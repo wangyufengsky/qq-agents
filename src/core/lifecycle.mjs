@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 export const SUBJECT = "@subject";
 export function stableInstructions(agent, self, subject = false, anchors = {}) {
   return [
@@ -209,12 +209,31 @@ export class ContextLifecycle {
       a = r.agent(ctx.agentId),
       m = r.memory.bind(a.id),
       self = m.identity.initialize(a, r.now());
+    const instructions = stableInstructions(
+      a,
+      self,
+      ctx.conversation === SUBJECT,
+      m.identity.anchors(a),
+    );
+    const instructionsHash = createHash("sha256")
+      .update(instructions)
+      .digest("hex");
     let s = m.state(ctx.conversation);
-    if (s.session && s.loadedSelfVersion !== self.version) {
+    if (
+      s.session &&
+      (s.loadedSelfVersion !== self.version ||
+        s.loadedInstructionsHash !== instructionsHash)
+    ) {
       // Both protocols can preserve old text. Rebuild on identity changes until replacement is behaviorally verified.
       const wasRunning = r.running.delete(a.id + "|" + ctx.conversation);
       try {
-        this.retire(a.id, ctx.conversation, "self-version-change");
+        this.retire(
+          a.id,
+          ctx.conversation,
+          s.loadedSelfVersion !== self.version
+            ? "self-version-change"
+            : "identity-or-protocol-change",
+        );
       } finally {
         if (wasRunning) r.running.set(a.id + "|" + ctx.conversation, ctx);
       }
@@ -238,12 +257,6 @@ export class ContextLifecycle {
           );
     this.seen(ctx, history.items);
     ctx.feedThroughSeq = history.nextAfterSeq || s.feedThroughSeq || 0;
-    const instructions = stableInstructions(
-      a,
-      self,
-      ctx.conversation === SUBJECT,
-      m.identity.anchors(a),
-    );
     const prompt = [
       `当前场景 ${ctx.conversation}。本回合采用 self v${self.version}。主人/管理员：${a.ownerIds.join(",") || "未设置"}。`,
       `唤醒原因（资料）: ${JSON.stringify(reasons)}`,
@@ -258,6 +271,7 @@ export class ContextLifecycle {
     m.setState(ctx.conversation, {
       ...m.state(ctx.conversation),
       loadedSelfVersion: self.version,
+      loadedInstructionsHash: instructionsHash,
       lastTurnId: ctx.turnId,
       lifecycle: {
         ...s.lifecycle,
@@ -274,6 +288,7 @@ export class ContextLifecycle {
       initialSession: ctx.initialSession,
       promptChars: prompt.length,
       instructionsChars: ctx.initialSession ? instructions.length : 0,
+      instructionsHash,
     });
     ctx.estimatedAdded =
       prompt.length + (ctx.initialSession ? instructions.length : 0);

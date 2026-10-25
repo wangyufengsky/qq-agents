@@ -788,3 +788,26 @@ test("mind export restores all tables, remaps activity watermarks and refuses ex
     /REQUIRES_EMPTY/,
   );
 });
+
+test("changing identity anchors refreshes stable instructions without a self version write", async (t) => {
+  const prompts = [];
+  const { runtime, store } = fixture(t, {
+      run: async (p) => {
+        prompts.push(p);
+        p.saveSession({ id: "session" + prompts.length });
+      },
+    }),
+    m = store.bind("agent-0");
+  await runtime.wake("agent-0", "group:20000");
+  runtime.agent("agent-0").name = "新名字";
+  runtime.agent("agent-0").appearance = "绿色围巾";
+  await runtime.wake("agent-0", "group:20000");
+  assert(!prompts[1].session);
+  assert(prompts[1].instructions.includes("绿色围巾"));
+  assert(prompts[1].instructions.includes("新名字"));
+  assert.equal(m.identity.current().version, 1);
+  assert.equal(
+    m.identity.list("session_history")[0].reason,
+    "identity-or-protocol-change",
+  );
+});
