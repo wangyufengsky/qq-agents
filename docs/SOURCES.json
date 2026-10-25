@@ -16,6 +16,18 @@
       "commit": "6ddd867cab920d7e0878b8a9b54267dc640588f2",
       "license": "MIT",
       "note": "Reviewed source modules only; no private repository history or instance data imported."
+    },
+    {
+      "repository": "https://github.com/shadowfish07/heybox-cli",
+      "commit": "0a03f8884f35298bf26d37dfb8b390e2b5ac1d21",
+      "license": "MIT",
+      "note": "Read-only audit; signer port only. No upstream binary installed or executed."
+    },
+    {
+      "repository": "https://github.com/plasta2steel/dsh-xiaoheihe",
+      "commit": "32bc17d707397af48368db759548806763bca6aa",
+      "license": "MIT",
+      "note": "Read-only endpoint and response-shape reference. No package installed or executed."
     }
   ],
   "vendoredFiles": [
@@ -130,6 +142,13 @@
       "origin": "h-D-ACE/dsh-qq",
       "sourcePath": "src/scheduler/time.js",
       "sha256": "7793aa42c475fc6ad5486a2fbdb2c2339cc7be940a602d24e1d8c835dc2c58fc"
+    },
+    {
+      "path": "vendor/heybox/signature.mjs",
+      "origin": "shadowfish07/heybox-cli",
+      "sourcePath": "internal/api/signer.go",
+      "sha256": "c11408aca5fdda1e232ff874a5e1ed03f61cf01bbf851779d384c5ec5cfba395",
+      "modification": "JavaScript port of read API signature algorithm; compatibility vectors retained in app-adapters tests."
     }
   ]
 }

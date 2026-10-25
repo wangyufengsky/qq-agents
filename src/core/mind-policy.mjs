@@ -1,3 +1,4 @@
+import { SUBJECT_APP_TOOLS } from "../apps/policy.mjs";
 import { z } from "zod";
 const ms = (min, max, value) =>
   z.number().int().min(min).max(max).default(value);
@@ -42,6 +43,7 @@ export const subjectPolicySchema = z
     readTools: z
       .array(
         z.enum([
+          ...SUBJECT_APP_TOOLS,
           "web_fetch",
           "social_status",
           "social_search",

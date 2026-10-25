@@ -1,3 +1,7 @@
+import { beforeShareDelivery } from "../apps/sharing.mjs";
+import { appService } from "../apps/tools.mjs";
+import { appsPolicySchema } from "../apps/policy.mjs";
+import { appDefinitions } from "../apps/tools.mjs";
 import { ContextLifecycle, SUBJECT } from "./lifecycle.mjs";
 import { SubjectCoordinator } from "./subject.mjs";
 import { CHAT_MIND_TOOLS, SUBJECT_TOOLS } from "../tools/mind.mjs";
@@ -233,6 +237,24 @@ export class Runtime {
     this.conversations.cancel(agentId);
     this.operations.revoke(agentId, false);
     await this.backends.get(agentId)?.cancel?.();
+  }
+  async changeAppPermissions(agentId, policy, revision) {
+    this.agent(agentId);
+    const apps = appsPolicySchema.parse(policy);
+    if (revision !== this.configStore.revision) throw Error("CONFIG_CONFLICT");
+    const next = structuredClone(this.config),
+      agent = next.agents.find((a) => a.id === agentId);
+    agent.apps = apps;
+    const names = Object.keys(appDefinitions);
+    agent.tools = [
+      ...new Set([
+        ...agent.tools.filter((n) => !names.includes(n)),
+        ...(apps.enabled ? names : []),
+      ]),
+    ];
+    this.configStore.save(next, revision);
+    await this.cancel(agentId);
+    return { revision: this.configStore.revision, apps };
   }
   async changeFilePermissions(agentId, policy, revision) {
     this.agent(agentId);
@@ -668,6 +690,7 @@ export class Runtime {
     if (typeof requestId !== "string" || !requestId || requestId.length > 200)
       throw Error("INVALID_REQUEST_ID");
     this.assertDisclosure(ctx);
+    beforeShareDelivery(appService(this), ctx, metadata);
     const serialized = JSON.stringify(intent);
     if (
       serialized.includes(ctx.token) ||
@@ -698,12 +721,6 @@ export class Runtime {
       throw Error("SEND_RATE_LIMIT");
     const transport = this.transports.get(a.connectionId);
     if (!transport?.connected) throw Error("QQ_NOT_CONNECTED");
-    mem.store.transaction(() => {
-      mem.reserveDelivery(requestId, ctx.conversation, intent);
-      mem.setState(ctx.conversation, { ...state, sendTimes: [...times, now] });
-      this.subject.reserveContact(ctx, proactive);
-    });
-    ctx.sendCount++;
     const event = {
       connectionId: a.connectionId,
       conversation: ctx.conversation,
@@ -712,12 +729,18 @@ export class Runtime {
       body,
       payload: { requestId, ...metadata },
     };
-    mem.append({
-      ...event,
-      dedupe: "send:" + requestId + ":pending",
-      kind: "message.send-attempt",
-      status: "pending",
+    mem.store.transaction(() => {
+      mem.reserveDelivery(requestId, ctx.conversation, intent);
+      mem.setState(ctx.conversation, { ...state, sendTimes: [...times, now] });
+      this.subject.reserveContact(ctx, proactive);
+      mem.append({
+        ...event,
+        dedupe: "send:" + requestId + ":pending",
+        kind: "message.send-attempt",
+        status: "pending",
+      });
     });
+    ctx.sendCount++;
     try {
       this.assertActive(ctx);
       const receipt = await send(transport);

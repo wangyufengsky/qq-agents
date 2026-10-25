@@ -9,3 +9,6 @@ QQ Bridge Unified is an independent derivative project under MIT.
 `vendor/` contains the explicitly reused modules. Runtime integration and new memory implementation live in `src/`. No SnowLuma SDK, MCP package, QQ client, NapCat binary, DSH application, or Codex application is bundled. Each external application retains its own license. See vendor/social-reader for its dependency notices.
 
 The vendored forward helper changes only its Markdown-helper import path. The social-reader search adapter supplies the objective field required by the verified Exa schema. All vendored source hashes, local modifications and baseline origins are recorded in docs/SOURCES.json.
+
+- shadowfish07/heybox-cli at `0a03f8884f35298bf26d37dfb8b390e2b5ac1d21`: MIT read API signature port; original license in `vendor/heybox/LICENSE`. plasta2steel/dsh-xiaoheihe at `32bc17d707397af48368db759548806763bca6aa` was read as an endpoint/response reference only.
+- Platform adapters call a locally installed OpenCLI 1.8.4 through its fixed read commands and helpers. OpenCLI and browser login material are not bundled. The tested version is pinned at the adapter boundary; other versions fail with an explicit compatibility error.

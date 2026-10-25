@@ -1,3 +1,5 @@
+import { shareList, cancelShare } from "./apps/sharing.mjs";
+import { appService } from "./apps/tools.mjs";
 import { safeToolFailure } from "./tools/errors.mjs";
 import fs from "node:fs";
 import path from "node:path";
@@ -53,6 +55,7 @@ export function createServer({ runtime, token, allowLive = false }) {
           "/app.js",
           "/parity.js",
           "/files-ui.js",
+          "/apps-ui.js",
           "/mind-ui.js",
           "/style.css",
         ].includes(url.pathname)
@@ -185,6 +188,49 @@ export function createServer({ runtime, token, allowLive = false }) {
       }
       if (req.method === "GET" && url.pathname === "/api/status")
         return send({ ...runtime.status(), allowLive });
+      if (req.method === "PUT" && url.pathname === "/api/permissions/apps") {
+        const data = await body(req);
+        return send(
+          await runtime.changeAppPermissions(
+            data.agentId,
+            data.apps,
+            data.revision,
+          ),
+        );
+      }
+      if (req.method === "GET" && url.pathname === "/api/apps") {
+        const agentId = url.searchParams.get("agentId");
+        runtime.agent(agentId);
+        return send({
+          intents: shareList(appService(runtime), agentId),
+          progress: appService(runtime).progress(agentId),
+          capabilities: appService(runtime).capabilities(agentId),
+          history: appService(runtime).history(
+            agentId,
+            Math.max(
+              0,
+              Math.min(100000, Number(url.searchParams.get("offset")) || 0),
+            ),
+          ),
+        });
+      }
+      if (req.method === "POST" && url.pathname === "/api/apps/cancel") {
+        const data = await body(req);
+        runtime.agent(data.agentId);
+        return send(
+          await cancelShare(
+            appService(runtime),
+            data.agentId,
+            data.id,
+            data.revision,
+          ),
+        );
+      }
+      if (req.method === "POST" && url.pathname === "/api/apps/probe") {
+        const data = await body(req);
+        runtime.agent(data.agentId);
+        return send(await appService(runtime).probe(data.platform));
+      }
       if (req.method === "PUT" && url.pathname === "/api/permissions/files") {
         const data = await body(req);
         return send(
