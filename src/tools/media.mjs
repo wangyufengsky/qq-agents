@@ -3,6 +3,12 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { atomicJSON } from "../core/config.mjs";
 import {
+  inspectGif,
+  selectFrames,
+  decodeGif,
+  hasOtherAnimation,
+} from "./animation.mjs";
+import {
   safeFetchBuffer,
   looksLikeImageBuffer,
 } from "../../vendor/social-reader/safe-fetch.js";
@@ -31,8 +37,14 @@ export function imageMime(buffer) {
   throw Error("INVALID_IMAGE");
 }
 export class MediaStore {
-  constructor(root) {
+  constructor(
+    root,
+    { fetchBuffer = safeFetchBuffer, decode = decodeGif } = {},
+  ) {
     this.root = root;
+    this.fetchBuffer = fetchBuffer;
+    this.decode = decode;
+    this.activeAnimations = 0;
     fs.mkdirSync(root, { recursive: true, mode: 0o700 });
   }
   dir(agentId) {
@@ -110,6 +122,84 @@ export class MediaStore {
       mimeType: meta.mimeType,
     };
   }
+  async view(agentId, id, options, signal) {
+    if (signal?.aborted) throw Error("ABORTED");
+    const meta = this.metadata(agentId, id);
+    if (!meta) throw Error("MEDIA_NOT_FOUND");
+    const data = fs.readFileSync(path.join(this.dir(agentId), id + ".bin"));
+    const media = { id, mimeType: meta.mimeType, bytes: data.length };
+    if (hasOtherAnimation(data, meta.mimeType))
+      throw Error("ANIMATION_FORMAT_UNSUPPORTED_USE_GIF");
+    const info = meta.mimeType === "image/gif" ? inspectGif(data) : null;
+    if (!info || info.frames.length === 1)
+      return {
+        content: [
+          { type: "text", text: JSON.stringify({ ...media, animated: false }) },
+          {
+            type: "image",
+            data: data.toString("base64"),
+            mimeType: meta.mimeType,
+          },
+        ],
+      };
+    const selection = selectFrames(info, options);
+    if (this.activeAnimations >= 2) throw Error("ANIMATION_DECODER_BUSY");
+    this.activeAnimations++;
+    let images;
+    try {
+      images = await this.decode(data, info, selection.selected, { signal });
+    } finally {
+      this.activeAnimations--;
+    }
+    if (signal?.aborted) throw Error("ABORTED");
+    const animation = {
+      frameCount: info.frames.length,
+      durationMs: info.durationMs,
+      width: info.width,
+      height: info.height,
+      timing: "one cycle; missing/zero GIF delays use 100 ms",
+      mode: selection.mode,
+      startMs: selection.startMs,
+      endMs: selection.endMs,
+      complete: selection.complete,
+      sampled: selection.sampled,
+      frames: selection.selected,
+      nextFrameOffset: selection.nextFrameOffset,
+      next:
+        selection.nextFrameOffset === null
+          ? null
+          : {
+              mediaId: id,
+              animation: {
+                mode: "frames",
+                offset: selection.nextFrameOffset,
+                limit: options?.limit ?? 10,
+                startMs: selection.startMs,
+                endMs: selection.endMs,
+              },
+            },
+    };
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            ...media,
+            animated: true,
+            animation,
+            hint: "以下按时间排列的图片来自同一张动图，帧序号从0开始。结合画面变化理解动作。complete=false时没有展示全部帧，不能声称看完；可用sticker_read(mediaId, animation)读取已缓存原图，mode=frames并按next分页，或指定startMs/endMs细看。收藏和发送仍使用原始mediaId。",
+          }),
+        },
+        ...images.flatMap((image, i) => [
+          {
+            type: "text",
+            text: `动图帧 ${selection.selected[i].index}，时间 ${selection.selected[i].timeMs} ms，持续 ${selection.selected[i].durationMs} ms`,
+          },
+          image,
+        ]),
+      ],
+    };
+  }
   segment(agentId, id) {
     const image = this.read(agentId, id);
     return { type: "image", data: { file: "base64://" + image.data } };
@@ -121,7 +211,7 @@ export class MediaStore {
       throw Error("IMAGE_NOT_FOUND");
     const url = images[index].data?.url;
     if (!url) throw Error("IMAGE_URL_UNAVAILABLE");
-    const result = await safeFetchBuffer(url, 8 * 1024 * 1024);
+    const result = await this.fetchBuffer(url, 8 * 1024 * 1024);
     const buffer = Buffer.isBuffer(result) ? result : result.buffer;
     const mimeType =
       buffer[0] === 137
@@ -134,6 +224,7 @@ export class MediaStore {
     return this.put(agentId, buffer, mimeType, {
       sourceEventId: event.id,
       conversation: event.conversation,
+      protectedOperations: event.protectedOperations === true,
     });
   }
   collect(agentId, id, { title, tags = [] }) {
