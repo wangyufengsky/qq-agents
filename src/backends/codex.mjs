@@ -3,6 +3,7 @@ import path from "node:path";
 import { CodexRpc } from "../../vendor/local-bridge/codex-rpc.mjs";
 import { ExternalTools } from "./external.mjs";
 import { mcpResult } from "../tools/index.mjs";
+import { safeToolFailure } from "../tools/errors.mjs";
 
 export const restrictions = {
   "features.shell_tool": false,
@@ -120,12 +121,12 @@ export class CodexBackend {
                 : [],
         ),
       });
-    } catch {
+    } catch (error) {
       try {
         this.rpc.respond(id, {
           success: false,
           contentItems: [
-            { type: "inputText", text: "工具被拒绝或失败；不得假称成功。" },
+            { type: "inputText", text: JSON.stringify(safeToolFailure(error)) },
           ],
         });
       } catch {}

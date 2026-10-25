@@ -8,4 +8,4 @@ QQ Bridge Unified is an independent derivative project under MIT.
 
 `vendor/` contains the explicitly reused modules. Runtime integration and new memory implementation live in `src/`. No SnowLuma SDK, MCP package, QQ client, NapCat binary, DSH application, or Codex application is bundled. Each external application retains its own license. See vendor/social-reader for its dependency notices.
 
-The vendored forward helper changes only its Markdown-helper import path. All vendored source hashes and baseline origins are recorded in docs/SOURCES.json.
+The vendored forward helper changes only its Markdown-helper import path. The social-reader search adapter supplies the objective field required by the verified Exa schema. All vendored source hashes, local modifications and baseline origins are recorded in docs/SOURCES.json.

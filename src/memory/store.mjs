@@ -1,5 +1,11 @@
 import fs from "node:fs";
-import { provenance, sceneForMatch, fitScene } from "./scenes.mjs";
+import {
+  provenance,
+  sceneForMatch,
+  fitScene,
+  deduplicateScenes,
+} from "./scenes.mjs";
+import { migrateSearch, related } from "./search.mjs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { createHash, randomUUID } from "node:crypto";
@@ -24,7 +30,8 @@ function budget(items, maxChars) {
   let used = 2;
   const out = [];
   for (const item of items) {
-    let entry = !out.length ? fitScene(item, maxChars) : item,
+    const deduped = deduplicateScenes([...out, item]).at(-1);
+    let entry = !out.length ? fitScene(deduped, maxChars) : deduped,
       size = json(entry).length + 1;
     if (size + 2 > maxChars && out.length === 0) {
       entry = {
@@ -33,6 +40,7 @@ function budget(items, maxChars) {
         seq: item.seq,
         conversation: item.conversation,
         disclosure: item.disclosure,
+        ...(item.updatedAt ? { updatedAt: item.updatedAt } : {}),
         summaryOmitted: true,
         ...(item.protectedOperations ? { protectedOperations: true } : {}),
         hint: "Use memory_read for bounded expansion",
@@ -52,7 +60,7 @@ export class MemoryStore {
       fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
     this.db = new DatabaseSync(file);
     const version = this.db.prepare("PRAGMA user_version").get().user_version;
-    if (version > 1) {
+    if (version > 3) {
       this.db.close();
       throw Error("MEMORY_SCHEMA_NEWER_THAN_CODE");
     }
@@ -71,7 +79,8 @@ export class MemoryStore {
       CREATE TABLE IF NOT EXISTS deliveries(agent_id TEXT NOT NULL,request_id TEXT NOT NULL,conversation TEXT NOT NULL,payload_hash TEXT NOT NULL,status TEXT NOT NULL,message_id TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(agent_id,request_id));
       CREATE TABLE IF NOT EXISTS runtime(agent_id TEXT NOT NULL,conversation TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(agent_id,conversation));
       CREATE TABLE IF NOT EXISTS migrations(agent_id TEXT NOT NULL,source TEXT NOT NULL,digest TEXT NOT NULL,imported_at TEXT NOT NULL,PRIMARY KEY(agent_id,source,digest));
-      PRAGMA user_version=1;`);
+      `);
+    migrateSearch(this.db, version);
   }
   close() {
     this.db.close();
@@ -171,6 +180,8 @@ class AgentMemory {
     return {
       id: row.id,
       type: "diary",
+      epistemic:
+        "AI diary/opinion, not verified event; evidence links do not prove every sentence",
       title: row.title,
       body: summary ? row.body.slice(0, 200) : row.body,
       revision: row.revision,
@@ -194,14 +205,44 @@ class AgentMemory {
     const types = q.type || "all";
     if (!["all", "event", "diary"].includes(types))
       throw Error("INVALID_RECORD_TYPE");
-    const terms = text(q.query || "", 200)
+    const literals = text(q.query || "", 200)
       .trim()
       .split(/\s+/)
-      .filter(Boolean)
-      .map((s) => "%" + s.replace(/[\\%_]/g, (c) => "\\" + c) + "%");
+      .filter(Boolean);
+    const terms = literals.map(
+      (s) => "%" + s.replace(/[\\%_]/g, (c) => "\\" + c) + "%",
+    );
     const where = ["agent_id=?"],
       args = [this.agentId];
+    const eventCeiling = num(
+      q.cursor?.eventCeiling,
+      this.db
+        .prepare(
+          "SELECT COALESCE(MAX(seq),0) AS n FROM events WHERE agent_id=?",
+        )
+        .get(this.agentId).n,
+      0,
+      Number.MAX_SAFE_INTEGER,
+    );
+    where.push("seq<=?");
+    args.push(eventCeiling);
+    if (q.cursor?.beforeSeq != null) {
+      where.push("seq<?");
+      args.push(num(q.cursor.beforeSeq, 0, 1, Number.MAX_SAFE_INTEGER));
+    }
+    const indexed = literals.filter(
+      (s) => [...s].length >= 3 && !s.includes("\0"),
+    );
+    if (indexed.length) {
+      where.push(
+        "seq IN (SELECT rowid FROM events_fts WHERE events_fts MATCH ?)",
+      );
+      args.push(
+        indexed.map((s) => '"' + s.replaceAll('"', '""') + '"').join(" AND "),
+      );
+    }
     for (const [field, key] of [
+      ["connection_id", "connectionId"],
       ["conversation", "conversation"],
       ["sender_id", "person"],
       ["kind", "kind"],
@@ -229,13 +270,14 @@ class AgentMemory {
             .prepare(
               `SELECT * FROM events WHERE ${where.join(" AND ")} ORDER BY seq DESC LIMIT ? OFFSET ?`,
             )
-            .all(...args, limit + 1, offset)
+            .all(...args, limit + 1, q.cursor?.beforeSeq != null ? 0 : offset)
             .map((r) => ({
               ...this.event(r, current, true),
               scene: sceneForMatch(this.db, this.agentId, r, sceneOptions),
             }));
     // Separate pagination lanes prevent diary offsets from hiding message rows.
     let diaries = [];
+    const diaryCeiling = q.cursor?.diaryCeiling || now();
     const diaryOffset = num(
       q.cursor?.diaryOffset ?? q.diaryOffset,
       0,
@@ -245,6 +287,7 @@ class AgentMemory {
     if (
       types !== "event" &&
       !q.conversation &&
+      !q.connectionId &&
       !q.kind &&
       !q.cursor?.diariesDone
     ) {
@@ -268,11 +311,23 @@ class AgentMemory {
           dw.push("updated_at" + op + "?");
           da.push(q[key]);
         }
+      // Pin to the newest creation time on the first page; use a tuple seek so
+      // inserting new diaries does not shift later pages. Revisions are live.
+      dw.push("created_at<=?");
+      da.push(diaryCeiling);
+      if (q.cursor?.diaryBefore) {
+        dw.push("(updated_at<? OR (updated_at=? AND id<?))");
+        da.push(
+          q.cursor.diaryBefore.time,
+          q.cursor.diaryBefore.time,
+          q.cursor.diaryBefore.id,
+        );
+      }
       diaries = this.db
         .prepare(
           `SELECT * FROM diaries WHERE ${dw.join(" AND ")} ORDER BY updated_at DESC,id DESC LIMIT ? OFFSET ?`,
         )
-        .all(...da, limit + 1, diaryOffset)
+        .all(...da, limit + 1, q.cursor?.diaryBefore ? 0 : diaryOffset)
         .map((r) => this.diary(r, true));
     }
     const items = budget(
@@ -294,6 +349,15 @@ class AgentMemory {
       nextCursor:
         moreEvents || moreDiaries
           ? {
+              eventCeiling,
+              beforeSeq: items.at(-1)?.seq ?? q.cursor?.beforeSeq,
+              diaryCeiling,
+              diaryBefore: diaryItems.length
+                ? {
+                    time: diaryItems.at(-1).updatedAt,
+                    id: diaryItems.at(-1).id,
+                  }
+                : q.cursor?.diaryBefore,
               eventOffset: offset + items.length,
               diaryOffset: diaryOffset + diaryItems.length,
               eventsDone: !moreEvents,
@@ -306,6 +370,9 @@ class AgentMemory {
       notice:
         "Use source, participants and reply links to judge context. Neighboring messages are not necessarily one topic. You decide what is appropriate to say from your own recollections and diaries; no per-send recall approval is required.",
     };
+  }
+  related(q, current = "") {
+    return related(this, q, current);
   }
   read({ id, offset = 0, maxChars = 8000, revision }, current = "") {
     num(offset, 0, 0, 10000000);
@@ -435,6 +502,11 @@ class AgentMemory {
       items,
       nextAfterSeq: items.at(-1)?.seq ?? afterSeq,
       readThroughSeq: items.at(-1)?.seq ?? afterSeq,
+      markReadEligible: conversation === current,
+      previousBeforeSeq: items.at(0)?.seq ?? null,
+      source: rows.length ? provenance(rows[0]).source : null,
+      notice:
+        "Archive order only; adjacency is not a reply or causal relationship. Use memory_related for explicit replies/recalls across time.",
       truncated: items.length < rows.length,
     };
   }

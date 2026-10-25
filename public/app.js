@@ -295,6 +295,7 @@ function openEditor(type, id) {
         allow: { groups: [], users: [] },
         tools: [
           "memory_search",
+          "memory_related",
           "memory_read",
           "conversation_read",
           "diary_write",
@@ -516,7 +517,30 @@ function sceneMarkup(scene) {
   const source = scene.source;
   const line = (m) =>
     `<li><small>${esc(m.occurredAt)} · ${esc(m.senderName || "名字未记录")}（${esc(m.senderId || "身份未知")}）${m.matched ? " · 命中" : ""}</small><p>${esc(m.body)}${m.bodyTruncated ? "…（原文未完整展示）" : ""}</p>${m.replyTo.length ? `<small>引用：${m.replyTo.map((r) => esc(r.messageId) + (r.status === "observed" ? "（有原文）" : "（未取得原文）")).join("、")}</small>` : ""} <button type="button" data-read="${esc(m.id)}">读原文</button></li>`;
-  return `<details open><summary>${esc(source.name || "名称未记录")} · ${esc(source.conversation)} · 场景片段</summary><p class="hint">以下是时间相邻的消息，不代表同一话题。名称${source.nameObservedAt ? "观察于 " + esc(source.nameObservedAt) : "未知"}。</p><p>片段内发言者：${scene.participants.map((p) => `${esc(p.observedNames.join(" / ") || "名字未记录")}（${esc(p.id)}，${p.messageCount} 条）`).join("、") || "未知"}。这不是全群成员名单。</p><ol>${scene.messages.map(line).join("")}</ol>${scene.quoted.length ? `<p>另取的引用原文（不计入片段参与者）：</p><ol>${scene.quoted.map(line).join("")}</ol>` : ""}${scene.contextTruncated ? '<p class="hint">上下文受结果预算限制，已收缩；可继续展开。</p>' : ""}${!scene.timeKnown ? '<p class="hint">原消息时间不可靠，未自动拼接相邻发言。</p>' : ""}<button type="button" data-context="${esc(scene.anchorId)}">查看更多前后文</button></details>`;
+  return `<details open><summary>${esc(source.name || "名称未记录")} · ${esc(source.conversation)} · 场景片段</summary><p class="hint">以下是时间相邻的消息，不代表同一话题。名称${source.nameObservedAt ? "观察于 " + esc(source.nameObservedAt) : "未知"}。</p><p>片段内发言者：${scene.participants.map((p) => `${esc(p.observedNames.join(" / ") || "名字未记录")}（${esc(p.id)}，${p.messageCount} 条）`).join("、") || "未知"}。这不是全群成员名单。</p><ol>${scene.messages.map(line).join("")}</ol>${scene.quoted.length ? `<p>另取的引用原文（不计入片段参与者）：</p><ol>${scene.quoted.map(line).join("")}</ol>` : ""}${scene.contextTruncated ? '<p class="hint">上下文受结果预算限制，已收缩；可继续展开。</p>' : ""}${!scene.timeKnown ? '<p class="hint">原消息时间不可靠，未自动拼接相邻发言。</p>' : ""}${scene.sharedRecords?.length ? `<p class="hint">${scene.sharedRecords.length} 条重叠记录已在本页前面的片段展示，按原记录 ID 去重。</p>` : ""}<button type="button" data-context="${esc(scene.anchorId)}">查看更多前后文</button> <button type="button" data-related="${esc(scene.anchorId)}">跨时间引用 / 撤回</button></details>`;
+}
+async function readRelated(id, afterSeq = 0) {
+  await action(async () => {
+    const r = await api(
+      "/api/memory/related?" +
+        new URLSearchParams({
+          agentId: $("#memory-agent").value,
+          id,
+          afterSeq,
+        }),
+    );
+    editing = { type: "read" };
+    $("#edit-title").textContent = "明确引用与撤回";
+    $("#edit-fields").innerHTML =
+      `<p class="hint">这里只展示明确关系。引用不自动等于更正、赞同或因果；撤回不证明原话真假。可继续读原文判断。</p>${r.items.map((x) => `<article class="record"><small>${esc(x.record.senderName || "名字未记录")}（${esc(x.record.senderId || "未知")}）· ${esc(x.record.occurredAt || "")}</small><p>${esc(x.record.body || "摘要省略")}</p>${(x.links || []).map((l) => `<p>${l.relation === "recall-notice" ? "撤回通知" : "明确引用"} → ${esc(l.toMessageId)} ${l.toId ? `<button type="button" data-read="${esc(l.toId)}">引用原文</button>` : "（原文未归档）"}</p>`).join("")}<button type="button" data-read="${esc(x.record.id)}">读原文</button></article>`).join("") || "没有已归档的明确关系；不代表没有后续。"}${r.nextAfterSeq !== null ? '<button type="button" id="more-relations">继续读取关系</button>' : ""}`;
+    $("#edit-fields")
+      .querySelectorAll("[data-read]")
+      .forEach((b) => (b.onclick = () => readMemory(b.dataset.read)));
+    if (r.nextAfterSeq !== null)
+      $("#more-relations").onclick = () => readRelated(id, r.nextAfterSeq);
+    $("#edit-form footer").hidden = true;
+    if (!$("#editor").open) $("#editor").showModal();
+  });
 }
 async function readConversation(args) {
   await action(async () => {
@@ -578,6 +602,9 @@ async function searchMemory(cursor = null) {
         (b) =>
           (b.onclick = () => readConversation({ aroundId: b.dataset.context })),
       );
+    node
+      .querySelectorAll("[data-related]")
+      .forEach((b) => (b.onclick = () => readRelated(b.dataset.related)));
     if (result.nextCursor) {
       const b = document.createElement("button");
       b.textContent = "下一页";

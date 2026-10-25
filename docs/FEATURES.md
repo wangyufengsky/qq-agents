@@ -49,3 +49,24 @@ DSH 的 MCP 结果可携带 audio block。当前 Codex 动态工具适配没有�
 `memory_search` 的 `contextBefore` / `contextAfter` 默认各 2 条、最大各 5 条，`contextSeconds` 默认 600 秒、最大 3600 秒。结果包含同源消息的群/私聊标识、已观察名称、发言者、明确引用和 @；关键词与人物条件只用于选中命中消息。`conversation_read` 的 `aroundId` 自动保持原连接范围，分页可带 `connectionId`。管理台支持检索、场景展示、继续读前后文及原文分片。
 
 个人日记由程序记录写作场景及时间；写作场景不代表日记叙述事情的发生场景。日记、普通跨会话回忆不锁住 QQ 发言，模型自行判断表达范围。完整约定和未知/截断处理见 [场景记忆设计](MEMORY-DESIGN.md)。
+
+## 0.4.0 外部服务和语音
+
+每个后端的 `toolServers` 可配置 stdio（`command`/`args`）、`transport: "http"` 或 `"sse"`（`url`）。网络 URL 允许 HTTPS 或本机 HTTP，不接受 URL 中的用户名、密码、查询参数或片段；认证通过 `headers` 指向环境变量名。例如：
+
+```json
+{
+  "id": "exa",
+  "transport": "http",
+  "url": "https://mcp.exa.ai/mcp",
+  "allowedTools": ["web_search_exa", "web_fetch_exa"]
+}
+```
+
+角色需要显式启用 `external_tools` 和 `external_tool`。先发现实际 schema，再调用白名单工具；服务未配置返回空目录，未列出的工具无法调用。服务工具说明和结果属于不可信资料。示例 Exa 的搜索 schema 在本轮要求 `query` 和 `objective`，以后以实时目录为准。不得配置绕过统一 outbox 的第三方 QQ 发送工具。
+
+`external_tool.audioInput` 接受 `audioId`、`dataArgument` 和可选 `mimeArgument`，按真实服务的顶层字段提供音频 base64/MIME；不能借它读取其他主体音频或绕过跨会话资料外发检查。尚无默认 ASR 提供者。只返回网页 URL 的图像/音频结果不会自动登记；服务应返回 MCP 内嵌内容或 blob。
+
+macOS 本机 TTS：将角色 `voice.tts` 配为 `{"enabled":true,"voice":"Tingting"}`，再允许 `voice_synthesize`。工具返回登记的 audioId，模型可另行决定是否 `qq_send_voice`。需已有系统音色；默认关闭，不自动下载音色。生成文本只作为 TTS 输入来源保存，不是 ASR 转录。资料来源和运维限制会随生成音频保留。
+
+黑话研究的 `slang.researchArguments` 为管理员配置的固定 JSON 参数，`researchQueryField` 默认 `query`。例如给 Exa 固定 `objective` 和 `numResults:2`；候选词覆盖查询字段，程序不把证据原文交给外部服务。研究结果仍为未核实的候选，不能自动成为事实或人格。

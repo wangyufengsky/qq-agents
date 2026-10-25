@@ -1,9 +1,14 @@
 // Opt-in real-model acceptance. All QQ writes terminate at loopback fixture gateways.
 import fs from "node:fs";
+import {
+  seedQuality,
+  qualityPrompt,
+  judgeQuality,
+} from "./fixtures/memory-quality.mjs";
 import path from "node:path";
 import http from "node:http";
 import os from "node:os";
-import { randomBytes } from "node:crypto";
+import { randomBytes, createHash } from "node:crypto";
 import { WebSocketServer } from "ws";
 import { ConfigStore, validateConfig } from "../src/core/config.mjs";
 import { MemoryStore } from "../src/memory/store.mjs";
@@ -171,6 +176,13 @@ const cfg = validateConfig({
       provider: "deepseek-account",
       model: "deepseek-flash",
       effort: "high",
+      ...(args.includes("--tool-config")
+        ? {
+            toolServers: JSON.parse(
+              fs.readFileSync(opt("--tool-config"), "utf8"),
+            ),
+          }
+        : {}),
     },
     {
       id: "codex",
@@ -178,6 +190,13 @@ const cfg = validateConfig({
       label: "独立 Codex home",
       model: "gpt-6-astra",
       effort: "high",
+      ...(args.includes("--tool-config")
+        ? {
+            toolServers: JSON.parse(
+              fs.readFileSync(opt("--tool-config"), "utf8"),
+            ),
+          }
+        : {}),
     },
   ],
   agents: ids.map((id, i) => ({
@@ -189,6 +208,7 @@ const cfg = validateConfig({
     ownerIds: ["30000"],
     allow: { groups: ["20000"], users: ["30000"] },
     tools: TOOL_NAMES,
+    voice: { tts: { enabled: true, voice: "Tingting" } },
     persona:
       "你是独立测试环境的验收角色。当前 QQ 网关只保存本机测试回执。按当前唤醒原因中的验收说明调用工具；不要声称未经工具确认的结果。不要主动继续上一条测试。收到 sleep/proactive 原因时只发送对应的 ACCEPTANCE_SLEEP / ACCEPTANCE_PROACTIVE 标记并结束。",
     wake: { participation: 1, cooldownMs: 0 },
@@ -259,6 +279,24 @@ runtime.callTool = async (ctx, name, params) => {
   record();
   try {
     const result = await call(ctx, name, params);
+    if (name === "voice_synthesize")
+      entry.generatedAudio = {
+        id: result.id,
+        duration: result.duration,
+        mimeType: result.mimeType,
+      };
+    if (name === "external_tool")
+      entry.generatedMedia = (result.content || [])
+        .filter((c) => c.type === "text")
+        .flatMap((c) => {
+          try {
+            const x = JSON.parse(c.text);
+            return x.generatedMedia ? [x.generatedMedia] : [];
+          } catch {
+            return [];
+          }
+        });
+    if (name === "qq_cross_group_query") entry.activity = result;
     if (name === "qq_forward_read")
       entry.forward = {
         complete: result.complete,
@@ -389,6 +427,169 @@ async function runCase(id, test) {
           .slice(before)
           .some((m) => JSON.stringify(m.message).includes("ACCEPTANCE_HELLO")),
         "NO_CONFIRMED_HELLO",
+      );
+    } else if (test === "memory-quality") {
+      const f = seedQuality(memory.bind(id), id, "复杂蓝鲸" + started);
+      await turn(id, qualityPrompt(f));
+      const sent = gateway.sent.slice(before);
+      requireResult(sent.length === 1, "QUALITY_SEND_COUNT");
+      const text = sent[0].message
+        .filter((s) => s.type === "text")
+        .map((s) => s.data.text)
+        .join("");
+      fs.writeFileSync(
+        path.join(root, `quality-${id}.json`),
+        JSON.stringify({ fixture: f, answer: text }, null, 2),
+        { mode: 0o600 },
+      );
+      const quality = judgeQuality(f, text);
+      fs.writeFileSync(
+        path.join(root, `quality-${id}-review.json`),
+        JSON.stringify(quality, null, 2),
+        { mode: 0o600 },
+      );
+      for (const tool of [
+        "memory_search",
+        "memory_related",
+        "memory_read",
+        "qq_send",
+      ])
+        requireResult(
+          calls
+            .slice(beforeCalls)
+            .some((c) => c.name === tool && c.status === "ok"),
+          "QUALITY_TOOL_MISSING_" + tool,
+        );
+    } else if (test === "external-search") {
+      await turn(
+        id,
+        "外部工具验收：先用 external_tools 查看 exa 的真实schema，再调用它的 web_search_exa，搜索公开网络用语“鸽了”的含义，最多2个结果，objective只写查公开词义。不要发送任何聊天内容给服务。然后只发一条含 ACCEPTANCE_EXTERNAL_SEARCH 的 qq_send，简述实际结果并附来源链接，未经查询不可编造。",
+      );
+      requireResult(
+        calls
+          .slice(beforeCalls)
+          .some((c) => c.name === "external_tools" && c.status === "ok") &&
+          calls
+            .slice(beforeCalls)
+            .some((c) => c.name === "external_tool" && c.status === "ok"),
+        "EXTERNAL_NOT_CALLED",
+      );
+      requireResult(
+        gateway.sent
+          .slice(before)
+          .some((m) =>
+            JSON.stringify(m.message).includes("ACCEPTANCE_EXTERNAL_SEARCH"),
+          ),
+        "EXTERNAL_NOT_SENT",
+      );
+    } else if (test === "external-image") {
+      await turn(
+        id,
+        "图片验收：先 external_tools 查看 artifact 的真实工具schema，然后读取它返回的真实图像产物，用返回的 generatedMedia.id 调用 qq_send 发送图片一次。它只是已经生成的图片读取服务，不能声称本回合新生成了一张。不要用其他旧图片。",
+      );
+      requireResult(
+        calls
+          .slice(beforeCalls)
+          .some((c) => c.name === "external_tool" && c.status === "ok"),
+        "IMAGE_TOOL_NOT_CALLED",
+      );
+      const mediaIds = new Set(
+        calls
+          .slice(beforeCalls)
+          .flatMap((c) => (c.generatedMedia || []).map((m) => m.id)),
+      );
+      const imageSegments = gateway.sent
+        .slice(before)
+        .flatMap((m) => m.message || [])
+        .filter((s) => s.type === "image");
+      requireResult(
+        imageSegments.length === 1 &&
+          imageSegments.every(
+            (s) =>
+              s.data.file?.startsWith("base64://") &&
+              mediaIds.has(
+                createHash("sha256")
+                  .update(Buffer.from(s.data.file.slice(9), "base64"))
+                  .digest("hex"),
+              ),
+          ),
+        "IMAGE_BYTES_NOT_FROM_TOOL",
+      );
+    } else if (test === "tts") {
+      await turn(
+        id,
+        "本地语音生成验收：用 voice_synthesize 将“蓝鲸计划，明天下午三点见。”生成语音，用返回的audioId调用 qq_send_voice 发送一次。不要用旧语音，不要声称做了ASR。",
+      );
+      requireResult(
+        calls
+          .slice(beforeCalls)
+          .some(
+            (c) =>
+              c.name === "voice_synthesize" &&
+              c.status === "ok" &&
+              c.generatedAudio?.duration > 0 &&
+              c.generatedAudio?.mimeType === "audio/wav",
+          ),
+        "TTS_NOT_GENERATED",
+      );
+      requireResult(
+        gateway.sent
+          .slice(before)
+          .some((m) => m.message?.some((s) => s.type === "record")),
+        "TTS_NOT_SENT",
+      );
+    } else if (test === "group-scope") {
+      const a = runtime.agent(id),
+        mem = memory.bind(id);
+      a.allow.groups = ["20000", "20001"];
+      a.crossGroup = {
+        enabled: true,
+        links: [{ from: "20000", to: "20001", allow: ["activity"] }],
+      };
+      const startSeq = memory.db
+        .prepare("SELECT COALESCE(MAX(seq),0) n FROM events WHERE agent_id=?")
+        .get(id).n;
+      mem.setState("group:20000", { readThroughSeq: startSeq });
+      for (let n = 0; n < 2; n++)
+        mem.append({
+          dedupe: `group-scope-${started}-${n}`,
+          connectionId: id,
+          conversation: "group:20001",
+          kind: "message.received",
+          senderId: String(30002 + n),
+          body: "合成活动记录",
+        });
+      await runtime.wake(id, "group:20000", {
+        reasons: [
+          {
+            reason: "acceptance",
+            instruction:
+              '隔离群能力验收：用 qq_cross_group_query 查询 groupId="20001" 的 activity 汇总；只返回统计，不读取原文。然后用 qq_send 的 atUserId="30002" 在当前会话发一条 ACCEPTANCE_GROUP_SCOPE，说明实际查到的消息数。不要用文字代替at段，不发真实QQ。',
+          },
+        ],
+      });
+      await until(() => !runtime.running.has(id + "|group:20000"));
+      requireResult(
+        calls
+          .slice(beforeCalls)
+          .some(
+            (c) =>
+              c.name === "qq_cross_group_query" &&
+              c.activity?.messagesLast24h >= 2,
+          ),
+        "ACTIVITY_NOT_QUERIED",
+      );
+      requireResult(
+        gateway.sent
+          .slice(before)
+          .some(
+            (m) =>
+              m.action === "send_group_msg" &&
+              m.message?.some(
+                (s) => s.type === "at" && String(s.data.qq) === "30002",
+              ),
+          ),
+        "GROUP_AT_NOT_SENT",
       );
     } else if (test === "memory-scene") {
       const mem = memory.bind(id),

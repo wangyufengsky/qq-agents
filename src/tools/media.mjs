@@ -7,6 +7,29 @@ import {
   looksLikeImageBuffer,
 } from "../../vendor/social-reader/safe-fetch.js";
 
+export function imageMime(buffer) {
+  if (
+    buffer.length >= 24 &&
+    buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+  )
+    return "image/png";
+  if (
+    buffer.length >= 12 &&
+    buffer[0] === 255 &&
+    buffer[1] === 216 &&
+    buffer[2] === 255
+  )
+    return "image/jpeg";
+  if (buffer.length >= 13 && /^GIF8[79]a/.test(buffer.toString("ascii", 0, 6)))
+    return "image/gif";
+  if (
+    buffer.length >= 16 &&
+    buffer.toString("ascii", 0, 4) === "RIFF" &&
+    buffer.toString("ascii", 8, 12) === "WEBP"
+  )
+    return "image/webp";
+  throw Error("INVALID_IMAGE");
+}
 export class MediaStore {
   constructor(root) {
     this.root = root;
@@ -25,6 +48,7 @@ export class MediaStore {
       !["image/png", "image/jpeg", "image/gif", "image/webp"].includes(mimeType)
     )
       throw Error("INVALID_IMAGE");
+    if (imageMime(buffer) !== mimeType) throw Error("IMAGE_MIME_MISMATCH");
     const id = createHash("sha256").update(buffer).digest("hex"),
       dir = this.dir(agentId);
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -36,6 +60,32 @@ export class MediaStore {
       mimeType,
       bytes: buffer.length,
       ...meta,
+      protectedOperations:
+        existing?.protectedOperations || meta.protectedOperations || false,
+      sources: [
+        ...(existing?.sources ||
+          (existing?.conversation
+            ? [
+                {
+                  conversation: existing.conversation,
+                  eventId: existing.sourceEventId || null,
+                },
+              ]
+            : [])),
+        ...(meta.conversation
+          ? [
+              {
+                conversation: meta.conversation,
+                eventId: meta.sourceEventId || null,
+              },
+            ]
+          : []),
+      ].filter(
+        (x, i, all) =>
+          all.findIndex(
+            (y) => y.conversation === x.conversation && y.eventId === x.eventId,
+          ) === i,
+      ),
     });
     return { id, mimeType, bytes: buffer.length };
   }
