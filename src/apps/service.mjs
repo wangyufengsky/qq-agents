@@ -173,8 +173,10 @@ export class AppBrowsing {
     const value = JSON.parse(row.payload).app;
     if (!value) throw Error("APP_RECORD_NOT_FOUND");
     if (
-      row.conversation !== ctx.conversation &&
-      value.origin !== "app-browser"
+      (row.conversation !== ctx.conversation &&
+        value.origin !== "app-browser") ||
+      (value.source?.conversation &&
+        value.source.conversation !== ctx.conversation)
     ) {
       ctx.privateRead.add(row.id);
       ctx.persistTaint?.();

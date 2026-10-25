@@ -112,7 +112,13 @@ export async function appTool(runtime, ctx, name, args) {
   if (name === "app_image") return fetchImage(service, ctx, args);
   if (name === "app_boards") return service.boards(ctx, args);
   if (name === "app_capabilities") return service.capabilities(ctx.agentId);
-  if (name === "app_history") return service.history(ctx.agentId, args.offset);
+  if (name === "app_history") {
+    const page = service.history(ctx.agentId, args.offset);
+    // Apply the same source-disclosure rules as a full local read before
+    // returning even a title/summary. Admin history remains context-free.
+    for (const item of page.items) service.get(ctx, item.recordId);
+    return page;
+  }
   if (name === "qq_read_share_card") return service.cards(ctx, args);
   if (name === "app_browse") return service.perform(ctx, "browse", args);
   if (name === "app_search") return service.perform(ctx, "search", args);

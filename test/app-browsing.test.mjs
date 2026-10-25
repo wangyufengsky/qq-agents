@@ -365,3 +365,119 @@ test("private recollection can open fixed feeds but cannot submit query text or 
     /RESTRICTED/,
   );
 });
+
+test("model app history taints only returned cross-chat QQ sources and persists the restriction", async (t) => {
+  let calls = 0;
+  const { runtime, store } = setup(t, async () => {
+    calls++;
+    return { items: [], coverage: "listing" };
+  });
+  runtime.agent("agent-0").tools.push("app_search");
+  const m = store.bind("agent-0"),
+    privateCtx = context(runtime, "agent-0", "private:30000");
+  const event = m.append({
+    connectionId: "qq-0",
+    conversation: privateCtx.conversation,
+    senderId: "30000",
+    kind: "message.received",
+    direction: "in",
+    body: "[json]",
+    dedupe: "private-card-history",
+    payload: {
+      segments: [
+        {
+          type: "json",
+          data: {
+            data: JSON.stringify({
+              meta: {
+                news: {
+                  title: "私聊卡片标题",
+                  desc: "合成私密摘要",
+                  jumpUrl: url,
+                },
+              },
+            }),
+          },
+        },
+      ],
+    },
+  });
+  const card = (
+    await runtime.callTool(privateCtx, "qq_read_share_card", {
+      eventId: event.id,
+    })
+  ).items[0];
+  for (let i = 0; i < 20; i++)
+    runtime.apps.record(privateCtx, {
+      origin: "app-browser",
+      platform: "zhihu",
+      url,
+      title: "公开来源" + i,
+      readingScope: "listing",
+    });
+  const ctx = context(runtime);
+  const first = await runtime.callTool(ctx, "app_history", {});
+  assert.equal(first.items.length, 20);
+  assert.equal(first.nextOffset, 20);
+  assert.equal(ctx.privateRead.size, 0);
+  await runtime.callTool(ctx, "app_search", {
+    platform: "zhihu",
+    query: "公开搜索",
+  });
+  const page = await runtime.callTool(ctx, "app_history", {
+    offset: first.nextOffset,
+  });
+  assert.equal(page.items[0].recordId, card.recordId);
+  assert.equal(page.items[0].summary, "合成私密摘要");
+  const before = calls;
+  await assert.rejects(
+    runtime.callTool(ctx, "app_search", {
+      platform: "zhihu",
+      query: page.items[0].summary,
+    }),
+    /PRIVATE_RECOLLECTION_EXTERNAL_CALL_BLOCKED/,
+  );
+  assert.equal(calls, before);
+  assert(ctx.privateRead.has(card.recordId));
+  const resumed = context(runtime);
+  assert(resumed.privateRead.has(card.recordId));
+  await assert.rejects(
+    runtime.callTool(resumed, "app_search", {
+      platform: "zhihu",
+      query: "合成私密摘要",
+    }),
+    /PRIVATE_RECOLLECTION_EXTERNAL_CALL_BLOCKED/,
+  );
+  assert.equal(calls, before);
+  assert.equal(
+    (await runtime.callTool(context(runtime, "agent-1"), "app_history", {}))
+      .items.length,
+    0,
+  );
+  assert.equal(
+    runtime.apps.history("agent-0", 20).items[0].recordId,
+    card.recordId,
+  );
+  const original = context(runtime, "agent-0", "private:30000");
+  await runtime.callTool(original, "app_history", { offset: 20 });
+  assert.equal(original.privateRead.size, 0);
+});
+
+test("stored App reads retain cross-chat QQ provenance even in their recording conversation", async (t) => {
+  const { runtime } = setup(t, async () => ({ items: [] }));
+  for (const origin of ["qq-card", "app-browser"]) {
+    const recorded = context(runtime);
+    const card = runtime.apps.record(recorded, {
+      origin,
+      platform: "zhihu",
+      url,
+      title: "资料",
+      summary: origin === "qq-card" ? "合成摘要" : undefined,
+      source: { conversation: "private:30000", senderId: "30000" },
+    });
+    const reader = context(runtime);
+    reader.privateRead.clear();
+    runtime.apps.get(reader, card.recordId);
+    assert(reader.privateRead.has(card.recordId));
+  }
+});
