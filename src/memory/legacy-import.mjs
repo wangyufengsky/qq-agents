@@ -3,6 +3,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
   validateConnections,
+  mappedConnection,
   bindLegacyConnections,
 } from "./legacy-connections.mjs";
 import {
@@ -54,9 +55,17 @@ export function inspectLegacy(source, options = {}) {
     subjectMap,
     connectionMap,
   };
+  const connectionBinding =
+    binding.accountId && connectionMap[binding.accountId]
+      ? {
+          accountId: binding.accountId,
+          connectionId: mappedConnection(binding, binding.accountId, agentId),
+        }
+      : undefined;
   const plan = {
     version: 2,
     agentId,
+    connectionBinding,
     files: [],
     events: [],
     notes: [],

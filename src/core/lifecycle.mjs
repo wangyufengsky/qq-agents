@@ -317,6 +317,34 @@ export class ContextLifecycle {
       });
   }
   async finish(ctx, outcome, backend) {
+    const m = this.runtime.memory.bind(ctx.agentId);
+    let terminal = outcome;
+    try {
+      await this.finishContext(ctx, outcome, backend);
+    } catch (error) {
+      terminal = "failed";
+      throw error;
+    } finally {
+      if (ctx.controller.signal.aborted) terminal = "cancelled";
+      if (["failed", "cancelled"].includes(terminal))
+        retireSession(
+          m,
+          ctx.conversation,
+          terminal === "failed" ? "backend-failure" : "cancelled",
+          this.runtime.now(),
+          { turnId: ctx.turnId },
+        );
+      // Keep running durable through all async finalization/compaction. On a
+      // crash, recovery must still archive before removing the active mapping.
+      m.identity.put("model_turns", {
+        ...m.identity.get("model_turns", ctx.turnId),
+        status: terminal,
+        phase: "finished",
+        endedAt: this.runtime.now(),
+      });
+    }
+  }
+  async finishContext(ctx, outcome, backend) {
     const r = this.runtime,
       m = r.memory.bind(ctx.agentId),
       a = r.config.agents.find((a) => a.id === ctx.agentId);
@@ -334,8 +362,9 @@ export class ContextLifecycle {
     const record = m.identity.get("model_turns", ctx.turnId);
     m.identity.put("model_turns", {
       ...record,
-      status: outcome,
-      endedAt: r.now(),
+      status: "running",
+      phase: "finalizing",
+      modelOutcome: outcome,
       usage: s.usage,
       estimatedTextChars: ctx.estimatedAdded,
     });
@@ -401,6 +430,10 @@ export class ContextLifecycle {
         a.contextPolicy.compactCooldownMs
     ) {
       try {
+        m.identity.put("model_turns", {
+          ...m.identity.get("model_turns", ctx.turnId),
+          phase: "compacting",
+        });
         const result = await backend.compact({
           session: s.session,
           signal: ctx.controller.signal,

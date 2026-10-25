@@ -2,7 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import path from "node:path";
-import { fixture, config, temp } from "./helpers.mjs";
+import { fixture, config, temp, FakeTransport } from "./helpers.mjs";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { CodexBackend } from "../src/backends/codex.mjs";
 import { DshBackend } from "../src/backends/dsh.mjs";
 import { Runtime } from "../src/core/runtime.mjs";
@@ -12,6 +14,67 @@ import { MemoryStore } from "../src/memory/store.mjs";
 import { retireSession } from "../src/core/session-records.mjs";
 const chat = "group:20000",
   tick = () => new Promise((r) => setImmediate(r));
+
+if (process.argv[2] === "--crash-compaction") {
+  const root = process.argv[3],
+    store = new MemoryStore(path.join(root, "memory.sqlite"));
+  const cfg = new ConfigStore(path.join(root, "config.json"), config(1));
+  const runtime = new Runtime({
+    memory: store,
+    configStore: cfg,
+    backendFactory: () => ({
+      async run(p) {
+        p.saveSession({ backend: "codex", id: "interrupted-compact" });
+        p.onUsage({
+          source: "measured",
+          contextTokens: 19000,
+          capacityTokens: 20000,
+        });
+      },
+      async compact() {
+        process.exit(77);
+      },
+    }),
+  });
+  runtime.transports.set("qq-0", new FakeTransport());
+  await runtime.wake("agent-0", chat);
+  throw Error("EXPECTED_COMPACTION");
+}
+
+test("N3 process death during compaction retains a running recovery marker until archival", async (t) => {
+  const root = temp(t),
+    child = spawnSync(
+      process.execPath,
+      [fileURLToPath(import.meta.url), "--crash-compaction", root],
+      { encoding: "utf8" },
+    );
+  assert.equal(child.status, 77, child.stderr);
+  const store = new MemoryStore(path.join(root, "memory.sqlite")),
+    cfg = new ConfigStore(path.join(root, "config.json"), config(1));
+  const before = store.bind("agent-0").identity.list("model_turns")[0];
+  assert.equal(before.status, "running");
+  assert.equal(before.phase, "compacting");
+  const runtime = new Runtime({
+    memory: store,
+    configStore: cfg,
+    backendFactory: () => {
+      throw Error("NO_BACKEND_CALL");
+    },
+  });
+  try {
+    const m = store.bind("agent-0");
+    assert.equal(m.state(chat).session, null);
+    assert.equal(m.identity.list("session_history").length, 1);
+    assert.equal(
+      m.identity.list("session_history")[0].session.id,
+      "interrupted-compact",
+    );
+    assert.equal(m.identity.list("model_turns")[0].status, "interrupted");
+  } finally {
+    await runtime.close();
+    store.close();
+  }
+});
 
 class Rpc extends EventEmitter {
   constructor(mode, onReady) {

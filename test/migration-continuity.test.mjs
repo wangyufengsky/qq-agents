@@ -77,6 +77,57 @@ const live = (m, id, extra = {}) =>
 const edges = (m, id) =>
   m.related({ id, maxChars: 16000 }).items.flatMap((x) => x.links || []);
 
+test("N1 an empty current window still repairs known-account legacy connections", (t) => {
+  const f = setup(t, [exported("11")]),
+    event = f.plan().events[0];
+  const old = f.m.append({
+    ...event,
+    connectionId: "",
+    dedupe: event.legacyDedupe,
+  });
+  f.write([]);
+  const result = importLegacy(f.m, f.plan());
+  assert.equal(result.rebound, 1);
+  assert.equal(result.inserted, 0);
+  assert.equal(
+    f.store.db
+      .prepare("SELECT connection_id FROM events WHERE id=?")
+      .get(old.id).connection_id,
+    "qq-fish",
+  );
+  assert.equal(importLegacy(f.m, f.plan()).rebound, 0);
+});
+
+test("N3 multi-agent restoration remaps the learner watermark and preserves unprocessed input", (t) => {
+  const f = setup(t),
+    other = f.store.bind("dragon");
+  for (let i = 0; i < 100; i++) live(other, "filler-" + i);
+  const records = [live(f.m, "1"), live(f.m, "2"), live(f.m, "3")];
+  f.m.setState(chat, {
+    readThroughSeq: records[1].seq,
+    slang: { entries: [], throughSeq: records[1].seq },
+  });
+  const target = new MemoryStore(":memory:");
+  try {
+    live(target.bind("dragon"), "first");
+    restoreExport(target.bind("fish"), f.m.export());
+    const rows = target.db
+      .prepare("SELECT id,seq FROM events WHERE agent_id='fish' ORDER BY seq")
+      .all();
+    assert.equal(target.bind("fish").state(chat).slang.throughSeq, rows[1].seq);
+    assert.equal(
+      target.db
+        .prepare(
+          "SELECT COUNT(*) n FROM events WHERE agent_id='fish' AND seq>?",
+        )
+        .get(target.bind("fish").state(chat).slang.throughSeq).n,
+      1,
+    );
+  } finally {
+    target.close();
+  }
+});
+
 test("N1 CLI requires an explicit account/connection map and checks an available destination config", (t) => {
   const f = setup(t, [exported("11")]),
     target = path.join(f.root, "new"),
