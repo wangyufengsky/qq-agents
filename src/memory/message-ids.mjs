@@ -89,6 +89,21 @@ export const scopeFor = (row) => ({
   namespace: referenceNamespace(row),
 });
 
+export function confirmedMessage(db, scope, messageId) {
+  const rows = db
+    .prepare(
+      "SELECT DISTINCT e.* FROM message_identities i JOIN events e ON e.id=i.event_id JOIN deliveries d ON d.agent_id=e.agent_id AND d.request_id=json_extract(e.payload,'$.requestId') AND d.conversation=e.conversation AND d.message_id=e.message_id AND d.status='sent' WHERE i.agent_id=? AND i.connection_id=? AND i.conversation=? AND i.namespace=? AND i.message_id=? AND e.kind='message.sent' AND e.status='confirmed' AND e.direction='out'",
+    )
+    .all(
+      scope.agentId,
+      scope.connectionId,
+      scope.conversation,
+      scope.namespace,
+      String(messageId),
+    );
+  return rows.length === 1 ? rows[0] : null;
+}
+
 export function gatewayMessageId(db, scope, target, namespace, accountId) {
   const alias = db
     .prepare(
@@ -133,8 +148,32 @@ export function readAliasManifest(
 ) {
   const bytes = fs.readFileSync(file),
     data = JSON.parse(bytes);
-  const sources = new Set(
-    sourceFiles.map((file) => hash(fs.readFileSync(file))),
+  const sources = new Map(
+    sourceFiles.map((file) => {
+      const bytes = fs.readFileSync(file),
+        data = JSON.parse(bytes),
+        index = new Map();
+      if (!Array.isArray(data)) throw Error("INVALID_ALIAS_SOURCE");
+      for (const r of data) {
+        if (
+          !r ||
+          typeof r.robot_qq !== "string" ||
+          typeof r.conversation !== "string" ||
+          !identifier(r.native_message_id) ||
+          !identifier(r.message_id) ||
+          !hex(r.record_digest)
+        )
+          throw Error("INVALID_ALIAS_SOURCE");
+        const key = JSON.stringify([
+          r.robot_qq,
+          r.conversation,
+          r.native_message_id,
+        ]);
+        if (index.has(key)) throw Error("ALIAS_SOURCE_MAPPING_MISMATCH");
+        index.set(key, r);
+      }
+      return [hash(bytes), index];
+    }),
   );
   if (
     !data ||
@@ -149,6 +188,21 @@ export function readAliasManifest(
     validateAlias(a);
     if (!sources.has(a.evidence.sourceDigest))
       throw Error("ALIAS_SOURCE_DIGEST_NOT_VERIFIED");
+    const proof = sources
+        .get(a.evidence.sourceDigest)
+        .get(JSON.stringify([a.accountId, a.conversation, a.messageId])),
+      basis = {
+        group_sequence_time_sender: "verified-sequence",
+        text: "verified-observation",
+        segments: "verified-observation",
+        new_history_record: "native-record",
+      };
+    if (
+      !proof ||
+      proof.message_id !== a.archiveMessageId ||
+      basis[proof.match_basis] !== a.evidence.basis
+    )
+      throw Error("ALIAS_SOURCE_MAPPING_MISMATCH");
     const selected = connectionMap[a.accountId];
     if (!selected) throw Error("UNMAPPED_ALIAS_ACCOUNT");
     if (selected.agentId !== agentId) continue;
@@ -178,7 +232,9 @@ function validateAlias(a) {
           "evidence",
         ].includes(k),
     ) ||
+    typeof a.accountId !== "string" ||
     !/^\d+$/.test(a.accountId) ||
+    typeof a.conversation !== "string" ||
     !/^(group|private):\d+$/.test(a.conversation) ||
     !identifier(a.archiveMessageId) ||
     !identifier(a.messageId) ||
@@ -305,13 +361,67 @@ export function observeKnownMessage(memory, e) {
       "SELECT account_id FROM message_aliases WHERE agent_id=? AND event_id=? AND namespace=?",
     )
     .get(memory.agentId, target.id, scope.namespace);
-  if (alias && String(e.payload?.raw?.self_id) !== alias.account_id)
+  const account = e.payload.accountId ?? e.payload.raw?.self_id;
+  if (
+    account == null ||
+    !/^\d+$/.test(String(account)) ||
+    (alias && String(account) !== alias.account_id)
+  )
     throw Error("ALIAS_ACCOUNT_MISMATCH");
+  if (scope.namespace === "archive") throw Error("INVALID_MESSAGE_OBSERVATION");
+  assertMessageAccount(memory, e.connectionId, String(account));
   const observation = JSON.stringify(e);
   memory.db
     .prepare("INSERT OR IGNORE INTO message_observations VALUES(?,?,?,?)")
     .run(memory.agentId, target.id, hash(observation), observation);
   return { inserted: false, id: target.id, seq: target.seq };
+}
+
+export function validateRestoredObservations(memory) {
+  for (const r of memory.db
+    .prepare("SELECT * FROM message_observations WHERE agent_id=?")
+    .all(memory.agentId)) {
+    if (!hex(r.digest) || hash(r.observation) !== r.digest)
+      throw Error("OBSERVATION_DIGEST_MISMATCH");
+    const e = JSON.parse(r.observation);
+    const account = e.payload?.accountId ?? e.payload?.raw?.self_id;
+    if (
+      e.kind !== "message.received" ||
+      !identifier(e.messageId) ||
+      !validNamespace(e.payload?.messageNamespace) ||
+      e.payload.messageNamespace === "archive" ||
+      account == null ||
+      !/^\d+$/.test(String(account))
+    )
+      throw Error("INVALID_MESSAGE_OBSERVATION");
+    const target = resolveMessage(
+      memory.db,
+      {
+        agentId: memory.agentId,
+        connectionId: e.connectionId,
+        conversation: e.conversation,
+        namespace: e.payload.messageNamespace,
+      },
+      e.messageId,
+    );
+    if (!target || target.id !== r.event_id)
+      throw Error("OBSERVATION_SCOPE_MISMATCH");
+    assertMessageAccount(memory, e.connectionId, String(account));
+    if (
+      (target.sender_id && e.senderId && target.sender_id !== e.senderId) ||
+      (target.direction !== "unknown" &&
+        e.direction &&
+        target.direction !== e.direction)
+    )
+      throw Error("CONFLICTING_MESSAGE_IDENTITY");
+    const alias = memory.db
+      .prepare(
+        "SELECT account_id FROM message_aliases WHERE agent_id=? AND event_id=? AND namespace=?",
+      )
+      .get(memory.agentId, target.id, e.payload.messageNamespace);
+    if (alias && String(account) !== alias.account_id)
+      throw Error("ALIAS_ACCOUNT_MISMATCH");
+  }
 }
 
 export function validateRestoredAliases(memory) {

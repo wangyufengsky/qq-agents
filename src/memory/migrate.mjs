@@ -1,5 +1,8 @@
 export { inspectLegacy, importLegacy } from "./legacy-import.mjs";
-import { validateRestoredAliases } from "./message-ids.mjs";
+import {
+  validateRestoredAliases,
+  validateRestoredObservations,
+} from "./message-ids.mjs";
 export function restoreExport(memory, data) {
   if (data.version !== 1 || data.agentId !== memory.agentId)
     throw Error("EXPORT_IDENTITY_MISMATCH");
@@ -145,5 +148,6 @@ export function restoreExport(memory, data) {
       }
     }
     validateRestoredAliases(memory);
+    validateRestoredObservations(memory);
   });
 }

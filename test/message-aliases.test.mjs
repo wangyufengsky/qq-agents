@@ -75,6 +75,19 @@ function setup(t, store) {
     plan = () => inspectLegacy(source, opts);
   const base = plan();
   assert.equal(base.rejected.length, 0);
+  fs.writeFileSync(
+    aliasSource,
+    JSON.stringify(
+      base.events.map((e, i) => ({
+        robot_qq: account,
+        conversation: chat,
+        native_message_id: "native-" + (i + 1),
+        message_id: e.messageId,
+        record_digest: e.payload.migration.sources[0].digest,
+        match_basis: "text",
+      })),
+    ),
+  );
   const aliases = base.events.map((e, i) => ({
     accountId: account,
     conversation: chat,

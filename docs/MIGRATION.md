@@ -114,7 +114,7 @@ JSON 多主体恢复同时映射 learner 的 `slang.throughSeq`，以原账本�
 
 ## 消息编号别名与 schema 6
 
-网关更换后，后端编号不一定相同。先核对已有审计映射及原始观察，再准备本机版本 1 的别名清单，通过 `--message-aliases FILE --alias-source ORIGINAL_EVIDENCE_FILE` 导入；多个原始证据文件重复传 `--alias-source`。导入器验证原证据文件 SHA-256、目标记录来源观察摘要、显式账号/连接绑定及唯一性，不做正文或时间相似度匹配。旧侧审计数组不能直接冒充规范清单；转换时必须逐条核对来源、完整性和已发生的引用编号转换，保留原文件。
+网关更换后，后端编号不一定相同。先核对已有审计映射及原始观察，再准备本机版本 1 的别名清单，通过 `--message-aliases FILE --alias-source ORIGINAL_EVIDENCE_FILE` 导入；多个原始证据文件重复传 `--alias-source`。原证据是含 robot_qq、conversation、native_message_id、message_id、record_digest、match_basis 的审计数组。导入器验证文件 SHA-256、逐条编号对应及匹配依据、目标记录来源观察摘要、显式账号/连接绑定及唯一性，不做正文或时间相似度匹配。审计数组与规范清单须同时提供；转换时必须逐条核对来源、完整性和已发生的引用编号转换，保留原文件。
 
 清单顶层为 `{"version":1,"aliases":[...]}`，每条包含：
 

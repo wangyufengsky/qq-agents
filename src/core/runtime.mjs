@@ -356,7 +356,7 @@ export class Runtime {
       assertMessageAccount(mem, connectionId, c.accountId);
       if (
         ownEcho &&
-        resolveMessage(
+        confirmedMessage(
           mem.db,
           {
             agentId: a.id,
@@ -365,7 +365,7 @@ export class Runtime {
             namespace: c.messageIdNamespace || "onebot",
           },
           e.messageId,
-        )?.kind === "message.sent"
+        )
       ) {
         results.push({ agentId: a.id, duplicate: true, ownEcho: true });
         continue;
@@ -387,6 +387,7 @@ export class Runtime {
         payload: redactConfirmation
           ? {
               messageNamespace: c.messageIdNamespace || "onebot",
+              accountId: c.accountId,
               redacted: "owner-confirmation",
               timeKnown: e.timeKnown,
             }
@@ -783,6 +784,11 @@ export class Runtime {
   ) {
     const a = this.assertActive(ctx),
       mem = this.memory.bind(a.id);
+    assertMessageAccount(
+      mem,
+      a.connectionId,
+      this.connection(a.connectionId).accountId,
+    );
     if (mem.state(ctx.conversation).silenceUntil > this.now())
       throw Error("CONVERSATION_SILENCED");
     const proactive = this.subject.beforeDelivery(ctx);
@@ -953,4 +959,5 @@ import {
   resolveMessage,
   gatewayMessageId,
   assertMessageAccount,
+  confirmedMessage,
 } from "../memory/message-ids.mjs";

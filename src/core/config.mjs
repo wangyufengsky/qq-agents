@@ -80,7 +80,12 @@ export const configSchema = z
           id,
           label: z.string(),
           accountId: qq,
-          messageIdNamespace: id.default("onebot"),
+          messageIdNamespace: id
+            .refine(
+              (x) => x !== "archive",
+              "archive is reserved for imported records",
+            )
+            .default("onebot"),
           gateway: z.enum(["napcat", "onebot"]).default("napcat"),
           httpUrl: loopback,
           wsUrl: loopback,
