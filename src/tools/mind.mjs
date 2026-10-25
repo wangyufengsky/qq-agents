@@ -1,3 +1,4 @@
+import { SUBJECT_APP_TOOLS } from "../apps/policy.mjs";
 import { z } from "zod";
 const text = z.string().min(1),
   ids = z.array(text).max(30),
@@ -115,6 +116,7 @@ export const CHAT_MIND_TOOLS = Object.keys(mindDefinitions).filter(
   (n) => n !== "self_review",
 );
 export const SUBJECT_TOOLS = [
+  ...SUBJECT_APP_TOOLS,
   "memory_search",
   "memory_related",
   "memory_read",

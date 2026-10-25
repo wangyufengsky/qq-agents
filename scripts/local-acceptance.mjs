@@ -1,3 +1,4 @@
+import { appSharingAcceptance } from "./fixtures/app-sharing.mjs";
 // Opt-in real-model acceptance. All QQ writes terminate at loopback fixture gateways.
 import fs from "node:fs";
 import { automaticContinuityAcceptance } from "./fixtures/automatic-continuity.mjs";
@@ -36,6 +37,11 @@ if (
   throw Error("INDEPENDENT_DSH_HOME_REQUIRED");
 const args = process.argv.slice(2),
   opt = (k) => args[args.indexOf(k) + 1];
+const portBase = args.includes("--port-base")
+  ? Number(opt("--port-base"))
+  : 3212;
+if (!Number.isInteger(portBase) || portBase < 1024 || portBase > 60000)
+  throw Error("INVALID_ACCEPTANCE_PORT_BASE");
 const root = path.resolve(
   args.includes("--data") ? opt("--data") : "work/live-acceptance/bridge",
 );
@@ -90,7 +96,7 @@ function record() {
 }
 for (let i = 0; i < ids.length; i++) {
   const id = ids[i],
-    port = 3214 + i,
+    port = portBase + 2 + i,
     sent = [],
     actions = [],
     resources = new Map();
@@ -178,21 +184,21 @@ const cfg = validateConfig({
   version: 1,
   mode: "live",
   globalPaused: true,
-  port: 3212,
+  port: portBase,
   connections: ids.map((id, i) => ({
     id,
     label: "本机验收网关 " + id,
     accountId: String(10000 + i),
     enabled: true,
-    httpUrl: `http://127.0.0.1:${3214 + i}`,
-    wsUrl: `ws://127.0.0.1:${3214 + i}`,
+    httpUrl: `http://127.0.0.1:${portBase + 2 + i}`,
+    wsUrl: `ws://127.0.0.1:${portBase + 2 + i}`,
   })),
   backends: [
     {
       id: "dsh",
       type: "dsh",
       label: "独立 DSH profile",
-      baseUrl: "http://127.0.0.1:3213",
+      baseUrl: `http://127.0.0.1:${portBase + 1}`,
       preset: "qq-unified",
       provider: "deepseek-account",
       model: "deepseek-flash",
@@ -355,7 +361,7 @@ runtime.callTool = async (ctx, name, params) => {
   }
 };
 const app = createServer({ runtime, token, allowLive: true });
-await app.listen(3212);
+await app.listen(portBase);
 for (const id of ids) await runtime.startConnection(id);
 runtime.startTimers();
 for (const id of ids)
@@ -452,6 +458,8 @@ async function runCase(id, test) {
         calls,
         root,
       });
+    } else if (test === "app-sharing") {
+      await appSharingAcceptance({ runtime, memory, id, gateway, calls, root });
     } else if (test === "intent-receipt") {
       await intentReceiptAcceptance({ runtime, memory, id, gateway, root });
     } else if (test === "subject-cost") {
@@ -1047,12 +1055,12 @@ const control = http.createServer(async (req, res) => {
     res.end(JSON.stringify({ error: e.message }));
   }
 });
-await new Promise((r) => control.listen(3216, "127.0.0.1", r));
+await new Promise((r) => control.listen(portBase + 4, "127.0.0.1", r));
 console.log(
   JSON.stringify({
     event: "ready",
-    consolePort: 3212,
-    controlPort: 3216,
+    consolePort: portBase,
+    controlPort: portBase + 4,
     qqDelivery: "loopback-only",
     data: root,
   }),
