@@ -48,9 +48,14 @@ export function createServer({ runtime, token, allowLive = false }) {
     try {
       if (
         req.method === "GET" &&
-        ["/", "/app.js", "/parity.js", "/files-ui.js", "/style.css"].includes(
-          url.pathname,
-        )
+        [
+          "/",
+          "/app.js",
+          "/parity.js",
+          "/files-ui.js",
+          "/mind-ui.js",
+          "/style.css",
+        ].includes(url.pathname)
       ) {
         const file =
           url.pathname === "/" ? "index.html" : url.pathname.slice(1);
@@ -88,6 +93,88 @@ export function createServer({ runtime, token, allowLive = false }) {
       }
       if (!equal(req.headers["x-admin-token"], token))
         return send({ error: "UNAUTHORIZED" }, 401);
+      if (req.method === "GET" && url.pathname === "/api/mind") {
+        const a = runtime.agent(url.searchParams.get("agentId")),
+          m = runtime.memory.bind(a.id);
+        return send({
+          current: m.identity.initialize(a, runtime.now()),
+          history: m.identity.history(),
+          candidates: m.identity.list("self_candidates"),
+          intents: m.identity.list("intentions"),
+          subject: m.state("@subject"),
+          turns: m.identity.list("model_turns").slice(0, 50),
+          sessions: m.db
+            .prepare("SELECT conversation,value FROM runtime WHERE agent_id=?")
+            .all(a.id)
+            .filter(
+              (r) =>
+                r.conversation === "@subject" ||
+                /^(group|private):/.test(r.conversation),
+            )
+            .map((r) => ({
+              conversation: r.conversation,
+              ...JSON.parse(r.value),
+            })),
+          retired: m.identity.list("session_history").slice(0, 30),
+        });
+      }
+      if (req.method === "POST" && url.pathname === "/api/self") {
+        const data = await body(req),
+          a = runtime.agent(data.agentId),
+          m = runtime.memory.bind(a.id);
+        if (
+          !Number.isSafeInteger(data.expectedVersion) ||
+          typeof data.reason !== "string"
+        )
+          throw Error("INVALID_SELF_EDIT");
+        if (data.action === "restore")
+          return send(
+            m.identity.restore(
+              data.version,
+              data.expectedVersion,
+              data.reason,
+              runtime.now(),
+            ),
+          );
+        if (
+          data.action !== "edit" ||
+          typeof data.body !== "string" ||
+          data.body.length > a.selfPolicy.maxBodyChars
+        )
+          throw Error("INVALID_SELF_EDIT");
+        return send(
+          m.identity.adminEdit(
+            {
+              body: data.body,
+              reason: data.reason,
+              expectedVersion: data.expectedVersion,
+            },
+            runtime.now(),
+          ),
+        );
+      }
+      if (req.method === "POST" && url.pathname === "/api/intent/cancel") {
+        const data = await body(req),
+          a = runtime.agent(data.agentId),
+          m = runtime.memory.bind(a.id),
+          i = m.identity.get("intentions", data.id);
+        if (i.revision !== data.expectedRevision)
+          throw Error("REVISION_CONFLICT");
+        if (
+          ["completed", "cancelled", "expired", "failed", "unknown"].includes(
+            i.status,
+          )
+        )
+          throw Error("INTENT_CLOSED");
+        return send(
+          runtime.subject.transition(
+            a.id,
+            i,
+            "cancelled",
+            "administrator cancellation",
+          ),
+        );
+      }
       if (req.method === "GET" && url.pathname === "/api/status")
         return send({ ...runtime.status(), allowLive });
       if (req.method === "PUT" && url.pathname === "/api/permissions/files") {
@@ -337,15 +424,7 @@ export function createServer({ runtime, token, allowLive = false }) {
       }
       if (req.method === "POST" && url.pathname === "/api/session/reset") {
         const data = await body(req);
-        const a = runtime.agent(data.agentId);
-        await runtime.cancel(a.id);
-        const mem = runtime.memory.bind(a.id),
-          state = mem.state(data.conversation);
-        mem.setState(data.conversation, {
-          ...state,
-          session: null,
-          disclosureTaint: [],
-        });
+        await runtime.resetSession(data.agentId, data.conversation);
         return send({ ok: true });
       }
       if (req.method === "POST" && url.pathname === "/api/conversation/state") {

@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { IdentityMemory, migrateIdentity } from "./identity.mjs";
 import {
   provenance,
   sceneForMatch,
@@ -60,7 +61,7 @@ export class MemoryStore {
       fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
     this.db = new DatabaseSync(file);
     const version = this.db.prepare("PRAGMA user_version").get().user_version;
-    if (version > 3) {
+    if (version > 4) {
       this.db.close();
       throw Error("MEMORY_SCHEMA_NEWER_THAN_CODE");
     }
@@ -81,6 +82,7 @@ export class MemoryStore {
       CREATE TABLE IF NOT EXISTS migrations(agent_id TEXT NOT NULL,source TEXT NOT NULL,digest TEXT NOT NULL,imported_at TEXT NOT NULL,PRIMARY KEY(agent_id,source,digest));
       `);
     migrateSearch(this.db, version);
+    migrateIdentity(this.db);
   }
   close() {
     this.db.close();
@@ -106,6 +108,7 @@ class AgentMemory {
     this.store = store;
     this.db = store.db;
     this.agentId = agentId;
+    this.identity = new IdentityMemory(this);
   }
   append(e) {
     if (!e.dedupe || !e.conversation || !e.kind)
@@ -659,6 +662,13 @@ class AgentMemory {
       "deliveries",
       "runtime",
       "migrations",
+      "self_versions",
+      "self_candidates",
+      "intentions",
+      "work_notes",
+      "model_turns",
+      "session_history",
+      "message_progress",
     ])
       tables[name] = this.db
         .prepare(`SELECT * FROM ${name} WHERE agent_id=?`)

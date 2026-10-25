@@ -17,6 +17,7 @@ export class DshBackend {
     Object.assign(this, { config, agent, root, client, discover });
     this.external = new ExternalTools(config.toolServers);
     this.turns = new Map();
+    this.capacities = new Map();
     this.streamAbort = null;
   }
   async ready() {
@@ -80,6 +81,22 @@ export class DshBackend {
           }
           if (p.type !== "session/event") continue;
           const e = p.event;
+          if (e.type === "request/context" && e.data?.contextWindow)
+            this.capacities.set(p.sessionId, e.data.contextWindow);
+          if (e.type === "assistant/message" && e.data?.usage) {
+            const u = e.data.usage;
+            t.onUsage?.({
+              source: "measured",
+              contextTokens:
+                u.inputTokens +
+                (u.cacheReadTokens || 0) +
+                (u.cacheWriteTokens || 0) +
+                u.outputTokens,
+              capacityTokens: this.capacities.get(p.sessionId),
+              basis:
+                "last provider request including disjoint cache counts and output",
+            });
+          }
           if (e.type === "turn/start") t.turn = e.data.turn;
           if (e.type === "turn/end" && e.data.turn === t.turn) {
             if (["completed", "done", "stop"].includes(e.data.reason?.kind))
@@ -106,7 +123,15 @@ export class DshBackend {
       clearTimeout(timeout);
     }
   }
-  async run({ conversation, prompt, signal, session, saveSession }) {
+  async run({
+    conversation,
+    prompt,
+    instructions,
+    onUsage,
+    signal,
+    session,
+    saveSession,
+  }) {
     const client = await this.ready();
     await this.stream();
     if (signal.aborted) throw Error("ABORTED");
@@ -119,6 +144,7 @@ export class DshBackend {
       session?.backend === "dsh" && session.signature === signature
         ? session.id
         : null;
+    const initializing = !sessionId;
     if (!sessionId) {
       const presets = unwrap(await client.agentPresets.list({}), "presets");
       const list = presets.presets || presets.items || [];
@@ -160,7 +186,13 @@ export class DshBackend {
       followError = j;
     });
     followReady.catch(() => {});
-    this.turns.set(sessionId, { resolve, reject, turn: null, followed });
+    this.turns.set(sessionId, {
+      resolve,
+      reject,
+      turn: null,
+      followed,
+      onUsage,
+    });
     const abort = () => {
       void client.callUnary("session.cancel", { sessionId }).catch(() => {});
       followError(Error("ABORTED"));
@@ -181,7 +213,15 @@ export class DshBackend {
         await client.sessions.prompt({
           sessionId,
           mode: "queue",
-          content: [{ type: "text", text: prompt }],
+          content: [
+            {
+              type: "text",
+              text:
+                initializing && instructions
+                  ? instructions + "\n\n" + prompt
+                  : prompt,
+            },
+          ],
         }),
         "prompt",
       );
@@ -195,6 +235,39 @@ export class DshBackend {
       this.turns.delete(sessionId);
       client.events.forget?.(sessionId);
     }
+  }
+  async compact({ session, signal }) {
+    const client = await this.ready();
+    if (signal.aborted) throw Error("ABORTED");
+    const result = unwrap(
+      await client.commands.execute(session.id, "/compact", signal),
+      "compact",
+    );
+    if (result?.result?.kind !== "success")
+      throw Error("DSH_COMPACTION_UNSUPPORTED_OR_FAILED");
+    const projection = unwrap(
+      await client.callUnary(
+        "session/projections",
+        { sessionId: session.id },
+        signal,
+      ),
+      "projection",
+    );
+    const p = projection?.values?.contextPressure;
+    return {
+      // Dynamic self is in the initial user envelope on this protocol; do not assume
+      // the native summarizer preserves it. A safe new session loads it in full.
+      requiresReinitialize: true,
+      usage: Number.isFinite(p?.projectedTokens)
+        ? {
+            source: "estimated",
+            contextTokens: p.projectedTokens,
+            capacityTokens: p.contextWindow,
+            basis:
+              "DSH contextPressure.projectedTokens; replay estimate with provider anchor",
+          }
+        : undefined,
+    };
   }
   async cancel() {
     for (const [sessionId, t] of this.turns) {

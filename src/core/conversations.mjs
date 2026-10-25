@@ -12,7 +12,7 @@ const priorities = {
   message: 50,
   replyCheck: 40,
   sleep: 30,
-  proactive: 20,
+  intent: 20,
   scheduled: 95,
   join: 45,
 };
@@ -61,21 +61,39 @@ export class ConversationEngine {
     id,
     conversation,
     reason,
-    { seq = 0, instruction = "", taskRunId = null, immediate = false } = {},
+    {
+      seq = 0,
+      instruction = "",
+      taskRunId = null,
+      intentId = null,
+      immediate = false,
+    } = {},
   ) {
     const a = this.runtime.agent(id),
       state = this.state(id, conversation),
       now = this.now();
     state.pendingWakes ||= [];
     const existing = state.pendingWakes.find(
-      (x) => x.reason === reason && x.taskRunId === taskRunId,
+      (x) =>
+        x.reason === reason &&
+        x.taskRunId === taskRunId &&
+        x.intentId === intentId,
     );
     if (existing) existing.seq = Math.max(existing.seq, seq);
     else
-      state.pendingWakes.push({ reason, seq, instruction, taskRunId, at: now });
+      state.pendingWakes.push({
+        reason,
+        seq,
+        instruction,
+        taskRunId,
+        intentId,
+        at: now,
+      });
     // Never discard a persisted scheduled instruction when coalescing ordinary chat wakes.
-    const tasks = state.pendingWakes.filter((x) => x.taskRunId),
-      ordinary = state.pendingWakes.filter((x) => !x.taskRunId).slice(-20);
+    const tasks = state.pendingWakes.filter((x) => x.taskRunId || x.intentId),
+      ordinary = state.pendingWakes
+        .filter((x) => !x.taskRunId && !x.intentId)
+        .slice(-20);
     state.pendingWakes = [...tasks, ...ordinary];
     state.wakeDueAt ??= immediate ? now : now + a.behavior.batchWindowMs;
     if (immediate) state.wakeDueAt = Math.min(state.wakeDueAt, now);
@@ -108,9 +126,19 @@ export class ConversationEngine {
       this.write(id, conversation, state);
       return { queued: true, rateLimited: true };
     }
-    const pending = state.pendingWakes.filter(
-      (x) => x.taskRunId || !x.seq || x.seq > (state.readThroughSeq || 0),
-    );
+    const pending = state.pendingWakes.filter((x) => {
+      if (x.intentId) {
+        const i = runtime.memory
+          .bind(id)
+          .identity.get("intentions", x.intentId);
+        return (
+          i.status === "handedoff" &&
+          i.expiresAt > now &&
+          runtime.subject.targetAllowed(a, conversation)
+        );
+      }
+      return x.taskRunId || !x.seq || x.seq > (state.readThroughSeq || 0);
+    });
     state.pendingWakes = [];
     delete state.wakeDueAt;
     if (!pending.length) {
@@ -151,7 +179,9 @@ export class ConversationEngine {
     if (
       !ctx.wakeConfigured &&
       s.noActionCount < a.behavior.noActionLimit &&
-      ctx.confirmedSends
+      ctx.confirmedSends &&
+      !ctx.activeIntentId &&
+      !(s.proactiveCooldownUntil > this.now())
     )
       s.replyCheckAt = this.now() + a.behavior.replyCheckMs;
     if (s.noActionCount >= a.behavior.noActionLimit) s.replyCheckAt = null;
@@ -254,7 +284,11 @@ export class ConversationEngine {
         },
         ctx.conversation,
       );
-      ctx.shownSeq = Math.max(ctx.shownSeq, messages.readThroughSeq || 0);
+      runtime.contexts.seen(ctx, messages.items);
+      ctx.feedThroughSeq = Math.max(
+        ctx.feedThroughSeq || 0,
+        messages.nextAfterSeq || 0,
+      );
       ctx.waitObservedMs = (ctx.waitObservedMs || 0) + (Date.now() - realStart);
       ctx.observationSatisfied =
         reason === "messages" ||
@@ -292,38 +326,16 @@ export class ConversationEngine {
           this.request(a.id, conversation, "sleep", { immediate: true });
         }
         s = this.state(a.id, conversation);
-        if (s.replyCheckAt && s.replyCheckAt <= now) {
+        if (
+          s.replyCheckAt &&
+          s.replyCheckAt <= now &&
+          !(s.proactiveCooldownUntil > now)
+        ) {
           s.replyCheckAt = null;
           this.write(a.id, conversation, s);
           this.request(a.id, conversation, "replyCheck");
         }
         s = this.state(a.id, conversation);
-        const p = a.behavior.proactive;
-        if (p.enabled && (!s.nextProactiveAt || s.nextProactiveAt <= now)) {
-          const due = !!s.nextProactiveAt;
-          s.nextProactiveAt =
-            now + p.minMs + Math.floor(runtime.random() * (p.maxMs - p.minMs));
-          this.write(a.id, conversation, s);
-          const hour = Number(
-            new Intl.DateTimeFormat("en", {
-              timeZone: p.timezone,
-              hour: "2-digit",
-              hourCycle: "h23",
-            }).format(new Date(now)),
-          );
-          let chance = p.probability;
-          if (hour >= 23 || hour < 8) chance *= p.nightFactor;
-          if (s.lastAiReplyAt && now - s.lastAiReplyAt < 1800000) chance *= 0.5;
-          if ((s.sendTimes || []).filter((x) => now - x < 3600000).length >= 5)
-            chance *= 0.3;
-          if (
-            due &&
-            now - (s.lastIncomingAt || now) >= p.idleMs &&
-            !runtime.running.has(a.id + "|" + conversation) &&
-            runtime.random() < chance
-          )
-            this.request(a.id, conversation, "proactive");
-        }
         this.flush(a.id, conversation);
       }
     }

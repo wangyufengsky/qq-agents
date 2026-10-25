@@ -1,0 +1,67 @@
+# Self、主体意图与会话管理
+
+实现从 0.4.0 / main b60fee1 延续。合并不是部署：现有机器人、旧人格、登录、聊天和 Docker 均不迁移或启动。正式规则见 PROMPT-CONTEXT-DISCUSSION.md；本文件记录工程选择及验收边界。
+
+## 数据与权限
+
+SQLite schema 4 保存 self_versions、self_candidates、intentions、work_notes、model_turns、session_history、message_progress；原 events、diaries、runtime 和 deliveries 继续作为经历、主观记录、调度状态和发送账本。所有行绑定 agent_id；群/私聊可并行，共享同一主体的 self。
+
+初始 persona 只建立第一版 self。管理员编辑和恢复都创建新版本，expectedVersion 不匹配就拒绝。恢复不抹除后来历史。名字与 appearance 属于固定配置；旧配置应在部署前将原有外形明确填入 appearance，模板历史可在管理台查看。不会自动从自由文本中可靠提取外形。
+
+普通聊天只提出候选。主体回顾可以采纳、修订、继续观察或拒绝；源会话可撤回。候选有 baseVersion、revision、理由、证据、反例和回顾记录。日记引用递归追溯到原始入站事件；同作者同文、同场同日讨论不能凑成多次独立经历。程序只执行来源、范围、延迟、版本和少量明确控制性用语检查，不保证识别所有语义上的人格操纵。
+
+每轮固定 selfVersion。下一轮前发现新版本则安全退休并重新加载完整当前版；空闲不调用模型。当前实现选择所有 self 变化均重建，不依赖未经行为确认的系统指令原地替换。撤权与暂停立即失效，不等下一轮。
+
+## 默认值与依据
+
+| 配置                                     | 默认值                                 | 依据                                             |
+| ---------------------------------------- | -------------------------------------- | ------------------------------------------------ |
+| selfPolicy.minorDelayMs                  | 6 小时                                 | 兴趣尝试仍需隔开当时情绪；可调                   |
+| selfPolicy.majorDelayMs                  | 24 小时                                | 习惯/关系变化需延后且至少两次独立场景；可调      |
+| selfPolicy.maxBodyChars                  | 6000 字符                              | 控制稳定提示长度；初始旧模板最多保留 32000 字符  |
+| contextPolicy.capacityTokens             | 32768                                  | 仅无后端容量时的保守假定，UI 标估算              |
+| contextPolicy.reserveTokens              | 4096                                   | 为工具结果和输出留空间                           |
+| 整理阈值                                 | 75%（含预留）                          | 规格固定起点                                     |
+| contextPolicy.recoverRatio / hardRatio   | 60% / 90%                              | 避免阈值反复震荡；极限前可靠切换                 |
+| contextPolicy.idleMs                     | 45 分钟                                | 仅压力已出现时使用，无压力不按天重开             |
+| contextPolicy.compactCooldownMs          | 5 分钟                                 | 原生压缩无明显回落时避免每轮再次调用             |
+| subject.enabled                          | false                                  | 需明确开启；旧 proactive.enabled 兼容为主体开关  |
+| subject.intervalMs / maxChecksPerDay     | 60 分钟 / 滚动 24 小时 6 次            | 每主体预算，不随聊天数量倍增                     |
+| subject.maxContactsPerDay                | 滚动 24 小时 4 次                      | 限制短期主动开场                                 |
+| contactCooldownMs / unansweredCooldownMs | 1 小时 / 24 小时                       | 同主体开场冷却；未回应不追问                     |
+| offlineReview / reviewInSilence          | false / true                           | 离线不重试；勿扰可保留内部回顾                   |
+| 主动范围                                 | 明确列出的群、主人、同伴；额外私聊单列 | 与回复白名单取交集，绝不因能回复就主动联系所有人 |
+
+旧 proactive 的概率、随机间隔、夜间系数不再控制逐聊天主动调用。普通回复、有限睡眠和明确调度任务保留语义。勿扰窗口沿用 agent.silence。未来 App 通过 subject.readTools 和显式 externalReads 白名单复用现有读取适配器，不自动登录或安装新服务。
+
+## 上下文与交接
+
+初始化加载身份、完整当前 self 与简短基本协议；普通回合只追加新增消息、唤醒原因和一次性凭据。详细分页/来源/调度/文件规则在工具说明及结果内。Codex 的稳定层进入 baseInstructions；DSH 固定协议由 preset 承载，动态 self 在初始化消息中提供。
+
+message_progress 记录实际提供的条目，区分摘要与完整正文；零散检索不能越过未见间隙。readThroughSeq 仍须显式 qq_mark_read；发送由 deliveries 独立确认。模型读取数据库最新 self 不改变当前回合已采用版本。
+
+交接包含准确水位、意图/投递结果、未完成工作笔记及原始来源。笔记不是日记或事实；缺失来源标 unavailable，超过首批八条显示溢出并通过 work_notes 翻页。没有笔记时不伪造模型摘要、不强迫日记或 self 更新。原文一直保留。
+
+75% 后优先尝试原生压缩；低于回落阈值才退出整理。无接口、失败或没有确认下降时保留整理状态；普通聊天空闲退休，90% 容量保护强制安全交接，主体检查结束可立即退休。退休不预先调用模型。进程重启将运行中回合记 interrupted，pending 投递记 unknown；未知发送不可重放，但不阻塞无关会话。
+
+## 后端协议核对
+
+核对源是本机 Codex 0.164.0-alpha.11.1 生成的 app-server 协议，以及安装的 DSH 0.2.1-rc.2 包源码和真实独立 profile。
+
+- Codex 支持 thread/resume 的 baseInstructions / developerInstructions 字段、thread/compact/start 和 thread/tokenUsage/updated。占用使用 last.inputTokens + last.outputTokens；total 单独记录累计消耗，不能当当前占用。
+- DSH 当次 assistant/message usage 的 input、cacheRead、cacheWrite 为不相交计数，合计再加输出。request/context 给容量。contextPressure.projectedTokens 是带 provider 锚点的估算，不能称全部实测。
+- 当前 DSH 的 /compact 走 commands/execute，session/prompt 只是普通消息。生成的 QQ preset 必须挂载隔离 compaction 服务与命令，旧测试 preset 缺少命令会返回未识别；不得把 undefined 当成功。
+- DSH 原生压缩可能总结掉初始化 self，因此确认压缩后仍退休并在下一次机会重新提供完整 self。不会声称已实现可靠的动态系统指令替换。
+- 无用量时用本桥接追踪的文本字符/工具结果估算上下文，并标明未覆盖未知后端开销；不是累计 token。估算无精确 tokenizer 保证。
+
+## 意图与投递
+
+主体仅有读取、日记、self 回顾和意图工具，没有 QQ 发送能力。目标会话选择 send/defer/cancel/complete；只有 send 才关联本意图的一次出站，使用确定的 intent:<id> 请求键进入共同 outbox。发送前重新校验目标范围、暂停、有效期、冷却、预算和新来信。未回应不会触发 replyCheck 补发；无关来信不自动完成意图。complete 要求本对象新的原始来信证据及判断理由，程序不宣称能确认语义相关性。
+
+管理台「Self 与主体」可查看当前版本、候选来源/回顾、逐版差异与初始化模板，编辑/恢复 self，配置主体范围/预算，取消意图，并查看工作会话、实测/估算用量和手动退休。
+
+## 开发验收与迁移
+
+离线：npm run verify。真实多轮：在独立验收 home/profile 中运行 acceptance:live -- --allow-real-models --case self-context；QQ 请求终止于本机 HTTP/WS 网关。实际模型输出必须人工阅读，脚本的数量/状态/词项断言不代替行为质量判断。
+
+部署前先用 memory:backup 备份 SQLite，再在新数据目录验证 schema 4；JSON 导出包含新表及来源。旧代码会拒绝较新 schema，回退应使用备份的新路径，不能直接让旧版本写 schema 4。更新 DSH bundle 是单独部署动作，本次只刷新独立测试 profile。真实 QQ、生产迁移与跨平台安装验收不包含在本次合并中。

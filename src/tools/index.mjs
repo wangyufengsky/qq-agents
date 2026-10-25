@@ -1,3 +1,4 @@
+import { mindDefinitions, mindTool } from "./mind.mjs";
 import { fileDefinitions, fileTool } from "./file-tools.mjs";
 import { z } from "zod";
 import { synthesize } from "./speech.mjs";
@@ -25,6 +26,7 @@ const fields = {
   evidence: z.array(str).optional(),
 };
 const definitions = {
+  ...mindDefinitions,
   ...legacyDefinitions,
   ...fileDefinitions,
   memory_search: [
@@ -301,6 +303,7 @@ export async function dispatchTool(runtime, ctx, name, input) {
   const args = definition[1].parse(input),
     mem = runtime.memory.bind(ctx.agentId);
   protect(ctx, args);
+  if (mindDefinitions[name]) return mindTool(runtime, ctx, name, args);
   if (fileDefinitions[name]) return fileTool(runtime, ctx, name, args);
   if (legacyDefinitions[name]) return legacyTool(runtime, ctx, name, args);
   if (name === "memory_search") {
@@ -327,8 +330,7 @@ export async function dispatchTool(runtime, ctx, name, input) {
       ctx.conversation,
     );
     track(ctx, r.items);
-    if (r.items.every((x) => x.conversation === ctx.conversation))
-      ctx.shownSeq = Math.max(ctx.shownSeq, r.readThroughSeq);
+    runtime.contexts.seen(ctx, r.items);
     return r;
   }
   if (name === "diary_write" || name === "diary_revise") {

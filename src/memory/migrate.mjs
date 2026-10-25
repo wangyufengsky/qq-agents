@@ -277,6 +277,13 @@ export function restoreExport(memory, data) {
     ],
     runtime: ["agent_id", "conversation", "value"],
     migrations: ["agent_id", "source", "digest", "imported_at"],
+    self_versions: ["agent_id", "version", "value"],
+    self_candidates: ["agent_id", "id", "value"],
+    intentions: ["agent_id", "id", "value"],
+    work_notes: ["agent_id", "conversation", "id", "value"],
+    model_turns: ["agent_id", "id", "value"],
+    session_history: ["agent_id", "id", "value"],
+    message_progress: ["agent_id", "conversation", "seq", "summary_only"],
   };
   // An empty target identity can be restored beside other identities. Remap only local seq watermarks.
   if (
@@ -306,10 +313,22 @@ export function restoreExport(memory, data) {
           throw Error("EXPORT_FOREIGN_DIARY");
         if (table === "runtime" && !empty) {
           const state = JSON.parse(row.value);
-          for (const key of ["readThroughSeq", "lastReceivedSeq"])
+          for (const key of [
+            "readThroughSeq",
+            "lastReceivedSeq",
+            "seenThroughSeq",
+            "feedThroughSeq",
+          ])
             if (state[key] !== undefined)
               state[key] = seqs.get(state[key]) ?? 0;
           row.value = JSON.stringify(state);
+        }
+        if (table === "message_progress" && !empty) row.seq = seqs.get(row.seq);
+        if (table === "intentions" && !empty) {
+          const value = JSON.parse(row.value);
+          if (value.handoffSeq)
+            value.handoffSeq = seqs.get(value.handoffSeq) ?? 0;
+          row.value = JSON.stringify(value);
         }
         const fields =
           table === "events" && !empty ? cols.filter((c) => c !== "seq") : cols;

@@ -1,0 +1,358 @@
+import { randomUUID } from "node:crypto";
+import { allowed, inSilence } from "./config.mjs";
+import { SUBJECT } from "./lifecycle.mjs";
+const terminal = new Set([
+  "completed",
+  "cancelled",
+  "expired",
+  "failed",
+  "unknown",
+]);
+const norm = (s) => s.trim().toLocaleLowerCase().replace(/\s+/g, " ");
+export class SubjectCoordinator {
+  constructor(runtime) {
+    this.runtime = runtime;
+    for (const a of runtime.config.agents) {
+      const m = runtime.memory.bind(a.id);
+      for (const i of m.identity.list("intentions"))
+        if (["handedoff", "selected"].includes(i.status)) {
+          const delivery = m.delivery("intent:" + i.id);
+          this.save(a.id, {
+            ...i,
+            status: delivery
+              ? delivery.status === "sent"
+                ? i.expectsResponse
+                  ? "awaiting-response"
+                  : "completed"
+                : "unknown"
+              : "waiting",
+            eligibleAt: runtime.now() + a.subject.contactCooldownMs,
+            history: [...i.history, { status: "recovered", at: runtime.now() }],
+          });
+        }
+    }
+  }
+  memory(id) {
+    return this.runtime.memory.bind(id);
+  }
+  save(id, value) {
+    return this.memory(id).identity.put("intentions", value);
+  }
+  enabled(a) {
+    return a.subject.enabled || a.behavior.proactive.enabled;
+  }
+  internalAllowed(a) {
+    const r = this.runtime;
+    return (
+      !r.closed &&
+      r.config.mode === "live" &&
+      !r.config.globalPaused &&
+      !a.paused &&
+      this.enabled(a) &&
+      (a.subject.offlineReview ||
+        r.transports.get(a.connectionId)?.connected) &&
+      (a.subject.reviewInSilence || !inSilence(a, r.clock()))
+    );
+  }
+  targetAllowed(a, target) {
+    if (!allowed(a, target)) return false;
+    const [kind, id] = target.split(":");
+    const peers = this.runtime.config.connections
+      .filter((c) => c.id !== a.connectionId)
+      .map((c) => c.accountId);
+    return kind === "group"
+      ? a.subject.groups.includes(id)
+      : a.subject.users.includes(id) ||
+          (a.subject.owners && a.ownerIds.includes(id)) ||
+          (a.subject.peers && peers.includes(id));
+  }
+  transition(agentId, item, status, reason, extra = {}) {
+    return this.save(agentId, {
+      ...item,
+      ...extra,
+      status,
+      revision: item.revision + 1,
+      history: [...item.history, { status, reason, at: this.runtime.now() }],
+    });
+  }
+  create(ctx, args) {
+    const r = this.runtime,
+      a = r.agent(ctx.agentId),
+      m = this.memory(a.id),
+      now = r.now();
+    if (!this.targetAllowed(a, args.target))
+      throw Error("PROACTIVE_TARGET_NOT_ENABLED");
+    m.identity.sources(args.evidence || []);
+    if (
+      args.expiresAt <= now ||
+      args.expiresAt > now + 7 * 86400000 ||
+      (args.eligibleAt || now) >= args.expiresAt
+    )
+      throw Error("INVALID_INTENT_TIME");
+    const duplicate = m.identity
+      .list("intentions")
+      .find(
+        (i) => !terminal.has(i.status) && norm(i.topic) === norm(args.topic),
+      );
+    if (duplicate) return { ...duplicate, duplicate: true };
+    const i = {
+      id: randomUUID(),
+      revision: 1,
+      status: "waiting",
+      createdAt: now,
+      createdIn: ctx.conversation,
+      ...args,
+      eligibleAt: args.eligibleAt || now,
+      evidence: args.evidence || [],
+      history: [{ status: "waiting", at: now }],
+    };
+    return this.save(a.id, i);
+  }
+  update(ctx, args) {
+    const m = this.memory(ctx.agentId),
+      i = m.identity.get("intentions", args.id);
+    if (i.revision !== args.expectedRevision) throw Error("REVISION_CONFLICT");
+    if (terminal.has(i.status)) throw Error("INTENT_CLOSED");
+    if (
+      ctx.conversation !== SUBJECT &&
+      ctx.conversation !== i.createdIn &&
+      ctx.conversation !== i.target
+    )
+      throw Error("INTENT_SCOPE");
+    if (args.action === "cancel")
+      return this.transition(ctx.agentId, i, "cancelled", args.reason);
+    if (!["waiting", "deferred"].includes(i.status))
+      throw Error("INTENT_ALREADY_HANDED_OFF");
+    const now = this.runtime.now(),
+      eligibleAt =
+        args.eligibleAt ||
+        now + this.runtime.agent(ctx.agentId).subject.contactCooldownMs;
+    if (eligibleAt >= i.expiresAt) throw Error("INVALID_INTENT_TIME");
+    return this.transition(ctx.agentId, i, "deferred", args.reason, {
+      eligibleAt,
+    });
+  }
+  decide(ctx, args) {
+    const r = this.runtime,
+      m = this.memory(ctx.agentId),
+      i = m.identity.get("intentions", args.id);
+    if (ctx.conversation !== i.target) throw Error("TARGET_CHAT_REQUIRED");
+    if (i.revision !== args.expectedRevision) throw Error("REVISION_CONFLICT");
+    if (args.action === "complete") {
+      if (
+        !["awaiting-response", "handedoff", "deferred", "waiting"].includes(
+          i.status,
+        )
+      )
+        throw Error("INTENT_STATE");
+      const records = (args.evidence || []).map((id) =>
+        m.db
+          .prepare("SELECT * FROM events WHERE agent_id=? AND id=?")
+          .get(ctx.agentId, id),
+      );
+      if (
+        !records.length ||
+        records.some(
+          (e) =>
+            !e ||
+            e.conversation !== i.target ||
+            e.direction !== "in" ||
+            e.seq <= (i.handoffSeq || 0),
+        )
+      )
+        throw Error("INTENT_RESPONSE_EVIDENCE_REQUIRED");
+      return this.transition(ctx.agentId, i, "completed", args.reason, {
+        responseEvidence: args.evidence,
+      });
+    }
+    if (i.status !== "handedoff" || !ctx.intentIds?.includes(i.id))
+      throw Error("INTENT_NOT_IN_TURN");
+    if (args.action === "send") {
+      this.assertFresh(ctx, i);
+      if (ctx.activeIntentId && ctx.activeIntentId !== i.id)
+        throw Error("ONE_INTENT_PER_TURN");
+      ctx.activeIntentId = i.id;
+      return this.transition(ctx.agentId, i, "selected", args.reason);
+    }
+    if (args.action === "cancel")
+      return this.transition(ctx.agentId, i, "cancelled", args.reason);
+    return this.transition(ctx.agentId, i, "deferred", args.reason, {
+      eligibleAt: r.now() + r.agent(ctx.agentId).subject.contactCooldownMs,
+    });
+  }
+  assertFresh(ctx, item) {
+    const r = this.runtime,
+      a = r.agent(ctx.agentId),
+      m = this.memory(a.id),
+      i = item || m.identity.get("intentions", ctx.activeIntentId);
+    if (
+      !this.enabled(a) ||
+      !this.targetAllowed(a, i.target) ||
+      !r.writable(a, i.target) ||
+      i.expiresAt <= r.now() ||
+      !["handedoff", "selected"].includes(i.status)
+    )
+      throw Error("INTENT_NO_LONGER_ALLOWED");
+    if (
+      (m.state(i.target).lastReceivedSeq || 0) !== (ctx.intentSnapshotSeq || 0)
+    )
+      throw Error("INTENT_STALE_REFRESH_REQUIRED");
+    return i;
+  }
+  beforeDelivery(ctx) {
+    if (ctx.conversation === SUBJECT) throw Error("SUBJECT_CANNOT_SEND_QQ");
+    if (ctx.intentOnly && !ctx.activeIntentId)
+      throw Error("INTENT_DECISION_REQUIRED");
+    if (!ctx.activeIntentId) return null;
+    const i = this.assertFresh(ctx);
+    const s = this.memory(ctx.agentId).state(SUBJECT),
+      a = this.runtime.agent(ctx.agentId),
+      now = this.runtime.now();
+    if (
+      (this.memory(ctx.agentId).state(i.target).proactiveCooldownUntil || 0) >
+        now ||
+      (s.lastContactAt || 0) + a.subject.contactCooldownMs > now
+    )
+      throw Error("PROACTIVE_COOLDOWN");
+    if (
+      (s.contacts || []).filter((t) => t > now - 86400000).length >=
+      a.subject.maxContactsPerDay
+    )
+      throw Error("SUBJECT_CONTACT_BUDGET");
+    return i;
+  }
+  delivered(ctx, status) {
+    if (!ctx.activeIntentId) return;
+    const m = this.memory(ctx.agentId),
+      i = m.identity.get("intentions", ctx.activeIntentId),
+      now = this.runtime.now();
+    this.transition(
+      ctx.agentId,
+      i,
+      status === "sent"
+        ? i.expectsResponse
+          ? "awaiting-response"
+          : "completed"
+        : status,
+      "outbox receipt",
+      { deliveryId: "intent:" + i.id, sentAt: status === "sent" ? now : null },
+    );
+    const s = m.state(SUBJECT);
+    m.setState(SUBJECT, {
+      ...s,
+      lastContactAt: now,
+      contacts: [...(s.contacts || []).filter((t) => t > now - 86400000), now],
+    });
+    const c = m.state(i.target),
+      a = this.runtime.agent(ctx.agentId);
+    m.setState(i.target, {
+      ...c,
+      proactiveCooldownUntil:
+        now +
+        (i.expectsResponse
+          ? a.subject.unansweredCooldownMs
+          : a.subject.contactCooldownMs),
+      replyCheckAt: null,
+    });
+  }
+  begin(ctx, reasons) {
+    const m = this.memory(ctx.agentId);
+    ctx.intentIds = reasons.filter((x) => x.intentId).map((x) => x.intentId);
+    ctx.intentOnly = !!ctx.intentIds.length && reasons.every((x) => x.intentId);
+    ctx.intentSnapshotSeq = m.state(ctx.conversation).lastReceivedSeq || 0;
+  }
+  finish(ctx) {
+    const m = this.memory(ctx.agentId),
+      a = this.runtime.agent(ctx.agentId);
+    for (const id of ctx.intentIds || []) {
+      const i = m.identity.get("intentions", id);
+      if (["handedoff", "selected"].includes(i.status))
+        this.transition(
+          a.id,
+          i,
+          "deferred",
+          "target turn ended without delivery",
+          { eligibleAt: this.runtime.now() + a.subject.contactCooldownMs },
+        );
+    }
+  }
+  tick() {
+    const r = this.runtime,
+      now = r.now();
+    for (const a of r.config.agents) {
+      const m = this.memory(a.id);
+      for (const i of m.identity.list("intentions")) {
+        if (!terminal.has(i.status) && i.expiresAt <= now)
+          this.transition(a.id, i, "expired", "validity elapsed");
+        else if (
+          this.internalAllowed(a) &&
+          ["waiting", "deferred"].includes(i.status) &&
+          i.eligibleAt <= now &&
+          this.targetAllowed(a, i.target) &&
+          r.writable(a, i.target) &&
+          r.transports.get(a.connectionId)?.connected
+        ) {
+          const c = m.state(i.target),
+            s = m.state(SUBJECT);
+          if (
+            r.running.has(a.id + "|" + i.target) ||
+            (c.proactiveCooldownUntil || 0) > now ||
+            (s.lastContactAt || 0) + a.subject.contactCooldownMs > now ||
+            (s.contacts || []).filter((t) => t > now - 86400000).length >=
+              a.subject.maxContactsPerDay
+          )
+            continue;
+          const handed = this.transition(
+            a.id,
+            i,
+            "handedoff",
+            "target opportunity",
+            { handoffSeq: c.lastReceivedSeq || 0 },
+          );
+          r.conversations.request(a.id, i.target, "intent", {
+            intentId: i.id,
+            instruction: JSON.stringify(handed),
+            immediate: true,
+          });
+        }
+      }
+      if (!this.internalAllowed(a) || r.running.has(a.id + "|" + SUBJECT))
+        continue;
+      const s = m.state(SUBJECT);
+      if (!s.nextCheckAt) {
+        m.setState(SUBJECT, { ...s, nextCheckAt: now + a.subject.intervalMs });
+        continue;
+      }
+      if (s.nextCheckAt > now) continue;
+      const checks = (s.checks || []).filter((t) => t > now - 86400000);
+      if (checks.length >= a.subject.maxChecksPerDay) continue;
+      m.setState(SUBJECT, {
+        ...s,
+        nextCheckAt: now + a.subject.intervalMs,
+        checks: [...checks, now],
+        lastOpportunityAt: now,
+        opportunities: (s.opportunities || []).slice(20),
+      });
+      const candidates = m.identity
+        .list("self_candidates")
+        .filter(
+          (c) =>
+            ["pending", "observing"].includes(c.status) && c.reviewAfter <= now,
+        )
+        .map((c) => c.id);
+      r.trackJob(
+        r.wake(a.id, SUBJECT, {
+          reasons: [
+            {
+              reason: "subject-opportunity",
+              candidateIds: candidates,
+              instruction:
+                "可不行动。候选与未完成意图可按需读取；没有候选不做专门人格回顾。",
+            },
+          ],
+        }),
+        a.id,
+      );
+    }
+  }
+}

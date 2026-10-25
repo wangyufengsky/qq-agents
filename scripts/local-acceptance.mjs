@@ -1,5 +1,6 @@
 // Opt-in real-model acceptance. All QQ writes terminate at loopback fixture gateways.
 import fs from "node:fs";
+import { selfContextAcceptance } from "./fixtures/self-context.mjs";
 import {
   seedQuality,
   qualityPrompt,
@@ -370,6 +371,7 @@ async function reset(id) {
       .get(id).seq,
   });
   runtime.agent(id).behavior.proactive.enabled = false;
+  runtime.agent(id).subject.enabled = false;
   const scheduler = runtime.scheduler.state(id);
   scheduler.tasks.forEach((t) => (t.enabled = false));
   runtime.scheduler.save(id, scheduler);
@@ -434,7 +436,17 @@ async function runCase(id, test) {
       for (const [key, value] of Object.entries(inputs.forwardResources || {}))
         gateway.resources.set(key, value);
     }
-    if (test === "files") {
+    if (test === "self-context") {
+      await selfContextAcceptance({
+        runtime,
+        memory,
+        id,
+        turn,
+        gateway,
+        calls,
+        root,
+      });
+    } else if (test === "files") {
       await runtime.changeFilePermissions(
         id,
         { enabled: true },
