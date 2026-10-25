@@ -186,3 +186,31 @@ test("Heybox web search uses browser-owned login and cursor without exporting co
     /VERIFICATION_REQUIRED/,
   );
 });
+
+test("Bilibili dynamic reading distinguishes actual text, forwarded excerpt and video metadata", async () => {
+  const { bilibiliDynamicRow } = await import("../src/apps/normalize.mjs");
+  const text = bilibiliDynamicRow([
+    { field: "text", value: "实际文字" },
+    { field: "url", value: "https://t.bilibili.com/123" },
+  ]);
+  assert.equal(text.coverage, "dynamic-text");
+  assert.equal(text.items[0].description, "实际文字");
+  const opus = bilibiliDynamicRow([{ field: "opus_text", value: "只有摘要" }]);
+  assert.equal(opus.coverage, "dynamic-summary");
+  assert.equal(opus.items[0].truncated, true);
+  const forward = bilibiliDynamicRow([
+    { field: "forward_text", value: "截断摘要" },
+  ]);
+  assert.equal(forward.coverage, "dynamic-summary");
+  assert.equal(forward.items[0].truncated, true);
+  const video = bilibiliDynamicRow([
+    { field: "video_title", value: "视频" },
+    { field: "video_desc", value: "简介" },
+  ]);
+  assert.equal(video.coverage, "video-metadata");
+  assert.equal(video.items[0].description, "简介");
+  assert.throws(
+    () => bilibiliDynamicRow([{ field: "error", value: "not available" }]),
+    /APP_BODY_UNAVAILABLE/,
+  );
+});

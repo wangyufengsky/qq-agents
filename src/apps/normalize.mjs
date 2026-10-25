@@ -83,3 +83,42 @@ export function parseExactJson(text) {
     return value;
   });
 }
+
+export function bilibiliDynamicRow(fields) {
+  const value = Object.fromEntries(fields.map((x) => [x.field, x.value]));
+  if (value.error) throw Error("APP_BODY_UNAVAILABLE");
+  const ownText = [
+    ...new Set([value.text, value.opus_text].filter(Boolean)),
+  ].join("\n");
+  return {
+    items: [
+      {
+        url: value.url,
+        title:
+          value.opus_title ||
+          value.video_title ||
+          value.article_title ||
+          "动态",
+        author: value.author,
+        time: value.time,
+        description: [
+          ownText,
+          value.video_desc,
+          value.forward_text ? "转发原文摘要：" + value.forward_text : "",
+        ]
+          .filter(Boolean)
+          .join("\n"),
+        cover: String(value.images || "").split("\n")[0],
+        truncated: !!(value.forward_text || value.opus_text),
+      },
+    ],
+    next: null,
+    coverage: value.video_title
+      ? "video-metadata"
+      : value.forward_text || value.opus_text
+        ? "dynamic-summary"
+        : ownText
+          ? "dynamic-text"
+          : "dynamic-metadata",
+  };
+}
