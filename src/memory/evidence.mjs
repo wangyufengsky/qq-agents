@@ -8,6 +8,17 @@ const normalize = (text) =>
     .trim()
     .replace(/\s+/g, " ");
 
+const strength = (root) =>
+  ["external-source-claim", "forwarded-claim"].includes(root?.epistemic)
+    ? 2
+    : root?.epistemic === "observed-speech"
+      ? 1
+      : 0;
+const preferred = (candidate, old) =>
+  !old ||
+  strength(candidate) > strength(old) ||
+  (strength(candidate) === strength(old) && candidate.id < old.id);
+
 // Immutable, agent-owned source proof. IDs remain lookup handles; they are not
 // themselves a historical revision. Never recompute an accepted proof from a diary's latest edit.
 export function freezeEvidence(memory, ids, now) {
@@ -19,6 +30,7 @@ export function freezeEvidence(memory, ids, now) {
     throw Error("INVALID_EVIDENCE");
   const references = new Map(),
     roots = new Map(),
+    members = new Map(),
     visiting = new Set(),
     resolved = new Map();
   function visit(id) {
@@ -132,7 +144,9 @@ export function freezeEvidence(memory, ids, now) {
       if (key) {
         key = digest(key);
         // Forwarded excerpts and their enclosing card are one originating source.
-        roots.set(key, {
+        if (!members.has(key)) members.set(key, new Set());
+        members.get(key).add(id);
+        const candidate = {
           id,
           key,
           contentKey: normalize(text)
@@ -146,7 +160,8 @@ export function freezeEvidence(memory, ids, now) {
               ? key
               : `${row.conversation}:${row.occurred_at.slice(0, 10)}`),
           epistemic,
-        });
+        };
+        if (preferred(candidate, roots.get(key))) roots.set(key, candidate);
       }
       resolved.set(id, key ? [key] : inherited);
     } else {
@@ -181,7 +196,7 @@ export function freezeEvidence(memory, ids, now) {
   const keys = [...new Set(ids.flatMap((id) => visit(id)))],
     contentSeen = new Set(),
     independent = [],
-    subsumed = new Set();
+    groups = new Map([...roots.keys()].map((key) => [key, key]));
   // An expansion and the message/card it expands are one source, even if both
   // are explicit entry IDs. Keep the full ancestry in references for audit.
   function ancestors(id, seen = new Set()) {
@@ -191,15 +206,32 @@ export function freezeEvidence(memory, ids, now) {
       ancestors(parent, seen);
     return seen;
   }
-  for (const key of keys) {
-    const root = roots.get(key);
+  const group = (key) => {
+    while (groups.get(key) !== key) key = groups.get(key);
+    return key;
+  };
+  for (const [key, root] of roots) {
     if (["external-source-claim", "forwarded-claim"].includes(root.epistemic))
-      for (const parent of references.get(root.id)?.parents || [])
-        for (const id of ancestors(parent)) subsumed.add(id);
+      for (const member of members.get(key) || [])
+        for (const parent of references.get(member)?.parents || [])
+          for (const id of ancestors(parent))
+            for (const parentKey of resolved.get(id) || []) {
+              const a = group(key),
+                b = group(parentKey);
+              if (a !== b) groups.set(a < b ? b : a, a < b ? a : b);
+            }
   }
+  const representatives = new Map();
   for (const key of keys) {
-    const root = roots.get(key);
-    if (subsumed.has(root.id)) continue;
+    const root = roots.get(key),
+      identity = group(key);
+    if (preferred(root, representatives.get(identity)))
+      representatives.set(identity, root);
+  }
+  // Connected origin chains keep one representative, including A → B → A revisits.
+  for (const root of [...representatives.values()].sort((a, b) =>
+    a.key.localeCompare(b.key),
+  )) {
     if (root.contentKey && contentSeen.has(root.contentKey)) continue;
     if (root.contentKey) contentSeen.add(root.contentKey);
     independent.push(root);
