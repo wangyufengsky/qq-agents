@@ -464,6 +464,13 @@ export class Runtime {
     ids.forEach((id) => ctx.grants.add(id));
     return { granted: ids, conversation: ctx.conversation };
   }
+  assertSafeOutput(ctx, text) {
+    if (
+      text.includes(ctx.token) ||
+      /(?:sk-|gh[pousr]_|Bearer\s)[a-zA-Z0-9_-]{16,}/.test(text)
+    )
+      throw Error("SENSITIVE_OUTPUT_BLOCKED");
+  }
   async send(
     ctx,
     { requestId, text = "", replyTo, atUserId, mediaId },
@@ -474,11 +481,7 @@ export class Runtime {
     this.assertDisclosure(ctx);
     if (typeof text !== "string" || text.length > 8000 || (!text && !mediaId))
       throw Error("INVALID_MESSAGE");
-    if (
-      text.includes(ctx.token) ||
-      /(?:sk-|gh[pousr]_|Bearer\s)[a-zA-Z0-9_-]{16,}/.test(text)
-    )
-      throw Error("SENSITIVE_OUTPUT_BLOCKED");
+    this.assertSafeOutput(ctx, text);
     text = mdToPlain(text);
     if (!text && !mediaId) throw Error("EMPTY_MESSAGE");
     const segments = [];

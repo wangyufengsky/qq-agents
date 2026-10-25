@@ -84,6 +84,38 @@ async function setup(t, options = {}) {
 }
 const call = (r, c, name, args = {}) => r.callTool(c, name, args);
 
+test("generated text files enforce the same credential filter as QQ text before registration", async (t) => {
+  const { runtime, ctx } = await setup(t);
+  for (const text of [
+    ctx.token,
+    "sk-" + "x".repeat(24),
+    "Bearer " + "b".repeat(24),
+    "ghp_" + "c".repeat(24),
+  ]) {
+    await assert.rejects(
+      runtime.send(ctx, { requestId: "blocked-text", text }),
+      /SENSITIVE_OUTPUT_BLOCKED/,
+    );
+    await assert.rejects(
+      call(runtime, ctx, "file_create", { name: "notes.txt", text }),
+      text === ctx.token
+        ? /CAPABILITY_EXFILTRATION_BLOCKED/
+        : /SENSITIVE_OUTPUT_BLOCKED/,
+    );
+  }
+  assert.equal(runtime.files.list(ctx.agentId).total, 0);
+  assert.equal(runtime.transports.get("qq-0").sent.length, 0);
+  const safe = await call(runtime, ctx, "file_create", {
+    name: "notes.txt",
+    text: "普通文件内容",
+  });
+  assert.equal(
+    runtime.files.read(ctx.agentId, safe.fileId, 1024).buffer.toString(),
+    "普通文件内容",
+  );
+  assert.equal(runtime.operations.pending.size, 0);
+});
+
 test("file permissions default off; admin enables each agent independently without changing pauses or connections", async (t) => {
   const { runtime, configStore } = fixture(t);
   assert.equal(runtime.agent("agent-0").files.enabled, false);

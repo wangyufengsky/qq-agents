@@ -121,6 +121,7 @@ export async function fileTool(runtime, ctx, tool, args) {
     );
     if (tool === "file_create") {
       active(runtime, ctx, "create");
+      runtime.assertSafeOutput(ctx, args.text);
       if (!/\.(txt|md|csv|json|tsv|log|xml|yaml|yml)$/i.test(args.name))
         throw Error("TEXT_FILE_EXTENSION_REQUIRED");
       return files.put(
