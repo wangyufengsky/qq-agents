@@ -332,6 +332,57 @@ export function importAliases(memory, aliases, binding) {
   return inserted;
 }
 
+function accountEvidence(payload) {
+  const values = [
+    payload.accountId,
+    payload.robotQQ,
+    payload.raw?.self_id,
+    ...(payload.migration?.sources || []).flatMap((s) => [
+      s.observation?.accountId,
+      s.observation?.robotQQ,
+    ]),
+  ].filter((x) => x !== undefined && x !== null);
+  if (
+    values.some(
+      (x) =>
+        !["string", "number"].includes(typeof x) ||
+        (typeof x === "number" && !Number.isSafeInteger(x)) ||
+        !/^\d+$/.test(String(x)),
+    )
+  )
+    throw Error("ALIAS_ACCOUNT_MISMATCH");
+  const accounts = new Set(values.map(String));
+  if (accounts.size > 1) throw Error("ALIAS_ACCOUNT_MISMATCH");
+  return [...accounts][0];
+}
+function validateObservation(memory, e, target) {
+  if (
+    e.kind !== "message.received" ||
+    !identifier(e.messageId) ||
+    !validNamespace(e.payload?.messageNamespace) ||
+    e.payload.messageNamespace === "archive"
+  )
+    throw Error("INVALID_MESSAGE_OBSERVATION");
+  if (
+    (target.sender_id && e.senderId && target.sender_id !== e.senderId) ||
+    (target.direction !== "unknown" &&
+      e.direction &&
+      target.direction !== e.direction)
+  )
+    throw Error("CONFLICTING_MESSAGE_IDENTITY");
+  const account = accountEvidence(e.payload),
+    original = accountEvidence(JSON.parse(target.payload));
+  if (!account || (original && account !== original))
+    throw Error("ALIAS_ACCOUNT_MISMATCH");
+  assertMessageAccount(memory, e.connectionId, account);
+  const alias = memory.db
+    .prepare(
+      "SELECT account_id FROM message_aliases WHERE agent_id=? AND event_id=? AND namespace=?",
+    )
+    .get(memory.agentId, target.id, e.payload.messageNamespace);
+  if (alias && account !== alias.account_id)
+    throw Error("ALIAS_ACCOUNT_MISMATCH");
+}
 export function observeKnownMessage(memory, e) {
   if (e.payload?.raw?.self_id != null)
     assertMessageAccount(memory, e.connectionId, String(e.payload.raw.self_id));
@@ -345,38 +396,17 @@ export function observeKnownMessage(memory, e) {
     agentId: memory.agentId,
     connectionId: e.connectionId || "",
     conversation: e.conversation,
-    namespace: e.payload?.messageNamespace || "onebot",
+    namespace: e.payload.messageNamespace,
   };
   const target = resolveMessage(memory.db, scope, e.messageId);
   if (!target) return null;
-  if (
-    (target.sender_id && e.senderId && target.sender_id !== e.senderId) ||
-    (target.direction !== "unknown" &&
-      e.direction &&
-      target.direction !== e.direction)
-  )
-    throw Error("CONFLICTING_MESSAGE_IDENTITY");
-  const alias = memory.db
-    .prepare(
-      "SELECT account_id FROM message_aliases WHERE agent_id=? AND event_id=? AND namespace=?",
-    )
-    .get(memory.agentId, target.id, scope.namespace);
-  const account = e.payload.accountId ?? e.payload.raw?.self_id;
-  if (
-    account == null ||
-    !/^\d+$/.test(String(account)) ||
-    (alias && String(account) !== alias.account_id)
-  )
-    throw Error("ALIAS_ACCOUNT_MISMATCH");
-  if (scope.namespace === "archive") throw Error("INVALID_MESSAGE_OBSERVATION");
-  assertMessageAccount(memory, e.connectionId, String(account));
+  validateObservation(memory, e, target);
   const observation = JSON.stringify(e);
   memory.db
     .prepare("INSERT OR IGNORE INTO message_observations VALUES(?,?,?,?)")
     .run(memory.agentId, target.id, hash(observation), observation);
   return { inserted: false, id: target.id, seq: target.seq };
 }
-
 export function validateRestoredObservations(memory) {
   for (const r of memory.db
     .prepare("SELECT * FROM message_observations WHERE agent_id=?")
@@ -384,43 +414,19 @@ export function validateRestoredObservations(memory) {
     if (!hex(r.digest) || hash(r.observation) !== r.digest)
       throw Error("OBSERVATION_DIGEST_MISMATCH");
     const e = JSON.parse(r.observation);
-    const account = e.payload?.accountId ?? e.payload?.raw?.self_id;
-    if (
-      e.kind !== "message.received" ||
-      !identifier(e.messageId) ||
-      !validNamespace(e.payload?.messageNamespace) ||
-      e.payload.messageNamespace === "archive" ||
-      account == null ||
-      !/^\d+$/.test(String(account))
-    )
-      throw Error("INVALID_MESSAGE_OBSERVATION");
     const target = resolveMessage(
       memory.db,
       {
         agentId: memory.agentId,
         connectionId: e.connectionId,
         conversation: e.conversation,
-        namespace: e.payload.messageNamespace,
+        namespace: e.payload?.messageNamespace,
       },
       e.messageId,
     );
     if (!target || target.id !== r.event_id)
       throw Error("OBSERVATION_SCOPE_MISMATCH");
-    assertMessageAccount(memory, e.connectionId, String(account));
-    if (
-      (target.sender_id && e.senderId && target.sender_id !== e.senderId) ||
-      (target.direction !== "unknown" &&
-        e.direction &&
-        target.direction !== e.direction)
-    )
-      throw Error("CONFLICTING_MESSAGE_IDENTITY");
-    const alias = memory.db
-      .prepare(
-        "SELECT account_id FROM message_aliases WHERE agent_id=? AND event_id=? AND namespace=?",
-      )
-      .get(memory.agentId, target.id, e.payload.messageNamespace);
-    if (alias && String(account) !== alias.account_id)
-      throw Error("ALIAS_ACCOUNT_MISMATCH");
+    validateObservation(memory, e, target);
   }
 }
 

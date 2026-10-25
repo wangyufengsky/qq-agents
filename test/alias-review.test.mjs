@@ -159,3 +159,29 @@ test("N4 account binding must also stop raw message-id forwarding after connecti
   );
   assert.equal(transport.sent.length, 0);
 });
+for (const binding of [false, true])
+  test(`restored observations reject inconsistent accounts, binding=${binding}`, (t) => {
+    const source = new MemoryStore(":memory:"),
+      target = new MemoryStore(":memory:");
+    t.after(() => {
+      source.close();
+      target.close();
+    });
+    const m = source.bind("agent-0");
+    if (binding)
+      m.setState("@migration-binding", {
+        connectionId: "qq-0",
+        accountId: "10000",
+      });
+    m.append(event);
+    m.append({ ...event, dedupe: "observed-again" });
+    const data = m.export(),
+      r = data.tables.message_observations[0],
+      o = JSON.parse(r.observation);
+    o.payload.raw.self_id = "10001";
+    if (binding) o.payload.accountId = "10000";
+    r.observation = JSON.stringify(o);
+    r.digest = hash(r.observation);
+    assert.throws(() => restoreExport(target.bind("agent-0"), data), /ACCOUNT/);
+    assert.equal(target.db.prepare("SELECT COUNT(*) n FROM events").get().n, 0);
+  });
