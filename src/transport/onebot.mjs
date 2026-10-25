@@ -39,6 +39,7 @@ export function normalizeEvent(raw, connection) {
     )
     .join("");
   const poke = raw.notice_type === "notify" && raw.sub_type === "poke";
+  const targetId = poke && raw.target_id != null ? String(raw.target_id) : null;
   const join = raw.notice_type === "group_increase";
   if (poke) body = `[拍一拍] QQ:${raw.user_id} → QQ:${raw.target_id}`;
   if (join) body = `[入群] QQ:${raw.user_id}`;
@@ -53,6 +54,7 @@ export function normalizeEvent(raw, connection) {
     messageId: raw.message_id == null ? null : String(raw.message_id),
     senderId: String(raw.user_id || raw.sender?.user_id || ""),
     senderName: raw.sender?.card || raw.sender?.nickname || "",
+    ...(poke ? { targetId } : {}),
     kind: fileNotice
       ? "notice.file"
       : recall
@@ -173,7 +175,12 @@ export class OneBot extends EventEmitter {
         }
       });
       socket.on("close", () => {
+        // A socket replaced by close()/connect() must not mark the newer connection as down.
+        if (this.socket !== socket) return;
+        const wasConnected = this.connected;
         this.connected = false;
+        this.socket = null;
+        if (wasConnected) this.emit("fault", "CONNECTION_LOST");
         this.emit("status");
       });
     });

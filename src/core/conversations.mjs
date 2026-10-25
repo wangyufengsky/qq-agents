@@ -39,7 +39,9 @@ export class ConversationEngine {
       ...a.wake,
       ...this.state(a.id, e.conversation).wakeConfig?.triggers,
     };
-    if (e.kind === "notice.poke") return wc.poke ? "poke" : null;
+    // Only a poke aimed at this account is a wake; pokes between other members are just observed.
+    if (e.kind === "notice.poke")
+      return wc.poke && e.targetId === accountId ? "poke" : null;
     if (e.kind === "notice.join") return wc.joins ? "join" : null;
     if (!["message.received", "notice.file"].includes(e.kind)) return null;
     if (wc.private && e.conversation.startsWith("private:")) return "private";
