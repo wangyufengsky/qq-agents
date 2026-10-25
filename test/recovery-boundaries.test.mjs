@@ -240,6 +240,49 @@ for (const lane of ["chat", "subject", "learner"])
         assert.equal(f.runtime.transports.get("qq-0").sent.length, 0);
       });
 
+for (const scope of [chat, "@subject"])
+  for (const recovery of ["next-turn", "restart"])
+    test(`N3 late callback after terminal-write failure remains archived before ${recovery}: ${scope}`, async (t) => {
+      const cfg = config(1);
+      cfg.agents[0].subject.enabled = true;
+      const supplied = [];
+      let originalCallback;
+      const f = fixture(t, {
+        cfg,
+        run: async (p) => {
+          supplied.push(p.session);
+          p.saveSession({ backend: "codex", id: "session-" + supplied.length });
+          if (supplied.length === 1) originalCallback = p.saveSession;
+        },
+      });
+      const m = f.store.bind("agent-0");
+      m.reserveDelivery("unknown", chat, { text: "synthetic" });
+      m.completeDelivery("unknown", "unknown");
+      f.store.db.exec(
+        "CREATE TEMP TRIGGER reject_terminal BEFORE INSERT ON model_turns WHEN json_extract(new.value,'$.status')='completed-no-send' BEGIN SELECT RAISE(ABORT,'terminal-fault'); END",
+      );
+      await f.runtime.wake("agent-0", scope);
+      assert.equal(m.identity.list("model_turns")[0].status, "running");
+      assert.equal(m.state(scope).session, null);
+      assert.equal(f.runtime.capabilities.size, 0);
+      assert.equal(f.runtime.running.size, 0);
+      originalCallback({ backend: "codex", id: "late-reference" });
+      assert.equal(m.state(scope).session, null);
+      assert.equal(m.identity.list("session_history").length, 2);
+      f.store.db.exec("DROP TRIGGER reject_terminal");
+      if (recovery === "restart") new ContextLifecycle(f.runtime);
+      await f.runtime.wake("agent-0", scope);
+      assert.equal(supplied.length, 2);
+      assert.equal(supplied[1], null);
+      const next = m.state(scope).session;
+      assert.equal(next.id, "session-2");
+      originalCallback({ backend: "codex", id: "late-reference" });
+      assert.deepEqual(m.state(scope).session, next);
+      assert.equal(m.identity.list("session_history").length, 2);
+      assert.equal(m.delivery("unknown").status, "unknown");
+      assert.equal(f.runtime.transports.get("qq-0").sent.length, 0);
+    });
+
 test("N3 learner committed progress survives terminal-write failure without repeating successful work", async (t) => {
   const cfg = config(1);
   cfg.agents[0].slang.enabled = true;
