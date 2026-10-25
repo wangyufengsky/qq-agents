@@ -162,7 +162,7 @@ export function freezeEvidence(memory, ids, now) {
       } else if (row.kind === "forward.node" && !confirmedCopy) {
         key = "forward:" + p.resourceId;
         epistemic =
-          unexpanded(p.segments) || !normalize(text)
+          !p.segments?.length || unexpanded(p.segments) || !normalize(text)
             ? "unexpanded-reference"
             : "forwarded-claim";
       } else if (
