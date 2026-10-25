@@ -1,5 +1,9 @@
 import { browserCursor } from "./policy.mjs";
-import { zhihuSearchRows, parseExactJson } from "./normalize.mjs";
+import {
+  zhihuSearchRows,
+  parseExactJson,
+  bilibiliDynamicRow,
+} from "./normalize.mjs";
 // Isolated child: fixed read adapters only. Never load model-provided code or commands.
 import { heyboxRead } from "./heybox.mjs";
 import fs from "node:fs";
@@ -51,7 +55,13 @@ async function main() {
   const unwrap = (x) =>
     x && typeof x === "object" && "session" in x && "data" in x ? x.data : x;
   const builtin = async (page, name, args = {}) => {
-    await imp(`clis/${job.platform}/${name === "whoami" ? "auth" : name}.js`);
+    const moduleName =
+      name === "whoami"
+        ? "auth"
+        : job.platform === "bilibili" && name === "feed-detail"
+          ? "feed"
+          : name;
+    await imp(`clis/${job.platform}/${moduleName}.js`);
     const c = getRegistry().get(`${job.platform}/${name}`);
     if (!c || c.access === "write" || typeof c.func !== "function")
       throw Error("APP_ADAPTER_UNAVAILABLE");
@@ -174,12 +184,14 @@ async function main() {
             "popular-list",
           );
         }
-        if (job.operation === "browse" && job.entry === "ranking")
+        if (job.operation === "browse" && job.entry === "ranking") {
+          await page.goto(APP_LOGIN.bilibili);
           return listing(
             await builtin(page, "ranking", { limit }),
             null,
             "ranking",
           );
+        }
         if (job.operation === "search") {
           await page.goto(APP_LOGIN.bilibili);
           const { apiGet } = await imp("clis/bilibili/utils.js");
@@ -233,20 +245,28 @@ async function main() {
               : "video-metadata",
           );
         if (job.operation === "read")
-          return listing(
+          return bilibiliDynamicRow(
             await builtin(page, "feed-detail", { id: identity.id }),
-            null,
-            "dynamic-text",
           );
         throw Error("APP_ENTRY_UNSUPPORTED");
       }
       if (job.platform === "zhihu") {
-        if (job.operation === "browse" && job.entry === "hot")
+        if (job.operation === "browse" && job.entry === "hot") {
+          await page.goto(APP_LOGIN.zhihu);
+          const data = await evalJson(
+            page,
+            "https://www.zhihu.com/api/v3/feed/topstory/hot-lists/total?limit=50",
+          );
           return listing(
-            await builtin(page, "hot", { limit }),
+            zhihuSearchRows({
+              data: (data.data || []).map((x) => ({
+                target: { ...x.target, type: "question" },
+              })),
+            }).slice(0, limit),
             null,
             "hot-list",
           );
+        }
         if (job.operation === "browse" && job.entry === "recommend") {
           await page.goto(APP_LOGIN.zhihu);
           const next =
