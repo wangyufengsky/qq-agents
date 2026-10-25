@@ -570,14 +570,24 @@ export class Runtime {
       };
     } catch (e) {
       const status = e.message === "ONEBOT_REJECTED" ? "failed" : "unknown";
+      const reason =
+        status === "failed" &&
+        ["PACKET_BACKEND_DISABLED", "PACKET_BACKEND_UNAVAILABLE"].includes(
+          e.reason,
+        )
+          ? e.reason
+          : undefined;
       mem.completeDelivery(requestId, status);
       mem.append({
         ...event,
         dedupe: "send:" + requestId + ":" + status,
         kind: "message.send-result",
         status,
+        payload: { ...event.payload, ...(reason ? { reason } : {}) },
       });
-      throw Error("DELIVERY_" + status.toUpperCase());
+      throw Error(
+        "DELIVERY_" + status.toUpperCase() + (reason ? "_" + reason : ""),
+      );
     }
   }
   status() {

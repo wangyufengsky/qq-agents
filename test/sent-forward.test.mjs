@@ -305,3 +305,164 @@ test("pausing during a rejected gateway read prevents confirmed-source fallback"
     0,
   );
 });
+
+for (const gateway of ["rejected", "middle-online"])
+  test(`nested confirmed-send lineage survives ${gateway} gateway resources`, async (t) => {
+    const f = setup(t);
+    let sends = 0;
+    const snapshots = new Map();
+    f.transport.sendForward = async () => ({
+      messageId: "local-sent-" + ++sends,
+    });
+    f.transport.call = async (_, args) => {
+      if (gateway === "middle-online" && args.message_id === "own-resource-1")
+        return { messages: snapshots.get(1), gatewayExtra: true };
+      throw Error("ONEBOT_REJECTED");
+    };
+    let source = f.mem.append({
+      dedupe: "inner-text",
+      conversation: f.ctx.conversation,
+      connectionId: "qq-0",
+      kind: "acceptance.fixture",
+      body: "内层松林",
+    }).id;
+    let sent;
+    for (let level = 0; level < 3; level++) {
+      sent = await f.runtime.callTool(f.ctx, "qq_forward_send", {
+        requestId: "own-nested-" + level,
+        eventIds: [source],
+      });
+      const row = f.mem.db
+        .prepare("SELECT payload FROM events WHERE id=?")
+        .get(sent.eventId);
+      snapshots.set(level, JSON.parse(row.payload).forwardSnapshot.messages);
+      source = f.mem.append({
+        dedupe: "own-card-" + level,
+        conversation: f.ctx.conversation,
+        connectionId: "qq-0",
+        kind: "message.received",
+        direction: "out",
+        messageId: sent.messageId,
+        payload: {
+          segments: [
+            {
+              type: "json",
+              data: {
+                data: JSON.stringify({
+                  app: "com.tencent.multimsg",
+                  view: "contact",
+                  meta: { detail: { resid: "own-resource-" + level } },
+                }),
+              },
+            },
+          ],
+        },
+      }).id;
+    }
+    const outer = source;
+    const first = await f.runtime.callTool(f.ctx, "qq_forward_read", {
+      eventId: outer,
+      maxDepth: 0,
+    });
+    assert.equal(first.total, 1);
+    assert.equal(first.complete, false);
+    const middle = await f.runtime.callTool(f.ctx, "qq_forward_read", {
+      eventId: outer,
+      resourceId: first.deferred[0],
+      maxDepth: 0,
+    });
+    assert.equal(middle.total, 1);
+    assert.equal(middle.complete, false);
+    const inner = await f.runtime.callTool(f.ctx, "qq_forward_read", {
+      eventId: outer,
+      resourceId: middle.deferred[0],
+    });
+    assert.equal(inner.complete, true);
+    assert.equal(inner.items[0].text, "内层松林");
+    const all = await f.runtime.callTool(f.ctx, "qq_forward_read", {
+      eventId: outer,
+      maxDepth: 5,
+    });
+    assert.equal(all.complete, true);
+    assert.deepEqual(
+      all.items.map((x) => x.depth),
+      [0, 1, 2],
+    );
+    assert.equal(all.total, 3);
+    assert.equal(sends, 3);
+  });
+
+test("nested fallback refuses changed, foreign or unconfirmed source cards", async (t) => {
+  for (const mutation of ["inbound", "connection", "content", "receipt"]) {
+    const f = setup(t);
+    let sentCount = 0;
+    f.transport.sendForward = async () => ({
+      messageId: "nested-proof-" + ++sentCount,
+    });
+    f.transport.call = async () => {
+      throw Error("ONEBOT_REJECTED");
+    };
+    const plain = f.mem.append({
+      dedupe: "plain",
+      conversation: f.ctx.conversation,
+      kind: "fixture",
+      body: "private inner",
+    }).id;
+    const inner = await f.runtime.callTool(f.ctx, "qq_forward_send", {
+      requestId: "proof-inner",
+      eventIds: [plain],
+    });
+    const payload = {
+      segments: [
+        {
+          type: "json",
+          data: {
+            data: JSON.stringify({
+              app: "com.tencent.multimsg",
+              view: "contact",
+              meta: { detail: { resid: "proof-resource" } },
+            }),
+          },
+        },
+      ],
+    };
+    const observed = f.mem.append({
+      dedupe: "proof-card",
+      conversation: f.ctx.conversation,
+      connectionId: "qq-0",
+      kind: "message.received",
+      direction: "out",
+      messageId: inner.messageId,
+      payload,
+    }).id;
+    const outer = await f.runtime.callTool(f.ctx, "qq_forward_send", {
+      requestId: "proof-outer",
+      eventIds: [observed],
+    });
+    if (mutation === "inbound")
+      f.mem.db
+        .prepare("UPDATE events SET direction='in' WHERE id=?")
+        .run(observed);
+    if (mutation === "connection")
+      f.mem.db
+        .prepare("UPDATE events SET connection_id='qq-1' WHERE id=?")
+        .run(observed);
+    if (mutation === "content")
+      f.mem.db
+        .prepare("UPDATE events SET payload=? WHERE id=?")
+        .run(JSON.stringify({ segments: [] }), observed);
+    if (mutation === "receipt")
+      f.mem.db
+        .prepare(
+          "UPDATE deliveries SET status='unknown' WHERE request_id='proof-inner'",
+        )
+        .run();
+    const read = await f.runtime.callTool(f.ctx, "qq_forward_read", {
+      eventId: outer.eventId,
+    });
+    assert.equal(read.complete, false, mutation);
+    assert.equal(read.total, 1);
+    assert.ok(!read.items.some((x) => x.text.includes("private inner")));
+    assert.equal(sentCount, 2);
+  }
+});

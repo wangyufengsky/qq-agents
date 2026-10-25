@@ -98,15 +98,15 @@ function confirmedForward(runtime, ctx, root) {
     receipt.conversation !== sent.conversation
   )
     return null;
+  const sources = p.eventIds.map((id) =>
+    mem.db
+      .prepare("SELECT * FROM events WHERE agent_id=? AND id=? AND seq<?")
+      .get(ctx.agentId, id, sent.seq),
+  );
   let snapshot = p.forwardSnapshot;
   if (!snapshot) {
     // Compatibility with confirmed 0.2.2 deliveries: their source event IDs
     // were persisted before the network write, and events are append-only.
-    const sources = p.eventIds.map((id) =>
-      mem.db
-        .prepare("SELECT * FROM events WHERE agent_id=? AND id=? AND seq<?")
-        .get(ctx.agentId, id, sent.seq),
-    );
     if (sources.some((x) => !x)) return null;
     snapshot = forwardPayload(
       sources.map((x) => mem.event(x, sent.conversation)),
@@ -114,8 +114,21 @@ function confirmedForward(runtime, ctx, root) {
       runtime.connection(sent.connectionId),
     ).snapshot;
   }
-  if (snapshot?.version !== 1 || !Array.isArray(snapshot.messages)) return null;
-  return { eventId: sent.id, data: { messages: snapshot.messages } };
+  if (
+    snapshot?.version !== 1 ||
+    !Array.isArray(snapshot.messages) ||
+    snapshot.messages.length !== p.eventIds.length ||
+    snapshot.messages.some((node) => !Array.isArray(node?.message))
+  )
+    return null;
+  return {
+    eventId: sent.id,
+    connectionId: sent.connectionId,
+    data: { messages: snapshot.messages },
+    sources: sources.map((row) =>
+      row ? mem.event(row, sent.conversation) : null,
+    ),
+  };
 }
 export async function readForward(
   runtime,
@@ -136,6 +149,41 @@ export async function readForward(
   const roots = localRoot
     ? ["sent:" + confirmed.eventId]
     : extractForwardIds(root.payload?.segments);
+  const confirmedResources = new Map();
+  const registered = new Set();
+  const rememberConfirmed = (id, candidate) => {
+    if (!candidate) return;
+    if (!confirmedResources.has(id)) confirmedResources.set(id, candidate);
+    else if (confirmedResources.get(id)?.eventId !== candidate.eventId)
+      confirmedResources.set(id, null); // Ambiguous lineage is never guessed.
+  };
+  const rememberConfirmedChildren = (candidate) => {
+    if (!candidate || registered.has(candidate.eventId)) return;
+    registered.add(candidate.eventId);
+    for (let i = 0; i < candidate.sources.length; i++) {
+      const source = candidate.sources[i];
+      if (
+        !source ||
+        source.type !== "message.received" ||
+        source.direction !== "out" ||
+        source.connectionId !== candidate.connectionId
+      )
+        continue;
+      const observed = source.payload?.segments;
+      // Only an exact source card that was actually included in this confirmed
+      // send can supply nested fallback. A matching resource elsewhere cannot.
+      if (
+        !Array.isArray(observed) ||
+        hash(observed) !== hash(candidate.data.messages[i]?.message)
+      )
+        continue;
+      const ids = extractForwardIds(observed);
+      if (ids.length === 1)
+        rememberConfirmed(ids[0], confirmedForward(runtime, ctx, source));
+    }
+  };
+  if (roots.length === 1) rememberConfirmed(roots[0], confirmed);
+  rememberConfirmedChildren(confirmed);
   const embedded = new Map();
   const rememberEmbedded = (segs) => {
     for (const segment of segs) {
@@ -158,6 +206,16 @@ export async function readForward(
     if (p.rootEventId === eventId) {
       extractForwardIds(p.segments).forEach((x) => known.add(x));
       rememberEmbedded(p.segments);
+      if (p.confirmedEventId) {
+        const row = mem.db
+          .prepare("SELECT * FROM events WHERE agent_id=? AND id=?")
+          .get(ctx.agentId, p.confirmedEventId);
+        const candidate =
+          row &&
+          confirmedForward(runtime, ctx, mem.event(row, root.conversation));
+        rememberConfirmed(p.resourceId, candidate);
+        rememberConfirmedChildren(candidate);
+      }
     }
   }
   if (resourceId && (!sanitizeForwardId(resourceId) || !known.has(resourceId)))
@@ -180,6 +238,7 @@ export async function readForward(
       continue;
     }
     visited.add(entry.id);
+    const confirmedSource = confirmedResources.get(entry.id);
     const key = `forward-resource:${eventId}:${hash(entry.id)}`;
     let cached = mem.db
         .prepare("SELECT payload FROM events WHERE agent_id=? AND dedupe=?")
@@ -214,8 +273,8 @@ export async function readForward(
           runtime.assertActive(ctx);
         } catch {
           runtime.assertActive(ctx);
-          if (confirmed && roots.length === 1 && entry.id === roots[0]) {
-            data = confirmed.data;
+          if (confirmedSource) {
+            data = confirmedSource.data;
             source = "confirmed-send-sources";
             warning = "GATEWAY_READ_FAILED_USING_CONFIRMED_SEND_SOURCES";
           } else {
@@ -245,6 +304,9 @@ export async function readForward(
         origin: "forward",
       });
     }
+    // The resource's confirmed lineage survives a successful gateway read too:
+    // a deeper child may fail independently. Only returned child IDs are queued.
+    rememberConfirmedChildren(confirmedSource);
     if (warning) warnings.push({ resourceId: entry.id, code: warning });
     const nodes = Array.isArray(data) ? data : data?.messages || [],
       previews = formatForwardResponse(data, {
@@ -282,6 +344,7 @@ export async function readForward(
           resourceId: entry.id,
           index: i,
           source,
+          confirmedEventId: confirmedSource?.eventId,
         },
         origin: "forward-claimed-author",
       });

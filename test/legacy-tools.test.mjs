@@ -636,3 +636,40 @@ test("QQ JSON merged-forward cards expose only their observed forward resource",
   ]);
   assert.equal(calls, 2);
 });
+
+test("disabled packet rejection is a failed action with an actionable reason and no retry", async (t) => {
+  const f = setup(t),
+    ctx = context(f.runtime);
+  let calls = 0;
+  f.runtime.transports.get("qq-0").call = async () => {
+    calls++;
+    throw Object.assign(Error("ONEBOT_REJECTED"), {
+      reason: "PACKET_BACKEND_DISABLED",
+    });
+  };
+  await assert.rejects(
+    f.runtime.callTool(ctx, "qq_send_poke", {
+      requestId: "packet-poke",
+      userId: "30000",
+    }),
+    /DELIVERY_FAILED_PACKET_BACKEND_DISABLED/,
+  );
+  assert.equal(
+    f.store.bind("agent-0").delivery("packet-poke").status,
+    "failed",
+  );
+  const row = f.store.db
+    .prepare(
+      "SELECT payload FROM events WHERE dedupe='send:packet-poke:failed'",
+    )
+    .get();
+  assert.equal(JSON.parse(row.payload).reason, "PACKET_BACKEND_DISABLED");
+  await assert.rejects(
+    f.runtime.callTool(ctx, "qq_send_poke", {
+      requestId: "packet-poke",
+      userId: "30000",
+    }),
+    /DELIVERY_ALREADY_ATTEMPTED_FAILED/,
+  );
+  assert.equal(calls, 1);
+});

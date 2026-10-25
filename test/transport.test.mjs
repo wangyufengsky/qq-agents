@@ -76,6 +76,31 @@ test("OneBot API failure is not interpreted as a successful send", async (t) => 
   );
   bot.close();
 });
+
+test("OneBot preserves sanitized packet capability rejection without leaking gateway details", async () => {
+  for (const [detail, reason] of [
+    ["packetBackend不可用：已禁用PacketBackend", "PACKET_BACKEND_DISABLED"],
+    ["packetBackend发包能力不可用", "PACKET_BACKEND_UNAVAILABLE"],
+  ]) {
+    const bot = new OneBot(config().connections[0], {
+      fetchImpl: async () =>
+        new Response(
+          JSON.stringify({
+            status: "failed",
+            retcode: 400,
+            message: detail + " private-runtime-detail",
+          }),
+        ),
+    });
+    await assert.rejects(
+      bot.call("send_poke", { user_id: 30000 }),
+      (e) =>
+        e.message === "ONEBOT_REJECTED" &&
+        e.reason === reason &&
+        !JSON.stringify(e).includes("private-runtime-detail"),
+    );
+  }
+});
 test("normalization retains original segments and recalled message identity", () => {
   const e = normalizeEvent(
     raw(12, { post_type: "notice", notice_type: "group_recall" }),

@@ -105,8 +105,17 @@ export class OneBot extends EventEmitter {
       chunks.push(Buffer.from(chunk));
     }
     const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-    if (body.status !== "ok" || body.retcode !== 0)
-      throw Error("ONEBOT_REJECTED");
+    if (body.status !== "ok" || body.retcode !== 0) {
+      const error = Error("ONEBOT_REJECTED");
+      // Never expose the gateway's raw message/stack: it can contain tokens,
+      // identifiers and local paths. Preserve only recognized operator causes.
+      const detail = String(body.message || body.wording || "");
+      if (/已禁用PacketBackend/i.test(detail))
+        error.reason = "PACKET_BACKEND_DISABLED";
+      else if (/packetBackend(?:发包能力)?不可用/i.test(detail))
+        error.reason = "PACKET_BACKEND_UNAVAILABLE";
+      throw error;
+    }
     return body.data;
   }
   async status() {
