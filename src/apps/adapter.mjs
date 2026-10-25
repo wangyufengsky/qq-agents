@@ -50,7 +50,7 @@ export const APP_CAPABILITIES = {
       },
       board: { semantic: "forum-posts", pagination: true },
     },
-    search: "offset",
+    search: "scroll",
     read: true,
     comments: "offset",
   },

@@ -107,3 +107,82 @@ test("Zhihu API article and answer URLs become valid browser content references"
     ],
   );
 });
+
+test("Zhihu recommendations and search preserve URL IDs larger than safe JSON integers", async () => {
+  const { zhihuSearchRows } = await import("../src/apps/normalize.mjs");
+  const target = JSON.parse(
+    '{"type":"answer","id":2097477416973354782,"url":"https://api.zhihu.com/answers/2097477416973354782","question":{"id":1937205528846655531,"url":"https://api.zhihu.com/questions/1937205528846655531","title":"精确来源"}}',
+  );
+  const expected =
+    "https://www.zhihu.com/question/1937205528846655531/answer/2097477416973354782";
+  for (const key of ["target", "object"])
+    assert.equal(
+      zhihuSearchRows({ data: [{ [key]: target }] })[0].url,
+      expected,
+    );
+  assert.equal(
+    zhihuSearchRows({
+      data: [{ object: { ...target, url: expected, question: undefined } }],
+    })[0].url,
+    expected,
+  );
+  assert.equal(
+    zhihuSearchRows({ data: [{ target: { ...target, url: undefined } }] })
+      .length,
+    0,
+  );
+  assert.equal(
+    zhihuSearchRows({
+      data: [{ target: { ...target, question: { id: target.question.id } } }],
+    }).length,
+    0,
+  );
+  assert.equal(
+    zhihuSearchRows({
+      data: [{ target: { type: "article", id: 2097477416973354782 } }],
+    }).length,
+    0,
+  );
+});
+
+test("exact JSON parsing retains large source IDs and ordinary numbers", async () => {
+  const { parseExactJson, zhihuSearchRows } = await import(
+    "../src/apps/normalize.mjs"
+  );
+  const data = parseExactJson(
+    '{"data":[{"target":{"type":"answer","id":2097477416973354782,"question":{"id":1937205528846655531}}}],"count":12,"score":1.5,"literal":"id:1937205528846655531"}',
+  );
+  assert.equal(
+    zhihuSearchRows(data)[0].url,
+    "https://www.zhihu.com/question/1937205528846655531/answer/2097477416973354782",
+  );
+  assert.equal(data.count, 12);
+  assert.equal(data.score, 1.5);
+  assert.equal(data.literal, "id:1937205528846655531");
+});
+test("Heybox web search uses browser-owned login and cursor without exporting cookies", async () => {
+  const { heyboxBrowserSearch } = await import("../src/apps/heybox.mjs");
+  const visited = [],
+    page = {
+      goto: async (u) => visited.push(u),
+      evaluate: async () => ({
+        items: [
+          { url: "https://www.xiaoheihe.cn/app/bbs/link/123", title: "测试" },
+        ],
+        more: true,
+      }),
+      getCookies: async () => {
+        throw Error("must not export cookies for browser search");
+      },
+    };
+  const first = await heyboxRead(page, { operation: "search", query: "a&b" });
+  assert.equal(first.coverage, "search-results-scroll");
+  assert.equal(new URL(visited[0]).searchParams.get("q"), "a&b");
+  await heyboxBrowserSearch(page, { query: "a&b", cursor: first.next });
+  assert.equal(visited.length, 1);
+  page.evaluate = async () => ({ error: "APP_VERIFICATION_REQUIRED" });
+  await assert.rejects(
+    heyboxBrowserSearch(page, { query: "a&b", cursor: first.next }),
+    /VERIFICATION_REQUIRED/,
+  );
+});
