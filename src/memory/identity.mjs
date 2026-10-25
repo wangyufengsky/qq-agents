@@ -155,6 +155,12 @@ export class IdentityMemory {
         expectedVersion,
         reason,
         restoredFrom: version,
+        ...(source.counterEvidenceSnapshot
+          ? {
+              counterEvidence: source.counterEvidence || [],
+              counterEvidenceSnapshot: source.counterEvidenceSnapshot,
+            }
+          : {}),
       },
       now,
     );
@@ -245,9 +251,11 @@ export class IdentityMemory {
           throw Error("EVIDENCE_SNAPSHOT_REQUIRED_REPROPOSE");
         const roots = c.evidenceSnapshot.roots.filter(
           (r) =>
-            !["unresolved-reference", "unexpanded-reference"].includes(
-              r.epistemic,
-            ),
+            ![
+              "unresolved-reference",
+              "unexpanded-reference",
+              "forward-reference",
+            ].includes(r.epistemic),
         );
         if (
           !roots.length ||
@@ -267,6 +275,7 @@ export class IdentityMemory {
             reason: input.reason,
             evidence: c.evidence,
             evidenceSnapshot: c.evidenceSnapshot,
+            counterEvidence: c.counterEvidence,
             counterEvidenceSnapshot: c.counterEvidenceSnapshot,
             actor: "subject-review",
             candidateId: c.id,

@@ -135,7 +135,7 @@ export const SUBJECT_TOOLS = [
   "intent_list",
   "intent_update",
 ];
-export function mindTool(runtime, ctx, name, args) {
+function executeMindTool(runtime, ctx, name, args) {
   const a = runtime.agent(ctx.agentId),
     m = runtime.memory.bind(a.id),
     identity = m.identity,
@@ -216,4 +216,27 @@ export function mindTool(runtime, ctx, name, args) {
   if (name === "intent_update") return runtime.subject.update(ctx, args);
   if (name === "intent_decide") return runtime.subject.decide(ctx, args);
   throw Error("UNKNOWN_TOOL");
+}
+
+// Frozen excerpts retain the same disclosure boundary as ordinary memory reads,
+// including when the live record has subsequently disappeared.
+export function mindTool(runtime, ctx, name, args) {
+  const result = executeMindTool(runtime, ctx, name, args);
+  for (const row of [result, result?.current, ...(result?.items || [])]) {
+    for (const proof of [row?.evidenceSnapshot, row?.counterEvidenceSnapshot]) {
+      for (const ref of proof?.references || []) {
+        if (
+          ref.type === "diary" ||
+          (ref.metadata?.conversation !== ctx.conversation &&
+            !(
+              ref.metadata?.kind === "app.observation" &&
+              ref.metadata?.origin === "app-browser"
+            ))
+        )
+          ctx.privateRead.add(ref.id);
+      }
+    }
+  }
+  ctx.persistTaint?.();
+  return result;
 }
