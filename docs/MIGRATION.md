@@ -11,7 +11,7 @@
 ## 记忆预检与导入
 
 ```sh
-npm run migrate -- --source /path/to/old-instance --agent agent-a --data /path/to/new-data
+npm run migrate -- --source /path/to/old-instance --agent agent-a --account 10001 --connection-map /private/connection-map.json --data /path/to/new-data
 ```
 
 默认只读预检；只输出数量和覆盖缺口，不打印聊天内容。支持：
@@ -23,7 +23,7 @@ npm run migrate -- --source /path/to/old-instance --agent agent-a --data /path/t
 没有识别到的档案结构会明确报告，不能自动猜测人物、内容或来源。窗口可能已经被旧代码截断，无法恢复缺失部分。DSH/Codex 模型内部历史不在本版自动导入范围。
 
 ```sh
-npm run migrate -- --source /path/to/old-instance --agent agent-a --data /path/to/new-data --apply
+npm run migrate -- --source /path/to/old-instance --agent agent-a --account 10001 --connection-map /private/connection-map.json --data /path/to/new-data --apply
 ```
 
 目标目录有进程锁时拒绝导入；已有目标数据库先用 SQLite backup API 做一致备份。导入采用事务、幂等事件键和迁移摘要。**旧文件不移动、不覆盖、不删除。** 旧笔记成为 `legacy.note`，不是伪造的过去日记；旧发送文本标为 legacy-unverified，不能当作真实投递回执。
@@ -85,6 +85,7 @@ Codex 的专用 home 位于新数据目录 `codex/<agentId>/home`；按 Codex �
 
 ```sh
 npm run migrate -- --source /path/to/old-instance --agent agent-a --account 10001 \
+  --connection-map /private/connection-map.json \
   --subject-map /private/subject-map.json --export /private/all-conversations.jsonl \
   --legacy-db /private/snapshot.sqlite --legacy-agent old-a --data /private/new-data
 ```
@@ -98,3 +99,13 @@ QQ 导出的扁平 text/at/reply/附件消息段转换为可查询的 segments�
 已存档快照不能代替切换时增量。记录每主体/会话的归档截止、源文件摘要、快照时刻和缺口，旧源继续归档时再次取得一致快照；稳定 messageId 幂等导入，无 ID 的歧义保留来源并人工核对。本轮演练结果与脱敏统计另列，不代表生产切换获准。
 
 已有旧版导入记录按主体、会话和 messageId 识别，保留原事件 ID、来源正文和元数据后补充新观察；已有多个候选时明确拒绝，需先核对歧义。首次迁入已有会话时保留目标水位、会话及运行字段，只合并旧源元数据并设为暂停。别名 ID、发送者、方向、时间相矛盾时拒绝；缓存 text、plain、tail 语义不同，分别保存，不能因 plain 更短而丢掉引用或尾段。
+
+## 连接连续性与 schema 5
+
+导入聊天必须显式提供账号到目标连接的绑定：`--connection-map /private/connection-map.json`，例如 `{"10001":{"agentId":"agent-a","connectionId":"qq-a"},"10002":{"agentId":"agent-b","connectionId":"qq-b"}}`。同一账号、主体和连接不得重复或矛盾绑定；缺映射的行拒绝。缓存/history 使用 `--account`（或唯一 subject-map 账号），QQ 导出按 robot_qq 选择绑定。目标已有 `config.json` 时自动核对角色连接和连接账号，也可用 `--target-config FILE` 明确核对准备配置；未提供配置时结果 `targetConfigChecked=false`，不能声称已核实正式连接。
+
+已迁入的空连接记录在导入事务中补绑；保留 UUID、seq、来源观察、原文和处理水位，重建明确关系与时间索引，涉及会话保持暂停。旧来源有多个账号、与绑定冲突、同一消息多个迁入候选，均拒绝整批。更早且没有账号证据的记录须有本批唯一兼容来源重放支持；缺证据不能猜测。绑定写入 runtime 的 `@migration-binding` 并随 JSON 导出，已有绑定冲突需要先独立核对，不会自动跨连接合并。新消息身份包括目标连接；已有导入键保留，通过兼容查询复用原 UUID。
+
+schema 5 新增可靠消息时间的派生索引和事件更新时的关系刷新。账本 seq、已读水位及原记录不重排。缓存观察时间、未知时间不作为可靠发生时间；新可靠观察可以更正所选时间，原时间观察仍在来源列表，并记录 timeProvenance。搜索锚点仍按账本游标分页，锚点的邻文按消息时间及 UUID 排列；时间展开使用独立 aroundCursor，不能作已读水位。具体见 MEMORY-DESIGN.md。
+
+先做升级前的 WAL 一致备份，再打开 schema 5。旧 schema 4 代码会拒绝 schema 5；回退应把升级前备份恢复到新路径，并用实际旧代码读取。JSON 恢复从原事件重建派生索引，无需导出派生表。数据库备份仍不包含配置、凭据和媒体。最新全量历史与正式连接/切换验收仍需另行完成。

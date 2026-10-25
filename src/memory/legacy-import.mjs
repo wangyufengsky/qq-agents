@@ -2,6 +2,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
+  validateConnections,
+  bindLegacyConnections,
+} from "./legacy-connections.mjs";
+import {
   adaptMessage,
   digest,
   originalTime,
@@ -22,9 +26,11 @@ export function inspectLegacy(source, options = {}) {
     legacyDb,
     legacyAgentId,
     subjectMap = {},
+    connectionMap = {},
     exportFiles = [],
   } = options;
   if (!validAgent(agentId)) throw Error("EXPLICIT_TARGET_AGENT_REQUIRED");
+  validateConnections(connectionMap, subjectMap);
   for (const [qq, b] of Object.entries(subjectMap))
     if (!/^\d+$/.test(qq) || !validAgent(b.agentId))
       throw Error("INVALID_SUBJECT_MAP");
@@ -46,6 +52,7 @@ export function inspectLegacy(source, options = {}) {
     ...options,
     accountId: accountId || mappedAccounts[0],
     subjectMap,
+    connectionMap,
   };
   const plan = {
     version: 2,
@@ -79,6 +86,10 @@ export function inspectLegacy(source, options = {}) {
       if (!e.payload.timeKnown) plan.coverage.unknownTime++;
       if (e.direction === "unknown") plan.coverage.unknownDirection++;
       if (!e.messageId) plan.coverage.idless++;
+      plan.connectionBinding = {
+        accountId: e.accountId,
+        connectionId: e.connectionId,
+      };
       plan.events.push(e);
     } catch (error) {
       plan.rejected.push({
@@ -339,14 +350,31 @@ export function importLegacy(memory, plan) {
   )
     throw Error("MIGRATION_IDENTITY_MISMATCH");
   if (plan.rejected.length) throw Error("MIGRATION_REJECTED_RECORDS");
+  for (const e of plan.events.filter(
+    (e) => e.kind === "legacy.message-observation",
+  ))
+    if (
+      !plan.connectionBinding ||
+      e.connectionId !== plan.connectionBinding.connectionId ||
+      e.accountId !== plan.connectionBinding.accountId
+    )
+      throw Error("MIGRATION_CONNECTION_MISMATCH");
   let inserted = 0,
     duplicates = 0,
-    enriched = 0;
+    enriched = 0,
+    rebound = 0;
   memory.store.transaction(() => {
+    rebound = bindLegacyConnections(memory, plan);
     for (const event of plan.events) {
       let existing = memory.db
         .prepare("SELECT * FROM events WHERE agent_id=? AND dedupe=?")
         .get(memory.agentId, event.dedupe);
+      if (!existing && event.legacyDedupe)
+        existing = memory.db
+          .prepare(
+            "SELECT * FROM events WHERE agent_id=? AND dedupe=? AND connection_id=?",
+          )
+          .get(memory.agentId, event.legacyDedupe, event.connectionId);
       if (
         !existing &&
         event.messageId &&
@@ -354,9 +382,14 @@ export function importLegacy(memory, plan) {
       ) {
         const candidates = memory.db
           .prepare(
-            "SELECT * FROM events WHERE agent_id=? AND conversation=? AND message_id=? AND kind='legacy.message-observation'",
+            "SELECT * FROM events WHERE agent_id=? AND conversation=? AND message_id=? AND connection_id=? AND kind='legacy.message-observation'",
           )
-          .all(memory.agentId, event.conversation, event.messageId);
+          .all(
+            memory.agentId,
+            event.conversation,
+            event.messageId,
+            event.connectionId,
+          );
         if (candidates.length > 1)
           throw Error("EXISTING_DUPLICATE_MESSAGE_ID_REQUIRES_RECONCILIATION");
         existing = candidates[0];
@@ -418,25 +451,6 @@ export function importLegacy(memory, plan) {
               JSON.stringify(merged.payload),
               existing.seq,
             );
-          // The original insert trigger indexes explicit replies. Enrichment may
-          // add previously unavailable segments, so refresh that derived index.
-          memory.db
-            .prepare("DELETE FROM event_links WHERE source_seq=?")
-            .run(existing.seq);
-          for (const segment of merged.payload.segments || [])
-            if (segment.type === "reply" && segment.data?.id != null)
-              memory.db
-                .prepare(
-                  "INSERT OR IGNORE INTO event_links VALUES(?,?,?,?,?,?)",
-                )
-                .run(
-                  existing.seq,
-                  memory.agentId,
-                  existing.connection_id,
-                  existing.conversation,
-                  String(segment.data.id),
-                  "explicit-reply",
-                );
           enriched++;
         }
       } else if (memory.append(event).inserted) inserted++;
@@ -497,6 +511,7 @@ export function importLegacy(memory, plan) {
     inserted,
     duplicates,
     enriched,
+    rebound,
     rejected: plan.rejected.length,
     warnings: plan.warnings,
     sourceFiles: plan.files.length,

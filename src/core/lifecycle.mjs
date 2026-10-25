@@ -1,5 +1,6 @@
 import { randomUUID, createHash } from "node:crypto";
 import { rememberSources, sourceHandoff } from "./context-handoff.mjs";
+import { retireSession, sessionReference } from "./session-records.mjs";
 export const SUBJECT = "@subject";
 export function stableInstructions(agent, self, subject = false, anchors = {}) {
   return [
@@ -25,25 +26,23 @@ export class ContextLifecycle {
     runtime.memory.db
       .prepare("UPDATE deliveries SET status='unknown' WHERE status='pending'")
       .run();
-    for (const a of runtime.config.agents) {
+    for (const a of runtime.memory.db
+      .prepare(
+        "SELECT DISTINCT agent_id AS id FROM model_turns WHERE json_extract(value,'$.status')='running'",
+      )
+      .all()) {
       const m = runtime.memory.bind(a.id);
       for (const t of m.identity
         .list("model_turns")
         .filter((t) => t.status === "running")) {
+        retireSession(m, t.conversation, "process-recovery", runtime.now(), {
+          turnId: t.id,
+          backendId: t.backendId,
+        });
         m.identity.put("model_turns", {
-          ...t,
+          ...m.identity.get("model_turns", t.id),
           status: "interrupted",
           endedAt: runtime.now(),
-        });
-        const s = m.state(t.conversation);
-        m.setState(t.conversation, {
-          ...s,
-          session: null,
-          lifecycle: {
-            ...s.lifecycle,
-            status: "retired",
-            reason: "process-recovery",
-          },
         });
       }
     }
@@ -204,22 +203,9 @@ export class ContextLifecycle {
       throw Error("SESSION_BUSY");
     const m = this.runtime.memory.bind(agentId),
       s = m.state(conversation);
-    if (s.session)
-      m.identity.put("session_history", {
-        id: randomUUID(),
-        conversation,
-        session: s.session,
-        selfVersion: s.loadedSelfVersion,
-        at: this.runtime.now(),
-        reason,
-        handoff: this.handoff(agentId, conversation),
-      });
-    m.setState(conversation, {
-      ...s,
-      session: null,
-      feedThroughSeq: s.readThroughSeq || 0,
-      lifecycle: { status: "retired", reason, at: this.runtime.now() },
-      usage: null,
+    retireSession(m, conversation, reason, this.runtime.now(), {
+      selfVersion: s.loadedSelfVersion,
+      handoff: this.handoff(agentId, conversation),
     });
   }
   prepare(ctx, backend, reasons, tools) {
@@ -313,6 +299,8 @@ export class ContextLifecycle {
       promptChars: prompt.length,
       instructionsChars: ctx.initialSession ? instructions.length : 0,
       instructionsHash,
+      backendId: a.backendId,
+      ...(s.session ? { backendSession: sessionReference(s.session) } : {}),
     });
     ctx.estimatedAdded =
       prompt.length + (ctx.initialSession ? instructions.length : 0);
@@ -351,6 +339,19 @@ export class ContextLifecycle {
       usage: s.usage,
       estimatedTextChars: ctx.estimatedAdded,
     });
+    if (
+      ["failed", "cancelled"].includes(outcome) ||
+      ctx.controller.signal.aborted
+    ) {
+      retireSession(
+        m,
+        ctx.conversation,
+        outcome === "failed" ? "backend-failure" : "cancelled",
+        r.now(),
+        { turnId: ctx.turnId, backendId: a?.backendId },
+      );
+      return;
+    }
     if (!a) return;
     let usage = s.usage;
     if (!usage || usage.at < ctx.turnStartedAt)
@@ -404,7 +405,16 @@ export class ContextLifecycle {
           session: s.session,
           signal: ctx.controller.signal,
         });
-        if (ctx.controller.signal.aborted) return;
+        if (ctx.controller.signal.aborted) {
+          retireSession(
+            m,
+            ctx.conversation,
+            "cancelled-during-compaction",
+            r.now(),
+            { turnId: ctx.turnId, backendId: a.backendId },
+          );
+          return;
+        }
         if (result?.usage) this.usage(ctx, result.usage);
         if (result?.requiresReinitialize) {
           this.retire(
@@ -448,7 +458,16 @@ export class ContextLifecycle {
         });
       }
     }
-    if (ctx.controller.signal.aborted) return;
+    if (ctx.controller.signal.aborted) {
+      retireSession(
+        m,
+        ctx.conversation,
+        "cancelled-during-compaction",
+        r.now(),
+        { turnId: ctx.turnId, backendId: a.backendId },
+      );
+      return;
+    }
     // Called after running is removed; unknown deliveries are in handoff, not a retirement lock.
     if (
       ctx.conversation === SUBJECT ||

@@ -8,6 +8,7 @@ const required = (value, max) => {
   return value.trim();
 };
 export function migrateIdentity(db) {
+  if (db.prepare("PRAGMA user_version").get().user_version >= 4) return;
   db.exec(`CREATE TABLE IF NOT EXISTS self_versions(agent_id TEXT NOT NULL,version INTEGER NOT NULL,value TEXT NOT NULL,PRIMARY KEY(agent_id,version));
     CREATE TABLE IF NOT EXISTS self_candidates(agent_id TEXT NOT NULL,id TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(agent_id,id));
     CREATE TABLE IF NOT EXISTS intentions(agent_id TEXT NOT NULL,id TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(agent_id,id));

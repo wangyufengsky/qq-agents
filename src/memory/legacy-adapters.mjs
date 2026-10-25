@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import { canonical } from "../backends/session-contract.mjs";
+import { mappedConnection } from "./legacy-connections.mjs";
+import { timeBasis } from "./timeline.mjs";
 export const digest = (value) =>
   createHash("sha256")
     .update(
@@ -225,6 +227,11 @@ export function adaptMessage(row, format, binding, source) {
   if (metadata.senderName !== null && typeof metadata.senderName !== "string")
     throw Error("INVALID_SENDER_NAME");
   const observation = { ...event, ...metadata };
+  const connectionId = mappedConnection(
+    binding,
+    event.accountId,
+    event.agentId,
+  );
   const identity = event.messageId
     ? [event.agentId, event.conversation, "messageId", event.messageId]
     : [
@@ -245,10 +252,21 @@ export function adaptMessage(row, format, binding, source) {
     kind: "legacy.message-observation",
     status: "legacy-unverified",
     origin: "legacy-import-v2",
-    dedupe: "legacy-v2:" + digest(identity),
+    connectionId,
+    legacyDedupe: "legacy-v2:" + digest(identity),
+    dedupe: "legacy-v3:" + digest([connectionId, ...identity]),
     payload: {
       ...metadata,
       timeKnown: event.occurredAt !== "unknown",
+      timeBasis: timeBasis(
+        event.occurredAt,
+        { ...metadata, timeKnown: event.occurredAt !== "unknown" },
+        "legacy-import-v2",
+      ),
+      timeProvenance:
+        event.occurredAt !== "unknown"
+          ? { sourceId: source.sourceId, format, digest: digest(observation) }
+          : null,
       raw: { sender: { nickname: metadata.senderName } },
       migration: {
         version: 2,
@@ -305,8 +323,22 @@ export function mergeObservations(old, incoming) {
     occurredAt,
     ...meta
   } = best;
-  const knownTime =
-    ranked.find((o) => o.occurredAt !== "unknown")?.occurredAt || "unknown";
+  // A later distinct reliable observation can correct a timestamp without
+  // replacing the richer display body or erasing earlier source evidence.
+  const latest = [...sources].reverse();
+  const reliable = (s) =>
+    timeBasis(
+      s.observation.occurredAt,
+      { ...s.observation, timeKnown: true },
+      "legacy-import-v2",
+    ) === "message";
+  const clock =
+    latest.find(
+      (s) => s.observation.source === "qq_message_database" && reliable(s),
+    ) ||
+    latest.find(reliable) ||
+    latest.find((s) => s.observation.occurredAt !== "unknown");
+  const knownTime = clock?.observation.occurredAt || "unknown";
   const name = ranked.find((o) => o.senderName)?.senderName || null;
   return {
     ...old,
@@ -322,6 +354,20 @@ export function mergeObservations(old, incoming) {
       senderName: name,
       raw: { sender: { nickname: name } },
       timeKnown: knownTime !== "unknown",
+      timeBasis: clock
+        ? timeBasis(
+            knownTime,
+            { ...clock.observation, timeKnown: true },
+            "legacy-import-v2",
+          )
+        : "unknown",
+      timeProvenance: clock
+        ? {
+            sourceId: clock.sourceId,
+            format: clock.format,
+            digest: clock.digest,
+          }
+        : null,
       segments: ranked.find((o) => o.segments?.length)?.segments || [],
       migration: { ...old.payload.migration, sources },
     },

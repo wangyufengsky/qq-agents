@@ -1,6 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { toolSpecs } from "../tools/index.mjs";
 import { ownedEvent } from "../tools/forward.mjs";
+import {
+  saveSession,
+  retireSession,
+  recordBackendTurn,
+  sessionReference,
+} from "./session-records.mjs";
 
 export class SlangLearner {
   constructor(runtime) {
@@ -144,6 +150,9 @@ export class SlangLearner {
       mem = runtime.memory.bind(a.id),
       ctx = runtime.makeContext(a.id, conversation);
     ctx.allowedTools = ["slang_submit", "slang_research"];
+    const scope = "learner:" + conversation;
+    ctx.turnId = randomUUID();
+    let outcome = "completed";
     const timer = setTimeout(() => ctx.controller.abort(), 120000);
     try {
       let backend = this.backends.get(a.id);
@@ -164,20 +173,22 @@ export class SlangLearner {
       let session = mem.state(conversation).slang?.session;
       const signature = backend.sessionSignature?.(tools);
       if (session && signature && signature !== session.signature) {
-        mem.identity.put("session_history", {
-          id: randomUUID(),
-          conversation: "learner:" + conversation,
-          session,
-          reason: "backend-contract-change",
-          at: runtime.now(),
-        });
-        const state = mem.state(conversation);
-        mem.setState(conversation, {
-          ...state,
-          slang: { ...state.slang, session: null },
-        });
+        retireSession(mem, scope, "backend-contract-change", runtime.now());
         session = null;
       }
+      const start = mem.state(conversation);
+      mem.setState(conversation, {
+        ...start,
+        slang: { ...start.slang, lastTurnId: ctx.turnId },
+      });
+      mem.identity.put("model_turns", {
+        id: ctx.turnId,
+        conversation: scope,
+        status: "running",
+        startedAt: runtime.now(),
+        backendId: a.backendId,
+        ...(session ? { backendSession: sessionReference(session) } : {}),
+      });
       await backend.run({
         agent: a,
         conversation: "learner:" + conversation,
@@ -186,11 +197,18 @@ export class SlangLearner {
         tools,
         callTool: (name, args) => runtime.callTool(ctx, name, args),
         session,
-        saveSession: (session) => {
-          const s = mem.state(conversation);
-          s.slang.session = session;
-          mem.setState(conversation, s);
-        },
+        saveSession: (session) =>
+          saveSession(mem, scope, session, {
+            turnId: ctx.turnId,
+            backendId: a.backendId,
+            at: runtime.now(),
+            inactive: ctx.controller.signal.aborted || runtime.closed,
+            reason: ctx.controller.signal.aborted
+              ? "cancelled"
+              : "backend-failure",
+          }),
+        onBackendTurn: (reference) =>
+          recordBackendTurn(mem, ctx.turnId, reference),
       });
       runtime.assertActive(ctx);
       if (a.slang.autoResearch)
@@ -203,10 +221,31 @@ export class SlangLearner {
       state.slang.lastError = null;
       mem.setState(conversation, state);
     } catch (e) {
+      outcome = ctx.controller.signal.aborted ? "cancelled" : "failed";
+      retireSession(
+        mem,
+        scope,
+        outcome === "cancelled" ? "cancelled" : "backend-failure",
+        runtime.now(),
+        { turnId: ctx.turnId, backendId: a.backendId },
+      );
       const s = mem.state(conversation);
-      s.slang.lastError = e.message;
+      s.slang = {
+        ...s.slang,
+        lastError:
+          outcome === "cancelled" ? "LEARNER_CANCELLED" : "LEARNER_TURN_FAILED",
+      };
       mem.setState(conversation, s);
     } finally {
+      const record = mem.db
+        .prepare("SELECT value FROM model_turns WHERE agent_id=? AND id=?")
+        .get(a.id, ctx.turnId);
+      if (record)
+        mem.identity.put("model_turns", {
+          ...JSON.parse(record.value),
+          status: outcome,
+          endedAt: runtime.now(),
+        });
       clearTimeout(timer);
       ctx.controller.abort();
       runtime.capabilities.delete(ctx.token);

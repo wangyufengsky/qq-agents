@@ -89,9 +89,13 @@ export class CodexBackend {
             "last model request input plus output; total only for billing telemetry",
         });
     }
-    if (method === "turn/started") r.turnId = p.turn.id;
+    if (method === "turn/started") {
+      r.turnId = p.turn.id;
+      r.onBackendTurn?.({ turnId: p.turn.id });
+    }
     if (method === "turn/completed") {
       r.turnId = p.turn.id;
+      r.onBackendTurn?.({ turnId: p.turn.id });
       if (p.turn.status === "completed") r.resolve();
       else r.reject(Error("CODEX_TURN_FAILED"));
     }
@@ -158,6 +162,7 @@ export class CodexBackend {
     callTool,
     session,
     saveSession,
+    onBackendTurn,
   }) {
     const signature = this.sessionSignature(tools);
     assertSession(session, "codex", signature);
@@ -199,7 +204,15 @@ export class CodexBackend {
       reject = j;
     });
     done.catch(() => {});
-    const active = { resolve, reject, callTool, signal, onUsage, turnId: null };
+    const active = {
+      resolve,
+      reject,
+      callTool,
+      signal,
+      onUsage,
+      onBackendTurn,
+      turnId: null,
+    };
     this.active.set(threadId, active);
     const abort = () => {
       if (active.turnId)
@@ -218,6 +231,7 @@ export class CodexBackend {
         effort: this.config.effort || "high",
       });
       active.turnId = receipt.turn.id;
+      onBackendTurn?.({ turnId: receipt.turn.id });
       if (signal.aborted) abort();
       await done;
     } catch (e) {

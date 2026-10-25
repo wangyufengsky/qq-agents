@@ -6,7 +6,7 @@ const args = process.argv.slice(2),
   get = (k) => args[args.indexOf(k) + 1];
 if (!args.includes("--source") || !args.includes("--agent"))
   throw Error(
-    "Usage: --source OLD_INSTANCE --agent STABLE_ID [--account QQ] [--subject-map JSON] [--export FILE ...] [--legacy-db FILE --legacy-agent ID] [--data NEW_DATA] [--apply]",
+    "Usage: --source OLD_INSTANCE --agent STABLE_ID [--account QQ] --connection-map JSON [--subject-map JSON] [--export FILE ...] [--legacy-db FILE --legacy-agent ID] [--data NEW_DATA] [--apply]",
   );
 const source = fs.realpathSync(get("--source"));
 function realDestination(p) {
@@ -28,6 +28,9 @@ if (legacyDb && legacyDb === path.join(root, "memory.sqlite"))
 const plan = inspectLegacy(source, {
   agentId: get("--agent"),
   accountId: args.includes("--account") ? get("--account") : undefined,
+  connectionMap: args.includes("--connection-map")
+    ? JSON.parse(fs.readFileSync(get("--connection-map"), "utf8"))
+    : {},
   subjectMap: args.includes("--subject-map")
     ? JSON.parse(fs.readFileSync(get("--subject-map"), "utf8"))
     : {},
@@ -50,10 +53,30 @@ const summary = {
   legacyNotes: plan.notes.length,
   conversations: plan.states.length,
   coverage: plan.coverage,
+  connectionId: plan.connectionBinding?.connectionId ?? null,
   rejected: plan.rejected,
   warnings: plan.warnings,
 };
 try {
+  const targetConfig = args.includes("--target-config")
+    ? get("--target-config")
+    : path.join(root, "config.json");
+  if (fs.existsSync(targetConfig) && plan.connectionBinding) {
+    const cfg = JSON.parse(fs.readFileSync(targetConfig, "utf8")),
+      binding = plan.connectionBinding;
+    const agent = cfg.agents?.find((a) => a.id === plan.agentId),
+      connection = cfg.connections?.find((c) => c.id === binding.connectionId);
+    if (
+      agent?.connectionId !== binding.connectionId ||
+      String(connection?.accountId) !== binding.accountId
+    )
+      throw Error("TARGET_CONFIG_CONNECTION_MISMATCH");
+    summary.targetConfigChecked = true;
+  } else {
+    if (args.includes("--target-config"))
+      throw Error("TARGET_CONFIG_NOT_FOUND");
+    summary.targetConfigChecked = false;
+  }
   if (args.includes("--apply"))
     summary.result = await applyMigration(
       path.join(root, "memory.sqlite"),

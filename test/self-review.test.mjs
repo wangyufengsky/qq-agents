@@ -352,7 +352,7 @@ test("F4: pressure hysteresis uses reserve on every turn; idle retirement costs 
   assert.equal(calls, 2);
 });
 
-test("F4: only measured recovery including reserve exits organizing; cancellation prevents retirement", async (t) => {
+test("F4: only measured recovery including reserve exits organizing; cancelled compaction retains its retired reference", async (t) => {
   const { runtime, store } = fixture(t, { cfg: enabled() }),
     m = store.bind(id);
   let tokens = 28000,
@@ -393,7 +393,12 @@ test("F4: only measured recovery including reserve exits organizing; cancellatio
     throw Error("cancelled");
   };
   await runtime.wake(id, chat);
-  assert(m.state(chat).session);
+  assert.equal(m.state(chat).session, null);
+  assert.equal(m.identity.list("session_history")[0].session.id, "recover");
+  assert.equal(
+    m.identity.list("session_history")[0].reason,
+    "cancelled-during-compaction",
+  );
   backend.compact = undefined;
   await runtime.wake(id, chat);
   assert.equal(m.state(chat).lifecycle.reason, "capacity-guard");
