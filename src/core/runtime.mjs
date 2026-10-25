@@ -558,7 +558,10 @@ export class Runtime {
             turnId: ctx.turnId,
             backendId: a.backendId,
             at: this.now(),
-            inactive: controller.signal.aborted || this.closed,
+            inactive:
+              !this.capabilities.has(token) ||
+              controller.signal.aborted ||
+              this.closed,
             reason: controller.signal.aborted ? "cancelled" : "backend-failure",
           }),
         onBackendTurn: (reference) =>
