@@ -698,8 +698,11 @@ export class Runtime {
       throw Error("SEND_RATE_LIMIT");
     const transport = this.transports.get(a.connectionId);
     if (!transport?.connected) throw Error("QQ_NOT_CONNECTED");
-    mem.reserveDelivery(requestId, ctx.conversation, intent);
-    mem.setState(ctx.conversation, { ...state, sendTimes: [...times, now] });
+    mem.store.transaction(() => {
+      mem.reserveDelivery(requestId, ctx.conversation, intent);
+      mem.setState(ctx.conversation, { ...state, sendTimes: [...times, now] });
+      this.subject.reserveContact(ctx, proactive);
+    });
     ctx.sendCount++;
     const event = {
       connectionId: a.connectionId,
@@ -723,8 +726,10 @@ export class Runtime {
       // Record confirmed delivery even if the user pauses while its network request is in flight.
       const messageId =
         receipt.messageId == null ? null : String(receipt.messageId);
-      mem.completeDelivery(requestId, "sent", messageId);
-      this.subject.delivered(ctx, "sent");
+      mem.store.transaction(() => {
+        mem.completeDelivery(requestId, "sent", messageId);
+        this.subject.delivered(ctx, "sent");
+      });
       ctx.confirmedSends = (ctx.confirmedSends || 0) + 1;
       this.conversations.sent(ctx);
       mem.append({
@@ -753,8 +758,13 @@ export class Runtime {
         )
           ? e.reason
           : undefined;
-      mem.completeDelivery(requestId, status);
-      this.subject.delivered(ctx, status);
+      // A later audit failure must never downgrade an already-confirmed receipt.
+      if (mem.delivery(requestId)?.status === "sent")
+        throw Error("DELIVERY_CONFIRMED_AUDIT_FAILED");
+      mem.store.transaction(() => {
+        mem.completeDelivery(requestId, status);
+        this.subject.delivered(ctx, status);
+      });
       mem.append({
         ...event,
         dedupe: "send:" + requestId + ":" + status,

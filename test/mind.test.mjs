@@ -811,3 +811,86 @@ test("changing identity anchors refreshes stable instructions without a self ver
     "identity-or-protocol-change",
   );
 });
+
+test("contact accounting is reserved before network and survives unknown receipts without double charge", async (t) => {
+  const { runtime, store } = fixture(t, { cfg: enabled() }),
+    m = store.bind("agent-0"),
+    ctx = context(runtime);
+  const i = runtime.subject.create(ctx, {
+    topic: "one attempt",
+    target: ctx.conversation,
+    reason: "test",
+    expiresAt: runtime.now() + 60000,
+    expectsResponse: true,
+  });
+  const handed = runtime.subject.transition(
+    ctx.agentId,
+    i,
+    "handedoff",
+    "test",
+  );
+  runtime.subject.begin(ctx, [{ intentId: i.id }]);
+  runtime.subject.decide(ctx, {
+    id: i.id,
+    expectedRevision: handed.revision,
+    action: "send",
+    reason: "appropriate",
+  });
+  runtime.transports.get("qq-0").send = async () => {
+    assert.equal(m.delivery("intent:" + i.id).status, "pending");
+    assert.equal(m.state("@subject").contacts.length, 1);
+    assert(m.state(ctx.conversation).proactiveCooldownUntil > runtime.now());
+    throw Error("lost receipt");
+  };
+  await assert.rejects(
+    runtime.send(ctx, { requestId: "ignored", text: "hello" }),
+    /UNKNOWN/,
+  );
+  const { SubjectCoordinator } = await import("../src/core/subject.mjs");
+  new SubjectCoordinator(runtime);
+  new SubjectCoordinator(runtime);
+  assert.equal(m.state("@subject").contacts.length, 1);
+  assert.equal(m.identity.get("intentions", i.id).status, "unknown");
+});
+
+test("recovery repairs legacy sent and pending crash windows from outbox exactly once", async (t) => {
+  const { runtime, store } = fixture(t, { cfg: enabled() }),
+    m = store.bind("agent-0"),
+    ctx = context(runtime);
+  for (const status of ["sent", "pending"]) {
+    const i = runtime.subject.create(ctx, {
+      topic: "crash " + status,
+      target: ctx.conversation,
+      reason: "test",
+      expiresAt: runtime.now() + 60000,
+      expectsResponse: true,
+    });
+    runtime.subject.transition(ctx.agentId, i, "selected", "test");
+    m.reserveDelivery("intent:" + i.id, ctx.conversation, {});
+    if (status === "sent")
+      m.completeDelivery("intent:" + i.id, "sent", "receipt");
+  }
+  const { SubjectCoordinator } = await import("../src/core/subject.mjs");
+  new SubjectCoordinator(runtime);
+  new SubjectCoordinator(runtime);
+  assert.equal(m.state("@subject").contacts.length, 2);
+  assert(m.state("@subject").lastContactAt > 0);
+  assert(m.state(ctx.conversation).proactiveCooldownUntil > runtime.now());
+  assert.deepEqual(
+    m.identity
+      .list("intentions")
+      .map((i) => i.status)
+      .sort(),
+    ["awaiting-response", "unknown"],
+  );
+  const next = runtime.subject.create(ctx, {
+    topic: "must wait",
+    target: ctx.conversation,
+    reason: "test",
+    expiresAt: runtime.now() + 60000,
+  });
+  runtime.subject.transition(ctx.agentId, next, "selected", "test");
+  ctx.activeIntentId = next.id;
+  ctx.intentSnapshotSeq = 0;
+  assert.throws(() => runtime.subject.beforeDelivery(ctx), /COOLDOWN/);
+});

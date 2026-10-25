@@ -235,3 +235,83 @@ export async function subjectCostAcceptance({
   );
   return report;
 }
+
+export async function intentReceiptAcceptance({
+  runtime,
+  memory,
+  id,
+  gateway,
+  root,
+}) {
+  const a = runtime.agent(id),
+    m = memory.bind(id),
+    now = Date.now(),
+    before = gateway.sent.length;
+  a.subject.enabled = true;
+  a.subject.intervalMs = 86400000;
+  const target = "private:30000",
+    ctx = { agentId: id, conversation: "@subject" };
+  // Test-only elapsed cooldown. This fixture never targets a real QQ connection.
+  m.setState(target, { ...m.state(target), proactiveCooldownUntil: 0 });
+  m.setState("@subject", {
+    ...m.state("@subject"),
+    lastContactAt: 0,
+    nextCheckAt: now + 86400000,
+  });
+  const count = (m.state("@subject").contacts || []).filter(
+    (t) => t > now - 86400000,
+  ).length;
+  a.subject.maxContactsPerDay = count + 1;
+  const evidence = m.append({
+    dedupe: "receipt:" + now,
+    conversation: target,
+    kind: "message.received",
+    senderId: "30000",
+    body: "合成验收：请问候我一句以确认服务恢复，不用继续追问。",
+  });
+  const intent = runtime.subject.create(ctx, {
+    topic: "最终发送回执验收 " + now,
+    target,
+    reason: "对方明确邀请一次简短问候",
+    background: "这是本机合成验收，目标仍自行检查现场。",
+    evidence: [evidence.id],
+    expiresAt: now + 300000,
+    expectsResponse: false,
+  });
+  runtime.contexts.retire(id, target, "acceptance-final-receipt");
+  runtime.subject.tick();
+  await Promise.allSettled([...runtime.jobs]);
+  const item = m.identity.get("intentions", intent.id),
+    receipt = m.delivery("intent:" + intent.id),
+    state = m.state("@subject");
+  if (
+    gateway.sent.length !== before + 1 ||
+    item.status !== "completed" ||
+    receipt?.status !== "sent" ||
+    !item.contactChargedAt ||
+    state.contacts.length !== count + 1 ||
+    m.state(target).proactiveCooldownUntil <= now
+  )
+    throw Error("FINAL_CONTACT_RECEIPT_FAILED");
+  const report = {
+    agentId: id,
+    elapsedMs: Date.now() - now,
+    status: item.status,
+    receipt: receipt.status,
+    charged: true,
+    contacts: state.contacts.length,
+    sends: 1,
+    replies: gateway.sent.slice(before).map((s) =>
+      (s.message || [])
+        .filter((x) => x.type === "text")
+        .map((x) => x.data.text)
+        .join(""),
+    ),
+  };
+  fs.writeFileSync(
+    path.join(root, `${id}-receipt-evidence.json`),
+    JSON.stringify(report, null, 2),
+    { mode: 0o600 },
+  );
+  return report;
+}

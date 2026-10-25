@@ -3,6 +3,7 @@ import fs from "node:fs";
 import {
   selfContextAcceptance,
   subjectCostAcceptance,
+  intentReceiptAcceptance,
 } from "./fixtures/self-context.mjs";
 import {
   seedQuality,
@@ -440,7 +441,9 @@ async function runCase(id, test) {
       for (const [key, value] of Object.entries(inputs.forwardResources || {}))
         gateway.resources.set(key, value);
     }
-    if (test === "subject-cost") {
+    if (test === "intent-receipt") {
+      await intentReceiptAcceptance({ runtime, memory, id, gateway, root });
+    } else if (test === "subject-cost") {
       await subjectCostAcceptance({ runtime, memory, id, gateway, root });
     } else if (test === "self-context") {
       await selfContextAcceptance({

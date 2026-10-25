@@ -34,22 +34,66 @@ export class SubjectCoordinator {
           opportunities: undefined,
         });
       }
-      for (const i of m.identity.list("intentions"))
-        if (["handedoff", "selected"].includes(i.status)) {
+      m.store.transaction(() => {
+        const contacts = [];
+        for (const original of m.identity.list("intentions")) {
+          let i = original;
           const delivery = m.delivery("intent:" + i.id);
-          this.save(a.id, {
-            ...i,
-            status: delivery
-              ? delivery.status === "sent"
-                ? i.expectsResponse
-                  ? "awaiting-response"
-                  : "completed"
-                : "unknown"
-              : "waiting",
-            eligibleAt: runtime.now() + a.subject.contactCooldownMs,
-            history: [...i.history, { status: "recovered", at: runtime.now() }],
-          });
+          if (delivery) {
+            const at =
+              i.contactChargedAt ??
+              (Date.parse(delivery.created_at) || runtime.now());
+            i = this.save(a.id, { ...i, contactChargedAt: at });
+            contacts.push(at);
+            const target = m.state(i.target);
+            m.setState(i.target, {
+              ...target,
+              proactiveCooldownUntil: Math.max(
+                target.proactiveCooldownUntil || 0,
+                at +
+                  (i.expectsResponse
+                    ? a.subject.unansweredCooldownMs
+                    : a.subject.contactCooldownMs),
+              ),
+              replyCheckAt: null,
+            });
+          }
+          if (["handedoff", "selected"].includes(i.status)) {
+            this.transition(
+              a.id,
+              i,
+              delivery
+                ? delivery.status === "sent"
+                  ? i.expectsResponse
+                    ? "awaiting-response"
+                    : "completed"
+                  : delivery.status === "failed"
+                    ? "failed"
+                    : "unknown"
+                : "waiting",
+              "process-recovery",
+              {
+                eligibleAt: runtime.now() + a.subject.contactCooldownMs,
+                ...(delivery
+                  ? {
+                      deliveryId: delivery.request_id,
+                      sentAt:
+                        delivery.status === "sent"
+                          ? Date.parse(delivery.updated_at)
+                          : null,
+                    }
+                  : {}),
+              },
+            );
+          }
         }
+        const subject = m.state(SUBJECT);
+        m.setState(SUBJECT, {
+          ...subject,
+          contacts: contacts.filter((t) => t > runtime.now() - 86400000),
+          lastContactAt: Math.max(subject.lastContactAt || 0, ...contacts),
+        });
+      });
     }
   }
   memory(id) {
@@ -257,24 +301,33 @@ export class SubjectCoordinator {
       "outbox receipt",
       { deliveryId: "intent:" + i.id, sentAt: status === "sent" ? now : null },
     );
+  }
+  reserveContact(ctx, item) {
+    if (!item || item.contactChargedAt !== undefined) return;
+    const m = this.memory(ctx.agentId),
+      now = this.runtime.now(),
+      a = this.runtime.agent(ctx.agentId);
+    // Called in the same SQLite transaction as the outbox reservation, before network I/O.
+    // An unknown receipt still represents a contact attempt and must consume its budget.
+    this.save(ctx.agentId, { ...item, contactChargedAt: now });
     const s = m.state(SUBJECT);
     m.setState(SUBJECT, {
       ...s,
       lastContactAt: now,
       contacts: [...(s.contacts || []).filter((t) => t > now - 86400000), now],
     });
-    const c = m.state(i.target),
-      a = this.runtime.agent(ctx.agentId);
-    m.setState(i.target, {
+    const c = m.state(item.target);
+    m.setState(item.target, {
       ...c,
       proactiveCooldownUntil:
         now +
-        (i.expectsResponse
+        (item.expectsResponse
           ? a.subject.unansweredCooldownMs
           : a.subject.contactCooldownMs),
       replyCheckAt: null,
     });
   }
+
   begin(ctx, reasons) {
     const m = this.memory(ctx.agentId);
     ctx.intentIds = reasons.filter((x) => x.intentId).map((x) => x.intentId);
