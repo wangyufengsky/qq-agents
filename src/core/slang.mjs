@@ -76,7 +76,6 @@ export class SlangLearner {
       mem = this.runtime.memory.bind(a.id);
     if (!p.enabled || !p.autoResearch || !p.researchServerId || !p.researchTool)
       throw Error("SLANG_RESEARCH_DISABLED");
-    this.runtime.assertDisclosure(ctx, { external: true });
     const entry = mem
       .state(ctx.conversation)
       .slang?.entries.find((e) => e.id === id);
@@ -85,11 +84,26 @@ export class SlangLearner {
       throw Error("SENSITIVE_OUTPUT_BLOCKED");
     const backend = ctx.learnerBackend || this.runtime.backends.get(a.id);
     if (!backend?.external) throw Error("EXTERNAL_TOOLS_UNAVAILABLE");
-    // Only the candidate term leaves the bridge, never its conversation or quoted evidence.
+    for (const id of entry.evidenceIds) ctx.privateRead.add(id);
+    ctx.privateRead.add("context:" + ctx.conversation);
+    ctx.persistTaint?.();
+    const outbound = {
+      ...p.researchArguments,
+      [p.researchQueryField]: entry.term,
+    };
+    this.runtime.authorizeExternal(ctx, {
+      tool: "external_tool",
+      args: {
+        serverId: p.researchServerId,
+        tool: p.researchTool,
+        arguments: outbound,
+      },
+    });
+    // A candidate term can itself be private; resolve and authorize the exact request.
     const result = await backend.external.call(
       p.researchServerId,
       p.researchTool,
-      { ...p.researchArguments, [p.researchQueryField]: entry.term },
+      outbound,
     );
     this.runtime.assertActive(ctx);
     if (result.isError) throw Error("SLANG_RESEARCH_FAILED");
@@ -157,6 +171,9 @@ export class SlangLearner {
     if (!records.length) return;
     const ctx = runtime.makeContext(a.id, conversation);
     ctx.allowedTools = ["slang_submit", "slang_research"];
+    ctx.privateRead.add("context:" + conversation);
+    records.forEach((row) => ctx.privateRead.add(row.id));
+    ctx.persistTaint?.();
     ctx.turnId = randomUUID();
     let outcome = "completed";
     let finalized = false;
@@ -222,7 +239,17 @@ export class SlangLearner {
         for (const entry of this.list(ctx)
           .filter((e) => e.status === "candidate" && !e.research)
           .slice(0, 3))
-          await this.research(ctx, { id: entry.id });
+          try {
+            await this.research(ctx, { id: entry.id });
+          } catch (error) {
+            if (error.message !== "PRIVATE_RECOLLECTION_EXTERNAL_CALL_BLOCKED")
+              throw error;
+            const state = mem.state(conversation);
+            mem.setState(conversation, {
+              ...state,
+              slang: { ...state.slang, lastResearchError: error.message },
+            });
+          }
       const state = mem.state(conversation);
       state.slang.throughSeq = records.at(-1).seq;
       state.slang.lastError = null;

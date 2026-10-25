@@ -197,7 +197,12 @@ export function requestAppUrl(url, addresses, { signal }) {
 }
 export async function resolveAppUrl(
   value,
-  { signal, validate = validateFetchUrl, request = requestAppUrl } = {},
+  {
+    signal,
+    validate = validateFetchUrl,
+    request = requestAppUrl,
+    authorize = () => {},
+  } = {},
 ) {
   let raw = value;
   const visited = new Set();
@@ -207,6 +212,7 @@ export async function resolveAppUrl(
   for (let hop = 0; hop < 6; hop++) {
     combined.throwIfAborted();
     const parsed = publicUrl(raw);
+    await authorize(parsed.href);
     if (!platformOf(parsed.href) && !shortHosts.has(parsed.hostname))
       throw Error("APP_URL_PLATFORM_DENIED");
     if (!shortHosts.has(parsed.hostname)) contentIdentity(parsed.href);

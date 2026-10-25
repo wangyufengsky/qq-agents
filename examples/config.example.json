@@ -53,7 +53,24 @@
       "persona": "请在管理台设置此角色的人格。",
       "aliases": [],
       "ownerIds": [],
-      "allow": { "groups": [], "users": [] }
+      "allow": {
+        "groups": [],
+        "users": []
+      },
+      "maxConsecutiveSends": 3,
+      "network": {
+        "publicUrls": []
+      },
+      "apps": {
+        "enabled": false,
+        "hours": {
+          "enabled": true,
+          "scope": "autonomous",
+          "start": "09:00",
+          "end": "22:00",
+          "timezone": "Asia/Shanghai"
+        }
+      }
     },
     {
       "id": "agent-b",
@@ -64,7 +81,24 @@
       "persona": "请在管理台设置此角色的人格。",
       "aliases": [],
       "ownerIds": [],
-      "allow": { "groups": [], "users": [] }
+      "allow": {
+        "groups": [],
+        "users": []
+      },
+      "maxConsecutiveSends": 3,
+      "network": {
+        "publicUrls": []
+      },
+      "apps": {
+        "enabled": false,
+        "hours": {
+          "enabled": true,
+          "scope": "autonomous",
+          "start": "09:00",
+          "end": "22:00",
+          "timezone": "Asia/Shanghai"
+        }
+      }
     }
   ]
 }

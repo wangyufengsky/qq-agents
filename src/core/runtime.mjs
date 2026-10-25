@@ -1,3 +1,9 @@
+import { observeInput } from "./input-progress.mjs";
+import {
+  authorizeExternal,
+  grantExternal,
+  sourceCounts,
+} from "./outbound-policy.mjs";
 import { toolAvailable } from "../tools/catalog.mjs";
 import { beforeShareDelivery } from "../apps/sharing.mjs";
 import { appService } from "../apps/tools.mjs";
@@ -113,6 +119,13 @@ export class Runtime {
       privateRead: new Set(mem.state(conversation).disclosureTaint || []),
       grants: new Set(),
       sendCount: 0,
+      replyBatchSends: mem.state(conversation).replyBatchSends || 0,
+      inputBaseline: Math.max(
+        mem.state(conversation).readThroughSeq || 0,
+        mem.state(conversation).replyInputSeq || 0,
+      ),
+      requestEvents: new Set(),
+      externalGrants: new Map(),
       confirmedSends: 0,
       shownSeq: 0,
     };
@@ -126,6 +139,8 @@ export class Runtime {
   }
   async withContext(agentId, conversation, fn) {
     const ctx = this.makeContext(agentId, conversation);
+    // Deterministic owner/scheduler control replies have their own invocation budget.
+    ctx.internalDelivery = true;
     try {
       this.assertActive(ctx);
       return await fn(ctx);
@@ -389,12 +404,14 @@ export class Runtime {
         dedupe: key,
         payload: redactConfirmation
           ? {
+              trustedInput: true,
               messageNamespace: c.messageIdNamespace || "onebot",
               accountId: c.accountId,
               redacted: "owner-confirmation",
               timeKnown: e.timeKnown,
             }
           : {
+              trustedInput: true,
               messageNamespace: c.messageIdNamespace || "onebot",
               segments: e.segments,
               raw: e.raw,
@@ -520,6 +537,20 @@ export class Runtime {
     });
     this.conversations.begin(ctx);
     this.subject.begin(ctx, reasons);
+    ctx.scheduleRunId = reasons
+      .map((r) => r.taskRunId)
+      .find(
+        (id) =>
+          id &&
+          this.scheduler
+            .state(agentId)
+            .history.some(
+              (run) =>
+                run.id === id &&
+                run.target === conversation &&
+                run.status === "queued",
+            ),
+      );
     ctx.allowedTools = this.toolsFor(a, conversation);
     this.running.set(runKey, ctx);
     const state = mem.state(conversation);
@@ -702,10 +733,18 @@ export class Runtime {
         : "PRIVATE_RECOLLECTION_REQUIRES_DISCLOSURE_GRANT",
     );
   }
-  grant(token, ids) {
+  authorizeExternal(ctx, request, options) {
+    return authorizeExternal(this, ctx, request, options);
+  }
+  observeInput(ctx, items) {
+    observeInput(this, ctx, items);
+  }
+  grant(token, ids, requestId) {
     const ctx = this.capability(token);
     if (!Array.isArray(ids) || ids.some((id) => !ctx.privateRead.has(id)))
       throw Error("INVALID_DISCLOSURE_GRANT");
+    if (ctx.disclosureRequest?.requestId || requestId)
+      return grantExternal(ctx, ids, requestId);
     ids.forEach((id) => ctx.grants.add(id));
     return { granted: ids, conversation: ctx.conversation };
   }
@@ -828,9 +867,17 @@ export class Runtime {
         "DELIVERY_ALREADY_ATTEMPTED_" + previous.status.toUpperCase(),
       );
     }
-    if (ctx.sendCount >= a.maxSendsPerTurn) throw Error("TURN_SEND_LIMIT");
     const state = mem.state(ctx.conversation),
       now = this.now();
+    const batchUsed = proactive
+      ? 0
+      : ctx.internalDelivery
+        ? ctx.sendCount
+        : ctx.scheduleRunId
+          ? state.scheduleReplyCounts?.[ctx.scheduleRunId] || 0
+          : state.replyBatchSends || 0;
+    if (batchUsed >= (a.maxConsecutiveSends ?? a.maxSendsPerTurn))
+      throw Error("REPLY_BURST_LIMIT");
     const times = (state.sendTimes || []).filter((x) => now - x < 3600000);
     if (
       times.length >= a.behavior.maxSendPerHour ||
@@ -849,7 +896,22 @@ export class Runtime {
     };
     mem.store.transaction(() => {
       mem.reserveDelivery(requestId, ctx.conversation, intent);
-      mem.setState(ctx.conversation, { ...state, sendTimes: [...times, now] });
+      mem.setState(ctx.conversation, {
+        ...state,
+        sendTimes: [...times, now],
+        ...(!proactive && !ctx.internalDelivery
+          ? ctx.scheduleRunId
+            ? {
+                scheduleReplyCounts: {
+                  ...Object.fromEntries(
+                    Object.entries(state.scheduleReplyCounts || {}).slice(-99),
+                  ),
+                  [ctx.scheduleRunId]: batchUsed + 1,
+                },
+              }
+            : { replyBatchSends: batchUsed + 1 }
+          : {}),
+      });
       this.subject.reserveContact(ctx, proactive);
       mem.append({
         ...event,
@@ -858,6 +920,7 @@ export class Runtime {
         status: "pending",
       });
     });
+    ctx.replyBatchSends = (ctx.replyBatchSends ?? ctx.sendCount) + 1;
     ctx.sendCount++;
     try {
       this.assertActive(ctx);
@@ -940,16 +1003,21 @@ export class Runtime {
       })),
       disclosureRequests: [...this.capabilities.values()]
         .filter((c) =>
-          c.disclosureRequest?.records.some((id) => !c.grants.has(id)),
+          c.disclosureRequest?.requestId
+            ? !c.externalGrants?.has(c.disclosureRequest.requestId)
+            : c.disclosureRequest?.records.some((id) => !c.grants.has(id)),
         )
         .map((c) => ({
           token: c.token,
           agentId: c.agentId,
           conversation: c.conversation,
           reason: c.disclosureRequest.reason,
-          records: c.disclosureRequest.records.filter(
-            (id) => !c.grants.has(id),
-          ),
+          requestId: c.disclosureRequest.requestId,
+          request: c.disclosureRequest.request,
+          sourceClasses: sourceCounts(this, c),
+          records: c.disclosureRequest.requestId
+            ? c.disclosureRequest.records
+            : c.disclosureRequest.records.filter((id) => !c.grants.has(id)),
           granted: [...c.grants],
         })),
     };

@@ -364,7 +364,8 @@ async function requestOnce(url, addresses, limit, binary = false) {
   throw lastError ?? new Error(`请求失败：${url.hostname}`);
 }
 
-export async function safeFetch(urlString, maxChars = 50000) {
+export async function safeFetch(urlString, maxChars = 50000, { authorize = () => {} } = {}) {
+  await authorize(urlString);
   validateLimit(maxChars, 'maxChars');
   const MAX_REDIRECTS = 5;
   let { url, addresses } = await validateFetchUrl(urlString);
@@ -373,6 +374,7 @@ export async function safeFetch(urlString, maxChars = 50000) {
     if ([301, 302, 303, 307, 308].includes(result.statusCode)) {
       if (!result.redirect) throw new Error(`重定向缺少 Location: ${result.statusCode}`);
       const next = new URL(result.redirect, url).toString();
+      await authorize(next);
       ({ url, addresses } = await validateFetchUrl(next));
       continue;
     }

@@ -185,6 +185,11 @@ class AgentMemory {
       direction: row.direction,
       origin: row.origin,
       disclosure: disclosure(row.conversation, current),
+      privacy: row.conversation.startsWith("private:")
+        ? "private-conversation"
+        : row.conversation.startsWith("group:")
+          ? "group-conversation"
+          : "internal",
       epistemic: "Observed speech/event; not independently verified fact",
       body: summary ? row.body.slice(0, 200) : row.body,
       bodyTruncated: summary && row.body.length > 200,
@@ -206,6 +211,7 @@ class AgentMemory {
       origin: row.origin,
       metadata: parse(row.metadata),
       disclosure: "agent-judged-diary",
+      privacy: "personal-diary",
       protectedOperations: parse(row.metadata).protectedOperations === true,
     };
   }

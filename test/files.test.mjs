@@ -297,7 +297,7 @@ test("unknown/rejected file sends are not retried and count against limits", asy
       fileId: file.fileId,
       requestId: "later",
     }),
-    /TURN_SEND_LIMIT/,
+    /REPLY_BURST_LIMIT/,
   );
 });
 

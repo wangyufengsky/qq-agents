@@ -107,23 +107,5 @@ export function context(
   agentId = "agent-0",
   conversation = "group:20000",
 ) {
-  const mem = runtime.memory.bind(agentId),
-    ctx = {
-      token: "fixture-context-" + Math.random(),
-      agentId,
-      conversation,
-      expires: Date.now() + 100000,
-      privateRead: new Set(mem.state(conversation).disclosureTaint || []),
-      grants: new Set(),
-      sendCount: 0,
-      shownSeq: 0,
-      controller: new AbortController(),
-    };
-  ctx.persistTaint = () =>
-    mem.setState(conversation, {
-      ...mem.state(conversation),
-      disclosureTaint: [...ctx.privateRead],
-    });
-  runtime.capabilities.set(ctx.token, ctx);
-  return ctx;
+  return runtime.makeContext(agentId, conversation);
 }

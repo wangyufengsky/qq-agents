@@ -210,7 +210,7 @@ test("slang candidates require same-conversation evidence and never self-confirm
     /WRONG_SCOPE/,
   );
 });
-test("automatic learner is isolated from sending and research transmits the candidate term only", async (t) => {
+test("automatic learner keeps evidence local until exact research approval", async (t) => {
   const f = setup(t),
     a = f.runtime.agent("agent-0"),
     seen = [];
@@ -255,6 +255,21 @@ test("automatic learner is isolated from sending and research transmits the cand
   });
   f.runtime.learner.tick();
   await settle(f.runtime);
+  assert.deepEqual(seen, []);
+  assert.equal(
+    mem.state("group:20000").slang.lastResearchError,
+    "PRIVATE_RECOLLECTION_EXTERNAL_CALL_BLOCKED",
+  );
+  const ctx = context(f.runtime),
+    entry = mem.state(ctx.conversation).slang.entries[0];
+  ctx.learnerBackend = f.runtime.learner.backends.get(a.id);
+  await assert.rejects(
+    f.runtime.learner.research(ctx, { id: entry.id }),
+    /EXTERNAL_CALL_BLOCKED/,
+  );
+  const pending = ctx.disclosureRequest;
+  f.runtime.grant(ctx.token, pending.records, pending.requestId);
+  await f.runtime.learner.research(ctx, { id: entry.id });
   assert.deepEqual(seen, [{ query: "鸽了" }]);
   assert.equal(mem.state("group:20000").slang.entries[0].status, "candidate");
   assert.equal(f.runtime.transports.get("qq-0").sent.length, 0);

@@ -4,6 +4,7 @@ import { appInfo, contentIdentity, resolveAppUrl, publicUrl } from "./urls.mjs";
 import { inAppHours, browserCursor } from "./policy.mjs";
 import { parseCards } from "./cards.mjs";
 import { ownedEvent } from "../tools/forward.mjs";
+import { requestedByHuman } from "../core/outbound-policy.mjs";
 import { allowed } from "../core/config.mjs";
 const LEDGER = "internal:app-browsing";
 export const clean = (v, max = 12000) =>
@@ -116,7 +117,11 @@ export class AppBrowsing {
       if (this.chains.get(id) === current) this.chains.delete(id);
     }
   }
-  active(ctx, platform, { spend = false, sharing = false } = {}) {
+  active(
+    ctx,
+    platform,
+    { spend = false, sharing = false, requested = false, network = false } = {},
+  ) {
     if (
       [...ctx.privateRead].some((id) =>
         /^(operations|operations-result):/.test(id),
@@ -132,7 +137,11 @@ export class AppBrowsing {
       (sharing && !p.sharing)
     )
       throw Error("APP_PERMISSION_DISABLED");
-    if (!inAppHours(p, r.clock())) throw Error("APP_OUTSIDE_HOURS");
+    if (
+      (spend || sharing || network) &&
+      !inAppHours(p, r.clock(), { requested })
+    )
+      throw Error("APP_OUTSIDE_HOURS");
     if (spend) {
       const now = r.now(),
         s = this.state(a.id),
@@ -245,9 +254,13 @@ export class AppBrowsing {
       hours: a.apps.hours,
     };
   }
-  async boards(ctx, { platform }) {
-    this.active(ctx, platform, { spend: true });
-    this.runtime.assertDisclosure(ctx, { external: false });
+  async boards(ctx, { platform, requestEventId }) {
+    const auth = this.runtime.authorizeExternal(
+      ctx,
+      { tool: "app_boards", args: { platform } },
+      { requestEventId, fixed: true },
+    );
+    this.active(ctx, platform, { spend: true, requested: auth.requested });
     const value = await this.adapter.perform(
       { platform, operation: "boards", streamId: "board-catalog" },
       { signal: ctx.controller.signal },
@@ -335,13 +348,30 @@ export class AppBrowsing {
         job.platform = prior.platform || args.platform;
         job.url = prior.url;
       }
-      const a = this.active(ctx, job.platform, { spend: true });
-      r.assertDisclosure(ctx, {
-        // Fixed feeds transmit only platform enums/limits, never recalled text.
-        external:
-          operation === "search" ||
-          (operation === "browse" && job.entry === "board"),
-      });
+      const request = {
+        tool: "app_" + operation,
+        args:
+          operation === "search"
+            ? { platform: job.platform, query: job.query }
+            : operation === "browse"
+              ? {
+                  platform: job.platform,
+                  entry: job.entry,
+                  ...(job.board ? { board: job.board } : {}),
+                }
+              : { platform: job.platform, url: job.url },
+      };
+      const requestEventId = args.requestEventId || stream?.job.requestEventId;
+      const fixed =
+        (operation === "browse" && job.entry !== "board") ||
+        (["read", "comments"].includes(operation) &&
+          prior?.origin === "app-browser" &&
+          !prior.source);
+      const requested = requestedByHuman(r, ctx, request, requestEventId);
+      this.active(ctx, job.platform, { network: true, requested });
+      r.authorizeExternal(ctx, request, { requestEventId, fixed });
+      const a = this.active(ctx, job.platform, { spend: true, requested });
+      job.requestEventId = requestEventId;
       const streamId = stream?.job.streamId || randomUUID();
       job.streamId = streamId;
       job.limit = Math.min(20, args.limit || stream?.job.limit || 5);
@@ -357,11 +387,20 @@ export class AppBrowsing {
         if (["read", "comments"].includes(operation)) {
           const resolved = await this.resolve(job.url, {
             signal: ctx.controller.signal,
+            authorize: (url) =>
+              r.authorizeExternal(
+                ctx,
+                {
+                  tool: "app_" + operation,
+                  args: { platform: job.platform, url },
+                },
+                { requestEventId, fixed: true },
+              ),
           });
           if (job.platform && resolved.platform !== job.platform)
             throw Error("APP_PLATFORM_MISMATCH");
           job.platform = resolved.platform;
-          this.active(ctx, job.platform);
+          this.active(ctx, job.platform, { network: true, requested });
           job.url = resolved.url;
         }
         const result = stream?.pending?.length
@@ -372,7 +411,7 @@ export class AppBrowsing {
               normalized: true,
             }
           : await this.adapter.perform(job, { signal: ctx.controller.signal });
-        this.active(ctx, job.platform);
+        this.active(ctx, job.platform, { network: true, requested });
         const fetchedAt = new Date(r.now()).toISOString(),
           rows = result.normalized
             ? result.items
