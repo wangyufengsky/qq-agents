@@ -297,6 +297,76 @@ test("N4 conflicts, missing source and incomplete target evidence reject atomica
   );
 });
 
+test("N4 alias import and observation-free restore reject conflicting target account evidence atomically", (t) => {
+  const f = setup(t);
+  f.manifest();
+  const originalPlan = f.plan();
+  const mutations = [
+    (p) => (p.accountId = "10001"),
+    (p) => (p.robotQQ = "10001"),
+    (p) => (p.raw = { self_id: "10001" }),
+    (p) => (p.robotQQ = false),
+    (p) => (p.raw = { self_id: Number.MAX_SAFE_INTEGER + 1 }),
+    (p) => (p.migration.sources[0].observation.robotQQ = "10001"),
+    (p) =>
+      p.migration.sources.push({
+        digest: "c".repeat(64),
+        observation: { accountId: "10001" },
+      }),
+  ];
+  const before = f.m.export().tables;
+  for (const mutate of mutations) {
+    const plan = structuredClone(originalPlan);
+    mutate(plan.events[1].payload);
+    assert.throws(() => importLegacy(f.m, plan), /ALIAS_ACCOUNT_MISMATCH/);
+    assert.deepEqual(f.m.export().tables, before);
+  }
+  importLegacy(f.m, originalPlan);
+  const data = f.m.export();
+  assert.equal(data.tables.message_observations.length, 0);
+  const target = new MemoryStore(":memory:");
+  t.after(() => target.close());
+  const other = target.bind("unrelated");
+  other.append({
+    dedupe: "sentinel",
+    conversation: chat,
+    kind: "message.received",
+    body: "synthetic",
+  });
+  const otherBefore = other.export().tables;
+  for (const mutate of mutations) {
+    const forged = structuredClone(data);
+    const p = JSON.parse(forged.tables.events[1].payload);
+    mutate(p);
+    forged.tables.events[1].payload = JSON.stringify(p);
+    assert.throws(
+      () => restoreExport(target.bind(agent), forged),
+      /ALIAS_ACCOUNT_MISMATCH/,
+    );
+    assert.deepEqual(target.bind(agent).export().tables, before);
+    assert.deepEqual(other.export().tables, otherBefore);
+  }
+});
+
+test("N4 matching target account fields permit alias import and observation-free JSON restore", (t) => {
+  const f = setup(t);
+  f.manifest();
+  const plan = f.plan();
+  for (const e of plan.events) {
+    e.payload.accountId = account;
+    e.payload.robotQQ = Number(account);
+    e.payload.raw = { self_id: Number(account) };
+    e.payload.migration.sources[0].observation.robotQQ = account;
+  }
+  assert.equal(importLegacy(f.m, plan).aliasesInserted, 2);
+  const data = f.m.export(),
+    target = new MemoryStore(":memory:");
+  t.after(() => target.close());
+  assert.equal(data.tables.message_observations.length, 0);
+  restoreExport(target.bind(agent), data);
+  assert.deepEqual(target.bind(agent).export().tables, data.tables);
+});
+
 test("N4 JSON reverse subject restore and consistent SQLite backup preserve aliases and observed UUIDs", async (t) => {
   const f = setup(t);
   f.manifest();
