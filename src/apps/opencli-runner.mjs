@@ -1,4 +1,5 @@
-import { zhihuSearchRows } from "./normalize.mjs";
+import { browserCursor } from "./policy.mjs";
+import { zhihuSearchRows, parseExactJson } from "./normalize.mjs";
 // Isolated child: fixed read adapters only. Never load model-provided code or commands.
 import { heyboxRead } from "./heybox.mjs";
 import fs from "node:fs";
@@ -66,7 +67,7 @@ async function main() {
       throw Error("APP_CURSOR_DENIED");
     const data = unwrap(
       await page.evaluate(
-        `async () =>{const r=await fetch(${JSON.stringify(u.href)},{credentials:'include',redirect:'error'});if(!r.ok)return {__httpError:r.status};return await r.json()}`,
+        `async () =>{const r=await fetch(${JSON.stringify(u.href)},{credentials:'include',redirect:'error'});if(!r.ok)return {__httpError:r.status};return (${parseExactJson.toString()})(await r.text())}`,
       ),
     );
     if (!data || typeof data !== "object") throw Error("APP_RESPONSE_INVALID");
@@ -258,24 +259,7 @@ async function main() {
           )
             throw Error("APP_CURSOR_DENIED");
           const data = await evalJson(page, next);
-          const rows = (data.data || []).map((x) => {
-            const t = x.target || {},
-              id = String(t.id || "");
-            return {
-              title: t.question?.title || t.title,
-              author: t.author?.name,
-              type: t.type,
-              description: t.excerpt,
-              url:
-                t.type === "answer"
-                  ? `https://www.zhihu.com/question/${t.question?.id}/answer/${id}`
-                  : t.type === "article"
-                    ? `https://zhuanlan.zhihu.com/p/${id}`
-                    : t.type === "question"
-                      ? `https://www.zhihu.com/question/${id}`
-                      : "",
-            };
-          });
+          const rows = zhihuSearchRows(data);
           return listing(
             rows,
             !data.paging?.is_end && data.paging?.next
@@ -439,10 +423,7 @@ async function main() {
     const result = await executeCommand(cmd, {}, false, {
       prepared: true,
       trace: "off",
-      siteSession:
-        job.platform === "xiaohongshu" && job.operation === "browse"
-          ? "persistent"
-          : "ephemeral",
+      siteSession: browserCursor(job) ? "persistent" : "ephemeral",
       keepTab: "false",
       windowMode: "background",
     });

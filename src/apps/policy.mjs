@@ -70,3 +70,10 @@ export const SUBJECT_APP_TOOLS = [
   "app_image",
   "app_share_propose",
 ];
+
+export function browserCursor(job) {
+  return (
+    (job.platform === "xiaohongshu" && job.operation === "browse") ||
+    (job.platform === "heybox" && job.operation === "search")
+  );
+}

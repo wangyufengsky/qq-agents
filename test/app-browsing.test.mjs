@@ -263,3 +263,59 @@ test("changing presentation page size does not change backend numbered page boun
   assert.deepEqual(batches, [2, 2]);
   assert.equal(second.items[0].id, "question/123/answer/3");
 });
+test("browser scroll cursors retain cached rows but reject live continuation after restart", async (t) => {
+  for (const job of [
+    { platform: "heybox", operation: "search", query: "游戏" },
+    { platform: "xiaohongshu", operation: "browse", entry: "recommend" },
+  ]) {
+    let calls = 0;
+    const prefix =
+      job.platform === "heybox"
+        ? "https://www.xiaoheihe.cn/app/bbs/link/"
+        : "https://www.xiaohongshu.com/explore/";
+    const ids =
+      job.platform === "heybox"
+        ? ["123", "456"]
+        : ["1234567890abcdef12345678", "1234567890abcdef12345679"];
+    const adapter = {
+      capabilities: () => [],
+      perform: async () => {
+        calls++;
+        return {
+          items: ids.map((id) => ({ url: prefix + id, title: id })),
+          next: { page: 2 },
+          coverage: "search-results-scroll",
+        };
+      },
+    };
+    const { runtime } = setup(t, adapter.perform);
+    runtime.agent("agent-0").apps.platforms = [job.platform];
+    const ctx = context(runtime),
+      first = await runtime.apps.perform(ctx, job.operation, {
+        ...job,
+        limit: 1,
+      });
+    runtime.apps = new AppBrowsing(runtime, { adapter });
+    const cached = await runtime.apps.perform(ctx, job.operation, {
+      ...job,
+      limit: 1,
+      cursor: first.nextCursor,
+    });
+    assert.equal(cached.items.length, 1);
+    assert.equal(cached.nextCursor, null);
+    assert.equal(calls, 1);
+    const next = await runtime.apps.perform(ctx, job.operation, {
+      ...job,
+      limit: 20,
+    });
+    runtime.apps = new AppBrowsing(runtime, { adapter });
+    await assert.rejects(
+      runtime.apps.perform(ctx, job.operation, {
+        ...job,
+        cursor: next.nextCursor,
+      }),
+      /APP_CURSOR_RESTARTED/,
+    );
+    assert.equal(calls, 2);
+  }
+});

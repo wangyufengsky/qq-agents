@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { AppAdapter } from "./adapter.mjs";
 import { appInfo, contentIdentity, resolveAppUrl, publicUrl } from "./urls.mjs";
-import { inAppHours } from "./policy.mjs";
+import { inAppHours, browserCursor } from "./policy.mjs";
 import { parseCards } from "./cards.mjs";
 import { ownedEvent } from "../tools/forward.mjs";
 import { allowed } from "../core/config.mjs";
@@ -313,7 +313,7 @@ export class AppBrowsing {
           throw Error("APP_CURSOR_INVALID");
         if (
           stream.epoch !== this.epoch &&
-          stream.platform === "xiaohongshu" &&
+          browserCursor(stream) &&
           !stream.pending?.length
         )
           throw Error("APP_CURSOR_RESTARTED");
@@ -343,7 +343,7 @@ export class AppBrowsing {
       job.backendLimit = stream?.job.backendLimit || job.limit;
       if (
         stream &&
-        job.platform === "xiaohongshu" &&
+        browserCursor(job) &&
         stream.epoch !== this.epoch &&
         stream.pending?.length
       )

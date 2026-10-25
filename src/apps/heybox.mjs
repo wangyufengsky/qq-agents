@@ -1,7 +1,5 @@
 import https from "node:https";
 import net from "node:net";
-import { randomBytes } from "node:crypto";
-const deviceId = randomBytes(16).toString("hex");
 import { signature } from "../../vendor/heybox/signature.mjs";
 import { validateFetchUrl } from "../../vendor/social-reader/safe-fetch.js";
 import { contentIdentity } from "./urls.mjs";
@@ -9,7 +7,6 @@ const paths = {
   recommend: "/bbs/app/feeds",
   board: "/bbs/app/topic/feeds",
   boards: "/bbs/app/topic/categories",
-  search: "/bbs/app/api/general/search/v1/web",
   read: "/bbs/app/link/tree",
   comments: "/bbs/app/link/tree",
 };
@@ -17,13 +14,7 @@ export async function requestHeybox(endpoint, params, cookie) {
   const url = new URL("https://api.xiaoheihe.cn" + endpoint);
   url.search = new URLSearchParams({
     os_type: "web",
-    app: "heybox",
-    client_type: "web",
-    version: "999.0.4",
-    web_version: "2.5",
-    device_info: "Chrome",
-    device_id: deviceId,
-    heybox_id: /(?:^|;\s*)heybox_id=(\d+)(?:;|$)/.exec(cookie || "")?.[1] || "",
+    version: "999.0.3",
     x_app: "heybox_website",
     x_client_type: "web",
     x_os_type: "Windows",
@@ -81,11 +72,16 @@ export async function requestHeybox(endpoint, params, cookie) {
             if (r.status !== "ok") {
               const message = String(r.msg || "");
               throw Error(
-                /login|登录|relogin/i.test(r.status + " " + message)
-                  ? "APP_LOGIN_REQUIRED"
-                  : /captcha|验证码|频繁/i.test(message)
-                    ? "APP_RATE_LIMITED"
-                    : "APP_UPSTREAM_FAILED",
+                /captcha|lack_token/i.test(r.status) ||
+                  /验证码|安全验证/.test(message)
+                  ? "APP_VERIFICATION_REQUIRED"
+                  : /login|unauthorized|登录|relogin/i.test(
+                        r.status + " " + message,
+                      )
+                    ? "APP_LOGIN_REQUIRED"
+                    : /频繁|限流/i.test(message)
+                      ? "APP_RATE_LIMITED"
+                      : "APP_UPSTREAM_FAILED",
               );
             }
             resolve(r.result || {});
@@ -139,6 +135,7 @@ function post(value) {
   };
 }
 export async function heyboxRead(page, job, { request = requestHeybox } = {}) {
+  if (job.operation === "search") return heyboxBrowserSearch(page, job);
   const cookies = await page.getCookies({ url: "https://api.xiaoheihe.cn" });
   const cookie = cookies
     .filter(
@@ -146,6 +143,7 @@ export async function heyboxRead(page, job, { request = requestHeybox } = {}) {
         (!x.domain || /(^|\.)xiaoheihe\.cn$/.test(x.domain)) &&
         [
           "heybox_id",
+          "user_heybox_id",
           "x_xhh_heyboxid",
           "user_pkey",
           "pkey",
@@ -172,13 +170,6 @@ export async function heyboxRead(page, job, { request = requestHeybox } = {}) {
     if (!/^\d{1,20}$/.test(job.board || "")) throw Error("APP_BOARD_REQUIRED");
     params.topic_id = job.board;
   }
-  if (op === "search")
-    Object.assign(params, {
-      keyword: job.query,
-      q: job.query,
-      search_type: "link",
-      tab_type: "link",
-    });
   if (op === "read" || op === "comments")
     params.link_id = contentIdentity(job.url, "heybox").id;
   const result = await request(endpoint, params, cookie);
@@ -234,5 +225,42 @@ export async function heyboxRead(page, job, { request = requestHeybox } = {}) {
         : op === "board"
           ? "forum-posts"
           : "search-results",
+  };
+}
+
+// Use the authenticated official web UI for search: its browser owns verification and cookies.
+export async function heyboxBrowserSearch(page, job) {
+  const target =
+    "https://www.xiaoheihe.cn/app/search/list?" +
+    new URLSearchParams({ q: job.query, search_type: "link" });
+  const step = Math.min(50, Math.max(1, Number(job.cursor?.page) || 1));
+  if (step === 1) await page.goto(target);
+  const data = await page.evaluate(`async () => {
+    const expected = new URL(${JSON.stringify(target)});
+    if (location.origin !== expected.origin || location.pathname !== expected.pathname || new URL(location.href).searchParams.get('q') !== expected.searchParams.get('q')) return {error:'APP_CURSOR_RESTARTED'};
+    const selector = 'a.hb-cpt__bbs-list-content[href*="/app/bbs/link/"]';
+    const before = document.querySelectorAll(selector).length;
+    if (${step} > 1) { window.scrollTo(0,document.body.scrollHeight); document.scrollingElement?.scrollTo(0,document.scrollingElement.scrollHeight); }
+    const deadline = Date.now()+8000;
+    while (Date.now()<deadline) {
+      await new Promise(r=>setTimeout(r,500));
+      const count=document.querySelectorAll(selector).length;
+      if ((${step}===1 && count>0) || (${step}>1 && count>before)) break;
+    }
+    const nodes=Array.from(document.querySelectorAll(selector));
+    if (!nodes.length) {
+      const text=document.body.innerText;
+      if (/验证码|安全验证/.test(text)) return {error:'APP_VERIFICATION_REQUIRED'};
+      if (/登录后搜索|请先登录/.test(text)) return {error:'APP_LOGIN_REQUIRED'};
+      if (!/暂无|没有找到|无相关/.test(text)) return {error:'APP_SEARCH_UNAVAILABLE'};
+    }
+    return {items:nodes.slice(-40).map(a=>({url:a.href,title:a.querySelector('.bbs-content__title')?.innerText||'',author:a.querySelector('.list-content__username')?.innerText||'',description:a.querySelector('.bbs-content__content')?.innerText||'',cover:a.querySelector('.bbs-content__imgs-wrapper img')?.src||''})),more:nodes.length>0 && (${step}===1 || nodes.length>before)};
+  }`);
+  if (data?.error) throw Error(data.error);
+  if (!Array.isArray(data?.items)) throw Error("APP_RESPONSE_INVALID");
+  return {
+    items: data.items,
+    next: data.more && step < 50 ? { page: step + 1 } : null,
+    coverage: "search-results-scroll",
   };
 }
