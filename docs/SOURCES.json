@@ -79,7 +79,9 @@
     {
       "path": "vendor/social-reader/reader.mjs",
       "origin": "local-bridge",
-      "sha256": "5ee5d2d7f8e2028765e079fd912f73401b16ce62a6d6496d5f341a1c2dc430b0"
+      "sha256": "018d87c7e58b627ef1d3d453925dc642a7e559229ab0974580813182b033ebd1",
+      "upstreamSha256": "5ee5d2d7f8e2028765e079fd912f73401b16ce62a6d6496d5f341a1c2dc430b0",
+      "modification": "Supply the required objective argument discovered from the current Exa MCP search schema; preserve native/index coverage distinction."
     },
     {
       "path": "vendor/social-reader/safe-fetch.js",

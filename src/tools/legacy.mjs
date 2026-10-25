@@ -99,7 +99,15 @@ export const legacyDefinitions = {
       resourceId: str.min(1).max(256).optional(),
       offset: z.number().int().min(0).optional(),
       limit: z.number().int().min(1).max(100).optional(),
-      maxChars: z.number().int().min(512).max(16000).optional(),
+      maxChars: z
+        .number()
+        .int()
+        .min(512)
+        .max(16000)
+        .describe(
+          "Maximum 16000 characters; omit for default and use pagination for more content.",
+        )
+        .optional(),
       maxDepth: z.number().int().min(0).max(5).optional(),
     }),
   ],
@@ -200,6 +208,8 @@ export const legacyDefinitions = {
   ops_result: ["仅原管理员私聊读取已确认请求的结果。", object({ id })],
 };
 export function taintMedia(ctx, meta) {
+  if (meta?.protectedOperations)
+    ctx.privateRead.add("operations:media:" + meta.id);
   const sources = meta?.sources || [meta].filter(Boolean);
   for (const source of sources)
     if (source.conversation && source.conversation !== ctx.conversation)

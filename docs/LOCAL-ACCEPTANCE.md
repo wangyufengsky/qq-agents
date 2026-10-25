@@ -43,3 +43,20 @@ DSH_HOME=/path/to/independent-dsh-home npm run acceptance:live -- --allow-real-m
 采集前明确发送者、私聊对象和测试标记；只采集用户新建的测试内容。此脚本不会主动连接生产 QQ 网关采集，也不会把真实 QQ 发件人或收件人绑定到出站连接。样本可能含私人标识、音频或附件地址，必须留在忽略的私有工作目录，不能提交 Git。
 
 浏览器选择文件、提交导入、列表成功提示和本机试听需要单独通过实际 UI 验证。原生音频输入或转录能力取决于后端；成功处理/转发音频不代表模型已理解语音内容。
+
+## 0.4.0 可选验收
+
+新增工具后必须在**独立测试 profile**刷新由 `dsh-bundle.mjs` 生成的 guard 白名单，并重启自己的测试 Host；只更新源码不足以让已有 bundle 暴露新工具。不要修改日常桌面 profile 或生产 QQ preset。
+
+- `--case memory-quality`：复杂合成场景，严格校验六类结论及证据 UUID，保存结构化结果与需要人工阅读的解释。检查原始错误，不将主判断通过视作每次工具参数都正确。
+- `--tool-config PRIVATE_JSON --case external-search`：JSON 是 `toolServers` 数组，需明确配置并允许真实 Exa 工具；脚本交给两个后端发现实际 schema。消耗外部服务额度。
+- `--case external-image`：测试配置需提供 `artifact` 服务器，其真实目录必须包含 `read_image_artifact`。它用于读取一张已有的真实生成图片，不应伪装为生成服务。断言接收图片 SHA-256 与登记 ID 相同。该私有验收适配器不是项目内置工具。
+- `--case tts`：本机需已安装 Tingting 音色；使用实际 macOS `say`。系统语音组件受限时可能返回空音频，FFprobe 会拒绝。不得用合成蜂鸣替代后声称语音生成通过；Windows/Linux 明确不支持此本机提供者。
+- `--case group-scope`：只创建合成群活动和有向链接，由模型实际汇总并发 at 段至本机网关。不是实际 @ 群友。
+
+```sh
+npm run memory:benchmark -- --synthetic --count 200000 --out work/new-benchmark
+npm run memory:backup -- --source /path/to/instance/memory.sqlite --destination /path/to/new-backup.sqlite
+```
+
+基准要求新数据库，默认 20 万条，上限 200 万条；耗时和磁盘占用随规模增加。仅使用合成记录。备份目标必须不存在；同一命令可以从备份恢复到新路径，不能覆盖运行中数据。备份命令直接只读打开源 SQLite，不触发 schema 升级。

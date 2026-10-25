@@ -204,3 +204,32 @@ export function fitScene(item, maxChars) {
   }
   return copy;
 }
+
+// Page-local deduplication: keep stable record IDs and explicit references to
+// earlier returned scenes. Never merge unrelated temporal neighborhoods.
+export function deduplicateScenes(items) {
+  const seen = new Map();
+  return items.map((item) => {
+    if (!item.scene) return item;
+    const scene = structuredClone(item.scene);
+    scene.sharedRecords = [];
+    for (const key of ["messages", "quoted"]) {
+      scene[key] = scene[key].filter((m) => {
+        const previous = seen.get(m.id);
+        if (previous && m.id !== scene.anchorId) {
+          scene.sharedRecords.push({
+            id: m.id,
+            sceneAnchorId: previous,
+            role: key,
+          });
+          return false;
+        }
+        seen.set(m.id, scene.anchorId);
+        return true;
+      });
+    }
+    scene.participants = sceneParticipants(scene.messages);
+    scene.expandRelations = { tool: "memory_related", id: item.id };
+    return { ...item, scene };
+  });
+}

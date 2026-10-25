@@ -211,7 +211,7 @@ export class SocialReader {
     // Structured JSON argument, never shell interpolation. Restrict sources again after retrieval.
     const sites = platforms[platform].domains.map(d => `site:${d}`).join(' OR ');
     const args = ['call', 'exa.web_search_exa', '--args', JSON.stringify({
-      query: `(${sites}) ${query}`, numResults: Math.min(20, limit + 3),
+      query: `(${sites}) ${query}`, objective: `Find public ${platform} content relevant to the query, with canonical content URLs; exclude login pages.`, numResults: Math.min(20, limit + 3),
     }), '--output', 'json', '--timeout', '30000'];
     const {stdout} = await this.run(this.mcporter, args, 35000);
     return parseIndexedResults(JSON.parse(stdout), platform, limit);

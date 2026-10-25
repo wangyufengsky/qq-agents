@@ -32,12 +32,35 @@ const loopback = z.string().refine((s) => {
 const toolServer = z
   .object({
     id,
-    command: z.string().min(1),
+    transport: z.enum(["stdio", "http", "sse"]).default("stdio"),
+    command: z.string().min(1).optional(),
+    url: z
+      .string()
+      .url()
+      .refine((s) => {
+        const u = new URL(s);
+        return (
+          !u.username &&
+          !u.password &&
+          !u.search &&
+          !u.hash &&
+          (u.protocol === "https:" ||
+            (u.protocol === "http:" &&
+              ["127.0.0.1", "localhost", "[::1]"].includes(u.hostname)))
+        );
+      })
+      .optional(),
+    headers: z.record(z.string().regex(/^[A-Za-z0-9-]+$/), envName).default({}),
     args: z.array(z.string()).default([]),
     env: z.record(z.string(), envName).default({}),
     allowedTools: z.array(z.string()).min(1),
   })
-  .strict();
+  .strict()
+  .refine(
+    (s) =>
+      s.transport === "stdio" ? !!s.command && !s.url : !!s.url && !s.command,
+    "Select a command for stdio or URL for HTTP/SSE",
+  );
 export const configSchema = z
   .object({
     version: z.literal(1),
@@ -120,6 +143,7 @@ export const configSchema = z
             .array(z.string())
             .default([
               "memory_search",
+              "memory_related",
               "memory_read",
               "conversation_read",
               "diary_write",
