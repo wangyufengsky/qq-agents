@@ -105,15 +105,20 @@ function direction(isSelf, value, sender, account) {
 export function adaptMessage(row, format, binding, source) {
   if (!row || typeof row !== "object" || Array.isArray(row))
     throw Error("INVALID_RECORD");
-  consistent(row, ["messageId", "message_id"], id);
-  consistent(row, ["senderId", "userId", "user_id", "sender_qq"], id);
-  consistent(
+  const messageId = consistent(row, ["messageId", "message_id"], id) ?? null;
+  const normalizedSender =
+    consistent(row, ["senderId", "userId", "user_id", "sender_qq"], id) ?? null;
+  const normalizedTime = consistent(
     row,
     ["occurredAt", "time", "timestamp", "unix_time"],
     originalTime,
   );
-  consistent(row, ["conversation", "key"], conversation);
-  consistent(row, ["isSelf", "is_self"]);
+  const normalizedConversation = consistent(
+    row,
+    ["conversation", "key"],
+    conversation,
+  );
+  const isSelf = consistent(row, ["isSelf", "is_self"]);
   let event, metadata;
   if (format === "qq-export-v1") {
     if (row.schema_version !== 1) throw Error("UNSUPPORTED_EXPORT_SCHEMA");
@@ -145,14 +150,14 @@ export function adaptMessage(row, format, binding, source) {
     const iso = originalTime(row.timestamp),
       unix = originalTime(row.unix_time);
     if (iso && unix && iso !== unix) throw Error("CONTRADICTORY_TIMESTAMPS");
-    const senderId = id(row.sender_qq);
+    const senderId = normalizedSender;
     event = {
       agentId: mapped.agentId,
       accountId: account,
       conversation: conversation(row.conversation),
-      messageId: id(row.message_id),
+      messageId,
       senderId,
-      direction: direction(row.is_self, undefined, senderId, account),
+      direction: direction(row.is_self, row.direction, senderId, account),
       body: row.text,
       occurredAt: iso || unix || "unknown",
     };
@@ -179,20 +184,19 @@ export function adaptMessage(row, format, binding, source) {
     if (row.role || row.reasoning || row.thinking || row.tool_calls)
       throw Error("MODEL_CONTENT_NOT_CHAT");
     const account = binding.accountId || null;
-    const senderId = id(row.senderId ?? row.userId ?? row.user_id);
-    const dir = direction(row.isSelf, row.direction, senderId, account);
+    const senderId = normalizedSender;
+    const dir = direction(isSelf, row.direction, senderId, account);
     const body = row.plain ?? row.body ?? row.text;
     if (typeof body !== "string") throw Error("UNRECOGNIZED_MESSAGE_BODY");
     event = {
       agentId: binding.agentId,
       accountId: account,
-      conversation: conversation(row.conversation ?? row.key),
-      messageId: id(row.messageId ?? row.message_id),
+      conversation: conversation(normalizedConversation),
+      messageId,
       senderId: senderId || (dir === "out" ? account : null),
       direction: dir,
       body,
-      occurredAt:
-        originalTime(row.occurredAt ?? row.time ?? row.timestamp) || "unknown",
+      occurredAt: normalizedTime || "unknown",
     };
     metadata = {
       senderName: row.sender_name ?? row.senderName ?? row.sender ?? null,

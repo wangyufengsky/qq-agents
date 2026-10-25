@@ -474,6 +474,7 @@ export function importLegacy(memory, plan) {
           legacy: { ...s.value.legacy, ...old.legacy },
           migrationImported: true,
         });
+      else memory.setState(s.conversation, { ...old, paused: true });
     }
     // Explicit exports can contain conversations absent from the bounded cache.
     for (const conversation of new Set(
@@ -481,13 +482,12 @@ export function importLegacy(memory, plan) {
         .filter((e) => e.kind === "legacy.message-observation")
         .map((e) => e.conversation),
     ))
-      if (!memory.state(conversation).migrationImported)
-        memory.setState(conversation, {
-          ...memory.state(conversation),
-          paused: true,
-          readThroughSeq: memory.state(conversation).readThroughSeq || 0,
-          migrationImported: true,
-        });
+      memory.setState(conversation, {
+        ...memory.state(conversation),
+        paused: true,
+        readThroughSeq: memory.state(conversation).readThroughSeq || 0,
+        migrationImported: true,
+      });
     for (const file of plan.files)
       memory.db
         .prepare("INSERT OR IGNORE INTO migrations VALUES(?,?,?,?)")

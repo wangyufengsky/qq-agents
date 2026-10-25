@@ -283,6 +283,48 @@ function legacyDb(file) {
   }
   db.close();
 }
+test("empty aliases do not hide valid IDs, senders or original times", (t) => {
+  const { source, plan, store } = setup(t, []);
+  write(path.join(source, "history/one.jsonl"), {
+    conversation: "",
+    key: "group:20000",
+    messageId: "",
+    message_id: "11",
+    senderId: "",
+    userId: "30000",
+    time: "",
+    timestamp: "2026-10-19T12:00:00+08:00",
+    text: "retained",
+  });
+  const p = plan();
+  assert.equal(p.rejected.length, 0);
+  assert.equal(p.events[0].messageId, "11");
+  assert.equal(p.events[0].senderId, "30000");
+  assert.equal(p.events[0].occurredAt, "2026-10-19T04:00:00.000Z");
+  importLegacy(store.bind("fish"), p);
+});
+test("incremental imports reapply pause while preserving existing progress and same-source copied ID-less exports", (t) => {
+  const { source, archive, opts, root, plan, store } = setup(t, [
+      row({ message_id: "" }),
+    ]),
+    m = store.bind("fish");
+  opts.exportSourceId = "fixture-export-series";
+  const p = plan();
+  importLegacy(m, p);
+  m.setState("group:20000", {
+    ...m.state("group:20000"),
+    paused: false,
+    readThroughSeq: 55,
+    session: { id: "keep" },
+  });
+  const copied = path.join(root, "next-export.jsonl");
+  fs.copyFileSync(archive, copied);
+  const again = inspectLegacy(source, { ...opts, exportFiles: [copied] });
+  assert.equal(importLegacy(m, again).inserted, 0);
+  assert.equal(m.state("group:20000").paused, true);
+  assert.equal(m.state("group:20000").readThroughSeq, 55);
+  assert.deepEqual(m.state("group:20000").session, { id: "keep" });
+});
 test("contradictory aliases reject, but distinct cache text/quote/tail representations survive", (t) => {
   const { source, store, plan } = setup(t, []),
     state = path.join(source, "state/social-v2.json");
