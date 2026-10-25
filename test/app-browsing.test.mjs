@@ -58,7 +58,7 @@ test("browser cursors, history and card references are isolated by agent", async
     cursor: first.nextCursor,
   });
   assert.equal(next.items.length, 0);
-  assert.equal(next.nextCursor, null);
+  assert(next.nextCursor);
   assert.equal(runtime.apps.history("agent-1").items.length, 0);
   assert.equal(runtime.apps.history("agent-0").items.length, 1);
   const reopened = new AppBrowsing(runtime, {
@@ -190,4 +190,48 @@ test("permission revocation cancels late browser output before records commit", 
   resolve({ items: [{ title: "late", url }], coverage: "listing" });
   await assert.rejects(pending, /PERMISSION_DISABLED/);
   assert(runtime.apps.history("agent-0").items.every((x) => !x.ok));
+});
+test("long article bodies expose truncation and can be continued locally", async (t) => {
+  const text = "x".repeat(15000) + " END-OF-ARTICLE";
+  const { runtime } = setup(t, async () => ({
+    items: [{ title: "长文", url, content: text }],
+    coverage: "answer-text",
+  }));
+  runtime.agent("agent-0").tools.push("app_record");
+  const ctx = context(runtime),
+    first = await runtime.callTool(ctx, "app_browse", {
+      platform: "zhihu",
+      entry: "recommend",
+    });
+  const row = first.items[0];
+  assert(row.textTruncated);
+  assert(row.nextTextOffset > 0);
+  const next = await runtime.callTool(ctx, "app_record", {
+    recordId: row.recordId,
+    offset: row.nextTextOffset,
+    maxChars: 16000,
+  });
+  assert(next.text.endsWith("END-OF-ARTICLE"));
+  assert.equal(next.nextTextOffset, null);
+  assert.equal(next.textTruncated, false);
+});
+test("public app records can be re-read in another allowed chat without a disclosure grant", async (t) => {
+  const { runtime } = setup(t, async () => ({
+    items: [{ title: "公开资料", url, content: "正文" }],
+    coverage: "answer-text",
+  }));
+  const origin = context(runtime),
+    source = (
+      await runtime.callTool(origin, "app_browse", {
+        platform: "zhihu",
+        entry: "recommend",
+      })
+    ).items[0];
+  const other = context(runtime, "agent-0", "group:20001");
+  const result = await runtime.callTool(other, "app_read", {
+    recordId: source.recordId,
+  });
+  assert.equal(result.items[0].text, "正文");
+  assert.equal(other.disclosureRequest, undefined);
+  assert.equal(other.privateRead.size, 0);
 });

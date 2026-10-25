@@ -1,3 +1,4 @@
+import { taintMedia } from "../tools/legacy.mjs";
 import { createHash } from "node:crypto";
 import { safeFetchBuffer } from "../../vendor/social-reader/safe-fetch.js";
 import { imageMime } from "../tools/media.mjs";
@@ -162,7 +163,7 @@ export async function fetchImage(service, ctx, { recordId }) {
   const record = service.get(ctx, recordId),
     r = service.runtime;
   service.active(ctx, record.platform, { spend: true });
-  r.assertDisclosure(ctx, { external: true });
+  r.assertDisclosure(ctx);
   if (!r.media) throw Error("MEDIA_UNAVAILABLE");
   if (!record.ok || !record.image) throw Error("APP_IMAGE_UNAVAILABLE");
   const result = await safeFetchBuffer(record.image, 8 * 1024 * 1024);
@@ -211,6 +212,9 @@ export async function sendShare(service, ctx, { recordId, comment, mediaId }) {
     const meta = r.media.metadata(ctx.agentId, mediaId);
     if (meta?.appRecordId !== recordId)
       throw Error("APP_IMAGE_SOURCE_MISMATCH");
+    taintMedia(ctx, meta);
+    unrestricted(ctx);
+    r.assertDisclosure(ctx);
     segments.push(r.media.segment(ctx.agentId, mediaId));
   }
   const appShare = {

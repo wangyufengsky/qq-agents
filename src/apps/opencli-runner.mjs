@@ -300,7 +300,7 @@ async function main() {
               {
                 id: ident.id.split("/").at(-1),
                 limit,
-                "max-content": 12000,
+                "max-content": 64000,
                 "replies-limit": 2,
               },
             ),
@@ -430,16 +430,6 @@ async function main() {
     });
     process.stdout.write(JSON.stringify({ ok: true, result }));
   } catch (error) {
-    if (process.env.APPS_ACCEPTANCE_DEBUG === "1")
-      console.error(
-        JSON.stringify({
-          name: error.name,
-          code: error.code,
-          message: String(error.message)
-            .replace(/https?:\/\/[^\s]+/g, "[url]")
-            .slice(0, 240),
-        }),
-      );
     const msg = String(error.message || "");
     const code = /^APP_[A-Z_]+$/.test(msg)
       ? msg

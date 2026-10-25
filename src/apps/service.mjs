@@ -52,8 +52,18 @@ export function normalizeRows(raw, job) {
             x.snippet ||
             x.excerpt ||
             "",
-          12000,
+          64000,
         ),
+        sourceMayBeTruncated:
+          String(
+            x.content ||
+              x.text ||
+              x.description ||
+              x.desc ||
+              x.snippet ||
+              x.excerpt ||
+              " ",
+          ).length >= 64000 || !!x.truncated,
         image: (() => {
           try {
             return publicUrl(x.cover || x.image || x.pic || x.thumbnail || "")
@@ -162,7 +172,10 @@ export class AppBrowsing {
     if (!row) throw Error("APP_RECORD_NOT_FOUND");
     const value = JSON.parse(row.payload).app;
     if (!value) throw Error("APP_RECORD_NOT_FOUND");
-    if (row.conversation !== ctx.conversation) {
+    if (
+      row.conversation !== ctx.conversation &&
+      value.origin !== "app-browser"
+    ) {
       ctx.privateRead.add(row.id);
       ctx.persistTaint?.();
     }
@@ -181,6 +194,23 @@ export class AppBrowsing {
         buffered: x.pending?.length || 0,
         expiresAt: x.expiresAt,
       }));
+  }
+  preview(record, maxChars = 6000, offset = 0) {
+    const text = record.text || "",
+      end = Math.min(text.length, offset + maxChars);
+    return {
+      ...record,
+      text: text.slice(offset, end),
+      textOffset: offset,
+      storedTextChars: text.length,
+      textTruncated: end < text.length || !!record.sourceMayBeTruncated,
+      nextTextOffset: end < text.length ? end : null,
+    };
+  }
+  readStored(ctx, { recordId, offset = 0, maxChars = 6000 }) {
+    const record = this.get(ctx, recordId);
+    this.active(ctx, record.platform);
+    return this.preview(record, maxChars, offset);
   }
   history(agentId, offset = 0) {
     const rows = this.memory(agentId)
@@ -304,7 +334,9 @@ export class AppBrowsing {
         job.url = prior.url;
       }
       const a = this.active(ctx, job.platform, { spend: true });
-      r.assertDisclosure(ctx, { external: true });
+      r.assertDisclosure(ctx, {
+        external: !["read", "comments"].includes(operation),
+      });
       const streamId = stream?.job.streamId || randomUUID();
       job.streamId = streamId;
       job.limit = Math.min(20, args.limit || stream?.job.limit || 5);
@@ -357,19 +389,22 @@ export class AppBrowsing {
           }
           seen.add(key);
           items.push(
-            this.record(ctx, {
-              ...row,
-              ok: true,
-              origin: "app-browser",
-              operation,
-              coverage: result.coverage,
-              readingScope: result.coverage,
-              fetchedAt,
-              validated: ["read", "comments"].includes(operation),
-              source: prior?.source || null,
-              evidence: prior ? [prior.recordId] : [],
-              untrustedContent: true,
-            }),
+            this.preview(
+              this.record(ctx, {
+                ...row,
+                ok: true,
+                origin: "app-browser",
+                operation,
+                coverage: result.coverage,
+                readingScope: result.coverage,
+                fetchedAt,
+                validated: ["read", "comments"].includes(operation),
+                source: prior?.source || null,
+                evidence: prior ? [prior.recordId] : [],
+                untrustedContent: true,
+              }),
+              Math.min(6000, Math.floor(12000 / job.limit)),
+            ),
           );
         }
         const state = this.state(ctx.agentId),
@@ -382,7 +417,10 @@ export class AppBrowsing {
         let nextCursor = null;
         if (
           (pending.length || result.next) &&
-          items.length &&
+          (stream?.pages || 0) < 100 &&
+          (pending.length ||
+            result.normalized ||
+            JSON.stringify(result.next) !== JSON.stringify(job.cursor)) &&
           Object.keys(cursors).length < 20
         ) {
           nextCursor = randomUUID();
@@ -393,7 +431,8 @@ export class AppBrowsing {
             backendCursor: result.next,
             pending,
             coverage: result.coverage,
-            seen: [...seen].slice(-1000),
+            seen: [...seen].slice(-10000),
+            pages: (stream?.pages || 0) + (result.normalized ? 0 : 1),
             expiresAt: r.now() + 3600000,
             epoch: this.epoch,
           };
@@ -409,7 +448,11 @@ export class AppBrowsing {
           untrustedContent: true,
           videoUnderstanding: false,
           ...(!items.length
-            ? { notice: "本次没有新内容；不会把重复样本当成下一页。" }
+            ? {
+                notice: nextCursor
+                  ? "本页没有新的内容；仍有后端下一页，可继续读取。"
+                  : "本次没有新内容，也没有继续游标。",
+              }
             : {}),
         };
       } catch (error) {

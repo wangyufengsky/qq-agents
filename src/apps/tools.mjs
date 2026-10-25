@@ -7,6 +7,16 @@ const platform = z.enum(APP_NAMES),
   recordId = z.string().min(1).max(100),
   cursor = z.string().uuid().optional();
 export const appDefinitions = {
+  app_record: [
+    "本地继续阅读自己已保存的 App 正文；根据 nextTextOffset 续读，不重新调用平台。textTruncated/sourceMayBeTruncated 为真时不能声称已读全文。",
+    z
+      .object({
+        recordId,
+        offset: z.number().int().min(0).max(64000).default(0),
+        maxChars: z.number().int().min(500).max(16000).default(6000),
+      })
+      .strict(),
+  ],
   app_share_propose: [
     "将自己实际浏览记录交给主体意图模块：指定一个已授权目标和具体相关理由。目标聊天仍需 intent_decide 选择发送/暂缓/取消；提出不代表发送。",
     z
@@ -96,6 +106,7 @@ export function appService(runtime) {
 }
 export async function appTool(runtime, ctx, name, args) {
   const service = appService(runtime);
+  if (name === "app_record") return service.readStored(ctx, args);
   if (name === "app_share_propose") return proposeShare(service, ctx, args);
   if (name === "app_share_send") return sendShare(service, ctx, args);
   if (name === "app_image") return fetchImage(service, ctx, args);

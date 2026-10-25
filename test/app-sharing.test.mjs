@@ -113,3 +113,27 @@ test("share gates expiry, permission and image lineage before delivery", async (
   );
   assert.equal(runtime.transports.get("qq-0").sent.length, 0);
 });
+test("registered app images retain protected Operations provenance after deduplication", async (t) => {
+  const { runtime } = setup(t),
+    ctx = context(runtime),
+    source = await read(runtime, ctx),
+    mediaId = "b".repeat(64);
+  runtime.media.metadata = () => ({
+    id: mediaId,
+    appRecordId: source.recordId,
+    protectedOperations: true,
+  });
+  runtime.media.segment = () => ({
+    type: "image",
+    data: { file: "base64://fixture" },
+  });
+  await assert.rejects(
+    runtime.callTool(ctx, "app_share_send", {
+      recordId: source.recordId,
+      comment: "测试",
+      mediaId,
+    }),
+    /RESTRICTED_CONTEXT/,
+  );
+  assert.equal(runtime.transports.get("qq-0").sent.length, 0);
+});
