@@ -245,7 +245,7 @@ export class AppBrowsing {
   }
   async boards(ctx, { platform }) {
     this.active(ctx, platform, { spend: true });
-    this.runtime.assertDisclosure(ctx, { external: true });
+    this.runtime.assertDisclosure(ctx, { external: false });
     const value = await this.adapter.perform(
       { platform, operation: "boards", streamId: "board-catalog" },
       { signal: ctx.controller.signal },
@@ -335,7 +335,10 @@ export class AppBrowsing {
       }
       const a = this.active(ctx, job.platform, { spend: true });
       r.assertDisclosure(ctx, {
-        external: !["read", "comments"].includes(operation),
+        // Fixed feeds transmit only platform enums/limits, never recalled text.
+        external:
+          operation === "search" ||
+          (operation === "browse" && job.entry === "board"),
       });
       const streamId = stream?.job.streamId || randomUUID();
       job.streamId = streamId;

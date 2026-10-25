@@ -319,3 +319,49 @@ test("browser scroll cursors retain cached rows but reject live continuation aft
     assert.equal(calls, 2);
   }
 });
+
+test("private recollection can open fixed feeds but cannot submit query text or board names", async (t) => {
+  const { runtime, store } = setup(t, async () => ({
+    items: [{ url, title: "公开推荐" }],
+    next: null,
+    coverage: "personalized-recommendations",
+  }));
+  runtime.agent("agent-0").tools.push("app_search");
+  store.bind("agent-0").append({
+    connectionId: "qq-0",
+    conversation: "private:30000",
+    senderId: "30000",
+    kind: "message.received",
+    direction: "in",
+    body: "合成私聊兴趣 科技",
+    dedupe: "private-interest",
+  });
+  const ctx = context(runtime);
+  await runtime.callTool(ctx, "memory_search", { query: "合成私聊兴趣" });
+  assert(ctx.privateRead.size > 0);
+  const feed = await runtime.callTool(ctx, "app_browse", {
+    platform: "zhihu",
+    entry: "recommend",
+  });
+  assert.equal(feed.items.length, 1);
+  await assert.rejects(
+    runtime.callTool(ctx, "app_search", { platform: "zhihu", query: "科技" }),
+    /PRIVATE_RECOLLECTION_EXTERNAL_CALL_BLOCKED/,
+  );
+  await assert.rejects(
+    runtime.callTool(ctx, "app_browse", {
+      platform: "zhihu",
+      entry: "board",
+      board: "科技",
+    }),
+    /PRIVATE_RECOLLECTION_EXTERNAL_CALL_BLOCKED/,
+  );
+  ctx.privateRead.add("operations:fixture");
+  await assert.rejects(
+    runtime.callTool(ctx, "app_browse", {
+      platform: "zhihu",
+      entry: "recommend",
+    }),
+    /RESTRICTED/,
+  );
+});
