@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { mdToPlain } from "../../vendor/dsh-qq/md-to-plain.js";
 import {
   extractForwardIds,
   formatForwardResponse,
@@ -32,6 +33,90 @@ function segments(node) {
         ? [c]
         : [];
 }
+// Keep the wire payload and the local representation together: fallback nodes
+// contain exactly the text we send, while real message references retain only
+// segments already observed for that message. This is not a QQ download receipt.
+export function forwardPayload(events, agent, connection) {
+  const nodes = [],
+    messages = [];
+  for (const e of events) {
+    const referenced = e.type === "message.received" && e.messageId;
+    const content = referenced
+      ? e.payload?.segments
+      : [
+          {
+            type: "text",
+            data: { text: mdToPlain(e.body).slice(0, 8000) },
+          },
+        ];
+    const name = String(e.senderId || agent.name);
+    const uin = String(e.senderId || connection.accountId);
+    nodes.push(
+      referenced
+        ? { type: "node", data: { id: e.messageId } }
+        : {
+            type: "node",
+            data: { name, uin, content },
+          },
+    );
+    messages.push(
+      Array.isArray(content)
+        ? {
+            sender: { user_id: uin, nickname: name },
+            message: content,
+          }
+        : null,
+    );
+  }
+  const snapshot = messages.every(Boolean) ? { version: 1, messages } : null;
+  if (snapshot && Buffer.byteLength(JSON.stringify(snapshot)) > 2 * 1024 * 1024)
+    throw Error("FORWARD_TOO_LARGE");
+  return { nodes, snapshot };
+}
+
+function confirmedForward(runtime, ctx, root) {
+  if (root.direction !== "out" || !root.messageId) return null;
+  const mem = runtime.memory.bind(ctx.agentId);
+  const rows = mem.db
+    .prepare(
+      "SELECT * FROM events WHERE agent_id=? AND connection_id=? AND conversation=? AND message_id=? AND kind='message.sent' AND status='confirmed' AND direction='out'",
+    )
+    .all(ctx.agentId, root.connectionId, root.conversation, root.messageId);
+  if (rows.length !== 1) return null;
+  const sent = mem.event(rows[0], root.conversation),
+    p = sent.payload;
+  if (
+    !Array.isArray(p.eventIds) ||
+    !p.eventIds.length ||
+    p.eventIds.length > 50
+  )
+    return null;
+  const receipt = mem.delivery(p.requestId);
+  if (
+    receipt?.status !== "sent" ||
+    receipt.message_id !== sent.messageId ||
+    receipt.conversation !== sent.conversation
+  )
+    return null;
+  let snapshot = p.forwardSnapshot;
+  if (!snapshot) {
+    // Compatibility with confirmed 0.2.2 deliveries: their source event IDs
+    // were persisted before the network write, and events are append-only.
+    const sources = p.eventIds.map((id) =>
+      mem.db
+        .prepare("SELECT * FROM events WHERE agent_id=? AND id=? AND seq<?")
+        .get(ctx.agentId, id, sent.seq),
+    );
+    if (sources.some((x) => !x)) return null;
+    snapshot = forwardPayload(
+      sources.map((x) => mem.event(x, sent.conversation)),
+      runtime.agent(ctx.agentId),
+      runtime.connection(sent.connectionId),
+    ).snapshot;
+  }
+  if (snapshot?.version !== 1 || !Array.isArray(snapshot.messages)) return null;
+  return { eventId: sent.id, data: { messages: snapshot.messages } };
+}
 export async function readForward(
   runtime,
   ctx,
@@ -46,8 +131,11 @@ export async function readForward(
 ) {
   const root = ownedEvent(runtime, ctx, eventId),
     mem = runtime.memory.bind(ctx.agentId);
-  if (!root.payload?.segments) throw Error("FORWARD_NOT_FOUND");
-  const roots = extractForwardIds(root.payload.segments);
+  const confirmed = confirmedForward(runtime, ctx, root);
+  const localRoot = root.type === "message.sent" && confirmed;
+  const roots = localRoot
+    ? ["sent:" + confirmed.eventId]
+    : extractForwardIds(root.payload?.segments);
   const embedded = new Map();
   const rememberEmbedded = (segs) => {
     for (const segment of segs) {
@@ -58,7 +146,7 @@ export async function readForward(
         embedded.set(id, { messages: segment.data.content });
     }
   };
-  rememberEmbedded(root.payload.segments);
+  rememberEmbedded(root.payload?.segments || []);
   const knownRows = mem.db
     .prepare(
       "SELECT payload FROM events WHERE agent_id=? AND kind='forward.node' AND conversation=?",
@@ -81,7 +169,8 @@ export async function readForward(
     visited = new Set(),
     items = [],
     deferred = [],
-    errors = [];
+    errors = [],
+    warnings = [];
   if (!queue.length) throw Error("FORWARD_NOT_FOUND");
   while (queue.length) {
     const entry = queue.shift();
@@ -95,10 +184,22 @@ export async function readForward(
     let cached = mem.db
         .prepare("SELECT payload FROM events WHERE agent_id=? AND dedupe=?")
         .get(ctx.agentId, key),
-      data;
-    if (cached) data = JSON.parse(cached.payload).data;
-    else {
-      data = embedded.get(entry.id);
+      data,
+      source = "gateway",
+      warning;
+    if (cached) {
+      const archive = JSON.parse(cached.payload);
+      data = archive.data;
+      source = archive.source || "gateway";
+      warning = archive.warning;
+    } else {
+      if (localRoot && entry.id === roots[0]) {
+        data = confirmed.data;
+        source = "confirmed-send-sources";
+      } else {
+        data = embedded.get(entry.id);
+        if (data) source = "observed-inline-content";
+      }
       if (!data) {
         const a = runtime.assertActive(ctx),
           transport = runtime.transports.get(a.connectionId);
@@ -112,8 +213,18 @@ export async function readForward(
           );
           runtime.assertActive(ctx);
         } catch {
-          errors.push({ resourceId: entry.id, error: "FORWARD_FETCH_FAILED" });
-          continue;
+          runtime.assertActive(ctx);
+          if (confirmed && roots.length === 1 && entry.id === roots[0]) {
+            data = confirmed.data;
+            source = "confirmed-send-sources";
+            warning = "GATEWAY_READ_FAILED_USING_CONFIRMED_SEND_SOURCES";
+          } else {
+            errors.push({
+              resourceId: entry.id,
+              error: "FORWARD_FETCH_FAILED",
+            });
+            continue;
+          }
         }
       }
       if (Buffer.byteLength(JSON.stringify(data)) > 2 * 1024 * 1024)
@@ -124,10 +235,17 @@ export async function readForward(
         connectionId: root.connectionId,
         kind: "forward.archive",
         body: "合并转发原始归档",
-        payload: { rootEventId: eventId, resourceId: entry.id, data },
+        payload: {
+          rootEventId: eventId,
+          resourceId: entry.id,
+          data,
+          source,
+          warning,
+        },
         origin: "forward",
       });
     }
+    if (warning) warnings.push({ resourceId: entry.id, code: warning });
     const nodes = Array.isArray(data) ? data : data?.messages || [],
       previews = formatForwardResponse(data, {
         maxMessages: 100,
@@ -163,6 +281,7 @@ export async function readForward(
           rootEventId: eventId,
           resourceId: entry.id,
           index: i,
+          source,
         },
         origin: "forward-claimed-author",
       });
@@ -180,6 +299,7 @@ export async function readForward(
         nestedForwardIds: extractForwardIds(segs),
         disclosure: root.disclosure,
         attribution: "转发内容声称的作者；不是本人在当前会话的发言",
+        source,
       });
       for (const id of extractForwardIds(segs))
         if (!visited.has(id)) queue.push({ id, depth: entry.depth + 1 });
@@ -209,6 +329,7 @@ export async function readForward(
       offset + page.length < items.length ? offset + page.length : null,
     deferred: [...new Set(deferred)],
     errors,
+    warnings,
     complete: !deferred.length && !errors.length,
     rootEventId: eventId,
   };

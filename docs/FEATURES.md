@@ -26,9 +26,9 @@ DSH 的 MCP 结果可携带 audio block。当前 Codex 动态工具适配没有�
 
 ## 嵌套转发与动作
 
-`qq_forward_read` 仅展开已观察转发或其已归档子资源，默认 NapCat 使用 `get_forward_msg.message_id`，通用 OneBot 可将连接 `gateway` 设为 `onebot` 使用 `id`。QQ 的 `com.tencent.multimsg/contact` JSON 转发卡片也可提取其中已观察的 `meta.detail.resid`；其他卡片、畸形或过大 JSON 保持不透明。识别资源不保证网关支持拉取：拒绝时返回 `complete=false` 与 `FORWARD_FETCH_FAILED`，不触发重新发送。NapCat 已返回的 `forward.data.content` 会直接归档并展开，不重复拉取不可独立获取的内层 ID。最多五层、一次十个资源，分页返回；达到预算会给出可继续展开的资源。原文归档保留，节点中的图片可以继续读取。转发中的署名是来源声称的署名，不等于认证身份。
+`qq_forward_read` 仅展开已观察转发或其已归档子资源，默认 NapCat 使用 `get_forward_msg.message_id`，通用 OneBot 可将连接 `gateway` 设为 `onebot` 使用 `id`。QQ 的 `com.tencent.multimsg/contact` JSON 转发卡片也可提取其中已观察的 `meta.detail.resid`；其他卡片、畸形或过大 JSON 保持不透明。识别资源不保证网关支持拉取。对本项目已确认发送的消息，网关拒绝时可从成功回执关联的发送快照恢复外层，并读取已观察的内层资源；`source=confirmed-send-sources` 明确标记来源，`warnings` 保留网关读取失败。其他消息或无法取得的内层仍返回 `complete=false` 与 `FORWARD_FETCH_FAILED`，不触发重新发送。NapCat 已返回的 `forward.data.content` 会直接归档并展开，不重复拉取不可独立获取的内层 ID。最多五层、一次十个资源，分页返回；达到预算会给出可继续展开的资源。原文归档保留，节点中的图片可以继续读取。转发中的署名是来源声称的署名，不等于认证身份。
 
-`qq_forward_send` 对真实收到的消息使用原消息 ID 保留附件；不具备可复用消息 ID 的归档节点按文字署名发送。`qq_send_poke` 只对当前私聊对象或核对过的群成员操作。`qq_send_burst` 每条独立回执，失败停止并保留已成功前缀。
+`qq_forward_send` 成功返回的 `eventId` 可直接交给 `qq_forward_read`，不必先获取 QQ 卡片。新发送在网络请求前持久化源消息段快照，只有已确认发送且身份、连接、会话、消息 ID 和回执一致才可使用；0.2.2 旧回执可关联当时已存在的源事件。深度、分页、资源预算、跨会话披露和暂停规则继续生效。对真实收到的消息使用原消息 ID 保留附件；不具备可复用消息 ID 的归档节点按文字署名发送。`qq_send_poke` 只对当前私聊对象或核对过的群成员操作。`qq_send_burst` 每条独立回执，失败停止并保留已成功前缀。
 
 官方表情读取使用 `fetch_custom_face`。收藏和备注沿用旧网关 `add_custom_face`/`modify_custom_face`，由工具白名单单独控制；目标网关不支持则明确失败。仅返回 URL 的表情用内部摘要 ID 读取，不能虚构可编辑 emoji ID。角色本地表情库不依赖这两个扩展。
 

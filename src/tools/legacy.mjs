@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { setTimeout as delay } from "node:timers/promises";
-import { ownedEvent, readForward } from "./forward.mjs";
+import { ownedEvent, readForward, forwardPayload } from "./forward.mjs";
 import { mdToPlain } from "../../vendor/dsh-qq/md-to-plain.js";
 import { safeFetchBuffer } from "../../vendor/social-reader/safe-fetch.js";
 import { modelScheduleSchema } from "./schedule-schema.mjs";
@@ -93,7 +93,7 @@ export const legacyDefinitions = {
     }),
   ],
   qq_forward_read: [
-    "展开自己已观察到的合并转发及嵌套转发，按预算分页；节点 ID 可继续读原文或附件。",
+    "展开已观察转发或 qq_forward_send 返回的 eventId，按预算分页；source 标明网关、内嵌内容或已确认发送来源，warnings 保留网关回查失败。节点 ID 可继续读原文或附件。",
     object({
       eventId: id,
       resourceId: str.min(1).max(256).optional(),
@@ -104,7 +104,7 @@ export const legacyDefinitions = {
     }),
   ],
   qq_forward_send: [
-    "将自己的已观察记录作为合并转发发送；保留来源署名，跨会话内容仍需披露授权。",
+    "将自己的已观察记录作为合并转发发送；返回 eventId 可继续展开。保留来源署名，跨会话内容仍需披露授权。",
     object({ requestId: id, eventIds: z.array(id).min(1).max(50) }),
   ],
   qq_send_poke: [
@@ -297,32 +297,25 @@ export async function legacyTool(runtime, ctx, name, args) {
   if (name === "qq_forward_send") {
     const events = args.eventIds.map((id) => ownedEvent(runtime, ctx, id));
     disclose(ctx);
-    const nodes = events.map((e) =>
-      e.type === "message.received" && e.messageId
-        ? { type: "node", data: { id: e.messageId } }
-        : {
-            type: "node",
-            data: {
-              name: String(e.senderId || a.name),
-              uin: String(
-                e.senderId || runtime.connection(a.connectionId).accountId,
-              ),
-              content: [
-                {
-                  type: "text",
-                  data: { text: mdToPlain(e.body).slice(0, 8000) },
-                },
-              ],
-            },
-          },
+    const { nodes, snapshot } = forwardPayload(
+      events,
+      a,
+      runtime.connection(a.connectionId),
     );
-    return runtime.deliver(ctx, {
+    const receipt = await runtime.deliver(ctx, {
       requestId: args.requestId,
       intent: { kind: "forward", eventIds: args.eventIds },
       body: "[合并转发] " + events.length + " 条记录",
-      metadata: { eventIds: args.eventIds },
+      metadata: { eventIds: args.eventIds, forwardSnapshot: snapshot },
       send: (t) => t.sendForward(ctx.conversation, nodes),
     });
+    const saved = runtime.memory
+      .bind(a.id)
+      .db.prepare(
+        "SELECT id FROM events WHERE agent_id=? AND dedupe=? AND kind='message.sent' AND status='confirmed'",
+      )
+      .get(a.id, "send:" + args.requestId + ":sent");
+    return { ...receipt, eventId: saved?.id };
   }
   if (name === "qq_send_poke") {
     const group = ctx.conversation.startsWith("group:"),
