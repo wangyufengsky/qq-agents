@@ -220,3 +220,105 @@ test("successful retry clears stale backend error while safe DSH error is diagno
   await f.runtime.wake("agent-0", "private:30000");
   assert.equal(f.runtime.faults.has("agent-0"), false);
 });
+
+function readiness(
+  t,
+  {
+    responses = [],
+    online = true,
+    account = "10001",
+    alive = true,
+    wsReady = true,
+  } = {},
+) {
+  const p = profile(t);
+  writeJson(path.join(p.workdir, "process.json"), record(p, 100));
+  let now = 0;
+  const calls = [];
+  const n = new NativeQQ([p], {
+    identity: () => (alive ? identity(p, 100) : null),
+    now: () => now,
+    wait: async (ms) => {
+      now += ms;
+    },
+    busy: async () => wsReady,
+    fetchImpl: async (url, options) => {
+      calls.push(url);
+      assert.equal(options.redirect, "error");
+      assert.equal(options.headers.authorization, "Bearer fixture-only");
+      if (responses.length) {
+        const response = responses.shift();
+        if (response instanceof Error) throw response;
+        return response;
+      }
+      return Response.json({
+        status: "ok",
+        retcode: 0,
+        data: url.endsWith("get_status")
+          ? { online, good: true }
+          : { user_id: account },
+      });
+    },
+  });
+  return { n, p, calls, elapsed: () => now };
+}
+test("native readiness waits through cold endpoint startup before bridge connection", async (t) => {
+  const f = readiness(t, {
+    responses: [
+      new TypeError("fetch failed", { cause: { code: "ECONNREFUSED" } }),
+    ],
+  });
+  await f.n.waitReady([f.p.id], 2000);
+  assert.equal(f.elapsed(), 500);
+  assert.equal(f.calls.length, 3);
+});
+test("native readiness bounds login and websocket waits and detects exited process", async (t) => {
+  const offline = readiness(t, { online: false });
+  await assert.rejects(
+    offline.n.waitReady([offline.p.id], 1000),
+    /NATIVE_LOGIN_REQUIRED/,
+  );
+  assert.equal(offline.elapsed(), 1000);
+  const ws = readiness(t, { wsReady: false });
+  await assert.rejects(ws.n.waitReady([ws.p.id], 1000), /NATIVE_READY_TIMEOUT/);
+  const dead = readiness(t, { alive: false });
+  await assert.rejects(dead.n.waitReady([dead.p.id]), /NATIVE_EXITED/);
+});
+test("native readiness fails immediately on auth, protocol or account mismatch", async (t) => {
+  for (const options of [
+    { responses: [new Response("credential", { status: 401 })] },
+    { responses: [new Response("credential")] },
+    { responses: [Response.json({ status: "failed", retcode: 1 })] },
+    { account: "99999" },
+  ]) {
+    const f = readiness(t, options);
+    await assert.rejects(
+      f.n.waitReady([f.p.id]),
+      /NATIVE_(READINESS_|ACCOUNT_MISMATCH)/,
+    );
+    assert.equal(f.elapsed(), 0);
+  }
+});
+
+test("native readiness retries response-body timeout but rejects malformed status", async (t) => {
+  const f = readiness(t, {
+    responses: [
+      {
+        ok: true,
+        json: async () => {
+          throw new DOMException("timeout", "AbortError");
+        },
+      },
+    ],
+  });
+  await f.n.waitReady([f.p.id], 2000);
+  assert.equal(f.elapsed(), 500);
+  const bad = readiness(t, {
+    responses: [Response.json({ status: "ok", retcode: 0, data: {} })],
+  });
+  await assert.rejects(
+    bad.n.waitReady([bad.p.id]),
+    /NATIVE_READINESS_INVALID_RESPONSE/,
+  );
+  assert.equal(bad.elapsed(), 0);
+});

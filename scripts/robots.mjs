@@ -104,6 +104,9 @@ async function connectAndResume() {
 }
 async function start() {
   await native.start();
+  await native.waitReady(
+    config.connections.filter((c) => c.enabled).map((c) => c.id),
+  );
   if (await portBusy(config.port)) {
     await api("status");
     await connectAndResume();

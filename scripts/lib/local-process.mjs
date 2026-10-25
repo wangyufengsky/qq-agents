@@ -117,13 +117,23 @@ export class NativeQQ {
       launch = spawn,
       kill = process.kill.bind(process),
       wait = sleep,
+      fetchImpl = fetch,
+      now = Date.now,
     } = {},
   ) {
     this.profiles = entries.map(nativeProfile);
     const ports = this.profiles.flatMap((p) => p.ports);
     if (new Set(ports).size !== ports.length)
       throw Error("NATIVE_PORT_COLLISION");
-    Object.assign(this, { identity, busy, launch, kill, wait });
+    Object.assign(this, {
+      identity,
+      busy,
+      launch,
+      kill,
+      wait,
+      fetch: fetchImpl,
+      now,
+    });
   }
   record(p) {
     const file = path.join(p.workdir, "process.json");
@@ -200,6 +210,68 @@ export class NativeQQ {
       if (!this.owns(p, record, id))
         throw Error("NATIVE_PID_OWNERSHIP_MISMATCH");
       writeJson(path.join(p.workdir, "process.json"), record);
+    }
+  }
+  async waitReady(ids, timeoutMs = 60000) {
+    for (const p of this.profiles.filter((p) => ids.includes(p.id))) {
+      const deadline = this.now() + timeoutMs;
+      let offline = false;
+      while (this.now() < deadline) {
+        const r = this.record(p),
+          i = this.identity(r?.pid);
+        if (!i) throw Error("NATIVE_EXITED_DURING_START");
+        if (!this.owns(p, r, i)) throw Error("NATIVE_PID_OWNERSHIP_MISMATCH");
+        try {
+          const config = readJson(
+            path.join(p.workdir, "config", `onebot11_${p.accountId}.json`),
+          );
+          const endpoint = config.network.httpServers.find((x) => x.enable);
+          const call = async (action) => {
+            const response = await this.fetch(`${p.httpUrl}/${action}`, {
+              method: "POST",
+              headers: {
+                authorization: `Bearer ${endpoint.token}`,
+                "content-type": "application/json",
+              },
+              body: "{}",
+              redirect: "error",
+              signal: AbortSignal.timeout(
+                Math.max(1, Math.min(3000, deadline - this.now())),
+              ),
+            });
+            if (!response.ok) throw Error("NATIVE_READINESS_HTTP_ERROR");
+            const body = await response.json().catch((error) => {
+              if (["AbortError", "TimeoutError"].includes(error.name))
+                throw error;
+              throw Error("NATIVE_READINESS_INVALID_RESPONSE");
+            });
+            if (body.status !== "ok" || body.retcode !== 0)
+              throw Error("NATIVE_READINESS_REJECTED");
+            return body.data;
+          };
+          const status = await call("get_status");
+          if (typeof status?.online !== "boolean")
+            throw Error("NATIVE_READINESS_INVALID_RESPONSE");
+          offline = !status.online;
+          if (!offline) {
+            const login = await call("get_login_info");
+            if (String(login?.user_id) !== p.accountId)
+              throw Error("NATIVE_ACCOUNT_MISMATCH");
+            if (status.good === false) throw Error("NATIVE_NOT_HEALTHY");
+            if (await this.busy(Number(new URL(p.wsUrl).port))) break;
+          }
+        } catch (error) {
+          // Only endpoint startup/timeout failures are retryable; auth, account and protocol errors are terminal.
+          if (
+            !["ECONNREFUSED", "ECONNRESET"].includes(error.cause?.code) &&
+            !["TimeoutError", "AbortError"].includes(error.name)
+          )
+            throw error;
+        }
+        await this.wait(Math.min(500, Math.max(0, deadline - this.now())));
+      }
+      if (this.now() >= deadline)
+        throw Error(offline ? "NATIVE_LOGIN_REQUIRED" : "NATIVE_READY_TIMEOUT");
     }
   }
   async stop() {

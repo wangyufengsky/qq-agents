@@ -11,7 +11,7 @@ node scripts/robots.mjs restart --data /absolute/private/bridge-data --resume
 node scripts/robots.mjs qq-stop --data /absolute/private/bridge-data
 ```
 
-`start` 默认保持全局暂停；`--resume` 在连接和模型目录检查成功后解除全局暂停，保留角色、会话各自的暂停偏好。`stop` 暂停并停止桥接，保留 QQ 和 DSH。启动失败不删除登录数据，也不通过反复重试掩盖错误。
+`start` 默认保持全局暂停；`--resume` 在连接和模型目录检查成功后解除全局暂停，保留角色、会话各自的暂停偏好。`stop` 暂停并停止桥接，保留 QQ 和 DSH。启动时对已启用的原生连接最多等待 60 秒，确认账号、在线状态与 WS 端口就绪后再连接桥接。端口未启动可短暂重试；身份、认证和协议错误立即终止，持续离线报告 `NATIVE_LOGIN_REQUIRED`。启动失败不删除登录数据。
 
 数据目录可包含 `deployment.json` 的 `codeRoot`，指向本地发布快照；省略时使用脚本所在项目。`secrets.json` 保存本地环境变量，只有桥接子进程会读取。`native-profiles.json` 的结构如下，必须留在私有数据目录，不能提交：
 
