@@ -77,8 +77,14 @@ export const mindDefinitions = {
       .strict(),
   ],
   intent_list: [
-    "读取主体意图状态和发送结果；已交接不能重复交接。",
-    z.object({ offset: z.number().int().min(0).default(0) }).strict(),
+    "读取主体意图状态和发送结果；可按目标和有效状态分页。已交接不能重复交接。",
+    z
+      .object({
+        offset: z.number().int().min(0).default(0),
+        target: text.regex(/^(group|private):\d+$/).optional(),
+        activeOnly: z.boolean().default(false),
+      })
+      .strict(),
   ],
   intent_update: [
     "取消或暂缓有效意图；需要 revision，不能修改已发送内容。",
@@ -152,7 +158,7 @@ export function mindTool(runtime, ctx, name, args) {
     throw Error("RESTRICTED_CONTEXT_MIND_WRITE_BLOCKED");
   if (name === "self_read")
     return {
-      current: identity.current(),
+      current: identity.withEvidence(identity.current()),
       turnSelfVersion: ctx.selfVersion,
       anchors: identity.anchors(a),
     };
@@ -162,7 +168,9 @@ export function mindTool(runtime, ctx, name, args) {
         ? identity.history()
         : identity.list("self_candidates");
     return {
-      items: rows.slice(args.offset, args.offset + 10),
+      items: rows
+        .slice(args.offset, args.offset + 10)
+        .map((row) => identity.withEvidence(row)),
       nextOffset: args.offset + 10 < rows.length ? args.offset + 10 : null,
     };
   }
@@ -183,9 +191,23 @@ export function mindTool(runtime, ctx, name, args) {
   }
   if (name === "intent_create") return runtime.subject.create(ctx, args);
   if (name === "intent_list") {
-    const rows = identity.list("intentions");
+    const rows = identity
+      .list("intentions")
+      .filter(
+        (i) =>
+          (!args.target || i.target === args.target) &&
+          (!args.activeOnly ||
+            ![
+              "cancelled",
+              "completed",
+              "expired",
+              "failed",
+              "unknown",
+            ].includes(i.status)),
+      );
     return {
       items: rows.slice(args.offset, args.offset + 20),
+      total: rows.length,
       nextOffset: args.offset + 20 < rows.length ? args.offset + 20 : null,
     };
   }

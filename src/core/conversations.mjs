@@ -131,11 +131,19 @@ export class ConversationEngine {
         const i = runtime.memory
           .bind(id)
           .identity.get("intentions", x.intentId);
-        return (
+        const valid =
           i.status === "handedoff" &&
           i.expiresAt > now &&
-          runtime.subject.targetAllowed(a, conversation)
-        );
+          runtime.subject.contactOpportunity(a, conversation);
+        if (!valid && i.status === "handedoff")
+          runtime.subject.transition(
+            id,
+            i,
+            i.expiresAt <= now ? "expired" : "deferred",
+            "queued contact opportunity no longer allowed",
+            { eligibleAt: now + a.subject.contactCooldownMs },
+          );
+        return valid;
       }
       return x.taskRunId || !x.seq || x.seq > (state.readThroughSeq || 0);
     });

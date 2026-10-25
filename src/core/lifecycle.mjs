@@ -1,4 +1,5 @@
 import { randomUUID, createHash } from "node:crypto";
+import { rememberSources, sourceHandoff } from "./context-handoff.mjs";
 export const SUBJECT = "@subject";
 export function stableInstructions(agent, self, subject = false, anchors = {}) {
   return [
@@ -63,6 +64,7 @@ export class ContextLifecycle {
           +(!!row.summaryOmitted || !!row.bodyTruncated),
         );
       }
+    rememberSources(m, ctx.conversation, items);
     const state = m.state(ctx.conversation),
       baseline = state.readThroughSeq || 0;
     const gap = db
@@ -90,6 +92,15 @@ export class ContextLifecycle {
     const important = notes.slice(0, 8);
     const subjectState = m.state(SUBJECT),
       a = this.runtime.config.agents.find((a) => a.id === agentId);
+    const intents = m.identity
+      .list("intentions")
+      .filter(
+        (x) =>
+          (conversation === SUBJECT || x.target === conversation) &&
+          !["cancelled", "completed", "expired", "failed", "unknown"].includes(
+            x.status,
+          ),
+      );
     return {
       conversation,
       subjectState:
@@ -116,21 +127,27 @@ export class ContextLifecycle {
         notes.length > important.length
           ? "更多未完成笔记需 work_notes 读取，未静默删除。"
           : "笔记是带来源的工作解释；原始事件可回查。",
-      intents: m.identity
-        .list("intentions")
-        .filter(
-          (x) =>
-            (conversation === SUBJECT || x.target === conversation) &&
-            !["cancelled", "completed", "expired"].includes(x.status),
-        )
-        .map((x) => ({
-          id: x.id,
-          target: x.target,
-          status: x.status,
-          topic: x.topic,
-          evidence: x.evidence,
-        }))
-        .slice(0, 30),
+      continuity: sourceHandoff(m, conversation),
+      intents: intents
+        .slice(0, 30)
+        .map(({ id, target, status, topic, evidence }) => ({
+          id,
+          target,
+          status,
+          topic,
+          evidence,
+        })),
+      intentsTotal: intents.length,
+      intentsOverflow: Math.max(0, intents.length - 30),
+      intentsContinuation:
+        intents.length > 30
+          ? {
+              tool: "intent_list",
+              offset: 30,
+              activeOnly: true,
+              ...(conversation === SUBJECT ? {} : { target: conversation }),
+            }
+          : null,
       deliveries: m.db
         .prepare(
           "SELECT request_id,status,message_id,conversation,created_at FROM deliveries WHERE agent_id=? AND (?='@subject' OR conversation=?) ORDER BY created_at DESC LIMIT 20",
@@ -243,6 +260,10 @@ export class ContextLifecycle {
     ctx.turnId = randomUUID();
     ctx.turnStartedAt = r.now();
     ctx.initialSession = !s.session;
+    ctx.sourceStartSeq =
+      m.db
+        .prepare("SELECT MAX(seq) AS seq FROM events WHERE agent_id=?")
+        .get(a.id).seq || 0;
     const history =
       ctx.conversation === SUBJECT
         ? { items: [] }
@@ -307,8 +328,18 @@ export class ContextLifecycle {
   async finish(ctx, outcome, backend) {
     const r = this.runtime,
       m = r.memory.bind(ctx.agentId),
-      a = r.config.agents.find((a) => a.id === ctx.agentId),
-      s = m.state(ctx.conversation);
+      a = r.config.agents.find((a) => a.id === ctx.agentId);
+    rememberSources(
+      m,
+      ctx.conversation,
+      m.db
+        .prepare(
+          "SELECT id,conversation,direction FROM events WHERE agent_id=? AND conversation=? AND seq>? AND kind IN ('app.observation','external.read','message.send-result') ORDER BY seq DESC LIMIT 12",
+        )
+        .all(ctx.agentId, ctx.conversation, ctx.sourceStartSeq || 0)
+        .reverse(),
+    );
+    const s = m.state(ctx.conversation);
     const record = m.identity.get("model_turns", ctx.turnId);
     m.identity.put("model_turns", {
       ...record,
@@ -328,12 +359,22 @@ export class ContextLifecycle {
         basis:
           "tracked text characters plus tool output; conservative estimate, excludes unknown backend overhead",
       };
-    const capacity = usage.capacityTokens || a.contextPolicy.capacityTokens;
+    const capacity =
+      usage.capacityTokens > 0
+        ? usage.capacityTokens
+        : a.contextPolicy.capacityTokens;
     const ratio =
       (usage.contextTokens + a.contextPolicy.reserveTokens) / capacity;
     const lifecycle = {
       ...s.lifecycle,
-      status: ratio >= 0.75 ? "organizing" : "active",
+      status:
+        ratio >= 0.75 ||
+        (s.lifecycle?.status === "organizing" &&
+          !(
+            usage.source === "measured" && ratio <= a.contextPolicy.recoverRatio
+          ))
+          ? "organizing"
+          : "active",
       ratio,
     };
     m.setState(ctx.conversation, {
@@ -347,9 +388,10 @@ export class ContextLifecycle {
       ...m.identity.get("model_turns", ctx.turnId),
       usage,
     });
-    if (ratio < 0.75 || ctx.controller.signal.aborted) return;
+    if (lifecycle.status !== "organizing" || ctx.controller.signal.aborted)
+      return;
     if (
-      backend.compact &&
+      backend?.compact &&
       s.session &&
       r.now() - (s.lifecycle?.lastCompactAt || 0) >=
         a.contextPolicy.compactCooldownMs
@@ -359,6 +401,7 @@ export class ContextLifecycle {
           session: s.session,
           signal: ctx.controller.signal,
         });
+        if (ctx.controller.signal.aborted) return;
         if (result?.usage) this.usage(ctx, result.usage);
         if (result?.requiresReinitialize) {
           this.retire(
@@ -373,7 +416,9 @@ export class ContextLifecycle {
           current = latest.usage;
         const reduced =
           current?.source === "measured" &&
-          current.contextTokens / capacity < a.contextPolicy.recoverRatio;
+          (current.contextTokens + a.contextPolicy.reserveTokens) /
+            (current.capacityTokens > 0 ? current.capacityTokens : capacity) <=
+            a.contextPolicy.recoverRatio;
         m.setState(ctx.conversation, {
           ...latest,
           lifecycle: {
@@ -381,6 +426,10 @@ export class ContextLifecycle {
             lastCompactAt: r.now(),
             compactResult: reduced ? "recovered" : "no-confirmed-reduction",
             status: reduced ? "active" : "organizing",
+            ratio: current
+              ? (current.contextTokens + a.contextPolicy.reserveTokens) /
+                (current.capacityTokens > 0 ? current.capacityTokens : capacity)
+              : ratio,
           },
         });
         if (reduced) return;
@@ -396,8 +445,12 @@ export class ContextLifecycle {
         });
       }
     }
+    if (ctx.controller.signal.aborted) return;
     // Called after running is removed; unknown deliveries are in handoff, not a retirement lock.
-    if (ctx.conversation === SUBJECT || ratio >= a.contextPolicy.hardRatio)
+    if (
+      ctx.conversation === SUBJECT ||
+      m.state(ctx.conversation).lifecycle.ratio >= a.contextPolicy.hardRatio
+    )
       this.retire(
         a.id,
         ctx.conversation,

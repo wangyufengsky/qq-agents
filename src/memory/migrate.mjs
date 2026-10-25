@@ -329,8 +329,14 @@ export function restoreExport(memory, data) {
         if (table === "message_progress" && !empty) row.seq = seqs.get(row.seq);
         if (table === "intentions" && !empty) {
           const value = JSON.parse(row.value);
-          if (value.handoffSeq)
-            value.handoffSeq = seqs.get(value.handoffSeq) ?? 0;
+          for (const key of ["handoffSeq", "createdAfterSeq"])
+            if (value[key] !== undefined)
+              value[key] = Math.max(
+                0,
+                ...[...seqs]
+                  .filter(([oldSeq]) => oldSeq <= value[key])
+                  .map(([, newSeq]) => newSeq),
+              );
           row.value = JSON.stringify(value);
         }
         const fields =

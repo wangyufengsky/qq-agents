@@ -17,6 +17,16 @@ const mindStates = {
   rejected: "已放弃",
   withdrawn: "已撤回",
 };
+function mindEvidence(proof) {
+  if (!proof || proof.status !== "frozen")
+    return '<p class="hint">历史依据未冻结版本；不以当前日记替代，旧候选需重新提出。</p>';
+  return `<details><summary>冻结依据 · ${mindTime(proof.capturedAt)} · ${proof.roots.length} 个去重来源</summary>${proof.references
+    .map((ref) => {
+      const available = proof.availability?.find((row) => row.id === ref.id);
+      return `<article class="record"><p class="mono">${esc(ref.id)}${ref.revision ? ` · 日记 v${ref.revision}` : ""}</p><p>${available?.available === false ? "原记录已不可用，以下为冻结摘录" : available?.changed ? `当前已修订为 v${available.currentRevision}，以下仍为提出时依据` : "提出时依据"}</p><pre>${esc(ref.excerpt)}${ref.excerptTruncated ? "\n［摘录已截断］" : ""}</pre><p class="hint">${esc(ref.metadata?.readingScope || ref.metadata?.epistemic || ref.metadata?.kind || "")} · 父引用 ${esc(ref.parents.join(", ") || "无")}</p><p class="mono">摘要校验 ${esc(ref.digest)}</p></article>`;
+    })
+    .join("")}</details>`;
+}
 async function renderMind() {
   if (!config.agents.some((a) => a.id === mindAgentId))
     mindAgentId = config.agents[0]?.id;
@@ -43,13 +53,13 @@ async function renderMind() {
         newLines = new Set(v.body.split("\n"));
       const removed = [...oldLines].filter((l) => !newLines.has(l)).join("\n"),
         added = [...newLines].filter((l) => !oldLines.has(l)).join("\n");
-      return `<details class="record"><summary>v${v.version} · ${esc(v.actor)} · ${mindTime(v.at)}</summary><p>${esc(v.reason)}</p><pre>${esc(v.body)}</pre><p>较前一版删除</p><pre>${esc(removed || "无")}</pre><p>较前一版新增</p><pre>${esc(added || "无")}</pre><p class="mono">来源：${esc((v.evidence || []).join(", ") || "无")}</p>${v.template !== undefined ? `<details><summary>初始化模板</summary><pre>${esc(v.template)}</pre></details>` : ""}${v.version !== current.version ? `<button data-restore="${v.version}">恢复为新版本</button>` : ""}</details>`;
+      return `<details class="record"><summary>v${v.version} · ${esc(v.actor)} · ${mindTime(v.at)}</summary><p>${esc(v.reason)}</p><pre>${esc(v.body)}</pre><p>较前一版删除</p><pre>${esc(removed || "无")}</pre><p>较前一版新增</p><pre>${esc(added || "无")}</pre><p class="mono">来源：${esc((v.evidence || []).join(", ") || "无")}</p>${mindEvidence(v.evidenceSnapshot)}${v.template !== undefined ? `<details><summary>初始化模板</summary><pre>${esc(v.template)}</pre></details>` : ""}${v.version !== current.version ? `<button data-restore="${v.version}">恢复为新版本</button>` : ""}</details>`;
     })
     .join("");
   $("#mind-body").innerHTML =
     `<section class="card"><h2>身份锚点</h2><p>${esc(a.name)} · ${esc(a.id)}</p><p>${esc(data.anchors?.appearance || (data.anchors?.requiresMigration ? "请在角色设置中确认原有外形；确认前保留初始 self，禁止替换。" : "未设置固定外形"))}</p><p class="hint">名字、外形、账号与管理权限来自配置；性格与相处方式通过下方 self 发展。</p></section>
   <form id="self-form" class="card"><h2>当前 self · v${current.version}</h2>${area("body", "当前自我", current.body)}${input("reason", "管理员修改理由", "", "required")}<button class="primary">保存新版本</button><p class="hint">下一回合生效；运行中的回合保持原版本。版本冲突会拒绝覆盖。</p></form>
-  <section class="card"><h2>候选与回顾</h2>${data.candidates.map((c) => `<details class="record"><summary>${esc(mindStates[c.status] || c.status)} · ${esc(c.scope)} · 基于 v${c.baseVersion}</summary><pre>${esc(c.body)}</pre><p>${esc(c.reason)}</p><p>最早回顾：${mindTime(c.reviewAfter)} · ${esc(c.conversation)}</p><p class="mono">来源：${esc(c.evidence.join(", "))}<br>反例：${esc(c.counterEvidence.join(", "))}</p>${c.reviews.map((r) => `<p>${esc(r.action)} · ${esc(r.reason)} · ${mindTime(r.at)}</p>`).join("")}</details>`).join("") || '<p class="hint">没有候选。普通聊天提出候选，主体统一回顾。</p>'}</section>
+  <section class="card"><h2>候选与回顾</h2>${data.candidates.map((c) => `<details class="record"><summary>${esc(mindStates[c.status] || c.status)} · ${esc(c.scope)} · 基于 v${c.baseVersion}</summary><pre>${esc(c.body)}</pre><p>${esc(c.reason)}</p><p>最早回顾：${mindTime(c.reviewAfter)} · ${esc(c.conversation)}</p><p class="mono">来源：${esc(c.evidence.join(", "))}<br>反例：${esc(c.counterEvidence.join(", "))}</p>${mindEvidence(c.evidenceSnapshot)}${c.counterEvidence.length ? mindEvidence(c.counterEvidenceSnapshot) : ""}${c.reviews.map((r) => `<p>${esc(r.action)} · ${esc(r.reason)} · ${mindTime(r.at)}</p>`).join("")}</details>`).join("") || '<p class="hint">没有候选。普通聊天提出候选，主体统一回顾。</p>'}</section>
   <section class="card"><h2>版本历史与差异</h2>${histories}</section>
   <form class="card" id="subject-form"><h2>主体机会与联系范围</h2><div class="form-grid">${check("enabled", "启用主体空闲思考", p.enabled || a.behavior.proactive.enabled)}${check("owners", "允许主动联系主人", p.owners)}${check("peers", "允许主动联系同伴机器人", p.peers)}${check("offlineReview", "离线时允许内部回顾", p.offlineReview)}${check("reviewInSilence", "勿扰期间允许内部回顾", p.reviewInSilence)}${input("interval", "检查间隔（分钟）", p.intervalMs / 60000, 'type="number" min="1" required')}${input("checks", "24 小时检查上限", p.maxChecksPerDay, 'type="number" min="1" required')}${input("contacts", "24 小时主动联系上限", p.maxContactsPerDay, 'type="number" min="1" required')}${input("cooldown", "联系冷却（分钟）", p.contactCooldownMs / 60000, 'type="number" min="1" required')}${input("unanswered", "未回应冷却（小时）", p.unansweredCooldownMs / 3600000, 'type="number" min="1" required')}${input("groups", "明确启用的群（逗号分隔）", p.groups.join(","))}${input("users", "额外启用的私聊（逗号分隔）", p.users.join(","))}</div><p class="hint">联系范围还受回复白名单约束。全局暂停会阻止模型检查；主体可以不行动。保存设置会中止本角色回合，连接需手动恢复。</p><button>保存主体设置</button></form>
   <section class="card"><h2>机会与决策</h2><p>待检查来信 ${data.subject.pendingActivities || 0} 条 · 最近机会：${mindTime(data.subject.lastOpportunityAt)} · 下次条件检查：${mindTime(data.subject.nextCheckAt)}</p><p>最近 24 小时检查 ${(data.subject.checks || []).filter((t) => t > Date.now() - 86400000).length} 次；主动联系 ${(data.subject.contacts || []).filter((t) => t > Date.now() - 86400000).length} 次</p>${

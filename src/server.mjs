@@ -97,10 +97,14 @@ export function createServer({ runtime, token, allowLive = false }) {
         const a = runtime.agent(url.searchParams.get("agentId")),
           m = runtime.memory.bind(a.id);
         return send({
-          current: m.identity.initialize(a, runtime.now()),
+          current: m.identity.withEvidence(
+            m.identity.initialize(a, runtime.now()),
+          ),
           anchors: m.identity.anchors(a),
-          history: m.identity.history(),
-          candidates: m.identity.list("self_candidates"),
+          history: m.identity.history().map((v) => m.identity.withEvidence(v)),
+          candidates: m.identity
+            .list("self_candidates")
+            .map((c) => m.identity.withEvidence(c)),
           intents: m.identity.list("intentions"),
           subject: {
             ...m.state("@subject"),

@@ -1,5 +1,6 @@
 // Opt-in real-model acceptance. All QQ writes terminate at loopback fixture gateways.
 import fs from "node:fs";
+import { automaticContinuityAcceptance } from "./fixtures/automatic-continuity.mjs";
 import {
   selfContextAcceptance,
   subjectCostAcceptance,
@@ -441,7 +442,17 @@ async function runCase(id, test) {
       for (const [key, value] of Object.entries(inputs.forwardResources || {}))
         gateway.resources.set(key, value);
     }
-    if (test === "intent-receipt") {
+    if (test === "automatic-continuity") {
+      await automaticContinuityAcceptance({
+        runtime,
+        memory,
+        id,
+        turn,
+        gateway,
+        calls,
+        root,
+      });
+    } else if (test === "intent-receipt") {
       await intentReceiptAcceptance({ runtime, memory, id, gateway, root });
     } else if (test === "subject-cost") {
       await subjectCostAcceptance({ runtime, memory, id, gateway, root });
