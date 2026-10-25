@@ -19,6 +19,7 @@ export function freezeEvidence(memory, ids, now) {
     throw Error("INVALID_EVIDENCE");
   const references = new Map(),
     roots = new Map(),
+    members = new Map(),
     visiting = new Set(),
     resolved = new Map();
   function visit(id) {
@@ -132,7 +133,9 @@ export function freezeEvidence(memory, ids, now) {
       if (key) {
         key = digest(key);
         // Forwarded excerpts and their enclosing card are one originating source.
-        roots.set(key, {
+        if (!members.has(key)) members.set(key, new Set());
+        members.get(key).add(id);
+        const candidate = {
           id,
           key,
           contentKey: normalize(text)
@@ -146,7 +149,15 @@ export function freezeEvidence(memory, ids, now) {
               ? key
               : `${row.conversation}:${row.occurred_at.slice(0, 10)}`),
           epistemic,
-        });
+        };
+        const old = roots.get(key),
+          strength = (root) => (root?.epistemic === "forwarded-claim" ? 2 : 1);
+        if (
+          !old ||
+          strength(candidate) > strength(old) ||
+          (strength(candidate) === strength(old) && candidate.id < old.id)
+        )
+          roots.set(key, candidate);
       }
       resolved.set(id, key ? [key] : inherited);
     } else {
@@ -194,12 +205,15 @@ export function freezeEvidence(memory, ids, now) {
   for (const key of keys) {
     const root = roots.get(key);
     if (["external-source-claim", "forwarded-claim"].includes(root.epistemic))
-      for (const parent of references.get(root.id)?.parents || [])
-        for (const id of ancestors(parent)) subsumed.add(id);
+      for (const member of members.get(key) || [])
+        for (const parent of references.get(member)?.parents || [])
+          for (const id of ancestors(parent))
+            for (const parentKey of resolved.get(id) || [])
+              if (parentKey !== key) subsumed.add(parentKey);
   }
   for (const key of keys) {
     const root = roots.get(key);
-    if (subsumed.has(root.id)) continue;
+    if (subsumed.has(key)) continue;
     if (root.contentKey && contentSeen.has(root.contentKey)) continue;
     if (root.contentKey) contentSeen.add(root.contentKey);
     independent.push(root);

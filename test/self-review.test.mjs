@@ -636,3 +636,28 @@ test("F5 large restore remaps a deleted boundary beyond the JS call argument lim
   assert.equal(restored.createdAfterSeq, 140001);
   assert.equal(restored.handoffSeq, 140001);
 });
+
+test("F2 same-origin proof is order independent and opaque cards cannot downgrade expanded evidence", (t) => {
+  const { runtime, store } = fixture(t),
+    m = store.bind(id);
+  const card = event(m, 1, {
+    payload: { segments: [{ type: "forward", data: { id: "shared" } }] },
+  });
+  const node = event(m, 2, {
+    kind: "forward.node",
+    body: "已经展开的独立观察",
+    payload: { resourceId: "shared", rootEventId: card.id, index: 0 },
+  });
+  const other = event(m, 3);
+  const forward = m.identity.sources([node.id, card.id, other.id]);
+  const reverse = m.identity.sources([card.id, node.id, other.id]);
+  assert.deepEqual(forward, reverse);
+  assert.equal(
+    forward.find((r) => r.id === node.id).epistemic,
+    "forwarded-claim",
+  );
+  assert.equal(
+    accept(runtime, propose(runtime, [node.id, card.id, other.id])).status,
+    "accepted",
+  );
+});
