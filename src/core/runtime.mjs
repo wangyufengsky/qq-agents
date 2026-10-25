@@ -18,6 +18,11 @@ import { ConversationEngine } from "./conversations.mjs";
 import { TaskScheduler } from "./scheduler.mjs";
 import { Operations } from "./operations.mjs";
 import { SlangLearner } from "./slang.mjs";
+import {
+  saveSession,
+  recordBackendTurn,
+  retireSession,
+} from "./session-records.mjs";
 
 const digest = (x) =>
   createHash("sha256").update(JSON.stringify(x)).digest("hex");
@@ -481,11 +486,16 @@ export class Runtime {
         tools,
         callTool: (name, args) => this.callTool(ctx, name, args),
         session: prepared.session,
-        saveSession: (session) => {
-          if (controller.signal.aborted || this.closed) return;
-          const latest = mem.state(conversation);
-          mem.setState(conversation, { ...latest, session });
-        },
+        saveSession: (session) =>
+          saveSession(mem, conversation, session, {
+            turnId: ctx.turnId,
+            backendId: a.backendId,
+            at: this.now(),
+            inactive: controller.signal.aborted || this.closed,
+            reason: controller.signal.aborted ? "cancelled" : "backend-failure",
+          }),
+        onBackendTurn: (reference) =>
+          recordBackendTurn(mem, ctx.turnId, reference),
       });
       outcome = controller.signal.aborted
         ? "cancelled"
@@ -509,6 +519,11 @@ export class Runtime {
         }
       } catch {
         this.faults.set(agentId, "CONTEXT_FINALIZATION_FAILED");
+        if (ctx.turnId)
+          retireSession(mem, conversation, "finalization-failed", this.now(), {
+            turnId: ctx.turnId,
+            backendId: a.backendId,
+          });
       } finally {
         clearTimeout(timer);
         this.running.delete(runKey);

@@ -54,3 +54,11 @@
 schema 3 保留 schema 2 引入的 FTS5 trigram，只缩小至少三个 Unicode 字符的候选范围，再逐项做原始转义 LIKE 校验；多个词仍取交集，不改变字面匹配语义。一、二字查询保留扫描与人物/来源/时间索引，未引入向量或外部检索。明确引用索引包含机器人已确认回复，未确认或失败的尝试不作为回复证据。详细性能、原始资料与派生索引空间成本见 QUALITY-0.4.md。
 
 日记返回显式 epistemic 说明，证据引用也不能证明其每句话。真实 DSH/Codex 的六维合成质量评估及观察到的失败保留在验收记录中；一次通过不等于消除幻觉。
+
+## 时间邻文与账本分页
+
+`memory_search` 的命中锚点继续按账本 seq 分页，关键词/人物只筛选锚点；场景邻文使用可靠发生时间，并以稳定事件 UUID 作为同时间并列顺序。新增历史、时间富化及恢复后无需重排账本。结果 `timeBasis` 区分 message、observation、unknown；观察时间和未知时间只提供锚点及可取得的明确引用，不能冒充同一时刻的对话。
+
+`conversation_read({aroundId,contextSeconds})` 使用同一时间索引，默认前后 10 分钟，最多扩至一小时。结果按时间和 UUID 排列；使用 `nextAroundBefore` 或 `nextAroundAfter` 作为 `aroundCursor`，保持相同 aroundId/contextSeconds。游标包含来源和锚点时间校验、首批账本上界；锚点时间更正使旧游标失效。其他记录富化是实时可见的，发生更正后重新检索，不宣称跨页快照隔离。页数、字符预算限制下仍返回可继续的游标；相同时间不会用 seq 排序而在多主体恢复后改变顺序。
+
+时间展开的 markReadEligible=false、readThroughSeq=null，与普通 conversation/afterSeq 的账本游标分开。工具仍只记录真正展示的消息，零散读取不能越过未见缺口。前后文不是同一话题或因果关系；远距离明确回复/撤回使用 memory_related，长原文继续使用 memory_read。

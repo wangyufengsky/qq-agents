@@ -7,6 +7,8 @@ import {
   deduplicateScenes,
 } from "./scenes.mjs";
 import { migrateSearch, related } from "./search.mjs";
+import { migrateTimeline } from "./timeline.mjs";
+import { around } from "./around.mjs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { createHash, randomUUID } from "node:crypto";
@@ -61,7 +63,7 @@ export class MemoryStore {
       fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
     this.db = new DatabaseSync(file);
     const version = this.db.prepare("PRAGMA user_version").get().user_version;
-    if (version > 4) {
+    if (version > 5) {
       this.db.close();
       throw Error("MEMORY_SCHEMA_NEWER_THAN_CODE");
     }
@@ -81,8 +83,14 @@ export class MemoryStore {
       CREATE TABLE IF NOT EXISTS runtime(agent_id TEXT NOT NULL,conversation TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(agent_id,conversation));
       CREATE TABLE IF NOT EXISTS migrations(agent_id TEXT NOT NULL,source TEXT NOT NULL,digest TEXT NOT NULL,imported_at TEXT NOT NULL,PRIMARY KEY(agent_id,source,digest));
       `);
-    migrateSearch(this.db, version);
-    migrateIdentity(this.db);
+    try {
+      migrateSearch(this.db, version);
+      migrateIdentity(this.db);
+      migrateTimeline(this.db, version);
+    } catch (error) {
+      this.db.close();
+      throw error;
+    }
   }
   close() {
     this.db.close();
@@ -426,6 +434,8 @@ class AgentMemory {
       conversation,
       connectionId,
       aroundId,
+      aroundCursor,
+      contextSeconds,
       afterSeq = 0,
       beforeSeq,
       limit = 20,
@@ -436,39 +446,16 @@ class AgentMemory {
     num(limit, 20, 1, 50);
     num(maxChars, 12000, 512, 16000);
     num(afterSeq, 0, 0, Number.MAX_SAFE_INTEGER);
+    if (aroundCursor && !aroundId)
+      throw Error("TIMELINE_CURSOR_REQUIRES_ANCHOR");
     let rows;
     if (aroundId) {
-      const center = this.db
-        .prepare(
-          "SELECT seq,conversation,connection_id FROM events WHERE agent_id=? AND id=?",
-        )
-        .get(this.agentId, aroundId);
-      if (!center) throw Error("RECORD_NOT_FOUND");
-      conversation = center.conversation;
-      const older = this.db
-        .prepare(
-          "SELECT * FROM events WHERE agent_id=? AND conversation=? AND connection_id=? AND seq<=? ORDER BY seq DESC LIMIT ?",
-        )
-        .all(
-          this.agentId,
-          conversation,
-          center.connection_id,
-          center.seq,
-          Math.ceil(limit / 2),
-        );
-      const newer = this.db
-        .prepare(
-          "SELECT * FROM events WHERE agent_id=? AND conversation=? AND (? IS NULL OR connection_id=?) AND seq>? ORDER BY seq LIMIT ?",
-        )
-        .all(
-          this.agentId,
-          conversation,
-          center.connection_id,
-          center.connection_id,
-          center.seq,
-          limit - older.length,
-        );
-      rows = [...older.reverse(), ...newer];
+      return around(
+        this,
+        { aroundId, aroundCursor, contextSeconds, limit, maxChars },
+        current,
+        budget,
+      );
     } else if (beforeSeq !== undefined) {
       num(beforeSeq, 0, 1, Number.MAX_SAFE_INTEGER);
       rows = this.db

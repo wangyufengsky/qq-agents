@@ -89,11 +89,25 @@ const definitions = {
       .strict(),
   ],
   conversation_read: [
-    "按来源读取消息或指定记录前后文；不把有限窗口当完整历史。",
+    "按来源读取账本；aroundId按可靠消息时间展开（同时间按UUID），不能用时间邻文更新已读水位。用nextAroundBefore/After作为aroundCursor继续，保持aroundId和contextSeconds；观察/未知时间只返回锚点，明确引用用memory_related。不把有限窗口当完整历史。",
     z
       .object({
         conversation: str.optional(),
         aroundId: str.optional(),
+        aroundCursor: z
+          .object({
+            anchorId: str,
+            anchorTime: z.number().int(),
+            connectionId: z.string(),
+            seconds: z.number().int(),
+            ceiling: z.number().int().nonnegative(),
+            direction: z.enum(["before", "after"]),
+            time_ms: z.number().int(),
+            event_id: str,
+          })
+          .strict()
+          .optional(),
+        contextSeconds: z.number().int().min(1).max(3600).optional(),
         connectionId: str.optional(),
         afterSeq: z.number().int().min(0).optional(),
         beforeSeq: z.number().int().min(1).optional(),

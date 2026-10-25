@@ -1,3 +1,4 @@
+import { timeBasis, timelineAnchor, timelineNeighbors } from "./timeline.mjs";
 const messageKinds = [
   "message.received",
   "message.sent",
@@ -13,6 +14,7 @@ export function provenance(row) {
   const name = kind === "group" ? string(raw.group_name) : null;
   const segments = Array.isArray(p.segments) ? p.segments : [];
   return {
+    timeBasis: timeBasis(row.occurred_at, p, row.origin),
     source: {
       agentId: row.agent_id,
       kind: ["group", "private"].includes(kind) ? kind : "internal",
@@ -42,19 +44,6 @@ export function provenance(row) {
     ].slice(0, 30),
   };
 }
-function reliableTime(row) {
-  const p = payload(row);
-  return (
-    Number.isFinite(Date.parse(row.occurred_at)) &&
-    p.timeKnown !== false &&
-    // Older live records stored fallback observation time without a flag.
-    (!p.raw?.post_type ||
-      p.timeKnown === true ||
-      (Number(p.raw.time) > 0 &&
-        Number.isFinite(new Date(Number(p.raw.time) * 1000).getTime()))) &&
-    (!row.origin.startsWith("legacy") || p.timeKnown === true)
-  );
-}
 function message(row, anchorId) {
   const p = provenance(row);
   return {
@@ -64,6 +53,7 @@ function message(row, anchorId) {
     senderId: row.sender_id,
     senderName: p.senderName,
     occurredAt: row.occurred_at,
+    timeBasis: p.timeBasis,
     body: row.body.slice(0, 200),
     bodyTruncated: row.body.length > 200,
     matched: row.id === anchorId,
@@ -92,33 +82,28 @@ export function sceneParticipants(messages) {
 }
 export function sceneForMatch(db, agentId, anchor, { before, after, seconds }) {
   if (!messageKinds.includes(anchor.kind)) return undefined;
-  const time = Date.parse(anchor.occurred_at),
-    timeKnown = reliableTime(anchor);
+  const clock = timelineAnchor(db, agentId, anchor.id),
+    timeKnown = !!clock;
+  let more = false;
   const seen = new Set([anchor.message_id || anchor.id]);
   function adjacent(count, direction) {
     if (!count || !timeKnown) return [];
     const older = direction === "before";
-    const rows = db
-      .prepare(
-        `SELECT * FROM events WHERE agent_id=? AND connection_id=? AND conversation=? AND kind IN ('message.received','message.sent','legacy.message-observation') AND seq${older ? "<" : ">"}? ORDER BY seq ${older ? "DESC" : "ASC"} LIMIT ?`,
-      )
-      .all(
-        agentId,
-        anchor.connection_id,
-        anchor.conversation,
-        anchor.seq,
-        count * 3 + 1,
-      );
+    const rows = timelineNeighbors(db, clock, {
+      direction,
+      count: count * 3 + 1,
+      seconds,
+    });
     const selected = [];
     for (const row of rows) {
-      const stamp = Date.parse(row.occurred_at);
-      if (!reliableTime(row) || Math.abs(stamp - time) > seconds * 1000) break;
       const key = row.message_id || row.id;
       if (seen.has(key)) continue;
       seen.add(key);
       selected.push(row);
-      if (selected.length === count) break;
+      if (selected.length > count) break;
     }
+    more ||= selected.length > count || rows.length === count * 3 + 1;
+    selected.splice(count);
     return older ? selected.reverse() : selected;
   }
   const rows = [
@@ -181,8 +166,14 @@ export function sceneForMatch(db, agentId, anchor, { before, after, seconds }) {
     participants: sceneParticipants(messages),
     messages,
     quoted,
-    contextTruncated: false,
-    expand: { tool: "conversation_read", aroundId: anchor.id },
+    contextTruncated: more,
+    ordering: "message-time-then-id",
+    timeBasis: provenance(anchor).timeBasis,
+    expand: {
+      tool: "conversation_read",
+      aroundId: anchor.id,
+      contextSeconds: seconds,
+    },
   };
 }
 export function fitScene(item, maxChars) {

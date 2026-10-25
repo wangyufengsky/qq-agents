@@ -523,7 +523,15 @@ export function createServer({ runtime, token, allowLive = false }) {
         const q = {};
         for (const key of ["conversation", "connectionId", "aroundId"])
           if (url.searchParams.has(key)) q[key] = url.searchParams.get(key);
-        for (const key of ["beforeSeq", "afterSeq", "limit", "maxChars"])
+        if (url.searchParams.has("aroundCursor"))
+          q.aroundCursor = JSON.parse(url.searchParams.get("aroundCursor"));
+        for (const key of [
+          "beforeSeq",
+          "afterSeq",
+          "limit",
+          "maxChars",
+          "contextSeconds",
+        ])
           if (url.searchParams.has(key))
             q[key] = Number(url.searchParams.get(key));
         return send(runtime.memory.bind(agentId).conversation(q));

@@ -224,7 +224,11 @@ test("legacy import is idempotent, preserves source bytes and marks missing hist
   });
   const file = path.join(source, "state", "social-v2.json");
   fs.writeFileSync(file, original);
-  const plan = inspectLegacy(source, { agentId: "agent-a" });
+  const plan = inspectLegacy(source, {
+    agentId: "agent-a",
+    accountId: "10001",
+    connectionMap: { 10001: { agentId: "agent-a", connectionId: "qq-a" } },
+  });
   assert.ok(plan.warnings.length);
   assert.equal(importLegacy(a, plan).inserted, 2);
   assert.equal(importLegacy(a, plan).inserted, 0);

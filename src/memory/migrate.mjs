@@ -106,6 +106,11 @@ export function restoreExport(memory, data) {
           ])
             if (state[key] !== undefined)
               state[key] = seqs.get(state[key]) ?? 0;
+          if (state.slang?.throughSeq !== undefined)
+            state.slang = {
+              ...state.slang,
+              throughSeq: remapBoundary(state.slang.throughSeq),
+            };
           row.value = JSON.stringify(state);
         }
         if (table === "message_progress" && !empty) row.seq = seqs.get(row.seq);

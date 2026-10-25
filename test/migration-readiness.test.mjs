@@ -53,6 +53,10 @@ function setup(t, rows = []) {
     agentId: "fish",
     accountId: "10001",
     subjectMap: map,
+    connectionMap: {
+      10001: { agentId: "fish", connectionId: "qq-fish" },
+      10002: { agentId: "dragon", connectionId: "qq-dragon" },
+    },
     exportFiles: [archive],
   };
   return {
@@ -525,7 +529,7 @@ test("backup precedes schema3 upgrade, includes WAL, restores to a separate old-
     d.close();
   }
   const upgraded = new DatabaseSync(file, { readOnly: true });
-  assert.equal(upgraded.prepare("PRAGMA user_version").get().user_version, 4);
+  assert.equal(upgraded.prepare("PRAGMA user_version").get().user_version, 5);
   upgraded.close();
 });
 test("backup failure leaves schema3 and source data unchanged; failed import is transactional and recoverable", async (t) => {

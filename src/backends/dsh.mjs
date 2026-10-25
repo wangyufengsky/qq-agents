@@ -98,7 +98,10 @@ export class DshBackend {
                 "last provider request including disjoint cache counts and output",
             });
           }
-          if (e.type === "turn/start") t.turn = e.data.turn;
+          if (e.type === "turn/start") {
+            t.turn = e.data.turn;
+            t.onBackendTurn?.({ turnId: String(e.data.turn) });
+          }
           if (e.type === "turn/end" && e.data.turn === t.turn) {
             if (["completed", "done", "stop"].includes(e.data.reason?.kind))
               t.resolve();
@@ -136,6 +139,7 @@ export class DshBackend {
     tools,
     session,
     saveSession,
+    onBackendTurn,
   }) {
     const signature = this.sessionSignature(tools);
     assertSession(session, "dsh", signature);
@@ -191,6 +195,7 @@ export class DshBackend {
       turn: null,
       followed,
       onUsage,
+      onBackendTurn,
     });
     const abort = () => {
       void client.callUnary("session.cancel", { sessionId }).catch(() => {});
