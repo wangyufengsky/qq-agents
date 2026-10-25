@@ -10,6 +10,9 @@ export async function appSharingAcceptance({
   calls,
   root,
 }) {
+  // Give independent backend success cases separate synthetic recipients; peer dedupe is tested separately.
+  const target = id.includes("codex") ? "private:30001" : "private:30000",
+    recipient = target.slice(8);
   let a = runtime.agent(id);
   const m = memory.bind(id),
     started = Date.now(),
@@ -29,27 +32,27 @@ export async function appSharingAcceptance({
   );
   a = runtime.agent(id);
   a.subject.enabled = true;
-  a.subject.users = ["30000"];
+  a.allow.users = [...new Set([...a.allow.users, recipient])];
+  a.subject.users = [recipient];
   a.subject.intervalMs = 86400000;
   a.subject.contactCooldownMs = 60000;
   a.behavior.preSleepWaitMs = 0;
   const observation = m.append({
     connectionId: a.connectionId,
-    conversation: "private:30000",
-    senderId: "30000",
+    conversation: target,
+    senderId: recipient,
     direction: "in",
     kind: "message.received",
     body: "这是本机合成验收聊天。我现在有空，可以看看你实际读到的一条科技、游戏或生活资料，简短说明你为何觉得相关，带原链接就好。",
     dedupe: "app-acceptance:" + started,
   });
-  const state = m.state("private:30000");
-  m.setState("private:30000", { ...state, lastReceivedSeq: observation.seq });
+  const state = m.state(target);
+  m.setState(target, { ...state, lastReceivedSeq: observation.seq });
   await runtime.wake(id, "@subject", {
     reasons: [
       {
         reason: "app-acceptance",
-        instruction:
-          "这是隔离验收，QQ 只接本机测试网关。先用 app_capabilities 看真实能力，自选一个感兴趣平台入口，app_browse 取少量真实内容，再用 app_read 读其中一个记录（如果不可读可换记录）。按实际阅读范围形成一个 app_share_propose，target=private:30000，说明内容与对象兴趣的具体关系；目标对象刚表示愿意看一条资料。不要发 QQ，不要等待/睡眠。不得把摘要或视频简介称为看过全文/视频。提出后结束，由目标聊天决定。",
+        instruction: `这是隔离验收，QQ 只接本机测试网关。先用 app_capabilities 看真实能力，自选一个感兴趣平台入口，app_browse 取少量真实内容，再用 app_read 读其中一个记录（如果不可读可换记录）。按实际阅读范围形成一个 app_share_propose，target=${target}，说明内容与对象兴趣的具体关系；目标对象刚表示愿意看一条资料。不要发 QQ，不要等待/睡眠。不得把摘要或视频简介称为看过全文/视频。提出后结束，由目标聊天决定。`,
       },
     ],
   });
