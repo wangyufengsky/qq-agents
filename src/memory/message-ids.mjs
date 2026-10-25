@@ -278,6 +278,8 @@ export function importAliases(memory, aliases, binding) {
     );
     if (!target) throw Error("ALIAS_TARGET_NOT_FOUND");
     const p = JSON.parse(target.payload);
+    if (accountEvidence(p) !== a.accountId)
+      throw Error("ALIAS_ACCOUNT_MISMATCH");
     if (
       !p.migration?.sources?.some(
         (s) =>
