@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { provenance, sceneForMatch, fitScene } from "./scenes.mjs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { createHash, randomUUID } from "node:crypto";
@@ -18,14 +19,12 @@ const num = (x, def, min, max) => {
   return x;
 };
 const disclosure = (source, current) =>
-  source === current
-    ? "current-conversation"
-    : "private-recollection-do-not-disclose";
+  source === current ? "current-conversation" : "agent-judged-recollection";
 function budget(items, maxChars) {
   let used = 2;
   const out = [];
   for (const item of items) {
-    let entry = item,
+    let entry = !out.length ? fitScene(item, maxChars) : item,
       size = json(entry).length + 1;
     if (size + 2 > maxChars && out.length === 0) {
       entry = {
@@ -35,6 +34,7 @@ function budget(items, maxChars) {
         conversation: item.conversation,
         disclosure: item.disclosure,
         summaryOmitted: true,
+        ...(item.protectedOperations ? { protectedOperations: true } : {}),
         hint: "Use memory_read for bounded expansion",
       };
       size = json(entry).length + 1;
@@ -61,6 +61,8 @@ export class MemoryStore {
       .exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE NOT NULL,agent_id TEXT NOT NULL,dedupe TEXT NOT NULL,connection_id TEXT NOT NULL,conversation TEXT NOT NULL,kind TEXT NOT NULL,direction TEXT NOT NULL,status TEXT NOT NULL,message_id TEXT,sender_id TEXT,occurred_at TEXT NOT NULL,observed_at TEXT NOT NULL,body TEXT NOT NULL,payload TEXT NOT NULL,origin TEXT NOT NULL,UNIQUE(agent_id,dedupe));
       CREATE INDEX IF NOT EXISTS events_scope ON events(agent_id,conversation,seq);
+      CREATE INDEX IF NOT EXISTS events_scene ON events(agent_id,connection_id,conversation,seq);
+      CREATE INDEX IF NOT EXISTS events_message_ref ON events(agent_id,connection_id,conversation,message_id);
       CREATE INDEX IF NOT EXISTS events_people ON events(agent_id,sender_id,occurred_at);
       CREATE TABLE IF NOT EXISTS diaries(id TEXT PRIMARY KEY,agent_id TEXT NOT NULL,title TEXT NOT NULL,body TEXT NOT NULL,revision INTEGER NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,metadata TEXT NOT NULL,origin TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS diaries_agent ON diaries(agent_id,updated_at);
@@ -160,6 +162,8 @@ class AgentMemory {
       disclosure: disclosure(row.conversation, current),
       epistemic: "Observed speech/event; not independently verified fact",
       body: summary ? row.body.slice(0, 200) : row.body,
+      bodyTruncated: summary && row.body.length > 200,
+      ...provenance(row),
       ...(!summary ? { payload: parse(row.payload) } : {}),
     };
   }
@@ -174,13 +178,19 @@ class AgentMemory {
       updatedAt: row.updated_at,
       origin: row.origin,
       metadata: parse(row.metadata),
-      disclosure: "private-recollection-do-not-disclose",
+      disclosure: "agent-judged-diary",
+      protectedOperations: parse(row.metadata).protectedOperations === true,
     };
   }
   search(q = {}, current = "") {
     const limit = num(q.limit, 10, 1, 50),
       offset = num(q.cursor?.eventOffset ?? q.offset, 0, 0, 10000000),
       maxChars = num(q.maxChars, 6000, 512, 16000);
+    const sceneOptions = {
+      before: num(q.contextBefore, 2, 0, 5),
+      after: num(q.contextAfter, 2, 0, 5),
+      seconds: num(q.contextSeconds, 600, 1, 3600),
+    };
     const types = q.type || "all";
     if (!["all", "event", "diary"].includes(types))
       throw Error("INVALID_RECORD_TYPE");
@@ -220,7 +230,10 @@ class AgentMemory {
               `SELECT * FROM events WHERE ${where.join(" AND ")} ORDER BY seq DESC LIMIT ? OFFSET ?`,
             )
             .all(...args, limit + 1, offset)
-            .map((r) => this.event(r, current, true));
+            .map((r) => ({
+              ...this.event(r, current, true),
+              scene: sceneForMatch(this.db, this.agentId, r, sceneOptions),
+            }));
     // Separate pagination lanes prevent diary offsets from hiding message rows.
     let diaries = [];
     const diaryOffset = num(
@@ -291,7 +304,7 @@ class AgentMemory {
         items.length < Math.min(rows.length, limit) ||
         diaryItems.length < Math.min(diaries.length, limit),
       notice:
-        "Private recollection is allowed across your conversations. Disclosure requires an explicit scoped grant at send time.",
+        "Use source, participants and reply links to judge context. Neighboring messages are not necessarily one topic. You decide what is appropriate to say from your own recollections and diaries; no per-send recall approval is required.",
     };
   }
   read({ id, offset = 0, maxChars = 8000, revision }, current = "") {
@@ -335,11 +348,13 @@ class AgentMemory {
       totalChars: complete.length,
       disclosure: item.disclosure,
       conversation: item.conversation,
+      protectedOperations: item.protectedOperations === true,
     };
   }
   conversation(
     {
       conversation,
+      connectionId,
       aroundId,
       afterSeq = 0,
       beforeSeq,
@@ -355,36 +370,63 @@ class AgentMemory {
     if (aroundId) {
       const center = this.db
         .prepare(
-          "SELECT seq,conversation FROM events WHERE agent_id=? AND id=?",
+          "SELECT seq,conversation,connection_id FROM events WHERE agent_id=? AND id=?",
         )
         .get(this.agentId, aroundId);
       if (!center) throw Error("RECORD_NOT_FOUND");
       conversation = center.conversation;
       const older = this.db
         .prepare(
-          "SELECT * FROM events WHERE agent_id=? AND conversation=? AND seq<=? ORDER BY seq DESC LIMIT ?",
+          "SELECT * FROM events WHERE agent_id=? AND conversation=? AND connection_id=? AND seq<=? ORDER BY seq DESC LIMIT ?",
         )
-        .all(this.agentId, conversation, center.seq, Math.ceil(limit / 2));
+        .all(
+          this.agentId,
+          conversation,
+          center.connection_id,
+          center.seq,
+          Math.ceil(limit / 2),
+        );
       const newer = this.db
         .prepare(
-          "SELECT * FROM events WHERE agent_id=? AND conversation=? AND seq>? ORDER BY seq LIMIT ?",
+          "SELECT * FROM events WHERE agent_id=? AND conversation=? AND (? IS NULL OR connection_id=?) AND seq>? ORDER BY seq LIMIT ?",
         )
-        .all(this.agentId, conversation, center.seq, limit - older.length);
+        .all(
+          this.agentId,
+          conversation,
+          center.connection_id,
+          center.connection_id,
+          center.seq,
+          limit - older.length,
+        );
       rows = [...older.reverse(), ...newer];
     } else if (beforeSeq !== undefined) {
       num(beforeSeq, 0, 1, Number.MAX_SAFE_INTEGER);
       rows = this.db
         .prepare(
-          "SELECT * FROM events WHERE agent_id=? AND conversation=? AND seq<? ORDER BY seq DESC LIMIT ?",
+          "SELECT * FROM events WHERE agent_id=? AND conversation=? AND (? IS NULL OR connection_id=?) AND seq<? ORDER BY seq DESC LIMIT ?",
         )
-        .all(this.agentId, conversation, beforeSeq, limit)
+        .all(
+          this.agentId,
+          conversation,
+          connectionId ?? null,
+          connectionId ?? null,
+          beforeSeq,
+          limit,
+        )
         .reverse();
     } else
       rows = this.db
         .prepare(
-          "SELECT * FROM events WHERE agent_id=? AND conversation=? AND seq>? ORDER BY seq LIMIT ?",
+          "SELECT * FROM events WHERE agent_id=? AND conversation=? AND (? IS NULL OR connection_id=?) AND seq>? ORDER BY seq LIMIT ?",
         )
-        .all(this.agentId, conversation, afterSeq, limit);
+        .all(
+          this.agentId,
+          conversation,
+          connectionId ?? null,
+          connectionId ?? null,
+          afterSeq,
+          limit,
+        );
     const items = budget(
       rows.map((r) => this.event(r, current, true)),
       maxChars,
@@ -399,11 +441,17 @@ class AgentMemory {
   diaryWrite(
     { title, body, people = [], tags = [], evidence = [] },
     origin = "ai-diary",
+    writtenIn = null,
+    protectedOperations = false,
   ) {
     text(title, 300);
     text(body, 32000);
     if (!title.trim() || !body.trim()) throw Error("EMPTY_DIARY");
-    const metadata = this.metadata({ people, tags, evidence }),
+    const metadata = {
+        ...this.metadata({ people, tags, evidence }),
+        writtenIn,
+        ...(protectedOperations ? { protectedOperations: true } : {}),
+      },
       id = randomUUID(),
       time = now();
     return this.store.transaction(() => {
@@ -445,7 +493,10 @@ class AgentMemory {
         throw Error("EVIDENCE_NOT_OWNED");
     return { people, tags, evidence };
   }
-  diaryRevise({ id, expectedRevision, title, body, people, tags, evidence }) {
+  diaryRevise(
+    { id, expectedRevision, title, body, people, tags, evidence },
+    protectedOperations = false,
+  ) {
     text(title, 300);
     text(body, 32000);
     if (!title.trim() || !body.trim()) throw Error("EMPTY_DIARY");
@@ -456,11 +507,17 @@ class AgentMemory {
       if (!old) throw Error("RECORD_NOT_FOUND");
       if (old.revision !== expectedRevision) throw Error("REVISION_CONFLICT");
       const previous = parse(old.metadata),
-        metadata = this.metadata({
-          people: people ?? previous.people,
-          tags: tags ?? previous.tags,
-          evidence: evidence ?? previous.evidence,
-        });
+        metadata = {
+          ...this.metadata({
+            people: people ?? previous.people,
+            tags: tags ?? previous.tags,
+            evidence: evidence ?? previous.evidence,
+          }),
+          ...(previous.writtenIn ? { writtenIn: previous.writtenIn } : {}),
+          ...(previous.protectedOperations || protectedOperations
+            ? { protectedOperations: true }
+            : {}),
+        };
       const revision = old.revision + 1,
         time = now();
       this.db

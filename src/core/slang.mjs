@@ -69,8 +69,7 @@ export class SlangLearner {
       mem = this.runtime.memory.bind(a.id);
     if (!p.enabled || !p.autoResearch || !p.researchServerId || !p.researchTool)
       throw Error("SLANG_RESEARCH_DISABLED");
-    if ([...ctx.privateRead].some((x) => !ctx.grants.has(x)))
-      throw Error("PRIVATE_RECOLLECTION_EXTERNAL_CALL_BLOCKED");
+    this.runtime.assertDisclosure(ctx, { external: true });
     const entry = mem
       .state(ctx.conversation)
       .slang?.entries.find((e) => e.id === id);

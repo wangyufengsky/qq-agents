@@ -275,3 +275,25 @@ test("OneBot forward group/private endpoints carry observed node IDs and real re
   assert.deepEqual(calls[0].body, { group_id: 20000, messages: nodes });
   assert.deepEqual(calls[1].body, { user_id: 30000, messages: nodes });
 });
+
+test("missing or invalid OneBot time is observation time, not trusted scene time", () => {
+  const raw = {
+    self_id: 10000,
+    post_type: "message",
+    message_type: "group",
+    group_id: 20000,
+    user_id: 30000,
+    message: "测试",
+  };
+  for (const time of [undefined, null, "bad", 0, 1e30]) {
+    const e = normalizeEvent({ ...raw, time }, { accountId: "10000" });
+    assert.equal(e.timeKnown, false);
+    assert.ok(Number.isFinite(Date.parse(e.occurredAt)));
+  }
+  const e = normalizeEvent(
+    { ...raw, time: 1700000000 },
+    { accountId: "10000" },
+  );
+  assert.equal(e.timeKnown, true);
+  assert.equal(e.occurredAt, "2023-11-14T22:13:20.000Z");
+});

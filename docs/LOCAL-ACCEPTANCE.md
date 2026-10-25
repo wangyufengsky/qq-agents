@@ -21,11 +21,13 @@ DSH_HOME=/path/to/independent-dsh-home npm run acceptance:live -- --allow-real-m
 
 ## 用例与结果
 
-两后端逐项运行：实际 WebSocket 入站与工具发送、语音读取/音量转换/发送及解码回读、嵌套转发展开与发送、等待后有限睡眠与再次唤醒、真实时钟主动参与、AI 任务创建/查询/修改/删除、真实分钟边界的一次性 AI 定时任务及不重复执行、等待中暂停后无迟到发送。
+两后端逐项运行：实际 WebSocket 入站与工具发送、语音读取/音量转换/发送及解码回读、嵌套转发展开与发送、按人物检索仍能读取群场景并结合日记自主发言、等待后有限睡眠与再次唤醒、真实时钟主动参与、AI 任务创建/查询/修改/删除、真实分钟边界的一次性 AI 定时任务及不重复执行、等待中暂停后无迟到发送。
 
 ```sh
 DSH_HOME=/path/to/independent-dsh-home npm run acceptance:live -- --allow-real-models --run-all --agent acceptance-dsh --case wait-sleep,proactive
 ```
+
+`--case memory-scene` 专门验证：只按甲的关键词和身份搜索，仍能读到乙的改期及对甲的引用、丙的回应，正确说出群名/三位发言者/最终时间，再读取个人日记并向当前主人私聊发送，且没有发言授权申请。所有内容是合成测试资料，发送只到本机网关。
 
 每项通过条件核对网关实际收到的发送请求和工具完成状态。定时任务还核对 SQLite 的终态记录；取消用例要求发送数为零。`acceptance-results.json` 保存脱离消息正文的结果与工具状态，失败退出码为 1。
 

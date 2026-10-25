@@ -137,7 +137,7 @@ test("voice sending uses shared outbox receipts and ambiguous send is never retr
   );
   assert.equal(transport.sent.length, 2);
 });
-test("private voice origins remain restricted across reads and shared content hashes", async (t) => {
+test("voice origins stay traceable while cross-conversation speech is agent-judged", async (t) => {
   const f = setup(t),
     a = f.runtime.agent("agent-0"),
     m = await f.runtime.voices.put(a.id, wav(), a.voice, {
@@ -149,12 +149,14 @@ test("private voice origins remain restricted across reads and shared content ha
   });
   const ctx = context(f.runtime);
   await f.runtime.callTool(ctx, "qq_voice_read", { audioId: m.id });
-  await assert.rejects(
-    f.runtime.callTool(ctx, "qq_send_voice", {
-      requestId: "private-voice",
-      audioId: m.id,
-    }),
-    /DISCLOSURE/,
+  assert.equal(
+    (
+      await f.runtime.callTool(ctx, "qq_send_voice", {
+        requestId: "private-voice",
+        audioId: m.id,
+      })
+    ).status,
+    "sent",
   );
   assert.ok(
     f.store
@@ -284,7 +286,7 @@ test("forward depth limits expose deferred resources which can be expanded later
   });
   assert.equal(next.items[0].text, "内层");
 });
-test("forward send preserves provenance and requires cross-conversation disclosure", async (t) => {
+test("forward send preserves provenance without per-send recollection approval", async (t) => {
   const f = setup(t),
     ctx = context(f.runtime),
     id = event(f, [], "private:30000", "私聊内容");
@@ -293,20 +295,12 @@ test("forward send preserves provenance and requires cross-conversation disclosu
     calls++;
     return { messageId: "forward-sent" };
   };
-  await assert.rejects(
-    f.runtime.callTool(ctx, "qq_forward_send", {
-      requestId: "forward-one",
-      eventIds: [id],
-    }),
-    /DISCLOSURE/,
-  );
-  assert.equal(calls, 0);
-  f.runtime.grant(ctx.token, [id]);
   const r = await f.runtime.callTool(ctx, "qq_forward_send", {
     requestId: "forward-one",
     eventIds: [id],
   });
   assert.equal(r.messageId, "forward-sent");
+  assert.equal(calls, 1);
 });
 test("poke requires current membership and stores action confirmation without a fake message ID", async (t) => {
   const f = setup(t),

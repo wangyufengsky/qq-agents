@@ -104,7 +104,7 @@ export const legacyDefinitions = {
     }),
   ],
   qq_forward_send: [
-    "将自己的已观察记录作为合并转发发送；返回 eventId 可继续展开。保留来源署名，跨会话内容仍需披露授权。",
+    "将自己的已观察记录作为合并转发发送；返回 eventId 可继续展开。保留来源署名，跨会话内容由你结合场景判断是否适合发送。",
     object({ requestId: id, eventIds: z.array(id).min(1).max(50) }),
   ],
   qq_send_poke: [
@@ -206,9 +206,8 @@ export function taintMedia(ctx, meta) {
       ctx.privateRead.add(source.eventId || source.sourceEventId || meta.id);
   ctx.persistTaint?.();
 }
-function disclose(ctx) {
-  if ([...ctx.privateRead].some((id) => !ctx.grants.has(id)))
-    throw Error("PRIVATE_RECOLLECTION_REQUIRES_DISCLOSURE_GRANT");
+function disclose(runtime, ctx) {
+  runtime.assertDisclosure(ctx);
 }
 export async function legacyTool(runtime, ctx, name, args) {
   const a = runtime.assertActive(ctx),
@@ -280,7 +279,7 @@ export async function legacyTool(runtime, ctx, name, args) {
   if (name === "qq_send_voice") {
     const m = runtime.voices.metadata(a.id, args.audioId);
     taintMedia(ctx, m);
-    disclose(ctx);
+    disclose(runtime, ctx);
     return runtime.deliver(ctx, {
       requestId: args.requestId,
       intent: { kind: "voice", ...args },
@@ -296,7 +295,7 @@ export async function legacyTool(runtime, ctx, name, args) {
   if (name === "qq_forward_read") return readForward(runtime, ctx, args);
   if (name === "qq_forward_send") {
     const events = args.eventIds.map((id) => ownedEvent(runtime, ctx, id));
-    disclose(ctx);
+    disclose(runtime, ctx);
     const { nodes, snapshot } = forwardPayload(
       events,
       a,
@@ -476,7 +475,7 @@ export async function legacyTool(runtime, ctx, name, args) {
       const meta = runtime.media.metadata(a.id, args.mediaId);
       if (!meta) throw Error("MEDIA_NOT_FOUND");
       taintMedia(ctx, meta);
-      disclose(ctx);
+      disclose(runtime, ctx);
       return runtime.deliver(ctx, {
         requestId: args.requestId,
         intent: { kind: "official-collect", mediaId: args.mediaId },

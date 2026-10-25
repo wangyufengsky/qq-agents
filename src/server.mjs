@@ -307,9 +307,28 @@ export function createServer({ runtime, token, allowLive = false }) {
         const q = Object.fromEntries(url.searchParams);
         delete q.agentId;
         if (q.cursor) q.cursor = JSON.parse(q.cursor);
-        for (const key of ["limit", "offset", "diaryOffset", "maxChars"])
+        for (const key of [
+          "limit",
+          "offset",
+          "diaryOffset",
+          "maxChars",
+          "contextBefore",
+          "contextAfter",
+          "contextSeconds",
+        ])
           if (q[key] !== undefined) q[key] = Number(q[key]);
         return send(runtime.memory.bind(agentId).search(q));
+      }
+      if (req.method === "GET" && url.pathname === "/api/memory/conversation") {
+        const agentId = url.searchParams.get("agentId");
+        runtime.agent(agentId);
+        const q = {};
+        for (const key of ["conversation", "connectionId", "aroundId"])
+          if (url.searchParams.has(key)) q[key] = url.searchParams.get(key);
+        for (const key of ["beforeSeq", "afterSeq", "limit", "maxChars"])
+          if (url.searchParams.has(key))
+            q[key] = Number(url.searchParams.get(key));
+        return send(runtime.memory.bind(agentId).conversation(q));
       }
       if (req.method === "GET" && url.pathname === "/api/memory/read") {
         const agentId = url.searchParams.get("agentId");

@@ -242,3 +242,56 @@ test("voice HTTP import and playback require admin and preserve agent ownership"
     1,
   );
 });
+
+test("admin memory search and context routes retain group scene and enforce agent ownership", async (t) => {
+  const { request, store } = await setup(t);
+  const mem = store.bind("agent-0");
+  const e = mem.append({
+    dedupe: "scene-ui",
+    conversation: "group:20000",
+    connectionId: "qq-0",
+    kind: "message.received",
+    senderId: "30000",
+    body: "xxx",
+    payload: { raw: { group_name: "场景验收群" } },
+  });
+  mem.append({
+    dedupe: "scene-ui-b",
+    conversation: "group:20000",
+    connectionId: "qq-0",
+    kind: "message.received",
+    senderId: "30001",
+    body: "yyy",
+  });
+  const result = await (
+    await request(
+      "/api/memory?agentId=agent-0&query=xxx&contextBefore=1&contextAfter=1",
+    )
+  ).json();
+  assert.equal(result.items[0].scene.source.name, "场景验收群");
+  assert.deepEqual(
+    result.items[0].scene.messages.map((x) => x.body),
+    ["xxx", "yyy"],
+  );
+  const around = await (
+    await request("/api/memory/conversation?agentId=agent-0&aroundId=" + e.id)
+  ).json();
+  assert.deepEqual(
+    around.items.map((x) => x.body),
+    ["xxx", "yyy"],
+  );
+  assert.notEqual(
+    (await request("/api/memory/conversation?agentId=agent-1&aroundId=" + e.id))
+      .status,
+    200,
+  );
+  assert.equal(
+    (
+      await request(
+        "/api/memory/conversation?agentId=agent-0&aroundId=" + e.id,
+        { auth: false },
+      )
+    ).status,
+    401,
+  );
+});

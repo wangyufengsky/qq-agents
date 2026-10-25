@@ -130,7 +130,7 @@ function render() {
       )
       .join(
         "",
-      )}</div><div class="section-title"><h2>角色状态</h2><button data-do="tab" data-id="agents">管理机器人 →</button></div><div class="grid">${config.agents.map(agentCard).join("")}</div><div class="section-title"><h2>披露请求</h2>${tag("回忆与对外披露分开")}</div><div class="card">${status.disclosureRequests.length ? status.disclosureRequests.map((r, i) => `<div class="record"><strong>${esc(find("agents", r.agentId)?.name)} → ${esc(r.conversation)}</strong><p>${r.records.length} 条跨会话或个人日记记录。批准仅对当前回合、当前目标有效。</p><p class="mono">${esc(r.records.join("\n"))}</p><button data-do="grant" data-id="${i}">批准本次披露</button></div>`).join("") : "<p>当前没有待批准的跨会话披露。</p>"}</div>`;
+      )}</div><div class="section-title"><h2>角色状态</h2><button data-do="tab" data-id="agents">管理机器人 →</button></div><div class="grid">${config.agents.map(agentCard).join("")}</div><div class="section-title"><h2>受限动作授权</h2>${tag("回忆发言由机器人自行判断")}</div><div class="card">${status.disclosureRequests.length ? status.disclosureRequests.map((r, i) => `<div class="record"><strong>${esc(find("agents", r.agentId)?.name)} → ${esc(r.conversation)}</strong><p>${r.records.length} 条资料涉及${r.reason === "external-service" ? "外部服务调用" : "本地运维内容"}。批准仅对当前回合、当前目标有效。</p><p class="mono">${esc(r.records.join("\n"))}</p><button data-do="grant" data-id="${i}">批准本次披露</button></div>`).join("") : "<p>当前没有待批准的受限动作。</p>"}</div>`;
   } else if (["agents", "connections", "backends"].includes(tab)) {
     content.innerHTML = `<div class="section-title"><h2>${titles[tab][0]} · ${config[tab].length}</h2><button class="primary" data-do="add" data-id="${tab}">+ 添加${{ agents: "机器人", connections: "实例", backends: "后端" }[tab]}</button></div><div class="grid">${config[tab].map(tab === "agents" ? agentCard : tab === "connections" ? connectionCard : backendCard).join("") || '<div class="card empty">添加第一个配置开始。</div>'}</div>`;
   } else if (["schedule", "voices", "operations"].includes(tab)) {
@@ -429,6 +429,7 @@ function openEditor(type, id) {
 }
 $("#edit-form").onsubmit = (e) => {
   e.preventDefault();
+  if (editing?.type === "read") return;
   action(async () => {
     let next = structuredClone(config);
     if (editing.type === "advanced") next = JSON.parse($("#config-json").value);
@@ -510,6 +511,42 @@ $("#edit-form").onsubmit = (e) => {
     notice("已保存。QQ 连接需要手动重新接入。");
   });
 };
+function sceneMarkup(scene) {
+  if (!scene) return "";
+  const source = scene.source;
+  const line = (m) =>
+    `<li><small>${esc(m.occurredAt)} · ${esc(m.senderName || "名字未记录")}（${esc(m.senderId || "身份未知")}）${m.matched ? " · 命中" : ""}</small><p>${esc(m.body)}${m.bodyTruncated ? "…（原文未完整展示）" : ""}</p>${m.replyTo.length ? `<small>引用：${m.replyTo.map((r) => esc(r.messageId) + (r.status === "observed" ? "（有原文）" : "（未取得原文）")).join("、")}</small>` : ""} <button type="button" data-read="${esc(m.id)}">读原文</button></li>`;
+  return `<details open><summary>${esc(source.name || "名称未记录")} · ${esc(source.conversation)} · 场景片段</summary><p class="hint">以下是时间相邻的消息，不代表同一话题。名称${source.nameObservedAt ? "观察于 " + esc(source.nameObservedAt) : "未知"}。</p><p>片段内发言者：${scene.participants.map((p) => `${esc(p.observedNames.join(" / ") || "名字未记录")}（${esc(p.id)}，${p.messageCount} 条）`).join("、") || "未知"}。这不是全群成员名单。</p><ol>${scene.messages.map(line).join("")}</ol>${scene.quoted.length ? `<p>另取的引用原文（不计入片段参与者）：</p><ol>${scene.quoted.map(line).join("")}</ol>` : ""}${scene.contextTruncated ? '<p class="hint">上下文受结果预算限制，已收缩；可继续展开。</p>' : ""}${!scene.timeKnown ? '<p class="hint">原消息时间不可靠，未自动拼接相邻发言。</p>' : ""}<button type="button" data-context="${esc(scene.anchorId)}">查看更多前后文</button></details>`;
+}
+async function readConversation(args) {
+  await action(async () => {
+    const r = await api(
+      "/api/memory/conversation?" +
+        new URLSearchParams({ agentId: $("#memory-agent").value, ...args }),
+    );
+    editing = { type: "read" };
+    $("#edit-title").textContent = "同一来源的前后文";
+    $("#edit-fields").innerHTML =
+      `<p class="hint">原始记录按归档顺序排列；不是自动识别的话题。${r.truncated ? "本页受字符预算限制。" : ""}</p>${r.items.map((m) => `<article class="record"><small>${esc(m.conversation)} · ${esc(m.senderName || m.senderId || "身份未知")} · ${esc(m.occurredAt || "时间未知")}</small><p>${esc(m.body || "摘要未展示")} ${m.bodyTruncated ? "（可读原文）" : ""}</p><button type="button" data-read="${esc(m.id)}">读原文</button></article>`).join("") || "没有更多记录"}${r.items.length ? '<button type="button" id="older-context">更早记录</button> <button type="button" id="newer-context">更晚记录</button>' : ""}`;
+    $("#edit-fields")
+      .querySelectorAll("[data-read]")
+      .forEach((b) => (b.onclick = () => readMemory(b.dataset.read)));
+    const first = r.items[0],
+      last = r.items.at(-1);
+    if (first) {
+      const scope = {
+        conversation: first.conversation,
+        connectionId: first.connectionId || "",
+      };
+      $("#older-context").onclick = () =>
+        readConversation({ ...scope, beforeSeq: first.seq });
+      $("#newer-context").onclick = () =>
+        readConversation({ ...scope, afterSeq: last.seq });
+    }
+    $("#edit-form footer").hidden = true;
+    if (!$("#editor").open) $("#editor").showModal();
+  });
+}
 async function searchMemory(cursor = null) {
   await action(async () => {
     const q = new URLSearchParams({
@@ -529,12 +566,18 @@ async function searchMemory(cursor = null) {
       rows
         .map(
           (r) =>
-            `<article class="record"><div class="row"><strong>${esc(r.title || r.type)}</strong>${tag(r.origin)}</div><p>${esc(r.body)}</p><small>${esc(r.conversation || "个人日记")} · ${esc(r.senderId || "")} · ${esc(r.occurredAt || r.updatedAt)}</small> <button data-read="${esc(r.id)}">展开</button></article>`,
+            `<article class="record"><div class="row"><strong>${esc(r.title || r.type)}</strong>${tag(r.origin)}</div><p>${esc(r.body)}</p><small>${esc(r.conversation || "个人日记")} · ${esc(r.senderId || "")} · ${esc(r.occurredAt || r.updatedAt)}</small> <button type="button" data-read="${esc(r.id)}">展开原文</button>${sceneMarkup(r.scene)}</article>`,
         )
         .join("") || '<p class="empty">没有匹配记录。</p>';
     node
       .querySelectorAll("[data-read]")
       .forEach((b) => (b.onclick = () => readMemory(b.dataset.read)));
+    node
+      .querySelectorAll("[data-context]")
+      .forEach(
+        (b) =>
+          (b.onclick = () => readConversation({ aroundId: b.dataset.context })),
+      );
     if (result.nextCursor) {
       const b = document.createElement("button");
       b.textContent = "下一页";
@@ -556,7 +599,7 @@ async function readMemory(id, offset = 0) {
     if (r.nextOffset !== null)
       $("#next-chunk").onclick = () => readMemory(id, r.nextOffset);
     $("#edit-form footer").hidden = true;
-    $("#editor").showModal();
+    if (!$("#editor").open) $("#editor").showModal();
   });
 }
 $("#editor").addEventListener(

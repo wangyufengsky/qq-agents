@@ -16,10 +16,13 @@ const fields = {
 const definitions = {
   ...legacyDefinitions,
   memory_search: [
-    "按中文关键词、人物QQ、来源、时间、记录类型检索自己的跨会话经历/日记。先摘要，再按ID读。其他会话资料不可直接披露。",
+    "按中文关键词、人物QQ、来源、时间、记录类型检索自己的跨会话经历/日记。命中附带同一场景的相邻发言和引用；相邻不等于同一话题。自行判断适合表达的回忆，再按ID展开原文。",
     z
       .object({
         query: str.max(200).optional(),
+        contextBefore: z.number().int().min(0).max(5).optional(),
+        contextAfter: z.number().int().min(0).max(5).optional(),
+        contextSeconds: z.number().int().min(1).max(3600).optional(),
         person: str.optional(),
         conversation: str.optional(),
         type: z.enum(["all", "event", "diary"]).optional(),
@@ -59,6 +62,7 @@ const definitions = {
       .object({
         conversation: str.optional(),
         aroundId: str.optional(),
+        connectionId: str.optional(),
         afterSeq: z.number().int().min(0).optional(),
         beforeSeq: z.number().int().min(1).optional(),
         limit,
@@ -212,9 +216,24 @@ export function toolSpecs(enabled = TOOL_NAMES, { context = false } = {}) {
     });
 }
 function track(ctx, items) {
-  for (const row of items)
-    if (row.disclosure === "private-recollection-do-not-disclose")
+  for (const row of items) {
+    if (row.protectedOperations)
+      ctx.privateRead.add("operations:diary:" + row.id);
+    if (
+      [
+        "agent-judged-recollection",
+        "agent-judged-diary",
+        "private-recollection-do-not-disclose",
+      ].includes(row.disclosure)
+    ) {
       ctx.privateRead.add(row.id);
+      for (const m of [
+        ...(row.scene?.messages || []),
+        ...(row.scene?.quoted || []),
+      ])
+        ctx.privateRead.add(m.id);
+    }
+  }
   ctx.persistTaint?.();
 }
 function protect(ctx, value) {
@@ -248,8 +267,22 @@ export async function dispatchTool(runtime, ctx, name, input) {
       ctx.shownSeq = Math.max(ctx.shownSeq, r.readThroughSeq);
     return r;
   }
-  if (name === "diary_write") return mem.diaryWrite(args);
-  if (name === "diary_revise") return mem.diaryRevise(args);
+  if (name === "diary_write" || name === "diary_revise") {
+    const protectedOperations = [...ctx.privateRead].some((id) =>
+      /^(operations|operations-result):/.test(id),
+    );
+    return name === "diary_write"
+      ? mem.diaryWrite(
+          args,
+          "ai-diary",
+          {
+            conversation: ctx.conversation,
+            connectionId: runtime.agent(ctx.agentId).connectionId,
+          },
+          protectedOperations,
+        )
+      : mem.diaryRevise(args, protectedOperations);
+  }
   if (name === "qq_send") return runtime.send(ctx, args);
   if (name === "qq_mark_read") {
     if (args.throughSeq > ctx.shownSeq) throw Error("UNSEEN_WATERMARK");
@@ -303,8 +336,7 @@ export async function dispatchTool(runtime, ctx, name, input) {
     name === "external_tool"
   ) {
     // External queries can also disclose remembered private content.
-    if ([...ctx.privateRead].some((id) => !ctx.grants.has(id)))
-      throw Error("PRIVATE_RECOLLECTION_EXTERNAL_CALL_BLOCKED");
+    runtime.assertDisclosure(ctx, { external: true });
     if (name === "web_fetch")
       return safeFetch(args.url, args.maxChars || 12000);
     runtime.social ??= new SocialReader();

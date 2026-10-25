@@ -173,10 +173,12 @@ test("AI scheduler tool is owner-private only and cross-target edits require app
     /CRON_ADMIN/,
   );
 });
-test("tasks cannot bypass private recollection disclosure with delayed text", async (t) => {
+test("tasks accept ordinary recollection but cannot bypass protected file disclosure", async (t) => {
   const f = setup(t),
     owner = context(f.runtime, "agent-0", "private:30000");
   owner.privateRead.add("elsewhere");
+  assert.ok(f.s.create("agent-0", task(), owner).id);
+  owner.privateRead.add("operations:protected-file");
   assert.throws(() => f.s.create("agent-0", task(), owner), /DISCLOSURE/);
 });
 test("AI task instruction survives busy queue and has a non-send outcome if model stays silent", async (t) => {

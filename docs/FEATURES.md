@@ -20,7 +20,7 @@ AI 只能在配置的管理员私聊登记本人任务；允许跨目标时仍�
 
 “语音库”按角色导入文件、列出与本机试听。支持识别 WAV、MP3、Ogg、FLAC、M4A、AMR、SILK；默认最多 20 MiB、300 秒。常规音频由 FFprobe 实际解码检查时长；SILK 无解码器时保留为不透明附件、时长未知，不能声称听懂。音量与响度转换需要 FFmpeg，安装后可使用默认命令或在角色 `voice` 指定命令位置。
 
-工具通过 `audioId` 读取/发送库内素材，不能传任意本机路径。来源语音只能从已观察消息读取。公开 URL 受 SSRF 和大小限制；原生 QQ 网关返回本机路径时，优先用该消息的文件引用调用 `get_record(out_format=wav)`，校验返回的 base64 音频、大小与时长。网关不提供音频字节时，管理员可在角色 `voice.localRoots` 明确列出音频缓存目录作为本机读取后备；默认空列表拒绝本机路径，规范化路径及符号链接不得逃出目录，模型无法设置这些目录。私聊来源与外部生成资料的披露限制保留。发送字节由目标 OneBot/QQ 转码和接收，真实目标兼容性另验收。
+工具通过 `audioId` 读取/发送库内素材，不能传任意本机路径。来源语音只能从已观察消息读取。公开 URL 受 SSRF 和大小限制；原生 QQ 网关返回本机路径时，优先用该消息的文件引用调用 `get_record(out_format=wav)`，校验返回的 base64 音频、大小与时长。网关不提供音频字节时，管理员可在角色 `voice.localRoots` 明确列出音频缓存目录作为本机读取后备；默认空列表拒绝本机路径，规范化路径及符号链接不得逃出目录，模型无法设置这些目录。音频来源保留；跨会话回忆表达由机器人判断，向外部服务提交资料仍保留独立检查。发送字节由目标 OneBot/QQ 转码和接收，真实目标兼容性另验收。
 
 DSH 的 MCP 结果可携带 audio block。当前 Codex 动态工具适配没有原生音频输入路径，会明确返回“不支持音频输入、无转录”，不能把音频元数据当转录。需要识别语音时可配置允许的转录 MCP，未经验证不自动启用外部服务。
 
@@ -28,7 +28,7 @@ DSH 的 MCP 结果可携带 audio block。当前 Codex 动态工具适配没有�
 
 `qq_forward_read` 仅展开已观察转发或其已归档子资源，默认 NapCat 使用 `get_forward_msg.message_id`，通用 OneBot 可将连接 `gateway` 设为 `onebot` 使用 `id`。QQ 的 `com.tencent.multimsg/contact` JSON 转发卡片也可提取其中已观察的 `meta.detail.resid`；其他卡片、畸形或过大 JSON 保持不透明。识别资源不保证网关支持拉取。对本项目已确认发送的消息，网关拒绝时可从成功回执关联的发送快照恢复外层；若内层也是自己先前成功发送的卡片，则逐层核对方向、连接、回执和源消息快照后读取；`source=confirmed-send-sources` 明确标记来源，`warnings` 保留网关读取失败。其他消息或无法取得的内层仍返回 `complete=false` 与 `FORWARD_FETCH_FAILED`，不触发重新发送。NapCat 已返回的 `forward.data.content` 会直接归档并展开，不重复拉取不可独立获取的内层 ID。最多五层、一次十个资源，分页返回；达到预算会给出可继续展开的资源。原文归档保留，节点中的图片可以继续读取。转发中的署名是来源声称的署名，不等于认证身份。
 
-`qq_forward_send` 成功返回的 `eventId` 可直接交给 `qq_forward_read`，不必先获取 QQ 卡片。新发送在网络请求前持久化源消息段快照，只有已确认发送且身份、连接、会话、消息 ID 和回执一致才可使用；0.2.2 旧回执可关联当时已存在的源事件。深度、分页、资源预算、跨会话披露和暂停规则继续生效。对真实收到的消息使用原消息 ID 保留附件；不具备可复用消息 ID 的归档节点按文字署名发送。`qq_send_poke` 只对当前私聊对象或核对过的群成员操作。NapCat 的拍一拍依赖可用的 PacketBackend，禁用时返回 `DELIVERY_FAILED_PACKET_BACKEND_DISABLED`，不可用时返回 `DELIVERY_FAILED_PACKET_BACKEND_UNAVAILABLE`；失败请求不会自动重试。启用和重启属于网关配置操作，桥接不会自动修改。`qq_send_burst` 每条独立回执，失败停止并保留已成功前缀。
+`qq_forward_send` 成功返回的 `eventId` 可直接交给 `qq_forward_read`，不必先获取 QQ 卡片。新发送在网络请求前持久化源消息段快照，只有已确认发送且身份、连接、会话、消息 ID 和回执一致才可使用；0.2.2 旧回执可关联当时已存在的源事件。深度、分页、资源预算、来源记录和暂停规则继续生效。对真实收到的消息使用原消息 ID 保留附件；不具备可复用消息 ID 的归档节点按文字署名发送。`qq_send_poke` 只对当前私聊对象或核对过的群成员操作。NapCat 的拍一拍依赖可用的 PacketBackend，禁用时返回 `DELIVERY_FAILED_PACKET_BACKEND_DISABLED`，不可用时返回 `DELIVERY_FAILED_PACKET_BACKEND_UNAVAILABLE`；失败请求不会自动重试。启用和重启属于网关配置操作，桥接不会自动修改。`qq_send_burst` 每条独立回执，失败停止并保留已成功前缀。
 
 官方表情读取使用 `fetch_custom_face`。收藏和备注沿用旧网关 `add_custom_face`/`modify_custom_face`，由工具白名单单独控制；目标网关不支持则明确失败。仅返回 URL 的表情用内部摘要 ID 读取，不能虚构可编辑 emoji ID。角色本地表情库不依赖这两个扩展。
 
@@ -43,3 +43,9 @@ DSH 的 MCP 结果可携带 audio block。当前 Codex 动态工具适配没有�
 ## 本地验收
 
 运行 `npm run verify` 完成语法、Node 测试、格式与隐私扫描。常规回归测试使用合成音频、本机网络替身和临时目录。另有显式启动的 [真实后端验收脚本](LOCAL-ACCEPTANCE.md)，使用独立 DSH profile/Codex home 和仅监听本机的 QQ 接收网关。仓库没有 GitHub Actions 工作流；GitHub 用于代码和 PR 管理。真实模型、用户授权的 QQ 入站样本，以及DSH/Codex 独立连接的手动真实 QQ 出站的验收范围见 [验收记录](ACCEPTANCE.md)；常规回归和 `acceptance:live` 脚本不会执行真实 QQ 出站与生产迁移。
+
+## 场景记忆与日记
+
+`memory_search` 的 `contextBefore` / `contextAfter` 默认各 2 条、最大各 5 条，`contextSeconds` 默认 600 秒、最大 3600 秒。结果包含同源消息的群/私聊标识、已观察名称、发言者、明确引用和 @；关键词与人物条件只用于选中命中消息。`conversation_read` 的 `aroundId` 自动保持原连接范围，分页可带 `connectionId`。管理台支持检索、场景展示、继续读前后文及原文分片。
+
+个人日记由程序记录写作场景及时间；写作场景不代表日记叙述事情的发生场景。日记、普通跨会话回忆不锁住 QQ 发言，模型自行判断表达范围。完整约定和未知/截断处理见 [场景记忆设计](MEMORY-DESIGN.md)。

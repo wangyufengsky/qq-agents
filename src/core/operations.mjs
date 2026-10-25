@@ -23,8 +23,7 @@ export class Operations {
       !a.ownerIds.includes(ctx.conversation.split(":")[1])
     )
       throw Error("OWNER_OPERATIONS_ONLY");
-    if ([...ctx.privateRead].some((id) => !ctx.grants.has(id)))
-      throw Error("PRIVATE_RECOLLECTION_REQUIRES_DISCLOSURE_GRANT");
+    this.runtime.assertDisclosure(ctx);
     return a;
   }
   audit(id, kind, payload) {

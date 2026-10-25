@@ -41,6 +41,9 @@ export function normalizeEvent(raw, connection) {
   if (raw.notice_type === "group_decrease") body = `[离群] QQ:${raw.user_id}`;
   if (raw.notice_type === "group_card")
     body = `[名片变更] QQ:${raw.user_id} ${String(raw.card_new || "").slice(0, 120)}`;
+  const messageTime = new Date(Number(raw.time) * 1000);
+  const timeKnown =
+    Number(raw.time) > 0 && Number.isFinite(messageTime.getTime());
   return {
     conversation,
     messageId: raw.message_id == null ? null : String(raw.message_id),
@@ -59,9 +62,10 @@ export function normalizeEvent(raw, connection) {
     status: recall ? "recalled" : "observed",
     body,
     segments,
-    occurredAt: raw.time
-      ? new Date(raw.time * 1000).toISOString()
+    occurredAt: timeKnown
+      ? messageTime.toISOString()
       : new Date().toISOString(),
+    timeKnown,
     raw,
   };
 }

@@ -82,8 +82,7 @@ export class TaskScheduler {
       )
         throw Error("OWNER_PRIVATE_ONLY");
       if (!a.scheduler.allowAiPrivate) throw Error("AI_SCHEDULING_DISABLED");
-      if ([...ctx.privateRead].some((x) => !ctx.grants.has(x)))
-        throw Error("PRIVATE_RECOLLECTION_REQUIRES_DISCLOSURE_GRANT");
+      this.runtime.assertDisclosure(ctx);
     }
     return a;
   }

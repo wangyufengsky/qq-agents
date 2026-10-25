@@ -252,7 +252,7 @@ test("new forwards persist their exact source snapshot and archived-node text wi
   assert.deepEqual(result.items[0].nestedForwardIds, []);
 });
 
-test("unavailable inner resources remain incomplete and cross-conversation reads require disclosure", async (t) => {
+test("unavailable inner resources remain incomplete while cross-conversation speech is agent-judged", async (t) => {
   const f = setup(t),
     sent = await f.runtime.callTool(f.ctx, "qq_forward_send", {
       requestId: "nested-send",
@@ -275,12 +275,14 @@ test("unavailable inner resources remain incomplete and cross-conversation reads
     maxDepth: 0,
   });
   assert.ok(other.privateRead.has(sent.eventId));
-  await assert.rejects(
-    f.runtime.callTool(other, "qq_send", {
-      requestId: "leak",
-      text: "不可直接披露",
-    }),
-    /DISCLOSURE/,
+  assert.equal(
+    (
+      await f.runtime.callTool(other, "qq_send", {
+        requestId: "recall-send",
+        text: "我认为适合分享的回忆",
+      })
+    ).status,
+    "sent",
   );
 });
 

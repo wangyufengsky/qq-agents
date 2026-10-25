@@ -265,6 +265,22 @@ runtime.callTool = async (ctx, name, params) => {
         maxDepth: Math.max(0, ...result.items.map((x) => x.depth || 0)),
         total: result.total,
       };
+    if (
+      name === "memory_search" &&
+      params.person === "30000" &&
+      params.conversation === "group:20000"
+    )
+      entry.sceneSearch = {
+        personFiltered: true,
+        groupScoped: true,
+        contextualMatch: result.items.some(
+          (item) =>
+            item.scene?.participants.length === 3 &&
+            item.scene.messages.some((m) =>
+              m.replyTo.some((r) => r.status === "observed"),
+            ),
+        ),
+      };
     entry.status = "ok";
     return result;
   } catch (e) {
@@ -373,6 +389,70 @@ async function runCase(id, test) {
           .slice(before)
           .some((m) => JSON.stringify(m.message).includes("ACCEPTANCE_HELLO")),
         "NO_CONFIRMED_HELLO",
+      );
+    } else if (test === "memory-scene") {
+      const mem = memory.bind(id),
+        key = "场景蓝鲸" + started;
+      const start = Date.now() - 30000;
+      for (const [i, name, text] of [
+        [0, "验收甲", key + "：原定周五上午。"],
+        [1, "验收乙", "周五取消，改为周六下午三点。"],
+        [2, "验收丙", "同意，我周六负责材料。"],
+      ])
+        mem.append({
+          dedupe: key + i,
+          connectionId: id,
+          conversation: "group:20000",
+          kind: "message.received",
+          messageId: key + i,
+          senderId: String(30000 + i),
+          occurredAt: new Date(start + i * 1000).toISOString(),
+          body: text,
+          payload: {
+            raw: { group_name: "独立验收讨论群", sender: { nickname: name } },
+            segments:
+              i === 1 ? [{ type: "reply", data: { id: key + "0" } }] : [],
+          },
+        });
+      const diary = mem.diaryWrite(
+        { title: key + "日记", body: "我的感受是期待这次合作。" },
+        "acceptance-fixture",
+        { conversation: "group:20000", connectionId: id },
+      );
+      await turn(
+        id,
+        `记忆场景验收：先 memory_search 搜索 query="${key}"、person="30000"、conversation="group:20000"、type="event"。根据返回场景确定群名称、片段内三位发言者、最后约定的时间以及修改意见引用了谁。再用 memory_read 读取日记 ${diary.id}，结合这篇自己的日记。最后只发一条 qq_send，含标记 ACCEPTANCE_MEMORY_SCENE 和以上结论及日记感受。请自行判断适合当前主人私聊的表达，不要把最初提议当最终结论。`,
+      );
+      const text = gateway.sent
+        .slice(before)
+        .map((m) => JSON.stringify(m.message))
+        .join("\n");
+      requireResult(
+        text.includes("ACCEPTANCE_MEMORY_SCENE") &&
+          text.includes("独立验收讨论群") &&
+          text.includes("验收甲") &&
+          text.includes("验收乙") &&
+          text.includes("验收丙") &&
+          /周六|星期六/.test(text) &&
+          /三点|3点|15[:：]00/.test(text) &&
+          text.includes("期待") &&
+          /引用[^\n]{0,100}验收甲|回复[^\n]{0,100}验收甲/.test(text),
+        "MEMORY_SCENE_NOT_UNDERSTOOD",
+      );
+      requireResult(
+        calls.slice(beforeCalls).some((c) => c.sceneSearch?.contextualMatch),
+        "PERSON_FILTER_LOST_SCENE",
+      );
+      for (const name of ["memory_search", "memory_read", "qq_send"])
+        requireResult(
+          calls
+            .slice(beforeCalls)
+            .some((c) => c.name === name && c.status === "ok"),
+          "MEMORY_TOOL_NOT_USED",
+        );
+      requireResult(
+        runtime.status().disclosureRequests.length === 0,
+        "RECOLLECTION_STILL_REQUESTS_APPROVAL",
       );
     } else if (test === "voice") {
       await turn(
@@ -672,6 +752,7 @@ if (args.includes("--run-all")) {
         "smoke",
         "voice",
         "forward",
+        "memory-scene",
         "wait-sleep",
         "proactive",
         "schedule-crud",

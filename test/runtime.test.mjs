@@ -121,46 +121,71 @@ test("in-flight confirmed receipt is still recorded if pause arrives during HTTP
   assert.equal((await p).status, "sent");
   assert.equal(store.bind("agent-0").delivery("flight").status, "sent");
 });
-test("own cross-conversation recall works, send and external disclosure need scoped approval", async (t) => {
+test("own recall and diaries permit agent-judged QQ speech across current and later turns", async (t) => {
   const { runtime, store } = fixture(t);
-  const e = store.bind("agent-0").append({
-    dedupe: "private",
-    conversation: "private:30000",
+  const mem = store.bind("agent-0");
+  const e = mem.append({
+    dedupe: "group-memory",
+    conversation: "group:20000",
     kind: "message.received",
-    body: "私人约定",
+    body: "蓝鲸约定",
   });
-  const ctx = context(runtime);
-  const r = await runtime.callTool(ctx, "memory_search", { query: "私人约定" });
+  const diary = mem.diaryWrite({
+    title: "感受",
+    body: "我记得那次约定",
+    evidence: [e.id],
+  });
+  const ctx = context(runtime, "agent-0", "private:30000");
+  const r = await runtime.callTool(ctx, "memory_search", { query: "蓝鲸约定" });
   assert.equal(r.items.length, 1);
-  await assert.rejects(
-    runtime.send(ctx, { requestId: "privacy", text: "私人约定" }),
-    /DISCLOSURE_GRANT/,
-  );
-  runtime.grant(ctx.token, [e.id]);
+  await runtime.callTool(ctx, "memory_read", { id: diary.id });
   assert.equal(
-    (await runtime.send(ctx, { requestId: "privacy", text: "私人约定" }))
-      .status,
+    (
+      await runtime.send(ctx, {
+        requestId: "recall",
+        text: "群里曾聊过蓝鲸约定。",
+      })
+    ).status,
     "sent",
   );
-});
-test("private recall taint survives later turns and only owner can inspect records", async (t) => {
-  const { runtime, store } = fixture(t);
-  const e = store.bind("agent-0").append({
-    dedupe: "p",
-    conversation: "private:30000",
-    kind: "message.received",
-    body: "private",
-  });
-  const ctx = context(runtime);
-  await runtime.callTool(ctx, "memory_read", { id: e.id });
-  const next = context(runtime);
-  await assert.rejects(
-    runtime.send(next, { requestId: "next", text: "leak" }),
-    /DISCLOSURE_GRANT/,
+  const next = context(runtime, "agent-0", "private:30000");
+  assert.equal(
+    (
+      await runtime.send(next, {
+        requestId: "next-recall",
+        text: "这是我自己的感受。",
+      })
+    ).status,
+    "sent",
   );
+  assert.equal(runtime.status().disclosureRequests.length, 0);
   await assert.rejects(
     runtime.callTool(context(runtime, "agent-1"), "memory_read", { id: e.id }),
     /RECORD_NOT_FOUND/,
+  );
+});
+test("old persisted recollection marks no longer lock QQ speech, while external disclosure stays scoped", async (t) => {
+  const { runtime, store } = fixture(t);
+  const mem = store.bind("agent-0");
+  mem.setState("group:20000", { disclosureTaint: ["old-recollection"] });
+  const ctx = context(runtime);
+  assert.equal(
+    (await runtime.send(ctx, { requestId: "old-state", text: "自主表达" }))
+      .status,
+    "sent",
+  );
+  runtime.agent("agent-0").tools.push("external_tool");
+  await assert.rejects(
+    runtime.callTool(ctx, "external_tool", {
+      serverId: "test",
+      tool: "test",
+      arguments: {},
+    }),
+    /EXTERNAL_CALL_BLOCKED/,
+  );
+  assert.equal(
+    runtime.status().disclosureRequests[0].reason,
+    "external-service",
   );
 });
 test("model cannot supply another agentId or replace its destination", async (t) => {
@@ -226,7 +251,7 @@ test("bounded peer interaction stops loops after configured messages", async (t)
     await settle(runtime);
   }
   assert.equal(calls, 2);
-  assert.equal(store.bind("agent-0").search().items.length, 5);
+  assert.equal(store.bind("agent-0").export().tables.events.length, 5);
   await runtime.ingest("qq-0", raw(99));
   await settle(runtime);
   assert.equal(calls, 3);
@@ -292,5 +317,66 @@ test("outbound archive reflects the actual plain text sent to QQ", async (t) => 
   assert.equal(
     store.bind("agent-0").search({ kind: "message.sent" }).items[0].body,
     "Hello world",
+  );
+});
+
+test("diary creation records its actual writing scene and revisions keep that provenance", async (t) => {
+  const { runtime, store } = fixture(t);
+  const ctx = context(runtime, "agent-0", "private:30000");
+  const d = await runtime.callTool(ctx, "diary_write", {
+    title: "我的记忆",
+    body: "当时的感受",
+  });
+  await runtime.callTool(ctx, "diary_revise", {
+    id: d.id,
+    expectedRevision: 1,
+    title: "我的记忆",
+    body: "后来又想到一点",
+  });
+  const record = JSON.parse(store.bind("agent-0").read({ id: d.id }).chunk);
+  assert.deepEqual(record.metadata.writtenIn, {
+    conversation: "private:30000",
+    connectionId: "qq-0",
+  });
+  await assert.rejects(
+    runtime.callTool(ctx, "diary_write", {
+      title: "伪造",
+      body: "x",
+      writtenIn: { conversation: "group:20001" },
+    }),
+  );
+});
+
+test("protected operations content cannot lose its restriction by being saved and revised as a diary", async (t) => {
+  const { runtime } = fixture(t);
+  const ctx = context(runtime);
+  ctx.privateRead.add("operations:file-source");
+  const diary = await runtime.callTool(ctx, "diary_write", {
+    title: "工作区笔记",
+    body: "受限文件内容",
+  });
+  const next = context(runtime, "agent-0", "private:30000");
+  await runtime.callTool(next, "memory_search", {
+    query: "工作区笔记",
+    maxChars: 512,
+  });
+  await assert.rejects(
+    runtime.send(next, { requestId: "protected-diary", text: "受限文件内容" }),
+    /DISCLOSURE/,
+  );
+  await runtime.callTool(next, "diary_revise", {
+    id: diary.id,
+    expectedRevision: 1,
+    title: "工作区笔记",
+    body: "整理后的受限内容",
+  });
+  const other = context(runtime, "agent-0", "group:20001");
+  await runtime.callTool(other, "memory_read", { id: diary.id });
+  await assert.rejects(
+    runtime.send(other, {
+      requestId: "protected-revision",
+      text: "整理后的受限内容",
+    }),
+    /DISCLOSURE/,
   );
 });

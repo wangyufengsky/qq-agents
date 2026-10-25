@@ -12,6 +12,16 @@ const timestamp = (value) => {
     : new Date().toISOString();
 };
 
+const knownTime = (value) =>
+  value !== undefined &&
+  value !== null &&
+  value !== "" &&
+  Number.isFinite(
+    new Date(
+      typeof value === "number" && value < 1e12 ? value * 1000 : value,
+    ).getTime(),
+  );
+
 /** Read only known message/state surfaces. Never import config tokens or model credentials. */
 export function inspectLegacy(source, { legacyDb, legacyAgentId } = {}) {
   const files = [],
@@ -51,6 +61,7 @@ export function inspectLegacy(source, { legacyDb, legacyAgentId } = {}) {
             ),
           payload: {
             legacySeq: m.seq ?? null,
+            timeKnown: knownTime(m.time ?? m.timestamp),
             media: m.media || [],
             source: "social-v2",
             completeness: "bounded-window; original may have been truncated",
@@ -130,6 +141,7 @@ export function inspectLegacy(source, { legacyDb, legacyAgentId } = {}) {
             ),
           payload: {
             source: name,
+            timeKnown: knownTime(e.occurredAt ?? e.time),
             line: index + 1,
             attachments: e.attachments || [],
             completeness: "as-exported",
