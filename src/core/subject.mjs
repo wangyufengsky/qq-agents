@@ -55,7 +55,16 @@ export class SubjectCoordinator {
                     ? a.subject.unansweredCooldownMs
                     : a.subject.contactCooldownMs),
               ),
-              replyCheckAt: null,
+              replyCheckAt:
+                Math.max(
+                  target.proactiveCooldownUntil || 0,
+                  at +
+                    (i.expectsResponse
+                      ? a.subject.unansweredCooldownMs
+                      : a.subject.contactCooldownMs),
+                ) > runtime.now()
+                  ? null
+                  : target.replyCheckAt,
             });
           }
           if (["handedoff", "selected"].includes(i.status)) {

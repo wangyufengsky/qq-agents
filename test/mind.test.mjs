@@ -894,3 +894,30 @@ test("recovery repairs legacy sent and pending crash windows from outbox exactly
   ctx.intentSnapshotSeq = 0;
   assert.throws(() => runtime.subject.beforeDelivery(ctx), /COOLDOWN/);
 });
+
+test("old completed contacts do not erase a newer ordinary reply check on restart", async (t) => {
+  const { runtime, store } = fixture(t, { cfg: enabled() }),
+    m = store.bind("agent-0"),
+    ctx = context(runtime),
+    past = runtime.now() - 3 * 86400000;
+  const i = runtime.subject.create(ctx, {
+    topic: "old",
+    target: ctx.conversation,
+    reason: "past",
+    expiresAt: runtime.now() + 60000,
+  });
+  runtime.subject.transition(ctx.agentId, i, "completed", "old receipt", {
+    contactChargedAt: past,
+  });
+  m.reserveDelivery("intent:" + i.id, ctx.conversation, {});
+  m.completeDelivery("intent:" + i.id, "sent", "old");
+  const future = runtime.now() + 30000;
+  m.setState(ctx.conversation, {
+    replyCheckAt: future,
+    proactiveCooldownUntil: past,
+  });
+  const { SubjectCoordinator } = await import("../src/core/subject.mjs");
+  new SubjectCoordinator(runtime);
+  assert.equal(m.state(ctx.conversation).replyCheckAt, future);
+  assert(m.state(ctx.conversation).proactiveCooldownUntil < runtime.now());
+});
