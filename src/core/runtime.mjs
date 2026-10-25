@@ -340,7 +340,9 @@ export class Runtime {
     const c = this.connection(connectionId),
       e = normalizeEvent(raw, c);
     if (!e) return { ignored: true };
+    // Only message events can be echoes; a recall notice of our own message must still be archived.
     const ownEcho =
+      e.kind === "message.received" &&
       e.messageId != null &&
       (e.direction === "out" || e.senderId === c.accountId);
     // The gateway may echo our own send before its HTTP receipt lands; let that delivery finish first.

@@ -126,6 +126,32 @@ test("an echo that arrives before the send receipt waits and is still deduplicat
   );
 });
 
+test("a recall of the agent's own confirmed message is still archived", async (t) => {
+  const f = fixture(t, { cfg: config(1) }),
+    r = await f.runtime.send(context(f.runtime), {
+      requestId: "recalled",
+      text: "说错了",
+    });
+  const result = await f.runtime.ingest("qq-0", {
+    post_type: "notice",
+    notice_type: "group_recall",
+    self_id: 10000,
+    group_id: 20000,
+    user_id: 10000,
+    operator_id: 30000,
+    message_id: Number(r.messageId),
+    time: 1800000000,
+  });
+  assert.ok(!result.some((x) => x.ownEcho));
+  assert.deepEqual(
+    f.store.db
+      .prepare("SELECT kind FROM events WHERE message_id=? ORDER BY seq")
+      .all(r.messageId)
+      .map((x) => x.kind),
+    ["message.sent", "message.recalled"],
+  );
+});
+
 test("a message typed manually on the bot account is still archived", async (t) => {
   const f = fixture(t, { cfg: config(1) });
   const result = await f.runtime.ingest(
