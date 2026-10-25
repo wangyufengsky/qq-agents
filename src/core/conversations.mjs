@@ -41,7 +41,7 @@ export class ConversationEngine {
     };
     if (e.kind === "notice.poke") return wc.poke ? "poke" : null;
     if (e.kind === "notice.join") return wc.joins ? "join" : null;
-    if (e.kind !== "message.received") return null;
+    if (!["message.received", "notice.file"].includes(e.kind)) return null;
     if (wc.private && e.conversation.startsWith("private:")) return "private";
     if (
       wc.mentions &&

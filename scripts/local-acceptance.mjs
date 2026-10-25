@@ -17,6 +17,7 @@ import { BackendRegistry } from "../src/backends/index.mjs";
 import { createServer } from "../src/server.mjs";
 import { MediaStore } from "../src/tools/media.mjs";
 import { VoiceStore } from "../src/tools/voice.mjs";
+import { FileStore } from "../src/tools/files.mjs";
 import { TOOL_NAMES } from "../src/tools/index.mjs";
 import { wav } from "../test/audio-fixture.mjs";
 
@@ -124,7 +125,21 @@ for (let i = 0; i < ids.length; i++) {
     else if (action === "get_status") data = { online: true, good: true };
     else if (action === "get_forward_msg")
       data = resources.get(p.message_id || p.id) || { messages: [] };
-    else if (
+    else if (["upload_private_file", "upload_group_file"].includes(action)) {
+      if (!p.file?.startsWith("base64://"))
+        throw Error("FIXTURE_EXPECTED_FILE_BYTES");
+      const bytes = Buffer.from(p.file.slice(9), "base64");
+      data = { file_id: "fixture-file-" + ++messageId };
+      sent.push({
+        action,
+        name: p.name,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        bytes: bytes.length,
+        userId: p.user_id,
+        groupId: p.group_id,
+        at: Date.now(),
+      });
+    } else if (
       action === "get_record" &&
       inputs?.record &&
       p.file ===
@@ -267,6 +282,7 @@ const runtime = new Runtime({
 });
 runtime.media = new MediaStore(path.join(root, "media"));
 runtime.voices = new VoiceStore(path.join(root, "voices"));
+runtime.files = new FileStore(path.join(root, "files"));
 const call = runtime.callTool.bind(runtime);
 runtime.callTool = async (ctx, name, params) => {
   const entry = {
@@ -279,6 +295,8 @@ runtime.callTool = async (ctx, name, params) => {
   record();
   try {
     const result = await call(ctx, name, params);
+    if (["file_download", "file_create"].includes(name))
+      entry.fileId = result.fileId;
     if (name === "voice_synthesize")
       entry.generatedAudio = {
         id: result.id,
@@ -416,7 +434,84 @@ async function runCase(id, test) {
       for (const [key, value] of Object.entries(inputs.forwardResources || {}))
         gateway.resources.set(key, value);
     }
-    if (test === "smoke") {
+    if (test === "files") {
+      await runtime.changeFilePermissions(
+        id,
+        { enabled: true },
+        configStore.revision,
+      );
+      const publicFile =
+        "https://raw.githubusercontent.com/github/gitignore/main/Node.gitignore";
+      await turn(
+        id,
+        `文件验收：依次用 file_list 查看文件库；用 file_download 下载公开链接 ${publicFile}，name=公开样本.txt；再用 file_download 下载本条消息附带的 QQ 文件（先从 conversation_read 找到本条经历的记录 UUID 作为 eventId，不能使用 QQ messageId）；然后用 file_create 生成 验收说明.txt，正文必须是 FILE_ACCEPTANCE_OK。用 qq_send_file 将公开样本.txt 和 验收说明.txt 各发送一次到当前私聊，两次 requestId 不同。不要用 qq_send 发送文字替代附件。开启的普通文件权限不需额外确认。完成后结束。`,
+        {
+          segments: [
+            {
+              type: "file",
+              data: {
+                file_id: "synthetic-file",
+                name: "QQ样本.txt",
+                url: publicFile,
+              },
+            },
+          ],
+        },
+      );
+      const recent = calls.slice(beforeCalls),
+        delivered = gateway.sent
+          .slice(before)
+          .filter((m) => m.action === "upload_private_file");
+      for (const tool of [
+        "file_list",
+        "file_download",
+        "file_create",
+        "qq_send_file",
+      ])
+        requireResult(
+          recent.some((c) => c.name === tool && c.status === "ok"),
+          "FILE_TOOL_MISSING_" + tool,
+        );
+      requireResult(
+        recent.filter((c) => c.name === "file_download" && c.status === "ok")
+          .length >= 2,
+        "FILE_DOWNLOAD_SOURCES_MISSING",
+      );
+      requireResult(delivered.length === 2, "FILE_SEND_COUNT");
+      requireResult(
+        delivered.every(
+          (m) =>
+            m.userId === "30000" &&
+            !m.groupId &&
+            runtime.files.read(id, m.sha256, 20971520).buffer.length ===
+              m.bytes,
+        ),
+        "FILE_DELIVERY_BYTES_MISMATCH",
+      );
+      requireResult(
+        delivered.some(
+          (m) =>
+            runtime.files.read(id, m.sha256, 20971520).buffer.toString() ===
+            "FILE_ACCEPTANCE_OK",
+        ),
+        "FILE_GENERATED_CONTENT_MISMATCH",
+      );
+      requireResult(
+        runtime.files
+          .list(id)
+          .items.some(
+            (m) =>
+              m.sources.some((s) => s.kind === "qq-attachment") &&
+              m.sources.some((s) => s.kind === "web"),
+          ),
+        "FILE_PROVENANCE_MISSING",
+      );
+      requireResult(
+        runtime.status().disclosureRequests.length === 0 &&
+          runtime.operations.pending.size === 0,
+        "FILE_UNEXPECTED_CONFIRMATION",
+      );
+    } else if (test === "smoke") {
       await turn(
         id,
         "独立验收：请只调用 qq_send 发送 ACCEPTANCE_HELLO，然后结束。",

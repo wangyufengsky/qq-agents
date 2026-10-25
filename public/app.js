@@ -19,6 +19,7 @@ let token = sessionStorage.getItem("qq-unified-token") || "",
   tab = "overview",
   editing;
 const titles = {
+  permissions: ["权限", "分别设置每个 AI 的文件收发能力与独立文件库。"],
   schedule: ["主动与定时", "条件唤醒、睡前观察和定时任务，各自按规则运行。"],
   voices: ["语音库", "导入、试听和管理每个角色自己的语音素材。"],
   operations: ["词汇与运维", "核对黑话候选，逐项确认管理员操作。"],
@@ -133,6 +134,8 @@ function render() {
       )}</div><div class="section-title"><h2>角色状态</h2><button data-do="tab" data-id="agents">管理机器人 →</button></div><div class="grid">${config.agents.map(agentCard).join("")}</div><div class="section-title"><h2>受限动作授权</h2>${tag("回忆发言由机器人自行判断")}</div><div class="card">${status.disclosureRequests.length ? status.disclosureRequests.map((r, i) => `<div class="record"><strong>${esc(find("agents", r.agentId)?.name)} → ${esc(r.conversation)}</strong><p>${r.records.length} 条资料涉及${r.reason === "external-service" ? "外部服务调用" : "本地运维内容"}。批准仅对当前回合、当前目标有效。</p><p class="mono">${esc(r.records.join("\n"))}</p><button data-do="grant" data-id="${i}">批准本次披露</button></div>`).join("") : "<p>当前没有待批准的受限动作。</p>"}</div>`;
   } else if (["agents", "connections", "backends"].includes(tab)) {
     content.innerHTML = `<div class="section-title"><h2>${titles[tab][0]} · ${config[tab].length}</h2><button class="primary" data-do="add" data-id="${tab}">+ 添加${{ agents: "机器人", connections: "实例", backends: "后端" }[tab]}</button></div><div class="grid">${config[tab].map(tab === "agents" ? agentCard : tab === "connections" ? connectionCard : backendCard).join("") || '<div class="card empty">添加第一个配置开始。</div>'}</div>`;
+  } else if (tab === "permissions") {
+    renderFilePermissions();
   } else if (["schedule", "voices", "operations"].includes(tab)) {
     renderParity(tab);
   } else if (tab === "memory") {

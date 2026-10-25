@@ -9,7 +9,9 @@ export function normalizeEvent(raw, connection) {
   if (!/^(group|private):\d+$/.test(conversation)) return null;
   const recall =
     raw.notice_type === "group_recall" || raw.notice_type === "friend_recall";
-  const message = raw.message;
+  const fileNotice =
+    ["group_upload", "offline_file"].includes(raw.notice_type) && raw.file;
+  const message = fileNotice ? [{ type: "file", data: raw.file }] : raw.message;
   if (
     raw.post_type !== "message" &&
     raw.post_type !== "message_sent" &&
@@ -27,11 +29,13 @@ export function normalizeEvent(raw, connection) {
     .map((s) =>
       s.type === "text"
         ? s.data?.text || ""
-        : s.type === "at"
-          ? `[提及 QQ:${s.data?.qq}]`
-          : s.type === "reply"
-            ? `[引用:${s.data?.id}]`
-            : `[${s.type}; 尚未识别内容]`,
+        : s.type === "file"
+          ? `[文件: ${String(s.data?.name || s.data?.file_name || "附件").slice(0, 200)}; 尚未下载或阅读]`
+          : s.type === "at"
+            ? `[提及 QQ:${s.data?.qq}]`
+            : s.type === "reply"
+              ? `[引用:${s.data?.id}]`
+              : `[${s.type}; 尚未识别内容]`,
     )
     .join("");
   const poke = raw.notice_type === "notify" && raw.sub_type === "poke";
@@ -49,15 +53,17 @@ export function normalizeEvent(raw, connection) {
     messageId: raw.message_id == null ? null : String(raw.message_id),
     senderId: String(raw.user_id || raw.sender?.user_id || ""),
     senderName: raw.sender?.card || raw.sender?.nickname || "",
-    kind: recall
-      ? "message.recalled"
-      : poke
-        ? "notice.poke"
-        : join
-          ? "notice.join"
-          : raw.post_type === "notice"
-            ? "notice"
-            : "message.received",
+    kind: fileNotice
+      ? "notice.file"
+      : recall
+        ? "message.recalled"
+        : poke
+          ? "notice.poke"
+          : join
+            ? "notice.join"
+            : raw.post_type === "notice"
+              ? "notice"
+              : "message.received",
     direction: raw.post_type === "message_sent" ? "out" : "in",
     status: recall ? "recalled" : "observed",
     body,
@@ -187,6 +193,24 @@ export class OneBot extends EventEmitter {
     );
     if (data?.message_id == null) throw Error("DELIVERY_UNCONFIRMED");
     return { messageId: String(data.message_id) };
+  }
+  async sendFile(conversation, buffer, name) {
+    const [kind, target] = conversation.split(":");
+    if (!["group", "private"].includes(kind) || !/^\d+$/.test(target))
+      throw Error("INVALID_TARGET");
+    const receipt = await this.call(
+      kind === "group" ? "upload_group_file" : "upload_private_file",
+      {
+        [kind === "group" ? "group_id" : "user_id"]: target,
+        file: "base64://" + buffer.toString("base64"),
+        name,
+        upload_file: true,
+      },
+      120000,
+    );
+    if (typeof receipt?.file_id !== "string" || !receipt.file_id)
+      throw Error("DELIVERY_UNCONFIRMED");
+    return { confirmed: true, fileId: receipt.file_id };
   }
   async sendForward(conversation, nodes) {
     const [kind, target] = conversation.split(":");
