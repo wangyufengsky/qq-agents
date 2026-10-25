@@ -1,7 +1,7 @@
-import { randomUUID, createHash } from "node:crypto";
+import { randomUUID } from "node:crypto";
+import { freezeEvidence, evidenceView } from "./evidence.mjs";
 const encode = JSON.stringify;
 const decode = (row) => (row ? JSON.parse(row.value) : null);
-const digest = (text) => createHash("sha256").update(text).digest("hex");
 const required = (value, max) => {
   if (typeof value !== "string" || !value.trim() || value.length > max)
     throw Error("INVALID_SELF_TEXT");
@@ -98,13 +98,21 @@ export class IdentityMemory {
     return anchors;
   }
   writeVersion(
-    { body, reason, evidence = [], actor, expectedVersion, ...metadata },
+    {
+      body,
+      reason,
+      evidence = [],
+      evidenceSnapshot,
+      actor,
+      expectedVersion,
+      ...metadata
+    },
     now,
     max = 32000,
   ) {
     required(body, max);
     required(reason, 2000);
-    this.sources(evidence);
+    evidenceSnapshot ??= this.freeze(evidence, now);
     const old = this.current();
     if (old && this.mem.state("@identity").anchors?.requiresMigration)
       throw Error("IDENTITY_ANCHORS_REQUIRE_MIGRATION");
@@ -116,6 +124,7 @@ export class IdentityMemory {
       body,
       reason,
       evidence,
+      evidenceSnapshot,
       actor,
       at: now,
     };
@@ -136,57 +145,48 @@ export class IdentityMemory {
       {
         body: source.body,
         evidence: source.evidence,
+        evidenceSnapshot: source.evidenceSnapshot || {
+          version: 1,
+          status: "legacy-unpinned",
+          entryIds: source.evidence || [],
+          references: [],
+          roots: source.roots || [],
+        },
         expectedVersion,
         reason,
         restoredFrom: version,
+        ...(source.counterEvidenceSnapshot
+          ? {
+              counterEvidence: source.counterEvidence || [],
+              counterEvidenceSnapshot: source.counterEvidenceSnapshot,
+            }
+          : {}),
       },
       now,
     );
   }
-  // Diaries remain interpretations. Only their original event roots count as observations;
-  // outgoing self quotations and repetitions never create new independent evidence.
-  sources(ids, visited = new Set()) {
-    if (!Array.isArray(ids) || ids.length > 30) throw Error("INVALID_EVIDENCE");
-    const roots = new Map();
-    for (const id of ids) {
-      if (visited.has(id)) continue;
-      visited.add(id);
-      const e = this.db
-        .prepare("SELECT * FROM events WHERE agent_id=? AND id=?")
-        .get(this.agentId, id);
-      if (e) {
-        if (e.direction === "in" && e.kind === "message.received") {
-          const payload = JSON.parse(e.payload);
-          if (payload.evidence)
-            for (const root of this.sources(payload.evidence, visited))
-              roots.set(root.key, root);
-          else {
-            const key = digest(`${e.sender_id}:${e.body.trim()}`);
-            roots.set(key, {
-              id,
-              key,
-              conversation: e.conversation,
-              occurredAt: e.occurred_at,
-              episode: `${e.conversation}:${e.occurred_at.slice(0, 10)}`,
-              epistemic: "observed-speech",
-            });
+  sources(ids) {
+    return freezeEvidence(this.mem, ids, Date.now()).roots;
+  }
+  freeze(ids, now) {
+    return freezeEvidence(this.mem, ids, now);
+  }
+  evidence(record) {
+    return evidenceView(this.mem, record);
+  }
+  withEvidence(record) {
+    return {
+      ...record,
+      evidenceSnapshot: this.evidence(record),
+      ...(record.counterEvidence
+        ? {
+            counterEvidenceSnapshot: evidenceView(this.mem, {
+              evidence: record.counterEvidence,
+              evidenceSnapshot: record.counterEvidenceSnapshot,
+            }),
           }
-        }
-        continue;
-      }
-      const diary = this.db
-        .prepare("SELECT metadata FROM diaries WHERE agent_id=? AND id=?")
-        .get(this.agentId, id);
-      if (!diary) throw Error("EVIDENCE_NOT_OWNED_OR_MISSING");
-      if (JSON.parse(diary.metadata).protectedOperations)
-        throw Error("RESTRICTED_EVIDENCE_NOT_ALLOWED_IN_MIND");
-      for (const root of this.sources(
-        JSON.parse(diary.metadata).evidence || [],
-        visited,
-      ))
-        roots.set(root.key, root);
-    }
-    return [...roots.values()];
+        : {}),
+    };
   }
   propose(input, ctx, policy, now) {
     const {
@@ -203,14 +203,17 @@ export class IdentityMemory {
       throw Error("INVALID_SELF_SCOPE");
     if (this.current()?.version !== expectedVersion)
       throw Error("SELF_VERSION_CONFLICT");
-    const roots = this.sources(evidence);
-    this.sources(counterEvidence);
+    const evidenceSnapshot = this.freeze(evidence, now),
+      counterEvidenceSnapshot = this.freeze(counterEvidence, now),
+      roots = evidenceSnapshot.roots;
     const value = {
       id: randomUUID(),
       body,
       reason,
       evidence,
       counterEvidence,
+      evidenceSnapshot,
+      counterEvidenceSnapshot,
       roots,
       scope,
       baseVersion: expectedVersion,
@@ -244,7 +247,16 @@ export class IdentityMemory {
           this.current()?.version !== c.baseVersion
         )
           throw Error("SELF_VERSION_CONFLICT_REPROPOSE");
-        const roots = this.sources(c.evidence);
+        if (c.evidenceSnapshot?.status !== "frozen")
+          throw Error("EVIDENCE_SNAPSHOT_REQUIRED_REPROPOSE");
+        const roots = c.evidenceSnapshot.roots.filter(
+          (r) =>
+            ![
+              "unresolved-reference",
+              "unexpanded-reference",
+              "forward-reference",
+            ].includes(r.epistemic),
+        );
         if (
           !roots.length ||
           (c.scope !== "interest" &&
@@ -262,6 +274,9 @@ export class IdentityMemory {
             body,
             reason: input.reason,
             evidence: c.evidence,
+            evidenceSnapshot: c.evidenceSnapshot,
+            counterEvidence: c.counterEvidence,
+            counterEvidenceSnapshot: c.counterEvidenceSnapshot,
             actor: "subject-review",
             candidateId: c.id,
             expectedVersion: input.expectedVersion,

@@ -38,6 +38,14 @@ export class SubjectCoordinator {
         const contacts = [];
         for (const original of m.identity.list("intentions")) {
           let i = original;
+          if (!Number.isSafeInteger(i.createdAfterSeq))
+            i = this.save(a.id, {
+              ...i,
+              createdAfterSeq: Number.isSafeInteger(i.handoffSeq)
+                ? i.handoffSeq
+                : this.incomingCeiling(a.id, i.target),
+              creationBaselineOrigin: "legacy-recovery",
+            });
           const delivery = m.delivery("intent:" + i.id);
           if (delivery) {
             const at =
@@ -108,6 +116,31 @@ export class SubjectCoordinator {
   memory(id) {
     return this.runtime.memory.bind(id);
   }
+  incomingCeiling(id, conversation) {
+    return (
+      this.memory(id)
+        .db.prepare(
+          "SELECT MAX(seq) AS seq FROM events WHERE agent_id=? AND conversation=? AND direction='in'",
+        )
+        .get(id, conversation).seq || 0
+    );
+  }
+  contactOpportunity(a, target) {
+    const r = this.runtime,
+      m = this.memory(a.id),
+      s = m.state(SUBJECT),
+      now = r.now();
+    return (
+      this.internalAllowed(a) &&
+      this.targetAllowed(a, target) &&
+      r.writable(a, target) &&
+      !!r.transports.get(a.connectionId)?.connected &&
+      (m.state(target).proactiveCooldownUntil || 0) <= now &&
+      (s.lastContactAt || 0) + a.subject.contactCooldownMs <= now &&
+      (s.contacts || []).filter((t) => t > now - 86400000).length <
+        a.subject.maxContactsPerDay
+    );
+  }
   save(id, value) {
     return this.memory(id).identity.put("intentions", value);
   }
@@ -175,6 +208,7 @@ export class SubjectCoordinator {
       createdAt: now,
       createdIn: ctx.conversation,
       ...args,
+      createdAfterSeq: this.incomingCeiling(a.id, args.target),
       eligibleAt: args.eligibleAt || now,
       evidence: args.evidence || [],
       history: [{ status: "waiting", at: now }],
@@ -230,7 +264,8 @@ export class SubjectCoordinator {
             !e ||
             e.conversation !== i.target ||
             e.direction !== "in" ||
-            e.seq <= (i.handoffSeq || 0),
+            !Number.isSafeInteger(i.createdAfterSeq) ||
+            e.seq <= Math.max(i.createdAfterSeq, i.handoffSeq || 0),
         )
       )
         throw Error("INTENT_RESPONSE_EVIDENCE_REQUIRED");
@@ -385,23 +420,12 @@ export class SubjectCoordinator {
         if (!terminal.has(i.status) && i.expiresAt <= now)
           this.transition(a.id, i, "expired", "validity elapsed");
         else if (
-          this.internalAllowed(a) &&
           ["waiting", "deferred"].includes(i.status) &&
           i.eligibleAt <= now &&
-          this.targetAllowed(a, i.target) &&
-          r.writable(a, i.target) &&
-          r.transports.get(a.connectionId)?.connected
+          this.contactOpportunity(a, i.target)
         ) {
-          const c = m.state(i.target),
-            s = m.state(SUBJECT);
-          if (
-            r.running.has(a.id + "|" + i.target) ||
-            (c.proactiveCooldownUntil || 0) > now ||
-            (s.lastContactAt || 0) + a.subject.contactCooldownMs > now ||
-            (s.contacts || []).filter((t) => t > now - 86400000).length >=
-              a.subject.maxContactsPerDay
-          )
-            continue;
+          const c = m.state(i.target);
+          if (r.running.has(a.id + "|" + i.target)) continue;
           const handed = this.transition(
             a.id,
             i,

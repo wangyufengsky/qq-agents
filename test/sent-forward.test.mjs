@@ -77,6 +77,223 @@ function setup(t) {
     }).id;
   return { ...f, ctx, mem, source, calls, observe, transport };
 }
+
+function interest(f, evidence) {
+  return f.mem.identity.propose(
+    {
+      body: "探索新的兴趣",
+      reason: "回顾来源",
+      evidence,
+      scope: "interest",
+      expectedVersion: 1,
+    },
+    f.ctx,
+    f.runtime.agent("agent-0").selfPolicy,
+    100,
+  );
+}
+function acceptInterest(f, candidate) {
+  return f.mem.identity.review(
+    {
+      id: candidate.id,
+      expectedVersion: 1,
+      expectedRevision: 1,
+      action: "accept",
+      reason: "延后核对",
+    },
+    { conversation: "@subject", turnStartedAt: candidate.reviewAfter + 1 },
+    f.runtime.agent("agent-0").selfPolicy,
+    candidate.reviewAfter + 1,
+  );
+}
+
+test("forward evidence: opaque gateway nodes cannot support a Self interest", async (t) => {
+  const f = setup(t);
+  const contents = [
+    ...[
+      "image",
+      "video",
+      "record",
+      "json",
+      "xml",
+      "music",
+      "file",
+      "forward",
+      "reply",
+      "unknown-media",
+      "face",
+      "at",
+    ].map((type) => [{ type, data: {} }]),
+    "[CQ:image,file=opaque]",
+    [],
+  ];
+  const nodes = [
+    ...contents.map((message) => ({ message })),
+    { text: "[CQ:image,file=opaque]" },
+    { data: { text: "[CQ:music,id=opaque]" } },
+    { message: { content: [{ type: "image", data: { file: "opaque" } }] } },
+    { content: { text: "[CQ:video,file=opaque]" } },
+    {
+      content: {
+        text: "[CQ:image,file=opaque]",
+        content: [{ type: "text", data: { text: "低优先级字段" } }],
+      },
+    },
+  ];
+  f.transport.call = async () => ({ messages: nodes });
+  const read = await f.runtime.callTool(f.ctx, "qq_forward_read", {
+    eventId: f.source,
+  });
+  assert.equal(read.total, nodes.length);
+  for (const item of read.items) {
+    const candidate = interest(f, [item.id]);
+    assert(
+      ["unexpanded-reference", "forward-reference"].includes(
+        candidate.roots[0].epistemic,
+      ),
+    );
+    assert.throws(() => acceptInterest(f, candidate), /INSUFFICIENT/);
+  }
+  // Previously archived compatibility nodes can have a nonempty preview but
+  // no parsed segments. That preview is not evidence of interpreted content.
+  const archived = f.mem.append({
+    dedupe: "old-opaque-archive",
+    conversation: f.ctx.conversation,
+    kind: "forward.node",
+    body: "[媒体]",
+    payload: { segments: [], resourceId: "old-opaque" },
+  }).id;
+  assert.throws(
+    () => acceptInterest(f, interest(f, [archived])),
+    /INSUFFICIENT/,
+  );
+});
+
+test("forward evidence: compatibility text nodes retain readable speech", async (t) => {
+  const f = setup(t);
+  f.transport.call = async () => ({
+    messages: [
+      { text: "旧格式仍然是可读的文字" },
+      { data: { text: "另一段可读文字" } },
+      {
+        message: {
+          content: [{ type: "text", data: { text: "容器内的文字" } }],
+        },
+      },
+      { content: { text: "文本容器" } },
+    ],
+  });
+  const read = await f.runtime.callTool(f.ctx, "qq_forward_read", {
+    eventId: f.source,
+  });
+  assert.equal(read.total, 4);
+  for (const item of read.items)
+    assert.equal(interest(f, [item.id]).roots[0].epistemic, "forwarded-claim");
+  assert.equal(
+    acceptInterest(f, interest(f, [read.items[0].id])).status,
+    "accepted",
+  );
+});
+
+test("forward evidence: confirmed copies inherit only the matching original source", async (t) => {
+  const f = setup(t);
+  const own = f.mem.append({
+    dedupe: "own-text",
+    conversation: f.ctx.conversation,
+    kind: "message.sent",
+    direction: "out",
+    body: "我自己说我喜欢登山",
+  }).id;
+  const observed = f.mem.append({
+    dedupe: "observed-text",
+    conversation: f.ctx.conversation,
+    kind: "message.received",
+    direction: "in",
+    body: "这次一起登山很开心",
+    payload: {
+      segments: [{ type: "text", data: { text: "这次一起登山很开心" } }],
+    },
+  }).id;
+  f.transport.sendForward = async () => ({
+    messageId: "confirmed-sent-message",
+  });
+  const sent = await f.runtime.callTool(f.ctx, "qq_forward_send", {
+    requestId: "mixed-sources",
+    eventIds: [own, observed],
+  });
+  const read = await f.runtime.callTool(f.ctx, "qq_forward_read", {
+    eventId: sent.eventId,
+  });
+  const selfCopy = interest(f, [read.items[0].id]);
+  assert.deepEqual(selfCopy.roots, []);
+  assert.throws(() => acceptInterest(f, selfCopy), /INSUFFICIENT/);
+  assert(selfCopy.evidenceSnapshot.references.some((r) => r.id === own));
+  assert(!selfCopy.evidenceSnapshot.references.some((r) => r.id === observed));
+  const externalCopy = interest(f, [read.items[1].id, observed]);
+  assert.equal(externalCopy.roots.length, 1);
+  assert.equal(externalCopy.roots[0].id, observed);
+
+  // A successful gateway read of our reflected card is still a copy. Its text
+  // cannot acquire observed status, even when the gateway changes that text.
+  const payload = JSON.parse(
+    f.mem.db.prepare("SELECT payload FROM events WHERE id=?").get(sent.eventId)
+      .payload,
+  );
+  f.transport.call = async () => ({
+    messages: payload.forwardSnapshot.messages,
+  });
+  const reflected = await f.runtime.callTool(f.ctx, "qq_forward_read", {
+    eventId: f.observe(),
+  });
+  assert.deepEqual(interest(f, [reflected.items[0].id]).roots, []);
+  const node = JSON.parse(
+    f.mem.db
+      .prepare("SELECT payload FROM events WHERE id=?")
+      .get(reflected.items[1].id).payload,
+  );
+  node.segments = [{ type: "text", data: { text: "网关返回了不匹配的文字" } }];
+  f.mem.db
+    .prepare("UPDATE events SET payload=? WHERE id=?")
+    .run(JSON.stringify(node), reflected.items[1].id);
+  assert.deepEqual(interest(f, [reflected.items[1].id]).roots, []);
+  assert.equal(acceptInterest(f, externalCopy).status, "accepted");
+});
+
+test("forward evidence: legacy confirmed copies preserve provenance and reject missing originals", async (t) => {
+  const f = setup(t);
+  const original = f.mem.append({
+    dedupe: "legacy-original",
+    conversation: f.ctx.conversation,
+    kind: "message.sent",
+    direction: "out",
+    body: "这是我自己的文字",
+  }).id;
+  f.transport.sendForward = async () => ({
+    messageId: "confirmed-sent-message",
+  });
+  const sent = await f.runtime.callTool(f.ctx, "qq_forward_send", {
+    requestId: "legacy-copy",
+    eventIds: [original],
+  });
+  const p = JSON.parse(
+    f.mem.db.prepare("SELECT payload FROM events WHERE id=?").get(sent.eventId)
+      .payload,
+  );
+  delete p.forwardSnapshot;
+  f.mem.db
+    .prepare("UPDATE events SET payload=? WHERE id=?")
+    .run(JSON.stringify(p), sent.eventId);
+  const read = await f.runtime.callTool(f.ctx, "qq_forward_read", {
+    eventId: sent.eventId,
+  });
+  assert.deepEqual(interest(f, [read.items[0].id]).roots, []);
+  f.mem.db.prepare("DELETE FROM events WHERE id=?").run(original);
+  assert.throws(
+    () => interest(f, [read.items[0].id]),
+    /EVIDENCE_NOT_OWNED_OR_MISSING/,
+  );
+});
+
 test("sent JSON forward reads confirmed sources when native gateway resource lookup fails", async (t) => {
   const f = setup(t);
   await f.runtime.callTool(f.ctx, "qq_forward_send", {
