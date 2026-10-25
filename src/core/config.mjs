@@ -208,6 +208,14 @@ export const configSchema = z
                 .strict(),
             )
             .default([]),
+          network: z
+            .object({
+              publicUrls: z.array(z.string().url()).max(100).default([]),
+            })
+            .strict()
+            .prefault({}),
+          maxConsecutiveSends: z.number().int().min(1).max(10).optional(),
+          // Compatibility alias: now bounds consecutive sends between fresh human inputs.
           maxSendsPerTurn: z.number().int().min(1).max(10).default(3),
         })
         .strict(),

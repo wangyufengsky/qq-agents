@@ -80,7 +80,7 @@ function renderApps() {
    )
    .join(
      "",
-   )}${input("maxReadsPerTurn", "每回合最多读取次数", p.maxReadsPerTurn, 'type="number" min="1" max="30" required')}${input("maxReadsPerDay", "每日最多读取次数", p.maxReadsPerDay, 'type="number" min="1" max="200" required')}${input("maxSharesPerDay", "每日最多分享次数", p.maxSharesPerDay, 'type="number" min="1" max="30" required')}${input("start", "浏览开始时间", p.hours.start, 'type="time" required')}${input("end", "浏览结束时间", p.hours.end, 'type="time" required')}${input("timezone", "时区", p.hours.timezone, "required")}${input("ttlHours", "分享意图有效期（小时）", p.shareTtlMs / 3600000, 'type="number" min="1" max="168" required')}${input("dedupeDays", "同目标重复分享间隔（天）", p.dedupeMs / 86400000, 'type="number" min="1" max="30" required')}</div><p class="hint">主体提出意图，目标聊天根据现场选择发送、暂缓或放弃。全局暂停、角色暂停、主动联系范围及冷却继续生效；开启浏览不会自动解除暂停。视频仅可读取标题、简介和评论。</p><button class="primary">保存浏览设置</button></form>
+   )}${input("maxReadsPerTurn", "每回合最多读取次数", p.maxReadsPerTurn, 'type="number" min="1" max="30" required')}${input("maxReadsPerDay", "每日最多读取次数", p.maxReadsPerDay, 'type="number" min="1" max="200" required')}${input("maxSharesPerDay", "每日最多分享次数", p.maxSharesPerDay, 'type="number" min="1" max="30" required')}${check("hoursEnabled", "启用浏览时段限制", p.hours.enabled !== false)}${check("hoursAll", "时段也约束用户明确请求", p.hours.scope === "all")}${input("start", "浏览开始时间", p.hours.start, 'type="time" required')}${input("end", "浏览结束时间", p.hours.end, 'type="time" required')}${input("timezone", "时区", p.hours.timezone, "required")}${input("ttlHours", "分享意图有效期（小时）", p.shareTtlMs / 3600000, 'type="number" min="1" max="168" required')}${input("dedupeDays", "同目标重复分享间隔（天）", p.dedupeMs / 86400000, 'type="number" min="1" max="30" required')}</div><p class="hint">主体提出意图，目标聊天根据现场选择发送、暂缓或放弃。全局暂停、角色暂停、主动联系范围及冷却继续生效；开启浏览不会自动解除暂停。关闭时段限制后全天可浏览；默认仅限制自主浏览。用户请求须引用本轮已读取的人类原始 URL 或 /search、/browse、/boards 明确请求；读取预算始终有效。视频仅可读取标题、简介和评论。</p><button class="primary">保存浏览设置</button></form>
  <section class="card"><h2>平台能力与本机登录</h2><p class="hint">在已连接 OpenCLI 的 Chrome 内完成登录或扫码。不要在聊天中发送密码或 Cookie。登录检查只返回状态。</p><div id="app-platforms">正在读取…</div></section>
  <section class="card"><h2>${esc(a.name)}的浏览记录</h2><button id="app-refresh">刷新记录</button><div id="app-history"></div></section><section class="card"><h2>分享意图</h2><div id="app-intents">正在读取…</div></section>`;
   $("#app-agent").onchange = (e) => {
@@ -107,6 +107,8 @@ function renderApps() {
             maxReadsPerDay: Number(d.get("maxReadsPerDay")),
             maxSharesPerDay: Number(d.get("maxSharesPerDay")),
             hours: {
+              enabled: d.has("hoursEnabled"),
+              scope: d.has("hoursAll") ? "all" : "autonomous",
               start: d.get("start"),
               end: d.get("end"),
               timezone: d.get("timezone"),

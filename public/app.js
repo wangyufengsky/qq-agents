@@ -137,7 +137,7 @@ function render() {
       )
       .join(
         "",
-      )}</div><div class="section-title"><h2>角色状态</h2><button data-do="tab" data-id="agents">管理机器人 →</button></div><div class="grid">${config.agents.map(agentCard).join("")}</div><div class="section-title"><h2>受限动作授权</h2>${tag("回忆发言由机器人自行判断")}</div><div class="card">${status.disclosureRequests.length ? status.disclosureRequests.map((r, i) => `<div class="record"><strong>${esc(find("agents", r.agentId)?.name)} → ${esc(r.conversation)}</strong><p>${r.records.length} 条资料涉及${r.reason === "external-service" ? "外部服务调用" : "本地运维内容"}。批准仅对当前回合、当前目标有效。</p><p class="mono">${esc(r.records.join("\n"))}</p><button data-do="grant" data-id="${i}">批准本次披露</button></div>`).join("") : "<p>当前没有待批准的受限动作。</p>"}</div>`;
+      )}</div><div class="section-title"><h2>角色状态</h2><button data-do="tab" data-id="agents">管理机器人 →</button></div><div class="grid">${config.agents.map(agentCard).join("")}</div><div class="section-title"><h2>受限动作授权</h2>${tag("回忆发言由机器人自行判断")}</div><div class="card">${status.disclosureRequests.length ? status.disclosureRequests.map((r, i) => `<div class="record"><strong>${esc(find("agents", r.agentId)?.name)} → ${esc(r.conversation)}</strong><p>${r.records.length} 条资料涉及${r.reason === "external-service" ? "外部服务调用" : "本地运维内容"}。批准仅对当前回合、所示请求参数及资料集合有效。</p><p class="mono">${esc(r.records.join("\n"))}</p>${r.request ? `<pre>${esc(JSON.stringify(r.request, null, 2))}</pre><p>${esc(JSON.stringify(r.sourceClasses))}</p>` : ""}<button data-do="grant" data-id="${i}">批准本次披露</button></div>`).join("") : "<p>当前没有待批准的受限动作。</p>"}</div>`;
   } else if (["agents", "connections", "backends"].includes(tab)) {
     content.innerHTML = `<div class="section-title"><h2>${titles[tab][0]} · ${config[tab].length}</h2><button class="primary" data-do="add" data-id="${tab}">+ 添加${{ agents: "机器人", connections: "实例", backends: "后端" }[tab]}</button></div><div class="grid">${config[tab].map(tab === "agents" ? agentCard : tab === "connections" ? connectionCard : backendCard).join("") || '<div class="card empty">添加第一个配置开始。</div>'}</div>`;
   } else if (tab === "apps") {
@@ -259,7 +259,11 @@ async function operate(kind, id) {
   }
   if (kind === "grant") {
     const r = status.disclosureRequests[Number(id)];
-    await api("/api/disclosure", { token: r.token, ids: r.records });
+    await api("/api/disclosure", {
+      token: r.token,
+      ids: r.records,
+      requestId: r.requestId,
+    });
     await load();
     return;
   }
@@ -354,6 +358,17 @@ function openEditor(type, id) {
         "persona",
         "初始化模板（仅建立首版 self；已有 self 请在专页编辑）",
         row.persona || "",
+      ) +
+      input(
+        "maxConsecutiveSends",
+        "每批连续回复上限（读到人类新消息后恢复）",
+        row.maxConsecutiveSends ?? row.maxSendsPerTurn,
+        'type="number" min="1" max="10" required',
+      ) +
+      area(
+        "publicUrls",
+        "允许随时读取的精确公开 URL（每行一个，不含私密参数）",
+        (row.network?.publicUrls || []).join("\n"),
       ) +
       input("aliases", "唤醒别名（逗号分隔）", (row.aliases || []).join(", ")) +
       input(
@@ -473,6 +488,14 @@ $("#edit-form").onsubmit = (e) => {
           effort: get("effort"),
           persona: get("persona"),
           appearance: get("appearance"),
+          maxConsecutiveSends: Number(get("maxConsecutiveSends")),
+          network: {
+            ...row.network,
+            publicUrls: get("publicUrls")
+              .split(/\r?\n/)
+              .map((s) => s.trim())
+              .filter(Boolean),
+          },
           aliases: list("aliases"),
           ownerIds: list("ownerIds"),
           allow: { groups: list("groups"), users: list("users") },

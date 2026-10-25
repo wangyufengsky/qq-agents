@@ -48,6 +48,10 @@ export class ContextLifecycle {
           +(!!row.summaryOmitted || !!row.bodyTruncated),
         );
       }
+    this.runtime.observeInput(ctx, items);
+    for (const row of items)
+      if (row.id && row.privacy !== "public") ctx.privateRead.add(row.id);
+    ctx.persistTaint?.();
     rememberSources(m, ctx.conversation, items);
     const state = m.state(ctx.conversation),
       baseline = state.readThroughSeq || 0;
@@ -260,13 +264,20 @@ export class ContextLifecycle {
           );
     this.seen(ctx, history.items);
     ctx.feedThroughSeq = history.nextAfterSeq || s.feedThroughSeq || 0;
+    // Existing backend context and legacy handoffs may predate disclosure tracking.
+    // Retain an explicit source boundary and every recoverable handoff handle.
+    const handoff = ctx.initialSession
+      ? this.handoff(a.id, ctx.conversation)
+      : null;
+    ctx.privateRead.add("context:" + ctx.conversation);
+    for (const source of handoff?.continuity?.sources || [])
+      ctx.privateRead.add(source.id);
+    ctx.persistTaint?.();
     const prompt = [
       `当前场景 ${ctx.conversation}。本回合采用 self v${self.version}。主人/管理员：${a.ownerIds.join(",") || "未设置"}。`,
       `唤醒原因（资料）: ${JSON.stringify(reasons)}`,
       turnEnvironment(r, a, ctx, backendType),
-      ctx.initialSession
-        ? `程序交接状态：${JSON.stringify(this.handoff(a.id, ctx.conversation))}`
-        : "",
+      ctx.initialSession ? `程序交接状态：${JSON.stringify(handoff)}` : "",
       `新增消息：${JSON.stringify(history)}`,
     ]
       .filter(Boolean)

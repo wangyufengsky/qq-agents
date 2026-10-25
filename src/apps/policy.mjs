@@ -11,6 +11,8 @@ export const appsPolicySchema = z
     maxSharesPerDay: z.number().int().min(1).max(30).default(3),
     hours: z
       .object({
+        enabled: z.boolean().default(true),
+        scope: z.enum(["autonomous", "all"]).default("autonomous"),
         start: time.default("09:00"),
         end: time.default("22:00"),
         timezone: z
@@ -42,7 +44,12 @@ export const appsPolicySchema = z
   })
   .strict()
   .prefault({});
-export function inAppHours(policy, date) {
+export function inAppHours(policy, date, { requested = false } = {}) {
+  if (
+    policy.hours.enabled === false ||
+    (requested && policy.hours.scope !== "all")
+  )
+    return true;
   const p = new Intl.DateTimeFormat("en-GB", {
     timeZone: policy.hours.timezone,
     hour: "2-digit",

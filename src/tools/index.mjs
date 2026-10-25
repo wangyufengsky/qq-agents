@@ -221,6 +221,7 @@ const definitions = {
     z
       .object({
         url: str,
+        requestEventId: str.optional(),
         maxChars: z.number().int().min(100).max(16000).optional(),
       })
       .strict(),
@@ -248,6 +249,7 @@ const definitions = {
       .object({
         serverId: str,
         tool: str,
+        requestEventId: str.optional(),
         arguments: z.record(str, z.unknown()).default({}),
         audioInput: z
           .object({
@@ -290,6 +292,12 @@ export function toolSpecs(enabled = TOOL_NAMES, { context = false } = {}) {
 }
 function track(ctx, items) {
   for (const row of items) {
+    if (row.id) ctx.privateRead.add(row.id);
+    for (const m of [
+      ...(row.scene?.messages || []),
+      ...(row.scene?.quoted || []),
+    ])
+      if (m.id) ctx.privateRead.add(m.id);
     if (row.protectedOperations)
       ctx.privateRead.add("operations:diary:" + row.id);
     if (
@@ -339,6 +347,21 @@ export async function dispatchTool(runtime, ctx, name, input) {
   if (name === "memory_read") {
     const r = mem.read(args, ctx.conversation);
     track(ctx, [r]);
+    const pages = (ctx.inputPages ??= new Map());
+    const old = pages.get(r.id);
+    const chunk =
+      r.offset === 0
+        ? r.chunk
+        : old?.offset === r.offset
+          ? old.chunk + r.chunk
+          : null;
+    if (chunk !== null) {
+      if (r.nextOffset === null) {
+        pages.delete(r.id);
+        runtime.observeInput(ctx, [JSON.parse(chunk)]);
+      } else if (pages.size < 10 && chunk.length <= 2100000)
+        pages.set(r.id, { chunk, offset: r.nextOffset });
+    }
     return r;
   }
   if (name === "conversation_read") {
@@ -427,10 +450,34 @@ export async function dispatchTool(runtime, ctx, name, input) {
     name.startsWith("social_") ||
     name === "external_tool"
   ) {
-    // External queries can also disclose remembered private content.
-    runtime.assertDisclosure(ctx, { external: true });
+    const request =
+      name === "web_fetch"
+        ? { tool: name, args: { url: args.url } }
+        : {
+            tool: name,
+            args: Object.fromEntries(
+              Object.entries(args).filter(([k]) => k !== "requestEventId"),
+            ),
+          };
+    const outbound =
+      name === "external_tool" ? externalArguments(runtime, ctx, args) : null;
+    runtime.authorizeExternal(ctx, request, {
+      requestEventId: args.requestEventId,
+    });
     if (name === "web_fetch")
-      return safeFetch(args.url, args.maxChars || 12000);
+      return (runtime.fetchPublicPage || safeFetch)(
+        args.url,
+        args.maxChars || 12000,
+        {
+          authorize: (url) =>
+            runtime.authorizeExternal(
+              ctx,
+              { tool: name, args: { url } },
+              // Redirect targets come from this authorized fetch, never from model parameters.
+              { fixed: true },
+            ),
+        },
+      );
     runtime.social ??= new SocialReader();
     if (name === "social_search") return runtime.social.perform("search", args);
     if (name === "social_read") return runtime.social.perform("read", args);
@@ -441,7 +488,7 @@ export async function dispatchTool(runtime, ctx, name, input) {
     const result = await backend.external.call(
       args.serverId,
       args.tool,
-      externalArguments(runtime, ctx, args),
+      outbound,
     );
     runtime.assertActive(ctx);
     return externalResult(runtime, ctx, args, result);

@@ -26,7 +26,21 @@ export function externalArguments(runtime, ctx, args) {
         throw Error("EXTERNAL_INPUT_COLLISION");
     if (dataArgument === mimeArgument) throw Error("EXTERNAL_INPUT_COLLISION");
     taintMedia(ctx, runtime.voices.metadata(ctx.agentId, audioId));
-    runtime.assertDisclosure(ctx, { external: true });
+    ctx.privateRead.add("audio:" + audioId);
+    ctx.persistTaint?.();
+    runtime.authorizeExternal(
+      ctx,
+      {
+        tool: "external_tool",
+        args: {
+          serverId: args.serverId,
+          tool: args.tool,
+          arguments: args.arguments || {},
+          audioInput: args.audioInput,
+        },
+      },
+      { requestEventId: args.requestEventId },
+    );
     const audio = runtime.voices.read(ctx.agentId, audioId);
     input[dataArgument] = audio.data;
     if (mimeArgument) input[mimeArgument] = audio.mimeType;
