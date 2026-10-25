@@ -60,7 +60,7 @@ export class MemoryStore {
       fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
     this.db = new DatabaseSync(file);
     const version = this.db.prepare("PRAGMA user_version").get().user_version;
-    if (version > 2) {
+    if (version > 3) {
       this.db.close();
       throw Error("MEMORY_SCHEMA_NEWER_THAN_CODE");
     }

@@ -24,11 +24,14 @@ export function provenance(row) {
     },
     senderName: string(raw.sender?.card || raw.sender?.nickname) || null,
     replyToMessageIds: [
-      ...new Set(
-        segments
+      ...new Set([
+        ...(row.kind === "message.sent" && p.replyTo != null
+          ? [String(p.replyTo)]
+          : []),
+        ...segments
           .filter((s) => s.type === "reply" && s.data?.id != null)
           .map((s) => String(s.data.id)),
-      ),
+      ]),
     ].slice(0, 10),
     mentions: [
       ...new Set(

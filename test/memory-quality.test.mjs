@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { MemoryStore } from "../src/memory/store.mjs";
 import { backupDatabase } from "../src/memory/backup.mjs";
 import { restoreExport } from "../src/memory/migrate.mjs";
-import { temp } from "./helpers.mjs";
+import { temp, fixture } from "./helpers.mjs";
 function setup(t) {
   const root = temp(t),
     file = path.join(root, "memory.sqlite"),
@@ -205,8 +205,14 @@ test("schema v1 upgrade backfills indexes atomically and is idempotent", (t) => 
       payload: { segments: [{ type: "reply", data: { id: "1" } }] },
     }),
   );
+  a.append(
+    event(3, "机器人答复", {
+      kind: "message.sent",
+      payload: { requestId: "old-reply", replyTo: "1" },
+    }),
+  );
   s.db.exec(
-    "DROP TRIGGER events_fts_insert; DROP TRIGGER events_fts_update; DROP TRIGGER events_fts_delete; DROP TABLE events_fts; DROP TRIGGER event_links_insert; DROP TABLE event_links; PRAGMA user_version=1",
+    "DROP TRIGGER events_fts_insert; DROP TRIGGER events_fts_update; DROP TRIGGER events_fts_delete; DROP TABLE events_fts; DROP TRIGGER event_links_insert; DROP TRIGGER event_links_sent_insert; DROP TABLE event_links; PRAGMA user_version=1",
   );
   s.close();
   for (let i = 0; i < 2; i++) {
@@ -215,9 +221,92 @@ test("schema v1 upgrade backfills indexes atomically and is idempotent", (t) => 
       n.bind("agent-a").search({ query: "旧档蓝鲸" }).items[0].id,
       e.id,
     );
-    assert.equal(n.bind("agent-a").related({ id: e.id }).items.length, 1);
-    assert.equal(n.db.prepare("SELECT COUNT(*) n FROM events").get().n, 2);
+    assert.equal(n.bind("agent-a").related({ id: e.id }).items.length, 2);
+    assert.equal(n.db.prepare("SELECT COUNT(*) n FROM events").get().n, 3);
+    assert.equal(n.db.prepare("PRAGMA user_version").get().user_version, 3);
     n.close();
+  }
+});
+
+test("confirmed runtime replies are indexed without an echo and failed attempts do not create links", async (t) => {
+  const { runtime, store } = fixture(t),
+    memory = store.bind("agent-0"),
+    anchor = memory.append(event(1, "原提议", { connectionId: "qq-0" })),
+    ctx = runtime.makeContext("agent-0", "group:20000");
+  await runtime.send(ctx, {
+    requestId: "reply-ok",
+    text: "明确答复",
+    replyTo: "1",
+  });
+  runtime.transports.get("qq-0").failure = "ONEBOT_REJECTED";
+  await assert.rejects(
+    runtime.send(ctx, {
+      requestId: "reply-failed",
+      text: "失败答复",
+      replyTo: "1",
+    }),
+  );
+  const related = memory.related({ id: anchor.id });
+  assert.equal(related.items.length, 1);
+  assert.equal(related.items[0].record.type, "message.sent");
+  assert.deepEqual(
+    related.items[0].links.map((x) => x.toId),
+    [anchor.id],
+  );
+  const result = memory.search({ query: "明确答复", kind: "message.sent" })
+    .items[0];
+  assert.ok(
+    result.scene.messages
+      .find((m) => m.id === result.id)
+      .replyTo.some((r) => r.eventId === anchor.id),
+  );
+});
+
+test("schema v2 upgrade backfills outgoing reply metadata once and preserves the FTS index", (t) => {
+  const file = path.join(temp(t), "schema2.sqlite"),
+    initial = new MemoryStore(file),
+    memory = initial.bind("agent-a"),
+    anchor = memory.append(event(1, "迁移原文"));
+  const reply = memory.append(
+    event(2, "历史答复", {
+      kind: "message.sent",
+      payload: { requestId: "historical", replyTo: "1" },
+    }),
+  );
+  memory.append(
+    event(3, "未确认", {
+      kind: "message.send-attempt",
+      payload: { replyTo: "1" },
+    }),
+  );
+  initial.db.exec(
+    "DROP TRIGGER event_links_sent_insert; DELETE FROM event_links; PRAGMA user_version=2",
+  );
+  initial.close();
+  for (let i = 0; i < 2; i++) {
+    const reopened = new MemoryStore(file);
+    try {
+      assert.equal(
+        reopened.db.prepare("PRAGMA user_version").get().user_version,
+        3,
+      );
+      const a = reopened.bind("agent-a");
+      assert.deepEqual(
+        a.related({ id: anchor.id }).items.map((x) => x.record.id),
+        [reply.id],
+      );
+      assert.equal(a.search({ query: "迁移原文" }).items[0].id, anchor.id);
+      assert.equal(
+        reopened.db.prepare("SELECT COUNT(*) n FROM event_links").get().n,
+        1,
+      );
+      assert.equal(
+        reopened.db.prepare("PRAGMA integrity_check").get().integrity_check,
+        "ok",
+      );
+    } finally {
+      reopened.close();
+    }
   }
 });
 

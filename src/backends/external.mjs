@@ -5,10 +5,12 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 
 export class ExternalTools {
-  constructor(configs = []) {
+  constructor(configs = [], { connectTimeoutMs = 15000 } = {}) {
     this.configs = configs;
     this.clients = new Map();
     this.starting = new Map();
+    this.connecting = new Map();
+    this.connectTimeoutMs = connectTimeoutMs;
   }
   async connect(id) {
     if (this.clients.has(id)) return this.clients.get(id);
@@ -46,35 +48,51 @@ export class ExternalTools {
                 stderr: "pipe",
               });
       transport.stderr?.on("data", () => {}); // Drain, never expose credentials in logs.
+      let cancel;
+      const cancelled = new Promise((_, reject) => {
+        cancel = () => reject(Error("EXTERNAL_CONNECTION_CANCELLED"));
+      });
+      this.connecting.set(id, { cancel });
+      const deadline = setTimeout(cancel, this.connectTimeoutMs);
       try {
-        await client.connect(transport, { timeout: 15000 });
-        const catalog = { tools: [] },
-          cursors = new Set();
-        let cursor;
-        do {
-          const page = await client.listTools(cursor ? { cursor } : {}, {
-            timeout: 15000,
-          });
-          catalog.tools.push(...page.tools);
-          cursor = page.nextCursor;
-          if (catalog.tools.length > 1000 || (cursor && cursors.has(cursor)))
-            throw Error("EXTERNAL_CATALOG_LIMIT");
-          if (cursor) cursors.add(cursor);
-        } while (cursor);
-        const entry = {
-          client,
-          transport,
-          tools: catalog.tools.filter((t) =>
-            config.allowedTools.includes(t.name),
-          ),
-          names: new Set(catalog.tools.map((t) => t.name)),
-          allowed: new Set(config.allowedTools),
+        const initialize = async () => {
+          await client.connect(transport, { timeout: 15000 });
+          const catalog = { tools: [] },
+            cursors = new Set();
+          let cursor;
+          do {
+            const page = await client.listTools(cursor ? { cursor } : {}, {
+              timeout: 15000,
+            });
+            catalog.tools.push(...page.tools);
+            cursor = page.nextCursor;
+            if (
+              catalog.tools.length > 1000 ||
+              cursors.size >= 100 ||
+              (cursor && cursors.has(cursor))
+            )
+              throw Error("EXTERNAL_CATALOG_LIMIT");
+            if (cursor) cursors.add(cursor);
+          } while (cursor);
+          return {
+            client,
+            transport,
+            tools: catalog.tools.filter((t) =>
+              config.allowedTools.includes(t.name),
+            ),
+            names: new Set(catalog.tools.map((t) => t.name)),
+            allowed: new Set(config.allowedTools),
+          };
         };
+        const entry = await Promise.race([initialize(), cancelled]);
         this.clients.set(id, entry);
         return entry;
       } catch (e) {
-        await transport.close();
+        await transport.close().catch(() => {});
         throw e;
+      } finally {
+        clearTimeout(deadline);
+        this.connecting.delete(id);
       }
     })();
     this.starting.set(id, pending);
@@ -144,6 +162,9 @@ export class ExternalTools {
     });
   }
   async close() {
+    // SDK request timeouts do not cover transport startup (e.g. an SSE stream
+    // that never supplies an endpoint). Cancel before waiting on discovery.
+    for (const pending of this.connecting.values()) pending.cancel();
     await Promise.allSettled([...this.starting.values()]);
     await Promise.allSettled(
       [...this.clients.values()].map((e) => e.client.close()),

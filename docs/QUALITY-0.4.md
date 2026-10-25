@@ -10,7 +10,7 @@
 - `voice_synthesize` 提供显式启用的 macOS 本地 TTS。默认关闭，使用已安装音色、独立临时目录、FFprobe 验证并登记 WAV，不自动发送。保存输入文字为 `tts-input-not-asr`，不能称作转录。其他操作系统明确返回不可用。
 - 平台工具可选择 native/index/auto，并提供最近探测状态。按实际 Exa schema 修复了索引搜索缺少 `objective` 的兼容问题；黑话研究可配置固定参数和查询字段，仍只提交候选词，研究结果保持 candidate / unverified。
 - 记忆增加 `memory_related`、关系索引、场景重叠去重、事件 keyset 游标、FTS5 trigram 候选索引及管理台关系展开。没有自动话题分类、事实合并、删除历史或更改人格。
-- SQLite backup API 一致备份及新路径恢复命令；schema 1→2 在事务中补建索引，保留原记录、日记修订、证据和主体隔离。
+- SQLite backup API 一致备份及新路径恢复命令；schema 1→3 在事务中补建索引，已有 schema 2 则补齐机器人已确认回复的引用索引，保留原记录、日记修订、证据和主体隔离。
 
 ## 实际验证与边界
 
@@ -60,3 +60,9 @@
 - `npm run verify` 的 175 项 Node 测试全部通过，并通过语法、Prettier 和隐私扫描。本地执行，没有运行 GitHub Actions。
 
 复验入口：`scripts/local-acceptance.mjs` 的 `memory-quality`、`external-search`、`external-image`、`tts`、`group-scope`；详见 LOCAL-ACCEPTANCE.md。真实服务输出、模型答复、图片、音频、截图与运行配置均留在忽略的 `work/`，不提交凭据、聊天或用户标识。
+
+## 合并前审查复测 · 2026-10-25
+
+修复了大媒体 base64 校验栈溢出、机器人已确认回复未进入关系索引、外部生成媒体丢失运维披露标记、SSE 启动或异常目录分页导致关闭等待，以及 TTS 文本绕过已有凭据过滤。增加总发现时限、关闭取消和目录页数上限；schema 3 补齐出站引用，并支持早期 schema 2 的独立副本升级。未重写原始事件或迁移生产数据。
+
+本分支重新执行 `npm run verify`：181 项测试通过，语法、格式、隐私扫描通过。新增回归覆盖多 MiB 图片与音频、错误 padding、受限媒体重复登记与后续发送、真实回环 SSE 停滞、确认/失败回复区分、schema 1/2 升级，以及在启动语音进程前拒绝凭据文本。以上属于本地隔离复测，没有新增真实模型或真实 QQ 调用；原轮次真实服务证据与限制仍按上文保留。

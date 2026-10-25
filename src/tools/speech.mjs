@@ -6,6 +6,7 @@ import { execFile } from "node:child_process";
 export async function synthesize(runtime, ctx, { text }) {
   const a = runtime.assertActive(ctx);
   if (!a.voice.tts.enabled) throw Error("TTS_DISABLED");
+  runtime.assertSafeOutput(ctx, text);
   if (process.platform !== "darwin") throw Error("LOCAL_TTS_UNAVAILABLE");
   const dir = fs.mkdtempSync(path.join(runtime.voices.root, "tts-")),
     file = path.join(dir, "speech.wav");

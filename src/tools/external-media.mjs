@@ -7,9 +7,9 @@ function bytes(item) {
     typeof data !== "string" ||
     !data.length ||
     data.length > encodedLimit ||
-    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
-      data,
-    )
+    data.length % 4 !== 0 ||
+    /[^A-Za-z0-9+/=]/.test(data) ||
+    (data.includes("=") && !/^[^=]*={1,2}$/.test(data))
   )
     throw Error("INVALID_EXTERNAL_MEDIA");
   return Buffer.from(data, "base64");
@@ -81,6 +81,9 @@ export async function externalResult(runtime, ctx, args, result) {
       conversation: ctx.conversation,
       sourceType: "external-tool-result",
       untrusted: true,
+      protectedOperations: [...(ctx.privateRead || [])].some((id) =>
+        /^(operations|operations-result):/.test(id),
+      ),
     };
     if (image) {
       const m = runtime.media.put(

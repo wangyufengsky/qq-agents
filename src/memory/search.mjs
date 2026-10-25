@@ -1,9 +1,10 @@
 // Derived indexes only: raw events and diary history are never rewritten.
 export function migrateSearch(db, version) {
-  if (version >= 2) return;
+  if (version >= 3) return;
   db.exec("BEGIN IMMEDIATE");
   try {
-    db.exec(`
+    if (version < 2)
+      db.exec(`
       CREATE INDEX IF NOT EXISTS events_agent_seq ON events(agent_id,seq);
       CREATE INDEX IF NOT EXISTS events_time ON events(agent_id,occurred_at,seq);
       CREATE INDEX IF NOT EXISTS events_connection_time ON events(agent_id,connection_id,conversation,occurred_at,seq);
@@ -39,7 +40,21 @@ export function migrateSearch(db, version) {
       INSERT OR IGNORE INTO event_links
       SELECT seq,agent_id,connection_id,conversation,CAST(json_extract(payload,'$.raw.message_id') AS TEXT),'recall-notice'
       FROM events WHERE json_extract(payload,'$.raw.notice_type') IN ('group_recall','friend_recall') AND json_extract(payload,'$.raw.message_id') IS NOT NULL;
-      PRAGMA user_version=2;
+    `);
+    // Confirmed bot replies use payload.replyTo; gateway echoes are optional.
+    // Upgrade existing schema 2 indexes without rebuilding the FTS table.
+    db.exec(`
+      DROP TRIGGER IF EXISTS event_links_sent_insert;
+      CREATE TRIGGER event_links_sent_insert AFTER INSERT ON events
+      WHEN new.kind='message.sent' AND json_extract(new.payload,'$.replyTo') IS NOT NULL
+      BEGIN
+        INSERT OR IGNORE INTO event_links
+        VALUES(new.seq,new.agent_id,new.connection_id,new.conversation,CAST(json_extract(new.payload,'$.replyTo') AS TEXT),'explicit-reply');
+      END;
+      INSERT OR IGNORE INTO event_links
+      SELECT seq,agent_id,connection_id,conversation,CAST(json_extract(payload,'$.replyTo') AS TEXT),'explicit-reply'
+      FROM events WHERE kind='message.sent' AND json_extract(payload,'$.replyTo') IS NOT NULL;
+      PRAGMA user_version=3;
       COMMIT;
     `);
   } catch (e) {
