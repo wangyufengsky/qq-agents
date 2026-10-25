@@ -9,6 +9,14 @@ export const digest = (value) =>
     )
     .digest("hex");
 const present = (x) => x !== undefined && x !== null && x !== "";
+function consistent(row, keys, normalize = (x) => x) {
+  const values = keys
+    .filter((k) => present(row[k]))
+    .map((k) => normalize(row[k]));
+  if (new Set(values.map((x) => JSON.stringify(x))).size > 1)
+    throw Error("CONTRADICTORY_ALIASES:" + keys.join("/"));
+  return values[0];
+}
 export function originalTime(value) {
   if (!present(value)) return null;
   const v =
@@ -97,6 +105,15 @@ function direction(isSelf, value, sender, account) {
 export function adaptMessage(row, format, binding, source) {
   if (!row || typeof row !== "object" || Array.isArray(row))
     throw Error("INVALID_RECORD");
+  consistent(row, ["messageId", "message_id"], id);
+  consistent(row, ["senderId", "userId", "user_id", "sender_qq"], id);
+  consistent(
+    row,
+    ["occurredAt", "time", "timestamp", "unix_time"],
+    originalTime,
+  );
+  consistent(row, ["conversation", "key"], conversation);
+  consistent(row, ["isSelf", "is_self"]);
   let event, metadata;
   if (format === "qq-export-v1") {
     if (row.schema_version !== 1) throw Error("UNSUPPORTED_EXPORT_SCHEMA");
@@ -190,6 +207,15 @@ export function adaptMessage(row, format, binding, source) {
       attachments: row.attachments ?? [],
       forwardIds: row.forwardIds ?? [],
       quoteTargetIsSelf: row.quoteTargetIsSelf ?? null,
+      legacyIdentityLabels: {
+        isOwner: row.isOwner ?? null,
+        ownerLabel: row.ownerLabel ?? null,
+      },
+      // text includes quoted context that plain excludes; tail can hold overflow.
+      originalText: row.text ?? null,
+      originalPlain: row.plain ?? null,
+      originalBody: row.body ?? null,
+      tail: row.tail ?? null,
     };
   }
   if (metadata.senderName !== null && typeof metadata.senderName !== "string")

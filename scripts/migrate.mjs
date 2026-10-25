@@ -32,6 +32,9 @@ const plan = inspectLegacy(source, {
     ? JSON.parse(fs.readFileSync(get("--subject-map"), "utf8"))
     : {},
   exportFiles: args.flatMap((a, i) => (a === "--export" ? [args[i + 1]] : [])),
+  exportSourceId: args.includes("--export-source-id")
+    ? get("--export-source-id")
+    : undefined,
   sourceId: args.includes("--source-id") ? get("--source-id") : undefined,
   legacySourceId: args.includes("--legacy-source-id")
     ? get("--legacy-source-id")

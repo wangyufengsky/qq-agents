@@ -106,10 +106,18 @@ export function inspectLegacy(source, options = {}) {
       }
       for (const lane of ["recentMessages", "unread"])
         for (const [i, row] of (st[lane] || []).entries())
-          accept({ ...row, conversation }, "social-v2", {
-            sourceId,
-            locator: `social-v2:${conversation}:${lane}:${i}`,
-          });
+          accept(
+            {
+              ...row,
+              conversation,
+              key: row.key ?? row.conversation ?? conversation,
+            },
+            "social-v2",
+            {
+              sourceId,
+              locator: `social-v2:${conversation}:${lane}:${i}`,
+            },
+          );
       // pendingThoughts are unfinished model drafts, not observed speech or notes.
       plan.coverage.excludedDrafts += (st.pendingThoughts || []).length;
       for (const n of st.activeTopics || [])
@@ -188,7 +196,7 @@ export function inspectLegacy(source, options = {}) {
         sourceId + ":history/" + name,
       );
   for (const file of [...new Set(exportFiles.map((p) => fs.realpathSync(p)))])
-    readLines(file, "qq-export-v1", digest(file));
+    readLines(file, "qq-export-v1", options.exportSourceId || digest(file));
   if (legacyDb) {
     if (!legacyAgentId) throw Error("LEGACY_AGENT_ID_REQUIRED");
     const db = new DatabaseSync(legacyDb, { readOnly: true });
@@ -336,9 +344,23 @@ export function importLegacy(memory, plan) {
     enriched = 0;
   memory.store.transaction(() => {
     for (const event of plan.events) {
-      const existing = memory.db
+      let existing = memory.db
         .prepare("SELECT * FROM events WHERE agent_id=? AND dedupe=?")
         .get(memory.agentId, event.dedupe);
+      if (
+        !existing &&
+        event.messageId &&
+        event.kind === "legacy.message-observation"
+      ) {
+        const candidates = memory.db
+          .prepare(
+            "SELECT * FROM events WHERE agent_id=? AND conversation=? AND message_id=? AND kind='legacy.message-observation'",
+          )
+          .all(memory.agentId, event.conversation, event.messageId);
+        if (candidates.length > 1)
+          throw Error("EXISTING_DUPLICATE_MESSAGE_ID_REQUIRES_RECONCILIATION");
+        existing = candidates[0];
+      }
       if (existing && event.kind === "legacy.message-observation") {
         duplicates++;
         const old = {
@@ -349,6 +371,39 @@ export function importLegacy(memory, plan) {
           occurredAt: existing.occurred_at,
           payload: JSON.parse(existing.payload),
         };
+        if (!old.payload.migration) {
+          const observation = {
+            agentId: memory.agentId,
+            conversation: existing.conversation,
+            messageId: existing.message_id,
+            senderId: existing.sender_id,
+            direction: existing.direction,
+            body: existing.body,
+            occurredAt:
+              old.payload.timeKnown === true ? existing.occurred_at : "unknown",
+            source: "previous-import",
+            senderName: old.payload.senderName || null,
+            segments: old.payload.segments || [],
+            possibleTextTruncation: "unknown",
+            previousPayload: old.payload,
+          };
+          old.payload = {
+            ...old.payload,
+            migration: {
+              version: 2,
+              identity: "message-id",
+              sources: [
+                {
+                  sourceId: "previous-import:" + existing.id,
+                  locator: existing.id,
+                  format: "previous-import",
+                  digest: digest(observation),
+                  observation,
+                },
+              ],
+            },
+          };
+        }
         const merged = mergeObservations(old, event);
         if (digest(old) !== digest(merged)) {
           memory.db
@@ -409,12 +464,17 @@ export function importLegacy(memory, plan) {
       else duplicates++;
     }
     for (const person of plan.people) memory.person(person.qq, person.name);
-    for (const s of plan.states)
-      if (!memory.state(s.conversation).migrationImported)
+    for (const s of plan.states) {
+      const old = memory.state(s.conversation);
+      if (!old.migrationImported)
         memory.setState(s.conversation, {
           ...s.value,
+          ...old,
+          paused: true,
+          legacy: { ...s.value.legacy, ...old.legacy },
           migrationImported: true,
         });
+    }
     // Explicit exports can contain conversations absent from the bounded cache.
     for (const conversation of new Set(
       plan.events
@@ -425,7 +485,7 @@ export function importLegacy(memory, plan) {
         memory.setState(conversation, {
           ...memory.state(conversation),
           paused: true,
-          readThroughSeq: 0,
+          readThroughSeq: memory.state(conversation).readThroughSeq || 0,
           migrationImported: true,
         });
     for (const file of plan.files)

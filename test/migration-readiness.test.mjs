@@ -283,6 +283,126 @@ function legacyDb(file) {
   }
   db.close();
 }
+test("contradictory aliases reject, but distinct cache text/quote/tail representations survive", (t) => {
+  const { source, store, plan } = setup(t, []),
+    state = path.join(source, "state/social-v2.json");
+  const messages = [
+    { messageId: "1", message_id: "2", text: "x" },
+    { senderId: "30000", userId: "40000", text: "x" },
+    { time: 1792382400, timestamp: 1792382401, text: "x" },
+    { conversation: "private:30000", text: "x" },
+  ];
+  write(state, {
+    conversations: { "group:20000": { recentMessages: messages, unread: [] } },
+  });
+  assert.equal(plan().rejected.length, 4);
+  const quote = {
+    messageId: "3",
+    userId: "30000",
+    time: 1792382400,
+    text: "[引用 Alice：旧约定周五见] 当前回复",
+    plain: "当前回复",
+    tail: "被截断的后半段",
+    quoteTargetIsSelf: true,
+  };
+  write(state, {
+    conversations: { "group:20000": { recentMessages: [quote], unread: [] } },
+  });
+  const p = plan();
+  assert.equal(p.rejected.length, 0);
+  importLegacy(store.bind("fish"), p);
+  const r = store.db.prepare("SELECT body,payload FROM events").get(),
+    payload = JSON.parse(r.payload);
+  assert.equal(r.body, quote.plain);
+  assert.equal(payload.originalText, quote.text);
+  assert.equal(payload.tail, quote.tail);
+  assert.equal(payload.quoteTargetIsSelf, true);
+});
+test("prior importer message keys are adopted without duplicate IDs or losing original provenance", (t) => {
+  const { store, plan } = setup(t, [row()]),
+    m = store.bind("fish");
+  const old = m.append({
+    dedupe: "legacy-message:previous-version-key",
+    conversation: "group:20000",
+    kind: "legacy.message-observation",
+    messageId: "11",
+    senderId: "10001",
+    direction: "out",
+    body: "old truncated",
+    occurredAt: "2026-10-19T04:00:00.000Z",
+    origin: "legacy-chat-window",
+    payload: { timeKnown: true, source: "social-v2", legacySeq: 7 },
+    status: "legacy-unverified",
+  });
+  assert.equal(importLegacy(m, plan()).inserted, 0);
+  assert.equal(importLegacy(m, plan()).enriched, 0);
+  const rows = store.db.prepare("SELECT * FROM events").all();
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].id, old.id);
+  assert.equal(rows[0].body, "source message");
+  const sources = JSON.parse(rows[0].payload).migration.sources;
+  assert.equal(sources.length, 2);
+  assert.equal(
+    sources.find((s) => s.format === "previous-import").observation
+      .previousPayload.legacySeq,
+    7,
+  );
+  m.append({
+    dedupe: "legacy-history:duplicate",
+    conversation: "group:20000",
+    kind: "legacy.message-observation",
+    messageId: "11",
+    body: "duplicate",
+  });
+  assert.throws(() => importLegacy(m, plan()), /EXISTING_DUPLICATE_MESSAGE_ID/);
+});
+test("existing runtime progress and session survive first migration, with imports paused", (t) => {
+  const { source, store, plan } = setup(t, [
+      row({ conversation: "private:30000" }),
+    ]),
+    m = store.bind("fish");
+  write(path.join(source, "state/social-v2.json"), {
+    conversations: {
+      "group:20000": { recentMessages: [], unread: [], lastReadThroughSeq: 9 },
+    },
+  });
+  for (const c of ["group:20000", "private:30000"])
+    m.setState(c, {
+      readThroughSeq: 88,
+      seenThroughSeq: 99,
+      session: { id: "preserved" },
+      custom: "preserved",
+      paused: false,
+    });
+  importLegacy(m, plan());
+  for (const c of ["group:20000", "private:30000"]) {
+    const s = m.state(c);
+    assert.equal(s.readThroughSeq, 88);
+    assert.equal(s.seenThroughSeq, 99);
+    assert.deepEqual(s.session, { id: "preserved" });
+    assert.equal(s.custom, "preserved");
+    assert.equal(s.paused, true);
+  }
+  assert.equal(m.state("group:20000").legacy.lastReadThroughSeq, 9);
+});
+test("target SQLite aliases and sidecar links never upgrade or modify an old source", async (t) => {
+  const { root, plan } = setup(t, []),
+    source = path.join(root, "source.sqlite"),
+    old = schema3(source);
+  old.close();
+  const before = fs.readFileSync(source);
+  const symbolic = path.join(root, "symlink.sqlite");
+  fs.symlinkSync(source, symbolic);
+  await assert.rejects(applyMigration(symbolic, plan()), /TARGET_LINK_REFUSED/);
+  const hard = path.join(root, "hardlink.sqlite");
+  fs.linkSync(source, hard);
+  await assert.rejects(applyMigration(hard, plan()), /TARGET_LINK_REFUSED/);
+  const sidecar = path.join(root, "target.sqlite");
+  fs.symlinkSync(source, sidecar + "-wal");
+  await assert.rejects(applyMigration(sidecar, plan()), /TARGET_LINK_REFUSED/);
+  assert.deepEqual(fs.readFileSync(source), before);
+  assert.equal(fs.existsSync(sidecar), false);
+});
 test("SQLite notes, people, sightings and revision audit preserve owner and evidence through export/restore", (t) => {
   const { source, root, store, opts } = setup(t, []),
     dbfile = path.join(root, "legacy.sqlite");
@@ -384,6 +504,7 @@ test("backup failure leaves schema3 and source data unchanged; failed import is 
   p.events.push({
     ...p.events[0],
     dedupe: "invalid",
+    messageId: "99",
     body: "x".repeat(2 * 1024 * 1024 + 1),
   });
   let saved;
