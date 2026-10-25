@@ -48,6 +48,17 @@ export async function readForward(
     mem = runtime.memory.bind(ctx.agentId);
   if (!root.payload?.segments) throw Error("FORWARD_NOT_FOUND");
   const roots = extractForwardIds(root.payload.segments);
+  const embedded = new Map();
+  const rememberEmbedded = (segs) => {
+    for (const segment of segs) {
+      if (segment.type !== "forward" || !Array.isArray(segment.data?.content))
+        continue;
+      const id = extractForwardIds([segment])[0];
+      if (id && !embedded.has(id))
+        embedded.set(id, { messages: segment.data.content });
+    }
+  };
+  rememberEmbedded(root.payload.segments);
   const knownRows = mem.db
     .prepare(
       "SELECT payload FROM events WHERE agent_id=? AND kind='forward.node' AND conversation=?",
@@ -56,8 +67,10 @@ export async function readForward(
   const known = new Set(roots);
   for (const r of knownRows) {
     const p = JSON.parse(r.payload);
-    if (p.rootEventId === eventId)
+    if (p.rootEventId === eventId) {
       extractForwardIds(p.segments).forEach((x) => known.add(x));
+      rememberEmbedded(p.segments);
+    }
   }
   if (resourceId && (!sanitizeForwardId(resourceId) || !known.has(resourceId)))
     throw Error("FORWARD_RESOURCE_NOT_OBSERVED");
@@ -70,11 +83,10 @@ export async function readForward(
     deferred = [],
     errors = [];
   if (!queue.length) throw Error("FORWARD_NOT_FOUND");
-  let requests = 0;
   while (queue.length) {
     const entry = queue.shift();
     if (visited.has(entry.id)) continue;
-    if (entry.depth > maxDepth || requests >= 10) {
+    if (entry.depth > maxDepth || visited.size >= 10) {
       deferred.push(entry.id);
       continue;
     }
@@ -86,21 +98,23 @@ export async function readForward(
       data;
     if (cached) data = JSON.parse(cached.payload).data;
     else {
-      const a = runtime.assertActive(ctx),
-        transport = runtime.transports.get(a.connectionId);
-      if (!transport?.connected) throw Error("QQ_NOT_CONNECTED");
-      try {
-        requests++;
-        data = await transport.call(
-          "get_forward_msg",
-          runtime.connection(a.connectionId).gateway === "onebot"
-            ? { id: entry.id }
-            : { message_id: entry.id },
-        );
-        runtime.assertActive(ctx);
-      } catch {
-        errors.push({ resourceId: entry.id, error: "FORWARD_FETCH_FAILED" });
-        continue;
+      data = embedded.get(entry.id);
+      if (!data) {
+        const a = runtime.assertActive(ctx),
+          transport = runtime.transports.get(a.connectionId);
+        if (!transport?.connected) throw Error("QQ_NOT_CONNECTED");
+        try {
+          data = await transport.call(
+            "get_forward_msg",
+            runtime.connection(a.connectionId).gateway === "onebot"
+              ? { id: entry.id }
+              : { message_id: entry.id },
+          );
+          runtime.assertActive(ctx);
+        } catch {
+          errors.push({ resourceId: entry.id, error: "FORWARD_FETCH_FAILED" });
+          continue;
+        }
       }
       if (Buffer.byteLength(JSON.stringify(data)) > 2 * 1024 * 1024)
         throw Error("FORWARD_TOO_LARGE");
@@ -129,6 +143,7 @@ export async function readForward(
           previews[i] ||
           formatForwardResponse([node], { maxCharsPerMessage: 600 })
             .messages[0];
+      rememberEmbedded(segs);
       const time =
         preview?.time && Number.isFinite(preview.time)
           ? new Date(preview.time * 1000)

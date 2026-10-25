@@ -22,7 +22,9 @@
     {
       "path": "vendor/dsh-qq/dsh-client.js",
       "origin": "h-D-ACE/dsh-qq",
-      "sha256": "25e539d2ca6e6e834b9863b2a0943d2c2e69f99c5cf5b03f888261a1dd730f53"
+      "sha256": "dd797d42849a5888461aa4fb087f0c0761bc81d59f1e2fdbc2084c53a315a6dc",
+      "upstreamSha256": "25e539d2ca6e6e834b9863b2a0943d2c2e69f99c5cf5b03f888261a1dd730f53",
+      "modification": "Cancel and release forgotten remote.mux session streams so subsequent turns receive a fresh snapshot; ignore stale end frames after reopening."
     },
     {
       "path": "vendor/dsh-qq/dsh-endpoint.mjs",

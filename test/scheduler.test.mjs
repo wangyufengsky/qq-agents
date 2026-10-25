@@ -6,7 +6,7 @@ import { MemoryStore } from "../src/memory/store.mjs";
 import { Runtime } from "../src/core/runtime.mjs";
 import { fixture, config, context, settle } from "./helpers.mjs";
 import { TaskScheduler } from "../src/core/scheduler.mjs";
-import { TOOL_NAMES } from "../src/tools/index.mjs";
+import { TOOL_NAMES, toolSpecs } from "../src/tools/index.mjs";
 
 function setup(t, run = async () => {}) {
   const c = config(1);
@@ -51,6 +51,32 @@ const rules = [
   },
   { type: "cron", expr: "0 9 * * MON-FRI" },
 ];
+test("AI scheduling schema describes every supported rule and accepts their real payloads", async (t) => {
+  const schedule = toolSpecs(["qq_schedule_create"])[0].inputSchema.properties
+    .schedule;
+  assert.equal(schedule.oneOf.length, 12);
+  const daily = schedule.oneOf.find((s) => s.properties.type.const === "daily");
+  assert.ok(daily.required.includes("times"));
+  assert.equal(daily.properties.times.items.type, "string");
+  const checkItems = (value) => {
+    if (!value || typeof value !== "object") return;
+    assert.ok(
+      !Array.isArray(value.items),
+      "provider schemas require homogeneous array items",
+    );
+    Object.values(value).forEach(checkItems);
+  };
+  checkItems(schedule);
+  const f = setup(t),
+    ctx = context(f.runtime, "agent-0", "private:30000");
+  for (const rule of rules.filter((r) => r.type !== "cron"))
+    await f.runtime.callTool(
+      ctx,
+      "qq_schedule_create",
+      task({ schedule: rule, enabled: false }),
+    );
+  assert.equal(f.s.state("agent-0").tasks.length, 12);
+});
 for (const rule of rules)
   test(`schedule preview and validation: ${rule.type}`, (t) => {
     const f = setup(t),

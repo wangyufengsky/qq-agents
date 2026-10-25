@@ -166,6 +166,15 @@ test("MCP stdio handshake and memory roundtrip use live scoped capability", asyn
   const catalog = await client.listTools();
   assert.ok(catalog.tools.some((x) => x.name === "diary_revise"));
   assert.ok(!catalog.tools.some((x) => x.name.startsWith("qq_memory_")));
+  const capability = catalog.tools.find((x) => x.name === "qq_send").inputSchema
+    .properties.context;
+  assert.match(capability.description, /copy.*context=/i);
+  assert.match(capability.description, /not.*explanation/i);
+  const invalid = await client.callTool({
+    name: "memory_search",
+    arguments: { context: "This is an explanation of the current task" },
+  });
+  assert.equal(invalid.isError, true);
   const r = await client.callTool({
     name: "memory_search",
     arguments: { context: ctx.token, query: "中文约定" },

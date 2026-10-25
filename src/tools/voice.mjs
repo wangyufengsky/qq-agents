@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { createHash, randomUUID } from "node:crypto";
 import { atomicJSON } from "../core/config.mjs";
 import {
@@ -152,15 +153,42 @@ export class VoiceStore {
       if (processed?.converted) cleanupTemp(processed.path, true);
     }
   }
-  async fromMessage(agentId, event, index, policy) {
+  async fromMessage(agentId, event, index, policy, getRecord) {
     const segment = (event.payload?.segments || []).filter(
       (s) => s.type === "record",
     )[index];
     if (!segment) throw Error("VOICE_NOT_FOUND");
-    // Only public attachment URLs already observed by this agent; never open a gateway's local file path.
     const url = segment.data?.url;
-    if (!url) throw Error("VOICE_URL_UNAVAILABLE");
-    const result = await this.fetchBuffer(url, policy.maxBytes);
+    if (!url && !segment.data?.file) throw Error("VOICE_URL_UNAVAILABLE");
+    // Native QQ gateways can return filesystem paths. Only an administrator's
+    // explicit media directories grant access; the message cannot grant it.
+    const local = !url || path.isAbsolute(url) || url.startsWith("file:");
+    let result;
+    if (local && getRecord && segment.data?.file) {
+      let record;
+      try {
+        record = await getRecord({
+          file: segment.data.file,
+          out_format: "wav",
+        });
+      } catch {
+        /* Gateways without get_record may use explicitly allowed local media roots. */
+      }
+      if (typeof record?.base64 === "string" && record.base64) {
+        const encoded = record.base64.replace(/^base64:\/\//, "");
+        if (encoded.length > Math.ceil(policy.maxBytes / 3) * 4)
+          throw Error("AUDIO_TOO_LARGE");
+        if (!/^[A-Za-z0-9+/]*={0,2}$/.test(encoded))
+          throw Error("INVALID_AUDIO");
+        result = Buffer.from(encoded, "base64");
+      }
+    }
+    if (!result) {
+      if (!url) throw Error("VOICE_URL_UNAVAILABLE");
+      result = local
+        ? this.readLocal(url, policy)
+        : await this.fetchBuffer(url, policy.maxBytes);
+    }
     return this.put(
       agentId,
       Buffer.isBuffer(result) ? result : result.buffer,
@@ -171,5 +199,46 @@ export class VoiceStore {
         title: "收到的语音",
       },
     );
+  }
+  readLocal(url, policy) {
+    let file;
+    try {
+      file = fs.realpathSync(
+        url.startsWith("file:") ? fileURLToPath(url) : url,
+      );
+      const permitted = (policy.localRoots || []).some((root) => {
+        if (!path.isAbsolute(root)) return false;
+        const relative = path.relative(fs.realpathSync(root), file);
+        return (
+          relative &&
+          relative !== ".." &&
+          !relative.startsWith(".." + path.sep) &&
+          !path.isAbsolute(relative)
+        );
+      });
+      if (!permitted) throw Error();
+    } catch {
+      throw Error("VOICE_LOCAL_PATH_DENIED");
+    }
+    const fd = fs.openSync(
+      file,
+      fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0),
+    );
+    try {
+      const stat = fs.fstatSync(fd);
+      if (!stat.isFile()) throw Error("VOICE_LOCAL_PATH_DENIED");
+      if (stat.size > policy.maxBytes) throw Error("AUDIO_TOO_LARGE");
+      const bytes = Buffer.alloc(policy.maxBytes + 1);
+      let length = 0;
+      while (length < bytes.length) {
+        const n = fs.readSync(fd, bytes, length, bytes.length - length, null);
+        if (!n) break;
+        length += n;
+      }
+      if (length > policy.maxBytes) throw Error("AUDIO_TOO_LARGE");
+      return bytes.subarray(0, length);
+    } finally {
+      fs.closeSync(fd);
+    }
   }
 }

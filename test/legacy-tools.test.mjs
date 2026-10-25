@@ -54,6 +54,40 @@ test("real ffprobe and ffmpeg validate and process an isolated WAV without chang
     0,
   );
 });
+test("gateway get_record converts observed native voice without opening arbitrary local files", async (t) => {
+  const f = setup(t),
+    a = f.runtime.agent("agent-0"),
+    ctx = context(f.runtime);
+  const eventId = event(f, [
+    {
+      type: "record",
+      data: {
+        file: "observed-record.amr",
+        url: path.join(f.root, "gateway-only.amr"),
+      },
+    },
+  ]);
+  const calls = [];
+  f.runtime.transports.get(a.connectionId).call = async (action, args) => {
+    calls.push({ action, args });
+    return { base64: wav().toString("base64") };
+  };
+  const result = await f.runtime.callTool(ctx, "qq_voice_read", { eventId });
+  assert.ok(
+    result.content.some(
+      (c) => c.type === "audio" && c.mimeType === "audio/wav",
+    ),
+  );
+  assert.deepEqual(calls, [
+    {
+      action: "get_record",
+      args: { file: "observed-record.amr", out_format: "wav" },
+    },
+  ]);
+  const m = f.runtime.voices.list(a.id).items[0];
+  assert.ok(m.duration > 0);
+  assert.equal(m.sources[0].eventId, eventId);
+});
 test("voice import refuses invalid bytes, excessive duration, and another agent's asset", async (t) => {
   const f = setup(t),
     a = f.runtime.agent("agent-0");
@@ -431,4 +465,99 @@ test("URL-only official stickers receive bounded IDs and refuse invented editabl
     }),
     /DID_NOT_PROVIDE_EDITABLE/,
   );
+});
+
+test("received local voice is confined to administrator media roots and retains provenance", async (t) => {
+  const f = setup(t),
+    a = f.runtime.agent("agent-0"),
+    dir = path.join(f.root, "gateway-audio");
+  fs.mkdirSync(dir);
+  const file = path.join(dir, "received.wav");
+  fs.writeFileSync(file, wav());
+  const eventId = event(f, [{ type: "record", data: { url: file } }]);
+  const ctx = context(f.runtime);
+  await assert.rejects(
+    f.runtime.callTool(ctx, "qq_voice_read", { eventId }),
+    /VOICE_LOCAL_PATH_DENIED/,
+  );
+  a.voice.localRoots = [dir];
+  const result = await f.runtime.callTool(ctx, "qq_voice_read", { eventId });
+  assert.ok(result.content.some((c) => c.type === "audio"));
+  const imported = f.runtime.voices.list(a.id).items[0];
+  assert.equal(imported.sources[0].eventId, eventId);
+  const outside = path.join(f.root, "outside.wav");
+  fs.writeFileSync(outside, wav());
+  fs.symlinkSync(outside, path.join(dir, "escape.wav"));
+  for (const candidate of [outside, path.join(dir, "escape.wav")]) {
+    const id = event(f, [{ type: "record", data: { url: candidate } }]);
+    await assert.rejects(
+      f.runtime.callTool(ctx, "qq_voice_read", { eventId: id }),
+      /VOICE_LOCAL_PATH_DENIED/,
+    );
+  }
+  fs.writeFileSync(
+    path.join(dir, "large.wav"),
+    Buffer.alloc(a.voice.maxBytes + 1),
+  );
+  const large = event(f, [
+    { type: "record", data: { url: path.join(dir, "large.wav") } },
+  ]);
+  await assert.rejects(
+    f.runtime.callTool(ctx, "qq_voice_read", { eventId: large }),
+    /AUDIO_TOO_LARGE/,
+  );
+});
+
+test("NapCat inline nested forwards remain readable when child IDs cannot be fetched", async (t) => {
+  const f = setup(t),
+    ctx = context(f.runtime),
+    root = event(f, [{ type: "forward", data: { id: "root-inline" } }]);
+  let calls = 0;
+  f.runtime.transports.get("qq-0").call = async (_, args) => {
+    calls++;
+    if (args.message_id !== "root-inline")
+      throw Error("INNER_MESSAGE_NOT_FETCHABLE");
+    return {
+      messages: [
+        {
+          sender: { user_id: 30000, nickname: "外层" },
+          message: [
+            { type: "text", data: { text: "外层蓝鲸" } },
+            {
+              type: "forward",
+              data: {
+                id: "nested-message-id",
+                content: [
+                  {
+                    sender: { user_id: 30001, nickname: "内层" },
+                    message: [{ type: "text", data: { text: "内层松林" } }],
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    };
+  };
+  const first = await f.runtime.callTool(ctx, "qq_forward_read", {
+    eventId: root,
+    maxDepth: 0,
+  });
+  assert.equal(first.total, 1);
+  assert.deepEqual(first.deferred, ["nested-message-id"]);
+  const child = await f.runtime.callTool(ctx, "qq_forward_read", {
+    eventId: root,
+    resourceId: "nested-message-id",
+  });
+  assert.equal(child.complete, true);
+  assert.equal(child.items[0].text, "内层松林");
+  assert.equal(calls, 1);
+  const all = await f.runtime.callTool(ctx, "qq_forward_read", {
+    eventId: root,
+  });
+  assert.equal(all.total, 2);
+  assert.equal(all.items[1].depth, 1);
+  assert.equal(all.complete, true);
+  assert.equal(calls, 1);
 });

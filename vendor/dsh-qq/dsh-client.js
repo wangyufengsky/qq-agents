@@ -303,6 +303,7 @@ export class NodeApiClient extends AbstractApiClient {
     this.cookiePromise = null;
     this._authEpoch = 0;
     this._muxSendOpen = null;
+    this._muxForget = null;
     // 持久化签名密钥的探测缓存：undefined=未探测，null=不可用，Buffer=可用。
     // 探一次就够（文件在 DSH 生命周期内不变），避免每个请求都读一次磁盘。
     this._secret = undefined;
@@ -686,11 +687,12 @@ export class NodeApiClient extends AbstractApiClient {
      * 不做这件事的话 `_desiredFollows` 只增不减：每次重连都会为一个早已不存在的会话
      * 重开一条 follow 流，并让 DSH 回一整份历史快照 —— 内存、重连延迟和账本基线行数
      * 都会随「历史上创建过的会话数」线性增长。
-     * 已经打开的流由 DSH 在会话消失时自行结束。
+     * 同时关闭当前逻辑流，使下次 follow 同一会话也能获得新的开场快照。
      */
     forget: (sessionId) => {
       if (!sessionId) return;
       this._desiredFollows.delete(String(sessionId));
+      this._muxForget?.(String(sessionId));
     },
   };
 
@@ -699,7 +701,7 @@ export class NodeApiClient extends AbstractApiClient {
     return {
       [Symbol.asyncIterator]: () => gen,
       follow: (sessionId) => this._followSession(sessionId),
-      forget: (sessionId) => { if (sessionId) this._desiredFollows.delete(String(sessionId)); }
+      forget: (sessionId) => this.events.forget(sessionId)
     };
   }
 
@@ -738,6 +740,7 @@ export class NodeApiClient extends AbstractApiClient {
       if (ended) return;
       ended = true;
       if (this._muxSendOpen === sendOpen) this._muxSendOpen = null;
+      if (this._muxForget === forget) this._muxForget = null;
       // 连接断开（含鉴权失败/DSH 重启）时丢弃旧 Cookie，重连会重新 token exchange。
       if (!sig.aborted) this.invalidateAuth();
       enqueue({ kind: 'end' });
@@ -773,6 +776,19 @@ export class NodeApiClient extends AbstractApiClient {
         endStream();
       }
     };
+    const forget = (sessionId) => {
+      const streamId = sessionToStream.get(sessionId);
+      sessionToStream.delete(sessionId);
+      followed.delete(sessionId);
+      if (!streamId) return;
+      // Drop the old correlation before sending cancel: a late end must not
+      // tear down a newly opened stream for the same session.
+      streamToSession.delete(streamId);
+      if (!ended && socketOpen) {
+        try { socket.send(JSON.stringify({ type: 'cancel', streamId })); }
+        catch { endStream(); }
+      }
+    };
     const sendOpenEvents = () => {
       if (ended || !socketOpen || eventStreamId) return;
       const streamId = randomUUID();
@@ -794,6 +810,7 @@ export class NodeApiClient extends AbstractApiClient {
       if (ended || sig.aborted) return;
       socketOpen = true;
       this._muxSendOpen = sendOpen;
+      this._muxForget = forget;
       // 重放**全部**期望 follow（跨重连保留），而不只是本次连接排队的那些。
       // 少了这一步，DSH 一重启，所有已存在的 QQ 会话就会静默失联。
       for (const sid of this._desiredFollows) sendOpen(sid);
@@ -940,6 +957,7 @@ export class NodeApiClient extends AbstractApiClient {
       }
     } finally {
       if (this._muxSendOpen === sendOpen) this._muxSendOpen = null;
+      if (this._muxForget === forget) this._muxForget = null;
       sig.removeEventListener('abort', handleAbort);
       socket.removeEventListener('open', handleOpen);
       socket.removeEventListener('message', handleMessage);

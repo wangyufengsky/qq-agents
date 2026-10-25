@@ -85,6 +85,7 @@ export const voiceSchema = z
     maxSeconds: ms(1, 1800, 300),
     ffmpegCommand: z.string().min(1).default("ffmpeg"),
     ffprobeCommand: z.string().min(1).default("ffprobe"),
+    localRoots: z.array(z.string().min(1).max(4096)).max(10).default([]),
   })
   .strict()
   .prefault({});

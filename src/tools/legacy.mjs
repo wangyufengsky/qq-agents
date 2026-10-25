@@ -4,6 +4,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { ownedEvent, readForward } from "./forward.mjs";
 import { mdToPlain } from "../../vendor/dsh-qq/md-to-plain.js";
 import { safeFetchBuffer } from "../../vendor/social-reader/safe-fetch.js";
+import { modelScheduleSchema } from "./schedule-schema.mjs";
 
 const str = z.string(),
   id = str.min(1).max(200),
@@ -18,7 +19,7 @@ const taskFields = {
     .min(1)
     .max(10)
     .optional(),
-  schedule: z.record(str, z.unknown()),
+  schedule: modelScheduleSchema,
   timezone: str.optional(),
   maxRuns: z.number().int().min(1).max(100000).nullable().optional(),
   jitterMin: z.number().int().min(0).max(30).optional(),
@@ -265,6 +266,8 @@ export async function legacyTool(runtime, ctx, name, args) {
           ownedEvent(runtime, ctx, args.eventId),
           args.index || 0,
           a.voice,
+          (params) =>
+            runtime.transports.get(a.connectionId).call("get_record", params),
         );
     taintMedia(ctx, m);
     return {

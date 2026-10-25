@@ -195,7 +195,12 @@ export function toolSpecs(enabled = TOOL_NAMES, { context = false } = {}) {
       if (context) {
         const add = (s) => {
           if (s.properties) {
-            s.properties.context = { type: "string", minLength: 20 };
+            s.properties.context = {
+              type: "string",
+              minLength: 20,
+              description:
+                "Opaque authorization token: copy the exact value after context= from the CURRENT bridge prompt. This is not a task explanation or conversation summary. Never invent it, reuse a previous turn's token, or disclose it outside this tool parameter.",
+            };
             s.required = [...(s.required || []), "context"];
           }
           for (const key of ["anyOf", "oneOf"]) if (s[key]) s[key].forEach(add);
