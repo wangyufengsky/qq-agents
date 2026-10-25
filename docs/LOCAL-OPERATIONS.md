@@ -1,0 +1,46 @@
+# 独立本机启停与旧桥接退役
+
+`scripts/robots.mjs` 统一管理本项目桥接和已明确登记的 macOS 原生 QQ。无需启动旧桥接管理台，DSH 桌面仍需先启动；Codex 使用数据目录下的独立 CLI 登录。此入口不会修改日常 Codex 登录、清空会话或启动 Docker。
+
+```sh
+node scripts/robots.mjs status --data /absolute/private/bridge-data
+node scripts/robots.mjs start --data /absolute/private/bridge-data --resume --open
+node scripts/robots.mjs stop --data /absolute/private/bridge-data
+node scripts/robots.mjs restart --data /absolute/private/bridge-data --resume
+# 只有桥接已停止时，才可单独停止本入口确认拥有的原生 QQ：
+node scripts/robots.mjs qq-stop --data /absolute/private/bridge-data
+```
+
+`start` 默认保持全局暂停；`--resume` 在连接和模型目录检查成功后解除全局暂停，保留角色、会话各自的暂停偏好。`stop` 暂停并停止桥接，保留 QQ 和 DSH。启动时对已启用的原生连接最多等待 60 秒，确认账号、在线状态与 WS 端口就绪后再连接桥接。端口未启动可短暂重试；身份、认证和协议错误立即终止，持续离线报告 `NATIVE_LOGIN_REQUIRED`。启动失败不删除登录数据。
+
+数据目录可包含 `deployment.json` 的 `codeRoot`，指向本地发布快照；省略时使用脚本所在项目。`secrets.json` 保存本地环境变量，只有桥接子进程会读取。`native-profiles.json` 的结构如下，必须留在私有数据目录，不能提交：
+
+```json
+{
+  "profiles": [
+    {
+      "id": "napcat-a",
+      "accountId": "10001",
+      "workdir": "/absolute/private/napcat-profile-a"
+    }
+  ]
+}
+```
+
+原生配置从该 profile 的 `config/onebot11_<accountId>.json` 与 `config/webui.json` 读取，只接受本机带令牌的独立 HTTP/WS/WebUI 端口，并与新桥接账号和地址核对。账号、端口或 PID 归属不符时停止操作。只复用同时匹配账号、规范路径、进程组、启动时间及精确命令的原生进程记录；PID 被重用时不接管、不结束。未完成的停止会报错，不强制杀进程。
+
+启动器有独立操作锁。桥接异常退出留下的数据锁只在原 PID 已不存在时改名保留；操作锁如果因启动器崩溃留下，先核对其中 PID，再人工归档，不能盲删。
+
+## 退役顺序
+
+1. 保存当前数据库、配置、发布快照与凭据的本地备份；Git 只提交代码及脱敏示例。
+2. 核对新版真实 QQ 回复和工具回执。预设列表必须没有 `broken`；只有模型目录可读还不足以证明能创建会话。
+3. 在此入口登记原生 QQ profile，演练桥接停止、重新连接、恢复及独立 QQ 重启。任何重新登录要求交给用户，不绕过手机验证。
+4. 停止旧桥接应用进程，保持共享 QQ 运行。旧入口的 `stop` 与 `qq-stop` 含义不同，后者会断开新框架仍使用的 QQ。
+5. 停用旧 QQ 专用 DSH bundle、移除其旧路径 MCP 注册。其他用途的浏览器/搜索插件不随旧桥接清理。
+6. 检查活跃进程、符号链接、DSH profile 和新启动脚本均不引用待移除的旧代码。旧 DSH 工作区的历史会话目录必须单独保留。
+7. 将旧代码归档到私有回退目录，再从原位置移除；旧人格、历史会话、QQ 登录、浏览器登录、Docker 资源不与代码一起删除。记录恢复路径和启动方式。
+
+## DSH 预设热更新
+
+DSH 保留已有会话对应的预设版本。压缩引擎与 `/compact` 必须放入同一个 `cordis:group`，使用 `isolate.compaction: true` 为每个版本分配独立作用域。使用固定的字符串隔离名称会让新旧版本重复注册 `compaction`，导致新会话被拒绝。更新 bundle 后必须实际创建新会话，并在有旧会话存活时再次热加载验证。现有历史不需要删除。

@@ -1,5 +1,5 @@
 import { RESTRICTED_TOOL_NAMES } from "../../vendor/dsh-qq/qq-tool-restrict.mjs";
-import { TOOL_NAMES } from "../tools/index.mjs";
+import { MCP_ENTRY_NAMES } from "../tools/catalog.mjs";
 export const name = "qq-unified-tool-guard";
 export const inject = ["tools"];
 export function installGuard(ctx, blocked, allowed) {
@@ -21,6 +21,6 @@ export function apply(ctx) {
   installGuard(
     ctx,
     RESTRICTED_TOOL_NAMES,
-    TOOL_NAMES.map((t) => "mcp__qq-unified__" + t),
+    MCP_ENTRY_NAMES.map((t) => "mcp__qq-unified__" + t),
   );
 }

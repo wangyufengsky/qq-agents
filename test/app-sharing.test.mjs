@@ -99,7 +99,7 @@ test("share gates expiry, permission and image lineage before delivery", async (
       recordId: source.recordId,
       comment: "测试",
     }),
-    /PERMISSION_DISABLED/,
+    /TOOL_DISABLED/,
   );
   runtime.agent("agent-0").apps.sharing = true;
   const old = runtime.now.bind(runtime);

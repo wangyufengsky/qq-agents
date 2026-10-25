@@ -144,7 +144,7 @@ test("AI scheduler tool is owner-private only and cross-target edits require app
     owner = context(f.runtime, "agent-0", "private:30000");
   await assert.rejects(
     f.runtime.callTool(group, "qq_schedule_create", task()),
-    /OWNER_PRIVATE/,
+    /TOOL_DISABLED/,
   );
   f.runtime.agent("agent-0").scheduler.allowAiOtherTargets = true;
   const created = f.s.create(

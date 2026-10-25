@@ -151,8 +151,9 @@ export class DshBackend {
     if (!sessionId) {
       const presets = unwrap(await client.agentPresets.list({}), "presets");
       const list = presets.presets || presets.items || [];
-      if (!list.some((p) => (p.id || p.name) === this.config.preset))
-        throw Error("DSH_UNIFIED_PRESET_NOT_INSTALLED");
+      const preset = list.find((p) => (p.id || p.name) === this.config.preset);
+      if (!preset) throw Error("DSH_UNIFIED_PRESET_NOT_INSTALLED");
+      if (preset.broken) throw Error("DSH_UNIFIED_PRESET_BROKEN");
       const dir = path.join(this.root, "dsh-workspaces", this.agent.id);
       fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
       const w = unwrap(
