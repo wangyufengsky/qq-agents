@@ -127,13 +127,24 @@ test("forward evidence: opaque gateway nodes cannot support a Self interest", as
     "[CQ:image,file=opaque]",
     [],
   ];
-  f.transport.call = async () => ({
-    messages: contents.map((message) => ({ message })),
-  });
+  const nodes = [
+    ...contents.map((message) => ({ message })),
+    { text: "[CQ:image,file=opaque]" },
+    { data: { text: "[CQ:music,id=opaque]" } },
+    { message: { content: [{ type: "image", data: { file: "opaque" } }] } },
+    { content: { text: "[CQ:video,file=opaque]" } },
+    {
+      content: {
+        text: "[CQ:image,file=opaque]",
+        content: [{ type: "text", data: { text: "低优先级字段" } }],
+      },
+    },
+  ];
+  f.transport.call = async () => ({ messages: nodes });
   const read = await f.runtime.callTool(f.ctx, "qq_forward_read", {
     eventId: f.source,
   });
-  assert.equal(read.total, contents.length);
+  assert.equal(read.total, nodes.length);
   for (const item of read.items) {
     const candidate = interest(f, [item.id]);
     assert(
@@ -143,6 +154,45 @@ test("forward evidence: opaque gateway nodes cannot support a Self interest", as
     );
     assert.throws(() => acceptInterest(f, candidate), /INSUFFICIENT/);
   }
+  // Previously archived compatibility nodes can have a nonempty preview but
+  // no parsed segments. That preview is not evidence of interpreted content.
+  const archived = f.mem.append({
+    dedupe: "old-opaque-archive",
+    conversation: f.ctx.conversation,
+    kind: "forward.node",
+    body: "[媒体]",
+    payload: { segments: [], resourceId: "old-opaque" },
+  }).id;
+  assert.throws(
+    () => acceptInterest(f, interest(f, [archived])),
+    /INSUFFICIENT/,
+  );
+});
+
+test("forward evidence: compatibility text nodes retain readable speech", async (t) => {
+  const f = setup(t);
+  f.transport.call = async () => ({
+    messages: [
+      { text: "旧格式仍然是可读的文字" },
+      { data: { text: "另一段可读文字" } },
+      {
+        message: {
+          content: [{ type: "text", data: { text: "容器内的文字" } }],
+        },
+      },
+      { content: { text: "文本容器" } },
+    ],
+  });
+  const read = await f.runtime.callTool(f.ctx, "qq_forward_read", {
+    eventId: f.source,
+  });
+  assert.equal(read.total, 4);
+  for (const item of read.items)
+    assert.equal(interest(f, [item.id]).roots[0].epistemic, "forwarded-claim");
+  assert.equal(
+    acceptInterest(f, interest(f, [read.items[0].id])).status,
+    "accepted",
+  );
 });
 
 test("forward evidence: confirmed copies inherit only the matching original source", async (t) => {

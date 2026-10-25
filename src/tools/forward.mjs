@@ -24,14 +24,23 @@ export function ownedEvent(runtime, ctx, id) {
 }
 function segments(node) {
   const c =
-    node.message ?? node.content ?? node.data?.message ?? node.data?.content;
+    node.message ??
+    node.content ??
+    node.text ??
+    node.data?.message ??
+    node.data?.content ??
+    node.data?.text;
   return Array.isArray(c)
     ? c
     : typeof c === "string"
       ? [{ type: "text", data: { text: c } }]
       : c?.type
         ? [c]
-        : [];
+        : typeof c?.text === "string"
+          ? [{ type: "text", data: { text: c.text } }]
+          : Array.isArray(c?.content)
+            ? c.content
+            : [];
 }
 // Keep the wire payload and the local representation together: fallback nodes
 // contain exactly the text we send, while real message references retain only

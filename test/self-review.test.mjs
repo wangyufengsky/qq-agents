@@ -646,7 +646,12 @@ test("F2 same-origin proof is order independent and opaque cards cannot downgrad
   const node = event(m, 2, {
     kind: "forward.node",
     body: "已经展开的独立观察",
-    payload: { resourceId: "shared", rootEventId: card.id, index: 0 },
+    payload: {
+      resourceId: "shared",
+      rootEventId: card.id,
+      index: 0,
+      segments: [{ type: "text", data: { text: "已经展开的独立观察" } }],
+    },
   });
   const other = event(m, 3);
   const forward = m.identity.sources([node.id, card.id, other.id]);
