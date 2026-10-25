@@ -306,6 +306,27 @@ export async function legacyTool(runtime, ctx, name, args) {
   if (name === "qq_forward_send") {
     const events = args.eventIds.map((id) => ownedEvent(runtime, ctx, id));
     disclose(runtime, ctx);
+    const memory = runtime.memory.bind(a.id),
+      connection = runtime.connection(a.connectionId);
+    for (const e of events)
+      if (e.type === "message.received" && e.messageId) {
+        if (e.connectionId !== a.connectionId)
+          throw Error("FORWARD_CONNECTION_MISMATCH");
+        const row = memory.db
+          .prepare("SELECT * FROM events WHERE id=? AND agent_id=?")
+          .get(e.id, a.id);
+        e.gatewayMessageId = gatewayMessageId(
+          memory.db,
+          {
+            agentId: a.id,
+            connectionId: e.connectionId,
+            conversation: e.conversation,
+          },
+          row,
+          connection.messageIdNamespace || "onebot",
+          connection.accountId,
+        );
+      }
     const { nodes, snapshot } = forwardPayload(
       events,
       a,
@@ -526,3 +547,4 @@ export async function legacyTool(runtime, ctx, name, args) {
   if (name === "ops_result") return runtime.operations.result(ctx, args.id);
   throw Error("UNKNOWN_LEGACY_TOOL");
 }
+import { gatewayMessageId } from "../memory/message-ids.mjs";

@@ -1,4 +1,5 @@
 import { timeBasis, timelineAnchor, timelineNeighbors } from "./timeline.mjs";
+import { resolveMessage, scopeFor } from "./message-ids.mjs";
 const messageKinds = [
   "message.received",
   "message.sent",
@@ -85,7 +86,7 @@ export function sceneForMatch(db, agentId, anchor, { before, after, seconds }) {
   const clock = timelineAnchor(db, agentId, anchor.id),
     timeKnown = !!clock;
   let more = false;
-  const seen = new Set([anchor.message_id || anchor.id]);
+  const seen = new Set([anchor.id]);
   function adjacent(count, direction) {
     if (!count || !timeKnown) return [];
     const older = direction === "before";
@@ -96,7 +97,7 @@ export function sceneForMatch(db, agentId, anchor, { before, after, seconds }) {
     });
     const selected = [];
     for (const row of rows) {
-      const key = row.message_id || row.id;
+      const key = row.id;
       if (seen.has(key)) continue;
       seen.add(key);
       selected.push(row);
@@ -125,32 +126,22 @@ export function sceneForMatch(db, agentId, anchor, { before, after, seconds }) {
   }
   const messages = rows.map((row) => message(row, anchor.id)),
     quoted = [],
-    byMessage = new Map(
-      messages.filter((x) => x.messageId).map((x) => [x.messageId, x]),
-    );
+    byEvent = new Map(messages.map((x) => [x.id, x]));
   let lookups = 0;
   for (const m of messages)
     for (const ref of m.replyTo) {
-      let target = byMessage.get(ref.messageId);
+      const sourceRow = rows.find((r) => r.id === m.id);
+      if (++lookups > 5) {
+        ref.status = "lookup-budget";
+        continue;
+      }
+      const row = resolveMessage(db, scopeFor(sourceRow), ref.messageId);
+      let target = row && byEvent.get(row.id);
       if (!target) {
-        if (++lookups > 5) {
-          ref.status = "lookup-budget";
-          continue;
-        }
-        const row = db
-          .prepare(
-            "SELECT * FROM events WHERE agent_id=? AND connection_id=? AND conversation=? AND message_id=? AND kind IN ('message.received','message.sent','legacy.message-observation') ORDER BY kind='message.received' DESC,seq LIMIT 1",
-          )
-          .get(
-            agentId,
-            anchor.connection_id,
-            anchor.conversation,
-            ref.messageId,
-          );
         if (row) {
           target = message(row, anchor.id);
           quoted.push(target);
-          byMessage.set(ref.messageId, target);
+          byEvent.set(row.id, target);
         }
       }
       if (target)

@@ -28,6 +28,12 @@ if (legacyDb && legacyDb === path.join(root, "memory.sqlite"))
 const plan = inspectLegacy(source, {
   agentId: get("--agent"),
   accountId: args.includes("--account") ? get("--account") : undefined,
+  aliasFile: args.includes("--message-aliases")
+    ? get("--message-aliases")
+    : undefined,
+  aliasSourceFiles: args.flatMap((a, i) =>
+    a === "--alias-source" ? [args[i + 1]] : [],
+  ),
   connectionMap: args.includes("--connection-map")
     ? JSON.parse(fs.readFileSync(get("--connection-map"), "utf8"))
     : {},
@@ -50,6 +56,7 @@ const plan = inspectLegacy(source, {
 const summary = {
   mode: args.includes("--apply") ? "apply" : "dry-run",
   events: plan.events.length,
+  aliases: plan.aliases?.length || 0,
   legacyNotes: plan.notes.length,
   conversations: plan.states.length,
   coverage: plan.coverage,
@@ -71,6 +78,12 @@ try {
       String(connection?.accountId) !== binding.accountId
     )
       throw Error("TARGET_CONFIG_CONNECTION_MISMATCH");
+    if (
+      plan.aliases?.some(
+        (a) => a.namespace !== (connection.messageIdNamespace || "onebot"),
+      )
+    )
+      throw Error("TARGET_CONFIG_MESSAGE_NAMESPACE_MISMATCH");
     summary.targetConfigChecked = true;
   } else {
     if (args.includes("--target-config"))

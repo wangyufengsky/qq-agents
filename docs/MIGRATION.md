@@ -111,3 +111,24 @@ schema 5 新增可靠消息时间的派生索引和事件更新时的关系刷�
 JSON 多主体恢复同时映射 learner 的 `slang.throughSeq`，以原账本边界对应到目标主体的本地 seq，避免新库中尚未处理的消息被旧数字跳过。Self、日记、回合与归档引用保留，派生索引按恢复后的记录重新生成。
 
 先做升级前的 WAL 一致备份，再打开 schema 5。旧 schema 4 代码会拒绝 schema 5；回退应把升级前备份恢复到新路径，并用实际旧代码读取。JSON 恢复从原事件重建派生索引，无需导出派生表。数据库备份仍不包含配置、凭据和媒体。最新全量历史与正式连接/切换验收仍需另行完成。
+
+## 消息编号别名与 schema 6
+
+网关更换后，后端编号不一定相同。先核对已有审计映射及原始观察，再准备本机版本 1 的别名清单，通过 `--message-aliases FILE --alias-source ORIGINAL_EVIDENCE_FILE` 导入；多个原始证据文件重复传 `--alias-source`。原证据是含 robot_qq、conversation、native_message_id、message_id、record_digest、match_basis 的审计数组。导入器验证文件 SHA-256、逐条编号对应及匹配依据、目标记录来源观察摘要、显式账号/连接绑定及唯一性，不做正文或时间相似度匹配。审计数组与规范清单须同时提供；转换时必须逐条核对来源、完整性和已发生的引用编号转换，保留原文件。
+
+清单顶层为 `{"version":1,"aliases":[...]}`，每条包含：
+
+| 字段                             | 内容                                                                              |
+| -------------------------------- | --------------------------------------------------------------------------------- |
+| accountId / conversation         | 已显式绑定的账号及 `group:` / `private:` 会话                                     |
+| archiveMessageId                 | 目标档案保留的原编号；目标必须唯一存在                                            |
+| namespace / messageId            | 当前网关编号命名空间和该网关实际编号；`archive` 保留给档案                        |
+| evidence.sourceId / sourceDigest | 有界逻辑来源标识及 `--alias-source` 文件 SHA-256                                  |
+| evidence.targetDigest            | 目标 `payload.migration.sources` 中同账号来源观察的 digest                        |
+| evidence.basis                   | 已核实的 `verified-sequence`、`verified-observation` 或新原生记录 `native-record` |
+
+目标连接须配置相同的 `messageIdNamespace`，默认 `onebot`；显式 `--target-config` 会校验它。不同网关编号空间应使用不同稳定名称，不复用已有空间表示另一种编号；同一 namespace 下一个目标只能有一个编号。缺源、冲突、缺目标或账号不符会拒绝整批。可对已导入目标补充别名，无须改写旧 UUID、message_id、账本 seq 或时间索引。补充和重复导入不会推进水位；无稳定身份的疑似重复继续保留。
+
+schema 6 新增 message_aliases 和 message_observations。明确别名解析统一用于双向回复/撤回关系、场景引用、证据追溯和发往当前网关的引用；没有当前网关编号时拒绝发送该引用。用户只给编号而跨空间存在多个目标时拒绝猜测。旧记录缺显式空间时，只允许不歧义的兼容解析；不会凭相同文本合并。运行时同一消息再次观察保留到独立观察表，原文、来源、发生时间和已读边界保持；不把重复观察作为新来信唤醒。连接不能在同一迁移绑定下换成另一账号。
+
+两个新表随主体 JSON 导出恢复；外键、主体/连接/会话及来源校验均保留。仍须在首次升级前执行只读一致备份（CLI apply 自动先备份），使用实际 schema 5 旧代码读取升级前备份的新路径恢复副本。旧代码不能打开 schema 6；新 schema 备份不能替代升级前回退。媒体、登录、配置和模型 home 不在数据库备份内。

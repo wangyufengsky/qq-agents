@@ -6,6 +6,7 @@ import {
   retireSession,
   recordBackendTurn,
   sessionReference,
+  recoverSessions,
 } from "./session-records.mjs";
 
 export class SlangLearner {
@@ -148,11 +149,17 @@ export class SlangLearner {
   async learn(a, conversation, records) {
     const runtime = this.runtime,
       mem = runtime.memory.bind(a.id),
-      ctx = runtime.makeContext(a.id, conversation);
+      scope = "learner:" + conversation;
+    recoverSessions(mem, runtime.now(), scope);
+    records = records.filter(
+      (r) => r.seq > (mem.state(conversation).slang?.throughSeq || 0),
+    );
+    if (!records.length) return;
+    const ctx = runtime.makeContext(a.id, conversation);
     ctx.allowedTools = ["slang_submit", "slang_research"];
-    const scope = "learner:" + conversation;
     ctx.turnId = randomUUID();
     let outcome = "completed";
+    let finalized = false;
     const timer = setTimeout(() => ctx.controller.abort(), 120000);
     try {
       let backend = this.backends.get(a.id);
@@ -220,6 +227,7 @@ export class SlangLearner {
       state.slang.throughSeq = records.at(-1).seq;
       state.slang.lastError = null;
       mem.setState(conversation, state);
+      finalized = true;
     } catch (e) {
       outcome = ctx.controller.signal.aborted ? "cancelled" : "failed";
       retireSession(
@@ -236,19 +244,23 @@ export class SlangLearner {
           outcome === "cancelled" ? "LEARNER_CANCELLED" : "LEARNER_TURN_FAILED",
       };
       mem.setState(conversation, s);
+      finalized = true;
     } finally {
-      const record = mem.db
-        .prepare("SELECT value FROM model_turns WHERE agent_id=? AND id=?")
-        .get(a.id, ctx.turnId);
-      if (record)
-        mem.identity.put("model_turns", {
-          ...JSON.parse(record.value),
-          status: outcome,
-          endedAt: runtime.now(),
-        });
-      clearTimeout(timer);
-      ctx.controller.abort();
-      runtime.capabilities.delete(ctx.token);
+      try {
+        const record = mem.db
+          .prepare("SELECT value FROM model_turns WHERE agent_id=? AND id=?")
+          .get(a.id, ctx.turnId);
+        if (record && finalized)
+          mem.identity.put("model_turns", {
+            ...JSON.parse(record.value),
+            status: outcome,
+            endedAt: runtime.now(),
+          });
+      } finally {
+        clearTimeout(timer);
+        ctx.controller.abort();
+        runtime.capabilities.delete(ctx.token);
+      }
     }
   }
   async close() {

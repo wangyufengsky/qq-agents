@@ -96,18 +96,15 @@ export function freezeEvidence(memory, ids, now) {
         parents.push(p.confirmedEventId);
       }
       // Resolve explicit replies to the original observed message in its actual namespace.
-      for (const s of p.segments || [])
+      const replySegments = [
+        ...(p.segments || []),
+        ...(row.kind === "message.sent" && p.replyTo != null
+          ? [{ type: "reply", data: { id: p.replyTo } }]
+          : []),
+      ];
+      for (const s of replySegments)
         if (s.type === "reply" && s.data?.id != null) {
-          const source = memory.db
-            .prepare(
-              "SELECT id FROM events WHERE agent_id=? AND connection_id=? AND conversation=? AND message_id=? ORDER BY seq LIMIT 1",
-            )
-            .get(
-              memory.agentId,
-              row.connection_id,
-              row.conversation,
-              String(s.data.id),
-            );
+          const source = resolveMessage(memory.db, scopeFor(row), s.data.id);
           if (source) parents.push(source.id);
         }
       parents = [...new Set(parents)];
@@ -331,3 +328,4 @@ export function evidenceView(memory, record) {
     }),
   };
 }
+import { resolveMessage, scopeFor } from "./message-ids.mjs";

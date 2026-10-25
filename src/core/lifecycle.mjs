@@ -1,6 +1,10 @@
 import { randomUUID, createHash } from "node:crypto";
 import { rememberSources, sourceHandoff } from "./context-handoff.mjs";
-import { retireSession, sessionReference } from "./session-records.mjs";
+import {
+  retireSession,
+  sessionReference,
+  recoverSessions,
+} from "./session-records.mjs";
 export const SUBJECT = "@subject";
 export function stableInstructions(agent, self, subject = false, anchors = {}) {
   return [
@@ -32,19 +36,7 @@ export class ContextLifecycle {
       )
       .all()) {
       const m = runtime.memory.bind(a.id);
-      for (const t of m.identity
-        .list("model_turns")
-        .filter((t) => t.status === "running")) {
-        retireSession(m, t.conversation, "process-recovery", runtime.now(), {
-          turnId: t.id,
-          backendId: t.backendId,
-        });
-        m.identity.put("model_turns", {
-          ...m.identity.get("model_turns", t.id),
-          status: "interrupted",
-          endedAt: runtime.now(),
-        });
-      }
+      recoverSessions(m, runtime.now());
     }
   }
   seen(ctx, items) {
@@ -212,8 +204,9 @@ export class ContextLifecycle {
     if (ctx.controller.signal.aborted) throw Error("ABORTED");
     const r = this.runtime,
       a = r.agent(ctx.agentId),
-      m = r.memory.bind(a.id),
-      self = m.identity.initialize(a, r.now());
+      m = r.memory.bind(a.id);
+    recoverSessions(m, r.now(), ctx.conversation);
+    const self = m.identity.initialize(a, r.now());
     const instructions = stableInstructions(
       a,
       self,

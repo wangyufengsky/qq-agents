@@ -1,3 +1,8 @@
+import {
+  resolveMessage,
+  scopeFor,
+  referenceNamespaceSql,
+} from "./message-ids.mjs";
 // Derived indexes only: raw events and diary history are never rewritten.
 export function migrateSearch(db, version) {
   if (version >= 3) return;
@@ -86,14 +91,14 @@ export function related(
   if (!anchor) throw Error("RECORD_NOT_FOUND");
   const sources = db
     .prepare(
-      `SELECT DISTINCT source_seq FROM event_links WHERE agent_id=? AND connection_id=? AND conversation=? AND (source_seq=? OR target_message_id=?) AND source_seq>? ORDER BY source_seq LIMIT ?`,
+      `SELECT DISTINCT l.source_seq FROM event_links l JOIN events e ON e.seq=l.source_seq WHERE l.agent_id=? AND l.connection_id=? AND l.conversation=? AND (l.source_seq=? OR EXISTS(SELECT 1 FROM message_identities i WHERE i.agent_id=l.agent_id AND i.connection_id=l.connection_id AND i.conversation=l.conversation AND i.message_id=l.target_message_id AND (${referenceNamespaceSql("e")} IS NULL OR i.namespace=${referenceNamespaceSql("e")}) GROUP BY i.message_id HAVING COUNT(DISTINCT i.event_id)=1 AND MIN(i.event_id)=?)) AND l.source_seq>? ORDER BY l.source_seq LIMIT ?`,
     )
     .all(
       memory.agentId,
       anchor.connection_id,
       anchor.conversation,
       anchor.seq,
-      anchor.message_id ?? "",
+      anchor.id,
       afterSeq,
       limit + 1,
     );
@@ -111,16 +116,7 @@ export function related(
         record: memory.event(link, current, true),
         links: [],
       });
-    const target = db
-      .prepare(
-        `SELECT id FROM events WHERE agent_id=? AND connection_id=? AND conversation=? AND message_id=? AND kind IN ('message.received','message.sent','legacy.message-observation') ORDER BY seq LIMIT 1`,
-      )
-      .get(
-        memory.agentId,
-        anchor.connection_id,
-        anchor.conversation,
-        link.target_message_id,
-      );
+    const target = resolveMessage(db, scopeFor(link), link.target_message_id);
     groups.get(link.seq).links.push({
       relation: link.relation,
       fromId: link.id,
