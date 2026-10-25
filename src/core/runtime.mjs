@@ -258,9 +258,12 @@ export class Runtime {
       throw Error("STOP_MANAGED_QQ_PROCESSES_BEFORE_CONFIG_EDIT");
     // Invalidate capabilities synchronously before awaiting cancellation: late tool calls cannot send.
     for (const ctx of this.capabilities.values()) ctx.controller.abort();
+    for (const ctx of this.running.values()) ctx.controller.abort();
     this.capabilities.clear();
     this.pending.clear();
     this.configStore.save(next, revision);
+    for (const a of this.config.agents)
+      this.memory.bind(a.id).identity.initialize(a, this.now());
     await Promise.allSettled(
       [...this.backends.values()].map((b) => b.close?.()),
     );
@@ -337,13 +340,7 @@ export class Runtime {
         const subject = mem.state(SUBJECT);
         mem.setState(SUBJECT, {
           ...subject,
-          opportunities: [
-            ...(subject.opportunities || []),
-            { id: archived.id, conversation: e.conversation, at: this.now() },
-          ].slice(-100),
-          activityOverflow:
-            (subject.activityOverflow || 0) +
-            ((subject.opportunities || []).length >= 100 ? 1 : 0),
+          lastActivitySeq: archived.seq,
         });
       }
       this.conversations.notify(a.id, e.conversation);
@@ -449,7 +446,10 @@ export class Runtime {
         this.backends.set(agentId, backend);
       }
       const prepared = this.contexts.prepare(ctx, backend, reasons);
-      ctx.estimatedAdded += JSON.stringify(toolSpecs(ctx.allowedTools)).length;
+      if (ctx.initialSession)
+        ctx.estimatedAdded += JSON.stringify(
+          toolSpecs(ctx.allowedTools),
+        ).length;
       await backend.run({
         agent: a,
         conversation,
@@ -466,7 +466,11 @@ export class Runtime {
           mem.setState(conversation, { ...latest, session });
         },
       });
-      outcome = ctx.confirmedSends ? "sent" : "completed-no-send";
+      outcome = controller.signal.aborted
+        ? "cancelled"
+        : ctx.confirmedSends
+          ? "sent"
+          : "completed-no-send";
     } catch (e) {
       outcome = controller.signal.aborted ? "cancelled" : "failed";
       this.faults.set(
@@ -477,23 +481,25 @@ export class Runtime {
       );
     } finally {
       this.capabilities.delete(token);
-      this.subject.finish(ctx);
-      if (ctx.turnId) {
-        try {
+      try {
+        this.subject.finish(ctx, outcome);
+        if (ctx.turnId) {
           await this.contexts.finish(ctx, outcome, backend);
-        } catch {
-          this.faults.set(agentId, "CONTEXT_FINALIZATION_FAILED");
         }
+      } catch {
+        this.faults.set(agentId, "CONTEXT_FINALIZATION_FAILED");
+      } finally {
+        clearTimeout(timer);
+        this.running.delete(runKey);
+        resolveDone();
       }
-      clearTimeout(timer);
-      this.running.delete(runKey);
-      resolveDone();
       for (const reason of reasons)
         if (reason.taskRunId)
           this.scheduler.finish(agentId, reason.taskRunId, outcome);
       if (
         !controller.signal.aborted &&
         !this.closed &&
+        this.config.agents.some((a) => a.id === agentId) &&
         conversation !== SUBJECT
       )
         this.conversations.finish(ctx);

@@ -14,6 +14,26 @@ export class SubjectCoordinator {
     this.runtime = runtime;
     for (const a of runtime.config.agents) {
       const m = runtime.memory.bind(a.id);
+      const state = m.state(SUBJECT);
+      if (state.activityCursor === undefined) {
+        const pending = (state.opportunities || [])
+          .map(
+            (o) =>
+              m.db
+                .prepare("SELECT seq FROM events WHERE agent_id=? AND id=?")
+                .get(a.id, o.id)?.seq,
+          )
+          .filter(Number.isSafeInteger);
+        const latest =
+          m.db
+            .prepare("SELECT MAX(seq) AS seq FROM events WHERE agent_id=?")
+            .get(a.id).seq || 0;
+        m.setState(SUBJECT, {
+          ...state,
+          activityCursor: pending.length ? Math.min(...pending) - 1 : latest,
+          opportunities: undefined,
+        });
+      }
       for (const i of m.identity.list("intentions"))
         if (["handedoff", "selected"].includes(i.status)) {
           const delivery = m.delivery("intent:" + i.id);
@@ -260,10 +280,28 @@ export class SubjectCoordinator {
     ctx.intentIds = reasons.filter((x) => x.intentId).map((x) => x.intentId);
     ctx.intentOnly = !!ctx.intentIds.length && reasons.every((x) => x.intentId);
     ctx.intentSnapshotSeq = m.state(ctx.conversation).lastReceivedSeq || 0;
+    ctx.activityThroughSeq = Math.max(
+      0,
+      ...reasons.flatMap((r) => (r.activities || []).map((e) => e.seq)),
+    );
   }
-  finish(ctx) {
+  finish(ctx, outcome) {
     const m = this.memory(ctx.agentId),
-      a = this.runtime.agent(ctx.agentId);
+      a = this.runtime.config.agents.find((a) => a.id === ctx.agentId);
+    if (
+      ctx.conversation === SUBJECT &&
+      ["sent", "completed-no-send"].includes(outcome)
+    ) {
+      const s = m.state(SUBJECT);
+      m.setState(SUBJECT, {
+        ...s,
+        activityCursor: Math.max(
+          s.activityCursor || 0,
+          ctx.activityThroughSeq || 0,
+        ),
+      });
+    }
+    if (!a) return;
     for (const id of ctx.intentIds || []) {
       const i = m.identity.get("intentions", id);
       if (["handedoff", "selected"].includes(i.status))
@@ -331,8 +369,13 @@ export class SubjectCoordinator {
         nextCheckAt: now + a.subject.intervalMs,
         checks: [...checks, now],
         lastOpportunityAt: now,
-        opportunities: (s.opportunities || []).slice(20),
       });
+      const activities = m.db
+        .prepare(
+          "SELECT id,seq,conversation,kind,occurred_at AS occurredAt FROM events WHERE agent_id=? AND direction='in' AND seq>? ORDER BY seq LIMIT 20",
+        )
+        .all(a.id, s.activityCursor || 0);
+      const pending = this.pendingActivities(a.id);
       const candidates = m.identity
         .list("self_candidates")
         .filter(
@@ -346,13 +389,23 @@ export class SubjectCoordinator {
             {
               reason: "subject-opportunity",
               candidateIds: candidates,
+              activities,
+              activityOverflow: Math.max(0, pending - activities.length),
               instruction:
-                "可不行动。候选与未完成意图可按需读取；没有候选不做专门人格回顾。",
+                "可不行动。activities 是本批实际来信引用，需按原始记录 ID 回查内容；溢出保留在事件库供后续机会读取。候选与未完成意图可按需读取；没有候选不做专门人格回顾。",
             },
           ],
         }),
         a.id,
       );
     }
+  }
+  pendingActivities(agentId) {
+    const m = this.memory(agentId);
+    return m.db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM events WHERE agent_id=? AND direction='in' AND seq>?",
+      )
+      .get(agentId, m.state(SUBJECT).activityCursor || 0).n;
   }
 }

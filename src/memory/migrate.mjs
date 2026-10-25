@@ -287,12 +287,13 @@ export function restoreExport(memory, data) {
   };
   // An empty target identity can be restored beside other identities. Remap only local seq watermarks.
   if (
-    memory.db
-      .prepare("SELECT COUNT(*) AS n FROM events WHERE agent_id=?")
-      .get(memory.agentId).n ||
-    memory.db
-      .prepare("SELECT COUNT(*) AS n FROM diaries WHERE agent_id=?")
-      .get(memory.agentId).n
+    Object.entries(columns).some(
+      ([table, cols]) =>
+        cols.includes("agent_id") &&
+        memory.db
+          .prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE agent_id=?`)
+          .get(memory.agentId).n,
+    )
   )
     throw Error("RESTORE_REQUIRES_EMPTY_DATABASE_FOR_AGENT");
   const empty =
@@ -317,6 +318,8 @@ export function restoreExport(memory, data) {
             "readThroughSeq",
             "lastReceivedSeq",
             "seenThroughSeq",
+            "activityCursor",
+            "lastActivitySeq",
             "feedThroughSeq",
           ])
             if (state[key] !== undefined)

@@ -557,3 +557,234 @@ test("working notes retain source uncertainty, flag missing references and expos
   assert.equal(handoff.notes[0].sources[0].available, false);
   assert.equal(handoff.notes[0].epistemic, "working-interpretation");
 });
+
+test("legacy processed progress remains authoritative after first session rebuild", async (t) => {
+  const { runtime, store } = fixture(t),
+    m = store.bind("agent-0");
+  event(m, 1);
+  const old = event(m, 2),
+    next = event(m, 3);
+  m.setState("group:20000", { readThroughSeq: old.seq });
+  const ctx = context(runtime);
+  const p = runtime.contexts.prepare(ctx, {}, []);
+  assert(p.prompt.includes(next.id));
+  assert.equal(ctx.shownSeq, next.seq);
+  await runtime.callTool(ctx, "qq_mark_read", { throughSeq: next.seq });
+  assert.equal(m.state(ctx.conversation).readThroughSeq, next.seq);
+});
+
+test("restricted Operations content cannot be laundered through shared mind records", async (t) => {
+  const { runtime, store } = fixture(t, { cfg: enabled() }),
+    m = store.bind("agent-0"),
+    ctx = context(runtime),
+    e = event(m, 1);
+  ctx.privateRead.add("operations:protected-file");
+  for (const [name, args] of [
+    ["self_propose", { ...proposal(m, e), body: "restricted placeholder" }],
+    [
+      "work_note",
+      {
+        body: "restricted placeholder",
+        evidence: [e.id],
+        uncertainty: "unknown",
+      },
+    ],
+    [
+      "intent_create",
+      {
+        topic: "restricted placeholder",
+        target: "group:20000",
+        reason: "test",
+        expiresAt: runtime.now() + 100000,
+      },
+    ],
+  ])
+    await assert.rejects(
+      runtime.callTool(ctx, name, args),
+      /RESTRICTED_CONTEXT_MIND_WRITE_BLOCKED/,
+    );
+  const d = m.diaryWrite(
+    { title: "restricted", body: "placeholder", evidence: [e.id] },
+    "ai-diary",
+    {},
+    true,
+  );
+  await assert.rejects(
+    runtime.callTool(
+      context(runtime, "agent-0", "group:20001"),
+      "self_propose",
+      { ...proposal(m, e), evidence: [d.id] },
+    ),
+    /RESTRICTED_EVIDENCE/,
+  );
+  assert.equal(m.identity.list("self_candidates").length, 0);
+  assert.equal(m.identity.list("intentions").length, 0);
+});
+
+test("legacy appearance stays in first self until explicit anchor migration, then survives replacement", (t) => {
+  const c = enabled();
+  c.agents[0].persona = "蓝色围巾，喜欢安静。";
+  const { runtime, store } = fixture(t, { cfg: c }),
+    m = store.bind("agent-0"),
+    a = runtime.agent("agent-0");
+  assert.throws(
+    () =>
+      m.identity.adminEdit(
+        { body: "我喜欢交流", reason: "test", expectedVersion: 1 },
+        1,
+      ),
+    /ANCHORS_REQUIRE_MIGRATION/,
+  );
+  assert.equal(m.identity.current().body, c.agents[0].persona);
+  a.appearance = "蓝色围巾";
+  m.identity.initialize(a, 2);
+  m.identity.adminEdit(
+    { body: "我喜欢交流", reason: "test", expectedVersion: 1 },
+    3,
+  );
+  const ctx = context(runtime),
+    p = runtime.contexts.prepare(ctx, {}, []);
+  assert(p.instructions.includes("蓝色围巾"));
+  assert(!p.instructions.includes("喜欢安静"));
+  assert.equal(m.identity.history().at(-1).template, c.agents[0].persona);
+});
+
+test("subject receives durable activity batches and failure never acknowledges them", async (t) => {
+  const prompts = [];
+  let fail = true,
+    now = Date.now();
+  const f = fixture(t, {
+      cfg: enabled(),
+      run: async (p) => {
+        prompts.push(p.prompt);
+        if (fail) throw Error("fixture failure");
+      },
+    }),
+    m = f.store.bind("agent-0");
+  f.runtime.clock = () => new Date(now);
+  const events = Array.from({ length: 22 }, (_, n) =>
+    event(m, n + 1, { occurredAt: "2026-10-25T00:00:00Z" }),
+  );
+  f.runtime.subject.tick();
+  now += 60001;
+  f.runtime.subject.tick();
+  await settle(f.runtime);
+  assert(prompts[0].includes(events[0].id));
+  assert(prompts[0].includes('"activityOverflow":2'));
+  assert.equal(f.runtime.subject.pendingActivities("agent-0"), 22);
+  fail = false;
+  now += 60001;
+  f.runtime.subject.tick();
+  await settle(f.runtime);
+  assert(prompts[1].includes(events[0].id));
+  assert.equal(f.runtime.subject.pendingActivities("agent-0"), 2);
+  now += 60001;
+  f.runtime.subject.tick();
+  await settle(f.runtime);
+  assert(prompts[2].includes(events[21].id));
+  assert.equal(f.runtime.subject.pendingActivities("agent-0"), 0);
+});
+
+test("handoff includes scheduled ownership and agent-wide confirmed contacts", (t) => {
+  const { runtime, store } = fixture(t),
+    m = store.bind("agent-0");
+  runtime.scheduler.list = () => [
+    { id: 1, ownerConversation: "group:20000", targets: ["private:30000"] },
+    { id: 2, targets: ["group:20001"] },
+  ];
+  m.reserveDelivery("intent:sent", "group:20000", {});
+  m.completeDelivery("intent:sent", "sent", "123");
+  m.identity.put("intentions", {
+    id: "sent",
+    target: "group:20000",
+    topic: "finished",
+    status: "completed",
+    history: [{ status: "completed", at: 1 }],
+  });
+  assert.equal(
+    runtime.contexts.handoff("agent-0", "group:20000").scheduled.length,
+    1,
+  );
+  assert.equal(
+    runtime.contexts.handoff("agent-0", "private:30000").scheduled.length,
+    1,
+  );
+  const h = runtime.contexts.handoff("agent-0", "@subject");
+  assert.equal(h.deliveries[0].conversation, "group:20000");
+  assert.equal(h.recentContacts[0].status, "completed");
+});
+
+test("removing an active agent always releases its running slot and completion promise", async (t) => {
+  const f = fixture(t, {
+    cfg: enabled(),
+    run: async (p) =>
+      new Promise((resolve) =>
+        p.signal.addEventListener("abort", resolve, { once: true }),
+      ),
+  });
+  const job = f.runtime.wake("agent-0", "group:20000"),
+    ctx = f.runtime.running.get("agent-0|group:20000");
+  const next = structuredClone(f.runtime.config);
+  next.agents = [];
+  await f.runtime.changeConfig(next, f.configStore.revision);
+  await job;
+  await ctx.done;
+  assert.equal(f.runtime.running.size, 0);
+  assert.equal(
+    f.store.bind("agent-0").identity.list("model_turns")[0].status,
+    "cancelled",
+  );
+});
+
+test("mind export restores all tables, remaps activity watermarks and refuses existing self", async (t) => {
+  const { store, runtime, root } = fixture(t, { cfg: enabled() }),
+    m = store.bind("agent-0"),
+    e = event(m, 1),
+    ctx = context(runtime);
+  const c = m.identity.propose(
+    proposal(m, e),
+    ctx,
+    runtime.agent("agent-0").selfPolicy,
+    runtime.now(),
+  );
+  m.identity.saveNote(
+    { body: "unfinished", evidence: [e.id], uncertainty: "unconfirmed" },
+    ctx.conversation,
+    runtime.now(),
+  );
+  runtime.subject.create(ctx, {
+    topic: "pending",
+    target: ctx.conversation,
+    reason: "test",
+    expiresAt: runtime.now() + 60000,
+  });
+  runtime.contexts.seen(ctx, [e]);
+  m.setState("@subject", { activityCursor: e.seq, lastActivitySeq: e.seq });
+  const { restoreExport } = await import("../src/memory/migrate.mjs"),
+    target = new MemoryStore(path.join(root, "mind-restored.sqlite"));
+  t.after(() => target.close());
+  event(target.bind("other"), 1);
+  event(target.bind("other"), 2);
+  restoreExport(target.bind("agent-0"), m.export());
+  const restored = target.bind("agent-0"),
+    mapped = target.db
+      .prepare("SELECT seq FROM events WHERE id=?")
+      .get(e.id).seq;
+  assert.notEqual(mapped, e.seq);
+  assert.equal(restored.state("@subject").activityCursor, mapped);
+  assert.equal(
+    restored.identity.get("self_candidates", c.id).evidence[0],
+    e.id,
+  );
+  assert.equal(restored.identity.notes(ctx.conversation).length, 1);
+  assert.equal(restored.identity.list("intentions").length, 1);
+  const selfOnly = target.bind("self-only");
+  selfOnly.identity.initialize(
+    { ...runtime.agent("agent-0"), id: "self-only" },
+    runtime.now(),
+  );
+  assert.throws(
+    () => restoreExport(selfOnly, { ...m.export(), agentId: "self-only" }),
+    /REQUIRES_EMPTY/,
+  );
+});

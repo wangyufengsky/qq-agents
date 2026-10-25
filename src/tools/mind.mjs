@@ -8,12 +8,12 @@ export const mindDefinitions = {
     z.object({}).strict(),
   ],
   self_history: [
-    "查看 self 版本历史、理由与证据。初始化模板只作历史；恢复旧版由管理端生成新版本。",
-    z.object({}).strict(),
+    "分页查看 self 版本历史、理由与证据。初始化模板只作历史；恢复旧版由管理端生成新版本。",
+    z.object({ offset: z.number().int().min(0).default(0) }).strict(),
   ],
   self_candidates: [
-    "读取独立候选和回顾状态；候选不是已生效人格。",
-    z.object({}).strict(),
+    "分页读取独立候选和回顾状态；候选不是已生效人格。",
+    z.object({ offset: z.number().int().min(0).default(0) }).strict(),
   ],
   self_propose: [
     "提出 self 候选，不能直接改写正式 self。提供原始经历、反例和原因；当前版本冲突应重读后重新考虑。",
@@ -132,14 +132,40 @@ export function mindTool(runtime, ctx, name, args) {
     m = runtime.memory.bind(a.id),
     identity = m.identity,
     now = runtime.now();
+  // Operations grants authorize a particular disclosure, not unbounded future
+  // propagation through shared self/notes/intents. Ordinary cross-chat memories
+  // remain agent-judged; only the pre-existing restricted Operations boundary applies.
+  if (
+    [
+      "self_propose",
+      "self_review",
+      "self_withdraw",
+      "work_note",
+      "intent_create",
+      "intent_update",
+      "intent_decide",
+    ].includes(name) &&
+    [...ctx.privateRead].some((id) =>
+      /^(operations|operations-result):/.test(id),
+    )
+  )
+    throw Error("RESTRICTED_CONTEXT_MIND_WRITE_BLOCKED");
   if (name === "self_read")
     return {
       current: identity.current(),
       turnSelfVersion: ctx.selfVersion,
-      anchors: { name: a.name, appearance: a.appearance },
+      anchors: identity.anchors(a),
     };
-  if (name === "self_history") return identity.history();
-  if (name === "self_candidates") return identity.list("self_candidates");
+  if (name === "self_history" || name === "self_candidates") {
+    const rows =
+      name === "self_history"
+        ? identity.history()
+        : identity.list("self_candidates");
+    return {
+      items: rows.slice(args.offset, args.offset + 10),
+      nextOffset: args.offset + 10 < rows.length ? args.offset + 10 : null,
+    };
+  }
   if (name === "self_propose")
     return identity.propose(args, ctx, a.selfPolicy, now);
   if (name === "self_review")

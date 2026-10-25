@@ -66,6 +66,7 @@ export class IdentityMemory {
       .map(decode);
   }
   initialize(agent, now) {
+    this.anchors(agent);
     if (this.current()) return this.current();
     return this.writeVersion(
       {
@@ -80,6 +81,22 @@ export class IdentityMemory {
       now,
     );
   }
+  anchors(agent) {
+    const initial = this.history().at(-1),
+      template = initial?.template ?? agent.persona ?? "",
+      previous = this.mem.state("@identity").anchors;
+    // Free-form persona cannot be reliably parsed into immutable identity and
+    // evolving character. Preserve it until the administrator explicitly supplies
+    // appearance (including an explicit 'no fixed appearance') before replacement.
+    const anchors = {
+      name: agent.name,
+      appearance: agent.appearance || previous?.appearance || "",
+      requiresMigration:
+        !!template && !(agent.appearance || previous?.appearance),
+    };
+    this.mem.setState("@identity", { anchors });
+    return anchors;
+  }
   writeVersion(
     { body, reason, evidence = [], actor, expectedVersion, ...metadata },
     now,
@@ -89,6 +106,8 @@ export class IdentityMemory {
     required(reason, 2000);
     this.sources(evidence);
     const old = this.current();
+    if (old && this.mem.state("@identity").anchors?.requiresMigration)
+      throw Error("IDENTITY_ANCHORS_REQUIRE_MIGRATION");
     if ((old?.version || 0) !== expectedVersion)
       throw Error("SELF_VERSION_CONFLICT");
     const value = {
@@ -159,6 +178,8 @@ export class IdentityMemory {
         .prepare("SELECT metadata FROM diaries WHERE agent_id=? AND id=?")
         .get(this.agentId, id);
       if (!diary) throw Error("EVIDENCE_NOT_OWNED_OR_MISSING");
+      if (JSON.parse(diary.metadata).protectedOperations)
+        throw Error("RESTRICTED_EVIDENCE_NOT_ALLOWED_IN_MIND");
       for (const root of this.sources(
         JSON.parse(diary.metadata).evidence || [],
         visited,

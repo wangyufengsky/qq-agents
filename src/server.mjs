@@ -98,10 +98,14 @@ export function createServer({ runtime, token, allowLive = false }) {
           m = runtime.memory.bind(a.id);
         return send({
           current: m.identity.initialize(a, runtime.now()),
+          anchors: m.identity.anchors(a),
           history: m.identity.history(),
           candidates: m.identity.list("self_candidates"),
           intents: m.identity.list("intentions"),
-          subject: m.state("@subject"),
+          subject: {
+            ...m.state("@subject"),
+            pendingActivities: runtime.subject.pendingActivities(a.id),
+          },
           turns: m.identity.list("model_turns").slice(0, 50),
           sessions: m.db
             .prepare("SELECT conversation,value FROM runtime WHERE agent_id=?")

@@ -342,7 +342,16 @@ function openEditor(type, id) {
       ) +
       input("model", "模型（空白则继承后端）", row.model) +
       input("effort", "思考强度（空白则继承）", row.effort) +
-      area("persona", "基础人格", row.persona || "") +
+      area(
+        "appearance",
+        "固定外形（无固定外形时请明确填写）",
+        row.appearance || "",
+      ) +
+      area(
+        "persona",
+        "初始化模板（仅建立首版 self；已有 self 请在专页编辑）",
+        row.persona || "",
+      ) +
       input("aliases", "唤醒别名（逗号分隔）", (row.aliases || []).join(", ")) +
       input(
         "ownerIds",
@@ -460,6 +469,7 @@ $("#edit-form").onsubmit = (e) => {
           model: get("model"),
           effort: get("effort"),
           persona: get("persona"),
+          appearance: get("appearance"),
           aliases: list("aliases"),
           ownerIds: list("ownerIds"),
           allow: { groups: list("groups"), users: list("users") },

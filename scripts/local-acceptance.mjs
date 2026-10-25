@@ -1,6 +1,9 @@
 // Opt-in real-model acceptance. All QQ writes terminate at loopback fixture gateways.
 import fs from "node:fs";
-import { selfContextAcceptance } from "./fixtures/self-context.mjs";
+import {
+  selfContextAcceptance,
+  subjectCostAcceptance,
+} from "./fixtures/self-context.mjs";
 import {
   seedQuality,
   qualityPrompt,
@@ -218,6 +221,7 @@ const cfg = validateConfig({
   agents: ids.map((id, i) => ({
     id,
     name: i ? "Codex 验收角色" : "DSH 验收角色",
+    appearance: "合成验收角色，无固定外形",
     connectionId: id,
     backendId: i ? "codex" : "dsh",
     paused: true,
@@ -436,7 +440,9 @@ async function runCase(id, test) {
       for (const [key, value] of Object.entries(inputs.forwardResources || {}))
         gateway.resources.set(key, value);
     }
-    if (test === "self-context") {
+    if (test === "subject-cost") {
+      await subjectCostAcceptance({ runtime, memory, id, gateway, root });
+    } else if (test === "self-context") {
       await selfContextAcceptance({
         runtime,
         memory,

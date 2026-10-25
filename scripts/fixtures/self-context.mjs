@@ -122,6 +122,7 @@ export async function selfContextAcceptance({
   } catch (e) {
     compact = { error: e.message };
   }
+  const compactElapsedMs = Date.now() - compactStarted;
   runtime.contexts.retire(
     id,
     "private:30000",
@@ -153,7 +154,7 @@ export async function selfContextAcceptance({
     intent: m.identity.get("intentions", intent.id),
     usageBefore,
     usageAfter: m.state("private:30000").usage,
-    compact: { ...compact, elapsedMs: Date.now() - compactStarted },
+    compact: { ...compact, elapsedMs: compactElapsedMs },
     replies,
     toolCalls: calls.slice(callStart),
     scope:
@@ -165,5 +166,72 @@ export async function selfContextAcceptance({
     { mode: 0o600 },
   );
   requireResult(!compact.error, "NATIVE_COMPACTION_FAILED");
+  return report;
+}
+
+// A bounded, matched two-turn sample. These are occupancy/latency measurements,
+// not dollar-cost claims; cache pricing and model work can differ between samples.
+export async function subjectCostAcceptance({
+  runtime,
+  memory,
+  id,
+  gateway,
+  root,
+}) {
+  const m = memory.bind(id),
+    a = runtime.agent(id),
+    before = gateway.sent.length;
+  a.subject.enabled = true;
+  a.subject.intervalMs = 86400000;
+  const samples = [];
+  for (const mode of ["reuse", "fresh"]) {
+    runtime.contexts.retire(id, "@subject", "acceptance-cost-mode");
+    for (let n = 0; n < 2; n++) {
+      if (mode === "fresh" && n)
+        runtime.contexts.retire(id, "@subject", "acceptance-cost-fresh");
+      const startedAt = Date.now();
+      const result = await runtime.wake(id, "@subject", {
+        reasons: [
+          {
+            reason: "acceptance-no-action",
+            instruction:
+              "合成的空闲检查，没有新的事项。先 self_read 核对当前版本，再自行判断有无必要行动。本次已有意图都已处理，不要另建相同主题。没有新证据就保持现状；可以沉默，不需要发QQ，也不需要改 self 或写日记。",
+          },
+        ],
+      });
+      if (
+        result.status !== "completed-no-send" ||
+        gateway.sent.length !== before
+      )
+        throw Error("SUBJECT_NO_ACTION_FAILED");
+      const record = m.identity.get(
+        "model_turns",
+        m.state("@subject").lastTurnId,
+      );
+      samples.push({
+        mode,
+        index: n + 1,
+        elapsedMs: Date.now() - startedAt,
+        initialSession: record.initialSession,
+        promptChars: record.promptChars,
+        instructionsChars: record.instructionsChars,
+        usage: record.usage,
+        selfVersion: record.selfVersion,
+      });
+    }
+  }
+  const report = {
+    agentId: id,
+    samples,
+    modelCalls: 4,
+    sends: gateway.sent.length - before,
+    scope:
+      "same no-action subject instruction; two reused vs two fresh turns; occupancy is not billed tokens or price",
+  };
+  fs.writeFileSync(
+    path.join(root, `${id}-subject-cost-evidence.json`),
+    JSON.stringify(report, null, 2),
+    { mode: 0o600 },
+  );
   return report;
 }

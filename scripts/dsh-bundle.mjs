@@ -65,26 +65,21 @@ const patch = [
           order: 20,
           plugins: [
             {
-              id: "qq-compaction-scope",
-              group: true,
-              isolate: { compaction: true },
-              config: [
-                {
-                  id: "qq-compaction",
-                  name: "@deepseek-ai/dsh-compaction-basic",
-                  config: {
-                    auto: false,
-                    thresholdRatio: 0.75,
-                    headroomTokens: 4096,
-                    retainTokens: 4096,
-                    maxTokens: 4096,
-                  },
-                },
-                {
-                  id: "qq-command-compact",
-                  name: "@deepseek-ai/dsh-command-compact",
-                },
-              ],
+              id: "qq-compaction",
+              name: "@deepseek-ai/dsh-compaction-basic",
+              isolate: { compaction: "qq-unified-compaction" },
+              config: {
+                auto: false,
+                thresholdRatio: 0.75,
+                headroomTokens: 4096,
+                retainTokens: 4096,
+                maxTokens: 4096,
+              },
+            },
+            {
+              id: "qq-command-compact",
+              name: "@deepseek-ai/dsh-command-compact",
+              isolate: { compaction: "qq-unified-compaction" },
             },
             {
               id: "persona",

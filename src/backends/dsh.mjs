@@ -257,7 +257,9 @@ export class DshBackend {
     return {
       // Dynamic self is in the initial user envelope on this protocol; do not assume
       // the native summarizer preserves it. A safe new session loads it in full.
-      requiresReinitialize: true,
+      requiresReinitialize: Number.isSafeInteger(result.result.sourceEventSeq),
+      compacted: Number.isSafeInteger(result.result.sourceEventSeq),
+      sourceEventSeq: result.result.sourceEventSeq,
       usage: Number.isFinite(p?.projectedTokens)
         ? {
             source: "estimated",

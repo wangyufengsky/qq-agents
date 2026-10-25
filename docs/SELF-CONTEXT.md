@@ -6,7 +6,7 @@
 
 SQLite schema 4 保存 self_versions、self_candidates、intentions、work_notes、model_turns、session_history、message_progress；原 events、diaries、runtime 和 deliveries 继续作为经历、主观记录、调度状态和发送账本。所有行绑定 agent_id；群/私聊可并行，共享同一主体的 self。
 
-初始 persona 只建立第一版 self。管理员编辑和恢复都创建新版本，expectedVersion 不匹配就拒绝。恢复不抹除后来历史。名字与 appearance 属于固定配置；旧配置应在部署前将原有外形明确填入 appearance，模板历史可在管理台查看。不会自动从自由文本中可靠提取外形。
+初始 persona 只建立第一版 self。管理员编辑和恢复都创建新版本，expectedVersion 不匹配就拒绝。恢复不抹除后来历史。名字与 appearance 属于固定配置；旧配置须在首次替换 self 前将原有外形明确填入 appearance；未确认时程序拒绝替换并保留首版，模板历史可在管理台查看。不会自动从自由文本中可靠提取外形。
 
 普通聊天只提出候选。主体回顾可以采纳、修订、继续观察或拒绝；源会话可撤回。候选有 baseVersion、revision、理由、证据、反例和回顾记录。日记引用递归追溯到原始入站事件；同作者同文、同场同日讨论不能凑成多次独立经历。程序只执行来源、范围、延迟、版本和少量明确控制性用语检查，不保证识别所有语义上的人格操纵。
 
@@ -62,6 +62,18 @@ message_progress 记录实际提供的条目，区分摘要与完整正文；零
 
 ## 开发验收与迁移
 
-离线：npm run verify。真实多轮：在独立验收 home/profile 中运行 acceptance:live -- --allow-real-models --case self-context；QQ 请求终止于本机 HTTP/WS 网关。实际模型输出必须人工阅读，脚本的数量/状态/词项断言不代替行为质量判断。
+离线：npm run verify。真实多轮：在独立验收 home/profile 中运行 acceptance:live -- --allow-real-models --run-all --agent acceptance-dsh --case self-context；QQ 请求终止于本机 HTTP/WS 网关。实际模型输出必须人工阅读，脚本的数量/状态/词项断言不代替行为质量判断。
 
 部署前先用 memory:backup 备份 SQLite，再在新数据目录验证 schema 4；JSON 导出包含新表及来源。旧代码会拒绝较新 schema，回退应使用备份的新路径，不能直接让旧版本写 schema 4。更新 DSH bundle 是单独部署动作，本次只刷新独立测试 profile。真实 QQ、生产迁移与跨平台安装验收不包含在本次合并中。
+
+## 审查后的补强
+
+- 旧版连续处理水位是已完成历史的权威基线，不要求旧数据库回读全部历史来补 message_progress。
+- 来信机会使用原始事件游标，最多每批 20 项、显式溢出数量；仅成功检查前移。失败、暂停和重启保留未确认事件，新增事件不会被旧批次覆盖。
+- 初始化交接包含真正的任务归属/目标、近期主体联系结果及预算/冷却。主体的发送结果从目标聊天账本读取。
+- 没有独立外形字段的旧模板会阻止正式 self 替换（IDENTITY_ANCHORS_REQUIRE_MIGRATION），直到管理员在角色设置中明确确认原有外形或无固定外形；不会用一个空泛提示代替实际锚点，也不靠模型或关键词自动猜测。
+- 已读取受限 Operations 内容的回合不能写入共享 self、候选、工作笔记或意图；受限日记也不能作这些记录的证据。普通跨聊天回忆继续由 AI 判断表达，不增加逐次 QQ 授权。
+- 移除正在工作的角色、取消和配置更新均释放运行槽和完成承诺；压缩期间也受取消控制。
+- self 历史和候选工具分页。新表导出恢复与事件游标一起迁移，恢复拒绝覆盖仅已有 self 的目标。
+
+Codex 原生压缩可能发送 last=0 的统计重置通知，适配器忽略该值，不把它当上下文已空。DSH 只有命令返回成功且含 sourceEventSeq 才算真正写入摘要；“无可压缩历史”是无操作，不声称压缩有效。DSH 静态 MCP 工具目录会显示普通工具，但每次调用仍由桥接当前能力凭据执行主体白名单，QQ 发送在程序端被拒绝。

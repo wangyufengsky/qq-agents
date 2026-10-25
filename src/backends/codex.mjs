@@ -78,7 +78,7 @@ export class CodexBackend {
     if (!r) return;
     if (method === "thread/tokenUsage/updated") {
       const usage = p.tokenUsage;
-      if (usage?.last)
+      if (usage?.last && usage.last.inputTokens + usage.last.outputTokens > 0)
         r.onUsage?.({
           source: "measured",
           contextTokens: usage.last.inputTokens + usage.last.outputTokens,
