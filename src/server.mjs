@@ -47,7 +47,9 @@ export function createServer({ runtime, token, allowLive = false }) {
     try {
       if (
         req.method === "GET" &&
-        ["/", "/app.js", "/parity.js", "/style.css"].includes(url.pathname)
+        ["/", "/app.js", "/parity.js", "/files-ui.js", "/style.css"].includes(
+          url.pathname,
+        )
       ) {
         const file =
           url.pathname === "/" ? "index.html" : url.pathname.slice(1);
@@ -85,6 +87,66 @@ export function createServer({ runtime, token, allowLive = false }) {
         return send({ error: "UNAUTHORIZED" }, 401);
       if (req.method === "GET" && url.pathname === "/api/status")
         return send({ ...runtime.status(), allowLive });
+      if (req.method === "PUT" && url.pathname === "/api/permissions/files") {
+        const data = await body(req);
+        return send(
+          await runtime.changeFilePermissions(
+            data.agentId,
+            data.files,
+            data.revision,
+          ),
+        );
+      }
+      if (req.method === "GET" && url.pathname === "/api/files") {
+        const a = runtime.agent(url.searchParams.get("agentId"));
+        return send(
+          runtime.files.list(a.id, {
+            offset: Math.max(0, Number(url.searchParams.get("offset")) || 0),
+            limit: 30,
+            query: (url.searchParams.get("query") || "").slice(0, 100),
+          }),
+        );
+      }
+      if (req.method === "POST" && url.pathname === "/api/files/import") {
+        const data = await body(req, 70 * 1024 * 1024),
+          a = runtime.agent(data.agentId);
+        if (
+          typeof data.base64 !== "string" ||
+          data.base64.length > Math.ceil(a.files.maxBytes / 3) * 4 ||
+          data.base64.length % 4 ||
+          /[^A-Za-z0-9+/=]/.test(data.base64) ||
+          (data.base64.includes("=") && !/^[^=]*={1,2}$/.test(data.base64))
+        )
+          throw Error("INVALID_FILE_BYTES");
+        return send(
+          await runtime.files.acquire(a.id, () =>
+            runtime.files.put(
+              a.id,
+              Buffer.from(data.base64, "base64"),
+              data.name,
+              a.files,
+              { kind: "administrator-upload" },
+            ),
+          ),
+        );
+      }
+      if (req.method === "GET" && url.pathname === "/api/files/download") {
+        const a = runtime.agent(url.searchParams.get("agentId"));
+        const { meta, buffer } = runtime.files.read(
+          a.id,
+          url.searchParams.get("fileId"),
+          50 * 1024 * 1024,
+        );
+        res.writeHead(200, {
+          "content-type": "application/octet-stream",
+          "cache-control": "no-store",
+          "x-content-type-options": "nosniff",
+          "content-disposition":
+            "attachment; filename*=UTF-8''" + encodeURIComponent(meta.name),
+        });
+        res.end(buffer);
+        return;
+      }
       if (req.method === "GET" && url.pathname === "/api/schedules") {
         const id = url.searchParams.get("agentId");
         runtime.agent(id);

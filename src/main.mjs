@@ -1,3 +1,4 @@
+import { FileStore } from "./tools/files.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
@@ -73,6 +74,7 @@ try {
     backendFactory: (c, a) => registry.create(c, a, { root }),
   });
   runtime.media = new MediaStore(path.join(root, "media"));
+  runtime.files = new FileStore(path.join(root, "files"));
   runtime.voices = new VoiceStore(path.join(root, "voices"));
   runtime.lifecycle = new Lifecycle(root);
   server = createServer({ runtime, token, allowLive });

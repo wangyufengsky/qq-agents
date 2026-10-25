@@ -1,3 +1,5 @@
+import path from "node:path";
+import os from "node:os";
 import { z } from "zod";
 
 const ms = (min, max, def) => z.number().int().min(min).max(max).default(def);
@@ -134,3 +136,36 @@ export const operationsSchema = z
   })
   .strict()
   .prefault({});
+
+export const filesSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    download: z.boolean().default(true),
+    receive: z.boolean().default(true),
+    send: z.boolean().default(true),
+    create: z.boolean().default(true),
+    maxBytes: ms(1024, 52428800, 20971520),
+    maxTotalBytes: ms(1024, 5368709120, 209715200),
+    maxFiles: ms(1, 10000, 1000),
+    localRoots: z
+      .array(
+        z
+          .string()
+          .min(1)
+          .max(4096)
+          .refine(
+            (root) =>
+              path.isAbsolute(root) &&
+              ![
+                path.parse(root).root,
+                os.homedir(),
+                path.dirname(os.homedir()),
+              ].includes(path.resolve(root)),
+          ),
+      )
+      .max(10)
+      .default([]),
+  })
+  .strict()
+  .prefault({})
+  .refine((p) => p.maxTotalBytes >= p.maxBytes, "FILE_QUOTA_TOO_SMALL");
