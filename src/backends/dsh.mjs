@@ -1,0 +1,213 @@
+import fs from "node:fs";
+import path from "node:path";
+import { NodeApiClient, unwrap } from "../../vendor/dsh-qq/dsh-client.js";
+import {
+  resolveDshBaseUrl,
+  looksLikeDsh,
+  listDesktopListenPorts,
+} from "../../vendor/dsh-qq/dsh-endpoint.mjs";
+import { ExternalTools } from "./external.mjs";
+
+export class DshBackend {
+  constructor(
+    config,
+    agent,
+    { root, client, discover = resolveDshBaseUrl } = {},
+  ) {
+    Object.assign(this, { config, agent, root, client, discover });
+    this.external = new ExternalTools(config.toolServers);
+    this.turns = new Map();
+    this.streamAbort = null;
+  }
+  async ready() {
+    if (this.client) return this.client;
+    if (!this.connecting)
+      this.connecting = this.connectClient().finally(() => {
+        this.connecting = null;
+      });
+    return this.connecting;
+  }
+  async connectClient() {
+    const found = await this.discover(this.config.baseUrl);
+    if (!found.reachable) throw Error("DSH_NOT_FOUND");
+    // TCP-open alone is insufficient: a reused port may belong to an unrelated local service.
+    let base = found.url;
+    if (!(await looksLikeDsh(base))) {
+      if (this.config.baseUrl) throw Error("NOT_DSH_ENDPOINT");
+      base = null;
+      for (const p of await listDesktopListenPorts()) {
+        const u = `http://127.0.0.1:${p}`;
+        if (await looksLikeDsh(u)) {
+          base = u;
+          break;
+        }
+      }
+      if (!base) throw Error("DSH_NOT_FOUND");
+    }
+    this.client = new NodeApiClient(base, 30000, {});
+    return this.client;
+  }
+  async models() {
+    const c = await this.ready();
+    return unwrap(
+      await c.callUnary("session.modelCatalog", {}),
+      "model catalog",
+    );
+  }
+  async stream() {
+    if (this.streamReady) return this.streamReady;
+    const client = this.client;
+    if (!client) throw Error("DSH_NOT_READY");
+    this.streamAbort = new AbortController();
+    let resolve, reject;
+    this.streamReady = new Promise((r, j) => {
+      resolve = r;
+      reject = j;
+    });
+    this.pump = (async () => {
+      try {
+        for await (const frame of client.events.mux(
+          {},
+          this.streamAbort.signal,
+          resolve,
+        )) {
+          const p = frame.payload;
+          const t = this.turns.get(p?.sessionId);
+          if (!t) continue;
+          if (p.type === "session/snapshot") {
+            t.followed?.();
+            continue;
+          }
+          if (p.type !== "session/event") continue;
+          const e = p.event;
+          if (e.type === "turn/start") t.turn = e.data.turn;
+          if (e.type === "turn/end" && e.data.turn === t.turn) {
+            if (["completed", "done", "stop"].includes(e.data.reason?.kind))
+              t.resolve();
+            else t.reject(Error("DSH_TURN_FAILED"));
+          }
+        }
+      } catch {
+        reject(Error("DSH_STREAM_FAILED"));
+      } finally {
+        for (const t of this.turns.values())
+          t.reject(Error("DSH_STREAM_ENDED"));
+        this.streamReady = null;
+        this.client = null;
+      }
+    })();
+    const timeout = setTimeout(() => {
+      reject(Error("DSH_STREAM_TIMEOUT"));
+      this.streamAbort.abort();
+    }, 10000);
+    try {
+      await this.streamReady;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+  async run({ conversation, prompt, signal, session, saveSession }) {
+    const client = await this.ready();
+    await this.stream();
+    if (signal.aborted) throw Error("ABORTED");
+    const signature = JSON.stringify([
+      this.config.id,
+      this.config.preset,
+      this.agent.persona,
+    ]);
+    let sessionId =
+      session?.backend === "dsh" && session.signature === signature
+        ? session.id
+        : null;
+    if (!sessionId) {
+      const presets = unwrap(await client.agentPresets.list({}), "presets");
+      const list = presets.presets || presets.items || [];
+      if (!list.some((p) => (p.id || p.name) === this.config.preset))
+        throw Error("DSH_UNIFIED_PRESET_NOT_INSTALLED");
+      const dir = path.join(this.root, "dsh-workspaces", this.agent.id);
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      const w = unwrap(
+        await client.workspace.create({ path: dir }),
+        "workspace",
+      );
+      sessionId = unwrap(
+        await client.sessions.create({
+          workspaceId: w.workspace.workspaceId,
+          agentPreset: this.config.preset,
+        }),
+        "session",
+      ).sessionId;
+      saveSession({ backend: "dsh", id: sessionId, signature });
+    }
+    if (this.config.model)
+      unwrap(
+        await client.sessions.selectModel({
+          sessionId,
+          provider: this.config.provider || undefined,
+          model: this.config.model,
+          reasoningEffort: this.config.effort,
+        }),
+        "model",
+      );
+    let resolve, reject, followed, followError;
+    const done = new Promise((r, j) => {
+      resolve = r;
+      reject = j;
+    });
+    done.catch(() => {});
+    const followReady = new Promise((r, j) => {
+      followed = r;
+      followError = j;
+    });
+    followReady.catch(() => {});
+    this.turns.set(sessionId, { resolve, reject, turn: null, followed });
+    const abort = () => {
+      void client.callUnary("session.cancel", { sessionId }).catch(() => {});
+      followError(Error("ABORTED"));
+      reject(Error("ABORTED"));
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    const followTimer = setTimeout(
+      () => followError(Error("DSH_FOLLOW_TIMEOUT")),
+      10000,
+    );
+    try {
+      if (signal.aborted) throw Error("ABORTED");
+      client.events.follow(sessionId);
+      await followReady;
+      clearTimeout(followTimer);
+      if (signal.aborted) throw Error("ABORTED");
+      unwrap(
+        await client.sessions.prompt({
+          sessionId,
+          mode: "queue",
+          content: [{ type: "text", text: prompt }],
+        }),
+        "prompt",
+      );
+      await done;
+    } catch (e) {
+      saveSession(null);
+      throw e;
+    } finally {
+      clearTimeout(followTimer);
+      signal.removeEventListener("abort", abort);
+      this.turns.delete(sessionId);
+      client.events.forget?.(sessionId);
+    }
+  }
+  async cancel() {
+    for (const [sessionId, t] of this.turns) {
+      void this.client
+        ?.callUnary("session.cancel", { sessionId })
+        .catch(() => {});
+      t.reject(Error("ABORTED"));
+    }
+  }
+  async close() {
+    await this.cancel();
+    this.streamAbort?.abort();
+    await this.pump;
+    await this.external.close();
+  }
+}

@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>QQ Bridge · 统一管理台</title>
+    <link rel="stylesheet" href="/style.css" />
+    <script src="/app.js" defer></script>
+    <script src="/parity.js" defer></script>
+  </head>
+  <body>
+    <aside>
+      <div class="brand">
+        <span class="mark">Q</span>
+        <div>QQ Bridge<small>UNIFIED CONSOLE</small></div>
+      </div>
+      <nav>
+        <button data-tab="overview" class="active">概览</button
+        ><button data-tab="agents">机器人</button
+        ><button data-tab="connections">QQ 实例</button
+        ><button data-tab="backends">AI 后端</button
+        ><button data-tab="memory">经历与日记</button
+        ><button data-tab="schedule">主动与定时</button
+        ><button data-tab="voices">语音库</button
+        ><button data-tab="operations">词汇与运维</button
+        ><button data-tab="settings">运行设置</button>
+      </nav>
+      <div class="sidebar-note">
+        一个主体，连续的经历。<br />各自的人格，各自的记忆。<span
+          class="version"
+          >v0.2 · 多角色管理</span
+        >
+      </div>
+    </aside>
+    <main>
+      <header>
+        <div>
+          <div class="eyebrow">WORKSPACE / QQ BRIDGE</div>
+          <h1 id="title">概览</h1>
+          <p id="subtitle">在一个地方，照看每个独立的 AI。</p>
+        </div>
+        <div class="header-actions">
+          <span id="mode" class="pill">未连接</span
+          ><button id="pause-all" class="danger">全部暂停</button
+          ><button id="logout" class="ghost">退出</button>
+        </div>
+      </header>
+      <section id="login" class="card login">
+        <span class="eyebrow">LOCAL ACCESS</span>
+        <h2>连接本地管理台</h2>
+        <p>输入数据目录中 <code>admin-token</code> 文件的管理令牌。</p>
+        <label
+          >访问令牌<input
+            type="password"
+            id="token"
+            autocomplete="off"
+            placeholder="仅在本次浏览器会话保存" /></label
+        ><button id="login-button" class="primary">进入管理台</button>
+        <p class="hint">所有接口仅监听本机回环地址。</p>
+      </section>
+      <div id="content" hidden></div>
+      <div id="notice" role="status" hidden></div>
+    </main>
+    <dialog id="editor">
+      <form id="edit-form">
+        <div class="dialog-head">
+          <h2 id="edit-title">编辑</h2>
+          <button type="button" id="close-editor" class="ghost">关闭</button>
+        </div>
+        <div id="edit-fields"></div>
+        <footer>
+          <span class="hint">保存配置后需手动重新连接 QQ 实例。</span
+          ><button type="submit" class="primary">保存配置</button>
+        </footer>
+      </form>
+    </dialog>
+  </body>
+</html>

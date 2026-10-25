@@ -1,0 +1,544 @@
+import fs from "node:fs";
+import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { createHash, randomUUID } from "node:crypto";
+
+const json = JSON.stringify;
+const parse = (s) => JSON.parse(s);
+const now = () => new Date().toISOString();
+const hash = (s) => createHash("sha256").update(s).digest("hex");
+const text = (s, max = 2 * 1024 * 1024) => {
+  if (typeof s !== "string" || s.length > max) throw Error("INVALID_TEXT");
+  return s;
+};
+const num = (x, def, min, max) => {
+  if (x === undefined) return def;
+  if (!Number.isSafeInteger(x) || x < min || x > max)
+    throw Error("INVALID_BUDGET");
+  return x;
+};
+const disclosure = (source, current) =>
+  source === current
+    ? "current-conversation"
+    : "private-recollection-do-not-disclose";
+function budget(items, maxChars) {
+  let used = 2;
+  const out = [];
+  for (const item of items) {
+    let entry = item,
+      size = json(entry).length + 1;
+    if (size + 2 > maxChars && out.length === 0) {
+      entry = {
+        id: item.id,
+        type: item.type,
+        seq: item.seq,
+        conversation: item.conversation,
+        disclosure: item.disclosure,
+        summaryOmitted: true,
+        hint: "Use memory_read for bounded expansion",
+      };
+      size = json(entry).length + 1;
+    }
+    if (used + size > maxChars) break;
+    out.push(entry);
+    used += size;
+  }
+  return out;
+}
+
+export class MemoryStore {
+  constructor(file) {
+    if (file !== ":memory:")
+      fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    this.db = new DatabaseSync(file);
+    const version = this.db.prepare("PRAGMA user_version").get().user_version;
+    if (version > 1) {
+      this.db.close();
+      throw Error("MEMORY_SCHEMA_NEWER_THAN_CODE");
+    }
+    if (file !== ":memory:") fs.chmodSync(file, 0o600);
+    this.db
+      .exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
+      CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE NOT NULL,agent_id TEXT NOT NULL,dedupe TEXT NOT NULL,connection_id TEXT NOT NULL,conversation TEXT NOT NULL,kind TEXT NOT NULL,direction TEXT NOT NULL,status TEXT NOT NULL,message_id TEXT,sender_id TEXT,occurred_at TEXT NOT NULL,observed_at TEXT NOT NULL,body TEXT NOT NULL,payload TEXT NOT NULL,origin TEXT NOT NULL,UNIQUE(agent_id,dedupe));
+      CREATE INDEX IF NOT EXISTS events_scope ON events(agent_id,conversation,seq);
+      CREATE INDEX IF NOT EXISTS events_people ON events(agent_id,sender_id,occurred_at);
+      CREATE TABLE IF NOT EXISTS diaries(id TEXT PRIMARY KEY,agent_id TEXT NOT NULL,title TEXT NOT NULL,body TEXT NOT NULL,revision INTEGER NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,metadata TEXT NOT NULL,origin TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS diaries_agent ON diaries(agent_id,updated_at);
+      CREATE TABLE IF NOT EXISTS diary_revisions(id TEXT NOT NULL,revision INTEGER NOT NULL,title TEXT NOT NULL,body TEXT NOT NULL,metadata TEXT NOT NULL,written_at TEXT NOT NULL,PRIMARY KEY(id,revision),FOREIGN KEY(id) REFERENCES diaries(id));
+      CREATE TABLE IF NOT EXISTS people(agent_id TEXT NOT NULL,qq TEXT NOT NULL,names TEXT NOT NULL,PRIMARY KEY(agent_id,qq));
+      CREATE TABLE IF NOT EXISTS deliveries(agent_id TEXT NOT NULL,request_id TEXT NOT NULL,conversation TEXT NOT NULL,payload_hash TEXT NOT NULL,status TEXT NOT NULL,message_id TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(agent_id,request_id));
+      CREATE TABLE IF NOT EXISTS runtime(agent_id TEXT NOT NULL,conversation TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(agent_id,conversation));
+      CREATE TABLE IF NOT EXISTS migrations(agent_id TEXT NOT NULL,source TEXT NOT NULL,digest TEXT NOT NULL,imported_at TEXT NOT NULL,PRIMARY KEY(agent_id,source,digest));
+      PRAGMA user_version=1;`);
+  }
+  close() {
+    this.db.close();
+  }
+  transaction(fn) {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const value = fn();
+      this.db.exec("COMMIT");
+      return value;
+    } catch (e) {
+      this.db.exec("ROLLBACK");
+      throw e;
+    }
+  }
+  bind(agentId) {
+    if (!/^[a-z][a-z0-9_-]{0,63}$/.test(agentId)) throw Error("INVALID_AGENT");
+    return new AgentMemory(this, agentId);
+  }
+}
+class AgentMemory {
+  constructor(store, agentId) {
+    this.store = store;
+    this.db = store.db;
+    this.agentId = agentId;
+  }
+  append(e) {
+    if (!e.dedupe || !e.conversation || !e.kind)
+      throw Error("EVENT_IDENTITY_REQUIRED");
+    const id = randomUUID(),
+      observed = e.observedAt || now();
+    const result = this.db
+      .prepare(
+        `INSERT OR IGNORE INTO events(id,agent_id,dedupe,connection_id,conversation,kind,direction,status,message_id,sender_id,occurred_at,observed_at,body,payload,origin) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        id,
+        this.agentId,
+        text(e.dedupe, 1000),
+        e.connectionId || "",
+        text(e.conversation, 100),
+        e.kind,
+        e.direction || "in",
+        e.status || "observed",
+        e.messageId ?? null,
+        e.senderId ?? null,
+        e.occurredAt || observed,
+        observed,
+        text(e.body || ""),
+        json(e.payload || {}),
+        e.origin || "live",
+      );
+    return {
+      inserted: !!result.changes,
+      ...this.db
+        .prepare("SELECT id,seq FROM events WHERE agent_id=? AND dedupe=?")
+        .get(this.agentId, e.dedupe),
+    };
+  }
+  person(qq, name) {
+    if (!qq) return;
+    const row = this.db
+      .prepare("SELECT names FROM people WHERE agent_id=? AND qq=?")
+      .get(this.agentId, qq);
+    const names = [
+      ...new Set(
+        [...(row ? parse(row.names) : []), String(name || "")].filter(Boolean),
+      ),
+    ].slice(-30);
+    this.db
+      .prepare("INSERT OR REPLACE INTO people VALUES(?,?,?)")
+      .run(this.agentId, qq, json(names));
+  }
+  event(row, current, summary = false) {
+    return {
+      id: row.id,
+      seq: row.seq,
+      type: row.kind,
+      conversation: row.conversation,
+      connectionId: row.connection_id,
+      senderId: row.sender_id,
+      messageId: row.message_id,
+      occurredAt: row.occurred_at,
+      observedAt: row.observed_at,
+      status: row.status,
+      direction: row.direction,
+      origin: row.origin,
+      disclosure: disclosure(row.conversation, current),
+      epistemic: "Observed speech/event; not independently verified fact",
+      body: summary ? row.body.slice(0, 200) : row.body,
+      ...(!summary ? { payload: parse(row.payload) } : {}),
+    };
+  }
+  diary(row, summary = false) {
+    return {
+      id: row.id,
+      type: "diary",
+      title: row.title,
+      body: summary ? row.body.slice(0, 200) : row.body,
+      revision: row.revision,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      origin: row.origin,
+      metadata: parse(row.metadata),
+      disclosure: "private-recollection-do-not-disclose",
+    };
+  }
+  search(q = {}, current = "") {
+    const limit = num(q.limit, 10, 1, 50),
+      offset = num(q.cursor?.eventOffset ?? q.offset, 0, 0, 10000000),
+      maxChars = num(q.maxChars, 6000, 512, 16000);
+    const types = q.type || "all";
+    if (!["all", "event", "diary"].includes(types))
+      throw Error("INVALID_RECORD_TYPE");
+    const terms = text(q.query || "", 200)
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((s) => "%" + s.replace(/[\\%_]/g, (c) => "\\" + c) + "%");
+    const where = ["agent_id=?"],
+      args = [this.agentId];
+    for (const [field, key] of [
+      ["conversation", "conversation"],
+      ["sender_id", "person"],
+      ["kind", "kind"],
+    ])
+      if (q[key]) {
+        where.push(field + "=?");
+        args.push(text(q[key], 100));
+      }
+    for (const [key, op] of [
+      ["from", ">="],
+      ["to", "<="],
+    ])
+      if (q[key]) {
+        where.push("occurred_at" + op + "?");
+        args.push(q[key]);
+      }
+    for (const term of terms) {
+      where.push("body LIKE ? ESCAPE '\\'");
+      args.push(term);
+    }
+    const rows =
+      types === "diary" || q.cursor?.eventsDone
+        ? []
+        : this.db
+            .prepare(
+              `SELECT * FROM events WHERE ${where.join(" AND ")} ORDER BY seq DESC LIMIT ? OFFSET ?`,
+            )
+            .all(...args, limit + 1, offset)
+            .map((r) => this.event(r, current, true));
+    // Separate pagination lanes prevent diary offsets from hiding message rows.
+    let diaries = [];
+    const diaryOffset = num(
+      q.cursor?.diaryOffset ?? q.diaryOffset,
+      0,
+      0,
+      10000000,
+    );
+    if (
+      types !== "event" &&
+      !q.conversation &&
+      !q.kind &&
+      !q.cursor?.diariesDone
+    ) {
+      const dw = ["agent_id=?"],
+        da = [this.agentId];
+      for (const t of terms) {
+        dw.push("(title LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\')");
+        da.push(t, t);
+      }
+      if (q.person) {
+        dw.push(
+          "EXISTS (SELECT 1 FROM json_each(diaries.metadata,'$.people') WHERE value=?)",
+        );
+        da.push(q.person);
+      }
+      for (const [key, op] of [
+        ["from", ">="],
+        ["to", "<="],
+      ])
+        if (q[key]) {
+          dw.push("updated_at" + op + "?");
+          da.push(q[key]);
+        }
+      diaries = this.db
+        .prepare(
+          `SELECT * FROM diaries WHERE ${dw.join(" AND ")} ORDER BY updated_at DESC,id DESC LIMIT ? OFFSET ?`,
+        )
+        .all(...da, limit + 1, diaryOffset)
+        .map((r) => this.diary(r, true));
+    }
+    const items = budget(
+        rows.slice(0, limit),
+        diaries.length ? Math.floor(maxChars / 2) : maxChars,
+      ),
+      left = maxChars - json(items).length;
+    const diaryItems = budget(diaries.slice(0, limit), Math.max(0, left));
+    const moreEvents = rows.length > items.length,
+      moreDiaries = diaries.length > diaryItems.length;
+    return {
+      items,
+      diaries: diaryItems,
+      nextOffset: rows.length > items.length ? offset + items.length : null,
+      nextDiaryOffset:
+        diaries.length > diaryItems.length
+          ? diaryOffset + diaryItems.length
+          : null,
+      nextCursor:
+        moreEvents || moreDiaries
+          ? {
+              eventOffset: offset + items.length,
+              diaryOffset: diaryOffset + diaryItems.length,
+              eventsDone: !moreEvents,
+              diariesDone: !moreDiaries,
+            }
+          : null,
+      truncated:
+        items.length < Math.min(rows.length, limit) ||
+        diaryItems.length < Math.min(diaries.length, limit),
+      notice:
+        "Private recollection is allowed across your conversations. Disclosure requires an explicit scoped grant at send time.",
+    };
+  }
+  read({ id, offset = 0, maxChars = 8000, revision }, current = "") {
+    num(offset, 0, 0, 10000000);
+    num(maxChars, 8000, 512, 16000);
+    let row = this.db
+        .prepare("SELECT * FROM events WHERE agent_id=? AND id=?")
+        .get(this.agentId, id),
+      item;
+    if (row) item = this.event(row, current);
+    else {
+      row = this.db
+        .prepare("SELECT * FROM diaries WHERE agent_id=? AND id=?")
+        .get(this.agentId, id);
+      if (!row) throw Error("RECORD_NOT_FOUND");
+      item = this.diary(row);
+      if (revision !== undefined) {
+        const r = this.db
+          .prepare("SELECT * FROM diary_revisions WHERE id=? AND revision=?")
+          .get(id, revision);
+        if (!r) throw Error("REVISION_NOT_FOUND");
+        item = {
+          ...item,
+          title: r.title,
+          body: r.body,
+          metadata: parse(r.metadata),
+          revision: r.revision,
+          writtenAt: r.written_at,
+        };
+      }
+    }
+    const complete = json(item),
+      chunk = complete.slice(offset, offset + maxChars);
+    return {
+      id,
+      format: "json-text-chunk",
+      chunk,
+      offset,
+      nextOffset:
+        offset + maxChars < complete.length ? offset + maxChars : null,
+      totalChars: complete.length,
+      disclosure: item.disclosure,
+      conversation: item.conversation,
+    };
+  }
+  conversation(
+    {
+      conversation,
+      aroundId,
+      afterSeq = 0,
+      beforeSeq,
+      limit = 20,
+      maxChars = 12000,
+    },
+    current = "",
+  ) {
+    num(limit, 20, 1, 50);
+    num(maxChars, 12000, 512, 16000);
+    num(afterSeq, 0, 0, Number.MAX_SAFE_INTEGER);
+    let rows;
+    if (aroundId) {
+      const center = this.db
+        .prepare(
+          "SELECT seq,conversation FROM events WHERE agent_id=? AND id=?",
+        )
+        .get(this.agentId, aroundId);
+      if (!center) throw Error("RECORD_NOT_FOUND");
+      conversation = center.conversation;
+      const older = this.db
+        .prepare(
+          "SELECT * FROM events WHERE agent_id=? AND conversation=? AND seq<=? ORDER BY seq DESC LIMIT ?",
+        )
+        .all(this.agentId, conversation, center.seq, Math.ceil(limit / 2));
+      const newer = this.db
+        .prepare(
+          "SELECT * FROM events WHERE agent_id=? AND conversation=? AND seq>? ORDER BY seq LIMIT ?",
+        )
+        .all(this.agentId, conversation, center.seq, limit - older.length);
+      rows = [...older.reverse(), ...newer];
+    } else if (beforeSeq !== undefined) {
+      num(beforeSeq, 0, 1, Number.MAX_SAFE_INTEGER);
+      rows = this.db
+        .prepare(
+          "SELECT * FROM events WHERE agent_id=? AND conversation=? AND seq<? ORDER BY seq DESC LIMIT ?",
+        )
+        .all(this.agentId, conversation, beforeSeq, limit)
+        .reverse();
+    } else
+      rows = this.db
+        .prepare(
+          "SELECT * FROM events WHERE agent_id=? AND conversation=? AND seq>? ORDER BY seq LIMIT ?",
+        )
+        .all(this.agentId, conversation, afterSeq, limit);
+    const items = budget(
+      rows.map((r) => this.event(r, current, true)),
+      maxChars,
+    );
+    return {
+      items,
+      nextAfterSeq: items.at(-1)?.seq ?? afterSeq,
+      readThroughSeq: items.at(-1)?.seq ?? afterSeq,
+      truncated: items.length < rows.length,
+    };
+  }
+  diaryWrite(
+    { title, body, people = [], tags = [], evidence = [] },
+    origin = "ai-diary",
+  ) {
+    text(title, 300);
+    text(body, 32000);
+    if (!title.trim() || !body.trim()) throw Error("EMPTY_DIARY");
+    const metadata = this.metadata({ people, tags, evidence }),
+      id = randomUUID(),
+      time = now();
+    return this.store.transaction(() => {
+      this.db
+        .prepare("INSERT INTO diaries VALUES(?,?,?,?,?,?,?,?,?)")
+        .run(
+          id,
+          this.agentId,
+          title,
+          body,
+          1,
+          time,
+          time,
+          json(metadata),
+          origin,
+        );
+      this.db
+        .prepare("INSERT INTO diary_revisions VALUES(?,?,?,?,?,?)")
+        .run(id, 1, title, body, json(metadata), time);
+      return { id, revision: 1 };
+    });
+  }
+  metadata({ people = [], tags = [], evidence = [] }) {
+    for (const list of [people, tags, evidence])
+      if (
+        !Array.isArray(list) ||
+        list.length > 50 ||
+        list.some((s) => typeof s !== "string" || s.length > 200)
+      )
+        throw Error("INVALID_METADATA");
+    for (const id of evidence)
+      if (
+        !this.db
+          .prepare(
+            "SELECT id FROM events WHERE agent_id=? AND id=? UNION SELECT id FROM diaries WHERE agent_id=? AND id=?",
+          )
+          .get(this.agentId, id, this.agentId, id)
+      )
+        throw Error("EVIDENCE_NOT_OWNED");
+    return { people, tags, evidence };
+  }
+  diaryRevise({ id, expectedRevision, title, body, people, tags, evidence }) {
+    text(title, 300);
+    text(body, 32000);
+    if (!title.trim() || !body.trim()) throw Error("EMPTY_DIARY");
+    return this.store.transaction(() => {
+      const old = this.db
+        .prepare("SELECT * FROM diaries WHERE id=? AND agent_id=?")
+        .get(id, this.agentId);
+      if (!old) throw Error("RECORD_NOT_FOUND");
+      if (old.revision !== expectedRevision) throw Error("REVISION_CONFLICT");
+      const previous = parse(old.metadata),
+        metadata = this.metadata({
+          people: people ?? previous.people,
+          tags: tags ?? previous.tags,
+          evidence: evidence ?? previous.evidence,
+        });
+      const revision = old.revision + 1,
+        time = now();
+      this.db
+        .prepare(
+          "UPDATE diaries SET title=?,body=?,revision=?,updated_at=?,metadata=? WHERE id=? AND agent_id=?",
+        )
+        .run(title, body, revision, time, json(metadata), id, this.agentId);
+      this.db
+        .prepare("INSERT INTO diary_revisions VALUES(?,?,?,?,?,?)")
+        .run(id, revision, title, body, json(metadata), time);
+      return { id, revision };
+    });
+  }
+  reserveDelivery(requestId, conversation, payload) {
+    text(requestId, 200);
+    if (!requestId) throw Error("REQUEST_ID_REQUIRED");
+    const digest = hash(json(payload)),
+      time = now();
+    this.db
+      .prepare("INSERT OR IGNORE INTO deliveries VALUES(?,?,?,?,?,?,?,?)")
+      .run(
+        this.agentId,
+        requestId,
+        conversation,
+        digest,
+        "pending",
+        null,
+        time,
+        time,
+      );
+    const row = this.db
+      .prepare("SELECT * FROM deliveries WHERE agent_id=? AND request_id=?")
+      .get(this.agentId, requestId);
+    if (row.payload_hash !== digest || row.conversation !== conversation)
+      throw Error("IDEMPOTENCY_CONFLICT");
+    return row;
+  }
+  delivery(requestId) {
+    return this.db
+      .prepare("SELECT * FROM deliveries WHERE agent_id=? AND request_id=?")
+      .get(this.agentId, requestId);
+  }
+  completeDelivery(requestId, status, messageId = null) {
+    this.db
+      .prepare(
+        "UPDATE deliveries SET status=?,message_id=?,updated_at=? WHERE agent_id=? AND request_id=?",
+      )
+      .run(status, messageId, now(), this.agentId, requestId);
+  }
+  state(conversation) {
+    const row = this.db
+      .prepare("SELECT value FROM runtime WHERE agent_id=? AND conversation=?")
+      .get(this.agentId, conversation);
+    return row ? parse(row.value) : { readThroughSeq: 0, paused: false };
+  }
+  setState(conversation, value) {
+    this.db
+      .prepare("INSERT OR REPLACE INTO runtime VALUES(?,?,?)")
+      .run(this.agentId, conversation, json(value));
+  }
+  export() {
+    const tables = {};
+    for (const name of [
+      "events",
+      "diaries",
+      "people",
+      "deliveries",
+      "runtime",
+      "migrations",
+    ])
+      tables[name] = this.db
+        .prepare(`SELECT * FROM ${name} WHERE agent_id=?`)
+        .all(this.agentId);
+    tables.diary_revisions = this.db
+      .prepare(
+        "SELECT r.* FROM diary_revisions r JOIN diaries d ON d.id=r.id WHERE d.agent_id=?",
+      )
+      .all(this.agentId);
+    return { version: 1, agentId: this.agentId, exportedAt: now(), tables };
+  }
+}

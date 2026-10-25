@@ -1,0 +1,131 @@
+{
+  "verifiedDate": "2026-10-25",
+  "baselines": [
+    {
+      "repository": "https://github.com/h-D-ACE/dsh-qq",
+      "commit": "0a10b6b13778bf19816432fbe8b51cdf00302d89",
+      "license": "MIT"
+    },
+    {
+      "repository": "https://github.com/Derpyu520/qq-bridge",
+      "commit": "a49877f4e58d04e47532d44b803360d0f001160d",
+      "license": "MIT"
+    },
+    {
+      "repository": "local-bridge",
+      "commit": "6ddd867cab920d7e0878b8a9b54267dc640588f2",
+      "license": "MIT",
+      "note": "Reviewed source modules only; no private repository history or instance data imported."
+    }
+  ],
+  "vendoredFiles": [
+    {
+      "path": "vendor/dsh-qq/dsh-client.js",
+      "origin": "h-D-ACE/dsh-qq",
+      "sha256": "25e539d2ca6e6e834b9863b2a0943d2c2e69f99c5cf5b03f888261a1dd730f53"
+    },
+    {
+      "path": "vendor/dsh-qq/dsh-endpoint.mjs",
+      "origin": "h-D-ACE/dsh-qq",
+      "sha256": "4506b9acecc85eb7e41dabe79cce84a298d70cde1b07e3e459e51f00b698ff6b"
+    },
+    {
+      "path": "vendor/dsh-qq/md-to-plain.js",
+      "origin": "h-D-ACE/dsh-qq",
+      "sha256": "45b929e680473b99a66ba4957582e43601b3a2b2eb33f5b67fafd6d9c01089ee"
+    },
+    {
+      "path": "vendor/dsh-qq/protected-paths.mjs",
+      "origin": "h-D-ACE/dsh-qq",
+      "sha256": "9a714e185ce27ba6ef90f238fcf4474cadcfef669ff203a8f212a8d0cd85d45e"
+    },
+    {
+      "path": "vendor/dsh-qq/qq-tool-restrict.mjs",
+      "origin": "h-D-ACE/dsh-qq",
+      "sha256": "0d143253800e0884ac92596bca482f9404f1c4955b30b695fee086c024e2ac44"
+    },
+    {
+      "path": "vendor/local-bridge/banter.mjs",
+      "origin": "local-bridge",
+      "sha256": "fa08e403fdab6e812eeab8b871d24a76ed8b26bacefee1af10d37f1aad25e349"
+    },
+    {
+      "path": "vendor/local-bridge/codex-rpc.mjs",
+      "origin": "local-bridge",
+      "sha256": "0b5f88da6f000a66e0091365287102049e324586edf24814944c53467156c7da"
+    },
+    {
+      "path": "vendor/social-reader/LICENSE",
+      "origin": "local-bridge",
+      "sha256": "f6bcea6d09baabe11a50f333fe878bf709ad7df4ddd13734d98c705dfa63088b"
+    },
+    {
+      "path": "vendor/social-reader/THIRD_PARTY_LICENSES.txt",
+      "origin": "local-bridge",
+      "sha256": "c7e8fa99367dc8fac8b03706b810ee60c2fb59e586a0e250aab6d92b50ad797c"
+    },
+    {
+      "path": "vendor/social-reader/browser-lock.mjs",
+      "origin": "local-bridge",
+      "sha256": "89c84847cfe8a615964600fb4be386f0431ad7a724ee7b6b5eca765915e9f48b"
+    },
+    {
+      "path": "vendor/social-reader/public-dns.js",
+      "origin": "local-bridge",
+      "sha256": "8311492405bb97b37fa47c8603a9ea46e0167355499e79ff24abb32b4a42f184"
+    },
+    {
+      "path": "vendor/social-reader/reader.mjs",
+      "origin": "local-bridge",
+      "sha256": "5ee5d2d7f8e2028765e079fd912f73401b16ce62a6d6496d5f341a1c2dc430b0"
+    },
+    {
+      "path": "vendor/social-reader/safe-fetch.js",
+      "origin": "local-bridge",
+      "sha256": "34dcaf7aa6b632826ba56af1173e40930579bb2701abeb213d52f141bc78a124"
+    },
+    {
+      "path": "vendor/legacy/forward.js",
+      "origin": "local-bridge",
+      "sourcePath": "src/forward.js",
+      "sha256": "b20c9e92018a2e657ef646098b2c25e218096fb46e59eab422b6ae8ead00d786",
+      "modification": "Markdown helper import adjusted to ../dsh-qq/md-to-plain.js; behavior otherwise unchanged."
+    },
+    {
+      "path": "vendor/legacy/totp.js",
+      "origin": "h-D-ACE/dsh-qq",
+      "sourcePath": "src/admin/totp.js",
+      "sha256": "3b9201afd57372055c93232c060072ea98442591d9d299b352b9579bea18ed2c"
+    },
+    {
+      "path": "vendor/legacy/v2-wait.js",
+      "origin": "local-bridge",
+      "sourcePath": "src/v2-wait.js",
+      "sha256": "88eef2d2f240e93ceb865fc9fc78d480df2219fafbd72b4e5a6f7ae1e5c8ed36"
+    },
+    {
+      "path": "vendor/legacy/voice-core.js",
+      "origin": "local-bridge",
+      "sourcePath": "src/voice-core.js",
+      "sha256": "8bc41fb3a430e4740e6344dda609d90e6131ae120651b062386f67acf8146cf1"
+    },
+    {
+      "path": "vendor/scheduler/commands.js",
+      "origin": "h-D-ACE/dsh-qq",
+      "sourcePath": "src/scheduler/commands.js",
+      "sha256": "06ec6fd25fc4ab7ae65b115727da819e2b99237b34b118967106d1184206b23a"
+    },
+    {
+      "path": "vendor/scheduler/schedule.js",
+      "origin": "h-D-ACE/dsh-qq",
+      "sourcePath": "src/scheduler/schedule.js",
+      "sha256": "3c7139f96d4a15f393fc2056cb6117842197fe50f467d6641f3c2dc8c2eb93e1"
+    },
+    {
+      "path": "vendor/scheduler/time.js",
+      "origin": "h-D-ACE/dsh-qq",
+      "sourcePath": "src/scheduler/time.js",
+      "sha256": "7793aa42c475fc6ad5486a2fbdb2c2339cc7be940a602d24e1d8c835dc2c58fc"
+    }
+  ]
+}
