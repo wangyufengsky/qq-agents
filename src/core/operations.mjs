@@ -335,7 +335,8 @@ export class Operations {
     const elevate = /^\/ops\s+(L[0-3])$/i.exec(e.body.trim()),
       confirm = /^确认\s+(\d{6})(?:\s+(\d{6}))?$/.exec(e.body.trim());
     if (!elevate && !confirm) return false;
-    if (!this.runtime.writable(a, e.conversation)) return true;
+    if (!this.runtime.writable(a, e.conversation))
+      return this.runtime.skipOwnerCommand(a, e, archived, "operations");
     let text;
     try {
       if (elevate) {

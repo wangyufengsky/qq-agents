@@ -435,8 +435,11 @@ export class Runtime {
       const reason = this.conversations.reason(a, e, c.accountId);
       if (!reason) continue;
       if (!this.writable(a, e.conversation)) {
-        state.pendingWake = true;
-        mem.setState(e.conversation, state);
+        // Re-read: owner commands above may have yielded while other events updated this state.
+        mem.setState(e.conversation, {
+          ...mem.state(e.conversation),
+          pendingWake: true,
+        });
         this.conversations.request(a.id, e.conversation, reason, {
           seq: archived.seq,
         });
@@ -448,6 +451,24 @@ export class Runtime {
       results.push({ agentId: a.id, ...wake });
     }
     return results;
+  }
+  // A command cannot be answered while paused or silenced. It is never replayed later
+  // (approvals and schedules would be stale); leave a visible record and wake on resume.
+  skipOwnerCommand(a, e, archived, source) {
+    this.memory.bind(a.id).append({
+      dedupe: "owner-command-skipped:" + archived.id,
+      connectionId: a.connectionId,
+      conversation: e.conversation,
+      kind: "owner-command.skipped",
+      direction: "internal",
+      status: "observed",
+      body: "[暂停或静默期间收到的主人命令未执行，也不会自动补执行；如仍需要，请主人重新发送]",
+      payload: { source, commandEventId: archived.id },
+    });
+    this.conversations.request(a.id, e.conversation, "private", {
+      seq: archived.seq,
+    });
+    return true;
   }
   async resetSession(agentId, conversation) {
     const a = this.agent(agentId);

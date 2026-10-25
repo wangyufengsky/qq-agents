@@ -403,7 +403,8 @@ export class TaskScheduler {
       tz: a.scheduler.timezone,
     });
     if (!cmd) return false;
-    if (!this.runtime.writable(a, e.conversation)) return true;
+    if (!this.runtime.writable(a, e.conversation))
+      return this.runtime.skipOwnerCommand(a, e, archived, "scheduler");
     let text;
     try {
       if (cmd.error) text = cmd.error;

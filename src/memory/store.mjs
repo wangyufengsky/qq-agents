@@ -643,6 +643,7 @@ class AgentMemory {
   }
   export() {
     const tables = {};
+    // Restore reassigns seq in export order; keep it ascending so equal-time order survives.
     for (const name of [
       "events",
       "diaries",
@@ -659,7 +660,9 @@ class AgentMemory {
       "message_progress",
     ])
       tables[name] = this.db
-        .prepare(`SELECT * FROM ${name} WHERE agent_id=?`)
+        .prepare(
+          `SELECT * FROM ${name} WHERE agent_id=?${name === "events" ? " ORDER BY seq" : ""}`,
+        )
         .all(this.agentId);
     tables.diary_revisions = this.db
       .prepare(

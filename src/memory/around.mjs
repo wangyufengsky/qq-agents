@@ -37,7 +37,7 @@ export function around(
       !Number.isSafeInteger(c.ceiling) ||
       c.ceiling < center.seq ||
       !Number.isSafeInteger(c.time_ms) ||
-      typeof c.event_id !== "string")
+      !Number.isSafeInteger(c.seq))
   )
     throw Error("INVALID_OR_STALE_TIMELINE_CURSOR");
   const query = (direction, count, cursor) =>
@@ -70,11 +70,10 @@ export function around(
   const rows = selected.filter((r) => retained.has(r.id));
   const clockOf = (r) => ({
     time_ms: r.time_ms ?? anchor?.time_ms,
-    event_id: r.id,
+    seq: r.seq,
   });
   const sorted = [...rows].sort(
-    (a, b) =>
-      clockOf(a).time_ms - clockOf(b).time_ms || a.id.localeCompare(b.id),
+    (a, b) => clockOf(a).time_ms - clockOf(b).time_ms || a.seq - b.seq,
   );
   const cursor = (direction, row) => {
     if (!anchor || !row || !query(direction, 1, clockOf(row)).length)
@@ -92,7 +91,7 @@ export function around(
   items = sorted.map((r) => items.find((i) => i.id === r.id));
   return {
     items,
-    ordering: "message-time-then-id",
+    ordering: "message-time-then-archive-order",
     timeKnown: !!anchor,
     timeBasis: timeBasis(center.occurred_at, center.payload, center.origin),
     nextAroundBefore: cursor("before", sorted[0]),
@@ -104,6 +103,6 @@ export function around(
     source: memory.event(center, current, true).source,
     truncated: items.length < selected.length,
     notice:
-      "Reliable message-time neighborhood, then stable event UUID; not ledger order or proof of one topic. Observation/unknown times have no temporal neighbors. Continue with aroundId, contextSeconds and a nextAround cursor; enrichment is live, restart after time corrections. Use memory_related for explicit references and conversation/afterSeq for ledger reading; these cursors cannot mark messages read.",
+      "Reliable message-time neighborhood; equal times keep archive (arrival) order. Not ledger reading or proof of one topic. Observation/unknown times have no temporal neighbors. Continue with aroundId, contextSeconds and a nextAround cursor; enrichment is live, restart after time corrections. Use memory_related for explicit references and conversation/afterSeq for ledger reading; these cursors cannot mark messages read.",
   };
 }

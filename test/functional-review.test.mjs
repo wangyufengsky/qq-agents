@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { config, fixture, raw, context, settle } from "./helpers.mjs";
+import path from "node:path";
+import { ExternalTools } from "../src/backends/external.mjs";
+import { MemoryStore } from "../src/memory/store.mjs";
+import { restoreExport } from "../src/memory/migrate.mjs";
+import { temp } from "./helpers.mjs";
 
 const poke = (target) => ({
   post_type: "notice",
@@ -189,4 +194,134 @@ test("the turn that sets silence can finish bookkeeping but cannot send", async 
     f.runtime.callTool(context(f.runtime), "qq_mark_read", { throughSeq: 0 }),
     /AGENT_PAUSED_OR_EXPIRED/,
   );
+});
+
+test("an external MCP server that exits is rediscovered on the next call", async (t) => {
+  const external = new ExternalTools([
+    {
+      id: "crash",
+      transport: "stdio",
+      command: process.execPath,
+      args: ["test/crash-mcp-fixture.mjs"],
+      env: {},
+      headers: {},
+      allowedTools: ["echo_pid"],
+    },
+  ]);
+  t.after(() => external.close());
+  const first = (await external.call("crash", "echo_pid", {})).content[0].text;
+  const deadline = Date.now() + 3000;
+  while (external.clients.size && Date.now() < deadline)
+    await new Promise((r) => setTimeout(r, 20));
+  assert.equal(external.clients.size, 0, "dead client must be evicted");
+  const second = (await external.call("crash", "echo_pid", {})).content[0].text;
+  assert.notEqual(second, first);
+});
+
+const ownerPrivate = (id, text) =>
+  raw(id, {
+    message_type: "private",
+    group_id: undefined,
+    user_id: 30000,
+    message: [{ type: "text", data: { text } }],
+  });
+const owned = () => {
+  const cfg = config(1);
+  cfg.agents[0].ownerIds = ["30000"];
+  cfg.agents[0].operations.enabled = true;
+  cfg.agents[0].scheduler.enabled = true;
+  cfg.agents[0].paused = true;
+  return cfg;
+};
+
+test("owner commands received while paused leave a record and wake on resume without replay", async (t) => {
+  let runs = 0;
+  const f = fixture(t, { cfg: owned(), run: async () => void runs++ });
+  await f.runtime.ingest("qq-0", ownerPrivate(1, "/ops L1"));
+  await f.runtime.ingest("qq-0", ownerPrivate(2, "/remind list"));
+  const skipped = f.store.db
+    .prepare(
+      "SELECT json_extract(payload,'$.source') AS source FROM events WHERE kind='owner-command.skipped' ORDER BY seq",
+    )
+    .all()
+    .map((x) => x.source);
+  assert.deepEqual(skipped, ["operations", "scheduler"]);
+  assert.equal(f.runtime.operations.pending.size, 0);
+  assert.equal(f.runtime.transports.get("qq-0").sent.length, 0);
+  await f.runtime.pause("agent-0", false);
+  f.runtime.tick();
+  await settle(f.runtime);
+  assert.equal(runs, 1);
+  // Resuming wakes the AI to explain; it never re-runs the elevation request.
+  assert.equal(f.runtime.operations.pending.size, 0);
+});
+
+test("a paused owner message does not overwrite state changed while commands were checked", async (t) => {
+  const f = fixture(t, { cfg: owned() }),
+    mem = f.store.bind("agent-0");
+  f.runtime.operations.command = async () => {
+    mem.setState("private:30000", {
+      ...mem.state("private:30000"),
+      marker: "concurrent",
+    });
+    return false;
+  };
+  await f.runtime.ingest("qq-0", ownerPrivate(3, "随便聊聊"));
+  const state = mem.state("private:30000");
+  assert.equal(state.marker, "concurrent");
+  assert.equal(state.pendingWake, true);
+});
+
+test("the narrowed tick still fires due reply checks and sleep timers", async (t) => {
+  let runs = 0;
+  const f = fixture(t, { cfg: quiet(), run: async () => void runs++ }),
+    mem = f.store.bind("agent-0"),
+    now = f.runtime.now();
+  mem.setState("group:20000", { replyCheckAt: now - 1 });
+  mem.setState("group:20001", {
+    wakeConfig: { mode: "diving", sleepUntil: now - 1 },
+  });
+  mem.setState("private:30000", { lastReceivedSeq: 5 });
+  f.runtime.tick();
+  await settle(f.runtime);
+  assert.equal(runs, 2);
+  assert.equal(mem.state("group:20000").lastWakeReason, "replyCheck");
+  assert.equal(mem.state("group:20001").lastWakeReason, "sleep");
+});
+
+test("equal-time messages keep arrival order, also after restore beside another identity", (t) => {
+  const root = temp(t),
+    source = new MemoryStore(path.join(root, "source.sqlite")),
+    target = new MemoryStore(path.join(root, "target.sqlite"));
+  t.after(() => {
+    source.close();
+    target.close();
+  });
+  const at = new Date(1800000000000).toISOString(),
+    burst = (m, agent, bodies) =>
+      bodies.map((body, i) =>
+        m.bind(agent).append({
+          dedupe: agent + ":" + body,
+          connectionId: "qq-0",
+          conversation: "group:20000",
+          kind: "message.received",
+          messageId: agent + "-" + i,
+          senderId: "30000",
+          body,
+          occurredAt: at,
+          payload: { timeKnown: true },
+        }),
+      );
+  const bodies = ["一", "二", "三", "四", "五", "六"],
+    ids = burst(source, "agent-0", bodies).map((x) => x.id);
+  const order = (m) =>
+    m
+      .bind("agent-0")
+      .conversation({ aroundId: ids[2], limit: 10 })
+      .items.map((x) => x.body);
+  assert.deepEqual(order(source), bodies);
+  // Another identity already owns the low seq values, so every restored seq is remapped.
+  burst(target, "agent-1", ["x", "y", "z"]);
+  restoreExport(target.bind("agent-0"), source.bind("agent-0").export());
+  assert.deepEqual(order(target), bodies);
 });

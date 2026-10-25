@@ -103,7 +103,7 @@ const definitions = {
             ceiling: z.number().int().nonnegative(),
             direction: z.enum(["before", "after"]),
             time_ms: z.number().int(),
-            event_id: str,
+            seq: z.number().int().nonnegative(),
           })
           .strict()
           .optional(),

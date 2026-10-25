@@ -85,6 +85,12 @@ export class ExternalTools {
           };
         };
         const entry = await Promise.race([initialize(), cancelled]);
+        // A server that exits or drops its session must be rediscovered on the next call.
+        const onclose = client.onclose;
+        client.onclose = () => {
+          onclose?.();
+          if (this.clients.get(id) === entry) this.clients.delete(id);
+        };
         this.clients.set(id, entry);
         return entry;
       } catch (e) {
