@@ -521,3 +521,118 @@ test("handoff intentions expose counts and an exact filtered continuation beyond
     35,
   );
 });
+
+test("F1 legacy: prepare retains processed task when seeing the first new message", (t) => {
+  const { runtime, store } = fixture(t),
+    m = store.bind(id);
+  const old = event(m, 1, { body: "旧任务：杭州、三人、每晚600元" });
+  m.setState(chat, { readThroughSeq: old.seq, session: null });
+  event(m, 2, { body: "接着规划" });
+  const prepared = runtime.contexts.prepare(context(runtime), {}, []);
+  assert.match(prepared.prompt, /旧任务：杭州、三人、每晚600元/);
+  assert.equal(m.state(chat).readThroughSeq, old.seq);
+});
+
+test("F2 review: URL entry plus expanded App is one source; opaque forwards cannot establish growth", (t) => {
+  const { runtime, store } = fixture(t),
+    m = store.bind(id);
+  const card = event(m, 1, {
+    body: "https://www.zhihu.com/question/123/answer/456",
+  });
+  const app = event(m, 2, {
+    kind: "app.observation",
+    direction: "internal",
+    payload: {
+      app: {
+        origin: "app-browser",
+        key: "zhihu:question/123/answer/456",
+        text: "实际读过的文字",
+        source: { eventId: card.id },
+        readingScope: "text",
+        evidence: [card.id],
+      },
+    },
+  });
+  const candidate = propose(runtime, [card.id, app.id]);
+  assert.equal(candidate.roots.length, 1);
+  assert.throws(() => accept(runtime, candidate), /INSUFFICIENT/);
+  const opaque = event(m, 3, {
+    body: "未展开转发",
+    payload: {
+      segments: [{ type: "forward", data: { id: "opaque-resource" } }],
+    },
+  });
+  assert.throws(
+    () => accept(runtime, propose(runtime, [opaque.id], "interest")),
+    /INSUFFICIENT/,
+  );
+});
+
+test("F3 review: restore retains frozen counterevidence; cross-chat excerpts remain disclosure-tainted after source deletion", async (t) => {
+  const { runtime, store } = fixture(t),
+    m = store.bind(id);
+  const privateSource = event(m, 1, {
+    conversation: "private:30000",
+    body: "PRIVATE_SOURCE_PLACEHOLDER",
+  });
+  const counter = event(m, 2, { body: "相反的观察" });
+  const candidate = m.identity.propose(
+    {
+      body: "尝试一种新的兴趣",
+      reason: "回顾并保留反例",
+      evidence: [privateSource.id],
+      counterEvidence: [counter.id],
+      scope: "interest",
+      expectedVersion: 1,
+    },
+    context(runtime),
+    runtime.agent(id).selfPolicy,
+    100,
+  );
+  accept(runtime, candidate);
+  m.identity.restore(2, 2, "恢复包括反例的依据", runtime.now());
+  assert.deepEqual(
+    m.identity.current().counterEvidenceSnapshot,
+    candidate.counterEvidenceSnapshot,
+  );
+  assert.deepEqual(m.identity.current().counterEvidence, [counter.id]);
+  m.db.prepare("DELETE FROM events WHERE id=?").run(privateSource.id);
+  for (const name of ["self_read", "self_candidates", "self_history"]) {
+    const ctx = context(runtime);
+    const result = await runtime.callTool(ctx, name, {});
+    assert(JSON.stringify(result).includes("PRIVATE_SOURCE_PLACEHOLDER"));
+    assert(ctx.privateRead.has(privateSource.id));
+    assert.throws(
+      () => runtime.assertDisclosure(ctx, { external: true }),
+      /PRIVATE_RECOLLECTION_EXTERNAL/,
+    );
+  }
+});
+
+test("F5 large restore remaps a deleted boundary beyond the JS call argument limit", (t) => {
+  const { runtime, store } = fixture(t, { cfg: enabled() }),
+    m = store.bind(id);
+  event(m, 1);
+  const i = intent(runtime),
+    data = m.export(),
+    template = data.tables.events[0];
+  data.tables.events = Array.from({ length: 140000 }, (_, n) => ({
+    ...template,
+    seq: n + 1,
+    id: `large-fixture-${n}`,
+    dedupe: `large-fixture-${n}`,
+  }));
+  const row = data.tables.intentions[0],
+    value = JSON.parse(row.value);
+  // The exact historical boundary was deleted; all retained older events stay excluded.
+  value.createdAfterSeq = 140001;
+  value.handoffSeq = 140001;
+  row.value = JSON.stringify(value);
+  const target = new MemoryStore(":memory:");
+  t.after(() => target.close());
+  event(target.bind("other"), 1);
+  restoreExport(target.bind(id), data);
+  const restored = target.bind(id).identity.get("intentions", i.id);
+  assert.equal(restored.createdAfterSeq, 140001);
+  assert.equal(restored.handoffSeq, 140001);
+});

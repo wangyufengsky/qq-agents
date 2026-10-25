@@ -299,6 +299,12 @@ export function restoreExport(memory, data) {
   const empty =
       memory.db.prepare("SELECT COUNT(*) AS n FROM events").get().n === 0,
     seqs = new Map([[0, 0]]);
+  const remapBoundary = (boundary) => {
+    let mapped = 0;
+    for (const [oldSeq, newSeq] of seqs)
+      if (oldSeq <= boundary && newSeq > mapped) mapped = newSeq;
+    return mapped;
+  };
   memory.store.transaction(() => {
     for (const [table, cols] of Object.entries(columns)) {
       for (const original of data.tables[table] || []) {
@@ -331,12 +337,7 @@ export function restoreExport(memory, data) {
           const value = JSON.parse(row.value);
           for (const key of ["handoffSeq", "createdAfterSeq"])
             if (value[key] !== undefined)
-              value[key] = Math.max(
-                0,
-                ...[...seqs]
-                  .filter(([oldSeq]) => oldSeq <= value[key])
-                  .map(([, newSeq]) => newSeq),
-              );
+              value[key] = remapBoundary(value[key]);
           row.value = JSON.stringify(value);
         }
         const fields =

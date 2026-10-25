@@ -1,8 +1,19 @@
 // Retain source handles automatically, independently of optional model-written notes.
 // A bounded excerpt is orientation, never an acknowledgement or a new evidence root.
+function retainedSources(memory, conversation, state) {
+  if (state.continuity) return state.continuity;
+  const legacy = memory.db
+    .prepare(
+      "SELECT id FROM events WHERE agent_id=? AND conversation=? AND seq<=? ORDER BY seq DESC LIMIT 12",
+    )
+    .all(memory.agentId, conversation, state.readThroughSeq || 0)
+    .reverse();
+  return { anchors: [], recent: legacy.map((row) => row.id) };
+}
+
 export function rememberSources(memory, conversation, items) {
   const state = memory.state(conversation),
-    old = state.continuity || { anchors: [], recent: [] },
+    old = retainedSources(memory, conversation, state),
     rows = items.filter(
       (item) => item.id && item.conversation === conversation,
     ),
@@ -26,21 +37,9 @@ export function rememberSources(memory, conversation, items) {
 
 export function sourceHandoff(memory, conversation) {
   const state = memory.state(conversation);
-  // Upgrade old sessions from their already processed range, without refeeding all history.
-  const legacy = state.continuity
-    ? []
-    : memory.db
-        .prepare(
-          "SELECT id FROM events WHERE agent_id=? AND conversation=? AND seq<=? ORDER BY seq DESC LIMIT 12",
-        )
-        .all(memory.agentId, conversation, state.readThroughSeq || 0)
-        .reverse();
-  const ids = [
-    ...new Set([
-      ...(state.continuity?.anchors || []),
-      ...(state.continuity?.recent || legacy.map((row) => row.id)),
-    ]),
-  ];
+  // Initialize before new observations can suppress the legacy fallback.
+  const retained = retainedSources(memory, conversation, state);
+  const ids = [...new Set([...retained.anchors, ...retained.recent])];
   const perSource = Math.min(1200, Math.floor(12000 / Math.max(1, ids.length)));
   const sources = ids.map((id) => {
     const row = memory.db

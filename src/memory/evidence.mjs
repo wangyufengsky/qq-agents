@@ -67,6 +67,7 @@ export function freezeEvidence(memory, ids, now) {
         kind: row.kind,
         ...(app
           ? {
+              origin: app.origin,
               platform: app.platform,
               key: app.key,
               url: app.url,
@@ -179,9 +180,26 @@ export function freezeEvidence(memory, ids, now) {
   }
   const keys = [...new Set(ids.flatMap((id) => visit(id)))],
     contentSeen = new Set(),
-    independent = [];
+    independent = [],
+    subsumed = new Set();
+  // An expansion and the message/card it expands are one source, even if both
+  // are explicit entry IDs. Keep the full ancestry in references for audit.
+  function ancestors(id, seen = new Set()) {
+    if (seen.has(id)) return seen;
+    seen.add(id);
+    for (const parent of references.get(id)?.parents || [])
+      ancestors(parent, seen);
+    return seen;
+  }
   for (const key of keys) {
     const root = roots.get(key);
+    if (["external-source-claim", "forwarded-claim"].includes(root.epistemic))
+      for (const parent of references.get(root.id)?.parents || [])
+        for (const id of ancestors(parent)) subsumed.add(id);
+  }
+  for (const key of keys) {
+    const root = roots.get(key);
+    if (subsumed.has(root.id)) continue;
     if (root.contentKey && contentSeen.has(root.contentKey)) continue;
     if (root.contentKey) contentSeen.add(root.contentKey);
     independent.push(root);
