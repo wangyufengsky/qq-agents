@@ -4,7 +4,8 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { toolSpecs } from "./tools/index.mjs";
+import { mcpEntrySpecs, parseMcpEntry } from "./tools/catalog.mjs";
+import { safeToolFailure } from "./tools/errors.mjs";
 
 const base = process.env.QQ_UNIFIED_URL || "http://127.0.0.1:3210";
 const url = new URL(base);
@@ -20,30 +21,37 @@ const server = new Server(
   { capabilities: { tools: {} } },
 );
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: toolSpecs(undefined, { context: true }),
+  tools: mcpEntrySpecs(),
 }));
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
   try {
-    const { context, ...args } = req.params.arguments || {};
+    const { context, ...args } = parseMcpEntry(
+      req.params.name,
+      req.params.arguments || {},
+    );
     if (typeof context !== "string") throw Error();
-    const response = await fetch(new URL("/agent/tools", base), {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-agent-capability": context,
+    const response = await fetch(
+      new URL(
+        req.params.name === "bridge_tools" ? "/agent/catalog" : "/agent/tools",
+        base,
+      ),
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-agent-capability": context,
+        },
+        body: JSON.stringify(args),
+        signal: AbortSignal.timeout(660000),
+        redirect: "error",
       },
-      body: JSON.stringify({ name: req.params.name, arguments: args }),
-      signal: AbortSignal.timeout(660000),
-      redirect: "error",
-    });
+    );
     if (!response.ok) throw Error();
     return await response.json();
-  } catch {
+  } catch (error) {
     return {
       isError: true,
-      content: [
-        { type: "text", text: "工具调用被拒绝或未确认；不得假称发送成功。" },
-      ],
+      content: [{ type: "text", text: JSON.stringify(safeToolFailure(error)) }],
     };
   }
 });

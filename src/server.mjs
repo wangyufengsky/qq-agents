@@ -1,3 +1,4 @@
+import { scopedCatalog } from "./tools/catalog.mjs";
 import { shareList, cancelShare } from "./apps/sharing.mjs";
 import { appService } from "./apps/tools.mjs";
 import { safeToolFailure } from "./tools/errors.mjs";
@@ -76,6 +77,20 @@ export function createServer({ runtime, token, allowLive = false }) {
         });
         res.end(fs.readFileSync(path.join(publicDir, file)));
         return;
+      }
+      if (url.pathname === "/agent/catalog") {
+        const ctx = runtime.capability(req.headers["x-agent-capability"]);
+        if (req.method !== "POST") return send({ error: "METHOD" }, 405);
+        try {
+          return send(mcpResult(scopedCatalog(runtime, ctx, await body(req))));
+        } catch (e) {
+          return send({
+            isError: true,
+            content: [
+              { type: "text", text: JSON.stringify(safeToolFailure(e)) },
+            ],
+          });
+        }
       }
       if (url.pathname === "/agent/tools") {
         const ctx = runtime.capability(req.headers["x-agent-capability"]);

@@ -164,26 +164,45 @@ test("MCP stdio handshake and memory roundtrip use live scoped capability", asyn
   await client.connect(transport);
   t.after(() => client.close());
   const catalog = await client.listTools();
-  assert.ok(catalog.tools.some((x) => x.name === "diary_revise"));
-  assert.ok(!catalog.tools.some((x) => x.name.startsWith("qq_memory_")));
-  const capability = catalog.tools.find((x) => x.name === "qq_send").inputSchema
-    .properties.context;
+  assert.deepEqual(
+    catalog.tools.map((x) => x.name),
+    ["bridge_tools", "bridge_call"],
+  );
+  const capability = catalog.tools.find((x) => x.name === "bridge_call")
+    .inputSchema.properties.context;
   assert.match(capability.description, /copy.*context=/i);
   assert.match(capability.description, /not.*explanation/i);
   const invalid = await client.callTool({
-    name: "memory_search",
+    name: "bridge_tools",
     arguments: { context: "This is an explanation of the current task" },
   });
   assert.equal(invalid.isError, true);
+  const discovery = await client.callTool({
+    name: "bridge_tools",
+    arguments: { context: ctx.token, names: ["memory_search"] },
+  });
+  const found = JSON.parse(discovery.content[0].text);
+  assert.equal(found.tools[0].name, "memory_search");
+  assert(!found.tools[0].inputSchema.properties.context);
   const r = await client.callTool({
-    name: "memory_search",
-    arguments: { context: ctx.token, query: "中文约定" },
+    name: "bridge_call",
+    arguments: {
+      context: ctx.token,
+      name: "memory_search",
+      arguments: { query: "中文约定" },
+    },
   });
   assert.match(r.content[0].text, /MCP中文约定/);
+  const subject = context(runtime, "agent-0", "@subject");
+  const denied = await client.callTool({
+    name: "bridge_tools",
+    arguments: { context: subject.token, names: ["qq_send"] },
+  });
+  assert.equal(denied.isError, true);
   await runtime.pause("all", true);
   const paused = await client.callTool({
-    name: "memory_search",
-    arguments: { context: ctx.token },
+    name: "bridge_call",
+    arguments: { context: ctx.token, name: "memory_search", arguments: {} },
   });
   assert.equal(paused.isError, true);
 });

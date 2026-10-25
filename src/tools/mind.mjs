@@ -1,4 +1,5 @@
 import { SUBJECT_APP_TOOLS } from "../apps/policy.mjs";
+import { identityAnchors } from "../core/prompts.mjs";
 import { z } from "zod";
 const text = z.string().min(1),
   ids = z.array(text).max(30),
@@ -163,6 +164,7 @@ function executeMindTool(runtime, ctx, name, args) {
       current: identity.withEvidence(identity.current()),
       turnSelfVersion: ctx.selfVersion,
       anchors: identity.anchors(a),
+      identity: identityAnchors(runtime.config, a),
     };
   if (name === "self_history" || name === "self_candidates") {
     const rows =

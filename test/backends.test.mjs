@@ -296,6 +296,37 @@ test("DSH uses required preset, workspace, model selection, followed event strea
   await run;
   assert.equal(completed, true);
 });
+test("DSH rejects a broken installed preset before creating a workspace", async (t) => {
+  const { client } = dshFake();
+  client.agentPresets.list = async () => ({
+    result: {
+      ok: true,
+      value: {
+        presets: [{ id: "qq-unified", broken: "private provider detail" }],
+      },
+    },
+  });
+  const b = new DshBackend(
+    { id: "dsh", preset: "qq-unified" },
+    config().agents[0],
+    { root: temp(t), client },
+  );
+  t.after(() => b.close());
+  await assert.rejects(
+    b.run({
+      prompt: "x",
+      signal: new AbortController().signal,
+      tools: [],
+      saveSession() {},
+    }),
+    /^Error: DSH_UNIFIED_PRESET_BROKEN$/,
+  );
+  assert.equal(
+    client.calls.some((x) => x.name === "workspace"),
+    false,
+  );
+});
+
 test("DSH never falls back to a default unrestricted preset", async (t) => {
   const root = temp(t),
     { client } = dshFake(),
@@ -328,7 +359,9 @@ test("DSH guard only permits new capability-bound tools, leaving global applicat
     },
   });
   assert.ok(denied.includes("bash"));
-  assert.equal(gate({ name: "mcp__qq-unified__memory_search" }), undefined);
+  assert.equal(gate({ name: "mcp__qq-unified__bridge_call" }), undefined);
+  assert.ok(gate({ name: "mcp__qq-unified__memory_search" }));
+  assert.equal(gate({ name: "mcp__qq-unified__bridge_tools" }), undefined);
   assert.ok(gate({ name: "mcp__snowluma__qq_send_message" }));
   assert.ok(gate({ name: "bash" }));
   assert.ok(gate({ name: "mcp__unknown__read_file" }));

@@ -77,3 +77,5 @@ npm run dsh:bundle -- --out /path/to/private-data/dsh-bundle --url http://127.0.
 ## 来源和许可
 
 MIT。保留上游 [LICENSE](LICENSE)、[原 NOTICE](UPSTREAM-NOTICE.md) 和 [本项目归属说明](NOTICE.md)。版本及文件摘要见 `docs/SOURCES.json`。仓库不分发 QQ/NapCat/DSH/Codex 应用或 SnowLuma SDK；外部程序适用各自许可。
+
+本机统一启停、原生 QQ 账号隔离与旧桥接退役步骤见 [本机运维](docs/LOCAL-OPERATIONS.md)。

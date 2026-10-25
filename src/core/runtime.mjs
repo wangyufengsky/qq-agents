@@ -1,3 +1,4 @@
+import { toolAvailable } from "../tools/catalog.mjs";
 import { beforeShareDelivery } from "../apps/sharing.mjs";
 import { appService } from "../apps/tools.mjs";
 import { appsPolicySchema } from "../apps/policy.mjs";
@@ -144,27 +145,29 @@ export class Runtime {
     return c;
   }
   toolsFor(a, conversation) {
-    return conversation === SUBJECT
-      ? [
-          ...new Set([
-            ...SUBJECT_TOOLS.filter(
-              (n) =>
-                n.startsWith("self_") ||
-                n.startsWith("intent_") ||
-                n.startsWith("work_") ||
-                a.tools.includes(n),
-            ),
-            ...a.subject.readTools.filter((n) => a.tools.includes(n)),
-          ]),
-        ]
-      : [
-          ...new Set([
-            ...a.tools.filter(
-              (n) => n !== "self_update" && n !== "self_review",
-            ),
-            ...CHAT_MIND_TOOLS,
-          ]),
-        ];
+    const selected =
+      conversation === SUBJECT
+        ? [
+            ...new Set([
+              ...SUBJECT_TOOLS.filter(
+                (n) =>
+                  n.startsWith("self_") ||
+                  n.startsWith("intent_") ||
+                  n.startsWith("work_") ||
+                  a.tools.includes(n),
+              ),
+              ...a.subject.readTools.filter((n) => a.tools.includes(n)),
+            ]),
+          ]
+        : [
+            ...new Set([
+              ...a.tools.filter(
+                (n) => n !== "self_update" && n !== "self_review",
+              ),
+              ...CHAT_MIND_TOOLS,
+            ]),
+          ];
+    return selected.filter((name) => toolAvailable(a, name, conversation));
   }
   writable(a, conversation, ctx = null) {
     if (conversation === SUBJECT) return this.subject.internalAllowed(a);
@@ -572,13 +575,16 @@ export class Runtime {
         : ctx.confirmedSends
           ? "sent"
           : "completed-no-send";
+      if (!controller.signal.aborted) this.faults.delete(agentId);
     } catch (e) {
       outcome = controller.signal.aborted ? "cancelled" : "failed";
       this.faults.set(
         agentId,
         e.message === "AGENT_PAUSED_OR_EXPIRED"
           ? "PAUSED"
-          : "BACKEND_TURN_FAILED",
+          : /^DSH_[A-Z_]+$/.test(e.message)
+            ? e.message
+            : "BACKEND_TURN_FAILED",
       );
     } finally {
       this.capabilities.delete(token);
@@ -615,7 +621,10 @@ export class Runtime {
   async callTool(ctx, name, args = {}) {
     const a = this.assertActive(ctx);
     if (
-      !(ctx.allowedTools || this.toolsFor(a, ctx.conversation)).includes(name)
+      !(ctx.allowedTools || this.toolsFor(a, ctx.conversation)).includes(
+        name,
+      ) ||
+      !toolAvailable(a, name, ctx.conversation)
     )
       throw Error("TOOL_DISABLED");
     if (
