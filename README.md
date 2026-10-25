@@ -12,7 +12,7 @@
 
 新增[自主文件收发](docs/FILE-TRANSFER.md)：管理台“权限”页可分别开启每个角色的下载与发送权限；两个 AI 使用独立文件库，普通收发不逐项确认。默认关闭，生产启用需另行部署与验收。
 
-需要 Node.js 24（内置 SQLite）；语音校验与音量处理需要 FFprobe/FFmpeg。
+需要 Node.js 24（内置 SQLite）；语音校验与音量处理需要 FFprobe/FFmpeg，GIF 动图阅读需要 FFmpeg（可用 `FFMPEG_PATH` 指定）。图片读取自动返回带时间信息的动图采样帧，并支持逐帧分页，见[动图阅读说明](docs/FEATURES.md#gif-动图阅读)。
 
 ```sh
 npm ci --ignore-scripts

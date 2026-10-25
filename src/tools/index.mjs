@@ -26,6 +26,33 @@ const fields = {
   tags: z.array(str).optional(),
   evidence: z.array(str).optional(),
 };
+const animation = z
+  .object({
+    mode: z
+      .enum(["overview", "frames"])
+      .optional()
+      .describe(
+        "overview按时间抽样；frames按原始帧序号连续分页。默认overview。",
+      ),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(12)
+      .optional()
+      .describe("每次最多12帧，默认10帧。"),
+    offset: z
+      .number()
+      .int()
+      .min(0)
+      .max(1000)
+      .optional()
+      .describe("仅frames模式使用，从0开始；继续时使用nextFrameOffset。"),
+    startMs: z.number().int().min(0).max(120000).optional(),
+    endMs: z.number().int().min(1).max(120000).optional(),
+  })
+  .strict()
+  .optional();
 const definitions = {
   ...mindDefinitions,
   ...legacyDefinitions,
@@ -147,8 +174,10 @@ const definitions = {
     z.object({ minutes: z.number().int().min(0).max(10080) }).strict(),
   ],
   qq_image_read: [
-    "读取某条经历里的图片像素。只有成功拿到图片后才能描述内容。",
-    z.object({ id: str, index: z.number().int().min(0).optional() }).strict(),
+    "读取某条经历的图片。GIF动图自动返回按时间抽取的多帧及时间信息；animation可指定时间段或连续逐帧分页。只有拿到像素后才能描述；complete=false不能声称看完动图。",
+    z
+      .object({ id: str, index: z.number().int().min(0).optional(), animation })
+      .strict(),
   ],
   sticker_list: [
     "搜索自己的表情收藏。",
@@ -164,7 +193,10 @@ const definitions = {
       })
       .strict(),
   ],
-  sticker_read: ["查看收藏的表情像素。", z.object({ mediaId: str }).strict()],
+  sticker_read: [
+    "查看自己已读取或收藏的图片；动图默认时间抽样，animation.mode=frames按next分页，也可指定时间段。复用原始mediaId，无需重新下载。",
+    z.object({ mediaId: str, animation }).strict(),
+  ],
   social_search: [
     "只读平台搜索；使用已配置的浏览器登录与并发锁。",
     z
@@ -416,12 +448,12 @@ export async function dispatchTool(runtime, ctx, name, input) {
       event,
       args.index || 0,
     );
-    return {
-      content: [
-        { type: "text", text: JSON.stringify(media) },
-        runtime.media.read(ctx.agentId, media.id),
-      ],
-    };
+    return runtime.media.view(
+      ctx.agentId,
+      media.id,
+      args.animation,
+      ctx.controller.signal,
+    );
   }
   if (name === "sticker_list") {
     const rows = runtime.media.list(ctx.agentId, args.query || "");
@@ -433,7 +465,12 @@ export async function dispatchTool(runtime, ctx, name, input) {
   if (name === "sticker_read") {
     const meta = runtime.media.metadata(ctx.agentId, args.mediaId);
     taintMedia(ctx, meta);
-    return { content: [runtime.media.read(ctx.agentId, args.mediaId)] };
+    return runtime.media.view(
+      ctx.agentId,
+      args.mediaId,
+      args.animation,
+      ctx.controller.signal,
+    );
   }
   if (name === "voice_synthesize") return synthesize(runtime, ctx, args);
   if (name === "external_tools") {

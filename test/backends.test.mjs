@@ -6,6 +6,8 @@ import { DshBackend } from "../src/backends/dsh.mjs";
 import { apply as guard } from "../src/backends/dsh-guard.mjs";
 import { toolSpecs } from "../src/tools/index.mjs";
 import { temp, config } from "./helpers.mjs";
+import { MediaStore } from "../src/tools/media.mjs";
+import { gif } from "./gif-fixture.mjs";
 
 class Rpc extends EventEmitter {
   constructor() {
@@ -47,6 +49,63 @@ class Rpc extends EventEmitter {
   }
 }
 const tick = () => new Promise((r) => setImmediate(r));
+test("Codex delivers every decoded animation frame and its time label in order", async (t) => {
+  const root = temp(t),
+    rpc = new Rpc(),
+    cfg = config();
+  const media = new MediaStore(root + "/media");
+  const saved = media.put(
+    "a",
+    gif([{ color: 0 }, { color: 1 }, { color: 2 }]),
+    "image/gif",
+  );
+  const result = await media.view("a", saved.id);
+  const backend = new CodexBackend(cfg.backends[0], cfg.agents[0], {
+    root,
+    rpc,
+  });
+  t.after(() => backend.close());
+  const run = backend.run({
+    prompt: "Synthetic animation",
+    signal: new AbortController().signal,
+    tools: toolSpecs(["sticker_read"]),
+    callTool: async () => result,
+    saveSession() {},
+  });
+  await tick();
+  await backend.request({
+    id: 1,
+    method: "item/tool/call",
+    params: {
+      threadId: "fixture-thread",
+      turnId: "fixture-turn",
+      tool: "sticker_read",
+      arguments: { mediaId: saved.id },
+    },
+  });
+  const response = rpc.responses[0].value;
+  assert.equal(response.success, true);
+  assert.deepEqual(
+    response.contentItems.map((c) => c.type),
+    [
+      "inputText",
+      "inputText",
+      "inputImage",
+      "inputText",
+      "inputImage",
+      "inputText",
+      "inputImage",
+    ],
+  );
+  assert(
+    response.contentItems
+      .filter((c) => c.type === "inputImage")
+      .every((c) => c.imageUrl.startsWith("data:image/png;base64,")),
+  );
+  assert.match(response.contentItems[5].text, /200 ms/);
+  rpc.complete();
+  await run;
+});
 test("Codex protocol uses restricted dynamic tools and isolated session state", async (t) => {
   const root = temp(t),
     rpc = new Rpc(),

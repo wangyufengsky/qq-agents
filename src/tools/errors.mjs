@@ -1,6 +1,15 @@
 // Report actionable validation bounds without echoing input values, paths,
 // stack traces, provider errors or credentials into either model backend.
 export function safeToolFailure(error) {
+  if (
+    /^(ANIMATION_[A-Z_]+|INVALID_GIF|INVALID_ANIMATION_RANGE)$/.test(
+      error?.message || "",
+    )
+  )
+    return {
+      code: error.message,
+      hint: "Animation frames were not read. Do not describe motion or silently treat it as a still. For invalid ranges, omit animation options to get an overview and duration first. Missing decoder requires an administrator to install/configure FFmpeg. Other animated formats currently require a GIF source; processing limits or decode errors do not mean the source is static.",
+    };
   if (error?.name === "ZodError" && Array.isArray(error.issues))
     return {
       code: "INVALID_TOOL_ARGUMENTS",
