@@ -378,3 +378,79 @@ test("Codex returns safe actionable validation bounds so failed reads can be cor
   rpc.complete();
   await run;
 });
+
+test("Codex occupancy uses last request, ignores compaction reset zero, and waits for completion", async (t) => {
+  const cfg = config(),
+    rpc = new Rpc(),
+    b = new CodexBackend(cfg.backends[0], cfg.agents[0], {
+      root: temp(t),
+      rpc,
+    });
+  t.after(() => b.close());
+  const usage = [];
+  b.active.set("fixture-thread", { onUsage: (u) => usage.push(u) });
+  const emit = (last) =>
+    rpc.emit("notification", {
+      method: "thread/tokenUsage/updated",
+      params: {
+        threadId: "fixture-thread",
+        tokenUsage: {
+          last,
+          total: { totalTokens: 999999 },
+          modelContextWindow: 10000,
+        },
+      },
+    });
+  emit({ inputTokens: 4000, outputTokens: 100 });
+  emit({ inputTokens: 0, outputTokens: 0 });
+  assert.equal(usage.length, 1);
+  assert.equal(usage[0].contextTokens, 4100);
+  assert.equal(usage[0].cumulativeTokens, 999999);
+  b.active.delete("fixture-thread");
+  let finished = false;
+  const compact = b
+    .compact({
+      session: { id: "fixture-thread" },
+      signal: new AbortController().signal,
+    })
+    .then((r) => {
+      finished = true;
+      return r;
+    });
+  await tick();
+  assert(!finished);
+  emit({ inputTokens: 0, outputTokens: 0 });
+  rpc.complete();
+  assert.equal((await compact).usage, undefined);
+  assert(rpc.calls.some((c) => c.method === "thread/compact/start"));
+});
+
+test("DSH manual compaction distinguishes unsupported, no-op and committed summary", async () => {
+  const cfg = config();
+  let result;
+  const client = {
+    commands: {
+      execute: async () => ({ result: { ok: true, value: result } }),
+    },
+    callUnary: async () => ({
+      result: {
+        ok: true,
+        value: {
+          values: {
+            contextPressure: { projectedTokens: 2000, contextWindow: 10000 },
+          },
+        },
+      },
+    }),
+  };
+  const b = new DshBackend(cfg.backends[0], cfg.agents[0], { client }),
+    p = { session: { id: "fixture" }, signal: new AbortController().signal };
+  await assert.rejects(b.compact(p), /UNSUPPORTED_OR_FAILED/);
+  result = { result: { kind: "success", text: "No compactable history yet." } };
+  assert.equal((await b.compact(p)).requiresReinitialize, false);
+  result = { result: { kind: "success", sourceEventSeq: 12 } };
+  const r = await b.compact(p);
+  assert.equal(r.compacted, true);
+  assert.equal(r.requiresReinitialize, true);
+  assert.equal(r.usage.source, "estimated");
+});

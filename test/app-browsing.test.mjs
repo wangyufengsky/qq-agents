@@ -235,3 +235,31 @@ test("public app records can be re-read in another allowed chat without a disclo
   assert.equal(other.disclosureRequest, undefined);
   assert.equal(other.privateRead.size, 0);
 });
+test("changing presentation page size does not change backend numbered page boundaries", async (t) => {
+  const batches = [];
+  const { runtime } = setup(t, async (job) => {
+    batches.push(job.backendLimit);
+    const offset = ((job.cursor?.page || 1) - 1) * job.backendLimit;
+    return {
+      items: Array.from({ length: job.backendLimit }, (_, i) => ({
+        url: `https://www.zhihu.com/question/123/answer/${offset + i + 1}`,
+      })),
+      next: { page: (job.cursor?.page || 1) + 1 },
+      coverage: "listing",
+    };
+  });
+  const ctx = context(runtime),
+    first = await runtime.callTool(ctx, "app_browse", {
+      platform: "zhihu",
+      entry: "recommend",
+      limit: 2,
+    });
+  const second = await runtime.callTool(ctx, "app_browse", {
+    platform: "zhihu",
+    entry: "recommend",
+    limit: 5,
+    cursor: first.nextCursor,
+  });
+  assert.deepEqual(batches, [2, 2]);
+  assert.equal(second.items[0].id, "question/123/answer/3");
+});

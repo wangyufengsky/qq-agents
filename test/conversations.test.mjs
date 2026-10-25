@@ -160,8 +160,9 @@ test("scheduled silence suppresses wake, then resumes the queued mention once", 
   await settle(f.runtime);
   assert.equal(calls, 1);
 });
-test("proactive checks require idle time, enabled policy, probability and active gates", async (t) => {
+test("legacy proactive enable maps to one subject opportunity, with active gates", async (t) => {
   const c = cfg();
+  c.agents[0].subject.intervalMs = 60000;
   Object.assign(c.agents[0].behavior.proactive, {
     enabled: true,
     minMs: 60000,

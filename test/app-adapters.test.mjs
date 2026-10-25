@@ -24,7 +24,8 @@ test("Heybox signature matches upstream web-client compatibility vectors", () =>
 test("Heybox never returns cookie fields and image-only posts stay metadata", async () => {
   const page = {
     getCookies: async () => [
-      { name: "user_pkey", value: "fixture-secret" },
+      { name: "user_pkey", value: "fixture-secret", domain: ".xiaoheihe.cn" },
+      { name: "pkey", value: "other-platform", domain: ".example.org" },
       { name: "unrelated", value: "ignored" },
     ],
   };
@@ -73,5 +74,36 @@ test("capability probes distinguish failed reads and unverified credentials", as
     adapter.capabilities().find((x) => x.platform === "heybox").lastProbe
       .status,
     "APP_LOGIN_REQUIRED",
+  );
+});
+test("Zhihu API article and answer URLs become valid browser content references", async () => {
+  const { zhihuSearchRows } = await import("../src/apps/normalize.mjs");
+  const rows = zhihuSearchRows({
+    data: [
+      {
+        object: {
+          type: "article",
+          id: "123",
+          url: "https://api.zhihu.com/articles/123",
+          title: "文章",
+        },
+      },
+      {
+        object: {
+          type: "answer",
+          id: "456",
+          url: "https://www.zhihu.com/api/v4/answers/456",
+          question: { id: "789", title: "问答" },
+        },
+      },
+      { object: { type: "ad", id: "100", url: "https://example.org" } },
+    ],
+  });
+  assert.deepEqual(
+    rows.map((x) => x.url),
+    [
+      "https://zhuanlan.zhihu.com/p/123",
+      "https://www.zhihu.com/question/789/answer/456",
+    ],
   );
 });

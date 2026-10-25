@@ -1,3 +1,4 @@
+import { zhihuSearchRows } from "./normalize.mjs";
 // Isolated child: fixed read adapters only. Never load model-provided code or commands.
 import { heyboxRead } from "./heybox.mjs";
 import fs from "node:fs";
@@ -18,7 +19,10 @@ async function main() {
     )
   )
     throw Error("APP_OPERATION_INVALID");
-  const limit = Math.min(20, Math.max(1, Number(job.limit) || 5));
+  const limit = Math.min(
+    20,
+    Math.max(1, Number(job.backendLimit || job.limit) || 5),
+  );
   const pageNo = Math.min(50, Math.max(1, Number(job.cursor?.page) || 1));
   const candidates = (process.env.PATH || "")
     .split(path.delimiter)
@@ -175,17 +179,44 @@ async function main() {
             null,
             "ranking",
           );
-        if (job.operation === "search")
+        if (job.operation === "search") {
+          await page.goto(APP_LOGIN.bilibili);
+          const { apiGet } = await imp("clis/bilibili/utils.js");
+          const result = await apiGet(
+            page,
+            "/x/web-interface/wbi/search/type",
+            {
+              params: {
+                search_type: "video",
+                keyword: job.query,
+                page: pageNo,
+              },
+              signed: true,
+            },
+          );
+          if (result?.code !== 0)
+            throw Error(
+              result?.code === -101
+                ? "APP_LOGIN_REQUIRED"
+                : result?.code === -412
+                  ? "APP_RATE_LIMITED"
+                  : "APP_UPSTREAM_FAILED",
+            );
+          const rows = (result.data?.result || []).map((x) => ({
+            title: x.title,
+            author: x.author,
+            description: x.description,
+            url: x.bvid ? `https://www.bilibili.com/video/${x.bvid}` : "",
+            cover: x.pic,
+          }));
           return listing(
-            await builtin(page, "search", {
-              query: job.query,
-              type: "video",
-              page: pageNo,
-              limit: 50,
-            }),
-            { page: pageNo + 1 },
+            rows,
+            rows.length && pageNo < (result.data?.numPages || 50)
+              ? { page: pageNo + 1 }
+              : null,
             "search-results",
           );
+        }
         await page.goto(APP_LOGIN.bilibili);
         const identity = contentIdentity(job.url, "bilibili");
         if (identity.kind === "video-metadata")
@@ -267,20 +298,7 @@ async function main() {
                 limit: String(limit),
               }),
           );
-          const rows = (data.data || []).map((x) => {
-            const o = x.object || x,
-              target = o.question || o;
-            return {
-              title: target.title,
-              author: o.author?.name,
-              description: o.excerpt,
-              url:
-                o.url
-                  ?.replace("api.zhihu.com", "www.zhihu.com")
-                  .replace("/answers/", `/question/${o.question?.id}/answer/`)
-                  .replace("/questions/", "/question/") || "",
-            };
-          });
+          const rows = zhihuSearchRows(data);
           return listing(
             rows,
             data.paging?.is_end

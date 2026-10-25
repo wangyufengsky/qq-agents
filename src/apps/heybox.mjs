@@ -1,5 +1,7 @@
 import https from "node:https";
 import net from "node:net";
+import { randomBytes } from "node:crypto";
+const deviceId = randomBytes(16).toString("hex");
 import { signature } from "../../vendor/heybox/signature.mjs";
 import { validateFetchUrl } from "../../vendor/social-reader/safe-fetch.js";
 import { contentIdentity } from "./urls.mjs";
@@ -7,7 +9,7 @@ const paths = {
   recommend: "/bbs/app/feeds",
   board: "/bbs/app/topic/feeds",
   boards: "/bbs/app/topic/categories",
-  search: "/bbs/app/api/general/search/v1",
+  search: "/bbs/app/api/general/search/v1/web",
   read: "/bbs/app/link/tree",
   comments: "/bbs/app/link/tree",
 };
@@ -15,7 +17,13 @@ export async function requestHeybox(endpoint, params, cookie) {
   const url = new URL("https://api.xiaoheihe.cn" + endpoint);
   url.search = new URLSearchParams({
     os_type: "web",
-    version: "999.0.3",
+    app: "heybox",
+    client_type: "web",
+    version: "999.0.4",
+    web_version: "2.5",
+    device_info: "Chrome",
+    device_id: deviceId,
+    heybox_id: /(?:^|;\s*)heybox_id=(\d+)(?:;|$)/.exec(cookie || "")?.[1] || "",
     x_app: "heybox_website",
     x_client_type: "web",
     x_os_type: "Windows",
@@ -99,9 +107,14 @@ export async function requestHeybox(endpoint, params, cookie) {
 const rows = (result) =>
   Array.isArray(result)
     ? result
-    : result.links || result.link_list || result.list || result.data || [];
+    : result.items ||
+      result.links ||
+      result.link_list ||
+      result.list ||
+      result.data ||
+      [];
 function post(value) {
-  const x = value.link || value,
+  const x = value.link || value.info || value.post || value,
     id = String(x.linkid || x.link_id || x.id || "");
   if (!/^\d+$/.test(id)) return null;
   let body = x.content || x.text || x.description || "";
@@ -128,14 +141,16 @@ function post(value) {
 export async function heyboxRead(page, job, { request = requestHeybox } = {}) {
   const cookies = await page.getCookies({ url: "https://api.xiaoheihe.cn" });
   const cookie = cookies
-    .filter((x) =>
-      [
-        "heybox_id",
-        "x_xhh_heyboxid",
-        "user_pkey",
-        "pkey",
-        "x_xhh_tokenid",
-      ].includes(x.name),
+    .filter(
+      (x) =>
+        (!x.domain || /(^|\.)xiaoheihe\.cn$/.test(x.domain)) &&
+        [
+          "heybox_id",
+          "x_xhh_heyboxid",
+          "user_pkey",
+          "pkey",
+          "x_xhh_tokenid",
+        ].includes(x.name),
     )
     .map((x) => `${x.name}=${x.value}`)
     .join("; ");

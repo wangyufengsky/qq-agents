@@ -340,6 +340,7 @@ export class AppBrowsing {
       const streamId = stream?.job.streamId || randomUUID();
       job.streamId = streamId;
       job.limit = Math.min(20, args.limit || stream?.job.limit || 5);
+      job.backendLimit = stream?.job.backendLimit || job.limit;
       if (
         stream &&
         job.platform === "xiaohongshu" &&

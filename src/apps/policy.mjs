@@ -56,3 +56,17 @@ export function inAppHours(policy, date) {
       ? p >= start && p < end
       : p >= start || p < end;
 }
+
+export const SUBJECT_APP_TOOLS = [
+  "app_capabilities",
+  "app_browse",
+  "app_search",
+  "app_boards",
+  "app_read",
+  "app_record",
+  "app_comments",
+  "app_history",
+  "qq_read_share_card",
+  "app_image",
+  "app_share_propose",
+];

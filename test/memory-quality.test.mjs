@@ -223,7 +223,7 @@ test("schema v1 upgrade backfills indexes atomically and is idempotent", (t) => 
     );
     assert.equal(n.bind("agent-a").related({ id: e.id }).items.length, 2);
     assert.equal(n.db.prepare("SELECT COUNT(*) n FROM events").get().n, 3);
-    assert.equal(n.db.prepare("PRAGMA user_version").get().user_version, 3);
+    assert.equal(n.db.prepare("PRAGMA user_version").get().user_version, 4);
     n.close();
   }
 });
@@ -288,7 +288,7 @@ test("schema v2 upgrade backfills outgoing reply metadata once and preserves the
     try {
       assert.equal(
         reopened.db.prepare("PRAGMA user_version").get().user_version,
-        3,
+        4,
       );
       const a = reopened.bind("agent-a");
       assert.deepEqual(

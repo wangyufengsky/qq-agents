@@ -6,6 +6,52 @@ const appLabels = {
   xiaohongshu: "小红书",
   tieba: "贴吧",
 };
+const appWords = {
+  following: "关注流",
+  hot: "热门",
+  ranking: "排行榜",
+  recommend: "推荐",
+  board: "板块",
+  page: "按页继续",
+  cursor: "连续分页",
+  offset: "连续分页",
+  sample: "有限样本",
+  "first-page": "首批结果",
+  "following-timeline": "关注动态",
+  "popular-list": "热门内容",
+  "hot-list": "热榜",
+  "hot-topics": "热门话题",
+  "personalized-recommendations": "推荐信息流",
+  "recommendations-account-dependent": "推荐内容（受账号状态影响）",
+  "forum-posts": "板块帖子",
+  "not-tested": "尚未检查",
+  checked: "已检查",
+  ok: "读取成功",
+  "login-required": "需要本机登录",
+  "credential-present-unverified": "发现本机登录信息，账号有效性待核验",
+  "public-read": "公开读取可用，登录状态未核验",
+  "answer-text": "回答正文",
+  "post-text": "帖子正文",
+  "note-text": "笔记正文",
+  "post-metadata": "帖子元数据",
+  "note-metadata": "笔记元数据",
+  "video-metadata": "视频标题和简介",
+  "sampled-comments": "评论样本",
+  "thread-replies": "楼层回复",
+  "thread-comments": "帖子评论",
+  "thread-text": "帖子与楼层",
+  "card-summary": "分享卡片摘要",
+  waiting: "等待目标会话",
+  deferred: "暂缓",
+  handedoff: "已交给目标会话",
+  selected: "目标会话决定发送",
+  completed: "已完成",
+  cancelled: "已取消",
+  expired: "已过期",
+  failed: "失败",
+  unknown: "送达结果未知",
+};
+const appWord = (x) => appWords[x] || x || "暂无";
 function renderApps() {
   if (!config.agents.some((a) => a.id === appAgentId))
     appAgentId = config.agents[0]?.id;
@@ -81,15 +127,15 @@ async function loadApps(agentId, offset = 0) {
           Object.entries(p.browse)
             .map(
               ([name, v]) =>
-                name +
+                appWord(name) +
                 "（" +
-                v.semantic +
+                appWord(v.semantic) +
                 "，" +
                 (v.pagination ? "可继续" : "单页样本") +
                 "）",
             )
             .join("、"),
-        )}</p><p>搜索分页：${esc(p.search)}；评论：${esc(p.comments)}；最近探测：${esc(p.lastProbe.status)}</p><a href="${esc(p.loginUrl)}" target="_blank" rel="noreferrer noopener">本机登录网址</a> <button data-app-probe="${esc(p.platform)}">检查登录</button><span data-app-login="${esc(p.platform)}"></span></article>`,
+        )}</p><p>搜索分页：${esc(appWord(p.search))}；评论：${esc(appWord(p.comments))}；最近探测：${esc(appWord(p.lastProbe.status))}</p><a href="${esc(p.loginUrl)}" target="_blank" rel="noreferrer noopener">本机登录网址</a> <button data-app-probe="${esc(p.platform)}">检查登录</button><span data-app-login="${esc(p.platform)}"></span></article>`,
     )
     .join("");
   document.querySelectorAll("[data-app-probe]").forEach(
@@ -110,7 +156,7 @@ async function loadApps(agentId, offset = 0) {
                 ? " 已登录"
                 : result.loggedIn === false
                   ? " 未登录"
-                  : ` ${result.status}`;
+                  : ` ${appWord(result.status)}`;
           } finally {
             b.disabled = false;
           }
@@ -120,7 +166,7 @@ async function loadApps(agentId, offset = 0) {
     data.intents
       .map(
         (i) =>
-          `<article class="record"><strong>${esc(i.appShare.title || i.topic)}</strong> ${tag(i.status)}<p>目标：${esc(i.target)} · 阅读范围：${esc(i.appShare.readingScope)}</p><p>分享理由：${esc(i.reason)}</p><p>有效期：${esc(new Date(i.expiresAt).toLocaleString())} · 出站：${esc(i.deliveryId || "尚未投递")}</p><p><a href="${esc(i.appShare.url)}" target="_blank" rel="noreferrer noopener">来源链接</a> · 记录 ${esc(i.appShare.recordId)}</p>${["waiting", "deferred", "handedoff", "selected"].includes(i.status) ? `<button data-share-cancel="${esc(i.id)}" data-revision="${i.revision}">取消此意图</button>` : ""}</article>`,
+          `<article class="record"><strong>${esc(i.appShare.title || i.topic)}</strong> ${tag(appWord(i.status))}<p>目标：${esc(i.target)} · 阅读范围：${esc(appWord(i.appShare.readingScope))}</p><p>分享理由：${esc(i.reason.slice(0, 220))}${i.reason.length > 220 ? "…" : ""}</p>${i.reason.length > 220 ? `<details><summary>展开完整理由</summary><p>${esc(i.reason)}</p></details>` : ""}<p>有效期：${esc(new Date(i.expiresAt).toLocaleString())} · 出站：${esc(i.deliveryId || "尚未投递")}</p><p><a href="${esc(i.appShare.url)}" target="_blank" rel="noreferrer noopener">来源链接</a> · 记录 ${esc(i.appShare.recordId)}</p>${["waiting", "deferred", "handedoff", "selected"].includes(i.status) ? `<button data-share-cancel="${esc(i.id)}" data-revision="${i.revision}">取消此意图</button>` : ""}</article>`,
       )
       .join("") ||
     '<p class="hint">尚无分享意图；没有意图不表示需要强行分享。</p>';
@@ -141,7 +187,7 @@ async function loadApps(agentId, offset = 0) {
     data.history.items
       .map(
         (x) =>
-          `<article class="record"><strong>${esc(x.title || x.error || "浏览记录")}</strong><p>${esc(x.platform)} · ${esc(x.coverage || x.readingScope || x.error)} · ${esc(x.fetchedAt)}</p>${x.url ? `<p><a href="${esc(x.url)}" target="_blank" rel="noreferrer noopener">打开来源</a></p>` : ""}<p>${esc(x.summary || "")}</p><p class="mono">${esc(x.recordId)}</p>${x.source ? `<p>来源会话：${esc(x.source.conversation)} · 消息：${esc(x.source.messageId)}</p>` : ""}</article>`,
+          `<article class="record"><strong>${esc(x.title || x.error || "浏览记录")}</strong><p>${esc(appLabels[x.platform] || x.platform)} · ${esc(appWord(x.coverage || x.readingScope || x.error))} · ${esc(x.fetchedAt)}</p>${x.url ? `<p><a href="${esc(x.url)}" target="_blank" rel="noreferrer noopener">打开来源</a></p>` : ""}<p>${esc(x.summary || "")}</p><p class="mono">${esc(x.recordId)}</p>${x.source ? `<p>来源会话：${esc(x.source.conversation)} · 消息：${esc(x.source.messageId)}</p>` : ""}</article>`,
       )
       .join("") || '<p class="hint">尚无浏览记录。</p>';
   if (data.progress.length)

@@ -61,9 +61,7 @@ async function renderSchedules() {
   parityTasks = result.tasks;
   $("#parity-body").innerHTML =
     `<details class="card" open><summary>作息与主动参与</summary><form id="behavior-form"><div class="form-grid">
-    ${parityCheck("proactive", "启用主动机会检查", p.enabled)}${parityNumber("idle", "安静多久后可以主动参与（分钟）", p.idleMs / 60000)}
-    ${parityNumber("min", "检查最短间隔（分钟）", p.minMs / 60000, 1)}${parityNumber("max", "检查最长间隔（分钟）", p.maxMs / 60000, 1)}
-    ${parityNumber("chance", "主动机会概率（0—1）", p.probability, 0, 0.01)}${parityField("zone", "作息时区", p.timezone)}
+    <p class="hint">主体主动检查与联系范围请在「Self 与主体」设置；旧逐聊天随机主动入口已停用。</p>
     ${parityNumber("observe", "睡前观察（秒；0 关闭要求）", b.preSleepWaitMs / 1000)}${parityNumber("quiet", "新消息后的安静窗口（秒）", b.quietAfterNewMs / 1000)}
     ${parityNumber("batch", "合并唤醒窗口（秒）", b.batchWindowMs / 1000)}${parityNumber("reply", "发言后回复检查（秒）", b.replyCheckMs / 1000, 1)}
     ${parityNumber("wakeHour", "每小时唤醒上限", b.maxWakePerHour, 1)}${parityNumber("sendHour", "每小时投递上限", b.maxSendPerHour, 1)}
@@ -105,14 +103,6 @@ async function renderSchedules() {
         replyCheckMs: num("reply") * 1000,
         maxWakePerHour: num("wakeHour"),
         maxSendPerHour: num("sendHour"),
-      });
-      Object.assign(agent.behavior.proactive, {
-        enabled: f.has("proactive"),
-        idleMs: num("idle") * 60000,
-        minMs: num("min") * 60000,
-        maxMs: num("max") * 60000,
-        probability: num("chance"),
-        timezone: f.get("zone"),
       });
       Object.assign(agent.wake, {
         keywords: String(f.get("keywords"))

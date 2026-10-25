@@ -44,7 +44,10 @@ export const APP_CAPABILITIES = {
   },
   heybox: {
     browse: {
-      recommend: { semantic: "personalized-recommendations", pagination: true },
+      recommend: {
+        semantic: "recommendations-account-dependent",
+        pagination: true,
+      },
       board: { semantic: "forum-posts", pagination: true },
     },
     search: "offset",

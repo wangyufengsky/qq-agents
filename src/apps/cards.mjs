@@ -1,5 +1,5 @@
 import { SaxesParser } from "saxes";
-import { platformOf, publicUrl } from "./urls.mjs";
+import { platformOf, publicUrl, contentIdentity } from "./urls.mjs";
 const MAX = 65536;
 const text = (value, max = 1000) =>
   typeof value === "string"
@@ -40,6 +40,10 @@ function shape(value, format) {
   try {
     platform = target ? platformOf(target) : null;
   } catch {}
+  let identity;
+  try {
+    if (target) identity = contentIdentity(target);
+  } catch {}
   const appPath = text(
     value.pagepath || value.path || value.appid || value.appId,
     200,
@@ -47,6 +51,9 @@ function shape(value, format) {
   return {
     format,
     platform,
+    ...(identity
+      ? { key: identity.key, id: identity.id, kind: identity.kind }
+      : {}),
     title: text(value.title || value.desc || value.prompt, 500),
     summary: text(value.desc || value.summary || value.content, 2000),
     image: urlValue(
