@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { appsPolicySchema } from "../apps/policy.mjs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -130,6 +131,7 @@ export const configSchema = z
           scheduler: schedulerSchema,
           voice: voiceSchema,
           files: filesSchema,
+          apps: appsPolicySchema,
           crossGroup: crossGroupSchema,
           slang: slangSchema,
           operations: operationsSchema,

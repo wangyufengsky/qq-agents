@@ -1,3 +1,4 @@
+import { appDefinitions, appTool } from "../apps/tools.mjs";
 import { fileDefinitions, fileTool } from "./file-tools.mjs";
 import { z } from "zod";
 import { synthesize } from "./speech.mjs";
@@ -27,6 +28,7 @@ const fields = {
 const definitions = {
   ...legacyDefinitions,
   ...fileDefinitions,
+  ...appDefinitions,
   memory_search: [
     "按中文关键词、人物QQ、来源、时间、记录类型检索自己的跨会话经历/日记。命中附带同一场景的相邻发言和引用；相邻不等于同一话题。自行判断适合表达的回忆，再按ID展开原文。",
     z
@@ -301,6 +303,7 @@ export async function dispatchTool(runtime, ctx, name, input) {
   const args = definition[1].parse(input),
     mem = runtime.memory.bind(ctx.agentId);
   protect(ctx, args);
+  if (appDefinitions[name]) return appTool(runtime, ctx, name, args);
   if (fileDefinitions[name]) return fileTool(runtime, ctx, name, args);
   if (legacyDefinitions[name]) return legacyTool(runtime, ctx, name, args);
   if (name === "memory_search") {
