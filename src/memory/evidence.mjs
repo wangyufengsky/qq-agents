@@ -19,6 +19,41 @@ const preferred = (candidate, old) =>
   strength(candidate) > strength(old) ||
   (strength(candidate) === strength(old) && candidate.id < old.id);
 
+const unexpanded = (segments = []) =>
+  segments.some(
+    (s) =>
+      ["json", "image", "video", "record", "file", "forward", "reply"].includes(
+        s.type,
+      ) || /\[CQ:[^\]]*\]/i.test(s.data?.text || ""),
+  );
+
+// A confirmed send is a copy, not a new observation. Its node index refers to
+// exactly one source; inheriting every eventIds entry would launder sibling nodes.
+function confirmedNodeSource(memory, payload) {
+  const sent = memory.db
+    .prepare("SELECT * FROM events WHERE agent_id=? AND id=?")
+    .get(memory.agentId, payload.confirmedEventId);
+  if (!sent) throw Error("EVIDENCE_NOT_OWNED_OR_MISSING");
+  const p = JSON.parse(sent.payload || "{}");
+  if (
+    sent.kind !== "message.sent" ||
+    sent.direction !== "out" ||
+    sent.status !== "confirmed" ||
+    !Number.isInteger(payload.index) ||
+    payload.index < 0 ||
+    !Array.isArray(p.eventIds)
+  )
+    return null;
+  const snapshot = p.forwardSnapshot?.messages?.[payload.index]?.message;
+  if (
+    snapshot
+      ? digest(snapshot) !== digest(payload.segments || [])
+      : payload.source !== "confirmed-send-sources"
+  )
+    return null;
+  return p.eventIds[payload.index] || null;
+}
+
 // Immutable, agent-owned source proof. IDs remain lookup handles; they are not
 // themselves a historical revision. Never recompute an accepted proof from a diary's latest edit.
 export function freezeEvidence(memory, ids, now) {
@@ -53,6 +88,12 @@ export function freezeEvidence(memory, ids, now) {
         ];
       if (row.kind === "forward.node" && p.rootEventId)
         parents = [...parents, p.rootEventId];
+      const confirmedCopy = row.kind === "forward.node" && p.confirmedEventId;
+      if (confirmedCopy) {
+        const source = confirmedNodeSource(memory, p);
+        if (source) parents.push(source);
+        parents.push(p.confirmedEventId);
+      }
       // Resolve explicit replies to the original observed message in its actual namespace.
       for (const s of p.segments || [])
         if (s.type === "reply" && s.data?.id != null) {
@@ -91,7 +132,13 @@ export function freezeEvidence(memory, ids, now) {
             }
           : {}),
         ...(row.kind === "forward.node"
-          ? { resourceId: p.resourceId, index: p.index, claimedAuthor: true }
+          ? {
+              resourceId: p.resourceId,
+              index: p.index,
+              claimedAuthor: true,
+              source: p.source,
+              confirmedEventId: p.confirmedEventId,
+            }
           : {}),
       };
       references.set(id, {
@@ -111,9 +158,12 @@ export function freezeEvidence(memory, ids, now) {
       if (app?.key) {
         key = "app:" + normalize(app.key);
         epistemic = "external-source-claim";
-      } else if (row.kind === "forward.node") {
+      } else if (row.kind === "forward.node" && !confirmedCopy) {
         key = "forward:" + p.resourceId;
-        epistemic = "forwarded-claim";
+        epistemic =
+          unexpanded(p.segments) || !normalize(text)
+            ? "unexpanded-reference"
+            : "forwarded-claim";
       } else if (
         row.direction === "in" &&
         row.kind === "message.received" &&
@@ -134,9 +184,7 @@ export function freezeEvidence(memory, ids, now) {
           epistemic = "unresolved-reference";
         } else if (normalize(row.body)) {
           key = "speech:" + normalize(row.body);
-          epistemic = (p.segments || []).some((s) =>
-            ["json", "image", "video", "record"].includes(s.type),
-          )
+          epistemic = unexpanded(p.segments)
             ? "unexpanded-reference"
             : "observed-speech";
         }
