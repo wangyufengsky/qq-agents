@@ -1,7 +1,10 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import {
+  StreamableHTTPClientTransport,
+  StreamableHTTPError,
+} from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 
 export class ExternalTools {
@@ -11,8 +14,10 @@ export class ExternalTools {
     this.starting = new Map();
     this.connecting = new Map();
     this.connectTimeoutMs = connectTimeoutMs;
+    this.closing = null;
   }
   async connect(id) {
+    if (this.closing) throw Error("EXTERNAL_CONNECTION_CANCELLED");
     if (this.clients.has(id)) return this.clients.get(id);
     if (this.starting.has(id)) return this.starting.get(id);
     const config = this.configs.find((s) => s.id === id);
@@ -54,6 +59,12 @@ export class ExternalTools {
       });
       this.connecting.set(id, { cancel });
       const deadline = setTimeout(cancel, this.connectTimeoutMs);
+      let entry,
+        closed = false;
+      client.onclose = () => {
+        closed = true;
+        if (entry && this.clients.get(id) === entry) this.clients.delete(id);
+      };
       try {
         const initialize = async () => {
           await client.connect(transport, { timeout: 15000 });
@@ -84,13 +95,8 @@ export class ExternalTools {
             allowed: new Set(config.allowedTools),
           };
         };
-        const entry = await Promise.race([initialize(), cancelled]);
-        // A server that exits or drops its session must be rediscovered on the next call.
-        const onclose = client.onclose;
-        client.onclose = () => {
-          onclose?.();
-          if (this.clients.get(id) === entry) this.clients.delete(id);
-        };
+        entry = await Promise.race([initialize(), cancelled]);
+        if (closed) throw Error("EXTERNAL_CONNECTION_CANCELLED");
         this.clients.set(id, entry);
         return entry;
       } catch (e) {
@@ -163,11 +169,36 @@ export class ExternalTools {
       throw Error("EXTERNAL_TOOL_DISABLED");
     const entry = await this.connect(id);
     if (!entry.names.has(name)) throw Error("EXTERNAL_TOOL_UNAVAILABLE");
-    return entry.client.callTool({ name, arguments: args }, undefined, {
-      timeout: 120000,
-    });
+    try {
+      return await entry.client.callTool({ name, arguments: args }, undefined, {
+        timeout: 120000,
+      });
+    } catch (error) {
+      // Streamable HTTP specifies 404 for an expired initialized session.
+      // A JSON-RPC tool error (even code 404) is not this transport error.
+      if (
+        entry.transport instanceof StreamableHTTPClientTransport &&
+        entry.transport.sessionId &&
+        error instanceof StreamableHTTPError &&
+        error.code === 404
+      ) {
+        if (this.clients.get(id) === entry) this.clients.delete(id);
+        await entry.client.close().catch(() => {});
+      }
+      // Never replay a failed tools/call: it may already have caused a side effect.
+      throw error;
+    }
   }
   async close() {
+    if (this.closing) return this.closing;
+    this.closing = this.closeConnections();
+    try {
+      await this.closing;
+    } finally {
+      this.closing = null;
+    }
+  }
+  async closeConnections() {
     // SDK request timeouts do not cover transport startup (e.g. an SSE stream
     // that never supplies an endpoint). Cancel before waiting on discovery.
     for (const pending of this.connecting.values()) pending.cancel();

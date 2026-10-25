@@ -212,7 +212,7 @@ test("schema v1 upgrade backfills indexes atomically and is idempotent", (t) => 
     }),
   );
   s.db.exec(
-    "DROP TRIGGER events_fts_insert; DROP TRIGGER events_fts_update; DROP TRIGGER events_fts_delete; DROP TABLE events_fts; DROP TRIGGER event_links_insert; DROP TRIGGER event_links_sent_insert; DROP TABLE event_links; PRAGMA user_version=1",
+    "DROP VIEW message_identities; DROP TABLE message_aliases; DROP TABLE message_observations; DROP TRIGGER events_fts_insert; DROP TRIGGER events_fts_update; DROP TRIGGER events_fts_delete; DROP TABLE events_fts; DROP TRIGGER event_links_insert; DROP TRIGGER event_links_sent_insert; DROP TABLE event_links; PRAGMA user_version=1",
   );
   s.close();
   for (let i = 0; i < 2; i++) {
@@ -223,7 +223,7 @@ test("schema v1 upgrade backfills indexes atomically and is idempotent", (t) => 
     );
     assert.equal(n.bind("agent-a").related({ id: e.id }).items.length, 2);
     assert.equal(n.db.prepare("SELECT COUNT(*) n FROM events").get().n, 3);
-    assert.equal(n.db.prepare("PRAGMA user_version").get().user_version, 5);
+    assert.equal(n.db.prepare("PRAGMA user_version").get().user_version, 6);
     n.close();
   }
 });
@@ -280,7 +280,7 @@ test("schema v2 upgrade backfills outgoing reply metadata once and preserves the
     }),
   );
   initial.db.exec(
-    "DROP TRIGGER event_links_sent_insert; DELETE FROM event_links; PRAGMA user_version=2",
+    "DROP VIEW message_identities; DROP TABLE message_aliases; DROP TABLE message_observations; DROP TRIGGER event_links_sent_insert; DELETE FROM event_links; PRAGMA user_version=2",
   );
   initial.close();
   for (let i = 0; i < 2; i++) {
@@ -288,7 +288,7 @@ test("schema v2 upgrade backfills outgoing reply metadata once and preserves the
     try {
       assert.equal(
         reopened.db.prepare("PRAGMA user_version").get().user_version,
-        5,
+        6,
       );
       const a = reopened.bind("agent-a");
       assert.deepEqual(

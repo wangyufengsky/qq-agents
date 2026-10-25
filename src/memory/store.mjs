@@ -9,6 +9,7 @@ import {
 import { migrateSearch, related } from "./search.mjs";
 import { migrateTimeline } from "./timeline.mjs";
 import { around } from "./around.mjs";
+import { migrateMessageIds, observeKnownMessage } from "./message-ids.mjs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { createHash, randomUUID } from "node:crypto";
@@ -63,7 +64,7 @@ export class MemoryStore {
       fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
     this.db = new DatabaseSync(file);
     const version = this.db.prepare("PRAGMA user_version").get().user_version;
-    if (version > 5) {
+    if (version > 6) {
       this.db.close();
       throw Error("MEMORY_SCHEMA_NEWER_THAN_CODE");
     }
@@ -88,6 +89,7 @@ export class MemoryStore {
       migrateSearch(this.db, version);
       migrateIdentity(this.db);
       migrateTimeline(this.db, version);
+      migrateMessageIds(this.db, version);
     } catch (error) {
       this.db.close();
       throw error;
@@ -122,6 +124,8 @@ class AgentMemory {
   append(e) {
     if (!e.dedupe || !e.conversation || !e.kind)
       throw Error("EVENT_IDENTITY_REQUIRED");
+    const observedMessage = observeKnownMessage(this, e);
+    if (observedMessage) return observedMessage;
     const id = randomUUID(),
       observed = e.observedAt || now();
     const result = this.db
@@ -658,6 +662,8 @@ class AgentMemory {
       "model_turns",
       "session_history",
       "message_progress",
+      "message_aliases",
+      "message_observations",
     ])
       tables[name] = this.db
         .prepare(

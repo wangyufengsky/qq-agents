@@ -62,7 +62,7 @@ export function forwardPayload(events, agent, connection) {
     const uin = String(e.senderId || connection.accountId);
     nodes.push(
       referenced
-        ? { type: "node", data: { id: e.messageId } }
+        ? { type: "node", data: { id: e.gatewayMessageId || e.messageId } }
         : {
             type: "node",
             data: { name, uin, content },
@@ -86,11 +86,21 @@ export function forwardPayload(events, agent, connection) {
 function confirmedForward(runtime, ctx, root) {
   if (root.direction !== "out" || !root.messageId) return null;
   const mem = runtime.memory.bind(ctx.agentId);
+  // A confirmed send and a pre-schema-6 observed echo can both exist. The
+  // receipt-backed send is explicit provenance, not a guessed content match.
+  const ns = root.payload?.messageNamespace ?? null;
   const rows = mem.db
     .prepare(
-      "SELECT * FROM events WHERE agent_id=? AND connection_id=? AND conversation=? AND message_id=? AND kind='message.sent' AND status='confirmed' AND direction='out'",
+      "SELECT DISTINCT e.* FROM message_identities i JOIN events e ON e.id=i.event_id WHERE i.agent_id=? AND i.connection_id=? AND i.conversation=? AND i.message_id=? AND (? IS NULL OR i.namespace=?) AND e.kind='message.sent' AND e.status='confirmed' AND e.direction='out'",
     )
-    .all(ctx.agentId, root.connectionId, root.conversation, root.messageId);
+    .all(
+      ctx.agentId,
+      root.connectionId,
+      root.conversation,
+      root.messageId,
+      ns,
+      ns,
+    );
   if (rows.length !== 1) return null;
   const sent = mem.event(rows[0], root.conversation),
     p = sent.payload;

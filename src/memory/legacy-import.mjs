@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { readAliasManifest, importAliases } from "./message-ids.mjs";
 import {
   validateConnections,
   mappedConnection,
@@ -348,6 +349,17 @@ export function inspectLegacy(source, options = {}) {
   for (const e of plan.events)
     if (e.payload.senderName && e.senderId)
       plan.people.push({ qq: e.senderId, name: e.payload.senderName });
+  if (options.aliasFile) {
+    const manifest = readAliasManifest(
+      options.aliasFile,
+      plan.connectionBinding,
+      agentId,
+      connectionMap,
+      options.aliasSourceFiles,
+    );
+    plan.aliases = manifest.aliases;
+    plan.files.push(manifest.file);
+  }
   return plan;
 }
 
@@ -371,7 +383,8 @@ export function importLegacy(memory, plan) {
   let inserted = 0,
     duplicates = 0,
     enriched = 0,
-    rebound = 0;
+    rebound = 0,
+    aliasesInserted = 0;
   memory.store.transaction(() => {
     rebound = bindLegacyConnections(memory, plan);
     for (const event of plan.events) {
@@ -465,6 +478,11 @@ export function importLegacy(memory, plan) {
       } else if (memory.append(event).inserted) inserted++;
       else duplicates++;
     }
+    aliasesInserted = importAliases(
+      memory,
+      plan.aliases,
+      plan.connectionBinding,
+    );
     for (const note of plan.notes) {
       const e = {
         conversation: note.conversation || "legacy:unknown",
@@ -521,6 +539,7 @@ export function importLegacy(memory, plan) {
     duplicates,
     enriched,
     rebound,
+    aliasesInserted,
     rejected: plan.rejected.length,
     warnings: plan.warnings,
     sourceFiles: plan.files.length,

@@ -353,19 +353,25 @@ export class Runtime {
     )) {
       if (!allowed(a, e.conversation)) continue;
       const mem = this.memory.bind(a.id);
+      assertMessageAccount(mem, connectionId, c.accountId);
       if (
         ownEcho &&
-        mem.db
-          .prepare(
-            "SELECT 1 FROM deliveries WHERE agent_id=? AND conversation=? AND message_id=? AND status='sent'",
-          )
-          .get(a.id, e.conversation, e.messageId)
+        resolveMessage(
+          mem.db,
+          {
+            agentId: a.id,
+            connectionId,
+            conversation: e.conversation,
+            namespace: c.messageIdNamespace || "onebot",
+          },
+          e.messageId,
+        )?.kind === "message.sent"
       ) {
         results.push({ agentId: a.id, duplicate: true, ownEcho: true });
         continue;
       }
       const key = e.messageId
-        ? `${connectionId}:${e.kind}:${e.messageId}`
+        ? `${connectionId}:${c.messageIdNamespace || "onebot"}:${e.conversation}:${e.kind}:${e.messageId}`
         : `${connectionId}:${e.kind}:${digest(raw)}`;
       const redactConfirmation =
         e.conversation.startsWith("private:") &&
@@ -379,8 +385,17 @@ export class Runtime {
         connectionId,
         dedupe: key,
         payload: redactConfirmation
-          ? { redacted: "owner-confirmation", timeKnown: e.timeKnown }
-          : { segments: e.segments, raw: e.raw, timeKnown: e.timeKnown },
+          ? {
+              messageNamespace: c.messageIdNamespace || "onebot",
+              redacted: "owner-confirmation",
+              timeKnown: e.timeKnown,
+            }
+          : {
+              messageNamespace: c.messageIdNamespace || "onebot",
+              segments: e.segments,
+              raw: e.raw,
+              timeKnown: e.timeKnown,
+            },
       });
       mem.person(e.senderId, e.senderName);
       if (!archived.inserted) {
@@ -702,13 +717,25 @@ export class Runtime {
     text = mdToPlain(text);
     if (!text && !mediaId) throw Error("EMPTY_MESSAGE");
     const segments = [];
+    const connection = this.connection(a.connectionId),
+      namespace = connection.messageIdNamespace || "onebot",
+      requestedReplyTo = replyTo;
+    assertMessageAccount(mem, a.connectionId, connection.accountId);
     if (replyTo) {
-      const own = mem.db
-        .prepare(
-          "SELECT id FROM events WHERE agent_id=? AND conversation=? AND message_id=?",
-        )
-        .get(a.id, ctx.conversation, String(replyTo));
+      const scope = {
+        agentId: a.id,
+        connectionId: a.connectionId,
+        conversation: ctx.conversation,
+      };
+      const own = resolveMessage(mem.db, scope, replyTo);
       if (!own) throw Error("UNKNOWN_REPLY_TARGET");
+      replyTo = gatewayMessageId(
+        mem.db,
+        scope,
+        own,
+        namespace,
+        connection.accountId,
+      );
       segments.push({ type: "reply", data: { id: String(replyTo) } });
     }
     if (atUserId) {
@@ -726,7 +753,13 @@ export class Runtime {
       requestId,
       intent: segments,
       body: archiveBody ?? text,
-      metadata: { replyTo, atUserId, mediaId },
+      metadata: {
+        replyTo,
+        requestedReplyTo,
+        referenceNamespace: namespace,
+        atUserId,
+        mediaId,
+      },
       send: (transport) => transport.send(ctx.conversation, segments),
     });
   }
@@ -828,6 +861,8 @@ export class Runtime {
         messageId,
         payload: {
           ...event.payload,
+          messageNamespace:
+            this.connection(a.connectionId).messageIdNamespace || "onebot",
           ...(receipt.fileId ? { gatewayFileId: receipt.fileId } : {}),
         },
         kind: action ? "action.confirmed" : "message.sent",
@@ -914,3 +949,8 @@ export class Runtime {
     await this.lifecycle?.close();
   }
 }
+import {
+  resolveMessage,
+  gatewayMessageId,
+  assertMessageAccount,
+} from "../memory/message-ids.mjs";

@@ -1,4 +1,5 @@
 export { inspectLegacy, importLegacy } from "./legacy-import.mjs";
+import { validateRestoredAliases } from "./message-ids.mjs";
 export function restoreExport(memory, data) {
   if (data.version !== 1 || data.agentId !== memory.agentId)
     throw Error("EXPORT_IDENTITY_MISMATCH");
@@ -60,6 +61,17 @@ export function restoreExport(memory, data) {
     model_turns: ["agent_id", "id", "value"],
     session_history: ["agent_id", "id", "value"],
     message_progress: ["agent_id", "conversation", "seq", "summary_only"],
+    message_aliases: [
+      "agent_id",
+      "connection_id",
+      "conversation",
+      "namespace",
+      "message_id",
+      "event_id",
+      "account_id",
+      "evidence",
+    ],
+    message_observations: ["agent_id", "event_id", "digest", "observation"],
   };
   // An empty target identity can be restored beside other identities. Remap only local seq watermarks.
   if (
@@ -132,5 +144,6 @@ export function restoreExport(memory, data) {
           seqs.set(row.seq, Number(result.lastInsertRowid));
       }
     }
+    validateRestoredAliases(memory);
   });
 }

@@ -494,7 +494,7 @@ function schema3(file) {
     body: "committed WAL data",
   });
   store.db.exec(
-    "DROP TABLE self_versions;DROP TABLE self_candidates;DROP TABLE intentions;DROP TABLE work_notes;DROP TABLE model_turns;DROP TABLE session_history;DROP TABLE message_progress;PRAGMA user_version=3;",
+    "DROP VIEW message_identities;DROP TABLE message_aliases;DROP TABLE message_observations;DROP TABLE self_versions;DROP TABLE self_candidates;DROP TABLE intentions;DROP TABLE work_notes;DROP TABLE model_turns;DROP TABLE session_history;DROP TABLE message_progress;PRAGMA user_version=3;",
   );
   return store;
 }
@@ -529,7 +529,7 @@ test("backup precedes schema3 upgrade, includes WAL, restores to a separate old-
     d.close();
   }
   const upgraded = new DatabaseSync(file, { readOnly: true });
-  assert.equal(upgraded.prepare("PRAGMA user_version").get().user_version, 5);
+  assert.equal(upgraded.prepare("PRAGMA user_version").get().user_version, 6);
   upgraded.close();
 });
 test("backup failure leaves schema3 and source data unchanged; failed import is transactional and recoverable", async (t) => {

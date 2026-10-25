@@ -43,6 +43,24 @@ function patchTurn(memory, id, patch) {
   if (row)
     memory.identity.put("model_turns", { ...JSON.parse(row.value), ...patch });
 }
+
+// Only call for scopes with no active owner (startup, or before the next turn).
+// A failed archival/terminal write leaves running durable and retries here.
+export function recoverSessions(memory, at, scope) {
+  const rows = memory.db
+    .prepare(
+      "SELECT value FROM model_turns WHERE agent_id=? AND json_extract(value,'$.status')='running' AND (? IS NULL OR json_extract(value,'$.conversation')=?)",
+    )
+    .all(memory.agentId, scope ?? null, scope ?? null);
+  for (const row of rows) {
+    const t = JSON.parse(row.value);
+    retireSession(memory, t.conversation, "process-recovery", at, {
+      turnId: t.id,
+      backendId: t.backendId,
+    });
+    patchTurn(memory, t.id, { status: "interrupted", endedAt: at });
+  }
+}
 function archive(
   memory,
   scope,
@@ -133,7 +151,12 @@ export function saveSession(
   memory.store.transaction(() => {
     const p = stateAt(memory, scope);
     patchTurn(memory, turnId, { backendSession: reference, backendId });
-    if (inactive || p.value.lastTurnId !== turnId) {
+    const turn = turnRecord(memory, turnId);
+    if (
+      inactive ||
+      p.value.lastTurnId !== turnId ||
+      (turn && JSON.parse(turn.value).status !== "running")
+    ) {
       archive(memory, scope, reference, {
         turnId,
         backendId,
