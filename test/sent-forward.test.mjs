@@ -110,9 +110,20 @@ function acceptInterest(f, candidate) {
 test("forward evidence: opaque gateway nodes cannot support a Self interest", async (t) => {
   const f = setup(t);
   const contents = [
-    ...["image", "video", "record", "json", "file", "forward", "reply"].map(
-      (type) => [{ type, data: {} }],
-    ),
+    ...[
+      "image",
+      "video",
+      "record",
+      "json",
+      "xml",
+      "music",
+      "file",
+      "forward",
+      "reply",
+      "unknown-media",
+      "face",
+      "at",
+    ].map((type) => [{ type, data: {} }]),
     "[CQ:image,file=opaque]",
     [],
   ];

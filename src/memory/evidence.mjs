@@ -20,12 +20,13 @@ const preferred = (candidate, old) =>
   (strength(candidate) === strength(old) && candidate.id < old.id);
 
 const unexpanded = (segments = []) =>
-  segments.some(
-    (s) =>
-      ["json", "image", "video", "record", "file", "forward", "reply"].includes(
-        s.type,
-      ) || /\[CQ:[^\]]*\]/i.test(s.data?.text || ""),
-  );
+  segments.length > 0 &&
+  (!segments.some((s) => s.type === "text" && normalize(s.data?.text)) ||
+    segments.some(
+      (s) =>
+        !["text", "at", "face"].includes(s.type) ||
+        /\[CQ:[^\]]*\]/i.test(s.data?.text || ""),
+    ));
 
 // A confirmed send is a copy, not a new observation. Its node index refers to
 // exactly one source; inheriting every eventIds entry would launder sibling nodes.
