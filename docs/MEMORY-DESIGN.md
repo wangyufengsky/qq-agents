@@ -57,8 +57,8 @@ schema 3 保留 schema 2 引入的 FTS5 trigram，只缩小至少三个 Unicode 
 
 ## 时间邻文与账本分页
 
-`memory_search` 的命中锚点继续按账本 seq 分页，关键词/人物只筛选锚点；场景邻文使用可靠发生时间，并以稳定事件 UUID 作为同时间并列顺序。新增历史、时间富化及恢复后无需重排账本。结果 `timeBasis` 区分 message、observation、unknown；观察时间和未知时间只提供锚点及可取得的明确引用，不能冒充同一时刻的对话。
+`memory_search` 的命中锚点继续按账本 seq 分页，关键词/人物只筛选锚点；场景邻文使用可靠发生时间，同一时间按存档顺序（seq）排列。QQ 时间只精确到秒，同一秒内的连发消息因此保持到达顺序。新增历史、时间富化及恢复后无需重排账本。结果 `timeBasis` 区分 message、observation、unknown；观察时间和未知时间只提供锚点及可取得的明确引用，不能冒充同一时刻的对话。
 
-`conversation_read({aroundId,contextSeconds})` 使用同一时间索引，默认前后 10 分钟，最多扩至一小时。结果按时间和 UUID 排列；使用 `nextAroundBefore` 或 `nextAroundAfter` 作为 `aroundCursor`，保持相同 aroundId/contextSeconds。游标包含来源和锚点时间校验、首批账本上界；锚点时间更正使旧游标失效。其他记录富化是实时可见的，发生更正后重新检索，不宣称跨页快照隔离。页数、字符预算限制下仍返回可继续的游标；相同时间不会用 seq 排序而在多主体恢复后改变顺序。
+`conversation_read({aroundId,contextSeconds})` 使用同一时间索引，默认前后 10 分钟，最多扩至一小时。结果按时间和存档顺序排列；使用 `nextAroundBefore` 或 `nextAroundAfter` 作为 `aroundCursor`，保持相同 aroundId/contextSeconds。游标包含来源和锚点时间校验、首批账本上界；锚点时间更正使旧游标失效。其他记录富化是实时可见的，发生更正后重新检索，不宣称跨页快照隔离。页数、字符预算限制下仍返回可继续的游标；游标里的 seq 只用于同时间续页，不能当作已读水位。导出按 seq 升序，恢复时（包括恢复到已有其他主体的库）按导出顺序重新分配 seq，所以同一会话内相同时间的消息恢复后顺序不变。
 
 时间展开的 markReadEligible=false、readThroughSeq=null，与普通 conversation/afterSeq 的账本游标分开。工具仍只记录真正展示的消息，零散读取不能越过未见缺口。前后文不是同一话题或因果关系；远距离明确回复/撤回使用 memory_related，长原文继续使用 memory_read。

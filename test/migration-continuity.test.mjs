@@ -481,7 +481,7 @@ test("N2 bounded time cursors cover equal-time neighbors deterministically, pres
   const ids = [];
   for (let i = 0; i < 55; i++) ids.push(live(f.m, "tie-" + i).id);
   const sorted = [...ids].sort(),
-    anchorId = sorted[27];
+    anchorId = ids[27];
   for (const maxChars of [512, 2500, 16000]) {
     const first = f.m.conversation({ aroundId: anchorId, limit: 7, maxChars });
     assert(first.items.some((x) => x.id === anchorId));
@@ -507,12 +507,18 @@ test("N2 bounded time cursors cover equal-time neighbors deterministically, pres
     }
     assert.deepEqual([...seen].sort(), sorted);
   }
+  // Equal message times keep archive (arrival) order rather than UUID order.
+  const window = f.m.conversation({ aroundId: anchorId, limit: 9 });
+  assert.deepEqual(
+    window.items.map((x) => x.id),
+    ids.slice(23, 32),
+  );
   const plan = f.store.db
     .prepare(
-      "EXPLAIN QUERY PLAN SELECT * FROM event_timeline WHERE agent_id=? AND connection_id=? AND conversation=? AND (time_ms,event_id)>(?,?) ORDER BY time_ms,event_id LIMIT 10",
+      "EXPLAIN QUERY PLAN SELECT * FROM event_timeline WHERE agent_id=? AND connection_id=? AND conversation=? AND (time_ms,seq)>(?,?) ORDER BY time_ms,seq LIMIT 10",
     )
-    .all("fish", "qq-fish", chat, base, anchorId);
-  assert(plan.some((x) => x.detail.includes("event_timeline_scope")));
+    .all("fish", "qq-fish", chat, base, 0);
+  assert(plan.some((x) => x.detail.includes("event_timeline_order")));
   const first = f.m.conversation({ aroundId: anchorId, limit: 5 });
   f.store.db
     .prepare("UPDATE events SET occurred_at=? WHERE id=?")

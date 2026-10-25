@@ -39,7 +39,9 @@ export class ConversationEngine {
       ...a.wake,
       ...this.state(a.id, e.conversation).wakeConfig?.triggers,
     };
-    if (e.kind === "notice.poke") return wc.poke ? "poke" : null;
+    // Only a poke aimed at this account is a wake; pokes between other members are just observed.
+    if (e.kind === "notice.poke")
+      return wc.poke && e.targetId === accountId ? "poke" : null;
     if (e.kind === "notice.join") return wc.joins ? "join" : null;
     if (!["message.received", "notice.file"].includes(e.kind)) return null;
     if (wc.private && e.conversation.startsWith("private:")) return "private";
@@ -318,9 +320,15 @@ export class ConversationEngine {
     const runtime = this.runtime,
       now = this.now();
     for (const a of runtime.config.agents) {
+      // Only conversations with queued wakes, a sleep timer or a reply check need a tick.
       const mem = runtime.memory.bind(a.id),
         rows = mem.db
-          .prepare("SELECT conversation,value FROM runtime WHERE agent_id=?")
+          .prepare(
+            `SELECT conversation FROM runtime WHERE agent_id=? AND conversation GLOB '[gp]*:*' AND (
+              json_extract(value,'$.pendingWakes[0]') IS NOT NULL OR
+              json_extract(value,'$.wakeConfig.sleepUntil') IS NOT NULL OR
+              json_extract(value,'$.replyCheckAt') IS NOT NULL)`,
+          )
           .all(a.id);
       for (const row of rows) {
         const conversation = row.conversation;

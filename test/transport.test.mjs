@@ -60,6 +60,26 @@ test("OneBot HTTP/WS fixture verifies identity, receives event and sends literal
   assert.equal(sent.auto_escape, true);
   assert.equal(sent.message[0].type, "text");
 });
+test("OneBot reports a dropped websocket and can connect again", async (t) => {
+  const { c, ws } = await onebot(t),
+    bot = new OneBot(c),
+    faults = [];
+  t.after(() => bot.close());
+  bot.on("fault", (code) => faults.push(code));
+  await bot.connect();
+  const down = new Promise((r) => bot.once("status", r));
+  ws.clients.forEach((s) => s.terminate());
+  await down;
+  assert.equal(bot.connected, false);
+  assert.deepEqual(faults, ["CONNECTION_LOST"]);
+  await bot.connect();
+  assert.equal(bot.connected, true);
+  // Replacing a live socket must not report it lost or mark the new one down.
+  await bot.connect();
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(bot.connected, true);
+  assert.deepEqual(faults, ["CONNECTION_LOST"]);
+});
 test("OneBot refuses a different logged-in account before websocket connection", async (t) => {
   const { c } = await onebot(t, { account: 999 });
   const bot = new OneBot(c);

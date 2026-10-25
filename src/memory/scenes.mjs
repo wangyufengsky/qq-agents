@@ -167,7 +167,7 @@ export function sceneForMatch(db, agentId, anchor, { before, after, seconds }) {
     messages,
     quoted,
     contextTruncated: more,
-    ordering: "message-time-then-id",
+    ordering: "message-time-then-archive-order",
     timeBasis: provenance(anchor).timeBasis,
     expand: {
       tool: "conversation_read",

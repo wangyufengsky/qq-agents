@@ -35,7 +35,13 @@ export function migrateTimeline(db, version) {
   db.function("message_time", { deterministic: true }, (at, json, origin) =>
     timeBasis(at, json, origin) === "message" ? Date.parse(at) : null,
   );
-  if (version >= 5) return;
+  if (version < 5) createTimeline(db);
+  // QQ times have one-second precision, so equal times are common; break ties by
+  // archive order instead of random UUIDs so bursts keep their arrival order.
+  db.exec(`CREATE INDEX IF NOT EXISTS event_timeline_order ON event_timeline(agent_id,connection_id,conversation,time_ms,seq);
+    DROP INDEX IF EXISTS event_timeline_scope;`);
+}
+function createTimeline(db) {
   const insert = (prefix) => `INSERT INTO event_timeline
     SELECT ${prefix}.seq,${prefix}.agent_id,${prefix}.connection_id,${prefix}.conversation,
       message_time(${prefix}.occurred_at,${prefix}.payload,${prefix}.origin),${prefix}.id
@@ -46,7 +52,6 @@ export function migrateTimeline(db, version) {
     db.exec(`
       CREATE TABLE IF NOT EXISTS event_timeline(seq INTEGER PRIMARY KEY REFERENCES events(seq) ON DELETE CASCADE,
         agent_id TEXT NOT NULL,connection_id TEXT NOT NULL,conversation TEXT NOT NULL,time_ms INTEGER NOT NULL,event_id TEXT NOT NULL);
-      CREATE INDEX IF NOT EXISTS event_timeline_scope ON event_timeline(agent_id,connection_id,conversation,time_ms,event_id);
       DROP TRIGGER IF EXISTS event_timeline_insert;
       DROP TRIGGER IF EXISTS event_timeline_update;
       DROP TRIGGER IF EXISTS event_timeline_delete;
@@ -99,8 +104,8 @@ export function timelineNeighbors(
     .prepare(
       `SELECT e.*,t.time_ms FROM event_timeline t JOIN events e ON e.seq=t.seq
     WHERE t.agent_id=? AND t.connection_id=? AND t.conversation=?
-      AND t.time_ms BETWEEN ? AND ? AND (t.time_ms,t.event_id) ${before ? "<" : ">"} (?,?) AND t.seq<=?
-    ORDER BY t.time_ms ${before ? "DESC" : "ASC"},t.event_id ${before ? "DESC" : "ASC"} LIMIT ?`,
+      AND t.time_ms BETWEEN ? AND ? AND (t.time_ms,t.seq) ${before ? "<" : ">"} (?,?) AND t.seq<=?
+    ORDER BY t.time_ms ${before ? "DESC" : "ASC"},t.seq ${before ? "DESC" : "ASC"} LIMIT ?`,
     )
     .all(
       anchor.agent_id,
@@ -109,7 +114,7 @@ export function timelineNeighbors(
       anchor.time_ms - seconds * 1000,
       anchor.time_ms + seconds * 1000,
       edge.time_ms,
-      edge.event_id,
+      edge.seq,
       ceiling,
       count,
     );

@@ -103,7 +103,7 @@ const definitions = {
             ceiling: z.number().int().nonnegative(),
             direction: z.enum(["before", "after"]),
             time_ms: z.number().int(),
-            event_id: str,
+            seq: z.number().int().nonnegative(),
           })
           .strict()
           .optional(),
@@ -378,6 +378,7 @@ export async function dispatchTool(runtime, ctx, name, input) {
     const state = mem.state(ctx.conversation);
     state.silenceUntil = runtime.now() + args.minutes * 60000;
     mem.setState(ctx.conversation, state);
+    if (args.minutes > 0) ctx.selfSilenced = true;
     return { silenceUntil: state.silenceUntil };
   }
   if (name === "qq_image_read") {

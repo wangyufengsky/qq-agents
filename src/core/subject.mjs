@@ -416,7 +416,14 @@ export class SubjectCoordinator {
       now = r.now();
     for (const a of r.config.agents) {
       const m = this.memory(a.id);
-      for (const i of m.identity.list("intentions")) {
+      // Terminal intentions accumulate forever; the 1 Hz tick only needs open ones.
+      const open = m.db
+        .prepare(
+          `SELECT value FROM intentions WHERE agent_id=? AND json_extract(value,'$.status') NOT IN (${[...terminal].map(() => "?").join(",")}) ORDER BY rowid DESC`,
+        )
+        .all(a.id, ...terminal)
+        .map((row) => JSON.parse(row.value));
+      for (const i of open) {
         if (!terminal.has(i.status) && i.expiresAt <= now)
           this.transition(a.id, i, "expired", "validity elapsed");
         else if (

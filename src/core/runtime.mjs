@@ -44,6 +44,7 @@ export class Runtime {
       random,
     });
     this.transports = new Map();
+    this.connecting = new Set();
     this.backends = new Map();
     this.running = new Map();
     this.pending = new Map();
@@ -165,7 +166,7 @@ export class Runtime {
           ]),
         ];
   }
-  writable(a, conversation) {
+  writable(a, conversation, ctx = null) {
     if (conversation === SUBJECT) return this.subject.internalAllowed(a);
     const state = this.memory.bind(a.id).state(conversation);
     return (
@@ -176,7 +177,8 @@ export class Runtime {
       allowed(a, conversation) &&
       !inSilence(a, this.clock()) &&
       !state.paused &&
-      !(state.silenceUntil > this.now())
+      // The turn that chose to go quiet may still finish bookkeeping; deliverNow blocks its sends.
+      (!(state.silenceUntil > this.now()) || ctx?.selfSilenced === true)
     );
   }
   assertActive(ctx) {
@@ -185,7 +187,7 @@ export class Runtime {
       stored !== ctx ||
       ctx.controller.signal.aborted ||
       ctx.expires < Date.now() ||
-      !this.writable(this.agent(ctx.agentId), ctx.conversation)
+      !this.writable(this.agent(ctx.agentId), ctx.conversation, ctx)
     )
       throw Error("AGENT_PAUSED_OR_EXPIRED");
     return this.agent(ctx.agentId);
@@ -200,9 +202,17 @@ export class Runtime {
     if (this.config.mode !== "live") throw Error("ISOLATED_MODE");
     const config = this.connection(id);
     if (!config.enabled) throw Error("CONNECTION_DISABLED");
-    if (this.transports.has(id)) throw Error("CONNECTION_ALREADY_STARTED");
+    if (this.connecting.has(id)) throw Error("CONNECTION_IN_PROGRESS");
+    const previous = this.transports.get(id);
+    if (previous?.connected) throw Error("CONNECTION_ALREADY_STARTED");
+    // A dropped socket leaves a disconnected transport behind; replace it instead of blocking reconnect.
+    if (previous) {
+      previous.close();
+      this.transports.delete(id);
+    }
     const t = this.transportFactory(config);
     this.transports.set(id, t);
+    this.connecting.add(id);
     t.on("event", (raw) => {
       const job = this.ingest(id, raw).catch(() => {
         this.faults.set(id, "EVENT_PROCESSING_FAILED");
@@ -216,9 +226,11 @@ export class Runtime {
       this.faults.delete(id);
     } catch (e) {
       t.close();
-      this.transports.delete(id);
+      if (this.transports.get(id) === t) this.transports.delete(id);
       this.faults.set(id, "CONNECTION_FAILED");
       throw e;
+    } finally {
+      this.connecting.delete(id);
     }
     return { connected: true };
   }
@@ -328,15 +340,33 @@ export class Runtime {
     const c = this.connection(connectionId),
       e = normalizeEvent(raw, c);
     if (!e) return { ignored: true };
+    // Only message events can be echoes; a recall notice of our own message must still be archived.
+    const ownEcho =
+      e.kind === "message.received" &&
+      e.messageId != null &&
+      (e.direction === "out" || e.senderId === c.accountId);
+    // The gateway may echo our own send before its HTTP receipt lands; let that delivery finish first.
+    if (ownEcho) await this.sendChains.get(connectionId)?.catch(() => {});
     const results = [];
     for (const a of this.config.agents.filter(
       (a) => a.connectionId === connectionId,
     )) {
       if (!allowed(a, e.conversation)) continue;
-      const mem = this.memory.bind(a.id),
-        key = e.messageId
-          ? `${connectionId}:${e.kind}:${e.messageId}`
-          : `${connectionId}:${e.kind}:${digest(raw)}`;
+      const mem = this.memory.bind(a.id);
+      if (
+        ownEcho &&
+        mem.db
+          .prepare(
+            "SELECT 1 FROM deliveries WHERE agent_id=? AND conversation=? AND message_id=? AND status='sent'",
+          )
+          .get(a.id, e.conversation, e.messageId)
+      ) {
+        results.push({ agentId: a.id, duplicate: true, ownEcho: true });
+        continue;
+      }
+      const key = e.messageId
+        ? `${connectionId}:${e.kind}:${e.messageId}`
+        : `${connectionId}:${e.kind}:${digest(raw)}`;
       const redactConfirmation =
         e.conversation.startsWith("private:") &&
         (a.ownerIds.includes(e.senderId) || e.senderId === c.accountId) &&
@@ -405,8 +435,11 @@ export class Runtime {
       const reason = this.conversations.reason(a, e, c.accountId);
       if (!reason) continue;
       if (!this.writable(a, e.conversation)) {
-        state.pendingWake = true;
-        mem.setState(e.conversation, state);
+        // Re-read: owner commands above may have yielded while other events updated this state.
+        mem.setState(e.conversation, {
+          ...mem.state(e.conversation),
+          pendingWake: true,
+        });
         this.conversations.request(a.id, e.conversation, reason, {
           seq: archived.seq,
         });
@@ -418,6 +451,24 @@ export class Runtime {
       results.push({ agentId: a.id, ...wake });
     }
     return results;
+  }
+  // A command cannot be answered while paused or silenced. It is never replayed later
+  // (approvals and schedules would be stale); leave a visible record and wake on resume.
+  skipOwnerCommand(a, e, archived, source) {
+    this.memory.bind(a.id).append({
+      dedupe: "owner-command-skipped:" + archived.id,
+      connectionId: a.connectionId,
+      conversation: e.conversation,
+      kind: "owner-command.skipped",
+      direction: "internal",
+      status: "observed",
+      body: "[暂停或静默期间收到的主人命令未执行，也不会自动补执行；如仍需要，请主人重新发送]",
+      payload: { source, commandEventId: archived.id },
+    });
+    this.conversations.request(a.id, e.conversation, "private", {
+      seq: archived.seq,
+    });
+    return true;
   }
   async resetSession(agentId, conversation) {
     const a = this.agent(agentId);
@@ -699,6 +750,8 @@ export class Runtime {
   ) {
     const a = this.assertActive(ctx),
       mem = this.memory.bind(a.id);
+    if (mem.state(ctx.conversation).silenceUntil > this.now())
+      throw Error("CONVERSATION_SILENCED");
     const proactive = this.subject.beforeDelivery(ctx);
     if (proactive) requestId = "intent:" + proactive.id;
     if (typeof requestId !== "string" || !requestId || requestId.length > 200)
