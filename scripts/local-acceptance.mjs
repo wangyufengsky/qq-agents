@@ -1,4 +1,5 @@
 import { appSharingAcceptance } from "./fixtures/app-sharing.mjs";
+import { backendContractAcceptance } from "./fixtures/backend-contract.mjs";
 // Opt-in real-model acceptance. All QQ writes terminate at loopback fixture gateways.
 import fs from "node:fs";
 import { automaticContinuityAcceptance } from "./fixtures/automatic-continuity.mjs";
@@ -448,7 +449,16 @@ async function runCase(id, test) {
       for (const [key, value] of Object.entries(inputs.forwardResources || {}))
         gateway.resources.set(key, value);
     }
-    if (test === "automatic-continuity") {
+    if (test === "backend-contract") {
+      await backendContractAcceptance({
+        runtime,
+        memory,
+        id,
+        turn,
+        gateway,
+        root,
+      });
+    } else if (test === "automatic-continuity") {
       await automaticContinuityAcceptance({
         runtime,
         memory,

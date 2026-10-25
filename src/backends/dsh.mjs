@@ -7,6 +7,7 @@ import {
   listDesktopListenPorts,
 } from "../../vendor/dsh-qq/dsh-endpoint.mjs";
 import { ExternalTools } from "./external.mjs";
+import { sessionSignature, assertSession } from "./session-contract.mjs";
 
 export class DshBackend {
   constructor(
@@ -123,27 +124,25 @@ export class DshBackend {
       clearTimeout(timeout);
     }
   }
+  sessionSignature(tools) {
+    return sessionSignature(this, tools);
+  }
   async run({
     conversation,
     prompt,
     instructions,
     onUsage,
     signal,
+    tools,
     session,
     saveSession,
   }) {
+    const signature = this.sessionSignature(tools);
+    assertSession(session, "dsh", signature);
     const client = await this.ready();
     await this.stream();
     if (signal.aborted) throw Error("ABORTED");
-    const signature = JSON.stringify([
-      this.config.id,
-      this.config.preset,
-      this.agent.persona,
-    ]);
-    let sessionId =
-      session?.backend === "dsh" && session.signature === signature
-        ? session.id
-        : null;
+    let sessionId = session?.id;
     const initializing = !sessionId;
     if (!sessionId) {
       const presets = unwrap(await client.agentPresets.list({}), "presets");

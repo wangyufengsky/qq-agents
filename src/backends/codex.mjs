@@ -4,6 +4,7 @@ import { CodexRpc } from "../../vendor/local-bridge/codex-rpc.mjs";
 import { ExternalTools } from "./external.mjs";
 import { mcpResult } from "../tools/index.mjs";
 import { safeToolFailure } from "../tools/errors.mjs";
+import { sessionSignature, assertSession } from "./session-contract.mjs";
 
 export const restrictions = {
   "features.shell_tool": false,
@@ -145,6 +146,9 @@ export class CodexBackend {
       } catch {}
     }
   }
+  sessionSignature(tools) {
+    return sessionSignature(this, tools);
+  }
   async run({
     prompt,
     instructions,
@@ -155,19 +159,11 @@ export class CodexBackend {
     session,
     saveSession,
   }) {
+    const signature = this.sessionSignature(tools);
+    assertSession(session, "codex", signature);
     await this.ready();
     if (signal.aborted) throw Error("ABORTED");
-    const signature = JSON.stringify([
-      this.config.id,
-      this.config.model,
-      this.config.effort,
-      tools.map((t) => t.name),
-      this.agent.persona,
-    ]);
-    let threadId =
-      session?.backend === "codex" && session.signature === signature
-        ? session.id
-        : null;
+    let threadId = session?.id;
     if (threadId)
       await this.rpc.request("thread/resume", {
         threadId,

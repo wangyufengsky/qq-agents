@@ -142,7 +142,7 @@ test("Codex abort interrupts turn and invalidates session receipt", async (t) =>
   assert.equal(session, null);
   assert.ok(rpc.calls.some((c) => c.method === "turn/interrupt"));
 });
-test("Codex configuration changes create a fresh model session while retaining agent identity", async (t) => {
+test("Codex refuses incompatible sessions until the caller prepares a handoff", async (t) => {
   const root = temp(t),
     rpc = new Rpc(),
     cfg = config(),
@@ -160,11 +160,8 @@ test("Codex configuration changes create a fresh model session while retaining a
     session: { backend: "codex", id: "old", signature: "different" },
     saveSession: () => {},
   });
-  await tick();
-  rpc.complete();
-  await run;
-  assert.ok(rpc.calls.some((c) => c.method === "thread/start"));
-  assert.ok(!rpc.calls.some((c) => c.method === "thread/resume"));
+  await assert.rejects(run, /SESSION_REQUIRES_HANDOFF/);
+  assert.equal(rpc.calls.length, 0);
   assert.equal(backend.agent.id, "agent-0");
 });
 

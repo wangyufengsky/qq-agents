@@ -467,11 +467,10 @@ export class Runtime {
         );
         this.backends.set(agentId, backend);
       }
-      const prepared = this.contexts.prepare(ctx, backend, reasons);
+      const tools = toolSpecs(ctx.allowedTools);
+      const prepared = this.contexts.prepare(ctx, backend, reasons, tools);
       if (ctx.initialSession)
-        ctx.estimatedAdded += JSON.stringify(
-          toolSpecs(ctx.allowedTools),
-        ).length;
+        ctx.estimatedAdded += JSON.stringify(tools).length;
       await backend.run({
         agent: a,
         conversation,
@@ -479,7 +478,7 @@ export class Runtime {
         instructions: prepared.instructions,
         onUsage: (usage) => this.contexts.usage(ctx, usage),
         signal: controller.signal,
-        tools: toolSpecs(ctx.allowedTools),
+        tools,
         callTool: (name, args) => this.callTool(ctx, name, args),
         session: prepared.session,
         saveSession: (session) => {

@@ -78,3 +78,23 @@ Codex 的专用 home 位于新数据目录 `codex/<agentId>/home`；按 Codex �
 ## Self / schema 4
 
 本轮新增 self、候选、意图、工作笔记、回合/退休记录和已见消息表。部署前先做一致 SQLite 备份并在新路径验收。旧 persona 只初始化首版 self；有旧模板但缺少独立 appearance 时，更新被拒绝，需由管理员明确保存原有外形或无固定外形，不能靠自动解析猜测。名字/外形变更及 self 变化都在下一回合安全同步。JSON 恢复要求目标主体所有表为空，并重映射事件/活动游标。回退旧代码应恢复备份到新路径，禁止旧代码写入 schema 4。详见 [工程说明](SELF-CONTEXT.md) 与 [验收证据](QUALITY-SELF-CONTEXT.md)。本轮未执行生产迁移。
+
+## 迁移前修复：显式主体与档案格式
+
+导入器现要求显式 `agentId`。近期缓存和 camelCase history 绑定所选源实例；用 `--account` 提供原账号，方向和发送者矛盾会拒绝。独立 QQ JSONL 用重复的 `--export FILE` 指定，只接受 schema_version=1 的已知原始来源；不能将重点对话合并视角当原档案导入。`--subject-map` 指向本机 JSON，例如 `{"10001":{"agentId":"agent-a","robot":"测试角色"},"10002":{"agentId":"agent-b"}}`。同一混合文件可分别导入两主体，其他已映射主体计入 otherSubjects，未知主体或矛盾行列入 rejected；有拒绝记录时 apply 整体拒绝。
+
+```sh
+npm run migrate -- --source /path/to/old-instance --agent agent-a --account 10001 \
+  --subject-map /private/subject-map.json --export /private/all-conversations.jsonl \
+  --legacy-db /private/snapshot.sqlite --legacy-agent old-a --data /private/new-data
+```
+
+QQ 导出的扁平 text/at/reply/附件消息段转换为可查询的 segments，同时保存 originalSegments；来源、截断属性和原始时间字段均留存。缓存时间是旧缓存的观察时间，不能声称总是 QQ 原始发送时间。缺原时间存 unknown，缺方向存 unknown，缺 ID 不生成 QQ ID；所有旧消息仍为 legacy-unverified，不生成投递账本。旧 SQLite 必须匹配已知 memories/people/sightings/events schema，按 legacy-agent 显式选取；保留笔记主体、证据 source_ref、certainty、可见性、替代引用与修订审计。修订审计没有历史正文时，不伪造历史版本。pendingThoughts 和模型草稿排除。
+
+同主体、同会话、同 messageId 只有一条导入消息；跨来源重复观察合并到来源列表，更完整的已知正文优先显示，其他正文与时间差异仍保留。没有 ID 时采用稳定来源、时间、方向、发送者和原序号/位置的保守身份；不按同正文或近时间合并不同来源。无 ID 跨来源可能重复，统计须注明，不能把保留观察数宣称为独立消息精确总数。`--source-id`、`--legacy-source-id` 和 `--export-source-id` 可为缓存、旧库和导出快照提供同一逻辑源标识，复制档案或增量导出时应保持它们稳定。未显式提供时使用原路径摘要。
+
+已有目标先由只读 SQLite backup API 做包含 WAL 的一致备份，验证后才构造 MemoryStore 升级；备份失败时不打开目标。目标数据库及 WAL/SHM 的符号链接、硬链接均拒绝，防止别名指向旧源。导入事务失败时保留升级前备份和错误中的备份位置，恢复到另一个新路径核验，禁止用已升级副本假称升级前回退。目标必须停机；不要复制活跃 SQLite 主文件代替备份。
+
+已存档快照不能代替切换时增量。记录每主体/会话的归档截止、源文件摘要、快照时刻和缺口，旧源继续归档时再次取得一致快照；稳定 messageId 幂等导入，无 ID 的歧义保留来源并人工核对。本轮演练结果与脱敏统计另列，不代表生产切换获准。
+
+已有旧版导入记录按主体、会话和 messageId 识别，保留原事件 ID、来源正文和元数据后补充新观察；已有多个候选时明确拒绝，需先核对歧义。首次迁入已有会话时保留目标水位、会话及运行字段，只合并旧源元数据并设为暂停。别名 ID、发送者、方向、时间相矛盾时拒绝；缓存 text、plain、tail 语义不同，分别保存，不能因 plain 更短而丢掉引用或尾段。
