@@ -62,3 +62,7 @@ npm run memory:backup -- --source /path/to/instance/memory.sqlite --destination 
 ```
 
 基准要求新数据库，默认 20 万条，上限 200 万条；耗时和磁盘占用随规模增加。仅使用合成记录。备份目标必须不存在；同一命令可以从备份恢复到新路径，不能覆盖运行中数据。备份命令直接只读打开源 SQLite，不触发 schema 升级。
+
+## Self / 上下文 / 主体意图
+
+独立环境可选择 `--case self-context` 跑五回合候选、主体采纳、目标发言、取消、原生压缩及重建回忆；`--case subject-cost` 每后端严格四次无新事项检查，对比复用两次和各自新建两次；`--case intent-receipt` 验证最终目标发送、outbox 与联系预算/冷却。它们均只向脚本创建的本机网关写入，必须 `--allow-real-models`，保留实际输出供人工阅读。self-context 使用全新合成数据目录，复用旧数据可能使模型合理地继续观察候选而不再次采纳。生成的 DSH preset 需包含同一隔离服务域的 compaction provider 与 compact 命令。结果解释、失败及限制见 [本轮报告](QUALITY-SELF-CONTEXT.md)。

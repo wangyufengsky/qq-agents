@@ -1,4 +1,9 @@
 import fs from "node:fs";
+import {
+  selfPolicySchema,
+  contextPolicySchema,
+  subjectPolicySchema,
+} from "./mind-policy.mjs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -126,6 +131,10 @@ export const configSchema = z
           model: z.string().default(""),
           effort: z.string().default(""),
           persona: z.string().max(32000).default(""),
+          appearance: z.string().max(2000).default(""),
+          selfPolicy: selfPolicySchema,
+          contextPolicy: contextPolicySchema,
+          subject: subjectPolicySchema,
           behavior: behaviorSchema,
           scheduler: schedulerSchema,
           voice: voiceSchema,

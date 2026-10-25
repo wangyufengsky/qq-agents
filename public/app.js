@@ -19,6 +19,7 @@ let token = sessionStorage.getItem("qq-unified-token") || "",
   tab = "overview",
   editing;
 const titles = {
+  mind: ["Self 与主体", "当前自我、候选成长、主动意图与工作会话。"],
   permissions: ["权限", "分别设置每个 AI 的文件收发能力与独立文件库。"],
   schedule: ["主动与定时", "条件唤醒、睡前观察和定时任务，各自按规则运行。"],
   voices: ["语音库", "导入、试听和管理每个角色自己的语音素材。"],
@@ -114,6 +115,10 @@ function render() {
     (status.mode === "isolated" ? "warn" : status.globalPaused ? "" : "live");
   const content = $("#content");
   if (!config) return;
+  if (tab === "mind") {
+    renderMind();
+    return;
+  }
   if (tab === "overview") {
     content.innerHTML = `<div class="banner">${status.mode === "isolated" ? "当前为隔离模式。不会连接 QQ 或启动模型回合。切换需要以 --live 启动并在管理台配置。" : status.globalPaused ? "全局暂停中。连接可记录收到的消息，机器人不会参与；解除全局暂停后，各角色的独立暂停仍生效。" : "全局允许参与。具体行为由每个角色的暂停、白名单、唤醒和静默配置决定。"}</div><div class="stats">${[
       ["机器人", config.agents.length, "独立人格与经历"],
@@ -337,7 +342,16 @@ function openEditor(type, id) {
       ) +
       input("model", "模型（空白则继承后端）", row.model) +
       input("effort", "思考强度（空白则继承）", row.effort) +
-      area("persona", "基础人格", row.persona || "") +
+      area(
+        "appearance",
+        "固定外形（无固定外形时请明确填写）",
+        row.appearance || "",
+      ) +
+      area(
+        "persona",
+        "初始化模板（仅建立首版 self；已有 self 请在专页编辑）",
+        row.persona || "",
+      ) +
       input("aliases", "唤醒别名（逗号分隔）", (row.aliases || []).join(", ")) +
       input(
         "ownerIds",
@@ -455,6 +469,7 @@ $("#edit-form").onsubmit = (e) => {
           model: get("model"),
           effort: get("effort"),
           persona: get("persona"),
+          appearance: get("appearance"),
           aliases: list("aliases"),
           ownerIds: list("ownerIds"),
           allow: { groups: list("groups"), users: list("users") },
