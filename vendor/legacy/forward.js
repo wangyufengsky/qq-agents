@@ -27,8 +27,18 @@ export function extractForwardIds(segments) {
   if (!Array.isArray(segments)) return [];
   const out = [];
   for (const seg of segments) {
-    if (!seg || typeof seg !== 'object' || seg.type !== 'forward') continue;
-    const id = forwardIdFromData(seg.data);
+    if (!seg || typeof seg !== 'object') continue;
+    let id = '';
+    if (seg.type === 'forward') id = forwardIdFromData(seg.data);
+    // NapCat get_msg can return a sent merged-forward as its original QQ JSON
+    // card. Only this recognized card's observed resource is eligible to fetch.
+    else if (seg.type === 'json' && typeof seg.data?.data === 'string' && seg.data.data.length <= 65536) {
+      try {
+        const card = JSON.parse(seg.data.data);
+        if (card?.app === 'com.tencent.multimsg' && card.view === 'contact')
+          id = sanitizeForwardId(card.meta?.detail?.resid);
+      } catch { /* Malformed and unrelated cards stay opaque. */ }
+    }
     if (id && !out.includes(id)) out.push(id);
   }
   return out;

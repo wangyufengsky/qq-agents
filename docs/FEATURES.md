@@ -26,7 +26,7 @@ DSH 的 MCP 结果可携带 audio block。当前 Codex 动态工具适配没有�
 
 ## 嵌套转发与动作
 
-`qq_forward_read` 仅展开已观察转发或其已归档子资源，默认 NapCat 使用 `get_forward_msg.message_id`，通用 OneBot 可将连接 `gateway` 设为 `onebot` 使用 `id`。NapCat 已返回的 `forward.data.content` 会直接归档并展开，不重复拉取不可独立获取的内层 ID。最多五层、一次十个资源，分页返回；达到预算会给出可继续展开的资源。原文归档保留，节点中的图片可以继续读取。转发中的署名是来源声称的署名，不等于认证身份。
+`qq_forward_read` 仅展开已观察转发或其已归档子资源，默认 NapCat 使用 `get_forward_msg.message_id`，通用 OneBot 可将连接 `gateway` 设为 `onebot` 使用 `id`。QQ 的 `com.tencent.multimsg/contact` JSON 转发卡片也可提取其中已观察的 `meta.detail.resid`；其他卡片、畸形或过大 JSON 保持不透明。识别资源不保证网关支持拉取：拒绝时返回 `complete=false` 与 `FORWARD_FETCH_FAILED`，不触发重新发送。NapCat 已返回的 `forward.data.content` 会直接归档并展开，不重复拉取不可独立获取的内层 ID。最多五层、一次十个资源，分页返回；达到预算会给出可继续展开的资源。原文归档保留，节点中的图片可以继续读取。转发中的署名是来源声称的署名，不等于认证身份。
 
 `qq_forward_send` 对真实收到的消息使用原消息 ID 保留附件；不具备可复用消息 ID 的归档节点按文字署名发送。`qq_send_poke` 只对当前私聊对象或核对过的群成员操作。`qq_send_burst` 每条独立回执，失败停止并保留已成功前缀。
 
@@ -42,4 +42,4 @@ DSH 的 MCP 结果可携带 audio block。当前 Codex 动态工具适配没有�
 
 ## 本地验收
 
-运行 `npm run verify` 完成语法、Node 测试、格式与隐私扫描。常规回归测试使用合成音频、本机网络替身和临时目录。另有显式启动的 [真实后端验收脚本](LOCAL-ACCEPTANCE.md)，使用独立 DSH profile/Codex home 和仅监听本机的 QQ 接收网关。仓库没有 GitHub Actions 工作流；GitHub 用于代码和 PR 管理。真实模型和用户授权的 QQ 入站样本验收范围见 [验收记录](ACCEPTANCE.md)；真实 QQ 出站与生产迁移不会由测试脚本执行。
+运行 `npm run verify` 完成语法、Node 测试、格式与隐私扫描。常规回归测试使用合成音频、本机网络替身和临时目录。另有显式启动的 [真实后端验收脚本](LOCAL-ACCEPTANCE.md)，使用独立 DSH profile/Codex home 和仅监听本机的 QQ 接收网关。仓库没有 GitHub Actions 工作流；GitHub 用于代码和 PR 管理。真实模型、用户授权的 QQ 入站样本，以及独立手动投递三项真实 QQ 出站的验收范围见 [验收记录](ACCEPTANCE.md)；常规回归和 `acceptance:live` 脚本不会执行真实 QQ 出站与生产迁移。

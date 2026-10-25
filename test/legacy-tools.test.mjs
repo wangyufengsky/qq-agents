@@ -561,3 +561,78 @@ test("NapCat inline nested forwards remain readable when child IDs cannot be fet
   assert.equal(all.complete, true);
   assert.equal(calls, 1);
 });
+
+test("QQ JSON merged-forward cards expose only their observed forward resource", async (t) => {
+  const f = setup(t),
+    ctx = context(f.runtime);
+  let calls = 0;
+  f.runtime.transports.get("qq-0").call = async (action, args) => {
+    calls++;
+    assert.equal(action, "get_forward_msg");
+    assert.equal(args.message_id, "observed-card-resource");
+    return {
+      messages: [
+        {
+          sender: { user_id: 30000, nickname: "测试" },
+          message: [{ type: "text", data: { text: "卡片原文" } }],
+        },
+      ],
+    };
+  };
+  const card = {
+    app: "com.tencent.multimsg",
+    view: "contact",
+    meta: { detail: { resid: "observed-card-resource" } },
+  };
+  const segment = (data) => ({
+    type: "json",
+    data: { data: typeof data === "string" ? data : JSON.stringify(data) },
+  });
+  const id = event(f, [segment(card)]),
+    read = await f.runtime.callTool(ctx, "qq_forward_read", { eventId: id });
+  assert.equal(read.complete, true);
+  assert.equal(read.items[0].text, "卡片原文");
+  assert.equal(calls, 1);
+  for (const invalid of [
+    { ...card, app: "unrelated.app" },
+    { ...card, view: "unrelated-view" },
+    "{invalid JSON}",
+    JSON.stringify(card) + " ".repeat(65536),
+    { ...card, meta: { detail: { resid: "bad resource\n" } } },
+  ]) {
+    const denied = event(f, [segment(invalid)]);
+    await assert.rejects(
+      f.runtime.callTool(ctx, "qq_forward_read", { eventId: denied }),
+      /FORWARD_NOT_FOUND/,
+    );
+  }
+  assert.equal(calls, 1);
+  await assert.rejects(
+    f.runtime.callTool(ctx, "qq_forward_read", {
+      eventId: id,
+      resourceId: "unobserved-resource",
+    }),
+    /FORWARD_RESOURCE_NOT_OBSERVED/,
+  );
+  f.runtime.transports.get("qq-0").call = async (action, args) => {
+    calls++;
+    assert.equal(action, "get_forward_msg");
+    assert.equal(args.message_id, "unavailable-card-resource");
+    throw Error("ONEBOT_REJECTED");
+  };
+  const unavailable = event(f, [
+    segment({
+      ...card,
+      meta: { detail: { resid: "unavailable-card-resource" } },
+    }),
+  ]);
+  const rejected = await f.runtime.callTool(ctx, "qq_forward_read", {
+    eventId: unavailable,
+  });
+  assert.equal(rejected.complete, false);
+  assert.equal(rejected.total, 0);
+  assert.deepEqual(rejected.errors, [
+    { resourceId: "unavailable-card-resource", error: "FORWARD_FETCH_FAILED" },
+  ]);
+  assert.equal(calls, 2);
+});

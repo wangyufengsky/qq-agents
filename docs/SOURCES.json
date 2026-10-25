@@ -90,8 +90,8 @@
       "path": "vendor/legacy/forward.js",
       "origin": "local-bridge",
       "sourcePath": "src/forward.js",
-      "sha256": "b20c9e92018a2e657ef646098b2c25e218096fb46e59eab422b6ae8ead00d786",
-      "modification": "Markdown helper import adjusted to ../dsh-qq/md-to-plain.js; behavior otherwise unchanged."
+      "sha256": "0699603ff237c68e6a842507f69f1f5170496869dd43c45f67a69b85d1e51459",
+      "modification": "Markdown helper import adjusted to ../dsh-qq/md-to-plain.js; recognize observed com.tencent.multimsg/contact JSON forward cards with bounded parsing and existing resource ID validation."
     },
     {
       "path": "vendor/legacy/totp.js",
