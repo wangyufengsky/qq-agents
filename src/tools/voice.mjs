@@ -103,6 +103,17 @@ export class VoiceStore {
       codec: info.codec,
       title: String(meta.title || old?.title || "未命名语音").slice(0, 120),
       sources,
+      ...(meta.generatedBy
+        ? { generatedBy: String(meta.generatedBy).slice(0, 200) }
+        : {}),
+      ...(meta.spokenText
+        ? {
+            spokenText: String(meta.spokenText).slice(0, 2000),
+            textSource: "tts-input-not-asr",
+          }
+        : {}),
+      protectedOperations:
+        old?.protectedOperations || meta.protectedOperations || false,
       createdAt: old?.createdAt || new Date().toISOString(),
     };
     atomicJSON(path.join(dir, id + ".json"), entry);

@@ -1,12 +1,22 @@
 import { fileDefinitions, fileTool } from "./file-tools.mjs";
 import { z } from "zod";
+import { synthesize } from "./speech.mjs";
+import { externalArguments, externalResult } from "./external-media.mjs";
 import { legacyDefinitions, legacyTool, taintMedia } from "./legacy.mjs";
 import { SocialReader } from "../../vendor/social-reader/reader.mjs";
 import { safeFetch } from "../../vendor/social-reader/safe-fetch.js";
 
 const str = z.string(),
   limit = z.number().int().min(1).max(50).optional(),
-  budget = z.number().int().min(512).max(16000).optional();
+  budget = z
+    .number()
+    .int()
+    .min(512)
+    .max(16000)
+    .describe(
+      "Maximum 16000 characters; omit to use default. Continue with pagination rather than increasing beyond the limit.",
+    )
+    .optional();
 const fields = {
   title: str.max(300),
   body: str.max(32000),
@@ -26,6 +36,7 @@ const definitions = {
         contextAfter: z.number().int().min(0).max(5).optional(),
         contextSeconds: z.number().int().min(1).max(3600).optional(),
         person: str.optional(),
+        connectionId: str.optional(),
         conversation: str.optional(),
         type: z.enum(["all", "event", "diary"]).optional(),
         kind: str.optional(),
@@ -35,6 +46,10 @@ const definitions = {
         diaryOffset: z.number().int().min(0).optional(),
         cursor: z
           .object({
+            eventCeiling: z.number().int().min(0).optional(),
+            beforeSeq: z.number().int().min(1).optional(),
+            diaryCeiling: str.optional(),
+            diaryBefore: z.object({ time: str, id: str }).strict().optional(),
             eventOffset: z.number().int().min(0),
             diaryOffset: z.number().int().min(0),
             eventsDone: z.boolean(),
@@ -42,6 +57,17 @@ const definitions = {
           })
           .strict()
           .optional(),
+        limit,
+        maxChars: budget,
+      })
+      .strict(),
+  ],
+  memory_related: [
+    "读取同一来源里明确引用/撤回关系，可跨越很长时间。更正与同意仍需读原文判断；无关系不代表没有后续。按 nextAfterSeq 继续。",
+    z
+      .object({
+        id: str,
+        afterSeq: z.number().int().min(0).optional(),
         limit,
         maxChars: budget,
       })
@@ -95,7 +121,7 @@ const definitions = {
       .strict(),
   ],
   qq_mark_read: [
-    "提交已看到的安全消息水位；不能超过工具返回的 readThroughSeq。",
+    "仅提交当前会话已看到的安全消息水位；不能使用跨会话结果的readThroughSeq。conversation_read的markReadEligible必须为true，不能超过已展示水位。",
     z.object({ throughSeq: z.number().int().min(0) }).strict(),
   ],
   qq_set_silence: [
@@ -134,12 +160,13 @@ const definitions = {
           "threads",
         ]),
         query: str.max(200),
+        source: z.enum(["auto", "native", "index"]).optional(),
         limit: z.number().int().min(1).max(20).optional(),
       })
       .strict(),
   ],
   social_read: [
-    "只读平台内容。",
+    "只读平台内容。source=native 可验证已登录的原生读取；公开索引摘要不能当正文。",
     z
       .object({
         platform: z.enum([
@@ -151,6 +178,7 @@ const definitions = {
           "threads",
         ]),
         url: str,
+        source: z.enum(["auto", "native", "index"]).optional(),
       })
       .strict(),
   ],
@@ -179,6 +207,23 @@ const definitions = {
       })
       .strict(),
   ],
+  voice_synthesize: [
+    "使用管理员启用的本机TTS生成语音并登记audioId；这不是ASR识别，不会自动发送。",
+    z.object({ text: str.min(1).max(2000) }).strict(),
+  ],
+  external_tools: [
+    "列出管理端白名单中真实可用的外部MCP工具及参数schema；调用前发现名称和参数，不得猜测。未配置服务会明确为空。",
+    z
+      .object({
+        serverId: str.optional(),
+        offset: z.number().int().min(0).optional(),
+      })
+      .strict(),
+  ],
+  social_status: [
+    "查看平台读取后端与最近探测状态；配置存在不等于已登录。",
+    z.object({}).strict(),
+  ],
   external_tool: [
     "调用管理端明确允许的MCP工具，服务端不接受任意服务器或工具名。图片结果登记为自己的媒体。",
     z
@@ -186,6 +231,14 @@ const definitions = {
         serverId: str,
         tool: str,
         arguments: z.record(str, z.unknown()).default({}),
+        audioInput: z
+          .object({
+            audioId: str,
+            dataArgument: str.regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/),
+            mimeArgument: str.regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/).optional(),
+          })
+          .strict()
+          .optional(),
       })
       .strict(),
   ],
@@ -253,6 +306,14 @@ export async function dispatchTool(runtime, ctx, name, input) {
   if (name === "memory_search") {
     const r = mem.search(args, ctx.conversation);
     track(ctx, [...r.items, ...r.diaries]);
+    return r;
+  }
+  if (name === "memory_related") {
+    const r = mem.related(args, ctx.conversation);
+    track(
+      ctx,
+      r.items.map((x) => x.record),
+    );
     return r;
   }
   if (name === "memory_read") {
@@ -328,10 +389,18 @@ export async function dispatchTool(runtime, ctx, name, input) {
     return runtime.media.collect(ctx.agentId, args.mediaId, args);
   if (name === "sticker_read") {
     const meta = runtime.media.metadata(ctx.agentId, args.mediaId);
-    if (meta?.conversation && meta.conversation !== ctx.conversation)
-      ctx.privateRead.add(meta.sourceEventId || args.mediaId);
-    ctx.persistTaint?.();
+    taintMedia(ctx, meta);
     return { content: [runtime.media.read(ctx.agentId, args.mediaId)] };
+  }
+  if (name === "voice_synthesize") return synthesize(runtime, ctx, args);
+  if (name === "external_tools") {
+    const backend = runtime.backends.get(ctx.agentId);
+    if (!backend?.external) throw Error("EXTERNAL_TOOLS_UNAVAILABLE");
+    return backend.external.list(args.serverId, args.offset);
+  }
+  if (name === "social_status") {
+    runtime.social ??= new SocialReader();
+    return runtime.social.status();
   }
   if (
     name === "web_fetch" ||
@@ -352,41 +421,10 @@ export async function dispatchTool(runtime, ctx, name, input) {
     const result = await backend.external.call(
       args.serverId,
       args.tool,
-      args.arguments,
+      externalArguments(runtime, ctx, args),
     );
     runtime.assertActive(ctx);
-    const content = [];
-    for (const item of result.content || []) {
-      if (item.type === "image") {
-        const media = runtime.media.put(
-          ctx.agentId,
-          Buffer.from(item.data, "base64"),
-          item.mimeType,
-          {
-            generatedBy: args.serverId + ":" + args.tool,
-            conversation: ctx.conversation,
-          },
-        );
-        content.push(
-          { type: "text", text: JSON.stringify({ generatedMedia: media }) },
-          item,
-        );
-      } else if (item.type === "audio") {
-        const a = runtime.agent(ctx.agentId),
-          audio = await runtime.voices.put(
-            ctx.agentId,
-            Buffer.from(item.data, "base64"),
-            a.voice,
-            { conversation: ctx.conversation, title: "生成语音" },
-          );
-        content.push(
-          { type: "text", text: JSON.stringify({ generatedAudio: audio }) },
-          runtime.voices.read(ctx.agentId, audio.id),
-        );
-      } else if (item.type === "text")
-        content.push({ type: "text", text: item.text.slice(0, 16000) });
-    }
-    return { content, isError: !!result.isError };
+    return externalResult(runtime, ctx, args, result);
   }
   throw Error("UNKNOWN_TOOL");
 }

@@ -341,3 +341,40 @@ test("Codex restrictions apply only to the dedicated spawned instance", () => {
   assert.equal(restrictions["apps._default.enabled"], false);
   assert.ok(!Object.hasOwn(process.env, "QQ_UNIFIED_MODIFIED_DAILY_CODEX"));
 });
+
+test("Codex returns safe actionable validation bounds so failed reads can be corrected", async (t) => {
+  const root = temp(t),
+    rpc = new Rpc(),
+    cfg = config(),
+    backend = new CodexBackend(cfg.backends[0], cfg.agents[0], { root, rpc });
+  t.after(() => backend.close());
+  const { z } = await import("zod");
+  const run = backend.run({
+    prompt: "x",
+    signal: new AbortController().signal,
+    tools: toolSpecs(),
+    callTool: async () =>
+      z.object({ maxChars: z.number().max(16000) }).parse({ maxChars: 30000 }),
+    saveSession: () => {},
+  });
+  await tick();
+  await backend.request({
+    id: 77,
+    method: "item/tool/call",
+    params: {
+      threadId: "fixture-thread",
+      turnId: "fixture-turn",
+      tool: "qq_forward_read",
+      arguments: {},
+    },
+  });
+  const answer = rpc.responses.find((x) => x.id === 77).value;
+  assert.equal(answer.success, false);
+  const error = JSON.parse(answer.contentItems[0].text);
+  assert.equal(error.code, "INVALID_TOOL_ARGUMENTS");
+  assert.deepEqual(error.issues, [
+    { field: "maxChars", code: "too_big", maximum: 16000 },
+  ]);
+  rpc.complete();
+  await run;
+});

@@ -82,7 +82,7 @@ export class SlangLearner {
     const result = await backend.external.call(
       p.researchServerId,
       p.researchTool,
-      { query: entry.term },
+      { ...p.researchArguments, [p.researchQueryField]: entry.term },
     );
     this.runtime.assertActive(ctx);
     if (result.isError) throw Error("SLANG_RESEARCH_FAILED");

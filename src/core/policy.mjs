@@ -83,6 +83,13 @@ export const schedulerSchema = z
 
 export const voiceSchema = z
   .object({
+    tts: z
+      .object({
+        enabled: z.boolean().default(false),
+        voice: z.string().min(1).max(100).default("Tingting"),
+      })
+      .strict()
+      .prefault({}),
     maxBytes: ms(1024, 20971520, 20971520),
     maxSeconds: ms(1, 1800, 300),
     ffmpegCommand: z.string().min(1).default("ffmpeg"),
@@ -117,6 +124,11 @@ export const slangSchema = z
     cooldownMs: ms(60000, 86400000, 300000),
     maxCandidates: ms(1, 2000, 200),
     researchServerId: z.string().default(""),
+    researchArguments: z.record(z.string(), z.unknown()).default({}),
+    researchQueryField: z
+      .string()
+      .regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/)
+      .default("query"),
     researchTool: z.string().default(""),
   })
   .strict()

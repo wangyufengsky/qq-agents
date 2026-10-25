@@ -1,3 +1,4 @@
+import { safeToolFailure } from "./tools/errors.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import http from "node:http";
@@ -79,7 +80,9 @@ export function createServer({ runtime, token, allowLive = false }) {
         } catch (e) {
           return send({
             isError: true,
-            content: [{ type: "text", text: code(e) }],
+            content: [
+              { type: "text", text: JSON.stringify(safeToolFailure(e)) },
+            ],
           });
         }
       }
@@ -391,6 +394,16 @@ export function createServer({ runtime, token, allowLive = false }) {
           if (url.searchParams.has(key))
             q[key] = Number(url.searchParams.get(key));
         return send(runtime.memory.bind(agentId).conversation(q));
+      }
+      if (req.method === "GET" && url.pathname === "/api/memory/related") {
+        const agentId = url.searchParams.get("agentId");
+        runtime.agent(agentId);
+        return send(
+          runtime.memory.bind(agentId).related({
+            id: url.searchParams.get("id"),
+            afterSeq: Number(url.searchParams.get("afterSeq") || 0),
+          }),
+        );
       }
       if (req.method === "GET" && url.pathname === "/api/memory/read") {
         const agentId = url.searchParams.get("agentId");
