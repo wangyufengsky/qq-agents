@@ -222,7 +222,8 @@ export class ContextLifecycle {
       usage: null,
     });
   }
-  prepare(ctx, backend, reasons) {
+  prepare(ctx, backend, reasons, tools) {
+    if (ctx.controller.signal.aborted) throw Error("ABORTED");
     const r = this.runtime,
       a = r.agent(ctx.agentId),
       m = r.memory.bind(a.id),
@@ -237,24 +238,25 @@ export class ContextLifecycle {
       .update(instructions)
       .digest("hex");
     let s = m.state(ctx.conversation);
+    const signature = backend.sessionSignature?.(tools);
+    const contractChanged = signature && s.session?.signature !== signature;
     if (
       s.session &&
       (s.loadedSelfVersion !== self.version ||
-        s.loadedInstructionsHash !== instructionsHash)
+        s.loadedInstructionsHash !== instructionsHash ||
+        contractChanged)
     ) {
       // Both protocols can preserve old text. Rebuild on identity changes until replacement is behaviorally verified.
-      const wasRunning = r.running.delete(a.id + "|" + ctx.conversation);
-      try {
-        this.retire(
-          a.id,
-          ctx.conversation,
-          s.loadedSelfVersion !== self.version
-            ? "self-version-change"
+      this.retire(
+        a.id,
+        ctx.conversation,
+        s.loadedSelfVersion !== self.version
+          ? "self-version-change"
+          : contractChanged
+            ? "backend-contract-change"
             : "identity-or-protocol-change",
-        );
-      } finally {
-        if (wasRunning) r.running.set(a.id + "|" + ctx.conversation, ctx);
-      }
+        ctx,
+      );
       s = m.state(ctx.conversation);
     }
     ctx.selfVersion = self.version;

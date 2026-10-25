@@ -1,22 +1,42 @@
 import fs from "node:fs";
 import path from "node:path";
-import { backup } from "node:sqlite";
-import { MemoryStore } from "../src/memory/store.mjs";
-import { inspectLegacy, importLegacy } from "../src/memory/migrate.mjs";
+import { inspectLegacy } from "../src/memory/migrate.mjs";
+import { applyMigration } from "../src/memory/migration-apply.mjs";
 const args = process.argv.slice(2),
   get = (k) => args[args.indexOf(k) + 1];
 if (!args.includes("--source") || !args.includes("--agent"))
   throw Error(
-    "Usage: --source OLD_INSTANCE --agent STABLE_ID [--data NEW_DATA] [--legacy-db FILE --legacy-agent ID] [--apply]",
+    "Usage: --source OLD_INSTANCE --agent STABLE_ID [--account QQ] [--subject-map JSON] [--export FILE ...] [--legacy-db FILE --legacy-agent ID] [--data NEW_DATA] [--apply]",
   );
-const source = fs.realpathSync(get("--source")),
-  root = path.resolve(args.includes("--data") ? get("--data") : ".runtime");
+const source = fs.realpathSync(get("--source"));
+function realDestination(p) {
+  if (fs.existsSync(p)) return fs.realpathSync(p);
+  return path.join(realDestination(path.dirname(p)), path.basename(p));
+}
+const root = realDestination(
+  path.resolve(args.includes("--data") ? get("--data") : ".runtime"),
+);
 if (root === source || root.startsWith(source + path.sep))
   throw Error("DESTINATION_MUST_BE_SEPARATE");
 if (fs.existsSync(path.join(root, "process.lock")))
   throw Error("STOP_DESTINATION_BEFORE_MIGRATING");
+const legacyDb = args.includes("--legacy-db")
+  ? fs.realpathSync(get("--legacy-db"))
+  : undefined;
+if (legacyDb && legacyDb === path.join(root, "memory.sqlite"))
+  throw Error("DESTINATION_MUST_BE_SEPARATE");
 const plan = inspectLegacy(source, {
-  legacyDb: args.includes("--legacy-db") ? get("--legacy-db") : undefined,
+  agentId: get("--agent"),
+  accountId: args.includes("--account") ? get("--account") : undefined,
+  subjectMap: args.includes("--subject-map")
+    ? JSON.parse(fs.readFileSync(get("--subject-map"), "utf8"))
+    : {},
+  exportFiles: args.flatMap((a, i) => (a === "--export" ? [args[i + 1]] : [])),
+  sourceId: args.includes("--source-id") ? get("--source-id") : undefined,
+  legacySourceId: args.includes("--legacy-source-id")
+    ? get("--legacy-source-id")
+    : undefined,
+  legacyDb,
   legacyAgentId: args.includes("--legacy-agent")
     ? get("--legacy-agent")
     : undefined,
@@ -26,22 +46,19 @@ const summary = {
   events: plan.events.length,
   legacyNotes: plan.notes.length,
   conversations: plan.states.length,
+  coverage: plan.coverage,
+  rejected: plan.rejected,
   warnings: plan.warnings,
 };
-if (args.includes("--apply")) {
-  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
-  const file = path.join(root, "memory.sqlite"),
-    existed = fs.existsSync(file);
-  const store = new MemoryStore(file);
-  try {
-    if (existed) {
-      const destination = path.join(root, `memory-${Date.now()}.backup.sqlite`);
-      await backup(store.db, destination);
-      fs.chmodSync(destination, 0o600);
-    }
-    summary.result = importLegacy(store.bind(get("--agent")), plan);
-  } finally {
-    store.close();
-  }
+try {
+  if (args.includes("--apply"))
+    summary.result = await applyMigration(
+      path.join(root, "memory.sqlite"),
+      plan,
+    );
+} catch (error) {
+  summary.error = error.message;
+  if (error.backup) summary.before = error.backup;
+  process.exitCode = 1;
 }
 console.log(JSON.stringify(summary, null, 2));
