@@ -15,6 +15,7 @@ import { CHAT_MIND_TOOLS, SUBJECT_TOOLS } from "../tools/mind.mjs";
 import { FILE_TOOL_NAMES } from "../tools/file-tools.mjs";
 import { filesSchema } from "./policy.mjs";
 import { createHash, randomBytes } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { allowed, inSilence, validateConfig } from "./config.mjs";
 import { normalizeEvent, OneBot } from "../transport/onebot.mjs";
 import { BanterCoordinator } from "../../vendor/local-bridge/banter.mjs";
@@ -309,8 +310,19 @@ export class Runtime {
     return { revision: this.configStore.revision, files };
   }
   async changeConfig(next, revision) {
-    validateConfig(next);
+    next = validateConfig(next);
     if (revision !== this.configStore.revision) throw Error("CONFIG_CONFLICT");
+    // Participation only controls future wake decisions; existing capabilities
+    // and backend sessions remain valid. All other edits use full invalidation.
+    const withNextRates = structuredClone(this.config);
+    for (const a of withNextRates.agents)
+      a.wake.participation =
+        next.agents.find((candidate) => candidate.id === a.id)?.wake
+          .participation ?? a.wake.participation;
+    if (isDeepStrictEqual(withNextRates, next)) {
+      this.configStore.save(next, revision);
+      return { saved: true, reconnectRequired: false };
+    }
     if (this.lifecycle?.owned.size)
       throw Error("STOP_MANAGED_QQ_PROCESSES_BEFORE_CONFIG_EDIT");
     // Invalidate capabilities synchronously before awaiting cancellation: late tool calls cannot send.
@@ -557,10 +569,11 @@ export class Runtime {
     state.lastWakeAt = this.now();
     state.pendingWake = false;
     mem.setState(conversation, state);
-    const timer = setTimeout(
-      () => controller.abort(),
-      a.behavior.turnTimeoutMs,
-    );
+    const timer = setTimeout(() => {
+      if (controller.signal.aborted) return;
+      this.faults.set(agentId, "BACKEND_TURN_TIMEOUT");
+      controller.abort();
+    }, a.behavior.turnTimeoutMs);
     let outcome = "completed-no-send",
       backend;
     try {
@@ -609,14 +622,17 @@ export class Runtime {
       if (!controller.signal.aborted) this.faults.delete(agentId);
     } catch (e) {
       outcome = controller.signal.aborted ? "cancelled" : "failed";
-      this.faults.set(
-        agentId,
-        e.message === "AGENT_PAUSED_OR_EXPIRED"
-          ? "PAUSED"
-          : /^DSH_[A-Z_]+$/.test(e.message)
-            ? e.message
-            : "BACKEND_TURN_FAILED",
-      );
+      // Administrative cancellation is an expected lifecycle transition. Keep
+      // earlier genuine faults (including the deadline), but do not invent one.
+      if (!controller.signal.aborted)
+        this.faults.set(
+          agentId,
+          e.message === "AGENT_PAUSED_OR_EXPIRED"
+            ? "PAUSED"
+            : /^DSH_[A-Z_]+$/.test(e.message)
+              ? e.message
+              : "BACKEND_TURN_FAILED",
+        );
     } finally {
       this.capabilities.delete(token);
       try {
