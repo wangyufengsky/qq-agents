@@ -210,6 +210,7 @@ export const configSchema = z
             .default([]),
           network: z
             .object({
+              autonomous: z.boolean().default(false),
               publicUrls: z.array(z.string().url()).max(100).default([]),
             })
             .strict()

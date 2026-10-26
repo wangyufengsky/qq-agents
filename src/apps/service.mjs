@@ -242,6 +242,7 @@ export class AppBrowsing {
     const a = this.runtime.agent(agentId);
     return {
       enabled: a.apps.enabled,
+      autonomousNetwork: a.network?.autonomous === true,
       sharing: a.apps.sharing,
       platforms: this.adapter
         .capabilities()

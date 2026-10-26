@@ -52,6 +52,7 @@ export function scopedCatalog(runtime, ctx, input) {
     throw Error("TOOL_DISABLED");
   const names = args.names || allowed.slice(args.offset, args.offset + 20);
   return {
+    network: { autonomous: a.network?.autonomous === true },
     tools: toolSpecs(names).map((s) =>
       args.names ? s : { name: s.name, description: s.description },
     ),

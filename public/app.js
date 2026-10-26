@@ -380,6 +380,12 @@ function openEditor(type, id) {
         "允许随时读取的精确公开 URL（每行一个，不含私密参数）",
         (row.network?.publicUrls || []).join("\n"),
       ) +
+      check(
+        "autonomousNetwork",
+        "允许自主搜索与联网浏览（无需命令或逐次确认）",
+        row.network?.autonomous,
+      ) +
+      '<p class="hint">允许自行整理查询内容，提交给已启用的平台和外部工具。聊天经历不再触发逐次联网确认；平台开关、时段、预算与凭据保护仍生效。</p>' +
       input("aliases", "唤醒别名（逗号分隔）", (row.aliases || []).join(", ")) +
       input(
         "ownerIds",
@@ -501,6 +507,7 @@ $("#edit-form").onsubmit = (e) => {
           maxConsecutiveSends: Number(get("maxConsecutiveSends")),
           network: {
             ...row.network,
+            autonomous: f.has("autonomousNetwork"),
             publicUrls: get("publicUrls")
               .split(/\r?\n/)
               .map((s) => s.trim())

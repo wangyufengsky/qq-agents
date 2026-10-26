@@ -181,6 +181,34 @@ export function requestedByHuman(runtime, ctx, request, eventId) {
   }
   return false;
 }
+function autonomouslyAllowed(runtime, ctx, request) {
+  const agent = runtime.agent(ctx.agentId);
+  if (agent.network?.autonomous !== true) return false;
+  if (request.tool === "web_fetch") {
+    publicRequestUrl(request.args.url);
+    return true;
+  }
+  if (
+    [
+      "app_browse",
+      "app_search",
+      "app_boards",
+      "app_read",
+      "app_comments",
+    ].includes(request.tool)
+  )
+    return (
+      agent.apps.enabled && agent.apps.platforms.includes(request.args.platform)
+    );
+  if (request.tool !== "external_tool" || request.args.audioInput) return false;
+  const backend = runtime.config.backends.find((b) => b.id === agent.backendId);
+  return !!backend?.toolServers.some(
+    (server) =>
+      server.id === request.args.serverId &&
+      server.allowedTools.includes(request.args.tool),
+  );
+}
+
 export function authorizeExternal(
   runtime,
   ctx,
@@ -212,6 +240,13 @@ export function authorizeExternal(
   const records = [...ctx.privateRead]
     .filter((id) => sourceClass(runtime, ctx, id) !== "public-platform")
     .sort();
+  // This is a persistent administrator grant for ordinary queries/reads, not
+  // a deletion of provenance or permission to disclose operations/media bytes.
+  if (
+    autonomouslyAllowed(runtime, ctx, request) &&
+    !records.some((id) => sourceClass(runtime, ctx, id) === "operations")
+  )
+    return { requested: false, basis: "autonomous-network-permission" };
   if (!records.length)
     return { requested: false, basis: "no-protected-source" };
   const requestId = createHash("sha256")

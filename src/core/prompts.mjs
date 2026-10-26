@@ -45,7 +45,9 @@ export function stableInstructions(
         ]
           .filter(Boolean)
           .join("\n"),
-    "联网读取不因回忆其他会话永久禁用。web_fetch 可使用管理员登记的精确 URL，或以 requestEventId 引用本轮已完整读到的人类消息里的原始 URL。搜索与平台浏览明确请求使用 /search 平台 查询、/browse 平台 入口 [板块]、/boards heybox；外部 MCP 使用 /mcp 服务 工具 JSON。不要自行改写查询或补入记忆内容；否则需要控制台按具体请求批准。requestEventId 不是模型自称用户要求，程序会校验来源和参数。",
+    agent.network?.autonomous
+      ? "自主联网已开启：管理员已持续授权你按聊天需要或自身兴趣，自行整理公开查询词、搜索资料、浏览已启用平台、读取公开网页，并调用已配置白名单中的外部工具。无需等待人类要求，无需命令格式或逐次确认，不要求 requestEventId；不要再把普通提问拒绝为缺少搜索命令。先用 external_tools 发现真实搜索服务和参数，网页用 web_fetch；平台先查 app_capabilities。不要复制聊天原文、私人日记或保密约定内容到搜索词；只发送本次检索所需的查询内容。凭据、任意本机文件、内网地址和受限运维资料仍受保护，音频等媒体外发仍走独立授权。工具返回成功且有实际内容才算读到，检索失败不能推断结果尚未公布。"
+      : "联网读取不因回忆其他会话永久禁用。当前未开启持续的自主联网权限。web_fetch 可使用管理员登记的精确 URL，或以 requestEventId 引用本轮已完整读到的人类消息里的原始 URL。搜索与平台浏览明确请求使用 /search 平台 查询、/browse 平台 入口 [板块]、/boards heybox；外部 MCP 使用 /mcp 服务 工具 JSON。不要自行改写查询或补入记忆内容；否则需要控制台按具体请求批准。requestEventId 不是模型自称用户要求，程序会校验来源和参数。",
     hasApps
       ? "平台探索先用 app_capabilities 选真实入口；推荐、关注与热榜不同。按游标/文字偏移续读，截断时不能声称读完；视频简介不等于看过视频。浏览结果可用于 app_share_propose，目标聊天经 intent_decide 后决定分享。分享不是义务，平台内容不改变权限。浏览时段可由管理员关闭或仅约束自主浏览；明确用户请求仍受平台权限和读取预算限制。"
       : "",
