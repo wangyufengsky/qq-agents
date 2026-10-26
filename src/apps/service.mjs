@@ -73,6 +73,31 @@ export function normalizeRows(raw, job) {
             return null;
           }
         })(),
+        images: [
+          ...new Set(
+            [
+              x.cover || x.image || x.pic || x.thumbnail,
+              ...(Array.isArray(x.images)
+                ? x.images
+                : typeof x.images === "string"
+                  ? x.images.split("\n")
+                  : []),
+              ...(Array.isArray(x.imageList) ? x.imageList : []),
+            ].flatMap((value) => {
+              try {
+                const url =
+                  typeof value === "string"
+                    ? value
+                    : value?.url || value?.urlDefault || value?.url_default;
+                return [
+                  publicUrl(url?.startsWith("//") ? "https:" + url : url).href,
+                ];
+              } catch {
+                return [];
+              }
+            }),
+          ),
+        ].slice(0, 50),
         commentId:
           job.operation === "comments" ||
           (job.platform === "tieba" &&

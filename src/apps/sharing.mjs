@@ -1,8 +1,7 @@
 import { taintMedia } from "../tools/legacy.mjs";
 import { createHash } from "node:crypto";
-import { safeFetchBuffer } from "../../vendor/social-reader/safe-fetch.js";
-import { imageMime } from "../tools/media.mjs";
 import { contentIdentity } from "./urls.mjs";
+import { saveFileImage } from "../tools/saved-media.mjs";
 const terminal = new Set([
   "completed",
   "cancelled",
@@ -159,22 +158,28 @@ export function proposeShare(service, ctx, args) {
     },
   });
 }
-export async function fetchImage(service, ctx, { recordId }) {
+export async function fetchImage(service, ctx, { recordId, index = 0 }) {
   const record = service.get(ctx, recordId),
     r = service.runtime;
   service.active(ctx, record.platform, { spend: true });
   r.assertDisclosure(ctx);
   if (!r.media) throw Error("MEDIA_UNAVAILABLE");
-  if (!record.ok || !record.image) throw Error("APP_IMAGE_UNAVAILABLE");
-  const result = await safeFetchBuffer(record.image, 8 * 1024 * 1024);
+  const url = record.images?.length
+    ? record.images[index]
+    : index === 0
+      ? record.image
+      : null;
+  if (!record.ok || !url) throw Error("APP_IMAGE_UNAVAILABLE");
+  const file = await r.callTool(ctx, "file_download", { url });
   service.active(ctx, record.platform);
-  const buffer = Buffer.isBuffer(result) ? result : result.buffer;
+  const image = saveFileImage(r, ctx, file.fileId, {
+    title: record.title || "App 图片",
+    kind: "app-image",
+    appRecordId: recordId,
+  });
   return {
-    ...r.media.put(ctx.agentId, buffer, imageMime(buffer), {
-      conversation: ctx.conversation,
-      sourceEventId: recordId,
-      appRecordId: recordId,
-    }),
+    ...image,
+    id: image.mediaId,
     readingScope: "registered-image",
     notice: "登记成功不代表已理解图片；需实际查看图片后才能描述。",
   };

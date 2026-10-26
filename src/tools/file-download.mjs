@@ -3,7 +3,7 @@ import https from "node:https";
 import net from "node:net";
 import { validateFetchUrl } from "../../vendor/social-reader/safe-fetch.js";
 
-function validateWithSignal(raw, validate, signal) {
+export function validateWithSignal(raw, validate, signal) {
   signal.throwIfAborted();
   return new Promise((resolve, reject) => {
     const finish = (complete, value) => {
@@ -22,7 +22,11 @@ function validateWithSignal(raw, validate, signal) {
 }
 
 // Resolve and pin each hop; never forward cookies, auth headers or local paths.
-export function requestFile(url, addresses, { maxBytes, signal }) {
+export function requestFile(
+  url,
+  addresses,
+  { maxBytes, signal, includeType = false },
+) {
   return new Promise((resolve, reject) => {
     const request = (url.protocol === "https:" ? https : http).get(
       url,
@@ -68,7 +72,19 @@ export function requestFile(url, addresses, { maxBytes, signal }) {
             response.destroy();
           } else chunks.push(chunk);
         });
-        response.on("end", () => resolve({ buffer: Buffer.concat(chunks) }));
+        response.on("end", () =>
+          resolve({
+            buffer: Buffer.concat(chunks),
+            ...(includeType
+              ? {
+                  contentType: String(
+                    response.headers["content-type"] ||
+                      "application/octet-stream",
+                  ),
+                }
+              : {}),
+          }),
+        );
         response.on("error", () => reject(Error("FILE_DOWNLOAD_FAILED")));
         response.on("aborted", () => reject(Error("FILE_DOWNLOAD_FAILED")));
       },

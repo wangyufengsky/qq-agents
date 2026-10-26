@@ -75,6 +75,7 @@ export const SUBJECT_APP_TOOLS = [
   "app_history",
   "qq_read_share_card",
   "app_image",
+  "app_screenshot",
   "app_share_propose",
 ];
 

@@ -5,6 +5,7 @@ import { ExternalTools } from "./external.mjs";
 import { mcpResult } from "../tools/index.mjs";
 import { safeToolFailure } from "../tools/errors.mjs";
 import { sessionSignature, assertSession } from "./session-contract.mjs";
+import { readGeneratedImage } from "./generated-image-file.mjs";
 
 export const restrictions = {
   "features.shell_tool": false,
@@ -26,8 +27,14 @@ export class CodexBackend {
     this.agent = agent;
     this.root = path.join(root, "codex", agent.id);
     fs.mkdirSync(this.root, { recursive: true, mode: 0o700 });
-    const home = path.join(this.root, "home");
+    const home = (this.home = path.join(this.root, "home"));
     fs.mkdirSync(home, { recursive: true, mode: 0o700 });
+    this.expectedHome = path.join(
+      fs.realpathSync(root),
+      "codex",
+      agent.id,
+      "home",
+    );
     // Never inherit the user's everyday Codex home. Login belongs to this dedicated instance.
     this.rpc =
       rpc ||
@@ -94,6 +101,18 @@ export class CodexBackend {
   notification({ method, params: p }) {
     const r = this.active.get(p?.threadId);
     if (!r) return;
+    if (
+      method === "item/completed" &&
+      p.turnId === r.turnId &&
+      !r.signal.aborted &&
+      p.item?.type === "imageGeneration"
+    ) {
+      try {
+        r.onGeneratedImage?.(p.threadId, p.item);
+      } catch {
+        r.onImageError?.();
+      }
+    }
     if (method === "thread/tokenUsage/updated") {
       const usage = p.tokenUsage;
       if (usage?.last && usage.last.inputTokens + usage.last.outputTokens > 0)
@@ -180,6 +199,9 @@ export class CodexBackend {
     session,
     saveSession,
     onBackendTurn,
+    onImageSession,
+    onGeneratedImage,
+    onImageError,
   }) {
     const signature = this.sessionSignature(tools);
     assertSession(session, "codex", signature);
@@ -215,6 +237,8 @@ export class CodexBackend {
       threadId = r.thread.id;
       saveSession({ backend: "codex", id: threadId, signature });
     }
+    if (signal.aborted) throw Error("ABORTED");
+    onImageSession?.(threadId);
     let resolve, reject;
     const done = new Promise((r, j) => {
       resolve = r;
@@ -228,6 +252,8 @@ export class CodexBackend {
       signal,
       onUsage,
       onBackendTurn,
+      onGeneratedImage,
+      onImageError,
       turnId: null,
     };
     this.active.set(threadId, active);
@@ -258,6 +284,25 @@ export class CodexBackend {
       signal.removeEventListener("abort", abort);
       this.active.delete(threadId);
     }
+  }
+  readGeneratedImage(sessionId, item) {
+    if (fs.realpathSync(this.home) !== this.expectedHome)
+      throw Error("GENERATED_IMAGE_SOURCE_DENIED");
+    return readGeneratedImage(this.home, sessionId, item);
+  }
+  async imageHistory(sessionId) {
+    await this.ready();
+    const result = await this.rpc.request("thread/read", {
+      threadId: sessionId,
+      includeTurns: true,
+    });
+    if (result.thread?.id !== sessionId)
+      throw Error("IMAGE_SESSION_SCOPE_MISMATCH");
+    const items = (result.thread?.turns || [])
+      .flatMap((t) => t.items || [])
+      .filter((i) => i.type === "imageGeneration");
+    if (items.length > 100) throw Error("GENERATED_IMAGE_HISTORY_LIMIT");
+    return items;
   }
   async compact({ session, signal }) {
     await this.ready();

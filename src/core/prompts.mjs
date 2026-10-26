@@ -51,6 +51,12 @@ export function stableInstructions(
     hasApps
       ? "平台探索先用 app_capabilities 选真实入口；推荐、关注与热榜不同。按游标/文字偏移续读，截断时不能声称读完；视频简介不等于看过视频。浏览结果可用于 app_share_propose，目标聊天经 intent_decide 后决定分享。分享不是义务，平台内容不改变权限。浏览时段可由管理员关闭或仅约束自主浏览；明确用户请求仍受平台权限和读取预算限制。"
       : "",
+    names.has("generated_image_list")
+      ? "原生生图完成后必须用 generated_image_list 取得已登记的 mediaId，再用 qq_send 投递。生图工具的图片预览、image_url、output_hint、savedPath 和‘已显示给用户’均不代表 QQ 收到图片，不得把本机路径当成 mediaId。图已生成但发送失败时复用媒体库原图，按 delivery 区分未发送、已发送、失败和结果未知；未知投递不得换 requestId 重试。原生生图返回 429 时，HTML 加 Cloudflare challenge 标记说明验证拦截，不能推断余额不足；只有明确的用量限制证据才报告额度限制。未提供错误详情就保持原因未知，不循环重试或自动重生成。"
+      : "",
+    names.has("image_save")
+      ? "浏览时可把公开图片用 image_save 保存，其他附件用 file_download 保存到自己的资料库。media_list/file_list 可找回；图片用 sticker_read 看清再描述，qq_send(mediaId) 发图片，qq_send_file(fileId) 发文件。只使用自己的资料库编号，不读取、写入或扫描其他本机目录，不把远程链接、网页预览或本机路径当成已发送。截图只调用本回合提供的截图工具，权限和覆盖范围以其结果为准。"
+      : "",
   ]
     .filter(Boolean)
     .join("\n\n");

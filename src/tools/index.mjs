@@ -1,6 +1,8 @@
 import { appDefinitions, appTool } from "../apps/tools.mjs";
 import { mindDefinitions, mindTool } from "./mind.mjs";
 import { fileDefinitions, fileTool } from "./file-tools.mjs";
+import { savedMediaDefinitions, savedMediaTool } from "./saved-media.mjs";
+import { screenshotDefinitions, screenshotTool } from "./screenshots.mjs";
 import { readEventImage } from "./image-read.mjs";
 import { z } from "zod";
 import { synthesize } from "./speech.mjs";
@@ -58,6 +60,8 @@ const definitions = {
   ...mindDefinitions,
   ...legacyDefinitions,
   ...fileDefinitions,
+  ...savedMediaDefinitions,
+  ...screenshotDefinitions,
   ...appDefinitions,
   memory_search: [
     "按中文关键词、人物QQ、来源、时间、记录类型检索自己的跨会话经历/日记。命中附带同一场景的相邻发言和引用；相邻不等于同一话题。自行判断适合表达的回忆，再按ID展开原文。",
@@ -163,6 +167,16 @@ const definitions = {
         replyTo: str.optional(),
         atUserId: str.optional(),
         mediaId: str.optional(),
+      })
+      .strict(),
+  ],
+  generated_image_list: [
+    "恢复并列出本角色当前聊天的原生生图记录。生图后先调用，取得 mediaId，再用 qq_send 发送；原生界面显示图片不等于 QQ 已投递。按 nextOffset 翻图片，nextSessionOffset 翻待恢复会话。不会重新生图或自动发送。",
+    z
+      .object({
+        offset: z.number().int().min(0).default(0),
+        limit: z.number().int().min(1).max(20).default(10),
+        sessionOffset: z.number().int().min(0).default(0),
       })
       .strict(),
   ],
@@ -428,6 +442,14 @@ export async function dispatchTool(runtime, ctx, name, input) {
       : mem.diaryRevise(args, protectedOperations);
   }
   if (name === "qq_send") return runtime.send(ctx, args);
+  if (name in savedMediaDefinitions)
+    return savedMediaTool(runtime, ctx, name, args);
+  if (name in screenshotDefinitions)
+    return screenshotTool(runtime, ctx, name, args);
+  if (name === "generated_image_list") {
+    const recovery = await runtime.generatedImages.recover(ctx, args);
+    return { ...runtime.generatedImages.list(ctx, args), ...recovery };
+  }
   if (name === "qq_mark_read") {
     if (args.throughSeq > ctx.shownSeq) throw Error("UNSEEN_WATERMARK");
     const state = mem.state(ctx.conversation);
