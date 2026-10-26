@@ -510,7 +510,12 @@ $("#edit-form").onsubmit = (e) => {
             questions: f.has("questions"),
             peers: f.has("peers"),
           },
-          tools: tools.filter((t) => f.has("tool:" + t)),
+          tools: [
+            ...row.tools.filter((t) => f.has("tool:" + t)),
+            ...tools.filter(
+              (t) => !row.tools.includes(t) && f.has("tool:" + t),
+            ),
+          ],
           silence: JSON.parse(get("silence") || "[]"),
         };
       else if (editing.type === "connections")
@@ -545,15 +550,26 @@ $("#edit-form").onsubmit = (e) => {
       if (editing.type === "agents") {
         delete row.enabled;
         delete row.toolServers;
+        // Keep the compatibility alias unchanged when the displayed value was
+        // not edited, so a participation save does not become a policy change.
+        if (
+          !Object.hasOwn(editing.row, "maxConsecutiveSends") &&
+          row.maxConsecutiveSends === editing.row.maxSendsPerTurn
+        )
+          delete row.maxConsecutiveSends;
       }
       const index = next[editing.type].findIndex((x) => x.id === editing.id);
       if (index < 0) next[editing.type].push(row);
       else next[editing.type][index] = row;
     }
-    await api("/api/config", { config: next, revision }, "PUT");
+    const result = await api("/api/config", { config: next, revision }, "PUT");
     $("#editor").close();
     await load();
-    notice("已保存。QQ 连接需要手动重新接入。");
+    notice(
+      result.reconnectRequired
+        ? "已保存。QQ 连接需要手动重新接入。"
+        : "已保存并生效，现有 QQ 连接和回合保持不变。",
+    );
   });
 };
 function sceneMarkup(scene) {

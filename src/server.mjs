@@ -439,8 +439,12 @@ export function createServer({ runtime, token, allowLive = false }) {
         const data = await body(req);
         if (data.config?.mode === "live" && !allowLive)
           throw Error("RESTART_WITH_LIVE_FLAG_REQUIRED");
-        await runtime.changeConfig(data.config, data.revision);
-        return send({ ok: true, revision: runtime.configStore.revision });
+        const result = await runtime.changeConfig(data.config, data.revision);
+        return send({
+          ...result,
+          ok: true,
+          revision: runtime.configStore.revision,
+        });
       }
       if (req.method === "POST" && url.pathname === "/api/pause") {
         const data = await body(req);
