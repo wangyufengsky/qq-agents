@@ -54,7 +54,7 @@ export const legacyDefinitions = {
     }),
   ],
   qq_send_burst: [
-    "按顺序发送多条文字；每条独立回执，未知结果停止，不自动重发。",
+    "自然分条补充时使用：messages 中每个元素是一条独立 QQ 消息，正文换行不会分条。按 self 与场景决定长短和条数，不强制连发或机械切碎长文。省略 gapMs 使用配置的自然间隔；每条独立回执，未知结果停止，不自动重发。",
     object({
       requestId: id,
       messages: z.array(str.min(1).max(2000)).min(1).max(10),
