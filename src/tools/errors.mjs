@@ -67,7 +67,7 @@ export function safeToolFailure(error) {
     REPLY_BURST_LIMIT:
       "Consecutive replies are exhausted. Read genuinely new human input before replying again; rereads, peer messages and restarting a turn do not refill this budget.",
     PRIVATE_RECOLLECTION_EXTERNAL_CALL_BLOCKED:
-      "This exact outbound request lacks authority. Use a configured exact public URL or a fully read current human requestEventId with matching parameters; otherwise the console must approve this request. Do not copy remembered private text into a different call.",
+      "This request lacks outbound authority. Ordinary searches/reads can use the administrator's autonomous network permission; otherwise use a configured exact public URL, a matching current human requestEventId, or exact console approval. Operations-derived content and media disclosure still require their own authority. Do not copy private records into a query.",
     EXTERNAL_URL_REQUIRES_WEB_FETCH:
       "Arbitrary MCP URL fetching cannot enforce bridge DNS/redirect checks. Use web_fetch for a public URL; no external call was made.",
     APP_OUTSIDE_HOURS:

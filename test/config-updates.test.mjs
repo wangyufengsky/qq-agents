@@ -267,4 +267,22 @@ test("real console role form changes only participation and shows the server's r
   assert.equal(f.runtime.status().connections[0].connected, true);
   assert.match(node("#notice").textContent, /保持/);
   assert.equal(bodyClasses.has("locked"), false);
+  // The same real form persists the per-agent autonomy grant in both directions.
+  for (const enabled of [true, false]) {
+    vm.runInContext(
+      'editing = { type: "agents", id: config.agents[0].id, row: config.agents[0] };',
+      sandbox,
+    );
+    if (enabled) fields.set("autonomousNetwork", "on");
+    else fields.delete("autonomousNetwork");
+    node("#edit-form").onsubmit({ preventDefault() {}, target: fields });
+    await vm.runInContext("submitted", sandbox);
+    assert.equal(f.runtime.agent(a.id).network.autonomous, enabled);
+    assert.equal(
+      JSON.parse(fs.readFileSync(f.configStore.file)).agents[0].network
+        .autonomous,
+      enabled,
+    );
+    assert.equal(f.runtime.agent(a.id).wake.participation, 0.4);
+  }
 });
