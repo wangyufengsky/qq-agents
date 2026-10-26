@@ -170,6 +170,10 @@ export class SlangLearner {
     );
     if (!records.length) return;
     const ctx = runtime.makeContext(a.id, conversation);
+    let resolveDone;
+    ctx.done = new Promise((resolve) => {
+      resolveDone = resolve;
+    });
     ctx.allowedTools = ["slang_submit", "slang_research"];
     ctx.privateRead.add("context:" + conversation);
     records.forEach((row) => ctx.privateRead.add(row.id));
@@ -287,6 +291,7 @@ export class SlangLearner {
         clearTimeout(timer);
         ctx.controller.abort();
         runtime.capabilities.delete(ctx.token);
+        resolveDone();
       }
     }
   }

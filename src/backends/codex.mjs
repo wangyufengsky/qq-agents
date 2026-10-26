@@ -53,6 +53,7 @@ export class CodexBackend {
         r.reject(Error("CODEX_DISCONNECTED"));
       this.active.clear();
       this.readyPromise = null;
+      if (!this.closing) this.onDisconnect?.(Error("CODEX_DISCONNECTED"));
     });
   }
   async ready() {
@@ -71,8 +72,24 @@ export class CodexBackend {
     return this.readyPromise;
   }
   async models() {
-    const result = await this.ready();
-    return result.data;
+    return (await this.health()).models;
+  }
+  async health() {
+    await this.ready();
+    const auth = await this.rpc.request("account/read", {
+      refreshToken: false,
+    });
+    if (!auth.account) throw Error("CODEX_DEDICATED_LOGIN_REQUIRED");
+    const result = await this.rpc.request("model/list", {});
+    if (
+      !result.data?.length ||
+      (this.config.model &&
+        !result.data.some(
+          (m) => m.model === this.config.model || m.id === this.config.model,
+        ))
+    )
+      throw Error("BACKEND_MODEL_UNAVAILABLE");
+    return { models: result.data, endpoint: "stdio" };
   }
   notification({ method, params: p }) {
     const r = this.active.get(p?.threadId);
@@ -291,6 +308,7 @@ export class CodexBackend {
     }
   }
   async close() {
+    this.closing = true;
     await this.cancel();
     this.rpc.close();
     await this.external.close();

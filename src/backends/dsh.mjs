@@ -1,11 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { NodeApiClient, unwrap } from "../../vendor/dsh-qq/dsh-client.js";
-import {
-  resolveDshBaseUrl,
-  looksLikeDsh,
-  listDesktopListenPorts,
-} from "../../vendor/dsh-qq/dsh-endpoint.mjs";
+import { resolveDshInstance } from "./dsh-discovery.mjs";
 import { ExternalTools } from "./external.mjs";
 import { sessionSignature, assertSession } from "./session-contract.mjs";
 
@@ -13,7 +9,7 @@ export class DshBackend {
   constructor(
     config,
     agent,
-    { root, client, discover = resolveDshBaseUrl } = {},
+    { root, client, discover = resolveDshInstance } = {},
   ) {
     Object.assign(this, { config, agent, root, client, discover });
     this.external = new ExternalTools(config.toolServers);
@@ -30,22 +26,9 @@ export class DshBackend {
     return this.connecting;
   }
   async connectClient() {
-    const found = await this.discover(this.config.baseUrl);
-    if (!found.reachable) throw Error("DSH_NOT_FOUND");
-    // TCP-open alone is insufficient: a reused port may belong to an unrelated local service.
-    let base = found.url;
-    if (!(await looksLikeDsh(base))) {
-      if (this.config.baseUrl) throw Error("NOT_DSH_ENDPOINT");
-      base = null;
-      for (const p of await listDesktopListenPorts()) {
-        const u = `http://127.0.0.1:${p}`;
-        if (await looksLikeDsh(u)) {
-          base = u;
-          break;
-        }
-      }
-      if (!base) throw Error("DSH_NOT_FOUND");
-    }
+    const found = await this.discover(this.config);
+    const base = found.url;
+    this.endpoint = base;
     this.client = new NodeApiClient(base, 30000, {});
     return this.client;
   }
@@ -55,6 +38,19 @@ export class DshBackend {
       await c.callUnary("session.modelCatalog", {}),
       "model catalog",
     );
+  }
+  async health() {
+    const catalog = await this.models();
+    const groups = catalog.groups?.filter(
+      (g) => !this.config.provider || g.id === this.config.provider,
+    );
+    const models = groups?.flatMap((g) => g.models);
+    if (
+      !models?.length ||
+      (this.config.model && !models.some((m) => m.id === this.config.model))
+    )
+      throw Error("BACKEND_MODEL_UNAVAILABLE");
+    return { models, endpoint: this.endpoint || null };
   }
   async stream() {
     if (this.streamReady) return this.streamReady;
@@ -115,6 +111,7 @@ export class DshBackend {
           t.reject(Error("DSH_STREAM_ENDED"));
         this.streamReady = null;
         this.client = null;
+        if (!this.closing) this.onDisconnect?.(Error("DSH_STREAM_ENDED"));
       }
     })();
     const timeout = setTimeout(() => {
@@ -285,6 +282,7 @@ export class DshBackend {
     }
   }
   async close() {
+    this.closing = true;
     await this.cancel();
     this.streamAbort?.abort();
     await this.pump;

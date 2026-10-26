@@ -19,10 +19,11 @@ export class CodexRpc extends EventEmitter {
     this.child = child;
     // Diagnostics may contain paths or credentials: do not forward stderr into QQ.
     child.stderr?.on('data',()=>{});
-    child.on('error',error=>this.fail(error));
-    child.on('exit',()=>this.fail(new Error('CODEX_PROCESS_EXITED')));
+    child.on('error',error=>{if(this.child===child)this.fail(error);});
+    child.on('exit',()=>{if(this.child===child)this.fail(new Error('CODEX_PROCESS_EXITED'));});
     this.lines = createInterface({input:child.stdout});
     this.lines.on('line',line=>{
+      if(this.child!==child)return;
       let message; try { message=JSON.parse(line); } catch { return; }
       if (message.id !== undefined && !message.method) {
         const item=this.pending.get(message.id); if(!item)return;
