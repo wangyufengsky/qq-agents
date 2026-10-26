@@ -1,6 +1,7 @@
 import { appDefinitions, appTool } from "../apps/tools.mjs";
 import { mindDefinitions, mindTool } from "./mind.mjs";
 import { fileDefinitions, fileTool } from "./file-tools.mjs";
+import { readEventImage } from "./image-read.mjs";
 import { z } from "zod";
 import { synthesize } from "./speech.mjs";
 import { externalArguments, externalResult } from "./external-media.mjs";
@@ -174,9 +175,14 @@ const definitions = {
     z.object({ minutes: z.number().int().min(0).max(10080) }).strict(),
   ],
   qq_image_read: [
-    "读取某条经历的图片。GIF动图自动返回按时间抽取的多帧及时间信息；animation可指定时间段或连续逐帧分页。只有拿到像素后才能描述；complete=false不能声称看完动图。",
+    "读取某条经历的图片或图片文件附件。id须是包含附件的经历ID；默认优先image，无image时读file，也可用source指定，index从0开始按该类型计数。file需要file_download工具和文件接收权限。GIF动图自动返回按时间抽取的多帧及时间信息；animation可指定时间段或连续逐帧分页。只有拿到像素后才能描述；complete=false不能声称看完动图。",
     z
-      .object({ id: str, index: z.number().int().min(0).optional(), animation })
+      .object({
+        id: str,
+        index: z.number().int().min(0).optional(),
+        source: z.enum(["image", "file"]).optional(),
+        animation,
+      })
       .strict(),
   ],
   sticker_list: [
@@ -443,11 +449,9 @@ export async function dispatchTool(runtime, ctx, name, input) {
     if (!row) throw Error("RECORD_NOT_FOUND");
     const event = mem.event(row, ctx.conversation);
     track(ctx, [event]);
-    const media = await runtime.media.fromMessage(
-      ctx.agentId,
-      event,
-      args.index || 0,
-    );
+    const media = await readEventImage(runtime, ctx, event, args);
+    runtime.assertActive(ctx);
+    taintMedia(ctx, runtime.media.metadata(ctx.agentId, media.id));
     return runtime.media.view(
       ctx.agentId,
       media.id,

@@ -36,6 +36,34 @@ export function safeToolFailure(error) {
       hint: "Correct the named arguments within these bounds, or omit optional budgets and use pagination. The operation did not succeed. Do not infer unread content or claim successful delivery.",
     };
   const hints = {
+    INVALID_IMAGE:
+      "The downloaded bytes are not a supported image. No pixels were read. Use the actual GIF, PNG, JPEG or WebP attachment; a filename or an error page is not image evidence.",
+    IMAGE_MIME_MISMATCH:
+      "The declared image format does not match the downloaded bytes. No pixels were read; request a valid source image rather than describing this failed result.",
+    IMAGE_TOO_LARGE:
+      "Image pixels were not read. GIF originals are limited to 20 MiB; other image originals to 8 MiB. File attachments also obey the configured file size limit. Ask for a smaller source instead of repeating this download.",
+    IMAGE_OUTPUT_LIMIT:
+      "Image pixels were not read. A static image or single-frame GIF exceeds the 8 MiB output limit. Request a smaller image; do not treat an unread GIF as a successfully viewed animation.",
+    IMAGE_DOWNLOAD_TIMEOUT:
+      "Image pixels were not read. The bounded download deadline expired. Do not repeatedly retry the same large or slow source; ask for a smaller attachment or a fresh upload. A failed download is not evidence of a static image.",
+    IMAGE_DOWNLOAD_HTTP_ERROR:
+      "Image pixels were not read. The image server rejected the download or returned an unsupported response. The signed link may have expired; request a fresh upload rather than repeating the same URL.",
+    IMAGE_DOWNLOAD_FAILED:
+      "Image pixels were not read because the transfer failed. Do not describe the image or repeatedly retry the same source. A fresh upload may be needed.",
+    IMAGE_DOWNLOAD_BUSY:
+      "The image download concurrency limit is reached. Wait for existing reads to finish before requesting another image; no pixels were read by this call.",
+    IMAGE_URL_DENIED:
+      "The source URL failed the public-network safety check. Do not bypass this check with another tool or a local path; request a supported QQ image upload.",
+    IMAGE_REDIRECT_INVALID:
+      "Image pixels were not read because the download redirect was invalid. Request a fresh supported upload; do not infer image content.",
+    IMAGE_REDIRECT_LIMIT:
+      "Image pixels were not read because the download exceeded its redirect limit. Request a fresh supported upload; do not repeat the redirect chain.",
+    IMAGE_NOT_FOUND:
+      "This record has no image at the requested source/index. Use the ID of the event containing the actual image or image file attachment. source selects image or file; index starts at zero within that type. Text about an image is not image evidence.",
+    IMAGE_ATTACHMENT_REQUIRED:
+      "The selected file is not named as a GIF, PNG, JPEG or WebP image attachment. Read the actual image event instead. Arbitrary files cannot be interpreted as image pixels.",
+    IMAGE_URL_UNAVAILABLE:
+      "The image event has no downloadable source URL. Request a fresh image upload; no pixels were read and a local gateway path must not be substituted.",
     REPLY_BURST_LIMIT:
       "Consecutive replies are exhausted. Read genuinely new human input before replying again; rereads, peer messages and restarting a turn do not refill this budget.",
     PRIVATE_RECOLLECTION_EXTERNAL_CALL_BLOCKED:

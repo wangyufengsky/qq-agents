@@ -8,10 +8,11 @@ import {
   decodeGif,
   hasOtherAnimation,
 } from "./animation.mjs";
-import {
-  safeFetchBuffer,
-  looksLikeImageBuffer,
-} from "../../vendor/social-reader/safe-fetch.js";
+import { looksLikeImageBuffer } from "../../vendor/social-reader/safe-fetch.js";
+import { downloadImage } from "./image-download.mjs";
+
+export const MAX_IMAGE_SOURCE_BYTES = 20 * 1024 * 1024;
+const MAX_STATIC_BYTES = 8 * 1024 * 1024;
 
 export function imageMime(buffer) {
   if (
@@ -37,14 +38,12 @@ export function imageMime(buffer) {
   throw Error("INVALID_IMAGE");
 }
 export class MediaStore {
-  constructor(
-    root,
-    { fetchBuffer = safeFetchBuffer, decode = decodeGif } = {},
-  ) {
+  constructor(root, { fetchBuffer = downloadImage, decode = decodeGif } = {}) {
     this.root = root;
     this.fetchBuffer = fetchBuffer;
     this.decode = decode;
     this.activeAnimations = 0;
+    this.activeDownloads = 0;
     fs.mkdirSync(root, { recursive: true, mode: 0o700 });
   }
   dir(agentId) {
@@ -55,12 +54,16 @@ export class MediaStore {
     if (
       !Buffer.isBuffer(buffer) ||
       !buffer.length ||
-      buffer.length > 8 * 1024 * 1024 ||
       !looksLikeImageBuffer(buffer) ||
       !["image/png", "image/jpeg", "image/gif", "image/webp"].includes(mimeType)
     )
       throw Error("INVALID_IMAGE");
     if (imageMime(buffer) !== mimeType) throw Error("IMAGE_MIME_MISMATCH");
+    if (
+      buffer.length >
+      (mimeType === "image/gif" ? MAX_IMAGE_SOURCE_BYTES : MAX_STATIC_BYTES)
+    )
+      throw Error("IMAGE_TOO_LARGE");
     const id = createHash("sha256").update(buffer).digest("hex"),
       dir = this.dir(agentId);
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -81,21 +84,30 @@ export class MediaStore {
                 {
                   conversation: existing.conversation,
                   eventId: existing.sourceEventId || null,
+                  type: existing.sourceType,
+                  index: existing.sourceIndex,
                 },
               ]
             : [])),
+        ...(meta.sources || []),
         ...(meta.conversation
           ? [
               {
                 conversation: meta.conversation,
                 eventId: meta.sourceEventId || null,
+                type: meta.sourceType,
+                index: meta.sourceIndex,
               },
             ]
           : []),
       ].filter(
         (x, i, all) =>
           all.findIndex(
-            (y) => y.conversation === x.conversation && y.eventId === x.eventId,
+            (y) =>
+              y.conversation === x.conversation &&
+              y.eventId === x.eventId &&
+              y.type === x.type &&
+              y.index === x.index,
           ) === i,
       ),
     });
@@ -131,7 +143,8 @@ export class MediaStore {
     if (hasOtherAnimation(data, meta.mimeType))
       throw Error("ANIMATION_FORMAT_UNSUPPORTED_USE_GIF");
     const info = meta.mimeType === "image/gif" ? inspectGif(data) : null;
-    if (!info || info.frames.length === 1)
+    if (!info || info.frames.length === 1) {
+      if (data.length > MAX_STATIC_BYTES) throw Error("IMAGE_OUTPUT_LIMIT");
       return {
         content: [
           { type: "text", text: JSON.stringify({ ...media, animated: false }) },
@@ -142,6 +155,7 @@ export class MediaStore {
           },
         ],
       };
+    }
     const selection = selectFrames(info, options);
     if (this.activeAnimations >= 2) throw Error("ANIMATION_DECODER_BUSY");
     this.activeAnimations++;
@@ -204,28 +218,60 @@ export class MediaStore {
     const image = this.read(agentId, id);
     return { type: "image", data: { file: "base64://" + image.data } };
   }
-  async fromMessage(agentId, event, index = 0) {
+  cachedSource(agentId, eventId, index) {
+    const dir = this.dir(agentId);
+    if (!eventId || !fs.existsSync(dir)) return null;
+    for (const file of fs.readdirSync(dir)) {
+      if (!/^[a-f0-9]{64}\.json$/.test(file)) continue;
+      const meta = this.metadata(agentId, file.slice(0, -5));
+      if (
+        meta?.sources?.some(
+          (source) =>
+            source.eventId === eventId &&
+            source.type === "image" &&
+            source.index === index,
+        ) &&
+        fs.existsSync(path.join(dir, meta.id + ".bin"))
+      )
+        return { id: meta.id, mimeType: meta.mimeType, bytes: meta.bytes };
+    }
+    return null;
+  }
+  async fromMessage(agentId, event, index = 0, { signal, assertActive } = {}) {
+    const active = () => {
+      if (signal?.aborted) throw Error("ABORTED");
+      assertActive?.();
+    };
+    active();
     const segments = event.payload?.segments || [],
       images = segments.filter((s) => s.type === "image");
     if (!Number.isInteger(index) || index < 0 || index >= images.length)
       throw Error("IMAGE_NOT_FOUND");
-    const url = images[index].data?.url;
+    const cached = this.cachedSource(agentId, event.id, index);
+    if (cached) return cached;
+    const data = images[index].data || {};
+    if (Number(data.file_size || data.size) > MAX_IMAGE_SOURCE_BYTES)
+      throw Error("IMAGE_TOO_LARGE");
+    const url = data.url;
     if (!url) throw Error("IMAGE_URL_UNAVAILABLE");
-    const result = await this.fetchBuffer(url, 8 * 1024 * 1024);
-    const buffer = Buffer.isBuffer(result) ? result : result.buffer;
-    const mimeType =
-      buffer[0] === 137
-        ? "image/png"
-        : buffer[0] === 255
-          ? "image/jpeg"
-          : buffer.toString("ascii", 0, 3) === "GIF"
-            ? "image/gif"
-            : "image/webp";
-    return this.put(agentId, buffer, mimeType, {
-      sourceEventId: event.id,
-      conversation: event.conversation,
-      protectedOperations: event.protectedOperations === true,
-    });
+    if (this.activeDownloads >= 2) throw Error("IMAGE_DOWNLOAD_BUSY");
+    this.activeDownloads++;
+    try {
+      const result = await this.fetchBuffer(url, MAX_IMAGE_SOURCE_BYTES, {
+        signal,
+      });
+      active();
+      const buffer = Buffer.isBuffer(result) ? result : result.buffer;
+      return this.put(agentId, buffer, imageMime(buffer), {
+        sourceEventId: event.id,
+        sourceType: "image",
+        sourceIndex: index,
+        conversation: event.conversation,
+        protectedOperations: event.protectedOperations === true,
+      });
+    } finally {
+      this.activeDownloads--;
+    }
   }
   collect(agentId, id, { title, tags = [] }) {
     const meta = this.metadata(agentId, id);
