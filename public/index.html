@@ -3,7 +3,8 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>QQ Bridge · 统一管理台</title>
+    <meta name="color-scheme" content="dark" />
+    <title>QQ Agents · 智能体控制台</title>
     <link rel="stylesheet" href="/style.css" />
     <script src="/app.js" defer></script>
     <script src="/parity.js" defer></script>
@@ -11,49 +12,180 @@
     <script src="/apps-ui.js" defer></script>
     <script src="/mind-ui.js" defer></script>
   </head>
-  <body>
+  <body class="locked">
+    <svg class="sprite" aria-hidden="true" focusable="false">
+      <defs>
+        <linearGradient id="beam" x1="0" x2="1" y1="0" y2="0">
+          <stop offset="0" stop-color="#4d6bfe" />
+          <stop offset="1" stop-color="#5fd4ff" />
+        </linearGradient>
+      </defs>
+      <symbol id="i-logo" viewBox="0 0 24 24">
+        <path
+          d="M12 2.8 20 7.4v9.2L12 21.2 4 16.6V7.4zM12 12l8-4.6M12 12v9.2M12 12 4 7.4"
+        />
+      </symbol>
+      <symbol id="i-home" viewBox="0 0 24 24">
+        <path d="M4 4h7v7H4zM13 4h7v4h-7zM13 10h7v10h-7zM4 13h7v7H4z" />
+      </symbol>
+      <symbol id="i-bot" viewBox="0 0 24 24">
+        <path
+          d="M5 9h14v10H5zM12 4v5M9 13.5h.01M15 13.5h.01M2.5 13v3M21.5 13v3M12 4h.01"
+        />
+      </symbol>
+      <symbol id="i-link" viewBox="0 0 24 24">
+        <path
+          d="M10 14a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1M14 10a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"
+        />
+      </symbol>
+      <symbol id="i-chip" viewBox="0 0 24 24">
+        <path
+          d="M7 7h10v10H7zM10 10h4v4h-4zM9.5 3v4M14.5 3v4M9.5 17v4M14.5 17v4M3 9.5h4M3 14.5h4M17 9.5h4M17 14.5h4"
+        />
+      </symbol>
+      <symbol id="i-sparkle" viewBox="0 0 24 24">
+        <path
+          d="M12 3l1.8 5.6L19.5 10l-5.7 1.6L12 17l-1.8-5.4L4.5 10l5.7-1.4z"
+        />
+      </symbol>
+      <symbol id="i-book" viewBox="0 0 24 24">
+        <path
+          d="M4 5.5A1.5 1.5 0 0 1 5.5 4H10a2 2 0 0 1 2 2v14a2 2 0 0 0-2-2H4zM20 5.5A1.5 1.5 0 0 0 18.5 4H14a2 2 0 0 0-2 2v14a2 2 0 0 1 2-2h6z"
+        />
+      </symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24">
+        <path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7v5l3 2" />
+      </symbol>
+      <symbol id="i-wave" viewBox="0 0 24 24">
+        <path d="M3 12h2M7 8v8M11 5v14M15 9v6M19 7v10M21 12h0" />
+      </symbol>
+      <symbol id="i-globe" viewBox="0 0 24 24">
+        <path
+          d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM3 12h18M12 3c2.5 2.6 3.7 5.6 3.7 9s-1.2 6.4-3.7 9c-2.5-2.6-3.7-5.6-3.7-9S9.5 5.6 12 3z"
+        />
+      </symbol>
+      <symbol id="i-shield" viewBox="0 0 24 24">
+        <path d="M12 3 4 6v6c0 5 3.4 8 8 9 4.6-1 8-4 8-9V6zM9 12l2 2 4-4" />
+      </symbol>
+      <symbol id="i-terminal" viewBox="0 0 24 24">
+        <path d="M4 5h16v14H4zM8 10l3 2-3 2M13 15h3" />
+      </symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24">
+        <path
+          d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"
+        />
+      </symbol>
+      <symbol id="i-pause" viewBox="0 0 24 24">
+        <path d="M8 5h2.5v14H8zM13.5 5H16v14h-2.5z" />
+      </symbol>
+      <symbol id="i-logout" viewBox="0 0 24 24">
+        <path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10" />
+      </symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24">
+        <path d="M6 11h12v10H6zM8.5 11V7.5a3.5 3.5 0 0 1 7 0V11" />
+      </symbol>
+      <symbol id="i-arrow" viewBox="0 0 24 24">
+        <path d="M5 12h14M13 6l6 6-6 6" />
+      </symbol>
+      <symbol id="i-pulse" viewBox="0 0 24 24">
+        <path d="M3 12h4l2.5-6 5 12 2.5-6h4" />
+      </symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24">
+        <path d="M12 5v14M5 12h14" />
+      </symbol>
+      <symbol id="i-play" viewBox="0 0 24 24">
+        <path d="M7 5v14l11-7z" />
+      </symbol>
+      <symbol id="i-x" viewBox="0 0 24 24">
+        <path d="M6 6l12 12M18 6 6 18" />
+      </symbol>
+    </svg>
+
     <aside>
       <div class="brand">
-        <span class="mark">Q</span>
-        <div>QQ Bridge<small>UNIFIED CONSOLE</small></div>
+        <span class="mark"
+          ><svg class="i lg"><use href="#i-logo" /></svg
+        ></span>
+        <div class="brand-text">
+          <span class="brand-name">QQ Agents</span>
+          <small>智能体控制台</small>
+        </div>
       </div>
-      <nav>
-        <button data-tab="overview" class="active">概览</button
-        ><button data-tab="agents">机器人</button
-        ><button data-tab="connections">QQ 实例</button
-        ><button data-tab="backends">AI 后端</button
-        ><button data-tab="mind">Self 与主体</button
-        ><button data-tab="memory">经历与日记</button
-        ><button data-tab="schedule">主动与定时</button
-        ><button data-tab="voices">语音库</button
-        ><button data-tab="apps">浏览与分享</button
-        ><button data-tab="permissions">权限</button
-        ><button data-tab="operations">词汇与运维</button
-        ><button data-tab="settings">运行设置</button>
+      <nav aria-label="主导航">
+        <div class="nav-cap">工作台</div>
+        <button data-tab="overview" class="active">
+          <svg class="i"><use href="#i-home" /></svg><span>概览</span></button
+        ><button data-tab="agents">
+          <svg class="i"><use href="#i-bot" /></svg><span>智能体</span></button
+        ><button data-tab="connections">
+          <svg class="i"><use href="#i-link" /></svg
+          ><span>QQ 实例</span></button
+        ><button data-tab="backends">
+          <svg class="i"><use href="#i-chip" /></svg><span>AI 后端</span>
+        </button>
+        <div class="nav-cap">心智与记忆</div>
+        <button data-tab="mind">
+          <svg class="i"><use href="#i-sparkle" /></svg
+          ><span>Self 与主体</span></button
+        ><button data-tab="memory">
+          <svg class="i"><use href="#i-book" /></svg><span>经历与日记</span>
+        </button>
+        <div class="nav-cap">能力</div>
+        <button data-tab="schedule">
+          <svg class="i"><use href="#i-clock" /></svg
+          ><span>主动与定时</span></button
+        ><button data-tab="voices">
+          <svg class="i"><use href="#i-wave" /></svg><span>语音库</span></button
+        ><button data-tab="apps">
+          <svg class="i"><use href="#i-globe" /></svg
+          ><span>浏览与分享</span></button
+        ><button data-tab="permissions">
+          <svg class="i"><use href="#i-shield" /></svg><span>权限</span>
+        </button>
+        <div class="nav-cap">系统</div>
+        <button data-tab="operations">
+          <svg class="i"><use href="#i-terminal" /></svg
+          ><span>词汇与运维</span></button
+        ><button data-tab="settings">
+          <svg class="i"><use href="#i-settings" /></svg><span>运行设置</span>
+        </button>
       </nav>
-      <div class="sidebar-note">
-        一个主体，连续的经历。<br />各自的人格，各自的记忆。<span
-          class="version"
-          >v0.4 · 多角色管理</span
-        >
+      <div class="nav-foot">
+        <div class="runtime-chip">
+          <span id="runtime-dot" class="dot"></span>
+          <span>
+            <span class="runtime-label">运行环境</span>
+            <span id="runtime-text" class="hint">未连接</span>
+          </span>
+        </div>
+        <span class="version">v0.4 · 一个主体，连续的经历</span>
       </div>
     </aside>
     <main>
       <header>
-        <div>
-          <div class="eyebrow">WORKSPACE / QQ BRIDGE</div>
+        <div class="header-text">
+          <div class="eyebrow">
+            <span>QQ AGENTS</span><span class="sep">/</span
+            ><span id="crumb">概览</span>
+          </div>
           <h1 id="title">概览</h1>
           <p id="subtitle">在一个地方，照看每个独立的 AI。</p>
         </div>
         <div class="header-actions">
           <span id="mode" class="pill">未连接</span
-          ><button id="pause-all" class="danger">全部暂停</button
-          ><button id="logout" class="ghost">退出</button>
+          ><button id="pause-all" class="danger">
+            <svg class="i sm"><use href="#i-pause" /></svg>全部暂停</button
+          ><button id="logout" class="ghost">
+            <svg class="i sm"><use href="#i-logout" /></svg>退出
+          </button>
         </div>
       </header>
       <section id="login" class="card login">
-        <span class="eyebrow">LOCAL ACCESS</span>
-        <h2>连接本地管理台</h2>
+        <div class="login-mark">
+          <svg class="i lg"><use href="#i-logo" /></svg>
+        </div>
+        <span class="eyebrow">LOCAL ACCESS · 127.0.0.1</span>
+        <h2>连接 QQ Agents 控制台</h2>
         <p>输入数据目录中 <code>admin-token</code> 文件的管理令牌。</p>
         <label
           >访问令牌<input
@@ -61,8 +193,13 @@
             id="token"
             autocomplete="off"
             placeholder="仅在本次浏览器会话保存" /></label
-        ><button id="login-button" class="primary">进入管理台</button>
-        <p class="hint">所有接口仅监听本机回环地址。</p>
+        ><button id="login-button" class="primary">
+          进入控制台<svg class="i sm"><use href="#i-arrow" /></svg>
+        </button>
+        <p class="hint">
+          <svg class="i sm"><use href="#i-lock" /></svg
+          >所有接口仅监听本机回环地址。
+        </p>
       </section>
       <div id="content" hidden></div>
       <div id="notice" role="status" hidden></div>
@@ -71,7 +208,14 @@
       <form id="edit-form">
         <div class="dialog-head">
           <h2 id="edit-title">编辑</h2>
-          <button type="button" id="close-editor" class="ghost">关闭</button>
+          <button
+            type="button"
+            id="close-editor"
+            class="ghost icon"
+            aria-label="关闭"
+          >
+            <svg class="i"><use href="#i-x" /></svg>
+          </button>
         </div>
         <div id="edit-fields"></div>
         <footer>

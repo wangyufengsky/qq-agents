@@ -85,7 +85,7 @@ try {
   );
   runtime.startTimers();
   console.log(
-    `QQ Bridge Unified: http://127.0.0.1:${port} | ${configStore.value.mode} | paused | admin token in data directory/admin-token`,
+    `QQ Agents: http://127.0.0.1:${port} | ${configStore.value.mode} | paused | admin token in data directory/admin-token`,
   );
   process.on("SIGINT", () => void close().then(() => process.exit(0)));
   process.on("SIGTERM", () => void close().then(() => process.exit(0)));

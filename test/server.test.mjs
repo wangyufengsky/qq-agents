@@ -138,7 +138,7 @@ test("static console has CSP and never exposes admin token", async (t) => {
     /frame-ancestors 'none'/,
   );
   const html = await r.text();
-  assert.ok(html.includes("QQ Bridge"));
+  assert.ok(html.includes("QQ Agents"));
   assert.ok(!html.includes(token));
   assert.equal(
     (await request("/../../package.json", { auth: false })).status,
