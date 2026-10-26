@@ -196,13 +196,18 @@ test("real console role form changes only participation and shows the server's r
   const original = structuredClone(f.runtime.config);
   const a = original.agents[0];
   const nodes = new Map();
+  const bodyClasses = new Set(["locked"]);
   const node = (selector) => {
     if (!nodes.has(selector))
       nodes.set(selector, { close() {}, addEventListener() {} });
     return nodes.get(selector);
   };
   const sandbox = vm.createContext({
-    document: { querySelector: node, querySelectorAll: () => [] },
+    document: {
+      querySelector: node,
+      querySelectorAll: () => [],
+      body: { classList: { remove: (name) => bodyClasses.delete(name) } },
+    },
     sessionStorage: { getItem: () => "" },
     setInterval() {},
     setTimeout() {},
@@ -261,4 +266,5 @@ test("real console role form changes only participation and shows the server's r
   assert.deepEqual(f.runtime.config, original);
   assert.equal(f.runtime.status().connections[0].connected, true);
   assert.match(node("#notice").textContent, /保持/);
+  assert.equal(bodyClasses.has("locked"), false);
 });
