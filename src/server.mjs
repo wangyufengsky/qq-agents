@@ -127,6 +127,13 @@ export function createServer({ runtime, token, allowLive = false }) {
           subject: {
             ...m.state("@subject"),
             pendingActivities: runtime.subject.pendingActivities(a.id),
+            checkStatus: runtime.subject.checkStatus(a),
+            turns: m.db
+              .prepare(
+                "SELECT value FROM model_turns WHERE agent_id=? AND json_extract(value,'$.conversation')='@subject' ORDER BY json_extract(value,'$.startedAt') DESC, id DESC LIMIT 10",
+              )
+              .all(a.id)
+              .map((row) => JSON.parse(row.value)),
           },
           turns: m.identity.list("model_turns").slice(0, 50),
           sessions: m.db

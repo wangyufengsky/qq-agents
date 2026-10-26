@@ -1,5 +1,25 @@
 let mindAgentId;
 const mindTime = (value) => (value ? new Date(value).toLocaleString() : "—");
+const subjectCheckStates = {
+  inactive: "运行未启用",
+  disabled: "自主思考未开启",
+  paused: "已暂停",
+  offline: "等待 QQ 连接恢复",
+  silenced: "勿扰期间暂停检查",
+  recovering: "后端恢复中",
+  running: "正在思考",
+  "budget-exhausted": "检查额度已用完",
+  waiting: "等待下次检查",
+  due: "已到时间，等待执行",
+};
+const subjectTurnStates = {
+  "completed-no-send": "已完成（无 QQ 发送）",
+  sent: "已完成（有 QQ 投递）",
+  failed: "思考失败",
+  cancelled: "已取消",
+  interrupted: "运行被中断",
+  running: "正在思考",
+};
 const mindStates = {
   waiting: "等待机会",
   deferred: "已暂缓",
@@ -45,6 +65,7 @@ async function renderMind() {
   const data = await api("/api/mind?" + new URLSearchParams({ agentId: a.id }));
   if (tab !== "mind" || a.id !== mindAgentId) return;
   const current = data.current,
+    checkStatus = data.subject.checkStatus,
     p = a.subject;
   const histories = data.history
     .map((v, index) => {
@@ -61,16 +82,15 @@ async function renderMind() {
   <form id="self-form" class="card"><h2>当前 self · v${current.version}</h2>${area("body", "当前自我", current.body)}${input("reason", "管理员修改理由", "", "required")}<button class="primary">保存新版本</button><p class="hint">下一回合生效；运行中的回合保持原版本。版本冲突会拒绝覆盖。</p></form>
   <section class="card"><h2>候选与回顾</h2>${data.candidates.map((c) => `<details class="record"><summary>${esc(mindStates[c.status] || c.status)} · ${esc(c.scope)} · 基于 v${c.baseVersion}</summary><pre>${esc(c.body)}</pre><p>${esc(c.reason)}</p><p>最早回顾：${mindTime(c.reviewAfter)} · ${esc(c.conversation)}</p><p class="mono">来源：${esc(c.evidence.join(", "))}<br>反例：${esc(c.counterEvidence.join(", "))}</p>${mindEvidence(c.evidenceSnapshot)}${c.counterEvidence.length ? mindEvidence(c.counterEvidenceSnapshot) : ""}${c.reviews.map((r) => `<p>${esc(r.action)} · ${esc(r.reason)} · ${mindTime(r.at)}</p>`).join("")}</details>`).join("") || '<p class="hint">没有候选。普通聊天提出候选，主体统一回顾。</p>'}</section>
   <section class="card"><h2>版本历史与差异</h2>${histories}</section>
-  <form class="card" id="subject-form"><h2>主体机会与联系范围</h2><div class="form-grid">${check("enabled", "启用主体空闲思考", p.enabled || a.behavior.proactive.enabled)}${check("owners", "允许主动联系主人", p.owners)}${check("peers", "允许主动联系同伴智能体", p.peers)}${check("offlineReview", "离线时允许内部回顾", p.offlineReview)}${check("reviewInSilence", "勿扰期间允许内部回顾", p.reviewInSilence)}${input("interval", "检查间隔（分钟）", p.intervalMs / 60000, 'type="number" min="1" required')}${input("checks", "24 小时检查上限", p.maxChecksPerDay, 'type="number" min="1" required')}${input("contacts", "24 小时主动联系上限", p.maxContactsPerDay, 'type="number" min="1" required')}${input("cooldown", "联系冷却（分钟）", p.contactCooldownMs / 60000, 'type="number" min="1" required')}${input("unanswered", "未回应冷却（小时）", p.unansweredCooldownMs / 3600000, 'type="number" min="1" required')}${input("groups", "明确启用的群（逗号分隔）", p.groups.join(","))}${input("users", "额外启用的私聊（逗号分隔）", p.users.join(","))}</div><p class="hint">联系范围还受回复白名单约束。全局暂停会阻止模型检查；主体可以不行动。保存设置会中止本角色回合，连接需手动恢复。</p><button>保存主体设置</button></form>
-  <section class="card"><h2>机会与决策</h2><p>待检查来信 ${data.subject.pendingActivities || 0} 条 · 最近机会：${mindTime(data.subject.lastOpportunityAt)} · 下次条件检查：${mindTime(data.subject.nextCheckAt)}</p><p>最近 24 小时检查 ${(data.subject.checks || []).filter((t) => t > Date.now() - 86400000).length} 次；主动联系 ${(data.subject.contacts || []).filter((t) => t > Date.now() - 86400000).length} 次</p>${
-    data.turns
-      .filter((t) => t.conversation === "@subject")
-      .slice(0, 10)
+  <form class="card" id="subject-form"><h2>主体机会与联系范围</h2><div class="form-grid">${check("enabled", "启用主体空闲思考", p.enabled || a.behavior.proactive.enabled)}${check("owners", "允许主动联系主人", p.owners)}${check("peers", "允许主动联系同伴智能体", p.peers)}${check("offlineReview", "离线时允许内部回顾", p.offlineReview)}${check("reviewInSilence", "勿扰期间允许内部回顾", p.reviewInSilence)}${input("interval", "检查间隔（分钟）", p.intervalMs / 60000, 'type="number" min="1" required')}${input("checks", "24 小时检查上限", p.maxChecksPerDay, 'type="number" min="1" required')}${input("contacts", "24 小时主动联系上限", p.maxContactsPerDay, 'type="number" min="1" required')}${input("cooldown", "联系冷却（分钟）", p.contactCooldownMs / 60000, 'type="number" min="1" required')}${input("unanswered", "未回应冷却（小时）", p.unansweredCooldownMs / 3600000, 'type="number" min="1" required')}${input("groups", "明确启用的群（逗号分隔）", p.groups.join(","))}${input("users", "额外启用的私聊（逗号分隔）", p.users.join(","))}</div><p class="hint">联系范围还受回复白名单约束。全局暂停会阻止模型检查；主体可以不行动。仅修改检查间隔和次数会立即生效，保留连接与当前回合；修改权限或联系范围后需手动重新连接。</p><button>保存主体设置</button></form>
+  <section class="card"><h2>机会与决策</h2><p>待检查来信 ${data.subject.pendingActivities || 0} 条 · 最近机会：${mindTime(data.subject.lastOpportunityAt)}</p><p>${esc(subjectCheckStates[checkStatus.state] || checkStatus.state)} · 最近 24 小时检查 ${checkStatus.used} / ${checkStatus.limit} 次，剩余 ${checkStatus.remaining} 次；主动联系 ${(data.subject.contacts || []).filter((t) => t > Date.now() - 86400000).length} 次</p><p>${checkStatus.nextEligibleAt ? `下次最早可检查：${mindTime(checkStatus.nextEligibleAt)}（需保持启用及连接条件）` : "恢复上述运行条件后重新计算下次检查时间。"}</p><p class="hint">检查额度按滚动 24 小时计算，午夜不清零。完成但未发送 QQ 也属于已运行的思考。</p>${
+    data.subject.turns
       .map(
         (t) =>
-          `<p>${mindTime(t.startedAt)} · self v${t.selfVersion} · ${esc(t.status)}</p>`,
+          `<p>${mindTime(t.startedAt)} · self v${t.selfVersion} · ${esc(subjectTurnStates[t.status] || t.status)}</p>`,
       )
-      .join("") || '<p class="hint">尚未思考；程序检查条件不等于调用模型。</p>'
+      .join("") ||
+    '<p class="hint">尚无主体思考回合记录；条件检查不等于模型回合完成。</p>'
   }</section>
   <section class="card"><h2>聊天意图与结果</h2>${data.intents.map((i) => `<details class="record"><summary>${esc(i.topic)} · ${esc(mindStates[i.status] || i.status)}</summary><p>${esc(i.target)} · ${esc(i.reason)}</p><p>有效期至 ${mindTime(i.expiresAt)} · 已确认发送 ${mindTime(i.sentAt)}</p><p class="mono">来源：${esc(i.evidence.join(", "))}</p>${i.history.map((h) => `<p>${mindTime(h.at)} · ${esc(mindStates[h.status] || h.status)} · ${esc(h.reason || "")}</p>`).join("")}${!["completed", "cancelled", "expired", "failed", "unknown"].includes(i.status) ? `<button data-cancel-intent="${esc(i.id)}" data-revision="${i.revision}">取消意图</button>` : ""}</details>`).join("") || '<p class="hint">没有意图。已考虑、已交接和已确认投递分别记录。</p>'}</section>
   <section class="card"><h2>工作会话</h2>${data.sessions.map((s) => `<article class="record"><strong>${esc(s.conversation === "@subject" ? "主体思考" : s.conversation)}</strong><p>self v${s.loadedSelfVersion || "—"} · ${esc(s.lifecycle?.status || "尚未初始化")} · ${esc(s.lifecycle?.reason || "")}</p><p>${s.usage ? `${s.usage.source === "measured" ? "后端实测" : "估算"} ${s.usage.contextTokens} / ${s.usage.capacityTokens || a.contextPolicy.capacityTokens} tokens（另预留 ${a.contextPolicy.reserveTokens}）` : "用量尚不可用"}</p><p>连续已见 ${s.seenThroughSeq || 0} · 已处理 ${s.readThroughSeq || 0}</p><button data-reset-session="${esc(s.conversation)}">结束当前会话，下次再初始化</button></article>`).join("")}</section>`;
@@ -151,9 +171,17 @@ async function renderMind() {
         users: list("users"),
       });
       agent.behavior.proactive.enabled = false;
-      await api("/api/config", { config: next, revision }, "PUT");
+      const result = await api(
+        "/api/config",
+        { config: next, revision },
+        "PUT",
+      );
       await load();
-      notice("主体设置已保存，请按需手动连接");
+      notice(
+        result.reconnectRequired
+          ? "主体设置已保存，请按需手动连接"
+          : "思考设置已生效，连接与当前回合保持；到期后按新额度检查",
+      );
     });
   };
 }
