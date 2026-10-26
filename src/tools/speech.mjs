@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFile } from "node:child_process";
+import { privateGithubSources } from "../github/policy.mjs";
 
 // Explicitly enabled local TTS. This generates speech, it does not transcribe it.
 export async function synthesize(runtime, ctx, { text }) {
@@ -36,6 +37,7 @@ export async function synthesize(runtime, ctx, { text }) {
       conversation: ctx.conversation,
       generatedBy: "macos-say",
       spokenText: text,
+      protectedRepositories: privateGithubSources(ctx, runtime),
       protectedOperations: [...ctx.privateRead].some((x) =>
         /^(operations|operations-result):/.test(x),
       ),

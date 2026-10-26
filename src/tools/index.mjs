@@ -1,4 +1,6 @@
 import { appDefinitions, appTool } from "../apps/tools.mjs";
+import { githubDefinitions, githubTool } from "../github/tools.mjs";
+import { githubMarker, privateGithubSources } from "../github/policy.mjs";
 import { mindDefinitions, mindTool } from "./mind.mjs";
 import { fileDefinitions, fileTool } from "./file-tools.mjs";
 import { savedMediaDefinitions, savedMediaTool } from "./saved-media.mjs";
@@ -57,6 +59,7 @@ const animation = z
   .strict()
   .optional();
 const definitions = {
+  ...githubDefinitions,
   ...mindDefinitions,
   ...legacyDefinitions,
   ...fileDefinitions,
@@ -344,6 +347,13 @@ export function toolSpecs(enabled = TOOL_NAMES, { context = false } = {}) {
 }
 function track(ctx, items) {
   for (const row of items) {
+    for (const item of [
+      row,
+      ...(row.scene?.messages || []),
+      ...(row.scene?.quoted || []),
+    ])
+      for (const repo of item.protectedRepositories || [])
+        ctx.privateRead.add(githubMarker(repo));
     if (row.id) ctx.privateRead.add(row.id);
     for (const m of [
       ...(row.scene?.messages || []),
@@ -379,6 +389,7 @@ export async function dispatchTool(runtime, ctx, name, input) {
   const args = definition[1].parse(input),
     mem = runtime.memory.bind(ctx.agentId);
   protect(ctx, args);
+  if (githubDefinitions[name]) return githubTool(runtime, ctx, name, args);
   if (appDefinitions[name]) return appTool(runtime, ctx, name, args);
   if (mindDefinitions[name]) return mindTool(runtime, ctx, name, args);
   if (fileDefinitions[name]) return fileTool(runtime, ctx, name, args);
@@ -438,8 +449,13 @@ export async function dispatchTool(runtime, ctx, name, input) {
             connectionId: runtime.agent(ctx.agentId).connectionId,
           },
           protectedOperations,
+          privateGithubSources(ctx, runtime),
         )
-      : mem.diaryRevise(args, protectedOperations);
+      : mem.diaryRevise(
+          args,
+          protectedOperations,
+          privateGithubSources(ctx, runtime),
+        );
   }
   if (name === "qq_send") return runtime.send(ctx, args);
   if (name in savedMediaDefinitions)

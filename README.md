@@ -69,6 +69,8 @@ npm run dsh:bundle -- --out /path/to/private-data/dsh-bundle --url http://127.0.
 
 ## 文档
 
+- [GitHub 只读搜索与指定私有仓库](docs/GITHUB-READ.md)
+- [公开前检查与提交身份扫描](docs/PUBLIC-READINESS.md)
 - [架构与身份边界](docs/ARCHITECTURE.md)
 - [场景记忆、来源与自主表达](docs/MEMORY-DESIGN.md)
 - [基线与功能对照](docs/FEATURE-MATRIX.md)

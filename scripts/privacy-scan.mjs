@@ -1,26 +1,19 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
-import { createHash } from "node:crypto";
+import {
+  textFindings,
+  identityFindings,
+  commitFindings,
+} from "./privacy-rules.mjs";
 const args = process.argv.slice(2),
   git = (...a) =>
     execFileSync("git", a, { encoding: "utf8", maxBuffer: 32 * 1024 * 1024 });
-const rules = [
-  [
-    "credential",
-    /(?:gh[pousr]_[A-Za-z0-9]{30,}|sk-[A-Za-z0-9_-]{32,}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----)/,
-  ],
-  ["personal-path", /\/(?:Users|home)\/[A-Za-z][A-Za-z0-9._-]+\//],
-  [
-    "access-url",
-    /https?:\/\/[^\s"']+[?&](?:token|access_token|api_key)=[A-Za-z0-9_-]{16,}/,
-  ],
-  ["runtime-data", /^(?:\.runtime|instances|state|data)\//],
-];
 const privateHashes = (process.env.QQ_PRIVATE_IDENTIFIER_HASHES || "")
   .split(",")
   .filter(Boolean);
 const failures = [];
 let scanned = 0;
+let commitsScanned = 0;
 function scan(name, text) {
   scanned++;
   if (
@@ -29,16 +22,44 @@ function scan(name, text) {
     )
   )
     failures.push({ name, rule: "private-file" });
-  for (const [code, re] of rules) {
-    if (re.test(code === "runtime-data" ? name : text))
-      failures.push({ name, rule: code });
+  if (/^(?:\.runtime|instances|state|data)\//.test(name))
+    failures.push({ name, rule: "runtime-data" });
+  for (const rule of textFindings(text, privateHashes))
+    failures.push({ name, rule });
+}
+const commitIndex = args.indexOf("--commits");
+const revision = commitIndex < 0 ? null : args[commitIndex + 1];
+if (commitIndex >= 0 && (!revision || revision.startsWith("-")))
+  throw Error("--commits requires a revision or revision range");
+if (args.includes("--history") || revision) {
+  for (const sha of git(
+    "rev-list",
+    ...(revision ? [revision, "--"] : ["--all"]),
+  )
+    .trim()
+    .split("\n")
+    .filter(Boolean)) {
+    commitsScanned++;
+    for (const finding of commitFindings(
+      git("cat-file", "commit", sha),
+      privateHashes,
+    ))
+      failures.push({ commit: sha, ...finding });
   }
-  if (privateHashes.length)
-    for (const m of text.matchAll(/\b\d{6,12}\b/g))
-      if (
-        privateHashes.includes(createHash("sha256").update(m[0]).digest("hex"))
-      )
-        failures.push({ name, rule: "private-identifier" });
+} else {
+  // Check the effective identity, including environment overrides, before committing.
+  for (const field of ["GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"]) {
+    let identity = "";
+    try {
+      identity = git("var", field).trim();
+    } catch {
+      /* Report a redacted finding. */
+    }
+    for (const rule of identityFindings(identity))
+      failures.push({ field, rule });
+    for (const rule of textFindings(identity, privateHashes))
+      failures.push({ field, rule });
+  }
 }
 if (args.includes("--history")) {
   for (const line of git("rev-list", "--objects", "--all").trim().split("\n")) {
@@ -48,6 +69,8 @@ if (args.includes("--history")) {
     if (git("cat-file", "-t", object).trim() !== "blob") continue;
     scan(name, git("cat-file", "blob", object));
   }
+} else if (revision) {
+  // Commit ranges intentionally scan metadata only; file scans run separately in verify.
 } else if (args.includes("--staged")) {
   for (const name of git(
     "diff",
@@ -67,5 +90,5 @@ if (args.includes("--history")) {
   ))
     if (fs.existsSync(name) && fs.statSync(name).isFile())
       scan(name, fs.readFileSync(name, "utf8"));
-console.log(JSON.stringify({ scanned, failures }, null, 2));
+console.log(JSON.stringify({ scanned, commitsScanned, failures }, null, 2));
 if (failures.length) process.exitCode = 1;

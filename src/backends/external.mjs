@@ -37,14 +37,25 @@ export class ExternalTools {
         if (!process.env[ref]) throw Error("EXTERNAL_SECRET_ENV_MISSING");
         headers[key] = process.env[ref];
       }
+      // Keep credentials on the configured origin, including SSE endpoint events.
+      const confinedFetch = (input, init) => {
+        const target = new URL(
+          typeof input === "string" || input instanceof URL ? input : input.url,
+        );
+        if (target.origin !== new URL(config.url).origin)
+          throw Error("EXTERNAL_ORIGIN_DENIED");
+        return fetch(input, { ...init, redirect: "error" });
+      };
       const transport =
         config.transport === "http"
           ? new StreamableHTTPClientTransport(new URL(config.url), {
               requestInit: { headers },
+              fetch: confinedFetch,
             })
           : config.transport === "sse"
             ? new SSEClientTransport(new URL(config.url), {
                 requestInit: { headers },
+                fetch: confinedFetch,
               })
             : new StdioClientTransport({
                 command: config.command,

@@ -1,6 +1,7 @@
 import { SUBJECT_APP_TOOLS } from "../apps/policy.mjs";
 import { identityAnchors } from "../core/prompts.mjs";
 import { z } from "zod";
+import { privateGithubSources } from "../github/policy.mjs";
 const text = z.string().min(1),
   ids = z.array(text).max(30),
   version = z.number().int().min(1);
@@ -117,6 +118,9 @@ export const CHAT_MIND_TOOLS = Object.keys(mindDefinitions).filter(
   (n) => n !== "self_review",
 );
 export const SUBJECT_TOOLS = [
+  "github_capabilities",
+  "github_search",
+  "github_read",
   ...SUBJECT_APP_TOOLS,
   "memory_search",
   "memory_related",
@@ -154,9 +158,10 @@ function executeMindTool(runtime, ctx, name, args) {
       "intent_update",
       "intent_decide",
     ].includes(name) &&
-    [...ctx.privateRead].some((id) =>
-      /^(operations|operations-result):/.test(id),
-    )
+    (privateGithubSources(ctx, runtime).length > 0 ||
+      [...ctx.privateRead].some((id) =>
+        /^(operations|operations-result|github-private):/.test(id),
+      ))
   )
     throw Error("RESTRICTED_CONTEXT_MIND_WRITE_BLOCKED");
   if (name === "self_read")

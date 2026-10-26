@@ -81,6 +81,8 @@ export function freezeEvidence(memory, ids, now) {
     if (row) {
       const p = JSON.parse(row.payload || "{}"),
         app = p.app;
+      if (p.protectedRepositories?.length)
+        throw Error("RESTRICTED_EVIDENCE_NOT_ALLOWED_IN_MIND");
       let parents = Array.isArray(p.evidence) ? p.evidence : [];
       if (app)
         parents = [
@@ -216,7 +218,10 @@ export function freezeEvidence(memory, ids, now) {
         .get(memory.agentId, id);
       if (!diary) throw Error("EVIDENCE_NOT_OWNED_OR_MISSING");
       const metadata = JSON.parse(diary.metadata);
-      if (metadata.protectedOperations)
+      if (
+        metadata.protectedOperations ||
+        metadata.protectedRepositories?.length
+      )
         throw Error("RESTRICTED_EVIDENCE_NOT_ALLOWED_IN_MIND");
       const parents = metadata.evidence || [];
       const inherited = parents.flatMap((parent) => visit(parent));

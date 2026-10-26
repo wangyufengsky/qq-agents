@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { humanInput } from "./input-progress.mjs";
 import { publicUrl } from "../apps/urls.mjs";
+import { privateGithubSources } from "../github/policy.mjs";
 
 const stable = (v) => JSON.stringify(sort(v));
 function sort(v) {
@@ -19,6 +20,7 @@ export function publicRequestUrl(value) {
   return u.href;
 }
 export function sourceClass(runtime, ctx, id) {
+  if (id.startsWith("github-private:")) return "private-repository";
   if (/^(operations|operations-result):/.test(id)) return "operations";
   if (id.startsWith("context:"))
     return id.startsWith("context:private:")
@@ -33,6 +35,8 @@ export function sourceClass(runtime, ctx, id) {
     )
     .get(ctx.agentId, id);
   if (row) {
+    if (JSON.parse(row.payload).protectedRepositories?.length)
+      return "private-repository";
     const app = JSON.parse(row.payload).app;
     if (app?.origin === "app-browser" && !app.source) return "public-platform";
     const source = app?.source?.conversation || row.conversation;
@@ -45,10 +49,13 @@ export function sourceClass(runtime, ctx, id) {
   const diary = m.db
     .prepare("SELECT metadata FROM diaries WHERE agent_id=? AND id=?")
     .get(ctx.agentId, id);
-  if (diary)
+  if (diary) {
+    if (JSON.parse(diary.metadata).protectedRepositories?.length)
+      return "private-repository";
     return JSON.parse(diary.metadata).protectedOperations
       ? "operations"
       : "personal-diary";
+  }
   // Deleted legacy records and frozen handoffs retain their protection.
   return "unknown-legacy";
 }
@@ -91,8 +98,10 @@ function assertCredentials(runtime, ctx, request) {
   for (const b of runtime.config.backends)
     for (const s of b.toolServers || [])
       envs.push(...Object.values(s.env), ...Object.values(s.headers));
-  for (const a of runtime.config.agents)
+  for (const a of runtime.config.agents) {
     if (a.operations?.totpEnv) envs.push(a.operations.totpEnv);
+    if (a.github?.tokenEnv) envs.push(a.github.tokenEnv);
+  }
   for (const key of envs.filter(Boolean)) {
     const value = process.env[key];
     if (!value || value.length < 6) continue;
@@ -184,6 +193,7 @@ export function requestedByHuman(runtime, ctx, request, eventId) {
 function autonomouslyAllowed(runtime, ctx, request) {
   const agent = runtime.agent(ctx.agentId);
   if (agent.network?.autonomous !== true) return false;
+  if (request.tool.startsWith("github_")) return agent.github?.enabled === true;
   if (request.tool === "web_fetch") {
     publicRequestUrl(request.args.url);
     return true;
@@ -213,10 +223,20 @@ export function authorizeExternal(
   runtime,
   ctx,
   request,
-  { requestEventId, fixed = false } = {},
+  { requestEventId, fixed = false, privateRepository } = {},
 ) {
   runtime.assertActive(ctx);
   assertCredentials(runtime, ctx, request);
+  const githubSources = privateGithubSources(ctx, runtime);
+  // Public-URL and autonomous grants never authorize exporting private source code.
+  // Only a server-validated read back to the same allowlisted repository is exempt.
+  const githubRestricted =
+    githubSources.length > 0 &&
+    !(
+      request.tool.startsWith("github_") &&
+      privateRepository &&
+      githubSources.every((repo) => repo === privateRepository)
+    );
   const requested = requestedByHuman(runtime, ctx, request, requestEventId);
   const configured =
     request.tool === "web_fetch" &&
@@ -228,7 +248,7 @@ export function authorizeExternal(
       }
     });
   // Fixed reads have no model-controlled outbound text/URLs; only caller-owned provenance may set this flag.
-  if (fixed || requested || configured)
+  if (!githubRestricted && (fixed || requested || configured))
     return {
       requested,
       basis: fixed
@@ -244,6 +264,7 @@ export function authorizeExternal(
   // a deletion of provenance or permission to disclose operations/media bytes.
   if (
     autonomouslyAllowed(runtime, ctx, request) &&
+    !githubRestricted &&
     !records.some((id) => sourceClass(runtime, ctx, id) === "operations")
   )
     return { requested: false, basis: "autonomous-network-permission" };

@@ -17,6 +17,11 @@ import { appDefinitions } from "../apps/tools.mjs";
 import { ContextLifecycle, SUBJECT } from "./lifecycle.mjs";
 import { SubjectCoordinator } from "./subject.mjs";
 import { CHAT_MIND_TOOLS, SUBJECT_TOOLS } from "../tools/mind.mjs";
+import {
+  githubPrivateContext,
+  githubMarker,
+  privateGithubSources,
+} from "../github/policy.mjs";
 import { FILE_TOOL_NAMES } from "../tools/file-tools.mjs";
 import { filesSchema } from "./policy.mjs";
 import { createHash, randomBytes } from "node:crypto";
@@ -709,6 +714,9 @@ export class Runtime {
   }
   async callTool(ctx, name, args = {}) {
     const a = this.assertActive(ctx);
+    for (const repo of privateGithubSources(ctx, this))
+      ctx.privateRead.add(githubMarker(repo));
+    ctx.persistTaint?.();
     if (
       !(ctx.allowedTools || this.toolsFor(a, ctx.conversation)).includes(
         name,
@@ -775,10 +783,16 @@ export class Runtime {
     return result;
   }
   assertDisclosure(ctx, { external = false } = {}) {
+    for (const repo of privateGithubSources(ctx, this))
+      ctx.privateRead.add(githubMarker(repo));
+    ctx.persistTaint?.();
     const ids = [...ctx.privateRead].filter(
       (id) =>
         !ctx.grants.has(id) &&
-        (external || /^(operations|operations-result):/.test(id)),
+        (external ||
+          /^(operations|operations-result):/.test(id) ||
+          (id.startsWith("github-private:") &&
+            !githubPrivateContext(this.agent(ctx.agentId), ctx.conversation))),
     );
     if (!ids.length) return;
     ctx.disclosureRequest = {
@@ -809,7 +823,7 @@ export class Runtime {
   assertSafeOutput(ctx, text) {
     if (
       text.includes(ctx.token) ||
-      /(?:sk-|gh[pousr]_|Bearer\s)[a-zA-Z0-9_-]{16,}/.test(text)
+      /(?:sk-|gh[pousr]_|github_pat_|Bearer\s)[a-zA-Z0-9_-]{16,}/.test(text)
     )
       throw Error("SENSITIVE_OUTPUT_BLOCKED");
   }
@@ -952,7 +966,11 @@ export class Runtime {
       senderId: this.connection(a.connectionId).accountId,
       direction: "out",
       body,
-      payload: { requestId, ...metadata },
+      payload: {
+        requestId,
+        ...metadata,
+        protectedRepositories: privateGithubSources(ctx, this),
+      },
     };
     mem.store.transaction(() => {
       mem.reserveDelivery(requestId, ctx.conversation, intent);

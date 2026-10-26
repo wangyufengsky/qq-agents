@@ -96,7 +96,7 @@ export async function externalResult(runtime, ctx, args, result) {
       sourceType: "external-tool-result",
       untrusted: true,
       protectedOperations: [...(ctx.privateRead || [])].some((id) =>
-        /^(operations|operations-result):/.test(id),
+        /^(operations|operations-result|github-private):/.test(id),
       ),
     };
     if (image) {

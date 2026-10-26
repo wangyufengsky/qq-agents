@@ -65,6 +65,7 @@ export function scopedCatalog(runtime, ctx, input) {
 }
 
 export function toolAvailable(agent, name, conversation) {
+  if (name.startsWith("github_")) return agent.github?.enabled === true;
   // These legacy readers bypass App permissions, budgets and source records.
   if (name.startsWith("social_")) return false;
   if (name.startsWith("qq_schedule_"))

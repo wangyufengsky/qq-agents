@@ -44,6 +44,7 @@ export function saveFileImage(runtime, ctx, fileId, extra = {}) {
     conversation: ctx.conversation,
     sources: meta.sources,
     protectedOperations: meta.protectedOperations,
+    protectedRepositories: meta.protectedRepositories,
     ...extra,
   });
   return {

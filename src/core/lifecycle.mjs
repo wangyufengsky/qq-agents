@@ -5,6 +5,7 @@ import {
 } from "./prompts.mjs";
 export { stableInstructions } from "./prompts.mjs";
 import { randomUUID, createHash } from "node:crypto";
+import { githubMarker } from "../github/policy.mjs";
 import { rememberSources, sourceHandoff } from "./context-handoff.mjs";
 import {
   retireSession,
@@ -49,8 +50,11 @@ export class ContextLifecycle {
         );
       }
     this.runtime.observeInput(ctx, items);
-    for (const row of items)
+    for (const row of items) {
       if (row.id && row.privacy !== "public") ctx.privateRead.add(row.id);
+      for (const repo of row.protectedRepositories || [])
+        ctx.privateRead.add(githubMarker(repo));
+    }
     ctx.persistTaint?.();
     rememberSources(m, ctx.conversation, items);
     const state = m.state(ctx.conversation),

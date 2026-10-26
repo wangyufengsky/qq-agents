@@ -3,6 +3,7 @@ import { capturePublicPage } from "./public-screenshot.mjs";
 import { saveFileImage } from "./saved-media.mjs";
 import { imageMime } from "./media.mjs";
 import { appService } from "../apps/tools.mjs";
+import { privateGithubSources } from "../github/policy.mjs";
 
 export const screenshotDefinitions = {
   web_screenshot: [
@@ -111,6 +112,8 @@ export async function screenshotTool(runtime, ctx, name, args) {
         conversation: ctx.conversation,
         ...(record ? { recordId: record.recordId } : {}),
       },
+      false,
+      privateGithubSources(ctx, runtime),
     );
     return {
       ...saveFileImage(runtime, ctx, file.fileId, {

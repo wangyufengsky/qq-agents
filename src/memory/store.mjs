@@ -47,6 +47,9 @@ function budget(items, maxChars) {
         ...(item.updatedAt ? { updatedAt: item.updatedAt } : {}),
         summaryOmitted: true,
         ...(item.protectedOperations ? { protectedOperations: true } : {}),
+        ...(item.protectedRepositories?.length
+          ? { protectedRepositories: item.protectedRepositories }
+          : {}),
         hint: "Use memory_read for bounded expansion",
       };
       size = json(entry).length + 1;
@@ -185,6 +188,7 @@ class AgentMemory {
       direction: row.direction,
       origin: row.origin,
       disclosure: disclosure(row.conversation, current),
+      protectedRepositories: parse(row.payload).protectedRepositories || [],
       privacy: row.conversation.startsWith("private:")
         ? "private-conversation"
         : row.conversation.startsWith("group:")
@@ -214,6 +218,7 @@ class AgentMemory {
       disclosure: "agent-judged-diary",
       privacy: "personal-diary",
       protectedOperations: parse(row.metadata).protectedOperations === true,
+      protectedRepositories: parse(row.metadata).protectedRepositories || [],
     };
   }
   search(q = {}, current = "") {
@@ -475,6 +480,7 @@ class AgentMemory {
       disclosure: item.disclosure,
       conversation: item.conversation,
       protectedOperations: item.protectedOperations === true,
+      protectedRepositories: item.protectedRepositories || [],
     };
   }
   conversation(
@@ -553,6 +559,7 @@ class AgentMemory {
     origin = "ai-diary",
     writtenIn = null,
     protectedOperations = false,
+    protectedRepositories = [],
   ) {
     text(title, 300);
     text(body, 32000);
@@ -561,6 +568,9 @@ class AgentMemory {
         ...this.metadata({ people, tags, evidence }),
         writtenIn,
         ...(protectedOperations ? { protectedOperations: true } : {}),
+        ...(protectedRepositories.length
+          ? { protectedRepositories: [...new Set(protectedRepositories)] }
+          : {}),
       },
       id = randomUUID(),
       time = now();
@@ -606,6 +616,7 @@ class AgentMemory {
   diaryRevise(
     { id, expectedRevision, title, body, people, tags, evidence },
     protectedOperations = false,
+    protectedRepositories = [],
   ) {
     text(title, 300);
     text(body, 32000);
@@ -624,6 +635,17 @@ class AgentMemory {
             evidence: evidence ?? previous.evidence,
           }),
           ...(previous.writtenIn ? { writtenIn: previous.writtenIn } : {}),
+          ...(previous.protectedRepositories?.length ||
+          protectedRepositories.length
+            ? {
+                protectedRepositories: [
+                  ...new Set([
+                    ...(previous.protectedRepositories || []),
+                    ...protectedRepositories,
+                  ]),
+                ],
+              }
+            : {}),
           ...(previous.protectedOperations || protectedOperations
             ? { protectedOperations: true }
             : {}),

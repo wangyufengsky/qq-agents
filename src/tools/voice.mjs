@@ -114,6 +114,12 @@ export class VoiceStore {
         : {}),
       protectedOperations:
         old?.protectedOperations || meta.protectedOperations || false,
+      protectedRepositories: [
+        ...new Set([
+          ...(old?.protectedRepositories || []),
+          ...(meta.protectedRepositories || []),
+        ]),
+      ],
       createdAt: old?.createdAt || new Date().toISOString(),
     };
     atomicJSON(path.join(dir, id + ".json"), entry);

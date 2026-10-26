@@ -482,6 +482,32 @@ function openEditor(type, id) {
         row.network?.autonomous,
       ) +
       '<p class="hint">允许自行整理查询内容，提交给已启用的平台和外部工具。聊天经历不再触发逐次联网确认；平台开关、时段、预算与凭据保护仍生效。</p>' +
+      check(
+        "githubEnabled",
+        "启用 GitHub 只读搜索与文件阅读",
+        row.github?.enabled,
+      ) +
+      select("githubAuth", "GitHub 登录方式", row.github?.auth || "token", [
+        ["token", "独立只读令牌（推荐）"],
+        ["gh", "本机 GitHub CLI 登录"],
+      ]) +
+      input(
+        "githubTokenEnv",
+        "GitHub 令牌环境变量名",
+        row.github?.tokenEnv || "QQ_GITHUB_READ_TOKEN",
+      ) +
+      input(
+        "githubToken",
+        "GitHub 只读令牌（留空保留已保存值）",
+        "",
+        'type="password" autocomplete="new-password"',
+      ) +
+      area(
+        "githubPrivateRepositories",
+        "允许读取的私有仓库（每行 owner/repo）",
+        (row.github?.privateRepositories || []).join("\n"),
+      ) +
+      '<p class="hint">仅搜索与读取，不提供提交、评论或工作流操作。私有内容仅管理员私聊或主体可读，不自动转发到其他聊天或外部服务。本机 CLI 登录可能自带较大权限，推荐独立只读令牌；变量名填写在上一栏，令牌仅填写专用密码框并保存到本机私有配置。</p>' +
       input("aliases", "唤醒别名（逗号分隔）", (row.aliases || []).join(", ")) +
       input(
         "ownerIds",
@@ -580,6 +606,7 @@ $("#edit-form").onsubmit = (e) => {
   if (editing?.type === "read") return;
   action(async () => {
     let next = structuredClone(config);
+    let githubCredential;
     if (editing.type === "advanced") next = JSON.parse($("#config-json").value);
     else {
       const f = new FormData(e.target),
@@ -590,6 +617,11 @@ $("#edit-form").onsubmit = (e) => {
             .map((s) => s.trim())
             .filter(Boolean);
       let row = { ...editing.row, id: get("id") };
+      if (editing.type === "agents" && get("githubToken").trim())
+        githubCredential = {
+          agentId: get("id"),
+          token: get("githubToken").trim(),
+        };
       if (editing.type === "agents")
         row = {
           ...row,
@@ -605,6 +637,16 @@ $("#edit-form").onsubmit = (e) => {
             ...row.network,
             autonomous: f.has("autonomousNetwork"),
             publicUrls: get("publicUrls")
+              .split(/\r?\n/)
+              .map((s) => s.trim())
+              .filter(Boolean),
+          },
+          github: {
+            ...row.github,
+            enabled: f.has("githubEnabled"),
+            auth: get("githubAuth"),
+            tokenEnv: get("githubTokenEnv"),
+            privateRepositories: get("githubPrivateRepositories")
               .split(/\r?\n/)
               .map((s) => s.trim())
               .filter(Boolean),
@@ -683,6 +725,8 @@ $("#edit-form").onsubmit = (e) => {
       else next[editing.type][index] = row;
     }
     const result = await api("/api/config", { config: next, revision }, "PUT");
+    if (githubCredential)
+      await api("/api/github/credential", githubCredential, "POST");
     $("#editor").close();
     await load();
     notice(

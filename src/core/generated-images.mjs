@@ -3,7 +3,9 @@ import { generationError } from "../backends/generated-image-file.mjs";
 import { taintMedia } from "../tools/legacy.mjs";
 
 const protectedRead = (ctx) =>
-  [...ctx.privateRead].some((x) => /^(operations|operations-result):/.test(x));
+  [...ctx.privateRead].some((x) =>
+    /^(operations|operations-result|github-private):/.test(x),
+  );
 export class GeneratedImages {
   constructor(runtime) {
     this.runtime = runtime;

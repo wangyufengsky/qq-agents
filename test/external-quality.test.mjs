@@ -15,6 +15,45 @@ import { temp, fixture, config } from "./helpers.mjs";
 import { wav } from "./audio-fixture.mjs";
 const png =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC1lEQVR42mP8/x8AAwMCAO+a/pkAAAAASUVORK5CYII=";
+test("HTTP MCP redirects do not forward custom credentials to another origin", async (t) => {
+  const leaked = [];
+  const destination = http.createServer((req, res) => {
+    leaked.push(req.headers);
+    res.end("{}");
+  });
+  destination.listen(0, "127.0.0.1");
+  await once(destination, "listening");
+  const source = http.createServer((req, res) => {
+    res.writeHead(307, {
+      location: `http://127.0.0.1:${destination.address().port}/mcp`,
+    });
+    res.end();
+  });
+  source.listen(0, "127.0.0.1");
+  await once(source, "listening");
+  process.env.QQ_MCP_TEST_HEADER = "fixture-credential";
+  const external = new ExternalTools([
+    {
+      id: "redirect",
+      transport: "http",
+      url: `http://127.0.0.1:${source.address().port}/mcp`,
+      headers: { "X-API-Key": "QQ_MCP_TEST_HEADER" },
+      allowedTools: ["read"],
+    },
+  ]);
+  t.after(async () => {
+    await external.close();
+    source.closeAllConnections();
+    destination.closeAllConnections();
+    await Promise.all([
+      new Promise((r) => source.close(r)),
+      new Promise((r) => destination.close(r)),
+    ]);
+    delete process.env.QQ_MCP_TEST_HEADER;
+  });
+  await assert.rejects(external.connect("redirect"));
+  assert.deepEqual(leaked, []);
+});
 test("MCP discovery returns only actual allowlisted names and schemas, rejects unknown server/tool", async (t) => {
   const e = new ExternalTools([
     {

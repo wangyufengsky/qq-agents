@@ -36,6 +36,16 @@ export function safeToolFailure(error) {
       hint: "Correct the named arguments within these bounds, or omit optional budgets and use pagination. The operation did not succeed. Do not infer unread content or claim successful delivery.",
     };
   const hints = {
+    GITHUB_AUTH_UNAVAILABLE:
+      "GitHub authentication is not configured or has expired. Ask the administrator to save a dedicated read-only token in the console; never request or print a token in QQ.",
+    GITHUB_REPOSITORY_DENIED:
+      "This private repository is outside the role allowlist or current context. Private repository reads are limited to administrator private chats and the subject context.",
+    GITHUB_ACCESS_DENIED_OR_NOT_FOUND:
+      "GitHub did not authorize or locate this resource. Check the repository spelling and the token's selected repositories/read permissions; do not infer the repository does not exist.",
+    GITHUB_RATE_LIMITED:
+      "GitHub rate-limited the read. Do not retry in a loop, change credentials, or claim an empty result.",
+    GITHUB_READ_BUDGET_EXHAUSTED:
+      "The configured GitHub request budget is exhausted. Metadata checks count too; continue in a later allowed turn/day.",
     SCREENSHOT_BROWSER_MISSING:
       "No supported local Chromium browser is available. No screenshot was saved. The administrator can configure QQ_SCREENSHOT_BROWSER; do not claim capture succeeded.",
     SCREENSHOT_BROWSER_FAILED:

@@ -13,7 +13,7 @@ const hash = (s) => createHash("sha256").update(s).digest("hex");
 function unrestricted(ctx) {
   if (
     [...ctx.privateRead].some((id) =>
-      /^(operations|operations-result):/.test(id),
+      /^(operations|operations-result|github-private):/.test(id),
     )
   )
     throw Error("RESTRICTED_CONTEXT_MIND_WRITE_BLOCKED");

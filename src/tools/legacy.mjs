@@ -208,6 +208,8 @@ export const legacyDefinitions = {
   ops_result: ["仅原管理员私聊读取已确认请求的结果。", object({ id })],
 };
 export function taintMedia(ctx, meta) {
+  for (const repo of meta?.protectedRepositories || [])
+    ctx.privateRead.add("github-private:" + repo);
   if (meta?.protectedOperations)
     ctx.privateRead.add("operations:media:" + meta.id);
   const sources = meta?.sources || [meta].filter(Boolean);

@@ -149,7 +149,7 @@ export class AppBrowsing {
   ) {
     if (
       [...ctx.privateRead].some((id) =>
-        /^(operations|operations-result):/.test(id),
+        /^(operations|operations-result|github-private):/.test(id),
       )
     )
       throw Error("APP_RESTRICTED_CONTEXT");

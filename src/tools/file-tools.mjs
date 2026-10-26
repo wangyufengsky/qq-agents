@@ -2,6 +2,7 @@ import { z } from "zod";
 import { allowed } from "../core/config.mjs";
 import { ownedEvent } from "./forward.mjs";
 import { fileName } from "./files.mjs";
+import { githubMarker, privateGithubSources } from "../github/policy.mjs";
 
 const name = z.string().min(1).max(200),
   id = z.string().regex(/^[a-f0-9]{64}$/);
@@ -61,6 +62,8 @@ function active(runtime, ctx, permission) {
   return a;
 }
 function protect(ctx, meta) {
+  for (const repo of meta.protectedRepositories || [])
+    ctx.privateRead.add(githubMarker(repo));
   if (meta.protectedOperations)
     ctx.privateRead.add("operations:file:" + meta.fileId);
   for (const source of meta.sources || [])
@@ -131,6 +134,7 @@ export async function fileTool(runtime, ctx, tool, args) {
         a.files,
         { kind: "generated-text", conversation: ctx.conversation },
         restricted,
+        privateGithubSources(ctx, runtime),
       );
     }
     if (tool === "file_import") {
@@ -139,6 +143,11 @@ export async function fileTool(runtime, ctx, tool, args) {
     // Ordinary downloads are covered by the persistent file permission. The
     // existing operations-content restriction still applies to outbound URLs.
     runtime.assertDisclosure(ctx);
+    if (privateGithubSources(ctx, runtime).length && args.url)
+      runtime.authorizeExternal(ctx, {
+        tool: "file_download",
+        args: { url: args.url },
+      });
     const permission = args.url ? "download" : "receive";
     active(runtime, ctx, permission);
     let url = args.url,

@@ -77,6 +77,12 @@ export class MediaStore {
       ...meta,
       protectedOperations:
         existing?.protectedOperations || meta.protectedOperations || false,
+      protectedRepositories: [
+        ...new Set([
+          ...(existing?.protectedRepositories || []),
+          ...(meta.protectedRepositories || []),
+        ]),
+      ],
       sources: [
         ...(existing?.sources ||
           (existing?.conversation

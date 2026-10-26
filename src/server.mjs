@@ -1,4 +1,5 @@
 import { scopedCatalog } from "./tools/catalog.mjs";
+import { saveGithubCredential } from "./github/credentials.mjs";
 import { shareList, cancelShare } from "./apps/sharing.mjs";
 import { appService } from "./apps/tools.mjs";
 import { safeToolFailure } from "./tools/errors.mjs";
@@ -23,7 +24,12 @@ async function body(req, maxBytes = 1024 * 1024) {
   }
   return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
 }
-export function createServer({ runtime, token, allowLive = false }) {
+export function createServer({
+  runtime,
+  token,
+  allowLive = false,
+  githubSecretFile,
+}) {
   const server = http.createServer(async (req, res) => {
     const send = (data, status = 200) => {
       res.writeHead(status, {
@@ -111,6 +117,19 @@ export function createServer({ runtime, token, allowLive = false }) {
       }
       if (!equal(req.headers["x-admin-token"], token))
         return send({ error: "UNAUTHORIZED" }, 401);
+      if (req.method === "POST" && url.pathname === "/api/github/credential") {
+        const data = await body(req, 4096);
+        const agent = runtime.agent(data.agentId);
+        if (agent.github.auth !== "token")
+          throw Error("GITHUB_TOKEN_AUTH_REQUIRED");
+        return send(
+          saveGithubCredential(
+            githubSecretFile,
+            agent.github.tokenEnv,
+            data.token,
+          ),
+        );
+      }
       if (req.method === "GET" && url.pathname === "/api/mind") {
         const a = runtime.agent(url.searchParams.get("agentId")),
           m = runtime.memory.bind(a.id);

@@ -98,7 +98,15 @@ export class FileStore {
       nextOffset: offset + limit < filtered.length ? offset + limit : null,
     };
   }
-  put(agentId, buffer, name, policy, source = {}, protectedOperations = false) {
+  put(
+    agentId,
+    buffer,
+    name,
+    policy,
+    source = {},
+    protectedOperations = false,
+    protectedRepositories = [],
+  ) {
     fileName(name);
     if (!Buffer.isBuffer(buffer) || buffer.length > policy.maxBytes)
       throw Error("FILE_TOO_LARGE");
@@ -128,6 +136,12 @@ export class FileStore {
       createdAt: old?.createdAt || new Date().toISOString(),
       sources: sources.slice(-100),
       protectedOperations: old?.protectedOperations || protectedOperations,
+      protectedRepositories: [
+        ...new Set([
+          ...(old?.protectedRepositories || []),
+          ...protectedRepositories,
+        ]),
+      ],
       contentRead: false,
     };
     const destination = path.join(dir, fileId + ".bin"),

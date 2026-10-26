@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import { appsPolicySchema } from "../apps/policy.mjs";
+import { githubPolicySchema } from "../github/policy.mjs";
 import {
   selfPolicySchema,
   contextPolicySchema,
@@ -157,6 +158,7 @@ export const configSchema = z
           voice: voiceSchema,
           files: filesSchema,
           apps: appsPolicySchema,
+          github: githubPolicySchema,
           crossGroup: crossGroupSchema,
           slang: slangSchema,
           operations: operationsSchema,
