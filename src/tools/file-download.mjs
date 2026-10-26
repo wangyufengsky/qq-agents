@@ -3,6 +3,24 @@ import https from "node:https";
 import net from "node:net";
 import { validateFetchUrl } from "../../vendor/social-reader/safe-fetch.js";
 
+function validateWithSignal(raw, validate, signal) {
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const finish = (complete, value) => {
+      signal.removeEventListener("abort", abort);
+      complete(value);
+    };
+    const abort = () => finish(reject, signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+    Promise.resolve()
+      .then(() => validate(raw))
+      .then(
+        (value) => finish(resolve, value),
+        (error) => finish(reject, error),
+      );
+  });
+}
+
 // Resolve and pin each hop; never forward cookies, auth headers or local paths.
 export function requestFile(url, addresses, { maxBytes, signal }) {
   return new Promise((resolve, reject) => {
@@ -76,15 +94,25 @@ export async function downloadFile(
     combined.throwIfAborted();
     let checked;
     try {
-      checked = await validate(raw);
+      checked = await validateWithSignal(raw, validate, combined);
     } catch {
+      combined.throwIfAborted();
       throw Error("FILE_URL_DENIED");
     }
     combined.throwIfAborted();
-    const result = await request(checked.url, checked.addresses, {
-      maxBytes,
-      signal: combined,
-    });
+    let result;
+    try {
+      result = await request(checked.url, checked.addresses, {
+        maxBytes,
+        signal: combined,
+      });
+    } catch (error) {
+      // The response may emit 'aborted' before the request emits AbortError.
+      // Preserve cancellation/deadline identity instead of reporting a network failure.
+      combined.throwIfAborted();
+      throw error;
+    }
+    combined.throwIfAborted();
     if (result.buffer)
       return { buffer: result.buffer, origin: checked.url.origin };
     if (!result.redirect) throw Error("FILE_REDIRECT_INVALID");

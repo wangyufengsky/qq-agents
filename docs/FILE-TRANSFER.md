@@ -40,6 +40,8 @@
 
 下载不会执行、解压或解释文件。工具返回 `contentRead=false`，不能据此声称读懂 PDF、Word、Excel 或压缩包。文本生成不会把普通文字冒充 Office/PDF 格式。来自现有运维文件读取的受限内容仍保留原披露限制，普通文件收发不进入运维确认队列。
 
+图片附件可另用 `qq_image_read({id: "<附件经历ID>", source: "file", index: 0})` 读取像素；无普通图片段时可省略 `source`。这个入口通过同一个 `file_download` 授权路径下载，仍要求文件接收权限、工具白名单、来源白名单及文件库配额，不能绕过文件权限。校验为 GIF 后返回多帧，其他支持格式返回图片；GIF 原图另限 20 MiB、其他格式 8 MiB。读取结果保留文件库中相同内容的已有来源和运维限制；后续可用返回的 `mediaId` 在 `sticker_read` 中继续读图。
+
 ## QQ 与下载协议
 
 普通 file 消息段、群 `group_upload` 与私聊 `offline_file` 通知会显示附件名称。下载仅使用本主体、当前 QQ 连接及仍允许来源中已归档的附件；不接受模型自行编造的 QQ 文件 ID。附件直链过期时可通过 `get_group_file_url` / `get_private_file_url` 刷新。网关没有可用直链时明确失败，不读取其返回的任意本机路径。
