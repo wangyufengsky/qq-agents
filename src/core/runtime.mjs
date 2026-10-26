@@ -1,5 +1,9 @@
 import { observeInput } from "./input-progress.mjs";
 import {
+  BackendConnections,
+  isConnectionFailure,
+} from "./backend-connections.mjs";
+import {
   authorizeExternal,
   grantExternal,
   sourceCounts,
@@ -54,6 +58,7 @@ export class Runtime {
     this.transports = new Map();
     this.connecting = new Set();
     this.backends = new Map();
+    this.backendConnections = new BackendConnections(this);
     this.running = new Map();
     this.pending = new Map();
     this.capabilities = new Map();
@@ -101,6 +106,7 @@ export class Runtime {
   }
   tick() {
     if (this.closed) return;
+    this.backendConnections.tick();
     this.contexts.tick();
     this.subject.tick();
     this.conversations.tick();
@@ -186,6 +192,7 @@ export class Runtime {
     return selected.filter((name) => toolAvailable(a, name, conversation));
   }
   writable(a, conversation, ctx = null) {
+    if (this.backendConnections.blocked.has(a.id)) return false;
     if (conversation === SUBJECT) return this.subject.internalAllowed(a);
     const state = this.memory.bind(a.id).state(conversation);
     return (
@@ -323,6 +330,8 @@ export class Runtime {
       this.configStore.save(next, revision);
       return { saved: true, reconnectRequired: false };
     }
+    if (this.backendConnections.operations.size)
+      throw Error("BACKEND_OPERATION_IN_PROGRESS");
     if (this.lifecycle?.owned.size)
       throw Error("STOP_MANAGED_QQ_PROCESSES_BEFORE_CONFIG_EDIT");
     // Invalidate capabilities synchronously before awaiting cancellation: late tool calls cannot send.
@@ -337,6 +346,7 @@ export class Runtime {
       [...this.backends.values()].map((b) => b.close?.()),
     );
     this.backends.clear();
+    this.backendConnections.states.clear();
     await this.learner.close();
     this.operations.levels.clear();
     this.operations.pending.clear();
@@ -577,15 +587,7 @@ export class Runtime {
     let outcome = "completed-no-send",
       backend;
     try {
-      backend = this.backends.get(agentId);
-      if (!backend) {
-        const bc = this.config.backends.find((b) => b.id === a.backendId);
-        backend = this.backendFactory(
-          { ...bc, model: a.model || bc.model, effort: a.effort || bc.effort },
-          a,
-        );
-        this.backends.set(agentId, backend);
-      }
+      backend = this.backendConnections.adapter(a);
       const tools = toolSpecs(ctx.allowedTools);
       const prepared = this.contexts.prepare(ctx, backend, reasons, tools);
       if (ctx.initialSession)
@@ -622,6 +624,8 @@ export class Runtime {
       if (!controller.signal.aborted) this.faults.delete(agentId);
     } catch (e) {
       outcome = controller.signal.aborted ? "cancelled" : "failed";
+      if (!controller.signal.aborted && isConnectionFailure(e))
+        this.backendConnections.failed(a.backendId, e);
       // Administrative cancellation is an expected lifecycle transition. Keep
       // earlier genuine faults (including the deadline), but do not invent one.
       if (!controller.signal.aborted)
@@ -1003,6 +1007,7 @@ export class Runtime {
     return {
       mode: this.config.mode,
       globalPaused: this.config.globalPaused,
+      backends: this.backendConnections.list(),
       connections: this.config.connections.map((c) => ({
         id: c.id,
         connected: !!this.transports.get(c.id)?.connected,
@@ -1047,6 +1052,7 @@ export class Runtime {
       [...this.backends.values()].map((b) => b.close?.()),
     );
     await this.learner.close();
+    await this.backendConnections.drain();
     await Promise.allSettled([...this.jobs]);
     await this.lifecycle?.close();
   }

@@ -20,7 +20,13 @@ export function sessionSignature(backend, tools = []) {
       .update(
         JSON.stringify(
           canonical({
-            backend: backend.config,
+            backend: {
+              ...backend.config,
+              recovery: undefined,
+              ...(backend.config.recovery?.dshInstance
+                ? { dshInstance: backend.config.recovery.dshInstance }
+                : {}),
+            },
             tools: tools
               .map(({ name, description, inputSchema }) => ({
                 name,

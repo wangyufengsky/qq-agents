@@ -105,3 +105,7 @@ DSH 的 MCP 结果可携带 audio block。当前 Codex 动态工具适配没有�
 macOS 本机 TTS：将角色 `voice.tts` 配为 `{"enabled":true,"voice":"Tingting"}`，再允许 `voice_synthesize`。工具返回登记的 audioId，模型可另行决定是否 `qq_send_voice`。需已有系统音色；默认关闭，不自动下载音色。生成文本只作为 TTS 输入来源保存，不是 ASR 转录。资料来源和运维限制会随生成音频保留。
 
 黑话研究的 `slang.researchArguments` 为管理员配置的固定 JSON 参数，`researchQueryField` 默认 `query`。例如给 Exa 固定 `objective` 和 `numResults:2`；候选词覆盖查询字段，程序不把证据原文交给外部服务。研究结果仍为未核实的候选，不能自动成为事实或人格。
+
+## 后端连接恢复
+
+“AI 后端”提供 DSH/Codex 连接状态、检测连接、恢复连接与自动恢复开关；DSH 可选择桌面实例并跟随重启后的端口。恢复只处理该后端的角色，保留 QQ 连接、记忆及兼容会话，不重放被中断的回复。操作方式、自动恢复边界和实例绑定见 [后端连接恢复](BACKEND-RECOVERY.md)。

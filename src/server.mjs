@@ -491,6 +491,11 @@ export function createServer({ runtime, token, allowLive = false }) {
           if (!existing) await backend.close();
         }
       }
+      if (req.method === "POST" && url.pathname === "/api/backend") {
+        if (!allowLive || runtime.config.mode !== "live")
+          throw Error("ISOLATED_MODE");
+        return send(await runtime.backendConnections.handle(await body(req)));
+      }
       if (req.method === "POST" && url.pathname === "/api/disclosure") {
         const data = await body(req);
         return send(runtime.grant(data.token, data.ids, data.requestId));

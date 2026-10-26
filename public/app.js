@@ -206,16 +206,112 @@ function agentCard(a) {
   const s = status.agents.find((s) => s.id === a.id),
     c = find("connections", a.connectionId),
     b = find("backends", a.backendId);
-  return `<article class="card"><div class="row"><div class="identity"><span class="avatar">${esc(a.name.slice(0, 1))}</span><div><h3>${esc(a.name)}</h3><span class="hint mono">${esc(a.id)}</span></div></div>${tag(a.paused ? "已暂停" : status.globalPaused ? "全局暂停" : "允许参与", a.paused ? "off" : status.globalPaused ? "warn" : "live")}</div><dl class="agent-meta"><dt>QQ 实例</dt><dd>${esc(c?.label)}</dd><dt>后端 / 模型</dt><dd>${esc(b?.label)} / <span class="mono">${esc(a.model || b?.model || "后端默认")}</span></dd><dt>参与率</dt><dd>${Math.round(a.wake.participation * 100)}%${meter(a.wake.participation)}</dd><dt>来源范围</dt><dd>${a.allow.groups.length} 个群 · ${a.allow.users.length} 位私聊对象</dd></dl>${s?.error ? `<p class="hint">${esc(s.error)}</p>` : ""}<div class="card-actions"><button data-do="edit-agent" data-id="${esc(a.id)}">${icon("settings", "sm")}配置角色</button><button class="ghost" data-do="toggle" data-id="${esc(a.id)}" ${status.mode === "isolated" && !a.paused ? "disabled" : ""}>${icon(a.paused ? "play" : "pause", "sm")}${a.paused ? "解除角色暂停" : "暂停角色"}</button></div></article>`;
+  return `<article class="card"><div class="row"><div class="identity"><span class="avatar">${esc(a.name.slice(0, 1))}</span><div><h3>${esc(a.name)}</h3><span class="hint mono">${esc(a.id)}</span></div></div>${tag(a.paused ? "已暂停" : status.globalPaused ? "全局暂停" : "允许参与", a.paused ? "off" : status.globalPaused ? "warn" : "live")}</div><dl class="agent-meta"><dt>QQ 实例</dt><dd>${esc(c?.label)}</dd><dt>后端 / 模型</dt><dd>${esc(b?.label)} / <span class="mono">${esc(a.model || b?.model || "后端默认")}</span></dd><dt>后端连接</dt><dd>${esc(backendLabels[status.backends?.find((x) => x.id === a.backendId)?.state] || "尚未检测")}</dd><dt>参与率</dt><dd>${Math.round(a.wake.participation * 100)}%${meter(a.wake.participation)}</dd><dt>来源范围</dt><dd>${a.allow.groups.length} 个群 · ${a.allow.users.length} 位私聊对象</dd></dl>${s?.error ? `<p class="hint">${esc(s.error)}</p>` : ""}<div class="card-actions"><button data-do="edit-agent" data-id="${esc(a.id)}">${icon("settings", "sm")}配置角色</button><button class="ghost" data-do="toggle" data-id="${esc(a.id)}" ${status.mode === "isolated" && !a.paused ? "disabled" : ""}>${icon(a.paused ? "play" : "pause", "sm")}${a.paused ? "解除角色暂停" : "暂停角色"}</button></div></article>`;
 }
 function connectionCard(c) {
   const s = status.connections.find((s) => s.id === c.id);
   return `<article class="card"><div class="row"><div class="identity"><span class="avatar">${icon("link")}</span><div><h3>${esc(c.label)}</h3><span class="hint mono">${esc(c.id)}</span></div></div>${tag(s?.connected ? "已连接" : "未连接", s?.connected ? "live" : "off")}</div><dl class="agent-meta"><dt>QQ 账号</dt><dd class="mono">${esc(c.accountId)}</dd><dt>HTTP</dt><dd class="mono">${esc(c.httpUrl)}</dd><dt>WebSocket</dt><dd class="mono">${esc(c.wsUrl)}</dd><dt>部署方式</dt><dd>${esc(c.deployment)}</dd></dl><p class="hint">${esc(s?.error || "连接前核对实际登录账号，不匹配时拒绝接入。")}</p><div class="card-actions"><button data-do="edit-connection" data-id="${esc(c.id)}">${icon("settings", "sm")}编辑</button><button class="ghost" data-do="connect" data-id="${esc(c.id)}" ${status.mode === "isolated" || !c.enabled ? "disabled" : ""}>${s?.connected ? "断开桥接" : "连接桥接"}</button>${c.deployment !== "external" ? `<button class="ghost" data-do="process" data-id="${esc(c.id)}" ${status.mode === "isolated" || !c.enabled ? "disabled" : ""}>${s?.process?.managed ? "停止 QQ 进程" : "启动 QQ 进程"}</button>` : ""}</div></article>`;
 }
+const backendBusy = new Set();
+const backendLabels = {
+  unchecked: "尚未检测",
+  ready: "已就绪",
+  disconnected: "连接已断开",
+  recovering: "恢复中",
+  "login-required": "需要登录",
+  "selection-required": "请选择 DSH 实例",
+};
+const backendErrors = {
+  DSH_NOT_FOUND: "未找到 DSH，请先打开桌面应用，再恢复连接。",
+  DSH_INSTANCE_UNAVAILABLE:
+    "绑定的 DSH 实例尚未就绪。请等待启动完成，或选择其他实例。",
+  DSH_SELECTION_REQUIRED:
+    "发现的实例与原连接无法唯一对应，请选择要连接的 DSH。",
+  CODEX_DEDICATED_LOGIN_REQUIRED:
+    "Codex 专用实例需要登录。登录完成后再恢复连接。",
+  BACKEND_MODEL_UNAVAILABLE:
+    "后端可访问，但所选模型当前不可用，请检查模型配置。",
+  BACKEND_NO_AGENTS: "请先将此后端绑定到一个智能体。",
+};
 function backendCard(b) {
-  return `<article class="card"><div class="row"><div class="identity"><span class="avatar">${icon("chip")}</span><div><h3>${esc(b.label)}</h3><span class="hint mono">${esc(b.id)}</span></div></div>${tag(b.type.toUpperCase(), "accent")}</div><dl class="agent-meta"><dt>提供方</dt><dd>${esc(b.provider || "后端默认")}</dd><dt>模型</dt><dd class="mono">${esc(b.model || "后端默认")}</dd><dt>思考强度</dt><dd>${esc(b.effort)}</dd><dt>外部工具</dt><dd>${b.toolServers.length} 个 MCP 服务</dd></dl><p class="hint">${b.type === "dsh" ? "端口留空时动态识别 DSH。需安装本项目独立 preset。" : "专用 Codex home 位于数据目录，需单独登录。"}</p><div class="card-actions"><button data-do="edit-backend" data-id="${esc(b.id)}">${icon("settings", "sm")}编辑后端</button><button class="ghost" data-do="models" data-id="${esc(b.id)}" ${status.mode === "isolated" ? "disabled" : ""}>读取模型目录</button></div></article>`;
+  const s = status.backends?.find((x) => x.id === b.id) || {
+    state: "unchecked",
+  };
+  const busy = backendBusy.has(b.id) || s.state === "recovering";
+  const disabled = status.mode === "isolated" || busy ? "disabled" : "";
+  const checked = s.checkedAt
+    ? new Date(s.checkedAt).toLocaleTimeString()
+    : "尚未检测";
+  return `<article class="card"><div class="row"><div class="identity"><span class="avatar">${icon("chip")}</span><div><h3>${esc(b.label)}</h3><span class="hint mono">${esc(b.id)} · ${esc(b.type.toUpperCase())}</span></div></div>${tag(busy ? "处理中" : backendLabels[s.state] || s.state, s.state === "ready" ? "live" : "warn")}</div>
+    <dl class="agent-meta"><dt>提供方</dt><dd>${esc(b.provider || "后端默认")}</dd><dt>模型</dt><dd>${esc(b.model || "后端默认")}</dd><dt>思考强度</dt><dd>${esc(b.effort)}</dd><dt>外部工具</dt><dd>${b.toolServers.length} 个 MCP 服务</dd><dt>最近检测</dt><dd>${esc(checked)}</dd><dt>自动恢复</dt><dd>${s.autoReconnect ? "已开启" : "已关闭"}${s.attempts ? ` · 已尝试 ${s.attempts}/3 次` : ""}</dd>${b.type === "dsh" ? `<dt>绑定实例</dt><dd>${esc(s.dshInstance?.replace(/^relay:/, "桌面 DSH · ") || b.baseUrl || "尚未选择")}</dd>` : ""}</dl>
+    <p class="hint">${esc(s.error ? backendErrors[s.error] || "连接检查未通过：" + s.error : b.type === "dsh" ? "选择桌面实例后可跟随重启后的地址。" : "使用角色自己的 Codex 进程与登录目录。")}</p>
+    ${s.attempts >= 3 ? '<p class="hint">自动恢复已停止，请检查原因后手动恢复。</p>' : ""}
+    ${(s.agents || []).map((a) => `<p class="hint">${esc(find("agents", a.id)?.name || a.id)}：${esc(backendLabels[a.state] || a.state)}${a.endpoint ? " · " + esc(a.endpoint === "stdio" ? "专用 Codex 进程" : a.endpoint) : ""}</p>`).join("")}
+    <div class="card-actions"><button data-do="backend-check" data-id="${esc(b.id)}" ${disabled}>检测连接</button><button data-do="backend-recover" data-id="${esc(b.id)}" ${disabled}>恢复连接</button>${b.type === "dsh" ? `<button data-do="backend-discover" data-id="${esc(b.id)}" ${disabled}>选择 DSH 实例</button>` : ""}<button data-do="backend-auto" data-id="${esc(b.id)}" ${disabled}>${s.autoReconnect ? "关闭" : "开启"}自动恢复</button><button class="ghost" data-do="edit-backend" data-id="${esc(b.id)}" ${disabled}>编辑后端</button><button class="ghost" data-do="models" data-id="${esc(b.id)}" ${disabled}>读取模型目录</button></div></article>`;
+}
+async function backendDiscover(id) {
+  const { candidates } = await api("/api/backend", { id, action: "discover" });
+  editing = { type: "read" };
+  $("#edit-title").textContent = "选择 DSH 实例";
+  $("#edit-fields").innerHTML = candidates.length
+    ? candidates
+        .map(
+          (c) =>
+            `<div class="record"><strong>${esc(c.label)}</strong><p class="mono">${esc(c.url)} · PID ${esc(c.pid || "未知")}</p>${c.home ? `<p class="hint">${esc(c.home)}</p>` : ""}<p>${c.followsRestart ? "可跟随此桌面实例重启" : "固定地址；重启后可能需要重新选择"}</p><button type="button" data-backend-candidate="${esc(c.id)}">连接此实例</button></div>`,
+        )
+        .join("")
+    : "<p>没有发现可连接的 DSH。请先打开桌面应用，再重新检测。</p>";
+  $("#edit-form footer").hidden = true;
+  $("#edit-fields")
+    .querySelectorAll("[data-backend-candidate]")
+    .forEach((button) => {
+      button.onclick = () =>
+        action(async () => {
+          $("#editor").close();
+          await backendAction(id, "recover", {
+            candidateId: button.dataset.backendCandidate,
+          });
+        });
+    });
+  $("#editor").showModal();
+}
+async function backendAction(id, operation, extra = {}) {
+  if (backendBusy.has(id)) return;
+  backendBusy.add(id);
+  render();
+  try {
+    const result = await api("/api/backend", {
+      id,
+      action: operation,
+      ...extra,
+    });
+    await load();
+    if (result.state === "selection-required") await backendDiscover(id);
+    notice(
+      result.error
+        ? backendErrors[result.error] || "连接未恢复：" + result.error
+        : operation === "settings"
+          ? "自动恢复设置已保存"
+          : operation === "recover"
+            ? "后端连接已恢复；可用会话与 QQ 连接保留"
+            : "后端连接检测通过",
+    );
+  } finally {
+    backendBusy.delete(id);
+    render();
+  }
 }
 async function operate(kind, id) {
+  if (kind.startsWith("backend-")) {
+    const operation = kind.slice(8);
+    if (operation === "discover") return backendDiscover(id);
+    if (operation === "auto")
+      return backendAction(id, "settings", {
+        autoReconnect: !status.backends?.find((x) => x.id === id)
+          ?.autoReconnect,
+      });
+    return backendAction(id, operation);
+  }
   if (kind === "tab") {
     tab = id;
     render();
@@ -467,7 +563,7 @@ function openEditor(type, id) {
       input("provider", "模型提供方（可选）", row.provider) +
       input("model", "默认模型（留空使用后端默认）", row.model) +
       input("effort", "默认思考强度", row.effort || "high") +
-      input("baseUrl", "DSH 地址（空白自动发现）", row.baseUrl) +
+      input("baseUrl", "DSH 固定地址（也可在后端卡片选择实例）", row.baseUrl) +
       input("preset", "DSH preset", row.preset || "qq-unified") +
       input("command", "Codex 命令", row.command || "codex") +
       area(
@@ -553,13 +649,20 @@ $("#edit-form").onsubmit = (e) => {
         };
       else
         row = {
+          ...row,
           id: row.id,
           label: get("label"),
           type: get("type"),
           provider: get("provider"),
           model: get("model"),
           effort: get("effort"),
-          ...(get("baseUrl") ? { baseUrl: get("baseUrl") } : {}),
+          baseUrl: get("baseUrl") || undefined,
+          recovery: {
+            ...row.recovery,
+            ...(get("baseUrl") !== (row.baseUrl || "")
+              ? { dshInstance: undefined }
+              : {}),
+          },
           preset: get("preset"),
           command: get("command"),
           toolServers: JSON.parse(get("toolServers") || "[]"),
@@ -722,7 +825,11 @@ function download(value, name) {
 }
 if (token) action(load);
 setInterval(() => {
-  if (config && tab === "overview" && !$("#editor").open)
+  if (
+    config &&
+    ["overview", "agents", "backends"].includes(tab) &&
+    !$("#editor").open
+  )
     action(async () => {
       status = await api("/api/status");
       render();

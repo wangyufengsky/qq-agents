@@ -118,6 +118,16 @@ export const configSchema = z
           label: z.string(),
           provider: z.string().default(""),
           baseUrl: loopback.optional(),
+          recovery: z
+            .object({
+              autoReconnect: z.boolean().default(false),
+              dshInstance: z
+                .string()
+                .regex(/^relay:[a-zA-Z0-9_-]{1,64}$/)
+                .optional(),
+            })
+            .strict()
+            .default({ autoReconnect: false }),
           command: z.string().default("codex"),
           home: z.string().optional(),
           preset: z.string().default("qq-unified"),
