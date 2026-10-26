@@ -770,7 +770,7 @@ async function searchMemory(cursor = null) {
       rows
         .map(
           (r) =>
-            `<article class="record"><div class="row"><strong>${esc(r.title || r.type)}</strong>${tag(r.origin)}</div><p>${esc(r.body)}</p><small>${esc(r.conversation || "个人日记")} · ${esc(r.senderId || "")} · ${esc(r.occurredAt || r.updatedAt)}</small> <button type="button" data-read="${esc(r.id)}">展开原文</button>${sceneMarkup(r.scene)}</article>`,
+            `<article class="record"><div class="row"><strong>${esc(r.title || r.type)}</strong>${tag(r.origin)}</div><p>${esc(r.body)}${r.bodyTruncated ? "…" : ""}</p>${r.bodyTruncated ? '<p class="hint">这里是摘要，可打开阅读全文。</p>' : ""}<small>${esc(r.conversation || "个人日记")} · ${esc(r.senderId || "")} · ${esc(r.occurredAt || r.updatedAt)}</small> <button type="button" data-read="${esc(r.id)}">${r.type === "diary" ? "阅读全文" : "展开原文"}</button>${sceneMarkup(r.scene)}</article>`,
         )
         .join("") || '<p class="empty">没有匹配记录。</p>';
     node
@@ -793,26 +793,81 @@ async function searchMemory(cursor = null) {
     }
   });
 }
-async function readMemory(id, offset = 0) {
+let memoryReaderRequest = 0;
+async function readMemory(id, options = {}) {
+  const request = ++memoryReaderRequest;
+  const agentId = options.agentId || $("#memory-agent").value;
   await action(async () => {
-    const r = await api(
-      "/api/memory/read?" +
-        new URLSearchParams({ agentId: $("#memory-agent").value, id, offset }),
-    );
-    editing = { type: "read" };
-    $("#edit-title").textContent = "记录详情";
+    const query = new URLSearchParams({ agentId, id });
+    if (options.revision !== undefined) query.set("revision", options.revision);
+    const r = await api("/api/memory/view?" + query);
+    if (request !== memoryReaderRequest) return;
+    const reader = { type: "read" };
+    editing = reader;
+    $("#edit-title").textContent = r.title || "经历原文";
     $("#edit-fields").innerHTML =
-      `<pre class="mono">${esc(r.chunk)}</pre>${r.nextOffset !== null ? '<button type="button" id="next-chunk">继续展开</button>' : ""}`;
-    if (r.nextOffset !== null)
-      $("#next-chunk").onclick = () => readMemory(id, r.nextOffset);
+      `<article class="memory-reader"><p class="hint" id="memory-reader-meta"></p><div class="card-actions" id="memory-version-controls"><button type="button" id="memory-previous-version">上一版本</button><span id="memory-reader-version"></span><button type="button" id="memory-next-version">下一版本</button></div><div class="memory-reader-body" id="memory-reader-body"></div><p class="hint" id="memory-read-progress" aria-live="polite"></p><button type="button" id="memory-read-more">继续阅读</button></article>`;
+    const author = config.agents.find((a) => a.id === agentId)?.name || agentId;
+    const time = r.writtenAt || r.occurredAt || r.updatedAt;
+    $("#memory-reader-meta").textContent = [
+      author,
+      r.type === "diary" ? "个人日记" : r.conversation,
+      r.senderName || r.senderId,
+      time ? new Date(time).toLocaleString() : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    $("#memory-reader-body").textContent = r.body;
+    const versions = $("#memory-version-controls");
+    versions.hidden = r.type !== "diary";
+    if (r.type === "diary") {
+      $("#memory-reader-version").textContent =
+        `版本 ${r.revision} / ${r.latestRevision}`;
+      $("#memory-previous-version").disabled = r.revision <= 1;
+      $("#memory-next-version").disabled = r.revision >= r.latestRevision;
+      $("#memory-previous-version").onclick = () =>
+        readMemory(id, { agentId, revision: r.revision - 1 });
+      $("#memory-next-version").onclick = () =>
+        readMemory(id, { agentId, revision: r.revision + 1 });
+      // Keep every continuation on the version that was initially displayed.
+      query.set("revision", r.revision);
+    }
+    const more = $("#memory-read-more");
+    let nextOffset = r.nextOffset,
+      loading = false;
+    const progress = () => {
+      more.hidden = nextOffset === null;
+      $("#memory-read-progress").textContent =
+        nextOffset === null
+          ? "正文已全部显示"
+          : "下方还有正文，继续阅读会保留已显示的内容。";
+    };
+    progress();
+    more.onclick = () =>
+      action(async () => {
+        if (loading || nextOffset === null) return;
+        loading = true;
+        more.disabled = true;
+        try {
+          query.set("offset", nextOffset);
+          const page = await api("/api/memory/view?" + query);
+          if (request !== memoryReaderRequest || editing !== reader) return;
+          $("#memory-reader-body").textContent += page.body;
+          nextOffset = page.nextOffset;
+          progress();
+        } finally {
+          loading = false;
+          more.disabled = false;
+        }
+      });
     $("#edit-form footer").hidden = true;
     if (!$("#editor").open) $("#editor").showModal();
   });
 }
-$("#editor").addEventListener(
-  "close",
-  () => ($("#edit-form footer").hidden = false),
-);
+$("#editor").addEventListener("close", () => {
+  memoryReaderRequest++;
+  $("#edit-form footer").hidden = false;
+});
 function download(value, name) {
   const url = URL.createObjectURL(
     new Blob([JSON.stringify(value, null, 2)], { type: "application/json" }),

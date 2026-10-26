@@ -205,6 +205,7 @@ class AgentMemory {
         "AI diary/opinion, not verified event; evidence links do not prove every sentence",
       title: row.title,
       body: summary ? row.body.slice(0, 200) : row.body,
+      ...(summary ? { bodyTruncated: row.body.length > 200 } : {}),
       revision: row.revision,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
@@ -396,9 +397,7 @@ class AgentMemory {
   related(q, current = "") {
     return related(this, q, current);
   }
-  read({ id, offset = 0, maxChars = 8000, revision }, current = "") {
-    num(offset, 0, 0, 10000000);
-    num(maxChars, 8000, 512, 16000);
+  readRecord({ id, revision }, current = "") {
     let row = this.db
         .prepare("SELECT * FROM events WHERE agent_id=? AND id=?")
         .get(this.agentId, id),
@@ -425,6 +424,44 @@ class AgentMemory {
         };
       }
     }
+    return item;
+  }
+  view({ id, offset = 0, maxChars = 8000, revision }, current = "") {
+    num(offset, 0, 0, 10000000);
+    num(maxChars, 8000, 512, 16000);
+    if (revision !== undefined) num(revision, 1, 1, Number.MAX_SAFE_INTEGER);
+    const item = this.readRecord({ id, revision }, current);
+    const body = item.body || "";
+    const latestRevision =
+      item.type === "diary"
+        ? this.db
+            .prepare("SELECT revision FROM diaries WHERE agent_id=? AND id=?")
+            .get(this.agentId, id).revision
+        : undefined;
+    return {
+      id,
+      type: item.type,
+      title: item.title,
+      body: body.slice(offset, offset + maxChars),
+      offset,
+      nextOffset: offset + maxChars < body.length ? offset + maxChars : null,
+      totalChars: body.length,
+      revision: item.revision,
+      latestRevision,
+      createdAt: item.createdAt,
+      updatedAt: item.updatedAt,
+      writtenAt: item.writtenAt,
+      occurredAt: item.occurredAt,
+      conversation: item.conversation,
+      senderId: item.senderId,
+      senderName: item.senderName,
+      origin: item.origin,
+    };
+  }
+  read({ id, offset = 0, maxChars = 8000, revision }, current = "") {
+    num(offset, 0, 0, 10000000);
+    num(maxChars, 8000, 512, 16000);
+    const item = this.readRecord({ id, revision }, current);
     const complete = json(item),
       chunk = complete.slice(offset, offset + maxChars);
     return {

@@ -577,17 +577,22 @@ export function createServer({ runtime, token, allowLive = false }) {
           }),
         );
       }
-      if (req.method === "GET" && url.pathname === "/api/memory/read") {
+      if (
+        req.method === "GET" &&
+        ["/api/memory/read", "/api/memory/view"].includes(url.pathname)
+      ) {
         const agentId = url.searchParams.get("agentId");
         runtime.agent(agentId);
         return send(
-          runtime.memory.bind(agentId).read({
-            id: url.searchParams.get("id"),
-            offset: Number(url.searchParams.get("offset") || 0),
-            ...(url.searchParams.has("revision")
-              ? { revision: Number(url.searchParams.get("revision")) }
-              : {}),
-          }),
+          runtime.memory
+            .bind(agentId)
+            [url.pathname.endsWith("/view") ? "view" : "read"]({
+              id: url.searchParams.get("id"),
+              offset: Number(url.searchParams.get("offset") || 0),
+              ...(url.searchParams.has("revision")
+                ? { revision: Number(url.searchParams.get("revision")) }
+                : {}),
+            }),
         );
       }
       if (req.method === "GET" && url.pathname === "/api/export") {
