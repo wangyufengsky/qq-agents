@@ -34,7 +34,7 @@ function renderParity(page) {
   if (!config.agents.some((a) => a.id === parityAgentId))
     parityAgentId = config.agents[0]?.id;
   $("#content").innerHTML =
-    `<div class="card toolbar"><label>机器人<select id="parity-agent">${parityOptions(
+    `<div class="card toolbar"><label>智能体<select id="parity-agent">${parityOptions(
       config.agents.map((a) => [a.id, a.name]),
       parityAgentId,
     )}</select></label><p class="hint">${status.mode === "isolated" ? "隔离模式下可编辑和预览，实际运行与投递保持关闭。" : "全局、角色与会话暂停始终优先于任何自动任务。"}</p></div><div id="parity-body"></div>`;

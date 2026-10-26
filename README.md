@@ -1,4 +1,4 @@
-# QQ Bridge Unified
+# QQ Agents
 
 一个项目、一个管理台，管理多个独立 AI 和多个 NapCat 连接。基于 [h-D-ACE/dsh-qq](https://github.com/h-D-ACE/dsh-qq) 的 DSH 客户端与发现模块，参考 [Derpyu520/qq-bridge](https://github.com/Derpyu520/qq-bridge)，整合本地双机器人项目的 Codex RPC、互聊边界与平台读取模块。
 
