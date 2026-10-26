@@ -147,6 +147,46 @@ export class SubjectCoordinator {
   enabled(a) {
     return a.subject.enabled || a.behavior.proactive.enabled;
   }
+  checkStatus(a) {
+    const r = this.runtime,
+      now = r.now(),
+      s = this.memory(a.id).state(SUBJECT);
+    const checks = (s.checks || [])
+      .filter((t) => t > now - 86400000)
+      .sort((a, b) => a - b);
+    const limit = a.subject.maxChecksPerDay;
+    // If the limit was lowered, more than one old check may need to expire.
+    const budgetReadyAt =
+      checks.length >= limit ? checks[checks.length - limit] + 86400000 : now;
+    const nextEligibleAt = Math.max(
+      s.nextCheckAt || now + a.subject.intervalMs,
+      budgetReadyAt,
+    );
+    let state;
+    if (r.closed || r.config.mode !== "live") state = "inactive";
+    else if (!this.enabled(a)) state = "disabled";
+    else if (r.config.globalPaused || a.paused) state = "paused";
+    else if (
+      !a.subject.offlineReview &&
+      !r.transports.get(a.connectionId)?.connected
+    )
+      state = "offline";
+    else if (!a.subject.reviewInSilence && inSilence(a, r.clock()))
+      state = "silenced";
+    else if (r.backendConnections.blocked.has(a.id)) state = "recovering";
+    else if (r.running.has(a.id + "|" + SUBJECT)) state = "running";
+    else if (checks.length >= limit) state = "budget-exhausted";
+    else state = nextEligibleAt > now ? "waiting" : "due";
+    return {
+      state,
+      used: checks.length,
+      limit,
+      remaining: Math.max(0, limit - checks.length),
+      nextEligibleAt: ["budget-exhausted", "waiting", "due"].includes(state)
+        ? nextEligibleAt
+        : null,
+    };
+  }
   internalAllowed(a) {
     const r = this.runtime;
     return (

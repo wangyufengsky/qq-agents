@@ -331,15 +331,31 @@ export class Runtime {
   async changeConfig(next, revision) {
     next = validateConfig(next);
     if (revision !== this.configStore.revision) throw Error("CONFIG_CONFLICT");
-    // Participation only controls future wake decisions; existing capabilities
-    // and backend sessions remain valid. All other edits use full invalidation.
+    // These scheduling values only affect future opportunities. Permission,
+    // identity and backend edits still require full capability invalidation.
     const withNextRates = structuredClone(this.config);
-    for (const a of withNextRates.agents)
-      a.wake.participation =
-        next.agents.find((candidate) => candidate.id === a.id)?.wake
-          .participation ?? a.wake.participation;
+    const intervals = [];
+    for (const a of withNextRates.agents) {
+      const candidate = next.agents.find((item) => item.id === a.id);
+      if (!candidate) continue;
+      a.wake.participation = candidate.wake.participation;
+      if (a.subject.intervalMs !== candidate.subject.intervalMs)
+        intervals.push(a.id);
+      a.subject.intervalMs = candidate.subject.intervalMs;
+      a.subject.maxChecksPerDay = candidate.subject.maxChecksPerDay;
+    }
     if (isDeepStrictEqual(withNextRates, next)) {
       this.configStore.save(next, revision);
+      for (const id of intervals) {
+        const m = this.memory.bind(id),
+          s = m.state(SUBJECT);
+        m.setState(SUBJECT, {
+          ...s,
+          nextCheckAt:
+            (s.lastOpportunityAt || this.now()) +
+            this.agent(id).subject.intervalMs,
+        });
+      }
       return { saved: true, reconnectRequired: false };
     }
     if (this.backendConnections.operations.size)
