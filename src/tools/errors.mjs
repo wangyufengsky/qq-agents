@@ -36,6 +36,16 @@ export function safeToolFailure(error) {
       hint: "Correct the named arguments within these bounds, or omit optional budgets and use pagination. The operation did not succeed. Do not infer unread content or claim successful delivery.",
     };
   const hints = {
+    SCREENSHOT_BROWSER_MISSING:
+      "No supported local Chromium browser is available. No screenshot was saved. The administrator can configure QQ_SCREENSHOT_BROWSER; do not claim capture succeeded.",
+    SCREENSHOT_BROWSER_FAILED:
+      "The isolated screenshot browser could not start. No screenshot was saved. Check the host browser runtime; do not retry with a local file path.",
+    SCREENSHOT_PAGE_UNAVAILABLE:
+      "The public page could not be captured within the bounded request budget. No screenshot was saved. Public screenshots use a separate signed-out browser with scripts disabled; authorized App pages have their own app_screenshot tool.",
+    APP_SCREENSHOT_TARGET_MISMATCH:
+      "The browser did not stay on the requested App content page. No screenshot was saved. A login or unrelated page is not evidence of the requested content.",
+    GENERATED_IMAGE_DELIVERY_UNKNOWN:
+      "This generated image already has a pending or unknown delivery to this conversation. Do not send it again with a new requestId or regenerate it to bypass this check. Inspect the existing QQ receipt first.",
     INVALID_IMAGE:
       "The downloaded bytes are not a supported image. No pixels were read. Use the actual GIF, PNG, JPEG or WebP attachment; a filename or an error page is not image evidence.",
     IMAGE_MIME_MISMATCH:

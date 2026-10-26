@@ -50,8 +50,10 @@ export const appDefinitions = {
       .strict(),
   ],
   app_image: [
-    "安全取得并登记浏览记录的封面；失败时可只发文字和链接。返回登记引用不代表已理解图片。",
-    z.object({ recordId }).strict(),
+    "保存浏览记录的图片到自己的资料库，返回 mediaId/fileId；index 从0开始，默认首图/封面，图片链接以记录的 images 为准。返回登记引用不代表已理解图片。",
+    z
+      .object({ recordId, index: z.number().int().min(0).max(49).default(0) })
+      .strict(),
   ],
   app_boards: [
     "发现小黑盒实际板块 ID 和名称，供 app_browse(board) 使用；贴吧可直接使用准确吧名。",

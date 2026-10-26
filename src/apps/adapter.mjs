@@ -77,7 +77,7 @@ export class AppAdapter {
       const timeout = setTimeout(() => child.kill("SIGTERM"), 60000);
       child.stdout.on("data", (chunk) => {
         bytes += chunk.length;
-        if (bytes > 2 * 1024 * 1024) {
+        if (bytes > (job.operation === "screenshot" ? 12 : 2) * 1024 * 1024) {
           child.kill();
           reject(Error("APP_OUTPUT_LIMIT"));
         } else output += chunk;
@@ -146,6 +146,7 @@ export class AppAdapter {
         "同一平台账号的推荐可能受两个 AI 的浏览共同影响；本程序按主体隔离记录和意图。",
       videoUnderstanding: false,
       platformWrites: false,
+      screenshots: "content-page-viewport",
     }));
   }
 }

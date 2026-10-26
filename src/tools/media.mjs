@@ -303,4 +303,27 @@ export class MediaStore {
       )
       .slice(0, 30);
   }
+  saved(agentId, { query = "", offset = 0, limit = 10 } = {}) {
+    const dir = this.dir(agentId);
+    if (!fs.existsSync(dir)) return { items: [], nextOffset: null };
+    const rows = fs
+      .readdirSync(dir)
+      .filter((f) => /^[a-f0-9]{64}\.json$/.test(f))
+      .map((f) => this.metadata(agentId, f.slice(0, -5)))
+      .filter(
+        (x) =>
+          x &&
+          (x.saved || x.generatedBy || x.appRecordId) &&
+          String(x.title || "生成图").includes(query),
+      )
+      .sort(
+        (a, b) =>
+          String(b.createdAt || "").localeCompare(String(a.createdAt || "")) ||
+          a.id.localeCompare(b.id),
+      );
+    return {
+      items: rows.slice(offset, offset + limit),
+      nextOffset: offset + limit < rows.length ? offset + limit : null,
+    };
+  }
 }

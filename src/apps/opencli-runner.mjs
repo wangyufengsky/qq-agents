@@ -1,4 +1,5 @@
 import { browserCursor } from "./policy.mjs";
+import { screenshotAppPage } from "./screenshot-page.mjs";
 import {
   zhihuSearchRows,
   parseExactJson,
@@ -19,9 +20,15 @@ async function main() {
   const job = JSON.parse(input);
   appInfo(job.platform);
   if (
-    !["status", "browse", "search", "read", "comments", "boards"].includes(
-      job.operation,
-    )
+    ![
+      "status",
+      "browse",
+      "search",
+      "read",
+      "comments",
+      "boards",
+      "screenshot",
+    ].includes(job.operation)
   )
     throw Error("APP_OPERATION_INVALID");
   const limit = Math.min(
@@ -106,6 +113,7 @@ async function main() {
     navigateBefore: false,
     args: [],
     func: async (page) => {
+      if (job.operation === "screenshot") return screenshotAppPage(page, job);
       if (job.platform === "heybox") return heyboxRead(page, job);
       if (job.operation === "status") {
         if (job.platform === "tieba")
@@ -342,7 +350,7 @@ async function main() {
           await page.goto(ident.url);
           const r = unwrap(
             await page.evaluate(
-              `()=>({title:document.querySelector('h1')?.textContent||'',content:document.querySelector('.Post-RichText')?.textContent||'',url:location.href})`,
+              `()=>({title:document.querySelector('h1')?.textContent||'',content:document.querySelector('.Post-RichText')?.textContent||'',images:Array.from(document.querySelectorAll('.Post-RichText img')).map(i=>i.currentSrc||i.src).filter(Boolean).slice(0,50),url:location.href})`,
             ),
           );
           if (!r.content) throw Error("APP_BODY_UNAVAILABLE");
@@ -445,7 +453,9 @@ async function main() {
       trace: "off",
       siteSession: browserCursor(job) ? "persistent" : "ephemeral",
       keepTab: "false",
-      windowMode: "background",
+      // Chromium may suspend screenshot rendering in an occluded background window.
+      // Only captures briefly show the tool-owned window; it is closed by keepTab=false.
+      windowMode: job.operation === "screenshot" ? "foreground" : "background",
     });
     process.stdout.write(JSON.stringify({ ok: true, result }));
   } catch (error) {
@@ -456,7 +466,7 @@ async function main() {
         ? "APP_LOGIN_REQUIRED"
         : /captcha|429|验证码/i.test(msg)
           ? "APP_RATE_LIMITED"
-          : /timeout|TIMEOUT/i.test(msg)
+          : /timeout|timed out/i.test(msg)
             ? "APP_TIMEOUT"
             : "APP_BACKEND_FAILED";
     process.stdout.write(JSON.stringify({ ok: false, error: code }));

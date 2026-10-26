@@ -109,6 +109,9 @@ export function bilibiliDynamicRow(fields) {
           .filter(Boolean)
           .join("\n"),
         cover: String(value.images || "").split("\n")[0],
+        images: String(value.images || "")
+          .split("\n")
+          .filter(Boolean),
         truncated: !!(value.forward_text || value.opus_text),
       },
     ],

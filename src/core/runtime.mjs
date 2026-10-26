@@ -1,4 +1,5 @@
 import { observeInput } from "./input-progress.mjs";
+import { GeneratedImages } from "./generated-images.mjs";
 import {
   BackendConnections,
   isConnectionFailure,
@@ -71,6 +72,7 @@ export class Runtime {
     this.operations = new Operations(this);
     this.learner = new SlangLearner(this);
     this.contexts = new ContextLifecycle(this);
+    this.generatedImages = new GeneratedImages(this);
     this.subject = new SubjectCoordinator(this);
     for (const a of this.config.agents)
       this.memory.bind(a.id).identity.initialize(a, this.now());
@@ -136,11 +138,13 @@ export class Runtime {
       confirmedSends: 0,
       shownSeq: 0,
     };
-    ctx.persistTaint = () =>
+    ctx.persistTaint = () => {
       mem.setState(conversation, {
         ...mem.state(conversation),
         disclosureTaint: [...ctx.privateRead],
       });
+      this.generatedImages.taint(ctx);
+    };
     this.capabilities.set(ctx.token, ctx);
     return ctx;
   }
@@ -189,7 +193,15 @@ export class Runtime {
               ...CHAT_MIND_TOOLS,
             ]),
           ];
-    return selected.filter((name) => toolAvailable(a, name, conversation));
+    if (
+      conversation !== SUBJECT &&
+      selected.includes("qq_send") &&
+      this.config.backends.find((b) => b.id === a.backendId)?.type === "codex"
+    )
+      selected.push("generated_image_list");
+    return [...new Set(selected)].filter((name) =>
+      toolAvailable(a, name, conversation),
+    );
   }
   writable(a, conversation, ctx = null) {
     if (this.backendConnections.blocked.has(a.id)) return false;
@@ -615,13 +627,23 @@ export class Runtime {
           }),
         onBackendTurn: (reference) =>
           recordBackendTurn(mem, ctx.turnId, reference),
+        onImageSession: (id) => this.generatedImages.begin(ctx, id),
+        onGeneratedImage: (id, item) =>
+          this.generatedImages.capture(ctx, backend, id, item),
+        onImageError: () => {
+          if (!controller.signal.aborted) {
+            ctx.imageRegistrationFailed = true;
+            this.faults.set(agentId, "GENERATED_IMAGE_REGISTRATION_FAILED");
+          }
+        },
       });
       outcome = controller.signal.aborted
         ? "cancelled"
         : ctx.confirmedSends
           ? "sent"
           : "completed-no-send";
-      if (!controller.signal.aborted) this.faults.delete(agentId);
+      if (!controller.signal.aborted && !ctx.imageRegistrationFailed)
+        this.faults.delete(agentId);
     } catch (e) {
       outcome = controller.signal.aborted ? "cancelled" : "failed";
       if (!controller.signal.aborted && isConnectionFailure(e))
@@ -887,6 +909,8 @@ export class Runtime {
         "DELIVERY_ALREADY_ATTEMPTED_" + previous.status.toUpperCase(),
       );
     }
+    if (metadata.mediaId)
+      this.generatedImages.assertDelivery(ctx, metadata.mediaId, requestId);
     const state = mem.state(ctx.conversation),
       now = this.now();
     const batchUsed = proactive
