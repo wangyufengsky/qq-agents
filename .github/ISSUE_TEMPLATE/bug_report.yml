@@ -1,0 +1,88 @@
+name: 问题报告
+description: 报告一个可以复现的错误
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢报告问题。**安全问题请不要在这里提交**，按 [安全策略](https://github.com/wangyufengsky/qq-agents/security/advisories/new) 私下报告。
+
+        Issue 是公开的：请只贴错误码和脱敏后的配置片段，不要附上真实 QQ 号、群号、令牌、`admin-token`、聊天内容、会话截图或数据目录文件。
+  - type: input
+    id: version
+    attributes:
+      label: 版本或提交
+      description: "`package.json` 中的版本，或 `git rev-parse --short HEAD` 的输出。"
+      placeholder: 0.4.0 / 44fd0cf
+    validations:
+      required: true
+  - type: dropdown
+    id: runner
+    attributes:
+      label: 运行方式
+      options:
+        - npm start（或 node src/main.mjs）
+        - node scripts/robots.mjs
+        - Docker
+        - 其他（在下方说明）
+    validations:
+      required: true
+  - type: dropdown
+    id: backend
+    attributes:
+      label: AI 后端
+      description: 出问题的角色使用的后端类型。
+      options:
+        - DSH
+        - Codex
+        - OpenAI 兼容 API
+        - 与后端无关 / 隔离模式
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: 运行环境
+      description: 操作系统和 Node.js 版本（`node --version`）；与 QQ 相关时附上 NapCat 版本。
+      placeholder: macOS 15 / Node 24.4.0 / NapCat 4.x
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 从启动开始的最少步骤。配置片段请用示例账号和占位令牌。
+      placeholder: |
+        1. 以隔离模式启动 npm start
+        2. 在「角色」页 …
+        3. 点击 …
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为
+    validations:
+      required: true
+  - type: input
+    id: error-code
+    attributes:
+      label: 错误码
+      description: 管理台或日志中显示的大写错误码，例如 `ONEBOT_TOKEN_ENV_MISSING`。只贴错误码，不贴原始日志。
+  - type: textarea
+    id: blocked-reasons
+    attributes:
+      label: “当前无法发言”原因
+      description: 角色不说话时，角色卡片上“当前无法发言：…”列出的原因（与此无关可留空）。
+      placeholder: 当前无法发言：全局暂停、角色暂停
+  - type: checkboxes
+    id: redacted
+    attributes:
+      label: 脱敏确认
+      options:
+        - label: 我确认已经脱敏，没有附上 QQ 号、群号、令牌、API 密钥、聊天内容或数据目录文件。
+          required: true
