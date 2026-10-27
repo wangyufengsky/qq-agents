@@ -17,7 +17,8 @@ let token = sessionStorage.getItem("qq-unified-token") || "",
   tools = [],
   status,
   tab = "overview",
-  editing;
+  editing,
+  globalPausePending = false;
 const titles = {
   apps: ["浏览与分享", "按主体配置平台浏览，查看真实来源和分享决定。"],
   mind: ["Self 与主体", "当前自我、候选成长、主动意图与工作会话。"],
@@ -84,11 +85,37 @@ $("#logout").onclick = () => {
   location.reload();
 };
 $("#pause-all").onclick = () =>
-  action(async () => {
-    await api("/api/pause", { paused: true });
+  action(() => setGlobalPaused(!status?.globalPaused));
+function renderGlobalPauseControl() {
+  const button = $("#pause-all"),
+    paused = status?.globalPaused === true;
+  button.innerHTML =
+    icon(paused ? "play" : "pause", "sm") + (paused ? "全局恢复" : "全部暂停");
+  button.className = paused ? "" : "danger";
+  button.disabled =
+    !status || globalPausePending || (paused && status.mode === "isolated");
+  button.title = paused
+    ? "恢复全局参与；单独暂停的角色和会话保持暂停，断开的连接需要另行恢复。"
+    : "暂停所有智能体参与，保留 QQ 连接。";
+}
+async function setGlobalPaused(paused) {
+  if (globalPausePending || !status || (!paused && status.mode === "isolated"))
+    return;
+  globalPausePending = true;
+  renderGlobalPauseControl();
+  try {
+    await api("/api/pause", { paused });
     await load();
-    notice("全部智能体已暂停");
-  });
+    notice(
+      paused
+        ? "全部智能体已暂停"
+        : "已恢复全局参与；单独暂停的角色和会话仍保持暂停，断开的连接需另行恢复",
+    );
+  } finally {
+    globalPausePending = false;
+    renderGlobalPauseControl();
+  }
+}
 document.querySelectorAll("nav button").forEach(
   (b) =>
     (b.onclick = () => {
@@ -104,6 +131,7 @@ const meter = (ratio) =>
   `<svg class="meter" viewBox="0 0 100 4" preserveAspectRatio="none" aria-hidden="true"><rect class="track" width="100" height="4" rx="2"/><rect class="bar" width="${Math.max(0, Math.min(100, ratio * 100))}" height="4" rx="2"/></svg>`;
 const find = (type, id) => config[type].find((x) => x.id === id);
 function render() {
+  renderGlobalPauseControl();
   const [title, subtitle] = titles[tab];
   $("#title").textContent = title;
   $("#crumb").textContent = title;
@@ -374,9 +402,7 @@ async function operate(kind, id) {
     return;
   }
   if (kind === "global-resume") {
-    await api("/api/pause", { paused: false });
-    await load();
-    return;
+    return setGlobalPaused(false);
   }
   if (kind === "download-config") {
     download(config, "qq-unified-config.json");
