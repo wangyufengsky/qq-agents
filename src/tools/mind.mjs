@@ -1,6 +1,7 @@
 import { SUBJECT_APP_TOOLS } from "../apps/policy.mjs";
 import { identityAnchors } from "../core/prompts.mjs";
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
 import { privateGithubSources } from "../github/policy.mjs";
 import {
   contextProtection,
@@ -105,6 +106,37 @@ export const mindDefinitions = {
       })
       .strict(),
   ],
+  subject_log: [
+    "空闲时间结束前记一笔：做了什么、发现了什么、下次想接着做什么。下次空闲时间会先看到最近几条，管理员也能看到。选择休息也要记录原因。found 可附上浏览/读取工具返回的 sourceRecordId。",
+    z
+      .object({
+        did: z.enum([
+          "browsed",
+          "searched",
+          "read",
+          "wrote",
+          "reviewed",
+          "rested",
+        ]),
+        summary: text.max(200),
+        found: z
+          .array(
+            z
+              .object({
+                title: text.max(120),
+                sourceRecordId: text.max(80).optional(),
+              })
+              .strict(),
+          )
+          .max(3)
+          .default([]),
+        next: z.string().max(100).default(""),
+        restReason: z
+          .enum(["recent", "no-interest", "budget", "quiet"])
+          .optional(),
+      })
+      .strict(),
+  ],
   intent_decide: [
     "仅目标聊天结合现场决定 send/defer/cancel/complete。send 后使用启用 QQ 工具发一次；无关来信不能 complete，完成需提供相关新来信证据。",
     z
@@ -119,7 +151,7 @@ export const mindDefinitions = {
   ],
 };
 export const CHAT_MIND_TOOLS = Object.keys(mindDefinitions).filter(
-  (n) => n !== "self_review",
+  (n) => n !== "self_review" && n !== "subject_log",
 );
 export const SUBJECT_TOOLS = [
   "github_capabilities",
@@ -145,6 +177,7 @@ export const SUBJECT_TOOLS = [
   "intent_create",
   "intent_list",
   "intent_update",
+  "subject_log",
 ];
 function executeMindTool(runtime, ctx, name, args) {
   const a = runtime.agent(ctx.agentId),
@@ -199,6 +232,29 @@ function executeMindTool(runtime, ctx, name, args) {
       items: rows.slice(args.offset, args.offset + 8),
       nextOffset: args.offset + 8 < rows.length ? args.offset + 8 : null,
     };
+  }
+  if (name === "subject_log") {
+    if (ctx.conversation !== "@subject") throw Error("TOOL_DISABLED");
+    if (args.did === "rested" && !args.restReason)
+      throw Error("SUBJECT_LOG_REQUIRES_REASON");
+    const record = m.append({
+      dedupe: "subject-log:" + ctx.turnId + ":" + randomUUID(),
+      conversation: "@subject",
+      kind: "subject.log",
+      direction: "internal",
+      status: "observed",
+      body: [args.summary, args.next && "下次：" + args.next]
+        .filter(Boolean)
+        .join("\n"),
+      payload: {
+        ...args,
+        turnId: ctx.turnId,
+        // Inherit what this turn read, like work notes do.
+        ...contextProtection(runtime, ctx),
+      },
+    });
+    ctx.subjectLogged = true;
+    return { id: record.id, recorded: true };
   }
   if (name === "intent_create") return runtime.subject.create(ctx, args);
   if (name === "intent_list") {

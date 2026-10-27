@@ -2,12 +2,12 @@ import { randomUUID } from "node:crypto";
 import { AppCursors } from "./cursors.mjs";
 import { AppAdapter } from "./adapter.mjs";
 import { appInfo, contentIdentity, resolveAppUrl, publicUrl } from "./urls.mjs";
-import { inAppHours, browserCursor } from "./policy.mjs";
+import { inAppHours, browserCursor, APP_LEDGER } from "./policy.mjs";
 import { parseCards } from "./cards.mjs";
 import { ownedEvent } from "../tools/forward.mjs";
 import { requestedByHuman } from "../core/outbound-policy.mjs";
 import { allowed } from "../core/config.mjs";
-const LEDGER = "internal:app-browsing";
+const LEDGER = APP_LEDGER;
 export const clean = (v, max = 12000) =>
   String(v ?? "")
     .replace(

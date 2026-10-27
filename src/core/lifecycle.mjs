@@ -7,6 +7,7 @@ export { stableInstructions } from "./prompts.mjs";
 import { randomUUID, createHash } from "node:crypto";
 import { githubMarker } from "../github/policy.mjs";
 import { trackMindRecords } from "./protected-mind.mjs";
+import { subjectMaterials } from "./subject-materials.mjs";
 import { mergeProtection } from "../memory/protection.mjs";
 import { rememberSources, sourceHandoff } from "./context-handoff.mjs";
 import {
@@ -227,6 +228,16 @@ export class ContextLifecycle {
       .update(instructions)
       .digest("hex");
     let s = m.state(ctx.conversation);
+    // A free-time turn must not inherit a transcript of earlier idle turns;
+    // the subject log and materials pack carry continuity instead.
+    if (
+      ctx.conversation === SUBJECT &&
+      a.subject.sessionMode === "fresh" &&
+      s.session
+    ) {
+      this.retire(a.id, ctx.conversation, "subject-fresh-session", ctx);
+      s = m.state(ctx.conversation);
+    }
     const signature = backend.sessionSignature?.(tools);
     const contractChanged = signature && s.session?.signature !== signature;
     if (
@@ -294,7 +305,9 @@ export class ContextLifecycle {
       `唤醒原因（资料）: ${JSON.stringify(reasons)}`,
       turnEnvironment(r, a, ctx, backendType),
       ctx.initialSession ? `程序交接状态：${JSON.stringify(handoff)}` : "",
-      `新增消息：${JSON.stringify(history)}`,
+      ctx.conversation === SUBJECT
+        ? `空闲时间素材：${JSON.stringify(subjectMaterials(r, ctx))}`
+        : `新增消息：${JSON.stringify(history)}`,
     ]
       .filter(Boolean)
       .join("\n\n");
@@ -365,6 +378,7 @@ export class ContextLifecycle {
         status: terminal,
         phase: "finished",
         endedAt: this.runtime.now(),
+        toolCalls: ctx.toolCalls || [],
       });
     }
   }

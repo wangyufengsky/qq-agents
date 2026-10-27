@@ -38,6 +38,9 @@ function agentPolicy(value) {
   delete result.wake.participation;
   delete result.subject.intervalMs;
   delete result.subject.maxChecksPerDay;
+  // Read when each free-time turn starts.
+  delete result.subject.maxToolCallsPerTurn;
+  delete result.subject.sessionMode;
   return result;
 }
 /** Tools and app/file permissions are supplied with every turn, and a changed tool

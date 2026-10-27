@@ -223,6 +223,7 @@ export class Runtime {
                   n.startsWith("self_") ||
                   n.startsWith("intent_") ||
                   n.startsWith("work_") ||
+                  n === "subject_log" ||
                   a.tools.includes(n),
               ),
               ...a.subject.readTools.filter((n) => a.tools.includes(n)),
@@ -646,7 +647,30 @@ export class Runtime {
   callTool(...args) {
     return this.trackWork(this.runTool(...args));
   }
+  // Records name, outcome and duration of every call (never arguments or
+  // results), so a turn's actual activity can be measured afterwards.
   async runTool(ctx, name, args = {}) {
+    const startedAt = Date.now(),
+      calls = (ctx.toolCalls ||= []);
+    try {
+      const result = await this.executeTool(ctx, name, args);
+      if (calls.length < 50)
+        calls.push({ name, ok: true, ms: Date.now() - startedAt });
+      return result;
+    } catch (error) {
+      if (calls.length < 50)
+        calls.push({
+          name,
+          ok: false,
+          code: /^[A-Z][A-Z0-9_]{2,80}$/.test(error?.message || "")
+            ? error.message
+            : "TOOL_FAILED",
+          ms: Date.now() - startedAt,
+        });
+      throw error;
+    }
+  }
+  async executeTool(ctx, name, args = {}) {
     const a = this.assertActive(ctx);
     for (const repo of privateGithubSources(ctx, this))
       ctx.privateRead.add(githubMarker(repo));
@@ -658,6 +682,14 @@ export class Runtime {
       !toolAvailable(a, name, ctx.conversation)
     )
       throw Error("TOOL_DISABLED");
+    // The log is how a free-time turn ends, so it never counts against the cap.
+    if (
+      ctx.conversation === SUBJECT &&
+      name !== "subject_log" &&
+      (ctx.toolCalls || []).filter((c) => c.name !== "subject_log").length >=
+        a.subject.maxToolCallsPerTurn
+    )
+      throw Error("SUBJECT_TOOL_BUDGET");
     if (
       ctx.conversation === SUBJECT &&
       name === "external_tool" &&

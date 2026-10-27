@@ -20,6 +20,42 @@ const subjectTurnStates = {
   interrupted: "运行被中断",
   running: "正在思考",
 };
+const subjectDid = {
+  browsed: "浏览",
+  searched: "搜索",
+  read: "阅读",
+  wrote: "写作",
+  reviewed: "回顾",
+  rested: "休息",
+};
+const restReasons = {
+  recent: "刚做过",
+  "no-interest": "暂时没兴趣",
+  budget: "额度用完",
+  quiet: "安静时段",
+};
+function toolSummary(calls) {
+  if (!Array.isArray(calls)) return "工具调用未记录（升级前的回合）";
+  const counts = {};
+  for (const c of calls)
+    counts[c.name + (c.ok ? "" : "（失败）")] =
+      (counts[c.name + (c.ok ? "" : "（失败）")] || 0) + 1;
+  const list = Object.entries(counts).map(([n, k]) =>
+    k > 1 ? `${n}×${k}` : n,
+  );
+  return list.length ? "工具：" + list.join("、") : "没有调用工具";
+}
+function subjectLogMarkup(subject) {
+  const s = subject.stats24h || {};
+  const header = `<p>最近 24 小时：空闲时间 ${s.turns || 0} 次，其中有实际行动 ${s.active || 0} 次，留下日志 ${s.logged || 0} 次，共调用工具 ${s.toolCalls || 0} 次${s.traced < s.turns ? `（${s.turns - s.traced} 次为升级前回合，未记录工具调用）` : ""}。</p>`;
+  const items = (subject.logs || [])
+    .map(
+      (l) =>
+        `<article class="record"><strong>${mindTime(l.at)} · ${esc(subjectDid[l.did] || l.did)}${l.restReason ? `（${esc(restReasons[l.restReason] || l.restReason)}）` : ""}${l.protected ? " · 含受保护资料" : ""}</strong><p>${esc(l.summary)}</p>${l.found.length ? `<p class="hint">发现：${esc(l.found.join("；"))}</p>` : ""}${l.next ? `<p class="hint">下次想做：${esc(l.next)}</p>` : ""}</article>`,
+    )
+    .join("");
+  return `<section class="card"><h2>空闲时间日志</h2>${header}${items || '<p class="hint">还没有日志。升级后，每次空闲时间结束都会在这里记一笔。</p>'}</section>`;
+}
 const mindStates = {
   waiting: "等待机会",
   deferred: "已暂缓",
@@ -82,12 +118,13 @@ async function renderMind() {
   <form id="self-form" class="card"><h2>当前 self · v${current.version}</h2>${area("body", "当前自我", current.body)}${input("reason", "管理员修改理由", "", "required")}<button class="primary">保存新版本</button><p class="hint">下一回合生效；运行中的回合保持原版本。版本冲突会拒绝覆盖。</p></form>
   <section class="card"><h2>候选与回顾</h2>${data.candidates.map((c) => `<details class="record"><summary>${esc(mindStates[c.status] || c.status)} · ${esc(c.scope)} · 基于 v${c.baseVersion}</summary><pre>${esc(c.body)}</pre><p>${esc(c.reason)}</p><p>最早回顾：${mindTime(c.reviewAfter)} · ${esc(c.conversation)}</p><p class="mono">来源：${esc(c.evidence.join(", "))}<br>反例：${esc(c.counterEvidence.join(", "))}</p>${mindEvidence(c.evidenceSnapshot)}${c.counterEvidence.length ? mindEvidence(c.counterEvidenceSnapshot) : ""}${c.reviews.map((r) => `<p>${esc(r.action)} · ${esc(r.reason)} · ${mindTime(r.at)}</p>`).join("")}</details>`).join("") || '<p class="hint">没有候选。普通聊天提出候选，主体统一回顾。</p>'}</section>
   <section class="card"><h2>版本历史与差异</h2>${histories}</section>
-  <form class="card" id="subject-form"><h2>主体机会与联系范围</h2><div class="form-grid">${check("enabled", "启用主体空闲思考", p.enabled || a.behavior.proactive.enabled)}${check("owners", "允许主动联系主人", p.owners)}${check("peers", "允许主动联系同伴角色", p.peers)}${check("offlineReview", "离线时允许内部回顾", p.offlineReview)}${check("reviewInSilence", "勿扰期间允许内部回顾", p.reviewInSilence)}${input("interval", "检查间隔（分钟）", p.intervalMs / 60000, 'type="number" min="1" required')}${input("checks", "24 小时检查上限", p.maxChecksPerDay, 'type="number" min="1" required')}${input("contacts", "24 小时主动联系上限", p.maxContactsPerDay, 'type="number" min="1" required')}${input("cooldown", "联系冷却（分钟）", p.contactCooldownMs / 60000, 'type="number" min="1" required')}${input("unanswered", "未回应冷却（小时）", p.unansweredCooldownMs / 3600000, 'type="number" min="1" required')}${input("groups", "明确启用的群（逗号分隔）", p.groups.join(","))}${input("users", "额外启用的私聊（逗号分隔）", p.users.join(","))}</div><p class="hint">联系范围还受回复白名单约束。全局暂停会阻止模型检查；主体可以不行动。仅修改检查间隔和次数会立即生效，保留连接与当前回合；修改权限或联系范围后需手动重新连接。</p><button>保存主体设置</button></form>
+  <form class="card" id="subject-form"><h2>主体机会与联系范围</h2><div class="form-grid">${check("enabled", "启用主体空闲思考", p.enabled || a.behavior.proactive.enabled)}${check("owners", "允许主动联系主人", p.owners)}${check("peers", "允许主动联系同伴角色", p.peers)}${check("offlineReview", "离线时允许内部回顾", p.offlineReview)}${check("reviewInSilence", "勿扰期间允许内部回顾", p.reviewInSilence)}${input("interval", "检查间隔（分钟）", p.intervalMs / 60000, 'type="number" min="1" required')}${input("checks", "24 小时检查上限", p.maxChecksPerDay, 'type="number" min="1" required')}${input("toolCalls", "每次空闲时间最多调用工具数", p.maxToolCallsPerTurn ?? 8, 'type="number" min="1" max="30" required')}${input("contacts", "24 小时主动联系上限", p.maxContactsPerDay, 'type="number" min="1" required')}${input("cooldown", "联系冷却（分钟）", p.contactCooldownMs / 60000, 'type="number" min="1" required')}${input("unanswered", "未回应冷却（小时）", p.unansweredCooldownMs / 3600000, 'type="number" min="1" required')}${input("groups", "明确启用的群（逗号分隔）", p.groups.join(","))}${input("users", "额外启用的私聊（逗号分隔）", p.users.join(","))}</div><p class="hint">联系范围还受回复白名单约束。全局暂停会阻止模型检查；每次空闲时间结束，主体会用日志记下做了什么或为什么休息。仅修改检查间隔和次数会立即生效，保留连接与当前回合；修改权限或联系范围后需手动重新连接。</p><button>保存主体设置</button></form>
+  ${subjectLogMarkup(data.subject)}
   <section class="card"><h2>机会与决策</h2><p>待检查来信 ${data.subject.pendingActivities || 0} 条 · 最近机会：${mindTime(data.subject.lastOpportunityAt)}</p><p>${esc(subjectCheckStates[checkStatus.state] || checkStatus.state)} · 最近 24 小时检查 ${checkStatus.used} / ${checkStatus.limit} 次，剩余 ${checkStatus.remaining} 次；主动联系 ${(data.subject.contacts || []).filter((t) => t > Date.now() - 86400000).length} 次</p><p>${checkStatus.nextEligibleAt ? `下次最早可检查：${mindTime(checkStatus.nextEligibleAt)}（需保持启用及连接条件）` : "恢复上述运行条件后重新计算下次检查时间。"}</p><p class="hint">检查额度按滚动 24 小时计算，午夜不清零。完成但未发送 QQ 也属于已运行的思考。</p>${
     data.subject.turns
       .map(
         (t) =>
-          `<p>${mindTime(t.startedAt)} · self v${t.selfVersion} · ${esc(subjectTurnStates[t.status] || t.status)}</p>`,
+          `<p>${mindTime(t.startedAt)} · self v${t.selfVersion} · ${esc(subjectTurnStates[t.status] || t.status)} · ${esc(toolSummary(t.toolCalls))}</p>`,
       )
       .join("") ||
     '<p class="hint">尚无主体思考回合记录；条件检查不等于模型回合完成。</p>'
@@ -164,6 +201,7 @@ async function renderMind() {
         reviewInSilence: f.has("reviewInSilence"),
         intervalMs: Number(f.get("interval")) * 60000,
         maxChecksPerDay: Number(f.get("checks")),
+        maxToolCallsPerTurn: Number(f.get("toolCalls")),
         maxContactsPerDay: Number(f.get("contacts")),
         contactCooldownMs: Number(f.get("cooldown")) * 60000,
         unansweredCooldownMs: Number(f.get("unanswered")) * 3600000,

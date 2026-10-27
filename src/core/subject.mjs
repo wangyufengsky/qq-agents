@@ -569,7 +569,7 @@ export class SubjectCoordinator {
               activities,
               activityOverflow: Math.max(0, pending - activities.length),
               instruction:
-                "可不行动。activities 是本批实际来信引用，需按原始记录 ID 回查内容；溢出保留在事件库供后续机会读取。候选与未完成意图可按需读取；没有候选不做专门人格回顾。",
+                "空闲时间开始。activities 是本批未读来信的原始记录 ID，需要时按 ID 回查；溢出部分留在事件库，下次再读。候选与未完成意图可按需读取；没有到期候选不必专门回顾人格。",
             },
           ],
         }),

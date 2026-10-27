@@ -146,6 +146,7 @@ const AGENT_TOOL_GROUPS = [
       intent_create: "创建主动意图",
       intent_list: "查看主动意图",
       intent_update: "暂缓或取消意图",
+      subject_log: "记录空闲时间（主体自动可用）",
       intent_decide: "决定是否执行意图",
     },
   },

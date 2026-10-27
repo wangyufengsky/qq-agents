@@ -15,6 +15,48 @@ import { z } from "zod";
 import { mcpResult, TOOL_NAMES } from "./tools/index.mjs";
 import { readiness } from "./core/readiness.mjs";
 const publicDir = fileURLToPath(new URL("../public/", import.meta.url));
+// Free-time log and 24-hour activity for the console; no message bodies.
+function subjectActivity(m, agentId, now) {
+  const logs = m.db
+    .prepare(
+      "SELECT id,observed_at AS at,payload FROM events WHERE agent_id=? AND conversation='@subject' AND kind='subject.log' ORDER BY seq DESC LIMIT 20",
+    )
+    .all(agentId)
+    .map((row) => {
+      const p = JSON.parse(row.payload);
+      return {
+        id: row.id,
+        at: row.at,
+        did: p.did,
+        summary: p.summary,
+        found: (p.found || []).map((f) => f.title),
+        next: p.next || "",
+        restReason: p.restReason || null,
+        protected: !!(p.protectedRepositories?.length || p.protectedOperations),
+      };
+    });
+  const turns = m.db
+    .prepare(
+      "SELECT value FROM model_turns WHERE agent_id=? AND json_extract(value,'$.conversation')='@subject' AND json_extract(value,'$.startedAt')>?",
+    )
+    .all(agentId, now - 86400000)
+    .map((row) => JSON.parse(row.value))
+    .filter((t) => t.status !== "running");
+  const work = (t) =>
+    (t.toolCalls || []).filter((c) => c.name !== "subject_log").length;
+  return {
+    logs,
+    stats24h: {
+      turns: turns.length,
+      active: turns.filter((t) => work(t) > 0).length,
+      logged: turns.filter((t) =>
+        (t.toolCalls || []).some((c) => c.name === "subject_log" && c.ok),
+      ).length,
+      toolCalls: turns.reduce((n, t) => n + work(t), 0),
+      traced: turns.filter((t) => Array.isArray(t.toolCalls)).length,
+    },
+  };
+}
 const fileRecoveryRequest = z
   .object({
     agentId: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/),
@@ -242,6 +284,7 @@ export function createServer({
           intents: m.identity.list("intentions"),
           subject: {
             ...m.state("@subject"),
+            ...subjectActivity(m, a.id, runtime.now()),
             pendingActivities: runtime.subject.pendingActivities(a.id),
             checkStatus: runtime.subject.checkStatus(a),
             turns: m.db

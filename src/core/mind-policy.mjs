@@ -33,6 +33,10 @@ export const subjectPolicySchema = z
     maxContactsPerDay: ms(1, 100, 4),
     contactCooldownMs: ms(60000, 604800000, 3600000),
     unansweredCooldownMs: ms(60000, 2592000000, 86400000),
+    // Each wake starts a new backend session; continuity comes from the
+    // subject log and materials instead of an ever-growing transcript.
+    sessionMode: z.enum(["fresh", "continuous"]).default("fresh"),
+    maxToolCallsPerTurn: ms(1, 30, 8),
     offlineReview: z.boolean().default(false),
     reviewInSilence: z.boolean().default(true),
     groups: ids,

@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { APP_NAMES } from "./urls.mjs";
+// Runtime-state key of the per-agent read ledger (daily read budget).
+export const APP_LEDGER = "internal:app-browsing";
 const time = z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/);
 export const appsPolicySchema = z
   .object({
