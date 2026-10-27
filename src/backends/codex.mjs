@@ -1,3 +1,4 @@
+// @ts-check
 import fs from "node:fs";
 import { codexTurnFailure, BackendTurnFailure } from "./turn-failure.mjs";
 import path from "node:path";
@@ -23,16 +24,27 @@ export const restrictions = {
   project_doc_max_bytes: 0,
   "apps._default.enabled": false,
 };
+/**
+ * @typedef {import("./session-contract.mjs").BackendConfig} BackendConfig
+ * @typedef {import("./session-contract.mjs").RunParams} RunParams
+ * @typedef {import("./session-contract.mjs").StoredSession} StoredSession
+ * @typedef {import("./session-contract.mjs").DisconnectHook} DisconnectHook
+ */
 export class CodexBackend {
+  /**
+   * @param {BackendConfig} config
+   * @param {import("./session-contract.mjs").BackendAgent} agent
+   * @param {{root?: string, rpc?: CodexRpc}} [options] root is required; the default only keeps the destructuring safe.
+   */
   constructor(config, agent, { root, rpc } = {}) {
     this.config = config;
     this.agent = agent;
-    this.root = path.join(root, "codex", agent.id);
+    this.root = path.join(/** @type {string} */ (root), "codex", agent.id);
     fs.mkdirSync(this.root, { recursive: true, mode: 0o700 });
     const home = (this.home = path.join(this.root, "home"));
     fs.mkdirSync(home, { recursive: true, mode: 0o700 });
     this.expectedHome = path.join(
-      fs.realpathSync(root),
+      fs.realpathSync(/** @type {string} */ (root)),
       "codex",
       agent.id,
       "home",
@@ -40,29 +52,35 @@ export class CodexBackend {
     // Never inherit the user's everyday Codex home. Login belongs to this dedicated instance.
     this.rpc =
       rpc ||
-      new CodexRpc({
-        command: config.command || "codex",
-        cwd: this.root,
-        env: { ...buildChildEnv("codex", config.env), CODEX_HOME: home },
-        args: [
-          "app-server",
-          "--stdio",
-          ...Object.entries(restrictions).flatMap(([k, v]) => [
-            "-c",
-            `${k}=${JSON.stringify(v)}`,
-          ]),
-        ],
-      });
+      new CodexRpc(
+        // Vendor JS: its inferred options type omits the destructured cwd.
+        /** @type {any} */ ({
+          command: config.command || "codex",
+          cwd: this.root,
+          env: { ...buildChildEnv("codex", config.env), CODEX_HOME: home },
+          args: [
+            "app-server",
+            "--stdio",
+            ...Object.entries(restrictions).flatMap(([k, v]) => [
+              "-c",
+              `${k}=${JSON.stringify(v)}`,
+            ]),
+          ],
+        }),
+      );
     this.external = new ExternalTools(config.toolServers);
     this.active = new Map();
-    this.rpc.on("notification", (m) => this.notification(m));
-    this.rpc.on("request", (m) => void this.request(m));
+    this.rpc.on("notification", (/** @type {any} */ m) => this.notification(m));
+    this.rpc.on("request", (/** @type {any} */ m) => void this.request(m));
     this.rpc.on("disconnected", () => {
       for (const r of this.active.values())
         r.reject(Error("CODEX_DISCONNECTED"));
       this.active.clear();
       this.readyPromise = null;
-      if (!this.closing) this.onDisconnect?.(Error("CODEX_DISCONNECTED"));
+      if (!this.closing)
+        /** @type {this & DisconnectHook} */ (this).onDisconnect?.(
+          Error("CODEX_DISCONNECTED"),
+        );
     });
   }
   async ready() {
@@ -94,12 +112,14 @@ export class CodexBackend {
       !result.data?.length ||
       (this.config.model &&
         !result.data.some(
-          (m) => m.model === this.config.model || m.id === this.config.model,
+          (/** @type {any} */ m) =>
+            m.model === this.config.model || m.id === this.config.model,
         ))
     )
       throw Error("BACKEND_MODEL_UNAVAILABLE");
     return { models: result.data, endpoint: "stdio" };
   }
+  /** @param {{method: string, params?: any}} message */
   notification({ method, params: p }) {
     const r = this.active.get(p?.threadId);
     if (!r) return;
@@ -143,6 +163,7 @@ export class CodexBackend {
       else r.reject(codexTurnFailure(p.turn));
     }
   }
+  /** @param {{id: number | string, method: string, params?: any}} message */
   async request({ id, method, params: p }) {
     const r = this.active.get(p?.threadId);
     if (
@@ -162,7 +183,7 @@ export class CodexBackend {
       if (r.signal.aborted) return this.rpc.reject(id);
       this.rpc.respond(id, {
         success: !result.isError,
-        contentItems: result.content.flatMap((c) =>
+        contentItems: result.content.flatMap((/** @type {any} */ c) =>
           c.type === "text"
             ? [{ type: "inputText", text: c.text }]
             : c.type === "image"
@@ -195,9 +216,11 @@ export class CodexBackend {
       }
     }
   }
+  /** @param {import("./session-contract.mjs").ToolSpec[]} tools */
   sessionSignature(tools) {
     return sessionSignature(this, tools);
   }
+  /** @param {RunParams} params */
   async run({
     prompt,
     instructions,
@@ -244,14 +267,17 @@ export class CodexBackend {
         config: restrictions,
         experimentalRawEvents: false,
       });
-      threadId = r.thread.id;
+      threadId = /** @type {string} */ (r.thread.id);
       saveSession({ backend: "codex", id: threadId, signature });
     }
     if (signal.aborted) throw Error("ABORTED");
     if (recovery && !(await this.recoveryReady(threadId, recovery)))
       throw Error("CODEX_RECOVERY_STATE_UNVERIFIED");
     onImageSession?.(threadId);
-    let resolve, reject;
+    /** @type {(value?: unknown) => void} */
+    let resolve = /** @type {any} */ (undefined);
+    /** @type {(reason?: unknown) => void} */
+    let reject = /** @type {any} */ (undefined);
     const done = new Promise((r, j) => {
       resolve = r;
       reject = j;
@@ -290,7 +316,7 @@ export class CodexBackend {
       onBackendTurn?.({ turnId: receipt.turn.id });
       if (signal.aborted) abort();
       await done;
-    } catch (e) {
+    } catch (/** @type {any} */ e) {
       if (!signal.aborted && e instanceof BackendTurnFailure && e.recoverable)
         e.sessionReusable = await this.recoveryReady(threadId, e).catch(
           () => false,
@@ -302,6 +328,7 @@ export class CodexBackend {
       this.active.delete(threadId);
     }
   }
+  /** @param {string} threadId @param {BackendTurnFailure} failure */
   async recoveryReady(threadId, failure) {
     const { thread } = await this.rpc.request("thread/read", {
       threadId,
@@ -316,11 +343,13 @@ export class CodexBackend {
       codexTurnFailure(last).code === failure.code
     );
   }
+  /** @param {string} sessionId @param {any} item */
   readGeneratedImage(sessionId, item) {
     if (fs.realpathSync(this.home) !== this.expectedHome)
       throw Error("GENERATED_IMAGE_SOURCE_DENIED");
     return readGeneratedImage(this.home, sessionId, item);
   }
+  /** @param {string} sessionId */
   async imageHistory(sessionId) {
     await this.ready();
     const result = await this.rpc.request("thread/read", {
@@ -330,16 +359,22 @@ export class CodexBackend {
     if (result.thread?.id !== sessionId)
       throw Error("IMAGE_SESSION_SCOPE_MISMATCH");
     const items = (result.thread?.turns || [])
-      .flatMap((t) => t.items || [])
-      .filter((i) => i.type === "imageGeneration");
+      .flatMap((/** @type {any} */ t) => t.items || [])
+      .filter((/** @type {any} */ i) => i.type === "imageGeneration");
     if (items.length > 100) throw Error("GENERATED_IMAGE_HISTORY_LIMIT");
     return items;
   }
+  /** @param {{session: StoredSession, signal: AbortSignal}} params */
   async compact({ session, signal }) {
     await this.ready();
     if (signal.aborted) throw Error("ABORTED");
     const threadId = session.id;
-    let resolve, reject, usage;
+    /** @type {(value?: unknown) => void} */
+    let resolve = /** @type {any} */ (undefined);
+    /** @type {(reason?: unknown) => void} */
+    let reject = /** @type {any} */ (undefined);
+    /** @type {import("./session-contract.mjs").UsageReport | undefined} */
+    let usage;
     const done = new Promise((r, j) => {
       resolve = r;
       reject = j;
@@ -350,7 +385,9 @@ export class CodexBackend {
       reject,
       signal,
       turnId: null,
-      onUsage: (value) => {
+      onUsage: (
+        /** @type {import("./session-contract.mjs").UsageReport} */ value,
+      ) => {
         usage = value;
       },
     };

@@ -1,3 +1,4 @@
+// @ts-check
 import fs from "node:fs/promises";
 import path from "node:path";
 import { execFile } from "node:child_process";
@@ -10,18 +11,28 @@ import {
 } from "../../vendor/dsh-qq/dsh-endpoint.mjs";
 
 const exec = promisify(execFile);
+/**
+ * @typedef {{pid: number | null | undefined, url: string}} DshListener
+ * @typedef {{id: string, label: string, url: string, pid: number | null,
+ *   startedAt?: unknown, home?: string, followsRestart: boolean}} DshCandidate
+ */
+/** @param {string} text */
 export function parseDshListeners(text) {
-  let pid, command;
+  /** @type {number | undefined} */
+  let pid;
+  /** @type {string | undefined} */
+  let command;
   const rows = [];
   for (const line of text.split(/\r?\n/)) {
     if (line.startsWith("p")) pid = Number(line.slice(1));
     if (line.startsWith("c")) command = line.slice(1);
     const m = /^n(?:127\.0\.0\.1|localhost|\[::1\]):(\d+)$/.exec(line);
-    if (m && pid > 0 && command?.startsWith("DeepSeek"))
+    if (m && pid !== undefined && pid > 0 && command?.startsWith("DeepSeek"))
       rows.push({ pid, url: `http://127.0.0.1:${Number(m[1])}` });
   }
   return rows;
 }
+/** @returns {Promise<DshListener[]>} */
 async function listeners() {
   const fallback = async () => {
     const ports = await listDesktopListenPorts();
@@ -45,11 +56,13 @@ async function listeners() {
     return fallback();
   }
 }
+/** @param {string} file */
 async function json(file) {
   const stat = await fs.stat(file);
   if (stat.size > 65536) throw Error("DSH_DESCRIPTOR_INVALID");
   return JSON.parse(await fs.readFile(file, "utf8"));
 }
+/** @param {string} value */
 export function localDshUrl(value) {
   const u = new URL(value);
   if (
@@ -65,6 +78,11 @@ export function localDshUrl(value) {
   return u.origin;
 }
 // Read published routing metadata, never Relay credentials or conversation data.
+/**
+ * @param {{home?: string, list?: () => Promise<DshListener[]>,
+ *   probe?: (url: string) => Promise<boolean>, configuredUrl?: string}} [options]
+ * @returns {Promise<DshCandidate[]>}
+ */
 export async function discoverDshInstances({
   home = dshHomeDir(),
   list = listeners,
@@ -75,6 +93,7 @@ export async function discoverDshInstances({
     result = [],
     claimed = new Set();
   const base = path.join(home, "plugins", "dsh-relay");
+  /** @type {string[]} */
   let profiles = [];
   try {
     profiles = await fs.readdir(base);
@@ -130,6 +149,12 @@ export async function discoverDshInstances({
   }
   return result;
 }
+/**
+ * @param {import("./session-contract.mjs").BackendConfig} config
+ * @param {DshCandidate[]} candidates
+ * @param {string} [selectedId]
+ * @param {{automatic?: boolean}} [options]
+ */
 export function selectDshInstance(
   config,
   candidates,
@@ -144,13 +169,17 @@ export function selectDshInstance(
   }
   const configured =
     config.baseUrl &&
-    candidates.find((x) => x.url === config.baseUrl.replace(/\/$/, ""));
+    candidates.find(
+      (x) =>
+        x.url === /** @type {string} */ (config.baseUrl).replace(/\/$/, ""),
+    );
   if (configured) return configured;
   if (automatic && config.baseUrl) throw Error("DSH_SELECTION_REQUIRED");
   if (candidates.length > 1) throw Error("DSH_SELECTION_REQUIRED");
   if (!candidates.length) throw Error("DSH_NOT_FOUND");
   return candidates[0];
 }
+/** @param {import("./session-contract.mjs").BackendConfig} config @returns {Promise<{url: string}>} */
 export async function resolveDshInstance(config) {
   // An explicit endpoint stays explicit until the administrator chooses an instance.
   if (!config.recovery?.dshInstance && config.baseUrl) {

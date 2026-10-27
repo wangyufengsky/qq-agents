@@ -1,3 +1,4 @@
+// @ts-check
 import fs from "node:fs";
 import path from "node:path";
 import { NodeApiClient, unwrap } from "../../vendor/dsh-qq/dsh-client.js";
@@ -6,6 +7,14 @@ import { ExternalTools } from "./external.mjs";
 import { sessionSignature, assertSession } from "./session-contract.mjs";
 import { dshTurnFailure, BackendTurnFailure } from "./turn-failure.mjs";
 
+/**
+ * @typedef {import("./session-contract.mjs").BackendConfig} BackendConfig
+ * @typedef {import("./session-contract.mjs").RunParams} RunParams
+ * @typedef {import("./session-contract.mjs").StoredSession} StoredSession
+ * @typedef {import("./session-contract.mjs").DisconnectHook} DisconnectHook
+ */
+
+/** @param {any} snapshot @param {BackendTurnFailure} failure */
 export function dshRecoveryReady(snapshot, failure) {
   const inbox = snapshot?.projections?.values?.inbox;
   if (
@@ -16,8 +25,11 @@ export function dshRecoveryReady(snapshot, failure) {
   )
     return false;
   const last = snapshot.records
-    ?.map((r) => r.event)
-    .filter((e) => e?.type === "turn/start" || e?.type === "turn/end")
+    ?.map((/** @type {any} */ r) => r.event)
+    .filter(
+      (/** @type {any} */ e) =>
+        e?.type === "turn/start" || e?.type === "turn/end",
+    )
     .at(-1);
   return (
     last?.type === "turn/end" &&
@@ -28,15 +40,25 @@ export function dshRecoveryReady(snapshot, failure) {
 }
 
 export class DshBackend {
+  /**
+   * @param {BackendConfig} config
+   * @param {import("./session-contract.mjs").BackendAgent} agent
+   * @param {{root?: string, client?: NodeApiClient | null, discover?: typeof resolveDshInstance}} [options]
+   */
   constructor(
     config,
     agent,
     { root, client, discover = resolveDshInstance } = {},
   ) {
-    Object.assign(this, { config, agent, root, client, discover });
+    this.config = config;
+    this.agent = agent;
+    this.root = root;
+    this.client = client;
+    this.discover = discover;
     this.external = new ExternalTools(config.toolServers);
     this.turns = new Map();
     this.capacities = new Map();
+    /** @type {AbortController | null} */
     this.streamAbort = null;
   }
   async ready() {
@@ -64,12 +86,14 @@ export class DshBackend {
   async health() {
     const catalog = await this.models();
     const groups = catalog.groups?.filter(
-      (g) => !this.config.provider || g.id === this.config.provider,
+      (/** @type {any} */ g) =>
+        !this.config.provider || g.id === this.config.provider,
     );
-    const models = groups?.flatMap((g) => g.models);
+    const models = groups?.flatMap((/** @type {any} */ g) => g.models);
     if (
       !models?.length ||
-      (this.config.model && !models.some((m) => m.id === this.config.model))
+      (this.config.model &&
+        !models.some((/** @type {any} */ m) => m.id === this.config.model))
     )
       throw Error("BACKEND_MODEL_UNAVAILABLE");
     return { models, endpoint: this.endpoint || null };
@@ -79,7 +103,10 @@ export class DshBackend {
     const client = this.client;
     if (!client) throw Error("DSH_NOT_READY");
     this.streamAbort = new AbortController();
-    let resolve, reject;
+    /** @type {(value?: unknown) => void} */
+    let resolve = /** @type {any} */ (undefined);
+    /** @type {(reason?: unknown) => void} */
+    let reject = /** @type {any} */ (undefined);
     this.streamReady = new Promise((r, j) => {
       resolve = r;
       reject = j;
@@ -88,7 +115,7 @@ export class DshBackend {
       try {
         for await (const frame of client.events.mux(
           {},
-          this.streamAbort.signal,
+          /** @type {AbortController} */ (this.streamAbort).signal,
           resolve,
         )) {
           const p = frame.payload;
@@ -133,12 +160,15 @@ export class DshBackend {
           t.reject(Error("DSH_STREAM_ENDED"));
         this.streamReady = null;
         this.client = null;
-        if (!this.closing) this.onDisconnect?.(Error("DSH_STREAM_ENDED"));
+        if (!this.closing)
+          /** @type {this & DisconnectHook} */ (this).onDisconnect?.(
+            Error("DSH_STREAM_ENDED"),
+          );
       }
     })();
     const timeout = setTimeout(() => {
       reject(Error("DSH_STREAM_TIMEOUT"));
-      this.streamAbort.abort();
+      /** @type {AbortController} */ (this.streamAbort).abort();
     }, 10000);
     try {
       await this.streamReady;
@@ -146,9 +176,11 @@ export class DshBackend {
       clearTimeout(timeout);
     }
   }
+  /** @param {import("./session-contract.mjs").ToolSpec[]} tools */
   sessionSignature(tools) {
     return sessionSignature(this, tools);
   }
+  /** @param {RunParams} params */
   async run({
     conversation,
     prompt,
@@ -166,15 +198,23 @@ export class DshBackend {
     const client = await this.ready();
     await this.stream();
     if (signal.aborted) throw Error("ABORTED");
+    // The SDK brands session ids; this holds the raw id it handed out.
+    /** @type {any} */
     let sessionId = session?.id;
     const initializing = !sessionId;
     if (!sessionId) {
       const presets = unwrap(await client.agentPresets.list({}), "presets");
       const list = presets.presets || presets.items || [];
-      const preset = list.find((p) => (p.id || p.name) === this.config.preset);
+      const preset = list.find(
+        (/** @type {any} */ p) => (p.id || p.name) === this.config.preset,
+      );
       if (!preset) throw Error("DSH_UNIFIED_PRESET_NOT_INSTALLED");
       if (preset.broken) throw Error("DSH_UNIFIED_PRESET_BROKEN");
-      const dir = path.join(this.root, "dsh-workspaces", this.agent.id);
+      const dir = path.join(
+        /** @type {string} */ (this.root),
+        "dsh-workspaces",
+        this.agent.id,
+      );
       fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
       const w = unwrap(
         await client.workspace.create({ path: dir }),
@@ -193,13 +233,21 @@ export class DshBackend {
       unwrap(
         await client.sessions.selectModel({
           sessionId,
-          provider: this.config.provider || undefined,
+          // Omitted when unset, although the SDK type asks for a string.
+          provider: /** @type {string} */ (this.config.provider || undefined),
           model: this.config.model,
           reasoningEffort: this.config.effort,
         }),
         "model",
       );
-    let resolve, reject, followed, followError;
+    /** @type {(value?: unknown) => void} */
+    let resolve = /** @type {any} */ (undefined);
+    /** @type {(reason?: unknown) => void} */
+    let reject = /** @type {any} */ (undefined);
+    /** @type {(snapshot: unknown) => void} */
+    let followed = /** @type {any} */ (undefined);
+    /** @type {(reason?: unknown) => void} */
+    let followError = /** @type {any} */ (undefined);
     const done = new Promise((r, j) => {
       resolve = r;
       reject = j;
@@ -253,7 +301,7 @@ export class DshBackend {
         "prompt",
       );
       await done;
-    } catch (e) {
+    } catch (/** @type {any} */ e) {
       if (!signal.aborted && e instanceof BackendTurnFailure && e.recoverable) {
         // A fresh native snapshot must still end at this exact failed turn and
         // have no queued input. A stream error alone is never replay evidence.
@@ -283,6 +331,7 @@ export class DshBackend {
       client.events.forget?.(sessionId);
     }
   }
+  /** @param {{session: StoredSession, signal: AbortSignal}} params */
   async compact({ session, signal }) {
     const client = await this.ready();
     if (signal.aborted) throw Error("ABORTED");

@@ -1,15 +1,18 @@
 {
   "compilerOptions": {
     "allowJs": true,
-    "checkJs": true,
+    "checkJs": false,
     "noEmit": true,
     "strict": true,
     "target": "ES2023",
     "module": "NodeNext",
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "skipLibCheck": true
   },
   "include": [
+    "src/backends/*.mjs",
     "src/core/config-impact.mjs",
     "src/core/default-config.mjs",
     "src/memory/conversation-state.mjs",
