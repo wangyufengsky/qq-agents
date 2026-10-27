@@ -221,6 +221,7 @@ export const configSchema = z
                 .object({
                   start: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
                   end: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+                  allDay: z.boolean().optional(),
                   days: z.array(z.number().int().min(0).max(6)),
                   timezone: z
                     .string()
@@ -234,7 +235,12 @@ export const configSchema = z
                     })
                     .default("Asia/Shanghai"),
                 })
-                .strict(),
+                .strict()
+                .refine(
+                  (s) =>
+                    s.allDay === true ? s.start === s.end : s.start !== s.end,
+                  "EXPLICIT_ALL_DAY_REQUIRED",
+                ),
             )
             .default([]),
           network: z
@@ -308,7 +314,37 @@ function readConfig(file) {
     throw Error("CONFIG_INVALID_JSON", { cause });
   }
   try {
-    return validateConfig(input);
+    const migrationWarnings = new Set();
+    // Only persisted legacy settings are migrated. New API saves must make
+    // the all-day choice explicitly, so an accidental equal pair is rejected.
+    for (const a of Array.isArray(input?.agents) ? input.agents : []) {
+      for (const s of Array.isArray(a?.silence) ? a.silence : []) {
+        if (
+          s &&
+          typeof s.start === "string" &&
+          s.start === s.end &&
+          s.allDay === undefined
+        ) {
+          s.allDay = true;
+          migrationWarnings.add("SILENCE_EQUAL_TIME_MIGRATED");
+        }
+      }
+      const s = a?.scheduler;
+      if (
+        s &&
+        typeof s.quietStart === "string" &&
+        s.quietStart === s.quietEnd &&
+        s.quietAllDay === undefined
+      ) {
+        s.quietEnabled = false;
+        s.quietAllDay = false;
+        migrationWarnings.add("SCHEDULER_EQUAL_TIME_MIGRATED");
+      }
+    }
+    return {
+      value: validateConfig(input),
+      migrationWarnings: [...migrationWarnings],
+    };
   } catch (cause) {
     throw Error("CONFIG_SCHEMA_INVALID", { cause });
   }
@@ -316,9 +352,11 @@ function readConfig(file) {
 export class ConfigStore {
   constructor(file, initial) {
     this.file = file;
-    this.value = fs.existsSync(file)
+    const loaded = fs.existsSync(file)
       ? readConfig(file)
-      : validateConfig(initial);
+      : { value: validateConfig(initial), migrationWarnings: [] };
+    this.value = loaded.value;
+    this.migrationWarnings = loaded.migrationWarnings;
     // Derived from the persisted configuration, never reset by a process restart.
     this.revision = configRevision(this.value);
     if (!fs.existsSync(file)) atomicJSON(file, this.value);

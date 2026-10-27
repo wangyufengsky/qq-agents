@@ -26,6 +26,8 @@ const parityOptions = (rows, value) =>
     .join("");
 const parityNumber = (name, label, value, min = 0, step = 1) =>
   `<label>${esc(label)}<input name="${name}" type="number" min="${min}" step="${step}" value="${esc(value)}" required></label>`;
+const parityOptionalNumber = (name, label, value) =>
+  `<label>${esc(label)}<input name="${name}" type="number" min="1" step="1" value="${esc(value ?? "")}" placeholder="留空不额外限制"></label>`;
 const parityField = (name, label, value = "", type = "text") =>
   `<label>${esc(label)}<input name="${name}" type="${type}" value="${esc(value)}"></label>`;
 const parityCheck = (name, label, value) =>
@@ -64,7 +66,9 @@ async function renderSchedules() {
     <p class="hint">主体主动检查与联系范围请在「Self 与主体」设置；旧逐聊天随机主动入口已停用。</p>
     ${parityNumber("observe", "睡前观察（秒；0 关闭要求）", b.preSleepWaitMs / 1000)}${parityNumber("quiet", "新消息后的安静窗口（秒）", b.quietAfterNewMs / 1000)}
     ${parityNumber("batch", "合并唤醒窗口（秒）", b.batchWindowMs / 1000)}${parityNumber("reply", "发言后回复检查（秒）", b.replyCheckMs / 1000, 1)}
-    ${parityNumber("wakeHour", "每小时唤醒上限", b.maxWakePerHour, 1)}${parityNumber("sendHour", "每小时投递上限", b.maxSendPerHour, 1)}
+    ${parityNumber("wakeHour", "单会话每小时唤醒上限", b.maxWakePerHour, 1)}${parityNumber("sendMinute", "角色总投递上限／分钟", b.maxSendPerMinute, 1)}${parityNumber("sendHour", "角色总投递上限／小时", b.maxSendPerHour, 1)}
+    ${parityOptionalNumber("conversationSendMinute", "单会话投递上限／分钟（可选）", b.conversationMaxSendPerMinute)}${parityOptionalNumber("conversationSendHour", "单会话投递上限／小时（可选）", b.conversationMaxSendPerHour)}
+    <p class="hint">角色总额度由所有群和私聊共享，文本、文件及其他投递统一计数；失败或未知回执也占用额度。连续回复批次另按角色设置限制。升级会保留近期已消耗额度。</p>
     ${parityField("keywords", "关键词（逗号分隔）", a.wake.keywords.join(","))}${parityField("speakers", "指定发言者 QQ（逗号分隔）", a.wake.speakerIds.join(","))}
     ${parityCheck("poke", "拍一拍唤醒", a.wake.poke)}${parityCheck("joins", "入群事件唤醒", a.wake.joins)}
     </div><button class="primary">保存作息设置</button></form></details>
@@ -74,7 +78,7 @@ async function renderSchedules() {
     ${parityNumber("totalPerDay", "每日全部目标上限", s.totalPerDay, 1)}${parityNumber("perTaskPerDay", "单任务每日上限", s.perTaskPerDay, 1)}
     ${parityNumber("perGroupPerDay", "每群每日上限", s.perGroupPerDay, 1)}${parityNumber("missedGraceMin", "允许补发的迟到分钟数", s.missedGraceMin)}
     ${parityNumber("jitterMin", "固定时间随机偏移（分钟）", s.jitterMin)}${parityCheck("quietEnabled", "启用群定时免打扰", s.quietEnabled)}
-    ${parityField("quietStart", "免打扰开始", s.quietStart, "time")}${parityField("quietEnd", "免打扰结束", s.quietEnd, "time")}
+    ${parityCheck("quietAllDay", "全天免打扰（仅群定时任务）", s.quietAllDay)}${parityField("quietStart", "免打扰开始", s.quietStart, "time")}${parityField("quietEnd", "免打扰结束", s.quietEnd, "time")}
     ${parityField("holidays", "跳过的节假日（YYYY-MM-DD，逗号分隔）", s.holidays.join(","))}</div><button>保存定时设置</button></form></details>
     <div class="section-title"><h2>定时任务</h2><button id="new-schedule">+ 新建任务</button></div><div id="task-form"></div>
     <div class="grid">${result.tasks.map((t) => `<article class="card"><div class="row"><h3>${esc(t.name)}</h3>${tag(t.pendingConfirm ? "待确认" : t.enabled ? "启用" : "暂停")}</div><p>${esc(t.scheduleText)}</p><p class="hint">${esc(t.nextRunText || "无下一次")} · ${esc(t.timezone)}</p><p>${esc(t.kind === "ai" ? t.instruction : t.text)}</p><p class="mono">${esc(t.targets.join(", "))}</p><div class="card-actions"><button data-task="edit" data-id="${t.id}">编辑</button><button data-task="toggle" data-id="${t.id}">${t.enabled ? "暂停" : "启用 / 确认"}</button><button data-task="run" data-id="${t.id}" ${status.mode === "isolated" || status.globalPaused ? "disabled" : ""}>立即执行</button><button data-task="delete" data-id="${t.id}">删除</button></div></article>`).join("") || '<div class="card empty">尚无任务。创建后可以先预览时间，再决定启用。</div>'}</div>
@@ -103,7 +107,16 @@ async function renderSchedules() {
         replyCheckMs: num("reply") * 1000,
         maxWakePerHour: num("wakeHour"),
         maxSendPerHour: num("sendHour"),
+        maxSendPerMinute: num("sendMinute"),
       });
+      for (const [input, key] of [
+        ["conversationSendMinute", "conversationMaxSendPerMinute"],
+        ["conversationSendHour", "conversationMaxSendPerHour"],
+      ]) {
+        const value = String(f.get(input) ?? "").trim();
+        if (value) agent.behavior[key] = Number(value);
+        else delete agent.behavior[key];
+      }
       Object.assign(agent.wake, {
         keywords: String(f.get("keywords"))
           .split(/[,，]/)
@@ -131,6 +144,7 @@ async function renderSchedules() {
         "allowAiPrivate",
         "allowAiOtherTargets",
         "quietEnabled",
+        "quietAllDay",
       ])
         agent.scheduler[key] = f.has(key);
       for (const key of [

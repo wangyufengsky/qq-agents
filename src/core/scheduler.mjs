@@ -253,6 +253,7 @@ export class TaskScheduler {
   quiet(a, conversation, now) {
     const p = a.scheduler;
     if (!p.quietEnabled || !conversation.startsWith("group:")) return false;
+    if (p.quietAllDay) return true;
     const parts = zonedParts(now, p.timezone),
       n = parts.hour * 60 + parts.minute;
     const minutes = (s) => Number(s.slice(0, 2)) * 60 + Number(s.slice(3));

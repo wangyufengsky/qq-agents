@@ -25,6 +25,8 @@ export const behaviorSchema = z
     quietAfterNewMs: ms(0, 60000, 10000),
     maxSendPerMinute: ms(1, 60, 8),
     maxSendPerHour: ms(1, 1000, 60),
+    conversationMaxSendPerMinute: z.number().int().min(1).max(60).optional(),
+    conversationMaxSendPerHour: z.number().int().min(1).max(1000).optional(),
     burstMax: ms(1, 10, 8),
     burstMinMs: ms(0, 10000, 1000),
     burstMaxMs: ms(0, 10000, 3000),
@@ -65,6 +67,7 @@ export const schedulerSchema = z
     missedGraceMin: ms(0, 1440, 10),
     jitterMin: ms(0, 30, 2),
     quietEnabled: z.boolean().default(true),
+    quietAllDay: z.boolean().optional(),
     quietStart: z
       .string()
       .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
@@ -79,7 +82,12 @@ export const schedulerSchema = z
       .default([]),
   })
   .strict()
-  .prefault({});
+  .prefault({})
+  .refine(
+    (s) =>
+      !s.quietEnabled || s.quietAllDay === true || s.quietStart !== s.quietEnd,
+    "EXPLICIT_ALL_DAY_REQUIRED",
+  );
 
 export const voiceSchema = z
   .object({

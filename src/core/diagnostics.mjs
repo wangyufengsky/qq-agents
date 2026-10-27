@@ -24,6 +24,7 @@ const conflicts = new Set([
   "CONNECTION_IN_PROGRESS",
   "CONNECTION_ALREADY_STARTED",
   "SESSION_BUSY",
+  "FILE_REPAIR_NOT_NEEDED",
   "DATA_DIRECTORY_LOCKED",
 ]);
 const components = new Set([

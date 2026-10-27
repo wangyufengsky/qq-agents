@@ -9,8 +9,18 @@ import path from "node:path";
 import http from "node:http";
 import { fileURLToPath } from "node:url";
 import { timingSafeEqual } from "node:crypto";
+import { z } from "zod";
 import { mcpResult, TOOL_NAMES } from "./tools/index.mjs";
 const publicDir = fileURLToPath(new URL("../public/", import.meta.url));
+const fileRecoveryRequest = z
+  .object({
+    agentId: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/),
+    fileId: z.string().regex(/^[a-f0-9]{64}$/),
+    action: z.enum(["repair", "remove"]),
+    name: z.string().min(1).max(200).optional(),
+  })
+  .strict()
+  .refine((value) => value.action !== "repair" || !!value.name);
 const equal = (a, b) =>
   typeof a === "string" &&
   Buffer.byteLength(a) === Buffer.byteLength(b) &&
@@ -330,6 +340,17 @@ export function createServer({
           }),
         );
       }
+      if (req.method === "POST" && url.pathname === "/api/files/recovery") {
+        const data = fileRecoveryRequest.parse(await readBody()),
+          a = runtime.agent(data.agentId);
+        return send(
+          await runtime.files.acquire(a.id, () =>
+            data.action === "repair"
+              ? runtime.files.repair(a.id, data.fileId, data.name, a.files)
+              : runtime.files.removeDamaged(a.id, data.fileId),
+          ),
+        );
+      }
       if (req.method === "POST" && url.pathname === "/api/files/import") {
         const data = await readBody(70 * 1024 * 1024),
           a = runtime.agent(data.agentId);
@@ -497,6 +518,7 @@ export function createServer({
         return send({
           config: runtime.config,
           revision: runtime.configStore.revision,
+          migrationWarnings: runtime.configStore.migrationWarnings || [],
           tools: TOOL_NAMES,
         });
       if (req.method === "PUT" && url.pathname === "/api/config") {

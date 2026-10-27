@@ -77,7 +77,7 @@ DSH 的 MCP 结果可携带 audio block。当前 Codex 动态工具适配没有�
 
 ## 本地验收
 
-停机宽限、进程锁恢复、配置内容版本与管理台最近错误见 [第一轮可靠性说明](RELIABILITY-ROUND-ONE.md)。
+停机宽限、进程锁恢复、配置内容版本与管理台最近错误见 [第一轮可靠性说明](RELIABILITY-ROUND-ONE.md)。角色总发送额度、文件库损坏恢复与明确静默时段见 [第三轮可靠性说明](RELIABILITY-ROUND-THREE.md)。
 
 运行 `npm run verify` 完成语法、Node 测试、格式与隐私扫描。常规回归测试使用合成音频、本机网络替身和临时目录。另有显式启动的 [真实后端验收脚本](LOCAL-ACCEPTANCE.md)，使用独立 DSH profile/Codex home 和仅监听本机的 QQ 接收网关。仓库没有 GitHub Actions 工作流；GitHub 用于代码和 PR 管理。真实模型、用户授权的 QQ 入站样本，以及DSH/Codex 独立连接的手动真实 QQ 出站的验收范围见 [验收记录](ACCEPTANCE.md)；常规回归和 `acceptance:live` 脚本不会执行真实 QQ 出站与生产迁移。
 

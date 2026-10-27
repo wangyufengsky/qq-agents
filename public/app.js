@@ -11,6 +11,7 @@ const $ = (s) => document.querySelector(s),
           "'": "&#39;",
         })[c],
     );
+let configMigrationWarnings = [];
 let token = sessionStorage.getItem("qq-unified-token") || "",
   config,
   revision,
@@ -49,6 +50,18 @@ async function api(url, data, method) {
         CONFIG_SAVE_FAILED:
           "配置保存失败，当前配置和回合保持原状。请检查最近错误中的磁盘诊断。",
         CONFIG_CONFLICT: "配置已变化，请刷新页面后重新核对修改。",
+        FILE_METADATA_CORRUPT: "文件元数据损坏，请在文件库中查看并修复。",
+        FILE_METADATA_MISSING:
+          "文件内容仍存在但元数据缺失，请先修复，不能直接重传覆盖。",
+        FILE_REMOVED_PROTECTED:
+          "该内容已保留保护拦截记录，不能通过重新导入清除保护。",
+        FILE_QUOTA_EXCEEDED:
+          "文件库容量或数量额度不足；损坏、孤儿文件和元数据仍计入占用。",
+        FILE_QUOTA_UNAVAILABLE:
+          "无法完整统计文件占用，请检查文件权限和异常目录后重试。",
+        FILE_REPAIR_NOT_NEEDED: "该文件正常，不需要损坏恢复操作。",
+        SEND_BUDGET_CORRUPT:
+          "发送预算记录损坏，已停止新增投递，请检查数据并从可信备份恢复。",
         RUNTIME_CLOSING: "服务正在停止，请等待服务恢复后刷新。",
         INTERNAL_ERROR: "服务内部故障，请查看概览中的最近错误。",
       }[value.error] ||
@@ -69,6 +82,7 @@ function notice(value) {
 async function load() {
   const c = await api("/api/config");
   config = c.config;
+  configMigrationWarnings = c.migrationWarnings || [];
   revision = c.revision;
   tools = c.tools;
   status = await api("/api/status");
@@ -209,6 +223,11 @@ function render() {
       "beforeend",
       `<div class="section-title"><h2>最近错误</h2></div><div class="card"><label>筛选错误码、组件或关联 ID<input id="error-filter" placeholder="例如 CONFIG_SAVE_FAILED、http"></label><p class="hint">最多保留本次启动的 50 类错误，同类重复错误合并计数；完整留存取决于服务日志配置。</p><div id="recent-errors">${recentErrorsMarkup()}</div></div>`,
     );
+    if (configMigrationWarnings.length)
+      content.insertAdjacentHTML(
+        "afterbegin",
+        '<div class="card"><p>已兼容旧静默设置：角色起止相同的时段明确标记为整日（从开始时刻到次日同一时刻）；定时任务起止相同继续保持不静默。可在角色及作息设置中核对，后续保存会写入明确选项。</p></div>',
+      );
     $("#error-filter").oninput = (e) => {
       $("#recent-errors").innerHTML = recentErrorsMarkup(e.target.value);
     };
@@ -601,7 +620,7 @@ function openEditor(type, id) {
       `<div class="wide"><h3>允许的工具</h3><div class="tools">${tools.map((t) => check("tool:" + t, esc(t), row.tools.includes(t))).join("")}</div></div>` +
       area(
         "silence",
-        "定时静默（JSON：start、end、days 0—6、timezone）",
+        "定时静默（JSON：start、end、days 0—6、timezone；起止相同须 allDay:true，00:00 表示日历整日）",
         JSON.stringify(row.silence, null, 2),
       );
   } else if (type === "connections") {

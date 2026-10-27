@@ -4,9 +4,66 @@ import os from "node:os";
 import { createHash, randomUUID } from "node:crypto";
 import { atomicJSON } from "../core/config.mjs";
 import { downloadFile } from "./file-download.mjs";
+import { z } from "zod";
 
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const validId = /^[a-f0-9]{64}$/;
+const metadataSchema = z
+  .object({
+    fileId: z.string().regex(validId),
+    sha256: z.string().regex(validId),
+    name: z.string().refine((v) => {
+      try {
+        fileName(v);
+        return true;
+      } catch {
+        return false;
+      }
+    }),
+    bytes: z.number().int().min(0).max(52428800),
+    createdAt: z.string().refine((v) => Number.isFinite(Date.parse(v))),
+    sources: z
+      .array(
+        z
+          .object({
+            conversation: z.string().optional(),
+            eventId: z.string().optional(),
+          })
+          .passthrough(),
+      )
+      .max(100),
+    protectedOperations: z.boolean().optional(),
+    protectedRepositories: z.array(z.string().min(1)).optional(),
+    protectionUnknown: z.boolean().optional(),
+    contentRead: z.literal(false),
+  })
+  .strict();
+function fileError(error, missing) {
+  if (error.code === "ENOENT") return Error(missing);
+  if (["EACCES", "EPERM"].includes(error.code))
+    return Error("FILE_ACCESS_DENIED");
+  if (error.code === "ELOOP" || error.message === "FILE_PATH_DENIED")
+    return Error("FILE_PATH_DENIED");
+  return Error("FILE_IO_ERROR");
+}
+const corruptCodes = new Set([
+  "FILE_METADATA_CORRUPT",
+  "FILE_CONTENT_MISSING",
+  "FILE_INTEGRITY_FAILED",
+  "FILE_PATH_DENIED",
+  "FILE_ACCESS_DENIED",
+  "FILE_IO_ERROR",
+  "FILE_REMOVED_PROTECTED",
+]);
+function hasEntry(file) {
+  try {
+    fs.lstatSync(file);
+    return true;
+  } catch (error) {
+    if (error.code === "ENOENT") return false;
+    throw fileError(error, "FILE_NOT_FOUND");
+  }
+}
 export function fileName(value) {
   if (
     typeof value !== "string" ||
@@ -69,32 +126,108 @@ export class FileStore {
   }
   metadata(agentId, fileId) {
     if (!validId.test(fileId)) throw Error("INVALID_FILE_ID");
+    const dir = this.dir(agentId);
+    if (hasEntry(path.join(dir, fileId + ".blocked")))
+      throw Error("FILE_REMOVED_PROTECTED");
+    let bytes;
     try {
-      const meta = JSON.parse(
-        readRegular(path.join(this.dir(agentId), fileId + ".json"), 256 * 1024),
-      );
-      if (meta.fileId !== fileId) throw Error();
+      bytes = readRegular(path.join(dir, fileId + ".json"), 256 * 1024);
+    } catch (error) {
+      if (error.message === "FILE_TOO_LARGE")
+        throw Error("FILE_METADATA_CORRUPT");
+      throw fileError(error, "FILE_NOT_FOUND");
+    }
+    try {
+      const meta = metadataSchema.parse(JSON.parse(bytes));
+      if (meta.fileId !== fileId || meta.sha256 !== fileId) throw Error();
+      if (
+        meta.protectedOperations === undefined ||
+        meta.protectedRepositories === undefined ||
+        meta.protectionUnknown
+      ) {
+        meta.protectionUnknown = true;
+        meta.protectedOperations = true;
+      }
       return meta;
     } catch {
-      throw Error("FILE_NOT_FOUND");
+      throw Error("FILE_METADATA_CORRUPT");
     }
   }
+  scan(agentId) {
+    const dir = this.dir(agentId),
+      ids = new Set(),
+      stats = new Map();
+    let usedBytes = 0,
+      extraFiles = 0,
+      usageComplete = true,
+      blockedCount = 0;
+    for (const name of fs.readdirSync(dir)) {
+      const match = /^([a-f0-9]{64})\.(json|bin|blocked)$/.exec(name);
+      if (match) ids.add(match[1]);
+      else extraFiles++;
+      try {
+        const stat = fs.lstatSync(path.join(dir, name));
+        usedBytes += stat.size;
+        if (stat.isDirectory()) usageComplete = false;
+        stats.set(name, stat);
+      } catch {
+        usageComplete = false;
+      }
+    }
+    const items = [],
+      corrupt = [];
+    for (const fileId of ids) {
+      if (stats.has(fileId + ".blocked")) {
+        blockedCount++;
+        if (stats.has(fileId + ".json") || stats.has(fileId + ".bin"))
+          corrupt.push({ fileId, code: "FILE_REMOVAL_INCOMPLETE" });
+        continue;
+      }
+      try {
+        const meta = this.metadata(agentId, fileId),
+          bin = stats.get(fileId + ".bin");
+        if (!bin) throw Error("FILE_CONTENT_MISSING");
+        if (!bin.isFile() || bin.nlink !== 1) throw Error("FILE_PATH_DENIED");
+        if (bin.size !== meta.bytes) throw Error("FILE_INTEGRITY_FAILED");
+        items.push(meta);
+      } catch (error) {
+        corrupt.push({
+          fileId,
+          code:
+            error.message === "FILE_NOT_FOUND"
+              ? "FILE_METADATA_MISSING"
+              : corruptCodes.has(error.message)
+                ? error.message
+                : "FILE_IO_ERROR",
+        });
+      }
+    }
+    return {
+      items,
+      corrupt,
+      corruptCount: corrupt.length,
+      usedBytes,
+      storedFiles: ids.size + extraFiles,
+      usageComplete,
+      blockedCount,
+      orphanFiles: extraFiles,
+    };
+  }
   list(agentId, { offset = 0, limit = 30, query = "" } = {}) {
-    const items = fs
-      .readdirSync(this.dir(agentId))
-      .filter((f) => /^[a-f0-9]{64}\.json$/.test(f))
-      .map((f) => this.metadata(agentId, f.slice(0, -5)))
-      .sort(
-        (a, b) =>
-          b.createdAt.localeCompare(a.createdAt) ||
-          a.fileId.localeCompare(b.fileId),
-      );
+    const scanned = this.scan(agentId);
+    const items = scanned.items.sort(
+      (a, b) =>
+        b.createdAt.localeCompare(a.createdAt) ||
+        a.fileId.localeCompare(b.fileId),
+    );
     const filtered = items.filter((x) => x.name.includes(query));
     return {
+      ...scanned,
       items: filtered.slice(offset, offset + limit),
       total: filtered.length,
-      usedBytes: items.reduce((n, x) => n + x.bytes, 0),
-      storedFiles: items.length,
+      corrupt: scanned.corrupt.slice(offset, offset + limit),
+      nextCorruptOffset:
+        offset + limit < scanned.corrupt.length ? offset + limit : null,
       nextOffset: offset + limit < filtered.length ? offset + limit : null,
     };
   }
@@ -117,14 +250,16 @@ export class FileStore {
       old = this.metadata(agentId, fileId);
     } catch (e) {
       if (e.message !== "FILE_NOT_FOUND") throw e;
+      try {
+        fs.lstatSync(path.join(dir, fileId + ".bin"));
+        throw Error("FILE_METADATA_MISSING");
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+      }
     }
-    const usage = this.list(agentId);
-    if (
-      !old &&
-      (usage.usedBytes + buffer.length > policy.maxTotalBytes ||
-        usage.storedFiles >= policy.maxFiles)
-    )
-      throw Error("FILE_QUOTA_EXCEEDED");
+    if (old) this.read(agentId, fileId, policy.maxBytes);
+    const usage = this.scan(agentId);
+    if (!usage.usageComplete) throw Error("FILE_QUOTA_UNAVAILABLE");
     const sources = [...(old?.sources || [])];
     if (!sources.some((s) => JSON.stringify(s) === JSON.stringify(source)))
       sources.push(source);
@@ -142,8 +277,23 @@ export class FileStore {
           ...protectedRepositories,
         ]),
       ],
+      ...(old?.protectionUnknown ? { protectionUnknown: true } : {}),
       contentRead: false,
     };
+    const metaBytes = Buffer.byteLength(JSON.stringify(meta, null, 2) + "\n");
+    if (metaBytes > 256 * 1024) throw Error("FILE_METADATA_TOO_LARGE");
+    if (!metadataSchema.safeParse(meta).success)
+      throw Error("INVALID_FILE_METADATA");
+    const replaced = old
+      ? fs.lstatSync(path.join(dir, fileId + ".bin")).size +
+        fs.lstatSync(path.join(dir, fileId + ".json")).size
+      : 0;
+    if (
+      usage.usedBytes - replaced + buffer.length + metaBytes >
+        policy.maxTotalBytes ||
+      (!old && usage.storedFiles >= policy.maxFiles)
+    )
+      throw Error("FILE_QUOTA_EXCEEDED");
     const destination = path.join(dir, fileId + ".bin"),
       temp = path.join(dir, randomUUID() + ".part");
     try {
@@ -160,13 +310,117 @@ export class FileStore {
   }
   read(agentId, fileId, maxBytes) {
     const meta = this.metadata(agentId, fileId);
-    const buffer = readRegular(
-      path.join(this.dir(agentId), fileId + ".bin"),
-      maxBytes,
-    );
+    let buffer;
+    try {
+      buffer = readRegular(
+        path.join(this.dir(agentId), fileId + ".bin"),
+        maxBytes,
+      );
+    } catch (error) {
+      if (error.message === "FILE_TOO_LARGE") throw error;
+      throw fileError(error, "FILE_CONTENT_MISSING");
+    }
     if (buffer.length !== meta.bytes || hash(buffer) !== fileId)
       throw Error("FILE_INTEGRITY_FAILED");
     return { meta, buffer };
+  }
+  requireDamage(agentId, fileId) {
+    try {
+      this.read(agentId, fileId, 52428800);
+    } catch (error) {
+      if (
+        [
+          "FILE_METADATA_CORRUPT",
+          "FILE_NOT_FOUND",
+          "FILE_CONTENT_MISSING",
+          "FILE_INTEGRITY_FAILED",
+          "FILE_PATH_DENIED",
+          "FILE_REMOVED_PROTECTED",
+        ].includes(error.message)
+      )
+        return;
+      throw error;
+    }
+    throw Error("FILE_REPAIR_NOT_NEEDED");
+  }
+  repair(agentId, fileId, name, policy) {
+    if (!validId.test(fileId)) throw Error("INVALID_FILE_ID");
+    fileName(name);
+    this.requireDamage(agentId, fileId);
+    const dir = this.dir(agentId);
+    if (hasEntry(path.join(dir, fileId + ".blocked")))
+      throw Error("FILE_REMOVED_PROTECTED");
+    let buffer;
+    try {
+      buffer = readRegular(path.join(dir, fileId + ".bin"), policy.maxBytes);
+    } catch (error) {
+      if (error.message === "FILE_TOO_LARGE") throw error;
+      throw fileError(error, "FILE_CONTENT_MISSING");
+    }
+    if (hash(buffer) !== fileId) throw Error("FILE_INTEGRITY_FAILED");
+    const meta = {
+      fileId,
+      sha256: fileId,
+      name,
+      bytes: buffer.length,
+      createdAt: new Date().toISOString(),
+      sources: [{ kind: "administrator-recovery" }],
+      protectedOperations: true,
+      protectedRepositories: [],
+      protectionUnknown: true,
+      contentRead: false,
+    };
+    const usage = this.scan(agentId),
+      target = path.join(dir, fileId + ".json");
+    let previous = 0;
+    try {
+      const stat = fs.lstatSync(target);
+      if (!stat.isFile() || stat.nlink !== 1) throw Error("FILE_PATH_DENIED");
+      previous = stat.size;
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+    const added =
+      Buffer.byteLength(JSON.stringify(meta, null, 2) + "\n") - previous;
+    if (!usage.usageComplete) throw Error("FILE_QUOTA_UNAVAILABLE");
+    if (added > 0 && usage.usedBytes + added > policy.maxTotalBytes)
+      throw Error("FILE_QUOTA_EXCEEDED");
+    atomicJSON(target, meta);
+    return meta;
+  }
+  removeDamaged(agentId, fileId) {
+    if (!validId.test(fileId)) throw Error("INVALID_FILE_ID");
+    this.requireDamage(agentId, fileId);
+    const dir = this.dir(agentId),
+      entries = ["json", "bin"].map((ext) =>
+        path.join(dir, fileId + "." + ext),
+      );
+    let found = false;
+    for (const file of entries) {
+      try {
+        const stat = fs.lstatSync(file);
+        if (stat.isDirectory()) throw Error("FILE_PATH_DENIED");
+        found = true;
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+      }
+    }
+    if (!found && !hasEntry(path.join(dir, fileId + ".blocked")))
+      throw Error("FILE_NOT_FOUND");
+    // Persist the provenance tombstone BEFORE removing either file. A crash or
+    // same-content upload must not turn unknown protected data into public data.
+    atomicJSON(path.join(dir, fileId + ".blocked"), {
+      version: 1,
+      protectionUnknown: true,
+    });
+    for (const file of entries) {
+      try {
+        fs.unlinkSync(file);
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+      }
+    }
+    return { removed: true, blockedForReimport: true };
   }
   import(agentId, rootIndex, relativePath, policy) {
     const root = policy.localRoots[rootIndex];

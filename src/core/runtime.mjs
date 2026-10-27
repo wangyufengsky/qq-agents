@@ -39,6 +39,7 @@ import { ConversationEngine } from "./conversations.mjs";
 import { TaskScheduler } from "./scheduler.mjs";
 import { Operations } from "./operations.mjs";
 import { SlangLearner } from "./slang.mjs";
+import { reserveSendBudget } from "./send-budget.mjs";
 import {
   saveSession,
   recordBackendTurn,
@@ -91,6 +92,7 @@ export class Runtime {
     this.retiredResources = new Set();
     this.closed = false;
     this.sendChains = new Map();
+    this.budgetReconciled = new Set();
     this.conversations = new ConversationEngine(this);
     this.scheduler = new TaskScheduler(this);
     this.operations = new Operations(this);
@@ -1197,12 +1199,6 @@ export class Runtime {
           : state.replyBatchSends || 0;
     if (batchUsed >= (a.maxConsecutiveSends ?? a.maxSendsPerTurn))
       throw Error("REPLY_BURST_LIMIT");
-    const times = (state.sendTimes || []).filter((x) => now - x < 3600000);
-    if (
-      times.length >= a.behavior.maxSendPerHour ||
-      times.filter((x) => now - x < 60000).length >= a.behavior.maxSendPerMinute
-    )
-      throw Error("SEND_RATE_LIMIT");
     const transport = this.transports.get(a.connectionId);
     if (!transport?.connected) throw Error("QQ_NOT_CONNECTED");
     const event = {
@@ -1218,10 +1214,17 @@ export class Runtime {
       },
     };
     mem.store.transaction(() => {
+      const sendTimes = reserveSendBudget(
+        mem,
+        a.behavior,
+        state.sendTimes,
+        now,
+        !this.budgetReconciled.has(a.id),
+      );
       mem.reserveDelivery(requestId, ctx.conversation, intent);
       mem.setState(ctx.conversation, {
         ...state,
-        sendTimes: [...times, now],
+        sendTimes,
         ...(!proactive && !ctx.internalDelivery
           ? ctx.scheduleRunId
             ? {
@@ -1245,6 +1248,7 @@ export class Runtime {
     });
     ctx.replyBatchSends = (ctx.replyBatchSends ?? ctx.sendCount) + 1;
     ctx.deliveryAttempted = true;
+    this.budgetReconciled.add(a.id);
     ctx.sendCount++;
     try {
       this.assertActive(ctx);
