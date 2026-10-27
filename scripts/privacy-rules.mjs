@@ -26,8 +26,10 @@ export function identityFindings(identity) {
   if (!match) return ["commit-identity-missing"];
   const email = match[1];
   // Explicit non-personal service addresses; do not allow entire corporate domains.
-  return /^[A-Za-z0-9+_.-]+@users\.noreply\.github\.com$/i.test(email) ||
-    /^(?:noreply@github\.com|noreply@anthropic\.com)$/i.test(email)
+  // GitHub App bots use "<id>+<name>[bot]@users.noreply.github.com".
+  return /^[A-Za-z0-9+_.-]+(?:\[bot\])?@users\.noreply\.github\.com$/i.test(
+    email,
+  ) || /^(?:noreply@github\.com|noreply@anthropic\.com)$/i.test(email)
     ? []
     : ["personal-commit-email"];
 }
