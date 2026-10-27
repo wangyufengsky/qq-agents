@@ -80,19 +80,23 @@ test("origin and host guards reject cross-site and rebinding requests", async (t
 test("config revision conflicts prevent stale edits; isolated listener cannot enable live mode", async (t) => {
   const { request, runtime } = await setup(t);
   const value = structuredClone(runtime.config);
+  const revision = runtime.configStore.revision;
   value.mode = "isolated";
   const save = () =>
     request("/api/config", {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ config: value, revision: 0 }),
+      body: JSON.stringify({ config: value, revision }),
     });
   assert.equal((await save()).status, 200);
   assert.equal((await save()).status, 409);
   value.mode = "live";
   const r = await request("/api/config", {
     method: "PUT",
-    body: JSON.stringify({ config: value, revision: 1 }),
+    body: JSON.stringify({
+      config: value,
+      revision: runtime.configStore.revision,
+    }),
   });
   assert.equal(r.status, 400);
 });

@@ -1,4 +1,5 @@
 import { observeInput } from "./input-progress.mjs";
+import { Diagnostics } from "./diagnostics.mjs";
 import { runWithRecovery, failureSummary } from "../backends/turn-failure.mjs";
 import { GeneratedImages } from "./generated-images.mjs";
 import {
@@ -53,6 +54,7 @@ export class Runtime {
     transportFactory = (c) => new OneBot(c),
     clock = () => new Date(),
     random = Math.random,
+    diagnostics = new Diagnostics(),
   }) {
     Object.assign(this, {
       configStore,
@@ -61,6 +63,7 @@ export class Runtime {
       transportFactory,
       clock,
       random,
+      diagnostics,
     });
     this.transports = new Map();
     this.connecting = new Set();
@@ -71,6 +74,8 @@ export class Runtime {
     this.capabilities = new Map();
     this.faults = new Map();
     this.jobs = new Set();
+    this.work = new Set();
+    this.retiredResources = new Set();
     this.closed = false;
     this.sendChains = new Map();
     this.conversations = new ConversationEngine(this);
@@ -93,27 +98,41 @@ export class Runtime {
   now() {
     return +this.clock();
   }
+  trackWork(job) {
+    const pending = Promise.resolve(job);
+    this.work.add(pending);
+    const remove = () => this.work.delete(pending);
+    pending.then(remove, remove);
+    return pending;
+  }
   trackJob(job, id) {
-    const tracked = Promise.resolve(job).catch(() => {
+    const tracked = Promise.resolve(job).catch((cause) => {
       this.faults.set(id, "BACKGROUND_JOB_FAILED");
+      this.diagnostics.report(Error("BACKGROUND_JOB_FAILED", { cause }), {
+        component: "runtime",
+        agentId: id,
+      });
     });
     this.jobs.add(tracked);
     tracked.then(() => this.jobs.delete(tracked));
     return tracked;
   }
   startTimers() {
-    if (this.ticker) return;
+    if (this.closed || this.ticker) return;
     this.ticker = setInterval(() => {
       try {
         this.tick();
-      } catch {
+      } catch (cause) {
         this.faults.set("scheduler", "SCHEDULER_TICK_FAILED");
+        this.diagnostics.report(Error("SCHEDULER_TICK_FAILED", { cause }), {
+          component: "scheduler",
+        });
       }
     }, 1000);
     this.ticker.unref?.();
   }
   tick() {
-    if (this.closed) return;
+    if (this.closed || this.configChanging) return;
     this.backendConnections.tick();
     this.contexts.tick();
     this.subject.tick();
@@ -123,6 +142,8 @@ export class Runtime {
     this.learner.tick();
   }
   makeContext(agentId, conversation) {
+    if (this.closed) throw Error("RUNTIME_CLOSING");
+    if (this.configChanging) throw Error("CONFIG_CONFLICT");
     const a = this.agent(agentId),
       mem = this.memory.bind(agentId);
     const ctx = {
@@ -154,7 +175,10 @@ export class Runtime {
     this.capabilities.set(ctx.token, ctx);
     return ctx;
   }
-  async withContext(agentId, conversation, fn) {
+  withContext(...args) {
+    return this.trackWork(this.runWithContext(...args));
+  }
+  async runWithContext(agentId, conversation, fn) {
     const ctx = this.makeContext(agentId, conversation);
     // Deterministic owner/scheduler control replies have their own invocation budget.
     ctx.internalDelivery = true;
@@ -210,6 +234,7 @@ export class Runtime {
     );
   }
   writable(a, conversation, ctx = null) {
+    if (this.closed || this.configChanging) return false;
     if (this.backendConnections.blocked.has(a.id)) return false;
     if (conversation === SUBJECT) return this.subject.internalAllowed(a);
     const state = this.memory.bind(a.id).state(conversation);
@@ -242,7 +267,12 @@ export class Runtime {
     this.assertActive(ctx);
     return ctx;
   }
-  async startConnection(id) {
+  startConnection(...args) {
+    return this.trackWork(this.connectConnection(...args));
+  }
+  async connectConnection(id) {
+    if (this.closed) throw Error("RUNTIME_CLOSING");
+    if (this.configChanging) throw Error("CONFIG_CONFLICT");
     if (this.config.mode !== "live") throw Error("ISOLATED_MODE");
     const config = this.connection(id);
     if (!config.enabled) throw Error("CONNECTION_DISABLED");
@@ -258,8 +288,12 @@ export class Runtime {
     this.transports.set(id, t);
     this.connecting.add(id);
     t.on("event", (raw) => {
-      const job = this.ingest(id, raw).catch(() => {
+      const job = this.ingest(id, raw).catch((cause) => {
         this.faults.set(id, "EVENT_PROCESSING_FAILED");
+        if (!this.closed)
+          this.diagnostics.report(Error("EVENT_PROCESSING_FAILED", { cause }), {
+            component: "transport",
+          });
       });
       this.jobs.add(job);
       job.finally(() => this.jobs.delete(job));
@@ -267,6 +301,8 @@ export class Runtime {
     t.on("fault", (code) => this.faults.set(id, code));
     try {
       await t.connect();
+      if (this.closed || this.transports.get(id) !== t)
+        throw Error("CONNECTION_CANCELLED");
       this.faults.delete(id);
     } catch (e) {
       t.close();
@@ -300,6 +336,8 @@ export class Runtime {
     await this.backends.get(agentId)?.cancel?.();
   }
   async changeAppPermissions(agentId, policy, revision) {
+    if (this.closed) throw Error("RUNTIME_CLOSING");
+    if (this.configChanging) throw Error("CONFIG_CONFLICT");
     this.agent(agentId);
     const apps = appsPolicySchema.parse(policy);
     if (revision !== this.configStore.revision) throw Error("CONFIG_CONFLICT");
@@ -318,6 +356,8 @@ export class Runtime {
     return { revision: this.configStore.revision, apps };
   }
   async changeFilePermissions(agentId, policy, revision) {
+    if (this.closed) throw Error("RUNTIME_CLOSING");
+    if (this.configChanging) throw Error("CONFIG_CONFLICT");
     this.agent(agentId);
     const files = filesSchema.parse(policy);
     if (revision !== this.configStore.revision) throw Error("CONFIG_CONFLICT");
@@ -334,7 +374,12 @@ export class Runtime {
     await this.cancel(agentId);
     return { revision: this.configStore.revision, files };
   }
-  async changeConfig(next, revision) {
+  changeConfig(...args) {
+    return this.trackWork(this.commitConfig(...args));
+  }
+  async commitConfig(next, revision) {
+    if (this.closed) throw Error("RUNTIME_CLOSING");
+    if (this.configChanging) throw Error("CONFIG_CONFLICT");
     next = validateConfig(next);
     if (revision !== this.configStore.revision) throw Error("CONFIG_CONFLICT");
     // These scheduling values only affect future opportunities. Permission,
@@ -352,47 +397,92 @@ export class Runtime {
     }
     if (isDeepStrictEqual(withNextRates, next)) {
       this.configStore.save(next, revision);
+      let failed = false;
       for (const id of intervals) {
-        const m = this.memory.bind(id),
-          s = m.state(SUBJECT);
-        m.setState(SUBJECT, {
-          ...s,
-          nextCheckAt:
-            (s.lastOpportunityAt || this.now()) +
-            this.agent(id).subject.intervalMs,
-        });
+        try {
+          const m = this.memory.bind(id),
+            s = m.state(SUBJECT);
+          m.setState(SUBJECT, {
+            ...s,
+            nextCheckAt:
+              (s.lastOpportunityAt || this.now()) +
+              this.agent(id).subject.intervalMs,
+          });
+        } catch (cause) {
+          failed = true;
+          this.diagnostics.report(
+            Error("CONFIG_RECONFIGURE_FAILED", { cause }),
+            { component: "config", agentId: id },
+          );
+        }
       }
-      return { saved: true, reconnectRequired: false };
+      return {
+        saved: true,
+        reconnectRequired: false,
+        ...(failed ? { warnings: ["CONFIG_RECONFIGURE_FAILED"] } : {}),
+      };
     }
     if (this.backendConnections.operations.size)
       throw Error("BACKEND_OPERATION_IN_PROGRESS");
     if (this.lifecycle?.owned.size)
       throw Error("STOP_MANAGED_QQ_PROCESSES_BEFORE_CONFIG_EDIT");
-    // Invalidate capabilities synchronously before awaiting cancellation: late tool calls cannot send.
+    // A failed disk commit must not cancel the still-current configuration.
+    this.configStore.save(next, revision);
+    // No await between commit and invalidation: late tool calls cannot send.
     for (const ctx of this.capabilities.values()) ctx.controller.abort();
     for (const ctx of this.running.values()) ctx.controller.abort();
     this.capabilities.clear();
     this.pending.clear();
-    this.configStore.save(next, revision);
-    for (const a of this.config.agents)
-      this.memory.bind(a.id).identity.initialize(a, this.now());
-    await Promise.allSettled(
-      [...this.backends.values()].map((b) => b.close?.()),
-    );
-    this.backends.clear();
-    this.backendConnections.states.clear();
-    await this.learner.close();
-    this.operations.levels.clear();
-    this.operations.pending.clear();
-    for (const t of this.transports.values()) t.close();
-    this.transports.clear();
-    this.banter = new BanterCoordinator({
-      botIds: this.config.connections.map((c) => c.accountId),
-      ...this.config.peerLimit,
-    });
-    return { saved: true, reconnectRequired: true };
+    this.configChanging = true;
+    let failed = false;
+    const apply = async (fn, resource = false) => {
+      try {
+        await fn();
+      } catch (cause) {
+        failed = true;
+        if (resource) this.retiredResources.add(fn);
+        this.diagnostics.report(Error("CONFIG_RECONFIGURE_FAILED", { cause }), {
+          component: "config",
+        });
+      }
+    };
+    try {
+      for (const a of this.config.agents)
+        await apply(() =>
+          this.memory.bind(a.id).identity.initialize(a, this.now()),
+        );
+      await Promise.all(
+        [...this.backends.values()].map((b) => apply(() => b.close?.(), true)),
+      );
+      this.backends.clear();
+      this.backendConnections.states.clear();
+      await apply(() => this.learner.close());
+      // Failed old adapters remain owned for a shutdown retry, but cannot be
+      // reused by the learner under the newly committed configuration.
+      for (const b of this.learner.backends.values())
+        this.retiredResources.add(() => b.close?.());
+      this.learner.backends.clear();
+      this.operations.levels.clear();
+      this.operations.pending.clear();
+      for (const t of this.transports.values())
+        await apply(() => t.close(), true);
+      this.transports.clear();
+      this.banter = new BanterCoordinator({
+        botIds: this.config.connections.map((c) => c.accountId),
+        ...this.config.peerLimit,
+      });
+      return {
+        saved: true,
+        reconnectRequired: true,
+        ...(failed ? { warnings: ["CONFIG_RECONFIGURE_FAILED"] } : {}),
+      };
+    } finally {
+      this.configChanging = false;
+    }
   }
+
   async pause(agentId, paused = true) {
+    if (this.closed) throw Error("RUNTIME_CLOSING");
     const next = structuredClone(this.config);
     if (agentId === "all") next.globalPaused = paused;
     else {
@@ -410,7 +500,11 @@ export class Runtime {
     }
     return { paused };
   }
-  async ingest(connectionId, raw) {
+  ingest(...args) {
+    return this.trackWork(this.ingestEvent(...args));
+  }
+  async ingestEvent(connectionId, raw) {
+    if (this.closed) throw Error("RUNTIME_CLOSING");
     const c = this.connection(connectionId),
       e = normalizeEvent(raw, c);
     if (!e) return { ignored: true };
@@ -574,7 +668,11 @@ export class Runtime {
     await this.sendChains.get(a.connectionId)?.catch(() => {});
     this.contexts.retire(agentId, conversation, "administrator-reset");
   }
-  async wake(agentId, conversation, { reasons = [] } = {}) {
+  wake(...args) {
+    return this.trackWork(this.runTurn(...args));
+  }
+  async runTurn(agentId, conversation, { reasons = [] } = {}) {
+    if (this.closed) throw Error("RUNTIME_CLOSING");
     const a = this.agent(agentId);
     if (!this.writable(a, conversation)) throw Error("AGENT_PAUSED");
     if (
@@ -631,12 +729,13 @@ export class Runtime {
         conversation,
         prompt: prepared.prompt,
         instructions: prepared.instructions,
-        onUsage: (usage) => this.contexts.usage(ctx, usage),
+        onUsage: (usage) => !this.stopped && this.contexts.usage(ctx, usage),
         signal: controller.signal,
         tools,
         callTool: (name, args) => this.callTool(ctx, name, args),
         session: prepared.session,
         saveSession: (session) =>
+          !this.stopped &&
           saveSession(mem, conversation, session, {
             turnId: ctx.turnId,
             backendId: a.backendId,
@@ -648,10 +747,11 @@ export class Runtime {
             reason: controller.signal.aborted ? "cancelled" : "backend-failure",
           }),
         onBackendTurn: (reference) =>
-          recordBackendTurn(mem, ctx.turnId, reference),
-        onImageSession: (id) => this.generatedImages.begin(ctx, id),
+          !this.stopped && recordBackendTurn(mem, ctx.turnId, reference),
+        onImageSession: (id) =>
+          !this.stopped && this.generatedImages.begin(ctx, id),
         onGeneratedImage: (id, item) =>
-          this.generatedImages.capture(ctx, backend, id, item),
+          !this.stopped && this.generatedImages.capture(ctx, backend, id, item),
         onImageError: () => {
           if (!controller.signal.aborted) {
             ctx.imageRegistrationFailed = true;
@@ -668,6 +768,12 @@ export class Runtime {
         this.faults.delete(agentId);
     } catch (e) {
       outcome = controller.signal.aborted ? "cancelled" : "failed";
+      if (!controller.signal.aborted)
+        this.diagnostics.report(Error("BACKEND_TURN_FAILED", { cause: e }), {
+          component: "runtime",
+          agentId,
+          conversation,
+        });
       const failure = failureSummary(e);
       const classifiedFault =
         failure && failure.code !== "TURN_FAILED"
@@ -694,32 +800,45 @@ export class Runtime {
     } finally {
       this.capabilities.delete(token);
       try {
-        this.subject.finish(ctx, outcome);
-        if (ctx.turnId) {
-          await this.contexts.finish(ctx, outcome, backend);
-        }
-      } catch {
-        this.faults.set(agentId, "CONTEXT_FINALIZATION_FAILED");
-        if (ctx.turnId)
-          retireSession(mem, conversation, "finalization-failed", this.now(), {
-            turnId: ctx.turnId,
-            backendId: a.backendId,
+        try {
+          this.subject.finish(ctx, outcome);
+          if (ctx.turnId) await this.contexts.finish(ctx, outcome, backend);
+        } catch (error) {
+          this.faults.set(agentId, "CONTEXT_FINALIZATION_FAILED");
+          this.diagnostics.report(error, {
+            component: "runtime",
+            agentId,
+            conversation,
           });
+          if (ctx.turnId)
+            retireSession(
+              mem,
+              conversation,
+              "finalization-failed",
+              this.now(),
+              {
+                turnId: ctx.turnId,
+                backendId: a.backendId,
+              },
+            );
+        }
+        for (const reason of reasons)
+          if (reason.taskRunId)
+            this.scheduler.finish(agentId, reason.taskRunId, outcome);
+        // Allow the next queued wake to start; ctx.done still covers all finalization.
+        this.running.delete(runKey);
+        if (
+          !controller.signal.aborted &&
+          !this.closed &&
+          this.config.agents.some((a) => a.id === agentId) &&
+          conversation !== SUBJECT
+        )
+          this.conversations.finish(ctx);
       } finally {
         clearTimeout(timer);
-        this.running.delete(runKey);
+        if (this.running.get(runKey) === ctx) this.running.delete(runKey);
         resolveDone();
       }
-      for (const reason of reasons)
-        if (reason.taskRunId)
-          this.scheduler.finish(agentId, reason.taskRunId, outcome);
-      if (
-        !controller.signal.aborted &&
-        !this.closed &&
-        this.config.agents.some((a) => a.id === agentId) &&
-        conversation !== SUBJECT
-      )
-        this.conversations.finish(ctx);
     }
     return { status: outcome };
   }
@@ -763,7 +882,10 @@ export class Runtime {
       throw error;
     }
   }
-  async callTool(ctx, name, args = {}) {
+  callTool(...args) {
+    return this.trackWork(this.runTool(...args));
+  }
+  async runTool(ctx, name, args = {}) {
     const a = this.assertActive(ctx);
     for (const repo of privateGithubSources(ctx, this))
       ctx.privateRead.add(githubMarker(repo));
@@ -1121,6 +1243,7 @@ export class Runtime {
   }
   status() {
     return {
+      recentErrors: this.diagnostics.snapshot(),
       mode: this.config.mode,
       globalPaused: this.config.globalPaused,
       backends: this.backendConnections.list(),
@@ -1159,18 +1282,51 @@ export class Runtime {
         })),
     };
   }
-  async close() {
+  close() {
+    if (this.closing) return this.closing;
     this.closed = true;
     clearInterval(this.ticker);
-    await Promise.allSettled(this.config.agents.map((a) => this.cancel(a.id)));
-    for (const t of this.transports.values()) t.close();
-    await Promise.allSettled(
-      [...this.backends.values()].map((b) => b.close?.()),
-    );
-    await this.learner.close();
-    await this.backendConnections.drain();
-    await Promise.allSettled([...this.jobs]);
-    await this.lifecycle?.close();
+    this.closing = this.closeResources();
+    return this.closing;
+  }
+  async closeResources() {
+    let failures = 0;
+    const cleanup = async (fn) => {
+      try {
+        await fn();
+      } catch (error) {
+        failures++;
+        this.diagnostics.report(error, { component: "shutdown" });
+      }
+    };
+    // Include contexts belonging to an agent removed by a committed config edit.
+    for (const ctx of [...this.capabilities.values(), ...this.running.values()])
+      ctx.controller.abort();
+    this.capabilities.clear();
+    this.pending.clear();
+    // Pending handshakes cannot carry a delivery, and must settle before HTTP drains.
+    for (const id of this.connecting)
+      await cleanup(() => this.transports.get(id)?.close());
+    // Start backend close even if a cancel operation does not respond.
+    await Promise.all([
+      ...this.config.agents.map((a) => cleanup(() => this.cancel(a.id))),
+      ...[...this.backends.values()].map((b) => cleanup(() => b.close?.())),
+      cleanup(() => this.learner.close()),
+      cleanup(() => this.backendConnections.drain()),
+    ]);
+    while (this.jobs.size || this.work.size || this.sendChains.size)
+      await Promise.allSettled([
+        ...this.jobs,
+        ...this.work,
+        ...this.sendChains.values(),
+      ]);
+    for (const transport of this.transports.values())
+      await cleanup(() => transport.close());
+    for (const close of this.retiredResources) await cleanup(close);
+    this.retiredResources.clear();
+    await cleanup(() => this.lifecycle?.close());
+    this.stopped = true;
+    return { ok: failures === 0, failures };
   }
 }
 import {

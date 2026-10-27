@@ -80,6 +80,56 @@ test("OneBot reports a dropped websocket and can connect again", async (t) => {
   assert.equal(bot.connected, true);
   assert.deepEqual(faults, ["CONNECTION_LOST"]);
 });
+
+test("OneBot cancels a pending socket and ignores stale callbacks while persistently handling errors", async () => {
+  const sockets = [],
+    created = [];
+  class Socket extends EventEmitter {
+    constructor() {
+      super();
+      sockets.push(this);
+      created.shift()?.();
+    }
+    close() {
+      this.emit("close");
+    }
+  }
+  const bot = new OneBot(config(1).connections[0], {
+    WebSocketImpl: Socket,
+    fetchImpl: async (url) =>
+      new Response(
+        JSON.stringify({
+          status: "ok",
+          retcode: 0,
+          data: url.endsWith("get_login_info")
+            ? { user_id: 10000 }
+            : { online: true },
+        }),
+      ),
+  });
+  const opened = new Promise((resolve) => created.push(resolve));
+  const pending = bot.connect();
+  const cancelled = assert.rejects(pending, /CONNECTION_CANCELLED/);
+  await opened;
+  bot.close();
+  sockets[0].emit("open");
+  await cancelled;
+  assert.equal(bot.connected, false);
+  const nextSocket = new Promise((resolve) => created.push(resolve));
+  const next = bot.connect();
+  await nextSocket;
+  sockets[1].emit("open");
+  await next;
+  const faults = [];
+  bot.on("fault", (code) => faults.push(code));
+  sockets[1].emit("error", Error("synthetic first error"));
+  assert.equal(bot.connected, false);
+  assert.deepEqual(faults, ["ONEBOT_WS_ERROR"]);
+  assert.doesNotThrow(() =>
+    sockets[1].emit("error", Error("synthetic second error")),
+  );
+  bot.close();
+});
 test("OneBot refuses a different logged-in account before websocket connection", async (t) => {
   const { c } = await onebot(t, { account: 999 });
   const bot = new OneBot(c);
@@ -187,6 +237,34 @@ test("Docker lifecycle requires ownership label and never removes containers or 
     calls.filter((x) => x.args[0] !== "inspect").map((x) => x.args[0]),
     ["start", "stop"],
   );
+});
+
+test("native shutdown waits for exit after SIGKILL and reports a failed kill safely", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  for (const fails of [false, true]) {
+    const manager = new Lifecycle(temp(t));
+    const child = new EventEmitter();
+    child.exitCode = null;
+    child.kill = (signal) => {
+      if (signal === "SIGKILL" && fails) throw Error("synthetic kill failure");
+      return true;
+    };
+    manager.owned.set("synthetic", { type: "native", child });
+    let stopped = false;
+    const stopping = manager.stop("synthetic");
+    const result = fails
+      ? assert.rejects(stopping, /PROCESS_STOP_FAILED/)
+      : stopping.then(() => {
+          stopped = true;
+        });
+    assert.doesNotThrow(() => t.mock.timers.tick(5001));
+    await new Promise(setImmediate);
+    if (!fails) {
+      assert.equal(stopped, false);
+      child.emit("exit", null, "SIGKILL");
+    }
+    await result;
+  }
 });
 const png = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a/pkAAAAASUVORK5CYII=",

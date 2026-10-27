@@ -91,26 +91,47 @@ export class Lifecycle {
       this.owned.delete(id);
       return;
     }
-    await new Promise((resolve) => {
+    await new Promise((resolve, reject) => {
       const child = item.child;
-      if (child.exitCode !== null && child.exitCode !== undefined) {
+      if (
+        (child.exitCode !== null && child.exitCode !== undefined) ||
+        child.signalCode
+      ) {
         resolve();
         return;
       }
-      const timer = setTimeout(() => {
-        child.kill("SIGKILL");
-        resolve();
-      }, 5000);
-      child.once("exit", () => {
+      const finish = (error) => {
         clearTimeout(timer);
-        resolve();
-      });
-      child.kill("SIGTERM");
+        child.removeListener("exit", exited);
+        child.removeListener("error", failed);
+        if (error) reject(Error("PROCESS_STOP_FAILED", { cause: error }));
+        else resolve();
+      };
+      const exited = () => finish();
+      const failed = (error) => finish(error);
+      const kill = (signal) => {
+        try {
+          if (child.kill(signal) === false)
+            failed(Error("PROCESS_STOP_FAILED"));
+        } catch (error) {
+          failed(error);
+        }
+      };
+      // Sending SIGKILL is not proof of exit. The process-level deadline remains
+      // responsible for a child that never acknowledges either signal.
+      const timer = setTimeout(() => kill("SIGKILL"), 5000);
+      child.once("exit", exited);
+      child.once("error", failed);
+      kill("SIGTERM");
     });
     this.owned.delete(id);
     this.failures.delete(id);
   }
   async close() {
-    await Promise.allSettled([...this.owned.keys()].map((id) => this.stop(id)));
+    const results = await Promise.allSettled(
+      [...this.owned.keys()].map((id) => this.stop(id)),
+    );
+    const failure = results.find((r) => r.status === "rejected");
+    if (failure) throw Error("PROCESS_STOP_FAILED", { cause: failure.reason });
   }
 }

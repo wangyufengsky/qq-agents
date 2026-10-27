@@ -43,7 +43,21 @@ async function api(url, data, method) {
     ...(data ? { body: JSON.stringify(data) } : {}),
   });
   const value = await r.json();
-  if (!r.ok) throw Error(value.error || "请求失败");
+  if (!r.ok) {
+    const hint =
+      {
+        CONFIG_SAVE_FAILED:
+          "配置保存失败，当前配置和回合保持原状。请检查最近错误中的磁盘诊断。",
+        CONFIG_CONFLICT: "配置已变化，请刷新页面后重新核对修改。",
+        RUNTIME_CLOSING: "服务正在停止，请等待服务恢复后刷新。",
+        INTERNAL_ERROR: "服务内部故障，请查看概览中的最近错误。",
+      }[value.error] ||
+      value.error ||
+      "请求失败";
+    throw Error(
+      hint + (value.requestId ? `（关联 ID：${value.requestId}）` : ""),
+    );
+  }
   return value;
 }
 function notice(value) {
@@ -130,6 +144,21 @@ const icon = (name, cls = "") =>
 const meter = (ratio) =>
   `<svg class="meter" viewBox="0 0 100 4" preserveAspectRatio="none" aria-hidden="true"><rect class="track" width="100" height="4" rx="2"/><rect class="bar" width="${Math.max(0, Math.min(100, ratio * 100))}" height="4" rx="2"/></svg>`;
 const find = (type, id) => config[type].find((x) => x.id === id);
+function recentErrorsMarkup(query = "") {
+  const rows = (status.recentErrors || []).filter((r) =>
+    [r.code, r.component, r.requestId].some((v) =>
+      String(v).toLowerCase().includes(query.trim().toLowerCase()),
+    ),
+  );
+  return (
+    rows
+      .map(
+        (r) =>
+          `<div class="record"><strong>${esc(r.code)}</strong> ${tag(r.component)}<p>${esc(r.at)} · 累计 ${esc(r.count)} 次${r.cause ? " · 原因：" + esc(r.cause) : ""}</p><p class="mono">关联 ID：${esc(r.requestId)}</p></div>`,
+      )
+      .join("") || "<p>暂无匹配的错误记录。</p>"
+  );
+}
 function render() {
   renderGlobalPauseControl();
   const [title, subtitle] = titles[tab];
@@ -176,6 +205,13 @@ function render() {
       .join(
         "",
       )}</div><div class="section-title"><h2>角色状态</h2><button class="ghost" data-do="tab" data-id="agents">管理智能体${icon("arrow", "sm")}</button></div><div class="grid">${config.agents.map(agentCard).join("")}</div><div class="section-title"><h2>受限动作授权</h2>${tag("回忆发言由智能体自行判断", "accent")}</div><div class="card">${status.disclosureRequests.length ? status.disclosureRequests.map((r, i) => `<div class="record"><strong>${esc(find("agents", r.agentId)?.name)} → ${esc(r.conversation)}</strong><p>${r.records.length} 条资料涉及${r.reason === "external-service" ? "外部服务调用" : "本地运维内容"}。批准仅对当前回合、所示请求参数及资料集合有效。</p><p class="mono">${esc(r.records.join("\n"))}</p>${r.request ? `<pre>${esc(JSON.stringify(r.request, null, 2))}</pre><p>${esc(JSON.stringify(r.sourceClasses))}</p>` : ""}<button data-do="grant" data-id="${i}">批准本次披露</button></div>`).join("") : "<p>当前没有待批准的受限动作。</p>"}</div>`;
+    content.insertAdjacentHTML(
+      "beforeend",
+      `<div class="section-title"><h2>最近错误</h2></div><div class="card"><label>筛选错误码、组件或关联 ID<input id="error-filter" placeholder="例如 CONFIG_SAVE_FAILED、http"></label><p class="hint">最多保留本次启动的 50 类错误，同类重复错误合并计数；完整留存取决于服务日志配置。</p><div id="recent-errors">${recentErrorsMarkup()}</div></div>`,
+    );
+    $("#error-filter").oninput = (e) => {
+      $("#recent-errors").innerHTML = recentErrorsMarkup(e.target.value);
+    };
   } else if (["agents", "connections", "backends"].includes(tab)) {
     content.innerHTML = `<div class="section-title"><h2>${titles[tab][0]} · ${config[tab].length}</h2><button class="primary" data-do="add" data-id="${tab}">${icon("plus", "sm")}添加${{ agents: "智能体", connections: "实例", backends: "后端" }[tab]}</button></div><div class="grid">${config[tab].map(tab === "agents" ? agentCard : tab === "connections" ? connectionCard : backendCard).join("") || '<div class="card empty">添加第一个配置开始。</div>'}</div>`;
   } else if (tab === "apps") {
@@ -756,9 +792,11 @@ $("#edit-form").onsubmit = (e) => {
     $("#editor").close();
     await load();
     notice(
-      result.reconnectRequired
-        ? "已保存。QQ 连接需要手动重新接入。"
-        : "已保存并生效，现有 QQ 连接和回合保持不变。",
+      result.warnings?.length
+        ? "配置已保存，但运行态更新未完成。请查看最近错误，处理故障后恢复服务。"
+        : result.reconnectRequired
+          ? "已保存。QQ 连接需要手动重新接入。"
+          : "已保存并生效，现有 QQ 连接和回合保持不变。",
     );
   });
 };

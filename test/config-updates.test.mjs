@@ -5,6 +5,7 @@ import vm from "node:vm";
 import { randomBytes } from "node:crypto";
 import { fixture, config } from "./helpers.mjs";
 import { createServer } from "../src/server.mjs";
+import { ConfigStore } from "../src/core/config.mjs";
 
 function pendingTurn(t) {
   let finish;
@@ -35,6 +36,162 @@ async function httpConfig(t, f) {
       headers: { "x-admin-token": token, "content-type": "application/json" },
     });
 }
+
+for (const phase of ["writeFileSync", "renameSync"])
+  test(`failed configuration ${phase} leaves the current turn and permissions usable`, async (t) => {
+    const f = pendingTurn(t);
+    const before = fs.readFileSync(f.configStore.file, "utf8");
+    const revision = f.configStore.revision;
+    const next = structuredClone(f.runtime.config);
+    next.agents[0].allow.groups = [];
+    const original = fs[phase];
+    const fault = t.mock.method(fs, phase, (source, ...args) => {
+      const target = phase === "renameSync" ? args[0] : source;
+      if (
+        target === f.configStore.file ||
+        (typeof target === "string" &&
+          target.startsWith(f.configStore.file + ".") &&
+          target.endsWith(".tmp"))
+      )
+        throw Object.assign(Error("synthetic disk failure"), {
+          code: "ENOSPC",
+        });
+      return original(source, ...args);
+    });
+    try {
+      await assert.rejects(f.runtime.changeConfig(next, revision));
+      assert.equal(fs.readFileSync(f.configStore.file, "utf8"), before);
+      assert.equal(f.configStore.revision, revision);
+      assert.equal(f.runtime.capability(f.ctx.token), f.ctx);
+      assert.equal(f.ctx.controller.signal.aborted, false);
+      assert.equal(f.runtime.transports.get("qq-0").connected, true);
+    } finally {
+      fault.mock.restore();
+      f.finish();
+      await f.job;
+    }
+  });
+
+test("a stale page cannot overwrite a changed configuration after restart", (t) => {
+  const f = fixture(t);
+  const old = structuredClone(f.configStore.value);
+  const revision = f.configStore.revision;
+  const next = structuredClone(old);
+  next.agents[0].name = "Updated identity label";
+  f.configStore.save(next, revision);
+  const reopened = new ConfigStore(f.configStore.file, config());
+  assert.throws(() => reopened.save(old, revision), /CONFIG_CONFLICT/);
+  assert.equal(reopened.value.agents[0].name, "Updated identity label");
+  assert.equal(reopened.revision, f.configStore.revision);
+});
+
+test("invalid persisted configuration reports a safe actionable code without replacing the file", (t) => {
+  const f = fixture(t);
+  for (const [content, code] of [
+    ["{broken", "CONFIG_INVALID_JSON"],
+    ["{}", "CONFIG_SCHEMA_INVALID"],
+  ]) {
+    fs.writeFileSync(f.configStore.file, content);
+    assert.throws(
+      () => new ConfigStore(f.configStore.file, config()),
+      new RegExp(code),
+    );
+    assert.equal(fs.readFileSync(f.configStore.file, "utf8"), content);
+  }
+});
+
+test("a successful disk commit is reported as saved even if backend cleanup fails", async (t) => {
+  const f = pendingTurn(t);
+  f.runtime.learner.backends.set("agent-0", {
+    close: async () => {
+      throw Error("synthetic learner teardown failure");
+    },
+  });
+  f.runtime.backends.get("agent-0").close = async () => {
+    throw Error("synthetic backend teardown failure");
+  };
+  const next = structuredClone(f.runtime.config);
+  next.agents[0].name = "Saved identity label";
+  const result = await f.runtime.changeConfig(next, f.configStore.revision);
+  f.finish();
+  await f.job;
+  assert.equal(result.saved, true);
+  assert.equal(result.reconnectRequired, true);
+  assert.deepEqual(result.warnings, ["CONFIG_RECONFIGURE_FAILED"]);
+  assert.equal(
+    f.runtime.learner.backends.size,
+    0,
+    "the new config must not reuse a failed old learner backend",
+  );
+  assert.equal(
+    new ConfigStore(f.configStore.file).value.agents[0].name,
+    "Saved identity label",
+  );
+  assert.throws(() => f.runtime.capability(f.ctx.token), /INVALID_CAPABILITY/);
+});
+
+test("a committed interval change reports saved with a warning when state synchronization fails", async (t) => {
+  const f = fixture(t);
+  const next = structuredClone(f.runtime.config);
+  next.agents[0].subject.intervalMs += 1000;
+  const bind = f.store.bind.bind(f.store);
+  const fault = t.mock.method(f.store, "bind", (id) => {
+    const m = bind(id);
+    m.setState = () => {
+      throw Object.assign(Error("synthetic disk full"), { code: "ENOSPC" });
+    };
+    return m;
+  });
+  try {
+    const result = await f.runtime.changeConfig(next, f.configStore.revision);
+    assert.equal(result.saved, true);
+    assert.deepEqual(result.warnings, ["CONFIG_RECONFIGURE_FAILED"]);
+    assert.equal(
+      new ConfigStore(f.configStore.file).value.agents[0].subject.intervalMs,
+      next.agents[0].subject.intervalMs,
+    );
+  } finally {
+    fault.mock.restore();
+  }
+});
+
+test("a committed configuration blocks new work until old resources finish closing", async (t) => {
+  const f = fixture(t);
+  const closing = Promise.withResolvers();
+  const started = Promise.withResolvers();
+  f.runtime.backends.set("agent-0", {
+    close: async () => {
+      started.resolve();
+      await closing.promise;
+    },
+  });
+  const next = structuredClone(f.runtime.config);
+  next.agents[0].name = "Updated";
+  const save = f.runtime.changeConfig(next, f.configStore.revision);
+  await started.promise;
+  try {
+    assert.throws(
+      () => f.runtime.makeContext("agent-0", "group:20000"),
+      /CONFIG_CONFLICT/,
+    );
+    await assert.rejects(
+      f.runtime.wake("agent-0", "group:20000"),
+      /AGENT_PAUSED/,
+    );
+    await assert.rejects(f.runtime.startConnection("qq-0"), /CONFIG_CONFLICT/);
+    await assert.rejects(
+      f.runtime.backendConnections.handle({
+        id: "fixture",
+        action: "settings",
+        autoReconnect: true,
+      }),
+      /CONFIG_CONFLICT/,
+    );
+  } finally {
+    closing.resolve();
+    await save;
+  }
+});
 
 test("participation saves retain transports, active capabilities and sessions, including managed QQ", async (t) => {
   const f = pendingTurn(t);

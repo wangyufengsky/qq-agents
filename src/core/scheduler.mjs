@@ -426,8 +426,16 @@ export class TaskScheduler {
         this.runNow(a.id, cmd.id, archived.id);
         text = "执行请求已登记，请查看执行记录；此确认不代表已投递。";
       }
-    } catch {
-      text = "定时命令未成功，请在管理台检查规则、白名单和状态。";
+    } catch (error) {
+      const failure = this.runtime.diagnostics.report(error, {
+        component: "scheduler",
+        agentId: a.id,
+        conversation: e.conversation,
+      });
+      text =
+        failure.status >= 500
+          ? "定时操作遇到系统故障，请在管理台查看最近错误。"
+          : "定时命令未成功，请在管理台检查规则、白名单和状态。";
     }
     await this.runtime.withContext(a.id, e.conversation, (ctx) =>
       this.runtime.send(ctx, {

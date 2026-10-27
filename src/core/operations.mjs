@@ -363,8 +363,16 @@ export class Operations {
         await this.confirm(a.id, e.conversation, p.id, confirm[1], confirm[2]);
         text = "已执行确认的请求，详情可在管理台查看。";
       }
-    } catch {
-      text = "请求未通过，请检查权限、确认有效期和动态码。";
+    } catch (error) {
+      const failure = this.runtime.diagnostics.report(error, {
+        component: "operations",
+        agentId: a.id,
+        conversation: e.conversation,
+      });
+      text =
+        failure.status >= 500
+          ? "执行遇到系统故障，请在管理台查看最近错误。"
+          : "请求未通过，请检查权限、确认有效期和动态码。";
     }
     await this.runtime.withContext(a.id, e.conversation, (ctx) =>
       this.runtime.send(

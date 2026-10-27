@@ -156,13 +156,38 @@ export class OneBot extends EventEmitter {
         handshakeTimeout: 5000,
       });
       this.socket = socket;
+      let settled = false;
+      const current = () =>
+        !this.closed && epoch === this.epoch && this.socket === socket;
+      const settle = (error) => {
+        if (settled) return;
+        settled = true;
+        if (this.cancelConnect === cancel) this.cancelConnect = null;
+        if (error) reject(error);
+        else resolve();
+      };
+      const cancel = () => settle(Error("CONNECTION_CANCELLED"));
+      this.cancelConnect = cancel;
       socket.once("open", () => {
+        if (!current()) {
+          cancel();
+          return;
+        }
         this.connected = true;
         this.emit("status");
-        resolve();
+        settle();
       });
-      socket.once("error", () => reject(Error("ONEBOT_WS_ERROR")));
+      socket.on("error", () => {
+        if (!current()) return;
+        const opened = this.connected;
+        this.connected = false;
+        settle(Error("ONEBOT_WS_ERROR"));
+        if (opened) this.emit("fault", "ONEBOT_WS_ERROR");
+        this.emit("status");
+        socket.close();
+      });
       socket.on("message", (data) => {
+        if (!current()) return;
         try {
           const raw = JSON.parse(data.toString());
           if (String(raw.self_id) !== this.config.accountId)
@@ -176,7 +201,8 @@ export class OneBot extends EventEmitter {
       });
       socket.on("close", () => {
         // A socket replaced by close()/connect() must not mark the newer connection as down.
-        if (this.socket !== socket) return;
+        if (!current()) return;
+        settle(Error("CONNECTION_CANCELLED"));
         const wasConnected = this.connected;
         this.connected = false;
         this.socket = null;
@@ -237,6 +263,7 @@ export class OneBot extends EventEmitter {
   close() {
     this.closed = true;
     this.epoch++;
+    this.cancelConnect?.();
     this.connected = false;
     this.socket?.close();
     this.socket = null;

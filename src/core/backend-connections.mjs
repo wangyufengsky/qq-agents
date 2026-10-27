@@ -82,6 +82,7 @@ export class BackendConnections {
   }
   adapter(a) {
     if (this.runtime.closed) throw Error("BACKEND_RECOVERY_FAILED");
+    if (this.runtime.configChanging) throw Error("CONFIG_CONFLICT");
     let b = this.runtime.backends.get(a.id);
     if (!b) {
       const config = this.config(a.backendId);
@@ -161,6 +162,8 @@ export class BackendConnections {
     return this.snapshot(id);
   }
   single(id, key, fn) {
+    if (this.runtime.closed) throw Error("RUNTIME_CLOSING");
+    if (this.runtime.configChanging) throw Error("CONFIG_CONFLICT");
     const pending = this.operations.get(id);
     if (pending) {
       if (pending.key !== key) throw Error("BACKEND_OPERATION_IN_PROGRESS");
@@ -263,6 +266,7 @@ export class BackendConnections {
       config = this.config(args.id),
       r = this.runtime;
     if (r.closed) throw Error("BACKEND_RECOVERY_FAILED");
+    if (r.configChanging) throw Error("CONFIG_CONFLICT");
     if (r.config.mode !== "live") throw Error("ISOLATED_MODE");
     if (args.action === "discover") {
       if (config.type !== "dsh") throw Error("DSH_BACKEND_REQUIRED");

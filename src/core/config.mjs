@@ -7,7 +7,7 @@ import {
   subjectPolicySchema,
 } from "./mind-policy.mjs";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
   behaviorSchema,
@@ -276,21 +276,46 @@ export function atomicJSON(file, value) {
     if (fs.existsSync(temp)) fs.unlinkSync(temp);
   }
 }
+const configRevision = (value) =>
+  createHash("sha256").update(JSON.stringify(value)).digest("hex");
+function readConfig(file) {
+  let text, input;
+  try {
+    text = fs.readFileSync(file, "utf8");
+  } catch (cause) {
+    throw Error("CONFIG_READ_FAILED", { cause });
+  }
+  try {
+    input = JSON.parse(text);
+  } catch (cause) {
+    throw Error("CONFIG_INVALID_JSON", { cause });
+  }
+  try {
+    return validateConfig(input);
+  } catch (cause) {
+    throw Error("CONFIG_SCHEMA_INVALID", { cause });
+  }
+}
 export class ConfigStore {
   constructor(file, initial) {
     this.file = file;
-    this.value = validateConfig(
-      fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : initial,
-    );
-    this.revision = 0;
+    this.value = fs.existsSync(file)
+      ? readConfig(file)
+      : validateConfig(initial);
+    // Derived from the persisted configuration, never reset by a process restart.
+    this.revision = configRevision(this.value);
     if (!fs.existsSync(file)) atomicJSON(file, this.value);
   }
   save(next, revision) {
     if (revision !== this.revision) throw Error("CONFIG_CONFLICT");
     const c = validateConfig(next);
-    atomicJSON(this.file, c);
+    try {
+      atomicJSON(this.file, c);
+    } catch (cause) {
+      throw Error("CONFIG_SAVE_FAILED", { cause });
+    }
     this.value = c;
-    this.revision++;
+    this.revision = configRevision(c);
     return this.value;
   }
 }

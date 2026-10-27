@@ -226,6 +226,7 @@ export class SlangLearner {
         callTool: (name, args) => runtime.callTool(ctx, name, args),
         session,
         saveSession: (session) =>
+          !runtime.stopped &&
           saveSession(mem, scope, session, {
             turnId: ctx.turnId,
             backendId: a.backendId,
@@ -236,7 +237,7 @@ export class SlangLearner {
               : "backend-failure",
           }),
         onBackendTurn: (reference) =>
-          recordBackendTurn(mem, ctx.turnId, reference),
+          !runtime.stopped && recordBackendTurn(mem, ctx.turnId, reference),
       });
       runtime.assertActive(ctx);
       if (a.slang.autoResearch)
@@ -297,9 +298,13 @@ export class SlangLearner {
     }
   }
   async close() {
-    await Promise.allSettled(
-      [...this.backends.values()].map((b) => b.close?.()),
+    const results = await Promise.allSettled(
+      [...this.backends].map(async ([id, b]) => {
+        await b.close?.();
+        if (this.backends.get(id) === b) this.backends.delete(id);
+      }),
     );
-    this.backends.clear();
+    const failure = results.find((r) => r.status === "rejected");
+    if (failure) throw Error("BACKEND_CLOSE_FAILED", { cause: failure.reason });
   }
 }

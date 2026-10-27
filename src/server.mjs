@@ -1,4 +1,5 @@
 import { scopedCatalog } from "./tools/catalog.mjs";
+import { randomUUID } from "node:crypto";
 import { saveGithubCredential } from "./github/credentials.mjs";
 import { shareList, cancelShare } from "./apps/sharing.mjs";
 import { appService } from "./apps/tools.mjs";
@@ -22,7 +23,11 @@ async function body(req, maxBytes = 1024 * 1024) {
     if (bytes > maxBytes) throw Error("BODY_TOO_LARGE");
     chunks.push(chunk);
   }
-  return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+  } catch (cause) {
+    throw Error("INVALID_JSON_BODY", { cause });
+  }
 }
 export function createServer({
   runtime,
@@ -30,12 +35,25 @@ export function createServer({
   allowLive = false,
   githubSecretFile,
 }) {
-  const server = http.createServer(async (req, res) => {
+  let stopping = false,
+    closing;
+  const requests = new Set();
+  const handle = async (req, res) => {
+    const requestId = randomUUID(),
+      startedAt = Date.now();
     const send = (data, status = 200) => {
+      if (res.destroyed || res.writableEnded) return;
+      if (res.headersSent) {
+        res.destroy();
+        return;
+      }
+      if (status >= 400)
+        data = { ...data, requestId, retryable: data.retryable ?? false };
       res.writeHead(status, {
         "content-type": "application/json; charset=utf-8",
         "cache-control": "no-store",
         "x-content-type-options": "nosniff",
+        "x-request-id": requestId,
       });
       res.end(JSON.stringify(data));
     };
@@ -53,8 +71,14 @@ export function createServer({
       return send({ error: "CROSS_ORIGIN" }, 403);
     if (req.headers["sec-fetch-site"] === "cross-site")
       return send({ error: "CROSS_SITE" }, 403);
-    const url = new URL(req.url, "http://" + req.headers.host);
+    const readBody = async (limit) => {
+      const data = await body(req, limit);
+      if (stopping || runtime.closed) throw Error("RUNTIME_CLOSING");
+      return data;
+    };
     try {
+      if (stopping || runtime.closed) throw Error("RUNTIME_CLOSING");
+      const url = new URL(req.url, "http://" + req.headers.host);
       if (
         req.method === "GET" &&
         [
@@ -88,8 +112,15 @@ export function createServer({
         const ctx = runtime.capability(req.headers["x-agent-capability"]);
         if (req.method !== "POST") return send({ error: "METHOD" }, 405);
         try {
-          return send(mcpResult(scopedCatalog(runtime, ctx, await body(req))));
+          return send(mcpResult(scopedCatalog(runtime, ctx, await readBody())));
         } catch (e) {
+          runtime.diagnostics.report(e, {
+            component: "http",
+            requestId,
+            agentId: ctx.agentId,
+            conversation: ctx.conversation,
+            durationMs: Date.now() - startedAt,
+          });
           return send({
             isError: true,
             content: [
@@ -101,12 +132,19 @@ export function createServer({
       if (url.pathname === "/agent/tools") {
         const ctx = runtime.capability(req.headers["x-agent-capability"]);
         if (req.method !== "POST") return send({ error: "METHOD" }, 405);
-        const data = await body(req);
+        const data = await readBody();
         try {
           return send(
             mcpResult(await runtime.callTool(ctx, data.name, data.arguments)),
           );
         } catch (e) {
+          runtime.diagnostics.report(e, {
+            component: "http",
+            requestId,
+            agentId: ctx.agentId,
+            conversation: ctx.conversation,
+            durationMs: Date.now() - startedAt,
+          });
           return send({
             isError: true,
             content: [
@@ -118,7 +156,7 @@ export function createServer({
       if (!equal(req.headers["x-admin-token"], token))
         return send({ error: "UNAUTHORIZED" }, 401);
       if (req.method === "POST" && url.pathname === "/api/github/credential") {
-        const data = await body(req, 4096);
+        const data = await readBody(4096);
         const agent = runtime.agent(data.agentId);
         if (agent.github.auth !== "token")
           throw Error("GITHUB_TOKEN_AUTH_REQUIRED");
@@ -171,7 +209,7 @@ export function createServer({
         });
       }
       if (req.method === "POST" && url.pathname === "/api/self") {
-        const data = await body(req),
+        const data = await readBody(),
           a = runtime.agent(data.agentId),
           m = runtime.memory.bind(a.id);
         if (
@@ -206,7 +244,7 @@ export function createServer({
         );
       }
       if (req.method === "POST" && url.pathname === "/api/intent/cancel") {
-        const data = await body(req),
+        const data = await readBody(),
           a = runtime.agent(data.agentId),
           m = runtime.memory.bind(a.id),
           i = m.identity.get("intentions", data.id);
@@ -230,7 +268,7 @@ export function createServer({
       if (req.method === "GET" && url.pathname === "/api/status")
         return send({ ...runtime.status(), allowLive });
       if (req.method === "PUT" && url.pathname === "/api/permissions/apps") {
-        const data = await body(req);
+        const data = await readBody();
         return send(
           await runtime.changeAppPermissions(
             data.agentId,
@@ -256,7 +294,7 @@ export function createServer({
         });
       }
       if (req.method === "POST" && url.pathname === "/api/apps/cancel") {
-        const data = await body(req);
+        const data = await readBody();
         runtime.agent(data.agentId);
         return send(
           await cancelShare(
@@ -268,12 +306,12 @@ export function createServer({
         );
       }
       if (req.method === "POST" && url.pathname === "/api/apps/probe") {
-        const data = await body(req);
+        const data = await readBody();
         runtime.agent(data.agentId);
         return send(await appService(runtime).probe(data.platform));
       }
       if (req.method === "PUT" && url.pathname === "/api/permissions/files") {
-        const data = await body(req);
+        const data = await readBody();
         return send(
           await runtime.changeFilePermissions(
             data.agentId,
@@ -293,7 +331,7 @@ export function createServer({
         );
       }
       if (req.method === "POST" && url.pathname === "/api/files/import") {
-        const data = await body(req, 70 * 1024 * 1024),
+        const data = await readBody(70 * 1024 * 1024),
           a = runtime.agent(data.agentId);
         if (
           typeof data.base64 !== "string" ||
@@ -341,7 +379,7 @@ export function createServer({
         });
       }
       if (req.method === "POST" && url.pathname === "/api/schedules") {
-        const data = await body(req),
+        const data = await readBody(),
           id = data.agentId;
         runtime.agent(id);
         if (data.action === "preview")
@@ -386,7 +424,7 @@ export function createServer({
         );
       }
       if (req.method === "POST" && url.pathname === "/api/voices/import") {
-        const data = await body(req, 29 * 1024 * 1024),
+        const data = await readBody(29 * 1024 * 1024),
           a = runtime.agent(data.agentId);
         if (
           typeof data.base64 !== "string" ||
@@ -417,7 +455,7 @@ export function createServer({
       if (req.method === "GET" && url.pathname === "/api/operations")
         return send(runtime.operations.snapshot());
       if (req.method === "POST" && url.pathname === "/api/operations") {
-        const data = await body(req);
+        const data = await readBody();
         if (data.action === "revoke") {
           runtime.operations.revoke(data.agentId);
           return send({ level: "L0" });
@@ -445,7 +483,7 @@ export function createServer({
         );
       }
       if (req.method === "POST" && url.pathname === "/api/slang") {
-        const data = await body(req);
+        const data = await readBody();
         return send(
           runtime.learner.review(
             data.agentId,
@@ -462,7 +500,7 @@ export function createServer({
           tools: TOOL_NAMES,
         });
       if (req.method === "PUT" && url.pathname === "/api/config") {
-        const data = await body(req);
+        const data = await readBody();
         if (data.config?.mode === "live" && !allowLive)
           throw Error("RESTART_WITH_LIVE_FLAG_REQUIRED");
         const result = await runtime.changeConfig(data.config, data.revision);
@@ -473,12 +511,12 @@ export function createServer({
         });
       }
       if (req.method === "POST" && url.pathname === "/api/pause") {
-        const data = await body(req);
+        const data = await readBody();
         if (typeof data.paused !== "boolean") throw Error("INVALID_PAUSE");
         return send(await runtime.pause(data.agentId || "all", data.paused));
       }
       if (req.method === "POST" && url.pathname === "/api/connection") {
-        const data = await body(req);
+        const data = await readBody();
         if (!["connect", "disconnect"].includes(data.action))
           throw Error("INVALID_ACTION");
         if (data.action === "connect") {
@@ -491,7 +529,7 @@ export function createServer({
       if (req.method === "POST" && url.pathname === "/api/process") {
         if (!allowLive || runtime.config.mode !== "live")
           throw Error("ISOLATED_MODE");
-        const data = await body(req);
+        const data = await readBody();
         if (!runtime.lifecycle) throw Error("LIFECYCLE_UNAVAILABLE");
         const c = runtime.connection(data.id);
         if (data.action === "start") {
@@ -506,7 +544,7 @@ export function createServer({
       if (req.method === "POST" && url.pathname === "/api/models") {
         if (!allowLive || runtime.config.mode !== "live")
           throw Error("ISOLATED_MODE");
-        const data = await body(req),
+        const data = await readBody(),
           a = runtime.agent(data.agentId),
           b = runtime.config.backends.find((b) => b.id === a.backendId);
         const existing = runtime.backends.get(a.id),
@@ -520,19 +558,19 @@ export function createServer({
       if (req.method === "POST" && url.pathname === "/api/backend") {
         if (!allowLive || runtime.config.mode !== "live")
           throw Error("ISOLATED_MODE");
-        return send(await runtime.backendConnections.handle(await body(req)));
+        return send(await runtime.backendConnections.handle(await readBody()));
       }
       if (req.method === "POST" && url.pathname === "/api/disclosure") {
-        const data = await body(req);
+        const data = await readBody();
         return send(runtime.grant(data.token, data.ids, data.requestId));
       }
       if (req.method === "POST" && url.pathname === "/api/session/reset") {
-        const data = await body(req);
+        const data = await readBody();
         await runtime.resetSession(data.agentId, data.conversation);
         return send({ ok: true });
       }
       if (req.method === "POST" && url.pathname === "/api/conversation/state") {
-        const data = await body(req);
+        const data = await readBody();
         runtime.agent(data.agentId);
         if (
           !/^(group|private):\d+$/.test(data.conversation) ||
@@ -621,15 +659,25 @@ export function createServer({
       }
       send({ error: "NOT_FOUND" }, 404);
     } catch (e) {
+      const failure = runtime.diagnostics.report(e, {
+        component: "http",
+        requestId,
+        durationMs: Date.now() - startedAt,
+      });
       send(
-        { error: code(e) },
-        e.message === "CONFIG_CONFLICT"
-          ? 409
-          : e.message === "BODY_TOO_LARGE"
-            ? 413
-            : 400,
+        { error: failure.code, requestId, retryable: failure.retryable },
+        failure.status,
       );
     }
+  };
+  const server = http.createServer((req, res) => {
+    const job = handle(req, res).catch((error) => {
+      runtime.diagnostics.report(error, { component: "http" });
+      res.destroy();
+    });
+    requests.add(job);
+    runtime.trackWork(job);
+    job.then(() => requests.delete(job));
   });
   server.requestTimeout = 15000;
   server.headersTimeout = 10000;
@@ -641,14 +689,16 @@ export function createServer({
         server.listen(port, "127.0.0.1", () => resolve(server.address().port));
       });
     },
-    async close() {
+    close() {
+      if (closing) return closing;
+      stopping = true;
+      const stopped = new Promise((resolve) => server.close(resolve));
       server.closeAllConnections();
-      await new Promise((r) => server.close(r));
+      closing = (async () => {
+        await stopped;
+        while (requests.size) await Promise.allSettled([...requests]);
+      })();
+      return closing;
     },
   };
-}
-function code(e) {
-  return /^[A-Z][A-Z0-9_:-]{0,100}$/.test(e.message || "")
-    ? e.message
-    : "INVALID_REQUEST_OR_OPERATION_FAILED";
 }

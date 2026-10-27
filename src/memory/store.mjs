@@ -101,6 +101,14 @@ export class MemoryStore {
   close() {
     this.db.close();
   }
+  interruptDeliveries() {
+    // Called only at the process exit boundary; confirmed receipts never regress.
+    return this.db
+      .prepare(
+        "UPDATE deliveries SET status='unknown',updated_at=? WHERE status='pending'",
+      )
+      .run(now());
+  }
   transaction(fn) {
     this.db.exec("BEGIN IMMEDIATE");
     try {
