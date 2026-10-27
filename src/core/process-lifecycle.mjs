@@ -24,7 +24,9 @@ export function acquireProcessLock(root) {
         const current = fs.lstatSync(file);
         if (current.dev === stat.dev && current.ino === stat.ino)
           fs.unlinkSync(file);
-      } catch {}
+      } catch {
+        // Best-effort cleanup; the original failure is thrown below.
+      }
     }
     throw Error(
       cause.code === "EEXIST"

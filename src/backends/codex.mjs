@@ -190,7 +190,9 @@ export class CodexBackend {
             { type: "inputText", text: JSON.stringify(safeToolFailure(error)) },
           ],
         });
-      } catch {}
+      } catch {
+        // The app-server may already be gone; nothing more to report.
+      }
     }
   }
   sessionSignature(tools) {

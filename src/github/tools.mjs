@@ -16,6 +16,7 @@ const query = z
   .max(200)
   .refine(
     (s) =>
+      // eslint-disable-next-line no-control-regex -- deliberately rejects control characters
       !/(?:^|\s)-?(?:repo|org|user|is|visibility):|\b(?:OR|NOT)\b|[\x00-\x1f()]/i.test(
         s,
       ),
@@ -150,6 +151,7 @@ async function client(runtime, ctx, policy) {
       return JSON.parse(Buffer.concat(chunks).toString("utf8"));
     } catch (error) {
       await reader.cancel().catch(() => {});
+      // eslint-disable-next-line preserve-caught-error -- only the sanitized GITHUB_* code may leave; the response/parse error must not.
       throw Error(
         error.message === "GITHUB_RESPONSE_TOO_LARGE"
           ? error.message
@@ -226,6 +228,7 @@ export async function githubTool(runtime, ctx, name, args) {
     (args.path.startsWith("/") ||
       args.path.includes("\\") ||
       args.path.split("/").some((part) => part === ".." || part === ".") ||
+      // eslint-disable-next-line no-control-regex -- deliberately rejects control characters
       /[\x00-\x1f]/.test(args.path))
   )
     throw Error("GITHUB_PATH_INVALID");

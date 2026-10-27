@@ -2,7 +2,6 @@ import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { setTimeout as delay } from "node:timers/promises";
 import { ownedEvent, readForward, forwardPayload } from "./forward.mjs";
-import { mdToPlain } from "../../vendor/dsh-qq/md-to-plain.js";
 import { safeFetchBuffer } from "../../vendor/social-reader/safe-fetch.js";
 import { modelScheduleSchema } from "./schedule-schema.mjs";
 import { safeToolFailure } from "./errors.mjs";

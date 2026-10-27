@@ -69,6 +69,7 @@ export function fileName(value) {
     typeof value !== "string" ||
     !value.trim() ||
     Buffer.byteLength(value) > 200 ||
+    // eslint-disable-next-line no-control-regex -- deliberately rejects control characters
     /[\\/\x00-\x1f\x7f<>:"|?*\u202a-\u202e\u2066-\u2069]/.test(value) ||
     value.startsWith(".") ||
     /[. ]$/.test(value)
@@ -134,7 +135,7 @@ export class FileStore {
       bytes = readRegular(path.join(dir, fileId + ".json"), 256 * 1024);
     } catch (error) {
       if (error.message === "FILE_TOO_LARGE")
-        throw Error("FILE_METADATA_CORRUPT");
+        throw Error("FILE_METADATA_CORRUPT", { cause: error });
       throw fileError(error, "FILE_NOT_FOUND");
     }
     try {
@@ -252,7 +253,7 @@ export class FileStore {
       if (e.message !== "FILE_NOT_FOUND") throw e;
       try {
         fs.lstatSync(path.join(dir, fileId + ".bin"));
-        throw Error("FILE_METADATA_MISSING");
+        throw Error("FILE_METADATA_MISSING", { cause: e });
       } catch (error) {
         if (error.code !== "ENOENT") throw error;
       }

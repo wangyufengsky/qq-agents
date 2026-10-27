@@ -78,7 +78,9 @@ export async function discoverDshInstances({
   let profiles = [];
   try {
     profiles = await fs.readdir(base);
-  } catch {}
+  } catch {
+    // No relay plugin directory: no profiles to discover.
+  }
   for (const profile of profiles.sort()) {
     if (!/^[a-zA-Z0-9_-]{1,64}$/.test(profile)) continue;
     try {
