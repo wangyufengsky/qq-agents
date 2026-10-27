@@ -29,6 +29,7 @@ const titles = {
   voices: ["语音库", "导入、试听和管理每个角色自己的语音素材。"],
   operations: ["词汇与运维", "核对黑话候选，逐项确认管理员操作。"],
   overview: ["概览", "在一个地方，照看每个独立的 AI。"],
+  activity: ["动态", "每个角色最近做了什么：聊天回复、空闲时间、浏览与日记。"],
   agents: ["角色", "人格与经历归属于稳定身份，切换后端也能延续。"],
   connections: ["QQ 账号", "每个 QQ 账号独立连接，启停连接不影响登录数据。"],
   backends: ["AI 后端", "管理 DSH、Codex 与各自的模型和工具。"],
@@ -359,6 +360,8 @@ function render() {
     };
   } else if (["agents", "connections", "backends"].includes(tab)) {
     content.innerHTML = `<div class="section-title"><h2>${titles[tab][0]} · ${config[tab].length}</h2><button class="primary" data-do="add" data-id="${tab}">${icon("plus", "sm")}添加${{ agents: "角色", connections: "实例", backends: "后端" }[tab]}</button></div><div class="grid">${config[tab].map(tab === "agents" ? agentCard : tab === "connections" ? connectionCard : backendCard).join("") || '<div class="card empty">添加第一个配置开始。</div>'}</div>`;
+  } else if (tab === "activity") {
+    renderActivity();
   } else if (tab === "apps") {
     renderApps();
   } else if (tab === "permissions") {

@@ -1429,3 +1429,48 @@ details > form > button {
     padding-left: 34px;
   }
 }
+.act-filters {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.act-entry {
+  border-top: 1px solid var(--line);
+  padding: 14px 0;
+}
+.act-entry:first-child {
+  border-top: 0;
+}
+.act-entry .row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+}
+.act-entry > p {
+  margin: 6px 0 0;
+}
+.act-entry.quiet strong,
+.act-entry.quiet > p {
+  color: var(--muted);
+}
+.act-box {
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--panel-2, rgba(255, 255, 255, 0.03));
+}
+.act-box p {
+  margin: 2px 0;
+}
+.act-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 0;
+}
+.act-more summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.9em;
+}

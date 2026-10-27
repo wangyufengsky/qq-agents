@@ -14,6 +14,7 @@ import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { mcpResult, TOOL_NAMES } from "./tools/index.mjs";
 import { readiness } from "./core/readiness.mjs";
+import { activityPage } from "./core/activity.mjs";
 const publicDir = fileURLToPath(new URL("../public/", import.meta.url));
 // Free-time log and 24-hour activity for the console; no message bodies.
 function subjectActivity(m, agentId, now) {
@@ -161,6 +162,7 @@ export function createServer({
           "/apps-ui.js",
           "/mind-ui.js",
           "/onboarding-ui.js",
+          "/activity-ui.js",
           "/style.css",
           "/agent-form.css",
         ].includes(url.pathname)
@@ -362,6 +364,22 @@ export function createServer({
             "cancelled",
             "administrator cancellation",
           ),
+        );
+      }
+      if (req.method === "GET" && url.pathname === "/api/activity") {
+        const a = runtime.agent(url.searchParams.get("agentId"));
+        const filter = url.searchParams.get("filter") || "all";
+        if (!["all", "subject", "chat", "browse"].includes(filter))
+          throw Error("INVALID_ACTIVITY_FILTER");
+        const before = Number(url.searchParams.get("before"));
+        return send(
+          activityPage(runtime.memory, a.id, {
+            filter,
+            before:
+              Number.isSafeInteger(before) && before > 0 ? before : undefined,
+            limit: 20,
+            now: runtime.now(),
+          }),
         );
       }
       if (req.method === "GET" && url.pathname === "/api/deliveries") {
