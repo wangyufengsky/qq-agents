@@ -77,7 +77,10 @@ async function setup(t) {
   let tick;
   const sandbox = vm.createContext({
     document,
-    sessionStorage: { getItem: () => "test-admin" },
+    // No stored token: app.js would otherwise start its own unawaited
+    // action(load) at startup, whose late render() could land after a test
+    // swaps render(). The fetch wrapper below authenticates every request.
+    sessionStorage: { getItem: () => "" },
     setInterval: (fn) => (tick = fn),
     setTimeout() {},
     clearTimeout() {},
