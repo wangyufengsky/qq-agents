@@ -43,7 +43,7 @@ const fieldInputs = {
   "allow.groups": "groups",
   "allow.users": "users",
   "wake.participation": "participation",
-  "wake.cooldownMs": "cooldownMs",
+  "wake.cooldownMs": "cooldownSeconds",
   "network.autonomous": "autonomousNetwork",
   "network.publicUrls": "publicUrls",
   "github.enabled": "githubEnabled",
@@ -90,6 +90,13 @@ function fieldErrorHint(fields) {
     if (!named.includes(label || path)) named.push(label || path);
   }
   if (first) {
+    // The agent editor keeps fields in collapsible sections; reveal the field.
+    for (
+      let d = first.closest("details");
+      d;
+      d = d.parentElement?.closest("details")
+    )
+      d.open = true;
     first.scrollIntoView({ block: "center" });
     first.focus({ preventScroll: true });
   }
@@ -796,108 +803,12 @@ function openEditor(type, id) {
     id ? "readonly" : 'required pattern="[a-z][a-z0-9_-]{0,63}"',
   );
   if (type === "agents") {
-    html +=
-      input("name", "角色名称", row.name, "required") +
-      select(
-        "connectionId",
-        "QQ 实例",
-        row.connectionId,
-        config.connections.map((c) => [c.id, c.label]),
-      ) +
-      select(
-        "backendId",
-        "AI 后端",
-        row.backendId,
-        config.backends.map((c) => [c.id, c.label]),
-      ) +
-      input("model", "模型（空白则继承后端）", row.model) +
-      input("effort", "思考强度（空白则继承）", row.effort) +
-      area(
-        "appearance",
-        "固定外形（无固定外形时请明确填写）",
-        row.appearance || "",
-      ) +
-      area(
-        "persona",
-        "初始化模板（仅建立首版 self；已有 self 请在专页编辑）",
-        row.persona || "",
-      ) +
-      input(
-        "maxConsecutiveSends",
-        "每批连续回复上限（读到人类新消息后恢复）",
-        row.maxConsecutiveSends ?? row.maxSendsPerTurn,
-        'type="number" min="1" max="10" required',
-      ) +
-      area(
-        "publicUrls",
-        "允许随时读取的精确公开 URL（每行一个，不含私密参数）",
-        (row.network?.publicUrls || []).join("\n"),
-      ) +
-      check(
-        "autonomousNetwork",
-        "允许自主搜索与联网浏览（无需命令或逐次确认）",
-        row.network?.autonomous,
-      ) +
-      '<p class="hint">允许自行整理查询内容，提交给已启用的平台和外部工具。聊天经历不再触发逐次联网确认；平台开关、时段、预算与凭据保护仍生效。</p>' +
-      check(
-        "githubEnabled",
-        "启用 GitHub 只读搜索与文件阅读",
-        row.github?.enabled,
-      ) +
-      select("githubAuth", "GitHub 登录方式", row.github?.auth || "token", [
-        ["token", "独立只读令牌（推荐）"],
-        ["gh", "本机 GitHub CLI 登录"],
-      ]) +
-      input(
-        "githubTokenEnv",
-        "GitHub 令牌环境变量名",
-        row.github?.tokenEnv || "QQ_GITHUB_READ_TOKEN",
-      ) +
-      input(
-        "githubToken",
-        "GitHub 只读令牌（留空保留已保存值）",
-        "",
-        'type="password" autocomplete="new-password"',
-      ) +
-      area(
-        "githubPrivateRepositories",
-        "允许读取的私有仓库（每行 owner/repo）",
-        (row.github?.privateRepositories || []).join("\n"),
-      ) +
-      '<p class="hint">仅搜索与读取，不提供提交、评论或工作流操作。私有内容仅管理员私聊或主体可读，不自动转发到其他聊天或外部服务。本机 CLI 登录可能自带较大权限，推荐独立只读令牌；变量名填写在上一栏，令牌仅填写专用密码框并保存到本机私有配置。</p>' +
-      input("aliases", "唤醒别名（逗号分隔）", (row.aliases || []).join(", ")) +
-      input(
-        "ownerIds",
-        "AI 管理员 QQ（逗号分隔）",
-        (row.ownerIds || []).join(", "),
-      ) +
-      input("groups", "群白名单（逗号分隔）", row.allow.groups.join(", ")) +
-      input("users", "私聊白名单（逗号分隔）", row.allow.users.join(", ")) +
-      input(
-        "participation",
-        "普通消息参与率（0—1）",
-        row.wake.participation,
-        'type="number" min="0" max="1" step="0.01"',
-      ) +
-      input(
-        "cooldownMs",
-        "唤醒冷却（毫秒）",
-        row.wake.cooldownMs,
-        'type="number" min="0"',
-      ) +
-      check("paused", "保持角色暂停", row.paused) +
-      check("mentions", "被 @ 时唤醒", row.wake.mentions) +
-      check("names", "提到名字时唤醒", row.wake.names) +
-      check("private", "私聊时唤醒", row.wake.private) +
-      check("questions", "问句唤醒", row.wake.questions) +
-      check("peers", "参与其他智能体对话", row.wake.peers) +
-      `<div class="wide"><h3>允许的工具</h3><div class="tools">${tools.map((t) => check("tool:" + t, esc(t), row.tools.includes(t))).join("")}</div></div>` +
-      area(
-        "silence",
-        "定时静默（JSON：start、end、days 0—6、timezone；起止相同须 allDay:true，00:00 表示日历整日）",
-        JSON.stringify(row.silence, null, 2),
-      );
-  } else if (type === "connections") {
+    $("#edit-fields").innerHTML = agentForm.build(row, html);
+    agentForm.bind($("#edit-fields"), row);
+    $("#editor").showModal();
+    return;
+  }
+  if (type === "connections") {
     html +=
       input("label", "实例名称", row.label, "required") +
       input(
@@ -985,62 +896,8 @@ $("#edit-form").onsubmit = (e) => {
             .map((s) => s.trim())
             .filter(Boolean);
       let row = { ...editing.row, id: get("id") };
-      if (editing.type === "agents" && get("githubToken").trim())
-        githubCredential = {
-          agentId: get("id"),
-          token: get("githubToken").trim(),
-        };
       if (editing.type === "agents")
-        row = {
-          ...row,
-          name: get("name"),
-          connectionId: get("connectionId"),
-          backendId: get("backendId"),
-          model: get("model"),
-          effort: get("effort"),
-          persona: get("persona"),
-          appearance: get("appearance"),
-          maxConsecutiveSends: Number(get("maxConsecutiveSends")),
-          network: {
-            ...row.network,
-            autonomous: f.has("autonomousNetwork"),
-            publicUrls: get("publicUrls")
-              .split(/\r?\n/)
-              .map((s) => s.trim())
-              .filter(Boolean),
-          },
-          github: {
-            ...row.github,
-            enabled: f.has("githubEnabled"),
-            auth: get("githubAuth"),
-            tokenEnv: get("githubTokenEnv"),
-            privateRepositories: get("githubPrivateRepositories")
-              .split(/\r?\n/)
-              .map((s) => s.trim())
-              .filter(Boolean),
-          },
-          aliases: list("aliases"),
-          ownerIds: list("ownerIds"),
-          allow: { groups: list("groups"), users: list("users") },
-          paused: f.has("paused"),
-          wake: {
-            ...row.wake,
-            participation: Number(get("participation")),
-            cooldownMs: Number(get("cooldownMs")),
-            mentions: f.has("mentions"),
-            names: f.has("names"),
-            private: f.has("private"),
-            questions: f.has("questions"),
-            peers: f.has("peers"),
-          },
-          tools: [
-            ...row.tools.filter((t) => f.has("tool:" + t)),
-            ...tools.filter(
-              (t) => !row.tools.includes(t) && f.has("tool:" + t),
-            ),
-          ],
-          silence: JSON.parse(get("silence") || "[]"),
-        };
+        ({ row, githubCredential } = agentForm.parse(f, editing.row));
       else if (editing.type === "connections")
         row = {
           id: row.id,
@@ -1087,17 +944,6 @@ $("#edit-form").onsubmit = (e) => {
           command: get("command"),
           toolServers: JSON.parse(get("toolServers") || "[]"),
         };
-      if (editing.type === "agents") {
-        delete row.enabled;
-        delete row.toolServers;
-        // Keep the compatibility alias unchanged when the displayed value was
-        // not edited, so a participation save does not become a policy change.
-        if (
-          !Object.hasOwn(editing.row, "maxConsecutiveSends") &&
-          row.maxConsecutiveSends === editing.row.maxSendsPerTurn
-        )
-          delete row.maxConsecutiveSends;
-      }
       const index = next[editing.type].findIndex((x) => x.id === editing.id);
       if (index < 0) next[editing.type].push(row);
       else next[editing.type][index] = row;

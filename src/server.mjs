@@ -114,11 +114,13 @@ export function createServer({
           "/",
           "/app.js",
           "/parity.js",
+          "/agent-form.js",
           "/files-ui.js",
           "/apps-ui.js",
           "/mind-ui.js",
           "/onboarding-ui.js",
           "/style.css",
+          "/agent-form.css",
         ].includes(url.pathname)
       ) {
         const file =

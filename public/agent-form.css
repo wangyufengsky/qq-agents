@@ -1,0 +1,127 @@
+/* Agent editor (public/agent-form.js) */
+details.agent-section {
+  margin: 0 0 12px;
+  padding: 4px 16px 8px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  background: var(--fill-1);
+}
+details.agent-section > summary {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--ink);
+}
+details.agent-section[open] > summary {
+  margin-bottom: 4px;
+}
+.form-grid > details {
+  grid-column: 1/-1;
+}
+.tool-groups {
+  display: grid;
+  gap: 10px;
+}
+.tool-group {
+  padding: 10px 14px 2px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  background: var(--fill-2);
+}
+.tool-group.managed {
+  border-style: dashed;
+}
+.tool-group-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.tool-group-head .check {
+  margin: 0;
+}
+.tool-group-head strong {
+  color: var(--ink);
+}
+.tool-group-head button {
+  margin-left: auto;
+}
+.tool-group > p.hint {
+  margin: 6px 0 0;
+}
+.tool-group details {
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.tool-group .tools label {
+  font-family: inherit;
+  font-size: 13px;
+}
+.tool-group .tools label > span {
+  display: flex;
+  flex-direction: column;
+}
+.tool-group .tools code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--faint);
+}
+.silence-editor {
+  display: grid;
+  gap: 10px;
+}
+.silence-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0 14px;
+  align-items: end;
+  padding: 10px 14px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  background: var(--fill-2);
+}
+.silence-days {
+  grid-column: 1/-1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 6px 0;
+}
+.silence-row > p.hint {
+  grid-column: 1/-1;
+  margin: 0;
+}
+.silence-row > p.hint:empty {
+  display: none;
+}
+.silence-editor > button {
+  justify-self: start;
+}
+.hint.warn {
+  color: var(--warn);
+}
+.conversation-picker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-bottom: 12px;
+}
+.conversation-list {
+  flex-basis: 100%;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 2px 12px;
+  max-height: 220px;
+  overflow: auto;
+  padding: 8px 14px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  background: var(--fill-1);
+}
+@media (max-width: 720px) {
+  .silence-row,
+  .conversation-list {
+    grid-template-columns: 1fr;
+  }
+}

@@ -384,10 +384,11 @@ test("real console role form changes only participation and shows the server's r
       tools: [...a.tools].reverse(),
     },
   });
-  vm.runInContext(
-    fs.readFileSync(new URL("../public/app.js", import.meta.url), "utf8"),
-    sandbox,
-  );
+  for (const file of ["app.js", "agent-form.js"])
+    vm.runInContext(
+      fs.readFileSync(new URL("../public/" + file, import.meta.url), "utf8"),
+      sandbox,
+    );
   vm.runInContext(
     `config = initial.config; revision = initial.revision; tools = initial.tools;
     editing = { type: "agents", id: config.agents[0].id, row: config.agents[0] };
@@ -414,7 +415,7 @@ test("real console role form changes only participation and shows the server's r
       groups: a.allow.groups.join(","),
       users: a.allow.users.join(","),
       participation: "0.4",
-      cooldownMs: String(a.wake.cooldownMs),
+      cooldownSeconds: String(a.wake.cooldownMs / 1000),
       silence: JSON.stringify(a.silence),
     }),
   );
