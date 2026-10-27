@@ -207,6 +207,9 @@ class AgentMemory {
       origin: row.origin,
       disclosure: disclosure(row.conversation, current),
       protectedRepositories: parse(row.payload).protectedRepositories || [],
+      ...(parse(row.payload).protectedOperations === true
+        ? { protectedOperations: true }
+        : {}),
       privacy: row.conversation.startsWith("private:")
         ? "private-conversation"
         : row.conversation.startsWith("group:")

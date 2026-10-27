@@ -21,7 +21,10 @@ function track(ctx, items) {
     ])
       if (m.id) ctx.privateRead.add(m.id);
     if (row.protectedOperations)
-      ctx.privateRead.add("operations:diary:" + row.id);
+      ctx.privateRead.add(
+        (row.type === "diary" ? "operations:diary:" : "operations:event:") +
+          row.id,
+      );
     if (
       [
         "agent-judged-recollection",

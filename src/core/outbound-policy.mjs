@@ -35,6 +35,9 @@ export function sourceClass(runtime, ctx, id) {
     )
     .get(ctx.agentId, id);
   if (row) {
+    // Records derived from operations material (e.g. a subject log) stay operations.
+    if (JSON.parse(row.payload).protectedOperations === true)
+      return "operations";
     if (JSON.parse(row.payload).protectedRepositories?.length)
       return "private-repository";
     const app = JSON.parse(row.payload).app;

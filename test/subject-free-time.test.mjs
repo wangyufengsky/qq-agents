@@ -193,3 +193,60 @@ test("live subject settings do not count as agent policy changes", () => {
   after.agents[0].subject.sessionMode = "continuous";
   assert.equal(configImpact(before, after).agentIds.size, 0);
 });
+
+test("concurrent calls cannot slip past the per-turn tool cap", async (t) => {
+  let outcomes;
+  const f = fixture(t, {
+    cfg: enabled((a) => (a.subject.maxToolCallsPerTurn = 1)),
+    run: async (p) => {
+      if (p.conversation !== "@subject") return;
+      outcomes = await Promise.all(
+        [1, 2, 3].map(() =>
+          p.callTool("memory_search", { query: "x" }).then(
+            () => "ok",
+            (e) => e.message,
+          ),
+        ),
+      );
+    },
+  });
+  await f.runtime.wake("agent-0", "@subject");
+  assert.deepEqual(outcomes.sort(), [
+    "SUBJECT_TOOL_BUDGET",
+    "SUBJECT_TOOL_BUDGET",
+    "ok",
+  ]);
+});
+
+test("a subject log written from operations material stays protected when recalled in a chat", async (t) => {
+  let logId;
+  const f = fixture(t, {
+    cfg: enabled(),
+    run: async (p) => {
+      if (p.conversation !== "@subject") return;
+      // Simulate a free-time turn that read restricted operations content.
+      const ctx = [...f.runtime.capabilities.values()].find(
+        (c) => c.conversation === "@subject",
+      );
+      ctx.privateRead.add("operations:synthetic-file");
+      logId = (
+        await p.callTool("subject_log", {
+          did: "read",
+          summary: "整理了运维日志里的部署口令位置",
+        })
+      ).id;
+    },
+  });
+  await f.runtime.wake("agent-0", "@subject");
+  const ctx = f.runtime.makeContext("agent-0", "group:20000");
+  const found = await f.runtime.callTool(ctx, "memory_read", { id: logId });
+  assert.equal(
+    found.record?.protectedOperations ?? found.protectedOperations,
+    true,
+  );
+  assert([...ctx.privateRead].some((id) => id === "operations:event:" + logId));
+  await assert.rejects(
+    f.runtime.send(ctx, { requestId: "leak", text: "转述那条日志" }),
+    /PRIVATE_RECOLLECTION_REQUIRES_DISCLOSURE_GRANT/,
+  );
+});

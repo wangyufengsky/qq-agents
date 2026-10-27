@@ -653,6 +653,13 @@ export class Runtime {
     const startedAt = Date.now(),
       calls = (ctx.toolCalls ||= []);
     try {
+      // Reserved before any await, so concurrent calls share one budget.
+      if (ctx.conversation === SUBJECT && name !== "subject_log") {
+        const limit = this.agent(ctx.agentId).subject.maxToolCallsPerTurn;
+        if ((ctx.subjectToolReservations || 0) >= limit)
+          throw Error("SUBJECT_TOOL_BUDGET");
+        ctx.subjectToolReservations = (ctx.subjectToolReservations || 0) + 1;
+      }
       const result = await this.executeTool(ctx, name, args);
       if (calls.length < 50)
         calls.push({ name, ok: true, ms: Date.now() - startedAt });
@@ -682,14 +689,6 @@ export class Runtime {
       !toolAvailable(a, name, ctx.conversation)
     )
       throw Error("TOOL_DISABLED");
-    // The log is how a free-time turn ends, so it never counts against the cap.
-    if (
-      ctx.conversation === SUBJECT &&
-      name !== "subject_log" &&
-      (ctx.toolCalls || []).filter((c) => c.name !== "subject_log").length >=
-        a.subject.maxToolCallsPerTurn
-    )
-      throw Error("SUBJECT_TOOL_BUDGET");
     if (
       ctx.conversation === SUBJECT &&
       name === "external_tool" &&
