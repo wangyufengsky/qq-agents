@@ -30,6 +30,9 @@ export async function commitConfig(runtime, next, revision) {
     .map((ctx) => ctx.done);
   runtime.configStore.save(next, revision);
   runtime.configChanging = true;
+  let settle;
+  // Lets a safety control (pause) wait out this commit instead of failing.
+  runtime.configSettled = new Promise((resolve) => (settle = resolve));
   runtime.reconfiguringAgents = agentIds;
   runtime.reconfiguringConnections = connectionIds;
   for (const [token, ctx] of runtime.capabilities)
@@ -57,6 +60,9 @@ export async function commitConfig(runtime, next, revision) {
     }
   };
   try {
+    await Promise.all(
+      [...impact.paused].map((id) => apply(() => runtime.cancel(id))),
+    );
     for (const id of agentIds) {
       runtime.operations.revoke(id, false);
       const a = next.agents.find((a) => a.id === id);
@@ -64,6 +70,7 @@ export async function commitConfig(runtime, next, revision) {
         await apply(() =>
           runtime.memory.bind(id).identity.initialize(a, runtime.now()),
         );
+      if (!impact.backendAgentIds.has(id)) continue;
       for (const adapters of [runtime.backends, runtime.learner.backends]) {
         const backend = adapters.get(id);
         adapters.delete(id);
@@ -99,7 +106,7 @@ export async function commitConfig(runtime, next, revision) {
         ...next.peerLimit,
       });
     // No await between the final refresh and lifting the per-agent gates.
-    for (const id of agentIds) {
+    for (const id of new Set([...agentIds, ...impact.resumed])) {
       try {
         runtime.memory.due.rebuild(id);
       } catch (cause) {
@@ -120,5 +127,6 @@ export async function commitConfig(runtime, next, revision) {
     runtime.reconfiguringAgents = new Set();
     runtime.reconfiguringConnections = new Set();
     runtime.configChanging = false;
+    settle();
   }
 }

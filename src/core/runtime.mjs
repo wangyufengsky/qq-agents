@@ -395,13 +395,9 @@ export class Runtime {
     }
   }
   async changeAppPermissions(agentId, policy, revision) {
-    if (this.closed) throw Error("RUNTIME_CLOSING");
-    if (this.configChanging) throw Error("CONFIG_CONFLICT");
-    this.agent(agentId);
-    const apps = appsPolicySchema.parse(policy);
-    if (revision !== this.configStore.revision) throw Error("CONFIG_CONFLICT");
-    const next = structuredClone(this.config),
-      agent = next.agents.find((a) => a.id === agentId);
+    const apps = appsPolicySchema.parse(policy),
+      next = structuredClone(this.config),
+      agent = next.agents.find((a) => a.id === this.agent(agentId).id);
     agent.apps = apps;
     const names = Object.keys(appDefinitions);
     agent.tools = [
@@ -410,18 +406,13 @@ export class Runtime {
         ...(apps.enabled ? names : []),
       ]),
     ];
-    this.configStore.save(next, revision);
-    await this.cancel(agentId);
+    await this.changeConfig(next, revision);
     return { revision: this.configStore.revision, apps };
   }
   async changeFilePermissions(agentId, policy, revision) {
-    if (this.closed) throw Error("RUNTIME_CLOSING");
-    if (this.configChanging) throw Error("CONFIG_CONFLICT");
-    this.agent(agentId);
-    const files = filesSchema.parse(policy);
-    if (revision !== this.configStore.revision) throw Error("CONFIG_CONFLICT");
-    const next = structuredClone(this.config);
-    const agent = next.agents.find((a) => a.id === agentId);
+    const files = filesSchema.parse(policy),
+      next = structuredClone(this.config),
+      agent = next.agents.find((a) => a.id === this.agent(agentId).id);
     agent.files = files;
     agent.tools = [
       ...new Set([
@@ -429,8 +420,7 @@ export class Runtime {
         ...(files.enabled ? FILE_TOOL_NAMES : []),
       ]),
     ];
-    this.configStore.save(next, revision);
-    await this.cancel(agentId);
+    await this.changeConfig(next, revision);
     return { revision: this.configStore.revision, files };
   }
   changeConfig(...args) {
@@ -439,9 +429,12 @@ export class Runtime {
   commitConfig(next, revision) {
     return commitConfig(this, next, revision);
   }
-
+  // Pause is a safety control: it waits out an in-flight edit rather than
+  // failing with CONFIG_CONFLICT, then applies to the latest configuration.
   async pause(agentId, paused = true) {
     if (this.closed) throw Error("RUNTIME_CLOSING");
+    if (agentId !== "all") this.agent(agentId);
+    while (this.configChanging) await this.configSettled;
     const next = structuredClone(this.config);
     if (agentId === "all") next.globalPaused = paused;
     else {
@@ -449,16 +442,7 @@ export class Runtime {
       if (!a) throw Error("UNKNOWN_AGENT");
       a.paused = paused;
     }
-    this.configStore.save(next, this.configStore.revision);
-    if (!paused)
-      this.memory.due.rebuild(agentId === "all" ? undefined : agentId);
-    if (paused) {
-      if (agentId === "all")
-        await Promise.allSettled(
-          this.config.agents.map((a) => this.cancel(a.id)),
-        );
-      else await this.cancel(agentId);
-    }
+    await this.changeConfig(next, this.configStore.revision);
     return { paused };
   }
   ingest(...args) {
