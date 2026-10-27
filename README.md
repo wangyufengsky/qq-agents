@@ -1,6 +1,38 @@
 # QQ Agents
 
-QQ Agents 用一个本机管理台同时管理多个 AI 角色：每个角色绑定一个 QQ 账号（通过 NapCat/OneBot 接入），由 DSH 或 Codex 作为 AI 后端生成回复，并拥有各自独立的人格、记忆、日记和权限。所有新配置默认处于隔离模式并全部暂停，确认无误后再逐步放开。
+[English](README.en.md) | 中文
+
+QQ Agents 用一个本机管理台同时管理多个 AI 角色：每个角色绑定一个 QQ 账号（通过 NapCat/OneBot 接入），由 DSH、Codex 或任意 OpenAI 兼容 API 作为 AI 后端生成回复，并拥有各自独立的人格、记忆、日记和权限。所有新配置默认处于隔离模式并全部暂停，确认无误后再逐步放开。
+
+## 这是什么
+
+QQ Agents 是一个**可以直接部署的自托管应用**：在自己的机器上运行，数据（配置、聊天记录、记忆、媒体）全部留在本机的私有数据目录，用浏览器里的管理台完成配置和运维，不需要写代码。
+
+它同时留了几个有限的扩展点：接入新的 AI 后端、新增桥接工具、通过配置接入外部 MCP 服务，见 [扩展指南](docs/EXTENDING.md)。它**不是通用的机器人 SDK**，也没有稳定的程序化 API；除了外部 MCP 只需改配置，其他扩展都要 fork 本仓库后修改源码，内部模块可能随版本调整。
+
+**适合：**
+
+- 想在自己的机器上运行一个或几个长期存在的 QQ 角色，每个角色有自己的人格、记忆和日记；
+- 希望先在隔离模式下检查清楚，再逐步放开发言，并且能随时一键暂停；
+- 已经有或愿意自己维护 NapCat，并能提供一个 AI 后端（最低只需一个 OpenAI 兼容 API key）。
+
+**不适合：**
+
+- 需要托管服务、多租户或给大量用户提供机器人的场景；
+- 想把它当库或框架嵌进自己的程序，或依赖稳定的插件接口；
+- 不想自己维护 QQ 登录、NapCat 和本机运行环境。
+
+## AI 后端怎么选
+
+DSH 和 Codex 功能最全；OpenAI 兼容后端门槛最低，但不支持上下文压缩和原生生图。
+
+| 后端            | 需要准备                                         | 上下文压缩 | 原生生图 | 说明                                                                       |
+| --------------- | ------------------------------------------------ | ---------- | -------- | -------------------------------------------------------------------------- |
+| DSH             | DeepSeek Harness 桌面应用，并启用本项目的 bundle | 支持       | 不支持   | 工具通过本项目的 MCP 入口调用。                                            |
+| Codex           | Codex CLI，并为每个角色单独登录一次              | 支持       | 支持     | 独立 app-server、独立登录目录；唯一支持原生生图的后端。                    |
+| OpenAI 兼容 API | 一个服务地址和一个 API key（本机服务可不要 key） | 不支持     | 不支持   | 门槛最低，不用安装其他应用；上下文接近上限时由桥接退休会话、下一回合重建。 |
+
+三种后端共用同一套桥接工具（只有生图记录 `generated_image_list` 需要原生生图）和外部 MCP 配置。细节见 [OpenAI 兼容后端](docs/CONFIGURATION.md#openai-兼容后端) 和 [入门指南](docs/GETTING-STARTED.md)。
 
 ## 5 分钟快速开始
 
@@ -34,7 +66,7 @@ QQ Agents 用一个本机管理台同时管理多个 AI 角色：每个角色绑
 node src/main.mjs --data /path/to/private-data --port 3210
 ```
 
-接入第一个真实角色的完整步骤见 [入门指南](docs/GETTING-STARTED.md)。
+接入第一个真实角色的完整步骤见 [入门指南](docs/GETTING-STARTED.md)；已经有 NapCat 和一个 OpenAI 兼容 API key 时，按其中的“最快路径”大约 10 分钟可以上线一个角色。
 
 ## 核心概念
 
@@ -67,6 +99,10 @@ node src/main.mjs --data /path/to/private-data --port 3210
 
 两者使用同一个数据目录格式，但同一数据目录同一时间只能被一个进程使用（有进程锁）。配置为 `mode: live` 的数据目录如果不带 `--live` 启动，`npm start` 会以 `LIVE_CONFIG_REQUIRES_EXPLICIT_LIVE_FLAG` 拒绝启动；`robots.mjs` 会按配置自动加上该参数。
 
+## 第三方平台内容
+
+项目可以读取部分第三方平台的公开或登录后内容：B 站、知乎、小红书、贴吧通过本机的 OpenCLI 读取，小黑盒的接口请求使用移植的签名（`vendor/heybox/`），另有沿用旧项目的 `vendor/social-reader` 读取模块。这些功能**默认关闭**：角色的“浏览与分享”（`apps.enabled`）默认关闭且不选任何平台，旧的 `social_*` 读取工具目前不会提供给模型。开启前请自行确认并遵守相关平台的服务条款和使用规则，登录状态和访问频率由使用者自己负责。本项目与这些平台没有任何关联，也不代表它们。详见 [功能说明](docs/FEATURES.md#第三方平台读取)。
+
 ## 文档索引
 
 **开始使用**
@@ -83,7 +119,6 @@ node src/main.mjs --data /path/to/private-data --port 3210
 - [迁移、部署与回退](docs/MIGRATION.md)
 - [真实后端的本地验收](docs/LOCAL-ACCEPTANCE.md)
 - [公开前检查与提交身份扫描](docs/PUBLIC-READINESS.md)
-- [安全策略与漏洞报告](SECURITY.md)
 
 **功能指南**
 
@@ -104,6 +139,11 @@ node src/main.mjs --data /path/to/private-data --port 3210
 - [Prompt 与 Self 的职责](docs/PROMPT-CONTRACTS.md)
 - [审批标识与子进程凭据边界](docs/CREDENTIAL-BOUNDARIES.md)
 - [基线与功能对照](docs/FEATURE-MATRIX.md)
+
+**扩展与安全**
+
+- [扩展指南：新增 AI 后端、桥接工具与外部 MCP](docs/EXTENDING.md)
+- [安全策略与漏洞报告](SECURITY.md)
 
 **历史记录**
 

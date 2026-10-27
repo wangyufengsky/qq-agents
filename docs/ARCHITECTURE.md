@@ -2,15 +2,15 @@
 
 ## 身份模型
 
-| 实体          | 含义                                             | 生命周期                   |
-| ------------- | ------------------------------------------------ | -------------------------- |
-| agentId       | 同一个 AI 主体，人格及所有个人经历的归属         | 稳定；不要通过改 ID 来改名 |
-| connectionId  | 一个 NapCat/OneBot 连接与其 QQ 登录身份          | 可重连、换部署地址         |
-| backendId     | DSH/Codex 运行入口、provider、默认模型与工具配置 | 可切换                     |
-| model session | 每个 agent × QQ 会话对应的模型工作上下文         | 可取消、重建、压缩         |
-| conversation  | `group:<QQ>` 或 `private:<QQ>` 的消息来源        | 检索来源及表达场景         |
+| 实体          | 含义                                                             | 生命周期                   |
+| ------------- | ---------------------------------------------------------------- | -------------------------- |
+| agentId       | 同一个 AI 主体，人格及所有个人经历的归属                         | 稳定；不要通过改 ID 来改名 |
+| connectionId  | 一个 NapCat/OneBot 连接与其 QQ 登录身份                          | 可重连、换部署地址         |
+| backendId     | DSH/Codex/OpenAI 兼容 API 运行入口、provider、默认模型与工具配置 | 可切换                     |
+| model session | 每个 agent × QQ 会话对应的模型工作上下文                         | 可取消、重建、压缩         |
+| conversation  | `group:<QQ>` 或 `private:<QQ>` 的消息来源                        | 检索来源及表达场景         |
 
-同一账号只绑定一个 agent，避免多个主体通过同一个 QQ 身份发言。相同后端可以被多个 agent 使用；Codex 仍各有独立 home。将来增加 backend 需实现 registry 的 `run/models/cancel/close` 契约并扩展配置类型校验，不需要修改记忆身份。
+同一账号只绑定一个 agent，避免多个主体通过同一个 QQ 身份发言。相同后端可以被多个 agent 使用；Codex 仍各有独立 home。增加 backend 需实现 `run/models/cancel/close/sessionSignature` 等契约、在 `src/backends/capabilities.mjs` 声明能力、向 `BackendRegistry` 注册并扩展配置类型校验，不需要修改记忆身份，见 [扩展指南](EXTENDING.md#新增-ai-后端)。
 
 ```mermaid
 flowchart LR
