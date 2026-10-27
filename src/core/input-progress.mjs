@@ -45,6 +45,16 @@ export function observeInput(runtime, ctx, items) {
   }
   if (latest > baseline) {
     ctx.replyInputSeq = latest;
+    // A fresh, fully observed human exchange can turn an intent-only wake into
+    // an ordinary reply. Cancelling an intent or rereading old input cannot.
+    // Keep selected intents bound to their delivery/receipt until turn end.
+    if (
+      ctx.intentOnly &&
+      !ctx.activeIntentId &&
+      Number.isSafeInteger(ctx.intentSnapshotSeq) &&
+      latest > ctx.intentSnapshotSeq
+    )
+      ctx.intentOnly = false;
     // A scheduled wake does not turn later human exchanges into scheduled sends.
     ctx.scheduleRunId = null;
     ctx.replyBatchSends = 0;

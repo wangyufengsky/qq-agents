@@ -5,6 +5,7 @@ import { ownedEvent, readForward, forwardPayload } from "./forward.mjs";
 import { mdToPlain } from "../../vendor/dsh-qq/md-to-plain.js";
 import { safeFetchBuffer } from "../../vendor/social-reader/safe-fetch.js";
 import { modelScheduleSchema } from "./schedule-schema.mjs";
+import { safeToolFailure } from "./errors.mjs";
 
 const str = z.string(),
   id = str.min(1).max(200),
@@ -258,6 +259,7 @@ export async function legacyTool(runtime, ctx, name, args) {
           receipts,
           failedIndex: i,
           error: e.message,
+          hint: safeToolFailure(e).hint,
           doNotReplay: true,
         };
       }
