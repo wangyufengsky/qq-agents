@@ -8,6 +8,7 @@ import { AppCursors } from "../apps/cursors.mjs";
 import { Diagnostics } from "./diagnostics.mjs";
 import { GeneratedImages } from "./generated-images.mjs";
 import { BackendConnections } from "./backend-connections.mjs";
+import { backendCapabilities } from "../backends/capabilities.mjs";
 import { ConnectionRecovery } from "./connection-recovery.mjs";
 import { authorizeExternal, grantExternal } from "./outbound-policy.mjs";
 import { toolAvailable } from "../tools/catalog.mjs";
@@ -240,7 +241,9 @@ export class Runtime {
     if (
       conversation !== SUBJECT &&
       selected.includes("qq_send") &&
-      this.config.backends.find((b) => b.id === a.backendId)?.type === "codex"
+      backendCapabilities(
+        this.config.backends.find((b) => b.id === a.backendId)?.type,
+      ).imageGeneration
     )
       selected.push("generated_image_list");
     return [...new Set(selected)].filter((name) =>

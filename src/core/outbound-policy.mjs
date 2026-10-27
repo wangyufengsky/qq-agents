@@ -111,6 +111,7 @@ function assertCredentials(runtime, ctx, request) {
   ]);
   for (const b of runtime.config.backends) {
     envs.push(...Object.values(b.env || {}));
+    if (b.apiKeyEnv) envs.push(b.apiKeyEnv);
     for (const s of b.toolServers || [])
       envs.push(...Object.values(s.env), ...Object.values(s.headers));
   }

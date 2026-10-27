@@ -70,6 +70,35 @@ export function codexTurnFailure(turn) {
   );
 }
 
+// Only network loss, 5xx and malformed bodies are transient. A 429 is not
+// retried here: an immediate continuation would only meet the same limit.
+export function openaiTurnFailure(error, turnId) {
+  const fail = (code, category, recoverable = false) =>
+    new BackendTurnFailure("openai", code, category, turnId, recoverable);
+  if (error?.message === "OPENAI_UNREACHABLE")
+    return fail("unreachable", "response-stream", true);
+  if (error?.message === "OPENAI_MALFORMED_RESPONSE")
+    return fail("malformedResponse", "malformed-response", true);
+  if (error?.message === "OPENAI_API_KEY_ENV_MISSING")
+    return fail("apiKeyEnvMissing", "authentication");
+  if (error?.message !== "OPENAI_HTTP_ERROR")
+    return fail("TURN_FAILED", "unknown");
+  const { status, code } = error;
+  if (status >= 500 && status <= 599)
+    return fail("serverError", "response-stream", true);
+  if (status === 401 || status === 403)
+    return fail("unauthorized", "authentication");
+  if (status === 429)
+    return code === "insufficient_quota"
+      ? fail("insufficientQuota", "quota")
+      : fail("rateLimited", "rate-limit");
+  if (code === "context_length_exceeded" || status === 413)
+    return fail("contextLengthExceeded", "context-limit");
+  if (status === 400 || status === 404 || status === 422)
+    return fail("badRequest", "invalid-request");
+  return fail("TURN_FAILED", "unknown");
+}
+
 export function failureSummary(error) {
   return error instanceof BackendTurnFailure
     ? {

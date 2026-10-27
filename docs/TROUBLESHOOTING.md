@@ -54,6 +54,18 @@
 | `ONEBOT_HTTP_ERROR`        | NapCat 的 HTTP 接口返回非成功状态，常见原因是令牌与 NapCat 中设置的不一致或地址错误。   | 核对 NapCat OneBot 11 配置中 HTTP 服务器的 token 和端口，与 `tokenEnv` 指向的值、`httpUrl` 一致。                                                  |
 | `ONEBOT_WS_ERROR`          | 正向 WebSocket 无法建立或中途出错，可能是令牌错误、端口错误或 NapCat 未开启 WS 服务器。 | 核对 NapCat 中 WebSocket 服务器的 token 和端口与 `wsUrl` 一致。                                                                                    |
 
+### OpenAI 兼容后端的 API 密钥
+
+| 错误码 / 故障                                       | 原因                                                                    | 处理                                                                         |
+| --------------------------------------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `OPENAI_API_KEY_ENV_MISSING`                        | 后端配置了 `apiKeyEnv`，但桥接进程的环境里没有这个变量。                | 同 OneBot 令牌：`export` 后重启，或写入 `secrets.json`。配置里填的是变量名。 |
+| `OPENAI_AUTH_FAILED`                                | 服务返回 401/403。                                                      | 核对密钥是否有效、是否属于 `baseUrl` 对应的服务。                            |
+| `OPENAI_UNREACHABLE`                                | 无法连接服务地址，或请求超时。                                          | 检查网络和 `baseUrl`（通常以 `/v1` 结尾）；本机服务确认已启动。              |
+| `OPENAI_MODEL_REQUIRED`                             | 后端和角色都没有填写模型。                                              | 在后端或角色配置中填写模型名。                                               |
+| `OPENAI_RATE_LIMITED` / `OPENAI_INSUFFICIENT_QUOTA` | 服务返回 429。不会自动重试。                                            | 等待限额恢复或检查账户余额。                                                 |
+| `OPENAI_CONTEXT_LENGTH_EXCEEDED`                    | 历史超过模型上下文。会话已退休，下一回合重新开始。                      | 把 `contextWindow` 设成与模型一致，让桥接更早整理上下文。                    |
+| `OPENAI_BAD_REQUEST`                                | 服务拒绝请求格式，常见于模型不支持工具调用或不接受 `reasoning_effort`。 | 换用支持 function calling 的模型；普通模型关闭 `sendEffort`。                |
+
 GitHub 只读令牌的设置见 [GitHub 只读访问](GITHUB-READ.md)。
 
 ## 连接断开 / 自动重连停止

@@ -37,6 +37,23 @@ const loopback = z.string().refine((s) => {
     return false;
   }
 }, "Loopback URL required");
+// Remote model APIs must use TLS; plain HTTP is only for a local server.
+const apiUrl = z.string().refine((s) => {
+  try {
+    const u = new URL(s);
+    return (
+      !u.username &&
+      !u.password &&
+      !u.search &&
+      !u.hash &&
+      (u.protocol === "https:" ||
+        (u.protocol === "http:" &&
+          ["127.0.0.1", "localhost", "[::1]"].includes(u.hostname)))
+    );
+  } catch {
+    return false;
+  }
+}, "HTTPS or loopback HTTP URL required");
 const toolServer = z
   .object({
     id,
@@ -137,10 +154,18 @@ export const configSchema = z
       z
         .object({
           id,
-          type: z.enum(["dsh", "codex"]),
+          type: z.enum(["dsh", "codex", "openai"]),
           label: z.string(),
           provider: z.string().default(""),
-          baseUrl: loopback.optional(),
+          baseUrl: z.string().optional(),
+          // OpenAI-compatible only. No schema defaults: existing DSH/Codex
+          // configs must parse unchanged so their session signatures hold.
+          apiKeyEnv: envName.optional(),
+          contextWindow: z.number().int().min(1024).max(10000000).optional(),
+          maxToolRounds: z.number().int().min(1).max(200).optional(),
+          requestTimeoutMs: z.number().int().min(5000).max(600000).optional(),
+          vision: z.boolean().optional(),
+          sendEffort: z.boolean().optional(),
           recovery: z
             .object({
               autoReconnect: z.boolean().default(false),
@@ -175,6 +200,34 @@ export const configSchema = z
           (backend) =>
             backend.type === "codex" || !Object.keys(backend.env || {}).length,
           "Environment mappings require a Codex subprocess",
+        )
+        .refine(
+          (backend) =>
+            backend.baseUrl === undefined ||
+            (backend.type === "openai" ? apiUrl : loopback).safeParse(
+              backend.baseUrl,
+            ).success,
+          {
+            message: "DSH needs a loopback URL; an OpenAI API needs HTTPS",
+            path: ["baseUrl"],
+          },
+        )
+        .refine((backend) => backend.type !== "openai" || !!backend.baseUrl, {
+          message: "An OpenAI-compatible backend needs baseUrl",
+          path: ["baseUrl"],
+        })
+        .refine(
+          (backend) =>
+            backend.type === "openai" ||
+            [
+              "apiKeyEnv",
+              "contextWindow",
+              "maxToolRounds",
+              "requestTimeoutMs",
+              "vision",
+              "sendEffort",
+            ].every((k) => backend[k] === undefined),
+          "These settings apply to an OpenAI-compatible backend",
         ),
     ),
     agents: z.array(

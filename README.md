@@ -40,7 +40,7 @@ node src/main.mjs --data /path/to/private-data --port 3210
 
 - **角色**：一个 AI 身份，有稳定的 `agentId`、人格、记忆和日记。每个角色只绑定一个 QQ 账号连接和一个 AI 后端；不同角色之间不能互读记忆。（管理台「角色」页。）
 - **QQ 账号连接**：一个 NapCat/OneBot 实例，使用 HTTP + 正向 WebSocket。连接前会核对实际登录的 QQ 号，不匹配时拒绝接入。（管理台「QQ 账号」页。）
-- **AI 后端**：生成回复的模型服务，目前支持 DSH（DeepSeek Harness 桌面应用）和 Codex（本项目专用的 Codex app-server，独立登录目录）。多个角色可以共用一个后端配置。（管理台「AI 后端」页。）
+- **AI 后端**：生成回复的模型服务，目前支持 DSH（DeepSeek Harness 桌面应用）、Codex（本项目专用的 Codex app-server，独立登录目录）和任意 OpenAI 兼容 API（一个地址加一个密钥即可，见 [OpenAI 兼容后端](docs/CONFIGURATION.md#openai-兼容后端)）。DSH 和 Codex 功能最全；OpenAI 兼容后端不支持上下文压缩和原生生图。多个角色可以共用一个后端配置。（管理台「AI 后端」页。）
 - **隔离模式与暂停**：`mode: isolated` 时不会连接 QQ、不会运行模型回合。切到 `live` 之后，仍有几道独立的开关：全局暂停（每次启动都会自动打开）、角色暂停、会话暂停和静默时段。任意一道没放开，角色都不会发言；管理台在每个角色卡片上列出“当前无法发言”的具体原因。
 
 更多术语见 [术语表](#术语表)。
@@ -114,7 +114,7 @@ node src/main.mjs --data /path/to/private-data --port 3210
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | 角色                | 一个 AI 身份（配置中的 `agents[]`），用 `agentId` 标识。文档中旧称“机器人”“智能体”“AI”均指角色。                            |
 | QQ 账号连接         | 配置中的 `connections[]`，一个 NapCat/OneBot 实例及其登录的 QQ 号。                                                         |
-| AI 后端             | 配置中的 `backends[]`，即 DSH 或 Codex。                                                                                    |
+| AI 后端             | 配置中的 `backends[]`，即 DSH、Codex 或 OpenAI 兼容 API。                                                                   |
 | DSH                 | DeepSeek Harness 桌面应用。本项目通过它的 Web RPC 接入，并可生成专用的 preset/MCP bundle（`npm run dsh:bundle`）。          |
 | self                | 角色可长期成长的自我描述（性格、喜好、关系、表达倾向），按版本保存在 SQLite，可在管理台「Self 与主体」查看和恢复。          |
 | 主体                | 角色在聊天之外的“自己”：在空闲时回顾 self、读取资料、提出要联系谁的意图；主体本身没有 QQ 发送能力，由目标聊天决定是否发送。 |

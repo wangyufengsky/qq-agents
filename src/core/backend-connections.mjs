@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { backendCapabilities } from "../backends/capabilities.mjs";
 import {
   discoverDshInstances,
   selectDshInstance,
@@ -23,6 +24,9 @@ const known = new Set([
   "CODEX_PROCESS_EXITED",
   "CODEX_NOT_CONNECTED",
   "CODEX_DEDICATED_LOGIN_REQUIRED",
+  "OPENAI_API_KEY_ENV_MISSING",
+  "OPENAI_AUTH_FAILED",
+  "OPENAI_UNREACHABLE",
   "BACKEND_MODEL_UNAVAILABLE",
   "BACKEND_NO_AGENTS",
   "BACKEND_PROBE_FAILED",
@@ -32,7 +36,9 @@ export const isConnectionFailure = (error) => known.has(error?.message);
 export const connectionError = (e) =>
   known.has(e?.message) ? e.message : "BACKEND_PROBE_FAILED";
 function failureState(code) {
-  return code === "CODEX_DEDICATED_LOGIN_REQUIRED"
+  return code === "CODEX_DEDICATED_LOGIN_REQUIRED" ||
+    code === "OPENAI_AUTH_FAILED" ||
+    code === "OPENAI_API_KEY_ENV_MISSING"
     ? "login-required"
     : code === "DSH_SELECTION_REQUIRED"
       ? "selection-required"
@@ -75,6 +81,7 @@ export class BackendConnections {
       ...s,
       autoReconnect: config.recovery?.autoReconnect === true,
       dshInstance: config.recovery?.dshInstance || null,
+      capabilities: backendCapabilities(config.type),
     };
   }
   list() {

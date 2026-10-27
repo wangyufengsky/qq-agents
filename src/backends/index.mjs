@@ -1,10 +1,15 @@
 import { CodexBackend } from "./codex.mjs";
 import { DshBackend } from "./dsh.mjs";
+import { OpenAIBackend } from "./openai.mjs";
+
+export { BACKEND_CAPABILITIES, backendCapabilities } from "./capabilities.mjs";
+
 export class BackendRegistry {
   constructor() {
     this.factories = new Map([
       ["dsh", (c, a, o) => new DshBackend(c, a, o)],
       ["codex", (c, a, o) => new CodexBackend(c, a, o)],
+      ["openai", (c, a, o) => new OpenAIBackend(c, a, o)],
     ]);
   }
   register(type, factory) {

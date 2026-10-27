@@ -13,6 +13,7 @@
 - 至少一个 AI 后端：
   - **DSH**：DeepSeek Harness 桌面应用已启动并登录。建议用 `npm run dsh:bundle` 生成本项目专用的 preset/MCP bundle 并按 DSH 的流程启用，见 [配置与数据目录](CONFIGURATION.md#dsh-bundle)。
   - **Codex**：已安装 Codex CLI。本项目为每个角色使用独立的 Codex 登录目录 `<数据目录>/codex/<agentId>/home`，需要以该目录为 `CODEX_HOME` 按 Codex 官方流程单独登录一次（例如 `CODEX_HOME=<该目录> codex login`）。不要指向日常使用的 Codex home。
+  - **OpenAI 兼容 API**：只需要服务地址和 API 密钥（本机的 Ollama 等不需要密钥），不用安装其他应用。把密钥放进环境变量（方法同下文的 OneBot 令牌），在「AI 后端」页添加类型为“OpenAI 兼容 API”的后端，填写地址、密钥变量名和模型，见 [OpenAI 兼容后端](CONFIGURATION.md#openai-兼容后端)。
 
 **NapCat / OneBot 设置**
 
@@ -72,7 +73,7 @@ npm run verify
    ```
 
 2. 在管理台把运行模式改为 `live` 并保存。每次启动都会自动处于全局暂停，此时角色仍不会发言。
-3. 在「AI 后端」页对该后端执行“检测连接”，确认显示就绪（Codex 检查专用登录和模型目录，DSH 检查提供方和模型）。
+3. 在「AI 后端」页对该后端执行“检测连接”，确认显示就绪（Codex 检查专用登录和模型目录，DSH 检查提供方和模型，OpenAI 兼容 API 检查密钥和模型列表）。
 4. 在「QQ 账号」页启用该连接并保存，然后点击连接。连接前会核对 NapCat 实际登录的 QQ 号；不一致时以 `QQ_ACCOUNT_MISMATCH` 拒绝。
 5. 显示“已连接”后，在测试群里发几条消息。全局暂停期间连接仍会记录收到的消息，可以在「经历与日记」等页面确认消息已经进入该角色的记录。
 

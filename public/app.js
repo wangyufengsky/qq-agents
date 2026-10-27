@@ -577,6 +577,16 @@ const backendErrors = {
   BACKEND_MODEL_UNAVAILABLE:
     "后端可访问，但所选模型当前不可用，请检查模型配置。",
   BACKEND_NO_AGENTS: "请先将此后端绑定到一个角色。",
+  OPENAI_API_KEY_ENV_MISSING:
+    "未找到 API 密钥环境变量。请在启动环境或 secrets.json 中设置后再恢复连接。",
+  OPENAI_AUTH_FAILED: "API 密钥被拒绝，请检查密钥和服务地址。",
+  OPENAI_UNREACHABLE: "无法访问 API 服务地址，请检查网络和 baseUrl。",
+};
+const backendKinds = {
+  dsh: "选择桌面实例后可跟随重启后的地址。",
+  codex: "使用角色自己的 Codex 进程与登录目录。",
+  openai:
+    "直接调用 OpenAI 兼容 API；会话保存在本机数据目录。不支持原生生图和上下文压缩。",
 };
 function backendCard(b) {
   const s = status.backends?.find((x) => x.id === b.id) || {
@@ -593,8 +603,8 @@ function backendCard(b) {
     ? new Date(s.checkedAt).toLocaleTimeString()
     : "尚未检测";
   return `<article class="card"><div class="row"><div class="identity"><span class="avatar">${icon("chip")}</span><div><h3>${esc(b.label)}</h3><span class="hint mono">${esc(b.id)} · ${esc(b.type.toUpperCase())}</span></div></div>${tag(busy ? "处理中" : backendLabels[s.state] || s.state, s.state === "ready" ? "live" : "warn")}</div>
-    <dl class="agent-meta"><dt>提供方</dt><dd>${esc(b.provider || "后端默认")}</dd><dt>模型</dt><dd>${esc(b.model || "后端默认")}</dd><dt>思考强度</dt><dd>${esc(b.effort)}</dd><dt>外部工具</dt><dd>${b.toolServers.length} 个 MCP 服务</dd><dt>最近检测</dt><dd>${esc(checked)}</dd><dt>自动恢复</dt><dd>${s.autoReconnect ? "已开启" : "已关闭"}${s.attempts ? ` · 已尝试 ${s.attempts}/3 次` : ""}</dd>${b.type === "dsh" ? `<dt>绑定实例</dt><dd>${esc(s.dshInstance?.replace(/^relay:/, "桌面 DSH · ") || b.baseUrl || "尚未选择")}</dd>` : ""}</dl>
-    <p class="hint">${esc(s.error ? backendErrors[s.error] || "连接检查未通过：" + s.error : b.type === "dsh" ? "选择桌面实例后可跟随重启后的地址。" : "使用角色自己的 Codex 进程与登录目录。")}</p>
+    <dl class="agent-meta"><dt>提供方</dt><dd>${esc(b.provider || "后端默认")}</dd><dt>模型</dt><dd>${esc(b.model || "后端默认")}</dd><dt>思考强度</dt><dd>${esc(b.effort)}</dd><dt>外部工具</dt><dd>${b.toolServers.length} 个 MCP 服务</dd><dt>最近检测</dt><dd>${esc(checked)}</dd><dt>自动恢复</dt><dd>${s.autoReconnect ? "已开启" : "已关闭"}${s.attempts ? ` · 已尝试 ${s.attempts}/3 次` : ""}</dd>${b.type === "openai" ? `<dt>服务地址</dt><dd>${esc(b.baseUrl || "")}</dd><dt>密钥变量</dt><dd>${esc(b.apiKeyEnv || "无（本机服务）")}</dd>` : ""}${b.type === "dsh" ? `<dt>绑定实例</dt><dd>${esc(s.dshInstance?.replace(/^relay:/, "桌面 DSH · ") || b.baseUrl || "尚未选择")}</dd>` : ""}</dl>
+    <p class="hint">${esc(s.error ? backendErrors[s.error] || "连接检查未通过：" + s.error : backendKinds[b.type] || "")}</p>
     ${s.attempts >= 3 ? '<p class="hint">自动恢复已停止，请检查原因后手动恢复。</p>' : ""}
     ${(s.agents || []).map((a) => `<p class="hint">${esc(find("agents", a.id)?.name || a.id)}：${esc(backendLabels[a.state] || a.state)}${a.endpoint ? " · " + esc(a.endpoint === "stdio" ? "专用 Codex 进程" : a.endpoint) : ""}</p>`).join("")}
     <div class="card-actions"><button data-do="backend-check" data-id="${esc(b.id)}" ${disabled}>检测连接</button><button data-do="backend-recover" data-id="${esc(b.id)}" ${disabled}>恢复连接</button>${b.type === "dsh" ? `<button data-do="backend-discover" data-id="${esc(b.id)}" ${disabled}>选择 DSH 实例</button>` : ""}<button data-do="backend-auto" data-id="${esc(b.id)}" ${disabled}>${s.autoReconnect ? "关闭" : "开启"}自动恢复</button><button class="ghost" data-do="edit-backend" data-id="${esc(b.id)}" ${disabled}>编辑后端</button><button class="ghost" data-do="models" data-id="${esc(b.id)}" ${disabled}>读取模型目录</button></div>${disabledHints(off)}</article>`;
@@ -870,11 +880,33 @@ function openEditor(type, id) {
       select("type", "适配器", row.type || "dsh", [
         ["dsh", "DeepSeek Harness"],
         ["codex", "Codex app-server"],
+        ["openai", "OpenAI 兼容 API"],
       ]) +
       input("provider", "模型提供方（可选）", row.provider) +
       input("model", "默认模型（留空使用后端默认）", row.model) +
       input("effort", "默认思考强度", row.effort || "high") +
-      input("baseUrl", "DSH 固定地址（也可在后端卡片选择实例）", row.baseUrl) +
+      input(
+        "baseUrl",
+        "服务地址（DSH：固定本机地址，可留空选择实例；OpenAI 兼容：如 https://api.deepseek.com/v1）",
+        row.baseUrl,
+      ) +
+      input(
+        "apiKeyEnv",
+        "API 密钥环境变量名（OpenAI 兼容；本机服务可留空）",
+        row.apiKeyEnv,
+      ) +
+      input(
+        "contextWindow",
+        "上下文窗口 tokens（OpenAI 兼容）",
+        row.contextWindow ?? 128000,
+        'type="number" min="1024"',
+      ) +
+      check("vision", "模型支持图片输入（OpenAI 兼容）", row.vision) +
+      check(
+        "sendEffort",
+        "发送思考强度 reasoning_effort（OpenAI 兼容，仅推理模型）",
+        row.sendEffort,
+      ) +
       input("preset", "DSH preset", row.preset || "qq-unified") +
       input("command", "Codex 命令", row.command || "codex") +
       area(
@@ -949,6 +981,20 @@ $("#edit-form").onsubmit = (e) => {
           preset: get("preset"),
           command: get("command"),
           toolServers: JSON.parse(get("toolServers") || "[]"),
+          ...(get("type") === "openai"
+            ? {
+                ...(get("apiKeyEnv") ? { apiKeyEnv: get("apiKeyEnv") } : {}),
+                contextWindow: Number(get("contextWindow")) || 128000,
+                ...(row.maxToolRounds
+                  ? { maxToolRounds: row.maxToolRounds }
+                  : {}),
+                ...(row.requestTimeoutMs
+                  ? { requestTimeoutMs: row.requestTimeoutMs }
+                  : {}),
+                vision: f.has("vision"),
+                sendEffort: f.has("sendEffort"),
+              }
+            : {}),
         };
       const index = next[editing.type].findIndex((x) => x.id === editing.id);
       if (index < 0) next[editing.type].push(row);
