@@ -92,6 +92,28 @@ export const configSchema = z
           wsUrl: loopback,
           tokenEnv: envName.optional(),
           enabled: z.boolean().default(false),
+          recovery: z
+            .object({
+              autoReconnect: z.boolean().default(true),
+              maxAttempts: z.number().int().min(1).max(20).default(8),
+              initialDelayMs: z
+                .number()
+                .int()
+                .min(1000)
+                .max(60000)
+                .default(2000),
+              maxDelayMs: z
+                .number()
+                .int()
+                .min(5000)
+                .max(600000)
+                .default(300000),
+            })
+            .strict()
+            .prefault({})
+            .refine((r) => r.maxDelayMs >= r.initialDelayMs, {
+              message: "maxDelayMs must be at least initialDelayMs",
+            }),
           deployment: z
             .enum(["external", "native", "docker"])
             .default("external"),

@@ -87,6 +87,8 @@ export async function commitConfig(runtime, next, revision) {
         });
       });
     for (const id of connectionIds) {
+      // reconnectRequired: an edited connection waits for a manual connect.
+      runtime.connectionRecovery.disarm(id);
       const transport = runtime.transports.get(id);
       runtime.transports.delete(id);
       if (transport) await apply(() => transport.close(), true);

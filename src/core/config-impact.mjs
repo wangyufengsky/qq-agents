@@ -24,6 +24,12 @@ function operational(value) {
   const { label: _label, ...rest } = value;
   return rest;
 }
+/** Recovery policy is read on each tick; editing it must not drop the socket.
+ * @param {Entity} value */
+function connectionOperational(value) {
+  const { label: _label, recovery: _recovery, ...rest } = value;
+  return rest;
+}
 /** @param {Agent} value */
 function agentPolicy(value) {
   const result = structuredClone(value);
@@ -38,7 +44,7 @@ export function configImpact(before, after) {
   const connectionIds = changed(
     before.connections,
     after.connections,
-    operational,
+    connectionOperational,
   );
   if (before.mode !== after.mode)
     for (const c of [...before.connections, ...after.connections])

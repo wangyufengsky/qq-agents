@@ -383,9 +383,28 @@ function agentCard(a) {
     b = find("backends", a.backendId);
   return `<article class="card"><div class="row"><div class="identity"><span class="avatar">${esc(a.name.slice(0, 1))}</span><div><h3>${esc(a.name)}</h3><span class="hint mono">${esc(a.id)}</span></div></div>${tag(a.paused ? "已暂停" : status.globalPaused ? "全局暂停" : "允许参与", a.paused ? "off" : status.globalPaused ? "warn" : "live")}</div><dl class="agent-meta"><dt>QQ 实例</dt><dd>${esc(c?.label)}</dd><dt>后端 / 模型</dt><dd>${esc(b?.label)} / <span class="mono">${esc(a.model || b?.model || "后端默认")}</span></dd><dt>后端连接</dt><dd>${esc(backendLabels[status.backends?.find((x) => x.id === a.backendId)?.state] || "尚未检测")}</dd><dt>参与率</dt><dd>${Math.round(a.wake.participation * 100)}%${meter(a.wake.participation)}</dd><dt>来源范围</dt><dd>${a.allow.groups.length} 个群 · ${a.allow.users.length} 位私聊对象</dd></dl>${blockersMarkup(s)}${s?.error ? `<p class="hint">${esc(s.error)}</p>` : ""}<div class="card-actions"><button data-do="edit-agent" data-id="${esc(a.id)}">${icon("settings", "sm")}配置角色</button><button class="ghost" data-do="toggle" data-id="${esc(a.id)}" ${status.mode === "isolated" && !a.paused ? "disabled" : ""}>${icon(a.paused ? "play" : "pause", "sm")}${a.paused ? "解除角色暂停" : "暂停角色"}</button></div></article>`;
 }
+const recoveryText = (r) => {
+  if (!r) return "";
+  const at = (t) => new Date(t).toLocaleTimeString();
+  const gap = r.lastGap
+    ? `上次断线 ${at(r.lastGap.lostAt)}—${at(r.lastGap.recoveredAt)}，期间的消息未补录。`
+    : "";
+  if (r.state === "retrying")
+    return `连接中断，自动重连等待中：已尝试 ${r.attempts}/${r.maxAttempts} 次，下次约 ${at(r.nextRetryAt)}。`;
+  if (r.state === "reconnecting")
+    return `连接中断，正在进行第 ${r.attempts}/${r.maxAttempts} 次自动重连。`;
+  if (r.state === "exhausted")
+    return `自动重连已停止（${r.error === "QQ_ACCOUNT_MISMATCH" ? "登录账号不匹配" : "多次失败"}），请检查实例后手动连接。`;
+  if (r.state === "stopped") return "自动重连已关闭或连接已停用，请手动连接。";
+  return (
+    (r.enabled
+      ? "断线后自动重连已开启，仅限本次手动连接后的中断。"
+      : "断线后需手动重连。") + gap
+  );
+};
 function connectionCard(c) {
   const s = status.connections.find((s) => s.id === c.id);
-  return `<article class="card"><div class="row"><div class="identity"><span class="avatar">${icon("link")}</span><div><h3>${esc(c.label)}</h3><span class="hint mono">${esc(c.id)}</span></div></div>${tag(s?.connected ? "已连接" : "未连接", s?.connected ? "live" : "off")}</div><dl class="agent-meta"><dt>QQ 账号</dt><dd class="mono">${esc(c.accountId)}</dd><dt>HTTP</dt><dd class="mono">${esc(c.httpUrl)}</dd><dt>WebSocket</dt><dd class="mono">${esc(c.wsUrl)}</dd><dt>部署方式</dt><dd>${esc(c.deployment)}</dd></dl><p class="hint">${esc(s?.error || "连接前核对实际登录账号，不匹配时拒绝接入。")}</p><div class="card-actions"><button data-do="edit-connection" data-id="${esc(c.id)}">${icon("settings", "sm")}编辑</button><button class="ghost" data-do="connect" data-id="${esc(c.id)}" ${status.mode === "isolated" || !c.enabled ? "disabled" : ""}>${s?.connected ? "断开桥接" : "连接桥接"}</button>${c.deployment !== "external" ? `<button class="ghost" data-do="process" data-id="${esc(c.id)}" ${status.mode === "isolated" || !c.enabled ? "disabled" : ""}>${s?.process?.managed ? "停止 QQ 进程" : "启动 QQ 进程"}</button>` : ""}</div></article>`;
+  return `<article class="card"><div class="row"><div class="identity"><span class="avatar">${icon("link")}</span><div><h3>${esc(c.label)}</h3><span class="hint mono">${esc(c.id)}</span></div></div>${tag(s?.connected ? "已连接" : "未连接", s?.connected ? "live" : "off")}</div><dl class="agent-meta"><dt>QQ 账号</dt><dd class="mono">${esc(c.accountId)}</dd><dt>HTTP</dt><dd class="mono">${esc(c.httpUrl)}</dd><dt>WebSocket</dt><dd class="mono">${esc(c.wsUrl)}</dd><dt>部署方式</dt><dd>${esc(c.deployment)}</dd></dl><p class="hint">${esc(s?.error || "连接前核对实际登录账号，不匹配时拒绝接入。")}</p><p class="hint">${esc(recoveryText(s?.recovery))}</p><div class="card-actions"><button data-do="edit-connection" data-id="${esc(c.id)}">${icon("settings", "sm")}编辑</button><button class="ghost" data-do="connect" data-id="${esc(c.id)}" ${status.mode === "isolated" || !c.enabled ? "disabled" : ""}>${s?.connected ? "断开桥接" : "连接桥接"}</button>${c.deployment !== "external" ? `<button class="ghost" data-do="process" data-id="${esc(c.id)}" ${status.mode === "isolated" || !c.enabled ? "disabled" : ""}>${s?.process?.managed ? "停止 QQ 进程" : "启动 QQ 进程"}</button>` : ""}</div></article>`;
 }
 const backendBusy = new Set();
 const backendLabels = {
@@ -748,6 +767,17 @@ function openEditor(type, id) {
       ) +
       input("webUrl", "NapCat Web 管理地址（可选）", row.webUrl) +
       check("enabled", "启用此连接配置", row.enabled) +
+      check(
+        "autoReconnect",
+        "断线后自动重连（只恢复接收；不重发、不补录断线期间消息）",
+        row.recovery?.autoReconnect ?? true,
+      ) +
+      input(
+        "maxAttempts",
+        "自动重连最多尝试次数",
+        row.recovery?.maxAttempts ?? 8,
+        'type="number" min="1" max="20"',
+      ) +
       input("container", "Docker 容器名（须有实例归属标签）", row.container) +
       area(
         "process",
@@ -851,6 +881,16 @@ $("#edit-form").onsubmit = (e) => {
       else if (editing.type === "connections")
         row = {
           id: row.id,
+          // Fields without a form control must survive an edit unchanged.
+          ...(row.messageIdNamespace
+            ? { messageIdNamespace: row.messageIdNamespace }
+            : {}),
+          ...(row.gateway ? { gateway: row.gateway } : {}),
+          recovery: {
+            ...row.recovery,
+            autoReconnect: f.has("autoReconnect"),
+            maxAttempts: Number(get("maxAttempts")) || 8,
+          },
           label: get("label"),
           accountId: get("accountId"),
           deployment: get("deployment"),

@@ -8,6 +8,7 @@ import { AppCursors } from "../apps/cursors.mjs";
 import { Diagnostics } from "./diagnostics.mjs";
 import { GeneratedImages } from "./generated-images.mjs";
 import { BackendConnections } from "./backend-connections.mjs";
+import { ConnectionRecovery } from "./connection-recovery.mjs";
 import { authorizeExternal, grantExternal } from "./outbound-policy.mjs";
 import { toolAvailable } from "../tools/catalog.mjs";
 import { appsPolicySchema } from "../apps/policy.mjs";
@@ -71,6 +72,7 @@ export class Runtime {
     this.connecting = new Set();
     this.backends = new Map();
     this.backendConnections = new BackendConnections(this);
+    this.connectionRecovery = new ConnectionRecovery(this);
     this.running = new Map();
     this.pending = new Map();
     this.capabilities = new Map();
@@ -144,6 +146,7 @@ export class Runtime {
       this.nextCursorCleanupAt = this.now() + 60000;
     }
     this.backendConnections.tick();
+    this.connectionRecovery.tick();
     this.contexts.tick();
     this.subject.tick();
     this.conversations.tick();
@@ -330,14 +333,16 @@ export class Runtime {
       job.finally(() => this.jobs.delete(job));
     });
     t.on("fault", (code) => {
-      if (this.transports.get(id) === t && !this.closed)
-        this.faults.set(id, code);
+      if (this.transports.get(id) !== t || this.closed) return;
+      this.faults.set(id, code);
+      this.connectionRecovery.lost(id, code);
     });
     try {
       await t.connect();
       if (this.closed || this.transports.get(id) !== t)
         throw Error("CONNECTION_CANCELLED");
       this.faults.delete(id);
+      this.connectionRecovery.armed(id);
       for (const a of this.config.agents.filter((a) => a.connectionId === id))
         this.memory.due.rebuild(a.id);
     } catch (e) {
@@ -351,6 +356,8 @@ export class Runtime {
     return { connected: true };
   }
   async stopConnection(id) {
+    // An administrator disconnect is final until the next manual connect.
+    this.connectionRecovery.disarm(id);
     this.transports.get(id)?.close();
     this.transports.delete(id);
     for (const a of this.config.agents.filter((a) => a.connectionId === id))

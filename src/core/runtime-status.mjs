@@ -12,6 +12,7 @@ export function runtimeStatus(runtime) {
       connected: !!runtime.transports.get(c.id)?.connected,
       process: runtime.lifecycle?.status(c.id),
       error: runtime.faults.get(c.id) || null,
+      recovery: runtime.connectionRecovery.snapshot(c.id),
     })),
     agents: runtime.config.agents.map((a) => {
       const c = runtime.config.connections.find((c) => c.id === a.connectionId);
