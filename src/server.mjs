@@ -102,6 +102,7 @@ export function createServer({
   allowLive = false,
   githubSecretFile,
   exportOptions,
+  publicPort,
 }) {
   let stopping = false,
     closing;
@@ -130,11 +131,19 @@ export function createServer({
       });
       res.end(JSON.stringify(data));
     };
-    const expectedHosts = new Set([
-      `127.0.0.1:${server.address()?.port}`,
-      `localhost:${server.address()?.port}`,
-      `[::1]:${server.address()?.port}`,
-    ]);
+    // The console is only served under a loopback name, even when the socket
+    // listens on 0.0.0.0 inside a container: a host port mapping such as
+    // 127.0.0.1:8080:3210 is admitted through publicPort, and any other name
+    // (a LAN address, a rebinding domain) is refused before authentication.
+    const expectedHosts = new Set(
+      [server.address()?.port, publicPort]
+        .filter((port) => port !== undefined)
+        .flatMap((port) => [
+          `127.0.0.1:${port}`,
+          `localhost:${port}`,
+          `[::1]:${port}`,
+        ]),
+    );
     if (!expectedHosts.has(req.headers.host))
       return send({ error: "INVALID_HOST" }, 403);
     if (
@@ -901,10 +910,10 @@ export function createServer({
   server.headersTimeout = 10000;
   return {
     server,
-    listen(port = 0) {
+    listen(port = 0, host = "127.0.0.1") {
       return new Promise((resolve, reject) => {
         server.once("error", reject);
-        server.listen(port, "127.0.0.1", () => resolve(server.address().port));
+        server.listen(port, host, () => resolve(server.address().port));
       });
     },
     close() {

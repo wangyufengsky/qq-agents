@@ -7,6 +7,7 @@ import { FileStore } from "./tools/files.mjs";
 import { loadGithubCredentials } from "./github/credentials.mjs";
 import fs from "node:fs";
 import path from "node:path";
+import { isIP } from "node:net";
 import { randomBytes } from "node:crypto";
 import { defaultConfig } from "./core/default-config.mjs";
 import { ConfigStore } from "./core/config.mjs";
@@ -31,6 +32,19 @@ try {
   if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > 120000)
     throw Error("INVALID_BUDGET");
   lifecycle.timeoutMs = timeout;
+  // Containers listen on 0.0.0.0 behind a loopback-only port mapping; the
+  // console still answers only to loopback Host names and the admin token.
+  const host = option("--host") ?? "127.0.0.1";
+  if (!isIP(host) && host !== "localhost") throw Error("INVALID_HOST_OPTION");
+  const publicPort =
+    option("--public-port") === undefined
+      ? undefined
+      : Number(option("--public-port"));
+  if (
+    publicPort !== undefined &&
+    (!Number.isSafeInteger(publicPort) || publicPort < 1 || publicPort > 65535)
+  )
+    throw Error("INVALID_PUBLIC_PORT");
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
   lifecycle.lock = acquireProcessLock(root);
   const configStore = new ConfigStore(
@@ -75,16 +89,22 @@ try {
     token,
     allowLive,
     githubSecretFile,
+    publicPort,
   }));
   const port = await server.listen(
     option("--port") === undefined
       ? configStore.value.port
       : Number(option("--port")),
+    host,
   );
   runtime.startTimers();
   console.log(
-    `QQ Agents: http://127.0.0.1:${port} | ${configStore.value.mode} | paused | admin token file: ${tokenFile}`,
+    `QQ Agents: http://127.0.0.1:${publicPort ?? port} | ${configStore.value.mode} | paused | admin token file: ${tokenFile}`,
   );
+  if (host !== "127.0.0.1" && host !== "localhost" && host !== "::1")
+    console.log(
+      `Listening on ${host}:${port}; publish the port to 127.0.0.1 only. Requests must use a loopback Host name.`,
+    );
 } catch (e) {
   diagnostics.report(e, { component: "startup" });
   await lifecycle.stop(1);
