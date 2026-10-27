@@ -98,16 +98,4 @@ export default [
     files: [`public/${file}`],
     languageOptions: { globals: sharedFrom(file) },
   })),
-  // Owned by the in-flight Docker support change; fix and drop these overrides
-  // once it has merged.
-  {
-    files: ["src/server.mjs"],
-    // Prettier's chosen layout for a computed member call on a new line.
-    rules: { "no-unexpected-multiline": "off" },
-  },
-  {
-    files: ["src/tools/public-screenshot.mjs"],
-    // Rethrows sanitized SCREENSHOT_* codes without the browser error text.
-    rules: { "preserve-caught-error": "off" },
-  },
 ];
