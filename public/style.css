@@ -1474,3 +1474,48 @@ details > form > button {
   color: var(--muted);
   font-size: 0.9em;
 }
+.section-bar {
+  display: grid;
+  gap: 10px;
+  margin: 0 0 18px;
+}
+.role-pick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.section-bar > .hint {
+  margin: 0;
+}
+.sub-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  border-bottom: 1px solid var(--line);
+}
+.sub-tabs button {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: none;
+  color: var(--muted);
+  padding: 8px 12px;
+}
+.sub-tabs button.active {
+  color: var(--text, inherit);
+  border-bottom-color: currentColor;
+}
+/* Role pages follow the role picked above; their own pickers are redundant. */
+body.in-role
+  label:has(
+    > select:is(
+        #activity-agent,
+        #memory-agent,
+        #app-agent,
+        #file-agent,
+        #mind-agent,
+        #parity-agent
+      )
+  ) {
+  display: none;
+}

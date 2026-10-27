@@ -36,7 +36,7 @@ test("console recovery and automatic-recovery controls call real admin routes wi
     document: {
       querySelector: node,
       querySelectorAll: () => [],
-      body: { classList: { remove() {} } },
+      body: { classList: { remove() {}, toggle() {} } },
     },
     sessionStorage: { getItem: () => "" },
     setInterval() {},

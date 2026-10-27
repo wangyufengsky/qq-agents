@@ -34,7 +34,7 @@ async function setup(t, mode = "live") {
     document: {
       querySelector: node,
       querySelectorAll: () => [],
-      body: { classList: { remove() {} } },
+      body: { classList: { remove() {}, toggle() {} } },
     },
     sessionStorage: { getItem: () => "" },
     setInterval() {},

@@ -117,44 +117,14 @@
         </div>
       </div>
       <nav aria-label="主导航">
-        <div class="nav-cap">工作台</div>
-        <button data-tab="overview" class="active">
-          <svg class="i"><use href="#i-home" /></svg><span>概览</span></button
-        ><button data-tab="activity">
-          <svg class="i"><use href="#i-pulse" /></svg><span>动态</span></button
-        ><button data-tab="agents">
+        <button data-section="home" class="active">
+          <svg class="i"><use href="#i-home" /></svg><span>首页</span></button
+        ><button data-section="role">
           <svg class="i"><use href="#i-bot" /></svg><span>角色</span></button
-        ><button data-tab="connections">
-          <svg class="i"><use href="#i-link" /></svg
-          ><span>QQ 账号</span></button
-        ><button data-tab="backends">
-          <svg class="i"><use href="#i-chip" /></svg><span>AI 后端</span>
-        </button>
-        <div class="nav-cap">心智与记忆</div>
-        <button data-tab="mind">
-          <svg class="i"><use href="#i-sparkle" /></svg
-          ><span>Self 与主体</span></button
-        ><button data-tab="memory">
-          <svg class="i"><use href="#i-book" /></svg><span>经历与日记</span>
-        </button>
-        <div class="nav-cap">能力</div>
-        <button data-tab="schedule">
-          <svg class="i"><use href="#i-clock" /></svg
-          ><span>主动与定时</span></button
-        ><button data-tab="voices">
-          <svg class="i"><use href="#i-wave" /></svg><span>语音库</span></button
-        ><button data-tab="apps">
-          <svg class="i"><use href="#i-globe" /></svg
-          ><span>浏览与分享</span></button
-        ><button data-tab="permissions">
-          <svg class="i"><use href="#i-shield" /></svg><span>权限</span>
-        </button>
-        <div class="nav-cap">系统</div>
-        <button data-tab="operations">
-          <svg class="i"><use href="#i-terminal" /></svg
-          ><span>运维</span></button
-        ><button data-tab="settings">
-          <svg class="i"><use href="#i-settings" /></svg><span>运行设置</span>
+        ><button data-section="links">
+          <svg class="i"><use href="#i-link" /></svg><span>连接</span></button
+        ><button data-section="system">
+          <svg class="i"><use href="#i-settings" /></svg><span>系统</span>
         </button>
       </nav>
       <div class="nav-foot">
@@ -187,6 +157,7 @@
           </button>
         </div>
       </header>
+      <div id="section-bar" class="section-bar" hidden></div>
       <section id="login" class="card login">
         <div class="login-mark">
           <svg class="i lg"><use href="#i-logo" /></svg>

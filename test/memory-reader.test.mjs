@@ -33,7 +33,7 @@ async function setup(t) {
     document: {
       querySelector: node,
       querySelectorAll: () => [],
-      body: { classList: { remove() {} } },
+      body: { classList: { remove() {}, toggle() {} } },
     },
     sessionStorage: { getItem: () => "" },
     setInterval() {},

@@ -71,7 +71,7 @@ async function setup(t) {
   const document = {
     querySelector: node,
     querySelectorAll: () => [],
-    body: { classList: { remove() {} } },
+    body: { classList: { remove() {}, toggle() {} } },
     activeElement: null,
   };
   let tick;

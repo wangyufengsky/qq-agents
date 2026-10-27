@@ -72,7 +72,7 @@ const AGENT_TOOL_GROUPS = [
     id: "files",
     title: "文件收发",
     desc: "下载、生成和发送文件，使用自己的独立文件库。",
-    managedBy: { tab: "permissions", page: "权限", policy: "files" },
+    managedBy: { tab: "permissions", page: "文件", policy: "files" },
     tools: {
       file_list: "查看文件库",
       file_download: "下载文件",
@@ -446,7 +446,10 @@ const agentForm = {
     for (const b of root.querySelectorAll("[data-goto-tab]"))
       b.onclick = () => {
         $("#editor").close();
-        document.querySelector(`nav [data-tab="${b.dataset.gotoTab}"]`).click();
+        // Open that sub-page for the role being edited (sections in app.js).
+        if (row.id) roleId = row.id;
+        tab = b.dataset.gotoTab;
+        render();
       };
     this.bindSilence(root);
     this.bindConversations(root, row);
