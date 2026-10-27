@@ -37,6 +37,56 @@ const loopback = z.string().refine((s) => {
     return false;
   }
 }, "Loopback URL required");
+const loopbackHosts = ["127.0.0.1", "localhost", "[::1]"];
+// Names a container network can reach without leaving the machine or LAN: a
+// single-label Docker service name, host.docker.internal, an RFC 1918 IPv4
+// address or an IPv6 unique-local address. Link-local (cloud metadata),
+// CGNAT and public addresses are never private here.
+export function privateNetworkHost(hostname) {
+  const h = String(hostname).toLowerCase();
+  if (loopbackHosts.includes(h) || h === "host.docker.internal") return true;
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(h);
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])];
+    return (
+      a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
+    );
+  }
+  if (h.startsWith("[")) return /^\[f[cd][0-9a-f]{0,2}:/.test(h);
+  return /^[a-z0-9_]([a-z0-9_-]{0,62})$/.test(h);
+}
+// OneBot endpoints carry the access token in clear text, so the host must stay
+// on loopback unless the connection explicitly opts into a private network.
+const onebotUrl = z.string().refine((s) => {
+  try {
+    const u = new URL(s);
+    return (
+      ["http:", "ws:"].includes(u.protocol) &&
+      !u.username &&
+      !u.password &&
+      !u.search &&
+      !u.hash
+    );
+  } catch {
+    return false;
+  }
+}, "http:// or ws:// URL without credentials, query or hash required");
+function onebotHosts(c, ctx) {
+  for (const key of ["httpUrl", "wsUrl", "webUrl"]) {
+    if (c[key] === undefined) continue;
+    const host = new URL(c[key]).hostname;
+    if (loopbackHosts.includes(host)) continue;
+    if (c.allowPrivateNetwork === true && privateNetworkHost(host)) continue;
+    ctx.addIssue({
+      code: "custom",
+      path: [key],
+      message:
+        c.allowPrivateNetwork === true
+          ? "Loopback or private-network URL required"
+          : "Loopback URL required",
+    });
+  }
+}
 // Remote model APIs must use TLS; plain HTTP is only for a local server.
 const apiUrl = z.string().refine((s) => {
   try {
@@ -105,8 +155,12 @@ export const configSchema = z
             )
             .default("onebot"),
           gateway: z.enum(["napcat", "onebot"]).default("napcat"),
-          httpUrl: loopback,
-          wsUrl: loopback,
+          httpUrl: onebotUrl,
+          wsUrl: onebotUrl,
+          // Opt-in for Docker/LAN deployments: the OneBot token then crosses
+          // the container network in clear text. No default, so existing
+          // configs parse unchanged.
+          allowPrivateNetwork: z.boolean().optional(),
           tokenEnv: envName.optional(),
           enabled: z.boolean().default(false),
           recovery: z
@@ -134,7 +188,7 @@ export const configSchema = z
           deployment: z
             .enum(["external", "native", "docker"])
             .default("external"),
-          webUrl: loopback.optional(),
+          webUrl: onebotUrl.optional(),
           process: z
             .object({
               command: z.string().min(1),
@@ -148,7 +202,8 @@ export const configSchema = z
             .regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/)
             .optional(),
         })
-        .strict(),
+        .strict()
+        .superRefine(onebotHosts),
     ),
     backends: z.array(
       z
