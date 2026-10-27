@@ -331,10 +331,14 @@ export class ContextLifecycle {
       await this.finishContext(ctx, outcome, backend);
     } catch (error) {
       terminal = "failed";
+      ctx.retainBackendSession = false;
       throw error;
     } finally {
       if (ctx.controller.signal.aborted) terminal = "cancelled";
-      if (["failed", "cancelled"].includes(terminal))
+      if (
+        terminal === "cancelled" ||
+        (terminal === "failed" && !ctx.retainBackendSession)
+      )
         retireSession(
           m,
           ctx.conversation,
@@ -380,6 +384,12 @@ export class ContextLifecycle {
       ["failed", "cancelled"].includes(outcome) ||
       ctx.controller.signal.aborted
     ) {
+      if (
+        outcome === "failed" &&
+        ctx.retainBackendSession &&
+        !ctx.controller.signal.aborted
+      )
+        return;
       retireSession(
         m,
         ctx.conversation,

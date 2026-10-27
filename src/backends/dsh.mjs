@@ -4,6 +4,28 @@ import { NodeApiClient, unwrap } from "../../vendor/dsh-qq/dsh-client.js";
 import { resolveDshInstance } from "./dsh-discovery.mjs";
 import { ExternalTools } from "./external.mjs";
 import { sessionSignature, assertSession } from "./session-contract.mjs";
+import { dshTurnFailure, BackendTurnFailure } from "./turn-failure.mjs";
+
+export function dshRecoveryReady(snapshot, failure) {
+  const inbox = snapshot?.projections?.values?.inbox;
+  if (
+    !Array.isArray(inbox?.["next-turn"]) ||
+    !Array.isArray(inbox?.["next-step"]) ||
+    inbox["next-turn"].length ||
+    inbox["next-step"].length
+  )
+    return false;
+  const last = snapshot.records
+    ?.map((r) => r.event)
+    .filter((e) => e?.type === "turn/start" || e?.type === "turn/end")
+    .at(-1);
+  return (
+    last?.type === "turn/end" &&
+    String(last.data?.turn) === failure.turnId &&
+    last.data?.reason?.kind === "error" &&
+    last.data.reason.error?.code === failure.code
+  );
+}
 
 export class DshBackend {
   constructor(
@@ -73,7 +95,7 @@ export class DshBackend {
           const t = this.turns.get(p?.sessionId);
           if (!t) continue;
           if (p.type === "session/snapshot") {
-            t.followed?.();
+            t.followed?.(p.snapshot);
             continue;
           }
           if (p.type !== "session/event") continue;
@@ -101,7 +123,7 @@ export class DshBackend {
           if (e.type === "turn/end" && e.data.turn === t.turn) {
             if (["completed", "done", "stop"].includes(e.data.reason?.kind))
               t.resolve();
-            else t.reject(Error("DSH_TURN_FAILED"));
+            else t.reject(dshTurnFailure(e.data.reason, e.data.turn));
           }
         }
       } catch {
@@ -137,6 +159,7 @@ export class DshBackend {
     session,
     saveSession,
     onBackendTurn,
+    recovery,
   }) {
     const signature = this.sessionSignature(tools);
     assertSession(session, "dsh", signature);
@@ -208,9 +231,11 @@ export class DshBackend {
     try {
       if (signal.aborted) throw Error("ABORTED");
       client.events.follow(sessionId);
-      await followReady;
+      const snapshot = await followReady;
       clearTimeout(followTimer);
       if (signal.aborted) throw Error("ABORTED");
+      if (recovery && !dshRecoveryReady(snapshot, recovery))
+        throw Error("DSH_RECOVERY_STATE_UNVERIFIED");
       unwrap(
         await client.sessions.prompt({
           sessionId,
@@ -229,7 +254,27 @@ export class DshBackend {
       );
       await done;
     } catch (e) {
-      saveSession(null);
+      if (!signal.aborted && e instanceof BackendTurnFailure && e.recoverable) {
+        // A fresh native snapshot must still end at this exact failed turn and
+        // have no queued input. A stream error alone is never replay evidence.
+        let timer;
+        try {
+          const snapshot = await new Promise((r, j) => {
+            timer = setTimeout(() => j(Error("DSH_FOLLOW_TIMEOUT")), 10000);
+            followed = r;
+            followError = j;
+            this.turns.get(sessionId).followed = r;
+            client.events.forget?.(sessionId);
+            client.events.follow(sessionId);
+          });
+          e.sessionReusable = !signal.aborted && dshRecoveryReady(snapshot, e);
+        } catch {
+          e.sessionReusable = false;
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+      if (!e.sessionReusable || signal.aborted) saveSession(null);
       throw e;
     } finally {
       clearTimeout(followTimer);

@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { codexTurnFailure, BackendTurnFailure } from "./turn-failure.mjs";
 import path from "node:path";
 import { CodexRpc } from "../../vendor/local-bridge/codex-rpc.mjs";
 import { ExternalTools } from "./external.mjs";
@@ -130,10 +131,15 @@ export class CodexBackend {
       r.onBackendTurn?.({ turnId: p.turn.id });
     }
     if (method === "turn/completed") {
+      if (
+        (r.turnId && p.turn.id !== r.turnId) ||
+        p.turn.id === r.recoveryTurnId
+      )
+        return;
       r.turnId = p.turn.id;
       r.onBackendTurn?.({ turnId: p.turn.id });
       if (p.turn.status === "completed") r.resolve();
-      else r.reject(Error("CODEX_TURN_FAILED"));
+      else r.reject(codexTurnFailure(p.turn));
     }
   }
   async request({ id, method, params: p }) {
@@ -202,6 +208,7 @@ export class CodexBackend {
     onImageSession,
     onGeneratedImage,
     onImageError,
+    recovery,
   }) {
     const signature = this.sessionSignature(tools);
     assertSession(session, "codex", signature);
@@ -238,6 +245,8 @@ export class CodexBackend {
       saveSession({ backend: "codex", id: threadId, signature });
     }
     if (signal.aborted) throw Error("ABORTED");
+    if (recovery && !(await this.recoveryReady(threadId, recovery)))
+      throw Error("CODEX_RECOVERY_STATE_UNVERIFIED");
     onImageSession?.(threadId);
     let resolve, reject;
     const done = new Promise((r, j) => {
@@ -255,6 +264,7 @@ export class CodexBackend {
       onGeneratedImage,
       onImageError,
       turnId: null,
+      recoveryTurnId: recovery?.turnId,
     };
     this.active.set(threadId, active);
     const abort = () => {
@@ -278,12 +288,30 @@ export class CodexBackend {
       if (signal.aborted) abort();
       await done;
     } catch (e) {
-      saveSession(null);
+      if (!signal.aborted && e instanceof BackendTurnFailure && e.recoverable)
+        e.sessionReusable = await this.recoveryReady(threadId, e).catch(
+          () => false,
+        );
+      if (!e.sessionReusable || signal.aborted) saveSession(null);
       throw e;
     } finally {
       signal.removeEventListener("abort", abort);
       this.active.delete(threadId);
     }
+  }
+  async recoveryReady(threadId, failure) {
+    const { thread } = await this.rpc.request("thread/read", {
+      threadId,
+      includeTurns: true,
+    });
+    const last = thread?.turns?.at(-1);
+    return (
+      thread?.id === threadId &&
+      thread.status?.type === "idle" &&
+      last?.id === failure.turnId &&
+      last.status === "failed" &&
+      codexTurnFailure(last).code === failure.code
+    );
   }
   readGeneratedImage(sessionId, item) {
     if (fs.realpathSync(this.home) !== this.expectedHome)

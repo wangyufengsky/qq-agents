@@ -172,5 +172,13 @@ export function saveSession(
 export function recordBackendTurn(memory, turnId, reference) {
   if (typeof reference?.turnId !== "string" || reference.turnId.length > 512)
     return;
-  patchTurn(memory, turnId, { backendTurnId: reference.turnId });
+  const row = turnRecord(memory, turnId);
+  const record = row && JSON.parse(row.value);
+  const ids =
+    record?.backendTurnIds ||
+    (record?.backendTurnId ? [record.backendTurnId] : []);
+  patchTurn(memory, turnId, {
+    backendTurnId: reference.turnId,
+    backendTurnIds: [...new Set([...ids, reference.turnId])].slice(-8),
+  });
 }

@@ -1,4 +1,5 @@
 import { observeInput } from "./input-progress.mjs";
+import { runWithRecovery, failureSummary } from "../backends/turn-failure.mjs";
 import { GeneratedImages } from "./generated-images.mjs";
 import {
   BackendConnections,
@@ -625,7 +626,7 @@ export class Runtime {
       const prepared = this.contexts.prepare(ctx, backend, reasons, tools);
       if (ctx.initialSession)
         ctx.estimatedAdded += JSON.stringify(tools).length;
-      await backend.run({
+      await this.runBackend(ctx, backend, {
         agent: a,
         conversation,
         prompt: prepared.prompt,
@@ -667,6 +668,15 @@ export class Runtime {
         this.faults.delete(agentId);
     } catch (e) {
       outcome = controller.signal.aborted ? "cancelled" : "failed";
+      const failure = failureSummary(e);
+      const classifiedFault =
+        failure && failure.code !== "TURN_FAILED"
+          ? (
+              failure.backend +
+              "_" +
+              failure.code.replace(/([a-z])([A-Z])/g, "$1_$2")
+            ).toUpperCase()
+          : null;
       if (!controller.signal.aborted && isConnectionFailure(e))
         this.backendConnections.failed(a.backendId, e);
       // Administrative cancellation is an expected lifecycle transition. Keep
@@ -676,9 +686,10 @@ export class Runtime {
           agentId,
           e.message === "AGENT_PAUSED_OR_EXPIRED"
             ? "PAUSED"
-            : /^DSH_[A-Z_]+$/.test(e.message)
-              ? e.message
-              : "BACKEND_TURN_FAILED",
+            : classifiedFault ||
+                (/^DSH_[A-Z_]+$/.test(e.message)
+                  ? e.message
+                  : "BACKEND_TURN_FAILED"),
         );
     } finally {
       this.capabilities.delete(token);
@@ -711,6 +722,46 @@ export class Runtime {
         this.conversations.finish(ctx);
     }
     return { status: outcome };
+  }
+  async runBackend(ctx, backend, params) {
+    const mem = this.memory.bind(ctx.agentId);
+    try {
+      const result = await runWithRecovery(backend, params, {
+        onFailure: (error, attempt) => {
+          const failure = failureSummary(error);
+          if (!failure) return;
+          const turn = mem.identity.get("model_turns", ctx.turnId);
+          if (turn)
+            mem.identity.put("model_turns", {
+              ...turn,
+              backendFailures: [
+                ...(turn.backendFailures || []),
+                { ...failure, attempt, at: this.now() },
+              ],
+            });
+        },
+        onRecovery: (error, attempt) => {
+          this.assertActive(ctx);
+          ctx.recoveryDeliveryBlocked =
+            ctx.deliveryAttempted === true || ctx.pendingDeliveries > 0;
+          error.deliveryBlocked = ctx.recoveryDeliveryBlocked;
+          const turn = mem.identity.get("model_turns", ctx.turnId);
+          if (turn)
+            mem.identity.put("model_turns", {
+              ...turn,
+              recoveryAttempts: attempt,
+              recoveryDeliveryBlocked: ctx.recoveryDeliveryBlocked,
+            });
+        },
+      });
+      return result;
+    } catch (error) {
+      ctx.retainBackendSession =
+        failureSummary(error)?.sessionReusable === true &&
+        !ctx.controller.signal.aborted &&
+        this.capabilities.has(ctx.token);
+      throw error;
+    }
   }
   async callTool(ctx, name, args = {}) {
     const a = this.assertActive(ctx);
@@ -889,6 +940,7 @@ export class Runtime {
   }
   async deliver(ctx, operation) {
     const a = this.assertActive(ctx);
+    ctx.pendingDeliveries = (ctx.pendingDeliveries || 0) + 1;
     const previous = this.sendChains.get(a.connectionId);
     const result = previous
       ? previous.catch(() => {}).then(() => this.deliverNow(ctx, operation))
@@ -897,6 +949,7 @@ export class Runtime {
     try {
       return await result;
     } finally {
+      ctx.pendingDeliveries--;
       if (this.sendChains.get(a.connectionId) === result)
         this.sendChains.delete(a.connectionId);
     }
@@ -939,6 +992,10 @@ export class Runtime {
         "DELIVERY_ALREADY_ATTEMPTED_" + previous.status.toUpperCase(),
       );
     }
+    // Recovery must not evade a sent/unknown/failed receipt by changing the
+    // request ID, wording, media, action or target. Same-ID receipt reads above
+    // remain available; new deliveries are fenced for this continuation.
+    if (ctx.recoveryDeliveryBlocked) throw Error("RECOVERY_DELIVERY_BLOCKED");
     if (metadata.mediaId)
       this.generatedImages.assertDelivery(ctx, metadata.mediaId, requestId);
     const state = mem.state(ctx.conversation),
@@ -999,6 +1056,7 @@ export class Runtime {
       });
     });
     ctx.replyBatchSends = (ctx.replyBatchSends ?? ctx.sendCount) + 1;
+    ctx.deliveryAttempted = true;
     ctx.sendCount++;
     try {
       this.assertActive(ctx);

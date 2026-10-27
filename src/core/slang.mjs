@@ -217,7 +217,7 @@ export class SlangLearner {
         backendId: a.backendId,
         ...(session ? { backendSession: sessionReference(session) } : {}),
       });
-      await backend.run({
+      await runtime.runBackend(ctx, backend, {
         agent: a,
         conversation: "learner:" + conversation,
         signal: ctx.controller.signal,
@@ -261,13 +261,14 @@ export class SlangLearner {
       finalized = true;
     } catch (e) {
       outcome = ctx.controller.signal.aborted ? "cancelled" : "failed";
-      retireSession(
-        mem,
-        scope,
-        outcome === "cancelled" ? "cancelled" : "backend-failure",
-        runtime.now(),
-        { turnId: ctx.turnId, backendId: a.backendId },
-      );
+      if (!ctx.retainBackendSession || ctx.controller.signal.aborted)
+        retireSession(
+          mem,
+          scope,
+          outcome === "cancelled" ? "cancelled" : "backend-failure",
+          runtime.now(),
+          { turnId: ctx.turnId, backendId: a.backendId },
+        );
       const s = mem.state(conversation);
       s.slang = {
         ...s.slang,
