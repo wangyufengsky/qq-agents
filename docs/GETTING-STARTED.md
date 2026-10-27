@@ -4,6 +4,36 @@
 
 管理台按钮和分组可能随版本调整，下文描述的是要完成的事情，而不是具体按钮位置。
 
+## 最快路径：NapCat + 一个 API key，约 10 分钟
+
+已经有一个登录好目标 QQ 号的 NapCat，再准备一个 OpenAI 兼容服务的 API key（例如 DeepSeek），就不需要安装 DSH 或 Codex。下面是压缩后的顺序，每一步的细节和检查点见后文第 0–3 节。
+
+1. **NapCat**：在 OneBot 11 网络配置里开一个 HTTP 服务器和一个正向 WebSocket 服务器，都监听本机回环地址，设同一个访问令牌（见[第 0 节](#0-准备)）。
+2. **环境变量**：在要启动桥接的终端里设置 OneBot 令牌和 API key。变量名可以自己取，配置里只填名字：
+
+   ```sh
+   export QQ_UNIFIED_ONEBOT_A='<NapCat 中设置的 token>'
+   export QQ_UNIFIED_DEEPSEEK_KEY='<API key>'
+   ```
+
+3. **启动并登录**：
+
+   ```sh
+   npm ci --ignore-scripts
+   npm start -- --live
+   cat .runtime/admin-token
+   ```
+
+   打开 `http://127.0.0.1:3210` 粘贴令牌。这时仍是隔离模式和全局暂停，不会连接 QQ 或调用模型。
+
+4. **AI 后端**（「连接」页）：添加类型为“OpenAI 兼容 API”的后端，地址填服务商的 API 地址（DeepSeek 为 `https://api.deepseek.com/v1`），密钥变量名填 `QQ_UNIFIED_DEEPSEEK_KEY`，模型名以服务商文档为准。字段说明见 [OpenAI 兼容后端](CONFIGURATION.md#openai-兼容后端)。
+5. **QQ 账号连接**（「连接」页）：编辑一个示例连接，填写真实 QQ 号、HTTP 和 WS 地址、令牌变量名 `QQ_UNIFIED_ONEBOT_A`，部署方式选 `external`。
+6. **角色**（「角色」页）：编辑一个示例角色，填名称和人格，绑定上面的连接和后端，群白名单填测试群号。
+7. **上线**：把运行模式设为 `live` 并保存；对后端执行“检测连接”确认就绪；启用 QQ 账号连接并点击连接，确认“已连接”；然后解除全局暂停和该角色的角色暂停。
+8. 在测试群里 @ 角色或叫它的名字。没有回复时看角色卡片上“当前无法发言”的原因，对照 [故障排查](TROUBLESHOOTING.md)。
+
+OpenAI 兼容后端不支持上下文压缩和原生生图；需要这些能力时再按下文接入 DSH 或 Codex。想一步步确认每个阶段，按下面第 0–3 节的完整流程走。
+
 ## 0. 准备
 
 **本机软件**
