@@ -1,11 +1,13 @@
 export { inspectLegacy, importLegacy } from "./legacy-import.mjs";
+import { validateExport } from "./export-format.mjs";
 import {
   validateRestoredAliases,
   validateRestoredObservations,
 } from "./message-ids.mjs";
 export function restoreExport(memory, data) {
-  if (data.version !== 1 || data.agentId !== memory.agentId)
+  if (![1, 2].includes(data.version) || data.agentId !== memory.agentId)
     throw Error("EXPORT_IDENTITY_MISMATCH");
+  validateExport(data);
   const columns = {
     events: [
       "seq",

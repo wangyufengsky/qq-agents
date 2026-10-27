@@ -7,6 +7,7 @@ import { safeToolFailure } from "./tools/errors.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import http from "node:http";
+import { withExport, streamExport } from "./memory/export.mjs";
 import { fileURLToPath } from "node:url";
 import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
@@ -25,7 +26,7 @@ const equal = (a, b) =>
   typeof a === "string" &&
   Buffer.byteLength(a) === Buffer.byteLength(b) &&
   timingSafeEqual(Buffer.from(a), Buffer.from(b));
-async function body(req, maxBytes = 1024 * 1024) {
+async function body(req, maxBytes = 1024 * 1024, form = false) {
   const chunks = [];
   let bytes = 0;
   for await (const chunk of req) {
@@ -34,7 +35,10 @@ async function body(req, maxBytes = 1024 * 1024) {
     chunks.push(chunk);
   }
   try {
-    return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+    const text = Buffer.concat(chunks).toString("utf8");
+    return form
+      ? Object.fromEntries(new URLSearchParams(text))
+      : JSON.parse(text || "{}");
   } catch (cause) {
     throw Error("INVALID_JSON_BODY", { cause });
   }
@@ -44,10 +48,16 @@ export function createServer({
   token,
   allowLive = false,
   githubSecretFile,
+  exportOptions,
 }) {
   let stopping = false,
     closing;
   const requests = new Set();
+  const exportTickets = new Map();
+  const expireTickets = () => {
+    for (const [ticket, value] of exportTickets)
+      if (value.expiresAt <= runtime.now()) exportTickets.delete(ticket);
+  };
   const handle = async (req, res) => {
     const requestId = randomUUID(),
       startedAt = Date.now();
@@ -163,8 +173,35 @@ export function createServer({
           });
         }
       }
-      if (!equal(req.headers["x-admin-token"], token))
+      let downloadAgentId;
+      if (req.method === "POST" && url.pathname === "/api/export/download") {
+        expireTickets();
+        const data = await body(req, 512, true);
+        const grant = exportTickets.get(data.ticket);
+        if (
+          !grant ||
+          grant.expiresAt <= runtime.now() ||
+          Object.keys(data).length !== 1
+        )
+          return send({ error: "UNAUTHORIZED" }, 401);
+        exportTickets.delete(data.ticket);
+        downloadAgentId = grant.agentId;
+        if (stopping || runtime.closed) throw Error("RUNTIME_CLOSING");
+      }
+      if (!downloadAgentId && !equal(req.headers["x-admin-token"], token))
         return send({ error: "UNAUTHORIZED" }, 401);
+      if (req.method === "POST" && url.pathname === "/api/export/ticket") {
+        const data = await readBody(512);
+        const agent = runtime.agent(data.agentId);
+        expireTickets();
+        if (exportTickets.size >= 8) throw Error("EXPORT_TICKET_BUDGET");
+        const ticket = randomUUID();
+        exportTickets.set(ticket, {
+          agentId: agent.id,
+          expiresAt: runtime.now() + 60000,
+        });
+        return send({ ticket });
+      }
       if (req.method === "POST" && url.pathname === "/api/github/credential") {
         const data = await readBody(4096);
         const agent = runtime.agent(data.agentId);
@@ -204,13 +241,10 @@ export function createServer({
           },
           turns: m.identity.list("model_turns").slice(0, 50),
           sessions: m.db
-            .prepare("SELECT conversation,value FROM runtime WHERE agent_id=?")
-            .all(a.id)
-            .filter(
-              (r) =>
-                r.conversation === "@subject" ||
-                /^(group|private):/.test(r.conversation),
+            .prepare(
+              "SELECT conversation,value FROM runtime WHERE agent_id=? AND (conversation='@subject' OR conversation LIKE 'group:%' OR conversation LIKE 'private:%')",
             )
+            .all(a.id)
             .map((r) => ({
               conversation: r.conversation,
               ...JSON.parse(r.value),
@@ -424,7 +458,7 @@ export function createServer({
         return send(
           mem.db
             .prepare(
-              "SELECT conversation,value FROM runtime WHERE agent_id=? AND conversation NOT LIKE '@%' ORDER BY conversation",
+              "SELECT conversation,value FROM runtime WHERE agent_id=? AND (conversation LIKE 'group:%' OR conversation LIKE 'private:%') ORDER BY conversation",
             )
             .all(id)
             .map((r) => ({
@@ -674,10 +708,37 @@ export function createServer({
             }),
         );
       }
-      if (req.method === "GET" && url.pathname === "/api/export") {
-        const agentId = url.searchParams.get("agentId");
+      if (
+        downloadAgentId ||
+        (req.method === "GET" && url.pathname === "/api/export")
+      ) {
+        const agentId = downloadAgentId || url.searchParams.get("agentId");
         runtime.agent(agentId);
-        return send(runtime.memory.bind(agentId).export());
+        const controller = new AbortController();
+        const disconnect = () => {
+          if (!res.writableFinished) controller.abort();
+        };
+        res.once("close", disconnect);
+        try {
+          await withExport(
+            runtime.memory,
+            agentId,
+            async ({ path: file, bytes, signal }) => {
+              res.writeHead(200, {
+                "content-type": "application/json; charset=utf-8",
+                "content-disposition": `attachment; filename="${agentId}-export.json"`,
+                "content-length": bytes,
+                "cache-control": "no-store",
+                "x-content-type-options": "nosniff",
+              });
+              await streamExport(file, res, signal);
+            },
+            { ...exportOptions, signal: controller.signal },
+          );
+        } finally {
+          res.off("close", disconnect);
+        }
+        return;
       }
       send({ error: "NOT_FOUND" }, 404);
     } catch (e) {
@@ -714,6 +775,7 @@ export function createServer({
     close() {
       if (closing) return closing;
       stopping = true;
+      exportTickets.clear();
       const stopped = new Promise((resolve) => server.close(resolve));
       server.closeAllConnections();
       closing = (async () => {

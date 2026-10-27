@@ -36,6 +36,12 @@ export function safeToolFailure(error) {
       hint: "Correct the named arguments within these bounds, or omit optional budgets and use pagination. The operation did not succeed. Do not infer unread content or claim successful delivery.",
     };
   const hints = {
+    APP_RESULT_BUDGET:
+      "The platform returned more than 100 rows in one batch. No page was committed and an existing cursor is preserved. Request a smaller backend page or narrower query; do not claim that omitted rows were read or that the source is complete.",
+    APP_CURSOR_BUDGET:
+      "The cursor byte, count, page or deduplication budget was reached. This page was not committed; an existing cursor stays valid until its TTL expires. Do not claim the source was fully read. Finish other buffered cursors or retry with a larger presentation limit to reduce pending data; narrow the query/start a new explicit browse if the page limit is exhausted. Do not retry in a loop.",
+    APP_CURSOR_STALLED:
+      "The platform returned the same continuation without buffered new content. The old cursor is preserved, but no page was committed. Do not claim completion or repeatedly retry; report the stalled pagination.",
     INTENT_DECISION_REQUIRED:
       "This turn was woken only for proactive intentions. A successful cancel/defer remains saved, but does not authorize another proactive send. Read conversation_read or qq_wait_for_messages: fully reading a genuinely new human message received after this wake allows an ordinary reply when no intent is selected. If there is no new input, finish without sending. Do not repeat the blocked burst or change requestId to bypass the gate; preserve all existing receipts.",
     INTENT_STALE_REFRESH_REQUIRED:

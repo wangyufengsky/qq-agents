@@ -15,6 +15,7 @@ import { resolveMessage, importAliases } from "../src/memory/message-ids.mjs";
 import { digest } from "../src/memory/legacy-adapters.mjs";
 import { freezeEvidence } from "../src/memory/evidence.mjs";
 import { backupDatabase } from "../src/memory/backup.mjs";
+import { createServer } from "../src/server.mjs";
 const chat = "group:20000",
   namespace = "napcat-native",
   account = "10000",
@@ -58,7 +59,7 @@ function setup(t, store) {
     );
   write(["old-1", "old-2"]);
   store ||= new MemoryStore(":memory:");
-  if (!store.file)
+  if (store.file === ":memory:")
     t.after(() => {
       try {
         store.close();
@@ -146,6 +147,38 @@ const append = (m, id, payload = {}, extra = {}) =>
     },
     ...extra,
   });
+
+test("v2 HTTP snapshots retain alias and observation identity across restore", async (t) => {
+  const runtimeFixture = fixture(t),
+    f = setup(t, runtimeFixture.store);
+  f.manifest();
+  importLegacy(f.m, f.plan());
+  const original = row(f.m, "old-1");
+  const observation = append(f.m, "native-1");
+  assert.equal(observation.id, original.id);
+  const server = createServer({
+    runtime: runtimeFixture.runtime,
+    token: "synthetic-export-admin",
+  });
+  const port = await server.listen();
+  t.after(() => server.close());
+  const response = await fetch(
+    `http://127.0.0.1:${port}/api/export?agentId=agent-0`,
+    { headers: { "x-admin-token": "synthetic-export-admin" } },
+  );
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  assert.equal(data.manifest.counts.message_aliases, 2);
+  assert.equal(data.manifest.counts.message_observations, 1);
+  const restored = new MemoryStore(":memory:");
+  try {
+    restoreExport(restored.bind(agent), data);
+    assert.deepEqual(restored.bind(agent).export().tables, f.m.export().tables);
+    assert.equal(append(restored.bind(agent), "native-1").id, original.id);
+  } finally {
+    restored.close();
+  }
+});
 
 test("N4 exact aliases supplement imported DB, preserve every old field, and resolve bidirectional replies, recalls, scenes and evidence", (t) => {
   const f = setup(t);

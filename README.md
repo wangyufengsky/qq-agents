@@ -69,6 +69,7 @@ npm run dsh:bundle -- --out /path/to/private-data/dsh-bundle --url http://127.0.
 
 ## 文档
 
+- [有界导出、完整性恢复与浏览游标](docs/RELIABILITY-ROUND-FOUR.md)
 - [GitHub 只读搜索与指定私有仓库](docs/GITHUB-READ.md)
 - [公开前检查与提交身份扫描](docs/PUBLIC-READINESS.md)
 - [架构与身份边界](docs/ARCHITECTURE.md)

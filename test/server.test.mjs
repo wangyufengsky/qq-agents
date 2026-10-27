@@ -10,10 +10,10 @@ import { createServer } from "../src/server.mjs";
 import { VoiceStore } from "../src/tools/voice.mjs";
 import { wav } from "./audio-fixture.mjs";
 import { fixture, context, disclosureApproval } from "./helpers.mjs";
-async function setup(t) {
+async function setup(t, exportOptions) {
   const f = fixture(t),
     token = randomBytes(32).toString("hex"),
-    app = createServer({ runtime: f.runtime, token });
+    app = createServer({ runtime: f.runtime, token, exportOptions });
   const port = await app.listen();
   t.after(() => app.close());
   const base = `http://127.0.0.1:${port}`;
@@ -377,6 +377,227 @@ test("HTTP memory export is admin-only and includes only selected agent", async 
   const data = await (await request("/api/export?agentId=agent-0")).json();
   assert.equal(data.tables.diaries.length, 1);
   assert.equal(data.tables.diaries[0].body, "AAA");
+  assert.equal(data.manifest.counts.diaries, 1);
+  assert.match(data.manifest.sha256, /^[a-f0-9]{64}$/);
+});
+test("conversation and session summaries exclude cursor bodies and other internal ledgers", async (t) => {
+  const { request, store } = await setup(t);
+  const memory = store.bind("agent-0");
+  memory.setState("group:20000", { paused: true });
+  memory.setState("internal:app-cursor-item:synthetic:000000", {
+    text: "SYNTHETIC_PENDING_BODY",
+  });
+  const response = await (
+    await request("/api/conversations?agentId=agent-0")
+  ).json();
+  assert.deepEqual(response, [{ conversation: "group:20000", paused: true }]);
+  assert.equal(
+    (await (await request("/api/mind?agentId=agent-0")).text()).includes(
+      "SYNTHETIC_PENDING_BODY",
+    ),
+    false,
+  );
+});
+test("the bounded export worker supports large rows below its advertised limit", async (t) => {
+  const { request, store } = await setup(t);
+  store.bind("agent-0").append({
+    dedupe: "large-row",
+    conversation: "group:20000",
+    kind: "message.received",
+    body: "x".repeat(2 * 1024 * 1024),
+    payload: { text: "y".repeat(4 * 1024 * 1024) },
+  });
+  const response = await request("/api/export?agentId=agent-0");
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  assert.equal(data.tables.events[0].body.length, 2 * 1024 * 1024);
+  assert.equal(
+    JSON.parse(data.tables.events[0].payload).text.length,
+    4 * 1024 * 1024,
+  );
+});
+test("native export downloads use a single-use agent-bound POST ticket", async (t) => {
+  const { request, store } = await setup(t);
+  store.bind("agent-0").diaryWrite({ title: "mine", body: "native download" });
+  store.bind("agent-1").diaryWrite({ title: "other", body: "other identity" });
+  const prepare = () =>
+    request("/api/export/ticket", {
+      method: "POST",
+      body: JSON.stringify({ agentId: "agent-0" }),
+    });
+  assert.equal(
+    (
+      await request("/api/export/ticket", {
+        auth: false,
+        method: "POST",
+        body: "{}",
+      })
+    ).status,
+    401,
+  );
+  const { ticket } = await (await prepare()).json();
+  assert.match(ticket, /^[a-f0-9-]{36}$/);
+  const download = () =>
+    request("/api/export/download", {
+      auth: false,
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ ticket }),
+    });
+  assert.equal(
+    (await request("/api/config", { headers: { "x-admin-token": ticket } }))
+      .status,
+    401,
+  );
+  const response = await download();
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-disposition"), /attachment/);
+  assert.equal(
+    (await response.json()).tables.diaries[0].body,
+    "native download",
+  );
+  assert.equal((await download()).status, 401);
+});
+test("export console submits a scoped native download without fetching the export into JavaScript", async (t) => {
+  const f = await setup(t),
+    nodes = new Map(),
+    calls = [],
+    submitted = [];
+  const node = (key) => {
+    if (!nodes.has(key))
+      nodes.set(key, { addEventListener() {}, querySelectorAll: () => [] });
+    return nodes.get(key);
+  };
+  const sandbox = vm.createContext({
+    document: {
+      querySelector: node,
+      querySelectorAll: () => [],
+      body: { append() {} },
+      createElement: (tag) => ({
+        tag,
+        children: [],
+        append(child) {
+          this.children.push(child);
+        },
+        remove() {},
+        submit() {
+          submitted.push(this);
+        },
+      }),
+    },
+    sessionStorage: { getItem: () => "" },
+    setInterval() {},
+    setTimeout() {},
+    clearTimeout() {},
+    initialConfig: f.runtime.config,
+    initialStatus: await (await f.request("/api/status")).json(),
+    adminToken: f.token,
+    fetch: (url, options) => {
+      calls.push(url);
+      return f.request(url, options);
+    },
+  });
+  vm.runInContext(
+    fs.readFileSync(new URL("../public/app.js", import.meta.url), "utf8"),
+    sandbox,
+  );
+  vm.runInContext(
+    'token=adminToken; config=initialConfig; status=initialStatus; tab="memory"; render()',
+    sandbox,
+  );
+  node("#memory-agent").value = "agent-0";
+  await node("#export-memory").onclick();
+  assert.deepEqual(calls, ["/api/export/ticket"]);
+  assert.equal(submitted.length, 1);
+  assert.equal(submitted[0].method, "POST");
+  assert.equal(submitted[0].action, "/api/export/download");
+  assert.equal(submitted[0].children[0].name, "ticket");
+  assert.notEqual(submitted[0].children[0].value, f.token);
+  assert.equal(
+    (
+      await f.request(submitted[0].action, {
+        auth: false,
+        method: "POST",
+        body: new URLSearchParams({ ticket: submitted[0].children[0].value }),
+      })
+    ).status,
+    200,
+  );
+});
+test("export size and time budgets fail before headers and clean temporary snapshots", async (t) => {
+  for (const [limits, code, status] of [
+    [{ rowBytes: 500 }, "EXPORT_ROW_BUDGET", 429],
+    [{ outputBytes: 100 }, "EXPORT_OUTPUT_BUDGET", 429],
+    [{ snapshotBytes: 1 }, "EXPORT_SNAPSHOT_BUDGET", 429],
+    [{ snapshotMs: 0 }, "EXPORT_TIMEOUT", 503],
+    [{ timeoutMs: 1 }, "EXPORT_TIMEOUT", 503],
+  ])
+    await t.test(code, async (t) => {
+      const tempRoot = fs.mkdtempSync("/tmp/qq-export-budget-test-");
+      t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
+      const { request, store } = await setup(t, { limits, tempRoot });
+      store
+        .bind("agent-0")
+        .diaryWrite({ title: "large", body: "x".repeat(2000) });
+      const response = await request("/api/export?agentId=agent-0");
+      assert.equal(response.status, status);
+      assert.equal((await response.json()).error, code);
+      assert.deepEqual(fs.readdirSync(tempRoot), []);
+      assert.equal((await request("/api/status")).status, 200);
+    });
+});
+test("a slow export download applies backpressure, excludes concurrent exports, and cancels cleanly", async (t) => {
+  const tempRoot = fs.mkdtempSync("/tmp/qq-export-cancel-test-");
+  t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
+  const { request, store, base, token } = await setup(t, { tempRoot });
+  for (let i = 0; i < 80; i++)
+    store.bind("agent-0").append({
+      dedupe: "large-" + i,
+      conversation: "group:20000",
+      kind: "message.received",
+      body: "x".repeat(64000),
+    });
+  const response = await new Promise((resolve, reject) => {
+    const req = http.get(
+      base + "/api/export?agentId=agent-0",
+      { headers: { "x-admin-token": token } },
+      (res) => {
+        res.pause();
+        resolve(res);
+      },
+    );
+    req.on("error", reject);
+  });
+  assert.equal(response.statusCode, 200);
+  const other = await request("/api/export?agentId=agent-0");
+  assert.equal(other.status, 429);
+  assert.equal((await other.json()).error, "EXPORT_DOWNLOAD_BUSY");
+  assert.equal((await request("/api/status")).status, 200);
+  response.destroy();
+  for (let i = 0; i < 100 && fs.readdirSync(tempRoot).length; i++)
+    await new Promise((r) => setTimeout(r, 10));
+  assert.deepEqual(fs.readdirSync(tempRoot), []);
+});
+test("shutdown cancels export preparation and waits for worker and snapshot cleanup", async (t) => {
+  const tempRoot = fs.mkdtempSync("/tmp/qq-export-stop-test-");
+  t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
+  const { request, store, app } = await setup(t, { tempRoot });
+  for (let i = 0; i < 80; i++)
+    store.bind("agent-0").append({
+      dedupe: "stop-" + i,
+      conversation: "group:20000",
+      kind: "message.received",
+      body: "x".repeat(64000),
+    });
+  const download = request("/api/export?agentId=agent-0")
+    .then((res) => res.arrayBuffer())
+    .catch(() => {});
+  for (let i = 0; i < 200 && !fs.readdirSync(tempRoot).length; i++)
+    await new Promise((r) => setTimeout(r, 1));
+  assert.equal(fs.readdirSync(tempRoot).length, 1);
+  await app.close();
+  await download;
+  assert.deepEqual(fs.readdirSync(tempRoot), []);
 });
 test("static console has CSP and never exposes admin token", async (t) => {
   const { request, token } = await setup(t);

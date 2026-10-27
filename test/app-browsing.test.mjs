@@ -2,8 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { fixture, config, context, raw } from "./helpers.mjs";
 import { AppBrowsing } from "../src/apps/service.mjs";
+import { restoreExport } from "../src/memory/migrate.mjs";
+import { MemoryStore } from "../src/memory/store.mjs";
 const url = "https://www.zhihu.com/question/123/answer/456";
-function setup(t, perform) {
+function setup(t, perform, cursorLimits) {
   const cfg = config(2);
   for (const a of cfg.agents) {
     a.apps = {
@@ -18,9 +20,256 @@ function setup(t, perform) {
   f.runtime.apps = new AppBrowsing(f.runtime, {
     adapter: { perform, capabilities: () => [] },
     resolve: async (value) => ({ platform: "zhihu", url: value }),
+    cursorLimits,
   });
   return f;
 }
+test("a cursor budget failure preserves the old continuation and records no partial success", async (t) => {
+  let oversized = false;
+  const { runtime } = setup(
+    t,
+    async (job) => ({
+      items: job.cursor
+        ? [
+            {
+              url: "https://www.zhihu.com/question/123/answer/457",
+              title: "second",
+            },
+            {
+              url: "https://www.zhihu.com/question/123/answer/458",
+              text: oversized ? "大".repeat(2000) : "third",
+            },
+          ]
+        : [{ url, title: "first" }],
+      next: job.cursor ? null : { page: 2 },
+    }),
+    { cursorBytes: 2000 },
+  );
+  const ctx = context(runtime);
+  const args = { platform: "zhihu", entry: "recommend", limit: 1 };
+  const first = await runtime.apps.perform(ctx, "browse", args);
+  oversized = true;
+  await assert.rejects(
+    runtime.apps.perform(ctx, "browse", { ...args, cursor: first.nextCursor }),
+    /APP_CURSOR_BUDGET/,
+  );
+  assert.equal(runtime.apps.progress(ctx.agentId)[0].cursor, first.nextCursor);
+  assert.equal(
+    runtime.apps.history(ctx.agentId).items.filter((x) => x.ok).length,
+    1,
+  );
+  oversized = false;
+  const second = await runtime.apps.perform(ctx, "browse", {
+    ...args,
+    cursor: first.nextCursor,
+  });
+  assert.equal(second.items[0].title, "second");
+  const third = await runtime.apps.perform(ctx, "browse", {
+    ...args,
+    cursor: second.nextCursor,
+  });
+  assert.equal(third.items[0].text, "third");
+  assert.equal(third.nextCursor, null);
+});
+test("cursor count and page limits fail explicitly, while buffered pages remain consumable once", async (t) => {
+  const { runtime } = setup(
+    t,
+    async () => ({
+      items: [
+        { url, title: "one" },
+        { url: "https://www.zhihu.com/question/123/answer/457", title: "two" },
+      ],
+      next: { page: 2 },
+    }),
+    { count: 1, pages: 1 },
+  );
+  const ctx = context(runtime),
+    args = { platform: "zhihu", entry: "recommend", limit: 1 };
+  const first = await runtime.apps.perform(ctx, "browse", args);
+  await assert.rejects(
+    runtime.apps.perform(ctx, "browse", args),
+    /APP_CURSOR_BUDGET/,
+  );
+  const concurrent = await Promise.allSettled(
+    [1, 2].map(() =>
+      runtime.apps.perform(ctx, "browse", {
+        ...args,
+        cursor: first.nextCursor,
+      }),
+    ),
+  );
+  assert.equal(concurrent.filter((x) => x.status === "fulfilled").length, 1);
+  assert.match(
+    concurrent.find((x) => x.status === "rejected").reason.message,
+    /APP_CURSOR_INVALID/,
+  );
+  const second = concurrent.find((x) => x.status === "fulfilled").value;
+  assert.equal(second.items[0].title, "two");
+  await assert.rejects(
+    runtime.apps.perform(ctx, "browse", { ...args, cursor: second.nextCursor }),
+    /APP_CURSOR_BUDGET/,
+  );
+  assert.equal(runtime.apps.progress(ctx.agentId)[0].cursor, second.nextCursor);
+});
+test("legacy cursor bodies migrate without losing budget calls, survive restore, and expire on runtime ticks", async (t) => {
+  const { runtime, store } = setup(t, async () => {
+    throw Error("unexpected network");
+  });
+  const ctx = context(runtime),
+    id = "12345678-1234-1234-1234-123456789abc",
+    now = runtime.now();
+  store.bind(ctx.agentId).setState("internal:app-browsing", {
+    calls: [now],
+    cursors: {
+      [id]: {
+        job: { platform: "zhihu", entry: "recommend", limit: 1, streamId: id },
+        platform: "zhihu",
+        operation: "browse",
+        pending: [
+          {
+            url,
+            key: "zhihu:456",
+            commentId: null,
+            title: "legacy body",
+            text: "stored text",
+          },
+        ],
+        seen: [],
+        backendCursor: null,
+        pages: 1,
+        expiresAt: now + 1000,
+        epoch: "old-process",
+      },
+    },
+  });
+  assert.equal(runtime.apps.progress(ctx.agentId)[0].buffered, 1);
+  const snapshot = store.bind(ctx.agentId).export();
+  assert.equal(
+    store.bind(ctx.agentId).state("internal:app-browsing").cursors,
+    undefined,
+  );
+  assert.deepEqual(
+    store.bind(ctx.agentId).state("internal:app-browsing").calls,
+    [now],
+  );
+  const restored = new MemoryStore(":memory:");
+  try {
+    restoreExport(restored.bind(ctx.agentId), snapshot);
+    // Restore through the public browsing interface against a separate real store.
+    const saved = runtime.memory;
+    runtime.memory = restored;
+    try {
+      const reopened = new AppBrowsing(runtime, {
+        adapter: {
+          perform: async () => {
+            throw Error("unexpected network");
+          },
+        },
+      });
+      const page = await reopened.perform(ctx, "browse", {
+        platform: "zhihu",
+        entry: "recommend",
+        cursor: id,
+      });
+      assert.equal(page.items[0].text, "stored text");
+      assert.equal(page.nextCursor, null);
+    } finally {
+      runtime.memory = saved;
+    }
+  } finally {
+    restored.close();
+  }
+  runtime.now = () => now + 2000;
+  runtime.tick();
+  assert.equal(
+    store
+      .bind(ctx.agentId)
+      .export()
+      .tables.runtime.filter((row) =>
+        row.conversation.startsWith("internal:app-cursor"),
+      ).length,
+    0,
+  );
+  await assert.rejects(
+    runtime.apps.perform(ctx, "browse", {
+      platform: "zhihu",
+      entry: "recommend",
+      cursor: id,
+    }),
+    /APP_CURSOR_INVALID/,
+  );
+});
+test("periodic cleanup removes expired legacy buffers even before browsing is reopened", (t) => {
+  const { runtime, store } = setup(t, async () => ({ items: [] }));
+  store.bind("agent-0").setState("internal:app-browsing", {
+    calls: [runtime.now()],
+    cursors: {
+      old: {
+        expiresAt: runtime.now() - 1,
+        pending: [{ text: "expired legacy body" }],
+      },
+    },
+  });
+  delete runtime.apps;
+  runtime.tick();
+  assert.equal(
+    store.bind("agent-0").state("internal:app-browsing").cursors,
+    undefined,
+  );
+  assert.equal(
+    store.bind("agent-0").state("internal:app-browsing").calls.length,
+    1,
+  );
+});
+test("oversized platform batches fail explicitly instead of silently discarding rows after 100", async (t) => {
+  const { runtime } = setup(t, async () => ({
+    items: Array.from({ length: 101 }, (_, i) => ({
+      url: `https://www.zhihu.com/question/123/answer/${1000 + i}`,
+    })),
+  }));
+  const ctx = context(runtime);
+  await assert.rejects(
+    runtime.apps.perform(ctx, "browse", {
+      platform: "zhihu",
+      entry: "recommend",
+    }),
+    /APP_RESULT_BUDGET/,
+  );
+  assert.equal(
+    runtime.apps.history(ctx.agentId).items.filter((x) => x.ok).length,
+    0,
+  );
+});
+test("cursor bytes are shared within one role and isolated across roles", async (t) => {
+  const { runtime } = setup(
+    t,
+    async () => ({
+      items: [
+        { url, title: "one" },
+        {
+          url: "https://www.zhihu.com/question/123/answer/457",
+          text: "x".repeat(1500),
+        },
+      ],
+    }),
+    { cursorBytes: 3000, agentBytes: 3500 },
+  );
+  const a = context(runtime),
+    b = context(runtime, "agent-1"),
+    args = { platform: "zhihu", entry: "recommend", limit: 1 };
+  const first = await runtime.apps.perform(a, "browse", args);
+  await assert.rejects(
+    runtime.apps.perform(a, "browse", args),
+    /APP_CURSOR_BUDGET/,
+  );
+  assert.ok((await runtime.apps.perform(b, "browse", args)).nextCursor);
+  const drained = await runtime.apps.perform(a, "browse", {
+    ...args,
+    cursor: first.nextCursor,
+  });
+  assert.equal(drained.nextCursor, null);
+  assert.ok((await runtime.apps.perform(a, "browse", args)).nextCursor);
+});
 test("browser cursors, history and card references are isolated by agent", async (t) => {
   let calls = 0;
   const { runtime, store } = setup(t, async () => ({
@@ -303,6 +552,8 @@ test("browser scroll cursors retain cached rows but reject live continuation aft
     });
     assert.equal(cached.items.length, 1);
     assert.equal(cached.nextCursor, null);
+    assert.equal(cached.completion, "interrupted");
+    assert.match(cached.notice, /重启/);
     assert.equal(calls, 1);
     const next = await runtime.apps.perform(ctx, job.operation, {
       ...job,

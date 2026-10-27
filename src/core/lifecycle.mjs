@@ -549,7 +549,9 @@ export class ContextLifecycle {
     const r = this.runtime;
     for (const a of r.config.agents)
       for (const row of r.memory.db
-        .prepare("SELECT conversation,value FROM runtime WHERE agent_id=?")
+        .prepare(
+          "SELECT conversation,value FROM runtime WHERE agent_id=? AND (conversation='@subject' OR conversation LIKE 'group:%' OR conversation LIKE 'private:%')",
+        )
         .all(a.id)) {
         const s = JSON.parse(row.value);
         if (

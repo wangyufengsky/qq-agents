@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { AppCursors } from "./cursors.mjs";
 import { AppAdapter } from "./adapter.mjs";
 import { appInfo, contentIdentity, resolveAppUrl, publicUrl } from "./urls.mjs";
 import { inAppHours, browserCursor } from "./policy.mjs";
@@ -27,7 +28,8 @@ export function normalizeRows(raw, job) {
     rows = [Object.fromEntries(rows.map((x) => [x.field, x.value]))];
   if (["read", "comments"].includes(job.operation) && job.url)
     rows = rows.map((x) => ({ ...x, url: x.url || job.url }));
-  return rows.slice(0, 100).flatMap((x, index) => {
+  if (rows.length > 100) throw Error("APP_RESULT_BUDGET");
+  return rows.flatMap((x, index) => {
     if (!x || typeof x !== "object") return [];
     let identity;
     try {
@@ -112,13 +114,14 @@ export function normalizeRows(raw, job) {
 export class AppBrowsing {
   constructor(
     runtime,
-    { adapter = new AppAdapter(), resolve = resolveAppUrl } = {},
+    { adapter = new AppAdapter(), resolve = resolveAppUrl, cursorLimits } = {},
   ) {
     this.runtime = runtime;
     this.adapter = adapter;
     this.resolve = resolve;
     this.epoch = randomUUID();
     this.chains = new Map();
+    this.cursors = new AppCursors(runtime.memory, cursorLimits);
   }
   memory(id) {
     return this.runtime.memory.bind(id);
@@ -218,18 +221,17 @@ export class AppBrowsing {
     return { recordId: row.id, ...value };
   }
   progress(agentId) {
-    return Object.entries(this.state(agentId).cursors || {})
-      .filter(([, x]) => x.expiresAt > this.runtime.now())
-      .map(([cursor, x]) => ({
-        cursor,
-        platform: x.platform,
-        operation: x.operation,
-        entry: x.job.entry,
-        recordId: x.job.recordId,
-        query: x.job.query,
-        buffered: x.pending?.length || 0,
-        expiresAt: x.expiresAt,
-      }));
+    this.cursors.prepare(agentId, this.runtime.now());
+    return this.cursors.list(agentId).map((x) => ({
+      cursor: x.id,
+      platform: x.platform,
+      operation: x.operation,
+      entry: x.job.entry,
+      recordId: x.job.recordId,
+      query: x.job.query,
+      buffered: x.pendingCount,
+      expiresAt: x.expiresAt,
+    }));
   }
   preview(record, maxChars = 6000, offset = 0) {
     const text = record.text || "",
@@ -337,14 +339,14 @@ export class AppBrowsing {
   async perform(ctx, operation, args) {
     return this.serial(ctx.agentId, async () => {
       const r = this.runtime;
+      this.cursors.prepare(ctx.agentId, r.now());
       if (JSON.stringify(args).includes(ctx.token))
         throw Error("APP_SENSITIVE_INPUT");
       let job = { ...args, operation },
         stream,
         prior;
       if (args.cursor) {
-        const state = this.state(ctx.agentId);
-        stream = state.cursors?.[args.cursor];
+        stream = this.cursors.get(ctx.agentId, args.cursor);
         if (
           !stream ||
           stream.expiresAt <= r.now() ||
@@ -364,6 +366,8 @@ export class AppBrowsing {
           (args.board && args.board !== stream.job.board)
         )
           throw Error("APP_CURSOR_INVALID");
+        if (!stream.pending.length && stream.pages >= this.cursors.limits.pages)
+          throw Error("APP_CURSOR_BUDGET");
         job = { ...stream.job, operation, cursor: stream.backendCursor };
       }
       if (args.recordId) {
@@ -402,13 +406,16 @@ export class AppBrowsing {
       job.streamId = streamId;
       job.limit = Math.min(20, args.limit || stream?.job.limit || 5);
       job.backendLimit = stream?.job.backendLimit || job.limit;
+      let continuationInterrupted = stream?.continuationInterrupted || false;
       if (
         stream &&
         browserCursor(job) &&
         stream.epoch !== this.epoch &&
         stream.pending?.length
-      )
+      ) {
         stream.backendCursor = null;
+        continuationInterrupted = true;
+      }
       try {
         if (["read", "comments"].includes(operation)) {
           const resolved = await this.resolve(job.url, {
@@ -459,66 +466,80 @@ export class AppBrowsing {
             continue;
           }
           seen.add(key);
-          items.push(
-            this.preview(
-              this.record(ctx, {
-                ...row,
-                ok: true,
-                origin: "app-browser",
-                operation,
-                coverage: result.coverage,
-                readingScope: result.coverage,
-                fetchedAt,
-                validated: ["read", "comments"].includes(operation),
-                source: prior?.source || null,
-                evidence: prior ? [prior.recordId] : [],
-                untrustedContent: true,
-              }),
-              Math.min(6000, Math.floor(12000 / job.limit)),
-            ),
-          );
+          items.push({
+            ...row,
+            ok: true,
+            origin: "app-browser",
+            operation,
+            coverage: result.coverage,
+            readingScope: result.coverage,
+            fetchedAt,
+            validated: ["read", "comments"].includes(operation),
+            source: prior?.source || null,
+            evidence: prior ? [prior.recordId] : [],
+            untrustedContent: true,
+          });
         }
-        const state = this.state(ctx.agentId),
-          cursors = Object.fromEntries(
-            Object.entries(state.cursors || {}).filter(
-              ([, v]) => v.expiresAt > r.now(),
-            ),
-          );
-        if (args.cursor) delete cursors[args.cursor];
         let nextCursor = null;
-        if (
-          (pending.length || result.next) &&
-          (stream?.pages || 0) < 100 &&
-          (pending.length ||
-            result.normalized ||
-            JSON.stringify(result.next) !== JSON.stringify(job.cursor)) &&
-          Object.keys(cursors).length < 20
-        ) {
+        let continuation;
+        if (pending.length || result.next) {
+          if (
+            !pending.length &&
+            !result.normalized &&
+            JSON.stringify(result.next) === JSON.stringify(job.cursor)
+          )
+            throw Error("APP_CURSOR_STALLED");
           nextCursor = randomUUID();
-          cursors[nextCursor] = {
+          continuation = {
             job: { ...job, cursor: undefined },
             operation,
             platform: job.platform,
             backendCursor: result.next,
             pending,
             coverage: result.coverage,
-            seen: [...seen].slice(-10000),
+            seen: [...seen],
             pages: (stream?.pages || 0) + (result.normalized ? 0 : 1),
             expiresAt: r.now() + 3600000,
             epoch: this.epoch,
+            continuationInterrupted,
           };
         }
-        this.save(ctx.agentId, { ...state, cursors });
+        const savedItems = r.memory.transaction(() => {
+          this.cursors.replace(
+            ctx.agentId,
+            args.cursor,
+            nextCursor,
+            continuation,
+            r.now(),
+          );
+          return items.map((item) =>
+            this.preview(
+              this.record(ctx, item),
+              Math.min(6000, Math.floor(12000 / job.limit)),
+            ),
+          );
+        });
         return {
           platform: job.platform,
           operation,
           coverage: result.coverage,
-          items,
+          items: savedItems,
           nextCursor,
           duplicatesRemoved,
           untrustedContent: true,
           videoUnderstanding: false,
-          ...(!items.length
+          completion: nextCursor
+            ? "more"
+            : continuationInterrupted
+              ? "interrupted"
+              : "end",
+          ...(continuationInterrupted
+            ? {
+                notice:
+                  "浏览器会话已重启；仅续读缓存内容，后端分页已中断，不能视为读完来源。",
+              }
+            : {}),
+          ...(!items.length && !continuationInterrupted
             ? {
                 notice: nextCursor
                   ? "本页没有新的内容；仍有后端下一页，可继续读取。"

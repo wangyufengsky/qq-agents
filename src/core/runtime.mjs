@@ -1,4 +1,5 @@
 import { observeInput } from "./input-progress.mjs";
+import { AppCursors } from "../apps/cursors.mjs";
 import { Diagnostics } from "./diagnostics.mjs";
 import { runWithRecovery, failureSummary } from "../backends/turn-failure.mjs";
 import { GeneratedImages } from "./generated-images.mjs";
@@ -148,6 +149,10 @@ export class Runtime {
   }
   tick() {
     if (this.closed || this.configChanging) return;
+    if (!this.nextCursorCleanupAt || this.now() >= this.nextCursorCleanupAt) {
+      new AppCursors(this.memory).cleanup(this.now());
+      this.nextCursorCleanupAt = this.now() + 60000;
+    }
     this.backendConnections.tick();
     this.contexts.tick();
     this.subject.tick();

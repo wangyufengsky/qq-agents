@@ -63,6 +63,7 @@ function budget(items, maxChars) {
 
 export class MemoryStore {
   constructor(file) {
+    this.file = file === ":memory:" ? file : path.resolve(file);
     if (file !== ":memory:")
       fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
     this.db = new DatabaseSync(file);

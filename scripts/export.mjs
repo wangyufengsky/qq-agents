@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { MemoryStore } from "../src/memory/store.mjs";
 import { restoreExport } from "../src/memory/migrate.mjs";
+import { exportToFile } from "../src/memory/export.mjs";
 const args = process.argv.slice(2),
   get = (k) => args[args.indexOf(k) + 1];
 if (
@@ -16,20 +17,25 @@ const root = path.resolve(get("--data"));
 if (fs.existsSync(path.join(root, "process.lock")))
   throw Error("STOP_DESTINATION_BEFORE_EXPORT_OR_RESTORE");
 const store = new MemoryStore(path.join(root, "memory.sqlite"));
+const controller = new AbortController();
+const cancel = () => controller.abort();
+process.once("SIGINT", cancel);
+process.once("SIGTERM", cancel);
 try {
   const memory = store.bind(get("--agent"));
   if (args.includes("--restore")) {
     restoreExport(memory, JSON.parse(fs.readFileSync(get("--file"), "utf8")));
     console.log("Restored into empty database. Start paused.");
   } else {
-    fs.writeFileSync(get("--file"), JSON.stringify(memory.export(), null, 2), {
-      flag: "wx",
-      mode: 0o600,
+    await exportToFile(store, memory.agentId, get("--file"), {
+      signal: controller.signal,
     });
     console.log(
       "Private export written. Referenced media remains in data directory/media; back it up separately.",
     );
   }
 } finally {
+  process.off("SIGINT", cancel);
+  process.off("SIGTERM", cancel);
   store.close();
 }

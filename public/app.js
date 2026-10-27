@@ -266,15 +266,27 @@ function render() {
       });
     $("#search-memory").onclick = () => searchMemory();
     $("#export-memory").onclick = () =>
-      action(async () =>
-        download(
-          await api(
-            "/api/export?agentId=" +
-              encodeURIComponent($("#memory-agent").value),
-          ),
-          "agent-export.json",
-        ),
-      );
+      action(async () => {
+        const { ticket } = await api("/api/export/ticket", {
+          agentId: $("#memory-agent").value,
+        });
+        const form = document.createElement("form");
+        form.method = "POST";
+        form.action = "/api/export/download";
+        form.target = "_blank";
+        form.rel = "noopener";
+        const input = document.createElement("input");
+        input.type = "hidden";
+        input.name = "ticket";
+        input.value = ticket;
+        form.append(input);
+        document.body.append(form);
+        form.submit();
+        form.remove();
+        notice(
+          "已请求导出；完成状态请查看浏览器下载列表，失败信息会在新窗口显示。",
+        );
+      });
   } else {
     content.innerHTML = `<div class="card"><h2>参与控制</h2><p>启动时总是全局暂停。解除全局暂停不会自动解除角色暂停，也不会连接 QQ。</p><div class="card-actions"><button data-do="global-resume" ${status.mode === "isolated" ? "disabled" : ""}>解除全局暂停</button></div></div><div class="card section-title"><div><h2>完整配置</h2><p>支持配置任意数量的智能体、QQ 实例与后端。配置中的凭据仅填写环境变量名。</p></div><button data-do="advanced">打开配置编辑器</button></div><div class="card"><h2>迁移与备份</h2><p>先运行迁移预检，再导入到新数据目录。旧文件、原登录目录和 Docker 数据都保留。</p><p class="mono">npm run migrate -- --source /path/to/old-instance --agent agent-a --data /path/to/new-data</p><p class="hint">默认只生成统计预检。实际导入需 --apply；目标目录有运行锁时会拒绝。迁移不会修改旧实例，也不会启动 QQ。</p><button data-do="download-config">导出配置</button></div>`;
   }

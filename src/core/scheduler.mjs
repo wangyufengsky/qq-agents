@@ -40,7 +40,9 @@ export class TaskScheduler {
         this.save(a.id, s);
         const mem = runtime.memory.bind(a.id);
         for (const row of mem.db
-          .prepare("SELECT conversation,value FROM runtime WHERE agent_id=?")
+          .prepare(
+            "SELECT conversation,value FROM runtime WHERE agent_id=? AND (conversation='@subject' OR conversation LIKE 'group:%' OR conversation LIKE 'private:%')",
+          )
           .all(a.id)) {
           const state = JSON.parse(row.value);
           if (state.pendingWakes)
