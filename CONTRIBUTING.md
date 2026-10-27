@@ -25,15 +25,15 @@ npm start
 
 每个 PR 都必须在本机通过 `npm run verify`，CI 在 Ubuntu 和 macOS 上运行同一条命令。它依次执行：
 
-| 步骤     | 命令                     | 检查内容                                                                                                      |
-| -------- | ------------------------ | ------------------------------------------------------------------------------------------------------------- |
-| 语法检查 | `npm run check`          | 对 `src`、`public`、`scripts`、`test`、`vendor` 下所有 `.mjs`/`.js` 运行 `node --check`。                     |
-| 代码规范 | `npm run lint`           | ESLint 检查 `src`、`scripts`、`test`（规则见 `eslint.config.mjs`）。                                          |
-| 类型检查 | `npm run typecheck`      | `tsc` 按 JSDoc 检查 `tsconfig.json` 中列出的核心模块。                                                        |
-| 默认配置 | `npm run defaults:check` | `examples/config.example.json` 必须与运行时默认配置一致；改了默认值后运行 `npm run defaults:write` 重新生成。 |
-| 测试     | `npm test`               | `node --test test/*.test.mjs`。测试使用临时目录和本地假网关，不调用模型，不连接真实 QQ。                      |
-| 格式     | `npm run format:check`   | Prettier 检查代码、`docs`、`examples`、`README.md`、`.github` 等；用 `npm run format` 自动修正。              |
-| 隐私扫描 | `npm run privacy-scan`   | 扫描受 Git 跟踪的文件中的凭据、本机路径、运行数据文件，以及当前有效的提交作者/提交者邮箱。                    |
+| 步骤     | 命令                     | 检查内容                                                                                                             |
+| -------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| 语法检查 | `npm run check`          | 对 `src`、`public`、`scripts`、`test`、`vendor` 下所有 `.mjs`/`.js` 运行 `node --check`。                            |
+| 代码规范 | `npm run lint`           | ESLint 检查 `src`、`scripts`、`test`、`public` 下的全部代码（`vendor` 除外，规则见 `eslint.config.mjs`）。           |
+| 类型检查 | `npm run typecheck`      | `tsc` 按 JSDoc 检查文件头带 `// @ts-check`、并列在 `tsconfig.json` 的 `include` 里的模块；新模块能通过时请一起纳入。 |
+| 默认配置 | `npm run defaults:check` | `examples/config.example.json` 必须与运行时默认配置一致；改了默认值后运行 `npm run defaults:write` 重新生成。        |
+| 测试     | `npm test`               | `node --test test/*.test.mjs`。测试使用临时目录和本地假网关，不调用模型，不连接真实 QQ。                             |
+| 格式     | `npm run format:check`   | Prettier 检查代码、`docs`、`examples`、`README.md`、`.github` 等；用 `npm run format` 自动修正。                     |
+| 隐私扫描 | `npm run privacy-scan`   | 扫描受 Git 跟踪的文件中的凭据、本机路径、运行数据文件，以及当前有效的提交作者/提交者邮箱。                           |
 
 需要真实模型的端到端验收（`npm run acceptance:live`）会消耗模型额度，不属于 `verify`，只在需要时按 [真实后端的本地验收](docs/LOCAL-ACCEPTANCE.md) 单独运行。
 

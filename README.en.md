@@ -77,6 +77,7 @@ Some features read content from third-party platforms: Bilibili, Zhihu, Xiaohong
 The documentation is written in Chinese.
 
 - [Getting started: your first character in a group](docs/GETTING-STARTED.md)
+- [Deploying on Linux / Docker, with a NapCat container](docs/DOCKER.md)
 - [Configuration and the data directory](docs/CONFIGURATION.md), including the OpenAI-compatible backend
 - [Troubleshooting by symptom](docs/TROUBLESHOOTING.md)
 - [Local operations with `scripts/robots.mjs`](docs/LOCAL-OPERATIONS.md)
@@ -85,6 +86,7 @@ The documentation is written in Chinese.
 - [Extending: AI backends, bridge tools and external MCP](docs/EXTENDING.md)
 - [Migration, deployment and rollback](docs/MIGRATION.md)
 - [Security policy and vulnerability reports](SECURITY.md)
+- [Contributing](CONTRIBUTING.md) and the [code of conduct](CODE_OF_CONDUCT.md)
 - [Changelog](CHANGELOG.md)
 
 The [Chinese README](README.md) has the full index.
