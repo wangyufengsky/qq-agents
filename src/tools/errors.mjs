@@ -1,5 +1,7 @@
+// @ts-check
 // Report actionable validation bounds without echoing input values, paths,
 // stack traces, provider errors or credentials into either model backend.
+/** @param {any} error */
 export function safeToolFailure(error) {
   if (
     /^(ANIMATION_[A-Z_]+|INVALID_GIF|INVALID_ANIMATION_RANGE)$/.test(
@@ -13,10 +15,10 @@ export function safeToolFailure(error) {
   if (error?.name === "ZodError" && Array.isArray(error.issues))
     return {
       code: "INVALID_TOOL_ARGUMENTS",
-      issues: error.issues.slice(0, 8).map((issue) => ({
+      issues: error.issues.slice(0, 8).map((/** @type {any} */ issue) => ({
         field: (issue.path || [])
           .filter(
-            (p) =>
+            (/** @type {unknown} */ p) =>
               typeof p === "string" && /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(p),
           )
           .slice(0, 4)
@@ -35,6 +37,7 @@ export function safeToolFailure(error) {
       })),
       hint: "Correct the named arguments within these bounds, or omit optional budgets and use pagination. The operation did not succeed. Do not infer unread content or claim successful delivery.",
     };
+  /** @type {Record<string, string>} */
   const hints = {
     APP_RESULT_BUDGET:
       "The platform returned more than 100 rows in one batch. No page was committed and an existing cursor is preserved. Request a smaller backend page or narrower query; do not claim that omitted rows were read or that the source is complete.",

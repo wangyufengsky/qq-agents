@@ -1,19 +1,22 @@
+// @ts-check
 // Keep only protocol-defined classifications, never provider messages/HTML or
 // tool arguments: errors can contain credentials and private conversation text.
 export class BackendTurnFailure extends Error {
+  /** @param {string} backend @param {string} code @param {string} category @param {string} turnId */
   constructor(backend, code, category, turnId, recoverable = false) {
     super(`${backend.toUpperCase()}_TURN_FAILED`);
-    Object.assign(this, {
-      backend,
-      code,
-      category,
-      turnId,
-      recoverable,
-      sessionReusable: false,
-    });
+    this.backend = backend;
+    this.code = code;
+    this.category = category;
+    this.turnId = turnId;
+    this.recoverable = recoverable;
+    this.sessionReusable = false;
   }
 }
+/** The turn runner marks a failure whose turn already attempted QQ delivery.
+ * @typedef {BackendTurnFailure & {deliveryBlocked?: boolean}} RecoveryFailure */
 
+/** @param {any} reason @param {unknown} turnId */
 export function dshTurnFailure(reason, turnId) {
   const code = reason?.error?.code;
   if (reason?.kind === "error" && code === "MALFORMED_RESPONSE")
@@ -28,8 +31,10 @@ export function dshTurnFailure(reason, turnId) {
   return new BackendTurnFailure("dsh", "TURN_FAILED", category, String(turnId));
 }
 
+/** @param {any} turn */
 export function codexTurnFailure(turn) {
   const info = turn.error?.codexErrorInfo;
+  /** @type {Record<string, string>} */
   const categories = {
     unauthorized: "authentication",
     usageLimitExceeded: "quota",
@@ -72,7 +77,9 @@ export function codexTurnFailure(turn) {
 
 // Only network loss, 5xx and malformed bodies are transient. A 429 is not
 // retried here: an immediate continuation would only meet the same limit.
+/** @param {any} error @param {string} turnId */
 export function openaiTurnFailure(error, turnId) {
+  /** @param {string} code @param {string} category */
   const fail = (code, category, recoverable = false) =>
     new BackendTurnFailure("openai", code, category, turnId, recoverable);
   if (error?.message === "OPENAI_UNREACHABLE")
@@ -99,6 +106,7 @@ export function openaiTurnFailure(error, turnId) {
   return fail("TURN_FAILED", "unknown");
 }
 
+/** @param {unknown} error */
 export function failureSummary(error) {
   return error instanceof BackendTurnFailure
     ? {
@@ -112,12 +120,19 @@ export function failureSummary(error) {
 
 // Retry a continuation, never the original prompt or a tools/call. The same
 // runtime capability, disclosure state, limits and receipt ledger stay in use.
+/**
+ * @param {{run(params: import("./session-contract.mjs").RunParams): Promise<unknown>}} backend
+ * @param {import("./session-contract.mjs").RunParams} params
+ * @param {{onFailure?: (error: unknown, attempt: number) => void,
+ *   onRecovery?: (error: BackendTurnFailure, attempt: number) => void}} [hooks]
+ */
 export async function runWithRecovery(
   backend,
   params,
   { onFailure, onRecovery } = {},
 ) {
   let session = params.session;
+  /** @type {RecoveryFailure | undefined} */
   let recovery;
   for (let attempt = 0; ; attempt++) {
     try {

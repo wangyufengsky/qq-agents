@@ -1,3 +1,4 @@
+// @ts-check
 import fs from "node:fs";
 import { format } from "prettier";
 import { defaultConfig } from "../src/core/default-config.mjs";

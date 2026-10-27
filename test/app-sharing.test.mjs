@@ -251,8 +251,7 @@ test("outbox and app attempt index roll back together when append fails", async 
   const { runtime, store } = setup(t),
     ctx = context(runtime),
     source = await read(runtime, ctx),
-    mem = store.bind(ctx.agentId),
-    original = mem.append;
+    mem = store.bind(ctx.agentId);
   mem.db.exec(
     "CREATE TEMP TRIGGER app_fail BEFORE INSERT ON events WHEN NEW.kind='message.send-attempt' BEGIN SELECT RAISE(ABORT,'FIXTURE_APPEND_FAILED'); END;",
   );

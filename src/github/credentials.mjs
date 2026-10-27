@@ -1,7 +1,9 @@
+// @ts-check
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
+/** @param {string} file */
 export function loadGithubCredentials(file) {
   if (!fs.existsSync(file)) return;
   const values = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -9,6 +11,7 @@ export function loadGithubCredentials(file) {
     if (/^QQ_GITHUB_[A-Z0-9_]+$/.test(key) && typeof value === "string")
       process.env[key] = value;
 }
+/** @param {string} file @param {string} key @param {unknown} value */
 export function saveGithubCredential(file, key, value) {
   if (
     !file ||

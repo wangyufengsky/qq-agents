@@ -1,7 +1,9 @@
+// @ts-check
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 let count = 0;
+/** @param {string} dir */
 function visit(dir) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     const f = path.join(dir, e.name);

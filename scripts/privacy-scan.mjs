@@ -1,3 +1,4 @@
+// @ts-check
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import {
@@ -6,7 +7,7 @@ import {
   commitFindings,
 } from "./privacy-rules.mjs";
 const args = process.argv.slice(2),
-  git = (...a) =>
+  git = (/** @type {string[]} */ ...a) =>
     execFileSync("git", a, { encoding: "utf8", maxBuffer: 32 * 1024 * 1024 });
 const privateHashes = (process.env.QQ_PRIVATE_IDENTIFIER_HASHES || "")
   .split(",")
@@ -14,6 +15,7 @@ const privateHashes = (process.env.QQ_PRIVATE_IDENTIFIER_HASHES || "")
 const failures = [];
 let scanned = 0;
 let commitsScanned = 0;
+/** @param {string} name @param {string} text */
 function scan(name, text) {
   scanned++;
   if (

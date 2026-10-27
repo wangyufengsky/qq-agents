@@ -1,3 +1,4 @@
+// @ts-check
 import { z } from "zod";
 import { registry } from "./registry.mjs";
 export const TOOL_NAMES = Object.keys(registry);
@@ -6,9 +7,13 @@ export function toolSpecs(enabled = TOOL_NAMES, { context = false } = {}) {
     .filter((n) => Object.hasOwn(registry, n))
     .map((name) => {
       const { description, schema } = registry[name];
-      const inputSchema = z.toJSONSchema(schema, { target: "draft-7" });
+      const inputSchema = z.toJSONSchema(
+        /** @type {import("zod").ZodType} */ (schema),
+        { target: "draft-7" },
+      );
       inputSchema.type = "object";
       if (context) {
+        /** @param {any} s */
         const add = (s) => {
           if (s.properties) {
             s.properties.context = {

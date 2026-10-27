@@ -25,6 +25,7 @@ const identifier = (x) =>
   typeof x === "string" &&
   x.length > 0 &&
   x.length <= 128 &&
+  // eslint-disable-next-line no-control-regex -- deliberately rejects control characters
   !/[\s\x00-\x1f]/.test(x);
 const hex = (x) => typeof x === "string" && /^[0-9a-f]{64}$/.test(x);
 export function assertMessageAccount(memory, connectionId, accountId) {

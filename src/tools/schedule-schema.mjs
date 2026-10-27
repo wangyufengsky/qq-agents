@@ -1,3 +1,4 @@
+// @ts-check
 import { z } from "zod";
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   time = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
@@ -11,6 +12,7 @@ const common = {
   excludeDates: z.array(date).max(1000).optional(),
   excludeHolidays: z.boolean().optional(),
 };
+/** @template {string} T @param {T} type @param {import("zod").ZodRawShape} shape */
 const rule = (type, shape) =>
   z.object({ ...common, type: z.literal(type), ...shape }).strict();
 // Calendar validity, quiet hours, quotas and next occurrences remain authoritative

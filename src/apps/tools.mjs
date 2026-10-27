@@ -1,3 +1,4 @@
+// @ts-check
 import { z } from "zod";
 import { APP_NAMES } from "./urls.mjs";
 import { proposeShare, sendShare, fetchImage } from "./sharing.mjs";
@@ -119,9 +120,11 @@ export const appDefinitions = {
     z.object({ eventId: z.string().min(1).max(100) }).strict(),
   ],
 };
+/** @param {any} runtime */
 export function appService(runtime) {
   return (runtime.apps ??= new AppBrowsing(runtime));
 }
+/** @param {any} runtime @param {any} ctx @param {string} name @param {any} args */
 export async function appTool(runtime, ctx, name, args) {
   const service = appService(runtime);
   if (name === "app_record") return service.readStored(ctx, args);

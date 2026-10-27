@@ -3,7 +3,8 @@ import { platformOf, publicUrl, contentIdentity } from "./urls.mjs";
 const MAX = 65536;
 const text = (value, max = 1000) =>
   typeof value === "string"
-    ? value.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "").slice(0, max)
+    ? // eslint-disable-next-line no-control-regex -- deliberately strips control characters
+      value.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "").slice(0, max)
     : "";
 function depthCheck(root) {
   let nodes = 0;
@@ -39,11 +40,15 @@ function shape(value, format) {
   let platform = null;
   try {
     platform = target ? platformOf(target) : null;
-  } catch {}
+  } catch {
+    // Unknown or unsupported URL: leave the platform unset.
+  }
   let identity;
   try {
     if (target) identity = contentIdentity(target);
-  } catch {}
+  } catch {
+    // No stable content identity for this URL: leave it unset.
+  }
   const appPath = text(
     value.pagepath || value.path || value.appid || value.appId,
     200,

@@ -1,5 +1,7 @@
+// @ts-check
 import { createHash } from "node:crypto";
 
+/** @type {[string, RegExp][]} */
 const rules = [
   [
     "credential",
@@ -11,6 +13,7 @@ const rules = [
     /https?:\/\/[^\s"']+[?&](?:token|access_token|api_key)=[A-Za-z0-9_-]{16,}/,
   ],
 ];
+/** @param {string} text @param {string[]} [privateHashes] */
 export function textFindings(text, privateHashes = []) {
   const found = rules.filter(([, re]) => re.test(text)).map(([rule]) => rule);
   if (
@@ -21,6 +24,7 @@ export function textFindings(text, privateHashes = []) {
     found.push("private-identifier");
   return found;
 }
+/** @param {string} identity */
 export function identityFindings(identity) {
   const match = identity.match(/^.+ <([^<>\s]+)>/);
   if (!match) return ["commit-identity-missing"];
@@ -33,12 +37,15 @@ export function identityFindings(identity) {
     ? []
     : ["personal-commit-email"];
 }
+/** @param {string} raw @param {string[]} [privateHashes] */
 export function commitFindings(raw, privateHashes = []) {
   const split = raw.indexOf("\n\n");
   const headers = raw.slice(0, split);
   const findings = [];
   for (const field of ["author", "committer"]) {
-    const line = headers.split("\n").find((s) => s.startsWith(field + " "));
+    const line = headers
+      .split("\n")
+      .find((/** @type {string} */ s) => s.startsWith(field + " "));
     for (const rule of identityFindings(line?.slice(field.length + 1) || ""))
       findings.push({ field, rule });
   }

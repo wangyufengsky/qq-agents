@@ -1,3 +1,4 @@
+// @ts-check
 // Synthetic data only. Opt-in because this creates a sizeable private database.
 import fs from "node:fs";
 import os from "node:os";
@@ -5,7 +6,8 @@ import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { MemoryStore } from "../src/memory/store.mjs";
 const args = process.argv.slice(2),
-  get = (k, d) => (args.includes(k) ? args[args.indexOf(k) + 1] : d);
+  get = (/** @type {string} */ k, /** @type {string} */ d) =>
+    args.includes(k) ? args[args.indexOf(k) + 1] : d;
 if (!args.includes("--synthetic"))
   throw Error("Use --synthetic [--count 200000] [--out work/memory-benchmark]");
 const count = Number(get("--count", "200000")),
@@ -42,6 +44,7 @@ for (let base = 0; base < count; base += 1000)
   });
 const ingestMs = performance.now() - start;
 store.db.exec("PRAGMA wal_checkpoint(TRUNCATE); PRAGMA optimize;");
+/** @param {() => unknown} fn */
 function timing(fn) {
   const times = [];
   let n;
@@ -102,7 +105,9 @@ const result = {
   count,
   environment: {
     node: process.version,
-    sqlite: store.db.prepare("SELECT sqlite_version() version").get().version,
+    sqlite: /** @type {Record<string, unknown>} */ (
+      store.db.prepare("SELECT sqlite_version() version").get()
+    ).version,
     platform: process.platform,
     arch: process.arch,
     cpu: os.cpus()[0]?.model,
@@ -111,7 +116,9 @@ const result = {
   databaseBytes: fs.statSync(file).size,
   cases,
   personSourceTime: filtered,
-  integrity: store.db.prepare("PRAGMA integrity_check").get().integrity_check,
+  integrity: /** @type {Record<string, unknown>} */ (
+    store.db.prepare("PRAGMA integrity_check").get()
+  ).integrity_check,
   fts: store.db
     .prepare("SELECT name FROM sqlite_master WHERE name='events_fts'")
     .get()?.name,

@@ -1,3 +1,4 @@
+// @ts-check
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -13,10 +14,22 @@ const DEFAULT_INSTRUCTIONS = "你是独立 QQ 人格，只通过启用的 QQ 发
 const DEVELOPER_INSTRUCTIONS =
   "只使用本回合提供的工具。不得访问本机开发环境。不要在文本中泄露能力凭据。";
 
+/**
+ * @typedef {import("./session-contract.mjs").BackendConfig} BackendConfig
+ * @typedef {import("./session-contract.mjs").RunParams} RunParams
+ * @typedef {{role: string, content?: unknown, tool_calls?: unknown[], tool_call_id?: string}} ChatMessage
+ * @typedef {{version: number, id: string, createdAt: number, messages: ChatMessage[]}} OpenAISession
+ */
+
 // Chat Completions with an in-process tool loop. The bridge owns the history,
 // so there is no remote session to verify: a step is persisted only once the
 // assistant message and every tool result for it are complete.
 export class OpenAIBackend {
+  /**
+   * @param {BackendConfig} config
+   * @param {import("./session-contract.mjs").BackendAgent} agent
+   * @param {{root?: string, fetch?: typeof fetch}} [options] root is required; the default only keeps the destructuring safe.
+   */
   constructor(
     config,
     agent,
@@ -32,15 +45,24 @@ export class OpenAIBackend {
     };
     this.agent = agent;
     this.fetch = fetchImpl;
-    this.dir = path.join(root, "openai", agent.id, "sessions");
+    this.dir = path.join(
+      /** @type {string} */ (root),
+      "openai",
+      agent.id,
+      "sessions",
+    );
     fs.mkdirSync(this.dir, { recursive: true, mode: 0o700 });
     this.external = new ExternalTools(config.toolServers);
     this.active = new Set();
   }
+  /** @param {string} route */
   endpoint(route) {
-    return this.config.baseUrl.replace(/\/+$/, "") + route;
+    return (
+      /** @type {string} */ (this.config.baseUrl).replace(/\/+$/, "") + route
+    );
   }
   headers() {
+    /** @type {Record<string, string>} */
     const headers = { "content-type": "application/json" };
     if (this.config.apiKeyEnv) {
       const key = process.env[this.config.apiKeyEnv];
@@ -49,9 +71,11 @@ export class OpenAIBackend {
     }
     return headers;
   }
+  /** @param {string} route @param {{body?: unknown, signal?: AbortSignal}} [options] */
   async request(route, { body, signal } = {}) {
     const headers = this.headers();
     // Errors are rebuilt rather than chained: a cause could carry response text.
+    /** @type {any} */
     let failure;
     const response = await this.fetch(this.endpoint(route), {
       method: body === undefined ? "GET" : "POST",
@@ -92,12 +116,13 @@ export class OpenAIBackend {
     return (await this.health()).models;
   }
   async health() {
+    /** @type {any} */
     let failure;
     const result = await this.request("/models").catch((e) => {
       failure = e;
     });
     let models = Array.isArray(result?.data)
-      ? result.data.filter((m) => typeof m?.id === "string")
+      ? result.data.filter((/** @type {any} */ m) => typeof m?.id === "string")
       : null;
     if (failure?.message === "OPENAI_HTTP_ERROR") {
       if ([401, 403].includes(failure.status))
@@ -110,15 +135,21 @@ export class OpenAIBackend {
     if (!models) throw Error("BACKEND_PROBE_FAILED");
     if (
       !models.length ||
-      (this.config.model && !models.some((m) => m.id === this.config.model))
+      (this.config.model &&
+        !models.some((/** @type {any} */ m) => m.id === this.config.model))
     )
       throw Error("BACKEND_MODEL_UNAVAILABLE");
-    return { models, endpoint: new URL(this.config.baseUrl).origin };
+    return {
+      models,
+      endpoint: new URL(/** @type {string} */ (this.config.baseUrl)).origin,
+    };
   }
+  /** @param {string} id */
   file(id) {
     if (!SESSION_ID.test(String(id))) throw Error("OPENAI_SESSION_INVALID");
     return path.join(this.dir, id + ".json");
   }
+  /** @param {string} id @returns {OpenAISession} */
   load(id) {
     const file = this.file(id);
     let value;
@@ -131,15 +162,18 @@ export class OpenAIBackend {
       throw Error("OPENAI_SESSION_MISSING");
     return value;
   }
+  /** @param {OpenAISession} session */
   store(session) {
     const file = this.file(session.id),
       tmp = file + "." + process.pid + ".tmp";
     fs.writeFileSync(tmp, JSON.stringify(session), { mode: 0o600 });
     fs.renameSync(tmp, file);
   }
+  /** @param {import("./session-contract.mjs").ToolSpec[]} tools */
   sessionSignature(tools) {
     return sessionSignature(this, tools);
   }
+  /** @param {any} call @param {RunParams["callTool"]} callTool @param {AbortSignal} signal */
   async toolMessages(call, callTool, signal) {
     let result;
     try {
@@ -195,6 +229,7 @@ export class OpenAIBackend {
         : [],
     };
   }
+  /** @param {RunParams} params */
   async run({
     prompt,
     instructions,
@@ -211,6 +246,7 @@ export class OpenAIBackend {
     assertSession(session, "openai", signature);
     if (!this.config.model) throw Error("OPENAI_MODEL_REQUIRED");
     if (signal.aborted) throw Error("ABORTED");
+    /** @type {OpenAISession} */
     let state;
     if (session) {
       try {
@@ -265,6 +301,7 @@ export class OpenAIBackend {
             "tool-limit",
             turnId,
           );
+        /** @type {any} */
         let failure;
         const result = await this.request("/chat/completions", {
           signal: controller.signal,
@@ -293,8 +330,11 @@ export class OpenAIBackend {
             basis: "last chat completion prompt plus completion tokens",
           });
         const calls = Array.isArray(message.tool_calls)
-          ? message.tool_calls.filter((c) => c?.type === "function" && c.id)
+          ? message.tool_calls.filter(
+              (/** @type {any} */ c) => c?.type === "function" && c.id,
+            )
           : [];
+        /** @type {ChatMessage[]} */
         const step = [
           {
             role: "assistant",
@@ -326,7 +366,7 @@ export class OpenAIBackend {
         this.store(state);
         if (!calls.length) return;
       }
-    } catch (e) {
+    } catch (/** @type {any} */ e) {
       // History holds only complete steps, so a transient failure may continue it.
       if (e instanceof BackendTurnFailure && e.recoverable && !signal.aborted)
         e.sessionReusable = true;

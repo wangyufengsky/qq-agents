@@ -79,7 +79,9 @@ export class VoiceStore {
     let old;
     try {
       old = this.metadata(agentId, id);
-    } catch {}
+    } catch {
+      // No previous metadata: this is a new voice.
+    }
     const sources = [...(old?.sources || [])];
     if (
       meta.conversation &&

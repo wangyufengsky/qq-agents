@@ -175,7 +175,9 @@ export class Diagnostics {
       // A failing diagnostic sink must not mask the original operation or recurse.
       try {
         this.write(JSON.stringify(entry) + "\n");
-      } catch {}
+      } catch {
+        // Intentionally ignored; see the comment above.
+      }
     }
     return { ...info, requestId: entry.requestId };
   }

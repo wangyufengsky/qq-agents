@@ -1,9 +1,12 @@
+// @ts-check
 import { downloadFile } from "./file-download.mjs";
 
 // Images share the bounded, DNS-pinned attachment transport, not the short
 // webpage fetch budget. Keep provider messages and signed URLs out of errors.
+/** @param {any} error @param {AbortSignal} [signal] */
 export function imageDownloadError(error, signal) {
   if (signal?.aborted) return Error("ABORTED");
+  /** @type {Record<string, string>} */
   const codes = {
     FILE_TOO_LARGE: "IMAGE_TOO_LARGE",
     FILE_DOWNLOAD_HTTP_ERROR: "IMAGE_DOWNLOAD_HTTP_ERROR",
@@ -21,6 +24,7 @@ export function imageDownloadError(error, signal) {
   );
 }
 
+/** @param {string} url @param {number} maxBytes @param {{signal?: AbortSignal}} [options] @param {any} [transport] */
 export async function downloadImage(url, maxBytes, { signal } = {}, transport) {
   try {
     return await downloadFile(url, { maxBytes, signal }, transport);

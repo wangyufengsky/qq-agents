@@ -1,3 +1,4 @@
+// @ts-check
 // Child programs receive an explicit operational environment, never the bridge's
 // credential bag. These lists are launch compatibility policy, not an OS sandbox.
 const base = [
@@ -65,6 +66,11 @@ const desktop = [
 const targetName = /^[A-Za-z_][A-Za-z0-9_]{0,100}$/;
 const sourceName = /^[A-Z][A-Z0-9_]{0,100}$/;
 
+/**
+ * @param {string} component
+ * @param {Record<string, string>} [explicitMappings]
+ * @param {{parent?: NodeJS.ProcessEnv, platform?: NodeJS.Platform}} [options]
+ */
 export function buildChildEnv(
   component,
   explicitMappings = {},
@@ -78,9 +84,10 @@ export function buildChildEnv(
     Array.isArray(explicitMappings)
   )
     throw Error("INVALID_CHILD_ENV_MAPPING");
-  const canonical = (key) => (platform === "win32" ? key.toUpperCase() : key);
+  const canonical = (/** @type {string} */ key) =>
+    platform === "win32" ? key.toUpperCase() : key;
   const keys = Object.keys(parent).sort();
-  const read = (key) => {
+  const read = (/** @type {string} */ key) => {
     const name = canonical(key);
     const source = Object.hasOwn(parent, name)
       ? name
