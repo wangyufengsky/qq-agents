@@ -167,7 +167,7 @@ export async function capturePublicPage(
         "公开网页的 1280×900 可视区域截图；独立无登录环境，不执行网页脚本。脚本生成的内容可能缺失，不代表已读全文。",
     };
   } catch (e) {
-    if (signal?.aborted) throw Error("ABORTED");
+    if (signal?.aborted) throw Error("ABORTED", { cause: e });
     throw Error(
       /^SCREENSHOT_[A-Z_]+$/.test(e.message)
         ? e.message

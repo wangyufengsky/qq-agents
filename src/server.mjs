@@ -835,16 +835,16 @@ export function createServer({
       ) {
         const agentId = url.searchParams.get("agentId");
         runtime.agent(agentId);
+        const memory = runtime.memory.bind(agentId),
+          method = url.pathname.endsWith("/view") ? "view" : "read";
         return send(
-          runtime.memory
-            .bind(agentId)
-            [url.pathname.endsWith("/view") ? "view" : "read"]({
-              id: url.searchParams.get("id"),
-              offset: Number(url.searchParams.get("offset") || 0),
-              ...(url.searchParams.has("revision")
-                ? { revision: Number(url.searchParams.get("revision")) }
-                : {}),
-            }),
+          memory[method]({
+            id: url.searchParams.get("id"),
+            offset: Number(url.searchParams.get("offset") || 0),
+            ...(url.searchParams.has("revision")
+              ? { revision: Number(url.searchParams.get("revision")) }
+              : {}),
+          }),
         );
       }
       if (
