@@ -243,3 +243,67 @@ export function activityPage(
   const nextBefore = filtered.length > cap ? page.at(-1).startedAt : scanEnd;
   return { items: page, nextBefore };
 }
+
+// Per-role home summary for the last 24 hours: what it did, its latest entry
+// and when its next free time is. Counts only; no message text beyond the
+// latest entry's own summary or reply.
+export function homeSummary(memory, agentId, { now = Date.now() } = {}) {
+  const m = memory.bind(agentId),
+    since = now - 86400000,
+    sinceIso = iso(since);
+  const turns = m.db
+    .prepare(
+      "SELECT value FROM model_turns WHERE agent_id=? AND json_extract(value,'$.startedAt')>? AND (json_extract(value,'$.conversation')='@subject' OR json_extract(value,'$.conversation') LIKE 'group:%' OR json_extract(value,'$.conversation') LIKE 'private:%')",
+    )
+    .all(agentId, since)
+    .map((r) => parse(r.value));
+  const free = turns.filter((t) => t.conversation === SUBJECT);
+  const work = (t) =>
+    Array.isArray(t.toolCalls)
+      ? t.toolCalls.filter((c) => c.name !== "subject_log").length
+      : null;
+  const count = (sql, ...args) => m.db.prepare(sql).get(agentId, ...args).n;
+  const latest = activityPage(memory, agentId, { limit: 1, now }).items[0];
+  const subject = parse(
+    m.db
+      .prepare(
+        "SELECT value FROM runtime WHERE agent_id=? AND conversation='@subject'",
+      )
+      .get(agentId)?.value || "{}",
+  );
+  return {
+    agentId,
+    last24h: {
+      chatTurns: turns.length - free.length,
+      sent: count(
+        "SELECT COUNT(*) AS n FROM events WHERE agent_id=? AND kind='message.sent' AND observed_at>?",
+        sinceIso,
+      ),
+      freeTime: free.length,
+      freeTimeActive: free.filter((t) => work(t) > 0).length,
+      freeTimeTraced: free.filter((t) => work(t) !== null).length,
+      reads: count(
+        "SELECT COUNT(DISTINCT json_extract(payload,'$.app.key')) AS n FROM events WHERE agent_id=? AND kind='app.observation' AND observed_at>? AND json_extract(payload,'$.app.operation')='read'",
+        sinceIso,
+      ),
+      diaries: count(
+        "SELECT COUNT(*) AS n FROM diaries WHERE agent_id=? AND updated_at>?",
+        sinceIso,
+      ),
+    },
+    latest: latest
+      ? {
+          kind: latest.kind,
+          conversation: latest.conversation,
+          startedAt: latest.startedAt,
+          did: latest.log?.did || null,
+          text:
+            latest.log?.summary ||
+            latest.sent[0]?.text ||
+            latest.browsing.items[0]?.title ||
+            null,
+        }
+      : null,
+    nextFreeTimeAt: subject.nextCheckAt || null,
+  };
+}

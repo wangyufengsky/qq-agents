@@ -1519,3 +1519,25 @@ body.in-role
   ) {
   display: none;
 }
+.home-role > p {
+  margin: 8px 0 0;
+}
+.home-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 10px;
+}
+.home-stats span {
+  display: grid;
+  font-size: 0.85em;
+  color: var(--muted);
+}
+.home-stats b {
+  font-size: 1.4em;
+  font-weight: 500;
+  color: var(--text, inherit);
+}
+.home-errors summary {
+  cursor: pointer;
+}

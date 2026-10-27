@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { fixture } from "./helpers.mjs";
-import { activityPage } from "../src/core/activity.mjs";
+import { activityPage, homeSummary } from "../src/core/activity.mjs";
 import { createServer } from "../src/server.mjs";
 
 const T0 = Date.parse("2026-10-27T15:02:14Z");
@@ -167,4 +167,33 @@ test("the activity API validates the filter", async (t) => {
     page.items.map((e) => e.turnId),
     ["free"],
   );
+});
+
+test("the home summary counts the last 24 hours and shows the latest entry", (t) => {
+  const { store } = fixture(t);
+  const m = store.bind("agent-0");
+  seed(m);
+  m.append({
+    dedupe: "sent:1",
+    conversation: "group:20000",
+    kind: "message.sent",
+    direction: "out",
+    observedAt: at(310),
+    body: "晚上好",
+    payload: {},
+  });
+  m.setState("@subject", { nextCheckAt: T0 + 3600000 });
+  const h = homeSummary(store, "agent-0", { now: T0 + 600000 });
+  assert.deepEqual(h.last24h, {
+    chatTurns: 1,
+    sent: 1,
+    freeTime: 1,
+    freeTimeActive: 1,
+    freeTimeTraced: 1,
+    reads: 1,
+    diaries: 0,
+  });
+  assert.equal(h.latest.kind, "chat");
+  assert.equal(h.latest.text, "晚上好");
+  assert.equal(h.nextFreeTimeAt, T0 + 3600000);
 });

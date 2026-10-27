@@ -262,7 +262,7 @@ function consoleSandbox(initial) {
   return node("#content").innerHTML;
 }
 
-test("overview renders the checklist above the stat cards in every state", async (t) => {
+test("overview renders the checklist above the role cards in every state", async (t) => {
   for (const allowLive of [false, true]) {
     const { call, runtime } = await serve(t, { allowLive });
     const html = consoleSandbox({
@@ -270,7 +270,7 @@ test("overview renders the checklist above the stat cards in every state", async
       status: (await call("/api/status")).body,
     });
     assert.ok(html.indexOf("上线清单") >= 0, "checklist present");
-    assert.ok(html.indexOf("上线清单") < html.indexOf('class="stats"'));
+    assert.ok(html.indexOf("上线清单") < html.indexOf('id="home-roles"'));
     assert.equal(html.includes('data-mode="live" disabled'), !allowLive);
   }
   const cfg = config(1);

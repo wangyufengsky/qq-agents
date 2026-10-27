@@ -14,7 +14,7 @@ import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { mcpResult, TOOL_NAMES } from "./tools/index.mjs";
 import { readiness } from "./core/readiness.mjs";
-import { activityPage } from "./core/activity.mjs";
+import { activityPage, homeSummary } from "./core/activity.mjs";
 import { slangAvailable } from "./core/features.mjs";
 const publicDir = fileURLToPath(new URL("../public/", import.meta.url));
 // Free-time log and 24-hour activity for the console; no message bodies.
@@ -367,6 +367,12 @@ export function createServer({
           ),
         );
       }
+      if (req.method === "GET" && url.pathname === "/api/home")
+        return send({
+          agents: runtime.config.agents.map((a) =>
+            homeSummary(runtime.memory, a.id, { now: runtime.now() }),
+          ),
+        });
       if (req.method === "GET" && url.pathname === "/api/activity") {
         const a = runtime.agent(url.searchParams.get("agentId"));
         const filter = url.searchParams.get("filter") || "all";

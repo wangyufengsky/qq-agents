@@ -300,6 +300,56 @@ function recentErrorsMarkup(query = "") {
       .join("") || "<p>暂无匹配的错误记录。</p>"
   );
 }
+// Home: per-role 24-hour summary, fetched at most every 30 s because the
+// overview re-renders on each status refresh.
+let homeData = null,
+  homeFetchedAt = 0,
+  errorsOpen = false;
+function loadHome() {
+  if (Date.now() - homeFetchedAt < 30000) return;
+  homeFetchedAt = Date.now();
+  api("/api/home")
+    .then((data) => {
+      homeData = data;
+      const box = $("#home-roles");
+      if (tab === "overview" && box) box.innerHTML = homeRolesMarkup();
+    })
+    .catch(() => (homeFetchedAt = 0));
+}
+const clipText = (s, n) => (!s ? "" : s.length > n ? s.slice(0, n) + "…" : s);
+// Last character tells roles apart when names share a prefix (大肥鱼 / 大肥龙).
+const avatarChar = (name) => [...String(name).trim()].pop() || "?";
+const homeTime = (t) =>
+  new Date(t).toLocaleTimeString("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+const homeDid = {
+  browsed: "浏览",
+  searched: "搜索",
+  read: "阅读",
+  wrote: "写作",
+  reviewed: "回顾",
+  rested: "休息",
+};
+function homeRoleCard(a) {
+  const s = status.agents.find((x) => x.id === a.id),
+    h = homeData?.agents?.find((x) => x.agentId === a.id),
+    c = status.connections.find((x) => x.id === a.connectionId),
+    b = status.backends?.find((x) => x.id === a.backendId),
+    can = s && !s.blockers?.length;
+  const latest = h?.latest
+    ? `<p><span class="hint">${homeTime(h.latest.startedAt)} · ${h.latest.kind === "subject" ? "空闲时间" + (h.latest.did ? " · " + esc(homeDid[h.latest.did] || h.latest.did) : "") : esc(h.latest.conversation.replace(/^group:/, "群 ").replace(/^private:/, "私聊 "))}</span><br><span title="${esc(h.latest.text || "")}">${esc(clipText(h.latest.text, 110) || "（这一回合没有留下文字）")}</span></p>`
+    : `<p class="hint">${homeData ? "还没有动态。" : "读取中…"}</p>`;
+  const d = h?.last24h;
+  const stats = d
+    ? `<div class="home-stats"><span><b>${d.sent}</b>回复</span><span><b>${d.freeTimeTraced ? `${d.freeTimeActive}/${d.freeTimeTraced}` : d.freeTime}</b>${d.freeTimeTraced ? "空闲时有行动" : "空闲时间"}</span><span><b>${d.reads}</b>读文章</span><span><b>${d.diaries}</b>日记</span></div>`
+    : "";
+  return `<article class="card home-role"><div class="row"><div class="identity"><span class="avatar">${esc(avatarChar(a.name))}</span><div><h3>${esc(a.name)}</h3><span class="hint">QQ ${c?.connected ? "已连接" : "未连接"} · ${esc(backendLabels[b?.state] || "后端尚未检测")}</span></div></div>${tag(can ? "可以发言" : a.paused ? "已暂停" : "暂不发言", can ? "live" : a.paused ? "off" : "warn")}</div>${can ? "" : blockersMarkup(s)}${latest}${stats}${d ? `<p class="hint">最近 24 小时${h.nextFreeTimeAt && a.subject?.enabled ? ` · 下次空闲时间 ${homeTime(h.nextFreeTimeAt)}` : ""}</p>` : ""}<div class="card-actions"><button data-do="role" data-id="${esc(a.id)}">${icon("pulse", "sm")}查看动态</button><button class="ghost" data-do="role-settings" data-id="${esc(a.id)}">${icon("settings", "sm")}设置</button></div></article>`;
+}
+const homeRolesMarkup = () =>
+  config.agents.map(homeRoleCard).join("") ||
+  '<div class="card empty">还没有角色。到“角色”中添加第一个。</div>';
 // Four sections; existing pages keep their keys and become sub-pages. Role
 // pages all follow one selected role instead of each keeping its own picker.
 const sections = {
@@ -425,34 +475,22 @@ function render() {
     return;
   }
   if (tab === "overview") {
-    content.innerHTML = `<div class="banner ${status.mode === "isolated" ? "warn" : status.globalPaused ? "" : "ok"}">${icon(status.mode === "isolated" ? "shield" : "pulse")}<span>${status.mode === "isolated" ? "当前为隔离模式。不会连接 QQ 或启动模型回合。切换需要以 --live 启动并在管理台配置。" : status.globalPaused ? "全局暂停中。连接可记录收到的消息，角色不会参与；解除全局暂停后，各角色的独立暂停仍生效。" : "全局允许参与。具体行为由每个角色的暂停、白名单、唤醒和静默配置决定。"}</span></div><div class="stats">${[
-      ["角色", config.agents.length, "独立人格与经历", "bot"],
-      ["QQ 账号", config.connections.length, "账号与连接分离", "link"],
-      ["AI 后端", config.backends.length, "模型可独立切换", "chip"],
-      [
-        "活动回合",
-        status.agents.reduce((n, a) => n + a.activeTurns, 0),
-        "当前进行中的对话",
-        "pulse",
-      ],
-    ]
-      .map(
-        ([name, n, sub, ic]) =>
-          `<div class="card stat"><div class="stat-head"><span>${name}</span>${icon(ic)}</div><span class="number">${n}</span><p class="hint">${sub}</p></div>`,
-      )
-      .join(
-        "",
-      )}</div><div class="section-title"><h2>角色状态</h2><button class="ghost" data-do="tab" data-id="agents">管理角色${icon("arrow", "sm")}</button></div><div class="grid">${config.agents.map(agentCard).join("")}</div><div class="section-title"><h2>受限动作授权</h2>${tag("回忆发言由角色自行判断", "accent")}</div><div class="card">${status.disclosureRequests.length ? status.disclosureRequests.map((r, i) => `<div class="record"><strong>${esc(find("agents", r.agentId)?.name)} → ${esc(r.conversation)}</strong><p>${r.records.length} 条资料涉及${r.reason === "external-service" ? "外部服务调用" : "本地运维内容"}。${r.request ? "批准仅对当前回合、所示请求参数及资料集合有效。" : "批准仅对当前回合、当前会话所示资料集合有效。"}</p><p class="mono">${esc(r.records.join("\n"))}</p>${r.request ? `<pre>${esc(JSON.stringify(r.request, null, 2))}</pre><p>${esc(JSON.stringify(r.sourceClasses))}</p>` : ""}<button data-do="grant" data-id="${i}">批准本次披露</button></div>`).join("") : "<p>当前没有待批准的受限动作。</p>"}</div>`;
+    const waiting = status.agents.reduce(
+        (n, a) => n + (a.unresolvedDeliveries || 0),
+        0,
+      ),
+      grants = status.disclosureRequests.length,
+      errors = (status.recentErrors || []).length;
+    content.innerHTML = `<div class="banner ${status.mode === "isolated" ? "warn" : status.globalPaused ? "" : "ok"}">${icon(status.mode === "isolated" ? "shield" : "pulse")}<span>${status.mode === "isolated" ? "隔离模式：不连接 QQ，也不运行模型。" : status.globalPaused ? "全局暂停中：连接照常记录消息，角色不参与。" : "运行中：各角色按自己的设置参与。"}</span></div><div class="section-title"><h2>角色</h2></div><div class="grid" id="home-roles">${homeRolesMarkup()}</div><div class="section-title"><h2>需要处理</h2>${grants + waiting ? "" : tag("暂无", "live")}</div>${grants ? `<div class="card"><h3>受限动作授权 · ${grants}</h3>${status.disclosureRequests.map((r, i) => `<div class="record"><strong>${esc(find("agents", r.agentId)?.name)} → ${esc(r.conversation)}</strong><p>${r.records.length} 条资料涉及${r.reason === "external-service" ? "外部服务调用" : "本地运维内容"}。${r.request ? "批准仅对当前回合、所示请求参数及资料集合有效。" : "批准仅对当前回合、当前会话所示资料集合有效。"}</p><p class="mono">${esc(r.records.join("\n"))}</p>${r.request ? `<pre>${esc(JSON.stringify(r.request, null, 2))}</pre><p>${esc(JSON.stringify(r.sourceClasses))}</p>` : ""}<button data-do="grant" data-id="${i}">批准本次披露</button></div>`).join("")}</div>` : ""}${waiting ? `<div class="card"><h3>待核对发送 · ${waiting}</h3><p class="hint">网络结果未知的发送不会自动重发。请在 QQ 中查看对应会话后标记结果。</p><div id="unresolved-deliveries">读取中…</div></div>` : ""}${grants + waiting ? "" : '<p class="hint">没有待批准的动作或待核对的发送。</p>'}`;
     renderOnboarding(content);
+    if (waiting) action(renderUnresolved);
     content.insertAdjacentHTML(
       "beforeend",
-      `<div class="section-title"><h2>待核对发送 · ${status.agents.reduce((n, a) => n + (a.unresolvedDeliveries || 0), 0)}</h2></div><div class="card"><p class="hint">网络结果未知的发送不会自动重发。请在 QQ 中查看对应会话后标记结果。</p><div id="unresolved-deliveries">读取中…</div></div>`,
+      `<details class="card home-errors" ${errorsOpen || errorFilter ? "open" : ""}><summary>最近错误 · ${errors} 类</summary><label>筛选错误码、组件或关联 ID<input id="error-filter" value="${esc(errorFilter)}" placeholder="例如 CONFIG_SAVE_FAILED、http"></label><p class="hint">最多保留本次启动的 50 类错误，同类重复错误合并计数；完整留存取决于服务日志配置。</p><div id="recent-errors">${recentErrorsMarkup(errorFilter)}</div></details>`,
     );
-    action(renderUnresolved);
-    content.insertAdjacentHTML(
-      "beforeend",
-      `<div class="section-title"><h2>最近错误</h2></div><div class="card"><label>筛选错误码、组件或关联 ID<input id="error-filter" value="${esc(errorFilter)}" placeholder="例如 CONFIG_SAVE_FAILED、http"></label><p class="hint">最多保留本次启动的 50 类错误，同类重复错误合并计数；完整留存取决于服务日志配置。</p><div id="recent-errors">${recentErrorsMarkup(errorFilter)}</div></div>`,
-    );
+    const details = content.querySelector?.(".home-errors");
+    if (details) details.ontoggle = () => (errorsOpen = details.open);
+    loadHome();
     if (configMigrationWarnings.length)
       content.insertAdjacentHTML(
         "afterbegin",
@@ -644,7 +682,7 @@ function agentCard(a) {
   const toggleOff = disabledReason([
     [status.mode === "isolated" && !a.paused, "isolatedAgent"],
   ]);
-  return `<article class="card"><div class="row"><div class="identity"><span class="avatar">${esc(a.name.slice(0, 1))}</span><div><h3>${esc(a.name)}</h3><span class="hint mono">${esc(a.id)}</span></div></div>${tag(a.paused ? "已暂停" : status.globalPaused ? "全局暂停" : "允许参与", a.paused ? "off" : status.globalPaused ? "warn" : "live")}</div><dl class="agent-meta"><dt>QQ 账号</dt><dd>${esc(c?.label)}</dd><dt>后端 / 模型</dt><dd>${esc(b?.label)} / <span class="mono">${esc(a.model || b?.model || "后端默认")}</span></dd><dt>后端连接</dt><dd>${esc(backendLabels[status.backends?.find((x) => x.id === a.backendId)?.state] || "尚未检测")}</dd><dt>参与率</dt><dd>${Math.round(a.wake.participation * 100)}%${meter(a.wake.participation)}</dd><dt>来源范围</dt><dd>${a.allow.groups.length} 个群 · ${a.allow.users.length} 位私聊对象</dd></dl>${blockersMarkup(s)}${s?.error ? `<p class="hint">${esc(s.error)}</p>` : ""}<div class="card-actions"><button data-do="role" data-id="${esc(a.id)}">${icon("pulse", "sm")}查看动态</button><button data-do="edit-agent" data-id="${esc(a.id)}">${icon("settings", "sm")}配置角色</button><button class="ghost" data-do="toggle" data-id="${esc(a.id)}" ${disabledAttr(toggleOff)}>${icon(a.paused ? "play" : "pause", "sm")}${a.paused ? "解除角色暂停" : "暂停角色"}</button></div>${disabledHints(toggleOff)}</article>`;
+  return `<article class="card"><div class="row"><div class="identity"><span class="avatar">${esc(avatarChar(a.name))}</span><div><h3>${esc(a.name)}</h3><span class="hint mono">${esc(a.id)}</span></div></div>${tag(a.paused ? "已暂停" : status.globalPaused ? "全局暂停" : "允许参与", a.paused ? "off" : status.globalPaused ? "warn" : "live")}</div><dl class="agent-meta"><dt>QQ 账号</dt><dd>${esc(c?.label)}</dd><dt>后端 / 模型</dt><dd>${esc(b?.label)} / <span class="mono">${esc(a.model || b?.model || "后端默认")}</span></dd><dt>后端连接</dt><dd>${esc(backendLabels[status.backends?.find((x) => x.id === a.backendId)?.state] || "尚未检测")}</dd><dt>参与率</dt><dd>${Math.round(a.wake.participation * 100)}%${meter(a.wake.participation)}</dd><dt>来源范围</dt><dd>${a.allow.groups.length} 个群 · ${a.allow.users.length} 位私聊对象</dd></dl>${blockersMarkup(s)}${s?.error ? `<p class="hint">${esc(s.error)}</p>` : ""}<div class="card-actions"><button data-do="role" data-id="${esc(a.id)}">${icon("pulse", "sm")}查看动态</button><button data-do="edit-agent" data-id="${esc(a.id)}">${icon("settings", "sm")}配置角色</button><button class="ghost" data-do="toggle" data-id="${esc(a.id)}" ${disabledAttr(toggleOff)}>${icon(a.paused ? "play" : "pause", "sm")}${a.paused ? "解除角色暂停" : "暂停角色"}</button></div>${disabledHints(toggleOff)}</article>`;
 }
 const recoveryText = (r) => {
   if (!r) return "";
@@ -786,6 +824,12 @@ async function operate(kind, id) {
   if (kind === "role") {
     roleId = id;
     tab = "activity";
+    render();
+    return;
+  }
+  if (kind === "role-settings") {
+    roleId = id;
+    tab = "agents";
     render();
     return;
   }
