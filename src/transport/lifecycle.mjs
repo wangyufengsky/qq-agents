@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { buildChildEnv } from "../core/child-env.mjs";
 const exec = promisify(execFile);
 
 /** Explicit lifecycle control. Never discover/stop unrelated QQ processes or delete Docker resources. */
@@ -46,11 +47,7 @@ export class Lifecycle {
     if (!config.process) throw Error("NATIVE_PROCESS_NOT_CONFIGURED");
     const cwd = path.join(this.root, "qq-processes", config.id);
     fs.mkdirSync(cwd, { recursive: true, mode: 0o700 });
-    const env = { ...process.env };
-    for (const [key, ref] of Object.entries(config.process.env)) {
-      if (!process.env[ref]) throw Error("PROCESS_ENV_MISSING");
-      env[key] = process.env[ref];
-    }
+    const env = buildChildEnv("native-qq", config.process.env);
     const fd = fs.openSync(path.join(cwd, "process.log"), "a", 0o600);
     let child;
     try {

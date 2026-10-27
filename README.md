@@ -57,7 +57,7 @@ node src/main.mjs --data /path/to/private-data --port 3210
 
 `examples/config.example.json` 是唯一随仓库分发的示例。运行配置、凭据引用、人格、聊天、媒体、模型会话全部在私有数据目录；`.gitignore` 和隐私扫描器禁止把这些运行文件提交。
 
-OneBot 令牌填写环境变量名 `tokenEnv`；外部 MCP 和原生进程的 `env` 使用“目标变量名 → 本进程环境变量名”的映射，不把密钥写入仓库。Codex home 固定在数据目录 `codex/<agentId>/home`，不继承日常 Codex home。
+OneBot 令牌填写环境变量名 `tokenEnv`；Codex 后端、外部 MCP 和原生进程的 `env` 使用“目标变量名 → 本进程环境变量名”的映射，不把密钥写入仓库。Codex 和管理台原生 QQ 子进程默认仅继承运行所需的环境白名单，专用变量须显式映射。Codex home 固定在数据目录 `codex/<agentId>/home`，不继承日常 Codex home。审批 ID、环境白名单和升级说明见 [凭据边界](docs/CREDENTIAL-BOUNDARIES.md)。
 
 DSH bundle 仅生成，不自动安装、改 profile 或重启应用：
 

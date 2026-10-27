@@ -6,7 +6,13 @@ import path from "node:path";
 import { VoiceStore } from "../src/tools/voice.mjs";
 import { wav } from "./audio-fixture.mjs";
 import { EventEmitter } from "node:events";
-import { fixture, config, context, raw } from "./helpers.mjs";
+import {
+  fixture,
+  config,
+  context,
+  raw,
+  disclosureApproval,
+} from "./helpers.mjs";
 import { AppBrowsing } from "../src/apps/service.mjs";
 import { appsPolicySchema, inAppHours } from "../src/apps/policy.mjs";
 import { sourceCounts } from "../src/core/outbound-policy.mjs";
@@ -326,10 +332,14 @@ test("exact admin grants bind tool, full arguments and source set, never all fut
   );
   const pending = ctx.disclosureRequest;
   assert.throws(
-    () => f.runtime.grant(ctx.token, pending.records),
+    () =>
+      f.runtime.grant({
+        ...disclosureApproval(ctx, pending),
+        requestId: undefined,
+      }),
     /EXACT_EXTERNAL/,
   );
-  f.runtime.grant(ctx.token, pending.records, pending.requestId);
+  f.runtime.grant(disclosureApproval(ctx, pending));
   await f.runtime.callTool(ctx, "external_tool", args);
   await assert.rejects(
     f.runtime.callTool(ctx, "external_tool", {
@@ -555,7 +565,7 @@ test("external approval UI retains complete source set even after a QQ-only gran
   );
   const pending = f.runtime.status().disclosureRequests[0];
   assert.deepEqual(pending.records, ["operations:fixture"]);
-  f.runtime.grant(ctx.token, pending.records, pending.requestId);
+  f.runtime.grant(disclosureApproval(ctx, pending));
   assert.equal(
     f.runtime.authorizeExternal(ctx, request).basis,
     "exact-request-grant",
@@ -650,7 +660,7 @@ test("audio MCP request gets one precise approval after media source is included
   );
   const pending = f.runtime.status().disclosureRequests[0];
   assert(pending.records.includes("audio:" + audio.id));
-  f.runtime.grant(ctx.token, pending.records, pending.requestId);
+  f.runtime.grant(disclosureApproval(ctx, pending));
   await f.runtime.callTool(ctx, "external_tool", args);
   assert.equal(f.calls.length, 1);
   assert.equal(f.calls[0].args.audio, wav().toString("base64"));

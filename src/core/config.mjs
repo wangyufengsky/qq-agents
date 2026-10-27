@@ -130,13 +130,30 @@ export const configSchema = z
             .strict()
             .default({ autoReconnect: false }),
           command: z.string().default("codex"),
+          env: z
+            .record(
+              z
+                .string()
+                .regex(/^[A-Za-z_][A-Za-z0-9_]{0,100}$/)
+                .refine(
+                  (name) => name.toUpperCase() !== "CODEX_HOME",
+                  "Codex home is managed by the bridge",
+                ),
+              envName,
+            )
+            .optional(),
           home: z.string().optional(),
           preset: z.string().default("qq-unified"),
           model: z.string().default(""),
           effort: z.string().default("high"),
           toolServers: z.array(toolServer).default([]),
         })
-        .strict(),
+        .strict()
+        .refine(
+          (backend) =>
+            backend.type === "codex" || !Object.keys(backend.env || {}).length,
+          "Environment mappings require a Codex subprocess",
+        ),
     ),
     agents: z.array(
       z

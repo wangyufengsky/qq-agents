@@ -26,7 +26,8 @@ import {
 } from "../github/policy.mjs";
 import { FILE_TOOL_NAMES } from "../tools/file-tools.mjs";
 import { filesSchema } from "./policy.mjs";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { z } from "zod";
 import { isDeepStrictEqual } from "node:util";
 import { allowed, inSilence, validateConfig } from "./config.mjs";
 import { normalizeEvent, OneBot } from "../transport/onebot.mjs";
@@ -46,6 +47,18 @@ import {
 
 const digest = (x) =>
   createHash("sha256").update(JSON.stringify(x)).digest("hex");
+const disclosureGrant = z
+  .object({
+    approvalId: z.uuid(),
+    agentId: z.string().min(1).max(64),
+    conversation: z.string().min(1).max(120),
+    ids: z.array(z.string().min(1)),
+    requestId: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
+  })
+  .strict();
 export class Runtime {
   constructor({
     configStore,
@@ -660,6 +673,11 @@ export class Runtime {
     const a = this.agent(agentId);
     if (conversation !== SUBJECT && !allowed(a, conversation))
       throw Error("INVALID_CONVERSATION");
+    for (const [token, active] of this.capabilities)
+      if (active.agentId === agentId && active.conversation === conversation) {
+        active.controller.abort();
+        this.capabilities.delete(token);
+      }
     const ctx = this.running.get(agentId + "|" + conversation);
     if (ctx) {
       ctx.controller.abort();
@@ -968,10 +986,10 @@ export class Runtime {
             !githubPrivateContext(this.agent(ctx.agentId), ctx.conversation))),
     );
     if (!ids.length) return;
-    ctx.disclosureRequest = {
+    this.requestDisclosure(ctx, {
       reason: external ? "external-service" : "operations-content",
       records: ids,
-    };
+    });
     throw Error(
       external
         ? "PRIVATE_RECOLLECTION_EXTERNAL_CALL_BLOCKED"
@@ -984,14 +1002,62 @@ export class Runtime {
   observeInput(ctx, items) {
     observeInput(this, ctx, items);
   }
-  grant(token, ids, requestId) {
-    const ctx = this.capability(token);
-    if (!Array.isArray(ids) || ids.some((id) => !ctx.privateRead.has(id)))
+  requestDisclosure(ctx, details) {
+    const candidate = {
+      ...structuredClone(details),
+      records: [...details.records].sort(),
+      binding: {
+        agentId: ctx.agentId,
+        conversation: ctx.conversation,
+        expires: ctx.expires,
+        sourceIds: [...ctx.privateRead].sort(),
+      },
+    };
+    const { approvalId, ...previous } = ctx.disclosureRequest || {};
+    if (!approvalId || !isDeepStrictEqual(previous, candidate))
+      ctx.disclosureRequest = { ...candidate, approvalId: randomUUID() };
+  }
+  currentDisclosure(ctx) {
+    const pending = ctx.disclosureRequest;
+    if (!pending) return false;
+    try {
+      this.assertActive(ctx);
+    } catch {
+      return false;
+    }
+    return isDeepStrictEqual(pending.binding, {
+      agentId: ctx.agentId,
+      conversation: ctx.conversation,
+      expires: ctx.expires,
+      sourceIds: [...ctx.privateRead].sort(),
+    });
+  }
+  grant(input) {
+    const { approvalId, agentId, conversation, ids, requestId } =
+      disclosureGrant.parse(input);
+    const ctx = [...this.capabilities.values()].find(
+      (c) => c.disclosureRequest?.approvalId === approvalId,
+    );
+    if (
+      !ctx ||
+      !this.currentDisclosure(ctx) ||
+      ctx.agentId !== agentId ||
+      ctx.conversation !== conversation
+    )
       throw Error("INVALID_DISCLOSURE_GRANT");
-    if (ctx.disclosureRequest?.requestId || requestId)
-      return grantExternal(ctx, ids, requestId);
-    ids.forEach((id) => ctx.grants.add(id));
-    return { granted: ids, conversation: ctx.conversation };
+    const pending = ctx.disclosureRequest;
+    if (!isDeepStrictEqual([...ids].sort(), pending.records))
+      throw Error("INVALID_DISCLOSURE_GRANT");
+    let result;
+    if (pending.requestId || requestId)
+      result = grantExternal(ctx, ids, requestId);
+    else {
+      ids.forEach((id) => ctx.grants.add(id));
+      result = { granted: ids, conversation: ctx.conversation };
+    }
+    // The public ID names one pending approval, never a model capability.
+    ctx.disclosureRequest = undefined;
+    return result;
   }
   assertSafeOutput(ctx, text) {
     if (
@@ -1262,13 +1328,14 @@ export class Runtime {
         error: this.faults.get(a.id) || null,
       })),
       disclosureRequests: [...this.capabilities.values()]
+        .filter((c) => this.currentDisclosure(c))
         .filter((c) =>
           c.disclosureRequest?.requestId
             ? !c.externalGrants?.has(c.disclosureRequest.requestId)
             : c.disclosureRequest?.records.some((id) => !c.grants.has(id)),
         )
         .map((c) => ({
-          token: c.token,
+          approvalId: c.disclosureRequest.approvalId,
           agentId: c.agentId,
           conversation: c.conversation,
           reason: c.disclosureRequest.reason,

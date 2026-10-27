@@ -2,12 +2,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import http from "node:http";
+import fs from "node:fs";
+import vm from "node:vm";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { createServer } from "../src/server.mjs";
 import { VoiceStore } from "../src/tools/voice.mjs";
 import { wav } from "./audio-fixture.mjs";
-import { fixture, context } from "./helpers.mjs";
+import { fixture, context, disclosureApproval } from "./helpers.mjs";
 async function setup(t) {
   const f = fixture(t),
     token = randomBytes(32).toString("hex"),
@@ -44,6 +46,248 @@ test("admin routes reject absent, wrong and agent credentials", async (t) => {
     401,
   );
   assert.equal((await request("/api/config")).status, 200);
+});
+
+test("disclosure approval uses an admin-only request ID that cannot call model tools", async (t) => {
+  const { request, runtime } = await setup(t);
+  const ctx = context(runtime);
+  ctx.privateRead.add("operations:synthetic");
+  const outbound = {
+    tool: "external_tool",
+    args: {
+      serverId: "fixture",
+      tool: "search",
+      arguments: { q: "synthetic query" },
+    },
+  };
+  assert.throws(
+    () => runtime.authorizeExternal(ctx, outbound),
+    /EXTERNAL_CALL_BLOCKED/,
+  );
+  const status = await (await request("/api/status")).json();
+  assert.equal(JSON.stringify(status).includes(ctx.token), false);
+  const pending = status.disclosureRequests[0];
+  assert.equal(Object.hasOwn(pending, "token"), false);
+  assert.match(pending.approvalId, /^[a-f0-9-]{36}$/);
+  for (const route of ["/agent/tools", "/agent/catalog"])
+    assert.equal(
+      (
+        await request(route, {
+          auth: false,
+          method: "POST",
+          headers: { "x-agent-capability": pending.approvalId },
+          body: "{}",
+        })
+      ).status,
+      401,
+    );
+  const payload = {
+    approvalId: pending.approvalId,
+    agentId: pending.agentId,
+    conversation: pending.conversation,
+    ids: pending.records,
+    requestId: pending.requestId,
+  };
+  const approve = (auth = true) =>
+    request("/api/disclosure", {
+      auth,
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  assert.equal((await approve(false)).status, 401);
+  assert.equal((await approve()).status, 200);
+  assert.equal(
+    runtime.authorizeExternal(ctx, outbound).basis,
+    "exact-request-grant",
+  );
+  assert.equal((await approve()).status, 400);
+  assert.equal(
+    (await (await request("/api/status")).json()).disclosureRequests.length,
+    0,
+  );
+  assert.equal(
+    (await (await request("/api/export?agentId=agent-0")).text()).includes(
+      ctx.token,
+    ),
+    false,
+  );
+});
+
+for (const change of [
+  "expired",
+  "cancelled",
+  "paused",
+  "reset",
+  "sources",
+  "request",
+])
+  test(`disclosure approval rejects a stale ${change} request`, async (t) => {
+    const { request, runtime } = await setup(t);
+    const ctx = context(runtime);
+    ctx.privateRead.add("operations:synthetic");
+    const outbound = {
+      tool: "external_tool",
+      args: {
+        serverId: "fixture",
+        tool: "search",
+        arguments: { q: "original" },
+      },
+    };
+    assert.throws(
+      () => runtime.authorizeExternal(ctx, outbound),
+      /EXTERNAL_CALL_BLOCKED/,
+    );
+    const payload = disclosureApproval(ctx);
+    if (change === "expired") ctx.expires = Date.now() - 1;
+    if (change === "cancelled") ctx.controller.abort();
+    if (change === "paused") await runtime.pause(ctx.agentId);
+    if (change === "reset")
+      await runtime.resetSession(ctx.agentId, ctx.conversation);
+    if (change === "sources") ctx.privateRead.add("operations:new-source");
+    if (change === "request") {
+      outbound.args.arguments.q = "changed";
+      assert.throws(
+        () => runtime.authorizeExternal(ctx, outbound),
+        /EXTERNAL_CALL_BLOCKED/,
+      );
+    }
+    const result = await request("/api/disclosure", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    assert.equal(result.status, 400);
+    assert.equal(ctx.externalGrants.size, 0);
+  });
+
+test("disclosure approval binds identity, complete source set and immutable action arguments", async (t) => {
+  const { request, runtime } = await setup(t);
+  const ctx = context(runtime);
+  ctx.privateRead.add("operations:synthetic");
+  const outbound = {
+    tool: "external_tool",
+    args: { serverId: "fixture", tool: "search", arguments: { q: "original" } },
+  };
+  assert.throws(
+    () => runtime.authorizeExternal(ctx, outbound),
+    /EXTERNAL_CALL_BLOCKED/,
+  );
+  const original = structuredClone(outbound);
+  const payload = disclosureApproval(ctx);
+  // Repeating the same blocked action retains one pending ID; caller mutation cannot edit it.
+  assert.throws(
+    () => runtime.authorizeExternal(ctx, original),
+    /EXTERNAL_CALL_BLOCKED/,
+  );
+  assert.equal(ctx.disclosureRequest.approvalId, payload.approvalId);
+  outbound.args.arguments.q = "mutated by caller";
+  for (const patch of [
+    { agentId: "agent-1" },
+    { conversation: "group:20001" },
+    { ids: [] },
+    { ids: [...payload.ids, ...payload.ids] },
+    { requestId: "0".repeat(64) },
+    { token: ctx.token },
+    { approvalId: ctx.token },
+  ]) {
+    const result = await request("/api/disclosure", {
+      method: "POST",
+      body: JSON.stringify({ ...payload, ...patch }),
+    });
+    assert.equal(result.status, 400);
+    assert.equal(ctx.externalGrants.size, 0);
+  }
+  assert.equal(
+    (
+      await request("/api/disclosure", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    runtime.authorizeExternal(ctx, original).basis,
+    "exact-request-grant",
+  );
+  assert.throws(
+    () => runtime.authorizeExternal(ctx, outbound),
+    /EXTERNAL_CALL_BLOCKED/,
+  );
+});
+
+test("QQ source disclosure approvals stay scoped to the pending role and conversation", async (t) => {
+  const { request, runtime } = await setup(t);
+  const ctx = context(runtime);
+  ctx.privateRead.add("operations:synthetic");
+  assert.throws(() => runtime.assertDisclosure(ctx), /DISCLOSURE_GRANT/);
+  const payload = disclosureApproval(ctx);
+  assert.equal(
+    (
+      await request("/api/disclosure", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      })
+    ).status,
+    200,
+  );
+  assert.doesNotThrow(() => runtime.assertDisclosure(ctx));
+  const peer = context(runtime, ctx.agentId, "group:20001");
+  peer.privateRead.add("operations:synthetic");
+  assert.throws(() => runtime.assertDisclosure(peer), /DISCLOSURE_GRANT/);
+});
+
+test("console approval submits the public ID and scope without a model capability", async (t) => {
+  const f = await setup(t),
+    ctx = context(f.runtime);
+  ctx.privateRead.add("operations:synthetic");
+  const outbound = {
+    tool: "external_tool",
+    args: {
+      serverId: "fixture",
+      tool: "search",
+      arguments: { q: "synthetic" },
+    },
+  };
+  assert.throws(
+    () => f.runtime.authorizeExternal(ctx, outbound),
+    /EXTERNAL_CALL_BLOCKED/,
+  );
+  const nodes = new Map();
+  let submitted;
+  const sandbox = vm.createContext({
+    document: {
+      querySelector: (s) => {
+        if (!nodes.has(s)) nodes.set(s, { addEventListener() {} });
+        return nodes.get(s);
+      },
+      querySelectorAll: () => [],
+    },
+    sessionStorage: { getItem: () => "" },
+    adminToken: f.token,
+    setInterval() {},
+    initialStatus: await (await f.request("/api/status")).json(),
+    fetch: (url, options) => {
+      if (url === "/api/disclosure") submitted = JSON.parse(options.body);
+      return f.request(url, options);
+    },
+  });
+  vm.runInContext(
+    fs.readFileSync(new URL("../public/app.js", import.meta.url), "utf8"),
+    sandbox,
+  );
+  await vm.runInContext(
+    'token = adminToken; status = initialStatus; load = async () => {}; operate("grant", "0")',
+    sandbox,
+  );
+  assert.equal(
+    submitted.approvalId,
+    sandbox.initialStatus.disclosureRequests[0].approvalId,
+  );
+  assert.equal(JSON.stringify(submitted).includes(ctx.token), false);
+  assert.equal(
+    f.runtime.authorizeExternal(ctx, outbound).basis,
+    "exact-request-grant",
+  );
 });
 test("origin and host guards reject cross-site and rebinding requests", async (t) => {
   const { request, base, token } = await setup(t);

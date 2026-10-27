@@ -109,3 +109,12 @@ export function context(
 ) {
   return runtime.makeContext(agentId, conversation);
 }
+export function disclosureApproval(ctx, pending = ctx.disclosureRequest) {
+  return {
+    approvalId: pending.approvalId,
+    agentId: ctx.agentId,
+    conversation: ctx.conversation,
+    ids: pending.records,
+    ...(pending.requestId ? { requestId: pending.requestId } : {}),
+  };
+}

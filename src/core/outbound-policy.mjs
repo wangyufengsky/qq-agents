@@ -106,9 +106,11 @@ function assertCredentials(runtime, ctx, request) {
     c.tokenEnv,
     ...Object.values(c.process?.env || {}),
   ]);
-  for (const b of runtime.config.backends)
+  for (const b of runtime.config.backends) {
+    envs.push(...Object.values(b.env || {}));
     for (const s of b.toolServers || [])
       envs.push(...Object.values(s.env), ...Object.values(s.headers));
+  }
   for (const a of runtime.config.agents) {
     if (a.operations?.totpEnv) envs.push(a.operations.totpEnv);
     if (a.github?.tokenEnv) envs.push(a.github.tokenEnv);
@@ -286,12 +288,12 @@ export function authorizeExternal(
     .digest("hex");
   if (ctx.externalGrants?.has(requestId))
     return { requested: false, basis: "exact-request-grant" };
-  ctx.disclosureRequest = {
+  runtime.requestDisclosure(ctx, {
     reason: "external-service",
     records,
     requestId,
     request,
-  };
+  });
   throw Error("PRIVATE_RECOLLECTION_EXTERNAL_CALL_BLOCKED");
 }
 export function grantExternal(ctx, ids, requestId) {

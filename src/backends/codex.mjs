@@ -7,6 +7,7 @@ import { mcpResult } from "../tools/index.mjs";
 import { safeToolFailure } from "../tools/errors.mjs";
 import { sessionSignature, assertSession } from "./session-contract.mjs";
 import { readGeneratedImage } from "./generated-image-file.mjs";
+import { buildChildEnv } from "../core/child-env.mjs";
 
 export const restrictions = {
   "features.shell_tool": false,
@@ -42,7 +43,7 @@ export class CodexBackend {
       new CodexRpc({
         command: config.command || "codex",
         cwd: this.root,
-        env: { ...process.env, CODEX_HOME: home },
+        env: { ...buildChildEnv("codex", config.env), CODEX_HOME: home },
         args: [
           "app-server",
           "--stdio",

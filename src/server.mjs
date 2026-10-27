@@ -562,7 +562,7 @@ export function createServer({
       }
       if (req.method === "POST" && url.pathname === "/api/disclosure") {
         const data = await readBody();
-        return send(runtime.grant(data.token, data.ids, data.requestId));
+        return send(runtime.grant(data));
       }
       if (req.method === "POST" && url.pathname === "/api/session/reset") {
         const data = await readBody();

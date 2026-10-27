@@ -2,7 +2,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { fixture, config, context, raw, settle } from "./helpers.mjs";
+import {
+  fixture,
+  config,
+  context,
+  raw,
+  settle,
+  disclosureApproval,
+} from "./helpers.mjs";
 import { TOOL_NAMES } from "../src/tools/index.mjs";
 import { totp } from "../vendor/legacy/totp.js";
 import { Operations } from "../src/core/operations.mjs";
@@ -268,7 +275,7 @@ test("automatic learner keeps evidence local until exact research approval", asy
     /EXTERNAL_CALL_BLOCKED/,
   );
   const pending = ctx.disclosureRequest;
-  f.runtime.grant(ctx.token, pending.records, pending.requestId);
+  f.runtime.grant(disclosureApproval(ctx, pending));
   await f.runtime.learner.research(ctx, { id: entry.id });
   assert.deepEqual(seen, [{ query: "鸽了" }]);
   assert.equal(mem.state("group:20000").slang.entries[0].status, "candidate");
