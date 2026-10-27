@@ -26,7 +26,7 @@ const AGENT_TOOL_GROUPS = [
   {
     id: "memory",
     title: "记忆与日记",
-    desc: "回忆过去的经历、翻阅聊天记录、写日记，以及整理群里的黑话。",
+    desc: "回忆过去的经历、翻阅聊天记录、写日记。",
     tools: {
       memory_search: "检索经历与日记",
       memory_related: "查看引用与撤回关系",
@@ -377,7 +377,8 @@ const agentForm = {
     ];
     return `<div class="wide tool-groups">${groups
       .map((g) => {
-        const names = Object.keys(g.tools),
+        // Withheld features (not in the server's tool list) are not offered.
+        const names = Object.keys(g.tools).filter((t) => tools.includes(t)),
           on = names.filter((t) => enabled.has(t)).length;
         const items = names
           .map(

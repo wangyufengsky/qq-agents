@@ -15,6 +15,7 @@ import { z } from "zod";
 import { mcpResult, TOOL_NAMES } from "./tools/index.mjs";
 import { readiness } from "./core/readiness.mjs";
 import { activityPage } from "./core/activity.mjs";
+import { slangAvailable } from "./core/features.mjs";
 const publicDir = fileURLToPath(new URL("../public/", import.meta.url));
 // Free-time log and 24-hour activity for the console; no message bodies.
 function subjectActivity(m, agentId, now) {
@@ -632,6 +633,8 @@ export function createServer({
         }
         throw Error("INVALID_ACTION");
       }
+      if (url.pathname === "/api/slang" && !slangAvailable())
+        throw Error("SLANG_FEATURE_DISABLED");
       if (req.method === "GET" && url.pathname === "/api/slang") {
         const id = url.searchParams.get("agentId");
         runtime.agent(id);
@@ -656,7 +659,10 @@ export function createServer({
           config: runtime.config,
           revision: runtime.configStore.revision,
           migrationWarnings: runtime.configStore.migrationWarnings || [],
-          tools: TOOL_NAMES,
+          tools: TOOL_NAMES.filter(
+            (n) => slangAvailable() || !n.startsWith("slang_"),
+          ),
+          features: { slang: slangAvailable() },
         });
       if (req.method === "PUT" && url.pathname === "/api/config") {
         const data = await readBody();

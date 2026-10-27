@@ -20,6 +20,7 @@ let token = sessionStorage.getItem("qq-unified-token") || "",
   tab = "overview",
   editing,
   errorFilter = "",
+  features = {},
   globalPausePending = false;
 const titles = {
   apps: ["浏览与分享", "按主体配置平台浏览，查看真实来源和分享决定。"],
@@ -27,7 +28,7 @@ const titles = {
   permissions: ["权限", "分别设置每个 AI 的文件收发能力与独立文件库。"],
   schedule: ["主动与定时", "条件唤醒、睡前观察和定时任务，各自按规则运行。"],
   voices: ["语音库", "导入、试听和管理每个角色自己的语音素材。"],
-  operations: ["词汇与运维", "核对黑话候选，逐项确认管理员操作。"],
+  operations: ["运维", "逐项确认管理员操作。"],
   overview: ["概览", "在一个地方，照看每个独立的 AI。"],
   activity: ["动态", "每个角色最近做了什么：聊天回复、空闲时间、浏览与日记。"],
   agents: ["角色", "人格与经历归属于稳定身份，切换后端也能延续。"],
@@ -173,6 +174,7 @@ async function load() {
   configMigrationWarnings = c.migrationWarnings || [];
   revision = c.revision;
   tools = c.tools;
+  features = c.features || {};
   status = await api("/api/status");
   $("#login").hidden = true;
   $("#content").hidden = false;

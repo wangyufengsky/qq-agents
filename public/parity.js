@@ -448,7 +448,7 @@ async function renderOperations() {
     [status.mode === "isolated" || status.globalPaused, "opsBlocked"],
   ]);
   $("#parity-body").innerHTML =
-    `<div class="card"><h2>黑话候选</h2><div class="toolbar"><label>来源<select id="slang-source">${parityOptions(a.allow.groups.map((x) => ["group:" + x, "群 " + x]))}</select></label><button id="load-slang">读取候选</button></div><p class="hint">候选与联网资料不自动成为事实，确认后才标为已确认。</p><div id="slang-rows"></div></div><div class="section-title"><h2>管理员操作</h2><button id="revoke-ops">回落到 L0 并撤销待批准项</button></div><div class="banner">${a.operations.enabled ? "只接受管理员私聊身份；级别有时限，写入与命令逐项确认。" : "运维工具当前关闭。可在完整配置中指定专用工作区及允许命令后开启。"}</div>${
+    `${features.slang ? `<div class="card"><h2>黑话候选</h2><div class="toolbar"><label>来源<select id="slang-source">${parityOptions(a.allow.groups.map((x) => ["group:" + x, "群 " + x]))}</select></label><button id="load-slang">读取候选</button></div><p class="hint">候选与联网资料不自动成为事实，确认后才标为已确认。</p><div id="slang-rows"></div></div>` : ""}<div class="section-title"><h2>管理员操作</h2><button id="revoke-ops">回落到 L0 并撤销待批准项</button></div><div class="banner">${a.operations.enabled ? "只接受管理员私聊身份；级别有时限，写入与命令逐项确认。" : "运维工具当前关闭。可在完整配置中指定专用工作区及允许命令后开启。"}</div>${
       ops.pending
         .filter((p) => p.agentId === id)
         .map(
@@ -457,34 +457,35 @@ async function renderOperations() {
         )
         .join("") || '<div class="card empty">没有待确认操作。</div>'
     }`;
-  $("#load-slang").onclick = () =>
-    action(async () => {
-      const conversation = $("#slang-source").value;
-      if (!conversation) return;
-      const s = await api(
-        `/api/slang?agentId=${encodeURIComponent(id)}&conversation=${encodeURIComponent(conversation)}`,
-      );
-      $("#slang-rows").innerHTML =
-        (s.entries || [])
-          .map(
-            (e) =>
-              `<div class="record"><strong>${esc(e.term)}</strong> ${tag(e.status)}<p>${esc(e.meaning)}</p><p class="hint">证据 ${e.evidenceIds.length} 条${e.research ? " · 已有研究资料，待人工核对" : ""}</p><button data-slang="${esc(e.id)}" data-state="confirmed">确认</button> <button data-slang="${esc(e.id)}" data-state="rejected">否决</button></div>`,
-          )
-          .join("") || '<p class="hint">没有候选</p>';
-      document.querySelectorAll("[data-slang]").forEach(
-        (b) =>
-          (b.onclick = () =>
-            action(async () => {
-              await api("/api/slang", {
-                agentId: id,
-                conversation,
-                id: b.dataset.slang,
-                status: b.dataset.state,
-              });
-              $("#load-slang").click();
-            })),
-      );
-    });
+  if ($("#load-slang"))
+    $("#load-slang").onclick = () =>
+      action(async () => {
+        const conversation = $("#slang-source").value;
+        if (!conversation) return;
+        const s = await api(
+          `/api/slang?agentId=${encodeURIComponent(id)}&conversation=${encodeURIComponent(conversation)}`,
+        );
+        $("#slang-rows").innerHTML =
+          (s.entries || [])
+            .map(
+              (e) =>
+                `<div class="record"><strong>${esc(e.term)}</strong> ${tag(e.status)}<p>${esc(e.meaning)}</p><p class="hint">证据 ${e.evidenceIds.length} 条${e.research ? " · 已有研究资料，待人工核对" : ""}</p><button data-slang="${esc(e.id)}" data-state="confirmed">确认</button> <button data-slang="${esc(e.id)}" data-state="rejected">否决</button></div>`,
+            )
+            .join("") || '<p class="hint">没有候选</p>';
+        document.querySelectorAll("[data-slang]").forEach(
+          (b) =>
+            (b.onclick = () =>
+              action(async () => {
+                await api("/api/slang", {
+                  agentId: id,
+                  conversation,
+                  id: b.dataset.slang,
+                  status: b.dataset.state,
+                });
+                $("#load-slang").click();
+              })),
+        );
+      });
   $("#revoke-ops").onclick = () =>
     action(async () => {
       if (
