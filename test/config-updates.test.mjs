@@ -365,7 +365,12 @@ test("real console role form changes only participation and shows the server's r
     document: {
       querySelector: node,
       querySelectorAll: () => [],
-      body: { classList: { remove: (name) => bodyClasses.delete(name) } },
+      body: {
+        classList: {
+          remove: (name) => bodyClasses.delete(name),
+          toggle() {},
+        },
+      },
     },
     sessionStorage: { getItem: () => "" },
     setInterval() {},

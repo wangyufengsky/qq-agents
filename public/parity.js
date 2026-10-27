@@ -62,24 +62,28 @@ async function renderSchedules() {
   if (tab !== "schedule" || id !== parityAgentId) return;
   parityTasks = result.tasks;
   $("#parity-body").innerHTML =
-    `<details class="card" open><summary>作息与主动参与</summary><form id="behavior-form"><div class="form-grid">
-    <p class="hint">主体主动检查与联系范围请在「Self 与主体」设置；旧逐聊天随机主动入口已停用。</p>
-    ${parityNumber("observe", "睡前观察（秒；0 关闭要求）", b.preSleepWaitMs / 1000)}${parityNumber("quiet", "新消息后的安静窗口（秒）", b.quietAfterNewMs / 1000)}
-    ${parityNumber("batch", "合并唤醒窗口（秒）", b.batchWindowMs / 1000)}${parityNumber("reply", "发言后回复检查（秒）", b.replyCheckMs / 1000, 1)}
+    `<details class="card" open><summary>唤醒与回复节奏</summary><form id="behavior-form"><p class="hint">除了被 @、私聊和提到名字，下面这些也会让角色醒来看看。主动检查与联系范围在「Self 与主体」中设置。</p><div class="form-grid">
+    ${parityField("keywords", "关键词（逗号分隔）", a.wake.keywords.join(","))}${parityField("speakers", "指定发言者 QQ（逗号分隔）", a.wake.speakerIds.join(","))}
+    ${parityCheck("poke", "拍一拍唤醒", a.wake.poke)}${parityCheck("joins", "有人入群时唤醒", a.wake.joins)}
+    ${parityNumber("quiet", "新消息后等安静（秒）", b.quietAfterNewMs / 1000)}${parityNumber("batch", "合并唤醒窗口（秒）", b.batchWindowMs / 1000)}
+    </div>${advanced(
+      "高级设置：观察、回复检查与投递额度",
+      `${parityNumber("observe", "睡前观察（秒；0 关闭要求）", b.preSleepWaitMs / 1000)}${parityNumber("reply", "发言后回复检查（秒）", b.replyCheckMs / 1000, 1)}
     ${parityNumber("wakeHour", "单会话每小时唤醒上限", b.maxWakePerHour, 1)}${parityNumber("sendMinute", "角色总投递上限／分钟", b.maxSendPerMinute, 1)}${parityNumber("sendHour", "角色总投递上限／小时", b.maxSendPerHour, 1)}
     ${parityOptionalNumber("conversationSendMinute", "单会话投递上限／分钟（可选）", b.conversationMaxSendPerMinute)}${parityOptionalNumber("conversationSendHour", "单会话投递上限／小时（可选）", b.conversationMaxSendPerHour)}
-    <p class="hint">角色总额度由所有群和私聊共享，文本、文件及其他投递统一计数；失败或未知回执也占用额度。连续回复批次另按角色设置限制。升级会保留近期已消耗额度。</p>
-    ${parityField("keywords", "关键词（逗号分隔）", a.wake.keywords.join(","))}${parityField("speakers", "指定发言者 QQ（逗号分隔）", a.wake.speakerIds.join(","))}
-    ${parityCheck("poke", "拍一拍唤醒", a.wake.poke)}${parityCheck("joins", "入群事件唤醒", a.wake.joins)}
-    </div><button class="primary">保存作息设置</button></form></details>
-    <details class="card"><summary>定时任务开关与限额</summary><form id="schedule-settings"><div class="form-grid">
+    <p class="hint">角色总额度由所有群和私聊共享，文本、文件及其他投递统一计数；失败或未知回执也占用额度。连续回复批次另按角色设置限制。</p>`,
+    )}<button class="primary">保存唤醒与节奏</button></form></details>
+    <details class="card"><summary>定时任务设置</summary><form id="schedule-settings"><div class="form-grid">
     ${parityCheck("enabled", "启用定时任务", s.enabled)}${parityField("timezone", "任务默认时区", s.timezone)}
-    ${parityCheck("allowAiPrivate", "允许管理员私聊 AI 登记", s.allowAiPrivate)}${parityCheck("allowAiOtherTargets", "允许 AI 申请其他目标（仍需确认）", s.allowAiOtherTargets)}
+    ${parityCheck("quietEnabled", "群定时任务免打扰", s.quietEnabled)}${parityField("quietStart", "免打扰开始", s.quietStart, "time")}${parityField("quietEnd", "免打扰结束", s.quietEnd, "time")}
+    </div>${advanced(
+      "高级设置：AI 登记、每日上限、补发与节假日",
+      `${parityCheck("allowAiPrivate", "允许管理员私聊 AI 登记", s.allowAiPrivate)}${parityCheck("allowAiOtherTargets", "允许 AI 申请其他目标（仍需确认）", s.allowAiOtherTargets)}
     ${parityNumber("totalPerDay", "每日全部目标上限", s.totalPerDay, 1)}${parityNumber("perTaskPerDay", "单任务每日上限", s.perTaskPerDay, 1)}
     ${parityNumber("perGroupPerDay", "每群每日上限", s.perGroupPerDay, 1)}${parityNumber("missedGraceMin", "允许补发的迟到分钟数", s.missedGraceMin)}
-    ${parityNumber("jitterMin", "固定时间随机偏移（分钟）", s.jitterMin)}${parityCheck("quietEnabled", "启用群定时免打扰", s.quietEnabled)}
-    ${parityCheck("quietAllDay", "全天免打扰（仅群定时任务）", s.quietAllDay)}${parityField("quietStart", "免打扰开始", s.quietStart, "time")}${parityField("quietEnd", "免打扰结束", s.quietEnd, "time")}
-    ${parityField("holidays", "跳过的节假日（YYYY-MM-DD，逗号分隔）", s.holidays.join(","))}</div><button>保存定时设置</button></form></details>
+    ${parityNumber("jitterMin", "固定时间随机偏移（分钟）", s.jitterMin)}${parityCheck("quietAllDay", "全天免打扰（仅群定时任务）", s.quietAllDay)}
+    ${parityField("holidays", "跳过的节假日（YYYY-MM-DD，逗号分隔）", s.holidays.join(","))}`,
+    )}<button class="primary">保存定时设置</button></form></details>
     <div class="section-title"><h2>定时任务</h2><button id="new-schedule">+ 新建任务</button></div><div id="task-form"></div>
     <div class="grid">${result.tasks.map((t) => `<article class="card"><div class="row"><h3>${esc(t.name)}</h3>${tag(t.pendingConfirm ? "待确认" : t.enabled ? "启用" : "暂停")}</div><p>${esc(t.scheduleText)}</p><p class="hint">${esc(t.nextRunText || "无下一次")} · ${esc(t.timezone)}</p><p>${esc(t.kind === "ai" ? t.instruction : t.text)}</p><p class="mono">${esc(t.targets.join(", "))}</p><div class="card-actions"><button data-task="edit" data-id="${t.id}">编辑</button><button data-task="toggle" data-id="${t.id}">${t.enabled ? "暂停" : "启用 / 确认"}</button><button data-task="run" data-id="${t.id}" ${status.mode === "isolated" || status.globalPaused ? "disabled" : ""}>立即执行</button><button data-task="delete" data-id="${t.id}">删除</button></div></article>`).join("") || '<div class="card empty">尚无任务。创建后可以先预览时间，再决定启用。</div>'}</div>
     <div class="section-title"><h2>最近执行记录</h2></div><div class="card">${
@@ -448,7 +452,7 @@ async function renderOperations() {
     [status.mode === "isolated" || status.globalPaused, "opsBlocked"],
   ]);
   $("#parity-body").innerHTML =
-    `<div class="card"><h2>黑话候选</h2><div class="toolbar"><label>来源<select id="slang-source">${parityOptions(a.allow.groups.map((x) => ["group:" + x, "群 " + x]))}</select></label><button id="load-slang">读取候选</button></div><p class="hint">候选与联网资料不自动成为事实，确认后才标为已确认。</p><div id="slang-rows"></div></div><div class="section-title"><h2>管理员操作</h2><button id="revoke-ops">回落到 L0 并撤销待批准项</button></div><div class="banner">${a.operations.enabled ? "只接受管理员私聊身份；级别有时限，写入与命令逐项确认。" : "运维工具当前关闭。可在完整配置中指定专用工作区及允许命令后开启。"}</div>${
+    `${features.slang ? `<div class="card"><h2>黑话候选</h2><div class="toolbar"><label>来源<select id="slang-source">${parityOptions(a.allow.groups.map((x) => ["group:" + x, "群 " + x]))}</select></label><button id="load-slang">读取候选</button></div><p class="hint">候选与联网资料不自动成为事实，确认后才标为已确认。</p><div id="slang-rows"></div></div>` : ""}<div class="section-title"><h2>管理员操作</h2><button id="revoke-ops">回落到 L0 并撤销待批准项</button></div><div class="banner">${a.operations.enabled ? "只接受管理员私聊身份；级别有时限，写入与命令逐项确认。" : "运维工具当前关闭。可在完整配置中指定专用工作区及允许命令后开启。"}</div>${
       ops.pending
         .filter((p) => p.agentId === id)
         .map(
@@ -457,34 +461,35 @@ async function renderOperations() {
         )
         .join("") || '<div class="card empty">没有待确认操作。</div>'
     }`;
-  $("#load-slang").onclick = () =>
-    action(async () => {
-      const conversation = $("#slang-source").value;
-      if (!conversation) return;
-      const s = await api(
-        `/api/slang?agentId=${encodeURIComponent(id)}&conversation=${encodeURIComponent(conversation)}`,
-      );
-      $("#slang-rows").innerHTML =
-        (s.entries || [])
-          .map(
-            (e) =>
-              `<div class="record"><strong>${esc(e.term)}</strong> ${tag(e.status)}<p>${esc(e.meaning)}</p><p class="hint">证据 ${e.evidenceIds.length} 条${e.research ? " · 已有研究资料，待人工核对" : ""}</p><button data-slang="${esc(e.id)}" data-state="confirmed">确认</button> <button data-slang="${esc(e.id)}" data-state="rejected">否决</button></div>`,
-          )
-          .join("") || '<p class="hint">没有候选</p>';
-      document.querySelectorAll("[data-slang]").forEach(
-        (b) =>
-          (b.onclick = () =>
-            action(async () => {
-              await api("/api/slang", {
-                agentId: id,
-                conversation,
-                id: b.dataset.slang,
-                status: b.dataset.state,
-              });
-              $("#load-slang").click();
-            })),
-      );
-    });
+  if ($("#load-slang"))
+    $("#load-slang").onclick = () =>
+      action(async () => {
+        const conversation = $("#slang-source").value;
+        if (!conversation) return;
+        const s = await api(
+          `/api/slang?agentId=${encodeURIComponent(id)}&conversation=${encodeURIComponent(conversation)}`,
+        );
+        $("#slang-rows").innerHTML =
+          (s.entries || [])
+            .map(
+              (e) =>
+                `<div class="record"><strong>${esc(e.term)}</strong> ${tag(e.status)}<p>${esc(e.meaning)}</p><p class="hint">证据 ${e.evidenceIds.length} 条${e.research ? " · 已有研究资料，待人工核对" : ""}</p><button data-slang="${esc(e.id)}" data-state="confirmed">确认</button> <button data-slang="${esc(e.id)}" data-state="rejected">否决</button></div>`,
+            )
+            .join("") || '<p class="hint">没有候选</p>';
+        document.querySelectorAll("[data-slang]").forEach(
+          (b) =>
+            (b.onclick = () =>
+              action(async () => {
+                await api("/api/slang", {
+                  agentId: id,
+                  conversation,
+                  id: b.dataset.slang,
+                  status: b.dataset.state,
+                });
+                $("#load-slang").click();
+              })),
+        );
+      });
   $("#revoke-ops").onclick = () =>
     action(async () => {
       if (

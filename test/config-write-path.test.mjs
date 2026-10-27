@@ -116,3 +116,36 @@ test("permission changes are validated, gated and revoke turns but keep the adap
     /UNKNOWN_AGENT/,
   );
 });
+
+test("saving unchanged app or file permissions keeps the tool order and the turn", async (t) => {
+  const { runtime } = fixture(t);
+  await runtime.changeAppPermissions(
+    "agent-0",
+    { enabled: true },
+    runtime.configStore.revision,
+  );
+  await runtime.changeFilePermissions(
+    "agent-0",
+    { enabled: true },
+    runtime.configStore.revision,
+  );
+  // Put an existing tool after the feature tools, as older configs may have.
+  const next = structuredClone(runtime.config);
+  const tools = next.agents[0].tools;
+  tools.push(tools.splice(tools.indexOf("memory_search"), 1)[0]);
+  await runtime.changeConfig(next, runtime.configStore.revision);
+  const before = [...runtime.agent("agent-0").tools];
+  const ctx = context(runtime);
+  await runtime.changeAppPermissions(
+    "agent-0",
+    runtime.agent("agent-0").apps,
+    runtime.configStore.revision,
+  );
+  await runtime.changeFilePermissions(
+    "agent-0",
+    runtime.agent("agent-0").files,
+    runtime.configStore.revision,
+  );
+  assert.deepEqual(runtime.agent("agent-0").tools, before);
+  assert.equal(ctx.controller.signal.aborted, false);
+});

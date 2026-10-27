@@ -13,7 +13,7 @@
 - 至少一个 AI 后端：
   - **DSH**：DeepSeek Harness 桌面应用已启动并登录。建议用 `npm run dsh:bundle` 生成本项目专用的 preset/MCP bundle 并按 DSH 的流程启用，见 [配置与数据目录](CONFIGURATION.md#dsh-bundle)。
   - **Codex**：已安装 Codex CLI。本项目为每个角色使用独立的 Codex 登录目录 `<数据目录>/codex/<agentId>/home`，需要以该目录为 `CODEX_HOME` 按 Codex 官方流程单独登录一次（例如 `CODEX_HOME=<该目录> codex login`）。不要指向日常使用的 Codex home。
-  - **OpenAI 兼容 API**：只需要服务地址和 API 密钥（本机的 Ollama 等不需要密钥），不用安装其他应用。把密钥放进环境变量（方法同下文的 OneBot 令牌），在「AI 后端」页添加类型为“OpenAI 兼容 API”的后端，填写地址、密钥变量名和模型，见 [OpenAI 兼容后端](CONFIGURATION.md#openai-兼容后端)。
+  - **OpenAI 兼容 API**：只需要服务地址和 API 密钥（本机的 Ollama 等不需要密钥），不用安装其他应用。把密钥放进环境变量（方法同下文的 OneBot 令牌），在「连接」页添加类型为“OpenAI 兼容 API”的 AI 后端，填写地址、密钥变量名和模型，见 [OpenAI 兼容后端](CONFIGURATION.md#openai-兼容后端)。
 
 **NapCat / OneBot 设置**
 
@@ -45,9 +45,9 @@ cat .runtime/admin-token
 
 打开 `http://127.0.0.1:3210`，粘贴令牌登录。新数据目录自带两个示例角色、两个示例 QQ 账号连接和两个 AI 后端，全部停用或暂停。接下来只改其中一套：
 
-1. **QQ 账号连接**（「QQ 账号」页）：编辑示例连接，填写真实 QQ 号（`accountId`）、HTTP 和 WS 地址、令牌环境变量名（`tokenEnv`），部署方式选 `external`（NapCat 由你自己启动和维护）。暂时保持停用。
-2. **AI 后端**（「AI 后端」页）：保留需要的 DSH 或 Codex 后端，按需填写模型和思考强度；留空表示使用后端默认值。
-3. **角色**（「角色」页 → 配置角色）：
+1. **QQ 账号连接**（「连接」页）：编辑示例连接，填写真实 QQ 号（`accountId`）、HTTP 和 WS 地址、令牌环境变量名（`tokenEnv`），部署方式选 `external`（NapCat 由你自己启动和维护）。暂时保持停用。
+2. **AI 后端**（「连接」页）：保留需要的 DSH 或 Codex 后端，按需填写模型和思考强度；留空表示使用后端默认值。
+3. **角色**（「角色」页 → 设置 → 配置角色）：
    - 名称、别名和人格；
    - 绑定上面的 QQ 账号连接和 AI 后端；
    - **群白名单**里填测试群号，私聊白名单暂时留空；
@@ -73,8 +73,8 @@ npm run verify
    ```
 
 2. 在管理台把运行模式改为 `live` 并保存。每次启动都会自动处于全局暂停，此时角色仍不会发言。
-3. 在「AI 后端」页对该后端执行“检测连接”，确认显示就绪（Codex 检查专用登录和模型目录，DSH 检查提供方和模型，OpenAI 兼容 API 检查密钥和模型列表）。
-4. 在「QQ 账号」页启用该连接并保存，然后点击连接。连接前会核对 NapCat 实际登录的 QQ 号；不一致时以 `QQ_ACCOUNT_MISMATCH` 拒绝。
+3. 在「连接」页对该后端执行“检测连接”，确认显示就绪（Codex 检查专用登录和模型目录，DSH 检查提供方和模型，OpenAI 兼容 API 检查密钥和模型列表）。
+4. 在「连接」页启用该连接并保存，然后点击连接。连接前会核对 NapCat 实际登录的 QQ 号；不一致时以 `QQ_ACCOUNT_MISMATCH` 拒绝。
 5. 显示“已连接”后，在测试群里发几条消息。全局暂停期间连接仍会记录收到的消息，可以在「经历与日记」等页面确认消息已经进入该角色的记录。
 
 到这里，角色卡片上应该只剩“全局暂停”和“角色暂停”两个原因。

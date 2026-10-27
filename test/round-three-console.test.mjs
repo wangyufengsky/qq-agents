@@ -21,6 +21,9 @@ test("console saves role and optional conversation budgets and explicit schedule
     status: { mode: "isolated", globalPaused: true },
     esc: (v) => String(v ?? ""),
     tag: () => "",
+    // Same markup as the app.js helper: collapsed fields keep their names.
+    advanced: (title, html) =>
+      `<details class="adv"><summary>${title}</summary><div class="form-grid">${html}</div></details>`,
     structuredClone,
     find: (table, id) => sandbox.config[table].find((x) => x.id === id),
     document: { querySelectorAll: () => [] },

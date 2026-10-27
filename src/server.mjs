@@ -14,6 +14,8 @@ import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { mcpResult, TOOL_NAMES } from "./tools/index.mjs";
 import { readiness } from "./core/readiness.mjs";
+import { activityPage, homeSummary } from "./core/activity.mjs";
+import { slangAvailable } from "./core/features.mjs";
 const publicDir = fileURLToPath(new URL("../public/", import.meta.url));
 // Free-time log and 24-hour activity for the console; no message bodies.
 function subjectActivity(m, agentId, now) {
@@ -161,6 +163,7 @@ export function createServer({
           "/apps-ui.js",
           "/mind-ui.js",
           "/onboarding-ui.js",
+          "/activity-ui.js",
           "/style.css",
           "/agent-form.css",
         ].includes(url.pathname)
@@ -362,6 +365,28 @@ export function createServer({
             "cancelled",
             "administrator cancellation",
           ),
+        );
+      }
+      if (req.method === "GET" && url.pathname === "/api/home")
+        return send({
+          agents: runtime.config.agents.map((a) =>
+            homeSummary(runtime.memory, a.id, { now: runtime.now() }),
+          ),
+        });
+      if (req.method === "GET" && url.pathname === "/api/activity") {
+        const a = runtime.agent(url.searchParams.get("agentId"));
+        const filter = url.searchParams.get("filter") || "all";
+        if (!["all", "subject", "chat", "browse"].includes(filter))
+          throw Error("INVALID_ACTIVITY_FILTER");
+        const before = Number(url.searchParams.get("before"));
+        return send(
+          activityPage(runtime.memory, a.id, {
+            filter,
+            before:
+              Number.isSafeInteger(before) && before > 0 ? before : undefined,
+            limit: 20,
+            now: runtime.now(),
+          }),
         );
       }
       if (req.method === "GET" && url.pathname === "/api/deliveries") {
@@ -614,6 +639,8 @@ export function createServer({
         }
         throw Error("INVALID_ACTION");
       }
+      if (url.pathname === "/api/slang" && !slangAvailable())
+        throw Error("SLANG_FEATURE_DISABLED");
       if (req.method === "GET" && url.pathname === "/api/slang") {
         const id = url.searchParams.get("agentId");
         runtime.agent(id);
@@ -638,7 +665,10 @@ export function createServer({
           config: runtime.config,
           revision: runtime.configStore.revision,
           migrationWarnings: runtime.configStore.migrationWarnings || [],
-          tools: TOOL_NAMES,
+          tools: TOOL_NAMES.filter(
+            (n) => slangAvailable() || !n.startsWith("slang_"),
+          ),
+          features: { slang: slangAvailable() },
         });
       if (req.method === "PUT" && url.pathname === "/api/config") {
         const data = await readBody();

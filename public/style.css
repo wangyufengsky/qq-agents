@@ -1429,3 +1429,138 @@ details > form > button {
     padding-left: 34px;
   }
 }
+.act-filters {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+/* Activity rows follow the shared list row (.record): same rhythm and dividers. */
+.act-entry {
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line);
+}
+.act-entry:first-child {
+  padding-top: 4px;
+}
+.act-entry:last-of-type {
+  border-bottom: 0;
+}
+.act-entry .row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+}
+.act-entry > p {
+  margin: 6px 0 0;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+.act-entry.quiet strong,
+.act-entry.quiet > p {
+  color: var(--muted);
+}
+.act-box {
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--panel-2, rgba(255, 255, 255, 0.03));
+}
+.act-box p {
+  margin: 2px 0;
+}
+.act-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 0;
+}
+.act-more summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.9em;
+}
+.section-bar {
+  display: grid;
+  gap: 10px;
+  margin: 0 0 18px;
+}
+.role-pick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.section-bar > .hint {
+  margin: 0;
+}
+.sub-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  border-bottom: 1px solid var(--line);
+}
+.sub-tabs button {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: none;
+  color: var(--muted);
+  padding: 8px 12px;
+}
+.sub-tabs button.active {
+  color: var(--text, inherit);
+  border-bottom-color: currentColor;
+}
+/* Role pages follow the role picked above; their own pickers are redundant. */
+body.in-role
+  label:has(
+    > select:is(
+        #activity-agent,
+        #memory-agent,
+        #app-agent,
+        #file-agent,
+        #mind-agent,
+        #parity-agent
+      )
+  ) {
+  display: none;
+}
+.home-role > p {
+  margin: 8px 0 0;
+}
+.home-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 10px;
+}
+.home-stats span {
+  display: grid;
+  font-size: 0.85em;
+  color: var(--muted);
+}
+.home-stats b {
+  font-size: 1.4em;
+  font-weight: 500;
+  color: var(--text, inherit);
+}
+.home-errors summary {
+  cursor: pointer;
+}
+
+/* Collapsed less-used fields inside a form. */
+details.adv {
+  margin: 14px 0 4px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+details.adv > .form-grid {
+  margin-top: 10px;
+}
+form > .form-grid + .form-grid {
+  margin-top: 14px;
+}
+.home-role {
+  display: grid;
+  align-content: start;
+}

@@ -496,7 +496,7 @@ test("export console submits a scoped native download without fetching the expor
     document: {
       querySelector: node,
       querySelectorAll: () => [],
-      body: { append() {} },
+      body: { append() {}, classList: { toggle() {} } },
       createElement: (tag) => ({
         tag,
         children: [],

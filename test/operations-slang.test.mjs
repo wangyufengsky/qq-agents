@@ -13,6 +13,8 @@ import {
 import { TOOL_NAMES } from "../src/tools/index.mjs";
 import { totp } from "../vendor/legacy/totp.js";
 import { Operations } from "../src/core/operations.mjs";
+// Slang learning is withheld by default; these tests cover the retained code.
+process.env.QQ_AGENTS_EXPERIMENTAL_SLANG = "1";
 
 function setup(t) {
   const c = config(1);

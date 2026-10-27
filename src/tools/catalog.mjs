@@ -1,3 +1,4 @@
+import { slangAvailable } from "../core/features.mjs";
 import { z } from "zod";
 import { toolSpecs } from "./specs.mjs";
 
@@ -65,6 +66,8 @@ export function scopedCatalog(runtime, ctx, input) {
 }
 
 export function toolAvailable(agent, name, conversation) {
+  // Slang learning is withheld until it is reworked; see core/features.mjs.
+  if (name.startsWith("slang_")) return slangAvailable();
   if (name.startsWith("github_")) return agent.github?.enabled === true;
   // These legacy readers bypass App permissions, budgets and source records.
   if (name.startsWith("social_")) return false;

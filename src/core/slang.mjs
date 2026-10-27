@@ -1,3 +1,4 @@
+import { slangAvailable } from "./features.mjs";
 import { containsCredential } from "./secrets.mjs";
 import { randomUUID } from "node:crypto";
 import { toolSpecs } from "../tools/index.mjs";
@@ -124,6 +125,7 @@ export class SlangLearner {
     return current;
   }
   tick() {
+    if (!slangAvailable()) return;
     for (const a of this.runtime.config.agents) {
       if (!a.slang.enabled) continue;
       const mem = this.runtime.memory.bind(a.id);

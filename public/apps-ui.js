@@ -72,7 +72,7 @@ function renderApps() {
   const p = a.apps;
   $("#content").innerHTML =
     `<section class="card"><label>角色<select id="app-agent">${config.agents.map((x) => `<option value="${esc(x.id)}" ${x.id === a.id ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select></label><p>浏览记录和分享意图各自独立；同一平台账号的推荐可能受两个 AI 的共同浏览影响。</p></section>
- <form id="app-policy" class="card"><h2>自主浏览与分享</h2><div class="form-grid">${check("enabled", "允许此 AI 浏览平台", p.enabled)}${check("sharing", "允许此 AI 提出分享意图", p.sharing)}${Object.entries(
+ <form id="app-policy" class="card"><h2>浏览设置</h2><p class="hint">开启后，这个角色会在空闲时间和聊天中自行浏览勾选的平台，看到值得分享的内容时交给对应聊天决定说不说。</p><div class="form-grid">${check("enabled", "允许浏览平台", p.enabled)}${check("sharing", "允许提出分享", p.sharing)}</div><div class="form-grid"><h3>平台</h3>${Object.entries(
    appLabels,
  )
    .map(([id, label]) =>
@@ -80,7 +80,10 @@ function renderApps() {
    )
    .join(
      "",
-   )}${input("maxReadsPerTurn", "每回合最多读取次数", p.maxReadsPerTurn, 'type="number" min="1" max="30" required')}${input("maxReadsPerDay", "每日最多读取次数", p.maxReadsPerDay, 'type="number" min="1" max="200" required')}${input("maxSharesPerDay", "每日最多分享次数", p.maxSharesPerDay, 'type="number" min="1" max="30" required')}${check("hoursEnabled", "启用浏览时段限制", p.hours.enabled !== false)}${check("hoursAll", "时段也约束用户明确请求", p.hours.scope === "all")}${input("start", "浏览开始时间", p.hours.start, 'type="time" required')}${input("end", "浏览结束时间", p.hours.end, 'type="time" required')}${input("timezone", "时区", p.hours.timezone, "required")}${input("ttlHours", "分享意图有效期（小时）", p.shareTtlMs / 3600000, 'type="number" min="1" max="168" required')}${input("dedupeDays", "同目标重复分享间隔（天）", p.dedupeMs / 86400000, 'type="number" min="1" max="30" required')}</div><p class="hint">主体提出意图，目标聊天根据现场选择发送、暂缓或放弃。全局暂停、角色暂停、主动联系范围及冷却继续生效；开启浏览不会自动解除暂停。关闭时段限制后全天可浏览；默认仅限制自主浏览。用户请求须引用本轮已读取的人类原始 URL 或 /search、/browse、/boards 明确请求；读取预算始终有效。视频仅可读取标题、简介和评论。</p><button class="primary">保存浏览设置</button></form>
+   )}</div><div class="form-grid"><h3>浏览时段</h3>${check("hoursEnabled", "只在这个时段自主浏览", p.hours.enabled !== false)}${input("start", "开始", p.hours.start, 'type="time" required')}${input("end", "结束", p.hours.end, 'type="time" required')}</div>${advanced(
+   "高级设置：额度、有效期与时区",
+   `${input("maxReadsPerTurn", "每回合最多读取次数", p.maxReadsPerTurn, 'type="number" min="1" max="30" required')}${input("maxReadsPerDay", "每日最多读取次数", p.maxReadsPerDay, 'type="number" min="1" max="200" required')}${input("maxSharesPerDay", "每日最多分享次数", p.maxSharesPerDay, 'type="number" min="1" max="30" required')}${input("ttlHours", "分享意图有效期（小时）", p.shareTtlMs / 3600000, 'type="number" min="1" max="168" required')}${input("dedupeDays", "同目标重复分享间隔（天）", p.dedupeMs / 86400000, 'type="number" min="1" max="30" required')}${input("timezone", "时区", p.hours.timezone, "required")}${check("hoursAll", "时段也约束用户的明确请求", p.hours.scope === "all")}<p class="hint">读取额度始终有效；暂停、主动联系范围和冷却继续生效。用户请求须引用本轮读到的原始链接或 /search、/browse、/boards 指令。视频只能读标题、简介和评论。</p>`,
+ )}<button class="primary">保存浏览设置</button></form>
  <section class="card"><h2>平台能力与本机登录</h2><p class="hint">在已连接 OpenCLI 的 Chrome 内完成登录或扫码。不要在聊天中发送密码或 Cookie。登录检查只返回状态。</p><div id="app-platforms">正在读取…</div></section>
  <section class="card"><h2>${esc(a.name)}的浏览记录</h2><button id="app-refresh">刷新记录</button><div id="app-history"></div></section><section class="card"><h2>分享意图</h2><div id="app-intents">正在读取…</div></section>`;
   $("#app-agent").onchange = (e) => {

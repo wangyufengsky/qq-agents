@@ -74,8 +74,16 @@ test("managed native QQ receives only its allowed environment and explicit mappi
       env: { ROLE_SECRET: "QQ_ROUND2_EXPLICIT" },
     },
   });
-  for (let i = 0; i < 100 && !fs.existsSync(output); i++) await delay(10);
-  const value = JSON.parse(fs.readFileSync(output));
+  // The child may still be writing when the file appears; wait for whole JSON.
+  let value;
+  for (let i = 0; i < 200 && value === undefined; i++) {
+    try {
+      value = JSON.parse(fs.readFileSync(output, "utf8"));
+    } catch {
+      await delay(10);
+    }
+  }
+  assert.ok(value, "child process did not report its environment");
   assert.deepEqual(value.inheritedSecrets, []);
   assert.equal(value.explicitSecret, true);
   assert.equal(value.hasPath, true);

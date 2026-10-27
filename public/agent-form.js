@@ -26,7 +26,7 @@ const AGENT_TOOL_GROUPS = [
   {
     id: "memory",
     title: "记忆与日记",
-    desc: "回忆过去的经历、翻阅聊天记录、写日记，以及整理群里的黑话。",
+    desc: "回忆过去的经历、翻阅聊天记录、写日记。",
     tools: {
       memory_search: "检索经历与日记",
       memory_related: "查看引用与撤回关系",
@@ -72,7 +72,7 @@ const AGENT_TOOL_GROUPS = [
     id: "files",
     title: "文件收发",
     desc: "下载、生成和发送文件，使用自己的独立文件库。",
-    managedBy: { tab: "permissions", page: "权限", policy: "files" },
+    managedBy: { tab: "permissions", page: "文件", policy: "files" },
     tools: {
       file_list: "查看文件库",
       file_download: "下载文件",
@@ -377,7 +377,8 @@ const agentForm = {
     ];
     return `<div class="wide tool-groups">${groups
       .map((g) => {
-        const names = Object.keys(g.tools),
+        // Withheld features (not in the server's tool list) are not offered.
+        const names = Object.keys(g.tools).filter((t) => tools.includes(t)),
           on = names.filter((t) => enabled.has(t)).length;
         const items = names
           .map(
@@ -445,7 +446,10 @@ const agentForm = {
     for (const b of root.querySelectorAll("[data-goto-tab]"))
       b.onclick = () => {
         $("#editor").close();
-        document.querySelector(`nav [data-tab="${b.dataset.gotoTab}"]`).click();
+        // Open that sub-page for the role being edited (sections in app.js).
+        if (row.id) roleId = row.id;
+        tab = b.dataset.gotoTab;
+        render();
       };
     this.bindSilence(root);
     this.bindConversations(root, row);

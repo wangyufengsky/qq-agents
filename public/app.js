@@ -20,6 +20,7 @@ let token = sessionStorage.getItem("qq-unified-token") || "",
   tab = "overview",
   editing,
   errorFilter = "",
+  features = {},
   globalPausePending = false;
 const titles = {
   apps: ["浏览与分享", "按主体配置平台浏览，查看真实来源和分享决定。"],
@@ -27,8 +28,13 @@ const titles = {
   permissions: ["权限", "分别设置每个 AI 的文件收发能力与独立文件库。"],
   schedule: ["主动与定时", "条件唤醒、睡前观察和定时任务，各自按规则运行。"],
   voices: ["语音库", "导入、试听和管理每个角色自己的语音素材。"],
-  operations: ["词汇与运维", "核对黑话候选，逐项确认管理员操作。"],
-  overview: ["概览", "在一个地方，照看每个独立的 AI。"],
+  operations: ["运维", "逐项确认管理员操作。"],
+  overview: ["首页", "在一个地方，照看每个独立的 AI。"],
+  links: [
+    "连接",
+    "QQ 账号与 AI 后端。连接前核对登录账号，后端可单独检测与恢复。",
+  ],
+  activity: ["动态", "每个角色最近做了什么：聊天回复、空闲时间、浏览与日记。"],
   agents: ["角色", "人格与经历归属于稳定身份，切换后端也能延续。"],
   connections: ["QQ 账号", "每个 QQ 账号独立连接，启停连接不影响登录数据。"],
   backends: ["AI 后端", "管理 DSH、Codex 与各自的模型和工具。"],
@@ -172,6 +178,7 @@ async function load() {
   configMigrationWarnings = c.migrationWarnings || [];
   revision = c.revision;
   tools = c.tools;
+  features = c.features || {};
   status = await api("/api/status");
   $("#login").hidden = true;
   $("#content").hidden = false;
@@ -258,7 +265,8 @@ async function setGlobalPaused(paused) {
 document.querySelectorAll("nav button").forEach(
   (b) =>
     (b.onclick = () => {
-      tab = b.dataset.tab;
+      const section = b.dataset.section;
+      tab = lastPage[section] || sections[section].pages[0];
       render();
     }),
 );
@@ -292,16 +300,162 @@ function recentErrorsMarkup(query = "") {
       .join("") || "<p>暂无匹配的错误记录。</p>"
   );
 }
+// Home: per-role 24-hour summary, fetched at most every 30 s because the
+// overview re-renders on each status refresh.
+let homeData = null,
+  homeFetchedAt = 0,
+  errorsOpen = false;
+function loadHome() {
+  if (Date.now() - homeFetchedAt < 30000) return;
+  homeFetchedAt = Date.now();
+  api("/api/home")
+    .then((data) => {
+      homeData = data;
+      const box = $("#home-roles");
+      if (tab === "overview" && box) box.innerHTML = homeRolesMarkup();
+    })
+    .catch(() => (homeFetchedAt = 0));
+}
+const clipText = (s, n) => (!s ? "" : s.length > n ? s.slice(0, n) + "…" : s);
+// Last character tells roles apart when names share a prefix (大肥鱼 / 大肥龙).
+const avatarChar = (name) => [...String(name).trim()].pop() || "?";
+const homeTime = (t) =>
+  new Date(t).toLocaleTimeString("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+const homeDid = {
+  browsed: "浏览",
+  searched: "搜索",
+  read: "阅读",
+  wrote: "写作",
+  reviewed: "回顾",
+  rested: "休息",
+};
+function homeRoleCard(a) {
+  const s = status.agents.find((x) => x.id === a.id),
+    h = homeData?.agents?.find((x) => x.agentId === a.id),
+    c = status.connections.find((x) => x.id === a.connectionId),
+    b = status.backends?.find((x) => x.id === a.backendId),
+    can = s && !s.blockers?.length;
+  const latest = h?.latest
+    ? `<p><span class="hint">${homeTime(h.latest.startedAt)} · ${h.latest.kind === "subject" ? "空闲时间" + (h.latest.did ? " · " + esc(homeDid[h.latest.did] || h.latest.did) : "") : esc(h.latest.conversation.replace(/^group:/, "群 ").replace(/^private:/, "私聊 "))}</span><br><span title="${esc(h.latest.text || "")}">${esc(clipText(h.latest.text, 110) || "（这一回合没有留下文字）")}</span></p>`
+    : `<p class="hint">${homeData ? "还没有动态。" : "读取中…"}</p>`;
+  const d = h?.last24h;
+  const stats = d
+    ? `<div class="home-stats"><span><b>${d.sent}</b>回复</span><span><b>${d.freeTimeTraced ? `${d.freeTimeActive}/${d.freeTimeTraced}` : d.freeTime}</b>${d.freeTimeTraced ? "空闲时有行动" : "空闲时间"}</span><span><b>${d.reads}</b>读文章</span><span><b>${d.diaries}</b>日记</span></div>`
+    : "";
+  return `<article class="card home-role"><div class="row"><div class="identity"><span class="avatar">${esc(avatarChar(a.name))}</span><div><h3>${esc(a.name)}</h3><span class="hint">QQ ${c?.connected ? "已连接" : "未连接"} · ${esc(backendLabels[b?.state] || "后端尚未检测")}</span></div></div>${tag(can ? "可以发言" : a.paused ? "已暂停" : "暂不发言", can ? "live" : a.paused ? "off" : "warn")}</div>${can ? "" : blockersMarkup(s)}${latest}${stats}${d ? `<p class="hint">最近 24 小时${h.nextFreeTimeAt && a.subject?.enabled ? ` · 下次空闲时间 ${homeTime(h.nextFreeTimeAt)}` : ""}</p>` : ""}<div class="card-actions"><button data-do="role" data-id="${esc(a.id)}">${icon("pulse", "sm")}查看动态</button><button class="ghost" data-do="role-settings" data-id="${esc(a.id)}">${icon("settings", "sm")}设置</button></div></article>`;
+}
+const homeRolesMarkup = () =>
+  config.agents.map(homeRoleCard).join("") ||
+  '<div class="card empty">还没有角色。到“角色”中添加第一个。</div>';
+// Four sections; existing pages keep their keys and become sub-pages. Role
+// pages all follow one selected role instead of each keeping its own picker.
+const sections = {
+  home: { pages: ["overview"] },
+  role: {
+    pages: [
+      "activity",
+      "agents",
+      "mind",
+      "memory",
+      "schedule",
+      "apps",
+      "permissions",
+      "voices",
+    ],
+  },
+  links: { pages: ["links"] },
+  system: { pages: ["operations", "settings"] },
+};
+const pageLabels = {
+  activity: "动态",
+  agents: "设置",
+  mind: "Self 与主体",
+  memory: "记忆与日记",
+  schedule: "作息与定时",
+  apps: "浏览与分享",
+  permissions: "文件",
+  voices: "语音",
+  operations: "运维",
+  settings: "运行设置",
+};
+const lastPage = {};
+let roleId;
+const sectionOf = (page) =>
+  Object.keys(sections).find((s) => sections[s].pages.includes(page)) || "home";
+function syncRole() {
+  if (!config.agents.some((a) => a.id === roleId))
+    roleId = config.agents[0]?.id;
+  // Page modules keep their own selection variables (declared, initially
+  // undefined, in their scripts); point them at the role. A module that is
+  // not loaded (as in unit tests) simply has nothing to sync.
+  for (const assign of [
+    () => (activityAgentId = roleId),
+    () => (appAgentId = roleId),
+    () => (mindAgentId = roleId),
+    () => (parityAgentId = roleId),
+    () => (fileAgentId = roleId),
+  ])
+    try {
+      assign();
+    } catch {
+      /* module not loaded */
+    }
+}
+function renderSectionBar(section) {
+  const bar = $("#section-bar");
+  document.body.classList.toggle("in-role", section === "role");
+  if (!bar) return;
+  if (!["role", "system"].includes(section)) {
+    bar.hidden = true;
+    bar.innerHTML = "";
+    return;
+  }
+  const role = section === "role" && find("agents", roleId);
+  const picker =
+    section === "role"
+      ? `<div class="role-pick">${config.agents.map((a) => `<button type="button" data-role="${esc(a.id)}" class="${a.id === roleId ? "primary" : "ghost"}">${esc(a.name)}</button>`).join("")}<button type="button" class="ghost" data-role-add>${icon("plus", "sm")}添加角色</button></div>${role ? blockersMarkup(status.agents.find((s) => s.id === role.id)) : '<p class="hint">还没有角色。</p>'}`
+      : "";
+  bar.innerHTML = `${picker}<div class="sub-tabs" role="tablist">${sections[section].pages.map((p) => `<button type="button" role="tab" data-page="${p}" aria-selected="${p === tab}" class="${p === tab ? "active" : ""}">${pageLabels[p]}</button>`).join("")}</div>`;
+  bar.hidden = false;
+  bar.querySelectorAll?.("[data-role]").forEach(
+    (b) =>
+      (b.onclick = () => {
+        roleId = b.dataset.role;
+        render();
+      }),
+  );
+  bar.querySelectorAll?.("[data-page]").forEach(
+    (b) =>
+      (b.onclick = () => {
+        tab = b.dataset.page;
+        render();
+      }),
+  );
+  const add = bar.querySelector?.("[data-role-add]");
+  if (add) add.onclick = () => action(() => operate("add", "agents"));
+}
 function render() {
   renderGlobalPauseControl();
-  const [title, subtitle] = titles[tab];
+  // Older links name the pages that were merged into one.
+  if (["connections", "backends"].includes(tab)) tab = "links";
+  const section = sectionOf(tab);
+  lastPage[section] = tab;
+  if (section === "role" && config) syncRole();
+  const role = section === "role" && config && find("agents", roleId);
+  const [pageTitle, subtitle] = titles[tab];
+  const title = role ? `${role.name} · ${pageLabels[tab]}` : pageTitle;
   $("#title").textContent = title;
   $("#crumb").textContent = title;
   $("#subtitle").textContent = subtitle;
   document.title = `${title} · QQ Agents`;
   document
     .querySelectorAll("nav button")
-    .forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
+    .forEach((b) =>
+      b.classList.toggle("active", b.dataset.section === section),
+    );
   $("#mode").textContent =
     status.mode === "isolated"
       ? "隔离模式"
@@ -315,39 +469,28 @@ function render() {
   $("#runtime-text").textContent = $("#mode").textContent;
   const content = $("#content");
   if (!config) return;
+  renderSectionBar(section);
   if (tab === "mind") {
     renderMind();
     return;
   }
   if (tab === "overview") {
-    content.innerHTML = `<div class="banner ${status.mode === "isolated" ? "warn" : status.globalPaused ? "" : "ok"}">${icon(status.mode === "isolated" ? "shield" : "pulse")}<span>${status.mode === "isolated" ? "当前为隔离模式。不会连接 QQ 或启动模型回合。切换需要以 --live 启动并在管理台配置。" : status.globalPaused ? "全局暂停中。连接可记录收到的消息，角色不会参与；解除全局暂停后，各角色的独立暂停仍生效。" : "全局允许参与。具体行为由每个角色的暂停、白名单、唤醒和静默配置决定。"}</span></div><div class="stats">${[
-      ["角色", config.agents.length, "独立人格与经历", "bot"],
-      ["QQ 账号", config.connections.length, "账号与连接分离", "link"],
-      ["AI 后端", config.backends.length, "模型可独立切换", "chip"],
-      [
-        "活动回合",
-        status.agents.reduce((n, a) => n + a.activeTurns, 0),
-        "当前进行中的对话",
-        "pulse",
-      ],
-    ]
-      .map(
-        ([name, n, sub, ic]) =>
-          `<div class="card stat"><div class="stat-head"><span>${name}</span>${icon(ic)}</div><span class="number">${n}</span><p class="hint">${sub}</p></div>`,
-      )
-      .join(
-        "",
-      )}</div><div class="section-title"><h2>角色状态</h2><button class="ghost" data-do="tab" data-id="agents">管理角色${icon("arrow", "sm")}</button></div><div class="grid">${config.agents.map(agentCard).join("")}</div><div class="section-title"><h2>受限动作授权</h2>${tag("回忆发言由角色自行判断", "accent")}</div><div class="card">${status.disclosureRequests.length ? status.disclosureRequests.map((r, i) => `<div class="record"><strong>${esc(find("agents", r.agentId)?.name)} → ${esc(r.conversation)}</strong><p>${r.records.length} 条资料涉及${r.reason === "external-service" ? "外部服务调用" : "本地运维内容"}。${r.request ? "批准仅对当前回合、所示请求参数及资料集合有效。" : "批准仅对当前回合、当前会话所示资料集合有效。"}</p><p class="mono">${esc(r.records.join("\n"))}</p>${r.request ? `<pre>${esc(JSON.stringify(r.request, null, 2))}</pre><p>${esc(JSON.stringify(r.sourceClasses))}</p>` : ""}<button data-do="grant" data-id="${i}">批准本次披露</button></div>`).join("") : "<p>当前没有待批准的受限动作。</p>"}</div>`;
+    const waiting = status.agents.reduce(
+        (n, a) => n + (a.unresolvedDeliveries || 0),
+        0,
+      ),
+      grants = status.disclosureRequests.length,
+      errors = (status.recentErrors || []).length;
+    content.innerHTML = `<div class="banner ${status.mode === "isolated" ? "warn" : status.globalPaused ? "" : "ok"}">${icon(status.mode === "isolated" ? "shield" : "pulse")}<span>${status.mode === "isolated" ? "隔离模式：不连接 QQ，也不运行模型。" : status.globalPaused ? "全局暂停中：连接照常记录消息，角色不参与。" : "运行中：各角色按自己的设置参与。"}</span></div><div class="section-title"><h2>角色</h2></div><div class="grid" id="home-roles">${homeRolesMarkup()}</div><div class="section-title"><h2>需要处理</h2>${grants + waiting ? "" : tag("暂无", "live")}</div>${grants ? `<div class="card"><h3>受限动作授权 · ${grants}</h3>${status.disclosureRequests.map((r, i) => `<div class="record"><strong>${esc(find("agents", r.agentId)?.name)} → ${esc(r.conversation)}</strong><p>${r.records.length} 条资料涉及${r.reason === "external-service" ? "外部服务调用" : "本地运维内容"}。${r.request ? "批准仅对当前回合、所示请求参数及资料集合有效。" : "批准仅对当前回合、当前会话所示资料集合有效。"}</p><p class="mono">${esc(r.records.join("\n"))}</p>${r.request ? `<pre>${esc(JSON.stringify(r.request, null, 2))}</pre><p>${esc(JSON.stringify(r.sourceClasses))}</p>` : ""}<button data-do="grant" data-id="${i}">批准本次披露</button></div>`).join("")}</div>` : ""}${waiting ? `<div class="card"><h3>待核对发送 · ${waiting}</h3><p class="hint">网络结果未知的发送不会自动重发。请在 QQ 中查看对应会话后标记结果。</p><div id="unresolved-deliveries">读取中…</div></div>` : ""}${grants + waiting ? "" : '<p class="hint">没有待批准的动作或待核对的发送。</p>'}`;
     renderOnboarding(content);
+    if (waiting) action(renderUnresolved);
     content.insertAdjacentHTML(
       "beforeend",
-      `<div class="section-title"><h2>待核对发送 · ${status.agents.reduce((n, a) => n + (a.unresolvedDeliveries || 0), 0)}</h2></div><div class="card"><p class="hint">网络结果未知的发送不会自动重发。请在 QQ 中查看对应会话后标记结果。</p><div id="unresolved-deliveries">读取中…</div></div>`,
+      `<details class="card home-errors" ${errorsOpen || errorFilter ? "open" : ""}><summary>最近错误 · ${errors} 类</summary><label>筛选错误码、组件或关联 ID<input id="error-filter" value="${esc(errorFilter)}" placeholder="例如 CONFIG_SAVE_FAILED、http"></label><p class="hint">最多保留本次启动的 50 类错误，同类重复错误合并计数；完整留存取决于服务日志配置。</p><div id="recent-errors">${recentErrorsMarkup(errorFilter)}</div></details>`,
     );
-    action(renderUnresolved);
-    content.insertAdjacentHTML(
-      "beforeend",
-      `<div class="section-title"><h2>最近错误</h2></div><div class="card"><label>筛选错误码、组件或关联 ID<input id="error-filter" value="${esc(errorFilter)}" placeholder="例如 CONFIG_SAVE_FAILED、http"></label><p class="hint">最多保留本次启动的 50 类错误，同类重复错误合并计数；完整留存取决于服务日志配置。</p><div id="recent-errors">${recentErrorsMarkup(errorFilter)}</div></div>`,
-    );
+    const details = content.querySelector?.(".home-errors");
+    if (details) details.ontoggle = () => (errorsOpen = details.open);
+    loadHome();
     if (configMigrationWarnings.length)
       content.insertAdjacentHTML(
         "afterbegin",
@@ -357,8 +500,19 @@ function render() {
       errorFilter = e.target.value;
       $("#recent-errors").innerHTML = recentErrorsMarkup(errorFilter);
     };
-  } else if (["agents", "connections", "backends"].includes(tab)) {
-    content.innerHTML = `<div class="section-title"><h2>${titles[tab][0]} · ${config[tab].length}</h2><button class="primary" data-do="add" data-id="${tab}">${icon("plus", "sm")}添加${{ agents: "角色", connections: "实例", backends: "后端" }[tab]}</button></div><div class="grid">${config[tab].map(tab === "agents" ? agentCard : tab === "connections" ? connectionCard : backendCard).join("") || '<div class="card empty">添加第一个配置开始。</div>'}</div>`;
+  } else if (tab === "agents") {
+    const role = find("agents", roleId);
+    content.innerHTML = role
+      ? `<div class="grid">${agentCard(role)}</div><p class="hint">性格与相处方式在「Self 与主体」中发展；浏览、文件和作息有各自的标签页。</p>`
+      : '<div class="card empty">还没有角色。点上方的“添加角色”开始。</div>';
+  } else if (tab === "links") {
+    const group = (type, label, card) =>
+      `<div class="section-title"><h2>${label} · ${config[type].length}</h2><button class="primary" data-do="add" data-id="${type}">${icon("plus", "sm")}添加 ${label}</button></div><div class="grid">${config[type].map(card).join("") || '<div class="card empty">添加第一个配置开始。</div>'}</div>`;
+    content.innerHTML =
+      group("connections", "QQ 账号", connectionCard) +
+      group("backends", "AI 后端", backendCard);
+  } else if (tab === "activity") {
+    renderActivity();
   } else if (tab === "apps") {
     renderApps();
   } else if (tab === "permissions") {
@@ -366,7 +520,7 @@ function render() {
   } else if (["schedule", "voices", "operations"].includes(tab)) {
     renderParity(tab);
   } else if (tab === "memory") {
-    content.innerHTML = `<div class="card"><div class="toolbar"><label>角色<select id="memory-agent">${config.agents.map((a) => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join("")}</select></label><label>关键词<input id="memory-query" placeholder="约定、上次、某件事…"></label><label>记录类型<select id="memory-type"><option value="all">全部</option><option value="event">经历档案</option><option value="diary">个人日记</option></select></label><button class="primary" id="search-memory">搜索</button><button id="export-memory">导出</button></div><div class="form-grid"><label>人物 QQ<input id="memory-person" placeholder="按 QQ 身份检索"></label><label>来源<select id="memory-source"><option value="">全部来源</option></select></label><label id="memory-source-manual-field" hidden>手动来源<input id="memory-source-manual" placeholder="group:10000 或 private:10000"></label></div><p class="hint" id="memory-source-state"></p><div class="card-actions"><button id="reset-session">重置此来源模型上下文</button><button id="pause-conversation">暂停此来源</button><button id="resume-conversation">解除此来源暂停 / 静默</button></div><p class="hint">原始消息是“某人说过的话”，不自动等同于已核实事实。旧笔记标注 legacy 来源。</p><div id="memory-results" class="empty">搜索此角色自己的经历和日记。</div></div><div class="section-title"><h2>会话状态</h2></div><div class="card"><p class="hint">按会话单独暂停只影响此角色在该来源的参与；角色暂停和全局暂停仍独立生效。</p><div id="memory-conversations">读取中…</div></div>`;
+    content.innerHTML = `<div class="card"><div class="toolbar"><label>角色<select id="memory-agent">${config.agents.map((a) => `<option value="${esc(a.id)}" ${a.id === roleId ? "selected" : ""}>${esc(a.name)}</option>`).join("")}</select></label><label>关键词<input id="memory-query" placeholder="约定、上次、某件事…"></label><label>记录类型<select id="memory-type"><option value="all">全部</option><option value="event">经历档案</option><option value="diary">个人日记</option></select></label><button class="primary" id="search-memory">搜索</button><button id="export-memory">导出</button></div><div class="form-grid"><label>人物 QQ<input id="memory-person" placeholder="按 QQ 身份检索"></label><label>来源<select id="memory-source"><option value="">全部来源</option></select></label><label id="memory-source-manual-field" hidden>手动来源<input id="memory-source-manual" placeholder="group:10000 或 private:10000"></label></div><p class="hint" id="memory-source-state"></p><div class="card-actions"><button id="reset-session">重置此来源模型上下文</button><button id="pause-conversation">暂停此来源</button><button id="resume-conversation">解除此来源暂停 / 静默</button></div><p class="hint">原始消息是“某人说过的话”，不自动等同于已核实事实。旧笔记标注 legacy 来源。</p><div id="memory-results" class="empty">搜索此角色自己的经历和日记。</div></div><div class="section-title"><h2>会话状态</h2></div><div class="card"><p class="hint">按会话单独暂停只影响此角色在该来源的参与；角色暂停和全局暂停仍独立生效。</p><div id="memory-conversations">读取中…</div></div>`;
     $("#memory-agent").onchange = () => action(loadConversations);
     $("#memory-source").onchange = () => {
       $("#memory-source-manual-field").hidden =
@@ -528,7 +682,7 @@ function agentCard(a) {
   const toggleOff = disabledReason([
     [status.mode === "isolated" && !a.paused, "isolatedAgent"],
   ]);
-  return `<article class="card"><div class="row"><div class="identity"><span class="avatar">${esc(a.name.slice(0, 1))}</span><div><h3>${esc(a.name)}</h3><span class="hint mono">${esc(a.id)}</span></div></div>${tag(a.paused ? "已暂停" : status.globalPaused ? "全局暂停" : "允许参与", a.paused ? "off" : status.globalPaused ? "warn" : "live")}</div><dl class="agent-meta"><dt>QQ 账号</dt><dd>${esc(c?.label)}</dd><dt>后端 / 模型</dt><dd>${esc(b?.label)} / <span class="mono">${esc(a.model || b?.model || "后端默认")}</span></dd><dt>后端连接</dt><dd>${esc(backendLabels[status.backends?.find((x) => x.id === a.backendId)?.state] || "尚未检测")}</dd><dt>参与率</dt><dd>${Math.round(a.wake.participation * 100)}%${meter(a.wake.participation)}</dd><dt>来源范围</dt><dd>${a.allow.groups.length} 个群 · ${a.allow.users.length} 位私聊对象</dd></dl>${blockersMarkup(s)}${s?.error ? `<p class="hint">${esc(s.error)}</p>` : ""}<div class="card-actions"><button data-do="edit-agent" data-id="${esc(a.id)}">${icon("settings", "sm")}配置角色</button><button class="ghost" data-do="toggle" data-id="${esc(a.id)}" ${disabledAttr(toggleOff)}>${icon(a.paused ? "play" : "pause", "sm")}${a.paused ? "解除角色暂停" : "暂停角色"}</button></div>${disabledHints(toggleOff)}</article>`;
+  return `<article class="card"><div class="row"><div class="identity"><span class="avatar">${esc(avatarChar(a.name))}</span><div><h3>${esc(a.name)}</h3><span class="hint mono">${esc(a.id)}</span></div></div>${tag(a.paused ? "已暂停" : status.globalPaused ? "全局暂停" : "允许参与", a.paused ? "off" : status.globalPaused ? "warn" : "live")}</div><dl class="agent-meta"><dt>QQ 账号</dt><dd>${esc(c?.label)}</dd><dt>后端 / 模型</dt><dd>${esc(b?.label)} / <span class="mono">${esc(a.model || b?.model || "后端默认")}</span></dd><dt>后端连接</dt><dd>${esc(backendLabels[status.backends?.find((x) => x.id === a.backendId)?.state] || "尚未检测")}</dd><dt>参与率</dt><dd>${Math.round(a.wake.participation * 100)}%${meter(a.wake.participation)}</dd><dt>来源范围</dt><dd>${a.allow.groups.length} 个群 · ${a.allow.users.length} 位私聊对象</dd></dl>${blockersMarkup(s)}${s?.error ? `<p class="hint">${esc(s.error)}</p>` : ""}<div class="card-actions"><button data-do="role" data-id="${esc(a.id)}">${icon("pulse", "sm")}查看动态</button><button data-do="edit-agent" data-id="${esc(a.id)}">${icon("settings", "sm")}配置角色</button><button class="ghost" data-do="toggle" data-id="${esc(a.id)}" ${disabledAttr(toggleOff)}>${icon(a.paused ? "play" : "pause", "sm")}${a.paused ? "解除角色暂停" : "暂停角色"}</button></div>${disabledHints(toggleOff)}</article>`;
 }
 const recoveryText = (r) => {
   if (!r) return "";
@@ -677,6 +831,18 @@ async function operate(kind, id) {
     render();
     return;
   }
+  if (kind === "role") {
+    roleId = id;
+    tab = "activity";
+    render();
+    return;
+  }
+  if (kind === "role-settings") {
+    roleId = id;
+    tab = "agents";
+    render();
+    return;
+  }
   if (kind === "add" || kind.startsWith("edit-")) {
     const type =
       kind === "add"
@@ -774,6 +940,23 @@ const input = (key, label, value = "", extra = "") =>
   `<label>${label}<input name="${key}" value="${esc(value)}" ${extra}></label>`;
 const check = (key, label, value) =>
   `<label class="check"><input type="checkbox" name="${key}" ${value ? "checked" : ""}>${label}</label>`;
+// Less-used fields of a form, collapsed by default. Inputs keep their names,
+// so FormData and saving are unchanged.
+const advanced = (title, html) =>
+  `<details class="adv"><summary>${title}</summary><div class="form-grid">${html}</div></details>`;
+// A required field inside a collapsed section would block submit silently.
+document.addEventListener?.(
+  "invalid",
+  (e) => {
+    for (
+      let d = e.target.closest?.("details");
+      d;
+      d = d.parentElement?.closest("details")
+    )
+      d.open = true;
+  },
+  true,
+);
 const area = (key, label, value) =>
   `<label class="wide">${label}<textarea name="${key}">${esc(value)}</textarea></label>`;
 const select = (key, label, value, options) =>
@@ -1324,7 +1507,7 @@ if (token) action(load);
 setInterval(() => {
   if (
     config &&
-    ["overview", "agents", "backends"].includes(tab) &&
+    ["overview", "agents", "links"].includes(tab) &&
     !$("#editor").open
   )
     action(async () => {
