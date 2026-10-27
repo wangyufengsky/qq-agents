@@ -29,8 +29,8 @@ const titles = {
   voices: ["语音库", "导入、试听和管理每个角色自己的语音素材。"],
   operations: ["词汇与运维", "核对黑话候选，逐项确认管理员操作。"],
   overview: ["概览", "在一个地方，照看每个独立的 AI。"],
-  agents: ["智能体", "人格与经历归属于稳定身份，切换后端也能延续。"],
-  connections: ["QQ 实例", "每个 QQ 账号独立连接，启停桥接不影响登录数据。"],
+  agents: ["角色", "人格与经历归属于稳定身份，切换后端也能延续。"],
+  connections: ["QQ 账号", "每个 QQ 账号独立连接，启停连接不影响登录数据。"],
   backends: ["AI 后端", "管理 DSH、Codex 与各自的模型和工具。"],
   memory: ["经历与日记", "消息按实际发生记录；日记由 AI 自主书写。"],
   settings: ["运行设置", "隔离开发、全局参与边界与可迁移配置。"],
@@ -217,7 +217,7 @@ function renderGlobalPauseControl() {
     off ||
     (paused
       ? "恢复全局参与；单独暂停的角色和会话保持暂停，断开的连接需要另行恢复。"
-      : "暂停所有智能体参与，保留 QQ 连接。");
+      : "暂停所有角色参与，保留 QQ 连接。");
   let hint = $("#pause-all-hint");
   if (!hint) {
     hint = document.createElement("span");
@@ -236,7 +236,7 @@ async function setGlobalPaused(paused) {
   if (
     paused &&
     !confirm(
-      `全部暂停后，所有智能体立即停止参与${active ? `，进行中的 ${active} 个回合会被结束，未发出的回复不再发送` : ""}；QQ 连接保留。恢复全局参与后，单独暂停的角色和会话仍保持暂停。确定全部暂停？`,
+      `全部暂停后，所有角色立即停止参与${active ? `，进行中的 ${active} 个回合会被结束，未发出的回复不再发送` : ""}；QQ 连接保留。恢复全局参与后，单独暂停的角色和会话仍保持暂停。确定全部暂停？`,
     )
   )
     return;
@@ -247,7 +247,7 @@ async function setGlobalPaused(paused) {
     await load();
     notice(
       paused
-        ? "全部智能体已暂停"
+        ? "全部角色已暂停"
         : "已恢复全局参与；单独暂停的角色和会话仍保持暂停，断开的连接需另行恢复",
     );
   } finally {
@@ -320,9 +320,9 @@ function render() {
     return;
   }
   if (tab === "overview") {
-    content.innerHTML = `<div class="banner ${status.mode === "isolated" ? "warn" : status.globalPaused ? "" : "ok"}">${icon(status.mode === "isolated" ? "shield" : "pulse")}<span>${status.mode === "isolated" ? "当前为隔离模式。不会连接 QQ 或启动模型回合。切换需要以 --live 启动并在管理台配置。" : status.globalPaused ? "全局暂停中。连接可记录收到的消息，智能体不会参与；解除全局暂停后，各角色的独立暂停仍生效。" : "全局允许参与。具体行为由每个角色的暂停、白名单、唤醒和静默配置决定。"}</span></div><div class="stats">${[
-      ["智能体", config.agents.length, "独立人格与经历", "bot"],
-      ["QQ 实例", config.connections.length, "账号与连接分离", "link"],
+    content.innerHTML = `<div class="banner ${status.mode === "isolated" ? "warn" : status.globalPaused ? "" : "ok"}">${icon(status.mode === "isolated" ? "shield" : "pulse")}<span>${status.mode === "isolated" ? "当前为隔离模式。不会连接 QQ 或启动模型回合。切换需要以 --live 启动并在管理台配置。" : status.globalPaused ? "全局暂停中。连接可记录收到的消息，角色不会参与；解除全局暂停后，各角色的独立暂停仍生效。" : "全局允许参与。具体行为由每个角色的暂停、白名单、唤醒和静默配置决定。"}</span></div><div class="stats">${[
+      ["角色", config.agents.length, "独立人格与经历", "bot"],
+      ["QQ 账号", config.connections.length, "账号与连接分离", "link"],
       ["AI 后端", config.backends.length, "模型可独立切换", "chip"],
       [
         "活动回合",
@@ -337,7 +337,7 @@ function render() {
       )
       .join(
         "",
-      )}</div><div class="section-title"><h2>角色状态</h2><button class="ghost" data-do="tab" data-id="agents">管理智能体${icon("arrow", "sm")}</button></div><div class="grid">${config.agents.map(agentCard).join("")}</div><div class="section-title"><h2>受限动作授权</h2>${tag("回忆发言由智能体自行判断", "accent")}</div><div class="card">${status.disclosureRequests.length ? status.disclosureRequests.map((r, i) => `<div class="record"><strong>${esc(find("agents", r.agentId)?.name)} → ${esc(r.conversation)}</strong><p>${r.records.length} 条资料涉及${r.reason === "external-service" ? "外部服务调用" : "本地运维内容"}。${r.request ? "批准仅对当前回合、所示请求参数及资料集合有效。" : "批准仅对当前回合、当前会话所示资料集合有效。"}</p><p class="mono">${esc(r.records.join("\n"))}</p>${r.request ? `<pre>${esc(JSON.stringify(r.request, null, 2))}</pre><p>${esc(JSON.stringify(r.sourceClasses))}</p>` : ""}<button data-do="grant" data-id="${i}">批准本次披露</button></div>`).join("") : "<p>当前没有待批准的受限动作。</p>"}</div>`;
+      )}</div><div class="section-title"><h2>角色状态</h2><button class="ghost" data-do="tab" data-id="agents">管理角色${icon("arrow", "sm")}</button></div><div class="grid">${config.agents.map(agentCard).join("")}</div><div class="section-title"><h2>受限动作授权</h2>${tag("回忆发言由角色自行判断", "accent")}</div><div class="card">${status.disclosureRequests.length ? status.disclosureRequests.map((r, i) => `<div class="record"><strong>${esc(find("agents", r.agentId)?.name)} → ${esc(r.conversation)}</strong><p>${r.records.length} 条资料涉及${r.reason === "external-service" ? "外部服务调用" : "本地运维内容"}。${r.request ? "批准仅对当前回合、所示请求参数及资料集合有效。" : "批准仅对当前回合、当前会话所示资料集合有效。"}</p><p class="mono">${esc(r.records.join("\n"))}</p>${r.request ? `<pre>${esc(JSON.stringify(r.request, null, 2))}</pre><p>${esc(JSON.stringify(r.sourceClasses))}</p>` : ""}<button data-do="grant" data-id="${i}">批准本次披露</button></div>`).join("") : "<p>当前没有待批准的受限动作。</p>"}</div>`;
     renderOnboarding(content);
     content.insertAdjacentHTML(
       "beforeend",
@@ -358,7 +358,7 @@ function render() {
       $("#recent-errors").innerHTML = recentErrorsMarkup(errorFilter);
     };
   } else if (["agents", "connections", "backends"].includes(tab)) {
-    content.innerHTML = `<div class="section-title"><h2>${titles[tab][0]} · ${config[tab].length}</h2><button class="primary" data-do="add" data-id="${tab}">${icon("plus", "sm")}添加${{ agents: "智能体", connections: "实例", backends: "后端" }[tab]}</button></div><div class="grid">${config[tab].map(tab === "agents" ? agentCard : tab === "connections" ? connectionCard : backendCard).join("") || '<div class="card empty">添加第一个配置开始。</div>'}</div>`;
+    content.innerHTML = `<div class="section-title"><h2>${titles[tab][0]} · ${config[tab].length}</h2><button class="primary" data-do="add" data-id="${tab}">${icon("plus", "sm")}添加${{ agents: "角色", connections: "实例", backends: "后端" }[tab]}</button></div><div class="grid">${config[tab].map(tab === "agents" ? agentCard : tab === "connections" ? connectionCard : backendCard).join("") || '<div class="card empty">添加第一个配置开始。</div>'}</div>`;
   } else if (tab === "apps") {
     renderApps();
   } else if (tab === "permissions") {
@@ -366,7 +366,7 @@ function render() {
   } else if (["schedule", "voices", "operations"].includes(tab)) {
     renderParity(tab);
   } else if (tab === "memory") {
-    content.innerHTML = `<div class="card"><div class="toolbar"><label>智能体<select id="memory-agent">${config.agents.map((a) => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join("")}</select></label><label>关键词<input id="memory-query" placeholder="约定、上次、某件事…"></label><label>记录类型<select id="memory-type"><option value="all">全部</option><option value="event">经历档案</option><option value="diary">个人日记</option></select></label><button class="primary" id="search-memory">搜索</button><button id="export-memory">导出</button></div><div class="form-grid"><label>人物 QQ<input id="memory-person" placeholder="按 QQ 身份检索"></label><label>来源<select id="memory-source"><option value="">全部来源</option></select></label><label id="memory-source-manual-field" hidden>手动来源<input id="memory-source-manual" placeholder="group:10000 或 private:10000"></label></div><p class="hint" id="memory-source-state"></p><div class="card-actions"><button id="reset-session">重置此来源模型上下文</button><button id="pause-conversation">暂停此来源</button><button id="resume-conversation">解除此来源暂停 / 静默</button></div><p class="hint">原始消息是“某人说过的话”，不自动等同于已核实事实。旧笔记标注 legacy 来源。</p><div id="memory-results" class="empty">搜索此角色自己的经历和日记。</div></div><div class="section-title"><h2>会话状态</h2></div><div class="card"><p class="hint">按会话单独暂停只影响此角色在该来源的参与；角色暂停和全局暂停仍独立生效。</p><div id="memory-conversations">读取中…</div></div>`;
+    content.innerHTML = `<div class="card"><div class="toolbar"><label>角色<select id="memory-agent">${config.agents.map((a) => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join("")}</select></label><label>关键词<input id="memory-query" placeholder="约定、上次、某件事…"></label><label>记录类型<select id="memory-type"><option value="all">全部</option><option value="event">经历档案</option><option value="diary">个人日记</option></select></label><button class="primary" id="search-memory">搜索</button><button id="export-memory">导出</button></div><div class="form-grid"><label>人物 QQ<input id="memory-person" placeholder="按 QQ 身份检索"></label><label>来源<select id="memory-source"><option value="">全部来源</option></select></label><label id="memory-source-manual-field" hidden>手动来源<input id="memory-source-manual" placeholder="group:10000 或 private:10000"></label></div><p class="hint" id="memory-source-state"></p><div class="card-actions"><button id="reset-session">重置此来源模型上下文</button><button id="pause-conversation">暂停此来源</button><button id="resume-conversation">解除此来源暂停 / 静默</button></div><p class="hint">原始消息是“某人说过的话”，不自动等同于已核实事实。旧笔记标注 legacy 来源。</p><div id="memory-results" class="empty">搜索此角色自己的经历和日记。</div></div><div class="section-title"><h2>会话状态</h2></div><div class="card"><p class="hint">按会话单独暂停只影响此角色在该来源的参与；角色暂停和全局暂停仍独立生效。</p><div id="memory-conversations">读取中…</div></div>`;
     $("#memory-agent").onchange = () => action(loadConversations);
     $("#memory-source").onchange = () => {
       $("#memory-source-manual-field").hidden =
@@ -405,7 +405,7 @@ function render() {
         );
       });
   } else {
-    content.innerHTML = `<div class="card"><h2>参与控制</h2><p>启动时总是全局暂停。解除全局暂停不会自动解除角色暂停，也不会连接 QQ。</p><p>当前：${status.globalPaused ? "全局暂停中" : "全局允许参与"}。全局暂停与恢复统一使用页面右上角的「${status.globalPaused ? "全局恢复" : "全部暂停"}」按钮。</p>${disabledHints(disabledReason([[status.globalPaused && status.mode === "isolated", "isolatedResume"]]))}</div><div class="card section-title"><div><h2>完整配置</h2><p>支持配置任意数量的智能体、QQ 实例与后端。配置中的凭据仅填写环境变量名。</p></div><button data-do="advanced">打开配置编辑器</button></div><div class="card"><h2>迁移与备份</h2><p>先运行迁移预检，再导入到新数据目录。旧文件、原登录目录和 Docker 数据都保留。</p><p class="mono">npm run migrate -- --source /path/to/old-instance --agent agent-a --data /path/to/new-data</p><p class="hint">默认只生成统计预检。实际导入需 --apply；目标目录有运行锁时会拒绝。迁移不会修改旧实例，也不会启动 QQ。</p><button data-do="download-config">导出配置</button></div>`;
+    content.innerHTML = `<div class="card"><h2>参与控制</h2><p>启动时总是全局暂停。解除全局暂停不会自动解除角色暂停，也不会连接 QQ。</p><p>当前：${status.globalPaused ? "全局暂停中" : "全局允许参与"}。全局暂停与恢复统一使用页面右上角的「${status.globalPaused ? "全局恢复" : "全部暂停"}」按钮。</p>${disabledHints(disabledReason([[status.globalPaused && status.mode === "isolated", "isolatedResume"]]))}</div><div class="card section-title"><div><h2>完整配置</h2><p>支持配置任意数量的角色、QQ 账号与后端。配置中的凭据仅填写环境变量名。</p></div><button data-do="advanced">打开配置编辑器</button></div><div class="card"><h2>迁移与备份</h2><p>先运行迁移预检，再导入到新数据目录。旧文件、原登录目录和 Docker 数据都保留。</p><p class="mono">npm run migrate -- --source /path/to/old-instance --agent agent-a --data /path/to/new-data</p><p class="hint">默认只生成统计预检。实际导入需 --apply；目标目录有运行锁时会拒绝。迁移不会修改旧实例，也不会启动 QQ。</p><button data-do="download-config">导出配置</button></div>`;
   }
   content
     .querySelectorAll("[data-do]")
@@ -476,7 +476,7 @@ async function renderUnresolved() {
             !confirm(
               sent
                 ? "确认这条消息已出现在 QQ 中？标记后不会重发。"
-                : "确认这条消息没有发出？标记后同一请求仍不会自动重发，智能体可在之后的回合重新决定是否发送。",
+                : "确认这条消息没有发出？标记后同一请求仍不会自动重发，角色可在之后的回合重新决定是否发送。",
             )
           )
             return;
@@ -494,12 +494,10 @@ async function renderUnresolved() {
 const disabledReasons = {
   statusLoading: "尚未读取运行状态，请稍候",
   submitting: "正在提交，请稍候",
-  isolatedResume: "隔离模式下不能解除全局暂停；需以 --live 启动并切换运行模式",
-  isolatedAgent:
-    "隔离模式下角色不会参与，无需暂停；需以 --live 启动并切换运行模式",
-  isolatedConnection:
-    "隔离模式下不能连接 QQ 或启停进程；需以 --live 启动并切换运行模式",
-  isolatedBackend: "隔离模式下不连接 AI 后端；需以 --live 启动并切换运行模式",
+  isolatedResume: "隔离模式下不能解除全局暂停；{live}",
+  isolatedAgent: "隔离模式下角色不会参与，无需暂停；{live}",
+  isolatedConnection: "隔离模式下不能连接 QQ 或启停进程；{live}",
+  isolatedBackend: "隔离模式下不连接 AI 后端；{live}",
   connectionDisabled: "连接未启用，请先在编辑中勾选启用",
   backendBusy: "正在处理上一项后端操作，请稍候",
   backendRecovering: "后端正在自动恢复，完成后可再次操作",
@@ -507,8 +505,16 @@ const disabledReasons = {
   opsBlocked: "隔离模式或全局暂停时不执行运维操作",
 };
 /** @param {[unknown, keyof typeof disabledReasons][]} checks */
+// Started with --live, the remaining step is the mode switch on the overview.
+const liveStep = () =>
+  status?.allowLive
+    ? "请先在概览的上线清单中切换到运行模式"
+    : "需以 --live 重新启动服务，再切换到运行模式";
 const disabledReason = (checks) =>
-  disabledReasons[checks.find(([on]) => on)?.[1]] || "";
+  (disabledReasons[checks.find(([on]) => on)?.[1]] || "").replace(
+    "{live}",
+    liveStep(),
+  );
 const disabledAttr = (reason) =>
   reason ? `disabled title="${esc(reason)}"` : "";
 const disabledHints = (...reasons) =>
@@ -522,7 +528,7 @@ function agentCard(a) {
   const toggleOff = disabledReason([
     [status.mode === "isolated" && !a.paused, "isolatedAgent"],
   ]);
-  return `<article class="card"><div class="row"><div class="identity"><span class="avatar">${esc(a.name.slice(0, 1))}</span><div><h3>${esc(a.name)}</h3><span class="hint mono">${esc(a.id)}</span></div></div>${tag(a.paused ? "已暂停" : status.globalPaused ? "全局暂停" : "允许参与", a.paused ? "off" : status.globalPaused ? "warn" : "live")}</div><dl class="agent-meta"><dt>QQ 实例</dt><dd>${esc(c?.label)}</dd><dt>后端 / 模型</dt><dd>${esc(b?.label)} / <span class="mono">${esc(a.model || b?.model || "后端默认")}</span></dd><dt>后端连接</dt><dd>${esc(backendLabels[status.backends?.find((x) => x.id === a.backendId)?.state] || "尚未检测")}</dd><dt>参与率</dt><dd>${Math.round(a.wake.participation * 100)}%${meter(a.wake.participation)}</dd><dt>来源范围</dt><dd>${a.allow.groups.length} 个群 · ${a.allow.users.length} 位私聊对象</dd></dl>${blockersMarkup(s)}${s?.error ? `<p class="hint">${esc(s.error)}</p>` : ""}<div class="card-actions"><button data-do="edit-agent" data-id="${esc(a.id)}">${icon("settings", "sm")}配置角色</button><button class="ghost" data-do="toggle" data-id="${esc(a.id)}" ${disabledAttr(toggleOff)}>${icon(a.paused ? "play" : "pause", "sm")}${a.paused ? "解除角色暂停" : "暂停角色"}</button></div>${disabledHints(toggleOff)}</article>`;
+  return `<article class="card"><div class="row"><div class="identity"><span class="avatar">${esc(a.name.slice(0, 1))}</span><div><h3>${esc(a.name)}</h3><span class="hint mono">${esc(a.id)}</span></div></div>${tag(a.paused ? "已暂停" : status.globalPaused ? "全局暂停" : "允许参与", a.paused ? "off" : status.globalPaused ? "warn" : "live")}</div><dl class="agent-meta"><dt>QQ 账号</dt><dd>${esc(c?.label)}</dd><dt>后端 / 模型</dt><dd>${esc(b?.label)} / <span class="mono">${esc(a.model || b?.model || "后端默认")}</span></dd><dt>后端连接</dt><dd>${esc(backendLabels[status.backends?.find((x) => x.id === a.backendId)?.state] || "尚未检测")}</dd><dt>参与率</dt><dd>${Math.round(a.wake.participation * 100)}%${meter(a.wake.participation)}</dd><dt>来源范围</dt><dd>${a.allow.groups.length} 个群 · ${a.allow.users.length} 位私聊对象</dd></dl>${blockersMarkup(s)}${s?.error ? `<p class="hint">${esc(s.error)}</p>` : ""}<div class="card-actions"><button data-do="edit-agent" data-id="${esc(a.id)}">${icon("settings", "sm")}配置角色</button><button class="ghost" data-do="toggle" data-id="${esc(a.id)}" ${disabledAttr(toggleOff)}>${icon(a.paused ? "play" : "pause", "sm")}${a.paused ? "解除角色暂停" : "暂停角色"}</button></div>${disabledHints(toggleOff)}</article>`;
 }
 const recoveryText = (r) => {
   if (!r) return "";
@@ -549,7 +555,7 @@ function connectionCard(c) {
     [status.mode === "isolated", "isolatedConnection"],
     [!c.enabled, "connectionDisabled"],
   ]);
-  return `<article class="card"><div class="row"><div class="identity"><span class="avatar">${icon("link")}</span><div><h3>${esc(c.label)}</h3><span class="hint mono">${esc(c.id)}</span></div></div>${tag(s?.connected ? "已连接" : "未连接", s?.connected ? "live" : "off")}</div><dl class="agent-meta"><dt>QQ 账号</dt><dd class="mono">${esc(c.accountId)}</dd><dt>HTTP</dt><dd class="mono">${esc(c.httpUrl)}</dd><dt>WebSocket</dt><dd class="mono">${esc(c.wsUrl)}</dd><dt>部署方式</dt><dd>${esc(c.deployment)}</dd></dl><p class="hint">${esc(s?.error || "连接前核对实际登录账号，不匹配时拒绝接入。")}</p><p class="hint">${esc(recoveryText(s?.recovery))}</p><div class="card-actions"><button data-do="edit-connection" data-id="${esc(c.id)}">${icon("settings", "sm")}编辑</button><button class="ghost" data-do="connect" data-id="${esc(c.id)}" ${disabledAttr(off)}>${s?.connected ? "断开桥接" : "连接桥接"}</button>${c.deployment !== "external" ? `<button class="ghost" data-do="process" data-id="${esc(c.id)}" ${disabledAttr(off)}>${s?.process?.managed ? "停止 QQ 进程" : "启动 QQ 进程"}</button>` : ""}</div>${disabledHints(off)}</article>`;
+  return `<article class="card"><div class="row"><div class="identity"><span class="avatar">${icon("link")}</span><div><h3>${esc(c.label)}</h3><span class="hint mono">${esc(c.id)}</span></div></div>${tag(s?.connected ? "已连接" : "未连接", s?.connected ? "live" : "off")}</div><dl class="agent-meta"><dt>QQ 账号</dt><dd class="mono">${esc(c.accountId)}</dd><dt>HTTP</dt><dd class="mono">${esc(c.httpUrl)}</dd><dt>WebSocket</dt><dd class="mono">${esc(c.wsUrl)}</dd><dt>部署方式</dt><dd>${esc(c.deployment)}</dd></dl><p class="hint">${esc(s?.error || "连接前核对实际登录账号，不匹配时拒绝接入。")}</p><p class="hint">${esc(recoveryText(s?.recovery))}</p><div class="card-actions"><button data-do="edit-connection" data-id="${esc(c.id)}">${icon("settings", "sm")}编辑</button><button class="ghost" data-do="connect" data-id="${esc(c.id)}" ${disabledAttr(off)}>${s?.connected ? "断开 QQ" : "连接 QQ"}</button>${c.deployment !== "external" ? `<button class="ghost" data-do="process" data-id="${esc(c.id)}" ${disabledAttr(off)}>${s?.process?.managed ? "停止 QQ 进程" : "启动 QQ 进程"}</button>` : ""}</div>${disabledHints(off)}</article>`;
 }
 const backendBusy = new Set();
 const backendLabels = {
@@ -570,7 +576,7 @@ const backendErrors = {
     "Codex 专用实例需要登录。登录完成后再恢复连接。",
   BACKEND_MODEL_UNAVAILABLE:
     "后端可访问，但所选模型当前不可用，请检查模型配置。",
-  BACKEND_NO_AGENTS: "请先将此后端绑定到一个智能体。",
+  BACKEND_NO_AGENTS: "请先将此后端绑定到一个角色。",
 };
 function backendCard(b) {
   const s = status.backends?.find((x) => x.id === b.id) || {
@@ -694,7 +700,7 @@ async function operate(kind, id) {
     if (
       managed &&
       !confirm(
-        `停止 QQ 进程会先断开「${find("connections", id)?.label || id}」的桥接，并让这个 QQ 账号下线；绑定它的智能体都无法收发消息，期间的消息不会补录，需重新启动进程并连接。确定停止？`,
+        `停止 QQ 进程会先断开「${find("connections", id)?.label || id}」的连接，并让这个 QQ 账号下线；绑定它的角色都无法收发消息，期间的消息不会补录，需重新启动进程并连接。确定停止？`,
       )
     )
       return;
@@ -704,7 +710,7 @@ async function operate(kind, id) {
   }
   if (kind === "models") {
     const a = config.agents.find((a) => a.backendId === id);
-    if (!a) throw Error("请先将此后端绑定到一个智能体");
+    if (!a) throw Error("请先将此后端绑定到一个角色");
     const r = await api("/api/models", { agentId: a.id });
     editing = { type: "read" };
     $("#edit-title").textContent = "后端模型目录";
@@ -719,7 +725,7 @@ async function operate(kind, id) {
     if (
       connected &&
       !confirm(
-        `断开桥接后，「${find("connections", id)?.label || id}」不再接收或发送 QQ 消息，绑定它的智能体都无法发言，断开期间的消息不会补录；QQ 登录数据保留。确定断开？`,
+        `断开连接后，「${find("connections", id)?.label || id}」不再接收或发送 QQ 消息，绑定它的角色都无法发言，断开期间的消息不会补录；QQ 登录数据保留。确定断开？`,
       )
     )
       return;
@@ -795,7 +801,7 @@ function openEditor(type, id) {
   editing = { type, id, row };
   $("#edit-title").textContent =
     (id ? "编辑" : "添加") +
-    { agents: "智能体", connections: "QQ 实例", backends: "AI 后端" }[type];
+    { agents: "角色", connections: "QQ 账号", backends: "AI 后端" }[type];
   let html = input(
     "id",
     "稳定 ID",
@@ -966,7 +972,7 @@ function savedNotice(result) {
   if (reconnect.length)
     return `已保存。${reconnect.map((l) => `“${l}”`).join("、")} 的连接设置已变化，需要手动重新连接后才能继续收发。`;
   if (result.reconnectRequired)
-    return "已保存。改动的 QQ 实例未启用，无需重新连接。";
+    return "已保存。改动的 QQ 账号未启用，无需重新连接。";
   return result.affectedAgents?.length
     ? "已保存并生效。受影响角色的旧回合已结束，其他角色继续运行。"
     : "已保存并生效，现有 QQ 连接和回合保持不变。";

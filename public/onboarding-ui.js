@@ -50,7 +50,7 @@ function onboardingStep(s, r, liveReady) {
     account: () => [
       "填写真实 QQ 账号",
       !c
-        ? "角色绑定的 QQ 实例不存在，请在角色配置中重新选择。"
+        ? "角色绑定的 QQ 账号不存在，请在角色配置中重新选择。"
         : s.done
           ? `实例${cName}使用账号 ${esc(c.accountId)}。`
           : `实例${cName}仍是示例账号 ${esc(c.accountId)}，连接时会因登录账号不匹配被拒绝。`,
@@ -61,14 +61,14 @@ function onboardingStep(s, r, liveReady) {
           : doFix("edit-connection", c.id, "编辑实例"),
     ],
     "connection-enabled": () => [
-      "启用 QQ 实例",
+      "启用 QQ 账号",
       s.done
         ? `实例${cName}已启用。`
         : `实例${cName}未启用，无法连接。请在实例编辑中勾选“启用”。`,
       s.done || !c ? "" : doFix("edit-connection", c.id, "编辑实例"),
     ],
     "connection-connected": () => [
-      "连接 QQ 桥接",
+      "连接 QQ",
       s.done
         ? `实例${cName}已连接。`
         : `实例${cName}尚未连接${s.detail?.error ? "（" + esc(s.detail.error) + "）" : ""}。连接前会核对实际登录账号。`,
@@ -77,7 +77,7 @@ function onboardingStep(s, r, liveReady) {
         : doFix(
             "connect",
             c.id,
-            "连接桥接",
+            "连接 QQ",
             liveReady && c.enabled ? "" : "disabled title='请先完成前面的步骤'",
           ),
     ],
@@ -115,9 +115,9 @@ function onboardingStep(s, r, liveReady) {
       "",
     ],
     agent: () => [
-      "添加智能体",
-      "还没有任何智能体。",
-      doFix("add", "agents", "添加智能体"),
+      "添加角色",
+      "还没有任何角色。",
+      doFix("add", "agents", "添加角色"),
     ],
   }[s.id];
   const text = texts ? texts() : [s.id, "", ""];
@@ -146,8 +146,8 @@ function onboardingMarkup() {
 async function switchMode(mode) {
   const message =
     mode === "live"
-      ? "切换到运行模式？\n\n· 配置会写入 mode: live。之后必须带 --live 启动，否则服务会拒绝启动。\n· 切换本身不会连接 QQ，也不会解除任何暂停：全局暂停和角色暂停仍然生效。\n· 所有 QQ 实例会按新模式重新配置，需要再手动连接。\n\n随时可以在这里切回隔离模式。"
-      : "切回隔离模式？\n\n· 立即断开所有 QQ 桥接，智能体不再收发 QQ 消息，进行中的回合也无法再发送。\n· 暂停设置和白名单保持不变。\n· 之后需要重新切换到运行模式并手动连接。";
+      ? "切换到运行模式？\n\n· 配置会写入 mode: live。之后必须带 --live 启动，否则服务会拒绝启动。\n· 切换本身不会连接 QQ，也不会解除任何暂停：全局暂停和角色暂停仍然生效。\n· 所有 QQ 账号会按新模式重新配置，需要再手动连接。\n\n随时可以在这里切回隔离模式。"
+      : "切回隔离模式？\n\n· 立即断开所有 QQ 连接，角色不再收发 QQ 消息，进行中的回合也无法再发送。\n· 暂停设置和白名单保持不变。\n· 之后需要重新切换到运行模式并手动连接。";
   if (modePending || !confirm(message)) return;
   modePending = true;
   bindOnboarding();
@@ -157,7 +157,7 @@ async function switchMode(mode) {
     notice(
       mode === "live"
         ? "已切换到运行模式；QQ 连接与暂停状态保持不变，请继续完成清单"
-        : "已切回隔离模式，所有 QQ 桥接已断开",
+        : "已切回隔离模式，所有 QQ 连接已断开",
     );
   } finally {
     modePending = false;

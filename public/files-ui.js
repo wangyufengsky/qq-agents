@@ -4,13 +4,13 @@ function renderFilePermissions() {
     fileAgentId = config.agents[0]?.id;
   const a = config.agents.find((a) => a.id === fileAgentId);
   if (!a) {
-    $("#content").innerHTML = '<div class="card">请先添加智能体。</div>';
+    $("#content").innerHTML = '<div class="card">请先添加角色。</div>';
     return;
   }
   const f = a.files,
     mib = 1024 * 1024;
   $("#content").innerHTML =
-    `<div class="card toolbar"><label>智能体<select id="file-agent">${config.agents.map((row) => `<option value="${esc(row.id)}" ${row.id === a.id ? "selected" : ""}>${esc(row.name)}</option>`).join("")}</select></label>${tag(f.enabled ? "文件权限已开启" : "文件权限已关闭", f.enabled ? "live" : "")}<p class="hint">每个角色拥有独立文件库。全局、角色及会话暂停仍然生效。</p></div>
+    `<div class="card toolbar"><label>角色<select id="file-agent">${config.agents.map((row) => `<option value="${esc(row.id)}" ${row.id === a.id ? "selected" : ""}>${esc(row.name)}</option>`).join("")}</select></label>${tag(f.enabled ? "文件权限已开启" : "文件权限已关闭", f.enabled ? "live" : "")}<p class="hint">每个角色拥有独立文件库。全局、角色及会话暂停仍然生效。</p></div>
   <form id="file-permissions" class="card"><h2>自主文件收发</h2><p>开启后，AI 可在已允许的群和私聊中自主操作，无需每次确认。发送目标固定为当前会话。</p><div class="form-grid">
   ${check("enabled", "启用此 AI 的文件权限", f.enabled)}
   ${check("download", "允许下载公开链接", f.download)}${check("receive", "允许下载 QQ 附件", f.receive)}${check("send", "允许发送文件", f.send)}${check("create", "允许生成文本文件", f.create)}

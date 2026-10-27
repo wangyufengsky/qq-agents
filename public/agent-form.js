@@ -222,7 +222,7 @@ const agentForm = {
           input("name", "角色名称", row.name, "required") +
           select(
             "connectionId",
-            "QQ 实例",
+            "QQ 账号",
             row.connectionId,
             config.connections.map((c) => [c.id, c.label]),
           ) +
@@ -277,7 +277,7 @@ const agentForm = {
           check("names", "提到名字时唤醒", row.wake.names) +
           check("private", "私聊时唤醒", row.wake.private) +
           check("questions", "问句唤醒", row.wake.questions) +
-          check("peers", "参与其他智能体对话", row.wake.peers) +
+          check("peers", "参与其他角色对话", row.wake.peers) +
           input(
             "participation",
             "普通消息参与率（0—1）",

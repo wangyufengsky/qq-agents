@@ -66,12 +66,12 @@ function renderApps() {
     appAgentId = config.agents[0]?.id;
   const a = config.agents.find((a) => a.id === appAgentId);
   if (!a) {
-    $("#content").innerHTML = '<div class="card">请先添加智能体。</div>';
+    $("#content").innerHTML = '<div class="card">请先添加角色。</div>';
     return;
   }
   const p = a.apps;
   $("#content").innerHTML =
-    `<section class="card"><label>智能体<select id="app-agent">${config.agents.map((x) => `<option value="${esc(x.id)}" ${x.id === a.id ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select></label><p>浏览记录和分享意图各自独立；同一平台账号的推荐可能受两个 AI 的共同浏览影响。</p></section>
+    `<section class="card"><label>角色<select id="app-agent">${config.agents.map((x) => `<option value="${esc(x.id)}" ${x.id === a.id ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select></label><p>浏览记录和分享意图各自独立；同一平台账号的推荐可能受两个 AI 的共同浏览影响。</p></section>
  <form id="app-policy" class="card"><h2>自主浏览与分享</h2><div class="form-grid">${check("enabled", "允许此 AI 浏览平台", p.enabled)}${check("sharing", "允许此 AI 提出分享意图", p.sharing)}${Object.entries(
    appLabels,
  )
