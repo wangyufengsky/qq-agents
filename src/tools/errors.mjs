@@ -60,7 +60,9 @@ export function safeToolFailure(error) {
     GITHUB_READ_BUDGET_EXHAUSTED:
       "The configured GitHub request budget is exhausted. Metadata checks count too; continue in a later allowed turn/day.",
     SCREENSHOT_BROWSER_MISSING:
-      "No supported local Chromium browser is available. No screenshot was saved. The administrator can configure QQ_SCREENSHOT_BROWSER; do not claim capture succeeded.",
+      "No supported local Chromium browser is available. No screenshot was saved. The administrator can install Chromium or set QQ_SCREENSHOT_BROWSER / CHROME_PATH to an absolute browser path; do not claim capture succeeded.",
+    LOCAL_TTS_UNAVAILABLE:
+      "Local speech synthesis uses the macOS say command and is unavailable on this host (for example Linux or Docker). No voice file was created. Reply in text instead; do not claim a voice message was sent or retry this tool.",
     SCREENSHOT_BROWSER_FAILED:
       "The isolated screenshot browser could not start. No screenshot was saved. Check the host browser runtime; do not retry with a local file path.",
     SCREENSHOT_PAGE_UNAVAILABLE:
