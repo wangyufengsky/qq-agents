@@ -531,7 +531,11 @@ test("export console submits a scoped native download without fetching the expor
   );
   node("#memory-agent").value = "agent-0";
   await node("#export-memory").onclick();
-  assert.deepEqual(calls, ["/api/export/ticket"]);
+  // The memory tab also lists the agent's conversations for the source picker.
+  assert.deepEqual(
+    calls.filter((url) => !url.startsWith("/api/conversations?")),
+    ["/api/export/ticket"],
+  );
   assert.equal(submitted.length, 1);
   assert.equal(submitted[0].method, "POST");
   assert.equal(submitted[0].action, "/api/export/download");

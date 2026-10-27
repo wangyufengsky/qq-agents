@@ -200,14 +200,38 @@ function renderGlobalPauseControl() {
   button.innerHTML =
     icon(paused ? "play" : "pause", "sm") + (paused ? "全局恢复" : "全部暂停");
   button.className = paused ? "" : "danger";
-  button.disabled =
-    !status || globalPausePending || (paused && status.mode === "isolated");
-  button.title = paused
-    ? "恢复全局参与；单独暂停的角色和会话保持暂停，断开的连接需要另行恢复。"
-    : "暂停所有智能体参与，保留 QQ 连接。";
+  const off = disabledReason([
+    [!status, "statusLoading"],
+    [globalPausePending, "submitting"],
+    [paused && status?.mode === "isolated", "isolatedResume"],
+  ]);
+  button.disabled = !!off;
+  button.title =
+    off ||
+    (paused
+      ? "恢复全局参与；单独暂停的角色和会话保持暂停，断开的连接需要另行恢复。"
+      : "暂停所有智能体参与，保留 QQ 连接。");
+  let hint = $("#pause-all-hint");
+  if (!hint) {
+    hint = document.createElement("span");
+    hint.id = "pause-all-hint";
+    hint.className = "hint";
+    button.after(hint);
+  }
+  // Only a lasting reason earns header space; the brief submitting state does not.
+  hint.textContent = off && !globalPausePending && status ? off : "";
+  hint.hidden = !hint.textContent;
 }
 async function setGlobalPaused(paused) {
   if (globalPausePending || !status || (!paused && status.mode === "isolated"))
+    return;
+  const active = status.agents.reduce((n, a) => n + a.activeTurns, 0);
+  if (
+    paused &&
+    !confirm(
+      `全部暂停后，所有智能体立即停止参与${active ? `，进行中的 ${active} 个回合会被结束，未发出的回复不再发送` : ""}；QQ 连接保留。恢复全局参与后，单独暂停的角色和会话仍保持暂停。确定全部暂停？`,
+    )
+  )
     return;
   globalPausePending = true;
   renderGlobalPauseControl();
@@ -334,30 +358,21 @@ function render() {
   } else if (["schedule", "voices", "operations"].includes(tab)) {
     renderParity(tab);
   } else if (tab === "memory") {
-    content.innerHTML = `<div class="card"><div class="toolbar"><label>智能体<select id="memory-agent">${config.agents.map((a) => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join("")}</select></label><label>关键词<input id="memory-query" placeholder="约定、上次、某件事…"></label><label>记录类型<select id="memory-type"><option value="all">全部</option><option value="event">经历档案</option><option value="diary">个人日记</option></select></label><button class="primary" id="search-memory">搜索</button><button id="export-memory">导出</button></div><div class="form-grid"><label>人物 QQ<input id="memory-person" placeholder="按 QQ 身份检索"></label><label>来源<input id="memory-source" placeholder="group:10000 或 private:10000"></label></div><div class="card-actions"><button id="reset-session">重置此来源模型上下文</button><button id="resume-conversation">解除此来源暂停 / 静默</button></div><p class="hint">原始消息是“某人说过的话”，不自动等同于已核实事实。旧笔记标注 legacy 来源。</p><div id="memory-results" class="empty">搜索此角色自己的经历和日记。</div></div>`;
+    content.innerHTML = `<div class="card"><div class="toolbar"><label>智能体<select id="memory-agent">${config.agents.map((a) => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join("")}</select></label><label>关键词<input id="memory-query" placeholder="约定、上次、某件事…"></label><label>记录类型<select id="memory-type"><option value="all">全部</option><option value="event">经历档案</option><option value="diary">个人日记</option></select></label><button class="primary" id="search-memory">搜索</button><button id="export-memory">导出</button></div><div class="form-grid"><label>人物 QQ<input id="memory-person" placeholder="按 QQ 身份检索"></label><label>来源<select id="memory-source"><option value="">全部来源</option></select></label><label id="memory-source-manual-field" hidden>手动来源<input id="memory-source-manual" placeholder="group:10000 或 private:10000"></label></div><p class="hint" id="memory-source-state"></p><div class="card-actions"><button id="reset-session">重置此来源模型上下文</button><button id="pause-conversation">暂停此来源</button><button id="resume-conversation">解除此来源暂停 / 静默</button></div><p class="hint">原始消息是“某人说过的话”，不自动等同于已核实事实。旧笔记标注 legacy 来源。</p><div id="memory-results" class="empty">搜索此角色自己的经历和日记。</div></div><div class="section-title"><h2>会话状态</h2></div><div class="card"><p class="hint">按会话单独暂停只影响此角色在该来源的参与；角色暂停和全局暂停仍独立生效。</p><div id="memory-conversations">读取中…</div></div>`;
+    $("#memory-agent").onchange = () => action(loadConversations);
+    $("#memory-source").onchange = () => {
+      $("#memory-source-manual-field").hidden =
+        $("#memory-source").value !== "manual";
+      renderSourceState();
+    };
+    $("#memory-source-manual").oninput = renderSourceState;
     $("#reset-session").onclick = () =>
-      action(async () => {
-        const conversation = $("#memory-source").value;
-        if (!/^(group|private):\d+$/.test(conversation))
-          throw Error("请先填写准确来源");
-        await api("/api/session/reset", {
-          agentId: $("#memory-agent").value,
-          conversation,
-        });
-        notice("模型上下文已重置，经历档案保留");
-      });
+      action(() => conversationAction("reset", requireSource()));
+    $("#pause-conversation").onclick = () =>
+      action(() => conversationAction("pause", requireSource()));
     $("#resume-conversation").onclick = () =>
-      action(async () => {
-        const conversation = $("#memory-source").value;
-        if (!/^(group|private):\d+$/.test(conversation))
-          throw Error("请先填写准确来源");
-        await api("/api/conversation/state", {
-          agentId: $("#memory-agent").value,
-          conversation,
-          paused: false,
-        });
-        notice("来源暂停已解除；角色和全局暂停仍独立生效");
-      });
+      action(() => conversationAction("resume", requireSource()));
+    action(loadConversations);
     $("#search-memory").onclick = () => searchMemory();
     $("#export-memory").onclick = () =>
       action(async () => {
@@ -382,7 +397,7 @@ function render() {
         );
       });
   } else {
-    content.innerHTML = `<div class="card"><h2>参与控制</h2><p>启动时总是全局暂停。解除全局暂停不会自动解除角色暂停，也不会连接 QQ。</p><div class="card-actions"><button data-do="global-resume" ${status.mode === "isolated" ? "disabled" : ""}>解除全局暂停</button></div></div><div class="card section-title"><div><h2>完整配置</h2><p>支持配置任意数量的智能体、QQ 实例与后端。配置中的凭据仅填写环境变量名。</p></div><button data-do="advanced">打开配置编辑器</button></div><div class="card"><h2>迁移与备份</h2><p>先运行迁移预检，再导入到新数据目录。旧文件、原登录目录和 Docker 数据都保留。</p><p class="mono">npm run migrate -- --source /path/to/old-instance --agent agent-a --data /path/to/new-data</p><p class="hint">默认只生成统计预检。实际导入需 --apply；目标目录有运行锁时会拒绝。迁移不会修改旧实例，也不会启动 QQ。</p><button data-do="download-config">导出配置</button></div>`;
+    content.innerHTML = `<div class="card"><h2>参与控制</h2><p>启动时总是全局暂停。解除全局暂停不会自动解除角色暂停，也不会连接 QQ。</p><p>当前：${status.globalPaused ? "全局暂停中" : "全局允许参与"}。全局暂停与恢复统一使用页面右上角的「${status.globalPaused ? "全局恢复" : "全部暂停"}」按钮。</p>${disabledHints(disabledReason([[status.globalPaused && status.mode === "isolated", "isolatedResume"]]))}</div><div class="card section-title"><div><h2>完整配置</h2><p>支持配置任意数量的智能体、QQ 实例与后端。配置中的凭据仅填写环境变量名。</p></div><button data-do="advanced">打开配置编辑器</button></div><div class="card"><h2>迁移与备份</h2><p>先运行迁移预检，再导入到新数据目录。旧文件、原登录目录和 Docker 数据都保留。</p><p class="mono">npm run migrate -- --source /path/to/old-instance --agent agent-a --data /path/to/new-data</p><p class="hint">默认只生成统计预检。实际导入需 --apply；目标目录有运行锁时会拒绝。迁移不会修改旧实例，也不会启动 QQ。</p><button data-do="download-config">导出配置</button></div>`;
   }
   content
     .querySelectorAll("[data-do]")
@@ -466,11 +481,40 @@ async function renderUnresolved() {
         })),
   );
 }
+// Why a control is unavailable. The same sentence becomes the button title and
+// the visible hint, so every disabled button explains itself in one wording.
+const disabledReasons = {
+  statusLoading: "尚未读取运行状态，请稍候",
+  submitting: "正在提交，请稍候",
+  isolatedResume: "隔离模式下不能解除全局暂停；需以 --live 启动并切换运行模式",
+  isolatedAgent:
+    "隔离模式下角色不会参与，无需暂停；需以 --live 启动并切换运行模式",
+  isolatedConnection:
+    "隔离模式下不能连接 QQ 或启停进程；需以 --live 启动并切换运行模式",
+  isolatedBackend: "隔离模式下不连接 AI 后端；需以 --live 启动并切换运行模式",
+  connectionDisabled: "连接未启用，请先在编辑中勾选启用",
+  backendBusy: "正在处理上一项后端操作，请稍候",
+  backendRecovering: "后端正在自动恢复，完成后可再次操作",
+  notAllowed: "该来源已不在角色白名单中，不能重置上下文；可在角色配置中加回",
+  opsBlocked: "隔离模式或全局暂停时不执行运维操作",
+};
+/** @param {[unknown, keyof typeof disabledReasons][]} checks */
+const disabledReason = (checks) =>
+  disabledReasons[checks.find(([on]) => on)?.[1]] || "";
+const disabledAttr = (reason) =>
+  reason ? `disabled title="${esc(reason)}"` : "";
+const disabledHints = (...reasons) =>
+  [...new Set(reasons.filter(Boolean))]
+    .map((r) => `<p class="hint">${esc(r)}</p>`)
+    .join("");
 function agentCard(a) {
   const s = status.agents.find((s) => s.id === a.id),
     c = find("connections", a.connectionId),
     b = find("backends", a.backendId);
-  return `<article class="card"><div class="row"><div class="identity"><span class="avatar">${esc(a.name.slice(0, 1))}</span><div><h3>${esc(a.name)}</h3><span class="hint mono">${esc(a.id)}</span></div></div>${tag(a.paused ? "已暂停" : status.globalPaused ? "全局暂停" : "允许参与", a.paused ? "off" : status.globalPaused ? "warn" : "live")}</div><dl class="agent-meta"><dt>QQ 实例</dt><dd>${esc(c?.label)}</dd><dt>后端 / 模型</dt><dd>${esc(b?.label)} / <span class="mono">${esc(a.model || b?.model || "后端默认")}</span></dd><dt>后端连接</dt><dd>${esc(backendLabels[status.backends?.find((x) => x.id === a.backendId)?.state] || "尚未检测")}</dd><dt>参与率</dt><dd>${Math.round(a.wake.participation * 100)}%${meter(a.wake.participation)}</dd><dt>来源范围</dt><dd>${a.allow.groups.length} 个群 · ${a.allow.users.length} 位私聊对象</dd></dl>${blockersMarkup(s)}${s?.error ? `<p class="hint">${esc(s.error)}</p>` : ""}<div class="card-actions"><button data-do="edit-agent" data-id="${esc(a.id)}">${icon("settings", "sm")}配置角色</button><button class="ghost" data-do="toggle" data-id="${esc(a.id)}" ${status.mode === "isolated" && !a.paused ? "disabled" : ""}>${icon(a.paused ? "play" : "pause", "sm")}${a.paused ? "解除角色暂停" : "暂停角色"}</button></div></article>`;
+  const toggleOff = disabledReason([
+    [status.mode === "isolated" && !a.paused, "isolatedAgent"],
+  ]);
+  return `<article class="card"><div class="row"><div class="identity"><span class="avatar">${esc(a.name.slice(0, 1))}</span><div><h3>${esc(a.name)}</h3><span class="hint mono">${esc(a.id)}</span></div></div>${tag(a.paused ? "已暂停" : status.globalPaused ? "全局暂停" : "允许参与", a.paused ? "off" : status.globalPaused ? "warn" : "live")}</div><dl class="agent-meta"><dt>QQ 实例</dt><dd>${esc(c?.label)}</dd><dt>后端 / 模型</dt><dd>${esc(b?.label)} / <span class="mono">${esc(a.model || b?.model || "后端默认")}</span></dd><dt>后端连接</dt><dd>${esc(backendLabels[status.backends?.find((x) => x.id === a.backendId)?.state] || "尚未检测")}</dd><dt>参与率</dt><dd>${Math.round(a.wake.participation * 100)}%${meter(a.wake.participation)}</dd><dt>来源范围</dt><dd>${a.allow.groups.length} 个群 · ${a.allow.users.length} 位私聊对象</dd></dl>${blockersMarkup(s)}${s?.error ? `<p class="hint">${esc(s.error)}</p>` : ""}<div class="card-actions"><button data-do="edit-agent" data-id="${esc(a.id)}">${icon("settings", "sm")}配置角色</button><button class="ghost" data-do="toggle" data-id="${esc(a.id)}" ${disabledAttr(toggleOff)}>${icon(a.paused ? "play" : "pause", "sm")}${a.paused ? "解除角色暂停" : "暂停角色"}</button></div>${disabledHints(toggleOff)}</article>`;
 }
 const recoveryText = (r) => {
   if (!r) return "";
@@ -493,7 +537,11 @@ const recoveryText = (r) => {
 };
 function connectionCard(c) {
   const s = status.connections.find((s) => s.id === c.id);
-  return `<article class="card"><div class="row"><div class="identity"><span class="avatar">${icon("link")}</span><div><h3>${esc(c.label)}</h3><span class="hint mono">${esc(c.id)}</span></div></div>${tag(s?.connected ? "已连接" : "未连接", s?.connected ? "live" : "off")}</div><dl class="agent-meta"><dt>QQ 账号</dt><dd class="mono">${esc(c.accountId)}</dd><dt>HTTP</dt><dd class="mono">${esc(c.httpUrl)}</dd><dt>WebSocket</dt><dd class="mono">${esc(c.wsUrl)}</dd><dt>部署方式</dt><dd>${esc(c.deployment)}</dd></dl><p class="hint">${esc(s?.error || "连接前核对实际登录账号，不匹配时拒绝接入。")}</p><p class="hint">${esc(recoveryText(s?.recovery))}</p><div class="card-actions"><button data-do="edit-connection" data-id="${esc(c.id)}">${icon("settings", "sm")}编辑</button><button class="ghost" data-do="connect" data-id="${esc(c.id)}" ${status.mode === "isolated" || !c.enabled ? "disabled" : ""}>${s?.connected ? "断开桥接" : "连接桥接"}</button>${c.deployment !== "external" ? `<button class="ghost" data-do="process" data-id="${esc(c.id)}" ${status.mode === "isolated" || !c.enabled ? "disabled" : ""}>${s?.process?.managed ? "停止 QQ 进程" : "启动 QQ 进程"}</button>` : ""}</div></article>`;
+  const off = disabledReason([
+    [status.mode === "isolated", "isolatedConnection"],
+    [!c.enabled, "connectionDisabled"],
+  ]);
+  return `<article class="card"><div class="row"><div class="identity"><span class="avatar">${icon("link")}</span><div><h3>${esc(c.label)}</h3><span class="hint mono">${esc(c.id)}</span></div></div>${tag(s?.connected ? "已连接" : "未连接", s?.connected ? "live" : "off")}</div><dl class="agent-meta"><dt>QQ 账号</dt><dd class="mono">${esc(c.accountId)}</dd><dt>HTTP</dt><dd class="mono">${esc(c.httpUrl)}</dd><dt>WebSocket</dt><dd class="mono">${esc(c.wsUrl)}</dd><dt>部署方式</dt><dd>${esc(c.deployment)}</dd></dl><p class="hint">${esc(s?.error || "连接前核对实际登录账号，不匹配时拒绝接入。")}</p><p class="hint">${esc(recoveryText(s?.recovery))}</p><div class="card-actions"><button data-do="edit-connection" data-id="${esc(c.id)}">${icon("settings", "sm")}编辑</button><button class="ghost" data-do="connect" data-id="${esc(c.id)}" ${disabledAttr(off)}>${s?.connected ? "断开桥接" : "连接桥接"}</button>${c.deployment !== "external" ? `<button class="ghost" data-do="process" data-id="${esc(c.id)}" ${disabledAttr(off)}>${s?.process?.managed ? "停止 QQ 进程" : "启动 QQ 进程"}</button>` : ""}</div>${disabledHints(off)}</article>`;
 }
 const backendBusy = new Set();
 const backendLabels = {
@@ -521,7 +569,12 @@ function backendCard(b) {
     state: "unchecked",
   };
   const busy = backendBusy.has(b.id) || s.state === "recovering";
-  const disabled = status.mode === "isolated" || busy ? "disabled" : "";
+  const off = disabledReason([
+    [status.mode === "isolated", "isolatedBackend"],
+    [backendBusy.has(b.id), "backendBusy"],
+    [s.state === "recovering", "backendRecovering"],
+  ]);
+  const disabled = disabledAttr(off);
   const checked = s.checkedAt
     ? new Date(s.checkedAt).toLocaleTimeString()
     : "尚未检测";
@@ -530,7 +583,7 @@ function backendCard(b) {
     <p class="hint">${esc(s.error ? backendErrors[s.error] || "连接检查未通过：" + s.error : b.type === "dsh" ? "选择桌面实例后可跟随重启后的地址。" : "使用角色自己的 Codex 进程与登录目录。")}</p>
     ${s.attempts >= 3 ? '<p class="hint">自动恢复已停止，请检查原因后手动恢复。</p>' : ""}
     ${(s.agents || []).map((a) => `<p class="hint">${esc(find("agents", a.id)?.name || a.id)}：${esc(backendLabels[a.state] || a.state)}${a.endpoint ? " · " + esc(a.endpoint === "stdio" ? "专用 Codex 进程" : a.endpoint) : ""}</p>`).join("")}
-    <div class="card-actions"><button data-do="backend-check" data-id="${esc(b.id)}" ${disabled}>检测连接</button><button data-do="backend-recover" data-id="${esc(b.id)}" ${disabled}>恢复连接</button>${b.type === "dsh" ? `<button data-do="backend-discover" data-id="${esc(b.id)}" ${disabled}>选择 DSH 实例</button>` : ""}<button data-do="backend-auto" data-id="${esc(b.id)}" ${disabled}>${s.autoReconnect ? "关闭" : "开启"}自动恢复</button><button class="ghost" data-do="edit-backend" data-id="${esc(b.id)}" ${disabled}>编辑后端</button><button class="ghost" data-do="models" data-id="${esc(b.id)}" ${disabled}>读取模型目录</button></div></article>`;
+    <div class="card-actions"><button data-do="backend-check" data-id="${esc(b.id)}" ${disabled}>检测连接</button><button data-do="backend-recover" data-id="${esc(b.id)}" ${disabled}>恢复连接</button>${b.type === "dsh" ? `<button data-do="backend-discover" data-id="${esc(b.id)}" ${disabled}>选择 DSH 实例</button>` : ""}<button data-do="backend-auto" data-id="${esc(b.id)}" ${disabled}>${s.autoReconnect ? "关闭" : "开启"}自动恢复</button><button class="ghost" data-do="edit-backend" data-id="${esc(b.id)}" ${disabled}>编辑后端</button><button class="ghost" data-do="models" data-id="${esc(b.id)}" ${disabled}>读取模型目录</button></div>${disabledHints(off)}</article>`;
 }
 async function backendDiscover(id) {
   const { candidates } = await api("/api/backend", { id, action: "discover" });
@@ -613,7 +666,16 @@ async function operate(kind, id) {
     return;
   }
   if (kind === "toggle") {
-    const a = find("agents", id);
+    const a = find("agents", id),
+      active = status.agents.find((s) => s.id === id)?.activeTurns || 0;
+    if (
+      !a.paused &&
+      active &&
+      !confirm(
+        `「${a.name}」有 ${active} 个进行中的回合。暂停角色会立即结束这些回合，未发出的回复不再发送。确定暂停？`,
+      )
+    )
+      return;
     await api("/api/pause", { agentId: id, paused: !a.paused });
     await load();
     return;
@@ -621,6 +683,13 @@ async function operate(kind, id) {
   if (kind === "process") {
     const managed = status.connections.find((s) => s.id === id)?.process
       ?.managed;
+    if (
+      managed &&
+      !confirm(
+        `停止 QQ 进程会先断开「${find("connections", id)?.label || id}」的桥接，并让这个 QQ 账号下线；绑定它的智能体都无法收发消息，期间的消息不会补录，需重新启动进程并连接。确定停止？`,
+      )
+    )
+      return;
     await api("/api/process", { id, action: managed ? "stop" : "start" });
     await load();
     return;
@@ -639,6 +708,13 @@ async function operate(kind, id) {
   }
   if (kind === "connect") {
     const connected = status.connections.find((s) => s.id === id)?.connected;
+    if (
+      connected &&
+      !confirm(
+        `断开桥接后，「${find("connections", id)?.label || id}」不再接收或发送 QQ 消息，绑定它的智能体都无法发言，断开期间的消息不会补录；QQ 登录数据保留。确定断开？`,
+      )
+    )
+      return;
     await api("/api/connection", {
       id,
       action: connected ? "disconnect" : "connect",
@@ -657,9 +733,6 @@ async function operate(kind, id) {
     });
     await load();
     return;
-  }
-  if (kind === "global-resume") {
-    return setGlobalPaused(false);
   }
   if (kind === "download-config") {
     download(config, "qq-unified-config.json");
@@ -1110,6 +1183,118 @@ async function readConversation(args) {
     if (!$("#editor").open) $("#editor").showModal();
   });
 }
+let memoryConversations = [];
+const conversationLabel = (conversation) =>
+  conversation.replace(/^group:/, "群 ").replace(/^private:/, "私聊 ");
+function conversationStateText(c) {
+  if (!c) return "尚无会话状态，按角色设置参与";
+  return (
+    [
+      c.paused ? "已暂停" : "",
+      c.silenceUntil > Date.now()
+        ? `静默至 ${new Date(c.silenceUntil).toLocaleString()}`
+        : "",
+      c.allowed ? "" : "不在白名单",
+    ]
+      .filter(Boolean)
+      .join(" · ") || "正常参与"
+  );
+}
+const memorySource = () =>
+  $("#memory-source").value === "manual"
+    ? $("#memory-source-manual").value.trim()
+    : $("#memory-source").value;
+function requireSource() {
+  const conversation = memorySource();
+  if (!/^(group|private):\d+$/.test(conversation))
+    throw Error("请先选择来源，或手动填写 group:群号 / private:QQ 号");
+  return conversation;
+}
+function renderSourceState() {
+  const conversation = memorySource(),
+    known = memoryConversations.find((c) => c.conversation === conversation);
+  $("#memory-source-state").textContent = conversation
+    ? `${conversationLabel(conversation)}：${conversationStateText(known)}`
+    : "选择来源后可暂停、解除暂停或重置其模型上下文。";
+}
+async function loadConversations() {
+  const agentId = $("#memory-agent").value,
+    a = find("agents", agentId);
+  const rows = await api(
+    "/api/conversations?agentId=" + encodeURIComponent(agentId),
+  );
+  if (tab !== "memory" || $("#memory-agent")?.value !== agentId) return;
+  const allowed = new Set([
+    ...a.allow.groups.map((x) => "group:" + x),
+    ...a.allow.users.map((x) => "private:" + x),
+  ]);
+  // Allow-listed sources with no stored state yet are still pickable.
+  memoryConversations = [
+    ...rows,
+    ...[...allowed]
+      .filter((c) => !rows.some((r) => r.conversation === c))
+      .map((conversation) => ({ conversation, paused: false })),
+  ]
+    .map((c) => ({ ...c, allowed: allowed.has(c.conversation) }))
+    .sort((x, y) => x.conversation.localeCompare(y.conversation));
+  const pick = $("#memory-source"),
+    previous = pick.value;
+  pick.innerHTML = `<option value="">全部来源</option>${memoryConversations.map((c) => `<option value="${esc(c.conversation)}">${esc(conversationLabel(c.conversation))} · ${esc(conversationStateText(c))}</option>`).join("")}<option value="manual">手动输入…</option>`;
+  pick.value = [...pick.options].some((o) => o.value === previous)
+    ? previous
+    : "";
+  $("#memory-source-manual-field").hidden = pick.value !== "manual";
+  renderSourceState();
+  const list = $("#memory-conversations");
+  list.innerHTML =
+    memoryConversations
+      .map((c) => {
+        const resetOff = disabledReason([[!c.allowed, "notAllowed"]]);
+        return `<div class="record"><div class="row"><strong>${esc(conversationLabel(c.conversation))}</strong>${tag(conversationStateText(c), c.paused ? "off" : c.silenceUntil > Date.now() || !c.allowed ? "warn" : "live")}</div><p class="hint mono">${esc(c.conversation)}</p><button type="button" data-conv-pick="${esc(c.conversation)}">选为来源</button> ${c.paused || c.silenceUntil > Date.now() ? `<button type="button" data-conv="resume" data-conversation="${esc(c.conversation)}">解除暂停 / 静默</button>` : `<button type="button" data-conv="pause" data-conversation="${esc(c.conversation)}">暂停</button>`} <button type="button" class="ghost" data-conv="reset" data-conversation="${esc(c.conversation)}" ${disabledAttr(resetOff)}>重置模型上下文</button>${disabledHints(resetOff)}</div>`;
+      })
+      .join("") ||
+    "<p>此角色还没有会话记录，白名单也为空。可在上方手动输入来源。</p>";
+  list.querySelectorAll("[data-conv-pick]").forEach(
+    (b) =>
+      (b.onclick = () => {
+        $("#memory-source").value = b.dataset.convPick;
+        $("#memory-source").onchange();
+      }),
+  );
+  list
+    .querySelectorAll("[data-conv]")
+    .forEach(
+      (b) =>
+        (b.onclick = () =>
+          action(() =>
+            conversationAction(b.dataset.conv, b.dataset.conversation),
+          )),
+    );
+}
+async function conversationAction(kind, conversation) {
+  const agentId = $("#memory-agent").value,
+    name = find("agents", agentId)?.name || agentId,
+    label = conversationLabel(conversation);
+  if (kind === "reset") {
+    if (
+      !confirm(
+        `重置后，「${name}」在「${label}」的模型上下文会清空，进行中的回合会被结束，下次回合重新建立会话；经历档案和日记保留。确定重置？`,
+      )
+    )
+      return;
+    await api("/api/session/reset", { agentId, conversation });
+    notice(`「${label}」的模型上下文已重置，经历档案保留`);
+  } else {
+    const paused = kind === "pause";
+    await api("/api/conversation/state", { agentId, conversation, paused });
+    notice(
+      paused
+        ? `「${label}」已暂停，此来源进行中的回合已结束`
+        : `「${label}」的暂停 / 静默已解除；角色和全局暂停仍独立生效`,
+    );
+  }
+  await loadConversations();
+}
 async function searchMemory(cursor = null) {
   await action(async () => {
     const q = new URLSearchParams({
@@ -1119,8 +1304,7 @@ async function searchMemory(cursor = null) {
     });
     if (cursor) q.set("cursor", JSON.stringify(cursor));
     if ($("#memory-person").value) q.set("person", $("#memory-person").value);
-    if ($("#memory-source").value)
-      q.set("conversation", $("#memory-source").value);
+    if (memorySource()) q.set("conversation", memorySource());
     const result = await api("/api/memory?" + q);
     const rows = [...result.items, ...result.diaries];
     const node = $("#memory-results");

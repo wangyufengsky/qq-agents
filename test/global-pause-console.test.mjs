@@ -25,9 +25,11 @@ async function setup(t, mode = "live") {
       nodes.set(s, { addEventListener() {}, querySelectorAll: () => [] });
     return nodes.get(s);
   };
-  const requests = [];
+  const requests = [],
+    confirms = [];
   let gate,
-    fail = false;
+    fail = false,
+    accept = true;
   const sandbox = vm.createContext({
     document: {
       querySelector: node,
@@ -39,6 +41,10 @@ async function setup(t, mode = "live") {
     setTimeout() {},
     clearTimeout() {},
     structuredClone,
+    confirm: (message) => {
+      confirms.push(message);
+      return accept;
+    },
     initial: { config: f.runtime.config, status: f.runtime.status() },
     fetch: async (url, options) => {
       if (url === "/api/pause") {
@@ -68,6 +74,10 @@ async function setup(t, mode = "live") {
     node,
     sandbox,
     requests,
+    confirms,
+    setAccept: (value) => {
+      accept = value;
+    },
     setGate: (value) => {
       gate = value;
     },
@@ -106,13 +116,35 @@ test("header resumes and pauses through the admin API while preserving individua
   assert.match(button.innerHTML, /全部暂停/);
   assert.equal(button.disabled, false);
   assert.match(f.node("#notice").textContent, /单独暂停/);
+  assert.equal(f.confirms.length, 0, "resuming never asks for confirmation");
+  f.setAccept(false);
+  await button.onclick();
+  assert.equal(f.confirms.length, 1);
+  assert.match(f.confirms[0], /QQ 连接保留/);
+  assert.equal(
+    f.runtime.config.globalPaused,
+    false,
+    "declined pause is a no-op",
+  );
+  assert.deepEqual(f.requests, [{ paused: false }]);
+  f.setAccept(true);
   await button.onclick();
   original.globalPaused = true;
   assert.deepEqual(f.runtime.config, original);
   assert.match(button.innerHTML, /全局恢复/);
-  await vm.runInContext('operate("global-resume")', f.sandbox);
-  assert.equal(f.runtime.config.globalPaused, false);
-  assert.match(button.innerHTML, /全部暂停/);
+});
+
+test("settings points to the header control instead of a second resume button", async (t) => {
+  const f = await setup(t);
+  assert.doesNotMatch(f.node("#content").innerHTML, /data-do="global-resume"/);
+  assert.match(f.node("#content").innerHTML, /右上角的「全局恢复」/);
+  const isolated = await setup(t, "isolated");
+  assert.match(isolated.node("#pause-all").title, /隔离模式下不能解除全局暂停/);
+  assert.match(isolated.node("#pause-all-hint").textContent, /--live/);
+  assert.match(
+    isolated.node("#content").innerHTML,
+    /隔离模式下不能解除全局暂停/,
+  );
 });
 
 test("failed resume keeps the paused control usable and isolated mode cannot resume", async (t) => {
@@ -130,7 +162,6 @@ test("failed resume keeps the paused control usable and isolated mode cannot res
   const isolated = await setup(t, "isolated");
   assert.equal(isolated.node("#pause-all").disabled, true);
   await isolated.node("#pause-all").onclick();
-  await vm.runInContext('operate("global-resume")', isolated.sandbox);
   assert.equal(isolated.requests.length, 0);
   assert.equal(isolated.runtime.config.globalPaused, true);
 });

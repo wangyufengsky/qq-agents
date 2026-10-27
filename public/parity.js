@@ -444,13 +444,16 @@ async function renderOperations() {
     a = find("agents", id),
     ops = await api("/api/operations");
   if (tab !== "operations" || id !== parityAgentId) return;
+  const confirmOff = disabledReason([
+    [status.mode === "isolated" || status.globalPaused, "opsBlocked"],
+  ]);
   $("#parity-body").innerHTML =
     `<div class="card"><h2>黑话候选</h2><div class="toolbar"><label>来源<select id="slang-source">${parityOptions(a.allow.groups.map((x) => ["group:" + x, "群 " + x]))}</select></label><button id="load-slang">读取候选</button></div><p class="hint">候选与联网资料不自动成为事实，确认后才标为已确认。</p><div id="slang-rows"></div></div><div class="section-title"><h2>管理员操作</h2><button id="revoke-ops">回落到 L0 并撤销待批准项</button></div><div class="banner">${a.operations.enabled ? "只接受管理员私聊身份；级别有时限，写入与命令逐项确认。" : "运维工具当前关闭。可在完整配置中指定专用工作区及允许命令后开启。"}</div>${
       ops.pending
         .filter((p) => p.agentId === id)
         .map(
           (p) =>
-            `<form class="card ops-confirm" data-id="${esc(p.id)}" data-conversation="${esc(p.conversation)}"><h3>${esc(p.operation.type)} · ${esc(p.conversation)}</h3><pre>${esc(JSON.stringify(p.operation, null, 2))}</pre><p>本次确认码：${esc(p.confirmationCode)} · 两分钟内有效</p><div class="form-grid">${parityField("code", "输入本次确认码")}${parityField("otp", "L3 动态码", "", "password")}</div><button ${status.mode === "isolated" || status.globalPaused ? "disabled" : ""}>确认此项操作</button></form>`,
+            `<form class="card ops-confirm" data-id="${esc(p.id)}" data-conversation="${esc(p.conversation)}"><h3>${esc(p.operation.type)} · ${esc(p.conversation)}</h3><pre>${esc(JSON.stringify(p.operation, null, 2))}</pre><p>本次确认码：${esc(p.confirmationCode)} · 两分钟内有效</p><div class="form-grid">${parityField("code", "输入本次确认码")}${parityField("otp", "L3 动态码", "", "password")}</div><button ${disabledAttr(confirmOff)}>确认此项操作</button>${disabledHints(confirmOff)}</form>`,
         )
         .join("") || '<div class="card empty">没有待确认操作。</div>'
     }`;
@@ -484,6 +487,12 @@ async function renderOperations() {
     });
   $("#revoke-ops").onclick = () =>
     action(async () => {
+      if (
+        !confirm(
+          `回落到 L0 会立即收回「${a.name}」当前的管理员操作级别，并撤销全部待确认操作；之后需管理员重新申请。确定继续？`,
+        )
+      )
+        return;
       await api("/api/operations", { action: "revoke", agentId: id });
       await renderOperations();
       notice("已回落到 L0");
