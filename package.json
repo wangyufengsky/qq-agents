@@ -1,10 +1,27 @@
 {
-  "name": "qq-bridge-unified",
+  "name": "qq-agents",
   "version": "0.4.0",
   "private": true,
   "type": "module",
   "license": "MIT",
-  "description": "Independent multi-agent DSH/Codex and multi-NapCat bridge",
+  "description": "Self-hosted console for multiple AI personas on QQ (NapCat/OneBot) with DSH, Codex or any OpenAI-compatible API",
+  "keywords": [
+    "qq",
+    "onebot",
+    "napcat",
+    "ai-agent",
+    "chatbot",
+    "mcp",
+    "openai"
+  ],
+  "homepage": "https://github.com/wangyufengsky/qq-agents#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wangyufengsky/qq-agents.git"
+  },
+  "bugs": {
+    "url": "https://github.com/wangyufengsky/qq-agents/issues"
+  },
   "engines": {
     "node": ">=24.0.0"
   },

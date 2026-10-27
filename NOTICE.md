@@ -1,6 +1,6 @@
 # Attribution
 
-QQ Bridge Unified is an independent derivative project under MIT.
+QQ Agents (formerly developed privately as QQ Bridge Unified) is an independent derivative project under MIT.
 
 - h-D-ACE/dsh-qq at `0a10b6b13778bf19816432fbe8b51cdf00302d89`: DSH Web RPC/mux client, dynamic endpoint discovery, Markdown conversion, scheduler rules/time/commands and TOTP. Original copyright: 2026 Derpyu520 and qq-bridge / QSH contributors; enhanced work by h-D-ACE. Original LICENSE and UPSTREAM-NOTICE.md retained verbatim in vendor/dsh/UPSTREAM-LICENSE.md and vendor/dsh/UPSTREAM-NOTICE.md; their implementation notes describe the historical upstream, not this project.
 - Derpyu520/qq-bridge at `a49877f4e58d04e47532d44b803360d0f001160d`: protocol and behavior reference, MIT.

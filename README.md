@@ -83,6 +83,7 @@ node src/main.mjs --data /path/to/private-data --port 3210
 - [迁移、部署与回退](docs/MIGRATION.md)
 - [真实后端的本地验收](docs/LOCAL-ACCEPTANCE.md)
 - [公开前检查与提交身份扫描](docs/PUBLIC-READINESS.md)
+- [安全策略与漏洞报告](SECURITY.md)
 
 **功能指南**
 
