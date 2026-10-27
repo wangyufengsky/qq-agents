@@ -510,8 +510,7 @@ for (const gate of ["disabled", "revoked", "budget", "paused"])
   });
 
 test("handoff intentions expose counts and an exact filtered continuation beyond 30", async (t) => {
-  const { runtime, store } = fixture(t, { cfg: enabled() }),
-    m = store.bind(id);
+  const { runtime } = fixture(t, { cfg: enabled() });
   for (let n = 0; n < 35; n++) intent(runtime, { topic: `不同话题 ${n}` });
   const h = runtime.contexts.handoff(id, chat);
   assert.equal(h.intents.length, 30);

@@ -13,7 +13,7 @@ export async function appSharingAcceptance({
   // Give independent backend success cases separate synthetic recipients; peer dedupe is tested separately.
   const target = id.includes("codex") ? "private:30001" : "private:30000",
     recipient = target.slice(8);
-  let a = runtime.agent(id);
+  runtime.agent(id);
   const m = memory.bind(id),
     started = Date.now(),
     before = gateway.sent.length,
@@ -30,7 +30,7 @@ export async function appSharingAcceptance({
     },
     runtime.configStore.revision,
   );
-  a = runtime.agent(id);
+  const a = runtime.agent(id);
   a.subject.enabled = true;
   a.allow.users = [...new Set([...a.allow.users, recipient])];
   a.subject.users = [recipient];
