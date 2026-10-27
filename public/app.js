@@ -1164,20 +1164,23 @@ $("#edit-form").onsubmit = (e) => {
           preset: get("preset"),
           command: get("command"),
           toolServers: JSON.parse(get("toolServers") || "[]"),
+          // The ...row spread keeps unlisted fields; OpenAI-only ones must not
+          // survive a type change, and an emptied key field means no key.
           ...(get("type") === "openai"
             ? {
-                ...(get("apiKeyEnv") ? { apiKeyEnv: get("apiKeyEnv") } : {}),
+                apiKeyEnv: get("apiKeyEnv") || undefined,
                 contextWindow: Number(get("contextWindow")) || 128000,
-                ...(row.maxToolRounds
-                  ? { maxToolRounds: row.maxToolRounds }
-                  : {}),
-                ...(row.requestTimeoutMs
-                  ? { requestTimeoutMs: row.requestTimeoutMs }
-                  : {}),
                 vision: f.has("vision"),
                 sendEffort: f.has("sendEffort"),
               }
-            : {}),
+            : {
+                apiKeyEnv: undefined,
+                contextWindow: undefined,
+                maxToolRounds: undefined,
+                requestTimeoutMs: undefined,
+                vision: undefined,
+                sendEffort: undefined,
+              }),
         };
       const index = next[editing.type].findIndex((x) => x.id === editing.id);
       if (index < 0) next[editing.type].push(row);

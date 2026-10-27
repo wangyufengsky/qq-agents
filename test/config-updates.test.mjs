@@ -455,6 +455,115 @@ test("real console role form changes only participation and shows the server's r
   }
 });
 
+test("real console backend form drops OpenAI-only fields on a type change and clears an emptied key", async (t) => {
+  const cfg = config(1);
+  cfg.backends = [
+    {
+      id: "fixture",
+      type: "openai",
+      label: "API",
+      baseUrl: "https://api.example.test/v1",
+      apiKeyEnv: "QQ_TEST_OPENAI_KEY",
+      model: "m",
+      contextWindow: 64000,
+      maxToolRounds: 8,
+      vision: true,
+      sendEffort: false,
+      provider: "",
+      effort: "high",
+      preset: "qq-unified",
+      command: "codex",
+      toolServers: [],
+      recovery: { autoReconnect: false },
+    },
+  ];
+  const f = fixture(t, { cfg });
+  const request = await httpConfig(t, f);
+  const node = (() => {
+    const nodes = new Map();
+    return (selector) => {
+      if (!nodes.has(selector))
+        nodes.set(selector, { close() {}, addEventListener() {} });
+      return nodes.get(selector);
+    };
+  })();
+  const sandbox = vm.createContext({
+    document: {
+      querySelector: node,
+      querySelectorAll: () => [],
+      body: { classList: { remove() {}, toggle() {} } },
+    },
+    sessionStorage: { getItem: () => "" },
+    setInterval() {},
+    setTimeout() {},
+    clearTimeout() {},
+    structuredClone,
+    FormData: class {
+      constructor(fields) {
+        return fields;
+      }
+    },
+    fetch: request,
+    initial: { revision: f.configStore.revision },
+  });
+  for (const file of ["app.js", "agent-form.js"])
+    vm.runInContext(
+      fs.readFileSync(new URL("../public/" + file, import.meta.url), "utf8"),
+      sandbox,
+    );
+  const submit = async (values) => {
+    sandbox.current = structuredClone(f.runtime.config);
+    sandbox.revision0 = f.configStore.revision;
+    vm.runInContext(
+      `config = current; revision = revision0;
+      editing = { type: "backends", id: "fixture", row: config.backends[0] };
+      render = () => {}; var submitted; action = fn => submitted = fn();`,
+      sandbox,
+    );
+    node("#edit-form").onsubmit({
+      preventDefault() {},
+      target: new Map(
+        Object.entries({ id: "fixture", toolServers: "[]", ...values }),
+      ),
+    });
+    await vm.runInContext("submitted", sandbox);
+    return JSON.parse(fs.readFileSync(f.configStore.file)).backends[0];
+  };
+  const common = {
+    label: "API",
+    provider: "",
+    model: "m",
+    effort: "high",
+    preset: "qq-unified",
+    command: "codex",
+  };
+  // Clearing the key field removes the stored reference for a keyless local server.
+  const keyless = await submit({
+    ...common,
+    type: "openai",
+    baseUrl: "http://127.0.0.1:11434/v1",
+    apiKeyEnv: "",
+    contextWindow: "64000",
+    vision: "on",
+  });
+  assert.equal(keyless.apiKeyEnv, undefined);
+  assert.equal(keyless.maxToolRounds, 8, "unlisted OpenAI settings survive");
+  assert.equal(keyless.vision, true);
+  // Switching to Codex removes every OpenAI-only field so validation accepts it.
+  const codex = await submit({ ...common, type: "codex", baseUrl: "" });
+  assert.equal(codex.type, "codex");
+  for (const key of [
+    "apiKeyEnv",
+    "contextWindow",
+    "maxToolRounds",
+    "requestTimeoutMs",
+    "vision",
+    "sendEffort",
+  ])
+    assert.equal(Object.hasOwn(codex, key), false, key);
+  assert.equal(f.runtime.config.backends[0].type, "codex");
+});
+
 test("editing one agent revokes its capability but preserves unrelated work and both QQ transports", async (t) => {
   const f = pendingTurn(t);
   const other = f.runtime.makeContext("agent-1", "group:20000");

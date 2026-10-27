@@ -206,6 +206,45 @@ test("tool results degrade images and audio unless the model accepts images", as
   }
 });
 
+test("images from several tool calls follow every tool response", async (t) => {
+  const server = scripted([
+    reply({
+      content: null,
+      tool_calls: [
+        call("a", "sticker_read", { n: 1 }),
+        call("b", "sticker_read", { n: 2 }),
+      ],
+    }),
+    reply({ content: "看完了" }),
+  ]);
+  const backend = new OpenAIBackend(
+    backendConfig({ apiKeyEnv: undefined, vision: true }),
+    { id: "agent-a" },
+    { root: temp(t), fetch: server.fetch },
+  );
+  await backend.run(
+    params({
+      callTool: async (name, args) => ({
+        content: [
+          { type: "image", mimeType: "image/png", data: "IMG" + args.n },
+        ],
+      }),
+    }).value,
+  );
+  const messages = server.requests[1].body.messages.slice(2);
+  // Every pending call is answered before any user message.
+  assert.deepEqual(
+    messages.map((m) => m.role + (m.tool_call_id ? ":" + m.tool_call_id : "")),
+    ["assistant", "tool:a", "tool:b", "user"],
+  );
+  assert.deepEqual(
+    messages[3].content
+      .filter((c) => c.type === "image_url")
+      .map((c) => c.image_url.url),
+    ["data:image/png;base64,IMG1", "data:image/png;base64,IMG2"],
+  );
+});
+
 test("tool failures are returned to the model as safe errors, not thrown", async (t) => {
   const server = scripted([
     reply({
