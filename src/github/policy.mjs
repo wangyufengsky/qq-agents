@@ -30,10 +30,19 @@ export function privateGithubSources(ctx, runtime) {
   if (runtime) {
     const memory = runtime.memory.bind(ctx.agentId);
     const lookup = memory.db.prepare(
-      "SELECT payload AS metadata FROM events WHERE agent_id=? AND id=? UNION ALL SELECT metadata FROM diaries WHERE agent_id=? AND id=?",
+      "SELECT payload AS metadata FROM events WHERE agent_id=? AND id=? UNION ALL SELECT metadata FROM diaries WHERE agent_id=? AND id=? UNION ALL SELECT value AS metadata FROM work_notes WHERE agent_id=? AND id=? UNION ALL SELECT value AS metadata FROM intentions WHERE agent_id=? AND id=?",
     );
     for (const id of ctx.privateRead)
-      for (const row of lookup.all(ctx.agentId, id, ctx.agentId, id))
+      for (const row of lookup.all(
+        ctx.agentId,
+        id,
+        ctx.agentId,
+        id,
+        ctx.agentId,
+        id,
+        ctx.agentId,
+        id,
+      ))
         for (const repo of JSON.parse(row.metadata).protectedRepositories || [])
           repos.add(repo);
   }

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { freezeEvidence, evidenceView } from "./evidence.mjs";
+import { mergeProtection } from "./protection.mjs";
 const encode = JSON.stringify;
 const decode = (row) => (row ? JSON.parse(row.value) : null);
 const required = (value, max) => {
@@ -311,13 +312,17 @@ export class IdentityMemory {
     { id, body, evidence, uncertainty, status = "open" },
     conversation,
     now,
+    protection = {},
   ) {
     required(body, 2000);
     required(uncertainty, 1000);
-    this.sources(evidence);
+    const proof = freezeEvidence(this.mem, evidence, now, {
+      allowProtected: true,
+    });
     if (!evidence.length) throw Error("NOTE_SOURCE_REQUIRED");
+    let old;
     if (id) {
-      const old = decode(
+      old = decode(
         this.db
           .prepare(
             "SELECT value FROM work_notes WHERE agent_id=? AND id=? AND conversation=?",
@@ -335,6 +340,11 @@ export class IdentityMemory {
       conversation,
       writtenAt: now,
       epistemic: "working-interpretation",
+      ...mergeProtection(
+        old,
+        protection,
+        ...proof.references.map((r) => r.metadata),
+      ),
     };
     this.db
       .prepare("INSERT OR REPLACE INTO work_notes VALUES(?,?,?,?)")

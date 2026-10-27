@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { allowed, inSilence } from "./config.mjs";
 import { SUBJECT } from "./lifecycle.mjs";
+import { freezeEvidence } from "../memory/evidence.mjs";
+import { mergeProtection } from "../memory/protection.mjs";
+import { contextProtection, trackMindRecords } from "./protected-mind.mjs";
+import { githubPrivateContext } from "../github/policy.mjs";
 const terminal = new Set([
   "completed",
   "cancelled",
@@ -228,7 +232,9 @@ export class SubjectCoordinator {
       now = r.now();
     if (!this.targetAllowed(a, args.target))
       throw Error("PROACTIVE_TARGET_NOT_ENABLED");
-    m.identity.sources(args.evidence || []);
+    const proof = freezeEvidence(m, args.evidence || [], now, {
+      allowProtected: true,
+    });
     if (
       args.expiresAt <= now ||
       args.expiresAt > now + 7 * 86400000 ||
@@ -240,7 +246,10 @@ export class SubjectCoordinator {
       .find(
         (i) => !terminal.has(i.status) && norm(i.topic) === norm(args.topic),
       );
-    if (duplicate) return { ...duplicate, duplicate: true };
+    if (duplicate) {
+      trackMindRecords(r, ctx, [duplicate], "intent");
+      return { ...duplicate, duplicate: true };
+    }
     const i = {
       id: randomUUID(),
       revision: 1,
@@ -252,12 +261,18 @@ export class SubjectCoordinator {
       eligibleAt: args.eligibleAt || now,
       evidence: args.evidence || [],
       history: [{ status: "waiting", at: now }],
+      ...mergeProtection(
+        contextProtection(r, ctx),
+        ...proof.references.map((ref) => ref.metadata),
+      ),
     };
-    return this.save(a.id, i);
+    const saved = this.save(a.id, i);
+    trackMindRecords(r, ctx, [saved], "intent");
+    return saved;
   }
   update(ctx, args) {
-    const m = this.memory(ctx.agentId),
-      i = m.identity.get("intentions", args.id);
+    const m = this.memory(ctx.agentId);
+    let i = m.identity.get("intentions", args.id);
     if (i.revision !== args.expectedRevision) throw Error("REVISION_CONFLICT");
     if (terminal.has(i.status)) throw Error("INTENT_CLOSED");
     if (
@@ -266,6 +281,8 @@ export class SubjectCoordinator {
       ctx.conversation !== i.target
     )
       throw Error("INTENT_SCOPE");
+    i = { ...i, ...mergeProtection(i, contextProtection(this.runtime, ctx)) };
+    trackMindRecords(this.runtime, ctx, [i], "intent");
     if (args.action === "cancel")
       return this.transition(ctx.agentId, i, "cancelled", args.reason);
     if (!["waiting", "deferred"].includes(i.status))
@@ -281,10 +298,12 @@ export class SubjectCoordinator {
   }
   decide(ctx, args) {
     const r = this.runtime,
-      m = this.memory(ctx.agentId),
-      i = m.identity.get("intentions", args.id);
+      m = this.memory(ctx.agentId);
+    let i = m.identity.get("intentions", args.id);
     if (ctx.conversation !== i.target) throw Error("TARGET_CHAT_REQUIRED");
     if (i.revision !== args.expectedRevision) throw Error("REVISION_CONFLICT");
+    i = { ...i, ...mergeProtection(i, contextProtection(r, ctx)) };
+    trackMindRecords(r, ctx, [i], "intent");
     if (args.action === "complete") {
       if (
         !["awaiting-response", "handedoff", "deferred", "waiting"].includes(
@@ -309,6 +328,13 @@ export class SubjectCoordinator {
         )
       )
         throw Error("INTENT_RESPONSE_EVIDENCE_REQUIRED");
+      const proof = freezeEvidence(m, args.evidence, r.now(), {
+        allowProtected: true,
+      });
+      i = {
+        ...i,
+        ...mergeProtection(i, ...proof.references.map((ref) => ref.metadata)),
+      };
       return this.transition(ctx.agentId, i, "completed", args.reason, {
         responseEvidence: args.evidence,
       });
@@ -316,6 +342,7 @@ export class SubjectCoordinator {
     if (i.status !== "handedoff" || !ctx.intentIds?.includes(i.id))
       throw Error("INTENT_NOT_IN_TURN");
     if (args.action === "send") {
+      r.assertDisclosure(ctx);
       this.assertFresh(ctx, i);
       if (ctx.activeIntentId && ctx.activeIntentId !== i.id)
         throw Error("ONE_INTENT_PER_TURN");
@@ -353,6 +380,7 @@ export class SubjectCoordinator {
       throw Error("INTENT_DECISION_REQUIRED");
     if (!ctx.activeIntentId) return null;
     const i = this.assertFresh(ctx);
+    trackMindRecords(this.runtime, ctx, [i], "intent");
     const s = this.memory(ctx.agentId).state(SUBJECT),
       a = this.runtime.agent(ctx.agentId),
       now = this.runtime.now();
@@ -422,6 +450,21 @@ export class SubjectCoordinator {
       ...reasons.flatMap((r) => (r.activities || []).map((e) => e.seq)),
     );
   }
+  trackForTurn(ctx) {
+    const records = (ctx.intentIds || []).map((id) =>
+      this.memory(ctx.agentId).identity.get("intentions", id),
+    );
+    if (records.some((i) => i.target !== ctx.conversation))
+      throw Error("TARGET_CHAT_REQUIRED");
+    trackMindRecords(this.runtime, ctx, records, "intent");
+  }
+  canAutoDisclose(agent, item) {
+    return (
+      !item.protectedOperations &&
+      (!item.protectedRepositories?.length ||
+        githubPrivateContext(agent, item.target))
+    );
+  }
   finish(ctx, outcome) {
     const m = this.memory(ctx.agentId),
       a = this.runtime.config.agents.find((a) => a.id === ctx.agentId);
@@ -469,6 +512,7 @@ export class SubjectCoordinator {
         else if (
           ["waiting", "deferred"].includes(i.status) &&
           i.eligibleAt <= now &&
+          this.canAutoDisclose(a, i) &&
           this.contactOpportunity(a, i.target)
         ) {
           const c = m.state(i.target);

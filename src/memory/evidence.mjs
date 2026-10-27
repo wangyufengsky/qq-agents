@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { mergeProtection } from "./protection.mjs";
 import { extractForwardIds } from "../../vendor/legacy/forward.js";
 const digest = (value) =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -57,7 +58,12 @@ function confirmedNodeSource(memory, payload) {
 
 // Immutable, agent-owned source proof. IDs remain lookup handles; they are not
 // themselves a historical revision. Never recompute an accepted proof from a diary's latest edit.
-export function freezeEvidence(memory, ids, now) {
+export function freezeEvidence(
+  memory,
+  ids,
+  now,
+  { allowProtected = false } = {},
+) {
   if (
     !Array.isArray(ids) ||
     ids.length > 30 ||
@@ -81,7 +87,10 @@ export function freezeEvidence(memory, ids, now) {
     if (row) {
       const p = JSON.parse(row.payload || "{}"),
         app = p.app;
-      if (p.protectedRepositories?.length)
+      if (
+        !allowProtected &&
+        (p.protectedOperations || p.protectedRepositories?.length)
+      )
         throw Error("RESTRICTED_EVIDENCE_NOT_ALLOWED_IN_MIND");
       let parents = Array.isArray(p.evidence) ? p.evidence : [];
       if (app)
@@ -113,6 +122,7 @@ export function freezeEvidence(memory, ids, now) {
       const inherited = parents.flatMap((parent) => visit(parent));
       const text = app?.text ?? row.body;
       const metadata = {
+        ...mergeProtection(p),
         conversation: row.conversation,
         connectionId: row.connection_id,
         senderId: row.sender_id,
@@ -219,8 +229,8 @@ export function freezeEvidence(memory, ids, now) {
       if (!diary) throw Error("EVIDENCE_NOT_OWNED_OR_MISSING");
       const metadata = JSON.parse(diary.metadata);
       if (
-        metadata.protectedOperations ||
-        metadata.protectedRepositories?.length
+        !allowProtected &&
+        (metadata.protectedOperations || metadata.protectedRepositories?.length)
       )
         throw Error("RESTRICTED_EVIDENCE_NOT_ALLOWED_IN_MIND");
       const parents = metadata.evidence || [];
@@ -234,6 +244,7 @@ export function freezeEvidence(memory, ids, now) {
         excerpt: diary.body.slice(0, 2000),
         excerptTruncated: diary.body.length > 2000,
         metadata: {
+          ...mergeProtection(metadata),
           title: diary.title,
           writtenAt: diary.updated_at,
           epistemic: "subjective-interpretation",

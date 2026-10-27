@@ -2,6 +2,10 @@ import { SUBJECT_APP_TOOLS } from "../apps/policy.mjs";
 import { identityAnchors } from "../core/prompts.mjs";
 import { z } from "zod";
 import { privateGithubSources } from "../github/policy.mjs";
+import {
+  contextProtection,
+  trackMindRecords,
+} from "../core/protected-mind.mjs";
 const text = z.string().min(1),
   ids = z.array(text).max(30),
   version = z.number().int().min(1);
@@ -49,7 +53,7 @@ export const mindDefinitions = {
     z.object({ id: text, expectedRevision: version }).strict(),
   ],
   work_note: [
-    "保存或更新有来源的未完成话题/约定；不是日记或客观事实。完成/更正后更新状态，事件时间从原始来源读取。",
+    "保存或更新有来源的未完成话题/约定；不是日记或客观事实。允许保存受保护内容，自动继承且保留上下文及来源的保护标记；保存不授予对外披露权限。完成/更正后更新状态，事件时间从原始来源读取。",
     z
       .object({
         id: text.optional(),
@@ -65,7 +69,7 @@ export const mindDefinitions = {
     z.object({ offset: z.number().int().min(0).default(0) }).strict(),
   ],
   intent_create: [
-    "创建普通聊天意图（不是正式提醒）。主体不能直接发送；目标聊天可暂缓/放弃。主题跨群去重；expiresAt/eligibleAt 为 Unix 毫秒。",
+    "创建普通聊天意图（不是正式提醒），允许带保护标记保存。主体不能直接发送；目标聊天可暂缓/放弃，受保护资料不向未经授权的目标自动交接或发送。主题跨群去重；expiresAt/eligibleAt 为 Unix 毫秒。",
     z
       .object({
         topic: text.max(300),
@@ -136,6 +140,8 @@ export const SUBJECT_TOOLS = [
   "self_withdraw",
   "work_note",
   "work_notes",
+  "file_list",
+  "file_create",
   "intent_create",
   "intent_list",
   "intent_update",
@@ -145,19 +151,10 @@ function executeMindTool(runtime, ctx, name, args) {
     m = runtime.memory.bind(a.id),
     identity = m.identity,
     now = runtime.now();
-  // Operations grants authorize a particular disclosure, not unbounded future
-  // propagation through shared self/notes/intents. Ordinary cross-chat memories
-  // remain agent-judged; only the pre-existing restricted Operations boundary applies.
+  // Shared self cannot carry restricted material. Scoped notes and intentions
+  // instead retain protection on storage, reads, handoff and actual delivery.
   if (
-    [
-      "self_propose",
-      "self_review",
-      "self_withdraw",
-      "work_note",
-      "intent_create",
-      "intent_update",
-      "intent_decide",
-    ].includes(name) &&
+    ["self_propose", "self_review", "self_withdraw"].includes(name) &&
     (privateGithubSources(ctx, runtime).length > 0 ||
       [...ctx.privateRead].some((id) =>
         /^(operations|operations-result|github-private):/.test(id),
@@ -190,7 +187,12 @@ function executeMindTool(runtime, ctx, name, args) {
   if (name === "self_withdraw")
     return identity.withdraw(args.id, args.expectedRevision, ctx, now);
   if (name === "work_note")
-    return identity.saveNote(args, ctx.conversation, now);
+    return identity.saveNote(
+      args,
+      ctx.conversation,
+      now,
+      contextProtection(runtime, ctx),
+    );
   if (name === "work_notes") {
     const rows = identity.notes(ctx.conversation);
     return {
@@ -229,6 +231,19 @@ function executeMindTool(runtime, ctx, name, args) {
 // including when the live record has subsequently disappeared.
 export function mindTool(runtime, ctx, name, args) {
   const result = executeMindTool(runtime, ctx, name, args);
+  if (name === "work_note" || name === "work_notes")
+    trackMindRecords(
+      runtime,
+      ctx,
+      name === "work_note" ? [result] : result.items,
+    );
+  if (name.startsWith("intent_"))
+    trackMindRecords(
+      runtime,
+      ctx,
+      name === "intent_list" ? result.items : [result],
+      "intent",
+    );
   for (const row of [result, result?.current, ...(result?.items || [])]) {
     for (const proof of [row?.evidenceSnapshot, row?.counterEvidenceSnapshot]) {
       for (const ref of proof?.references || []) {

@@ -57,6 +57,17 @@ export function sourceClass(runtime, ctx, id) {
       : "personal-diary";
   }
   // Deleted legacy records and frozen handoffs retain their protection.
+  const note = m.db
+    .prepare(
+      "SELECT value FROM work_notes WHERE agent_id=? AND id=? UNION ALL SELECT value FROM intentions WHERE agent_id=? AND id=?",
+    )
+    .get(ctx.agentId, id, ctx.agentId, id);
+  if (note) {
+    const value = JSON.parse(note.value);
+    if (value.protectedRepositories?.length) return "private-repository";
+    if (value.protectedOperations) return "operations";
+    return "personal-mind-record";
+  }
   return "unknown-legacy";
 }
 export function sourceCounts(runtime, ctx) {

@@ -573,7 +573,7 @@ test("legacy processed progress remains authoritative after first session rebuil
   assert.equal(m.state(ctx.conversation).readThroughSeq, next.seq);
 });
 
-test("restricted Operations content cannot be laundered through shared mind records", async (t) => {
+test("restricted Operations stays blocked for shared self while scoped notes retain protection", async (t) => {
   const { runtime, store } = fixture(t, { cfg: enabled() }),
     m = store.bind("agent-0"),
     ctx = context(runtime),
@@ -581,28 +581,17 @@ test("restricted Operations content cannot be laundered through shared mind reco
   ctx.privateRead.add("operations:protected-file");
   for (const [name, args] of [
     ["self_propose", { ...proposal(m, e), body: "restricted placeholder" }],
-    [
-      "work_note",
-      {
-        body: "restricted placeholder",
-        evidence: [e.id],
-        uncertainty: "unknown",
-      },
-    ],
-    [
-      "intent_create",
-      {
-        topic: "restricted placeholder",
-        target: "group:20000",
-        reason: "test",
-        expiresAt: runtime.now() + 100000,
-      },
-    ],
   ])
     await assert.rejects(
       runtime.callTool(ctx, name, args),
       /RESTRICTED_CONTEXT_MIND_WRITE_BLOCKED/,
     );
+  const note = await runtime.callTool(ctx, "work_note", {
+    body: "restricted placeholder",
+    evidence: [e.id],
+    uncertainty: "unknown",
+  });
+  assert.equal(note.protectedOperations, true);
   const d = m.diaryWrite(
     { title: "restricted", body: "placeholder", evidence: [e.id] },
     "ai-diary",

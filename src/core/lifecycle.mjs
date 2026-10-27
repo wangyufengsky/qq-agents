@@ -6,6 +6,8 @@ import {
 export { stableInstructions } from "./prompts.mjs";
 import { randomUUID, createHash } from "node:crypto";
 import { githubMarker } from "../github/policy.mjs";
+import { trackMindRecords } from "./protected-mind.mjs";
+import { mergeProtection } from "../memory/protection.mjs";
 import { rememberSources, sourceHandoff } from "./context-handoff.mjs";
 import {
   retireSession,
@@ -120,15 +122,14 @@ export class ContextLifecycle {
           ? "更多未完成笔记需 work_notes 读取，未静默删除。"
           : "笔记是带来源的工作解释；原始事件可回查。",
       continuity: sourceHandoff(m, conversation),
-      intents: intents
-        .slice(0, 30)
-        .map(({ id, target, status, topic, evidence }) => ({
-          id,
-          target,
-          status,
-          topic,
-          evidence,
-        })),
+      intents: intents.slice(0, 30).map((i) => ({
+        id: i.id,
+        target: i.target,
+        status: i.status,
+        topic: i.topic,
+        evidence: i.evidence,
+        ...mergeProtection(i),
+      })),
       intentsTotal: intents.length,
       intentsOverflow: Math.max(0, intents.length - 30),
       intentsContinuation:
@@ -166,6 +167,7 @@ export class ContextLifecycle {
                 topic: i.topic,
                 status: i.status,
                 history: i.history.slice(-3),
+                ...mergeProtection(i),
               }))
           : [],
       contactHistoryNotice:
@@ -276,6 +278,16 @@ export class ContextLifecycle {
     ctx.privateRead.add("context:" + ctx.conversation);
     for (const source of handoff?.continuity?.sources || [])
       ctx.privateRead.add(source.id);
+    if (handoff) {
+      trackMindRecords(r, ctx, handoff.notes);
+      trackMindRecords(
+        r,
+        ctx,
+        [...handoff.intents, ...handoff.recentContacts],
+        "intent",
+      );
+    }
+    r.subject.trackForTurn(ctx);
     ctx.persistTaint?.();
     const prompt = [
       `当前场景 ${ctx.conversation}。本回合采用 self v${self.version}。主人/管理员：${a.ownerIds.join(",") || "未设置"}。`,
