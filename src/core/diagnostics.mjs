@@ -26,6 +26,7 @@ const conflicts = new Set([
   "SESSION_BUSY",
   "FILE_REPAIR_NOT_NEEDED",
   "DATA_DIRECTORY_LOCKED",
+  "DELIVERY_ALREADY_SETTLED",
 ]);
 const components = new Set([
   "http",

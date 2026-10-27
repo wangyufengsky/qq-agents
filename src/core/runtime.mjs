@@ -243,21 +243,36 @@ export class Runtime {
       toolAvailable(a, name, conversation),
     );
   }
-  writable(a, conversation, ctx = null) {
-    if (this.closed || this.reconfiguringAgents.has(a.id)) return false;
-    if (this.backendConnections.blocked.has(a.id)) return false;
-    if (conversation === SUBJECT) return this.subject.internalAllowed(a);
+  // Every gate that keeps an agent from speaking. Without a conversation, only
+  // agent-wide gates are listed (for the console); writable() always passes one.
+  blockers(a, conversation, ctx = null) {
+    const codes = [];
+    if (this.closed) codes.push("RUNTIME_CLOSING");
+    if (this.reconfiguringAgents.has(a.id)) codes.push("RECONFIGURING");
+    if (this.backendConnections.blocked.has(a.id))
+      codes.push("BACKEND_UNAVAILABLE");
+    if (conversation === SUBJECT) {
+      if (!codes.length && !this.subject.internalAllowed(a))
+        codes.push("SUBJECT_NOT_ALLOWED");
+      return codes;
+    }
+    if (this.config.mode !== "live") codes.push("ISOLATED_MODE");
+    if (this.config.globalPaused) codes.push("GLOBAL_PAUSED");
+    if (a.paused) codes.push("AGENT_PAUSED");
+    if (inSilence(a, this.clock())) codes.push("QUIET_HOURS");
+    if (conversation === undefined) return codes;
+    if (!allowed(a, conversation)) codes.push("NOT_ALLOWED");
     const state = this.memory.bind(a.id).state(conversation);
+    if (state.paused) codes.push("CONVERSATION_PAUSED");
+    // The turn that chose to go quiet may still finish bookkeeping; deliverNow blocks its sends.
+    if (state.silenceUntil > this.now() && ctx?.selfSilenced !== true)
+      codes.push("CONVERSATION_SILENCED");
+    return codes;
+  }
+  writable(a, conversation, ctx = null) {
     return (
-      !this.closed &&
-      this.config.mode === "live" &&
-      !this.config.globalPaused &&
-      !a.paused &&
-      allowed(a, conversation) &&
-      !inSilence(a, this.clock()) &&
-      !state.paused &&
-      // The turn that chose to go quiet may still finish bookkeeping; deliverNow blocks its sends.
-      (!(state.silenceUntil > this.now()) || ctx?.selfSilenced === true)
+      conversation !== undefined &&
+      this.blockers(a, conversation, ctx).length === 0
     );
   }
   assertActive(ctx) {

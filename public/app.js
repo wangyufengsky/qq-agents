@@ -221,6 +221,11 @@ function render() {
       )}</div><div class="section-title"><h2>角色状态</h2><button class="ghost" data-do="tab" data-id="agents">管理智能体${icon("arrow", "sm")}</button></div><div class="grid">${config.agents.map(agentCard).join("")}</div><div class="section-title"><h2>受限动作授权</h2>${tag("回忆发言由智能体自行判断", "accent")}</div><div class="card">${status.disclosureRequests.length ? status.disclosureRequests.map((r, i) => `<div class="record"><strong>${esc(find("agents", r.agentId)?.name)} → ${esc(r.conversation)}</strong><p>${r.records.length} 条资料涉及${r.reason === "external-service" ? "外部服务调用" : "本地运维内容"}。${r.request ? "批准仅对当前回合、所示请求参数及资料集合有效。" : "批准仅对当前回合、当前会话所示资料集合有效。"}</p><p class="mono">${esc(r.records.join("\n"))}</p>${r.request ? `<pre>${esc(JSON.stringify(r.request, null, 2))}</pre><p>${esc(JSON.stringify(r.sourceClasses))}</p>` : ""}<button data-do="grant" data-id="${i}">批准本次披露</button></div>`).join("") : "<p>当前没有待批准的受限动作。</p>"}</div>`;
     content.insertAdjacentHTML(
       "beforeend",
+      `<div class="section-title"><h2>待核对发送 · ${status.agents.reduce((n, a) => n + (a.unresolvedDeliveries || 0), 0)}</h2></div><div class="card"><p class="hint">网络结果未知的发送不会自动重发。请在 QQ 中查看对应会话后标记结果。</p><div id="unresolved-deliveries">读取中…</div></div>`,
+    );
+    action(renderUnresolved);
+    content.insertAdjacentHTML(
+      "beforeend",
       `<div class="section-title"><h2>最近错误</h2></div><div class="card"><label>筛选错误码、组件或关联 ID<input id="error-filter" placeholder="例如 CONFIG_SAVE_FAILED、http"></label><p class="hint">最多保留本次启动的 50 类错误，同类重复错误合并计数；完整留存取决于服务日志配置。</p><div id="recent-errors">${recentErrorsMarkup()}</div></div>`,
     );
     if (configMigrationWarnings.length)
@@ -297,11 +302,86 @@ function render() {
         (b.onclick = () => action(() => operate(b.dataset.do, b.dataset.id))),
     );
 }
+const blockerLabels = {
+  RUNTIME_CLOSING: "管理器正在关闭",
+  RECONFIGURING: "配置正在生效",
+  BACKEND_UNAVAILABLE: "AI 后端不可用",
+  ISOLATED_MODE: "隔离模式",
+  GLOBAL_PAUSED: "全局暂停",
+  AGENT_PAUSED: "角色暂停",
+  QUIET_HOURS: "静默时段",
+  CONNECTION_DISABLED: "QQ 连接已停用",
+  QQ_NOT_CONNECTED: "QQ 未连接",
+};
+const blockersMarkup = (s) =>
+  s?.blockers?.length
+    ? `<p class="hint">当前无法发言：${s.blockers.map((b) => esc(blockerLabels[b] || b)).join("、")}</p>`
+    : s
+      ? '<p class="hint">各道开关已就绪；具体会话仍受白名单、会话暂停与静默约束。</p>'
+      : "";
+let unresolved = [];
+async function renderUnresolved() {
+  const box = $("#unresolved-deliveries");
+  if (!box) return;
+  const agents = status.agents.filter((s) => s.unresolvedDeliveries > 0);
+  if (!agents.length) {
+    unresolved = [];
+    box.innerHTML = "<p>没有结果未知的发送。</p>";
+    return;
+  }
+  const pages = await Promise.all(
+    agents.map((s) =>
+      api("/api/deliveries?agentId=" + encodeURIComponent(s.id)).then(
+        (page) => ({ agentId: s.id, ...page }),
+      ),
+    ),
+  );
+  if (!$("#unresolved-deliveries")) return;
+  unresolved = pages.flatMap((page) =>
+    page.items.map((item) => ({ ...item, agentId: page.agentId })),
+  );
+  box.innerHTML =
+    unresolved
+      .map(
+        (d, i) =>
+          `<div class="record"><strong>${esc(find("agents", d.agentId)?.name || d.agentId)} → ${esc(d.conversation)}</strong><p>${esc(d.preview || (d.mediaId ? "[媒体]" : "[无文字内容]"))}</p><p class="hint mono">${esc(d.requestId)} · ${esc(new Date(d.createdAt).toLocaleString())}</p><button data-reconcile="sent" data-index="${i}">已在 QQ 中看到</button><button class="ghost" data-reconcile="failed" data-index="${i}">确认未发出</button></div>`,
+      )
+      .join("") +
+    pages
+      .filter((page) => page.total > page.items.length)
+      .map(
+        (page) =>
+          `<p class="hint">${esc(find("agents", page.agentId)?.name || page.agentId)} 另有 ${page.total - page.items.length} 条，处理后刷新查看。</p>`,
+      )
+      .join("");
+  box.querySelectorAll("[data-reconcile]").forEach(
+    (b) =>
+      (b.onclick = () =>
+        action(async () => {
+          const d = unresolved[Number(b.dataset.index)],
+            sent = b.dataset.reconcile === "sent";
+          if (
+            !confirm(
+              sent
+                ? "确认这条消息已出现在 QQ 中？标记后不会重发。"
+                : "确认这条消息没有发出？标记后同一请求仍不会自动重发，智能体可在之后的回合重新决定是否发送。",
+            )
+          )
+            return;
+          await api("/api/deliveries/reconcile", {
+            agentId: d.agentId,
+            requestId: d.requestId,
+            resolution: b.dataset.reconcile,
+          });
+          await load();
+        })),
+  );
+}
 function agentCard(a) {
   const s = status.agents.find((s) => s.id === a.id),
     c = find("connections", a.connectionId),
     b = find("backends", a.backendId);
-  return `<article class="card"><div class="row"><div class="identity"><span class="avatar">${esc(a.name.slice(0, 1))}</span><div><h3>${esc(a.name)}</h3><span class="hint mono">${esc(a.id)}</span></div></div>${tag(a.paused ? "已暂停" : status.globalPaused ? "全局暂停" : "允许参与", a.paused ? "off" : status.globalPaused ? "warn" : "live")}</div><dl class="agent-meta"><dt>QQ 实例</dt><dd>${esc(c?.label)}</dd><dt>后端 / 模型</dt><dd>${esc(b?.label)} / <span class="mono">${esc(a.model || b?.model || "后端默认")}</span></dd><dt>后端连接</dt><dd>${esc(backendLabels[status.backends?.find((x) => x.id === a.backendId)?.state] || "尚未检测")}</dd><dt>参与率</dt><dd>${Math.round(a.wake.participation * 100)}%${meter(a.wake.participation)}</dd><dt>来源范围</dt><dd>${a.allow.groups.length} 个群 · ${a.allow.users.length} 位私聊对象</dd></dl>${s?.error ? `<p class="hint">${esc(s.error)}</p>` : ""}<div class="card-actions"><button data-do="edit-agent" data-id="${esc(a.id)}">${icon("settings", "sm")}配置角色</button><button class="ghost" data-do="toggle" data-id="${esc(a.id)}" ${status.mode === "isolated" && !a.paused ? "disabled" : ""}>${icon(a.paused ? "play" : "pause", "sm")}${a.paused ? "解除角色暂停" : "暂停角色"}</button></div></article>`;
+  return `<article class="card"><div class="row"><div class="identity"><span class="avatar">${esc(a.name.slice(0, 1))}</span><div><h3>${esc(a.name)}</h3><span class="hint mono">${esc(a.id)}</span></div></div>${tag(a.paused ? "已暂停" : status.globalPaused ? "全局暂停" : "允许参与", a.paused ? "off" : status.globalPaused ? "warn" : "live")}</div><dl class="agent-meta"><dt>QQ 实例</dt><dd>${esc(c?.label)}</dd><dt>后端 / 模型</dt><dd>${esc(b?.label)} / <span class="mono">${esc(a.model || b?.model || "后端默认")}</span></dd><dt>后端连接</dt><dd>${esc(backendLabels[status.backends?.find((x) => x.id === a.backendId)?.state] || "尚未检测")}</dd><dt>参与率</dt><dd>${Math.round(a.wake.participation * 100)}%${meter(a.wake.participation)}</dd><dt>来源范围</dt><dd>${a.allow.groups.length} 个群 · ${a.allow.users.length} 位私聊对象</dd></dl>${blockersMarkup(s)}${s?.error ? `<p class="hint">${esc(s.error)}</p>` : ""}<div class="card-actions"><button data-do="edit-agent" data-id="${esc(a.id)}">${icon("settings", "sm")}配置角色</button><button class="ghost" data-do="toggle" data-id="${esc(a.id)}" ${status.mode === "isolated" && !a.paused ? "disabled" : ""}>${icon(a.paused ? "play" : "pause", "sm")}${a.paused ? "解除角色暂停" : "暂停角色"}</button></div></article>`;
 }
 function connectionCard(c) {
   const s = status.connections.find((s) => s.id === c.id);

@@ -13,14 +13,28 @@ export function runtimeStatus(runtime) {
       process: runtime.lifecycle?.status(c.id),
       error: runtime.faults.get(c.id) || null,
     })),
-    agents: runtime.config.agents.map((a) => ({
-      id: a.id,
-      paused: a.paused,
-      activeTurns: [...runtime.running.values()].filter(
-        (c) => c.agentId === a.id,
-      ).length,
-      error: runtime.faults.get(a.id) || null,
-    })),
+    agents: runtime.config.agents.map((a) => {
+      const c = runtime.config.connections.find((c) => c.id === a.connectionId);
+      return {
+        id: a.id,
+        paused: a.paused,
+        activeTurns: [...runtime.running.values()].filter(
+          (c) => c.agentId === a.id,
+        ).length,
+        error: runtime.faults.get(a.id) || null,
+        blockers: [
+          ...runtime.blockers(a),
+          ...(!c?.enabled
+            ? ["CONNECTION_DISABLED"]
+            : runtime.transports.get(c.id)?.connected
+              ? []
+              : ["QQ_NOT_CONNECTED"]),
+        ],
+        unresolvedDeliveries: runtime.memory
+          .bind(a.id)
+          .unresolvedDeliveryCount(),
+      };
+    }),
     disclosureRequests: [...runtime.capabilities.values()]
       .filter((c) => runtime.currentDisclosure(c))
       .filter((c) =>

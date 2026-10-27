@@ -23,6 +23,13 @@ const fileRecoveryRequest = z
   })
   .strict()
   .refine((value) => value.action !== "repair" || !!value.name);
+const deliveryReconciliation = z
+  .object({
+    agentId: z.string(),
+    requestId: z.string().min(1).max(200),
+    resolution: z.enum(["sent", "failed"]),
+  })
+  .strict();
 const equal = (a, b) =>
   typeof a === "string" &&
   Buffer.byteLength(a) === Buffer.byteLength(b) &&
@@ -308,6 +315,30 @@ export function createServer({
             "cancelled",
             "administrator cancellation",
           ),
+        );
+      }
+      if (req.method === "GET" && url.pathname === "/api/deliveries") {
+        const a = runtime.agent(url.searchParams.get("agentId"));
+        return send(
+          runtime.memory.bind(a.id).unresolvedDeliveries({
+            offset: Math.max(
+              0,
+              Math.min(100000, Number(url.searchParams.get("offset")) || 0),
+            ),
+            limit: 20,
+          }),
+        );
+      }
+      if (
+        req.method === "POST" &&
+        url.pathname === "/api/deliveries/reconcile"
+      ) {
+        const data = deliveryReconciliation.parse(await readBody(1024)),
+          a = runtime.agent(data.agentId);
+        return send(
+          runtime.memory
+            .bind(a.id)
+            .reconcileDelivery(data.requestId, data.resolution),
         );
       }
       if (req.method === "GET" && url.pathname === "/api/status")

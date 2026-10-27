@@ -92,6 +92,7 @@ export class MemoryStore {
       CREATE TABLE IF NOT EXISTS people(agent_id TEXT NOT NULL,qq TEXT NOT NULL,names TEXT NOT NULL,PRIMARY KEY(agent_id,qq));
       CREATE TABLE IF NOT EXISTS deliveries(agent_id TEXT NOT NULL,request_id TEXT NOT NULL,conversation TEXT NOT NULL,payload_hash TEXT NOT NULL,status TEXT NOT NULL,message_id TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(agent_id,request_id));
       CREATE INDEX IF NOT EXISTS deliveries_message ON deliveries(agent_id,conversation,message_id);
+      CREATE INDEX IF NOT EXISTS deliveries_status ON deliveries(agent_id,status);
       CREATE TABLE IF NOT EXISTS runtime(agent_id TEXT NOT NULL,conversation TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(agent_id,conversation));
       CREATE TABLE IF NOT EXISTS migrations(agent_id TEXT NOT NULL,source TEXT NOT NULL,digest TEXT NOT NULL,imported_at TEXT NOT NULL,PRIMARY KEY(agent_id,source,digest));
       `);
@@ -715,6 +716,56 @@ class AgentMemory {
         "UPDATE deliveries SET status=?,message_id=?,updated_at=? WHERE agent_id=? AND request_id=?",
       )
       .run(status, messageId, now(), this.agentId, requestId);
+  }
+  unresolvedDeliveryCount() {
+    return this.db
+      .prepare(
+        "SELECT count(*) AS total FROM deliveries WHERE agent_id=? AND status='unknown'",
+      )
+      .get(this.agentId).total;
+  }
+  unresolvedDeliveries({ offset = 0, limit = 20 } = {}) {
+    const items = this.db
+      .prepare(
+        "SELECT d.request_id AS requestId,d.conversation,d.created_at AS createdAt,d.updated_at AS updatedAt,substr(e.body,1,200) AS preview,json_extract(e.payload,'$.mediaId') AS mediaId FROM deliveries d LEFT JOIN events e ON e.agent_id=d.agent_id AND e.dedupe='send:'||d.request_id||':pending' WHERE d.agent_id=? AND d.status='unknown' ORDER BY d.updated_at DESC,d.request_id LIMIT ? OFFSET ?",
+      )
+      .all(this.agentId, limit, offset);
+    return { total: this.unresolvedDeliveryCount(), offset, items };
+  }
+  // Administrator verdict on an unknown receipt. Settled receipts never change,
+  // and neither verdict resends: the same requestId stays fenced afterwards.
+  reconcileDelivery(requestId, resolution) {
+    return this.store.transaction(() => {
+      const row = this.delivery(requestId);
+      if (!row) throw Error("DELIVERY_NOT_FOUND");
+      if (row.status !== "unknown") throw Error("DELIVERY_ALREADY_SETTLED");
+      this.completeDelivery(requestId, resolution);
+      const attempt = this.db
+        .prepare(
+          "SELECT connection_id,sender_id,body,payload FROM events WHERE agent_id=? AND dedupe=?",
+        )
+        .get(this.agentId, "send:" + requestId + ":pending");
+      this.append({
+        dedupe: "send:" + requestId + ":reconciled",
+        connectionId: attempt?.connection_id || "",
+        conversation: row.conversation,
+        senderId: attempt?.sender_id ?? null,
+        kind: "message.send-result",
+        direction: "out",
+        status: resolution === "sent" ? "confirmed" : "failed",
+        body: attempt?.body || "",
+        // Inherit the attempt's payload so repository/operations protection
+        // follows the copied body, as the delivery's own send-result does.
+        payload: {
+          ...(attempt ? parse(attempt.payload) : {}),
+          requestId,
+          reconciledBy: "administrator",
+          previousStatus: "unknown",
+          resolution,
+        },
+      });
+      return { requestId, status: resolution };
+    });
   }
   state(conversation) {
     const row = this.db
