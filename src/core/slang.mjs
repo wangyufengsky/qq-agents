@@ -1,3 +1,4 @@
+import { containsCredential } from "./secrets.mjs";
 import { randomUUID } from "node:crypto";
 import { toolSpecs } from "../tools/index.mjs";
 import { ownedEvent } from "../tools/forward.mjs";
@@ -80,7 +81,7 @@ export class SlangLearner {
       .state(ctx.conversation)
       .slang?.entries.find((e) => e.id === id);
     if (!entry) throw Error("SLANG_NOT_FOUND");
-    if (entry.term.includes(ctx.token) || /(?:sk-|Bearer\s)/.test(entry.term))
+    if (entry.term.includes(ctx.token) || containsCredential(entry.term))
       throw Error("SENSITIVE_OUTPUT_BLOCKED");
     const backend = ctx.learnerBackend || this.runtime.backends.get(a.id);
     if (!backend?.external) throw Error("EXTERNAL_TOOLS_UNAVAILABLE");

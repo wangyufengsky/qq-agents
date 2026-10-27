@@ -1,3 +1,4 @@
+import { containsCredential } from "./secrets.mjs";
 import { isDeepStrictEqual } from "node:util";
 import { DeliveryService } from "./delivery.mjs";
 import { TurnRunner } from "./turn-runner.mjs";
@@ -354,6 +355,22 @@ export class Runtime {
     this.conversations.cancel(agentId);
     this.operations.revoke(agentId, false);
     await this.backends.get(agentId)?.cancel?.();
+  }
+  // Stops one conversation's turn; the agent's other conversations and owner grants continue.
+  async cancelConversation(agentId, conversation) {
+    const key = agentId + "|" + conversation;
+    for (const [token, ctx] of this.capabilities)
+      if (ctx.agentId === agentId && ctx.conversation === conversation) {
+        ctx.controller.abort();
+        this.capabilities.delete(token);
+      }
+    this.pending.delete(key);
+    this.conversations.notify(agentId, conversation);
+    const ctx = this.running.get(key);
+    if (ctx) {
+      ctx.controller.abort();
+      await ctx.done;
+    }
   }
   async changeAppPermissions(agentId, policy, revision) {
     if (this.closed) throw Error("RUNTIME_CLOSING");
@@ -764,10 +781,7 @@ export class Runtime {
     return result;
   }
   assertSafeOutput(ctx, text) {
-    if (
-      text.includes(ctx.token) ||
-      /(?:sk-|gh[pousr]_|github_pat_|Bearer\s)[a-zA-Z0-9_-]{16,}/.test(text)
-    )
+    if (text.includes(ctx.token) || containsCredential(text))
       throw Error("SENSITIVE_OUTPUT_BLOCKED");
   }
   send(...args) {

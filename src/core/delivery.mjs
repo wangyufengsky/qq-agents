@@ -1,3 +1,4 @@
+import { containsCredential } from "./secrets.mjs";
 import { beforeShareDelivery } from "../apps/sharing.mjs";
 import { appService } from "../apps/tools.mjs";
 import { privateGithubSources } from "../github/policy.mjs";
@@ -116,10 +117,7 @@ export class DeliveryService {
     runtime.assertDisclosure(ctx);
     beforeShareDelivery(appService(runtime), ctx, metadata);
     const serialized = JSON.stringify(intent);
-    if (
-      serialized.includes(ctx.token) ||
-      /(?:sk-|gh[pousr]_|Bearer\s)[a-zA-Z0-9_-]{16,}/.test(body)
-    )
+    if (serialized.includes(ctx.token) || containsCredential(body))
       throw Error("SENSITIVE_OUTPUT_BLOCKED");
     const previous = mem.delivery(requestId);
     if (previous) {
@@ -204,6 +202,22 @@ export class DeliveryService {
     ctx.sendCount++;
     try {
       runtime.assertActive(ctx);
+    } catch (e) {
+      // Paused or cancelled before the gateway call: nothing left the process.
+      mem.store.transaction(() => {
+        mem.completeDelivery(requestId, "failed");
+        runtime.subject.delivered(ctx, "failed");
+      });
+      mem.append({
+        ...event,
+        dedupe: "send:" + requestId + ":failed",
+        kind: "message.send-result",
+        status: "failed",
+        payload: { ...event.payload, reason: "CANCELLED_BEFORE_SEND" },
+      });
+      throw e;
+    }
+    try {
       const receipt = await send(transport);
       if (action ? receipt?.confirmed !== true : receipt?.messageId == null)
         throw Error("DELIVERY_UNCONFIRMED");

@@ -634,14 +634,16 @@ export function createServer({
           typeof data.paused !== "boolean"
         )
           throw Error("INVALID_CONVERSATION_STATE");
-        const mem = runtime.memory.bind(data.agentId),
-          state = mem.state(data.conversation);
-        if (data.paused) await runtime.cancel(data.agentId);
+        const mem = runtime.memory.bind(data.agentId);
+        // Persist first: the stopping turn then cannot send, and state written
+        // while it finishes is not overwritten by a stale copy.
         mem.setState(data.conversation, {
-          ...state,
+          ...mem.state(data.conversation),
           paused: data.paused,
           silenceUntil: 0,
         });
+        if (data.paused)
+          await runtime.cancelConversation(data.agentId, data.conversation);
         return send({ ok: true, paused: data.paused });
       }
       if (req.method === "GET" && url.pathname === "/api/memory") {

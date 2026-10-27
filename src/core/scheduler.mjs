@@ -1,3 +1,4 @@
+import { containsCredential } from "./secrets.mjs";
 import { randomUUID } from "node:crypto";
 import { allowed, inSilence } from "./config.mjs";
 import {
@@ -21,9 +22,8 @@ import {
 
 const sourceKey = "@scheduler";
 const sensitive = (s) =>
-  /(?:sk-|gh[pousr]_|Bearer\s)[A-Za-z0-9_-]{16,}|\/(?:Users|home)\/|-----BEGIN .*PRIVATE KEY/.test(
-    s,
-  );
+  containsCredential(s) ||
+  /\/(?:Users|home)\/|-----BEGIN .*PRIVATE KEY/.test(s);
 export class TaskScheduler {
   constructor(runtime) {
     this.runtime = runtime;

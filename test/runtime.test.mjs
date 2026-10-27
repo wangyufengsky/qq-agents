@@ -121,6 +121,25 @@ test("in-flight confirmed receipt is still recorded if pause arrives during HTTP
   assert.equal((await p).status, "sent");
   assert.equal(store.bind("agent-0").delivery("flight").status, "sent");
 });
+test("a send cancelled before the gateway call is failed, not unknown", async (t) => {
+  const { runtime, store } = fixture(t);
+  const ctx = context(runtime);
+  const reserve = runtime.subject.reserveContact.bind(runtime.subject);
+  // Cancellation lands after the outbox reservation but before any network I/O.
+  runtime.subject.reserveContact = (...args) => {
+    reserve(...args);
+    ctx.controller.abort();
+  };
+  await assert.rejects(
+    runtime.send(ctx, { requestId: "early", text: "x" }),
+    /AGENT_PAUSED_OR_EXPIRED/,
+  );
+  assert.equal(runtime.transports.get("qq-0").sent.length, 0);
+  const mem = store.bind("agent-0");
+  assert.equal(mem.delivery("early").status, "failed");
+  const [result] = mem.search({ kind: "message.send-result" }).items;
+  assert.equal(result.status, "failed");
+});
 test("own recall and diaries permit agent-judged QQ speech across current and later turns", async (t) => {
   const { runtime, store } = fixture(t);
   const mem = store.bind("agent-0");

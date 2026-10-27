@@ -783,3 +783,40 @@ test("admin memory search and context routes retain group scene and enforce agen
     401,
   );
 });
+
+test("pausing one conversation stops only that conversation's turn", async (t) => {
+  const { request, runtime, store } = await setup(t);
+  const group = context(runtime, "agent-0", "group:20000"),
+    other = context(runtime, "agent-0", "private:30000");
+  let finished = false;
+  group.done = new Promise((resolve) =>
+    group.controller.signal.addEventListener("abort", () =>
+      setTimeout(() => {
+        finished = true;
+        resolve();
+      }, 10),
+    ),
+  );
+  runtime.running.set("agent-0|group:20000", group);
+  runtime.operations.levels.set("agent-0|private:30000", {
+    level: "L1",
+    activeAt: runtime.now(),
+  });
+  const response = await request("/api/conversation/state", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      agentId: "agent-0",
+      conversation: "group:20000",
+      paused: true,
+    }),
+  });
+  assert.equal(response.status, 200);
+  assert.equal(group.controller.signal.aborted, true);
+  assert.equal(finished, true, "response waits for the stopping turn");
+  assert.equal(other.controller.signal.aborted, false);
+  assert.equal(runtime.capabilities.has(other.token), true);
+  assert.equal(runtime.operations.levels.has("agent-0|private:30000"), true);
+  assert.equal(store.bind("agent-0").state("group:20000").paused, true);
+  runtime.running.delete("agent-0|group:20000");
+});
