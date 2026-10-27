@@ -865,6 +865,15 @@ textarea:focus {
   border-color: var(--focus-line);
   box-shadow: var(--ring);
 }
+input.invalid,
+select.invalid,
+textarea.invalid {
+  border-color: var(--danger-line);
+  background: var(--danger-fill);
+}
+#edit-status.alert {
+  color: var(--danger);
+}
 input::placeholder,
 textarea::placeholder {
   color: var(--muted);

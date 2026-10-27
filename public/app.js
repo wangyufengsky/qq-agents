@@ -19,6 +19,7 @@ let token = sessionStorage.getItem("qq-unified-token") || "",
   status,
   tab = "overview",
   editing,
+  errorFilter = "",
   globalPausePending = false;
 const titles = {
   apps: ["浏览与分享", "按主体配置平台浏览，查看真实来源和分享决定。"],
@@ -34,6 +35,73 @@ const titles = {
   memory: ["经历与日记", "消息按实际发生记录；日记由 AI 自主书写。"],
   settings: ["运行设置", "隔离开发、全局参与边界与可迁移配置。"],
 };
+// Config path below "<agents|connections|backends>.<index>." → editor input
+// name. Paths not listed match an input of the same name (httpUrl, wsUrl,
+// accountId, name, model…); add a row when a form field stores its value
+// under a different config key. Unmatched paths are shown as-is.
+const fieldInputs = {
+  "allow.groups": "groups",
+  "allow.users": "users",
+  "wake.participation": "participation",
+  "wake.cooldownMs": "cooldownMs",
+  "network.autonomous": "autonomousNetwork",
+  "network.publicUrls": "publicUrls",
+  "github.enabled": "githubEnabled",
+  "github.auth": "githubAuth",
+  "github.tokenEnv": "githubTokenEnv",
+  "github.privateRepositories": "githubPrivateRepositories",
+  maxSendsPerTurn: "maxConsecutiveSends",
+  "recovery.autoReconnect": "autoReconnect",
+  "recovery.maxAttempts": "maxAttempts",
+};
+function fieldInput(path) {
+  const [type, index, ...rest] = path.split(".");
+  if (!$("#editor").open || !config?.[type] || editing?.type !== type)
+    return null;
+  const at = editing.id
+    ? config[type].findIndex((x) => x.id === editing.id)
+    : config[type].length;
+  if (String(at) !== index) return null;
+  for (let n = rest.length; n > 0; n--) {
+    const key = rest.slice(0, n).join(".");
+    const el = $("#edit-form").elements.namedItem(fieldInputs[key] || key);
+    if (el?.tagName) return el;
+  }
+  return null;
+}
+function fieldErrorHint(fields) {
+  const named = [],
+    unmatched = [];
+  let first;
+  for (const path of fields) {
+    const el = fieldInput(path);
+    if (!el) {
+      unmatched.push(path);
+      continue;
+    }
+    el.classList.add("invalid");
+    el.setAttribute("aria-invalid", "true");
+    first ||= el;
+    const label = [...(el.closest("label")?.childNodes || [])]
+      .filter((n) => n.nodeType === 3)
+      .map((n) => n.textContent)
+      .join("")
+      .trim();
+    if (!named.includes(label || path)) named.push(label || path);
+  }
+  if (first) {
+    first.scrollIntoView({ block: "center" });
+    first.focus({ preventScroll: true });
+  }
+  return (
+    [
+      named.length && `格式不正确：${named.join("、")}，已在表单中标出`,
+      unmatched.length && `配置校验未通过的字段：${unmatched.join("、")}`,
+    ]
+      .filter(Boolean)
+      .join("；") + "。"
+  );
+}
 async function api(url, data, method) {
   const r = await fetch(url, {
     method: method || (data ? "POST" : "GET"),
@@ -46,7 +114,11 @@ async function api(url, data, method) {
   const value = await r.json();
   if (!r.ok) {
     const hint =
+      (value.fields?.length && fieldErrorHint(value.fields)) ||
       {
+        UNAUTHORIZED:
+          "令牌不正确，请复制数据目录中 admin-token 文件的全部内容。",
+        INVALID_REQUEST: "提交内容格式不正确，请检查后重试。",
         CONFIG_SAVE_FAILED:
           "配置保存失败，当前配置和回合保持原状。请检查最近错误中的磁盘诊断。",
         CONFIG_CONFLICT: "配置已变化，请刷新页面后重新核对修改。",
@@ -68,12 +140,20 @@ async function api(url, data, method) {
       value.error ||
       "请求失败";
     throw Error(
-      hint + (value.requestId ? `（关联 ID：${value.requestId}）` : ""),
+      hint +
+        (value.requestId && value.error !== "UNAUTHORIZED"
+          ? `（关联 ID：${value.requestId}）`
+          : ""),
     );
   }
   return value;
 }
 function notice(value) {
+  // The toast sits below the modal editor, so repeat it in the editor footer.
+  if ($("#editor").open && !$("#edit-form footer").hidden) {
+    $("#edit-status").textContent = value;
+    $("#edit-status").classList.add("alert");
+  }
   $("#notice").textContent = value;
   $("#notice").hidden = false;
   clearTimeout(notice.timer);
@@ -152,6 +232,14 @@ document.querySelectorAll("nav button").forEach(
     }),
 );
 $("#close-editor").onclick = () => $("#editor").close();
+$("#edit-form").addEventListener("input", (e) => {
+  e.target.classList?.remove("invalid");
+  e.target.removeAttribute?.("aria-invalid");
+});
+$("#editor").addEventListener("close", () => {
+  $("#edit-status").textContent = $("#edit-status").dataset.default;
+  $("#edit-status").classList.remove("alert");
+});
 const tag = (text, cls = "") => `<span class="pill ${cls}">${esc(text)}</span>`;
 const icon = (name, cls = "") =>
   `<svg class="i ${cls}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
@@ -226,7 +314,7 @@ function render() {
     action(renderUnresolved);
     content.insertAdjacentHTML(
       "beforeend",
-      `<div class="section-title"><h2>最近错误</h2></div><div class="card"><label>筛选错误码、组件或关联 ID<input id="error-filter" placeholder="例如 CONFIG_SAVE_FAILED、http"></label><p class="hint">最多保留本次启动的 50 类错误，同类重复错误合并计数；完整留存取决于服务日志配置。</p><div id="recent-errors">${recentErrorsMarkup()}</div></div>`,
+      `<div class="section-title"><h2>最近错误</h2></div><div class="card"><label>筛选错误码、组件或关联 ID<input id="error-filter" value="${esc(errorFilter)}" placeholder="例如 CONFIG_SAVE_FAILED、http"></label><p class="hint">最多保留本次启动的 50 类错误，同类重复错误合并计数；完整留存取决于服务日志配置。</p><div id="recent-errors">${recentErrorsMarkup(errorFilter)}</div></div>`,
     );
     if (configMigrationWarnings.length)
       content.insertAdjacentHTML(
@@ -234,7 +322,8 @@ function render() {
         '<div class="card"><p>已兼容旧静默设置：角色起止相同的时段明确标记为整日（从开始时刻到次日同一时刻）；定时任务起止相同继续保持不静默。可在角色及作息设置中核对，后续保存会写入明确选项。</p></div>',
       );
     $("#error-filter").oninput = (e) => {
-      $("#recent-errors").innerHTML = recentErrorsMarkup(e.target.value);
+      errorFilter = e.target.value;
+      $("#recent-errors").innerHTML = recentErrorsMarkup(errorFilter);
     };
   } else if (["agents", "connections", "backends"].includes(tab)) {
     content.innerHTML = `<div class="section-title"><h2>${titles[tab][0]} · ${config[tab].length}</h2><button class="primary" data-do="add" data-id="${tab}">${icon("plus", "sm")}添加${{ agents: "智能体", connections: "实例", backends: "后端" }[tab]}</button></div><div class="grid">${config[tab].map(tab === "agents" ? agentCard : tab === "connections" ? connectionCard : backendCard).join("") || '<div class="card empty">添加第一个配置开始。</div>'}</div>`;
@@ -944,19 +1033,24 @@ $("#edit-form").onsubmit = (e) => {
       await api("/api/github/credential", githubCredential, "POST");
     $("#editor").close();
     await load();
-    notice(
-      result.warnings?.length
-        ? "配置已保存，但运行态更新未完成。请查看最近错误，处理故障后恢复服务。"
-        : result.restartRequired
-          ? "已保存。监听端口将在重启服务后生效。"
-          : result.reconnectRequired
-            ? "已保存。受影响的 QQ 连接需要手动重新接入。"
-            : result.affectedAgents?.length
-              ? "已保存并生效。受影响角色的旧回合已结束，其他角色继续运行。"
-              : "已保存并生效，现有 QQ 连接和回合保持不变。",
-    );
+    notice(savedNotice(result));
   });
 };
+function savedNotice(result) {
+  if (result.warnings?.length)
+    return "配置已保存，但运行态更新未完成。请查看最近错误，处理故障后恢复服务。";
+  if (result.restartRequired) return "已保存。监听端口将在重启服务后生效。";
+  const reconnect = (result.reconnectConnections || []).map(
+    (id) => config.connections.find((c) => c.id === id)?.label || id,
+  );
+  if (reconnect.length)
+    return `已保存。${reconnect.map((l) => `“${l}”`).join("、")} 的连接设置已变化，需要手动重新连接后才能继续收发。`;
+  if (result.reconnectRequired)
+    return "已保存。改动的 QQ 实例未启用，无需重新连接。";
+  return result.affectedAgents?.length
+    ? "已保存并生效。受影响角色的旧回合已结束，其他角色继续运行。"
+    : "已保存并生效，现有 QQ 连接和回合保持不变。";
+}
 function sceneMarkup(scene) {
   if (!scene) return "";
   const source = scene.source;
@@ -1152,6 +1246,15 @@ setInterval(() => {
   )
     action(async () => {
       status = await api("/api/status");
-      render();
+      // Re-rendering replaces #content; never discard what the user is typing.
+      const focused = document.activeElement;
+      if (
+        focused?.matches?.("input, textarea, select") &&
+        $("#content").contains(focused)
+      ) {
+        renderGlobalPauseControl();
+        if (tab === "overview" && $("#recent-errors"))
+          $("#recent-errors").innerHTML = recentErrorsMarkup(errorFilter);
+      } else render();
     });
 }, 5000);

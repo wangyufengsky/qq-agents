@@ -38,6 +38,7 @@ const components = new Set([
   "startup",
   "config",
 ]);
+const fieldSegment = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 
 export function classifyError(error) {
@@ -74,7 +75,29 @@ export function classifyError(error) {
   else if (code.startsWith("INVALID_")) status = 400;
   if (/(?:_DENIED|_NOT_ALLOWED|_PRIVATE_ONLY|_OPERATIONS_ONLY)$/.test(code))
     status = 403;
-  return { code, status, retryable: status === 503 || status === 429 };
+  const fields = code === "INVALID_REQUEST" ? validationFields(error) : [];
+  return {
+    code,
+    status,
+    retryable: status === 503 || status === 429,
+    ...(fields.length ? { fields } : {}),
+  };
+}
+
+// Field paths name where validation failed, never what was submitted: index
+// and identifier-shaped segments are kept, anything else is masked.
+function validationFields(error) {
+  const segment = (p) =>
+    Number.isSafeInteger(p) || (typeof p === "string" && fieldSegment.test(p))
+      ? String(p)
+      : "*";
+  const paths = error.issues.flatMap((issue) => {
+    const base = (issue.path || []).slice(0, 8).map(segment);
+    return issue.code === "unrecognized_keys" && Array.isArray(issue.keys)
+      ? issue.keys.slice(0, 4).map((key) => [...base, segment(key)].join("."))
+      : [base.join(".")];
+  });
+  return [...new Set(paths.filter(Boolean))].slice(0, 8);
 }
 
 function safeCause(error) {

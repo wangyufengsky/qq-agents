@@ -782,7 +782,12 @@ export function createServer({
         durationMs: Date.now() - startedAt,
       });
       send(
-        { error: failure.code, requestId, retryable: failure.retryable },
+        {
+          error: failure.code,
+          requestId,
+          retryable: failure.retryable,
+          ...(failure.fields ? { fields: failure.fields } : {}),
+        },
         failure.status,
       );
     }

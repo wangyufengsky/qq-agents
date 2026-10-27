@@ -83,7 +83,7 @@ try {
   );
   runtime.startTimers();
   console.log(
-    `QQ Agents: http://127.0.0.1:${port} | ${configStore.value.mode} | paused | admin token in data directory/admin-token`,
+    `QQ Agents: http://127.0.0.1:${port} | ${configStore.value.mode} | paused | admin token file: ${tokenFile}`,
   );
 } catch (e) {
   diagnostics.report(e, { component: "startup" });

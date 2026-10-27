@@ -344,6 +344,30 @@ test("config revision conflicts prevent stale edits; isolated listener cannot en
   });
   assert.equal(r.status, 400);
 });
+test("invalid config names the failing field paths without echoing values", async (t) => {
+  const { request, runtime } = await setup(t);
+  const value = structuredClone(runtime.config);
+  value.mode = "isolated";
+  value.agents[0].allow.groups = ["abc-leaked-value"];
+  value.agents[0]["not a key"] = "other-leaked-value";
+  const r = await request("/api/config", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      config: value,
+      revision: runtime.configStore.revision,
+    }),
+  });
+  assert.equal(r.status, 400);
+  const text = await r.text(),
+    body = JSON.parse(text);
+  assert.equal(body.error, "INVALID_REQUEST");
+  assert(body.fields.includes("agents.0.allow.groups.0"));
+  assert(body.fields.includes("agents.0.*"));
+  assert(body.fields.length <= 8);
+  assert.doesNotMatch(text, /leaked-value|not a key/);
+  assert.notEqual(runtime.config.agents[0].allow.groups[0], "abc-leaked-value");
+});
 test("agent tool endpoint binds identity from capability and rejects forged agentId", async (t) => {
   const { request, runtime, store } = await setup(t),
     ctx = context(runtime);
