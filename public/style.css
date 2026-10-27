@@ -1434,12 +1434,16 @@ details > form > button {
   gap: 6px;
   flex-wrap: wrap;
 }
+/* Activity rows follow the shared list row (.record): same rhythm and dividers. */
 .act-entry {
-  border-top: 1px solid var(--line);
-  padding: 14px 0;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line);
 }
 .act-entry:first-child {
-  border-top: 0;
+  padding-top: 4px;
+}
+.act-entry:last-of-type {
+  border-bottom: 0;
 }
 .act-entry .row {
   display: flex;
@@ -1449,6 +1453,8 @@ details > form > button {
 }
 .act-entry > p {
   margin: 6px 0 0;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
 }
 .act-entry.quiet strong,
 .act-entry.quiet > p {
@@ -1540,4 +1546,21 @@ body.in-role
 }
 .home-errors summary {
   cursor: pointer;
+}
+
+/* Collapsed less-used fields inside a form. */
+details.adv {
+  margin: 14px 0 4px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+details.adv > .form-grid {
+  margin-top: 10px;
+}
+form > .form-grid + .form-grid {
+  margin-top: 14px;
+}
+.home-role {
+  display: grid;
+  align-content: start;
 }

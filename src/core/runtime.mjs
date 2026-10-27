@@ -35,6 +35,12 @@ import { TaskScheduler } from "./scheduler.mjs";
 import { Operations } from "./operations.mjs";
 import { SlangLearner } from "./slang.mjs";
 
+// Adds or removes a feature's tools while keeping the existing order, so saving
+// an unchanged permission page does not count as a policy change.
+const toggleTools = (tools, names, enabled) =>
+  enabled
+    ? [...tools, ...names.filter((n) => !tools.includes(n))]
+    : tools.filter((n) => !names.includes(n));
 const digest = (x) =>
   createHash("sha256").update(JSON.stringify(x)).digest("hex");
 const disclosureGrant = z
@@ -400,13 +406,11 @@ export class Runtime {
       next = structuredClone(this.config),
       agent = next.agents.find((a) => a.id === this.agent(agentId).id);
     agent.apps = apps;
-    const names = Object.keys(appDefinitions);
-    agent.tools = [
-      ...new Set([
-        ...agent.tools.filter((n) => !names.includes(n)),
-        ...(apps.enabled ? names : []),
-      ]),
-    ];
+    agent.tools = toggleTools(
+      agent.tools,
+      Object.keys(appDefinitions),
+      apps.enabled,
+    );
     await this.changeConfig(next, revision);
     return { revision: this.configStore.revision, apps };
   }
@@ -415,12 +419,7 @@ export class Runtime {
       next = structuredClone(this.config),
       agent = next.agents.find((a) => a.id === this.agent(agentId).id);
     agent.files = files;
-    agent.tools = [
-      ...new Set([
-        ...agent.tools.filter((name) => !FILE_TOOL_NAMES.includes(name)),
-        ...(files.enabled ? FILE_TOOL_NAMES : []),
-      ]),
-    ];
+    agent.tools = toggleTools(agent.tools, FILE_TOOL_NAMES, files.enabled);
     await this.changeConfig(next, revision);
     return { revision: this.configStore.revision, files };
   }

@@ -930,6 +930,23 @@ const input = (key, label, value = "", extra = "") =>
   `<label>${label}<input name="${key}" value="${esc(value)}" ${extra}></label>`;
 const check = (key, label, value) =>
   `<label class="check"><input type="checkbox" name="${key}" ${value ? "checked" : ""}>${label}</label>`;
+// Less-used fields of a form, collapsed by default. Inputs keep their names,
+// so FormData and saving are unchanged.
+const advanced = (title, html) =>
+  `<details class="adv"><summary>${title}</summary><div class="form-grid">${html}</div></details>`;
+// A required field inside a collapsed section would block submit silently.
+document.addEventListener?.(
+  "invalid",
+  (e) => {
+    for (
+      let d = e.target.closest?.("details");
+      d;
+      d = d.parentElement?.closest("details")
+    )
+      d.open = true;
+  },
+  true,
+);
 const area = (key, label, value) =>
   `<label class="wide">${label}<textarea name="${key}">${esc(value)}</textarea></label>`;
 const select = (key, label, value, options) =>
