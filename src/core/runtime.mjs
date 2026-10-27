@@ -445,6 +445,22 @@ export class Runtime {
     await this.changeConfig(next, this.configStore.revision);
     return { paused };
   }
+  // Going isolated is a safety control like pause: it waits out an in-flight
+  // edit and applies to the latest revision. Going live must match the
+  // revision the administrator reviewed.
+  async setMode(mode, revision) {
+    if (this.closed) throw Error("RUNTIME_CLOSING");
+    if (mode === "isolated") {
+      while (this.configChanging) await this.configSettled;
+      revision = this.configStore.revision;
+    }
+    if (this.config.mode === mode) return { mode };
+    await this.changeConfig(
+      { ...structuredClone(this.config), mode },
+      revision,
+    );
+    return { mode };
+  }
   ingest(...args) {
     return this.trackWork(this.ingestEvent(...args));
   }

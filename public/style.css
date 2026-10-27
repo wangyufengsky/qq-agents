@@ -1347,3 +1347,85 @@ form > button,
 details > form > button {
   margin-top: 12px;
 }
+
+/* ---------- 上线清单 ---------- */
+.onboarding h2 {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.onboarding > .hint {
+  margin: 10px 0 0;
+}
+.onboarding-agent {
+  min-width: 200px;
+}
+.onboarding.ready .row {
+  justify-content: flex-start;
+}
+.onboarding-summary {
+  flex: 1;
+  color: var(--ink-2);
+}
+.checklist {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.checklist .step {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--fill-1);
+}
+.checklist .step-mark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-top: 1px;
+  border-radius: 50%;
+  border: 1px solid var(--line-3);
+  font-size: 12px;
+}
+.checklist .step.done .step-mark {
+  background: var(--ok-fill);
+  border-color: var(--ok-line);
+  color: var(--ok);
+}
+.checklist .step.blocking .step-mark {
+  border-color: var(--warn-line);
+  background: var(--warn-fill);
+}
+.checklist .step.done strong {
+  color: var(--sub);
+}
+.checklist .step-body {
+  flex: 1;
+  min-width: 0;
+}
+.checklist .step-body strong {
+  margin-right: 8px;
+}
+.checklist .step-body .hint {
+  margin: 4px 0 0;
+}
+.checklist .step-fix {
+  flex: none;
+}
+@media (max-width: 720px) {
+  .checklist .step {
+    flex-wrap: wrap;
+  }
+  .checklist .step-fix {
+    width: 100%;
+    padding-left: 34px;
+  }
+}

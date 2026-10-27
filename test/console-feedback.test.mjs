@@ -93,10 +93,12 @@ async function setup(t) {
         headers: { ...options?.headers, "x-admin-token": "test-admin" },
       }),
   });
-  vm.runInContext(
-    fs.readFileSync(new URL("../public/app.js", import.meta.url), "utf8"),
-    sandbox,
-  );
+  // Same load order as public/index.html: the overview renders the checklist.
+  for (const file of ["onboarding-ui.js", "app.js"])
+    vm.runInContext(
+      fs.readFileSync(new URL("../public/" + file, import.meta.url), "utf8"),
+      sandbox,
+    );
   await vm.runInContext("load()", sandbox);
   vm.runInContext(
     "var submitted; action = (fn) => (submitted = fn());",

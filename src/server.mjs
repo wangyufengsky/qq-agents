@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { mcpResult, TOOL_NAMES } from "./tools/index.mjs";
+import { readiness } from "./core/readiness.mjs";
 const publicDir = fileURLToPath(new URL("../public/", import.meta.url));
 const fileRecoveryRequest = z
   .object({
@@ -116,6 +117,7 @@ export function createServer({
           "/files-ui.js",
           "/apps-ui.js",
           "/mind-ui.js",
+          "/onboarding-ui.js",
           "/style.css",
         ].includes(url.pathname)
       ) {
@@ -341,8 +343,14 @@ export function createServer({
             .reconcileDelivery(data.requestId, data.resolution),
         );
       }
-      if (req.method === "GET" && url.pathname === "/api/status")
-        return send({ ...runtime.status(), allowLive });
+      if (req.method === "GET" && url.pathname === "/api/status") {
+        const status = runtime.status();
+        return send({
+          ...status,
+          allowLive,
+          readiness: readiness(runtime.config, status, { allowLive }),
+        });
+      }
       if (req.method === "PUT" && url.pathname === "/api/permissions/apps") {
         const data = await readBody();
         return send(
@@ -595,6 +603,19 @@ export function createServer({
         return send({
           ...result,
           ok: true,
+          revision: runtime.configStore.revision,
+        });
+      }
+      if (req.method === "POST" && url.pathname === "/api/mode") {
+        const data = await readBody(512);
+        if (!["isolated", "live"].includes(data.mode))
+          throw Error("INVALID_MODE");
+        if (data.mode === "live" && !allowLive)
+          throw Error("RESTART_WITH_LIVE_FLAG_REQUIRED");
+        await runtime.setMode(data.mode, data.revision);
+        return send({
+          ok: true,
+          mode: runtime.config.mode,
           revision: runtime.configStore.revision,
         });
       }
