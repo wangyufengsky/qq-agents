@@ -51,6 +51,18 @@ test("OneBot endpoints stay on loopback unless private networking is enabled", (
     assert.doesNotThrow(() => validateConfig(withUrls({ httpUrl }, true)));
 });
 
+test("unparsable OneBot URLs are validation errors with or without private networking", () => {
+  for (const allowPrivateNetwork of [undefined, false, true])
+    for (const key of ["httpUrl", "wsUrl", "webUrl"])
+      for (const value of ["not a url", "::::", ""])
+        assert.throws(
+          () => validateConfig(withUrls({ [key]: value }, allowPrivateNetwork)),
+          (e) =>
+            e.name === "ZodError" && e.issues.some((i) => i.path.includes(key)),
+          `${key}=${JSON.stringify(value)} allowPrivateNetwork=${allowPrivateNetwork}`,
+        );
+});
+
 test("private networking never admits public, link-local or credentialed endpoints", () => {
   for (const httpUrl of [
     "http://example.org:3000",

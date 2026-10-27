@@ -73,7 +73,8 @@ const onebotUrl = z.string().refine((s) => {
 }, "http:// or ws:// URL without credentials, query or hash required");
 function onebotHosts(c, ctx) {
   for (const key of ["httpUrl", "wsUrl", "webUrl"]) {
-    if (c[key] === undefined) continue;
+    // An unparsable URL was already reported by the field-level check.
+    if (c[key] === undefined || !URL.canParse(c[key])) continue;
     const host = new URL(c[key]).hostname;
     if (loopbackHosts.includes(host)) continue;
     if (c.allowPrivateNetwork === true && privateNetworkHost(host)) continue;
