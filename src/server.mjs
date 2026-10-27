@@ -1,3 +1,4 @@
+import { readConversationState } from "./memory/conversation-state.mjs";
 import { scopedCatalog } from "./tools/catalog.mjs";
 import { randomUUID } from "node:crypto";
 import { saveGithubCredential } from "./github/credentials.mjs";
@@ -247,7 +248,7 @@ export function createServer({
             .all(a.id)
             .map((r) => ({
               conversation: r.conversation,
-              ...JSON.parse(r.value),
+              ...readConversationState(JSON.parse(r.value)),
             })),
           retired: m.identity.list("session_history").slice(0, 30),
         });
@@ -463,7 +464,7 @@ export function createServer({
             .all(id)
             .map((r) => ({
               conversation: r.conversation,
-              ...JSON.parse(r.value),
+              ...readConversationState(JSON.parse(r.value)),
             })),
         );
       }

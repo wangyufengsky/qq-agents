@@ -1,4 +1,10 @@
 import fs from "node:fs";
+import { ConversationDue } from "./conversation-due.mjs";
+import {
+  isConversation,
+  readConversationState,
+  writeConversationState,
+} from "./conversation-state.mjs";
 import { IdentityMemory, migrateIdentity } from "./identity.mjs";
 import {
   provenance,
@@ -94,6 +100,8 @@ export class MemoryStore {
       migrateIdentity(this.db);
       migrateTimeline(this.db, version);
       migrateMessageIds(this.db, version);
+      this.due = new ConversationDue(this.db);
+      this.due.initialize();
     } catch (error) {
       this.db.close();
       throw error;
@@ -712,12 +720,19 @@ class AgentMemory {
     const row = this.db
       .prepare("SELECT value FROM runtime WHERE agent_id=? AND conversation=?")
       .get(this.agentId, conversation);
-    return row ? parse(row.value) : { readThroughSeq: 0, paused: false };
+    const value = row ? parse(row.value) : { readThroughSeq: 0, paused: false };
+    return isConversation(conversation) ? readConversationState(value) : value;
   }
   setState(conversation, value) {
     this.db
       .prepare("INSERT OR REPLACE INTO runtime VALUES(?,?,?)")
-      .run(this.agentId, conversation, json(value));
+      .run(
+        this.agentId,
+        conversation,
+        json(
+          isConversation(conversation) ? writeConversationState(value) : value,
+        ),
+      );
   }
   export() {
     const tables = {};

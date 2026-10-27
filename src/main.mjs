@@ -8,6 +8,7 @@ import { loadGithubCredentials } from "./github/credentials.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
+import { defaultConfig } from "./core/default-config.mjs";
 import { ConfigStore } from "./core/config.mjs";
 import { MemoryStore } from "./memory/store.mjs";
 import { MediaStore } from "./tools/media.mjs";
@@ -32,15 +33,9 @@ try {
   lifecycle.timeoutMs = timeout;
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
   lifecycle.lock = acquireProcessLock(root);
-  const example = JSON.parse(
-    fs.readFileSync(
-      new URL("../examples/config.example.json", import.meta.url),
-      "utf8",
-    ),
-  );
   const configStore = new ConfigStore(
     path.resolve(option("--config") || path.join(root, "config.json")),
-    example,
+    defaultConfig(),
   );
   const allowLive = args.includes("--live");
   if (!allowLive && configStore.value.mode === "live")

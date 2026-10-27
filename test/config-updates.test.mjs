@@ -116,7 +116,7 @@ test("a successful disk commit is reported as saved even if backend cleanup fail
   f.finish();
   await f.job;
   assert.equal(result.saved, true);
-  assert.equal(result.reconnectRequired, true);
+  assert.equal(result.reconnectRequired, false);
   assert.deepEqual(result.warnings, ["CONFIG_RECONFIGURE_FAILED"]);
   assert.equal(
     f.runtime.learner.backends.size,
@@ -167,6 +167,7 @@ test("a committed configuration blocks new work until old resources finish closi
   });
   const next = structuredClone(f.runtime.config);
   next.agents[0].name = "Updated";
+  next.connections[0].httpUrl = "http://127.0.0.1:10";
   const save = f.runtime.changeConfig(next, f.configStore.revision);
   await started.promise;
   try {
@@ -265,20 +266,21 @@ test("participation fast path rejects stale/invalid saves and never bypasses oth
     status: () => ({ managed: true }),
     close: async () => {},
   };
+  const endpointEdit = structuredClone(next);
+  endpointEdit.connections[0].httpUrl = "http://127.0.0.1:10";
   await assert.rejects(
-    f.runtime.changeConfig(next, f.configStore.revision),
+    f.runtime.changeConfig(endpointEdit, f.configStore.revision),
     /STOP_MANAGED_QQ_PROCESSES/,
   );
-  f.runtime.lifecycle.owned.clear();
   const request = await httpConfig(t, f);
   const response = await request("/api/config", {
     method: "PUT",
     body: JSON.stringify({ config: next, revision: f.configStore.revision }),
   });
   assert.equal(response.status, 200);
-  assert.equal((await response.json()).reconnectRequired, true);
+  assert.equal((await response.json()).reconnectRequired, false);
   await f.job;
-  assert.equal(f.runtime.transports.size, 0);
+  assert.equal(f.runtime.transports.size, 2);
   assert.equal(f.ctx.controller.signal.aborted, true);
   assert.throws(() => f.runtime.capability(f.ctx.token), /INVALID_CAPABILITY/);
   assert.equal(f.runtime.status().agents[0].error, null);
@@ -445,4 +447,157 @@ test("real console role form changes only participation and shows the server's r
     );
     assert.equal(f.runtime.agent(a.id).wake.participation, 0.4);
   }
+});
+
+test("editing one agent revokes its capability but preserves unrelated work and both QQ transports", async (t) => {
+  const f = pendingTurn(t);
+  const other = f.runtime.makeContext("agent-1", "group:20000");
+  const transports = [...f.runtime.transports];
+  const otherBackend = f.runtime.backendConnections.adapter(
+    f.runtime.agent("agent-1"),
+  );
+  const pending = { reason: "message" };
+  f.runtime.pending.set("agent-1|group:20000", pending);
+  const next = structuredClone(f.runtime.config);
+  next.agents[0].allow.groups = [];
+  const result = await f.runtime.changeConfig(next, f.configStore.revision);
+  await f.job;
+  assert.equal(result.reconnectRequired, false);
+  assert.throws(() => f.runtime.capability(f.ctx.token), /INVALID_CAPABILITY/);
+  assert.equal(f.runtime.capability(other.token), other);
+  assert.equal(f.runtime.backends.get("agent-1"), otherBackend);
+  assert.equal(f.runtime.pending.get("agent-1|group:20000"), pending);
+  assert.deepEqual([...f.runtime.transports], transports);
+  assert(transports.every(([, transport]) => transport.connected));
+});
+
+test("unaffected agents can run and send while another agent's resources are still closing", async (t) => {
+  const f = fixture(t, { cfg: config(2) });
+  const closing = Promise.withResolvers(),
+    started = Promise.withResolvers();
+  f.runtime.backends.set("agent-0", {
+    close: async () => {
+      started.resolve();
+      await closing.promise;
+    },
+  });
+  const next = structuredClone(f.runtime.config);
+  next.agents[0].persona = "Changed identity";
+  const saving = f.runtime.changeConfig(next, f.configStore.revision);
+  await started.promise;
+  try {
+    assert.throws(
+      () => f.runtime.makeContext("agent-0", "group:20000"),
+      /CONFIG_CONFLICT/,
+    );
+    await f.runtime.wake("agent-1", "group:20000");
+    const ctx = f.runtime.makeContext("agent-1", "group:20000");
+    const result = await f.runtime.callTool(ctx, "qq_send", {
+      requestId: "unaffected",
+      text: "Synthetic output",
+    });
+    assert.equal(result.status, "sent");
+    assert.equal(f.runtime.transports.get("qq-1").sent.length, 1);
+  } finally {
+    closing.resolve();
+    await saving;
+  }
+});
+
+for (const change of ["connection", "backend", "rebind", "remove"])
+  test(`${change} changes invalidate only dependent agents and resources`, async (t) => {
+    const cfg = config(3);
+    cfg.backends.push({ ...cfg.backends[0], id: "other-backend" });
+    cfg.agents[2].backendId = "other-backend";
+    const f = fixture(t, { cfg });
+    const contexts = cfg.agents.map((a) =>
+      f.runtime.makeContext(a.id, "group:20000"),
+    );
+    const backends = cfg.agents.map((a) =>
+      f.runtime.backendConnections.adapter(a),
+    );
+    const transports = cfg.connections.map((c) =>
+      f.runtime.transports.get(c.id),
+    );
+    const next = structuredClone(f.runtime.config);
+    if (change === "connection")
+      next.connections[0].httpUrl = "http://127.0.0.1:10";
+    if (change === "backend") next.backends[0].model = "synthetic-model";
+    if (change === "rebind") next.agents[0].backendId = "other-backend";
+    if (change === "remove") next.agents.splice(0, 1);
+    const result = await f.runtime.changeConfig(next, f.configStore.revision);
+    assert.equal(result.reconnectRequired, change === "connection");
+    assert.deepEqual(
+      result.affectedAgents.sort(),
+      change === "backend" ? ["agent-0", "agent-1"] : ["agent-0"],
+    );
+    for (let i = 0; i < 3; i++) {
+      const affected = i === 0 || (change === "backend" && i === 1);
+      assert.equal(contexts[i].controller.signal.aborted, affected);
+      assert.equal(
+        f.runtime.backends.get("agent-" + i),
+        affected ? undefined : backends[i],
+      );
+      assert.equal(
+        transports[i].connected,
+        !(change === "connection" && i === 0),
+      );
+      if (!affected)
+        assert.equal(f.runtime.capability(contexts[i].token), contexts[i]);
+    }
+  });
+
+test("an old QQ transport cannot inject events or faults after replacement", async (t) => {
+  const f = fixture(t, { cfg: config(1) });
+  await f.runtime.stopConnection("qq-0");
+  await f.runtime.startConnection("qq-0");
+  const old = f.runtime.transports.get("qq-0");
+  const next = structuredClone(f.runtime.config);
+  next.connections[0].httpUrl = "http://127.0.0.1:10";
+  await f.runtime.changeConfig(next, f.configStore.revision);
+  await f.runtime.startConnection("qq-0");
+  old.emit("event", { post_type: "malformed-late-event" });
+  old.emit("fault", "SYNTHETIC_STALE_FAULT");
+  assert.equal(f.runtime.jobs.size, 0);
+  assert.equal(f.runtime.faults.has("qq-0"), false);
+});
+
+test("labels and port changes preserve live contexts and report restart requirements", async (t) => {
+  const f = fixture(t);
+  const ctx = f.runtime.makeContext("agent-0", "group:20000");
+  const next = structuredClone(f.runtime.config);
+  next.connections[0].label = "Renamed";
+  next.backends[0].label = "Renamed backend";
+  next.port++;
+  const result = await f.runtime.changeConfig(next, f.configStore.revision);
+  assert.deepEqual(result.affectedAgents, []);
+  assert.equal(result.restartRequired, true);
+  assert.equal(result.reconnectRequired, false);
+  assert.equal(f.runtime.capability(ctx.token), ctx);
+});
+
+test("queued work becomes eligible when a multi-agent config commit finishes", async (t) => {
+  const f = fixture(t, { cfg: config(2) });
+  const now = 1800000000000;
+  f.runtime.clock = () => new Date(now);
+  const closing = Promise.withResolvers(),
+    started = Promise.withResolvers();
+  f.runtime.backends.set("agent-1", {
+    close: async () => {
+      started.resolve();
+      await closing.promise;
+    },
+  });
+  f.store
+    .bind("agent-0")
+    .setState("group:20000", { wakeConfig: { sleepUntil: now - 1 } });
+  const next = structuredClone(f.runtime.config);
+  for (const agent of next.agents) agent.name += " changed";
+  const saving = f.runtime.changeConfig(next, f.configStore.revision);
+  await started.promise;
+  assert.equal(f.runtime.conversations.tick().examined, 1);
+  assert.equal(f.runtime.conversations.tick().examined, 0);
+  closing.resolve();
+  await saving;
+  assert.equal(f.runtime.conversations.tick().examined, 1);
 });

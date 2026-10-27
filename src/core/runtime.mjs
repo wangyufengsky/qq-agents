@@ -1,20 +1,14 @@
+import { isDeepStrictEqual } from "node:util";
+import { DeliveryService } from "./delivery.mjs";
+import { TurnRunner } from "./turn-runner.mjs";
+import { runtimeStatus } from "./runtime-status.mjs";
 import { observeInput } from "./input-progress.mjs";
 import { AppCursors } from "../apps/cursors.mjs";
 import { Diagnostics } from "./diagnostics.mjs";
-import { runWithRecovery, failureSummary } from "../backends/turn-failure.mjs";
 import { GeneratedImages } from "./generated-images.mjs";
-import {
-  BackendConnections,
-  isConnectionFailure,
-} from "./backend-connections.mjs";
-import {
-  authorizeExternal,
-  grantExternal,
-  sourceCounts,
-} from "./outbound-policy.mjs";
+import { BackendConnections } from "./backend-connections.mjs";
+import { authorizeExternal, grantExternal } from "./outbound-policy.mjs";
 import { toolAvailable } from "../tools/catalog.mjs";
-import { beforeShareDelivery } from "../apps/sharing.mjs";
-import { appService } from "../apps/tools.mjs";
 import { appsPolicySchema } from "../apps/policy.mjs";
 import { appDefinitions } from "../apps/tools.mjs";
 import { ContextLifecycle, SUBJECT } from "./lifecycle.mjs";
@@ -29,23 +23,15 @@ import { FILE_TOOL_NAMES } from "../tools/file-tools.mjs";
 import { filesSchema } from "./policy.mjs";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
-import { isDeepStrictEqual } from "node:util";
-import { allowed, inSilence, validateConfig } from "./config.mjs";
+import { commitConfig } from "./config-updates.mjs";
+import { allowed, inSilence } from "./config.mjs";
 import { normalizeEvent, OneBot } from "../transport/onebot.mjs";
 import { BanterCoordinator } from "../../vendor/local-bridge/banter.mjs";
-import { toolSpecs, dispatchTool } from "../tools/index.mjs";
-import { taintMedia } from "../tools/legacy.mjs";
-import { mdToPlain } from "../../vendor/dsh-qq/md-to-plain.js";
+import { dispatchTool } from "../tools/index.mjs";
 import { ConversationEngine } from "./conversations.mjs";
 import { TaskScheduler } from "./scheduler.mjs";
 import { Operations } from "./operations.mjs";
 import { SlangLearner } from "./slang.mjs";
-import { reserveSendBudget } from "./send-budget.mjs";
-import {
-  saveSession,
-  recordBackendTurn,
-  retireSession,
-} from "./session-records.mjs";
 
 const digest = (x) =>
   createHash("sha256").update(JSON.stringify(x)).digest("hex");
@@ -92,8 +78,11 @@ export class Runtime {
     this.work = new Set();
     this.retiredResources = new Set();
     this.closed = false;
-    this.sendChains = new Map();
-    this.budgetReconciled = new Set();
+    this.reconfiguringAgents = new Set();
+    this.reconfiguringConnections = new Set();
+    this.delivery = new DeliveryService(this);
+    this.sendChains = this.delivery.chains;
+    this.turns = new TurnRunner(this);
     this.conversations = new ConversationEngine(this);
     this.scheduler = new TaskScheduler(this);
     this.operations = new Operations(this);
@@ -148,7 +137,7 @@ export class Runtime {
     this.ticker.unref?.();
   }
   tick() {
-    if (this.closed || this.configChanging) return;
+    if (this.closed) return;
     if (!this.nextCursorCleanupAt || this.now() >= this.nextCursorCleanupAt) {
       new AppCursors(this.memory).cleanup(this.now());
       this.nextCursorCleanupAt = this.now() + 60000;
@@ -163,7 +152,7 @@ export class Runtime {
   }
   makeContext(agentId, conversation) {
     if (this.closed) throw Error("RUNTIME_CLOSING");
-    if (this.configChanging) throw Error("CONFIG_CONFLICT");
+    if (this.reconfiguringAgents.has(agentId)) throw Error("CONFIG_CONFLICT");
     const a = this.agent(agentId),
       mem = this.memory.bind(agentId);
     const ctx = {
@@ -254,7 +243,7 @@ export class Runtime {
     );
   }
   writable(a, conversation, ctx = null) {
-    if (this.closed || this.configChanging) return false;
+    if (this.closed || this.reconfiguringAgents.has(a.id)) return false;
     if (this.backendConnections.blocked.has(a.id)) return false;
     if (conversation === SUBJECT) return this.subject.internalAllowed(a);
     const state = this.memory.bind(a.id).state(conversation);
@@ -292,7 +281,7 @@ export class Runtime {
   }
   async connectConnection(id) {
     if (this.closed) throw Error("RUNTIME_CLOSING");
-    if (this.configChanging) throw Error("CONFIG_CONFLICT");
+    if (this.reconfiguringConnections.has(id)) throw Error("CONFIG_CONFLICT");
     if (this.config.mode !== "live") throw Error("ISOLATED_MODE");
     const config = this.connection(id);
     if (!config.enabled) throw Error("CONNECTION_DISABLED");
@@ -308,6 +297,12 @@ export class Runtime {
     this.transports.set(id, t);
     this.connecting.add(id);
     t.on("event", (raw) => {
+      if (
+        this.transports.get(id) !== t ||
+        this.closed ||
+        this.reconfiguringConnections.has(id)
+      )
+        return;
       const job = this.ingest(id, raw).catch((cause) => {
         this.faults.set(id, "EVENT_PROCESSING_FAILED");
         if (!this.closed)
@@ -318,12 +313,17 @@ export class Runtime {
       this.jobs.add(job);
       job.finally(() => this.jobs.delete(job));
     });
-    t.on("fault", (code) => this.faults.set(id, code));
+    t.on("fault", (code) => {
+      if (this.transports.get(id) === t && !this.closed)
+        this.faults.set(id, code);
+    });
     try {
       await t.connect();
       if (this.closed || this.transports.get(id) !== t)
         throw Error("CONNECTION_CANCELLED");
       this.faults.delete(id);
+      for (const a of this.config.agents.filter((a) => a.connectionId === id))
+        this.memory.due.rebuild(a.id);
     } catch (e) {
       t.close();
       if (this.transports.get(id) === t) this.transports.delete(id);
@@ -397,108 +397,8 @@ export class Runtime {
   changeConfig(...args) {
     return this.trackWork(this.commitConfig(...args));
   }
-  async commitConfig(next, revision) {
-    if (this.closed) throw Error("RUNTIME_CLOSING");
-    if (this.configChanging) throw Error("CONFIG_CONFLICT");
-    next = validateConfig(next);
-    if (revision !== this.configStore.revision) throw Error("CONFIG_CONFLICT");
-    // These scheduling values only affect future opportunities. Permission,
-    // identity and backend edits still require full capability invalidation.
-    const withNextRates = structuredClone(this.config);
-    const intervals = [];
-    for (const a of withNextRates.agents) {
-      const candidate = next.agents.find((item) => item.id === a.id);
-      if (!candidate) continue;
-      a.wake.participation = candidate.wake.participation;
-      if (a.subject.intervalMs !== candidate.subject.intervalMs)
-        intervals.push(a.id);
-      a.subject.intervalMs = candidate.subject.intervalMs;
-      a.subject.maxChecksPerDay = candidate.subject.maxChecksPerDay;
-    }
-    if (isDeepStrictEqual(withNextRates, next)) {
-      this.configStore.save(next, revision);
-      let failed = false;
-      for (const id of intervals) {
-        try {
-          const m = this.memory.bind(id),
-            s = m.state(SUBJECT);
-          m.setState(SUBJECT, {
-            ...s,
-            nextCheckAt:
-              (s.lastOpportunityAt || this.now()) +
-              this.agent(id).subject.intervalMs,
-          });
-        } catch (cause) {
-          failed = true;
-          this.diagnostics.report(
-            Error("CONFIG_RECONFIGURE_FAILED", { cause }),
-            { component: "config", agentId: id },
-          );
-        }
-      }
-      return {
-        saved: true,
-        reconnectRequired: false,
-        ...(failed ? { warnings: ["CONFIG_RECONFIGURE_FAILED"] } : {}),
-      };
-    }
-    if (this.backendConnections.operations.size)
-      throw Error("BACKEND_OPERATION_IN_PROGRESS");
-    if (this.lifecycle?.owned.size)
-      throw Error("STOP_MANAGED_QQ_PROCESSES_BEFORE_CONFIG_EDIT");
-    // A failed disk commit must not cancel the still-current configuration.
-    this.configStore.save(next, revision);
-    // No await between commit and invalidation: late tool calls cannot send.
-    for (const ctx of this.capabilities.values()) ctx.controller.abort();
-    for (const ctx of this.running.values()) ctx.controller.abort();
-    this.capabilities.clear();
-    this.pending.clear();
-    this.configChanging = true;
-    let failed = false;
-    const apply = async (fn, resource = false) => {
-      try {
-        await fn();
-      } catch (cause) {
-        failed = true;
-        if (resource) this.retiredResources.add(fn);
-        this.diagnostics.report(Error("CONFIG_RECONFIGURE_FAILED", { cause }), {
-          component: "config",
-        });
-      }
-    };
-    try {
-      for (const a of this.config.agents)
-        await apply(() =>
-          this.memory.bind(a.id).identity.initialize(a, this.now()),
-        );
-      await Promise.all(
-        [...this.backends.values()].map((b) => apply(() => b.close?.(), true)),
-      );
-      this.backends.clear();
-      this.backendConnections.states.clear();
-      await apply(() => this.learner.close());
-      // Failed old adapters remain owned for a shutdown retry, but cannot be
-      // reused by the learner under the newly committed configuration.
-      for (const b of this.learner.backends.values())
-        this.retiredResources.add(() => b.close?.());
-      this.learner.backends.clear();
-      this.operations.levels.clear();
-      this.operations.pending.clear();
-      for (const t of this.transports.values())
-        await apply(() => t.close(), true);
-      this.transports.clear();
-      this.banter = new BanterCoordinator({
-        botIds: this.config.connections.map((c) => c.accountId),
-        ...this.config.peerLimit,
-      });
-      return {
-        saved: true,
-        reconnectRequired: true,
-        ...(failed ? { warnings: ["CONFIG_RECONFIGURE_FAILED"] } : {}),
-      };
-    } finally {
-      this.configChanging = false;
-    }
+  commitConfig(next, revision) {
+    return commitConfig(this, next, revision);
   }
 
   async pause(agentId, paused = true) {
@@ -511,6 +411,8 @@ export class Runtime {
       a.paused = paused;
     }
     this.configStore.save(next, this.configStore.revision);
+    if (!paused)
+      this.memory.due.rebuild(agentId === "all" ? undefined : agentId);
     if (paused) {
       if (agentId === "all")
         await Promise.allSettled(
@@ -696,216 +598,11 @@ export class Runtime {
   wake(...args) {
     return this.trackWork(this.runTurn(...args));
   }
-  async runTurn(agentId, conversation, { reasons = [] } = {}) {
-    if (this.closed) throw Error("RUNTIME_CLOSING");
-    const a = this.agent(agentId);
-    if (!this.writable(a, conversation)) throw Error("AGENT_PAUSED");
-    if (
-      conversation !== SUBJECT &&
-      !this.transports.get(a.connectionId)?.connected
-    )
-      throw Error("QQ_NOT_CONNECTED");
-    const runKey = agentId + "|" + conversation;
-    if (this.running.has(runKey)) return;
-    const mem = this.memory.bind(agentId);
-    const ctx = this.makeContext(agentId, conversation),
-      { token, controller } = ctx;
-    let resolveDone;
-    ctx.done = new Promise((resolve) => {
-      resolveDone = resolve;
-    });
-    this.conversations.begin(ctx);
-    this.subject.begin(ctx, reasons);
-    ctx.scheduleRunId = reasons
-      .map((r) => r.taskRunId)
-      .find(
-        (id) =>
-          id &&
-          this.scheduler
-            .state(agentId)
-            .history.some(
-              (run) =>
-                run.id === id &&
-                run.target === conversation &&
-                run.status === "queued",
-            ),
-      );
-    ctx.allowedTools = this.toolsFor(a, conversation);
-    this.running.set(runKey, ctx);
-    const state = mem.state(conversation);
-    state.lastWakeAt = this.now();
-    state.pendingWake = false;
-    mem.setState(conversation, state);
-    const timer = setTimeout(() => {
-      if (controller.signal.aborted) return;
-      this.faults.set(agentId, "BACKEND_TURN_TIMEOUT");
-      controller.abort();
-    }, a.behavior.turnTimeoutMs);
-    let outcome = "completed-no-send",
-      backend;
-    try {
-      backend = this.backendConnections.adapter(a);
-      const tools = toolSpecs(ctx.allowedTools);
-      const prepared = this.contexts.prepare(ctx, backend, reasons, tools);
-      if (ctx.initialSession)
-        ctx.estimatedAdded += JSON.stringify(tools).length;
-      await this.runBackend(ctx, backend, {
-        agent: a,
-        conversation,
-        prompt: prepared.prompt,
-        instructions: prepared.instructions,
-        onUsage: (usage) => !this.stopped && this.contexts.usage(ctx, usage),
-        signal: controller.signal,
-        tools,
-        callTool: (name, args) => this.callTool(ctx, name, args),
-        session: prepared.session,
-        saveSession: (session) =>
-          !this.stopped &&
-          saveSession(mem, conversation, session, {
-            turnId: ctx.turnId,
-            backendId: a.backendId,
-            at: this.now(),
-            inactive:
-              !this.capabilities.has(token) ||
-              controller.signal.aborted ||
-              this.closed,
-            reason: controller.signal.aborted ? "cancelled" : "backend-failure",
-          }),
-        onBackendTurn: (reference) =>
-          !this.stopped && recordBackendTurn(mem, ctx.turnId, reference),
-        onImageSession: (id) =>
-          !this.stopped && this.generatedImages.begin(ctx, id),
-        onGeneratedImage: (id, item) =>
-          !this.stopped && this.generatedImages.capture(ctx, backend, id, item),
-        onImageError: () => {
-          if (!controller.signal.aborted) {
-            ctx.imageRegistrationFailed = true;
-            this.faults.set(agentId, "GENERATED_IMAGE_REGISTRATION_FAILED");
-          }
-        },
-      });
-      outcome = controller.signal.aborted
-        ? "cancelled"
-        : ctx.confirmedSends
-          ? "sent"
-          : "completed-no-send";
-      if (!controller.signal.aborted && !ctx.imageRegistrationFailed)
-        this.faults.delete(agentId);
-    } catch (e) {
-      outcome = controller.signal.aborted ? "cancelled" : "failed";
-      if (!controller.signal.aborted)
-        this.diagnostics.report(Error("BACKEND_TURN_FAILED", { cause: e }), {
-          component: "runtime",
-          agentId,
-          conversation,
-        });
-      const failure = failureSummary(e);
-      const classifiedFault =
-        failure && failure.code !== "TURN_FAILED"
-          ? (
-              failure.backend +
-              "_" +
-              failure.code.replace(/([a-z])([A-Z])/g, "$1_$2")
-            ).toUpperCase()
-          : null;
-      if (!controller.signal.aborted && isConnectionFailure(e))
-        this.backendConnections.failed(a.backendId, e);
-      // Administrative cancellation is an expected lifecycle transition. Keep
-      // earlier genuine faults (including the deadline), but do not invent one.
-      if (!controller.signal.aborted)
-        this.faults.set(
-          agentId,
-          e.message === "AGENT_PAUSED_OR_EXPIRED"
-            ? "PAUSED"
-            : classifiedFault ||
-                (/^DSH_[A-Z_]+$/.test(e.message)
-                  ? e.message
-                  : "BACKEND_TURN_FAILED"),
-        );
-    } finally {
-      this.capabilities.delete(token);
-      try {
-        try {
-          this.subject.finish(ctx, outcome);
-          if (ctx.turnId) await this.contexts.finish(ctx, outcome, backend);
-        } catch (error) {
-          this.faults.set(agentId, "CONTEXT_FINALIZATION_FAILED");
-          this.diagnostics.report(error, {
-            component: "runtime",
-            agentId,
-            conversation,
-          });
-          if (ctx.turnId)
-            retireSession(
-              mem,
-              conversation,
-              "finalization-failed",
-              this.now(),
-              {
-                turnId: ctx.turnId,
-                backendId: a.backendId,
-              },
-            );
-        }
-        for (const reason of reasons)
-          if (reason.taskRunId)
-            this.scheduler.finish(agentId, reason.taskRunId, outcome);
-        // Allow the next queued wake to start; ctx.done still covers all finalization.
-        this.running.delete(runKey);
-        if (
-          !controller.signal.aborted &&
-          !this.closed &&
-          this.config.agents.some((a) => a.id === agentId) &&
-          conversation !== SUBJECT
-        )
-          this.conversations.finish(ctx);
-      } finally {
-        clearTimeout(timer);
-        if (this.running.get(runKey) === ctx) this.running.delete(runKey);
-        resolveDone();
-      }
-    }
-    return { status: outcome };
+  runTurn(...args) {
+    return this.turns.runTurn(...args);
   }
-  async runBackend(ctx, backend, params) {
-    const mem = this.memory.bind(ctx.agentId);
-    try {
-      const result = await runWithRecovery(backend, params, {
-        onFailure: (error, attempt) => {
-          const failure = failureSummary(error);
-          if (!failure) return;
-          const turn = mem.identity.get("model_turns", ctx.turnId);
-          if (turn)
-            mem.identity.put("model_turns", {
-              ...turn,
-              backendFailures: [
-                ...(turn.backendFailures || []),
-                { ...failure, attempt, at: this.now() },
-              ],
-            });
-        },
-        onRecovery: (error, attempt) => {
-          this.assertActive(ctx);
-          ctx.recoveryDeliveryBlocked =
-            ctx.deliveryAttempted === true || ctx.pendingDeliveries > 0;
-          error.deliveryBlocked = ctx.recoveryDeliveryBlocked;
-          const turn = mem.identity.get("model_turns", ctx.turnId);
-          if (turn)
-            mem.identity.put("model_turns", {
-              ...turn,
-              recoveryAttempts: attempt,
-              recoveryDeliveryBlocked: ctx.recoveryDeliveryBlocked,
-            });
-        },
-      });
-      return result;
-    } catch (error) {
-      ctx.retainBackendSession =
-        failureSummary(error)?.sessionReusable === true &&
-        !ctx.controller.signal.aborted &&
-        this.capabilities.has(ctx.token);
-      throw error;
-    }
+  runBackend(...args) {
+    return this.turns.runBackend(...args);
   }
   callTool(...args) {
     return this.trackWork(this.runTool(...args));
@@ -1073,290 +770,17 @@ export class Runtime {
     )
       throw Error("SENSITIVE_OUTPUT_BLOCKED");
   }
-  async send(
-    ctx,
-    { requestId, text = "", replyTo, atUserId, mediaId },
-    { archiveBody } = {},
-  ) {
-    const a = this.assertActive(ctx),
-      mem = this.memory.bind(a.id);
-    this.assertDisclosure(ctx);
-    if (typeof text !== "string" || text.length > 8000 || (!text && !mediaId))
-      throw Error("INVALID_MESSAGE");
-    this.assertSafeOutput(ctx, text);
-    text = mdToPlain(text);
-    if (!text && !mediaId) throw Error("EMPTY_MESSAGE");
-    const segments = [];
-    const connection = this.connection(a.connectionId),
-      namespace = connection.messageIdNamespace || "onebot",
-      requestedReplyTo = replyTo;
-    assertMessageAccount(mem, a.connectionId, connection.accountId);
-    if (replyTo) {
-      const scope = {
-        agentId: a.id,
-        connectionId: a.connectionId,
-        conversation: ctx.conversation,
-      };
-      const own = resolveMessage(mem.db, scope, replyTo);
-      if (!own) throw Error("UNKNOWN_REPLY_TARGET");
-      replyTo = gatewayMessageId(
-        mem.db,
-        scope,
-        own,
-        namespace,
-        connection.accountId,
-      );
-      segments.push({ type: "reply", data: { id: String(replyTo) } });
-    }
-    if (atUserId) {
-      if (!/^\d+$/.test(String(atUserId))) throw Error("INVALID_PERSON");
-      segments.push({ type: "at", data: { qq: String(atUserId) } });
-    }
-    if (text) segments.push({ type: "text", data: { text } });
-    if (mediaId) {
-      if (!this.media) throw Error("MEDIA_UNAVAILABLE");
-      const meta = this.media.metadata(a.id, mediaId);
-      taintMedia(ctx, meta);
-      segments.push(this.media.segment(a.id, mediaId));
-    }
-    return this.deliver(ctx, {
-      requestId,
-      intent: segments,
-      body: archiveBody ?? text,
-      metadata: {
-        replyTo,
-        requestedReplyTo,
-        referenceNamespace: namespace,
-        atUserId,
-        mediaId,
-      },
-      send: (transport) => transport.send(ctx.conversation, segments),
-    });
+  send(...args) {
+    return this.delivery.send(...args);
   }
-  async deliver(ctx, operation) {
-    const a = this.assertActive(ctx);
-    ctx.pendingDeliveries = (ctx.pendingDeliveries || 0) + 1;
-    const previous = this.sendChains.get(a.connectionId);
-    const result = previous
-      ? previous.catch(() => {}).then(() => this.deliverNow(ctx, operation))
-      : this.deliverNow(ctx, operation);
-    this.sendChains.set(a.connectionId, result);
-    try {
-      return await result;
-    } finally {
-      ctx.pendingDeliveries--;
-      if (this.sendChains.get(a.connectionId) === result)
-        this.sendChains.delete(a.connectionId);
-    }
+  deliver(...args) {
+    return this.delivery.deliver(...args);
   }
-  async deliverNow(
-    ctx,
-    { requestId, intent, body = "", metadata = {}, send, action = false },
-  ) {
-    const a = this.assertActive(ctx),
-      mem = this.memory.bind(a.id);
-    assertMessageAccount(
-      mem,
-      a.connectionId,
-      this.connection(a.connectionId).accountId,
-    );
-    if (mem.state(ctx.conversation).silenceUntil > this.now())
-      throw Error("CONVERSATION_SILENCED");
-    const proactive = this.subject.beforeDelivery(ctx);
-    if (proactive) requestId = "intent:" + proactive.id;
-    if (typeof requestId !== "string" || !requestId || requestId.length > 200)
-      throw Error("INVALID_REQUEST_ID");
-    this.assertDisclosure(ctx);
-    beforeShareDelivery(appService(this), ctx, metadata);
-    const serialized = JSON.stringify(intent);
-    if (
-      serialized.includes(ctx.token) ||
-      /(?:sk-|gh[pousr]_|Bearer\s)[a-zA-Z0-9_-]{16,}/.test(body)
-    )
-      throw Error("SENSITIVE_OUTPUT_BLOCKED");
-    const previous = mem.delivery(requestId);
-    if (previous) {
-      mem.reserveDelivery(requestId, ctx.conversation, intent);
-      if (previous.status === "sent")
-        return {
-          status: "sent",
-          messageId: previous.message_id,
-          duplicate: true,
-        };
-      throw Error(
-        "DELIVERY_ALREADY_ATTEMPTED_" + previous.status.toUpperCase(),
-      );
-    }
-    // Recovery must not evade a sent/unknown/failed receipt by changing the
-    // request ID, wording, media, action or target. Same-ID receipt reads above
-    // remain available; new deliveries are fenced for this continuation.
-    if (ctx.recoveryDeliveryBlocked) throw Error("RECOVERY_DELIVERY_BLOCKED");
-    if (metadata.mediaId)
-      this.generatedImages.assertDelivery(ctx, metadata.mediaId, requestId);
-    const state = mem.state(ctx.conversation),
-      now = this.now();
-    const batchUsed = proactive
-      ? 0
-      : ctx.internalDelivery
-        ? ctx.sendCount
-        : ctx.scheduleRunId
-          ? state.scheduleReplyCounts?.[ctx.scheduleRunId] || 0
-          : state.replyBatchSends || 0;
-    if (batchUsed >= (a.maxConsecutiveSends ?? a.maxSendsPerTurn))
-      throw Error("REPLY_BURST_LIMIT");
-    const transport = this.transports.get(a.connectionId);
-    if (!transport?.connected) throw Error("QQ_NOT_CONNECTED");
-    const event = {
-      connectionId: a.connectionId,
-      conversation: ctx.conversation,
-      senderId: this.connection(a.connectionId).accountId,
-      direction: "out",
-      body,
-      payload: {
-        requestId,
-        ...metadata,
-        protectedRepositories: privateGithubSources(ctx, this),
-      },
-    };
-    mem.store.transaction(() => {
-      const sendTimes = reserveSendBudget(
-        mem,
-        a.behavior,
-        state.sendTimes,
-        now,
-        !this.budgetReconciled.has(a.id),
-      );
-      mem.reserveDelivery(requestId, ctx.conversation, intent);
-      mem.setState(ctx.conversation, {
-        ...state,
-        sendTimes,
-        ...(!proactive && !ctx.internalDelivery
-          ? ctx.scheduleRunId
-            ? {
-                scheduleReplyCounts: {
-                  ...Object.fromEntries(
-                    Object.entries(state.scheduleReplyCounts || {}).slice(-99),
-                  ),
-                  [ctx.scheduleRunId]: batchUsed + 1,
-                },
-              }
-            : { replyBatchSends: batchUsed + 1 }
-          : {}),
-      });
-      this.subject.reserveContact(ctx, proactive);
-      mem.append({
-        ...event,
-        dedupe: "send:" + requestId + ":pending",
-        kind: "message.send-attempt",
-        status: "pending",
-      });
-    });
-    ctx.replyBatchSends = (ctx.replyBatchSends ?? ctx.sendCount) + 1;
-    ctx.deliveryAttempted = true;
-    this.budgetReconciled.add(a.id);
-    ctx.sendCount++;
-    try {
-      this.assertActive(ctx);
-      const receipt = await send(transport);
-      if (action ? receipt?.confirmed !== true : receipt?.messageId == null)
-        throw Error("DELIVERY_UNCONFIRMED");
-      // Record confirmed delivery even if the user pauses while its network request is in flight.
-      const messageId =
-        receipt.messageId == null ? null : String(receipt.messageId);
-      mem.store.transaction(() => {
-        mem.completeDelivery(requestId, "sent", messageId);
-        this.subject.delivered(ctx, "sent");
-      });
-      ctx.confirmedSends = (ctx.confirmedSends || 0) + 1;
-      this.conversations.sent(ctx);
-      mem.append({
-        ...event,
-        dedupe: "send:" + requestId + ":sent",
-        messageId,
-        payload: {
-          ...event.payload,
-          messageNamespace:
-            this.connection(a.connectionId).messageIdNamespace || "onebot",
-          ...(receipt.fileId ? { gatewayFileId: receipt.fileId } : {}),
-        },
-        kind: action ? "action.confirmed" : "message.sent",
-        status: "confirmed",
-      });
-      return {
-        status: "sent",
-        messageId,
-        ...(action ? { actionConfirmed: true } : {}),
-        ...(receipt.fileId ? { gatewayFileId: receipt.fileId } : {}),
-      };
-    } catch (e) {
-      const status = e.message === "ONEBOT_REJECTED" ? "failed" : "unknown";
-      const reason =
-        status === "failed" &&
-        ["PACKET_BACKEND_DISABLED", "PACKET_BACKEND_UNAVAILABLE"].includes(
-          e.reason,
-        )
-          ? e.reason
-          : undefined;
-      // A later audit failure must never downgrade an already-confirmed receipt.
-      if (mem.delivery(requestId)?.status === "sent")
-        throw Error("DELIVERY_CONFIRMED_AUDIT_FAILED");
-      mem.store.transaction(() => {
-        mem.completeDelivery(requestId, status);
-        this.subject.delivered(ctx, status);
-      });
-      mem.append({
-        ...event,
-        dedupe: "send:" + requestId + ":" + status,
-        kind: "message.send-result",
-        status,
-        payload: { ...event.payload, ...(reason ? { reason } : {}) },
-      });
-      throw Error(
-        "DELIVERY_" + status.toUpperCase() + (reason ? "_" + reason : ""),
-      );
-    }
+  deliverNow(...args) {
+    return this.delivery.deliverNow(...args);
   }
   status() {
-    return {
-      recentErrors: this.diagnostics.snapshot(),
-      mode: this.config.mode,
-      globalPaused: this.config.globalPaused,
-      backends: this.backendConnections.list(),
-      connections: this.config.connections.map((c) => ({
-        id: c.id,
-        connected: !!this.transports.get(c.id)?.connected,
-        process: this.lifecycle?.status(c.id),
-        error: this.faults.get(c.id) || null,
-      })),
-      agents: this.config.agents.map((a) => ({
-        id: a.id,
-        paused: a.paused,
-        activeTurns: [...this.running.values()].filter(
-          (c) => c.agentId === a.id,
-        ).length,
-        error: this.faults.get(a.id) || null,
-      })),
-      disclosureRequests: [...this.capabilities.values()]
-        .filter((c) => this.currentDisclosure(c))
-        .filter((c) =>
-          c.disclosureRequest?.requestId
-            ? !c.externalGrants?.has(c.disclosureRequest.requestId)
-            : c.disclosureRequest?.records.some((id) => !c.grants.has(id)),
-        )
-        .map((c) => ({
-          approvalId: c.disclosureRequest.approvalId,
-          agentId: c.agentId,
-          conversation: c.conversation,
-          reason: c.disclosureRequest.reason,
-          requestId: c.disclosureRequest.requestId,
-          request: c.disclosureRequest.request,
-          sourceClasses: sourceCounts(this, c),
-          records: c.disclosureRequest.requestId
-            ? c.disclosureRequest.records
-            : c.disclosureRequest.records.filter((id) => !c.grants.has(id)),
-          granted: [...c.grants],
-        })),
-    };
+    return runtimeStatus(this);
   }
   close() {
     if (this.closing) return this.closing;
@@ -1406,8 +830,6 @@ export class Runtime {
   }
 }
 import {
-  resolveMessage,
-  gatewayMessageId,
   assertMessageAccount,
   confirmedMessage,
 } from "../memory/message-ids.mjs";

@@ -827,9 +827,13 @@ $("#edit-form").onsubmit = (e) => {
     notice(
       result.warnings?.length
         ? "配置已保存，但运行态更新未完成。请查看最近错误，处理故障后恢复服务。"
-        : result.reconnectRequired
-          ? "已保存。QQ 连接需要手动重新接入。"
-          : "已保存并生效，现有 QQ 连接和回合保持不变。",
+        : result.restartRequired
+          ? "已保存。监听端口将在重启服务后生效。"
+          : result.reconnectRequired
+            ? "已保存。受影响的 QQ 连接需要手动重新接入。"
+            : result.affectedAgents?.length
+              ? "已保存并生效。受影响角色的旧回合已结束，其他角色继续运行。"
+              : "已保存并生效，现有 QQ 连接和回合保持不变。",
     );
   });
 };

@@ -1,0 +1,108 @@
+// @ts-check
+// Runtime defaults are source code; examples are generated documentation.
+export function defaultConfig() {
+  return {
+    version: 1,
+    mode: "isolated",
+    port: 3210,
+    globalPaused: true,
+    connections: [
+      {
+        id: "napcat-a",
+        label: "QQ 实例 A",
+        accountId: "10001",
+        httpUrl: "http://127.0.0.1:23010",
+        wsUrl: "ws://127.0.0.1:23011",
+        tokenEnv: "QQ_UNIFIED_ONEBOT_A",
+        enabled: false,
+        deployment: "external",
+      },
+      {
+        id: "napcat-b",
+        label: "QQ 实例 B",
+        accountId: "10002",
+        httpUrl: "http://127.0.0.1:23020",
+        wsUrl: "ws://127.0.0.1:23021",
+        tokenEnv: "QQ_UNIFIED_ONEBOT_B",
+        enabled: false,
+        deployment: "external",
+      },
+    ],
+    backends: [
+      {
+        id: "dsh-desktop",
+        type: "dsh",
+        label: "DeepSeek Harness",
+        provider: "",
+        model: "",
+        effort: "high",
+        preset: "qq-unified",
+      },
+      {
+        id: "codex-cli",
+        type: "codex",
+        label: "Codex 独立实例",
+        model: "",
+        effort: "high",
+      },
+    ],
+    agents: [
+      {
+        id: "agent-a",
+        name: "角色 A",
+        connectionId: "napcat-a",
+        backendId: "dsh-desktop",
+        paused: true,
+        persona: "请在管理台设置此角色的人格。",
+        aliases: [],
+        ownerIds: [],
+        allow: {
+          groups: [],
+          users: [],
+        },
+        maxConsecutiveSends: 3,
+        network: {
+          publicUrls: [],
+        },
+        apps: {
+          enabled: false,
+          hours: {
+            enabled: true,
+            scope: "autonomous",
+            start: "09:00",
+            end: "22:00",
+            timezone: "Asia/Shanghai",
+          },
+        },
+      },
+      {
+        id: "agent-b",
+        name: "角色 B",
+        connectionId: "napcat-b",
+        backendId: "codex-cli",
+        paused: true,
+        persona: "请在管理台设置此角色的人格。",
+        aliases: [],
+        ownerIds: [],
+        allow: {
+          groups: [],
+          users: [],
+        },
+        maxConsecutiveSends: 3,
+        network: {
+          publicUrls: [],
+        },
+        apps: {
+          enabled: false,
+          hours: {
+            enabled: true,
+            scope: "autonomous",
+            start: "09:00",
+            end: "22:00",
+            timezone: "Asia/Shanghai",
+          },
+        },
+      },
+    ],
+  };
+}

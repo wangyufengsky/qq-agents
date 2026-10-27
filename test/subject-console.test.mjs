@@ -198,7 +198,7 @@ test("interval changes recompute due time while current model work and permissio
   assert.equal(
     (await f.runtime.changeConfig(next, f.configStore.revision))
       .reconnectRequired,
-    true,
+    false,
   );
-  assert.equal(f.runtime.transports.size, 0);
+  assert.equal(f.runtime.transports.size, 1);
 });

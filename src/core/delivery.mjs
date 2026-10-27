@@ -1,0 +1,267 @@
+import { beforeShareDelivery } from "../apps/sharing.mjs";
+import { appService } from "../apps/tools.mjs";
+import { privateGithubSources } from "../github/policy.mjs";
+import { taintMedia } from "../tools/legacy.mjs";
+import { mdToPlain } from "../../vendor/dsh-qq/md-to-plain.js";
+import { reserveSendBudget } from "./send-budget.mjs";
+import {
+  resolveMessage,
+  gatewayMessageId,
+  assertMessageAccount,
+} from "../memory/message-ids.mjs";
+
+// Serializes deliveries per connection, and commits budget, outbox and receipts.
+export class DeliveryService {
+  constructor(runtime) {
+    this.runtime = runtime;
+    this.chains = new Map();
+    this.reconciled = new Set();
+  }
+  async send(
+    ctx,
+    { requestId, text = "", replyTo, atUserId, mediaId },
+    { archiveBody } = {},
+  ) {
+    const runtime = this.runtime;
+    const a = runtime.assertActive(ctx),
+      mem = runtime.memory.bind(a.id);
+    runtime.assertDisclosure(ctx);
+    if (typeof text !== "string" || text.length > 8000 || (!text && !mediaId))
+      throw Error("INVALID_MESSAGE");
+    runtime.assertSafeOutput(ctx, text);
+    text = mdToPlain(text);
+    if (!text && !mediaId) throw Error("EMPTY_MESSAGE");
+    const segments = [];
+    const connection = runtime.connection(a.connectionId),
+      namespace = connection.messageIdNamespace || "onebot",
+      requestedReplyTo = replyTo;
+    assertMessageAccount(mem, a.connectionId, connection.accountId);
+    if (replyTo) {
+      const scope = {
+        agentId: a.id,
+        connectionId: a.connectionId,
+        conversation: ctx.conversation,
+      };
+      const own = resolveMessage(mem.db, scope, replyTo);
+      if (!own) throw Error("UNKNOWN_REPLY_TARGET");
+      replyTo = gatewayMessageId(
+        mem.db,
+        scope,
+        own,
+        namespace,
+        connection.accountId,
+      );
+      segments.push({ type: "reply", data: { id: String(replyTo) } });
+    }
+    if (atUserId) {
+      if (!/^\d+$/.test(String(atUserId))) throw Error("INVALID_PERSON");
+      segments.push({ type: "at", data: { qq: String(atUserId) } });
+    }
+    if (text) segments.push({ type: "text", data: { text } });
+    if (mediaId) {
+      if (!runtime.media) throw Error("MEDIA_UNAVAILABLE");
+      const meta = runtime.media.metadata(a.id, mediaId);
+      taintMedia(ctx, meta);
+      segments.push(runtime.media.segment(a.id, mediaId));
+    }
+    return this.deliver(ctx, {
+      requestId,
+      intent: segments,
+      body: archiveBody ?? text,
+      metadata: {
+        replyTo,
+        requestedReplyTo,
+        referenceNamespace: namespace,
+        atUserId,
+        mediaId,
+      },
+      send: (transport) => transport.send(ctx.conversation, segments),
+    });
+  }
+  async deliver(ctx, operation) {
+    const runtime = this.runtime;
+    const a = runtime.assertActive(ctx);
+    ctx.pendingDeliveries = (ctx.pendingDeliveries || 0) + 1;
+    const previous = this.chains.get(a.connectionId);
+    const result = previous
+      ? previous.catch(() => {}).then(() => this.deliverNow(ctx, operation))
+      : this.deliverNow(ctx, operation);
+    this.chains.set(a.connectionId, result);
+    try {
+      return await result;
+    } finally {
+      ctx.pendingDeliveries--;
+      if (this.chains.get(a.connectionId) === result)
+        this.chains.delete(a.connectionId);
+    }
+  }
+  async deliverNow(
+    ctx,
+    { requestId, intent, body = "", metadata = {}, send, action = false },
+  ) {
+    const runtime = this.runtime;
+    const a = runtime.assertActive(ctx),
+      mem = runtime.memory.bind(a.id);
+    assertMessageAccount(
+      mem,
+      a.connectionId,
+      runtime.connection(a.connectionId).accountId,
+    );
+    if (mem.state(ctx.conversation).silenceUntil > runtime.now())
+      throw Error("CONVERSATION_SILENCED");
+    const proactive = runtime.subject.beforeDelivery(ctx);
+    if (proactive) requestId = "intent:" + proactive.id;
+    if (typeof requestId !== "string" || !requestId || requestId.length > 200)
+      throw Error("INVALID_REQUEST_ID");
+    runtime.assertDisclosure(ctx);
+    beforeShareDelivery(appService(runtime), ctx, metadata);
+    const serialized = JSON.stringify(intent);
+    if (
+      serialized.includes(ctx.token) ||
+      /(?:sk-|gh[pousr]_|Bearer\s)[a-zA-Z0-9_-]{16,}/.test(body)
+    )
+      throw Error("SENSITIVE_OUTPUT_BLOCKED");
+    const previous = mem.delivery(requestId);
+    if (previous) {
+      mem.reserveDelivery(requestId, ctx.conversation, intent);
+      if (previous.status === "sent")
+        return {
+          status: "sent",
+          messageId: previous.message_id,
+          duplicate: true,
+        };
+      throw Error(
+        "DELIVERY_ALREADY_ATTEMPTED_" + previous.status.toUpperCase(),
+      );
+    }
+    // Recovery must not evade a sent/unknown/failed receipt by changing the
+    // request ID, wording, media, action or target. Same-ID receipt reads above
+    // remain available; new deliveries are fenced for this continuation.
+    if (ctx.recoveryDeliveryBlocked) throw Error("RECOVERY_DELIVERY_BLOCKED");
+    if (metadata.mediaId)
+      runtime.generatedImages.assertDelivery(ctx, metadata.mediaId, requestId);
+    const state = mem.state(ctx.conversation),
+      now = runtime.now();
+    const batchUsed = proactive
+      ? 0
+      : ctx.internalDelivery
+        ? ctx.sendCount
+        : ctx.scheduleRunId
+          ? state.scheduleReplyCounts?.[ctx.scheduleRunId] || 0
+          : state.replyBatchSends || 0;
+    if (batchUsed >= (a.maxConsecutiveSends ?? a.maxSendsPerTurn))
+      throw Error("REPLY_BURST_LIMIT");
+    const transport = runtime.transports.get(a.connectionId);
+    if (!transport?.connected) throw Error("QQ_NOT_CONNECTED");
+    const event = {
+      connectionId: a.connectionId,
+      conversation: ctx.conversation,
+      senderId: runtime.connection(a.connectionId).accountId,
+      direction: "out",
+      body,
+      payload: {
+        requestId,
+        ...metadata,
+        protectedRepositories: privateGithubSources(ctx, runtime),
+      },
+    };
+    mem.store.transaction(() => {
+      const sendTimes = reserveSendBudget(
+        mem,
+        a.behavior,
+        state.sendTimes,
+        now,
+        !this.reconciled.has(a.id),
+      );
+      mem.reserveDelivery(requestId, ctx.conversation, intent);
+      mem.setState(ctx.conversation, {
+        ...state,
+        sendTimes,
+        ...(!proactive && !ctx.internalDelivery
+          ? ctx.scheduleRunId
+            ? {
+                scheduleReplyCounts: {
+                  ...Object.fromEntries(
+                    Object.entries(state.scheduleReplyCounts || {}).slice(-99),
+                  ),
+                  [ctx.scheduleRunId]: batchUsed + 1,
+                },
+              }
+            : { replyBatchSends: batchUsed + 1 }
+          : {}),
+      });
+      runtime.subject.reserveContact(ctx, proactive);
+      mem.append({
+        ...event,
+        dedupe: "send:" + requestId + ":pending",
+        kind: "message.send-attempt",
+        status: "pending",
+      });
+    });
+    ctx.replyBatchSends = (ctx.replyBatchSends ?? ctx.sendCount) + 1;
+    ctx.deliveryAttempted = true;
+    this.reconciled.add(a.id);
+    ctx.sendCount++;
+    try {
+      runtime.assertActive(ctx);
+      const receipt = await send(transport);
+      if (action ? receipt?.confirmed !== true : receipt?.messageId == null)
+        throw Error("DELIVERY_UNCONFIRMED");
+      // Record confirmed delivery even if the user pauses while its network request is in flight.
+      const messageId =
+        receipt.messageId == null ? null : String(receipt.messageId);
+      mem.store.transaction(() => {
+        mem.completeDelivery(requestId, "sent", messageId);
+        runtime.subject.delivered(ctx, "sent");
+      });
+      ctx.confirmedSends = (ctx.confirmedSends || 0) + 1;
+      runtime.conversations.sent(ctx);
+      mem.append({
+        ...event,
+        dedupe: "send:" + requestId + ":sent",
+        messageId,
+        payload: {
+          ...event.payload,
+          messageNamespace:
+            runtime.connection(a.connectionId).messageIdNamespace || "onebot",
+          ...(receipt.fileId ? { gatewayFileId: receipt.fileId } : {}),
+        },
+        kind: action ? "action.confirmed" : "message.sent",
+        status: "confirmed",
+      });
+      return {
+        status: "sent",
+        messageId,
+        ...(action ? { actionConfirmed: true } : {}),
+        ...(receipt.fileId ? { gatewayFileId: receipt.fileId } : {}),
+      };
+    } catch (e) {
+      const status = e.message === "ONEBOT_REJECTED" ? "failed" : "unknown";
+      const reason =
+        status === "failed" &&
+        ["PACKET_BACKEND_DISABLED", "PACKET_BACKEND_UNAVAILABLE"].includes(
+          e.reason,
+        )
+          ? e.reason
+          : undefined;
+      // A later audit failure must never downgrade an already-confirmed receipt.
+      if (mem.delivery(requestId)?.status === "sent")
+        throw Error("DELIVERY_CONFIRMED_AUDIT_FAILED", { cause: e });
+      mem.store.transaction(() => {
+        mem.completeDelivery(requestId, status);
+        runtime.subject.delivered(ctx, status);
+      });
+      mem.append({
+        ...event,
+        dedupe: "send:" + requestId + ":" + status,
+        kind: "message.send-result",
+        status,
+        payload: { ...event.payload, ...(reason ? { reason } : {}) },
+      });
+      throw Error(
+        "DELIVERY_" + status.toUpperCase() + (reason ? "_" + reason : ""),
+        { cause: e },
+      );
+    }
+  }
+}

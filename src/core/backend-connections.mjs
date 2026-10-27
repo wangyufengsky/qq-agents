@@ -82,7 +82,8 @@ export class BackendConnections {
   }
   adapter(a) {
     if (this.runtime.closed) throw Error("BACKEND_RECOVERY_FAILED");
-    if (this.runtime.configChanging) throw Error("CONFIG_CONFLICT");
+    if (this.runtime.reconfiguringAgents.has(a.id))
+      throw Error("CONFIG_CONFLICT");
     let b = this.runtime.backends.get(a.id);
     if (!b) {
       const config = this.config(a.backendId);
@@ -295,7 +296,13 @@ export class BackendConnections {
   }
   tick() {
     const r = this.runtime;
-    if (r.closed || r.config.mode !== "live" || r.config.globalPaused) return;
+    if (
+      r.closed ||
+      r.configChanging ||
+      r.config.mode !== "live" ||
+      r.config.globalPaused
+    )
+      return;
     for (const config of r.config.backends) {
       if (
         !config.recovery?.autoReconnect ||

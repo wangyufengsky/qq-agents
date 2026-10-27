@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { toolSpecs } from "./index.mjs";
+import { toolSpecs } from "./specs.mjs";
 
 export const discoveryInput = z
   .object({

@@ -319,42 +319,46 @@ export class ConversationEngine {
   tick() {
     const runtime = this.runtime,
       now = this.now();
-    for (const a of runtime.config.agents) {
-      // Only conversations with queued wakes, a sleep timer or a reply check need a tick.
-      const mem = runtime.memory.bind(a.id),
-        rows = mem.db
-          .prepare(
-            `SELECT conversation FROM runtime WHERE agent_id=? AND conversation GLOB '[gp]*:*' AND (
-              json_extract(value,'$.pendingWakes[0]') IS NOT NULL OR
-              json_extract(value,'$.wakeConfig.sleepUntil') IS NOT NULL OR
-              json_extract(value,'$.replyCheckAt') IS NOT NULL)`,
-          )
-          .all(a.id);
-      for (const row of rows) {
-        const conversation = row.conversation;
-        if (!allowed(a, conversation) || !runtime.writable(a, conversation))
-          continue;
-        let s = this.state(a.id, conversation);
-        const sleep = s.wakeConfig?.sleepUntil;
-        if (sleep && sleep <= now) {
-          s.wakeConfig.sleepUntil = null;
-          this.write(a.id, conversation, s);
-          this.request(a.id, conversation, "sleep", { immediate: true });
-        }
-        s = this.state(a.id, conversation);
-        if (
-          s.replyCheckAt &&
-          s.replyCheckAt <= now &&
-          !(s.proactiveCooldownUntil > now)
-        ) {
-          s.replyCheckAt = null;
-          this.write(a.id, conversation, s);
-          this.request(a.id, conversation, "replyCheck");
-        }
-        s = this.state(a.id, conversation);
-        this.flush(a.id, conversation);
+    const rows = runtime.memory.due.ready(now);
+    for (const row of rows) {
+      const a = runtime.config.agents.find(
+        (agent) => agent.id === row.agent_id,
+      );
+      const conversation = row.conversation;
+      if (
+        !a ||
+        !allowed(a, conversation) ||
+        !runtime.writable(a, conversation)
+      ) {
+        runtime.memory.due.defer(row, now + 30000);
+        continue;
+      }
+      let s = this.state(a.id, conversation);
+      const sleep = s.wakeConfig?.sleepUntil;
+      if (sleep && sleep <= now) {
+        s.wakeConfig.sleepUntil = null;
+        this.write(a.id, conversation, s);
+        this.request(a.id, conversation, "sleep", { immediate: true });
+      }
+      s = this.state(a.id, conversation);
+      if (
+        s.replyCheckAt &&
+        s.replyCheckAt <= now &&
+        !(s.proactiveCooldownUntil > now)
+      ) {
+        s.replyCheckAt = null;
+        this.write(a.id, conversation, s);
+        this.request(a.id, conversation, "replyCheck");
+      }
+      const result = this.flush(a.id, conversation);
+      if (result.queued && !result.rateLimited) {
+        // Busy/disconnected work waits for a lifecycle signal or a bounded retry.
+        const current = runtime.memory.due.current(a.id, conversation);
+        if (current?.next_due_at !== null && current?.next_due_at <= now)
+          runtime.memory.due.defer(current, now + 30000);
       }
     }
+    return { examined: rows.length };
   }
   cancel(agentId) {
     // Capabilities are aborted by Runtime first, so long polls resolve immediately.
