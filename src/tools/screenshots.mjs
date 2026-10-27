@@ -1,3 +1,4 @@
+// @ts-check
 import { z } from "zod";
 import { capturePublicPage } from "./public-screenshot.mjs";
 import { saveFileImage } from "./saved-media.mjs";
@@ -25,6 +26,7 @@ export const screenshotDefinitions = {
       .strict(),
   ],
 };
+/** @param {any} runtime @param {any} ctx */
 function enabled(runtime, ctx) {
   const a = runtime.assertActive(ctx);
   if (
@@ -37,6 +39,7 @@ function enabled(runtime, ctx) {
   runtime.assertDisclosure(ctx);
   return a;
 }
+/** @param {any} runtime @param {any} ctx @param {string} name @param {any} args */
 export async function screenshotTool(runtime, ctx, name, args) {
   const a = enabled(runtime, ctx);
   return runtime.files.acquire(a.id, async () => {

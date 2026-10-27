@@ -1,4 +1,6 @@
+// @ts-check
 // Only transport-authenticated human events can advance reply/request authority.
+/** @param {any} runtime @param {any} ctx @param {string} id */
 export function humanInput(runtime, ctx, id) {
   const a = runtime.agent(ctx.agentId);
   const row = runtime.memory
@@ -14,12 +16,15 @@ export function humanInput(runtime, ctx, id) {
     row.origin !== "live" ||
     row.status === "recalled" ||
     !/^\d+$/.test(row.sender_id || "") ||
-    runtime.config.connections.some((c) => c.accountId === row.sender_id) ||
+    runtime.config.connections.some(
+      (/** @type {any} */ c) => c.accountId === row.sender_id,
+    ) ||
     JSON.parse(row.payload).trustedInput !== true
   )
     return null;
   return row;
 }
+/** @param {any} runtime @param {any} ctx @param {any[]} items */
 export function observeInput(runtime, ctx, items) {
   const mem = runtime.memory.bind(ctx.agentId);
   const state = mem.state(ctx.conversation);

@@ -1,3 +1,4 @@
+// @ts-check
 import { z } from "zod";
 
 export const repositoryName = z
@@ -20,7 +21,9 @@ export const githubPolicySchema = z
   })
   .strict()
   .prefault({});
+/** @param {string} repo */
 export const githubMarker = (repo) => "github-private:" + repo.toLowerCase();
+/** @param {{agentId: string, privateRead: Iterable<string>}} ctx @param {any} [runtime] @returns {string[]} */
 export function privateGithubSources(ctx, runtime) {
   const repos = new Set(
     [...ctx.privateRead]
@@ -48,6 +51,7 @@ export function privateGithubSources(ctx, runtime) {
   }
   return [...repos];
 }
+/** @param {{ownerIds: string[]}} agent @param {string} conversation */
 export const githubPrivateContext = (agent, conversation) =>
   conversation === "@subject" ||
   agent.ownerIds.some((id) => conversation === `private:${id}`);

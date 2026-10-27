@@ -6,9 +6,7 @@
     "strict": true,
     "target": "ES2023",
     "module": "NodeNext",
-    "types": [
-      "node"
-    ],
+    "types": ["node"],
     "skipLibCheck": true
   },
   "include": [
@@ -16,6 +14,40 @@
     "src/core/config-impact.mjs",
     "src/core/default-config.mjs",
     "src/memory/conversation-state.mjs",
-    "src/memory/conversation-due.mjs"
+    "src/memory/conversation-due.mjs",
+    "src/github/*.mjs",
+    "src/core/error-codes.mjs",
+    "src/core/features.mjs",
+    "src/mcp.mjs",
+    "src/tools/definitions.mjs",
+    "scripts/default-config.mjs",
+    "scripts/backup.mjs",
+    "scripts/check.mjs",
+    "scripts/export.mjs",
+    "src/core/secrets.mjs",
+    "src/memory/protection.mjs",
+    "src/apps/screenshot-page.mjs",
+    "src/memory/export-format.mjs",
+    "src/tools/schedule-schema.mjs",
+    "src/tools/specs.mjs",
+    "scripts/privacy-scan.mjs",
+    "src/apps/policy.mjs",
+    "src/core/child-env.mjs",
+    "src/core/mind-policy.mjs",
+    "src/core/policy.mjs",
+    "src/memory/migrate.mjs",
+    "src/tools/errors.mjs",
+    "scripts/memory-benchmark.mjs",
+    "scripts/scheduling-benchmark.mjs",
+    "src/apps/tools.mjs",
+    "src/memory/backup.mjs",
+    "src/memory/migration-apply.mjs",
+    "src/core/protected-mind.mjs",
+    "src/core/runtime-status.mjs",
+    "src/memory/search.mjs",
+    "src/tools/screenshots.mjs",
+    "scripts/privacy-rules.mjs",
+    "src/core/input-progress.mjs",
+    "src/tools/image-download.mjs"
   ]
 }

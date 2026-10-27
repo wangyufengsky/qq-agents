@@ -1,3 +1,4 @@
+// @ts-check
 import { z } from "zod";
 import { APP_NAMES } from "./urls.mjs";
 // Runtime-state key of the per-agent read ledger (daily read budget).
@@ -46,6 +47,7 @@ export const appsPolicySchema = z
   })
   .strict()
   .prefault({});
+/** @param {any} policy @param {Date} date */
 export function inAppHours(policy, date, { requested = false } = {}) {
   if (
     policy.hours.enabled === false ||
@@ -81,6 +83,7 @@ export const SUBJECT_APP_TOOLS = [
   "app_share_propose",
 ];
 
+/** @param {{platform: string, operation: string}} job */
 export function browserCursor(job) {
   return (
     (job.platform === "xiaohongshu" && job.operation === "browse") ||

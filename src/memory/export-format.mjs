@@ -1,3 +1,4 @@
+// @ts-check
 import { createHash } from "node:crypto";
 
 // The ordering is part of the v2 checksum contract and of restore dependencies.
@@ -20,12 +21,14 @@ export const EXPORT_TABLES = [
   "message_observations",
 ];
 
+/** @param {{version: number, agentId: string, exportedAt: string}} header */
 export function exportDigest(header) {
   return createHash("sha256").update(
     JSON.stringify([header.version, header.agentId, header.exportedAt]) + "\n",
   );
 }
 
+/** @param {any} data Parsed export file; validated here. */
 export function validateExport(data) {
   if (data.version === 1) return; // Explicit compatibility with historical exports.
   if (data.version !== 2 || data.manifest?.algorithm !== "sha256")
