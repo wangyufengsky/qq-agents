@@ -20,6 +20,7 @@ RUN npm ci --ignore-scripts --omit=dev && npm cache clean --force
 COPY src ./src
 COPY public ./public
 COPY vendor ./vendor
+COPY LICENSE NOTICE.md UPSTREAM-NOTICE.md ./
 
 # The node image's unprivileged user owns only the data directory.
 RUN mkdir -p /data && chown node:node /data && chmod 700 /data
