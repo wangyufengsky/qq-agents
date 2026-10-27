@@ -56,7 +56,6 @@ async function renderSchedules() {
   const id = parityAgentId,
     a = find("agents", id),
     b = a.behavior,
-    p = b.proactive,
     s = a.scheduler;
   const result = await api("/api/schedules?agentId=" + encodeURIComponent(id));
   if (tab !== "schedule" || id !== parityAgentId) return;

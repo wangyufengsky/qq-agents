@@ -1110,12 +1110,7 @@ $("#edit-form").onsubmit = (e) => {
     if (editing.type === "advanced") next = JSON.parse($("#config-json").value);
     else {
       const f = new FormData(e.target),
-        get = (k) => String(f.get(k) || ""),
-        list = (k) =>
-          get(k)
-            .split(/[,，\s]+/)
-            .map((s) => s.trim())
-            .filter(Boolean);
+        get = (k) => String(f.get(k) || "");
       let row = { ...editing.row, id: get("id") };
       if (editing.type === "agents")
         ({ row, githubCredential } = agentForm.parse(f, editing.row));
