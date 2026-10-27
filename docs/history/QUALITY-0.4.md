@@ -59,7 +59,7 @@
 - 浏览器实际操作了关键词检索、同名身份展示、缺失引用、跨天引用与原文链接；私有截图保留在验收目录。UI 验收未连接生产 QQ。
 - `npm run verify` 的 175 项 Node 测试全部通过，并通过语法、Prettier 和隐私扫描。本地执行，没有运行 GitHub Actions。
 
-复验入口：`scripts/local-acceptance.mjs` 的 `memory-quality`、`external-search`、`external-image`、`tts`、`group-scope`；详见 LOCAL-ACCEPTANCE.md。真实服务输出、模型答复、图片、音频、截图与运行配置均留在忽略的 `work/`，不提交凭据、聊天或用户标识。
+复验入口：`scripts/local-acceptance.mjs` 的 `memory-quality`、`external-search`、`external-image`、`tts`、`group-scope`；详见 [LOCAL-ACCEPTANCE.md](../LOCAL-ACCEPTANCE.md)。真实服务输出、模型答复、图片、音频、截图与运行配置均留在忽略的 `work/`，不提交凭据、聊天或用户标识。
 
 ## 合并前审查复测 · 2026-10-25
 

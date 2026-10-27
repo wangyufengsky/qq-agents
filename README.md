@@ -1,29 +1,32 @@
 # QQ Agents
 
-一个项目、一个管理台，管理多个独立 AI 和多个 NapCat 连接。基于 [h-D-ACE/dsh-qq](https://github.com/h-D-ACE/dsh-qq) 的 DSH 客户端与发现模块，参考 [Derpyu520/qq-bridge](https://github.com/Derpyu520/qq-bridge)，整合本地双机器人项目的 Codex RPC、互聊边界与平台读取模块。
+QQ Agents 用一个本机管理台同时管理多个 AI 角色：每个角色绑定一个 QQ 账号（通过 NapCat/OneBot 接入），由 DSH 或 Codex 作为 AI 后端生成回复，并拥有各自独立的人格、记忆、日记和权限。所有新配置默认处于隔离模式并全部暂停，确认无误后再逐步放开。
 
-**0.4.0 补齐外部工具发现与场景证据读取**：HTTP/SSE/stdio MCP 白名单目录、受控图像和音频结果、本机可选 TTS；跨时间明确引用/撤回、重叠片段去重、事件稳定游标与中文 FTS 加速。真实平台、两后端和 20 万条合成压测的结果与限制见 [本轮验收](docs/QUALITY-0.4.md)。ASR 与常驻图像生成服务仍待配置；现有两只机器人保持暂停，没有生产迁移、部署或自动重连，全部检查在本机执行。
+## 5 分钟快速开始
 
-新增 [Self、主体意图与上下文管理](docs/SELF-CONTEXT.md)：SQLite 版本化 self 与延后回顾、逐回合同步、75% 整理和延迟重建、主体思考到目标聊天的意图交接。管理台可编辑/恢复 self、配置主动范围和查看用量。旧数据升级前须备份并确认外形锚点，生产保持暂停。
+**需要：** Node.js 24 或更高版本（内置 SQLite）。语音处理需要 FFprobe/FFmpeg，GIF 动图阅读需要 FFmpeg（可用 `FFMPEG_PATH` 指定）。只看管理台不需要 QQ 或 AI 后端。
 
-新增[连续聊天与联网策略](docs/CHAT-NETWORK-POLICY.md)：连续回复预算随可信人类新输入推进；公开请求按精确参数和来源授权；浏览时段可关闭或仅约束自主浏览。旧配置兼容，生产迁移需独立执行。
+1. 安装依赖：
 
-## 本地启动
+   ```sh
+   npm ci --ignore-scripts
+   ```
 
-新增[自主文件收发](docs/FILE-TRANSFER.md)：管理台“权限”页可分别开启每个角色的下载与发送权限；两个 AI 使用独立文件库，普通收发不逐项确认。默认关闭，生产启用需另行部署与验收。角色总发送额度、文件库损坏恢复和静默迁移见[第三轮可靠性说明](docs/RELIABILITY-ROUND-THREE.md)。
+2. 启动管理台（默认数据目录为当前目录下的 `.runtime/`，端口 3210）：
 
-需要 Node.js 24（内置 SQLite）；语音校验与音量处理需要 FFprobe/FFmpeg，GIF 动图阅读需要 FFmpeg（可用 `FFMPEG_PATH` 指定）。图片读取自动返回带时间信息的动图采样帧，并支持逐帧分页，见[动图阅读说明](docs/FEATURES.md#gif-动图阅读)。
+   ```sh
+   npm start
+   ```
 
-```sh
-npm ci --ignore-scripts
-npm start
-```
+3. 取得管理令牌。首次启动会在数据目录生成 `admin-token`：
 
-打开 `http://127.0.0.1:3210`，在登录框输入本机 `.runtime/admin-token` 的内容。令牌不放进 URL，不打印到日志。新建配置采用示例占位账号、空白名单、停用连接、角色暂停和隔离模式。**启动管理台不会启动 QQ、DSH 或模型回合。**
+   ```sh
+   cat .runtime/admin-token
+   ```
 
-```sh
-npm run verify
-```
+4. 用浏览器打开 `http://127.0.0.1:3210`（必须用 `127.0.0.1` 或 `localhost` 访问），在登录框粘贴令牌。令牌不放进 URL，也不会打印到日志。
+
+新建的配置使用示例占位账号、空白名单、停用的连接、暂停的角色和隔离模式。**启动管理台不会启动 QQ、DSH 或模型回合**，可以放心浏览每个页面。
 
 需要指定独立数据目录或端口时：
 
@@ -31,59 +34,97 @@ npm run verify
 node src/main.mjs --data /path/to/private-data --port 3210
 ```
 
-真实接入需要显式 `--live` 启动、配置 `mode: live`、开启目标连接并手动连接；所有启动仍会落在全局暂停状态。进入参与状态要分别解除全局暂停和角色暂停。此开关属于后续部署步骤，不属于本轮本地验收。
+接入第一个真实角色的完整步骤见 [入门指南](docs/GETTING-STARTED.md)。
 
-## 已实现的功能
+## 核心概念
 
-- 任意数量的 `agents`、`connections` 和 `backends`。一只机器人对应稳定 `agentId` 和一个 QQ 身份，后端/模型会话可以变更。
-- 统一管理台：增改机器人、QQ 连接、后端、提供方、模型、思考强度、人格、工具白名单、群/私聊白名单、名字/@/问句唤醒、参与率、静默时段、暂停及状态。
-- OneBot HTTP + 正向 WebSocket；连接前核对实际登录账号。群聊和私聊按白名单接收；自己的消息不触发自己；其他 AI 的互聊有共享计数与冷却边界。
-- DSH Web RPC + mux 适配，动态发现本机端口；独立的 DSH preset/MCP bundle 生成器。Codex 使用专用 app-server、独立 home、动态工具和回合取消。
-- 完整入站消息在接收时持续写入 SQLite。出站尝试、确认、失败/未知结果分别记录。幂等键避免重复接收/发送；网络结果未知时不自动重放。
-- 手动连接过的 QQ 接收通道意外断开后按指数退避自动重连（默认最多 8 次，可按连接关闭）；只恢复接收，不重发、不补录断线期间消息，账号不匹配立即停止。
-- 管理台总览列出结果未知的发送，管理员在 QQ 中核对后标记“已发出/未发出”，两种结论都不会重发同一请求；每个角色卡片显示当前无法发言的具体原因（隔离、全局/角色暂停、静默时段、后端或 QQ 未连接）。
-- 自主个人日记及版本历史，中文关键词/人物/来源/时间检索，命中附带场景、发言者与引用，按 ID 分页展开及前后文读取。不同机器人不能互读；同一机器人可回忆自己的群聊和私聊。
-- 回忆表达由机器人判断，允许在私聊中谈及群聊回忆；个人日记也不逐次请求发言授权。本地运维文件与把跨会话资料提交外部服务仍有独立授权检查。
-- 图片像素读取、角色独立的表情收藏、图片/文字/引用/@ 投递；允许的外部 MCP 图像工具可返回图片并登记为受控媒体后投递。平台只读搜索/内容/评论复用 social-reader 的并发锁。
-- 显式原生进程启动/停止、带归属标签的 Docker 容器启动/停止。仅操作本管理器拥有的实例，不创建/删除登录目录、容器、卷或镜像。
-- 旧 social-v2 窗口、JSONL 历史、旧 SQLite 笔记的只读预检与幂等导入；单身份导出/恢复；保留旧资料及修订历史。
+- **角色**：一个 AI 身份，有稳定的 `agentId`、人格、记忆和日记。每个角色只绑定一个 QQ 账号连接和一个 AI 后端；不同角色之间不能互读记忆。（管理台「智能体」页管理角色。）
+- **QQ 账号连接**：一个 NapCat/OneBot 实例，使用 HTTP + 正向 WebSocket。连接前会核对实际登录的 QQ 号，不匹配时拒绝接入。（管理台「QQ 实例」页。）
+- **AI 后端**：生成回复的模型服务，目前支持 DSH（DeepSeek Harness 桌面应用）和 Codex（本项目专用的 Codex app-server，独立登录目录）。多个角色可以共用一个后端配置。（管理台「AI 后端」页。）
+- **隔离模式与暂停**：`mode: isolated` 时不会连接 QQ、不会运行模型回合。切到 `live` 之后，仍有几道独立的开关：全局暂停（每次启动都会自动打开）、角色暂停、会话暂停和静默时段。任意一道没放开，角色都不会发言；管理台在每个角色卡片上列出“当前无法发言”的具体原因。
 
-- 角色语音库、导入/试听、音量/响度处理、受控语音发送；嵌套转发展开、归档、分页与合并转发发送；拍一拍与分段连发。
-- 可取消长等待、睡前观察、条件唤醒、有限睡眠、消息合并与回复检查、主体主动意图与统一发送限额。
-- 13 类定时规则、时区/排除日期、固定文字/AI 任务、配额、忙碌队列、执行日志及重启不重放；管理台预览与编辑。
-- 独立黑话 learner、人工确认、显式有向跨群汇总；管理员私聊 L1–L3 运维、逐项批准与 TOTP 防重放，默认关闭。
+更多术语见 [术语表](#术语表)。
 
-图片/音频生成、转录与黑话检索依赖管理员配置的 MCP；平台读取依赖 OpenCLI/mcporter 和已有登录。官方表情收藏/备注需要旧网关扩展接口，不能假定所有 NapCat 版本支持。详见 [使用说明](docs/FEATURES.md) 与 [功能对照](docs/FEATURE-MATRIX.md)。
+## 上线步骤
 
-## 配置与数据
+先在隔离模式下配置好角色、QQ 账号连接和 AI 后端，再按顺序：
 
-`examples/config.example.json` 是唯一随仓库分发的示例。运行配置、凭据引用、人格、聊天、媒体、模型会话全部在私有数据目录；`.gitignore` 和隐私扫描器禁止把这些运行文件提交。
+1. 以 `--live` 重新启动（`npm start -- --live`，或用下文的 `scripts/robots.mjs`）。
+2. 在管理台把运行模式设为 `live` 并保存。
+3. 启用目标 QQ 账号连接，然后手动点击连接，确认显示“已连接”。
+4. 在角色配置里填好群聊/私聊白名单（只有白名单内的会话会被接收和回复）。
+5. 解除全局暂停。
+6. 解除目标角色的角色暂停。
 
-OneBot 令牌填写环境变量名 `tokenEnv`；Codex 后端、外部 MCP 和原生进程的 `env` 使用“目标变量名 → 本进程环境变量名”的映射，不把密钥写入仓库。Codex 和管理台原生 QQ 子进程默认仅继承运行所需的环境白名单，专用变量须显式映射。Codex home 固定在数据目录 `codex/<agentId>/home`，不继承日常 Codex home。审批 ID、环境白名单和升级说明见 [凭据边界](docs/CREDENTIAL-BOUNDARIES.md)。
+之后如果角色仍不说话，看角色卡片上“当前无法发言：…”列出的原因，对照 [故障排查](docs/TROUBLESHOOTING.md#机器人不说话)。
 
-DSH bundle 仅生成，不自动安装、改 profile 或重启应用：
+## 用哪个启动方式
 
-```sh
-npm run dsh:bundle -- --out /path/to/private-data/dsh-bundle --url http://127.0.0.1:3210
-```
+| 场景                                                                                                                                          | 用法                                                                                         |
+| --------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| 第一次试用、开发调试、隔离模式验证；想在前台看日志，按 Ctrl+C 停止                                                                            | `npm start`（等同 `node src/main.mjs`），真实接入加 `-- --live`                              |
+| 已配置好的数据目录日常运行：后台运行、自动带上 `--live`、从 `secrets.json` 注入环境变量、可选择连接成功后自动解除全局暂停、管理 macOS 原生 QQ | `node scripts/robots.mjs start --data <数据目录>`，详见 [本机运维](docs/LOCAL-OPERATIONS.md) |
 
-新运行时只注册 `memory_search`、`memory_read`、`conversation_read`、`diary_write`、`diary_revise` 等新工具。旧 `qq_memory_*`、双写和 1800 字自动注入不在执行路径中。短期上下文使用已核对的后端压缩接口，并由桥接统一管理用量阈值和安全退休，不全局修改用户的记忆插件。
+两者使用同一个数据目录格式，但同一数据目录同一时间只能被一个进程使用（有进程锁）。配置为 `mode: live` 的数据目录如果不带 `--live` 启动，`npm start` 会以 `LIVE_CONFIG_REQUIRES_EXPLICIT_LIVE_FLAG` 拒绝启动；`robots.mjs` 会按配置自动加上该参数。
 
-## 文档
+## 文档索引
 
-- [有界导出、完整性恢复与浏览游标](docs/RELIABILITY-ROUND-FOUR.md)
-- [GitHub 只读搜索与指定私有仓库](docs/GITHUB-READ.md)
-- [第五轮调度、配置隔离与质量门禁](docs/RELIABILITY-ROUND-FIVE.md)
+**开始使用**
+
+- [入门指南：在一个群里接入第一个角色](docs/GETTING-STARTED.md)
+- [故障排查（按症状查找）](docs/TROUBLESHOOTING.md)
+- [配置与数据目录](docs/CONFIGURATION.md)
+
+**日常运维**
+
+- [本机启停与旧桥接退役（`scripts/robots.mjs`）](docs/LOCAL-OPERATIONS.md)
+- [AI 后端连接状态与恢复](docs/BACKEND-RECOVERY.md)
+- [回合失败与会话恢复](docs/turn-recovery.md)
+- [迁移、部署与回退](docs/MIGRATION.md)
+- [真实后端的本地验收](docs/LOCAL-ACCEPTANCE.md)
 - [公开前检查与提交身份扫描](docs/PUBLIC-READINESS.md)
+
+**功能指南**
+
+- [功能说明：主动调度、语音、图片与旧工具](docs/FEATURES.md)
+- [连续聊天与联网策略](docs/CHAT-NETWORK-POLICY.md)
+- [自主文件收发](docs/FILE-TRANSFER.md)
+- [图片、截图与文件资料库](docs/SAVED-MEDIA.md)
+- [平台浏览与分享](docs/APP-EXPLORATION-IMPLEMENTATION.md)
+- [GitHub 只读访问](docs/GITHUB-READ.md)
+- [Self、主体意图与会话管理](docs/SELF-CONTEXT.md)
+- [意图取消与普通回复](docs/intent-reply-recovery.md)
+- [受保护的工作笔记、聊天意图与文件](docs/protected-mind-records.md)
+
+**设计与参考**
+
 - [架构与身份边界](docs/ARCHITECTURE.md)
 - [场景记忆、来源与自主表达](docs/MEMORY-DESIGN.md)
+- [Prompt 与 Self 的职责](docs/PROMPT-CONTRACTS.md)
+- [审批标识与子进程凭据边界](docs/CREDENTIAL-BOUNDARIES.md)
 - [基线与功能对照](docs/FEATURE-MATRIX.md)
-- [迁移、部署与回退](docs/MIGRATION.md)
-- [主动调度与旧工具使用](docs/FEATURES.md)
-- [验收范围](docs/ACCEPTANCE.md)
+
+**历史记录**
+
+- [更新日志](CHANGELOG.md)：按版本和轮次列出变化，并链接到 [`docs/history/`](docs/history/) 中的验收、审查和讨论记录。
+
+## 术语表
+
+| 术语                | 含义                                                                                                                        |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| 角色                | 一个 AI 身份（配置中的 `agents[]`），用 `agentId` 标识。文档中旧称“机器人”“智能体”“AI”均指角色。                            |
+| QQ 账号连接         | 配置中的 `connections[]`，一个 NapCat/OneBot 实例及其登录的 QQ 号。                                                         |
+| AI 后端             | 配置中的 `backends[]`，即 DSH 或 Codex。                                                                                    |
+| DSH                 | DeepSeek Harness 桌面应用。本项目通过它的 Web RPC 接入，并可生成专用的 preset/MCP bundle（`npm run dsh:bundle`）。          |
+| self                | 角色可长期成长的自我描述（性格、喜好、关系、表达倾向），按版本保存在 SQLite，可在管理台「Self 与主体」查看和恢复。          |
+| 主体                | 角色在聊天之外的“自己”：在空闲时回顾 self、读取资料、提出要联系谁的意图；主体本身没有 QQ 发送能力，由目标聊天决定是否发送。 |
+| 隔离模式 / live     | 配置 `mode`。`isolated` 不连接 QQ、不运行模型回合；`live` 需要以 `--live` 启动才能启用。                                    |
+| 全局暂停 / 角色暂停 | 两道独立开关。每次启动都会打开全局暂停；解除全局暂停不会解除角色暂停。                                                      |
+| 会话暂停 / 会话静默 | 针对单个群聊或私聊。会话暂停由管理员设置；会话静默是角色自己选择安静一段时间（`qq_set_silence`）。                          |
+| L0–L3               | 管理员私聊运维权限等级。L0 无运维权限（默认）；L1 只读普通文件；L2 写入需逐项确认；L3 需额外开关、TOTP 和独立命令批准。     |
 
 ## 来源和许可
 
-MIT。保留上游 [LICENSE](LICENSE)、[原 NOTICE](UPSTREAM-NOTICE.md) 和 [本项目归属说明](NOTICE.md)。版本及文件摘要见 `docs/SOURCES.json`。仓库不分发 QQ/NapCat/DSH/Codex 应用或 SnowLuma SDK；外部程序适用各自许可。
+MIT。保留上游 [LICENSE](LICENSE)、[原 NOTICE](UPSTREAM-NOTICE.md) 和 [本项目归属说明](NOTICE.md)。版本及文件摘要见 [`docs/SOURCES.json`](docs/SOURCES.json)。
 
-本机统一启停、原生 QQ 账号隔离与旧桥接退役步骤见 [本机运维](docs/LOCAL-OPERATIONS.md)。
+本项目基于 [h-D-ACE/dsh-qq](https://github.com/h-D-ACE/dsh-qq) 的 DSH 客户端与发现模块，参考 [Derpyu520/qq-bridge](https://github.com/Derpyu520/qq-bridge)，整合本地双机器人项目的 Codex RPC、互聊边界与平台读取模块。仓库不分发 QQ/NapCat/DSH/Codex 应用或 SnowLuma SDK；外部程序适用各自许可。

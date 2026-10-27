@@ -7,7 +7,7 @@
 - Node.js 24、FFprobe、FFmpeg，以及已安装的 DSH 与 Codex CLI。
 - 专用 DSH_HOME、profile、会话目录与登录；将本项目生成的 `qq-unified` bundle 安装到该 profile，桥接地址为 `http://127.0.0.1:3212`，DSH 监听 `127.0.0.1:3213`。
 - Codex 只使用验收数据目录下 `codex/acceptance-codex/home` 的专用登录。不要指向日常 Codex home，不共享会话目录。
-- 确认 3212–3216 端口可用，现有机器人保持暂停。脚本不会寻找、修改或启动现有机器人，也不会读取旧机器人的配置或凭据。
+- 确认 3212–3216 端口可用，现有角色保持暂停。脚本不会寻找、修改或启动现有角色，也不会读取旧角色的配置或凭据。
 
 默认数据目录是 `work/live-acceptance/bridge`。现有目录的角色标识必须属于本验收环境；脚本取得 `process.lock` 后才运行。异常退出留下锁时先检查 PID，不自动删除活跃进程的锁。
 
@@ -65,4 +65,4 @@ npm run memory:backup -- --source /path/to/instance/memory.sqlite --destination 
 
 ## Self / 上下文 / 主体意图
 
-独立环境可选择 `--case self-context` 跑五回合候选、主体采纳、目标发言、取消、原生压缩及重建回忆；`--case subject-cost` 每后端严格四次无新事项检查，对比复用两次和各自新建两次；`--case intent-receipt` 验证最终目标发送、outbox 与联系预算/冷却。它们均只向脚本创建的本机网关写入，必须 `--allow-real-models`，保留实际输出供人工阅读。self-context 使用全新合成数据目录，复用旧数据可能使模型合理地继续观察候选而不再次采纳。生成的 DSH preset 需包含同一隔离服务域的 compaction provider 与 compact 命令。结果解释、失败及限制见 [本轮报告](QUALITY-SELF-CONTEXT.md)。
+独立环境可选择 `--case self-context` 跑五回合候选、主体采纳、目标发言、取消、原生压缩及重建回忆；`--case subject-cost` 每后端严格四次无新事项检查，对比复用两次和各自新建两次；`--case intent-receipt` 验证最终目标发送、outbox 与联系预算/冷却。它们均只向脚本创建的本机网关写入，必须 `--allow-real-models`，保留实际输出供人工阅读。self-context 使用全新合成数据目录，复用旧数据可能使模型合理地继续观察候选而不再次采纳。生成的 DSH preset 需包含同一隔离服务域的 compaction provider 与 compact 命令。结果解释、失败及限制见 [本轮报告](history/QUALITY-SELF-CONTEXT.md)。

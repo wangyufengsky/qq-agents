@@ -1,0 +1,97 @@
+# 更新日志
+
+按时间倒序排列。每节对应一个版本、一轮可靠性工作或一个合并的 PR；详细的验收、审查和讨论记录保存在 [`docs/history/`](docs/history/)。“合并”不代表部署：除非另有说明，以下改动都只在本机隔离环境验证，生产角色保持暂停。
+
+## 文档整理（2026-10-27）
+
+- README 改为使用指南：快速开始、核心概念、上线步骤、启动方式选择、按任务分组的文档索引和术语表。
+- 新增 [入门指南](docs/GETTING-STARTED.md)、[故障排查](docs/TROUBLESHOOTING.md) 和 [配置与数据目录](docs/CONFIGURATION.md)；原 README 的功能列表移入 [功能说明](docs/FEATURES.md#功能一览)。
+- 各轮验收、审查和讨论记录移入 `docs/history/`，原链接已更新。
+
+## 暂停与权限写入统一提交（#45，2026-10-27）
+
+暂停、App 权限与文件权限的写入统一经过按影响范围的配置提交，与其他配置修改使用同样的版本检查和冲突处理。
+
+## QQ 接收通道自动重连（#44，2026-10-27）
+
+管理员手动连接过的 QQ 账号连接在意外断开后按指数退避自动重连（默认最多 8 次，可按连接关闭）。只恢复接收，不重发、不补录断线期间的消息；登录账号不匹配时立即停止（`QQ_ACCOUNT_MISMATCH`），重试用尽后显示 `QQ_AUTO_RECONNECT_EXHAUSTED`。
+
+## 待核对发送与“当前无法发言”原因（#43，2026-10-27）
+
+管理台总览新增“待核对发送”：网络结果未知的发送由管理员在 QQ 中核对后标记已发出/未发出，两种结论都不会重发。每个角色卡片列出当前无法发言的具体原因。
+
+## 凭据过滤、会话暂停与发送前取消（#42，2026-10-27）
+
+收窄凭据过滤（普通词语不再误拦 QQ 发送）；暂停单个会话只取消该会话的回合；已预留但尚未提交网关就被取消的发送记为失败（`CANCELLED_BEFORE_SEND`），而不是结果未知。
+
+## 第五轮：调度、配置隔离与维护边界（#41，2026-10-27）
+
+到期索引、按影响范围提交配置、运行时与工具职责拆分、增量质量门禁和默认配置收尾。记录：[RELIABILITY-ROUND-FIVE](docs/history/RELIABILITY-ROUND-FIVE.md)。
+
+## 第四轮：有界导出与浏览游标（#40，2026-10-27）
+
+管理台、HTTP、CLI 导出和 App 分页存储的大小上限与完整性恢复。记录：[RELIABILITY-ROUND-FOUR](docs/history/RELIABILITY-ROUND-FOUR.md)。
+
+## 第三轮：发送预算、文件库恢复与静默语义（#39，2026-10-27）
+
+角色总发送额度、文件库损坏恢复和相等静默时间的明确处理。记录：[RELIABILITY-ROUND-THREE](docs/history/RELIABILITY-ROUND-THREE.md)。
+
+## 第二轮：审批标识与子进程凭据边界（#38，2026-10-27）
+
+移除管理台状态中的模型 capability，收紧 Codex 与原生 QQ 子进程默认继承的环境变量。说明：[CREDENTIAL-BOUNDARIES](docs/CREDENTIAL-BOUNDARIES.md)。
+
+## 第一轮：停机、配置提交与错误诊断（#37，2026-10-27）
+
+进程退出与在途任务收敛、配置版本与提交、错误分类和管理台“最近错误”。记录：[RELIABILITY-ROUND-ONE](docs/history/RELIABILITY-ROUND-ONE.md)。
+
+## 回合恢复、受保护笔记与 GitHub 只读（#32–#36，2026-10-26）
+
+- 意图取消后恢复普通回复：[intent-reply-recovery](docs/intent-reply-recovery.md)（#36）。
+- 受保护的工作笔记、聊天意图与文件：[protected-mind-records](docs/protected-mind-records.md)（#35）。
+- 可恢复的后端会话不重放 QQ 发送：[turn-recovery](docs/turn-recovery.md)（#34）。
+- 管理台顶部补回“解除全局暂停”（#33）。
+- 按角色的 GitHub 只读搜索与公开前检查：[GITHUB-READ](docs/GITHUB-READ.md)、[PUBLIC-READINESS](docs/PUBLIC-READINESS.md)（#32）。
+
+## 资料库、后端恢复与主体用量（#27–#31，2026-10-26）
+
+- 原生生图登记、图片/文件留存和网页/App 内容页截图：[SAVED-MEDIA](docs/SAVED-MEDIA.md)（#28）。
+- AI 后端连接状态与自动恢复：[BACKEND-RECOVERY](docs/BACKEND-RECOVERY.md)（#27）。
+- 日记可读视图、主体历史与额度、短聊天节奏（#29–#31）。
+- 当时的完成状态与剩余事项：[STATUS](docs/history/STATUS.md)。
+
+## 连续聊天、联网策略与管理台改版（#19–#26，2026-10-25）
+
+- 连续聊天与联网策略：连续回复预算随可信人类新输入推进；公开请求按精确参数和来源授权；浏览时段可关闭或仅约束自主浏览。旧配置兼容。说明：[CHAT-NETWORK-POLICY](docs/CHAT-NETWORK-POLICY.md)（#21，#26）。
+- GIF 动图阅读：图片读取自动返回带时间信息的动图采样帧，并支持逐帧分页，见 [功能说明](docs/FEATURES.md#gif-动图阅读)（#20）。
+- Prompt 与 Self 的职责：[PROMPT-CONTRACTS](docs/PROMPT-CONTRACTS.md)（#19）。
+- 管理台改版、参与率热更新与 QQ 媒体下载修复（#22–#25）。
+
+## 迁移准备与记忆连续性（#13–#18，2026-10-25）
+
+迁移前修复与隔离演练、迁移记忆连续性、别名与目标账号一致性、退役会话回调保护。记录：[QUALITY-MIGRATION-READINESS](docs/history/QUALITY-MIGRATION-READINESS.md)、[QUALITY-MEMORY-CONTINUITY](docs/history/QUALITY-MEMORY-CONTINUITY.md)。迁移步骤见 [MIGRATION](docs/MIGRATION.md)。
+
+## App 自主浏览与 QQ 分享（#12，2026-10-25）
+
+按角色开启 B 站、小黑盒、知乎、小红书、贴吧的读取与分享，主体提出意图，目标聊天决定是否发送。说明：[APP-EXPLORATION-IMPLEMENTATION](docs/APP-EXPLORATION-IMPLEMENTATION.md)；规格讨论：[APP-EXPLORATION-DISCUSSION](docs/history/APP-EXPLORATION-DISCUSSION.md)。
+
+## Self 复审修复（#11，2026-10-25）
+
+六个复审问题的修复与联合验收契约。记录：[SELF-REVIEW-FIXES](docs/history/SELF-REVIEW-FIXES.md)。
+
+## Self、主体意图与上下文管理（#10，2026-10-25）
+
+SQLite 版本化 self 与延后回顾、逐回合同步、75% 整理和延迟重建、主体思考到目标聊天的意图交接。管理台可编辑/恢复 self、配置主动范围和查看用量。旧数据升级前须备份并确认外形锚点。说明：[SELF-CONTEXT](docs/SELF-CONTEXT.md)；验收：[QUALITY-SELF-CONTEXT](docs/history/QUALITY-SELF-CONTEXT.md)；规格：[PROMPT-CONTEXT-DISCUSSION](docs/history/PROMPT-CONTEXT-DISCUSSION.md)。
+
+## 0.4.0：外部工具发现与场景证据读取（#8，#9，2026-10-24）
+
+- HTTP/SSE/stdio MCP 白名单目录、受控图像和音频结果、本机可选 TTS；跨时间明确引用/撤回、重叠片段去重、事件稳定游标与中文 FTS 加速。真实平台、两后端和 20 万条合成压测的结果与限制见 [QUALITY-0.4](docs/history/QUALITY-0.4.md)。ASR 与常驻图像生成服务仍待配置。
+- 自主文件收发：管理台“权限”页可分别开启每个角色的下载与发送权限；各角色使用独立文件库，普通收发不逐项确认，默认关闭。说明：[FILE-TRANSFER](docs/FILE-TRANSFER.md)；额度、文件库恢复见第三轮记录。
+- 合并前审查：[PR-REVIEW-0.4](docs/history/PR-REVIEW-0.4.md)。
+
+## 0.3.0：场景记忆与自主回忆（2026-10-24）
+
+场景化记忆、来源与自主表达。设计：[MEMORY-DESIGN](docs/MEMORY-DESIGN.md)；当时的本地统一验收：[ACCEPTANCE](docs/history/ACCEPTANCE.md)；功能对照：[FEATURE-MATRIX](docs/FEATURE-MATRIX.md)。
+
+## 0.2.x：统一多角色桥接（2026-10-24）
+
+首个统一多角色桥接（旧调度与媒体能力迁入）、隔离的真实后端验收（0.2.1）以及 QQ 转发卡片和 Codex 投递确认修复（#3–#6）。真实后端验收工具：[LOCAL-ACCEPTANCE](docs/LOCAL-ACCEPTANCE.md)。
