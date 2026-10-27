@@ -31,6 +31,21 @@ test("identity scan checks author, committer and co-authors without exposing val
   assert.deepEqual(identityFindings("Example <name@github.com>"), [
     "personal-commit-email",
   ]);
+  // The identity CI sets for the privacy check; [bot] only on the noreply domain.
+  assert.deepEqual(
+    identityFindings(
+      "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com> 0 +0000",
+    ),
+    [],
+  );
+  for (const email of [
+    "a[bot]@example.com",
+    "a[bot]x@users.noreply.github.com",
+    "[bot]@users.noreply.github.com",
+  ])
+    assert.deepEqual(identityFindings(`Bot <${email}>`), [
+      "personal-commit-email",
+    ]);
 });
 test("commit messages and fine-grained GitHub tokens are covered", () => {
   const secret = "github_" + "pat_" + "x".repeat(50);
