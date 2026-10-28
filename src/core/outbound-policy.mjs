@@ -244,6 +244,19 @@ export function authorizeExternal(
 ) {
   runtime.assertActive(ctx);
   assertCredentials(runtime, ctx, request);
+  // App readers prove this from a fixed feed selector or a stored platform
+  // response. No query, arbitrary URL or recalled text is sent. Keep this
+  // exemption separate from general URLs, MCP calls and disclosure grants.
+  if (
+    fixed &&
+    ["app_browse", "app_boards", "app_read", "app_comments"].includes(
+      request.tool,
+    )
+  )
+    return {
+      requested: requestedByHuman(runtime, ctx, request, requestEventId),
+      basis: "fixed-public-read",
+    };
   const githubSources = privateGithubSources(ctx, runtime);
   // Public-URL and autonomous grants never authorize exporting private source code.
   // Only a server-validated read back to the same allowlisted repository is exempt.
