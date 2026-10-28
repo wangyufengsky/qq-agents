@@ -170,8 +170,12 @@ export class TaskScheduler {
     if (typeof t.enabled !== "boolean" && t.enabled !== undefined)
       throw Error("INVALID_ENABLED");
     t.enabled = t.enabled !== false;
-    // Every edit to an AI's non-owner-target task requires renewed approval, including re-enabling it.
-    t.pendingConfirm = !!ctx && t.targets.some((x) => x !== ctx.conversation);
+    // Keep confirmation as the default; administrators can grant direct
+    // scheduling to allowlisted targets from their private conversation.
+    t.pendingConfirm =
+      !!ctx &&
+      p.confirmAiOtherTargets !== false &&
+      t.targets.some((x) => x !== ctx.conversation);
     if (t.pendingConfirm) t.enabled = false;
     const next = this.preview(id, t);
     if (t.schedule.type === "once" && !next.length)

@@ -455,6 +455,58 @@ test("group uploads and offline files become visible attachment events", () => {
   }
 });
 
+test("private attachments fall back to bounded gateway streaming when packet URLs are disabled", async (t) => {
+  const { runtime, ctx, store } = await setup(t, {
+    download: async () => {
+      throw Error("MUST_NOT_FETCH_ARBITRARY_URL");
+    },
+  });
+  const e = store.bind(ctx.agentId).append({
+    dedupe: "private-file",
+    connectionId: "qq-0",
+    conversation: "private:30000",
+    kind: "message.received",
+    payload: {
+      segments: [
+        {
+          type: "file",
+          data: {
+            file: "photo.png",
+            file_id: "observed-private-file",
+            file_size: "5",
+          },
+        },
+      ],
+    },
+  });
+  const transport = runtime.transports.get("qq-0");
+  transport.call = async (action) => {
+    assert.equal(action, "get_private_file_url");
+    throw Object.assign(Error("ONEBOT_REJECTED"), {
+      reason: "PACKET_BACKEND_DISABLED",
+    });
+  };
+  let downloads = 0;
+  transport.downloadFile = async (fileId, { maxBytes, signal }) => {
+    downloads++;
+    assert.equal(fileId, "observed-private-file");
+    assert.equal(maxBytes, runtime.agent(ctx.agentId).files.maxBytes);
+    assert.equal(signal.aborted, false);
+    return { buffer: Buffer.from("image") };
+  };
+  const saved = await runtime.callTool(ctx, "file_download", { eventId: e.id });
+  assert.equal(saved.name, "photo.png");
+  assert.equal(saved.sources[0].eventId, e.id);
+  assert.equal(saved.bytes, 5);
+  assert.equal(downloads, 1);
+  runtime.agent(ctx.agentId).files.receive = false;
+  await assert.rejects(
+    runtime.callTool(ctx, "file_download", { eventId: e.id }),
+    /FILE_PERMISSION_DISABLED/,
+  );
+  assert.equal(downloads, 1);
+});
+
 test("operations-derived files retain disclosure restriction across persistence", async (t) => {
   const { runtime, ctx } = await setup(t);
   ctx.privateRead.add("operations:fixture");

@@ -10,6 +10,8 @@ import { FileStore } from "../src/tools/files.mjs";
 import { safeToolFailure } from "../src/tools/errors.mjs";
 import { fixture, config, context, temp } from "./helpers.mjs";
 import { gif } from "./gif-fixture.mjs";
+import { normalizeEvent } from "../src/transport/onebot.mjs";
+import { raw } from "./helpers.mjs";
 
 function largeGif() {
   const data = gif([{}, { color: 1 }, { color: 2 }]);
@@ -290,6 +292,48 @@ test("GIF file notices use the authorized attachment URL route and return frames
       .length,
     2,
   );
+});
+
+test("NapCat file segments expose their filename and image pixels", async (t) => {
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII=",
+    "base64",
+  );
+  const f = await attachmentFixture(t, {
+    download: async () => ({ buffer: png }),
+  });
+  const incoming = normalizeEvent(
+    raw(9, {
+      message_type: "private",
+      group_id: undefined,
+      message: [
+        {
+          type: "file",
+          data: {
+            file: "photo.png",
+            file_id: "observed-file",
+            file_size: "68",
+          },
+        },
+      ],
+    }),
+    { accountId: "10000" },
+  );
+  const e = f.store.bind("agent-0").append({
+    dedupe: "napcat-file",
+    connectionId: "qq-0",
+    conversation: incoming.conversation,
+    kind: incoming.kind,
+    body: incoming.body,
+    payload: { segments: incoming.segments },
+  });
+  const ctx = context(f.runtime, "agent-0", incoming.conversation);
+  const result = await f.runtime.callTool(ctx, "qq_image_read", { id: e.id });
+  assert.equal(images(result).length, 1);
+  assert.equal(images(result)[0].mimeType, "image/png");
+  assert.deepEqual(Buffer.from(images(result)[0].data, "base64"), png);
+  assert.match(incoming.body, /photo\.png/);
+  assert.equal(f.runtime.files.list("agent-0").items[0].name, "photo.png");
 });
 
 test("attachment image reading cannot bypass file permissions, tool grants or source ownership", async (t) => {

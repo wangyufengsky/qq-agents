@@ -61,6 +61,7 @@ export const schedulerSchema = z
     timezone: timezone.default("Asia/Shanghai"),
     allowAiPrivate: z.boolean().default(true),
     allowAiOtherTargets: z.boolean().default(false),
+    confirmAiOtherTargets: z.boolean().default(true),
     maxTasks: ms(1, 200, 20),
     perTaskPerDay: ms(1, 288, 12),
     totalPerDay: ms(1, 2000, 50),

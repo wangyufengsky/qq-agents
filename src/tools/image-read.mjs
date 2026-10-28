@@ -1,5 +1,6 @@
 import { imageMime, MAX_IMAGE_SOURCE_BYTES } from "./media.mjs";
 import { imageDownloadError } from "./image-download.mjs";
+import { attachmentName } from "../transport/attachments.mjs";
 
 export async function readEventImage(
   runtime,
@@ -17,11 +18,7 @@ export async function readEventImage(
     });
   const attachment = segments.filter((s) => s.type === "file")[index]?.data;
   if (!attachment) throw Error("IMAGE_NOT_FOUND");
-  if (
-    !/\.(gif|png|jpe?g|webp)$/i.test(
-      attachment.name || attachment.file_name || "",
-    )
-  )
+  if (!/\.(gif|png|jpe?g|webp)$/i.test(attachmentName(attachment)))
     throw Error("IMAGE_ATTACHMENT_REQUIRED");
   if (Number(attachment.file_size || attachment.size) > MAX_IMAGE_SOURCE_BYTES)
     throw Error("IMAGE_TOO_LARGE");

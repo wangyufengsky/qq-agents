@@ -121,12 +121,12 @@ export const legacyDefinitions = {
     object({ requestId: id, userId: str.regex(/^[1-9]\d*$/).optional() }),
   ],
   qq_schedule_create: [
-    "仅管理员私聊登记结构化定时任务，登记成功后才可承诺；其他目标必须管理员批准。",
+    "仅管理员私聊登记结构化定时任务。其他目标须在允许范围且开启跨目标登记；是否需控制台确认由管理员配置决定。以返回的 enabled、pendingConfirm 和 scheduledAt 判断是否生效，待确认或禁用时不可承诺会执行。",
     object(taskFields),
   ],
   qq_schedule_list: ["仅管理员私聊列出该私聊创建的任务。", object({})],
   qq_schedule_update: [
-    "仅管理员私聊修改自己创建的任务；跨目标修改重新等待批准。",
+    "仅管理员私聊修改自己创建的任务；跨目标修改按管理员配置决定是否重新等待控制台确认。以返回的 enabled、pendingConfirm 和 scheduledAt 判断是否生效。",
     object({
       id: z.number().int().min(1),
       patch: z.object(taskFields).partial().strict(),

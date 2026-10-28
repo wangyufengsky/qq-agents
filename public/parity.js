@@ -77,7 +77,8 @@ async function renderSchedules() {
     ${parityCheck("quietEnabled", "群定时任务免打扰", s.quietEnabled)}${parityField("quietStart", "免打扰开始", s.quietStart, "time")}${parityField("quietEnd", "免打扰结束", s.quietEnd, "time")}
     </div>${advanced(
       "高级设置：AI 登记、每日上限、补发与节假日",
-      `${parityCheck("allowAiPrivate", "允许管理员私聊 AI 登记", s.allowAiPrivate)}${parityCheck("allowAiOtherTargets", "允许 AI 申请其他目标（仍需确认）", s.allowAiOtherTargets)}
+      `${parityCheck("allowAiPrivate", "允许管理员私聊 AI 登记", s.allowAiPrivate)}${parityCheck("allowAiOtherTargets", "允许管理员私聊登记其他目标", s.allowAiOtherTargets)}${parityCheck("confirmAiOtherTargets", "其他目标登记或修改后需控制台确认", s.confirmAiOtherTargets !== false)}
+    <p class="hint">关闭其他目标确认后，管理员私聊登记的任务可直接生效；目标仍限于角色允许的联系人和群，普通聊天不获得登记权限。</p>
     ${parityNumber("totalPerDay", "每日全部目标上限", s.totalPerDay, 1)}${parityNumber("perTaskPerDay", "单任务每日上限", s.perTaskPerDay, 1)}
     ${parityNumber("perGroupPerDay", "每群每日上限", s.perGroupPerDay, 1)}${parityNumber("missedGraceMin", "允许补发的迟到分钟数", s.missedGraceMin)}
     ${parityNumber("jitterMin", "固定时间随机偏移（分钟）", s.jitterMin)}${parityCheck("quietAllDay", "全天免打扰（仅群定时任务）", s.quietAllDay)}
@@ -146,6 +147,7 @@ async function renderSchedules() {
         "enabled",
         "allowAiPrivate",
         "allowAiOtherTargets",
+        "confirmAiOtherTargets",
         "quietEnabled",
         "quietAllDay",
       ])

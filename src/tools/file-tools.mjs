@@ -4,6 +4,7 @@ import { allowed } from "../core/config.mjs";
 import { ownedEvent } from "./forward.mjs";
 import { fileName } from "./files.mjs";
 import { githubMarker, privateGithubSources } from "../github/policy.mjs";
+import { attachmentName } from "../transport/attachments.mjs";
 
 const name = z.string().min(1).max(200),
   id = z.string().regex(/^[a-f0-9]{64}$/);
@@ -165,7 +166,12 @@ export async function fileTool(runtime, ctx, tool, args) {
     let url = args.url,
       displayName = args.name,
       source = { kind: "web", conversation: ctx.conversation },
-      refresh;
+      refresh,
+      stream;
+    const options = {
+      maxBytes: a.files.maxBytes,
+      signal: ctx.controller.signal,
+    };
     if (args.eventId) {
       const event = ownedEvent(runtime, ctx, args.eventId);
       if (
@@ -180,15 +186,24 @@ export async function fileTool(runtime, ctx, tool, args) {
       if (Number(attachment.size || attachment.file_size) > a.files.maxBytes)
         throw Error("FILE_TOO_LARGE");
       const fileId = attachment.file_id || attachment.id;
-      displayName ||=
-        attachment.name || attachment.file_name || "attachment.bin";
+      displayName ||= attachmentName(attachment) || "attachment.bin";
       url = attachment.url;
       source = {
         kind: "qq-attachment",
         conversation: event.conversation,
         eventId: event.id,
       };
-      if (typeof fileId === "string" && fileId.length && fileId.length <= 1024)
+      if (
+        typeof fileId === "string" &&
+        fileId.length &&
+        fileId.length <= 1024
+      ) {
+        stream = async () => {
+          active(runtime, ctx, permission);
+          const transport = runtime.transports.get(a.connectionId);
+          if (!transport?.connected) throw Error("QQ_NOT_CONNECTED");
+          return transport.downloadFile(fileId, options);
+        };
         refresh = async () => {
           const transport = runtime.transports.get(a.connectionId);
           if (!transport?.connected) throw Error("QQ_NOT_CONNECTED");
@@ -208,28 +223,37 @@ export async function fileTool(runtime, ctx, tool, args) {
           if (!result?.url) throw Error("FILE_URL_UNAVAILABLE");
           return result.url;
         };
+      }
     }
-    if (!url) url = refresh ? await refresh() : null;
-    if (!url) throw Error("FILE_URL_UNAVAILABLE");
-    fileName(displayName || suggestedName(url));
-    const options = {
-      maxBytes: a.files.maxBytes,
-      signal: ctx.controller.signal,
-    };
+    if (displayName) fileName(displayName);
     let result;
     try {
-      result = await files.download(url, options);
+      if (!url) url = refresh ? await refresh() : null;
+      if (!url) throw Error("FILE_URL_UNAVAILABLE");
+      try {
+        result = await files.download(url, options);
+      } catch (error) {
+        if (
+          !refresh ||
+          !["FILE_DOWNLOAD_HTTP_ERROR", "FILE_DOWNLOAD_FAILED"].includes(
+            error.message,
+          )
+        )
+          throw error;
+        active(runtime, ctx, permission);
+        url = await refresh();
+        result = await files.download(url, options);
+      }
     } catch (error) {
       if (
-        !refresh ||
-        !["FILE_DOWNLOAD_HTTP_ERROR", "FILE_DOWNLOAD_FAILED"].includes(
-          error.message,
+        !stream ||
+        error.message !== "ONEBOT_REJECTED" ||
+        !["PACKET_BACKEND_DISABLED", "PACKET_BACKEND_UNAVAILABLE"].includes(
+          error.reason,
         )
       )
         throw error;
-      active(runtime, ctx, permission);
-      url = await refresh();
-      result = await files.download(url, options);
+      result = await stream();
     }
     active(runtime, ctx, permission);
     const saved = files.put(

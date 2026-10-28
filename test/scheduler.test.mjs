@@ -181,6 +181,66 @@ test("tasks accept ordinary recollection but cannot bypass protected file disclo
   owner.privateRead.add("operations:protected-file");
   assert.throws(() => f.s.create("agent-0", task(), owner), /DISCLOSURE/);
 });
+
+test("authorized owner scheduling can activate other allowed targets without a console confirmation", async (t) => {
+  const f = setup(t);
+  const a = f.runtime.agent("agent-0");
+  a.allow.users.push("30001");
+  Object.assign(a.scheduler, {
+    allowAiOtherTargets: true,
+    confirmAiOtherTargets: false,
+  });
+  const owner = context(f.runtime, "agent-0", "private:30000");
+  const created = await f.runtime.callTool(
+    owner,
+    "qq_schedule_create",
+    task({ targets: ["group:20000", "private:30001"] }),
+  );
+  assert.equal(created.enabled, true);
+  assert.equal(created.pendingConfirm, false);
+  const edited = await f.runtime.callTool(owner, "qq_schedule_update", {
+    id: created.id,
+    patch: { text: "updated" },
+  });
+  assert.equal(edited.enabled, true);
+  assert.equal(edited.pendingConfirm, false);
+  f.advance(60001);
+  f.runtime.tick();
+  await settle(f.runtime);
+  assert.deepEqual(
+    f.runtime.transports.get("qq-0").sent.map((x) => x.conversation),
+    ["group:20000", "private:30001"],
+  );
+  await assert.rejects(
+    f.runtime.callTool(
+      owner,
+      "qq_schedule_create",
+      task({ targets: ["private:39999"] }),
+    ),
+    /TASK_TARGET_NOT_ALLOWED/,
+  );
+  await assert.rejects(
+    f.runtime.callTool(context(f.runtime), "qq_schedule_create", task()),
+    /TOOL_DISABLED/,
+  );
+  await assert.rejects(
+    f.runtime.callTool(
+      context(f.runtime, "agent-0", "private:30001"),
+      "qq_schedule_create",
+      task(),
+    ),
+    /TOOL_DISABLED/,
+  );
+  a.scheduler.allowAiOtherTargets = false;
+  await assert.rejects(
+    f.runtime.callTool(
+      owner,
+      "qq_schedule_create",
+      task({ targets: ["group:20000"] }),
+    ),
+    /AI_OTHER_TARGETS_DISABLED/,
+  );
+});
 test("AI task instruction survives busy queue and has a non-send outcome if model stays silent", async (t) => {
   let release,
     calls = 0,
