@@ -147,9 +147,8 @@ test("Zhihu recommendations and search preserve URL IDs larger than safe JSON in
 });
 
 test("exact JSON parsing retains large source IDs and ordinary numbers", async () => {
-  const { parseExactJson, zhihuSearchRows } = await import(
-    "../src/apps/normalize.mjs"
-  );
+  const { parseExactJson, zhihuSearchRows } =
+    await import("../src/apps/normalize.mjs");
   const data = parseExactJson(
     '{"data":[{"target":{"type":"answer","id":2097477416973354782,"question":{"id":1937205528846655531}}}],"count":12,"score":1.5,"literal":"id:1937205528846655531"}',
   );

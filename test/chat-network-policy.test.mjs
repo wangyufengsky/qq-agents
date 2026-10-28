@@ -702,9 +702,8 @@ test("mixed public/private DNS answers fail before transport and URLs remain pin
     { address: "10.0.0.2", family: 4 },
   ]);
   // Fresh module captures the synthetic resolver, without ever resolving an actual host.
-  const isolated = await import(
-    "../vendor/social-reader/safe-fetch.js?synthetic-dns-policy"
-  );
+  const isolated =
+    await import("../vendor/social-reader/safe-fetch.js?synthetic-dns-policy");
   await assert.rejects(
     isolated.validateFetchUrl("https://fixture.invalid/"),
     /内网/,
