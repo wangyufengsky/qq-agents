@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
-import { fixture, config } from "./helpers.mjs";
+import { fixture, config, settle } from "./helpers.mjs";
 import { createServer } from "../src/server.mjs";
 import { configImpact } from "../src/core/config-impact.mjs";
 
@@ -249,4 +249,77 @@ test("a subject log written from operations material stays protected when recall
   );
   assert(!ctx.privateRead.has(logId));
   assert.doesNotThrow(() => f.runtime.assertDisclosure(ctx));
+});
+
+test("free time sees who it can reach and can log reaching out", async (t) => {
+  const c = config(2),
+    a = c.agents[0];
+  a.ownerIds = ["30000"];
+  a.allow.users = ["30000", "30001", "10001"];
+  Object.assign(a.subject, {
+    enabled: true,
+    owners: true,
+    peers: true,
+    users: ["30000", "30001", "39999"],
+    groups: ["20000"],
+    intervalMs: 60000,
+    maxContactsPerDay: 3,
+  });
+  const seen = [];
+  const f = fixture(t, {
+    cfg: c,
+    run: async (p) => {
+      seen.push(p);
+      if (p.conversation !== "@subject") return;
+      await p.callTool("intent_create", {
+        topic: "问问昨天说的猫找到没有",
+        target: "private:30001",
+        reason: "惦记着这件事",
+        expiresAt: Date.now() + 6 * 3600000,
+        expectsResponse: true,
+      });
+      await p.callTool("subject_log", {
+        did: "reached-out",
+        summary: "想起猫的事，交给私聊去问一句",
+      });
+    },
+  });
+  const m = f.store.bind("agent-0");
+  m.append({
+    dedupe: "heard",
+    conversation: "private:30001",
+    kind: "message.received",
+    body: "猫跑了",
+    senderId: "30001",
+    occurredAt: "2026-10-27T18:00:00Z",
+  });
+  await f.runtime.wake("agent-0", "@subject");
+  assert.match(seen[0].instructions, /reach/);
+  assert.match(seen[0].instructions, /不算打扰/);
+  const reach = JSON.parse(seen[0].prompt.split("空闲时间素材：")[1]).reach;
+  assert.equal(reach.contactsLeftToday, 3);
+  assert.deepEqual(
+    reach.targets.map(({ target, who, name }) => ({ target, who, name })),
+    [
+      { target: "private:30000", who: "owner", name: undefined },
+      { target: "private:10001", who: "peer", name: "角色1" },
+      { target: "private:30001", who: "user", name: undefined },
+      { target: "group:20000", who: "group", name: undefined },
+    ],
+  );
+  assert(reach.targets[2].lastHeardAt);
+  assert.equal(reach.targets[0].lastHeardAt, null);
+  const [intent] = m.identity.list("intentions");
+  assert.equal(intent.target, "private:30001");
+  f.runtime.subject.tick();
+  await settle(f.runtime);
+  assert.equal(
+    m.identity.get("intentions", intent.id).history[1].status,
+    "handedoff",
+  );
+  assert(seen.some((p) => p.conversation === "private:30001"));
+  const [log] = m.db
+    .prepare("SELECT payload FROM events WHERE kind='subject.log'")
+    .all();
+  assert.equal(JSON.parse(log.payload).did, "reached-out");
 });

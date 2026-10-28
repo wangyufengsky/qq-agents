@@ -117,6 +117,7 @@ export const mindDefinitions = {
           "read",
           "wrote",
           "reviewed",
+          "reached-out",
           "rested",
         ]),
         summary: text.max(200),

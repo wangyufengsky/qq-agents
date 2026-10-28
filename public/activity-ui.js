@@ -15,6 +15,7 @@ const activityDid = {
   read: "阅读",
   wrote: "写作",
   reviewed: "回顾",
+  "reached-out": "联系",
   rested: "休息",
 };
 const activityRest = {

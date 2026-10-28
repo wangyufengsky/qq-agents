@@ -638,7 +638,7 @@ test("legacy appearance stays in first self until explicit anchor migration, the
   assert.equal(m.identity.history().at(-1).template, c.agents[0].persona);
 });
 
-test("subject receives durable activity batches and failure never acknowledges them", async (t) => {
+test("subject sees the newest activity batch and failure never acknowledges it", async (t) => {
   const prompts = [];
   let fail = true,
     now = Date.now();
@@ -658,20 +658,26 @@ test("subject receives durable activity batches and failure never acknowledges t
   now += 60001;
   f.runtime.subject.tick();
   await settle(f.runtime);
-  assert(prompts[0].includes(events[0].id));
+  // A busy chat must not leave free time reading yesterday's backlog.
+  assert(prompts[0].includes(events[21].id));
+  assert(prompts[0].includes(events[2].id));
+  assert(!prompts[0].includes(events[1].id));
+  assert(prompts[0].indexOf(events[2].id) < prompts[0].indexOf(events[21].id));
   assert(prompts[0].includes('"activityOverflow":2'));
   assert.equal(f.runtime.subject.pendingActivities("agent-0"), 22);
   fail = false;
   now += 60001;
   f.runtime.subject.tick();
   await settle(f.runtime);
-  assert(prompts[1].includes(events[0].id));
-  assert.equal(f.runtime.subject.pendingActivities("agent-0"), 2);
+  assert(prompts[1].includes(events[21].id));
+  assert.equal(f.runtime.subject.pendingActivities("agent-0"), 0);
+  const later = event(m, 23, { occurredAt: "2026-10-26T00:00:00Z" });
   now += 60001;
   f.runtime.subject.tick();
   await settle(f.runtime);
-  assert(prompts[2].includes(events[21].id));
-  assert.equal(f.runtime.subject.pendingActivities("agent-0"), 0);
+  assert(prompts[2].includes(later.id));
+  assert(!prompts[2].includes(events[0].id));
+  assert(prompts[2].includes('"activityOverflow":0'));
 });
 
 test("handoff includes scheduled ownership and agent-wide confirmed contacts", (t) => {
