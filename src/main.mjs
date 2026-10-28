@@ -19,6 +19,7 @@ import { createServer } from "./server.mjs";
 import { Lifecycle } from "./transport/lifecycle.mjs";
 import { VoiceStore } from "./tools/voice.mjs";
 import { applyLocalSecrets } from "./core/local-secrets.mjs";
+import { AutoResume } from "./core/auto-resume.mjs";
 
 const args = process.argv.slice(2),
   option = (name) =>
@@ -62,6 +63,9 @@ try {
     defaultConfig(),
   );
   const allowLive = args.includes("--live");
+  // Opt-in: lift the boot pause once QQ and the backends are ready.
+  const resume = args.includes("--resume");
+  if (resume && !allowLive) throw Error("RESUME_REQUIRES_LIVE_FLAG");
   if (!allowLive && configStore.value.mode === "live")
     throw Error("LIVE_CONFIG_REQUIRES_EXPLICIT_LIVE_FLAG");
   // Every boot begins paused. The console can explicitly resume after connections are checked.
@@ -107,9 +111,11 @@ try {
       : Number(option("--port")),
     host,
   );
+  runtime.autoResume = new AutoResume(runtime, { enabled: resume });
   runtime.startTimers();
+  if (resume) void runtime.trackJob(runtime.autoResume.run(), "auto-resume");
   console.log(
-    `QQ Agents: http://127.0.0.1:${publicPort ?? port} | ${configStore.value.mode} | paused | admin token file: ${tokenFile}`,
+    `QQ Agents: http://127.0.0.1:${publicPort ?? port} | ${configStore.value.mode} | ${resume ? "paused, resuming once QQ and backends are ready" : "paused"} | admin token file: ${tokenFile}`,
   );
   if (host !== "127.0.0.1" && host !== "localhost" && host !== "::1")
     console.log(

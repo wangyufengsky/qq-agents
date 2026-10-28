@@ -696,6 +696,7 @@ export function createServer({
           throw Error("INVALID_MODE");
         if (data.mode === "live" && !allowLive)
           throw Error("RESTART_WITH_LIVE_FLAG_REQUIRED");
+        if (data.mode === "isolated") runtime.autoResume.cancel();
         await runtime.setMode(data.mode, data.revision);
         return send({
           ok: true,
@@ -706,6 +707,8 @@ export function createServer({
       if (req.method === "POST" && url.pathname === "/api/pause") {
         const data = await readBody();
         if (typeof data.paused !== "boolean") throw Error("INVALID_PAUSE");
+        // A global pause or resume from the console ends automatic resume.
+        if ((data.agentId || "all") === "all") runtime.autoResume.cancel();
         return send(await runtime.pause(data.agentId || "all", data.paused));
       }
       if (req.method === "POST" && url.pathname === "/api/connection") {

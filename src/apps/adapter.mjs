@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { buildChildEnv } from "../core/child-env.mjs";
 import { fileURLToPath } from "node:url";
 import { withBrowserLock } from "../../vendor/social-reader/browser-lock.mjs";
 import { appInfo } from "./urls.mjs";
@@ -69,7 +70,7 @@ export class AppAdapter {
         [fileURLToPath(new URL("./opencli-runner.mjs", import.meta.url))],
         {
           stdio: ["pipe", "pipe", "pipe"],
-          env: { ...process.env, NO_COLOR: "1" },
+          env: { ...buildChildEnv("app-reader"), NO_COLOR: "1" },
           signal,
         },
       );

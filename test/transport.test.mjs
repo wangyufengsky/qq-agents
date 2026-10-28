@@ -395,3 +395,105 @@ test("missing or invalid OneBot time is observation time, not trusted scene time
   assert.equal(e.timeKnown, true);
   assert.equal(e.occurredAt, "2023-11-14T22:13:20.000Z");
 });
+
+function fakeGateway(recovery) {
+  const sockets = [];
+  class Socket extends EventEmitter {
+    constructor() {
+      super();
+      this.pings = 0;
+      this.terminated = false;
+      sockets.push(this);
+      queueMicrotask(() => this.emit("open"));
+    }
+    ping() {
+      this.pings++;
+    }
+    terminate() {
+      this.terminated = true;
+      this.emit("close");
+    }
+    close() {
+      this.emit("close");
+    }
+  }
+  const c = { ...config(1).connections[0], recovery };
+  const bot = new OneBot(c, {
+    WebSocketImpl: Socket,
+    fetchImpl: async (url) =>
+      new Response(
+        JSON.stringify({
+          status: "ok",
+          retcode: 0,
+          data: url.endsWith("get_login_info")
+            ? { user_id: 10000 }
+            : { online: true },
+        }),
+      ),
+  });
+  const faults = [];
+  bot.on("fault", (code) => faults.push(code));
+  return { bot, sockets, faults };
+}
+
+test("a silent OneBot socket is pinged and then reported lost", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval", "Date"], now: 0 });
+  const { bot, sockets, faults } = fakeGateway({
+    ...config(1).connections[0].recovery,
+  });
+  t.after(() => bot.close());
+  await bot.connect();
+  const socket = sockets[0];
+  t.mock.timers.tick(30000);
+  assert.equal(socket.pings, 1);
+  // A pong or any frame keeps the socket alive.
+  t.mock.timers.tick(30000);
+  socket.emit("pong");
+  t.mock.timers.tick(60000);
+  assert.equal(bot.connected, true);
+  socket.emit("message", Buffer.from(JSON.stringify({ self_id: 10000 })));
+  t.mock.timers.tick(60000);
+  assert.equal(bot.connected, true);
+  assert.deepEqual(faults, []);
+  t.mock.timers.tick(30000);
+  assert.equal(bot.connected, false);
+  assert.equal(socket.terminated, true);
+  assert.deepEqual(faults, ["ONEBOT_HEARTBEAT_TIMEOUT"]);
+  t.mock.timers.tick(300000);
+  assert.deepEqual(faults, ["ONEBOT_HEARTBEAT_TIMEOUT"], "reported once");
+});
+
+test("the OneBot heartbeat watchdog can be turned off", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval", "Date"], now: 0 });
+  const { bot, sockets, faults } = fakeGateway({
+    ...config(1).connections[0].recovery,
+    heartbeatTimeoutMs: 0,
+  });
+  t.after(() => bot.close());
+  await bot.connect();
+  t.mock.timers.tick(600000);
+  assert.equal(sockets[0].pings, 0);
+  assert.equal(bot.connected, true);
+  assert.deepEqual(faults, []);
+});
+
+test("an unreadable OneBot frame is dropped, another account's frame stops the channel", async (t) => {
+  const { bot, sockets, faults } = fakeGateway();
+  t.after(() => bot.close());
+  const events = [];
+  bot.on("event", (raw) => events.push(raw));
+  await bot.connect();
+  sockets[0].emit("message", Buffer.from("not json"));
+  sockets[0].emit("message", Buffer.from("[1]"));
+  assert.equal(bot.connected, true);
+  sockets[0].emit("message", Buffer.from(JSON.stringify({ self_id: 10000 })));
+  assert.equal(events.length, 1);
+  sockets[0].emit("message", Buffer.from(JSON.stringify({ self_id: 999 })));
+  assert.equal(bot.connected, false);
+  assert.equal(events.length, 1);
+  assert.deepEqual(faults, [
+    "INVALID_ONEBOT_EVENT",
+    "INVALID_ONEBOT_EVENT",
+    "QQ_ACCOUNT_MISMATCH",
+  ]);
+});

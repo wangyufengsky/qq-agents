@@ -305,3 +305,103 @@ test("explicit Codex credentials remain protected from outbound request argument
       /SENSITIVE_OUTPUT_BLOCKED/,
     );
 });
+
+test("reader, browser and media helpers receive only their documented variables", (t) => {
+  canaries(t);
+  // Simulated Linux: Windows spells the variable "Path", so set it explicitly.
+  const parent = {
+    ...process.env,
+    PATH: "/synthetic/bin",
+    OPENCLI_CONFIG_DIR: "/synthetic/opencli",
+    MCPORTER_CONFIG: "/synthetic/mcporter.json",
+    EXA_API_KEY: "synthetic-round2-exa",
+    SOCIAL_OPENCLI: "/synthetic/opencli-bin",
+  };
+  const secrets = [
+    "GITHUB_TOKEN",
+    "ONEBOT_TOKEN",
+    "TOTP_SECRET",
+    "OPENAI_API_KEY",
+    "QQ_ROUND2_UNRELATED",
+    "QQ_ROUND2_EXPLICIT",
+    "NODE_OPTIONS",
+  ];
+  const env = Object.fromEntries(
+    ["app-reader", "mcporter", "browser", "media"].map((component) => [
+      component,
+      buildChildEnv(component, {}, { parent, platform: "linux" }),
+    ]),
+  );
+  for (const value of Object.values(env)) {
+    for (const name of secrets) assert.equal(value[name], undefined, name);
+    assert.equal(value.PATH, "/synthetic/bin");
+  }
+  assert.equal(env["app-reader"].OPENCLI_CONFIG_DIR, "/synthetic/opencli");
+  assert.equal(env["app-reader"].SOCIAL_OPENCLI, "/synthetic/opencli-bin");
+  assert.equal(env["app-reader"].EXA_API_KEY, undefined);
+  assert.equal(env["app-reader"].HTTPS_PROXY, "http://127.0.0.1:9");
+  assert.equal(env.mcporter.EXA_API_KEY, "synthetic-round2-exa");
+  assert.equal(env.mcporter.MCPORTER_CONFIG, "/synthetic/mcporter.json");
+  assert.equal(env.mcporter.OPENCLI_CONFIG_DIR, undefined);
+  for (const component of ["browser", "media"]) {
+    assert.equal(env[component].HTTPS_PROXY, undefined);
+    assert.equal(env[component].OPENCLI_CONFIG_DIR, undefined);
+    assert.equal(env[component].EXA_API_KEY, undefined);
+  }
+  assert.throws(() => buildChildEnv("unknown"), /INVALID_CHILD_ENV_COMPONENT/);
+});
+
+test(
+  "ffmpeg, ffprobe and OpenCLI launches do not inherit bridge secrets",
+  {
+    skip: process.platform === "win32" && "uses an executable script fixture",
+  },
+  async (t) => {
+    canaries(t);
+    const root = temp(t),
+      script = path.join(root, "env-dump"),
+      seen = path.join(root, "seen.json");
+    // Prints and records the variable names it was started with, then fails.
+    fs.writeFileSync(
+      script,
+      `#!${process.execPath}\nconst keys = Object.keys(process.env);\nrequire("node:fs").writeFileSync(${JSON.stringify(seen)}, JSON.stringify(keys));\nprocess.stdout.write(JSON.stringify({ keys }));\nprocess.exit(process.argv.includes("search") ? 0 : 1);\n`,
+      { mode: 0o700 },
+    );
+    const leaked = () =>
+      JSON.parse(fs.readFileSync(seen, "utf8")).filter((k) =>
+        [
+          "GITHUB_TOKEN",
+          "ONEBOT_TOKEN",
+          "TOTP_SECRET",
+          "OPENAI_API_KEY",
+          "QQ_ROUND2_UNRELATED",
+          "QQ_ROUND2_EXPLICIT",
+          "NODE_OPTIONS",
+        ].includes(k),
+      );
+    const { decodeGif } = await import("../src/tools/animation.mjs");
+    await assert.rejects(
+      decodeGif(
+        Buffer.from("GIF89a"),
+        { width: 1, height: 1 },
+        [{ index: 0 }],
+        {
+          command: script,
+        },
+      ),
+    );
+    assert.deepEqual(leaked(), []);
+    fs.rmSync(seen);
+    const { probeAudio } = await import("../vendor/legacy/voice-core.js");
+    await probeAudio(path.join(root, "missing.wav"), {
+      ffprobePath: script,
+      tmpDir: root,
+    });
+    assert.deepEqual(leaked(), []);
+    fs.rmSync(seen);
+    const { SocialReader } = await import("../vendor/social-reader/reader.mjs");
+    const reader = new SocialReader({ opencli: script, cooldownMs: 0 });
+    await reader.cliUnlocked(["search"]);
+    assert.deepEqual(leaked(), []);
+  },
+);

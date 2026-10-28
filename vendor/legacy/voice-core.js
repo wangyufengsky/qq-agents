@@ -12,6 +12,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+// Same environment boundary as every other bridge child process.
+import { buildChildEnv } from '../../src/core/child-env.mjs';
 
 /** 网关能直接吃进去的音频扩展名（SnowLuma 会自动转 SILK）。 */
 export const AUDIO_EXTS = [
@@ -165,7 +167,7 @@ export async function probeAudio(file, { ffprobePath = 'ffprobe', timeoutMs = 10
         '-show_entries', 'format=duration,format_name',
         '-show_entries', 'stream=codec_name,codec_type,sample_rate,channels',
         '-of', 'json', '-o', outFile, file
-      ], { windowsHide: true, stdio: 'ignore' });
+      ], { windowsHide: true, stdio: 'ignore', env: buildChildEnv('media') });
     } catch (error) {
       resolve({ code: -1, error: `ffprobe 启动失败：${error?.message ?? error}` });
       return;
@@ -399,7 +401,7 @@ export async function processAudioVolume(file, {
   const run = () => new Promise((resolve) => {
     let child;
     try {
-      child = spawn(ffmpeg, args, { windowsHide: true, stdio: 'ignore' });
+      child = spawn(ffmpeg, args, { windowsHide: true, stdio: 'ignore', env: buildChildEnv('media') });
     } catch (error) {
       resolve({ code: -1, error: `ffmpeg 启动失败：${error?.message ?? error}` });
       return;
@@ -420,7 +422,7 @@ export async function processAudioVolume(file, {
     res = await new Promise((resolve) => {
       let child;
       try {
-        child = spawn(ffmpeg, wavArgs, { windowsHide: true, stdio: 'ignore' });
+        child = spawn(ffmpeg, wavArgs, { windowsHide: true, stdio: 'ignore', env: buildChildEnv('media') });
       } catch (error) {
         resolve({ code: -1, error: `ffmpeg 启动失败：${error?.message ?? error}` });
         return;

@@ -8,6 +8,7 @@ export function runtimeStatus(runtime) {
     recentErrors: runtime.diagnostics.snapshot(),
     mode: runtime.config.mode,
     globalPaused: runtime.config.globalPaused,
+    autoResume: runtime.autoResume.snapshot(),
     backends: runtime.backendConnections.list(),
     connections: runtime.config.connections.map((/** @type {any} */ c) => ({
       id: c.id,

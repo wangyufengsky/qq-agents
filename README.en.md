@@ -74,6 +74,8 @@ Configure the character, its QQ account connection and its AI backend in isolate
 5. Lift the global pause.
 6. Lift the character's own pause.
 
+Every start begins globally paused. Once the setup works, `npm start -- --live --resume` (or `command: ["--live", "--resume"]` in Docker) connects the enabled QQ connections after a restart, checks the backends of unpaused characters and lifts only the global pause when everything is ready; character and conversation pauses stay as they are.
+
 If the character still stays silent, check the reasons on its card against the [troubleshooting guide](docs/TROUBLESHOOTING.md).
 
 ## Third-party platforms

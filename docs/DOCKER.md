@@ -135,6 +135,8 @@ docker compose up -d qq-agents
 
 与 [入门指南第 3 步](GETTING-STARTED.md#3-解除暂停) 相同：先解除全局暂停，再解除角色暂停，然后在测试群里 @ 角色。每次容器重启都会重新进入全局暂停。
 
+希望容器重启（包括宿主机重启）后自动恢复发言时，把 compose 里的 `command` 改成 `["--live", "--resume"]`。启动后管理台仍先处于全局暂停，它会连接所有已启用的 QQ 账号连接、检测每个未暂停角色的 AI 后端，全部就绪后才解除全局暂停；角色暂停、会话暂停和静默时段保持不变。NapCat 启动较慢时会按 5 秒起、逐次翻倍、最长 60 秒的间隔重试，最多 10 次，仍未就绪就保持暂停。这期间在管理台手动暂停、解除暂停或切到隔离模式，都会停止自动恢复。概览顶部显示自动恢复的状态。
+
 ## 管理台监听地址与端口映射
 
 镜像以 `--host 0.0.0.0` 启动，因为端口映射需要容器内监听所有网卡。安全边界不靠监听地址，而靠下面几层：
@@ -174,6 +176,22 @@ command: ["--public-port", "8080"]
 | DSH 后端                               | DeepSeek Harness 桌面应用只有 macOS 版，且只允许回环地址；容器里的回环是容器自己，连不到宿主机上的 DSH。                                                                        |
 | Codex 后端                             | 镜像里没有 Codex CLI。需要时可基于本镜像另建镜像安装 Codex CLI，并按 [入门指南](GETTING-STARTED.md#0-准备) 用 `<数据目录>/codex/<agentId>/home` 单独登录。                      |
 | 部署方式 `docker`（由桥接启停 NapCat） | 需要在桥接里执行 `docker` 命令。镜像里没有 Docker CLI，也不应把 Docker socket 挂进容器（等同于宿主机 root 权限）。在 compose 部署里一律用 `external`。                          |
+
+## 停止与残留锁
+
+管理台运行时在数据目录里持有 `process.lock`，正常退出时删除。Docker 默认只等 10 秒就强制结束容器，而管理台自己的关闭预算是 30 秒，所以 compose 示例里设置了 `stop_grace_period: 40s`。不用 compose 时，用 `docker stop -t 40 <容器>` 停止。
+
+容器被强制结束（`docker kill`、超出宽限期、内存不足被杀、宿主机断电）后，锁会留在数据卷里，下次启动报 `DATA_DIRECTORY_LOCKED`，`restart: unless-stopped` 会让容器反复重启又失败。程序不会自动回收旧锁。按下面的步骤处理：
+
+```sh
+docker compose stop qq-agents
+docker compose ps                     # 确认 qq-agents 已停止，且没有别的容器挂载同一个卷
+docker compose run --rm --no-deps --entrypoint cat qq-agents /data/process.lock   # 记录的 pid 和启动时间
+docker compose run --rm --no-deps --entrypoint rm qq-agents /data/process.lock
+docker compose start qq-agents
+```
+
+只有确认没有任何容器或进程还在使用这个数据卷时才删除锁；两个实例同时写同一个数据库会损坏数据。
 
 ## 升级与备份
 

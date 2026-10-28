@@ -63,6 +63,30 @@ const desktop = [
   "XDG_CACHE_HOME",
   "XDG_DATA_HOME",
 ];
+// Read-only helpers that run third-party code or render untrusted content get
+// the same base environment plus only the variables their programs document.
+const components = {
+  codex: { network: true },
+  "native-qq": { network: true, desktop: true },
+  // OpenCLI drives the administrator's logged-in browser through its bridge.
+  "app-reader": {
+    network: true,
+    desktop: true,
+    names: ["SOCIAL_OPENCLI", "SOCIAL_MCPORTER", "SOCIAL_BROWSER_LOCK"],
+    prefixes: ["OPENCLI_"],
+  },
+  // mcporter calls the configured Exa search server, whose key it may read.
+  mcporter: {
+    network: true,
+    names: ["EXA_API_KEY"],
+    prefixes: ["MCPORTER_"],
+  },
+  // Screenshot browser: every request is routed through the bridge's checked
+  // fetcher, so it needs no proxy settings or credentials of its own.
+  browser: {},
+  // ffmpeg, ffprobe and macOS say read local files only.
+  media: {},
+};
 const targetName = /^[A-Za-z_][A-Za-z0-9_]{0,100}$/;
 const sourceName = /^[A-Z][A-Z0-9_]{0,100}$/;
 
@@ -76,8 +100,12 @@ export function buildChildEnv(
   explicitMappings = {},
   { parent = process.env, platform = process.platform } = {},
 ) {
-  if (!["codex", "native-qq"].includes(component))
+  if (!Object.hasOwn(components, component))
     throw Error("INVALID_CHILD_ENV_COMPONENT");
+  const policy =
+    /** @type {{network?: boolean, desktop?: boolean, names?: string[], prefixes?: string[]}} */ (
+      components[/** @type {keyof typeof components} */ (component)]
+    );
   if (
     !explicitMappings ||
     typeof explicitMappings !== "object" ||
@@ -99,12 +127,18 @@ export function buildChildEnv(
   const env = Object.create(null);
   const allowed = [
     ...base,
-    ...network,
+    ...(policy.network ? network : []),
     ...(platform === "win32" ? windows : []),
-    ...(component === "native-qq" && platform === "linux" ? desktop : []),
-    ...(component === "native-qq" && platform === "darwin"
+    ...(policy.desktop && platform === "linux" ? desktop : []),
+    ...(policy.desktop && platform === "darwin"
       ? ["__CF_USER_TEXT_ENCODING"]
       : []),
+    ...(policy.names || []),
+    ...keys.filter((key) =>
+      (policy.prefixes || []).some((prefix) =>
+        canonical(key).startsWith(prefix),
+      ),
+    ),
   ];
   for (const key of allowed) {
     const value = read(key);

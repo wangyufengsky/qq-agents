@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { buildChildEnv } from "../core/child-env.mjs";
 import { validateFetchUrl } from "../../vendor/social-reader/safe-fetch.js";
 import { requestFile, validateWithSignal } from "./file-download.mjs";
 
@@ -146,7 +147,7 @@ export async function capturePublicPage(
         acceptDownloads: false,
         viewport: { width: 1280, height: 900 },
         downloadsPath: path.join(dir, "downloads"),
-        env: { ...process.env, TMPDIR: dir, TMP: dir, TEMP: dir },
+        env: { ...buildChildEnv("browser"), TMPDIR: dir, TMP: dir, TEMP: dir },
         args: [
           "--disable-background-networking",
           "--disable-component-update",

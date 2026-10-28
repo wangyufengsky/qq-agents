@@ -13,6 +13,41 @@ const SESSION_ID =
 const DEFAULT_INSTRUCTIONS = "你是独立 QQ 人格，只通过启用的 QQ 发送工具投递。";
 const DEVELOPER_INSTRUCTIONS =
   "只使用本回合提供的工具。不得访问本机开发环境。不要在文本中泄露能力凭据。";
+// Used when contextWindow is not configured and the server's model list does
+// not report one: small enough for common local models, so the capacity guard
+// retires a session before the server starts rejecting it.
+export const FALLBACK_CONTEXT_WINDOW = 32768;
+const SEEN_IMAGE = "[图片已在本会话中看过；需要再看时重新调用读取图片的工具]";
+
+/** Context length a /models entry reports (vLLM, OpenRouter, LM Studio and others). @param {any} entry */
+function reportedContextWindow(entry) {
+  for (const key of [
+    "context_length",
+    "context_window",
+    "max_model_len",
+    "max_context_length",
+  ]) {
+    const value = entry?.[key];
+    if (Number.isSafeInteger(value) && value >= 1024) return value;
+  }
+  return null;
+}
+
+/** Replace image parts that a completed request already sent with a short note.
+ * Every later request would otherwise resend the same base64 data.
+ * @param {ChatMessage[]} messages */
+function forgetSentImages(messages) {
+  for (const message of messages) {
+    if (message.role !== "user" || !Array.isArray(message.content)) continue;
+    if (!message.content.some((part) => part?.type === "image_url")) continue;
+    message.content = message.content
+      .filter((part) => part?.type !== "image_url")
+      .map((part) => part?.text)
+      .filter((text) => typeof text === "string")
+      .concat(SEEN_IMAGE)
+      .join("\n");
+  }
+}
 
 /**
  * @typedef {import("./session-contract.mjs").BackendConfig} BackendConfig
@@ -36,7 +71,6 @@ export class OpenAIBackend {
     { root, fetch: fetchImpl = globalThis.fetch } = {},
   ) {
     this.config = {
-      contextWindow: 128000,
       maxToolRounds: 32,
       requestTimeoutMs: 180000,
       vision: false,
@@ -54,6 +88,8 @@ export class OpenAIBackend {
     fs.mkdirSync(this.dir, { recursive: true, mode: 0o700 });
     this.external = new ExternalTools(config.toolServers);
     this.active = new Set();
+    /** @type {number | null | undefined} undefined until the model list was read */
+    this.detectedContextWindow = undefined;
   }
   /** @param {string} route */
   endpoint(route) {
@@ -139,10 +175,32 @@ export class OpenAIBackend {
         !models.some((/** @type {any} */ m) => m.id === this.config.model))
     )
       throw Error("BACKEND_MODEL_UNAVAILABLE");
+    this.detectedContextWindow = reportedContextWindow(
+      models.find((/** @type {any} */ m) => m.id === this.config.model),
+    );
     return {
       models,
       endpoint: new URL(/** @type {string} */ (this.config.baseUrl)).origin,
     };
+  }
+  /** Configured window, else what the model list reports, else the fallback.
+   * A failed lookup never fails the turn. @param {AbortSignal} signal */
+  async contextWindow(signal) {
+    if (this.config.contextWindow) return this.config.contextWindow;
+    if (this.detectedContextWindow === undefined) {
+      const lookup = await this.request("/models", {
+        signal: AbortSignal.any([signal, AbortSignal.timeout(10000)]),
+      }).catch(() => null);
+      if (signal.aborted) throw Error("ABORTED");
+      this.detectedContextWindow = Array.isArray(lookup?.data)
+        ? reportedContextWindow(
+            lookup.data.find(
+              (/** @type {any} */ m) => m?.id === this.config.model,
+            ),
+          )
+        : null;
+    }
+    return this.detectedContextWindow || FALLBACK_CONTEXT_WINDOW;
   }
   /** @param {string} id */
   file(id) {
@@ -275,6 +333,7 @@ export class OpenAIBackend {
       this.store(state);
       saveSession({ backend: "openai", id: state.id, signature });
     }
+    const capacityTokens = await this.contextWindow(signal);
     const turnId = randomUUID();
     onBackendTurn?.({ turnId });
     const controller = new AbortController();
@@ -318,6 +377,8 @@ export class OpenAIBackend {
         });
         if (controller.signal.aborted) throw Error("ABORTED");
         if (failure) throw openaiTurnFailure(failure, turnId);
+        // The images this request carried have been seen; keep only a note.
+        forgetSentImages(state.messages);
         const message = result?.choices?.[0]?.message;
         if (!message || typeof message !== "object")
           throw openaiTurnFailure(Error("OPENAI_MALFORMED_RESPONSE"), turnId);
@@ -326,7 +387,7 @@ export class OpenAIBackend {
           onUsage?.({
             source: "measured",
             contextTokens: u.prompt_tokens + (u.completion_tokens || 0),
-            capacityTokens: this.config.contextWindow,
+            capacityTokens,
             basis: "last chat completion prompt plus completion tokens",
           });
         const calls = Array.isArray(message.tool_calls)

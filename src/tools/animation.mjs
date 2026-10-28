@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { buildChildEnv } from "../core/child-env.mjs";
 
 const MAX_FRAMES = 1000;
 const MAX_DURATION_MS = 120000;
@@ -231,7 +232,11 @@ export async function decodeGif(
         "image2pipe",
         "pipe:1",
       ],
-      { stdio: ["pipe", "pipe", "ignore"], windowsHide: true },
+      {
+        stdio: ["pipe", "pipe", "ignore"],
+        windowsHide: true,
+        env: buildChildEnv("media"),
+      },
     );
     const chunks = [];
     let bytes = 0,

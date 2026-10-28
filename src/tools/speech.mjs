@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFile } from "node:child_process";
+import { buildChildEnv } from "../core/child-env.mjs";
 import { privateGithubSources } from "../github/policy.mjs";
 
 // Explicitly enabled local TTS. This generates speech, it does not transcribe it.
@@ -25,7 +26,12 @@ export async function synthesize(runtime, ctx, { text }) {
           "-f",
           "-",
         ],
-        { timeout: 60000, maxBuffer: 4096, signal: ctx.controller.signal },
+        {
+          timeout: 60000,
+          maxBuffer: 4096,
+          signal: ctx.controller.signal,
+          env: buildChildEnv("media"),
+        },
         (err) => (err ? reject(Error("TTS_GENERATION_FAILED")) : resolve()),
       );
       child.stdin.on("error", () => {});

@@ -2,7 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { OpenAIBackend } from "../src/backends/openai.mjs";
+import {
+  OpenAIBackend,
+  FALLBACK_CONTEXT_WINDOW,
+} from "../src/backends/openai.mjs";
 import {
   BackendRegistry,
   backendCapabilities,
@@ -52,6 +55,7 @@ const backendConfig = (extra = {}) => ({
   apiKeyEnv: "QQ_TEST_OPENAI_KEY",
   model: "fixture-model",
   effort: "high",
+  contextWindow: 128000,
   toolServers: [],
   ...extra,
 });
@@ -245,6 +249,85 @@ test("images from several tool calls follow every tool response", async (t) => {
       .map((c) => c.image_url.url),
     ["data:image/png;base64,IMG1", "data:image/png;base64,IMG2"],
   );
+});
+
+test("an image is sent once, then the history keeps only a note", async (t) => {
+  const server = scripted([
+    reply({ content: null, tool_calls: [call("a", "sticker_read", {})] }),
+    reply({ content: null, tool_calls: [call("b", "qq_send", {})] }),
+    reply({ content: "看完了" }),
+  ]);
+  const root = temp(t);
+  const backend = new OpenAIBackend(
+    backendConfig({ apiKeyEnv: undefined, vision: true }),
+    { id: "agent-a" },
+    { root, fetch: server.fetch },
+  );
+  const p = params({
+    callTool: async (name) =>
+      name === "sticker_read"
+        ? { content: [{ type: "image", mimeType: "image/png", data: "IMG1" }] }
+        : { ok: true },
+  });
+  await backend.run(p.value);
+  const sent = (i) => JSON.stringify(server.requests[i].body.messages);
+  assert.equal(sent(0).includes("IMG1"), false);
+  assert.equal(sent(1).includes("data:image/png;base64,IMG1"), true);
+  assert.equal(sent(2).includes("IMG1"), false, "not resent");
+  assert.match(sent(2), /图片已在本会话中看过/);
+  const file = path.join(
+    root,
+    "openai",
+    "agent-a",
+    "sessions",
+    p.saved[0].id + ".json",
+  );
+  assert.equal(fs.readFileSync(file, "utf8").includes("IMG1"), false);
+});
+
+test("an unset context window comes from the model list, else a small fallback", async (t) => {
+  const models = (data) =>
+    new Response(JSON.stringify({ data }), { status: 200 });
+  const run = async (first) => {
+    const server = scripted([
+      first,
+      reply({ content: "好" }),
+      reply({ content: "好" }),
+    ]);
+    const backend = new OpenAIBackend(
+      backendConfig({ contextWindow: undefined }),
+      { id: "agent-a" },
+      { root: temp(t), fetch: server.fetch },
+    );
+    const usage = [];
+    await backend.run(params({ onUsage: (u) => usage.push(u) }).value);
+    // The lookup happens once per backend instance.
+    await backend.run(params({ onUsage: (u) => usage.push(u) }).value);
+    assert.deepEqual(
+      server.requests.map((r) => new URL(r.url).pathname),
+      ["/v1/models", "/v1/chat/completions", "/v1/chat/completions"],
+    );
+    return usage.map((u) => u.capacityTokens);
+  };
+  process.env.QQ_TEST_OPENAI_KEY = "fixture-key-value-0000";
+  t.after(() => delete process.env.QQ_TEST_OPENAI_KEY);
+  assert.deepEqual(
+    await run(
+      models([
+        { id: "other", context_length: 1000000 },
+        { id: "fixture-model", max_model_len: 8192 },
+      ]),
+    ),
+    [8192, 8192],
+  );
+  assert.deepEqual(await run(models([{ id: "fixture-model" }])), [
+    FALLBACK_CONTEXT_WINDOW,
+    FALLBACK_CONTEXT_WINDOW,
+  ]);
+  assert.deepEqual(await run(status(404)), [
+    FALLBACK_CONTEXT_WINDOW,
+    FALLBACK_CONTEXT_WINDOW,
+  ]);
 });
 
 test("tool failures are returned to the model as safe errors, not thrown", async (t) => {

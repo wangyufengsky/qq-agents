@@ -52,6 +52,17 @@ Codex 仍由桥接固定设置数据目录内的 `codex/<agentId>/home` 为 CODE
 
 管理台原生进程沿用 `connections[].process.env` 的同种映射。源变量缺失或为空会在启动子进程前失败，分别报告 `CODEX_ENV_MISSING` / `PROCESS_ENV_MISSING`。所需的自定义启动变量现在必须显式登记，不能依赖全量继承。修改映射后需重建相应进程才能更新环境。
 
+0.5.0 起，其他会运行第三方程序或处理不可信内容的子进程也使用 `buildChildEnv`，只得到上表的基础运行变量和各自程序需要的变量：
+
+| 子进程                                                | 额外保留                                                                                        |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| OpenCLI 读取（`apps` 浏览、social-reader 的 opencli） | 网络变量、桌面会话变量、`OPENCLI_*`、`SOCIAL_OPENCLI`、`SOCIAL_MCPORTER`、`SOCIAL_BROWSER_LOCK` |
+| mcporter（Exa 索引搜索）                              | 网络变量、`MCPORTER_*`、`EXA_API_KEY`                                                           |
+| 公开网页截图用的 Chromium                             | 无；它的每个请求都由桥接经过校验后代为抓取，不需要代理或凭据                                    |
+| ffmpeg、ffprobe、macOS `say`                          | 无                                                                                              |
+
+`gh auth token`、`docker`、`lsof` 等系统工具仍继承启动环境：它们是管理员自己的凭据或系统命令，例如 `gh` 需要读取 `GH_TOKEN`。
+
 独立 macOS QQ 启动器 `scripts/lib/local-process.mjs` 原本已有环境白名单及按 profile 注入的 NAPCAT 变量，本轮保留其策略。外部 MCP 也保留 SDK 的安全默认环境与既有显式映射，不转用新的通用白名单。
 
 环境裁剪降低意外凭据传递，不是操作系统文件隔离；HOME、配置文件、已授权工具和管理员自定义启动器仍按其原有边界工作。没有更改 QQ 登录目录、专属 Codex 登录内容或部署配置。

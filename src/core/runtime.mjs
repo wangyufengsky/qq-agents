@@ -85,6 +85,8 @@ export class Runtime {
     this.backends = new Map();
     this.backendConnections = new BackendConnections(this);
     this.connectionRecovery = new ConnectionRecovery(this);
+    // Replaced by main.mjs when the console starts with `--live --resume`.
+    this.autoResume = new AutoResume(this);
     this.running = new Map();
     this.pending = new Map();
     this.capabilities = new Map();
@@ -909,6 +911,7 @@ export class Runtime {
     if (this.closing) return this.closing;
     this.closed = true;
     clearInterval(this.ticker);
+    this.autoResume.cancel("stopped");
     this.closing = this.closeResources();
     return this.closing;
   }
@@ -952,6 +955,7 @@ export class Runtime {
     return { ok: failures === 0, failures };
   }
 }
+import { AutoResume } from "./auto-resume.mjs";
 import {
   assertMessageAccount,
   confirmedMessage,

@@ -1,6 +1,11 @@
 import { EventEmitter } from "node:events";
 import WebSocket from "ws";
 
+// A half-open TCP connection (NAT timeout, host sleep, a frozen gateway) never
+// fires "close". Ping the gateway and treat a socket that has sent nothing,
+// not even a pong, for this long as lost so connection recovery takes over.
+export const HEARTBEAT_TIMEOUT_MS = 90000;
+
 export function normalizeEvent(raw, connection) {
   if (String(raw.self_id) !== connection.accountId)
     throw Error("QQ_ACCOUNT_MISMATCH");
@@ -88,6 +93,10 @@ export class OneBot extends EventEmitter {
     this.closed = true;
     this.epoch = 0;
     this.lastEventAt = null;
+    this.lastFrameAt = null;
+  }
+  heartbeatTimeoutMs() {
+    return this.config.recovery?.heartbeatTimeoutMs ?? HEARTBEAT_TIMEOUT_MS;
   }
   headers() {
     const value = this.config.tokenEnv ? process.env[this.config.tokenEnv] : "";
@@ -156,9 +165,39 @@ export class OneBot extends EventEmitter {
         handshakeTimeout: 5000,
       });
       this.socket = socket;
-      let settled = false;
+      let settled = false,
+        watchdog;
       const current = () =>
         !this.closed && epoch === this.epoch && this.socket === socket;
+      const stopWatchdog = () => clearInterval(watchdog);
+      const startWatchdog = () => {
+        const timeout = this.heartbeatTimeoutMs();
+        if (!timeout) return;
+        this.lastFrameAt = Date.now();
+        watchdog = setInterval(
+          () => {
+            if (!current()) return stopWatchdog();
+            if (Date.now() - this.lastFrameAt < timeout) {
+              if (typeof socket.ping === "function")
+                try {
+                  socket.ping();
+                } catch {
+                  // A failing ping surfaces as an "error" or "close" event.
+                }
+              return;
+            }
+            stopWatchdog();
+            this.connected = false;
+            this.socket = null;
+            this.emit("fault", "ONEBOT_HEARTBEAT_TIMEOUT");
+            this.emit("status");
+            if (typeof socket.terminate === "function") socket.terminate();
+            else socket.close();
+          },
+          Math.max(1000, Math.floor(timeout / 3)),
+        );
+        watchdog.unref?.();
+      };
       const settle = (error) => {
         if (settled) return;
         settled = true;
@@ -174,12 +213,17 @@ export class OneBot extends EventEmitter {
           return;
         }
         this.connected = true;
+        startWatchdog();
         this.emit("status");
         settle();
+      });
+      socket.on("pong", () => {
+        if (current()) this.lastFrameAt = Date.now();
       });
       socket.on("error", () => {
         if (!current()) return;
         const opened = this.connected;
+        stopWatchdog();
         this.connected = false;
         settle(Error("ONEBOT_WS_ERROR"));
         if (opened) this.emit("fault", "ONEBOT_WS_ERROR");
@@ -188,20 +232,31 @@ export class OneBot extends EventEmitter {
       });
       socket.on("message", (data) => {
         if (!current()) return;
+        this.lastFrameAt = Date.now();
+        let raw;
         try {
-          const raw = JSON.parse(data.toString());
-          if (String(raw.self_id) !== this.config.accountId)
-            throw Error("QQ_ACCOUNT_MISMATCH");
-          this.lastEventAt = Date.now();
-          this.emit("event", raw);
+          raw = JSON.parse(data.toString());
         } catch {
-          this.emit("fault", "INVALID_ONEBOT_EVENT");
-          this.close();
+          raw = null;
         }
+        // One unreadable frame is dropped and reported; the receive channel stays up.
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+          this.emit("fault", "INVALID_ONEBOT_EVENT");
+          return;
+        }
+        // Another QQ account on this gateway is an identity failure: stop for good.
+        if (String(raw.self_id) !== this.config.accountId) {
+          this.emit("fault", "QQ_ACCOUNT_MISMATCH");
+          this.close();
+          return;
+        }
+        this.lastEventAt = Date.now();
+        this.emit("event", raw);
       });
       socket.on("close", () => {
         // A socket replaced by close()/connect() must not mark the newer connection as down.
         if (!current()) return;
+        stopWatchdog();
         settle(Error("CONNECTION_CANCELLED"));
         const wasConnected = this.connected;
         this.connected = false;
