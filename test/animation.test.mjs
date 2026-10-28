@@ -239,24 +239,28 @@ test("missing decoder, byte limit, timeout and cancellation return explicit fail
     decodeGif(data, info, info.frames, { maxOutputBytes: 1 }),
     /OUTPUT_LIMIT/,
   );
-  const dir = temp(t),
-    sleeper = path.join(dir, "sleep-decoder");
-  fs.writeFileSync(
-    sleeper,
-    `#!${process.execPath}\nsetInterval(() => {}, 1000);\n`,
-    { mode: 0o700 },
-  );
-  await assert.rejects(
-    decodeGif(data, info, info.frames, { command: sleeper, timeoutMs: 50 }),
-    /TIMEOUT/,
-  );
-  const controller = new AbortController();
-  const pending = decodeGif(data, info, info.frames, {
-    command: sleeper,
-    signal: controller.signal,
-  });
-  controller.abort();
-  await assert.rejects(pending, /ABORTED/);
+  const dir = temp(t);
+  // The stand-in decoder is a shebang script, which Windows cannot execute;
+  // the timeout and abort handling is the same JavaScript on every platform.
+  if (process.platform !== "win32") {
+    const sleeper = path.join(dir, "sleep-decoder");
+    fs.writeFileSync(
+      sleeper,
+      `#!${process.execPath}\nsetInterval(() => {}, 1000);\n`,
+      { mode: 0o700 },
+    );
+    await assert.rejects(
+      decodeGif(data, info, info.frames, { command: sleeper, timeoutMs: 50 }),
+      /TIMEOUT/,
+    );
+    const controller = new AbortController();
+    const pending = decodeGif(data, info, info.frames, {
+      command: sleeper,
+      signal: controller.signal,
+    });
+    controller.abort();
+    await assert.rejects(pending, /ABORTED/);
+  }
   const safe = safeToolFailure(Error("ANIMATION_DECODER_UNAVAILABLE"));
   assert.equal(safe.code, "ANIMATION_DECODER_UNAVAILABLE");
   assert(!JSON.stringify(safe).includes(dir));

@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import os from "node:os";
+import path from "node:path";
 import { randomBytes } from "node:crypto";
 import http from "node:http";
 import fs from "node:fs";
@@ -561,7 +563,9 @@ test("export size and time budgets fail before headers and clean temporary snaps
     [{ timeoutMs: 1 }, "EXPORT_TIMEOUT", 503],
   ])
     await t.test(code, async (t) => {
-      const tempRoot = fs.mkdtempSync("/tmp/qq-export-budget-test-");
+      const tempRoot = fs.mkdtempSync(
+        path.join(os.tmpdir(), "qq-export-budget-test-"),
+      );
       t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
       const { request, store } = await setup(t, { limits, tempRoot });
       store
@@ -578,7 +582,9 @@ test(
   "a slow export download applies backpressure, excludes concurrent exports, and cancels cleanly",
   { timeout: 30000 },
   async (t) => {
-    const tempRoot = fs.mkdtempSync("/tmp/qq-export-cancel-test-");
+    const tempRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), "qq-export-cancel-test-"),
+    );
     t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
     const { request, store, base, token } = await setup(t, { tempRoot });
     for (let i = 0; i < 80; i++)
@@ -614,7 +620,9 @@ test(
   "shutdown cancels export preparation and waits for worker and snapshot cleanup",
   { timeout: 30000 },
   async (t) => {
-    const tempRoot = fs.mkdtempSync("/tmp/qq-export-stop-test-");
+    const tempRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), "qq-export-stop-test-"),
+    );
     t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
     const { request, store, app } = await setup(t, { tempRoot });
     for (let i = 0; i < 80; i++)

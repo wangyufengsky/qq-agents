@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
@@ -33,6 +33,13 @@ jobs:
       - name: Install media test tools on macOS
         if: runner.os == 'macOS'
         run: brew install ffmpeg
+      - name: Install media test tools on Windows
+        if: runner.os == 'Windows'
+        timeout-minutes: 8
+        run: |
+          choco install ffmpeg -y --no-progress
+          ffmpeg -version | Select-Object -First 1
+          ffprobe -version | Select-Object -First 1
       - run: npm ci
       - name: Set public CI commit identity for privacy checks
         run: |

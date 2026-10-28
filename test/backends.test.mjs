@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { CodexBackend, restrictions } from "../src/backends/codex.mjs";
+import {
+  CodexBackend,
+  restrictions,
+  windowsCodexSpawn,
+} from "../src/backends/codex.mjs";
 import { DshBackend } from "../src/backends/dsh.mjs";
 import { apply as guard } from "../src/backends/dsh-guard.mjs";
 import { toolSpecs } from "../src/tools/index.mjs";
@@ -542,4 +546,50 @@ test("DSH manual compaction distinguishes unsupported, no-op and committed summa
   assert.equal(r.compacted, true);
   assert.equal(r.requiresReinitialize, true);
   assert.equal(r.usage.source, "estimated");
+});
+
+test("the Windows Codex launcher ends the whole process tree, not just the cmd.exe wrapper", () => {
+  const children = [],
+    killed = [];
+  const spawn = (command, args, options) => {
+    const child = {
+      command,
+      args,
+      options,
+      pid: 4242 + children.length,
+      exitCode: null,
+      signalCode: null,
+      kills: [],
+      kill(signal) {
+        this.kills.push(signal);
+        return true;
+      },
+    };
+    children.push(child);
+    return child;
+  };
+  let failTree = false;
+  const launch = windowsCodexSpawn({
+    spawn,
+    killTree: (pid) => {
+      if (failTree) throw Error("taskkill unavailable");
+      killed.push(pid);
+    },
+  });
+  const running = launch("codex", ["app-server", "--stdio"], { cwd: "x" });
+  assert.deepEqual(running.args, ["app-server", "--stdio"]);
+  assert.equal(running.kill("SIGTERM"), true);
+  assert.deepEqual(killed, [4242]);
+  assert.deepEqual(running.kills, [], "the wrapper-only kill is not used");
+  // An exited process is not looked up again by pid.
+  const exited = launch("codex", [], {});
+  exited.exitCode = 0;
+  exited.kill("SIGTERM");
+  assert.deepEqual(killed, [4242]);
+  assert.deepEqual(exited.kills, ["SIGTERM"]);
+  // If taskkill fails, the wrapper is still ended.
+  failTree = true;
+  const fallback = launch("codex", [], {});
+  fallback.kill("SIGTERM");
+  assert.deepEqual(fallback.kills, ["SIGTERM"]);
 });

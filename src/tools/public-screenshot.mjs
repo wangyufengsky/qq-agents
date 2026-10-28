@@ -72,6 +72,16 @@ export function screenshotRoutes({
     }
   }
 }
+const windowsBrowsers = (/** @type {NodeJS.ProcessEnv} */ env) =>
+  [
+    [env.PROGRAMFILES, "Google\\Chrome\\Application\\chrome.exe"],
+    [env["PROGRAMFILES(X86)"], "Google\\Chrome\\Application\\chrome.exe"],
+    [env.LOCALAPPDATA, "Google\\Chrome\\Application\\chrome.exe"],
+    [env["PROGRAMFILES(X86)"], "Microsoft\\Edge\\Application\\msedge.exe"],
+    [env.PROGRAMFILES, "Microsoft\\Edge\\Application\\msedge.exe"],
+  ]
+    .filter(([root]) => root)
+    .map(([root, rest]) => path.win32.join(/** @type {string} */ (root), rest));
 const browserCandidates = {
   darwin: [
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -98,7 +108,11 @@ export function findScreenshotBrowser({
       throw Error("SCREENSHOT_BROWSER_MISSING");
     return configured;
   }
-  const found = (browserCandidates[platform] || []).find((p) => exists(p));
+  const candidates =
+    platform === "win32"
+      ? windowsBrowsers(env)
+      : browserCandidates[/** @type {"darwin" | "linux"} */ (platform)] || [];
+  const found = candidates.find((p) => exists(p));
   if (!found) throw Error("SCREENSHOT_BROWSER_MISSING");
   return found;
 }

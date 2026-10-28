@@ -3,6 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import { createHash, randomUUID } from "node:crypto";
 import { atomicJSON } from "../core/config.mjs";
+import { openNoFollow } from "../core/no-follow.mjs";
 import { downloadFile } from "./file-download.mjs";
 import { z } from "zod";
 
@@ -87,10 +88,7 @@ const inside = (root, target) => {
   );
 };
 function readRegular(file, maxBytes) {
-  const fd = fs.openSync(
-    file,
-    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
-  );
+  const fd = openNoFollow(file);
   try {
     const stat = fs.fstatSync(fd);
     if (!stat.isFile() || stat.nlink !== 1) throw Error("FILE_PATH_DENIED");

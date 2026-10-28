@@ -42,7 +42,9 @@ test("admin-only GitHub credential entry preserves other secrets and never retur
   const values = JSON.parse(fs.readFileSync(githubSecretFile, "utf8"));
   assert.equal(values.QQ_ONEBOT_FIXTURE, "keep-this-value");
   assert.equal(values[key], secret);
-  assert.equal(fs.statSync(githubSecretFile).mode & 0o777, 0o600);
+  // Windows has no POSIX permission bits to check.
+  if (process.platform !== "win32")
+    assert.equal(fs.statSync(githubSecretFile).mode & 0o777, 0o600);
   delete process.env[key];
   loadGithubCredentials(githubSecretFile);
   assert.equal(process.env[key], secret);

@@ -147,7 +147,9 @@ test("OpenAI-compatible backend runs the tool loop in process and keeps history 
     "sessions",
     session.id + ".json",
   );
-  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  // Windows has no POSIX permission bits to check.
+  if (process.platform !== "win32")
+    assert.equal(fs.statSync(file).mode & 0o777, 0o600);
   const stored = JSON.parse(fs.readFileSync(file, "utf8"));
   assert.deepEqual(
     stored.messages.map((m) => m.role),

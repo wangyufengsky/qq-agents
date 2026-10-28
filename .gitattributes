@@ -1,0 +1,8 @@
+# Keep LF everywhere: Prettier, byte-exact fixtures and hashes in
+# docs/SOURCES.json assume it, and Windows checkouts would otherwise get CRLF.
+* text=auto eol=lf
+*.png binary
+*.gif binary
+*.jpg binary
+*.wav binary
+*.silk binary
