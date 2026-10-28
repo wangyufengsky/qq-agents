@@ -34,9 +34,9 @@
     {
       "path": "vendor/dsh-qq/dsh-client.js",
       "origin": "h-D-ACE/dsh-qq",
-      "sha256": "dd797d42849a5888461aa4fb087f0c0761bc81d59f1e2fdbc2084c53a315a6dc",
+      "sha256": "69cd8a05111470458e8de0054b627c851329c4920945d9b1c68ba1333227bba2",
       "upstreamSha256": "25e539d2ca6e6e834b9863b2a0943d2c2e69f99c5cf5b03f888261a1dd730f53",
-      "modification": "Cancel and release forgotten remote.mux session streams so subsequent turns receive a fresh snapshot; ignore stale end frames after reopening."
+      "modification": "Cancel and release forgotten remote.mux session streams so subsequent turns receive a fresh snapshot; ignore stale end frames after reopening. Import js-yaml as a namespace (js-yaml 5 has no default export)."
     },
     {
       "path": "vendor/dsh-qq/dsh-endpoint.mjs",
