@@ -8,8 +8,9 @@ const SUBJECT = "@subject";
 const DAY = 86400000;
 
 // What a free-time turn starts from: its own recent log, what happened lately,
-// where it can explore with how much budget left, and how earlier shares went.
-// Only AI-authored titles and counts are included, never chat text.
+// who it may reach out to, where it can explore with how much budget left, and
+// how earlier shares went. Only AI-authored titles, counts and times are
+// included, never chat text.
 export function subjectMaterials(runtime, ctx) {
   const a = runtime.agent(ctx.agentId),
     m = runtime.memory.bind(a.id),
@@ -74,6 +75,27 @@ export function subjectMaterials(runtime, ctx) {
       protectedRepositories: i.protectedRepositories,
       protectedOperations: i.protectedOperations,
     }));
+  const subject = m.state(SUBJECT),
+    contactsToday = (subject.contacts || []).filter((t) => t > now - DAY),
+    iso = (t) => (t > now ? new Date(t).toISOString() : undefined),
+    lastAt = m.db.prepare(
+      "SELECT observed_at AS at FROM events WHERE agent_id=? AND conversation=? AND kind=? ORDER BY seq DESC LIMIT 1",
+    );
+  const reach = {
+    contactsLeftToday: Math.max(
+      0,
+      a.subject.maxContactsPerDay - contactsToday.length,
+    ),
+    nextContactAt: iso(
+      (subject.lastContactAt || 0) + a.subject.contactCooldownMs,
+    ),
+    targets: runtime.subject.reachableTargets(a).map((x) => ({
+      ...x,
+      lastHeardAt: lastAt.get(a.id, x.target, "message.received")?.at || null,
+      lastSaidAt: lastAt.get(a.id, x.target, "message.sent")?.at || null,
+      cooldownUntil: iso(m.state(x.target).proactiveCooldownUntil || 0),
+    })),
+  };
   const reads = (m.state(APP_LEDGER).calls || []).filter(
     (t) => t > now - DAY,
   ).length;
@@ -115,6 +137,7 @@ export function subjectMaterials(runtime, ctx) {
       diaryTitles: diaries.map((d) => ({ title: d.title, at: d.updatedAt })),
     },
     inbox,
+    reach,
     explore: {
       platforms,
       appsOpenNow: appsOpen,

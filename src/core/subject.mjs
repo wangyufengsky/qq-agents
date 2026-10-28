@@ -216,6 +216,43 @@ export class SubjectCoordinator {
           (a.subject.owners && a.ownerIds.includes(id)) ||
           (a.subject.peers && peers.includes(id));
   }
+  // Who free time may reach, labelled so the model knows who each target is.
+  reachableTargets(a) {
+    const c = this.runtime.config,
+      peers = c.agents
+        .filter((p) => p.id !== a.id)
+        .map((p) => ({
+          name: p.name,
+          accountId: c.connections.find((x) => x.id === p.connectionId)
+            ?.accountId,
+        }))
+        .filter((p) => p.accountId);
+    const seen = new Set();
+    return [
+      ...(a.subject.owners ? a.ownerIds : []).map((id) => ({
+        target: "private:" + id,
+        who: "owner",
+      })),
+      ...(a.subject.peers ? peers : []).map((p) => ({
+        target: "private:" + p.accountId,
+        who: "peer",
+        name: p.name,
+      })),
+      ...a.subject.users.map((id) => ({
+        target: "private:" + id,
+        who: "user",
+      })),
+      ...a.subject.groups.map((id) => ({
+        target: "group:" + id,
+        who: "group",
+      })),
+    ].filter(
+      (x) =>
+        !seen.has(x.target) &&
+        seen.add(x.target) &&
+        this.targetAllowed(a, x.target),
+    );
+  }
   transition(agentId, item, status, reason, extra = {}) {
     return this.save(agentId, {
       ...item,
@@ -557,11 +594,14 @@ export class SubjectCoordinator {
         checks: [...checks, now],
         lastOpportunityAt: now,
       });
+      // Busy chats outpace one batch an hour; reading the oldest first left
+      // free time a day behind. Show the newest and let older rows be skipped.
       const activities = m.db
         .prepare(
-          "SELECT id,seq,conversation,kind,occurred_at AS occurredAt FROM events WHERE agent_id=? AND direction='in' AND seq>? ORDER BY seq LIMIT 20",
+          "SELECT id,seq,conversation,kind,occurred_at AS occurredAt FROM events WHERE agent_id=? AND direction='in' AND seq>? ORDER BY seq DESC LIMIT 20",
         )
-        .all(a.id, s.activityCursor || 0);
+        .all(a.id, s.activityCursor || 0)
+        .reverse();
       const pending = this.pendingActivities(a.id);
       const candidates = m.identity
         .list("self_candidates")
@@ -579,7 +619,7 @@ export class SubjectCoordinator {
               activities,
               activityOverflow: Math.max(0, pending - activities.length),
               instruction:
-                "空闲时间开始。activities 是本批未读来信的原始记录 ID，需要时按 ID 回查；溢出部分留在事件库，下次再读。候选与未完成意图可按需读取；没有到期候选不必专门回顾人格。",
+                "空闲时间开始。activities 是上次空闲以来最新的一批来信原始记录 ID（按时间先后），需要时按 ID 回查；更早的 activityOverflow 条没有列出，不必补读，仍在事件库里可按会话检索。候选与未完成意图可按需读取；没有到期候选不必专门回顾人格。",
             },
           ],
         }),
