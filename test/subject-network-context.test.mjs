@@ -147,17 +147,14 @@ test("fresh subject starts without old protected handoff and can browse without 
   assert(!f.m.state(scope).disclosureTaint.includes(marker));
 });
 
-test("explicit protected subject recall still blocks network, but the next fresh turn has its own sources", async (t) => {
+test("explicit protected subject recall permits fixed feeds but blocks queries; the next fresh turn has its own sources", async (t) => {
   let turn = 0,
     diary;
   const f = setup(t, async (p) => {
     turn++;
     if (turn === 1) {
       await p.callTool("memory_read", { id: diary.id });
-      await assert.rejects(
-        p.callTool("app_browse", browse),
-        /APP_RESTRICTED_CONTEXT/,
-      );
+      await p.callTool("app_browse", browse);
       await assert.rejects(
         p.callTool("external_tool", search),
         /EXTERNAL_CALL_BLOCKED/,
@@ -182,7 +179,7 @@ test("explicit protected subject recall still blocks network, but the next fresh
   await f.runtime.wake("agent-0", scope);
   assert(f.m.state(scope).disclosureTaint.includes(marker));
   await f.runtime.wake("agent-0", scope);
-  assert.equal(f.calls.length, 1);
+  assert.equal(f.calls.length, 2);
   assert(!f.m.state(scope).disclosureTaint.includes(marker));
 });
 
@@ -190,16 +187,17 @@ test("continuous subject sessions retain protection", async (t) => {
   const f = setup(
     t,
     async (p) => {
+      await p.callTool("app_browse", browse);
       await assert.rejects(
-        p.callTool("app_browse", browse),
-        /APP_RESTRICTED_CONTEXT/,
+        p.callTool("external_tool", search),
+        /EXTERNAL_CALL_BLOCKED/,
       );
     },
     "continuous",
   );
   f.m.setState(scope, { disclosureTaint: [marker] });
   await f.runtime.wake("agent-0", scope);
-  assert.equal(f.calls.length, 0);
+  assert.equal(f.calls.length, 1);
   assert(f.m.state(scope).disclosureTaint.includes(marker));
 });
 
@@ -235,6 +233,7 @@ test("capabilities distinguish successful platform probes from a restricted curr
   assert.equal(result.platforms[0].probe.read.ok, true);
   assert.equal(result.contextGate.allowed, false);
   assert.equal(result.contextGate.code, "APP_RESTRICTED_CONTEXT");
+  assert.equal(result.fixedPublicReads.allowed, true);
   assert.equal(f.calls.length, 0);
 });
 

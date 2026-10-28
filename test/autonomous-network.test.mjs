@@ -231,13 +231,18 @@ test("autonomy cannot authorize operations content, media disclosure, secrets or
     /EXTERNAL_CALL_BLOCKED/,
   );
   await assert.rejects(
-    f.runtime.callTool(f.ctx, "app_browse", {
+    f.runtime.callTool(f.ctx, "app_search", {
       platform: "zhihu",
-      entry: "hot",
+      query: "operations text",
     }),
     /APP_RESTRICTED_CONTEXT/,
   );
   assert.equal(f.calls.length, 0);
+  await f.runtime.callTool(f.ctx, "app_browse", {
+    platform: "zhihu",
+    entry: "hot",
+  });
+  assert.equal(f.calls.length, 1);
 });
 
 test("enabling autonomy replaces command-only instructions through normal session handoff", async (t) => {

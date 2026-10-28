@@ -40,7 +40,7 @@ export function safeToolFailure(error) {
   /** @type {Record<string, string>} */
   const hints = {
     APP_RESTRICTED_CONTEXT:
-      "This context has already read protected repository or operations material. Platform configuration and successful historical probes do not remove that restriction. Stop retrying in this context. A fresh subject turn starts with filtered automatic materials; explicitly recalling protected records restricts that turn again. Do not conclude that all subject browsing is disabled.",
+      "This context has read protected repository or operations material. Arbitrary queries, board names, QQ cards and sharing remain restricted. Check app_capabilities.fixedPublicReads: fixed recommend/hot/following/ranking feeds without board and their returned platform recordId reads can still work without sending recalled text. Do not retry the rejected action or assume the next chat message clears protection.",
     SUBJECT_EXTERNAL_TOOL_NOT_READ_ALLOWED:
       "The supplied serverId/tool pair is outside subject.externalReads. Use external_tools to inspect subjectReadAllowlist and callFormat; external_tool requires serverId, tool and arguments. This rejection does not mean every external read is disabled.",
     RECALL_SOURCE_NOT_ALLOWED:
@@ -110,7 +110,7 @@ export function safeToolFailure(error) {
     REPLY_BURST_LIMIT:
       "Consecutive replies are exhausted. Read genuinely new human input before replying again; rereads, peer messages and restarting a turn do not refill this budget.",
     PRIVATE_RECOLLECTION_EXTERNAL_CALL_BLOCKED:
-      "This request lacks outbound authority. Ordinary searches/reads can use the administrator's autonomous network permission; otherwise use a configured exact public URL, a matching current human requestEventId, or exact console approval. Operations-derived content and media disclosure still require their own authority. Do not copy private records into a query.",
+      "This request lacks outbound authority. Autonomous network permission does not release protected repository or operations sources. Do not retry another search service or claim that a new chat message clears protection. For public reading, check app_capabilities.fixedPublicReads and use a fixed app_browse feed without query/board, then its returned recordId. Other requests need their own authority or exact console approval. Never copy private records into a query.",
     EXTERNAL_URL_REQUIRES_WEB_FETCH:
       "Arbitrary MCP URL fetching cannot enforce bridge DNS/redirect checks. Use web_fetch for a public URL; no external call was made.",
     APP_OUTSIDE_HOURS:
