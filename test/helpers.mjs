@@ -5,9 +5,28 @@ import { EventEmitter } from "node:events";
 import { ConfigStore, validateConfig } from "../src/core/config.mjs";
 import { MemoryStore } from "../src/memory/store.mjs";
 import { Runtime } from "../src/core/runtime.mjs";
+const leftovers = new Set();
+process.once("exit", () => {
+  for (const root of leftovers)
+    try {
+      fs.rmSync(root, { recursive: true, force: true });
+    } catch {
+      // Best effort: the OS temp directory is cleaned eventually.
+    }
+});
 export function temp(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "qq-unified-test-"));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  // This hook runs before hooks registered later close the stores inside
+  // root. Windows cannot delete open files, and a throw here would skip those
+  // hooks and leave timers running, so retry at exit there instead.
+  t.after(() => {
+    try {
+      fs.rmSync(root, { recursive: true, force: true });
+    } catch (error) {
+      if (process.platform !== "win32") throw error;
+      leftovers.add(root);
+    }
+  });
   return root;
 }
 export function config(n = 3) {
