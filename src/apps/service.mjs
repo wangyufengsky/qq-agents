@@ -265,9 +265,25 @@ export class AppBrowsing {
       nextOffset: rows.length > 20 ? offset + 20 : null,
     };
   }
-  capabilities(agentId) {
+  capabilities(agentId, ctx = null) {
     const a = this.runtime.agent(agentId);
+    let contextGate;
+    if (ctx) {
+      try {
+        this.active(ctx, undefined, { network: true });
+        contextGate = { allowed: true, code: null };
+      } catch (error) {
+        contextGate = { allowed: false, code: error.message };
+      }
+    }
     return {
+      ...(contextGate
+        ? {
+            contextGate,
+            probeNotice:
+              "Recent platform probes describe service health, not current-context authorization. Platform permissions, tool allowlists and budgets still apply.",
+          }
+        : {}),
       enabled: a.apps.enabled,
       autonomousNetwork: a.network?.autonomous === true,
       sharing: a.apps.sharing,

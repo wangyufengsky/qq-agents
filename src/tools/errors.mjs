@@ -39,6 +39,10 @@ export function safeToolFailure(error) {
     };
   /** @type {Record<string, string>} */
   const hints = {
+    APP_RESTRICTED_CONTEXT:
+      "This context has already read protected repository or operations material. Platform configuration and successful historical probes do not remove that restriction. Stop retrying in this context. A fresh subject turn starts with filtered automatic materials; explicitly recalling protected records restricts that turn again. Do not conclude that all subject browsing is disabled.",
+    SUBJECT_EXTERNAL_TOOL_NOT_READ_ALLOWED:
+      "The supplied serverId/tool pair is outside subject.externalReads. Use external_tools to inspect subjectReadAllowlist and callFormat; external_tool requires serverId, tool and arguments. This rejection does not mean every external read is disabled.",
     RECALL_SOURCE_NOT_ALLOWED:
       "This protected record was not read in this conversation. Use ordinary conversation records instead. Only administrator private chats and the subject may recall protected records; do not retry another representation of the same source.",
     PRIVATE_RECOLLECTION_REQUIRES_DISCLOSURE_GRANT:

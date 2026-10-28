@@ -217,7 +217,8 @@ for (const lane of ["chat", "subject", "learner"])
         assert.equal(f.runtime.capabilities.size, 0);
         assert.equal(f.runtime.running.size, 0);
         // Failed recovery must keep the durable marker and must not call the backend.
-        if (lane === "learner") await assert.rejects(run());
+        if (lane === "learner" || lane === "subject")
+          await assert.rejects(run());
         else assert.equal((await run()).status, "failed");
         assert.equal(calls.length, 1);
         f.store.db.exec("DROP TRIGGER reject_archive");
@@ -233,7 +234,7 @@ for (const lane of ["chat", "subject", "learner"])
         assert.equal(
           m.identity
             .list("session_history")
-            .filter((x) => x.session.id === "session-1").length,
+            .filter((x) => x.session?.id === "session-1").length,
           1,
         );
         assert.equal(m.delivery("unknown").status, "unknown");
@@ -268,7 +269,10 @@ for (const scope of [chat, "@subject"])
       assert.equal(f.runtime.running.size, 0);
       originalCallback({ backend: "codex", id: "late-reference" });
       assert.equal(m.state(scope).session, null);
-      assert.equal(m.identity.list("session_history").length, 2);
+      assert.equal(
+        m.identity.list("session_history").filter((x) => x.session).length,
+        2,
+      );
       f.store.db.exec("DROP TRIGGER reject_terminal");
       if (recovery === "restart") new ContextLifecycle(f.runtime);
       await f.runtime.wake("agent-0", scope);
@@ -278,7 +282,16 @@ for (const scope of [chat, "@subject"])
       assert.equal(next.id, "session-2");
       originalCallback({ backend: "codex", id: "late-reference" });
       assert.deepEqual(m.state(scope).session, next);
-      assert.equal(m.identity.list("session_history").length, 2);
+      assert.equal(
+        m.identity.list("session_history").filter((x) => x.session).length,
+        2,
+      );
+      if (scope === "@subject")
+        assert(
+          m.identity
+            .list("session_history")
+            .some((x) => x.reason === "subject-fresh-context"),
+        );
       assert.equal(m.delivery("unknown").status, "unknown");
       assert.equal(f.runtime.transports.get("qq-0").sent.length, 0);
     });

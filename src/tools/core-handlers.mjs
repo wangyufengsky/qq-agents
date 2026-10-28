@@ -203,13 +203,41 @@ async function handle_voice_synthesize(runtime, ctx, args, name) {
 async function handle_external_tools(runtime, ctx, args, name) {
   const backend = runtime.backends.get(ctx.agentId);
   if (!backend?.external) throw Error("EXTERNAL_TOOLS_UNAVAILABLE");
-  return backend.external.list(args.serverId, args.offset);
+  const result = await backend.external.list(args.serverId, args.offset);
+  return {
+    ...result,
+    callFormat: {
+      name: "external_tool",
+      arguments: {
+        serverId: "<server id>",
+        tool: "<tool name>",
+        arguments: {},
+      },
+    },
+    ...(ctx.conversation === "@subject"
+      ? {
+          subjectReadAllowlist: runtime.agent(ctx.agentId).subject
+            .externalReads,
+        }
+      : {}),
+  };
 }
 async function handle_social_status(runtime, ctx, args, name) {
   runtime.social ??= new SocialReader();
   return runtime.social.status();
 }
 async function handle_web_fetch(runtime, ctx, args, name) {
+  // dispatchTool has validated the selector schema before authorization.
+  if (
+    name === "external_tool" &&
+    ctx.conversation === "@subject" &&
+    !runtime
+      .agent(ctx.agentId)
+      .subject.externalReads.some(
+        (x) => x.serverId === args.serverId && x.tool === args.tool,
+      )
+  )
+    throw Error("SUBJECT_EXTERNAL_TOOL_NOT_READ_ALLOWED");
   const request =
     name === "web_fetch"
       ? { tool: name, args: { url: args.url } }

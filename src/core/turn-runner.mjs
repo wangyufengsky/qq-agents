@@ -26,8 +26,13 @@ export class TurnRunner {
     const runKey = agentId + "|" + conversation;
     if (runtime.running.has(runKey)) return;
     const mem = runtime.memory.bind(agentId);
+    const freshSubject = runtime.contexts.startFreshSubject(
+      agentId,
+      conversation,
+    );
     const ctx = runtime.makeContext(agentId, conversation),
       { token, controller } = ctx;
+    ctx.freshSubject = freshSubject;
     let resolveDone;
     ctx.done = new Promise((resolve) => {
       resolveDone = resolve;

@@ -81,8 +81,12 @@ export class ContextLifecycle {
     m.setState(ctx.conversation, { ...state, seenThroughSeq: through });
     return through;
   }
-  handoff(agentId, conversation) {
-    const boundary = recallBoundary(this.runtime, { agentId, conversation });
+  handoff(agentId, conversation, options = {}) {
+    const boundary = recallBoundary(
+      this.runtime,
+      { agentId, conversation },
+      options,
+    );
     const m = this.runtime.memory.bind(agentId),
       s = m.state(conversation),
       notes = boundary.rows(m.identity.notes(conversation));
@@ -155,8 +159,8 @@ export class ContextLifecycle {
         .all(agentId, conversation, conversation),
       recentContacts:
         conversation === SUBJECT
-          ? m.identity
-              .list("intentions")
+          ? boundary
+              .rows(m.identity.list("intentions"))
               .filter((i) =>
                 i.history.some((h) =>
                   [
@@ -208,6 +212,56 @@ export class ContextLifecycle {
       selfVersion: s.loadedSelfVersion,
       handoff: this.handoff(agentId, conversation),
     });
+  }
+  startFreshSubject(agentId, conversation) {
+    const r = this.runtime;
+    if (
+      conversation !== SUBJECT ||
+      r.agent(agentId).subject.sessionMode !== "fresh"
+    )
+      return false;
+    if (r.running.has(agentId + "|" + conversation))
+      throw Error("SESSION_BUSY");
+    const m = r.memory.bind(agentId);
+    recoverSessions(m, r.now(), conversation);
+    // Retire the actual backend transcript before changing its source boundary.
+    // On either archival failure, no new model turn starts and protection stays.
+    if (m.state(conversation).session)
+      this.retire(agentId, conversation, "subject-fresh-session");
+    m.store.transaction(() => {
+      const state = m.state(conversation),
+        at = r.now(),
+        id = "subject-context:" + randomUUID();
+      const archived = !!(state.disclosureTaint?.length || state.continuity);
+      if (archived)
+        m.identity.put("session_history", {
+          id,
+          conversation,
+          session: null,
+          reason: "subject-fresh-context",
+          at,
+          disclosureTaint: state.disclosureTaint || [],
+          continuity: state.continuity || null,
+        });
+      m.setState(conversation, {
+        ...state,
+        session: null,
+        disclosureTaint: [],
+        continuity: { anchors: [], recent: [] },
+        usage: null,
+        recallRecovery: {
+          generation: (state.recallRecovery?.generation || 0) + 1,
+          at,
+          archiveId: archived ? id : null,
+        },
+      });
+    });
+    for (const [token, old] of r.capabilities)
+      if (old.agentId === agentId && old.conversation === conversation) {
+        old.controller.abort();
+        r.capabilities.delete(token);
+      }
+    return true;
   }
   prepare(ctx, backend, reasons, tools = []) {
     if (ctx.controller.signal.aborted) throw Error("ABORTED");
@@ -295,7 +349,9 @@ export class ContextLifecycle {
     // Existing backend context and legacy handoffs may predate disclosure tracking.
     // Retain an explicit source boundary and every recoverable handoff handle.
     const handoff = ctx.initialSession
-      ? this.handoff(a.id, ctx.conversation)
+      ? this.handoff(a.id, ctx.conversation, {
+          publicOnly: ctx.freshSubject === true,
+        })
       : null;
     ctx.privateRead.add("context:" + ctx.conversation);
     for (const source of handoff?.continuity?.sources || [])
