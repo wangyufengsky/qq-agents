@@ -39,6 +39,8 @@ export function safeToolFailure(error) {
     };
   /** @type {Record<string, string>} */
   const hints = {
+    AI_OTHER_TARGETS_DISABLED:
+      "Scheduling for a target other than this administrator private conversation is disabled. No task was created or changed. The administrator can enable allowAiOtherTargets in the console and choose whether confirmAiOtherTargets is required. Do not change the target or retry to bypass this setting.",
     APP_RESTRICTED_CONTEXT:
       "This context has read protected repository or operations material. Arbitrary queries, board names, QQ cards and sharing remain restricted. Check app_capabilities.fixedPublicReads: fixed recommend/hot/following/ranking feeds without board and their returned platform recordId reads can still work without sending recalled text. Do not retry the rejected action or assume the next chat message clears protection.",
     SUBJECT_EXTERNAL_TOOL_NOT_READ_ALLOWED:

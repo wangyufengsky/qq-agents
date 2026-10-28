@@ -1,5 +1,7 @@
 import { EventEmitter } from "node:events";
 import WebSocket from "ws";
+import { attachmentName } from "./attachments.mjs";
+import { downloadFileStream } from "./file-stream.mjs";
 
 // A half-open TCP connection (NAT timeout, host sleep, a frozen gateway) never
 // fires "close". Ping the gateway and treat a socket that has sent nothing,
@@ -35,7 +37,7 @@ export function normalizeEvent(raw, connection) {
       s.type === "text"
         ? s.data?.text || ""
         : s.type === "file"
-          ? `[文件: ${String(s.data?.name || s.data?.file_name || "附件").slice(0, 200)}; 尚未下载或阅读]`
+          ? `[文件: ${attachmentName(s.data).slice(0, 200) || "附件"}; 尚未下载或阅读]`
           : s.type === "at"
             ? `[提及 QQ:${s.data?.qq}]`
             : s.type === "reply"
@@ -149,6 +151,9 @@ export class OneBot extends EventEmitter {
       online: status?.online === true,
       good: status?.good !== false,
     };
+  }
+  downloadFile(fileId, options) {
+    return downloadFileStream(this, fileId, options);
   }
   async connect() {
     this.close();

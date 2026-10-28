@@ -65,6 +65,9 @@ export function stableInstructions(
     names.has("file_create")
       ? "需要把文章、草稿或数据保存为文件时，直接使用 file_create(name,text) 写入自己的资料库，支持 txt、md、csv、json 等 UTF-8 文本；file_list 可找回 fileId。此入口不需要 terminal_open、终端或本机路径，不能写其他目录，也不会执行文件。保存会继承资料保护标记，不等于已发送；有 qq_send_file 时按原有披露权限投递，主体只保存并创建适当的聊天意图。"
       : "",
+    names.has("qq_schedule_create")
+      ? `定时任务仅在管理员私聊中按要求登记。其他目标登记${agent.scheduler.allowAiOtherTargets ? (agent.scheduler.confirmAiOtherTargets === false ? "已获管理员持续授权，无需再次去控制台确认" : "已开启，但创建和修改后需控制台确认") : "未开启，不能承诺已为其他人或群登记"}；仅可使用已允许的目标，最终以工具返回的 enabled、pendingConfirm 和 scheduledAt 为准。`
+      : "",
     names.has("generated_image_list")
       ? "原生生图完成后必须用 generated_image_list 取得已登记的 mediaId，再用 qq_send 投递。生图工具的图片预览、image_url、output_hint、savedPath 和‘已显示给用户’均不代表 QQ 收到图片，不得把本机路径当成 mediaId。图已生成但发送失败时复用媒体库原图，按 delivery 区分未发送、已发送、失败和结果未知；未知投递不得换 requestId 重试。原生生图返回 429 时，HTML 加 Cloudflare challenge 标记说明验证拦截，不能推断余额不足；只有明确的用量限制证据才报告额度限制。未提供错误详情就保持原因未知，不循环重试或自动重生成。"
       : "",

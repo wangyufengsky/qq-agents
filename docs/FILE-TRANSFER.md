@@ -42,6 +42,8 @@
 
 图片附件可另用 `qq_image_read({id: "<附件经历ID>", source: "file", index: 0})` 读取像素；无普通图片段时可省略 `source`。这个入口通过同一个 `file_download` 授权路径下载，仍要求文件接收权限、工具白名单、来源白名单及文件库配额，不能绕过文件权限。校验为 GIF 后返回多帧，其他支持格式返回图片；GIF 原图另限 20 MiB、其他格式 8 MiB。读取结果保留文件库中相同内容的已有来源和运维限制；后续可用返回的 `mediaId` 在 `sticker_read` 中继续读图。
 
+兼容 NapCat 消息段的 `file` 文件名字段及上传通知的 `name/file_name` 字段，包括已经保存的历史附件。私聊附件直链接口明确报告 PacketBackend 禁用或不可用时，会通过同一网关的 `download_file_stream` 获取已观察到的附件 ID。分片下载校验文件大小、序号、完整性和 60 秒超时，并响应回合取消；不接受模型指定的文件 ID、网关本机路径或任意 URL，也不需要打开本机导入权限或 PacketBackend。
+
 ## QQ 与下载协议
 
 普通 file 消息段、群 `group_upload` 与私聊 `offline_file` 通知会显示附件名称。下载仅使用本主体、当前 QQ 连接及仍允许来源中已归档的附件；不接受模型自行编造的 QQ 文件 ID。附件直链过期时可通过 `get_group_file_url` / `get_private_file_url` 刷新。网关没有可用直链时明确失败，不读取其返回的任意本机路径。
