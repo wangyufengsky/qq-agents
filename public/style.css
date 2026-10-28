@@ -1564,3 +1564,47 @@ form > .form-grid + .form-grid {
   display: grid;
   align-content: start;
 }
+
+/* Current self on the mind page: full read view, edit on demand. */
+.self-card > .row {
+  margin-bottom: 12px;
+}
+.self-card > .row h2 {
+  margin: 0;
+}
+.self-view {
+  position: relative;
+  padding: 14px 16px;
+  border-radius: var(--r-md);
+  background: var(--bg-sunken);
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+  font-size: 14px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  /* Clears the sticky top bar on narrow screens when scrolled back into view. */
+  scroll-margin-top: 140px;
+}
+.self-view.collapsed {
+  max-height: 600px;
+  overflow: hidden;
+}
+.self-view.collapsed::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  height: 72px;
+  background: linear-gradient(transparent, var(--bg-sunken));
+  border-radius: 0 0 var(--r-md) var(--r-md);
+}
+.self-more {
+  margin-top: 10px;
+}
+#self-body {
+  min-height: 40vh;
+  max-height: none;
+}
+.self-card .card-actions {
+  margin-top: 4px;
+}
