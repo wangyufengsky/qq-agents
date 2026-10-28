@@ -87,6 +87,11 @@ test("subject history and console survive more than fifty later chat turns", asy
   assert.doesNotMatch(html, /尚未思考/);
   assert.match(html, /已完成（无 QQ 发送）/);
   assert.match(html, /思考失败/);
+  // Current self reads in full; the editor stays hidden until 修改.
+  assert.match(html, /<div id="self-view" class="self-view">[^<]+<\/div>/);
+  assert.match(html, /<button type="button" id="self-edit">修改<\/button>/);
+  assert.match(html, /<form id="self-form" hidden>/);
+  assert.match(html, /id="self-cancel">取消<\/button>/);
 });
 
 test("subject check status shows rolling budget release and real offline gate without writing state", async (t) => {
