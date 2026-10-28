@@ -4,6 +4,8 @@ English | [中文](README.md)
 
 QQ Agents runs several AI characters from one local admin console. Each character is tied to its own QQ account (through NapCat/OneBot), gets its replies from an AI backend — DSH, Codex or any OpenAI-compatible API — and keeps its own persona, memory, diary and permissions. A fresh setup starts isolated and fully paused, so nothing reaches QQ until you open the gates one by one.
 
+![The console home page: one card per character with whether it can speak, its latest reply and the last 24 hours of activity](docs/images/console-home.png)
+
 ## What it is
 
 QQ Agents is a **self-hosted application you deploy as is**. It runs on your own machine, keeps every piece of data (configuration, chat history, memory, media) in a private local data directory, and is configured and operated from a browser console. No code is needed to use it.
@@ -21,6 +23,36 @@ It also has a few narrow extension points: adding an AI backend, adding a bridge
 - need a hosted, multi-tenant service or a bot for a large audience;
 - want a library or framework to embed in your own program, or rely on a stable plugin interface;
 - don't want to look after a QQ login, NapCat and a local runtime yourself.
+
+## A look at the console
+
+Everything is configured and operated from a local web console (in Chinese). These screenshots come from a demo setup; the characters, QQ numbers, group and messages are fictional.
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/console-activity.png" alt="Character activity"></td>
+    <td width="50%"><img src="docs/images/console-memory.png" alt="Memory and diary"></td>
+  </tr>
+  <tr>
+    <td><b>Activity</b>: one entry per chat reply or free-time turn, with what the character read, what it said and which tools it used, including reply checks where it chose to stay quiet.</td>
+    <td><b>Memory and diary</b>: messages are kept in the character's own history in the order they happened; a search hit comes back as a scene with the messages around it and who said what.</td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/console-mind.png" alt="Self"></td>
+    <td><img src="docs/images/console-links.png" alt="QQ accounts and AI backends"></td>
+  </tr>
+  <tr>
+    <td><b>Self</b>: name and appearance are fixed identity anchors; personality and ways of relating live in a versioned self that can grow, and administrators can review and restore it.</td>
+    <td><b>Connections</b>: each character has its own QQ account (the logged-in number is checked before connecting); DSH, Codex and OpenAI-compatible backends are checked and recovered independently.</td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/console-role-settings.png" alt="Character settings"></td>
+    <td>
+      <b>Character settings</b>: persona, allowlists, wake rules, participation rate and file, browsing and voice permissions are set per character.<br><br>
+      <b>Pause all</b> at the top stops every character at once, and every start begins globally paused until you open it again.
+    </td>
+  </tr>
+</table>
 
 ## Choosing a backend
 
