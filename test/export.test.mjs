@@ -89,7 +89,9 @@ test("CLI exports a verified snapshot and restores revisions, identities and mes
   assert.equal(data.version, 2);
   assert.equal(data.manifest.counts.events, 2);
   assert.deepEqual(data.tables, expected);
-  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  // Windows has no POSIX permission bits to check.
+  if (process.platform !== "win32")
+    assert.equal(fs.statSync(file).mode & 0o777, 0o600);
   assert.notEqual(run(root, file).status, 0);
   assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), data);
   const restored = path.join(root, "restored");

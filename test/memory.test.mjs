@@ -194,7 +194,9 @@ test("SQLite reopen persists identity and private permissions are 0600", (t) => 
   s.close();
   s = new MemoryStore(file);
   assert.equal(s.bind("a").search().items.length, 1);
-  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  // Windows has no POSIX permission bits to check.
+  if (process.platform !== "win32")
+    assert.equal(fs.statSync(file).mode & 0o777, 0o600);
   s.close();
 });
 test("legacy import is idempotent, preserves source bytes and marks missing history", (t) => {

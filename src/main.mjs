@@ -27,6 +27,12 @@ const diagnostics = new Diagnostics();
 const lifecycle = new ProcessLifecycle({ diagnostics });
 process.on("SIGINT", () => lifecycle.signal());
 process.on("SIGTERM", () => lifecycle.signal());
+// Windows sends SIGHUP when the console window is closed (and ends the
+// process about 10 s later) and SIGBREAK for Ctrl+Break; shut down cleanly so
+// the data directory lock is released.
+if (process.platform === "win32")
+  for (const name of ["SIGHUP", "SIGBREAK"])
+    process.on(name, () => lifecycle.signal());
 try {
   const timeout = Number(option("--shutdown-timeout-ms") ?? 30000);
   if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > 120000)

@@ -4,6 +4,13 @@
 
 2026-10-28 公开之后的条目用本仓库的 PR 链接；更早条目中的 `#编号` 指公开前私有仓库中的 PR，与本仓库的 Issue/PR 编号无关。
 
+## Windows 支持（2026-10-28）
+
+- CI 增加 `windows-latest`，三个平台运行同一套 `npm run verify`；新增 `.gitattributes` 统一使用 LF 换行。
+- Codex 在 Windows 上通过 `cross-spawn` 启动 npm 安装的 `codex.cmd`；平台浏览子进程的脚本路径改用 `fileURLToPath`；公开网页截图自动查找 Windows 上的 Chrome 和 Edge。
+- Windows 上关闭控制台窗口（`SIGHUP`）和 Ctrl+Break（`SIGBREAK`）与 Ctrl+C 一样正常停止并释放数据目录锁。
+- 新增 [在 Windows 上运行](docs/WINDOWS.md)：PowerShell 启动与环境变量、三种后端的配置、NTFS 下数据目录的放置，以及 `robots.mjs`、本地语音合成等不可用的功能。
+
 ## 开源发布（2026-10-28）
 
 - 仓库公开为 [wangyufengsky/qq-agents](https://github.com/wangyufengsky/qq-agents)：历史只带入 `main`，提交身份改写为 GitHub 隐私邮箱，旧 PR 编号改为文字说明；新增 [安全策略](SECURITY.md)，开启私下报告漏洞。迁移方式见 [公开前检查](docs/PUBLIC-READINESS.md)。

@@ -78,6 +78,7 @@ The documentation is written in Chinese.
 
 - [Getting started: your first character in a group](docs/GETTING-STARTED.md)
 - [Deploying on Linux / Docker, with a NapCat container](docs/DOCKER.md)
+- [Running on Windows](docs/WINDOWS.md)
 - [Configuration and the data directory](docs/CONFIGURATION.md), including the OpenAI-compatible backend
 - [Troubleshooting by symptom](docs/TROUBLESHOOTING.md)
 - [Local operations with `scripts/robots.mjs`](docs/LOCAL-OPERATIONS.md)

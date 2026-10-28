@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import os from "node:os";
+import path from "node:path";
 import { sign } from "../vendor/heybox/signature.mjs";
 import { heyboxRead } from "../src/apps/heybox.mjs";
 import { AppAdapter } from "../src/apps/adapter.mjs";
@@ -58,7 +60,10 @@ test("capability probes distinguish failed reads and unverified credentials", as
         return { loggedIn: null, status: "credential-present-unverified" };
       throw Error("APP_LOGIN_REQUIRED");
     },
-    lockOptions: { lockPath: "/tmp/qq-app-probe-unit.lock", cooldownMs: 0 },
+    lockOptions: {
+      lockPath: path.join(os.tmpdir(), "qq-app-probe-unit.lock"),
+      cooldownMs: 0,
+    },
   });
   await adapter.perform({ platform: "heybox", operation: "status" });
   assert.equal(

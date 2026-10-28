@@ -110,6 +110,7 @@ node src/main.mjs --data /path/to/private-data --port 3210
 
 - [入门指南：在一个群里接入第一个角色](docs/GETTING-STARTED.md)
 - [在 Linux / Docker 上部署（含 NapCat 容器）](docs/DOCKER.md)
+- [在 Windows 上运行](docs/WINDOWS.md)
 - [故障排查（按症状查找）](docs/TROUBLESHOOTING.md)
 - [配置与数据目录](docs/CONFIGURATION.md)
 

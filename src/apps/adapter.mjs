@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { withBrowserLock } from "../../vendor/social-reader/browser-lock.mjs";
 import { appInfo } from "./urls.mjs";
 export const APP_CAPABILITIES = {
@@ -65,7 +66,7 @@ export class AppAdapter {
     return new Promise((resolve, reject) => {
       const child = spawn(
         process.execPath,
-        [new URL("./opencli-runner.mjs", import.meta.url).pathname],
+        [fileURLToPath(new URL("./opencli-runner.mjs", import.meta.url))],
         {
           stdio: ["pipe", "pipe", "pipe"],
           env: { ...process.env, NO_COLOR: "1" },

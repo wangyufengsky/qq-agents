@@ -9,6 +9,7 @@ import { safeToolFailure } from "../tools/errors.mjs";
 import { sessionSignature, assertSession } from "./session-contract.mjs";
 import { readGeneratedImage } from "./generated-image-file.mjs";
 import { buildChildEnv } from "../core/child-env.mjs";
+import crossSpawn from "cross-spawn";
 
 export const restrictions = {
   "features.shell_tool": false,
@@ -56,6 +57,9 @@ export class CodexBackend {
         // Vendor JS: its inferred options type omits the destructured cwd.
         /** @type {any} */ ({
           command: config.command || "codex",
+          // npm installs `codex.cmd` on Windows, which spawn() cannot start
+          // without a shell; cross-spawn runs it with cmd.exe-safe quoting.
+          ...(process.platform === "win32" ? { spawnProcess: crossSpawn } : {}),
           cwd: this.root,
           env: { ...buildChildEnv("codex", config.env), CODEX_HOME: home },
           args: [
