@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { imageMime } from "../tools/media.mjs";
+import { openNoFollow } from "../core/no-follow.mjs";
 
 // Only native, completed image items may name a file. Never accept a model-supplied
 // path, a data URL, or arbitrary tool output as authority to read the filesystem.
@@ -41,10 +42,7 @@ export function readGeneratedImage(home, sessionId, item) {
     )
   )
     throw Error("GENERATED_IMAGE_SOURCE_DENIED");
-  const fd = fs.openSync(
-    file,
-    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
-  );
+  const fd = openNoFollow(file);
   try {
     const before = fs.fstatSync(fd);
     if (!before.isFile() || before.nlink !== 1)

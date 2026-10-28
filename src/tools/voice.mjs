@@ -9,6 +9,7 @@ import {
   cleanupTemp,
 } from "../../vendor/legacy/voice-core.js";
 import { safeFetchBuffer } from "../../vendor/social-reader/safe-fetch.js";
+import { openNoFollow } from "../core/no-follow.mjs";
 
 export function audioType(b) {
   if (!Buffer.isBuffer(b) || b.length < 10) throw Error("INVALID_AUDIO");
@@ -239,10 +240,7 @@ export class VoiceStore {
     } catch {
       throw Error("VOICE_LOCAL_PATH_DENIED");
     }
-    const fd = fs.openSync(
-      file,
-      fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0),
-    );
+    const fd = openNoFollow(file);
     try {
       const stat = fs.fstatSync(fd);
       if (!stat.isFile()) throw Error("VOICE_LOCAL_PATH_DENIED");

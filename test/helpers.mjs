@@ -5,6 +5,8 @@ import { EventEmitter } from "node:events";
 import { ConfigStore, validateConfig } from "../src/core/config.mjs";
 import { MemoryStore } from "../src/memory/store.mjs";
 import { Runtime } from "../src/core/runtime.mjs";
+// Captured at load: some tests stub process.platform while their hooks run.
+const windows = process.platform === "win32";
 const leftovers = new Set();
 process.once("exit", () => {
   for (const root of leftovers)
@@ -23,7 +25,7 @@ export function temp(t) {
     try {
       fs.rmSync(root, { recursive: true, force: true });
     } catch (error) {
-      if (process.platform !== "win32") throw error;
+      if (!windows) throw error;
       leftovers.add(root);
     }
   });

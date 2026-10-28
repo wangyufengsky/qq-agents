@@ -64,7 +64,7 @@ npm start -- --live
 
 直接关闭窗口也会触发同样的停止流程，但 Windows 大约 10 秒后就会强制结束进程，进行中的回合可能来不及收尾，所以优先用 Ctrl+C。
 
-进程被强制结束（任务管理器结束任务、断电）时，数据目录里会留下 `process.lock`，下次启动报 `DATA_DIRECTORY_LOCKED`。程序不会自动回收旧锁。先确认没有旧实例还在使用这个目录：
+进程被强制结束（任务管理器或任务计划程序“结束任务”、断电）时。Windows 上别的进程无法向它发送停止信号，所以这几种方式都没有机会正常退出，会在数据目录里留下 `process.lock`，下次启动报 `DATA_DIRECTORY_LOCKED`。程序不会自动回收旧锁。先确认没有旧实例还在使用这个目录：
 
 ```powershell
 Get-Content .runtime\process.lock          # 记录的 pid 和启动时间

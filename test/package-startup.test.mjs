@@ -14,10 +14,16 @@ test(
   async (t) => {
     const root = temp(t);
     const source = fileURLToPath(new URL("..", import.meta.url));
+    // npm is npm.cmd on Windows, which execFile cannot start without a shell;
+    // `npm test` sets npm_execpath to the CLI script, run that with node.
+    const npm = process.env.npm_execpath
+      ? [process.execPath, [process.env.npm_execpath]]
+      : ["npm", []];
     const [packed] = JSON.parse(
       execFileSync(
-        "npm",
+        npm[0],
         [
+          ...npm[1],
           "pack",
           "--ignore-scripts",
           "--json",
@@ -40,7 +46,8 @@ test(
     fs.symlinkSync(
       path.join(source, "node_modules"),
       path.join(app, "node_modules"),
-      "dir",
+      // A junction needs no privilege on Windows; the type is ignored elsewhere.
+      "junction",
     );
     for (let boot = 0; boot < 2; boot++) {
       const child = spawn(
@@ -80,8 +87,16 @@ test(
       assert(status.connections.every((c) => !c.connected));
       assert.equal((await fetch(url)).status, 200);
       child.kill("SIGTERM");
-      assert.equal((await exited)[0], 0);
-      assert(!fs.existsSync(path.join(data, "process.lock")));
+      const [code] = await exited;
+      if (process.platform === "win32") {
+        // Windows cannot signal another process: kill() terminates it at once,
+        // so the clean-shutdown path is covered on POSIX only. Remove the lock
+        // the way an administrator would before starting again.
+        fs.rmSync(path.join(data, "process.lock"), { force: true });
+      } else {
+        assert.equal(code, 0);
+        assert(!fs.existsSync(path.join(data, "process.lock")));
+      }
       const file = path.join(data, "config.json"),
         config = JSON.parse(fs.readFileSync(file));
       if (boot === 0) {
