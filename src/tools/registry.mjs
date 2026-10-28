@@ -9,7 +9,11 @@ import { screenshotDefinitions, screenshotTool } from "./screenshots.mjs";
 import { legacyDefinitions, legacyTool } from "./legacy.mjs";
 
 // Discovery and dispatch use this same registry. Fail at load time on drift.
-const handlers = { ...coreHandlers };
+const handlers = {
+  ...coreHandlers,
+  protected_work_submit: (runtime, ctx, args) =>
+    runtime.protectedWork.submit(ctx, args),
+};
 for (const [group, dispatch] of [
   [appDefinitions, appTool],
   [githubDefinitions, githubTool],

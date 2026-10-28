@@ -103,7 +103,7 @@ test("owner command failures retain safe diagnostics without exposing command te
     recent.some(
       (r) => r.component === "operations" && r.code === "OWNER_OPERATIONS_ONLY",
     ),
-    true,
+    false,
   );
   assert.equal(
     recent.some(

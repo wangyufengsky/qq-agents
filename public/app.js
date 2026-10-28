@@ -28,7 +28,7 @@ const titles = {
   permissions: ["权限", "分别设置每个 AI 的文件收发能力与独立文件库。"],
   schedule: ["主动与定时", "条件唤醒、睡前观察和定时任务，各自按规则运行。"],
   voices: ["语音库", "导入、试听和管理每个角色自己的语音素材。"],
-  operations: ["运维", "逐项确认管理员操作。"],
+  operations: ["受保护工作", "独立处理私有仓库与运维，审阅结果后再交回聊天。"],
   overview: ["首页", "在一个地方，照看每个独立的 AI。"],
   links: [
     "连接",
@@ -394,7 +394,7 @@ const pageLabels = {
   apps: "浏览与分享",
   permissions: "文件",
   voices: "语音",
-  operations: "运维",
+  operations: "受保护工作",
   settings: "运行设置",
 };
 const lastPage = {};

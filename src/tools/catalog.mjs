@@ -76,7 +76,10 @@ export function toolAvailable(agent, name, conversation) {
       agent.scheduler.enabled &&
       agent.ownerIds.some((id) => conversation === `private:${id}`)
     );
-  if (name.startsWith("ops_")) return agent.operations.enabled;
+  if (name === "protected_work_submit")
+    return conversation.startsWith("@work:");
+  if (name.startsWith("ops_"))
+    return agent.operations.enabled && conversation.startsWith("@work:");
   if (name.startsWith("app_") || name === "qq_read_share_card")
     return (
       name === "app_capabilities" ||

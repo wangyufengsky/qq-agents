@@ -1,3 +1,4 @@
+import { recallBoundary } from "../core/recall-boundary.mjs";
 import { createHash } from "node:crypto";
 import { mdToPlain } from "../../vendor/dsh-qq/md-to-plain.js";
 import {
@@ -16,6 +17,7 @@ export function ownedEvent(runtime, ctx, id) {
     .get(ctx.agentId, id);
   if (!row) throw Error("RECORD_NOT_FOUND");
   const event = mem.event(row, ctx.conversation);
+  recallBoundary(runtime, ctx).assert(event);
   if (event.conversation !== ctx.conversation) {
     ctx.privateRead.add(event.id);
     ctx.persistTaint?.();

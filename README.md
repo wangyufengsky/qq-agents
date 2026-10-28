@@ -182,6 +182,7 @@ node src/main.mjs --data /path/to/private-data --port 3210
 - [GitHub 只读访问](docs/GITHUB-READ.md)
 - [Self、主体意图与会话管理](docs/SELF-CONTEXT.md)
 - [意图取消与普通回复](docs/intent-reply-recovery.md)
+- [独立受保护工作：私有仓库、运维与结果审批](docs/PROTECTED-WORK.md)
 - [受保护的工作笔记、聊天意图与文件](docs/protected-mind-records.md)
 
 **设计与参考**
@@ -219,7 +220,7 @@ node src/main.mjs --data /path/to/private-data --port 3210
 | 隔离模式 / live     | 配置 `mode`。`isolated` 不连接 QQ、不运行模型回合；`live` 需要以 `--live` 启动才能启用。                                    |
 | 全局暂停 / 角色暂停 | 两道独立开关。每次启动都会打开全局暂停；解除全局暂停不会解除角色暂停。                                                      |
 | 会话暂停 / 会话静默 | 针对单个群聊或私聊。会话暂停由管理员设置；会话静默是角色自己选择安静一段时间（`qq_set_silence`）。                          |
-| L0–L3               | 管理员私聊运维权限等级。L0 无运维权限（默认）；L1 只读普通文件；L2 写入需逐项确认；L3 需额外开关、TOTP 和独立命令批准。     |
+| L0–L3               | 独立工作任务的运维权限等级。L0 无运维权限（默认）；L1 只读普通文件；L2 写入需逐项确认；L3 需额外开关、TOTP 和独立命令批准。 |
 
 ## 来源和许可
 

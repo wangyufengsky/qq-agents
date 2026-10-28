@@ -1,3 +1,4 @@
+import { recallBoundary } from "./recall-boundary.mjs";
 import { containsCredential } from "./secrets.mjs";
 import { beforeShareDelivery } from "../apps/sharing.mjs";
 import { appService } from "../apps/tools.mjs";
@@ -26,6 +27,8 @@ export class DeliveryService {
     const runtime = this.runtime;
     const a = runtime.assertActive(ctx),
       mem = runtime.memory.bind(a.id);
+    if (runtime.protectedWork?.context(ctx))
+      throw Error("PROTECTED_WORK_OUTBOUND_DENIED");
     runtime.assertDisclosure(ctx);
     if (typeof text !== "string" || text.length > 8000 || (!text && !mediaId))
       throw Error("INVALID_MESSAGE");
@@ -62,6 +65,7 @@ export class DeliveryService {
     if (mediaId) {
       if (!runtime.media) throw Error("MEDIA_UNAVAILABLE");
       const meta = runtime.media.metadata(a.id, mediaId);
+      recallBoundary(runtime, ctx).assert(meta);
       taintMedia(ctx, meta);
       segments.push(runtime.media.segment(a.id, mediaId));
     }

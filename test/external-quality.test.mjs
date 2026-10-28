@@ -77,7 +77,7 @@ test("MCP discovery returns only actual allowlisted names and schemas, rejects u
 test("external media detects MIME mismatch, handles embedded blobs and does not register error payloads", async (t) => {
   const root = temp(t),
     media = new MediaStore(path.join(root, "media")),
-    runtime = { media, assertActive() {} },
+    runtime = { media, memory: fixture(t).store, assertActive() {} },
     ctx = { agentId: "agent-a", conversation: "group:20000" },
     args = { serverId: "fixture", tool: "generate" };
   await assert.rejects(
@@ -223,6 +223,7 @@ test("multi-megabyte external media validates without regex stack overflow and r
     voices = new VoiceStore(path.join(root, "voice")),
     policy = config(1).agents[0].voice,
     runtime = {
+      memory: fixture(t).store,
       media,
       voices,
       assertActive() {},
@@ -283,15 +284,22 @@ test("external generated image and audio retain protected provenance across dedu
     ];
   ctx.privateRead.add("operations:fixture-source");
   ctx.grants.add("operations:fixture-source");
-  const result = await externalResult(runtime, ctx, args, { content });
-  const imageId = JSON.parse(
-    result.content.find((c) => c.text?.includes("generatedMedia")).text,
-  ).generatedMedia.id;
-  const audioId = JSON.parse(
-    result.content.find((c) => c.text?.includes("generatedAudio")).text,
-  ).generatedAudio.id;
+  const imageId = runtime.media.put(
+    "agent-0",
+    Buffer.from(png, "base64"),
+    "image/png",
+    { protectedOperations: true },
+  ).id;
+  const audioId = (
+    await runtime.voices.put("agent-0", wav(), runtime.agent("agent-0").voice, {
+      protectedOperations: true,
+    })
+  ).id;
   const fresh = runtime.makeContext("agent-0", "private:30000");
-  await externalResult(runtime, fresh, args, { content });
+  await assert.rejects(
+    externalResult(runtime, fresh, args, { content }),
+    /RECALL_SOURCE_NOT_ALLOWED/,
+  );
   assert.equal(
     new MediaStore(path.join(root, "media")).metadata("agent-0", imageId)
       .protectedOperations,
@@ -304,7 +312,7 @@ test("external generated image and audio retain protected provenance across dedu
   );
   await assert.rejects(
     runtime.send(fresh, { requestId: "protected-image", mediaId: imageId }),
-    /REQUIRES_DISCLOSURE_GRANT/,
+    /RECALL_SOURCE_NOT_ALLOWED|REQUIRES_DISCLOSURE_GRANT/,
   );
   runtime.agent("agent-0").tools.push("qq_send_voice");
   await assert.rejects(
@@ -312,7 +320,7 @@ test("external generated image and audio retain protected provenance across dedu
       requestId: "protected-audio",
       audioId,
     }),
-    /REQUIRES_DISCLOSURE_GRANT/,
+    /RECALL_SOURCE_NOT_ALLOWED|REQUIRES_DISCLOSURE_GRANT/,
   );
 });
 

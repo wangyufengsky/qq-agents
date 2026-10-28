@@ -88,7 +88,17 @@ test("work notes inherit protected event and diary ancestry even without prior r
     {},
     true,
   );
-  const note = await f.runtime.callTool(f.ctx, "work_note", input([diary.id]));
+  const note = f.m.identity.saveNote(
+    input([diary.id]),
+    f.ctx.conversation,
+    f.runtime.now(),
+  );
+  await assert.rejects(
+    f.runtime.callTool(f.ctx, "work_note", input([diary.id])),
+    /RECALL_SOURCE_NOT_ALLOWED/,
+  );
+  f.ctx.privateRead.add("operations:legacy");
+  f.ctx.privateRead.add("github-private:" + repo);
   assert.deepEqual(note.protectedRepositories, [repo]);
   assert.equal(note.protectedOperations, true);
   assertExternalBlocked(f, f.ctx);
@@ -105,10 +115,19 @@ test("editing, changing evidence and reopening cannot strip protection", async (
   for (const status of ["completed", "corrected", "open"]) {
     const ctx = fresh(f);
     ctx.privateRead.add("github-private:fixture/second");
-    const updated = await f.runtime.callTool(
-      ctx,
-      "work_note",
+    const updated = f.m.identity.saveNote(
       input([f.source.id], { id: note.id, body: "reworded", status }),
+      ctx.conversation,
+      f.runtime.now(),
+      { protectedRepositories: ["fixture/second"] },
+    );
+    await assert.rejects(
+      f.runtime.callTool(
+        ctx,
+        "work_note",
+        input([f.source.id], { id: note.id }),
+      ),
+      /RECALL_SOURCE_NOT_ALLOWED/,
     );
     assert.equal(updated.protectedOperations, true);
     assert.deepEqual(updated.protectedRepositories, [repo, "fixture/second"]);
@@ -133,36 +152,10 @@ for (const scope of ["@subject", "private:30000", "group:20000"]) {
         route === "read"
           ? await f.runtime.callTool(ctx, "work_notes", {})
           : f.runtime.contexts.prepare(ctx, {}, []);
-      if (scope.startsWith("group:")) {
-        assert(!JSON.stringify(result).includes(note.id));
-        assert(!ctx.privateRead.has("github-private:" + repo));
-        assert.doesNotThrow(() => f.runtime.assertDisclosure(ctx));
-        assert(f.m.identity.notes(scope).some((row) => row.id === note.id));
-        return;
-      }
-      assert(JSON.stringify(result).includes(note.id));
-      assert(ctx.privateRead.has("github-private:" + repo));
-      assert(
-        f.m.state(scope).disclosureTaint.includes("github-private:" + repo),
-      );
-      assertExternalBlocked(f, ctx);
-      if (scope === "private:30000") {
-        assert.doesNotThrow(() => f.runtime.assertDisclosure(ctx));
-        const receipt = await f.runtime.send(ctx, {
-          requestId: "owner-reply",
-          text: "owner-visible note",
-        });
-        assert.equal(receipt.status, "sent");
-      } else if (scope.startsWith("group:")) {
-        await assert.rejects(
-          f.runtime.send(ctx, {
-            requestId: "group-leak",
-            text: "private note",
-          }),
-          /REQUIRES_DISCLOSURE_GRANT/,
-        );
-        assert.equal(f.runtime.transports.get("qq-0").sent.length, 0);
-      }
+      assert(!JSON.stringify(result).includes(note.id));
+      assert(!ctx.privateRead.has("github-private:" + repo));
+      assert.doesNotThrow(() => f.runtime.assertDisclosure(ctx));
+      assert(f.m.identity.notes(scope).some((row) => row.id === note.id));
     });
   }
 }
@@ -175,13 +168,12 @@ test("Operations protection survives source deletion and implicit handoff", asyn
     .run("agent-0", f.source.id);
   const ctx = fresh(f);
   const prepared = f.runtime.contexts.prepare(ctx, {}, []);
-  assert(prepared.prompt.includes(note.id));
-  assert(prepared.prompt.includes('"available":false'));
-  assert(ctx.privateRead.has("operations:work-note:" + note.id));
-  assertExternalBlocked(f, ctx);
-  await assert.rejects(
-    f.runtime.send(ctx, { requestId: "copy", text: "copy" }),
-    /REQUIRES_DISCLOSURE_GRANT/,
+  assert(!prepared.prompt.includes(note.id));
+  assert(!ctx.privateRead.has("operations:work-note:" + note.id));
+  assert(f.m.identity.get("work_notes", note.id).protectedOperations);
+  assert.equal(
+    (await f.runtime.send(ctx, { requestId: "clean", text: "hello" })).status,
+    "sent",
   );
 });
 
@@ -190,6 +182,9 @@ test("note-derived diaries and subsequent notes keep all inherited markers", asy
   await protectedNote(f, { ops: true });
   const ctx = fresh(f);
   await f.runtime.callTool(ctx, "work_notes", {});
+  // Already-read legacy contexts must still propagate protection on new writes.
+  ctx.privateRead.add("operations:legacy");
+  ctx.privateRead.add("github-private:" + repo);
   const diary = await f.runtime.callTool(ctx, "diary_write", {
     title: "derived",
     body: "from note",
@@ -241,7 +236,7 @@ test("notes remain scoped to agent and conversation, including updates", async (
         "work_note",
         input([f.source.id], { id: note.id }),
       ),
-      /RECORD_NOT_FOUND|EVIDENCE_NOT_OWNED_OR_MISSING/,
+      /RECALL_SOURCE_NOT_ALLOWED|RECORD_NOT_FOUND|EVIDENCE_NOT_OWNED_OR_MISSING/,
     );
   }
 });
@@ -295,9 +290,14 @@ for (const route of ["list", "handoff", "queued-reason", "duplicate"]) {
     let result;
     if (route === "list")
       result = await f.runtime.callTool(ctx, "intent_list", {});
-    else if (route === "duplicate")
-      result = await f.runtime.callTool(ctx, "intent_create", args);
-    else {
+    else if (route === "duplicate") {
+      await assert.rejects(
+        f.runtime.callTool(ctx, "intent_create", args),
+        /RECALL_SOURCE_NOT_ALLOWED/,
+      );
+      assert(!ctx.privateRead.has("github-private:" + repo));
+      return;
+    } else {
       if (route === "queued-reason") {
         // Use an existing session: reason records must be tracked even when no
         // initial handoff is injected. Persisted data is authoritative.
@@ -320,7 +320,7 @@ for (const route of ["list", "handoff", "queued-reason", "duplicate"]) {
       ]);
     }
     assert(result);
-    if (route === "list" || route === "handoff") {
+    if (["list", "handoff", "queued-reason"].includes(route)) {
       if (route === "list") assert(!JSON.stringify(result).includes(i.id));
       // A wake reason may retain an opaque ID; the protected record must not
       // enter the handoff as content or authorize disclosure.
@@ -345,10 +345,8 @@ for (const route of ["list", "handoff", "queued-reason", "duplicate"]) {
   });
 }
 
-test("private repository intent may be handed to its configured owner and sent once", async (t) => {
-  const f = setup(t),
-    a = f.runtime.agent("agent-0");
-  a.subject.owners = true;
+test("private repository intent is never auto-handed to ordinary owner chat", async (t) => {
+  const f = setup(t);
   f.ctx.privateRead.add("github-private:" + repo);
   const i = await f.runtime.callTool(f.ctx, "intent_create", {
     topic: "owner-only",
@@ -359,20 +357,8 @@ test("private repository intent may be handed to its configured owner and sent o
   const requests = [];
   f.runtime.conversations.request = (...args) => requests.push(args);
   f.runtime.subject.tick();
-  assert.equal(requests.length, 1);
-  const ctx = fresh(f);
-  f.runtime.subject.begin(ctx, [{ intentId: i.id }]);
-  f.runtime.contexts.prepare(ctx, {}, [{ intentId: i.id }]);
-  const handed = f.m.identity.get("intentions", i.id);
-  await f.runtime.callTool(ctx, "intent_decide", {
-    id: i.id,
-    expectedRevision: handed.revision,
-    action: "send",
-    reason: "owner can see",
-  });
-  await f.runtime.send(ctx, { requestId: "reply", text: "owner reply" });
-  assert.equal(f.runtime.transports.get("qq-0").sent.length, 1);
-  assert.equal(f.m.delivery("intent:" + i.id).status, "sent");
+  assert.equal(requests.length, 0);
+  assert.equal(f.m.identity.get("intentions", i.id).status, "waiting");
 });
 
 test("new protected context taints intent updates and cannot select a forbidden send", async (t) => {
@@ -409,16 +395,18 @@ test("new protected context taints intent updates and cannot select a forbidden 
       action: "send",
       reason: "attempt",
     }),
-    /REQUIRES_DISCLOSURE_GRANT/,
+    /RECALL_SOURCE_NOT_ALLOWED/,
   );
   assert.equal(f.runtime.transports.get("qq-0").sent.length, 0);
-  const cancelled = await f.runtime.callTool(ctx, "intent_decide", {
-    id: i.id,
-    expectedRevision: handed.revision,
-    action: "cancel",
-    reason: "cancel safely",
-  });
-  assert.deepEqual(cancelled.protectedRepositories, [repo]);
+  await assert.rejects(
+    f.runtime.callTool(ctx, "intent_decide", {
+      id: i.id,
+      expectedRevision: handed.revision,
+      action: "cancel",
+      reason: "cancel safely",
+    }),
+    /RECALL_SOURCE_NOT_ALLOWED/,
+  );
 });
 
 test("completed contact history keeps protected reasons in implicit subject handoff", async (t) => {
@@ -435,9 +423,8 @@ test("completed contact history keeps protected reasons in implicit subject hand
   f.runtime.subject.transition("agent-0", i, "completed", "protected history");
   const ctx = fresh(f, "@subject"),
     prepared = f.runtime.contexts.prepare(ctx, {}, []);
-  assert(prepared.prompt.includes("protected history"));
-  assert(ctx.privateRead.has("github-private:" + repo));
-  assertExternalBlocked(f, ctx);
+  assert(!prepared.prompt.includes("protected history"));
+  assert(!ctx.privateRead.has("github-private:" + repo));
 });
 
 test("subject can create a protected text file in its library without terminal access", async (t) => {
@@ -472,10 +459,7 @@ test("subject can create a protected text file in its library without terminal a
       .buffer.toString(),
     "# My article\nPrivate framework reflections.",
   );
-  assert.equal(
-    (await f.runtime.callTool(ctx, "file_list", {})).items[0].fileId,
-    file.fileId,
-  );
+  assert.deepEqual((await f.runtime.callTool(ctx, "file_list", {})).items, []);
   await assert.rejects(
     f.runtime.callTool(ctx, "file_create", { name: "../escape.md", text: "x" }),
     /INVALID_FILE_NAME/,
@@ -490,19 +474,17 @@ test("subject can create a protected text file in its library without terminal a
       requestId: "file-leak",
       fileId: file.fileId,
     }),
-    /REQUIRES_DISCLOSURE_GRANT/,
+    /RECALL_SOURCE_NOT_ALLOWED/,
   );
   assert.equal(sends, 0);
-  assert.equal(
-    (
-      await f.runtime.callTool(fresh(f), "qq_send_file", {
-        requestId: "owner-file",
-        fileId: file.fileId,
-      })
-    ).status,
-    "sent",
+  await assert.rejects(
+    f.runtime.callTool(fresh(f), "qq_send_file", {
+      requestId: "owner-file",
+      fileId: file.fileId,
+    }),
+    /RECALL_SOURCE_NOT_ALLOWED/,
   );
-  assert.equal(sends, 1);
+  assert.equal(sends, 0);
 });
 
 test("paginated work notes apply protection only when their content is included", async (t) => {
@@ -516,12 +498,16 @@ test("paginated work notes apply protection only when their content is included"
     );
   const ctx = fresh(f);
   const first = await f.runtime.callTool(ctx, "work_notes", {});
-  assert.equal(first.nextOffset, 8);
+  assert.equal(first.nextOffset, null);
   assert(!ctx.privateRead.has("github-private:" + repo));
   const last = await f.runtime.callTool(ctx, "work_notes", { offset: 8 });
-  assert.equal(last.items[0].id, note.id);
-  assert(ctx.privateRead.has("github-private:" + repo));
-  assertExternalBlocked(f, ctx);
+  assert.deepEqual(last.items, []);
+  assert(!ctx.privateRead.has("github-private:" + repo));
+  assert(
+    f.m.identity
+      .get("work_notes", note.id)
+      .protectedRepositories.includes(repo),
+  );
 });
 
 test("export, restore and database reopen retain note and intent protection", async (t) => {
@@ -533,6 +519,8 @@ test("export, restore and database reopen retain note and intent protection", as
   a.subject.groups = ["20000"];
   const protectedCtx = fresh(f);
   await f.runtime.callTool(protectedCtx, "work_notes", {});
+  protectedCtx.privateRead.add("operations:legacy");
+  protectedCtx.privateRead.add("github-private:" + repo);
   const intent = await f.runtime.callTool(protectedCtx, "intent_create", {
     topic: "protected",
     target: "group:20000",
@@ -576,20 +564,20 @@ test("ordinary self evidence stays strict while only note and intent storage acc
     () => freezeEvidence(f.m, [protectedSource.id], f.runtime.now()),
     /RESTRICTED_EVIDENCE/,
   );
-  const note = await f.runtime.callTool(
-    f.ctx,
-    "work_note",
+  const note = f.m.identity.saveNote(
     input([protectedSource.id]),
+    f.ctx.conversation,
+    f.runtime.now(),
   );
   f.m.db.prepare("DELETE FROM events WHERE id=?").run(protectedSource.id);
   const ctx = fresh(f);
   await f.runtime.callTool(ctx, "work_notes", {});
-  assert(ctx.privateRead.has("github-private:" + repo));
+  assert(!ctx.privateRead.has("github-private:" + repo));
   assert.deepEqual(
     f.m.identity.notes("private:30000")[0].protectedRepositories,
     [repo],
   );
-  assertExternalBlocked(f, ctx);
+  assert.doesNotThrow(() => f.runtime.assertDisclosure(ctx));
   assert.equal(note.evidence[0], protectedSource.id);
 });
 

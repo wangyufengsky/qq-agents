@@ -1,12 +1,9 @@
-import { githubPrivateContext } from "../github/policy.mjs";
 import { sourceClass } from "./outbound-policy.mjs";
 
 // This is a read boundary, not declassification. Stored records and the
 // protection of any context that already saw them remain unchanged.
 export function recallBoundary(runtime, ctx, { publicOnly = false } = {}) {
-  const privileged =
-    !publicOnly &&
-    githubPrivateContext(runtime.agent(ctx.agentId), ctx.conversation);
+  const privileged = !publicOnly && !!runtime.protectedWork?.context(ctx);
   const restricted = (value) =>
     value?.protectedOperations === true ||
     value?.protectedRepositories?.length > 0;
@@ -17,18 +14,32 @@ export function recallBoundary(runtime, ctx, { publicOnly = false } = {}) {
     return ["operations", "private-repository"].includes(classes.get(id));
   }
   function allowed(row) {
-    if (privileged) return true;
+    if (privileged) return runtime.protectedWork.canRead(ctx, row);
+    if (
+      row?.conversation?.startsWith("@work:") ||
+      row?.writtenIn?.conversation?.startsWith("@work:")
+    )
+      return false;
     return (
       ![
         row,
         row?.metadata,
         row?.payload,
+        ...(row?.sources || []),
         ...(row?.evidenceSnapshot?.references || []).map((ref) => ref.metadata),
         ...(row?.counterEvidenceSnapshot?.references || []).map(
           (ref) => ref.metadata,
         ),
       ].some(restricted) &&
-      ![row?.id, ...(row?.evidence || [])].some(protectedId)
+      ![
+        row?.id,
+        ...(row?.evidence || []),
+        ...(row?.sources || []).flatMap((s) => [
+          s.eventId,
+          s.sourceEventId,
+          s.recordId,
+        ]),
+      ].some(protectedId)
     );
   }
   function project(row) {

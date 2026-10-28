@@ -604,7 +604,7 @@ test("restricted Operations stays blocked for shared self while scoped notes ret
       "self_propose",
       { ...proposal(m, e), evidence: [d.id] },
     ),
-    /RESTRICTED_EVIDENCE/,
+    /RECALL_SOURCE_NOT_ALLOWED|RESTRICTED_EVIDENCE/,
   );
   assert.equal(m.identity.list("self_candidates").length, 0);
   assert.equal(m.identity.list("intentions").length, 0);

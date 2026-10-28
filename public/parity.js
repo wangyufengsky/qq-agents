@@ -451,7 +451,7 @@ async function renderOperations() {
     [status.mode === "isolated" || status.globalPaused, "opsBlocked"],
   ]);
   $("#parity-body").innerHTML =
-    `${features.slang ? `<div class="card"><h2>黑话候选</h2><div class="toolbar"><label>来源<select id="slang-source">${parityOptions(a.allow.groups.map((x) => ["group:" + x, "群 " + x]))}</select></label><button id="load-slang">读取候选</button></div><p class="hint">候选与联网资料不自动成为事实，确认后才标为已确认。</p><div id="slang-rows"></div></div>` : ""}<div class="section-title"><h2>管理员操作</h2><button id="revoke-ops">回落到 L0 并撤销待批准项</button></div><div class="banner">${a.operations.enabled ? "只接受管理员私聊身份；级别有时限，写入与命令逐项确认。" : "运维工具当前关闭。可在完整配置中指定专用工作区及允许命令后开启。"}</div>${
+    `${features.slang ? `<div class="card"><h2>黑话候选</h2><div class="toolbar"><label>来源<select id="slang-source">${parityOptions(a.allow.groups.map((x) => ["group:" + x, "群 " + x]))}</select></label><button id="load-slang">读取候选</button></div><p class="hint">候选与联网资料不自动成为事实，确认后才标为已确认。</p><div id="slang-rows"></div></div>` : ""}<div class="section-title"><h2>管理员操作</h2><button id="revoke-ops">回落到 L0 并撤销待批准项</button></div><div class="banner">${a.operations.enabled ? "仅独立工作任务可申请运维；级别有时限，写入与命令逐项确认。" : "运维工具当前关闭。可在完整配置中指定专用工作区及允许命令后开启。"}</div>${
       ops.pending
         .filter((p) => p.agentId === id)
         .map(
@@ -460,6 +460,11 @@ async function renderOperations() {
         )
         .join("") || '<div class="card empty">没有待确认操作。</div>'
     }`;
+  $("#parity-body").insertAdjacentHTML(
+    "afterbegin",
+    '<section id="protected-work"></section>',
+  );
+  await renderProtectedWork(id);
   if ($("#load-slang"))
     $("#load-slang").onclick = () =>
       action(async () => {
@@ -519,4 +524,82 @@ async function renderOperations() {
           notice("已处理确认请求");
         })),
   );
+}
+
+async function renderProtectedWork(id) {
+  const a = find("agents", id);
+  const { tasks } = await api(
+    `/api/protected-work?agentId=${encodeURIComponent(id)}`,
+  );
+  if (tab !== "operations" || id !== parityAgentId) return;
+  const names = {
+    ready: "待开始",
+    running: "处理中",
+    review: "待审阅",
+    waiting: "等待继续",
+    interrupted: "已中断",
+    failed: "任务失败",
+    cancelled: "已取消",
+    cancelling: "正在取消",
+    released: "已交回聊天",
+  };
+  const targets = [
+    ...a.allow.users.map((x) => ["private:" + x, "私聊 " + x]),
+    ...a.allow.groups.map((x) => ["group:" + x, "群 " + x]),
+  ];
+  $("#protected-work").innerHTML =
+    `<div class="section-title"><h2>受保护工作</h2><button id="work-refresh">刷新任务</button></div><p class="hint">工作任务有独立模型会话。私有资料和运维结果留在这里；普通聊天与上网照常。批准会将所示文字解除工作保护，加入所选聊天及角色普通记忆；原始资料仍隔离，不自动发送 QQ。</p><form id="work-create" class="card"><label>任务说明<textarea name="instruction" required maxlength="12000" rows="3" placeholder="只填写本任务需要处理的内容"></textarea></label><label>私有仓库<select name="repository"><option value="">不读取私有仓库</option>${parityOptions(a.github.privateRepositories.map((x) => [x, x]))}</select></label><label><input name="operations" type="checkbox" ${a.operations.enabled ? "" : "disabled"}>仅运维任务（与仓库任务分开；操作仍逐项确认）</label><button>创建受保护任务</button></form>${tasks.map((t) => `<article class="card"><h3>${esc(names[t.status] || t.status)}</h3><p class="hint">${esc(new Date(t.createdAt).toLocaleString())}</p><pre>${esc(t.instruction)}</pre>${t.error ? `<p class="hint">${esc(t.error)}</p>` : ""}${t.result ? `<h4>候选结果 · 第 ${t.revision} 版</h4><pre>${esc(t.result.text)}</pre>` : ""}${!["released", "cancelled", "cancelling"].includes(t.status) ? `<div class="toolbar"><button data-work-run="${t.id}" ${t.status === "running" ? "disabled" : ""}>${t.status === "ready" ? "开始任务" : "继续任务"}</button><button data-work-cancel="${t.id}">取消任务</button></div>${t.result && t.status !== "running" ? `<form class="work-release" data-task="${t.id}"><label>交回结果的聊天<select name="target">${parityOptions(targets)}</select></label><label><input type="checkbox" required>我已审阅上方完整文字，同意解除这一版文字的工作保护并交回所选聊天</label><button>批准解除这段结果的保护</button></form>` : ""}` : t.release ? `<p class="hint">已交回 ${esc(t.release.target)}，未自动发送。</p>` : ""}</article>`).join("")}`;
+  $("#work-refresh").onclick = () => action(() => renderOperations());
+  const repoSelect = $("#work-create select[name=repository]");
+  const opsCheckbox = $("#work-create input[name=operations]");
+  repoSelect.onchange = () => {
+    if (repoSelect.value) opsCheckbox.checked = false;
+    opsCheckbox.disabled = !a.operations.enabled || !!repoSelect.value;
+  };
+  opsCheckbox.onchange = () => {
+    repoSelect.disabled = opsCheckbox.checked;
+  };
+  $("#work-create").onsubmit = (event) => {
+    event.preventDefault();
+    action(async () => {
+      const form = new FormData(event.target),
+        repository = form.get("repository");
+      await api("/api/protected-work", {
+        agentId: id,
+        instruction: form.get("instruction"),
+        repositories: repository ? [repository] : [],
+        operations: form.has("operations"),
+      });
+      await renderOperations();
+    });
+  };
+  for (const b of document.querySelectorAll(
+    "[data-work-run],[data-work-cancel]",
+  ))
+    b.onclick = () =>
+      action(async () => {
+        const run = b.dataset.workRun;
+        await api("/api/protected-work", {
+          agentId: id,
+          taskId: run || b.dataset.workCancel,
+          action: run ? "run" : "cancel",
+        });
+        await renderOperations();
+      });
+  for (const form of document.querySelectorAll(".work-release"))
+    form.onsubmit = (event) => {
+      event.preventDefault();
+      action(async () => {
+        const task = tasks.find((t) => t.id === form.dataset.task);
+        await api("/api/protected-work", {
+          agentId: id,
+          taskId: task.id,
+          action: "release",
+          revision: task.revision,
+          digest: task.result.digest,
+          target: new FormData(form).get("target"),
+        });
+        await renderOperations();
+      });
+    };
 }

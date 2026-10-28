@@ -756,6 +756,21 @@ export function createServer({
           throw Error("ISOLATED_MODE");
         return send(await runtime.backendConnections.handle(await readBody()));
       }
+      if (url.pathname === "/api/protected-work") {
+        if (req.method === "GET")
+          return send({
+            tasks: runtime.protectedWork.list(url.searchParams.get("agentId")),
+          });
+        if (req.method === "POST") {
+          const data = await readBody();
+          if (data.action === "run" && !allowLive) throw Error("ISOLATED_MODE");
+          return send(
+            data.action
+              ? await runtime.protectedWork.act(data)
+              : runtime.protectedWork.create(data),
+          );
+        }
+      }
       if (req.method === "POST" && url.pathname === "/api/disclosure") {
         const data = await readBody();
         return send(runtime.grant(data));

@@ -1,3 +1,4 @@
+import { recallPage } from "./recall-boundary.mjs";
 import { looksLikeUnfinished } from "../../vendor/legacy/v2-wait.js";
 import { allowed } from "./config.mjs";
 
@@ -285,14 +286,18 @@ export class ConversationEngine {
         else check();
       });
       runtime.assertActive(ctx);
-      const messages = runtime.memory.bind(a.id).conversation(
-        {
-          conversation: ctx.conversation,
-          afterSeq: from,
-          limit: 50,
-          maxChars: 16000,
-        },
-        ctx.conversation,
+      const messages = recallPage(
+        runtime,
+        ctx,
+        runtime.memory.bind(a.id).conversation(
+          {
+            conversation: ctx.conversation,
+            afterSeq: from,
+            limit: 50,
+            maxChars: 16000,
+          },
+          ctx.conversation,
+        ),
       );
       runtime.contexts.seen(ctx, messages.items);
       ctx.feedThroughSeq = Math.max(

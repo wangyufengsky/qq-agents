@@ -44,7 +44,7 @@ export function safeToolFailure(error) {
     SUBJECT_EXTERNAL_TOOL_NOT_READ_ALLOWED:
       "The supplied serverId/tool pair is outside subject.externalReads. Use external_tools to inspect subjectReadAllowlist and callFormat; external_tool requires serverId, tool and arguments. This rejection does not mean every external read is disabled.",
     RECALL_SOURCE_NOT_ALLOWED:
-      "This protected record was not read in this conversation. Use ordinary conversation records instead. Only administrator private chats and the subject may recall protected records; do not retry another representation of the same source.",
+      "This protected record was not read in this conversation. Use ordinary conversation records instead. Only isolated protected work tasks may recall protected records; do not retry another representation of the same source.",
     PRIVATE_RECOLLECTION_REQUIRES_DISCLOSURE_GRANT:
       "This context already contains protected material and cannot send here. Rewording, changing requestId or waiting for another message will not clear it. Stop retrying and let the administrator recover the conversation with a fresh, filtered context; do not claim delivery.",
     APP_RESULT_BUDGET:

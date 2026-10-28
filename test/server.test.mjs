@@ -864,3 +864,46 @@ test("pausing one conversation stops only that conversation's turn", async (t) =
   assert.equal(store.bind("agent-0").state("group:20000").paused, true);
   runtime.running.delete("agent-0|group:20000");
 });
+
+test("protected work creation and exact-result release require administrator credentials", async (t) => {
+  const f = await setup(t);
+  const body = { agentId: "agent-0", instruction: "PRIVATE_TASK" };
+  const post = (value, auth = true, headers = {}) =>
+    f.request("/api/protected-work", {
+      method: "POST",
+      auth,
+      headers,
+      body: JSON.stringify(value),
+    });
+  assert.equal((await post(body, false)).status, 401);
+  const daily = context(f.runtime);
+  assert.equal(
+    (await post(body, false, { "x-agent-capability": daily.token })).status,
+    401,
+  );
+  const response = await post(body);
+  assert.equal(response.status, 200);
+  const task = await response.json();
+  const work = context(f.runtime, "agent-0", "@work:" + task.id);
+  await f.runtime.callTool(work, "protected_work_submit", {
+    text: "Approved public result",
+  });
+  const latest = f.runtime.protectedWork.task("agent-0", work.conversation);
+  const release = {
+    agentId: "agent-0",
+    taskId: task.id,
+    action: "release",
+    revision: latest.revision,
+    digest: latest.result.digest,
+    target: "group:20000",
+  };
+  assert.equal((await post(release, false)).status, 401);
+  assert.equal(
+    (await post({ ...release, digest: "0".repeat(64) })).status,
+    400,
+  );
+  const result = await post(release);
+  assert.equal(result.status, 200);
+  assert.equal((await result.json()).sent, false);
+  assert.equal(f.runtime.transports.get("qq-0").sent.length, 0);
+});

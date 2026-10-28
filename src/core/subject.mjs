@@ -4,7 +4,7 @@ import { SUBJECT } from "./lifecycle.mjs";
 import { freezeEvidence } from "../memory/evidence.mjs";
 import { mergeProtection } from "../memory/protection.mjs";
 import { contextProtection, trackMindRecords } from "./protected-mind.mjs";
-import { githubPrivateContext } from "../github/policy.mjs";
+import { recallBoundary } from "./recall-boundary.mjs";
 const terminal = new Set([
   "completed",
   "cancelled",
@@ -247,6 +247,7 @@ export class SubjectCoordinator {
         (i) => !terminal.has(i.status) && norm(i.topic) === norm(args.topic),
       );
     if (duplicate) {
+      recallBoundary(r, ctx).assert(duplicate);
       trackMindRecords(r, ctx, [duplicate], "intent");
       return { ...duplicate, duplicate: true };
     }
@@ -442,8 +443,16 @@ export class SubjectCoordinator {
 
   begin(ctx, reasons) {
     const m = this.memory(ctx.agentId);
-    ctx.intentIds = reasons.filter((x) => x.intentId).map((x) => x.intentId);
-    ctx.intentOnly = !!ctx.intentIds.length && reasons.every((x) => x.intentId);
+    ctx.intentIds = reasons
+      .filter(
+        (x) =>
+          x.intentId &&
+          recallBoundary(this.runtime, ctx).allowed(
+            m.identity.get("intentions", x.intentId),
+          ),
+      )
+      .map((x) => x.intentId);
+    ctx.intentOnly = reasons.length > 0 && reasons.every((x) => x.intentId);
     ctx.intentSnapshotSeq = m.state(ctx.conversation).lastReceivedSeq || 0;
     ctx.activityThroughSeq = Math.max(
       0,
@@ -456,14 +465,15 @@ export class SubjectCoordinator {
     );
     if (records.some((i) => i.target !== ctx.conversation))
       throw Error("TARGET_CHAT_REQUIRED");
-    trackMindRecords(this.runtime, ctx, records, "intent");
+    trackMindRecords(
+      this.runtime,
+      ctx,
+      recallBoundary(this.runtime, ctx).rows(records),
+      "intent",
+    );
   }
   canAutoDisclose(agent, item) {
-    return (
-      !item.protectedOperations &&
-      (!item.protectedRepositories?.length ||
-        githubPrivateContext(agent, item.target))
-    );
+    return !item.protectedOperations && !item.protectedRepositories?.length;
   }
   finish(ctx, outcome) {
     const m = this.memory(ctx.agentId),

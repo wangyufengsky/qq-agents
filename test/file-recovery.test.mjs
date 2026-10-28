@@ -7,13 +7,7 @@ import { FileStore } from "../src/tools/files.mjs";
 import { FILE_TOOL_NAMES } from "../src/tools/file-tools.mjs";
 import { filesSchema } from "../src/core/policy.mjs";
 import { createServer } from "../src/server.mjs";
-import {
-  temp,
-  config,
-  fixture,
-  context,
-  disclosureApproval,
-} from "./helpers.mjs";
+import { temp, config, fixture, context } from "./helpers.mjs";
 
 test("metadata growth is rejected before a healthy file becomes unreadable", (t) => {
   const store = new FileStore(temp(t)),
@@ -72,7 +66,7 @@ test("one corrupt metadata entry is isolated while healthy reads and new writes 
   );
 });
 
-test("admin repair is authenticated, role-scoped, and requires a new disclosure approval before QQ sends", async (t) => {
+test("admin repair is authenticated, role-scoped, and keeps repaired protected files out of ordinary QQ contexts", async (t) => {
   const cfg = config(2);
   cfg.agents[0].files.enabled = true;
   cfg.agents[0].tools.push(...FILE_TOOL_NAMES);
@@ -130,18 +124,11 @@ test("admin repair is authenticated, role-scoped, and requires a new disclosure 
       fileId: meta.fileId,
       requestId: "one",
     }),
-    /DISCLOSURE_GRANT/,
+    /RECALL_SOURCE_NOT_ALLOWED/,
   );
   assert.equal(sent, 0);
-  assert.equal(
-    (await request("/api/disclosure", disclosureApproval(ctx))).status,
-    200,
-  );
-  await f.runtime.callTool(ctx, "qq_send_file", {
-    fileId: meta.fileId,
-    requestId: "one",
-  });
-  assert.equal(sent, 1);
+  assert.equal(ctx.disclosureRequest, undefined);
+  assert.equal(sent, 0);
   assert.equal(
     (await request("/api/files/recovery", { ...input, action: "remove" }))
       .status,

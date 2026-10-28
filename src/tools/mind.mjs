@@ -197,7 +197,11 @@ function executeMindTool(runtime, ctx, name, args) {
     throw Error("RESTRICTED_CONTEXT_MIND_WRITE_BLOCKED");
   if (name === "self_read")
     return {
-      current: identity.withEvidence(identity.current()),
+      current: (() => {
+        const current = identity.withEvidence(identity.current());
+        recallBoundary(runtime, ctx).assert(current);
+        return current;
+      })(),
       turnSelfVersion: ctx.selfVersion,
       anchors: identity.anchors(a),
       identity: identityAnchors(runtime.config, a),
@@ -208,9 +212,11 @@ function executeMindTool(runtime, ctx, name, args) {
         ? identity.history()
         : identity.list("self_candidates");
     return {
-      items: rows
-        .slice(args.offset, args.offset + 10)
-        .map((row) => identity.withEvidence(row)),
+      items: recallBoundary(runtime, ctx).rows(
+        rows
+          .slice(args.offset, args.offset + 10)
+          .map((row) => identity.withEvidence(row)),
+      ),
       nextOffset: args.offset + 10 < rows.length ? args.offset + 10 : null,
     };
   }

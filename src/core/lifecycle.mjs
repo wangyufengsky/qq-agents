@@ -369,7 +369,7 @@ export class ContextLifecycle {
     ctx.persistTaint?.();
     const prompt = [
       `当前场景 ${ctx.conversation}。本回合采用 self v${self.version}。主人/管理员：${a.ownerIds.join(",") || "未设置"}。`,
-      `唤醒原因（资料）: ${JSON.stringify(reasons)}`,
+      `唤醒原因（资料）: ${JSON.stringify(reasons.map((reason) => (reason.intentId && !recallBoundary(r, ctx).allowed(m.identity.get("intentions", reason.intentId)) ? { reason: "protected-work-withheld" } : reason)))}`,
       turnEnvironment(r, a, ctx, backendType),
       ctx.initialSession ? `程序交接状态：${JSON.stringify(handoff)}` : "",
       ctx.conversation === SUBJECT

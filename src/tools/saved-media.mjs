@@ -1,3 +1,4 @@
+import { recallBoundary } from "../core/recall-boundary.mjs";
 import { z } from "zod";
 import { imageMime } from "./media.mjs";
 import { taintMedia } from "./legacy.mjs";
@@ -32,6 +33,7 @@ export function saveFileImage(runtime, ctx, fileId, extra = {}) {
   const a = runtime.assertActive(ctx);
   if (!a.files.enabled || !runtime.files)
     throw Error("FILE_PERMISSION_DISABLED");
+  recallBoundary(runtime, ctx).assert(runtime.files.metadata(a.id, fileId));
   const { buffer, meta } = runtime.files.read(a.id, fileId, a.files.maxBytes);
   taintMedia(ctx, meta);
   const saved = runtime.media.put(a.id, buffer, imageMime(buffer), {
@@ -59,6 +61,7 @@ export async function savedMediaTool(runtime, ctx, name, args) {
   runtime.assertActive(ctx);
   if (name === "media_list") {
     const page = runtime.media.saved(ctx.agentId, args);
+    page.items = recallBoundary(runtime, ctx).rows(page.items);
     for (const meta of page.items) taintMedia(ctx, meta);
     return {
       ...page,

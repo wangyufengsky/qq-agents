@@ -64,7 +64,7 @@ function setup(t) {
   return { ...f, calls, m: f.store.bind("agent-0") };
 }
 
-test("owner private diary recall still permits fixed public feeds, detail and comments without clearing protection", async (t) => {
+test("legacy already-read contexts retain protection while fixed public feeds remain available", async (t) => {
   const f = setup(t);
   const diary = f.m.diaryWrite(
     { title: "network", body: "PRIVATE_REPOSITORY_TEXT" },
@@ -77,8 +77,8 @@ test("owner private diary recall still permits fixed public feeds, detail and co
   const recall = await f.runtime.callTool(ctx, "memory_search", {
     query: "network",
   });
-  assert(recall.diaries.some((x) => x.id === diary.id));
-  assert(ctx.privateRead.has("github-private:fixture/private"));
+  assert(!recall.diaries.some((x) => x.id === diary.id));
+  ctx.privateRead.add("github-private:fixture/private");
   const page = await f.runtime.callTool(ctx, "app_browse", browse);
   assert.equal(page.items[0].title, "public result");
   const recordId = page.items[0].recordId;

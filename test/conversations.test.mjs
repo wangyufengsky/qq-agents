@@ -207,3 +207,29 @@ test("wake rate limit queues rather than discarding a direct message", async (t)
   await settle(f.runtime);
   assert.equal(calls, 2);
 });
+
+test("message wait withholds protected history before exposing new messages", async (t) => {
+  const f = fixture(t, { cfg: cfg() }),
+    ctx = context(f.runtime),
+    m = f.store.bind("agent-0");
+  const pending = f.runtime.callTool(ctx, "qq_wait_for_messages", {
+    timeoutMs: 1000,
+    quietMs: 0,
+  });
+  const row = m.append({
+    dedupe: "protected-wait",
+    conversation: ctx.conversation,
+    kind: "message.received",
+    body: "WAIT_PROTECTED_SECRET",
+    payload: { protectedOperations: true },
+  });
+  m.setState(ctx.conversation, {
+    ...m.state(ctx.conversation),
+    lastReceivedSeq: row.seq,
+  });
+  f.runtime.conversations.notify("agent-0", ctx.conversation);
+  const result = await pending;
+  assert.doesNotMatch(JSON.stringify(result), /WAIT_PROTECTED_SECRET/);
+  assert.equal(result.newMessages.withheld, 1);
+  assert(!ctx.privateRead.has(row.id));
+});

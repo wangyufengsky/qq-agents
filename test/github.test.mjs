@@ -89,6 +89,15 @@ function setup(t) {
     ctx: context(f.runtime, "agent-0", `private:${owner}`),
   };
 }
+function work(f) {
+  const task = f.runtime.protectedWork.create({
+    agentId: "agent-0",
+    instruction: "read fixture repository",
+    repositories: [repo],
+  });
+  f.ctx = context(f.runtime, "agent-0", "@work:" + task.id);
+  return f;
+}
 test("GitHub is opt-in, persists per agent, and exposes only read tools", async (t) => {
   assert.equal(config(1).agents[0].github.enabled, false);
   const f = setup(t);
@@ -104,7 +113,7 @@ test("GitHub is opt-in, persists per agent, and exposes only read tools", async 
   );
   const caps = await f.runtime.callTool(f.ctx, "github_capabilities");
   assert.equal(caps.readOnly, true);
-  assert.deepEqual(caps.privateRepositories, [repo]);
+  assert.deepEqual(caps.privateRepositories, []);
   f.runtime.agent("agent-1").github.enabled = false;
   await assert.rejects(
     f.runtime.callTool(context(f.runtime, "agent-1"), "github_search", {
@@ -162,9 +171,10 @@ test("private files are bounded, allowlisted, owner-scoped, and protected across
   assert.equal(f.calls.at(-1).headers.Authorization, undefined);
   await assert.rejects(
     f.runtime.callTool(context(f.runtime), "github_read", { repository: repo }),
-    /ACCESS_DENIED/,
+    /PROTECTED_WORK_REQUIRED/,
   );
   assert.equal(f.calls.at(-1).headers.Authorization, undefined);
+  work(f);
   const r = await f.runtime.callTool(f.ctx, "github_read", {
     repository: repo,
     path: "README.md",
@@ -174,7 +184,7 @@ test("private files are bounded, allowlisted, owner-scoped, and protected across
   assert.equal(r.nextOffset, 512);
   assert.equal(r.private, true);
   assert.deepEqual(privateGithubSources(f.ctx, f.runtime), [repo]);
-  const resumed = context(f.runtime, "agent-0", `private:${owner}`);
+  const resumed = context(f.runtime, "agent-0", f.ctx.conversation);
   const next = await f.runtime.callTool(resumed, "github_read", {
     repository: repo,
     path: "README.md",
@@ -183,7 +193,10 @@ test("private files are bounded, allowlisted, owner-scoped, and protected across
   });
   assert.equal(next.nextOffset, 1024);
   assert.ok(!JSON.stringify(next).includes(process.env.QQ_GITHUB_TEST_TOKEN));
-  assert.doesNotThrow(() => f.runtime.assertDisclosure(resumed));
+  assert.throws(
+    () => f.runtime.assertDisclosure(resumed),
+    /PROTECTED_WORK_OUTBOUND_DENIED/,
+  );
   assert.throws(
     () =>
       f.runtime.authorizeExternal(
@@ -191,13 +204,13 @@ test("private files are bounded, allowlisted, owner-scoped, and protected across
         { tool: "web_fetch", args: { url: "https://example.org" } },
         { fixed: true },
       ),
-    /EXTERNAL_CALL_BLOCKED/,
+    /EXTERNAL_CALL_BLOCKED|PROTECTED_WORK_OUTBOUND_DENIED|PROTECTED_WORK_PERMISSION_DENIED/,
   );
   await assert.rejects(
     f.runtime.callTool(resumed, "github_search", {
       query: "framework-private-text",
     }),
-    /EXTERNAL_CALL_BLOCKED/,
+    /EXTERNAL_CALL_BLOCKED|PROTECTED_WORK_OUTBOUND_DENIED|PROTECTED_WORK_PERMISSION_DENIED/,
   );
   await assert.rejects(
     f.runtime.callTool(resumed, "self_propose", {
@@ -207,19 +220,25 @@ test("private files are bounded, allowlisted, owner-scoped, and protected across
       scope: "interest",
       expectedVersion: 1,
     }),
-    /RESTRICTED_CONTEXT_MIND_WRITE_BLOCKED/,
+    /TOOL_DISABLED/,
   );
 });
 test("private read results, diaries, revisions and remembered owner replies retain the boundary", async (t) => {
   const f = setup(t);
+  work(f);
   const r = await f.runtime.callTool(f.ctx, "github_read", {
     repository: repo,
     path: "README.md",
   });
-  const diary = await f.runtime.callTool(f.ctx, "diary_write", {
-    title: "framework",
-    body: "private framework notes",
-  });
+  const diary = f.store
+    .bind("agent-0")
+    .diaryWrite(
+      { title: "framework", body: "legacy private framework notes" },
+      "ai-diary",
+      {},
+      false,
+      [repo],
+    );
   const group = context(f.runtime);
   await assert.rejects(
     f.runtime.callTool(group, "memory_read", { id: diary.id }),
@@ -267,7 +286,7 @@ test("private read results, diaries, revisions and remembered owner replies reta
         tool: "web_fetch",
         args: { url: "https://example.org" },
       }),
-    /EXTERNAL_CALL_BLOCKED/,
+    /EXTERNAL_CALL_BLOCKED|PROTECTED_WORK_OUTBOUND_DENIED|PROTECTED_WORK_PERMISSION_DENIED/,
   );
   assert.throws(
     () => freezeEvidence(memory, [r.sourceRecordId]),
@@ -275,7 +294,7 @@ test("private read results, diaries, revisions and remembered owner replies reta
   );
 });
 test("paths, errors, response size, budgets and permission revocation fail closed", async (t) => {
-  const f = setup(t);
+  const f = work(setup(t));
   for (const path of ["../secret", "/etc/passwd", "a/../b", "a\\b"])
     await assert.rejects(
       f.runtime.callTool(f.ctx, "github_read", { repository: repo, path }),
@@ -319,6 +338,7 @@ test("private GitHub records cannot escape through saved files or download URLs"
   a.files.enabled = a.files.create = a.files.download = a.files.send = true;
   a.tools.push("file_create", "file_download", "qq_send_file");
   f.runtime.files = new FileStore(path.join(f.root, "files"));
+  work(f);
   const read = await f.runtime.callTool(f.ctx, "github_read", {
     repository: repo,
     path: "README.md",
@@ -337,20 +357,20 @@ test("private GitHub records cannot escape through saved files or download URLs"
     f.runtime.callTool(restored, "file_download", {
       url: "https://example.org/private-framework-notes",
     }),
-    /EXTERNAL_CALL_BLOCKED/,
+    /EXTERNAL_CALL_BLOCKED|PROTECTED_WORK_OUTBOUND_DENIED|PROTECTED_WORK_PERMISSION_DENIED/,
   );
   await assert.rejects(
     f.runtime.callTool(context(f.runtime), "qq_send_file", {
       requestId: "blocked-file",
       fileId: file.fileId,
     }),
-    /DISCLOSURE_GRANT/,
+    /RECALL_SOURCE_NOT_ALLOWED/,
   );
   assert.equal(f.runtime.transports.get("qq-0").sent.length, 0);
 });
 
 test("a public allowlisted repository becoming private cannot leak through authenticated content reads", async (t) => {
-  const f = setup(t);
+  const f = work(setup(t));
   let anonymousContent = false;
   f.runtime.githubFetch = async (url, init) => {
     if (new URL(url).pathname === `/repos/${repo}`)
@@ -373,4 +393,16 @@ test("a public allowlisted repository becoming private cannot leak through authe
     /ACCESS_DENIED/,
   );
   assert.equal(anonymousContent, true);
+});
+
+test("isolated GitHub reads still reject capabilities embedded in paths before network I/O", async (t) => {
+  const f = setup(t);
+  await assert.rejects(
+    f.runtime.callTool(f.ctx, "github_read", {
+      repository: repo,
+      path: encodeURIComponent(f.ctx.token),
+    }),
+    /CAPABILITY_EXFILTRATION_BLOCKED/,
+  );
+  assert.equal(f.calls.length, 0);
 });

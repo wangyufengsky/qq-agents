@@ -251,3 +251,20 @@ test("new input cannot detach a selected intention from its stale-send guard or 
   await assert.rejects(send({ ...f, ctx }), /INTENT_STALE_REFRESH_REQUIRED/);
   assert.equal(f.runtime.transports.get("qq-0").sent.length, 0);
 });
+
+test("withheld protected intent still requires a trusted new human message before ordinary reply", async (t) => {
+  const f = fixture(t, { cfg: enabled() }),
+    ctx = context(f.runtime),
+    i = handoff(f, ctx);
+  f.store
+    .bind("agent-0")
+    .identity.put("intentions", { ...i, protectedOperations: true });
+  f.runtime.subject.begin(ctx, [{ reason: "intent", intentId: i.id }]);
+  assert.equal(ctx.intentOnly, true);
+  assert.deepEqual(ctx.intentIds, []);
+  await assert.rejects(
+    f.runtime.send(ctx, { requestId: "withheld-intent", text: "unsolicited" }),
+    /INTENT_DECISION_REQUIRED/,
+  );
+  assert.equal(f.runtime.transports.get("qq-0").sent.length, 0);
+});
