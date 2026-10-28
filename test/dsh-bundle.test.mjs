@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import YAML from "js-yaml";
+import * as YAML from "js-yaml";
 import { temp } from "./helpers.mjs";
 
 test("DSH retained preset revisions have private compaction realms shared by engine and command", (t) => {
