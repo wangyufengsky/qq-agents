@@ -27,7 +27,7 @@
   },
   "scripts": {
     "start": "node src/main.mjs",
-    "test": "node --test test/*.test.mjs",
+    "test": "node --test --test-timeout=120000 test/*.test.mjs",
     "check": "node scripts/check.mjs",
     "privacy-scan": "node scripts/privacy-scan.mjs",
     "mcp": "node src/mcp.mjs",

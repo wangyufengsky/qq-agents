@@ -574,59 +574,67 @@ test("export size and time budgets fail before headers and clean temporary snaps
       assert.equal((await request("/api/status")).status, 200);
     });
 });
-test("a slow export download applies backpressure, excludes concurrent exports, and cancels cleanly", async (t) => {
-  const tempRoot = fs.mkdtempSync("/tmp/qq-export-cancel-test-");
-  t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
-  const { request, store, base, token } = await setup(t, { tempRoot });
-  for (let i = 0; i < 80; i++)
-    store.bind("agent-0").append({
-      dedupe: "large-" + i,
-      conversation: "group:20000",
-      kind: "message.received",
-      body: "x".repeat(64000),
+test(
+  "a slow export download applies backpressure, excludes concurrent exports, and cancels cleanly",
+  { timeout: 30000 },
+  async (t) => {
+    const tempRoot = fs.mkdtempSync("/tmp/qq-export-cancel-test-");
+    t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
+    const { request, store, base, token } = await setup(t, { tempRoot });
+    for (let i = 0; i < 80; i++)
+      store.bind("agent-0").append({
+        dedupe: "large-" + i,
+        conversation: "group:20000",
+        kind: "message.received",
+        body: "x".repeat(64000),
+      });
+    const response = await new Promise((resolve, reject) => {
+      const req = http.get(
+        base + "/api/export?agentId=agent-0",
+        { headers: { "x-admin-token": token } },
+        (res) => {
+          res.pause();
+          resolve(res);
+        },
+      );
+      req.on("error", reject);
     });
-  const response = await new Promise((resolve, reject) => {
-    const req = http.get(
-      base + "/api/export?agentId=agent-0",
-      { headers: { "x-admin-token": token } },
-      (res) => {
-        res.pause();
-        resolve(res);
-      },
-    );
-    req.on("error", reject);
-  });
-  assert.equal(response.statusCode, 200);
-  const other = await request("/api/export?agentId=agent-0");
-  assert.equal(other.status, 429);
-  assert.equal((await other.json()).error, "EXPORT_DOWNLOAD_BUSY");
-  assert.equal((await request("/api/status")).status, 200);
-  response.destroy();
-  for (let i = 0; i < 100 && fs.readdirSync(tempRoot).length; i++)
-    await new Promise((r) => setTimeout(r, 10));
-  assert.deepEqual(fs.readdirSync(tempRoot), []);
-});
-test("shutdown cancels export preparation and waits for worker and snapshot cleanup", async (t) => {
-  const tempRoot = fs.mkdtempSync("/tmp/qq-export-stop-test-");
-  t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
-  const { request, store, app } = await setup(t, { tempRoot });
-  for (let i = 0; i < 80; i++)
-    store.bind("agent-0").append({
-      dedupe: "stop-" + i,
-      conversation: "group:20000",
-      kind: "message.received",
-      body: "x".repeat(64000),
-    });
-  const download = request("/api/export?agentId=agent-0")
-    .then((res) => res.arrayBuffer())
-    .catch(() => {});
-  for (let i = 0; i < 200 && !fs.readdirSync(tempRoot).length; i++)
-    await new Promise((r) => setTimeout(r, 1));
-  assert.equal(fs.readdirSync(tempRoot).length, 1);
-  await app.close();
-  await download;
-  assert.deepEqual(fs.readdirSync(tempRoot), []);
-});
+    assert.equal(response.statusCode, 200);
+    const other = await request("/api/export?agentId=agent-0");
+    assert.equal(other.status, 429);
+    assert.equal((await other.json()).error, "EXPORT_DOWNLOAD_BUSY");
+    assert.equal((await request("/api/status")).status, 200);
+    response.destroy();
+    for (let i = 0; i < 100 && fs.readdirSync(tempRoot).length; i++)
+      await new Promise((r) => setTimeout(r, 10));
+    assert.deepEqual(fs.readdirSync(tempRoot), []);
+  },
+);
+test(
+  "shutdown cancels export preparation and waits for worker and snapshot cleanup",
+  { timeout: 30000 },
+  async (t) => {
+    const tempRoot = fs.mkdtempSync("/tmp/qq-export-stop-test-");
+    t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
+    const { request, store, app } = await setup(t, { tempRoot });
+    for (let i = 0; i < 80; i++)
+      store.bind("agent-0").append({
+        dedupe: "stop-" + i,
+        conversation: "group:20000",
+        kind: "message.received",
+        body: "x".repeat(64000),
+      });
+    const download = request("/api/export?agentId=agent-0")
+      .then((res) => res.arrayBuffer())
+      .catch(() => {});
+    for (let i = 0; i < 200 && !fs.readdirSync(tempRoot).length; i++)
+      await new Promise((r) => setTimeout(r, 1));
+    assert.equal(fs.readdirSync(tempRoot).length, 1);
+    await app.close();
+    await download;
+    assert.deepEqual(fs.readdirSync(tempRoot), []);
+  },
+);
 test("static console has CSP and never exposes admin token", async (t) => {
   const { request, token } = await setup(t);
   const r = await request("/", { auth: false });
