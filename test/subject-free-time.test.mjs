@@ -239,14 +239,14 @@ test("a subject log written from operations material stays protected when recall
   });
   await f.runtime.wake("agent-0", "@subject");
   const ctx = f.runtime.makeContext("agent-0", "group:20000");
-  const found = await f.runtime.callTool(ctx, "memory_read", { id: logId });
+  await assert.rejects(
+    f.runtime.callTool(ctx, "memory_read", { id: logId }),
+    /RECALL_SOURCE_NOT_ALLOWED/,
+  );
   assert.equal(
-    found.record?.protectedOperations ?? found.protectedOperations,
+    f.store.bind("agent-0").readRecord({ id: logId }).protectedOperations,
     true,
   );
-  assert([...ctx.privateRead].some((id) => id === "operations:event:" + logId));
-  await assert.rejects(
-    f.runtime.send(ctx, { requestId: "leak", text: "转述那条日志" }),
-    /PRIVATE_RECOLLECTION_REQUIRES_DISCLOSURE_GRANT/,
-  );
+  assert(!ctx.privateRead.has(logId));
+  assert.doesNotThrow(() => f.runtime.assertDisclosure(ctx));
 });

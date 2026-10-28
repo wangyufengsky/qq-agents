@@ -221,14 +221,18 @@ test("private read results, diaries, revisions and remembered owner replies reta
     body: "private framework notes",
   });
   const group = context(f.runtime);
-  await f.runtime.callTool(group, "memory_read", { id: diary.id });
-  assert.throws(() => f.runtime.assertDisclosure(group), /DISCLOSURE_GRANT/);
+  await assert.rejects(
+    f.runtime.callTool(group, "memory_read", { id: diary.id }),
+    /RECALL_SOURCE_NOT_ALLOWED/,
+  );
+  assert.doesNotThrow(() => f.runtime.assertDisclosure(group));
   const fresh = context(f.runtime, "agent-0", "group:20001");
-  await f.runtime.callTool(fresh, "memory_search", {
+  const recalledPage = await f.runtime.callTool(fresh, "memory_search", {
     query: "framework",
     maxChars: 512,
   });
-  assert.throws(() => f.runtime.assertDisclosure(fresh), /DISCLOSURE_GRANT/);
+  assert.equal(recalledPage.diaries.length, 0);
+  assert.doesNotThrow(() => f.runtime.assertDisclosure(fresh));
   const memory = f.store.bind("agent-0");
   memory.diaryRevise({
     id: diary.id,
@@ -250,7 +254,13 @@ test("private read results, diaries, revisions and remembered owner replies reta
     payload: { protectedRepositories: [repo] },
   });
   const recalled = context(f.runtime, "agent-0", "group:20001");
-  await f.runtime.callTool(recalled, "memory_read", { id: fakeReply.id });
+  await assert.rejects(
+    f.runtime.callTool(recalled, "memory_read", { id: fakeReply.id }),
+    /RECALL_SOURCE_NOT_ALLOWED/,
+  );
+  assert(!recalled.privateRead.has(fakeReply.id));
+  // Already-read legacy contexts still retain the original outbound restriction.
+  recalled.privateRead.add(fakeReply.id);
   assert.throws(
     () =>
       f.runtime.authorizeExternal(recalled, {

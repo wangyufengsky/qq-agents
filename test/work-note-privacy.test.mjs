@@ -125,7 +125,7 @@ test("editing, changing evidence and reopening cannot strip protection", async (
 
 for (const scope of ["@subject", "private:30000", "group:20000"]) {
   for (const route of ["read", "handoff"]) {
-    test(`${scope} ${route} restores note protection before any tool or delivery`, async (t) => {
+    test(`${scope} ${route} applies the protected note read boundary`, async (t) => {
       const f = setup(t),
         note = await protectedNote(f, { scope });
       const ctx = fresh(f, scope);
@@ -133,6 +133,13 @@ for (const scope of ["@subject", "private:30000", "group:20000"]) {
         route === "read"
           ? await f.runtime.callTool(ctx, "work_notes", {})
           : f.runtime.contexts.prepare(ctx, {}, []);
+      if (scope.startsWith("group:")) {
+        assert(!JSON.stringify(result).includes(note.id));
+        assert(!ctx.privateRead.has("github-private:" + repo));
+        assert.doesNotThrow(() => f.runtime.assertDisclosure(ctx));
+        assert(f.m.identity.notes(scope).some((row) => row.id === note.id));
+        return;
+      }
       assert(JSON.stringify(result).includes(note.id));
       assert(ctx.privateRead.has("github-private:" + repo));
       assert(
@@ -270,16 +277,16 @@ test("protected context can save an intent without scheduling a forbidden disclo
 });
 
 for (const route of ["list", "handoff", "queued-reason", "duplicate"]) {
-  test(`intent ${route} restores protection on the consuming context`, async (t) => {
+  test(`intent ${route} preserves the protected read boundary`, async (t) => {
     const f = setup(t),
       a = f.runtime.agent("agent-0");
     a.subject.groups = ["20000"];
     f.ctx.privateRead.add("github-private:" + repo);
     f.ctx.privateRead.add("operations:fixture");
     const args = {
-      topic: "protected",
+      topic: "fixture-private-intent-topic",
       target: "group:20000",
-      reason: "test",
+      reason: "fixture-private-intent-reason",
       evidence: [f.source.id],
       expiresAt: f.runtime.now() + 100000,
     };
@@ -313,6 +320,21 @@ for (const route of ["list", "handoff", "queued-reason", "duplicate"]) {
       ]);
     }
     assert(result);
+    if (route === "list" || route === "handoff") {
+      if (route === "list") assert(!JSON.stringify(result).includes(i.id));
+      // A wake reason may retain an opaque ID; the protected record must not
+      // enter the handoff as content or authorize disclosure.
+      assert(!JSON.stringify(result).includes(args.topic));
+      assert(!JSON.stringify(result).includes(args.reason));
+      assert(!ctx.privateRead.has("github-private:" + repo));
+      assert.doesNotThrow(() => f.runtime.assertDisclosure(ctx));
+      assert(
+        f.m.identity
+          .get("intentions", i.id)
+          .protectedRepositories.includes(repo),
+      );
+      return;
+    }
     assert(ctx.privateRead.has("github-private:" + repo));
     assert(ctx.privateRead.has("operations:intent:" + i.id));
     assertExternalBlocked(f, ctx);

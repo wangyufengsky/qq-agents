@@ -1,4 +1,5 @@
 import { containsCredential } from "./secrets.mjs";
+import { sessionReference } from "./session-records.mjs";
 import { isDeepStrictEqual } from "node:util";
 import { DeliveryService } from "./delivery.mjs";
 import { TurnRunner } from "./turn-runner.mjs";
@@ -10,7 +11,11 @@ import { GeneratedImages } from "./generated-images.mjs";
 import { BackendConnections } from "./backend-connections.mjs";
 import { backendCapabilities } from "../backends/capabilities.mjs";
 import { ConnectionRecovery } from "./connection-recovery.mjs";
-import { authorizeExternal, grantExternal } from "./outbound-policy.mjs";
+import {
+  authorizeExternal,
+  grantExternal,
+  sourceClass,
+} from "./outbound-policy.mjs";
 import { toolAvailable } from "../tools/catalog.mjs";
 import { appsPolicySchema } from "../apps/policy.mjs";
 import { appDefinitions } from "../apps/tools.mjs";
@@ -166,6 +171,8 @@ export class Runtime {
     if (this.reconfiguringAgents.has(agentId)) throw Error("CONFIG_CONFLICT");
     const a = this.agent(agentId),
       mem = this.memory.bind(agentId);
+    const recallGeneration =
+      mem.state(conversation).recallRecovery?.generation || 0;
     const ctx = {
       token: randomBytes(32).toString("base64url"),
       agentId,
@@ -186,8 +193,11 @@ export class Runtime {
       shownSeq: 0,
     };
     ctx.persistTaint = () => {
+      const current = mem.state(conversation);
+      if ((current.recallRecovery?.generation || 0) !== recallGeneration)
+        return;
       mem.setState(conversation, {
-        ...mem.state(conversation),
+        ...current,
         disclosureTaint: [...ctx.privateRead],
       });
       this.generatedImages.taint(ctx);
@@ -636,6 +646,50 @@ export class Runtime {
     }
     await this.sendChains.get(a.connectionId)?.catch(() => {});
     this.contexts.retire(agentId, conversation, "administrator-reset");
+  }
+  async recoverProtectedConversation(agentId, conversation) {
+    const a = this.agent(agentId),
+      m = this.memory.bind(agentId);
+    if (!allowed(a, conversation) || githubPrivateContext(a, conversation))
+      throw Error("INVALID_CONVERSATION");
+    const before = m.state(conversation);
+    if (!before.paused) throw Error("RECOVERY_REQUIRES_PAUSED_CONVERSATION");
+    const blocked = (before.disclosureTaint || []).some((id) =>
+      ["operations", "private-repository"].includes(
+        sourceClass(this, { agentId }, id),
+      ),
+    );
+    if (!blocked) throw Error("RECOVERY_NOT_REQUIRED");
+    await this.resetSession(agentId, conversation);
+    return m.store.transaction(() => {
+      const state = m.state(conversation);
+      if (!state.paused || this.running.has(agentId + "|" + conversation))
+        throw Error("RECOVERY_REQUIRES_PAUSED_CONVERSATION");
+      const at = this.now(),
+        id = "recall-recovery:" + randomUUID();
+      m.identity.put("session_history", {
+        id,
+        conversation,
+        reason: "protected-recall-recovery",
+        at,
+        session: before.session ? sessionReference(before.session) : null,
+        disclosureTaint: state.disclosureTaint || [],
+        continuity: state.continuity || null,
+      });
+      m.setState(conversation, {
+        ...state,
+        session: null,
+        disclosureTaint: [],
+        continuity: { anchors: [], recent: [] },
+        usage: null,
+        recallRecovery: {
+          generation: (state.recallRecovery?.generation || 0) + 1,
+          at,
+          archiveId: id,
+        },
+      });
+      return { recovered: true, paused: true, archiveId: id };
+    });
   }
   wake(...args) {
     return this.trackWork(this.runTurn(...args));

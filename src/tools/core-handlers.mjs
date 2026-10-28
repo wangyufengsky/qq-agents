@@ -5,6 +5,7 @@ import { externalArguments, externalResult } from "./external-media.mjs";
 import { taintMedia } from "./legacy.mjs";
 import { SocialReader } from "../../vendor/social-reader/reader.mjs";
 import { safeFetch } from "../../vendor/social-reader/safe-fetch.js";
+import { recallBoundary, recallPage } from "../core/recall-boundary.mjs";
 function track(ctx, items) {
   for (const row of items) {
     for (const item of [
@@ -46,14 +47,22 @@ function track(ctx, items) {
 async function handle_memory_search(runtime, ctx, args, name) {
   const mem = runtime.memory.bind(ctx.agentId);
 
-  const r = mem.search(args, ctx.conversation);
+  const r = recallPage(runtime, ctx, mem.search(args, ctx.conversation));
   track(ctx, [...r.items, ...r.diaries]);
   return r;
 }
 async function handle_memory_related(runtime, ctx, args, name) {
   const mem = runtime.memory.bind(ctx.agentId);
 
+  const boundary = recallBoundary(runtime, ctx);
+  boundary.assert(mem.readRecord({ id: args.id }, ctx.conversation));
   const r = mem.related(args, ctx.conversation);
+  r.items = r.items
+    .filter((x) => boundary.allowed(x.record))
+    .map((x) => ({
+      ...x,
+      links: x.links?.filter((link) => boundary.allowed({ id: link.toId })),
+    }));
   track(
     ctx,
     r.items.map((x) => x.record),
@@ -63,6 +72,7 @@ async function handle_memory_related(runtime, ctx, args, name) {
 async function handle_memory_read(runtime, ctx, args, name) {
   const mem = runtime.memory.bind(ctx.agentId);
 
+  recallBoundary(runtime, ctx).assert(mem.readRecord(args, ctx.conversation));
   const r = mem.read(args, ctx.conversation);
   track(ctx, [r]);
   const pages = (ctx.inputPages ??= new Map());
@@ -85,9 +95,17 @@ async function handle_memory_read(runtime, ctx, args, name) {
 async function handle_conversation_read(runtime, ctx, args, name) {
   const mem = runtime.memory.bind(ctx.agentId);
 
-  const r = mem.conversation(
-    { conversation: ctx.conversation, ...args },
-    ctx.conversation,
+  if (args.aroundId)
+    recallBoundary(runtime, ctx).assert(
+      mem.readRecord({ id: args.aroundId }, ctx.conversation),
+    );
+  const r = recallPage(
+    runtime,
+    ctx,
+    mem.conversation(
+      { conversation: ctx.conversation, ...args },
+      ctx.conversation,
+    ),
   );
   track(ctx, r.items);
   runtime.contexts.seen(ctx, r.items);
@@ -149,6 +167,7 @@ async function handle_qq_image_read(runtime, ctx, args, name) {
     .get(args.id, ctx.agentId);
   if (!row) throw Error("RECORD_NOT_FOUND");
   const event = mem.event(row, ctx.conversation);
+  recallBoundary(runtime, ctx).assert(event);
   track(ctx, [event]);
   const media = await readEventImage(runtime, ctx, event, args);
   runtime.assertActive(ctx);

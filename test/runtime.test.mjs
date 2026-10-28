@@ -368,6 +368,7 @@ test("diary creation records its actual writing scene and revisions keep that pr
 
 test("protected operations content cannot lose its restriction by being saved and revised as a diary", async (t) => {
   const { runtime } = fixture(t);
+  runtime.agent("agent-0").ownerIds = ["30000"];
   const ctx = context(runtime);
   ctx.privateRead.add("operations:file-source");
   const diary = await runtime.callTool(ctx, "diary_write", {
@@ -390,7 +391,13 @@ test("protected operations content cannot lose its restriction by being saved an
     body: "整理后的受限内容",
   });
   const other = context(runtime, "agent-0", "group:20001");
-  await runtime.callTool(other, "memory_read", { id: diary.id });
+  await assert.rejects(
+    runtime.callTool(other, "memory_read", { id: diary.id }),
+    /RECALL_SOURCE_NOT_ALLOWED/,
+  );
+  assert(!other.privateRead.has(diary.id));
+  // A context that previously saw the record must still be blocked.
+  other.privateRead.add("operations:diary:" + diary.id);
   await assert.rejects(
     runtime.send(other, {
       requestId: "protected-revision",
