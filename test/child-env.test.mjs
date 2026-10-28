@@ -308,8 +308,10 @@ test("explicit Codex credentials remain protected from outbound request argument
 
 test("reader, browser and media helpers receive only their documented variables", (t) => {
   canaries(t);
+  // Simulated Linux: Windows spells the variable "Path", so set it explicitly.
   const parent = {
     ...process.env,
+    PATH: "/synthetic/bin",
     OPENCLI_CONFIG_DIR: "/synthetic/opencli",
     MCPORTER_CONFIG: "/synthetic/mcporter.json",
     EXA_API_KEY: "synthetic-round2-exa",
@@ -332,7 +334,7 @@ test("reader, browser and media helpers receive only their documented variables"
   );
   for (const value of Object.values(env)) {
     for (const name of secrets) assert.equal(value[name], undefined, name);
-    assert.equal(value.PATH, process.env.PATH);
+    assert.equal(value.PATH, "/synthetic/bin");
   }
   assert.equal(env["app-reader"].OPENCLI_CONFIG_DIR, "/synthetic/opencli");
   assert.equal(env["app-reader"].SOCIAL_OPENCLI, "/synthetic/opencli-bin");
