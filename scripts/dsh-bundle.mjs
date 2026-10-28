@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import YAML from "js-yaml";
+import * as YAML from "js-yaml";
 import { MCP_ENTRY_NAMES } from "../src/tools/catalog.mjs";
 import { installGuard } from "../src/backends/dsh-guard.mjs";
 import { RESTRICTED_TOOL_NAMES } from "../vendor/dsh-qq/qq-tool-restrict.mjs";
