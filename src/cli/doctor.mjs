@@ -243,11 +243,16 @@ export async function runDoctor({
       for (const a of config.agents) {
         const b = config.backends.find((x) => x.id === a.backendId);
         if (!b) continue;
-        if (running && b.type === "codex") {
+        // A lock means some console owns this data directory even when its API
+        // is out of reach (another container, a non-default port).
+        if (
+          (running || fs.existsSync(path.join(root, "process.lock"))) &&
+          b.type === "codex"
+        ) {
           add(
             "backend:" + b.id,
             "skip",
-            "console is running; a second Codex app-server would share its home",
+            "a console holds this data directory; a second Codex app-server would share its home",
             "在管理台「连接」页对该后端执行“检测连接”",
           );
           continue;

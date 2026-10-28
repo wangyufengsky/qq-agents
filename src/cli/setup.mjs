@@ -194,7 +194,13 @@ export function napcatOnebotConfig(existing, { httpUrl, wsUrl, token }) {
   return { ...(existing || {}), network };
 }
 
-export function init({ root, answers, napcatConfig, force = false }) {
+export function init({
+  root,
+  answers,
+  napcatConfig,
+  force = false,
+  env = process.env,
+}) {
   assertStopped(root);
   const configFile = path.join(root, "config.json");
   if (fs.existsSync(configFile) && !force) throw Error("CONFIG_EXISTS");
@@ -205,17 +211,24 @@ export function init({ root, answers, napcatConfig, force = false }) {
   atomicJSON(configFile, config);
   wrote.push(configFile);
   const connection = config.connections[0];
-  const secrets = readLocalSecrets(root);
-  let generatedToken = false;
-  if (!secrets[connection.tokenEnv]) {
-    writeLocalSecret(
-      root,
-      connection.tokenEnv,
-      randomBytes(24).toString("base64url"),
-    );
-    generatedToken = true;
+  // Same precedence as applyLocalSecrets at startup: a variable the shell or
+  // a Docker env file already sets wins over secrets.json, so NapCat must be
+  // given that value or the console and NapCat would disagree.
+  let tokenSource = "environment";
+  if (!env[connection.tokenEnv]) {
+    tokenSource = "secrets.json";
+    if (!readLocalSecrets(root)[connection.tokenEnv]) {
+      writeLocalSecret(
+        root,
+        connection.tokenEnv,
+        randomBytes(24).toString("base64url"),
+      );
+      tokenSource = "generated";
+    }
+    wrote.push(path.join(root, "secrets.json"));
   }
-  wrote.push(path.join(root, "secrets.json"));
+  const onebotToken =
+    env[connection.tokenEnv] || readLocalSecrets(root)[connection.tokenEnv];
   if (napcatConfig) {
     const file = path.join(
       napcatConfig,
@@ -238,7 +251,7 @@ export function init({ root, answers, napcatConfig, force = false }) {
         napcatOnebotConfig(existing, {
           httpUrl: connection.httpUrl,
           wsUrl: connection.wsUrl,
-          token: readLocalSecrets(root)[connection.tokenEnv],
+          token: onebotToken,
         }),
         null,
         2,
@@ -250,12 +263,13 @@ export function init({ root, answers, napcatConfig, force = false }) {
     wrote.push(file);
   }
   const keyEnv = config.backends[0].apiKeyEnv;
-  const missing = keyEnv && !readLocalSecrets(root)[keyEnv] ? [keyEnv] : [];
+  const missing =
+    keyEnv && !env[keyEnv] && !readLocalSecrets(root)[keyEnv] ? [keyEnv] : [];
   return {
     ok: true,
     wrote,
     backedUp,
-    generatedOnebotToken: generatedToken,
+    onebotTokenSource: tokenSource,
     missingSecrets: missing,
     next: [
       ...missing.map((name) => `npm run setup -- secret ${name}`),

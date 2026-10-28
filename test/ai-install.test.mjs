@@ -85,9 +85,14 @@ test("init writes config, a private generated token and NapCat's OneBot file; re
     }),
     { mode: 0o644 },
   );
-  const result = init({ root, answers: answers(), napcatConfig: napcat });
+  const result = init({
+    root,
+    answers: answers(),
+    napcatConfig: napcat,
+    env: {},
+  });
   assert.equal(result.ok, true);
-  assert.equal(result.generatedOnebotToken, true);
+  assert.equal(result.onebotTokenSource, "generated");
   assert.deepEqual(result.missingSecrets, ["QQ_AGENTS_API_KEY"]);
   const token = readLocalSecrets(root).QQ_AGENTS_ONEBOT_TOKEN;
   assert.match(token, /^[A-Za-z0-9_-]{32}$/);
@@ -112,14 +117,17 @@ test("init writes config, a private generated token and NapCat's OneBot file; re
   if (posix) assert.equal(fs.statSync(napcatFile).mode & 0o777, 0o644);
   assert.ok(fs.readdirSync(napcat).some((f) => f.includes(".before-setup-")));
 
-  assert.throws(() => init({ root, answers: answers() }), /CONFIG_EXISTS/);
-  const again = init({ root, answers: answers(), force: true });
-  assert.equal(again.generatedOnebotToken, false, "the token is reused");
+  assert.throws(
+    () => init({ root, answers: answers(), env: {} }),
+    /CONFIG_EXISTS/,
+  );
+  const again = init({ root, answers: answers(), force: true, env: {} });
+  assert.equal(again.onebotTokenSource, "secrets.json", "the token is reused");
   assert.equal(readLocalSecrets(root).QQ_AGENTS_ONEBOT_TOKEN, token);
   assert.equal(again.backedUp.length, 1);
   fs.writeFileSync(path.join(root, "process.lock"), "{}");
   assert.throws(
-    () => init({ root, answers: answers(), force: true }),
+    () => init({ root, answers: answers(), force: true, env: {} }),
     /DATA_DIRECTORY_LOCKED/,
   );
 });
@@ -163,7 +171,7 @@ test("secrets.json fills only unset variables and rejects anything but a name→
 
 test("live enables the character's connection and lifts its pause, only while stopped", (t) => {
   const root = temp(t);
-  init({ root, answers: answers() });
+  init({ root, answers: answers(), env: {} });
   const result = goLive({ root });
   assert.equal(result.mode, "live");
   const config = JSON.parse(
@@ -178,7 +186,7 @@ test("live enables the character's connection and lifts its pause, only while st
 
 test("unpause connects QQ first and lifts the global pause through the console API", async (t) => {
   const root = temp(t);
-  init({ root, answers: answers() });
+  init({ root, answers: answers(), env: {} });
   goLive({ root });
   fs.writeFileSync(path.join(root, "admin-token"), "admin\n");
   const calls = [];
@@ -258,7 +266,7 @@ test("doctor checks OneBot identity and the backend without leaking secret value
   const port = server.address().port;
   const a = answers(port);
   a.backend.baseUrl = `http://127.0.0.1:${port}/v1`;
-  init({ root, answers: a });
+  init({ root, answers: a, env: {} });
 
   let report = await runDoctor({ root, env: {} });
   const byId = (id) => report.checks.find((c) => c.id === id);
@@ -294,4 +302,43 @@ test("doctor only asks for secrets that the config actually uses", () => {
     "QQ_AGENTS_API_KEY",
     "QQ_AGENTS_ONEBOT_TOKEN",
   ]);
+});
+
+test("init gives NapCat the token the console will actually use when the shell sets it", (t) => {
+  const root = path.join(temp(t), "data"),
+    napcat = temp(t);
+  const result = init({
+    root,
+    answers: answers(),
+    napcatConfig: napcat,
+    env: { QQ_AGENTS_ONEBOT_TOKEN: "token-from-shell" },
+  });
+  assert.equal(result.onebotTokenSource, "environment");
+  assert.equal(readLocalSecrets(root).QQ_AGENTS_ONEBOT_TOKEN, undefined);
+  const onebot = JSON.parse(
+    fs.readFileSync(path.join(napcat, "onebot11_123456789.json"), "utf8"),
+  );
+  assert.equal(onebot.network.httpServers[0].token, "token-from-shell");
+  assert.equal(onebot.network.websocketServers[0].token, "token-from-shell");
+  assert.ok(!JSON.stringify(result).includes("token-from-shell"));
+});
+
+test("doctor never starts a Codex app-server while a console holds the data directory", async (t) => {
+  const root = temp(t);
+  const a = answers();
+  a.backend = { type: "codex" };
+  init({ root, answers: a, env: {} });
+  fs.writeFileSync(path.join(root, "process.lock"), "{}");
+  const registry = {
+    create: () =>
+      assert.fail("no backend may be created for a locked Codex home"),
+  };
+  const report = await runDoctor({
+    root,
+    env: {},
+    registry,
+    fetchImpl: async () => Promise.reject(Error("unreachable console")),
+  });
+  const check = report.checks.find((c) => c.id === "backend:codex");
+  assert.equal(check.status, "skip");
 });
