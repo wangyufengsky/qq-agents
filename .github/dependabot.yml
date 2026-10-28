@@ -5,6 +5,12 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      # Keep the Node typings on the major that CI and `engines` run (Node 24);
+      # newer typings would let code use APIs Node 24 does not have. Drop this
+      # when the project moves to a newer Node line.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     groups:
       npm-minor-and-patch:
         update-types: [minor, patch]
