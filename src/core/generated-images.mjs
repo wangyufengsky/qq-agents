@@ -196,28 +196,19 @@ export class GeneratedImages {
     this.runtime.assertActive(ctx);
     const rows = this.db
       .prepare(
-        "SELECT value,session_id FROM image_generations WHERE agent_id=? AND conversation=? ORDER BY at DESC,id LIMIT ? OFFSET ?",
+        "SELECT g.value,s.protected_operations FROM image_generations g LEFT JOIN image_sessions s ON s.agent_id=g.agent_id AND s.session_id=g.session_id WHERE g.agent_id=? AND g.conversation=? ORDER BY g.at DESC,g.id LIMIT ? OFFSET ?",
       )
       .all(ctx.agentId, ctx.conversation, limit + 1, offset);
+    const boundary = recallBoundary(this.runtime, ctx);
     const items = rows.slice(0, limit).flatMap((row) => {
       const value = JSON.parse(row.value);
-      const source = this.db
-        .prepare(
-          "SELECT protected_operations FROM image_sessions WHERE agent_id=? AND session_id=?",
-        )
-        .get(ctx.agentId, row.session_id);
       if (
-        source?.protected_operations &&
-        !recallBoundary(this.runtime, ctx).allowed({
-          protectedOperations: true,
-        })
-      )
-        return [];
-      if (
-        value.mediaId &&
-        !recallBoundary(this.runtime, ctx).allowed(
-          this.runtime.media.metadata(ctx.agentId, value.mediaId),
-        )
+        (row.protected_operations &&
+          !boundary.allowed({ protectedOperations: true })) ||
+        (value.mediaId &&
+          !boundary.allowed(
+            this.runtime.media.metadata(ctx.agentId, value.mediaId),
+          ))
       )
         return [];
       let delivery = { status: "not-sent" };

@@ -43,6 +43,28 @@ async function level(f, level = "L2", otp) {
     p = f.ops.pending.get(r.requestId);
   await f.ops.confirm("agent-0", f.ctx.conversation, p.id, p.code, otp);
 }
+test("an approved write that outlives its task reports success but keeps no result", async (t) => {
+  const f = setup(t);
+  await level(f);
+  const r = f.ops.propose(f.ctx, {
+      type: "write",
+      file: "late.txt",
+      text: "written",
+    }),
+    p = f.ops.pending.get(r.requestId);
+  const confirmed = f.ops.confirm("agent-0", f.ctx.conversation, p.id, p.code);
+  f.runtime.protectedWork.update("agent-0", f.ctx.conversation, {
+    status: "cancelled",
+  });
+  const result = await confirmed;
+  assert.equal(result.written, "late.txt");
+  assert.equal(result.taskInactive, true);
+  assert.equal(
+    fs.readFileSync(path.join(f.root, "workspace", "late.txt"), "utf8"),
+    "written",
+  );
+  assert(![...f.ops.results.values()].some((row) => row.result.written));
+});
 test("operations escalation is isolated-work-only and tool returns no approval challenge", async (t) => {
   const f = setup(t);
   await assert.rejects(
@@ -377,7 +399,6 @@ test("cancelling work aborts its already approved command and revokes all pendin
     pending.id,
     pending.code,
   );
-  const rejected = assert.rejects(confirmation, /PROTECTED_WORK_NOT_ACTIVE/);
   assert.equal(f.ops.executions.size, 1);
   f.runtime.protectedWork.submit(f.ctx, { text: "Early summary" });
   const current = f.runtime.protectedWork.task("agent-0", f.ctx.conversation);
@@ -398,7 +419,10 @@ test("cancelling work aborts its already approved command and revokes all pendin
     taskId,
     action: "cancel",
   });
-  await rejected;
+  const aborted = await confirmation;
+  assert.equal(aborted.taskInactive, true);
+  assert.notEqual(aborted.exitCode, 0);
+  assert.doesNotMatch(JSON.stringify(aborted), /late private result/);
   assert.equal(result.status, "cancelled");
   assert.equal(f.ops.executions.size, 0);
   assert.equal(f.ops.results.size, 0);

@@ -1,5 +1,24 @@
 import { sourceClass } from "./outbound-policy.mjs";
 
+// Boundary checks run per row and per referenced ID; compile each query once.
+const statements = new WeakMap();
+export function prepared(db, sql) {
+  let cache = statements.get(db);
+  if (!cache) statements.set(db, (cache = new Map()));
+  if (!cache.has(sql)) cache.set(sql, db.prepare(sql));
+  return cache.get(sql);
+}
+// Notes, intents and Self candidates that an ID may name directly.
+export function storedMindRecords(db, agentId, id) {
+  return ["work_notes", "intentions", "self_candidates"].flatMap((table) => {
+    const row = prepared(
+      db,
+      `SELECT value FROM ${table} WHERE agent_id=? AND id=?`,
+    ).get(agentId, id);
+    return row ? [JSON.parse(row.value)] : [];
+  });
+}
+
 // This is a read boundary, not declassification. Stored records and the
 // protection of any context that already saw them remain unchanged.
 export function recallBoundary(runtime, ctx, { publicOnly = false } = {}) {
@@ -63,6 +82,14 @@ export function recallBoundary(runtime, ctx, { publicOnly = false } = {}) {
     allowed,
     assert(row) {
       if (!allowed(row)) throw Error("RECALL_SOURCE_NOT_ALLOWED");
+    },
+    // A bare ID may name an event or a stored mind record. Work tasks already
+    // resolve both in canRead.
+    assertId(id) {
+      this.assert({ id });
+      if (privileged) return;
+      for (const row of storedMindRecords(runtime.memory.db, ctx.agentId, id))
+        this.assert(row);
     },
     rows: (rows) => rows.map(project).filter(Boolean),
   };
