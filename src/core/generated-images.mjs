@@ -1,3 +1,4 @@
+import { recallBoundary } from "./recall-boundary.mjs";
 import { createHash } from "node:crypto";
 import { generationError } from "../backends/generated-image-file.mjs";
 import { taintMedia } from "../tools/legacy.mjs";
@@ -169,7 +170,7 @@ export class GeneratedImages {
       return { nextSessionOffset: null, recoveryErrors: [] };
     const sessions = this.db
       .prepare(
-        "SELECT session_id FROM image_sessions WHERE agent_id=? AND conversation=? AND backend_id=? ORDER BY at DESC,session_id LIMIT 6 OFFSET ?",
+        "SELECT session_id FROM image_sessions WHERE agent_id=? AND conversation=? AND backend_id=? AND protected_operations=0 ORDER BY at DESC,session_id LIMIT 6 OFFSET ?",
       )
       .all(a.id, ctx.conversation, a.backendId, sessionOffset);
     const recoveryErrors = [];
@@ -195,11 +196,30 @@ export class GeneratedImages {
     this.runtime.assertActive(ctx);
     const rows = this.db
       .prepare(
-        "SELECT value FROM image_generations WHERE agent_id=? AND conversation=? ORDER BY at DESC,id LIMIT ? OFFSET ?",
+        "SELECT value,session_id FROM image_generations WHERE agent_id=? AND conversation=? ORDER BY at DESC,id LIMIT ? OFFSET ?",
       )
       .all(ctx.agentId, ctx.conversation, limit + 1, offset);
-    const items = rows.slice(0, limit).map((row) => {
+    const items = rows.slice(0, limit).flatMap((row) => {
       const value = JSON.parse(row.value);
+      const source = this.db
+        .prepare(
+          "SELECT protected_operations FROM image_sessions WHERE agent_id=? AND session_id=?",
+        )
+        .get(ctx.agentId, row.session_id);
+      if (
+        source?.protected_operations &&
+        !recallBoundary(this.runtime, ctx).allowed({
+          protectedOperations: true,
+        })
+      )
+        return [];
+      if (
+        value.mediaId &&
+        !recallBoundary(this.runtime, ctx).allowed(
+          this.runtime.media.metadata(ctx.agentId, value.mediaId),
+        )
+      )
+        return [];
       let delivery = { status: "not-sent" };
       if (value.mediaId) {
         taintMedia(
@@ -213,7 +233,7 @@ export class GeneratedImages {
           .get(ctx.agentId, ctx.conversation, value.mediaId);
         if (receipt) delivery = { ...receipt };
       }
-      return { ...value, delivery };
+      return [{ ...value, delivery }];
     });
     return {
       items,

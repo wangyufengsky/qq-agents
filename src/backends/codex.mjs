@@ -286,7 +286,18 @@ export class CodexBackend {
     onGeneratedImage,
     onImageError,
     recovery,
+    protectedWork = false,
   }) {
+    const policy = protectedWork
+      ? {
+          ...restrictions,
+          "features.image_generation": false,
+          "features.browser_use": false,
+          "features.computer_use": false,
+          "features.in_app_browser": false,
+          "features.apps": false,
+        }
+      : restrictions;
     const signature = this.sessionSignature(tools);
     assertSession(session, "codex", signature);
     await this.ready();
@@ -298,7 +309,7 @@ export class CodexBackend {
         excludeTurns: true,
         sandbox: "read-only",
         approvalPolicy: "never",
-        config: restrictions,
+        config: policy,
       });
     else {
       const r = await this.rpc.request("thread/start", {
@@ -315,7 +326,7 @@ export class CodexBackend {
           description: t.description,
           inputSchema: t.inputSchema,
         })),
-        config: restrictions,
+        config: policy,
         experimentalRawEvents: false,
       });
       threadId = /** @type {string} */ (r.thread.id);

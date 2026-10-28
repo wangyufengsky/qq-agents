@@ -1,3 +1,4 @@
+import { recallBoundary } from "./recall-boundary.mjs";
 import { slangAvailable } from "./features.mjs";
 import { containsCredential } from "./secrets.mjs";
 import { randomUUID } from "node:crypto";
@@ -147,7 +148,13 @@ export class SlangLearner {
           .prepare(
             "SELECT * FROM events WHERE agent_id=? AND conversation=? AND kind='message.received' AND direction='in' AND seq>? ORDER BY seq LIMIT 50",
           )
-          .all(a.id, row.conversation, slang.throughSeq || 0);
+          .all(a.id, row.conversation, slang.throughSeq || 0)
+          .filter((event) =>
+            recallBoundary(this.runtime, {
+              agentId: a.id,
+              conversation: row.conversation,
+            }).allowed(mem.event(event, row.conversation)),
+          );
         if (records.length < a.slang.minMessages) continue;
         state.slang = {
           entries: [],

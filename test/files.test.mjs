@@ -468,7 +468,7 @@ test("operations-derived files retain disclosure restriction across persistence"
       fileId: file.fileId,
       requestId: "ops",
     }),
-    /DISCLOSURE_GRANT/,
+    /RECALL_SOURCE_NOT_ALLOWED|DISCLOSURE_GRANT/,
   );
 });
 

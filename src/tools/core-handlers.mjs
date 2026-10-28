@@ -171,6 +171,9 @@ async function handle_qq_image_read(runtime, ctx, args, name) {
   track(ctx, [event]);
   const media = await readEventImage(runtime, ctx, event, args);
   runtime.assertActive(ctx);
+  recallBoundary(runtime, ctx).assert(
+    runtime.media.metadata(ctx.agentId, media.id),
+  );
   taintMedia(ctx, runtime.media.metadata(ctx.agentId, media.id));
   return runtime.media.view(
     ctx.agentId,
@@ -180,7 +183,9 @@ async function handle_qq_image_read(runtime, ctx, args, name) {
   );
 }
 async function handle_sticker_list(runtime, ctx, args, name) {
-  const rows = runtime.media.list(ctx.agentId, args.query || "");
+  const rows = recallBoundary(runtime, ctx).rows(
+    runtime.media.list(ctx.agentId, args.query || ""),
+  );
   rows.forEach((m) => taintMedia(ctx, m));
   return rows;
 }

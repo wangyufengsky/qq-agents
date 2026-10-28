@@ -53,6 +53,10 @@ const animation = z
   .strict()
   .optional();
 export const definitions = {
+  protected_work_submit: [
+    "提交本受保护任务的待审阅结果。只有控制台批准的精确文字才会交回指定聊天；此调用不发送 QQ。",
+    z.object({ text: z.string().trim().min(1).max(12000) }).strict(),
+  ],
   ...githubDefinitions,
   ...mindDefinitions,
   ...legacyDefinitions,

@@ -330,16 +330,11 @@ test("file images retain prior private and operations provenance after content d
     { conversation: "private:30000", eventId: "private-source" },
     true,
   );
-  const result = await f.runtime.callTool(f.ctx, "qq_image_read", {
-    id: f.event.id,
-  });
-  const id = JSON.parse(result.content[0].text).id;
-  assert(f.ctx.privateRead.has("private-source"));
-  assert(f.ctx.privateRead.has("operations:media:" + id));
-  const next = context(f.runtime);
-  await f.runtime.callTool(next, "sticker_read", { mediaId: id });
-  assert(next.privateRead.has("private-source"));
-  assert(next.privateRead.has("operations:media:" + id));
+  await assert.rejects(
+    f.runtime.callTool(f.ctx, "qq_image_read", { id: f.event.id }),
+    /RECALL_SOURCE_NOT_ALLOWED/,
+  );
+  assert(![...f.ctx.privateRead].some((id) => id.startsWith("operations:")));
 });
 
 test("image cache preserves origins and does not confuse old unindexed metadata with image zero", async (t) => {
@@ -369,9 +364,12 @@ test("image cache preserves origins and does not confuse old unindexed metadata 
   });
   for (let i = 0; i < 2; i++) {
     const ctx = context(f.runtime);
-    await f.runtime.callTool(ctx, "qq_image_read", { id: e.id });
-    assert(ctx.privateRead.has("old-private"));
-    assert(ctx.privateRead.has("operations:media:" + media.id));
+    await assert.rejects(
+      f.runtime.callTool(ctx, "qq_image_read", { id: e.id }),
+      /RECALL_SOURCE_NOT_ALLOWED/,
+    );
+    assert(!ctx.privateRead.has("old-private"));
+    assert(!ctx.privateRead.has("operations:media:" + media.id));
   }
   assert.equal(calls, 1);
 });

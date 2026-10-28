@@ -380,15 +380,30 @@ test("protected operations content cannot lose its restriction by being saved an
     query: "工作区笔记",
     maxChars: 512,
   });
-  await assert.rejects(
-    runtime.send(next, { requestId: "protected-diary", text: "受限文件内容" }),
-    /DISCLOSURE/,
+  assert(!next.privateRead.has(diary.id));
+  assert.equal(
+    (
+      await runtime.send(next, {
+        requestId: "ordinary-after-filter",
+        text: "hello",
+      })
+    ).status,
+    "sent",
   );
-  await runtime.callTool(next, "diary_revise", {
+  await assert.rejects(
+    runtime.callTool(next, "diary_revise", {
+      id: diary.id,
+      expectedRevision: 1,
+      title: "changed",
+      body: "changed",
+    }),
+    /RECALL_SOURCE_NOT_ALLOWED/,
+  );
+  runtime.memory.bind("agent-0").diaryRevise({
     id: diary.id,
     expectedRevision: 1,
-    title: "工作区笔记",
-    body: "整理后的受限内容",
+    title: "changed",
+    body: "changed",
   });
   const other = context(runtime, "agent-0", "group:20001");
   await assert.rejects(

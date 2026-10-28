@@ -64,15 +64,15 @@ test("a rejected direct protected read does not taint the chat", async (t) => {
   assert.doesNotThrow(() => f.runtime.assertDisclosure(ctx));
 });
 
-test("owner and subject retain protected recall and its durable provenance", async (t) => {
+test("owner and subject withhold protected recall before importing provenance", async (t) => {
   const f = setup(t);
   for (const scope of ["private:30000", "@subject"]) {
     const ctx = context(f.runtime, "agent-0", scope);
     const result = await f.runtime.callTool(ctx, "memory_search", {
       query: "nickname",
     });
-    assert(result.diaries.some((r) => r.id === f.diary.id));
-    assert(ctx.privateRead.has("github-private:" + repo));
+    assert(!result.diaries.some((r) => r.id === f.diary.id));
+    assert(!ctx.privateRead.has("github-private:" + repo));
   }
 });
 

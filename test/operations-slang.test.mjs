@@ -27,24 +27,29 @@ function setup(t) {
     "workspace",
   );
   fs.mkdirSync(path.join(f.root, "workspace"));
+  const task = f.runtime.protectedWork.create({
+    agentId: "agent-0",
+    instruction: "fixture work",
+    operations: true,
+  });
   return {
     ...f,
-    ctx: context(f.runtime, "agent-0", "private:30000"),
+    ctx: context(f.runtime, "agent-0", "@work:" + task.id),
     ops: f.runtime.operations,
   };
 }
 async function level(f, level = "L2", otp) {
   const r = f.ops.request(f.ctx, { level }),
     p = f.ops.pending.get(r.requestId);
-  await f.ops.confirm("agent-0", "private:30000", p.id, p.code, otp);
+  await f.ops.confirm("agent-0", f.ctx.conversation, p.id, p.code, otp);
 }
-test("operations escalation is owner-private and tool returns no approval challenge", async (t) => {
+test("operations escalation is isolated-work-only and tool returns no approval challenge", async (t) => {
   const f = setup(t);
   await assert.rejects(
     f.runtime.callTool(context(f.runtime), "ops_request_level", {
       level: "L1",
     }),
-    /OWNER_OPERATIONS_ONLY/,
+    /TOOL_DISABLED/,
   );
   const r = await f.runtime.callTool(f.ctx, "ops_request_level", {
     level: "L1",
@@ -63,7 +68,7 @@ test("L2 write executes only after independent confirmation and detects concurre
   });
   assert.ok(!fs.existsSync(path.join(f.root, "workspace", "notes.txt")));
   const p = f.ops.pending.get(r.requestId);
-  await f.ops.confirm("agent-0", "private:30000", p.id, p.code);
+  await f.ops.confirm("agent-0", f.ctx.conversation, p.id, p.code);
   assert.equal(
     fs.readFileSync(path.join(f.root, "workspace", "notes.txt"), "utf8"),
     "已确认内容",
@@ -76,7 +81,7 @@ test("L2 write executes only after independent confirmation and detects concurre
     p2 = f.ops.pending.get(r2.requestId);
   fs.writeFileSync(path.join(f.root, "workspace", "notes.txt"), "用户改动");
   await assert.rejects(
-    f.ops.confirm("agent-0", "private:30000", p2.id, p2.code),
+    f.ops.confirm("agent-0", f.ctx.conversation, p2.id, p2.code),
     /FILE_CHANGED/,
   );
   assert.equal(
@@ -100,7 +105,7 @@ test("approval has attempt limit, expiry and pause immediately revokes elevated 
     p = f.ops.pending.get(r.requestId);
   for (let i = 0; i < 3; i++)
     await assert.rejects(
-      f.ops.confirm("agent-0", "private:30000", p.id, "bad"),
+      f.ops.confirm("agent-0", f.ctx.conversation, p.id, "bad"),
       /CONFIRMATION/,
     );
   assert.equal(f.ops.pending.size, 0);
@@ -134,7 +139,7 @@ test("L3 requires TOTP, replay protection survives controller reconstruction, an
     request = f.ops.pending.get(r.requestId);
   const result = await f.ops.confirm(
     "agent-0",
-    "private:30000",
+    f.ctx.conversation,
     request.id,
     request.code,
   );
@@ -145,7 +150,7 @@ test("L3 requires TOTP, replay protection survives controller reconstruction, an
   await assert.rejects(
     reboot.confirm(
       "agent-0",
-      "private:30000",
+      f.ctx.conversation,
       p2.id,
       p2.code,
       totp(process.env.QQ_UNIFIED_TEST_TOTP, now),
@@ -161,7 +166,7 @@ test("private file reads mark retained disclosure context and cannot be sent wit
   assert.equal(r.text, "工作区内容");
   await assert.rejects(
     f.runtime.send(f.ctx, { requestId: "private-output", text: r.text }),
-    /DISCLOSURE/,
+    /PROTECTED_WORK_OUTBOUND_DENIED/,
   );
 });
 test("owner confirmation secrets are removed from archived raw message payload", async (t) => {
@@ -315,14 +320,14 @@ test("confirmation failures across requests share a five-minute lock", async (t)
       p = f.ops.pending.get(r.requestId);
     for (let i = 0; i < (request === 0 ? 3 : 2); i++)
       await assert.rejects(
-        f.ops.confirm("agent-0", "private:30000", p.id, "wrong"),
+        f.ops.confirm("agent-0", f.ctx.conversation, p.id, "wrong"),
         /INVALID_CONFIRMATION/,
       );
   }
   const r = f.ops.request(f.ctx, { level: "L1" }),
     p = f.ops.pending.get(r.requestId);
   await assert.rejects(
-    f.ops.confirm("agent-0", "private:30000", p.id, p.code),
+    f.ops.confirm("agent-0", f.ctx.conversation, p.id, p.code),
     /CONFIRMATION_LOCKED/,
   );
   now += 300001;
@@ -332,7 +337,7 @@ test("confirmation failures across requests share a five-minute lock", async (t)
   assert.equal(f.ops.levels.size, 1);
 });
 
-test("owner challenge reaches its private recipient but is not exposed through model memory", async (t) => {
+test("owner QQ commands redirect to console without opening an operations context", async (t) => {
   const f = setup(t);
   await f.runtime.ingest(
     "qq-0",
@@ -342,12 +347,61 @@ test("owner challenge reaches its private recipient but is not exposed through m
       message: [{ type: "text", data: { text: "/ops L1" } }],
     }),
   );
-  const pending = [...f.ops.pending.values()][0];
-  assert.ok(pending);
+  assert.equal(f.ops.pending.size, 0);
   const sent = f.runtime.transports.get("qq-0").sent[0];
   assert.equal(sent.conversation, "private:30000");
-  assert.ok(JSON.stringify(sent.segments).includes(pending.code));
-  assert.ok(
-    !JSON.stringify(f.store.bind("agent-0").export()).includes(pending.code),
+  assert.match(JSON.stringify(sent.segments), /受保护工作区/);
+});
+
+test("cancelling work aborts its already approved command and revokes all pending results", async (t) => {
+  const f = setup(t),
+    policy = f.runtime.agent("agent-0").operations;
+  Object.assign(policy, { allowL3: true, allowedCommands: [process.execPath] });
+  f.ops.levels.set("agent-0|" + f.ctx.conversation, {
+    level: "L3",
+    grantedAt: f.runtime.now(),
+    activeAt: f.runtime.now(),
+  });
+  const proposed = f.ops.propose(f.ctx, {
+    type: "run",
+    command: process.execPath,
+    args: [
+      "-e",
+      "setTimeout(() => process.stdout.write('late private result'), 20000)",
+    ],
+  });
+  const pending = f.ops.pending.get(proposed.requestId);
+  const confirmation = f.ops.confirm(
+    "agent-0",
+    f.ctx.conversation,
+    pending.id,
+    pending.code,
   );
+  const rejected = assert.rejects(confirmation, /PROTECTED_WORK_NOT_ACTIVE/);
+  assert.equal(f.ops.executions.size, 1);
+  f.runtime.protectedWork.submit(f.ctx, { text: "Early summary" });
+  const current = f.runtime.protectedWork.task("agent-0", f.ctx.conversation);
+  await assert.rejects(
+    f.runtime.protectedWork.act({
+      agentId: "agent-0",
+      taskId: current.id,
+      action: "release",
+      revision: current.revision,
+      digest: current.result.digest,
+      target: "private:30000",
+    }),
+    /SESSION_BUSY/,
+  );
+  const taskId = f.ctx.conversation.slice(6);
+  const result = await f.runtime.protectedWork.act({
+    agentId: "agent-0",
+    taskId,
+    action: "cancel",
+  });
+  await rejected;
+  assert.equal(result.status, "cancelled");
+  assert.equal(f.ops.executions.size, 0);
+  assert.equal(f.ops.results.size, 0);
+  assert.equal(f.ops.levels.size, 0);
+  assert(f.ctx.controller.signal.aborted);
 });

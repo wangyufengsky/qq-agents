@@ -26,6 +26,7 @@ export class TurnRunner {
     const runKey = agentId + "|" + conversation;
     if (runtime.running.has(runKey)) return;
     const mem = runtime.memory.bind(agentId);
+    runtime.protectedWork.prepareDaily(agentId, conversation);
     const freshSubject = runtime.contexts.startFreshSubject(
       agentId,
       conversation,

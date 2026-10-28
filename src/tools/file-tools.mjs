@@ -1,3 +1,4 @@
+import { recallBoundary } from "../core/recall-boundary.mjs";
 import { z } from "zod";
 import { allowed } from "../core/config.mjs";
 import { ownedEvent } from "./forward.mjs";
@@ -90,6 +91,7 @@ export async function fileTool(runtime, ctx, tool, args) {
     files = runtime.files;
   if (tool === "file_list") {
     const result = files.list(a.id, args);
+    result.items = recallBoundary(runtime, ctx).rows(result.items);
     result.items.forEach((m) => protect(ctx, m));
     return {
       ...result,
@@ -100,6 +102,7 @@ export async function fileTool(runtime, ctx, tool, args) {
   if (tool === "qq_send_file") {
     active(runtime, ctx, "send");
     const meta = files.metadata(a.id, args.fileId);
+    recallBoundary(runtime, ctx).assert(meta);
     if (meta.bytes > a.files.maxBytes) throw Error("FILE_TOO_LARGE");
     protect(ctx, meta);
     const displayName = fileName(args.name || meta.name);
@@ -140,7 +143,14 @@ export async function fileTool(runtime, ctx, tool, args) {
       );
     }
     if (tool === "file_import") {
-      return files.import(a.id, args.rootIndex, args.relativePath, a.files);
+      const saved = files.import(
+        a.id,
+        args.rootIndex,
+        args.relativePath,
+        a.files,
+      );
+      recallBoundary(runtime, ctx).assert(saved);
+      return saved;
     }
     // Ordinary downloads are covered by the persistent file permission. The
     // existing operations-content restriction still applies to outbound URLs.
@@ -222,7 +232,7 @@ export async function fileTool(runtime, ctx, tool, args) {
       result = await files.download(url, options);
     }
     active(runtime, ctx, permission);
-    return files.put(
+    const saved = files.put(
       a.id,
       result.buffer,
       displayName || suggestedName(url),
@@ -233,5 +243,7 @@ export async function fileTool(runtime, ctx, tool, args) {
       },
       restricted,
     );
+    recallBoundary(runtime, ctx).assert(saved);
+    return saved;
   });
 }

@@ -275,21 +275,30 @@ test("native image provenance retains restricted reads across recovery", async (
   f.ctx.privateRead.add("operations:private-result");
   f.ctx.persistTaint();
   f.rpc.items.push(f.item);
-  const image = (await f.runtime.callTool(f.ctx, "generated_image_list", {}))
-    .items[0];
+  const image = f.runtime.generatedImages.capture(
+    f.ctx,
+    f.backend,
+    "native-thread",
+    f.item,
+  );
   assert.equal(
     f.runtime.media.metadata("agent-0", image.mediaId).protectedOperations,
     true,
   );
-  const fresh = context(f.runtime);
-  f.runtime.generatedImages.list(fresh, {});
-  assert([...fresh.privateRead].some((x) => x.startsWith("operations:")));
+  const fresh = context(f.runtime, "agent-0", "private:30000");
+  assert.deepEqual(f.runtime.generatedImages.list(fresh, {}).items, []);
+  const before = f.rpc.historyReads;
+  assert.deepEqual(
+    (await f.runtime.callTool(f.ctx, "generated_image_list", {})).items,
+    [],
+  );
+  assert.equal(f.rpc.historyReads, before);
   await assert.rejects(
     f.runtime.callTool(fresh, "qq_send", {
       requestId: "private-image",
       mediaId: image.mediaId,
     }),
-    /PRIVATE_RECOLLECTION|DISCLOSURE/,
+    /RECALL_SOURCE_NOT_ALLOWED/,
   );
 });
 test("generic native failures stay unknown and notification bookkeeping failures do not crash the RPC reader", async (t) => {

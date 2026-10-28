@@ -35,6 +35,7 @@ export function sourceClass(runtime, ctx, id) {
     )
     .get(ctx.agentId, id);
   if (row) {
+    if (row.conversation.startsWith("@work:")) return "operations";
     // Records derived from operations material (e.g. a subject log) stay operations.
     if (JSON.parse(row.payload).protectedOperations === true)
       return "operations";
@@ -81,7 +82,7 @@ export function sourceCounts(runtime, ctx) {
   }
   return counts;
 }
-function assertCredentials(runtime, ctx, request) {
+export function assertCredentials(runtime, ctx, request) {
   const raw = stable(request);
   let decoded = raw;
   for (let i = 0; i < 3; i++) {
@@ -243,6 +244,8 @@ export function authorizeExternal(
   { requestEventId, fixed = false, privateRepository } = {},
 ) {
   runtime.assertActive(ctx);
+  if (runtime.protectedWork?.context(ctx))
+    throw Error("PROTECTED_WORK_OUTBOUND_DENIED");
   assertCredentials(runtime, ctx, request);
   // App readers prove this from a fixed feed selector or a stored platform
   // response. No query, arbitrary URL or recalled text is sent. Keep this

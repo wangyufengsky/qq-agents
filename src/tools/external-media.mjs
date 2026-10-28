@@ -1,3 +1,4 @@
+import { recallBoundary } from "../core/recall-boundary.mjs";
 import { audioType } from "./voice.mjs";
 import { taintMedia } from "./legacy.mjs";
 const encodedLimit = 28 * 1024 * 1024;
@@ -106,6 +107,7 @@ export async function externalResult(runtime, ctx, args, result) {
         item.mimeType,
         meta,
       );
+      recallBoundary(runtime, ctx).assert(m);
       addText(JSON.stringify({ generatedMedia: m }));
       content.push(runtime.media.read(ctx.agentId, m.id));
     } else {
@@ -121,6 +123,7 @@ export async function externalResult(runtime, ctx, args, result) {
           ...meta,
           title: "外部工具音频",
         });
+      recallBoundary(runtime, ctx).assert(m);
       addText(JSON.stringify({ generatedAudio: m }));
       content.push(runtime.voices.read(ctx.agentId, m.id));
     }

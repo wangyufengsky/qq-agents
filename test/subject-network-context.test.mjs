@@ -97,11 +97,11 @@ test("fresh subject starts without old protected handoff and can browse without 
     false,
     ["fixture/private"],
   );
-  await f.runtime.callTool(old, "work_note", {
-    body: "PRIVATE_NOTE",
-    evidence: [log.id],
-    uncertainty: "unverified",
-  });
+  f.m.identity.saveNote(
+    { body: "PRIVATE_NOTE", evidence: [log.id], uncertainty: "unverified" },
+    scope,
+    f.runtime.now(),
+  );
   f.m.identity.put("intentions", {
     id: "private-intent",
     target: "group:20000",
@@ -153,15 +153,15 @@ test("explicit protected subject recall permits fixed feeds but blocks queries; 
   const f = setup(t, async (p) => {
     turn++;
     if (turn === 1) {
-      await p.callTool("memory_read", { id: diary.id });
-      await p.callTool("app_browse", browse);
       await assert.rejects(
-        p.callTool("external_tool", search),
-        /EXTERNAL_CALL_BLOCKED/,
+        p.callTool("memory_read", { id: diary.id }),
+        /RECALL_SOURCE_NOT_ALLOWED/,
       );
+      await p.callTool("app_browse", browse);
+      await p.callTool("external_tool", search);
       await p.callTool("subject_log", {
         did: "read",
-        summary: "PRIVATE_NEW_LOG",
+        summary: "ORDINARY_NEW_LOG",
       });
     } else {
       assert.doesNotMatch(p.prompt, /PRIVATE_NEW_LOG/);
@@ -177,9 +177,9 @@ test("explicit protected subject recall permits fixed feeds but blocks queries; 
     ["fixture/private"],
   );
   await f.runtime.wake("agent-0", scope);
-  assert(f.m.state(scope).disclosureTaint.includes(marker));
+  assert(!f.m.state(scope).disclosureTaint.includes(marker));
   await f.runtime.wake("agent-0", scope);
-  assert.equal(f.calls.length, 2);
+  assert.equal(f.calls.length, 3);
   assert(!f.m.state(scope).disclosureTaint.includes(marker));
 });
 
@@ -188,17 +188,14 @@ test("continuous subject sessions retain protection", async (t) => {
     t,
     async (p) => {
       await p.callTool("app_browse", browse);
-      await assert.rejects(
-        p.callTool("external_tool", search),
-        /EXTERNAL_CALL_BLOCKED/,
-      );
+      await p.callTool("external_tool", search);
     },
     "continuous",
   );
   f.m.setState(scope, { disclosureTaint: [marker] });
   await f.runtime.wake("agent-0", scope);
-  assert.equal(f.calls.length, 1);
-  assert(f.m.state(scope).disclosureTaint.includes(marker));
+  assert.equal(f.calls.length, 2);
+  assert(!f.m.state(scope).disclosureTaint.includes(marker));
 });
 
 test("external tool argument errors are validated before the subject read allowlist", async (t) => {
@@ -245,7 +242,7 @@ for (const session of [null, { id: "prior-subject", backend: "fixture" }]) {
     });
     f.m.setState(scope, { session, disclosureTaint: [marker], checks: [123] });
     f.m.db.exec(
-      "CREATE TRIGGER fail_subject_archive BEFORE INSERT ON session_history WHEN json_extract(new.value,'$.reason')='subject-fresh-context' BEGIN SELECT RAISE(ABORT,'archive unavailable'); END;",
+      "CREATE TRIGGER fail_subject_archive BEFORE INSERT ON session_history WHEN json_extract(new.value,'$.reason') IN ('subject-fresh-context','protected-work-isolation') BEGIN SELECT RAISE(ABORT,'archive unavailable'); END;",
     );
     await assert.rejects(
       f.runtime.wake("agent-0", scope),

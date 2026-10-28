@@ -1,3 +1,4 @@
+import { recallBoundary } from "../core/recall-boundary.mjs";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { setTimeout as delay } from "node:timers/promises";
@@ -267,6 +268,7 @@ export async function legacyTool(runtime, ctx, name, args) {
   }
   if (name === "qq_list_voices") {
     const r = runtime.voices.list(a.id, args);
+    r.items = recallBoundary(runtime, ctx).rows(r.items);
     r.items.forEach((m) => taintMedia(ctx, m));
     return r;
   }
@@ -281,6 +283,7 @@ export async function legacyTool(runtime, ctx, name, args) {
           (params) =>
             runtime.transports.get(a.connectionId).call("get_record", params),
         );
+    recallBoundary(runtime, ctx).assert(m);
     taintMedia(ctx, m);
     return {
       content: [

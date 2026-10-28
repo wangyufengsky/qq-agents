@@ -12,6 +12,7 @@ export class Operations {
     this.levels = new Map();
     this.pending = new Map();
     this.results = new Map();
+    this.executions = new Map();
     this.totpCounters = new Map();
     this.attempts = new Map();
   }
@@ -19,11 +20,9 @@ export class Operations {
     const a = this.runtime.assertActive(ctx);
     if (
       !a.operations.enabled ||
-      !ctx.conversation.startsWith("private:") ||
-      !a.ownerIds.includes(ctx.conversation.split(":")[1])
+      !this.runtime.protectedWork?.context(ctx)?.operations
     )
       throw Error("OWNER_OPERATIONS_ONLY");
-    this.runtime.assertDisclosure(ctx);
     return a;
   }
   audit(id, kind, payload) {
@@ -179,8 +178,8 @@ export class Operations {
       a = this.runtime.agent(agentId),
       now = this.runtime.now();
     if (
-      !a.ownerIds.includes(conversation.split(":")[1]) ||
-      !conversation.startsWith("private:") ||
+      !a.operations.enabled ||
+      !this.runtime.protectedWork?.task(agentId, conversation)?.operations ||
       !this.runtime.writable(a, conversation)
     )
       throw Error("OWNER_OPERATIONS_ONLY");
@@ -220,7 +219,7 @@ export class Operations {
     }
     this.pending.delete(p.id);
     this.attempts.delete(key);
-    const result = await this.runtime.withContext(
+    const execution = this.runtime.withContext(
       agentId,
       conversation,
       async (ctx) => {
@@ -282,6 +281,19 @@ export class Operations {
         });
       },
     );
+    this.executions.set(requestId, {
+      agentId,
+      conversation,
+      promise: execution,
+    });
+    let result;
+    try {
+      result = await execution;
+    } finally {
+      this.executions.delete(requestId);
+    }
+    if (!this.runtime.protectedWork.active(agentId, conversation))
+      throw Error("PROTECTED_WORK_NOT_ACTIVE");
     this.results.set(requestId, {
       agentId,
       conversation,
@@ -303,6 +315,15 @@ export class Operations {
     ctx.privateRead.add("operations-result:" + id);
     ctx.persistTaint?.();
     return row.result;
+  }
+  revokeScope(agentId, conversation) {
+    this.levels.delete(agentId + "|" + conversation);
+    for (const [key, row] of this.pending)
+      if (row.agentId === agentId && row.conversation === conversation)
+        this.pending.delete(key);
+    for (const [key, row] of this.results)
+      if (row.agentId === agentId && row.conversation === conversation)
+        this.results.delete(key);
   }
   revoke(agentId, audit = true) {
     for (const [key] of this.levels)
@@ -337,43 +358,11 @@ export class Operations {
     if (!elevate && !confirm) return false;
     if (!this.runtime.writable(a, e.conversation))
       return this.runtime.skipOwnerCommand(a, e, archived, "operations");
-    let text;
-    try {
-      if (elevate) {
-        const r = await this.runtime.withContext(a.id, e.conversation, (ctx) =>
-          this.request(ctx, { level: elevate[1].toUpperCase() }),
-        );
-        const p = this.pending.get(r.requestId);
-        text = p
-          ? `申请 ${p.operation.level}。两分钟内发送：确认 ${p.code}${p.operation.level === "L3" ? " <TOTP动态码>" : ""}。操作仍需逐项批准。`
-          : "已回落到 L0。";
-      } else {
-        const key = a.id + "|" + e.conversation;
-        this.checkAttempts(key);
-        const p = [...this.pending.values()].find(
-          (p) =>
-            p.agentId === a.id &&
-            p.conversation === e.conversation &&
-            p.code === confirm[1],
-        );
-        if (!p) {
-          this.failedAttempt(key);
-          throw Error("APPROVAL_NOT_FOUND");
-        }
-        await this.confirm(a.id, e.conversation, p.id, confirm[1], confirm[2]);
-        text = "已执行确认的请求，详情可在管理台查看。";
-      }
-    } catch (error) {
-      const failure = this.runtime.diagnostics.report(error, {
-        component: "operations",
-        agentId: a.id,
-        conversation: e.conversation,
-      });
-      text =
-        failure.status >= 500
-          ? "执行遇到系统故障，请在管理台查看最近错误。"
-          : "请求未通过，请检查权限、确认有效期和动态码。";
-    }
+    if (elevate?.[1].toUpperCase() === "L0") this.revoke(a.id);
+    const text =
+      elevate?.[1].toUpperCase() === "L0"
+        ? "已回落到 L0，并撤销待确认运维操作。"
+        : "运维已移至控制台的受保护工作区，请在那里创建任务和逐项确认；普通聊天不会读取运维内容。";
     await this.runtime.withContext(a.id, e.conversation, (ctx) =>
       this.runtime.send(
         ctx,

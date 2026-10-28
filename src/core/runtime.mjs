@@ -1,3 +1,5 @@
+import { ProtectedWork, isWorkScope } from "./protected-work.mjs";
+import { recallBoundary } from "./recall-boundary.mjs";
 import { containsCredential } from "./secrets.mjs";
 import { sessionReference } from "./session-records.mjs";
 import { isDeepStrictEqual } from "node:util";
@@ -107,6 +109,8 @@ export class Runtime {
     this.contexts = new ContextLifecycle(this);
     this.generatedImages = new GeneratedImages(this);
     this.subject = new SubjectCoordinator(this);
+    this.protectedWork = new ProtectedWork(this);
+    this.protectedWork.recover();
     for (const a of this.config.agents)
       this.memory.bind(a.id).identity.initialize(a, this.now());
     this.banter = new BanterCoordinator({
@@ -173,6 +177,11 @@ export class Runtime {
     if (this.reconfiguringAgents.has(agentId)) throw Error("CONFIG_CONFLICT");
     const a = this.agent(agentId),
       mem = this.memory.bind(agentId);
+    if (
+      isWorkScope(conversation) &&
+      !this.protectedWork.active(agentId, conversation)
+    )
+      throw Error("PROTECTED_WORK_NOT_ACTIVE");
     const recallGeneration =
       mem.state(conversation).recallRecovery?.generation || 0;
     const ctx = {
@@ -233,6 +242,8 @@ export class Runtime {
     return c;
   }
   toolsFor(a, conversation) {
+    if (isWorkScope(conversation))
+      return this.protectedWork.tools(a, conversation);
     const selected =
       conversation === SUBJECT
         ? [
@@ -286,6 +297,11 @@ export class Runtime {
     if (a.paused) codes.push("AGENT_PAUSED");
     if (inSilence(a, this.clock())) codes.push("QUIET_HOURS");
     if (conversation === undefined) return codes;
+    if (isWorkScope(conversation)) {
+      if (!this.protectedWork.active(a.id, conversation))
+        codes.push("NOT_ALLOWED");
+      return codes;
+    }
     if (!allowed(a, conversation)) codes.push("NOT_ALLOWED");
     const state = this.memory.bind(a.id).state(conversation);
     if (state.paused) codes.push("CONVERSATION_PAUSED");
@@ -747,7 +763,38 @@ export class Runtime {
       !toolAvailable(a, name, ctx.conversation)
     )
       throw Error("TOOL_DISABLED");
+    const boundary = recallBoundary(this, ctx);
+    for (const id of [
+      args.id,
+      args.eventId,
+      args.recordId,
+      args.aroundId,
+      ...(args.eventIds || []),
+      ...(args.evidence || []),
+      ...(args.evidenceIds || []),
+      ...(args.counterEvidence || []),
+    ].filter((id) => typeof id === "string")) {
+      boundary.assert({ id });
+      for (const table of ["work_notes", "intentions", "self_candidates"]) {
+        const row = this.memory.db
+          .prepare(`SELECT value FROM ${table} WHERE agent_id=? AND id=?`)
+          .get(ctx.agentId, id);
+        if (row) boundary.assert(JSON.parse(row.value));
+      }
+    }
+    for (const [id, library] of [
+      [args.fileId, this.files],
+      [args.mediaId, this.media],
+      [args.audioId || args.audioInput?.audioId, this.voices],
+    ])
+      if (id && library) boundary.assert(library.metadata(ctx.agentId, id));
     let result = await dispatchTool(this, ctx, name, args);
+    if (this.protectedWork.context(ctx) && name !== "protected_work_submit")
+      this.protectedWork.record(
+        ctx,
+        "tool",
+        JSON.stringify({ name, result }).slice(0, 24000),
+      );
     if (
       ["web_fetch", "social_read", "social_search", "social_comments"].includes(
         name,
@@ -798,6 +845,8 @@ export class Runtime {
     return result;
   }
   assertDisclosure(ctx, { external = false } = {}) {
+    if (this.protectedWork?.context(ctx))
+      throw Error("PROTECTED_WORK_OUTBOUND_DENIED");
     for (const repo of privateGithubSources(ctx, this))
       ctx.privateRead.add(githubMarker(repo));
     ctx.persistTaint?.();

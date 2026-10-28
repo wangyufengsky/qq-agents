@@ -593,3 +593,38 @@ test("the Windows Codex launcher ends the whole process tree, not just the cmd.e
   fallback.kill("SIGTERM");
   assert.deepEqual(fallback.kills, ["SIGTERM"]);
 });
+
+test("protected work disables native external tools in the Codex session policy", async (t) => {
+  const rpc = new Rpc(),
+    cfg = config(),
+    backend = new CodexBackend(cfg.backends[0], cfg.agents[0], {
+      root: temp(t),
+      rpc,
+    });
+  t.after(() => backend.close());
+  const run = backend.run({
+    protectedWork: true,
+    prompt: "work",
+    signal: new AbortController().signal,
+    tools: toolSpecs(["protected_work_submit"]),
+    callTool: async () => ({}),
+    saveSession: () => {},
+  });
+  await tick();
+  const start = rpc.calls.find((c) => c.method === "thread/start").args;
+  for (const feature of [
+    "shell_tool",
+    "image_generation",
+    "browser_use",
+    "computer_use",
+    "in_app_browser",
+    "apps",
+  ])
+    assert.equal(start.config["features." + feature], false, feature);
+  assert.deepEqual(
+    start.dynamicTools.map((t) => t.name),
+    ["protected_work_submit"],
+  );
+  rpc.complete();
+  await run;
+});

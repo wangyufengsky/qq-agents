@@ -133,7 +133,7 @@ test("registered app images retain protected Operations provenance after dedupli
       comment: "测试",
       mediaId,
     }),
-    /RESTRICTED_CONTEXT/,
+    /RECALL_SOURCE_NOT_ALLOWED|RESTRICTED_CONTEXT/,
   );
   assert.equal(runtime.transports.get("qq-0").sent.length, 0);
 });
