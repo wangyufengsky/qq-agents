@@ -4,6 +4,26 @@
 
 2026-10-28 公开之后的条目用本仓库的 PR 链接；更早条目中的 `#编号` 指公开前私有仓库中的 PR，与本仓库的 Issue/PR 编号无关。
 
+## 0.5.0（2026-10-28）
+
+首个公开版本，包含下面从“OpenAI 兼容后端”到“交给 AI 安装”各节的全部改动。要点：
+
+- **更多后端**：除 DSH 和 Codex 外，新增任意 OpenAI 兼容 API 后端，一个地址加一个 API key 即可使用。
+- **更多平台**：支持 Linux / Docker（含 NapCat 的 compose 示例）和 Windows，CI 在 Ubuntu、macOS、Windows 上运行同一套检查，另外检查 Docker 镜像构建。
+- **交给 AI 安装**：AI 助手可以按 [AI 安装手册](docs/AI-INSTALL.md) 完成安装、配置和上线，只在扫码登录、输入 API key 和确认上线时停下来等用户；新增 `npm run setup` 和 `npm run doctor`。
+- **安全**：Windows 上读取文件不再跟随符号链接；受保护的记忆在群聊和非管理员私聊中隔离；Windows 上关闭 Codex 时结束整个进程树。
+- **开源**：新增安全策略、贡献指南、行为准则、Issue/PR 模板和 Dependabot，README 增加英文版和扩展指南。
+
+发布前审查修正：
+
+- **子进程不再拿到全部密钥**：OpenCLI 读取、social-reader、mcporter、截图用的 Chromium、ffmpeg/ffprobe 和 macOS `say` 改用与 Codex 相同的白名单环境，只保留各自需要的变量（见 [凭据边界](docs/CREDENTIAL-BOUNDARIES.md#子进程环境)）。此前它们会继承包括 `secrets.json` 在内的全部 API key、OneBot 令牌和 TOTP 种子。
+- **发现半开的 QQ 连接**：OneBot WebSocket 每 30 秒 ping 一次，90 秒内没有任何回应就按断线处理并自动重连（`ONEBOT_HEARTBEAT_TIMEOUT`，可用连接的 `recovery.heartbeatTimeoutMs` 调整或关闭）。一条无法解析的网关消息只被丢弃，不再断开接收通道。
+- **可选的启动后自动恢复**：`npm start -- --live --resume`（Docker 为 `command: ["--live", "--resume"]`）在 QQ 连接和 AI 后端都就绪后自动解除全局暂停，失败时保持暂停；管理员手动暂停或解除暂停会停止它。
+- **OpenAI 兼容后端**：每张图片只随下一次请求发送一次，之后会话历史里只留一句说明；不填 `contextWindow` 时从服务的模型列表读取，读不到按 32768 处理（此前默认 128000，管理台表单也会写入这个值）。
+- **Docker**：compose 示例设置 `stop_grace_period: 40s`，避免关闭未完成就被强制结束而留下 `process.lock`；文档补充残留锁的处理步骤。
+
+升级提示：现有的 DSH/Codex 配置无需修改，已有会话也不需要交接；`npm start` 现在会读取数据目录下的 `secrets.json`，启动终端里已经设置的变量仍然优先。
+
 ## 交给 AI 安装（2026-10-28）
 
 - 新增 [AI 安装手册](docs/AI-INSTALL.md)：用户把仓库交给 Claude Code、Codex、DSH 等助手，助手就能按步骤完成安装、部署 NapCat 和管理台、生成配置和上线。全程只在扫码登录、输入 API key、确认上线这三处停下来等用户。README 中英文版都加了“让 AI 帮你装”一节。
