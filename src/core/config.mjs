@@ -180,6 +180,11 @@ export const configSchema = z
                 .min(5000)
                 .max(600000)
                 .default(300000),
+              // No default, so existing configs parse unchanged; 0 turns the
+              // OneBot ping watchdog off.
+              heartbeatTimeoutMs: z
+                .union([z.literal(0), z.number().int().min(15000).max(600000)])
+                .optional(),
             })
             .strict()
             .prefault({})

@@ -156,3 +156,36 @@ test("editing a connection's endpoint disarms recovery until a manual connect", 
   await advance(2000);
   assert.equal(runtime.transports.has("qq-0"), false);
 });
+
+test("a heartbeat timeout is recovered like a dropped socket", async (t) => {
+  const { runtime, advance, drop } = setup(t);
+  await runtime.startConnection("qq-0");
+  drop("ONEBOT_HEARTBEAT_TIMEOUT");
+  assert.equal(recovery(runtime).state, "retrying");
+  await advance(2000);
+  assert.equal(recovery(runtime).state, "connected");
+});
+
+test("an account mismatch on the socket is not retried", async (t) => {
+  const { runtime, drop } = setup(t);
+  await runtime.startConnection("qq-0");
+  drop("QQ_ACCOUNT_MISMATCH");
+  assert.equal(recovery(runtime).state, "connected", "not a lost socket");
+  assert.equal(runtime.faults.get("qq-0"), "QQ_ACCOUNT_MISMATCH");
+});
+
+test("the heartbeat timeout is optional and bounded", () => {
+  const cfg = config(1);
+  assert.equal(cfg.connections[0].recovery.heartbeatTimeoutMs, undefined);
+  for (const value of [0, 15000, 600000]) {
+    cfg.connections[0].recovery.heartbeatTimeoutMs = value;
+    assert.equal(
+      validateConfig(cfg).connections[0].recovery.heartbeatTimeoutMs,
+      value,
+    );
+  }
+  for (const value of [1, 14999, 600001]) {
+    cfg.connections[0].recovery.heartbeatTimeoutMs = value;
+    assert.throws(() => validateConfig(cfg));
+  }
+});

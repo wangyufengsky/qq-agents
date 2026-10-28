@@ -1,7 +1,11 @@
 // Receive-channel recovery. Only a connection an administrator connected in this
 // process is armed, and only an established socket that drops is retried. Sends
 // are never replayed; messages posted while disconnected are not backfilled.
-const LOST = new Set(["CONNECTION_LOST", "ONEBOT_WS_ERROR"]);
+const LOST = new Set([
+  "CONNECTION_LOST",
+  "ONEBOT_WS_ERROR",
+  "ONEBOT_HEARTBEAT_TIMEOUT",
+]);
 // Identity and configuration failures will not heal by retrying.
 const FATAL = new Set([
   "QQ_ACCOUNT_MISMATCH",

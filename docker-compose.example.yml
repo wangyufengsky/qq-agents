@@ -24,6 +24,10 @@ services:
     image: qq-agents:local
     restart: unless-stopped
     init: true
+    # Docker sends SIGKILL after 10 s by default, before the console's own
+    # 30 s shutdown budget runs out; a killed process leaves /data/process.lock
+    # behind and every later start then fails with DATA_DIRECTORY_LOCKED.
+    stop_grace_period: 40s
     depends_on:
       - napcat
     # OneBot token and model API keys, named by tokenEnv / apiKeyEnv in the

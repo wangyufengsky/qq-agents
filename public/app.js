@@ -347,6 +347,22 @@ function homeRoleCard(a) {
     : "";
   return `<article class="card home-role"><div class="row"><div class="identity"><span class="avatar">${esc(avatarChar(a.name))}</span><div><h3>${esc(a.name)}</h3><span class="hint">QQ ${c?.connected ? "已连接" : "未连接"} · ${esc(backendLabels[b?.state] || "后端尚未检测")}</span></div></div>${tag(can ? "可以发言" : a.paused ? "已暂停" : "暂不发言", can ? "live" : a.paused ? "off" : "warn")}</div>${can ? "" : blockersMarkup(s)}${latest}${stats}${d ? `<p class="hint">最近 24 小时${h.nextFreeTimeAt && a.subject?.enabled ? ` · 下次空闲时间 ${homeTime(h.nextFreeTimeAt)}` : ""}</p>` : ""}<div class="card-actions"><button data-do="role" data-id="${esc(a.id)}">${icon("pulse", "sm")}查看动态</button><button class="ghost" data-do="role-settings" data-id="${esc(a.id)}">${icon("settings", "sm")}设置</button></div></article>`;
 }
+// Started with `--live --resume`: say where lifting the boot pause stands.
+const autoResumeText = (r) => {
+  if (!r?.enabled) return "";
+  const last = r.error ? `（上次：${r.error}）` : "";
+  return (
+    {
+      waiting: `自动恢复：稍后进行第 ${r.attempts + 1} 次尝试${last}。`,
+      resuming: `自动恢复：正在进行第 ${r.attempts} 次尝试。`,
+      resumed: "自动恢复：QQ 和 AI 后端就绪后已解除全局暂停。",
+      failed: `自动恢复失败${last}，请检查连接后手动解除全局暂停。`,
+      cancelled: "自动恢复已因管理员操作停止。",
+      skipped: "自动恢复未运行：当前是隔离模式。",
+      "not-needed": "自动恢复：全局暂停已被手动解除。",
+    }[r.state] || ""
+  );
+};
 const homeRolesMarkup = () =>
   config.agents.map(homeRoleCard).join("") ||
   '<div class="card empty">还没有角色。到“角色”中添加第一个。</div>';
@@ -481,7 +497,7 @@ function render() {
       ),
       grants = status.disclosureRequests.length,
       errors = (status.recentErrors || []).length;
-    content.innerHTML = `<div class="banner ${status.mode === "isolated" ? "warn" : status.globalPaused ? "" : "ok"}">${icon(status.mode === "isolated" ? "shield" : "pulse")}<span>${status.mode === "isolated" ? "隔离模式：不连接 QQ，也不运行模型。" : status.globalPaused ? "全局暂停中：连接照常记录消息，角色不参与。" : "运行中：各角色按自己的设置参与。"}</span></div><div class="section-title"><h2>角色</h2></div><div class="grid" id="home-roles">${homeRolesMarkup()}</div><div class="section-title"><h2>需要处理</h2>${grants + waiting ? "" : tag("暂无", "live")}</div>${grants ? `<div class="card"><h3>受限动作授权 · ${grants}</h3>${status.disclosureRequests.map((r, i) => `<div class="record"><strong>${esc(find("agents", r.agentId)?.name)} → ${esc(r.conversation)}</strong><p>${r.records.length} 条资料涉及${r.reason === "external-service" ? "外部服务调用" : "本地运维内容"}。${r.request ? "批准仅对当前回合、所示请求参数及资料集合有效。" : "批准仅对当前回合、当前会话所示资料集合有效。"}</p><p class="mono">${esc(r.records.join("\n"))}</p>${r.request ? `<pre>${esc(JSON.stringify(r.request, null, 2))}</pre><p>${esc(JSON.stringify(r.sourceClasses))}</p>` : ""}<button data-do="grant" data-id="${i}">批准本次披露</button></div>`).join("")}</div>` : ""}${waiting ? `<div class="card"><h3>待核对发送 · ${waiting}</h3><p class="hint">网络结果未知的发送不会自动重发。请在 QQ 中查看对应会话后标记结果。</p><div id="unresolved-deliveries">读取中…</div></div>` : ""}${grants + waiting ? "" : '<p class="hint">没有待批准的动作或待核对的发送。</p>'}`;
+    content.innerHTML = `<div class="banner ${status.mode === "isolated" ? "warn" : status.globalPaused ? "" : "ok"}">${icon(status.mode === "isolated" ? "shield" : "pulse")}<span>${status.mode === "isolated" ? "隔离模式：不连接 QQ，也不运行模型。" : status.globalPaused ? "全局暂停中：连接照常记录消息，角色不参与。" : "运行中：各角色按自己的设置参与。"}${autoResumeText(status.autoResume) ? ` ${esc(autoResumeText(status.autoResume))}` : ""}</span></div><div class="section-title"><h2>角色</h2></div><div class="grid" id="home-roles">${homeRolesMarkup()}</div><div class="section-title"><h2>需要处理</h2>${grants + waiting ? "" : tag("暂无", "live")}</div>${grants ? `<div class="card"><h3>受限动作授权 · ${grants}</h3>${status.disclosureRequests.map((r, i) => `<div class="record"><strong>${esc(find("agents", r.agentId)?.name)} → ${esc(r.conversation)}</strong><p>${r.records.length} 条资料涉及${r.reason === "external-service" ? "外部服务调用" : "本地运维内容"}。${r.request ? "批准仅对当前回合、所示请求参数及资料集合有效。" : "批准仅对当前回合、当前会话所示资料集合有效。"}</p><p class="mono">${esc(r.records.join("\n"))}</p>${r.request ? `<pre>${esc(JSON.stringify(r.request, null, 2))}</pre><p>${esc(JSON.stringify(r.sourceClasses))}</p>` : ""}<button data-do="grant" data-id="${i}">批准本次披露</button></div>`).join("")}</div>` : ""}${waiting ? `<div class="card"><h3>待核对发送 · ${waiting}</h3><p class="hint">网络结果未知的发送不会自动重发。请在 QQ 中查看对应会话后标记结果。</p><div id="unresolved-deliveries">读取中…</div></div>` : ""}${grants + waiting ? "" : '<p class="hint">没有待批准的动作或待核对的发送。</p>'}`;
     renderOnboarding(content);
     if (waiting) action(renderUnresolved);
     content.insertAdjacentHTML(
@@ -1085,8 +1101,8 @@ function openEditor(type, id) {
       ) +
       input(
         "contextWindow",
-        "上下文窗口 tokens（OpenAI 兼容）",
-        row.contextWindow ?? 128000,
+        "上下文窗口 tokens（OpenAI 兼容；留空时从服务的模型列表读取，读不到按 32768）",
+        row.contextWindow ?? "",
         'type="number" min="1024"',
       ) +
       check("vision", "模型支持图片输入（OpenAI 兼容）", row.vision) +
@@ -1172,7 +1188,7 @@ $("#edit-form").onsubmit = (e) => {
           ...(get("type") === "openai"
             ? {
                 apiKeyEnv: get("apiKeyEnv") || undefined,
-                contextWindow: Number(get("contextWindow")) || 128000,
+                contextWindow: Number(get("contextWindow")) || undefined,
                 vision: f.has("vision"),
                 sendEffort: f.has("sendEffort"),
               }

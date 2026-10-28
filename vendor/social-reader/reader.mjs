@@ -1,5 +1,7 @@
 import {withBrowserLock} from './browser-lock.mjs';
 import { execFile } from 'node:child_process';
+// Same environment boundary as every other bridge child process.
+import { buildChildEnv } from '../../src/core/child-env.mjs';
 import { promisify } from 'node:util';
 import { safeFetch } from './safe-fetch.js';
 
@@ -176,7 +178,7 @@ export class SocialReader {
     this.useBrowserLock = !run;
     this.run = run || ((file, args, timeout) => exec(file, args, {
       timeout, maxBuffer: 1024 * 1024, encoding: 'utf8', shell: false,
-      env: { ...process.env, NO_COLOR: '1', PATH: `${process.env.PATH || ''}:/opt/homebrew/bin:/usr/local/bin` },
+      env: { ...buildChildEnv(file === this.mcporter ? 'mcporter' : 'app-reader'), NO_COLOR: '1', PATH: `${process.env.PATH || ''}:/opt/homebrew/bin:/usr/local/bin` },
     }));
     this.fetchPage = fetchPage; this.opencli = opencli; this.mcporter = mcporter;
     this.cooldownMs = cooldownMs; this.tail = Promise.resolve(); this.nextAt = 0;
