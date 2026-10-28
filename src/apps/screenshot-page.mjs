@@ -1,7 +1,9 @@
+// @ts-check
 import { contentIdentity } from "./urls.mjs";
+/** @param {any} page OpenCLI page handle, not a Playwright Page. @param {{url: string, platform: string}} job */
 export async function screenshotAppPage(page, job) {
   const expected = contentIdentity(job.url, job.platform);
-  await page.goto(expected.url);
+  await page.goto(/** @type {string} */ (expected.url));
   const current = async () => {
     const result = await page.evaluate("() => location.href");
     const url =

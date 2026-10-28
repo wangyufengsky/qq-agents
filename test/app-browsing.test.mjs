@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fixture, config, context, raw } from "./helpers.mjs";
+import { fixture, config, context } from "./helpers.mjs";
 import { AppBrowsing } from "../src/apps/service.mjs";
 import { restoreExport } from "../src/memory/migrate.mjs";
 import { MemoryStore } from "../src/memory/store.mjs";
@@ -272,7 +272,7 @@ test("cursor bytes are shared within one role and isolated across roles", async 
 });
 test("browser cursors, history and card references are isolated by agent", async (t) => {
   let calls = 0;
-  const { runtime, store } = setup(t, async () => ({
+  const { runtime } = setup(t, async () => ({
     items: [
       { title: "Fixture", url },
       { title: "Again", url },

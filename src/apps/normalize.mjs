@@ -31,7 +31,9 @@ function sourceIdentity(value) {
       };
     m = u.pathname.match(/^\/(question|p)\/(\d+)\/?$/);
     if (m) return { kind: m[1] === "p" ? "article" : "question", id: m[2] };
-  } catch {}
+  } catch {
+    // Unparseable URL: fall through to null.
+  }
   return null;
 }
 export function zhihuSearchRows(data) {

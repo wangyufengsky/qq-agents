@@ -105,6 +105,7 @@ export class AppCursors {
       const total = Buffer.byteLength(json) + itemBytes;
       if (total === bytes) break;
       bytes = total;
+      // eslint-disable-next-line no-constant-condition -- exits via break once the size converges
     } while (true);
     return { meta: json, items, bytes };
   }

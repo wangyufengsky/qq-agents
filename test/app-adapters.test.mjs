@@ -139,6 +139,7 @@ test("Zhihu recommendations and search preserve URL IDs larger than safe JSON in
   );
   assert.equal(
     zhihuSearchRows({
+      // eslint-disable-next-line no-loss-of-precision -- a numeric ID beyond 2^53 must be rejected, not rounded
       data: [{ target: { type: "article", id: 2097477416973354782 } }],
     }).length,
     0,

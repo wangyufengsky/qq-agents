@@ -1,3 +1,4 @@
+// @ts-check
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -5,6 +6,7 @@ import { backupDatabase } from "./backup.mjs";
 import { MemoryStore } from "./store.mjs";
 import { importLegacy } from "./migrate.mjs";
 
+/** @param {string} file @param {any} plan Legacy import plan. @param {{backupDestination?: string}} [options] */
 export async function applyMigration(file, plan, { backupDestination } = {}) {
   if (plan.rejected.length) throw Error("MIGRATION_REJECTED_RECORDS");
   // Refuse aliases of old sources, including dangling symlinks and hard links.
@@ -12,7 +14,7 @@ export async function applyMigration(file, plan, { backupDestination } = {}) {
     let stat;
     try {
       stat = fs.lstatSync(candidate);
-    } catch (error) {
+    } catch (/** @type {any} */ error) {
       if (error.code !== "ENOENT") throw error;
     }
     if (stat && (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1))
@@ -34,7 +36,7 @@ export async function applyMigration(file, plan, { backupDestination } = {}) {
   try {
     store = new MemoryStore(file);
     return { before, ...importLegacy(store.bind(plan.agentId), plan) };
-  } catch (error) {
+  } catch (/** @type {any} */ error) {
     error.backup = before;
     throw error;
   } finally {

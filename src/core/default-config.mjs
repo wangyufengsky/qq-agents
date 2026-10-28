@@ -1,4 +1,5 @@
 // @ts-check
+// @ts-check
 // Runtime defaults are source code; examples are generated documentation.
 export function defaultConfig() {
   return {

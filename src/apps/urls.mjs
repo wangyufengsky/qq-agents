@@ -45,6 +45,7 @@ export function publicUrl(value) {
   if (
     typeof value !== "string" ||
     value.length > 4096 ||
+    // eslint-disable-next-line no-control-regex -- deliberately rejects control characters
     /[\x00-\x20\x7f\\]/.test(value)
   )
     throw Error("APP_URL_DENIED");

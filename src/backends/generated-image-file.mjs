@@ -1,9 +1,11 @@
+// @ts-check
 import fs from "node:fs";
 import path from "node:path";
 import { imageMime } from "../tools/media.mjs";
 
 // Only native, completed image items may name a file. Never accept a model-supplied
 // path, a data URL, or arbitrary tool output as authority to read the filesystem.
+/** @param {string} home @param {string} sessionId @param {{type?: string, status?: string, savedPath?: unknown}} item */
 export function readGeneratedImage(home, sessionId, item) {
   if (
     !/^[A-Za-z0-9_-]{1,128}$/.test(sessionId) ||
@@ -74,6 +76,7 @@ export function readGeneratedImage(home, sessionId, item) {
   }
 }
 
+/** @param {{type?: string} | null | undefined} failure */
 export function generationError(failure) {
   if (failure?.type === "usageLimitExceeded")
     return {

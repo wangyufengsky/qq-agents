@@ -134,6 +134,7 @@ export class AppAdapter {
         operation: job.operation,
         status: code,
       });
+      // eslint-disable-next-line preserve-caught-error -- only the sanitized APP_* code may leave; the upstream error text must not.
       throw Error(code);
     }
   }

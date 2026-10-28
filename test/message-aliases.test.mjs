@@ -63,7 +63,9 @@ function setup(t, store) {
     t.after(() => {
       try {
         store.close();
-      } catch {}
+      } catch {
+        // Already closed by the test.
+      }
     });
   const m = store.bind(agent),
     opts = {

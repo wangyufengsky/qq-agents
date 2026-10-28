@@ -400,7 +400,7 @@ export class AppBrowsing {
       const requested = requestedByHuman(r, ctx, request, requestEventId);
       this.active(ctx, job.platform, { network: true, requested });
       r.authorizeExternal(ctx, request, { requestEventId, fixed });
-      const a = this.active(ctx, job.platform, { spend: true, requested });
+      this.active(ctx, job.platform, { spend: true, requested });
       job.requestEventId = requestEventId;
       const streamId = stream?.job.streamId || randomUUID();
       job.streamId = streamId;
@@ -560,6 +560,7 @@ export class AppBrowsing {
           fetchedAt: new Date(r.now()).toISOString(),
           untrustedContent: true,
         });
+        // eslint-disable-next-line preserve-caught-error -- only the sanitized APP_* code may leave; the upstream error text must not.
         throw Error(code);
       }
     });

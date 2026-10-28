@@ -1,15 +1,19 @@
+// @ts-check
 import { githubMarker, privateGithubSources } from "../github/policy.mjs";
 import { sourceClass } from "./outbound-policy.mjs";
 
 // Protection from the entire context, not only model-selected evidence IDs.
+/** @param {any} runtime @param {any} ctx */
 export function contextProtection(runtime, ctx) {
   return {
     protectedRepositories: privateGithubSources(ctx, runtime),
     protectedOperations: [...ctx.privateRead].some(
-      (id) => sourceClass(runtime, ctx, id) === "operations",
+      (/** @type {string} */ id) =>
+        sourceClass(runtime, ctx, id) === "operations",
     ),
   };
 }
+/** @param {any} runtime @param {any} ctx @param {any[]} notes */
 export function trackMindRecords(runtime, ctx, notes, kind = "work-note") {
   // Every model-facing record return and implicit handoff restores durable
   // markers; deleting an original source cannot erase read protection.
@@ -22,7 +26,8 @@ export function trackMindRecords(runtime, ctx, notes, kind = "work-note") {
     if (
       note.protectedOperations ||
       (note.evidence || []).some(
-        (id) => sourceClass(runtime, ctx, id) === "operations",
+        (/** @type {string} */ id) =>
+          sourceClass(runtime, ctx, id) === "operations",
       )
     )
       ctx.privateRead.add("operations:" + kind + ":" + note.id);

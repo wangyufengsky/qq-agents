@@ -40,7 +40,7 @@
     "acceptance:live": "node scripts/local-acceptance.mjs",
     "memory:benchmark": "node scripts/memory-benchmark.mjs",
     "memory:backup": "node scripts/backup.mjs",
-    "lint": "eslint src scripts test eslint.config.mjs",
+    "lint": "eslint src scripts test public eslint.config.mjs",
     "typecheck": "tsc -p tsconfig.json",
     "defaults:check": "node scripts/default-config.mjs",
     "defaults:write": "node scripts/default-config.mjs --write",

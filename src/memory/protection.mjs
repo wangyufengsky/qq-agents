@@ -1,5 +1,7 @@
+// @ts-check
 // Protection is monotonic: editing text or removing evidence cannot declassify
 // information already incorporated into a saved record.
+/** @param {...any} records */
 export function mergeProtection(...records) {
   const repositories = new Set();
   for (const record of records) {
