@@ -1,7 +1,8 @@
 import { APP_CAPABILITIES } from "../apps/adapter.mjs";
 import { APP_LEDGER, inAppHours } from "../apps/policy.mjs";
 import { githubMarker } from "../github/policy.mjs";
-import { trackMindRecords } from "./protected-mind.mjs";
+import { contextProtection, trackMindRecords } from "./protected-mind.mjs";
+import { recallBoundary } from "./recall-boundary.mjs";
 
 const SUBJECT = "@subject";
 const DAY = 86400000;
@@ -13,25 +14,30 @@ export function subjectMaterials(runtime, ctx) {
   const a = runtime.agent(ctx.agentId),
     m = runtime.memory.bind(a.id),
     now = runtime.now();
-  const logs = m.db
-    .prepare(
-      "SELECT id,observed_at AS at,payload FROM events WHERE agent_id=? AND conversation=? AND kind='subject.log' ORDER BY seq DESC LIMIT 3",
-    )
-    .all(a.id, SUBJECT)
-    .map((row) => {
-      const p = JSON.parse(row.payload);
-      return {
-        id: row.id,
-        at: row.at,
-        did: p.did,
-        summary: p.summary,
-        found: (p.found || []).map((f) => f.title),
-        next: p.next || "",
-        ...(p.restReason ? { restReason: p.restReason } : {}),
-        protectedRepositories: p.protectedRepositories,
-        protectedOperations: p.protectedOperations,
-      };
-    });
+  const boundary = recallBoundary(runtime, ctx, {
+    publicOnly: ctx.freshSubject === true,
+  });
+  const logs = boundary.rows(
+    m.db
+      .prepare(
+        "SELECT id,observed_at AS at,payload FROM events WHERE agent_id=? AND conversation=? AND kind='subject.log' ORDER BY seq DESC LIMIT 3",
+      )
+      .all(a.id, SUBJECT)
+      .map((row) => {
+        const p = JSON.parse(row.payload);
+        return {
+          id: row.id,
+          at: row.at,
+          did: p.did,
+          summary: p.summary,
+          found: (p.found || []).map((f) => f.title),
+          next: p.next || "",
+          ...(p.restReason ? { restReason: p.restReason } : {}),
+          protectedRepositories: p.protectedRepositories,
+          protectedOperations: p.protectedOperations,
+        };
+      }),
+  );
   // Recent rows bound the scan; counts per conversation, no message bodies.
   const floor =
     (m.db
@@ -49,13 +55,15 @@ export function subjectMaterials(runtime, ctx) {
       "SELECT conversation, COUNT(*) AS unread FROM events WHERE agent_id=? AND direction='in' AND seq>? GROUP BY conversation ORDER BY unread DESC LIMIT 6",
     )
     .all(a.id, cursor);
-  const diaries = m.db
-    .prepare(
-      "SELECT id,title,updated_at AS updatedAt FROM diaries WHERE agent_id=? ORDER BY updated_at DESC LIMIT 3",
-    )
-    .all(a.id);
-  const shares = m.identity
-    .list("intentions")
+  const diaries = boundary.rows(
+    m.db
+      .prepare(
+        "SELECT id,title,updated_at AS updatedAt FROM diaries WHERE agent_id=? ORDER BY updated_at DESC LIMIT 3",
+      )
+      .all(a.id),
+  );
+  const shares = boundary
+    .rows(m.identity.list("intentions"))
     .slice(0, 5)
     .map((i) => ({
       id: i.id,
@@ -87,6 +95,10 @@ export function subjectMaterials(runtime, ctx) {
   for (const repo of logs.flatMap((l) => l.protectedRepositories || []))
     ctx.privateRead.add(githubMarker(repo));
   ctx.persistTaint?.();
+  const protection = contextProtection(runtime, ctx);
+  const restricted =
+    protection.protectedOperations ||
+    protection.protectedRepositories.length > 0;
   const strip = ({ protectedRepositories, protectedOperations, ...rest }) => ({
     ...rest,
     ...(protectedRepositories?.length || protectedOperations
@@ -94,6 +106,9 @@ export function subjectMaterials(runtime, ctx) {
       : {}),
   });
   return {
+    notice: ctx.freshSubject
+      ? "本轮是新的空闲上下文，自动素材和交接已隔离受保护内容；原始记录仍保留。主动读取受保护记忆会限制本轮外网调用。旧日志中的权限判断不是当前授权，请以当前工具配置、参数 schema 和 contextGate 为准。"
+      : "当前上下文已读来源继续生效；历史平台探测成功不代表当前上下文有联网权限。",
     lastLogs: logs.map(strip),
     recent: {
       conversations,
@@ -102,12 +117,14 @@ export function subjectMaterials(runtime, ctx) {
     inbox,
     explore: {
       platforms,
-      appsOpenNow: appsOpen,
+      appsOpenNow: appsOpen && !restricted,
+      restrictedContext: restricted,
       readsLeftToday: Math.max(0, a.apps.maxReadsPerDay - reads),
       readsPerTurn: a.apps.maxReadsPerTurn,
-      webSearch: a.network?.autonomous
-        ? a.subject.externalReads.map((x) => `${x.serverId}/${x.tool}`)
-        : [],
+      webSearch:
+        a.network?.autonomous && !restricted
+          ? a.subject.externalReads.map((x) => `${x.serverId}/${x.tool}`)
+          : [],
       toolCallsThisTurn: a.subject.maxToolCallsPerTurn,
     },
     shares: shares.map(strip),

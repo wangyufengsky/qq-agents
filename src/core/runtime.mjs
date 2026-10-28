@@ -747,14 +747,6 @@ export class Runtime {
       !toolAvailable(a, name, ctx.conversation)
     )
       throw Error("TOOL_DISABLED");
-    if (
-      ctx.conversation === SUBJECT &&
-      name === "external_tool" &&
-      !a.subject.externalReads.some(
-        (x) => x.serverId === args.serverId && x.tool === args.tool,
-      )
-    )
-      throw Error("SUBJECT_EXTERNAL_TOOL_NOT_READ_ALLOWED");
     let result = await dispatchTool(this, ctx, name, args);
     if (
       ["web_fetch", "social_read", "social_search", "social_comments"].includes(

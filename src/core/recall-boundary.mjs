@@ -3,11 +3,10 @@ import { sourceClass } from "./outbound-policy.mjs";
 
 // This is a read boundary, not declassification. Stored records and the
 // protection of any context that already saw them remain unchanged.
-export function recallBoundary(runtime, ctx) {
-  const privileged = githubPrivateContext(
-    runtime.agent(ctx.agentId),
-    ctx.conversation,
-  );
+export function recallBoundary(runtime, ctx, { publicOnly = false } = {}) {
+  const privileged =
+    !publicOnly &&
+    githubPrivateContext(runtime.agent(ctx.agentId), ctx.conversation);
   const restricted = (value) =>
     value?.protectedOperations === true ||
     value?.protectedRepositories?.length > 0;

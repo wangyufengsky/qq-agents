@@ -132,7 +132,8 @@ export async function appTool(runtime, ctx, name, args) {
   if (name === "app_share_send") return sendShare(service, ctx, args);
   if (name === "app_image") return fetchImage(service, ctx, args);
   if (name === "app_boards") return service.boards(ctx, args);
-  if (name === "app_capabilities") return service.capabilities(ctx.agentId);
+  if (name === "app_capabilities")
+    return service.capabilities(ctx.agentId, ctx);
   if (name === "app_history") {
     const page = service.history(ctx.agentId, args.offset);
     // Apply the same source-disclosure rules as a full local read before
