@@ -10,6 +10,51 @@ import { sessionSignature, assertSession } from "./session-contract.mjs";
 import { readGeneratedImage } from "./generated-image-file.mjs";
 import { buildChildEnv } from "../core/child-env.mjs";
 import crossSpawn from "cross-spawn";
+import { execFileSync } from "node:child_process";
+
+/** @param {number} pid */
+function taskkillTree(pid) {
+  execFileSync(
+    path.join(
+      process.env.SystemRoot || "C:\\Windows",
+      "System32",
+      "taskkill.exe",
+    ),
+    ["/pid", String(pid), "/T", "/F"],
+    { stdio: "ignore", windowsHide: true, timeout: 10000 },
+  );
+}
+/**
+ * Windows launcher for Codex. cross-spawn starts `codex.cmd` through cmd.exe,
+ * so the child is that wrapper and kill() would leave the app-server running
+ * against the same dedicated home. kill() ends the whole tree instead, and
+ * synchronously, so a replacement backend never overlaps the old process.
+ * @param {{ spawn?: typeof crossSpawn, killTree?: (pid: number) => void }} [deps]
+ */
+export function windowsCodexSpawn({
+  spawn = crossSpawn,
+  killTree = taskkillTree,
+} = {}) {
+  return (
+    /** @type {string} */ command,
+    /** @type {string[]} */ args,
+    /** @type {any} */ options,
+  ) => {
+    const child = spawn(command, args, options);
+    const kill = child.kill.bind(child);
+    child.kill = (signal) => {
+      if (child.pid && child.exitCode === null && child.signalCode === null)
+        try {
+          killTree(child.pid);
+          return true;
+        } catch {
+          // taskkill missing or refused: fall back to ending the wrapper.
+        }
+      return kill(signal);
+    };
+    return child;
+  };
+}
 
 export const restrictions = {
   "features.shell_tool": false,
@@ -58,8 +103,10 @@ export class CodexBackend {
         /** @type {any} */ ({
           command: config.command || "codex",
           // npm installs `codex.cmd` on Windows, which spawn() cannot start
-          // without a shell; cross-spawn runs it with cmd.exe-safe quoting.
-          ...(process.platform === "win32" ? { spawnProcess: crossSpawn } : {}),
+          // without a shell; see windowsCodexSpawn for how it is stopped.
+          ...(process.platform === "win32"
+            ? { spawnProcess: windowsCodexSpawn() }
+            : {}),
           cwd: this.root,
           env: { ...buildChildEnv("codex", config.env), CODEX_HOME: home },
           args: [
