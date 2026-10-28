@@ -762,6 +762,15 @@ export function createServer({
         await runtime.resetSession(data.agentId, data.conversation);
         return send({ ok: true });
       }
+      if (req.method === "POST" && url.pathname === "/api/session/recover") {
+        const data = await readBody();
+        return send(
+          await runtime.recoverProtectedConversation(
+            data.agentId,
+            data.conversation,
+          ),
+        );
+      }
       if (req.method === "POST" && url.pathname === "/api/conversation/state") {
         const data = await readBody();
         runtime.agent(data.agentId);

@@ -3,6 +3,7 @@ import { identityAnchors } from "../core/prompts.mjs";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { privateGithubSources } from "../github/policy.mjs";
+import { recallBoundary } from "../core/recall-boundary.mjs";
 import {
   contextProtection,
   trackMindRecords,
@@ -227,7 +228,9 @@ function executeMindTool(runtime, ctx, name, args) {
       contextProtection(runtime, ctx),
     );
   if (name === "work_notes") {
-    const rows = identity.notes(ctx.conversation);
+    const rows = recallBoundary(runtime, ctx).rows(
+      identity.notes(ctx.conversation),
+    );
     return {
       items: rows.slice(args.offset, args.offset + 8),
       nextOffset: args.offset + 8 < rows.length ? args.offset + 8 : null,
@@ -258,8 +261,8 @@ function executeMindTool(runtime, ctx, name, args) {
   }
   if (name === "intent_create") return runtime.subject.create(ctx, args);
   if (name === "intent_list") {
-    const rows = identity
-      .list("intentions")
+    const rows = recallBoundary(runtime, ctx)
+      .rows(identity.list("intentions"))
       .filter(
         (i) =>
           (!args.target || i.target === args.target) &&
