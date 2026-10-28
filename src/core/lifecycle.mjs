@@ -229,39 +229,61 @@ export class ContextLifecycle {
     if (m.state(conversation).session)
       this.retire(agentId, conversation, "subject-fresh-session");
     m.store.transaction(() => {
-      const state = m.state(conversation),
-        at = r.now(),
-        id = "subject-context:" + randomUUID();
-      const archived = !!(state.disclosureTaint?.length || state.continuity);
-      if (archived)
-        m.identity.put("session_history", {
-          id,
-          conversation,
-          session: null,
-          reason: "subject-fresh-context",
-          at,
-          disclosureTaint: state.disclosureTaint || [],
-          continuity: state.continuity || null,
-        });
-      m.setState(conversation, {
-        ...state,
-        session: null,
-        disclosureTaint: [],
-        continuity: { anchors: [], recent: [] },
-        usage: null,
-        recallRecovery: {
-          generation: (state.recallRecovery?.generation || 0) + 1,
-          at,
-          archiveId: archived ? id : null,
-        },
+      const state = m.state(conversation);
+      this.fence(m, conversation, {
+        prefix: "subject-context",
+        reason: "subject-fresh-context",
+        archive: !!(state.disclosureTaint?.length || state.continuity),
       });
     });
-    for (const [token, old] of r.capabilities)
-      if (old.agentId === agentId && old.conversation === conversation) {
-        old.controller.abort();
-        r.capabilities.delete(token);
-      }
+    r.revokeCapabilities(agentId, conversation);
     return true;
+  }
+  // Archive a context's taint and continuity and start a new source boundary.
+  // Run inside the caller's transaction, after the backend transcript is retired.
+  fence(
+    m,
+    conversation,
+    {
+      prefix,
+      reason,
+      session = null,
+      archive = true,
+      keepContinuity = false,
+      state: extra = {},
+    },
+  ) {
+    const state = m.state(conversation),
+      at = this.runtime.now(),
+      id = prefix + ":" + randomUUID();
+    if (archive)
+      m.identity.put("session_history", {
+        id,
+        conversation,
+        session,
+        reason,
+        at,
+        disclosureTaint: state.disclosureTaint || [],
+        continuity: state.continuity || null,
+      });
+    m.setState(conversation, {
+      ...state,
+      ...extra,
+      session: null,
+      disclosureTaint: [],
+      // Continuity holds source IDs only; handoff() re-checks them at the boundary.
+      continuity: (keepContinuity && state.continuity) || {
+        anchors: [],
+        recent: [],
+      },
+      usage: null,
+      recallRecovery: {
+        generation: (state.recallRecovery?.generation || 0) + 1,
+        at,
+        archiveId: archive ? id : null,
+      },
+    });
+    return archive ? id : null;
   }
   prepare(ctx, backend, reasons, tools = []) {
     if (ctx.controller.signal.aborted) throw Error("ABORTED");

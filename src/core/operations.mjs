@@ -292,8 +292,16 @@ export class Operations {
     } finally {
       this.executions.delete(requestId);
     }
-    if (!this.runtime.protectedWork.active(agentId, conversation))
-      throw Error("PROTECTED_WORK_NOT_ACTIVE");
+    // The approved operation already ran. If its task ended meanwhile, report
+    // the outcome to the console but keep nothing for a later ops_result.
+    if (!this.runtime.protectedWork.active(agentId, conversation)) {
+      this.audit(agentId, "completed", {
+        id: requestId,
+        type: p.operation.type,
+        taskInactive: true,
+      });
+      return { ...result, taskInactive: true };
+    }
     this.results.set(requestId, {
       agentId,
       conversation,

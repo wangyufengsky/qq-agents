@@ -466,3 +466,95 @@ test("work rejects mixed sources at creation and on persisted task recovery", as
     /PERMISSION_DENIED/,
   );
 });
+
+test("quiet hours keep QQ chats quiet without blocking console work", async (t) => {
+  const f = setup(t);
+  f.runtime.clock = () => new Date("2026-10-25T12:00:00Z");
+  f.runtime.agent("agent-0").silence = [
+    {
+      start: "00:00",
+      end: "23:59",
+      days: [0, 1, 2, 3, 4, 5, 6],
+      timezone: "UTC",
+    },
+  ];
+  assert(
+    f.runtime
+      .blockers(f.runtime.agent("agent-0"), "private:30000")
+      .includes("QUIET_HOURS"),
+  );
+  const task = f.runtime.protectedWork.create({
+    agentId: "agent-0",
+    instruction: "night task",
+  });
+  const scope = "@work:" + task.id;
+  await f.runtime.protectedWork.act({
+    agentId: "agent-0",
+    taskId: task.id,
+    action: "run",
+  });
+  await f.runtime.running.get("agent-0|" + scope)?.done;
+  assert.equal(
+    f.runtime.protectedWork.task("agent-0", scope).status,
+    "waiting",
+  );
+});
+
+test("a run without a new submission does not resurface an old result for review", async (t) => {
+  let submit = false;
+  const f = setup(t, {
+    run: async (p) => {
+      if (submit)
+        await p.callTool("protected_work_submit", { text: "fresh result" });
+    },
+  });
+  const task = f.runtime.protectedWork.create({
+    agentId: "agent-0",
+    instruction: "two runs",
+  });
+  const scope = "@work:" + task.id;
+  const start = async () => {
+    await f.runtime.protectedWork.act({
+      agentId: "agent-0",
+      taskId: task.id,
+      action: "run",
+    });
+    await f.runtime.running.get("agent-0|" + scope)?.done;
+    return f.runtime.protectedWork.task("agent-0", scope);
+  };
+  submit = true;
+  assert.equal((await start()).status, "review");
+  submit = false;
+  const second = await start();
+  assert.equal(second.status, "waiting");
+  assert.equal(second.revision, 1);
+});
+
+test("one failing chat migration is reported without stopping recovery", (t) => {
+  const f = setup(t),
+    scope = "private:30000";
+  const task = f.runtime.protectedWork.create({
+    agentId: "agent-0",
+    instruction: "was running",
+  });
+  f.runtime.protectedWork.update("agent-0", "@work:" + task.id, {
+    status: "running",
+  });
+  f.m.setState(scope, {
+    session: { id: "old", backend: "dsh" },
+    disclosureTaint: ["operations:legacy"],
+  });
+  f.m.db.exec(
+    "CREATE TRIGGER deny_isolation BEFORE INSERT ON session_history BEGIN SELECT RAISE(ABORT,'archive unavailable'); END;",
+  );
+  assert.doesNotThrow(() => f.runtime.protectedWork.recover());
+  assert.deepEqual(f.m.state(scope).disclosureTaint, ["operations:legacy"]);
+  assert.equal(
+    f.runtime.protectedWork.task("agent-0", "@work:" + task.id).status,
+    "interrupted",
+  );
+  assert.match(
+    JSON.stringify(f.runtime.diagnostics.recent),
+    /PROTECTED_WORK_MIGRATION_FAILED/,
+  );
+});

@@ -295,13 +295,14 @@ export class Runtime {
     if (this.config.mode !== "live") codes.push("ISOLATED_MODE");
     if (this.config.globalPaused) codes.push("GLOBAL_PAUSED");
     if (a.paused) codes.push("AGENT_PAUSED");
-    if (inSilence(a, this.clock())) codes.push("QUIET_HOURS");
-    if (conversation === undefined) return codes;
+    // Quiet hours govern QQ chatter; console-started protected work never speaks there.
     if (isWorkScope(conversation)) {
       if (!this.protectedWork.active(a.id, conversation))
         codes.push("NOT_ALLOWED");
       return codes;
     }
+    if (inSilence(a, this.clock())) codes.push("QUIET_HOURS");
+    if (conversation === undefined) return codes;
     if (!allowed(a, conversation)) codes.push("NOT_ALLOWED");
     const state = this.memory.bind(a.id).state(conversation);
     if (state.paused) codes.push("CONVERSATION_PAUSED");
@@ -652,11 +653,7 @@ export class Runtime {
     const a = this.agent(agentId);
     if (conversation !== SUBJECT && !allowed(a, conversation))
       throw Error("INVALID_CONVERSATION");
-    for (const [token, active] of this.capabilities)
-      if (active.agentId === agentId && active.conversation === conversation) {
-        active.controller.abort();
-        this.capabilities.delete(token);
-      }
+    this.revokeCapabilities(agentId, conversation);
     const ctx = this.running.get(agentId + "|" + conversation);
     if (ctx) {
       ctx.controller.abort();
@@ -683,31 +680,20 @@ export class Runtime {
       const state = m.state(conversation);
       if (!state.paused || this.running.has(agentId + "|" + conversation))
         throw Error("RECOVERY_REQUIRES_PAUSED_CONVERSATION");
-      const at = this.now(),
-        id = "recall-recovery:" + randomUUID();
-      m.identity.put("session_history", {
-        id,
-        conversation,
+      const id = this.contexts.fence(m, conversation, {
+        prefix: "recall-recovery",
         reason: "protected-recall-recovery",
-        at,
         session: before.session ? sessionReference(before.session) : null,
-        disclosureTaint: state.disclosureTaint || [],
-        continuity: state.continuity || null,
-      });
-      m.setState(conversation, {
-        ...state,
-        session: null,
-        disclosureTaint: [],
-        continuity: { anchors: [], recent: [] },
-        usage: null,
-        recallRecovery: {
-          generation: (state.recallRecovery?.generation || 0) + 1,
-          at,
-          archiveId: id,
-        },
       });
       return { recovered: true, paused: true, archiveId: id };
     });
+  }
+  revokeCapabilities(agentId, conversation) {
+    for (const [token, active] of this.capabilities)
+      if (active.agentId === agentId && active.conversation === conversation) {
+        active.controller.abort();
+        this.capabilities.delete(token);
+      }
   }
   wake(...args) {
     return this.trackWork(this.runTurn(...args));
@@ -773,15 +759,8 @@ export class Runtime {
       ...(args.evidence || []),
       ...(args.evidenceIds || []),
       ...(args.counterEvidence || []),
-    ].filter((id) => typeof id === "string")) {
-      boundary.assert({ id });
-      for (const table of ["work_notes", "intentions", "self_candidates"]) {
-        const row = this.memory.db
-          .prepare(`SELECT value FROM ${table} WHERE agent_id=? AND id=?`)
-          .get(ctx.agentId, id);
-        if (row) boundary.assert(JSON.parse(row.value));
-      }
-    }
+    ].filter((id) => typeof id === "string"))
+      boundary.assertId(id);
     for (const [id, library] of [
       [args.fileId, this.files],
       [args.mediaId, this.media],
