@@ -117,7 +117,8 @@ export function subjectMaterials(runtime, ctx) {
     inbox,
     explore: {
       platforms,
-      appsOpenNow: appsOpen && !restricted,
+      appsOpenNow: appsOpen,
+      fixedPublicReadsOnly: restricted,
       restrictedContext: restricted,
       readsLeftToday: Math.max(0, a.apps.maxReadsPerDay - reads),
       readsPerTurn: a.apps.maxReadsPerTurn,

@@ -608,10 +608,14 @@ test("private recollection can open fixed feeds but cannot submit query text or 
     /PRIVATE_RECOLLECTION_EXTERNAL_CALL_BLOCKED/,
   );
   ctx.privateRead.add("operations:fixture");
+  await runtime.callTool(ctx, "app_browse", {
+    platform: "zhihu",
+    entry: "recommend",
+  });
   await assert.rejects(
-    runtime.callTool(ctx, "app_browse", {
+    runtime.callTool(ctx, "app_search", {
       platform: "zhihu",
-      entry: "recommend",
+      query: "operations text",
     }),
     /RESTRICTED/,
   );

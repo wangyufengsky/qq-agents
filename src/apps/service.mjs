@@ -5,7 +5,7 @@ import { appInfo, contentIdentity, resolveAppUrl, publicUrl } from "./urls.mjs";
 import { inAppHours, browserCursor, APP_LEDGER } from "./policy.mjs";
 import { parseCards } from "./cards.mjs";
 import { ownedEvent } from "../tools/forward.mjs";
-import { requestedByHuman } from "../core/outbound-policy.mjs";
+import { requestedByHuman, sourceClass } from "../core/outbound-policy.mjs";
 import { allowed } from "../core/config.mjs";
 const LEDGER = APP_LEDGER;
 export const clean = (v, max = 12000) =>
@@ -148,11 +148,20 @@ export class AppBrowsing {
   active(
     ctx,
     platform,
-    { spend = false, sharing = false, requested = false, network = false } = {},
+    {
+      spend = false,
+      sharing = false,
+      requested = false,
+      network = false,
+      fixed = false,
+    } = {},
   ) {
     if (
+      (!fixed || sharing) &&
       [...ctx.privateRead].some((id) =>
-        /^(operations|operations-result|github-private):/.test(id),
+        ["operations", "private-repository"].includes(
+          sourceClass(this.runtime, ctx, id),
+        ),
       )
     )
       throw Error("APP_RESTRICTED_CONTEXT");
@@ -247,7 +256,9 @@ export class AppBrowsing {
   }
   readStored(ctx, { recordId, offset = 0, maxChars = 6000 }) {
     const record = this.get(ctx, recordId);
-    this.active(ctx, record.platform);
+    this.active(ctx, record.platform, {
+      fixed: record.origin === "app-browser" && !record.source,
+    });
     return this.preview(record, maxChars, offset);
   }
   history(agentId, offset = 0) {
@@ -267,7 +278,7 @@ export class AppBrowsing {
   }
   capabilities(agentId, ctx = null) {
     const a = this.runtime.agent(agentId);
-    let contextGate;
+    let contextGate, fixedPublicReads;
     if (ctx) {
       try {
         this.active(ctx, undefined, { network: true });
@@ -275,11 +286,22 @@ export class AppBrowsing {
       } catch (error) {
         contextGate = { allowed: false, code: error.message };
       }
+      try {
+        this.active(ctx, undefined, { network: true, fixed: true });
+        fixedPublicReads = { allowed: true, code: null };
+      } catch (error) {
+        fixedPublicReads = { allowed: false, code: error.message };
+      }
     }
     return {
       ...(contextGate
         ? {
             contextGate,
+            fixedPublicReads: {
+              ...fixedPublicReads,
+              notice:
+                "Fixed app_browse feeds (recommend/following/hot/ranking without board), app_boards and app_read/app_comments/app_record of records returned by the platform remain available after protected recall. Arbitrary queries, board names, QQ cards and sharing remain restricted. Use returned recordId/cursor; never copy protected text into a request.",
+            },
             probeNotice:
               "Recent platform probes describe service health, not current-context authorization. Platform permissions, tool allowlists and budgets still apply.",
           }
@@ -304,12 +326,16 @@ export class AppBrowsing {
       { tool: "app_boards", args: { platform } },
       { requestEventId, fixed: true },
     );
-    this.active(ctx, platform, { spend: true, requested: auth.requested });
+    this.active(ctx, platform, {
+      spend: true,
+      requested: auth.requested,
+      fixed: true,
+    });
     const value = await this.adapter.perform(
       { platform, operation: "boards", streamId: "board-catalog" },
       { signal: ctx.controller.signal },
     );
-    this.active(ctx, platform);
+    this.active(ctx, platform, { fixed: true });
     return value;
   }
   async probe(platform) {
@@ -409,14 +435,17 @@ export class AppBrowsing {
       };
       const requestEventId = args.requestEventId || stream?.job.requestEventId;
       const fixed =
-        (operation === "browse" && job.entry !== "board") ||
+        (operation === "browse" &&
+          ["recommend", "following", "hot", "ranking"].includes(job.entry) &&
+          !job.board &&
+          !job.query) ||
         (["read", "comments"].includes(operation) &&
           prior?.origin === "app-browser" &&
           !prior.source);
       const requested = requestedByHuman(r, ctx, request, requestEventId);
-      this.active(ctx, job.platform, { network: true, requested });
+      this.active(ctx, job.platform, { network: true, requested, fixed });
       r.authorizeExternal(ctx, request, { requestEventId, fixed });
-      this.active(ctx, job.platform, { spend: true, requested });
+      this.active(ctx, job.platform, { spend: true, requested, fixed });
       job.requestEventId = requestEventId;
       const streamId = stream?.job.streamId || randomUUID();
       job.streamId = streamId;
@@ -449,7 +478,7 @@ export class AppBrowsing {
           if (job.platform && resolved.platform !== job.platform)
             throw Error("APP_PLATFORM_MISMATCH");
           job.platform = resolved.platform;
-          this.active(ctx, job.platform, { network: true, requested });
+          this.active(ctx, job.platform, { network: true, requested, fixed });
           job.url = resolved.url;
         }
         const result = stream?.pending?.length
@@ -460,7 +489,7 @@ export class AppBrowsing {
               normalized: true,
             }
           : await this.adapter.perform(job, { signal: ctx.controller.signal });
-        this.active(ctx, job.platform, { network: true, requested });
+        this.active(ctx, job.platform, { network: true, requested, fixed });
         const fetchedAt = new Date(r.now()).toISOString(),
           rows = result.normalized
             ? result.items
