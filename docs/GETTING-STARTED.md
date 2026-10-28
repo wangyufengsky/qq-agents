@@ -63,7 +63,7 @@ OpenAI 兼容后端不支持上下文压缩和原生生图；需要这些能力�
 export QQ_UNIFIED_ONEBOT_A='<NapCat 中设置的 token>'
 ```
 
-如果之后改用 `scripts/robots.mjs` 后台启动，可把同一键值写入数据目录的 `secrets.json`（`{"QQ_UNIFIED_ONEBOT_A": "..."}`），该文件只留在私有数据目录，不要提交。缺少该变量时，连接会以 `ONEBOT_TOKEN_ENV_MISSING` 失败。
+也可以运行 `npm run setup -- secret QQ_UNIFIED_ONEBOT_A`，把它写进数据目录的 `secrets.json`（输入时不显示）。之后每次启动（`npm start`、`scripts/robots.mjs`、Docker）都会自动读取，不用再在终端里设置。该文件只留在私有数据目录，不要提交。缺少该变量时，连接会以 `ONEBOT_TOKEN_ENV_MISSING` 失败。
 
 ## 1. 隔离模式：填写配置
 

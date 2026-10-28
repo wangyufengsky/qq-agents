@@ -31,6 +31,8 @@
     "check": "node scripts/check.mjs",
     "privacy-scan": "node scripts/privacy-scan.mjs",
     "mcp": "node src/mcp.mjs",
+    "doctor": "node src/cli/doctor.mjs",
+    "setup": "node src/cli/setup.mjs",
     "migrate": "node scripts/migrate.mjs",
     "export": "node scripts/export.mjs",
     "dsh:bundle": "node scripts/dsh-bundle.mjs",

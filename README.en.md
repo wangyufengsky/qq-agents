@@ -32,6 +32,14 @@ DSH and Codex are the most complete. The OpenAI-compatible backend is the easies
 | Codex             | The Codex CLI, logged in once per character                  | Yes        | Yes           | Dedicated app-server and login directory per character.                                       |
 | OpenAI-compatible | A base URL and an API key (local servers may not need a key) | No         | No            | Nothing else to install. Near the context limit the session is retired and rebuilt next turn. |
 
+## Let an AI assistant install it
+
+Give the repository to an AI assistant that can run commands on your machine (Claude Code, Codex, DSH …) and say:
+
+> Please follow `docs/AI-INSTALL.md` in this repository to install and configure QQ Agents until the character can chat in my group.
+
+It asks for the bot's QQ number, the group, the persona and the AI service, then installs, deploys NapCat and the console, writes the configuration and checks every step with `npm run doctor`. You only do three things yourself: **scan the QQ login code** with your phone, **type the API key** into `npm run setup -- secret …` (hidden; the assistant never sees it), and **confirm going live** after it shows you where and as whom the character will speak. The [AI install runbook](docs/AI-INSTALL.md) (in Chinese) has the exact steps.
+
 ## Quick start
 
 **Requirements:** Node.js 24 or later (for the built-in SQLite). Voice handling needs FFprobe/FFmpeg and GIF reading needs FFmpeg (`FFMPEG_PATH` can point to it). Browsing the console needs neither QQ nor an AI backend.
@@ -77,6 +85,7 @@ Some features read content from third-party platforms: Bilibili, Zhihu, Xiaohong
 The documentation is written in Chinese.
 
 - [Getting started: your first character in a group](docs/GETTING-STARTED.md)
+- [AI install runbook: let an assistant set it up](docs/AI-INSTALL.md)
 - [Deploying on Linux / Docker, with a NapCat container](docs/DOCKER.md)
 - [Running on Windows](docs/WINDOWS.md)
 - [Configuration and the data directory](docs/CONFIGURATION.md), including the OpenAI-compatible backend

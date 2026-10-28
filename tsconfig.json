@@ -34,6 +34,7 @@
     "src/apps/policy.mjs",
     "src/core/child-env.mjs",
     "src/core/no-follow.mjs",
+    "src/core/local-secrets.mjs",
     "src/core/mind-policy.mjs",
     "src/core/policy.mjs",
     "src/memory/migrate.mjs",
