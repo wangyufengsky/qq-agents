@@ -275,7 +275,7 @@ export async function decodeGif(
 // Never silently present the first frame of another animation format as a still.
 export function hasOtherAnimation(data, mimeType) {
   if (mimeType === "image/png") {
-    for (let p = 8; p + 12 <= data.length; ) {
+    for (let p = 8; p + 12 <= data.length;) {
       const n = data.readUInt32BE(p),
         type = data.toString("ascii", p + 4, p + 8);
       if (type === "acTL") return true;
@@ -283,7 +283,7 @@ export function hasOtherAnimation(data, mimeType) {
       p += n + 12;
     }
   } else if (mimeType === "image/webp") {
-    for (let p = 12; p + 8 <= data.length; ) {
+    for (let p = 12; p + 8 <= data.length;) {
       const type = data.toString("ascii", p, p + 4),
         n = data.readUInt32LE(p + 4);
       if (
