@@ -39,6 +39,10 @@ export function safeToolFailure(error) {
     };
   /** @type {Record<string, string>} */
   const hints = {
+    RECALL_SOURCE_NOT_ALLOWED:
+      "This protected record was not read in this conversation. Use ordinary conversation records instead. Only administrator private chats and the subject may recall protected records; do not retry another representation of the same source.",
+    PRIVATE_RECOLLECTION_REQUIRES_DISCLOSURE_GRANT:
+      "This context already contains protected material and cannot send here. Rewording, changing requestId or waiting for another message will not clear it. Stop retrying and let the administrator recover the conversation with a fresh, filtered context; do not claim delivery.",
     APP_RESULT_BUDGET:
       "The platform returned more than 100 rows in one batch. No page was committed and an existing cursor is preserved. Request a smaller backend page or narrower query; do not claim that omitted rows were read or that the source is complete.",
     APP_CURSOR_BUDGET:

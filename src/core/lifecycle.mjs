@@ -10,6 +10,7 @@ import { trackMindRecords } from "./protected-mind.mjs";
 import { subjectMaterials } from "./subject-materials.mjs";
 import { mergeProtection } from "../memory/protection.mjs";
 import { rememberSources, sourceHandoff } from "./context-handoff.mjs";
+import { recallBoundary, recallPage } from "./recall-boundary.mjs";
 import {
   retireSession,
   sessionReference,
@@ -81,14 +82,16 @@ export class ContextLifecycle {
     return through;
   }
   handoff(agentId, conversation) {
+    const boundary = recallBoundary(this.runtime, { agentId, conversation });
     const m = this.runtime.memory.bind(agentId),
       s = m.state(conversation),
-      notes = m.identity.notes(conversation);
+      notes = boundary.rows(m.identity.notes(conversation));
     const important = notes.slice(0, 8);
     const subjectState = m.state(SUBJECT),
       a = this.runtime.config.agents.find((a) => a.id === agentId);
-    const intents = m.identity
-      .list("intentions")
+    const continuity = sourceHandoff(m, conversation);
+    const intents = boundary
+      .rows(m.identity.list("intentions"))
       .filter(
         (x) =>
           (conversation === SUBJECT || x.target === conversation) &&
@@ -122,7 +125,10 @@ export class ContextLifecycle {
         notes.length > important.length
           ? "更多未完成笔记需 work_notes 读取，未静默删除。"
           : "笔记是带来源的工作解释；原始事件可回查。",
-      continuity: sourceHandoff(m, conversation),
+      continuity: {
+        ...continuity,
+        sources: boundary.rows(continuity.sources),
+      },
       intents: intents.slice(0, 30).map((i) => ({
         id: i.id,
         target: i.target,
@@ -270,14 +276,19 @@ export class ContextLifecycle {
     const history =
       ctx.conversation === SUBJECT
         ? { items: [] }
-        : m.conversation(
-            {
-              conversation: ctx.conversation,
-              afterSeq: (s.session ? s.feedThroughSeq : s.readThroughSeq) || 0,
-              limit: 30,
-              maxChars: 12000,
-            },
-            ctx.conversation,
+        : recallPage(
+            r,
+            ctx,
+            m.conversation(
+              {
+                conversation: ctx.conversation,
+                afterSeq:
+                  (s.session ? s.feedThroughSeq : s.readThroughSeq) || 0,
+                limit: 30,
+                maxChars: 12000,
+              },
+              ctx.conversation,
+            ),
           );
     this.seen(ctx, history.items);
     ctx.feedThroughSeq = history.nextAfterSeq || s.feedThroughSeq || 0;
