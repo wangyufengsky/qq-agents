@@ -4,6 +4,13 @@
 
 2026-10-28 公开之后的条目用本仓库的 PR 链接；更早条目中的 `#编号` 指公开前私有仓库中的 PR，与本仓库的 Issue/PR 编号无关。
 
+## 交给 AI 安装（2026-10-28）
+
+- 新增 [AI 安装手册](docs/AI-INSTALL.md)：用户把仓库交给 Claude Code、Codex、DSH 等助手，助手就能按步骤完成安装、部署 NapCat 和管理台、生成配置和上线。全程只在扫码登录、输入 API key、确认上线这三处停下来等用户。README 中英文版都加了“让 AI 帮你装”一节。
+- `npm run setup`：`init` 把答案文件生成为隔离、暂停状态下的配置，随机生成 OneBot 令牌，并写好 NapCat 的 `onebot11_<QQ号>.json`（保留原有的其他服务和文件权限，先备份）；`secret` 用不回显的方式写入密钥；`live --confirm` 和 `unpause --confirm` 负责上线。
+- `npm run doctor`：只读检查 Node、FFmpeg、配置、配置用到的密钥（只检查是否存在，不显示值）、管理台状态和各角色无法发言的原因、OneBot 登录的账号、后端可用性，`--json` 输出每项的修复命令。
+- 启动时（`npm start`、Docker）会读取数据目录的 `secrets.json`，补上启动终端里没有设置的环境变量，和 `scripts/robots.mjs` 原来的做法一致。
+
 ## Windows 支持（2026-10-28）
 
 - CI 增加 `windows-latest`，三个平台运行同一套 `npm run verify`；新增 `.gitattributes` 统一使用 LF 换行。

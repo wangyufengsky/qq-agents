@@ -34,6 +34,20 @@ DSH 和 Codex 功能最全；OpenAI 兼容后端门槛最低，但不支持上�
 
 三种后端共用同一套桥接工具（只有生图记录 `generated_image_list` 需要原生生图）和外部 MCP 配置。细节见 [OpenAI 兼容后端](docs/CONFIGURATION.md#openai-兼容后端) 和 [入门指南](docs/GETTING-STARTED.md)。
 
+## 让 AI 帮你装
+
+把仓库交给能在你电脑上执行命令的 AI 助手（Claude Code、Codex、DSH 等），对它说：
+
+> 请按照这个仓库的 `docs/AI-INSTALL.md`，帮我安装并配置 QQ Agents，直到角色能在我的群里聊天。
+
+助手会问你几件事（机器人的 QQ 号、要进的群、角色人设、用哪个 AI 服务），然后安装依赖、部署 NapCat 和管理台、生成配置、逐项检查。全程只有三处需要你亲自动手：
+
+1. **用手机 QQ 扫码登录**机器人账号；
+2. **在终端里输入 API key**（`npm run setup -- secret …`，输入时不显示，助手看不到）；
+3. **确认上线**：助手会先列出角色将在哪些群、以什么人设发言，你同意后才会开始回复。
+
+助手用 `npm run doctor` 检查每一步，用 `npm run setup` 生成配置，不手写配置文件，也不读取或显示任何密钥。详细步骤见 [AI 安装手册](docs/AI-INSTALL.md)。
+
 ## 5 分钟快速开始
 
 **需要：** Node.js 24 或更高版本（内置 SQLite）。语音处理需要 FFprobe/FFmpeg，GIF 动图阅读需要 FFmpeg（可用 `FFMPEG_PATH` 指定）。只看管理台不需要 QQ 或 AI 后端。
@@ -109,6 +123,7 @@ node src/main.mjs --data /path/to/private-data --port 3210
 **开始使用**
 
 - [入门指南：在一个群里接入第一个角色](docs/GETTING-STARTED.md)
+- [AI 安装手册：交给 AI 助手一键安装](docs/AI-INSTALL.md)
 - [在 Linux / Docker 上部署（含 NapCat 容器）](docs/DOCKER.md)
 - [在 Windows 上运行](docs/WINDOWS.md)
 - [故障排查（按症状查找）](docs/TROUBLESHOOTING.md)

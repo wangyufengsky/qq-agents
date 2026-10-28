@@ -18,6 +18,7 @@ import { BackendRegistry } from "./backends/index.mjs";
 import { createServer } from "./server.mjs";
 import { Lifecycle } from "./transport/lifecycle.mjs";
 import { VoiceStore } from "./tools/voice.mjs";
+import { applyLocalSecrets } from "./core/local-secrets.mjs";
 
 const args = process.argv.slice(2),
   option = (name) =>
@@ -52,6 +53,9 @@ try {
   )
     throw Error("INVALID_PUBLIC_PORT");
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  // Same rule as scripts/robots.mjs: secrets.json fills variables the shell
+  // did not set, so `npm start` works the same on Windows, Linux and Docker.
+  applyLocalSecrets(root);
   lifecycle.lock = acquireProcessLock(root);
   const configStore = new ConfigStore(
     path.resolve(option("--config") || path.join(root, "config.json")),
