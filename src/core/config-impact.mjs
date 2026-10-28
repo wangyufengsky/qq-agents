@@ -1,4 +1,5 @@
 // @ts-check
+// @ts-check
 import { isDeepStrictEqual } from "node:util";
 /** @typedef {{id: string, [key: string]: unknown}} Entity */
 /** @typedef {Entity & {connectionId: string, backendId: string, wake: {participation?: number, [key: string]: unknown}, subject: {intervalMs?: number, maxChecksPerDay?: number, [key: string]: unknown}}} Agent */

@@ -1039,6 +1039,11 @@ function openEditor(type, id) {
         row.tokenEnv || "QQ_UNIFIED_ONEBOT_A",
       ) +
       input("webUrl", "NapCat Web 管理地址（可选）", row.webUrl) +
+      check(
+        "allowPrivateNetwork",
+        "允许 Docker 服务名或内网地址（如 http://napcat:3000；令牌会以明文经过容器网络）",
+        row.allowPrivateNetwork,
+      ) +
       check("enabled", "启用此连接配置", row.enabled) +
       check(
         "autoReconnect",
@@ -1110,12 +1115,7 @@ $("#edit-form").onsubmit = (e) => {
     if (editing.type === "advanced") next = JSON.parse($("#config-json").value);
     else {
       const f = new FormData(e.target),
-        get = (k) => String(f.get(k) || ""),
-        list = (k) =>
-          get(k)
-            .split(/[,，\s]+/)
-            .map((s) => s.trim())
-            .filter(Boolean);
+        get = (k) => String(f.get(k) || "");
       let row = { ...editing.row, id: get("id") };
       if (editing.type === "agents")
         ({ row, githubCredential } = agentForm.parse(f, editing.row));
@@ -1139,6 +1139,9 @@ $("#edit-form").onsubmit = (e) => {
           wsUrl: get("wsUrl"),
           ...(get("tokenEnv") ? { tokenEnv: get("tokenEnv") } : {}),
           ...(get("webUrl") ? { webUrl: get("webUrl") } : {}),
+          ...(f.has("allowPrivateNetwork")
+            ? { allowPrivateNetwork: true }
+            : {}),
           enabled: f.has("enabled"),
           ...(get("container") ? { container: get("container") } : {}),
           ...(get("process").trim()

@@ -96,8 +96,9 @@ node src/main.mjs --data /path/to/private-data --port 3210
 | --------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
 | 第一次试用、开发调试、隔离模式验证；想在前台看日志，按 Ctrl+C 停止                                                                            | `npm start`（等同 `node src/main.mjs`），真实接入加 `-- --live`                              |
 | 已配置好的数据目录日常运行：后台运行、自动带上 `--live`、从 `secrets.json` 注入环境变量、可选择连接成功后自动解除全局暂停、管理 macOS 原生 QQ | `node scripts/robots.mjs start --data <数据目录>`，详见 [本机运维](docs/LOCAL-OPERATIONS.md) |
+| Linux 服务器或 Docker：桥接和 NapCat 都跑在容器里                                                                                             | `docker compose`，见 [Docker 部署](docs/DOCKER.md)                                           |
 
-两者使用同一个数据目录格式，但同一数据目录同一时间只能被一个进程使用（有进程锁）。配置为 `mode: live` 的数据目录如果不带 `--live` 启动，`npm start` 会以 `LIVE_CONFIG_REQUIRES_EXPLICIT_LIVE_FLAG` 拒绝启动；`robots.mjs` 会按配置自动加上该参数。
+前两种使用同一个数据目录格式，但同一数据目录同一时间只能被一个进程使用（有进程锁）。配置为 `mode: live` 的数据目录如果不带 `--live` 启动，`npm start` 会以 `LIVE_CONFIG_REQUIRES_EXPLICIT_LIVE_FLAG` 拒绝启动；`robots.mjs` 会按配置自动加上该参数。
 
 ## 第三方平台内容
 
@@ -108,6 +109,7 @@ node src/main.mjs --data /path/to/private-data --port 3210
 **开始使用**
 
 - [入门指南：在一个群里接入第一个角色](docs/GETTING-STARTED.md)
+- [在 Linux / Docker 上部署（含 NapCat 容器）](docs/DOCKER.md)
 - [故障排查（按症状查找）](docs/TROUBLESHOOTING.md)
 - [配置与数据目录](docs/CONFIGURATION.md)
 
@@ -144,6 +146,11 @@ node src/main.mjs --data /path/to/private-data --port 3210
 
 - [扩展指南：新增 AI 后端、桥接工具与外部 MCP](docs/EXTENDING.md)
 - [安全策略与漏洞报告](SECURITY.md)
+
+**参与贡献**
+
+- [贡献指南](CONTRIBUTING.md)
+- [行为准则](CODE_OF_CONDUCT.md)
 
 **历史记录**
 

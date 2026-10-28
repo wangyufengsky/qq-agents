@@ -1,3 +1,4 @@
+// @ts-check
 // Only reviewed, literal codes may leave the process. Never echo an arbitrary error message.
 export const knownErrorCodes = new Set(
   `

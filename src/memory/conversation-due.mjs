@@ -1,4 +1,5 @@
 // @ts-check
+// @ts-check
 /** @typedef {{agent_id: string, conversation: string, next_due_at: number | null, state_version: number}} DueRow */
 // Derived data is excluded from exports. Triggers cover every writer and
 // restore, in the same transaction as the authoritative runtime state.

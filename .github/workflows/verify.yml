@@ -24,7 +24,12 @@ jobs:
           cache: npm
       - name: Install media test tools on Linux
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+        timeout-minutes: 6
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          ffmpeg -version | head -1
+          ffprobe -version | head -1
       - name: Install media test tools on macOS
         if: runner.os == 'macOS'
         run: brew install ffmpeg
@@ -34,3 +39,23 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
       - run: npm run verify
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - run: docker build -t qq-agents:ci .
+      - name: Smoke-test the container console through a loopback port mapping
+        run: |
+          docker run -d --name qq-agents-ci -p 127.0.0.1:3210:3210 qq-agents:ci
+          for i in $(seq 1 30); do
+            docker exec qq-agents-ci test -s /data/admin-token && break
+            sleep 1
+          done
+          token=$(docker exec qq-agents-ci cat /data/admin-token)
+          curl -fsS --retry 10 --retry-connrefused --retry-delay 1 \
+            -H "x-admin-token: $token" http://127.0.0.1:3210/api/status \
+            | grep -q '"mode":"isolated"'
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: 192.0.2.1:3210' http://127.0.0.1:3210/api/status)" = 403
+      - if: failure()
+        run: docker logs qq-agents-ci

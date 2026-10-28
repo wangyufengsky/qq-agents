@@ -2,7 +2,16 @@
 
 按时间倒序排列。每节对应一个版本、一轮可靠性工作或一个合并的 PR；详细的验收、审查和讨论记录保存在 [`docs/history/`](docs/history/)。“合并”不代表部署：除非另有说明，以下改动都只在本机隔离环境验证，生产角色保持暂停。
 
-标题和正文中的 `#编号` 指本项目公开前在私有仓库中的 PR，与本仓库的 Issue/PR 编号无关。
+2026-10-28 公开之后的条目用本仓库的 PR 链接；更早条目中的 `#编号` 指公开前私有仓库中的 PR，与本仓库的 Issue/PR 编号无关。
+
+## 开源发布（2026-10-28）
+
+- 仓库公开为 [wangyufengsky/qq-agents](https://github.com/wangyufengsky/qq-agents)：历史只带入 `main`，提交身份改写为 GitHub 隐私邮箱，旧 PR 编号改为文字说明；新增 [安全策略](SECURITY.md)，开启私下报告漏洞。迁移方式见 [公开前检查](docs/PUBLIC-READINESS.md)。
+- **Linux / Docker 部署**（[#10](https://github.com/wangyufengsky/qq-agents/pull/10)）：`Dockerfile`、含 NapCat 的 `docker-compose.example.yml` 和 [Docker 部署](docs/DOCKER.md)。连接新增显式开启的 `allowPrivateNetwork`，开启后 OneBot 地址可用 Docker 服务名或私有网段（令牌以明文经过容器网络），默认仍只允许本机回环；启动参数新增 `--host` 和 `--public-port`，容器内监听 `0.0.0.0` 时管理台仍只接受回环 Host。截图浏览器支持 `CHROME_PATH` 和 Linux 常见路径；本地 TTS 在非 macOS 上返回可读的不可用提示。CI 新增镜像构建与冒烟测试，Ubuntu 上安装 FFmpeg 改为不装推荐依赖并单独限时。
+- **文档**（[#3](https://github.com/wangyufengsky/qq-agents/pull/3)）：README 说明项目定位（可直接部署的自托管应用，扩展点有限）并对比三种后端；新增英文版 [README.en.md](README.en.md)、[扩展指南](docs/EXTENDING.md)、入门“最快路径”，以及第三方平台读取默认关闭、需自行遵守平台条款的说明。
+- **社区**（[#2](https://github.com/wangyufengsky/qq-agents/pull/2)）：新增 [贡献指南](CONTRIBUTING.md)、[行为准则](CODE_OF_CONDUCT.md)（Contributor Covenant 2.1 中文版）、Issue/PR 模板和 Dependabot 配置。
+- **开发**（[#4](https://github.com/wangyufengsky/qq-agents/pull/4)）：ESLint 覆盖 `src`、`scripts`、`test`、`public` 全部代码（`vendor` 除外）；类型检查改为按文件 `// @ts-check` 纳入，从 4 个文件扩大到 51 个，包括 `src/backends` 和 `src/github` 全部。
+- **CI 修复**（[#1](https://github.com/wangyufengsky/qq-agents/pull/1)）：修复控制台测试与启动时自动加载之间的时序竞争；隐私扫描接受 GitHub Actions 机器人的隐私邮箱。
 
 ## OpenAI 兼容后端（2026-10-28）
 

@@ -1,0 +1,41 @@
+# QQ Agents + NapCat on one Docker network. Copy to docker-compose.yml and
+# follow docs/DOCKER.md. Every published port is bound to the host's 127.0.0.1;
+# reach them from another machine through an SSH tunnel, not by widening the
+# binding.
+services:
+  napcat:
+    # Community NapCat image: https://github.com/NapNeko/NapCat-Docker
+    image: mlikiowa/napcat-docker:latest
+    restart: unless-stopped
+    # WEBUI_TOKEN (NapCat WebUI login) and optional NAPCAT_UID / NAPCAT_GID.
+    env_file: .env.napcat
+    ports:
+      # NapCat WebUI, used for the QR login and the OneBot network settings.
+      - "127.0.0.1:6099:6099"
+    # The OneBot HTTP (3000) and WebSocket (3001) servers stay on the compose
+    # network: only qq-agents reaches them, as http://napcat:3000 and
+    # ws://napcat:3001.
+    volumes:
+      - ./data/napcat/qq:/app/.config/QQ
+      - ./data/napcat/config:/app/napcat/config
+
+  qq-agents:
+    build: .
+    image: qq-agents:local
+    restart: unless-stopped
+    init: true
+    depends_on:
+      - napcat
+    # OneBot token and model API keys, named by tokenEnv / apiKeyEnv in the
+    # console. The configuration itself stores only the variable names.
+    env_file: .env.qq-agents
+    # Starts isolated. After the console configuration is complete, switch to
+    # live by replacing this with: command: ["--live"]
+    command: []
+    ports:
+      - "127.0.0.1:3210:3210"
+    volumes:
+      - qq-agents-data:/data
+
+volumes:
+  qq-agents-data:

@@ -76,7 +76,9 @@ function suggestedName(raw) {
   try {
     value =
       decodeURIComponent(new URL(raw).pathname.split("/").at(-1)) || value;
-  } catch {}
+  } catch {
+    // Unparseable URL or name: keep the default name.
+  }
   try {
     return fileName(value);
   } catch {

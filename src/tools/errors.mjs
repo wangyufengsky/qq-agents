@@ -1,5 +1,7 @@
+// @ts-check
 // Report actionable validation bounds without echoing input values, paths,
 // stack traces, provider errors or credentials into either model backend.
+/** @param {any} error */
 export function safeToolFailure(error) {
   if (
     /^(ANIMATION_[A-Z_]+|INVALID_GIF|INVALID_ANIMATION_RANGE)$/.test(
@@ -13,10 +15,10 @@ export function safeToolFailure(error) {
   if (error?.name === "ZodError" && Array.isArray(error.issues))
     return {
       code: "INVALID_TOOL_ARGUMENTS",
-      issues: error.issues.slice(0, 8).map((issue) => ({
+      issues: error.issues.slice(0, 8).map((/** @type {any} */ issue) => ({
         field: (issue.path || [])
           .filter(
-            (p) =>
+            (/** @type {unknown} */ p) =>
               typeof p === "string" && /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(p),
           )
           .slice(0, 4)
@@ -35,6 +37,7 @@ export function safeToolFailure(error) {
       })),
       hint: "Correct the named arguments within these bounds, or omit optional budgets and use pagination. The operation did not succeed. Do not infer unread content or claim successful delivery.",
     };
+  /** @type {Record<string, string>} */
   const hints = {
     APP_RESULT_BUDGET:
       "The platform returned more than 100 rows in one batch. No page was committed and an existing cursor is preserved. Request a smaller backend page or narrower query; do not claim that omitted rows were read or that the source is complete.",
@@ -57,7 +60,9 @@ export function safeToolFailure(error) {
     GITHUB_READ_BUDGET_EXHAUSTED:
       "The configured GitHub request budget is exhausted. Metadata checks count too; continue in a later allowed turn/day.",
     SCREENSHOT_BROWSER_MISSING:
-      "No supported local Chromium browser is available. No screenshot was saved. The administrator can configure QQ_SCREENSHOT_BROWSER; do not claim capture succeeded.",
+      "No supported local Chromium browser is available. No screenshot was saved. The administrator can install Chromium or set QQ_SCREENSHOT_BROWSER / CHROME_PATH to an absolute browser path; do not claim capture succeeded.",
+    LOCAL_TTS_UNAVAILABLE:
+      "Local speech synthesis uses the macOS say command and is unavailable on this host (for example Linux or Docker). No voice file was created. Reply in text instead; do not claim a voice message was sent or retry this tool.",
     SCREENSHOT_BROWSER_FAILED:
       "The isolated screenshot browser could not start. No screenshot was saved. Check the host browser runtime; do not retry with a local file path.",
     SCREENSHOT_PAGE_UNAVAILABLE:

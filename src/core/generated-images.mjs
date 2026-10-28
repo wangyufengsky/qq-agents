@@ -82,7 +82,9 @@ export class GeneratedImages {
     if (existing?.status === "ready") {
       try {
         stored = this.runtime.media.read(ctx.agentId, existing.mediaId);
-      } catch {}
+      } catch {
+        // Stored media is gone or unreadable: regenerate below.
+      }
     }
     if (stored) {
       if (source.protected_operations) {

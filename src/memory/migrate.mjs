@@ -1,9 +1,11 @@
+// @ts-check
 export { inspectLegacy, importLegacy } from "./legacy-import.mjs";
 import { validateExport } from "./export-format.mjs";
 import {
   validateRestoredAliases,
   validateRestoredObservations,
 } from "./message-ids.mjs";
+/** @param {any} memory Bound AgentMemory. @param {any} data Parsed export file. */
 export function restoreExport(memory, data) {
   if (![1, 2].includes(data.version) || data.agentId !== memory.agentId)
     throw Error("EXPORT_IDENTITY_MISMATCH");
@@ -92,7 +94,7 @@ export function restoreExport(memory, data) {
   const empty =
       memory.db.prepare("SELECT COUNT(*) AS n FROM events").get().n === 0,
     seqs = new Map([[0, 0]]);
-  const remapBoundary = (boundary) => {
+  const remapBoundary = (/** @type {number} */ boundary) => {
     let mapped = 0;
     for (const [oldSeq, newSeq] of seqs)
       if (oldSeq <= boundary && newSeq > mapped) mapped = newSeq;

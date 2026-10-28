@@ -72,9 +72,39 @@ export function screenshotRoutes({
     }
   }
 }
+const browserCandidates = {
+  darwin: [
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+  ],
+  linux: [
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "/snap/bin/chromium",
+  ],
+};
+// An explicit administrator setting wins and is never silently replaced by a
+// probed browser; otherwise only well-known paths for this platform are used.
+export function findScreenshotBrowser({
+  env = process.env,
+  platform = process.platform,
+  exists = fs.existsSync,
+} = {}) {
+  const configured = env.QQ_SCREENSHOT_BROWSER || env.CHROME_PATH;
+  if (configured) {
+    if (!path.isAbsolute(configured) || !exists(configured))
+      throw Error("SCREENSHOT_BROWSER_MISSING");
+    return configured;
+  }
+  const found = (browserCandidates[platform] || []).find((p) => exists(p));
+  if (!found) throw Error("SCREENSHOT_BROWSER_MISSING");
+  return found;
+}
 export async function capturePublicPage(
   url,
-  { root, signal, executablePath = process.env.QQ_SCREENSHOT_BROWSER } = {},
+  { root, signal, executablePath } = {},
 ) {
   const combined = AbortSignal.any([
     signal || new AbortController().signal,
@@ -82,13 +112,7 @@ export async function capturePublicPage(
   ]);
   await validateWithSignal(url, validateFetchUrl, combined);
   if (active >= 2) throw Error("SCREENSHOT_BUSY");
-  executablePath ||= [
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    "/usr/bin/chromium",
-    "/usr/bin/chromium-browser",
-    "/usr/bin/google-chrome",
-  ].find((p) => fs.existsSync(p));
-  if (!executablePath) throw Error("SCREENSHOT_BROWSER_MISSING");
+  executablePath ||= findScreenshotBrowser();
   active++;
   let dir, browser;
   const abort = () => {
@@ -143,7 +167,7 @@ export async function capturePublicPage(
         "公开网页的 1280×900 可视区域截图；独立无登录环境，不执行网页脚本。脚本生成的内容可能缺失，不代表已读全文。",
     };
   } catch (e) {
-    if (signal?.aborted) throw Error("ABORTED");
+    if (signal?.aborted) throw Error("ABORTED", { cause: e });
     throw Error(
       /^SCREENSHOT_[A-Z_]+$/.test(e.message)
         ? e.message

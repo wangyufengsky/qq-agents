@@ -1,9 +1,11 @@
+// @ts-check
 import {
   resolveMessage,
   scopeFor,
   referenceNamespaceSql,
 } from "./message-ids.mjs";
 // Derived indexes only: raw events and diary history are never rewritten.
+/** @param {import("node:sqlite").DatabaseSync} db @param {number} version */
 export function migrateSearch(db, version) {
   if (version >= 3) return;
   db.exec("BEGIN IMMEDIATE");
@@ -68,6 +70,11 @@ export function migrateSearch(db, version) {
   }
 }
 
+/**
+ * @param {any} memory Bound AgentMemory.
+ * @param {{id: string, afterSeq?: number, limit?: number, maxChars?: number}} options
+ * @param {any} current
+ */
 export function related(
   memory,
   { id, afterSeq = 0, limit = 10, maxChars = 6000 },
@@ -102,7 +109,7 @@ export function related(
       afterSeq,
       limit + 1,
     );
-  const links = sources.flatMap(({ source_seq }) =>
+  const links = sources.flatMap((/** @type {any} */ { source_seq }) =>
     db
       .prepare(
         `SELECT e.*,l.relation,l.target_message_id FROM event_links l JOIN events e ON e.seq=l.source_seq WHERE l.source_seq=? ORDER BY l.target_message_id`,

@@ -122,7 +122,9 @@ function post(value) {
           .filter((b) => b.type === "text" || b.type === "html")
           .map((b) => b.text || b.content || "")
           .join("\n");
-    } catch {}
+    } catch {
+      // Not JSON: keep the body as plain text.
+    }
   }
   return {
     id,

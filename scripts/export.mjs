@@ -1,10 +1,11 @@
+// @ts-check
 import fs from "node:fs";
 import path from "node:path";
 import { MemoryStore } from "../src/memory/store.mjs";
 import { restoreExport } from "../src/memory/migrate.mjs";
 import { exportToFile } from "../src/memory/export.mjs";
 const args = process.argv.slice(2),
-  get = (k) => args[args.indexOf(k) + 1];
+  get = (/** @type {string} */ k) => args[args.indexOf(k) + 1];
 if (
   !args.includes("--data") ||
   !args.includes("--agent") ||

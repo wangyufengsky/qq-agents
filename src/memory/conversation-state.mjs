@@ -1,4 +1,5 @@
 // @ts-check
+// @ts-check
 export const CONVERSATION_SCHEMA = 1;
 /** @param {string} conversation */
 export const isConversation = (conversation) =>

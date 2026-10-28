@@ -1,7 +1,9 @@
+// @ts-check
 import path from "node:path";
 import os from "node:os";
 import { z } from "zod";
 
+/** @param {number} min @param {number} max @param {number} def */
 const ms = (min, max, def) => z.number().int().min(min).max(max).default(def);
 const probability = z.number().min(0).max(1);
 export const timezone = z.string().refine((s) => {

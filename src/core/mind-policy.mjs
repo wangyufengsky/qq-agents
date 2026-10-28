@@ -1,5 +1,7 @@
+// @ts-check
 import { SUBJECT_APP_TOOLS } from "../apps/policy.mjs";
 import { z } from "zod";
+/** @param {number} min @param {number} max @param {number} value */
 const ms = (min, max, value) =>
   z.number().int().min(min).max(max).default(value);
 const ids = z

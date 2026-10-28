@@ -1,3 +1,4 @@
+// @ts-check
 // Synthetic inactive conversations; no external services or production data.
 import fs from "node:fs";
 import os from "node:os";
@@ -48,6 +49,7 @@ try {
         json_extract(value,'$.pendingWakes[0]') IS NOT NULL OR
         json_extract(value,'$.wakeConfig.sleepUntil') IS NOT NULL OR
         json_extract(value,'$.replyCheckAt') IS NOT NULL)`);
+      /** @param {number[]} samples @param {number} q */
       const percentile = (samples, q) => {
         samples.sort((a, b) => a - b);
         const index = Math.min(
@@ -56,6 +58,7 @@ try {
         );
         return +samples[index].toFixed(3);
       };
+      /** @param {() => unknown} fn */
       const measure = async (fn) => {
         const samples = [],
           histogram = monitorEventLoopDelay({ resolution: 1 });

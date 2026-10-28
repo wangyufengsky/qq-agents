@@ -1,21 +1,25 @@
+// @ts-check
 import { sourceCounts } from "./outbound-policy.mjs";
 
 // Explicit allowlist: capabilities and backend credentials never enter this view.
+/** @param {any} runtime */
 export function runtimeStatus(runtime) {
   return {
     recentErrors: runtime.diagnostics.snapshot(),
     mode: runtime.config.mode,
     globalPaused: runtime.config.globalPaused,
     backends: runtime.backendConnections.list(),
-    connections: runtime.config.connections.map((c) => ({
+    connections: runtime.config.connections.map((/** @type {any} */ c) => ({
       id: c.id,
       connected: !!runtime.transports.get(c.id)?.connected,
       process: runtime.lifecycle?.status(c.id),
       error: runtime.faults.get(c.id) || null,
       recovery: runtime.connectionRecovery.snapshot(c.id),
     })),
-    agents: runtime.config.agents.map((a) => {
-      const c = runtime.config.connections.find((c) => c.id === a.connectionId);
+    agents: runtime.config.agents.map((/** @type {any} */ a) => {
+      const c = runtime.config.connections.find(
+        (/** @type {any} */ c) => c.id === a.connectionId,
+      );
       return {
         id: a.id,
         paused: a.paused,
@@ -41,7 +45,9 @@ export function runtimeStatus(runtime) {
       .filter((c) =>
         c.disclosureRequest?.requestId
           ? !c.externalGrants?.has(c.disclosureRequest.requestId)
-          : c.disclosureRequest?.records.some((id) => !c.grants.has(id)),
+          : c.disclosureRequest?.records.some(
+              (/** @type {string} */ id) => !c.grants.has(id),
+            ),
       )
       .map((c) => ({
         approvalId: c.disclosureRequest.approvalId,
@@ -53,7 +59,9 @@ export function runtimeStatus(runtime) {
         sourceClasses: sourceCounts(runtime, c),
         records: c.disclosureRequest.requestId
           ? c.disclosureRequest.records
-          : c.disclosureRequest.records.filter((id) => !c.grants.has(id)),
+          : c.disclosureRequest.records.filter(
+              (/** @type {string} */ id) => !c.grants.has(id),
+            ),
         granted: [...c.grants],
       })),
   };

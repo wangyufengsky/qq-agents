@@ -1,3 +1,4 @@
+// @ts-check
 import { appDefinitions } from "../apps/tools.mjs";
 import { githubDefinitions } from "../github/tools.mjs";
 import { mindDefinitions } from "./mind.mjs";
