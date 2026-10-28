@@ -20,10 +20,12 @@ function setup(t, { edit = () => {}, failures = 0, backend = true } = {}) {
     };
     return transport;
   };
-  f.runtime.backendFactory = () => ({
+  const probed = [];
+  f.runtime.backendFactory = (_config, agent) => ({
     run: async () => {},
     models: async () => {
-      if (!backend) throw Error("BACKEND_PROBE_FAILED");
+      probed.push(agent.id);
+      if (!backend || agent.paused) throw Error("BACKEND_PROBE_FAILED");
       return [{ id: "fixture-model" }];
     },
     cancel: async () => {},
@@ -36,7 +38,7 @@ function setup(t, { edit = () => {}, failures = 0, backend = true } = {}) {
       wait: async (ms) => waits.push(ms),
       ...options,
     }));
-  return { ...f, waits, resume };
+  return { ...f, waits, resume, probed };
 }
 
 test("auto-resume connects QQ, checks backends and lifts only the global pause", async (t) => {
@@ -49,6 +51,16 @@ test("auto-resume connects QQ, checks backends and lifts only the global pause",
   for (const c of runtime.config.connections)
     assert.equal(runtime.transports.get(c.id).connected, true);
   assert.equal(runtime.status().autoResume.state, "resumed");
+});
+
+test("a paused agent on a shared backend cannot hold the others back", async (t) => {
+  // agent-1 is paused and its backend probe would fail; both use "fixture".
+  const { runtime, resume, probed } = setup(t);
+  assert.equal(runtime.config.agents[1].backendId, "fixture");
+  const result = await resume().run();
+  assert.equal(result.state, "resumed");
+  assert.deepEqual(probed, ["agent-0"]);
+  assert.equal(runtime.backends.has("agent-1"), false, "not initialised");
 });
 
 test("auto-resume retries with backoff until QQ is ready", async (t) => {

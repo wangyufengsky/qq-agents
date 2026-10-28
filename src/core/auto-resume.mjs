@@ -98,15 +98,16 @@ export class AutoResume {
       )
     )
       throw Error("QQ_NOT_READY");
-    const backendIds = new Set(
-      r.config.agents
-        .filter((/** @type {any} */ a) => !a.paused)
-        .map((/** @type {any} */ a) => a.backendId),
-    );
-    for (const id of backendIds) {
-      const result = await r.backendConnections.check(id);
-      if (result.state !== "ready")
-        throw Error(result.error || "BACKEND_UNAVAILABLE");
+    // Probe each unpaused agent's own backend: a backend check covers every
+    // agent on it, so a deliberately paused role could hold the others back.
+    for (const a of r.config.agents.filter(
+      (/** @type {any} */ a) => !a.paused,
+    )) {
+      const backend = r.backendConnections.adapter(a);
+      const health = backend.health
+        ? await backend.health()
+        : { models: await backend.models() };
+      if (!Array.isArray(health?.models)) throw Error("BACKEND_PROBE_FAILED");
     }
   }
   /** @param {string} state @param {string | null} [error] */
