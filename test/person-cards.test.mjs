@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
-import { fixture, context } from "./helpers.mjs";
+import { fixture, context, config } from "./helpers.mjs";
 import { createServer } from "../src/server.mjs";
 import { MemoryStore } from "../src/memory/store.mjs";
 import { restoreExport } from "../src/memory/migrate.mjs";
@@ -283,4 +283,296 @@ test("cards travel with an export, and an export made before cards still restore
   const tampered = sign(before);
   tampered.tables.person_notes = [];
   assert.throws(() => validateExport(tampered), /EXPORT_INTEGRITY_FAILED/);
+});
+
+// The cards a prompt carries, in order, or none.
+const cardsIn = (prompt) => {
+  const part = prompt.split("\n\n").find((p) => p.startsWith("人物卡（"));
+  return part ? JSON.parse(part.slice(part.indexOf("）：") + 2)) : [];
+};
+const message = (
+  m,
+  { conversation = scope, senderId, body = "", segments, messageId, namespace },
+) =>
+  m.append({
+    dedupe: "e" + ++n,
+    conversation,
+    connectionId: "qq-0",
+    kind: "message.received",
+    body,
+    senderId,
+    ...(messageId ? { messageId } : {}),
+    occurredAt: new Date(Date.parse("2026-10-29T00:00:00Z") + n).toISOString(),
+    payload: {
+      ...(namespace ? { messageNamespace: namespace } : {}),
+      ...(segments ? { segments } : {}),
+    },
+  });
+const turnsOf = (m) =>
+  m.db
+    .prepare(
+      "SELECT value FROM model_turns WHERE agent_id=? ORDER BY json_extract(value,'$.startedAt'), rowid",
+    )
+    .all(m.agentId)
+    .map((row) => JSON.parse(row.value));
+
+test("a private chat shows the other side's card even with nothing new, with the name they last used", async (t) => {
+  const c = config();
+  c.agents[0].allow.users = ["30000", "30001"];
+  const prompts = [];
+  const f = fixture(t, {
+      cfg: c,
+      run: async (p) => {
+        prompts.push(p.prompt);
+        p.saveSession({ id: "s", backend: "fixture" });
+      },
+    }),
+    m = f.store.bind("agent-0");
+  const e = said(m, "叫我阿明");
+  const write = (personId, call, body) =>
+    m.identity.savePersonCard(
+      { personId, call, body, evidence: [e.id] },
+      { writtenIn: scope, now: f.runtime.now() },
+    );
+  m.person("30000", "旧名字");
+  m.person("30000", "阿明同学");
+  write("30000", "阿明", "私聊里很健谈");
+  write("30001", "小新", "还不太熟");
+  const mood = m.identity.setMood(
+    { mood: "平静", intensity: 2, reason: "今天没什么事" },
+    { writtenIn: scope, now: f.runtime.now() },
+  );
+
+  // Woken with nothing new, as an intent or a timer would.
+  await f.runtime.wake("agent-0", "private:30000");
+  assert.match(prompts[0], /新增消息：\{"items":\[\]/);
+  assert.deepEqual(
+    cardsIn(prompts[0]).map((x) => [x.personId, x.nickname, x.call]),
+    [["30000", "阿明同学", "阿明"]],
+  );
+  let [turn] = turnsOf(m);
+  assert.equal(turn.moodShown, mood.id);
+  assert.equal(turn.personCards.length, 1);
+  assert.equal(turn.personCards[0].personId, "30000");
+  assert.equal(turn.personCards[0].revision, 1);
+
+  // Seen this session: neither the card nor the mood comes again.
+  await f.runtime.wake("agent-0", "private:30000");
+  assert.deepEqual(cardsIn(prompts[1]), []);
+  turn = turnsOf(m)[1];
+  assert.equal("moodShown" in turn, false);
+  assert.equal("personCards" in turn, false);
+
+  // Someone with no recorded name gets no nickname field.
+  await f.runtime.wake("agent-0", "private:30001");
+  const [card] = cardsIn(prompts[2]);
+  assert.equal(card.personId, "30001");
+  assert.equal("nickname" in card, false);
+});
+
+test("cards follow whom the shown messages mention or reply to, after those who spoke", async (t) => {
+  const prompts = [];
+  const f = fixture(t, {
+      run: async (p) => {
+        prompts.push(p.prompt);
+        p.saveSession({ id: "s", backend: "fixture" });
+      },
+    }),
+    m = f.store.bind("agent-0");
+  const e = said(m, "证据", "39999");
+  const write = (personId) =>
+    m.identity.savePersonCard(
+      {
+        personId,
+        call: "称呼" + personId,
+        body: "印象" + personId,
+        evidence: [e.id],
+      },
+      { writtenIn: scope, now: f.runtime.now() },
+    );
+  // Quoted messages land in an earlier turn, before their authors have cards.
+  message(m, {
+    senderId: "30005",
+    body: "被引用的话",
+    messageId: "777",
+    namespace: "onebot",
+  });
+  message(m, {
+    senderId: "30006",
+    body: "同号一",
+    messageId: "778",
+    namespace: "onebot",
+  });
+  message(m, {
+    senderId: "30007",
+    body: "同号二",
+    messageId: "778",
+    namespace: "heybox",
+  });
+  await f.runtime.wake("agent-0", scope);
+  for (const id of [
+    "30001",
+    "30002",
+    "30003",
+    "30004",
+    "30005",
+    "30006",
+    "30007",
+    "10000",
+  ])
+    write(id);
+
+  message(m, {
+    senderId: "30001",
+    body: "[提及 QQ:30003][提及 QQ:10000][提及 QQ:all][引用:777]你们看 [提及 QQ:30004]",
+    namespace: "onebot",
+    segments: [
+      { type: "at", data: { qq: "30003" } },
+      { type: "at", data: { qq: "10000" } },
+      { type: "at", data: { qq: "all" } },
+      { type: "reply", data: { id: "777" } },
+      // Typed text that only looks like a mention names no one.
+      { type: "text", data: { text: "你们看 [提及 QQ:30004]" } },
+    ],
+  });
+  message(m, {
+    senderId: "30002",
+    body: "来了",
+    namespace: "onebot",
+    segments: [{ type: "text", data: { text: "来了" } }],
+  });
+  // A reply whose id two archived messages share is not resolved.
+  message(m, {
+    senderId: "30002",
+    body: "[引用:778]哪条",
+    segments: [{ type: "reply", data: { id: "778" } }],
+  });
+  await f.runtime.wake("agent-0", scope);
+  assert.deepEqual(
+    cardsIn(prompts[1]).map((x) => x.personId),
+    ["30001", "30002", "30003", "30005"],
+  );
+  assert.deepEqual(
+    turnsOf(m)[1].personCards.map((x) => x.personId),
+    ["30001", "30002", "30003", "30005"],
+  );
+
+  // Mentioned again in the same session: already seen.
+  message(m, {
+    senderId: "30002",
+    body: "[提及 QQ:30003]",
+    namespace: "onebot",
+    segments: [{ type: "at", data: { qq: "30003" } }],
+  });
+  await f.runtime.wake("agent-0", scope);
+  assert.deepEqual(cardsIn(prompts[2]), []);
+});
+
+test("a message archived without segments is read from its text, and an unknown reply is skipped", async (t) => {
+  const prompts = [];
+  const f = fixture(t, {
+      run: async (p) => {
+        prompts.push(p.prompt);
+        p.saveSession({ id: "s", backend: "fixture" });
+      },
+    }),
+    m = f.store.bind("agent-0");
+  const e = said(m, "证据", "39999");
+  for (const id of ["30003", "30008"])
+    m.identity.savePersonCard(
+      { personId: id, body: "印象" + id, evidence: [e.id] },
+      { writtenIn: scope, now: f.runtime.now() },
+    );
+  message(m, {
+    senderId: "30001",
+    body: "[引用:999][提及 QQ:30003] 看这个",
+  });
+  await f.runtime.wake("agent-0", scope);
+  assert.deepEqual(
+    cardsIn(prompts[0]).map((x) => x.personId),
+    ["30003"],
+  );
+});
+
+test("free time sees each private target's card in brief without marking it seen", async (t) => {
+  const c = config(2),
+    a = c.agents[0];
+  a.allow.users = ["30000", "30001", "10001"];
+  Object.assign(a.subject, {
+    enabled: true,
+    peers: true,
+    users: ["30000", "30001"],
+    groups: ["20000"],
+    intervalMs: 60000,
+  });
+  const prompts = [];
+  const f = fixture(t, {
+      cfg: c,
+      run: async (p) => {
+        prompts.push(p.prompt);
+      },
+    }),
+    m = f.store.bind("agent-0");
+  const e = said(m, "证据", "39999");
+  const long = "很长的印象".repeat(20);
+  m.identity.savePersonCard(
+    { personId: "30000", call: "阿明", body: long, evidence: [e.id] },
+    { writtenIn: scope, now: f.runtime.now() },
+  );
+  m.identity.savePersonCard(
+    { personId: "30001", call: "小新", body: "刚认识", evidence: [e.id] },
+    { writtenIn: scope, now: f.runtime.now() },
+  );
+  await f.runtime.wake("agent-0", "@subject");
+  const materials = JSON.parse(
+    prompts[0].split("空闲时间素材：")[1].split("\n\n")[0],
+  );
+  // A new free-time context isolates protected material; cards hold none.
+  assert.match(materials.notice, /新的空闲上下文/);
+  const byTarget = Object.fromEntries(
+    materials.reach.targets.map((x) => [x.target, x]),
+  );
+  assert.equal(byTarget["private:30000"].call, "阿明");
+  assert.equal(
+    byTarget["private:30000"].impression,
+    Array.from(long).slice(0, 80).join("") + "…",
+  );
+  assert.equal(byTarget["private:30001"].impression, "刚认识");
+  assert.equal("call" in byTarget["private:10001"], false);
+  assert.equal("call" in byTarget["group:20000"], false);
+  assert.equal(m.state("private:30000").personCardsShown, undefined);
+  assert.equal(m.state("@subject").personCardsShown, undefined);
+});
+
+test("a name used again is the one a card shows", async (t) => {
+  const prompts = [];
+  const f = fixture(t, {
+      run: async (p) => {
+        prompts.push(p.prompt);
+        p.saveSession({ id: "s", backend: "fixture" });
+      },
+    }),
+    m = f.store.bind("agent-0");
+  const e = said(m, "叫我阿明");
+  m.identity.savePersonCard(
+    { personId: "30000", call: "阿明", body: "老朋友", evidence: [e.id] },
+    { writtenIn: scope, now: f.runtime.now() },
+  );
+  for (const name of ["阿明同学", "搬家中", "阿明同学"])
+    m.person("30000", name);
+  const names = () =>
+    JSON.parse(
+      m.db
+        .prepare("SELECT names FROM people WHERE agent_id=? AND qq=?")
+        .get(m.agentId, "30000").names,
+    );
+  assert.deepEqual(names(), ["搬家中", "阿明同学"]);
+  await f.runtime.wake("agent-0", "private:30000");
+  assert.equal(cardsIn(prompts[0])[0].nickname, "阿明同学");
+
+  // Still only the last thirty, and an empty name changes nothing.
+  for (let i = 0; i < 31; i++) m.person("30000", "名字" + i);
+  m.person("30000", "");
+  assert.equal(names().length, 30);
+  assert.equal(names().at(-1), "名字30");
 });

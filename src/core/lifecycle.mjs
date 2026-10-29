@@ -470,6 +470,16 @@ export class ContextLifecycle {
       instructionsHash,
       backendId: a.backendId,
       ...(s.session ? { backendSession: sessionReference(s.session) } : {}),
+      // What this prompt actually carried, for later questions about a reply.
+      ...(mood.line ? { moodShown: mood.shown } : {}),
+      ...(people?.cards.length
+        ? {
+            personCards: people.cards.map(({ personId, revision }) => ({
+              personId,
+              revision,
+            })),
+          }
+        : {}),
     });
     ctx.estimatedAdded =
       prompt.length + (ctx.initialSession ? instructions.length : 0);
