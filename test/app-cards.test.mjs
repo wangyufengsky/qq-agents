@@ -88,6 +88,21 @@ test("credential URLs are never returned and content identity ignores tracking o
   assert.throws(() =>
     contentIdentity("https://www.bilibili.com.evil.example/video/BV1234567890"),
   );
+  assert.equal(
+    contentIdentity("https://www.xiaoheihe.cn/app/bbs/link/854272b8d995").url,
+    "https://www.xiaoheihe.cn/app/bbs/link/854272b8d995",
+  );
+  assert.equal(
+    contentIdentity(
+      "https://api.xiaoheihe.cn/bbs/app/link/web/view?link_id=854272b8d995",
+    ).key,
+    "heybox:854272b8d995",
+  );
+  for (const bad of ["854272B8D995", "abc", "854272b8d99z"])
+    assert.throws(
+      () => contentIdentity("https://www.xiaoheihe.cn/app/bbs/link/" + bad),
+      /APP_CONTENT_URL_INVALID/,
+    );
 });
 test("short links validate DNS on each hop and refuse private or credential redirects", async () => {
   const hops = [],

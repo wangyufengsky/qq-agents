@@ -69,6 +69,9 @@ test("Heybox long posts keep paragraphs and lazy-loaded images, not raw HTML", a
         type: "html",
         text: '<p>第一段 &amp; 说明 &lt;原文&gt;</p><blockquote><p>引用&nbsp;内容</p></blockquote><p><img src="https://cdn.example.org/lazy.jpg" data-original="https://img.example.org/1.png?a=1&amp;b=2"></p><h2>标题</h2><p>第二行<br>第三行</p><img src="//img.example.org/3.png">',
       },
+      // The web client ignores these: they repeat the HTML's pictures as thumbnails.
+      { type: "img", url: "https://img1.example.org/1.png?thumbnail" },
+      { type: "text", text: "不渲染" },
     ]),
   });
   const item = html.items[0];
@@ -105,31 +108,46 @@ test("Heybox long posts keep paragraphs and lazy-loaded images, not raw HTML", a
   assert.equal(summary.coverage, "post-summary");
   assert.equal(summary.items[0].truncated, true);
 });
-test("Heybox post reads send the web client's platform fields", async () => {
-  let called;
-  await heyboxRead(
-    { getCookies: async () => [] },
-    { operation: "read", url: "https://www.xiaoheihe.cn/app/bbs/link/9" },
-    {
-      request: async (path, params) => {
-        called = heyboxUrl(path, params);
-        return { link: { linkid: 9 } };
+test("Heybox post reads send the web client's platform fields and accept hex link ids", async () => {
+  const urls = [];
+  const run = (operation, url) =>
+    heyboxRead(
+      { getCookies: async () => [] },
+      { operation, url },
+      {
+        request: async (path, params) => {
+          urls.push(heyboxUrl(path, params));
+          return { link: { linkid: 195241656, text: "正文" }, comments: [] };
+        },
       },
-    },
+    );
+  const read = await run(
+    "read",
+    "https://www.xiaoheihe.cn/app/bbs/link/854272b8d995",
   );
-  const q = Object.fromEntries(called.searchParams);
-  assert.equal(called.pathname, "/bbs/app/link/tree");
+  // link/tree answers a short code with the numeric id, which becomes the record URL.
+  assert.equal(
+    read.items[0].url,
+    "https://www.xiaoheihe.cn/app/bbs/link/195241656",
+  );
+  await run("comments", "https://www.xiaoheihe.cn/app/bbs/link/9");
+  const [q, comments] = urls.map((u) => Object.fromEntries(u.searchParams));
+  assert.equal(urls[0].pathname, "/bbs/app/link/tree");
   for (const [k, v] of Object.entries({
     app: "heybox",
     client_type: "web",
     x_client_type: "web",
     web_version: "3.0",
-    link_id: "9",
+    link_id: "854272b8d995",
     is_first: "1",
     owner_only: "0",
   }))
     assert.equal(q[k], v, k);
   assert.match(q.hkey, /^\w{7}$/);
+  // Without limit, link/tree returns no floors even though total_floor_num is set.
+  assert.equal(q.limit, "5");
+  assert.equal(comments.limit, "5");
+  assert.equal(comments.link_id, "9");
 });
 test("capability probes distinguish failed reads and unverified credentials", async () => {
   const adapter = new AppAdapter({
