@@ -1,5 +1,6 @@
 // @ts-check
-// Only transport-authenticated human events can advance reply/request authority.
+import { observePeerInput } from "./peer-replies.mjs";
+// Only transport-authenticated human events can advance human request authority.
 /** @param {any} runtime @param {any} ctx @param {string} id */
 export function humanInput(runtime, ctx, id) {
   const a = runtime.agent(ctx.agentId);
@@ -69,4 +70,5 @@ export function observeInput(runtime, ctx, items) {
       replyBatchSends: 0,
     });
   }
+  observePeerInput(runtime, ctx, items);
 }

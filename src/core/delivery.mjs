@@ -6,6 +6,7 @@ import { privateGithubSources } from "../github/policy.mjs";
 import { taintMedia } from "../tools/legacy.mjs";
 import { mdToPlain } from "../../vendor/dsh-qq/md-to-plain.js";
 import { reserveSendBudget } from "./send-budget.mjs";
+import { privatePeer } from "./peer-replies.mjs";
 import {
   resolveMessage,
   gatewayMessageId,
@@ -151,8 +152,16 @@ export class DeliveryService {
         : ctx.scheduleRunId
           ? state.scheduleReplyCounts?.[ctx.scheduleRunId] || 0
           : state.replyBatchSends || 0;
-    if (batchUsed >= (a.maxConsecutiveSends ?? a.maxSendsPerTurn))
-      throw Error("REPLY_BURST_LIMIT");
+    const ordinaryPeer =
+      !proactive &&
+      !ctx.internalDelivery &&
+      !ctx.scheduleRunId &&
+      privatePeer(runtime, ctx);
+    const batchLimit = Math.min(
+      a.maxConsecutiveSends ?? a.maxSendsPerTurn,
+      ordinaryPeer ? runtime.config.peerLimit.maxMessages : Infinity,
+    );
+    if (batchUsed >= batchLimit) throw Error("REPLY_BURST_LIMIT");
     const transport = runtime.transports.get(a.connectionId);
     if (!transport?.connected) throw Error("QQ_NOT_CONNECTED");
     const event = {
@@ -189,7 +198,10 @@ export class DeliveryService {
                   [ctx.scheduleRunId]: batchUsed + 1,
                 },
               }
-            : { replyBatchSends: batchUsed + 1 }
+            : {
+                replyBatchSends: batchUsed + 1,
+                replyBatchLastAttemptAt: now,
+              }
           : {}),
       });
       runtime.subject.reserveContact(ctx, proactive);
