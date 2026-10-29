@@ -24,6 +24,10 @@ test("console saves role and optional conversation budgets and explicit schedule
     // Same markup as the app.js helper: collapsed fields keep their names.
     advanced: (title, html) =>
       `<details class="adv"><summary>${title}</summary><div class="form-grid">${html}</div></details>`,
+    fold: (id, title, body) => body,
+    ids: () => "",
+    fillIds: async () => {},
+    range: () => "",
     structuredClone,
     find: (table, id) => sandbox.config[table].find((x) => x.id === id),
     document: { querySelectorAll: () => [] },
@@ -114,6 +118,7 @@ test("console offers scoped recovery and only submits damage removal after confi
   const sandbox = vm.createContext({
     $: () => library,
     tab: "permissions",
+    config: { agents: [{ id: "agent-a", files: { maxTotalBytes: 1024 } }] },
     URLSearchParams,
     esc: (v) => String(v ?? ""),
     action: (fn) => fn(),

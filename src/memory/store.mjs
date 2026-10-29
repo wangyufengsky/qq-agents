@@ -788,6 +788,63 @@ class AgentMemory {
       ...group,
     }));
   }
+  // The groups and people this role has met, newest first, so the console can
+  // offer them in pickers instead of asking for bare numbers. A group's name
+  // is the latest one QQ sent with its messages; a person's is the latest
+  // nickname, plus the call on their card when there is one.
+  knownTargets({ groups = 200, people = 500 } = {}) {
+    const named = this.db.prepare(
+      "SELECT json_extract(payload,'$.raw.group_name') AS name FROM (SELECT payload FROM events WHERE agent_id=? AND conversation=? ORDER BY seq DESC LIMIT 200) WHERE json_extract(payload,'$.raw.group_name') IS NOT NULL LIMIT 1",
+    );
+    const groupRows = this.db
+      .prepare(
+        "SELECT conversation,MAX(observed_at) AS lastAt FROM events WHERE agent_id=? AND conversation LIKE 'group:%' GROUP BY conversation ORDER BY lastAt DESC LIMIT ?",
+      )
+      .all(this.agentId, groups)
+      .map((r) => ({
+        id: r.conversation.slice(6),
+        name: named.get(this.agentId, r.conversation)?.name || "",
+        lastAt: r.lastAt,
+      }));
+    const privateAt = new Map(
+      this.db
+        .prepare(
+          "SELECT conversation,MAX(observed_at) AS lastAt FROM events WHERE agent_id=? AND conversation LIKE 'private:%' GROUP BY conversation",
+        )
+        .all(this.agentId)
+        .map((r) => [r.conversation.slice(8), r.lastAt]),
+    );
+    const calls = new Map(
+      this.identity.personCards().map((c) => [c.personId, c.call]),
+    );
+    const peopleRows = this.db
+      .prepare("SELECT qq,names FROM people WHERE agent_id=?")
+      .all(this.agentId)
+      .map((r) => ({ id: r.qq, name: parse(r.names).at(-1) || "" }));
+    // People only seen in a private chat still belong in the list.
+    for (const id of privateAt.keys())
+      if (!peopleRows.some((p) => p.id === id))
+        peopleRows.push({ id, name: "" });
+    const rank = (p) => (privateAt.has(p.id) ? 0 : calls.has(p.id) ? 1 : 2);
+    return {
+      groups: groupRows,
+      people: peopleRows
+        .filter((p) => /^\d{5,12}$/.test(p.id))
+        .map((p) => ({
+          ...p,
+          ...(calls.get(p.id) ? { call: calls.get(p.id) } : {}),
+          ...(privateAt.has(p.id)
+            ? { private: true, lastAt: privateAt.get(p.id) }
+            : {}),
+        }))
+        .sort(
+          (a, b) =>
+            rank(a) - rank(b) ||
+            String(b.lastAt || "").localeCompare(String(a.lastAt || "")),
+        )
+        .slice(0, people),
+    };
+  }
   // Where this person has spoken lately: one row per source, with their last
   // message there so its surroundings can be read.
   recentChatsWith(personId, limit = 5) {
