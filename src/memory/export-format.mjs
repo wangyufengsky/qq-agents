@@ -20,10 +20,11 @@ export const EXPORT_TABLES = [
   "message_aliases",
   "message_observations",
   "person_notes",
+  "moods",
 ];
 // Appended after v2 shipped. An older v2 export simply lacks them; their
 // absence must not fail the checksum of the tables it does carry.
-const ADDED_AFTER_V2 = new Set(["person_notes"]);
+const ADDED_AFTER_V2 = new Set(["person_notes", "moods"]);
 
 /** @param {{version: number, agentId: string, exportedAt: string}} header */
 export function exportDigest(header) {

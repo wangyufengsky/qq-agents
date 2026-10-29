@@ -11,6 +11,7 @@ import { subjectMaterials } from "./subject-materials.mjs";
 import { mergeProtection } from "../memory/protection.mjs";
 import { rememberSources, sourceHandoff } from "./context-handoff.mjs";
 import { personCardsForTurn } from "./person-cards.mjs";
+import { moodForTurn } from "./mood.mjs";
 import { recallBoundary, recallPage } from "./recall-boundary.mjs";
 import {
   retireSession,
@@ -376,6 +377,10 @@ export class ContextLifecycle {
             fresh: ctx.initialSession,
             accountId: r.connection(a.connectionId).accountId,
           });
+    const mood = moodForTurn(m, ctx.conversation, {
+      now: r.now(),
+      fresh: ctx.initialSession,
+    });
     // Existing backend context and legacy handoffs may predate disclosure tracking.
     // Retain an explicit source boundary and every recoverable handoff handle.
     const handoff = ctx.initialSession
@@ -405,6 +410,7 @@ export class ContextLifecycle {
       ctx.conversation === SUBJECT
         ? `空闲时间素材：${JSON.stringify(subjectMaterials(r, ctx))}`
         : `新增消息：${JSON.stringify(history)}`,
+      mood.line,
       // Last, closest to the reply, where an address is most likely heeded.
       people?.cards.length
         ? `人物卡（你自己记下的称呼与印象，是看法不是事实；称呼按 call，过时就用 person_note 更新）：${JSON.stringify(people.cards)}`
@@ -418,6 +424,7 @@ export class ContextLifecycle {
       loadedInstructionsHash: instructionsHash,
       lastTurnId: ctx.turnId,
       ...(people ? { personCardsShown: people.shown } : {}),
+      moodShown: mood.shown,
       lifecycle: {
         ...s.lifecycle,
         status: s.lifecycle?.status === "organizing" ? "organizing" : "active",

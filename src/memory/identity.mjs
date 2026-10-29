@@ -455,4 +455,88 @@ export class IdentityMemory {
       .run(this.agentId, old.personId);
     return { deleted: true, personId: old.personId };
   }
+  // The agent's own account of its mood, written when it actually changes,
+  // with why. Only the agent writes or clears it; nothing computes or decays
+  // it, and it stops applying when it expires. Every change is a new row, so
+  // the console can show the history (read-only).
+  moodHistory(limit = 50) {
+    return this.db
+      .prepare(
+        "SELECT value FROM moods WHERE agent_id=? ORDER BY rowid DESC LIMIT ?",
+      )
+      .all(this.agentId, limit)
+      .map(decode);
+  }
+  currentMood(now) {
+    const [latest] = this.moodHistory(1);
+    return latest?.action === "set" && latest.expiresAt > now ? latest : null;
+  }
+  setMood(
+    { mood = "", intensity, reason, hours = 4, evidence = [], clear = false },
+    { writtenIn, now },
+  ) {
+    if (
+      typeof reason !== "string" ||
+      !reason.trim() ||
+      reason.length > 300 ||
+      typeof mood !== "string" ||
+      mood.length > 40 ||
+      (!clear &&
+        (!mood.trim() ||
+          !Number.isInteger(intensity) ||
+          intensity < 1 ||
+          intensity > 5)) ||
+      !(hours >= 0.5 && hours <= 24)
+    )
+      throw Error("INVALID_MOOD");
+    if (evidence.length) freezeEvidence(this.mem, evidence, now);
+    const [previous] = this.moodHistory(1);
+    // A strong mood still in effect changes only for something that happened
+    // after it was written: a newer record cited as evidence. Without one it
+    // stays until it expires, so a fresh session cannot flip it on a whim.
+    if (
+      previous?.action === "set" &&
+      previous.expiresAt > now &&
+      previous.intensity >= 4 &&
+      !evidence.some(
+        (id) =>
+          (this.db
+            .prepare("SELECT seq FROM events WHERE agent_id=? AND id=?")
+            .get(this.agentId, id)?.seq ?? 0) > (previous.sinceSeq ?? 0),
+      )
+    )
+      throw Error("MOOD_CHANGE_NEEDS_CAUSE");
+    const value = {
+      id: randomUUID(),
+      action: clear ? "clear" : "set",
+      ...(clear
+        ? {}
+        : {
+            mood: mood.trim(),
+            intensity,
+            since: now,
+            expiresAt: now + Math.round(hours * 3600000),
+            // Records after this point can count as a cause for changing it.
+            sinceSeq:
+              this.db
+                .prepare("SELECT MAX(seq) AS seq FROM events WHERE agent_id=?")
+                .get(this.agentId).seq || 0,
+          }),
+      evidence,
+      reason: reason.trim(),
+      writtenIn: writtenIn ?? null,
+      writtenAt: now,
+      previousId: previous?.id ?? null,
+    };
+    this.db
+      .prepare("INSERT INTO moods VALUES(?,?,?)")
+      .run(this.agentId, value.id, encode(value));
+    // Keep a bounded history; the oldest changes go first.
+    this.db
+      .prepare(
+        "DELETE FROM moods WHERE agent_id=? AND rowid NOT IN (SELECT rowid FROM moods WHERE agent_id=? ORDER BY rowid DESC LIMIT 500)",
+      )
+      .run(this.agentId, this.agentId);
+    return value;
+  }
 }

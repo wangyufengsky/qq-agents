@@ -80,6 +80,12 @@ test("CLI exports a verified snapshot and restores revisions, identities and mes
     conversation: "group:20000",
     evidence: [event.id],
   });
+  // Moods are read newest-first by rowid, so both export paths keep write order.
+  for (const [i, mood] of ["开心", "平静", "紧张", "无聊"].entries())
+    memory.identity.setMood(
+      { mood, intensity: 2, reason: "合成心情" },
+      { writtenIn: "group:20000", now: 1000 + i },
+    );
   const expected = JSON.parse(JSON.stringify(memory.export().tables));
   store.close();
   const file = path.join(root, "private.json"),

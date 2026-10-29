@@ -171,6 +171,8 @@ export function createServer({
           "/files-ui.js",
           "/apps-ui.js",
           "/mind-ui.js",
+          "/mood-ui.js",
+          "/people-ui.js",
           "/onboarding-ui.js",
           "/activity-ui.js",
           "/style.css",
@@ -294,6 +296,11 @@ export function createServer({
             .list("self_candidates")
             .map((c) => m.identity.withEvidence(c)),
           intents: m.identity.list("intentions"),
+          // Read-only: only the agent writes or clears its own mood.
+          mood: {
+            current: m.identity.currentMood(runtime.now()),
+            history: m.identity.moodHistory(50),
+          },
           personCards: m.identity.personCards().map((card) => ({
             ...card,
             names: JSON.parse(
