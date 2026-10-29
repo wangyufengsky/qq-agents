@@ -218,6 +218,7 @@ const agentForm = {
       `<details class="agent-section"${open ? " open" : ""}><summary>${title}</summary><div class="form-grid">${body}</div></details>`;
     const cooldownSeconds =
       row.wake.cooldownMs === undefined ? "" : row.wake.cooldownMs / 1000;
+    const asr = row.voice?.asr || {};
     return (
       section(
         "基本信息",
@@ -311,7 +312,30 @@ const agentForm = {
             row.behavior?.failureNotice?.text ?? "",
             'maxlength="200" placeholder="我刚才没接上，稍后再回你。"',
           ) +
-          `<p class="hint">私聊、被 @ 或被叫名字后，这一轮因 AI 后端出错或超时失败、又一句都没发出时，由程序发送这句话；同一会话每 ${Math.round((row.behavior?.failureNotice?.cooldownMs ?? 600000) / 60000)} 分钟最多一次，仍受暂停、静默和发送限额约束。</p>`,
+          `<p class="hint">私聊、被 @ 或被叫名字后，这一轮因 AI 后端出错或超时失败、又一句都没发出时，由程序发送这句话；同一会话每 ${Math.round((row.behavior?.failureNotice?.cooldownMs ?? 600000) / 60000)} 分钟最多一次，仍受暂停、静默和发送限额约束。</p>` +
+          check(
+            "outageNotice",
+            "QQ 掉线时请其他角色告诉主人",
+            row.behavior?.outageNotice?.enabled,
+          ) +
+          input(
+            "outageNoticeText",
+            "掉线提示内容",
+            row.behavior?.outageNotice?.text ?? "",
+            'maxlength="200" placeholder="{agent} 的 QQ 掉线了：{reason}。请到 NapCat 看一下。"',
+          ) +
+          check(
+            "outageNoticeRecovered",
+            "恢复连接后再说一句",
+            row.behavior?.outageNotice?.notifyRecovered,
+          ) +
+          input(
+            "outageNoticeRecoveredText",
+            "恢复提示内容",
+            row.behavior?.outageNotice?.recoveredText ?? "",
+            'maxlength="200" placeholder="{agent} 的 QQ 已经恢复连接。"',
+          ) +
+          `<p class="hint">本角色的 QQ 已离线或自动重连用完次数时，由同一实例里排在最前、QQ 已连接、未暂停、私聊白名单包含该主人的另一个角色，把这句话私聊发给本角色的每位主人；{agent} 换成本角色名，{reason} 换成“QQ 已离线”或“自动重连失败”。同一连接的同类提示每 ${Math.round((row.behavior?.outageNotice?.cooldownMs ?? 1800000) / 60000)} 分钟最多一次，仍受暂停、静默和发送限额约束，被拦下不重试。需要先填写主人 QQ；只有一个角色时没有人代发。</p>`,
       ) +
       section(
         "能力",
@@ -327,6 +351,64 @@ const agentForm = {
             "启用 GitHub 只读搜索与文件阅读",
             row.github?.enabled,
           ),
+      ) +
+      section(
+        "语音转写",
+        check("asrEnabled", "收到语音时自动转成文字", asr.enabled) +
+          select(
+            "asrTool",
+            "转写工具（此角色 AI 后端的外部工具白名单）",
+            this.asrToolValue(asr),
+            this.asrToolOptions(row.backendId, asr),
+          ) +
+          input(
+            "asrAudioArgument",
+            "音频参数名",
+            asr.audioArgument ?? "audio",
+            'pattern="[A-Za-z_][A-Za-z0-9_]{0,63}"',
+          ) +
+          input(
+            "asrMimeArgument",
+            "MIME 参数名（工具不需要时留空）",
+            asr.mimeArgument ?? "mimeType",
+            'pattern="([A-Za-z_][A-Za-z0-9_]{0,63})?"',
+          ) +
+          input(
+            "asrMaxSeconds",
+            "单条语音最长（秒）",
+            asr.maxSeconds ?? 90,
+            'type="number" min="1" max="600"',
+          ) +
+          input(
+            "asrMaxMegabytes",
+            "单条语音最大（MB）",
+            this.megabytes(asr.maxBytes ?? 8388608),
+            'type="number" min="0.0625" max="20" step="any"',
+          ) +
+          input(
+            "asrTimeoutSeconds",
+            "转写超时（秒）",
+            (asr.timeoutMs ?? 60000) / 1000,
+            'type="number" min="1" max="300" step="any"',
+          ) +
+          input(
+            "asrWaitSeconds",
+            "回合开始前最多等转写（秒）",
+            (asr.waitMs ?? 8000) / 1000,
+            'type="number" min="0" max="30" step="any"',
+          ) +
+          input(
+            "asrMaxPerHour",
+            "每小时最多转写条数",
+            asr.maxPerHour ?? 60,
+            'type="number" min="1" max="1000"',
+          ) +
+          area(
+            "asrArguments",
+            '固定附加参数（JSON，例如 {"language":"zh"}）',
+            JSON.stringify(asr.arguments || {}),
+          ) +
+          '<p class="hint">开启后，收到的语音会经 QQ 网关下载到此角色的语音库，再发给上面选择的外部工具转写，也就是把聊天语音交给该服务；只能选此角色 AI 后端里管理员白名单中的工具，改了 AI 后端请重新选择。转写结果单独保存并标明是机器转写，原消息不变。暂停、受保护会话、单条上限和每小时上限照常生效；失败时保留原占位并记一条诊断。</p>',
       ) +
       section(
         "作息与静默",
@@ -367,6 +449,31 @@ const agentForm = {
           '<p class="hint">仅搜索与读取，不提供提交、评论或工作流操作。私有内容仅独立受保护工作任务可读，不自动转发到其他聊天或外部服务。本机 CLI 登录可能自带较大权限，推荐独立只读令牌；变量名填写在上一栏，令牌仅填写专用密码框并保存到本机私有配置。</p>',
       )
     );
+  },
+
+  megabytes(bytes) {
+    return Math.round((bytes / 1048576) * 1000) / 1000;
+  },
+  asrToolValue(asr) {
+    return asr.serverId && asr.tool
+      ? JSON.stringify([asr.serverId, asr.tool])
+      : "";
+  },
+  /** Allowlisted MCP tools of a backend, plus the saved choice if gone. */
+  asrToolOptions(backendId, asr = {}) {
+    const backend =
+      config.backends.find((b) => b.id === backendId) || config.backends[0];
+    const options = [["", "未选择"]];
+    for (const s of backend?.toolServers || [])
+      for (const t of s.allowedTools)
+        options.push([JSON.stringify([s.id, t]), `${s.id} · ${t}`]);
+    const saved = this.asrToolValue(asr);
+    if (saved && !options.some(([v]) => v === saved))
+      options.push([
+        saved,
+        `${asr.serverId} · ${asr.tool}（不在当前后端白名单）`,
+      ]);
+    return options;
   },
 
   toolGroupsMarkup(row) {
@@ -468,6 +575,23 @@ const agentForm = {
       };
     this.bindSilence(root);
     this.bindConversations(root, row);
+    this.bindAsr(root, row);
+  },
+
+  // The tool choices follow the selected AI backend.
+  bindAsr(root, row) {
+    const backend = root.querySelector('select[name="backendId"]'),
+      tool = root.querySelector('select[name="asrTool"]');
+    if (!backend || !tool) return;
+    backend.addEventListener("change", () => {
+      const current = tool.value;
+      tool.innerHTML = this.asrToolOptions(backend.value, row.voice?.asr)
+        .map(
+          ([v, l]) =>
+            `<option value="${esc(v)}" ${v === current ? "selected" : ""}>${esc(l)}</option>`,
+        )
+        .join("");
+    });
   },
 
   bindSilence(root) {
@@ -614,6 +738,18 @@ const agentForm = {
           .map((s) => s.trim())
           .filter(Boolean);
     const managed = this.managedTools();
+    // A field left as shown keeps its stored value, so saving an unchanged
+    // form is not a policy change; a field missing from the form keeps it too.
+    const asr = original.voice?.asr || {},
+      edited = (key, shown, convert, saved) =>
+        !f.has(key) || get(key).trim() === String(shown)
+          ? saved
+          : convert(get(key).trim()),
+      asrTool = !f.has("asrTool")
+        ? [asr.serverId, asr.tool]
+        : get("asrTool")
+          ? JSON.parse(get("asrTool"))
+          : ["", ""];
     const seconds = Number(get("cooldownSeconds")),
       cooldownMs =
         original.wake.cooldownMs !== undefined &&
@@ -639,11 +775,76 @@ const agentForm = {
           // An empty field keeps the built-in default text.
           text: get("failureNoticeText").trim() || undefined,
         },
+        outageNotice: {
+          ...original.behavior?.outageNotice,
+          enabled: f.has("outageNotice"),
+          notifyRecovered: f.has("outageNoticeRecovered"),
+          // Empty fields keep the built-in default text.
+          text: get("outageNoticeText").trim() || undefined,
+          recoveredText: get("outageNoticeRecoveredText").trim() || undefined,
+        },
       },
       network: {
         ...original.network,
         autonomous: f.has("autonomousNetwork"),
         publicUrls: lines("publicUrls"),
+      },
+      voice: {
+        ...original.voice,
+        asr: {
+          ...asr,
+          enabled: f.has("asrEnabled"),
+          serverId: asrTool[0],
+          tool: asrTool[1],
+          audioArgument: edited(
+            "asrAudioArgument",
+            asr.audioArgument,
+            String,
+            asr.audioArgument,
+          ),
+          mimeArgument: edited(
+            "asrMimeArgument",
+            asr.mimeArgument,
+            String,
+            asr.mimeArgument,
+          ),
+          arguments: edited(
+            "asrArguments",
+            JSON.stringify(asr.arguments || {}),
+            (v) => JSON.parse(v || "{}"),
+            asr.arguments,
+          ),
+          maxSeconds: edited(
+            "asrMaxSeconds",
+            asr.maxSeconds,
+            Number,
+            asr.maxSeconds,
+          ),
+          maxBytes: edited(
+            "asrMaxMegabytes",
+            asr.maxBytes === undefined ? "" : this.megabytes(asr.maxBytes),
+            (v) => Math.round(Number(v) * 1048576),
+            asr.maxBytes,
+          ),
+          timeoutMs: edited(
+            "asrTimeoutSeconds",
+            asr.timeoutMs === undefined ? "" : asr.timeoutMs / 1000,
+            (v) => Math.round(Number(v) * 1000),
+            asr.timeoutMs,
+          ),
+          waitMs: edited(
+            "asrWaitSeconds",
+            asr.waitMs === undefined ? "" : asr.waitMs / 1000,
+            (v) => Math.round(Number(v) * 1000),
+            asr.waitMs,
+          ),
+          maxPerHour: edited(
+            "asrMaxPerHour",
+            asr.maxPerHour,
+            Number,
+            asr.maxPerHour,
+          ),
+        },
       },
       github: {
         ...original.github,

@@ -2,6 +2,7 @@ import {
   stableInstructions,
   identityAnchors,
   turnEnvironment,
+  scheduleForTurn,
 } from "./prompts.mjs";
 export { stableInstructions } from "./prompts.mjs";
 import { randomUUID, createHash } from "node:crypto";
@@ -12,6 +13,7 @@ import { mergeProtection } from "../memory/protection.mjs";
 import { rememberSources, sourceHandoff } from "./context-handoff.mjs";
 import { personCardsForTurn } from "./person-cards.mjs";
 import { moodForTurn } from "./mood.mjs";
+import { taskBrief } from "./scheduler.mjs";
 import { recallBoundary, recallPage } from "./recall-boundary.mjs";
 import {
   retireSession,
@@ -20,9 +22,9 @@ import {
 } from "./session-records.mjs";
 export const SUBJECT = "@subject";
 // The initial prompt gives each record once. Sources already in the new
-// messages or the free-time logs, and intents already in the handoff, are
-// not repeated further down.
-function dropRepeats(handoff, history, materials) {
+// messages or the free-time logs, intents already in the handoff, and timed
+// tasks in the coming-up list are not repeated elsewhere.
+function dropRepeats(handoff, history, materials, schedule) {
   const shown = new Set(
     [...history.items, ...(materials?.lastLogs || [])].map((x) => x.id),
   );
@@ -37,6 +39,10 @@ function dropRepeats(handoff, history, materials) {
     );
     materials.shares = materials.shares.filter((x) => !listed.has(x.id));
   }
+  if (schedule?.listed.length)
+    handoff.scheduled = handoff.scheduled.filter(
+      (t) => !schedule.listed.includes(t.id),
+    );
 }
 export class ContextLifecycle {
   constructor(runtime) {
@@ -223,7 +229,16 @@ export class ContextLifecycle {
               conversation === SUBJECT ||
               t.ownerConversation === conversation ||
               t.targets?.includes(conversation),
-          ) || [],
+          )
+          .map((t) => ({
+            ...taskBrief(t),
+            targets: t.targets,
+            enabled: t.enabled,
+            pendingConfirm: t.pendingConfirm,
+            ownerConversation: t.ownerConversation,
+            scheduleText: t.scheduleText,
+            nextRunText: t.nextRunText,
+          })) || [],
     };
   }
   retire(agentId, conversation, reason, owner = null) {
@@ -401,6 +416,18 @@ export class ContextLifecycle {
             fresh: ctx.initialSession,
             accountId: r.connection(a.connectionId).accountId,
           });
+    const schedule =
+      ctx.conversation === SUBJECT
+        ? null
+        : scheduleForTurn(
+            m,
+            ctx.conversation,
+            r.scheduler?.upcoming(a.id, ctx.conversation) ?? [],
+            {
+              fresh: ctx.initialSession,
+              timezone: a.behavior.proactive.timezone,
+            },
+          );
     const mood = moodForTurn(m, ctx.conversation, {
       now: r.now(),
       fresh: ctx.initialSession,
@@ -428,7 +455,7 @@ export class ContextLifecycle {
     ctx.persistTaint?.();
     const materials =
       ctx.conversation === SUBJECT ? subjectMaterials(r, ctx) : null;
-    if (handoff) dropRepeats(handoff, history, materials);
+    if (handoff) dropRepeats(handoff, history, materials, schedule);
     const prompt = [
       `当前场景 ${ctx.conversation}。本回合采用 self v${self.version}。主人/管理员：${a.ownerIds.join(",") || "未设置"}。`,
       `唤醒原因（资料）: ${JSON.stringify(reasons.map((reason) => (reason.intentId && !recallBoundary(r, ctx).allowed(m.identity.get("intentions", reason.intentId)) ? { reason: "protected-work-withheld" } : reason)))}`,
@@ -437,6 +464,7 @@ export class ContextLifecycle {
       ctx.conversation === SUBJECT
         ? `空闲时间素材：${JSON.stringify(materials)}`
         : `新增消息：${JSON.stringify(history)}`,
+      schedule?.line,
       mood.line,
       // Last, closest to the reply, where an address is most likely heeded.
       people?.cards.length
@@ -451,6 +479,7 @@ export class ContextLifecycle {
       loadedInstructionsHash: instructionsHash,
       lastTurnId: ctx.turnId,
       ...(people ? { personCardsShown: people.shown } : {}),
+      ...(schedule ? { scheduleShown: schedule.shown } : {}),
       moodShown: mood.shown,
       lifecycle: {
         ...s.lifecycle,

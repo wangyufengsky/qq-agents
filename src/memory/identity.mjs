@@ -371,6 +371,17 @@ export class IdentityMemory {
         })),
       }));
   }
+  // Open notes across every group and private chat, most recently written
+  // first, for free time to see what is still pending. Only the chat that
+  // wrote a note can change it.
+  openNotes() {
+    return this.db
+      .prepare(
+        "SELECT value FROM work_notes WHERE agent_id=? AND (conversation LIKE 'group:%' OR conversation LIKE 'private:%') AND json_extract(value,'$.status')='open' ORDER BY json_extract(value,'$.writtenAt') DESC, rowid DESC",
+      )
+      .all(this.agentId)
+      .map(decode);
+  }
   // A person card is the agent's own view of someone: how to address them and
   // how they get along. Every conversation shares it, like Self, so it never
   // holds protected material. Recent revisions stay for review.
@@ -467,16 +478,16 @@ export class IdentityMemory {
       .all(this.agentId, limit)
       .map(decode);
   }
-  // Who each mood is about: the people whose incoming messages it cites as
-  // evidence, never the agent's own account. Read from the cited events each
-  // time; nothing is copied onto the mood.
+  // Who each mood is about: the people whose incoming messages (or their
+  // voice transcripts) it cites as evidence, never the agent's own account.
+  // Read from the cited events each time; nothing is copied onto the mood.
   moodPeople(moods, accountId) {
     const cited = [...new Set(moods.flatMap((x) => x.evidence || []))];
     const senders = new Map(
       cited.length
         ? this.db
             .prepare(
-              "SELECT id,sender_id FROM events WHERE agent_id=? AND direction='in' AND id IN (SELECT value FROM json_each(?))",
+              "SELECT id,sender_id FROM events WHERE agent_id=? AND (direction='in' OR kind='voice.transcript') AND id IN (SELECT value FROM json_each(?))",
             )
             .all(this.agentId, encode(cited))
             .filter(

@@ -320,7 +320,9 @@ function loadHome() {
     .then((data) => {
       homeData = data;
       const box = $("#home-roles");
-      if (tab === "overview" && box) box.innerHTML = homeRolesMarkup();
+      if (tab !== "overview" || !box) return;
+      box.innerHTML = homeRolesMarkup();
+      bindOperations(box);
     })
     .catch(() => (homeFetchedAt = 0));
 }
@@ -341,6 +343,17 @@ const homeDid = {
   "reached-out": "联系",
   rested: "休息",
 };
+// The mood still in effect, or 平常; either way it opens the role's mood tab.
+function homeMood(a, h) {
+  if (!h) return "";
+  const m = h.mood,
+    until = m && new Date(m.expiresAt),
+    sameDay = until && until.toDateString() === new Date().toDateString();
+  const text = m
+    ? `心情：${esc(m.mood)}（${Number(m.intensity)}/5）· 到 ${sameDay ? homeTime(m.expiresAt) : esc(until.toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }))}`
+    : "心情：平常";
+  return `<button type="button" class="home-mood${m ? "" : " is-calm"}" data-do="role-mood" data-id="${esc(a.id)}" title="查看${esc(a.name)}的心情">${text}</button>`;
+}
 function homeRoleCard(a) {
   const s = status.agents.find((x) => x.id === a.id),
     h = homeData?.agents?.find((x) => x.agentId === a.id),
@@ -354,7 +367,7 @@ function homeRoleCard(a) {
   const stats = d
     ? `<div class="home-stats"><span><b>${d.sent}</b>回复</span><span><b>${d.freeTimeTraced ? `${d.freeTimeActive}/${d.freeTimeTraced}` : d.freeTime}</b>${d.freeTimeTraced ? "空闲时有行动" : "空闲时间"}</span><span><b>${d.reads}</b>读文章</span><span><b>${d.diaries}</b>日记</span></div>`
     : "";
-  return `<article class="card home-role"><div class="row"><div class="identity"><span class="avatar">${esc(avatarChar(a.name))}</span><div><h3>${esc(a.name)}</h3><span class="hint">QQ ${c?.connected ? "已连接" : "未连接"} · ${esc(backendLabels[b?.state] || "后端尚未检测")}</span></div></div>${tag(can ? "可以发言" : a.paused ? "已暂停" : "暂不发言", can ? "live" : a.paused ? "off" : "warn")}</div>${can ? "" : blockersMarkup(s)}${latest}${stats}${d ? `<p class="hint">最近 24 小时${h.nextFreeTimeAt && a.subject?.enabled ? ` · 下次空闲时间 ${homeTime(h.nextFreeTimeAt)}` : ""}</p>` : ""}<div class="card-actions"><button data-do="role" data-id="${esc(a.id)}">${icon("pulse", "sm")}查看动态</button><button class="ghost" data-do="role-settings" data-id="${esc(a.id)}">${icon("settings", "sm")}设置</button></div></article>`;
+  return `<article class="card home-role"><div class="row"><div class="identity"><span class="avatar">${esc(avatarChar(a.name))}</span><div><h3>${esc(a.name)}</h3><span class="hint">QQ ${c?.connected ? "已连接" : "未连接"} · ${esc(backendLabels[b?.state] || "后端尚未检测")}</span></div></div>${tag(can ? "可以发言" : a.paused ? "已暂停" : "暂不发言", can ? "live" : a.paused ? "off" : "warn")}</div>${can ? "" : blockersMarkup(s)}${homeMood(a, h)}${latest}${stats}${d ? `<p class="hint">最近 24 小时${h.nextFreeTimeAt && a.subject?.enabled ? ` · 下次空闲时间 ${homeTime(h.nextFreeTimeAt)}` : ""}</p>` : ""}<div class="card-actions"><button data-do="role" data-id="${esc(a.id)}">${icon("pulse", "sm")}查看动态</button><button class="ghost" data-do="role-settings" data-id="${esc(a.id)}">${icon("settings", "sm")}设置</button></div></article>`;
 }
 // Started with `--live --resume`: say where lifting the boot pause stands.
 const autoResumeText = (r) => {
@@ -599,7 +612,10 @@ function render() {
   } else {
     content.innerHTML = `<div class="card"><h2>参与控制</h2><p>启动时总是全局暂停。解除全局暂停不会自动解除角色暂停，也不会连接 QQ。</p><p>当前：${status.globalPaused ? "全局暂停中" : "全局允许参与"}。全局暂停与恢复统一使用页面右上角的「${status.globalPaused ? "全局恢复" : "全部暂停"}」按钮。</p>${disabledHints(disabledReason([[status.globalPaused && status.mode === "isolated", "isolatedResume"]]))}</div><div class="card section-title"><div><h2>完整配置</h2><p>支持配置任意数量的角色、QQ 账号与后端。配置中的凭据仅填写环境变量名。</p></div><button data-do="advanced">打开配置编辑器</button></div><div class="card"><h2>迁移与备份</h2><p>先运行迁移预检，再导入到新数据目录。旧文件、原登录目录和 Docker 数据都保留。</p><p class="mono">npm run migrate -- --source /path/to/old-instance --agent agent-a --data /path/to/new-data</p><p class="hint">默认只生成统计预检。实际导入需 --apply；目标目录有运行锁时会拒绝。迁移不会修改旧实例，也不会启动 QQ。</p><button data-do="download-config">导出配置</button></div>`;
   }
-  content
+  bindOperations(content);
+}
+function bindOperations(root) {
+  root
     .querySelectorAll("[data-do]")
     .forEach(
       (b) =>
@@ -887,6 +903,12 @@ async function operate(kind, id) {
   if (kind === "role-settings") {
     roleId = id;
     tab = "agents";
+    render();
+    return;
+  }
+  if (kind === "role-mood") {
+    roleId = id;
+    tab = "mood";
     render();
     return;
   }
@@ -1259,12 +1281,22 @@ function savedNotice(result) {
     ? "已保存并生效。受影响角色的旧回合已结束，其他角色继续运行。"
     : "已保存并生效，现有 QQ 连接和回合保持不变。";
 }
-function sceneMarkup(scene) {
+// A speaker in memory results by QQ name and QQ; one with a person card by
+// the call it gives instead, with a way to open the card. people is the
+// /api/memory map of the speakers on this page that have a card.
+function memorySpeaker(id, names, people, extra = "") {
+  const name = esc(names || "名字未记录"),
+    card = id && Object.hasOwn(people, id) ? people[id] : null;
+  if (!card)
+    return `${name}（${esc(id || "身份未知")}${extra ? "，" + extra : ""}）`;
+  return `<span title="QQ ${esc(id)}">${name}</span>（${personCallText(card.call)}${extra ? "，" + extra : ""}）${personCardButton(id)}`;
+}
+function sceneMarkup(scene, people = {}) {
   if (!scene) return "";
   const source = scene.source;
   const line = (m) =>
-    `<li><small>${esc(m.occurredAt)} · ${esc(m.senderName || "名字未记录")}（${esc(m.senderId || "身份未知")}）${m.matched ? " · 命中" : ""}</small><p>${esc(m.body)}${m.bodyTruncated ? "…（原文未完整展示）" : ""}</p>${m.replyTo.length ? `<small>引用：${m.replyTo.map((r) => esc(r.messageId) + (r.status === "observed" ? "（有原文）" : "（未取得原文）")).join("、")}</small>` : ""} <button type="button" data-read="${esc(m.id)}">读原文</button></li>`;
-  return `<details open><summary>${esc(source.name || "名称未记录")} · ${esc(source.conversation)} · 场景片段</summary><p class="hint">以下是时间相邻的消息，不代表同一话题。名称${source.nameObservedAt ? "观察于 " + esc(source.nameObservedAt) : "未知"}。</p><p>片段内发言者：${scene.participants.map((p) => `${esc(p.observedNames.join(" / ") || "名字未记录")}（${esc(p.id)}，${p.messageCount} 条）`).join("、") || "未知"}。这不是全群成员名单。</p><ol>${scene.messages.map(line).join("")}</ol>${scene.quoted.length ? `<p>另取的引用原文（不计入片段参与者）：</p><ol>${scene.quoted.map(line).join("")}</ol>` : ""}${scene.contextTruncated ? '<p class="hint">上下文受结果预算限制，已收缩；可继续展开。</p>' : ""}${!scene.timeKnown ? '<p class="hint">原消息时间不可靠，未自动拼接相邻发言。</p>' : ""}${scene.sharedRecords?.length ? `<p class="hint">${scene.sharedRecords.length} 条重叠记录已在本页前面的片段展示，按原记录 ID 去重。</p>` : ""}<button type="button" data-context="${esc(scene.anchorId)}">查看更多前后文</button> <button type="button" data-related="${esc(scene.anchorId)}">跨时间引用 / 撤回</button></details>`;
+    `<li><small>${esc(m.occurredAt)} · ${memorySpeaker(m.senderId, m.senderName, people)}${m.matched ? " · 命中" : ""}</small><p>${esc(m.body)}${m.bodyTruncated ? "…（原文未完整展示）" : ""}</p>${m.replyTo.length ? `<small>引用：${m.replyTo.map((r) => esc(r.messageId) + (r.status === "observed" ? "（有原文）" : "（未取得原文）")).join("、")}</small>` : ""} <button type="button" data-read="${esc(m.id)}">读原文</button></li>`;
+  return `<details open><summary>${esc(source.name || "名称未记录")} · ${esc(source.conversation)} · 场景片段</summary><p class="hint">以下是时间相邻的消息，不代表同一话题。名称${source.nameObservedAt ? "观察于 " + esc(source.nameObservedAt) : "未知"}。</p><p>片段内发言者：${scene.participants.map((p) => memorySpeaker(p.id, p.observedNames.join(" / "), people, `${Number(p.messageCount)} 条`)).join("、") || "未知"}。这不是全群成员名单。</p><ol>${scene.messages.map(line).join("")}</ol>${scene.quoted.length ? `<p>另取的引用原文（不计入片段参与者）：</p><ol>${scene.quoted.map(line).join("")}</ol>` : ""}${scene.contextTruncated ? '<p class="hint">上下文受结果预算限制，已收缩；可继续展开。</p>' : ""}${!scene.timeKnown ? '<p class="hint">原消息时间不可靠，未自动拼接相邻发言。</p>' : ""}${scene.sharedRecords?.length ? `<p class="hint">${scene.sharedRecords.length} 条重叠记录已在本页前面的片段展示，按原记录 ID 去重。</p>` : ""}<button type="button" data-context="${esc(scene.anchorId)}">查看更多前后文</button> <button type="button" data-related="${esc(scene.anchorId)}">跨时间引用 / 撤回</button></details>`;
 }
 async function readRelated(id, afterSeq = 0) {
   await action(async () => {
@@ -1436,8 +1468,10 @@ async function conversationAction(kind, conversation) {
 }
 async function searchMemory(cursor = null) {
   await action(async () => {
+    // Results belong to the role searched, even if the picker changes later.
+    const agentId = $("#memory-agent").value;
     const q = new URLSearchParams({
-      agentId: $("#memory-agent").value,
+      agentId,
       query: $("#memory-query").value,
       type: $("#memory-type").value,
     });
@@ -1445,14 +1479,15 @@ async function searchMemory(cursor = null) {
     if ($("#memory-person").value) q.set("person", $("#memory-person").value);
     if (memorySource()) q.set("conversation", memorySource());
     const result = await api("/api/memory?" + q);
-    const rows = [...result.items, ...result.diaries];
+    const rows = [...result.items, ...result.diaries],
+      people = result.people || {};
     const node = $("#memory-results");
     node.className = "";
     node.innerHTML =
       rows
         .map(
           (r) =>
-            `<article class="record"><div class="row"><strong>${esc(r.title || r.type)}</strong>${tag(r.origin)}</div><p>${esc(r.body)}${r.bodyTruncated ? "…" : ""}</p>${r.bodyTruncated ? '<p class="hint">这里是摘要，可打开阅读全文。</p>' : ""}<small>${esc(r.conversation || "个人日记")} · ${esc(r.senderId || "")} · ${esc(r.occurredAt || r.updatedAt)}</small> <button type="button" data-read="${esc(r.id)}">${r.type === "diary" ? "阅读全文" : "展开原文"}</button>${sceneMarkup(r.scene)}</article>`,
+            `<article class="record"><div class="row"><strong>${esc(r.title || r.type)}</strong>${tag(r.origin)}</div><p>${esc(r.body)}${r.bodyTruncated ? "…" : ""}</p>${r.bodyTruncated ? '<p class="hint">这里是摘要，可打开阅读全文。</p>' : ""}<small>${esc(r.conversation || "个人日记")}${r.senderId ? ` · ${memorySpeaker(r.senderId, r.senderName, people)}` : ""} · ${esc(r.occurredAt || r.updatedAt)}</small> <button type="button" data-read="${esc(r.id)}">${r.type === "diary" ? "阅读全文" : "展开原文"}</button>${sceneMarkup(r.scene, people)}</article>`,
         )
         .join("") || '<p class="empty">没有匹配记录。</p>';
     node
@@ -1467,6 +1502,8 @@ async function searchMemory(cursor = null) {
     node
       .querySelectorAll("[data-related]")
       .forEach((b) => (b.onclick = () => readRelated(b.dataset.related)));
+    // The card opens under the role searched, not the one selected above.
+    bindPersonCards(node, agentId);
     if (result.nextCursor) {
       const b = document.createElement("button");
       b.textContent = "下一页";
@@ -1500,6 +1537,14 @@ async function readMemory(id, options = {}) {
       .filter(Boolean)
       .join(" · ");
     $("#memory-reader-body").textContent = r.body;
+    // A voice message's machine transcript is its own record, shown beside it.
+    if (r.notice) $("#memory-reader-meta").textContent += " · " + r.notice;
+    if (r.voiceTranscript?.text) {
+      const transcript = document.createElement("p");
+      transcript.className = "hint";
+      transcript.textContent = `语音转写（机器识别，可能有误）：${r.voiceTranscript.text}`;
+      $("#memory-reader-body").after(transcript);
+    }
     const versions = $("#memory-version-controls");
     versions.hidden = r.type !== "diary";
     if (r.type === "diary") {

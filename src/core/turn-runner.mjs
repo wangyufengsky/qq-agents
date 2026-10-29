@@ -75,6 +75,10 @@ export class TurnRunner {
     try {
       backend = runtime.backendConnections.adapter(a);
       const tools = toolSpecs(ctx.allowedTools);
+      // A voice still being transcribed gets a short, bounded wait so the
+      // turn reads what was said rather than a placeholder.
+      const transcribing = runtime.transcripts.settle(ctx);
+      if (transcribing) await transcribing;
       const prepared = runtime.contexts.prepare(ctx, backend, reasons, tools);
       if (ctx.initialSession)
         ctx.estimatedAdded += JSON.stringify(tools).length;

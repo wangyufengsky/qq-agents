@@ -1,3 +1,9 @@
+import { createHash } from "node:crypto";
+import { describeSchedule } from "../../vendor/scheduler/schedule.js";
+import { describeInstant } from "../../vendor/scheduler/time.js";
+
+const UPCOMING_SHOWN = 3;
+
 // Identity belongs to configuration. Self describes the person, not the transport.
 export function identityAnchors(config, agent) {
   const account = (a) => ({
@@ -37,7 +43,7 @@ export function stableInstructions(
     subject
       ? [
           "这是你的空闲时间，大约每小时一次，属于你自己，不是值班检查。",
-          "先看「空闲时间素材」：上次留下的线索、最近的动态、未读来信、可以主动找的人（reach）和可用的探索入口。然后挑一件你真想做的小事去做，例如：顺着上次的线索继续；想起某个人、惦记一件没聊完的事、群里有个话题还想接，就主动找对方说句话；在已开启的平台看看热门或关注（入口和剩余额度见素材，可直接 app_browse）；搜一个你好奇或之前没想通的问题；读完一篇内容；写日记或整理工作笔记；有到期的成长候选就回顾。",
+          "先看「空闲时间素材」：上次留下的线索、最近的动态、未读来信、各聊天还没完成的工作笔记（openNotes）、可以主动找的人（reach）和可用的探索入口。然后挑一件你真想做的小事去做，例如：顺着上次的线索继续；想起某个人、惦记一件没聊完的事、群里有个话题还想接，就主动找对方说句话；在已开启的平台看看热门或关注（入口和剩余额度见素材，可直接 app_browse）；搜一个你好奇或之前没想通的问题；读完一篇内容；写日记或整理工作笔记；有到期的成长候选就回顾。",
           `结束前用 subject_log 记一笔：做了什么、发现了什么、下次想接着做什么；主动找了人记 did=reached-out。真的想休息也可以，同样用 subject_log 记下 did=rested 和原因。每次空闲时间最多调用 ${agent.subject?.maxToolCallsPerTurn ?? 8} 个工具，subject_log 不计入。`,
           "想主动找人说话，或想把发现的东西分享给某人，用 intent_create 交给对应聊天：target 从 reach.targets 里选，expiresAt 一般给几小时到一天，等回应就设 expectsResponse。由那边结合现场决定说、暂缓还是放弃；这里不直接发 QQ，也不需要聊天里的等待或已读操作。朋友之间主动开口是正常的，不算打扰；对方没接也没关系，冷却和每日额度由程序把关。不必每次都找人，也不为凑数找人。",
         ].join("\n")
@@ -97,4 +103,54 @@ export function turnEnvironment(runtime, agent, ctx, backendType) {
       `先处理已有消息；需要等补充时再短暂等待。潜水前观察 ${agent.behavior.preSleepWaitMs} 毫秒，不是首回复的前置等待。`,
     );
   return parts.join("\n");
+}
+
+// A chat session is told its coming timed tasks once, and again only after the
+// list changes: a task added, removed or rescheduled. A run only moves a task
+// to its next time, so the scheduled turn itself repeats nothing.
+export function scheduleForTurn(memory, conversation, upcoming, options) {
+  const seen = options.fresh
+    ? null
+    : (memory.state(conversation).scheduleShown ?? null);
+  // What the tasks are, not when or in which order they next run.
+  const key = upcoming.length
+    ? createHash("sha256")
+        .update(
+          JSON.stringify(
+            upcoming
+              .map(({ nextRunAt: _, ...t }) => t)
+              .sort((a, b) => a.id - b.id),
+          ),
+        )
+        .digest("hex")
+    : null;
+  if (key === seen) return { line: "", shown: seen, listed: [] };
+  if (!key)
+    return {
+      line: "这个聊天之前提到的定时任务已经执行完或被取消，现在没有待执行的定时任务。",
+      shown: null,
+      listed: [],
+    };
+  const tasks = upcoming.slice(0, UPCOMING_SHOWN);
+  return {
+    line: `这个聊天接下来的定时任务（管理员安排的，让你心里有数：不必主动提起，也不要再答应一遍同样的事。固定文字到时由程序直接发出，内容不在这里给出；AI 任务到时会唤醒你并附上说明）：${JSON.stringify(
+      {
+        tasks: tasks.map((t) => ({
+          ...(t.name ? { name: t.name } : {}),
+          kind: t.kind === "text" ? "固定文字" : "AI 任务",
+          next: describeInstant(t.nextRunAt, options.timezone),
+          // The rule keeps the task's own clock; name it when it is not the
+          // agent's, or later occurrences read in the wrong zone.
+          rule:
+            describeSchedule(t.schedule) +
+            (t.timezone === options.timezone ? "" : `（${t.timezone} 时间）`),
+        })),
+        ...(upcoming.length > tasks.length
+          ? { more: upcoming.length - tasks.length }
+          : {}),
+      },
+    )}`,
+    shown: key,
+    listed: tasks.map((t) => t.id),
+  };
 }

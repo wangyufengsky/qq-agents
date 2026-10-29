@@ -34,6 +34,9 @@ const num = (x, def, min, max) => {
     throw Error("INVALID_BUDGET");
   return x;
 };
+// Ties a machine transcript to the voice message it was made from.
+export const transcriptKey = (eventId) => `voice-transcript:${eventId}:0`;
+const TRANSCRIPT_NOTICE = "语音转写：机器识别，可能有误；原消息未改动";
 const disclosure = (source, current) =>
   source === current ? "current-conversation" : "agent-judged-recollection";
 function budget(items, maxChars) {
@@ -98,6 +101,8 @@ export class MemoryStore {
       CREATE TABLE IF NOT EXISTS person_notes(agent_id TEXT NOT NULL,person_id TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(agent_id,person_id));
       CREATE TABLE IF NOT EXISTS moods(agent_id TEXT NOT NULL,id TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(agent_id,id));
       `);
+    // agentId|eventId of voice messages whose transcript is still running.
+    this.transcribing = new Set();
     try {
       migrateSearch(this.db, version);
       migrateIdentity(this.db);
@@ -217,7 +222,21 @@ class AgentMemory {
   }
   // Feed entry for the model. A resolved attempt keeps its place, so read
   // progress still covers every seq, but its text is only on the outcome.
-  feedEvent(row, current) {
+  feedEvent(row, current, page) {
+    // Its text already rides on the voice message in this same page.
+    if (
+      row.kind === "voice.transcript" &&
+      page?.has(parse(row.payload).sourceEventId)
+    )
+      return {
+        id: row.id,
+        seq: row.seq,
+        type: row.kind,
+        conversation: row.conversation,
+        direction: row.direction,
+        sourceEventId: parse(row.payload).sourceEventId,
+        notice: "语音转写记录；文字已附在原消息的 voiceTranscript 里。",
+      };
     const outcome = this.sendOutcome(row);
     if (!outcome) return this.event(row, current, true);
     const payload = parse(row.payload);
@@ -241,7 +260,34 @@ class AgentMemory {
         : {}),
     };
   }
+  // A voice message keeps its body; its machine transcript, a separate
+  // record, is shown beside it, or marked pending while it is running.
+  voiceTranscript(row, summary = false) {
+    if (row.kind !== "message.received" || !row.payload.includes('"record"'))
+      return undefined;
+    const segments = parse(row.payload).segments;
+    if (!Array.isArray(segments) || !segments.some((s) => s?.type === "record"))
+      return undefined;
+    const t = this.db
+      .prepare("SELECT id,body FROM events WHERE agent_id=? AND dedupe=?")
+      .get(this.agentId, transcriptKey(row.id));
+    if (t)
+      return {
+        id: t.id,
+        text: summary ? t.body.slice(0, 1000) : t.body,
+        ...(summary && t.body.length > 1000 ? { textTruncated: true } : {}),
+        notice: TRANSCRIPT_NOTICE,
+      };
+    if (this.store.transcribing.has(this.agentId + "|" + row.id))
+      return {
+        status: "pending",
+        notice: "语音转写中；完成后作为单独的 voice.transcript 记录出现",
+      };
+    return undefined;
+  }
   event(row, current, summary = false) {
+    const transcript = row.kind === "voice.transcript",
+      voiceTranscript = this.voiceTranscript(row, summary);
     return {
       id: row.id,
       seq: row.seq,
@@ -265,9 +311,15 @@ class AgentMemory {
         : row.conversation.startsWith("group:")
           ? "group-conversation"
           : "internal",
-      epistemic: "Observed speech/event; not independently verified fact",
+      epistemic: transcript
+        ? "Machine transcription of a voice message; may contain recognition errors and is not the speaker's verified words"
+        : "Observed speech/event; not independently verified fact",
       body: summary ? row.body.slice(0, 200) : row.body,
       bodyTruncated: summary && row.body.length > 200,
+      ...(transcript
+        ? { sourceEventId: parse(row.payload).sourceEventId }
+        : {}),
+      ...(voiceTranscript ? { voiceTranscript } : {}),
       ...provenance(row),
       ...(!summary ? { payload: parse(row.payload) } : {}),
     };
@@ -532,6 +584,12 @@ class AgentMemory {
       senderId: item.senderId,
       senderName: item.senderName,
       origin: item.origin,
+      ...(item.type === "voice.transcript"
+        ? { sourceEventId: item.sourceEventId, notice: TRANSCRIPT_NOTICE }
+        : {}),
+      ...(item.voiceTranscript
+        ? { voiceTranscript: item.voiceTranscript }
+        : {}),
     };
   }
   read({ id, offset = 0, maxChars = 8000, revision }, current = "") {
@@ -611,9 +669,12 @@ class AgentMemory {
         );
     // A reader in its own conversation (the model) sees each outgoing text
     // once; the console reads the plain archive.
+    const page = new Set(rows.map((r) => r.id));
     const items = budget(
       rows.map((r) =>
-        current ? this.feedEvent(r, current) : this.event(r, current, true),
+        current
+          ? this.feedEvent(r, current, page)
+          : this.event(r, current, true),
       ),
       maxChars,
     );

@@ -142,6 +142,10 @@ function activitySeen(s) {
     parts.push(`人物卡：${s.personCards.map(activityCard).join("、")}`);
   return `<p class="hint act-basis">这一轮附上的${parts.join(" · ")}</p>`;
 }
+// A private intent target with a person card: its call, and the card opens.
+const activityTarget = (target, p) =>
+  `${esc(conversationLabel(target))}${p ? `（${personCallText(p.call)}）` : ""}`;
+const activityPersonButton = (p) => (p ? personCardButton(p.personId) : "");
 function activityEntry(e) {
   const quiet =
     e.kind === "subject" &&
@@ -168,7 +172,7 @@ function activityEntry(e) {
         .slice(0, 3)
         .map(
           (s) =>
-            `<p>${s.action ? "（动作）" : ""}${esc(s.text)}</p>${activityBasis(s.basis)}`,
+            `<div class="act-sent"><p>${s.action ? "（动作）" : ""}${esc(s.text)}</p>${s.id ? `<button type="button" class="ghost act-open" data-act-read="${esc(s.id)}">读原文</button>` : ""}</div>${activityBasis(s.basis)}`,
         )
         .join(
           "",
@@ -183,17 +187,23 @@ function activityEntry(e) {
     parts.push(`<p class="hint">联网读取 ${e.externalReads} 次</p>`);
   for (const d of e.diaries)
     parts.push(
-      `<p class="hint">${d.revised ? "修改日记" : "写日记"}：${esc(d.title)}</p>`,
+      `<p class="hint">${d.revised ? "修改日记" : "写日记"}：<button type="button" class="act-link" data-act-read="${esc(d.id)}" title="阅读这篇日记">${esc(d.title)}</button></p>`,
     );
   for (const i of e.intents.created)
     parts.push(
-      `<p class="hint">想告诉 ${esc(i.target)}：${esc(i.topic)}（${esc(intentWords[i.status] || i.status)}）</p>`,
+      `<p class="hint">想告诉 ${activityTarget(i.target, i.person)}：${esc(i.topic)}（${esc(intentWords[i.status] || i.status)}）${activityPersonButton(i.person)}</p>`,
     );
   for (const i of e.intents.decided)
     parts.push(
-      `<p class="hint">处理主动意图「${esc(i.topic)}」：${esc(intentWords[i.status] || i.status)}</p>`,
+      `<p class="hint">处理主动意图「${esc(i.topic)}」：${esc(intentWords[i.status] || i.status)}${i.person ? ` · 对方${personCallText(i.person.call)}` : ""}${activityPersonButton(i.person)}</p>`,
     );
   parts.push(activitySeen(e.seen));
+  // Read this turn where it happened, around its first sent message or what
+  // it last heard (activityPage picks which).
+  if (e.contextId)
+    parts.push(
+      `<div class="act-actions"><button type="button" class="ghost act-open" data-act-context="${esc(e.contextId)}">看前后文</button></div>`,
+    );
   const tools = e.tools
     ? e.tools.total
       ? `工具：${e.tools.names.map(esc).join("、")}${e.tools.failed ? `（失败 ${e.tools.failed} 次）` : ""}`
@@ -217,6 +227,23 @@ function activityList() {
     );
   const more = $("#activity-more");
   if (more) more.onclick = () => action(() => loadActivity(true));
+  // The list always shows the selected role's entries (loadActivity checks).
+  const agentId = activityAgentId;
+  list
+    .querySelectorAll("[data-act-read]")
+    .forEach(
+      (b) => (b.onclick = () => readMemory(b.dataset.actRead, { agentId })),
+    );
+  list.querySelectorAll("[data-act-context]").forEach(
+    (b) =>
+      (b.onclick = () =>
+        readConversation({
+          agentId,
+          aroundId: b.dataset.actContext,
+          contextSeconds: 1800,
+        })),
+  );
+  bindPersonCards(list, agentId);
 }
 async function loadActivity(append = false) {
   const agentId = activityAgentId,

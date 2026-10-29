@@ -2,7 +2,7 @@ import https from "node:https";
 import net from "node:net";
 import { signature } from "../../vendor/heybox/signature.mjs";
 import { validateFetchUrl } from "../../vendor/social-reader/safe-fetch.js";
-import { contentIdentity } from "./urls.mjs";
+import { contentIdentity, heyboxLinkId } from "./urls.mjs";
 const paths = {
   recommend: "/bbs/app/feeds",
   board: "/bbs/app/topic/feeds",
@@ -12,7 +12,7 @@ const paths = {
 };
 export function heyboxUrl(endpoint, params) {
   const url = new URL("https://api.xiaoheihe.cn" + endpoint);
-  // Same platform fields as the official web client; without them link/tree hides long post bodies.
+  // Same platform fields as the official web client sends.
   url.search = new URLSearchParams({
     app: "heybox",
     os_type: "web",
@@ -153,7 +153,8 @@ function htmlText(html, images) {
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
-// link.text is a JSON block list: a single "html" block, or text/url/img blocks like the web client renders.
+// link.text is a JSON block list rendered like the web client: a leading "html" block is the
+// whole post (the img blocks after it repeat its pictures as thumbnails), else text/url/img blocks.
 function richText(raw) {
   const images = [];
   if (typeof raw !== "string") return { text: "", images };
@@ -164,6 +165,11 @@ function richText(raw) {
     return { text: raw, images };
   }
   if (!Array.isArray(blocks)) return { text: raw, images };
+  if (blocks[0]?.type === "html")
+    return {
+      text: htmlText(blocks[0].text || blocks[0].content || "", images),
+      images,
+    };
   const text = blocks
     .map((b) => {
       if (b?.type === "html")
@@ -181,7 +187,7 @@ function richText(raw) {
 function post(value) {
   const x = value.link || value.info || value.post || value,
     id = String(x.linkid || x.link_id || x.id || "");
-  if (!/^\d+$/.test(id)) return null;
+  if (!heyboxLinkId.test(id)) return null;
   const { text, images } = richText(x.content || x.text);
   const summary = !text.trim() && typeof x.description === "string";
   return {

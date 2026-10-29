@@ -191,7 +191,10 @@ export class VoiceStore {
           file: segment.data.file,
           out_format: "wav",
         });
-      } catch {
+      } catch (error) {
+        // An answer cut off at the size cap means the audio itself is too large.
+        if (error?.message === "ONEBOT_RESPONSE_TOO_LARGE")
+          throw Error("AUDIO_TOO_LARGE", { cause: error });
         /* Gateways without get_record may use explicitly allowed local media roots. */
       }
       if (typeof record?.base64 === "string" && record.base64) {

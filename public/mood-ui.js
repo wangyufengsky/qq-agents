@@ -212,15 +212,11 @@ function bindMood(mood, now, agentId) {
       }),
   );
   drawMoodChart(mood, now);
-  document.querySelectorAll("[data-mood-person]").forEach(
-    (b) =>
-      (b.onclick = () =>
-        document.dispatchEvent(
-          new CustomEvent("open-person-card", {
-            detail: b.dataset.moodPerson,
-          }),
-        )),
-  );
+  document
+    .querySelectorAll("[data-mood-person]")
+    .forEach(
+      (b) => (b.onclick = () => openPersonCard(agentId, b.dataset.moodPerson)),
+    );
   document
     .querySelectorAll(".mood-card [data-read-diary]")
     .forEach(

@@ -6,6 +6,7 @@ import { ownedEvent, readForward, forwardPayload } from "./forward.mjs";
 import { safeFetchBuffer } from "../../vendor/social-reader/safe-fetch.js";
 import { modelScheduleSchema } from "./schedule-schema.mjs";
 import { safeToolFailure } from "./errors.mjs";
+import { transcriptKey } from "../memory/store.mjs";
 
 const str = z.string(),
   id = str.min(1).max(200),
@@ -269,9 +270,30 @@ export async function legacyTool(runtime, ctx, name, args) {
         );
     recallBoundary(runtime, ctx).assert(m);
     taintMedia(ctx, m);
+    // A stored machine transcript of this voice message, if one was made.
+    const transcript = args.eventId
+      ? runtime.memory
+          .bind(a.id)
+          .db.prepare(
+            "SELECT id,body FROM events WHERE agent_id=? AND dedupe=?",
+          )
+          .get(a.id, transcriptKey(args.eventId))
+      : null;
     return {
       content: [
-        { type: "text", text: JSON.stringify({ ...m, transcript: null }) },
+        {
+          type: "text",
+          text: JSON.stringify({
+            ...m,
+            transcript: transcript
+              ? {
+                  id: transcript.id,
+                  text: transcript.body,
+                  epistemic: "machine-transcription",
+                }
+              : null,
+          }),
+        },
         runtime.voices.read(a.id, m.id),
       ],
     };
