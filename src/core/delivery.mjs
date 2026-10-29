@@ -6,7 +6,7 @@ import { privateGithubSources } from "../github/policy.mjs";
 import { taintMedia } from "../tools/legacy.mjs";
 import { mdToPlain } from "../../vendor/dsh-qq/md-to-plain.js";
 import { reserveSendBudget } from "./send-budget.mjs";
-import { privatePeer } from "./peer-replies.mjs";
+import { privatePeer, peerReplyLastAttemptAt } from "./peer-replies.mjs";
 import {
   resolveMessage,
   gatewayMessageId,
@@ -188,6 +188,12 @@ export class DeliveryService {
       mem.setState(ctx.conversation, {
         ...state,
         sendTimes,
+        // Control, scheduled and proactive openings have separate budgets.
+        // Freeze legacy ordinary timing before they update shared send times;
+        // a quick peer response must not restart an already-expired cooldown.
+        ...(privatePeer(runtime, ctx) && state.replyBatchLastAttemptAt == null
+          ? { replyBatchLastAttemptAt: peerReplyLastAttemptAt(state) }
+          : {}),
         ...(!proactive && !ctx.internalDelivery
           ? ctx.scheduleRunId
             ? {

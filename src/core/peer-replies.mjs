@@ -10,6 +10,15 @@ export function privatePeer(runtime, ctx) {
   );
 }
 
+// Older states predate the ordinary-attempt clock. Keep their conservative
+// timestamp until delivery can persist it before an independent send changes it.
+export function peerReplyLastAttemptAt(state) {
+  return (
+    state.replyBatchLastAttemptAt ??
+    Math.max(state.lastAiReplyAt || 0, ...(state.sendTimes || []))
+  );
+}
+
 export function observePeerInput(runtime, ctx, items) {
   const peer = privatePeer(runtime, ctx);
   if (
@@ -26,12 +35,8 @@ export function observePeerInput(runtime, ctx, items) {
     baseline = Math.max(state.peerReplyInputSeq || 0, ctx.inputBaseline || 0),
     now = runtime.now();
   const notBefore =
-    Math.max(
-      state.peerReplyWindowAt || 0,
-      state.replyBatchLastAttemptAt || 0,
-      state.lastAiReplyAt || 0,
-      ...(state.sendTimes || []),
-    ) + runtime.config.peerLimit.cooldownMs;
+    Math.max(state.peerReplyWindowAt || 0, peerReplyLastAttemptAt(state)) +
+    runtime.config.peerLimit.cooldownMs;
   let latest = baseline,
     renew = false;
   for (const item of items) {

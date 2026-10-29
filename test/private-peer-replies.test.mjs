@@ -92,6 +92,95 @@ test("replacing a context does not reset a peer batch, while later new input doe
   await f.send("fresh-context-input", next);
 });
 
+async function opening(f, kind) {
+  const send = (ctx) =>
+    f.runtime.send(ctx, { requestId: "opening", text: "synthetic opening" });
+  if (kind === "control")
+    return f.runtime.withContext("agent-0", f.ctx.conversation, send);
+  const ctx = context(f.runtime, "agent-0", f.ctx.conversation);
+  if (kind === "scheduled") ctx.scheduleRunId = "synthetic-schedule";
+  else {
+    f.runtime.agent("agent-0").subject.enabled = true;
+    f.runtime.agent("agent-0").subject.peers = true;
+    const created = f.runtime.subject.create(ctx, {
+      topic: "synthetic opening",
+      target: ctx.conversation,
+      reason: "test opportunity",
+      background: "",
+      evidence: [],
+      expiresAt: f.runtime.now() + 60000,
+      expectsResponse: true,
+    });
+    const handed = f.runtime.subject.transition(
+      "agent-0",
+      created,
+      "handedoff",
+      "test",
+    );
+    f.runtime.subject.begin(ctx, [{ reason: "intent", intentId: handed.id }]);
+    f.runtime.subject.decide(ctx, {
+      id: handed.id,
+      expectedRevision: handed.revision,
+      action: "send",
+      reason: "test",
+    });
+  }
+  return send(ctx);
+}
+
+for (const kind of ["control", "scheduled", "proactive"])
+  test(`a ${kind} opening after cooldown lets a prompt peer reply renew a spent ordinary batch`, async (t) => {
+    const f = setup(t);
+    await f.incoming();
+    await f.send("first");
+    await f.send("second");
+    f.advance(2000);
+    await opening(f, kind);
+    await assert.rejects(f.send("opening-alone"), /REPLY_BURST_LIMIT/);
+    f.advance(100);
+    const reply = await f.incoming(f.ctx, { read: false });
+    await assert.rejects(f.send("unread-peer-answer"), /REPLY_BURST_LIMIT/);
+    await f.runtime.callTool(f.ctx, "conversation_read", {
+      afterSeq: reply.seq - 1,
+    });
+    await f.send("answer-prompt-peer-reply");
+    await f.send("bounded-second-answer");
+    await assert.rejects(f.send("bounded-third-answer"), /REPLY_BURST_LIMIT/);
+    assert.equal(f.ctx.requestEvents.size, 0);
+  });
+
+for (const quiet of [false, true])
+  test(`legacy peer timing survives a control opening ${quiet ? "after" : "during"} cooldown`, async (t) => {
+    const f = setup(t),
+      mem = f.store.bind("agent-0");
+    await f.incoming();
+    await f.send("first");
+    await f.send("second");
+    const state = mem.state(f.ctx.conversation);
+    const previousAttempt = state.replyBatchLastAttemptAt;
+    delete state.replyBatchLastAttemptAt;
+    mem.setState(f.ctx.conversation, state);
+    f.advance(quiet ? 2000 : 100);
+    await opening(f, "control");
+    assert.equal(
+      mem.state(f.ctx.conversation).replyBatchLastAttemptAt,
+      previousAttempt,
+    );
+    f.advance(100);
+    await f.incoming();
+    if (!quiet) {
+      await assert.rejects(f.send("too-soon"), /REPLY_BURST_LIMIT/);
+      f.advance(2000);
+      await f.runtime.callTool(f.ctx, "conversation_read", {});
+      await assert.rejects(
+        f.send("reread-too-soon-input"),
+        /REPLY_BURST_LIMIT/,
+      );
+      await f.incoming();
+    }
+    await f.send("new-peer-reply");
+  });
+
 test("messages received during cooldown cannot replenish the batch by being read later", async (t) => {
   const f = setup(t);
   await f.incoming();
