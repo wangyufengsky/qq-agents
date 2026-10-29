@@ -288,7 +288,7 @@ async function renderMind() {
     bindSelf(a, data.current);
   } else if (view === "mood") {
     body.innerHTML = moodMarkup(data.mood, now);
-    bindMood(data.mood, now);
+    bindMood(data.mood, now, a.id);
   } else if (view === "people") {
     body.innerHTML = peopleMarkup(data.personCards);
     bindPeople(data.personCards, a.id);

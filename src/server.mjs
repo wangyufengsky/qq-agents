@@ -306,6 +306,8 @@ export function createServer({
                 .prepare("SELECT names FROM people WHERE agent_id=? AND qq=?")
                 .get(a.id, qq)?.names || "[]",
             );
+        const shownMoods = moods.slice(0, 50),
+          diariesIn = m.diariesInMoods(shownMoods.map((x) => x.id));
         return send({
           current: m.identity.withEvidence(
             m.identity.initialize(a, runtime.now()),
@@ -319,7 +321,7 @@ export function createServer({
           // Read-only: only the agent writes or clears its own mood.
           mood: {
             current: m.identity.currentMood(runtime.now()),
-            history: moods.slice(0, 50).map((x) => ({
+            history: shownMoods.map((x) => ({
               ...x,
               people: about.get(x.id).map((personId) => ({
                 personId,
@@ -327,6 +329,7 @@ export function createServer({
                 name: namesOf(personId).at(-1) || "",
                 card: cardOf.has(personId),
               })),
+              diaries: diariesIn.get(x.id) || [],
             })),
           },
           personCards: cards.map((card) => ({
@@ -406,6 +409,19 @@ export function createServer({
             runtime.now(),
           ),
         );
+      }
+      // Read when a card's panel opens, not with every /api/mind: what was
+      // sent under each of its versions and where the person spoke lately.
+      if (req.method === "GET" && url.pathname === "/api/person-card/links") {
+        const a = runtime.agent(url.searchParams.get("agentId")),
+          m = runtime.memory.bind(a.id),
+          personId = url.searchParams.get("personId") || "";
+        if (!/^\d{5,12}$/.test(personId)) throw Error("INVALID_PERSON");
+        const card = m.identity.personCard(personId);
+        return send({
+          sent: card ? m.sentUnderCard(card.id) : [],
+          chats: m.recentChatsWith(personId),
+        });
       }
       if (req.method === "POST" && url.pathname === "/api/person-card") {
         const data = await readBody(),

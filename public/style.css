@@ -2256,6 +2256,37 @@ dialog.people-drawer[open] {
   font-size: 13px;
   overflow-wrap: anywhere;
 }
+/* A diary title that opens the diary, and the small reads under a link. */
+.person-link-open {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.person-links li > button {
+  margin-top: 6px;
+}
+/* What was sent under one version of the card, folded by default. */
+.person-sent {
+  margin-top: 8px;
+}
+.person-sent summary {
+  color: var(--sub);
+  font-size: 12px;
+  cursor: pointer;
+}
+.person-sent .person-links {
+  margin-top: 8px;
+}
 .person-source {
   margin: 0;
   color: var(--faint);
@@ -2277,14 +2308,16 @@ dialog.people-drawer[open] {
   padding: 0;
   list-style: none;
 }
-.person-versions li {
+/* Direct children only: a version's own lists (what was sent under it) keep
+   their plain layout. */
+.person-versions > li {
   position: relative;
   display: grid;
   grid-template-columns: 34px 1fr;
   gap: 10px;
   padding-bottom: 14px;
 }
-.person-versions li:not(:last-child)::before {
+.person-versions > li:not(:last-child)::before {
   content: "";
   position: absolute;
   left: 16px;
@@ -2303,7 +2336,7 @@ dialog.people-drawer[open] {
   font-family: var(--font-mono);
   font-size: 11px;
 }
-.person-versions li.is-current .person-rev {
+.person-versions > li.is-current .person-rev {
   background: var(--accent-fill);
   color: var(--accent);
 }

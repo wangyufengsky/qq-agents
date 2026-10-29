@@ -682,6 +682,59 @@ class AgentMemory {
       .all(this.agentId, String(personId), limit)
       .map((r) => this.diary(r, true));
   }
+  // Diaries written while each of these moods was in effect, by the moodId
+  // they kept, newest first. Titles only; the diary itself stays where it is.
+  diariesInMoods(moodIds) {
+    const byMood = new Map();
+    if (!moodIds.length) return byMood;
+    for (const r of this.db
+      .prepare(
+        "SELECT id,title,updated_at AS updatedAt,json_extract(metadata,'$.moodId') AS moodId FROM diaries WHERE agent_id=? AND json_extract(metadata,'$.moodId') IN (SELECT value FROM json_each(?)) ORDER BY updated_at DESC,id DESC",
+      )
+      .all(this.agentId, json(moodIds)))
+      byMood.set(r.moodId, [
+        ...(byMood.get(r.moodId) || []),
+        { id: r.id, title: r.title, updatedAt: r.updatedAt },
+      ]);
+    return byMood;
+  }
+  // What was sent resting on one person card (the personCard reference a sent
+  // message keeps), grouped by the revision it rested on, newest first. A card
+  // deleted and written again has a new id, so it starts with nothing.
+  sentUnderCard(cardId, perRevision = 3) {
+    const byRevision = new Map();
+    for (const r of this.db
+      .prepare(
+        "SELECT id,conversation,observed_at AS at,body,json_extract(payload,'$.personCard.revision') AS revision FROM events WHERE agent_id=? AND kind='message.sent' AND json_extract(payload,'$.personCard.id')=? ORDER BY seq DESC",
+      )
+      .all(this.agentId, String(cardId))) {
+      const group = byRevision.get(r.revision) || { count: 0, recent: [] };
+      group.count++;
+      if (group.recent.length < perRevision)
+        group.recent.push({
+          id: r.id,
+          conversation: r.conversation,
+          at: r.at,
+          text: Array.from(r.body || "")
+            .slice(0, 120)
+            .join(""),
+        });
+      byRevision.set(r.revision, group);
+    }
+    return [...byRevision].map(([revision, group]) => ({
+      revision,
+      ...group,
+    }));
+  }
+  // Where this person has spoken lately: one row per source, with their last
+  // message there so its surroundings can be read.
+  recentChatsWith(personId, limit = 5) {
+    return this.db
+      .prepare(
+        "SELECT conversation,connection_id AS connectionId,id AS lastId,MAX(occurred_at) AS lastAt,COUNT(*) AS messages FROM events WHERE agent_id=? AND sender_id=? AND direction='in' AND kind='message.received' GROUP BY conversation,connection_id ORDER BY lastAt DESC LIMIT ?",
+      )
+      .all(this.agentId, String(personId), limit);
+  }
   metadata({ people = [], tags = [], evidence = [] }) {
     for (const list of [people, tags, evidence])
       if (
