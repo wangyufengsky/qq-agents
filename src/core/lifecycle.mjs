@@ -11,7 +11,7 @@ import { trackMindRecords } from "./protected-mind.mjs";
 import { subjectMaterials } from "./subject-materials.mjs";
 import { mergeProtection } from "../memory/protection.mjs";
 import { rememberSources, sourceHandoff } from "./context-handoff.mjs";
-import { personCardsForTurn } from "./person-cards.mjs";
+import { personCardsForTurn, personItemsForTurn } from "./person-cards.mjs";
 import { moodForTurn } from "./mood.mjs";
 import { taskBrief } from "./scheduler.mjs";
 import { recallBoundary, recallPage } from "./recall-boundary.mjs";
@@ -416,6 +416,13 @@ export class ContextLifecycle {
             fresh: ctx.initialSession,
             accountId: r.connection(a.connectionId).accountId,
           });
+    const between =
+      ctx.conversation === SUBJECT
+        ? null
+        : personItemsForTurn(m, ctx.conversation, history.items, {
+            fresh: ctx.initialSession,
+            accountId: r.connection(a.connectionId).accountId,
+          });
     const schedule =
       ctx.conversation === SUBJECT
         ? null
@@ -470,6 +477,9 @@ export class ContextLifecycle {
       people?.cards.length
         ? `人物卡（你自己记下的称呼与印象，是看法不是事实；称呼按 call，过时就用 person_note 更新）：${JSON.stringify(people.cards)}`
         : "",
+      between?.items.length
+        ? `你和这些人之间还没了结的事（你自己用 person_item 记下的）：boundary 是对方的相处边界，照着调整；promise 是你答应对方的事，做到了就回来交代，做不成就坦白，交代后用 person_item 关掉；shared 是一起经历过的事，合适时自然接回来，不必硬提。fromPrivate 的记在别的私聊里，只用来调整你自己的做法，不要在这里提起内容。${JSON.stringify({ items: between.items, ...(Object.keys(between.more).length ? { more: between.more } : {}) })}`
+        : "",
     ]
       .filter(Boolean)
       .join("\n\n");
@@ -479,6 +489,7 @@ export class ContextLifecycle {
       loadedInstructionsHash: instructionsHash,
       lastTurnId: ctx.turnId,
       ...(people ? { personCardsShown: people.shown } : {}),
+      ...(between ? { personItemsShown: between.shown } : {}),
       ...(schedule ? { scheduleShown: schedule.shown } : {}),
       moodShown: mood.shown,
       lifecycle: {
@@ -508,6 +519,14 @@ export class ContextLifecycle {
             personCards: people.cards.map(({ personId, revision }) => ({
               id: people.shown[personId]?.split(":")[0],
               personId,
+              revision,
+            })),
+          }
+        : {}),
+      ...(between?.items.length
+        ? {
+            personItems: between.items.map(({ id, revision }) => ({
+              id,
               revision,
             })),
           }

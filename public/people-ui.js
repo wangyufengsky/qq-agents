@@ -47,6 +47,20 @@ function personMoods(c) {
   if (!c.moods?.length) return "";
   return `<div class="person-field"><span class="person-label">相关心情</span><ol class="person-links">${c.moods.map((x) => `<li><div class="person-link-head">${x.action === "clear" ? "<strong>心情过去了</strong>" : `<strong>${esc(x.mood)}</strong><span class="person-link-meta">强度 ${Number(x.intensity)}/5</span>`}<time>${peopleTime(x.writtenAt)}</time></div><p>${esc(x.reason)}</p></li>`).join("")}</ol></div>`;
 }
+// What the agent keeps beside the card: promises, shared moments, boundaries.
+const peopleItemKinds = {
+  promise: "答应的事",
+  shared: "共同经历",
+  boundary: "相处边界",
+};
+const peopleItemStates = { open: "未了结", done: "已兑现", dropped: "已放下" };
+const peopleItemPlace = (c) =>
+  c === "@subject" ? "空闲时间" : conversationLabel(c);
+function personItems(c) {
+  if (!c.items?.length) return "";
+  const open = c.items.filter((x) => x.status === "open").length;
+  return `<div class="person-field"><span class="person-label">相处记录${open ? `（${open} 件未了结）` : ""}</span><ol class="person-links">${c.items.map((x) => `<li><div class="person-link-head"><strong>${esc(peopleItemKinds[x.kind] || x.kind)}</strong><span class="person-link-meta">${esc(peopleItemStates[x.status] || x.status)}${x.createdIn ? ` · ${esc(peopleItemPlace(x.createdIn))}` : ""}</span><time>${peopleTime(x.createdAt)}</time></div><p>${esc(x.body)}</p>${x.outcome ? `<p class="person-link-meta">结果：${esc(x.outcome)}（${peopleTime(x.updatedAt)}）</p>` : ""}<button type="button" class="ghost danger" data-item-delete="${esc(x.id)}" data-revision="${Number(x.revision)}">删除这条</button></li>`).join("")}</ol></div>`;
+}
 function personDiaries(c) {
   if (!c.diaries?.length) return "";
   return `<div class="person-field"><span class="person-label">相关日记</span><ol class="person-links">${c.diaries.map((d) => `<li><div class="person-link-head"><button type="button" class="person-link-open" data-read-diary="${esc(d.id)}" title="阅读这篇日记">${esc(d.title)}</button><time>${peopleTime(d.updatedAt)}</time></div></li>`).join("")}</ol></div>`;
@@ -61,7 +75,7 @@ function personChats(chats) {
 }
 function personDetail(c) {
   const names = (c.names || []).filter(Boolean);
-  return `<div class="people-drawer-body"><header class="person-head">${peopleAvatar(c)}<div><h2 id="person-title">${esc(peopleName(c))}</h2><span class="person-qq">QQ ${esc(c.personId)}</span></div><button type="button" class="ghost" id="person-close" aria-label="关闭">关闭</button></header><div id="person-view" class="person-view"><div class="person-field"><span class="person-label">怎么称呼</span><span class="person-call big${c.call ? "" : " is-empty"}">${c.call ? esc(c.call) : "未记称呼"}</span></div><div class="person-field"><span class="person-label">关系与印象</span><p class="person-body">${esc(c.body)}</p></div>${names.length ? `<div class="person-field"><span class="person-label">QQ 曾用名</span><div class="person-names">${names.map((n) => `<span>${esc(n)}</span>`).join("")}</div></div>` : ""}${personMoods(c)}${personDiaries(c)}<div class="person-field" id="person-chats" hidden></div><p class="person-source">v${c.revision} · ${peopleBy(c.author)} · ${peopleTime(c.updatedAt)}${c.evidence?.length ? ` · <span title="${esc(c.evidence.join("\n"))}">来源 ${c.evidence.length} 条记录</span>` : ""}</p><div class="card-actions"><button type="button" class="primary" id="person-edit">修改</button></div></div><form id="person-form" class="person-form" hidden>${input("call", "称呼", c.call, 'maxlength="40"')}<label class="wide">关系与印象<textarea name="body" maxlength="600" required>${esc(c.body)}</textarea></label><p class="hint">保存后生成新版本；角色下次在会话里见到这个人时会看到你改过的卡，并标明是管理员修改的。</p><div class="card-actions"><button class="primary">保存新版本</button><button type="button" id="person-cancel">取消</button></div></form><div class="person-field"><span class="person-label">版本记录</span><ol class="person-versions">${personVersions(c)}</ol></div><div class="person-danger"><button type="button" class="ghost danger" id="person-delete">删除这张人物卡</button><span class="hint">连同旧版本一起删除，角色之后可以重新记下。</span></div></div>`;
+  return `<div class="people-drawer-body"><header class="person-head">${peopleAvatar(c)}<div><h2 id="person-title">${esc(peopleName(c))}</h2><span class="person-qq">QQ ${esc(c.personId)}</span></div><button type="button" class="ghost" id="person-close" aria-label="关闭">关闭</button></header><div id="person-view" class="person-view"><div class="person-field"><span class="person-label">怎么称呼</span><span class="person-call big${c.call ? "" : " is-empty"}">${c.call ? esc(c.call) : "未记称呼"}</span></div><div class="person-field"><span class="person-label">关系与印象</span><p class="person-body">${esc(c.body)}</p></div>${names.length ? `<div class="person-field"><span class="person-label">QQ 曾用名</span><div class="person-names">${names.map((n) => `<span>${esc(n)}</span>`).join("")}</div></div>` : ""}${personItems(c)}${personMoods(c)}${personDiaries(c)}<div class="person-field" id="person-chats" hidden></div><p class="person-source">v${c.revision} · ${peopleBy(c.author)} · ${peopleTime(c.updatedAt)}${c.evidence?.length ? ` · <span title="${esc(c.evidence.join("\n"))}">来源 ${c.evidence.length} 条记录</span>` : ""}</p><div class="card-actions"><button type="button" class="primary" id="person-edit">修改</button></div></div><form id="person-form" class="person-form" hidden>${input("call", "称呼", c.call, 'maxlength="40"')}<label class="wide">关系与印象<textarea name="body" maxlength="600" required>${esc(c.body)}</textarea></label><p class="hint">保存后生成新版本；角色下次在会话里见到这个人时会看到你改过的卡，并标明是管理员修改的。</p><div class="card-actions"><button class="primary">保存新版本</button><button type="button" id="person-cancel">取消</button></div></form><div class="person-field"><span class="person-label">版本记录</span><ol class="person-versions">${personVersions(c)}</ol></div><div class="person-danger"><button type="button" class="ghost danger" id="person-delete">删除这张人物卡</button><span class="hint">连同旧版本一起删除，角色之后可以重新记下。</span></div></div>`;
 }
 // The mood timeline (mood-ui.js) asks for a card by its person.
 document.addEventListener("open-person-card", (e) => {
@@ -182,6 +196,20 @@ function bindPeople(cards, agentId) {
         notice("人物卡已保存为新版本");
       });
     };
+    drawer.querySelectorAll("[data-item-delete]").forEach((b) => {
+      b.onclick = () => {
+        if (!confirm("删除这条相处记录？角色之后可以重新记下。")) return;
+        action(async () => {
+          await api("/api/person-item", {
+            agentId,
+            action: "delete",
+            id: b.dataset.itemDelete,
+            expectedRevision: Number(b.dataset.revision),
+          });
+          await renderMind();
+        });
+      };
+    });
     $("#person-delete").onclick = () => {
       if (!confirm("删除这张人物卡和它的旧版本？角色之后可以重新记下。"))
         return;

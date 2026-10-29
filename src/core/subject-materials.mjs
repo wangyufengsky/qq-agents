@@ -9,6 +9,7 @@ const DAY = 86400000;
 const IMPRESSION_CHARS = 80;
 const NOTE_CHARS = 120;
 const OPEN_NOTES = 8;
+const OWED = 8;
 
 const clip = (text, max) => {
   const chars = Array.from(text);
@@ -37,6 +38,21 @@ const noteBrief = (note) => ({
   evidence: note.evidence,
   updatedAt: new Date(note.writtenAt).toISOString(),
 });
+
+// A promise still owed, with how the agent addresses that person. Like cards,
+// items hold no protected material.
+function owedBrief(memory, item) {
+  const call = memory.identity.personCard(item.personId)?.call;
+  return {
+    id: item.id,
+    personId: item.personId,
+    ...(call ? { call } : {}),
+    body: clip(item.body, NOTE_CHARS),
+    since: new Date(item.createdAt).toISOString(),
+    writtenIn: item.createdIn,
+    evidence: item.evidence,
+  };
+}
 
 // What a free-time turn starts from: its own recent log, what happened lately,
 // what chats left open, who it may reach out to, where it can explore with how
@@ -95,6 +111,7 @@ export function subjectMaterials(runtime, ctx) {
       .all(a.id),
   );
   // Protected notes are left out before the limit, so they take no place.
+  const owed = m.identity.openPersonItems("promise");
   const allNotes = m.identity.openNotes(),
     visibleNotes = boundary.rows(allNotes),
     notes = visibleNotes.slice(0, OPEN_NOTES);
@@ -202,6 +219,16 @@ export function subjectMaterials(runtime, ctx) {
       toolCallsThisTurn: a.subject.maxToolCallsPerTurn,
     },
     ...(allNotes.length ? { openNotes } : {}),
+    ...(owed.length
+      ? {
+          owed: {
+            notice:
+              "你答应别人、还没交代的事，等得最久的在前。空闲时间可以去做（查资料、写东西）；做完或确定做不成，用 intent_create 交给对方所在的聊天去交代：evidence 填这条的 evidence，background 写上它的 id。交代过后在那个聊天用 person_item 关掉。不必每次都处理，也不用为凑数去找人。",
+            items: owed.slice(0, OWED).map((x) => owedBrief(m, x)),
+            ...(owed.length > OWED ? { more: owed.length - OWED } : {}),
+          },
+        }
+      : {}),
     shares: shares.map(strip),
   };
 }

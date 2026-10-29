@@ -60,7 +60,11 @@ test("an outbound message records the card and mood it rested on, by reference o
     atUserId: "30000",
   });
   // DeliveryService.send keeps its receipt; only the record gains references.
-  assert.deepEqual(Object.keys(receipt).sort(), ["messageId", "status"]);
+  assert.deepEqual(Object.keys(receipt).sort(), [
+    "messageId",
+    "recordId",
+    "status",
+  ]);
   const sent = payload(f, "send:at-1:sent");
   assert.deepEqual(sent.personCard, {
     id: c.id,
@@ -220,6 +224,7 @@ test("qq_send brings the card of someone addressed before they spoke, once per v
   ])
     assert.deepEqual(Object.keys(await f.tool(ctx, args)).sort(), [
       "messageId",
+      "recordId",
       "status",
     ]);
 });

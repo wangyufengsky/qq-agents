@@ -280,7 +280,7 @@ export class DeliveryService {
       });
       ctx.confirmedSends = (ctx.confirmedSends || 0) + 1;
       runtime.conversations.sent(ctx);
-      mem.append({
+      const record = mem.append({
         ...event,
         dedupe: "send:" + requestId + ":sent",
         messageId,
@@ -296,6 +296,8 @@ export class DeliveryService {
       return {
         status: "sent",
         messageId,
+        // The archived record, which mind tools accept as evidence.
+        ...(record?.id ? { recordId: record.id } : {}),
         ...(action ? { actionConfirmed: true } : {}),
         ...(receipt.fileId ? { gatewayFileId: receipt.fileId } : {}),
       };

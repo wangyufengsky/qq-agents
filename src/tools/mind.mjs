@@ -8,7 +8,11 @@ import {
   contextProtection,
   trackMindRecords,
 } from "../core/protected-mind.mjs";
-import { markPersonCardShown } from "../core/person-cards.mjs";
+import {
+  markPersonCardShown,
+  markPersonItemShown,
+} from "../core/person-cards.mjs";
+import { PERSON_ITEM_KINDS } from "../memory/identity.mjs";
 import { markMoodShown } from "../core/mood.mjs";
 const text = z.string().min(1),
   ids = z.array(text).max(30),
@@ -57,7 +61,7 @@ export const mindDefinitions = {
     z.object({ id: text, expectedRevision: version }).strict(),
   ],
   work_note: [
-    "保存或更新有来源的未完成话题/约定；不是日记或客观事实。允许保存受保护内容，自动继承且保留上下文及来源的保护标记；保存不授予对外披露权限。完成/更正后更新状态，事件时间从原始来源读取。",
+    "保存或更新有来源的未完成话题/约定；不是日记或客观事实。答应某个人的事、和某人的共同经历或相处边界改用 person_item，它跟着这个人走，到别的聊天也看得到。允许保存受保护内容，自动继承且保留上下文及来源的保护标记；保存不授予对外披露权限。完成/更正后更新状态，事件时间从原始来源读取。",
     z
       .object({
         id: text.optional(),
@@ -93,6 +97,35 @@ export const mindDefinitions = {
           .min(1)
           .max(20)
           .optional(),
+        offset: z.number().int().min(0).default(0),
+      })
+      .strict(),
+  ],
+  person_item: [
+    "记下或更新你和某个人之间的一件事，放在人物卡旁边。kind 三选一：promise 是你答应对方、还没做完的事（“我回头查查”“下次接着讲”），只记真打算做的，客套话不用记；shared 是你们一起经历过、以后可能接回来的事（一起讨论过的结局、给角色起的梗、约好下次继续的故事）；boundary 是对方明确表示的相处边界或发生过的误会（不喜欢的称呼或玩笑、误会后来有没有解释清楚），记下后真的照着调整，不要道歉一次又重犯。body 用你自己的话写这件事（最多 300 字），evidence 至少一条记录 ID。新记录省略 id；更新或关掉时带 id 和当前 expectedRevision。promise 做到了、回来交代过就 status=done；做不成，坦白告诉对方后 status=dropped；边界或经历不再适用也用 dropped。关掉要写 outcome（结果怎样、怎么交代的），evidence 里必须有一条在这件事记下之后的聊天消息：你回来交代的那句话（qq_send 结果里的 recordId），或者对方说不用了的那句话。只在空闲时间想过不算交代。这些记录在所有群聊和私聊共用；在私聊里记下的事，到了别的聊天只用来调整你自己的做法，不要提起内容。",
+    z
+      .object({
+        id: text.optional(),
+        personId: text.regex(/^\d{5,12}$/),
+        kind: z.enum(PERSON_ITEM_KINDS).optional(),
+        body: text.max(300).optional(),
+        evidence: ids.min(1),
+        status: z.enum(["open", "done", "dropped"]).default("open"),
+        outcome: z.string().max(300).default(""),
+        expectedRevision: version.optional(),
+      })
+      .strict(),
+  ],
+  person_items: [
+    "读取你和某些人之间记下的事（答应的事、共同经历、相处边界）：给 personIds 读这些人的全部记录，没了结的在前，附最近关掉的；省略时按最久未了结的在前分页列出所有人的 open 记录，可用 kind 只看一类。",
+    z
+      .object({
+        personIds: z
+          .array(text.regex(/^\d{5,12}$/))
+          .min(1)
+          .max(20)
+          .optional(),
+        kind: z.enum(PERSON_ITEM_KINDS).optional(),
         offset: z.number().int().min(0).default(0),
       })
       .strict(),
@@ -220,6 +253,8 @@ export const SUBJECT_TOOLS = [
   "work_notes",
   "person_note",
   "person_notes",
+  "person_item",
+  "person_items",
   "mood_set",
   "mood_read",
   "file_list",
@@ -244,6 +279,7 @@ function executeMindTool(runtime, ctx, name, args) {
       "self_review",
       "self_withdraw",
       "person_note",
+      "person_item",
       "mood_set",
     ].includes(name) &&
     (privateGithubSources(ctx, runtime).length > 0 ||
@@ -325,6 +361,35 @@ function executeMindTool(runtime, ctx, name, args) {
       };
     }
     const rows = identity.personCards();
+    return {
+      items: rows.slice(args.offset, args.offset + 20),
+      total: rows.length,
+      nextOffset: args.offset + 20 < rows.length ? args.offset + 20 : null,
+    };
+  }
+  if (name === "person_item") {
+    const item = identity.savePersonItem(args, {
+      writtenIn: ctx.conversation,
+      now,
+    });
+    markPersonItemShown(m, ctx.conversation, item);
+    return item;
+  }
+  if (name === "person_items") {
+    if (args.personIds)
+      return {
+        people: args.personIds.map((personId) => {
+          const rows = identity
+            .personItems(personId)
+            .filter((x) => !args.kind || x.kind === args.kind);
+          return {
+            personId,
+            open: rows.filter((x) => x.status === "open"),
+            recentlyClosed: rows.filter((x) => x.status !== "open").slice(0, 5),
+          };
+        }),
+      };
+    const rows = identity.openPersonItems(args.kind);
     return {
       items: rows.slice(args.offset, args.offset + 20),
       total: rows.length,
