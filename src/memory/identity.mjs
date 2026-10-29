@@ -467,16 +467,16 @@ export class IdentityMemory {
       .all(this.agentId, limit)
       .map(decode);
   }
-  // Who each mood is about: the people whose incoming messages it cites as
-  // evidence, never the agent's own account. Read from the cited events each
-  // time; nothing is copied onto the mood.
+  // Who each mood is about: the people whose incoming messages (or their
+  // voice transcripts) it cites as evidence, never the agent's own account.
+  // Read from the cited events each time; nothing is copied onto the mood.
   moodPeople(moods, accountId) {
     const cited = [...new Set(moods.flatMap((x) => x.evidence || []))];
     const senders = new Map(
       cited.length
         ? this.db
             .prepare(
-              "SELECT id,sender_id FROM events WHERE agent_id=? AND direction='in' AND id IN (SELECT value FROM json_each(?))",
+              "SELECT id,sender_id FROM events WHERE agent_id=? AND (direction='in' OR kind='voice.transcript') AND id IN (SELECT value FROM json_each(?))",
             )
             .all(this.agentId, encode(cited))
             .filter(

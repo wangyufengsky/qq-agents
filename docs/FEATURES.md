@@ -95,7 +95,22 @@ GIF 原图最多 20 MiB，其他格式原图仍最多 8 MiB；图片文件同时
 
 工具通过 `audioId` 读取/发送库内素材，不能传任意本机路径。来源语音只能从已观察消息读取。公开 URL 受 SSRF 和大小限制；原生 QQ 网关返回本机路径时，优先用该消息的文件引用调用 `get_record(out_format=wav)`，校验返回的 base64 音频、大小与时长。网关不提供音频字节时，管理员可在角色 `voice.localRoots` 明确列出音频缓存目录作为本机读取后备；默认空列表拒绝本机路径，规范化路径及符号链接不得逃出目录，模型无法设置这些目录。音频来源保留；跨会话回忆表达由机器人判断，向外部服务提交资料仍保留独立检查。发送字节由目标 OneBot/QQ 转码和接收，真实目标兼容性另验收。
 
-DSH 的 MCP 结果可携带 audio block。当前 Codex 动态工具适配没有原生音频输入路径，会明确返回“不支持音频输入、无转录”，不能把音频元数据当转录。需要识别语音时可配置允许的转录 MCP，未经验证不自动启用外部服务。
+DSH 的 MCP 结果可携带 audio block。当前 Codex 动态工具适配没有原生音频输入路径，会明确返回“不支持音频输入、无转录”，不能把音频元数据当转录。
+
+### 收到的语音自动转文字
+
+默认关闭。管理员在「配置角色 → 语音转写」开启，并从此角色 AI 后端的外部工具白名单里选一个转写工具（`voice.asr`，字段见 [配置](CONFIGURATION.md#语音转写voiceasr)）后，**收到的语音会发给这个工具对应的 MCP 服务**；不开启、不选工具就不会外发。流程：
+
+1. 消息照常归档，正文仍是 `[record; 尚未识别内容]`，段落不改。转写在接收流程旁边进行，不阻塞后续消息。
+2. 用该消息的文件引用调用网关 `get_record(out_format=wav)` 取音频（与 `qq_voice_read` 同一路径，管理员的 `voice.localRoots` 仍是后备），登记到本角色语音库并记下来源消息。下载限时 30 秒；超过单条大小或时长上限、或时长无法测出（SILK 原文件）时不外发。
+3. 按管理员配置的参数名，把音频 base64 和 MIME（可省）连同固定附加参数交给转写工具，限时 `timeoutMs`。工具返回文字（或带 `text`/`transcript` 字段的 JSON）即为转写结果。
+4. 结果存为一条单独的 `voice.transcript` 记录，关联原消息，标注 `machine-transcription`。原消息保持原样；转写可被 `memory_search` 搜到，可用 `memory_read` 读取，`qq_voice_read` 也会附上它。
+
+模型看到的那条语音消息会多一个 `voiceTranscript`：有结果时是转写文字和“语音转写：机器识别，可能有误”的说明；还在转写时标为“转写中”。为让回合读到内容而不是占位，回合开始前最多等 `waitMs`（默认 8 秒）；仍未完成就先按“转写中”进行，结果稍后作为新记录出现。这条语音本来会唤醒角色、回合却没等到结果时，结果到达后会再唤醒一次。转写记录可以作为人物卡、心情、笔记等的证据，冻结证据里标为 `machine-transcription`，是识别结果而不是对方核实过的原话；它不算人类输入，不能用来下达命令或授权联网。
+
+失败、超时、返回空白时保留原占位，只记一条诊断（`VOICE_TRANSCRIPTION_FAILED`/`_TIMEOUT`/`_EMPTY`，超限为 `AUDIO_TOO_LARGE`/`AUDIO_TOO_LONG`/`VOICE_TRANSCRIPTION_FORMAT_UNSUPPORTED`），不自动重试。角色或会话暂停、全局暂停、隔离模式时不下载也不外发，下载期间被暂停也不再外发；会话已带运维或私有仓库来源时拒绝外发（`VOICE_TRANSCRIPTION_DENIED`）；工具不在白名单（`EXTERNAL_TOOL_DISABLED`）或超过每小时上限（`VOICE_TRANSCRIPTION_BUDGET`，按进程计数，重启后清零）时也不外发。管理台记忆页展开语音消息时显示转写文字。
+
+没有采用 QQ/NapCat 自带的语音转文字：仓库的网关替身和 NapCat 文档里都没有可确认的转写接口。原生附件流（`download_file_stream`）拿到的是 QQ 原始 SILK，FFprobe 和常见转写服务都无法解码，因此也不作为下载路径。
 
 ## 嵌套转发与动作
 
@@ -140,7 +155,7 @@ DSH 的 MCP 结果可携带 audio block。当前 Codex 动态工具适配没有�
 
 角色需要显式启用 `external_tools` 和 `external_tool`。先发现实际 schema，再调用白名单工具；服务未配置返回空目录，未列出的工具无法调用。服务工具说明和结果属于不可信资料。示例 Exa 的搜索 schema 在本轮要求 `query` 和 `objective`，以后以实时目录为准。不得配置绕过统一 outbox 的第三方 QQ 发送工具。
 
-`external_tool.audioInput` 接受 `audioId`、`dataArgument` 和可选 `mimeArgument`，按真实服务的顶层字段提供音频 base64/MIME；不能借它读取其他主体音频或绕过跨会话资料外发检查。尚无默认 ASR 提供者。只返回网页 URL 的图像/音频结果不会自动登记；服务应返回 MCP 内嵌内容或 blob。
+`external_tool.audioInput` 接受 `audioId`、`dataArgument` 和可选 `mimeArgument`，按真实服务的顶层字段提供音频 base64/MIME；不能借它读取其他主体音频或绕过跨会话资料外发检查。没有内置的 ASR 提供者；收到语音的自动转写由管理员在 `voice.asr` 指定白名单中的工具，见上文“收到的语音自动转文字”。只返回网页 URL 的图像/音频结果不会自动登记；服务应返回 MCP 内嵌内容或 blob。
 
 macOS 本机 TTS：将角色 `voice.tts` 配为 `{"enabled":true,"voice":"Tingting"}`，再允许 `voice_synthesize`。工具返回登记的 audioId，模型可另行决定是否 `qq_send_voice`。需已有系统音色；默认关闭，不自动下载音色。生成文本只作为 TTS 输入来源保存，不是 ASR 转录。资料来源和运维限制会随生成音频保留。
 

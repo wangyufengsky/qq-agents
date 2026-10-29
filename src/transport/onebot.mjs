@@ -121,14 +121,20 @@ export class OneBot extends EventEmitter {
       ...(value ? { authorization: `Bearer ${value}` } : {}),
     };
   }
-  async call(action, params = {}, timeoutMs = 10000) {
+  async call(
+    action,
+    params = {},
+    timeoutMs = 10000,
+    { maxBytes = 2 * 1024 * 1024, signal } = {},
+  ) {
+    const deadline = AbortSignal.timeout(timeoutMs);
     const response = await this.fetch(
       this.config.httpUrl.replace(/\/$/, "") + "/" + action,
       {
         method: "POST",
         headers: this.headers(),
         body: JSON.stringify(params),
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
         redirect: "error",
       },
     );
@@ -137,7 +143,7 @@ export class OneBot extends EventEmitter {
     let bytes = 0;
     for await (const chunk of response.body) {
       bytes += chunk.length;
-      if (bytes > 2 * 1024 * 1024) throw Error("ONEBOT_RESPONSE_TOO_LARGE");
+      if (bytes > maxBytes) throw Error("ONEBOT_RESPONSE_TOO_LARGE");
       chunks.push(Buffer.from(chunk));
     }
     const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));

@@ -57,6 +57,41 @@ OneBot 令牌填写环境变量名 `tokenEnv`，配置里只保存变量名，�
 
 密钥与 OneBot 令牌一样只通过环境变量提供；后台启动时可写入数据目录的 `secrets.json`。外发检查会把该变量的值视为凭据，不允许出现在工具参数里。
 
+## 语音转写（voice.asr）
+
+收到的语音自动转文字，默认关闭。开启即授权把该角色收到的语音发给所选 MCP 服务，见 [功能说明](FEATURES.md#收到的语音自动转文字)。管理台「配置角色 → 语音转写」可设置全部字段。
+
+```json
+{
+  "voice": {
+    "asr": {
+      "enabled": true,
+      "serverId": "asr",
+      "tool": "transcribe",
+      "audioArgument": "audio",
+      "mimeArgument": "mimeType",
+      "arguments": { "language": "zh" }
+    }
+  }
+}
+```
+
+| 字段            | 说明                                                                                          |
+| --------------- | --------------------------------------------------------------------------------------------- |
+| `enabled`       | 默认 `false`。开启时必须同时填写 `serverId` 和 `tool`，否则保存被拒绝。                       |
+| `serverId`      | 此角色 AI 后端 `toolServers` 里的服务 ID。                                                    |
+| `tool`          | 该服务 `allowedTools` 里的工具名；不在白名单时不下载也不外发，记 `EXTERNAL_TOOL_DISABLED`。   |
+| `audioArgument` | 音频 base64 填入的参数名，默认 `audio`。                                                      |
+| `mimeArgument`  | MIME 类型填入的参数名，默认 `mimeType`；工具不需要时设为空字符串。                            |
+| `arguments`     | 固定附加参数，最多 10 个，值为字符串、数字或布尔；不能与上面两个参数名重复。                  |
+| `maxSeconds`    | 单条语音最长秒数，默认 90，范围 1—600；同时受 `voice.maxSeconds` 约束。                       |
+| `maxBytes`      | 单条语音最大字节数，默认 8 MiB，范围 64 KiB—20 MiB；同时受 `voice.maxBytes` 约束。            |
+| `timeoutMs`     | 转写调用超时，默认 60000，范围 1000—300000；音频下载另限 30 秒（取两者较小值）。              |
+| `waitMs`        | 回合开始前最多等待仍在进行的转写，默认 8000，范围 0—30000；0 表示不等，结果由之后的回合看到。 |
+| `maxPerHour`    | 每个角色每小时最多外发的语音条数，默认 60；计数在进程内，重启后清零。                         |
+
+转写服务的凭据沿用该 MCP 服务已有的 `env`/`headers` 环境变量映射，不新增凭据字段，见 [凭据边界](CREDENTIAL-BOUNDARIES.md)。
+
 ## DSH bundle
 
 DSH bundle 仅生成，不自动安装、改 profile 或重启应用：
