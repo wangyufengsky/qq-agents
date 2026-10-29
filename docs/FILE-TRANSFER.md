@@ -31,6 +31,7 @@
 | 工具            | 作用                                                           |
 | --------------- | -------------------------------------------------------------- |
 | `file_list`     | 按名称查询本主体文件，返回分页、用量与可导入目录编号           |
+| `file_read`     | 分页读取本主体文件库里的 UTF-8 文本文件，按 `nextOffset` 续读  |
 | `file_download` | 公开 HTTP(S) URL，或已观察记录的 `eventId` + 附件序号，二选一  |
 | `file_create`   | 创建 UTF-8 文本附件；支持 txt/md/csv/json/tsv/log/xml/yaml/yml |
 | `file_import`   | 从管理员配置的目录编号及相对路径导入                           |
@@ -38,7 +39,7 @@
 
 文件保存在数据目录的 `files/<agentId>/`，字节文件与元信息均按主体隔离。`fileId` 是 SHA-256 内容摘要，相同内容在各自库内去重，显示名称采用最后登记的名称；发送时可指定显示名称。知道另一个 AI 的 `fileId` 不会获得访问权。元信息记录来源、文件名、大小、创建时间和内容摘要，不返回本机绝对路径或带访问参数的下载链接。
 
-下载不会执行、解压或解释文件。工具返回 `contentRead=false`，不能据此声称读懂 PDF、Word、Excel 或压缩包。文本生成不会把普通文字冒充 Office/PDF 格式。来自现有运维文件读取的受限内容仍保留原披露限制，普通文件收发不进入运维确认队列。
+下载不会执行、解压或解释文件。工具返回 `contentRead=false`，不能据此声称读懂 PDF、Word、Excel 或压缩包。`file_read` 只读文本扩展名（与 `file_create` 相同）且是有效 UTF-8 的文件，其他文件返回 `FILE_NOT_TEXT`；开启文件库时它和其他文件工具一起加入 `tools`；之前保存的配置里只要有 `file_list`，升级后同样可用。读取结果带 `contentRead=true`、`totalChars` 和 `nextOffset`，`nextOffset` 为 null 才算读完。受保护文件读不到（`RECALL_SOURCE_NOT_ALLOWED`），来自其他聊天的文件读过后本回合按读过那里的资料处理，与 `qq_send_file` 相同。文本生成不会把普通文字冒充 Office/PDF 格式。来自现有运维文件读取的受限内容仍保留原披露限制，普通文件收发不进入运维确认队列。
 
 图片附件可另用 `qq_image_read({id: "<附件经历ID>", source: "file", index: 0})` 读取像素；无普通图片段时可省略 `source`。这个入口通过同一个 `file_download` 授权路径下载，仍要求文件接收权限、工具白名单、来源白名单及文件库配额，不能绕过文件权限。校验为 GIF 后返回多帧，其他支持格式返回图片；GIF 原图另限 20 MiB、其他格式 8 MiB。读取结果保留文件库中相同内容的已有来源和运维限制；后续可用返回的 `mediaId` 在 `sticker_read` 中继续读图。
 

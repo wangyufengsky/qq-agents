@@ -148,6 +148,32 @@ test("a strong mood in effect changes only for something that happened after it"
   assert.equal(calm.mood, "平静");
 });
 
+test("a strong mood can settle on the agent's own idle time without anyone coaxing it", async (t) => {
+  const cfg = config(1);
+  Object.assign(cfg.agents[0].subject, { enabled: true, groups: ["20000"] });
+  const f = chat(t, cfg);
+  const rude = said(f.m, "你别说话了");
+  await f.runtime.callTool(context(f.runtime), "mood_set", {
+    mood: "很受伤",
+    intensity: 4,
+    reason: "被人叫我闭嘴",
+    evidence: [rude.id],
+  });
+  f.advance(HOUR);
+  const idle = context(f.runtime, "agent-0", "@subject");
+  // No one apologised; the agent went and did something else, then thought it over.
+  const log = await f.runtime.callTool(idle, "subject_log", {
+    did: "read",
+    summary: "读了会儿鲸类睡眠的论文，回头想了想，那句话是冲着刷屏说的",
+  });
+  const settled = await f.runtime.callTool(idle, "mood_set", {
+    clear: true,
+    reason: "缓过来了，那句话不是冲我这个人",
+    evidence: [log.id],
+  });
+  assert.equal(settled.action, "clear");
+});
+
 test("a mood reaches each session once while it lasts, with what it changed from", async (t) => {
   const f = chat(t);
   f.m.identity.setMood(

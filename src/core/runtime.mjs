@@ -276,6 +276,10 @@ export class Runtime {
       ).imageGeneration
     )
       selected.push("generated_image_list");
+    // Reading back one's own library goes with listing it: enabling files
+    // grants both, and configurations saved before file_read existed get it
+    // without an edit.
+    if (selected.includes("file_list")) selected.push("file_read");
     return [...new Set(selected)].filter((name) =>
       toolAvailable(a, name, conversation),
     );

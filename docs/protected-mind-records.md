@@ -36,7 +36,7 @@
 
 ## 主体保存文章
 
-主体场景补充开放已配置的 `file_create` 和 `file_list`。只有管理员已经开启文件库及创建权限时才能写入。文章可用 `file_create(name,text)` 保存为 txt、md、csv、json 等 UTF-8 文本，返回 fileId；文件内容不会执行。
+主体场景补充开放已配置的 `file_create`、`file_list`，以及随 `file_list` 一起开放的 `file_read`。只有管理员已经开启文件库及创建权限时才能写入。文章可用 `file_create(name,text)` 保存为 txt、md、csv、json 等 UTF-8 文本，返回 fileId；之后可用 `file_read` 读回原稿接着改，不必凭日志概要重写。文件内容不会执行。
 
 不需要通用 `terminal_open`。原生终端入口仍禁止；模型不能传任意本机路径、越过自己的资料库或修改其他目录。主体不直接发送 QQ 文件；进入适当聊天后，通过现有 `qq_send_file` 和披露规则投递。文件继续继承私有仓库及运维资料保护。
 
