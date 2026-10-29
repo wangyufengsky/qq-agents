@@ -355,6 +355,8 @@ test("a private chat shows the other side's card even with nothing new, with the
   assert.equal(turn.personCards.length, 1);
   assert.equal(turn.personCards[0].personId, "30000");
   assert.equal(turn.personCards[0].revision, 1);
+  // The card's own id, so a card deleted and written again is told apart.
+  assert.equal(turn.personCards[0].id, m.identity.personCard("30000").id);
 
   // Seen this session: neither the card nor the mood comes again.
   await f.runtime.wake("agent-0", "private:30000");

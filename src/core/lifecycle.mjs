@@ -474,7 +474,10 @@ export class ContextLifecycle {
       ...(mood.line ? { moodShown: mood.shown } : {}),
       ...(people?.cards.length
         ? {
+            // The seen key is "<card id>:<revision>"; the id tells a card
+            // deleted and written again apart from the one shown here.
             personCards: people.cards.map(({ personId, revision }) => ({
+              id: people.shown[personId]?.split(":")[0],
               personId,
               revision,
             })),

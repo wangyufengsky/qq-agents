@@ -1291,11 +1291,12 @@ async function readRelated(id, afterSeq = 0) {
     if (!$("#editor").open) $("#editor").showModal();
   });
 }
+// Other pages (a person card) pass their own agentId; the memory page uses its picker.
 async function readConversation(args) {
+  const agentId = args.agentId || $("#memory-agent").value;
   await action(async () => {
     const r = await api(
-      "/api/memory/conversation?" +
-        new URLSearchParams({ agentId: $("#memory-agent").value, ...args }),
+      "/api/memory/conversation?" + new URLSearchParams({ ...args, agentId }),
     );
     editing = { type: "read" };
     $("#edit-title").textContent = "同一来源的前后文";
@@ -1303,11 +1304,14 @@ async function readConversation(args) {
       `<p class="hint">原始记录按归档顺序排列；不是自动识别的话题。${r.truncated ? "本页受字符预算限制。" : ""}</p>${r.items.map((m) => `<article class="record"><small>${esc(m.conversation)} · ${esc(m.senderName || m.senderId || "身份未知")} · ${esc(m.occurredAt || "时间未知")}</small><p>${esc(m.body || "摘要未展示")} ${m.bodyTruncated ? "（可读原文）" : ""}</p><button type="button" data-read="${esc(m.id)}">读原文</button></article>`).join("") || "没有更多记录"}${r.items.length ? '<button type="button" id="older-context">更早记录</button> <button type="button" id="newer-context">更晚记录</button>' : ""}`;
     $("#edit-fields")
       .querySelectorAll("[data-read]")
-      .forEach((b) => (b.onclick = () => readMemory(b.dataset.read)));
+      .forEach(
+        (b) => (b.onclick = () => readMemory(b.dataset.read, { agentId })),
+      );
     const first = r.items[0],
       last = r.items.at(-1);
     if (first) {
       const scope = {
+        agentId,
         conversation: first.conversation,
         connectionId: first.connectionId || "",
       };

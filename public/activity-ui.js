@@ -117,23 +117,30 @@ function activityBrowsing(b) {
     : "";
   return `<div class="act-box">${rows}${searches}${list}${failed}</div>`;
 }
+const activityCard = (c) =>
+  `${esc(c.call || c.personId)} v${esc(c.revision)}${c.deleted ? "（已删除）" : ""}`;
+const activityMood = (m) =>
+  m.missing
+    ? "记录已清理"
+    : m.cleared
+      ? "已经过去"
+      : `${esc(m.mood)}（强度 ${esc(m.intensity)}）`;
 // 发送时参考的人物卡和当时的心情；卡已删除或心情记录已清理时照实说明。
 function activityBasis(b) {
   if (!b) return "";
   const parts = [];
-  if (b.personCard) {
-    const c = b.personCard;
-    parts.push(
-      `参考人物卡：${esc(c.call || c.personId)} v${esc(c.revision)}${c.deleted ? "（已删除）" : ""}`,
-    );
-  }
-  if (b.mood)
-    parts.push(
-      b.mood.missing
-        ? "当时心情：记录已清理"
-        : `当时心情：${esc(b.mood.mood)}（强度 ${esc(b.mood.intensity)}）`,
-    );
+  if (b.personCard) parts.push(`参考人物卡：${activityCard(b.personCard)}`);
+  if (b.mood) parts.push(`当时心情：${activityMood(b.mood)}`);
   return `<p class="hint act-basis">${parts.join(" · ")}</p>`;
+}
+// 这一轮提示里附上的心情和人物卡（回合记录写下的）。
+function activitySeen(s) {
+  if (!s) return "";
+  const parts = [];
+  if (s.mood) parts.push(`心情：${activityMood(s.mood)}`);
+  if (s.personCards)
+    parts.push(`人物卡：${s.personCards.map(activityCard).join("、")}`);
+  return `<p class="hint act-basis">这一轮附上的${parts.join(" · ")}</p>`;
 }
 function activityEntry(e) {
   const quiet =
@@ -186,6 +193,7 @@ function activityEntry(e) {
     parts.push(
       `<p class="hint">处理主动意图「${esc(i.topic)}」：${esc(intentWords[i.status] || i.status)}</p>`,
     );
+  parts.push(activitySeen(e.seen));
   const tools = e.tools
     ? e.tools.total
       ? `工具：${e.tools.names.map(esc).join("、")}${e.tools.failed ? `（失败 ${e.tools.failed} 次）` : ""}`
