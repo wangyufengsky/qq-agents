@@ -1157,6 +1157,159 @@ const area = (key, label, value) =>
   `<label class="wide">${label}<textarea name="${key}">${esc(value)}</textarea></label>`;
 const select = (key, label, value, options) =>
   `<label>${label}<select name="${key}">${options.map(([v, l]) => `<option value="${esc(v)}" ${v === value ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`;
+
+// A page section folded unless this browser opened it before. Its summary
+// line says the state in a few words, so the page reads without opening it.
+// `id` names the section across renders, e.g. "subject-quota".
+const foldOpen = (id, fallback) => {
+  try {
+    const v = localStorage.getItem("fold:" + id);
+    return v === null ? fallback : v === "1";
+  } catch {
+    return fallback;
+  }
+};
+const fold = (id, title, body, { summary = "", open = false, cls = "" } = {}) =>
+  `<details class="card fold${cls ? " " + cls : ""}" data-fold="${esc(id)}"${foldOpen(id, open) ? " open" : ""}><summary><span class="fold-title">${title}</span>${summary ? `<span class="fold-summary">${summary}</span>` : ""}</summary><div class="fold-body">${body}</div></details>`;
+// Remember what the viewer opened or closed; toggle does not bubble.
+document.addEventListener?.(
+  "toggle",
+  (e) => {
+    const id = e.target?.dataset?.fold;
+    if (!id) return;
+    try {
+      localStorage.setItem("fold:" + id, e.target.open ? "1" : "0");
+    } catch {
+      // Private windows may refuse storage; the section still works.
+    }
+  },
+  true,
+);
+
+// QQ numbers (groups or people) as removable chips, with an add box that
+// offers the groups and people this role has met. The hidden input sends the
+// same comma list the form always sent. Call fillIds(root, agentId) after
+// the markup is on the page to fill the offers and name the chips.
+let idsSeq = 0;
+const idsList = (values) => [
+  ...new Set(
+    (Array.isArray(values) ? values : String(values ?? "").split(/[,，\s]+/))
+      .map((x) => String(x).trim())
+      .filter(Boolean),
+  ),
+];
+const idChip = (id, name = "") =>
+  `<span class="ids-chip" data-id="${esc(id)}"><span class="ids-name">${name ? `${esc(name)} <small>${esc(id)}</small>` : esc(id)}</span><button type="button" class="ids-remove" data-ids-remove="${esc(id)}" aria-label="移除 ${esc(id)}">×</button></span>`;
+function ids(key, label, values, { kind = "group", hint = "" } = {}) {
+  const list = idsList(values),
+    n = ++idsSeq;
+  return `<div class="ids wide" data-ids="${kind}"><span class="ids-label">${label}</span><input type="hidden" name="${key}" value="${esc(list.join(","))}"><div class="ids-chips">${list.map((id) => idChip(id)).join("") || '<span class="ids-empty">还没有</span>'}</div><div class="ids-add"><input list="ids-${n}" inputmode="numeric" autocomplete="off" placeholder="${kind === "group" ? "输入群号，或从认识的群里选" : "输入 QQ 号，或从认识的人里选"}" aria-label="添加到${label}"><datalist id="ids-${n}"></datalist><button type="button" class="ghost" data-ids-add>添加</button></div>${hint ? `<p class="hint">${hint}</p>` : ""}</div>`;
+}
+// The groups and people a role has met, fetched once a minute at most.
+const knownCache = new Map();
+function knownTargets(agentId) {
+  const hit = knownCache.get(agentId);
+  if (hit && Date.now() - hit.at < 60000) return hit.promise;
+  const promise = api(
+    "/api/known-targets?agentId=" + encodeURIComponent(agentId),
+  ).catch(() => ({ groups: [], people: [] }));
+  knownCache.set(agentId, { at: Date.now(), promise });
+  return promise;
+}
+const knownName = (x) =>
+  [x.name, x.call && x.call !== x.name ? `叫「${x.call}」` : ""]
+    .filter(Boolean)
+    .join(" · ");
+async function fillIds(root, agentId) {
+  const boxes = [...(root?.querySelectorAll?.("[data-ids]") || [])];
+  if (!boxes.length || !agentId) return;
+  const known = await knownTargets(agentId);
+  for (const box of boxes) {
+    const rows = box.dataset.ids === "group" ? known.groups : known.people,
+      names = new Map(rows.map((x) => [x.id, knownName(x)]));
+    box.querySelector("datalist").innerHTML = rows
+      .map(
+        (x) =>
+          `<option value="${esc(x.id)}">${esc(knownName(x) || x.id)}</option>`,
+      )
+      .join("");
+    box.knownNames = names;
+    for (const chip of box.querySelectorAll(".ids-chip")) {
+      const name = names.get(chip.dataset.id);
+      if (name)
+        chip.querySelector(".ids-name").innerHTML =
+          `${esc(name)} <small>${esc(chip.dataset.id)}</small>`;
+    }
+  }
+}
+function idsSet(box, list) {
+  const hidden = box.querySelector('input[type="hidden"]');
+  hidden.value = list.join(",");
+  hidden.dispatchEvent(new Event("change", { bubbles: true }));
+  box.querySelector(".ids-chips").innerHTML =
+    list.map((id) => idChip(id, box.knownNames?.get(id))).join("") ||
+    '<span class="ids-empty">还没有</span>';
+}
+function idsAdd(box) {
+  const field = box.querySelector(".ids-add input"),
+    id = field.value.trim();
+  if (!id) return;
+  if (!/^\d{5,12}$/.test(id)) {
+    field.setCustomValidity("只能填 5–12 位数字的号码");
+    field.reportValidity();
+    return;
+  }
+  field.setCustomValidity("");
+  field.value = "";
+  const list = idsList(box.querySelector('input[type="hidden"]').value);
+  if (!list.includes(id)) idsSet(box, [...list, id]);
+}
+document.addEventListener?.("click", (e) => {
+  const box = e.target.closest?.("[data-ids]");
+  if (!box) return;
+  if (e.target.closest("[data-ids-add]")) idsAdd(box);
+  const gone = e.target.closest("[data-ids-remove]")?.dataset.idsRemove;
+  if (gone)
+    idsSet(
+      box,
+      idsList(box.querySelector('input[type="hidden"]').value).filter(
+        (id) => id !== gone,
+      ),
+    );
+});
+document.addEventListener?.("keydown", (e) => {
+  const box = e.target.closest?.(".ids-add") && e.target.closest("[data-ids]");
+  if (!box || e.key !== "Enter") return;
+  // Enter adds the number instead of submitting the form.
+  e.preventDefault();
+  idsAdd(box);
+});
+document.addEventListener?.("input", (e) => {
+  const box = e.target.closest?.(".ids-add") && e.target.closest("[data-ids]");
+  if (box) {
+    e.target.setCustomValidity("");
+    // Picking an offer from the list adds it straight away.
+    if (box.knownNames?.has(e.target.value.trim())) idsAdd(box);
+    return;
+  }
+  // A slider shows its value as it moves.
+  if (e.target.type === "range") {
+    const out = e.target.parentElement?.querySelector("output");
+    if (out) out.textContent = rangeText(e.target.value, e.target.dataset.unit);
+  }
+});
+
+// A number on a slider with its value beside it. unit "%" shows a 0–1 value
+// as a percentage; any other unit is appended as is.
+const rangeText = (value, unit = "") =>
+  unit === "%" ? `${Math.round(Number(value) * 100)}%` : `${value}${unit}`;
+const range = (
+  key,
+  label,
+  value,
+  { min = 0, max = 1, step = 0.05, unit = "" } = {},
+) =>
+  `<label class="range">${label}<span class="range-row"><input type="range" name="${key}" min="${min}" max="${max}" step="${step}" value="${esc(value)}" data-unit="${esc(unit)}"><output>${esc(rangeText(value, unit))}</output></span></label>`;
 function openEditor(type, id) {
   const row = id
     ? structuredClone(find(type, id))
