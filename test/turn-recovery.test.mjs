@@ -486,32 +486,17 @@ test("late Codex completion from the failed attempt cannot end its continuation"
 });
 
 for (const type of ["dsh", "codex"])
-  for (const lane of ["subject", "learner"]) {
-    test(`${type} ${lane} uses the same recovery policy`, async (t) => {
-      const f = setup(t, type);
-      f.runtime.config.agents[0].subject.enabled = true;
-      f.runtime.config.agents[0].slang.enabled = true;
-      if (lane === "subject") {
-        assert.equal(
-          (await f.runtime.wake("agent-0", "@subject")).status,
-          "completed-no-send",
-        );
-        assert.equal(f.m.state("@subject").session.id, type + "-session");
-      } else {
-        f.m.setState(chat, {
-          slang: { entries: [], throughSeq: 0 },
-          readThroughSeq: 0,
-        });
-        await f.runtime.learner.learn(f.runtime.agent("agent-0"), chat, [
-          { id: "evidence", body: "synthetic", seq: 1 },
-        ]);
-        assert.equal(f.m.state(chat).slang.session.id, type + "-session");
-        assert.equal(f.m.state(chat).slang.throughSeq, 1);
-      }
-      assert.equal(f.attempts(), 2);
-      assert.equal(f.runtime.transports.get("qq-0").sent.length, 0);
-    });
-  }
+  test(`${type} subject uses the same recovery policy`, async (t) => {
+    const f = setup(t, type);
+    f.runtime.config.agents[0].subject.enabled = true;
+    assert.equal(
+      (await f.runtime.wake("agent-0", "@subject")).status,
+      "completed-no-send",
+    );
+    assert.equal(f.m.state("@subject").session.id, type + "-session");
+    assert.equal(f.attempts(), 2);
+    assert.equal(f.runtime.transports.get("qq-0").sent.length, 0);
+  });
 for (const httpStatusCode of [401, 403, 429]) {
   test(`Codex stream error with HTTP ${httpStatusCode} is not transient`, async (t) => {
     const f = setup(t, "codex", {

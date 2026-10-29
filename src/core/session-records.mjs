@@ -15,21 +15,6 @@ export function sessionReference(session) {
       : {}),
   };
 }
-const place = (scope) =>
-  scope.startsWith("learner:")
-    ? { conversation: scope.slice(8), learner: true }
-    : { conversation: scope, learner: false };
-function stateAt(memory, scope) {
-  const p = place(scope),
-    state = memory.state(p.conversation);
-  return { ...p, state, value: p.learner ? state.slang || {} : state };
-}
-function writeAt(memory, p, value) {
-  memory.setState(
-    p.conversation,
-    p.learner ? { ...p.state, slang: value } : value,
-  );
-}
 function turnRecord(memory, id) {
   return (
     id &&
@@ -54,10 +39,13 @@ export function recoverSessions(memory, at, scope) {
     .all(memory.agentId, scope ?? null, scope ?? null);
   for (const row of rows) {
     const t = JSON.parse(row.value);
-    retireSession(memory, t.conversation, "process-recovery", at, {
-      turnId: t.id,
-      backendId: t.backendId,
-    });
+    // Slang learner turns (removed in 0.5.3) keep their records, but nothing
+    // owns their scope any more, so only the turn itself is closed.
+    if (!t.conversation.startsWith("learner:"))
+      retireSession(memory, t.conversation, "process-recovery", at, {
+        turnId: t.id,
+        backendId: t.backendId,
+      });
     patchTurn(memory, t.id, { status: "interrupted", endedAt: at });
   }
 }
@@ -110,14 +98,13 @@ export function retireSession(
   { turnId, backendId, session, ...extra } = {},
 ) {
   return memory.store.transaction(() => {
-    const p = stateAt(memory, scope),
-      owner = turnId ?? p.value.lastTurnId;
-    const owns =
-      !turnId || !p.value.lastTurnId || p.value.lastTurnId === turnId;
+    const value = memory.state(scope),
+      owner = turnId ?? value.lastTurnId;
+    const owns = !turnId || !value.lastTurnId || value.lastTurnId === turnId;
     const record = turnRecord(memory, owner);
     const previous =
       session ||
-      (owns ? p.value.session : null) ||
+      (owns ? value.session : null) ||
       (record && JSON.parse(record.value).backendSession);
     if (previous)
       archive(memory, scope, previous, {
@@ -128,12 +115,11 @@ export function retireSession(
         ...extra,
       });
     if (owns)
-      writeAt(memory, p, {
-        ...p.value,
+      memory.setState(scope, {
+        ...value,
         session: null,
-        ...(!p.learner
-          ? { feedThroughSeq: p.value.readThroughSeq || 0, usage: null }
-          : {}),
+        feedThroughSeq: value.readThroughSeq || 0,
+        usage: null,
         lifecycle: { status: "retired", reason, at },
       });
   });
@@ -149,12 +135,12 @@ export function saveSession(
     return retireSession(memory, scope, reason, at, { turnId, backendId });
   const reference = sessionReference(session);
   memory.store.transaction(() => {
-    const p = stateAt(memory, scope);
+    const value = memory.state(scope);
     patchTurn(memory, turnId, { backendSession: reference, backendId });
     const turn = turnRecord(memory, turnId);
     if (
       inactive ||
-      p.value.lastTurnId !== turnId ||
+      value.lastTurnId !== turnId ||
       (turn && JSON.parse(turn.value).status !== "running")
     ) {
       archive(memory, scope, reference, {
@@ -165,7 +151,7 @@ export function saveSession(
       });
       return;
     }
-    writeAt(memory, p, { ...p.value, session: reference });
+    memory.setState(scope, { ...value, session: reference });
   });
 }
 

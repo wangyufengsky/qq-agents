@@ -41,7 +41,6 @@ import { dispatchTool } from "../tools/index.mjs";
 import { ConversationEngine } from "./conversations.mjs";
 import { TaskScheduler } from "./scheduler.mjs";
 import { Operations } from "./operations.mjs";
-import { SlangLearner } from "./slang.mjs";
 
 // Adds or removes a feature's tools while keeping the existing order, so saving
 // an unchanged permission page does not count as a policy change.
@@ -105,7 +104,6 @@ export class Runtime {
     this.conversations = new ConversationEngine(this);
     this.scheduler = new TaskScheduler(this);
     this.operations = new Operations(this);
-    this.learner = new SlangLearner(this);
     this.contexts = new ContextLifecycle(this);
     this.generatedImages = new GeneratedImages(this);
     this.subject = new SubjectCoordinator(this);
@@ -170,7 +168,6 @@ export class Runtime {
     this.conversations.tick();
     this.scheduler.tick();
     this.operations.expire();
-    this.learner.tick();
   }
   makeContext(agentId, conversation) {
     if (this.closed) throw Error("RUNTIME_CLOSING");
@@ -591,7 +588,6 @@ export class Runtime {
         });
       }
       this.conversations.notify(a.id, e.conversation);
-      this.learner.observe(a, e, archived);
       if (
         ![
           "message.received",
@@ -976,7 +972,6 @@ export class Runtime {
     await Promise.all([
       ...this.config.agents.map((a) => cleanup(() => this.cancel(a.id))),
       ...[...this.backends.values()].map((b) => cleanup(() => b.close?.())),
-      cleanup(() => this.learner.close()),
       cleanup(() => this.backendConnections.drain()),
     ]);
     while (this.jobs.size || this.work.size || this.sendChains.size)

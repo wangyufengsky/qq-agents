@@ -163,22 +163,6 @@ export const legacyDefinitions = {
     "修改先前列出表情的官方备注；工具需管理员单独启用。",
     object({ requestId: id, id, remark: str.max(50) }),
   ],
-  slang_query: [
-    "检索本会话的黑话候选与人工确认状态。",
-    object({ query: str.max(100).optional() }),
-  ],
-  slang_submit: [
-    "从本会话证据提交黑话候选，AI 不能将其标成已确认事实。",
-    object({
-      term: str.min(1).max(50),
-      meaning: str.max(1000).optional(),
-      evidenceIds: z.array(id).min(1).max(30),
-    }),
-  ],
-  slang_research: [
-    "使用管理员指定的只读检索 MCP 研究候选词；仅发送该词，不发送聊天证据。",
-    object({ id }),
-  ],
   ops_request_level: [
     "仅管理员私聊申请 L1/L2/L3，桥接等待独立确认；模型不能批准自己。",
     object({ level: z.enum(["L0", "L1", "L2", "L3"]) }),
@@ -543,9 +527,6 @@ export async function legacyTool(runtime, ctx, name, args) {
       },
     });
   }
-  if (name === "slang_query") return runtime.learner.list(ctx, args.query);
-  if (name === "slang_submit") return runtime.learner.submit(ctx, args);
-  if (name === "slang_research") return runtime.learner.research(ctx, args);
   if (name === "ops_request_level")
     return runtime.operations.request(ctx, args);
   if (name === "ops_read") return runtime.operations.read(ctx, args);

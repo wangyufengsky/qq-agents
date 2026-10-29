@@ -180,15 +180,15 @@ test("late backend callbacks cannot access memory after shutdown has completed",
   }
 });
 
-test("learner and managed process cleanup failures remain visible and other resources still close", async (t) => {
+test("backend and managed process cleanup failures remain visible and other resources still close", async (t) => {
   const f = fixture(t, { cfg: config(1) });
   let siblingClosed = false;
-  f.runtime.learner.backends.set("bad", {
+  f.runtime.backends.set("bad", {
     close: async () => {
       throw Error("synthetic");
     },
   });
-  f.runtime.learner.backends.set("good", {
+  f.runtime.backends.set("good", {
     close: async () => {
       siblingClosed = true;
     },

@@ -20,7 +20,6 @@ let token = sessionStorage.getItem("qq-unified-token") || "",
   tab = "overview",
   editing,
   errorFilter = "",
-  features = {},
   globalPausePending = false;
 const titles = {
   apps: ["浏览与分享", "按主体配置平台浏览，查看真实来源和分享决定。"],
@@ -186,7 +185,6 @@ async function load() {
   configMigrationWarnings = c.migrationWarnings || [];
   revision = c.revision;
   tools = c.tools;
-  features = c.features || {};
   status = await api("/api/status");
   if (status.version)
     $(".version").textContent = `v${status.version} · 一个主体，连续的经历`;

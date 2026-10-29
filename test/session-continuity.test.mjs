@@ -189,20 +189,14 @@ function dsh(mode, onReady) {
 }
 
 for (const backendType of ["codex", "dsh"])
-  for (const lane of ["chat", "subject", "learner"])
+  for (const lane of ["chat", "subject"])
     for (const mode of ["failure", "cancel", "creation-cancel"])
       test(`N3 ${backendType} ${lane} ${mode} retains session and turn references without replay`, async (t) => {
         const cfg = config(1);
         cfg.agents[0].subject.enabled = true;
-        cfg.agents[0].slang.enabled = true;
         const f = fixture(t, { cfg }),
           m = f.store.bind("agent-0"),
-          scope =
-            lane === "subject"
-              ? "@subject"
-              : lane === "learner"
-                ? "learner:" + chat
-                : chat;
+          scope = lane === "subject" ? "@subject" : chat;
         const abort = () => {
           for (const ctx of f.runtime.capabilities.values())
             ctx.controller.abort();
@@ -221,24 +215,12 @@ for (const backendType of ["codex", "dsh"])
         f.runtime.backendFactory = factory;
         m.reserveDelivery("prior-unknown", chat, { text: "synthetic" });
         m.completeDelivery("prior-unknown", "unknown");
-        if (lane === "learner") {
-          m.setState(chat, {
-            slang: { entries: [], throughSeq: 0 },
-            readThroughSeq: 0,
-          });
-          await f.runtime.learner.learn(f.runtime.agent("agent-0"), chat, [
-            { id: "evidence", body: "synthetic", seq: 1 },
-          ]);
-          assert.equal(m.state(chat).slang.session, null);
-          assert.equal(m.state(chat).slang.throughSeq, 0);
-        } else {
-          const result = await f.runtime.wake("agent-0", scope);
-          assert.equal(
-            result.status,
-            mode === "failure" ? "failed" : "cancelled",
-          );
-          assert.equal(m.state(scope).session, null);
-        }
+        const result = await f.runtime.wake("agent-0", scope);
+        assert.equal(
+          result.status,
+          mode === "failure" ? "failed" : "cancelled",
+        );
+        assert.equal(m.state(scope).session, null);
         const history = m.identity.list("session_history"),
           turns = m.identity.list("model_turns");
         assert.equal(history.length, 1);
@@ -302,7 +284,7 @@ test("N3 errors before adapter turn try blocks still archive a new DSH or resume
   }
 });
 
-test("N3 process recovery archives chat, subject and learner before clearing; restart and JSON restore are idempotent", async (t) => {
+test("N3 process recovery archives chat and subject before clearing, only closes legacy learner turns; restart and JSON restore are idempotent", async (t) => {
   const root = temp(t),
     file = path.join(root, "db.sqlite"),
     cfg = new ConfigStore(path.join(root, "config.json"), config(1));
@@ -322,6 +304,7 @@ test("N3 process recovery archives chat, subject and learner before clearing; re
       status: "running",
       backendId: "dedicated",
     });
+    // Slang learner turns (removed in 0.5.3) can still be running in old data.
     if (scope.startsWith("learner:"))
       m.setState(chat, {
         ...m.state(chat),
@@ -345,20 +328,27 @@ test("N3 process recovery archives chat, subject and learner before clearing; re
       backendFactory: () => ({}),
     });
     m = db.bind("agent-0");
-    assert.equal(m.identity.list("session_history").length, 3);
+    assert.equal(m.identity.list("session_history").length, 2);
     assert(
       m.identity
         .list("model_turns")
         .every(
           (x) =>
             x.status === "interrupted" &&
-            x.backendSession &&
-            x.sessionHistoryId,
+            (x.conversation.startsWith("learner:") ||
+              (x.backendSession && x.sessionHistoryId)),
         ),
     );
     assert.equal(m.state(chat).session, null);
-    assert.equal(m.state(chat).slang.session, null);
+    // The old learner state is kept as it was, and its scope gets no state row.
+    assert.equal(m.state(chat).slang.session.id, "old:learner:" + chat);
     assert.equal(m.state(chat).slang.throughSeq, 42);
+    assert.equal(
+      m.db
+        .prepare("SELECT COUNT(*) n FROM runtime WHERE conversation LIKE ?")
+        .get("learner:%").n,
+      0,
+    );
     assert.equal(m.state(chat).readThroughSeq, 12);
     assert.equal(m.delivery("pending").status, "unknown");
     assert(
