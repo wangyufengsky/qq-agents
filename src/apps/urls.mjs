@@ -3,6 +3,8 @@ import http from "node:http";
 import https from "node:https";
 import net from "node:net";
 
+// Heybox posts have a numeric id and a hex short code (e.g. 854272b8d995); link/tree accepts both.
+export const heyboxLinkId = /^(?:\d+|[0-9a-f]{6,32})$/;
 export const APP_NAMES = [
   "bilibili",
   "heybox",
@@ -147,15 +149,15 @@ export function contentIdentity(value, expected) {
     }
   } else if (platform === "heybox") {
     const m = url.pathname.match(
-      /^\/(?:app\/bbs\/link|bbs\/app\/link|link)\/(\d+)\/?$/,
+      /^\/(?:app\/bbs\/link|bbs\/app\/link|link)\/([0-9a-f]+)\/?$/,
     );
     const q = url.searchParams.get("link_id") || url.searchParams.get("linkid");
     if (
-      m ||
+      (m && heyboxLinkId.test(m[1])) ||
       (/^(?:\/app\/bbs\/link\/web\/view|\/bbs\/app\/link\/web\/view|\/bbs\/link\/view)$/.test(
         url.pathname,
       ) &&
-        /^\d+$/.test(q || ""))
+        heyboxLinkId.test(q || ""))
     ) {
       id = m?.[1] || q;
       canonical = `https://www.xiaoheihe.cn/app/bbs/link/${id}`;
