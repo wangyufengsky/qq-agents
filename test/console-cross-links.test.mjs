@@ -203,18 +203,29 @@ test("a home card shows the mood still in effect and opens the mood tab", async 
       `homeMood(find("agents", "agent-0"), ${key ? `moods.${key}` : "undefined"})`,
       sandbox,
     );
+  // One line: intensity as dots, the mood itself, and until when.
+  const upToday = line("today");
   assert.match(
-    line("today"),
-    /<button type="button" class="home-mood" data-do="role-mood" data-id="agent-0"[^>]*>心情：开心&lt;b&gt;（3\/5）· 到 22:30<\/button>/,
+    upToday,
+    /^<button type="button" class="home-mood" data-do="role-mood" data-id="agent-0"/,
+  );
+  assert.match(upToday, /aria-label="强度 3\/5"/);
+  assert.equal(upToday.match(/<i class="on"><\/i>/g).length, 3);
+  assert.match(
+    upToday,
+    /<span class="home-mood-text">开心&lt;b&gt;<\/span><span class="home-mood-until">到 22:30<\/span>/,
   );
   // A mood that lasts past midnight names the day it ends.
-  assert.match(line("tomorrow"), /心情：困（1\/5）· 到 \d+\/\d+ 08:05/);
+  assert.match(line("tomorrow"), /到 \d+\/\d+ 08:05/);
   assert.match(
     line("calm"),
-    /class="home-mood is-calm" data-do="role-mood"[^>]*>心情：平常</,
+    /class="home-mood is-calm" data-do="role-mood"[^>]*>.*<span class="home-mood-text">平常</,
   );
-  // Before the summary arrives there is nothing to say.
-  assert.equal(line(), "");
+  // Before the summary arrives the line keeps its place, saying nothing.
+  assert.match(
+    line(),
+    /^<span class="home-mood is-loading" aria-hidden="true"><\/span>$/,
+  );
 
   // The summary fills the cards after the page drew them; the mood line
   // still opens the role's mood tab.
@@ -225,7 +236,10 @@ test("a home card shows the mood still in effect and opens the mood tab", async 
   vm.runInContext("loadHome()", sandbox);
   const box = node("#home-roles");
   await until(() => box.innerHTML.includes("开心&lt;b&gt;"));
-  assert.match(box.innerHTML, /data-id="agent-1"[^>]*>心情：平常/);
+  assert.match(
+    box.innerHTML,
+    /class="home-mood is-calm" data-do="role-mood" data-id="agent-1"/,
+  );
   const mood = box.found["[data-do]"].find(
     (b) => b.dataset.do === "role-mood" && b.dataset.id === "agent-0",
   );
@@ -525,4 +539,174 @@ test("the contacts tab names private targets by their card; the mood tab opens c
   );
   clicks[0].onclick();
   assert.equal(sandbox.rendered.at(-1), "people agent-1");
+});
+
+// The home card keeps one shape whatever it says, the top line says how
+// things stand, and the page rises in only when the home opens.
+function homeSandbox(f, request) {
+  const { sandbox, node } = consoleScripts(f, request);
+  run(sandbox, ["onboarding-ui.js"]);
+  vm.runInContext(
+    `tab = "overview"; status = { mode: "live", globalPaused: false, agents: [{ id: "agent-0", blockers: [] }, { id: "agent-1", blockers: ["QQ_NOT_CONNECTED"] }, { id: "agent-2", blockers: [] }], connections: [], backends: [], disclosureRequests: [], recentErrors: [] }`,
+    sandbox,
+  );
+  return { sandbox, node };
+}
+
+test("a home card keeps one shape, and says why a role cannot speak", async (t) => {
+  const f = fixture(t);
+  const { request } = await consoleApi(t, f);
+  const { sandbox } = homeSandbox(f, request);
+  const hourly = Array.from({ length: 24 }, (_, i) => ({
+    chat: i === 23 ? 4 : i % 3,
+    free: 1,
+  }));
+  const long = "好".repeat(300) + "<b>";
+  sandbox.homeData = {
+    agents: [
+      {
+        agentId: "agent-0",
+        mood: null,
+        hourly,
+        last24h: {
+          sent: 7,
+          freeTime: 3,
+          freeTimeActive: 2,
+          freeTimeTraced: 3,
+          reads: 1,
+          diaries: 2,
+        },
+        latest: {
+          kind: "chat",
+          conversation: group,
+          startedAt: T0,
+          text: long,
+        },
+        nextFreeTimeAt: null,
+      },
+      {
+        agentId: "agent-1",
+        mood: null,
+        hourly,
+        last24h: {
+          sent: 0,
+          freeTime: 0,
+          freeTimeActive: 0,
+          freeTimeTraced: 0,
+          reads: 0,
+          diaries: 0,
+        },
+        latest: {
+          kind: "subject",
+          conversation: "@subject",
+          startedAt: T0,
+          did: "rested",
+          text: null,
+        },
+        nextFreeTimeAt: null,
+      },
+    ],
+  };
+  vm.runInContext("homeData = this.homeData", sandbox);
+  const html = (id) =>
+    vm.runInContext(`homeRoleCard(find("agents", "${id}"))`, sandbox);
+  const ready = html("agent-0"),
+    blocked = html("agent-1");
+  // The whole text is there (and in the title); CSS cuts it to two lines.
+  assert.match(
+    ready,
+    /class="home-latest-text" title="好+&lt;b&gt;">好+&lt;b&gt;</,
+  );
+  assert.match(ready, /<i class="home-online"/);
+  assert.match(ready, /class="pill live">可以发言/);
+  assert.equal(ready.match(/<rect class="track"/g).length, 24);
+  assert.match(
+    ready,
+    /<title>[^<]+ 起的一小时：聊天 4 次，空闲时间 1 次<\/title>/,
+  );
+  assert.match(ready, /<dd>7<\/dd>/);
+  assert.match(ready, /<dt>空闲有行动<\/dt><dd>2\/3<\/dd>/);
+  // The reason goes in the one line under the name, not in a new line.
+  assert.match(
+    blocked,
+    /class="home-sub is-blocked" title="暂不发言：[^"]+">暂不发言：/,
+  );
+  assert.doesNotMatch(blocked, /home-online/);
+  assert.match(blocked, /最近 · \d\d:\d\d · 空闲时间 · 休息/);
+  assert.match(
+    blocked,
+    /class="home-latest-text is-empty">这一回合没有留下文字/,
+  );
+  // Every card has the same parts, in the same order, before and after data.
+  const parts = (s) =>
+    [...s.matchAll(/class="(home-[a-z-]+)/g)]
+      .map((m) => m[1])
+      .filter(
+        (c) =>
+          ![
+            "home-mood-dots",
+            "home-mood-text",
+            "home-mood-until",
+            "home-mood-label",
+            "home-online",
+            "home-pulse-axis",
+          ].includes(c),
+      );
+  assert.deepEqual(parts(ready), parts(blocked));
+  const before = vm.runInContext(
+    'homeData = null; homeRoleCard(find("agents", "agent-0"))',
+    sandbox,
+  );
+  assert.deepEqual(parts(before), parts(ready));
+  assert.match(before, /<dd>–<\/dd>/);
+  assert.match(before, /home-pulse is-loading/);
+});
+
+test("the home says how things stand and rises in only once", async (t) => {
+  const f = fixture(t);
+  const { request } = await consoleApi(t, f);
+  const { sandbox } = homeSandbox(f, request);
+  const say = () => vm.runInContext("homeHeadline()", sandbox);
+  assert.equal(say(), "2/3 个角色可以发言");
+  vm.runInContext("status.agents[1].blockers = []", sandbox);
+  assert.equal(say(), "3 个角色都在线，可以发言");
+  vm.runInContext("config.agents.pop(); status.agents.pop()", sandbox);
+  assert.equal(say(), "两个角色都在线，可以发言");
+  vm.runInContext("status.globalPaused = true", sandbox);
+  assert.equal(say(), "全局暂停中，角色先不参与");
+  vm.runInContext('status.mode = "isolated"', sandbox);
+  assert.equal(say(), "隔离模式：不连接 QQ，也不运行模型");
+  vm.runInContext('status.mode = "live"; status.globalPaused = false', sandbox);
+
+  sandbox.homeData = {
+    agents: [
+      {
+        agentId: "agent-0",
+        last24h: { sent: 3, freeTime: 2, reads: 1, diaries: 0 },
+      },
+      {
+        agentId: "agent-1",
+        last24h: { sent: 4, freeTime: 1, reads: 0, diaries: 5 },
+      },
+    ],
+  };
+  vm.runInContext("homeData = this.homeData", sandbox);
+  assert.equal(
+    vm.runInContext("homeTotals()", sandbox),
+    "最近 24 小时：回复 <b>7</b> 条 · 空闲时间 <b>3</b> 次 · 读文章 <b>1</b> 篇 · 写日记 <b>5</b> 篇",
+  );
+  assert.match(vm.runInContext("homeHero(0)", sandbox), /没有待处理的事/);
+  assert.match(
+    vm.runInContext("homeHero(2)", sandbox),
+    /<a class="pill accent" href="#home-todo">需要处理 2<\/a>/,
+  );
+
+  // The page rises in when the home opens; the 5 s refresh redraws it still,
+  // until the home is left (render() clears homeShown on any other tab).
+  const enter = () => vm.runInContext("homeEntrance()", sandbox);
+  assert.equal(enter(), " home-enter");
+  assert.equal(enter(), "");
+  assert.equal(enter(), "");
+  vm.runInContext("homeShown = false", sandbox);
+  assert.equal(enter(), " home-enter");
 });

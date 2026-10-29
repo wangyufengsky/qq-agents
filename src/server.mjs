@@ -667,6 +667,11 @@ export function createServer({
         }
         throw Error("INVALID_ACTION");
       }
+      // Groups and people this role has met, for the console's pickers.
+      if (req.method === "GET" && url.pathname === "/api/known-targets") {
+        const a = runtime.agent(url.searchParams.get("agentId"));
+        return send(runtime.memory.bind(a.id).knownTargets());
+      }
       if (req.method === "GET" && url.pathname === "/api/conversations") {
         const id = url.searchParams.get("agentId");
         runtime.agent(id);

@@ -1531,25 +1531,6 @@ body.in-role
   ) {
   display: none;
 }
-.home-role > p {
-  margin: 8px 0 0;
-}
-.home-stats {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-  margin-top: 10px;
-}
-.home-stats span {
-  display: grid;
-  font-size: 0.85em;
-  color: var(--muted);
-}
-.home-stats b {
-  font-size: 1.4em;
-  font-weight: 500;
-  color: var(--text, inherit);
-}
 .home-errors summary {
   cursor: pointer;
 }
@@ -1565,10 +1546,6 @@ details.adv > .form-grid {
 }
 form > .form-grid + .form-grid {
   margin-top: 14px;
-}
-.home-role {
-  display: grid;
-  align-content: start;
 }
 
 /* Current self on the mind page: full read view, edit on demand. */
@@ -2388,29 +2365,8 @@ dialog.people-drawer[open] {
   }
 }
 
-/* Cross-links: a role's mood on its home card, records an activity entry
-   points at, and people the console recognizes by their person card. */
-.home-role > .home-mood {
-  justify-self: start;
-  max-width: 100%;
-  min-height: 26px;
-  margin-top: 10px;
-  padding: 3px 12px;
-  /* A long mood wraps; a pill radius would turn it into a capsule. */
-  border-radius: 14px;
-  border-color: var(--accent-line);
-  background: var(--accent-fill);
-  color: var(--accent);
-  font-size: 12.5px;
-  white-space: normal;
-  text-align: left;
-  overflow-wrap: anywhere;
-}
-.home-role > .home-mood.is-calm {
-  border-color: var(--line-2);
-  background: transparent;
-  color: var(--sub);
-}
+/* Cross-links: records an activity entry points at, and people the console
+   recognizes by their person card. */
 .act-sent {
   display: flex;
   align-items: baseline;
@@ -2464,4 +2420,525 @@ button.person-open:hover {
   background: var(--accent-fill);
   border-color: var(--accent-line);
   color: var(--accent);
+}
+
+/* Home: a greeting with the state of things, then one card per role. Every
+   part of a card keeps its size (one line for the state and the mood, two
+   for the latest words), so a long line never makes a card grow or shrink. */
+.home-hero {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px 24px;
+  padding: 26px 28px;
+  margin-bottom: 20px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xl);
+  background:
+    radial-gradient(
+      120% 160% at 0% 0%,
+      rgba(77, 107, 254, 0.24),
+      transparent 55%
+    ),
+    radial-gradient(
+      90% 140% at 100% 100%,
+      rgba(95, 212, 255, 0.1),
+      transparent 60%
+    ),
+    var(--panel);
+}
+.home-hero-main {
+  min-width: 0;
+}
+.home-greet {
+  margin: 0 0 6px;
+  color: var(--accent);
+  font-size: 13px;
+  letter-spacing: 0.08em;
+}
+.home-headline {
+  margin: 0;
+  color: var(--ink-strong);
+  font-family: var(--font-display);
+  font-size: clamp(22px, 2.6vw, 30px);
+  font-weight: 600;
+  line-height: 1.25;
+}
+.home-totals {
+  margin: 10px 0 0;
+  color: var(--sub);
+  font-size: 13.5px;
+}
+.home-totals b {
+  color: var(--ink);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.home-hero-side {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+a.pill {
+  text-decoration: none;
+}
+.home-roles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.home-role {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 0;
+  overflow: hidden;
+}
+/* A soft glow in the role's color behind the top of the card. */
+.home-role::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 140px;
+  background: radial-gradient(
+    90% 100% at 0% 0%,
+    var(--role-fill),
+    transparent 70%
+  );
+  pointer-events: none;
+}
+.home-role > * {
+  position: relative;
+}
+.home-role-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.home-avatar {
+  position: relative;
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
+  font-size: 19px;
+  background:
+    linear-gradient(160deg, var(--role-fill-strong), var(--role-fill))
+      padding-box,
+    linear-gradient(140deg, var(--role-line), transparent) border-box;
+}
+/* Breathes while the role can speak. */
+.home-online {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--panel);
+  border-radius: 50%;
+  background: var(--ok);
+  animation: home-online 2.6s ease-out infinite;
+}
+@keyframes home-online {
+  0% {
+    box-shadow: 0 0 0 0 rgba(115, 199, 153, 0.5);
+  }
+  70%,
+  100% {
+    box-shadow: 0 0 0 7px rgba(115, 199, 153, 0);
+  }
+}
+.home-who {
+  flex: 1;
+  min-width: 0;
+}
+.home-who h3 {
+  margin: 0;
+  font-size: 17px;
+}
+.home-sub {
+  display: block;
+  margin-top: 3px;
+  overflow: hidden;
+  color: var(--sub);
+  font-size: 12.5px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.home-sub.is-blocked {
+  color: var(--warn);
+}
+.home-mood {
+  display: flex;
+  justify-content: flex-start;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--role-line);
+  border-radius: var(--r-md);
+  background: var(--role-fill);
+  color: var(--ink);
+  font-weight: 400;
+  text-align: left;
+}
+.home-mood:hover {
+  border-color: var(--role);
+  background: var(--role-fill-strong);
+}
+.home-mood.is-calm {
+  border-color: var(--line-2);
+  background: var(--fill-2);
+}
+.home-mood.is-calm:hover {
+  border-color: var(--line-3);
+  background: var(--fill-3);
+}
+.home-mood.is-loading {
+  border-color: var(--line);
+  background: var(--fill-1);
+}
+.home-mood-label {
+  flex: none;
+  color: var(--role);
+  font-size: 12px;
+}
+.home-mood.is-calm .home-mood-label {
+  color: var(--muted);
+}
+.home-mood-dots {
+  display: flex;
+  flex: none;
+  gap: 3px;
+}
+.home-mood-dots i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--fill-5);
+}
+.home-mood-dots i.on {
+  background: var(--role);
+}
+.home-mood-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-strong);
+  text-overflow: ellipsis;
+}
+.home-mood.is-calm .home-mood-text {
+  color: var(--sub);
+}
+.home-mood-until {
+  flex: none;
+  color: var(--sub);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.home-latest {
+  display: grid;
+  gap: 4px;
+}
+.home-latest-meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+.home-latest-text {
+  display: -webkit-box;
+  min-height: calc(1.6em * 2);
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink-2);
+  font-size: 14px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+.home-latest-text.is-empty {
+  color: var(--faint);
+}
+.home-pulse {
+  min-height: 60px;
+}
+.home-pulse svg {
+  display: block;
+  width: 100%;
+  height: 40px;
+}
+.home-pulse .track {
+  fill: var(--fill-2);
+}
+.home-pulse .free {
+  fill: var(--role-line);
+}
+.home-pulse .chat {
+  fill: var(--role);
+}
+.home-pulse-axis {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+  color: var(--faint);
+  font-size: 11px;
+}
+.home-pulse-axis i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin: 0 4px 0 10px;
+  border-radius: 2px;
+  vertical-align: -1px;
+}
+.home-pulse-axis i.chat {
+  background: var(--role);
+}
+.home-pulse-axis i.free {
+  background: var(--role-line);
+}
+.home-pulse.is-loading {
+  border-radius: var(--r-sm);
+  background: var(--fill-1);
+}
+.home-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.home-stats div {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 2px;
+  min-width: 0;
+}
+.home-stats dt {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.home-stats dd {
+  margin: 0;
+  color: var(--ink-strong);
+  font-size: 22px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.home-role-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: auto;
+}
+.home-role-foot .card-actions {
+  margin: 0;
+}
+/* Six role colors, given by a role's place in the list. */
+.hue-0 {
+  --role: #a9bcff;
+  --role-fill: rgba(77, 107, 254, 0.14);
+  --role-fill-strong: rgba(77, 107, 254, 0.4);
+  --role-line: rgba(169, 188, 255, 0.4);
+}
+.hue-1 {
+  --role: #6fdcff;
+  --role-fill: rgba(95, 212, 255, 0.11);
+  --role-fill-strong: rgba(95, 212, 255, 0.32);
+  --role-line: rgba(95, 212, 255, 0.4);
+}
+.hue-2 {
+  --role: #cdb9f2;
+  --role-fill: rgba(201, 181, 239, 0.11);
+  --role-fill-strong: rgba(201, 181, 239, 0.3);
+  --role-line: rgba(201, 181, 239, 0.42);
+}
+.hue-3 {
+  --role: #7fd3a4;
+  --role-fill: rgba(115, 199, 153, 0.11);
+  --role-fill-strong: rgba(115, 199, 153, 0.3);
+  --role-line: rgba(115, 199, 153, 0.42);
+}
+.hue-4 {
+  --role: #f4cb7c;
+  --role-fill: rgba(242, 196, 109, 0.1);
+  --role-fill-strong: rgba(242, 196, 109, 0.28);
+  --role-line: rgba(242, 196, 109, 0.42);
+}
+.hue-5 {
+  --role: #ffa5c8;
+  --role-fill: rgba(255, 141, 186, 0.1);
+  --role-fill-strong: rgba(255, 141, 186, 0.28);
+  --role-line: rgba(255, 141, 186, 0.42);
+}
+/* Rises in once when the home opens; the 5 s refresh redraws without it. */
+.home-enter .home-hero,
+.home-enter .home-role {
+  animation: home-rise 0.55s var(--ease) both;
+}
+.home-enter .home-role:nth-child(2) {
+  animation-delay: 0.07s;
+}
+.home-enter .home-role:nth-child(3) {
+  animation-delay: 0.14s;
+}
+.home-enter .home-role:nth-child(n + 4) {
+  animation-delay: 0.21s;
+}
+@keyframes home-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .home-enter .home-hero,
+  .home-enter .home-role,
+  .home-online {
+    animation: none;
+  }
+}
+@media (max-width: 600px) {
+  .home-hero {
+    padding: 20px;
+  }
+  .home-roles {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .home-stats dd {
+    font-size: 20px;
+  }
+  /* The dots already say how strong; leave the room to the mood. */
+  .home-mood-label {
+    display: none;
+  }
+}
+
+/* Shared page parts. A folded section is a card whose summary row carries
+   the title and the state in a few words; the body opens below. */
+details.card.fold > summary {
+  min-height: 24px;
+}
+details.card.fold[open] > summary {
+  margin-bottom: 14px;
+}
+.fold-title {
+  flex: none;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 600;
+}
+.fold-summary {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--sub);
+  font-size: 13px;
+  font-weight: 400;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.fold-body > :first-child {
+  margin-top: 0;
+}
+.fold-body > :last-child {
+  margin-bottom: 0;
+}
+/* QQ numbers as chips with an add box that offers known groups and people. */
+.ids {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.ids-label {
+  color: var(--sub);
+  font-size: 13px;
+}
+.ids-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 30px;
+}
+.ids-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  height: 30px;
+  padding: 0 4px 0 12px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-pill);
+  background: var(--fill-3);
+  color: var(--ink);
+  font-size: 13px;
+}
+.ids-name {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.ids-name small {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+button.ids-remove {
+  min-height: 22px;
+  width: 22px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+}
+button.ids-remove:hover {
+  background: var(--fill-4);
+  color: var(--ink);
+}
+.ids-empty {
+  align-self: center;
+  color: var(--faint);
+  font-size: 13px;
+}
+.ids-add {
+  display: flex;
+  gap: 8px;
+}
+.ids-add input {
+  flex: 1;
+  min-width: 0;
+}
+/* A slider with its value beside it. */
+.range-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.range-row input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--brand);
+}
+.range-row output {
+  min-width: 3.5em;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
