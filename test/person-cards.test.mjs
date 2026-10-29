@@ -543,3 +543,36 @@ test("free time sees each private target's card in brief without marking it seen
   assert.equal(m.state("private:30000").personCardsShown, undefined);
   assert.equal(m.state("@subject").personCardsShown, undefined);
 });
+
+test("a name used again is the one a card shows", async (t) => {
+  const prompts = [];
+  const f = fixture(t, {
+      run: async (p) => {
+        prompts.push(p.prompt);
+        p.saveSession({ id: "s", backend: "fixture" });
+      },
+    }),
+    m = f.store.bind("agent-0");
+  const e = said(m, "叫我阿明");
+  m.identity.savePersonCard(
+    { personId: "30000", call: "阿明", body: "老朋友", evidence: [e.id] },
+    { writtenIn: scope, now: f.runtime.now() },
+  );
+  for (const name of ["阿明同学", "搬家中", "阿明同学"])
+    m.person("30000", name);
+  const names = () =>
+    JSON.parse(
+      m.db
+        .prepare("SELECT names FROM people WHERE agent_id=? AND qq=?")
+        .get(m.agentId, "30000").names,
+    );
+  assert.deepEqual(names(), ["搬家中", "阿明同学"]);
+  await f.runtime.wake("agent-0", "private:30000");
+  assert.equal(cardsIn(prompts[0])[0].nickname, "阿明同学");
+
+  // Still only the last thirty, and an empty name changes nothing.
+  for (let i = 0; i < 31; i++) m.person("30000", "名字" + i);
+  m.person("30000", "");
+  assert.equal(names().length, 30);
+  assert.equal(names().at(-1), "名字30");
+});
