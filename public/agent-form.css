@@ -1,18 +1,57 @@
 /* Agent editor (public/agent-form.js) */
-details.agent-section {
-  margin: 0 0 12px;
-  padding: 4px 16px 8px;
-  border-radius: var(--r-md);
-  border: 1px solid var(--line);
-  background: var(--fill-1);
+.agent-form > h3 {
+  margin: 18px 0 2px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--sub);
 }
-details.agent-section > summary {
-  font-size: 15px;
-  font-weight: 500;
+.agent-form > h3:first-child {
+  margin-top: 4px;
+}
+.agent-form > .ids {
+  margin: 6px 0;
+}
+.agent-form .ids > .hint {
+  margin: 0;
+}
+.agent-models {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  margin: -4px 0 8px;
+}
+.agent-models .hint {
+  flex: 1 1 16em;
+  margin: 0;
+}
+.agent-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 22px;
+  margin: 6px 0 4px;
+}
+.agent-checks .check {
+  margin: 4px 0;
+}
+.agent-range .hint {
+  margin: 0 0 4px;
+}
+.agent-form details.adv > summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 12px;
   color: var(--ink);
+  font-weight: 500;
 }
-details.agent-section[open] > summary {
-  margin-bottom: 4px;
+.adv-summary {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 400;
+  overflow-wrap: anywhere;
 }
 .form-grid > details {
   grid-column: 1/-1;
@@ -100,28 +139,8 @@ details.agent-section[open] > summary {
 .hint.warn {
   color: var(--warn);
 }
-.conversation-picker {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 12px;
-  margin-bottom: 12px;
-}
-.conversation-list {
-  flex-basis: 100%;
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 2px 12px;
-  max-height: 220px;
-  overflow: auto;
-  padding: 8px 14px;
-  border-radius: var(--r-md);
-  border: 1px solid var(--line);
-  background: var(--fill-1);
-}
 @media (max-width: 720px) {
-  .silence-row,
-  .conversation-list {
+  .silence-row {
     grid-template-columns: 1fr;
   }
 }
