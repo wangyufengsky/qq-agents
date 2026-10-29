@@ -312,7 +312,9 @@ function recentErrorsMarkup(query = "") {
 // overview re-renders on each status refresh.
 let homeData = null,
   homeFetchedAt = 0,
-  errorsOpen = false;
+  errorsOpen = false,
+  // The page rises in once when the home opens, not on every 5 s refresh.
+  homeShown = false;
 function loadHome() {
   if (Date.now() - homeFetchedAt < 30000) return;
   homeFetchedAt = Date.now();
@@ -323,6 +325,8 @@ function loadHome() {
       if (tab !== "overview" || !box) return;
       box.innerHTML = homeRolesMarkup();
       bindOperations(box);
+      const totals = $("#home-totals");
+      if (totals) totals.innerHTML = homeTotals();
     })
     .catch(() => (homeFetchedAt = 0));
 }
@@ -334,6 +338,25 @@ const homeTime = (t) =>
     hour: "2-digit",
     minute: "2-digit",
   });
+// "22:30" today; a time on another day also names the day.
+const homeWhen = (t) =>
+  new Date(t).toDateString() === new Date().toDateString()
+    ? homeTime(t)
+    : new Date(t).toLocaleString("zh-CN", {
+        month: "numeric",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+// How long until a moment; one already passed is about to begin.
+const homeIn = (t) => {
+  const min = Math.round((t - Date.now()) / 60000);
+  return min <= 0
+    ? "即将开始"
+    : min < 60
+      ? `${min} 分钟后`
+      : `${Math.round(min / 60)} 小时后`;
+};
 const homeDid = {
   browsed: "浏览",
   searched: "搜索",
@@ -343,31 +366,134 @@ const homeDid = {
   "reached-out": "联系",
   rested: "休息",
 };
-// The mood still in effect, or 平常; either way it opens the role's mood tab.
+// Each role keeps one of six colors by its place in the list, so roles whose
+// names look alike still look apart.
+const homeHue = (a) => Math.max(0, config.agents.indexOf(a)) % 6;
+// One line whatever the mood says: intensity as dots, the mood (cut with …)
+// and until when. Either way it opens the role's mood tab.
 function homeMood(a, h) {
-  if (!h) return "";
-  const m = h.mood,
-    until = m && new Date(m.expiresAt),
-    sameDay = until && until.toDateString() === new Date().toDateString();
-  const text = m
-    ? `心情：${esc(m.mood)}（${Number(m.intensity)}/5）· 到 ${sameDay ? homeTime(m.expiresAt) : esc(until.toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }))}`
-    : "心情：平常";
-  return `<button type="button" class="home-mood${m ? "" : " is-calm"}" data-do="role-mood" data-id="${esc(a.id)}" title="查看${esc(a.name)}的心情">${text}</button>`;
+  if (!h)
+    return '<span class="home-mood is-loading" aria-hidden="true"></span>';
+  const m = h.mood;
+  const title = m
+    ? `${a.name}的心情：${m.mood}（${m.intensity}/5），到 ${homeWhen(m.expiresAt)}`
+    : `${a.name}的心情：平常`;
+  const body = m
+    ? `<span class="home-mood-dots" role="img" aria-label="强度 ${Number(m.intensity)}/5">${[1, 2, 3, 4, 5].map((i) => `<i${i <= m.intensity ? ' class="on"' : ""}></i>`).join("")}</span><span class="home-mood-text">${esc(m.mood)}</span><span class="home-mood-until">到 ${esc(homeWhen(m.expiresAt))}</span>`
+    : '<span class="home-mood-text">平常</span>';
+  return `<button type="button" class="home-mood${m ? "" : " is-calm"}" data-do="role-mood" data-id="${esc(a.id)}" title="${esc(title)}"><span class="home-mood-label">心情</span>${body}</button>`;
 }
+// When the role was busy over the last day: one bar an hour, chat stacked on
+// free time, scaled to the role's own busiest hour.
+function homePulse(h) {
+  const hours = h?.hourly;
+  if (!hours?.length)
+    return '<div class="home-pulse is-loading" aria-hidden="true"></div>';
+  const top = Math.max(1, ...hours.map((x) => x.chat + x.free)),
+    W = 10,
+    H = 40,
+    from = Date.now() - hours.length * 3600000;
+  const bars = hours
+    .map((x, i) => {
+      const free = (x.free / top) * H,
+        chat = (x.chat / top) * H,
+        at = from + i * 3600000;
+      return `<g><title>${esc(`${homeTime(at)} 起的一小时：聊天 ${x.chat} 次，空闲时间 ${x.free} 次`)}</title><rect class="track" x="${i * W}" y="0" width="${W - 2}" height="${H}" rx="2"/>${x.free ? `<rect class="free" x="${i * W}" y="${(H - free).toFixed(1)}" width="${W - 2}" height="${free.toFixed(1)}" rx="2"/>` : ""}${x.chat ? `<rect class="chat" x="${i * W}" y="${(H - free - chat).toFixed(1)}" width="${W - 2}" height="${chat.toFixed(1)}" rx="2"/>` : ""}</g>`;
+    })
+    .join("");
+  return `<div class="home-pulse"><svg viewBox="0 0 ${hours.length * W - 2} ${H}" preserveAspectRatio="none" role="img" aria-label="最近 24 小时每小时的回合数">${bars}</svg><div class="home-pulse-axis"><span>24 小时前</span><span><i class="chat"></i>聊天<i class="free"></i>空闲时间</span><span>现在</span></div></div>`;
+}
+// Every part of the card keeps its size: one line for the state, one for the
+// mood, two for the latest words, then the day's bars and numbers. A long
+// line is cut, never wrapped, so the card does not grow or shrink.
 function homeRoleCard(a) {
   const s = status.agents.find((x) => x.id === a.id),
     h = homeData?.agents?.find((x) => x.agentId === a.id),
     c = status.connections.find((x) => x.id === a.connectionId),
     b = status.backends?.find((x) => x.id === a.backendId),
     can = s && !s.blockers?.length;
-  const latest = h?.latest
-    ? `<p><span class="hint">${homeTime(h.latest.startedAt)} · ${h.latest.kind === "subject" ? "空闲时间" + (h.latest.did ? " · " + esc(homeDid[h.latest.did] || h.latest.did) : "") : esc(h.latest.conversation.replace(/^group:/, "群 ").replace(/^private:/, "私聊 "))}</span><br><span title="${esc(h.latest.text || "")}">${esc(clipText(h.latest.text, 110) || "（这一回合没有留下文字）")}</span></p>`
-    : `<p class="hint">${homeData ? "还没有动态。" : "读取中…"}</p>`;
+  const sub = s?.blockers?.length
+    ? `暂不发言：${s.blockers.map((x) => blockerLabels[x] || x).join("、")}`
+    : `QQ ${c?.connected ? "已连接" : "未连接"} · ${backendLabels[b?.state] || "后端尚未检测"}`;
+  const place = (l) =>
+    l.kind === "subject"
+      ? "空闲时间" + (l.did ? " · " + (homeDid[l.did] || l.did) : "")
+      : l.conversation.replace(/^group:/, "群 ").replace(/^private:/, "私聊 ");
+  const l = h?.latest;
+  const latest = `<div class="home-latest"><span class="home-latest-meta">${l ? `最近 · ${homeTime(l.startedAt)} · ${esc(place(l))}` : "最近"}</span><p class="home-latest-text${l?.text ? "" : " is-empty"}"${l?.text ? ` title="${esc(l.text)}"` : ""}>${l ? esc(l.text || "这一回合没有留下文字") : homeData ? "还没有动态" : "读取中…"}</p></div>`;
   const d = h?.last24h;
-  const stats = d
-    ? `<div class="home-stats"><span><b>${d.sent}</b>回复</span><span><b>${d.freeTimeTraced ? `${d.freeTimeActive}/${d.freeTimeTraced}` : d.freeTime}</b>${d.freeTimeTraced ? "空闲时有行动" : "空闲时间"}</span><span><b>${d.reads}</b>读文章</span><span><b>${d.diaries}</b>日记</span></div>`
-    : "";
-  return `<article class="card home-role"><div class="row"><div class="identity"><span class="avatar">${esc(avatarChar(a.name))}</span><div><h3>${esc(a.name)}</h3><span class="hint">QQ ${c?.connected ? "已连接" : "未连接"} · ${esc(backendLabels[b?.state] || "后端尚未检测")}</span></div></div>${tag(can ? "可以发言" : a.paused ? "已暂停" : "暂不发言", can ? "live" : a.paused ? "off" : "warn")}</div>${can ? "" : blockersMarkup(s)}${homeMood(a, h)}${latest}${stats}${d ? `<p class="hint">最近 24 小时${h.nextFreeTimeAt && a.subject?.enabled ? ` · 下次空闲时间 ${homeTime(h.nextFreeTimeAt)}` : ""}</p>` : ""}<div class="card-actions"><button data-do="role" data-id="${esc(a.id)}">${icon("pulse", "sm")}查看动态</button><button class="ghost" data-do="role-settings" data-id="${esc(a.id)}">${icon("settings", "sm")}设置</button></div></article>`;
+  const cell = (value, label) =>
+    `<div><dt>${label}</dt><dd>${value}</dd></div>`;
+  const stats = `<dl class="home-stats">${[
+    cell(d ? d.sent : "–", "回复"),
+    d?.freeTimeTraced
+      ? cell(`${d.freeTimeActive}/${d.freeTimeTraced}`, "空闲有行动")
+      : cell(d ? d.freeTime : "–", "空闲时间"),
+    cell(d ? d.reads : "–", "读文章"),
+    cell(d ? d.diaries : "–", "日记"),
+  ].join("")}</dl>`;
+  const next =
+    h?.nextFreeTimeAt && a.subject?.enabled
+      ? `下次空闲时间 ${homeTime(h.nextFreeTimeAt)} · ${homeIn(h.nextFreeTimeAt)}`
+      : "最近 24 小时";
+  return `<article class="card home-role hue-${homeHue(a)}"><header class="home-role-head"><span class="avatar home-avatar">${esc(avatarChar(a.name))}${can ? '<i class="home-online" aria-hidden="true"></i>' : ""}</span><div class="home-who"><h3>${esc(a.name)}</h3><span class="home-sub${can ? "" : " is-blocked"}" title="${esc(sub)}">${esc(sub)}</span></div>${tag(can ? "可以发言" : a.paused ? "已暂停" : "暂不发言", can ? "live" : a.paused ? "off" : "warn")}</header>${homeMood(a, h)}${latest}${homePulse(h)}${stats}<footer class="home-role-foot"><span class="hint">${next}</span><div class="card-actions"><button data-do="role" data-id="${esc(a.id)}">${icon("pulse", "sm")}查看动态</button><button class="ghost" data-do="role-settings" data-id="${esc(a.id)}">${icon("settings", "sm")}设置</button></div></footer></article>`;
+}
+// The top of the home page: a greeting, the state of things in one sentence
+// and the last day in numbers.
+const homeGreeting = () => {
+  const hour = new Date().getHours();
+  return hour < 5
+    ? "夜深了"
+    : hour < 11
+      ? "早上好"
+      : hour < 13
+        ? "中午好"
+        : hour < 18
+          ? "下午好"
+          : hour < 23
+            ? "晚上好"
+            : "夜深了";
+};
+function homeHeadline() {
+  const n = config.agents.length;
+  if (!n) return "还没有角色，先去添加一个吧";
+  if (status.mode === "isolated") return "隔离模式：不连接 QQ，也不运行模型";
+  if (status.globalPaused) return "全局暂停中，角色先不参与";
+  const ready = config.agents.filter((a) => {
+    const s = status.agents.find((x) => x.id === a.id);
+    return s && !s.blockers?.length;
+  });
+  if (ready.length === n)
+    return n === 1
+      ? `${ready[0].name}在线，可以发言`
+      : `${n === 2 ? "两" : `${n} `}个角色都在线，可以发言`;
+  return ready.length
+    ? `${ready.length}/${n} 个角色可以发言`
+    : "现在没有角色能发言";
+}
+function homeTotals() {
+  const days = (homeData?.agents || []).map((x) => x.last24h).filter(Boolean);
+  if (!days.length)
+    return homeData ? "最近 24 小时还没有动态" : "正在读取最近 24 小时…";
+  const sum = (k) => days.reduce((n, d) => n + (d[k] || 0), 0);
+  return `最近 24 小时：回复 <b>${sum("sent")}</b> 条 · 空闲时间 <b>${sum("freeTime")}</b> 次 · 读文章 <b>${sum("reads")}</b> 篇 · 写日记 <b>${sum("diaries")}</b> 篇`;
+}
+// " home-enter" the first time the home is drawn after opening it; the 5 s
+// refresh draws it again without, so nothing replays.
+function homeEntrance() {
+  const enter = !homeShown;
+  homeShown = true;
+  return enter ? " home-enter" : "";
+}
+function homeHero(todo) {
+  const state =
+    status.mode === "isolated"
+      ? tag("隔离模式", "warn")
+      : status.globalPaused
+        ? tag("全局暂停", "warn")
+        : tag("运行中", "live");
+  const resume = autoResumeText(status.autoResume);
+  return `<section class="home-hero"><div class="home-hero-main"><p class="home-greet">${homeGreeting()}</p><h2 class="home-headline">${esc(homeHeadline())}</h2><p class="home-totals" id="home-totals">${homeTotals()}</p>${resume ? `<p class="hint">${esc(resume)}</p>` : ""}</div><div class="home-hero-side">${state}${todo ? `<a class="pill accent" href="#home-todo">需要处理 ${todo}</a>` : tag("没有待处理的事")}</div></section>`;
 }
 // Started with `--live --resume`: say where lifting the boot pause stands.
 const autoResumeText = (r) => {
@@ -386,7 +512,7 @@ const autoResumeText = (r) => {
   );
 };
 const homeRolesMarkup = () =>
-  config.agents.map(homeRoleCard).join("") ||
+  config.agents.map((a) => homeRoleCard(a)).join("") ||
   '<div class="card empty">还没有角色。到“角色”中添加第一个。</div>';
 // Four sections; existing pages keep their keys and become sub-pages. Role
 // pages all follow one selected role instead of each keeping its own picker.
@@ -491,6 +617,7 @@ function render() {
   if (["connections", "backends"].includes(tab)) tab = "links";
   const section = sectionOf(tab);
   lastPage[section] = tab;
+  if (tab !== "overview") homeShown = false;
   if (section === "role" && config) syncRole();
   const role = section === "role" && config && find("agents", roleId);
   const [pageTitle, subtitle] = titles[tab];
@@ -532,7 +659,7 @@ function render() {
       ),
       grants = status.disclosureRequests.length,
       errors = (status.recentErrors || []).length;
-    content.innerHTML = `<div class="banner ${status.mode === "isolated" ? "warn" : status.globalPaused ? "" : "ok"}">${icon(status.mode === "isolated" ? "shield" : "pulse")}<span>${status.mode === "isolated" ? "隔离模式：不连接 QQ，也不运行模型。" : status.globalPaused ? "全局暂停中：连接照常记录消息，角色不参与。" : "运行中：各角色按自己的设置参与。"}${autoResumeText(status.autoResume) ? ` ${esc(autoResumeText(status.autoResume))}` : ""}</span></div><div class="section-title"><h2>角色</h2></div><div class="grid" id="home-roles">${homeRolesMarkup()}</div><div class="section-title"><h2>需要处理</h2>${grants + waiting ? "" : tag("暂无", "live")}</div>${grants ? `<div class="card"><h3>受限动作授权 · ${grants}</h3>${status.disclosureRequests.map((r, i) => `<div class="record"><strong>${esc(find("agents", r.agentId)?.name)} → ${esc(r.conversation)}</strong><p>${r.records.length} 条资料涉及${r.reason === "external-service" ? "外部服务调用" : "本地运维内容"}。${r.request ? "批准仅对当前回合、所示请求参数及资料集合有效。" : "批准仅对当前回合、当前会话所示资料集合有效。"}</p><p class="mono">${esc(r.records.join("\n"))}</p>${r.request ? `<pre>${esc(JSON.stringify(r.request, null, 2))}</pre><p>${esc(JSON.stringify(r.sourceClasses))}</p>` : ""}<button data-do="grant" data-id="${i}">批准本次披露</button></div>`).join("")}</div>` : ""}${waiting ? `<div class="card"><h3>待核对发送 · ${waiting}</h3><p class="hint">网络结果未知的发送不会自动重发。请在 QQ 中查看对应会话后标记结果。</p><div id="unresolved-deliveries">读取中…</div></div>` : ""}${grants + waiting ? "" : '<p class="hint">没有待批准的动作或待核对的发送。</p>'}`;
+    content.innerHTML = `<div class="home${homeEntrance()}">${homeHero(grants + waiting)}<div class="home-roles" id="home-roles">${homeRolesMarkup()}</div>${grants + waiting ? `<div class="section-title" id="home-todo"><h2>需要处理</h2></div>${grants ? `<div class="card"><h3>受限动作授权 · ${grants}</h3>${status.disclosureRequests.map((r, i) => `<div class="record"><strong>${esc(find("agents", r.agentId)?.name)} → ${esc(r.conversation)}</strong><p>${r.records.length} 条资料涉及${r.reason === "external-service" ? "外部服务调用" : "本地运维内容"}。${r.request ? "批准仅对当前回合、所示请求参数及资料集合有效。" : "批准仅对当前回合、当前会话所示资料集合有效。"}</p><p class="mono">${esc(r.records.join("\n"))}</p>${r.request ? `<pre>${esc(JSON.stringify(r.request, null, 2))}</pre><p>${esc(JSON.stringify(r.sourceClasses))}</p>` : ""}<button data-do="grant" data-id="${i}">批准本次披露</button></div>`).join("")}</div>` : ""}${waiting ? `<div class="card"><h3>待核对发送 · ${waiting}</h3><p class="hint">网络结果未知的发送不会自动重发。请在 QQ 中查看对应会话后标记结果。</p><div id="unresolved-deliveries">读取中…</div></div>` : ""}` : ""}</div>`;
     renderOnboarding(content);
     if (waiting) action(renderUnresolved);
     content.insertAdjacentHTML(
@@ -558,7 +685,7 @@ function render() {
       : '<div class="card empty">还没有角色。点上方的“添加角色”开始。</div>';
   } else if (tab === "links") {
     const group = (type, label, card) =>
-      `<div class="section-title"><h2>${label} · ${config[type].length}</h2><button class="primary" data-do="add" data-id="${type}">${icon("plus", "sm")}添加 ${label}</button></div><div class="grid">${config[type].map(card).join("") || '<div class="card empty">添加第一个配置开始。</div>'}</div>`;
+      `<div class="section-title"><h2>${label} · ${config[type].length}</h2><button class="primary" data-do="add" data-id="${type}">${icon("plus", "sm")}添加 ${label}</button></div><div class="grid link-grid">${config[type].map(card).join("") || '<div class="card empty">添加第一个配置开始。</div>'}</div>`;
     content.innerHTML =
       group("connections", "QQ 账号", connectionCard) +
       group("backends", "AI 后端", backendCard);
@@ -571,48 +698,34 @@ function render() {
   } else if (["schedule", "voices", "operations"].includes(tab)) {
     renderParity(tab);
   } else if (tab === "memory") {
-    content.innerHTML = `<div class="card"><div class="toolbar"><label>角色<select id="memory-agent">${config.agents.map((a) => `<option value="${esc(a.id)}" ${a.id === roleId ? "selected" : ""}>${esc(a.name)}</option>`).join("")}</select></label><label>关键词<input id="memory-query" placeholder="约定、上次、某件事…"></label><label>记录类型<select id="memory-type"><option value="all">全部</option><option value="event">经历档案</option><option value="diary">个人日记</option></select></label><button class="primary" id="search-memory">搜索</button><button id="export-memory">导出</button></div><div class="form-grid"><label>人物 QQ<input id="memory-person" placeholder="按 QQ 身份检索"></label><label>来源<select id="memory-source"><option value="">全部来源</option></select></label><label id="memory-source-manual-field" hidden>手动来源<input id="memory-source-manual" placeholder="group:10000 或 private:10000"></label></div><p class="hint" id="memory-source-state"></p><div class="card-actions"><button id="reset-session">重置此来源模型上下文</button><button id="pause-conversation">暂停此来源</button><button id="resume-conversation">解除此来源暂停 / 静默</button></div><p class="hint">原始消息是“某人说过的话”，不自动等同于已核实事实。旧笔记标注 legacy 来源。</p><div id="memory-results" class="empty">搜索此角色自己的经历和日记。</div></div><div class="section-title"><h2>会话状态</h2></div><div class="card"><p class="hint">按会话单独暂停只影响此角色在该来源的参与；角色暂停和全局暂停仍独立生效。</p><div id="memory-conversations">读取中…</div></div>`;
-    $("#memory-agent").onchange = () => action(loadConversations);
-    $("#memory-source").onchange = () => {
-      $("#memory-source-manual-field").hidden =
-        $("#memory-source").value !== "manual";
-      renderSourceState();
-    };
-    $("#memory-source-manual").oninput = renderSourceState;
-    $("#reset-session").onclick = () =>
-      action(() => conversationAction("reset", requireSource()));
-    $("#pause-conversation").onclick = () =>
-      action(() => conversationAction("pause", requireSource()));
-    $("#resume-conversation").onclick = () =>
-      action(() => conversationAction("resume", requireSource()));
-    action(loadConversations);
-    $("#search-memory").onclick = () => searchMemory();
-    $("#export-memory").onclick = () =>
-      action(async () => {
-        const { ticket } = await api("/api/export/ticket", {
-          agentId: $("#memory-agent").value,
-        });
-        const form = document.createElement("form");
-        form.method = "POST";
-        form.action = "/api/export/download";
-        form.target = "_blank";
-        form.rel = "noopener";
-        const input = document.createElement("input");
-        input.type = "hidden";
-        input.name = "ticket";
-        input.value = ticket;
-        form.append(input);
-        document.body.append(form);
-        form.submit();
-        form.remove();
-        notice(
-          "已请求导出；完成状态请查看浏览器下载列表，失败信息会在新窗口显示。",
-        );
-      });
+    renderMemory(content);
   } else {
-    content.innerHTML = `<div class="card"><h2>参与控制</h2><p>启动时总是全局暂停。解除全局暂停不会自动解除角色暂停，也不会连接 QQ。</p><p>当前：${status.globalPaused ? "全局暂停中" : "全局允许参与"}。全局暂停与恢复统一使用页面右上角的「${status.globalPaused ? "全局恢复" : "全部暂停"}」按钮。</p>${disabledHints(disabledReason([[status.globalPaused && status.mode === "isolated", "isolatedResume"]]))}</div><div class="card section-title"><div><h2>完整配置</h2><p>支持配置任意数量的角色、QQ 账号与后端。配置中的凭据仅填写环境变量名。</p></div><button data-do="advanced">打开配置编辑器</button></div><div class="card"><h2>迁移与备份</h2><p>先运行迁移预检，再导入到新数据目录。旧文件、原登录目录和 Docker 数据都保留。</p><p class="mono">npm run migrate -- --source /path/to/old-instance --agent agent-a --data /path/to/new-data</p><p class="hint">默认只生成统计预检。实际导入需 --apply；目标目录有运行锁时会拒绝。迁移不会修改旧实例，也不会启动 QQ。</p><button data-do="download-config">导出配置</button></div>`;
+    content.innerHTML = settingsMarkup();
   }
   bindOperations(content);
+}
+// Runtime settings: who may take part first, then the full config and the
+// migration notes folded with their state in the title line.
+function settingsMarkup() {
+  const paused = config.agents.filter((a) => a.paused).length,
+    linked = status.connections.filter((c) => c.connected).length;
+  const facts = `<dl class="link-meta settings-meta">${linkRow("运行模式", status.mode === "isolated" ? "隔离模式（不连接 QQ，也不运行模型）" : "运行模式")}${linkRow("角色", `${config.agents.length} 个${paused ? `，其中 ${paused} 个单独暂停` : ""}`)}${linkRow("QQ 连接", `${linked}/${config.connections.length} 个已连接`)}</dl>`;
+  const control = `<section class="card settings-control"><div class="row"><h2>参与控制</h2>${tag(status.globalPaused ? "全局暂停中" : "全局允许参与", status.globalPaused ? "warn" : "live")}</div>${facts}<p>启动时总是全局暂停。解除全局暂停不会自动解除角色暂停，也不会连接 QQ。</p><p>当前：${status.globalPaused ? "全局暂停中" : "全局允许参与"}。全局暂停与恢复统一使用页面右上角的「${status.globalPaused ? "全局恢复" : "全部暂停"}」按钮。</p>${disabledHints(disabledReason([[status.globalPaused && status.mode === "isolated", "isolatedResume"]]))}</section>`;
+  const full = fold(
+    "settings-config",
+    "完整配置",
+    '<p>支持配置任意数量的角色、QQ 账号与后端。配置中的凭据仅填写环境变量名。</p><div class="card-actions"><button data-do="advanced">打开配置编辑器</button></div>',
+    {
+      summary: `JSON · ${config.agents.length} 个角色 · ${config.connections.length} 个 QQ 账号 · ${config.backends.length} 个后端`,
+    },
+  );
+  const migrate = fold(
+    "settings-migrate",
+    "迁移与备份",
+    '<p>先运行迁移预检，再导入到新数据目录。旧文件、原登录目录和 Docker 数据都保留。</p><p class="mono">npm run migrate -- --source /path/to/old-instance --agent agent-a --data /path/to/new-data</p><p class="hint">默认只生成统计预检。实际导入需 --apply；目标目录有运行锁时会拒绝。迁移不会修改旧实例，也不会启动 QQ。</p><div class="card-actions"><button data-do="download-config">导出配置</button></div>',
+    { summary: "先预检再导入 · 旧实例保持不变 · 可导出配置" },
+  );
+  return control + full + migrate;
 }
 function bindOperations(root) {
   root
@@ -710,6 +823,7 @@ const disabledReasons = {
   backendBusy: "正在处理上一项后端操作，请稍候",
   backendRecovering: "后端正在自动恢复，完成后可再次操作",
   notAllowed: "该来源已不在角色白名单中，不能重置上下文；可在角色配置中加回",
+  backendUnbound: "保存并绑定到一个角色后才能读取模型目录",
   opsBlocked: "隔离模式或全局暂停时不执行运维操作",
 };
 /** @param {[unknown, keyof typeof disabledReasons][]} checks */
@@ -766,13 +880,38 @@ const recoveryText = (r) => {
       : "断线后需手动重连。") + gap
   );
 };
+// QQ account and AI backend cards share one shape: name and state on top, a
+// fixed set of one-line facts (cut, full text on hover), at most two lines
+// of notes, and the buttons along the bottom so they line up across a row.
+const linkRow = (label, value, cls = "") =>
+  `<dt>${label}</dt><dd${cls ? ` class="${cls}"` : ""} title="${esc(value)}">${esc(value)}</dd>`;
+const linkNote = (text, warn = false) =>
+  text
+    ? `<p class="link-note${warn ? " is-warn" : ""}" title="${esc(text)}">${esc(text)}</p>`
+    : "";
+const linkHead = (glyph, title, sub, state) =>
+  `<header class="link-head"><span class="avatar">${icon(glyph)}</span><div class="link-who"><h3 title="${esc(title)}">${esc(title)}</h3><span class="hint mono" title="${esc(sub)}">${esc(sub)}</span></div>${state}</header>`;
+const deploymentLabels = {
+  external: "已有外部实例",
+  native: "原生 NapCat",
+  docker: "Docker NapCat",
+};
 function connectionCard(c) {
   const s = status.connections.find((s) => s.id === c.id);
   const off = disabledReason([
     [status.mode === "isolated", "isolatedConnection"],
     [!c.enabled, "connectionDisabled"],
   ]);
-  return `<article class="card"><div class="row"><div class="identity"><span class="avatar">${icon("link")}</span><div><h3>${esc(c.label)}</h3><span class="hint mono">${esc(c.id)}</span></div></div>${tag(s?.connected ? "已连接" : "未连接", s?.connected ? "live" : "off")}</div><dl class="agent-meta"><dt>QQ 账号</dt><dd class="mono">${esc(c.accountId)}</dd><dt>HTTP</dt><dd class="mono">${esc(c.httpUrl)}</dd><dt>WebSocket</dt><dd class="mono">${esc(c.wsUrl)}</dd><dt>部署方式</dt><dd>${esc(c.deployment)}</dd></dl><p class="hint">${esc(s?.error || "连接前核对实际登录账号，不匹配时拒绝接入。")}</p><p class="hint">${esc(recoveryText(s?.recovery))}</p><div class="card-actions"><button data-do="edit-connection" data-id="${esc(c.id)}">${icon("settings", "sm")}编辑</button><button class="ghost" data-do="connect" data-id="${esc(c.id)}" ${disabledAttr(off)}>${s?.connected ? "断开 QQ" : "连接 QQ"}</button>${c.deployment !== "external" ? `<button class="ghost" data-do="process" data-id="${esc(c.id)}" ${disabledAttr(off)}>${s?.process?.managed ? "停止 QQ 进程" : "启动 QQ 进程"}</button>` : ""}</div>${disabledHints(off)}</article>`;
+  const state = s?.connected
+    ? tag("已连接", "live")
+    : c.enabled
+      ? tag("未连接", "off")
+      : tag("未启用");
+  const reconnect =
+    c.recovery?.autoReconnect === false
+      ? "关闭"
+      : `开启 · 最多 ${c.recovery?.maxAttempts ?? 8} 次`;
+  return `<article class="card link-card">${linkHead("link", c.label, c.id, state)}<dl class="link-meta">${linkRow("QQ 账号", c.accountId, "mono")}${linkRow("部署方式", deploymentLabels[c.deployment] || c.deployment)}${linkRow("OneBot HTTP", c.httpUrl, "mono")}${linkRow("WebSocket", c.wsUrl, "mono")}${linkRow("自动重连", reconnect)}</dl><div class="link-notes">${linkNote(s?.error || "连接前核对实际登录账号，不匹配时拒绝接入。", !!s?.error)}${linkNote(recoveryText(s?.recovery), ["retrying", "reconnecting", "exhausted"].includes(s?.recovery?.state))}</div><div class="card-actions link-actions"><div><button data-do="edit-connection" data-id="${esc(c.id)}">${icon("settings", "sm")}编辑</button><button class="ghost" data-do="connect" data-id="${esc(c.id)}" ${disabledAttr(off)}>${s?.connected ? "断开 QQ" : "连接 QQ"}</button>${c.deployment !== "external" ? `<button class="ghost" data-do="process" data-id="${esc(c.id)}" ${disabledAttr(off)}>${s?.process?.managed ? "停止 QQ 进程" : "启动 QQ 进程"}</button>` : ""}</div></div>${disabledHints(off)}</article>`;
 }
 const backendBusy = new Set();
 const backendLabels = {
@@ -819,13 +958,102 @@ function backendCard(b) {
   const checked = s.checkedAt
     ? new Date(s.checkedAt).toLocaleTimeString()
     : "尚未检测";
-  return `<article class="card"><div class="row"><div class="identity"><span class="avatar">${icon("chip")}</span><div><h3>${esc(b.label)}</h3><span class="hint mono">${esc(b.id)} · ${esc(b.type.toUpperCase())}</span></div></div>${tag(busy ? "处理中" : backendLabels[s.state] || s.state, s.state === "ready" ? "live" : "warn")}</div>
-    <dl class="agent-meta"><dt>提供方</dt><dd>${esc(b.provider || "后端默认")}</dd><dt>模型</dt><dd>${esc(b.model || "后端默认")}</dd><dt>思考强度</dt><dd>${esc(b.effort)}</dd><dt>外部工具</dt><dd>${b.toolServers.length} 个 MCP 服务</dd><dt>最近检测</dt><dd>${esc(checked)}</dd><dt>自动恢复</dt><dd>${s.autoReconnect ? "已开启" : "已关闭"}${s.attempts ? ` · 已尝试 ${s.attempts}/3 次` : ""}</dd>${b.type === "openai" ? `<dt>服务地址</dt><dd>${esc(b.baseUrl || "")}</dd><dt>密钥变量</dt><dd>${esc(b.apiKeyEnv || "无（本机服务）")}</dd>` : ""}${b.type === "dsh" ? `<dt>绑定实例</dt><dd>${esc(s.dshInstance?.replace(/^relay:/, "桌面 DSH · ") || b.baseUrl || "尚未选择")}</dd>` : ""}</dl>
-    <p class="hint">${esc(s.error ? backendErrors[s.error] || "连接检查未通过：" + s.error : backendKinds[b.type] || "")}</p>
-    ${s.attempts >= 3 ? '<p class="hint">自动恢复已停止，请检查原因后手动恢复。</p>' : ""}
-    ${(s.agents || []).map((a) => `<p class="hint">${esc(find("agents", a.id)?.name || a.id)}：${esc(backendLabels[a.state] || a.state)}${a.endpoint ? " · " + esc(a.endpoint === "stdio" ? "专用 Codex 进程" : a.endpoint) : ""}</p>`).join("")}
-    <div class="card-actions"><button data-do="backend-check" data-id="${esc(b.id)}" ${disabled}>检测连接</button><button data-do="backend-recover" data-id="${esc(b.id)}" ${disabled}>恢复连接</button>${b.type === "dsh" ? `<button data-do="backend-discover" data-id="${esc(b.id)}" ${disabled}>选择 DSH 实例</button>` : ""}<button data-do="backend-auto" data-id="${esc(b.id)}" ${disabled}>${s.autoReconnect ? "关闭" : "开启"}自动恢复</button><button class="ghost" data-do="edit-backend" data-id="${esc(b.id)}" ${disabled}>编辑后端</button><button class="ghost" data-do="models" data-id="${esc(b.id)}" ${disabled}>读取模型目录</button></div>${disabledHints(off)}</article>`;
+  // The same seven rows for every adapter; the two in the middle say where
+  // it runs and what it needs, in that adapter's terms.
+  const where = {
+    dsh: [
+      "绑定实例",
+      s.dshInstance?.replace(/^relay:/, "桌面 DSH · ") ||
+        b.baseUrl ||
+        "尚未选择",
+      "Preset",
+      b.preset,
+    ],
+    codex: ["进程", "每个角色一个专用 Codex 进程", "命令", b.command],
+    openai: [
+      "服务地址",
+      b.baseUrl || "",
+      "密钥变量",
+      b.apiKeyEnv || "无（本机服务）",
+    ],
+  }[b.type] || ["地址", b.baseUrl || "", "Preset", b.preset];
+  const effort =
+    (b.effort || "后端默认") +
+    (b.type === "openai" && !b.sendEffort ? "（未发送）" : "");
+  const roles = (s.agents || [])
+    .map(
+      (a) =>
+        `${find("agents", a.id)?.name || a.id}：${backendLabels[a.state] || a.state}${a.endpoint ? " · " + (a.endpoint === "stdio" ? "专用 Codex 进程" : a.endpoint) : ""}`,
+    )
+    .join("；");
+  return `<article class="card link-card">${linkHead("chip", b.label, `${b.id} · ${backendTypeNames[b.type] || b.type}`, tag(busy ? "处理中" : backendLabels[s.state] || s.state, s.state === "ready" ? "live" : "warn"))}<dl class="link-meta">${linkRow("模型", (b.model || "后端默认") + (b.provider ? ` · ${b.provider}` : ""), "mono")}${linkRow("思考强度", effort)}${linkRow(where[0], where[1], "mono")}${linkRow(where[2], where[3], "mono")}${linkRow("外部工具", `${b.toolServers.length} 个 MCP 服务`)}${linkRow("最近检测", checked)}${linkRow("自动恢复", `${s.autoReconnect ? "已开启" : "已关闭"}${s.attempts ? ` · 已尝试 ${s.attempts}/3 次` : ""}`)}</dl><div class="link-notes">${linkNote(s.error ? backendErrors[s.error] || "连接检查未通过：" + s.error : backendKinds[b.type] || "", !!s.error)}${s.attempts >= 3 ? linkNote("自动恢复已停止，请检查原因后手动恢复。", true) : linkNote(roles)}</div><div class="card-actions link-actions"><div><button data-do="backend-check" data-id="${esc(b.id)}" ${disabled}>检测连接</button><button data-do="backend-recover" data-id="${esc(b.id)}" ${disabled}>恢复连接</button><button data-do="backend-auto" data-id="${esc(b.id)}" ${disabled}>${s.autoReconnect ? "关闭" : "开启"}自动恢复</button></div><div><button class="ghost" data-do="edit-backend" data-id="${esc(b.id)}" ${disabled}>${icon("settings", "sm")}编辑</button><button class="ghost" data-do="models" data-id="${esc(b.id)}" ${disabled}>模型目录</button>${b.type === "dsh" ? `<button class="ghost" data-do="backend-discover" data-id="${esc(b.id)}" ${disabled}>选择实例</button>` : ""}</div></div>${disabledHints(off)}</article>`;
 }
+const backendTypeNames = {
+  dsh: "DSH",
+  codex: "Codex",
+  openai: "OpenAI 兼容",
+};
+// Model catalogs read from a backend this session, by backend ID: what the
+// edit form offers for model, provider and thinking effort. Each adapter
+// lists its models in its own shape; DSH and Codex also say which efforts
+// each model takes.
+const backendModels = new Map();
+try {
+  for (const [id, value] of Object.entries(
+    JSON.parse(sessionStorage.getItem("qq-agents-models") || "{}"),
+  ))
+    backendModels.set(id, value);
+} catch {
+  // A missing or unreadable copy only means the catalog is read again.
+}
+function rememberModels(id, raw) {
+  const groups = Array.isArray(raw?.groups) ? raw.groups : null,
+    list = groups
+      ? groups.flatMap((g) =>
+          (g.models || []).map((m) => ({ ...m, provider: g.id })),
+        )
+      : Array.isArray(raw)
+        ? raw
+        : Array.isArray(raw?.data)
+          ? raw.data
+          : [];
+  const models = list
+    .map((m) => ({
+      id: String(m.id ?? m.model ?? ""),
+      name: String(m.name ?? m.displayName ?? ""),
+      ...(m.provider ? { provider: String(m.provider) } : {}),
+      efforts: (
+        m.reasoning?.efforts?.map((e) => e.id) ||
+        m.supportedReasoningEfforts?.map((e) => e.reasoningEffort ?? e) ||
+        []
+      )
+        .filter((e) => typeof e === "string" && e)
+        .slice(0, 12),
+    }))
+    .filter((m) => m.id)
+    .slice(0, 300);
+  const catalog = {
+    models,
+    providers: (groups || [])
+      .filter((g) => g.id)
+      .map((g) => ({ id: String(g.id), name: String(g.name || "") })),
+    at: Date.now(),
+  };
+  backendModels.set(id, catalog);
+  try {
+    sessionStorage.setItem(
+      "qq-agents-models",
+      JSON.stringify(Object.fromEntries(backendModels)),
+    );
+  } catch {
+    // Storage may be full or refused; the catalog still serves this page.
+  }
+  return catalog;
+}
+const modelCatalogMarkup = (catalog) =>
+  catalog.models.length
+    ? `<div class="model-list">${catalog.models.map((m) => `<div class="model-row"><span class="mono" title="${esc(m.id)}">${esc(m.id)}</span><span class="hint" title="${esc(m.name)}">${esc([m.provider, m.name !== m.id ? m.name : ""].filter(Boolean).join(" · "))}</span><span class="hint">${esc(m.efforts.join(" / "))}</span></div>`).join("")}</div>`
+    : '<p class="hint">后端没有列出模型。</p>';
 async function backendDiscover(id) {
   const { candidates } = await api("/api/backend", { id, action: "discover" });
   editing = { type: "read" };
@@ -957,10 +1185,11 @@ async function operate(kind, id) {
     const a = config.agents.find((a) => a.backendId === id);
     if (!a) throw Error("请先将此后端绑定到一个角色");
     const r = await api("/api/models", { agentId: a.id });
+    const catalog = rememberModels(id, r.models);
     editing = { type: "read" };
     $("#edit-title").textContent = "后端模型目录";
     $("#edit-fields").innerHTML =
-      '<pre class="mono">' + esc(JSON.stringify(r.models, null, 2)) + "</pre>";
+      `<p class="hint">${catalog.models.length} 个模型；编辑后端时可以从中选择模型和思考强度。</p>${modelCatalogMarkup(catalog)}<details><summary>原始数据</summary><pre class="mono">${esc(JSON.stringify(r.models, null, 2))}</pre></details>`;
     $("#edit-form footer").hidden = true;
     $("#editor").showModal();
     return;
@@ -1030,10 +1259,199 @@ const area = (key, label, value) =>
   `<label class="wide">${label}<textarea name="${key}">${esc(value)}</textarea></label>`;
 const select = (key, label, value, options) =>
   `<label>${label}<select name="${key}">${options.map(([v, l]) => `<option value="${esc(v)}" ${v === value ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`;
+
+// A page section folded unless this browser opened it before. Its summary
+// line says the state in a few words, so the page reads without opening it.
+// `id` names the section across renders, e.g. "subject-quota".
+const foldOpen = (id, fallback) => {
+  try {
+    const v = localStorage.getItem("fold:" + id);
+    return v === null ? fallback : v === "1";
+  } catch {
+    return fallback;
+  }
+};
+const fold = (id, title, body, { summary = "", open = false, cls = "" } = {}) =>
+  `<details class="card fold${cls ? " " + cls : ""}" data-fold="${esc(id)}"${foldOpen(id, open) ? " open" : ""}><summary><span class="fold-title">${title}</span>${summary ? `<span class="fold-summary">${summary}</span>` : ""}</summary><div class="fold-body">${body}</div></details>`;
+// Remember what the viewer opened or closed; toggle does not bubble.
+document.addEventListener?.(
+  "toggle",
+  (e) => {
+    const id = e.target?.dataset?.fold;
+    if (!id) return;
+    try {
+      localStorage.setItem("fold:" + id, e.target.open ? "1" : "0");
+    } catch {
+      // Private windows may refuse storage; the section still works.
+    }
+  },
+  true,
+);
+
+// QQ numbers (groups or people) as removable chips, with an add box that
+// offers the groups and people this role has met. The hidden input sends the
+// same comma list the form always sent. Call fillIds(root, agentId) after
+// the markup is on the page to fill the offers and name the chips.
+let idsSeq = 0;
+const idsList = (values) => [
+  ...new Set(
+    (Array.isArray(values) ? values : String(values ?? "").split(/[,，\s]+/))
+      .map((x) => String(x).trim())
+      .filter(Boolean),
+  ),
+];
+const idChip = (id, name = "") =>
+  `<span class="ids-chip" data-id="${esc(id)}"><span class="ids-name">${name ? `${esc(name)} <small>${esc(id)}</small>` : esc(id)}</span><button type="button" class="ids-remove" data-ids-remove="${esc(id)}" aria-label="移除 ${esc(id)}">×</button></span>`;
+function ids(key, label, values, { kind = "group", hint = "" } = {}) {
+  const list = idsList(values),
+    n = ++idsSeq;
+  return `<div class="ids wide" data-ids="${kind}"><span class="ids-label">${label}</span><input type="hidden" name="${key}" value="${esc(list.join(","))}"><div class="ids-chips">${list.map((id) => idChip(id)).join("") || '<span class="ids-empty">还没有</span>'}</div><div class="ids-add"><input list="ids-${n}" inputmode="numeric" autocomplete="off" placeholder="${kind === "group" ? "输入群号，或从认识的群里选" : "输入 QQ 号，或从认识的人里选"}" aria-label="添加到${label}"><datalist id="ids-${n}"></datalist><button type="button" class="ghost" data-ids-add>添加</button></div>${hint ? `<p class="hint">${hint}</p>` : ""}</div>`;
+}
+// The groups and people a role has met, fetched once a minute at most.
+const knownCache = new Map();
+function knownTargets(agentId) {
+  const hit = knownCache.get(agentId);
+  if (hit && Date.now() - hit.at < 60000) return hit.promise;
+  const promise = api(
+    "/api/known-targets?agentId=" + encodeURIComponent(agentId),
+  ).catch(() => ({ groups: [], people: [] }));
+  knownCache.set(agentId, { at: Date.now(), promise });
+  return promise;
+}
+const knownName = (x) =>
+  [x.name, x.call && x.call !== x.name ? `叫「${x.call}」` : ""]
+    .filter(Boolean)
+    .join(" · ");
+async function fillIds(root, agentId) {
+  const boxes = [...(root?.querySelectorAll?.("[data-ids]") || [])];
+  if (!boxes.length || !agentId) return;
+  const known = await knownTargets(agentId);
+  for (const box of boxes) {
+    const rows = box.dataset.ids === "group" ? known.groups : known.people,
+      names = new Map(rows.map((x) => [x.id, knownName(x)]));
+    box.querySelector("datalist").innerHTML = rows
+      .map(
+        (x) =>
+          `<option value="${esc(x.id)}">${esc(knownName(x) || x.id)}</option>`,
+      )
+      .join("");
+    box.knownNames = names;
+    for (const chip of box.querySelectorAll(".ids-chip")) {
+      const name = names.get(chip.dataset.id);
+      if (name)
+        chip.querySelector(".ids-name").innerHTML =
+          `${esc(name)} <small>${esc(chip.dataset.id)}</small>`;
+    }
+  }
+}
+function idsSet(box, list) {
+  const hidden = box.querySelector('input[type="hidden"]');
+  hidden.value = list.join(",");
+  hidden.dispatchEvent(new Event("change", { bubbles: true }));
+  box.querySelector(".ids-chips").innerHTML =
+    list.map((id) => idChip(id, box.knownNames?.get(id))).join("") ||
+    '<span class="ids-empty">还没有</span>';
+}
+function idsAdd(box) {
+  const field = box.querySelector(".ids-add input"),
+    id = field.value.trim();
+  if (!id) return;
+  if (!/^\d{5,12}$/.test(id)) {
+    field.setCustomValidity("只能填 5–12 位数字的号码");
+    field.reportValidity();
+    return;
+  }
+  field.setCustomValidity("");
+  field.value = "";
+  const list = idsList(box.querySelector('input[type="hidden"]').value);
+  if (!list.includes(id)) idsSet(box, [...list, id]);
+}
+document.addEventListener?.("click", (e) => {
+  const box = e.target.closest?.("[data-ids]");
+  if (!box) return;
+  if (e.target.closest("[data-ids-add]")) idsAdd(box);
+  const gone = e.target.closest("[data-ids-remove]")?.dataset.idsRemove;
+  if (gone)
+    idsSet(
+      box,
+      idsList(box.querySelector('input[type="hidden"]').value).filter(
+        (id) => id !== gone,
+      ),
+    );
+});
+document.addEventListener?.("keydown", (e) => {
+  const box = e.target.closest?.(".ids-add") && e.target.closest("[data-ids]");
+  if (!box || e.key !== "Enter") return;
+  // Enter adds the number instead of submitting the form.
+  e.preventDefault();
+  idsAdd(box);
+});
+document.addEventListener?.("input", (e) => {
+  const box = e.target.closest?.(".ids-add") && e.target.closest("[data-ids]");
+  if (box) {
+    e.target.setCustomValidity("");
+    // Picking an offer from the list adds it straight away.
+    if (box.knownNames?.has(e.target.value.trim())) idsAdd(box);
+    return;
+  }
+  // A slider shows its value as it moves, and only then becomes the value
+  // the form sends (see range()).
+  if (e.target.type === "range") {
+    const row = e.target.parentElement,
+      out = row?.querySelector("output"),
+      sent = row?.querySelector('input[type="hidden"]');
+    if (out) out.textContent = rangeText(e.target.value, e.target.dataset.unit);
+    if (sent) sent.value = e.target.value;
+  }
+});
+// A number typed into an add box but not yet added still counts when its
+// form is saved. One that is not a QQ number stops the save and says why,
+// instead of being dropped. Capture runs before the form's own handler.
+function idsFlush(root) {
+  let ok = true;
+  for (const box of root?.querySelectorAll?.("[data-ids]") || []) {
+    const field = box.querySelector(".ids-add input");
+    if (!field?.value.trim()) continue;
+    idsAdd(box);
+    // idsAdd clears the box once the number is in; what stays is invalid.
+    if (field.value.trim()) ok = false;
+  }
+  return ok;
+}
+document.addEventListener?.(
+  "submit",
+  (e) => {
+    if (idsFlush(e.target)) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+  },
+  true,
+);
+
+// A number on a slider with its value beside it. unit "%" shows a 0–1 value
+// as a percentage; any other unit is appended as is.
+const rangeText = (value, unit = "") =>
+  unit === "%" ? `${Math.round(Number(value) * 100)}%` : `${value}${unit}`;
+// The form sends a hidden copy of the value that only moving the slider
+// changes: a slider snaps to its step when drawn, and a saved 0.4 s on a
+// whole-second slider must not come back as 0 when something else is saved.
+const range = (
+  key,
+  label,
+  value,
+  { min = 0, max = 1, step = 0.05, unit = "" } = {},
+) =>
+  `<label class="range">${label}<span class="range-row"><input type="range" data-range="${key}" min="${min}" max="${max}" step="${step}" value="${esc(value)}" data-unit="${esc(unit)}"><input type="hidden" name="${key}" value="${esc(value)}"><output>${esc(rangeText(value, unit))}</output></span></label>`;
 function openEditor(type, id) {
+  // A new QQ account or backend starts empty: saving a backend keeps every
+  // key of its row, and the role defaults below are not backend keys.
+  const blank = {
+    connections: { id: "", enabled: false },
+    backends: { id: "" },
+  };
   const row = id
     ? structuredClone(find(type, id))
-    : {
+    : blank[type] || {
         id: "",
         paused: true,
         enabled: false,
@@ -1068,7 +1486,13 @@ function openEditor(type, id) {
     "id",
     "稳定 ID",
     row.id,
-    id ? "readonly" : 'required pattern="[a-z][a-z0-9_-]{0,63}"',
+    id
+      ? "readonly"
+      : 'required pattern="[a-z][a-z0-9_-]{0,63}"' +
+          ({
+            connections: ' placeholder="例如 qq-a"',
+            backends: ' placeholder="例如 deepseek-api"',
+          }[type] || ""),
   );
   if (type === "agents") {
     $("#edit-fields").innerHTML = agentForm.build(row, html);
@@ -1076,104 +1500,338 @@ function openEditor(type, id) {
     $("#editor").showModal();
     return;
   }
-  if (type === "connections") {
-    html +=
-      input("label", "实例名称", row.label, "required") +
+  $("#edit-fields").innerHTML =
+    type === "connections"
+      ? connectionForm(row, id, html)
+      : backendForm(row, id, html);
+  bindLinkForm($("#edit-fields"), type);
+  $("#editor").showModal();
+}
+// Fields that only one deployment or adapter uses. They stay in the form and
+// are sent exactly as before; they only show while they apply.
+const linkFor = (types, html) =>
+  `<div class="for-type" data-for="${types}">${html}</div>`;
+// The connection form: a new one starts from the usual local addresses and
+// token variable; an existing one shows exactly what is stored, so saving it
+// untouched writes it back unchanged.
+function connectionForm(row, id, html) {
+  const main =
+    html +
+    input(
+      "label",
+      "实例名称",
+      row.label,
+      'required placeholder="例如 小号 A"',
+    ) +
+    input(
+      "accountId",
+      "QQ 账号",
+      row.accountId,
+      'required pattern="[0-9]+" inputmode="numeric" placeholder="例如 123456789"',
+    ) +
+    select("deployment", "部署方式", row.deployment || "external", [
+      ["external", "已有外部实例"],
+      ["native", "原生 NapCat"],
+      ["docker", "Docker NapCat"],
+    ]) +
+    linkFor(
+      "docker",
       input(
-        "accountId",
-        "QQ 账号",
-        row.accountId,
-        'required pattern="[0-9]+"',
-      ) +
-      select("deployment", "部署方式", row.deployment || "external", [
-        ["external", "已有外部实例"],
-        ["native", "原生 NapCat"],
-        ["docker", "Docker NapCat"],
-      ]) +
+        "container",
+        "Docker 容器名（须有实例归属标签）",
+        row.container,
+        'placeholder="例如 napcat-qq-a"',
+      ),
+    ) +
+    input(
+      "httpUrl",
+      "OneBot HTTP 地址",
+      row.httpUrl || "http://127.0.0.1:23010",
+      'required placeholder="例如 http://127.0.0.1:3000"',
+    ) +
+    input(
+      "wsUrl",
+      "OneBot WebSocket 地址",
+      row.wsUrl || "ws://127.0.0.1:23011",
+      'required placeholder="例如 ws://127.0.0.1:3001"',
+    ) +
+    input(
+      "tokenEnv",
+      "访问令牌的环境变量名",
+      id ? row.tokenEnv || "" : "QQ_UNIFIED_ONEBOT_A",
+      'placeholder="例如 QQ_UNIFIED_ONEBOT_A；不用令牌时留空"',
+    ) +
+    check("enabled", "启用此连接配置", row.enabled) +
+    linkFor(
+      "native",
+      `<label class="wide">原生启动配置（JSON：command、args、env；可留空）<textarea name="process" placeholder="${esc('例如 {"command": "/opt/napcat/napcat.sh", "args": []}')}">${esc(row.process ? JSON.stringify(row.process, null, 2) : "")}</textarea></label>`,
+    );
+  const rare =
+    check(
+      "autoReconnect",
+      "断线后自动重连（只恢复接收；不重发、不补录断线期间消息）",
+      row.recovery?.autoReconnect ?? true,
+    ) +
+    input(
+      "maxAttempts",
+      "自动重连最多尝试次数",
+      row.recovery?.maxAttempts ?? 8,
+      'type="number" min="1" max="20" placeholder="8"',
+    ) +
+    input(
+      "webUrl",
+      "NapCat Web 管理地址（可选）",
+      row.webUrl,
+      'placeholder="例如 http://127.0.0.1:6099/webui"',
+    ) +
+    check(
+      "allowPrivateNetwork",
+      "允许 Docker 服务名或内网地址（如 http://napcat:3000；令牌会以明文经过容器网络）",
+      row.allowPrivateNetwork,
+    );
+  return `<div class="form-grid">${main}</div>${advanced("自动重连、NapCat 管理地址与内网", rare)}`;
+}
+// Thinking effort levels each adapter takes. DSH and Codex name the levels
+// each model supports in their model catalog, which replaces these once read;
+// a stored value outside the list stays selectable so it saves unchanged.
+const backendEfforts = {
+  dsh: ["low", "medium", "high"],
+  codex: ["minimal", "low", "medium", "high", "xhigh"],
+  openai: ["minimal", "low", "medium", "high"],
+};
+const backendEffortNames = {
+  none: "不思考",
+  minimal: "最低",
+  low: "低",
+  medium: "中",
+  high: "高",
+  xhigh: "很高",
+  max: "最高",
+};
+function backendEffortOptions(type, model, current, catalog) {
+  const listed = catalog?.models.find((m) => m.id === model)?.efforts,
+    levels = listed?.length
+      ? listed
+      : backendEfforts[type] || backendEfforts.dsh;
+  // DSH refuses an empty effort once a model is chosen, so it offers no
+  // blank unless one is already stored.
+  const blank = type !== "dsh" || current === "";
+  return [
+    ...(blank ? [["", "留空使用默认"]] : []),
+    ...levels.map((v) => [
+      v,
+      backendEffortNames[v] ? `${v} · ${backendEffortNames[v]}` : v,
+    ]),
+    ...(current && !levels.includes(current)
+      ? [[current, `${current}（当前值）`]]
+      : []),
+  ];
+}
+const backendModelExamples = {
+  dsh: "例如 deepseek-chat；留空使用 DSH 当前模型",
+  codex: "例如 gpt-5-codex；留空使用 Codex 默认",
+  openai: "例如 deepseek-chat",
+};
+const backendUrlExamples = {
+  dsh: "留空则选择桌面实例；固定地址如 http://127.0.0.1:3213",
+  codex: "Codex 不需要，留空",
+  openai: "例如 https://api.deepseek.com/v1",
+};
+// Common DSH provider routes; the catalog adds the ones this DSH has.
+const backendProviders = [
+  ["deepseek-official", "DeepSeek 官方"],
+  ["openai", "OpenAI"],
+  ["anthropic", "Anthropic"],
+  ["openrouter", "OpenRouter"],
+];
+const datalistOptions = (rows) =>
+  rows
+    .map(
+      ([v, l]) =>
+        `<option value="${esc(v)}"${l && l !== v ? ` label="${esc(l)}"` : ""}></option>`,
+    )
+    .join("");
+const backendModelOptions = (catalog) =>
+  datalistOptions(
+    (catalog?.models || []).map((m) => [
+      m.id,
+      [m.name !== m.id ? m.name : "", m.provider].filter(Boolean).join(" · "),
+    ]),
+  );
+const backendProviderOptions = (catalog) =>
+  datalistOptions([
+    ...(catalog?.providers || []).map((p) => [p.id, p.name]),
+    ...backendProviders.filter(
+      ([id]) => !catalog?.providers?.some((p) => p.id === id),
+    ),
+  ]);
+const backendCatalogState = (catalog) =>
+  catalog
+    ? `已读取 ${catalog.models.length} 个模型（${homeWhen(catalog.at)}），可以直接选择。`
+    : "还没有读取模型目录，可以手动填写。";
+function backendForm(row, id, html) {
+  const type = row.type || "dsh",
+    catalog = id ? backendModels.get(id) : null,
+    effort = row.effort ?? "high";
+  const readOff = disabledReason([
+    [status.mode === "isolated", "isolatedBackend"],
+    [!config.agents.some((a) => a.backendId === id), "backendUnbound"],
+  ]);
+  const main =
+    html +
+    input(
+      "label",
+      "后端名称",
+      row.label,
+      'required placeholder="例如 DeepSeek API"',
+    ) +
+    select("type", "适配器", type, [
+      ["dsh", "DeepSeek Harness"],
+      ["codex", "Codex app-server"],
+      ["openai", "OpenAI 兼容 API"],
+    ]) +
+    `<label>默认模型（留空使用后端默认）<span class="input-row"><input name="model" value="${esc(row.model)}" list="backend-models" autocomplete="off" placeholder="${esc(backendModelExamples[type])}"><button type="button" class="ghost" data-models-read ${disabledAttr(readOff)}>读取目录</button></span></label>` +
+    select(
+      "effort",
+      "默认思考强度",
+      effort,
+      backendEffortOptions(type, row.model, effort, catalog),
+    ) +
+    linkFor(
+      "dsh",
       input(
-        "httpUrl",
-        "OneBot HTTP 地址",
-        row.httpUrl || "http://127.0.0.1:23010",
-        "required",
-      ) +
-      input(
-        "wsUrl",
-        "OneBot WebSocket 地址",
-        row.wsUrl || "ws://127.0.0.1:23011",
-        "required",
-      ) +
-      input(
-        "tokenEnv",
-        "访问令牌的环境变量名",
-        row.tokenEnv || "QQ_UNIFIED_ONEBOT_A",
-      ) +
-      input("webUrl", "NapCat Web 管理地址（可选）", row.webUrl) +
-      check(
-        "allowPrivateNetwork",
-        "允许 Docker 服务名或内网地址（如 http://napcat:3000；令牌会以明文经过容器网络）",
-        row.allowPrivateNetwork,
-      ) +
-      check("enabled", "启用此连接配置", row.enabled) +
-      check(
-        "autoReconnect",
-        "断线后自动重连（只恢复接收；不重发、不补录断线期间消息）",
-        row.recovery?.autoReconnect ?? true,
-      ) +
-      input(
-        "maxAttempts",
-        "自动重连最多尝试次数",
-        row.recovery?.maxAttempts ?? 8,
-        'type="number" min="1" max="20"',
-      ) +
-      input("container", "Docker 容器名（须有实例归属标签）", row.container) +
-      area(
-        "process",
-        "原生启动配置（JSON：command、args、env；可留空）",
-        row.process ? JSON.stringify(row.process, null, 2) : "",
-      );
-  } else {
-    html +=
-      input("label", "后端名称", row.label, "required") +
-      select("type", "适配器", row.type || "dsh", [
-        ["dsh", "DeepSeek Harness"],
-        ["codex", "Codex app-server"],
-        ["openai", "OpenAI 兼容 API"],
-      ]) +
-      input("provider", "模型提供方（可选）", row.provider) +
-      input("model", "默认模型（留空使用后端默认）", row.model) +
-      input("effort", "默认思考强度", row.effort || "high") +
-      input(
-        "baseUrl",
-        "服务地址（DSH：固定本机地址，可留空选择实例；OpenAI 兼容：如 https://api.deepseek.com/v1）",
-        row.baseUrl,
-      ) +
+        "provider",
+        "模型提供方（可选）",
+        row.provider,
+        'list="backend-providers" autocomplete="off" placeholder="例如 deepseek-official；留空不限"',
+      ),
+    ) +
+    input(
+      "baseUrl",
+      "服务地址",
+      row.baseUrl,
+      `placeholder="${esc(backendUrlExamples[type])}"`,
+    ) +
+    linkFor(
+      "openai",
       input(
         "apiKeyEnv",
-        "API 密钥环境变量名（OpenAI 兼容；本机服务可留空）",
+        "API 密钥环境变量名",
         row.apiKeyEnv,
-      ) +
+        'placeholder="例如 QQ_UNIFIED_DEEPSEEK_KEY；本机服务留空"',
+      ),
+    ) +
+    `<p class="hint" id="backend-models-state">${esc(backendCatalogState(catalog))}${readOff ? " " + esc(readOff) : ""}</p>` +
+    linkFor(
+      "dsh",
+      '<p class="hint">DSH 指定模型时需要明确的一档思考强度。</p>',
+    ) +
+    linkFor(
+      "openai",
+      '<p class="hint">思考强度只在勾选高级设置里的“发送思考强度”后才发给服务。</p>',
+    ) +
+    `<datalist id="backend-models">${backendModelOptions(catalog)}</datalist><datalist id="backend-providers">${backendProviderOptions(catalog)}</datalist><datalist id="backend-presets">${datalistOptions([["qq-unified", "本项目生成的 preset"]])}</datalist>`;
+  const rare =
+    linkFor(
+      "openai",
       input(
         "contextWindow",
-        "上下文窗口 tokens（OpenAI 兼容；留空时从服务的模型列表读取，读不到按 32768）",
+        "上下文窗口 tokens（留空时从服务的模型列表读取，读不到按 32768）",
         row.contextWindow ?? "",
-        'type="number" min="1024"',
+        'type="number" min="1024" placeholder="例如 128000"',
       ) +
-      check("vision", "模型支持图片输入（OpenAI 兼容）", row.vision) +
-      check(
-        "sendEffort",
-        "发送思考强度 reasoning_effort（OpenAI 兼容，仅推理模型）",
-        row.sendEffort,
-      ) +
-      input("preset", "DSH preset", row.preset || "qq-unified") +
-      input("command", "Codex 命令", row.command || "codex") +
-      area(
-        "toolServers",
-        "允许的外部 MCP 服务（JSON，凭据用 env 引用）",
-        JSON.stringify(row.toolServers, null, 2),
-      );
-  }
-  $("#edit-fields").innerHTML = '<div class="form-grid">' + html + "</div>";
-  $("#editor").showModal();
+        check("vision", "模型支持图片输入", row.vision) +
+        check(
+          "sendEffort",
+          "发送思考强度 reasoning_effort（仅推理模型）",
+          row.sendEffort,
+        ),
+    ) +
+    linkFor(
+      "dsh",
+      input(
+        "preset",
+        "DSH preset",
+        row.preset || "qq-unified",
+        'list="backend-presets" autocomplete="off" placeholder="qq-unified"',
+      ),
+    ) +
+    linkFor(
+      "codex",
+      input(
+        "command",
+        "Codex 命令",
+        row.command || "codex",
+        'placeholder="codex"',
+      ),
+    ) +
+    area(
+      "toolServers",
+      "允许的外部 MCP 服务（JSON，凭据用 env 引用）",
+      JSON.stringify(row.toolServers || [], null, 2),
+    );
+  return `<div class="form-grid">${main}</div>${advanced("高级：上下文、preset、命令与外部工具", rare)}`;
+}
+// Shows the fields of the chosen deployment or adapter, and keeps the
+// effort list and examples in step with the adapter and model.
+function bindLinkForm(root, type) {
+  if (!root?.querySelector) return;
+  const pick = root.querySelector(
+    type === "connections" ? '[name="deployment"]' : '[name="type"]',
+  );
+  if (!pick) return;
+  const show = () => {
+    for (const el of root.querySelectorAll("[data-for]"))
+      el.hidden = !el.dataset.for.split(" ").includes(pick.value);
+  };
+  pick.addEventListener("change", show);
+  show();
+  if (type !== "backends") return;
+  const model = root.querySelector('[name="model"]'),
+    effort = root.querySelector('[name="effort"]'),
+    baseUrl = root.querySelector('[name="baseUrl"]'),
+    id = editing?.id;
+  const refresh = () => {
+    const current = effort.value,
+      catalog = id ? backendModels.get(id) : null;
+    effort.innerHTML = backendEffortOptions(
+      pick.value,
+      model.value.trim(),
+      current,
+      catalog,
+    )
+      .map(
+        ([v, l]) =>
+          `<option value="${esc(v)}"${v === current ? " selected" : ""}>${esc(l)}</option>`,
+      )
+      .join("");
+    model.placeholder = backendModelExamples[pick.value] || "";
+    baseUrl.placeholder = backendUrlExamples[pick.value] || "";
+  };
+  pick.addEventListener("change", refresh);
+  model.addEventListener("change", refresh);
+  const read = root.querySelector("[data-models-read]");
+  if (read)
+    read.onclick = () =>
+      action(async () => {
+        const a = config.agents.find((x) => x.backendId === id);
+        if (!a) throw Error("请先将此后端绑定到一个角色");
+        read.disabled = true;
+        try {
+          const r = await api("/api/models", { agentId: a.id }),
+            catalog = rememberModels(id, r.models);
+          if (editing?.id !== id || !root.contains(read)) return;
+          root.querySelector("#backend-models").innerHTML =
+            backendModelOptions(catalog);
+          root.querySelector("#backend-providers").innerHTML =
+            backendProviderOptions(catalog);
+          root.querySelector("#backend-models-state").textContent =
+            backendCatalogState(catalog);
+          refresh();
+        } finally {
+          read.disabled = false;
+        }
+      });
 }
 $("#edit-form").onsubmit = (e) => {
   e.preventDefault();
@@ -1354,7 +2012,82 @@ async function readConversation(args) {
     if (!$("#editor").open) $("#editor").showModal();
   });
 }
+// Memory: a compact search bar, then what was found (the latest records
+// when nothing is asked), then each conversation's state folded below.
+function renderMemory(content) {
+  const agentId = roleId || config.agents[0]?.id;
+  content.innerHTML = `<section class="card mem-search"><label class="mem-agent">角色<select id="memory-agent">${config.agents.map((a) => `<option value="${esc(a.id)}" ${a.id === agentId ? "selected" : ""}>${esc(a.name)}</option>`).join("")}</select></label><div class="mem-bar"><label class="mem-query">关键词<input id="memory-query" type="search" placeholder="约定、上次、某件事…"></label><label>类型<select id="memory-type"><option value="all">全部</option><option value="event">经历档案</option><option value="diary">个人日记</option></select></label><label>人物<input id="memory-person" list="memory-people" inputmode="numeric" autocomplete="off" placeholder="QQ 号或从列表选"><datalist id="memory-people"></datalist></label><label>来源<select id="memory-source"><option value="">全部来源</option></select></label><label id="memory-source-manual-field" hidden>手动来源<input id="memory-source-manual" placeholder="group:10000 或 private:10000"></label><div class="mem-go"><button class="primary" id="search-memory">搜索</button><button class="ghost" id="export-memory">导出</button></div></div><div class="mem-source" id="memory-source-bar" hidden><p class="hint" id="memory-source-state"></p><div class="card-actions"><button id="reset-session">重置此来源模型上下文</button><button id="pause-conversation">暂停此来源</button><button id="resume-conversation">解除此来源暂停 / 静默</button></div></div></section><section class="card mem-results"><div class="mem-results-head"><strong id="memory-results-head">最近的经历和日记</strong><span class="hint">原始消息是“某人说过的话”，不自动等同于已核实事实；旧笔记标注 legacy 来源。</span></div><div id="memory-results" class="empty">读取中…</div></section>${fold("memory-conversations", "会话状态", '<p class="hint">按会话单独暂停只影响此角色在该来源的参与；角色暂停和全局暂停仍独立生效。</p><div id="memory-conversations">读取中…</div>', { summary: '<span id="memory-conversations-summary">读取中…</span>' })}`;
+  $("#memory-agent").onchange = () => {
+    action(loadConversations);
+    searchMemory();
+  };
+  $("#memory-source").onchange = () => {
+    $("#memory-source-manual-field").hidden =
+      $("#memory-source").value !== "manual";
+    renderSourceState();
+  };
+  $("#memory-source-manual").oninput = renderSourceState;
+  $("#memory-query").onkeydown = (e) => {
+    if (e.key === "Enter") searchMemory();
+  };
+  $("#reset-session").onclick = () =>
+    action(() => conversationAction("reset", requireSource()));
+  $("#pause-conversation").onclick = () =>
+    action(() => conversationAction("pause", requireSource()));
+  $("#resume-conversation").onclick = () =>
+    action(() => conversationAction("resume", requireSource()));
+  action(loadConversations);
+  // The people this role has met, offered for the person filter.
+  knownTargets(agentId).then((known) => {
+    const list = $("#memory-people");
+    if (tab !== "memory" || !list || $("#memory-agent")?.value !== agentId)
+      return;
+    list.innerHTML = known.people
+      .map(
+        (x) =>
+          `<option value="${esc(x.id)}">${esc(knownName(x) || x.id)}</option>`,
+      )
+      .join("");
+  });
+  searchMemory();
+  $("#search-memory").onclick = () => searchMemory();
+  $("#export-memory").onclick = () =>
+    action(async () => {
+      const { ticket } = await api("/api/export/ticket", {
+        agentId: $("#memory-agent").value,
+      });
+      const form = document.createElement("form");
+      form.method = "POST";
+      form.action = "/api/export/download";
+      form.target = "_blank";
+      form.rel = "noopener";
+      const input = document.createElement("input");
+      input.type = "hidden";
+      input.name = "ticket";
+      input.value = ticket;
+      form.append(input);
+      document.body.append(form);
+      form.submit();
+      form.remove();
+      notice(
+        "已请求导出；完成状态请查看浏览器下载列表，失败信息会在新窗口显示。",
+      );
+    });
+}
 let memoryConversations = [];
+// "12 个会话 · 1 个暂停": the folded list's state in its title line.
+function conversationsSummary(rows) {
+  if (!rows.length) return "还没有会话";
+  const paused = rows.filter((c) => c.paused).length,
+    quiet = rows.filter((c) => !c.paused && c.silenceUntil > Date.now()).length;
+  return [
+    `${rows.length} 个会话`,
+    paused ? `${paused} 个暂停` : "没有暂停",
+    quiet ? `${quiet} 个静默` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
 const conversationLabel = (conversation) =>
   conversation.replace(/^group:/, "群 ").replace(/^private:/, "私聊 ");
 function conversationStateText(c) {
@@ -1381,12 +2114,16 @@ function requireSource() {
     throw Error("请先选择来源，或手动填写 group:群号 / private:QQ 号");
   return conversation;
 }
+// A chosen source shows its state and what can be done to it; "all
+// sources" keeps the bar out of the way.
 function renderSourceState() {
   const conversation = memorySource(),
     known = memoryConversations.find((c) => c.conversation === conversation);
   $("#memory-source-state").textContent = conversation
     ? `${conversationLabel(conversation)}：${conversationStateText(known)}`
     : "选择来源后可暂停、解除暂停或重置其模型上下文。";
+  const bar = $("#memory-source-bar");
+  if (bar) bar.hidden = !conversation;
 }
 async function loadConversations() {
   const agentId = $("#memory-agent").value,
@@ -1416,12 +2153,14 @@ async function loadConversations() {
     : "";
   $("#memory-source-manual-field").hidden = pick.value !== "manual";
   renderSourceState();
+  const summary = $("#memory-conversations-summary");
+  if (summary) summary.textContent = conversationsSummary(memoryConversations);
   const list = $("#memory-conversations");
   list.innerHTML =
     memoryConversations
       .map((c) => {
         const resetOff = disabledReason([[!c.allowed, "notAllowed"]]);
-        return `<div class="record"><div class="row"><strong>${esc(conversationLabel(c.conversation))}</strong>${tag(conversationStateText(c), c.paused ? "off" : c.silenceUntil > Date.now() || !c.allowed ? "warn" : "live")}</div><p class="hint mono">${esc(c.conversation)}</p><button type="button" data-conv-pick="${esc(c.conversation)}">选为来源</button> ${c.paused || c.silenceUntil > Date.now() ? `<button type="button" data-conv="resume" data-conversation="${esc(c.conversation)}">解除暂停 / 静默</button>` : `<button type="button" data-conv="pause" data-conversation="${esc(c.conversation)}">暂停</button>`} <button type="button" class="ghost" data-conv="reset" data-conversation="${esc(c.conversation)}" ${disabledAttr(resetOff)}>重置模型上下文</button>${disabledHints(resetOff)}</div>`;
+        return `<div class="record conv-row"><div class="conv-who"><strong>${esc(conversationLabel(c.conversation))}</strong><span class="hint mono">${esc(c.conversation)}</span></div>${tag(conversationStateText(c), c.paused ? "off" : c.silenceUntil > Date.now() || !c.allowed ? "warn" : "live")}<div class="conv-actions"><button type="button" data-conv-pick="${esc(c.conversation)}">选为来源</button>${c.paused || c.silenceUntil > Date.now() ? `<button type="button" data-conv="resume" data-conversation="${esc(c.conversation)}">解除暂停 / 静默</button>` : `<button type="button" data-conv="pause" data-conversation="${esc(c.conversation)}">暂停</button>`}<button type="button" class="ghost" data-conv="reset" data-conversation="${esc(c.conversation)}" ${disabledAttr(resetOff)}>重置模型上下文</button></div>${disabledHints(resetOff)}</div>`;
       })
       .join("") ||
     "<p>此角色还没有会话记录，白名单也为空。可在上方手动输入来源。</p>";
@@ -1466,7 +2205,14 @@ async function conversationAction(kind, conversation) {
   }
   await loadConversations();
 }
+let memorySearchRequest = 0;
+const memoryTypeNames = {
+  all: "经历和日记",
+  event: "经历档案",
+  diary: "个人日记",
+};
 async function searchMemory(cursor = null) {
+  const request = ++memorySearchRequest;
   await action(async () => {
     // Results belong to the role searched, even if the picker changes later.
     const agentId = $("#memory-agent").value;
@@ -1479,17 +2225,32 @@ async function searchMemory(cursor = null) {
     if ($("#memory-person").value) q.set("person", $("#memory-person").value);
     if (memorySource()) q.set("conversation", memorySource());
     const result = await api("/api/memory?" + q);
+    // A newer search (another role, another query) owns the list now.
+    if (request !== memorySearchRequest) return;
     const rows = [...result.items, ...result.diaries],
       people = result.people || {};
+    const asked = [
+      q.get("query").trim(),
+      q.get("person") && "QQ " + q.get("person"),
+      q.get("conversation") && conversationLabel(q.get("conversation")),
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    const head = $("#memory-results-head");
+    if (head)
+      head.textContent = `${asked ? `“${asked}”的` : "最近的"}${memoryTypeNames[q.get("type")] || "记录"} · ${rows.length}${result.nextCursor ? "+" : ""} 条`;
     const node = $("#memory-results");
     node.className = "";
+    // Each record keeps one shape: title and origin, three lines of the
+    // body (the reader has the rest), then where, who and when.
     node.innerHTML =
       rows
         .map(
           (r) =>
-            `<article class="record"><div class="row"><strong>${esc(r.title || r.type)}</strong>${tag(r.origin)}</div><p>${esc(r.body)}${r.bodyTruncated ? "…" : ""}</p>${r.bodyTruncated ? '<p class="hint">这里是摘要，可打开阅读全文。</p>' : ""}<small>${esc(r.conversation || "个人日记")}${r.senderId ? ` · ${memorySpeaker(r.senderId, r.senderName, people)}` : ""} · ${esc(r.occurredAt || r.updatedAt)}</small> <button type="button" data-read="${esc(r.id)}">${r.type === "diary" ? "阅读全文" : "展开原文"}</button>${sceneMarkup(r.scene, people)}</article>`,
+            `<article class="record mem-record"><div class="mem-head"><strong title="${esc(r.title || r.type)}">${esc(r.title || r.type)}</strong>${tag(r.origin)}</div><p class="mem-body" title="${esc(r.body)}">${esc(r.body)}${r.bodyTruncated ? "…" : ""}</p><div class="mem-foot"><small>${esc(r.conversation || "个人日记")}${r.senderId ? ` · ${memorySpeaker(r.senderId, r.senderName, people)}` : ""} · ${esc(r.occurredAt || r.updatedAt)}</small> <button type="button" data-read="${esc(r.id)}"${r.bodyTruncated ? ' title="这里是摘要，可打开阅读全文"' : ""}>${r.type === "diary" ? "阅读全文" : "展开原文"}</button></div>${sceneMarkup(r.scene, people)}</article>`,
         )
-        .join("") || '<p class="empty">没有匹配记录。</p>';
+        .join("") ||
+      `<p class="empty">${asked || q.get("type") !== "all" ? "没有匹配记录。" : "这个角色还没有经历和日记。"}</p>`;
     node
       .querySelectorAll("[data-read]")
       .forEach((b) => (b.onclick = () => readMemory(b.dataset.read)));
@@ -1506,6 +2267,7 @@ async function searchMemory(cursor = null) {
     bindPersonCards(node, agentId);
     if (result.nextCursor) {
       const b = document.createElement("button");
+      b.className = "mem-more";
       b.textContent = "下一页";
       b.onclick = () => searchMemory(result.nextCursor);
       node.append(b);

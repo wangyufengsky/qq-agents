@@ -38,8 +38,28 @@ function subjectActivity(m, agentId, now) {
         next: p.next || "",
         restReason: p.restReason || null,
         protected: !!(p.protectedRepositories?.length || p.protectedOperations),
+        turnId: p.turnId || null,
       };
     });
+  // Each log's own turn, however many came after it: the tools it used
+  // (null when the turn predates tool tracing). A turn still running has
+  // not recorded them yet and adds nothing.
+  const turnIds = [...new Set(logs.map((l) => l.turnId).filter(Boolean))];
+  const ofLog = new Map(
+    turnIds.length
+      ? m.db
+          .prepare(
+            `SELECT id,value FROM model_turns WHERE agent_id=? AND id IN (${turnIds.map(() => "?").join(",")})`,
+          )
+          .all(agentId, ...turnIds)
+          .map((row) => [row.id, JSON.parse(row.value)])
+      : [],
+  );
+  for (const log of logs) {
+    const turn = ofLog.get(log.turnId);
+    if (turn && turn.status !== "running")
+      log.toolCalls = Array.isArray(turn.toolCalls) ? turn.toolCalls : null;
+  }
   const turns = m.db
     .prepare(
       "SELECT value FROM model_turns WHERE agent_id=? AND json_extract(value,'$.conversation')='@subject' AND json_extract(value,'$.startedAt')>?",
@@ -585,6 +605,7 @@ export function createServer({
         return send({
           intents: shareList(appService(runtime), agentId),
           progress: appService(runtime).progress(agentId),
+          readsLastDay: appService(runtime).readsLastDay(agentId),
           capabilities: appService(runtime).capabilities(agentId),
           history: appService(runtime).history(
             agentId,
@@ -708,6 +729,11 @@ export function createServer({
           return send(runtime.scheduler.runNow(id, data.id, data.requestId));
         }
         throw Error("INVALID_ACTION");
+      }
+      // Groups and people this role has met, for the console's pickers.
+      if (req.method === "GET" && url.pathname === "/api/known-targets") {
+        const a = runtime.agent(url.searchParams.get("agentId"));
+        return send(runtime.memory.bind(a.id).knownTargets());
       }
       if (req.method === "GET" && url.pathname === "/api/conversations") {
         const id = url.searchParams.get("agentId");

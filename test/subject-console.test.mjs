@@ -41,6 +41,14 @@ async function render(f, tab = "subject") {
     check: () => "",
     input: () => "",
     area: () => "",
+    // Shared parts from app.js; mind-pages.test.mjs renders the real ones.
+    fold: (id, title, body) =>
+      `<details data-fold="${id}">${title}${body}</details>`,
+    ids: () => "",
+    range: () => "",
+    advanced: () => "",
+    fillIds: () => {},
+    conversationLabel: (c) => c,
     URLSearchParams,
     document: { querySelectorAll: () => [], addEventListener: () => {} },
   });
