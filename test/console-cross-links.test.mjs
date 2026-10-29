@@ -517,10 +517,11 @@ test("the contacts tab names private targets by their card; the mood tab opens c
   const html = vm.runInContext("intentsMarkup(data)", sandbox);
   assert.match(
     html,
-    /<p>私聊 30000（叫「阿&#60;明&#62;」）<button type="button" class="ghost person-open" data-open-person="30000"[^>]*>人物卡<\/button> · 惦记着<\/p>/,
+    /<p class="mind-clip[^"]*"[^>]*>私聊 30000（叫「阿&#60;明&#62;」）<button type="button" class="ghost person-open" data-open-person="30000"[^>]*>人物卡<\/button> · 惦记着<\/p>/,
   );
-  assert.match(html, /<p>private:30003 · 惦记着<\/p>/);
-  assert.match(html, /<p>group:20000 · 惦记着<\/p>/);
+  // Others are named as chats, without a card button.
+  assert.match(html, /<p class="mind-clip[^"]*"[^>]*>私聊 30003 · 惦记着<\/p>/);
+  assert.match(html, /<p class="mind-clip[^"]*"[^>]*>群 20000 · 惦记着<\/p>/);
   assert.equal(html.split("data-open-person=").length - 1, 1);
 
   // The tab's own picker may show another role than the one selected.

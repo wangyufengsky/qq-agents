@@ -2942,3 +2942,347 @@ button.ids-remove:hover {
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
+
+/* Role pages (Self, mood, person cards, free time, contacts, sessions): a
+   title line that counts the list, the list, then what the page is for.
+   Rows keep their shape: titles cut to one line, text to a few, and a tap
+   or hover shows the rest. */
+.mind-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  margin-bottom: 14px;
+}
+.mind-head h2 {
+  margin: 0;
+}
+.mind-count {
+  flex: none;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+.mind-foot {
+  margin: 16px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.mind-lead {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+.mind-subhead {
+  margin: 18px 0 2px;
+  color: var(--sub);
+  font-size: 13px;
+}
+.mind-list {
+  display: grid;
+}
+.mind-row {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+}
+.mind-row:first-child {
+  padding-top: 6px;
+}
+.mind-row:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+.mind-row > p,
+.mind-row > details {
+  margin: 0;
+}
+.mind-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.mind-row-head time {
+  flex: none;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.mind-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.mind-sub {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12.5px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.mind-meta {
+  color: var(--muted);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+.mind-attn {
+  color: var(--warn);
+}
+.mind-tag {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  height: 22px;
+  padding: 0 9px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-pill);
+  background: var(--fill-3);
+  color: var(--sub);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.mind-tag.is-wait {
+  border-color: var(--accent-line);
+  background: var(--accent-fill);
+  color: var(--accent);
+}
+.mind-tag.is-ok {
+  border-color: var(--ok-line);
+  background: var(--ok-fill);
+  color: var(--ok);
+}
+.mind-tag.is-warn {
+  border-color: var(--warn-line);
+  background: var(--warn-fill);
+  color: var(--warn);
+}
+.mind-tag.is-bad {
+  border-color: var(--danger-line);
+  background: var(--danger-fill);
+  color: var(--danger);
+}
+.mind-tag.is-off {
+  border-color: var(--line);
+  background: transparent;
+  color: var(--muted);
+}
+.mind-clip {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--lines, 2);
+  line-clamp: var(--lines, 2);
+}
+.mind-clip.lines-1 {
+  --lines: 1;
+  color: var(--sub);
+  font-size: 13px;
+}
+.mind-clip.lines-3 {
+  --lines: 3;
+}
+.mind-clip:focus {
+  outline: 0;
+  -webkit-line-clamp: unset;
+  line-clamp: none;
+}
+.mind-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.mind-actions button {
+  min-height: 28px;
+  padding: 0 12px;
+  margin-left: -12px;
+  font-size: 12.5px;
+}
+/* A turn's tools: one line with the count, chips inside. */
+details.mind-tools,
+details.mind-more {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+details.mind-tools > summary,
+details.mind-more > summary {
+  min-height: 26px;
+  font-size: 12.5px;
+}
+p.mind-tools {
+  color: var(--faint);
+  font-size: 12.5px;
+}
+.mind-failed {
+  padding: 0 7px;
+  border-radius: var(--r-pill);
+  background: var(--danger-fill);
+  color: var(--danger);
+  font-size: 12px;
+}
+.mind-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 0 2px 16px;
+}
+.mind-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  height: 24px;
+  padding: 0 9px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
+  background: var(--fill-2);
+  color: var(--ink-2);
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.mind-chip b {
+  color: var(--muted);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.mind-chip.is-failed {
+  border-color: var(--danger-line);
+  background: var(--danger-fill);
+  color: var(--danger);
+}
+.mind-more > p {
+  margin: 4px 0 0 16px;
+  font-size: 12.5px;
+}
+/* How checks stand, four numbers in a row (two on a phone). */
+.mind-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.mind-stat {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--fill-1);
+}
+.mind-stat span,
+.mind-stat small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.mind-stat b {
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+/* Sessions: context used against capacity. */
+.mind-usage {
+  display: grid;
+  gap: 4px;
+  color: var(--sub);
+  font-size: 12.5px;
+}
+.mind-usage .meter {
+  margin: 0;
+}
+.mind-bar.is-high .bar {
+  fill: var(--warn);
+}
+/* Folded lists of records (candidates, versions) and their summary rows. */
+.mind-details > details.record {
+  margin: 0;
+  padding: 8px 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: none;
+}
+.mind-details > details.record:last-child {
+  border-bottom: 0;
+}
+.mind-summary-main {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* Who wrote the current self, when and why, in one line. */
+.self-meta {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  margin: -4px 0 12px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.self-meta > span {
+  flex: none;
+}
+.self-meta .self-reason {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.self-meta .self-reason::before {
+  content: "· ";
+}
+#subject-form .ids + .ids {
+  margin-top: 8px;
+}
+/* Refresh sits at the right above the page, not in a card of its own. */
+.mind-toolbar {
+  justify-content: flex-end;
+  align-items: center;
+  margin: -6px 0 10px;
+}
+.mind-toolbar > button {
+  min-height: 30px;
+}
+@media (max-width: 720px) {
+  .mind-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .mind-fold > summary {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+  .mind-fold .fold-summary {
+    flex-basis: 100%;
+    padding-left: 16px;
+    white-space: normal;
+  }
+  .self-meta {
+    flex-wrap: wrap;
+  }
+  .self-meta .self-reason {
+    flex-basis: 100%;
+  }
+  .self-meta .self-reason::before {
+    content: "";
+  }
+}
