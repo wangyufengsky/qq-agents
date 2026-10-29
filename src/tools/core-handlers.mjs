@@ -6,6 +6,7 @@ import { taintMedia } from "./legacy.mjs";
 import { SocialReader } from "../../vendor/social-reader/reader.mjs";
 import { safeFetch } from "../../vendor/social-reader/safe-fetch.js";
 import { recallBoundary, recallPage } from "../core/recall-boundary.mjs";
+import { markPersonCardShown } from "../core/person-cards.mjs";
 function track(ctx, items) {
   for (const row of items) {
     for (const item of [
@@ -135,7 +136,29 @@ async function handle_diary_write(runtime, ctx, args, name) {
       );
 }
 async function handle_qq_send(runtime, ctx, args, name) {
-  return runtime.send(ctx, args);
+  const receipt = await runtime.send(ctx, args);
+  if (receipt.status !== "sent" || !args.atUserId) return receipt;
+  // Someone addressed before they spoke here has not had their card shown.
+  // It comes once with the receipt, so the rest of the turn can use it.
+  const mem = runtime.memory.bind(ctx.agentId),
+    card = mem.identity.personCard(args.atUserId);
+  if (
+    !card ||
+    // The same seen key as person-cards.mjs: this card, at this revision.
+    mem.state(ctx.conversation).personCardsShown?.[card.personId] ===
+      `${card.id}:${card.revision}`
+  )
+    return receipt;
+  markPersonCardShown(mem, ctx.conversation, card);
+  return {
+    ...receipt,
+    personCard: {
+      personId: card.personId,
+      call: card.call,
+      impression: card.body,
+      revision: card.revision,
+    },
+  };
 }
 async function handle_generated_image_list(runtime, ctx, args, name) {
   const recovery = await runtime.generatedImages.recover(ctx, args);
