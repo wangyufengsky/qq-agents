@@ -13,6 +13,30 @@ import {
   assertMessageAccount,
 } from "../memory/message-ids.mjs";
 
+// What a reply could rest on when it left: the card of the person it
+// addresses (the one at-mentioned, else the private peer) and the mood then in
+// effect. References only, so a later look can tell a wrong address or tone
+// from a card or mood that was itself wrong.
+function sendBasis(mem, conversation, atUserId, now) {
+  const personId = atUserId
+    ? String(atUserId)
+    : /^private:(\d+)$/.exec(conversation)?.[1];
+  const card = personId ? mem.identity.personCard(personId) : null,
+    mood = mem.identity.currentMood(now);
+  return {
+    ...(card
+      ? {
+          personCard: {
+            id: card.id,
+            personId: card.personId,
+            revision: card.revision,
+          },
+        }
+      : {}),
+    ...(mood ? { moodId: mood.id } : {}),
+  };
+}
+
 // Serializes deliveries per connection, and commits budget, outbox and receipts.
 export class DeliveryService {
   constructor(runtime) {
@@ -80,6 +104,10 @@ export class DeliveryService {
         referenceNamespace: namespace,
         atUserId,
         mediaId,
+        // Fixed control text is not worded from a card or a mood.
+        ...(ctx.internalDelivery
+          ? {}
+          : sendBasis(mem, ctx.conversation, atUserId, runtime.now())),
       },
       send: (transport) => transport.send(ctx.conversation, segments),
     });

@@ -117,6 +117,24 @@ function activityBrowsing(b) {
     : "";
   return `<div class="act-box">${rows}${searches}${list}${failed}</div>`;
 }
+// 发送时参考的人物卡和当时的心情；卡已删除或心情记录已清理时照实说明。
+function activityBasis(b) {
+  if (!b) return "";
+  const parts = [];
+  if (b.personCard) {
+    const c = b.personCard;
+    parts.push(
+      `参考人物卡：${esc(c.call || c.personId)} v${esc(c.revision)}${c.deleted ? "（已删除）" : ""}`,
+    );
+  }
+  if (b.mood)
+    parts.push(
+      b.mood.missing
+        ? "当时心情：记录已清理"
+        : `当时心情：${esc(b.mood.mood)}（强度 ${esc(b.mood.intensity)}）`,
+    );
+  return `<p class="hint act-basis">${parts.join(" · ")}</p>`;
+}
 function activityEntry(e) {
   const quiet =
     e.kind === "subject" &&
@@ -141,7 +159,10 @@ function activityEntry(e) {
     parts.push(
       `<div class="act-box"><p class="hint">发出 ${e.sent.length} 条</p>${e.sent
         .slice(0, 3)
-        .map((s) => `<p>${s.action ? "（动作）" : ""}${esc(s.text)}</p>`)
+        .map(
+          (s) =>
+            `<p>${s.action ? "（动作）" : ""}${esc(s.text)}</p>${activityBasis(s.basis)}`,
+        )
         .join(
           "",
         )}${e.sent.length > 3 ? `<p class="hint">另有 ${e.sent.length - 3} 条</p>` : ""}</div>`,

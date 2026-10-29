@@ -1469,6 +1469,12 @@ details > form > button {
 .act-box p {
   margin: 2px 0;
 }
+/* The card and mood a sent message rested on, under that message. */
+.act-box p.act-basis {
+  display: block;
+  margin-bottom: 6px;
+  overflow-wrap: anywhere;
+}
 .act-line {
   display: flex;
   justify-content: space-between;
