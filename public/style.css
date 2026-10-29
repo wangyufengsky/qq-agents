@@ -1453,7 +1453,10 @@ small.app-row-id {
   text-overflow: ellipsis;
 }
 .file-warn {
+  margin: 2px 0 0;
   color: var(--warn);
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 .file-row button {
   min-height: 30px;

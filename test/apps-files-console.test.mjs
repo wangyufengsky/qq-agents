@@ -640,7 +640,7 @@ test("each file is one line: kind, cut name, size and date, download at the end"
   assert.match(lib, /<span class="file-kind">文件<\/span>/);
   assert.match(
     lib,
-    /<span class="file-warn">保护信息不完整，发送需批准<\/span>/,
+    /<small class="mono" title="b{64}">b{64}<\/small><\/p><p class="file-warn">保护信息不完整，发送需批准<\/p><\/div>/,
   );
   assert.match(
     lib,
