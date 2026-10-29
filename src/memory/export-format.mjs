@@ -19,7 +19,12 @@ export const EXPORT_TABLES = [
   "message_progress",
   "message_aliases",
   "message_observations",
+  "person_notes",
+  "moods",
 ];
+// Appended after v2 shipped. An older v2 export simply lacks them; their
+// absence must not fail the checksum of the tables it does carry.
+const ADDED_AFTER_V2 = new Set(["person_notes", "moods"]);
 
 /** @param {{version: number, agentId: string, exportedAt: string}} header */
 export function exportDigest(header) {
@@ -34,9 +39,13 @@ export function validateExport(data) {
   if (data.version !== 2 || data.manifest?.algorithm !== "sha256")
     throw Error("EXPORT_INTEGRITY_FAILED");
   const digest = exportDigest(data);
-  if (Object.keys(data.tables || {}).length !== EXPORT_TABLES.length)
+  const tables = EXPORT_TABLES.filter(
+    (name) =>
+      !ADDED_AFTER_V2.has(name) || Object.hasOwn(data.tables || {}, name),
+  );
+  if (Object.keys(data.tables || {}).length !== tables.length)
     throw Error("EXPORT_INTEGRITY_FAILED");
-  for (const name of EXPORT_TABLES) {
+  for (const name of tables) {
     const rows = data.tables[name];
     if (!Array.isArray(rows) || rows.length !== data.manifest.counts?.[name])
       throw Error("EXPORT_INTEGRITY_FAILED");

@@ -47,6 +47,21 @@ export const behaviorSchema = z
       })
       .strict()
       .prefault({}),
+    // A fixed line, written by the administrator, for a turn someone
+    // addressed directly that failed before saying anything. Off by default.
+    failureNotice: z
+      .object({
+        enabled: z.boolean().default(false),
+        text: z
+          .string()
+          .trim()
+          .min(1)
+          .max(200)
+          .default("我刚才没接上，稍后再回你。"),
+        cooldownMs: ms(60000, 86400000, 600000),
+      })
+      .strict()
+      .prefault({}),
   })
   .strict()
   .prefault({})

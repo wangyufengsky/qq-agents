@@ -143,6 +143,10 @@ const AGENT_TOOL_GROUPS = [
       self_withdraw: "撤回候选",
       work_note: "记录未完成话题",
       work_notes: "查看未完成话题",
+      person_note: "记下人物卡（称呼与印象）",
+      person_notes: "查看人物卡",
+      mood_set: "记下当前心情与原因",
+      mood_read: "查看自己的心情",
       intent_create: "创建主动意图",
       intent_list: "查看主动意图",
       intent_update: "暂缓或取消意图",
@@ -298,7 +302,19 @@ const agentForm = {
             row.maxConsecutiveSends ?? row.maxSendsPerTurn,
             'type="number" min="1" max="10" required',
           ) +
-          '<p class="hint">读到人类新消息后恢复；同伴私聊需冷却结束后收到并读到新消息。重读或重启不会恢复。</p>',
+          '<p class="hint">读到人类新消息后恢复；同伴私聊需冷却结束后收到并读到新消息。重读或重启不会恢复。</p>' +
+          check(
+            "failureNotice",
+            "回复失败时发一句固定提示",
+            row.behavior?.failureNotice?.enabled,
+          ) +
+          input(
+            "failureNoticeText",
+            "固定提示内容",
+            row.behavior?.failureNotice?.text ?? "",
+            'maxlength="200" placeholder="我刚才没接上，稍后再回你。"',
+          ) +
+          `<p class="hint">私聊、被 @ 或被叫名字后，这一轮因 AI 后端出错或超时失败、又一句都没发出时，由程序发送这句话；同一会话每 ${Math.round((row.behavior?.failureNotice?.cooldownMs ?? 600000) / 60000)} 分钟最多一次，仍受暂停、静默和发送限额约束。</p>`,
       ) +
       section(
         "能力",
@@ -618,6 +634,15 @@ const agentForm = {
       persona: get("persona"),
       appearance: get("appearance"),
       maxConsecutiveSends: Number(get("maxConsecutiveSends")),
+      behavior: {
+        ...original.behavior,
+        failureNotice: {
+          ...original.behavior?.failureNotice,
+          enabled: f.has("failureNotice"),
+          // An empty field keeps the built-in default text.
+          text: get("failureNoticeText").trim() || undefined,
+        },
+      },
       network: {
         ...original.network,
         autonomous: f.has("autonomousNetwork"),

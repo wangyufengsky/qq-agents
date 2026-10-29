@@ -95,6 +95,8 @@ export class MemoryStore {
       CREATE INDEX IF NOT EXISTS deliveries_status ON deliveries(agent_id,status);
       CREATE TABLE IF NOT EXISTS runtime(agent_id TEXT NOT NULL,conversation TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(agent_id,conversation));
       CREATE TABLE IF NOT EXISTS migrations(agent_id TEXT NOT NULL,source TEXT NOT NULL,digest TEXT NOT NULL,imported_at TEXT NOT NULL,PRIMARY KEY(agent_id,source,digest));
+      CREATE TABLE IF NOT EXISTS person_notes(agent_id TEXT NOT NULL,person_id TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(agent_id,person_id));
+      CREATE TABLE IF NOT EXISTS moods(agent_id TEXT NOT NULL,id TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(agent_id,id));
       `);
     try {
       migrateSearch(this.db, version);
@@ -190,6 +192,52 @@ class AgentMemory {
     this.db
       .prepare("INSERT OR REPLACE INTO people VALUES(?,?,?)")
       .run(this.agentId, qq, json(names));
+  }
+  // A send is archived as an attempt and then its outcome, both carrying the
+  // full text. Returns the outcome once one exists.
+  sendOutcome(row) {
+    const request =
+      row.kind === "message.send-attempt" &&
+      /^send:(.+):pending$/.exec(row.dedupe || "")?.[1];
+    if (!request) return null;
+    return (
+      this.db
+        .prepare(
+          "SELECT id,seq,kind,status FROM events WHERE agent_id=? AND dedupe IN (?,?,?)",
+        )
+        .get(
+          this.agentId,
+          `send:${request}:sent`,
+          `send:${request}:failed`,
+          `send:${request}:unknown`,
+        ) || null
+    );
+  }
+  // Feed entry for the model. A resolved attempt keeps its place, so read
+  // progress still covers every seq, but its text is only on the outcome.
+  feedEvent(row, current) {
+    const outcome = this.sendOutcome(row);
+    if (!outcome) return this.event(row, current, true);
+    const payload = parse(row.payload);
+    return {
+      id: row.id,
+      seq: row.seq,
+      type: row.kind,
+      conversation: row.conversation,
+      direction: row.direction,
+      status: row.status,
+      outcome: {
+        id: outcome.id,
+        seq: outcome.seq,
+        type: outcome.kind,
+        status: outcome.status,
+      },
+      notice: "发送尝试；正文和发送结果只在 outcome 这条记录里出现一次。",
+      protectedRepositories: payload.protectedRepositories || [],
+      ...(payload.protectedOperations === true
+        ? { protectedOperations: true }
+        : {}),
+    };
   }
   event(row, current, summary = false) {
     return {
@@ -559,8 +607,12 @@ class AgentMemory {
           afterSeq,
           limit,
         );
+    // A reader in its own conversation (the model) sees each outgoing text
+    // once; the console reads the plain archive.
     const items = budget(
-      rows.map((r) => this.event(r, current, true)),
+      rows.map((r) =>
+        current ? this.feedEvent(r, current) : this.event(r, current, true),
+      ),
       maxChars,
     );
     return {
@@ -807,10 +859,12 @@ class AgentMemory {
       "message_progress",
       "message_aliases",
       "message_observations",
+      "person_notes",
+      "moods",
     ])
       tables[name] = this.db
         .prepare(
-          `SELECT * FROM ${name} WHERE agent_id=?${name === "events" ? " ORDER BY seq" : ""}`,
+          `SELECT * FROM ${name} WHERE agent_id=?${name === "events" ? " ORDER BY seq" : name === "moods" ? " ORDER BY rowid" : ""}`,
         )
         .all(this.agentId);
     tables.diary_revisions = this.db

@@ -8,6 +8,8 @@ import {
   contextProtection,
   trackMindRecords,
 } from "../core/protected-mind.mjs";
+import { markPersonCardShown } from "../core/person-cards.mjs";
+import { markMoodShown } from "../core/mood.mjs";
 const text = z.string().min(1),
   ids = z.array(text).max(30),
   version = z.number().int().min(1);
@@ -69,6 +71,48 @@ export const mindDefinitions = {
   work_notes: [
     "分页读当前会话未完成工作笔记及来源可用性。",
     z.object({ offset: z.number().int().min(0).default(0) }).strict(),
+  ],
+  person_note: [
+    "写下或更新你对某个人的人物卡：call 是你怎么称呼对方，body 是你们的关系和你对他的印象（对这个人的情绪，比如还在生他的气，也写在这里），用你自己的视角写，是看法不是事实。evidence 至少一条记录 ID，依据对方明确说过的话或你亲眼见到的事；对方自称、开玩笑的叫法或反问“你叫我什么”不等于希望你这么叫。卡片在所有群和私聊共用，不要写只适合某个场合说的私事。已有卡片时 expectedRevision 填当前版本号，新卡省略。对方之后在聊天里说话时，会自动附上这张卡。",
+    z
+      .object({
+        personId: text.regex(/^\d{5,12}$/),
+        call: z.string().max(40).default(""),
+        body: text.max(600),
+        evidence: ids.min(1),
+        expectedRevision: version.optional(),
+      })
+      .strict(),
+  ],
+  person_notes: [
+    "读取人物卡。给 personIds 读指定的人（含证据与旧版本）；省略时按最近更新分页列出全部。",
+    z
+      .object({
+        personIds: z
+          .array(text.regex(/^\d{5,12}$/))
+          .min(1)
+          .max(20)
+          .optional(),
+        offset: z.number().int().min(0).default(0),
+      })
+      .strict(),
+  ],
+  mood_set: [
+    "记下你此刻的心情和原因。不是必须的：心情真的变了再写，不用每轮都写，也不用为了写而写。mood 用几个字说心情，intensity 是有多强烈（1 很轻，5 非常强烈）；reason 说为什么变好或变坏、是因为什么事，可在 evidence 附上引起变化的记录 ID。hours 是这份心情大约持续多久（0.5–24，默认 4），到期后就不再提示；之后心情又变了就再写一次。clear=true 表示心情已经过去、回到平常，这时只需要 reason。强度 4 以上、仍在有效期内的心情，要改变或清除它，evidence 里必须有一条在它之后发生的记录（比如安慰你或惹你的那句话、你的 subject_log）；没有新的原因就让它保持，到期会自然结束。冲着某个人的情绪（比如生某人的气）写进那个人的人物卡（person_note），这里只写你整体的状态。心情在你所有群聊和私聊之间共享，只给你自己看，但原因要写成在别的聊天里想起来也无妨的说法。",
+    z
+      .object({
+        mood: z.string().max(40).optional(),
+        intensity: z.number().int().min(1).max(5).optional(),
+        reason: text.max(300),
+        hours: z.number().min(0.5).max(24).default(4),
+        evidence: ids.max(10).default([]),
+        clear: z.boolean().default(false),
+      })
+      .strict(),
+  ],
+  mood_read: [
+    "读取你当前仍有效的心情和最近十次心情变化（含原因）。",
+    z.object({}).strict(),
   ],
   intent_create: [
     "创建普通聊天意图（不是正式提醒），允许带保护标记保存。主体不能直接发送；目标聊天可暂缓/放弃，受保护资料不向未经授权的目标自动交接或发送。主题跨群去重；expiresAt/eligibleAt 为 Unix 毫秒。",
@@ -174,6 +218,10 @@ export const SUBJECT_TOOLS = [
   "self_withdraw",
   "work_note",
   "work_notes",
+  "person_note",
+  "person_notes",
+  "mood_set",
+  "mood_read",
   "file_list",
   "file_create",
   "intent_create",
@@ -186,10 +234,17 @@ function executeMindTool(runtime, ctx, name, args) {
     m = runtime.memory.bind(a.id),
     identity = m.identity,
     now = runtime.now();
-  // Shared self cannot carry restricted material. Scoped notes and intentions
-  // instead retain protection on storage, reads, handoff and actual delivery.
+  // Shared self and person cards cannot carry restricted material. Scoped notes
+  // and intentions instead retain protection on storage, reads, handoff and
+  // actual delivery.
   if (
-    ["self_propose", "self_review", "self_withdraw"].includes(name) &&
+    [
+      "self_propose",
+      "self_review",
+      "self_withdraw",
+      "person_note",
+      "mood_set",
+    ].includes(name) &&
     (privateGithubSources(ctx, runtime).length > 0 ||
       [...ctx.privateRead].some((id) =>
         /^(operations|operations-result|github-private):/.test(id),
@@ -243,6 +298,42 @@ function executeMindTool(runtime, ctx, name, args) {
       nextOffset: args.offset + 8 < rows.length ? args.offset + 8 : null,
     };
   }
+  if (name === "person_note") {
+    const card = identity.savePersonCard(args, {
+      writtenIn: ctx.conversation,
+      now,
+    });
+    markPersonCardShown(m, ctx.conversation, card);
+    return card;
+  }
+  if (name === "person_notes") {
+    if (args.personIds) {
+      const cards = args.personIds.map((id) => identity.personCard(id));
+      return {
+        items: cards.filter(Boolean),
+        missing: args.personIds.filter((_, i) => !cards[i]),
+      };
+    }
+    const rows = identity.personCards();
+    return {
+      items: rows.slice(args.offset, args.offset + 20),
+      total: rows.length,
+      nextOffset: args.offset + 20 < rows.length ? args.offset + 20 : null,
+    };
+  }
+  if (name === "mood_set") {
+    const mood = identity.setMood(args, {
+      writtenIn: ctx.conversation,
+      now,
+    });
+    markMoodShown(m, ctx.conversation, mood);
+    return mood;
+  }
+  if (name === "mood_read")
+    return {
+      current: identity.currentMood(now),
+      recent: identity.moodHistory(10),
+    };
   if (name === "subject_log") {
     if (ctx.conversation !== "@subject") throw Error("TOOL_DISABLED");
     if (args.did === "rested" && !args.restReason)

@@ -10,6 +10,8 @@ import { trackMindRecords } from "./protected-mind.mjs";
 import { subjectMaterials } from "./subject-materials.mjs";
 import { mergeProtection } from "../memory/protection.mjs";
 import { rememberSources, sourceHandoff } from "./context-handoff.mjs";
+import { personCardsForTurn } from "./person-cards.mjs";
+import { moodForTurn } from "./mood.mjs";
 import { recallBoundary, recallPage } from "./recall-boundary.mjs";
 import {
   retireSession,
@@ -17,6 +19,25 @@ import {
   recoverSessions,
 } from "./session-records.mjs";
 export const SUBJECT = "@subject";
+// The initial prompt gives each record once. Sources already in the new
+// messages or the free-time logs, and intents already in the handoff, are
+// not repeated further down.
+function dropRepeats(handoff, history, materials) {
+  const shown = new Set(
+    [...history.items, ...(materials?.lastLogs || [])].map((x) => x.id),
+  );
+  const sources = handoff.continuity.sources;
+  handoff.continuity.sources = sources.filter((x) => !shown.has(x.id));
+  const repeated = sources.length - handoff.continuity.sources.length;
+  if (repeated)
+    handoff.continuity.notice += ` 另有 ${repeated} 条来源已在下方新增消息或空闲素材中给出，不再重复。`;
+  if (materials) {
+    const listed = new Set(
+      [...handoff.intents, ...handoff.recentContacts].map((x) => x.id),
+    );
+    materials.shares = materials.shares.filter((x) => !listed.has(x.id));
+  }
+}
 export class ContextLifecycle {
   constructor(runtime) {
     this.runtime = runtime;
@@ -103,6 +124,7 @@ export class ContextLifecycle {
             x.status,
           ),
       );
+    const shownIntents = new Set(intents.slice(0, 30).map((i) => i.id));
     return {
       conversation,
       subjectState:
@@ -139,6 +161,8 @@ export class ContextLifecycle {
         status: i.status,
         topic: i.topic,
         evidence: i.evidence,
+        // Free time sees how an active contact went here, not again under recentContacts.
+        ...(conversation === SUBJECT ? { history: i.history.slice(-3) } : {}),
         ...mergeProtection(i),
       })),
       intentsTotal: intents.length,
@@ -161,15 +185,17 @@ export class ContextLifecycle {
         conversation === SUBJECT
           ? boundary
               .rows(m.identity.list("intentions"))
-              .filter((i) =>
-                i.history.some((h) =>
-                  [
-                    "awaiting-response",
-                    "completed",
-                    "failed",
-                    "unknown",
-                  ].includes(h.status),
-                ),
+              .filter(
+                (i) =>
+                  !shownIntents.has(i.id) &&
+                  i.history.some((h) =>
+                    [
+                      "awaiting-response",
+                      "completed",
+                      "failed",
+                      "unknown",
+                    ].includes(h.status),
+                  ),
               )
               .slice(0, 20)
               .map((i) => ({
@@ -368,6 +394,17 @@ export class ContextLifecycle {
           );
     this.seen(ctx, history.items);
     ctx.feedThroughSeq = history.nextAfterSeq || s.feedThroughSeq || 0;
+    const people =
+      ctx.conversation === SUBJECT
+        ? null
+        : personCardsForTurn(m, ctx.conversation, history.items, {
+            fresh: ctx.initialSession,
+            accountId: r.connection(a.connectionId).accountId,
+          });
+    const mood = moodForTurn(m, ctx.conversation, {
+      now: r.now(),
+      fresh: ctx.initialSession,
+    });
     // Existing backend context and legacy handoffs may predate disclosure tracking.
     // Retain an explicit source boundary and every recoverable handoff handle.
     const handoff = ctx.initialSession
@@ -389,14 +426,22 @@ export class ContextLifecycle {
     }
     r.subject.trackForTurn(ctx);
     ctx.persistTaint?.();
+    const materials =
+      ctx.conversation === SUBJECT ? subjectMaterials(r, ctx) : null;
+    if (handoff) dropRepeats(handoff, history, materials);
     const prompt = [
       `当前场景 ${ctx.conversation}。本回合采用 self v${self.version}。主人/管理员：${a.ownerIds.join(",") || "未设置"}。`,
       `唤醒原因（资料）: ${JSON.stringify(reasons.map((reason) => (reason.intentId && !recallBoundary(r, ctx).allowed(m.identity.get("intentions", reason.intentId)) ? { reason: "protected-work-withheld" } : reason)))}`,
       turnEnvironment(r, a, ctx, backendType),
       ctx.initialSession ? `程序交接状态：${JSON.stringify(handoff)}` : "",
       ctx.conversation === SUBJECT
-        ? `空闲时间素材：${JSON.stringify(subjectMaterials(r, ctx))}`
+        ? `空闲时间素材：${JSON.stringify(materials)}`
         : `新增消息：${JSON.stringify(history)}`,
+      mood.line,
+      // Last, closest to the reply, where an address is most likely heeded.
+      people?.cards.length
+        ? `人物卡（你自己记下的称呼与印象，是看法不是事实；称呼按 call，过时就用 person_note 更新）：${JSON.stringify(people.cards)}`
+        : "",
     ]
       .filter(Boolean)
       .join("\n\n");
@@ -405,6 +450,8 @@ export class ContextLifecycle {
       loadedSelfVersion: self.version,
       loadedInstructionsHash: instructionsHash,
       lastTurnId: ctx.turnId,
+      ...(people ? { personCardsShown: people.shown } : {}),
+      moodShown: mood.shown,
       lifecycle: {
         ...s.lifecycle,
         status: s.lifecycle?.status === "organizing" ? "organizing" : "active",

@@ -81,6 +81,18 @@ export class ConversationEngine {
     if (wc.keywords?.some((w) => e.body.includes(w))) return "keyword";
     return this.runtime.random() < wc.participation ? "message" : null;
   }
+  // Whether a message speaks to this agent, whichever wake reason wins (a
+  // question or a watched speaker can outrank a name or an @mention).
+  addressed(a, e, accountId) {
+    if (!["message.received", "notice.file"].includes(e.kind)) return false;
+    return (
+      e.conversation.startsWith("private:") ||
+      e.segments.some(
+        (s) => s.type === "at" && String(s.data?.qq) === accountId,
+      ) ||
+      [a.name, ...a.aliases].some((n) => n && e.body.includes(n))
+    );
+  }
   request(
     id,
     conversation,
@@ -92,6 +104,7 @@ export class ConversationEngine {
       intentId = null,
       immediate = false,
       senderId = null,
+      addressed = false,
     } = {},
   ) {
     const a = this.runtime.agent(id),
@@ -109,8 +122,10 @@ export class ConversationEngine {
         x.taskRunId === taskRunId &&
         x.intentId === intentId,
     );
-    if (existing) existing.seq = Math.max(existing.seq, seq);
-    else
+    if (existing) {
+      existing.seq = Math.max(existing.seq, seq);
+      if (addressed) existing.addressed = true;
+    } else
       state.pendingWakes.push({
         reason,
         seq,
@@ -118,6 +133,7 @@ export class ConversationEngine {
         taskRunId,
         intentId,
         at: now,
+        ...(addressed ? { addressed: true } : {}),
       });
     // Never discard a persisted scheduled instruction when coalescing ordinary chat wakes.
     const tasks = state.pendingWakes.filter((x) => x.taskRunId || x.intentId),

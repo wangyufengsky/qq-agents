@@ -114,6 +114,7 @@ async function renderMind() {
       return `<details class="record"><summary>v${v.version} · ${esc(v.actor)} · ${mindTime(v.at)}</summary><p>${esc(v.reason)}</p><pre>${esc(v.body)}</pre><p>较前一版删除</p><pre>${esc(removed || "无")}</pre><p>较前一版新增</p><pre>${esc(added || "无")}</pre><p class="mono">来源：${esc((v.evidence || []).join(", ") || "无")}</p>${mindEvidence(v.evidenceSnapshot)}${v.template !== undefined ? `<details><summary>初始化模板</summary><pre>${esc(v.template)}</pre></details>` : ""}${v.version !== current.version ? `<button data-restore="${v.version}">恢复为新版本</button>` : ""}</details>`;
     })
     .join("");
+  const moodNow = Date.now();
   $("#mind-body").innerHTML =
     `<section class="card"><h2>身份锚点</h2><p>${esc(a.name)} · ${esc(a.id)}</p><p>${esc(data.anchors?.appearance || (data.anchors?.requiresMigration ? "请在角色设置中确认原有外形；确认前保留初始 self，禁止替换。" : "未设置固定外形"))}</p><p class="hint">名字、外形、账号与管理权限来自配置；性格与相处方式通过下方 self 发展。</p></section>
   <section class="card self-card"><div class="row"><h2>当前 self · v${current.version}</h2><button type="button" id="self-edit">修改</button></div><div id="self-view" class="self-view">${esc(current.body)}</div><button type="button" id="self-more" class="self-more" hidden>显示全部</button><form id="self-form" hidden><label class="wide">当前自我<textarea id="self-body" name="body">${esc(current.body)}</textarea></label>${input("reason", "管理员修改理由", "", "required")}<div class="card-actions"><button class="primary">保存新版本</button><button type="button" id="self-cancel">取消</button></div><p class="hint">下一回合生效；运行中的回合保持原版本。版本冲突会拒绝覆盖。</p></form></section>
@@ -130,10 +131,14 @@ async function renderMind() {
       .join("") ||
     '<p class="hint">尚无主体思考回合记录；条件检查不等于模型回合完成。</p>'
   }</section>
+  ${moodMarkup(data.mood, moodNow)}
+  ${peopleMarkup(data.personCards)}
   <section class="card"><h2>聊天意图与结果</h2>${data.intents.map((i) => `<details class="record"><summary>${esc(i.topic)} · ${esc(mindStates[i.status] || i.status)}</summary><p>${esc(i.target)} · ${esc(i.reason)}</p><p>有效期至 ${mindTime(i.expiresAt)} · 已确认发送 ${mindTime(i.sentAt)}</p><p class="mono">来源：${esc(i.evidence.join(", "))}</p>${i.history.map((h) => `<p>${mindTime(h.at)} · ${esc(mindStates[h.status] || h.status)} · ${esc(h.reason || "")}</p>`).join("")}${!["completed", "cancelled", "expired", "failed", "unknown"].includes(i.status) ? `<button data-cancel-intent="${esc(i.id)}" data-revision="${i.revision}">取消意图</button>` : ""}</details>`).join("") || '<p class="hint">没有意图。已考虑、已交接和已确认投递分别记录。</p>'}</section>
   <section class="card"><h2>工作会话</h2>${data.sessions.map((s) => `<article class="record"><strong>${esc(s.conversation === "@subject" ? "主体思考" : s.conversation)}</strong><p>self v${s.loadedSelfVersion || "—"} · ${esc(s.lifecycle?.status || "尚未初始化")} · ${esc(s.lifecycle?.reason || "")}</p><p>${s.usage ? `${s.usage.source === "measured" ? "后端实测" : "估算"} ${s.usage.contextTokens} / ${s.usage.capacityTokens || a.contextPolicy.capacityTokens} tokens（另预留 ${a.contextPolicy.reserveTokens}）` : "用量尚不可用"}</p><p>连续已见 ${s.seenThroughSeq || 0} · 已处理 ${s.readThroughSeq || 0}</p><button data-reset-session="${esc(s.conversation)}">结束当前会话，下次再初始化</button></article>`).join("")}</section>`;
   // Self is read in full by default; 修改 swaps in a textarea that grows
   // with its content. 取消 resets the form, discarding unsaved edits.
+  bindMood(data.mood, moodNow);
+  bindPeople(data.personCards, a.id);
   const selfView = $("#self-view"),
     selfMore = $("#self-more"),
     selfForm = $("#self-form"),

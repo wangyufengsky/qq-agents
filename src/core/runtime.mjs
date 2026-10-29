@@ -253,6 +253,8 @@ export class Runtime {
                   n.startsWith("self_") ||
                   n.startsWith("intent_") ||
                   n.startsWith("work_") ||
+                  n.startsWith("person_") ||
+                  n.startsWith("mood_") ||
                   n === "subject_log" ||
                   a.tools.includes(n),
               ),
@@ -611,7 +613,8 @@ export class Runtime {
         if (await this.operations.command(a, e, archived)) continue;
         if (await this.scheduler.command(a, e, archived)) continue;
       }
-      const reason = this.conversations.reason(a, e, c.accountId);
+      const reason = this.conversations.reason(a, e, c.accountId),
+        addressed = this.conversations.addressed(a, e, c.accountId);
       if (!reason) {
         this.conversations.extend(a.id, e.conversation, e.senderId);
         continue;
@@ -625,12 +628,14 @@ export class Runtime {
         this.conversations.request(a.id, e.conversation, reason, {
           seq: archived.seq,
           senderId: e.senderId,
+          addressed,
         });
         continue;
       }
       const wake = this.conversations.request(a.id, e.conversation, reason, {
         seq: archived.seq,
         senderId: e.senderId,
+        addressed,
       });
       results.push({ agentId: a.id, ...wake });
     }
