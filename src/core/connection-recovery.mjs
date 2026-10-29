@@ -35,21 +35,24 @@ export class ConnectionRecovery {
       error: null,
       attemptError: null,
       lostAt: null,
-      noticeCode: null,
       lastGap: previous?.lostAt
         ? { lostAt: previous.lostAt, recoveredAt: this.runtime.now() }
         : previous?.lastGap || null,
     });
-    // "Recovered" only follows an outage the owners were sent a line about.
-    if (previous?.lostAt && previous.noticeCode)
-      this.notify(id, "recovered", previous.noticeCode);
+    // "Recovered" only goes to owners an outage line actually reached.
+    if (previous?.lostAt && previous.told?.size)
+      this.notify(id, "recovered", previous.noticeCode, null, [
+        ...previous.told,
+      ]);
   }
   // At most one line per event and outage; the notice applies its own cooldown.
-  notify(id, event, code, s = null) {
+  notify(id, event, code, s = null, owners = null) {
     if (s?.notified.has(event)) return;
     s?.notified.add(event);
-    const job = this.outage.send(id, event, code).then((sent) => {
-      if (sent && s) s.noticeCode = code;
+    const job = this.outage.send(id, event, code, owners).then((delivered) => {
+      if (!s || !delivered.length) return;
+      for (const owner of delivered) s.told.add(owner);
+      s.noticeCode = code;
     });
     this.runtime.trackJob(job, "connection:" + id);
   }
@@ -66,6 +69,7 @@ export class ConnectionRecovery {
       lostAt: this.runtime.now(),
       nextRetryAt: this.runtime.now() + this.delay(id, 1),
       notified: new Set(),
+      told: new Set(),
       noticeCode: null,
     });
     if (code === "QQ_OFFLINE") this.notify(id, "offline", code, s);

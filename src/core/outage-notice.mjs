@@ -31,26 +31,32 @@ export class OutageNotice {
     );
   }
   // event is "offline", "exhausted" or "recovered"; code is a registered
-  // error code that picks the {reason} wording. True once a line was tried.
-  async send(connectionId, event, code) {
+  // error code that picks the {reason} wording. Only `owners` are told when
+  // given (a recovery goes to those who heard of the outage). Returns the
+  // owners whose line was confirmed sent.
+  async send(connectionId, event, code, owners = null) {
     const r = this.runtime;
-    if (r.closed) return false;
+    if (r.closed) return [];
     const agent = r.config.agents.find((a) => a.connectionId === connectionId),
       notice = agent?.behavior.outageNotice;
-    if (!notice?.enabled) return false;
-    if (event === "recovered" && !notice.notifyRecovered) return false;
+    if (!notice?.enabled) return [];
+    if (event === "recovered" && !notice.notifyRecovered) return [];
     const mem = r.memory.bind(agent.id),
       state = mem.state(STATE),
       key = connectionId + ":" + event,
       now = r.now();
-    if (now - (state[key] || 0) < notice.cooldownMs) return false;
+    if (now - (state[key] || 0) < notice.cooldownMs) return [];
     if (!agent.ownerIds.length)
       r.diagnostics.report(Error("OUTAGE_NOTICE_NO_OWNER"), {
         component: "runtime",
         agentId: agent.id,
       });
     const targets = [];
-    for (const owner of new Set(agent.ownerIds)) {
+    for (const owner of new Set(
+      owners
+        ? agent.ownerIds.filter((o) => owners.includes(o))
+        : agent.ownerIds,
+    )) {
       const sender = this.sender(agent, owner);
       if (sender) targets.push({ owner, sender });
       else
@@ -60,7 +66,7 @@ export class OutageNotice {
           conversation: "private:" + owner,
         });
     }
-    if (!targets.length) return false;
+    if (!targets.length) return [];
     mem.setState(STATE, { ...state, [key]: now });
     const reason = REASONS[code] || REASONS.QQ_AUTO_RECONNECT_EXHAUSTED,
       text = (
@@ -68,15 +74,17 @@ export class OutageNotice {
       ).replace(/\{(agent|reason)\}/g, (_, name) =>
         name === "agent" ? agent.name : reason,
       );
+    const delivered = [];
     for (const { owner, sender } of targets) {
       const conversation = "private:" + owner;
       try {
-        await r.withContext(sender.id, conversation, (ctx) =>
+        const receipt = await r.withContext(sender.id, conversation, (ctx) =>
           r.send(ctx, {
             requestId: ["outage", connectionId, event, now, owner].join(":"),
             text,
           }),
         );
+        if (receipt?.status === "sent") delivered.push(owner);
       } catch (error) {
         r.diagnostics.report(error, {
           component: "runtime",
@@ -85,6 +93,6 @@ export class OutageNotice {
         });
       }
     }
-    return true;
+    return delivered;
   }
 }

@@ -257,6 +257,59 @@ test("the recovered line is off by default and only follows an outage line", asy
   ]);
 });
 
+test("the recovered line only reaches owners whose outage line was delivered", async (t) => {
+  const other = "private:30001";
+  const f = setup(t, {
+    notice: { notifyRecovered: true },
+    edit: (cfg) => {
+      cfg.agents[0].ownerIds = [owner, "30001"];
+      cfg.agents[1].allow.users = [owner, "30001"];
+    },
+  });
+  // The second owner's chat is silenced only while QQ is down.
+  const m = f.store.bind("agent-1");
+  m.setState(other, {
+    ...m.state(other),
+    silenceUntil: f.runtime.now() + 10 * MINUTE,
+  });
+  await f.runtime.startConnection("qq-0");
+  await f.drop("QQ_OFFLINE");
+  assert.deepEqual(f.sent("qq-1"), [[dm, "角色0 掉线了：QQ 已离线"]]);
+  f.failWith("QQ_OFFLINE");
+  await f.advance(2000);
+  await f.advance(11 * MINUTE); // the silence is over before QQ comes back
+  f.goOnline();
+  await f.advance(8000);
+  assert.equal(
+    f.runtime.connectionRecovery.snapshot("qq-0").state,
+    "connected",
+  );
+  assert.deepEqual(f.sent("qq-1"), [
+    [dm, "角色0 掉线了：QQ 已离线"],
+    [dm, "角色0 回来了"],
+  ]);
+
+  // Nobody heard of the outage, so nobody hears of the recovery.
+  const g = setup(t, { notice: { notifyRecovered: true } });
+  const n = g.store.bind("agent-1");
+  n.setState(dm, {
+    ...n.state(dm),
+    silenceUntil: g.runtime.now() + 10 * MINUTE,
+  });
+  await g.runtime.startConnection("qq-0");
+  await g.drop("QQ_OFFLINE");
+  g.failWith("QQ_OFFLINE");
+  await g.advance(2000);
+  await g.advance(11 * MINUTE);
+  g.goOnline();
+  await g.advance(8000);
+  assert.equal(
+    g.runtime.connectionRecovery.snapshot("qq-0").state,
+    "connected",
+  );
+  assert.deepEqual(g.sent("qq-1"), []);
+});
+
 test("the outage notice defaults off and older configurations still load", () => {
   const cfg = config(1);
   assert.deepEqual(cfg.agents[0].behavior.outageNotice, {
