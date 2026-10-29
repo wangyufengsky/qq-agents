@@ -3286,3 +3286,387 @@ p.mind-tools {
     content: "";
   }
 }
+
+/* 作息与定时、语音、受保护工作 (parity.js): what the page is for comes
+   first; settings fold below with their state in the summary row. */
+#parity-body .section-title {
+  flex-wrap: wrap;
+}
+.section-actions {
+  display: flex;
+  gap: 8px;
+}
+/* A fold inside a folded form reads lighter than the one around it. */
+#parity-body details.card.fold.fold-inner {
+  margin: 14px 0 4px;
+  padding: 12px 16px;
+  background: var(--fill-1);
+  box-shadow: none;
+}
+#parity-body details.card.fold.fold-inner[open] > summary {
+  margin-bottom: 4px;
+}
+#parity-body .fold-inner .fold-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 13.5px;
+  font-weight: 500;
+}
+/* Tasks: name, next run and rule cut to one line each; the switch and edit
+   stay put at the right. */
+.task-list {
+  margin: 0 0 12px;
+  padding: 4px 20px;
+  list-style: none;
+}
+.task-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+}
+.task-row:last-child {
+  border-bottom: 0;
+}
+.task-main {
+  min-width: 0;
+}
+.task-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.task-name,
+.task-next,
+.task-rule {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.task-name {
+  color: var(--ink);
+  font-size: 14.5px;
+  font-weight: 600;
+}
+.task-next,
+.task-rule {
+  margin: 4px 0 0;
+  font-size: 13px;
+}
+.task-next {
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.task-next span {
+  margin-right: 6px;
+  color: var(--muted);
+}
+.task-rule {
+  color: var(--muted);
+}
+.task-row.is-off .task-name,
+.task-row.is-off .task-next {
+  color: var(--sub);
+}
+.task-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.task-actions button {
+  min-height: 28px;
+  padding: 0 12px;
+  font-size: 12.5px;
+}
+.task-editor {
+  border-color: var(--accent-line);
+}
+.task-editor h3 {
+  margin-top: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.task-editor-gap {
+  flex: 1;
+}
+/* An on/off switch drawn over a real checkbox. */
+#parity-body .switch {
+  position: relative;
+  display: inline-flex;
+  margin: 0;
+  cursor: pointer;
+}
+#parity-body .switch input[type="checkbox"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.switch-track {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line-2);
+  background: var(--fill-4);
+  transition:
+    background var(--t-fast),
+    border-color var(--t-fast);
+}
+.switch-track::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--sub);
+  transition:
+    transform var(--t-fast),
+    background var(--t-fast);
+}
+.switch input:checked + .switch-track {
+  border-color: var(--brand);
+  background: var(--brand);
+}
+.switch input:checked + .switch-track::after {
+  background: var(--ink-strong);
+  transform: translateX(16px);
+}
+.switch input:focus-visible + .switch-track {
+  box-shadow: var(--ring);
+}
+/* Run history: state, what and when on one line. */
+.run-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.run-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+.run-row:last-child {
+  border-bottom: 0;
+}
+.run-what {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-2);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.run-row time,
+.ops-levels time,
+.work-head time {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.run-more {
+  margin: 6px 0 0;
+}
+#parity-body .pill.bad {
+  padding-left: 9px;
+  border-color: var(--danger-line);
+  background: var(--danger-fill);
+  color: var(--danger);
+}
+#parity-body .pill.bad::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+/* Checkbox groups (targets, weekdays) instead of a multi-select. */
+#parity-body fieldset.pick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 18px;
+  min-width: 0;
+  margin: 12px 0;
+  padding: 0;
+  border: 0;
+}
+#parity-body fieldset.pick legend {
+  margin-bottom: 7px;
+  padding: 0;
+  color: var(--ink-2);
+  font-size: 13px;
+  font-weight: 500;
+}
+#parity-body fieldset.pick .check {
+  margin: 4px 0;
+}
+.chips-add {
+  flex-wrap: wrap;
+}
+.chips-add input[type="date"],
+.chips-add input[type="time"] {
+  flex: 1 1 130px;
+}
+/* Voices: title and facts cut to one line, the play button beside them. */
+.voice-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.voice-list > .card {
+  margin: 0;
+}
+.voice-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+}
+.voice-text {
+  flex: 1;
+  min-width: 0;
+}
+.voice-text h3,
+.voice-text p {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.voice-text h3 {
+  margin: 0;
+  font-size: 14.5px;
+}
+.voice-text p {
+  margin: 4px 0 0;
+}
+#voice-player {
+  margin: 0 0 16px;
+}
+/* Protected work and operations. */
+.work-list {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.work-list > .card {
+  margin: 0;
+}
+.work-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.work-scope {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--sub);
+  font-size: 13px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.work-head time {
+  margin-left: auto;
+}
+.work-text {
+  display: -webkit-box;
+  margin: 10px 0 0;
+  overflow: hidden;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+.work-result {
+  max-height: 320px;
+}
+.work-release {
+  margin-top: 14px;
+  padding: 4px 14px 12px;
+  border: 1px solid var(--warn-line);
+  border-radius: var(--r-md);
+  background: var(--warn-fill);
+}
+.work-release .check {
+  align-items: flex-start;
+}
+.work-release .check input {
+  margin-top: 3px;
+}
+.ops-levels {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ops-levels li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+.ops-confirm {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.ops-confirm h3 {
+  margin-top: 0;
+  overflow-wrap: anywhere;
+}
+.danger-zone {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-color: var(--danger-line);
+  background: linear-gradient(180deg, var(--danger-fill), transparent);
+}
+.danger-zone > div {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+.danger-zone h3 {
+  margin: 0 0 4px;
+  color: var(--danger);
+}
+.danger-zone .hint {
+  margin: 0;
+}
+@media (max-width: 720px) {
+  /* Phones put a fold's state under its title rather than squeeze it. */
+  #parity-body details.card.fold > summary {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+  /* A zero basis keeps a long title beside its arrow, wrapping inside. */
+  #parity-body .fold .fold-title {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  #parity-body .fold-summary {
+    flex: 1 1 100%;
+    padding-left: 16px;
+  }
+  .task-list {
+    padding: 4px 16px;
+  }
+}
