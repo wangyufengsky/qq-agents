@@ -707,12 +707,21 @@ const recoveryText = (r) => {
   const gap = r.lastGap
     ? `上次断线 ${at(r.lastGap.lostAt)}—${at(r.lastGap.recoveredAt)}，期间的消息未补录。`
     : "";
+  // QQ logged out behind a live gateway: reconnecting cannot log it back in.
+  const offline = r.error === "QQ_OFFLINE" || r.attemptError === "QQ_OFFLINE";
+  const cause = offline
+    ? "QQ 账号已离线（被其他设备顶下线、登录过期或风控），需要在 NapCat 重新登录"
+    : "连接中断";
   if (r.state === "retrying")
-    return `连接中断，自动重连等待中：已尝试 ${r.attempts}/${r.maxAttempts} 次，下次约 ${at(r.nextRetryAt)}。`;
+    return `${cause}，自动重连等待中：已尝试 ${r.attempts}/${r.maxAttempts} 次，下次约 ${at(r.nextRetryAt)}。`;
   if (r.state === "reconnecting")
-    return `连接中断，正在进行第 ${r.attempts}/${r.maxAttempts} 次自动重连。`;
+    return `${cause}，正在进行第 ${r.attempts}/${r.maxAttempts} 次自动重连。`;
   if (r.state === "exhausted")
-    return `自动重连已停止（${r.error === "QQ_ACCOUNT_MISMATCH" ? "登录账号不匹配" : "多次失败"}），请检查实例后手动连接。`;
+    return r.error === "QQ_ACCOUNT_MISMATCH"
+      ? "自动重连已停止（登录账号不匹配），请检查实例后手动连接。"
+      : offline
+        ? "自动重连已停止：QQ 账号仍未登录。在 NapCat 重新登录后手动连接。"
+        : "自动重连已停止（多次失败），请检查实例后手动连接。";
   if (r.state === "stopped") return "自动重连已关闭或连接已停用，请手动连接。";
   return (
     (r.enabled

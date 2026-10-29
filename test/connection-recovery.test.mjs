@@ -27,12 +27,16 @@ function setup(t, edit = () => {}) {
       return transport;
     };
   };
+  const online = f.runtime.transportFactory;
+  const goOnline = () => {
+    f.runtime.transportFactory = online;
+  };
   const drop = (code = "CONNECTION_LOST") => {
     const transport = f.runtime.transports.get("qq-0");
     transport.connected = false;
     transport.emit("fault", code);
   };
-  return { ...f, advance, failWith, drop, now: () => now };
+  return { ...f, advance, failWith, goOnline, drop, now: () => now };
 }
 const recovery = (runtime, id = "qq-0") =>
   runtime.connectionRecovery.snapshot(id);
@@ -188,4 +192,28 @@ test("the heartbeat timeout is optional and bounded", () => {
     cfg.connections[0].recovery.heartbeatTimeoutMs = value;
     assert.throws(() => validateConfig(cfg));
   }
+});
+
+test("a QQ that logged out is reconnected once it is online again", async (t) => {
+  const { runtime, advance, drop, failWith, goOnline } = setup(t);
+  await runtime.startConnection("qq-0");
+  drop("QQ_OFFLINE");
+  assert.equal(recovery(runtime).state, "retrying");
+  assert.equal(recovery(runtime).error, "QQ_OFFLINE");
+  assert.equal(runtime.faults.get("qq-0"), "QQ_OFFLINE");
+  failWith("QQ_OFFLINE");
+  await advance(2000);
+  assert.equal(recovery(runtime).state, "retrying");
+  assert.equal(recovery(runtime).attemptError, "QQ_OFFLINE");
+  // Unreviewed failure text never reaches the console.
+  failWith("connect ECONNREFUSED 127.0.0.1:3000");
+  await advance(4000);
+  assert.equal(recovery(runtime).attemptError, "CONNECTION_FAILED");
+  goOnline();
+  await advance(8000);
+  const r = recovery(runtime);
+  assert.equal(r.state, "connected");
+  assert.equal(r.attemptError, null);
+  assert.equal(r.lastGap.recoveredAt - r.lastGap.lostAt, 14000);
+  assert.equal(runtime.transports.get("qq-0").connected, true);
 });
