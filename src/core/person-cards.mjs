@@ -3,6 +3,9 @@
 // there, and again only after the card changes. A new session starts with
 // none seen, so a card never repeats turn after turn.
 const MAX_CARDS_PER_TURN = 10;
+// What a session has seen: this card, at this revision.
+/** @param {any} card */
+const seenKey = (card) => `${card.id}:${card.revision}`;
 
 /**
  * @param {any} memory Bound agent memory.
@@ -28,7 +31,7 @@ export function personCardsForTurn(memory, conversation, items, options) {
   for (const id of speakers) {
     if (cards.length >= MAX_CARDS_PER_TURN) break;
     const card = memory.identity.personCard(id);
-    if (!card || shown[id] === card.revision) continue;
+    if (!card || shown[id] === seenKey(card)) continue;
     cards.push({
       personId: card.personId,
       call: card.call,
@@ -37,7 +40,7 @@ export function personCardsForTurn(memory, conversation, items, options) {
       updatedAt: card.updatedAt,
       ...(card.author === "admin" ? { editedBy: "admin" } : {}),
     });
-    shown[id] = card.revision;
+    shown[id] = seenKey(card);
   }
   return { cards, shown };
 }
@@ -49,7 +52,7 @@ export function markPersonCardShown(memory, conversation, card) {
     ...state,
     personCardsShown: {
       ...state.personCardsShown,
-      [card.personId]: card.revision,
+      [card.personId]: seenKey(card),
     },
   });
 }

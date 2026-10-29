@@ -414,6 +414,9 @@ export class IdentityMemory {
     if ((old?.revision || 0) !== expectedRevision)
       throw Error("REVISION_CONFLICT");
     const value = {
+      // Stable for the card's life; a card deleted and written again is a
+      // new card even though its revision restarts at 1.
+      id: old?.id || randomUUID(),
       personId,
       call: call.trim(),
       body: body.trim(),

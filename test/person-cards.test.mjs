@@ -158,6 +158,23 @@ test("a card reaches a model session once per revision, when its person speaks",
   said(m, "新的一天");
   await f.runtime.wake("agent-0", scope);
   assert.match(prompts[6], /管理员补充：喜欢被叫明哥/);
+  assert.match(prompts[6], /刚进群的新朋友/);
+
+  // A card deleted and written again is new, though its revision restarts at 1.
+  m.identity.deletePersonCard("30001", 1);
+  const again = m.identity.savePersonCard(
+    {
+      personId: "30001",
+      call: "新新",
+      body: "删掉重写的新卡",
+      evidence: [e.id],
+    },
+    { writtenIn: scope, now: f.runtime.now() },
+  );
+  assert.equal(again.revision, 1);
+  said(m, "又是我", "30001");
+  await f.runtime.wake("agent-0", scope);
+  assert.match(prompts[7], /删掉重写的新卡/);
 });
 
 test("the console lists, edits and deletes cards with revision checks", async (t) => {
