@@ -91,7 +91,7 @@ function moodLogMarkup(history, currentId, now) {
   return `<div class="mood-section-title"><h3>变化记录</h3><span class="hint">最近 ${history.length} 次，最新在上</span></div><ol class="mood-log" id="mood-log">${rows.join("")}</ol>${history.length > 8 ? `<button type="button" class="ghost mood-more" id="mood-more">显示全部 ${history.length} 次</button>` : ""}`;
 }
 function moodMarkup(mood, now) {
-  return `<section class="card mood-card"><h2>心情</h2><p class="hint">角色自己记下的心情和原因；有效期内同一会话只附上一次，心情变了再附。这里只能查看，心情只有角色自己能改，想让角色心情好起来，就去和角色聊天。</p>${moodNowMarkup(mood, now)}<div class="mood-section-title"><h3>强度变化</h3><div class="mood-range" role="group" aria-label="时间范围"><button type="button" data-mood-range="1">24 小时</button><button type="button" data-mood-range="7">7 天</button></div></div><div class="mood-chart" id="mood-chart"></div>${moodLogMarkup(mood.history, mood.current?.id, now)}</section>`;
+  return `<section class="card mood-card"><div class="mind-head"><h2>心情</h2></div>${moodNowMarkup(mood, now)}<div class="mood-section-title"><h3>强度变化</h3><div class="mood-range" role="group" aria-label="时间范围"><button type="button" data-mood-range="1">24 小时</button><button type="button" data-mood-range="7">7 天</button></div></div><div class="mood-chart" id="mood-chart"></div>${moodLogMarkup(mood.history, mood.current?.id, now)}<p class="hint mind-foot">角色自己记下的心情和原因；有效期内同一会话只附上一次，心情变了再附。这里只能查看，心情只有角色自己能改，想让角色心情好起来，就去和角色聊天。</p></section>`;
 }
 function drawMoodChart(mood, now) {
   const host = $("#mood-chart");

@@ -28,29 +28,270 @@ const parityNumber = (name, label, value, min = 0, step = 1) =>
   `<label>${esc(label)}<input name="${name}" type="number" min="${min}" step="${step}" value="${esc(value)}" required></label>`;
 const parityOptionalNumber = (name, label, value) =>
   `<label>${esc(label)}<input name="${name}" type="number" min="1" step="1" value="${esc(value ?? "")}" placeholder="留空不额外限制"></label>`;
-const parityField = (name, label, value = "", type = "text") =>
-  `<label>${esc(label)}<input name="${name}" type="${type}" value="${esc(value)}"></label>`;
+const parityField = (
+  name,
+  label,
+  value = "",
+  type = "text",
+  placeholder = "",
+) =>
+  `<label>${esc(label)}<input name="${name}" type="${type}" value="${esc(value)}"${placeholder ? ` placeholder="${esc(placeholder)}"` : ""}></label>`;
 const parityCheck = (name, label, value) =>
   `<label class="check"><input name="${name}" type="checkbox" ${value ? "checked" : ""}>${esc(label)}</label>`;
+const parityTarget = (x) =>
+  String(x)
+    .replace(/^group:/, "群 ")
+    .replace(/^private:/, "私聊 ");
+
+// Words, dates and times as removable chips: the text cousin of ids() in
+// app.js, with the same look. The hidden input sends the list the form always
+// sent: comma-separated, or one "YYYY-MM-DD HH:mm" per line for "when".
+const chipKinds = {
+  text: {
+    sep: ",",
+    add: (hint) =>
+      `<input type="text" maxlength="80" autocomplete="off" placeholder="${hint}">`,
+  },
+  date: { sep: ",", add: () => '<input type="date" aria-label="日期">' },
+  time: { sep: ",", add: () => '<input type="time" aria-label="时刻">' },
+  when: {
+    sep: "\n",
+    add: () =>
+      '<input type="date" aria-label="日期"><input type="time" aria-label="时刻" value="09:00">',
+  },
+};
+const chipsList = (values, kind = "text") => {
+  const list = [
+    ...new Set(
+      (Array.isArray(values)
+        ? values
+        : String(values ?? "").split(kind === "when" ? /\r?\n/ : /[,，]/)
+      )
+        .map((x) => String(x).trim())
+        .filter(Boolean),
+    ),
+  ];
+  // Words keep the order they were added in; dates and times read in order.
+  return kind === "text" ? list : list.sort();
+};
+const chipsChip = (value) =>
+  `<span class="ids-chip" data-chip="${esc(value)}"><span class="ids-name" title="${esc(value)}">${esc(value)}</span><button type="button" class="ids-remove" data-chips-remove="${esc(value)}" aria-label="移除 ${esc(value)}">×</button></span>`;
+function chips(
+  key,
+  label,
+  values,
+  { kind = "text", hint = "", placeholder = "" } = {},
+) {
+  const list = chipsList(values, kind);
+  return `<div class="ids chips wide" data-chips="${kind}"><span class="ids-label">${esc(label)}</span><input type="hidden" name="${key}" value="${esc(list.join(chipKinds[kind].sep))}"><div class="ids-chips">${list.map(chipsChip).join("") || '<span class="ids-empty">还没有</span>'}</div><div class="ids-add chips-add">${chipKinds[kind].add(esc(placeholder))}<button type="button" class="ghost" data-chips-add aria-label="添加到${esc(label)}">添加</button></div>${hint ? `<p class="hint">${hint}</p>` : ""}</div>`;
+}
+function chipsSet(box, list) {
+  const hidden = box.querySelector('input[type="hidden"]');
+  hidden.value = list.join(chipKinds[box.dataset.chips].sep);
+  hidden.dispatchEvent(new Event("change", { bubbles: true }));
+  box.querySelector(".ids-chips").innerHTML =
+    list.map(chipsChip).join("") || '<span class="ids-empty">还没有</span>';
+}
+// Adds what the add row holds; false when a date-time pair is half filled.
+function chipsAdd(box) {
+  const kind = box.dataset.chips,
+    fields = [...box.querySelectorAll(".chips-add input")],
+    hidden = box.querySelector('input[type="hidden"]');
+  let values;
+  if (kind === "when") {
+    const [date, time] = fields;
+    if (!date.value && !time.value) return true;
+    const missing = date.value ? time : date;
+    if (!date.value || !time.value) {
+      missing.setCustomValidity("先选好日期和时刻");
+      missing.reportValidity();
+      return false;
+    }
+    values = [`${date.value} ${time.value}`];
+    date.value = "";
+  } else {
+    values = chipsList(fields[0].value, kind);
+    fields[0].value = "";
+  }
+  if (values.length)
+    chipsSet(
+      box,
+      chipsList([...chipsList(hidden.value, kind), ...values], kind),
+    );
+  return true;
+}
+// Something typed but not yet added still counts when the form is saved. The
+// first box decides: a date-time pair is untouched until a date is picked,
+// since its time starts at 09:00. False when a picked date lacks its time.
+function chipsFlush(form) {
+  let complete = true;
+  for (const box of form?.querySelectorAll?.("[data-chips]") || [])
+    if (box.querySelector(".chips-add input")?.value)
+      complete = chipsAdd(box) && complete;
+  return complete;
+}
+document.addEventListener?.("click", (e) => {
+  const box = e.target.closest?.("[data-chips]");
+  if (!box) return;
+  if (e.target.closest("[data-chips-add]")) chipsAdd(box);
+  const gone = e.target.closest("[data-chips-remove]")?.dataset.chipsRemove;
+  if (gone != null)
+    chipsSet(
+      box,
+      chipsList(
+        box.querySelector('input[type="hidden"]').value,
+        box.dataset.chips,
+      ).filter((x) => x !== gone),
+    );
+});
+document.addEventListener?.("keydown", (e) => {
+  const box =
+    e.target.closest?.(".chips-add") && e.target.closest("[data-chips]");
+  if (!box || e.key !== "Enter") return;
+  // Enter adds the chip instead of submitting the form.
+  e.preventDefault();
+  chipsAdd(box);
+});
+// The add row has no named fields: a warning there must never hold up saving.
+for (const type of ["input", "focusout"])
+  document.addEventListener?.(type, (e) => {
+    if (e.target.closest?.(".chips-add")) e.target.setCustomValidity("");
+  });
+
+// Time zones as a list: a few common ones first, then every zone this
+// browser knows. A saved zone the list lacks is still offered.
+const commonZones = [
+  ["Asia/Shanghai", "北京时间"],
+  ["Asia/Hong_Kong", "香港"],
+  ["Asia/Taipei", "台北"],
+  ["Asia/Tokyo", "东京"],
+  ["Asia/Seoul", "首尔"],
+  ["Asia/Singapore", "新加坡"],
+  ["Europe/London", "伦敦"],
+  ["Europe/Berlin", "柏林"],
+  ["America/New_York", "纽约"],
+  ["America/Los_Angeles", "洛杉矶"],
+  ["UTC", "协调世界时"],
+];
+function zoneSelect(name, label, value) {
+  let all = [];
+  try {
+    all = Intl.supportedValuesOf("timeZone");
+  } catch {
+    // Older browsers: the common zones and the saved one.
+  }
+  const common = new Set(commonZones.map(([z]) => z)),
+    rest = all.filter((z) => !common.has(z));
+  if (value && !common.has(value) && !rest.includes(value)) rest.unshift(value);
+  return `<label>${esc(label)}<select name="${name}"><optgroup label="常用">${parityOptions(
+    commonZones.map(([z, n]) => [z, `${n} · ${z}`]),
+    value,
+  )}</optgroup>${
+    rest.length
+      ? `<optgroup label="全部">${parityOptions(
+          rest.map((z) => [z, z]),
+          value,
+        )}</optgroup>`
+      : ""
+  }</select></label>`;
+}
+const weekdayNames = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+
+// Fold summaries: the state of a section in a few words.
+function wakeSummary(a) {
+  const w = a.wake,
+    b = a.behavior;
+  const by = [
+    w.mentions && "@",
+    w.names && "叫名字",
+    w.keywords.length && `${w.keywords.length} 个关键词`,
+    w.speakerIds.length && `${w.speakerIds.length} 位指定发言者`,
+    w.poke && "拍一拍",
+    w.joins && "入群",
+  ].filter(Boolean);
+  const said = by.length
+    ? `${by.length > 1 ? by.slice(0, -1).join("、") + "和" + by.at(-1) : by[0]}会唤醒`
+    : "只有私聊会唤醒";
+  return `${said} · ${b.batchWindowMs ? `合并窗口 ${b.batchWindowMs / 1000} 秒` : "不合并唤醒"}`;
+}
+const wakeMoreSummary = (b) =>
+  `睡前观察 ${b.preSleepWaitMs / 1000} 秒 · 每小时最多唤醒 ${b.maxWakePerHour} 次 · 投递 ${b.maxSendPerMinute}/分 ${b.maxSendPerHour}/时`;
+const schedulerSummary = (s) =>
+  `${s.enabled ? "已启用" : "未启用"} · 时区 ${s.timezone} · 每日上限 ${s.totalPerDay}`;
+const schedulerMoreSummary = (s) =>
+  `${s.allowAiPrivate ? "管理员私聊可登记" : "AI 不能登记"} · 单任务每日 ${s.perTaskPerDay} 次 · 节假日 ${s.holidays.length} 天`;
+
 function renderParity(page) {
   if (!config.agents.some((a) => a.id === parityAgentId))
     parityAgentId = config.agents[0]?.id;
+  // Role pages follow the role picked in the section bar; the system page
+  // has none, so it keeps its own picker.
   $("#content").innerHTML =
-    `<div class="card toolbar"><label>角色<select id="parity-agent">${parityOptions(
-      config.agents.map((a) => [a.id, a.name]),
-      parityAgentId,
-    )}</select></label><p class="hint">${status.mode === "isolated" ? "隔离模式下可编辑和预览，实际运行与投递保持关闭。" : "全局、角色与会话暂停始终优先于任何自动任务。"}</p></div><div id="parity-body"></div>`;
-  $("#parity-agent").onchange = (e) => {
-    parityAgentId = e.target.value;
-    parityEditing = null;
-    renderParity(page);
-  };
+    page === "operations"
+      ? `<div class="card toolbar"><label>角色<select id="parity-agent">${parityOptions(
+          config.agents.map((a) => [a.id, a.name]),
+          parityAgentId,
+        )}</select></label><p class="hint">${status.mode === "isolated" ? "隔离模式下可编辑和预览，实际运行与投递保持关闭。" : "全局、角色与会话暂停始终优先于任何自动任务。"}</p></div><div id="parity-body"></div>`
+      : '<div id="parity-body"></div>';
+  const picker = $("#parity-agent");
+  if (picker)
+    picker.onchange = (e) => {
+      parityAgentId = e.target.value;
+      parityEditing = null;
+      renderParity(page);
+    };
   if (!parityAgentId) return;
   action(async () => {
     if (page === "schedule") await renderSchedules();
     else if (page === "voices") await renderVoices();
     else await renderOperations();
   });
+}
+
+const runStates = {
+  reserved: ["已预留", ""],
+  queued: ["已交给 AI", "live"],
+  running: ["发送中", ""],
+  sent: ["已发送", "live"],
+  unknown: ["结果未知", "warn"],
+  failed: ["失败", "bad"],
+  skipped: ["已跳过", "off"],
+  missed: ["已错过", "off"],
+};
+const runReasons = {
+  PAUSED_OR_SILENCED: "暂停或静默中",
+  QUIET_HOURS: "免打扰时段",
+  TOTAL_DAILY_LIMIT: "到了每日全部目标上限",
+  GROUP_DAILY_LIMIT: "到了每群每日上限",
+  TASK_DAILY_LIMIT: "到了单任务每日上限",
+  MISSED: "超过补发时间",
+  SCHEDULER_DISABLED: "定时任务未启用",
+  RESTART_INTERRUPTED_DO_NOT_REPLAY: "重启时中断，不重放",
+  DELIVERY_UNKNOWN: "网络结果未知",
+};
+const parityWhen = (t) =>
+  new Date(t).toLocaleString("zh-CN", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+// One task, one fixed row: name, next run, rule, an on/off switch and edit.
+// Long names and rules are cut; the full text shows on hover.
+function scheduleRow(t) {
+  const next = t.pendingConfirm
+      ? "等待确认后开始"
+      : t.enabled
+        ? t.nextRunText || "没有下一次"
+        : "已暂停",
+    rule = `${t.scheduleText} · ${t.targets.map(parityTarget).join("、")} · ${t.kind === "ai" ? "叫 AI 来说" : "固定文字"}`,
+    name = t.name || "未命名任务";
+  return `<li class="task-row${t.enabled ? "" : " is-off"}"><div class="task-main"><div class="task-head"><strong class="task-name" title="${esc(name)}">${esc(name)}</strong>${t.pendingConfirm ? tag("待确认", "warn") : ""}</div><p class="task-next" title="${esc(next)}">${t.enabled && !t.pendingConfirm ? "<span>下次</span>" : ""}${esc(next)}</p><p class="task-rule" title="${esc(rule)}">${esc(rule)}</p></div><div class="task-actions"><label class="switch" title="${t.pendingConfirm ? "确认并启用" : t.enabled ? "已启用，点一下暂停" : "已暂停，点一下启用"}"><input type="checkbox" data-task-toggle="${esc(t.id)}" ${t.enabled ? "checked" : ""} aria-label="${t.pendingConfirm ? "确认并启用" : "启用"}「${esc(name)}」"><span class="switch-track" aria-hidden="true"></span></label><button type="button" data-task-edit="${esc(t.id)}">编辑</button></div></li>`;
+}
+function scheduleRunRow(r, names) {
+  const [label, tone] = runStates[r.status] || [r.status, ""],
+    what = `#${r.taskId} ${names.get(r.taskId) || ""} → ${parityTarget(r.target)}${r.reason ? " · " + (runReasons[r.reason] || r.reason) : ""}`;
+  return `<li class="run-row">${tag(label, tone)}<span class="run-what" title="${esc(what)}">${esc(what)}</span><time>${esc(parityWhen(r.at))}</time></li>`;
 }
 async function renderSchedules() {
   const id = parityAgentId,
@@ -60,46 +301,71 @@ async function renderSchedules() {
   const result = await api("/api/schedules?agentId=" + encodeURIComponent(id));
   if (tab !== "schedule" || id !== parityAgentId) return;
   parityTasks = result.tasks;
+  const names = new Map(result.tasks.map((t) => [t.id, t.name])),
+    runs = result.history.slice(-20).reverse();
   $("#parity-body").innerHTML =
-    `<details class="card" open><summary>唤醒与回复节奏</summary><form id="behavior-form"><p class="hint">除了被 @、私聊和提到名字，下面这些也会让角色醒来看看。主动检查与联系范围在「空闲时间」中设置。</p><div class="form-grid">
-    ${parityField("keywords", "关键词（逗号分隔）", a.wake.keywords.join(","))}${parityField("speakers", "指定发言者 QQ（逗号分隔）", a.wake.speakerIds.join(","))}
+    `<div class="section-title"><h2>定时任务 · ${result.tasks.length}</h2><button type="button" class="primary" id="new-schedule">+ 新建任务</button></div>
+    ${s.enabled ? "" : '<div class="banner warn">定时任务总开关没有打开，下面的任务都不会执行。可在下方「定时任务设置」里启用。</div>'}<div id="task-form"></div>
+    ${result.tasks.length ? `<ul class="card task-list">${result.tasks.map(scheduleRow).join("")}</ul>` : '<div class="card empty">尚无任务。创建后可以先预览时间，再决定启用。</div>'}
+    <p class="hint">${status.mode === "isolated" ? "隔离模式下可编辑和预览，实际运行与投递保持关闭。" : "全局、角色与会话暂停始终优先于任何自动任务。"}</p>
+    <div class="section-title"><h2>最近执行记录</h2></div>${
+      runs.length
+        ? `<div class="card"><ul class="run-list">${runs
+            .slice(0, 8)
+            .map((r) => scheduleRunRow(r, names))
+            .join("")}</ul>${
+            runs.length > 8
+              ? `<details class="run-more"><summary>更早的 ${runs.length - 8} 条</summary><ul class="run-list">${runs
+                  .slice(8)
+                  .map((r) => scheduleRunRow(r, names))
+                  .join("")}</ul></details>`
+              : ""
+          }</div>`
+        : '<div class="card"><p class="hint">没有执行记录。保存和预览不会发送消息。</p></div>'
+    }
+    <div class="section-title"><h2>设置</h2></div>
+    ${fold(
+      "schedule-wake",
+      "唤醒与回复节奏",
+      `<form id="behavior-form"><p class="hint">除了被 @、私聊和提到名字，下面这些也会让角色醒来看看。主动检查与联系范围在「空闲时间」中设置。</p><div class="form-grid">
+    ${chips("keywords", "关键词", a.wake.keywords, { placeholder: "输入关键词后回车；逗号可一次加几个", hint: "群里有人说到这些词时唤醒。" })}${ids("speakers", "指定发言者 QQ", a.wake.speakerIds, { kind: "person", hint: "这些人在群里说话时唤醒。" })}
     ${parityCheck("poke", "拍一拍唤醒", a.wake.poke)}${parityCheck("joins", "有人入群时唤醒", a.wake.joins)}
-    ${parityNumber("quiet", "新消息后等安静（秒）", b.quietAfterNewMs / 1000)}${parityNumber("batch", "合并唤醒：每条后等待（秒）", b.batchWindowMs / 1000)}${parityNumber("batchMax", "合并唤醒：最长等待（秒）", b.batchMaxMs / 1000)}
-    </div><p class="hint">合并唤醒时每来一条消息都重新等待，从第一条算起不超过最长等待；最长等待不大于每条后等待时，从第一条起固定等待。</p>${advanced(
+    ${range("quiet", "新消息后等安静", b.quietAfterNewMs / 1000, { min: 0, max: 60, step: 1, unit: " 秒" })}${range("batch", "合并唤醒：每条后等待", b.batchWindowMs / 1000, { min: 0, max: 60, step: 1, unit: " 秒" })}${range("batchMax", "合并唤醒：最长等待", b.batchMaxMs / 1000, { min: 0, max: 60, step: 1, unit: " 秒" })}
+    </div><p class="hint">合并唤醒时每来一条消息都重新等待，从第一条算起不超过最长等待；最长等待不大于每条后等待时，从第一条起固定等待。</p>${fold(
+      "schedule-wake-more",
       "高级设置：观察、回复检查与投递额度",
-      `${parityNumber("observe", "睡前观察（秒；0 关闭要求）", b.preSleepWaitMs / 1000)}${parityNumber("reply", "发言后回复检查（秒）", b.replyCheckMs / 1000, 1)}
+      `<div class="form-grid">${parityNumber("observe", "睡前观察（秒；0 关闭要求）", b.preSleepWaitMs / 1000)}${parityNumber("reply", "发言后回复检查（秒）", b.replyCheckMs / 1000, 1)}
     ${parityNumber("wakeHour", "单会话每小时唤醒上限", b.maxWakePerHour, 1)}${parityNumber("sendMinute", "角色总投递上限／分钟", b.maxSendPerMinute, 1)}${parityNumber("sendHour", "角色总投递上限／小时", b.maxSendPerHour, 1)}
     ${parityOptionalNumber("conversationSendMinute", "单会话投递上限／分钟（可选）", b.conversationMaxSendPerMinute)}${parityOptionalNumber("conversationSendHour", "单会话投递上限／小时（可选）", b.conversationMaxSendPerHour)}
-    <p class="hint">角色总额度由所有群和私聊共享，文本、文件及其他投递统一计数；失败或未知回执也占用额度。连续回复批次另按角色设置限制。</p>`,
-    )}<button class="primary">保存唤醒与节奏</button></form></details>
-    <details class="card"><summary>定时任务设置</summary><form id="schedule-settings"><div class="form-grid">
-    ${parityCheck("enabled", "启用定时任务", s.enabled)}${parityField("timezone", "任务默认时区", s.timezone)}
+    <p class="hint">角色总额度由所有群和私聊共享，文本、文件及其他投递统一计数；失败或未知回执也占用额度。连续回复批次另按角色设置限制。</p></div>`,
+      { summary: esc(wakeMoreSummary(b)), cls: "fold-inner" },
+    )}<button class="primary">保存唤醒与节奏</button></form>`,
+      { summary: esc(wakeSummary(a)) },
+    )}
+    ${fold(
+      "schedule-settings",
+      "定时任务设置",
+      `<form id="schedule-settings"><div class="form-grid">
+    ${parityCheck("enabled", "启用定时任务", s.enabled)}${zoneSelect("timezone", "任务默认时区", s.timezone)}
     ${parityCheck("quietEnabled", "群定时任务免打扰", s.quietEnabled)}${parityField("quietStart", "免打扰开始", s.quietStart, "time")}${parityField("quietEnd", "免打扰结束", s.quietEnd, "time")}
-    </div>${advanced(
+    </div>${fold(
+      "schedule-settings-more",
       "高级设置：AI 登记、每日上限、补发与节假日",
-      `${parityCheck("allowAiPrivate", "允许管理员私聊 AI 登记", s.allowAiPrivate)}${parityCheck("allowAiOtherTargets", "允许管理员私聊登记其他目标", s.allowAiOtherTargets)}${parityCheck("confirmAiOtherTargets", "其他目标登记或修改后需控制台确认", s.confirmAiOtherTargets !== false)}
+      `<div class="form-grid">${parityCheck("allowAiPrivate", "允许管理员私聊 AI 登记", s.allowAiPrivate)}${parityCheck("allowAiOtherTargets", "允许管理员私聊登记其他目标", s.allowAiOtherTargets)}${parityCheck("confirmAiOtherTargets", "其他目标登记或修改后需控制台确认", s.confirmAiOtherTargets !== false)}
     <p class="hint">关闭其他目标确认后，管理员私聊登记的任务可直接生效；目标仍限于角色允许的联系人和群，普通聊天不获得登记权限。</p>
     ${parityNumber("totalPerDay", "每日全部目标上限", s.totalPerDay, 1)}${parityNumber("perTaskPerDay", "单任务每日上限", s.perTaskPerDay, 1)}
     ${parityNumber("perGroupPerDay", "每群每日上限", s.perGroupPerDay, 1)}${parityNumber("missedGraceMin", "允许补发的迟到分钟数", s.missedGraceMin)}
     ${parityNumber("jitterMin", "固定时间随机偏移（分钟）", s.jitterMin)}${parityCheck("quietAllDay", "全天免打扰（仅群定时任务）", s.quietAllDay)}
-    ${parityField("holidays", "跳过的节假日（YYYY-MM-DD，逗号分隔）", s.holidays.join(","))}`,
-    )}<button class="primary">保存定时设置</button></form></details>
-    <div class="section-title"><h2>定时任务</h2><button id="new-schedule">+ 新建任务</button></div><div id="task-form"></div>
-    <div class="grid">${result.tasks.map((t) => `<article class="card"><div class="row"><h3>${esc(t.name)}</h3>${tag(t.pendingConfirm ? "待确认" : t.enabled ? "启用" : "暂停")}</div><p>${esc(t.scheduleText)}</p><p class="hint">${esc(t.nextRunText || "无下一次")} · ${esc(t.timezone)}</p><p>${esc(t.kind === "ai" ? t.instruction : t.text)}</p><p class="mono">${esc(t.targets.join(", "))}</p><div class="card-actions"><button data-task="edit" data-id="${t.id}">编辑</button><button data-task="toggle" data-id="${t.id}">${t.enabled ? "暂停" : "启用 / 确认"}</button><button data-task="run" data-id="${t.id}" ${status.mode === "isolated" || status.globalPaused ? "disabled" : ""}>立即执行</button><button data-task="delete" data-id="${t.id}">删除</button></div></article>`).join("") || '<div class="card empty">尚无任务。创建后可以先预览时间，再决定启用。</div>'}</div>
-    <div class="section-title"><h2>最近执行记录</h2></div><div class="card">${
-      result.history
-        .slice(-20)
-        .reverse()
-        .map(
-          (r) =>
-            `<div class="record"><strong>#${r.taskId} · ${esc(r.status)}</strong><p>${esc(r.target)} · ${new Date(r.at).toLocaleString()} · ${esc(r.reason || "")}</p></div>`,
-        )
-        .join("") ||
-      '<p class="hint">没有执行记录。保存和预览不会发送消息。</p>'
-    }</div>`;
+    ${chips("holidays", "跳过的节假日", s.holidays, { kind: "date", hint: "工作日任务在这些日子不执行。不会自动拉取法定调休安排。" })}</div>`,
+      { summary: esc(schedulerMoreSummary(s)), cls: "fold-inner" },
+    )}<button class="primary">保存定时设置</button></form>`,
+      { summary: esc(schedulerSummary(s)) },
+    )}`;
+  fillIds($("#parity-body"), id);
   $("#behavior-form").onsubmit = (e) =>
     action(async () => {
       e.preventDefault();
+      chipsFlush(e.target);
       const f = new FormData(e.target),
         num = (n) => Number(f.get(n));
       const next = structuredClone(config),
@@ -141,6 +407,7 @@ async function renderSchedules() {
   $("#schedule-settings").onsubmit = (e) =>
     action(async () => {
       e.preventDefault();
+      chipsFlush(e.target);
       const f = new FormData(e.target),
         next = structuredClone(config),
         agent = next.agents.find((x) => x.id === id);
@@ -172,23 +439,31 @@ async function renderSchedules() {
       notice("定时设置已保存");
     });
   $("#new-schedule").onclick = () => drawScheduleForm(null);
-  document.querySelectorAll("[data-task]").forEach(
-    (button) =>
-      (button.onclick = () =>
+  const taskOf = (el) =>
+    parityTasks.find(
+      (t) => String(t.id) === (el.dataset.taskEdit ?? el.dataset.taskToggle),
+    );
+  document
+    .querySelectorAll("[data-task-edit]")
+    .forEach(
+      (button) => (button.onclick = () => drawScheduleForm(taskOf(button))),
+    );
+  document.querySelectorAll("[data-task-toggle]").forEach(
+    (box) =>
+      (box.onchange = () =>
         action(async () => {
-          const task = parityTasks.find(
-              (t) => t.id === Number(button.dataset.id),
-            ),
-            kind = button.dataset.task;
-          if (kind === "edit") return drawScheduleForm(task);
-          await api("/api/schedules", {
-            agentId: id,
-            id: task.id,
-            action: kind === "toggle" ? "update" : kind,
-            task: { enabled: !task.enabled },
-            requestId: crypto.randomUUID(),
-          });
-          await renderSchedules();
+          try {
+            await api("/api/schedules", {
+              agentId: id,
+              id: taskOf(box).id,
+              action: "update",
+              task: { enabled: box.checked },
+              requestId: crypto.randomUUID(),
+            });
+          } finally {
+            // A refused change puts the switch back where it was.
+            await renderSchedules();
+          }
         })),
   );
 }
@@ -204,8 +479,13 @@ function drawScheduleForm(task) {
       enabled: false,
       jitterMin: a.scheduler.jitterMin,
     };
+  const targets = [
+    ...a.allow.groups.map((x) => ["group:" + x, "群 " + x]),
+    ...a.allow.users.map((x) => ["private:" + x, "私聊 " + x]),
+  ];
+  const live = status.mode !== "isolated" && !status.globalPaused;
   $("#task-form").innerHTML =
-    `<form id="schedule-form" class="card"><h3>${task ? "编辑任务" : "新建任务"}</h3><div class="form-grid">${parityField("name", "任务名称", t.name)}
+    `<form id="schedule-form" class="card task-editor"><h3>${task ? `编辑任务 · ${esc(t.name)}` : "新建任务"}</h3><div class="form-grid">${parityField("name", "任务名称", t.name)}
     <label>内容方式<select name="kind">${parityOptions(
       [
         ["text", "固定文字"],
@@ -214,13 +494,26 @@ function drawScheduleForm(task) {
       t.kind,
     )}</select></label>
     <label class="wide">文字 / 给 AI 的说明<textarea name="content" required>${esc(t.kind === "ai" ? t.instruction : t.text)}</textarea></label>
-    <label>发送目标（可多选）<select name="targets" multiple required>${parityOptions([...a.allow.groups.map((x) => ["group:" + x, "群 " + x]), ...a.allow.users.map((x) => ["private:" + x, "私聊 " + x])], null)}</select></label>
+    <fieldset class="pick wide"><legend>发送目标（可多选）</legend>${
+      targets
+        .map(
+          ([v, l]) =>
+            `<label class="check"><input type="checkbox" name="targets" value="${esc(v)}" ${t.targets.includes(v) ? "checked" : ""}>${esc(l)}</label>`,
+        )
+        .join("") ||
+      '<p class="hint">这个角色还没有允许的群或私聊，先在角色设置的白名单里添加。</p>'
+    }</fieldset>
     <label>重复方式<select name="ruleType" id="rule-type">${parityOptions(Object.entries(scheduleLabels), t.schedule.type)}</select></label>
-    <div id="rule-fields" class="form-grid wide"></div>${parityField("timezone", "时区", t.timezone)}${parityNumber("jitter", "随机偏移（分钟）", t.jitterMin)}
-    ${parityField("maxRuns", "最多执行次数（空白不限）", t.maxRuns || "", "number")}${parityField("exclude", "排除日期（逗号分隔）", (t.schedule.excludeDates || []).join(","))}
-    ${parityCheck("enabled", "保存后启用（暂停仍优先）", t.enabled)}</div><div class="card-actions"><button type="button" id="preview-schedule">预览接下来五次</button><button class="primary">保存任务</button><button type="button" id="cancel-schedule">取消</button></div><div id="schedule-preview" class="hint"></div></form>`;
-  for (const option of $("#schedule-form").elements.targets.options)
-    option.selected = t.targets.includes(option.value);
+    <div id="rule-fields" class="form-grid wide"></div>
+    ${parityCheck("enabled", "保存后启用（暂停仍优先）", t.enabled)}</div>${advanced(
+      "更多：时区、随机偏移、执行次数与排除日期",
+      `${zoneSelect("timezone", "时区", t.timezone)}${parityNumber("jitter", "随机偏移（分钟）", t.jitterMin)}
+    ${parityField("maxRuns", "最多执行次数（空白不限）", t.maxRuns || "", "number")}${chips("exclude", "排除日期", t.schedule.excludeDates || [], { kind: "date" })}`,
+    )}<div class="card-actions"><button type="button" id="preview-schedule">预览接下来五次</button><button class="primary">保存任务</button><button type="button" id="cancel-schedule">取消</button>${
+      task
+        ? `<span class="task-editor-gap"></span><button type="button" id="run-schedule" ${live ? "" : "disabled"} title="按已保存的设置立刻执行一次">立即执行一次</button><button type="button" class="danger" id="delete-schedule">删除任务</button>`
+        : ""
+    }</div><div id="schedule-preview" class="hint"></div></form>`;
   const rules = () => {
     const type = $("#rule-type").value,
       r = type === t.schedule.type ? t.schedule : {};
@@ -228,44 +521,63 @@ function drawScheduleForm(task) {
     if (["once", "everyNDays"].includes(type))
       html += parityField(
         "date",
-        "日期",
+        type === "once" ? "日期" : "开始日期",
         r.date || r.startDate || new Date().toISOString().slice(0, 10),
         "date",
       );
-    if (
+    if (type === "once")
+      html += parityField("times", "时刻", r.time || "09:00", "time");
+    else if (
       !["dates", "cron", "interval", "dailyRandom", "monthlyRandom"].includes(
         type,
       )
     )
-      html += parityField(
-        "times",
-        "时刻（多个用逗号分隔）",
-        r.time || (r.times || ["09:00"]).join(","),
-      );
+      html += chips("times", "时刻", r.times || ["09:00"], { kind: "time" });
     if (type === "weekly")
-      html += parityField(
-        "weekdays",
-        "星期（1 周一 … 7 周日）",
-        (r.weekdays || [1, 3, 5]).join(","),
-      );
+      html += `<fieldset class="pick wide"><legend>星期</legend>${weekdayNames
+        .map(
+          (d, i) =>
+            `<label class="check"><input type="checkbox" name="weekdays" value="${i + 1}" ${(r.weekdays || [1, 3, 5]).includes(i + 1) ? "checked" : ""}>${d}</label>`,
+        )
+        .join("")}</fieldset>`;
     if (type === "monthly")
       html += parityField(
         "days",
-        "每月几号（-1 为月底）",
+        "每月几号（逗号分隔，-1 为月底）",
         (r.days || [1, -1]).join(","),
+        "text",
+        "例如 1,15,-1",
       );
     if (type === "monthlyWeekday")
-      html +=
-        parityNumber("nth", "第几个（-1 最后一个）", r.nth || 2, -1) +
-        parityNumber("weekday", "星期（1—7）", r.weekday || 6, 1);
+      html += `<label>第几个<select name="nth">${parityOptions(
+        [
+          ["1", "第 1 个"],
+          ["2", "第 2 个"],
+          ["3", "第 3 个"],
+          ["4", "第 4 个"],
+          ["5", "第 5 个"],
+          ["-1", "最后一个"],
+        ],
+        String(r.nth || 2),
+      )}</select></label><label>星期几<select name="weekday">${parityOptions(
+        weekdayNames.map((d, i) => [String(i + 1), d]),
+        String(r.weekday || 6),
+      )}</select></label>`;
     if (type === "yearly")
       html += parityField(
         "dates",
         "月日（MM-DD，逗号分隔）",
         (r.dates || ["12-31"]).join(","),
+        "text",
+        "例如 01-01,12-31",
       );
     if (type === "dates")
-      html += `<label class="wide">特殊日期（每行 YYYY-MM-DD HH:mm）<textarea name="dates">${esc((r.items || []).map((x) => x.date + " " + x.time).join("\n"))}</textarea></label>`;
+      html += chips(
+        "dates",
+        "特殊日期",
+        (r.items || []).map((x) => x.date + " " + x.time),
+        { kind: "when" },
+      );
     if (type === "everyNDays")
       html += parityNumber("every", "每隔几天", r.every || 3, 1);
     if (["interval", "dailyRandom", "monthlyRandom"].includes(type))
@@ -298,6 +610,8 @@ function drawScheduleForm(task) {
         "dayRange",
         "日期范围（起止日，逗号分隔）",
         (r.dayRange || [1, 28]).join(","),
+        "text",
+        "例如 1,28",
       );
     if (type === "cron")
       html += parityField(
@@ -310,6 +624,8 @@ function drawScheduleForm(task) {
   $("#rule-type").onchange = rules;
   rules();
   const read = () => {
+    if (!chipsFlush($("#schedule-form")))
+      throw Error("还没添加的日期缺少时刻，补上时刻或清空日期");
     const f = new FormData($("#schedule-form")),
       type = f.get("ruleType"),
       list = (n) =>
@@ -333,7 +649,7 @@ function drawScheduleForm(task) {
       ].includes(type)
     )
       r.times = list("times");
-    if (type === "weekly") r.weekdays = list("weekdays").map(Number);
+    if (type === "weekly") r.weekdays = f.getAll("weekdays").map(Number);
     if (type === "monthly") r.days = list("days").map(Number);
     if (type === "monthlyWeekday")
       Object.assign(r, { nth: num("nth"), weekday: num("weekday") });
@@ -341,7 +657,7 @@ function drawScheduleForm(task) {
     if (type === "dates")
       r.items = String(f.get("dates"))
         .split("\n")
-        .filter(Boolean)
+        .filter((x) => x.trim())
         .map((x) => {
           const [date, time] = x.trim().split(/\s+/);
           return { date, time };
@@ -386,11 +702,13 @@ function drawScheduleForm(task) {
   $("#schedule-form").onsubmit = (e) =>
     action(async () => {
       e.preventDefault();
+      const next = read();
+      if (!next.targets.length) throw Error("至少选一个发送目标");
       await api("/api/schedules", {
         agentId: parityAgentId,
         action: parityEditing ? "update" : "create",
         id: parityEditing,
-        task: read(),
+        task: next,
       });
       parityEditing = null;
       await renderSchedules();
@@ -400,14 +718,55 @@ function drawScheduleForm(task) {
     $("#task-form").innerHTML = "";
     parityEditing = null;
   };
+  const run = $("#run-schedule"),
+    remove = $("#delete-schedule");
+  if (task && run)
+    run.onclick = () =>
+      action(async () => {
+        await api("/api/schedules", {
+          agentId: parityAgentId,
+          id: task.id,
+          action: "run",
+          requestId: crypto.randomUUID(),
+        });
+        await renderSchedules();
+        notice("已登记执行，结果见执行记录");
+      });
+  if (task && remove)
+    remove.onclick = () =>
+      action(async () => {
+        if (!confirm(`删除任务「${task.name}」？已有的执行记录会保留。`))
+          return;
+        await api("/api/schedules", {
+          agentId: parityAgentId,
+          id: task.id,
+          action: "delete",
+          requestId: crypto.randomUUID(),
+        });
+        parityEditing = null;
+        await renderSchedules();
+        notice("任务已删除");
+      });
+  $("#task-form").scrollIntoView?.({ block: "nearest" });
 }
+const voiceMeta = (m) =>
+  `${m.duration == null ? "时长未知" : m.duration.toFixed(1) + " 秒"} · ${m.codec} · ${(m.bytes / 1024).toFixed(1)} KB`;
 async function renderVoices() {
   const id = parityAgentId,
     result = await api("/api/voices?agentId=" + encodeURIComponent(id));
   if (tab !== "voices" || id !== parityAgentId) return;
   $("#parity-body").innerHTML =
-    `<div class="card"><h2>导入语音</h2><p class="hint">每个角色单独保存。导入会校验音频；试听只在本机播放，不向 QQ 投递。</p><form id="voice-import"><div class="form-grid">${parityField("title", "语音名称")}<label>音频文件<input name="audio" type="file" accept="audio/*,.silk,.slk" required></label></div><button class="primary">导入</button></form></div><div class="section-title"><h2>角色语音 · ${result.total}</h2></div><div class="grid">${result.items.map((m) => `<article class="card"><h3>${esc(m.title)}</h3><p>${m.duration == null ? "时长未提供" : m.duration.toFixed(1) + " 秒"} · ${esc(m.codec)} · ${(m.bytes / 1024).toFixed(1)} KB</p><button data-audio="${esc(m.id)}">本机试听</button></article>`).join("") || '<div class="card empty">暂无语音。可导入素材或由已配置的音频 MCP 生成。</div>'}</div><audio id="voice-player" controls hidden></audio>`;
-  $("#voice-import").onsubmit = (e) =>
+    `<div class="section-title"><h2>角色语音 · ${result.total}</h2><button type="button" class="primary" id="voice-import-open" aria-expanded="false" aria-controls="voice-import">+ 导入语音</button></div><form id="voice-import" class="card" hidden><h3>导入语音</h3><p class="hint">每个角色单独保存。导入会校验音频；试听只在本机播放，不向 QQ 投递。支持 WAV、MP3、Ogg、FLAC、M4A、AMR、SILK，最大 20 MiB。</p><div class="form-grid">${parityField("title", "语音名称", "", "text", "留空用文件名")}<label>音频文件<input name="audio" type="file" accept="audio/*,.silk,.slk" required></label></div><div class="card-actions"><button class="primary">导入</button><button type="button" id="voice-import-cancel">取消</button></div></form><audio id="voice-player" controls hidden></audio>${result.items.length ? `<div class="voice-list">${result.items.map((m) => `<article class="card voice-item"><div class="voice-text"><h3 title="${esc(m.title)}">${esc(m.title)}</h3><p class="hint" title="${esc(voiceMeta(m))}">${esc(voiceMeta(m))}</p></div><button type="button" data-audio="${esc(m.id)}">本机试听</button></article>`).join("")}</div>` : '<div class="card empty">暂无语音。点「导入语音」添加素材，或由已配置的音频 MCP 生成。</div>'}${result.total > result.items.length ? `<p class="hint">只列出前 ${result.items.length} 条。</p>` : ""}`;
+  const form = $("#voice-import"),
+    open = $("#voice-import-open");
+  const show = (on) => {
+    form.hidden = !on;
+    open.setAttribute?.("aria-expanded", String(on));
+    if (on) form.querySelector?.('input[name="title"]')?.focus();
+  };
+  open.onclick = () => show(form.hidden);
+  $("#voice-import-cancel").onclick = () => show(false);
+  form.onsubmit = (e) =>
     action(async () => {
       e.preventDefault();
       const f = new FormData(e.target),
@@ -445,6 +804,21 @@ async function renderVoices() {
         })),
   );
 }
+// The operations level an agent holds now, per conversation.
+function opsLevelsMarkup(levels) {
+  return levels.length
+    ? levels
+        .map(
+          (l) =>
+            `<li>${tag(l.level, "warn")}<span>${esc(parityTarget(l.key.split("|").slice(1).join("|")))}</span><time>授予于 ${esc(parityWhen(l.grantedAt))}</time></li>`,
+        )
+        .join("")
+    : `<li>${tag("L0")}<span>没有授予的管理员操作级别</span></li>`;
+}
+const opsSummary = (o) =>
+  o.enabled
+    ? `已开启 · ${o.allowL3 ? "允许 L3" : "最高 L2"} · 级别最长 ${Math.round(o.maxLevelMs / 60000)} 分钟`
+    : "运维工具已关闭";
 async function renderOperations() {
   const id = parityAgentId,
     a = find("agents", id),
@@ -453,20 +827,24 @@ async function renderOperations() {
   const confirmOff = disabledReason([
     [status.mode === "isolated" || status.globalPaused, "opsBlocked"],
   ]);
+  const pending = ops.pending.filter((p) => p.agentId === id),
+    levels = (ops.levels || []).filter((l) => l.key.startsWith(id + "|")),
+    o = a.operations;
   $("#parity-body").innerHTML =
-    `<div class="section-title"><h2>管理员操作</h2><button id="revoke-ops">回落到 L0 并撤销待批准项</button></div><div class="banner">${a.operations.enabled ? "仅独立工作任务可申请运维；级别有时限，写入与命令逐项确认。" : "运维工具当前关闭。可在完整配置中指定专用工作区及允许命令后开启。"}</div>${
-      ops.pending
-        .filter((p) => p.agentId === id)
+    `<section id="protected-work"><p class="hint">读取中…</p></section><div class="section-title"><h2>管理员操作${pending.length ? ` · 待确认 ${pending.length}` : ""}</h2></div><div class="card"><ul class="ops-levels">${opsLevelsMarkup(levels)}</ul>${
+      pending
         .map(
           (p) =>
-            `<form class="card ops-confirm" data-id="${esc(p.id)}" data-conversation="${esc(p.conversation)}"><h3>${esc(p.operation.type)} · ${esc(p.conversation)}</h3><pre>${esc(JSON.stringify(p.operation, null, 2))}</pre><p>本次确认码：${esc(p.confirmationCode)} · 两分钟内有效</p><div class="form-grid">${parityField("code", "输入本次确认码")}${parityField("otp", "L3 动态码", "", "password")}</div><button ${disabledAttr(confirmOff)}>确认此项操作</button>${disabledHints(confirmOff)}</form>`,
+            `<form class="ops-confirm" data-id="${esc(p.id)}" data-conversation="${esc(p.conversation)}"><h3>${esc(p.operation.type)} · ${esc(parityTarget(p.conversation))}</h3><pre>${esc(JSON.stringify(p.operation, null, 2))}</pre><p>本次确认码：<strong class="mono">${esc(p.confirmationCode)}</strong> · 两分钟内有效</p><div class="form-grid">${parityField("code", "输入本次确认码")}${parityField("otp", "L3 动态码", "", "password")}</div><button class="danger" ${disabledAttr(confirmOff)}>确认执行此项操作</button>${disabledHints(confirmOff)}</form>`,
         )
-        .join("") || '<div class="card empty">没有待确认操作。</div>'
-    }`;
-  $("#parity-body").insertAdjacentHTML(
-    "afterbegin",
-    '<section id="protected-work"></section>',
-  );
+        .join("") || '<p class="hint">没有待确认操作。</p>'
+    }</div>${fold(
+      "ops-settings",
+      "运维设置",
+      `<p>${o.enabled ? "仅独立工作任务可申请运维；级别有时限，写入与命令逐项确认。" : "运维工具当前关闭。可在完整配置中指定专用工作区及允许命令后开启。"}</p><dl class="agent-meta"><dt>工作区</dt><dd class="mono">${esc(o.workspace || "未设置")}</dd><dt>允许命令</dt><dd>${o.allowedCommands.length ? esc(o.allowedCommands.join("、")) : "无"}</dd><dt>L3</dt><dd>${o.allowL3 ? `允许 · 动态码变量 ${esc(o.totpEnv || "未设置")}` : "不允许"}</dd><dt>级别时限</dt><dd>最长 ${Math.round(o.maxLevelMs / 60000)} 分钟，空闲 ${Math.round(o.idleMs / 60000)} 分钟后收回</dd></dl><div class="card-actions"><button type="button" id="ops-config">在完整配置中修改</button></div>`,
+      { summary: esc(opsSummary(o)) },
+    )}<div class="card danger-zone"><div><h3>回落到 L0</h3><p class="hint">立即收回「${esc(a.name)}」当前的管理员操作级别，并撤销全部待确认操作；之后需管理员重新申请。</p></div><button type="button" class="danger" id="revoke-ops">回落到 L0 并撤销待批准项</button></div>`;
+  $("#ops-config").onclick = () => action(() => operate("advanced"));
   await renderProtectedWork(id);
   $("#revoke-ops").onclick = () =>
     action(async () => {
@@ -500,30 +878,59 @@ async function renderOperations() {
   );
 }
 
+const workStates = {
+  ready: ["待开始", ""],
+  running: ["处理中", "live"],
+  review: ["待审阅", "warn"],
+  waiting: ["等待继续", ""],
+  interrupted: ["已中断", "warn"],
+  failed: ["任务失败", "bad"],
+  cancelled: ["已取消", "off"],
+  cancelling: ["正在取消", "off"],
+  released: ["已交回聊天", "live"],
+};
+function workItem(t, targets) {
+  const [label, tone] = workStates[t.status] || [t.status, ""],
+    scope = t.operations
+      ? "运维"
+      : t.repositories?.length
+        ? t.repositories.join("、")
+        : "";
+  const open = !["released", "cancelled", "cancelling"].includes(t.status);
+  return `<article class="card work-item"><div class="work-head">${tag(label, tone)}${scope ? `<span class="work-scope" title="${esc(scope)}">${esc(scope)}</span>` : ""}<time>${esc(parityWhen(t.createdAt))}</time></div><p class="work-text" title="${esc(t.instruction)}">${esc(t.instruction)}</p>${t.error ? `<p class="hint">${esc(t.error)}</p>` : ""}${t.result ? `<h4>候选结果 · 第 ${t.revision} 版</h4><pre class="work-result">${esc(t.result.text)}</pre>` : ""}${
+    open
+      ? `<div class="card-actions"><button type="button" data-work-run="${esc(t.id)}" ${t.status === "running" ? "disabled" : ""}>${t.status === "ready" ? "开始任务" : "继续任务"}</button><button type="button" class="danger" data-work-cancel="${esc(t.id)}">取消任务</button></div>${t.result && t.status !== "running" ? `<form class="work-release" data-task="${esc(t.id)}"><label>交回结果的聊天<select name="target">${parityOptions(targets)}</select></label><label class="check"><input type="checkbox" required>我已审阅上方完整文字，同意解除这一版文字的工作保护并交回所选聊天</label><button class="danger">批准解除这段结果的保护</button></form>` : ""}`
+      : t.release
+        ? `<p class="hint">已交回 ${esc(parityTarget(t.release.target))}，未自动发送。</p>`
+        : ""
+  }</article>`;
+}
 async function renderProtectedWork(id) {
   const a = find("agents", id);
   const { tasks } = await api(
     `/api/protected-work?agentId=${encodeURIComponent(id)}`,
   );
   if (tab !== "operations" || id !== parityAgentId) return;
-  const names = {
-    ready: "待开始",
-    running: "处理中",
-    review: "待审阅",
-    waiting: "等待继续",
-    interrupted: "已中断",
-    failed: "任务失败",
-    cancelled: "已取消",
-    cancelling: "正在取消",
-    released: "已交回聊天",
-  };
   const targets = [
     ...a.allow.users.map((x) => ["private:" + x, "私聊 " + x]),
     ...a.allow.groups.map((x) => ["group:" + x, "群 " + x]),
   ];
   $("#protected-work").innerHTML =
-    `<div class="section-title"><h2>受保护工作</h2><button id="work-refresh">刷新任务</button></div><p class="hint">工作任务有独立模型会话。私有资料和运维结果留在这里；普通聊天与上网照常。批准会将所示文字解除工作保护，加入所选聊天及角色普通记忆；原始资料仍隔离，不自动发送 QQ。</p><form id="work-create" class="card"><label>任务说明<textarea name="instruction" required maxlength="12000" rows="3" placeholder="只填写本任务需要处理的内容"></textarea></label><label>私有仓库<select name="repository"><option value="">不读取私有仓库</option>${parityOptions(a.github.privateRepositories.map((x) => [x, x]))}</select></label><label><input name="operations" type="checkbox" ${a.operations.enabled ? "" : "disabled"}>仅运维任务（与仓库任务分开；操作仍逐项确认）</label><button>创建受保护任务</button></form>${tasks.map((t) => `<article class="card"><h3>${esc(names[t.status] || t.status)}</h3><p class="hint">${esc(new Date(t.createdAt).toLocaleString())}</p><pre>${esc(t.instruction)}</pre>${t.error ? `<p class="hint">${esc(t.error)}</p>` : ""}${t.result ? `<h4>候选结果 · 第 ${t.revision} 版</h4><pre>${esc(t.result.text)}</pre>` : ""}${!["released", "cancelled", "cancelling"].includes(t.status) ? `<div class="toolbar"><button data-work-run="${t.id}" ${t.status === "running" ? "disabled" : ""}>${t.status === "ready" ? "开始任务" : "继续任务"}</button><button data-work-cancel="${t.id}">取消任务</button></div>${t.result && t.status !== "running" ? `<form class="work-release" data-task="${t.id}"><label>交回结果的聊天<select name="target">${parityOptions(targets)}</select></label><label><input type="checkbox" required>我已审阅上方完整文字，同意解除这一版文字的工作保护并交回所选聊天</label><button>批准解除这段结果的保护</button></form>` : ""}` : t.release ? `<p class="hint">已交回 ${esc(t.release.target)}，未自动发送。</p>` : ""}</article>`).join("")}`;
+    `<div class="section-title"><h2>受保护工作 · ${tasks.length}</h2><div class="section-actions"><button type="button" id="work-refresh">刷新</button><button type="button" class="primary" id="work-create-open" aria-expanded="false" aria-controls="work-create">+ 新建任务</button></div></div><form id="work-create" class="card" hidden><h3>新建受保护任务</h3><p class="hint">工作任务有独立模型会话。私有资料和运维结果留在这里；普通聊天与上网照常。批准会将所示文字解除工作保护，加入所选聊天及角色普通记忆；原始资料仍隔离，不自动发送 QQ。</p><label>任务说明<textarea name="instruction" required maxlength="12000" rows="3" placeholder="只填写本任务需要处理的内容"></textarea></label><label>私有仓库<select name="repository"><option value="">不读取私有仓库</option>${parityOptions(a.github.privateRepositories.map((x) => [x, x]))}</select></label><label class="check"><input name="operations" type="checkbox" ${a.operations.enabled ? "" : "disabled"}>仅运维任务（与仓库任务分开；操作仍逐项确认）</label><div class="card-actions"><button class="primary">创建受保护任务</button><button type="button" id="work-create-cancel">取消</button></div></form>${
+      tasks.length
+        ? `<div class="work-list">${tasks.map((t) => workItem(t, targets)).join("")}</div>`
+        : '<div class="card empty">还没有受保护任务。私有仓库和运维只在这里处理。</div>'
+    }`;
   $("#work-refresh").onclick = () => action(() => renderOperations());
+  const create = $("#work-create"),
+    open = $("#work-create-open");
+  const show = (on) => {
+    create.hidden = !on;
+    open.setAttribute?.("aria-expanded", String(on));
+    if (on) create.querySelector?.("textarea")?.focus();
+  };
+  open.onclick = () => show(create.hidden);
+  $("#work-create-cancel").onclick = () => show(false);
   const repoSelect = $("#work-create select[name=repository]");
   const opsCheckbox = $("#work-create input[name=operations]");
   repoSelect.onchange = () => {
@@ -533,7 +940,7 @@ async function renderProtectedWork(id) {
   opsCheckbox.onchange = () => {
     repoSelect.disabled = opsCheckbox.checked;
   };
-  $("#work-create").onsubmit = (event) => {
+  create.onsubmit = (event) => {
     event.preventDefault();
     action(async () => {
       const form = new FormData(event.target),
@@ -553,6 +960,13 @@ async function renderProtectedWork(id) {
     b.onclick = () =>
       action(async () => {
         const run = b.dataset.workRun;
+        if (
+          !run &&
+          !confirm(
+            "取消这个受保护任务？正在进行的处理会停下，还没批准的候选结果不会交回聊天。",
+          )
+        )
+          return;
         await api("/api/protected-work", {
           agentId: id,
           taskId: run || b.dataset.workCancel,

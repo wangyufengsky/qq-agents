@@ -197,4 +197,14 @@ test("the home summary counts the last 24 hours and shows the latest entry", (t)
   assert.equal(h.latest.kind, "chat");
   assert.equal(h.latest.text, "晚上好");
   assert.equal(h.nextFreeTimeAt, T0 + 3600000);
+  // One bucket an hour, oldest first; both turns fell in the last hour.
+  assert.equal(h.hourly.length, 24);
+  assert.deepEqual(h.hourly[23], { chat: 1, free: 1 });
+  assert.ok(h.hourly.slice(0, 23).every((x) => x.chat === 0 && x.free === 0));
+  // A turn from more than a day ago is in no bucket.
+  const later = homeSummary(store, "agent-0", { now: T0 + 86400000 + 400000 });
+  assert.equal(
+    later.hourly.reduce((n, x) => n + x.chat + x.free, 0),
+    0,
+  );
 });

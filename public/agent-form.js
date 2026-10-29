@@ -1,5 +1,6 @@
-// Agent editor: builds the sectioned form, wires its widgets and turns the
-// submitted form back into an agent row. The saved shape is unchanged: the
+// Agent editor: builds the form, wires its widgets and turns the submitted
+// form back into an agent row. The fields changed most often come first; the
+// rest fold away under titled sections. The saved shape is unchanged: the
 // same `tools` names, `silence` objects and `wake.cooldownMs`.
 // Top-level code only declares values so tests can load this file in a VM.
 
@@ -167,7 +168,7 @@ const AGENT_TOOL_GROUPS = [
   {
     id: "github",
     title: "GitHub",
-    desc: "只读搜索和阅读 GitHub 仓库，登录方式在「高级」中设置。",
+    desc: "只读搜索和阅读 GitHub 仓库，登录方式在「联网与 GitHub」中设置。",
     tools: {
       github_capabilities: "查看 GitHub 权限",
       github_search: "搜索仓库与代码",
@@ -197,6 +198,28 @@ const SILENCE_DAYS = [
   [6, "六"],
   [0, "日"],
 ];
+// Reasoning effort levels offered until the backend's model catalog is read;
+// then the chosen model's own list replaces them (DSH `reasoning.efforts`,
+// Codex `supportedReasoningEfforts`). An OpenAI-compatible backend sends the
+// value as `reasoning_effort` only when its `sendEffort` is on.
+const AGENT_EFFORTS = {
+  dsh: ["low", "medium", "high"],
+  codex: ["minimal", "low", "medium", "high", "xhigh"],
+  openai: ["minimal", "low", "medium", "high"],
+};
+const EFFORT_NAMES = {
+  none: "不思考",
+  minimal: "最低",
+  low: "低",
+  medium: "中",
+  high: "高",
+  xhigh: "很高",
+  max: "最高",
+};
+// Usual argument names of speech-to-text MCP tools. The console cannot read a
+// tool's parameters, so these are offers and the fields stay free text.
+const ASR_AUDIO_ARGUMENTS = ["audio", "file", "audio_base64", "data"];
+const ASR_MIME_ARGUMENTS = ["mimeType", "mime_type", "format"];
 
 const agentForm = {
   groups: AGENT_TOOL_GROUPS,
@@ -215,35 +238,93 @@ const agentForm = {
   },
 
   build(row, idField) {
-    const section = (title, body, open = false) =>
-      `<details class="agent-section"${open ? " open" : ""}><summary>${title}</summary><div class="form-grid">${body}</div></details>`;
     const cooldownSeconds =
       row.wake.cooldownMs === undefined ? "" : row.wake.cooldownMs / 1000;
-    const asr = row.voice?.asr || {};
+    const asr = row.voice?.asr || {},
+      backend = this.backendOf(row.backendId),
+      notices = row.behavior || {},
+      on = (v) => (v ? "开" : "关");
+    const toolCount = row.tools.filter((t) => tools.includes(t)).length;
     return (
-      section(
-        "基本信息",
-        idField +
-          input("name", "角色名称", row.name, "required") +
-          select(
-            "connectionId",
-            "QQ 账号",
-            row.connectionId,
-            config.connections.map((c) => [c.id, c.label]),
-          ) +
-          select(
-            "backendId",
-            "AI 后端",
-            row.backendId,
-            config.backends.map((c) => [c.id, c.label]),
-          ) +
-          input("model", "模型（空白则继承后端）", row.model) +
-          input("effort", "思考强度（空白则继承）", row.effort) +
-          check("paused", "保持角色暂停", row.paused),
-        true,
+      '<div class="form-grid agent-form">' +
+      "<h3>基本</h3>" +
+      idField +
+      input("name", "角色名称", row.name, 'required placeholder="例如 小满"') +
+      select(
+        "connectionId",
+        "QQ 账号",
+        row.connectionId,
+        config.connections.map((c) => [c.id, c.label]),
       ) +
-      section(
-        "人格与外形",
+      select(
+        "backendId",
+        "AI 后端",
+        row.backendId,
+        config.backends.map((c) => [c.id, c.label]),
+      ) +
+      this.modelField(row, backend) +
+      select(
+        "effort",
+        "思考强度",
+        row.effort || "",
+        this.effortOptions(backend, row.effort),
+      ) +
+      `<div class="agent-models"><button type="button" class="ghost" data-models ${disabledAttr(this.modelsOff(row, row.backendId))}>读取可用模型</button><span class="hint" data-models-hint>${esc(this.modelsHint(row, backend))}</span></div>` +
+      check("paused", "保持角色暂停", row.paused) +
+      "<h3>聊天范围</h3>" +
+      ids("groups", "群白名单", row.allow.groups, {
+        kind: "group",
+        hint: "只在这些群里接收和回复消息。",
+      }) +
+      ids("users", "私聊白名单", row.allow.users, {
+        kind: "person",
+        hint: "只接收和回复这些人的私聊。",
+      }) +
+      ids("ownerIds", "AI 管理员 QQ", row.ownerIds || [], {
+        kind: "person",
+        hint: "也就是主人：可以在私聊里登记定时任务，QQ 掉线时的提示也发给他们。",
+      }) +
+      "<h3>唤醒</h3>" +
+      this.words("aliases", "唤醒别名", row.aliases || [], {
+        hint: "消息里出现角色名或这些别名，就算叫到它（需开启“提到名字时唤醒”）。空格和逗号会分成几个别名。",
+      }) +
+      '<div class="agent-checks">' +
+      check("mentions", "被 @ 时唤醒", row.wake.mentions) +
+      check("names", "提到名字时唤醒", row.wake.names) +
+      check("private", "私聊时唤醒", row.wake.private) +
+      check("questions", "问句唤醒", row.wake.questions) +
+      check("peers", "参与其他角色对话", row.wake.peers) +
+      "</div>" +
+      `<div class="agent-range">${range(
+        "participation",
+        "普通消息参与率（0–100%）",
+        row.wake.participation,
+        { min: 0, max: 1, step: 0.01, unit: "%" },
+      )}<input type="hidden" name="participationShown"><p class="hint">没有被叫到时，每条普通消息有这么大的机会参与。</p></div>` +
+      advanced(
+        this.foldTitle(
+          "唤醒冷却与连发上限",
+          `冷却 ${cooldownSeconds === "" ? "未设" : cooldownSeconds + " 秒"} · 每批最多 ${row.maxConsecutiveSends ?? row.maxSendsPerTurn} 条`,
+        ),
+        input(
+          "cooldownSeconds",
+          "唤醒冷却（秒，0 起）",
+          cooldownSeconds,
+          'type="number" min="0" step="any" placeholder="1.5"',
+        ) +
+          input(
+            "maxConsecutiveSends",
+            "每批连续回复上限（1–10 条）",
+            row.maxConsecutiveSends ?? row.maxSendsPerTurn,
+            'type="number" min="1" max="10" required',
+          ) +
+          '<p class="hint">读到人类新消息后恢复；同伴私聊需冷却结束后收到并读到新消息。重读或重启不会恢复。</p>',
+      ) +
+      advanced(
+        this.foldTitle(
+          "人格与外形",
+          row.appearance ? "已填写固定外形" : "未填写固定外形",
+        ),
         area(
           "appearance",
           "固定外形（无固定外形时请明确填写）",
@@ -255,61 +336,19 @@ const agentForm = {
             row.persona || "",
           ),
       ) +
-      section(
-        "聊天范围与唤醒",
-        input(
-          "groups",
-          "群白名单（逗号分隔群号）",
-          row.allow.groups.join(", "),
+      advanced(
+        this.foldTitle(
+          "回复失败与掉线提示",
+          `失败提示${on(notices.failureNotice?.enabled)} · 掉线提示${on(notices.outageNotice?.enabled)}`,
+        ),
+        check(
+          "failureNotice",
+          "回复失败时发一句固定提示",
+          row.behavior?.failureNotice?.enabled,
         ) +
           input(
-            "users",
-            "私聊白名单（逗号分隔 QQ 号）",
-            row.allow.users.join(", "),
-          ) +
-          `<div class="wide conversation-picker"><button type="button" data-conversations ${row.id ? "" : "disabled"}>从见过的会话中选择</button><span class="hint">${row.id ? "勾选即加入对应白名单，取消勾选即移除。" : "保存角色并收到消息后，可在这里从见过的会话中选择。"}</span><div class="conversation-list" data-conversation-list hidden></div></div>` +
-          input(
-            "ownerIds",
-            "AI 管理员 QQ（逗号分隔）",
-            (row.ownerIds || []).join(", "),
-          ) +
-          input(
-            "aliases",
-            "唤醒别名（逗号分隔）",
-            (row.aliases || []).join(", "),
-          ) +
-          check("mentions", "被 @ 时唤醒", row.wake.mentions) +
-          check("names", "提到名字时唤醒", row.wake.names) +
-          check("private", "私聊时唤醒", row.wake.private) +
-          check("questions", "问句唤醒", row.wake.questions) +
-          check("peers", "参与其他角色对话", row.wake.peers) +
-          input(
-            "participation",
-            "普通消息参与率（0—1）",
-            row.wake.participation,
-            'type="number" min="0" max="1" step="0.01"',
-          ) +
-          input(
-            "cooldownSeconds",
-            "唤醒冷却（秒）",
-            cooldownSeconds,
-            'type="number" min="0" step="any"',
-          ) +
-          input(
-            "maxConsecutiveSends",
-            "每批连续回复上限",
-            row.maxConsecutiveSends ?? row.maxSendsPerTurn,
-            'type="number" min="1" max="10" required',
-          ) +
-          '<p class="hint">读到人类新消息后恢复；同伴私聊需冷却结束后收到并读到新消息。重读或重启不会恢复。</p>' +
-          check(
-            "failureNotice",
-            "回复失败时发一句固定提示",
-            row.behavior?.failureNotice?.enabled,
-          ) +
-          input(
             "failureNoticeText",
-            "固定提示内容",
+            "固定提示内容（最多 200 字）",
             row.behavior?.failureNotice?.text ?? "",
             'maxlength="200" placeholder="我刚才没接上，稍后再回你。"',
           ) +
@@ -321,7 +360,7 @@ const agentForm = {
           ) +
           input(
             "outageNoticeText",
-            "掉线提示内容",
+            "掉线提示内容（最多 200 字）",
             row.behavior?.outageNotice?.text ?? "",
             'maxlength="200" placeholder="{agent} 的 QQ 掉线了：{reason}。请到 NapCat 看一下。"',
           ) +
@@ -332,29 +371,25 @@ const agentForm = {
           ) +
           input(
             "outageNoticeRecoveredText",
-            "恢复提示内容",
+            "恢复提示内容（最多 200 字）",
             row.behavior?.outageNotice?.recoveredText ?? "",
             'maxlength="200" placeholder="{agent} 的 QQ 已经恢复连接。"',
           ) +
           `<p class="hint">本角色的 QQ 已离线或自动重连用完次数时，由同一实例里排在最前、QQ 已连接、未暂停、私聊白名单包含该主人的另一个角色，把这句话私聊发给本角色的每位主人；{agent} 换成本角色名，{reason} 换成“QQ 已离线”或“自动重连失败”。同一连接的同类提示每 ${Math.round((row.behavior?.outageNotice?.cooldownMs ?? 1800000) / 60000)} 分钟最多一次，仍受暂停、静默和发送限额约束，被拦下不重试。需要先填写主人 QQ；只有一个角色时没有人代发。</p>`,
       ) +
-      section(
-        "能力",
-        `<p class="hint">每组一个开关；部分开启的组显示为“部分”。展开“高级：逐项工具”可单独调整。</p>${this.toolGroupsMarkup(row)}` +
-          check(
-            "autonomousNetwork",
-            "允许自主搜索与联网浏览（无需命令或逐次确认）",
-            row.network?.autonomous,
-          ) +
-          '<p class="hint">允许自行整理查询内容，提交给已启用的平台和外部工具。聊天经历不再触发逐次联网确认；平台开关、时段、预算与凭据保护仍生效。</p>' +
-          check(
-            "githubEnabled",
-            "启用 GitHub 只读搜索与文件阅读",
-            row.github?.enabled,
-          ),
+      advanced(
+        this.foldTitle("能力", `已开启 ${toolCount}/${tools.length} 项工具`),
+        `<p class="hint">每组一个开关；部分开启的组显示为“部分”。展开“高级：逐项工具”可单独调整。</p>${this.toolGroupsMarkup(row)}`,
       ) +
-      section(
-        "语音转写",
+      advanced(
+        this.foldTitle(
+          "语音转写",
+          asr.enabled && asr.serverId
+            ? `已开启 · ${asr.serverId} · ${asr.tool}`
+            : asr.enabled
+              ? "已开启"
+              : "未开启",
+        ),
         check("asrEnabled", "收到语音时自动转成文字", asr.enabled) +
           select(
             "asrTool",
@@ -362,57 +397,66 @@ const agentForm = {
             this.asrToolValue(asr),
             this.asrToolOptions(row.backendId, asr),
           ) +
-          input(
+          this.offered(
             "asrAudioArgument",
             "音频参数名",
             asr.audioArgument ?? "audio",
-            'pattern="[A-Za-z_][A-Za-z0-9_]{0,63}"',
+            ASR_AUDIO_ARGUMENTS,
+            'pattern="[A-Za-z_][A-Za-z0-9_]{0,63}" placeholder="例如 audio"',
           ) +
-          input(
+          this.offered(
             "asrMimeArgument",
             "MIME 参数名（工具不需要时留空）",
             asr.mimeArgument ?? "mimeType",
-            'pattern="([A-Za-z_][A-Za-z0-9_]{0,63})?"',
+            ASR_MIME_ARGUMENTS,
+            'pattern="([A-Za-z_][A-Za-z0-9_]{0,63})?" placeholder="例如 mimeType"',
           ) +
+          '<p class="hint">参数名要和转写工具的参数定义一致；不确定时看该 MCP 服务的说明，常见的是 audio 和 mimeType。</p>' +
           input(
             "asrMaxSeconds",
-            "单条语音最长（秒）",
+            "单条语音最长（秒，1–600）",
             asr.maxSeconds ?? 90,
             'type="number" min="1" max="600"',
           ) +
           input(
             "asrMaxMegabytes",
-            "单条语音最大（MB）",
+            "单条语音最大（MB，0.0625–20）",
             this.megabytes(asr.maxBytes ?? 8388608),
             'type="number" min="0.0625" max="20" step="any"',
           ) +
           input(
             "asrTimeoutSeconds",
-            "转写超时（秒）",
+            "转写超时（秒，1–300）",
             (asr.timeoutMs ?? 60000) / 1000,
             'type="number" min="1" max="300" step="any"',
           ) +
           input(
             "asrWaitSeconds",
-            "回合开始前最多等转写（秒）",
+            "回合开始前最多等转写（秒，0–30）",
             (asr.waitMs ?? 8000) / 1000,
             'type="number" min="0" max="30" step="any"',
           ) +
           input(
             "asrMaxPerHour",
-            "每小时最多转写条数",
+            "每小时最多转写条数（1–1000）",
             asr.maxPerHour ?? 60,
             'type="number" min="1" max="1000"',
           ) +
-          area(
+          this.note(
             "asrArguments",
-            '固定附加参数（JSON，例如 {"language":"zh"}）',
+            "固定附加参数（JSON，最多 10 个）",
             JSON.stringify(asr.arguments || {}),
+            '{"language":"zh"}',
           ) +
           '<p class="hint">开启后，收到的语音会经 QQ 网关下载到此角色的语音库，再发给上面选择的外部工具转写，也就是把聊天语音交给该服务；只能选此角色 AI 后端里管理员白名单中的工具，改了 AI 后端请重新选择。转写结果单独保存并标明是机器转写，原消息不变。暂停、受保护会话、单条上限和每小时上限照常生效；失败时保留原占位并记一条诊断。</p>',
       ) +
-      section(
-        "作息与静默",
+      advanced(
+        this.foldTitle(
+          "作息与静默",
+          row.silence.length
+            ? `${row.silence.length} 个静默时段`
+            : "未设置，全天可发言",
+        ),
         `<div class="silence-editor"><p class="hint">静默时段内角色不会主动发言。结束早于开始表示跨夜（如 23:00—07:00），星期按开始时间所在的那天计算。</p><div data-silence-rows></div><button type="button" data-silence-add>${icon("plus", "sm")}添加静默时段</button></div>` +
           `<details class="wide"><summary>高级 JSON</summary>${area(
             "silence",
@@ -420,13 +464,33 @@ const agentForm = {
             JSON.stringify(row.silence, null, 2),
           )}</details>`,
       ) +
-      section(
-        "高级",
-        area(
-          "publicUrls",
-          "允许随时读取的精确公开 URL（每行一个，不含私密参数）",
-          (row.network?.publicUrls || []).join("\n"),
+      advanced(
+        this.foldTitle(
+          "联网与 GitHub",
+          [
+            row.network?.autonomous ? "自主联网" : "",
+            row.github?.enabled ? "GitHub 只读" : "",
+          ]
+            .filter(Boolean)
+            .join(" · ") || "都未开启",
+        ),
+        check(
+          "autonomousNetwork",
+          "允许自主搜索与联网浏览（无需命令或逐次确认）",
+          row.network?.autonomous,
         ) +
+          '<p class="hint">允许自行整理查询内容，提交给已启用的平台和外部工具。聊天经历不再触发逐次联网确认；平台开关、时段、预算与凭据保护仍生效。</p>' +
+          this.note(
+            "publicUrls",
+            "允许随时读取的精确公开 URL（每行一个，不含私密参数）",
+            (row.network?.publicUrls || []).join("\n"),
+            "https://example.com/status.json",
+          ) +
+          check(
+            "githubEnabled",
+            "启用 GitHub 只读搜索与文件阅读",
+            row.github?.enabled,
+          ) +
           select("githubAuth", "GitHub 登录方式", row.github?.auth || "token", [
             ["token", "独立只读令牌（推荐）"],
             ["gh", "本机 GitHub CLI 登录"],
@@ -435,21 +499,126 @@ const agentForm = {
             "githubTokenEnv",
             "GitHub 令牌环境变量名",
             row.github?.tokenEnv || "QQ_GITHUB_READ_TOKEN",
+            'placeholder="例如 GITHUB_TOKEN"',
           ) +
           input(
             "githubToken",
             "GitHub 只读令牌（留空保留已保存值）",
             "",
-            'type="password" autocomplete="new-password"',
+            'type="password" autocomplete="new-password" placeholder="github_pat_…"',
           ) +
-          area(
+          this.note(
             "githubPrivateRepositories",
             "允许读取的私有仓库（每行 owner/repo）",
             (row.github?.privateRepositories || []).join("\n"),
+            "例如 octocat/hello-world",
           ) +
           '<p class="hint">仅搜索与读取，不提供提交、评论或工作流操作。私有内容仅独立受保护工作任务可读，不自动转发到其他聊天或外部服务。本机 CLI 登录可能自带较大权限，推荐独立只读令牌；变量名填写在上一栏，令牌仅填写专用密码框并保存到本机私有配置。</p>',
-      )
+      ) +
+      "</div>"
     );
+  },
+
+  backendOf(id) {
+    return config.backends.find((b) => b.id === id) || config.backends[0];
+  },
+  foldTitle(title, summary) {
+    return `${title}<span class="adv-summary">${esc(summary)}</span>`;
+  },
+  /** A textarea with an example shown while it is empty. */
+  note(key, label, value, example) {
+    return `<label class="wide">${label}<textarea name="${key}" placeholder="${esc(example)}">${esc(value)}</textarea></label>`;
+  },
+  /** A free-text input that offers the usual values as it is typed in. */
+  offered(key, label, value, offers, extra = "") {
+    return `<label>${label}<input name="${key}" value="${esc(value)}" list="agent-${key}-list" autocomplete="off" ${extra}><datalist id="agent-${key}-list">${offers.map((v) => `<option value="${esc(v)}"></option>`).join("")}</datalist></label>`;
+  },
+
+  // Model: free text that offers the backend default, the models other roles
+  // on this backend use and, once read, the backend's catalog. Empty keeps
+  // inheriting the backend's model.
+  modelField(row, backend) {
+    return `<label>模型<input name="model" value="${esc(row.model || "")}" list="agent-model-list" autocomplete="off" placeholder="${esc(this.modelPlaceholder(backend))}"><datalist id="agent-model-list">${this.modelOptions(this.modelSuggestions(backend))}</datalist></label>`;
+  },
+  modelPlaceholder(backend) {
+    return backend?.model
+      ? `留空用后端默认：${backend.model}`
+      : "留空用后端默认模型";
+  },
+  modelSuggestions(backend) {
+    return [
+      ...new Set(
+        [
+          backend?.model,
+          ...config.agents
+            .filter((a) => a.backendId === backend?.id)
+            .map((a) => a.model),
+        ].filter(Boolean),
+      ),
+    ].map((id) => ({ id, name: "" }));
+  },
+  modelOptions(models) {
+    return models
+      .map(
+        (m) =>
+          `<option value="${esc(m.id)}">${esc(m.name && m.name !== m.id ? m.name : "")}</option>`,
+      )
+      .join("");
+  },
+  /** Model ids with their effort levels, from any backend's model catalog. */
+  catalogModels(catalog, provider = "") {
+    const rows = Array.isArray(catalog)
+      ? catalog
+      : (catalog?.groups || [])
+          .filter((g) => !provider || g.id === provider)
+          .flatMap((g) => g.models || []);
+    return rows
+      .map((m) => ({
+        id: String(m?.model || m?.id || ""),
+        name: String(m?.displayName || m?.name || ""),
+        efforts: (m?.reasoning?.efforts || m?.supportedReasoningEfforts || [])
+          .map((e) =>
+            typeof e === "string" ? e : e?.id || e?.reasoningEffort || "",
+          )
+          .filter(Boolean),
+      }))
+      .filter((m) => m.id);
+  },
+  effortName(v) {
+    return EFFORT_NAMES[v] ? `${EFFORT_NAMES[v]}（${v}）` : v;
+  },
+  /** Inherit, the backend's levels (or a model's own), then the saved value. */
+  effortOptions(backend, value = "", levels) {
+    const options = [
+      [
+        "",
+        `继承后端（${backend?.effort ? this.effortName(backend.effort) : "后端默认"}）`,
+      ],
+      ...(levels || AGENT_EFFORTS[backend?.type] || AGENT_EFFORTS.dsh).map(
+        (v) => [v, this.effortName(v)],
+      ),
+    ];
+    if (value && !options.some(([v]) => v === value))
+      options.push([value, `${value}（当前值）`]);
+    return options;
+  },
+  // The catalog is read through the saved role, so it needs one on the
+  // backend it was saved with, outside isolated mode.
+  modelsOff(row, backendId) {
+    return !row.id
+      ? "保存角色后可读取后端的模型目录"
+      : backendId !== row.backendId
+        ? "改了 AI 后端，保存后才能读取新后端的模型"
+        : disabledReason([[status?.mode === "isolated", "isolatedBackend"]]);
+  },
+  modelsHint(row, backend, catalog) {
+    const off = this.modelsOff(row, backend?.id);
+    if (off) return off;
+    if (backend?.type === "openai" && !backend.sendEffort)
+      return "这个后端没有开启“发送思考强度”，思考强度不会发给模型。";
+    return catalog
+      ? `已读取 ${catalog.length} 个模型，可以在“模型”里直接选。`
+      : "模型和思考强度留空时用后端的设置。";
   },
 
   megabytes(bytes) {
@@ -536,20 +705,6 @@ const agentForm = {
   },
 
   bind(root, row) {
-    // Collapsed sections hide invalid fields from the browser's validation
-    // bubble, so open them first.
-    root.addEventListener(
-      "invalid",
-      (e) => {
-        for (
-          let d = e.target.closest("details");
-          d;
-          d = d.parentElement?.closest("details")
-        )
-          d.open = true;
-      },
-      true,
-    );
     for (const group of root.querySelectorAll(".tool-group:not(.managed)")) {
       const toggle = group.querySelector("[data-group-toggle]"),
         boxes = [...group.querySelectorAll('input[name^="tool:"]')],
@@ -577,25 +732,143 @@ const agentForm = {
         tab = b.dataset.gotoTab;
         render();
       };
+    // The slider snaps the saved value to its step; parse() keeps the saved
+    // value while the slider still shows that snapped position.
+    const slider = root.querySelector('input[name="participation"]');
+    root.querySelector('input[name="participationShown"]').value = slider.value;
+    // A number typed but not added yet is added when the field is left, so
+    // pressing save keeps it as the comma field did.
+    for (const field of root.querySelectorAll("[data-ids] .ids-add input"))
+      field.addEventListener("change", () =>
+        field.closest("[data-ids]").querySelector("[data-ids-add]").click(),
+      );
     this.bindSilence(root);
-    this.bindConversations(root, row);
-    this.bindAsr(root, row);
+    this.bindWords(root);
+    this.bindBackend(root, row);
+    fillIds(root, row.id);
   },
 
-  // The tool choices follow the selected AI backend.
-  bindAsr(root, row) {
+  // Effort levels, model offers and transcription tools follow the selected
+  // AI backend; a read catalog also follows the typed model.
+  bindBackend(root, row) {
     const backend = root.querySelector('select[name="backendId"]'),
+      model = root.querySelector('input[name="model"]'),
+      effort = root.querySelector('select[name="effort"]'),
+      offers = root.querySelector("#agent-model-list"),
+      button = root.querySelector("[data-models]"),
+      hint = root.querySelector("[data-models-hint]"),
       tool = root.querySelector('select[name="asrTool"]');
-    if (!backend || !tool) return;
-    backend.addEventListener("change", () => {
-      const current = tool.value;
-      tool.innerHTML = this.asrToolOptions(backend.value, row.voice?.asr)
+    let catalog = null;
+    const fill = (select, options) => {
+      const current = select.value;
+      select.innerHTML = options
         .map(
           ([v, l]) =>
             `<option value="${esc(v)}" ${v === current ? "selected" : ""}>${esc(l)}</option>`,
         )
         .join("");
+    };
+    const levels = () => {
+      const id = model.value.trim() || this.backendOf(backend.value)?.model,
+        efforts = catalog?.find((m) => m.id === id)?.efforts;
+      return efforts?.length ? efforts : undefined;
+    };
+    const refresh = () => {
+      const b = this.backendOf(backend.value),
+        off = this.modelsOff(row, backend.value);
+      fill(effort, this.effortOptions(b, effort.value, levels()));
+      model.placeholder = this.modelPlaceholder(b);
+      const seen = new Set(catalog?.map((m) => m.id));
+      offers.innerHTML = this.modelOptions([
+        ...(catalog || []),
+        ...this.modelSuggestions(b).filter((m) => !seen.has(m.id)),
+      ]);
+      button.disabled = Boolean(off);
+      button.title = off;
+      hint.textContent = this.modelsHint(row, b, catalog);
+    };
+    backend.addEventListener("change", () => {
+      catalog = null;
+      refresh();
+      fill(tool, this.asrToolOptions(backend.value, row.voice?.asr));
     });
+    model.addEventListener("input", () => {
+      if (catalog)
+        fill(
+          effort,
+          this.effortOptions(
+            this.backendOf(backend.value),
+            effort.value,
+            levels(),
+          ),
+        );
+    });
+    button.onclick = () =>
+      action(async () => {
+        const r = await api("/api/models", { agentId: row.id });
+        catalog = this.catalogModels(
+          r.models,
+          this.backendOf(backend.value)?.provider,
+        );
+        refresh();
+      });
+  },
+
+  // Words as removable chips, the text version of ids() in app.js. The hidden
+  // input sends the same comma list the plain field used to send.
+  words(key, label, values, { hint = "" } = {}) {
+    return `<div class="ids wide" data-words="${esc(JSON.stringify(values))}"><span class="ids-label">${label}</span><input type="hidden" name="${key}" value="${esc(values.join(", "))}"><div class="ids-chips">${this.wordChips(values)}</div><div class="ids-add"><input autocomplete="off" maxlength="80" placeholder="输入别名，按回车添加" aria-label="添加到${label}"><button type="button" class="ghost" data-words-add>添加</button></div>${hint ? `<p class="hint">${hint}</p>` : ""}</div>`;
+  },
+  wordChips(values) {
+    return (
+      values
+        .map(
+          (w, i) =>
+            `<span class="ids-chip" data-index="${i}"><span class="ids-name">${esc(w)}</span><button type="button" class="ids-remove" data-word-remove aria-label="移除 ${esc(w)}">×</button></span>`,
+        )
+        .join("") || '<span class="ids-empty">还没有</span>'
+    );
+  },
+  bindWords(root) {
+    for (const box of root.querySelectorAll("[data-words]")) {
+      const hidden = box.querySelector('input[type="hidden"]'),
+        field = box.querySelector(".ids-add input"),
+        words = JSON.parse(box.dataset.words);
+      const show = () => {
+        hidden.value = words.join(", ");
+        box.querySelector(".ids-chips").innerHTML = this.wordChips(words);
+      };
+      // Saving splits on spaces and commas, so adding does the same.
+      const add = () => {
+        const next = field.value.split(/[,，\s]+/).filter(Boolean);
+        if (!next.length) return;
+        if (next.some((w) => w.length > 80)) {
+          field.setCustomValidity("每个别名最多 80 个字");
+          field.reportValidity();
+          return;
+        }
+        field.setCustomValidity("");
+        field.value = "";
+        for (const w of next) if (!words.includes(w)) words.push(w);
+        show();
+      };
+      box.addEventListener("click", (e) => {
+        if (e.target.closest("[data-words-add]")) add();
+        const chip = e.target.closest("[data-word-remove]")?.parentElement;
+        if (chip) {
+          words.splice(Number(chip.dataset.index), 1);
+          show();
+        }
+      });
+      field.addEventListener("keydown", (e) => {
+        if (e.key !== "Enter") return;
+        // Enter adds the alias instead of submitting the form.
+        e.preventDefault();
+        add();
+      });
+      field.addEventListener("input", () => field.setCustomValidity(""));
+      field.addEventListener("change", add);
+    }
   },
 
   bindSilence(root) {
@@ -682,52 +955,6 @@ const agentForm = {
     render();
   },
 
-  bindConversations(root, row) {
-    const button = root.querySelector("[data-conversations]"),
-      box = root.querySelector("[data-conversation-list]"),
-      fields = {
-        group: root.querySelector('input[name="groups"]'),
-        private: root.querySelector('input[name="users"]'),
-      },
-      ids = (kind) =>
-        fields[kind].value
-          .split(/[,，\s]+/)
-          .map((s) => s.trim())
-          .filter(Boolean);
-    const syncChecks = () => {
-      for (const b of box.querySelectorAll("[data-kind]"))
-        b.checked = ids(b.dataset.kind).includes(b.value);
-    };
-    button.onclick = () =>
-      action(async () => {
-        const seen = await api(
-          "/api/conversations?agentId=" + encodeURIComponent(row.id),
-        );
-        const items = seen
-          .map((c) => /^(group|private):(.+)$/.exec(c.conversation))
-          .filter(Boolean);
-        box.hidden = false;
-        box.innerHTML = items.length
-          ? items
-              .map(
-                ([, kind, id]) =>
-                  `<label class="check"><input type="checkbox" data-kind="${kind}" value="${esc(id)}">${kind === "group" ? "群" : "私聊"} · <span class="mono">${esc(id)}</span></label>`,
-              )
-              .join("")
-          : '<p class="hint">此角色还没有见过任何群聊或私聊。</p>';
-        syncChecks();
-      });
-    box.addEventListener("change", (e) => {
-      const b = e.target,
-        field = fields[b.dataset.kind],
-        next = ids(b.dataset.kind).filter((id) => id !== b.value);
-      if (b.checked) next.push(b.value);
-      field.value = next.join(", ");
-    });
-    for (const field of Object.values(fields))
-      field.addEventListener("input", syncChecks);
-  },
-
   /** Returns the edited agent row and an optional GitHub credential. */
   parse(f, original) {
     const get = (k) => String(f.get(k) || ""),
@@ -736,6 +963,15 @@ const agentForm = {
           .split(/[,，\s]+/)
           .map((s) => s.trim())
           .filter(Boolean),
+      // The number chips show a repeated number once; a list left as shown
+      // keeps the saved one, repeats included.
+      numbers = (k, saved = []) => {
+        const next = list(k);
+        return JSON.stringify(next) ===
+          JSON.stringify([...new Set(saved.map((s) => String(s).trim()))])
+          ? saved
+          : next;
+      },
       lines = (k) =>
         get(k)
           .split(/\r?\n/)
@@ -858,12 +1094,19 @@ const agentForm = {
         privateRepositories: lines("githubPrivateRepositories"),
       },
       aliases: list("aliases"),
-      ownerIds: list("ownerIds"),
-      allow: { groups: list("groups"), users: list("users") },
+      ownerIds: numbers("ownerIds", original.ownerIds),
+      allow: {
+        groups: numbers("groups", original.allow.groups),
+        users: numbers("users", original.allow.users),
+      },
       paused: f.has("paused"),
       wake: {
         ...original.wake,
-        participation: Number(get("participation")),
+        participation:
+          f.has("participationShown") &&
+          get("participation") === get("participationShown")
+            ? original.wake.participation
+            : Number(get("participation")),
         cooldownMs,
         mentions: f.has("mentions"),
         names: f.has("names"),
