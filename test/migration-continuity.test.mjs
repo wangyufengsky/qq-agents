@@ -98,7 +98,7 @@ test("N1 an empty current window still repairs known-account legacy connections"
   assert.equal(importLegacy(f.m, f.plan()).rebound, 0);
 });
 
-test("N3 multi-agent restoration remaps the learner watermark and preserves unprocessed input", (t) => {
+test("N3 multi-agent restoration remaps the read watermark, keeps old learner state and preserves unprocessed input", (t) => {
   const f = setup(t),
     other = f.store.bind("dragon");
   for (let i = 0; i < 100; i++) live(other, "filler-" + i);
@@ -114,15 +114,21 @@ test("N3 multi-agent restoration remaps the learner watermark and preserves unpr
     const rows = target.db
       .prepare("SELECT id,seq FROM events WHERE agent_id='fish' ORDER BY seq")
       .all();
-    assert.equal(target.bind("fish").state(chat).slang.throughSeq, rows[1].seq);
+    const state = target.bind("fish").state(chat);
+    assert.equal(state.readThroughSeq, rows[1].seq);
     assert.equal(
       target.db
         .prepare(
           "SELECT COUNT(*) n FROM events WHERE agent_id='fish' AND seq>?",
         )
-        .get(target.bind("fish").state(chat).slang.throughSeq).n,
+        .get(state.readThroughSeq).n,
       1,
     );
+    // Slang learning was removed in 0.5.3; its old state is carried over as is.
+    assert.deepEqual(state.slang, {
+      entries: [],
+      throughSeq: records[1].seq,
+    });
   } finally {
     target.close();
   }

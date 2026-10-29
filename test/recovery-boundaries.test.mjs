@@ -168,21 +168,15 @@ test("N5 late old-entry close cannot evict a replacement; close blocks concurren
   assert.equal(f.stats().initialized, 3);
 });
 
-for (const lane of ["chat", "subject", "learner"])
+for (const lane of ["chat", "subject"])
   for (const outcome of ["failed", "cancelled"])
     for (const recovery of ["next-turn", "restart"])
       test(`N3 archive failure ${lane} ${outcome} recovers on ${recovery} without session reuse or delivery replay`, async (t) => {
         const cfg = config(1);
-        cfg.agents[0].slang.enabled = true;
         cfg.agents[0].subject.enabled = true;
         const f = fixture(t, { cfg }),
           m = f.store.bind("agent-0"),
-          scope =
-            lane === "subject"
-              ? "@subject"
-              : lane === "learner"
-                ? "learner:" + chat
-                : chat,
+          scope = lane === "subject" ? "@subject" : chat,
           calls = [];
         let late;
         f.runtime.backendFactory = () => ({
@@ -199,15 +193,9 @@ for (const lane of ["chat", "subject", "learner"])
           },
           async close() {},
         });
-        m.setState(chat, { slang: { entries: [], throughSeq: 0 } });
         m.reserveDelivery("unknown", chat, { text: "synthetic" });
         m.completeDelivery("unknown", "unknown");
-        const learn = () =>
-          f.runtime.learner.learn(f.runtime.agent("agent-0"), chat, [
-            { id: "synthetic", body: "sample", seq: 1 },
-          ]);
-        const run = () =>
-          lane === "learner" ? learn() : f.runtime.wake("agent-0", scope);
+        const run = () => f.runtime.wake("agent-0", scope);
         f.store.db.exec(
           "CREATE TEMP TRIGGER reject_archive BEFORE INSERT ON session_history BEGIN SELECT RAISE(ABORT,'archive-fault'); END",
         );
@@ -217,8 +205,7 @@ for (const lane of ["chat", "subject", "learner"])
         assert.equal(f.runtime.capabilities.size, 0);
         assert.equal(f.runtime.running.size, 0);
         // Failed recovery must keep the durable marker and must not call the backend.
-        if (lane === "learner" || lane === "subject")
-          await assert.rejects(run());
+        if (lane === "subject") await assert.rejects(run());
         else assert.equal((await run()).status, "failed");
         assert.equal(calls.length, 1);
         f.store.db.exec("DROP TRIGGER reject_archive");
@@ -228,8 +215,7 @@ for (const lane of ["chat", "subject", "learner"])
         assert.equal(calls.length, 2);
         assert(!calls[1]);
         oldCallback({ backend: "codex", id: "session-1" });
-        const state = lane === "learner" ? m.state(chat).slang : m.state(scope);
-        assert.equal(state.session.id, "session-2");
+        assert.equal(m.state(scope).session.id, "session-2");
         new ContextLifecycle(f.runtime);
         assert.equal(
           m.identity
@@ -295,33 +281,3 @@ for (const scope of [chat, "@subject"])
       assert.equal(m.delivery("unknown").status, "unknown");
       assert.equal(f.runtime.transports.get("qq-0").sent.length, 0);
     });
-
-test("N3 learner committed progress survives terminal-write failure without repeating successful work", async (t) => {
-  const cfg = config(1);
-  cfg.agents[0].slang.enabled = true;
-  let runs = 0;
-  const f = fixture(t, {
-      cfg,
-      run: async (p) => {
-        runs++;
-        p.saveSession({ backend: "codex", id: "done" });
-      },
-    }),
-    m = f.store.bind("agent-0");
-  m.setState(chat, { slang: { entries: [], throughSeq: 0 } });
-  f.store.db.exec(
-    "CREATE TEMP TRIGGER reject_terminal BEFORE INSERT ON model_turns WHEN json_extract(new.value,'$.status')='completed' BEGIN SELECT RAISE(ABORT,'terminal-fault'); END",
-  );
-  const run = () =>
-    f.runtime.learner.learn(f.runtime.agent("agent-0"), chat, [
-      { id: "event", body: "sample", seq: 1 },
-    ]);
-  await assert.rejects(run(), /terminal-fault/);
-  assert.equal(f.runtime.capabilities.size, 0);
-  assert.equal(m.state(chat).slang.throughSeq, 1);
-  f.store.db.exec("DROP TRIGGER reject_terminal");
-  await run();
-  assert.equal(runs, 1);
-  assert.equal(m.state(chat).slang.session, null);
-  assert.equal(m.identity.list("session_history").length, 1);
-});
