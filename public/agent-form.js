@@ -311,7 +311,30 @@ const agentForm = {
             row.behavior?.failureNotice?.text ?? "",
             'maxlength="200" placeholder="我刚才没接上，稍后再回你。"',
           ) +
-          `<p class="hint">私聊、被 @ 或被叫名字后，这一轮因 AI 后端出错或超时失败、又一句都没发出时，由程序发送这句话；同一会话每 ${Math.round((row.behavior?.failureNotice?.cooldownMs ?? 600000) / 60000)} 分钟最多一次，仍受暂停、静默和发送限额约束。</p>`,
+          `<p class="hint">私聊、被 @ 或被叫名字后，这一轮因 AI 后端出错或超时失败、又一句都没发出时，由程序发送这句话；同一会话每 ${Math.round((row.behavior?.failureNotice?.cooldownMs ?? 600000) / 60000)} 分钟最多一次，仍受暂停、静默和发送限额约束。</p>` +
+          check(
+            "outageNotice",
+            "QQ 掉线时请其他角色告诉主人",
+            row.behavior?.outageNotice?.enabled,
+          ) +
+          input(
+            "outageNoticeText",
+            "掉线提示内容",
+            row.behavior?.outageNotice?.text ?? "",
+            'maxlength="200" placeholder="{agent} 的 QQ 掉线了：{reason}。请到 NapCat 看一下。"',
+          ) +
+          check(
+            "outageNoticeRecovered",
+            "恢复连接后再说一句",
+            row.behavior?.outageNotice?.notifyRecovered,
+          ) +
+          input(
+            "outageNoticeRecoveredText",
+            "恢复提示内容",
+            row.behavior?.outageNotice?.recoveredText ?? "",
+            'maxlength="200" placeholder="{agent} 的 QQ 已经恢复连接。"',
+          ) +
+          `<p class="hint">本角色的 QQ 已离线或自动重连用完次数时，由同一实例里排在最前、QQ 已连接、未暂停、私聊白名单包含该主人的另一个角色，把这句话私聊发给本角色的每位主人；{agent} 换成本角色名，{reason} 换成“QQ 已离线”或“自动重连失败”。同一连接的同类提示每 ${Math.round((row.behavior?.outageNotice?.cooldownMs ?? 1800000) / 60000)} 分钟最多一次，仍受暂停、静默和发送限额约束，被拦下不重试。需要先填写主人 QQ；只有一个角色时没有人代发。</p>`,
       ) +
       section(
         "能力",
@@ -638,6 +661,14 @@ const agentForm = {
           enabled: f.has("failureNotice"),
           // An empty field keeps the built-in default text.
           text: get("failureNoticeText").trim() || undefined,
+        },
+        outageNotice: {
+          ...original.behavior?.outageNotice,
+          enabled: f.has("outageNotice"),
+          notifyRecovered: f.has("outageNoticeRecovered"),
+          // Empty fields keep the built-in default text.
+          text: get("outageNoticeText").trim() || undefined,
+          recoveredText: get("outageNoticeRecoveredText").trim() || undefined,
         },
       },
       network: {

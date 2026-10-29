@@ -58,6 +58,11 @@
         "users": []
       },
       "maxConsecutiveSends": 3,
+      "behavior": {
+        "outageNotice": {
+          "enabled": false
+        }
+      },
       "network": {
         "publicUrls": []
       },
@@ -86,6 +91,11 @@
         "users": []
       },
       "maxConsecutiveSends": 3,
+      "behavior": {
+        "outageNotice": {
+          "enabled": false
+        }
+      },
       "network": {
         "publicUrls": []
       },
