@@ -24,7 +24,15 @@ let token = sessionStorage.getItem("qq-unified-token") || "",
   globalPausePending = false;
 const titles = {
   apps: ["浏览与分享", "按主体配置平台浏览，查看真实来源和分享决定。"],
-  mind: ["Self 与主体", "当前自我、候选成长、主动意图与工作会话。"],
+  mind: ["Self", "身份锚点、当前 self、成长候选与版本历史。"],
+  mood: ["心情", "角色自己记下的当前心情、强度变化和每一次变化的原因。"],
+  people: ["人物卡", "角色对每个人的称呼、关系与印象，以及每一版的改动。"],
+  subject: ["空闲时间", "空闲时间的检查状态、日志，以及检查与联系的设置。"],
+  intents: ["主动联系", "空闲时间里想主动找人留下的意图，以及最后的结果。"],
+  sessions: [
+    "会话",
+    "每个聊天和空闲时间的模型会话与上下文用量，可结束后重新初始化。",
+  ],
   permissions: ["权限", "分别设置每个 AI 的文件收发能力与独立文件库。"],
   schedule: ["主动与定时", "条件唤醒、睡前观察和定时任务，各自按规则运行。"],
   voices: ["语音库", "导入、试听和管理每个角色自己的语音素材。"],
@@ -180,6 +188,8 @@ async function load() {
   tools = c.tools;
   features = c.features || {};
   status = await api("/api/status");
+  if (status.version)
+    $(".version").textContent = `v${status.version} · 一个主体，连续的经历`;
   $("#login").hidden = true;
   $("#content").hidden = false;
   document.body.classList.remove("locked");
@@ -376,11 +386,16 @@ const sections = {
       "activity",
       "agents",
       "mind",
+      "mood",
+      "people",
       "memory",
+      "subject",
+      "intents",
       "schedule",
       "apps",
       "permissions",
       "voices",
+      "sessions",
     ],
   },
   links: { pages: ["links"] },
@@ -389,7 +404,12 @@ const sections = {
 const pageLabels = {
   activity: "动态",
   agents: "设置",
-  mind: "Self 与主体",
+  mind: "Self",
+  mood: "心情",
+  people: "人物卡",
+  subject: "空闲时间",
+  intents: "主动联系",
+  sessions: "会话",
   memory: "记忆与日记",
   schedule: "作息与定时",
   apps: "浏览与分享",
@@ -487,7 +507,10 @@ function render() {
   const content = $("#content");
   if (!config) return;
   renderSectionBar(section);
-  if (tab === "mind") {
+  // Self, mood, people, free time, contacts and sessions share one renderer.
+  if (
+    ["mind", "mood", "people", "subject", "intents", "sessions"].includes(tab)
+  ) {
     renderMind();
     return;
   }
@@ -520,7 +543,7 @@ function render() {
   } else if (tab === "agents") {
     const role = find("agents", roleId);
     content.innerHTML = role
-      ? `<div class="grid">${agentCard(role)}</div><p class="hint">性格与相处方式在「Self 与主体」中发展；浏览、文件和作息有各自的标签页。</p>`
+      ? `<div class="grid">${agentCard(role)}</div><p class="hint">性格与相处方式在「Self」中发展；心情、人物卡、空闲时间、浏览、文件和作息有各自的标签页。</p>`
       : '<div class="card empty">还没有角色。点上方的“添加角色”开始。</div>';
   } else if (tab === "links") {
     const group = (type, label, card) =>

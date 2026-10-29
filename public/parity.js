@@ -61,7 +61,7 @@ async function renderSchedules() {
   if (tab !== "schedule" || id !== parityAgentId) return;
   parityTasks = result.tasks;
   $("#parity-body").innerHTML =
-    `<details class="card" open><summary>唤醒与回复节奏</summary><form id="behavior-form"><p class="hint">除了被 @、私聊和提到名字，下面这些也会让角色醒来看看。主动检查与联系范围在「Self 与主体」中设置。</p><div class="form-grid">
+    `<details class="card" open><summary>唤醒与回复节奏</summary><form id="behavior-form"><p class="hint">除了被 @、私聊和提到名字，下面这些也会让角色醒来看看。主动检查与联系范围在「空闲时间」中设置。</p><div class="form-grid">
     ${parityField("keywords", "关键词（逗号分隔）", a.wake.keywords.join(","))}${parityField("speakers", "指定发言者 QQ（逗号分隔）", a.wake.speakerIds.join(","))}
     ${parityCheck("poke", "拍一拍唤醒", a.wake.poke)}${parityCheck("joins", "有人入群时唤醒", a.wake.joins)}
     ${parityNumber("quiet", "新消息后等安静（秒）", b.quietAfterNewMs / 1000)}${parityNumber("batch", "合并唤醒：每条后等待（秒）", b.batchWindowMs / 1000)}${parityNumber("batchMax", "合并唤醒：最长等待（秒）", b.batchMaxMs / 1000)}

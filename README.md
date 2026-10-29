@@ -38,11 +38,11 @@ QQ Agents 是一个**可以直接部署的自托管应用**：在自己的机器
     <td><b>记忆与日记</b>：消息按实际发生的时间存进角色自己的经历。搜索命中一条时，会连同前后几条组成场景片段一起给出，并标明谁说了什么。</td>
   </tr>
   <tr>
-    <td><img src="docs/images/console-mind.png" alt="Self 与主体"></td>
+    <td><img src="docs/images/console-mind.png" alt="Self"></td>
     <td><img src="docs/images/console-links.png" alt="QQ 账号与 AI 后端"></td>
   </tr>
   <tr>
-    <td><b>Self 与主体</b>：名字和外形是固定的身份锚点；性格与相处方式写在可以成长的 self 里，按版本保存，管理员可以查看和恢复。</td>
+    <td><b>Self</b>：名字和外形是固定的身份锚点；性格与相处方式写在可以成长的 self 里，按版本保存，管理员可以查看和恢复。</td>
     <td><b>连接</b>：每个角色绑定自己的 QQ 账号（连接前核对登录的 QQ 号）；DSH、Codex、OpenAI 兼容 API 等后端各自检测、各自恢复。</td>
   </tr>
   <tr>
@@ -215,7 +215,7 @@ node src/main.mjs --data /path/to/private-data --port 3210
 | QQ 账号连接         | 配置中的 `connections[]`，一个 NapCat/OneBot 实例及其登录的 QQ 号。                                                         |
 | AI 后端             | 配置中的 `backends[]`，即 DSH、Codex 或 OpenAI 兼容 API。                                                                   |
 | DSH                 | DeepSeek Harness 桌面应用。本项目通过它的 Web RPC 接入，并可生成专用的 preset/MCP bundle（`npm run dsh:bundle`）。          |
-| self                | 角色可长期成长的自我描述（性格、喜好、关系、表达倾向），按版本保存在 SQLite，可在管理台「Self 与主体」查看和恢复。          |
+| self                | 角色可长期成长的自我描述（性格、喜好、关系、表达倾向），按版本保存在 SQLite，可在管理台角色页的「Self」标签查看和恢复。     |
 | 主体                | 角色在聊天之外的“自己”：在空闲时回顾 self、读取资料、提出要联系谁的意图；主体本身没有 QQ 发送能力，由目标聊天决定是否发送。 |
 | 隔离模式 / live     | 配置 `mode`。`isolated` 不连接 QQ、不运行模型回合；`live` 需要以 `--live` 启动才能启用。                                    |
 | 全局暂停 / 角色暂停 | 两道独立开关。每次启动都会打开全局暂停；解除全局暂停不会解除角色暂停。                                                      |
