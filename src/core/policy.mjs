@@ -62,6 +62,28 @@ export const behaviorSchema = z
       })
       .strict()
       .prefault({}),
+    // Fixed lines another online agent sends this agent's owners when this
+    // agent's QQ goes offline or auto-reconnect gives up. Off by default.
+    outageNotice: z
+      .object({
+        enabled: z.boolean().default(false),
+        text: z
+          .string()
+          .trim()
+          .min(1)
+          .max(200)
+          .default("{agent} 的 QQ 掉线了：{reason}。请到 NapCat 看一下。"),
+        recoveredText: z
+          .string()
+          .trim()
+          .min(1)
+          .max(200)
+          .default("{agent} 的 QQ 已经恢复连接。"),
+        notifyRecovered: z.boolean().default(false),
+        cooldownMs: ms(60000, 86400000, 1800000),
+      })
+      .strict()
+      .prefault({}),
   })
   .strict()
   .prefault({})

@@ -2,6 +2,7 @@
 // process is armed, and only an established socket that drops is retried. Sends
 // are never replayed; messages posted while disconnected are not backfilled.
 import { knownErrorCodes } from "./error-codes.mjs";
+import { OutageNotice } from "./outage-notice.mjs";
 
 const LOST = new Set([
   "CONNECTION_LOST",
@@ -23,6 +24,7 @@ export class ConnectionRecovery {
   constructor(runtime) {
     this.runtime = runtime;
     this.states = new Map();
+    this.outage = new OutageNotice(runtime);
   }
   armed(id) {
     const previous = this.states.get(id);
@@ -33,10 +35,23 @@ export class ConnectionRecovery {
       error: null,
       attemptError: null,
       lostAt: null,
+      noticeCode: null,
       lastGap: previous?.lostAt
         ? { lostAt: previous.lostAt, recoveredAt: this.runtime.now() }
         : previous?.lastGap || null,
     });
+    // "Recovered" only follows an outage the owners were sent a line about.
+    if (previous?.lostAt && previous.noticeCode)
+      this.notify(id, "recovered", previous.noticeCode);
+  }
+  // At most one line per event and outage; the notice applies its own cooldown.
+  notify(id, event, code, s = null) {
+    if (s?.notified.has(event)) return;
+    s?.notified.add(event);
+    const job = this.outage.send(id, event, code).then((sent) => {
+      if (sent && s) s.noticeCode = code;
+    });
+    this.runtime.trackJob(job, "connection:" + id);
   }
   disarm(id) {
     this.states.delete(id);
@@ -50,7 +65,10 @@ export class ConnectionRecovery {
       error: code,
       lostAt: this.runtime.now(),
       nextRetryAt: this.runtime.now() + this.delay(id, 1),
+      notified: new Set(),
+      noticeCode: null,
     });
+    if (code === "QQ_OFFLINE") this.notify(id, "offline", code, s);
   }
   policy(id) {
     return this.runtime.config.connections.find((c) => c.id === id)?.recovery;
@@ -100,13 +118,26 @@ export class ConnectionRecovery {
           error: FATAL.has(error?.message) ? error.message : s.error,
           nextRetryAt: null,
         });
-        if (!r.closed) r.faults.set(id, "QQ_AUTO_RECONNECT_EXHAUSTED");
+        if (!r.closed) {
+          r.faults.set(id, "QQ_AUTO_RECONNECT_EXHAUSTED");
+          this.notify(
+            id,
+            "exhausted",
+            FATAL.has(error?.message)
+              ? error.message
+              : "QQ_AUTO_RECONNECT_EXHAUSTED",
+            s,
+          );
+        }
         return;
       }
       Object.assign(s, {
         state: "retrying",
         nextRetryAt: r.now() + this.delay(id, s.attempts + 1),
       });
+      // Dropped for another reason, but QQ turned out to be logged out.
+      if (s.attemptError === "QQ_OFFLINE")
+        this.notify(id, "offline", "QQ_OFFLINE", s);
     }
   }
   snapshot(id) {
