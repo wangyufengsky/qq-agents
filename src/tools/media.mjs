@@ -243,7 +243,12 @@ export class MediaStore {
     }
     return null;
   }
-  async fromMessage(agentId, event, index = 0, { signal, assertActive } = {}) {
+  async fromMessage(
+    agentId,
+    event,
+    index = 0,
+    { signal, assertActive, fallback } = {},
+  ) {
     const active = () => {
       if (signal?.aborted) throw Error("ABORTED");
       assertActive?.();
@@ -263,9 +268,22 @@ export class MediaStore {
     if (this.activeDownloads >= 2) throw Error("IMAGE_DOWNLOAD_BUSY");
     this.activeDownloads++;
     try {
-      const result = await this.fetchBuffer(url, MAX_IMAGE_SOURCE_BYTES, {
-        signal,
-      });
+      let result;
+      try {
+        result = await this.fetchBuffer(url, MAX_IMAGE_SOURCE_BYTES, {
+          signal,
+        });
+      } catch (error) {
+        active();
+        if (
+          !fallback ||
+          !["IMAGE_DOWNLOAD_HTTP_ERROR", "IMAGE_DOWNLOAD_FAILED"].includes(
+            error.message,
+          )
+        )
+          throw error;
+        result = await fallback();
+      }
       active();
       const buffer = Buffer.isBuffer(result) ? result : result.buffer;
       return this.put(agentId, buffer, imageMime(buffer), {

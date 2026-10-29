@@ -1,6 +1,10 @@
 // NapCat's native attachment stream does not depend on PacketBackend. Use only
 // an observed attachment ID, never a model-supplied URL or gateway local path.
-export async function downloadFileStream(bot, fileId, { maxBytes, signal }) {
+export async function downloadFileStream(
+  bot,
+  fileId,
+  { maxBytes, signal, sizeHintOnly = false },
+) {
   if (typeof fileId !== "string" || !fileId || fileId.length > 1024)
     throw Error("FILE_SOURCE_DENIED");
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1)
@@ -52,7 +56,7 @@ export async function downloadFileStream(bot, fileId, { maxBytes, signal }) {
         chunk.length > 65536 ||
         chunk.toString("base64") !== data.data ||
         data.size !== chunk.length ||
-        bytes + chunk.length > expected
+        (!sizeHintOnly && bytes + chunk.length > expected)
       )
         fail();
       chunks.push(chunk);
@@ -65,7 +69,7 @@ export async function downloadFileStream(bot, fileId, { maxBytes, signal }) {
         expected === null ||
         data.total_chunks !== chunks.length ||
         data.total_bytes !== bytes ||
-        bytes !== expected
+        (!sizeHintOnly && bytes !== expected)
       )
         fail();
       completed = true;

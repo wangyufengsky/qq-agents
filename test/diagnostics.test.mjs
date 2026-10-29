@@ -5,6 +5,18 @@ import { fixture } from "./helpers.mjs";
 import { createServer } from "../src/server.mjs";
 import { Diagnostics, classifyError } from "../src/core/diagnostics.mjs";
 
+test("image download diagnostics preserve safe specific causes instead of INTERNAL_ERROR", () => {
+  for (const code of [
+    "IMAGE_DOWNLOAD_HTTP_ERROR",
+    "IMAGE_DOWNLOAD_FAILED",
+    "IMAGE_DOWNLOAD_TIMEOUT",
+    "IMAGE_URL_DENIED",
+    "IMAGE_REDIRECT_INVALID",
+    "IMAGE_REDIRECT_LIMIT",
+  ])
+    assert.equal(classifyError(Error(code)).code, code);
+});
+
 test("a disk failure returns a classified server error with a safe correlation ID", async (t) => {
   const f = fixture(t);
   const app = createServer({
