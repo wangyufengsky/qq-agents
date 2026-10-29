@@ -543,6 +543,7 @@ export function createServer({
         return send({
           intents: shareList(appService(runtime), agentId),
           progress: appService(runtime).progress(agentId),
+          readsLastDay: appService(runtime).readsLastDay(agentId),
           capabilities: appService(runtime).capabilities(agentId),
           history: appService(runtime).history(
             agentId,

@@ -229,6 +229,12 @@ export class AppBrowsing {
     }
     return { recordId: row.id, ...value };
   }
+  // Reads spent against the daily budget, which counts the last 24 hours.
+  readsLastDay(agentId) {
+    const now = this.runtime.now();
+    return (this.state(agentId).calls || []).filter((t) => t > now - 86400000)
+      .length;
+  }
   progress(agentId) {
     this.cursors.prepare(agentId, this.runtime.now());
     return this.cursors.list(agentId).map((x) => ({
