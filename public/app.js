@@ -312,7 +312,9 @@ function recentErrorsMarkup(query = "") {
 // overview re-renders on each status refresh.
 let homeData = null,
   homeFetchedAt = 0,
-  errorsOpen = false;
+  errorsOpen = false,
+  // The page rises in once when the home opens, not on every 5 s refresh.
+  homeShown = false;
 function loadHome() {
   if (Date.now() - homeFetchedAt < 30000) return;
   homeFetchedAt = Date.now();
@@ -323,6 +325,8 @@ function loadHome() {
       if (tab !== "overview" || !box) return;
       box.innerHTML = homeRolesMarkup();
       bindOperations(box);
+      const totals = $("#home-totals");
+      if (totals) totals.innerHTML = homeTotals();
     })
     .catch(() => (homeFetchedAt = 0));
 }
@@ -334,6 +338,25 @@ const homeTime = (t) =>
     hour: "2-digit",
     minute: "2-digit",
   });
+// "22:30" today; a time on another day also names the day.
+const homeWhen = (t) =>
+  new Date(t).toDateString() === new Date().toDateString()
+    ? homeTime(t)
+    : new Date(t).toLocaleString("zh-CN", {
+        month: "numeric",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+// How long until a moment; one already passed is about to begin.
+const homeIn = (t) => {
+  const min = Math.round((t - Date.now()) / 60000);
+  return min <= 0
+    ? "即将开始"
+    : min < 60
+      ? `${min} 分钟后`
+      : `${Math.round(min / 60)} 小时后`;
+};
 const homeDid = {
   browsed: "浏览",
   searched: "搜索",
@@ -343,31 +366,134 @@ const homeDid = {
   "reached-out": "联系",
   rested: "休息",
 };
-// The mood still in effect, or 平常; either way it opens the role's mood tab.
+// Each role keeps one of six colors by its place in the list, so roles whose
+// names look alike still look apart.
+const homeHue = (a) => Math.max(0, config.agents.indexOf(a)) % 6;
+// One line whatever the mood says: intensity as dots, the mood (cut with …)
+// and until when. Either way it opens the role's mood tab.
 function homeMood(a, h) {
-  if (!h) return "";
-  const m = h.mood,
-    until = m && new Date(m.expiresAt),
-    sameDay = until && until.toDateString() === new Date().toDateString();
-  const text = m
-    ? `心情：${esc(m.mood)}（${Number(m.intensity)}/5）· 到 ${sameDay ? homeTime(m.expiresAt) : esc(until.toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }))}`
-    : "心情：平常";
-  return `<button type="button" class="home-mood${m ? "" : " is-calm"}" data-do="role-mood" data-id="${esc(a.id)}" title="查看${esc(a.name)}的心情">${text}</button>`;
+  if (!h)
+    return '<span class="home-mood is-loading" aria-hidden="true"></span>';
+  const m = h.mood;
+  const title = m
+    ? `${a.name}的心情：${m.mood}（${m.intensity}/5），到 ${homeWhen(m.expiresAt)}`
+    : `${a.name}的心情：平常`;
+  const body = m
+    ? `<span class="home-mood-dots" role="img" aria-label="强度 ${Number(m.intensity)}/5">${[1, 2, 3, 4, 5].map((i) => `<i${i <= m.intensity ? ' class="on"' : ""}></i>`).join("")}</span><span class="home-mood-text">${esc(m.mood)}</span><span class="home-mood-until">到 ${esc(homeWhen(m.expiresAt))}</span>`
+    : '<span class="home-mood-text">平常</span>';
+  return `<button type="button" class="home-mood${m ? "" : " is-calm"}" data-do="role-mood" data-id="${esc(a.id)}" title="${esc(title)}"><span class="home-mood-label">心情</span>${body}</button>`;
 }
+// When the role was busy over the last day: one bar an hour, chat stacked on
+// free time, scaled to the role's own busiest hour.
+function homePulse(h) {
+  const hours = h?.hourly;
+  if (!hours?.length)
+    return '<div class="home-pulse is-loading" aria-hidden="true"></div>';
+  const top = Math.max(1, ...hours.map((x) => x.chat + x.free)),
+    W = 10,
+    H = 40,
+    from = Date.now() - hours.length * 3600000;
+  const bars = hours
+    .map((x, i) => {
+      const free = (x.free / top) * H,
+        chat = (x.chat / top) * H,
+        at = from + i * 3600000;
+      return `<g><title>${esc(`${homeTime(at)} 起的一小时：聊天 ${x.chat} 次，空闲时间 ${x.free} 次`)}</title><rect class="track" x="${i * W}" y="0" width="${W - 2}" height="${H}" rx="2"/>${x.free ? `<rect class="free" x="${i * W}" y="${(H - free).toFixed(1)}" width="${W - 2}" height="${free.toFixed(1)}" rx="2"/>` : ""}${x.chat ? `<rect class="chat" x="${i * W}" y="${(H - free - chat).toFixed(1)}" width="${W - 2}" height="${chat.toFixed(1)}" rx="2"/>` : ""}</g>`;
+    })
+    .join("");
+  return `<div class="home-pulse"><svg viewBox="0 0 ${hours.length * W - 2} ${H}" preserveAspectRatio="none" role="img" aria-label="最近 24 小时每小时的回合数">${bars}</svg><div class="home-pulse-axis"><span>24 小时前</span><span><i class="chat"></i>聊天<i class="free"></i>空闲时间</span><span>现在</span></div></div>`;
+}
+// Every part of the card keeps its size: one line for the state, one for the
+// mood, two for the latest words, then the day's bars and numbers. A long
+// line is cut, never wrapped, so the card does not grow or shrink.
 function homeRoleCard(a) {
   const s = status.agents.find((x) => x.id === a.id),
     h = homeData?.agents?.find((x) => x.agentId === a.id),
     c = status.connections.find((x) => x.id === a.connectionId),
     b = status.backends?.find((x) => x.id === a.backendId),
     can = s && !s.blockers?.length;
-  const latest = h?.latest
-    ? `<p><span class="hint">${homeTime(h.latest.startedAt)} · ${h.latest.kind === "subject" ? "空闲时间" + (h.latest.did ? " · " + esc(homeDid[h.latest.did] || h.latest.did) : "") : esc(h.latest.conversation.replace(/^group:/, "群 ").replace(/^private:/, "私聊 "))}</span><br><span title="${esc(h.latest.text || "")}">${esc(clipText(h.latest.text, 110) || "（这一回合没有留下文字）")}</span></p>`
-    : `<p class="hint">${homeData ? "还没有动态。" : "读取中…"}</p>`;
+  const sub = s?.blockers?.length
+    ? `暂不发言：${s.blockers.map((x) => blockerLabels[x] || x).join("、")}`
+    : `QQ ${c?.connected ? "已连接" : "未连接"} · ${backendLabels[b?.state] || "后端尚未检测"}`;
+  const place = (l) =>
+    l.kind === "subject"
+      ? "空闲时间" + (l.did ? " · " + (homeDid[l.did] || l.did) : "")
+      : l.conversation.replace(/^group:/, "群 ").replace(/^private:/, "私聊 ");
+  const l = h?.latest;
+  const latest = `<div class="home-latest"><span class="home-latest-meta">${l ? `最近 · ${homeTime(l.startedAt)} · ${esc(place(l))}` : "最近"}</span><p class="home-latest-text${l?.text ? "" : " is-empty"}"${l?.text ? ` title="${esc(l.text)}"` : ""}>${l ? esc(l.text || "这一回合没有留下文字") : homeData ? "还没有动态" : "读取中…"}</p></div>`;
   const d = h?.last24h;
-  const stats = d
-    ? `<div class="home-stats"><span><b>${d.sent}</b>回复</span><span><b>${d.freeTimeTraced ? `${d.freeTimeActive}/${d.freeTimeTraced}` : d.freeTime}</b>${d.freeTimeTraced ? "空闲时有行动" : "空闲时间"}</span><span><b>${d.reads}</b>读文章</span><span><b>${d.diaries}</b>日记</span></div>`
-    : "";
-  return `<article class="card home-role"><div class="row"><div class="identity"><span class="avatar">${esc(avatarChar(a.name))}</span><div><h3>${esc(a.name)}</h3><span class="hint">QQ ${c?.connected ? "已连接" : "未连接"} · ${esc(backendLabels[b?.state] || "后端尚未检测")}</span></div></div>${tag(can ? "可以发言" : a.paused ? "已暂停" : "暂不发言", can ? "live" : a.paused ? "off" : "warn")}</div>${can ? "" : blockersMarkup(s)}${homeMood(a, h)}${latest}${stats}${d ? `<p class="hint">最近 24 小时${h.nextFreeTimeAt && a.subject?.enabled ? ` · 下次空闲时间 ${homeTime(h.nextFreeTimeAt)}` : ""}</p>` : ""}<div class="card-actions"><button data-do="role" data-id="${esc(a.id)}">${icon("pulse", "sm")}查看动态</button><button class="ghost" data-do="role-settings" data-id="${esc(a.id)}">${icon("settings", "sm")}设置</button></div></article>`;
+  const cell = (value, label) =>
+    `<div><dt>${label}</dt><dd>${value}</dd></div>`;
+  const stats = `<dl class="home-stats">${[
+    cell(d ? d.sent : "–", "回复"),
+    d?.freeTimeTraced
+      ? cell(`${d.freeTimeActive}/${d.freeTimeTraced}`, "空闲有行动")
+      : cell(d ? d.freeTime : "–", "空闲时间"),
+    cell(d ? d.reads : "–", "读文章"),
+    cell(d ? d.diaries : "–", "日记"),
+  ].join("")}</dl>`;
+  const next =
+    h?.nextFreeTimeAt && a.subject?.enabled
+      ? `下次空闲时间 ${homeTime(h.nextFreeTimeAt)} · ${homeIn(h.nextFreeTimeAt)}`
+      : "最近 24 小时";
+  return `<article class="card home-role hue-${homeHue(a)}"><header class="home-role-head"><span class="avatar home-avatar">${esc(avatarChar(a.name))}${can ? '<i class="home-online" aria-hidden="true"></i>' : ""}</span><div class="home-who"><h3>${esc(a.name)}</h3><span class="home-sub${can ? "" : " is-blocked"}" title="${esc(sub)}">${esc(sub)}</span></div>${tag(can ? "可以发言" : a.paused ? "已暂停" : "暂不发言", can ? "live" : a.paused ? "off" : "warn")}</header>${homeMood(a, h)}${latest}${homePulse(h)}${stats}<footer class="home-role-foot"><span class="hint">${next}</span><div class="card-actions"><button data-do="role" data-id="${esc(a.id)}">${icon("pulse", "sm")}查看动态</button><button class="ghost" data-do="role-settings" data-id="${esc(a.id)}">${icon("settings", "sm")}设置</button></div></footer></article>`;
+}
+// The top of the home page: a greeting, the state of things in one sentence
+// and the last day in numbers.
+const homeGreeting = () => {
+  const hour = new Date().getHours();
+  return hour < 5
+    ? "夜深了"
+    : hour < 11
+      ? "早上好"
+      : hour < 13
+        ? "中午好"
+        : hour < 18
+          ? "下午好"
+          : hour < 23
+            ? "晚上好"
+            : "夜深了";
+};
+function homeHeadline() {
+  const n = config.agents.length;
+  if (!n) return "还没有角色，先去添加一个吧";
+  if (status.mode === "isolated") return "隔离模式：不连接 QQ，也不运行模型";
+  if (status.globalPaused) return "全局暂停中，角色先不参与";
+  const ready = config.agents.filter((a) => {
+    const s = status.agents.find((x) => x.id === a.id);
+    return s && !s.blockers?.length;
+  });
+  if (ready.length === n)
+    return n === 1
+      ? `${ready[0].name}在线，可以发言`
+      : `${n === 2 ? "两" : `${n} `}个角色都在线，可以发言`;
+  return ready.length
+    ? `${ready.length}/${n} 个角色可以发言`
+    : "现在没有角色能发言";
+}
+function homeTotals() {
+  const days = (homeData?.agents || []).map((x) => x.last24h).filter(Boolean);
+  if (!days.length)
+    return homeData ? "最近 24 小时还没有动态" : "正在读取最近 24 小时…";
+  const sum = (k) => days.reduce((n, d) => n + (d[k] || 0), 0);
+  return `最近 24 小时：回复 <b>${sum("sent")}</b> 条 · 空闲时间 <b>${sum("freeTime")}</b> 次 · 读文章 <b>${sum("reads")}</b> 篇 · 写日记 <b>${sum("diaries")}</b> 篇`;
+}
+// " home-enter" the first time the home is drawn after opening it; the 5 s
+// refresh draws it again without, so nothing replays.
+function homeEntrance() {
+  const enter = !homeShown;
+  homeShown = true;
+  return enter ? " home-enter" : "";
+}
+function homeHero(todo) {
+  const state =
+    status.mode === "isolated"
+      ? tag("隔离模式", "warn")
+      : status.globalPaused
+        ? tag("全局暂停", "warn")
+        : tag("运行中", "live");
+  const resume = autoResumeText(status.autoResume);
+  return `<section class="home-hero"><div class="home-hero-main"><p class="home-greet">${homeGreeting()}</p><h2 class="home-headline">${esc(homeHeadline())}</h2><p class="home-totals" id="home-totals">${homeTotals()}</p>${resume ? `<p class="hint">${esc(resume)}</p>` : ""}</div><div class="home-hero-side">${state}${todo ? `<a class="pill accent" href="#home-todo">需要处理 ${todo}</a>` : tag("没有待处理的事")}</div></section>`;
 }
 // Started with `--live --resume`: say where lifting the boot pause stands.
 const autoResumeText = (r) => {
@@ -386,7 +512,7 @@ const autoResumeText = (r) => {
   );
 };
 const homeRolesMarkup = () =>
-  config.agents.map(homeRoleCard).join("") ||
+  config.agents.map((a) => homeRoleCard(a)).join("") ||
   '<div class="card empty">还没有角色。到“角色”中添加第一个。</div>';
 // Four sections; existing pages keep their keys and become sub-pages. Role
 // pages all follow one selected role instead of each keeping its own picker.
@@ -491,6 +617,7 @@ function render() {
   if (["connections", "backends"].includes(tab)) tab = "links";
   const section = sectionOf(tab);
   lastPage[section] = tab;
+  if (tab !== "overview") homeShown = false;
   if (section === "role" && config) syncRole();
   const role = section === "role" && config && find("agents", roleId);
   const [pageTitle, subtitle] = titles[tab];
@@ -532,7 +659,7 @@ function render() {
       ),
       grants = status.disclosureRequests.length,
       errors = (status.recentErrors || []).length;
-    content.innerHTML = `<div class="banner ${status.mode === "isolated" ? "warn" : status.globalPaused ? "" : "ok"}">${icon(status.mode === "isolated" ? "shield" : "pulse")}<span>${status.mode === "isolated" ? "隔离模式：不连接 QQ，也不运行模型。" : status.globalPaused ? "全局暂停中：连接照常记录消息，角色不参与。" : "运行中：各角色按自己的设置参与。"}${autoResumeText(status.autoResume) ? ` ${esc(autoResumeText(status.autoResume))}` : ""}</span></div><div class="section-title"><h2>角色</h2></div><div class="grid" id="home-roles">${homeRolesMarkup()}</div><div class="section-title"><h2>需要处理</h2>${grants + waiting ? "" : tag("暂无", "live")}</div>${grants ? `<div class="card"><h3>受限动作授权 · ${grants}</h3>${status.disclosureRequests.map((r, i) => `<div class="record"><strong>${esc(find("agents", r.agentId)?.name)} → ${esc(r.conversation)}</strong><p>${r.records.length} 条资料涉及${r.reason === "external-service" ? "外部服务调用" : "本地运维内容"}。${r.request ? "批准仅对当前回合、所示请求参数及资料集合有效。" : "批准仅对当前回合、当前会话所示资料集合有效。"}</p><p class="mono">${esc(r.records.join("\n"))}</p>${r.request ? `<pre>${esc(JSON.stringify(r.request, null, 2))}</pre><p>${esc(JSON.stringify(r.sourceClasses))}</p>` : ""}<button data-do="grant" data-id="${i}">批准本次披露</button></div>`).join("")}</div>` : ""}${waiting ? `<div class="card"><h3>待核对发送 · ${waiting}</h3><p class="hint">网络结果未知的发送不会自动重发。请在 QQ 中查看对应会话后标记结果。</p><div id="unresolved-deliveries">读取中…</div></div>` : ""}${grants + waiting ? "" : '<p class="hint">没有待批准的动作或待核对的发送。</p>'}`;
+    content.innerHTML = `<div class="home${homeEntrance()}">${homeHero(grants + waiting)}<div class="home-roles" id="home-roles">${homeRolesMarkup()}</div>${grants + waiting ? `<div class="section-title" id="home-todo"><h2>需要处理</h2></div>${grants ? `<div class="card"><h3>受限动作授权 · ${grants}</h3>${status.disclosureRequests.map((r, i) => `<div class="record"><strong>${esc(find("agents", r.agentId)?.name)} → ${esc(r.conversation)}</strong><p>${r.records.length} 条资料涉及${r.reason === "external-service" ? "外部服务调用" : "本地运维内容"}。${r.request ? "批准仅对当前回合、所示请求参数及资料集合有效。" : "批准仅对当前回合、当前会话所示资料集合有效。"}</p><p class="mono">${esc(r.records.join("\n"))}</p>${r.request ? `<pre>${esc(JSON.stringify(r.request, null, 2))}</pre><p>${esc(JSON.stringify(r.sourceClasses))}</p>` : ""}<button data-do="grant" data-id="${i}">批准本次披露</button></div>`).join("")}</div>` : ""}${waiting ? `<div class="card"><h3>待核对发送 · ${waiting}</h3><p class="hint">网络结果未知的发送不会自动重发。请在 QQ 中查看对应会话后标记结果。</p><div id="unresolved-deliveries">读取中…</div></div>` : ""}` : ""}</div>`;
     renderOnboarding(content);
     if (waiting) action(renderUnresolved);
     content.insertAdjacentHTML(
