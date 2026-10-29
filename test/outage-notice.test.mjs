@@ -336,3 +336,43 @@ test("the outage notice defaults off and older configurations still load", () =>
     assert.throws(() => validateConfig(next));
   }
 });
+
+test("a recovery that beats the outage line still follows it once that line lands", async (t) => {
+  const f = setup(t, { notice: { notifyRecovered: true } });
+  const recovery = f.runtime.connectionRecovery,
+    calls = [],
+    pending = [];
+  // The other agent's outage line takes longer than QQ takes to come back.
+  recovery.outage = {
+    send: (id, event, code, owners) => {
+      calls.push([event, owners]);
+      if (event !== "offline") return Promise.resolve(owners || []);
+      return new Promise((resolve) => pending.push(resolve));
+    },
+  };
+  recovery.armed("qq-0");
+  recovery.lost("qq-0", "QQ_OFFLINE");
+  recovery.armed("qq-0"); // back before the outage line was confirmed
+  // Not drain(): that would wait for the line still on its way.
+  for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+  assert.deepEqual(calls, [["offline", null]]);
+  pending.shift()([owner]);
+  await drain(f.runtime);
+  assert.deepEqual(calls, [
+    ["offline", null],
+    ["recovered", [owner]],
+  ]);
+
+  // Dropped again before the line landed: that recovery is stale.
+  calls.length = 0;
+  recovery.lost("qq-0", "QQ_OFFLINE");
+  recovery.armed("qq-0");
+  recovery.lost("qq-0", "QQ_OFFLINE");
+  // Both outage lines land; the recovery between them is never sent.
+  while (pending.length) pending.shift()([owner]);
+  await drain(f.runtime);
+  assert.deepEqual(
+    calls.map(([event]) => event),
+    ["offline", "offline"],
+  );
+});

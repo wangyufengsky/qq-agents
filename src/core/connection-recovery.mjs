@@ -28,7 +28,7 @@ export class ConnectionRecovery {
   }
   armed(id) {
     const previous = this.states.get(id);
-    this.states.set(id, {
+    const current = {
       state: "connected",
       attempts: 0,
       nextRetryAt: null,
@@ -38,12 +38,28 @@ export class ConnectionRecovery {
       lastGap: previous?.lostAt
         ? { lostAt: previous.lostAt, recoveredAt: this.runtime.now() }
         : previous?.lastGap || null,
-    });
-    // "Recovered" only goes to owners an outage line actually reached.
-    if (previous?.lostAt && previous.told?.size)
-      this.notify(id, "recovered", previous.noticeCode, null, [
-        ...previous.told,
-      ]);
+    };
+    this.states.set(id, current);
+    if (!previous?.lostAt) return;
+    // "Recovered" only goes to owners an outage line actually reached. A line
+    // still on its way is waited for; if QQ dropped again meanwhile, the
+    // recovery is stale and says nothing.
+    const recover = () => {
+      if (
+        previous.told?.size &&
+        this.states.get(id) === current &&
+        current.state === "connected"
+      )
+        this.notify(id, "recovered", previous.noticeCode, null, [
+          ...previous.told,
+        ]);
+    };
+    if (!previous.sending?.size) recover();
+    else
+      this.runtime.trackJob(
+        Promise.allSettled([...previous.sending]).then(recover),
+        "connection:" + id,
+      );
   }
   // At most one line per event and outage; the notice applies its own cooldown.
   notify(id, event, code, s = null, owners = null) {
@@ -54,6 +70,11 @@ export class ConnectionRecovery {
       for (const owner of delivered) s.told.add(owner);
       s.noticeCode = code;
     });
+    if (s) {
+      s.sending.add(job);
+      const done = () => s.sending.delete(job);
+      job.then(done, done);
+    }
     this.runtime.trackJob(job, "connection:" + id);
   }
   disarm(id) {
@@ -70,6 +91,7 @@ export class ConnectionRecovery {
       nextRetryAt: this.runtime.now() + this.delay(id, 1),
       notified: new Set(),
       told: new Set(),
+      sending: new Set(),
       noticeCode: null,
     });
     if (code === "QQ_OFFLINE") this.notify(id, "offline", code, s);
