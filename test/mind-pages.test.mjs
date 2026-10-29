@@ -205,6 +205,7 @@ test("free time shows its log first and folds checks and settings, their state o
       summary: "读了<b>新闻</b>",
       found: [{ title: "光污染地图" }],
       next: "周末再看",
+      turnId: "free-1",
     },
   });
   const page = consolePage(f);
@@ -280,6 +281,73 @@ test("free time shows its log first and folds checks and settings, their state o
     [section(html, "subject-log").open, section(html, "subject-quota").open],
     [false, true],
   );
+});
+
+test("every log on the page shows its own turn's tools, however many turns came after", async (t) => {
+  const f = await consoleFixture(t),
+    m = f.store.bind("agent-0"),
+    now = Date.now();
+  // Twelve ended turns, newest last, each leaving a log; then one still
+  // running that has logged but not yet recorded its tools.
+  const turn = (k, extra) => {
+    const startedAt = now - (13 - k) * 600000;
+    m.identity.put("model_turns", {
+      id: "turn-" + k,
+      conversation: "@subject",
+      startedAt,
+      endedAt: startedAt + 60000,
+      status: "completed-no-send",
+      selfVersion: 1,
+      ...extra,
+    });
+    m.append({
+      dedupe: "turn-log-" + k,
+      conversation: "@subject",
+      kind: "subject.log",
+      direction: "internal",
+      occurredAt: new Date(startedAt + 30000).toISOString(),
+      observedAt: new Date(startedAt + 30000).toISOString(),
+      payload: {
+        did: "browsed",
+        summary: "第 " + k + " 次",
+        turnId: "turn-" + k,
+      },
+    });
+  };
+  turn(0, {
+    toolCalls: [
+      { name: "web_fetch", ok: false },
+      { name: "subject_log", ok: true },
+    ],
+  });
+  // Recorded before tools were traced.
+  turn(1, {});
+  for (let k = 2; k < 12; k++)
+    turn(k, { toolCalls: [{ name: "memory_search", ok: true }] });
+  turn(12, { status: "running", endedAt: undefined });
+
+  const data = await (await f.request("/api/mind?agentId=agent-0")).json();
+  assert.equal(data.subject.turns.length, 10);
+  const logOf = (k) =>
+    data.subject.logs.find((l) => l.summary === "第 " + k + " 次");
+  assert.deepEqual(
+    logOf(0).toolCalls.map((c) => [c.name, c.ok]),
+    [
+      ["web_fetch", false],
+      ["subject_log", true],
+    ],
+  );
+  assert.equal(logOf(1).toolCalls, null);
+  assert.equal("toolCalls" in logOf(12), false);
+
+  const html = await consolePage(f).show("subject"),
+    entry = (k) =>
+      html.slice(html.indexOf(`>第 ${k} 次<`)).split("</article>")[0];
+  // The oldest log is past the ten latest turns and still shows its failure.
+  assert.match(entry(0), /工具 1 次<span class="mind-failed">1 次失败<\/span>/);
+  assert.match(entry(1), /工具调用未记录（升级前的回合）/);
+  assert.match(entry(11), /工具 1 次<\/summary>/);
+  assert.doesNotMatch(entry(12), /工具/);
 });
 
 test("a turn's tools read as one line, and turns from before the upgrade say so", async (t) => {

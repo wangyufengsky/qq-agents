@@ -89,20 +89,15 @@ function toolCallsMarkup(calls) {
       .join("");
   return `<details class="mind-tools"><summary>工具 ${shown.length} 次${failed ? `<span class="mind-failed">${failed} 次失败</span>` : ""}</summary><div class="mind-chips">${chips}</div></details>`;
 }
-// The turn a log was written in: its time falls inside the turn.
-const subjectTurnOf = (turns, at) => {
-  const t = Date.parse(at);
-  return turns.find((x) => x.startedAt <= t && t <= (x.endedAt ?? Infinity));
-};
 const subjectDidTone = { "reached-out": "ok", rested: "off" };
 function subjectLogMarkup(subject) {
-  const s = subject.stats24h || {},
-    turns = subject.turns || [];
+  const s = subject.stats24h || {};
   const header = `<p class="mind-lead">最近 24 小时：空闲时间 ${s.turns || 0} 次，其中有实际行动 ${s.active || 0} 次，留下日志 ${s.logged || 0} 次，共调用工具 ${s.toolCalls || 0} 次${s.traced < s.turns ? `（${s.turns - s.traced} 次为升级前回合，未记录工具调用）` : ""}。</p>`;
   const items = (subject.logs || [])
     .map((l) => {
-      const turn = subjectTurnOf(turns, l.at);
-      return `<article class="mind-row"><div class="mind-row-head">${mindTag(subjectDid[l.did] || l.did, subjectDidTone[l.did] || "wait")}${l.restReason ? `<span class="mind-sub">${esc(restReasons[l.restReason] || l.restReason)}</span>` : ""}${l.protected ? mindTag("含受保护资料", "warn") : ""}${mindAt(l.at)}</div>${mindClip(l.summary, 3)}${l.found.length ? mindClip("发现：" + l.found.join("；"), 1) : ""}${l.next ? mindClip("下次想做：" + l.next, 1) : ""}${turn ? toolCallsMarkup(turn.toolCalls) : ""}</article>`;
+      // The server attaches the tools of the turn the log was written in,
+      // once that turn has ended.
+      return `<article class="mind-row"><div class="mind-row-head">${mindTag(subjectDid[l.did] || l.did, subjectDidTone[l.did] || "wait")}${l.restReason ? `<span class="mind-sub">${esc(restReasons[l.restReason] || l.restReason)}</span>` : ""}${l.protected ? mindTag("含受保护资料", "warn") : ""}${mindAt(l.at)}</div>${mindClip(l.summary, 3)}${l.found.length ? mindClip("发现：" + l.found.join("；"), 1) : ""}${l.next ? mindClip("下次想做：" + l.next, 1) : ""}${"toolCalls" in l ? toolCallsMarkup(l.toolCalls) : ""}</article>`;
     })
     .join("");
   return mindFold(
