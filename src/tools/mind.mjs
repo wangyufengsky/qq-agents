@@ -85,7 +85,7 @@ export const mindDefinitions = {
       .strict(),
   ],
   person_notes: [
-    "读取人物卡。给 personIds 读指定的人（含证据与旧版本）；省略时按最近更新分页列出全部。",
+    "读取人物卡。给 personIds 读指定的人（含证据与旧版本，以及 people 里写了这个人的最近三篇日记的标题）；省略时按最近更新分页列出全部。",
     z
       .object({
         personIds: z
@@ -98,7 +98,7 @@ export const mindDefinitions = {
       .strict(),
   ],
   mood_set: [
-    "记下你此刻的心情和原因。不是必须的：心情真的变了再写，不用每轮都写，也不用为了写而写。mood 用几个字说心情，intensity 是有多强烈（1 很轻，5 非常强烈）；reason 说为什么变好或变坏、是因为什么事，可在 evidence 附上引起变化的记录 ID。hours 是这份心情大约持续多久（0.5–24，默认 4），到期后就不再提示；之后心情又变了就再写一次。clear=true 表示心情已经过去、回到平常，这时只需要 reason。强度 4 以上、仍在有效期内的心情，要改变或清除它，evidence 里必须有一条在它之后发生的记录（比如安慰你或惹你的那句话、你的 subject_log）；没有新的原因就让它保持，到期会自然结束。冲着某个人的情绪（比如生某人的气）写进那个人的人物卡（person_note），这里只写你整体的状态。心情在你所有群聊和私聊之间共享，只给你自己看，但原因要写成在别的聊天里想起来也无妨的说法。",
+    "记下你此刻的心情和原因。不是必须的：心情真的变了再写，不用每轮都写，也不用为了写而写。mood 用几个字说心情，intensity 是有多强烈（1 很轻，5 非常强烈）；reason 说为什么变好或变坏、是因为什么事，可在 evidence 附上引起变化的记录 ID。hours 是这份心情大约持续多久（0.5–24，默认 4），到期后就不再提示；之后心情又变了就再写一次。clear=true 表示心情已经过去、回到平常，这时只需要 reason。强度 4 以上、仍在有效期内的心情，要改变或清除它，evidence 里必须有一条在它之后发生的记录（比如安慰你或惹你的那句话、你的 subject_log）；没有新的原因就让它保持，到期会自然结束。冲着某个人的情绪（比如生某人的气）写进那个人的人物卡（person_note），这里只写你整体的状态。心情在你所有群聊和私聊之间共享，只给你自己看，但原因要写成在别的聊天里想起来也无妨的说法。想配个表情，可以用 sticker_list 按心情搜你自己收藏的表情。",
     z
       .object({
         mood: z.string().max(40).optional(),
@@ -308,9 +308,18 @@ function executeMindTool(runtime, ctx, name, args) {
   }
   if (name === "person_notes") {
     if (args.personIds) {
-      const cards = args.personIds.map((id) => identity.personCard(id));
+      const cards = args.personIds.map((id) => identity.personCard(id)),
+        boundary = recallBoundary(runtime, ctx);
       return {
-        items: cards.filter(Boolean),
+        items: cards.filter(Boolean).map((card) => {
+          // Titles only, behind the same boundary as any diary read; the
+          // diaries shown count as read (mindTool tracks them).
+          const diaries = boundary
+            .rows(m.diariesAbout(card.personId))
+            .slice(0, 3)
+            .map(({ id, title, updatedAt }) => ({ id, title, updatedAt }));
+          return { ...card, diaries };
+        }),
         missing: args.personIds.filter((_, i) => !cards[i]),
       };
     }
@@ -338,6 +347,7 @@ function executeMindTool(runtime, ctx, name, args) {
     if (ctx.conversation !== "@subject") throw Error("TOOL_DISABLED");
     if (args.did === "rested" && !args.restReason)
       throw Error("SUBJECT_LOG_REQUIRES_REASON");
+    const mood = identity.currentMood(now);
     const record = m.append({
       dedupe: "subject-log:" + ctx.turnId + ":" + randomUUID(),
       conversation: "@subject",
@@ -350,6 +360,8 @@ function executeMindTool(runtime, ctx, name, args) {
       payload: {
         ...args,
         turnId: ctx.turnId,
+        // The mood in effect, by reference only.
+        ...(mood ? { moodId: mood.id } : {}),
         // Inherit what this turn read, like work notes do.
         ...contextProtection(runtime, ctx),
       },
@@ -401,6 +413,9 @@ export function mindTool(runtime, ctx, name, args) {
       name === "intent_list" ? result.items : [result],
       "intent",
     );
+  if (name === "person_notes")
+    for (const card of result.items)
+      for (const diary of card.diaries || []) ctx.privateRead.add(diary.id);
   for (const row of [result, result?.current, ...(result?.items || [])]) {
     for (const proof of [row?.evidenceSnapshot, row?.counterEvidenceSnapshot]) {
       for (const ref of proof?.references || []) {

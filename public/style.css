@@ -1943,6 +1943,38 @@ form > .form-grid + .form-grid {
 .mood-more {
   margin-top: 2px;
 }
+.mood-people {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.mood-person {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-height: 26px;
+  padding: 2px 10px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--sub);
+  font: inherit;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+button.mood-person {
+  border-color: var(--accent-line);
+  color: var(--accent);
+  cursor: pointer;
+}
+button.mood-person:hover {
+  border-color: var(--accent-line);
+  background: var(--accent-fill);
+}
 @media (max-width: 720px) {
   .mood-now {
     padding: 16px;
@@ -2176,6 +2208,47 @@ dialog.people-drawer[open] {
   background: var(--fill-3);
   color: var(--sub);
   font-size: 12px;
+}
+.person-links {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.person-links li {
+  padding: 8px 12px;
+  border-radius: var(--r-sm);
+  background: var(--fill-2);
+}
+.person-link-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.person-link-head strong {
+  min-width: 0;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.person-link-meta {
+  color: var(--sub);
+  font-size: 12px;
+}
+.person-link-head time {
+  margin-left: auto;
+  color: var(--faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.person-links p {
+  margin: 4px 0 0;
+  color: var(--ink-2);
+  font-size: 13px;
+  overflow-wrap: anywhere;
 }
 .person-source {
   margin: 0;

@@ -290,6 +290,22 @@ export function createServer({
       if (req.method === "GET" && url.pathname === "/api/mind") {
         const a = runtime.agent(url.searchParams.get("agentId")),
           m = runtime.memory.bind(a.id);
+        // A mood is about the people whose messages it cites; the card and the
+        // timeline show each other by reference, nothing is copied.
+        const moods = m.identity.moodHistory(500),
+          about = m.identity.moodPeople(
+            moods,
+            runtime.config.connections.find((c) => c.id === a.connectionId)
+              ?.accountId,
+          ),
+          cards = m.identity.personCards(),
+          cardOf = new Map(cards.map((c) => [c.personId, c])),
+          namesOf = (qq) =>
+            JSON.parse(
+              m.db
+                .prepare("SELECT names FROM people WHERE agent_id=? AND qq=?")
+                .get(a.id, qq)?.names || "[]",
+            );
         return send({
           current: m.identity.withEvidence(
             m.identity.initialize(a, runtime.now()),
@@ -303,15 +319,33 @@ export function createServer({
           // Read-only: only the agent writes or clears its own mood.
           mood: {
             current: m.identity.currentMood(runtime.now()),
-            history: m.identity.moodHistory(50),
+            history: moods.slice(0, 50).map((x) => ({
+              ...x,
+              people: about.get(x.id).map((personId) => ({
+                personId,
+                call: cardOf.get(personId)?.call || "",
+                name: namesOf(personId).at(-1) || "",
+                card: cardOf.has(personId),
+              })),
+            })),
           },
-          personCards: m.identity.personCards().map((card) => ({
+          personCards: cards.map((card) => ({
             ...card,
-            names: JSON.parse(
-              m.db
-                .prepare("SELECT names FROM people WHERE agent_id=? AND qq=?")
-                .get(a.id, card.personId)?.names || "[]",
-            ),
+            names: namesOf(card.personId),
+            moods: moods
+              .filter((x) => about.get(x.id).includes(card.personId))
+              .slice(0, 5)
+              .map(({ id, action, mood, intensity, reason, writtenAt }) => ({
+                id,
+                action,
+                mood,
+                intensity,
+                reason,
+                writtenAt,
+              })),
+            diaries: m
+              .diariesAbout(card.personId, 3)
+              .map(({ id, title, updatedAt }) => ({ id, title, updatedAt })),
           })),
           subject: {
             ...m.state("@subject"),

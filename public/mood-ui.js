@@ -25,6 +25,19 @@ function moodWhere(where) {
 }
 const moodDots = (n) =>
   `<span class="mood-dots" role="img" aria-label="强度 ${n}/5">${[1, 2, 3, 4, 5].map((i) => `<i${i <= n ? ' class="on"' : ""}></i>`).join("")}</span>`;
+// The people a mood is about. One with a card opens it (people-ui.js);
+// labels are untrusted text.
+function moodPeople(people) {
+  if (!people?.length) return "";
+  return `<div class="mood-people"><span>相关的人</span>${people
+    .map((p) => {
+      const label = esc(p.call || p.name || `QQ ${p.personId}`);
+      return p.card
+        ? `<button type="button" class="mood-person" data-mood-person="${esc(p.personId)}" title="打开 QQ ${esc(p.personId)} 的人物卡">${label}</button>`
+        : `<span class="mood-person" title="QQ ${esc(p.personId)}，还没有人物卡">${label}</span>`;
+    })
+    .join("")}</div>`;
+}
 // A mood lasts until it expires, the next change, or now.
 function moodSegments(history, now) {
   const ordered = [...history].reverse();
@@ -55,7 +68,7 @@ function moodNowMarkup(mood, now) {
     left = Math.max(0, current.expiresAt - now),
     spent = Math.min(1, Math.max(0, 1 - left / total));
   const where = moodWhere(current.writtenIn);
-  return `<div class="mood-now"><div class="mood-head"><span class="mood-label">此刻的心情</span>${where ? `<span class="mood-chip">写在${esc(where)}</span>` : ""}</div><div class="mood-value">${esc(current.mood)}</div><div class="mood-strength">${moodDots(current.intensity)}<span>强度 ${current.intensity}/5</span></div><blockquote class="mood-reason">${esc(current.reason)}</blockquote><div class="mood-life"><svg class="mood-life-bar" viewBox="0 0 100 4" preserveAspectRatio="none" aria-hidden="true"><rect class="track" width="100" height="4" rx="2"/><rect class="bar" width="${(1 - spent) * 100}" height="4" rx="2"/></svg><span>还剩 ${moodSpan(left)} · 到 ${moodWhen(current.expiresAt)}</span></div>${before ? `<p class="mood-from">由${before.action === "clear" ? "平常" : `「${esc(before.mood)}」（${before.intensity}/5）`}变来 · ${moodWhen(current.since)}</p>` : ""}</div>`;
+  return `<div class="mood-now"><div class="mood-head"><span class="mood-label">此刻的心情</span>${where ? `<span class="mood-chip">写在${esc(where)}</span>` : ""}</div><div class="mood-value">${esc(current.mood)}</div><div class="mood-strength">${moodDots(current.intensity)}<span>强度 ${current.intensity}/5</span></div><blockquote class="mood-reason">${esc(current.reason)}</blockquote>${moodPeople(history[at]?.people)}<div class="mood-life"><svg class="mood-life-bar" viewBox="0 0 100 4" preserveAspectRatio="none" aria-hidden="true"><rect class="track" width="100" height="4" rx="2"/><rect class="bar" width="${(1 - spent) * 100}" height="4" rx="2"/></svg><span>还剩 ${moodSpan(left)} · 到 ${moodWhen(current.expiresAt)}</span></div>${before ? `<p class="mood-from">由${before.action === "clear" ? "平常" : `「${esc(before.mood)}」（${before.intensity}/5）`}变来 · ${moodWhen(current.since)}</p>` : ""}</div>`;
 }
 function moodLogMarkup(history, currentId, now) {
   if (!history.length) return "";
@@ -68,7 +81,7 @@ function moodLogMarkup(history, currentId, now) {
           : x.id === currentId
             ? `已持续 ${moodSpan(now - x.since)}`
             : `持续 ${moodSpan(Math.min(x.expiresAt, next?.writtenAt ?? x.expiresAt) - x.since)}`;
-    return `<li class="${x.action === "clear" ? "is-clear" : ""}${x.id === currentId ? " is-current" : ""}${i >= 8 ? " is-extra" : ""}"><span class="mood-dot" aria-hidden="true"></span><div class="mood-entry"><div class="mood-entry-head">${x.action === "clear" ? "<strong>心情过去了</strong>" : `<strong>${esc(x.mood)}</strong>${moodDots(x.intensity)}`}<time>${moodWhen(x.writtenAt)}</time></div><p>${esc(x.reason)}</p><small>${[where && `写在${esc(where)}`, lasted, x.evidence?.length ? `<span title="${esc(x.evidence.join("\n"))}">来源 ${x.evidence.length} 条记录</span>` : ""].filter(Boolean).join(" · ")}</small></div></li>`;
+    return `<li class="${x.action === "clear" ? "is-clear" : ""}${x.id === currentId ? " is-current" : ""}${i >= 8 ? " is-extra" : ""}"><span class="mood-dot" aria-hidden="true"></span><div class="mood-entry"><div class="mood-entry-head">${x.action === "clear" ? "<strong>心情过去了</strong>" : `<strong>${esc(x.mood)}</strong>${moodDots(x.intensity)}`}<time>${moodWhen(x.writtenAt)}</time></div><p>${esc(x.reason)}</p>${moodPeople(x.people)}<small>${[where && `写在${esc(where)}`, lasted, x.evidence?.length ? `<span title="${esc(x.evidence.join("\n"))}">来源 ${x.evidence.length} 条记录</span>` : ""].filter(Boolean).join(" · ")}</small></div></li>`;
   });
   return `<div class="mood-section-title"><h3>变化记录</h3><span class="hint">最近 ${history.length} 次，最新在上</span></div><ol class="mood-log" id="mood-log">${rows.join("")}</ol>${history.length > 8 ? `<button type="button" class="ghost mood-more" id="mood-more">显示全部 ${history.length} 次</button>` : ""}`;
 }
@@ -194,6 +207,15 @@ function bindMood(mood, now) {
       }),
   );
   drawMoodChart(mood, now);
+  document.querySelectorAll("[data-mood-person]").forEach(
+    (b) =>
+      (b.onclick = () =>
+        document.dispatchEvent(
+          new CustomEvent("open-person-card", {
+            detail: b.dataset.moodPerson,
+          }),
+        )),
+  );
   const more = $("#mood-more");
   if (more)
     more.onclick = () => {
