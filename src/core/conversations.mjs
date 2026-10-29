@@ -1,6 +1,7 @@
 import { recallPage } from "./recall-boundary.mjs";
 import { looksLikeUnfinished } from "../../vendor/legacy/v2-wait.js";
 import { allowed } from "./config.mjs";
+import { references, quotedSender } from "./person-cards.mjs";
 
 const priorities = {
   private: 100,
@@ -56,7 +57,27 @@ export class ConversationEngine {
   notify(id, conversation) {
     this.waiters.get(id + "|" + conversation)?.();
   }
-  reason(a, e, accountId) {
+  // A question someone puts to another member: it @s only others, or quotes
+  // a message someone else wrote. Read from the archived row when there is
+  // one, since a quote names the message and not its author.
+  aimedElsewhere(a, e, accountId, archived) {
+    const at = e.segments
+      .filter((s) => s.type === "at")
+      .map((s) => String(s.data?.qq));
+    if (at.length && !at.includes(accountId) && !at.includes("all"))
+      return true;
+    if (!archived?.id) return false;
+    const m = this.runtime.memory.bind(a.id),
+      row = m.db
+        .prepare("SELECT * FROM events WHERE agent_id=? AND id=?")
+        .get(a.id, archived.id);
+    if (!row) return false;
+    return references(row).replies.some((id) => {
+      const author = quotedSender(m.db, row, id);
+      return author != null && author !== accountId;
+    });
+  }
+  reason(a, e, accountId, archived) {
     const wc = {
       ...a.wake,
       ...this.state(a.id, e.conversation).wakeConfig?.triggers,
@@ -74,7 +95,12 @@ export class ConversationEngine {
       )
     )
       return "mention";
-    if (wc.questions && /[?？]/.test(e.body)) return "question";
+    if (
+      wc.questions &&
+      /[?？]/.test(e.body) &&
+      !this.aimedElsewhere(a, e, accountId, archived)
+    )
+      return "question";
     if (wc.speakerIds?.includes(e.senderId)) return "speaker";
     if (wc.names && [a.name, ...a.aliases].some((n) => e.body.includes(n)))
       return "name";

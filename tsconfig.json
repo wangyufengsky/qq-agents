@@ -48,6 +48,7 @@
     "src/core/protected-mind.mjs",
     "src/core/person-cards.mjs",
     "src/core/mood.mjs",
+    "src/core/floor.mjs",
     "src/core/runtime-status.mjs",
     "src/memory/search.mjs",
     "src/tools/screenshots.mjs",

@@ -628,7 +628,7 @@ export class Runtime {
         if (await this.operations.command(a, e, archived)) continue;
         if (await this.scheduler.command(a, e, archived)) continue;
       }
-      const reason = this.conversations.reason(a, e, c.accountId),
+      const reason = this.conversations.reason(a, e, c.accountId, archived),
         addressed = this.conversations.addressed(a, e, c.accountId);
       if (voice) voice.reason = reason;
       if (!reason) {

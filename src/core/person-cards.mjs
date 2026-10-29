@@ -15,7 +15,7 @@ const QUOTE = /\[引用:([^\]\s]{1,128})\]/g;
 const seenKey = (card) => `${card.id}:${card.revision}`;
 
 /** @param {any} event An archived events row. */
-function references(event) {
+export function references(event) {
   const segments = JSON.parse(event.payload || "{}").segments;
   if (!Array.isArray(segments))
     return {
@@ -32,15 +32,18 @@ function references(event) {
 // Who wrote the quoted message, when this source knows it exactly; a reply to
 // something never archived, or to an id two messages share, names no one.
 /** @param {any} db @param {any} event @param {string} messageId */
-function quotedSender(db, event, messageId) {
+export function quotedMessage(db, event, messageId) {
   try {
-    return resolveMessage(db, scopeFor(event), messageId)?.sender_id;
+    return resolveMessage(db, scopeFor(event), messageId);
   } catch (error) {
     if (error instanceof Error && error.message === "AMBIGUOUS_MESSAGE_ID")
       return undefined;
     throw error;
   }
 }
+/** @param {any} db @param {any} event @param {string} messageId */
+export const quotedSender = (db, event, messageId) =>
+  quotedMessage(db, event, messageId)?.sender_id;
 
 // Who this turn is about, in order: who spoke in the new messages, the other
 // side of a private chat (even with nothing new, as when an intent or a timer
