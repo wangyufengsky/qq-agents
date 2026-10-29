@@ -789,12 +789,16 @@ class AgentMemory {
   }
   // Administrator verdict on an unknown receipt. Settled receipts never change,
   // and neither verdict resends: the same requestId stays fenced afterwards.
-  reconcileDelivery(requestId, resolution) {
+  reconcileDelivery(
+    requestId,
+    resolution,
+    { by = "administrator", messageId = null } = {},
+  ) {
     return this.store.transaction(() => {
       const row = this.delivery(requestId);
       if (!row) throw Error("DELIVERY_NOT_FOUND");
       if (row.status !== "unknown") throw Error("DELIVERY_ALREADY_SETTLED");
-      this.completeDelivery(requestId, resolution);
+      this.completeDelivery(requestId, resolution, messageId);
       const attempt = this.db
         .prepare(
           "SELECT connection_id,sender_id,body,payload FROM events WHERE agent_id=? AND dedupe=?",
@@ -814,12 +818,33 @@ class AgentMemory {
         payload: {
           ...(attempt ? parse(attempt.payload) : {}),
           requestId,
-          reconciledBy: "administrator",
+          reconciledBy: by,
           previousStatus: "unknown",
           resolution,
+          ...(messageId ? { messageId } : {}),
         },
       });
       return { requestId, status: resolution };
+    });
+  }
+  // QQ's own copy of a send the gateway could not confirm settles it: same
+  // conversation, the same text, within ten minutes, and only one candidate.
+  // An image-only send has no text to match and stays for the administrator.
+  reconcileFromEcho({ conversation, text, messageId }) {
+    const squash = (s) => String(s || "").replace(/\s+/g, "");
+    const want = squash(text);
+    if (!want || !messageId) return null;
+    const since = new Date(Date.now() - 10 * 60000).toISOString();
+    const candidates = this.db
+      .prepare(
+        "SELECT d.request_id AS requestId, e.body FROM deliveries d JOIN events e ON e.agent_id=d.agent_id AND e.dedupe='send:' || d.request_id || ':pending' WHERE d.agent_id=? AND d.conversation=? AND d.status='unknown' AND d.created_at>=?",
+      )
+      .all(this.agentId, conversation, since)
+      .filter((row) => squash(row.body) === want);
+    if (candidates.length !== 1) return null;
+    return this.reconcileDelivery(candidates[0].requestId, "sent", {
+      by: "gateway-echo",
+      messageId: String(messageId),
     });
   }
   state(conversation) {

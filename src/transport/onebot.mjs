@@ -150,6 +150,10 @@ export class OneBot extends EventEmitter {
         error.reason = "PACKET_BACKEND_DISABLED";
       else if (/packetBackend(?:发包能力)?不可用/i.test(detail))
         error.reason = "PACKET_BACKEND_UNAVAILABLE";
+      // NapCat stopped waiting for QQ to confirm (for example QQ dropped
+      // offline mid-send); the message can still go out afterwards.
+      else if (/Timeout: NTEvent/i.test(detail))
+        error.reason = "GATEWAY_TIMEOUT";
       throw error;
     }
     return body.data;

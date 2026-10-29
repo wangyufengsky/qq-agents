@@ -272,14 +272,17 @@ export class DeliveryService {
         ...(receipt.fileId ? { gatewayFileId: receipt.fileId } : {}),
       };
     } catch (e) {
-      const status = e.message === "ONEBOT_REJECTED" ? "failed" : "unknown";
-      const reason =
-        status === "failed" &&
-        ["PACKET_BACKEND_DISABLED", "PACKET_BACKEND_UNAVAILABLE"].includes(
-          e.reason,
-        )
-          ? e.reason
-          : undefined;
+      // A gateway timeout is not a refusal: QQ may still deliver the message.
+      const status =
+        e.message === "ONEBOT_REJECTED" && e.reason !== "GATEWAY_TIMEOUT"
+          ? "failed"
+          : "unknown";
+      const reason = (status === "failed"
+        ? ["PACKET_BACKEND_DISABLED", "PACKET_BACKEND_UNAVAILABLE"]
+        : ["GATEWAY_TIMEOUT"]
+      ).includes(e.reason)
+        ? e.reason
+        : undefined;
       // A later audit failure must never downgrade an already-confirmed receipt.
       if (mem.delivery(requestId)?.status === "sent")
         throw Error("DELIVERY_CONFIRMED_AUDIT_FAILED", { cause: e });
@@ -295,7 +298,9 @@ export class DeliveryService {
         payload: { ...event.payload, ...(reason ? { reason } : {}) },
       });
       throw Error(
-        "DELIVERY_" + status.toUpperCase() + (reason ? "_" + reason : ""),
+        "DELIVERY_" +
+          status.toUpperCase() +
+          (status === "failed" && reason ? "_" + reason : ""),
         { cause: e },
       );
     }

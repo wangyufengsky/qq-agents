@@ -533,6 +533,15 @@ export class Runtime {
         results.push({ agentId: a.id, duplicate: true, ownEcho: true });
         continue;
       }
+      if (ownEcho)
+        mem.reconcileFromEcho({
+          conversation: e.conversation,
+          text: e.segments
+            .filter((s) => s.type === "text")
+            .map((s) => s.data?.text || "")
+            .join(""),
+          messageId: e.messageId,
+        });
       const key = e.messageId
         ? `${connectionId}:${c.messageIdNamespace || "onebot"}:${e.conversation}:${e.kind}:${e.messageId}`
         : `${connectionId}:${e.kind}:${digest(raw)}`;
