@@ -1,26 +1,16 @@
 // @ts-check
 import { observePeerInput } from "./peer-replies.mjs";
+import { liveInput } from "./live-input.mjs";
 // Only transport-authenticated human events can advance human request authority.
 /** @param {any} runtime @param {any} ctx @param {string} id */
 export function humanInput(runtime, ctx, id) {
-  const a = runtime.agent(ctx.agentId);
-  const row = runtime.memory
-    .bind(a.id)
-    .db.prepare(
-      "SELECT * FROM events WHERE agent_id=? AND id=? AND conversation=? AND connection_id=?",
-    )
-    .get(a.id, id, ctx.conversation, a.connectionId);
+  const row = liveInput(runtime, ctx.agentId, ctx.conversation, id);
   if (
     !row ||
-    row.kind !== "message.received" ||
-    row.direction !== "in" ||
-    row.origin !== "live" ||
-    row.status === "recalled" ||
     !/^\d+$/.test(row.sender_id || "") ||
     runtime.config.connections.some(
       (/** @type {any} */ c) => c.accountId === row.sender_id,
-    ) ||
-    JSON.parse(row.payload).trustedInput !== true
+    )
   )
     return null;
   return row;

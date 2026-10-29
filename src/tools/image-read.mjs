@@ -2,6 +2,7 @@ import { imageMime, MAX_IMAGE_SOURCE_BYTES } from "./media.mjs";
 import { imageDownloadError } from "./image-download.mjs";
 import { attachmentName } from "../transport/attachments.mjs";
 import { allowed } from "../core/config.mjs";
+import { liveInput } from "../core/live-input.mjs";
 
 export async function readEventImage(
   runtime,
@@ -14,39 +15,43 @@ export async function readEventImage(
   source ||= segments.some((s) => s.type === "image") ? "image" : "file";
   if (source === "image") {
     const a = runtime.assertActive(ctx),
-      connection = runtime.connection(a.connectionId),
-      file = segments.filter((s) => s.type === "image")[index]?.data?.file;
+      connection = runtime.connection(a.connectionId);
     // Only a transport-observed image ID on this account may enter the native
     // stream. Never accept a URL, local path or model-supplied download target.
-    const eligible =
+    const eligible = () =>
       connection.gateway === "napcat" &&
-      event.connectionId === a.connectionId &&
-      event.origin === "live" &&
-      event.type === "message.received" &&
-      event.direction === "in" &&
-      event.status !== "recalled" &&
-      event.payload?.trustedInput === true &&
       allowed(a, event.conversation) &&
-      typeof file === "string" &&
-      /^[a-f0-9]{32}\.(?:jpe?g|png|gif|webp)$/i.test(file);
+      liveInput(runtime, a.id, event.conversation, event.id);
     return runtime.media.fromMessage(ctx.agentId, event, index, {
       signal,
       assertActive: () => runtime.assertActive(ctx),
-      fallback: eligible
-        ? async () => {
-            runtime.assertActive(ctx);
-            const transport = runtime.transports.get(a.connectionId);
-            if (!transport?.connected) throw Error("QQ_NOT_CONNECTED");
-            try {
-              return await transport.downloadImage(file, {
-                maxBytes: MAX_IMAGE_SOURCE_BYTES,
-                signal,
-              });
-            } catch (error) {
-              throw imageDownloadError(error, signal);
-            }
-          }
-        : undefined,
+      fallback: async (data, urlError) => {
+        runtime.assertActive(ctx);
+        const file = data.file;
+        if (
+          !eligible() ||
+          typeof file !== "string" ||
+          !/^(?:[a-f0-9]{32}|\{[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\})\.(?:jpe?g|png|gif|webp)$/i.test(
+            file,
+          )
+        )
+          throw urlError;
+        const transport = runtime.transports.get(a.connectionId);
+        if (!transport?.connected) throw Error("QQ_NOT_CONNECTED");
+        let result;
+        try {
+          result = await transport.downloadImage(file, {
+            // QQ sometimes labels GIF bytes as .jpg; cap by bytes, not extension.
+            maxBytes: MAX_IMAGE_SOURCE_BYTES,
+            signal,
+          });
+        } catch (error) {
+          throw imageDownloadError(error, signal);
+        }
+        runtime.assertActive(ctx);
+        if (!eligible()) throw urlError;
+        return result;
+      },
     });
   }
   const attachment = segments.filter((s) => s.type === "file")[index]?.data;

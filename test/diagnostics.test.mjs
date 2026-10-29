@@ -17,6 +17,26 @@ test("image download diagnostics preserve safe specific causes instead of INTERN
     assert.equal(classifyError(Error(code)).code, code);
 });
 
+test("native image diagnostics retain a safe URL cause without leaking provider text", () => {
+  const d = new Diagnostics({ write: () => {} });
+  d.report(
+    Error("IMAGE_DOWNLOAD_FAILED", {
+      cause: Error("IMAGE_DOWNLOAD_HTTP_ERROR"),
+    }),
+  );
+  assert.equal(d.snapshot()[0].cause, "IMAGE_DOWNLOAD_HTTP_ERROR");
+  d.report(
+    Error("IMAGE_DOWNLOAD_FAILED", {
+      cause: Error("https://example.com/?rkey=PRIVATE_VALUE"),
+    }),
+  );
+  assert.equal(d.snapshot()[0].cause, undefined);
+  assert.doesNotMatch(
+    JSON.stringify(d.snapshot()),
+    /PRIVATE_VALUE|example.com/,
+  );
+});
+
 test("a disk failure returns a classified server error with a safe correlation ID", async (t) => {
   const f = fixture(t);
   const app = createServer({

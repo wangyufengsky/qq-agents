@@ -264,12 +264,13 @@ export class MediaStore {
     if (Number(data.file_size || data.size) > MAX_IMAGE_SOURCE_BYTES)
       throw Error("IMAGE_TOO_LARGE");
     const url = data.url;
-    if (!url) throw Error("IMAGE_URL_UNAVAILABLE");
+    if (!url && !fallback) throw Error("IMAGE_URL_UNAVAILABLE");
     if (this.activeDownloads >= 2) throw Error("IMAGE_DOWNLOAD_BUSY");
     this.activeDownloads++;
     try {
       let result;
       try {
+        if (!url) throw Error("IMAGE_URL_UNAVAILABLE");
         result = await this.fetchBuffer(url, MAX_IMAGE_SOURCE_BYTES, {
           signal,
         });
@@ -277,12 +278,20 @@ export class MediaStore {
         active();
         if (
           !fallback ||
-          !["IMAGE_DOWNLOAD_HTTP_ERROR", "IMAGE_DOWNLOAD_FAILED"].includes(
-            error.message,
-          )
+          ![
+            "IMAGE_DOWNLOAD_HTTP_ERROR",
+            "IMAGE_DOWNLOAD_FAILED",
+            "IMAGE_URL_UNAVAILABLE",
+          ].includes(error.message)
         )
           throw error;
-        result = await fallback();
+        try {
+          result = await fallback(data, error);
+        } catch (nativeError) {
+          // Retain only a known code, never provider text or a signed URL.
+          if (nativeError !== error) nativeError.cause = Error(error.message);
+          throw nativeError;
+        }
       }
       active();
       const buffer = Buffer.isBuffer(result) ? result : result.buffer;

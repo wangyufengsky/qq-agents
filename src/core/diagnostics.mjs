@@ -102,6 +102,15 @@ function validationFields(error) {
 
 function safeCause(error) {
   for (let i = 0; error && i < 3; i++, error = error.cause) {
+    if (
+      i > 0 &&
+      [
+        "IMAGE_DOWNLOAD_HTTP_ERROR",
+        "IMAGE_DOWNLOAD_FAILED",
+        "IMAGE_URL_UNAVAILABLE",
+      ].includes(error.message)
+    )
+      return error.message;
     if (ioCodes.has(error.code)) return error.code;
     if (error.code === "ERR_SQLITE_ERROR") return "SQLITE";
     if (error instanceof ZodError) return "VALIDATION";
