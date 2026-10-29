@@ -24,7 +24,8 @@ async function consoleFixture(t, options) {
   return { ...f, api };
 }
 
-async function render(f) {
+// Free-time status, logs and settings live on the 空闲时间 tab.
+async function render(f, tab = "subject") {
   const nodes = new Map();
   const node = (id) => {
     if (!nodes.has(id)) nodes.set(id, {});
@@ -33,7 +34,7 @@ async function render(f) {
   const sandbox = vm.createContext({
     config: f.runtime.config,
     revision: f.configStore.revision,
-    tab: "mind",
+    tab,
     api: f.api,
     $: node,
     esc: (x) => String(x ?? ""),
@@ -90,11 +91,15 @@ test("subject history and console survive more than fifty later chat turns", asy
   assert.doesNotMatch(html, /尚未思考/);
   assert.match(html, /已完成（无 QQ 发送）/);
   assert.match(html, /思考失败/);
-  // Current self reads in full; the editor stays hidden until 修改.
-  assert.match(html, /<div id="self-view" class="self-view">[^<]+<\/div>/);
-  assert.match(html, /<button type="button" id="self-edit">修改<\/button>/);
-  assert.match(html, /<form id="self-form" hidden>/);
-  assert.match(html, /id="self-cancel">取消<\/button>/);
+  // Current self reads in full on its own tab; the editor stays hidden until 修改.
+  const self = await render(f, "mind");
+  assert.match(self, /<div id="self-view" class="self-view">[^<]+<\/div>/);
+  assert.match(self, /<button type="button" id="self-edit">修改<\/button>/);
+  assert.match(self, /<form id="self-form" hidden>/);
+  assert.match(self, /id="self-cancel">取消<\/button>/);
+  // Each tab carries only its own job.
+  assert.doesNotMatch(self, /空闲时间日志|工作会话|聊天意图与结果/);
+  assert.doesNotMatch(html, /当前 self|工作会话|聊天意图与结果/);
 });
 
 test("subject check status shows rolling budget release and real offline gate without writing state", async (t) => {
