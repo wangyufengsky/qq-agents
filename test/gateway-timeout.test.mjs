@@ -132,3 +132,27 @@ test("an ambiguous or image-only echo is left for the administrator", async (t) 
   await echo(runtime, 602, [{ type: "image", data: { file: "only.png" } }]);
   assert.equal(mem.unresolvedDeliveryCount(), 2);
 });
+
+test("a replayed echo cannot settle a later send with the same text", async (t) => {
+  const { runtime, store } = fixture(t);
+  const transport = runtime.transports.get("qq-0"),
+    mem = store.bind("agent-0");
+  transport.send = async () => {
+    throw timeout();
+  };
+  await assert.rejects(
+    runtime.send(context(runtime), { requestId: "r-1", text: "收到" }),
+    /UNKNOWN/,
+  );
+  await echo(runtime, 701, [text("收到")]);
+  assert.equal(mem.delivery("r-1").status, "sent");
+  // A later identical send that never arrived stays unknown when the old
+  // echo is delivered again.
+  await assert.rejects(
+    runtime.send(context(runtime), { requestId: "r-2", text: "收到" }),
+    /UNKNOWN/,
+  );
+  await echo(runtime, 701, [text("收到")]);
+  assert.equal(mem.delivery("r-2").status, "unknown");
+  assert.equal(mem.unresolvedDeliveryCount(), 1);
+});

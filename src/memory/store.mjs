@@ -834,6 +834,18 @@ class AgentMemory {
     const squash = (s) => String(s || "").replace(/\s+/g, "");
     const want = squash(text);
     if (!want || !messageId) return null;
+    // A replayed echo is one QQ message, not a new one: it must not settle a
+    // later send with the same text. Skip a message id already archived
+    // here or already given to a delivery.
+    const id = String(messageId);
+    if (
+      this.db
+        .prepare(
+          "SELECT 1 FROM events WHERE agent_id=? AND conversation=? AND message_id=? UNION ALL SELECT 1 FROM deliveries WHERE agent_id=? AND conversation=? AND message_id=? LIMIT 1",
+        )
+        .get(this.agentId, conversation, id, this.agentId, conversation, id)
+    )
+      return null;
     const since = new Date(Date.now() - 10 * 60000).toISOString();
     const candidates = this.db
       .prepare(
@@ -844,7 +856,7 @@ class AgentMemory {
     if (candidates.length !== 1) return null;
     return this.reconcileDelivery(candidates[0].requestId, "sent", {
       by: "gateway-echo",
-      messageId: String(messageId),
+      messageId: id,
     });
   }
   state(conversation) {
