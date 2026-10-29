@@ -17,6 +17,10 @@ import { readiness } from "./core/readiness.mjs";
 import { activityPage, homeSummary } from "./core/activity.mjs";
 import { slangAvailable } from "./core/features.mjs";
 const publicDir = fileURLToPath(new URL("../public/", import.meta.url));
+// The running release, shown in the console's sidebar.
+const packageVersion = JSON.parse(
+  fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+).version;
 // Free-time log and 24-hour activity for the console; no message bodies.
 function subjectActivity(m, agentId, now) {
   const logs = m.db
@@ -469,6 +473,7 @@ export function createServer({
         const status = runtime.status();
         return send({
           ...status,
+          version: packageVersion,
           allowLive,
           readiness: readiness(runtime.config, status, { allowLive }),
         });
