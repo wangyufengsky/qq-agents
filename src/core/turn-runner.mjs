@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { SUBJECT } from "./lifecycle.mjs";
 import { toolSpecs } from "../tools/specs.mjs";
 import { runWithRecovery, failureSummary } from "../backends/turn-failure.mjs";
@@ -7,6 +8,9 @@ import {
   recordBackendTurn,
   retireSession,
 } from "./session-records.mjs";
+
+// Wake reasons where someone spoke to the agent, not just near it.
+const ADDRESSED = new Set(["private", "mention", "name"]);
 
 // Owns a model turn through finalization; done settles only after all bookkeeping.
 export class TurnRunner {
@@ -63,6 +67,7 @@ export class TurnRunner {
     const timer = setTimeout(() => {
       if (controller.signal.aborted) return;
       runtime.faults.set(agentId, "BACKEND_TURN_TIMEOUT");
+      ctx.timedOut = true;
       controller.abort();
     }, a.behavior.turnTimeoutMs);
     let outcome = "completed-no-send",
@@ -191,7 +196,39 @@ export class TurnRunner {
         resolveDone();
       }
     }
+    if (outcome === "failed" || ctx.timedOut)
+      runtime.trackJob(this.failureNotice(ctx, reasons), agentId);
     return { status: outcome };
+  }
+  // Someone who addressed the agent directly would otherwise see a failed
+  // turn as being ignored. Send the administrator's fixed line, at most once
+  // per cooldown, through the same outbox and limits as scheduled text.
+  async failureNotice(ctx, reasons) {
+    const runtime = this.runtime;
+    if (runtime.closed || ctx.deliveryAttempted) return;
+    if (!reasons.some((r) => ADDRESSED.has(r.reason))) return;
+    const a = runtime.config.agents.find((x) => x.id === ctx.agentId),
+      notice = a?.behavior.failureNotice;
+    if (!notice?.enabled) return;
+    const mem = runtime.memory.bind(a.id),
+      state = mem.state(ctx.conversation),
+      now = runtime.now();
+    if (now - (state.failureNoticeAt || 0) < notice.cooldownMs) return;
+    mem.setState(ctx.conversation, { ...state, failureNoticeAt: now });
+    try {
+      await runtime.withContext(a.id, ctx.conversation, (c) =>
+        runtime.send(c, {
+          requestId: "turn-failure:" + (ctx.turnId || randomUUID()),
+          text: notice.text,
+        }),
+      );
+    } catch (error) {
+      runtime.diagnostics.report(error, {
+        component: "runtime",
+        agentId: a.id,
+        conversation: ctx.conversation,
+      });
+    }
   }
   async runBackend(ctx, backend, params) {
     const runtime = this.runtime;
