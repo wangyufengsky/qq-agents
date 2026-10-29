@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
 import { sign } from "../vendor/heybox/signature.mjs";
-import { heyboxRead } from "../src/apps/heybox.mjs";
+import { heyboxRead, heyboxUrl } from "../src/apps/heybox.mjs";
 import { AppAdapter } from "../src/apps/adapter.mjs";
 test("Heybox signature matches upstream web-client compatibility vectors", () => {
   assert.equal(
@@ -52,6 +52,81 @@ test("Heybox never returns cookie fields and image-only posts stay metadata", as
   assert.equal(called.cookie, "user_pkey=fixture-secret");
   assert(!JSON.stringify(value).includes("fixture-secret"));
   assert.equal(value.coverage, "post-metadata");
+  assert.deepEqual(value.items[0].images, ["https://example.org/a.png"]);
+});
+test("Heybox long posts keep paragraphs and lazy-loaded images, not raw HTML", async () => {
+  const page = { getCookies: async () => [] };
+  const read = (link) =>
+    heyboxRead(
+      page,
+      { operation: "read", url: "https://www.xiaoheihe.cn/app/bbs/link/123" },
+      { request: async () => ({ link: { linkid: 123, ...link } }) },
+    );
+  const html = await read({
+    description: "135 字摘要",
+    text: JSON.stringify([
+      {
+        type: "html",
+        text: '<p>第一段 &amp; 说明 &lt;原文&gt;</p><blockquote><p>引用&nbsp;内容</p></blockquote><p><img src="https://cdn.example.org/lazy.jpg" data-original="https://img.example.org/1.png?a=1&amp;b=2"></p><h2>标题</h2><p>第二行<br>第三行</p><img src="//img.example.org/3.png">',
+      },
+    ]),
+  });
+  const item = html.items[0];
+  assert.equal(html.coverage, "post-text");
+  assert.equal(
+    item.description,
+    "第一段 & 说明 &lt;原文&gt;\n\n引用 内容\n\n标题\n\n第二行\n第三行",
+  );
+  assert.deepEqual(item.images, [
+    "https://img.example.org/1.png?a=1&b=2",
+    "https://img.example.org/3.png",
+  ]);
+  assert.equal(item.cover, "https://img.example.org/1.png?a=1&b=2");
+  assert(!item.truncated);
+  const blocks = await read({
+    thumb: "https://img.example.org/thumb.png",
+    text: JSON.stringify([
+      { type: "text", text: "正文<不是标签>" },
+      { type: "img", url: "https://img.example.org/2.png" },
+      { type: "url", text: "https://example.org/x" },
+      { type: "game", appid: 1 },
+    ]),
+  });
+  assert.equal(
+    blocks.items[0].description,
+    "正文<不是标签>\nhttps://example.org/x",
+  );
+  assert.deepEqual(blocks.items[0].images, ["https://img.example.org/2.png"]);
+  assert.equal(blocks.items[0].cover, "https://img.example.org/thumb.png");
+  const summary = await read({ description: "只有摘要", text: "" });
+  assert.equal(summary.coverage, "post-summary");
+  assert.equal(summary.items[0].truncated, true);
+});
+test("Heybox post reads send the web client's platform fields", async () => {
+  let called;
+  await heyboxRead(
+    { getCookies: async () => [] },
+    { operation: "read", url: "https://www.xiaoheihe.cn/app/bbs/link/9" },
+    {
+      request: async (path, params) => {
+        called = heyboxUrl(path, params);
+        return { link: { linkid: 9 } };
+      },
+    },
+  );
+  const q = Object.fromEntries(called.searchParams);
+  assert.equal(called.pathname, "/bbs/app/link/tree");
+  for (const [k, v] of Object.entries({
+    app: "heybox",
+    client_type: "web",
+    x_client_type: "web",
+    web_version: "3.0",
+    link_id: "9",
+    is_first: "1",
+    owner_only: "0",
+  }))
+    assert.equal(q[k], v, k);
+  assert.match(q.hkey, /^\w{7}$/);
 });
 test("capability probes distinguish failed reads and unverified credentials", async () => {
   const adapter = new AppAdapter({
