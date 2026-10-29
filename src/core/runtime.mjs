@@ -253,6 +253,7 @@ export class Runtime {
                   n.startsWith("self_") ||
                   n.startsWith("intent_") ||
                   n.startsWith("work_") ||
+                  n.startsWith("person_") ||
                   n === "subject_log" ||
                   a.tools.includes(n),
               ),

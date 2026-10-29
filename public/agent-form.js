@@ -143,6 +143,8 @@ const AGENT_TOOL_GROUPS = [
       self_withdraw: "撤回候选",
       work_note: "记录未完成话题",
       work_notes: "查看未完成话题",
+      person_note: "记下人物卡（称呼与印象）",
+      person_notes: "查看人物卡",
       intent_create: "创建主动意图",
       intent_list: "查看主动意图",
       intent_update: "暂缓或取消意图",

@@ -294,6 +294,14 @@ export function createServer({
             .list("self_candidates")
             .map((c) => m.identity.withEvidence(c)),
           intents: m.identity.list("intentions"),
+          personCards: m.identity.personCards().map((card) => ({
+            ...card,
+            names: JSON.parse(
+              m.db
+                .prepare("SELECT names FROM people WHERE agent_id=? AND qq=?")
+                .get(a.id, card.personId)?.names || "[]",
+            ),
+          })),
           subject: {
             ...m.state("@subject"),
             ...subjectActivity(m, a.id, runtime.now()),
@@ -351,6 +359,34 @@ export function createServer({
               expectedVersion: data.expectedVersion,
             },
             runtime.now(),
+          ),
+        );
+      }
+      if (req.method === "POST" && url.pathname === "/api/person-card") {
+        const data = await readBody(),
+          a = runtime.agent(data.agentId),
+          m = runtime.memory.bind(a.id);
+        if (!Number.isSafeInteger(data.expectedRevision))
+          throw Error("INVALID_PERSON_NOTE");
+        if (data.action === "delete")
+          return send(
+            m.identity.deletePersonCard(
+              String(data.personId),
+              data.expectedRevision,
+            ),
+          );
+        if (data.action !== "edit") throw Error("INVALID_PERSON_NOTE");
+        // An administrator edit is a new revision; the agent sees it the next
+        // time this person speaks in each conversation.
+        return send(
+          m.identity.savePersonCard(
+            {
+              personId: data.personId,
+              call: data.call ?? "",
+              body: data.body,
+              expectedRevision: data.expectedRevision,
+            },
+            { writtenIn: "console", author: "admin", now: runtime.now() },
           ),
         );
       }

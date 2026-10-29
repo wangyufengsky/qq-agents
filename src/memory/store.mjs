@@ -95,6 +95,7 @@ export class MemoryStore {
       CREATE INDEX IF NOT EXISTS deliveries_status ON deliveries(agent_id,status);
       CREATE TABLE IF NOT EXISTS runtime(agent_id TEXT NOT NULL,conversation TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(agent_id,conversation));
       CREATE TABLE IF NOT EXISTS migrations(agent_id TEXT NOT NULL,source TEXT NOT NULL,digest TEXT NOT NULL,imported_at TEXT NOT NULL,PRIMARY KEY(agent_id,source,digest));
+      CREATE TABLE IF NOT EXISTS person_notes(agent_id TEXT NOT NULL,person_id TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(agent_id,person_id));
       `);
     try {
       migrateSearch(this.db, version);
@@ -807,6 +808,7 @@ class AgentMemory {
       "message_progress",
       "message_aliases",
       "message_observations",
+      "person_notes",
     ])
       tables[name] = this.db
         .prepare(

@@ -371,4 +371,85 @@ export class IdentityMemory {
         })),
       }));
   }
+  // A person card is the agent's own view of someone: how to address them and
+  // how they get along. Every conversation shares it, like Self, so it never
+  // holds protected material. Recent revisions stay for review.
+  personCard(personId) {
+    return decode(
+      this.db
+        .prepare(
+          "SELECT value FROM person_notes WHERE agent_id=? AND person_id=?",
+        )
+        .get(this.agentId, String(personId)),
+    );
+  }
+  personCards() {
+    return this.db
+      .prepare(
+        "SELECT value FROM person_notes WHERE agent_id=? ORDER BY json_extract(value,'$.updatedAt') DESC",
+      )
+      .all(this.agentId)
+      .map(decode);
+  }
+  savePersonCard(
+    { personId, call = "", body, evidence = [], expectedRevision = 0 },
+    { writtenIn, author = "agent", now },
+  ) {
+    personId = String(personId);
+    if (!/^\d{5,12}$/.test(personId)) throw Error("INVALID_PERSON");
+    if (
+      typeof call !== "string" ||
+      call.trim().length > 40 ||
+      typeof body !== "string" ||
+      !body.trim() ||
+      body.length > 600
+    )
+      throw Error("INVALID_PERSON_NOTE");
+    // The administrator vouches for an edit; the agent cites what it saw.
+    if (author === "agent") {
+      if (!evidence.length) throw Error("NOTE_SOURCE_REQUIRED");
+      freezeEvidence(this.mem, evidence, now);
+    }
+    const old = this.personCard(personId);
+    if ((old?.revision || 0) !== expectedRevision)
+      throw Error("REVISION_CONFLICT");
+    const value = {
+      personId,
+      call: call.trim(),
+      body: body.trim(),
+      evidence,
+      revision: (old?.revision || 0) + 1,
+      author,
+      writtenIn: writtenIn ?? null,
+      updatedAt: now,
+      epistemic: "agent-impression",
+      history: old
+        ? [
+            {
+              revision: old.revision,
+              call: old.call,
+              body: old.body,
+              evidence: old.evidence,
+              author: old.author,
+              writtenIn: old.writtenIn,
+              updatedAt: old.updatedAt,
+            },
+            ...old.history,
+          ].slice(0, 10)
+        : [],
+    };
+    this.db
+      .prepare("INSERT OR REPLACE INTO person_notes VALUES(?,?,?)")
+      .run(this.agentId, personId, encode(value));
+    return value;
+  }
+  deletePersonCard(personId, expectedRevision) {
+    const old = this.personCard(personId);
+    if (!old) throw Error("RECORD_NOT_FOUND");
+    if (old.revision !== expectedRevision) throw Error("REVISION_CONFLICT");
+    this.db
+      .prepare("DELETE FROM person_notes WHERE agent_id=? AND person_id=?")
+      .run(this.agentId, old.personId);
+    return { deleted: true, personId: old.personId };
+  }
 }
