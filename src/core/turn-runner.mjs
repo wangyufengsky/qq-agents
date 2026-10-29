@@ -206,7 +206,7 @@ export class TurnRunner {
   async failureNotice(ctx, reasons) {
     const runtime = this.runtime;
     if (runtime.closed || ctx.deliveryAttempted) return;
-    if (!reasons.some((r) => ADDRESSED.has(r.reason))) return;
+    if (!reasons.some((r) => r.addressed || ADDRESSED.has(r.reason))) return;
     const a = runtime.config.agents.find((x) => x.id === ctx.agentId),
       notice = a?.behavior.failureNotice;
     if (!notice?.enabled) return;

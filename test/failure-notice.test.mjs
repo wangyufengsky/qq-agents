@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fixture, config, settle } from "./helpers.mjs";
+import { fixture, config, settle, raw } from "./helpers.mjs";
 
 const scope = "private:30000";
 const TEXT = "稍等，我刚才没接上";
@@ -133,4 +133,31 @@ test("the notice text is bounded and defaults off", () => {
     text: "我刚才没接上，稍后再回你。",
     cooldownMs: 600000,
   });
+});
+
+test("a name inside a question still counts as addressed when the question wake wins", async (t) => {
+  const said = (id, text) =>
+    raw(id, { message: [{ type: "text", data: { text } }] });
+  const ingest = async (f, event) => {
+    Object.assign(f.runtime.config.agents[0].wake, {
+      questions: true,
+      participation: 0,
+    });
+    await f.runtime.ingest("qq-0", event);
+    f.runtime.tick();
+    await settle(f.runtime);
+  };
+  const named = setup(t);
+  await ingest(named, said(1, "角色0，你在吗？"));
+  const [turn] = named.store.bind("agent-0").identity.list("model_turns");
+  assert.deepEqual(turn.reason, ["question"]);
+  assert.deepEqual(named.sent(), [TEXT]);
+
+  const unnamed = setup(t);
+  await ingest(unnamed, said(2, "有人在吗？"));
+  assert.equal(
+    unnamed.store.bind("agent-0").identity.list("model_turns").length,
+    1,
+  );
+  assert.deepEqual(unnamed.sent(), []);
 });
