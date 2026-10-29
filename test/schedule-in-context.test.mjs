@@ -206,6 +206,32 @@ test("at most three tasks are listed, the rest counted", async (t) => {
   assert(!prompt.includes(SURPRISE));
 });
 
+test("a task on another clock names its zone beside the rule; the next run is local", async (t) => {
+  const f = setup(t);
+  f.s.create(
+    "agent-0",
+    task({
+      timezone: "America/New_York",
+      schedule: { type: "daily", times: ["09:00"] },
+    }),
+  );
+  f.s.create(
+    "agent-0",
+    task({ name: "本地", schedule: { type: "daily", times: ["22:00"] } }),
+  );
+  const { tasks } = listed(await f.turn());
+  assert.deepEqual(
+    tasks.map((x) => [x.next, x.rule]),
+    [
+      [
+        "2026-10-25 21:00（北京时间 UTC+8）",
+        "每天 09:00（America/New_York 时间）",
+      ],
+      ["2026-10-25 22:00（北京时间 UTC+8）", "每天 22:00"],
+    ],
+  );
+});
+
 test("free time and other chats get no coming-up line, and never the fixed text", async (t) => {
   const f = setup(t);
   f.s.create("agent-0", task());

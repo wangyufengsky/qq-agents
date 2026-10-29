@@ -139,7 +139,11 @@ export function scheduleForTurn(memory, conversation, upcoming, options) {
           ...(t.name ? { name: t.name } : {}),
           kind: t.kind === "text" ? "固定文字" : "AI 任务",
           next: describeInstant(t.nextRunAt, options.timezone),
-          rule: describeSchedule(t.schedule),
+          // The rule keeps the task's own clock; name it when it is not the
+          // agent's, or later occurrences read in the wrong zone.
+          rule:
+            describeSchedule(t.schedule) +
+            (t.timezone === options.timezone ? "" : `（${t.timezone} 时间）`),
         })),
         ...(upcoming.length > tasks.length
           ? { more: upcoming.length - tasks.length }
