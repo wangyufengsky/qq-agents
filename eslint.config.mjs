@@ -49,6 +49,7 @@ const browserScripts = {
   "apps-ui.js": ["appAgentId", "renderApps"],
   "files-ui.js": ["fileAgentId", "renderFilePermissions"],
   "mind-ui.js": ["mindAgentId", "renderMind"],
+  "mood-ui.js": ["bindMood", "moodMarkup"],
   "onboarding-ui.js": ["renderOnboarding"],
   "parity.js": ["parityAgentId", "renderParity"],
 };

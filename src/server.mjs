@@ -171,6 +171,7 @@ export function createServer({
           "/files-ui.js",
           "/apps-ui.js",
           "/mind-ui.js",
+          "/mood-ui.js",
           "/onboarding-ui.js",
           "/activity-ui.js",
           "/style.css",

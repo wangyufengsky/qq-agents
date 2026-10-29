@@ -43,10 +43,13 @@ async function render(f) {
     URLSearchParams,
     document: { querySelectorAll: () => [] },
   });
-  vm.runInContext(
-    fs.readFileSync(new URL("../public/mind-ui.js", import.meta.url), "utf8"),
-    sandbox,
-  );
+  for (const script of ["mood-ui.js", "mind-ui.js"])
+    vm.runInContext(
+      fs.readFileSync(new URL(`../public/${script}`, import.meta.url), "utf8"),
+      sandbox,
+    );
+  // The mood chart draws into a real DOM; this harness checks markup only.
+  vm.runInContext("bindMood = () => {}", sandbox);
   await vm.runInContext("renderMind()", sandbox);
   return node("#mind-body").innerHTML;
 }
