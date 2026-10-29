@@ -132,12 +132,13 @@ async function renderMind() {
     '<p class="hint">尚无主体思考回合记录；条件检查不等于模型回合完成。</p>'
   }</section>
   ${moodMarkup(data.mood, moodNow)}
-  <section class="card"><h2>人物卡</h2><p class="hint">角色自己记下的称呼与印象，是看法不是事实；所有群和私聊共用。某人在一次会话里第一次说话时附上他的卡，卡改过后再附一次。管理员修改会生成新版本，保留最近 10 个旧版本。</p>${data.personCards.map((c) => `<details class="record"><summary>${esc(c.names.at(-1) || c.personId)} · ${esc(c.call ? `叫“${c.call}”` : "未记称呼")} · v${c.revision}</summary><p class="mono">QQ ${esc(c.personId)} · ${c.author === "admin" ? "管理员修改" : "角色记录"} · ${mindTime(c.updatedAt)}</p><pre>${esc(c.body)}</pre><p class="mono">来源：${esc(c.evidence.join(", ") || "无")}</p>${c.history.length ? `<details><summary>旧版本（${c.history.length}）</summary>${c.history.map((h) => `<p>v${h.revision} · ${esc(h.call || "未记称呼")} · ${mindTime(h.updatedAt)}</p><pre>${esc(h.body)}</pre>`).join("")}</details>` : ""}<form data-person-card="${esc(c.personId)}" data-revision="${c.revision}">${input("call", "称呼", c.call, 'maxlength="40"')}<label class="wide">关系与印象<textarea name="body" maxlength="600" required>${esc(c.body)}</textarea></label><div class="card-actions"><button class="primary">保存新版本</button><button type="button" data-person-delete="${esc(c.personId)}" data-revision="${c.revision}">删除</button></div></form></details>`).join("") || '<p class="hint">还没有人物卡。角色在聊天中用 person_note 记下。</p>'}</section>
+  ${peopleMarkup(data.personCards)}
   <section class="card"><h2>聊天意图与结果</h2>${data.intents.map((i) => `<details class="record"><summary>${esc(i.topic)} · ${esc(mindStates[i.status] || i.status)}</summary><p>${esc(i.target)} · ${esc(i.reason)}</p><p>有效期至 ${mindTime(i.expiresAt)} · 已确认发送 ${mindTime(i.sentAt)}</p><p class="mono">来源：${esc(i.evidence.join(", "))}</p>${i.history.map((h) => `<p>${mindTime(h.at)} · ${esc(mindStates[h.status] || h.status)} · ${esc(h.reason || "")}</p>`).join("")}${!["completed", "cancelled", "expired", "failed", "unknown"].includes(i.status) ? `<button data-cancel-intent="${esc(i.id)}" data-revision="${i.revision}">取消意图</button>` : ""}</details>`).join("") || '<p class="hint">没有意图。已考虑、已交接和已确认投递分别记录。</p>'}</section>
   <section class="card"><h2>工作会话</h2>${data.sessions.map((s) => `<article class="record"><strong>${esc(s.conversation === "@subject" ? "主体思考" : s.conversation)}</strong><p>self v${s.loadedSelfVersion || "—"} · ${esc(s.lifecycle?.status || "尚未初始化")} · ${esc(s.lifecycle?.reason || "")}</p><p>${s.usage ? `${s.usage.source === "measured" ? "后端实测" : "估算"} ${s.usage.contextTokens} / ${s.usage.capacityTokens || a.contextPolicy.capacityTokens} tokens（另预留 ${a.contextPolicy.reserveTokens}）` : "用量尚不可用"}</p><p>连续已见 ${s.seenThroughSeq || 0} · 已处理 ${s.readThroughSeq || 0}</p><button data-reset-session="${esc(s.conversation)}">结束当前会话，下次再初始化</button></article>`).join("")}</section>`;
   // Self is read in full by default; 修改 swaps in a textarea that grows
   // with its content. 取消 resets the form, discarding unsaved edits.
   bindMood(data.mood, moodNow);
+  bindPeople(data.personCards, a.id);
   const selfView = $("#self-view"),
     selfMore = $("#self-more"),
     selfForm = $("#self-form"),
@@ -203,41 +204,6 @@ async function renderMind() {
           });
           await renderMind();
         })),
-  );
-  document.querySelectorAll("[data-person-card]").forEach(
-    (form) =>
-      (form.onsubmit = (e) => {
-        e.preventDefault();
-        action(async () => {
-          const f = new FormData(form);
-          await api("/api/person-card", {
-            agentId: a.id,
-            action: "edit",
-            personId: form.dataset.personCard,
-            expectedRevision: Number(form.dataset.revision),
-            call: f.get("call"),
-            body: f.get("body"),
-          });
-          await renderMind();
-          notice("人物卡已保存为新版本");
-        });
-      }),
-  );
-  document.querySelectorAll("[data-person-delete]").forEach(
-    (b) =>
-      (b.onclick = () => {
-        if (!confirm("删除这张人物卡和它的旧版本？角色之后可以重新记下。"))
-          return;
-        action(async () => {
-          await api("/api/person-card", {
-            agentId: a.id,
-            action: "delete",
-            personId: b.dataset.personDelete,
-            expectedRevision: Number(b.dataset.revision),
-          });
-          await renderMind();
-        });
-      }),
   );
   document.querySelectorAll("[data-cancel-intent]").forEach(
     (b) =>
