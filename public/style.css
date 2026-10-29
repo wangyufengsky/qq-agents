@@ -1429,14 +1429,58 @@ details > form > button {
     padding-left: 34px;
   }
 }
-.act-filters {
+/* Activity: a slim bar (what to show, refresh) over the list, the
+   explanation under it. */
+.act-bar {
   display: flex;
-  gap: 6px;
   flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 0 0 12px;
 }
-/* Activity rows follow the shared list row (.record): same rhythm and dividers. */
+.act-bar label {
+  min-width: 150px;
+  margin: 0;
+}
+#activity-refresh {
+  margin-left: auto;
+}
+.act-filters {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  max-width: 100%;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--fill-1);
+}
+.act-filters button {
+  min-height: 28px;
+  padding: 0 12px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--sub);
+  font-weight: 400;
+}
+.act-filters button:hover {
+  background: var(--fill-3);
+  border-color: transparent;
+  color: var(--ink);
+}
+.act-filters button.is-on {
+  background: var(--fill-5);
+  color: var(--ink-strong);
+  font-weight: 500;
+}
+.act-foot {
+  margin: -4px 4px 16px;
+}
+/* Activity rows follow the shared list row (.record): same rhythm and
+   dividers. Each keeps one shape: a single head line (title cut, full on
+   hover), then clamped text, so a long turn never stretches the list. */
 .act-entry {
-  padding: 16px 0;
+  padding: 14px 0;
   border-bottom: 1px solid var(--line);
 }
 .act-entry:first-child {
@@ -1445,20 +1489,66 @@ details > form > button {
 .act-entry:last-of-type {
   border-bottom: 0;
 }
-.act-entry .row {
+.act-head {
   display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: baseline;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.act-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.act-subject .act-dot {
+  background: var(--cyan);
+}
+.act-entry.quiet .act-dot {
+  background: var(--faint);
+}
+.act-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 500;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.act-head .pill {
+  height: 22px;
+  font-size: 11.5px;
+}
+.act-time {
+  flex: none;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 .act-entry > p {
   margin: 6px 0 0;
   color: var(--ink-2);
   overflow-wrap: anywhere;
 }
-.act-entry.quiet strong,
+.act-entry.quiet .act-title,
 .act-entry.quiet > p {
   color: var(--muted);
+}
+.act-summary,
+.act-sent p {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+.act-entry > p.act-next,
+.act-entry > p.act-tools {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .act-box {
   margin-top: 8px;
@@ -1469,17 +1559,57 @@ details > form > button {
 .act-box p {
   margin: 2px 0;
 }
-/* The card and mood a sent message rested on, under that message. */
+/* What a message or a turn rested on — the card and mood a message was sent
+   with, the ones attached to a turn — in one look: a label, then a chip
+   each. */
+p.act-basis {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
 .act-box p.act-basis {
-  display: block;
-  margin-bottom: 6px;
-  overflow-wrap: anywhere;
+  margin: 4px 0 8px;
+}
+.act-k {
+  margin-right: 2px;
+}
+.act-chip {
+  display: inline-block;
+  max-width: 100%;
+  height: 22px;
+  padding: 0 9px;
+  overflow: hidden;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-pill);
+  background: var(--fill-2);
+  color: var(--ink-2);
+  line-height: 20px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.act-chip small {
+  margin-right: 5px;
+  color: var(--muted);
+  font-size: 11px;
 }
 .act-line {
   display: flex;
   justify-content: space-between;
   gap: 12px;
   padding: 2px 0;
+}
+.act-line > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.act-line > .hint {
+  flex: none;
 }
 .act-more summary {
   cursor: pointer;
@@ -2941,4 +3071,287 @@ button.ids-remove:hover {
   color: var(--ink);
   font-variant-numeric: tabular-nums;
   text-align: right;
+}
+
+/* ---------- 连接、运行设置、记忆与日记 ---------- */
+/* QQ account and AI backend cards: name and state on top, a fixed set of
+   one-line facts, at most two lines of notes, and the buttons pinned to the
+   bottom so they line up across a row. */
+.link-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+.link-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.link-who {
+  flex: 1;
+  min-width: 0;
+}
+.link-who h3 {
+  margin: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.link-who .hint {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.link-meta {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 7px 12px;
+  margin: 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.link-meta dt {
+  color: var(--muted);
+  white-space: nowrap;
+}
+.link-meta dd {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink-2);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.link-meta dd.mono {
+  font-size: 12px;
+  line-height: 1.6;
+}
+.link-notes {
+  display: grid;
+  gap: 4px;
+}
+.link-note {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+.link-note.is-warn {
+  color: var(--warn);
+}
+/* Checks on the first row, editing and reading on the second: every card
+   of a kind has the same rows whatever its adapter adds. */
+.link-actions {
+  flex-direction: column;
+  align-items: flex-start;
+  margin-top: auto;
+}
+.link-actions > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.link-card > .hint:last-child {
+  margin: -6px 0 0;
+}
+/* Runtime settings: the participation card's facts reuse the card rows. */
+.settings-control .row h2 {
+  margin: 0;
+}
+.settings-meta {
+  margin: 14px 0 4px;
+}
+/* Memory: a compact search bar, results, then the folded sessions. */
+.mem-search {
+  padding: 16px 18px;
+}
+.mem-bar {
+  display: grid;
+  grid-template-columns:
+    minmax(180px, 2fr) repeat(3, minmax(110px, 1fr))
+    auto;
+  gap: 10px;
+  align-items: end;
+}
+.mem-bar label {
+  min-width: 0;
+  margin: 0;
+  gap: 5px;
+  font-size: 12.5px;
+}
+.mem-bar input,
+.mem-bar select {
+  min-height: 36px;
+}
+.mem-go {
+  display: flex;
+  gap: 6px;
+}
+.mem-go button {
+  min-height: 36px;
+}
+.mem-source {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.mem-source p.hint,
+.mem-source .card-actions {
+  margin: 0;
+}
+.mem-results-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+  margin-bottom: 6px;
+}
+.mem-results-head .hint {
+  font-size: 12px;
+}
+.mem-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+.mem-head strong {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.record p.mem-body {
+  display: -webkit-box;
+  margin: 6px 0;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+.mem-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 10px;
+}
+.mem-foot small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+button.mem-more {
+  margin-top: 12px;
+}
+.conv-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px 12px;
+}
+.conv-who {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  min-width: 0;
+}
+.conv-row .pill {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.conv-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  grid-column: 1/-1;
+}
+.conv-row > p.hint {
+  grid-column: 1/-1;
+  margin: 0;
+}
+/* Edit forms: an input with a button beside it, and fields that only one
+   deployment or adapter uses (they keep their place in the grid). */
+.input-row {
+  display: flex;
+  gap: 8px;
+}
+.input-row input {
+  flex: 1;
+  min-width: 0;
+}
+.input-row button {
+  flex: none;
+  min-height: var(--form-h);
+}
+.for-type {
+  display: contents;
+}
+.for-type > p {
+  grid-column: 1/-1;
+}
+#backend-models-state {
+  margin-top: 4px;
+}
+.model-list {
+  display: grid;
+  max-height: 50vh;
+  overflow: auto;
+}
+.model-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
+}
+.model-row span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+@media (max-width: 900px) {
+  .mem-bar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .mem-query {
+    grid-column: 1/-1;
+  }
+}
+@media (max-width: 720px) {
+  .model-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+  .act-bar label {
+    min-width: 100%;
+  }
+}
+/* On a phone the refresh keeps only its icon so the filters fit one line. */
+@media (max-width: 480px) {
+  #activity-refresh {
+    padding: 0 9px;
+  }
+  #activity-refresh span {
+    display: none;
+  }
 }

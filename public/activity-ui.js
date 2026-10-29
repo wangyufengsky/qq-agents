@@ -100,7 +100,7 @@ function activityBrowsing(b) {
   const rows = read
     .map(
       (x) =>
-        `<div class="act-line"><span>${platform(x.platform)} · ${esc(x.title)}</span><span class="hint">${[x.read ? "读了正文" : "", x.comments.length ? `评论 ${x.comments.length} 条` : ""].filter(Boolean).join(" · ")}</span></div>${x.comments.length ? `<details class="act-more"><summary>看评论</summary>${x.comments.map((c) => `<p class="hint">${esc(c.author || "匿名")}：${esc(c.text)}</p>`).join("")}</details>` : ""}`,
+        `<div class="act-line"><span title="${esc(x.title)}">${platform(x.platform)} · ${esc(x.title)}</span><span class="hint">${[x.read ? "读了正文" : "", x.comments.length ? `评论 ${x.comments.length} 条` : ""].filter(Boolean).join(" · ")}</span></div>${x.comments.length ? `<details class="act-more"><summary>看评论</summary>${x.comments.map((c) => `<p class="hint">${esc(c.author || "匿名")}：${esc(c.text)}</p>`).join("")}</details>` : ""}`,
     )
     .join("");
   const list = listed.length
@@ -109,7 +109,7 @@ function activityBrowsing(b) {
   const searches = b.searches
     .map(
       (s) =>
-        `<div class="act-line"><span>${platform(s.platform)} · 搜索「${esc(s.query)}」</span></div>`,
+        `<div class="act-line"><span title="${esc(s.query)}">${platform(s.platform)} · 搜索「${esc(s.query)}」</span></div>`,
     )
     .join("");
   const failed = b.failures.length
@@ -125,22 +125,31 @@ const activityMood = (m) =>
     : m.cleared
       ? "已经过去"
       : `${esc(m.mood)}（强度 ${esc(m.intensity)}）`;
+// 心情和人物卡的一行：先说是什么时候用上的，再一张卡或一个心情一枚标签。
+// 发送时参考的、这一轮附上的，都用这一个样子。
+const activityChip = (kind, text) =>
+  `<span class="act-chip"><small>${kind}</small>${text}</span>`;
+const activityChips = (label, chips) =>
+  chips.length
+    ? `<p class="act-basis"><span class="act-k">${label}</span>${chips.join("")}</p>`
+    : "";
 // 发送时参考的人物卡和当时的心情；卡已删除或心情记录已清理时照实说明。
 function activityBasis(b) {
   if (!b) return "";
-  const parts = [];
-  if (b.personCard) parts.push(`参考人物卡：${activityCard(b.personCard)}`);
-  if (b.mood) parts.push(`当时心情：${activityMood(b.mood)}`);
-  return `<p class="hint act-basis">${parts.join(" · ")}</p>`;
+  const chips = [];
+  if (b.personCard)
+    chips.push(activityChip("人物卡", activityCard(b.personCard)));
+  if (b.mood) chips.push(activityChip("心情", activityMood(b.mood)));
+  return activityChips("发送时参考", chips);
 }
 // 这一轮提示里附上的心情和人物卡（回合记录写下的）。
 function activitySeen(s) {
   if (!s) return "";
-  const parts = [];
-  if (s.mood) parts.push(`心情：${activityMood(s.mood)}`);
-  if (s.personCards)
-    parts.push(`人物卡：${s.personCards.map(activityCard).join("、")}`);
-  return `<p class="hint act-basis">这一轮附上的${parts.join(" · ")}</p>`;
+  const chips = [];
+  if (s.mood) chips.push(activityChip("心情", activityMood(s.mood)));
+  for (const c of s.personCards || [])
+    chips.push(activityChip("人物卡", activityCard(c)));
+  return activityChips("这一轮附上", chips);
 }
 // A private intent target with a person card: its call, and the card opens.
 const activityTarget = (target, p) =>
@@ -152,9 +161,13 @@ function activityEntry(e) {
     (e.log?.did === "rested" || (!e.log && !e.tools?.total));
   const parts = [];
   if (e.log) {
-    parts.push(`<p>${esc(e.log.summary)}</p>`);
+    parts.push(
+      `<p class="act-summary" title="${esc(e.log.summary)}">${esc(e.log.summary)}</p>`,
+    );
     if (e.log.next)
-      parts.push(`<p class="hint">下次想做：${esc(e.log.next)}</p>`);
+      parts.push(
+        `<p class="hint act-next" title="${esc(e.log.next)}">下次想做：${esc(e.log.next)}</p>`,
+      );
   } else if (e.kind === "subject" && !e.tools)
     parts.push('<p class="hint">升级前的空闲时间，没有日志和工具记录。</p>');
   if (
@@ -212,7 +225,10 @@ function activityEntry(e) {
   const status = activityStatus[e.status]
     ? tag(activityStatus[e.status], "warn")
     : "";
-  return `<article class="act-entry${quiet ? " quiet" : ""}"><div class="row"><strong>${esc(activityTitle(e))}</strong><span class="hint">${esc(activityTime(e))}</span></div>${status}${parts.join("")}${tools ? `<p class="hint mono">${tools}</p>` : ""}</article>`;
+  // One head line whatever happened: a dot for chat or free time, the title
+  // (cut, full on hover), any trouble, and when. Long text below is clamped.
+  const title = activityTitle(e);
+  return `<article class="act-entry act-${e.kind === "subject" ? "subject" : "chat"}${quiet ? " quiet" : ""}"><div class="act-head"><i class="act-dot" aria-hidden="true"></i><strong class="act-title" title="${esc(title)}">${esc(title)}</strong>${status}<span class="act-time">${esc(activityTime(e))}</span></div>${parts.join("")}${tools ? `<p class="hint mono act-tools" title="${tools}">${tools}</p>` : ""}</article>`;
 }
 function activityList() {
   const list = $("#activity-list");
@@ -268,8 +284,10 @@ function renderActivity() {
     $("#content").innerHTML = '<div class="card">请先添加角色。</div>';
     return;
   }
+  // A slim bar over the list: what to show and a refresh; the explanation
+  // sits under the list instead of above it.
   $("#content").innerHTML =
-    `<section class="card"><div class="toolbar"><label>角色<select id="activity-agent">${config.agents.map((a) => `<option value="${esc(a.id)}" ${a.id === activityAgentId ? "selected" : ""}>${esc(a.name)}</option>`).join("")}</select></label><div class="act-filters" role="group" aria-label="筛选">${activityFilters.map(([id, label]) => `<button type="button" data-activity-filter="${id}" class="${id === activityFilter ? "primary" : "ghost"}" aria-pressed="${id === activityFilter}">${label}</button>`).join("")}</div><button type="button" id="activity-refresh">刷新</button></div><p class="hint">每一条是一次聊天回复或一次空闲时间。同一帖子的浏览、正文和评论合并在一起；升级前的回合没有工具记录。</p></section><section class="card" id="activity-list"><p class="hint">读取中…</p></section>`;
+    `<div class="act-bar"><label>角色<select id="activity-agent">${config.agents.map((a) => `<option value="${esc(a.id)}" ${a.id === activityAgentId ? "selected" : ""}>${esc(a.name)}</option>`).join("")}</select></label><div class="act-filters" role="group" aria-label="筛选">${activityFilters.map(([id, label]) => `<button type="button" data-activity-filter="${id}" class="${id === activityFilter ? "is-on" : ""}" aria-pressed="${id === activityFilter}">${label}</button>`).join("")}</div><button type="button" class="ghost" id="activity-refresh" aria-label="刷新" title="刷新">${icon("pulse", "sm")}<span>刷新</span></button></div><section class="card act-list" id="activity-list"><p class="hint">读取中…</p></section><p class="hint act-foot">每一条是一次聊天回复或一次空闲时间。同一帖子的浏览、正文和评论合并在一起；升级前的回合没有工具记录。</p>`;
   $("#activity-agent").onchange = (e) => {
     activityAgentId = e.target.value;
     activityItems = [];
