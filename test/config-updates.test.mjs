@@ -102,11 +102,6 @@ test("invalid persisted configuration reports a safe actionable code without rep
 
 test("a successful disk commit is reported as saved even if backend cleanup fails", async (t) => {
   const f = pendingTurn(t);
-  f.runtime.learner.backends.set("agent-0", {
-    close: async () => {
-      throw Error("synthetic learner teardown failure");
-    },
-  });
   f.runtime.backends.get("agent-0").close = async () => {
     throw Error("synthetic backend teardown failure");
   };
@@ -118,11 +113,6 @@ test("a successful disk commit is reported as saved even if backend cleanup fail
   assert.equal(result.saved, true);
   assert.equal(result.reconnectRequired, false);
   assert.deepEqual(result.warnings, ["CONFIG_RECONFIGURE_FAILED"]);
-  assert.equal(
-    f.runtime.learner.backends.size,
-    0,
-    "the new config must not reuse a failed old learner backend",
-  );
   assert.equal(
     new ConfigStore(f.configStore.file).value.agents[0].name,
     "Saved identity label",

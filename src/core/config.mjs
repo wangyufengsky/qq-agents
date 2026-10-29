@@ -15,7 +15,6 @@ import {
   voiceSchema,
   filesSchema,
   crossGroupSchema,
-  slangSchema,
   operationsSchema,
 } from "./policy.mjs";
 
@@ -313,7 +312,6 @@ export const configSchema = z
           apps: appsPolicySchema,
           github: githubPolicySchema,
           crossGroup: crossGroupSchema,
-          slang: slangSchema,
           operations: operationsSchema,
           aliases: z.array(z.string().min(1).max(80)).default([]),
           ownerIds: z.array(qq).default([]),
@@ -402,8 +400,25 @@ export const configSchema = z
   })
   .strict();
 
+// Slang learning was removed in 0.5.3. Earlier configs still carry its
+// settings and tool names; drop them so they load and are not written back.
+function withoutSlang(input) {
+  if (!Array.isArray(input?.agents)) return input;
+  return {
+    ...input,
+    agents: input.agents.map((a) => {
+      if (!a || typeof a !== "object" || Array.isArray(a)) return a;
+      const { slang, ...agent } = a;
+      if (Array.isArray(agent.tools))
+        agent.tools = agent.tools.filter(
+          (t) => typeof t !== "string" || !t.startsWith("slang_"),
+        );
+      return agent;
+    }),
+  };
+}
 export function validateConfig(input) {
-  const c = configSchema.parse(input);
+  const c = configSchema.parse(withoutSlang(input));
   for (const rows of [c.connections, c.backends, c.agents])
     if (new Set(rows.map((r) => r.id)).size !== rows.length)
       throw Error("DUPLICATE_ID");

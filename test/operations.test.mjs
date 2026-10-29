@@ -2,19 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import {
-  fixture,
-  config,
-  context,
-  raw,
-  settle,
-  disclosureApproval,
-} from "./helpers.mjs";
+import { fixture, config, context, raw } from "./helpers.mjs";
 import { TOOL_NAMES } from "../src/tools/index.mjs";
 import { totp } from "../vendor/legacy/totp.js";
 import { Operations } from "../src/core/operations.mjs";
-// Slang learning is withheld by default; these tests cover the retained code.
-process.env.QQ_AGENTS_EXPERIMENTAL_SLANG = "1";
 
 function setup(t) {
   const c = config(1);
@@ -207,132 +198,6 @@ test("owner confirmation secrets are removed from archived raw message payload",
   assert.ok(!snapshot.includes("654321"));
   assert.match(snapshot, /验证码不进入记忆/);
 });
-test("slang candidates require same-conversation evidence and never self-confirm", async (t) => {
-  const f = setup(t),
-    a = f.runtime.agent("agent-0");
-  a.slang.enabled = true;
-  const ctx = context(f.runtime),
-    mem = f.store.bind(a.id);
-  const evidence = mem.append({
-    dedupe: "term",
-    conversation: ctx.conversation,
-    kind: "message.received",
-    body: "今天又鸽了",
-  });
-  const e = await f.runtime.callTool(ctx, "slang_submit", {
-    term: "鸽了",
-    meaning: "候选释义",
-    evidenceIds: [evidence.id],
-  });
-  assert.equal(e.status, "candidate");
-  await assert.rejects(
-    f.runtime.callTool(ctx, "slang_submit", {
-      term: "鸽了",
-      status: "confirmed",
-      evidenceIds: [evidence.id],
-    }),
-  );
-  const privateEvent = mem.append({
-    dedupe: "private",
-    conversation: "private:30000",
-    kind: "message.received",
-    body: "秘密",
-  });
-  await assert.rejects(
-    f.runtime.callTool(ctx, "slang_submit", {
-      term: "秘密",
-      evidenceIds: [privateEvent.id],
-    }),
-    /WRONG_SCOPE/,
-  );
-});
-test("automatic learner keeps evidence local until exact research approval", async (t) => {
-  const f = setup(t),
-    a = f.runtime.agent("agent-0"),
-    seen = [];
-  Object.assign(a.slang, {
-    enabled: true,
-    autoResearch: true,
-    minMessages: 1,
-    researchServerId: "research",
-    researchTool: "search",
-  });
-  const mem = f.store.bind(a.id),
-    ev = mem.append({
-      dedupe: "learner",
-      conversation: "group:20000",
-      kind: "message.received",
-      body: "观察证据 鸽了",
-    });
-  mem.setState("group:20000", { lastReceivedSeq: ev.seq });
-  f.runtime.backendFactory = () => ({
-    run: async (p) => {
-      assert.deepEqual(
-        p.tools.map((t) => t.name),
-        ["slang_submit", "slang_research"],
-      );
-      await assert.rejects(
-        p.callTool("qq_send", { requestId: "bad", text: "不应发送" }),
-        /TOOL_DISABLED/,
-      );
-      await p.callTool("slang_submit", {
-        term: "鸽了",
-        meaning: "可能指失约",
-        evidenceIds: [ev.id],
-      });
-    },
-    external: {
-      call: async (server, tool, args) => {
-        seen.push(args);
-        return { content: [{ type: "text", text: "公开词义资料" }] };
-      },
-    },
-    close: async () => {},
-  });
-  f.runtime.learner.tick();
-  await settle(f.runtime);
-  assert.deepEqual(seen, []);
-  assert.equal(
-    mem.state("group:20000").slang.lastResearchError,
-    "PRIVATE_RECOLLECTION_EXTERNAL_CALL_BLOCKED",
-  );
-  const ctx = context(f.runtime),
-    entry = mem.state(ctx.conversation).slang.entries[0];
-  ctx.learnerBackend = f.runtime.learner.backends.get(a.id);
-  await assert.rejects(
-    f.runtime.learner.research(ctx, { id: entry.id }),
-    /EXTERNAL_CALL_BLOCKED/,
-  );
-  const pending = ctx.disclosureRequest;
-  f.runtime.grant(disclosureApproval(ctx, pending));
-  await f.runtime.learner.research(ctx, { id: entry.id });
-  assert.deepEqual(seen, [{ query: "鸽了" }]);
-  assert.equal(mem.state("group:20000").slang.entries[0].status, "candidate");
-  assert.equal(f.runtime.transports.get("qq-0").sent.length, 0);
-});
-test("paused or isolated agents cannot run automatic learner jobs", async (t) => {
-  const f = setup(t),
-    a = f.runtime.agent("agent-0");
-  Object.assign(a.slang, { enabled: true, minMessages: 1 });
-  let calls = 0;
-  f.runtime.backendFactory = () => {
-    calls++;
-    throw Error("must not run");
-  };
-  const mem = f.store.bind(a.id);
-  mem.append({
-    dedupe: "paused-term",
-    conversation: "group:20000",
-    kind: "message.received",
-    body: "词语",
-  });
-  mem.setState("group:20000", {});
-  await f.runtime.pause("all", true);
-  f.runtime.learner.tick();
-  await settle(f.runtime);
-  assert.equal(calls, 0);
-});
-
 test("confirmation failures across requests share a five-minute lock", async (t) => {
   const f = setup(t);
   let now = Date.now();

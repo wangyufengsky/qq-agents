@@ -444,14 +444,12 @@ export class ProtectedWork {
       ),
     );
     if (before.protectedWorkIsolation === 1 && !dirty) return;
-    if (!before.session && !before.slang?.session && !dirty) {
+    if (!before.session && !dirty) {
       m.setState(scope, { ...before, protectedWorkIsolation: 1 });
       return;
     }
     if (r.running.has(agentId + "|" + scope)) throw Error("SESSION_BUSY");
     retireSession(m, scope, "protected-work-isolation", r.now());
-    if (before.slang?.session)
-      retireSession(m, "learner:" + scope, "protected-work-isolation", r.now());
     m.store.transaction(() =>
       r.contexts.fence(m, scope, {
         prefix: "protected-work-isolation",

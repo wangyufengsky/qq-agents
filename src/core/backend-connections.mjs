@@ -239,10 +239,6 @@ export class BackendConnections {
             const b = r.backends.get(a.id);
             await b?.close?.();
             if (r.backends.get(a.id) === b) r.backends.delete(a.id);
-            const learner = r.learner.backends.get(a.id);
-            await learner?.close?.();
-            if (r.learner.backends.get(a.id) === learner)
-              r.learner.backends.delete(a.id);
           }),
         );
         await Promise.all(contexts.map((ctx) => ctx.done));
