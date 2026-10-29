@@ -467,6 +467,37 @@ export class IdentityMemory {
       .all(this.agentId, limit)
       .map(decode);
   }
+  // Who each mood is about: the people whose incoming messages it cites as
+  // evidence, never the agent's own account. Read from the cited events each
+  // time; nothing is copied onto the mood.
+  moodPeople(moods, accountId) {
+    const cited = [...new Set(moods.flatMap((x) => x.evidence || []))];
+    const senders = new Map(
+      cited.length
+        ? this.db
+            .prepare(
+              "SELECT id,sender_id FROM events WHERE agent_id=? AND direction='in' AND id IN (SELECT value FROM json_each(?))",
+            )
+            .all(this.agentId, encode(cited))
+            .filter(
+              (r) =>
+                /^\d{5,12}$/.test(r.sender_id || "") &&
+                r.sender_id !== accountId,
+            )
+            .map((r) => [r.id, r.sender_id])
+        : [],
+    );
+    return new Map(
+      moods.map((x) => [
+        x.id,
+        [
+          ...new Set(
+            (x.evidence || []).map((id) => senders.get(id)).filter(Boolean),
+          ),
+        ],
+      ]),
+    );
+  }
   currentMood(now) {
     const [latest] = this.moodHistory(1);
     return latest?.action === "set" && latest.expiresAt > now ? latest : null;

@@ -42,7 +42,7 @@ async function render(f, tab = "subject") {
     input: () => "",
     area: () => "",
     URLSearchParams,
-    document: { querySelectorAll: () => [] },
+    document: { querySelectorAll: () => [], addEventListener: () => {} },
   });
   for (const script of ["mood-ui.js", "people-ui.js", "mind-ui.js"])
     vm.runInContext(

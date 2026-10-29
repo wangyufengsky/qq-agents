@@ -639,9 +639,12 @@ class AgentMemory {
     text(title, 300);
     text(body, 32000);
     if (!title.trim() || !body.trim()) throw Error("EMPTY_DIARY");
-    const metadata = {
+    // Only a reference to the mood in effect, never a copy of it.
+    const mood = this.identity.currentMood(Date.now()),
+      metadata = {
         ...this.metadata({ people, tags, evidence }),
         writtenIn,
+        ...(mood ? { moodId: mood.id } : {}),
         ...(protectedOperations ? { protectedOperations: true } : {}),
         ...(protectedRepositories.length
           ? { protectedRepositories: [...new Set(protectedRepositories)] }
@@ -668,6 +671,16 @@ class AgentMemory {
         .run(id, 1, title, body, json(metadata), time);
       return { id, revision: 1 };
     });
+  }
+  // Diaries that name this person in `people`, newest first, as memory_search
+  // matches them. Callers that show them to a model apply the recall boundary.
+  diariesAbout(personId, limit = -1) {
+    return this.db
+      .prepare(
+        "SELECT * FROM diaries WHERE agent_id=? AND EXISTS (SELECT 1 FROM json_each(diaries.metadata,'$.people') WHERE value=?) ORDER BY updated_at DESC,id DESC LIMIT ?",
+      )
+      .all(this.agentId, String(personId), limit)
+      .map((r) => this.diary(r, true));
   }
   metadata({ people = [], tags = [], evidence = [] }) {
     for (const list of [people, tags, evidence])
@@ -710,6 +723,8 @@ class AgentMemory {
             evidence: evidence ?? previous.evidence,
           }),
           ...(previous.writtenIn ? { writtenIn: previous.writtenIn } : {}),
+          // The mood it was written in, not the mood at revision time.
+          ...(previous.moodId ? { moodId: previous.moodId } : {}),
           ...(previous.protectedRepositories?.length ||
           protectedRepositories.length
             ? {
