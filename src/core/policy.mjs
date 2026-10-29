@@ -186,23 +186,6 @@ export const crossGroupSchema = z
   })
   .strict()
   .prefault({});
-export const slangSchema = z
-  .object({
-    enabled: z.boolean().default(false),
-    autoResearch: z.boolean().default(false),
-    minMessages: ms(1, 1000, 10),
-    cooldownMs: ms(60000, 86400000, 300000),
-    maxCandidates: ms(1, 2000, 200),
-    researchServerId: z.string().default(""),
-    researchArguments: z.record(z.string(), z.unknown()).default({}),
-    researchQueryField: z
-      .string()
-      .regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/)
-      .default("query"),
-    researchTool: z.string().default(""),
-  })
-  .strict()
-  .prefault({});
 export const operationsSchema = z
   .object({
     enabled: z.boolean().default(false),

@@ -71,11 +71,9 @@ export async function commitConfig(runtime, next, revision) {
           runtime.memory.bind(id).identity.initialize(a, runtime.now()),
         );
       if (!impact.backendAgentIds.has(id)) continue;
-      for (const adapters of [runtime.backends, runtime.learner.backends]) {
-        const backend = adapters.get(id);
-        adapters.delete(id);
-        if (backend) await apply(() => backend.close?.(), true);
-      }
+      const backend = runtime.backends.get(id);
+      runtime.backends.delete(id);
+      if (backend) await apply(() => backend.close?.(), true);
     }
     await Promise.allSettled(finishing);
     for (const id of backendIds) runtime.backendConnections.states.delete(id);

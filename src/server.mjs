@@ -15,7 +15,6 @@ import { z } from "zod";
 import { mcpResult, TOOL_NAMES } from "./tools/index.mjs";
 import { readiness } from "./core/readiness.mjs";
 import { activityPage, homeSummary } from "./core/activity.mjs";
-import { slangAvailable } from "./core/features.mjs";
 const publicDir = fileURLToPath(new URL("../public/", import.meta.url));
 // The running release, shown in the console's sidebar.
 const packageVersion = JSON.parse(
@@ -746,36 +745,12 @@ export function createServer({
         }
         throw Error("INVALID_ACTION");
       }
-      if (url.pathname === "/api/slang" && !slangAvailable())
-        throw Error("SLANG_FEATURE_DISABLED");
-      if (req.method === "GET" && url.pathname === "/api/slang") {
-        const id = url.searchParams.get("agentId");
-        runtime.agent(id);
-        return send(
-          runtime.memory.bind(id).state(url.searchParams.get("conversation"))
-            .slang || { entries: [] },
-        );
-      }
-      if (req.method === "POST" && url.pathname === "/api/slang") {
-        const data = await readBody();
-        return send(
-          runtime.learner.review(
-            data.agentId,
-            data.conversation,
-            data.id,
-            data,
-          ),
-        );
-      }
       if (req.method === "GET" && url.pathname === "/api/config")
         return send({
           config: runtime.config,
           revision: runtime.configStore.revision,
           migrationWarnings: runtime.configStore.migrationWarnings || [],
-          tools: TOOL_NAMES.filter(
-            (n) => slangAvailable() || !n.startsWith("slang_"),
-          ),
-          features: { slang: slangAvailable() },
+          tools: TOOL_NAMES,
         });
       if (req.method === "PUT" && url.pathname === "/api/config") {
         const data = await readBody();

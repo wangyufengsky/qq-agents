@@ -27,7 +27,6 @@ const browserScripts = {
     "disabledHints",
     "disabledReason",
     "esc",
-    "features",
     "find",
     "icon",
     "input",

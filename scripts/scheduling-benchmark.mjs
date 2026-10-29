@@ -102,7 +102,7 @@ try {
     cpu: os.cpus()[0]?.model,
     paddingBytesPerConversation: 1024,
     samples: 100,
-    note: "Legacy comparison measures the old candidate SQL only; fullCurrentTick measures the current whole tick. No due tasks, models, QQ or optional slang research.",
+    note: "Legacy comparison measures the old candidate SQL only; fullCurrentTick measures the current whole tick. No due tasks, models or QQ.",
     cases,
   };
   const text = JSON.stringify(report, null, 2) + "\n";

@@ -104,4 +104,6 @@ npm run dsh:bundle -- --out /path/to/private-data/dsh-bundle --url http://127.0.
 
 ## 配置保存
 
+黑话学习已在 0.5.3 移除，旧配置里的 `slang` 字段会被忽略：读取时丢弃该字段，工具白名单中的 `slang_*` 也静默去掉，下次保存时不再写出。
+
 管理台每次保存都带上读取时的配置版本；期间配置已被其他页面或进程修改时，保存会以 `CONFIG_CONFLICT` 拒绝，刷新后重新核对即可，见 [故障排查](TROUBLESHOOTING.md#配置保存冲突)。按影响范围提交配置的细节见 [第五轮记录](history/RELIABILITY-ROUND-FIVE.md)。

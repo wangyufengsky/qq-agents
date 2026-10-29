@@ -78,7 +78,8 @@ function seed(m) {
       turnId: "free",
     },
   });
-  // Learner turns are internal and never appear on the timeline.
+  // Learner turns (left by slang learning, removed in 0.5.3) are internal and
+  // never appear on the timeline.
   turn(m, "learn", "learner:group:20000", 200);
   turn(m, "chat", "group:20000", 300);
 }
