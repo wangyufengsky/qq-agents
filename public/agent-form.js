@@ -294,10 +294,11 @@ const agentForm = {
           ) +
           input(
             "maxConsecutiveSends",
-            "每批连续回复上限（读到人类新消息后恢复）",
+            "每批连续回复上限",
             row.maxConsecutiveSends ?? row.maxSendsPerTurn,
             'type="number" min="1" max="10" required',
-          ),
+          ) +
+          '<p class="hint">读到人类新消息后恢复；同伴私聊需冷却结束后收到并读到新消息。重读或重启不会恢复。</p>',
       ) +
       section(
         "能力",

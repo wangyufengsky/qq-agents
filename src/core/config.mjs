@@ -387,7 +387,7 @@ export const configSchema = z
             .strict()
             .prefault({}),
           maxConsecutiveSends: z.number().int().min(1).max(10).optional(),
-          // Compatibility alias: now bounds consecutive sends between fresh human inputs.
+          // Compatibility alias for the consecutive-reply batch limit.
           maxSendsPerTurn: z.number().int().min(1).max(10).default(3),
         })
         .strict(),
