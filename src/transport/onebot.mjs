@@ -8,6 +8,19 @@ import { downloadFileStream } from "./file-stream.mjs";
 // not even a pong, for this long as lost so connection recovery takes over.
 export const HEARTBEAT_TIMEOUT_MS = 90000;
 
+// The gateway can stay reachable after QQ itself logs out (kicked by another
+// device, expired login, risk control). NapCat announces it with a bot_offline
+// notice and later heartbeats carry status.online=false; only an explicit false
+// counts, since some gateways omit the field.
+export function reportsOffline(raw) {
+  return (
+    (raw.post_type === "notice" && raw.notice_type === "bot_offline") ||
+    (raw.post_type === "meta_event" &&
+      raw.meta_event_type === "heartbeat" &&
+      raw.status?.online === false)
+  );
+}
+
 export function normalizeEvent(raw, connection) {
   if (String(raw.self_id) !== connection.accountId)
     throw Error("QQ_ACCOUNT_MISMATCH");
@@ -180,6 +193,17 @@ export class OneBot extends EventEmitter {
       const current = () =>
         !this.closed && epoch === this.epoch && this.socket === socket;
       const stopWatchdog = () => clearInterval(watchdog);
+      // Take the socket down ourselves; its later "close" is no longer current
+      // and must not report a second fault.
+      const drop = (code) => {
+        stopWatchdog();
+        this.connected = false;
+        this.socket = null;
+        this.emit("fault", code);
+        this.emit("status");
+        if (typeof socket.terminate === "function") socket.terminate();
+        else socket.close();
+      };
       const startWatchdog = () => {
         const timeout = this.heartbeatTimeoutMs();
         if (!timeout) return;
@@ -196,13 +220,7 @@ export class OneBot extends EventEmitter {
                 }
               return;
             }
-            stopWatchdog();
-            this.connected = false;
-            this.socket = null;
-            this.emit("fault", "ONEBOT_HEARTBEAT_TIMEOUT");
-            this.emit("status");
-            if (typeof socket.terminate === "function") socket.terminate();
-            else socket.close();
+            drop("ONEBOT_HEARTBEAT_TIMEOUT");
           },
           Math.max(1000, Math.floor(timeout / 3)),
         );
@@ -258,6 +276,12 @@ export class OneBot extends EventEmitter {
         if (String(raw.self_id) !== this.config.accountId) {
           this.emit("fault", "QQ_ACCOUNT_MISMATCH");
           this.close();
+          return;
+        }
+        // An offline QQ cannot send or receive; hand it to connection recovery,
+        // which only polls get_status and never logs QQ back in.
+        if (reportsOffline(raw)) {
+          drop("QQ_OFFLINE");
           return;
         }
         this.lastEventAt = Date.now();
