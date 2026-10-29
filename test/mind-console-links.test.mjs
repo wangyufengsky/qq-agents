@@ -289,12 +289,12 @@ test("each activity entry shows the mood and cards its turn was shown", (t) => {
   ui.entry = of("saw");
   assert.match(
     vm.runInContext("activitySeen(entry.seen)", ui),
-    /这一轮附上的心情：开心（强度 3） · 人物卡：阿明 v1、小新 v1、30002 v3（已删除）/,
+    /^<p class="act-basis"><span class="act-k">这一轮附上<\/span><span class="act-chip"><small>心情<\/small>开心（强度 3）<\/span><span class="act-chip"><small>人物卡<\/small>阿明 v1<\/span><span class="act-chip"><small>人物卡<\/small>小新 v1<\/span><span class="act-chip"><small>人物卡<\/small>30002 v3（已删除）<\/span><\/p>$/,
   );
   ui.entry = of("passed");
   assert.match(
     vm.runInContext("activitySeen(entry.seen)", ui),
-    /心情：已经过去/,
+    /<small>心情<\/small>已经过去/,
   );
   assert.equal(vm.runInContext("activitySeen(undefined)", ui), "");
 });

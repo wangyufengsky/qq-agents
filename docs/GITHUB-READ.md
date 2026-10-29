@@ -1,6 +1,6 @@
 # GitHub 只读访问
 
-每个角色可在「配置角色」中开启 GitHub，只提供 `github_capabilities`、`github_search` 和 `github_read`。启用自主联网后，角色可以根据聊天需要或兴趣使用这些工具，无需 `/search` 指令。主体也可以读取。
+每个角色可在「配置角色 → 联网与 GitHub」中开启 GitHub，只提供 `github_capabilities`、`github_search` 和 `github_read`。启用自主联网后，角色可以根据聊天需要或兴趣使用这些工具，无需 `/search` 指令。主体也可以读取。
 
 公开搜索支持仓库、代码和 Issue/PR；文件和目录通过 GitHub Contents API 读取，长文件分页，不执行仓库里的命令。GitHub 的代码搜索需要登录，搜索索引覆盖和限流由 GitHub 决定，空结果不证明代码不存在。
 

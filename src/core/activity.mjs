@@ -377,8 +377,17 @@ export function homeSummary(memory, agentId, { now = Date.now() } = {}) {
   );
   // Only a mood still in effect; an expired or cleared one reads as calm.
   const mood = m.identity.currentMood(now);
+  // Turns per hour over the last day, oldest first, chat and free time apart,
+  // so the home card can show when the role was busy.
+  const hourly = Array.from({ length: 24 }, () => ({ chat: 0, free: 0 }));
+  for (const t of turns) {
+    const i = Math.floor((t.startedAt - since) / 3600000);
+    if (i >= 0 && i < 24)
+      hourly[i][t.conversation === SUBJECT ? "free" : "chat"]++;
+  }
   return {
     agentId,
+    hourly,
     mood: mood
       ? {
           mood: clip(mood.mood, 40),
