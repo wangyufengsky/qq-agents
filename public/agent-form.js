@@ -34,9 +34,6 @@ const AGENT_TOOL_GROUPS = [
       conversation_read: "按会话翻阅聊天记录",
       diary_write: "写日记",
       diary_revise: "修订日记",
-      slang_query: "查询黑话候选",
-      slang_submit: "提交黑话候选",
-      slang_research: "联网研究黑话",
     },
   },
   {
