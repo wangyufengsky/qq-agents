@@ -24,6 +24,16 @@ const sourceKey = "@scheduler";
 const sensitive = (s) =>
   containsCredential(s) ||
   /\/(?:Users|home)\/|-----BEGIN .*PRIVATE KEY/.test(s);
+// What a model prompt may say about a task. A fixed text may be a surprise the
+// administrator prepared, so neither it nor a name cut from it (as /remind
+// names tasks) is included; an AI task's instruction comes with its run.
+export const taskBrief = (t) => ({
+  id: t.id,
+  name: t.kind === "text" && t.text.startsWith(t.name) ? "" : t.name,
+  kind: t.kind,
+  schedule: t.schedule,
+  timezone: t.timezone,
+});
 export class TaskScheduler {
   constructor(runtime) {
     this.runtime = runtime;
@@ -99,6 +109,18 @@ export class TaskScheduler {
           ? describeInstant(t.scheduledAt, t.timezone)
           : null,
       }));
+  }
+  // Tasks that will next run in one conversation, soonest first. Read-only:
+  // the conversation's own turns learn what is coming without managing it.
+  upcoming(id, conversation) {
+    if (!this.runtime.agent(id).scheduler.enabled) return [];
+    return this.state(id)
+      .tasks.filter(
+        (t) =>
+          t.enabled && t.nextRunAt != null && t.targets.includes(conversation),
+      )
+      .sort((a, b) => a.nextRunAt - b.nextRunAt || a.id - b.id)
+      .map((t) => ({ ...taskBrief(t), nextRunAt: t.nextRunAt }));
   }
   preview(id, input) {
     const a = this.runtime.agent(id),

@@ -371,6 +371,17 @@ export class IdentityMemory {
         })),
       }));
   }
+  // Open notes across every group and private chat, most recently written
+  // first, for free time to see what is still pending. Only the chat that
+  // wrote a note can change it.
+  openNotes() {
+    return this.db
+      .prepare(
+        "SELECT value FROM work_notes WHERE agent_id=? AND (conversation LIKE 'group:%' OR conversation LIKE 'private:%') AND json_extract(value,'$.status')='open' ORDER BY json_extract(value,'$.writtenAt') DESC, rowid DESC",
+      )
+      .all(this.agentId)
+      .map(decode);
+  }
   // A person card is the agent's own view of someone: how to address them and
   // how they get along. Every conversation shares it, like Self, so it never
   // holds protected material. Recent revisions stay for review.

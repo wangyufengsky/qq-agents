@@ -7,6 +7,13 @@ import { recallBoundary } from "./recall-boundary.mjs";
 const SUBJECT = "@subject";
 const DAY = 86400000;
 const IMPRESSION_CHARS = 80;
+const NOTE_CHARS = 120;
+const OPEN_NOTES = 8;
+
+const clip = (text, max) => {
+  const chars = Array.from(text);
+  return chars.length > max ? chars.slice(0, max).join("") + "…" : text;
+};
 
 // Enough of a private target's own card to decide whether to reach out; the
 // chat it hands off to shows the whole card. Cards hold no protected material,
@@ -15,20 +22,26 @@ function cardBrief(memory, target) {
   const id = /^private:(\d+)$/.exec(target)?.[1];
   const card = id && memory.identity.personCard(id);
   if (!card) return {};
-  const chars = Array.from(card.body);
-  return {
-    call: card.call,
-    impression:
-      chars.length > IMPRESSION_CHARS
-        ? chars.slice(0, IMPRESSION_CHARS).join("") + "…"
-        : card.body,
-  };
+  return { call: card.call, impression: clip(card.body, IMPRESSION_CHARS) };
 }
 
+// Enough of a chat's open note to remember it and pick it up from there. The
+// evidence IDs are what an intent can cite: a note ID is not evidence.
+const noteBrief = (note) => ({
+  id: note.id,
+  conversation: note.conversation,
+  body: clip(note.body, NOTE_CHARS),
+  ...(note.uncertainty
+    ? { uncertainty: clip(note.uncertainty, NOTE_CHARS) }
+    : {}),
+  evidence: note.evidence,
+  updatedAt: new Date(note.writtenAt).toISOString(),
+});
+
 // What a free-time turn starts from: its own recent log, what happened lately,
-// who it may reach out to, where it can explore with how much budget left, and
-// how earlier shares went. Only AI-authored titles, counts and times are
-// included, never chat text.
+// what chats left open, who it may reach out to, where it can explore with how
+// much budget left, and how earlier shares went. Only AI-authored titles,
+// notes, counts and times are included, never chat text.
 export function subjectMaterials(runtime, ctx) {
   const a = runtime.agent(ctx.agentId),
     m = runtime.memory.bind(a.id),
@@ -81,6 +94,10 @@ export function subjectMaterials(runtime, ctx) {
       )
       .all(a.id),
   );
+  // Protected notes are left out before the limit, so they take no place.
+  const allNotes = m.identity.openNotes(),
+    visibleNotes = boundary.rows(allNotes),
+    notes = visibleNotes.slice(0, OPEN_NOTES);
   const shares = boundary
     .rows(m.identity.list("intentions"))
     .slice(0, 5)
@@ -132,10 +149,24 @@ export function subjectMaterials(runtime, ctx) {
   // Everything shown here becomes part of what the turn has read.
   trackMindRecords(runtime, ctx, logs, "subject-log");
   trackMindRecords(runtime, ctx, shares, "intent");
+  trackMindRecords(runtime, ctx, notes);
   for (const d of diaries) ctx.privateRead.add(d.id);
   for (const repo of logs.flatMap((l) => l.protectedRepositories || []))
     ctx.privateRead.add(githubMarker(repo));
   ctx.persistTaint?.();
+  const withheldNotes = allNotes.length - visibleNotes.length;
+  const openNotes = {
+    notice:
+      "各聊天还没完成的工作笔记，最近更新的在前。笔记归记下它的聊天，只有那个聊天能更新或结束它，空闲时间只看不改。想就某条去找对方，用 intent_create：evidence 填这条笔记的 evidence（笔记 id 本身不能当 evidence），background 里写上笔记 id，方便那个聊天对上。" +
+      (withheldNotes
+        ? "protectedNotListed 条带保护标记的笔记没有列出，不要推测内容。"
+        : ""),
+    items: notes.map(noteBrief),
+    ...(visibleNotes.length > notes.length
+      ? { more: visibleNotes.length - notes.length }
+      : {}),
+    ...(withheldNotes ? { protectedNotListed: withheldNotes } : {}),
+  };
   const protection = contextProtection(runtime, ctx);
   const restricted =
     protection.protectedOperations ||
@@ -170,6 +201,7 @@ export function subjectMaterials(runtime, ctx) {
           : [],
       toolCallsThisTurn: a.subject.maxToolCallsPerTurn,
     },
+    ...(allNotes.length ? { openNotes } : {}),
     shares: shares.map(strip),
   };
 }
