@@ -46,7 +46,7 @@ npm start -- --live
   Remove-Item Env:CODEX_HOME
   ```
 
-- **DSH**：DeepSeek Harness 桌面版在 Windows 上运行时，「选择 DSH 实例」会通过 `tasklist` 和 `netstat` 查找它监听的端口；找不到时在后端配置里填固定的本机地址。
+- **DSH**：DeepSeek Harness 桌面版在 Windows 上运行时，DSH 后端卡片上的「选择实例」会通过 `tasklist` 和 `netstat` 查找它监听的端口；找不到时在后端配置里填固定的本机地址。
 
 ## 4. 与 macOS / Linux 的差别
 

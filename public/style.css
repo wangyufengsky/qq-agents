@@ -1073,6 +1073,417 @@ details details {
 .card.empty {
   background: var(--fill-1);
 }
+
+/* ---------- 浏览与分享、文件 ---------- */
+/* A card's title with its action on the right. */
+.app-head,
+.file-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+.app-head h2,
+.file-head h2 {
+  margin: 0;
+}
+/* Settings inside a fold, in short groups under small headings. */
+.app-form h3,
+.file-form h3 {
+  margin: 20px 0 2px;
+  color: var(--sub);
+  font-size: 13px;
+  font-weight: 500;
+}
+.app-form > .hint:first-child,
+.file-form > .hint:first-child {
+  margin-top: 0;
+}
+.form-grid.app-three,
+.form-grid.file-three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+/* A number with its unit after the box and its range under it. */
+.unit-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.unit-field input {
+  flex: 1;
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+.unit-field > span {
+  flex: none;
+  color: var(--sub);
+  font-size: 13px;
+  font-weight: 400;
+}
+.field-hint {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+/* Platforms to browse as toggles in one row. */
+.app-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 4px;
+}
+.app-picks .check {
+  margin: 0;
+  padding: 6px 14px 6px 10px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-pill);
+  background: var(--fill-2);
+}
+.app-picks .check:has(input:checked) {
+  border-color: var(--accent-line);
+  background: var(--accent-fill);
+  color: var(--ink);
+}
+/* History narrowed to one platform. */
+.app-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 4px;
+}
+.app-filter button small {
+  color: inherit;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+/* One read or one share intent: the same three lines every time. */
+.app-row {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+}
+.app-row:last-of-type {
+  border-bottom: 0;
+}
+.app-row-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.app-row-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-weight: 500;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.app-row.is-failed .app-row-title {
+  color: var(--sub);
+}
+.app-row-time {
+  flex: none;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.app-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  min-width: 0;
+  color: var(--sub);
+  font-size: 12.5px;
+}
+.app-row-meta a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.app-row-meta a:hover {
+  text-decoration: underline;
+}
+.app-row-meta button {
+  min-height: 28px;
+  margin-left: auto;
+  padding: 0 12px;
+  font-size: 12.5px;
+}
+.app-row-id {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--faint);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+small.app-row-id {
+  flex: 0 1 18em;
+  font-size: 11px;
+}
+.app-row-text {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink-2);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+.app-more {
+  margin: 0;
+}
+.app-more > summary {
+  min-height: 24px;
+  font-size: 12.5px;
+}
+.app-more p {
+  margin: 6px 0 2px;
+  color: var(--ink-2);
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* The platform a row came from, in that platform's color. */
+.app-badge {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: var(--r-xs);
+  background: var(--fill-4);
+  color: var(--sub);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+.app-badge.is-bilibili {
+  background: rgba(251, 114, 153, 0.14);
+  color: #ff9fbd;
+}
+.app-badge.is-heybox {
+  background: rgba(130, 220, 120, 0.12);
+  color: #9fe08f;
+}
+.app-badge.is-zhihu {
+  background: rgba(23, 114, 246, 0.16);
+  color: #7fb3ff;
+}
+.app-badge.is-xiaohongshu {
+  background: rgba(255, 36, 66, 0.14);
+  color: #ff8a98;
+}
+.app-badge.is-tieba {
+  background: rgba(78, 110, 242, 0.16);
+  color: #a3b4ff;
+}
+/* What the role did with a source, as small tags. */
+.app-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 8px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-pill);
+  color: var(--sub);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.app-chip small {
+  color: var(--muted);
+  font-size: 10.5px;
+}
+.app-chip.is-deep {
+  border-color: var(--ok-line);
+  background: var(--ok-fill);
+  color: var(--ok);
+}
+.app-chip.is-bad {
+  border-color: var(--warn-line);
+  background: var(--warn-fill);
+  color: var(--warn);
+}
+.app-chip.is-quiet {
+  border-color: transparent;
+  background: var(--fill-3);
+}
+/* Each platform folds to one line: name, whether this role uses it, login. */
+.fold-body details.app-site {
+  margin: 8px 0 0;
+  padding: 2px 14px;
+}
+.app-site > summary {
+  min-height: 42px;
+}
+.app-site-name {
+  min-width: 4em;
+  color: var(--ink);
+  font-weight: 500;
+}
+.app-site-state {
+  display: flex;
+  margin-left: auto;
+  min-width: 0;
+}
+.app-facts {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 8px 12px;
+  margin: 4px 0 12px;
+  font-size: 13px;
+}
+.app-facts dt {
+  color: var(--muted);
+}
+.app-facts dd {
+  margin: 0;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+.app-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.app-site-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+.app-site-actions a {
+  color: var(--accent);
+}
+/* The file library: how full it is, then one line per file. */
+.file-tools {
+  margin: 12px 0 4px;
+}
+.file-usage {
+  display: grid;
+  gap: 2px;
+  margin: 12px 0 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--fill-1);
+}
+.file-usage p {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
+  margin: 0;
+  color: var(--sub);
+  font-size: 13px;
+}
+.file-usage b {
+  color: var(--ink);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.file-usage .hint {
+  margin-top: 6px;
+  font-size: 12px;
+}
+.file-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.file-row:last-of-type {
+  border-bottom: 0;
+}
+.file-kind {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  overflow: hidden;
+  border-radius: 10px;
+  background: var(--accent-fill);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+.file-main {
+  min-width: 0;
+}
+.file-name {
+  display: block;
+  overflow: hidden;
+  color: var(--ink);
+  font-weight: 500;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.file-meta {
+  display: flex;
+  gap: 10px;
+  margin: 2px 0 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.file-meta > * {
+  flex: none;
+}
+.file-meta small {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--faint);
+  font-size: 11px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.file-warn {
+  margin: 2px 0 0;
+  color: var(--warn);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.file-row button {
+  min-height: 30px;
+  padding: 0 12px;
+  font-size: 12.5px;
+}
+.file-damaged {
+  margin: 12px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--warn-line);
+  border-radius: var(--r-md);
+  background: var(--warn-fill);
+}
+@media (max-width: 720px) {
+  .form-grid.app-three,
+  .form-grid.file-three {
+    grid-template-columns: 1fr;
+  }
+  /* On a phone the download button moves under the name. */
+  .file-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .file-row button {
+    grid-column: 2;
+    justify-self: start;
+  }
+}
 audio {
   width: 100%;
   margin: 8px 0;
@@ -1429,14 +1840,58 @@ details > form > button {
     padding-left: 34px;
   }
 }
-.act-filters {
+/* Activity: a slim bar (what to show, refresh) over the list, the
+   explanation under it. */
+.act-bar {
   display: flex;
-  gap: 6px;
   flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 0 0 12px;
 }
-/* Activity rows follow the shared list row (.record): same rhythm and dividers. */
+.act-bar label {
+  min-width: 150px;
+  margin: 0;
+}
+#activity-refresh {
+  margin-left: auto;
+}
+.act-filters {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  max-width: 100%;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--fill-1);
+}
+.act-filters button {
+  min-height: 28px;
+  padding: 0 12px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--sub);
+  font-weight: 400;
+}
+.act-filters button:hover {
+  background: var(--fill-3);
+  border-color: transparent;
+  color: var(--ink);
+}
+.act-filters button.is-on {
+  background: var(--fill-5);
+  color: var(--ink-strong);
+  font-weight: 500;
+}
+.act-foot {
+  margin: -4px 4px 16px;
+}
+/* Activity rows follow the shared list row (.record): same rhythm and
+   dividers. Each keeps one shape: a single head line (title cut, full on
+   hover), then clamped text, so a long turn never stretches the list. */
 .act-entry {
-  padding: 16px 0;
+  padding: 14px 0;
   border-bottom: 1px solid var(--line);
 }
 .act-entry:first-child {
@@ -1445,20 +1900,66 @@ details > form > button {
 .act-entry:last-of-type {
   border-bottom: 0;
 }
-.act-entry .row {
+.act-head {
   display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: baseline;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.act-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.act-subject .act-dot {
+  background: var(--cyan);
+}
+.act-entry.quiet .act-dot {
+  background: var(--faint);
+}
+.act-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 500;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.act-head .pill {
+  height: 22px;
+  font-size: 11.5px;
+}
+.act-time {
+  flex: none;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 .act-entry > p {
   margin: 6px 0 0;
   color: var(--ink-2);
   overflow-wrap: anywhere;
 }
-.act-entry.quiet strong,
+.act-entry.quiet .act-title,
 .act-entry.quiet > p {
   color: var(--muted);
+}
+.act-summary,
+.act-sent p {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+.act-entry > p.act-next,
+.act-entry > p.act-tools {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .act-box {
   margin-top: 8px;
@@ -1469,17 +1970,57 @@ details > form > button {
 .act-box p {
   margin: 2px 0;
 }
-/* The card and mood a sent message rested on, under that message. */
+/* What a message or a turn rested on — the card and mood a message was sent
+   with, the ones attached to a turn — in one look: a label, then a chip
+   each. */
+p.act-basis {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
 .act-box p.act-basis {
-  display: block;
-  margin-bottom: 6px;
-  overflow-wrap: anywhere;
+  margin: 4px 0 8px;
+}
+.act-k {
+  margin-right: 2px;
+}
+.act-chip {
+  display: inline-block;
+  max-width: 100%;
+  height: 22px;
+  padding: 0 9px;
+  overflow: hidden;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-pill);
+  background: var(--fill-2);
+  color: var(--ink-2);
+  line-height: 20px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.act-chip small {
+  margin-right: 5px;
+  color: var(--muted);
+  font-size: 11px;
 }
 .act-line {
   display: flex;
   justify-content: space-between;
   gap: 12px;
   padding: 2px 0;
+}
+.act-line > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.act-line > .hint {
+  flex: none;
 }
 .act-more summary {
   cursor: pointer;
@@ -2941,4 +3482,1015 @@ button.ids-remove:hover {
   color: var(--ink);
   font-variant-numeric: tabular-nums;
   text-align: right;
+}
+
+/* Role pages (Self, mood, person cards, free time, contacts, sessions): a
+   title line that counts the list, the list, then what the page is for.
+   Rows keep their shape: titles cut to one line, text to a few, and a tap
+   or hover shows the rest. */
+.mind-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  margin-bottom: 14px;
+}
+.mind-head h2 {
+  margin: 0;
+}
+.mind-count {
+  flex: none;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+.mind-foot {
+  margin: 16px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.mind-lead {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+.mind-subhead {
+  margin: 18px 0 2px;
+  color: var(--sub);
+  font-size: 13px;
+}
+.mind-list {
+  display: grid;
+}
+.mind-row {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+}
+.mind-row:first-child {
+  padding-top: 6px;
+}
+.mind-row:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+.mind-row > p,
+.mind-row > details {
+  margin: 0;
+}
+.mind-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.mind-row-head time {
+  flex: none;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.mind-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.mind-sub {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12.5px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.mind-meta {
+  color: var(--muted);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+.mind-attn {
+  color: var(--warn);
+}
+.mind-tag {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  height: 22px;
+  padding: 0 9px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-pill);
+  background: var(--fill-3);
+  color: var(--sub);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.mind-tag.is-wait {
+  border-color: var(--accent-line);
+  background: var(--accent-fill);
+  color: var(--accent);
+}
+.mind-tag.is-ok {
+  border-color: var(--ok-line);
+  background: var(--ok-fill);
+  color: var(--ok);
+}
+.mind-tag.is-warn {
+  border-color: var(--warn-line);
+  background: var(--warn-fill);
+  color: var(--warn);
+}
+.mind-tag.is-bad {
+  border-color: var(--danger-line);
+  background: var(--danger-fill);
+  color: var(--danger);
+}
+.mind-tag.is-off {
+  border-color: var(--line);
+  background: transparent;
+  color: var(--muted);
+}
+.mind-clip {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--lines, 2);
+  line-clamp: var(--lines, 2);
+}
+.mind-clip.lines-1 {
+  --lines: 1;
+  color: var(--sub);
+  font-size: 13px;
+}
+.mind-clip.lines-3 {
+  --lines: 3;
+}
+.mind-clip:focus {
+  outline: 0;
+  -webkit-line-clamp: unset;
+  line-clamp: none;
+}
+.mind-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.mind-actions button {
+  min-height: 28px;
+  padding: 0 12px;
+  margin-left: -12px;
+  font-size: 12.5px;
+}
+/* A turn's tools: one line with the count, chips inside. */
+details.mind-tools,
+details.mind-more {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+details.mind-tools > summary,
+details.mind-more > summary {
+  min-height: 26px;
+  font-size: 12.5px;
+}
+p.mind-tools {
+  color: var(--faint);
+  font-size: 12.5px;
+}
+.mind-failed {
+  padding: 0 7px;
+  border-radius: var(--r-pill);
+  background: var(--danger-fill);
+  color: var(--danger);
+  font-size: 12px;
+}
+.mind-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 0 2px 16px;
+}
+.mind-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  height: 24px;
+  padding: 0 9px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
+  background: var(--fill-2);
+  color: var(--ink-2);
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.mind-chip b {
+  color: var(--muted);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.mind-chip.is-failed {
+  border-color: var(--danger-line);
+  background: var(--danger-fill);
+  color: var(--danger);
+}
+.mind-more > p {
+  margin: 4px 0 0 16px;
+  font-size: 12.5px;
+}
+/* How checks stand, four numbers in a row (two on a phone). */
+.mind-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.mind-stat {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--fill-1);
+}
+.mind-stat span,
+.mind-stat small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.mind-stat b {
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+/* Sessions: context used against capacity. */
+.mind-usage {
+  display: grid;
+  gap: 4px;
+  color: var(--sub);
+  font-size: 12.5px;
+}
+.mind-usage .meter {
+  margin: 0;
+}
+.mind-bar.is-high .bar {
+  fill: var(--warn);
+}
+/* Folded lists of records (candidates, versions) and their summary rows. */
+.mind-details > details.record {
+  margin: 0;
+  padding: 8px 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: none;
+}
+.mind-details > details.record:last-child {
+  border-bottom: 0;
+}
+.mind-summary-main {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* Who wrote the current self, when and why, in one line. */
+.self-meta {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  margin: -4px 0 12px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.self-meta > span {
+  flex: none;
+}
+.self-meta .self-reason {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.self-meta .self-reason::before {
+  content: "· ";
+}
+#subject-form .ids + .ids {
+  margin-top: 8px;
+}
+/* Refresh sits at the right above the page, not in a card of its own. */
+.mind-toolbar {
+  justify-content: flex-end;
+  align-items: center;
+  margin: -6px 0 10px;
+}
+.mind-toolbar > button {
+  min-height: 30px;
+}
+@media (max-width: 720px) {
+  .mind-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .mind-fold > summary {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+  .mind-fold .fold-summary {
+    flex-basis: 100%;
+    padding-left: 16px;
+    white-space: normal;
+  }
+  .self-meta {
+    flex-wrap: wrap;
+  }
+  .self-meta .self-reason {
+    flex-basis: 100%;
+  }
+  .self-meta .self-reason::before {
+    content: "";
+  }
+}
+
+/* 作息与定时、语音、受保护工作 (parity.js): what the page is for comes
+   first; settings fold below with their state in the summary row. */
+#parity-body .section-title {
+  flex-wrap: wrap;
+}
+.section-actions {
+  display: flex;
+  gap: 8px;
+}
+/* A fold inside a folded form reads lighter than the one around it. */
+#parity-body details.card.fold.fold-inner {
+  margin: 14px 0 4px;
+  padding: 12px 16px;
+  background: var(--fill-1);
+  box-shadow: none;
+}
+#parity-body details.card.fold.fold-inner[open] > summary {
+  margin-bottom: 4px;
+}
+#parity-body .fold-inner .fold-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 13.5px;
+  font-weight: 500;
+}
+/* Tasks: name, next run and rule cut to one line each; the switch and edit
+   stay put at the right. */
+.task-list {
+  margin: 0 0 12px;
+  padding: 4px 20px;
+  list-style: none;
+}
+.task-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+}
+.task-row:last-child {
+  border-bottom: 0;
+}
+.task-main {
+  min-width: 0;
+}
+.task-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.task-name,
+.task-next,
+.task-rule {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.task-name {
+  color: var(--ink);
+  font-size: 14.5px;
+  font-weight: 600;
+}
+.task-next,
+.task-rule {
+  margin: 4px 0 0;
+  font-size: 13px;
+}
+.task-next {
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.task-next span {
+  margin-right: 6px;
+  color: var(--muted);
+}
+.task-rule {
+  color: var(--muted);
+}
+.task-row.is-off .task-name,
+.task-row.is-off .task-next {
+  color: var(--sub);
+}
+.task-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.task-actions button {
+  min-height: 28px;
+  padding: 0 12px;
+  font-size: 12.5px;
+}
+.task-editor {
+  border-color: var(--accent-line);
+}
+.task-editor h3 {
+  margin-top: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.task-editor-gap {
+  flex: 1;
+}
+/* An on/off switch drawn over a real checkbox. */
+#parity-body .switch {
+  position: relative;
+  display: inline-flex;
+  margin: 0;
+  cursor: pointer;
+}
+#parity-body .switch input[type="checkbox"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.switch-track {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line-2);
+  background: var(--fill-4);
+  transition:
+    background var(--t-fast),
+    border-color var(--t-fast);
+}
+.switch-track::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--sub);
+  transition:
+    transform var(--t-fast),
+    background var(--t-fast);
+}
+.switch input:checked + .switch-track {
+  border-color: var(--brand);
+  background: var(--brand);
+}
+.switch input:checked + .switch-track::after {
+  background: var(--ink-strong);
+  transform: translateX(16px);
+}
+.switch input:focus-visible + .switch-track {
+  box-shadow: var(--ring);
+}
+/* Run history: state, what and when on one line. */
+.run-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.run-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+.run-row:last-child {
+  border-bottom: 0;
+}
+.run-what {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-2);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.run-row time,
+.ops-levels time,
+.work-head time {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.run-more {
+  margin: 6px 0 0;
+}
+#parity-body .pill.bad {
+  padding-left: 9px;
+  border-color: var(--danger-line);
+  background: var(--danger-fill);
+  color: var(--danger);
+}
+#parity-body .pill.bad::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+/* Checkbox groups (targets, weekdays) instead of a multi-select. */
+#parity-body fieldset.pick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 18px;
+  min-width: 0;
+  margin: 12px 0;
+  padding: 0;
+  border: 0;
+}
+#parity-body fieldset.pick legend {
+  margin-bottom: 7px;
+  padding: 0;
+  color: var(--ink-2);
+  font-size: 13px;
+  font-weight: 500;
+}
+#parity-body fieldset.pick .check {
+  margin: 4px 0;
+}
+.chips-add {
+  flex-wrap: wrap;
+}
+.chips-add input[type="date"],
+.chips-add input[type="time"] {
+  flex: 1 1 130px;
+}
+/* Voices: title and facts cut to one line, the play button beside them. */
+.voice-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.voice-list > .card {
+  margin: 0;
+}
+.voice-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+}
+.voice-text {
+  flex: 1;
+  min-width: 0;
+}
+.voice-text h3,
+.voice-text p {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.voice-text h3 {
+  margin: 0;
+  font-size: 14.5px;
+}
+.voice-text p {
+  margin: 4px 0 0;
+}
+#voice-player {
+  margin: 0 0 16px;
+}
+/* Protected work and operations. */
+.work-list {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.work-list > .card {
+  margin: 0;
+}
+.work-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.work-scope {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--sub);
+  font-size: 13px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.work-head time {
+  margin-left: auto;
+}
+.work-text {
+  display: -webkit-box;
+  margin: 10px 0 0;
+  overflow: hidden;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+.work-result {
+  max-height: 320px;
+}
+.work-release {
+  margin-top: 14px;
+  padding: 4px 14px 12px;
+  border: 1px solid var(--warn-line);
+  border-radius: var(--r-md);
+  background: var(--warn-fill);
+}
+.work-release .check {
+  align-items: flex-start;
+}
+.work-release .check input {
+  margin-top: 3px;
+}
+.ops-levels {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ops-levels li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+.ops-confirm {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.ops-confirm h3 {
+  margin-top: 0;
+  overflow-wrap: anywhere;
+}
+.danger-zone {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-color: var(--danger-line);
+  background: linear-gradient(180deg, var(--danger-fill), transparent);
+}
+.danger-zone > div {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+.danger-zone h3 {
+  margin: 0 0 4px;
+  color: var(--danger);
+}
+.danger-zone .hint {
+  margin: 0;
+}
+@media (max-width: 720px) {
+  /* Phones put a fold's state under its title rather than squeeze it. */
+  #parity-body details.card.fold > summary {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+  /* A zero basis keeps a long title beside its arrow, wrapping inside. */
+  #parity-body .fold .fold-title {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  #parity-body .fold-summary {
+    flex: 1 1 100%;
+    padding-left: 16px;
+  }
+  .task-list {
+    padding: 4px 16px;
+  }
+}
+
+/* ---------- 连接、运行设置、记忆与日记 ---------- */
+/* QQ account and AI backend cards: name and state on top, a fixed set of
+   one-line facts, at most two lines of notes, and the buttons pinned to the
+   bottom so they line up across a row. */
+.link-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+.link-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.link-who {
+  flex: 1;
+  min-width: 0;
+}
+.link-who h3 {
+  margin: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.link-who .hint {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.link-meta {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 7px 12px;
+  margin: 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.link-meta dt {
+  color: var(--muted);
+  white-space: nowrap;
+}
+.link-meta dd {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink-2);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.link-meta dd.mono {
+  font-size: 12px;
+  line-height: 1.6;
+}
+.link-notes {
+  display: grid;
+  gap: 4px;
+}
+.link-note {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+.link-note.is-warn {
+  color: var(--warn);
+}
+/* Checks on the first row, editing and reading on the second: every card
+   of a kind has the same rows whatever its adapter adds. */
+.link-actions {
+  flex-direction: column;
+  align-items: flex-start;
+  margin-top: auto;
+}
+.link-actions > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.link-card > .hint:last-child {
+  margin: -6px 0 0;
+}
+/* Runtime settings: the participation card's facts reuse the card rows. */
+.settings-control .row h2 {
+  margin: 0;
+}
+.settings-meta {
+  margin: 14px 0 4px;
+}
+/* Memory: a compact search bar, results, then the folded sessions. */
+.mem-search {
+  padding: 16px 18px;
+}
+.mem-bar {
+  display: grid;
+  grid-template-columns:
+    minmax(180px, 2fr) repeat(3, minmax(110px, 1fr))
+    auto;
+  gap: 10px;
+  align-items: end;
+}
+.mem-bar label {
+  min-width: 0;
+  margin: 0;
+  gap: 5px;
+  font-size: 12.5px;
+}
+.mem-bar input,
+.mem-bar select {
+  min-height: 36px;
+}
+.mem-go {
+  display: flex;
+  gap: 6px;
+}
+.mem-go button {
+  min-height: 36px;
+}
+.mem-source {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.mem-source p.hint,
+.mem-source .card-actions {
+  margin: 0;
+}
+.mem-results-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+  margin-bottom: 6px;
+}
+.mem-results-head .hint {
+  font-size: 12px;
+}
+.mem-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+.mem-head strong {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.record p.mem-body {
+  display: -webkit-box;
+  margin: 6px 0;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+.mem-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 10px;
+}
+.mem-foot small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+button.mem-more {
+  margin-top: 12px;
+}
+.conv-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px 12px;
+}
+.conv-who {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  min-width: 0;
+}
+.conv-row .pill {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.conv-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  grid-column: 1/-1;
+}
+.conv-row > p.hint {
+  grid-column: 1/-1;
+  margin: 0;
+}
+/* Edit forms: an input with a button beside it, and fields that only one
+   deployment or adapter uses (they keep their place in the grid). */
+.input-row {
+  display: flex;
+  gap: 8px;
+}
+.input-row input {
+  flex: 1;
+  min-width: 0;
+}
+.input-row button {
+  flex: none;
+  min-height: var(--form-h);
+}
+.for-type {
+  display: contents;
+}
+.for-type > p {
+  grid-column: 1/-1;
+}
+#backend-models-state {
+  margin-top: 4px;
+}
+.model-list {
+  display: grid;
+  max-height: 50vh;
+  overflow: auto;
+}
+.model-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
+}
+.model-row span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+@media (max-width: 900px) {
+  .mem-bar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .mem-query {
+    grid-column: 1/-1;
+  }
+}
+@media (max-width: 720px) {
+  .model-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+  .act-bar label {
+    min-width: 100%;
+  }
+}
+/* On a phone the refresh keeps only its icon so the filters fit one line. */
+@media (max-width: 480px) {
+  #activity-refresh {
+    padding: 0 9px;
+  }
+  #activity-refresh span {
+    display: none;
+  }
 }
