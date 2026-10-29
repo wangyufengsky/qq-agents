@@ -116,11 +116,13 @@ export async function fileTool(runtime, ctx, tool, args) {
     recallBoundary(runtime, ctx).assert(meta);
     if (!TEXT_FILE.test(meta.name)) throw Error("FILE_NOT_TEXT");
     protect(ctx, meta);
+    // FileStore.read returns { meta, buffer } where buffer is a Node Buffer:
+    // a view of exactly the file's bytes, even when it sits in a shared pool.
+    // Decode that view, never its underlying ArrayBuffer.
+    const { buffer: bytes } = files.read(a.id, args.fileId, a.files.maxBytes);
     let text;
     try {
-      text = new TextDecoder("utf-8", { fatal: true }).decode(
-        files.read(a.id, args.fileId, a.files.maxBytes).buffer,
-      );
+      text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
     } catch (error) {
       if (!(error instanceof TypeError)) throw error;
       throw Error("FILE_NOT_TEXT", { cause: error });

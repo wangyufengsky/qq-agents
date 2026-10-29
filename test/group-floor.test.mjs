@@ -135,3 +135,27 @@ test("a private chat carries no group floor", async (t) => {
   assert(f.prompts.length >= 1);
   assert.equal(floorIn(f.prompts.at(-1)), null);
 });
+
+test("a private question that quotes the user's own message still wakes the agent", async (t) => {
+  const f = setup(t);
+  // Only the question wake can wake it here.
+  f.runtime.config.agents[0].wake.private = false;
+  const dm = (id, message) =>
+    f.runtime.ingest(
+      "qq-0",
+      raw(id, {
+        message_type: "private",
+        group_id: undefined,
+        user_id: 30000,
+        message,
+      }),
+    );
+  await dm(30, [text("我上次说的那个游戏")]);
+  f.runtime.tick();
+  await settle(f.runtime);
+  assert.equal(turns(f), 0);
+  await dm(31, [reply(30), text("你后来玩了吗？")]);
+  f.runtime.tick();
+  await settle(f.runtime);
+  assert.equal(turns(f), 1);
+});

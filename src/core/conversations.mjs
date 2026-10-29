@@ -57,10 +57,13 @@ export class ConversationEngine {
   notify(id, conversation) {
     this.waiters.get(id + "|" + conversation)?.();
   }
-  // A question someone puts to another member: it @s only others, or quotes
-  // a message someone else wrote. Read from the archived row when there is
-  // one, since a quote names the message and not its author.
+  // A question someone puts to another group member: it @s only others, or
+  // quotes a message someone else wrote. Read from the archived row when
+  // there is one, since a quote names the message and not its author. A
+  // private chat has no one else to ask, even when its user quotes
+  // themselves.
   aimedElsewhere(a, e, accountId, archived) {
+    if (!e.conversation.startsWith("group:")) return false;
     const at = e.segments
       .filter((s) => s.type === "at")
       .map((s) => String(s.data?.qq));
