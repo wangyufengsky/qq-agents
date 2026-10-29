@@ -100,7 +100,7 @@ docs: turn README and docs into a task-oriented user guide
 维护者给 Issue 打上 `auto-fix` 标签后，[Claude Issue Fix](.github/workflows/claude-issue-fix.yml) 工作流让 Claude 读 Issue 和代码、写修复和测试、运行 `npm run verify`、推送分支、开 PR（带 `Fixes #编号`）并在 Issue 里回复；随后工作流为这个 PR 开启自动合并。
 
 - **合并要维护者批准**：`main` 的规则要求至少 1 个批准，Claude 之后再推送会让批准失效。维护者批准、CI 通过后自动合并，Issue 随之关闭。工作流检测不到这条批准要求时不开启自动合并。
-- **只有维护者能触发**：打标签，或有写权限的人在 Issue / PR 里评论 `@claude …`（例如让它处理审查意见、修 CI）。外部用户的评论不会触发。
+- **只有维护者能触发**：打标签，或有写权限的人在 Issue / PR 里评论 `@claude …`（例如让它处理审查意见、修 CI）。外部用户的评论不会触发；来自 fork 的 PR 也不会运行，因为 Claude 会执行 PR 分支里的 npm 脚本。
 - **Issue 内容按不可信数据处理**：Claude 不改 `.github/`、`vendor/`、`package.json` 和锁文件，不访问 Issue 里的网址，Claude 运行的测试和脚本拿不到令牌。打标签前请先看一遍 Issue 原文。
 - **限制**：运行在 GitHub Actions 上，没有登录态和浏览器，平台接口、真实 QQ 相关的问题只能靠测试覆盖，回复里会写明未实测。
 - **准备**：在仓库安装 [Claude GitHub App](https://github.com/apps/claude)，并在 Actions secrets 里设置 `ANTHROPIC_API_KEY` 或 `CLAUDE_CODE_OAUTH_TOKEN`（本机运行 `claude setup-token` 生成）其中一个。

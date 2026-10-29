@@ -14,7 +14,7 @@ concurrency:
   group: claude-${{ github.event.issue.number || github.event.pull_request.number }}
   cancel-in-progress: false
 jobs:
-  claude:
+  gate:
     # Only a maintainer starts a run: the auto-fix label, or an @claude comment
     # from someone with write access (the action re-checks the permission).
     if: >-
@@ -28,6 +28,37 @@ jobs:
       (github.event_name == 'pull_request_review' &&
         contains(github.event.review.body, '@claude') &&
         contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+      issues: write
+    outputs:
+      allowed: ${{ steps.check.outputs.allowed }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number || (github.event.issue.pull_request && github.event.issue.number) || '' }}
+        run: |
+          # The claude job runs npm scripts from the pull request's branch with
+          # credentials in reach, so only branches in this repository qualify:
+          # a fork could redefine those scripts to read them.
+          if [ -z "$PR" ]; then
+            echo "allowed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          head=$(gh api "repos/$REPO/pulls/$PR" --jq '.head.repo.full_name // ""')
+          if [ "$head" = "$REPO" ]; then
+            echo "allowed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "allowed=false" >> "$GITHUB_OUTPUT"
+            gh api "repos/$REPO/issues/$PR/comments" -f body="这个 PR 来自 fork，Claude 只处理本仓库分支上的 PR，不会运行。" --silent
+          fi
+  claude:
+    needs: gate
+    if: needs.gate.outputs.allowed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -43,15 +74,22 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
+          persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: npm
-      - name: Install media test tools
+      - name: Install media test tools and subprocess isolation
         timeout-minutes: 6
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ffmpeg
+          sudo apt-get install -y --no-install-recommends ffmpeg bubblewrap socat
+          # bubblewrap gives the commands Claude runs their own PID namespace, so
+          # they cannot read the action's environment through /proc. Ubuntu 24.04
+          # blocks the unprivileged user namespaces it needs unless this is off.
+          if [ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
       - run: npm ci
       - uses: anthropics/claude-code-action@a26b07d8c778b0c43f64618e5fd29fd0f8af72e8 # v1.0.250
         id: claude
