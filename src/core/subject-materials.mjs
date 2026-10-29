@@ -54,6 +54,24 @@ function owedBrief(memory, item) {
   };
 }
 
+// Where each of the agent's own projects stands, enough to take the next
+// step: the last two steps, what it made, what is next and what is in the way.
+const projectBrief = (p) => ({
+  id: p.id,
+  title: p.title,
+  why: clip(p.why, NOTE_CHARS),
+  revision: p.revision,
+  since: new Date(p.createdAt).toISOString(),
+  lastSteps: p.steps.slice(0, 2).map((s) => ({
+    at: new Date(s.at).toISOString(),
+    did: clip(s.did, NOTE_CHARS),
+  })),
+  steps: p.steps.length,
+  ...(p.files.length ? { files: p.files.slice(0, 5) } : {}),
+  ...(p.next ? { next: p.next } : {}),
+  ...(p.blocker ? { blocker: p.blocker } : {}),
+});
+
 // What a free-time turn starts from: its own recent log, what happened lately,
 // what chats left open, who it may reach out to, where it can explore with how
 // much budget left, and how earlier shares went. Only AI-authored titles,
@@ -112,6 +130,9 @@ export function subjectMaterials(runtime, ctx) {
   );
   // Protected notes are left out before the limit, so they take no place.
   const owed = m.identity.openPersonItems("promise");
+  const ownProjects = m.identity.projects(),
+    active = ownProjects.filter((p) => p.status === "active"),
+    paused = ownProjects.filter((p) => p.status === "paused");
   const allNotes = m.identity.openNotes(),
     visibleNotes = boundary.rows(allNotes),
     notes = visibleNotes.slice(0, OPEN_NOTES);
@@ -219,6 +240,18 @@ export function subjectMaterials(runtime, ctx) {
       toolCallsThisTurn: a.subject.maxToolCallsPerTurn,
     },
     ...(allNotes.length ? { openNotes } : {}),
+    ...(ownProjects.length
+      ? {
+          projects: {
+            notice:
+              "你自己的长期小项目。可以接着推进一步（先用 file_read 读回 files 里的上一稿），卡住了就记 blocker，没兴趣了可以 paused，做完或决定放弃就写 outcome 结束；不必每次都做，也不为凑进度编造进展。",
+            active: active.map(projectBrief),
+            ...(paused.length
+              ? { paused: paused.map((p) => ({ id: p.id, title: p.title })) }
+              : {}),
+          },
+        }
+      : {}),
     ...(owed.length
       ? {
           owed: {

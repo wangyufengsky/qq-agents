@@ -82,6 +82,7 @@ export function restoreExport(memory, data) {
     person_notes: ["agent_id", "person_id", "value"],
     moods: ["agent_id", "id", "value"],
     person_items: ["agent_id", "id", "value"],
+    projects: ["agent_id", "id", "value"],
   };
   // An empty target identity can be restored beside other identities. Remap only local seq watermarks.
   if (

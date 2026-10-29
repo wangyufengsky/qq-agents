@@ -130,6 +130,31 @@ export const mindDefinitions = {
       })
       .strict(),
   ],
+  project: [
+    "你自己的长期小项目：一件你感兴趣、想跨几天慢慢做的事（比如查资料比较几种说法后整理出自己的看法、写一个连载的小故事）。新项目给 title（最多 60 字）和 why（为什么感兴趣），同时最多 5 个进行中。之后每推进一步就带 id 和 expectedRevision 更新：progress 写这一步做了什么、真实的进展（最多 300 字），evidence 附读过的记录 ID，files 附这一步写下的作品（file_create 返回的 fileId）；next 写下一步打算，blocker 写卡在哪里。暂时没兴趣就 status=paused；做完了 status=done，决定放弃 status=dropped，两者都要写 outcome（结果或放弃的原因）。不必每次空闲都推进，也不为凑进度编造进展；接着写之前先用 file_read 读回上次的稿子。",
+    z
+      .object({
+        id: text.optional(),
+        title: z.string().max(60).optional(),
+        why: z.string().max(300).optional(),
+        progress: z.string().max(300).default(""),
+        evidence: ids.default([]),
+        files: z
+          .array(z.string().regex(/^[a-f0-9]{64}$/))
+          .max(10)
+          .default([]),
+        next: z.string().max(200).optional(),
+        blocker: z.string().max(200).optional(),
+        status: z.enum(["active", "paused", "done", "dropped"]).optional(),
+        outcome: z.string().max(300).default(""),
+        expectedRevision: version.optional(),
+      })
+      .strict(),
+  ],
+  projects: [
+    "读取你自己的小项目：进行中的在前，然后是暂停的和已结束的；每个带最近的进展、作品 fileId、下一步和卡住的地方。聊天里想说说自己最近在忙什么，也可以先看看这里。",
+    z.object({ offset: z.number().int().min(0).default(0) }).strict(),
+  ],
   mood_set: [
     "记下你此刻的心情和原因。不是必须的：心情真的变了再写，不用每轮都写，也不用为了写而写。mood 用几个字说心情，intensity 是有多强烈（1 很轻，5 非常强烈）；reason 说为什么变好或变坏、是因为什么事，可在 evidence 附上引起变化的记录 ID。hours 是这份心情大约持续多久（0.5–24，默认 4），到期后就不再提示；之后心情又变了就再写一次。clear=true 表示心情已经过去、回到平常，这时只需要 reason。强度 4 以上、仍在有效期内的心情，要改变或清除它，evidence 里必须有一条在它之后发生的记录：可以是对方后来的解释、别人的话，也可以是你自己的 subject_log，比如回头想清了那场误会，或者去做了别的事、缓过来了；没有新的原因就让它保持，到期会自然结束。平复不需要等谁来哄。心情影响你怎么说、想不想参与某个话题，但不要拿它向人讨安慰或要别人哄你。冲着某个人的情绪（比如生某人的气）写进那个人的人物卡（person_note），这里只写你整体的状态，也别把对一个人的不满带到不相干的群和人身上。心情在你所有群聊和私聊之间共享，只给你自己看，但原因要写成在别的聊天里想起来也无妨的说法。想配个表情，可以用 sticker_list 按心情搜你自己收藏的表情。",
     z
@@ -255,6 +280,8 @@ export const SUBJECT_TOOLS = [
   "person_notes",
   "person_item",
   "person_items",
+  "project",
+  "projects",
   "mood_set",
   "mood_read",
   "file_list",
@@ -280,6 +307,7 @@ function executeMindTool(runtime, ctx, name, args) {
       "self_withdraw",
       "person_note",
       "person_item",
+      "project",
       "mood_set",
     ].includes(name) &&
     (privateGithubSources(ctx, runtime).length > 0 ||
@@ -394,6 +422,27 @@ function executeMindTool(runtime, ctx, name, args) {
       items: rows.slice(args.offset, args.offset + 20),
       total: rows.length,
       nextOffset: args.offset + 20 < rows.length ? args.offset + 20 : null,
+    };
+  }
+  if (name === "project") {
+    // Works are the agent's own files, and a shared project never points at
+    // protected material.
+    for (const fileId of args.files) {
+      if (!runtime.files) throw Error("FILE_LIBRARY_UNAVAILABLE");
+      recallBoundary(runtime, ctx).assert(runtime.files.metadata(a.id, fileId));
+    }
+    return identity.saveProject(args, { writtenIn: ctx.conversation, now });
+  }
+  if (name === "projects") {
+    const rows = identity.projects();
+    return {
+      items: rows.slice(args.offset, args.offset + 10).map((p) => ({
+        ...p,
+        steps: p.steps.slice(0, 5),
+        moreSteps: Math.max(0, p.steps.length - 5),
+      })),
+      total: rows.length,
+      nextOffset: args.offset + 10 < rows.length ? args.offset + 10 : null,
     };
   }
   if (name === "mood_set") {

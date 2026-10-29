@@ -89,10 +89,18 @@ test("the agent writes person cards with evidence and revisions, never from rest
   );
 });
 
+// Room for every turn of a test in one session, so none is handed off for
+// space and the cards' once-per-session rule is what the test sees.
+function roomy(cfg = config()) {
+  for (const a of cfg.agents) a.contextPolicy.capacityTokens = 1000000;
+  return cfg;
+}
+
 test("a card reaches a model session once per revision, when its person speaks", async (t) => {
   const prompts = [];
   let write = null;
   const f = fixture(t, {
+      cfg: roomy(),
       run: async (p) => {
         prompts.push(p.prompt);
         p.saveSession({ id: "s", backend: "fixture" });
@@ -375,6 +383,7 @@ test("a private chat shows the other side's card even with nothing new, with the
 test("cards follow whom the shown messages mention or reply to, after those who spoke", async (t) => {
   const prompts = [];
   const f = fixture(t, {
+      cfg: roomy(),
       run: async (p) => {
         prompts.push(p.prompt);
         p.saveSession({ id: "s", backend: "fixture" });

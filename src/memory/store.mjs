@@ -101,6 +101,7 @@ export class MemoryStore {
       CREATE TABLE IF NOT EXISTS person_notes(agent_id TEXT NOT NULL,person_id TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(agent_id,person_id));
       CREATE TABLE IF NOT EXISTS moods(agent_id TEXT NOT NULL,id TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(agent_id,id));
       CREATE TABLE IF NOT EXISTS person_items(agent_id TEXT NOT NULL,id TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(agent_id,id));
+      CREATE TABLE IF NOT EXISTS projects(agent_id TEXT NOT NULL,id TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(agent_id,id));
       `);
     // agentId|eventId of voice messages whose transcript is still running.
     this.transcribing = new Set();
@@ -1031,6 +1032,7 @@ class AgentMemory {
       "person_notes",
       "moods",
       "person_items",
+      "projects",
     ])
       tables[name] = this.db
         .prepare(

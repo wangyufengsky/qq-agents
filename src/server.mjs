@@ -317,6 +317,8 @@ export function createServer({
             .list("self_candidates")
             .map((c) => m.identity.withEvidence(c)),
           intents: m.identity.list("intentions"),
+          // Read-only: the agent's own projects, active ones first.
+          projects: m.identity.projects(),
           // Read-only: only the agent writes or clears its own mood.
           mood: {
             current: m.identity.currentMood(runtime.now()),

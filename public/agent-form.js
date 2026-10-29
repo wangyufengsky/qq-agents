@@ -145,6 +145,8 @@ const AGENT_TOOL_GROUPS = [
       person_notes: "查看人物卡",
       person_item: "记下和某人之间的事（约定、经历、边界）",
       person_items: "查看和某人之间的事",
+      project: "推进自己的小项目",
+      projects: "查看自己的小项目",
       mood_set: "记下当前心情与原因",
       mood_read: "查看自己的心情",
       intent_create: "创建主动意图",

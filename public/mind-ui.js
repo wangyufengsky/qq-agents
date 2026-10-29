@@ -57,6 +57,22 @@ function subjectLogMarkup(subject) {
     .join("");
   return `<section class="card"><h2>空闲时间日志</h2>${header}${items || '<p class="hint">还没有日志。升级后，每次空闲时间结束都会在这里记一笔。</p>'}</section>`;
 }
+const projectStates = {
+  active: "进行中",
+  paused: "暂停",
+  done: "做完了",
+  dropped: "放弃了",
+};
+// The agent's own projects, read-only: why it cares, each step, what it made.
+function projectsMarkup(projects) {
+  const items = (projects || [])
+    .map(
+      (p) =>
+        `<details class="record"${p.status === "active" ? " open" : ""}><summary>${esc(p.title)} · ${esc(projectStates[p.status] || p.status)} · ${p.steps.length} 步</summary><p>${esc(p.why)}</p>${p.next ? `<p class="hint">下一步：${esc(p.next)}</p>` : ""}${p.blocker ? `<p class="hint">卡在：${esc(p.blocker)}</p>` : ""}${p.outcome ? `<p class="hint">结果：${esc(p.outcome)}</p>` : ""}${p.steps.map((s) => `<p>${mindTime(s.at)} · ${esc(s.did)}${s.files?.length ? `（作品 ${s.files.length} 个）` : ""}</p>`).join("")}</details>`,
+    )
+    .join("");
+  return `<section class="card"><h2>自己的小项目</h2><p class="hint">角色在空闲时间里跨几天推进的事，只能查看。作品在「文件」页按 fileId 找到。</p>${items || '<p class="hint">还没有小项目。角色想跨几天做一件事时会用 project 立一个。</p>'}</section>`;
+}
 const mindStates = {
   waiting: "等待机会",
   deferred: "已暂缓",
@@ -117,6 +133,7 @@ function subjectMarkup(a, data) {
     '<p class="hint">尚无空闲时间回合记录；条件检查不等于模型回合完成。</p>'
   }</section>
   ${subjectLogMarkup(data.subject)}
+  ${projectsMarkup(data.projects)}
   <form class="card" id="subject-form"><h2>空闲时间设置与联系范围</h2><div class="form-grid">${check("enabled", "启用主体空闲思考", p.enabled || a.behavior.proactive.enabled)}${check("owners", "允许主动联系主人", p.owners)}${check("peers", "允许主动联系同伴角色", p.peers)}${check("offlineReview", "离线时允许内部回顾", p.offlineReview)}${check("reviewInSilence", "勿扰期间允许内部回顾", p.reviewInSilence)}${input("interval", "检查间隔（分钟）", p.intervalMs / 60000, 'type="number" min="1" required')}${input("checks", "24 小时检查上限", p.maxChecksPerDay, 'type="number" min="1" required')}${input("toolCalls", "每次空闲时间最多调用工具数", p.maxToolCallsPerTurn ?? 8, 'type="number" min="1" max="30" required')}${input("contacts", "24 小时主动联系上限", p.maxContactsPerDay, 'type="number" min="1" required')}${input("cooldown", "联系冷却（分钟）", p.contactCooldownMs / 60000, 'type="number" min="1" required')}${input("unanswered", "未回应冷却（小时）", p.unansweredCooldownMs / 3600000, 'type="number" min="1" required')}${input("groups", "明确启用的群（逗号分隔）", p.groups.join(","))}${input("users", "额外启用的私聊（逗号分隔）", p.users.join(","))}</div><p class="hint">联系范围还受回复白名单约束。全局暂停会阻止模型检查；每次空闲时间结束，主体会用日志记下做了什么或为什么休息。仅修改检查间隔和次数会立即生效，保留连接与当前回合；修改权限或联系范围会结束该角色当前的回合，QQ 连接不受影响。</p><button>保存空闲时间设置</button></form>`;
 }
 // A private target with a person card is named by its call and opens the
