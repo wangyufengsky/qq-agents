@@ -163,7 +163,7 @@ function richText(raw) {
   } catch {
     return { text: raw, images };
   }
-  if (!Array.isArray(blocks)) return { text: "", images };
+  if (!Array.isArray(blocks)) return { text: raw, images };
   const text = blocks
     .map((b) => {
       if (b?.type === "html")

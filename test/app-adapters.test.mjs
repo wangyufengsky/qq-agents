@@ -98,6 +98,9 @@ test("Heybox long posts keep paragraphs and lazy-loaded images, not raw HTML", a
   );
   assert.deepEqual(blocks.items[0].images, ["https://img.example.org/2.png"]);
   assert.equal(blocks.items[0].cover, "https://img.example.org/thumb.png");
+  const numeric = await read({ description: "摘要", text: "123" });
+  assert.equal(numeric.items[0].description, "123");
+  assert.equal(numeric.coverage, "post-text");
   const summary = await read({ description: "只有摘要", text: "" });
   assert.equal(summary.coverage, "post-summary");
   assert.equal(summary.items[0].truncated, true);
