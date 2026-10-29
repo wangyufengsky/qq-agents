@@ -10,17 +10,25 @@ const paths = {
   read: "/bbs/app/link/tree",
   comments: "/bbs/app/link/tree",
 };
-export async function requestHeybox(endpoint, params, cookie) {
+export function heyboxUrl(endpoint, params) {
   const url = new URL("https://api.xiaoheihe.cn" + endpoint);
+  // Same platform fields as the official web client; without them link/tree hides long post bodies.
   url.search = new URLSearchParams({
+    app: "heybox",
     os_type: "web",
     version: "999.0.3",
     x_app: "heybox_website",
     x_client_type: "web",
+    client_type: "web",
+    web_version: "3.0",
     x_os_type: "Windows",
     ...signature(endpoint),
     ...params,
   }).toString();
+  return url;
+}
+export async function requestHeybox(endpoint, params, cookie) {
+  const url = heyboxUrl(endpoint, params);
   const { addresses } = await validateFetchUrl(url.href);
   return new Promise((resolve, reject) => {
     const req = https.get(
@@ -109,31 +117,83 @@ const rows = (result) =>
       result.list ||
       result.data ||
       [];
+// &lt;/&gt; stay encoded: later tag stripping in normalizeRows would otherwise eat that text.
+const entities = { amp: "&", quot: '"', apos: "'", nbsp: " " };
+const decode = (s) =>
+  s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e) => {
+    if (e[0] !== "#") return entities[e.toLowerCase()] ?? m;
+    const n =
+      e[1] === "x" || e[1] === "X" ? parseInt(e.slice(2), 16) : +e.slice(1);
+    return n > 0 && n <= 0x10ffff && n !== 60 && n !== 62
+      ? String.fromCodePoint(n)
+      : m;
+  });
+const absolute = (url) => (url.startsWith("//") ? "https:" + url : url);
+// Long posts store one HTML block; keep paragraph breaks and lift lazy-loaded image links.
+function htmlText(html, images) {
+  return decode(
+    String(html)
+      .replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, "")
+      .replace(/<img\b[^>]*>/gi, (tag) => {
+        const src =
+          /\sdata-original\s*=\s*["']([^"']+)/i.exec(tag) ||
+          /\ssrc\s*=\s*["']([^"']+)/i.exec(tag);
+        if (src) images.push(absolute(decode(src[1])));
+        return "\n";
+      })
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(
+        /<\/?(?:p|div|h[1-6]|blockquote|li|ul|ol|pre|figure|figcaption|table|tr|hr)\b[^>]*>/gi,
+        "\n",
+      )
+      .replace(/<[^>]*>/g, ""),
+  )
+    .replace(/[^\S\n]+/g, " ")
+    .replace(/ ?\n ?/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+// link.text is a JSON block list: a single "html" block, or text/url/img blocks like the web client renders.
+function richText(raw) {
+  const images = [];
+  if (typeof raw !== "string") return { text: "", images };
+  let blocks;
+  try {
+    blocks = JSON.parse(raw);
+  } catch {
+    return { text: raw, images };
+  }
+  if (!Array.isArray(blocks)) return { text: raw, images };
+  const text = blocks
+    .map((b) => {
+      if (b?.type === "html")
+        return htmlText(b.text || b.content || "", images);
+      if (b?.type === "img" && typeof b.url === "string")
+        images.push(absolute(b.url));
+      return b?.type === "text" || b?.type === "url"
+        ? String(b.text || b.content || "")
+        : "";
+    })
+    .filter((s) => s.trim())
+    .join("\n");
+  return { text, images };
+}
 function post(value) {
   const x = value.link || value.info || value.post || value,
     id = String(x.linkid || x.link_id || x.id || "");
   if (!/^\d+$/.test(id)) return null;
-  let body = x.content || x.text || x.description || "";
-  if (typeof body === "string") {
-    try {
-      const a = JSON.parse(body);
-      if (Array.isArray(a))
-        body = a
-          .filter((b) => b.type === "text" || b.type === "html")
-          .map((b) => b.text || b.content || "")
-          .join("\n");
-    } catch {
-      // Not JSON: keep the body as plain text.
-    }
-  }
+  const { text, images } = richText(x.content || x.text);
+  const summary = !text.trim() && typeof x.description === "string";
   return {
     id,
     title: x.title || "",
     author: x.user?.username || x.user?.nickname || "",
-    description: typeof body === "string" ? body : "",
+    description: summary ? x.description : text,
     url: `https://www.xiaoheihe.cn/app/bbs/link/${id}`,
-    cover: x.thumb || x.cover || "",
+    cover: x.thumb || x.cover || images[0] || "",
+    images,
     publishedAt: x.create_at || "",
+    ...(summary && x.description.trim() ? { truncated: true } : {}),
   };
 }
 export async function heyboxRead(page, job, { request = requestHeybox } = {}) {
@@ -174,6 +234,13 @@ export async function heyboxRead(page, job, { request = requestHeybox } = {}) {
   }
   if (op === "read" || op === "comments")
     params.link_id = contentIdentity(job.url, "heybox").id;
+  if (op === "read")
+    Object.assign(params, {
+      is_first: "1",
+      page: "1",
+      index: "1",
+      owner_only: "0",
+    });
   const result = await request(endpoint, params, cookie);
   if (op === "boards")
     return {
@@ -194,7 +261,11 @@ export async function heyboxRead(page, job, { request = requestHeybox } = {}) {
     return {
       items: [item],
       next: null,
-      coverage: item.description?.trim() ? "post-text" : "post-metadata",
+      coverage: !item.description.trim()
+        ? "post-metadata"
+        : item.truncated
+          ? "post-summary"
+          : "post-text",
     };
   }
   if (op === "comments") {
