@@ -1394,24 +1394,54 @@ document.addEventListener?.("input", (e) => {
     if (box.knownNames?.has(e.target.value.trim())) idsAdd(box);
     return;
   }
-  // A slider shows its value as it moves.
+  // A slider shows its value as it moves, and only then becomes the value
+  // the form sends (see range()).
   if (e.target.type === "range") {
-    const out = e.target.parentElement?.querySelector("output");
+    const row = e.target.parentElement,
+      out = row?.querySelector("output"),
+      sent = row?.querySelector('input[type="hidden"]');
     if (out) out.textContent = rangeText(e.target.value, e.target.dataset.unit);
+    if (sent) sent.value = e.target.value;
   }
 });
+// A number typed into an add box but not yet added still counts when its
+// form is saved. One that is not a QQ number stops the save and says why,
+// instead of being dropped. Capture runs before the form's own handler.
+function idsFlush(root) {
+  let ok = true;
+  for (const box of root?.querySelectorAll?.("[data-ids]") || []) {
+    const field = box.querySelector(".ids-add input");
+    if (!field?.value.trim()) continue;
+    idsAdd(box);
+    // idsAdd clears the box once the number is in; what stays is invalid.
+    if (field.value.trim()) ok = false;
+  }
+  return ok;
+}
+document.addEventListener?.(
+  "submit",
+  (e) => {
+    if (idsFlush(e.target)) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+  },
+  true,
+);
 
 // A number on a slider with its value beside it. unit "%" shows a 0–1 value
 // as a percentage; any other unit is appended as is.
 const rangeText = (value, unit = "") =>
   unit === "%" ? `${Math.round(Number(value) * 100)}%` : `${value}${unit}`;
+// The form sends a hidden copy of the value that only moving the slider
+// changes: a slider snaps to its step when drawn, and a saved 0.4 s on a
+// whole-second slider must not come back as 0 when something else is saved.
 const range = (
   key,
   label,
   value,
   { min = 0, max = 1, step = 0.05, unit = "" } = {},
 ) =>
-  `<label class="range">${label}<span class="range-row"><input type="range" name="${key}" min="${min}" max="${max}" step="${step}" value="${esc(value)}" data-unit="${esc(unit)}"><output>${esc(rangeText(value, unit))}</output></span></label>`;
+  `<label class="range">${label}<span class="range-row"><input type="range" data-range="${key}" min="${min}" max="${max}" step="${step}" value="${esc(value)}" data-unit="${esc(unit)}"><input type="hidden" name="${key}" value="${esc(value)}"><output>${esc(rangeText(value, unit))}</output></span></label>`;
 function openEditor(type, id) {
   // A new QQ account or backend starts empty: saving a backend keeps every
   // key of its row, and the role defaults below are not backend keys.

@@ -172,6 +172,41 @@ test("a slider shows its value, as a percentage for 0–1", () => {
   const html = run('range("participation", "参与率", 0.2, { unit: "%" })');
   assert.match(
     html,
-    /<input type="range" name="participation" min="0" max="1" step="0.05" value="0.2" data-unit="%"><output>20%<\/output>/,
+    /<input type="range" data-range="participation" min="0" max="1" step="0.05" value="0.2" data-unit="%"><input type="hidden" name="participation" value="0.2"><output>20%<\/output>/,
   );
+  // The form sends the saved value until the slider moves: a 0.4 s window on
+  // a whole-second slider is not snapped to 0 by saving something else.
+  assert.match(
+    run(
+      'range("batch", "等待", 0.4, { min: 0, max: 60, step: 1, unit: " 秒" })',
+    ),
+    /<input type="hidden" name="batch" value="0.4">/,
+  );
+});
+
+test("a number typed but not yet added is kept on save, and a wrong one stops it", () => {
+  const run = kit();
+  // Just enough of a picker for idsAdd and idsSet.
+  run(`
+    var Event = class { constructor(type) { this.type = type; } };
+    function picker(typed) {
+      const field = { value: typed, validity: "", setCustomValidity(m) { this.validity = m; }, reportValidity() {} };
+      const hidden = { value: "20000", dispatchEvent() {} };
+      const chipsBox = { innerHTML: "" };
+      return {
+        field, hidden,
+        querySelector: (s) => s === ".ids-add input" ? field : s === ".ids-chips" ? chipsBox : hidden,
+      };
+    }
+    var okBox = picker(" 30000 "), badBox = picker("abc"), emptyBox = picker("");
+  `);
+  const flush = (boxes) =>
+    run(`idsFlush({ querySelectorAll: () => [${boxes}] })`);
+  assert.equal(flush("okBox, emptyBox"), true);
+  assert.equal(run("okBox.hidden.value"), "20000,30000");
+  assert.equal(run("okBox.field.value"), "");
+  assert.equal(flush("badBox"), false);
+  assert.equal(run("badBox.hidden.value"), "20000");
+  assert.match(run("badBox.field.validity"), /5–12 位数字/);
+  assert.equal(flush(""), true);
 });

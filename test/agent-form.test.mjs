@@ -231,7 +231,7 @@ test("role editor fields keep the saved list and value shapes", async () => {
   // Participation is a percentage slider over the stored 0–1 value.
   assert.match(
     html,
-    /<input type="range" name="participation" min="0" max="1" step="0.01" value="0.025" data-unit="%"><output>3%<\/output>/,
+    /<input type="range" data-range="participation" min="0" max="1" step="0.01" value="0.025" data-unit="%"><input type="hidden" name="participation" value="0.025"><output>3%<\/output>/,
   );
   assert.equal(
     parse({ participation: "0.03", participationShown: "0.03" }).wake
