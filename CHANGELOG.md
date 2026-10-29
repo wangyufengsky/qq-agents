@@ -4,6 +4,10 @@
 
 2026-10-28 公开之后的条目用本仓库的 PR 链接；更早条目中的 `#编号` 指公开前私有仓库中的 PR，与本仓库的 Issue/PR 编号无关。
 
+## Issue 自动修复工作流（2026-10-29）
+
+- 维护者给 Issue 打 `auto-fix` 标签后，Claude 在 GitHub Actions 里修复、运行 `npm run verify`、开 PR 并在 Issue 里回复；维护者批准、CI 通过后自动合并。只有有写权限的人能触发，`main` 不要求批准时不开启自动合并。说明见 [参与贡献](CONTRIBUTING.md#自动修复维护者)。
+
 ## 小黑盒长文正文（2026-10-29，[#42](https://github.com/wangyufengsky/qq-agents/pull/42)）
 
 - 读取小黑盒帖子时带上与官网网页端相同的平台参数，长篇图文帖返回正文而不只是摘要（[#28](https://github.com/wangyufengsky/qq-agents/issues/28)）。
