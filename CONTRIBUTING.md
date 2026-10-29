@@ -97,7 +97,7 @@ docs: turn README and docs into a task-oriented user guide
 
 ## 自动修复（维护者）
 
-维护者给 Issue 打上 `auto-fix` 标签后，[Claude Issue Fix](.github/workflows/claude-issue-fix.yml) 工作流让 Claude 读 Issue 和代码、写修复和测试、运行 `npm run verify`、推送分支并在 Issue 里回复；随后工作流开 PR（带 `Fixes #编号`）并开启自动合并。
+维护者给 Issue 打上 `auto-fix` 标签后，[Claude Issue Fix](.github/workflows/claude-issue-fix.yml) 工作流让 Claude 读 Issue 和代码、写修复和测试、运行 `npm run verify`、推送分支、开 PR（带 `Fixes #编号`）并在 Issue 里回复；随后工作流为这个 PR 开启自动合并。
 
 - **合并要维护者批准**：`main` 的规则要求至少 1 个批准，Claude 之后再推送会让批准失效。维护者批准、CI 通过后自动合并，Issue 随之关闭。工作流检测不到这条批准要求时不开启自动合并。
 - **只有维护者能触发**：打标签，或有写权限的人在 Issue / PR 里评论 `@claude …`（例如让它处理审查意见、修 CI）。外部用户的评论不会触发。

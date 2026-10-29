@@ -63,7 +63,7 @@ jobs:
             actions: read
           claude_args: |
             --max-turns 150
-            --allowedTools "Bash(npm run verify)" "Bash(npm test)" "Bash(npm run check)" "Bash(npm run lint)" "Bash(npm run typecheck)" "Bash(npm run format)" "Bash(npm run format:check)" "Bash(npm run defaults:check)" "Bash(npm run defaults:write)" "Bash(npm run privacy-scan)" "Bash(node --test:*)" "Bash(git diff:*)" "Bash(git log:*)" "Bash(git show:*)" "Bash(git status:*)"
+            --allowedTools "mcp__github__create_pull_request" "Bash(npm run verify)" "Bash(npm test)" "Bash(npm run check)" "Bash(npm run lint)" "Bash(npm run typecheck)" "Bash(npm run format)" "Bash(npm run format:check)" "Bash(npm run defaults:check)" "Bash(npm run defaults:write)" "Bash(npm run privacy-scan)" "Bash(node --test:*)" "Bash(git diff:*)" "Bash(git log:*)" "Bash(git show:*)" "Bash(git status:*)"
             --append-system-prompt '你在公开仓库 qq-agents 里处理维护者交给你的 issue 或 PR 评论。
 
             安全边界：
@@ -81,35 +81,33 @@ jobs:
             - 无法用真实平台、真实 QQ 或网络验证的部分，在回复里写明未验证。
             - 无法复现、信息不足或不该修时，不提交代码，只在回复里说明还需要什么。
 
+            开 PR：
+            - 处理 issue 并推送了提交时，用 mcp__github__create_pull_request 开 PR，base 为 main，head 为你推送的分支。
+            - 标题同第一个提交的标题。正文第一行是 Fixes #issue编号，然后用中文简述根因、改动和验证情况，说明合并前需要维护者批准、需要修改时在 PR 评论 @claude，最后一行是 🤖 Generated with [Claude Code](https://claude.com/claude-code)。
+            - 在 PR 评论里被要求修改时，推送到同一个分支，不要再开新 PR。
+
             回复：
-            - 用中文，写给提 issue 的人：根因、改了什么、怎么验证的、还有什么没验证。
-            - 不要附创建 PR 的链接，工作流会自动开 PR；不要承诺合并时间，合并由维护者批准决定。'
-      - name: Open the pull request
+            - 用中文，写给提 issue 的人：根因、改了什么、怎么验证的、还有什么没验证，附上 PR 编号。
+            - 不要附创建 PR 的链接；不要承诺合并时间，合并由维护者批准决定。'
+      - name: Enable auto-merge after approval
         if: github.event_name == 'issues' && steps.claude.outputs.branch_name != ''
         env:
-          GH_TOKEN: ${{ steps.claude.outputs.github_token }}
+          # The action revokes the Claude App token when it finishes, so this
+          # step uses the job token; Claude opened the PR with the App token,
+          # which is what makes CI run on it.
+          GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           BRANCH: ${{ steps.claude.outputs.branch_name }}
           ISSUE: ${{ github.event.issue.number }}
         run: |
           if ! gh api "repos/$REPO/branches/$BRANCH" --silent 2>/dev/null; then
-            echo "Claude pushed no branch; nothing to open."
-            exit 0
-          fi
-          ahead=$(gh api "repos/$REPO/compare/main...$BRANCH" --jq .ahead_by)
-          if [ "$ahead" -eq 0 ]; then
-            echo "The branch has no commits ahead of main."
+            echo "Claude pushed no branch."
             exit 0
           fi
           url=$(gh api "repos/$REPO/pulls?head=${REPO%%/*}:$BRANCH&state=open" --jq '.[0].html_url // empty')
           if [ -z "$url" ]; then
-            title=$(gh api "repos/$REPO/compare/main...$BRANCH" --jq '.commits[0].commit.message | split("\n")[0]')
-            body=$(printf '%s\n\n%s\n\n%s\n\n%s\n' \
-              "Fixes #$ISSUE" \
-              "由 auto-fix 工作流根据 #$ISSUE 生成，过程和验证情况见 issue 里 Claude 的回复。" \
-              "合并前需要维护者批准；批准后 CI 通过会自动合并。需要修改时在本 PR 评论 \`@claude …\`。" \
-              "🤖 Generated with [Claude Code](https://claude.com/claude-code)")
-            url=$(gh api "repos/$REPO/pulls" -f title="$title" -f head="$BRANCH" -f base=main -f body="$body" --jq .html_url)
+            gh issue comment "$ISSUE" --repo "$REPO" --body "Claude 推送了分支 \`$BRANCH\`，但没有开 PR，请维护者查看。"
+            exit 1
           fi
           echo "Pull request: $url"
           # Auto-merge only when main itself requires an approving review, so
