@@ -14,8 +14,9 @@ function retainedSources(memory, conversation, state) {
 export function rememberSources(memory, conversation, items) {
   const state = memory.state(conversation),
     old = retainedSources(memory, conversation, state),
+    // A resolved send attempt points at its outcome, which holds the text.
     rows = items.filter(
-      (item) => item.id && item.conversation === conversation,
+      (item) => item.id && item.conversation === conversation && !item.outcome,
     ),
     anchors = [...old.anchors];
   for (const row of rows)
@@ -39,14 +40,21 @@ export function sourceHandoff(memory, conversation) {
   const state = memory.state(conversation);
   // Initialize before new observations can suppress the legacy fallback.
   const retained = retainedSources(memory, conversation, state);
-  const ids = [...new Set([...retained.anchors, ...retained.recent])];
+  const read = memory.db.prepare(
+    "SELECT * FROM events WHERE agent_id=? AND conversation=? AND id=?",
+  );
+  // Older lists retained both halves of a send; keep only the outcome.
+  const ids = [
+    ...new Set(
+      [...retained.anchors, ...retained.recent].map((id) => {
+        const row = read.get(memory.agentId, conversation, id);
+        return (row && memory.sendOutcome(row)?.id) || id;
+      }),
+    ),
+  ];
   const perSource = Math.min(1200, Math.floor(12000 / Math.max(1, ids.length)));
   const sources = ids.map((id) => {
-    const row = memory.db
-      .prepare(
-        "SELECT * FROM events WHERE agent_id=? AND conversation=? AND id=?",
-      )
-      .get(memory.agentId, conversation, id);
+    const row = read.get(memory.agentId, conversation, id);
     if (!row)
       return {
         id,
