@@ -93,17 +93,19 @@ function browsing(rows) {
   return { items, searches: unique, failures };
 }
 
-// A sent message keeps only references to the card and mood it rested on;
-// look up what they said then. The card's older versions are in its history,
-// and a card deleted (or deleted and written again) no longer has that id.
-function sendBasis(m) {
+// A sent message, and the turn that wrote it, keep only references to the
+// cards and mood they rested on; look up what those said then. The card's
+// older versions are in its history, and a card deleted (or deleted and
+// written again) no longer has that id. Turns recorded before cards carried
+// an id name the card by person and revision only.
+function references(m) {
   const cards = new Map();
   let moods;
   const card = (ref) => {
     if (!cards.has(ref.personId))
       cards.set(ref.personId, m.identity.personCard(ref.personId));
     const now = cards.get(ref.personId);
-    if (now?.id !== ref.id)
+    if (!now || (ref.id && now.id !== ref.id))
       return { personId: ref.personId, revision: ref.revision, deleted: true };
     const version =
       now.revision === ref.revision
@@ -119,17 +121,32 @@ function sendBasis(m) {
   const mood = (id) => {
     moods ??= new Map(m.identity.moodHistory(500).map((x) => [x.id, x]));
     const x = moods.get(id);
+    // A turn can be shown a mood's clearing ("the mood has passed").
     return x?.action === "set"
       ? { mood: clip(x.mood, 40), intensity: x.intensity }
-      : { missing: true };
+      : x
+        ? { cleared: true }
+        : { missing: true };
   };
-  return (payload) => {
-    const ref = payload.personCard,
-      b = {
-        ...(ref?.id && ref.personId ? { personCard: card(ref) } : {}),
-        ...(payload.moodId ? { mood: mood(payload.moodId) } : {}),
+  return {
+    basis(payload) {
+      const ref = payload.personCard,
+        b = {
+          ...(ref?.id && ref.personId ? { personCard: card(ref) } : {}),
+          ...(payload.moodId ? { mood: mood(payload.moodId) } : {}),
+        };
+      return Object.keys(b).length ? b : null;
+    },
+    // What a turn's prompt carried, as its model_turns record wrote down.
+    seen(turn) {
+      const s = {
+        ...(turn.moodShown ? { mood: mood(turn.moodShown) } : {}),
+        ...(Array.isArray(turn.personCards) && turn.personCards.length
+          ? { personCards: turn.personCards.map(card) }
+          : {}),
       };
-    return Object.keys(b).length ? b : null;
+      return Object.keys(s).length ? s : null;
+    },
   };
 }
 
@@ -177,7 +194,7 @@ export function activityPage(
     )
     .all(agentId, iso(from), iso(to));
   const intents = m.identity.list("intentions");
-  const basis = sendBasis(m);
+  const refs = references(m);
   const within = (t, at) => {
     const [a, b] = windowOf(t),
       x = typeof at === "number" ? at : Date.parse(at);
@@ -203,7 +220,7 @@ export function activityPage(
     const sent = mine
       .filter((e) => e.kind === "message.sent" || e.kind === "action.confirmed")
       .map((e) => {
-        const b = basis(parse(e.payload));
+        const b = refs.basis(parse(e.payload));
         return {
           text: clip(e.body, 120),
           action: e.kind === "action.confirmed",
@@ -251,6 +268,7 @@ export function activityPage(
       (e) => e.kind === "external.read" || e.kind === "github.read",
     ).length;
     const calls = Array.isArray(t.toolCalls) ? t.toolCalls : null;
+    const seen = refs.seen(t);
     return {
       turnId: t.id,
       conversation: t.conversation,
@@ -271,6 +289,7 @@ export function activityPage(
       externalReads: reads,
       diaries: writes,
       intents: { created, decided },
+      ...(seen ? { seen } : {}),
     };
   });
   const filtered =
