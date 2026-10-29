@@ -533,9 +533,12 @@ test("export console submits a scoped native download without fetching the expor
   );
   node("#memory-agent").value = "agent-0";
   await node("#export-memory").onclick();
-  // The memory tab also lists the agent's conversations for the source picker.
+  // On open the memory tab also reads the agent's conversations for the
+  // source picker, the people it knows and its latest records.
   assert.deepEqual(
-    calls.filter((url) => !url.startsWith("/api/conversations?")),
+    calls.filter(
+      (url) => !/^\/api\/(conversations|known-targets|memory)\?/.test(url),
+    ),
     ["/api/export/ticket"],
   );
   assert.equal(submitted.length, 1);

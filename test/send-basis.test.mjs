@@ -416,7 +416,7 @@ test("the activity API returns the basis and the page shows it in one line", asy
   const html = vm.runInContext("activityEntry(entry)", sandbox);
   assert.match(
     html,
-    /<p class="hint act-basis">参考人物卡：&lt;b&gt;明哥&lt;\/b&gt; v2 · 当时心情：开心（强度 3）<\/p>/,
+    /<p class="act-basis"><span class="act-k">发送时参考<\/span><span class="act-chip"><small>人物卡<\/small>&lt;b&gt;明哥&lt;\/b&gt; v2<\/span><span class="act-chip"><small>心情<\/small>开心（强度 3）<\/span><\/p>/,
   );
   sandbox.entry = {
     ...entry,
@@ -433,6 +433,9 @@ test("the activity API returns the basis and the page shows it in one line", asy
     ],
   };
   const old = vm.runInContext("activityEntry(entry)", sandbox);
-  assert.match(old, /参考人物卡：30001 v3（已删除） · 当时心情：记录已清理/);
+  assert.match(
+    old,
+    /<small>人物卡<\/small>30001 v3（已删除）<\/span><span class="act-chip"><small>心情<\/small>记录已清理/,
+  );
   assert.equal(old.split("act-basis").length - 1, 1);
 });
