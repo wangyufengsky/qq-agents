@@ -497,3 +497,64 @@ test("an unreadable OneBot frame is dropped, another account's frame stops the c
     "QQ_ACCOUNT_MISMATCH",
   ]);
 });
+
+test("a gateway reporting QQ offline takes the channel down once", async (t) => {
+  const { bot, sockets, faults } = fakeGateway();
+  t.after(() => bot.close());
+  const events = [];
+  bot.on("event", (raw) => events.push(raw));
+  await bot.connect();
+  // Heartbeats that say online, or omit the field, keep the channel up.
+  for (const status of [{ online: true, good: true }, undefined])
+    sockets[0].emit(
+      "message",
+      Buffer.from(
+        JSON.stringify({
+          self_id: 10000,
+          post_type: "meta_event",
+          meta_event_type: "heartbeat",
+          status,
+        }),
+      ),
+    );
+  assert.equal(bot.connected, true);
+  assert.equal(events.length, 2);
+  assert.deepEqual(faults, []);
+  sockets[0].emit(
+    "message",
+    Buffer.from(
+      JSON.stringify({
+        self_id: 10000,
+        user_id: 10000,
+        post_type: "notice",
+        notice_type: "bot_offline",
+        tag: "KickedOffLine",
+        message: "账号在其他设备登录",
+      }),
+    ),
+  );
+  assert.equal(bot.connected, false);
+  assert.equal(sockets[0].terminated, true);
+  assert.equal(events.length, 2, "the offline notice is not archived");
+  assert.deepEqual(
+    faults,
+    ["QQ_OFFLINE"],
+    "the socket close is not a second fault",
+  );
+
+  // A heartbeat with online=false is enough on its own.
+  await bot.connect();
+  sockets[1].emit(
+    "message",
+    Buffer.from(
+      JSON.stringify({
+        self_id: 10000,
+        post_type: "meta_event",
+        meta_event_type: "heartbeat",
+        status: { online: false, good: false },
+      }),
+    ),
+  );
+  assert.equal(bot.connected, false);
+  assert.deepEqual(faults, ["QQ_OFFLINE", "QQ_OFFLINE"]);
+});

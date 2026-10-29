@@ -1,10 +1,15 @@
 // Receive-channel recovery. Only a connection an administrator connected in this
 // process is armed, and only an established socket that drops is retried. Sends
 // are never replayed; messages posted while disconnected are not backfilled.
+import { knownErrorCodes } from "./error-codes.mjs";
+
 const LOST = new Set([
   "CONNECTION_LOST",
   "ONEBOT_WS_ERROR",
   "ONEBOT_HEARTBEAT_TIMEOUT",
+  // QQ logged out behind a live gateway. Retrying only checks get_status, so it
+  // reconnects once someone has logged QQ in again and never provokes risk control.
+  "QQ_OFFLINE",
 ]);
 // Identity and configuration failures will not heal by retrying.
 const FATAL = new Set([
@@ -26,6 +31,7 @@ export class ConnectionRecovery {
       attempts: 0,
       nextRetryAt: null,
       error: null,
+      attemptError: null,
       lostAt: null,
       lastGap: previous?.lostAt
         ? { lostAt: previous.lostAt, recoveredAt: this.runtime.now() }
@@ -82,6 +88,11 @@ export class ConnectionRecovery {
       if (this.states.get(id) !== s) return;
       if (error?.message === "CONNECTION_ALREADY_STARTED")
         return this.armed(id);
+      // Why the latest attempt failed (e.g. QQ still not logged in), as a
+      // reviewed code only; the lost reason stays in `error`.
+      s.attemptError = knownErrorCodes.has(error?.message)
+        ? error.message
+        : "CONNECTION_FAILED";
       const max = this.policy(id)?.maxAttempts ?? 0;
       if (FATAL.has(error?.message) || s.attempts >= max) {
         Object.assign(s, {
@@ -108,6 +119,7 @@ export class ConnectionRecovery {
       attempts: s?.attempts || 0,
       nextRetryAt: s?.nextRetryAt ?? null,
       error: s?.error ?? null,
+      attemptError: s?.attemptError ?? null,
       lostAt: s?.lostAt ?? null,
       lastGap: s?.lastGap ?? null,
     };
