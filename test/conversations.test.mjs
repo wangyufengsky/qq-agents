@@ -132,6 +132,41 @@ test("batch window restarts after each message until the cap", async (t) => {
   assert.equal(prompts.length, 2);
   assert.match(prompts[1], /连发0[\s\S]*连发3/);
 });
+test("group follow-ups from a batched sender extend the batch without waking on their own", async (t) => {
+  const c = cfg();
+  Object.assign(c.agents[0].behavior, {
+    batchWindowMs: 4000,
+    batchMaxMs: 12000,
+  });
+  c.agents[0].wake.participation = 0;
+  let now = Date.parse("2026-10-25T04:00:00Z"),
+    prompts = [];
+  const f = fixture(t, { cfg: c, run: async (p) => prompts.push(p.prompt) });
+  f.runtime.clock = () => new Date(now);
+  const at = async (ms) => {
+    now = Date.parse("2026-10-25T04:00:00Z") + ms;
+    f.runtime.tick();
+    await settle(f.runtime);
+  };
+  await f.runtime.ingest(
+    "qq-0",
+    raw(1, { message: [{ type: "at", data: { qq: "10000" } }] }),
+  );
+  await at(3000);
+  await f.runtime.ingest("qq-0", text(2, "补充一"));
+  await at(6000);
+  await f.runtime.ingest("qq-0", text(3, "补充二"));
+  await at(8000);
+  await f.runtime.ingest("qq-0", { ...text(4, "旁人插话"), user_id: 30001 });
+  await at(9999);
+  assert.equal(prompts.length, 0);
+  await at(10000);
+  assert.equal(prompts.length, 1);
+  assert.match(prompts[0], /补充一[\s\S]*补充二/);
+  await f.runtime.ingest("qq-0", text(5, "回合后的闲聊"));
+  await at(30000);
+  assert.equal(prompts.length, 1);
+});
 test("batch cap at or below the window keeps the window fixed from the first message", async (t) => {
   const c = cfg();
   c.agents[0].behavior.batchWindowMs = 5000;

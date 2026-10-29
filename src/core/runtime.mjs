@@ -612,7 +612,10 @@ export class Runtime {
         if (await this.scheduler.command(a, e, archived)) continue;
       }
       const reason = this.conversations.reason(a, e, c.accountId);
-      if (!reason) continue;
+      if (!reason) {
+        this.conversations.extend(a.id, e.conversation, e.senderId);
+        continue;
+      }
       if (!this.writable(a, e.conversation)) {
         // Re-read: owner commands above may have yielded while other events updated this state.
         mem.setState(e.conversation, {
@@ -621,11 +624,13 @@ export class Runtime {
         });
         this.conversations.request(a.id, e.conversation, reason, {
           seq: archived.seq,
+          senderId: e.senderId,
         });
         continue;
       }
       const wake = this.conversations.request(a.id, e.conversation, reason, {
         seq: archived.seq,
+        senderId: e.senderId,
       });
       results.push({ agentId: a.id, ...wake });
     }
