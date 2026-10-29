@@ -190,7 +190,8 @@ async function boot(t, extra) {
 test("--host 0.0.0.0 boots a reachable console and invalid hosts fail closed", async (t) => {
   const app = await boot(t, ["--host", "0.0.0.0"]);
   let url;
-  for (let i = 0; i < 1000 && !url; i++) {
+  // A loaded Windows runner can take well over 5s to start the child.
+  for (const end = Date.now() + 60_000; !url && Date.now() < end;) {
     url = app.output().match(/http:\/\/127\.0\.0\.1:\d+/)?.[0];
     if (app.child.exitCode !== null) break;
     await delay(5);
