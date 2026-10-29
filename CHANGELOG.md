@@ -4,7 +4,7 @@
 
 2026-10-28 公开之后的条目用本仓库的 PR 链接；更早条目中的 `#编号` 指公开前私有仓库中的 PR，与本仓库的 Issue/PR 编号无关。
 
-## 小黑盒十六进制帖子链接（2026-10-29）
+## 小黑盒十六进制帖子链接（2026-10-29，[#48](https://github.com/wangyufengsky/qq-agents/pull/48)）
 
 - 小黑盒帖子链接除了纯数字 id，还接受官网的十六进制短码（如 `/app/bbs/link/854272b8d995`），`link/tree` 对两种 id 返回同一份内容（[#46](https://github.com/wangyufengsky/qq-agents/issues/46)）。
 - 长文只按开头的 HTML 块解析，与官网一致；后面重复的缩略图块不再让每张配图出现两次。
