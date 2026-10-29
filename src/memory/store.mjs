@@ -184,10 +184,12 @@ class AgentMemory {
     const row = this.db
       .prepare("SELECT names FROM people WHERE agent_id=? AND qq=?")
       .get(this.agentId, qq);
+    // The name seen now goes last, even one used before, so the last entry is
+    // the one in use.
+    const seen = String(name || "");
     const names = [
-      ...new Set(
-        [...(row ? parse(row.names) : []), String(name || "")].filter(Boolean),
-      ),
+      ...(row ? parse(row.names) : []).filter((x) => x !== seen),
+      ...(seen ? [seen] : []),
     ].slice(-30);
     this.db
       .prepare("INSERT OR REPLACE INTO people VALUES(?,?,?)")

@@ -6,6 +6,24 @@ import { recallBoundary } from "./recall-boundary.mjs";
 
 const SUBJECT = "@subject";
 const DAY = 86400000;
+const IMPRESSION_CHARS = 80;
+
+// Enough of a private target's own card to decide whether to reach out; the
+// chat it hands off to shows the whole card. Cards hold no protected material,
+// and reading one here does not count as that chat having seen it.
+function cardBrief(memory, target) {
+  const id = /^private:(\d+)$/.exec(target)?.[1];
+  const card = id && memory.identity.personCard(id);
+  if (!card) return {};
+  const chars = Array.from(card.body);
+  return {
+    call: card.call,
+    impression:
+      chars.length > IMPRESSION_CHARS
+        ? chars.slice(0, IMPRESSION_CHARS).join("") + "…"
+        : card.body,
+  };
+}
 
 // What a free-time turn starts from: its own recent log, what happened lately,
 // who it may reach out to, where it can explore with how much budget left, and
@@ -91,6 +109,7 @@ export function subjectMaterials(runtime, ctx) {
     ),
     targets: runtime.subject.reachableTargets(a).map((x) => ({
       ...x,
+      ...cardBrief(m, x.target),
       lastHeardAt: lastAt.get(a.id, x.target, "message.received")?.at || null,
       lastSaidAt: lastAt.get(a.id, x.target, "message.sent")?.at || null,
       cooldownUntil: iso(m.state(x.target).proactiveCooldownUntil || 0),
