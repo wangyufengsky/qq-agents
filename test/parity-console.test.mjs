@@ -29,12 +29,18 @@ function kit({ cfg = makeConfig(1), routes = {}, mode = "live" } = {}) {
     return nodes.get(s);
   };
   let confirmed = true;
+  const listeners = {};
   const sandbox = vm.createContext({
     document: {
       querySelector: node,
       querySelectorAll: (s) => lists[s] || [],
-      addEventListener() {},
+      addEventListener: (type, fn) => (listeners[type] ||= []).push(fn),
       body: { classList: { remove() {}, toggle() {} } },
+    },
+    Event: class {
+      constructor(type) {
+        this.type = type;
+      }
     },
     sessionStorage: { getItem: () => "" },
     localStorage: { getItem: () => null, setItem() {} },
@@ -101,6 +107,8 @@ function kit({ cfg = makeConfig(1), routes = {}, mode = "live" } = {}) {
     notices,
     config: () => run("config"),
     confirm: (yes) => (confirmed = yes),
+    fire: (type, target) =>
+      (listeners[type] || []).forEach((fn) => fn({ target })),
   };
 }
 const order = (html, ...marks) => {
@@ -478,6 +486,91 @@ test("deleting a task asks first", async () => {
   assert.equal(k.calls[0].payload.action, "delete");
   assert.equal(k.calls[0].payload.id, 1);
   assert.equal(k.notices.at(-1), "任务已删除");
+});
+
+// The special-date add row starts at 09:00 with no date. Left alone it is
+// not a pending date: preview and save go through with the saved dates, and
+// no warning is left on the row to block the browser's form check.
+test("an untouched special-date row neither blocks nor joins preview and save", async () => {
+  const k = kit({
+    routes: { "/api/schedules": () => ({ tasks: [], history: [] }) },
+  });
+  k.run('tab = "schedule"');
+  const items = [{ date: "2026-11-01", time: "09:00" }];
+  k.node("#rule-type").value = "dates";
+  k.run(
+    `drawScheduleForm(${JSON.stringify(task({ schedule: { type: "dates", items, excludeDates: [] } }))})`,
+  );
+  const field = (value) => ({
+    value,
+    warning: "",
+    reported: false,
+    setCustomValidity(m) {
+      this.warning = m;
+    },
+    reportValidity() {
+      this.reported = true;
+    },
+    closest: (s) => (s === ".chips-add" ? {} : null),
+  });
+  const date = field(""),
+    time = field("09:00"),
+    hidden = { value: "2026-11-01 09:00", dispatchEvent() {} },
+    shown = { innerHTML: "" };
+  const box = {
+    dataset: { chips: "when" },
+    querySelector: (s) =>
+      ({
+        ".chips-add input": date,
+        'input[type="hidden"]': hidden,
+        ".ids-chips": shown,
+      })[s] ?? null,
+    querySelectorAll: (s) => (s === ".chips-add input" ? [date, time] : []),
+  };
+  const form = k.node("#schedule-form");
+  form.querySelectorAll = (s) => (s === "[data-chips]" ? [box] : []);
+  form.values = {
+    name: "纪念日",
+    kind: "text",
+    content: "到了",
+    targets: ["group:20000"],
+    ruleType: "dates",
+    dates: hidden.value,
+    timezone: "Asia/Shanghai",
+    jitter: "0",
+    maxRuns: "",
+    exclude: "",
+  };
+  const sent = () =>
+    k.calls.filter((c) => c.payload).map((c) => c.payload.action);
+  await k.node("#preview-schedule").onclick();
+  assert.deepEqual(k.calls[0].payload.task.schedule.items, items);
+  await form.onsubmit({ preventDefault() {} });
+  assert.deepEqual(sent(), ["preview", "update"]);
+  assert.equal(date.warning, "");
+  assert.equal(date.reported, false);
+  assert.equal(hidden.value, "2026-11-01 09:00");
+  // A picked date takes the row's time and joins the list.
+  date.value = "2026-12-24";
+  k.calls.length = 0;
+  await k.node("#preview-schedule").onclick();
+  assert.deepEqual(sent(), ["preview"]);
+  assert.equal(hidden.value, "2026-11-01 09:00\n2026-12-24 09:00");
+  assert.equal(date.value, "");
+  // A picked date without a time stops both, saying why, and the warning
+  // goes away once the row is left.
+  date.value = "2027-01-01";
+  time.value = "";
+  k.calls.length = 0;
+  await k.node("#preview-schedule").onclick();
+  await form.onsubmit({ preventDefault() {} });
+  assert.deepEqual(sent(), []);
+  assert.equal(k.notices.at(-1), "还没添加的日期缺少时刻，补上时刻或清空日期");
+  assert.equal(time.warning, "先选好日期和时刻");
+  assert.equal(time.reported, true);
+  assert.equal(date.value, "2027-01-01");
+  k.fire("focusout", time);
+  assert.equal(time.warning, "");
 });
 
 test("the voice page lists voices first and opens the import form on demand", async () => {

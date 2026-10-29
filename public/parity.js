@@ -92,6 +92,7 @@ function chipsSet(box, list) {
   box.querySelector(".ids-chips").innerHTML =
     list.map(chipsChip).join("") || '<span class="ids-empty">还没有</span>';
 }
+// Adds what the add row holds; false when a date-time pair is half filled.
 function chipsAdd(box) {
   const kind = box.dataset.chips,
     fields = [...box.querySelectorAll(".chips-add input")],
@@ -99,12 +100,12 @@ function chipsAdd(box) {
   let values;
   if (kind === "when") {
     const [date, time] = fields;
-    if (!date.value && !time.value) return;
+    if (!date.value && !time.value) return true;
     const missing = date.value ? time : date;
     if (!date.value || !time.value) {
       missing.setCustomValidity("先选好日期和时刻");
       missing.reportValidity();
-      return;
+      return false;
     }
     values = [`${date.value} ${time.value}`];
     date.value = "";
@@ -112,14 +113,22 @@ function chipsAdd(box) {
     values = chipsList(fields[0].value, kind);
     fields[0].value = "";
   }
-  if (!values.length) return;
-  chipsSet(box, chipsList([...chipsList(hidden.value, kind), ...values], kind));
+  if (values.length)
+    chipsSet(
+      box,
+      chipsList([...chipsList(hidden.value, kind), ...values], kind),
+    );
+  return true;
 }
-// Something typed but not yet added still counts when the form is saved.
+// Something typed but not yet added still counts when the form is saved. The
+// first box decides: a date-time pair is untouched until a date is picked,
+// since its time starts at 09:00. False when a picked date lacks its time.
 function chipsFlush(form) {
+  let complete = true;
   for (const box of form?.querySelectorAll?.("[data-chips]") || [])
-    if ([...box.querySelectorAll(".chips-add input")].some((x) => x.value))
-      chipsAdd(box);
+    if (box.querySelector(".chips-add input")?.value)
+      complete = chipsAdd(box) && complete;
+  return complete;
 }
 document.addEventListener?.("click", (e) => {
   const box = e.target.closest?.("[data-chips]");
@@ -143,9 +152,11 @@ document.addEventListener?.("keydown", (e) => {
   e.preventDefault();
   chipsAdd(box);
 });
-document.addEventListener?.("input", (e) => {
-  if (e.target.closest?.(".chips-add")) e.target.setCustomValidity("");
-});
+// The add row has no named fields: a warning there must never hold up saving.
+for (const type of ["input", "focusout"])
+  document.addEventListener?.(type, (e) => {
+    if (e.target.closest?.(".chips-add")) e.target.setCustomValidity("");
+  });
 
 // Time zones as a list: a few common ones first, then every zone this
 // browser knows. A saved zone the list lacks is still offered.
@@ -613,7 +624,8 @@ function drawScheduleForm(task) {
   $("#rule-type").onchange = rules;
   rules();
   const read = () => {
-    chipsFlush($("#schedule-form"));
+    if (!chipsFlush($("#schedule-form")))
+      throw Error("还没添加的日期缺少时刻，补上时刻或清空日期");
     const f = new FormData($("#schedule-form")),
       type = f.get("ruleType"),
       list = (n) =>
