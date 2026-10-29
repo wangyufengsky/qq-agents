@@ -118,6 +118,7 @@ test("console offers scoped recovery and only submits damage removal after confi
   const sandbox = vm.createContext({
     $: () => library,
     tab: "permissions",
+    config: { agents: [{ id: "agent-a", files: { maxTotalBytes: 1024 } }] },
     URLSearchParams,
     esc: (v) => String(v ?? ""),
     action: (fn) => fn(),
