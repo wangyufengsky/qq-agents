@@ -5,6 +5,38 @@ import { fixture } from "./helpers.mjs";
 import { createServer } from "../src/server.mjs";
 import { Diagnostics, classifyError } from "../src/core/diagnostics.mjs";
 
+test("image download diagnostics preserve safe specific causes instead of INTERNAL_ERROR", () => {
+  for (const code of [
+    "IMAGE_DOWNLOAD_HTTP_ERROR",
+    "IMAGE_DOWNLOAD_FAILED",
+    "IMAGE_DOWNLOAD_TIMEOUT",
+    "IMAGE_URL_DENIED",
+    "IMAGE_REDIRECT_INVALID",
+    "IMAGE_REDIRECT_LIMIT",
+  ])
+    assert.equal(classifyError(Error(code)).code, code);
+});
+
+test("native image diagnostics retain a safe URL cause without leaking provider text", () => {
+  const d = new Diagnostics({ write: () => {} });
+  d.report(
+    Error("IMAGE_DOWNLOAD_FAILED", {
+      cause: Error("IMAGE_DOWNLOAD_HTTP_ERROR"),
+    }),
+  );
+  assert.equal(d.snapshot()[0].cause, "IMAGE_DOWNLOAD_HTTP_ERROR");
+  d.report(
+    Error("IMAGE_DOWNLOAD_FAILED", {
+      cause: Error("https://example.com/?rkey=PRIVATE_VALUE"),
+    }),
+  );
+  assert.equal(d.snapshot()[0].cause, undefined);
+  assert.doesNotMatch(
+    JSON.stringify(d.snapshot()),
+    /PRIVATE_VALUE|example.com/,
+  );
+});
+
 test("a disk failure returns a classified server error with a safe correlation ID", async (t) => {
   const f = fixture(t);
   const app = createServer({

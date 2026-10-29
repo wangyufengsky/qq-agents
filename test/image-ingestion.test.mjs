@@ -32,6 +32,321 @@ const event = (id = "event", url = "https://example.com/image.gif") => ({
 });
 const images = (result) => result.content.filter((c) => c.type === "image");
 
+async function nativeImageFixture(t) {
+  const cfg = config(2);
+  cfg.agents[0].tools.push("qq_image_read");
+  cfg.agents[0].wake.participation = 0;
+  const f = fixture(t, { cfg });
+  const bytes = gif([{}, { color: 1 }]),
+    calls = [];
+  f.runtime.media = new MediaStore(path.join(f.root, "media"), {
+    fetchBuffer: async () => {
+      throw Error("IMAGE_DOWNLOAD_HTTP_ERROR");
+    },
+  });
+  f.runtime.transports.get("qq-0").downloadImage = async (file, options) => {
+    calls.push({ file, options });
+    return { buffer: bytes };
+  };
+  const ctx = context(f.runtime);
+  await f.runtime.ingest(
+    "qq-0",
+    raw(42, {
+      message: [
+        {
+          type: "image",
+          data: {
+            file: "0123456789abcdef0123456789abcdef.jpg",
+            file_size: bytes.length,
+            url: "https://example.com/rejected-image",
+          },
+        },
+      ],
+    }),
+  );
+  const e = f.store.db
+    .prepare(
+      "SELECT id FROM events WHERE agent_id='agent-0' AND message_id='42' AND kind='message.received'",
+    )
+    .get();
+  return { ...f, ctx, event: e, calls, bytes };
+}
+
+test("rejected QQ image URLs fall back to the same account's native stream and cache the original pixels", async (t) => {
+  const f = await nativeImageFixture(t);
+  const result = await f.runtime.callTool(f.ctx, "qq_image_read", {
+    id: f.event.id,
+  });
+  assert.equal(images(result).length, 2);
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.calls[0].file, "0123456789abcdef0123456789abcdef.jpg");
+  assert.equal(f.calls[0].options.maxBytes, 20 * 1024 * 1024);
+  const id = JSON.parse(result.content[0].text).id;
+  assert.deepEqual(
+    Buffer.from(f.runtime.media.read("agent-0", id).data, "base64"),
+    f.bytes,
+  );
+  await f.runtime.callTool(f.ctx, "qq_image_read", { id: f.event.id });
+  assert.equal(f.calls.length, 1);
+});
+
+test("native image fallback rejects untrusted IDs, foreign connections and unavailable sources", async (t) => {
+  for (const deny of [
+    "path",
+    "url",
+    "connection",
+    "untrusted",
+    "imported",
+    "allowlist",
+    "other-agent",
+    "onebot",
+  ]) {
+    const f = await nativeImageFixture(t),
+      mem = f.store.bind("agent-0");
+    const row = mem.db
+      .prepare("SELECT * FROM events WHERE id=?")
+      .get(f.event.id);
+    const payload = JSON.parse(row.payload);
+    if (deny === "path") payload.segments[0].data.file = "/tmp/private.png";
+    if (deny === "url")
+      payload.segments[0].data.file = "https://example.com/private.png";
+    if (deny === "untrusted") payload.trustedInput = false;
+    mem.db
+      .prepare(
+        "UPDATE events SET payload=?,connection_id=?,origin=? WHERE id=?",
+      )
+      .run(
+        JSON.stringify(payload),
+        deny === "connection" ? "qq-1" : row.connection_id,
+        deny === "imported" ? "imported" : row.origin,
+        f.event.id,
+      );
+    if (deny === "allowlist") {
+      f.runtime.agent("agent-0").allow.groups = ["20001"];
+      f.ctx = context(f.runtime, "agent-0", "group:20001");
+    }
+    if (deny === "other-agent") {
+      f.runtime.agent("agent-1").tools.push("qq_image_read");
+      f.ctx = context(f.runtime, "agent-1");
+    }
+    if (deny === "onebot") f.runtime.connection("qq-0").gateway = "onebot";
+    await assert.rejects(
+      f.runtime.callTool(f.ctx, "qq_image_read", { id: f.event.id }),
+      {
+        message:
+          deny === "other-agent"
+            ? "RECORD_NOT_FOUND"
+            : "IMAGE_DOWNLOAD_HTTP_ERROR",
+      },
+    );
+    assert.equal(f.calls.length, 0, deny);
+  }
+});
+
+async function recallImage(f, extra = {}) {
+  await f.runtime.ingest(
+    "qq-0",
+    raw(42, {
+      post_type: "notice",
+      notice_type: "group_recall",
+      message: [],
+      ...extra,
+    }),
+  );
+  assert.equal(
+    f.store.db.prepare("SELECT status FROM events WHERE id=?").get(f.event.id)
+      .status,
+    "observed",
+  );
+}
+
+test("a real recall notice blocks native retrieval without changing the original message status", async (t) => {
+  const f = await nativeImageFixture(t);
+  await recallImage(f);
+  await assert.rejects(
+    f.runtime.callTool(f.ctx, "qq_image_read", { id: f.event.id }),
+    { message: "IMAGE_DOWNLOAD_HTTP_ERROR" },
+  );
+  assert.equal(f.calls.length, 0);
+});
+
+test("recalls arriving during URL or native download prevent fallback or caching", async (t) => {
+  for (const stage of ["url", "native"]) {
+    const f = await nativeImageFixture(t);
+    if (stage === "url")
+      f.runtime.media.fetchBuffer = async () => {
+        await recallImage(f);
+        throw Error("IMAGE_DOWNLOAD_HTTP_ERROR");
+      };
+    else
+      f.runtime.transports.get("qq-0").downloadImage = async () => {
+        await recallImage(f);
+        return { buffer: f.bytes };
+      };
+    await assert.rejects(
+      f.runtime.callTool(f.ctx, "qq_image_read", { id: f.event.id }),
+      { message: "IMAGE_DOWNLOAD_HTTP_ERROR" },
+    );
+    assert.equal(f.calls.length, 0);
+    assert.equal(f.runtime.media.cachedSource("agent-0", f.event.id, 0), null);
+  }
+});
+
+test("a recall in a different conversation does not withdraw this image", async (t) => {
+  const f = await nativeImageFixture(t);
+  await recallImage(f, { group_id: 20001 });
+  assert.equal(
+    images(await f.runtime.callTool(f.ctx, "qq_image_read", { id: f.event.id }))
+      .length,
+    2,
+  );
+  assert.equal(f.calls.length, 1);
+});
+
+test("native retrieval supports observed braced UUID IDs and absent URLs", async (t) => {
+  for (const absentUrl of [false, true]) {
+    const f = await nativeImageFixture(t),
+      payload = JSON.parse(
+        f.store.db
+          .prepare("SELECT payload FROM events WHERE id=?")
+          .get(f.event.id).payload,
+      );
+    payload.segments[0].data.file =
+      "{01234567-89ab-cdef-0123-456789abcdef}.jpg";
+    if (absentUrl) delete payload.segments[0].data.url;
+    f.store.db
+      .prepare("UPDATE events SET payload=? WHERE id=?")
+      .run(JSON.stringify(payload), f.event.id);
+    assert.equal(
+      images(
+        await f.runtime.callTool(f.ctx, "qq_image_read", { id: f.event.id }),
+      ).length,
+      2,
+    );
+    assert.equal(f.calls.length, 1);
+  }
+});
+
+test("missing URLs never turn paths or malformed UUIDs into native targets", async (t) => {
+  for (const file of [
+    "/tmp/private.jpg",
+    "{01234567-89ab-cdef-0123-456789abcdef}/private.jpg",
+  ]) {
+    const f = await nativeImageFixture(t);
+    const payload = JSON.parse(
+      f.store.db
+        .prepare("SELECT payload FROM events WHERE id=?")
+        .get(f.event.id).payload,
+    );
+    payload.segments[0].data = { file };
+    f.store.db
+      .prepare("UPDATE events SET payload=? WHERE id=?")
+      .run(JSON.stringify(payload), f.event.id);
+    await assert.rejects(
+      f.runtime.callTool(f.ctx, "qq_image_read", { id: f.event.id }),
+      { message: "IMAGE_URL_UNAVAILABLE" },
+    );
+    assert.equal(f.calls.length, 0);
+  }
+});
+
+test("a GIF original labelled jpg retains the GIF byte budget in native recovery", async (t) => {
+  const f = await nativeImageFixture(t),
+    bytes = largeGif();
+  f.runtime.transports.get("qq-0").downloadImage = async (file, options) => {
+    assert.match(file, /\.jpg$/);
+    assert(bytes.length > 8 * 1024 * 1024 && bytes.length <= options.maxBytes);
+    return { buffer: bytes };
+  };
+  const result = await f.runtime.callTool(f.ctx, "qq_image_read", {
+    id: f.event.id,
+  });
+  assert.equal(images(result).length, 3);
+});
+
+test("native download failure retains its safe URL failure cause", async (t) => {
+  const f = await nativeImageFixture(t);
+  f.runtime.transports.get("qq-0").downloadImage = async () => {
+    throw Error("FILE_DOWNLOAD_FAILED");
+  };
+  await assert.rejects(
+    f.runtime.callTool(f.ctx, "qq_image_read", { id: f.event.id }),
+    (error) => {
+      assert.equal(error.message, "IMAGE_DOWNLOAD_FAILED");
+      assert.equal(error.cause?.message, "IMAGE_DOWNLOAD_HTTP_ERROR");
+      return true;
+    },
+  );
+});
+
+test("native image fallback does not bypass URL policy, declared size or download deadlines", async (t) => {
+  for (const code of [
+    "IMAGE_URL_DENIED",
+    "IMAGE_TOO_LARGE",
+    "IMAGE_DOWNLOAD_TIMEOUT",
+    "IMAGE_REDIRECT_INVALID",
+    "IMAGE_REDIRECT_LIMIT",
+    "ABORTED",
+  ]) {
+    const f = await nativeImageFixture(t);
+    f.runtime.media.fetchBuffer = async () => {
+      throw Error(code);
+    };
+    await assert.rejects(
+      f.runtime.callTool(f.ctx, "qq_image_read", { id: f.event.id }),
+      new RegExp(code),
+    );
+    assert.equal(f.calls.length, 0, code);
+  }
+});
+
+test("native image errors remain image-specific and invalid pixels never enter the cache", async (t) => {
+  for (const [cause, code] of [
+    ["FILE_TOO_LARGE", "IMAGE_TOO_LARGE"],
+    ["FILE_DOWNLOAD_CANCELLED", "IMAGE_DOWNLOAD_TIMEOUT"],
+    ["FILE_DOWNLOAD_FAILED", "IMAGE_DOWNLOAD_FAILED"],
+    ["invalid", "INVALID_IMAGE"],
+  ]) {
+    const f = await nativeImageFixture(t);
+    f.runtime.transports.get("qq-0").downloadImage = async () => {
+      if (cause === "invalid") return { buffer: Buffer.from("not an image") };
+      throw Error(cause);
+    };
+    await assert.rejects(
+      f.runtime.callTool(f.ctx, "qq_image_read", { id: f.event.id }),
+      new RegExp(code),
+    );
+    assert.equal(f.runtime.media.cachedSource("agent-0", f.event.id, 0), null);
+  }
+});
+
+test("native image fallback retains the download admission limit and honors cancellation before caching", async (t) => {
+  const f = await nativeImageFixture(t);
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  f.runtime.transports.get("qq-0").downloadImage = async () => {
+    await gate;
+    return { buffer: f.bytes };
+  };
+  const first = f.runtime.callTool(f.ctx, "qq_image_read", { id: f.event.id });
+  const secondCtx = context(f.runtime);
+  const second = f.runtime.callTool(secondCtx, "qq_image_read", {
+    id: f.event.id,
+  });
+  await assert.rejects(
+    f.runtime.callTool(context(f.runtime), "qq_image_read", { id: f.event.id }),
+    /IMAGE_DOWNLOAD_BUSY/,
+  );
+  const rejected = assert.rejects(first, /ABORTED|AGENT_PAUSED_OR_EXPIRED/);
+  f.ctx.controller.abort();
+  release();
+  await rejected;
+  await second;
+  assert.equal(f.runtime.media.activeDownloads, 0);
+});
+
 test("GIF source larger than 8 MiB is retained and decoded into bounded frames", async (t) => {
   const data = largeGif();
   assert(data.length > 9 * 1024 * 1024);

@@ -155,6 +155,11 @@ export class OneBot extends EventEmitter {
   downloadFile(fileId, options) {
     return downloadFileStream(this, fileId, options);
   }
+  downloadImage(fileId, options) {
+    // QQ can advertise the compressed message size while streaming the larger
+    // original. Actual bytes, sequence and final receipt remain authoritative.
+    return downloadFileStream(this, fileId, { ...options, sizeHintOnly: true });
+  }
   async connect() {
     this.close();
     const epoch = ++this.epoch;

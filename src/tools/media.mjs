@@ -243,7 +243,12 @@ export class MediaStore {
     }
     return null;
   }
-  async fromMessage(agentId, event, index = 0, { signal, assertActive } = {}) {
+  async fromMessage(
+    agentId,
+    event,
+    index = 0,
+    { signal, assertActive, fallback } = {},
+  ) {
     const active = () => {
       if (signal?.aborted) throw Error("ABORTED");
       assertActive?.();
@@ -259,13 +264,35 @@ export class MediaStore {
     if (Number(data.file_size || data.size) > MAX_IMAGE_SOURCE_BYTES)
       throw Error("IMAGE_TOO_LARGE");
     const url = data.url;
-    if (!url) throw Error("IMAGE_URL_UNAVAILABLE");
+    if (!url && !fallback) throw Error("IMAGE_URL_UNAVAILABLE");
     if (this.activeDownloads >= 2) throw Error("IMAGE_DOWNLOAD_BUSY");
     this.activeDownloads++;
     try {
-      const result = await this.fetchBuffer(url, MAX_IMAGE_SOURCE_BYTES, {
-        signal,
-      });
+      let result;
+      try {
+        if (!url) throw Error("IMAGE_URL_UNAVAILABLE");
+        result = await this.fetchBuffer(url, MAX_IMAGE_SOURCE_BYTES, {
+          signal,
+        });
+      } catch (error) {
+        active();
+        if (
+          !fallback ||
+          ![
+            "IMAGE_DOWNLOAD_HTTP_ERROR",
+            "IMAGE_DOWNLOAD_FAILED",
+            "IMAGE_URL_UNAVAILABLE",
+          ].includes(error.message)
+        )
+          throw error;
+        try {
+          result = await fallback(data, error);
+        } catch (nativeError) {
+          // Retain only a known code, never provider text or a signed URL.
+          if (nativeError !== error) nativeError.cause = Error(error.message);
+          throw nativeError;
+        }
+      }
       active();
       const buffer = Buffer.isBuffer(result) ? result : result.buffer;
       return this.put(agentId, buffer, imageMime(buffer), {

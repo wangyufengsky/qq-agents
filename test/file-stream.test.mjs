@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { OneBot } from "../src/transport/onebot.mjs";
+import { downloadFileStream } from "../src/transport/file-stream.mjs";
 import { config } from "./helpers.mjs";
 
 const packet = (data) => ({ status: "ok", retcode: 0, data });
@@ -56,6 +57,19 @@ test("attachment streaming assembles fragmented JSON frames and checks final byt
   assert.equal(result.buffer.toString(), "hello");
 });
 
+test("native image streams accept a stale size hint but retain complete actual-byte validation", async () => {
+  const packets = [info(2), chunk("hello"), complete(5)];
+  const result = await downloadFileStream(botFor(packets), "observed-id", {
+    maxBytes: 1024,
+    sizeHintOnly: true,
+  });
+  assert.equal(result.buffer.toString(), "hello");
+  await assert.rejects(
+    botFor(packets).downloadFile("observed-id", { maxBytes: 1024 }),
+    /FILE_DOWNLOAD_FAILED/,
+  );
+});
+
 for (const [label, packets, error] of [
   ["oversized metadata", [info(2048)], /FILE_TOO_LARGE/],
   [
@@ -82,10 +96,11 @@ for (const [label, packets, error] of [
   ],
 ])
   test(`attachment streaming rejects ${label}`, async () => {
-    await assert.rejects(
-      botFor(packets).downloadFile("observed-id", { maxBytes: 1024 }),
-      error,
-    );
+    for (const method of ["downloadFile", "downloadImage"])
+      await assert.rejects(
+        botFor(packets)[method]("observed-id", { maxBytes: 1024 }),
+        error,
+      );
   });
 
 test("attachment streaming honors cancellation and HTTP errors", async () => {

@@ -1,3 +1,4 @@
+import { liveInput } from "./live-input.mjs";
 // A peer's private message may renew a bounded reply batch after a quiet
 // interval. It never supplies human request, disclosure or intent authority.
 export function privatePeer(runtime, ctx) {
@@ -30,7 +31,6 @@ export function observePeerInput(runtime, ctx, items) {
   )
     return;
   const mem = runtime.memory.bind(ctx.agentId),
-    a = runtime.agent(ctx.agentId),
     state = mem.state(ctx.conversation),
     baseline = Math.max(state.peerReplyInputSeq || 0, ctx.inputBaseline || 0),
     now = runtime.now();
@@ -46,21 +46,12 @@ export function observePeerInput(runtime, ctx, items) {
       item.conversation !== ctx.conversation
     )
       continue;
-    const row = mem.db
-      .prepare(
-        "SELECT * FROM events WHERE agent_id=? AND id=? AND conversation=? AND connection_id=?",
-      )
-      .get(a.id, item.id, ctx.conversation, a.connectionId);
+    const row = liveInput(runtime, ctx.agentId, ctx.conversation, item.id);
     if (
       !row ||
       row.seq !== item.seq ||
       row.seq <= baseline ||
-      row.kind !== "message.received" ||
-      row.direction !== "in" ||
-      row.origin !== "live" ||
-      row.status === "recalled" ||
       row.sender_id !== peer.accountId ||
-      JSON.parse(row.payload).trustedInput !== true ||
       item.body !== row.body
     )
       continue;

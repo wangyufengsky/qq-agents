@@ -92,6 +92,67 @@ test("replacing a context does not reset a peer batch, while later new input doe
   await f.send("fresh-context-input", next);
 });
 
+test("a real friend recall cannot renew a spent peer reply batch", async (t) => {
+  const f = setup(t);
+  await f.incoming();
+  await f.send("first");
+  await f.send("second");
+  f.advance(2000);
+  const row = await f.incoming(f.ctx, { read: false });
+  const notice = raw(Number(row.message_id), {
+    post_type: "notice",
+    notice_type: "friend_recall",
+    message_type: "private",
+    user_id: 10001,
+  });
+  delete notice.group_id;
+  await f.runtime.ingest("qq-0", notice);
+  assert.equal(
+    f.store.db.prepare("SELECT status FROM events WHERE id=?").get(row.id)
+      .status,
+    "observed",
+  );
+  await f.runtime.callTool(f.ctx, "conversation_read", {
+    afterSeq: row.seq - 1,
+  });
+  await assert.rejects(f.send("withdrawn-peer-input"), {
+    message: "REPLY_BURST_LIMIT",
+  });
+});
+
+test("real group and friend recalls remove human input authority only in the same connection and conversation", async (t) => {
+  for (const privateChat of [false, true]) {
+    const cfg = config(2);
+    cfg.agents[0].wake.participation = 0;
+    cfg.agents[0].wake.private = false;
+    const f = fixture(t, { cfg });
+    const message = raw(42, {
+      message_type: privateChat ? "private" : "group",
+    });
+    if (privateChat) delete message.group_id;
+    const conversation = privateChat ? "private:30000" : "group:20000";
+    await f.runtime.ingest("qq-0", message);
+    const row = f.store.db
+      .prepare(
+        "SELECT * FROM events WHERE agent_id='agent-0' AND message_id='42'",
+      )
+      .get();
+    const ctx = context(f.runtime, "agent-0", conversation);
+    assert.equal(humanInput(f.runtime, ctx, row.id)?.id, row.id);
+    const notice = {
+      ...message,
+      post_type: "notice",
+      notice_type: privateChat ? "friend_recall" : "group_recall",
+    };
+    await f.runtime.ingest("qq-1", { ...notice, self_id: 10001 });
+    assert.equal(humanInput(f.runtime, ctx, row.id)?.id, row.id);
+    await f.runtime.ingest("qq-0", notice);
+    assert.equal(humanInput(f.runtime, ctx, row.id), null);
+    await f.runtime.callTool(ctx, "conversation_read", {});
+    assert.equal(ctx.requestEvents.has(row.id), false);
+  }
+});
+
 async function opening(f, kind) {
   const send = (ctx) =>
     f.runtime.send(ctx, { requestId: "opening", text: "synthetic opening" });
