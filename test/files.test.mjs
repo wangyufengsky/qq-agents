@@ -801,3 +801,27 @@ test("file_read comes with file_list in chats and idle time, and leaves with it"
   assert.equal(runtime.toolsFor(a, "group:20000").includes("file_read"), false);
   assert.equal(runtime.toolsFor(a, "@subject").includes("file_read"), false);
 });
+
+test("file_read returns exactly a short file's own bytes, not a shared pool around them", async (t) => {
+  const { runtime, ctx } = await setup(t);
+  const other = await call(
+    runtime,
+    runtime.makeContext("agent-1", "group:20000"),
+    "file_create",
+    {
+      name: "victim.txt",
+      text: "VICTIM_AGENT_PRIVATE_".repeat(40),
+    },
+  );
+  const mine = await call(runtime, ctx, "file_create", {
+    name: "short.txt",
+    text: "短",
+  });
+  // Reads of other files around this one fill the same Buffer pool.
+  runtime.files.read("agent-1", other.fileId, 1 << 20);
+  const read = await call(runtime, ctx, "file_read", { fileId: mine.fileId });
+  runtime.files.read("agent-1", other.fileId, 1 << 20);
+  assert.equal(read.text, "短");
+  assert.equal(read.totalChars, 1);
+  assert.equal(read.nextOffset, null);
+});
