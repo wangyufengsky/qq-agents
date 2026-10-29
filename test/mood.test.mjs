@@ -296,3 +296,80 @@ test("moods travel with an export, and earlier exports without them still restor
   const { moods: _m, person_notes: _p, ...before } = tables;
   validateExport(sign(before));
 });
+
+test("restoring keeps mood order and the strong-mood boundary", (t) => {
+  const source = new MemoryStore(":memory:"),
+    a = source.bind("agent-a");
+  t.after(() => source.close());
+  const old = a.append({
+    dedupe: "old",
+    conversation: scope,
+    kind: "message.received",
+    body: "放鸽子",
+    senderId: "30000",
+  });
+  for (const [i, mood] of ["开心", "平静", "紧张", "无聊", "困"].entries())
+    a.identity.setMood(
+      { mood, intensity: 2, reason: "第" + i + "次" },
+      { writtenIn: scope, now: 1000 + i },
+    );
+  a.identity.setMood(
+    {
+      mood: "非常生气",
+      intensity: 5,
+      reason: "又被放鸽子",
+      evidence: [old.id],
+    },
+    { writtenIn: scope, now: 2000 },
+  );
+  const expected = a.identity.moodHistory().map((x) => x.mood);
+  assert.deepEqual(
+    a.export().tables.moods.map((r) => JSON.parse(r.value).mood),
+    [...expected].reverse(),
+    "exported oldest first, as written",
+  );
+  // Restore beside another agent, so every event gets a new seq.
+  const target = new MemoryStore(":memory:");
+  t.after(() => target.close());
+  const b = target.bind("agent-b");
+  for (let i = 0; i < 5; i++)
+    b.append({
+      dedupe: "b" + i,
+      conversation: scope,
+      kind: "message.received",
+      body: "别的角色",
+      senderId: "30000",
+    });
+  const { moods, ...rest } = a.export().tables;
+  restoreExport(target.bind("agent-a"), {
+    version: 1,
+    agentId: "agent-a",
+    tables: { ...rest, moods },
+  });
+  const restored = target.bind("agent-a");
+  assert.deepEqual(
+    restored.identity.moodHistory().map((x) => x.mood),
+    expected,
+  );
+  assert.equal(restored.identity.currentMood(3000).mood, "非常生气");
+  // The message from before the mood is still not a new cause.
+  assert.throws(
+    () =>
+      restored.identity.setMood(
+        { clear: true, reason: "算了", evidence: [old.id] },
+        { writtenIn: scope, now: 3000 },
+      ),
+    /MOOD_CHANGE_NEEDS_CAUSE/,
+  );
+  const sorry = restored.append({
+    dedupe: "sorry",
+    conversation: scope,
+    kind: "message.received",
+    body: "对不起",
+    senderId: "30000",
+  });
+  restored.identity.setMood(
+    { clear: true, reason: "道歉了", evidence: [sorry.id] },
+    { writtenIn: scope, now: 3000 },
+  );
+});

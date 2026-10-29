@@ -814,7 +814,7 @@ class AgentMemory {
     ])
       tables[name] = this.db
         .prepare(
-          `SELECT * FROM ${name} WHERE agent_id=?${name === "events" ? " ORDER BY seq" : ""}`,
+          `SELECT * FROM ${name} WHERE agent_id=?${name === "events" ? " ORDER BY seq" : name === "moods" ? " ORDER BY rowid" : ""}`,
         )
         .all(this.agentId);
     tables.diary_revisions = this.db

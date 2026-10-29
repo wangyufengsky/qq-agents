@@ -81,7 +81,8 @@ try {
     let count = 0;
     for (const row of db
       .prepare(
-        `SELECT r.* FROM ${from}${name === "events" ? " ORDER BY r.seq" : ""}`,
+        // Restore assigns new rowids in file order; moods find the latest by rowid.
+        `SELECT r.* FROM ${from}${name === "events" ? " ORDER BY r.seq" : name === "moods" ? " ORDER BY r.rowid" : ""}`,
       )
       .iterate(agentId)) {
       const json = Buffer.from(JSON.stringify(row));

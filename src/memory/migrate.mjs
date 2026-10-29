@@ -135,6 +135,13 @@ export function restoreExport(memory, data) {
           row.value = JSON.stringify(state);
         }
         if (table === "message_progress" && !empty) row.seq = seqs.get(row.seq);
+        // The strong-mood guard compares evidence seqs against this boundary.
+        if (table === "moods" && !empty) {
+          const value = JSON.parse(row.value);
+          if (value.sinceSeq !== undefined)
+            value.sinceSeq = remapBoundary(value.sinceSeq);
+          row.value = JSON.stringify(value);
+        }
         if (table === "intentions" && !empty) {
           const value = JSON.parse(row.value);
           for (const key of ["handoffSeq", "createdAfterSeq"])
