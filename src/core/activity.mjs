@@ -93,6 +93,46 @@ function browsing(rows) {
   return { items, searches: unique, failures };
 }
 
+// A sent message keeps only references to the card and mood it rested on;
+// look up what they said then. The card's older versions are in its history,
+// and a card deleted (or deleted and written again) no longer has that id.
+function sendBasis(m) {
+  const cards = new Map();
+  let moods;
+  const card = (ref) => {
+    if (!cards.has(ref.personId))
+      cards.set(ref.personId, m.identity.personCard(ref.personId));
+    const now = cards.get(ref.personId);
+    if (now?.id !== ref.id)
+      return { personId: ref.personId, revision: ref.revision, deleted: true };
+    const version =
+      now.revision === ref.revision
+        ? now
+        : now.history?.find((h) => h.revision === ref.revision);
+    return {
+      personId: ref.personId,
+      revision: ref.revision,
+      // An old version beyond the kept history has only its number.
+      ...(version?.call ? { call: clip(version.call, 40) } : {}),
+    };
+  };
+  const mood = (id) => {
+    moods ??= new Map(m.identity.moodHistory(500).map((x) => [x.id, x]));
+    const x = moods.get(id);
+    return x?.action === "set"
+      ? { mood: clip(x.mood, 40), intensity: x.intensity }
+      : { missing: true };
+  };
+  return (payload) => {
+    const ref = payload.personCard,
+      b = {
+        ...(ref?.id && ref.personId ? { personCard: card(ref) } : {}),
+        ...(payload.moodId ? { mood: mood(payload.moodId) } : {}),
+      };
+    return Object.keys(b).length ? b : null;
+  };
+}
+
 export function activityPage(
   memory,
   agentId,
@@ -137,6 +177,7 @@ export function activityPage(
     )
     .all(agentId, iso(from), iso(to));
   const intents = m.identity.list("intentions");
+  const basis = sendBasis(m);
   const within = (t, at) => {
     const [a, b] = windowOf(t),
       x = typeof at === "number" ? at : Date.parse(at);
@@ -161,10 +202,14 @@ export function activityPage(
       .at(-1);
     const sent = mine
       .filter((e) => e.kind === "message.sent" || e.kind === "action.confirmed")
-      .map((e) => ({
-        text: clip(e.body, 120),
-        action: e.kind === "action.confirmed",
-      }));
+      .map((e) => {
+        const b = basis(parse(e.payload));
+        return {
+          text: clip(e.body, 120),
+          action: e.kind === "action.confirmed",
+          ...(b ? { basis: b } : {}),
+        };
+      });
     const failedSends = mine.filter(
       (e) =>
         e.kind === "message.send-result" &&
