@@ -192,32 +192,37 @@ export class VoiceTranscription {
       // An opaque SILK file has no measurable length to hold to the limit.
       if (!(audio.duration > 0))
         throw Error("VOICE_TRANSCRIPTION_FORMAT_UNSUPPORTED");
-      // Pause, protection and allowlist are checked again just before the
-      // audio leaves, since the download took time.
+      // The download took time: pause, protection, allowlist and limits are
+      // checked again, and the call uses the settings in force now.
       a = r.agent(job.agentId);
       const blocked = this.blocked(a, job.conversation);
       if (blocked === "paused") return;
       if (blocked) throw Error(blocked);
+      const current = a.voice.asr;
+      if (audio.bytes > Math.min(a.voice.maxBytes, current.maxBytes))
+        throw Error("AUDIO_TOO_LARGE");
+      if (audio.duration > Math.min(a.voice.maxSeconds, current.maxSeconds))
+        throw Error("AUDIO_TOO_LONG");
       const backend = r.backendConnections.adapter(a);
       if (!backend?.external) throw Error("EXTERNAL_TOOLS_UNAVAILABLE");
       const data = r.voices.read(a.id, audio.id),
         args = Object.fromEntries([
-          ...Object.entries(policy.arguments),
-          [policy.audioArgument, data.data],
-          ...(policy.mimeArgument
-            ? [[policy.mimeArgument, data.mimeType]]
+          ...Object.entries(current.arguments),
+          [current.audioArgument, data.data],
+          ...(current.mimeArgument
+            ? [[current.mimeArgument, data.mimeType]]
             : []),
         ]),
-        deadline = AbortSignal.timeout(policy.timeoutMs),
+        deadline = AbortSignal.timeout(current.timeoutMs),
         combined = AbortSignal.any([signal, deadline]);
       let result;
       try {
         result = await bounded(
-          backend.external.call(policy.serverId, policy.tool, args, {
+          backend.external.call(current.serverId, current.tool, args, {
             signal: combined,
-            timeoutMs: policy.timeoutMs,
+            timeoutMs: current.timeoutMs,
           }),
-          policy.timeoutMs + 1000,
+          current.timeoutMs + 1000,
           combined,
           "VOICE_TRANSCRIPTION_TIMEOUT",
         );
@@ -236,16 +241,18 @@ export class VoiceTranscription {
       if (result?.isError) throw Error("VOICE_TRANSCRIPTION_FAILED");
       const text = transcriptText(result);
       if (!text) throw Error("VOICE_TRANSCRIPTION_EMPTY");
-      this.store(job, a, row, audio, text);
+      this.store(job, a, row, audio, text, {
+        serverId: current.serverId,
+        tool: current.tool,
+      });
     } catch (error) {
       if (signal.aborted) return;
       this.report(error?.message, a, job.conversation, error);
     }
   }
-  store(job, a, row, audio, text) {
+  store(job, a, row, audio, text, service) {
     const r = this.runtime,
-      mem = r.memory.bind(a.id),
-      policy = a.voice.asr;
+      mem = r.memory.bind(a.id);
     const record = mem.append({
       dedupe: transcriptKey(job.eventId),
       connectionId: row.connection_id,
@@ -261,7 +268,7 @@ export class VoiceTranscription {
         sourceMessageId: row.message_id,
         audioId: audio.id,
         duration: audio.duration,
-        service: { serverId: policy.serverId, tool: policy.tool },
+        service,
         epistemic: TRANSCRIPT_EPISTEMIC,
         ...(text.length > MAX_TEXT ? { truncated: true } : {}),
       },

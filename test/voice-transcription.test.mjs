@@ -339,6 +339,42 @@ test("paused or protected conversations, other tools and an exhausted budget sen
   assert.deepEqual(codes(budget), ["VOICE_TRANSCRIPTION_BUDGET"]);
 });
 
+test("a settings change during the download applies to the call that follows", async (t) => {
+  // The administrator switches tools or lowers a limit while audio downloads.
+  const edit = (change) => (f) => {
+    const next = structuredClone(f.runtime.config);
+    change(next);
+    f.configStore.value = validateConfig(next);
+  };
+  const switched = setup(t, {
+    onRecord: edit((c) => {
+      c.backends[0].toolServers[0].allowedTools.push("whisper");
+      Object.assign(c.agents[0].voice.asr, {
+        tool: "whisper",
+        mimeArgument: "",
+      });
+    }),
+  });
+  await switched.runtime.ingest("qq-0", voiceRaw(42));
+  await drain(switched);
+  assert.deepEqual(
+    switched.calls.map((c) => [c.tool, Object.keys(c.args)]),
+    [["whisper", ["audio"]]],
+  );
+  assert.deepEqual(
+    JSON.parse(rows(switched, "voice.transcript")[0].payload).service,
+    { serverId: "asr", tool: "whisper" },
+  );
+  const lowered = setup(t, {
+    duration: 30,
+    onRecord: edit((c) => (c.agents[0].voice.asr.maxSeconds = 10)),
+  });
+  await lowered.runtime.ingest("qq-0", voiceRaw(42));
+  await drain(lowered);
+  assert.deepEqual(lowered.calls, []);
+  assert.deepEqual(codes(lowered), ["AUDIO_TOO_LONG"]);
+});
+
 test("a transcript that lands after the turn stopped waiting wakes the agent once more", async (t) => {
   let release;
   const gate = new Promise((resolve) => (release = resolve));
