@@ -2387,3 +2387,81 @@ dialog.people-drawer[open] {
     animation: none;
   }
 }
+
+/* Cross-links: a role's mood on its home card, records an activity entry
+   points at, and people the console recognizes by their person card. */
+.home-role > .home-mood {
+  justify-self: start;
+  max-width: 100%;
+  min-height: 26px;
+  margin-top: 10px;
+  padding: 3px 12px;
+  /* A long mood wraps; a pill radius would turn it into a capsule. */
+  border-radius: 14px;
+  border-color: var(--accent-line);
+  background: var(--accent-fill);
+  color: var(--accent);
+  font-size: 12.5px;
+  white-space: normal;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.home-role > .home-mood.is-calm {
+  border-color: var(--line-2);
+  background: transparent;
+  color: var(--sub);
+}
+.act-sent {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.act-sent p {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.act-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+button.act-open {
+  flex: none;
+  min-height: 24px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+button.act-link {
+  display: inline;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-2);
+  font: inherit;
+  white-space: normal;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  overflow-wrap: anywhere;
+}
+button.act-link:hover {
+  background: none;
+  color: var(--ink);
+}
+button.person-open {
+  min-height: 22px;
+  margin-left: 4px;
+  padding: 0 8px;
+  border-color: var(--accent-line);
+  color: var(--accent);
+  font-size: 12px;
+  vertical-align: baseline;
+}
+button.person-open:hover {
+  background: var(--accent-fill);
+  border-color: var(--accent-line);
+  color: var(--accent);
+}

@@ -898,7 +898,31 @@ export function createServer({
           "contextSeconds",
         ])
           if (q[key] !== undefined) q[key] = Number(q[key]);
-        return send(runtime.memory.bind(agentId).search(q));
+        const m = runtime.memory.bind(agentId),
+          result = m.search(q);
+        // The call each speaker's person card gives, for the speakers on this
+        // page that have one; the console names them by it and opens the card.
+        const speakers = [
+          ...new Set(
+            result.items.flatMap((r) => [
+              r.senderId,
+              ...[...(r.scene?.messages || []), ...(r.scene?.quoted || [])].map(
+                (x) => x.senderId,
+              ),
+            ]),
+          ),
+        ].filter(Boolean);
+        const people = speakers.length
+          ? Object.fromEntries(
+              m.db
+                .prepare(
+                  "SELECT person_id AS id, json_extract(value,'$.call') AS call FROM person_notes WHERE agent_id=? AND person_id IN (SELECT value FROM json_each(?))",
+                )
+                .all(agentId, JSON.stringify(speakers))
+                .map((r) => [r.id, { call: r.call || "" }]),
+            )
+          : {};
+        return send({ ...result, people });
       }
       if (req.method === "GET" && url.pathname === "/api/memory/conversation") {
         const agentId = url.searchParams.get("agentId");
