@@ -42,6 +42,7 @@ import { ConversationEngine } from "./conversations.mjs";
 import { TaskScheduler } from "./scheduler.mjs";
 import { Operations } from "./operations.mjs";
 import { SlangLearner } from "./slang.mjs";
+import { VoiceTranscription } from "./voice-transcription.mjs";
 
 // Adds or removes a feature's tools while keeping the existing order, so saving
 // an unchanged permission page does not count as a policy change.
@@ -109,6 +110,7 @@ export class Runtime {
     this.contexts = new ContextLifecycle(this);
     this.generatedImages = new GeneratedImages(this);
     this.subject = new SubjectCoordinator(this);
+    this.transcripts = new VoiceTranscription(this);
     this.protectedWork = new ProtectedWork(this);
     this.protectedWork.recover();
     for (const a of this.config.agents)
@@ -416,6 +418,7 @@ export class Runtime {
       if (k.startsWith(agentId + "|")) this.pending.delete(k);
     });
     this.conversations.cancel(agentId);
+    this.transcripts.cancel(agentId);
     this.operations.revoke(agentId, false);
     await this.backends.get(agentId)?.cancel?.();
   }
@@ -428,6 +431,7 @@ export class Runtime {
         this.capabilities.delete(token);
       }
     this.pending.delete(key);
+    this.transcripts.cancel(agentId, conversation);
     this.conversations.notify(agentId, conversation);
     const ctx = this.running.get(key);
     if (ctx) {
@@ -603,6 +607,8 @@ export class Runtime {
         e.senderId === c.accountId
       )
         continue;
+      // Received voice is transcribed beside intake, never awaited here.
+      const voice = this.transcripts.observe(a, e, archived);
       const peer = this.config.connections.some(
         (c) => c.accountId === e.senderId,
       );
@@ -624,6 +630,7 @@ export class Runtime {
       }
       const reason = this.conversations.reason(a, e, c.accountId),
         addressed = this.conversations.addressed(a, e, c.accountId);
+      if (voice) voice.reason = reason;
       if (!reason) {
         this.conversations.extend(a.id, e.conversation, e.senderId);
         continue;

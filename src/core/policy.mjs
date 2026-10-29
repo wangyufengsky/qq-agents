@@ -108,6 +108,48 @@ export const schedulerSchema = z
     "EXPLICIT_ALL_DAY_REQUIRED",
   );
 
+const argumentName = z
+  .string()
+  .regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/)
+  .refine((k) => !["__proto__", "constructor", "prototype"].includes(k));
+// Received voice is sent to this administrator-chosen MCP tool for a
+// transcript. Off by default: enabling it and naming the tool is the consent
+// to hand chat audio to that service.
+export const asrSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    serverId: z.string().max(64).default(""),
+    tool: z.string().max(200).default(""),
+    audioArgument: argumentName.default("audio"),
+    mimeArgument: z.union([argumentName, z.literal("")]).default("mimeType"),
+    arguments: z
+      .record(
+        argumentName,
+        z.union([z.string().max(500), z.number(), z.boolean()]),
+      )
+      .refine((x) => Object.keys(x).length <= 10, "TOO_MANY_ARGUMENTS")
+      .default({}),
+    maxSeconds: ms(1, 600, 90),
+    maxBytes: ms(65536, 20971520, 8388608),
+    timeoutMs: ms(1000, 300000, 60000),
+    // How long a turn may wait at its start for a transcript still running.
+    waitMs: ms(0, 30000, 8000),
+    maxPerHour: ms(1, 1000, 60),
+  })
+  .strict()
+  .prefault({})
+  .refine(
+    (x) => !x.enabled || (x.serverId !== "" && x.tool !== ""),
+    "ASR_TOOL_REQUIRED",
+  )
+  .refine(
+    (x) =>
+      x.audioArgument !== x.mimeArgument &&
+      ![x.audioArgument, x.mimeArgument].some((k) =>
+        Object.hasOwn(x.arguments, k),
+      ),
+    "ASR_ARGUMENT_COLLISION",
+  );
 export const voiceSchema = z
   .object({
     tts: z
@@ -122,6 +164,7 @@ export const voiceSchema = z
     ffmpegCommand: z.string().min(1).default("ffmpeg"),
     ffprobeCommand: z.string().min(1).default("ffprobe"),
     localRoots: z.array(z.string().min(1).max(4096)).max(10).default([]),
+    asr: asrSchema,
   })
   .strict()
   .prefault({});

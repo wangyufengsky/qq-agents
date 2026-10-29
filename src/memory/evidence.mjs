@@ -100,6 +100,8 @@ export function freezeEvidence(
         ];
       if (row.kind === "forward.node" && p.rootEventId)
         parents = [...parents, p.rootEventId];
+      if (row.kind === "voice.transcript" && p.sourceEventId)
+        parents = [...parents, p.sourceEventId];
       const confirmedCopy = row.kind === "forward.node" && p.confirmedEventId;
       if (confirmedCopy) {
         const source = confirmedNodeSource(memory, p);
@@ -141,6 +143,12 @@ export function freezeEvidence(
               source: app.source,
             }
           : {}),
+        ...(row.kind === "voice.transcript"
+          ? {
+              epistemic: "machine-transcription",
+              sourceEventId: p.sourceEventId,
+            }
+          : {}),
         ...(row.kind === "forward.node"
           ? {
               resourceId: p.resourceId,
@@ -168,6 +176,10 @@ export function freezeEvidence(
       if (app?.key) {
         key = "app:" + normalize(app.key);
         epistemic = "external-source-claim";
+      } else if (row.kind === "voice.transcript") {
+        // What a recognizer heard, not the speaker's checked words.
+        key = "voice:" + p.sourceEventId;
+        epistemic = "machine-transcription";
       } else if (row.kind === "forward.node" && !confirmedCopy) {
         key = "forward:" + p.resourceId;
         epistemic =

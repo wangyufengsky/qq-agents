@@ -1502,6 +1502,14 @@ async function readMemory(id, options = {}) {
       .filter(Boolean)
       .join(" · ");
     $("#memory-reader-body").textContent = r.body;
+    // A voice message's machine transcript is its own record, shown beside it.
+    if (r.notice) $("#memory-reader-meta").textContent += " · " + r.notice;
+    if (r.voiceTranscript?.text) {
+      const transcript = document.createElement("p");
+      transcript.className = "hint";
+      transcript.textContent = `语音转写（机器识别，可能有误）：${r.voiceTranscript.text}`;
+      $("#memory-reader-body").after(transcript);
+    }
     const versions = $("#memory-version-controls");
     versions.hidden = r.type !== "diary";
     if (r.type === "diary") {
