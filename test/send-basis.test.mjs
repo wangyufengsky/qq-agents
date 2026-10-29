@@ -371,8 +371,15 @@ test("the activity API returns the basis and the page shows it in one line", asy
     )
   ).json();
   const [entry] = page.items;
+  // The sent message's own record id lets the console open it.
+  const record = f.m.db
+    .prepare(
+      "SELECT id FROM events WHERE agent_id='agent-0' AND kind='message.sent'",
+    )
+    .get();
   assert.deepEqual(entry.sent, [
     {
+      id: record.id,
       text: "明哥晚上好",
       action: false,
       basis: {

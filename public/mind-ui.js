@@ -119,8 +119,17 @@ function subjectMarkup(a, data) {
   ${subjectLogMarkup(data.subject)}
   <form class="card" id="subject-form"><h2>空闲时间设置与联系范围</h2><div class="form-grid">${check("enabled", "启用主体空闲思考", p.enabled || a.behavior.proactive.enabled)}${check("owners", "允许主动联系主人", p.owners)}${check("peers", "允许主动联系同伴角色", p.peers)}${check("offlineReview", "离线时允许内部回顾", p.offlineReview)}${check("reviewInSilence", "勿扰期间允许内部回顾", p.reviewInSilence)}${input("interval", "检查间隔（分钟）", p.intervalMs / 60000, 'type="number" min="1" required')}${input("checks", "24 小时检查上限", p.maxChecksPerDay, 'type="number" min="1" required')}${input("toolCalls", "每次空闲时间最多调用工具数", p.maxToolCallsPerTurn ?? 8, 'type="number" min="1" max="30" required')}${input("contacts", "24 小时主动联系上限", p.maxContactsPerDay, 'type="number" min="1" required')}${input("cooldown", "联系冷却（分钟）", p.contactCooldownMs / 60000, 'type="number" min="1" required')}${input("unanswered", "未回应冷却（小时）", p.unansweredCooldownMs / 3600000, 'type="number" min="1" required')}${input("groups", "明确启用的群（逗号分隔）", p.groups.join(","))}${input("users", "额外启用的私聊（逗号分隔）", p.users.join(","))}</div><p class="hint">联系范围还受回复白名单约束。全局暂停会阻止模型检查；每次空闲时间结束，主体会用日志记下做了什么或为什么休息。仅修改检查间隔和次数会立即生效，保留连接与当前回合；修改权限或联系范围会结束该角色当前的回合，QQ 连接不受影响。</p><button>保存空闲时间设置</button></form>`;
 }
+// A private target with a person card is named by its call and opens the
+// card; group targets and people without a card show as recorded.
+function intentTarget(target, cards) {
+  const [kind, id] = String(target).split(":"),
+    card = kind === "private" && cards.find((c) => c.personId === id);
+  return card
+    ? `${esc(conversationLabel(target))}（${personCallText(card.call)}）${personCardButton(id)}`
+    : esc(target);
+}
 function intentsMarkup(data) {
-  return `<section class="card"><h2>聊天意图与结果</h2><p class="hint">空闲时间想主动找人时会留下意图，由目标聊天决定发送、暂缓或放弃。</p>${data.intents.map((i) => `<details class="record"><summary>${esc(i.topic)} · ${esc(mindStates[i.status] || i.status)}</summary><p>${esc(i.target)} · ${esc(i.reason)}</p><p>有效期至 ${mindTime(i.expiresAt)} · 已确认发送 ${mindTime(i.sentAt)}</p><p class="mono">来源：${esc(i.evidence.join(", "))}</p>${i.history.map((h) => `<p>${mindTime(h.at)} · ${esc(mindStates[h.status] || h.status)} · ${esc(h.reason || "")}</p>`).join("")}${!["completed", "cancelled", "expired", "failed", "unknown"].includes(i.status) ? `<button data-cancel-intent="${esc(i.id)}" data-revision="${i.revision}">取消意图</button>` : ""}</details>`).join("") || '<p class="hint">没有意图。已考虑、已交接和已确认投递分别记录。</p>'}</section>`;
+  return `<section class="card"><h2>聊天意图与结果</h2><p class="hint">空闲时间想主动找人时会留下意图，由目标聊天决定发送、暂缓或放弃。</p>${data.intents.map((i) => `<details class="record"><summary>${esc(i.topic)} · ${esc(mindStates[i.status] || i.status)}</summary><p>${intentTarget(i.target, data.personCards || [])} · ${esc(i.reason)}</p><p>有效期至 ${mindTime(i.expiresAt)} · 已确认发送 ${mindTime(i.sentAt)}</p><p class="mono">来源：${esc(i.evidence.join(", "))}</p>${i.history.map((h) => `<p>${mindTime(h.at)} · ${esc(mindStates[h.status] || h.status)} · ${esc(h.reason || "")}</p>`).join("")}${!["completed", "cancelled", "expired", "failed", "unknown"].includes(i.status) ? `<button data-cancel-intent="${esc(i.id)}" data-revision="${i.revision}">取消意图</button>` : ""}</details>`).join("") || '<p class="hint">没有意图。已考虑、已交接和已确认投递分别记录。</p>'}</section>`;
 }
 function sessionsMarkup(a, data) {
   return `<section class="card"><h2>工作会话</h2><p class="hint">每个聊天和空闲时间各有一个模型会话；结束后下一回合重新初始化，聊天记录和记忆都保留。</p>${data.sessions.map((s) => `<article class="record"><strong>${esc(s.conversation === "@subject" ? "空闲时间" : s.conversation)}</strong><p>self v${s.loadedSelfVersion || "—"} · ${esc(s.lifecycle?.status || "尚未初始化")} · ${esc(s.lifecycle?.reason || "")}</p><p>${s.usage ? `${s.usage.source === "measured" ? "后端实测" : "估算"} ${s.usage.contextTokens} / ${s.usage.capacityTokens || a.contextPolicy.capacityTokens} tokens（另预留 ${a.contextPolicy.reserveTokens}）` : "用量尚不可用"}</p><p>连续已见 ${s.seenThroughSeq || 0} · 已处理 ${s.readThroughSeq || 0}</p><button data-reset-session="${esc(s.conversation)}">结束当前会话，下次再初始化</button></article>`).join("") || '<p class="hint">还没有工作会话。</p>'}</section>`;
@@ -237,6 +246,7 @@ function bindSubject(a) {
   };
 }
 function bindIntents(a) {
+  bindPersonCards(document, a.id);
   document.querySelectorAll("[data-cancel-intent]").forEach(
     (b) =>
       (b.onclick = () =>

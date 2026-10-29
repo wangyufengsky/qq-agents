@@ -195,6 +195,20 @@ export function activityPage(
     .all(agentId, iso(from), iso(to));
   const intents = m.identity.list("intentions");
   const refs = references(m);
+  // A private target with a person card shows the card's call and opens it.
+  const cards = new Map();
+  const person = (target) => {
+    const [kind, id] = String(target || "").split(":");
+    if (kind !== "private" || !id) return null;
+    if (!cards.has(id)) cards.set(id, m.identity.personCard(id));
+    const card = cards.get(id);
+    return card ? { personId: id, call: clip(card.call, 40) } : null;
+  };
+  // A turn that sent nothing is read around the last message it heard before
+  // it started (an hour at most, like the context window it opens).
+  const heard = m.db.prepare(
+    "SELECT id FROM events WHERE agent_id=? AND conversation=? AND kind='message.received' AND observed_at>=? AND observed_at<=? ORDER BY seq DESC LIMIT 1",
+  );
   const within = (t, at) => {
     const [a, b] = windowOf(t),
       x = typeof at === "number" ? at : Date.parse(at);
@@ -222,6 +236,7 @@ export function activityPage(
       .map((e) => {
         const b = refs.basis(parse(e.payload));
         return {
+          id: e.id,
           text: clip(e.body, 120),
           action: e.kind === "action.confirmed",
           ...(b ? { basis: b } : {}),
@@ -247,11 +262,15 @@ export function activityPage(
       }));
     const created = intents
       .filter((i) => i.createdIn === t.conversation && within(t, i.createdAt))
-      .map((i) => ({
-        topic: clip(i.topic, 60),
-        target: i.target,
-        status: i.status,
-      }));
+      .map((i) => {
+        const p = person(i.target);
+        return {
+          topic: clip(i.topic, 60),
+          target: i.target,
+          status: i.status,
+          ...(p ? { person: p } : {}),
+        };
+      });
     const decided = intents
       .filter((i) => i.target === t.conversation)
       .flatMap((i) =>
@@ -262,13 +281,33 @@ export function activityPage(
                 h.status,
               ) && within(t, h.at),
           )
-          .map((h) => ({ topic: clip(i.topic, 60), status: h.status })),
+          .map((h) => {
+            const p = person(i.target);
+            return {
+              topic: clip(i.topic, 60),
+              status: h.status,
+              ...(p ? { person: p } : {}),
+            };
+          }),
       );
     const reads = mine.filter(
       (e) => e.kind === "external.read" || e.kind === "github.read",
     ).length;
     const calls = Array.isArray(t.toolCalls) ? t.toolCalls : null;
     const seen = refs.seen(t);
+    // Where this turn's messages sit in the chat: its first sent message (an
+    // action has no place on the message timeline), else what it last heard.
+    const contextId =
+      t.conversation === SUBJECT
+        ? null
+        : mine.find((e) => e.kind === "message.sent")?.id ||
+          heard.get(
+            agentId,
+            t.conversation,
+            iso(t.startedAt - 3600000),
+            iso(t.startedAt + 1000),
+          )?.id ||
+          null;
     return {
       turnId: t.id,
       conversation: t.conversation,
@@ -289,6 +328,7 @@ export function activityPage(
       externalReads: reads,
       diaries: writes,
       intents: { created, decided },
+      contextId,
       ...(seen ? { seen } : {}),
     };
   });
@@ -335,8 +375,17 @@ export function homeSummary(memory, agentId, { now = Date.now() } = {}) {
       )
       .get(agentId)?.value || "{}",
   );
+  // Only a mood still in effect; an expired or cleared one reads as calm.
+  const mood = m.identity.currentMood(now);
   return {
     agentId,
+    mood: mood
+      ? {
+          mood: clip(mood.mood, 40),
+          intensity: mood.intensity,
+          expiresAt: mood.expiresAt,
+        }
+      : null,
     last24h: {
       chatTurns: turns.length - free.length,
       sent: count(

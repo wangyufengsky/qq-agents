@@ -69,6 +69,26 @@ document.addEventListener("open-person-card", (e) => {
   tab = "people";
   render();
 });
+// Other pages name a person and open the card from there. A page with its own
+// role picker (memory, activity, contacts) may show another role than the one
+// selected, so switch to the page's role first.
+function openPersonCard(agentId, personId) {
+  roleId = agentId;
+  document.dispatchEvent(
+    new CustomEvent("open-person-card", { detail: personId }),
+  );
+}
+// "QQ 名（叫「称呼」）" for someone with a card; the call is untrusted text.
+const personCallText = (call) => (call ? `叫「${esc(call)}」` : "未记称呼");
+const personCardButton = (personId) =>
+  `<button type="button" class="ghost person-open" data-open-person="${esc(personId)}" title="打开 QQ ${esc(personId)} 的人物卡">人物卡</button>`;
+function bindPersonCards(root, agentId) {
+  root
+    .querySelectorAll("[data-open-person]")
+    .forEach(
+      (b) => (b.onclick = () => openPersonCard(agentId, b.dataset.openPerson)),
+    );
+}
 function bindPeople(cards, agentId) {
   const drawer = $("#people-drawer");
   if (!drawer) return;
