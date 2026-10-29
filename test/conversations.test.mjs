@@ -97,6 +97,121 @@ test("batch window upgrades wake priority and persists a single merged wake", as
   assert.equal(prompts.length, 1);
   assert.match(prompts[0], /"reason":"mention"/);
 });
+const text = (id, body) =>
+  raw(id, { message: [{ type: "text", data: { text: body } }] });
+test("batch window restarts after each message until the cap", async (t) => {
+  const c = cfg();
+  Object.assign(c.agents[0].behavior, {
+    batchWindowMs: 4000,
+    batchMaxMs: 12000,
+  });
+  let now = Date.parse("2026-10-25T04:00:00Z"),
+    prompts = [];
+  const f = fixture(t, { cfg: c, run: async (p) => prompts.push(p.prompt) });
+  f.runtime.clock = () => new Date(now);
+  const at = async (ms) => {
+    now = Date.parse("2026-10-25T04:00:00Z") + ms;
+    f.runtime.tick();
+    await settle(f.runtime);
+  };
+  await f.runtime.ingest("qq-0", text(1, "第一条"));
+  await at(3000);
+  await f.runtime.ingest("qq-0", text(2, "第二条"));
+  await at(6999);
+  assert.equal(prompts.length, 0);
+  await at(7000);
+  assert.equal(prompts.length, 1);
+  assert.match(prompts[0], /第一条[\s\S]*第二条/);
+  for (const [i, ms] of [20000, 23000, 26000, 29000].entries()) {
+    await at(ms);
+    await f.runtime.ingest("qq-0", text(10 + i, "连发" + i));
+  }
+  await at(31999);
+  assert.equal(prompts.length, 1);
+  await at(32000);
+  assert.equal(prompts.length, 2);
+  assert.match(prompts[1], /连发0[\s\S]*连发3/);
+});
+test("group follow-ups from a batched sender extend the batch without waking on their own", async (t) => {
+  const c = cfg();
+  Object.assign(c.agents[0].behavior, {
+    batchWindowMs: 4000,
+    batchMaxMs: 12000,
+  });
+  c.agents[0].wake.participation = 0;
+  let now = Date.parse("2026-10-25T04:00:00Z"),
+    prompts = [];
+  const f = fixture(t, { cfg: c, run: async (p) => prompts.push(p.prompt) });
+  f.runtime.clock = () => new Date(now);
+  const at = async (ms) => {
+    now = Date.parse("2026-10-25T04:00:00Z") + ms;
+    f.runtime.tick();
+    await settle(f.runtime);
+  };
+  await f.runtime.ingest(
+    "qq-0",
+    raw(1, { message: [{ type: "at", data: { qq: "10000" } }] }),
+  );
+  await at(3000);
+  await f.runtime.ingest("qq-0", text(2, "补充一"));
+  await at(6000);
+  await f.runtime.ingest("qq-0", text(3, "补充二"));
+  await at(8000);
+  await f.runtime.ingest("qq-0", { ...text(4, "旁人插话"), user_id: 30001 });
+  await at(9999);
+  assert.equal(prompts.length, 0);
+  await at(10000);
+  assert.equal(prompts.length, 1);
+  assert.match(prompts[0], /补充一[\s\S]*补充二/);
+  await f.runtime.ingest("qq-0", text(5, "回合后的闲聊"));
+  await at(30000);
+  assert.equal(prompts.length, 1);
+});
+test("batch cap at or below the window keeps the window fixed from the first message", async (t) => {
+  const c = cfg();
+  c.agents[0].behavior.batchWindowMs = 5000;
+  let now = Date.parse("2026-10-25T04:00:00Z"),
+    calls = 0;
+  const f = fixture(t, { cfg: c, run: async () => calls++ });
+  f.runtime.clock = () => new Date(now);
+  await f.runtime.ingest("qq-0", text(1, "第一条"));
+  now += 4000;
+  await f.runtime.ingest("qq-0", text(2, "第二条"));
+  now += 1000;
+  f.runtime.tick();
+  await settle(f.runtime);
+  assert.equal(calls, 1);
+});
+test("chat messages join a queued immediate wake without postponing it", async (t) => {
+  const c = cfg();
+  Object.assign(c.agents[0].behavior, {
+    batchWindowMs: 4000,
+    batchMaxMs: 12000,
+  });
+  let release,
+    calls = 0,
+    now = Date.parse("2026-10-25T04:00:00Z");
+  const f = fixture(t, {
+    cfg: c,
+    run: async () => {
+      calls++;
+      if (calls === 1) await new Promise((r) => (release = r));
+    },
+  });
+  f.runtime.clock = () => new Date(now);
+  const first = f.runtime.wake("agent-0", "group:20000");
+  f.runtime.conversations.request("agent-0", "group:20000", "sleep", {
+    immediate: true,
+  });
+  await f.runtime.ingest("qq-0", text(1, "第一条"));
+  const state = f.store.bind("agent-0").state("group:20000");
+  assert.equal(state.wakeDueAt, now);
+  assert.equal(state.wakeBatchAt, undefined);
+  release();
+  await first;
+  await settle(f.runtime);
+  assert.equal(calls, 2);
+});
 test("finite sleeping timers survive state restoration and wait through a pause", async (t) => {
   const c = cfg();
   let now = Date.parse("2026-10-25T04:00:00Z"),
