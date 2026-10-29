@@ -57,7 +57,8 @@ test("console saves role and optional conversation budgets and explicit schedule
   const values = {
     observe: "300",
     quiet: "10",
-    batch: "0",
+    batch: "4",
+    batchMax: "12",
     reply: "30",
     wakeHour: "60",
     sendMinute: "2",
@@ -68,6 +69,8 @@ test("console saves role and optional conversation budgets and explicit schedule
     speakers: "",
   };
   await submit("#behavior-form", values);
+  assert.equal(saved.agents[0].behavior.batchWindowMs, 4000);
+  assert.equal(saved.agents[0].behavior.batchMaxMs, 12000);
   assert.equal(saved.agents[0].behavior.maxSendPerMinute, 2);
   assert.equal(saved.agents[0].behavior.maxSendPerHour, 10);
   assert.equal(saved.agents[0].behavior.conversationMaxSendPerMinute, 1);

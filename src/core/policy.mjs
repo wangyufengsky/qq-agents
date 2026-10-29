@@ -17,6 +17,7 @@ export const timezone = z.string().refine((s) => {
 export const behaviorSchema = z
   .object({
     batchWindowMs: ms(0, 60000, 0),
+    batchMaxMs: ms(0, 60000, 0),
     maxWakePerMinute: ms(1, 60, 6),
     maxWakePerHour: ms(1, 360, 60),
     noActionLimit: ms(1, 10, 3),

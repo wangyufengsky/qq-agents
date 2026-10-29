@@ -64,8 +64,8 @@ async function renderSchedules() {
     `<details class="card" open><summary>唤醒与回复节奏</summary><form id="behavior-form"><p class="hint">除了被 @、私聊和提到名字，下面这些也会让角色醒来看看。主动检查与联系范围在「Self 与主体」中设置。</p><div class="form-grid">
     ${parityField("keywords", "关键词（逗号分隔）", a.wake.keywords.join(","))}${parityField("speakers", "指定发言者 QQ（逗号分隔）", a.wake.speakerIds.join(","))}
     ${parityCheck("poke", "拍一拍唤醒", a.wake.poke)}${parityCheck("joins", "有人入群时唤醒", a.wake.joins)}
-    ${parityNumber("quiet", "新消息后等安静（秒）", b.quietAfterNewMs / 1000)}${parityNumber("batch", "合并唤醒窗口（秒）", b.batchWindowMs / 1000)}
-    </div>${advanced(
+    ${parityNumber("quiet", "新消息后等安静（秒）", b.quietAfterNewMs / 1000)}${parityNumber("batch", "合并唤醒：每条后等待（秒）", b.batchWindowMs / 1000)}${parityNumber("batchMax", "合并唤醒：最长等待（秒）", b.batchMaxMs / 1000)}
+    </div><p class="hint">合并唤醒时每来一条消息都重新等待，从第一条算起不超过最长等待；最长等待不大于每条后等待时，从第一条起固定等待。</p>${advanced(
       "高级设置：观察、回复检查与投递额度",
       `${parityNumber("observe", "睡前观察（秒；0 关闭要求）", b.preSleepWaitMs / 1000)}${parityNumber("reply", "发言后回复检查（秒）", b.replyCheckMs / 1000, 1)}
     ${parityNumber("wakeHour", "单会话每小时唤醒上限", b.maxWakePerHour, 1)}${parityNumber("sendMinute", "角色总投递上限／分钟", b.maxSendPerMinute, 1)}${parityNumber("sendHour", "角色总投递上限／小时", b.maxSendPerHour, 1)}
@@ -108,6 +108,7 @@ async function renderSchedules() {
         preSleepWaitMs: num("observe") * 1000,
         quietAfterNewMs: num("quiet") * 1000,
         batchWindowMs: num("batch") * 1000,
+        batchMaxMs: num("batchMax") * 1000,
         replyCheckMs: num("reply") * 1000,
         maxWakePerHour: num("wakeHour"),
         maxSendPerHour: num("sendHour"),

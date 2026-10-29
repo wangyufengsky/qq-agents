@@ -75,6 +75,11 @@ export class ConversationEngine {
     const a = this.runtime.agent(id),
       state = this.state(id, conversation),
       now = this.now();
+    // Timers left behind by wakes that were dropped elsewhere must not shape a new batch.
+    if (!state.pendingWakes?.length) {
+      delete state.wakeDueAt;
+      delete state.wakeBatchAt;
+    }
     state.pendingWakes ||= [];
     const existing = state.pendingWakes.find(
       (x) =>
@@ -98,8 +103,25 @@ export class ConversationEngine {
         .filter((x) => !x.taskRunId && !x.intentId)
         .slice(-20);
     state.pendingWakes = [...tasks, ...ordinary];
-    state.wakeDueAt ??= immediate ? now : now + a.behavior.batchWindowMs;
-    if (immediate) state.wakeDueAt = Math.min(state.wakeDueAt, now);
+    if (immediate) {
+      // Later chat wakes may join an immediate wake but never postpone it.
+      delete state.wakeBatchAt;
+      state.wakeDueAt = Math.min(state.wakeDueAt ?? now, now);
+    } else if (
+      state.wakeDueAt === undefined ||
+      state.wakeBatchAt !== undefined
+    ) {
+      // Wait batchWindowMs after the latest wake, at most batchMaxMs after the first;
+      // a cap below the window keeps the window fixed from the first wake.
+      const { batchWindowMs, batchMaxMs } = a.behavior;
+      state.wakeBatchAt ??= now;
+      const due = Math.min(
+        state.wakeBatchAt + Math.max(batchWindowMs, batchMaxMs),
+        now + batchWindowMs,
+      );
+      // A later rate-limit retry stays in place.
+      state.wakeDueAt = Math.max(state.wakeDueAt ?? due, due);
+    }
     this.write(id, conversation, state);
     return this.flush(id, conversation);
   }
@@ -152,6 +174,7 @@ export class ConversationEngine {
     });
     state.pendingWakes = [];
     delete state.wakeDueAt;
+    delete state.wakeBatchAt;
     if (!pending.length) {
       this.write(id, conversation, state);
       return { skipped: true };
