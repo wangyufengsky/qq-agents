@@ -37,7 +37,17 @@ jobs:
         if: runner.os == 'Windows'
         timeout-minutes: 8
         run: |
-          choco install ffmpeg -y --no-progress
+          # The package CDN remains available when the NuGet query feed returns 503/504.
+          # Keep the official package and checksum pinned; install from a local source.
+          $version = '9.0.2'
+          $packageDir = Join-Path $env:RUNNER_TEMP 'qq-agents-media-packages'
+          New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
+          $package = Join-Path $packageDir "ffmpeg.$version.nupkg"
+          Invoke-WebRequest -Uri "https://community.chocolatey.org/api/v2/package/ffmpeg/$version" -OutFile $package -TimeoutSec 120 -MaximumRetryCount 3 -RetryIntervalSec 5
+          $expected = '5c8a22a97405200056d7672b07a25acc4f03efe0cac85c3f38349e2190bf7033'
+          if ((Get-FileHash $package -Algorithm SHA256).Hash -ne $expected) { throw 'FFmpeg package checksum mismatch' }
+          choco install ffmpeg --version $version --source $packageDir -y --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "FFmpeg installation failed: $LASTEXITCODE" }
           ffmpeg -version | Select-Object -First 1
           ffprobe -version | Select-Object -First 1
       - run: npm ci

@@ -3,10 +3,59 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { temp } from "./helpers.mjs";
 import { MemoryStore } from "../src/memory/store.mjs";
 import { restoreExport } from "../src/memory/migrate.mjs";
+import { streamExport } from "../src/memory/export.mjs";
+
+for (const reason of ["abort", "disconnect"])
+  test(`export ${reason} settles while a destination write callback is pending`, async (t) => {
+    const controller = new AbortController();
+    let releaseWrite, exporting, started;
+    // Release the synthetic stalled write even when an assertion fails, before
+    // the temp directory is removed (an open source handle matters on Windows).
+    t.after(async () => {
+      controller.abort(Error("TEST_CLEANUP"));
+      releaseWrite?.();
+      await exporting?.catch(() => {});
+    });
+    const file = path.join(temp(t), "source.json");
+    fs.writeFileSync(file, "x".repeat(65536));
+    const writing = new Promise((resolve) => (started = resolve));
+    const destination = new Writable({
+      write(_chunk, _encoding, callback) {
+        releaseWrite = callback;
+        started();
+      },
+    });
+    exporting = streamExport(file, destination, controller.signal);
+    exporting.catch(() => {});
+    await writing;
+    const message =
+      reason === "abort" ? "EXPORT_CANCELLED" : "DOWNLOAD_DISCONNECTED";
+    if (reason === "abort") controller.abort(Error(message));
+    else destination.destroy(Error(message));
+    let deadline;
+    try {
+      await assert.rejects(
+        Promise.race([
+          exporting,
+          new Promise((_, reject) => {
+            deadline = setTimeout(
+              () => reject(Error("EXPORT_DID_NOT_CANCEL")),
+              1000,
+            );
+          }),
+        ]),
+        new RegExp(message),
+      );
+    } finally {
+      clearTimeout(deadline);
+    }
+    assert.equal(destination.destroyed, true);
+  });
 
 const cli = fileURLToPath(new URL("../scripts/export.mjs", import.meta.url));
 const run = (root, file, restore = false) =>
