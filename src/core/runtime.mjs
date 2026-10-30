@@ -275,12 +275,13 @@ export class Runtime {
               ...CHAT_MIND_TOOLS,
             ]),
           ];
+    const imageGeneration = backendCapabilities(
+      this.config.backends.find((b) => b.id === a.backendId)?.type,
+    ).imageGeneration;
     if (
       conversation !== SUBJECT &&
       selected.includes("qq_send") &&
-      backendCapabilities(
-        this.config.backends.find((b) => b.id === a.backendId)?.type,
-      ).imageGeneration
+      imageGeneration
     )
       selected.push("generated_image_list");
     // Reading back one's own library goes with listing it: enabling files
@@ -289,8 +290,10 @@ export class Runtime {
     if (selected.includes("file_list")) selected.push("file_read");
     if (conversation !== SUBJECT && selected.includes("qq_send"))
       selected.push("qq_delivery_status");
-    return [...new Set(selected)].filter((name) =>
-      toolAvailable(a, name, conversation),
+    return [...new Set(selected)].filter(
+      (name) =>
+        toolAvailable(a, name, conversation) &&
+        (name !== "generated_image_list" || imageGeneration),
     );
   }
   // Every gate that keeps an agent from speaking. Without a conversation, only

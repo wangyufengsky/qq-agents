@@ -17,6 +17,7 @@ const browserScripts = {
     "$",
     "action",
     "advanced",
+    "agentDefaults",
     "api",
     "area",
     "blockerLabels",

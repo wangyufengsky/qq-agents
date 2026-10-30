@@ -63,6 +63,16 @@ export function config(n = 3) {
         "qq_mark_read",
         "qq_set_silence",
       ],
+      // Most fixtures exercise explicit, restricted permissions. Product
+      // defaults are covered independently in capability-defaults.test.mjs.
+      network: { autonomous: false },
+      apps: { enabled: false, sharing: false, platforms: [] },
+      files: { enabled: false },
+      github: { enabled: false },
+      scheduler: { enabled: false },
+      voice: { tts: { enabled: false } },
+      crossGroup: { enabled: false },
+      operations: { enabled: false },
     })),
   });
 }

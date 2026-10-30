@@ -153,11 +153,18 @@ export async function runDoctor({
     );
   }
   const lookup = { ...secrets, ...env };
+  // Optional capabilities are enabled on new roles before their services are
+  // configured. Missing capability credentials should not fail chat setup.
+  const chatSecrets = new Set(referencedSecrets({ ...config, agents: [] }));
   for (const name of referencedSecrets(config))
     add(
       "secret:" + name,
-      lookup[name] ? "ok" : "fail",
-      lookup[name] ? "set" : "missing",
+      lookup[name] ? "ok" : chatSecrets.has(name) ? "fail" : "warn",
+      lookup[name]
+        ? "set"
+        : chatSecrets.has(name)
+          ? "missing"
+          : "missing (needed for the enabled GitHub/operations capability)",
       lookup[name] ? undefined : `npm run setup -- secret ${name}`,
     );
 

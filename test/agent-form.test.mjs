@@ -1,4 +1,5 @@
 import test from "node:test";
+import { defaultAgentCapabilities } from "../src/core/default-config.mjs";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import vm from "node:vm";
@@ -42,6 +43,7 @@ test("managed groups match the tools their pages rewrite", () => {
 // built markup the way a form submission would.
 function editor(config, toolNames = TOOL_NAMES) {
   const element = {
+    showModal() {},
     addEventListener() {},
     querySelectorAll: () => [],
     classList: { add() {}, remove() {}, toggle() {} },
@@ -62,19 +64,44 @@ function editor(config, toolNames = TOOL_NAMES) {
     clearTimeout() {},
     fetch: () => new Promise(() => {}),
     URLSearchParams,
+    structuredClone,
   });
   for (const file of ["app.js", "agent-form.js"])
     vm.runInContext(
       fs.readFileSync(new URL(`../public/${file}`, import.meta.url), "utf8"),
       sandbox,
     );
-  sandbox.fixture = { config, tools: toolNames };
+  sandbox.fixture = {
+    config,
+    tools: toolNames,
+    defaults: defaultAgentCapabilities(),
+  };
   vm.runInContext(
-    "config = fixture.config; tools = fixture.tools; status = { mode: 'isolated' };",
+    "config = fixture.config; tools = fixture.tools; agentDefaults = fixture.defaults; status = { mode: 'isolated' };",
     sandbox,
   );
   return (code) => vm.runInContext(code, sandbox);
 }
+
+test("the add-role form uses server capability defaults and preserves them on save", async () => {
+  const run = editor(await sampleConfig());
+  run("agentForm.bind = () => {}; openEditor('agents');");
+  const row = run("editing.row");
+  assert.deepEqual(Array.from(row.tools), TOOL_NAMES);
+  const html = run(
+    "agentForm.build(editing.row, input('id', '稳定 ID', '', 'required'))",
+  );
+  const parsed = run("agentForm.parse.bind(agentForm)")(
+    formOf(html, { id: "agent-c", name: "测试三" }),
+    row,
+  ).row;
+  for (const key of Object.keys(defaultAgentCapabilities()))
+    assert.deepEqual(
+      JSON.parse(JSON.stringify(parsed[key])),
+      defaultAgentCapabilities()[key],
+      key,
+    );
+});
 
 const unescape = (s) =>
   s.replace(

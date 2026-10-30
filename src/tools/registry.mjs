@@ -1,4 +1,5 @@
 import { definitions } from "./definitions.mjs";
+import { TOOL_NAMES } from "./names.mjs";
 import { coreHandlers } from "./core-handlers.mjs";
 import { appDefinitions, appTool } from "../apps/tools.mjs";
 import { githubDefinitions, githubTool } from "../github/tools.mjs";
@@ -28,6 +29,9 @@ for (const [group, dispatch] of [
     handlers[name] = (runtime, ctx, args) => dispatch(runtime, ctx, name, args);
   }
 if (
+  new Set(TOOL_NAMES).size !== TOOL_NAMES.length ||
+  TOOL_NAMES.length !== Object.keys(definitions).length ||
+  TOOL_NAMES.some((name) => !Object.hasOwn(definitions, name)) ||
   Object.keys(handlers).length !== Object.keys(definitions).length ||
   Object.keys(definitions).some((name) => typeof handlers[name] !== "function")
 )
