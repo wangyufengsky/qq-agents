@@ -38,7 +38,13 @@ export function listConsoleProjects(memory, input) {
       status: p.status,
       revision: p.revision,
       updatedAt: p.updatedAt,
-      activity: p.activity,
+      activity: p.activity && {
+        ...p.activity,
+        administratorAcknowledged: undefined,
+        administratorAcknowledgedCount: (
+          p.activity.administratorAcknowledged || []
+        ).length,
+      },
       latest: p.steps[0]?.did || "",
       fileCount: p.files.length,
       next: p.next,

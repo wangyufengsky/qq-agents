@@ -85,7 +85,7 @@ jobs:
             sleep 1
           done
           token=$(docker exec qq-agents-ci cat /data/admin-token)
-          curl -fsS --retry 10 --retry-connrefused --retry-delay 1 \
+          curl -fsS --retry 10 --retry-connrefused --retry-all-errors --retry-delay 1 \
             -H "x-admin-token: $token" http://127.0.0.1:3210/api/status \
             | grep -q '"mode":"isolated"'
           test "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: 192.0.2.1:3210' http://127.0.0.1:3210/api/status)" = 403

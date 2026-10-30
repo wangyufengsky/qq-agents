@@ -165,12 +165,14 @@ async function api(url, data, method) {
       }[value.error] ||
       value.error ||
       "请求失败";
-    throw Error(
+    const error = Error(
       hint +
         (value.requestId && value.error !== "UNAUTHORIZED"
           ? `（关联 ID：${value.requestId}）`
           : ""),
     );
+    error.code = value.error;
+    throw error;
   }
   return value;
 }

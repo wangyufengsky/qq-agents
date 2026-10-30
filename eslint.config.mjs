@@ -60,6 +60,7 @@ const browserScripts = {
     "documentMarkdown",
     "downloadDocument",
   ],
+  "project-participation.js": ["bindProjectParticipation"],
   "mind-ui.js": ["mindAgentId", "renderMind"],
   "projects-ui.js": [
     "projectAgentId",

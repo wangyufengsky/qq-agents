@@ -1,3 +1,4 @@
+import { acknowledgeActivity } from "./activity-acknowledgements.mjs";
 import { z } from "zod";
 import { humanInput } from "../core/input-progress.mjs";
 
@@ -14,10 +15,21 @@ const pending = z
   )
   .max(10);
 export const activityFields = {
+  administratorRead: z
+    .object({
+      revisions: z.array(z.number().int().min(1)).min(1).max(20),
+      summary: z.string().trim().min(1).max(240),
+    })
+    .strict()
+    .optional(),
   shared: z
     .object({
-      participants: z.array(person).min(1).max(8).optional(),
-      turn: z.union([z.literal("agent"), person]).optional(),
+      participants: z
+        .array(z.string().regex(/^(?:\d{5,12}|administrator)$/))
+        .min(1)
+        .max(9)
+        .optional(),
+      turn: z.union([z.enum(["agent", "administrator"]), person]).optional(),
       pending: pending.optional(),
     })
     .strict()
@@ -67,6 +79,10 @@ export function activityForTurn(memory, conversation) {
       ...activityBrief(p),
       pending: undefined,
       pendingCount: p.activity.pending.length,
+      administratorAcknowledged: undefined,
+      administratorAcknowledgedCount: (
+        p.activity.administratorAcknowledged || []
+      ).length,
     }));
 }
 export function activityVersion(memory, id, revision) {
@@ -81,11 +97,28 @@ export function activityVersion(memory, id, revision) {
 export function writeActivity(runtime, ctx, args, old) {
   const memory = runtime.memory.bind(ctx.agentId);
   if (
-    !/^(group|private):/.test(ctx.conversation) ||
+    (!/^(group|private):/.test(ctx.conversation) &&
+      !(
+        old?.activity?.mode === "console" && ctx.conversation === "@subject"
+      )) ||
     (old && !activityVisible(old, ctx.conversation))
   )
     throw Error("ACTIVITY_SCOPE_REQUIRED");
   if (old && !old.activity) throw Error("ACTIVITY_CANNOT_CONVERT");
+  if (args.administratorRead)
+    return acknowledgeActivity(runtime, ctx, args, old);
+  const administratorRevisions = old?.activity.administratorRevisions || [];
+  const acknowledged = old?.activity.administratorAcknowledged || [];
+  if (
+    (acknowledged.length &&
+      !ctx.activityProjectRevisionsRead?.has(`${old.id}:${old.revision}`)) ||
+    administratorRevisions.some(
+      (rev) => !ctx.activityAdministratorRead?.has(`${old.id}:${rev}`),
+    )
+  )
+    throw Error("ACTIVITY_READ_ADMINISTRATOR_FIRST");
+  const administratorInput =
+    administratorRevisions.length + acknowledged.length > 0;
   const source =
     args.participantEventId &&
     humanInput(runtime, ctx, args.participantEventId);
@@ -114,6 +147,8 @@ export function writeActivity(runtime, ctx, args, old) {
     // (agreeing to join vs mentioning a name) remain the model's responsibility.
     if (
       !source ||
+      participants.length > 8 ||
+      participants.includes("administrator") ||
       participants.some(
         (id) =>
           ![...(ctx.requestEvents || [])].some(
@@ -139,6 +174,7 @@ export function writeActivity(runtime, ctx, args, old) {
   if (
     old?.activity.turn &&
     old.activity.turn !== "agent" &&
+    !(old.activity.turn === "administrator" && administratorInput) &&
     (!source || source.sender_id !== old.activity.turn)
   )
     throw Error("ACTIVITY_WAITING_FOR_PARTICIPANT");
@@ -148,7 +184,8 @@ export function writeActivity(runtime, ctx, args, old) {
     args.shared?.pending &&
     JSON.stringify(args.shared.pending) !==
       JSON.stringify(old.activity.pending) &&
-    !source
+    !source &&
+    !administratorInput
   )
     throw Error("ACTIVITY_DECISION_NEEDS_HUMAN");
   const turn = args.shared?.turn ?? old?.activity.turn ?? "agent";
@@ -166,6 +203,10 @@ export function writeActivity(runtime, ctx, args, old) {
   return memory.store.transaction(() => {
     const rev = (old?.revision || 0) + 1;
     const activity = {
+      ...(old?.activity || {}),
+      ...(old?.activity.administratorRevisions
+        ? { administratorRevisions: [], administratorAcknowledged: [] }
+        : {}),
       participants,
       conversation: old?.activity.conversation || ctx.conversation,
       turn,
@@ -199,6 +240,14 @@ export function writeActivity(runtime, ctx, args, old) {
         ...new Set([...(args.evidence || []), ...(source ? [source.id] : [])]),
       ],
       files: args.files || [],
+      ...(administratorInput
+        ? {
+            administratorContributions: [
+              ...acknowledged.map((entry) => entry.revision),
+              ...administratorRevisions,
+            ],
+          }
+        : {}),
       ...(args.draft ? { draft: args.draft, draftAuthor: "agent" } : {}),
       ...(source
         ? {
@@ -282,6 +331,18 @@ export function readProjects(runtime, ctx, args) {
       if (end >= text.length) (ctx.activityDraftsRead ??= new Set()).add(key);
     }
   }
+  if (
+    entry.contribution?.kind === "administrator" &&
+    entry.contribution.text.length <= args.maxChars &&
+    (!entry.draft ||
+      ctx.activityDraftsRead?.has(`${project.id}:${entry.revision}`))
+  )
+    (ctx.activityAdministratorRead ??= new Set()).add(
+      `${project.id}:${entry.revision}`,
+    );
+  (ctx.activityProjectRevisionsRead ??= new Set()).add(
+    `${project.id}:${entry.revision}`,
+  );
   for (const id of [
     ...(entry.evidence || []),
     ...(draftEntry?.evidence || []),
@@ -293,6 +354,8 @@ export function readProjects(runtime, ctx, args) {
     project,
     version: {
       ...entry,
+      submission: undefined,
+      previousProject: undefined,
       draft: undefined,
       ...(entry.contribution
         ? {
@@ -300,7 +363,15 @@ export function readProjects(runtime, ctx, args) {
               ...entry.contribution,
               text: entry.contribution.text.slice(0, args.maxChars),
               truncated: entry.contribution.text.length > args.maxChars,
-              read: { tool: "memory_read", id: entry.contribution.eventId },
+              read:
+                entry.contribution.kind === "administrator"
+                  ? {
+                      tool: "projects",
+                      id: project.id,
+                      revision: entry.revision,
+                      maxChars: 8000,
+                    }
+                  : { tool: "memory_read", id: entry.contribution.eventId },
             },
           }
         : {}),
@@ -330,6 +401,6 @@ export function readProjects(runtime, ctx, args) {
     nextHistoryOffset:
       args.historyOffset + 10 < total ? args.historyOffset + 10 : null,
     notice:
-      "正文必须按 nextOffset 读完才可改写；history 是索引，原始贡献在指定 version 中。",
+      "正文必须按 nextOffset 读完才可改写；history 是索引，原始贡献在指定 version 中。administratorRevisions 中每个修订用 projects(id,revision,maxChars:16000) 完整读文字贡献及该修订改稿；积压时用 project.administratorRead:{revisions,summary} 分批确认本轮读全的贡献，不混入其他修改。administratorAcknowledged 保留已读待处理摘要；跨回合继续须先读当前项目，摘要直到实际推进才清除；管理员贡献不是 QQ 来信，不增加回复或发送授权。",
   };
 }
