@@ -47,6 +47,7 @@ const titles = {
   connections: ["QQ 账号", "每个 QQ 账号独立连接，启停连接不影响登录数据。"],
   backends: ["AI 后端", "管理 DSH、Codex 与各自的模型和工具。"],
   memory: ["经历与日记", "消息按实际发生记录；日记由 AI 自主书写。"],
+  updates: ["版本更新", "查看官方版本、更新说明和升级方式。"],
   settings: ["运行设置", "隔离开发、全局参与边界与可迁移配置。"],
 };
 // Config path below "<agents|connections|backends>.<index>." → editor input
@@ -538,7 +539,7 @@ const sections = {
     ],
   },
   links: { pages: ["links"] },
-  system: { pages: ["operations", "settings"] },
+  system: { pages: ["operations", "updates", "settings"] },
 };
 const pageLabels = {
   activity: "动态",
@@ -555,6 +556,7 @@ const pageLabels = {
   permissions: "文件",
   voices: "语音",
   operations: "受保护工作",
+  updates: "版本更新",
   settings: "运行设置",
 };
 const lastPage = {};
@@ -615,6 +617,8 @@ function renderSectionBar(section) {
 }
 function render() {
   renderGlobalPauseControl();
+  if (typeof renderUpdateBadge === "function")
+    renderUpdateBadge(status?.updateNotice);
   // Older links name the pages that were merged into one.
   if (["connections", "backends"].includes(tab)) tab = "links";
   const section = sectionOf(tab);
@@ -691,6 +695,8 @@ function render() {
     content.innerHTML =
       group("connections", "QQ 账号", connectionCard) +
       group("backends", "AI 后端", backendCard);
+  } else if (tab === "updates") {
+    renderUpdates();
   } else if (tab === "activity") {
     renderActivity();
   } else if (tab === "apps") {
