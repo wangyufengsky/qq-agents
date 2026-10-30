@@ -54,13 +54,22 @@ export function gitVersion(root) {
         timeout: 2000,
         stdio: ["ignore", "pipe", "ignore"],
       }).trim();
-    if (
-      path.relative(
-        fs.realpathSync(root),
-        fs.realpathSync(run(["rev-parse", "--show-toplevel"])),
-      ) !== ""
-    )
-      return null;
+    const actualRoot = fs.realpathSync(root);
+    const gitRoot = fs.realpathSync(run(["rev-parse", "--show-toplevel"]));
+    if (path.relative(actualRoot, gitRoot) !== "") {
+      // Windows 8.3 aliases can survive realpath (RUNNER~1 vs runneradmin).
+      // Matching nonzero file IDs identify the same directory, not its parent.
+      const actual = fs.statSync(actualRoot, { bigint: true });
+      const repository = fs.statSync(gitRoot, { bigint: true });
+      if (
+        !actual.isDirectory() ||
+        !repository.isDirectory() ||
+        actual.ino === 0n ||
+        actual.dev !== repository.dev ||
+        actual.ino !== repository.ino
+      )
+        return null;
+    }
     const commit = run(["rev-parse", "HEAD"]);
     if (!commitPattern.test(commit)) return null;
     return {
