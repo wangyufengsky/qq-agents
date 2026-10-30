@@ -47,7 +47,8 @@
     "defaults:check": "node scripts/default-config.mjs",
     "defaults:write": "node scripts/default-config.mjs --write",
     "scheduling:benchmark": "node scripts/scheduling-benchmark.mjs",
-    "framework:build": "node scripts/framework-build.mjs"
+    "framework:build": "node scripts/framework-build.mjs",
+    "managed": "node src/updates/supervisor.mjs"
   },
   "dependencies": {
     "@deepseek-ai/dsh-host-apiproxy": "0.1.1-rc.2",
@@ -74,5 +75,6 @@
     "vendor",
     "docs",
     "NOTICE.md"
-  ]
+  ],
+  "qqAgentsUpdateProtocol": 1
 }

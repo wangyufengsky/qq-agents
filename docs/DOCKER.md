@@ -195,6 +195,8 @@ docker compose start qq-agents
 
 ## 升级与备份
 
+镜像内置独立启动器，可在数据卷中升级应用代码。构建时传入 `SOURCE_COMMIT` 完整提交 SHA，管理台即可核对安装身份；提交未知、代码历史分叉或新版修改 Dockerfile 时使用下面的镜像重建流程。管理台升级不会改变镜像中的 Node.js、FFmpeg 或其他系统依赖，详见 [版本更新与恢复](UPDATES.md)。
+
 ```sh
 git pull
 docker compose up -d --build

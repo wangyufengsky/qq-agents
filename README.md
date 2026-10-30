@@ -205,7 +205,7 @@ node src/main.mjs --data /path/to/private-data --port 3210
 
 **历史记录**
 
-- [版本更新与升级](docs/UPDATES.md)：检查官方新版、管理提醒与备份升级。
+- [版本更新与升级](docs/UPDATES.md)：检查官方新版、开启一键升级与失败恢复。
 - [更新日志](CHANGELOG.md)：按版本和轮次列出变化，并链接到 [`docs/history/`](docs/history/) 中的验收、审查和讨论记录。
 
 ## 术语表

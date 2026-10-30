@@ -181,6 +181,7 @@ export function createServer({
     const readBody = async (limit) => {
       const data = await body(req, limit);
       if (stopping || runtime.closed) throw Error("RUNTIME_CLOSING");
+      if (runtime.updateMaintenance) throw Error("UPDATE_IN_PROGRESS");
       return data;
     };
     try {
@@ -600,14 +601,39 @@ export function createServer({
       }
       if (url.pathname.startsWith("/api/updates")) {
         if (!runtime.updates) throw Error("UPDATE_UNAVAILABLE");
+        const snapshot = () => ({
+          ...runtime.updates.snapshot(),
+          upgrade: runtime.upgradeManager?.snapshot() || {
+            managed: false,
+            phase: "idle",
+          },
+        });
         if (req.method === "GET" && url.pathname === "/api/updates")
-          return send(runtime.updates.snapshot());
+          return send(snapshot());
+        if (req.method === "POST" && url.pathname === "/api/updates/install") {
+          const data = z
+            .object({ tag: z.string().max(80) })
+            .strict()
+            .parse(await readBody(1024));
+          if (!runtime.upgradeManager)
+            throw Error("UPDATE_MANAGED_START_REQUIRED");
+          const available = runtime.updates.snapshot();
+          if (
+            data.tag !== available.latest?.tag ||
+            available.comparison !== "available"
+          )
+            throw Error("UPDATE_RELEASE_CHANGED");
+          return send(await runtime.upgradeManager.install(data.tag), 202);
+        }
         if (req.method === "POST" && url.pathname === "/api/updates/check") {
           await readBody(1024);
-          return send(await runtime.updates.check());
+          await runtime.updates.check();
+          return send(snapshot());
         }
-        if (req.method === "PUT" && url.pathname === "/api/updates/settings")
-          return send(runtime.updates.configure(await readBody(1024)));
+        if (req.method === "PUT" && url.pathname === "/api/updates/settings") {
+          runtime.updates.configure(await readBody(1024));
+          return send(snapshot());
+        }
       }
       if (req.method === "GET" && url.pathname === "/api/status") {
         const status = runtime.status();
