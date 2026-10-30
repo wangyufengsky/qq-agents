@@ -61,6 +61,7 @@ export function chatHistory(history) {
         "mentions",
         "replyToMessageIds",
         "voiceTranscript",
+        "qqFaces",
         "sourceEventId",
         "outcome",
         "notice",
