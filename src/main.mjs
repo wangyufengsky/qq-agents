@@ -1,3 +1,7 @@
+import {
+  attachManagedUpdates,
+  assertManagedOwner,
+} from "./updates/managed-client.mjs";
 import { ReleaseUpdates } from "./updates/releases.mjs";
 import { Diagnostics } from "./core/diagnostics.mjs";
 import { FrameworkKnowledge } from "./core/framework-knowledge.mjs";
@@ -58,6 +62,7 @@ try {
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
   // Same rule as scripts/robots.mjs: secrets.json fills variables the shell
   // did not set, so `npm start` works the same on Windows, Linux and Docker.
+  assertManagedOwner(root, args.includes("--managed-updates"));
   applyLocalSecrets(root);
   lifecycle.lock = acquireProcessLock(root);
   const configStore = new ConfigStore(
@@ -94,6 +99,7 @@ try {
     memory,
     backendFactory: (c, a) => registry.create(c, a, { root }),
   }));
+  runtime.updateMaintenance = args.includes("--upgrade-hold");
   runtime.media = new MediaStore(path.join(root, "media"));
   runtime.framework = new FrameworkKnowledge();
   runtime.updates = new ReleaseUpdates({
@@ -122,6 +128,13 @@ try {
   runtime.autoResume = new AutoResume(runtime, { enabled: resume });
   runtime.startTimers();
   if (resume) void runtime.trackJob(runtime.autoResume.run(), "auto-resume");
+  if (args.includes("--managed-updates"))
+    runtime.upgradeManager = attachManagedUpdates({
+      runtime,
+      lifecycle,
+      installed: runtime.framework.version,
+      port,
+    });
   console.log(
     `QQ Agents: http://127.0.0.1:${publicPort ?? port} | ${configStore.value.mode} | ${resume ? "paused, resuming once QQ and backends are ready" : "paused"} | admin token file: ${tokenFile}`,
   );

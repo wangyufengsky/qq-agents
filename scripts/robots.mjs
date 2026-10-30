@@ -122,7 +122,12 @@ async function start() {
       path.join(root, `stale-process-lock-${Date.now()}.json`),
     );
   }
-  const entry = path.join(codeRoot, "src/main.mjs");
+  const entry = path.join(
+    codeRoot,
+    deployment.managedUpdates === true
+      ? "src/updates/supervisor.mjs"
+      : "src/main.mjs",
+  );
   if (!fs.existsSync(entry)) throw Error("DEPLOYED_CODE_MISSING");
   const secretsFile = path.join(root, "secrets.json");
   const secrets = fs.existsSync(secretsFile) ? readJson(secretsFile) : {};
@@ -178,7 +183,10 @@ async function stop() {
       throw Error("UNMANAGED_BRIDGE_REQUIRES_EXPLICIT_MIGRATION");
     return;
   }
-  await api("pause", { paused: true });
+  // A managed upgrade can temporarily close HTTP or hold the mutation gate.
+  // Its verified supervisor still owns graceful stop and transaction recovery.
+  if (!r.command.includes("src/updates/supervisor.mjs"))
+    await api("pause", { paused: true });
   process.kill(r.pid, "SIGTERM");
   for (let i = 0; i < 60 && processIdentity(r.pid); i++) await sleep(500);
   if (processIdentity(r.pid)) throw Error("BRIDGE_STOP_INCOMPLETE");
