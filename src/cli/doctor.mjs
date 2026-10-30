@@ -254,12 +254,12 @@ export async function runDoctor({
         // is out of reach (another container, a non-default port).
         if (
           (running || fs.existsSync(path.join(root, "process.lock"))) &&
-          b.type === "codex"
+          ["codex", "antigravity"].includes(b.type)
         ) {
           add(
             "backend:" + b.id,
             "skip",
-            "a console holds this data directory; a second Codex app-server would share its home",
+            "a console holds this data directory; another CLI process would share its managed profile",
             "在管理台「连接」页对该后端执行“检测连接”",
           );
           continue;

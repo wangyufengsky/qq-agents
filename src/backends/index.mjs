@@ -2,11 +2,12 @@
 import { CodexBackend } from "./codex.mjs";
 import { DshBackend } from "./dsh.mjs";
 import { OpenAIBackend } from "./openai.mjs";
+import { AntigravityBackend } from "./antigravity.mjs";
 
 export { BACKEND_CAPABILITIES, backendCapabilities } from "./capabilities.mjs";
 
 /**
- * @typedef {DshBackend | CodexBackend | OpenAIBackend} Backend
+ * @typedef {DshBackend | CodexBackend | OpenAIBackend | AntigravityBackend} Backend
  * @typedef {(config: import("./session-contract.mjs").BackendConfig,
  *   agent: import("./session-contract.mjs").BackendAgent, options?: any) => Backend} BackendFactory
  */
@@ -18,6 +19,7 @@ export class BackendRegistry {
         ["dsh", (c, a, o) => new DshBackend(c, a, o)],
         ["codex", (c, a, o) => new CodexBackend(c, a, o)],
         ["openai", (c, a, o) => new OpenAIBackend(c, a, o)],
+        ["antigravity", (c, a, o) => new AntigravityBackend(c, a, o)],
       ]),
     );
   }

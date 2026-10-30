@@ -19,8 +19,8 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - name: Check Windows framework identity before the full suite
-        run: node --test test/framework.test.mjs
+      - name: Check Windows framework identity and CLI isolation before the full suite
+        run: node --test --test-timeout=120000 test/framework.test.mjs test/antigravity-backend.test.mjs
   verify:
     needs: framework-windows
     strategy:

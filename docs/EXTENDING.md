@@ -63,6 +63,8 @@ QQ Agents 是一个可以直接部署的应用，不是 SDK。它留了三个有
 - **只暴露 `tools` 里的工具。** 不要给模型 shell、文件系统或供应商自带的工具；OpenAI 兼容后端只把 `tools` 转成 function calling。
 - **错误不要带原文。** 供应商的错误正文、HTML、工具参数都可能含密钥或聊天内容，只保留状态码和协议定义的错误码。`OpenAIBackend.request` 是可以照抄的写法。
 
+Antigravity 通过每回合临时 MCP 入口返回 `callTool`，并用原生 hook 限制工具；其会话和取消约束见 [Antigravity 指南](ANTIGRAVITY.md)。
+
 ### 声明能力
 
 在 `src/backends/capabilities.mjs` 的 `BACKEND_CAPABILITIES` 里为新类型加一行：
@@ -72,6 +74,7 @@ export const BACKEND_CAPABILITIES = {
   dsh: { compaction: true, imageGeneration: false },
   codex: { compaction: true, imageGeneration: true },
   openai: { compaction: false, imageGeneration: false },
+  antigravity: { compaction: false, imageGeneration: false },
   // mybackend: { compaction: false, imageGeneration: false },
 };
 ```
@@ -80,7 +83,7 @@ export const BACKEND_CAPABILITIES = {
 
 ### 注册
 
-`src/backends/index.mjs` 的 `BackendRegistry` 构造时登记了 `dsh`、`codex`、`openai` 三个工厂，另有 `register(type, factory)`，类型重复时抛 `BACKEND_ALREADY_REGISTERED`，未登记的类型在创建时抛 `BACKEND_NOT_REGISTERED`。注册表实例在 `src/main.mjs` 中创建并传给 `Runtime`，因此可以二选一：
+`src/backends/index.mjs` 的 `BackendRegistry` 构造时登记了 `dsh`、`codex`、`openai`、`antigravity` 四个工厂，另有 `register(type, factory)`，类型重复时抛 `BACKEND_ALREADY_REGISTERED`，未登记的类型在创建时抛 `BACKEND_NOT_REGISTERED`。注册表实例在 `src/main.mjs` 中创建并传给 `Runtime`，因此可以二选一：
 
 - 在 `BackendRegistry` 构造函数的 `factories` 里直接加一项；
 - 或在 `src/main.mjs` 的 `const registry = new BackendRegistry();` 之后调用 `registry.register("mybackend", (c, a, o) => new MyBackend(c, a, o))`。
@@ -89,7 +92,7 @@ export const BACKEND_CAPABILITIES = {
 
 `src/core/config.mjs` 的 `backends[]` 是严格 schema（`.strict()`），只注册不改校验时配置会被拒绝：
 
-- 把新类型加进 `type: z.enum(["dsh", "codex", "openai"])`；
+- 把新类型加进 `type: z.enum(["dsh", "codex", "openai", "antigravity"])`；
 - 新的配置字段必须加进 schema，否则保存时报未知字段。参照 OpenAI 专用字段的写法：声明为 `.optional()`、**不给默认值**，并加 `refine` 限定只对新类型生效。给现有字段加默认值会改变 DSH/Codex 配置解析后的内容，进而改变它们的会话签名，导致所有已有会话被退休；
 - `baseUrl` 的校验按类型区分：DSH 只能是本机回环地址，`openai` 允许 HTTPS 或本机 HTTP。新类型需要在对应 `refine` 里说明自己用哪一种；
 - `env` 映射目前只允许 Codex 子进程使用。
@@ -100,7 +103,7 @@ export const BACKEND_CAPABILITIES = {
 
 `src/backends/session-contract.mjs` 提供：
 
-- `sessionSignature(backend, tools)`：对后端配置（去掉 `recovery`，保留绑定的 DSH 实例）和工具目录（名称、说明、`inputSchema`，按名称排序）做规范化 JSON 后取 SHA-256，前缀 `contract-v2:`。
+- `sessionSignature(backend, tools)`：对后端配置（去掉显示名称 `label` 和 `recovery`，保留绑定的 DSH 实例）和工具目录（名称、说明、`inputSchema`，按名称排序）做规范化 JSON 后取 SHA-256，前缀 `contract-v3:`；`acceptsSession` 可兼容完整匹配的旧 `contract-v2:` 摘要。
 - `assertSession(session, backendType, signature)`：会话的 `backend` 或 `signature` 与当前不符时抛 `SESSION_REQUIRES_HANDOFF`。
 
 `run` 一开始应先算签名并调用 `assertSession`。运行时在每个回合前比较签名（`src/core/lifecycle.mjs`），签名变化、self 版本变化或指令变化时退休旧会话，下一回合新建会话，并通过来源交接（`src/core/context-handoff.mjs`）把最近的来源线索带给新会话；原始经历和日记不受影响。所以：

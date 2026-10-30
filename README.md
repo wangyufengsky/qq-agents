@@ -2,7 +2,7 @@
 
 [English](README.en.md) | 中文
 
-QQ Agents 用一个本机管理台同时管理多个 AI 角色：每个角色绑定一个 QQ 账号（通过 NapCat/OneBot 接入），由 DSH、Codex 或任意 OpenAI 兼容 API 作为 AI 后端生成回复，并拥有各自独立的人格、记忆、日记和权限。所有新配置默认处于隔离模式并全部暂停，确认无误后再逐步放开。
+QQ Agents 用一个本机管理台同时管理多个 AI 角色：每个角色绑定一个 QQ 账号（通过 NapCat/OneBot 接入），由 DSH、Codex、Antigravity CLI 或任意 OpenAI 兼容 API 作为 AI 后端生成回复，并拥有各自独立的人格、记忆、日记和权限。所有新配置默认处于隔离模式并全部暂停，确认无误后再逐步放开。
 
 ![管理台首页：每个角色一张卡片，显示能否发言、最近一次回复和 24 小时内的活动](docs/images/console-home.png)
 
@@ -62,9 +62,10 @@ DSH 和 Codex 功能最全；OpenAI 兼容后端门槛最低，但不支持上�
 | --------------- | ------------------------------------------------ | ---------- | -------- | -------------------------------------------------------------------------- |
 | DSH             | DeepSeek Harness 桌面应用，并启用本项目的 bundle | 支持       | 不支持   | 工具通过本项目的 MCP 入口调用。                                            |
 | Codex           | Codex CLI，并为每个角色单独登录一次              | 支持       | 支持     | 独立 app-server、独立登录目录；唯一支持原生生图的后端。                    |
+| Antigravity CLI | 官方 `agy` CLI 与可用登录                        | 不支持     | 不支持   | 显式续接会话、受限桥接工具；[配置及验收](docs/ANTIGRAVITY.md)。            |
 | OpenAI 兼容 API | 一个服务地址和一个 API key（本机服务可不要 key） | 不支持     | 不支持   | 门槛最低，不用安装其他应用；上下文接近上限时由桥接退休会话、下一回合重建。 |
 
-三种后端共用同一套桥接工具（只有生图记录 `generated_image_list` 需要原生生图）和外部 MCP 配置。细节见 [OpenAI 兼容后端](docs/CONFIGURATION.md#openai-兼容后端) 和 [入门指南](docs/GETTING-STARTED.md)。
+四种后端共用同一套桥接工具（只有生图记录 `generated_image_list` 需要原生生图）和外部 MCP 配置。细节见 [OpenAI 兼容后端](docs/CONFIGURATION.md#openai-兼容后端) 和 [入门指南](docs/GETTING-STARTED.md)。
 
 ## 让 AI 帮你装
 
@@ -127,7 +128,7 @@ node src/main.mjs --data /path/to/private-data --port 3210
 
 - **角色**：一个 AI 身份，有稳定的 `agentId`、人格、记忆和日记。每个角色只绑定一个 QQ 账号连接和一个 AI 后端；不同角色之间不能互读记忆。（管理台「角色」页。）
 - **QQ 账号连接**：一个 NapCat/OneBot 实例，使用 HTTP + 正向 WebSocket。连接前会核对实际登录的 QQ 号，不匹配时拒绝接入。（管理台「连接」页。）
-- **AI 后端**：生成回复的模型服务，目前支持 DSH（DeepSeek Harness 桌面应用）、Codex（本项目专用的 Codex app-server，独立登录目录）和任意 OpenAI 兼容 API（一个地址加一个密钥即可，见 [OpenAI 兼容后端](docs/CONFIGURATION.md#openai-兼容后端)）。DSH 和 Codex 功能最全；OpenAI 兼容后端不支持上下文压缩和原生生图。多个角色可以共用一个后端配置。（管理台「连接」页。）
+- **AI 后端**：生成回复的模型服务，目前支持 DSH（DeepSeek Harness 桌面应用）、Codex（本项目专用的 Codex app-server，独立登录目录）、Antigravity CLI 和任意 OpenAI 兼容 API（一个地址加一个密钥即可，见 [OpenAI 兼容后端](docs/CONFIGURATION.md#openai-兼容后端)）。DSH 和 Codex 功能最全；OpenAI 兼容后端不支持上下文压缩和原生生图。多个角色可以共用一个后端配置。（管理台「连接」页。）
 - **隔离模式与暂停**：`mode: isolated` 时不会连接 QQ、不会运行模型回合。切到 `live` 之后，仍有几道独立的开关：全局暂停（每次启动都会自动打开）、角色暂停、会话暂停和静默时段。任意一道没放开，角色都不会发言；管理台在每个角色卡片上列出“当前无法发言”的具体原因。
 
 更多术语见 [术语表](#术语表)。
@@ -171,6 +172,7 @@ node src/main.mjs --data /path/to/private-data --port 3210
 - [在 Windows 上运行](docs/WINDOWS.md)
 - [故障排查（按症状查找）](docs/TROUBLESHOOTING.md)
 - [配置与数据目录](docs/CONFIGURATION.md)
+- [Google Antigravity CLI 配置与验收](docs/ANTIGRAVITY.md)
 
 **日常运维**
 
@@ -226,7 +228,7 @@ node src/main.mjs --data /path/to/private-data --port 3210
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | 角色                | 一个 AI 身份（配置中的 `agents[]`），用 `agentId` 标识。文档中旧称“机器人”“智能体”“AI”均指角色。                            |
 | QQ 账号连接         | 配置中的 `connections[]`，一个 NapCat/OneBot 实例及其登录的 QQ 号。                                                         |
-| AI 后端             | 配置中的 `backends[]`，即 DSH、Codex 或 OpenAI 兼容 API。                                                                   |
+| AI 后端             | 配置中的 `backends[]`，即 DSH、Codex、Antigravity CLI 或 OpenAI 兼容 API。                                                  |
 | DSH                 | DeepSeek Harness 桌面应用。本项目通过它的 Web RPC 接入，并可生成专用的 preset/MCP bundle（`npm run dsh:bundle`）。          |
 | self                | 角色可长期成长的自我描述（性格、喜好、关系、表达倾向），按版本保存在 SQLite，可在管理台角色页的「Self」标签查看和恢复。     |
 | 主体                | 角色在聊天之外的“自己”：在空闲时回顾 self、读取资料、提出要联系谁的意图；主体本身没有 QQ 发送能力，由目标聊天决定是否发送。 |

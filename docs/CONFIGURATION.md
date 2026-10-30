@@ -11,6 +11,7 @@
 | `memory.sqlite`               | 聊天、经历、日记、self、意图和发送账本。                                                                                                                                             |
 | `media/`、`files/`、`voices/` | 各角色独立的图片、文件库和语音库。                                                                                                                                                   |
 | `codex/<agentId>/home`        | 每个使用 Codex 的角色的专用 Codex 登录目录，不继承日常 Codex home。                                                                                                                  |
+| `antigravity/<agentId>/`      | Antigravity 专用 profile、按聊天划分的工作区及会话绑定；登录使用系统凭据存储，详见 [Antigravity](ANTIGRAVITY.md)。                                                                   |
 | `openai/<agentId>/sessions/`  | 使用 OpenAI 兼容后端的角色的模型会话历史（每个会话一个 JSON 文件，权限 0600）。                                                                                                      |
 | `secrets.json`                | 可选。变量名到值的映射（都是字符串），启动时（`npm start`、`robots.mjs`、Docker）补进环境变量，启动终端里已经设置的变量优先。由 `npm run setup -- secret <变量名>` 写入，权限 0600。 |
 
@@ -19,6 +20,10 @@
 ## 凭据与环境变量
 
 OneBot 令牌填写环境变量名 `tokenEnv`，配置里只保存变量名，不保存令牌本身；启动桥接的进程环境中必须有这个变量，否则连接时报 `ONEBOT_TOKEN_ENV_MISSING`。Codex 后端、外部 MCP 和原生进程的 `env` 使用“目标变量名 → 本进程环境变量名”的映射，不把密钥写入仓库。Codex 和管理台原生 QQ 子进程默认仅继承运行所需的环境白名单，专用变量须显式映射。Codex home 固定在数据目录 `codex/<agentId>/home`，不继承日常 Codex home。审批 ID、环境白名单和升级说明见 [凭据边界](CREDENTIAL-BOUNDARIES.md)。
+
+## Antigravity CLI 后端
+
+`type: "antigravity"` 使用官方 `agy` headless CLI。管理台和安装向导均支持；按角色隔离 profile，按聊天明确续接，工具继续执行统一权限检查。它不需要 `baseUrl` 或 API 密钥，不自动切换现有角色。支持范围、配置片段与真实模型隔离验收见 [Antigravity 指南](ANTIGRAVITY.md)。
 
 ## OpenAI 兼容后端
 

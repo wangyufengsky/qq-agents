@@ -69,6 +69,19 @@ test("setup answers become an isolated, paused single-character config", () => {
   );
 });
 
+test("setup supports Antigravity without enabling QQ or changing role permissions", () => {
+  const a = answers();
+  a.backend = { type: "antigravity", model: "fixture-model" };
+  const config = buildConfig(a);
+  assert.equal(config.backends[0].type, "antigravity");
+  assert.equal(config.backends[0].command, "agy");
+  assert.equal(config.agents[0].backendId, "antigravity");
+  assert.equal(config.mode, "isolated");
+  assert.equal(config.globalPaused, true);
+  assert.equal(config.agents[0].paused, true);
+  assert.equal(config.connections[0].enabled, false);
+});
+
 test("init writes config, a private generated token and NapCat's OneBot file; refuses to clobber", (t) => {
   const root = path.join(temp(t), "data"),
     napcat = path.join(temp(t), "napcat");
