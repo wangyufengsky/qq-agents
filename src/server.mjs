@@ -1,3 +1,4 @@
+import { readProjects, projectReadSchema } from "./tools/activities.mjs";
 import { readConversationState } from "./memory/conversation-state.mjs";
 import { scopedCatalog } from "./tools/catalog.mjs";
 import { randomUUID } from "node:crypto";
@@ -303,6 +304,20 @@ export function createServer({
             githubSecretFile,
             agent.github.tokenEnv,
             data.token,
+          ),
+        );
+      }
+      if (req.method === "GET" && url.pathname === "/api/project") {
+        const a = runtime.agent(url.searchParams.get("agentId"));
+        const args = { id: url.searchParams.get("id") };
+        for (const key of ["revision", "offset", "maxChars", "historyOffset"])
+          if (url.searchParams.has(key))
+            args[key] = Number(url.searchParams.get(key));
+        return send(
+          readProjects(
+            runtime,
+            { agentId: a.id, conversation: "@subject" },
+            projectReadSchema.parse(args),
           ),
         );
       }

@@ -137,7 +137,7 @@ export function subjectMaterials(runtime, ctx) {
   );
   // Protected notes are left out before the limit, so they take no place.
   const owed = m.identity.openPersonItems("promise");
-  const ownProjects = m.identity.projects(),
+  const ownProjects = m.identity.projects().filter((p) => !p.activity),
     active = ownProjects.filter((p) => p.status === "active"),
     paused = ownProjects.filter((p) => p.status === "paused");
   const allNotes = m.identity.openNotes(),

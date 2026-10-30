@@ -1,3 +1,4 @@
+import { activityForTurn } from "../tools/activities.mjs";
 import {
   stableInstructions,
   identityAnchors,
@@ -506,7 +507,11 @@ export class ContextLifecycle {
         r.connection(a.connectionId).accountId,
       ),
     );
+    const activities = activityForTurn(m, ctx.conversation);
     const details = [
+      activities.length
+        ? `共同活动（继续时先读当前原稿；多个活动不明确时简短确认；轮到对方时等待真实来信）：${JSON.stringify(activities)}`
+        : "",
       corrections.length
         ? `已记录的纠正（旧聊天保留，旧判断不能当现状；pending 项仍需检查）：${JSON.stringify(corrections)}`
         : "",

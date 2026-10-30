@@ -130,14 +130,14 @@ function projectsMarkup(projects = []) {
   const items = projects
     .map(
       (p) =>
-        `<article class="mind-row"><div class="mind-row-head"><strong>${esc(p.title)}</strong>${mindTag(projectStates[p.status] || p.status, projectTone[p.status] || "")}<span class="mind-sub">${p.steps.length} 步${p.files.length ? ` · 作品 ${p.files.length} 个` : ""}</span>${mindAt(p.updatedAt)}</div>${mindClip(p.why, 2)}${p.steps[0] ? mindClip("最近一步：" + p.steps[0].did, 2) : ""}${p.next ? mindClip("下一步：" + p.next, 1) : ""}${p.blocker ? mindClip("卡在：" + p.blocker, 1) : ""}${p.outcome ? mindClip("结果：" + p.outcome, 2) : ""}</article>`,
+        `<article class="mind-row"><div class="mind-row-head"><strong>${esc(p.title)}</strong>${mindTag(projectStates[p.status] || p.status, projectTone[p.status] || "")}<span class="mind-sub">${p.steps.length} 步${p.files.length ? ` · 作品 ${p.files.length} 个` : ""}</span>${mindAt(p.updatedAt)}</div>${p.activity ? `<p class="hint">共同活动 · ${esc(conversationLabel(p.activity.conversation))} · 参与者 ${p.activity.participants.map(esc).join("、")} · 轮到 ${esc(p.activity.turn === "agent" ? "角色" : p.activity.turn)}</p>${p.activity.pending.map((x) => `<p>${esc(x.question)}${x.options.length ? "：" + x.options.map(esc).join(" / ") : ""}</p>`).join("")}` : ""}${mindClip(p.why, 2)}${p.steps[0] ? mindClip("最近一步：" + p.steps[0].did, 2) : ""}${p.next ? mindClip("下一步：" + p.next, 1) : ""}${p.blocker ? mindClip("卡在：" + p.blocker, 1) : ""}${p.outcome ? mindClip("结果：" + p.outcome, 2) : ""}${p.activity ? `<button type="button" class="ghost" data-activity-read="${esc(p.id)}">查看原稿与版本</button>` : ""}</article>`,
     )
     .join("");
   const active = projects.filter((p) => p.status === "active").length;
   return mindFold(
     "subject-projects",
-    "自己的小项目",
-    `<p class="hint">角色在空闲时间里跨几天推进的事，只能查看。作品在「文件」页按 fileId 找到。</p>${items ? `<div class="mind-list">${items}</div>` : '<p class="hint">还没有小项目。角色想跨几天做一件事时会用 project 立一个。</p>'}`,
+    "项目与共同活动",
+    `<p class="hint">角色在空闲时间里跨几天推进的事，只能查看。个人作品在「文件」页按 fileId 找到；共同活动可直接打开原稿与历史版本。</p>${items ? `<div class="mind-list">${items}</div>` : '<p class="hint">还没有小项目。角色想跨几天做一件事时会用 project 立一个。</p>'}`,
     {
       open: active > 0,
       summary: esc(
@@ -420,6 +420,66 @@ function bindSelf(a, current) {
   );
 }
 function bindSubject(a) {
+  document.querySelectorAll("[data-activity-read]").forEach(
+    (button) =>
+      (button.onclick = () =>
+        action(async () => {
+          const dialog = document.createElement("dialog");
+          dialog.className = "people-drawer";
+          document.body.append(dialog);
+          dialog.addEventListener("close", () => dialog.remove(), {
+            once: true,
+          });
+          const show = async (revision, offset = 0, historyOffset = 0) => {
+            const query = new URLSearchParams({
+              agentId: a.id,
+              id: button.dataset.activityRead,
+              offset: String(offset),
+              historyOffset: String(historyOffset),
+            });
+            if (revision) query.set("revision", String(revision));
+            const data = await api("/api/project?" + query);
+            if (!dialog.isConnected) return;
+            dialog.innerHTML = `<div class="people-drawer-body"><header class="person-head"><h2>${esc(data.project.title)} · v${data.version.revision}</h2><button type="button" data-close>关闭</button></header><p>${esc(data.version.progress)}</p>${data.version.contribution ? `<p>参与者原始贡献</p><pre>${esc(data.version.contribution.text)}</pre>${data.version.contribution.truncated ? '<p>此处仅显示原文开头。</p><button type="button" data-contribution-full>阅读完整贡献</button>' : ""}` : ""}${data.draft ? `<h3>${esc(data.draft.title)} · 原稿 v${data.draft.revision}</h3><pre>${esc(data.draft.text)}</pre>${data.draft.nextOffset !== null ? '<button type="button" data-next-draft>继续阅读原稿</button>' : ""}` : "<p>还没有原稿</p>"}<h3>版本历史（${data.historyTotal}）</h3>${data.history.map((x) => `<p><button type="button" data-activity-version="${x.revision}">v${x.revision}</button> ${esc(x.progress)}</p>`).join("")}${data.nextHistoryOffset !== null ? '<button type="button" data-next-history>更早版本</button>' : ""}</div>`;
+            dialog.querySelector("[data-close]").onclick = () => dialog.close();
+            dialog
+              .querySelectorAll("[data-activity-version]")
+              .forEach(
+                (b) =>
+                  (b.onclick = () =>
+                    action(() => show(Number(b.dataset.activityVersion)))),
+              );
+            const contribution = dialog.querySelector(
+              "[data-contribution-full]",
+            );
+            if (contribution)
+              contribution.onclick = () => {
+                dialog.close();
+                return readMemory(data.version.contribution.read.id, {
+                  agentId: a.id,
+                });
+              };
+            const next = dialog.querySelector("[data-next-draft]");
+            if (next)
+              next.onclick = () =>
+                action(() =>
+                  show(
+                    data.version.revision,
+                    data.draft.nextOffset,
+                    historyOffset,
+                  ),
+                );
+            const history = dialog.querySelector("[data-next-history]");
+            if (history)
+              history.onclick = () =>
+                action(() =>
+                  show(data.version.revision, 0, data.nextHistoryOffset),
+                );
+          };
+          dialog.showModal();
+          await show();
+        })),
+  );
   $("#subject-form").onsubmit = (e) => {
     e.preventDefault();
     action(async () => {
