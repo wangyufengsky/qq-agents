@@ -256,7 +256,7 @@ export async function supervise(argv = process.argv.slice(2)) {
       commit: identity.commit,
       version: identity.packageVersion,
     };
-    const validInstallation = (value) => {
+    const validInstallation = (value, allowBundledReplacement = false) => {
       if (
         !value ||
         typeof value.codeRoot !== "string" ||
@@ -271,6 +271,14 @@ export async function supervise(argv = process.argv.slice(2)) {
         )
       )
         throw Error("UPDATE_STATE_INVALID");
+      // A replacement image can install newer files at the same bundled path.
+      // Interrupted transactions must still use their exact recorded identity.
+      if (
+        allowBundledReplacement &&
+        resolved === fs.realpathSync(bundledRoot) &&
+        compareVersions(bundled.version, value.version) === 1
+      )
+        return bundled;
       const actual = new FrameworkKnowledge({ root: resolved }).version;
       if (
         actual.commit !== value.commit ||
@@ -281,16 +289,16 @@ export async function supervise(argv = process.argv.slice(2)) {
     };
     const pointer = path.join(home, "current.json"),
       journal = path.join(home, "transaction.json");
-    let current = fs.existsSync(pointer)
-      ? validInstallation(readState(pointer))
-      : bundled;
     const previous = fs.existsSync(journal)
       ? readState(journal)
       : { phase: "idle" };
-    if (
+    const interrupted =
       !finalPhases.has(previous.phase) ||
-      previous.phase === "recovery-required"
-    ) {
+      previous.phase === "recovery-required";
+    let current = fs.existsSync(pointer)
+      ? validInstallation(readState(pointer), !interrupted)
+      : bundled;
+    if (interrupted) {
       if (!recover) throw Error("UPDATE_RECOVERY_REQUIRED");
       if (previous.committing) current = validInstallation(previous.to);
       else {
@@ -312,7 +320,10 @@ export async function supervise(argv = process.argv.slice(2)) {
         error: "UPDATE_RECOVERY_REQUIRED",
         finishedAt: Date.now(),
       });
-    } else if (compareVersions(bundled.version, current.version) === 1) {
+    } else if (
+      current === bundled ||
+      compareVersions(bundled.version, current.version) === 1
+    ) {
       current = bundled;
       writeState(pointer, bundled);
     }

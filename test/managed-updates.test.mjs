@@ -550,51 +550,131 @@ test("install is an authenticated admin action, bound to the displayed version; 
   assert.equal((await pause.json()).error, "UPDATE_IN_PROGRESS");
 });
 
-test(
-  "real managed launcher starts isolated, reports capability and shuts down with both locks released",
-  { skip: process.platform === "win32" },
-  async (t) => {
-    const root = temp(t),
-      entry = fileURLToPath(
-        new URL("../src/updates/supervisor.mjs", import.meta.url),
+for (const savedBundle of [false, "normal", "recover"])
+  test(
+    `real managed launcher ${savedBundle ? `replaces an older bundled pointer (${savedBundle})` : "starts isolated"}, reports capability and shuts down with both locks released`,
+    { skip: process.platform === "win32" },
+    async (t) => {
+      const root = temp(t),
+        entry = fileURLToPath(
+          new URL("../src/updates/supervisor.mjs", import.meta.url),
+        );
+      if (savedBundle) {
+        const home = path.join(root, updateDirectory);
+        fs.mkdirSync(home);
+        fs.writeFileSync(
+          path.join(home, "current.json"),
+          JSON.stringify({
+            codeRoot: fileURLToPath(new URL("..", import.meta.url)),
+            version: "0.0.0",
+            commit: "a".repeat(40),
+          }),
+        );
+        fs.writeFileSync(
+          path.join(home, "transaction.json"),
+          JSON.stringify({ phase: "rolled-back" }),
+        );
+      }
+      const child = spawn(
+        process.execPath,
+        [
+          entry,
+          "--data",
+          root,
+          "--port",
+          "0",
+          ...(savedBundle === "recover" ? ["--recover"] : []),
+        ],
+        { stdio: ["ignore", "pipe", "pipe"] },
       );
-    const child = spawn(
-      process.execPath,
-      [entry, "--data", root, "--port", "0"],
-      { stdio: ["ignore", "pipe", "pipe"] },
-    );
-    let out = "",
-      err = "";
-    child.stdout.on("data", (b) => (out += b));
-    child.stderr.on("data", (b) => (err += b));
-    const exited = once(child, "exit");
-    t.after(() => {
-      if (child.exitCode === null) child.kill();
-    });
-    for (let n = 0; n < 200 && !out.includes("managed:"); n++) {
-      if (child.exitCode !== null)
-        throw Error(`synthetic launcher failed: ${err}`);
-      await delay(50);
+      let out = "",
+        err = "";
+      child.stdout.on("data", (b) => (out += b));
+      child.stderr.on("data", (b) => (err += b));
+      const exited = once(child, "exit");
+      t.after(() => {
+        if (child.exitCode === null) child.kill();
+      });
+      for (let n = 0; n < 200 && !out.includes("managed:"); n++) {
+        if (child.exitCode !== null)
+          throw Error(`synthetic launcher failed: ${err}`);
+        await delay(50);
+      }
+      const port = /127\.0\.0\.1:(\d+)/.exec(out)?.[1];
+      assert.ok(port);
+      const token = fs.readFileSync(path.join(root, "admin-token"), "utf8");
+      const state = await (
+        await fetch(`http://127.0.0.1:${port}/api/updates`, {
+          headers: { "x-admin-token": token },
+        })
+      ).json();
+      assert.equal(state.upgrade.managed, true);
+      assert.equal(state.upgrade.phase, savedBundle ? "rolled-back" : "idle");
+      const current = readState(
+        path.join(root, updateDirectory, "current.json"),
+      );
+      assert.equal(current.version, state.installed.version);
+      assert.equal(current.commit, state.installed.commit);
+      child.kill("SIGTERM");
+      assert.equal((await exited)[0], 0);
+      assert.equal(fs.existsSync(path.join(root, "process.lock")), false);
+      assert.equal(
+        fs.existsSync(path.join(root, updateDirectory, "supervisor.lock")),
+        false,
+      );
+    },
+  );
+
+for (const kind of ["staged", "same-version", "interrupted"])
+  test(`bundled replacement keeps ${kind} identity validation strict`, (t) => {
+    const root = temp(t),
+      home = path.join(root, updateDirectory);
+    fs.mkdirSync(home);
+    let codeRoot = fileURLToPath(new URL("..", import.meta.url));
+    const version = JSON.parse(
+      fs.readFileSync(path.join(codeRoot, "package.json"), "utf8"),
+    ).version;
+    if (kind === "staged") {
+      codeRoot = path.join(home, "releases", "synthetic");
+      fs.mkdirSync(codeRoot, { recursive: true });
+      fs.writeFileSync(
+        path.join(codeRoot, "package.json"),
+        JSON.stringify({ version }),
+      );
     }
-    const port = /127\.0\.0\.1:(\d+)/.exec(out)?.[1];
-    assert.ok(port);
-    const token = fs.readFileSync(path.join(root, "admin-token"), "utf8");
-    const state = await (
-      await fetch(`http://127.0.0.1:${port}/api/updates`, {
-        headers: { "x-admin-token": token },
-      })
-    ).json();
-    assert.equal(state.upgrade.managed, true);
-    assert.equal(state.upgrade.phase, "idle");
-    child.kill("SIGTERM");
-    assert.equal((await exited)[0], 0);
-    assert.equal(fs.existsSync(path.join(root, "process.lock")), false);
-    assert.equal(
-      fs.existsSync(path.join(root, updateDirectory, "supervisor.lock")),
-      false,
+    const saved = {
+      codeRoot,
+      version: kind === "same-version" ? version : "0.0.0",
+      commit: "a".repeat(40),
+    };
+    fs.writeFileSync(path.join(home, "current.json"), JSON.stringify(saved));
+    if (kind === "interrupted")
+      fs.writeFileSync(
+        path.join(home, "transaction.json"),
+        JSON.stringify({ phase: "checking", from: saved }),
+      );
+    assert.throws(
+      () =>
+        execFileSync(
+          process.execPath,
+          [
+            fileURLToPath(
+              new URL("../src/updates/supervisor.mjs", import.meta.url),
+            ),
+            "--data",
+            root,
+            "--port",
+            "0",
+            "--recover",
+          ],
+          { stdio: "pipe" },
+        ),
+      (error) => error.stderr.toString().includes("UPDATE_STATE_INVALID"),
     );
-  },
-);
+    assert.deepEqual(readState(path.join(home, "current.json")), saved);
+    assert.equal(fs.existsSync(path.join(root, "process.lock")), false);
+    assert.equal(fs.existsSync(path.join(home, "supervisor.lock")), false);
+  });
 
 for (const healthy of [true, false])
   test(`real child transaction ${healthy ? "resumes" : "rolls back"} on the same port and protects maintenance`, async (t) => {
