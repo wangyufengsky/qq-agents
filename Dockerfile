@@ -8,7 +8,7 @@ ARG WITH_CHROMIUM=false
 ARG SOURCE_COMMIT
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ffmpeg ca-certificates \
+  && apt-get install -y --no-install-recommends ffmpeg ca-certificates git \
   && if [ "$WITH_CHROMIUM" = "true" ]; then \
     apt-get install -y --no-install-recommends chromium fonts-noto-cjk; \
   fi \
@@ -34,5 +34,5 @@ EXPOSE 3210
 
 # Extra arguments (for example --live) are appended by `docker run` or the
 # compose `command:` field.
-ENTRYPOINT ["node", "src/main.mjs", "--data", "/data", "--host", "0.0.0.0"]
+ENTRYPOINT ["node", "src/updates/supervisor.mjs", "--data", "/data", "--host", "0.0.0.0"]
 CMD []

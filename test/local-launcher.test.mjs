@@ -6,7 +6,8 @@ import http from "node:http";
 import { EventEmitter } from "node:events";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { temp, fixture } from "./helpers.mjs";
+import { fileURLToPath } from "node:url";
+import { temp, fixture, config } from "./helpers.mjs";
 import {
   NativeQQ,
   nativeEnv,
@@ -15,6 +16,67 @@ import {
   writeJson,
 } from "../scripts/lib/local-process.mjs";
 const exec = promisify(execFile);
+test(
+  "local launcher manages the supervisor and stops both processes",
+  { skip: process.platform === "win32" },
+  async (t) => {
+    const root = temp(t),
+      codeRoot = fileURLToPath(new URL("..", import.meta.url));
+    const probe = http.createServer();
+    await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
+    const port = probe.address().port;
+    await new Promise((resolve) => probe.close(resolve));
+    const value = config(0);
+    value.mode = "isolated";
+    value.port = port;
+    writeJson(path.join(root, "config.json"), value);
+    writeJson(path.join(root, "deployment.json"), {
+      codeRoot,
+      managedUpdates: true,
+    });
+    const launch = (action) =>
+      exec(
+        process.execPath,
+        [path.join(codeRoot, "scripts/robots.mjs"), action, "--data", root],
+        { timeout: 45000 },
+      );
+    try {
+      await launch("start");
+      const record = JSON.parse(
+        fs.readFileSync(path.join(root, "launcher-process.json")),
+      );
+      const supervisor = JSON.parse(
+        fs.readFileSync(path.join(root, "updates-runtime/supervisor.lock")),
+      );
+      const bridge = JSON.parse(
+        fs.readFileSync(path.join(root, "process.lock")),
+      );
+      assert.equal(record.pid, supervisor.pid);
+      assert.notEqual(record.pid, bridge.pid);
+      const updates = await (
+        await fetch(`http://127.0.0.1:${port}/api/updates`, {
+          headers: {
+            "x-admin-token": fs
+              .readFileSync(path.join(root, "admin-token"), "utf8")
+              .trim(),
+          },
+        })
+      ).json();
+      assert.equal(updates.upgrade.managed, true);
+    } finally {
+      await launch("stop");
+    }
+    assert.equal(fs.existsSync(path.join(root, "process.lock")), false);
+    assert.equal(
+      fs.existsSync(path.join(root, "updates-runtime/supervisor.lock")),
+      false,
+    );
+    assert.equal(
+      fs.existsSync(path.join(root, "launcher-process.json")),
+      false,
+    );
+  },
+);
 function profile(t, id = "fixture", offset = 0) {
   const workdir = temp(t),
     accountId = String(10001 + offset);

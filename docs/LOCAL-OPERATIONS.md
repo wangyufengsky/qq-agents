@@ -15,7 +15,7 @@ node scripts/robots.mjs qq-stop --data /absolute/private/bridge-data
 
 管理台仅修改角色的普通消息参与率时立即生效，保留已有 QQ 连接、模型回合与会话；新比例用于之后的普通消息唤醒判断，已排队或正在进行的回合不会因此取消。原样保存同样不会断开连接。其他配置修改仍会撤销旧能力并要求重新连接，保存提示会说明是否需要接入。暂停、重置会话、断开连接或配置变更引起的正常取消不再报 `BACKEND_TURN_FAILED`；实际后端失败仍保留，回合达到时限显示 `BACKEND_TURN_TIMEOUT`。
 
-数据目录可包含 `deployment.json` 的 `codeRoot`，指向本地发布快照；省略时使用脚本所在项目。`secrets.json` 保存本地环境变量，只有桥接子进程会读取。`native-profiles.json` 的结构如下，必须留在私有数据目录，不能提交：
+数据目录可包含 `deployment.json` 的 `codeRoot`，指向本地发布快照；省略时使用脚本所在项目。设置 `managedUpdates: true` 后，原有启停命令改为管理独立升级启动器，支持管理台一键升级；切换前先正常停止原桥接，详情见 [版本更新](UPDATES.md)。`secrets.json` 保存本地环境变量，只有桥接子进程会读取。`native-profiles.json` 的结构如下，必须留在私有数据目录，不能提交：
 
 ```json
 {
