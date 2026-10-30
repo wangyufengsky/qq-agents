@@ -1,0 +1,115 @@
+name: Windows I/O probe (one-shot)
+on:
+  push:
+    branches: [codex/windows-io-probe-20261030]
+    paths: ['.github/workflows/windows-io-probe.yml']
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: windows-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.22.1
+          package-manager-cache: false
+      - name: Synthetic FULL SQLite and file I/O comparison
+        shell: pwsh
+        run: |
+          Get-CimInstance Win32_Processor | Select-Object Name,NumberOfCores,NumberOfLogicalProcessors | ConvertTo-Json
+          Get-Volume | Select-Object DriveLetter,FileSystem,Size,SizeRemaining | ConvertTo-Json
+          $probe = Join-Path $env:RUNNER_TEMP 'qq-ci-io-probe.mjs'
+          @'
+          // Standalone synthetic probe: no repository imports, dependencies, network or credentials.
+          import fs from 'node:fs';
+          import os from 'node:os';
+          import path from 'node:path';
+          import { performance } from 'node:perf_hooks';
+          import { DatabaseSync } from 'node:sqlite';
+          import { fork } from 'node:child_process';
+          import { fileURLToPath } from 'node:url';
+          
+          function probe(mode) {
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'qq-ci-io-probe-'));
+            const times = {};
+            let db;
+            const phase = (name, f) => {
+              const t = performance.now();
+              try { return f(); } finally { times[name] = performance.now() - t; }
+            };
+            try {
+              phase('open', () => { db = new DatabaseSync(path.join(root, 'probe.sqlite')); });
+              phase('pragmas', () => db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;'));
+              phase('schema33', () => {
+                if (mode === 'transaction') db.exec('BEGIN IMMEDIATE');
+                for (let n = 0; n < 33; n++) db.exec(`CREATE TABLE t${n}(id INTEGER PRIMARY KEY, value TEXT)`);
+                if (mode === 'transaction') db.exec('COMMIT');
+              });
+              phase('writes12Full', () => {
+                const stmt = db.prepare('INSERT INTO t0(value) VALUES(?)');
+                for (let n = 0; n < 12; n++) stmt.run('synthetic');
+              });
+              phase('fileSync12', () => {
+                const fd = fs.openSync(path.join(root, 'sync.bin'), 'w');
+                try { for (let n = 0; n < 12; n++) { fs.writeSync(fd, Buffer.alloc(4096)); fs.fsyncSync(fd); } }
+                finally { fs.closeSync(fd); }
+              });
+              phase('close', () => { db.close(); db = undefined; });
+              phase('delete', () => fs.rmSync(root, { recursive: true, force: true }));
+              return times;
+            } finally {
+              try { db?.close(); } catch {}
+              fs.rmSync(root, { recursive: true, force: true });
+            }
+          }
+          
+          if (process.argv[2] === '--probe-worker') {
+            const rows = [];
+            for (let repeat = 0; repeat < 3; repeat++) rows.push(probe(process.argv[3]));
+            process.send(rows);
+            process.disconnect();
+          } else {
+            const active = new Set();
+            const watchdog = setTimeout(() => {
+              console.error('PROBE_BUDGET_EXCEEDED: stopping workers at 150 seconds; no conclusion from partial data');
+              for (const worker of active) worker.kill();
+              process.exitCode = 2;
+            }, 150000);
+            try {
+              const parallel = Math.max(1, os.availableParallelism() - 1);
+              console.log(JSON.stringify({ kind: 'environment', platform: process.platform, node: process.version,
+                cpu: os.cpus()[0]?.model, logicalCpus: os.cpus().length, availableParallelism: os.availableParallelism(),
+                totalMemory: os.totalmem(), freeMemory: os.freemem(), defaultNodeTestConcurrency: parallel,
+                note: 'Synthetic SQL, not real fixture. FULL remains enabled in both modes.' }));
+              if (parallel > 16) throw Error('Default concurrency >16; explicit review required before this resource probe');
+              for (const concurrency of [...new Set([1, 2, parallel])]) {
+                for (const mode of ['autocommit', 'transaction']) {
+                  const start = performance.now();
+                  const rows = (await Promise.all(Array.from({ length: concurrency }, () => new Promise((resolve, reject) => {
+                    const worker = fork(fileURLToPath(import.meta.url), ['--probe-worker', mode], { stdio: ['ignore', 'inherit', 'inherit', 'ipc'] });
+                    active.add(worker);
+                    worker.once('message', resolve);
+                    worker.once('error', reject);
+                    worker.once('exit', (code) => { active.delete(worker); if (code) reject(Error(`Worker exit ${code}`)); });
+                  })))).flat();
+                  console.log(JSON.stringify({ kind: 'result', concurrency, mode, wallMs: performance.now() - start, rows }));
+                }
+              }
+            } finally { clearTimeout(watchdog); }
+          }
+          '@ | Set-Content -LiteralPath $probe -Encoding utf8
+          $sampler = Start-Job {
+            try {
+              Get-Counter '\Processor(_Total)\% Processor Time','\PhysicalDisk(_Total)\Avg. Disk sec/Write','\PhysicalDisk(_Total)\Current Disk Queue Length','\Memory\Available MBytes' -SampleInterval 1 -MaxSamples 145 |
+                ForEach-Object { $_.CounterSamples | Select-Object Timestamp,Path,CookedValue }
+            } catch { Write-Output "COUNTERS_UNAVAILABLE: $($_.Exception.Message)" }
+          }
+          try {
+            node $probe
+            if ($LASTEXITCODE -ne 0) { throw "Probe exited $LASTEXITCODE" }
+          } finally {
+            Stop-Job $sampler
+            Receive-Job $sampler | ConvertTo-Json -Depth 4
+            Remove-Job $sampler
+          }
