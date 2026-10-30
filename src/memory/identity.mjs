@@ -368,6 +368,7 @@ export class IdentityMemory {
       .filter((x) => x.status === "open")
       .map((x) => ({
         ...x,
+        ...this.mem.corrections.annotation("note", x.id),
         sources: x.evidence.map((id) => ({
           id,
           available: !!this.db

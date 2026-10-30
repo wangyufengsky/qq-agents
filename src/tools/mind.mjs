@@ -1,3 +1,4 @@
+import { correctionDefinitions, correctionTool } from "./corrections.mjs";
 import { SUBJECT_APP_TOOLS } from "../apps/policy.mjs";
 import { identityAnchors } from "../core/prompts.mjs";
 import { z } from "zod";
@@ -18,6 +19,7 @@ const text = z.string().min(1),
   ids = z.array(text).max(30),
   version = z.number().int().min(1);
 export const mindDefinitions = {
+  ...correctionDefinitions,
   self_read: [
     "读取当前正式 self、身份锚点与本回合固定版本；数据库最新版不改变当前回合。",
     z.object({}).strict(),
@@ -258,6 +260,8 @@ export const CHAT_MIND_TOOLS = Object.keys(mindDefinitions).filter(
   (n) => n !== "self_review" && n !== "subject_log",
 );
 export const SUBJECT_TOOLS = [
+  "memory_corrections",
+  "memory_correction_review",
   "github_capabilities",
   "github_search",
   "github_read",
@@ -302,6 +306,8 @@ function executeMindTool(runtime, ctx, name, args) {
   // actual delivery.
   if (
     [
+      "memory_correct",
+      "memory_correction_review",
       "self_propose",
       "self_review",
       "self_withdraw",
@@ -316,6 +322,8 @@ function executeMindTool(runtime, ctx, name, args) {
       ))
   )
     throw Error("RESTRICTED_CONTEXT_MIND_WRITE_BLOCKED");
+  if (name in correctionDefinitions)
+    return correctionTool(runtime, ctx, name, args);
   if (name === "self_read")
     return {
       current: (() => {
@@ -383,12 +391,19 @@ function executeMindTool(runtime, ctx, name, args) {
             .rows(m.diariesAbout(card.personId))
             .slice(0, 3)
             .map(({ id, title, updatedAt }) => ({ id, title, updatedAt }));
-          return { ...card, diaries };
+          return {
+            ...card,
+            ...m.corrections.annotation("person", card.id, card.revision),
+            diaries,
+          };
         }),
         missing: args.personIds.filter((_, i) => !cards[i]),
       };
     }
-    const rows = identity.personCards();
+    const rows = identity.personCards().map((c) => ({
+      ...c,
+      ...m.corrections.annotation("person", c.id, c.revision),
+    }));
     return {
       items: rows.slice(args.offset, args.offset + 20),
       total: rows.length,
@@ -409,6 +424,10 @@ function executeMindTool(runtime, ctx, name, args) {
         people: args.personIds.map((personId) => {
           const rows = identity
             .personItems(personId)
+            .map((x) => ({
+              ...x,
+              ...m.corrections.annotation("item", x.id, x.revision),
+            }))
             .filter((x) => !args.kind || x.kind === args.kind);
           return {
             personId,
@@ -417,7 +436,10 @@ function executeMindTool(runtime, ctx, name, args) {
           };
         }),
       };
-    const rows = identity.openPersonItems(args.kind);
+    const rows = identity.openPersonItems(args.kind).map((x) => ({
+      ...x,
+      ...m.corrections.annotation("item", x.id, x.revision),
+    }));
     return {
       items: rows.slice(args.offset, args.offset + 20),
       total: rows.length,
