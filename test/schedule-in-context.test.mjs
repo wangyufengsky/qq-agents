@@ -168,7 +168,7 @@ test("a chat is told its coming tasks once per session, and again only when the 
   const fresh = await f.turn();
   assert.equal(listed(fresh).tasks.length, 3);
   const handoff = JSON.parse(fresh.split("程序交接状态：")[1].split("\n\n")[0]);
-  assert.deepEqual(handoff.scheduled, []);
+  assert.equal(handoff.scheduled, undefined);
   assert(!fresh.includes(SURPRISE));
   assert.doesNotMatch(fresh, /SECRET_INSTRUCTION/);
 

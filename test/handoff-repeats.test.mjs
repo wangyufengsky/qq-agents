@@ -82,10 +82,9 @@ test("handoff sources already in the new messages are not listed again", async (
   assert.equal(count(prompt, "只说一遍的回复"), 1);
   assert.equal(count(prompt, "来信一"), 1);
   const handoff = JSON.parse(
-    prompt.split("程序交接状态：")[1].split("\n\n新增消息：")[0],
+    prompt.split("程序交接状态：")[1].split("\n\n")[0],
   );
-  assert.deepEqual(handoff.continuity.sources, []);
-  assert.match(handoff.continuity.notice, /不再重复/);
+  assert.equal(handoff.continuity, undefined);
 });
 
 test("handoffs saved before this change map both halves of a send to its outcome", async (t) => {

@@ -17,6 +17,7 @@ const AGENT_TOOL_GROUPS = [
       qq_send: "发送文字或图片",
       qq_send_burst: "分多条连续发送",
       qq_mark_read: "标记已读",
+      qq_delivery_status: "查看投递结果",
       qq_wait_for_messages: "等待对方继续说完",
       qq_send_poke: "拍一拍",
       qq_forward_read: "展开合并转发",
