@@ -122,12 +122,20 @@ export class DshBackend {
           const t = this.turns.get(p?.sessionId);
           if (!t) continue;
           if (p.type === "session/snapshot") {
+            const capacity =
+              p.snapshot?.projections?.values?.contextPressure?.contextWindow;
+            if (Number.isFinite(capacity) && capacity > 0)
+              this.capacities.set(p.sessionId, capacity);
             t.followed?.(p.snapshot);
             continue;
           }
           if (p.type !== "session/event") continue;
           const e = p.event;
-          if (e.type === "request/context" && e.data?.contextWindow)
+          if (
+            e.type === "request/context" &&
+            Number.isFinite(e.data?.contextWindow) &&
+            e.data.contextWindow > 0
+          )
             this.capacities.set(p.sessionId, e.data.contextWindow);
           if (e.type === "assistant/message" && e.data?.usage) {
             const u = e.data.usage;

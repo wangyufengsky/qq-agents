@@ -484,7 +484,7 @@ test("pressure compaction recovers, hard fallback retires lazily, and no daily r
   f.runtime.tick();
   assert.equal(calls, previous);
 });
-test("subject retirement does not wait on independent busy target", async (t) => {
+test("subject hard-pressure retirement does not wait on independent busy target", async (t) => {
   let release;
   const f = fixture(t, {
     cfg: enabled(),
@@ -493,18 +493,21 @@ test("subject retirement does not wait on independent busy target", async (t) =>
       if (p.conversation === "@subject")
         p.onUsage({
           source: "measured",
-          contextTokens: 28000,
+          contextTokens: 36000,
           capacityTokens: 40000,
         });
       else await new Promise((r) => (release = r));
     },
   });
   const chat = f.runtime.wake("agent-0", "group:20000");
-  await f.runtime.wake("agent-0", "@subject");
-  assert.equal(f.store.bind("agent-0").state("@subject").session, null);
-  assert(f.runtime.running.has("agent-0|group:20000"));
-  release();
-  await chat;
+  try {
+    await f.runtime.wake("agent-0", "@subject");
+    assert.equal(f.store.bind("agent-0").state("@subject").session, null);
+    assert(f.runtime.running.has("agent-0|group:20000"));
+  } finally {
+    release();
+    await chat;
+  }
 });
 test("restart recovers pending deliveries as unknown and interrupted model sessions", async (t) => {
   const root = temp(t),

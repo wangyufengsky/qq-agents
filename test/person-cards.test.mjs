@@ -551,8 +551,8 @@ test("free time sees each private target's card in brief without marking it seen
   const materials = JSON.parse(
     prompts[0].split("空闲时间素材：")[1].split("\n\n")[0],
   );
-  // A new free-time context isolates protected material; cards hold none.
-  assert.match(materials.notice, /新的空闲上下文/);
+  // Continuous free time keeps its source boundary; these cards hold no protected material.
+  assert.match(materials.notice, /当前上下文已读来源继续生效/);
   const byTarget = Object.fromEntries(
     materials.reach.targets.map((x) => [x.target, x]),
   );
