@@ -73,8 +73,8 @@ test("free time lists open notes from every chat, newest first; protected ones t
 
   await f.runtime.wake("agent-0", "@subject");
   const [prompt] = prompts;
-  // A fresh free-time context reads its materials public-only.
-  assert.match(materials(prompt).notice, /新的空闲上下文/);
+  // Continuous free time still excludes protected notes from automatic materials.
+  assert.match(materials(prompt).notice, /当前上下文已读来源继续生效/);
   assert.match(prompt, /openNotes/);
   assert.doesNotMatch(prompt, /PROTECTED_REPO_NOTE|OPERATIONS_NOTE/);
   const listed = materials(prompt).openNotes;

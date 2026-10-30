@@ -23,10 +23,10 @@ const turns = (f) =>
     .filter((t) => t.conversation === "@subject")
     .sort((a, b) => a.startedAt - b.startedAt);
 
-test("free-time turns are framed as own time, get materials and can log", async (t) => {
+test("fresh free-time turns are framed as own time, get materials and can log", async (t) => {
   const seen = [];
   const f = fixture(t, {
-    cfg: enabled(),
+    cfg: enabled((a) => (a.subject.sessionMode = "fresh")),
     run: async (p) => {
       seen.push(p);
       p.saveSession({ id: "s" + seen.length, backend: "fixture" });
@@ -66,16 +66,20 @@ test("free-time turns are framed as own time, get materials and can log", async 
   );
 });
 
-test("continuous mode keeps the previous subject session", async (t) => {
+test("default free-time mode keeps the previous subject session", async (t) => {
   const seen = [];
+  let now = Date.now();
   const f = fixture(t, {
-    cfg: enabled((a) => (a.subject.sessionMode = "continuous")),
+    cfg: enabled(),
     run: async (p) => {
       seen.push(p);
       p.saveSession({ id: "kept", backend: "fixture" });
     },
   });
+  f.runtime.clock = () => new Date(now);
   await f.runtime.wake("agent-0", "@subject");
+  now += 3600000;
+  f.runtime.contexts.tick();
   await f.runtime.wake("agent-0", "@subject");
   assert.equal(seen[1].session?.id, "kept");
 });
@@ -192,7 +196,7 @@ test("live subject settings do not count as agent policy changes", () => {
   const before = enabled();
   const after = structuredClone(before);
   after.agents[0].subject.maxToolCallsPerTurn = 12;
-  after.agents[0].subject.sessionMode = "continuous";
+  after.agents[0].subject.sessionMode = "fresh";
   assert.equal(configImpact(before, after).agentIds.size, 0);
 });
 

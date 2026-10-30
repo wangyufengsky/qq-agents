@@ -168,7 +168,7 @@ test("N5 late old-entry close cannot evict a replacement; close blocks concurren
   assert.equal(f.stats().initialized, 3);
 });
 
-for (const lane of ["chat", "subject"])
+for (const lane of ["chat", "subject", "fresh-subject"])
   for (const outcome of ["failed", "cancelled"])
     for (const recovery of ["next-turn", "restart"])
       test(`N3 archive failure ${lane} ${outcome} recovers on ${recovery} without session reuse or delivery replay`, async (t) => {
@@ -176,9 +176,11 @@ for (const lane of ["chat", "subject"])
         // Isolate archive recovery from tool-catalog size based retirement.
         cfg.agents[0].contextPolicy.capacityTokens = 131072;
         cfg.agents[0].subject.enabled = true;
+        if (lane === "fresh-subject")
+          cfg.agents[0].subject.sessionMode = "fresh";
         const f = fixture(t, { cfg }),
           m = f.store.bind("agent-0"),
-          scope = lane === "subject" ? "@subject" : chat,
+          scope = lane === "chat" ? chat : "@subject",
           calls = [];
         let late;
         f.runtime.backendFactory = () => ({
@@ -207,7 +209,7 @@ for (const lane of ["chat", "subject"])
         assert.equal(f.runtime.capabilities.size, 0);
         assert.equal(f.runtime.running.size, 0);
         // Failed recovery must keep the durable marker and must not call the backend.
-        if (lane === "subject") await assert.rejects(run());
+        if (lane === "fresh-subject") await assert.rejects(run());
         else assert.equal((await run()).status, "failed");
         assert.equal(calls.length, 1);
         f.store.db.exec("DROP TRIGGER reject_archive");
@@ -229,13 +231,18 @@ for (const lane of ["chat", "subject"])
         assert.equal(f.runtime.transports.get("qq-0").sent.length, 0);
       });
 
-for (const scope of [chat, "@subject"])
+for (const [scope, sessionMode] of [
+  [chat, "continuous"],
+  ["@subject", "continuous"],
+  ["@subject", "fresh"],
+])
   for (const recovery of ["next-turn", "restart"])
-    test(`N3 late callback after terminal-write failure remains archived before ${recovery}: ${scope}`, async (t) => {
+    test(`N3 late callback after terminal-write failure remains archived before ${recovery}: ${scope} ${sessionMode}`, async (t) => {
       const cfg = config(1);
       // Isolate archive recovery from tool-catalog size based retirement.
       cfg.agents[0].contextPolicy.capacityTokens = 131072;
       cfg.agents[0].subject.enabled = true;
+      cfg.agents[0].subject.sessionMode = sessionMode;
       const supplied = [];
       let originalCallback;
       const f = fixture(t, {
@@ -276,7 +283,7 @@ for (const scope of [chat, "@subject"])
         m.identity.list("session_history").filter((x) => x.session).length,
         2,
       );
-      if (scope === "@subject")
+      if (scope === "@subject" && sessionMode === "fresh")
         assert(
           m.identity
             .list("session_history")
