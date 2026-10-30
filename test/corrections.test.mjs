@@ -299,3 +299,52 @@ test("shared evidence does not block correction and inherited candidates stay re
     "unaffected",
   );
 });
+
+test("direct targets require a durable change before an update review can unblock an intent", async (t) => {
+  const f = setup(t);
+  const intent = f.m.identity.put("intentions", {
+    id: "direct-intent",
+    evidence: [f.old.id],
+    status: "waiting",
+    target: f.ctx.conversation,
+  });
+  const c = await f.call("memory_correct", {
+    ...f.args,
+    targets: [
+      { type: "diary", id: f.diary.id },
+      { type: "intent", id: intent.id },
+    ],
+  });
+  for (const [type, targetId] of [
+    ["diary", f.diary.id],
+    ["intent", intent.id],
+  ])
+    await assert.rejects(
+      f.call("memory_correction_review", {
+        id: c.id,
+        expectedRevision: 1,
+        type,
+        targetId,
+        action: "updated",
+        reason: "未经改动",
+      }),
+      /CORRECTION_RECORD_UNCHANGED/,
+    );
+  assert.equal(f.m.corrections.blocksIntent(intent.id), true);
+});
+
+test("one administrator message can correct the same belief about different people", async (t) => {
+  const f = setup(t);
+  f.runtime.agent("agent-0").ownerIds = ["30000"];
+  const first = await f.call("memory_correct", f.args);
+  const second = await f.call("memory_correct", {
+    ...f.args,
+    personId: "30001",
+  });
+  assert.notEqual(first.id, second.id);
+  assert.equal(f.m.corrections.forPeople(["30001"])[0].id, second.id);
+  assert.equal(
+    (await f.call("memory_correct", { ...f.args, personId: "30001" })).id,
+    second.id,
+  );
+});

@@ -127,7 +127,10 @@ export class Corrections {
   }
   create(args, source, boundary, now) {
     const prior = this.list().find(
-      (c) => c.sourceId === source.id && c.oldBelief === args.oldBelief,
+      (c) =>
+        c.sourceId === source.id &&
+        c.personId === args.personId &&
+        c.oldBelief === args.oldBelief,
     );
     if (prior) return prior;
     return this.memory.store.transaction(() => {
@@ -226,7 +229,7 @@ export class Corrections {
           id: r.id,
           direct: !!r.direct,
           revision: r.revision || 0,
-          fingerprint: digest(r),
+          fingerprint: digest(this.record(r.type, r.id)),
           state: r.type === "event" ? "annotated" : "pending",
         })),
       });
