@@ -149,11 +149,34 @@ export async function streamExport(source, destination, signal) {
       signal?.throwIfAborted();
       const { bytesRead } = await handle.read(buffer);
       if (!bytesRead) break;
-      await new Promise((resolve, reject) =>
-        destination.write(buffer.subarray(0, bytesRead), (error) =>
-          error ? reject(error) : resolve(),
-        ),
-      );
+      await new Promise((resolve, reject) => {
+        let settled = false;
+        const complete = (error) => {
+          if (settled) return;
+          settled = true;
+          destination.off("close", closed);
+          destination.off("finish", closed);
+          destination.off("error", complete);
+          error ? reject(error) : resolve();
+        };
+        const closed = () =>
+          complete(
+            signal?.reason || destination.errored || Error("EXPORT_CANCELLED"),
+          );
+        // A destroyed HTTP response may never acknowledge its pending write.
+        // Stop waiting on close/error, and remove these listeners after each
+        // chunk so large exports keep a bounded number of pending callbacks.
+        if (destination.destroyed || destination.writableFinished)
+          return closed();
+        destination.once("close", closed);
+        destination.once("finish", closed);
+        destination.once("error", complete);
+        try {
+          destination.write(buffer.subarray(0, bytesRead), complete);
+        } catch (error) {
+          complete(error);
+        }
+      });
     }
     destination.end();
     await done;
