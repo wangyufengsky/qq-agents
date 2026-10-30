@@ -309,7 +309,7 @@ function dshFake() {
   };
   return { client, push };
 }
-test("DSH uses required preset, workspace, model selection, followed event stream and ignores snapshots", async (t) => {
+test("DSH uses required preset, workspace, model selection and ignores historical completion", async (t) => {
   const root = temp(t),
     { client, push } = dshFake(),
     cfg = config(),
@@ -358,6 +358,65 @@ test("DSH uses required preset, workspace, model selection, followed event strea
   });
   await run;
   assert.equal(completed, true);
+});
+
+test("DSH resumes measured capacity from a fresh subscription snapshot", async (t) => {
+  const { client, push } = dshFake();
+  const backend = new DshBackend(
+    { id: "dsh", preset: "qq-unified" },
+    config(1).agents[0],
+    { root: temp(t), client },
+  );
+  t.after(() => backend.close());
+  client.events.follow = (sessionId) =>
+    push({
+      payload: {
+        type: "session/snapshot",
+        sessionId,
+        snapshot: {
+          projections: {
+            values: { contextPressure: { contextWindow: 1000000 } },
+          },
+        },
+      },
+    });
+  const usage = [];
+  const run = backend.run({
+    conversation: "private:30000",
+    prompt: "continue",
+    tools: [],
+    session: {
+      id: "s",
+      backend: "dsh",
+      signature: backend.sessionSignature([]),
+    },
+    signal: new AbortController().signal,
+    saveSession() {},
+    onUsage: (value) => usage.push(value),
+  });
+  await tick();
+  const emit = (type, data) =>
+    push({
+      payload: {
+        type: "session/event",
+        sessionId: "s",
+        event: { type, data },
+      },
+    });
+  // No new request/context event after reconnect. Invalid metadata must not
+  // replace the capacity recovered from the native snapshot.
+  emit("request/context", { contextWindow: -1 });
+  emit("assistant/message", {
+    usage: { inputTokens: 60387, outputTokens: 1864 },
+  });
+  emit("turn/end", { turn: "t", reason: { kind: "completed" } });
+  await run;
+  assert.equal(usage[0].contextTokens, 62251);
+  assert.equal(usage[0].capacityTokens, 1000000);
+  assert.equal(
+    client.calls.some((c) => c.name === "create"),
+    false,
+  );
 });
 test("DSH rejects a broken installed preset before creating a workspace", async (t) => {
   const { client } = dshFake();

@@ -624,7 +624,17 @@ export class ContextLifecycle {
     if (Number.isFinite(value?.contextTokens) && value.contextTokens >= 0)
       m.setState(ctx.conversation, {
         ...s,
-        usage: { ...value, at: this.runtime.now() },
+        // Some provider messages omit the window. Keep the last known
+        // capacity of this session instead of reverting to the fallback.
+        // Retirement clears usage before a different session/model starts.
+        usage: {
+          ...value,
+          capacityTokens:
+            Number.isFinite(value.capacityTokens) && value.capacityTokens > 0
+              ? value.capacityTokens
+              : s.usage?.capacityTokens,
+          at: this.runtime.now(),
+        },
       });
   }
   async finish(ctx, outcome, backend) {
@@ -709,7 +719,8 @@ export class ContextLifecycle {
       usage = {
         source: "estimated",
         contextTokens: (s.usage?.contextTokens || 0) + ctx.estimatedAdded,
-        capacityTokens: a.contextPolicy.capacityTokens,
+        capacityTokens:
+          s.usage?.capacityTokens || a.contextPolicy.capacityTokens,
         at: r.now(),
         basis:
           "tracked text characters plus tool output; conservative estimate, excludes unknown backend overhead",
@@ -824,18 +835,8 @@ export class ContextLifecycle {
       return;
     }
     // Called after running is removed; unknown deliveries are in handoff, not a retirement lock.
-    if (
-      ctx.conversation === SUBJECT ||
-      m.state(ctx.conversation).lifecycle.ratio >= a.contextPolicy.hardRatio
-    )
-      this.retire(
-        a.id,
-        ctx.conversation,
-        ctx.conversation === SUBJECT
-          ? "subject-check-complete"
-          : "capacity-guard",
-        ctx,
-      );
+    if (m.state(ctx.conversation).lifecycle.ratio >= a.contextPolicy.hardRatio)
+      this.retire(a.id, ctx.conversation, "capacity-guard", ctx);
   }
   tick() {
     const r = this.runtime;
