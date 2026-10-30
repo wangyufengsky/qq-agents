@@ -1,3 +1,4 @@
+import { readFileText, TEXT_FILE } from "./file-text.mjs";
 import { recallBoundary } from "../core/recall-boundary.mjs";
 import { z } from "zod";
 import { allowed } from "../core/config.mjs";
@@ -7,8 +8,7 @@ import { githubMarker, privateGithubSources } from "../github/policy.mjs";
 import { attachmentName } from "../transport/attachments.mjs";
 
 const name = z.string().min(1).max(200),
-  id = z.string().regex(/^[a-f0-9]{64}$/),
-  TEXT_FILE = /\.(txt|md|csv|json|tsv|log|xml|yaml|yml)$/i;
+  id = z.string().regex(/^[a-f0-9]{64}$/);
 export const fileDefinitions = {
   file_list: [
     "查询自己的独立文件库及可导入目录编号。文件元信息不代表已经阅读内容；要看正文用 file_read。",
@@ -116,29 +116,15 @@ export async function fileTool(runtime, ctx, tool, args) {
     recallBoundary(runtime, ctx).assert(meta);
     if (!TEXT_FILE.test(meta.name)) throw Error("FILE_NOT_TEXT");
     protect(ctx, meta);
-    // FileStore.read returns { meta, buffer } where buffer is a Node Buffer:
-    // a view of exactly the file's bytes, even when it sits in a shared pool.
-    // Decode that view, never its underlying ArrayBuffer.
-    const { buffer: bytes } = files.read(a.id, args.fileId, a.files.maxBytes);
-    let text;
-    try {
-      text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    } catch (error) {
-      if (!(error instanceof TypeError)) throw error;
-      throw Error("FILE_NOT_TEXT", { cause: error });
-    }
-    if (text.includes("\0")) throw Error("FILE_NOT_TEXT");
-    const end = args.offset + args.maxChars;
     return {
-      fileId: meta.fileId,
-      name: meta.name,
-      createdAt: meta.createdAt,
-      text: text.slice(args.offset, end),
-      totalChars: text.length,
-      nextOffset: end < text.length ? end : null,
+      ...readFileText(files, a.id, args.fileId, {
+        ...args,
+        maxBytes: a.files.maxBytes,
+      }),
       contentRead: true,
     };
   }
+
   if (tool === "qq_send_file") {
     active(runtime, ctx, "send");
     const meta = files.metadata(a.id, args.fileId);
