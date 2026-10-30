@@ -215,7 +215,7 @@ export const configSchema = z
       z
         .object({
           id,
-          type: z.enum(["dsh", "codex", "openai"]),
+          type: z.enum(["dsh", "codex", "openai", "antigravity"]),
           label: z.string(),
           provider: z.string().default(""),
           baseUrl: z.string().optional(),
@@ -237,7 +237,7 @@ export const configSchema = z
             })
             .strict()
             .default({ autoReconnect: false }),
-          command: z.string().default("codex"),
+          command: z.string().optional(),
           env: z
             .record(
               z
@@ -257,6 +257,23 @@ export const configSchema = z
           toolServers: z.array(toolServer).default([]),
         })
         .strict()
+        .transform((backend) => ({
+          ...backend,
+          command:
+            backend.command ??
+            (backend.type === "antigravity" ? "agy" : "codex"),
+        }))
+        .refine(
+          (backend) =>
+            backend.type !== "antigravity" ||
+            (!backend.baseUrl &&
+              !backend.home &&
+              !backend.provider &&
+              ["", "low", "medium", "high", "xhigh", "max"].includes(
+                backend.effort,
+              )),
+          "Antigravity uses its managed CLI profile and a supported effort level",
+        )
         .refine(
           (backend) =>
             backend.type === "codex" || !Object.keys(backend.env || {}).length,

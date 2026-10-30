@@ -6,6 +6,7 @@ export const BACKEND_CAPABILITIES = {
   dsh: { compaction: true, imageGeneration: false },
   codex: { compaction: true, imageGeneration: true },
   openai: { compaction: false, imageGeneration: false },
+  antigravity: { compaction: false, imageGeneration: false },
 };
 /** @param {string} type */
 export const backendCapabilities = (type) =>

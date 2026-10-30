@@ -942,6 +942,14 @@ const backendLabels = {
   "selection-required": "请选择 DSH 实例",
 };
 const backendErrors = {
+  ANTIGRAVITY_NOT_FOUND:
+    "未找到 Antigravity CLI，请安装 agy 或填写完整命令路径。",
+  ANTIGRAVITY_LOGIN_REQUIRED:
+    "Antigravity 需要登录，请先完成官方登录再恢复连接。",
+  ANTIGRAVITY_PROBE_FAILED:
+    "Antigravity CLI 检查失败，请核对版本、网络和模型目录。",
+  ANTIGRAVITY_PROFILE_UNSAFE:
+    "Antigravity 专用目录包含非桥接配置或符号链接，已停止加载。",
   DSH_NOT_FOUND: "未找到 DSH，请先打开桌面应用，再恢复连接。",
   DSH_INSTANCE_UNAVAILABLE:
     "绑定的 DSH 实例尚未就绪。请等待启动完成，或选择其他实例。",
@@ -958,6 +966,8 @@ const backendErrors = {
   OPENAI_UNREACHABLE: "无法访问 API 服务地址，请检查网络和 baseUrl。",
 };
 const backendKinds = {
+  antigravity:
+    "官方 agy CLI；角色配置与会话独立，使用本机官方登录。取消后重建会话。",
   dsh: "选择桌面实例后可跟随重启后的地址。",
   codex: "使用角色自己的 Codex 进程与登录目录。",
   openai:
@@ -989,6 +999,7 @@ function backendCard(b) {
       b.preset,
     ],
     codex: ["进程", "每个角色一个专用 Codex 进程", "命令", b.command],
+    antigravity: ["进程", "每回合独立 CLI，按聊天续接会话", "命令", b.command],
     openai: [
       "服务地址",
       b.baseUrl || "",
@@ -1008,6 +1019,7 @@ function backendCard(b) {
   return `<article class="card link-card">${linkHead("chip", b.label, `${b.id} · ${backendTypeNames[b.type] || b.type}`, tag(busy ? "处理中" : backendLabels[s.state] || s.state, s.state === "ready" ? "live" : "warn"))}<dl class="link-meta">${linkRow("模型", (b.model || "后端默认") + (b.provider ? ` · ${b.provider}` : ""), "mono")}${linkRow("思考强度", effort)}${linkRow(where[0], where[1], "mono")}${linkRow(where[2], where[3], "mono")}${linkRow("外部工具", `${b.toolServers.length} 个 MCP 服务`)}${linkRow("最近检测", checked)}${linkRow("自动恢复", `${s.autoReconnect ? "已开启" : "已关闭"}${s.attempts ? ` · 已尝试 ${s.attempts}/3 次` : ""}`)}</dl><div class="link-notes">${linkNote(s.error ? backendErrors[s.error] || "连接检查未通过：" + s.error : backendKinds[b.type] || "", !!s.error)}${s.attempts >= 3 ? linkNote("自动恢复已停止，请检查原因后手动恢复。", true) : linkNote(roles)}</div><div class="card-actions link-actions"><div><button data-do="backend-check" data-id="${esc(b.id)}" ${disabled}>检测连接</button><button data-do="backend-recover" data-id="${esc(b.id)}" ${disabled}>恢复连接</button><button data-do="backend-auto" data-id="${esc(b.id)}" ${disabled}>${s.autoReconnect ? "关闭" : "开启"}自动恢复</button></div><div><button class="ghost" data-do="edit-backend" data-id="${esc(b.id)}" ${disabled}>${icon("settings", "sm")}编辑</button><button class="ghost" data-do="models" data-id="${esc(b.id)}" ${disabled}>模型目录</button>${b.type === "dsh" ? `<button class="ghost" data-do="backend-discover" data-id="${esc(b.id)}" ${disabled}>选择实例</button>` : ""}</div></div>${disabledHints(off)}</article>`;
 }
 const backendTypeNames = {
+  antigravity: "Antigravity CLI",
   dsh: "DSH",
   codex: "Codex",
   openai: "OpenAI 兼容",
@@ -1605,6 +1617,7 @@ function connectionForm(row, id, html) {
 // each model supports in their model catalog, which replaces these once read;
 // a stored value outside the list stays selectable so it saves unchanged.
 const backendEfforts = {
+  antigravity: ["low", "medium", "high", "xhigh", "max"],
   dsh: ["low", "medium", "high"],
   codex: ["minimal", "low", "medium", "high", "xhigh"],
   openai: ["minimal", "low", "medium", "high"],
@@ -1638,11 +1651,13 @@ function backendEffortOptions(type, model, current, catalog) {
   ];
 }
 const backendModelExamples = {
+  antigravity: "读取 agy 模型目录后选择",
   dsh: "例如 deepseek-chat；留空使用 DSH 当前模型",
   codex: "例如 gpt-5-codex；留空使用 Codex 默认",
   openai: "例如 deepseek-chat",
 };
 const backendUrlExamples = {
+  antigravity: "Antigravity CLI 不需要，留空",
   dsh: "留空则选择桌面实例；固定地址如 http://127.0.0.1:3213",
   codex: "Codex 不需要，留空",
   openai: "例如 https://api.deepseek.com/v1",
@@ -1698,6 +1713,7 @@ function backendForm(row, id, html) {
     select("type", "适配器", type, [
       ["dsh", "DeepSeek Harness"],
       ["codex", "Codex app-server"],
+      ["antigravity", "Google Antigravity CLI"],
       ["openai", "OpenAI 兼容 API"],
     ]) +
     `<label>默认模型（留空使用后端默认）<span class="input-row"><input name="model" value="${esc(row.model)}" list="backend-models" autocomplete="off" placeholder="${esc(backendModelExamples[type])}"><button type="button" class="ghost" data-models-read ${disabledAttr(readOff)}>读取目录</button></span></label>` +
@@ -1716,11 +1732,14 @@ function backendForm(row, id, html) {
         'list="backend-providers" autocomplete="off" placeholder="例如 deepseek-official；留空不限"',
       ),
     ) +
-    input(
-      "baseUrl",
-      "服务地址",
-      row.baseUrl,
-      `placeholder="${esc(backendUrlExamples[type])}"`,
+    linkFor(
+      "dsh codex openai",
+      input(
+        "baseUrl",
+        "服务地址",
+        row.baseUrl,
+        `placeholder="${esc(backendUrlExamples[type])}"`,
+      ),
     ) +
     linkFor(
       "openai",
@@ -1767,12 +1786,12 @@ function backendForm(row, id, html) {
       ),
     ) +
     linkFor(
-      "codex",
+      "codex antigravity",
       input(
         "command",
-        "Codex 命令",
-        row.command || "codex",
-        'placeholder="codex"',
+        "CLI 命令（Codex / Antigravity）",
+        row.command || (type === "antigravity" ? "agy" : "codex"),
+        'placeholder="codex 或 agy，也可填写完整路径"',
       ),
     ) +
     area(
@@ -1819,6 +1838,11 @@ function bindLinkForm(root, type) {
     baseUrl.placeholder = backendUrlExamples[pick.value] || "";
   };
   pick.addEventListener("change", refresh);
+  pick.addEventListener("change", () => {
+    const command = root.querySelector('[name="command"]');
+    if (["", "codex", "agy"].includes(command.value))
+      command.value = pick.value === "antigravity" ? "agy" : "codex";
+  });
   model.addEventListener("change", refresh);
   const read = root.querySelector("[data-models-read]");
   if (read)
@@ -1891,10 +1915,16 @@ $("#edit-form").onsubmit = (e) => {
           id: row.id,
           label: get("label"),
           type: get("type"),
-          provider: get("provider"),
+          provider: get("type") === "antigravity" ? "" : get("provider"),
           model: get("model"),
           effort: get("effort"),
-          baseUrl: get("baseUrl") || undefined,
+          baseUrl:
+            get("type") === "antigravity"
+              ? undefined
+              : get("baseUrl") || undefined,
+          ...(get("type") === "antigravity"
+            ? { home: undefined, env: undefined }
+            : {}),
           recovery: {
             ...row.recovery,
             ...(get("baseUrl") !== (row.baseUrl || "")

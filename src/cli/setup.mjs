@@ -34,6 +34,13 @@ const backendAnswers = z.discriminatedUnion("type", [
     .strict(),
   z
     .object({
+      type: z.literal("antigravity"),
+      model: z.string().default(""),
+      command: z.string().min(1).default("agy"),
+    })
+    .strict(),
+  z
+    .object({
       type: z.literal("dsh"),
       model: z.string().default(""),
       provider: z.string().default(""),
@@ -88,9 +95,12 @@ const loopbackHost = (url) =>
 export function buildConfig(answers) {
   const a = answersSchema.parse(answers);
   const base = defaultConfig();
-  const backendId = { openai: "api", codex: "codex", dsh: "dsh" }[
-    a.backend.type
-  ];
+  const backendId = {
+    openai: "api",
+    codex: "codex",
+    dsh: "dsh",
+    antigravity: "antigravity",
+  }[a.backend.type];
   const backend =
     a.backend.type === "openai"
       ? {
@@ -107,6 +117,13 @@ export function buildConfig(answers) {
         }
       : {
           ...base.backends.find((b) => b.type === a.backend.type),
+          ...(a.backend.type === "antigravity"
+            ? {
+                type: "antigravity",
+                label: "Google Antigravity CLI",
+                command: a.backend.command,
+              }
+            : {}),
           id: backendId,
           model: a.backend.model,
           ...(a.backend.type === "dsh" ? { provider: a.backend.provider } : {}),

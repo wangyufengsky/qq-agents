@@ -67,6 +67,7 @@ const desktop = [
 // the same base environment plus only the variables their programs document.
 const components = {
   codex: { network: true },
+  antigravity: { network: true },
   "native-qq": { network: true, desktop: true },
   // OpenCLI drives the administrator's logged-in browser through its bridge.
   "app-reader": {

@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
  * @typedef {{id: string, transport: "stdio" | "http" | "sse", command?: string, url?: string,
  *   headers: Record<string, string>, args: string[], env: Record<string, string>,
  *   allowedTools: string[]}} ToolServerConfig
- * @typedef {{id: string, type: "dsh" | "codex" | "openai", label: string, provider: string,
+ * @typedef {{id: string, type: "dsh" | "codex" | "openai" | "antigravity", label: string, provider: string,
  *   baseUrl?: string, apiKeyEnv?: string, contextWindow?: number, maxToolRounds?: number,
  *   requestTimeoutMs?: number, vision?: boolean, sendEffort?: boolean,
  *   recovery: {autoReconnect: boolean, dshInstance?: string}, command: string,

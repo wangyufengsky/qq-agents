@@ -14,6 +14,10 @@ const request = z
   })
   .strict();
 const known = new Set([
+  "ANTIGRAVITY_NOT_FOUND",
+  "ANTIGRAVITY_LOGIN_REQUIRED",
+  "ANTIGRAVITY_PROBE_FAILED",
+  "ANTIGRAVITY_PROFILE_UNSAFE",
   "DSH_NOT_FOUND",
   "DSH_INSTANCE_UNAVAILABLE",
   "DSH_SELECTION_REQUIRED",
@@ -37,6 +41,7 @@ export const connectionError = (e) =>
   known.has(e?.message) ? e.message : "BACKEND_PROBE_FAILED";
 function failureState(code) {
   return code === "CODEX_DEDICATED_LOGIN_REQUIRED" ||
+    code === "ANTIGRAVITY_LOGIN_REQUIRED" ||
     code === "OPENAI_AUTH_FAILED" ||
     code === "OPENAI_API_KEY_ENV_MISSING"
     ? "login-required"

@@ -1,5 +1,7 @@
 # 真实后端的本地验收
 
+Antigravity CLI 使用独立的 `scripts/antigravity-acceptance.mjs`，验收会话续接、跨聊天隔离、取消及恢复，运行方式见 [Antigravity 指南](ANTIGRAVITY.md#隔离验收)。下文的 DSH/Codex 验收脚本保持原有用途。
+
 `npm run verify` 不调用模型，不使用真实 QQ。`scripts/local-acceptance.mjs` 是需要显式选择的真实后端验收工具，会消耗所选模型的额度。所有 QQ 写请求都由脚本内的回环 HTTP/WS 网关记录，不能投递到真实 QQ。
 
 ## 准备独立环境
