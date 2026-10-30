@@ -27,6 +27,7 @@ const titles = {
   mind: ["Self", "身份锚点、当前 self、成长候选与版本历史。"],
   mood: ["心情", "角色自己记下的当前心情、强度变化和每一次变化的原因。"],
   people: ["人物卡", "角色对每个人的称呼、关系与印象，以及每一版的改动。"],
+  projects: ["项目与活动", "持续推进的事情、共同原稿与作品历史。"],
   subject: ["空闲时间", "空闲时间的检查状态、日志，以及检查与联系的设置。"],
   intents: ["主动联系", "空闲时间里想主动找人留下的意图，以及最后的结果。"],
   sessions: [
@@ -533,6 +534,7 @@ const sections = {
       "people",
       "memory",
       "subject",
+      "projects",
       "intents",
       "schedule",
       "apps",
@@ -551,6 +553,7 @@ const pageLabels = {
   mood: "心情",
   people: "人物卡",
   subject: "空闲时间",
+  projects: "项目与活动",
   intents: "主动联系",
   sessions: "会话",
   memory: "记忆与日记",
@@ -578,6 +581,7 @@ function syncRole() {
     () => (mindAgentId = roleId),
     () => (parityAgentId = roleId),
     () => (fileAgentId = roleId),
+    () => (projectAgentId = roleId),
   ])
     try {
       assign();
@@ -704,6 +708,8 @@ function render() {
     renderActivity();
   } else if (tab === "apps") {
     renderApps();
+  } else if (tab === "projects") {
+    renderProjects();
   } else if (tab === "permissions") {
     renderFilePermissions();
   } else if (["schedule", "voices", "operations"].includes(tab)) {
