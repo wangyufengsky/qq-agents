@@ -6,7 +6,7 @@
 
 ## 未发布
 
-### Google Antigravity CLI harness
+### Google Antigravity CLI harness（[#88](https://github.com/wangyufengsky/qq-agents/pull/88)）
 
 - 新增 `antigravity` 后端、管理台配置及安装向导支持，以官方 headless JSON 流执行回合，按角色和聊天绑定原生会话，使用桥接专用 profile 和受限工具入口。
 - 工具权限在 hook 和桥接调用入口分别检查，取消及回合结束立即撤销；异常或取消退休模型会话，禁止重放。现有角色后端、默认配置与发送权限保持原值。
