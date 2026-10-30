@@ -13,6 +13,7 @@ import { mergeProtection } from "../memory/protection.mjs";
 import { rememberSources, sourceHandoff } from "./context-handoff.mjs";
 import { personCardsForTurn, personItemsForTurn } from "./person-cards.mjs";
 import { moodForTurn } from "./mood.mjs";
+import { floorForTurn } from "./floor.mjs";
 import { taskBrief } from "./scheduler.mjs";
 import { recallBoundary, recallPage } from "./recall-boundary.mjs";
 import {
@@ -423,6 +424,12 @@ export class ContextLifecycle {
             fresh: ctx.initialSession,
             accountId: r.connection(a.connectionId).accountId,
           });
+    const floor = floorForTurn(
+      m,
+      ctx.conversation,
+      history.items,
+      r.connection(a.connectionId).accountId,
+    );
     const schedule =
       ctx.conversation === SUBJECT
         ? null
@@ -471,6 +478,9 @@ export class ContextLifecycle {
       ctx.conversation === SUBJECT
         ? `空闲时间素材：${JSON.stringify(materials)}`
         : `新增消息：${JSON.stringify(history)}`,
+      floor
+        ? `群聊现场（程序按 @、引用和发言记录算的，只是参考）：toYou 是对你说的；betweenOthers 是别人之间在说的话，to 是对象；answeredByOthers 是已经有别人接了的问题；recent 是最近 ${floor.recent.of} 条里你说了几条。${JSON.stringify(floor)}`
+        : "",
       schedule?.line,
       mood.line,
       // Last, closest to the reply, where an address is most likely heeded.
