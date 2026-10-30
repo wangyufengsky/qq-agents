@@ -5,6 +5,7 @@ FROM node:24-bookworm-slim
 
 # Set to true to bundle Chromium (and CJK fonts) for public-page screenshots.
 ARG WITH_CHROMIUM=false
+ARG SOURCE_COMMIT
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ffmpeg ca-certificates \
@@ -20,7 +21,10 @@ RUN npm ci --ignore-scripts --omit=dev && npm cache clean --force
 COPY src ./src
 COPY public ./public
 COPY vendor ./vendor
-COPY LICENSE NOTICE.md UPSTREAM-NOTICE.md ./
+COPY docs ./docs
+COPY scripts/framework-build.mjs ./scripts/framework-build.mjs
+COPY README.md LICENSE NOTICE.md UPSTREAM-NOTICE.md ./
+RUN if [ -n "$SOURCE_COMMIT" ]; then node scripts/framework-build.mjs --commit "$SOURCE_COMMIT"; fi
 
 # The node image's unprivileged user owns only the data directory.
 RUN mkdir -p /data && chown node:node /data && chmod 700 /data

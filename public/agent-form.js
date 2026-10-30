@@ -163,6 +163,7 @@ const AGENT_TOOL_GROUPS = [
   },
   {
     id: "framework",
+    builtin: true,
     title: "框架自查",
     desc: "默认可用的只读工具：了解本机框架、部署与自身运行状态。",
     tools: {
@@ -249,7 +250,7 @@ const agentForm = {
   },
   managedTools() {
     return new Set(
-      AGENT_TOOL_GROUPS.filter((g) => g.managedBy).flatMap((g) =>
+      AGENT_TOOL_GROUPS.filter((g) => g.managedBy || g.builtin).flatMap((g) =>
         Object.keys(g.tools),
       ),
     );
@@ -693,6 +694,8 @@ const agentForm = {
         // Withheld features (not in the server's tool list) are not offered.
         const names = Object.keys(g.tools).filter((t) => tools.includes(t)),
           on = names.filter((t) => enabled.has(t)).length;
+        if (g.builtin)
+          return `<div class="tool-group managed" data-group="${g.id}"><div class="tool-group-head"><strong>${esc(g.title)}</strong><span>内建只读能力</span></div><p class="hint">${esc(g.desc)}</p><div class="tools">${names.map((t) => `<span>${esc(g.tools[t])}<code>${esc(t)}</code></span>`).join("")}</div></div>`;
         const items = names
           .map(
             (t) =>

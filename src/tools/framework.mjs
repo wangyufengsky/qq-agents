@@ -71,8 +71,8 @@ export function frameworkTool(runtime, ctx, name, args) {
         "仅描述本进程可验证的部署信息；未探测容器、服务管理器或宿主目录，不能据此编造安装方式。框架知识不属于人格 Self。",
     };
   const backendState = runtime.backendConnections.state(agent.backendId);
-  const state =
-    backendState.agents.find((a) => a.id === agent.id) || backendState;
+  const state = backendState;
+  const ownProbe = backendState.agents.find((a) => a.id === agent.id);
   const errors = runtime.diagnostics
     .snapshot()
     .filter((e) =>
@@ -105,6 +105,18 @@ export function frameworkTool(runtime, ctx, name, args) {
       state: state.state,
       error: state.error ? connectionError(Error(state.error)) : null,
       checkedAt: backendState.checkedAt,
+      ...(ownProbe
+        ? {
+            lastRoleProbe: {
+              state: ownProbe.state,
+              error: ownProbe.error
+                ? connectionError(Error(ownProbe.error))
+                : null,
+              notice:
+                "角色上次探测结果，时间未单独记录；不能覆盖当前后端状态。",
+            },
+          }
+        : {}),
     },
     blockers,
     error: safeCode(runtime.faults.get(agent.id)),
@@ -114,7 +126,7 @@ export function frameworkTool(runtime, ctx, name, args) {
       ...(!connected
         ? ["QQ 未连接：请主人在管理台查看连接与 NapCat 登录状态。"]
         : []),
-      ...(state.state !== "ready"
+      ...(state.state !== "ready" || (ownProbe && ownProbe.state !== "ready")
         ? [
             "后端未确认就绪：请主人在管理台检查后端连接、登录及模型；不要根据未知状态推断具体原因。",
           ]

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
-  frameworkSnapshot,
+  frameworkBuildDigest,
   gitVersion,
 } from "../src/core/framework-knowledge.mjs";
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -13,9 +13,9 @@ if (
   (git && (git.modified || git.commit !== commit))
 )
   throw Error("FRAMEWORK_BUILD_REQUIRES_CLEAN_COMMIT");
-const { contentDigest } = frameworkSnapshot(root);
+const buildDigest = frameworkBuildDigest(root);
 fs.writeFileSync(
   new URL("../framework-build.json", import.meta.url),
-  JSON.stringify({ commit, contentDigest }, null, 2) + "\n",
+  JSON.stringify({ commit, buildDigest }, null, 2) + "\n",
 );
-console.log(JSON.stringify({ commit, contentDigest }));
+console.log(JSON.stringify({ commit, buildDigest }));

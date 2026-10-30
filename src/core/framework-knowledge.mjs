@@ -70,6 +70,35 @@ export function gitVersion(root) {
     return null;
   }
 }
+// Build identity includes dependencies and assets independently of the read catalog.
+export function frameworkBuildDigest(root) {
+  const entries = [];
+  function visit(relative) {
+    const file = path.join(root, relative);
+    if (!fs.existsSync(file)) return;
+    const stat = fs.lstatSync(file);
+    if (stat.isSymbolicLink())
+      throw Error("FRAMEWORK_BUILD_SYMLINK_UNSUPPORTED");
+    if (stat.isDirectory()) {
+      for (const name of fs.readdirSync(file).sort())
+        visit(relative + "/" + name);
+    } else if (stat.isFile())
+      entries.push([relative, sha(fs.readFileSync(file))]);
+  }
+  for (const name of [
+    "src",
+    "vendor",
+    "public",
+    "scripts",
+    "docs",
+    "README.md",
+    "NOTICE.md",
+    "package.json",
+    "package-lock.json",
+  ])
+    visit(name);
+  return sha(JSON.stringify(entries));
+}
 export class FrameworkKnowledge {
   constructor({
     root = defaultRoot,
@@ -96,15 +125,23 @@ export class FrameworkKnowledge {
     } catch {
       /* Source checkouts need no manifest. */
     }
+    let buildDigest;
+    try {
+      buildDigest = frameworkBuildDigest(root);
+    } catch {
+      /* An unverifiable build stays unknown. */
+    }
     const recorded =
-      commitPattern.test(build.commit || "") &&
-      build.contentDigest === this.contentDigest
+      gitVersion(root) ||
+      (commitPattern.test(build.commit || "") &&
+      buildDigest &&
+      build.buildDigest === buildDigest
         ? {
             commit: build.commit,
             modified: false,
             provenance: "verified-build-manifest",
           }
-        : gitVersion(root);
+        : null);
     this.version = {
       packageVersion:
         typeof pkg.version === "string" &&
@@ -115,6 +152,7 @@ export class FrameworkKnowledge {
       modified: recorded?.modified ?? null,
       provenance: recorded?.provenance || "unknown",
       contentDigest: this.contentDigest,
+      buildDigest: buildDigest || null,
       capturedAt: new Date(this.clock()).toISOString(),
     };
   }
@@ -162,8 +200,8 @@ export class FrameworkKnowledge {
               headers: { accept: "text/plain" },
             },
           );
-        } catch {
-          throw Error("FRAMEWORK_UPSTREAM_UNAVAILABLE");
+        } catch (error) {
+          throw Error("FRAMEWORK_UPSTREAM_UNAVAILABLE", { cause: error });
         }
         if (!response.ok) {
           await response.body?.cancel();
@@ -179,7 +217,7 @@ export class FrameworkKnowledge {
           }
         } catch (error) {
           if (error.message === "FRAMEWORK_RESPONSE_TOO_LARGE") throw error;
-          throw Error("FRAMEWORK_UPSTREAM_UNAVAILABLE");
+          throw Error("FRAMEWORK_UPSTREAM_UNAVAILABLE", { cause: error });
         }
         cached = {
           body: Buffer.concat(chunks).toString("utf8"),

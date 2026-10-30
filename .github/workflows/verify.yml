@@ -61,10 +61,11 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: docker build -t qq-agents:ci .
+      - run: docker build --build-arg SOURCE_COMMIT=${{ github.sha }} -t qq-agents:ci .
       - name: Smoke-test the container console through a loopback port mapping
         run: |
           docker run -d --name qq-agents-ci -p 127.0.0.1:3210:3210 qq-agents:ci
+          docker exec qq-agents-ci node --input-type=module -e 'import { FrameworkKnowledge } from "./src/core/framework-knowledge.mjs"; const k = new FrameworkKnowledge(); if (k.version.provenance !== "verified-build-manifest" || !k.files.has("docs/AGENT-FRAMEWORK.md")) process.exit(1);'
           for i in $(seq 1 30); do
             docker exec qq-agents-ci test -s /data/admin-token && break
             sleep 1

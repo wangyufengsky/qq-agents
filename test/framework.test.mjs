@@ -6,7 +6,7 @@ import { execFileSync } from "node:child_process";
 import { fixture, context, temp, config } from "./helpers.mjs";
 import {
   FrameworkKnowledge,
-  frameworkSnapshot,
+  frameworkBuildDigest,
 } from "../src/core/framework-knowledge.mjs";
 import {
   frameworkDefinitions,
@@ -36,7 +36,7 @@ function source(t) {
       path.join(root, "framework-build.json"),
       JSON.stringify({
         commit,
-        contentDigest: frameworkSnapshot(root).contentDigest,
+        buildDigest: frameworkBuildDigest(root),
       }),
     );
   manifest();
@@ -179,6 +179,41 @@ test("nested release directories do not inherit a parent repository commit", (t)
   assert.equal(new FrameworkKnowledge({ root }).version.commit, null);
 });
 
+test("build identity includes vendor assets and a source checkout always prefers current Git", (t) => {
+  const s = source(t);
+  fs.mkdirSync(path.join(s.root, "vendor"));
+  const file = path.join(s.root, "vendor/runtime.js");
+  fs.writeFileSync(file, "before");
+  s.manifest();
+  assert.equal(new FrameworkKnowledge(s).version.commit, commit);
+  fs.writeFileSync(file, "after");
+  assert.equal(new FrameworkKnowledge(s).version.commit, null);
+  s.manifest();
+  fs.writeFileSync(path.join(s.root, ".gitignore"), "framework-build.json\n");
+  const git = (args) =>
+    execFileSync("git", ["-C", s.root, ...args], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  git(["init"]);
+  git(["add", "."]);
+  git([
+    "-c",
+    "user.name=Test",
+    "-c",
+    "user.email=test@example.invalid",
+    "commit",
+    "-m",
+    "fixture",
+  ]);
+  const current = new FrameworkKnowledge(s).version;
+  assert.equal(current.commit, git(["rev-parse", "HEAD"]));
+  assert.equal(current.provenance, "git");
+  assert.equal(current.modified, false);
+  fs.writeFileSync(file, "changed");
+  assert.equal(new FrameworkKnowledge(s).version.modified, true);
+});
+
 test("official reads use only fixed public URLs without credentials, distinguish main and preserve pagination", async (t) => {
   const s = source(t),
     requests = [],
@@ -316,4 +351,18 @@ test("diagnostics reveal only own current scope, stable codes and no configurati
     assert.ok(!JSON.stringify(result).includes(secret));
   assert.equal(JSON.stringify(f.runtime.config), before);
   assert.equal(f.runtime.transports.get("qq-0").sent.length, 0);
+});
+
+test("a stale successful role probe cannot conceal a newer backend failure", async (t) => {
+  const f = fixture(t),
+    ctx = context(f.runtime);
+  f.runtime.backendConnections.state("fixture").agents = [
+    { id: ctx.agentId, state: "ready", error: null },
+  ];
+  f.runtime.backendConnections.failed("fixture", Error("CODEX_DISCONNECTED"));
+  const result = await f.runtime.callTool(ctx, "diagnostics_read", {});
+  assert.equal(result.backend.state, "disconnected");
+  assert.equal(result.backend.error, "CODEX_DISCONNECTED");
+  assert.equal(result.backend.lastRoleProbe.state, "ready");
+  assert.ok(result.advice.some((s) => s.includes("后端未确认就绪")));
 });
