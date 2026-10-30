@@ -46,11 +46,12 @@ function setup(t, mode = "success") {
   const backend = new AntigravityBackend(backendConfig, cfg.agents[0], {
     root,
     spawn(command, args, options) {
-      launches.push({ command, args, options });
-      return spawn(process.execPath, [fixture, ...args], {
+      const child = spawn(process.execPath, [fixture, ...args], {
         ...options,
         env: { ...options.env, AGY_FIXTURE_MODE: mode },
       });
+      launches.push({ command, args, options, pid: child.pid });
+      return child;
     },
   });
   t.after(() => backend.close());
@@ -257,6 +258,51 @@ test("Antigravity close also terminates an in-flight model probe", async (t) => 
   await rejected;
   assert.equal(backend.active.size, 0);
 });
+
+test(
+  "POSIX cancellation kills descendants after the CLI group leader exits",
+  { skip: process.platform === "win32" },
+  async (t) => {
+    const { backend, params, controller, sessions, launches } = setup(
+      t,
+      "orphan",
+    );
+    let deadline;
+    const run = backend.run({
+      ...params,
+      callTool: async () => {
+        setImmediate(() => controller.abort());
+        await new Promise((resolve) =>
+          controller.signal.addEventListener("abort", resolve, { once: true }),
+        );
+        throw Error("ABORTED");
+      },
+    });
+    try {
+      await Promise.race([
+        assert.rejects(run, /ABORTED/),
+        new Promise((_, reject) => {
+          deadline = setTimeout(
+            () => reject(Error("ORPHAN_NOT_TERMINATED")),
+            8000,
+          );
+        }),
+      ]);
+      assert.equal(sessions.at(-1), null);
+      assert.equal(backend.active.size, 0);
+    } finally {
+      clearTimeout(deadline);
+      for (const launch of backend.active.size ? launches : []) {
+        try {
+          process.kill(-launch.pid, "SIGKILL");
+        } catch {
+          /* No test descendant survives a failed assertion. */
+        }
+      }
+      await run.catch(() => {});
+    }
+  },
+);
 
 test("Antigravity failure classification never exposes provider diagnostics", () => {
   const error = antigravityFailure("UNAUTHENTICATED private-provider-detail");

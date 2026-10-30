@@ -16,6 +16,8 @@ import { safeToolFailure } from "../tools/errors.mjs";
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 const here = path.dirname(fileURLToPath(import.meta.url));
 const MAX_OUTPUT = 16 * 1024 * 1024;
+/** @type {WeakSet<import("node:child_process").ChildProcess>} */
+const terminatedGroups = new WeakSet();
 function isolatedEnv() {
   return {
     ...buildChildEnv("antigravity"),
@@ -117,10 +119,10 @@ export function antigravityShellQuote(value, platform = process.platform) {
 }
 /** @param {import("node:child_process").ChildProcess} child @param {NodeJS.Signals} signal */
 function stopTree(child, signal) {
-  if (!child.pid || child.exitCode !== null || child.signalCode !== null)
-    return;
+  if (!child.pid || terminatedGroups.has(child)) return;
   try {
     if (process.platform === "win32") {
+      if (child.exitCode !== null || child.signalCode !== null) return;
       execFileSync(
         path.join(
           process.env.SystemRoot || "C:\\Windows",
@@ -130,9 +132,15 @@ function stopTree(child, signal) {
         ["/pid", String(child.pid), "/T", "/F"],
         { stdio: "ignore", windowsHide: true, timeout: 10000 },
       );
-    } else process.kill(-child.pid, signal);
+    } else {
+      // A dead group leader can leave descendants holding the stdio pipes open.
+      // Escalate the owned group once, independently of the leader's exit state.
+      if (signal === "SIGKILL") terminatedGroups.add(child);
+      process.kill(-child.pid, signal);
+    }
   } catch {
-    child.kill(signal);
+    if (child.exitCode === null && child.signalCode === null)
+      child.kill(signal);
   }
 }
 /** @param {string} text @param {string} status */

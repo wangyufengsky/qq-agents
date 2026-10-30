@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 
 const args = process.argv.slice(2);
 const flag = (name) => args[args.indexOf(name) + 1];
@@ -58,6 +60,21 @@ if (args.includes("models")) {
       },
     });
     process.exitCode = 3;
+  } else if (mode === "orphan") {
+    const descendant = spawn(
+      process.execPath,
+      [
+        "-e",
+        "process.on('SIGINT', () => {}); process.send('ready'); setInterval(() => {}, 1000);",
+      ],
+      {
+        stdio: ["ignore", "inherit", "inherit", "ipc"],
+      },
+    );
+    await once(descendant, "message");
+    descendant.disconnect();
+    process.once("SIGINT", () => process.exit(0));
+    await call("probe").catch(() => {});
   } else if (mode === "cancel") {
     process.once("SIGINT", async () => {
       const stale = await call("probe").catch(() => null);
