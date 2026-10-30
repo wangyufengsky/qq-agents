@@ -256,6 +256,11 @@ export class Runtime {
                   n.startsWith("mood_") ||
                   n.startsWith("project") ||
                   n.startsWith("memory_correction") ||
+                  [
+                    "framework_read",
+                    "deployment_info",
+                    "diagnostics_read",
+                  ].includes(n) ||
                   n === "subject_log" ||
                   a.tools.includes(n),
               ),

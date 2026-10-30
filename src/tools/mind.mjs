@@ -5,6 +5,7 @@ import {
   readProjects,
 } from "./activities.mjs";
 import { correctionDefinitions, correctionTool } from "./corrections.mjs";
+import { frameworkDefinitions, frameworkTool } from "./framework.mjs";
 import { SUBJECT_APP_TOOLS } from "../apps/policy.mjs";
 import { identityAnchors } from "../core/prompts.mjs";
 import { z } from "zod";
@@ -25,6 +26,7 @@ const text = z.string().min(1),
   ids = z.array(text).max(30),
   version = z.number().int().min(1);
 export const mindDefinitions = {
+  ...frameworkDefinitions,
   ...correctionDefinitions,
   self_read: [
     "读取当前正式 self、身份锚点与本回合固定版本；数据库最新版不改变当前回合。",
@@ -267,6 +269,7 @@ export const CHAT_MIND_TOOLS = Object.keys(mindDefinitions).filter(
   (n) => n !== "self_review" && n !== "subject_log",
 );
 export const SUBJECT_TOOLS = [
+  ...Object.keys(frameworkDefinitions),
   "memory_corrections",
   "memory_correction_review",
   "github_capabilities",
@@ -331,6 +334,8 @@ function executeMindTool(runtime, ctx, name, args) {
     throw Error("RESTRICTED_CONTEXT_MIND_WRITE_BLOCKED");
   if (name in correctionDefinitions)
     return correctionTool(runtime, ctx, name, args);
+  if (name in frameworkDefinitions)
+    return frameworkTool(runtime, ctx, name, args);
   if (name === "self_read")
     return {
       current: (() => {

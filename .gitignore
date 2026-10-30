@@ -17,3 +17,4 @@ config.json
 *.pem
 *.key
 .DS_Store
+framework-build.json

@@ -162,6 +162,16 @@ const AGENT_TOOL_GROUPS = [
     },
   },
   {
+    id: "framework",
+    title: "框架自查",
+    desc: "默认可用的只读工具：了解本机框架、部署与自身运行状态。",
+    tools: {
+      framework_read: "阅读框架文档与源码",
+      deployment_info: "查看本机版本与后端",
+      diagnostics_read: "查看自身运行诊断",
+    },
+  },
+  {
     id: "ops",
     title: "运维",
     desc: "只在独立受保护工作任务中使用，写入和命令仍需逐项确认。",
