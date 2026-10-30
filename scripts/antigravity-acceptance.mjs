@@ -2,8 +2,12 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { parseArgs } from "node:util";
-import { AntigravityBackend } from "../src/backends/antigravity.mjs";
+import {
+  AntigravityBackend,
+  antigravityShellQuote,
+} from "../src/backends/antigravity.mjs";
 import { validateConfig } from "../src/core/config.mjs";
 
 const { values } = parseArgs({
@@ -20,6 +24,38 @@ if (!values["allow-real-models"] || !values.model)
 // or user-selected existing data directory is loaded by this acceptance runner.
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "qq-agy-acceptance-"));
 fs.chmodSync(root, 0o700);
+// An ancestor hook must never run, even when private data lives in a repository.
+execFileSync("git", ["init", "--quiet", "--template=", root]);
+fs.mkdirSync(path.join(root, ".agents"));
+const canary = path.join(root, "ancestor-hook-ran");
+const hook = path.join(root, "ancestor-hook.mjs");
+fs.writeFileSync(
+  hook,
+  `import fs from "node:fs"; fs.writeFileSync(${JSON.stringify(canary)}, "loaded"); console.log(JSON.stringify({decision:"deny"}));`,
+  { mode: 0o600 },
+);
+fs.writeFileSync(
+  path.join(root, ".agents", "hooks.json"),
+  JSON.stringify({
+    ancestor: {
+      PreToolUse: [
+        {
+          matcher: "*",
+          hooks: [
+            {
+              type: "command",
+              command: [process.execPath, hook]
+                .map((v) => antigravityShellQuote(v))
+                .join(" "),
+              timeout: 5,
+            },
+          ],
+        },
+      ],
+    },
+  }),
+  { mode: 0o600 },
+);
 const config = validateConfig({
   version: 1,
   mode: "isolated",
@@ -88,6 +124,12 @@ async function run(name, conversation, prompt, cancel = false) {
       saveSession: (s) => sessions.set(conversation, s),
       signal: controller.signal,
       callTool: async (tool, args) => {
+        if (
+          tool === "probe_echo" &&
+          (typeof args.value !== "string" ||
+            Object.keys(args).some((k) => k !== "value"))
+        )
+          throw Error("INVALID_TOOL_ARGUMENTS");
         calls.push({ name: tool, value: args.value });
         if (tool === "probe_send") sends++;
         if (tool === "probe_wait") {
@@ -109,6 +151,7 @@ async function run(name, conversation, prompt, cancel = false) {
     clearTimeout(timer);
   }
   if (cancel) {
+    if (!waitStarted && failure) throw failure;
     assert(waitStarted, "WAIT_TOOL_NOT_REACHED");
     assert.equal(failure?.message, "ABORTED");
     assert.equal(sessions.get(conversation), null);
@@ -116,7 +159,7 @@ async function run(name, conversation, prompt, cancel = false) {
   const continued = previous
     ? previous.id === sessions.get(conversation)?.id
     : false;
-  results.push({ case: name, passed: true, continued });
+  results.push({ case: name, completed: true, continued });
   console.log(JSON.stringify(results.at(-1)));
   return calls;
 }
@@ -139,7 +182,7 @@ try {
   const isolated = await run(
     "separate-conversation",
     "private:synthetic-b",
-    "If you remember a marker from a previous turn, call probe_echo with it. Otherwise call probe_echo with NO_PREVIOUS_MARKER.",
+    'If you remember a marker from a previous turn, call probe_echo with it in the value argument. Otherwise call probe_echo with arguments {"value":"NO_PREVIOUS_MARKER"}.',
   );
   assert(
     isolated.some(
@@ -156,7 +199,7 @@ try {
   const recovery = await run(
     "recovery",
     "private:synthetic-a",
-    "Call probe_echo with RECOVERY_FRESH_ONLY. Do not send anything.",
+    'Call probe_echo with arguments {"value":"RECOVERY_FRESH_ONLY"}. Do not send anything.',
   );
   assert(
     recovery.some(
@@ -165,6 +208,8 @@ try {
   );
   assert.notEqual(sessions.get("private:synthetic-a").id, oldId);
   assert.equal(sends, 0);
+  assert(!fs.existsSync(canary), "ANCESTOR_HOOK_LOADED");
+  results.push({ case: "ancestor-configuration-isolation", passed: true });
   results.push({ case: "no-replay-or-send", passed: true });
 } catch (error) {
   results.push({ case: "acceptance", passed: false });
@@ -173,7 +218,9 @@ try {
   console.error(
     error?.category
       ? `ANTIGRAVITY_ACCEPTANCE_${error.category.toUpperCase().replaceAll("-", "_")}`
-      : "ANTIGRAVITY_ACCEPTANCE_FAILED",
+      : /^ANTIGRAVITY_[A-Z_]+$/.test(error?.message || "")
+        ? error.message
+        : "ANTIGRAVITY_ACCEPTANCE_FAILED",
   );
 } finally {
   await backend.close();

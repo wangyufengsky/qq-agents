@@ -950,6 +950,10 @@ const backendErrors = {
     "Antigravity CLI 检查失败，请核对版本、网络和模型目录。",
   ANTIGRAVITY_PROFILE_UNSAFE:
     "Antigravity 专用目录包含非桥接配置或符号链接，已停止加载。",
+  ANTIGRAVITY_GIT_REQUIRED:
+    "Antigravity 需要 Git 来建立独立工作区，请先安装 Git。",
+  ANTIGRAVITY_WORKSPACE_UNSAFE:
+    "Antigravity 工作区隔离检查失败，已停止加载上级目录配置。",
   DSH_NOT_FOUND: "未找到 DSH，请先打开桌面应用，再恢复连接。",
   DSH_INSTANCE_UNAVAILABLE:
     "绑定的 DSH 实例尚未就绪。请等待启动完成，或选择其他实例。",

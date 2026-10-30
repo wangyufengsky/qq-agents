@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import http from "node:http";
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
   AntigravityBackend,
@@ -319,4 +319,31 @@ test("Antigravity refuses session contract changes before launching", async (t) 
     /SESSION_REQUIRES_HANDOFF/,
   );
   assert.equal(launches.length, 1);
+});
+
+test("Antigravity creates Git boundaries even when data sits inside another repository", async (t) => {
+  const { backend, root, params, launches } = setup(t);
+  execFileSync("git", ["init", "--quiet", "--template=", root]);
+  await backend.run(params);
+  const launch = launches[0];
+  for (const directory of [backend.root, launch.options.cwd]) {
+    const actual = execFileSync(
+      "git",
+      ["-C", directory, "rev-parse", "--show-toplevel"],
+      { encoding: "utf8" },
+    ).trim();
+    assert.equal(fs.realpathSync(actual), fs.realpathSync(directory));
+  }
+  assert.equal(launch.options.env.GIT_CONFIG_NOSYSTEM, "1");
+  assert.equal(
+    launch.options.env.GIT_CONFIG_GLOBAL,
+    process.platform === "win32" ? "NUL" : "/dev/null",
+  );
+});
+
+test("Antigravity rejects an invalid Git boundary before CLI startup", async (t) => {
+  const { backend, params, launches } = setup(t);
+  fs.writeFileSync(path.join(backend.root, ".git"), "gitdir: unrelated");
+  await assert.rejects(backend.run(params), /ANTIGRAVITY_WORKSPACE_UNSAFE/);
+  assert.equal(launches.length, 0);
 });

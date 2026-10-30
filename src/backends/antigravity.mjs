@@ -16,6 +16,66 @@ import { safeToolFailure } from "../tools/errors.mjs";
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 const here = path.dirname(fileURLToPath(import.meta.url));
 const MAX_OUTPUT = 16 * 1024 * 1024;
+function isolatedEnv() {
+  return {
+    ...buildChildEnv("antigravity"),
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null",
+  };
+}
+/** CLI customizations resolve at the Git root, which must never be an ancestor.
+ * @param {string} directory */
+function isolatedWorkspace(directory) {
+  const git = path.join(directory, ".git");
+  try {
+    if (fs.existsSync(git)) {
+      if (
+        !fs.lstatSync(git).isDirectory() ||
+        fs.lstatSync(git).isSymbolicLink()
+      )
+        throw Error("ANTIGRAVITY_WORKSPACE_UNSAFE");
+    } else {
+      execFileSync(
+        "git",
+        [
+          "init",
+          "--quiet",
+          "--template=",
+          "--initial-branch=qq-agents",
+          directory,
+        ],
+        {
+          env: isolatedEnv(),
+          stdio: "ignore",
+          windowsHide: true,
+          timeout: 10000,
+        },
+      );
+    }
+    const actual = execFileSync(
+      "git",
+      ["-C", directory, "rev-parse", "--show-toplevel"],
+      {
+        env: isolatedEnv(),
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        windowsHide: true,
+        timeout: 10000,
+      },
+    ).trim();
+    if (fs.realpathSync(actual) !== fs.realpathSync(directory))
+      throw Error("ANTIGRAVITY_WORKSPACE_UNSAFE");
+  } catch (error) {
+    const code = /** @type {NodeJS.ErrnoException} */ (error).code;
+    // The bridge reports only the fixed outer category, never Git diagnostics.
+    throw Error(
+      code === "ENOENT"
+        ? "ANTIGRAVITY_GIT_REQUIRED"
+        : "ANTIGRAVITY_WORKSPACE_UNSAFE",
+      { cause: error },
+    );
+  }
+}
 /** @param {string} directory */
 function privateDirectory(directory) {
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -126,6 +186,7 @@ export class AntigravityBackend {
     return ["--gemini_dir", this.profile, "--app_data_dir", "cli"];
   }
   checkProfile() {
+    isolatedWorkspace(this.root);
     privateDirectory(this.profile);
     const configuration = privateDirectory(path.join(this.profile, "config"));
     // These directories are exclusively bridge-owned; personal customizations
@@ -184,7 +245,7 @@ export class AntigravityBackend {
       [...this.profileArgs(), ...args],
       {
         cwd: this.root,
-        env: buildChildEnv("antigravity"),
+        env: isolatedEnv(),
         stdio: ["ignore", "pipe", "pipe"],
         detached: process.platform !== "win32",
         windowsHide: true,
@@ -262,6 +323,7 @@ export class AntigravityBackend {
       .digest("hex");
     const workspaces = privateDirectory(path.join(this.root, "workspaces"));
     const workspace = privateDirectory(path.join(workspaces, key));
+    isolatedWorkspace(workspace);
     const custom = privateDirectory(path.join(workspace, ".agents"));
     const agents = privateDirectory(path.join(custom, "agents"));
     const binding = path.join(workspace, "session.json");
@@ -451,7 +513,7 @@ export class AntigravityBackend {
         {
           cwd: workspace,
           env: {
-            ...buildChildEnv("antigravity"),
+            ...isolatedEnv(),
             QQ_AGY_ENDPOINT: endpoint,
             QQ_AGY_TOKEN: token,
           },
