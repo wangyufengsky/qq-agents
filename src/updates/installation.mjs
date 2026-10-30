@@ -183,11 +183,8 @@ function entries(root) {
 }
 function audit(file) {
   const st = fs.lstatSync(file);
-  if (
-    st.isSymbolicLink() ||
-    (!st.isDirectory() && !st.isFile()) ||
-    (st.isFile() && st.nlink !== 1)
-  )
+  if (st.isSymbolicLink()) return Buffer.byteLength(fs.readlinkSync(file));
+  if ((!st.isDirectory() && !st.isFile()) || (st.isFile() && st.nlink !== 1))
     throw Error("UPDATE_DATA_LINK_UNSUPPORTED");
   return st.isDirectory()
     ? fs
@@ -198,7 +195,9 @@ function audit(file) {
 function syncSnapshot(root) {
   for (const name of fs.readdirSync(root)) {
     const file = path.join(root, name);
-    if (fs.statSync(file).isDirectory()) syncSnapshot(file);
+    const stat = fs.lstatSync(file);
+    if (stat.isSymbolicLink()) continue;
+    if (stat.isDirectory()) syncSnapshot(file);
     else {
       const fd = fs.openSync(file, "r+");
       try {
@@ -210,7 +209,46 @@ function syncSnapshot(root) {
   }
   syncDirectory(root);
 }
+function copySnapshot(source, destination) {
+  const stat = fs.lstatSync(source);
+  if (stat.isSymbolicLink()) {
+    // Copy the link itself, including broken and cyclic links. Never walk its target.
+    const type =
+      process.platform === "win32" &&
+      fs.statSync(source, { throwIfNoEntry: false })?.isDirectory()
+        ? "dir"
+        : "file";
+    fs.symlinkSync(fs.readlinkSync(source), destination, type);
+  } else if (stat.isDirectory()) {
+    fs.mkdirSync(destination, { mode: 0o700 });
+    for (const name of fs.readdirSync(source))
+      copySnapshot(path.join(source, name), path.join(destination, name));
+    fs.chmodSync(destination, stat.mode);
+  } else {
+    fs.cpSync(source, destination, {
+      errorOnExist: true,
+      force: false,
+      preserveTimestamps: true,
+    });
+  }
+}
 function validateSnapshot(root) {
+  for (const name of [
+    "config.json",
+    "admin-token",
+    "secrets.json",
+    "memory.sqlite",
+    "memory.sqlite-wal",
+    "memory.sqlite-shm",
+  ]) {
+    try {
+      const stat = fs.lstatSync(path.join(root, name));
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1)
+        throw Error("UPDATE_DATA_LINK_UNSUPPORTED");
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+  }
   const file = path.join(root, "memory.sqlite");
   if (!fs.existsSync(file)) return;
   const db = new DatabaseSync(file, { readOnly: true });
@@ -227,6 +265,7 @@ function validateSnapshot(root) {
 export function backupData(root, destination) {
   if (fs.existsSync(path.join(root, "process.lock")))
     throw Error("UPDATE_PROCESS_STILL_RUNNING");
+  validateSnapshot(root);
   const names = entries(root);
   const bytes = names.reduce(
     (sum, name) => sum + audit(path.join(root, name)),
@@ -237,12 +276,7 @@ export function backupData(root, destination) {
     throw Error("UPDATE_DISK_SPACE");
   fs.mkdirSync(destination, { mode: 0o700 });
   for (const name of names)
-    fs.cpSync(path.join(root, name), path.join(destination, name), {
-      recursive: true,
-      errorOnExist: true,
-      force: false,
-      preserveTimestamps: true,
-    });
+    copySnapshot(path.join(root, name), path.join(destination, name));
   validateSnapshot(destination);
   syncSnapshot(destination);
   syncDirectory(path.dirname(destination));
@@ -261,16 +295,13 @@ export function restoreData(root, backup, failed) {
   for (const name of fs.readdirSync(backup)) {
     if (name === updateDirectory || name === "process.lock")
       throw Error("UPDATE_STATE_INVALID");
-    fs.cpSync(path.join(backup, name), path.join(root, name), {
-      recursive: true,
-      errorOnExist: true,
-      force: false,
-      preserveTimestamps: true,
-    });
+    copySnapshot(path.join(backup, name), path.join(root, name));
   }
   for (const name of fs.readdirSync(backup)) {
     const file = path.join(root, name);
-    if (fs.statSync(file).isDirectory()) syncSnapshot(file);
+    const stat = fs.lstatSync(file);
+    if (stat.isSymbolicLink()) continue;
+    if (stat.isDirectory()) syncSnapshot(file);
     else {
       const fd = fs.openSync(file, "r+");
       try {

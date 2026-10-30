@@ -28,7 +28,7 @@ const upgradeErrorText = {
   UPDATE_RUNTIME_UNSUPPORTED:
     "新版要求不同的 Node.js 或升级协议，请按发布说明升级运行环境。",
   UPDATE_DATA_LINK_UNSUPPORTED:
-    "数据中存在链接或特殊文件，需要先按指南单独备份处理。",
+    "关键数据文件存在链接，或数据中存在硬链接、特殊文件，需要按指南处理。",
   UPDATE_DISK_SPACE: "磁盘空间不足，无法同时保留备份和恢复副本。",
   UPDATE_HEALTH_FAILED: "新版启动后的连接或后端检查没有通过。",
   UPDATE_STOP_FAILED: "进程未确认正常退出，已停止自动切换。",

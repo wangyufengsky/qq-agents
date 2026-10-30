@@ -88,7 +88,11 @@ export class UpgradeManager {
     this.notify(this.snapshot());
   }
   install(tag) {
-    if (this.job || this.state.phase === "recovery-required")
+    if (
+      this.shutdownRequested ||
+      this.job ||
+      this.state.phase === "recovery-required"
+    )
       throw Error("UPDATE_IN_PROGRESS");
     const id = randomUUID();
     this.state = {
@@ -151,9 +155,11 @@ export class UpgradeManager {
         signal: this.controller.signal,
         progress: (phase) => this.transition(phase),
       });
+      this.controller.signal.throwIfAborted();
       this.transition("stopping", { to: candidate });
       const checkpoint = await this.host.stop();
       stopped = true;
+      this.controller.signal.throwIfAborted();
       this.transition("backing-up", { checkpoint, backup });
       const summary = await this.backup(this.root, backup);
       backupComplete = true;
@@ -161,9 +167,11 @@ export class UpgradeManager {
         backupBytes: summary.bytes,
         backupReady: true,
       });
+      this.controller.signal.throwIfAborted();
       await this.host.start(candidate, false);
       this.transition("checking");
       await this.host.health(checkpoint);
+      this.controller.signal.throwIfAborted();
       // Persist the point of no automatic rollback BEFORE enabling any sends.
       // A lost resume acknowledgement must not rewind a possibly-used ledger.
       this.save(path.join(this.home, "current.json"), candidate);
@@ -201,8 +209,10 @@ export class UpgradeManager {
           );
         this.save(path.join(this.home, "current.json"), this.state.from);
         this.current = this.state.from;
-        await this.host.start(this.current, false);
-        await this.host.hold?.();
+        if (!this.shutdownRequested) {
+          await this.host.start(this.current, false);
+          await this.host.hold?.();
+        }
         // Rollbacks intentionally stay paused for administrator inspection.
         this.transition("rolled-back", { finishedAt: Date.now() });
       } catch {
@@ -214,6 +224,7 @@ export class UpgradeManager {
     }
   }
   cancel() {
+    this.shutdownRequested = true;
     this.controller?.abort();
   }
 }

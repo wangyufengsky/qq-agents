@@ -236,7 +236,7 @@ test("a stopped-data backup restores compatible SQLite, config and media, preser
   );
   assert.equal(fs.existsSync(path.join(root, "new-event.txt")), false);
 });
-test("backups reject active processes and linked data before copying", (t) => {
+test("backups reject active processes and hardlinked data before copying", (t) => {
   const root = temp(t),
     home = path.join(root, updateDirectory);
   fs.mkdirSync(home);
@@ -254,6 +254,78 @@ test("backups reject active processes and linked data before copying", (t) => {
   );
   assert.equal(fs.existsSync(path.join(home, "backup")), false);
 });
+
+test(
+  "backup preserves ordinary symlinks without following targets, but rejects linked critical data",
+  { skip: process.platform === "win32" },
+  (t) => {
+    const root = temp(t),
+      outside = temp(t),
+      home = path.join(root, updateDirectory);
+    fs.mkdirSync(home);
+    fs.writeFileSync(path.join(outside, "external"), "untouched");
+    fs.symlinkSync(outside, path.join(root, "workspace"));
+    fs.symlinkSync("missing-target", path.join(root, "dangling"));
+    fs.symlinkSync(".", path.join(root, "cycle"));
+    const backup = path.join(home, "backup");
+    backupData(root, backup);
+    assert.equal(
+      fs.lstatSync(path.join(backup, "workspace")).isSymbolicLink(),
+      true,
+    );
+    assert.equal(fs.readlinkSync(path.join(backup, "workspace")), outside);
+    assert.equal(
+      fs.readlinkSync(path.join(backup, "dangling")),
+      "missing-target",
+    );
+    restoreData(root, backup, path.join(home, "failed"));
+    assert.equal(fs.readlinkSync(path.join(root, "cycle")), ".");
+    assert.equal(
+      fs.readFileSync(path.join(outside, "external"), "utf8"),
+      "untouched",
+    );
+    fs.symlinkSync(
+      path.join(outside, "external"),
+      path.join(root, "config.json"),
+    );
+    assert.throws(
+      () => backupData(root, path.join(home, "rejected")),
+      /UPDATE_DATA_LINK_UNSUPPORTED/,
+    );
+    assert.equal(fs.existsSync(path.join(home, "rejected")), false);
+  },
+);
+
+for (const point of ["stage", "health"])
+  test(`shutdown during ${point} cannot resume or restart the service`, async (t) => {
+    const { manager, host, calls, candidate } = transaction(t);
+    let proceed;
+    const pending = new Promise((resolve) => {
+      proceed = resolve;
+    });
+    const entered = Promise.withResolvers();
+    if (point === "stage")
+      manager.stage = async () => {
+        entered.resolve();
+        await pending;
+        return candidate;
+      };
+    else
+      host.health = async () => {
+        entered.resolve();
+        await pending;
+      };
+    manager.install("v2.0.0");
+    await entered.promise;
+    manager.cancel();
+    proceed();
+    await manager.job;
+    assert.equal(calls.includes("resume"), false);
+    assert.equal(calls.includes("start:1.0.0"), false);
+    assert.equal(calls.includes("restore"), point === "health");
+    assert.equal(calls.includes("stop"), point === "health");
+    assert.throws(() => manager.install("v2.0.0"), /UPDATE_IN_PROGRESS/);
+  });
 
 function git(root, args) {
   return execFileSync("git", args, {
