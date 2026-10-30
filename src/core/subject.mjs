@@ -398,6 +398,8 @@ export class SubjectCoordinator {
       a = r.agent(ctx.agentId),
       m = this.memory(a.id),
       i = item || m.identity.get("intentions", ctx.activeIntentId);
+    if (m.corrections.blocksIntent(i.id))
+      throw Error("INTENT_CORRECTION_REVIEW_REQUIRED");
     if (
       !this.enabled(a) ||
       !this.targetAllowed(a, i.target) ||

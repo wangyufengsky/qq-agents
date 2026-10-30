@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { Corrections } from "./corrections.mjs";
 import { qqFaces } from "../transport/qq-faces.mjs";
 import { ConversationDue } from "./conversation-due.mjs";
 import {
@@ -102,6 +103,7 @@ export class MemoryStore {
       CREATE TABLE IF NOT EXISTS person_notes(agent_id TEXT NOT NULL,person_id TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(agent_id,person_id));
       CREATE TABLE IF NOT EXISTS moods(agent_id TEXT NOT NULL,id TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(agent_id,id));
       CREATE TABLE IF NOT EXISTS person_items(agent_id TEXT NOT NULL,id TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(agent_id,id));
+      CREATE TABLE IF NOT EXISTS memory_corrections(agent_id TEXT NOT NULL,id TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(agent_id,id));
       CREATE TABLE IF NOT EXISTS projects(agent_id TEXT NOT NULL,id TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(agent_id,id));
       `);
     // agentId|eventId of voice messages whose transcript is still running.
@@ -151,6 +153,7 @@ class AgentMemory {
     this.db = store.db;
     this.agentId = agentId;
     this.identity = new IdentityMemory(this);
+    this.corrections = new Corrections(this);
   }
   append(e) {
     if (!e.dedupe || !e.conversation || !e.kind)
@@ -346,6 +349,7 @@ class AgentMemory {
       ...(voiceTranscript ? { voiceTranscript } : {}),
       ...(faces ? { qqFaces: faces } : {}),
       ...provenance(row),
+      ...this.corrections.annotation("event", row.id),
       ...(!summary ? { payload: parse(row.payload) } : {}),
     };
   }
@@ -353,6 +357,7 @@ class AgentMemory {
     return {
       id: row.id,
       type: "diary",
+      ...this.corrections.annotation("diary", row.id, row.revision),
       epistemic:
         "AI diary/opinion, not verified event; evidence links do not prove every sentence",
       title: row.title,
@@ -449,7 +454,9 @@ class AgentMemory {
             .all(...args, limit + 1, q.cursor?.beforeSeq != null ? 0 : offset)
             .map((r) => ({
               ...this.event(r, current, true),
-              scene: sceneForMatch(this.db, this.agentId, r, sceneOptions),
+              scene: this.corrections.scene(
+                sceneForMatch(this.db, this.agentId, r, sceneOptions),
+              ),
             }));
     // Separate pagination lanes prevent diary offsets from hiding message rows.
     let diaries = [];
@@ -569,6 +576,7 @@ class AgentMemory {
         if (!r) throw Error("REVISION_NOT_FOUND");
         item = {
           ...item,
+          ...this.corrections.annotation("diary", id, revision),
           title: r.title,
           body: r.body,
           metadata: parse(r.metadata),
@@ -1117,6 +1125,7 @@ class AgentMemory {
       "moods",
       "person_items",
       "projects",
+      "memory_corrections",
     ])
       tables[name] = this.db
         .prepare(

@@ -49,7 +49,7 @@ export const quotedSender = (db, event, messageId) =>
 // side of a private chat (even with nothing new, as when an intent or a timer
 // opens the conversation), then whom those messages mention or reply to.
 /** @param {any} memory @param {string} conversation @param {any[]} items @param {string} accountId */
-function peopleInTurn(memory, conversation, items, accountId) {
+export function peopleInTurn(memory, conversation, items, accountId) {
   const incoming = items.filter((x) => x.direction === "in");
   const people = new Set(incoming.map((x) => x.senderId));
   people.add(/^private:(\d+)$/.exec(conversation)?.[1]);
@@ -101,6 +101,7 @@ export function personCardsForTurn(memory, conversation, items, options) {
       ...(nickname ? { nickname } : {}),
       call: card.call,
       impression: card.body,
+      ...memory.corrections.annotation("person", card.id, card.revision),
       revision: card.revision,
       updatedAt: card.updatedAt,
       ...(card.author === "admin" ? { editedBy: "admin" } : {}),
@@ -178,6 +179,7 @@ export function personItemsForTurn(memory, conversation, items, options) {
         personId,
         kind: x.kind,
         body: x.body,
+        ...memory.corrections.annotation("item", x.id, x.revision),
         revision: x.revision,
         since: new Date(x.createdAt).toISOString(),
         ...(fromPrivate(x, conversation) ? { fromPrivate: true } : {}),

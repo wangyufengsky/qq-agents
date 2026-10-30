@@ -255,6 +255,7 @@ export class Runtime {
                   n.startsWith("person_") ||
                   n.startsWith("mood_") ||
                   n.startsWith("project") ||
+                  n.startsWith("memory_correction") ||
                   n === "subject_log" ||
                   a.tools.includes(n),
               ),

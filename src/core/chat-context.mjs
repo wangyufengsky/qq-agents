@@ -62,6 +62,7 @@ export function chatHistory(history) {
         "replyToMessageIds",
         "voiceTranscript",
         "qqFaces",
+        "corrections",
         "sourceEventId",
         "outcome",
         "notice",
@@ -100,6 +101,7 @@ export function chatHandoff(handoff, { replay = false } = {}) {
         .map((s) => ({
           id: s.id,
           available: s.available,
+          corrections: s.corrections,
           kind: s.kind,
           epistemic: s.epistemic,
           platform: s.platform,

@@ -23,12 +23,17 @@ function cardBrief(memory, target) {
   const id = /^private:(\d+)$/.exec(target)?.[1];
   const card = id && memory.identity.personCard(id);
   if (!card) return {};
-  return { call: card.call, impression: clip(card.body, IMPRESSION_CHARS) };
+  return {
+    call: card.call,
+    impression: clip(card.body, IMPRESSION_CHARS),
+    ...memory.corrections.annotation("person", card.id, card.revision),
+  };
 }
 
 // Enough of a chat's open note to remember it and pick it up from there. The
 // evidence IDs are what an intent can cite: a note ID is not evidence.
 const noteBrief = (note) => ({
+  ...(note.corrections ? { corrections: note.corrections } : {}),
   id: note.id,
   conversation: note.conversation,
   body: clip(note.body, NOTE_CHARS),
@@ -48,6 +53,7 @@ function owedBrief(memory, item) {
     personId: item.personId,
     ...(call ? { call } : {}),
     body: clip(item.body, NOTE_CHARS),
+    ...memory.corrections.annotation("item", item.id, item.revision),
     since: new Date(item.createdAt).toISOString(),
     writtenIn: item.createdIn,
     evidence: item.evidence,
@@ -126,7 +132,8 @@ export function subjectMaterials(runtime, ctx) {
       .prepare(
         "SELECT id,title,updated_at AS updatedAt FROM diaries WHERE agent_id=? ORDER BY updated_at DESC LIMIT 3",
       )
-      .all(a.id),
+      .all(a.id)
+      .map((x) => ({ ...x, ...m.corrections.annotation("diary", x.id) })),
   );
   // Protected notes are left out before the limit, so they take no place.
   const owed = m.identity.openPersonItems("promise");
@@ -199,7 +206,9 @@ export function subjectMaterials(runtime, ctx) {
       (withheldNotes
         ? "protectedNotListed 条带保护标记的笔记没有列出，不要推测内容。"
         : ""),
-    items: notes.map(noteBrief),
+    items: notes.map((x) =>
+      noteBrief({ ...x, ...m.corrections.annotation("note", x.id) }),
+    ),
     ...(visibleNotes.length > notes.length
       ? { more: visibleNotes.length - notes.length }
       : {}),
@@ -216,6 +225,19 @@ export function subjectMaterials(runtime, ctx) {
       : {}),
   });
   return {
+    pendingCorrections: m.corrections
+      .list()
+      .filter(
+        (c) => !c.supersededBy && c.targets.some((t) => t.state === "pending"),
+      )
+      .slice(0, 5)
+      .map((c) => ({
+        id: c.id,
+        personId: c.personId,
+        current: c.current,
+        scope: c.scope,
+        pending: c.targets.filter((t) => t.state === "pending"),
+      })),
     notice: ctx.freshSubject
       ? "本轮是新的空闲上下文，自动素材和交接已隔离受保护内容；原始记录仍保留。主动读取受保护记忆会限制本轮外网调用。旧日志中的权限判断不是当前授权，请以当前工具配置、参数 schema 和 contextGate 为准。"
       : "当前上下文已读来源继续生效；历史平台探测成功不代表当前上下文有联网权限。",

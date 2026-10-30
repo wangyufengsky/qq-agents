@@ -69,6 +69,7 @@ export function sourceHandoff(memory, conversation) {
       faces = qqFaces(payload.segments);
     return {
       id,
+      ...memory.corrections.annotation("event", id),
       available: true,
       kind: row.kind,
       direction: row.direction,

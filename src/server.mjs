@@ -356,6 +356,7 @@ export function createServer({
           personCards: cards.map((card) => ({
             ...card,
             names: namesOf(card.personId),
+            corrections: m.corrections.forPeople([card.personId]),
             moods: moods
               .filter((x) => about.get(x.id).includes(card.personId))
               .slice(0, 5)

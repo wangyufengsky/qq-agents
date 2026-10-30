@@ -38,9 +38,18 @@ export class IdentityMemory {
         `SELECT value FROM ${table} WHERE agent_id=? ORDER BY rowid DESC`,
       )
       .all(this.agentId)
-      .map(decode);
+      .map(decode)
+      .map((value) =>
+        table === "intentions"
+          ? { ...value, ...this.mem.corrections.annotation("intent", value.id) }
+          : value,
+      );
   }
   put(table, value) {
+    if (table === "intentions") {
+      value = { ...value };
+      delete value.corrections;
+    }
     this.db
       .prepare(
         `INSERT OR REPLACE INTO ${table}(agent_id,id,value) VALUES(?,?,?)`,
@@ -368,6 +377,7 @@ export class IdentityMemory {
       .filter((x) => x.status === "open")
       .map((x) => ({
         ...x,
+        ...this.mem.corrections.annotation("note", x.id),
         sources: x.evidence.map((id) => ({
           id,
           available: !!this.db

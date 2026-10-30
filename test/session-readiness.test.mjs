@@ -200,6 +200,8 @@ test("model/file/backend changes retire before prompting; aborted and busy prepa
 });
 test("Codex App tools change retires through lifecycle with ordinary task handoff", async (t) => {
   const cfg = config(1);
+  // Readiness failures must not invoke unrelated context compaction.
+  cfg.agents[0].contextPolicy.capacityTokens = 131072;
   cfg.agents[0].behavior.preSleepWaitMs = 0;
   const { runtime, store, root } = fixture(t, { cfg }),
     m = store.bind("agent-0"),
@@ -256,6 +258,8 @@ import { DshBackend } from "../src/backends/dsh.mjs";
 import { FakeTransport } from "../test/helpers.mjs";
 test("DSH preset changes load Self and retain task handoff before prompting", async (t) => {
   const cfg = config(1);
+  // Readiness failures must not invoke unrelated context compaction.
+  cfg.agents[0].contextPolicy.capacityTokens = 131072;
   cfg.agents[0].behavior.preSleepWaitMs = 0;
   cfg.backends[0].type = "dsh";
   cfg.backends[0].preset = "qq-unified";

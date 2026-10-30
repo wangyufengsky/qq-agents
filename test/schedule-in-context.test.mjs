@@ -10,6 +10,8 @@ const GONE = "现在没有待执行的定时任务";
 function setup(t) {
   const c = config(1),
     a = c.agents[0];
+  // This suite tests schedule presentation, not conservative context retirement.
+  a.contextPolicy.capacityTokens = 131072;
   a.ownerIds = ["30000"];
   a.subject.enabled = true;
   a.subject.groups = ["20000"];

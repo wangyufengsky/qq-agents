@@ -18,7 +18,11 @@ import {
   chatStatus,
   wakeBackground,
 } from "./chat-context.mjs";
-import { personCardsForTurn, personItemsForTurn } from "./person-cards.mjs";
+import {
+  personCardsForTurn,
+  personItemsForTurn,
+  peopleInTurn,
+} from "./person-cards.mjs";
 import { moodForTurn } from "./mood.mjs";
 import { floorForTurn } from "./floor.mjs";
 import { taskBrief } from "./scheduler.mjs";
@@ -174,6 +178,7 @@ export class ContextLifecycle {
         target: i.target,
         status: i.status,
         topic: i.topic,
+        ...(i.corrections ? { corrections: i.corrections } : {}),
         evidence: i.evidence,
         // Free time sees how an active contact went here, not again under recentContacts.
         ...(conversation === SUBJECT ? { history: i.history.slice(-3) } : {}),
@@ -216,6 +221,7 @@ export class ContextLifecycle {
                 id: i.id,
                 target: i.target,
                 topic: i.topic,
+                ...(i.corrections ? { corrections: i.corrections } : {}),
                 status: i.status,
                 history: i.history.slice(-3),
                 ...mergeProtection(i),
@@ -492,7 +498,18 @@ export class ContextLifecycle {
         : reason,
     );
     const environment = turnEnvironment(r, a, ctx, backendType);
+    const corrections = m.corrections.forPeople(
+      peopleInTurn(
+        m,
+        ctx.conversation,
+        history.items,
+        r.connection(a.connectionId).accountId,
+      ),
+    );
     const details = [
+      corrections.length
+        ? `已记录的纠正（旧聊天保留，旧判断不能当现状；pending 项仍需检查）：${JSON.stringify(corrections)}`
+        : "",
       floor
         ? `群聊现场（程序按 @、引用和发言记录算的，只是参考）：toYou 是对你说的；betweenOthers 是别人之间在说的话，to 是对象；answeredByOthers 是已经有别人接了的问题；recent 是最近 ${floor.recent.of} 条里你说了几条。${JSON.stringify(floor)}`
         : "",
