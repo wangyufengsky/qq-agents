@@ -224,7 +224,7 @@ class AgentMemory {
   }
   // Feed entry for the model. A resolved attempt keeps its place, so read
   // progress still covers every seq, but its text is only on the outcome.
-  feedEvent(row, current, page) {
+  feedEvent(row, current, page, { fullText = false } = {}) {
     // Its text already rides on the voice message in this same page.
     if (
       row.kind === "voice.transcript" &&
@@ -240,7 +240,27 @@ class AgentMemory {
         notice: "语音转写记录；文字已附在原消息的 voiceTranscript 里。",
       };
     const outcome = this.sendOutcome(row);
-    if (!outcome) return this.event(row, current, true);
+    if (!outcome) {
+      const event = this.event(row, current, true);
+      if (
+        !fullText ||
+        ![
+          "message.received",
+          "message.sent",
+          "legacy.message-observation",
+          "voice.transcript",
+        ].includes(row.kind)
+      )
+        return event;
+      return {
+        ...event,
+        body: row.body,
+        bodyTruncated: false,
+        ...(event.voiceTranscript
+          ? { voiceTranscript: this.voiceTranscript(row, false) }
+          : {}),
+      };
+    }
     const payload = parse(row.payload);
     return {
       id: row.id,
@@ -625,6 +645,7 @@ class AgentMemory {
       beforeSeq,
       limit = 20,
       maxChars = 12000,
+      fullText = false,
     },
     current = "",
   ) {
@@ -667,17 +688,19 @@ class AgentMemory {
           connectionId ?? null,
           connectionId ?? null,
           afterSeq,
-          limit,
+          limit + (fullText ? 1 : 0),
         );
     // A reader in its own conversation (the model) sees each outgoing text
     // once; the console reads the plain archive.
     const page = new Set(rows.map((r) => r.id));
     const items = budget(
-      rows.map((r) =>
-        current
-          ? this.feedEvent(r, current, page)
-          : this.event(r, current, true),
-      ),
+      rows
+        .slice(0, limit)
+        .map((r) =>
+          current
+            ? this.feedEvent(r, current, page, { fullText })
+            : this.event(r, current, true),
+        ),
       maxChars,
     );
     return {
