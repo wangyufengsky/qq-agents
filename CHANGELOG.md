@@ -6,7 +6,13 @@
 
 ## 未发布（2026-10-30）
 
-以下为 `v0.5.4` 之后已合并到 `main` 的改动（[#69](https://github.com/wangyufengsky/qq-agents/pull/69)–[#77](https://github.com/wangyufengsky/qq-agents/pull/77)）。当前包版本仍为 `0.5.4`，尚未发布新的版本标签。
+以下为 `v0.5.4` 之后已合并到 `main` 的改动（包括 [#69](https://github.com/wangyufengsky/qq-agents/pull/69) 之后的功能与维护 PR）。当前包版本仍为 `0.5.4`，尚未发布新的版本标签。
+
+### 版本更新提醒（[#78](https://github.com/wangyufengsky/qq-agents/pull/78)）
+
+- 管理台新增「系统 → 版本更新」，支持手动检查、可选每 6 小时自动检查、发布说明和忽略指定版本提醒。只请求官方公开发布信息，网络失败保留上次成功结果并明确报错。
+- 识别相同版本号、较新开发版本、本地修改和未知安装，避免把同版本不同提交误报为可升级。升级执行与失败恢复由后续一键升级轮次提供。
+- 修正 Windows 慢磁盘上的导出测试夹具：批量写入保持原来的下载负载，超时自动断开连接，关闭服务后再清理文件，避免测试超时后留下连接拖住 CI。
 
 ### AI 安装与更新指南（[#77](https://github.com/wangyufengsky/qq-agents/pull/77)）
 

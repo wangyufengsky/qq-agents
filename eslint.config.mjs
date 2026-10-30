@@ -71,6 +71,7 @@ const browserScripts = {
     "personCallText",
     "personCardButton",
   ],
+  "updates-ui.js": ["renderUpdates", "renderUpdateBadge"],
   "onboarding-ui.js": ["renderOnboarding"],
   "parity.js": ["parityAgentId", "renderParity"],
 };

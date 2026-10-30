@@ -202,6 +202,7 @@ export function createServer({
           "/mood-ui.js",
           "/people-ui.js",
           "/onboarding-ui.js",
+          "/updates-ui.js",
           "/activity-ui.js",
           "/style.css",
           "/agent-form.css",
@@ -600,11 +601,28 @@ export function createServer({
             .reconcileDelivery(data.requestId, data.resolution),
         );
       }
+      if (url.pathname.startsWith("/api/updates")) {
+        if (!runtime.updates) throw Error("UPDATE_UNAVAILABLE");
+        if (req.method === "GET" && url.pathname === "/api/updates")
+          return send(runtime.updates.snapshot());
+        if (req.method === "POST" && url.pathname === "/api/updates/check") {
+          await readBody(1024);
+          return send(await runtime.updates.check());
+        }
+        if (req.method === "PUT" && url.pathname === "/api/updates/settings")
+          return send(runtime.updates.configure(await readBody(1024)));
+      }
       if (req.method === "GET" && url.pathname === "/api/status") {
         const status = runtime.status();
         return send({
           ...status,
           version: packageVersion,
+          updateNotice: runtime.updates
+            ? {
+                notify: runtime.updates.snapshot().notify,
+                tag: runtime.updates.latest?.tag || null,
+              }
+            : null,
           allowLive,
           readiness: readiness(runtime.config, status, { allowLive }),
         });

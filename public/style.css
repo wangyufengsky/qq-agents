@@ -1,4 +1,5 @@
-/* ==========================================================================
+/* ===================================================================}
+
    QQ Agents · 控制台设计系统
    基于 agent-workflow DS v1：近黑底、白色透明度分层、玻璃侧栏、胶囊按钮、
    克制的品牌蓝；在此之上加入点阵网格、渐变描边与状态光晕作为科技感点缀。
@@ -4565,4 +4566,19 @@ button.mem-more {
   text-align: left;
   text-decoration: underline;
   text-underline-offset: 4px;
+}
+
+/* Release notes are untrusted plain text and stay inside narrow viewports. */
+.update-notes {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 32rem;
+  overflow-y: auto;
+}
+.updates-card .card-actions {
+  flex-wrap: wrap;
+}
+#update-notice {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }

@@ -588,25 +588,30 @@ test(
     const tempRoot = fs.mkdtempSync(
       path.join(os.tmpdir(), "qq-export-cancel-test-"),
     );
-    t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
     const { request, store, base, token } = await setup(t, { tempRoot });
-    for (let i = 0; i < 80; i++)
-      store.bind("agent-0").append({
-        dedupe: "large-" + i,
-        conversation: "group:20000",
-        kind: "message.received",
-        body: "x".repeat(64000),
-      });
+    // Keep the same backpressure payload without timing 80 disk commits on CI.
+    store.transaction(() => {
+      for (let i = 0; i < 80; i++)
+        store.bind("agent-0").append({
+          dedupe: "large-" + i,
+          conversation: "group:20000",
+          kind: "message.received",
+          body: "x".repeat(64000),
+        });
+    });
+    // setup registers server shutdown first, before removing its export files.
+    t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
     const response = await new Promise((resolve, reject) => {
       const req = http.get(
         base + "/api/export?agentId=agent-0",
-        { headers: { "x-admin-token": token } },
+        { headers: { "x-admin-token": token }, signal: t.signal },
         (res) => {
           res.pause();
           resolve(res);
         },
       );
       req.on("error", reject);
+      t.after(() => req.destroy());
     });
     assert.equal(response.statusCode, 200);
     const other = await request("/api/export?agentId=agent-0");
