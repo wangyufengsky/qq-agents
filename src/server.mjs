@@ -4,6 +4,7 @@ import {
   listConsoleProjects,
   compareConsoleProjects,
 } from "./core/projects-console.mjs";
+import { participateInProject } from "./core/project-participation.mjs";
 import { readProjects, projectReadSchema } from "./tools/activities.mjs";
 import { readConversationState } from "./memory/conversation-state.mjs";
 import { scopedCatalog } from "./tools/catalog.mjs";
@@ -204,6 +205,7 @@ export function createServer({
           "/apps-ui.js",
           "/mind-ui.js",
           "/projects-ui.js",
+          "/project-participation.js",
           "/mood-ui.js",
           "/people-ui.js",
           "/onboarding-ui.js",
@@ -328,6 +330,15 @@ export function createServer({
         const query = Object.fromEntries(url.searchParams);
         delete query.agentId;
         return send(listConsoleProjects(runtime.memory.bind(a.id), query));
+      }
+      if (
+        req.method === "POST" &&
+        url.pathname === "/api/project/participate"
+      ) {
+        const data = await readBody(256 * 1024);
+        const agent = runtime.agent(data.agentId);
+        const { agentId: _agentId, ...input } = data;
+        return send(participateInProject(runtime, agent.id, input));
       }
       if (req.method === "GET" && url.pathname === "/api/project") {
         const a = runtime.agent(url.searchParams.get("agentId"));

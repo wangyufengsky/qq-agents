@@ -27,6 +27,7 @@ function workspace() {
     api: () =>
       new Promise((resolve, reject) => pending.push({ resolve, reject })),
     action: (fn) => fn(),
+    bindProjectParticipation: () => {},
     esc: (value) => String(value ?? ""),
     select: () => "",
     tag: () => "",

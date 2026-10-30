@@ -141,7 +141,7 @@ export const mindDefinitions = {
       .strict(),
   ],
   project: [
-    "个人项目或共同活动：共同活动新建时 shared.participants 填真正同意参与的人，participantEventId 引用本轮来信，shared.turn 是 agent 或轮到的参与者QQ，shared.pending 保存未定问题与选项。draft 保存真实文本原稿。续写先用 projects(id) 完整读原稿；参与者轮次要等新来信，不代选。共同活动仅在创建的聊天继续；原稿与每步版本永久保留。个人项目：一件你感兴趣、想跨几天慢慢做的事（比如查资料比较几种说法后整理出自己的看法、写一个连载的小故事）。新项目给 title（最多 60 字）和 why（为什么感兴趣），同时最多 5 个进行中。之后每推进一步就带 id 和 expectedRevision 更新：progress 写这一步做了什么、真实的进展（最多 300 字），evidence 附读过的记录 ID，files 附这一步写下的作品（file_create 返回的 fileId）；next 写下一步打算，blocker 写卡在哪里。暂时没兴趣就 status=paused；做完了 status=done，决定放弃 status=dropped，两者都要写 outcome（结果或放弃的原因）。不必每次空闲都推进，也不为凑进度编造进展；接着写之前先用 file_read 读回上次的稿子。",
+    "项目新建给 title/why（最多5个进行中），更新给 id/expectedRevision、真实 progress、来源 evidence/files、后续 next/blocker；done/dropped 须 outcome。shared.participants 填明确同意者，创建附本轮 participantEventId；turn 指轮次、pending 留选项、draft 存整稿，不代选。QQ活动仅原聊天继续，管理员明确加入的 mode=console 可在空闲主体继续。先 projects(id) 按返回指引读全旧稿与贡献；administratorRead 只确认阅读和摘要，不混入修改或授予QQ发送权限。",
     z
       .object({
         ...activityFields,
@@ -163,7 +163,7 @@ export const mindDefinitions = {
       .strict(),
   ],
   projects: [
-    "读取项目或共同活动：给 id 读当前状态、原稿和历史索引，revision 读旧版本，正文按 offset/maxChars 续读，historyOffset 翻历史。省略 id 列当前场合可见的项目。个人项目：进行中的在前，然后是暂停的和已结束的；每个带最近的进展、作品 fileId、下一步和卡住的地方。聊天里想说说自己最近在忙什么，也可以先看看这里。",
+    "读取项目：id 读当前状态、原稿、贡献与历史；revision 读旧版，offset/maxChars 续读正文，historyOffset 翻历史。省略 id 列当前场合可见的项目。",
     projectReadSchema,
   ],
   mood_set: [
@@ -471,7 +471,13 @@ function executeMindTool(runtime, ctx, name, args) {
       recallBoundary(runtime, ctx).assert(runtime.files.metadata(a.id, fileId));
     }
     const old = args.id ? identity.project(args.id) : null;
-    if (args.shared || args.draft || args.participantEventId || old?.activity)
+    if (
+      args.shared ||
+      args.draft ||
+      args.participantEventId ||
+      args.administratorRead ||
+      old?.activity
+    )
       return writeActivity(runtime, ctx, args, old);
     return identity.saveProject(args, { writtenIn: ctx.conversation, now });
   }
