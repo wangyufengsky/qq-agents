@@ -250,7 +250,9 @@ for (const backendType of ["codex", "dsh"])
 
 test("N3 errors before adapter turn try blocks still archive a new DSH or resumed Codex session", async (t) => {
   for (const type of ["dsh", "codex"]) {
-    const f = fixture(t, { cfg: config(1) }),
+    const cfg = config(1);
+    cfg.agents[0].contextPolicy.capacityTokens = 131072;
+    const f = fixture(t, { cfg }),
       m = f.store.bind("agent-0");
     let b;
     if (type === "dsh")

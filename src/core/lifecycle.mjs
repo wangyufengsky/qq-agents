@@ -178,6 +178,7 @@ export class ContextLifecycle {
         target: i.target,
         status: i.status,
         topic: i.topic,
+        ...(i.corrections ? { corrections: i.corrections } : {}),
         evidence: i.evidence,
         // Free time sees how an active contact went here, not again under recentContacts.
         ...(conversation === SUBJECT ? { history: i.history.slice(-3) } : {}),
@@ -220,6 +221,7 @@ export class ContextLifecycle {
                 id: i.id,
                 target: i.target,
                 topic: i.topic,
+                ...(i.corrections ? { corrections: i.corrections } : {}),
                 status: i.status,
                 history: i.history.slice(-3),
                 ...mergeProtection(i),

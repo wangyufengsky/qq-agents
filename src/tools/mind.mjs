@@ -390,7 +390,12 @@ function executeMindTool(runtime, ctx, name, args) {
           const diaries = boundary
             .rows(m.diariesAbout(card.personId))
             .slice(0, 3)
-            .map(({ id, title, updatedAt }) => ({ id, title, updatedAt }));
+            .map(({ id, title, updatedAt, corrections }) => ({
+              id,
+              title,
+              updatedAt,
+              ...(corrections ? { corrections } : {}),
+            }));
           return {
             ...card,
             ...m.corrections.annotation("person", card.id, card.revision),

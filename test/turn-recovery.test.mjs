@@ -99,7 +99,9 @@ function dshClient({
 }
 
 test("DSH malformed tool JSON continues in the same native session", async (t) => {
-  const f = fixture(t, { cfg: config(1) });
+  const cfg = config(1);
+  cfg.agents[0].contextPolicy.capacityTokens = 131072;
+  const f = fixture(t, { cfg });
   const client = dshClient();
   f.runtime.backendFactory = (b, a) =>
     new DshBackend({ ...b, preset: "qq-unified" }, a, { root: f.root, client });
@@ -180,7 +182,9 @@ class RecoveryRpc extends EventEmitter {
   }
 }
 function setup(t, type, options = {}) {
-  const f = fixture(t, { cfg: config(1) });
+  const cfg = config(1);
+  cfg.agents[0].contextPolicy.capacityTokens = 131072;
+  const f = fixture(t, { cfg });
   const client = type === "dsh" ? dshClient(options) : new RecoveryRpc(options);
   f.runtime.backendFactory = (b, a) =>
     type === "dsh"

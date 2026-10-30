@@ -132,7 +132,8 @@ export function subjectMaterials(runtime, ctx) {
       .prepare(
         "SELECT id,title,updated_at AS updatedAt FROM diaries WHERE agent_id=? ORDER BY updated_at DESC LIMIT 3",
       )
-      .all(a.id),
+      .all(a.id)
+      .map((x) => ({ ...x, ...m.corrections.annotation("diary", x.id) })),
   );
   // Protected notes are left out before the limit, so they take no place.
   const owed = m.identity.openPersonItems("promise");

@@ -242,3 +242,60 @@ test("a newer explanation supersedes the earlier correction on original targets"
   );
   assert.equal(f.m.corrections.forPeople(["30000"]).length, 1);
 });
+
+test("shared evidence does not block correction and inherited candidates stay reviewable", async (t) => {
+  const f = setup(t);
+  const other = f.m.identity.savePersonCard(
+    { personId: "30001", body: "另一个人的独立印象", evidence: [f.old.id] },
+    { writtenIn: f.ctx.conversation, now: 3 },
+  );
+  const intent = f.m.identity.put("intentions", {
+    id: "test-intent",
+    evidence: [f.old.id],
+    status: "waiting",
+    target: "group:20000",
+    background: "想问为什么不理我",
+  });
+  const c = await f.call("memory_correct", f.args);
+  assert.ok(
+    f.runtime.contexts.handoff("agent-0", "group:20000").intents[0].corrections,
+  );
+  assert.throws(
+    () => f.runtime.subject.assertFresh(f.ctx, intent),
+    /INTENT_CORRECTION_REVIEW_REQUIRED/,
+  );
+  assert.equal(c.targets.find((x) => x.id === other.id).direct, false);
+  assert.ok(
+    f.m.identity.list("intentions").find((x) => x.id === intent.id).corrections,
+  );
+  const later = f.m.append({
+    dedupe: "extra",
+    connectionId: "qq-0",
+    conversation: f.ctx.conversation,
+    kind: "message.received",
+    senderId: "30000",
+    body: "再补充一下",
+    payload: { trustedInput: true },
+  });
+  f.runtime.observeInput(f.ctx, [
+    f.m.readRecord({ id: later.id }, f.ctx.conversation),
+  ]);
+  const next = await f.call("memory_correct", {
+    ...f.args,
+    sourceId: later.id,
+    supersedes: c.id,
+  });
+  assert.equal(next.targets.find((x) => x.id === other.id).direct, false);
+  const reviewed = await f.call("memory_correction_review", {
+    id: next.id,
+    expectedRevision: 1,
+    targetId: other.id,
+    type: "person",
+    action: "unaffected",
+    reason: "与另一人的印象无关",
+  });
+  assert.equal(
+    reviewed.targets.find((x) => x.id === other.id).state,
+    "unaffected",
+  );
+});

@@ -7,6 +7,8 @@ import { configImpact } from "../src/core/config-impact.mjs";
 
 const enabled = (edit = () => {}) => {
   const c = config(1);
+  // Idle behavior tests use a non-measuring backend, not a context-limit fixture.
+  c.agents[0].contextPolicy.capacityTokens = 131072;
   c.agents[0].subject.enabled = true;
   c.agents[0].subject.groups = ["20000"];
   c.agents[0].subject.intervalMs = 60000;

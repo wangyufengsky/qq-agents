@@ -155,11 +155,14 @@ export class Corrections {
           }
         });
       const targetMap = new Map(
-        [...inherited, ...args.targets].map((t) => [t.type + ":" + t.id, t]),
+        [
+          ...inherited,
+          ...args.targets.map((t) => ({ ...t, direct: true })),
+        ].map((t) => [t.type + ":" + t.id, t]),
       );
       const direct = [...targetMap.values()].map((t) => ({
         ...this.record(t.type, t.id),
-        direct: true,
+        direct: !!t.direct,
       }));
       const candidates = [...direct];
       // Evidence dependencies are traversed until stable, plus the person's card/items.
@@ -196,7 +199,7 @@ export class Corrections {
       if (candidates.length > 200) throw Error("CORRECTION_TARGET_LIMIT");
       for (const r of candidates) {
         boundary.assert(r);
-        if (r.personId && r.personId !== args.personId)
+        if (r.direct && r.personId && r.personId !== args.personId)
           throw Error("CORRECTION_PERSON_MISMATCH");
       }
       const id = randomUUID();
@@ -228,6 +231,18 @@ export class Corrections {
         })),
       });
     });
+  }
+  blocksIntent(id) {
+    return this.list().some(
+      (c) =>
+        !c.supersededBy &&
+        c.targets.some(
+          (t) =>
+            t.type === "intent" &&
+            t.id === id &&
+            !["updated", "unaffected"].includes(t.state),
+        ),
+    );
   }
   review(args, boundary, now) {
     return this.memory.store.transaction(() => {

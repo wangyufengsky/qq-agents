@@ -173,6 +173,8 @@ for (const lane of ["chat", "subject"])
     for (const recovery of ["next-turn", "restart"])
       test(`N3 archive failure ${lane} ${outcome} recovers on ${recovery} without session reuse or delivery replay`, async (t) => {
         const cfg = config(1);
+        // Isolate archive recovery from tool-catalog size based retirement.
+        cfg.agents[0].contextPolicy.capacityTokens = 131072;
         cfg.agents[0].subject.enabled = true;
         const f = fixture(t, { cfg }),
           m = f.store.bind("agent-0"),
@@ -231,6 +233,8 @@ for (const scope of [chat, "@subject"])
   for (const recovery of ["next-turn", "restart"])
     test(`N3 late callback after terminal-write failure remains archived before ${recovery}: ${scope}`, async (t) => {
       const cfg = config(1);
+      // Isolate archive recovery from tool-catalog size based retirement.
+      cfg.agents[0].contextPolicy.capacityTokens = 131072;
       cfg.agents[0].subject.enabled = true;
       const supplied = [];
       let originalCallback;
