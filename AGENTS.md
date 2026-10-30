@@ -35,7 +35,7 @@ Node.js 24+、ESM（`.mjs`）、内置 SQLite。管理台使用普通浏览器�
 | `vendor/`、`NOTICE.md`、`docs/SOURCES.json`  | 上游代码和归属；改动保留许可与来源说明。                                                                                                                           |
 | `.github/workflows/verify.yml`、`Dockerfile` | 多平台 CI 与容器交付；不能只验证开发机平台。                                                                                                                       |
 
-进一步阅读：[架构](docs/ARCHITECTURE.md)、[扩展指南](docs/EXTENDING.md)、[聊天接续](docs/CHAT-CONTEXT.md)、[Self 与会话](docs/SELF-CONTEXT.md)、[受保护工作](docs/PROTECTED-WORK.md)、[迁移](docs/MIGRATION.md)、[本机运维](docs/LOCAL-OPERATIONS.md)。
+进一步阅读：[架构](docs/ARCHITECTURE.md)、[扩展指南](docs/EXTENDING.md)、[聊天接续](docs/CHAT-CONTEXT.md)、[Self 与会话](docs/SELF-CONTEXT.md)、[受保护工作](docs/PROTECTED-WORK.md)、[迁移](docs/MIGRATION.md)、[本机运维](docs/LOCAL-OPERATIONS.md)、[AI 更新手册](docs/AI-UPDATE.md)。
 
 ## 开发与验证
 
@@ -57,6 +57,8 @@ Node.js 24+、ESM（`.mjs`）、内置 SQLite。管理台使用普通浏览器�
 - 不提交 `.runtime/`、真实配置、数据库、登录数据、凭据、原始聊天、未脱敏截图或本机路径。PR 和公开文档只使用占位数据；私有运维证明存放在部署的私有目录中。
 
 ## 合并后更新本地主代码与服务
+
+结合 [AI 更新手册](docs/AI-UPDATE.md) 检查目标版本、兼容性与能力差异。先核对当前用户授权：已明确授权的合并、更新及恢复原有运行状态无需重复确认；未授权的新能力、权限扩大或恢复发言，仍须按实际范围确认，不能仅凭本文件推定授权。
 
 1. 从运行进程的 `--data`、启动器记录和该数据目录的 `deployment.json` 找到真实部署，以实际 `codeRoot` 的 [LOCAL-OPERATIONS.md](docs/LOCAL-OPERATIONS.md) 为准。不把当前工作目录、默认端口或历史路径当作现场，不启动第二份桥接。
 2. 记录本地与远程 `main` SHA、当前发布目录及逐角色状态。部署前保存配置、部署元数据及一致的 SQLite 备份（使用 `scripts/backup.mjs` 或 SQLite 在线备份，不能只复制正在使用的 WAL 主文件）；基线包括暂停状态、会话引用、事件/日记计数和 Self 版本。等待活跃回合结束，暂停用于切换时保留原有暂停意图。

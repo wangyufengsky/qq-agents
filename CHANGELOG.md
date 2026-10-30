@@ -6,7 +6,12 @@
 
 ## 未发布（2026-10-30）
 
-以下为 `v0.5.4` 之后已合并到 `main` 的改动（[#69](https://github.com/wangyufengsky/qq-agents/pull/69)–[#76](https://github.com/wangyufengsky/qq-agents/pull/76)）。当前包版本仍为 `0.5.4`，尚未发布新的版本标签。
+以下为 `v0.5.4` 之后已合并到 `main` 的改动（[#69](https://github.com/wangyufengsky/qq-agents/pull/69)–[#77](https://github.com/wangyufengsky/qq-agents/pull/77)）。当前包版本仍为 `0.5.4`，尚未发布新的版本标签。
+
+### AI 安装与更新指南（[#77](https://github.com/wangyufengsky/qq-agents/pull/77)）
+
+- 新增 [AI 更新手册](docs/AI-UPDATE.md)，明确固定目标提交、识别现有部署、核对能力差异、停机备份、切换代码、验证及回退的步骤；更新保留角色、记忆、配置和登录，不重新初始化，也不代表新增通用自动更新 CLI。
+- 安装指南增加逐项能力选择、依赖与使用范围说明，区分默认开关、实际可用和用户授权；补充本机、Docker 与不同 AI 后端的适用范围。README 提供安装、更新两种委托入口，Docker 文档同步版本清单与升级说明。
 
 ### 会话容量与空闲活动接续（[#76](https://github.com/wangyufengsky/qq-agents/pull/76)）
 
