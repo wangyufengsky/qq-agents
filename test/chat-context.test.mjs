@@ -36,7 +36,7 @@ function delivery(m, id, status, conversation = scope) {
 test("chat starts with speech, keeps IDs and reading gaps, and leaves the durable handoff intact", async (t) => {
   const f = setup(t);
   for (let n = 0; n < 20; n++) delivery(f.m, `success-${n}`, "sent");
-  const long = message(f.m, 1, "长句".repeat(200));
+  const long = message(f.m, 1, "长句".repeat(10000));
   const before = f.m.state(scope).readThroughSeq || 0;
   await f.runtime.wake("agent-0", scope, { reasons: [{ reason: "private" }] });
   const prompt = f.prompts[0];
@@ -48,7 +48,7 @@ test("chat starts with speech, keeps IDs and reading gaps, and leaves the durabl
   assert(!prompt.includes('"summaryOnly"'));
   const shown = section(prompt, "新增消息：").items[0];
   assert.equal(shown.id, long.id);
-  assert.equal(shown.bodyTruncated, true);
+  assert.equal(shown.summaryOmitted, true);
   assert.deepEqual(shown.continuation, {
     tool: "memory_read",
     id: long.id,

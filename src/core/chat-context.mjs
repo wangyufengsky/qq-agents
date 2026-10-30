@@ -82,10 +82,44 @@ export function chatHistory(history) {
   };
 }
 
-export function chatHandoff(handoff) {
+export function chatHandoff(handoff, { replay = false } = {}) {
   if (!handoff) return null;
   const result = {};
-  if (handoff.continuity.sources.length) result.continuity = handoff.continuity;
+  const sources = replay
+    ? handoff.continuity.sources
+        .filter(
+          (s) =>
+            ![
+              "message.received",
+              "message.sent",
+              "message.send-attempt",
+              "legacy.message-observation",
+            ].includes(s.kind),
+        )
+        .map((s) => ({
+          id: s.id,
+          available: s.available,
+          kind: s.kind,
+          epistemic: s.epistemic,
+          platform: s.platform,
+          key: s.key,
+          readingScope: s.readingScope,
+          coverage: s.coverage,
+          excerpt: s.excerpt?.slice(0, 200),
+          excerptTruncated:
+            !!s.excerptTruncated || (s.excerpt?.length || 0) > 200,
+          sourceMayBeTruncated: s.sourceMayBeTruncated,
+          continuation: s.continuation,
+        }))
+    : handoff.continuity.sources;
+  if (sources.length)
+    result.continuity = replay
+      ? {
+          sources,
+          notice:
+            "其他来源仅列线索，摘录最多200字，不是聊天原文；完整内容按 continuation 回查。",
+        }
+      : handoff.continuity;
   for (const key of ["notes", "intents", "scheduled"])
     if (handoff[key]?.length) result[key] = handoff[key];
   if (handoff.notesOverflow)
