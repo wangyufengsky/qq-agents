@@ -45,8 +45,8 @@ test("setup answers become an isolated, paused single-character config", () => {
   const [agent] = config.agents;
   assert.equal(agent.paused, true);
   assert.deepEqual(agent.allow, { groups: ["20000"], users: [] });
-  assert.equal(agent.network.autonomous, false);
-  assert.equal(agent.apps.enabled, false);
+  assert.equal(agent.network.autonomous, true);
+  assert.equal(agent.apps.enabled, true);
   // Docker service names need the explicit opt-in, as everywhere else.
   const docker = answers();
   docker.qq.httpUrl = "http://napcat:3000";
@@ -282,6 +282,7 @@ test("doctor checks OneBot identity and the backend without leaking secret value
   writeLocalSecret(root, "QQ_AGENTS_API_KEY", "model-key-value");
   report = await runDoctor({ root, env: {} });
   assert.equal(report.ok, true, JSON.stringify(report.checks));
+  assert.equal(byId("secret:QQ_GITHUB_READ_TOKEN").status, "warn");
   assert.match(byId("backend:api").detail, /1 model/);
   const text = JSON.stringify(report);
   for (const value of Object.values(readLocalSecrets(root)))
@@ -301,7 +302,10 @@ test("doctor only asks for secrets that the config actually uses", () => {
   assert.deepEqual(referencedSecrets(config).sort(), [
     "QQ_AGENTS_API_KEY",
     "QQ_AGENTS_ONEBOT_TOKEN",
+    "QQ_GITHUB_READ_TOKEN",
   ]);
+  config.agents[0].github.enabled = false;
+  assert(!referencedSecrets(config).includes("QQ_GITHUB_READ_TOKEN"));
 });
 
 test("init gives NapCat the token the console will actually use when the shell sets it", (t) => {

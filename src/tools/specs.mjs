@@ -1,7 +1,8 @@
 // @ts-check
 import { z } from "zod";
 import { registry } from "./registry.mjs";
-export const TOOL_NAMES = Object.keys(registry);
+import { TOOL_NAMES } from "./names.mjs";
+export { TOOL_NAMES } from "./names.mjs";
 export function toolSpecs(enabled = TOOL_NAMES, { context = false } = {}) {
   return enabled
     .filter((n) => Object.hasOwn(registry, n))

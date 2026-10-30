@@ -67,7 +67,7 @@
         "publicUrls": []
       },
       "apps": {
-        "enabled": false,
+        "enabled": true,
         "hours": {
           "enabled": true,
           "scope": "autonomous",
@@ -100,7 +100,7 @@
         "publicUrls": []
       },
       "apps": {
-        "enabled": false,
+        "enabled": true,
         "hours": {
           "enabled": true,
           "scope": "autonomous",

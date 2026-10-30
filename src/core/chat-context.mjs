@@ -84,6 +84,31 @@ export function chatHistory(history) {
   };
 }
 
+// Keep revision tracking in personCardsForTurn and the turn log, not the opening.
+export function chatPersonCards(cards) {
+  return cards.map(
+    ({ revision: _revision, updatedAt: _updatedAt, ...card }) => card,
+  );
+}
+
+function chatNote(note) {
+  const unavailable = (note.sources || []).filter(
+    (source) => !source.available,
+  ).length;
+  return {
+    body: note.body,
+    writtenAt: new Date(note.writtenAt).toISOString(),
+    uncertainty: note.uncertainty,
+    corrections: note.corrections,
+    ...(unavailable
+      ? {
+          sourceWarning: `${unavailable} 条原始来源已不可用，不能补猜内容；用 work_notes 核对。`,
+        }
+      : {}),
+    id: note.id,
+  };
+}
+
 export function chatHandoff(handoff, { replay = false } = {}) {
   if (!handoff) return null;
   const result = {};
@@ -123,7 +148,13 @@ export function chatHandoff(handoff, { replay = false } = {}) {
             "其他来源仅列线索，摘录最多200字，不是聊天原文；完整内容按 continuation 回查。",
         }
       : handoff.continuity;
-  for (const key of ["notes", "intents", "scheduled"])
+  if (handoff.notes?.length) {
+    result.notes = handoff.notes.map(chatNote);
+    result.notesNotice =
+      "未完成工作笔记：保留正文与不确定性，是工作解释而非客观事实；writtenAt 是记录时间，不是事件发生时间。来源及完整字段用 work_notes 读取，按 nextOffset 续页。";
+    result.notesContinuation = { tool: "work_notes", offset: 0 };
+  }
+  for (const key of ["intents", "scheduled"])
     if (handoff[key]?.length) result[key] = handoff[key];
   if (handoff.notesOverflow)
     Object.assign(result, {

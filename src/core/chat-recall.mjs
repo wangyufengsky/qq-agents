@@ -33,7 +33,7 @@ export function chatRecall(runtime, ctx, history, handoff, throughSeq) {
     earlierContinuation: null,
     continuation: { tool: "conversation_read", beforeSeq: throughSeq + 1 },
     notice:
-      "历史回放，不是新来信，不改变处理水位。items 按本聊天账本顺序连续选取；quoted 是明确引用的较早消息；earlier 是尚未写入工作笔记的起始线索，是否仍适用需核对。省略处不编造过渡。",
+      "历史回放，不是新来信，不改变处理水位。items 按本聊天账本顺序连续选取；quoted 是明确引用的较早消息；earlier 中本轮未完成笔记关联的来源可展开，其余起始线索只留时间与回查入口，不代表仍与当前话题有关。继续旧任务且条件不全时先回查，不凭省略内容猜测。",
   };
   const project = (row) =>
     chatHistory({
@@ -133,17 +133,25 @@ export function chatRecall(runtime, ctx, history, handoff, throughSeq) {
       deferQuote(row);
   }
   for (const { row } of quoteRequests.slice(4)) deferQuote(row);
-  // Keep original task conditions when no note carries their source yet.
-  // These are separate fallback references, never a prefix welded onto the tail.
+  // Expand old anchors only when an open note in this handoff still uses them.
+  // Unfiled conditions remain discoverable without replaying old small talk.
   const anchors = (
     memory.state(ctx.conversation).continuity?.anchors || []
   ).slice(0, 4);
   const noted = new Set((handoff.notes || []).flatMap((n) => n.evidence || []));
   for (const id of anchors) {
-    if (shown.has(id) || noted.has(id)) continue;
+    if (shown.has(id)) continue;
     const row = read.get(ctx.agentId, ctx.conversation, id);
     if (!available(row) || row.seq > throughSeq) continue;
-    if (!add("earlier", project(row)) && !add("earlier", reference(row))) {
+    const pointer = {
+      id,
+      occurredAt: row.occurred_at,
+      bodyOmitted: true,
+      ...memory.corrections.annotation("event", id),
+      continuation: { tool: "memory_read", id, offset: 0 },
+    };
+    const item = noted.has(id) ? project(row) : pointer;
+    if (!add("earlier", item) && !add("earlier", pointer)) {
       result.earlierOmitted++;
       result.earlierContinuation ||= {
         tool: "memory_read",

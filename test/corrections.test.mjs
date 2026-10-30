@@ -3,7 +3,13 @@ import assert from "node:assert/strict";
 import { fixture, context } from "./helpers.mjs";
 import { MemoryStore } from "../src/memory/store.mjs";
 import { restoreExport } from "../src/memory/migrate.mjs";
-import { chatHistory } from "../src/core/chat-context.mjs";
+import {
+  chatHistory,
+  chatHandoff,
+  chatPersonCards,
+} from "../src/core/chat-context.mjs";
+import { personCardsForTurn } from "../src/core/person-cards.mjs";
+import { chatRecall } from "../src/core/chat-recall.mjs";
 import { sourceHandoff } from "../src/core/context-handoff.mjs";
 import { subjectMaterials } from "../src/core/subject-materials.mjs";
 
@@ -74,9 +80,14 @@ function setup(t) {
 }
 
 test("a correction traverses dependencies, preserves originals and accompanies every recall projection", async (t) => {
-  const f = setup(t),
-    c = await f.call("memory_correct", f.args);
-  assert.equal(c.targets.length, 4);
+  const f = setup(t);
+  const note = f.m.identity.saveNote(
+    { body: "他暂时不想聊天", uncertainty: "这是猜测", evidence: [f.old.id] },
+    f.ctx.conversation,
+    3,
+  );
+  const c = await f.call("memory_correct", f.args);
+  assert.equal(c.targets.length, 5);
   assert.equal(f.m.readRecord({ id: f.old.id }).body, "你在疏远我");
   for (const row of [
     f.m.readRecord({ id: f.old.id }),
@@ -93,6 +104,39 @@ test("a correction traverses dependencies, preserves originals and accompanies e
     continuity: { anchors: [f.old.id], recent: [] },
   });
   assert.ok(sourceHandoff(f.m, f.ctx.conversation).sources[0].corrections);
+  const handoff = f.runtime.contexts.handoff("agent-0", f.ctx.conversation);
+  const briefNote = chatHandoff(handoff).notes.find((x) => x.id === note.id);
+  assert.equal(briefNote.uncertainty, "这是猜测");
+  assert.equal(briefNote.corrections[0].state, "review-required");
+  assert.equal(briefNote.corrections[0].current, f.args.current);
+  assert.equal(briefNote.corrections[0].scope, f.args.scope);
+  const cardBrief = chatPersonCards(
+    personCardsForTurn(f.m, "private:30000", [], {
+      fresh: true,
+      accountId: "10000",
+    }).cards,
+  )[0];
+  assert.equal(cardBrief.corrections[0].current, f.args.current);
+  assert.equal(cardBrief.corrections[0].state, "review-required");
+  // Force the old claim outside the tail. Its collapsed pointer still warns
+  // about the correction, even with no open note linking it in this handoff.
+  const barrier = f.m.append({
+    dedupe: "barrier",
+    conversation: f.ctx.conversation,
+    kind: "message.sent",
+    body: "长消息".repeat(4000),
+  });
+  const replay = chatRecall(
+    f.runtime,
+    f.ctx,
+    { items: [] },
+    { ...handoff, notes: [] },
+    barrier.seq,
+  );
+  const pointer = replay.earlier.find((x) => x.id === f.old.id);
+  assert.equal(pointer.body, undefined);
+  assert.equal(pointer.corrections[0].state, "corrected-claim");
+  assert.equal(pointer.corrections[0].current, f.args.current);
   const fresh = context(f.runtime, "agent-0", "private:30000");
   const cards = await f.runtime.callTool(fresh, "person_notes", {
     personIds: ["30000"],

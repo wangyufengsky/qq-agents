@@ -15,6 +15,7 @@ import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { mcpResult, TOOL_NAMES } from "./tools/index.mjs";
 import { readiness } from "./core/readiness.mjs";
+import { defaultAgentCapabilities } from "./core/default-config.mjs";
 import { activityPage, homeSummary } from "./core/activity.mjs";
 const publicDir = fileURLToPath(new URL("../public/", import.meta.url));
 // The running release, shown in the console's sidebar.
@@ -835,6 +836,7 @@ export function createServer({
           revision: runtime.configStore.revision,
           migrationWarnings: runtime.configStore.migrationWarnings || [],
           tools: TOOL_NAMES,
+          agentDefaults: defaultAgentCapabilities(),
         });
       if (req.method === "PUT" && url.pathname === "/api/config") {
         const data = await readBody();

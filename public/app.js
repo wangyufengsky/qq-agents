@@ -16,6 +16,7 @@ let token = sessionStorage.getItem("qq-unified-token") || "",
   config,
   revision,
   tools = [],
+  agentDefaults = {},
   status,
   tab = "overview",
   editing,
@@ -185,6 +186,7 @@ async function load() {
   configMigrationWarnings = c.migrationWarnings || [];
   revision = c.revision;
   tools = c.tools;
+  agentDefaults = c.agentDefaults;
   status = await api("/api/status");
   if (status.version)
     $(".version").textContent = `v${status.version} · 一个主体，连续的经历`;
@@ -1464,16 +1466,7 @@ function openEditor(type, id) {
           cooldownMs: 1500,
         },
         allow: { groups: [], users: [] },
-        tools: [
-          "memory_search",
-          "memory_related",
-          "memory_read",
-          "conversation_read",
-          "diary_write",
-          "diary_revise",
-          "qq_send",
-          "qq_mark_read",
-        ],
+        ...structuredClone(agentDefaults),
         silence: [],
         toolServers: [],
         maxSendsPerTurn: 3,

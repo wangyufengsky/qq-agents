@@ -6,9 +6,12 @@ export const APP_LEDGER = "internal:app-browsing";
 const time = z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/);
 export const appsPolicySchema = z
   .object({
-    enabled: z.boolean().default(false),
-    sharing: z.boolean().default(false),
-    platforms: z.array(z.enum(APP_NAMES)).max(5).default([]),
+    enabled: z.boolean().default(true),
+    sharing: z.boolean().default(true),
+    platforms: z
+      .array(z.enum(APP_NAMES))
+      .max(5)
+      .default(() => [...APP_NAMES]),
     maxReadsPerDay: z.number().int().min(1).max(200).default(30),
     maxReadsPerTurn: z.number().int().min(1).max(30).default(6),
     maxSharesPerDay: z.number().int().min(1).max(30).default(3),

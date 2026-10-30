@@ -122,6 +122,19 @@ test("a card reaches a model session once per revision, when its person speaks",
   await f.runtime.wake("agent-0", scope);
   assert.match(prompts[0], /人物卡/);
   assert.equal(count(prompts[0], "说话很直的老朋友"), 1);
+  const [openingCard] = cardsIn(prompts[0]);
+  assert.equal(openingCard.call, "阿明");
+  assert.equal(openingCard.impression, "说话很直的老朋友");
+  assert.equal("revision" in openingCard, false);
+  assert.equal("updatedAt" in openingCard, false);
+  assert.match(prompts[0], /person_notes 按 personId 回查，更新前先读当前版本/);
+  const fullCard = await f.runtime.callTool(
+    context(f.runtime),
+    "person_notes",
+    { personIds: ["30000"] },
+  );
+  assert.equal(fullCard.items[0].revision, 1);
+  assert.deepEqual(fullCard.items[0].evidence, [e.id]);
   // The card is last, after the new messages.
   assert(prompts[0].lastIndexOf("人物卡") > prompts[0].indexOf("新增消息"));
 
