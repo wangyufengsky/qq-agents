@@ -281,6 +281,8 @@ export class Runtime {
     // grants both, and configurations saved before file_read existed get it
     // without an edit.
     if (selected.includes("file_list")) selected.push("file_read");
+    if (conversation !== SUBJECT && selected.includes("qq_send"))
+      selected.push("qq_delivery_status");
     return [...new Set(selected)].filter((name) =>
       toolAvailable(a, name, conversation),
     );

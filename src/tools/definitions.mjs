@@ -181,6 +181,16 @@ export const definitions = {
       })
       .strict(),
   ],
+  qq_delivery_status: [
+    "只读查询本角色当前聊天的投递账本，默认只看 pending/unknown；可按 nextOffset 分页，unresolvedOnly=false 查看其他结果。不发送、不重试、不确认状态，不可换编号重发未知结果。",
+    z
+      .object({
+        offset: z.number().int().min(0).optional(),
+        limit,
+        unresolvedOnly: z.boolean().optional(),
+      })
+      .strict(),
+  ],
   qq_mark_read: [
     "仅提交当前会话已看到的安全消息水位；不能使用跨会话结果的readThroughSeq。conversation_read的markReadEligible必须为true，不能超过已展示水位。",
     z.object({ throughSeq: z.number().int().min(0) }).strict(),

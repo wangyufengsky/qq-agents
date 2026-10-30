@@ -1,3 +1,4 @@
+import { deliveryPage } from "../core/chat-context.mjs";
 import { githubMarker, privateGithubSources } from "../github/policy.mjs";
 import { readEventImage } from "./image-read.mjs";
 import { synthesize } from "./speech.mjs";
@@ -317,6 +318,8 @@ export const coreHandlers = {
   diary_write: handle_diary_write,
   diary_revise: handle_diary_write,
   qq_send: handle_qq_send,
+  qq_delivery_status: (runtime, ctx, args) =>
+    deliveryPage(runtime.memory.bind(ctx.agentId), ctx.conversation, args),
   generated_image_list: handle_generated_image_list,
   qq_mark_read: handle_qq_mark_read,
   qq_set_silence: handle_qq_set_silence,
