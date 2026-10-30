@@ -195,19 +195,17 @@ docker compose start qq-agents
 
 ## 升级与备份
 
-```sh
-git pull
-docker compose up -d --build
-```
+已有部署请按 [AI 更新手册](AI-UPDATE.md) 操作：先固定目标提交、暂停并停止框架、备份实际数据卷和原镜像，再构建和启动新版。保留原 Compose 项目身份、环境变量与卷映射，验收期间移除 `--resume`，经用户确认才恢复发言。不要直接 `git pull` 后重建全部服务，也不要重新初始化或删除数据卷。
 
-备份数据卷（容器停止时进行，避免数据库写入中途）：
+备份数据卷（容器停止时进行，避免数据库写入中途）：先确认实际卷名，并创建一个此前不存在、仅当前用户可访问的私有备份目录。下面的卷名和绝对路径均需按实际情况替换；不要把备份放进代码目录或覆盖旧备份。
 
 ```sh
 docker compose stop qq-agents
-docker run --rm -v qq-agents_qq-agents-data:/data -v "$PWD":/backup node:24-bookworm-slim \
+docker run --rm -v qq-agents_qq-agents-data:/data:ro -v "<私有备份目录绝对路径>":/backup node:24-bookworm-slim \
   tar -czf /backup/qq-agents-data.tgz -C /data .
-docker compose start qq-agents
 ```
+
+上面的片段只备份，不自动重启；更新期间继续按 [AI 更新手册](AI-UPDATE.md) 准备并验收新版。只做备份时，也应先核对启动参数，避免 `--resume` 自动恢复发言。
 
 卷名前缀取决于 compose 项目名（默认是目录名），用 `docker volume ls` 确认。备份文件里有令牌和全部聊天记录，按私密数据保管。
 
