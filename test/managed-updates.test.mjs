@@ -610,11 +610,18 @@ for (const savedBundle of [false, "normal", "recover"])
       ).json();
       assert.equal(state.upgrade.managed, true);
       assert.equal(state.upgrade.phase, savedBundle ? "rolled-back" : "idle");
-      const current = readState(
-        path.join(root, updateDirectory, "current.json"),
-      );
-      assert.equal(current.version, state.installed.version);
-      assert.equal(current.commit, state.installed.commit);
+      if (savedBundle) {
+        const current = readState(
+          path.join(root, updateDirectory, "current.json"),
+        );
+        assert.equal(current.version, state.installed.version);
+        assert.equal(current.commit, state.installed.commit);
+      } else {
+        assert.equal(
+          fs.existsSync(path.join(root, updateDirectory, "current.json")),
+          false,
+        );
+      }
       child.kill("SIGTERM");
       assert.equal((await exited)[0], 0);
       assert.equal(fs.existsSync(path.join(root, "process.lock")), false);

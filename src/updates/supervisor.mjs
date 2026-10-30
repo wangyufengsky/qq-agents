@@ -321,7 +321,7 @@ export async function supervise(argv = process.argv.slice(2)) {
         finishedAt: Date.now(),
       });
     } else if (
-      current === bundled ||
+      (current === bundled && fs.existsSync(pointer)) ||
       compareVersions(bundled.version, current.version) === 1
     ) {
       current = bundled;
