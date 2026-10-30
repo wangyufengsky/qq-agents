@@ -55,8 +55,10 @@ export function gitVersion(root) {
         stdio: ["ignore", "pipe", "ignore"],
       }).trim();
     if (
-      fs.realpathSync(run(["rev-parse", "--show-toplevel"])) !==
-      fs.realpathSync(root)
+      path.relative(
+        fs.realpathSync(root),
+        fs.realpathSync(run(["rev-parse", "--show-toplevel"])),
+      ) !== ""
     )
       return null;
     const commit = run(["rev-parse", "HEAD"]);
@@ -131,9 +133,16 @@ export class FrameworkKnowledge {
     } catch {
       /* An unverifiable build stays unknown. */
     }
+    let sourceCheckout = true;
+    try {
+      fs.lstatSync(path.join(root, ".git"));
+    } catch (error) {
+      sourceCheckout = error.code !== "ENOENT";
+    }
     const recorded =
       gitVersion(root) ||
-      (commitPattern.test(build.commit || "") &&
+      (!sourceCheckout &&
+      commitPattern.test(build.commit || "") &&
       buildDigest &&
       build.buildDigest === buildDigest
         ? {

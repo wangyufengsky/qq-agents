@@ -210,8 +210,33 @@ test("build identity includes vendor assets and a source checkout always prefers
   assert.equal(current.commit, git(["rev-parse", "HEAD"]));
   assert.equal(current.provenance, "git");
   assert.equal(current.modified, false);
+  if (process.platform === "win32") {
+    const otherCase =
+      s.root[0] === s.root[0].toUpperCase()
+        ? s.root[0].toLowerCase() + s.root.slice(1)
+        : s.root[0].toUpperCase() + s.root.slice(1);
+    assert.equal(
+      new FrameworkKnowledge({ root: otherCase }).version.commit,
+      current.commit,
+    );
+  }
   fs.writeFileSync(file, "changed");
   assert.equal(new FrameworkKnowledge(s).version.modified, true);
+});
+
+test("an unreadable source repository cannot silently fall back to an old build manifest", (t) => {
+  const s = source(t);
+  fs.writeFileSync(path.join(s.root, ".git"), "gitdir: missing-repository\n");
+  assert.equal(new FrameworkKnowledge(s).version.commit, null);
+  assert.equal(new FrameworkKnowledge(s).version.provenance, "unknown");
+  if (process.platform !== "win32") {
+    fs.unlinkSync(path.join(s.root, ".git"));
+    fs.symlinkSync(
+      path.join(s.root, "missing-repository"),
+      path.join(s.root, ".git"),
+    );
+    assert.equal(new FrameworkKnowledge(s).version.provenance, "unknown");
+  }
 });
 
 test("official reads use only fixed public URLs without credentials, distinguish main and preserve pagination", async (t) => {
