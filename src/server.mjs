@@ -1,5 +1,9 @@
 import { readFileText } from "./tools/file-text.mjs";
 import { fileProjects, projectFiles } from "./core/project-files.mjs";
+import {
+  listConsoleProjects,
+  compareConsoleProjects,
+} from "./core/projects-console.mjs";
 import { readProjects, projectReadSchema } from "./tools/activities.mjs";
 import { readConversationState } from "./memory/conversation-state.mjs";
 import { scopedCatalog } from "./tools/catalog.mjs";
@@ -199,6 +203,7 @@ export function createServer({
           "/document-reader.js",
           "/apps-ui.js",
           "/mind-ui.js",
+          "/projects-ui.js",
           "/mood-ui.js",
           "/people-ui.js",
           "/onboarding-ui.js",
@@ -311,6 +316,18 @@ export function createServer({
             data.token,
           ),
         );
+      }
+      if (req.method === "GET" && url.pathname === "/api/projects/compare") {
+        const a = runtime.agent(url.searchParams.get("agentId"));
+        const query = Object.fromEntries(url.searchParams);
+        delete query.agentId;
+        return send(compareConsoleProjects(runtime, a.id, query));
+      }
+      if (req.method === "GET" && url.pathname === "/api/projects") {
+        const a = runtime.agent(url.searchParams.get("agentId"));
+        const query = Object.fromEntries(url.searchParams);
+        delete query.agentId;
+        return send(listConsoleProjects(runtime.memory.bind(a.id), query));
       }
       if (req.method === "GET" && url.pathname === "/api/project") {
         const a = runtime.agent(url.searchParams.get("agentId"));

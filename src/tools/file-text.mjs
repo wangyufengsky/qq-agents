@@ -12,16 +12,7 @@ export function readFileText(files, agentId, fileId, options = {}) {
     maxChars > 16000
   )
     throw Error("FILE_READ_RANGE_INVALID");
-  const meta = files.metadata(agentId, fileId);
-  if (!TEXT_FILE.test(meta.name)) throw Error("FILE_NOT_TEXT");
-  const { buffer } = files.read(agentId, fileId, maxBytes);
-  let text;
-  try {
-    text = new TextDecoder("utf-8", { fatal: true }).decode(buffer);
-  } catch {
-    throw Error("FILE_NOT_TEXT");
-  }
-  if (text.includes("\0")) throw Error("FILE_NOT_TEXT");
+  const { meta, text } = loadFileText(files, agentId, fileId, maxBytes);
   const matches = [];
   const query = String(options.query || "").slice(0, 200);
   if (query) {
@@ -67,4 +58,23 @@ export function readFileText(files, agentId, fileId, options = {}) {
     nextOffset: end < text.length ? end : null,
     ...(query ? { matches, matchesLimited: matches.length === 100 } : {}),
   };
+}
+
+export function loadFileText(
+  files,
+  agentId,
+  fileId,
+  maxBytes = 50 * 1024 * 1024,
+) {
+  const meta = files.metadata(agentId, fileId);
+  if (!TEXT_FILE.test(meta.name)) throw Error("FILE_NOT_TEXT");
+  const { buffer } = files.read(agentId, fileId, maxBytes);
+  let text;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+  } catch {
+    throw Error("FILE_NOT_TEXT");
+  }
+  if (text.includes("\0")) throw Error("FILE_NOT_TEXT");
+  return { meta, text };
 }

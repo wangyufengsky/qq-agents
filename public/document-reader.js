@@ -190,22 +190,8 @@ async function openDocument(agentId, fileId) {
       .forEach(
         (b) =>
           (b.onclick = () =>
-            action(() => openProjectOverview(agentId, b.dataset.project))),
+            action(() => openProject(agentId, b.dataset.project))),
       );
   };
   await show();
-}
-async function openProjectOverview(agentId, id) {
-  const { project: p, files } = await api(
-    "/api/project/files?" + new URLSearchParams({ agentId, id }),
-  );
-  const dialog = documentDialog(p.title);
-  dialog.querySelector("[data-document-body]").innerHTML =
-    `<p>${esc(p.why)}</p><p>下一步：${esc(p.next || "尚未记录")}</p><h3>作品与文件</h3>${files.map((f) => `<p>${f.readable ? `<button type="button" data-read="${esc(f.fileId)}">${esc(f.name)}</button>` : esc(f.name)}</p>`).join("") || "<p>尚无文件</p>"}<h3>最近进展</h3>${p.steps.map((s) => `<p>${esc(s.did)}</p>`).join("")}`;
-  dialog
-    .querySelectorAll("[data-read]")
-    .forEach(
-      (b) =>
-        (b.onclick = () => action(() => openDocument(agentId, b.dataset.read))),
-    );
 }
