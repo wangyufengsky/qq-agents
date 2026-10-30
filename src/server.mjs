@@ -368,6 +368,33 @@ export function createServer({
             diaries: m
               .diariesAbout(card.personId, 3)
               .map(({ id, title, updatedAt }) => ({ id, title, updatedAt })),
+            // Read-only: promises, shared moments and boundaries the agent
+            // keeps beside the card, open ones first.
+            items: m.identity
+              .personItems(card.personId)
+              .map(
+                ({
+                  id,
+                  kind,
+                  body,
+                  status,
+                  outcome,
+                  revision,
+                  createdAt,
+                  updatedAt,
+                  createdIn,
+                }) => ({
+                  id,
+                  revision,
+                  kind,
+                  body,
+                  status,
+                  outcome,
+                  createdAt,
+                  updatedAt,
+                  createdIn,
+                }),
+              ),
           })),
           subject: {
             ...m.state("@subject"),
@@ -468,6 +495,19 @@ export function createServer({
             },
             { writtenIn: "console", author: "admin", now: runtime.now() },
           ),
+        );
+      }
+      if (req.method === "POST" && url.pathname === "/api/person-item") {
+        const data = await readBody(),
+          a = runtime.agent(data.agentId),
+          m = runtime.memory.bind(a.id);
+        if (
+          data.action !== "delete" ||
+          !Number.isSafeInteger(data.expectedRevision)
+        )
+          throw Error("INVALID_PERSON_ITEM");
+        return send(
+          m.identity.deletePersonItem(String(data.id), data.expectedRevision),
         );
       }
       if (req.method === "POST" && url.pathname === "/api/intent/cancel") {

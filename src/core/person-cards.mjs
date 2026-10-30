@@ -118,3 +118,83 @@ export function markPersonCardShown(memory, conversation, card) {
     },
   });
 }
+
+const MAX_ITEMS_PER_TURN = 12;
+const MAX_ITEMS_PER_PERSON = 5;
+// Boundaries first, as they change how to act right now; then what is owed;
+// then what was shared.
+const KIND_ORDER = ["boundary", "promise", "shared"];
+
+/** Where an item was written, when that is a private chat other than this one. @param {any} item @param {string} conversation */
+const fromPrivate = (item, conversation) =>
+  [item.createdIn, item.writtenIn].some(
+    (c) =>
+      typeof c === "string" && c.startsWith("private:") && c !== conversation,
+  );
+
+/**
+ * The open items between the agent and the people in this turn, each once per
+ * model session and again after it changes, like the cards.
+ * @param {any} memory Bound agent memory.
+ * @param {string} conversation
+ * @param {any[]} items Records this turn shows the model.
+ * @param {{fresh: boolean, accountId: string}} options
+ */
+export function personItemsForTurn(memory, conversation, items, options) {
+  const open = new Map(
+    memory.identity.openPersonItems().map((/** @type {any} */ x) => [x.id, x]),
+  );
+  // Closed or deleted items need no place in the session state.
+  const shown = Object.fromEntries(
+    Object.entries(
+      options.fresh ? {} : memory.state(conversation).personItemsShown || {},
+    ).filter(([id]) => open.has(id)),
+  );
+  const listed = [],
+    /** @type {Record<string, number>} */ more = {};
+  for (const personId of peopleInTurn(
+    memory,
+    conversation,
+    items,
+    options.accountId,
+  )) {
+    const unseen = [...open.values()]
+      .filter((x) => x.personId === personId && shown[x.id] !== x.revision)
+      .sort(
+        (a, b) =>
+          KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) ||
+          b.updatedAt - a.updatedAt,
+      );
+    const room = Math.min(
+      MAX_ITEMS_PER_PERSON,
+      MAX_ITEMS_PER_TURN - listed.length,
+    );
+    for (const x of unseen.slice(0, Math.max(0, room))) {
+      listed.push({
+        id: x.id,
+        personId,
+        kind: x.kind,
+        body: x.body,
+        revision: x.revision,
+        since: new Date(x.createdAt).toISOString(),
+        ...(fromPrivate(x, conversation) ? { fromPrivate: true } : {}),
+      });
+      shown[x.id] = x.revision;
+    }
+    if (unseen.length > Math.max(0, room))
+      more[personId] = unseen.length - Math.max(0, room);
+  }
+  return { items: listed, shown, more };
+}
+
+/** An item the agent just wrote is already known to this session. @param {any} memory @param {string} conversation @param {any} item */
+export function markPersonItemShown(memory, conversation, item) {
+  const state = memory.state(conversation);
+  memory.setState(conversation, {
+    ...state,
+    personItemsShown: {
+      ...state.personItemsShown,
+      [item.id]: item.revision,
+    },
+  });
+}

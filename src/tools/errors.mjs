@@ -43,6 +43,12 @@ export function safeToolFailure(error) {
       "The gateway could not confirm whether this message reached QQ (for example QQ dropped offline mid-send); it may already be visible. Do not send it again or change requestId. The program marks it sent when QQ's own copy arrives, otherwise the administrator checks it in the console.",
     MOOD_CHANGE_NEEDS_CAUSE:
       "Your current mood is strong (intensity 4 or 5) and still in effect, so it was not changed. Read it with mood_read. To change or clear it, cite in evidence at least one record that happened after it was written: someone's later explanation or message, or your own subject_log after you thought the misunderstanding over or did something else and settled down. You do not need anyone to coax you out of it. Without a new cause, keep the mood; it ends on its own when it expires.",
+    PERSON_ITEM_CLOSE_NEEDS_MESSAGE:
+      "The item stays open. Closing it needs, in evidence, a chat message from after it was written: your own message telling the person how it went (the recordId in the qq_send result), or the person's message saying it is no longer needed. Thinking it over in free time is not telling them. If you cannot tell them here, leave it open, or hand it to their chat with intent_create.",
+    PERSON_ITEM_CLOSED:
+      "That item is already closed and cannot change. If the same thing comes up again, write a new item.",
+    PERSON_ITEM_LIMIT:
+      "This person already has 20 open items. Read them with person_items and close the ones that are done or no longer apply before adding another.",
     AI_OTHER_TARGETS_DISABLED:
       "Scheduling for a target other than this administrator private conversation is disabled. No task was created or changed. The administrator can enable allowAiOtherTargets in the console and choose whether confirmAiOtherTargets is required. Do not change the target or retry to bypass this setting.",
     APP_RESTRICTED_CONTEXT:

@@ -81,6 +81,7 @@ export function restoreExport(memory, data) {
     message_observations: ["agent_id", "event_id", "digest", "observation"],
     person_notes: ["agent_id", "person_id", "value"],
     moods: ["agent_id", "id", "value"],
+    person_items: ["agent_id", "id", "value"],
   };
   // An empty target identity can be restored beside other identities. Remap only local seq watermarks.
   if (
@@ -130,8 +131,9 @@ export function restoreExport(memory, data) {
           row.value = JSON.stringify(state);
         }
         if (table === "message_progress" && !empty) row.seq = seqs.get(row.seq);
-        // The strong-mood guard compares evidence seqs against this boundary.
-        if (table === "moods" && !empty) {
+        // The strong-mood and closing guards compare evidence seqs against
+        // this boundary.
+        if ((table === "moods" || table === "person_items") && !empty) {
           const value = JSON.parse(row.value);
           if (value.sinceSeq !== undefined)
             value.sinceSeq = remapBoundary(value.sinceSeq);

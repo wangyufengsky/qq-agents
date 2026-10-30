@@ -3,6 +3,10 @@ import { freezeEvidence, evidenceView } from "./evidence.mjs";
 import { mergeProtection } from "./protection.mjs";
 const encode = JSON.stringify;
 const decode = (row) => (row ? JSON.parse(row.value) : null);
+export const PERSON_ITEM_KINDS = ["promise", "shared", "boundary"];
+const PERSON_ITEM_STATUSES = ["open", "done", "dropped"];
+const MAX_OPEN_PERSON_ITEMS = 20;
+const MAX_CLOSED_PERSON_ITEMS = 30;
 const required = (value, max) => {
   if (typeof value !== "string" || !value.trim() || value.length > max)
     throw Error("INVALID_SELF_TEXT");
@@ -465,6 +469,172 @@ export class IdentityMemory {
       .prepare("DELETE FROM person_notes WHERE agent_id=? AND person_id=?")
       .run(this.agentId, old.personId);
     return { deleted: true, personId: old.personId };
+  }
+  // What stands between the agent and one person, beside the card: a promise
+  // it made, something they went through together, or a boundary the person
+  // set. Shared by every conversation like the card, so it never holds
+  // protected material. An item stays open until the agent closes it, and
+  // closing needs a chat message from after it was written: the report back,
+  // or the person saying it is no longer needed. Nothing closes silently.
+  personItem(id) {
+    return decode(
+      this.db
+        .prepare("SELECT value FROM person_items WHERE agent_id=? AND id=?")
+        .get(this.agentId, String(id)),
+    );
+  }
+  // Open items first, newest first within each, then closed ones.
+  personItems(personId) {
+    return this.db
+      .prepare(
+        "SELECT value FROM person_items WHERE agent_id=? AND json_extract(value,'$.personId')=? ORDER BY json_extract(value,'$.status')<>'open', json_extract(value,'$.updatedAt') DESC, rowid DESC",
+      )
+      .all(this.agentId, String(personId))
+      .map(decode);
+  }
+  // Open items of one kind across everyone, oldest first: what has waited
+  // longest comes up first.
+  openPersonItems(kind) {
+    return this.db
+      .prepare(
+        "SELECT value FROM person_items WHERE agent_id=? AND json_extract(value,'$.status')='open' AND (? IS NULL OR json_extract(value,'$.kind')=?) ORDER BY json_extract(value,'$.createdAt'), rowid",
+      )
+      .all(this.agentId, kind ?? null, kind ?? null)
+      .map(decode);
+  }
+  savePersonItem(
+    {
+      id,
+      personId,
+      kind,
+      body,
+      evidence = [],
+      status = "open",
+      outcome = "",
+      expectedRevision = 0,
+    },
+    { writtenIn, now },
+  ) {
+    personId = String(personId);
+    if (!/^\d{5,12}$/.test(personId)) throw Error("INVALID_PERSON");
+    if (
+      (body !== undefined &&
+        (typeof body !== "string" || !body.trim() || body.length > 300)) ||
+      typeof outcome !== "string" ||
+      outcome.length > 300 ||
+      !PERSON_ITEM_STATUSES.includes(status)
+    )
+      throw Error("INVALID_PERSON_ITEM");
+    if (!evidence.length) throw Error("NOTE_SOURCE_REQUIRED");
+    freezeEvidence(this.mem, evidence, now);
+    const old = id ? this.personItem(id) : null;
+    if (id && !old) throw Error("RECORD_NOT_FOUND");
+    if ((old?.revision || 0) !== expectedRevision)
+      throw Error("REVISION_CONFLICT");
+    if (old) {
+      if (old.personId !== personId || (kind && kind !== old.kind))
+        throw Error("INVALID_PERSON_ITEM");
+      if (old.status !== "open") throw Error("PERSON_ITEM_CLOSED");
+    } else if (
+      !PERSON_ITEM_KINDS.includes(kind) ||
+      body === undefined ||
+      status !== "open"
+    )
+      throw Error("INVALID_PERSON_ITEM");
+    const closing = status !== "open";
+    if (closing) {
+      if (!outcome.trim()) throw Error("INVALID_PERSON_ITEM");
+      // A chat message with this person after the item was written: theirs,
+      // or the agent's in their private chat or a chat they speak in. An
+      // idle-time log, or a message to someone else, does not close it.
+      const later = this.db.prepare(
+        `SELECT e.seq FROM events e WHERE e.agent_id=? AND e.id=? AND e.seq>? AND (
+          (e.kind IN ('message.received','voice.transcript') AND e.sender_id=?)
+          OR (e.kind='message.sent' AND (e.conversation=? OR EXISTS (SELECT 1 FROM events h WHERE h.agent_id=e.agent_id AND h.conversation=e.conversation AND h.kind='message.received' AND h.sender_id=?))))`,
+      );
+      if (
+        !evidence.some((x) =>
+          later.get(
+            this.agentId,
+            x,
+            old.sinceSeq,
+            personId,
+            "private:" + personId,
+            personId,
+          ),
+        )
+      )
+        throw Error("PERSON_ITEM_CLOSE_NEEDS_MESSAGE");
+    }
+    if (
+      !old &&
+      this.personItems(personId).filter((x) => x.status === "open").length >=
+        MAX_OPEN_PERSON_ITEMS
+    )
+      throw Error("PERSON_ITEM_LIMIT");
+    const value = {
+      id: old?.id || randomUUID(),
+      personId,
+      kind: old?.kind || kind,
+      body: body === undefined ? old.body : body.trim(),
+      status,
+      ...(closing ? { outcome: outcome.trim(), closedAt: now } : {}),
+      evidence,
+      revision: (old?.revision || 0) + 1,
+      writtenIn: writtenIn ?? null,
+      createdIn: old?.createdIn ?? writtenIn ?? null,
+      createdAt: old?.createdAt ?? now,
+      updatedAt: now,
+      // Messages after this point can close it.
+      sinceSeq:
+        old?.sinceSeq ??
+        (this.db
+          .prepare("SELECT MAX(seq) AS seq FROM events WHERE agent_id=?")
+          .get(this.agentId).seq ||
+          0),
+      epistemic: "agent-impression",
+      history: old
+        ? [
+            {
+              revision: old.revision,
+              body: old.body,
+              status: old.status,
+              evidence: old.evidence,
+              writtenIn: old.writtenIn,
+              updatedAt: old.updatedAt,
+            },
+            ...old.history,
+          ].slice(0, 10)
+        : [],
+    };
+    this.db
+      .prepare("INSERT OR REPLACE INTO person_items VALUES(?,?,?)")
+      .run(this.agentId, value.id, encode(value));
+    // Closed items are kept for the console, the most recent ones per person.
+    if (closing)
+      this.db
+        .prepare(
+          "DELETE FROM person_items WHERE agent_id=? AND json_extract(value,'$.personId')=? AND json_extract(value,'$.status')<>'open' AND id NOT IN (SELECT id FROM person_items WHERE agent_id=? AND json_extract(value,'$.personId')=? AND json_extract(value,'$.status')<>'open' ORDER BY json_extract(value,'$.closedAt') DESC LIMIT ?)",
+        )
+        .run(
+          this.agentId,
+          personId,
+          this.agentId,
+          personId,
+          MAX_CLOSED_PERSON_ITEMS,
+        );
+    return value;
+  }
+  // The administrator removes an item that should not be there; the agent
+  // can write it again if it still applies.
+  deletePersonItem(id, expectedRevision) {
+    const old = this.personItem(id);
+    if (!old) throw Error("RECORD_NOT_FOUND");
+    if (old.revision !== expectedRevision) throw Error("REVISION_CONFLICT");
+    this.db
+      .prepare("DELETE FROM person_items WHERE agent_id=? AND id=?")
+      .run(this.agentId, old.id);
+    return { deleted: true, id: old.id };
   }
   // The agent's own account of its mood, written when it actually changes,
   // with why. Only the agent writes or clears it; nothing computes or decays
