@@ -63,7 +63,15 @@ function isolatedWorkspace(directory) {
         timeout: 10000,
       },
     ).trim();
-    if (fs.realpathSync(actual) !== fs.realpathSync(directory))
+    // Git and Node can return different drive-letter casing on Windows.
+    // Compare the actual directory identity without accepting an ancestor.
+    const expected = fs.statSync(directory, { bigint: true });
+    const resolved = fs.statSync(actual, { bigint: true });
+    if (
+      !expected.ino ||
+      expected.dev !== resolved.dev ||
+      expected.ino !== resolved.ino
+    )
       throw Error("ANTIGRAVITY_WORKSPACE_UNSAFE");
   } catch (error) {
     const code = /** @type {NodeJS.ErrnoException} */ (error).code;

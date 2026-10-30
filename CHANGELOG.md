@@ -10,7 +10,7 @@
 
 - 新增 `antigravity` 后端、管理台配置及安装向导支持，以官方 headless JSON 流执行回合，按角色和聊天绑定原生会话，使用桥接专用 profile 和受限工具入口。
 - 工具权限在 hook 和桥接调用入口分别检查，取消及回合结束立即撤销；异常或取消退休模型会话，禁止重放。现有角色后端、默认配置与发送权限保持原值。
-- 为 CLI 建立独立 Git 工作区边界，防止数据目录位于现有仓库内时加载上级 hooks/MCP；运行此后端需要 Git，隔离验收包含上级 hook 的未执行检查。
+- 为 CLI 建立独立 Git 工作区边界，按目录身份核对以兼容 Windows 路径表示，防止加载上级 hooks/MCP；运行此后端需要 Git，真实隔离验收包含上级 hook 未执行检查，Windows 预检也覆盖 CLI 隔离回归。
 - 增加模拟 CLI 回归和显式 opt-in 的真实模型隔离验收；macOS arm64 / CLI 1.4.11 已验证续接、跨聊天隔离、权限拒绝、取消与新会话恢复。初版不提供原生压缩、生图及图片输入；CLI 升级需重验内部 profile 参数和协议，详见 [Antigravity 指南](docs/ANTIGRAVITY.md)。
 
 ### 升级等待回合完成与会话接续（[#87](https://github.com/wangyufengsky/qq-agents/pull/87)）

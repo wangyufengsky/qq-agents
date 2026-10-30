@@ -332,7 +332,10 @@ test("Antigravity creates Git boundaries even when data sits inside another repo
       ["-C", directory, "rev-parse", "--show-toplevel"],
       { encoding: "utf8" },
     ).trim();
-    assert.equal(fs.realpathSync(actual), fs.realpathSync(directory));
+    const expected = fs.statSync(directory, { bigint: true });
+    const resolved = fs.statSync(actual, { bigint: true });
+    assert.equal(resolved.dev, expected.dev);
+    assert.equal(resolved.ino, expected.ino);
   }
   assert.equal(launch.options.env.GIT_CONFIG_NOSYSTEM, "1");
   assert.equal(
@@ -344,6 +347,14 @@ test("Antigravity creates Git boundaries even when data sits inside another repo
 test("Antigravity rejects an invalid Git boundary before CLI startup", async (t) => {
   const { backend, params, launches } = setup(t);
   fs.writeFileSync(path.join(backend.root, ".git"), "gitdir: unrelated");
+  await assert.rejects(backend.run(params), /ANTIGRAVITY_WORKSPACE_UNSAFE/);
+  assert.equal(launches.length, 0);
+});
+
+test("Antigravity rejects Git configuration redirecting its working tree to an ancestor", async (t) => {
+  const { backend, root, params, launches } = setup(t);
+  backend.checkProfile();
+  execFileSync("git", ["-C", backend.root, "config", "core.worktree", root]);
   await assert.rejects(backend.run(params), /ANTIGRAVITY_WORKSPACE_UNSAFE/);
   assert.equal(launches.length, 0);
 });
