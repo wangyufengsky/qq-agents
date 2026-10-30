@@ -4494,3 +4494,75 @@ button.mem-more {
     display: none;
   }
 }
+
+/* Shared document reader, also used by project works. */
+.document-reader {
+  width: min(960px, 94vw);
+  max-height: 90vh;
+  border: 1px solid var(--line, #34363d);
+  border-radius: 18px;
+  padding: 24px;
+  background: var(--panel, #15171b);
+  color: inherit;
+  overflow: auto;
+}
+.document-reader::backdrop {
+  background: #0009;
+}
+.document-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.document-head h2 {
+  overflow-wrap: anywhere;
+}
+.document-content {
+  padding: 18px 0;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+.document-content pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.document-content h1 {
+  font-size: 1.7rem;
+}
+.document-content table {
+  border-collapse: collapse;
+  width: 100%;
+}
+.document-content th,
+.document-content td {
+  border: 1px solid #4445;
+  padding: 8px 12px;
+  text-align: left;
+}
+.document-table {
+  overflow-x: auto;
+}
+.document-content blockquote {
+  border-left: 3px solid #7c86b4;
+  margin-left: 0;
+  padding-left: 16px;
+}
+.document-content a {
+  color: #aab8ff;
+}
+.document-matches {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+.file-read-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}

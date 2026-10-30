@@ -1,3 +1,5 @@
+import { readFileText } from "./tools/file-text.mjs";
+import { fileProjects, projectFiles } from "./core/project-files.mjs";
 import { readProjects, projectReadSchema } from "./tools/activities.mjs";
 import { readConversationState } from "./memory/conversation-state.mjs";
 import { scopedCatalog } from "./tools/catalog.mjs";
@@ -194,6 +196,7 @@ export function createServer({
           "/parity.js",
           "/agent-form.js",
           "/files-ui.js",
+          "/document-reader.js",
           "/apps-ui.js",
           "/mind-ui.js",
           "/mood-ui.js",
@@ -703,6 +706,22 @@ export function createServer({
             ),
           ),
         );
+      }
+      if (req.method === "GET" && url.pathname === "/api/files/read") {
+        const a = runtime.agent(url.searchParams.get("agentId"));
+        const fileId = url.searchParams.get("fileId");
+        return send({
+          ...readFileText(runtime.files, a.id, fileId, {
+            offset: Number(url.searchParams.get("offset") || 0),
+            maxChars: Number(url.searchParams.get("maxChars") || 8000),
+            query: url.searchParams.get("query") || "",
+          }),
+          projects: fileProjects(runtime.memory.bind(a.id), fileId),
+        });
+      }
+      if (req.method === "GET" && url.pathname === "/api/project/files") {
+        const a = runtime.agent(url.searchParams.get("agentId"));
+        return send(projectFiles(runtime, a.id, url.searchParams.get("id")));
       }
       if (req.method === "GET" && url.pathname === "/api/files/download") {
         const a = runtime.agent(url.searchParams.get("agentId"));

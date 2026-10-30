@@ -55,6 +55,12 @@ const browserScripts = {
   "agent-form.js": ["agentForm"],
   "apps-ui.js": ["appAgentId", "renderApps"],
   "files-ui.js": ["fileAgentId", "renderFilePermissions"],
+  "document-reader.js": [
+    "openDocument",
+    "openProjectOverview",
+    "documentMarkdown",
+    "downloadDocument",
+  ],
   "mind-ui.js": ["mindAgentId", "renderMind"],
   "mood-ui.js": ["bindMood", "moodMarkup"],
   "people-ui.js": [

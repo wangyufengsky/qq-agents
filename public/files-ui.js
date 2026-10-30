@@ -129,7 +129,7 @@ const fileTime = (iso) => {
 // Every file has one shape: kind, name cut to one line, size and date, the
 // download button at the end. A warning gets its own line so it is never cut.
 const fileRow = (file) =>
-  `<article class="file-row"><span class="file-kind">${esc(fileKind(file.name))}</span><div class="file-main"><strong class="file-name" title="${esc(file.name)}">${esc(file.name)}</strong><p class="file-meta"><span>${esc(fileSize(file.bytes))}</span><span>${esc(fileTime(file.createdAt))}</span><small class="mono" title="${esc(file.fileId)}">${esc(file.fileId)}</small></p>${file.protectionUnknown ? '<p class="file-warn">保护信息不完整，发送需批准</p>' : ""}</div><button type="button" class="ghost" data-file="${esc(file.fileId)}">下载到本机</button></article>`;
+  `<article class="file-row"><span class="file-kind">${esc(fileKind(file.name))}</span><div class="file-main"><strong class="file-name" title="${esc(file.name)}">${/\.(md|txt|json|csv|tsv|log|xml|ya?ml)$/i.test(file.name) ? `<button type="button" class="file-read-link" data-read-file="${esc(file.fileId)}">${esc(file.name)}</button>` : esc(file.name)}</strong><p class="file-meta"><span>${esc(fileSize(file.bytes))}</span><span>${esc(fileTime(file.createdAt))}</span></p><details><summary>文件标识</summary><small class="mono">${esc(file.fileId)}</small></details>${file.protectionUnknown ? '<p class="file-warn">保护信息不完整，发送需批准</p>' : ""}</div><button type="button" class="ghost" data-file="${esc(file.fileId)}">下载到本机</button></article>`;
 // How full the library is, against the role's saved limits when known.
 function fileUsage(result, f) {
   const used = result.usedBytes / fileMiB;
@@ -192,6 +192,12 @@ async function loadFileLibrary(agentId, offset = 0) {
       action(() =>
         loadFileLibrary(agentId, result.nextOffset ?? result.nextCorruptOffset),
       );
+  $("#file-library")
+    .querySelectorAll("[data-read-file]")
+    .forEach((button) => {
+      button.onclick = () =>
+        action(() => openDocument(agentId, button.dataset.readFile));
+    });
   $("#file-library")
     .querySelectorAll("[data-file]")
     .forEach((button) => {
