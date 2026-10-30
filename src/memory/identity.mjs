@@ -7,6 +7,9 @@ export const PERSON_ITEM_KINDS = ["promise", "shared", "boundary"];
 const PERSON_ITEM_STATUSES = ["open", "done", "dropped"];
 const MAX_OPEN_PERSON_ITEMS = 20;
 const MAX_CLOSED_PERSON_ITEMS = 30;
+const PROJECT_STATUSES = ["active", "paused", "done", "dropped"];
+const MAX_LIVE_PROJECTS = 5;
+const PROJECT_STEPS = 30;
 const required = (value, max) => {
   if (typeof value !== "string" || !value.trim() || value.length > max)
     throw Error("INVALID_SELF_TEXT");
@@ -635,6 +638,113 @@ export class IdentityMemory {
       .prepare("DELETE FROM person_items WHERE agent_id=? AND id=?")
       .run(this.agentId, old.id);
     return { deleted: true, id: old.id };
+  }
+  // Something the agent pursues for itself across free-time turns: why it
+  // cares, each step it took, what it made, where it got stuck, and in the
+  // end whether it finished or let it go. Shared by every conversation, so
+  // it can talk about its own work, and never holding protected material.
+  project(id) {
+    return decode(
+      this.db
+        .prepare("SELECT value FROM projects WHERE agent_id=? AND id=?")
+        .get(this.agentId, String(id)),
+    );
+  }
+  // Active ones first, then paused, then finished; most recently worked on
+  // first within each.
+  projects() {
+    return this.db
+      .prepare(
+        "SELECT value FROM projects WHERE agent_id=? ORDER BY CASE json_extract(value,'$.status') WHEN 'active' THEN 0 WHEN 'paused' THEN 1 ELSE 2 END, json_extract(value,'$.updatedAt') DESC, rowid DESC",
+      )
+      .all(this.agentId)
+      .map(decode);
+  }
+  saveProject(
+    {
+      id,
+      title,
+      why,
+      progress = "",
+      evidence = [],
+      files = [],
+      next,
+      blocker,
+      status,
+      outcome = "",
+      expectedRevision = 0,
+    },
+    { writtenIn, now },
+  ) {
+    const short = (value, max, required = false) =>
+      value === undefined
+        ? !required
+        : typeof value === "string" &&
+          value.length <= max &&
+          (!required || !!value.trim());
+    const old = id ? this.project(id) : null;
+    if (id && !old) throw Error("RECORD_NOT_FOUND");
+    if ((old?.revision || 0) !== expectedRevision)
+      throw Error("REVISION_CONFLICT");
+    if (
+      // Required for a new project; never blanked on an update.
+      !short(title, 60, !old || title !== undefined) ||
+      !short(why, 300, !old || why !== undefined) ||
+      !short(progress, 300) ||
+      !short(next, 200) ||
+      !short(blocker, 200) ||
+      !short(outcome, 300) ||
+      (status !== undefined && !PROJECT_STATUSES.includes(status)) ||
+      !Array.isArray(files) ||
+      files.length > 10 ||
+      files.some((f) => typeof f !== "string" || !/^[a-f0-9]{64}$/.test(f))
+    )
+      throw Error("INVALID_PROJECT");
+    if (old && ["done", "dropped"].includes(old.status))
+      throw Error("PROJECT_CLOSED");
+    const nextStatus = status ?? old?.status ?? "active";
+    const closing = ["done", "dropped"].includes(nextStatus);
+    if (closing && !outcome.trim()) throw Error("INVALID_PROJECT");
+    if (!old && nextStatus !== "active") throw Error("INVALID_PROJECT");
+    if (evidence.length) freezeEvidence(this.mem, evidence, now);
+    if (
+      nextStatus === "active" &&
+      old?.status !== "active" &&
+      this.projects().filter((p) => p.status === "active").length >=
+        MAX_LIVE_PROJECTS
+    )
+      throw Error("PROJECT_LIMIT");
+    const step = progress.trim()
+      ? [
+          {
+            at: now,
+            did: progress.trim(),
+            evidence,
+            files,
+            writtenIn: writtenIn ?? null,
+          },
+        ]
+      : [];
+    const value = {
+      id: old?.id || randomUUID(),
+      title: title === undefined ? old.title : title.trim(),
+      why: why === undefined ? old.why : why.trim(),
+      status: nextStatus,
+      steps: [...step, ...(old?.steps || [])].slice(0, PROJECT_STEPS),
+      // Everything it made along the way, newest first.
+      files: [...new Set([...files, ...(old?.files || [])])].slice(0, 30),
+      next: next === undefined ? (old?.next ?? "") : next.trim(),
+      blocker: blocker === undefined ? (old?.blocker ?? "") : blocker.trim(),
+      ...(closing ? { outcome: outcome.trim(), closedAt: now } : {}),
+      revision: (old?.revision || 0) + 1,
+      createdIn: old?.createdIn ?? writtenIn ?? null,
+      createdAt: old?.createdAt ?? now,
+      updatedAt: now,
+    };
+    this.db
+      .prepare("INSERT OR REPLACE INTO projects VALUES(?,?,?)")
+      .run(this.agentId, value.id, encode(value));
+    return value;
   }
   // The agent's own account of its mood, written when it actually changes,
   // with why. Only the agent writes or clears it; nothing computes or decays

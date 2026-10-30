@@ -118,6 +118,36 @@ function subjectLogMarkup(subject) {
     },
   );
 }
+const projectStates = {
+  active: "进行中",
+  paused: "暂停",
+  done: "做完了",
+  dropped: "放弃了",
+};
+const projectTone = { active: "wait", done: "ok", dropped: "off" };
+// The agent's own projects, read-only: why it cares, each step, what it made.
+function projectsMarkup(projects = []) {
+  const items = projects
+    .map(
+      (p) =>
+        `<article class="mind-row"><div class="mind-row-head"><strong>${esc(p.title)}</strong>${mindTag(projectStates[p.status] || p.status, projectTone[p.status] || "")}<span class="mind-sub">${p.steps.length} 步${p.files.length ? ` · 作品 ${p.files.length} 个` : ""}</span>${mindAt(p.updatedAt)}</div>${mindClip(p.why, 2)}${p.steps[0] ? mindClip("最近一步：" + p.steps[0].did, 2) : ""}${p.next ? mindClip("下一步：" + p.next, 1) : ""}${p.blocker ? mindClip("卡在：" + p.blocker, 1) : ""}${p.outcome ? mindClip("结果：" + p.outcome, 2) : ""}</article>`,
+    )
+    .join("");
+  const active = projects.filter((p) => p.status === "active").length;
+  return mindFold(
+    "subject-projects",
+    "自己的小项目",
+    `<p class="hint">角色在空闲时间里跨几天推进的事，只能查看。作品在「文件」页按 fileId 找到。</p>${items ? `<div class="mind-list">${items}</div>` : '<p class="hint">还没有小项目。角色想跨几天做一件事时会用 project 立一个。</p>'}`,
+    {
+      open: active > 0,
+      summary: esc(
+        projects.length
+          ? `进行中 ${active} 个 · 共 ${projects.length} 个`
+          : "还没有",
+      ),
+    },
+  );
+}
 const mindStates = {
   waiting: "等待机会",
   deferred: "已暂缓",
@@ -208,7 +238,7 @@ function selfMarkup(a, data) {
 // stand, then the settings. Both of the latter fold, their state on the
 // title line.
 function subjectMarkup(a, data) {
-  return `${subjectLogMarkup(data.subject)}${subjectStatusMarkup(data.subject)}${subjectFormMarkup(a)}`;
+  return `${subjectLogMarkup(data.subject)}${projectsMarkup(data.projects)}${subjectStatusMarkup(data.subject)}${subjectFormMarkup(a)}`;
 }
 function subjectStatusMarkup(subject) {
   const checkStatus = subject.checkStatus,

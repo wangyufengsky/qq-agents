@@ -254,6 +254,7 @@ export class Runtime {
                   n.startsWith("work_") ||
                   n.startsWith("person_") ||
                   n.startsWith("mood_") ||
+                  n.startsWith("project") ||
                   n === "subject_log" ||
                   a.tools.includes(n),
               ),
