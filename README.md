@@ -191,6 +191,7 @@ node src/main.mjs --data /path/to/private-data --port 3210
 - [平台浏览与分享](docs/APP-EXPLORATION-IMPLEMENTATION.md)
 - [GitHub 只读访问](docs/GITHUB-READ.md)
 - [Self、主体意图与会话管理](docs/SELF-CONTEXT.md)
+- [项目、共同活动与作品阅读](docs/PROJECT-WORKSPACE.md)
 - [意图取消与普通回复](docs/intent-reply-recovery.md)
 - [独立受保护工作：私有仓库、运维与结果审批](docs/PROTECTED-WORK.md)
 - [受保护的工作笔记、聊天意图与文件](docs/protected-mind-records.md)

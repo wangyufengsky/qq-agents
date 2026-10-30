@@ -130,14 +130,14 @@ function projectsMarkup(projects = []) {
   const items = projects
     .map(
       (p) =>
-        `<article class="mind-row"><div class="mind-row-head"><strong>${esc(p.title)}</strong>${mindTag(projectStates[p.status] || p.status, projectTone[p.status] || "")}<span class="mind-sub">${p.steps.length} 步${p.files.length ? ` · 作品 ${p.files.length} 个` : ""}</span>${mindAt(p.updatedAt)}</div>${p.activity ? `<p class="hint">共同活动 · ${esc(conversationLabel(p.activity.conversation))} · 参与者 ${p.activity.participants.map(esc).join("、")} · 轮到 ${esc(p.activity.turn === "agent" ? "角色" : p.activity.turn)}</p>${p.activity.pending.map((x) => `<p>${esc(x.question)}${x.options.length ? "：" + x.options.map(esc).join(" / ") : ""}</p>`).join("")}` : ""}${mindClip(p.why, 2)}${p.steps[0] ? mindClip("最近一步：" + p.steps[0].did, 2) : ""}${p.next ? mindClip("下一步：" + p.next, 1) : ""}${p.blocker ? mindClip("卡在：" + p.blocker, 1) : ""}${p.outcome ? mindClip("结果：" + p.outcome, 2) : ""}${p.activity ? `<button type="button" class="ghost" data-activity-read="${esc(p.id)}">查看原稿与版本</button>` : ""}</article>`,
+        `<article class="mind-row"><div class="mind-row-head"><strong>${esc(p.title)}</strong>${mindTag(projectStates[p.status] || p.status, projectTone[p.status] || "")}<span class="mind-sub">${p.steps.length} 步${p.files.length ? ` · 作品 ${p.files.length} 个` : ""}</span>${mindAt(p.updatedAt)}</div>${p.activity ? `<p class="hint">共同活动 · ${esc(conversationLabel(p.activity.conversation))} · 参与者 ${p.activity.participants.map(esc).join("、")} · 轮到 ${esc(p.activity.turn === "agent" ? "角色" : p.activity.turn)}</p>${p.activity.pending.map((x) => `<p>${esc(x.question)}${x.options.length ? "：" + x.options.map(esc).join(" / ") : ""}</p>`).join("")}` : ""}${mindClip(p.why, 2)}${p.steps[0] ? mindClip("最近一步：" + p.steps[0].did, 2) : ""}${p.next ? mindClip("下一步：" + p.next, 1) : ""}${p.blocker ? mindClip("卡在：" + p.blocker, 1) : ""}${p.outcome ? mindClip("结果：" + p.outcome, 2) : ""}${p.files.length ? `<button type="button" class="ghost" data-project-files="${esc(p.id)}">阅读作品 · ${p.files.length}</button>` : ""}${p.activity ? `<button type="button" class="ghost" data-activity-read="${esc(p.id)}">查看原稿与版本</button>` : ""}</article>`,
     )
     .join("");
   const active = projects.filter((p) => p.status === "active").length;
   return mindFold(
     "subject-projects",
     "项目与共同活动",
-    `<p class="hint">角色在空闲时间里跨几天推进的事，只能查看。个人作品在「文件」页按 fileId 找到；共同活动可直接打开原稿与历史版本。</p>${items ? `<div class="mind-list">${items}</div>` : '<p class="hint">还没有小项目。角色想跨几天做一件事时会用 project 立一个。</p>'}`,
+    `<p class="hint">角色在空闲时间里跨几天推进的事，只能查看。作品可直接在线阅读；共同活动也可打开原稿与历史版本。</p>${items ? `<div class="mind-list">${items}</div>` : '<p class="hint">还没有小项目。角色想跨几天做一件事时会用 project 立一个。</p>'}`,
     {
       open: active > 0,
       summary: esc(
@@ -420,6 +420,10 @@ function bindSelf(a, current) {
   );
 }
 function bindSubject(a) {
+  document.querySelectorAll("[data-project-files]").forEach((b) => {
+    b.onclick = () =>
+      action(() => openProjectOverview(a.id, b.dataset.projectFiles));
+  });
   document.querySelectorAll("[data-activity-read]").forEach(
     (button) =>
       (button.onclick = () =>
