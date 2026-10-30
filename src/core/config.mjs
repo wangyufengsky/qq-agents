@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { TOOL_NAMES } from "../tools/names.mjs";
 import { appsPolicySchema } from "../apps/policy.mjs";
 import { githubPolicySchema } from "../github/policy.mjs";
 import {
@@ -321,18 +322,7 @@ export const configSchema = z
               users: z.array(qq).default([]),
             })
             .strict(),
-          tools: z
-            .array(z.string())
-            .default([
-              "memory_search",
-              "memory_related",
-              "memory_read",
-              "conversation_read",
-              "diary_write",
-              "diary_revise",
-              "qq_send",
-              "qq_mark_read",
-            ]),
+          tools: z.array(z.string()).default(() => [...TOOL_NAMES]),
           wake: z
             .object({
               mentions: z.boolean().default(true),
@@ -379,7 +369,7 @@ export const configSchema = z
             .default([]),
           network: z
             .object({
-              autonomous: z.boolean().default(false),
+              autonomous: z.boolean().default(true),
               publicUrls: z.array(z.string().url()).max(100).default([]),
             })
             .strict()

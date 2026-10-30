@@ -144,9 +144,9 @@ new BackendTurnFailure(backend, code, category, turnId, recoverable);
 
 1. 在 `definitions.mjs`（或某个分组文件的 `*Definitions`）里加定义。说明写给模型看，要讲清楚何时用、结果代表什么、不代表什么；schema 用 `.strict()`。
 2. 加对应的处理函数：核心工具加进 `coreHandlers`，分组工具在该分组的分发函数里处理。新分组需要在 `definitions.mjs` 展开定义，并在 `registry.mjs` 的分组列表里登记分发函数。
-3. 需要功能开关时，在 `toolAvailable` 里加条件，并在配置 schema 里加默认关闭的开关。
+3. 需要功能开关时，在 `toolAvailable` 里加条件，并在配置 schema 里设置与能力策略一致的默认值；普通工具能力默认开启。
 4. 抛出的错误用全大写常量码，并加进 `src/core/error-codes.mjs` 的 `knownErrorCodes`；不在表里的错误信息不会原样离开进程。
-5. 为角色启用：工具名加进角色的 `tools` 白名单（管理台「角色」页，或配置 `agents[].tools`）。新工具默认不在任何角色的白名单里。
+5. 为角色启用：工具名加进角色的 `tools` 白名单（管理台「角色」页，或配置 `agents[].tools`）。同时更新 `src/tools/names.mjs` 的工具目录，注册表启动时校验名称一致。新角色默认包含全部目录；已保存的工具白名单保持原样。
 
 `test/tool-registry.test.mjs` 会检查每个工具都恰好有一个 schema 和处理函数。
 

@@ -95,7 +95,7 @@ export const behaviorSchema = z
 
 export const schedulerSchema = z
   .object({
-    enabled: z.boolean().default(false),
+    enabled: z.boolean().default(true),
     timezone: timezone.default("Asia/Shanghai"),
     allowAiPrivate: z.boolean().default(true),
     allowAiOtherTargets: z.boolean().default(false),
@@ -176,7 +176,7 @@ export const voiceSchema = z
   .object({
     tts: z
       .object({
-        enabled: z.boolean().default(false),
+        enabled: z.boolean().default(true),
         voice: z.string().min(1).max(100).default("Tingting"),
       })
       .strict()
@@ -192,7 +192,7 @@ export const voiceSchema = z
   .prefault({});
 export const crossGroupSchema = z
   .object({
-    enabled: z.boolean().default(false),
+    enabled: z.boolean().default(true),
     links: z
       .array(
         z
@@ -210,7 +210,7 @@ export const crossGroupSchema = z
   .prefault({});
 export const operationsSchema = z
   .object({
-    enabled: z.boolean().default(false),
+    enabled: z.boolean().default(true),
     workspace: z.string().default(""),
     allowL3: z.boolean().default(false),
     totpEnv: z
@@ -226,7 +226,7 @@ export const operationsSchema = z
 
 export const filesSchema = z
   .object({
-    enabled: z.boolean().default(false),
+    enabled: z.boolean().default(true),
     download: z.boolean().default(true),
     receive: z.boolean().default(true),
     send: z.boolean().default(true),

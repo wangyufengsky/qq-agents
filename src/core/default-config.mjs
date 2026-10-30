@@ -1,6 +1,25 @@
 // @ts-check
 // @ts-check
 // Runtime defaults are source code; examples are generated documentation.
+import { validateConfig } from "./config.mjs";
+
+// Reuse schema defaults for the console's new-role form and shipped examples.
+export function defaultAgentCapabilities() {
+  const agent = validateConfig(defaultConfig()).agents[0];
+  const keys = /** @type {const} */ ([
+    "tools",
+    "network",
+    "apps",
+    "files",
+    "github",
+    "scheduler",
+    "voice",
+    "crossGroup",
+    "operations",
+  ]);
+  return Object.fromEntries(keys.map((key) => [key, agent[key]]));
+}
+
 export function defaultConfig() {
   return {
     version: 1,
@@ -71,7 +90,7 @@ export function defaultConfig() {
           publicUrls: [],
         },
         apps: {
-          enabled: false,
+          enabled: true,
           hours: {
             enabled: true,
             scope: "autonomous",
@@ -102,7 +121,7 @@ export function defaultConfig() {
           publicUrls: [],
         },
         apps: {
-          enabled: false,
+          enabled: true,
           hours: {
             enabled: true,
             scope: "autonomous",

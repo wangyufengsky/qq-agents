@@ -9,7 +9,7 @@ export const repositoryName = z
   .toLowerCase();
 export const githubPolicySchema = z
   .object({
-    enabled: z.boolean().default(false),
+    enabled: z.boolean().default(true),
     auth: z.enum(["token", "gh"]).default("token"),
     tokenEnv: z
       .string()
