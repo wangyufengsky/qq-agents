@@ -21,6 +21,8 @@ npm start
 
 数据目录（`.runtime/` 等）里是运行配置、令牌和聊天记录，已被 `.gitignore` 排除，不要提交，也不要附到 Issue 或 PR 里。
 
+编码助手的模块导航、验证与交付要求见根目录 [AGENTS.md](AGENTS.md)。每项新修改（包括文档）须从最新 `origin/main` 新建独立 worktree 和 `codex/` 分支，不在本地主目录的 `main` 上直接开发。
+
 ## 提交前：`npm run verify`
 
 每个 PR 都必须在本机通过 `npm run verify`，CI 在 Ubuntu、macOS 和 Windows 上运行同一条命令。它依次执行：
@@ -67,7 +69,7 @@ npm start
 - **模块**：Node.js ESM（`.mjs`），不引入构建步骤。新增运行时依赖需要先在 Issue 里说明理由；`package.json` 中的依赖使用精确版本。
 - **注释**：用英文，写“为什么”而不是复述代码：说明约束、边界条件和安全取舍，例如为什么某个错误不能带出原文、为什么某一步只在完整写入后才持久化。显而易见的代码不加注释。
 - **错误码**：抛出的错误使用大写下划线的稳定错误码，如 `throw new Error("FILE_PATH_DENIED")`、`Error("CONFIG_CONFLICT")`。不要把服务商返回的错误原文、HTML、请求参数、路径或凭据放进错误信息或日志：它们可能含有密钥和私人聊天内容。需要区分原因时，映射到协议定义的分类（参见 `src/backends/turn-failure.mjs`、`src/tools/errors.mjs`）。
-- **默认安全**：新的能力默认关闭或处于最保守的状态；涉及发送、读取他人记忆、外部网络或凭据的改动要同时补上拒绝路径的测试。
+- **权限边界**：能力默认值遵循 `src/core/default-config.mjs` 和 [配置说明](docs/CONFIGURATION.md)，保留已有显式设置；工具开关开启不等于获得发送、外部访问或运维授权。涉及发送、读取他人记忆、外部网络或凭据的改动要同时补上拒绝路径的测试。
 - **测试**：行为改动都要有对应测试，放在 `test/*.test.mjs`，复用 `test/helpers.mjs` 中的夹具，不依赖网络和真实账号。
 - **用户可见文本**：管理台和文档面向中文用户，术语与 [README 的术语表](README.md#术语表) 保持一致。
 
@@ -99,7 +101,9 @@ docs: turn README and docs into a task-oriented user guide
 
 ## 提交 PR
 
-1. 从最新的 `main` 建分支，提交前运行 `npm run verify`。
-2. 按 PR 模板填写：做了什么、为什么、怎么验证的、隐私自检、是否需要更新文档或 CHANGELOG。
-3. 一个 PR 只解决一个问题；大的改动拆成可以独立审阅的几个 PR。
-4. 维护者审阅后合并。请不要在 PR 中推送与本次改动无关的格式化或重命名。
+1. 获取最新 `origin/main`，为本任务新建独立 worktree 和 `codex/` 分支；在该 worktree 内完成修改与 `npm run verify`。
+2. 检查 diff 和提交隐私后提交、推送，再按 PR 模板填写：做了什么、为什么、怎么验证的、隐私自检、文档与 CHANGELOG。
+3. 一个 PR 只解决一个问题；大的改动拆成可以独立审阅的几个 PR，不混入无关格式化或重命名。
+4. 当前 PR 提交的全部 CI 通过，并满足仓库审查要求后合并 `main`。同步主线或修复失败后必须等待新提交的 CI，不能沿用旧结果。
+5. 维护者在干净的本地主目录快进到最新远程 `main`，保留其他未提交工作。
+6. 有对应本机部署的维护者按 [AGENTS.md](AGENTS.md#合并后更新本地主代码与服务) 更新实际服务、验证运行版本与各角色健康，并报告 PR、验证及部署结果；外部贡献者不需要操作维护者的私有服务。

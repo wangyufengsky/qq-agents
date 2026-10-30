@@ -1,0 +1,71 @@
+# QQ Agents 开发与交付约定
+
+本文件适用于整个仓库，供在此项目中工作的编码助手使用。先读相关源码和文档再修改；用户当前明确指令优先，子目录有更具体的 `AGENTS.md` 时也要遵守。沟通和用户文档使用中文，代码注释使用英文并解释原因。贡献的通用要求见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
+## 每项修改的完整流程
+
+本项目维护流程为：**独立 worktree → 开发与验证 → 提交并推送 → PR → CI 通过 → 合并 main → 同步本地主目录 → 更新服务并复查**。代码、配置示例及文档修改都按此流程；同一任务的后续修正留在该任务的 worktree。除非用户明确另有安排，不能停在本地改完、PR 已开或仅已合并的阶段。
+
+1. **先核对现场。** 确认仓库、远程、当前分支、未提交修改和 `git worktree list`；读取本次涉及的模块。保留其他任务的工作和正在使用的 worktree，不自动 stash、reset、清理或删除。
+2. **每项新修改新建 worktree。** `git fetch origin main` 后，从最新 `origin/main` 用 `git worktree add -b codex/<任务名> <独立目录> origin/main` 创建任务分支与 worktree。在新 worktree 内编辑、安装依赖和验证；本地主目录只用于同步已合并的 `main`，不得直接开发或提交到 `main`。不从旧功能分支复制未合并改动，不让多个任务共用同一 worktree。
+3. **完成实现与验证。** 保持修改聚焦，行为改动补相关回归测试；同步配置、默认示例、文档和更新日志。先跑相关检查，再运行完整 `npm run verify`。失败要查明并修复，不降低检查标准。新功能或大范围设计按贡献指南先讨论；已明确授权的任务不重复索取相同确认。
+4. **提交、推送、开 PR。** 检查 `git diff --check`、完整 diff、暂存文件和提交身份；只提交本任务文件。使用仓库配置的 GitHub noreply 邮箱、英文类型前缀提交标题，不跳过隐私钩子。推送 `codex/` 分支，按 `.github/PULL_REQUEST_TEMPLATE.md` 创建面向 `main` 的 PR，写清问题、最终行为、验证和兼容性。
+5. **等待当前提交的 CI，通过后合并。** 按 `.github/workflows/verify.yml` 核对 Windows 框架预检、三平台完整验证和 Docker 检查；不能把排队、运行中、跳过或旧提交的成功当成本次通过。处理审查阻塞；若 `main` 前进导致分支落后或冲突，在任务 worktree 同步并重新验证，推送后等待新的 CI。通过仓库允许的方式合并，不绕过分支保护或强推 `main`。
+6. **同步本地主目录。** 确认 PR 已合并及其合并 SHA，获取最新远程 `main`。在本地主目录工作区干净且可安全快进时执行 `git switch main`、`git merge --ff-only origin/main`。遇到其他任务的改动或分叉，保留现场并说明具体阻碍，不能覆盖。核对本地 HEAD 与远程当前 `main` 相同。
+7. **更新实际服务。** 按下文部署步骤，用已合并的最新 `main` 更新真实部署并重启；确认运行进程实际使用该发布目录，逐角色复查健康与数据连续性。此步骤属于维护者要求的交付闭环；只在当前工作环境确有对应部署和运维权限时执行，不假定外部贡献者也有本机服务。
+8. **报告可核对的结果。** 给出修改文件、PR 链接、合并 SHA、验证结果、本地分支与服务运行版本，以及任何未完成项。不能只凭源目录或 `deployment.json` 已更新就宣称服务已升级；保留回退资料，不自动删除旧发布或任务 worktree。
+
+## 项目入口与模块
+
+Node.js 24+、ESM（`.mjs`）、内置 SQLite。管理台使用普通浏览器脚本，无前端打包框架；依赖使用精确版本。入口及职责如下，改动前继续读对应文件，不把本表当作完整接口契约。
+
+| 位置                                         | 职责与联动                                                                                                                                                         |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `src/main.mjs`、`src/server.mjs`             | 进程启动、数据目录、管理 API、鉴权与配置；核对暂停、Host/Origin 和启动屏障。                                                                                       |
+| `src/core/`                                  | 运行时、会话生命周期、调度、Self、上下文交接及权限。聊天接续看 `chat-context.mjs`、`chat-recall.mjs`、`lifecycle.mjs`；配置看 `config.mjs`、`default-config.mjs`。 |
+| `src/backends/`                              | DSH、Codex、OpenAI 兼容后端与能力契约；改会话、取消、用量和压缩时一并核对恢复与迟到回调。                                                                          |
+| `src/transport/`                             | OneBot 连接、账号校验、消息归一化、QQ 表情；不能混淆网关消息号与内部事件 ID。                                                                                      |
+| `src/memory/`                                | SQLite、身份绑定、来源/保护标记、搜索、纠正、迁移、导出恢复；新增记录须考虑旧库和导出兼容。                                                                        |
+| `src/tools/`、`src/mcp.mjs`                  | 工具名称、定义、目录、执行与回合凭据；工具新增或变更需同步相关注册、能力约束和测试。                                                                               |
+| `src/apps/`、`src/github/` 及其他功能目录    | 外部读取与专属策略；联网、凭据和保护边界应留在统一入口中。                                                                                                         |
+| `public/`                                    | 中文管理台；共享全局符号登记在 `eslint.config.mjs`，组件和页面规范见贡献指南。                                                                                     |
+| `scripts/`、`src/cli/`                       | 校验、隐私扫描、导出备份、构建清单、安装诊断和启停工具；生产启停入口是 `scripts/robots.mjs`。                                                                      |
+| `test/`                                      | Node 内置测试，公共夹具在 `test/helpers.mjs`，使用临时目录和假网关。                                                                                               |
+| `docs/`、`examples/`                         | 当前功能、配置、运维和脱敏示例；`docs/history/` 是历史证据，`docs/plans/` 的计划不等同已实现功能。                                                                 |
+| `vendor/`、`NOTICE.md`、`docs/SOURCES.json`  | 上游代码和归属；改动保留许可与来源说明。                                                                                                                           |
+| `.github/workflows/verify.yml`、`Dockerfile` | 多平台 CI 与容器交付；不能只验证开发机平台。                                                                                                                       |
+
+进一步阅读：[架构](docs/ARCHITECTURE.md)、[扩展指南](docs/EXTENDING.md)、[聊天接续](docs/CHAT-CONTEXT.md)、[Self 与会话](docs/SELF-CONTEXT.md)、[受保护工作](docs/PROTECTED-WORK.md)、[迁移](docs/MIGRATION.md)、[本机运维](docs/LOCAL-OPERATIONS.md)。
+
+## 开发与验证
+
+- 在任务 worktree 使用 `npm ci --ignore-scripts` 安装依赖。完整测试需要 FFmpeg 和 FFprobe；不要为跑测试使用真实 QQ 账号或模型。
+- `npm run verify` 依次执行语法、ESLint、JSDoc/TypeScript、默认配置一致性、完整测试、格式和隐私检查。当前 CI 先跑 Windows 框架身份测试，再跑 Ubuntu/macOS/Windows 的完整验证，另有 Docker 构建及隔离模式冒烟检查。
+- 定向测试用 `node --test --test-timeout=120000 test/<相关文件>.test.mjs`。行为、权限和失败恢复有相应回归；纯文档改动不增加只复述文字的测试，但仍执行仓库规定的完整验证。
+- 改默认值后运行 `npm run defaults:write`，核对 `examples/config.example.json` 和文档；保留已有显式配置。当前能力默认值以 `src/core/default-config.mjs` 和 [配置说明](docs/CONFIGURATION.md) 为准，不能把“工具开关开启”当作发送、外部访问或运维已授权。
+- `npm run format:check` 尚未覆盖所有根目录 Markdown；修改 `AGENTS.md`、`CHANGELOG.md`、`CONTRIBUTING.md` 时，另用本机已安装的 Prettier 检查修改文件，避免无关的全文件格式化。
+- 提交前运行隐私扫描，推送前运行 `node scripts/privacy-scan.mjs --commits origin/main..HEAD`。新增模块按现有约定纳入 lint、类型检查和工具目录。
+- 隔离调试使用独立临时数据目录和不冲突的端口。不要对生产数据运行 `npm start`、迁移实验或测试夹具。真实后端验收按 [LOCAL-ACCEPTANCE.md](docs/LOCAL-ACCEPTANCE.md) 单独安排，不能用模拟测试冒充真实投递成功。
+
+## 必须保持的运行边界
+
+- `agentId` 是稳定记忆身份，`connectionId` 是 QQ 连接，`backendId` 是模型入口；不能用换 ID 处理改名或会话问题。各角色的记忆与授权保持隔离。
+- 模型会话可以压缩、退休和重建，原始经历、日记、Self 和发送账本独立保留。历史回放不是新来信，不推进已读水位、增加回复额度或赋予新授权。
+- QQ 投递走统一发送器和幂等账本。`pending`/`unknown` 不等于已发送，不能换 requestId 自动重发；普通 assistant 文本不直接发送 QQ。
+- `isolated`、全局/角色/会话暂停、静默、白名单、预算和凭据分别生效。空闲主体通过意图交给目标聊天决定发送；受保护工作不能借普通记忆、Self 或意图外流。
+- 新增能力遵守现有权限检查，并覆盖必要的拒绝路径；不为修复故障放宽范围、移除来源保护或授予未知工具权限。错误使用稳定错误码，不把服务商原文、令牌或聊天内容写进日志。
+- 不提交 `.runtime/`、真实配置、数据库、登录数据、凭据、原始聊天、未脱敏截图或本机路径。PR 和公开文档只使用占位数据；私有运维证明存放在部署的私有目录中。
+
+## 合并后更新本地主代码与服务
+
+1. 从运行进程的 `--data`、启动器记录和该数据目录的 `deployment.json` 找到真实部署，以实际 `codeRoot` 的 [LOCAL-OPERATIONS.md](docs/LOCAL-OPERATIONS.md) 为准。不把当前工作目录、默认端口或历史路径当作现场，不启动第二份桥接。
+2. 记录本地与远程 `main` SHA、当前发布目录及逐角色状态。部署前保存配置、部署元数据及一致的 SQLite 备份（使用 `scripts/backup.mjs` 或 SQLite 在线备份，不能只复制正在使用的 WAL 主文件）；基线包括暂停状态、会话引用、事件/日记计数和 Self 版本。等待活跃回合结束，暂停用于切换时保留原有暂停意图。
+3. 从已合并的精确提交生成独立发布目录，不部署任务 worktree 的未提交内容。依赖与锁文件一致；无 `.git` 时在发布目录运行 `node scripts/framework-build.mjs --commit <完整SHA>`，验证构建摘要和版本来源，再切换 `deployment.json` 的 `codeRoot`。保留旧发布和回退位置。
+4. 使用确认过的代码和数据目录调用 `node <codeRoot>/scripts/robots.mjs restart --data <dataRoot>`。只有原本需要恢复自动活动时加 `--resume`；它检查连接和模型后只解除全局启动屏障，保留角色/会话暂停。不要更改 QQ 登录、记忆、白名单或重置模型会话来完成升级。
+5. 启动命令报错时先检查服务实际状态和错误码；例如模型目录检查超时可能已有服务但仍暂停，应诊断后最小恢复，不循环重启。前一步失败不得继续执行依赖它的切换或重启；不使用 `killall`、盲删锁或强制覆盖数据。
+6. 核对实际进程入口、构建清单和合并版本；逐角色检查 QQ 已连接、后端就绪、暂停/阻断及未确认投递。立即检查一次，约 10–30 秒后复查稳定性，并对比配置、会话引用、记忆与 Self。如果新版本按契约需要退休会话，说明具体原因，不能宣称会话全未变化；正常新增记录可以使计数增加。
+7. 不主动发送 QQ 测试消息或触发定时任务作为验证。需要重新登录、用户解除有意暂停、处理数据分叉等不可自动完成的情况，报告准确阻碍和剩余步骤，不把交付标成全部完成。
+
+## 文档与更新日志
+
+功能或行为变化更新最贴近的文档，并在 `CHANGELOG.md` 的“未发布”章节写用户可理解的结果、兼容性和已存在的 PR 链接。记录真实合并内容，不把计划写成已实现，也不把合并当成已发布或已部署。新版本只有实际发布时才增加版本标题、标签和相应包版本；不要为补日志随意升级版本。
