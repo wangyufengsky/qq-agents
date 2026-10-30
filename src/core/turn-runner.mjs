@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { SUBJECT } from "./lifecycle.mjs";
 import { toolSpecs } from "../tools/specs.mjs";
-import { runWithRecovery, failureSummary } from "../backends/turn-failure.mjs";
+import {
+  runWithRecovery,
+  failureSummary,
+  sessionWasUnchanged,
+} from "../backends/turn-failure.mjs";
 import { isConnectionFailure } from "./backend-connections.mjs";
 import {
   saveSession,
@@ -237,6 +241,7 @@ export class TurnRunner {
   async runBackend(ctx, backend, params) {
     const runtime = this.runtime;
     const mem = runtime.memory.bind(ctx.agentId);
+    let recoveryStarted = false;
     try {
       const result = await runWithRecovery(backend, params, {
         onFailure: (error, attempt) => {
@@ -254,6 +259,7 @@ export class TurnRunner {
         },
         onRecovery: (error, attempt) => {
           runtime.assertActive(ctx);
+          recoveryStarted = true;
           ctx.recoveryDeliveryBlocked =
             ctx.deliveryAttempted === true || ctx.pendingDeliveries > 0;
           error.deliveryBlocked = ctx.recoveryDeliveryBlocked;
@@ -268,8 +274,12 @@ export class TurnRunner {
       });
       return result;
     } catch (error) {
+      // A continuation can fail before its own input, after the original
+      // prompt was already submitted. Its display markers must stay committed.
+      ctx.inputNotSubmitted = sessionWasUnchanged(error) && !recoveryStarted;
       ctx.retainBackendSession =
-        failureSummary(error)?.sessionReusable === true &&
+        (failureSummary(error)?.sessionReusable === true ||
+          sessionWasUnchanged(error)) &&
         !ctx.controller.signal.aborted &&
         runtime.capabilities.has(ctx.token);
       throw error;

@@ -4,7 +4,12 @@ import path from "node:path";
 import { NodeApiClient, unwrap } from "../../vendor/dsh-qq/dsh-client.js";
 import { resolveDshInstance } from "./dsh-discovery.mjs";
 import { ExternalTools } from "./external.mjs";
-import { sessionSignature, assertSession } from "./session-contract.mjs";
+import {
+  sessionSignature,
+  assertSession,
+  acceptsSession,
+} from "./session-contract.mjs";
+import { beforeSessionInput } from "./turn-failure.mjs";
 import { dshTurnFailure, BackendTurnFailure } from "./turn-failure.mjs";
 
 /**
@@ -188,6 +193,10 @@ export class DshBackend {
   sessionSignature(tools) {
     return sessionSignature(this, tools);
   }
+  /** @param {StoredSession | null | undefined} session @param {import("./session-contract.mjs").ToolSpec[]} tools */
+  acceptsSession(session, tools) {
+    return acceptsSession(this, session, tools);
+  }
   /** @param {RunParams} params */
   async run({
     conversation,
@@ -203,8 +212,11 @@ export class DshBackend {
   }) {
     const signature = this.sessionSignature(tools);
     assertSession(session, "dsh", signature);
-    const client = await this.ready();
-    await this.stream();
+    const client = await beforeSessionInput(session, async () => {
+      const connected = await this.ready();
+      await this.stream();
+      return connected;
+    });
     if (signal.aborted) throw Error("ABORTED");
     // The SDK brands session ids; this holds the raw id it handed out.
     /** @type {any} */

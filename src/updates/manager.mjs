@@ -24,6 +24,7 @@ export const updateFailures = new Set([
   "UPDATE_HEALTH_FAILED",
   "UPDATE_START_FAILED",
   "UPDATE_STOP_FAILED",
+  "UPDATE_DRAIN_TIMEOUT",
   "UPDATE_RESPONSE_INVALID",
   "UPDATE_STATE_INVALID",
   "UPDATE_RECOVERY_REQUIRED",
@@ -157,7 +158,9 @@ export class UpgradeManager {
       });
       this.controller.signal.throwIfAborted();
       this.transition("stopping", { to: candidate });
-      const checkpoint = await this.host.stop();
+      const checkpoint = await this.host.stop({
+        signal: this.controller.signal,
+      });
       stopped = true;
       this.controller.signal.throwIfAborted();
       this.transition("backing-up", { checkpoint, backup });

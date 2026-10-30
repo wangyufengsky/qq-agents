@@ -112,6 +112,39 @@ test("DSH malformed tool JSON continues in the same native session", async (t) =
   assert.equal(f.store.bind("agent-0").state(chat).session.id, "dsh-session");
 });
 
+test("a continuation preflight failure keeps presentation already sent in the original prompt", async (t) => {
+  const cfg = config(1);
+  cfg.backends[0].type = "dsh";
+  cfg.agents[0].contextPolicy.capacityTokens = 131072;
+  const f = fixture(t, { cfg }),
+    client = dshClient();
+  const backend = new DshBackend(cfg.backends[0], cfg.agents[0], {
+    root: f.root,
+    client,
+  });
+  f.runtime.backends.set("agent-0", backend);
+  const memory = f.store.bind("agent-0");
+  const mood = memory.identity.setMood(
+    { mood: "期待", intensity: 2, reason: "已经送达的心情" },
+    { writtenIn: chat, now: f.runtime.now() },
+  );
+  const ready = backend.ready.bind(backend);
+  let preparations = 0;
+  backend.ready = async () => {
+    if (++preparations === 2) throw Error("DSH_STREAM_FAILED");
+    return ready();
+  };
+  assert.equal((await f.runtime.wake("agent-0", chat)).status, "failed");
+  assert.equal(preparations, 2);
+  assert.equal(client.prompts.length, 1);
+  assert.equal(memory.state(chat).moodShown, mood.id);
+  assert.equal(memory.state(chat).session.id, "dsh-session");
+  backend.ready = ready;
+  await f.runtime.wake("agent-0", chat);
+  assert.equal(client.creates, 1);
+  assert.ok(!client.prompts[1].content[0].text.includes("已经送达的心情"));
+});
+
 class RecoveryRpc extends EventEmitter {
   constructor({
     reasons = ["responseStreamDisconnected", null],

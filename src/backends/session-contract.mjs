@@ -43,16 +43,17 @@ export function canonical(value) {
     );
   return value;
 }
-/** @param {{config: BackendConfig}} backend @param {ToolSpec[]} [tools] */
-export function sessionSignature(backend, tools = []) {
+/** @param {{config: BackendConfig}} backend @param {ToolSpec[]} [tools] @param {boolean} [legacy] */
+export function sessionSignature(backend, tools = [], legacy = false) {
   return (
-    "contract-v2:" +
+    (legacy ? "contract-v2:" : "contract-v3:") +
     createHash("sha256")
       .update(
         JSON.stringify(
           canonical({
             backend: {
               ...backend.config,
+              ...(!legacy ? { label: undefined } : {}),
               recovery: undefined,
               ...(backend.config.recovery?.dshInstance
                 ? { dshInstance: backend.config.recovery.dshInstance }
@@ -69,6 +70,17 @@ export function sessionSignature(backend, tools = []) {
         ),
       )
       .digest("hex")
+  );
+}
+/** Accept an old digest only when its entire original contract still matches.
+ * This upgrades metadata without discarding a valid pre-upgrade transcript.
+ * @param {{config: BackendConfig}} backend @param {StoredSession | null | undefined} session @param {ToolSpec[]} tools */
+export function acceptsSession(backend, session, tools) {
+  return (
+    !!session &&
+    session.backend === backend.config.type &&
+    (session.signature === sessionSignature(backend, tools) ||
+      session.signature === sessionSignature(backend, tools, true))
   );
 }
 /** @param {StoredSession | null | undefined} session @param {string} backend @param {string} signature */

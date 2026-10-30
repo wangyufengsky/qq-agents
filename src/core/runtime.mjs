@@ -42,6 +42,7 @@ import { ConversationEngine } from "./conversations.mjs";
 import { TaskScheduler } from "./scheduler.mjs";
 import { Operations } from "./operations.mjs";
 import { VoiceTranscription } from "./voice-transcription.mjs";
+import { MaintenanceDrain } from "./maintenance.mjs";
 
 // Adds or removes a feature's tools while keeping the existing order, so saving
 // an unchanged permission page does not count as a policy change.
@@ -101,6 +102,7 @@ export class Runtime {
     this.reconfiguringConnections = new Set();
     this.delivery = new DeliveryService(this);
     this.sendChains = this.delivery.chains;
+    this.maintenance = new MaintenanceDrain(this);
     this.turns = new TurnRunner(this);
     this.conversations = new ConversationEngine(this);
     this.scheduler = new TaskScheduler(this);
@@ -158,7 +160,7 @@ export class Runtime {
     this.ticker.unref?.();
   }
   tick() {
-    if (this.closed) return;
+    if (this.closed || this.maintenance.active) return;
     if (!this.nextCursorCleanupAt || this.now() >= this.nextCursorCleanupAt) {
       new AppCursors(this.memory).cleanup(this.now());
       this.nextCursorCleanupAt = this.now() + 60000;
@@ -173,6 +175,7 @@ export class Runtime {
   }
   makeContext(agentId, conversation) {
     if (this.closed) throw Error("RUNTIME_CLOSING");
+    if (this.maintenance.active) throw Error("UPDATE_IN_PROGRESS");
     if (this.reconfiguringAgents.has(agentId)) throw Error("CONFIG_CONFLICT");
     const a = this.agent(agentId),
       mem = this.memory.bind(agentId);
@@ -220,6 +223,8 @@ export class Runtime {
   }
   async runWithContext(agentId, conversation, fn) {
     const ctx = this.makeContext(agentId, conversation);
+    const done = Promise.withResolvers();
+    ctx.done = done.promise;
     // Deterministic owner/scheduler control replies have their own invocation budget.
     ctx.internalDelivery = true;
     try {
@@ -228,6 +233,7 @@ export class Runtime {
     } finally {
       ctx.controller.abort();
       this.capabilities.delete(ctx.token);
+      done.resolve();
     }
   }
   agent(id) {
@@ -301,6 +307,8 @@ export class Runtime {
   blockers(a, conversation, ctx = null) {
     const codes = [];
     if (this.closed) codes.push("RUNTIME_CLOSING");
+    if (this.maintenance.active && !this.maintenance.allows(ctx))
+      codes.push("UPDATE_IN_PROGRESS");
     if (this.reconfiguringAgents.has(a.id)) codes.push("RECONFIGURING");
     if (this.backendConnections.blocked.has(a.id))
       codes.push("BACKEND_UNAVAILABLE");

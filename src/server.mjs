@@ -185,10 +185,11 @@ export function createServer({
       return send({ error: "CROSS_ORIGIN" }, 403);
     if (req.headers["sec-fetch-site"] === "cross-site")
       return send({ error: "CROSS_SITE" }, 403);
-    const readBody = async (limit) => {
+    const readBody = async (limit, ctx) => {
       const data = await body(req, limit);
       if (stopping || runtime.closed) throw Error("RUNTIME_CLOSING");
-      if (runtime.updateMaintenance) throw Error("UPDATE_IN_PROGRESS");
+      if (runtime.updateMaintenance && !runtime.maintenance.allows(ctx))
+        throw Error("UPDATE_IN_PROGRESS");
       return data;
     };
     try {
@@ -237,7 +238,11 @@ export function createServer({
         const ctx = runtime.capability(req.headers["x-agent-capability"]);
         if (req.method !== "POST") return send({ error: "METHOD" }, 405);
         try {
-          return send(mcpResult(scopedCatalog(runtime, ctx, await readBody())));
+          return send(
+            mcpResult(
+              scopedCatalog(runtime, ctx, await readBody(undefined, ctx)),
+            ),
+          );
         } catch (e) {
           runtime.diagnostics.report(e, {
             component: "http",
@@ -257,7 +262,7 @@ export function createServer({
       if (url.pathname === "/agent/tools") {
         const ctx = runtime.capability(req.headers["x-agent-capability"]);
         if (req.method !== "POST") return send({ error: "METHOD" }, 405);
-        const data = await readBody();
+        const data = await readBody(undefined, ctx);
         try {
           return send(
             mcpResult(await runtime.callTool(ctx, data.name, data.arguments)),
@@ -295,6 +300,11 @@ export function createServer({
       }
       if (!downloadAgentId && !equal(req.headers["x-admin-token"], token))
         return send({ error: "UNAUTHORIZED" }, 401);
+      if (req.method === "POST" && url.pathname === "/api/maintenance") {
+        const data = await body(req, 512);
+        if (Object.keys(data).length) throw Error("INVALID_REQUEST");
+        return send(runtime.maintenance.begin());
+      }
       if (req.method === "POST" && url.pathname === "/api/export/ticket") {
         const data = await readBody(512);
         const agent = runtime.agent(data.agentId);

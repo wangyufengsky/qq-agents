@@ -673,6 +673,8 @@ test("labels and port changes preserve live contexts and report restart requirem
   const next = structuredClone(f.runtime.config);
   next.connections[0].label = "Renamed";
   next.backends[0].label = "Renamed backend";
+  next.backends[0].recovery.autoReconnect =
+    !next.backends[0].recovery.autoReconnect;
   next.port++;
   const result = await f.runtime.changeConfig(next, f.configStore.revision);
   assert.deepEqual(result.affectedAgents, []);

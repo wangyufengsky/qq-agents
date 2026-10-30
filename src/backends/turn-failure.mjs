@@ -1,4 +1,28 @@
 // @ts-check
+class SessionPreparationFailure extends Error {
+  /** @param {Error} error */
+  constructor(error) {
+    super(error.message, { cause: error });
+  }
+}
+
+// A connection probe has not submitted a prompt or changed a transcript.
+// Preserve that evidence separately from retryability: no generation is replayed.
+/** @template T @param {import("./session-contract.mjs").StoredSession | null | undefined} session @param {() => Promise<T>} prepare @returns {Promise<T>} */
+export async function beforeSessionInput(session, prepare) {
+  try {
+    return await prepare();
+  } catch (error) {
+    if (session && error instanceof Error)
+      throw new SessionPreparationFailure(error);
+    throw error;
+  }
+}
+/** @param {unknown} error */
+export function sessionWasUnchanged(error) {
+  return error instanceof SessionPreparationFailure;
+}
+
 // Keep only protocol-defined classifications, never provider messages/HTML or
 // tool arguments: errors can contain credentials and private conversation text.
 export class BackendTurnFailure extends Error {

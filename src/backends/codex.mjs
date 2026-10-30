@@ -1,12 +1,20 @@
 // @ts-check
 import fs from "node:fs";
-import { codexTurnFailure, BackendTurnFailure } from "./turn-failure.mjs";
+import {
+  codexTurnFailure,
+  BackendTurnFailure,
+  beforeSessionInput,
+} from "./turn-failure.mjs";
 import path from "node:path";
 import { CodexRpc } from "../../vendor/local-bridge/codex-rpc.mjs";
 import { ExternalTools } from "./external.mjs";
 import { mcpResult } from "../tools/index.mjs";
 import { safeToolFailure } from "../tools/errors.mjs";
-import { sessionSignature, assertSession } from "./session-contract.mjs";
+import {
+  sessionSignature,
+  assertSession,
+  acceptsSession,
+} from "./session-contract.mjs";
 import { readGeneratedImage } from "./generated-image-file.mjs";
 import { buildChildEnv } from "../core/child-env.mjs";
 import crossSpawn from "cross-spawn";
@@ -271,6 +279,10 @@ export class CodexBackend {
   sessionSignature(tools) {
     return sessionSignature(this, tools);
   }
+  /** @param {StoredSession | null | undefined} session @param {import("./session-contract.mjs").ToolSpec[]} tools */
+  acceptsSession(session, tools) {
+    return acceptsSession(this, session, tools);
+  }
   /** @param {RunParams} params */
   async run({
     prompt,
@@ -300,7 +312,7 @@ export class CodexBackend {
       : restrictions;
     const signature = this.sessionSignature(tools);
     assertSession(session, "codex", signature);
-    await this.ready();
+    await beforeSessionInput(session, () => this.ready());
     if (signal.aborted) throw Error("ABORTED");
     let threadId = session?.id;
     if (threadId)
