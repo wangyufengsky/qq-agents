@@ -178,3 +178,24 @@ test("catalogue respects scheduler and App feature switches and administrator so
     ),
   );
 });
+
+test("chat and idle time both ask for views that hold under pushback and change only with a reason", async (t) => {
+  const cfg = config(1);
+  Object.assign(cfg.agents[0].subject, { enabled: true, groups: ["20000"] });
+  const captured = [];
+  const { runtime } = fixture(t, {
+    cfg,
+    run: async (p) => {
+      captured.push(p);
+      p.saveSession({ id: "fixture", backend: "fixture" });
+    },
+  });
+  await runtime.wake("agent-0", "group:20000");
+  await runtime.wake("agent-0", "@subject");
+  assert.equal(captured.length, 2);
+  for (const p of captured) {
+    assert.match(p.instructions, /分清事实和喜好/);
+    assert.match(p.instructions, /别人反对不等于你错了/);
+    assert.match(p.instructions, /之前为什么那么想/);
+  }
+});

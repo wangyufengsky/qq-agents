@@ -73,6 +73,7 @@ const AGENT_TOOL_GROUPS = [
     managedBy: { tab: "permissions", page: "文件", policy: "files" },
     tools: {
       file_list: "查看文件库",
+      file_read: "读取文本文件",
       file_download: "下载文件",
       file_create: "生成文本文件",
       file_import: "从指定目录导入",
@@ -647,6 +648,9 @@ const agentForm = {
 
   toolGroupsMarkup(row) {
     const enabled = new Set(row.tools);
+    // The server grants file_read with file_list, also to configurations
+    // saved before file_read existed (Runtime.toolsFor).
+    if (enabled.has("file_list")) enabled.add("file_read");
     const known = new Set(
       AGENT_TOOL_GROUPS.flatMap((g) => Object.keys(g.tools)),
     );

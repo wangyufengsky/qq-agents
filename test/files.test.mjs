@@ -706,3 +706,122 @@ test("admin HTTP permission API and uploads require authentication; both librari
     400,
   );
 });
+
+test("file_read pages through an agent's own text file so a draft can be read back", async (t) => {
+  const { runtime, ctx } = await setup(t);
+  const text = "桥".repeat(1200);
+  const file = await call(runtime, ctx, "file_create", {
+    name: "桥上的守夜人.md",
+    text,
+  });
+  const first = await call(runtime, ctx, "file_read", {
+    fileId: file.fileId,
+    maxChars: 512,
+  });
+  assert.equal(first.name, "桥上的守夜人.md");
+  assert.equal(first.text, text.slice(0, 512));
+  assert.equal(first.totalChars, 1200);
+  assert.equal(first.nextOffset, 512);
+  assert.equal(first.contentRead, true);
+  const last = await call(runtime, ctx, "file_read", {
+    fileId: file.fileId,
+    offset: 1024,
+    maxChars: 512,
+  });
+  assert.equal(last.text, text.slice(1024));
+  assert.equal(last.nextOffset, null);
+  await assert.rejects(
+    call(runtime, runtime.makeContext("agent-1", "group:20000"), "file_read", {
+      fileId: file.fileId,
+    }),
+    /FILE_NOT_FOUND/,
+  );
+});
+
+test("file_read refuses binary or non-text files instead of returning garbage", async (t) => {
+  const { runtime, ctx } = await setup(t);
+  const policy = runtime.agent("agent-0").files;
+  const image = runtime.files.put(
+    "agent-0",
+    Buffer.from("not really a png"),
+    "photo.png",
+    policy,
+  );
+  const broken = runtime.files.put(
+    "agent-0",
+    Buffer.from([0xff, 0xfe, 0x00, 0x41]),
+    "broken.txt",
+    policy,
+  );
+  for (const { fileId } of [image, broken])
+    await assert.rejects(
+      call(runtime, ctx, "file_read", { fileId }),
+      /FILE_NOT_TEXT/,
+    );
+});
+
+test("file_read keeps protection: protected files stay unread and other chats' sources taint the turn", async (t) => {
+  const { runtime, ctx } = await setup(t);
+  const policy = runtime.agent("agent-0").files;
+  const secret = runtime.files.put(
+    "agent-0",
+    Buffer.from("ops notes"),
+    "ops.txt",
+    policy,
+    {},
+    true,
+  );
+  await assert.rejects(
+    call(runtime, ctx, "file_read", { fileId: secret.fileId }),
+    /RECALL_SOURCE_NOT_ALLOWED/,
+  );
+  const elsewhere = runtime.files.put(
+    "agent-0",
+    Buffer.from("written in a private chat"),
+    "draft.txt",
+    policy,
+    { conversation: "private:30000", eventId: "event-elsewhere" },
+  );
+  assert.equal(ctx.privateRead.has("event-elsewhere"), false);
+  const read = await call(runtime, ctx, "file_read", {
+    fileId: elsewhere.fileId,
+  });
+  assert.equal(read.text, "written in a private chat");
+  assert.equal(ctx.privateRead.has("event-elsewhere"), true);
+});
+
+test("file_read comes with file_list in chats and idle time, and leaves with it", async (t) => {
+  const { runtime } = await setup(t);
+  const a = runtime.agent("agent-0");
+  // A configuration saved before file_read existed.
+  a.tools = a.tools.filter((n) => n !== "file_read");
+  assert(runtime.toolsFor(a, "group:20000").includes("file_read"));
+  assert(runtime.toolsFor(a, "@subject").includes("file_read"));
+  a.tools = a.tools.filter((n) => n !== "file_list");
+  assert.equal(runtime.toolsFor(a, "group:20000").includes("file_read"), false);
+  assert.equal(runtime.toolsFor(a, "@subject").includes("file_read"), false);
+});
+
+test("file_read returns exactly a short file's own bytes, not a shared pool around them", async (t) => {
+  const { runtime, ctx } = await setup(t);
+  const other = await call(
+    runtime,
+    runtime.makeContext("agent-1", "group:20000"),
+    "file_create",
+    {
+      name: "victim.txt",
+      text: "VICTIM_AGENT_PRIVATE_".repeat(40),
+    },
+  );
+  const mine = await call(runtime, ctx, "file_create", {
+    name: "short.txt",
+    text: "短",
+  });
+  // Reads of other files around this one fill the same Buffer pool.
+  runtime.files.read("agent-1", other.fileId, 1 << 20);
+  const read = await call(runtime, ctx, "file_read", { fileId: mine.fileId });
+  runtime.files.read("agent-1", other.fileId, 1 << 20);
+  assert.equal(read.text, "短");
+  assert.equal(read.totalChars, 1);
+  assert.equal(read.nextOffset, null);
+});
