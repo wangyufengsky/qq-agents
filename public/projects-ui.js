@@ -114,7 +114,7 @@ async function renderProjects(offset = 0) {
   });
 }
 async function showProjectDetail(root, agentId, { project: p, files }, active) {
-  root.innerHTML = `<div class="toolbar"><button type="button" data-project-back>所有项目</button><button type="button" data-project-refresh>刷新</button></div><section class="card"><div class="project-head"><h2>${esc(p.title)}</h2>${tag(projectStateLabels[p.status])}</div><p>${esc(p.why)}</p><p class="hint">${p.activity ? "共同活动" : "个人项目"} · 修订 ${p.revision} · ${esc(projectDate(p.updatedAt))}</p>${p.activity ? `<p>参与者：${p.activity.participants.map((id) => esc(projectActor(id))).join("、")} · 轮到 ${esc(projectActor(p.activity.turn))}</p><p class="hint">${esc(conversationLabel(p.activity.conversation))}</p>` : ""}<p>下一步：${esc(p.next || "尚未记录")}</p>${p.blocker ? `<p>卡点：${esc(p.blocker)}</p>` : ""}${p.outcome ? `<p>结果：${esc(p.outcome)}</p>` : ""}<div id="project-participation"></div></section><div class="project-columns"><section class="card"><h2>${p.activity ? "活动原稿与版本" : "作品与文件"}</h2>${p.activity ? '<div id="project-draft">正在读取…</div>' : `<div id="project-current-work"></div>${projectFileButtons(files)}`}${!p.activity && files.filter((f) => f.readable).length > 1 ? '<div id="project-compare"></div>' : ""}</section><section class="card"><h2>进展时间线</h2>${
+  root.innerHTML = `<div class="toolbar"><button type="button" data-project-back>所有项目</button><button type="button" data-project-refresh>刷新</button></div><section class="card"><div class="project-head"><h2>${esc(p.title)}</h2>${tag(projectStateLabels[p.status])}</div><p>${esc(p.why)}</p><p class="hint">${p.activity ? "共同活动" : "个人项目"} · 修订 ${p.revision} · ${esc(projectDate(p.updatedAt))}</p>${p.activity ? `<p>参与者：${p.activity.participants.map((id) => esc(projectActor(id))).join("、")} · 轮到 ${esc(projectActor(p.activity.turn))}</p><p class="hint">${p.activity.mode === "console" ? "管理台共同活动" : esc(conversationLabel(p.activity.conversation))}</p>` : ""}<p>下一步：${esc(p.next || "尚未记录")}</p>${p.blocker ? `<p>卡点：${esc(p.blocker)}</p>` : ""}${p.outcome ? `<p>结果：${esc(p.outcome)}</p>` : ""}<div id="project-participation"></div></section><div class="project-columns"><section class="card"><h2>${p.activity ? "活动原稿与版本" : "作品与文件"}</h2>${p.activity ? '<div id="project-draft">正在读取…</div>' : `<div id="project-current-work"></div>${projectFileButtons(files)}`}${!p.activity && files.filter((f) => f.readable).length > 1 ? '<div id="project-compare"></div>' : ""}</section><section class="card"><h2>进展时间线</h2>${
     p.steps
       .map(
         (s) =>
@@ -138,6 +138,13 @@ async function showProjectDetail(root, agentId, { project: p, files }, active) {
   root.querySelector("[data-project-refresh]").onclick = () =>
     action(() => renderProjects());
   bindProjectFiles(root, agentId, files);
+  bindProjectParticipation(
+    root.querySelector("#project-participation"),
+    agentId,
+    p,
+    files,
+    active,
+  );
   const currentWork = !p.activity && files.find((f) => f.readable);
   if (currentWork) {
     try {
@@ -201,7 +208,7 @@ async function loadProjectDraft(
       : data.draft?.author === "source-file"
         ? "来源文件"
         : "角色";
-  container.innerHTML = `${data.draft ? `<h3>${esc(data.draft.title)} · 原稿修订 ${data.draft.revision}</h3><p class="hint">${esc(author)}编写 · ${data.draft.offset + 1}–${data.draft.offset + data.draft.text.length} / ${data.draft.totalChars} 字符</p><article class="document-content"><pre>${esc(data.draft.text)}</pre></article><div class="toolbar"><button type="button" data-draft-prev ${offset ? "" : "disabled"}>原稿上一页</button><button type="button" data-draft-next ${data.draft.nextOffset === null ? "disabled" : ""}>原稿下一页</button></div>` : '<p class="hint">尚未保存原稿。</p>'}${data.version.contribution ? `<details><summary>参与者原始贡献</summary><pre>${esc(data.version.contribution.text)}</pre>${data.version.contribution.truncated ? '<button type="button" data-contribution-read>阅读完整贡献</button>' : ""}</details>` : ""}<h3>完整版本历史 · ${data.historyTotal}</h3><div class="project-versions">${data.history.map((v) => `<button type="button" data-draft-version="${v.revision}">修订 ${v.revision} · ${esc(v.progress || "保存记录")}</button>`).join("")}</div><div class="toolbar"><button type="button" data-history-prev ${historyOffset ? "" : "disabled"}>较新记录</button><button type="button" data-history-next ${data.nextHistoryOffset === null ? "disabled" : ""}>更早记录</button></div><div data-draft-compare></div>`;
+  container.innerHTML = `${data.draft ? `<h3>${esc(data.draft.title)} · 原稿修订 ${data.draft.revision}</h3><p class="hint">${esc(author)}编写 · ${data.draft.offset + 1}–${data.draft.offset + data.draft.text.length} / ${data.draft.totalChars} 字符</p><article class="document-content"><pre>${esc(data.draft.text)}</pre></article><div class="toolbar"><button type="button" data-draft-prev ${offset ? "" : "disabled"}>原稿上一页</button><button type="button" data-draft-next ${data.draft.nextOffset === null ? "disabled" : ""}>原稿下一页</button></div>` : '<p class="hint">尚未保存原稿。</p>'}${data.version.decision ? `<p>回应问题：${esc(data.version.decision.question)}</p>` : ""}${data.version.contribution ? `<details><summary>${data.version.contribution.kind === "administrator" ? "管理员" : "QQ 参与者"}原始贡献</summary><pre>${esc(data.version.contribution.text)}</pre>${data.version.contribution.truncated ? '<button type="button" data-contribution-read>阅读完整贡献</button>' : ""}</details>` : ""}<h3>完整版本历史 · ${data.historyTotal}</h3><div class="project-versions">${data.history.map((v) => `<button type="button" data-draft-version="${v.revision}">修订 ${v.revision} · ${esc(v.progress || "保存记录")}</button>`).join("")}</div><div class="toolbar"><button type="button" data-history-prev ${historyOffset ? "" : "disabled"}>较新记录</button><button type="button" data-history-next ${data.nextHistoryOffset === null ? "disabled" : ""}>更早记录</button></div><div data-draft-compare></div>`;
   const show = (rev = data.version.revision, off = 0, hist = historyOffset) =>
     action(() =>
       loadProjectDraft(container, agentId, project, active, rev, off, hist),
