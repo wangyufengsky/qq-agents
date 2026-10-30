@@ -1,3 +1,4 @@
+import { ReleaseUpdates } from "./updates/releases.mjs";
 import { Diagnostics } from "./core/diagnostics.mjs";
 import { FrameworkKnowledge } from "./core/framework-knowledge.mjs";
 import {
@@ -95,6 +96,11 @@ try {
   }));
   runtime.media = new MediaStore(path.join(root, "media"));
   runtime.framework = new FrameworkKnowledge();
+  runtime.updates = new ReleaseUpdates({
+    root,
+    installed: runtime.framework.version,
+  });
+  runtime.updates.start();
   runtime.files = new FileStore(path.join(root, "files"));
   runtime.voices = new VoiceStore(path.join(root, "voices"));
   runtime.lifecycle = new Lifecycle(root);

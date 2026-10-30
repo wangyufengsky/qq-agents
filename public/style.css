@@ -4494,3 +4494,18 @@ button.mem-more {
     display: none;
   }
 }
+
+/* Release notes are untrusted plain text and stay inside narrow viewports. */
+.update-notes {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 32rem;
+  overflow-y: auto;
+}
+.updates-card .card-actions {
+  flex-wrap: wrap;
+}
+#update-notice {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}

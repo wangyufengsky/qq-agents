@@ -968,6 +968,7 @@ export class Runtime {
   close() {
     if (this.closing) return this.closing;
     this.closed = true;
+    this.updates?.close();
     clearInterval(this.ticker);
     this.autoResume.cancel("stopped");
     this.closing = this.closeResources();
