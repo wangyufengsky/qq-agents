@@ -151,13 +151,17 @@ export async function stageRelease({
   const pkg = JSON.parse(
     fs.readFileSync(path.join(destination, "package.json"), "utf8"),
   );
-  const requiredNode = /^>=(\d+)\.\d+\.\d+$/.exec(pkg.engines?.node || "");
+  const requiredNode = /^>=(\d+\.\d+\.\d+)$/.exec(pkg.engines?.node || "");
+  const runtimeComparison = compareVersions(
+    process.versions.node,
+    requiredNode?.[1],
+  );
   if (
     pkg.name !== "qq-agents" ||
     compareVersions(pkg.version, tag) !== 0 ||
     pkg.qqAgentsUpdateProtocol !== 1 ||
-    !requiredNode ||
-    Number(process.versions.node.split(".")[0]) < Number(requiredNode[1])
+    runtimeComparison === null ||
+    runtimeComparison < 0
   )
     throw Error("UPDATE_RUNTIME_UNSUPPORTED");
   progress("installing");
@@ -192,20 +196,31 @@ function audit(file) {
         .reduce((sum, name) => sum + audit(path.join(file, name)), 0)
     : st.size;
 }
+function syncFile(file) {
+  const mode = fs.lstatSync(file).mode;
+  let fd,
+    restored = !!(mode & 0o200);
+  try {
+    // Only the copy is touched. Retain its permissions before flushing metadata.
+    if (!restored) fs.chmodSync(file, mode | 0o200);
+    fd = fs.openSync(file, "r+");
+    if (!restored) {
+      fs.fchmodSync(fd, mode);
+      restored = true;
+    }
+    fs.fsyncSync(fd);
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+    if (!restored) fs.chmodSync(file, mode);
+  }
+}
 function syncSnapshot(root) {
   for (const name of fs.readdirSync(root)) {
     const file = path.join(root, name);
     const stat = fs.lstatSync(file);
     if (stat.isSymbolicLink()) continue;
     if (stat.isDirectory()) syncSnapshot(file);
-    else {
-      const fd = fs.openSync(file, "r+");
-      try {
-        fs.fsyncSync(fd);
-      } finally {
-        fs.closeSync(fd);
-      }
-    }
+    else syncFile(file);
   }
   syncDirectory(root);
 }
@@ -302,14 +317,7 @@ export function restoreData(root, backup, failed) {
     const stat = fs.lstatSync(file);
     if (stat.isSymbolicLink()) continue;
     if (stat.isDirectory()) syncSnapshot(file);
-    else {
-      const fd = fs.openSync(file, "r+");
-      try {
-        fs.fsyncSync(fd);
-      } finally {
-        fs.closeSync(fd);
-      }
-    }
+    else syncFile(file);
   }
   syncDirectory(root);
   syncDirectory(failed);

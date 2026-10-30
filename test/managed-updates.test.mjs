@@ -236,6 +236,27 @@ test("a stopped-data backup restores compatible SQLite, config and media, preser
   );
   assert.equal(fs.existsSync(path.join(root, "new-event.txt")), false);
 });
+test("backup and restore preserve read-only files and their permissions", (t) => {
+  const root = temp(t),
+    home = path.join(root, updateDirectory);
+  fs.mkdirSync(home);
+  fs.mkdirSync(path.join(root, "workspace"));
+  for (const name of ["readonly.txt", "workspace/object"]) {
+    fs.writeFileSync(path.join(root, name), "read-only evidence", {
+      mode: 0o444,
+    });
+  }
+  const backup = path.join(home, "backup");
+  backupData(root, backup);
+  restoreData(root, backup, path.join(home, "failed"));
+  for (const base of [root, backup, path.join(home, "failed")]) {
+    for (const name of ["readonly.txt", "workspace/object"]) {
+      const file = path.join(base, name);
+      assert.equal(fs.readFileSync(file, "utf8"), "read-only evidence");
+      assert.equal(fs.statSync(file).mode & 0o200, 0);
+    }
+  }
+});
 test("backups reject active processes and hardlinked data before copying", (t) => {
   const root = temp(t),
     home = path.join(root, updateDirectory);
@@ -334,7 +355,7 @@ function git(root, args) {
     stdio: ["ignore", "pipe", "pipe"],
   }).trim();
 }
-function source(t) {
+function source(t, requiredNode = ">=24.0.0") {
   const root = temp(t),
     codeRoot = path.join(root, "source"),
     home = path.join(root, "home");
@@ -361,7 +382,7 @@ function source(t) {
       JSON.stringify({
         name: "qq-agents",
         version,
-        engines: { node: ">=24.0.0" },
+        engines: { node: version === "2.0.0" ? requiredNode : ">=24.0.0" },
         qqAgentsUpdateProtocol: 1,
       }),
     );
@@ -412,6 +433,30 @@ test("source staging pins an official tag and validates ancestry, version and ru
     stageRelease({ ...f, tag: "v2.0.0" }),
     /UPDATE_LOCAL_CHANGES/,
   );
+});
+test("staging rejects a newer Node minor or patch before installing or stopping the old release", async (t) => {
+  const [major, minor, patch] = process.versions.node.split(".").map(Number);
+  for (const minimum of [
+    `${major}.${minor + 1}.0`,
+    `${major}.${minor}.${patch + 1}`,
+  ]) {
+    const f = source(t, `>=${minimum}`),
+      phases = [];
+    await assert.rejects(
+      stageRelease({
+        ...f,
+        tag: "v2.0.0",
+        progress: (phase) => phases.push(phase),
+      }),
+      /UPDATE_RUNTIME_UNSUPPORTED/,
+    );
+    assert.deepEqual(phases, ["downloading"]);
+    assert.equal(
+      JSON.parse(fs.readFileSync(path.join(f.codeRoot, "package.json")))
+        .version,
+      "1.0.0",
+    );
+  }
 });
 test("staging rejects divergent history, unsupported origin and changed container requirements", async (t) => {
   const f = source(t);
