@@ -41,6 +41,7 @@ export function readFileText(files, agentId, fileId, options = {}) {
   let from = offset < text.length ? graphemes.containing(offset).index : offset;
   const markdown = /\.md$/i.test(meta.name);
   const fenceLine = (at) => {
+    if (at === 0) return 0;
     const start = text.lastIndexOf("\n", Math.max(0, at - 1)) + 1;
     return /^[ \t]*```/.test(text.slice(start, start + 100)) ? start : at;
   };

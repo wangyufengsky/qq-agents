@@ -4,6 +4,7 @@ import fs from "node:fs";
 import vm from "node:vm";
 import { randomBytes } from "node:crypto";
 import { fixture } from "./helpers.mjs";
+import { readFileText } from "../src/tools/file-text.mjs";
 import { FileStore } from "../src/tools/files.mjs";
 import path from "node:path";
 import { createServer } from "../src/server.mjs";
@@ -88,6 +89,35 @@ test("Markdown code context survives page boundaries and search jumps", async (t
   const fence = await read(text.lastIndexOf("```") + 1);
   assert.ok(fence.text.startsWith("```"));
   assert.equal(fence.codeFence, true);
+});
+test("paging preserves leading blank lines and every grapheme at the candidate boundary", async (t) => {
+  const f = await setup(t);
+  for (const emoji of ["👍🏽", "👨‍👩‍👧‍👦", "🇨🇳", "1️⃣"]) {
+    const text = "a".repeat(510) + emoji + "z".repeat(600);
+    const file = f.put("boundary.txt", text);
+    const first = readFileText(f.runtime.files, "agent-0", file.fileId, {
+      maxChars: 512,
+    });
+    assert.equal(first.text.length, 510);
+    const second = readFileText(f.runtime.files, "agent-0", file.fileId, {
+      offset: first.nextOffset,
+      maxChars: 512,
+    });
+    assert.ok(second.text.startsWith(emoji));
+  }
+  const text = "\n```js\n" + "value\n".repeat(200) + "```\n";
+  const file = f.put("leading.md", text);
+  let offset = 0,
+    result = "";
+  do {
+    const page = readFileText(f.runtime.files, "agent-0", file.fileId, {
+      offset,
+      maxChars: 512,
+    });
+    result += page.text;
+    offset = page.nextOffset;
+  } while (offset !== null);
+  assert.equal(result, text);
 });
 test("preview rejects binary, invalid UTF-8, unsafe paging and modified file bytes", async (t) => {
   const f = await setup(t);
