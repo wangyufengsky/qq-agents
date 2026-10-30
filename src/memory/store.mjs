@@ -78,14 +78,18 @@ export class MemoryStore {
     if (file !== ":memory:")
       fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
     this.db = new DatabaseSync(file);
-    const version = this.db.prepare("PRAGMA user_version").get().user_version;
-    if (version > 6) {
-      this.db.close();
-      throw Error("MEMORY_SCHEMA_NEWER_THAN_CODE");
-    }
-    if (file !== ":memory:") fs.chmodSync(file, 0o600);
-    this.db
-      .exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
+    try {
+      const version = this.db.prepare("PRAGMA user_version").get().user_version;
+      if (version > 6) throw Error("MEMORY_SCHEMA_NEWER_THAN_CODE");
+      if (file !== ":memory:") fs.chmodSync(file, 0o600);
+      // Connection settings must take effect before opening a schema transaction.
+      this.db.exec(
+        "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;",
+      );
+      // Batch schema writes without weakening FULL durability or nesting the
+      // independently versioned migrations' transactions.
+      this.transaction(() =>
+        this.db.exec(`
       CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE NOT NULL,agent_id TEXT NOT NULL,dedupe TEXT NOT NULL,connection_id TEXT NOT NULL,conversation TEXT NOT NULL,kind TEXT NOT NULL,direction TEXT NOT NULL,status TEXT NOT NULL,message_id TEXT,sender_id TEXT,occurred_at TEXT NOT NULL,observed_at TEXT NOT NULL,body TEXT NOT NULL,payload TEXT NOT NULL,origin TEXT NOT NULL,UNIQUE(agent_id,dedupe));
       CREATE INDEX IF NOT EXISTS events_scope ON events(agent_id,conversation,seq);
       CREATE INDEX IF NOT EXISTS events_scene ON events(agent_id,connection_id,conversation,seq);
@@ -106,16 +110,16 @@ export class MemoryStore {
       CREATE TABLE IF NOT EXISTS activity_history(agent_id TEXT NOT NULL,project_id TEXT NOT NULL,revision INTEGER NOT NULL,value TEXT NOT NULL,PRIMARY KEY(agent_id,project_id,revision));
       CREATE TABLE IF NOT EXISTS memory_corrections(agent_id TEXT NOT NULL,id TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(agent_id,id));
       CREATE TABLE IF NOT EXISTS projects(agent_id TEXT NOT NULL,id TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(agent_id,id));
-      `);
-    // agentId|eventId of voice messages whose transcript is still running.
-    this.transcribing = new Set();
-    try {
+      `),
+      );
+      // agentId|eventId of voice messages whose transcript is still running.
+      this.transcribing = new Set();
       migrateSearch(this.db, version);
-      migrateIdentity(this.db);
+      if (version < 4) this.transaction(() => migrateIdentity(this.db));
       migrateTimeline(this.db, version);
       migrateMessageIds(this.db, version);
       this.due = new ConversationDue(this.db);
-      this.due.initialize();
+      this.transaction(() => this.due.initialize());
     } catch (error) {
       this.db.close();
       throw error;

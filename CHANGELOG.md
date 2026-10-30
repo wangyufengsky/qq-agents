@@ -8,6 +8,11 @@
 
 以下为 `v0.5.4` 之后已合并到 `main` 的改动（包括 [#69](https://github.com/wangyufengsky/qq-agents/pull/69) 之后的功能与维护 PR）。当前包版本仍为 `0.5.4`，尚未发布新的版本标签。
 
+### SQLite 初始化提交优化（[#84](https://github.com/wangyufengsky/qq-agents/pull/84)）
+
+- 将基础表与索引、身份迁移及会话到期索引初始化分别批量提交，减少新建数据库在慢磁盘上的同步写入次数；保留 `WAL`、`synchronous=FULL`、外键检查及现有版本迁移边界，不降低测试覆盖或放宽超时。
+- 初始化失败时回滚当前批次并关闭数据库；补充新库、旧库重开、迁移与失败恢复回归。此优化针对建库开销，不代表所有 Windows CI 瓶颈已经消除。
+
 ### 一键升级与失败恢复（[#80](https://github.com/wangyufengsky/qq-agents/pull/80)）
 
 - 新增 `npm run managed` 独立启动器，管理台支持固定官方版本下载、依赖安装、停机备份、端口保持、启动与连接检查，以及按原暂停状态恢复。
