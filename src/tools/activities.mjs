@@ -69,7 +69,7 @@ export function activityForTurn(memory, conversation) {
       pendingCount: p.activity.pending.length,
     }));
 }
-function version(memory, id, revision) {
+export function activityVersion(memory, id, revision) {
   const row = memory.db
     .prepare(
       "SELECT value FROM activity_history WHERE agent_id=? AND project_id=? AND revision=?",
@@ -241,9 +241,13 @@ export function readProjects(runtime, ctx, args) {
   if (!project || !activityVisible(project, ctx.conversation))
     throw Error("RECORD_NOT_FOUND");
   if (!project.activity) return project;
-  const entry = version(memory, project.id, args.revision || project.revision);
+  const entry = activityVersion(
+    memory,
+    project.id,
+    args.revision || project.revision,
+  );
   const draftEntry = entry.activity.draftRevision
-    ? version(memory, project.id, entry.activity.draftRevision)
+    ? activityVersion(memory, project.id, entry.activity.draftRevision)
     : null;
   const text = draftEntry?.draft.text;
   const total = memory.db
@@ -257,11 +261,23 @@ export function readProjects(runtime, ctx, args) {
     )
     .all(ctx.agentId, project.id, args.historyOffset)
     .map((r) => JSON.parse(r.value));
-  const end = args.offset + args.maxChars;
+  let from = args.offset,
+    end = args.offset + args.maxChars;
+  if (text !== undefined) {
+    const parts = new Intl.Segmenter("und", {
+      granularity: "grapheme",
+    }).segment(text);
+    from = Math.min(from, text.length);
+    if (from < text.length) from = parts.containing(from).index;
+    end = Math.min(text.length, from + args.maxChars);
+    if (end < text.length) end = parts.containing(end).index;
+    if (from === end && from < text.length)
+      throw Error("ACTIVITY_TEXT_CLUSTER_TOO_LONG");
+  }
   if (text !== undefined) {
     const key = `${project.id}:${entry.activity.draftRevision}`;
     const pages = (ctx.activityDraftPages ??= new Map());
-    if (args.offset === 0 || pages.get(key) === args.offset) {
+    if (from === 0 || pages.get(key) === from) {
       pages.set(key, Math.min(end, text.length));
       if (end >= text.length) (ctx.activityDraftsRead ??= new Set()).add(key);
     }
@@ -293,7 +309,9 @@ export function readProjects(runtime, ctx, args) {
       ? {
           draft: {
             title: draftEntry.draft.title,
-            text: text.slice(args.offset, end),
+            author: draftEntry.draftAuthor || "agent",
+            text: text.slice(from, end),
+            offset: from,
             revision: entry.activity.draftRevision,
             totalChars: text.length,
             nextOffset: end < text.length ? end : null,

@@ -57,11 +57,16 @@ const browserScripts = {
   "files-ui.js": ["fileAgentId", "renderFilePermissions"],
   "document-reader.js": [
     "openDocument",
-    "openProjectOverview",
     "documentMarkdown",
     "downloadDocument",
   ],
   "mind-ui.js": ["mindAgentId", "renderMind"],
+  "projects-ui.js": [
+    "projectAgentId",
+    "renderProjects",
+    "openProject",
+    "projectActor",
+  ],
   "mood-ui.js": ["bindMood", "moodMarkup"],
   "people-ui.js": [
     "bindPeople",
