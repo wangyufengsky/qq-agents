@@ -24,6 +24,7 @@ export const EXPORT_TABLES = [
   "person_items",
   "projects",
   "memory_corrections",
+  "activity_history",
 ];
 // Appended after v2 shipped. An older v2 export simply lacks them; their
 // absence must not fail the checksum of the tables it does carry.
@@ -33,6 +34,7 @@ const ADDED_AFTER_V2 = new Set([
   "person_items",
   "projects",
   "memory_corrections",
+  "activity_history",
 ]);
 
 /** @param {{version: number, agentId: string, exportedAt: string}} header */

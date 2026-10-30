@@ -676,6 +676,7 @@ export class IdentityMemory {
       title,
       why,
       progress = "",
+      activity,
       evidence = [],
       files = [],
       next,
@@ -740,6 +741,7 @@ export class IdentityMemory {
       title: title === undefined ? old.title : title.trim(),
       why: why === undefined ? old.why : why.trim(),
       status: nextStatus,
+      ...(activity ? { activity } : {}),
       steps: [...step, ...(old?.steps || [])].slice(0, PROJECT_STEPS),
       // Everything it made along the way, newest first.
       files: [...new Set([...files, ...(old?.files || [])])].slice(0, 30),

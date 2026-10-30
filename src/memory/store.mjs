@@ -103,6 +103,7 @@ export class MemoryStore {
       CREATE TABLE IF NOT EXISTS person_notes(agent_id TEXT NOT NULL,person_id TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(agent_id,person_id));
       CREATE TABLE IF NOT EXISTS moods(agent_id TEXT NOT NULL,id TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(agent_id,id));
       CREATE TABLE IF NOT EXISTS person_items(agent_id TEXT NOT NULL,id TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(agent_id,id));
+      CREATE TABLE IF NOT EXISTS activity_history(agent_id TEXT NOT NULL,project_id TEXT NOT NULL,revision INTEGER NOT NULL,value TEXT NOT NULL,PRIMARY KEY(agent_id,project_id,revision));
       CREATE TABLE IF NOT EXISTS memory_corrections(agent_id TEXT NOT NULL,id TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(agent_id,id));
       CREATE TABLE IF NOT EXISTS projects(agent_id TEXT NOT NULL,id TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(agent_id,id));
       `);
@@ -1126,6 +1127,7 @@ class AgentMemory {
       "person_items",
       "projects",
       "memory_corrections",
+      "activity_history",
     ])
       tables[name] = this.db
         .prepare(
