@@ -440,7 +440,7 @@ function bindSubject(a) {
             if (revision) query.set("revision", String(revision));
             const data = await api("/api/project?" + query);
             if (!dialog.isConnected) return;
-            dialog.innerHTML = `<div class="people-drawer-body"><header class="person-head"><h2>${esc(data.project.title)} · v${data.version.revision}</h2><button type="button" data-close>关闭</button></header><p>${esc(data.version.progress)}</p>${data.version.contribution ? `<p>参与者原始贡献</p><pre>${esc(data.version.contribution.text)}</pre>` : ""}${data.draft ? `<h3>${esc(data.draft.title)} · 原稿 v${data.draft.revision}</h3><pre>${esc(data.draft.text)}</pre>${data.draft.nextOffset !== null ? '<button type="button" data-next-draft>继续阅读原稿</button>' : ""}` : "<p>还没有原稿</p>"}<h3>版本历史（${data.historyTotal}）</h3>${data.history.map((x) => `<p><button type="button" data-activity-version="${x.revision}">v${x.revision}</button> ${esc(x.progress)}</p>`).join("")}${data.nextHistoryOffset !== null ? '<button type="button" data-next-history>更早版本</button>' : ""}</div>`;
+            dialog.innerHTML = `<div class="people-drawer-body"><header class="person-head"><h2>${esc(data.project.title)} · v${data.version.revision}</h2><button type="button" data-close>关闭</button></header><p>${esc(data.version.progress)}</p>${data.version.contribution ? `<p>参与者原始贡献</p><pre>${esc(data.version.contribution.text)}</pre>${data.version.contribution.truncated ? '<p>此处仅显示原文开头。</p><button type="button" data-contribution-full>阅读完整贡献</button>' : ""}` : ""}${data.draft ? `<h3>${esc(data.draft.title)} · 原稿 v${data.draft.revision}</h3><pre>${esc(data.draft.text)}</pre>${data.draft.nextOffset !== null ? '<button type="button" data-next-draft>继续阅读原稿</button>' : ""}` : "<p>还没有原稿</p>"}<h3>版本历史（${data.historyTotal}）</h3>${data.history.map((x) => `<p><button type="button" data-activity-version="${x.revision}">v${x.revision}</button> ${esc(x.progress)}</p>`).join("")}${data.nextHistoryOffset !== null ? '<button type="button" data-next-history>更早版本</button>' : ""}</div>`;
             dialog.querySelector("[data-close]").onclick = () => dialog.close();
             dialog
               .querySelectorAll("[data-activity-version]")
@@ -449,6 +449,16 @@ function bindSubject(a) {
                   (b.onclick = () =>
                     action(() => show(Number(b.dataset.activityVersion)))),
               );
+            const contribution = dialog.querySelector(
+              "[data-contribution-full]",
+            );
+            if (contribution)
+              contribution.onclick = () => {
+                dialog.close();
+                return readMemory(data.version.contribution.read.id, {
+                  agentId: a.id,
+                });
+              };
             const next = dialog.querySelector("[data-next-draft]");
             if (next)
               next.onclick = () =>

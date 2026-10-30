@@ -63,7 +63,11 @@ export function activityForTurn(memory, conversation) {
         ["active", "paused"].includes(p.status),
     )
     .slice(0, 8)
-    .map(activityBrief);
+    .map((p) => ({
+      ...activityBrief(p),
+      pending: undefined,
+      pendingCount: p.activity.pending.length,
+    }));
 }
 function version(memory, id, revision) {
   const row = memory.db

@@ -106,6 +106,29 @@ test("draft updates require complete read of the current draft and reject stale 
   await f.call("projects", { id: p.id });
   await assert.rejects(f.call("project", update), /REVISION_CONFLICT/);
 });
+test("turn hints stay bounded and long human contributions retain a full-text reader", async (t) => {
+  const f = setup(t),
+    source = f.say("原文".repeat(5000)),
+    p = await f.call("project", {
+      ...f.start,
+      participantEventId: source.id,
+      shared: {
+        ...f.start.shared,
+        pending: Array.from({ length: 10 }, (_, i) => ({
+          id: String(i),
+          question: "问题".repeat(150),
+          options: Array(8).fill("选项".repeat(100)),
+        })),
+      },
+    });
+  const hint = activityForTurn(f.m, f.ctx.conversation);
+  assert.equal(hint[0].pendingCount, 10);
+  assert.ok(JSON.stringify(hint).length < 2000);
+  const read = await f.call("projects", { id: p.id });
+  assert.equal(read.version.contribution.truncated, true);
+  assert.equal(read.version.contribution.read.id, source.id);
+  assert.equal(f.m.readRecord({ id: source.id }).body.length, 10000);
+});
 test("activity history and original drafts survive beyond the rolling project summary, reopening and export", async (t) => {
   const f = setup(t);
   let p = await f.call("project", {

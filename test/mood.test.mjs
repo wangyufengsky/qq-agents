@@ -175,7 +175,9 @@ test("a strong mood can settle on the agent's own idle time without anyone coaxi
 });
 
 test("a mood reaches each session once while it lasts, with what it changed from", async (t) => {
-  const f = chat(t);
+  const cfg = config(1);
+  cfg.agents[0].contextPolicy.capacityTokens = 131072;
+  const f = chat(t, cfg);
   f.m.identity.setMood(
     { mood: "有点委屈", intensity: 2, reason: "主人在私聊里凶了我", hours: 2 },
     { writtenIn: "private:30000", now: f.runtime.now() },
