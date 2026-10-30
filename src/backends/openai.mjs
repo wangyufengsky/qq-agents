@@ -5,7 +5,11 @@ import { randomUUID } from "node:crypto";
 import { ExternalTools } from "./external.mjs";
 import { mcpResult } from "../tools/index.mjs";
 import { safeToolFailure } from "../tools/errors.mjs";
-import { sessionSignature, assertSession } from "./session-contract.mjs";
+import {
+  sessionSignature,
+  assertSession,
+  acceptsSession,
+} from "./session-contract.mjs";
 import { openaiTurnFailure, BackendTurnFailure } from "./turn-failure.mjs";
 
 const SESSION_ID =
@@ -230,6 +234,10 @@ export class OpenAIBackend {
   /** @param {import("./session-contract.mjs").ToolSpec[]} tools */
   sessionSignature(tools) {
     return sessionSignature(this, tools);
+  }
+  /** @param {import("./session-contract.mjs").StoredSession | null | undefined} session @param {import("./session-contract.mjs").ToolSpec[]} tools */
+  acceptsSession(session, tools) {
+    return acceptsSession(this, session, tools);
   }
   /** @param {any} call @param {RunParams["callTool"]} callTool @param {AbortSignal} signal */
   async toolMessages(call, callTool, signal) {

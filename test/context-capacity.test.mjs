@@ -2,6 +2,39 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { config, fixture } from "./helpers.mjs";
 
+test("late usage from a finished turn cannot force the next turn to retire a reusable session", async (t) => {
+  let previous,
+    calls = 0;
+  const f = fixture(t, {
+    cfg: config(1),
+    run: async (p) => {
+      calls++;
+      p.saveSession(
+        p.session || { id: "kept-after-late-usage", backend: "fixture" },
+      );
+      if (calls === 1) {
+        previous = p;
+        p.onUsage({
+          source: "measured",
+          contextTokens: 1000,
+          capacityTokens: 100000,
+        });
+      }
+    },
+  });
+  await f.runtime.wake("agent-0", "group:20000");
+  previous.onUsage({
+    source: "measured",
+    contextTokens: 99000,
+    capacityTokens: 100000,
+  });
+  await f.runtime.wake("agent-0", "group:20000");
+  assert.equal(
+    f.store.bind("agent-0").state("group:20000").session?.id,
+    "kept-after-late-usage",
+  );
+});
+
 for (const scope of ["group:20000", "private:30000", "@subject"])
   test(`${scope} retains measured capacity when a later usage report omits it`, async (t) => {
     const cfg = config(1);

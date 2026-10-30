@@ -65,10 +65,14 @@ export function attachManagedUpdates({ runtime, lifecycle, installed, port }) {
     if (message.type !== "command") return;
     try {
       let value = {};
-      if (message.action === "stop") {
+      if (message.action === "drain") {
+        value = runtime.maintenance.begin();
+      } else if (["stop", "stop-now"].includes(message.action)) {
+        const drained =
+          message.action === "stop" ? await runtime.maintenance.wait() : null;
         runtime.updateMaintenance = true;
         while (runtime.configChanging) await runtime.configSettled;
-        const checkpoint = {
+        const checkpoint = drained || {
           globalPaused: runtime.config.globalPaused,
           connections: runtime.config.connections
             .filter((c) => c.enabled && runtime.transports.get(c.id)?.connected)
@@ -108,8 +112,10 @@ export function attachManagedUpdates({ runtime, lifecycle, installed, port }) {
         if (!message.checkpoint.globalPaused && runtime.config.mode === "live")
           await runtime.pause("all", false);
         runtime.updateMaintenance = false;
+        runtime.maintenance.clear();
       } else if (message.action === "hold") {
         runtime.updateMaintenance = false;
+        runtime.maintenance.clear();
         runtime.autoResume.cancel("cancelled");
         await runtime.pause("all", true);
       } else throw Error("UPDATE_STATE_INVALID");

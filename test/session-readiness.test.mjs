@@ -4,6 +4,7 @@ import { EventEmitter } from "node:events";
 import { toolSpecs } from "../src/tools/index.mjs";
 import { fixture, config } from "../test/helpers.mjs";
 import { CodexBackend } from "../src/backends/codex.mjs";
+import { sessionSignature } from "../src/backends/session-contract.mjs";
 class Rpc extends EventEmitter {
   constructor() {
     super();
@@ -50,6 +51,174 @@ class Rpc extends EventEmitter {
   reject() {}
   close() {}
 }
+test("backend display labels survive adapter recreation without replacing the session", async (t) => {
+  const cfg = config(1),
+    f = fixture(t, { cfg }),
+    rpc = new Rpc();
+  const adapter = () =>
+    new CodexBackend(f.runtime.config.backends[0], cfg.agents[0], {
+      root: f.root,
+      rpc,
+    });
+  let backend = adapter();
+  f.runtime.backends.set("agent-0", backend);
+  await f.runtime.wake("agent-0", "group:20000");
+  const memory = f.store.bind("agent-0"),
+    original = memory.state("group:20000").session.id;
+  const next = structuredClone(f.runtime.config);
+  next.backends[0].label = "A different console label";
+  await f.runtime.changeConfig(next, f.configStore.revision);
+  await backend.close();
+  backend = adapter();
+  f.runtime.backends.set("agent-0", backend);
+  await f.runtime.wake("agent-0", "group:20000");
+  assert.equal(memory.state("group:20000").session.id, original);
+  assert.equal(memory.identity.list("session_history").length, 0);
+});
+
+test("a connection preflight failure preserves a session before any new input was submitted", async (t) => {
+  const cfg = config(1);
+  cfg.agents[0].contextPolicy.capacityTokens = 131072;
+  cfg.agents[0].scheduler.enabled = true;
+  const f = fixture(t, { cfg }),
+    rpc = new Rpc();
+  const backend = new CodexBackend(cfg.backends[0], cfg.agents[0], {
+    root: f.root,
+    rpc,
+  });
+  f.runtime.backends.set("agent-0", backend);
+  await f.runtime.wake("agent-0", "group:20000");
+  const memory = f.store.bind("agent-0"),
+    original = memory.state("group:20000").session;
+  const scope = "group:20000";
+  const fields = [
+    "personCardsShown",
+    "personItemsShown",
+    "scheduleShown",
+    "moodShown",
+  ];
+  const shown = () =>
+    Object.fromEntries(fields.map((key) => [key, memory.state(scope)[key]]));
+  const before = shown();
+  const event = memory.append({
+    dedupe: "new-details",
+    conversation: scope,
+    kind: "message.received",
+    direction: "in",
+    senderId: "30000",
+    body: "记住这些新资料",
+  });
+  memory.identity.savePersonCard(
+    {
+      personId: "30000",
+      call: "阿明",
+      body: "新的称呼资料",
+      evidence: [event.id],
+    },
+    { writtenIn: scope, now: f.runtime.now() },
+  );
+  memory.identity.savePersonItem(
+    {
+      personId: "30000",
+      kind: "boundary",
+      body: "新的相处边界",
+      evidence: [event.id],
+    },
+    { writtenIn: scope, now: f.runtime.now() },
+  );
+  memory.identity.setMood(
+    {
+      mood: "期待",
+      intensity: 2,
+      reason: "新的心情资料",
+      evidence: [event.id],
+    },
+    { writtenIn: scope, now: f.runtime.now() },
+  );
+  f.runtime.scheduler.create("agent-0", {
+    name: "新的日程资料",
+    kind: "text",
+    text: "任务内容",
+    targets: [scope],
+    schedule: { type: "daily", times: ["22:00"] },
+  });
+  const calls = rpc.calls.length;
+  const ready = backend.ready.bind(backend);
+  backend.ready = async () => {
+    for (const field of fields)
+      assert.notDeepEqual(shown()[field], before[field]);
+    throw Error("CODEX_DISCONNECTED");
+  };
+  await f.runtime.wake("agent-0", "group:20000");
+  assert.deepEqual(memory.state("group:20000").session, original);
+  assert.equal(rpc.calls.length, calls);
+  assert.deepEqual(shown(), before);
+  assert.equal(memory.identity.list("session_history").length, 0);
+  assert.equal(
+    memory.identity.list("model_turns").filter((x) => x.status === "failed")
+      .length,
+    1,
+  );
+  backend.ready = ready;
+  await f.runtime.wake("agent-0", scope);
+  const prompt = rpc.calls.filter((c) => c.method === "turn/start").at(-1).args
+    .input[0].text;
+  for (const text of [
+    "新的称呼资料",
+    "新的相处边界",
+    "新的心情资料",
+    "新的日程资料",
+  ])
+    assert.ok(prompt.includes(text));
+  assert.deepEqual(memory.state(scope).session, original);
+  await f.runtime.wake("agent-0", scope);
+  const subsequent = rpc.calls.filter((c) => c.method === "turn/start").at(-1)
+    .args.input[0].text;
+  for (const text of [
+    "新的称呼资料",
+    "新的相处边界",
+    "新的心情资料",
+    "新的日程资料",
+  ])
+    assert.ok(!subsequent.includes(text));
+});
+
+test("matching legacy contracts migrate in place while changed contracts still retire", async (t) => {
+  const cfg = config(1),
+    f = fixture(t, { cfg }),
+    rpc = new Rpc();
+  const backend = new CodexBackend(cfg.backends[0], cfg.agents[0], {
+    root: f.root,
+    rpc,
+  });
+  f.runtime.backends.set("agent-0", backend);
+  await f.runtime.wake("agent-0", "group:20000");
+  const memory = f.store.bind("agent-0"),
+    original = memory.state("group:20000");
+  const tools = toolSpecs(
+    f.runtime.toolsFor(f.runtime.agent("agent-0"), "group:20000"),
+  );
+  const legacy = {
+    ...original.session,
+    signature: sessionSignature(backend, tools, true),
+  };
+  memory.setState("group:20000", { ...original, session: legacy });
+  await f.runtime.wake("agent-0", "group:20000");
+  assert.equal(memory.state("group:20000").session.id, original.session.id);
+  assert.match(memory.state("group:20000").session.signature, /^contract-v3:/);
+  assert.equal(memory.identity.list("session_history").length, 0);
+  memory.setState("group:20000", {
+    ...memory.state("group:20000"),
+    session: legacy,
+  });
+  backend.config = { ...backend.config, model: "different-model" };
+  await f.runtime.wake("agent-0", "group:20000");
+  assert.notEqual(memory.state("group:20000").session.id, original.session.id);
+  assert.equal(
+    memory.identity.list("session_history")[0].reason,
+    "backend-contract-change",
+  );
+});
 test("full tool contracts rebuild with handoff, normalized objects reuse, and old metadata upgrades once", async (t) => {
   const cfg = config(1),
     { runtime, store, root } = fixture(t, { cfg }),

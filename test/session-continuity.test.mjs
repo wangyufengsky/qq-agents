@@ -248,6 +248,39 @@ for (const backendType of ["codex", "dsh"])
         );
       });
 
+test("DSH connection preparation preserves an existing transcript and resumes it after recovery", async (t) => {
+  const cfg = config(1);
+  cfg.backends[0].type = "dsh";
+  cfg.backends[0].preset = "qq-unified";
+  cfg.agents[0].contextPolicy.capacityTokens = 1000000;
+  const f = fixture(t, { cfg }),
+    client = dsh("success", () => {});
+  let created = 0;
+  const create = client.sessions.create;
+  client.sessions.create = async (...args) => {
+    created++;
+    return create(...args);
+  };
+  const backend = new DshBackend(cfg.backends[0], cfg.agents[0], {
+    root: f.root,
+    client,
+  });
+  f.runtime.backends.set("agent-0", backend);
+  await f.runtime.wake("agent-0", chat);
+  const memory = f.store.bind("agent-0"),
+    original = memory.state(chat).session;
+  const ready = backend.ready.bind(backend);
+  backend.ready = async () => {
+    throw Error("DSH_NOT_READY");
+  };
+  await f.runtime.wake("agent-0", chat);
+  assert.deepEqual(memory.state(chat).session, original);
+  backend.ready = ready;
+  await f.runtime.wake("agent-0", chat);
+  assert.equal(created, 1);
+  assert.equal(memory.identity.list("session_history").length, 0);
+});
+
 test("N3 errors before adapter turn try blocks still archive a new DSH or resumed Codex session", async (t) => {
   for (const type of ["dsh", "codex"]) {
     const cfg = config(1);

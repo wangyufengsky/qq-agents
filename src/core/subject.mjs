@@ -403,7 +403,7 @@ export class SubjectCoordinator {
     if (
       !this.enabled(a) ||
       !this.targetAllowed(a, i.target) ||
-      !r.writable(a, i.target) ||
+      !r.writable(a, i.target, ctx) ||
       i.expiresAt <= r.now() ||
       !["handedoff", "selected"].includes(i.status)
     )

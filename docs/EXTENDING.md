@@ -103,7 +103,7 @@ export const BACKEND_CAPABILITIES = {
 
 `src/backends/session-contract.mjs` 提供：
 
-- `sessionSignature(backend, tools)`：对后端配置（去掉 `recovery`，保留绑定的 DSH 实例）和工具目录（名称、说明、`inputSchema`，按名称排序）做规范化 JSON 后取 SHA-256，前缀 `contract-v2:`。
+- `sessionSignature(backend, tools)`：对后端配置（去掉显示名称 `label` 和 `recovery`，保留绑定的 DSH 实例）和工具目录（名称、说明、`inputSchema`，按名称排序）做规范化 JSON 后取 SHA-256，前缀 `contract-v3:`；`acceptsSession` 可兼容完整匹配的旧 `contract-v2:` 摘要。
 - `assertSession(session, backendType, signature)`：会话的 `backend` 或 `signature` 与当前不符时抛 `SESSION_REQUIRES_HANDOFF`。
 
 `run` 一开始应先算签名并调用 `assertSession`。运行时在每个回合前比较签名（`src/core/lifecycle.mjs`），签名变化、self 版本变化或指令变化时退休旧会话，下一回合新建会话，并通过来源交接（`src/core/context-handoff.mjs`）把最近的来源线索带给新会话；原始经历和日记不受影响。所以：
