@@ -22,8 +22,12 @@ function changed(before, after, project) {
 }
 /** @param {Entity} value */
 function operational(value) {
-  const { label: _label, ...rest } = value;
-  return rest;
+  const { label: _label, recovery, ...rest } = value;
+  return {
+    ...rest,
+    dshInstance: /** @type {{dshInstance?: string} | undefined} */ (recovery)
+      ?.dshInstance,
+  };
 }
 /** Recovery policy is read on each tick; editing it must not drop the socket.
  * @param {Entity} value */

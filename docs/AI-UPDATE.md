@@ -106,7 +106,7 @@ docker compose exec -T qq-agents node src/cli/doctor.mjs --data /data --json
 
 记录已有故障。doctor 不发送 QQ 消息，但会访问已配置的 OneBot 和模型服务。`ok: true` 只代表没有 fail，不保证服务运行、模型回合成功或角色能发言；检查 warn 和 skip。
 
-告知用户目标版本、预计中断、备份位置与恢复办法，得到确认后，在管理台“全部暂停”，不改变角色和会话各自的暂停偏好，再正常停止 **QQ Agents**。不停止共享 NapCat、QQ 或 DSH。
+告知用户目标版本、预计中断、备份位置与恢复办法，按已有授权安排切换。支持维护接口的版本先调用管理员 `POST /api/maintenance`（空 JSON 对象），关闭新回合入口，再轮询 `GET /api/status` 的 `maintenance.pending` 等待归零；这段时间保持原回合工具与投递正常收尾。然后正常停止 **QQ Agents**，不改变角色和会话各自的暂停偏好。旧版本没有该接口时，先核对所有角色无活跃回合，再全局暂停，并复核没有跨过该窗口的新回合被取消；不能把旧版直接暂停当作已实现等待。保留已有会话引用与归档原因作为前后基线，不停止共享 NapCat、QQ 或 DSH。
 
 Docker，在原项目目录使用原 Compose 项目：
 

@@ -378,7 +378,10 @@ export class ContextLifecycle {
       s = m.state(ctx.conversation);
     }
     const signature = backend.sessionSignature?.(tools);
-    const contractChanged = signature && s.session?.signature !== signature;
+    const contractChanged =
+      signature &&
+      s.session?.signature !== signature &&
+      !backend.acceptsSession?.(s.session, tools);
     if (
       s.session &&
       (s.loadedSelfVersion !== self.version ||
@@ -397,6 +400,10 @@ export class ContextLifecycle {
         ctx,
       );
       s = m.state(ctx.conversation);
+    }
+    if (s.session && signature && s.session.signature !== signature) {
+      s = { ...s, session: { ...s.session, signature } };
+      m.setState(ctx.conversation, s);
     }
     ctx.selfVersion = self.version;
     ctx.turnId = randomUUID();
@@ -621,7 +628,14 @@ export class ContextLifecycle {
   usage(ctx, value) {
     const m = this.runtime.memory.bind(ctx.agentId),
       s = m.state(ctx.conversation);
-    if (s.lastTurnId !== ctx.turnId) return;
+    // A completed or retired turn no longer owns occupancy. Late callbacks
+    // must not resurrect its capacity or poison the next turn's estimate.
+    if (
+      s.lastTurnId !== ctx.turnId ||
+      ctx.controller.signal.aborted ||
+      m.identity.get("model_turns", ctx.turnId)?.status !== "running"
+    )
+      return;
     if (Number.isFinite(value?.contextTokens) && value.contextTokens >= 0)
       m.setState(ctx.conversation, {
         ...s,

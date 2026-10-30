@@ -50,6 +50,8 @@
     "src/core/mood.mjs",
     "src/core/floor.mjs",
     "src/core/runtime-status.mjs",
+    "src/core/maintenance.mjs",
+    "src/updates/drain.mjs",
     "src/memory/search.mjs",
     "src/tools/screenshots.mjs",
     "scripts/privacy-rules.mjs",

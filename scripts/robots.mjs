@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, execFileSync } from "node:child_process";
+import { waitForDrain } from "../src/updates/drain.mjs";
 import {
   NativeQQ,
   processIdentity,
@@ -183,10 +184,8 @@ async function stop() {
       throw Error("UNMANAGED_BRIDGE_REQUIRES_EXPLICIT_MIGRATION");
     return;
   }
-  // A managed upgrade can temporarily close HTTP or hold the mutation gate.
-  // Its verified supervisor still owns graceful stop and transaction recovery.
-  if (!r.command.includes("src/updates/supervisor.mjs"))
-    await api("pause", { paused: true });
+  // Both entries handle SIGTERM through runtime shutdown. A second HTTP pause
+  // would be rejected by the drain gate and prevent an explicitly requested stop.
   process.kill(r.pid, "SIGTERM");
   for (let i = 0; i < 60 && processIdentity(r.pid); i++) await sleep(500);
   if (processIdentity(r.pid)) throw Error("BRIDGE_STOP_INCOMPLETE");
@@ -203,6 +202,8 @@ try {
   if (command === "start") await start();
   else if (command === "stop") await stop();
   else if (command === "restart") {
+    if (verifiedBridge() && (await portBusy(config.port)))
+      await waitForDrain(() => api("maintenance", {}));
     await stop();
     await start();
   } else if (command === "qq-stop") {

@@ -7,7 +7,7 @@ const upgradePhases = {
   preparing: "核对官方发布",
   downloading: "下载新版本",
   installing: "安装依赖",
-  stopping: "正在停止运行",
+  stopping: "等待当前回合完成后停止运行",
   "backing-up": "备份数据",
   starting: "启动新版本",
   checking: "检查连接与后端",
@@ -32,6 +32,8 @@ const upgradeErrorText = {
   UPDATE_DISK_SPACE: "磁盘空间不足，无法同时保留备份和恢复副本。",
   UPDATE_HEALTH_FAILED: "新版启动后的连接或后端检查没有通过。",
   UPDATE_STOP_FAILED: "进程未确认正常退出，已停止自动切换。",
+  UPDATE_DRAIN_TIMEOUT:
+    "当前回合或投递尚未完成，已停止升级并保留原服务；请检查后重新启动。",
   UPDATE_PROCESS_STILL_RUNNING:
     "检测到进程或数据锁，已停止切换以避免并发写入。",
   UPDATE_COMMAND_FAILED: "下载或依赖安装未完成，请检查 Git、npm 和网络。",

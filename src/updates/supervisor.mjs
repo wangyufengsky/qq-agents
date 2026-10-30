@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { FrameworkKnowledge } from "../core/framework-knowledge.mjs";
 import { UpgradeManager, finalPhases, safeUpdateError } from "./manager.mjs";
 import { updateChannel } from "./managed-client.mjs";
+import { waitForDrain } from "./drain.mjs";
 import {
   readState,
   writeState,
@@ -152,10 +153,16 @@ export class ManagedHost {
       clearTimeout(timer);
     }
   }
-  async stop() {
+  async stop({ drain = true, signal } = {}) {
+    if (drain)
+      await waitForDrain(() => this.request("drain", undefined, 10000), signal);
     let checkpoint;
     try {
-      checkpoint = await this.request("stop", undefined, 40000);
+      checkpoint = await this.request(
+        drain ? "stop" : "stop-now",
+        undefined,
+        40000,
+      );
     } catch {
       throw Error("UPDATE_STOP_FAILED");
     }
@@ -169,7 +176,7 @@ export class ManagedHost {
       this.child.signalCode === null
     )
       try {
-        await this.stop();
+        await this.stop({ drain: false });
       } catch {
         this.child.kill("SIGTERM");
         await this.waitStopped();

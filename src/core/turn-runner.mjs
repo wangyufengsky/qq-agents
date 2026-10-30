@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { SUBJECT } from "./lifecycle.mjs";
 import { toolSpecs } from "../tools/specs.mjs";
-import { runWithRecovery, failureSummary } from "../backends/turn-failure.mjs";
+import {
+  runWithRecovery,
+  failureSummary,
+  sessionWasUnchanged,
+} from "../backends/turn-failure.mjs";
 import { isConnectionFailure } from "./backend-connections.mjs";
 import {
   saveSession,
@@ -269,7 +273,8 @@ export class TurnRunner {
       return result;
     } catch (error) {
       ctx.retainBackendSession =
-        failureSummary(error)?.sessionReusable === true &&
+        (failureSummary(error)?.sessionReusable === true ||
+          sessionWasUnchanged(error)) &&
         !ctx.controller.signal.aborted &&
         runtime.capabilities.has(ctx.token);
       throw error;
