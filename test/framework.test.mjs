@@ -207,7 +207,29 @@ test("build identity includes vendor assets and a source checkout always prefers
     "fixture",
   ]);
   const current = new FrameworkKnowledge(s).version;
-  assert.equal(current.commit, git(["rev-parse", "HEAD"]));
+  const head = git(["rev-parse", "HEAD"]);
+  let diagnostic;
+  if (current.commit !== head) {
+    const gitRoot = git(["rev-parse", "--show-toplevel"]);
+    const identity = (p) => {
+      const s = fs.statSync(p, { bigint: true });
+      return { dev: String(s.dev), ino: String(s.ino) };
+    };
+    diagnostic = JSON.stringify({
+      root: s.root,
+      gitRoot,
+      realRoot: fs.realpathSync(s.root),
+      realGitRoot: fs.realpathSync(gitRoot),
+      relative: path.relative(
+        fs.realpathSync(s.root),
+        fs.realpathSync(gitRoot),
+      ),
+      rootIdentity: identity(s.root),
+      gitIdentity: identity(gitRoot),
+      status: git(["status", "--porcelain", "--untracked-files=normal"]),
+    });
+  }
+  assert.equal(current.commit, head, diagnostic);
   assert.equal(current.provenance, "git");
   assert.equal(current.modified, false);
   if (process.platform === "win32") {
