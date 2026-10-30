@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import WebSocket from "ws";
 import { attachmentName } from "./attachments.mjs";
+import { qqFaceText } from "./qq-faces.mjs";
 import { downloadFileStream } from "./file-stream.mjs";
 
 // A half-open TCP connection (NAT timeout, host sleep, a frozen gateway) never
@@ -55,7 +56,9 @@ export function normalizeEvent(raw, connection) {
             ? `[提及 QQ:${s.data?.qq}]`
             : s.type === "reply"
               ? `[引用:${s.data?.id}]`
-              : `[${s.type}; 尚未识别内容]`,
+              : s.type === "face"
+                ? qqFaceText(s.data)
+                : `[${s.type}; 尚未识别内容]`,
     )
     .join("");
   const poke = raw.notice_type === "notify" && raw.sub_type === "poke";

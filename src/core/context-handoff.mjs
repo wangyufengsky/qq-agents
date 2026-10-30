@@ -1,3 +1,4 @@
+import { qqFaces } from "../transport/qq-faces.mjs";
 // Retain source handles automatically, independently of optional model-written notes.
 // A bounded excerpt is orientation, never an acknowledgement or a new evidence root.
 function retainedSources(memory, conversation, state) {
@@ -64,7 +65,8 @@ export function sourceHandoff(memory, conversation) {
     const payload = JSON.parse(row.payload || "{}"),
       app = payload.app;
     const text = String(app?.text ?? row.body ?? "");
-    const excerpt = text.slice(0, perSource);
+    const excerpt = text.slice(0, perSource),
+      faces = qqFaces(payload.segments);
     return {
       id,
       available: true,
@@ -81,6 +83,7 @@ export function sourceHandoff(memory, conversation) {
             : "recorded-action",
       excerpt,
       excerptTruncated: excerpt.length < text.length,
+      ...(faces ? { qqFaces: faces } : {}),
       ...(app
         ? {
             platform: app.platform,

@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { qqFaces } from "../transport/qq-faces.mjs";
 import { ConversationDue } from "./conversation-due.mjs";
 import {
   isConversation,
@@ -309,7 +310,8 @@ class AgentMemory {
   }
   event(row, current, summary = false) {
     const transcript = row.kind === "voice.transcript",
-      voiceTranscript = this.voiceTranscript(row, summary);
+      voiceTranscript = this.voiceTranscript(row, summary),
+      faces = qqFaces(parse(row.payload).segments);
     return {
       id: row.id,
       seq: row.seq,
@@ -342,6 +344,7 @@ class AgentMemory {
         ? { sourceEventId: parse(row.payload).sourceEventId }
         : {}),
       ...(voiceTranscript ? { voiceTranscript } : {}),
+      ...(faces ? { qqFaces: faces } : {}),
       ...provenance(row),
       ...(!summary ? { payload: parse(row.payload) } : {}),
     };
@@ -612,6 +615,7 @@ class AgentMemory {
       ...(item.voiceTranscript
         ? { voiceTranscript: item.voiceTranscript }
         : {}),
+      ...(item.qqFaces ? { qqFaces: item.qqFaces } : {}),
     };
   }
   read({ id, offset = 0, maxChars = 8000, revision }, current = "") {
