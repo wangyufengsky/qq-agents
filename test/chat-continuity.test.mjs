@@ -79,10 +79,10 @@ test("external handoff hints keep their partial reading scope and original sourc
   assert.equal(hint.sourceMayBeTruncated, true);
   assert.equal(hint.continuation.tool, "app_record");
 });
-function setup(t) {
+function setup(t, cfg = config(1)) {
   const prompts = [];
   const f = fixture(t, {
-    cfg: config(1),
+    cfg,
     run: async (p) => {
       prompts.push(p.prompt);
       p.saveSession({ id: "continuity-fixture", backend: "fixture" });
@@ -155,7 +155,10 @@ test("twelve new messages cannot evict the continuous old tail, whose long bodie
 });
 
 test("ordinary new speech is complete while an oversized body offers explicit continuation without granting input authority", async (t) => {
-  const f = setup(t);
+  const cfg = config(1);
+  // Keep this paging test independent of schema-size retirement.
+  cfg.agents[0].contextPolicy.capacityTokens = 131072;
+  const f = setup(t, cfg);
   const ordinary = message(
     f.m,
     1,

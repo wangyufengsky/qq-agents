@@ -34,10 +34,12 @@ function setup(
     duration = 1.5,
     audio = wav(),
     onRecord,
+    capacity,
   } = {},
 ) {
   const base = config(1),
     agent = base.agents[0];
+  if (capacity) agent.contextPolicy.capacityTokens = capacity;
   const cfg = validateConfig({
     ...base,
     backends: [
@@ -379,6 +381,8 @@ test("a transcript that lands after the turn stopped waiting wakes the agent onc
   let release;
   const gate = new Promise((resolve) => (release = resolve));
   const f = setup(t, {
+    // This test covers late transcript wakeups, not context retirement.
+    capacity: 131072,
     asr: { waitMs: 0 },
     external: {
       call: async () => {

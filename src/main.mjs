@@ -1,4 +1,5 @@
 import { Diagnostics } from "./core/diagnostics.mjs";
+import { FrameworkKnowledge } from "./core/framework-knowledge.mjs";
 import {
   acquireProcessLock,
   ProcessLifecycle,
@@ -93,6 +94,7 @@ try {
     backendFactory: (c, a) => registry.create(c, a, { root }),
   }));
   runtime.media = new MediaStore(path.join(root, "media"));
+  runtime.framework = new FrameworkKnowledge();
   runtime.files = new FileStore(path.join(root, "files"));
   runtime.voices = new VoiceStore(path.join(root, "voices"));
   runtime.lifecycle = new Lifecycle(root);

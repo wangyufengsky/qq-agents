@@ -46,3 +46,9 @@ node scripts/robots.mjs qq-stop --data /absolute/private/bridge-data
 ## DSH 预设热更新
 
 DSH 保留已有会话对应的预设版本。压缩引擎与 `/compact` 必须放入同一个 `cordis:group`，使用 `isolate.compaction: true` 为每个版本分配独立作用域。使用固定的字符串隔离名称会让新旧版本重复注册 `compaction`，导致新会话被拒绝。更新 bundle 后必须实际创建新会话，并在有旧会话存活时再次热加载验证。现有历史不需要删除。
+
+## 框架版本清单
+
+源码运行时，框架从当前仓库读取 commit 并检查修改状态。发布快照不带 `.git` 时，在快照根目录运行 `node scripts/framework-build.mjs --commit <完整提交SHA>` 生成 `framework-build.json`，再启动应用。打包方须使用该提交的真实代码；脚本记录 src、vendor、public、scripts、docs 和依赖锁文件等运行资料的构建摘要，运行时验证摘要后才使用清单中的 commit。没有可验证清单或源码仓库时明确报告版本未知，不从父目录仓库推断版本。清单不包含配置、路径或密钥，不要手写虚假的提交号。
+
+每次启动保存框架资料快照，运行期间修改源码不会冒充已重新部署。应用更新后应重启，使运行代码、工具目录和说明同步。

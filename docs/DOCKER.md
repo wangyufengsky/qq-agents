@@ -210,3 +210,5 @@ docker compose start qq-agents
 ```
 
 卷名前缀取决于 compose 项目名（默认是目录名），用 `docker volume ls` 确认。备份文件里有令牌和全部聊天记录，按私密数据保管。
+
+镜像自带框架说明和源码，AI 无需网络即可用 `framework_read` 查阅。构建发布版本时可传 `--build-arg SOURCE_COMMIT=<本次构建代码的完整提交SHA>` 生成版本清单；没有该参数时如实报告 commit 未知，不把 GitHub 最新版当作镜像版本。

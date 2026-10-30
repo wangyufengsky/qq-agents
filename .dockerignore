@@ -14,8 +14,8 @@ instances
 coverage
 test
 examples
-docs
-scripts
+scripts/*
+!scripts/framework-build.mjs
 *.log
 *.sqlite*
 *.db*

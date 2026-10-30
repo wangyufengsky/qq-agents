@@ -178,6 +178,14 @@ test("an untouched role editor saves the role exactly as stored", async () => {
   }
 });
 
+test("built-in framework readers are shown as capabilities without misleading switches", async () => {
+  const run = editor(await sampleConfig());
+  const html = run("agentForm.toolGroupsMarkup(config.agents[0])");
+  assert.match(html, /内建只读能力/);
+  for (const name of ["framework_read", "deployment_info", "diagnostics_read"])
+    assert.ok(!html.includes(`name="tool:${name}"`));
+});
+
 test("role editor fields keep the saved list and value shapes", async () => {
   const config = await sampleConfig(),
     run = editor(config),
