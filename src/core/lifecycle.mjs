@@ -409,6 +409,16 @@ export class ContextLifecycle {
     ctx.turnId = randomUUID();
     ctx.turnStartedAt = r.now();
     ctx.initialSession = !s.session;
+    // Restore only presentation deduplication when the adapter proves that no
+    // input reached the retained session; keep evidence and permission state.
+    ctx.promptShownBefore = Object.fromEntries(
+      [
+        "personCardsShown",
+        "personItemsShown",
+        "scheduleShown",
+        "moodShown",
+      ].map((key) => [key, s[key]]),
+    );
     ctx.sourceStartSeq =
       m.db
         .prepare("SELECT MAX(seq) AS seq FROM events WHERE agent_id=?")
@@ -717,8 +727,11 @@ export class ContextLifecycle {
         outcome === "failed" &&
         ctx.retainBackendSession &&
         !ctx.controller.signal.aborted
-      )
+      ) {
+        if (ctx.inputNotSubmitted && s.lastTurnId === ctx.turnId)
+          m.setState(ctx.conversation, { ...s, ...ctx.promptShownBefore });
         return;
+      }
       retireSession(
         m,
         ctx.conversation,
