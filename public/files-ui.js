@@ -202,21 +202,12 @@ async function loadFileLibrary(agentId, offset = 0) {
     .querySelectorAll("[data-file]")
     .forEach((button) => {
       button.onclick = () =>
-        action(async () => {
-          const response = await fetch(
-            "/api/files/download?" +
-              new URLSearchParams({ agentId, fileId: button.dataset.file }),
-            { headers: { "x-admin-token": token } },
-          );
-          if (!response.ok) throw Error("文件下载失败");
-          const objectUrl = URL.createObjectURL(await response.blob()),
-            link = document.createElement("a");
-          link.href = objectUrl;
-          link.download = result.items.find(
-            (f) => f.fileId === button.dataset.file,
-          ).name;
-          link.click();
-          setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-        });
+        action(() =>
+          downloadDocument(
+            agentId,
+            button.dataset.file,
+            result.items.find((f) => f.fileId === button.dataset.file).name,
+          ),
+        );
     });
 }

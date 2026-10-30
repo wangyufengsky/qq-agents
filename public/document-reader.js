@@ -20,10 +20,10 @@ function documentInline(text) {
   }
   return html + esc(text.slice(at));
 }
-function documentMarkdown(text) {
+function documentMarkdown(text, { codeFence = false } = {}) {
   const lines = text.split(/\r?\n/),
     out = [];
-  let code = null,
+  let code = codeFence ? [] : null,
     list = null;
   const closeList = () => {
     if (list) {
@@ -155,7 +155,7 @@ async function openDocument(agentId, fileId) {
       <form class="toolbar" data-search><label>查找全文<input name="query" value="${esc(query)}" maxlength="200" placeholder="输入关键词"></label><button>查找</button></form>
       ${query ? `<p class="hint">${data.matches.length}${data.matchesLimited ? "+" : ""} 处匹配${data.matches.length ? "，点击跳转：" : ""}</p><div class="document-matches">${data.matches.map((at, i) => `<button type="button" data-match="${at}">${i + 1}</button>`).join("")}</div>` : ""}
       <p class="hint">${data.offset + (data.text ? 1 : 0)}–${data.offset + data.text.length} / ${data.totalChars} 字符${data.totalChars > data.text.length ? " · 分页显示，段落可能跨页" : ""}</p>
-      <article class="document-content">${!raw && data.format === "markdown" ? documentMarkdown(data.text) : `<pre>${esc(data.text)}</pre>`}</article>
+      <article class="document-content">${!raw && data.format === "markdown" ? documentMarkdown(data.text, data) : `<pre>${esc(data.text)}</pre>`}</article>
       <div class="toolbar"><button type="button" data-previous ${data.offset ? "" : "disabled"}>上一页</button><button type="button" data-next ${data.nextOffset === null ? "disabled" : ""}>下一页</button></div>
       ${data.projects.length ? `<footer><h3>所属项目</h3>${data.projects.map((p) => `<button type="button" data-project="${esc(p.id)}">${esc(p.title)} · ${p.shared ? "共同活动" : "个人项目"}</button>`).join("")}</footer>` : ""}
       <details><summary>文件详情</summary><p class="mono">${esc(fileId)}</p><p>${esc(data.createdAt)}</p></details>`;

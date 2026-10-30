@@ -33,19 +33,33 @@ export function readFileText(files, agentId, fileId, options = {}) {
       start = at + query.length;
     }
   }
-  // Never split a UTF-16 surrogate pair across pages.
+  // Segment by grapheme, so modifiers, flags and joined emoji stay together.
   offset = Math.min(offset, text.length);
-  const from =
-    offset > 0 && /[\uDC00-\uDFFF]/.test(text[offset] || "")
-      ? offset - 1
-      : offset;
+  const graphemes = new Intl.Segmenter("und", {
+    granularity: "grapheme",
+  }).segment(text);
+  let from = offset < text.length ? graphemes.containing(offset).index : offset;
+  const markdown = /\.md$/i.test(meta.name);
+  const fenceLine = (at) => {
+    const start = text.lastIndexOf("\n", Math.max(0, at - 1)) + 1;
+    return /^[ \t]*```/.test(text.slice(start, start + 100)) ? start : at;
+  };
+  if (markdown) from = fenceLine(from);
   let end = Math.min(text.length, from + maxChars);
-  if (end < text.length && /[\uDC00-\uDFFF]/.test(text[end])) end--;
+  if (end < text.length) end = graphemes.containing(end).index;
+  if (markdown && end < text.length) end = Math.max(from, fenceLine(end));
+  if (end === from && from < text.length)
+    throw Error("FILE_TEXT_CLUSTER_TOO_LONG");
+  // A paged Markdown reader must know whether the page starts inside a code
+  // block. This is rendering context, never an instruction or a model read.
+  const prefix = text.slice(0, from);
+  const codeFence = (prefix.match(/^[ \t]*```.*$/gm) || []).length % 2 === 1;
   return {
     fileId: meta.fileId,
     name: meta.name,
     createdAt: meta.createdAt,
-    format: /\.md$/i.test(meta.name) ? "markdown" : "text",
+    format: markdown ? "markdown" : "text",
+    codeFence,
     text: text.slice(from, end),
     offset: from,
     totalChars: text.length,

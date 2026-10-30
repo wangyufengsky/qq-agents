@@ -31,7 +31,8 @@ async function setup(t) {
 }
 test("administrator reads immutable UTF-8 pages, searches the whole file, and follows project links", async (t) => {
   const f = await setup(t);
-  const text = "字".repeat(511) + "🐟" + "后文".repeat(600) + "最后的关键词";
+  const text =
+    "字".repeat(511) + "🐟👍🏽👨‍👩‍👧‍👦🇨🇳" + "后文".repeat(600) + "最后的关键词";
   const file = f.put("story.md", text);
   const p = f.store
     .bind("agent-0")
@@ -69,6 +70,24 @@ test("administrator reads immutable UTF-8 pages, searches the whole file, and fo
   assert.ok(
     !(await f.request(`/api/project/files?agentId=agent-1&id=${p.id}`)).ok,
   );
+});
+test("Markdown code context survives page boundaries and search jumps", async (t) => {
+  const f = await setup(t);
+  const text = "```js\n" + "code\n".repeat(180) + "```\n# prose";
+  const file = f.put("code.md", text);
+  const read = async (offset) =>
+    (
+      await f.request(
+        `/api/files/read?agentId=agent-0&fileId=${file.fileId}&offset=${offset}&maxChars=512`,
+      )
+    ).json();
+  const first = await read(0);
+  assert.equal(first.codeFence, false);
+  assert.equal((await read(first.nextOffset)).codeFence, true);
+  assert.equal((await read(text.indexOf("# prose"))).codeFence, false);
+  const fence = await read(text.lastIndexOf("```") + 1);
+  assert.ok(fence.text.startsWith("```"));
+  assert.equal(fence.codeFence, true);
 });
 test("preview rejects binary, invalid UTF-8, unsafe paging and modified file bytes", async (t) => {
   const f = await setup(t);
@@ -141,4 +160,13 @@ test("Markdown renders common documents without interpreting source HTML or load
   assert.ok(!/<script|<img|href="javascript:|href="[^"]*"onclick=/.test(html));
   assert.match(html, /rel="noopener noreferrer"/);
   assert.match(html, /&lt;script&gt;/);
+  sandbox.input = "# still code\n```\n# Back to prose";
+  const continuation = vm.runInContext(
+    "documentMarkdown(input, {codeFence:true})",
+    sandbox,
+  );
+  assert.match(
+    continuation,
+    /<pre><code># still code<\/code><\/pre><h1>Back to prose<\/h1>/,
+  );
 });

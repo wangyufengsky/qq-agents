@@ -143,6 +143,9 @@ async function api(url, data, method) {
         CONFIG_SAVE_FAILED:
           "配置保存失败，当前配置和回合保持原状。请检查最近错误中的磁盘诊断。",
         CONFIG_CONFLICT: "配置已变化，请刷新页面后重新核对修改。",
+        FILE_NOT_TEXT: "此文件不支持在线文本阅读，请下载到本机查看。",
+        FILE_READ_RANGE_INVALID: "阅读范围无效，请重新打开文件。",
+        FILE_TEXT_CLUSTER_TOO_LONG: "此段文字超出单页范围，请下载全文查看。",
         FILE_METADATA_CORRUPT: "文件元数据损坏，请在文件库中查看并修复。",
         FILE_METADATA_MISSING:
           "文件内容仍存在但元数据缺失，请先修复，不能直接重传覆盖。",
