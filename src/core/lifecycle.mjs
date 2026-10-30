@@ -15,6 +15,7 @@ import { rememberSources, sourceHandoff } from "./context-handoff.mjs";
 import { chatRecall } from "./chat-recall.mjs";
 import {
   chatHistory,
+  chatPersonCards,
   chatHandoff,
   chatStatus,
   wakeBackground,
@@ -522,7 +523,7 @@ export class ContextLifecycle {
       mood.line,
       // Last, closest to the reply, where an address is most likely heeded.
       people?.cards.length
-        ? `人物卡（你自己记下的称呼与印象，是看法不是事实；称呼按 call，过时就用 person_note 更新）：${JSON.stringify(people.cards)}`
+        ? `人物卡（你自己记下的称呼与印象，是看法不是事实；称呼按 call。来源和版本用 person_notes 按 personId 回查，更新前先读当前版本，再用 person_note 保存）：${JSON.stringify(chatPersonCards(people.cards))}`
         : "",
       between?.items.length
         ? `你和这些人之间还没了结的事（你自己用 person_item 记下的）：boundary 是对方的相处边界，照着调整；promise 是你答应对方的事，做到了就回来交代，做不成就坦白，交代后用 person_item 关掉；shared 是一起经历过的事，合适时自然接回来，不必硬提。fromPrivate 的记在别的私聊里，只用来调整你自己的做法，不要在这里提起内容。${JSON.stringify({ items: between.items, ...(Object.keys(between.more).length ? { more: between.more } : {}) })}`

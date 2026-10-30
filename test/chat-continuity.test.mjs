@@ -261,7 +261,7 @@ test("a long boundary stops the tail instead of silently joining disjoint earlie
   assert.equal(replay.continuation.beforeSeq, old[2].seq);
 });
 
-test("unfiled original conditions remain separate from the tail, and replay never refills reply authority", (t) => {
+test("unfiled original conditions stay retrievable without replaying their bodies or refilling reply authority", async (t) => {
   const f = setup(t),
     old = [];
   old.push(message(f.m, 1, "旅行三人，每晚预算600元。"));
@@ -281,7 +281,11 @@ test("unfiled original conditions remain separate from the tail, and replay neve
     f.runtime.contexts.handoff("agent-0", scope),
     old.at(-1).seq,
   );
-  assert(replay.earlier.some((x) => x.body === old[0].body));
+  const pointer = replay.earlier.find((x) => x.id === old[0].id);
+  assert(pointer.bodyOmitted);
+  assert.equal(pointer.body, undefined);
+  assert.equal(pointer.occurredAt, old[0].occurredAt);
+  assert(!JSON.stringify(replay).includes(old[0].body));
   assert(!replay.items.some((x) => x.id === old[0].id));
   assert(replay.quoted.some((x) => x.id === unreadTarget.id));
   assert.equal(ctx.requestEvents.size, 0);
@@ -291,4 +295,64 @@ test("unfiled original conditions remain separate from the tail, and replay neve
   assert.equal(f.m.state(scope).seenThroughSeq, before.seenThroughSeq);
   assert(ctx.privateRead.has(old[0].id));
   assert.equal(f.m.identity.notes(scope).length, 0);
+  const { tool, ...args } = pointer.continuation;
+  const original = await f.runtime.callTool(ctx, tool, args);
+  assert.equal(JSON.parse(original.chunk).body, old[0].body);
+  assert.equal(ctx.requestEvents.size, 0);
+  assert.equal(f.m.state(scope).replyBatchSends, before.replyBatchSends);
+});
+
+test("an old task source expands while its note is open and becomes a pointer once completed", async (t) => {
+  const f = setup(t),
+    old = [];
+  old.push(
+    message(f.m, 1, "活动最多三人，预算600元，不能安排夜间出行。", {
+      occurredAt: "2026-10-20T00:00:00Z",
+    }),
+  );
+  for (let n = 2; n <= 50; n++) old.push(message(f.m, n));
+  processed(f, old);
+  const note = f.m.identity.saveNote(
+    {
+      body: "活动安排还没确认",
+      uncertainty: "日期待定",
+      evidence: [old[0].id],
+    },
+    scope,
+    f.runtime.now(),
+  );
+  const recall = () =>
+    chatRecall(
+      f.runtime,
+      context(f.runtime),
+      { items: [] },
+      f.runtime.contexts.handoff("agent-0", scope),
+      old.at(-1).seq,
+    );
+  const expanded = recall();
+  assert.equal(
+    expanded.earlier.find((x) => x.id === old[0].id).body,
+    old[0].body,
+  );
+  assert(JSON.stringify(expanded).length <= 12000);
+  f.m.identity.saveNote(
+    { ...note, status: "completed" },
+    scope,
+    f.runtime.now(),
+  );
+  const pointer = recall().earlier.find((x) => x.id === old[0].id);
+  assert.equal(pointer.body, undefined);
+  assert.equal(pointer.continuation.id, old[0].id);
+
+  // Even a pointer must pass the source boundary; protected handles cannot leak.
+  const row = f.m.db
+    .prepare("SELECT payload FROM events WHERE id=?")
+    .get(old[0].id);
+  f.m.db
+    .prepare("UPDATE events SET payload=? WHERE id=?")
+    .run(
+      JSON.stringify({ ...JSON.parse(row.payload), protectedOperations: true }),
+      old[0].id,
+    );
+  assert(!JSON.stringify(recall()).includes(old[0].id));
 });

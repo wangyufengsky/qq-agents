@@ -128,3 +128,63 @@ test("scheduled instructions remain distinct from optional wake background", asy
   assert.match(prompt, /唤醒背景.*不是待发送台词.*可以聊聊读书/);
   assert(prompt.indexOf("本轮定时任务") > prompt.indexOf("新增消息："));
 });
+
+test("fresh chat notes keep full meaning and missing-source warnings with pageable evidence on demand", async (t) => {
+  const f = setup(t);
+  const source = message(f.m, 1),
+    removed = message(f.m, 2);
+  const save = (body, extra = {}) =>
+    f.m.identity.saveNote(
+      {
+        body,
+        uncertainty: "只是暂定，仍需对方确认",
+        evidence: [source.id],
+        ...extra,
+      },
+      scope,
+      f.runtime.now(),
+    );
+  for (let n = 0; n < 8; n++) save(`未完成约定 ${n}`);
+  save("已完成的事", { status: "completed" });
+  const note = save("保持原始要求，不省略任何条件。".repeat(60), {
+    evidence: [source.id, removed.id],
+  });
+  f.m.db.prepare("DELETE FROM events WHERE id=?").run(removed.id);
+  const before = f.m.identity.notes(scope);
+  await f.runtime.wake("agent-0", scope);
+  const brief = section(f.prompts[0], "程序交接状态：");
+  const shown = brief.notes.find((x) => x.id === note.id);
+  assert.equal(shown.body, note.body);
+  assert.equal(shown.uncertainty, note.uncertainty);
+  assert.equal(shown.writtenAt, new Date(note.writtenAt).toISOString());
+  assert.match(shown.sourceWarning, /1 条原始来源已不可用/);
+  for (const key of [
+    "evidence",
+    "sources",
+    "status",
+    "epistemic",
+    "conversation",
+  ])
+    assert.equal(key in shown, false);
+  assert.match(brief.notesNotice, /未完成.*工作解释.*不是事件发生时间/);
+  assert.equal(brief.notesOverflow, 1);
+  assert(!JSON.stringify(brief.notes).includes("已完成的事"));
+  const { tool, ...args } = brief.notesContinuation;
+  const page = await f.runtime.callTool(context(f.runtime), tool, args);
+  assert.deepEqual(page.items[0].evidence, note.evidence);
+  assert.equal(page.items[0].sources[1].available, false);
+  const next = await f.runtime.callTool(context(f.runtime), tool, {
+    offset: page.nextOffset,
+  });
+  assert.equal(page.items.length + next.items.length, 9);
+  assert.equal(next.nextOffset, null);
+  assert.deepEqual(
+    f.runtime.contexts.handoff("agent-0", scope).notes,
+    before.slice(0, 8),
+  );
+  assert.deepEqual(f.m.identity.notes(scope), before);
+
+  f.runtime.contexts.retire("agent-0", scope, "test");
+  await f.runtime.wake("agent-0", scope);
+  assert.deepEqual(section(f.prompts[1], "程序交接状态：").notes, brief.notes);
+});
