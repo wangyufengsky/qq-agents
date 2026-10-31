@@ -928,7 +928,7 @@ export class NodeApiClient extends AbstractApiClient {
           if (msg.error?.code === 'session/not-found') this._desiredFollows.delete(sessionId);
           enqueue({
             kind: 'frame',
-            envelope: { rpcId: msg.streamId, payload: { type: 'stream/error', error: msg.error } }
+            envelope: { rpcId: msg.streamId, payload: { type: 'stream/error', sessionId, error: msg.error } }
           });
           if (msg.error?.code !== 'session/not-found') endStream();
         }

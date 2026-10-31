@@ -295,6 +295,41 @@ const sessionStates = {
 };
 const sessionTones = { active: "ok", retired: "off" };
 // Free time first, then the chats as the server lists them.
+const retirementSources = {
+  configuration: "配置变更",
+  "global-pause": "全局暂停",
+  "agent-pause": "角色暂停",
+  "conversation-pause": "聊天暂停",
+  "administrator-cancel": "管理员取消",
+  "administrator-reset": "手动结束会话",
+  "connection-disconnect": "QQ 连接断开",
+  "service-stop": "服务停止",
+  "turn-timeout": "回合超时",
+  backend: "模型后端",
+  lifecycle: "会话生命周期",
+  "process-recovery": "进程中断恢复",
+  "protected-work": "受保护工作边界",
+};
+const inputStages = {
+  "not-submitted": "尚未提交输入",
+  "submission-attempted": "已尝试提交输入",
+  accepted: "后端已确认输入",
+  unknown: "未记录输入阶段",
+};
+function retiredSessionsMarkup(retired) {
+  if (!retired?.length) return "";
+  return mindFold(
+    "retired-sessions",
+    "最近会话更替",
+    retired
+      .map((row) => {
+        const details = row.details;
+        return `<article class="mind-row"><div class="mind-row-head"><strong>${esc(row.conversation === "@subject" ? "空闲时间" : conversationLabel(row.conversation))}</strong>${mindAt(row.at)}</div>${mindClip("原因：" + row.reason, 1)}${mindClip("原会话：" + (row.session?.id || "未记录"), 1)}<p class="mind-meta">${esc(details ? (retirementSources[details.source] || details.source) + " · " + (inputStages[details.inputStage] || inputStages.unknown) : "升级前记录，未记录触发来源")}</p>${details?.changes?.length ? mindClip("变更项：" + details.changes.join("、"), 1) : ""}</article>`;
+      })
+      .join(""),
+    { summary: esc(`${retired.length} 条记录`) },
+  );
+}
 function sessionsMarkup(a, data) {
   const sessions = [...data.sessions].sort(
     (x, y) => (y.conversation === "@subject") - (x.conversation === "@subject"),
@@ -314,7 +349,7 @@ function sessionsMarkup(a, data) {
   return mindPage(
     "工作会话",
     sessions.length ? `共 ${sessions.length} 个` : "",
-    rows,
+    rows + retiredSessionsMarkup(data.retired),
     "还没有工作会话。",
     "每个聊天和空闲时间各有一个模型会话；结束后下一回合重新初始化，聊天记录和记忆都保留。",
   );

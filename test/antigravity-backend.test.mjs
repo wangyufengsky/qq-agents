@@ -619,3 +619,101 @@ test("compact parameter guides retain a description argument and all structural 
   assert.equal(schema.description, "documentation");
   assert.equal(schema.properties.description.description, "field prose");
 });
+
+test("a failed spawn preserves the completed native session and its scope binding", async (t) => {
+  const f = setup(t);
+  await f.backend.run(f.params);
+  const session = f.sessions.at(-1),
+    spawn = f.backend.spawn;
+  f.backend.spawn = () => {
+    throw Error("SYNTHETIC_SPAWN_FAILURE");
+  };
+  await assert.rejects(
+    f.backend.run({ ...f.params, session, instructions: undefined }),
+    /SYNTHETIC_SPAWN_FAILURE/,
+  );
+  assert.equal(f.sessions.at(-1).id, session.id);
+  f.backend.spawn = spawn;
+  await f.backend.run({ ...f.params, session, instructions: undefined });
+  assert.equal(f.sessions.at(-1).id, session.id);
+  assert.equal(f.launches.length, 2);
+});
+
+test("Antigravity resumes a proven compatible binding and refreshes optional argument guidance", async (t) => {
+  const { backend, params, sessions, launches } = setup(t, "usage");
+  const tools = [
+    {
+      name: "probe",
+      inputSchema: {
+        type: "object",
+        properties: {},
+        additionalProperties: false,
+      },
+    },
+  ];
+  await backend.run({ ...params, tools });
+  const original = sessions.at(-1),
+    next = structuredClone(tools);
+  next[0].inputSchema.properties.optional = { type: "string" };
+  const binding = JSON.parse(
+    fs.readFileSync(path.join(launches[0].options.cwd, "session.json"), "utf8"),
+  );
+  assert.equal(backend.acceptsSession(original, next, binding.contract), true);
+  const migrated = { ...original, signature: backend.sessionSignature(next) };
+  await backend.run({
+    ...params,
+    tools: next,
+    session: migrated,
+    instructions: undefined,
+  });
+  assert.equal(sessions.at(-1).id, original.id);
+  const guide = fs.readFileSync(
+    path.join(launches[1].options.cwd, ".agents", "agents", "qq-agents.md"),
+    "utf8",
+  );
+  assert(guide.includes(params.instructions));
+  assert(guide.includes('"optional":{"type":"string"}'));
+  const changed = structuredClone(next);
+  changed[0].inputSchema.required = ["optional"];
+  await assert.rejects(
+    backend.run({
+      ...params,
+      tools: changed,
+      session: { ...original, signature: backend.sessionSignature(changed) },
+    }),
+    /ANTIGRAVITY_SESSION_UNAVAILABLE/,
+  );
+  assert.equal(launches.length, 2);
+});
+
+test("Antigravity consumes a verified legacy binding after compatible request settings change", async (t) => {
+  const { backend, params, sessions, launches } = setup(t, "usage");
+  await backend.run(params);
+  const { legacySessionSignature } =
+    await import("../src/backends/session-contract.mjs");
+  const { upgradeSessionReference, sessionReference } =
+    await import("../src/core/session-records.mjs");
+  const old = {
+    ...sessions.at(-1),
+    signature: legacySessionSignature(backend, params.tools),
+  };
+  fs.writeFileSync(
+    path.join(launches[0].options.cwd, "session.json"),
+    JSON.stringify({ id: old.id, signature: old.signature }),
+  );
+  assert(backend.acceptsSession(old, params.tools));
+  const migrated = sessionReference(
+    upgradeSessionReference(old, backend.sessionSignature(params.tools)),
+  );
+  backend.config.effort = "high";
+  assert(backend.acceptsSession(migrated, params.tools));
+  await backend.run({ ...params, session: migrated, instructions: undefined });
+  assert.equal(sessions.at(-1).id, old.id);
+  assert.equal(sessions.at(-1).nativeSignature, undefined);
+  assert.equal(
+    JSON.parse(
+      fs.readFileSync(path.join(launches[1].options.cwd, "session.json")),
+    ).signature,
+    backend.sessionSignature(params.tools),
+  );
+});

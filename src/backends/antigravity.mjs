@@ -8,8 +8,17 @@ import crossSpawn from "cross-spawn";
 import { execFileSync } from "node:child_process";
 import { buildChildEnv } from "../core/child-env.mjs";
 import { ExternalTools } from "./external.mjs";
-import { assertSession, sessionSignature } from "./session-contract.mjs";
-import { BackendTurnFailure } from "./turn-failure.mjs";
+import {
+  assertSession,
+  sessionSignature,
+  acceptsSession,
+  sessionContract,
+  toolSchema as antigravitySchemaContract,
+} from "./session-contract.mjs";
+import {
+  BackendTurnFailure,
+  SessionPreparationFailure,
+} from "./turn-failure.mjs";
 import { mcpResult } from "../tools/index.mjs";
 import { AntigravityMedia } from "./antigravity-media.mjs";
 import { safeToolFailure } from "../tools/errors.mjs";
@@ -32,35 +41,7 @@ function responseOccupancy(usage) {
     ? tokens
     : null;
 }
-/** The MCP catalogue retains full descriptions. The repeated parameter guide only
- * needs structural constraints; do not drop a property literally named description.
- * @param {any} schema @returns {any} */
-export function antigravitySchemaContract(schema) {
-  if (!schema || typeof schema !== "object" || Array.isArray(schema))
-    return schema;
-  const { description: _description, ...result } = schema;
-  for (const key of ["properties", "$defs", "definitions", "patternProperties"])
-    if (result[key])
-      result[key] = Object.fromEntries(
-        Object.entries(result[key]).map(([name, value]) => [
-          name,
-          antigravitySchemaContract(value),
-        ]),
-      );
-  for (const key of [
-    "items",
-    "additionalProperties",
-    "not",
-    "if",
-    "then",
-    "else",
-  ])
-    if (result[key]) result[key] = antigravitySchemaContract(result[key]);
-  for (const key of ["anyOf", "oneOf", "allOf", "prefixItems"])
-    if (Array.isArray(result[key]))
-      result[key] = result[key].map(antigravitySchemaContract);
-  return result;
-}
+export { antigravitySchemaContract };
 /** @type {WeakSet<import("node:child_process").ChildProcess>} */
 const terminatedGroups = new WeakSet();
 function isolatedEnv() {
@@ -225,8 +206,9 @@ export class AntigravityBackend {
     agent,
     { root, spawn = crossSpawn, stop = stopTree } = {},
   ) {
-    this.config = config;
+    this.config = { ...config, type: /** @type {const} */ ("antigravity") };
     this.agent = agent;
+    this.sessionProtocol = "antigravity-tools-v3";
     this.spawn = spawn;
     this.stop = stop;
     this.root = privateDirectory(
@@ -243,7 +225,11 @@ export class AntigravityBackend {
   sessionSignature(tools) {
     // Native sessions retain their old prompt and native tool contract. Hand off
     // once to install the turn-scoped image reader instead of arbitrary file access.
-    return "antigravity-tools-v3:" + sessionSignature(this, tools);
+    return sessionSignature(this, tools);
+  }
+  /** @param {import("./session-contract.mjs").StoredSession | null | undefined} session @param {import("./session-contract.mjs").ToolSpec[]} tools @param {import("./session-contract.mjs").SessionContract} [previous] */
+  acceptsSession(session, tools, previous) {
+    return acceptsSession(this, session, tools, previous);
   }
   profileArgs() {
     return ["--gemini_dir", this.profile, "--app_data_dir", "cli"];
@@ -411,7 +397,19 @@ export class AntigravityBackend {
         !fs.existsSync(file) ||
         fs.lstatSync(file).isSymbolicLink() ||
         bound?.id !== params.session.id ||
-        bound?.signature !== signature
+        (!(
+          params.session.nativeSignature &&
+          bound?.signature === params.session.nativeSignature
+        ) &&
+          !this.acceptsSession(
+            {
+              backend: "antigravity",
+              id: bound?.id,
+              signature: bound?.signature,
+            },
+            params.tools,
+            bound?.contract,
+          ))
       ) {
         params.saveSession(null);
         throw Error("ANTIGRAVITY_SESSION_UNAVAILABLE");
@@ -491,6 +489,7 @@ export class AntigravityBackend {
     /** @type {NodeJS.Timeout | undefined} */
     let force;
     let cancelled = false;
+    let inputSubmitted = false;
     const abort = () => {
       if (cancelled) return;
       cancelled = true;
@@ -552,6 +551,30 @@ export class AntigravityBackend {
           agentFile,
           `---\nname: qq-agents\ndescription: QQ Agents restricted role\nmainAgent: true\nsubagent: false\ntools:\n  - finish\n  - view_file\nenable_mcp_tools: true\ncommandExecutionPolicy: off\n---\n${params.instructions || ""}\n\nUse the qq-agents MCP tools for actions. Call call_mcp_tool with ServerName="qq-agents", ToolName equal to an allowed name, and Arguments matching that tool's JSON schema below. Do not guess parameter names or read framework source to discover arguments. The current chat and authorization are bound by the bridge; never add target, chatId or context fields unless the schema requires them. Ordinary assistant text is never delivered to QQ. Only native view_file on the exact image paths returned by an authorized tool in the CURRENT turn is allowed. Always call view_file before describing those pixels; MCP path text is not visual evidence. Never read other files or reuse a previous turn image path; request the original bridge tool again. No native task, filesystem writes, shell, browser, scheduling or subagent actions are authorized.\n\nAllowed tool argument schemas keyed by ToolName (required fields and additionalProperties are binding):\n${JSON.stringify(Object.fromEntries(params.tools.map(({ name, inputSchema }) => [name, antigravitySchemaContract(inputSchema)])))}\n`,
         );
+      else {
+        // Preserve the role instructions while refreshing compatible optional fields.
+        if (fs.lstatSync(agentFile).isSymbolicLink())
+          throw Error("ANTIGRAVITY_WORKSPACE_UNSAFE");
+        const previous = fs.readFileSync(agentFile, "utf8");
+        const marker =
+          "\n\nAllowed tool argument schemas keyed by ToolName (required fields and additionalProperties are binding):\n";
+        const offset = previous.lastIndexOf(marker);
+        if (offset < 0) throw Error("ANTIGRAVITY_WORKSPACE_UNSAFE");
+        managedFile(
+          agentFile,
+          previous.slice(0, offset) +
+            marker +
+            JSON.stringify(
+              Object.fromEntries(
+                params.tools.map(({ name, inputSchema }) => [
+                  name,
+                  antigravitySchemaContract(inputSchema),
+                ]),
+              ),
+            ) +
+            "\n",
+        );
+      }
       const settings = path.join(workspace, "settings.json");
       managedFile(
         settings,
@@ -641,7 +664,11 @@ export class AntigravityBackend {
               if (live && !cancelled && !params.signal.aborted) {
                 managedFile(
                   binding,
-                  JSON.stringify({ id: event.conversation_id, signature }),
+                  JSON.stringify({
+                    id: event.conversation_id,
+                    signature,
+                    contract: sessionContract(this, params.tools),
+                  }),
                 );
                 params.saveSession({
                   backend: "antigravity",
@@ -696,6 +723,8 @@ export class AntigravityBackend {
       });
       // Prompts and credentials never appear in process arguments. EOF ends this
       // turn's process after its result; subsequent turns explicitly resume by ID.
+      inputSubmitted = true;
+      params.onInputSubmitted?.();
       child.stdin?.end(
         JSON.stringify({ event: "user", message: { content: params.prompt } }) +
           "\n",
@@ -716,6 +745,13 @@ export class AntigravityBackend {
             "Antigravity latest completed agent_response input_tokens + cache_read_tokens + output_tokens; excludes cumulative result and auxiliary steps",
         });
     } catch (error) {
+      if (
+        params.session &&
+        !params.signal.aborted &&
+        error instanceof Error &&
+        (!inputSubmitted || !child?.pid)
+      )
+        throw new SessionPreparationFailure(error);
       if (fs.existsSync(binding)) managedFile(binding, "{}\n");
       params.saveSession(null);
       throw error;

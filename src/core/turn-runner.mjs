@@ -10,6 +10,7 @@ import { isConnectionFailure } from "./backend-connections.mjs";
 import {
   saveSession,
   recordBackendTurn,
+  recordInputSubmission,
   retireSession,
 } from "./session-records.mjs";
 
@@ -72,7 +73,7 @@ export class TurnRunner {
       if (controller.signal.aborted) return;
       runtime.faults.set(agentId, "BACKEND_TURN_TIMEOUT");
       ctx.timedOut = true;
-      controller.abort();
+      runtime.abortContext(ctx, "turn-timeout");
     }, a.behavior.turnTimeoutMs);
     let outcome = "completed-no-send",
       backend;
@@ -111,6 +112,8 @@ export class TurnRunner {
           }),
         onBackendTurn: (reference) =>
           !runtime.stopped && recordBackendTurn(mem, ctx.turnId, reference),
+        onInputSubmitted: () =>
+          !runtime.stopped && recordInputSubmission(mem, ctx.turnId),
         onImageSession: (id) =>
           !runtime.stopped && runtime.generatedImages.begin(ctx, id),
         onGeneratedImage: (id, item) =>
@@ -256,6 +259,15 @@ export class TurnRunner {
                 { ...failure, attempt, at: runtime.now() },
               ],
             });
+          // Adapters may archive before throwing their classified failure.
+          const archived =
+            turn?.sessionHistoryId &&
+            mem.identity.get("session_history", turn.sessionHistoryId);
+          if (archived?.reason === "backend-failure")
+            mem.identity.put("session_history", {
+              ...archived,
+              details: { ...archived.details, backendFailure: failure },
+            });
         },
         onRecovery: (error, attempt) => {
           runtime.assertActive(ctx);
@@ -277,6 +289,11 @@ export class TurnRunner {
       // A continuation can fail before its own input, after the original
       // prompt was already submitted. Its display markers must stay committed.
       ctx.inputNotSubmitted = sessionWasUnchanged(error) && !recoveryStarted;
+      if (ctx.inputNotSubmitted)
+        mem.identity.put("model_turns", {
+          ...mem.identity.get("model_turns", ctx.turnId),
+          inputStage: "not-submitted",
+        });
       ctx.retainBackendSession =
         (failureSummary(error)?.sessionReusable === true ||
           sessionWasUnchanged(error)) &&

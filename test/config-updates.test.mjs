@@ -587,7 +587,7 @@ test("unaffected agents can run and send while another agent's resources are sti
     },
   });
   const next = structuredClone(f.runtime.config);
-  next.agents[0].persona = "Changed identity";
+  next.agents[0].appearance = "Changed identity";
   const saving = f.runtime.changeConfig(next, f.configStore.revision);
   await started.promise;
   try {
@@ -625,8 +625,7 @@ for (const change of ["connection", "backend", "rebind", "remove"])
       f.runtime.transports.get(c.id),
     );
     const next = structuredClone(f.runtime.config);
-    if (change === "connection")
-      next.connections[0].httpUrl = "http://127.0.0.1:10";
+    if (change === "connection") next.connections[0].accountId = "10009";
     if (change === "backend") next.backends[0].model = "synthetic-model";
     if (change === "rebind") next.agents[0].backendId = "other-backend";
     if (change === "remove") next.agents.splice(0, 1);

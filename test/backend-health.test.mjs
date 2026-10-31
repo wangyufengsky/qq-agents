@@ -41,7 +41,13 @@ test("changing automatic recovery does not discard a valid session contract", ()
   next.recovery.autoReconnect = true;
   assert.equal(sessionSignature({ config: next }), initial);
   next.recovery.dshInstance = "relay:web";
-  assert.notEqual(sessionSignature({ config: next }), initial);
+  assert.equal(sessionSignature({ config: next }), initial);
+  cfg.type = "dsh";
+  next.type = "dsh";
+  assert.notEqual(
+    sessionSignature({ config: next }),
+    sessionSignature({ config: cfg }),
+  );
 });
 test("late exit and output from an old Codex child cannot disconnect its replacement", async () => {
   const children = [];
@@ -102,4 +108,47 @@ test("DSH health reads grouped provider catalog and verifies configured model av
   assert.equal((await backend.health()).models.length, 1);
   backend.config.model = "missing";
   await assert.rejects(backend.health(), /BACKEND_MODEL_UNAVAILABLE/);
+});
+
+test("Codex RPC retains protocol codes needed to distinguish temporary resume rejection", async () => {
+  const rpc = new CodexRpc({
+    spawnProcess: () => {
+      const child = new EventEmitter();
+      child.stdout = new PassThrough();
+      child.stderr = new PassThrough();
+      child.kill = () => true;
+      child.stdin = new Writable({
+        write(chunk, encoding, done) {
+          const request = JSON.parse(String(chunk));
+          if (request.id !== undefined)
+            queueMicrotask(() =>
+              child.stdout.write(
+                JSON.stringify({
+                  id: request.id,
+                  ...(request.method === "thread/resume"
+                    ? {
+                        error: {
+                          code: -32600,
+                          message: `thread ${request.params.threadId} is closing; retry thread/resume after the thread is closed`,
+                        },
+                      }
+                    : { result: {} }),
+                }) + "\n",
+              ),
+            );
+          done();
+        },
+      });
+      return child;
+    },
+  });
+  try {
+    await rpc.start();
+    await assert.rejects(
+      rpc.request("thread/resume", { threadId: "synthetic-thread" }),
+      (error) => error.rpcRejected === true && error.rpcCode === -32600,
+    );
+  } finally {
+    rpc.close();
+  }
 });

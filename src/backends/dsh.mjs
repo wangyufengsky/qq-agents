@@ -9,7 +9,11 @@ import {
   assertSession,
   acceptsSession,
 } from "./session-contract.mjs";
-import { beforeSessionInput } from "./turn-failure.mjs";
+import {
+  beforeSessionInput,
+  sessionWasUnchanged,
+  SessionUnavailableFailure,
+} from "./turn-failure.mjs";
 import { dshTurnFailure, BackendTurnFailure } from "./turn-failure.mjs";
 
 /**
@@ -55,7 +59,7 @@ export class DshBackend {
     agent,
     { root, client, discover = resolveDshInstance } = {},
   ) {
-    this.config = config;
+    this.config = { ...config, type: /** @type {const} */ ("dsh") };
     this.agent = agent;
     this.root = root;
     this.client = client;
@@ -126,6 +130,15 @@ export class DshBackend {
           const p = frame.payload;
           const t = this.turns.get(p?.sessionId);
           if (!t) continue;
+          if (p.type === "stream/error") {
+            const error =
+              p.error?.code === "session/not-found"
+                ? new SessionUnavailableFailure("DSH_SESSION_UNAVAILABLE")
+                : Error("DSH_STREAM_FAILED");
+            t.followError?.(error);
+            t.reject(error);
+            continue;
+          }
           if (p.type === "session/snapshot") {
             const capacity =
               p.snapshot?.projections?.values?.contextPressure?.contextWindow;
@@ -169,8 +182,10 @@ export class DshBackend {
       } catch {
         reject(Error("DSH_STREAM_FAILED"));
       } finally {
-        for (const t of this.turns.values())
+        for (const t of this.turns.values()) {
+          t.followError?.(Error("DSH_STREAM_ENDED"));
           t.reject(Error("DSH_STREAM_ENDED"));
+        }
         this.streamReady = null;
         this.client = null;
         if (!this.closing)
@@ -193,9 +208,9 @@ export class DshBackend {
   sessionSignature(tools) {
     return sessionSignature(this, tools);
   }
-  /** @param {StoredSession | null | undefined} session @param {import("./session-contract.mjs").ToolSpec[]} tools */
-  acceptsSession(session, tools) {
-    return acceptsSession(this, session, tools);
+  /** @param {StoredSession | null | undefined} session @param {import("./session-contract.mjs").ToolSpec[]} tools @param {import("./session-contract.mjs").SessionContract} [previous] */
+  acceptsSession(session, tools, previous) {
+    return acceptsSession(this, session, tools, previous);
   }
   /** @param {RunParams} params */
   async run({
@@ -208,6 +223,7 @@ export class DshBackend {
     session,
     saveSession,
     onBackendTurn,
+    onInputSubmitted,
     recovery,
   }) {
     const signature = this.sessionSignature(tools);
@@ -250,16 +266,23 @@ export class DshBackend {
       saveSession({ backend: "dsh", id: sessionId, signature });
     }
     if (this.config.model)
-      unwrap(
-        await client.sessions.selectModel({
+      await beforeSessionInput(session, async () => {
+        const result = await client.sessions.selectModel({
           sessionId,
           // Omitted when unset, although the SDK type asks for a string.
           provider: /** @type {string} */ (this.config.provider || undefined),
           model: this.config.model,
           reasoningEffort: this.config.effort,
-        }),
-        "model",
-      );
+        });
+        if (
+          !result.result.ok &&
+          ["session/not-found", "session-not-found"].includes(
+            result.result.error.code,
+          )
+        )
+          throw new SessionUnavailableFailure("DSH_SESSION_UNAVAILABLE");
+        unwrap(result, "model");
+      });
     /** @type {(value?: unknown) => void} */
     let resolve = /** @type {any} */ (undefined);
     /** @type {(reason?: unknown) => void} */
@@ -283,6 +306,7 @@ export class DshBackend {
       reject,
       turn: null,
       followed,
+      followError,
       onUsage,
       onBackendTurn,
     });
@@ -298,12 +322,15 @@ export class DshBackend {
     );
     try {
       if (signal.aborted) throw Error("ABORTED");
-      client.events.follow(sessionId);
-      const snapshot = await followReady;
+      const snapshot = await beforeSessionInput(session, async () => {
+        client.events.follow(sessionId);
+        return await followReady;
+      });
       clearTimeout(followTimer);
       if (signal.aborted) throw Error("ABORTED");
       if (recovery && !dshRecoveryReady(snapshot, recovery))
         throw Error("DSH_RECOVERY_STATE_UNVERIFIED");
+      onInputSubmitted?.();
       unwrap(
         await client.sessions.prompt({
           sessionId,
@@ -332,6 +359,7 @@ export class DshBackend {
             followed = r;
             followError = j;
             this.turns.get(sessionId).followed = r;
+            this.turns.get(sessionId).followError = j;
             client.events.forget?.(sessionId);
             client.events.follow(sessionId);
           });
@@ -342,7 +370,8 @@ export class DshBackend {
           clearTimeout(timer);
         }
       }
-      if (!e.sessionReusable || signal.aborted) saveSession(null);
+      if ((!e.sessionReusable && !sessionWasUnchanged(e)) || signal.aborted)
+        saveSession(null);
       throw e;
     } finally {
       clearTimeout(followTimer);

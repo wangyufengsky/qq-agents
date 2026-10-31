@@ -205,7 +205,7 @@ test("matching legacy contracts migrate in place while changed contracts still r
   memory.setState("group:20000", { ...original, session: legacy });
   await f.runtime.wake("agent-0", "group:20000");
   assert.equal(memory.state("group:20000").session.id, original.session.id);
-  assert.match(memory.state("group:20000").session.signature, /^contract-v3:/);
+  assert.match(memory.state("group:20000").session.signature, /^contract-v4:/);
   assert.equal(memory.identity.list("session_history").length, 0);
   memory.setState("group:20000", {
     ...memory.state("group:20000"),
@@ -312,7 +312,7 @@ test("full tool contracts rebuild with handoff, normalized objects reuse, and ol
   assert.equal((await go(reordered)).initialSession, false);
   assert.equal(rpc.calls.filter((x) => x.method === "thread/start").length, 2);
   await go([{ ...changed[0], description: "description-only-change" }]);
-  assert.equal(rpc.calls.filter((x) => x.method === "thread/start").length, 3);
+  assert.equal(rpc.calls.filter((x) => x.method === "thread/start").length, 2);
   const state = m.state("group:20000");
   m.setState("group:20000", {
     ...state,
@@ -320,7 +320,7 @@ test("full tool contracts rebuild with handoff, normalized objects reuse, and ol
   });
   assert.equal((await go(changed)).initialSession, true);
   assert.equal((await go(changed)).initialSession, false);
-  assert.equal(m.identity.list("session_history").length, 3);
+  assert.equal(m.identity.list("session_history").length, 2);
   assert.equal(m.db.prepare("SELECT COUNT(*) n FROM events").get().n, 1);
   await backend.close();
 });
@@ -508,4 +508,62 @@ test("DSH preset changes load Self and retain task handoff before prompting", as
   assert(calls[1].content[0].text.includes("当前 self"));
   assert.equal(m.identity.list("session_history").length, 1);
   assert.equal(m.identity.list("model_turns")[0].initialSession, true);
+});
+
+test("legacy subject budget migrates without backend calls while unknown fixed instructions stay fenced", async (t) => {
+  const cfg = config(1);
+  cfg.agents[0].subject.enabled = true;
+  cfg.agents[0].subject.sessionMode = "continuous";
+  cfg.agents[0].subject.maxToolCallsPerTurn = 30;
+  const f = fixture(t, { cfg }),
+    rpc = new Rpc(),
+    backend = new CodexBackend(cfg.backends[0], cfg.agents[0], {
+      root: f.root,
+      rpc,
+    });
+  f.runtime.backends.set("agent-0", backend);
+  await f.runtime.wake("agent-0", "@subject");
+  const m = f.store.bind("agent-0"),
+    old = m.state("@subject"),
+    a = f.runtime.agent("agent-0"),
+    self = m.identity.current();
+  const contract = f.runtime.contexts.instructionContract(
+    a,
+    "@subject",
+    self,
+    f.runtime.toolsFor(a, "@subject"),
+  );
+  const { createHash } = await import("node:crypto");
+  const legacyInstructions = contract.instructions.replace(
+    "工具额度以本轮环境为准，subject_log 不计入。",
+    "每次空闲时间最多调用 8 个工具，subject_log 不计入。",
+  );
+  assert.notEqual(legacyInstructions, contract.instructions);
+  m.setState("@subject", {
+    ...old,
+    loadedInstructionsHash: createHash("sha256")
+      .update(legacyInstructions)
+      .digest("hex"),
+  });
+  const before = rpc.calls.length;
+  f.runtime.contexts.upgradeInstructions(a, self);
+  assert.equal(rpc.calls.length, before);
+  assert.equal(m.state("@subject").session.id, old.session.id);
+  assert.equal(
+    m.state("@subject").loadedInstructionsHash,
+    contract.instructionsHash,
+  );
+  await f.runtime.wake("agent-0", "@subject");
+  assert.equal(m.state("@subject").session.id, old.session.id);
+  m.setState("@subject", {
+    ...m.state("@subject"),
+    loadedInstructionsHash: "unknown-instructions",
+  });
+  f.runtime.contexts.upgradeInstructions(a, self);
+  assert.equal(
+    m.state("@subject").loadedInstructionsHash,
+    "unknown-instructions",
+  );
+  await f.runtime.wake("agent-0", "@subject");
+  assert.notEqual(m.state("@subject").session.id, old.session.id);
 });

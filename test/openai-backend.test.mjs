@@ -393,7 +393,7 @@ test("transient failures keep complete steps for one continuation; provider text
   assert.notEqual(p.saved.at(-1), null);
 });
 
-test("authentication, rate limits and context overflow are not retried and retire the session", async (t) => {
+test("authentication and rate limits preserve history without retry; context overflow retires", async (t) => {
   for (const [response, code, category] of [
     [status(401), "unauthorized", "authentication"],
     [
@@ -423,8 +423,9 @@ test("authentication, rate limits and context overflow are not retried and retir
     assert.ok(error instanceof BackendTurnFailure);
     assert.equal(error.code, code);
     assert.equal(error.category, category);
-    assert.equal(error.sessionReusable, false);
-    assert.equal(p.saved.at(-1), null);
+    const reusable = category !== "context-limit";
+    assert.equal(error.sessionReusable, reusable);
+    assert.equal(p.saved.at(-1) === null, !reusable);
     assert.equal(server.requests.length, 1);
   }
 });
@@ -440,7 +441,7 @@ test("missing key, missing model and runaway tool loops fail closed", async (t) 
     },
   );
   const keyError = await noKey.run(params().value).catch((e) => e);
-  assert.equal(keyError.code, "apiKeyEnvMissing");
+  assert.equal(keyError.message, "OPENAI_API_KEY_ENV_MISSING");
   await assert.rejects(noKey.health(), /OPENAI_API_KEY_ENV_MISSING/);
 
   const noModel = new OpenAIBackend(

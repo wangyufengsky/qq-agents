@@ -9,8 +9,13 @@ import {
   sessionSignature,
   assertSession,
   acceptsSession,
+  OPENAI_DEFAULTS,
 } from "./session-contract.mjs";
-import { openaiTurnFailure, BackendTurnFailure } from "./turn-failure.mjs";
+import {
+  openaiTurnFailure,
+  BackendTurnFailure,
+  beforeSessionInput,
+} from "./turn-failure.mjs";
 
 const SESSION_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -75,11 +80,9 @@ export class OpenAIBackend {
     { root, fetch: fetchImpl = globalThis.fetch } = {},
   ) {
     this.config = {
-      maxToolRounds: 32,
-      requestTimeoutMs: 180000,
-      vision: false,
-      sendEffort: false,
+      ...OPENAI_DEFAULTS,
       ...config,
+      type: /** @type {const} */ ("openai"),
     };
     this.agent = agent;
     this.fetch = fetchImpl;
@@ -235,9 +238,9 @@ export class OpenAIBackend {
   sessionSignature(tools) {
     return sessionSignature(this, tools);
   }
-  /** @param {import("./session-contract.mjs").StoredSession | null | undefined} session @param {import("./session-contract.mjs").ToolSpec[]} tools */
-  acceptsSession(session, tools) {
-    return acceptsSession(this, session, tools);
+  /** @param {import("./session-contract.mjs").StoredSession | null | undefined} session @param {import("./session-contract.mjs").ToolSpec[]} tools @param {import("./session-contract.mjs").SessionContract} [previous] */
+  acceptsSession(session, tools, previous) {
+    return acceptsSession(this, session, tools, previous);
   }
   /** @param {any} call @param {RunParams["callTool"]} callTool @param {AbortSignal} signal */
   async toolMessages(call, callTool, signal) {
@@ -306,12 +309,14 @@ export class OpenAIBackend {
     session,
     saveSession,
     onBackendTurn,
+    onInputSubmitted,
     recovery,
   }) {
     const signature = this.sessionSignature(tools);
     assertSession(session, "openai", signature);
     if (!this.config.model) throw Error("OPENAI_MODEL_REQUIRED");
     if (signal.aborted) throw Error("ABORTED");
+    await beforeSessionInput(session, async () => this.headers());
     /** @type {OpenAISession} */
     let state;
     if (session) {
@@ -343,7 +348,7 @@ export class OpenAIBackend {
     }
     const capacityTokens = await this.contextWindow(signal);
     const turnId = randomUUID();
-    onBackendTurn?.({ turnId });
+    onBackendTurn?.({ turnId, inputAccepted: false });
     const controller = new AbortController();
     const abort = () => controller.abort();
     signal.addEventListener("abort", abort, { once: true });
@@ -370,6 +375,7 @@ export class OpenAIBackend {
           );
         /** @type {any} */
         let failure;
+        onInputSubmitted?.();
         const result = await this.request("/chat/completions", {
           signal: controller.signal,
           body: {
@@ -437,7 +443,12 @@ export class OpenAIBackend {
       }
     } catch (/** @type {any} */ e) {
       // History holds only complete steps, so a transient failure may continue it.
-      if (e instanceof BackendTurnFailure && e.recoverable && !signal.aborted)
+      if (
+        e instanceof BackendTurnFailure &&
+        !signal.aborted &&
+        (e.recoverable ||
+          ["authentication", "quota", "rate-limit"].includes(e.category))
+      )
         e.sessionReusable = true;
       if (!e.sessionReusable || signal.aborted) saveSession(null);
       throw e;
