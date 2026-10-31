@@ -12,6 +12,7 @@ export function defaultAgentCapabilities() {
     "apps",
     "files",
     "github",
+    "games",
     "scheduler",
     "voice",
     "crossGroup",
@@ -27,6 +28,7 @@ export function defaultConfig() {
     port: 3210,
     globalPaused: true,
     privateLikeGroups: [],
+    games: { enabled: false, port: 35824, publicOrigin: "" },
     connections: [
       {
         id: "napcat-a",

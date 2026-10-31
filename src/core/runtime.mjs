@@ -1,3 +1,4 @@
+import { GameHost, sensitiveGameMessage } from "../games/framework/host.mjs";
 import { ProtectedWork, isWorkScope } from "./protected-work.mjs";
 import { recallBoundary } from "./recall-boundary.mjs";
 import { containsCredential } from "./secrets.mjs";
@@ -112,6 +113,7 @@ export class Runtime {
     this.generatedImages = new GeneratedImages(this);
     this.subject = new SubjectCoordinator(this);
     this.transcripts = new VoiceTranscription(this);
+    this.games = new GameHost(this);
     this.protectedWork = new ProtectedWork(this);
     this.protectedWork.recover();
     for (const a of this.config.agents) {
@@ -163,7 +165,9 @@ export class Runtime {
     this.ticker.unref?.();
   }
   tick() {
-    if (this.closed || this.maintenance.active) return;
+    if (this.closed) return;
+    this.games.tick();
+    if (this.maintenance.active) return;
     if (!this.nextCursorCleanupAt || this.now() >= this.nextCursorCleanupAt) {
       new AppCursors(this.memory).cleanup(this.now());
       this.nextCursorCleanupAt = this.now() + 60000;
@@ -305,6 +309,7 @@ export class Runtime {
     return [...new Set(selected)].filter(
       (name) =>
         toolAvailable(a, name, conversation) &&
+        (!name.startsWith("game_") || this.config.games.enabled) &&
         (name !== "generated_image_list" || imageGeneration),
     );
   }
@@ -475,6 +480,7 @@ export class Runtime {
   }
   // Stops one conversation's turn; the agent's other conversations and owner grants continue.
   async cancelConversation(agentId, conversation) {
+    this.games.worker.cancel(agentId, conversation);
     const key = agentId + "|" + conversation;
     for (const [token, ctx] of this.capabilities)
       if (ctx.agentId === agentId && ctx.conversation === conversation) {
@@ -603,32 +609,38 @@ export class Runtime {
       const key = e.messageId
         ? `${connectionId}:${c.messageIdNamespace || "onebot"}:${e.conversation}:${e.kind}:${e.messageId}`
         : `${connectionId}:${e.kind}:${digest(raw)}`;
+      const redactGame = sensitiveGameMessage(e.body);
       const redactConfirmation =
         e.conversation.startsWith("private:") &&
         (a.ownerIds.includes(e.senderId) || e.senderId === c.accountId) &&
         /确认\s+\d{6}/.test(e.body);
       const archived = mem.append({
         ...e,
-        ...(redactConfirmation
-          ? { body: "[管理员确认；验证码不进入记忆]" }
+        ...(redactConfirmation || redactGame
+          ? {
+              body: redactGame
+                ? "[游戏身份确认或邀请；凭据不进入记忆]"
+                : "[管理员确认；验证码不进入记忆]",
+            }
           : {}),
         connectionId,
         dedupe: key,
-        payload: redactConfirmation
-          ? {
-              trustedInput: true,
-              messageNamespace: c.messageIdNamespace || "onebot",
-              accountId: c.accountId,
-              redacted: "owner-confirmation",
-              timeKnown: e.timeKnown,
-            }
-          : {
-              trustedInput: true,
-              messageNamespace: c.messageIdNamespace || "onebot",
-              segments: e.segments,
-              raw: e.raw,
-              timeKnown: e.timeKnown,
-            },
+        payload:
+          redactConfirmation || redactGame
+            ? {
+                trustedInput: true,
+                messageNamespace: c.messageIdNamespace || "onebot",
+                accountId: c.accountId,
+                redacted: "owner-confirmation",
+                timeKnown: e.timeKnown,
+              }
+            : {
+                trustedInput: true,
+                messageNamespace: c.messageIdNamespace || "onebot",
+                segments: e.segments,
+                raw: e.raw,
+                timeKnown: e.timeKnown,
+              },
       });
       mem.person(e.senderId, e.senderName);
       if (!archived.inserted) {
@@ -658,6 +670,11 @@ export class Runtime {
         ].includes(e.kind) ||
         e.direction === "out" ||
         e.senderId === c.accountId
+      )
+        continue;
+      if (
+        e.kind === "message.received" &&
+        (await this.games.command(a, e, archived))
       )
         continue;
       // Received voice is transcribed beside intake, never awaited here.
@@ -1063,6 +1080,7 @@ export class Runtime {
     for (const close of this.retiredResources) await cleanup(close);
     this.retiredResources.clear();
     await cleanup(() => this.lifecycle?.close());
+    await cleanup(() => this.games.close());
     this.stopped = true;
     return { ok: failures === 0, failures };
   }

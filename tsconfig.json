@@ -64,6 +64,8 @@
     "src/games/fixtures/*.mjs",
     "scripts/game-p1a.mjs",
     "src/games/gomoku/*.mjs",
-    "scripts/game-p1b.mjs"
+    "scripts/game-p1b.mjs",
+    "src/games/framework/*.mjs",
+    "scripts/game-p2-acceptance.mjs"
   ]
 }

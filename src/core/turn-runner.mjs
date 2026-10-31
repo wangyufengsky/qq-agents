@@ -34,6 +34,7 @@ export class TurnRunner {
       throw Error("QQ_NOT_CONNECTED");
     const runKey = agentId + "|" + conversation;
     if (runtime.running.has(runKey)) return;
+    if (runtime.games.busy(a.backendId)) throw Error("GAME_BACKEND_BUSY");
     const mem = runtime.memory.bind(agentId);
     runtime.protectedWork.prepareDaily(agentId, conversation);
     const freshSubject = runtime.contexts.startFreshSubject(

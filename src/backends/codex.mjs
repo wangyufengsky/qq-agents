@@ -301,17 +301,19 @@ export class CodexBackend {
     onImageError,
     recovery,
     protectedWork = false,
+    game = false,
   }) {
-    const policy = protectedWork
-      ? {
-          ...restrictions,
-          "features.image_generation": false,
-          "features.browser_use": false,
-          "features.computer_use": false,
-          "features.in_app_browser": false,
-          "features.apps": false,
-        }
-      : restrictions;
+    const policy =
+      protectedWork || game
+        ? {
+            ...restrictions,
+            "features.image_generation": false,
+            "features.browser_use": false,
+            "features.computer_use": false,
+            "features.in_app_browser": false,
+            "features.apps": false,
+          }
+        : restrictions;
     const signature = this.sessionSignature(tools);
     assertSession(session, "codex", signature);
     await beforeSessionInput(session, () => this.ready());
@@ -416,6 +418,26 @@ export class CodexBackend {
       signal.removeEventListener("abort", abort);
       this.active.delete(threadId);
     }
+  }
+  /** A local abort is not terminal proof; match the exact native turn on the server.
+   * @param {{session?:{id?:string},backendTurn?:string}} run */
+  async gameRunState(run) {
+    if (!run.session?.id || !run.backendTurn) return { terminal: false };
+    await this.ready();
+    const reply = await this.rpc.request("thread/read", {
+      threadId: run.session.id,
+      includeTurns: true,
+    });
+    const thread = reply.thread,
+      turn = thread?.turns?.find(
+        (/** @type {any} */ item) => item.id === run.backendTurn,
+      );
+    return {
+      terminal:
+        thread?.id === run.session.id &&
+        thread?.status?.type === "idle" &&
+        ["completed", "interrupted", "failed"].includes(turn?.status),
+    };
   }
   /** @param {string} threadId @param {BackendTurnFailure} failure */
   async recoveryReady(threadId, failure) {

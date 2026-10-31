@@ -203,7 +203,8 @@ export class ConversationEngine {
     if (
       !runtime.writable(a, conversation) ||
       !runtime.transports.get(a.connectionId)?.connected ||
-      runtime.running.has(id + "|" + conversation)
+      runtime.running.has(id + "|" + conversation) ||
+      runtime.games.busy(a.backendId)
     )
       return { queued: true };
     if (!state.pendingWakes?.length || state.wakeDueAt > now)

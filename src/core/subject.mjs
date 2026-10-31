@@ -580,7 +580,11 @@ export class SubjectCoordinator {
           });
         }
       }
-      if (!this.internalAllowed(a) || r.running.has(a.id + "|" + SUBJECT))
+      if (
+        !this.internalAllowed(a) ||
+        r.running.has(a.id + "|" + SUBJECT) ||
+        r.games.busy(a.backendId)
+      )
         continue;
       const s = m.state(SUBJECT);
       if (!s.nextCheckAt) {
