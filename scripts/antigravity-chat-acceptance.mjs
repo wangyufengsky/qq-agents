@@ -201,13 +201,13 @@ try {
     cases.push(
       {
         name: "static-image",
-        body: instruction,
+        body: "这是一张 PNG 静态图片。" + instruction,
         media: media.still,
         imageCount: 1,
       },
       {
         name: "single-frame-gif",
-        body: instruction,
+        body: "这是一张单帧 GIF 图片。" + instruction,
         media: media.single,
         imageCount: 1,
       },
@@ -233,7 +233,7 @@ try {
       },
       {
         name: "handoff-and-media-recall",
-        body: "请回忆最初的合成标记，并重新读取之前那张静态图片，报告四个颜色。先写标记，再写颜色。",
+        body: "请回忆最初的合成标记，并重新读取第一张 PNG 静态图片。先写标记，再按左上、右上、左下、右下顺序写四个英文小写颜色名，用逗号分隔。",
         recall: true,
         mediaRecall: true,
         expectedColors: media.still.colors,
