@@ -2,6 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { fileURLToPath } from "node:url";
 import { once } from "node:events";
 
 const args = process.argv.slice(2);
@@ -81,6 +84,36 @@ if (args.includes("models")) {
     };
     event(result);
     step(7, { input_tokens: 999999, output_tokens: 1 });
+  } else if (mode === "media") {
+    const client = new Client({ name: "synthetic-cli", version: "1.0.0" });
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [
+        fileURLToPath(
+          new URL("../src/backends/antigravity-mcp.mjs", import.meta.url),
+        ),
+      ],
+      env: process.env,
+      stderr: "pipe",
+    });
+    try {
+      await client.connect(transport);
+      const result = await client.callTool({ name: "probe", arguments: {} });
+      fs.writeFileSync(
+        path.join(process.cwd(), "media-result.json"),
+        JSON.stringify({
+          ...result,
+          observedImages: (
+            await (await fetch(endpoint + "/catalog", { headers })).json()
+          ).images.map((image) =>
+            fs.readFileSync(image.path).toString("base64"),
+          ),
+        }),
+      );
+    } finally {
+      await client.close();
+    }
+    event(result);
   } else if (mode === "schema-error") {
     const response = await call("probe");
     const error = JSON.parse((await response.json()).content[0].text);

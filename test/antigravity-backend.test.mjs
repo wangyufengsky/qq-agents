@@ -9,6 +9,7 @@ import {
   AntigravityBackend,
   antigravityFailure,
   antigravityShellQuote,
+  antigravitySchemaContract,
 } from "../src/backends/antigravity.mjs";
 import { antigravityToolAllowed } from "../src/backends/antigravity-guard.mjs";
 import {
@@ -19,6 +20,8 @@ import { validateConfig } from "../src/core/config.mjs";
 import { buildChildEnv } from "../src/core/child-env.mjs";
 import { config, temp, fixture as runtimeFixture } from "./helpers.mjs";
 import { toolSpecs } from "../src/tools/specs.mjs";
+import { AntigravityMedia } from "../src/backends/antigravity-media.mjs";
+import { colorGrid } from "../scripts/fixtures/antigravity-media.mjs";
 import { registry } from "../src/tools/registry.mjs";
 
 const fixture = fileURLToPath(
@@ -156,9 +159,13 @@ test("Antigravity makes only allowed parameter schemas visible before the first 
     "utf8",
   );
   for (const { name, inputSchema } of tools) {
-    assert(instructions.includes(JSON.stringify({ name, inputSchema })));
+    assert(
+      instructions.includes(
+        `${JSON.stringify(name)}:${JSON.stringify(antigravitySchemaContract(inputSchema))}`,
+      ),
+    );
   }
-  assert(!instructions.includes('"name":"qq_send_burst"'));
+  assert(!instructions.includes('"qq_send_burst":'));
   assert(!instructions.includes(launches[0].options.env.QQ_AGY_TOKEN));
 });
 
@@ -392,10 +399,25 @@ test("Antigravity failure classification never exposes provider diagnostics", ()
 
 test("Antigravity hook process denies invalid, expired and unavailable policies", async (t) => {
   let active = true;
+  const media = new AntigravityMedia();
+  t.after(() => media.close());
+  media.result({
+    content: [
+      {
+        type: "image",
+        mimeType: "image/png",
+        data: colorGrid(["red", "blue", "green", "yellow"]).toString("base64"),
+      },
+    ],
+  });
+  const imageCall = {
+    name: "view_file",
+    args: { AbsolutePath: media.catalog()[0].path },
+  };
   const server = http.createServer((req, res) => {
     const valid = active && req.headers.authorization === "Bearer synthetic";
     res.writeHead(valid ? 200 : 403, { "content-type": "application/json" });
-    res.end(JSON.stringify({ tools: [tool] }));
+    res.end(JSON.stringify({ tools: [tool], images: media.catalog() }));
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => server.close());
@@ -427,10 +449,16 @@ test("Antigravity hook process denies invalid, expired and unavailable policies"
     args: { ServerName: "qq-agents", ToolName: "probe" },
   };
   assert.equal(await guard(call), "auto_approve");
+  assert.equal(await guard(imageCall), "auto_approve");
+  assert.equal(
+    await guard({ name: "view_file", args: { AbsolutePath: hook } }),
+    "deny",
+  );
   assert.equal(await guard({ name: "run_command" }), "deny");
   assert.equal(await guard("invalid json"), "deny");
   assert.equal(await guard(call, "invalid"), "deny");
   active = false;
+  assert.equal(await guard(imageCall), "deny");
   assert.equal(await guard(call), "deny");
   await new Promise((resolve) => server.close(resolve));
   assert.equal(await guard(call), "deny");
@@ -482,4 +510,112 @@ test("Antigravity rejects Git configuration redirecting its working tree to an a
   execFileSync("git", ["-C", backend.root, "config", "core.worktree", root]);
   await assert.rejects(backend.run(params), /ANTIGRAVITY_WORKSPACE_UNSAFE/);
   assert.equal(launches.length, 0);
+});
+
+test("Antigravity registers exact image bytes through its real MCP subprocess", async (t) => {
+  const { backend, params, launches } = setup(t, "media");
+  const content = [
+    { type: "text", text: "frame 0" },
+    {
+      type: "image",
+      mimeType: "image/png",
+      data: colorGrid(["red", "green", "blue", "yellow"]).toString("base64"),
+    },
+    { type: "text", text: "frame 1" },
+    {
+      type: "image",
+      mimeType: "image/png",
+      data: colorGrid(["blue", "yellow", "red", "green"]).toString("base64"),
+    },
+  ];
+  await backend.run({ ...params, callTool: async () => ({ content }) });
+  const result = JSON.parse(
+    fs.readFileSync(
+      path.join(launches[0].options.cwd, "media-result.json"),
+      "utf8",
+    ),
+  );
+  assert.equal(result.content.filter((c) => c.type === "image").length, 0);
+  assert.equal(result.content[0].text, "frame 0");
+  assert.match(result.content[1].text, /Image 1:.*view_file/);
+  assert.equal(result.content[2].text, "frame 1");
+  assert.match(result.content[3].text, /Image 2:.*view_file/);
+  assert.deepEqual(result.observedImages, [content[1].data, content[3].data]);
+  const target = JSON.parse(
+    /AbsolutePath=(".*?") to inspect/.exec(result.content[1].text)[1],
+  );
+  assert(!fs.existsSync(target));
+});
+
+test("Antigravity pressure handoff keeps original source evidence without acknowledging replay", async (t) => {
+  const { backend } = setup(t, "usage");
+  const cfg = config(1);
+  const f = runtimeFixture(t, { cfg });
+  f.runtime.backends.set("agent-0", backend);
+  const mem = f.store.bind("agent-0"),
+    scope = "private:30000";
+  const incoming = mem.append({
+    dedupe: "continuity-proof",
+    conversation: scope,
+    kind: "message.received",
+    direction: "in",
+    senderId: "30000",
+    body: "SYNTHETIC_ORIGINAL_SOURCE_7F31",
+  });
+  await f.runtime.wake("agent-0", scope);
+  const first = mem.state(scope).session.id;
+  f.runtime.config.agents[0].contextPolicy.capacityTokens = 24000;
+  await f.runtime.wake("agent-0", scope);
+  const retired = mem.state(scope);
+  assert.equal(retired.session, null);
+  assert.equal(retired.lifecycle.reason, "capacity-guard");
+  f.runtime.config.agents[0].contextPolicy.capacityTokens = 32768;
+  let prompt;
+  const run = backend.run.bind(backend);
+  backend.run = (params) => {
+    prompt = params.prompt;
+    return run(params);
+  };
+  await f.runtime.wake("agent-0", scope);
+  const restored = mem.state(scope);
+  assert.notEqual(restored.session.id, first);
+  assert(prompt.includes(incoming.id));
+  assert(prompt.includes("SYNTHETIC_ORIGINAL_SOURCE_7F31"));
+  assert.equal(restored.readThroughSeq, retired.readThroughSeq);
+  assert.equal(
+    mem.db.prepare("SELECT COUNT(*) AS n FROM deliveries").get().n,
+    0,
+  );
+});
+
+test("compact parameter guides retain a description argument and all structural validation", () => {
+  const schema = {
+    type: "object",
+    description: "documentation",
+    properties: {
+      description: { type: "string", description: "field prose", minLength: 3 },
+      options: {
+        anyOf: [
+          { type: "string", enum: ["a", "b"], description: "choice" },
+          { type: "null" },
+        ],
+      },
+    },
+    required: ["description"],
+    additionalProperties: false,
+  };
+  const compact = antigravitySchemaContract(schema);
+  assert.deepEqual(compact, {
+    type: "object",
+    properties: {
+      description: { type: "string", minLength: 3 },
+      options: {
+        anyOf: [{ type: "string", enum: ["a", "b"] }, { type: "null" }],
+      },
+    },
+    required: ["description"],
+    additionalProperties: false,
+  });
+  assert.equal(schema.description, "documentation");
+  assert.equal(schema.properties.description.description, "field prose");
 });

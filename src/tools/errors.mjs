@@ -3,6 +3,11 @@
 // stack traces, provider errors or credentials into either model backend.
 /** @param {any} error */
 export function safeToolFailure(error) {
+  if (/^ANTIGRAVITY_MEDIA_(FORMAT|LIMIT|FAILED)$/.test(error?.message || ""))
+    return {
+      code: error.message,
+      hint: "Image pixels were not delivered. Do not describe them. Request fewer or smaller static PNG/JPEG/WebP images. GIFs must use the bridge decoder; request one frame at a time with animation.mode=frames and limit=1. Never read an unregistered path or reuse one from an earlier turn.",
+    };
   if (
     /^(ANIMATION_[A-Z_]+|INVALID_GIF|INVALID_ANIMATION_RANGE)$/.test(
       error?.message || "",

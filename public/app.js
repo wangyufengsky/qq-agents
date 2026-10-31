@@ -971,7 +971,7 @@ const backendErrors = {
 };
 const backendKinds = {
   antigravity:
-    "官方 agy CLI；角色配置与会话独立，使用本机官方登录。取消后重建会话。",
+    "官方 agy CLI；使用本机官方登录。图片经桥接授权后读取临时图片，GIF 多帧需要 FFmpeg；取消后重建会话。",
   dsh: "选择桌面实例后可跟随重启后的地址。",
   codex: "使用角色自己的 Codex 进程与登录目录。",
   openai:
