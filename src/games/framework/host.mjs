@@ -562,6 +562,7 @@ export class GameHost {
   async retry(id) {
     this.ensure();
     const job = this.jobs.get(id);
+    if (this.worker.active.has(job.run?.runId)) fail("GAME_BACKEND_BUSY", 409);
     if (job.run && !job.run.terminal) {
       const backend = this.runtime.backendConnections.adapter(
         this.runtime.agent(job.agentId),

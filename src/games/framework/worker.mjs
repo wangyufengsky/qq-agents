@@ -155,22 +155,25 @@ export class GameWorker {
     } finally {
       clearTimeout(timer);
       clearInterval(renewal);
-      const run = jobs.get(id).run;
-      let terminal = completed || !run.submitted;
-      if (!terminal)
-        terminal =
-          (await backend?.gameRunState?.(run).catch(() => null))?.terminal ===
-          true;
-      jobs.settle(execution, {
-        terminal,
-        completed,
-        code: controller.signal.aborted
-          ? "GAME_RUN_CANCELLED"
-          : "GAME_MODEL_FAILED",
-      });
-      this.active.delete(execution.runId);
-      h.runtime.running.delete(key);
-      done(null);
+      try {
+        const run = jobs.match(execution).run;
+        let terminal = completed || !run.submitted;
+        if (!terminal)
+          terminal =
+            (await backend?.gameRunState?.(run).catch(() => null))?.terminal ===
+            true;
+        jobs.settle(execution, {
+          terminal,
+          completed,
+          code: controller.signal.aborted
+            ? "GAME_RUN_CANCELLED"
+            : "GAME_MODEL_FAILED",
+        });
+      } finally {
+        this.active.delete(execution.runId);
+        h.runtime.running.delete(key);
+        done(null);
+      }
     }
   }
   /** @param {string} agentId @param {string} [source] */

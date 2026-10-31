@@ -708,3 +708,41 @@ test("reopening the game database preserves unknown native runs, budgets and out
   restored.kernel.sweep();
   assert.equal(restored.kernel.store.room(roomId).id, roomId);
 });
+
+test("an administrator cannot replace a locally finishing worker before its cleanup", async (t) => {
+  const started = Promise.withResolvers(),
+    release = Promise.withResolvers();
+  const f = setup(t, async () => {
+    started.resolve();
+    await release.promise;
+  });
+  const { id } = await decision(f);
+  f.h.jobs.receive(id);
+  const pending = f.h.worker.run(id);
+  await started.promise;
+  try {
+    await assert.rejects(f.h.retry(id), /GAME_BACKEND_BUSY/);
+    assert.equal(f.h.jobs.get(id).fence, 1);
+  } finally {
+    release.resolve();
+    await pending;
+  }
+  assert.equal(f.runtime.running.size, 0);
+  assert.equal(f.h.worker.active.size, 0);
+});
+
+test("retrying an older claim returns its original fence and never replaces the current attempt", async (t) => {
+  const f = setup(t),
+    { id } = await decision(f);
+  f.h.jobs.receive(id);
+  const first = f.h.jobs.claim(id, "worker", "claim-1");
+  f.h.jobs.settle(first, { terminal: true });
+  const second = f.h.jobs.claim(id, "worker", "claim-2");
+  const replay = f.h.jobs.claim(id, "worker", "claim-1");
+  assert.equal(replay.runId, first.runId);
+  assert.equal(replay.fencingToken, first.fencingToken);
+  assert.equal(f.h.jobs.get(id).run.runId, second.runId);
+  assert.equal(second.fencingToken, 2);
+  assert.throws(() => f.h.jobs.renew(first), /GAME_EXECUTION_STALE/);
+  f.h.jobs.settle(second, { terminal: true });
+});

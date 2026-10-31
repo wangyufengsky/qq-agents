@@ -157,11 +157,12 @@ export class GameJobs {
   claim(id, workerId, claimRequestId) {
     return this.kernel.store.transaction(() => {
       const job = this.get(id);
-      if (
-        job.run?.claimRequestId === claimRequestId &&
-        job.run.workerId === workerId
-      )
-        return structuredClone(job.run);
+      const previous = this.kernel.store.db
+        .prepare(
+          "SELECT data FROM game_attempts WHERE job_id=? AND json_extract(data,'$.workerId')=? AND json_extract(data,'$.claimRequestId')=?",
+        )
+        .get(id, workerId, claimRequestId);
+      if (previous) return JSON.parse(String(previous.data));
       if (!this.current(job)) fail("GAME_DECISION_STALE");
       if (job.run && !job.run.terminal) fail("GAME_OUTCOME_UNKNOWN");
       if (
