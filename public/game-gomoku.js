@@ -8,7 +8,8 @@
     },
     coord = (i) =>
       `${String.fromCharCode(65 + (i % 15))}${Math.floor(i / 15) + 1}`;
-  let snapshot = null,
+  let sessionEstablished = !new URL(location.href).searchParams.has("invite"),
+    snapshot = null,
     selected = null,
     resigning = false,
     busy = false,
@@ -59,6 +60,8 @@
     render();
   }
   function render() {
+    $("join").disabled = busy;
+    $("join").hidden = sessionEstablished;
     if (!snapshot) return;
     $("game").hidden = false;
     $("join").hidden = true;
@@ -259,12 +262,28 @@
       const url = new URL(location.href),
         bindingId = url.searchParams.get("binding"),
         invite = url.searchParams.get("invite");
-      await request("/join", { bindingId, invite });
-      await request("/join", { bindingId });
+      // A lost response may already have installed the session cookie.
+      try {
+        await request("/view");
+      } catch (error) {
+        if (error.message !== "AUTH_REQUIRED") throw error;
+        // The HttpOnly binding cookie survives refresh; finish its exchange before consuming an invitation.
+        try {
+          await request("/join", { bindingId });
+        } catch (exchangeError) {
+          if (exchangeError.message !== "JOIN_UNCONFIRMED") throw exchangeError;
+          await request("/join", { bindingId, invite });
+          await request("/join", { bindingId });
+        }
+      }
+      sessionEstablished = true;
       history.replaceState(null, "", base);
-      await sync();
-      status("已加入，等待房主开始。");
-      schedule();
+      try {
+        await sync();
+        status("已加入，等待房主开始。");
+      } finally {
+        schedule();
+      }
     });
   for (const cell of $("board").children)
     cell.onclick = () => select(Number(cell.dataset.index));
@@ -296,7 +315,7 @@
   };
   function schedule() {
     clearTimeout(timer);
-    if (document.hidden) return;
+    if (document.hidden || !sessionEstablished) return;
     timer = setTimeout(
       async () => {
         if (!busy) await exclusive(sync);
@@ -309,7 +328,7 @@
     clearSelection();
     fresh = false;
     render();
-    if (snapshot) void exclusive(sync).finally(schedule);
+    if (sessionEstablished) void exclusive(sync).finally(schedule);
   }
   document.addEventListener("visibilitychange", () => {
     clearTimeout(timer);
@@ -325,7 +344,7 @@
   window.addEventListener("pageshow", (event) => {
     if (event.persisted) wake();
   });
-  if (!new URL(location.href).searchParams.has("invite"))
+  if (sessionEstablished)
     void exclusive(async () => {
       await sync();
       status("已同步。");

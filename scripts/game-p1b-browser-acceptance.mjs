@@ -48,8 +48,56 @@ try {
       .waitFor();
   };
   const room = service.createRoom();
-  await join(a, room.invitations[0].url);
+  // Preserve the binding cookie if the exchange never reaches the server, even across refresh.
+  phase = "join-exchange-retry";
+  let issuedInvites = 0;
+  await a.route("**/join", async (route) => {
+    if (route.request().postDataJSON().invite) {
+      issuedInvites++;
+      await route.continue();
+    } else if (issuedInvites)
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "TEST_UNAVAILABLE" }),
+      });
+    else await route.continue();
+  });
+  await a.goto(room.invitations[0].url);
+  await click(a, "确认加入");
+  await a.waitForFunction(() =>
+    document.getElementById("status").textContent.includes("操作未确认"),
+  );
+  await a.unroute("**/join");
+  await a.reload();
+  await a.route("**/join", async (route) => {
+    if (route.request().postDataJSON().invite) issuedInvites++;
+    await route.continue();
+  });
+  await click(a, "确认加入");
+  await a.waitForURL((url) => !url.searchParams.has("invite"));
+  assert.equal(issuedInvites, 1);
+  await a.unroute("**/join");
+  // A committed join must start polling even when its first view request fails.
+  phase = "join-first-view-retry";
+  let failedInitialView = false;
+  await b.route("**/view", async (route) => {
+    if (
+      !failedInitialView &&
+      service.kernel.store.room(room.roomId).participants[1].confirmed
+    ) {
+      failedInitialView = true;
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "TEST_UNAVAILABLE" }),
+      });
+    } else await route.continue();
+  });
   await join(b, room.invitations[1].url);
+  await b.waitForFunction(() => !document.getElementById("game").hidden);
+  assert.equal(failedInitialView, true);
+  await b.unroute("**/view");
   await a.waitForFunction(
     () => document.getElementById("revision").textContent === "版本 2",
   );
@@ -305,6 +353,8 @@ try {
     JSON.stringify({
       browser: engine === webkit ? "webkit" : "chromium",
       mobile: true,
+      joinExchangeRecovery: true,
+      initialViewRecovery: true,
       fullGame: true,
       overlapGuard: true,
       orientation: true,
