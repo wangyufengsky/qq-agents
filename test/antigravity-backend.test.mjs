@@ -17,7 +17,9 @@ import {
 } from "../src/backends/index.mjs";
 import { validateConfig } from "../src/core/config.mjs";
 import { buildChildEnv } from "../src/core/child-env.mjs";
-import { config, temp } from "./helpers.mjs";
+import { config, temp, fixture as runtimeFixture } from "./helpers.mjs";
+import { toolSpecs } from "../src/tools/specs.mjs";
+import { registry } from "../src/tools/registry.mjs";
 
 const fixture = fileURLToPath(
   new URL("./antigravity-fixture.mjs", import.meta.url),
@@ -143,6 +145,83 @@ test("Antigravity resumes only its bound conversation and keeps prompts off argv
   );
   assert.equal(sessions.at(-1), null);
   assert.equal(launches.length, 2);
+});
+
+test("Antigravity makes only allowed parameter schemas visible before the first call", async (t) => {
+  const { backend, params, launches } = setup(t, "usage");
+  const tools = toolSpecs(["qq_send", "qq_mark_read"]);
+  await backend.run({ ...params, tools });
+  const instructions = fs.readFileSync(
+    path.join(launches[0].options.cwd, ".agents", "agents", "qq-agents.md"),
+    "utf8",
+  );
+  for (const { name, inputSchema } of tools) {
+    assert(instructions.includes(JSON.stringify({ name, inputSchema })));
+  }
+  assert(!instructions.includes('"name":"qq_send_burst"'));
+  assert(!instructions.includes(launches[0].options.env.QQ_AGY_TOKEN));
+});
+
+test("Antigravity returns the called tool schema after argument validation fails", async (t) => {
+  const { backend, params } = setup(t, "schema-error");
+  const spec = { ...toolSpecs(["qq_send"])[0], name: "probe" };
+  await backend.run({
+    ...params,
+    tools: [spec],
+    callTool: async () => {
+      registry.qq_send.schema.parse({
+        text: "PRIVATE_ARGUMENT",
+        chatId: "PRIVATE_ARGUMENT",
+      });
+    },
+  });
+});
+
+test("Antigravity occupancy uses the last response and includes cached input, not cumulative or checkpoint usage", async (t) => {
+  const { backend, params } = setup(t, "usage"),
+    reports = [];
+  await backend.run({ ...params, onUsage: (u) => reports.push(u) });
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0].source, "measured");
+  assert.equal(reports[0].contextTokens, 23100);
+  assert.equal(reports[0].capacityTokens, undefined);
+});
+
+test("Antigravity falls back when the latest response has invalid usage", async (t) => {
+  const { backend, params } = setup(t, "invalid-usage"),
+    reports = [];
+  await backend.run({ ...params, onUsage: (u) => reports.push(u) });
+  assert.equal(reports.length, 0);
+});
+
+test("the runtime keeps a default-capacity Antigravity session with the complete tool catalogue", async (t) => {
+  const { backend } = setup(t, "usage");
+  const cfg = config(1);
+  cfg.agents[0].tools = toolSpecs().map((s) => s.name);
+  const f = runtimeFixture(t, { cfg });
+  f.runtime.backends.set("agent-0", backend);
+  const mem = f.store.bind("agent-0"),
+    scope = "private:30000";
+  await f.runtime.wake("agent-0", scope);
+  const first = mem.state(scope);
+  assert(first.session);
+  assert.equal(first.usage.contextTokens, 23100);
+  assert.equal(cfg.agents[0].contextPolicy.capacityTokens, 32768);
+  assert(
+    mem.identity.get("model_turns", first.lastTurnId).estimatedTextChars >
+      32768,
+  );
+  await f.runtime.wake("agent-0", scope);
+  assert.equal(mem.state(scope).session.id, first.session.id);
+  assert.equal(
+    mem.identity.get("model_turns", mem.state(scope).lastTurnId).initialSession,
+    false,
+  );
+  // A deliberately smaller administrator limit still triggers the hard guard.
+  f.runtime.config.agents[0].contextPolicy.capacityTokens = 24000;
+  await f.runtime.wake("agent-0", scope);
+  assert.equal(mem.state(scope).session, null);
+  assert.equal(mem.state(scope).lifecycle.reason, "capacity-guard");
 });
 
 test("Antigravity rejects polluted profiles before spawning", async (t) => {

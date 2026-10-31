@@ -42,7 +42,57 @@ if (args.includes("models")) {
       response: "Assistant text is never a delivery.",
     },
   };
-  if (mode === "malformed") process.stdout.write("not JSON\n");
+  if (mode === "usage" || mode === "invalid-usage") {
+    const step = (step_index, usage, extra = {}) =>
+      event({
+        event: "step_update",
+        step_update: {
+          conversation_id: id,
+          step_index,
+          step_type: "agent_response",
+          state: "DONE",
+          usage,
+          ...extra,
+        },
+      });
+    step(1, { input_tokens: 22000, output_tokens: 500, cache_read_tokens: 0 });
+    step(3, {
+      input_tokens: 1000,
+      output_tokens: 100,
+      cache_read_tokens: 22000,
+    });
+    step(2, { input_tokens: 99000, output_tokens: 500, cache_read_tokens: 0 });
+    step(
+      4,
+      { input_tokens: 50, output_tokens: 5 },
+      { step_type: "checkpoint" },
+    );
+    step(
+      5,
+      { input_tokens: 1, output_tokens: 1 },
+      { conversation_id: randomUUID() },
+    );
+    if (mode === "invalid-usage")
+      step(6, { input_tokens: -1, output_tokens: 3 });
+    result.result.usage = {
+      input_tokens: 900000,
+      output_tokens: 5000,
+      total_tokens: 905000,
+    };
+    event(result);
+    step(7, { input_tokens: 999999, output_tokens: 1 });
+  } else if (mode === "schema-error") {
+    const response = await call("probe");
+    const error = JSON.parse((await response.json()).content[0].text);
+    if (
+      error.code !== "INVALID_TOOL_ARGUMENTS" ||
+      error.tool?.name !== "probe" ||
+      !error.tool?.inputSchema?.properties?.requestId ||
+      JSON.stringify(error).includes("PRIVATE_ARGUMENT")
+    )
+      throw Error("TOOL_SCHEMA_RECOVERY_MISSING");
+    event(result);
+  } else if (mode === "malformed") process.stdout.write("not JSON\n");
   else if (mode === "wrong-result") {
     result.result.conversation_id = randomUUID();
     event(result);

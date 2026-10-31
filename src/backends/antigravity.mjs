@@ -16,6 +16,21 @@ import { safeToolFailure } from "../tools/errors.mjs";
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 const here = path.dirname(fileURLToPath(import.meta.url));
 const MAX_OUTPUT = 16 * 1024 * 1024;
+/** Headless result usage is cumulative; only a completed model-response step
+ * describes the latest request. Cache reads are excluded from input_tokens.
+ * @param {any} usage */
+function responseOccupancy(usage) {
+  const counts = [
+    usage?.input_tokens,
+    usage?.output_tokens,
+    usage?.cache_read_tokens ?? 0,
+  ];
+  if (!counts.every((n) => Number.isSafeInteger(n) && n >= 0)) return null;
+  const tokens = counts.reduce((sum, n) => sum + n, 0);
+  return Number.isSafeInteger(tokens) && counts[0] + counts[2] > 0
+    ? tokens
+    : null;
+}
 /** @type {WeakSet<import("node:child_process").ChildProcess>} */
 const terminatedGroups = new WeakSet();
 function isolatedEnv() {
@@ -196,7 +211,9 @@ export class AntigravityBackend {
   }
   /** @param {import("./session-contract.mjs").ToolSpec[]} tools */
   sessionSignature(tools) {
-    return sessionSignature(this, tools);
+    // Existing native sessions retain their old system prompt. Hand off once
+    // rather than resume a session without the explicit parameter contract.
+    return "antigravity-tools-v2:" + sessionSignature(this, tools);
   }
   profileArgs() {
     return ["--gemini_dir", this.profile, "--app_data_dir", "cli"];
@@ -392,6 +409,7 @@ export class AntigravityBackend {
       if (req.method === "GET" && req.url === "/catalog")
         return reply(200, { tools: params.tools });
       if (req.method !== "POST" || req.url !== "/call") return reply(404, {});
+      let spec;
       try {
         let body = "";
         for await (const part of req) {
@@ -401,14 +419,26 @@ export class AntigravityBackend {
         const value = JSON.parse(body);
         if (!live || params.signal.aborted || !names.has(value.name))
           return reply(403, {});
+        spec = params.tools.find((tool) => tool.name === value.name);
         const result = await params.callTool(value.name, value.arguments || {});
         if (!live || params.signal.aborted) return reply(403, {});
         reply(200, mcpResult(result));
       } catch (error) {
+        const failure = safeToolFailure(error);
         reply(200, {
           isError: true,
           content: [
-            { type: "text", text: JSON.stringify(safeToolFailure(error)) },
+            {
+              type: "text",
+              text: JSON.stringify({
+                ...failure,
+                ...(failure.code === "INVALID_TOOL_ARGUMENTS" && spec
+                  ? {
+                      tool: { name: spec.name, inputSchema: spec.inputSchema },
+                    }
+                  : {}),
+              }),
+            },
           ],
         });
       }
@@ -487,7 +517,7 @@ export class AntigravityBackend {
       )
         managedFile(
           agentFile,
-          `---\nname: qq-agents\ndescription: QQ Agents restricted role\nmainAgent: true\nsubagent: false\ntools:\n  - finish\nenable_mcp_tools: true\ncommandExecutionPolicy: off\n---\n${params.instructions || ""}\n\nUse only the qq-agents MCP tools. Select the exact tool name with call_mcp_tool. Ordinary assistant text is never delivered to QQ. No native task, filesystem, shell, browser, scheduling or subagent actions are authorized.\n`,
+          `---\nname: qq-agents\ndescription: QQ Agents restricted role\nmainAgent: true\nsubagent: false\ntools:\n  - finish\nenable_mcp_tools: true\ncommandExecutionPolicy: off\n---\n${params.instructions || ""}\n\nUse only the qq-agents MCP tools. Call call_mcp_tool with ServerName="qq-agents", ToolName equal to an allowed name, and Arguments matching that tool's JSON schema below. Do not guess parameter names or read framework source to discover arguments. The current chat and authorization are bound by the bridge; never add target, chatId or context fields unless the schema requires them. Ordinary assistant text is never delivered to QQ. No native task, filesystem, shell, browser, scheduling or subagent actions are authorized.\n\nAllowed tool argument schemas (required fields and additionalProperties are binding):\n${params.tools.map(({ name, inputSchema }) => JSON.stringify({ name, inputSchema })).join("\n")}\n`,
         );
       const settings = path.join(workspace, "settings.json");
       managedFile(
@@ -544,6 +574,8 @@ export class AntigravityBackend {
         initialized = false,
         initializedId = "";
       /** @type {any} */ let terminal;
+      let lastResponseStep = -1;
+      /** @type {number | null} */ let contextTokens = null;
       /** @type {Error | undefined} */ let protocolError;
       const fail = () => {
         protocolError = Error("ANTIGRAVITY_PROTOCOL_ERROR");
@@ -581,6 +613,25 @@ export class AntigravityBackend {
                   id: event.conversation_id,
                   signature,
                 });
+              }
+            } else if (event.event === "step_update") {
+              const step = event.step_update;
+              if (
+                live &&
+                initialized &&
+                !terminal &&
+                step?.conversation_id === initializedId &&
+                step.step_type === "agent_response" &&
+                Number.isSafeInteger(step.step_index) &&
+                step.step_index >= 0 &&
+                step.step_index >= lastResponseStep
+              ) {
+                if (step.step_index > lastResponseStep) {
+                  lastResponseStep = step.step_index;
+                  contextTokens = null;
+                }
+                if (step.state === "DONE")
+                  contextTokens = responseOccupancy(step.usage);
               }
             } else if (event.event === "result") {
               if (
@@ -622,6 +673,13 @@ export class AntigravityBackend {
           diagnostic + " " + (terminal?.error || ""),
           terminal?.status,
         );
+      if (contextTokens !== null)
+        params.onUsage?.({
+          source: "measured",
+          contextTokens,
+          basis:
+            "Antigravity latest completed agent_response input_tokens + cache_read_tokens + output_tokens; excludes cumulative result and auxiliary steps",
+        });
     } catch (error) {
       if (fs.existsSync(binding)) managedFile(binding, "{}\n");
       params.saveSession(null);
