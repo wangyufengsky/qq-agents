@@ -154,7 +154,7 @@ export function contentIdentity(value, expected) {
     const q = url.searchParams.get("link_id") || url.searchParams.get("linkid");
     if (
       (m && heyboxLinkId.test(m[1])) ||
-      (/^(?:\/app\/bbs\/link\/web\/view|\/bbs\/app\/link\/web\/view|\/bbs\/link\/view)$/.test(
+      (/^(?:\/app\/bbs\/link\/web\/view|\/bbs\/app\/link\/web\/view|\/bbs\/link\/view|\/v3\/bbs\/app\/api\/web\/share)$/.test(
         url.pathname,
       ) &&
         heyboxLinkId.test(q || ""))
