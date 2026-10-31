@@ -4,7 +4,7 @@ import { config, fixture, context, FakeTransport } from "./helpers.mjs";
 import { toolSpecs } from "../src/tools/index.mjs";
 import { mcpEntrySpecs, scopedCatalog } from "../src/tools/catalog.mjs";
 
-test("personality-only Self retains fixed accounts and peers across version and configuration changes", async (t) => {
+test("Self and own accounts stay fixed while peer accounts refresh without rebuilding", async (t) => {
   const cfg = config(2),
     captured = [];
   cfg.agents[0].persona = "我喜欢倾听，也会开玩笑。";
@@ -27,7 +27,8 @@ test("personality-only Self retains fixed accounts and peers across version and 
   await runtime.wake("agent-0", "group:20000");
   for (const p of captured) {
     assert.match(p.instructions, /10000/);
-    assert.match(p.instructions, /10001/);
+    assert.doesNotMatch(p.instructions, /10001/);
+    assert.match(p.prompt, /10001/);
     assert.match(p.instructions, /30000/);
     assert.match(p.instructions, /senderId/);
   }
@@ -40,9 +41,10 @@ test("personality-only Self retains fixed accounts and peers across version and 
   // changeConfig closes transports; restore only the local fake connection.
   runtime.transports.set("qq-0", new FakeTransport());
   await runtime.wake("agent-0", "group:20000");
-  assert.match(captured[2].instructions, /10009/);
-  assert.doesNotMatch(captured[2].instructions, /10001/);
-  assert.equal(captured[2].session, null);
+  assert.match(captured[2].prompt, /10009/);
+  assert.doesNotMatch(captured[2].prompt, /10001/);
+  assert.equal(captured[2].instructions, captured[1].instructions);
+  assert.equal(captured[2].session.id, "fixture");
 });
 
 test("Codex receives no capability secret while DSH receives only its scoped bridge-entry contract", async (t) => {

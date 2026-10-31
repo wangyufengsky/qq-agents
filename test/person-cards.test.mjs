@@ -338,7 +338,7 @@ const turnsOf = (m) =>
     .map((row) => JSON.parse(row.value));
 
 test("a private chat shows the other side's card even with nothing new, with the name they last used", async (t) => {
-  const c = config();
+  const c = roomy();
   c.agents[0].allow.users = ["30000", "30001"];
   const prompts = [];
   const f = fixture(t, {

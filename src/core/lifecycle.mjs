@@ -342,6 +342,63 @@ export class ContextLifecycle {
     });
     return archive ? id : null;
   }
+  instructionContract(a, conversation, self, toolNames) {
+    const r = this.runtime,
+      anchors = r.memory.bind(a.id).identity.anchors(a),
+      identity = identityAnchors(r.config, a),
+      backendType = r.config.backends.find((b) => b.id === a.backendId)?.type,
+      options = { backendType, toolNames },
+      subject = conversation === SUBJECT,
+      hash = (text) => createHash("sha256").update(text).digest("hex");
+    const instructions = stableInstructions(a, self, subject, anchors, {
+      ...options,
+      identity: {
+        self: identity.self,
+        administrators: identity.administrators,
+      },
+      dynamicPeers: true,
+    });
+    return {
+      instructions,
+      instructionsHash: hash(instructions),
+      // A legacy digest is accepted only when the entire original prompt still
+      // matches, including the old peer list; unknown identity changes stay fenced.
+      legacyHash: hash(
+        stableInstructions(a, self, subject, anchors, { ...options, identity }),
+      ),
+      backendType,
+    };
+  }
+  upgradeInstructions(a, self) {
+    const r = this.runtime,
+      m = r.memory.bind(a.id);
+    // Upgrade before configuration edits can change peers, without calling a
+    // backend or opening a turn. Only completed ordinary sessions are eligible.
+    for (const row of m.db
+      .prepare(
+        "SELECT conversation,value FROM runtime WHERE agent_id=? AND json_extract(value,'$.session') IS NOT NULL",
+      )
+      .all(a.id)) {
+      if (
+        row.conversation !== SUBJECT &&
+        !/^(group|private):/.test(row.conversation)
+      )
+        continue;
+      const s = JSON.parse(row.value);
+      if (s.loadedSelfVersion !== self.version) continue;
+      const contract = this.instructionContract(
+        a,
+        row.conversation,
+        self,
+        r.toolsFor(a, row.conversation),
+      );
+      if (s.loadedInstructionsHash === contract.legacyHash)
+        m.setState(row.conversation, {
+          ...s,
+          loadedInstructionsHash: contract.instructionsHash,
+        });
+    }
+  }
   prepare(ctx, backend, reasons, tools = []) {
     if (ctx.controller.signal.aborted) throw Error("ABORTED");
     const r = this.runtime,
@@ -349,23 +406,13 @@ export class ContextLifecycle {
       m = r.memory.bind(a.id);
     recoverSessions(m, r.now(), ctx.conversation);
     const self = m.identity.initialize(a, r.now());
-    const backendType = r.config.backends.find(
-      (b) => b.id === a.backendId,
-    )?.type;
-    const instructions = stableInstructions(
-      a,
-      self,
-      ctx.conversation === SUBJECT,
-      m.identity.anchors(a),
-      {
-        backendType,
-        identity: identityAnchors(r.config, a),
-        toolNames: tools.map((t) => t.name),
-      },
-    );
-    const instructionsHash = createHash("sha256")
-      .update(instructions)
-      .digest("hex");
+    const { instructions, instructionsHash, legacyHash, backendType } =
+      this.instructionContract(
+        a,
+        ctx.conversation,
+        self,
+        tools.map((t) => t.name),
+      );
     let s = m.state(ctx.conversation);
     // A free-time turn must not inherit a transcript of earlier idle turns;
     // the subject log and materials pack carry continuity instead.
@@ -385,7 +432,8 @@ export class ContextLifecycle {
     if (
       s.session &&
       (s.loadedSelfVersion !== self.version ||
-        s.loadedInstructionsHash !== instructionsHash ||
+        (s.loadedInstructionsHash !== instructionsHash &&
+          s.loadedInstructionsHash !== legacyHash) ||
         contractChanged)
     ) {
       // Both protocols can preserve old text. Rebuild on identity changes until replacement is behaviorally verified.

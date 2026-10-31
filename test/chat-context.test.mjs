@@ -7,8 +7,11 @@ const section = (prompt, label) =>
   JSON.parse(prompt.split(label)[1].split("\n\n")[0]);
 function setup(t) {
   const prompts = [];
+  const cfg = config(2);
+  // Presentation assertions need a continuing session, independent of schema size.
+  cfg.agents[0].contextPolicy.capacityTokens = 1000000;
   const f = fixture(t, {
-    cfg: config(2),
+    cfg,
     run: async (p) => {
       prompts.push(p.prompt);
       p.saveSession({ id: "chat-presentation", backend: "fixture" });
