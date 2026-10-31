@@ -41,6 +41,19 @@ export const transcriptKey = (eventId) => `voice-transcript:${eventId}:0`;
 const TRANSCRIPT_NOTICE = "语音转写：机器识别，可能有误；原消息未改动";
 const disclosure = (source, current) =>
   source === current ? "current-conversation" : "agent-judged-recollection";
+// A source kind is not an exact conversation key. Reject this common mistake
+// instead of returning an empty page that can be mistaken for missing memories.
+function recallScope(conversation, conversationType) {
+  if (
+    ["group", "private", "group:*", "private:*"].includes(conversation) ||
+    (conversationType !== undefined &&
+      !["group", "private"].includes(conversationType)) ||
+    (conversationType &&
+      conversation &&
+      !conversation.startsWith(conversationType + ":"))
+  )
+    throw Error("INVALID_MEMORY_SCOPE");
+}
 function budget(items, maxChars) {
   let used = 2;
   const out = [];
@@ -380,6 +393,7 @@ class AgentMemory {
     };
   }
   search(q = {}, current = "") {
+    recallScope(q.conversation, q.conversationType);
     const limit = num(q.limit, 10, 1, 50),
       offset = num(q.cursor?.eventOffset ?? q.offset, 0, 0, 10000000),
       maxChars = num(q.maxChars, 6000, 512, 16000);
@@ -412,6 +426,10 @@ class AgentMemory {
     );
     where.push("seq<=?");
     args.push(eventCeiling);
+    if (q.conversationType) {
+      where.push("conversation LIKE ?");
+      args.push(q.conversationType + ":%");
+    }
     if (q.cursor?.beforeSeq != null) {
       where.push("seq<?");
       args.push(num(q.cursor.beforeSeq, 0, 1, Number.MAX_SAFE_INTEGER));
@@ -475,6 +493,7 @@ class AgentMemory {
     if (
       types !== "event" &&
       !q.conversation &&
+      !q.conversationType &&
       !q.connectionId &&
       !q.kind &&
       !q.cursor?.diariesDone
@@ -526,37 +545,43 @@ class AgentMemory {
     const diaryItems = budget(diaries.slice(0, limit), Math.max(0, left));
     const moreEvents = rows.length > items.length,
       moreDiaries = diaries.length > diaryItems.length;
+    const nextCursor =
+      moreEvents || moreDiaries
+        ? {
+            eventCeiling,
+            beforeSeq: items.at(-1)?.seq ?? q.cursor?.beforeSeq,
+            diaryCeiling,
+            diaryBefore: diaryItems.length
+              ? {
+                  time: diaryItems.at(-1).updatedAt,
+                  id: diaryItems.at(-1).id,
+                }
+              : q.cursor?.diaryBefore,
+            eventOffset: offset + items.length,
+            diaryOffset: diaryOffset + diaryItems.length,
+            eventsDone: !moreEvents,
+            diariesDone: !moreDiaries,
+          }
+        : null;
     return {
       items,
       diaries: diaryItems,
-      nextOffset: rows.length > items.length ? offset + items.length : null,
-      nextDiaryOffset:
-        diaries.length > diaryItems.length
-          ? diaryOffset + diaryItems.length
-          : null,
-      nextCursor:
-        moreEvents || moreDiaries
-          ? {
-              eventCeiling,
-              beforeSeq: items.at(-1)?.seq ?? q.cursor?.beforeSeq,
-              diaryCeiling,
-              diaryBefore: diaryItems.length
-                ? {
-                    time: diaryItems.at(-1).updatedAt,
-                    id: diaryItems.at(-1).id,
-                  }
-                : q.cursor?.diaryBefore,
-              eventOffset: offset + items.length,
-              diaryOffset: diaryOffset + diaryItems.length,
-              eventsDone: !moreEvents,
-              diariesDone: !moreDiaries,
-            }
-          : null,
+      scope: {
+        conversationType: q.conversationType || "all",
+        conversation: q.conversation || null,
+      },
+      hasMore: !!nextCursor,
+      continueWith: nextCursor
+        ? { tool: "memory_search", arguments: { ...q, cursor: nextCursor } }
+        : null,
+      nextOffset: moreEvents ? offset + items.length : null,
+      nextDiaryOffset: moreDiaries ? diaryOffset + diaryItems.length : null,
+      nextCursor,
       truncated:
         items.length < Math.min(rows.length, limit) ||
         diaryItems.length < Math.min(diaries.length, limit),
       notice:
-        "Use source, participants and reply links to judge context. Neighboring messages are not necessarily one topic. You decide what is appropriate to say from your own recollections and diaries; no per-send recall approval is required.",
+        "Only this page of your own matching records is shown, newest first. Omitted conversation searches across conversations, not just the current chat. Use conversationType=group/private for a source kind; conversation requires an exact key such as group:20000. If hasMore, call continueWith before concluding older or other-chat memories are absent. Empty filtered results do not establish that the whole memory store is empty. Use source, participants and reply links to judge context; neighboring messages need not be one topic. You decide what is appropriate to say from your own recollections and diaries; no per-send recall approval is required.",
     };
   }
   related(q, current = "") {
@@ -666,6 +691,7 @@ class AgentMemory {
     },
     current = "",
   ) {
+    recallScope(conversation);
     num(limit, 20, 1, 50);
     num(maxChars, 12000, 512, 16000);
     num(afterSeq, 0, 0, Number.MAX_SAFE_INTEGER);
@@ -727,8 +753,9 @@ class AgentMemory {
       markReadEligible: conversation === current,
       previousBeforeSeq: items.at(0)?.seq ?? null,
       source: rows.length ? provenance(rows[0]).source : null,
+      scope: { conversation },
       notice:
-        "Archive order only; adjacency is not a reply or causal relationship. Use memory_related for explicit replies/recalls across time.",
+        "This reads one exact conversation; the tool defaults to the current conversation when omitted. To discover memories from other chats use memory_search with conversationType=group/private or no conversation filter. Archive order only; adjacency is not a reply or causal relationship. Use memory_related for explicit replies/recalls across time.",
       truncated: items.length < rows.length,
     };
   }

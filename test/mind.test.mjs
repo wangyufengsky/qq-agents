@@ -236,6 +236,8 @@ test("incremental prompts do not append persona or overlap prior messages", asyn
       },
     }),
     m = f.store.bind("agent-0");
+  // This tests session continuity, independently of estimated capacity guards.
+  f.runtime.agent("agent-0").contextPolicy.capacityTokens = 65536;
   event(m, 1, { body: "唯一首轮消息" });
   await f.runtime.wake("agent-0", "group:20000");
   event(m, 2, { body: "唯一新增消息" });
@@ -796,6 +798,8 @@ test("changing identity anchors refreshes stable instructions without a self ver
       },
     }),
     m = store.bind("agent-0");
+  // This tests session continuity, independently of estimated capacity guards.
+  runtime.agent("agent-0").contextPolicy.capacityTokens = 65536;
   await runtime.wake("agent-0", "group:20000");
   runtime.agent("agent-0").name = "新名字";
   runtime.agent("agent-0").appearance = "绿色围巾";

@@ -7,6 +7,8 @@ import { mcpEntrySpecs, scopedCatalog } from "../src/tools/catalog.mjs";
 test("Self and own accounts stay fixed while peer accounts refresh without rebuilding", async (t) => {
   const cfg = config(2),
     captured = [];
+  // This tests session continuity, independently of estimated capacity guards.
+  cfg.agents[0].contextPolicy.capacityTokens = 65536;
   cfg.agents[0].persona = "我喜欢倾听，也会开玩笑。";
   cfg.agents[0].appearance = "固定形象";
   cfg.agents[0].ownerIds = ["30000"];

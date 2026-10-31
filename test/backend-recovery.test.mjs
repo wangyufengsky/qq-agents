@@ -350,6 +350,8 @@ test("automatic DSH discovery cannot interrupt a turn that starts while discover
 test("a completed Codex session is resumed on the next real wake after recovery", async (t) => {
   const f = await setup(t),
     sessions = [];
+  // This tests session continuity, independently of estimated capacity guards.
+  f.runtime.agent("agent-0").contextPolicy.capacityTokens = 65536;
   f.runtime.backendFactory = () => ({
     models: async () => [{ model: "fixture" }],
     close: async () => {},
