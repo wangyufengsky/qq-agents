@@ -113,8 +113,10 @@ export class Runtime {
     this.transcripts = new VoiceTranscription(this);
     this.protectedWork = new ProtectedWork(this);
     this.protectedWork.recover();
-    for (const a of this.config.agents)
-      this.memory.bind(a.id).identity.initialize(a, this.now());
+    for (const a of this.config.agents) {
+      const self = this.memory.bind(a.id).identity.initialize(a, this.now());
+      this.contexts.upgradeInstructions(a, self);
+    }
     this.banter = new BanterCoordinator({
       botIds: this.config.connections.map((c) => c.accountId),
       ...this.config.peerLimit,
