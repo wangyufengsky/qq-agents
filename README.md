@@ -236,7 +236,8 @@ node src/main.mjs --data /path/to/private-data --port 3210
 **扩展与安全**
 
 - [扩展指南：新增 AI 后端、桥接工具与外部 MCP](docs/EXTENDING.md)
-- [网页游戏 P0 公网与手机验证](docs/WEB-GAME-P0.md) · [多游戏框架契约 v0.5（未实施，五子棋为首个试点）](docs/plans/WEB-GAME-v0.5.md)
+- [网页游戏 P0 公网与手机验证](docs/WEB-GAME-P0.md) · [多游戏框架契约 v0.5（分阶段实施，五子棋为首个试点）](docs/plans/WEB-GAME-v0.5.md)
+- [网页游戏 P1a 通用内核与非棋盘夹具](docs/WEB-GAME-P1A.md)（仅本机合成身份，不接 QQ 或模型）
 - [安全策略与漏洞报告](SECURITY.md)
 
 **参与贡献**

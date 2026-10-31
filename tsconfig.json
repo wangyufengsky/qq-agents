@@ -59,6 +59,9 @@
     "src/core/live-input.mjs",
     "src/tools/image-download.mjs",
     "src/games/p0-server.mjs",
-    "scripts/game-p0.mjs"
+    "scripts/game-p0.mjs",
+    "src/games/core/*.mjs",
+    "src/games/fixtures/*.mjs",
+    "scripts/game-p1a.mjs"
   ]
 }
