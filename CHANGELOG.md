@@ -6,6 +6,11 @@
 
 ## 未发布
 
+### 小黑盒分享链接识别修复（[#89](https://github.com/wangyufengsky/qq-agents/pull/89)）
+
+- 支持 `/v3/bbs/app/api/web/share` 分享地址中的数字或十六进制帖子 ID，修复纯文本链接及 QQ 分享卡片读取正文前报 `APP_CONTENT_URL_INVALID` 的问题。沿用固定正文接口、域名与 DNS 校验、凭据拒绝及现有权限，不修改配置或数据库。
+- 补充分享地址规范化、无效地址拒绝，以及文本/卡片经过授权和 DNS 校验后读取正文的回归测试；同步平台浏览说明。
+
 ### Google Antigravity CLI harness（[#88](https://github.com/wangyufengsky/qq-agents/pull/88)）
 
 - 新增 `antigravity` 后端、管理台配置及安装向导支持，以官方 headless JSON 流执行回合，按角色和聊天绑定原生会话，使用桥接专用 profile 和受限工具入口。
