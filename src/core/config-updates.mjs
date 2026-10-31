@@ -65,6 +65,7 @@ export async function commitConfig(runtime, next, revision) {
       }
       const controller = new AbortController();
       runtime.configDrain = {
+        connectionIds,
         contexts,
         controller,
         deadline:

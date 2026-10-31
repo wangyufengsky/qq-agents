@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fixture, config } from "./helpers.mjs";
+import { fixture, config, raw } from "./helpers.mjs";
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 for (const action of ["complete", "timeout", "pause", "isolated", "shutdown"])
   test(`same-account transport replacement ${action} respects admitted work`, async (t) => {
@@ -26,6 +26,8 @@ for (const action of ["complete", "timeout", "pause", "isolated", "shutdown"])
         },
       }),
       r = f.runtime;
+    await r.stopConnection("qq-0");
+    await r.startConnection("qq-0");
     await r.wake("agent-0", "group:20000");
     hold = true;
     const job = r.wake("agent-0", "group:20000");
@@ -49,6 +51,21 @@ for (const action of ["complete", "timeout", "pause", "isolated", "shutdown"])
     );
     assert.equal(r.backends.get("agent-0"), backend);
     assert(transport.connected);
+    const memory = f.store.bind("agent-0");
+    const count = () =>
+      memory.db
+        .prepare(
+          "SELECT COUNT(*) AS n FROM events WHERE agent_id=? AND direction='in'",
+        )
+        .get("agent-0").n;
+    const beforeEvents = count();
+    transport.emit("event", raw(700001));
+    await tick();
+    assert.equal(
+      count(),
+      beforeEvents + 1,
+      "old socket must still archive arrivals during drain",
+    );
     if (action === "complete") {
       release();
       await job;

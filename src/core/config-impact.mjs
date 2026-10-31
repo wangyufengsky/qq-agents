@@ -199,15 +199,12 @@ export function configImpact(before, after) {
       agentBackend(before, id),
       agentBackend(after, id),
     );
-    const revoked =
-      globalChanged ||
-      agentIds.has(id) ||
-      identityConnections.has(a.connectionId) ||
-      nativeChanged;
-    if (revoked) {
+    const nativeAuthorityChanged =
+      globalChanged || identityConnections.has(a.connectionId) || nativeChanged;
+    if (nativeAuthorityChanged) {
       agentIds.add(id);
       backendAgentIds.add(id);
-    } else if (connectionIds.has(a.connectionId)) {
+    } else if (!agentIds.has(id) && connectionIds.has(a.connectionId)) {
       agentIds.add(id);
       drainAgentIds.add(id);
     }

@@ -396,7 +396,8 @@ export class Runtime {
       if (
         this.transports.get(id) !== t ||
         this.closed ||
-        this.reconfiguringConnections.has(id)
+        (this.reconfiguringConnections.has(id) &&
+          !this.configDrain?.connectionIds.has(id))
       )
         return;
       const job = this.ingest(id, raw).catch((cause) => {
