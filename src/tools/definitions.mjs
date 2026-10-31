@@ -65,7 +65,7 @@ export const definitions = {
   ...screenshotDefinitions,
   ...appDefinitions,
   memory_search: [
-    "按中文关键词、人物QQ、来源、时间、记录类型检索自己的跨会话经历/日记。命中附带同一场景的相邻发言和引用；相邻不等于同一话题。自行判断适合表达的回忆，再按ID展开原文。",
+    "检索自己的跨会话经历/日记，私聊也能回忆自己的普通群聊记录。conversationType=group/private筛选聊天类型；conversation仅接受具体来源键。省略来源筛选会跨会话搜索。hasMore时用continueWith续查，不能将第一页当成全部记忆。相邻发言不等于同一话题，按ID展开原文并判断适合表达的回忆。",
     z
       .object({
         query: str.max(200).optional(),
@@ -74,6 +74,7 @@ export const definitions = {
         contextSeconds: z.number().int().min(1).max(3600).optional(),
         person: str.optional(),
         connectionId: str.optional(),
+        conversationType: z.enum(["group", "private"]).optional(),
         conversation: str.optional(),
         type: z.enum(["all", "event", "diary"]).optional(),
         kind: str.optional(),
@@ -93,6 +94,9 @@ export const definitions = {
             diariesDone: z.boolean(),
           })
           .strict()
+          .describe(
+            "Copy continueWith.arguments.cursor as an object, never a JSON string.",
+          )
           .optional(),
         limit,
         maxChars: budget,
@@ -122,7 +126,7 @@ export const definitions = {
       .strict(),
   ],
   conversation_read: [
-    "按来源读取账本；aroundId按可靠消息时间展开（同时间按UUID），不能用时间邻文更新已读水位。用nextAroundBefore/After作为aroundCursor继续，保持aroundId和contextSeconds；观察/未知时间只返回锚点，明确引用用memory_related。不把有限窗口当完整历史。",
+    "按具体conversation来源键读取账本；省略时仅读当前聊天。查找其他群聊/私聊先用memory_search，不能填写group/private代替具体来源键。aroundId按可靠消息时间展开（同时间按UUID），不能用时间邻文更新已读水位。用nextAroundBefore/After作为aroundCursor继续，保持aroundId和contextSeconds；观察/未知时间只返回锚点，明确引用用memory_related。不把有限窗口当完整历史。",
     z
       .object({
         conversation: str.optional(),

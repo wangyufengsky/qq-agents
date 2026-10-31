@@ -44,6 +44,8 @@ export function safeToolFailure(error) {
     };
   /** @type {Record<string, string>} */
   const hints = {
+    INVALID_MEMORY_SCOPE:
+      "The source selector is invalid, not an empty memory result. memory_search conversationType=group/private filters a kind of chat. conversation must be an exact source key such as group:20000 or private:30000; do not use group/private or wildcard keys. Omit conversation to search your own memories across chats, then use the returned source key. conversation_read without conversation only reads the current chat. Keep protected-source restrictions unchanged.",
     DELIVERY_UNKNOWN:
       "The gateway could not confirm whether this message reached QQ (for example QQ dropped offline mid-send); it may already be visible. Do not send it again or change requestId. The program marks it sent when QQ's own copy arrives, otherwise the administrator checks it in the console.",
     MOOD_CHANGE_NEEDS_CAUSE:
