@@ -4,7 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { imageMime } from "../tools/media.mjs";
-import { hasOtherAnimation } from "../tools/animation.mjs";
+import {
+  decodeGif,
+  hasOtherAnimation,
+  inspectGif,
+} from "../tools/animation.mjs";
 
 /** Native view_file must only see pixels returned by an authorized tool in this turn.
  * CLI MCP offloading alone does not reliably attach later images to model input. */
@@ -21,6 +25,51 @@ export class AntigravityMedia {
     this.directory ??= fs.mkdtempSync(path.join(os.tmpdir(), "qq-agy-media-"));
     fs.chmodSync(this.directory, 0o700);
     return this.directory;
+  }
+  /** MediaStore deliberately returns single-frame GIFs unchanged for other backends.
+   * Convert only that static case; animated GIFs must retain the bridge's frame metadata.
+   * @param {any} result @param {AbortSignal} signal */
+  async fromTool(result, signal) {
+    if (this.closed || signal.aborted) throw Error("ANTIGRAVITY_TURN_INACTIVE");
+    if (result.isError) return result;
+    const images = result.content.filter(
+      (/** @type {any} */ c) => c.type === "image",
+    );
+    if (images.length > 10) throw Error("ANTIGRAVITY_MEDIA_LIMIT");
+    let bytes = 0;
+    // Bound the complete input before starting any decoder or granting paths.
+    for (const image of images) {
+      if (
+        typeof image.data !== "string" ||
+        image.data.length > 12 * 1024 * 1024
+      )
+        throw Error("ANTIGRAVITY_MEDIA_LIMIT");
+      const size = Buffer.from(image.data, "base64").length;
+      bytes += size;
+      if (size > 8 * 1024 * 1024 || bytes > 20 * 1024 * 1024)
+        throw Error("ANTIGRAVITY_MEDIA_LIMIT");
+    }
+    const content = [];
+    for (const item of result.content) {
+      if (this.closed || signal.aborted)
+        throw Error("ANTIGRAVITY_TURN_INACTIVE");
+      if (item.type !== "image" || item.mimeType !== "image/gif") {
+        content.push(item);
+        continue;
+      }
+      const data = Buffer.from(item.data, "base64");
+      let info;
+      try {
+        info = inspectGif(data);
+        if (info.frames.length !== 1) throw Error();
+      } catch {
+        throw Error("ANTIGRAVITY_MEDIA_FORMAT");
+      }
+      const [image] = await decodeGif(data, info, info.frames, { signal });
+      content.push(image);
+    }
+    if (this.closed || signal.aborted) throw Error("ANTIGRAVITY_TURN_INACTIVE");
+    return this.result({ ...result, content });
   }
   /** @param {any} result */
   result(result) {

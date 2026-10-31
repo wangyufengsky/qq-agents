@@ -2,10 +2,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
+import { execFileSync } from "node:child_process";
 import { AntigravityMedia } from "../src/backends/antigravity-media.mjs";
 import { antigravityToolAllowed } from "../src/backends/antigravity-guard.mjs";
 import { safeToolFailure } from "../src/tools/errors.mjs";
 import { colorGrid } from "../scripts/fixtures/antigravity-media.mjs";
+import { MediaStore } from "../src/tools/media.mjs";
+import { gif } from "./gif-fixture.mjs";
 const image = (colors) => ({
   type: "image",
   mimeType: "image/png",
@@ -127,5 +131,69 @@ test("plain and failed results grant no native file access", (t) => {
     { ...fixture(), isError: true },
   ])
     assert.equal(media.result(value), value);
+  assert.equal(media.catalog().length, 0);
+});
+
+test("single-frame GIF tool results become visible PNG pixels without changing the source", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "qq-agy-single-gif-"));
+  const store = new MediaStore(root),
+    media = new AntigravityMedia();
+  t.after(() => {
+    media.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  const source = gif([{ color: 2 }]);
+  const saved = store.put("a", source, "image/gif");
+  const result = await store.view("a", saved.id);
+  assert.equal(result.content[1].mimeType, "image/gif");
+  const transformed = await media.fromTool(
+    result,
+    new AbortController().signal,
+  );
+  assert.deepEqual(transformed.content[0], result.content[0]);
+  const file = media.catalog()[0];
+  assert(file.path.endsWith(".png"));
+  const pixels = execFileSync(
+    "ffmpeg",
+    [
+      "-v",
+      "error",
+      "-i",
+      file.path,
+      "-f",
+      "rawvideo",
+      "-pix_fmt",
+      "rgba",
+      "pipe:1",
+    ],
+    { timeout: 5000 },
+  );
+  assert.deepEqual([...pixels.subarray(0, 4)], [0, 0, 255, 255]);
+  assert.equal(store.read("a", saved.id).data, source.toString("base64"));
+  assert(antigravityToolAllowed(call(file.path), [], media.catalog()));
+});
+
+test("raw animated GIFs and cancelled conversion never grant image paths", async (t) => {
+  const media = new AntigravityMedia();
+  t.after(() => media.close());
+  const result = {
+    content: [
+      {
+        type: "image",
+        mimeType: "image/gif",
+        data: gif([{ color: 0 }, { color: 1 }]).toString("base64"),
+      },
+    ],
+  };
+  await assert.rejects(
+    media.fromTool(result, new AbortController().signal),
+    /ANTIGRAVITY_MEDIA_FORMAT/,
+  );
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(
+    media.fromTool(fixture(), controller.signal),
+    /ANTIGRAVITY_TURN_INACTIVE/,
+  );
   assert.equal(media.catalog().length, 0);
 });

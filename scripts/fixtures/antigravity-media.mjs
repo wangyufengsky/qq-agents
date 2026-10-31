@@ -89,8 +89,29 @@ export function acceptanceMedia(root) {
     { stdio: "pipe", timeout: 30000 },
   );
   fs.chmodSync(output, 0o600);
+  const single = path.join(directory, "single.gif");
+  execFileSync(
+    "ffmpeg",
+    [
+      "-v",
+      "error",
+      "-nostdin",
+      "-i",
+      path.join(directory, "frame-0.png"),
+      "-frames:v",
+      "1",
+      single,
+    ],
+    { stdio: "pipe", timeout: 30000 },
+  );
+  fs.chmodSync(single, 0o600);
   return {
     still: { buffer: png, mimeType: "image/png", colors: still },
+    single: {
+      buffer: fs.readFileSync(single),
+      mimeType: "image/gif",
+      colors: first,
+    },
     animation: {
       buffer: fs.readFileSync(output),
       mimeType: "image/gif",

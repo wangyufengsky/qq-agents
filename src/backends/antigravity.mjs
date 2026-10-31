@@ -453,7 +453,7 @@ export class AntigravityBackend {
         spec = params.tools.find((tool) => tool.name === value.name);
         const result = await params.callTool(value.name, value.arguments || {});
         if (!live || params.signal.aborted) return reply(403, {});
-        const content = media.result(mcpResult(result));
+        const content = await media.fromTool(mcpResult(result), params.signal);
         if (!live || params.signal.aborted) return reply(403, {});
         reply(200, content);
       } catch (error) {

@@ -206,6 +206,12 @@ try {
         imageCount: 1,
       },
       {
+        name: "single-frame-gif",
+        body: instruction,
+        media: media.single,
+        imageCount: 1,
+      },
+      {
         name: "gif-frames",
         body:
           "这是一张两帧动图。" +
