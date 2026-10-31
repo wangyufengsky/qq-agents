@@ -236,6 +236,7 @@ node src/main.mjs --data /path/to/private-data --port 3210
 **扩展与安全**
 
 - [扩展指南：新增 AI 后端、桥接工具与外部 MCP](docs/EXTENDING.md)
+- [网页游戏 P0 公网与手机验证](docs/WEB-GAME-P0.md) · [后续接口设计 v0.4（未实施）](docs/plans/WEB-GAME-v0.4.md)
 - [安全策略与漏洞报告](SECURITY.md)
 
 **参与贡献**

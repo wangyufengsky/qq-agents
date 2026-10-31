@@ -57,6 +57,8 @@
     "scripts/privacy-rules.mjs",
     "src/core/input-progress.mjs",
     "src/core/live-input.mjs",
-    "src/tools/image-download.mjs"
+    "src/tools/image-download.mjs",
+    "src/games/p0-server.mjs",
+    "scripts/game-p0.mjs"
   ]
 }
