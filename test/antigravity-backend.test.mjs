@@ -619,3 +619,69 @@ test("compact parameter guides retain a description argument and all structural 
   assert.equal(schema.description, "documentation");
   assert.equal(schema.properties.description.description, "field prose");
 });
+
+test("a failed spawn preserves the completed native session and its scope binding", async (t) => {
+  const f = setup(t);
+  await f.backend.run(f.params);
+  const session = f.sessions.at(-1),
+    spawn = f.backend.spawn;
+  f.backend.spawn = () => {
+    throw Error("SYNTHETIC_SPAWN_FAILURE");
+  };
+  await assert.rejects(
+    f.backend.run({ ...f.params, session, instructions: undefined }),
+    /SYNTHETIC_SPAWN_FAILURE/,
+  );
+  assert.equal(f.sessions.at(-1).id, session.id);
+  f.backend.spawn = spawn;
+  await f.backend.run({ ...f.params, session, instructions: undefined });
+  assert.equal(f.sessions.at(-1).id, session.id);
+  assert.equal(f.launches.length, 2);
+});
+
+test("Antigravity resumes a proven compatible binding and refreshes optional argument guidance", async (t) => {
+  const { backend, params, sessions, launches } = setup(t, "usage");
+  const tools = [
+    {
+      name: "probe",
+      inputSchema: {
+        type: "object",
+        properties: {},
+        additionalProperties: false,
+      },
+    },
+  ];
+  await backend.run({ ...params, tools });
+  const original = sessions.at(-1),
+    next = structuredClone(tools);
+  next[0].inputSchema.properties.optional = { type: "string" };
+  const binding = JSON.parse(
+    fs.readFileSync(path.join(launches[0].options.cwd, "session.json"), "utf8"),
+  );
+  assert.equal(backend.acceptsSession(original, next, binding.contract), true);
+  const migrated = { ...original, signature: backend.sessionSignature(next) };
+  await backend.run({
+    ...params,
+    tools: next,
+    session: migrated,
+    instructions: undefined,
+  });
+  assert.equal(sessions.at(-1).id, original.id);
+  const guide = fs.readFileSync(
+    path.join(launches[1].options.cwd, ".agents", "agents", "qq-agents.md"),
+    "utf8",
+  );
+  assert(guide.includes(params.instructions));
+  assert(guide.includes('"optional":{"type":"string"}'));
+  const changed = structuredClone(next);
+  changed[0].inputSchema.required = ["optional"];
+  await assert.rejects(
+    backend.run({
+      ...params,
+      tools: changed,
+      session: { ...original, signature: backend.sessionSignature(changed) },
+    }),
+    /ANTIGRAVITY_SESSION_UNAVAILABLE/,
+  );
+  assert.equal(launches.length, 2);
+});

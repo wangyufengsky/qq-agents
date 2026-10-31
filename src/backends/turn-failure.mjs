@@ -1,5 +1,5 @@
 // @ts-check
-class SessionPreparationFailure extends Error {
+export class SessionPreparationFailure extends Error {
   /** @param {Error} error */
   constructor(error) {
     super(error.message, { cause: error });
@@ -13,11 +13,17 @@ export async function beforeSessionInput(session, prepare) {
   try {
     return await prepare();
   } catch (error) {
-    if (session && error instanceof Error)
+    if (
+      session &&
+      error instanceof Error &&
+      !(error instanceof SessionUnavailableFailure)
+    )
       throw new SessionPreparationFailure(error);
     throw error;
   }
 }
+// A native rejection is different from losing the transport before input.
+export class SessionUnavailableFailure extends Error {}
 /** @param {unknown} error */
 export function sessionWasUnchanged(error) {
   return error instanceof SessionPreparationFailure;
@@ -183,6 +189,7 @@ export async function runWithRecovery(
       if (
         params.signal.aborted ||
         !(error instanceof BackendTurnFailure) ||
+        !error.recoverable ||
         !error.sessionReusable ||
         !session ||
         attempt >= 1

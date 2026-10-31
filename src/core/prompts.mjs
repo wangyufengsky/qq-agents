@@ -6,17 +6,19 @@ import { describeInstant } from "../../vendor/scheduler/time.js";
 const UPCOMING_SHOWN = 3;
 
 // Identity belongs to configuration. Self describes the person, not the transport.
-export function identityAnchors(config, agent) {
+export function identityAnchors(config, agent, normalize = true) {
   const account = (a) => ({
     agentId: a.id,
     name: a.name,
-    aliases: a.aliases,
+    aliases: normalize ? [...new Set(a.aliases)].sort() : a.aliases,
     accountId: config.connections.find((c) => c.id === a.connectionId)
       ?.accountId,
   });
   return {
     self: account(agent),
-    administrators: agent.ownerIds,
+    administrators: normalize
+      ? [...new Set(agent.ownerIds)].sort()
+      : agent.ownerIds,
     peers: config.agents.filter((a) => a.id !== agent.id).map(account),
   };
 }
@@ -54,7 +56,7 @@ export function stableInstructions(
       ? [
           "这是你的空闲时间，大约每小时一次，属于你自己，不是值班检查。",
           "先看「空闲时间素材」：上次留下的线索、最近的动态、未读来信、各聊天还没完成的工作笔记（openNotes）、可以主动找的人（reach）和可用的探索入口。然后挑一件你真想做的小事去做，例如：推进自己的小项目（素材里的 projects），或者有件想跨几天慢慢做的事就用 project 立一个；管理台明确建立的共同活动（mode=console）也可以在这里继续，先用 projects 读当前原稿和未处理的管理员贡献，使用 project.draft 保存续稿，不代管理员选未定事项；顺着上次的线索继续；想起某个人、惦记一件没聊完的事、群里有个话题还想接，就主动找对方说句话；在已开启的平台看看热门或关注（入口和剩余额度见素材，可直接 app_browse）；搜一个你好奇或之前没想通的问题；读完一篇内容；写日记或整理工作笔记；有到期的成长候选就回顾。",
-          `结束前用 subject_log 记一笔：做了什么、发现了什么、下次想接着做什么；主动找了人记 did=reached-out。真的想休息也可以，同样用 subject_log 记下 did=rested 和原因。每次空闲时间最多调用 ${agent.subject?.maxToolCallsPerTurn ?? 8} 个工具，subject_log 不计入。`,
+          `结束前用 subject_log 记一笔：做了什么、发现了什么、下次想接着做什么；主动找了人记 did=reached-out。真的想休息也可以，同样用 subject_log 记下 did=rested 和原因。${options.legacyBudget === undefined ? "工具额度以本轮环境为准，subject_log 不计入。" : `每次空闲时间最多调用 ${options.legacyBudget} 个工具，subject_log 不计入。`}`,
           "想主动找人说话，或想把发现的东西分享给某人，用 intent_create 交给对应聊天：target 从 reach.targets 里选，expiresAt 一般给几小时到一天，等回应就设 expectsResponse。由那边结合现场决定说、暂缓还是放弃；这里不直接发 QQ，也不需要聊天里的等待或已读操作。朋友之间主动开口是正常的，不算打扰；对方没接也没关系，冷却和每日额度由程序把关。不必每次都找人，也不为凑数找人。",
         ].join("\n")
       : [
@@ -105,6 +107,10 @@ export function turnEnvironment(runtime, agent, ctx, backendType) {
     `当前时间：${JSON.stringify({ nowMs: now, iso: new Date(now).toISOString(), timezone, local: new Intl.DateTimeFormat("zh-CN", { timeZone: timezone, dateStyle: "full", timeStyle: "long" }).format(new Date(now)) })}。相对日期以此为准，消息发生时间另计。`,
     `当前同伴配置（程序提供，本轮有效，替换历史同伴名单；不增加管理员或工具授权）：${JSON.stringify(identityAnchors(runtime.config, agent).peers)}`,
   ];
+  if (ctx.conversation === "@subject")
+    parts.push(
+      `本回合工具额度（替换历史工具额度）：最多调用 ${ctx.subjectToolBudget} 个工具，subject_log 不计入；额度在本回合开始时确定。`,
+    );
   if (ctx.conversation.startsWith("group:"))
     parts.push(
       isPrivateLikeGroup(runtime.config, ctx.conversation)

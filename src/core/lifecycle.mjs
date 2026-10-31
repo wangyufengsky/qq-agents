@@ -1,5 +1,12 @@
 import { activityForTurn } from "../tools/activities.mjs";
 import {
+  sessionContract,
+  sessionSignature,
+  acceptsSession,
+  effectiveBackendConfig,
+} from "../backends/session-contract.mjs";
+import { toolSpecs } from "../tools/specs.mjs";
+import {
   stableInstructions,
   identityAnchors,
   turnEnvironment,
@@ -257,7 +264,7 @@ export class ContextLifecycle {
           })) || [],
     };
   }
-  retire(agentId, conversation, reason, owner = null) {
+  retire(agentId, conversation, reason, owner = null, details = {}) {
     if (
       this.runtime.running.has(agentId + "|" + conversation) &&
       this.runtime.running.get(agentId + "|" + conversation) !== owner
@@ -268,6 +275,7 @@ export class ContextLifecycle {
     retireSession(m, conversation, reason, this.runtime.now(), {
       selfVersion: s.loadedSelfVersion,
       handoff: this.handoff(agentId, conversation),
+      details,
     });
   }
   startFreshSubject(agentId, conversation) {
@@ -358,14 +366,39 @@ export class ContextLifecycle {
       },
       dynamicPeers: true,
     });
+    const legacyIdentity = identityAnchors(r.config, a, false);
+    const legacyHashes = new Set([
+      hash(
+        stableInstructions(a, self, subject, anchors, { ...options, identity }),
+      ),
+    ]);
+    // These bounded candidates differ only in the former runtime budget. The
+    // complete identity, Self and protocol text must still match the old digest.
+    for (const legacyBudget of subject
+      ? Array.from({ length: 30 }, (_, i) => i + 1)
+      : [undefined])
+      for (const dynamicPeers of [false, true])
+        legacyHashes.add(
+          hash(
+            stableInstructions(a, self, subject, anchors, {
+              ...options,
+              legacyBudget,
+              dynamicPeers,
+              identity: dynamicPeers
+                ? {
+                    self: legacyIdentity.self,
+                    administrators: legacyIdentity.administrators,
+                  }
+                : legacyIdentity,
+            }),
+          ),
+        );
     return {
       instructions,
       instructionsHash: hash(instructions),
       // A legacy digest is accepted only when the entire original prompt still
       // matches, including the old peer list; unknown identity changes stay fenced.
-      legacyHash: hash(
-        stableInstructions(a, self, subject, anchors, { ...options, identity }),
-      ),
+      legacyHashes,
       backendType,
     };
   }
@@ -392,11 +425,29 @@ export class ContextLifecycle {
         self,
         r.toolsFor(a, row.conversation),
       );
-      if (s.loadedInstructionsHash === contract.legacyHash)
-        m.setState(row.conversation, {
-          ...s,
-          loadedInstructionsHash: contract.instructionsHash,
-        });
+      if (contract.legacyHashes.has(s.loadedInstructionsHash))
+        s.loadedInstructionsHash = contract.instructionsHash;
+      const configured = r.config.backends.find((b) => b.id === a.backendId);
+      const backend = {
+        config: effectiveBackendConfig({
+          ...configured,
+          model: a.model || configured.model,
+          effort: a.effort || configured.effort,
+        }),
+        sessionProtocol:
+          configured.type === "antigravity"
+            ? "antigravity-tools-v3"
+            : undefined,
+      };
+      const tools = toolSpecs(r.toolsFor(a, row.conversation));
+      if (acceptsSession(backend, s.session, tools, s.backendContract)) {
+        s.session = {
+          ...s.session,
+          signature: sessionSignature(backend, tools),
+        };
+        s.backendContract = sessionContract(backend, tools);
+      }
+      m.setState(row.conversation, s);
     }
   }
   prepare(ctx, backend, reasons, tools = []) {
@@ -406,7 +457,7 @@ export class ContextLifecycle {
       m = r.memory.bind(a.id);
     recoverSessions(m, r.now(), ctx.conversation);
     const self = m.identity.initialize(a, r.now());
-    const { instructions, instructionsHash, legacyHash, backendType } =
+    const { instructions, instructionsHash, legacyHashes, backendType } =
       this.instructionContract(
         a,
         ctx.conversation,
@@ -428,12 +479,12 @@ export class ContextLifecycle {
     const contractChanged =
       signature &&
       s.session?.signature !== signature &&
-      !backend.acceptsSession?.(s.session, tools);
+      !backend.acceptsSession?.(s.session, tools, s.backendContract);
     if (
       s.session &&
       (s.loadedSelfVersion !== self.version ||
         (s.loadedInstructionsHash !== instructionsHash &&
-          s.loadedInstructionsHash !== legacyHash) ||
+          !legacyHashes.has(s.loadedInstructionsHash)) ||
         contractChanged)
     ) {
       // Both protocols can preserve old text. Rebuild on identity changes until replacement is behaviorally verified.
@@ -446,6 +497,24 @@ export class ContextLifecycle {
             ? "backend-contract-change"
             : "identity-or-protocol-change",
         ctx,
+        {
+          changes: [
+            ...(s.loadedSelfVersion !== self.version ? ["self-version"] : []),
+            ...(s.loadedInstructionsHash !== instructionsHash &&
+            !legacyHashes.has(s.loadedInstructionsHash)
+              ? ["instructions"]
+              : []),
+            ...(contractChanged
+              ? [
+                  backend.config &&
+                  s.backendContract?.backend ===
+                    sessionContract(backend, tools).backend
+                    ? "tool-schema"
+                    : "backend-contract",
+                ]
+              : []),
+          ],
+        },
       );
       s = m.state(ctx.conversation);
     }
@@ -634,6 +703,9 @@ export class ContextLifecycle {
       ...m.state(ctx.conversation),
       loadedSelfVersion: self.version,
       loadedInstructionsHash: instructionsHash,
+      ...(signature && backend.config
+        ? { backendContract: sessionContract(backend, tools) }
+        : {}),
       lastTurnId: ctx.turnId,
       ...(people ? { personCardsShown: people.shown } : {}),
       ...(between ? { personItemsShown: between.shown } : {}),
@@ -650,6 +722,7 @@ export class ContextLifecycle {
       selfVersion: self.version,
       startedAt: r.now(),
       status: "running",
+      inputStage: "not-submitted",
       reason: reasons.map((x) => x.reason),
       initialSession: ctx.initialSession,
       promptChars: prompt.length,

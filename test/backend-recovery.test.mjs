@@ -83,19 +83,27 @@ test("backend recovery is admin-only and unavailable to an isolated listener", a
   assert.equal(r.value.error, "ISOLATED_MODE");
 });
 
-test("recovery cancels only affected turns, drains them and never replays prompts or sends", async (t) => {
+test("recovery drains only affected turns without cancelling sessions or replaying prompts", async (t) => {
   const f = await setup(t);
   let runs = 0,
     newRuns = 0;
+  const finishes = [];
   f.runtime.backendFactory = () => ({
     models: async () => [],
     close: async () => {},
     cancel: async () => {},
-    run: async ({ signal }) => {
+    run: async ({ signal, saveSession, onUsage }) => {
       runs++;
-      await new Promise((resolve) =>
-        signal.addEventListener("abort", resolve, { once: true }),
-      );
+      saveSession({ backend: "codex", id: "preserved-" + runs });
+      onUsage({
+        source: "measured",
+        contextTokens: 1000,
+        capacityTokens: 1000000,
+      });
+      await new Promise((resolve) => {
+        finishes.push(resolve);
+        signal.addEventListener("abort", resolve, { once: true });
+      });
     },
   });
   const first = f.runtime.wake("agent-0", "group:20000"),
@@ -109,8 +117,19 @@ test("recovery cancels only affected turns, drains them and never replays prompt
       newRuns++;
     },
   });
-  const result = await f.request({ id: "fixture", action: "recover" });
-  assert.equal(result.value.state, "ready");
+  const recovery = f.runtime.backendConnections.recover("fixture");
+  await new Promise((r) => setImmediate(r));
+  const ctx = f.runtime.running.get("agent-0|group:20000");
+  assert.equal(ctx.controller.signal.aborted, false);
+  f.runtime.assertActive(ctx);
+  assert.throws(
+    () => f.runtime.makeContext("agent-0", "private:30000"),
+    /BACKEND_UNAVAILABLE/,
+  );
+  assert.equal(f.runtime.backends.get("agent-0").run !== undefined, true);
+  finishes[0]();
+  const result = await recovery;
+  assert.equal(result.state, "ready");
   await first;
   assert.equal(runs, 2);
   assert.equal(newRuns, 0);
@@ -119,7 +138,15 @@ test("recovery cancels only affected turns, drains them and never replays prompt
   assert.equal(f.runtime.status().agents[0].error, null);
   assert.equal(
     f.store.bind("agent-0").identity.list("model_turns")[0].status,
-    "cancelled",
+    "completed-no-send",
+  );
+  assert.equal(
+    f.store.bind("agent-0").state("group:20000").session.id,
+    "preserved-1",
+  );
+  assert.equal(
+    f.store.bind("agent-0").identity.list("session_history").length,
+    0,
   );
   assert(
     [...f.runtime.transports.values()].every(
@@ -395,3 +422,67 @@ test("pausing during automatic discovery prevents subsequent backend replacement
   assert.equal(created, 0);
   assert.equal(f.runtime.config.globalPaused, true);
 });
+
+for (const mode of ["timeout", "pause", "shutdown"])
+  test(`manual recovery ${mode} preserves its drain boundary`, async (t) => {
+    const f = await setup(t),
+      r = f.runtime;
+    let release,
+      closed = 0;
+    r.backendFactory = () => ({
+      models: async () => [],
+      close: async () => {
+        closed++;
+      },
+      run: async ({ signal, saveSession, onInputSubmitted, onUsage }) => {
+        saveSession({ backend: "codex", id: "drain-boundary" });
+        onInputSubmitted();
+        onUsage({
+          source: "measured",
+          contextTokens: 1000,
+          capacityTokens: 1000000,
+        });
+        await new Promise((resolve) => {
+          release = resolve;
+          signal.addEventListener("abort", resolve, { once: true });
+        });
+      },
+    });
+    const job = r.wake("agent-0", "group:20000");
+    await new Promise((resolve) => setImmediate(resolve));
+    const context = r.running.get("agent-0|group:20000"),
+      original = r.backends.get("agent-0");
+    const pending = r.backendConnections.recover("fixture");
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(r.backendConnections.snapshot("fixture").waitingForTurns, 1);
+    assert.equal(context.controller.signal.aborted, false);
+    assert.equal(closed, 0);
+    if (mode === "timeout") {
+      r.backendConnections.state("fixture").drainDeadline = 0;
+      assert.equal((await pending).error, "BACKEND_DRAIN_TIMEOUT");
+      assert.equal(r.backends.get("agent-0"), original);
+      assert.equal(context.controller.signal.aborted, false);
+      assert.equal(closed, 0);
+      release();
+      await job;
+      assert.equal(
+        f.store.bind("agent-0").state("group:20000").session.id,
+        "drain-boundary",
+      );
+    } else if (mode === "pause") {
+      await r.pause("agent-0", true);
+      await job;
+      await pending;
+      assert.equal(r.agent("agent-0").paused, true);
+      const retired = f.store.bind("agent-0").identity.list("session_history");
+      assert.equal(retired[0].details.source, "agent-pause");
+      assert.equal(retired[0].details.inputStage, "submission-attempted");
+    } else {
+      await r.close();
+      await job;
+      assert.equal((await pending).error, "BACKEND_RECOVERY_FAILED");
+      assert.equal(closed, 1);
+    }
+    assert.equal(r.backendConnections.blocked.size, 0);
+    assert.equal(r.backendConnections.drainingContexts.size, 0);
+  });

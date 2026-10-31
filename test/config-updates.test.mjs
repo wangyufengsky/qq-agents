@@ -587,7 +587,7 @@ test("unaffected agents can run and send while another agent's resources are sti
     },
   });
   const next = structuredClone(f.runtime.config);
-  next.agents[0].persona = "Changed identity";
+  next.agents[0].appearance = "Changed identity";
   const saving = f.runtime.changeConfig(next, f.configStore.revision);
   await started.promise;
   try {

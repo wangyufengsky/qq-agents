@@ -1,5 +1,5 @@
 import { isPrivateLikeGroup, validateConfig } from "./config.mjs";
-import { configImpact } from "./config-impact.mjs";
+import { configImpact, changedConfigFields } from "./config-impact.mjs";
 import { SUBJECT } from "./lifecycle.mjs";
 import { BanterCoordinator } from "../../vendor/local-bridge/banter.mjs";
 
@@ -37,11 +37,20 @@ export async function commitConfig(runtime, next, revision) {
   runtime.reconfiguringConnections = connectionIds;
   for (const [token, ctx] of runtime.capabilities)
     if (agentIds.has(ctx.agentId)) {
-      ctx.controller.abort();
+      runtime.abortContext(
+        ctx,
+        "configuration",
+        changedConfigFields(before, next, ctx.agentId),
+      );
       runtime.capabilities.delete(token);
     }
   for (const ctx of runtime.running.values())
-    if (agentIds.has(ctx.agentId)) ctx.controller.abort();
+    if (agentIds.has(ctx.agentId))
+      runtime.abortContext(
+        ctx,
+        "configuration",
+        changedConfigFields(before, next, ctx.agentId),
+      );
   for (const key of runtime.pending.keys())
     if (agentIds.has(key.split("|")[0])) runtime.pending.delete(key);
   let failed = false;
@@ -94,7 +103,14 @@ export async function commitConfig(runtime, next, revision) {
       }
     });
     await Promise.all(
-      [...impact.paused].map((id) => apply(() => runtime.cancel(id))),
+      [...impact.paused].map((id) =>
+        apply(() =>
+          runtime.cancel(
+            id,
+            next.globalPaused ? "global-pause" : "agent-pause",
+          ),
+        ),
+      ),
     );
     for (const id of agentIds) {
       runtime.operations.revoke(id, false);

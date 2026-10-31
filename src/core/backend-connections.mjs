@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { backendCapabilities } from "../backends/capabilities.mjs";
+import { backendRequestConfig } from "../backends/session-contract.mjs";
+import { waitForDrain } from "../updates/drain.mjs";
 import {
   discoverDshInstances,
   selectDshInstance,
@@ -37,6 +39,7 @@ const known = new Set([
   "BACKEND_NO_AGENTS",
   "BACKEND_PROBE_FAILED",
   "BACKEND_RECOVERY_FAILED",
+  "BACKEND_DRAIN_TIMEOUT",
 ]);
 export const isConnectionFailure = (error) => known.has(error?.message);
 export const connectionError = (e) =>
@@ -58,6 +61,7 @@ export class BackendConnections {
     this.states = new Map();
     this.operations = new Map();
     this.blocked = new Set();
+    this.drainingContexts = new Set();
   }
   config(id) {
     const b = this.runtime.config.backends.find((x) => x.id === id);
@@ -124,6 +128,17 @@ export class BackendConnections {
               error: connectionError(error),
             });
         }
+      };
+    }
+    // Compatible per-request settings must reach a retained adapter as well.
+    if (b.config) {
+      const config = this.config(a.backendId);
+      b.config = {
+        ...b.config,
+        ...backendRequestConfig({
+          ...config,
+          effort: a.effort || config.effort,
+        }),
       };
     }
     return b;
@@ -237,10 +252,48 @@ export class BackendConnections {
           return this.snapshot(id);
         }
         for (const a of agents) this.blocked.add(a.id);
-        const contexts = [...r.capabilities.values()].filter((ctx) =>
-          agents.some((a) => a.id === ctx.agentId),
+        const contexts = [
+          ...new Set([...r.capabilities.values(), ...r.running.values()]),
+        ].filter((ctx) => agents.some((a) => a.id === ctx.agentId));
+        for (const ctx of contexts) this.drainingContexts.add(ctx);
+        const pending = new Set(
+          contexts.filter((ctx) => ctx.done).map((ctx) => ctx.done),
         );
-        await Promise.all(agents.map((a) => r.cancel(a.id)));
+        for (const promise of pending) {
+          const finished = () => pending.delete(promise);
+          promise.then(finished, finished);
+        }
+        state.drainDeadline =
+          Math.max(Date.now(), ...contexts.map((ctx) => ctx.expires)) + 40000;
+        try {
+          await waitForDrain(async () => {
+            if (r.closed) throw Error("BACKEND_RECOVERY_FAILED");
+            state.waitingForTurns =
+              pending.size +
+              contexts.filter(
+                (ctx) => !ctx.done && r.capabilities.has(ctx.token),
+              ).length;
+            return {
+              active: true,
+              pending:
+                state.waitingForTurns +
+                new Set(
+                  agents
+                    .map((a) => a.connectionId)
+                    .filter((id) => r.sendChains.has(id)),
+                ).size,
+              deadline: state.drainDeadline,
+            };
+          });
+        } catch (error) {
+          if (error.message === "UPDATE_DRAIN_TIMEOUT")
+            throw Error("BACKEND_DRAIN_TIMEOUT", { cause: error });
+          throw error;
+        } finally {
+          for (const ctx of contexts) this.drainingContexts.delete(ctx);
+          delete state.waitingForTurns;
+          delete state.drainDeadline;
+        }
         await Promise.all(
           agents.map(async (a) => {
             const b = r.backends.get(a.id);
@@ -248,7 +301,6 @@ export class BackendConnections {
             if (r.backends.get(a.id) === b) r.backends.delete(a.id);
           }),
         );
-        await Promise.all(contexts.map((ctx) => ctx.done));
         if (r.closed) throw Error("BACKEND_RECOVERY_FAILED");
         if (selected) {
           const next = structuredClone(r.config),

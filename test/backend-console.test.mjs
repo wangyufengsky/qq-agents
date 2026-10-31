@@ -63,6 +63,18 @@ test("console recovery and automatic-recovery controls call real admin routes wi
   assert.match(card, /恢复连接/);
   assert.match(card, /开启自动恢复/);
   assert.match(card, /尚未检测/);
+  vm.runInContext(
+    'status.backends[0].state="recovering";status.backends[0].waitingForTurns=2;',
+    sandbox,
+  );
+  assert.match(
+    vm.runInContext("backendCard(config.backends[0])", sandbox),
+    /等待 2 个活跃回合结束/,
+  );
+  vm.runInContext(
+    'status.backends[0].state="unchecked";delete status.backends[0].waitingForTurns;',
+    sandbox,
+  );
   await vm.runInContext('operate("backend-check","fixture")', sandbox);
   assert.equal(f.runtime.backendConnections.snapshot("fixture").state, "ready");
   await vm.runInContext('operate("backend-recover","fixture")', sandbox);

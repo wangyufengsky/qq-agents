@@ -329,3 +329,42 @@ test("free time sees who it can reach and can log reaching out", async (t) => {
     .all();
   assert.equal(JSON.parse(log.payload).did, "reached-out");
 });
+
+test("budget changes apply on the next turn and do not abort or extend the admitted turn", async (t) => {
+  let entered,
+    release,
+    turn = 0;
+  const start = new Promise((resolve) => (entered = resolve)),
+    gate = new Promise((resolve) => (release = resolve)),
+    outcomes = [];
+  const f = fixture(t, {
+    cfg: enabled((a) => (a.subject.maxToolCallsPerTurn = 1)),
+    run: async (p) => {
+      turn++;
+      await p.callTool("memory_search", { query: "x" });
+      if (turn === 1) {
+        entered();
+        await gate;
+      }
+      outcomes.push(
+        await p.callTool("memory_search", { query: "x" }).then(
+          () => "ok",
+          (e) => e.message,
+        ),
+      );
+    },
+  });
+  const job = f.runtime.wake("agent-0", "@subject");
+  await start;
+  const next = structuredClone(f.runtime.config);
+  next.agents[0].subject.maxToolCallsPerTurn = 2;
+  await f.runtime.changeConfig(next, f.configStore.revision);
+  assert.equal(
+    f.runtime.running.get("agent-0|@subject").controller.signal.aborted,
+    false,
+  );
+  release();
+  await job;
+  await f.runtime.wake("agent-0", "@subject");
+  assert.deepEqual(outcomes, ["SUBJECT_TOOL_BUDGET", "ok"]);
+});

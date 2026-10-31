@@ -1,7 +1,7 @@
 import { ProtectedWork, isWorkScope } from "./protected-work.mjs";
 import { recallBoundary } from "./recall-boundary.mjs";
 import { containsCredential } from "./secrets.mjs";
-import { sessionReference } from "./session-records.mjs";
+import { sessionReference, recordRetirementCause } from "./session-records.mjs";
 import { isDeepStrictEqual } from "node:util";
 import { DeliveryService } from "./delivery.mjs";
 import { TurnRunner } from "./turn-runner.mjs";
@@ -179,6 +179,8 @@ export class Runtime {
     if (this.closed) throw Error("RUNTIME_CLOSING");
     if (this.maintenance.active) throw Error("UPDATE_IN_PROGRESS");
     if (this.reconfiguringAgents.has(agentId)) throw Error("CONFIG_CONFLICT");
+    if (this.backendConnections.blocked.has(agentId))
+      throw Error("BACKEND_UNAVAILABLE");
     const a = this.agent(agentId),
       mem = this.memory.bind(agentId);
     if (
@@ -193,6 +195,7 @@ export class Runtime {
       agentId,
       conversation,
       expires: Date.now() + a.behavior.turnTimeoutMs,
+      subjectToolBudget: a.subject.maxToolCallsPerTurn,
       controller: new AbortController(),
       privateRead: new Set(mem.state(conversation).disclosureTaint || []),
       grants: new Set(),
@@ -312,7 +315,10 @@ export class Runtime {
     if (this.maintenance.active && !this.maintenance.allows(ctx))
       codes.push("UPDATE_IN_PROGRESS");
     if (this.reconfiguringAgents.has(a.id)) codes.push("RECONFIGURING");
-    if (this.backendConnections.blocked.has(a.id))
+    if (
+      this.backendConnections.blocked.has(a.id) &&
+      !this.backendConnections.drainingContexts.has(ctx)
+    )
       codes.push("BACKEND_UNAVAILABLE");
     if (conversation === SUBJECT) {
       if (!codes.length && !this.subject.internalAllowed(a))
@@ -427,14 +433,30 @@ export class Runtime {
     this.transports.get(id)?.close();
     this.transports.delete(id);
     for (const a of this.config.agents.filter((a) => a.connectionId === id))
-      await this.cancel(a.id);
+      await this.cancel(a.id, "connection-disconnect");
   }
-  async cancel(agentId) {
+  abortContext(ctx, source, changes = []) {
+    try {
+      if (!ctx.controller.signal.aborted)
+        recordRetirementCause(this.memory.bind(ctx.agentId), ctx.turnId, {
+          source,
+          changes,
+        });
+    } catch (cause) {
+      // Audit storage failure must not prevent revoking an active capability.
+      this.diagnostics.report(
+        Error("SESSION_RETIREMENT_DETAILS_FAILED", { cause }),
+        { component: "runtime" },
+      );
+    }
+    ctx.controller.abort();
+  }
+  async cancel(agentId, source = "administrator-cancel") {
     for (const ctx of this.running.values())
-      if (ctx.agentId === agentId) ctx.controller.abort();
+      if (ctx.agentId === agentId) this.abortContext(ctx, source);
     for (const [token, ctx] of this.capabilities)
       if (ctx.agentId === agentId) {
-        ctx.controller.abort();
+        this.abortContext(ctx, source);
         this.capabilities.delete(token);
       }
     this.pending.forEach((v, k) => {
@@ -450,7 +472,7 @@ export class Runtime {
     const key = agentId + "|" + conversation;
     for (const [token, ctx] of this.capabilities)
       if (ctx.agentId === agentId && ctx.conversation === conversation) {
-        ctx.controller.abort();
+        this.abortContext(ctx, "conversation-pause");
         this.capabilities.delete(token);
       }
     this.pending.delete(key);
@@ -458,7 +480,7 @@ export class Runtime {
     this.conversations.notify(agentId, conversation);
     const ctx = this.running.get(key);
     if (ctx) {
-      ctx.controller.abort();
+      this.abortContext(ctx, "conversation-pause");
       await ctx.done;
     }
   }
@@ -704,14 +726,20 @@ export class Runtime {
     const a = this.agent(agentId);
     if (conversation !== SUBJECT && !allowed(a, conversation, this.config))
       throw Error("INVALID_CONVERSATION");
-    this.revokeCapabilities(agentId, conversation);
+    this.revokeCapabilities(agentId, conversation, "administrator-reset");
     const ctx = this.running.get(agentId + "|" + conversation);
     if (ctx) {
-      ctx.controller.abort();
+      this.abortContext(ctx, "administrator-reset");
       await ctx.done;
     }
     await this.sendChains.get(a.connectionId)?.catch(() => {});
-    this.contexts.retire(agentId, conversation, "administrator-reset");
+    this.contexts.retire(
+      agentId,
+      conversation,
+      "administrator-reset",
+      undefined,
+      { source: "administrator-reset" },
+    );
   }
   async recoverProtectedConversation(agentId, conversation) {
     const a = this.agent(agentId),
@@ -742,10 +770,10 @@ export class Runtime {
       return { recovered: true, paused: true, archiveId: id };
     });
   }
-  revokeCapabilities(agentId, conversation) {
+  revokeCapabilities(agentId, conversation, source = "lifecycle") {
     for (const [token, active] of this.capabilities)
       if (active.agentId === agentId && active.conversation === conversation) {
-        active.controller.abort();
+        this.abortContext(active, source);
         this.capabilities.delete(token);
       }
   }
@@ -769,7 +797,7 @@ export class Runtime {
     try {
       // Reserved before any await, so concurrent calls share one budget.
       if (ctx.conversation === SUBJECT && name !== "subject_log") {
-        const limit = this.agent(ctx.agentId).subject.maxToolCallsPerTurn;
+        const limit = ctx.subjectToolBudget;
         if ((ctx.subjectToolReservations || 0) >= limit)
           throw Error("SUBJECT_TOOL_BUDGET");
         ctx.subjectToolReservations = (ctx.subjectToolReservations || 0) + 1;
@@ -1002,7 +1030,7 @@ export class Runtime {
     };
     // Include contexts belonging to an agent removed by a committed config edit.
     for (const ctx of [...this.capabilities.values(), ...this.running.values()])
-      ctx.controller.abort();
+      this.abortContext(ctx, "service-stop");
     this.capabilities.clear();
     this.pending.clear();
     // Pending handshakes cannot carry a delivery, and must settle before HTTP drains.

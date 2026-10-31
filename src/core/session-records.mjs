@@ -28,6 +28,43 @@ function patchTurn(memory, id, patch) {
   if (row)
     memory.identity.put("model_turns", { ...JSON.parse(row.value), ...patch });
 }
+const retirementSources = new Set([
+  "configuration",
+  "global-pause",
+  "agent-pause",
+  "conversation-pause",
+  "administrator-cancel",
+  "administrator-reset",
+  "connection-disconnect",
+  "service-stop",
+  "turn-timeout",
+  "backend",
+  "lifecycle",
+  "process-recovery",
+  "protected-work",
+]);
+export function recordRetirementCause(
+  memory,
+  turnId,
+  { source, changes = [] },
+) {
+  if (!retirementSources.has(source)) throw Error("INVALID_RETIREMENT_SOURCE");
+  patchTurn(memory, turnId, {
+    retirementCause: {
+      source,
+      changes: changes
+        .filter((key) =>
+          /^(?:agent|backend|connection)\.[A-Za-z]+$|^mode$/.test(key),
+        )
+        .sort(),
+    },
+  });
+}
+export function recordInputSubmission(memory, turnId) {
+  const row = turnRecord(memory, turnId);
+  if (row && JSON.parse(row.value).inputStage === "not-submitted")
+    patchTurn(memory, turnId, { inputStage: "submission-attempted" });
+}
 
 // Only call for scopes with no active owner (startup, or before the next turn).
 // A failed archival/terminal write leaves running durable and retries here.
@@ -72,7 +109,31 @@ function archive(
     !memory.db
       .prepare("SELECT 1 FROM session_history WHERE agent_id=? AND id=?")
       .get(memory.agentId, id)
-  )
+  ) {
+    const turn = turnRecord(memory, turnId);
+    const record = turn && JSON.parse(turn.value);
+    const source = record?.retirementCause?.source;
+    const details = {
+      source: retirementSources.has(source)
+        ? source
+        : reason === "backend-failure"
+          ? "backend"
+          : reason === "process-recovery"
+            ? "process-recovery"
+            : "lifecycle",
+      inputStage: [
+        "not-submitted",
+        "submission-attempted",
+        "accepted",
+      ].includes(record?.inputStage)
+        ? record.inputStage
+        : "unknown",
+      changes: record?.retirementCause?.changes || [],
+      ...(reason === "backend-failure" && record?.backendFailures?.length
+        ? { backendFailure: record.backendFailures.at(-1) }
+        : {}),
+      ...extra.details,
+    };
     memory.identity.put("session_history", {
       id,
       conversation: scope,
@@ -82,7 +143,9 @@ function archive(
       reason,
       at,
       ...extra,
+      details,
     });
+  }
   patchTurn(memory, turnId, {
     backendSession: reference,
     sessionHistoryId: id,
@@ -164,6 +227,7 @@ export function recordBackendTurn(memory, turnId, reference) {
     record?.backendTurnIds ||
     (record?.backendTurnId ? [record.backendTurnId] : []);
   patchTurn(memory, turnId, {
+    ...(reference.inputAccepted !== false ? { inputStage: "accepted" } : {}),
     backendTurnId: reference.turnId,
     backendTurnIds: [...new Set([...ids, reference.turnId])].slice(-8),
   });

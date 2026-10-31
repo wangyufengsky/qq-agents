@@ -34,9 +34,9 @@
     {
       "path": "vendor/dsh-qq/dsh-client.js",
       "origin": "h-D-ACE/dsh-qq",
-      "sha256": "69cd8a05111470458e8de0054b627c851329c4920945d9b1c68ba1333227bba2",
+      "sha256": "62814b38259446d4096bf725453ee5ccf2d8bf21502961e92792f276f4b21736",
       "upstreamSha256": "25e539d2ca6e6e834b9863b2a0943d2c2e69f99c5cf5b03f888261a1dd730f53",
-      "modification": "Cancel and release forgotten remote.mux session streams so subsequent turns receive a fresh snapshot; ignore stale end frames after reopening. Import js-yaml as a namespace (js-yaml 5 has no default export)."
+      "modification": "Cancel and release forgotten remote.mux session streams so subsequent turns receive a fresh snapshot; ignore stale end frames after reopening. Import js-yaml as a namespace (js-yaml 5 has no default export). Keep the session ID on stream errors so missing transcripts are distinguished from transport preparation failures."
     },
     {
       "path": "vendor/dsh-qq/dsh-endpoint.mjs",
@@ -66,7 +66,8 @@
     {
       "path": "vendor/local-bridge/codex-rpc.mjs",
       "origin": "local-bridge",
-      "sha256": "0b5f88da6f000a66e0091365287102049e324586edf24814944c53467156c7da"
+      "sha256": "e2bafecfd719af1fcbd550369de9ca2469185b675d877101778bc818432a2da0",
+      "modification": "Mark decoded JSON-RPC rejections separately from transport failures before turn submission."
     },
     {
       "path": "vendor/social-reader/LICENSE",

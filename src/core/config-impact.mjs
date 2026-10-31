@@ -1,9 +1,9 @@
 // @ts-check
-// @ts-check
 import { isDeepStrictEqual } from "node:util";
+import { backendSessionConfig } from "../backends/session-contract.mjs";
 /** @typedef {{id: string, [key: string]: unknown}} Entity */
-/** @typedef {Entity & {connectionId: string, backendId: string, wake: {participation?: number, [key: string]: unknown}, subject: {intervalMs?: number, maxChecksPerDay?: number, [key: string]: unknown}}} Agent */
-/** @typedef {{agents: Agent[], connections: Entity[], backends: Entity[], port: number, [key: string]: unknown}} Configuration */
+/** @typedef {ReturnType<typeof import("./config.mjs").validateConfig>} Configuration */
+/** @typedef {Configuration["agents"][number]} Agent */
 /** @template {Entity} T
  * @param {T[]} before @param {T[]} after @param {(value: T) => unknown} project */
 function changed(before, after, project) {
@@ -20,33 +20,85 @@ function changed(before, after, project) {
     }),
   );
 }
-/** @param {Entity} value */
-function operational(value) {
-  const { label: _label, recovery, ...rest } = value;
-  return {
-    ...rest,
-    dshInstance: /** @type {{dshInstance?: string} | undefined} */ (recovery)
-      ?.dshInstance,
-  };
-}
 /** Recovery policy is read on each tick; editing it must not drop the socket.
  * @param {Entity} value */
 function connectionOperational(value) {
-  const { label: _label, recovery: _recovery, ...rest } = value;
+  const {
+    label: _label,
+    recovery: _recovery,
+    webUrl: _webUrl,
+    ...rest
+  } = value;
   return rest;
 }
 /** @param {Agent} value */
 function agentPolicy(value) {
-  const result = structuredClone(value);
-  // Pause flags are controls handled by commitConfig, not policy changes.
-  delete result.paused;
-  delete result.wake.participation;
-  delete result.subject.intervalMs;
-  delete result.subject.maxChecksPerDay;
-  // Read when each free-time turn starts.
-  delete result.subject.maxToolCallsPerTurn;
-  delete result.subject.sessionMode;
-  return result;
+  // Scheduling, display and limits do not revoke a transcript's authority.
+  // Permission-bearing policies stay in the comparison and still cancel work.
+  const {
+    paused: _p,
+    wake: _w,
+    behavior: _b,
+    contextPolicy: _c,
+    selfPolicy: _s,
+    persona: _persona,
+    effort: _effort,
+    ...rest
+  } = value;
+  const {
+    intervalMs: _i,
+    maxChecksPerDay: _checks,
+    maxContactsPerDay: _contacts,
+    contactCooldownMs: _cooldown,
+    unansweredCooldownMs: _unanswered,
+    maxToolCallsPerTurn: _tools,
+    sessionMode: _mode,
+    ...subject
+  } = value.subject;
+  return {
+    ...rest,
+    tools: unordered(value.tools),
+    ownerIds: unordered(value.ownerIds),
+    aliases: unordered(value.aliases),
+    allow: {
+      groups: unordered(value.allow.groups),
+      users: unordered(value.allow.users),
+    },
+    voice: { ...value.voice, tts: { enabled: value.voice.tts.enabled } },
+    subject: {
+      ...subject,
+      groups: unordered(subject.groups),
+      users: unordered(subject.users),
+      readTools: unordered(subject.readTools),
+    },
+  };
+}
+/** @param {string[]} values */
+const unordered = (values) => [...new Set(values)].sort();
+/** Field names only: neither configuration values nor credentials enter history.
+ * @param {Configuration} before @param {Configuration} after @param {string} id */
+export function changedConfigFields(before, after, id) {
+  const a = before.agents.find((a) => a.id === id),
+    b = after.agents.find((a) => a.id === id);
+  /** @param {string} kind @param {Record<string,unknown> | undefined} left @param {Record<string,unknown> | undefined} right */
+  const fields = (kind, left, right) =>
+    [...new Set([...Object.keys(left || {}), ...Object.keys(right || {})])]
+      .filter((key) => !isDeepStrictEqual(left?.[key], right?.[key]))
+      .map((key) => kind + "." + key);
+  return [
+    ...fields("agent", a, b),
+    ...fields(
+      "backend",
+      before.backends.find((x) => x.id === a?.backendId),
+      after.backends.find((x) => x.id === b?.backendId),
+    ),
+    ...fields(
+      "connection",
+      before.connections.find((x) => x.id === a?.connectionId),
+      after.connections.find((x) => x.id === b?.connectionId),
+    ),
+    ...(before.mode !== after.mode ? ["mode"] : []),
+  ];
 }
 /** Tools and app/file permissions are supplied with every turn, and a changed tool
  * set retires the session through the context lifecycle; the adapter can stay.
@@ -66,7 +118,11 @@ export function configImpact(before, after) {
   if (before.mode !== after.mode)
     for (const c of [...before.connections, ...after.connections])
       connectionIds.add(c.id);
-  const backendIds = changed(before.backends, after.backends, operational);
+  const backendIds = changed(
+    before.backends,
+    after.backends,
+    backendSessionConfig,
+  );
   const agentIds = changed(before.agents, after.agents, agentPolicy);
   const backendAgentIds = changed(before.agents, after.agents, backendPolicy);
   const {
@@ -76,6 +132,7 @@ export function configImpact(before, after) {
     port: _p,
     globalPaused: _g,
     privateLikeGroups: _privateLikeGroups,
+    peerLimit: _peerLimit,
     ...oldGlobal
   } = before;
   const {
@@ -85,6 +142,7 @@ export function configImpact(before, after) {
     port: _np,
     globalPaused: _ng,
     privateLikeGroups: _newPrivateLikeGroups,
+    peerLimit: _newPeerLimit,
     ...newGlobal
   } = after;
   const globalChanged = !isDeepStrictEqual(oldGlobal, newGlobal);

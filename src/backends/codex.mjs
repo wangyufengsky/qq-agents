@@ -4,6 +4,7 @@ import {
   codexTurnFailure,
   BackendTurnFailure,
   beforeSessionInput,
+  SessionUnavailableFailure,
 } from "./turn-failure.mjs";
 import path from "node:path";
 import { CodexRpc } from "../../vendor/local-bridge/codex-rpc.mjs";
@@ -91,7 +92,7 @@ export class CodexBackend {
    * @param {{root?: string, rpc?: CodexRpc}} [options] root is required; the default only keeps the destructuring safe.
    */
   constructor(config, agent, { root, rpc } = {}) {
-    this.config = config;
+    this.config = { ...config, type: /** @type {const} */ ("codex") };
     this.agent = agent;
     this.root = path.join(/** @type {string} */ (root), "codex", agent.id);
     fs.mkdirSync(this.root, { recursive: true, mode: 0o700 });
@@ -279,9 +280,9 @@ export class CodexBackend {
   sessionSignature(tools) {
     return sessionSignature(this, tools);
   }
-  /** @param {StoredSession | null | undefined} session @param {import("./session-contract.mjs").ToolSpec[]} tools */
-  acceptsSession(session, tools) {
-    return acceptsSession(this, session, tools);
+  /** @param {StoredSession | null | undefined} session @param {import("./session-contract.mjs").ToolSpec[]} tools @param {import("./session-contract.mjs").SessionContract} [previous] */
+  acceptsSession(session, tools, previous) {
+    return acceptsSession(this, session, tools, previous);
   }
   /** @param {RunParams} params */
   async run({
@@ -294,6 +295,7 @@ export class CodexBackend {
     session,
     saveSession,
     onBackendTurn,
+    onInputSubmitted,
     onImageSession,
     onGeneratedImage,
     onImageError,
@@ -316,12 +318,20 @@ export class CodexBackend {
     if (signal.aborted) throw Error("ABORTED");
     let threadId = session?.id;
     if (threadId)
-      await this.rpc.request("thread/resume", {
-        threadId,
-        excludeTurns: true,
-        sandbox: "read-only",
-        approvalPolicy: "never",
-        config: policy,
+      await beforeSessionInput(session, async () => {
+        try {
+          await this.rpc.request("thread/resume", {
+            threadId,
+            excludeTurns: true,
+            sandbox: "read-only",
+            approvalPolicy: "never",
+            config: policy,
+          });
+        } catch (/** @type {any} */ error) {
+          if (error.rpcRejected)
+            throw new SessionUnavailableFailure("CODEX_SESSION_UNAVAILABLE");
+          throw error;
+        }
       });
     else {
       const r = await this.rpc.request("thread/start", {
@@ -380,6 +390,7 @@ export class CodexBackend {
     signal.addEventListener("abort", abort, { once: true });
     try {
       if (signal.aborted) throw Error("ABORTED");
+      onInputSubmitted?.();
       const receipt = await this.rpc.request("turn/start", {
         threadId,
         input: [{ type: "text", text: prompt, text_elements: [] }],

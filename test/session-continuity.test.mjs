@@ -226,6 +226,15 @@ for (const backendType of ["codex", "dsh"])
         assert.equal(history.length, 1);
         assert.equal(history[0].session.id, backendType + "-session");
         assert.equal(history[0].conversation, scope);
+        if (mode === "failure") {
+          assert.equal(history[0].details.source, "backend");
+          assert.equal(history[0].details.inputStage, "accepted");
+          assert.equal(history[0].details.backendFailure.backend, backendType);
+          assert.equal(
+            history[0].details.backendFailure.sessionReusable,
+            false,
+          );
+        }
         assert.equal(turns.length, 1);
         assert.equal(history[0].turnId, turns[0].id);
         assert.equal(turns[0].backendSession.id, history[0].session.id);
@@ -281,7 +290,7 @@ test("DSH connection preparation preserves an existing transcript and resumes it
   assert.equal(memory.identity.list("session_history").length, 0);
 });
 
-test("N3 errors before adapter turn try blocks still archive a new DSH or resumed Codex session", async (t) => {
+test("new DSH preparation failures archive while Codex transport resume failures retain completed history", async (t) => {
   for (const type of ["dsh", "codex"]) {
     const cfg = config(1);
     cfg.agents[0].contextPolicy.capacityTokens = 131072;
@@ -306,11 +315,16 @@ test("N3 errors before adapter turn try blocks still archive a new DSH or resume
     }
     f.runtime.backends.set("agent-0", b);
     assert.equal((await f.runtime.wake("agent-0", chat)).status, "failed");
-    assert.equal(m.state(chat).session, null);
-    assert.equal(
-      m.identity.list("session_history")[0].session.id,
-      type + "-session",
-    );
+    if (type === "dsh") {
+      assert.equal(m.state(chat).session, null);
+      assert.equal(
+        m.identity.list("session_history")[0].session.id,
+        "dsh-session",
+      );
+    } else {
+      assert.equal(m.state(chat).session.id, "codex-session");
+      assert.equal(m.identity.list("session_history").length, 0);
+    }
     assert(
       !JSON.stringify(m.identity.list("session_history")).includes(
         "credential",

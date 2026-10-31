@@ -41,7 +41,13 @@ test("changing automatic recovery does not discard a valid session contract", ()
   next.recovery.autoReconnect = true;
   assert.equal(sessionSignature({ config: next }), initial);
   next.recovery.dshInstance = "relay:web";
-  assert.notEqual(sessionSignature({ config: next }), initial);
+  assert.equal(sessionSignature({ config: next }), initial);
+  cfg.type = "dsh";
+  next.type = "dsh";
+  assert.notEqual(
+    sessionSignature({ config: next }),
+    sessionSignature({ config: cfg }),
+  );
 });
 test("late exit and output from an old Codex child cannot disconnect its replacement", async () => {
   const children = [];

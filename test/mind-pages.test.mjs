@@ -530,3 +530,27 @@ test("mood and person cards show their content before what the page is for", asy
   const people = await page.show("people");
   assert.ok(people.indexOf('id="people-grid"') < people.indexOf("mind-foot"));
 });
+
+test("retirement history exposes source and input stage without expanding by default", async (t) => {
+  const f = await consoleFixture(t),
+    m = f.store.bind("agent-0");
+  m.identity.put("session_history", {
+    id: "synthetic-retirement",
+    conversation: "group:20000",
+    session: { id: "session-synthetic" },
+    reason: "cancelled",
+    at: Date.now(),
+    details: {
+      source: "configuration",
+      inputStage: "accepted",
+      changes: ["agent.tools"],
+    },
+  });
+  const page = consolePage(f),
+    html = await page.show("sessions");
+  assert.match(html, /最近会话更替/);
+  assert.match(html, /配置变更 · 后端已确认输入/);
+  assert.match(html, /session-synthetic/);
+  assert.match(html, /agent.tools/);
+  assert.equal(section(html, "retired-sessions").open, false);
+});
