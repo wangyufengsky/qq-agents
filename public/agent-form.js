@@ -291,10 +291,15 @@ const agentForm = {
       `<div class="agent-models"><button type="button" class="ghost" data-models ${disabledAttr(this.modelsOff(row, row.backendId))}>读取可用模型</button><span class="hint" data-models-hint>${esc(this.modelsHint(row, backend))}</span></div>` +
       check("paused", "保持角色暂停", row.paused) +
       "<h3>聊天范围</h3>" +
-      ids("groups", "群白名单", row.allow.groups, {
-        kind: "group",
-        hint: "只在这些群里接收和回复消息。",
-      }) +
+      ids(
+        "groups",
+        "普通群白名单（私聊模式群在运行设置中统一配置）",
+        row.allow.groups,
+        {
+          kind: "group",
+          hint: "这些群使用普通群策略；运行设置中的私聊模式群也会自动允许。",
+        },
+      ) +
       ids("users", "私聊白名单", row.allow.users, {
         kind: "person",
         hint: "只接收和回复这些人的私聊。",

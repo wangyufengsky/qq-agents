@@ -143,6 +143,7 @@ export const configSchema = z
     mode: z.enum(["isolated", "live"]).default("isolated"),
     port: z.number().int().min(0).max(65535).default(3210),
     globalPaused: z.boolean().default(true),
+    privateLikeGroups: z.array(qq).default([]),
     connections: z.array(
       z
         .object({
@@ -532,10 +533,24 @@ export class ConfigStore {
     return this.value;
   }
 }
-export function allowed(agent, conversation) {
+export function isPrivateLikeGroup(config, conversation) {
+  return (
+    String(conversation).startsWith("group:") &&
+    (config.privateLikeGroups || []).includes(String(conversation).slice(6))
+  );
+}
+
+export function allowedGroups(agent, config) {
+  return [
+    ...new Set([...agent.allow.groups, ...(config.privateLikeGroups || [])]),
+  ];
+}
+
+export function allowed(agent, conversation, config = {}) {
   const [kind, target] = String(conversation).split(":");
   return kind === "group"
-    ? agent.allow.groups.includes(target)
+    ? agent.allow.groups.includes(target) ||
+        isPrivateLikeGroup(config, conversation)
     : kind === "private" && agent.allow.users.includes(target);
 }
 export function inSilence(agent, date = new Date()) {

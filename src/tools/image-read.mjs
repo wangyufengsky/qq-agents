@@ -20,7 +20,7 @@ export async function readEventImage(
     // stream. Never accept a URL, local path or model-supplied download target.
     const eligible = () =>
       connection.gateway === "napcat" &&
-      allowed(a, event.conversation) &&
+      allowed(a, event.conversation, runtime.config) &&
       liveInput(runtime, a.id, event.conversation, event.id);
     return runtime.media.fromMessage(ctx.agentId, event, index, {
       signal,

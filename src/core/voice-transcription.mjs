@@ -71,7 +71,7 @@ export class VoiceTranscription {
       r.config.mode !== "live" ||
       r.config.globalPaused ||
       a.paused ||
-      !allowed(a, conversation)
+      !allowed(a, conversation, r.config)
     )
       return "paused";
     const state = r.memory.bind(a.id).state(conversation);
