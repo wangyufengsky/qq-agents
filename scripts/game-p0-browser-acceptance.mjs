@@ -20,9 +20,23 @@ try {
   page.setDefaultTimeout(10000);
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
+  let releaseInitialSync;
+  const initialSync = new Promise((resolve) => {
+    releaseInitialSync = resolve;
+  });
+  await page.route("**/state", async (route) => {
+    await initialSync;
+    await route.continue();
+  });
   await page.goto(service.createInvite().url);
   await page.getByRole("button", { name: "确认加入测试房间" }).click();
   await page.waitForURL((url) => !url.searchParams.has("invite"));
+  await page.getByRole("button", { name: "H8 空位", exact: true }).click();
+  assert.equal(
+    await page.getByRole("button", { name: "确认落点" }).isDisabled(),
+    true,
+  );
+  releaseInitialSync();
   await page.waitForFunction(() =>
     document.getElementById("connection")?.textContent.includes("已同步"),
   );
@@ -74,6 +88,7 @@ try {
       mobileViewport: "390x844",
       join: true,
       selectionCancel: true,
+      delayedSyncDisablesSubmit: true,
       move: true,
       refresh: true,
       lostReceiptReconciled: true,

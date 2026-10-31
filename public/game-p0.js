@@ -55,10 +55,10 @@
   }
   function controls() {
     $("confirm").disabled =
-      !storageReady || busy || !!pending || selected === null;
+      !storageReady || busy || syncing || !!pending || selected === null;
     $("cancel").disabled = selected === null || busy;
     $("retry").hidden = !pending;
-    $("retry").disabled = busy;
+    $("retry").disabled = busy || syncing;
     for (const cell of $("board").children)
       cell.disabled =
         !storageReady ||
@@ -165,6 +165,7 @@
   async function sync() {
     if (syncing || busy || document.hidden) return;
     syncing = true;
+    controls();
     clearTimeout(timer);
     try {
       await reconcile();
@@ -178,6 +179,7 @@
           : "连接中断，当前为旧快照。恢复后自动查询；临时地址失效请联系部署者。";
     } finally {
       syncing = false;
+      controls();
       timer = setTimeout(
         sync,
         Math.min(30000, 2500 * 2 ** Math.min(failures, 4)) *
