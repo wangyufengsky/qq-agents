@@ -50,6 +50,8 @@ export const durations = Object.freeze({
 });
 
 export class GameKernel {
+  /** @type {import("../framework/jobs.mjs").GameJobs | null} */
+  ai = null;
   /** @type {WeakMap<object,string>} */
   #actors = new WeakMap();
   /** @param {{database:string,registry:import('./registry.mjs').GameRegistry,clock?:()=>number,allow?:(principal:string,roomId:string)=>boolean,maxRooms?:number}} options */
@@ -220,7 +222,7 @@ export class GameKernel {
   decision(room, next) {
     this.store.db
       .prepare(
-        "UPDATE game_decisions SET status='invalidated' WHERE room_id=? AND status='blocked'",
+        "UPDATE game_decisions SET status='invalidated' WHERE room_id=? AND status IN ('blocked','queued')",
       )
       .run(room.id);
     room.decision = null;
@@ -239,11 +241,17 @@ export class GameKernel {
         roomId: room.id,
         agentId: p.agentId,
         moduleRef: room.moduleRef,
-        reason: "P2_NOT_IMPLEMENTED",
+        reason: this.ai ? null : "P2_NOT_IMPLEMENTED",
       };
       this.store.db
         .prepare("INSERT INTO game_decisions VALUES(?,?,?,?)")
-        .run(job.decisionId, room.id, "blocked", JSON.stringify(job));
+        .run(
+          job.decisionId,
+          room.id,
+          this.ai ? "queued" : "blocked",
+          JSON.stringify(job),
+        );
+      this.ai?.enqueue(job);
     }
   }
   /** @param {any} room @param {string} type */
@@ -269,6 +277,7 @@ export class GameKernel {
       for (const row of rows) {
         const room = this.store.room(String(row.id));
         if (room.deleteAt !== null && room.deleteAt <= this.clock()) {
+          if (this.ai?.unresolved(room.id)) continue;
           this.store.db
             .prepare("DELETE FROM game_rooms WHERE id=?")
             .run(room.id);
@@ -379,10 +388,11 @@ export class GameKernel {
         room.state !== null && access.member
           ? this.project(room, module, access.member.participantId)
           : null,
+      ...(this.ai ? { execution: this.ai.publicStatus(roomId) } : {}),
     };
   }
-  /** @param {string} roomId @param {object} actor @param {unknown} input */
-  act(roomId, actor, input) {
+  /** @param {string} roomId @param {object} actor @param {unknown} input @param {any} [execution] */
+  act(roomId, actor, input, execution = null) {
     const request = parse(actionSchema, input),
       fingerprint = digest(bounded(request, limits.action));
     return this.store.transaction(() => {
@@ -399,7 +409,12 @@ export class GameKernel {
         return JSON.parse(String(previous.receipt));
       }
       this.checkTime(room);
-      if (access.member?.kind === "ai") fail("P2_NOT_IMPLEMENTED", 403);
+      if (access.member?.kind === "ai") {
+        if (!this.ai) fail("P2_NOT_IMPLEMENTED", 403);
+        this.ai.validate(room, access.member, execution);
+        if (request.action.type.startsWith("room."))
+          fail("AI_CONTROL_DENIED", 403);
+      }
       if (room.lifecycle === "expired" || room.lifecycle === "finished")
         fail("ROOM_CLOSED");
       if (room.revision !== request.expectedRevision) fail("REVISION_CONFLICT");

@@ -687,3 +687,33 @@ test("protected work disables native external tools in the Codex session policy"
   rpc.complete();
   await run;
 });
+
+test("Codex game terminal proof matches the native thread, turn and terminal status", async (t) => {
+  const rpc = new Rpc(),
+    cfg = config(),
+    backend = new CodexBackend(cfg.backends[0], cfg.agents[0], {
+      root: temp(t),
+      rpc,
+    });
+  t.after(() => backend.close());
+  const request = rpc.request.bind(rpc);
+  let thread = {
+    id: "game-thread",
+    status: { type: "idle" },
+    turns: [{ id: "game-turn", status: "interrupted" }],
+  };
+  rpc.request = async (method, args) =>
+    method === "thread/read" ? { thread } : request(method, args);
+  const run = { session: { id: "game-thread" }, backendTurn: "game-turn" };
+  assert.equal((await backend.gameRunState(run)).terminal, true);
+  thread.status.type = "active";
+  assert.equal((await backend.gameRunState(run)).terminal, false);
+  thread.status.type = "idle";
+  assert.equal(
+    (await backend.gameRunState({ ...run, backendTurn: "different-turn" }))
+      .terminal,
+    false,
+  );
+  thread.id = "different-thread";
+  assert.equal((await backend.gameRunState(run)).terminal, false);
+});

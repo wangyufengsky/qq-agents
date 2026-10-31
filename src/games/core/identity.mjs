@@ -93,7 +93,10 @@ export class GameIdentity {
       )
         fail("INVITATION_UNAVAILABLE", 403);
       const data = this.load(roomId, bindingId);
-      if (data.tokenHash !== digest(token) || data.browserHash)
+      if (
+        data.tokenHash !== digest(token) ||
+        (data.browserHash && data.browserHash !== digest(browser))
+      )
         fail("INVITATION_UNAVAILABLE", 403);
       const challenge = secret();
       data.browserHash = digest(browser);
@@ -102,6 +105,56 @@ export class GameIdentity {
         .prepare("UPDATE game_bindings SET data=? WHERE id=?")
         .run(JSON.stringify(data), bindingId);
       return { challenge, expiresAt: data.expiresAt };
+    });
+  }
+  /** Public group links still require a challenge confirmed by the exact QQ sender.
+   * @param {string} roomId @param {string} browser */
+  requestPublic(roomId, browser) {
+    const k = this.kernel;
+    return k.store.transaction(() => {
+      const room = k.store.room(roomId);
+      k.checkTime(room);
+      const source = k.store.db
+        .prepare("SELECT data FROM game_host_rooms WHERE id=?")
+        .get(roomId);
+      if (!source || !JSON.parse(String(source.data)).group)
+        fail("INVITATION_REQUIRED", 403);
+      if (!["waiting", "active", "paused"].includes(room.lifecycle))
+        fail("JOIN_DENIED", 403);
+      const member = room.participants.find(
+        (/** @type {any} */ p) => p.kind === "human",
+      );
+      if (!member || member.revoked || !k.allow(member.principalId, roomId))
+        fail("JOIN_DENIED", 403);
+      k.store.db
+        .prepare(
+          "DELETE FROM game_bindings WHERE room_id=? AND json_extract(data,'$.expiresAt')<=?",
+        )
+        .run(roomId, k.clock());
+      if (
+        Number(
+          k.store.db
+            .prepare("SELECT count(*) AS n FROM game_bindings WHERE room_id=?")
+            .get(roomId)?.n,
+        ) >= 8
+      )
+        fail("BINDING_CAPACITY", 429);
+      const bindingId = randomUUID(),
+        challenge = secret(),
+        expiresAt = k.clock() + 900000;
+      const data = {
+        principalId: member.principalId,
+        participantId: member.participantId,
+        tokenHash: null,
+        browserHash: digest(browser),
+        challengeHash: digest(challenge),
+        confirmed: false,
+        expiresAt,
+      };
+      k.store.db
+        .prepare("INSERT INTO game_bindings VALUES(?,?,?)")
+        .run(bindingId, roomId, JSON.stringify(data));
+      return { bindingId, challenge, expiresAt };
     });
   }
   /** Host adapter must derive actor from the authenticated source message, never the browser.

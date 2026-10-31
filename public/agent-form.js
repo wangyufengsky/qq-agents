@@ -10,6 +10,17 @@
 // shows their state and keeps them as they were.
 const AGENT_TOOL_GROUPS = [
   {
+    id: "games",
+    title: "网页游戏",
+    desc: "默认关闭，需另启用全局与角色游戏策略并验证公网入口。落子工具只供独立游戏回合使用。",
+    tools: {
+      game_create: "创建游戏邀请",
+      game_view: "查看自己的游戏视图",
+      game_act: "提交游戏动作（独立游戏回合）",
+      game_close: "结束游戏房间",
+    },
+  },
+  {
     id: "chat",
     title: "聊天发言",
     desc: "在群聊和私聊里发消息、分条回复、拍一拍、转发和标记已读。",

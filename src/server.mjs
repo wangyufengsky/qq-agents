@@ -300,6 +300,23 @@ export function createServer({
       }
       if (!downloadAgentId && !equal(req.headers["x-admin-token"], token))
         return send({ error: "UNAUTHORIZED" }, 401);
+      if (req.method === "GET" && url.pathname === "/api/games")
+        return send(runtime.games.status());
+      if (req.method === "POST" && url.pathname === "/api/games/verify-entry") {
+        const data = z
+          .strictObject({
+            challenge: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+            external: z.literal(true),
+          })
+          .parse(await readBody(512));
+        return send(runtime.games.verifyEntry(data.challenge, data.external));
+      }
+      if (req.method === "POST" && url.pathname === "/api/games/retry") {
+        const data = z
+          .strictObject({ decisionId: z.uuid() })
+          .parse(await readBody(512));
+        return send(await runtime.games.retry(data.decisionId));
+      }
       if (req.method === "POST" && url.pathname === "/api/maintenance") {
         const data = await body(req, 512);
         if (Object.keys(data).length) throw Error("INVALID_REQUEST");

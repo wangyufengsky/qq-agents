@@ -1,3 +1,4 @@
+import { gamePolicy, agentGamePolicy } from "../games/framework/policy.mjs";
 import fs from "node:fs";
 import { TOOL_NAMES } from "../tools/names.mjs";
 import { appsPolicySchema } from "../apps/policy.mjs";
@@ -142,6 +143,7 @@ export const configSchema = z
     version: z.literal(1),
     mode: z.enum(["isolated", "live"]).default("isolated"),
     port: z.number().int().min(0).max(65535).default(3210),
+    games: gamePolicy,
     globalPaused: z.boolean().default(true),
     privateLikeGroups: z.array(qq).default([]),
     connections: z.array(
@@ -324,6 +326,7 @@ export const configSchema = z
           selfPolicy: selfPolicySchema,
           contextPolicy: contextPolicySchema,
           subject: subjectPolicySchema,
+          games: agentGamePolicy,
           behavior: behaviorSchema,
           scheduler: schedulerSchema,
           voice: voiceSchema,

@@ -1,4 +1,5 @@
 // @ts-check
+import { gameDefinitions } from "../games/framework/tools.mjs";
 import { appDefinitions } from "../apps/tools.mjs";
 import { githubDefinitions } from "../github/tools.mjs";
 import { mindDefinitions } from "./mind.mjs";
@@ -64,6 +65,7 @@ export const definitions = {
   ...savedMediaDefinitions,
   ...screenshotDefinitions,
   ...appDefinitions,
+  ...gameDefinitions,
   memory_search: [
     "检索自己的跨会话经历/日记，私聊也能回忆自己的普通群聊记录。conversationType=group/private筛选聊天类型；conversation仅接受具体来源键。省略来源筛选会跨会话搜索。hasMore时用continueWith续查，不能将第一页当成全部记忆。相邻发言不等于同一话题，按ID展开原文并判断适合表达的回忆。",
     z

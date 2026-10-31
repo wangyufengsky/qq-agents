@@ -4,6 +4,11 @@
   "port": 3210,
   "globalPaused": true,
   "privateLikeGroups": [],
+  "games": {
+    "enabled": false,
+    "port": 35824,
+    "publicOrigin": ""
+  },
   "connections": [
     {
       "id": "napcat-a",
