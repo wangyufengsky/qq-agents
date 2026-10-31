@@ -110,11 +110,22 @@ export function createGameHttp({ kernel, identity, assets, render, confirm }) {
         );
       if (req.method === "GET" && !route) {
         let snapshot = null;
-        if (cookie(req, sessionName))
-          snapshot = kernel.view(
-            roomId,
-            identity.session(roomId, cookie(req, sessionName)),
-          );
+        if (cookie(req, sessionName)) {
+          try {
+            snapshot = kernel.view(
+              roomId,
+              identity.session(roomId, cookie(req, sessionName)),
+            );
+          } catch (error) {
+            // Rotated/expired credentials must not block a fresh invitation's landing page.
+            if (
+              !(error instanceof GameError) ||
+              error.message !== "AUTH_REQUIRED"
+            )
+              throw error;
+            setCookie(sessionName, "", 0);
+          }
+        }
         if (snapshot && url.search) {
           res.writeHead(303, { location: `/rooms/${roomId}` });
           res.end();

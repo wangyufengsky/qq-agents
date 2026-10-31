@@ -189,3 +189,47 @@ test("HTTP snapshots, SSR, events and receipts do not disclose the other player'
   assert.equal(view.lifecycle, "finished");
   assert.deepEqual(view.view.revealed, ["sun", "sun"]);
 });
+
+test("a stale seat cookie cannot prevent reopening a newly issued invitation", async (t) => {
+  const f = await fixture(t),
+    stale = await f.join(0);
+  const reissue = () => {
+    const k = f.service.kernel,
+      p = k.store.room(f.roomId).participants[0];
+    const invitation = f.service.identity.invite(
+      f.roomId,
+      k.actor("fixture-owner"),
+      p.participantId,
+    );
+    f.invitations[0].url = `${f.origin}${f.base}?binding=${invitation.bindingId}&invite=${invitation.invite}`;
+  };
+  reissue();
+  await f.join(0);
+  reissue();
+  const url = new URL(f.invitations[0].url);
+  const page = await f.call(url.pathname + url.search, {
+    headers: { cookie: stale },
+  });
+  assert.equal(page.status, 200);
+  assert.match(page.headers.get("set-cookie"), /Max-Age=0/);
+  assert.match(await page.text(), /确认加入/);
+  assert.equal(
+    (await f.call(f.base + "/view", { headers: { cookie: stale } })).status,
+    401,
+  );
+  assert.equal(
+    (
+      await f.call(f.base + "/actions", {
+        method: "POST",
+        body: {},
+        headers: { cookie: stale },
+      })
+    ).status,
+    401,
+  );
+  const fresh = await f.join(0);
+  assert.equal(
+    (await f.call(f.base + "/view", { headers: { cookie: fresh } })).status,
+    200,
+  );
+});

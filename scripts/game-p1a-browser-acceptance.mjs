@@ -3,6 +3,7 @@ import { chromium, webkit } from "playwright-core";
 import assert from "node:assert/strict";
 import { createP1aFixture } from "../src/games/fixtures/server.mjs";
 import { findScreenshotBrowser } from "../src/tools/public-screenshot.mjs";
+import { secret } from "../src/games/core/value.mjs";
 
 const service = createP1aFixture({ database: ":memory:" });
 await service.listen();
@@ -46,6 +47,38 @@ try {
     }
   }
   const [a, b] = pages;
+  const owner = service.kernel.actor("fixture-owner"),
+    participant = service.kernel.store.room(room.roomId).participants[0];
+  const rotated = service.identity.invite(
+      room.roomId,
+      owner,
+      participant.participantId,
+    ),
+    browserSecret = secret();
+  const challenge = service.identity.request(
+    room.roomId,
+    rotated.bindingId,
+    rotated.invite,
+    browserSecret,
+  );
+  service.identity.confirm(
+    room.roomId,
+    rotated.bindingId,
+    challenge.challenge,
+    owner,
+  );
+  service.identity.exchange(room.roomId, rotated.bindingId, browserSecret);
+  const renewed = service.identity.invite(
+    room.roomId,
+    owner,
+    participant.participantId,
+  );
+  const newUrl = new URL(room.invitations[0].url);
+  newUrl.searchParams.set("binding", renewed.bindingId);
+  newUrl.searchParams.set("invite", renewed.invite);
+  await a.goto(newUrl.href);
+  await a.getByRole("button", { name: "确认加入", exact: true }).click();
+  await a.waitForURL((url) => !url.searchParams.has("invite"));
   await a.waitForFunction(
     () =>
       JSON.parse(document.getElementById("snapshot").textContent).revision ===
@@ -108,6 +141,7 @@ try {
     JSON.stringify({
       browser: engine === webkit ? "webkit" : "chromium",
       joined: 2,
+      staleCookieRejoin: true,
       hiddenChoice: true,
       uncertainReceiptRecovered: true,
       refresh: true,
