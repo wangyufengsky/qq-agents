@@ -302,26 +302,28 @@ test("P0 CLI still serves existing rooms when restart cannot mint invitations", 
     { stdio: ["ignore", "pipe", "pipe"] },
   );
   const exit = once(child, "exit");
-  t.after(async () => {
+  // Stop the child before fixture cleanup removes its open SQLite files on Windows.
+  try {
+    let output = "";
+    const started = new Promise((resolve, reject) => {
+      child.once("error", reject);
+      child.once("exit", () => reject(Error("P0_EXITED_BEFORE_READY")));
+      child.stdout.on("data", (chunk) => {
+        output += chunk;
+        if (output.includes("\n")) resolve(JSON.parse(output.split("\n")[0]));
+      });
+    });
+    const status = await started;
+    assert.equal(status.invitationCount, 0);
+    assert.equal(status.invitationStatus, "capacity-limited");
+    const response = await fetch(`http://127.0.0.1:${port}${f.route}/state`, {
+      headers: { cookie },
+    });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).revision, 0);
+    assert.equal(fs.readFileSync(invitationFile, "utf8"), "[]\n");
+  } finally {
     if (child.exitCode === null) child.kill("SIGTERM");
     await exit;
-  });
-  let output = "";
-  const started = new Promise((resolve, reject) => {
-    child.once("error", reject);
-    child.once("exit", () => reject(Error("P0_EXITED_BEFORE_READY")));
-    child.stdout.on("data", (chunk) => {
-      output += chunk;
-      if (output.includes("\n")) resolve(JSON.parse(output.split("\n")[0]));
-    });
-  });
-  const status = await started;
-  assert.equal(status.invitationCount, 0);
-  assert.equal(status.invitationStatus, "capacity-limited");
-  const response = await fetch(`http://127.0.0.1:${port}${f.route}/state`, {
-    headers: { cookie },
-  });
-  assert.equal(response.status, 200);
-  assert.equal((await response.json()).revision, 0);
-  assert.equal(fs.readFileSync(invitationFile, "utf8"), "[]\n");
+  }
 });
