@@ -97,3 +97,5 @@ ssh -F /dev/null -o IdentityFile=none -o IdentityAgent=none \
 自动化回归：`node --test --test-timeout=120000 test/game-p0.test.mjs`。覆盖预览不兑换、Secure Cookie、跨站拒绝、假身份、并发幂等、重启回执、无脚本快照、假时钟过期、容量和管理路由隔离。最终还需 `npm run verify`。
 
 本机已安装 Chrome/Chromium 时，可另运行 `node scripts/game-p0-browser-acceptance.mjs`；它使用临时浏览器、内存数据库和本机端口，检查窄屏加入、延迟同步期间的提交门禁、选点取消、提交、刷新、丢失回执后的对账及无脚本快照。需要自定义浏览器路径时设置 `CHROME_PATH`。它不会发送 QQ 或访问模型，也不替代真实手机测试。
+
+Safari/QQ 的 iOS 页面还应使用 WebKit 回归：先为现有 Playwright 安装测试用 WebKit，再执行 `node scripts/game-p0-browser-acceptance.mjs --webkit`。测试浏览器可用 `PLAYWRIGHT_BROWSERS_PATH` 放入临时目录，不修改个人 Safari 配置。加入请求保持 Fetch 的 CORS 模式、同源目标和同源凭据；若改为 `same-origin` 模式，WebKit 在 `no-referrer` 下会发送 `Origin: null` 并被服务拒绝。该约定见 [Fetch Origin 规则](https://fetch.spec.whatwg.org/#origin-header)，不能通过接受空 Origin 解决。

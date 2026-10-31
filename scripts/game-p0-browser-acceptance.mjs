@@ -1,13 +1,14 @@
 // Playwright evaluates wait predicates inside the browser document.
 /* global document */
-import { chromium } from "playwright-core";
+import { chromium, webkit } from "playwright-core";
 import { createP0Server } from "../src/games/p0-server.mjs";
 import assert from "node:assert/strict";
 import { findScreenshotBrowser } from "../src/tools/public-screenshot.mjs";
 const service = createP0Server({ database: ":memory:" });
 await service.listen();
-const browser = await chromium.launch({
-  executablePath: findScreenshotBrowser(),
+const engine = process.argv.includes("--webkit") ? webkit : chromium;
+const browser = await engine.launch({
+  ...(engine === chromium ? { executablePath: findScreenshotBrowser() } : {}),
   headless: true,
 });
 try {
@@ -85,6 +86,7 @@ try {
   assert.deepEqual(errors, []);
   console.log(
     JSON.stringify({
+      engine: engine.name(),
       mobileViewport: "390x844",
       join: true,
       selectionCancel: true,

@@ -14,6 +14,7 @@
 - 公网模式校验隧道的 HTTPS 转发标记并设置 HSTS，拒绝明文入口；补充 Quick Tunnel 无法连接时的独立临时入口操作，不修改系统代理或默认开放网络。
 - 房间容量耗尽只停止生成新邀请，正常重启仍可访问原有房间与会话；补充真实 CLI 启动回归和临时入口的浏览器协议差异说明。
 - 状态同步期间禁用落点确认和重试按钮，避免公网慢请求时点击被静默忽略；增加延迟状态请求的浏览器回归。
+- 修正 Safari/WebKit 在 `no-referrer` 页面加入时发送空 Origin 的请求模式，保留服务端来源校验与无 Referer 策略；浏览器回归支持 WebKit。
 
 ### Antigravity 图片读取与压力交接验收（[#94](https://github.com/wangyufengsky/qq-agents/pull/94)）
 

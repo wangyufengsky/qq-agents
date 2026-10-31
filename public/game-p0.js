@@ -8,11 +8,11 @@
       const button = join.querySelector("button");
       button.disabled = true;
       try {
-        // A no-referrer navigation form can send Origin: null. Fetch preserves
-        // the same-origin POST check without weakening it for opaque origins.
+        // WebKit sends Origin: null for non-CORS requests under no-referrer.
+        // CORS mode preserves Origin; the target and credentials stay same-origin.
         const response = await fetch(join.action, {
           method: "POST",
-          mode: "same-origin",
+          mode: "cors",
           credentials: "same-origin",
           body: new URLSearchParams(new FormData(join)),
           signal: AbortSignal.timeout(10000),
