@@ -6,11 +6,12 @@ import { readiness } from "../src/core/readiness.mjs";
 import { humanInput, observeInput } from "../src/core/input-progress.mjs";
 import { turnEnvironment } from "../src/core/prompts.mjs";
 
-function setup(t) {
+function setup(t, privateLike = true) {
   const cfg = config(3);
-  cfg.privateLikeGroups = ["20002"];
+  cfg.privateLikeGroups = privateLike ? ["20002"] : [];
   cfg.peerLimit = { maxMessages: 2, cooldownMs: 1000 };
   for (const a of cfg.agents) {
+    if (!privateLike) a.allow.groups.push("20002");
     a.wake = {
       ...a.wake,
       private: false,
@@ -293,4 +294,22 @@ test("hot changes preserve active contexts, sessions and budgets, and discard on
     /私聊模式群/,
   );
   assert.equal(mem.state(f.ctx.conversation).replyBatchSends, 2);
+});
+
+test("enabling private-like mode cannot recycle peer messages already received under ordinary group policy", async (t) => {
+  const f = setup(t, false);
+  await f.incoming();
+  for (const id of ["one", "two", "three"]) await f.send(id);
+  f.advance();
+  await f.incoming();
+  // Also leave a newer message unread: changing policy must not turn old arrivals into new credit.
+  await f.incoming(10002, { read: false });
+  await assert.rejects(f.send("ordinary"), /REPLY_BURST_LIMIT/);
+  const next = structuredClone(f.runtime.config);
+  next.privateLikeGroups = ["20002"];
+  await f.runtime.changeConfig(next, f.configStore.revision);
+  await f.runtime.callTool(f.ctx, "conversation_read", {});
+  await assert.rejects(f.send("recycled"), /REPLY_BURST_LIMIT/);
+  await f.incoming(10002);
+  await f.send("new-after-switch");
 });

@@ -77,8 +77,13 @@ export async function commitConfig(runtime, next, revision) {
         for (const a of next.agents) {
           const mem = runtime.memory.bind(a.id),
             state = mem.state(conversation);
-          if (!state.pendingWakes?.length) continue;
-          state.pendingWakes = state.pendingWakes.filter(
+          // Pre-switch arrivals are not new peer opportunities, including messages
+          // read by a still-active turn while the ordinary policy was in effect.
+          state.peerReplyInputSeq = Math.max(
+            state.peerReplyInputSeq || 0,
+            state.lastReceivedSeq || 0,
+          );
+          state.pendingWakes = (state.pendingWakes || []).filter(
             (wake) => wake.taskRunId || wake.intentId,
           );
           delete state.wakeBatchAt;
