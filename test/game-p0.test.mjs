@@ -4,6 +4,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import http from "node:http";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { createP0Server } from "../src/games/p0-server.mjs";
 
@@ -271,4 +274,54 @@ test("P0 exposes only dedicated assets and a per-start health challenge", async 
       }),
     /PUBLIC_ORIGIN_MUST_BE_HTTPS/,
   );
+});
+
+test("P0 CLI still serves existing rooms when restart cannot mint invitations", async (t) => {
+  const f = await fixture(t);
+  const joined = await f.join();
+  const cookie = joined.headers.get("set-cookie").split(";")[0];
+  for (let i = 0; i < 7; i++) f.createInvite();
+  const invitationFile = path.join(
+    path.dirname(f.database),
+    "invitations.json",
+  );
+  fs.writeFileSync(invitationFile, "[]\n");
+  const reservation = http.createServer();
+  await new Promise((resolve) => reservation.listen(0, "127.0.0.1", resolve));
+  const port = reservation.address().port;
+  await new Promise((resolve) => reservation.close(resolve));
+  const child = spawn(
+    process.execPath,
+    [
+      fileURLToPath(new URL("../scripts/game-p0.mjs", import.meta.url)),
+      "--data",
+      path.dirname(f.database),
+      "--port",
+      String(port),
+    ],
+    { stdio: ["ignore", "pipe", "pipe"] },
+  );
+  const exit = once(child, "exit");
+  t.after(async () => {
+    if (child.exitCode === null) child.kill("SIGTERM");
+    await exit;
+  });
+  let output = "";
+  const started = new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", () => reject(Error("P0_EXITED_BEFORE_READY")));
+    child.stdout.on("data", (chunk) => {
+      output += chunk;
+      if (output.includes("\n")) resolve(JSON.parse(output.split("\n")[0]));
+    });
+  });
+  const status = await started;
+  assert.equal(status.invitationCount, 0);
+  assert.equal(status.invitationStatus, "capacity-limited");
+  const response = await fetch(`http://127.0.0.1:${port}${f.route}/state`, {
+    headers: { cookie },
+  });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).revision, 0);
+  assert.equal(fs.readFileSync(invitationFile, "utf8"), "[]\n");
 });

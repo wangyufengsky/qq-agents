@@ -12,7 +12,7 @@ node scripts/game-p0.mjs --data /absolute/private/game-p0-data --port 35821
 
 数据目录必须独立，不能是 QQ Agents 生产数据目录；存在不属于 P0 的文件时拒绝启动。服务只监听 `127.0.0.1`。没有 `--public-origin` 时仅用于本机测试，Cookie 不加 Secure；公网模式只接受精确 HTTPS origin。
 
-每次启动生成两个独立测试房间的邀请，写入数据目录的 `invitations.json`，不在控制台输出令牌。分别用于 QQ 内置浏览器和系统浏览器。邀请 15 分钟有效、显式点击才兑换；已兑换浏览器会话与测试房间从创建起保留 24 小时。最多同时 8 个未过期房间；过期记录在下一次建房时清理。P0 尚未实现活动局自动暂停或 QQ 换域续座。
+每次启动在容量允许时生成最多两个独立测试房间的邀请，写入数据目录的 `invitations.json`，不在控制台输出令牌。分别用于 QQ 内置浏览器和系统浏览器。邀请 15 分钟有效、显式点击才兑换；已兑换浏览器会话与测试房间从创建起保留 24 小时。最多同时 8 个未过期房间；过期记录在下一次建房时清理。容量满时仍启动服务并恢复原房间，输出 `invitationCount: 0` 和 `capacity-limited`，保留原邀请文件。P0 尚未实现活动局自动暂停或 QQ 换域续座。
 
 不要把 `invitations.json`、Cookie、完整测试地址或数据库提交到 Git 或公开 Issue。邀请链接经隧道服务传输，该服务参与 HTTPS 终止；程序自身不记录请求 URL。禁止给隧道开启包含请求正文/URL 的调试采集。
 
@@ -51,6 +51,8 @@ ssh -F /dev/null -o IdentityFile=none -o IdentityAgent=none \
 这条命令不读取个人 SSH 配置或密钥，首次主机密钥写入专用文件，之后拒绝密钥变化。先结束原 P0 进程，再用新域名作为 `--public-origin` 启动；只有 P0 测试端口被转发。显式保留 `--inject-http-proxy-headers`，不假定服务默认注入；缺少此标记时应用会返回 `HTTPS_REQUIRED`。
 
 此服务也会终止 HTTPS 并转发测试流量，域名定期变化且限速。只用合成测试数据，仍须独立挑战和手机验收，不能声称正式稳定入口。参见 [官方基础说明](https://localhost.run/docs/)、[无需密钥模式](https://localhost.run/docs/faq#i-dont-want-to-use-an-ssh-key)、[免费限制](https://localhost.run/docs/forever-free)。
+
+已观察到部分浏览器路径的协议头与健康请求不一致，以及免费域名短时间内轮换；遇到 `HTTPS_REQUIRED` 时该入口不能标记为可用。须验证完整的浏览器加入、落点和刷新，健康探测通过不能代替此项；不要通过忽略协议头来绕过失败。
 
 ## 健康验证不等于手机通过
 

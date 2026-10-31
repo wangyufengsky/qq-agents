@@ -33,12 +33,23 @@ const service = createP0Server({
   publicOrigin: values["public-origin"],
 });
 const address = await service.listen(port);
-const invitations = [service.createInvite(), service.createInvite()];
-fs.writeFileSync(
-  path.join(values.data, "invitations.json"),
-  JSON.stringify(invitations, null, 2),
-  { mode: 0o600 },
-);
+const invitations = [];
+for (let i = 0; i < 2; i++) {
+  try {
+    invitations.push(service.createInvite());
+  } catch (error) {
+    // Capacity limits new invitations, not recovery of existing sessions.
+    if (error instanceof Error && error.message === "ROOM_CAPACITY") break;
+    await service.close();
+    throw error;
+  }
+}
+if (invitations.length)
+  fs.writeFileSync(
+    path.join(values.data, "invitations.json"),
+    JSON.stringify(invitations, null, 2),
+    { mode: 0o600 },
+  );
 fs.writeFileSync(
   path.join(values.data, "p0-status.json"),
   JSON.stringify(
@@ -59,7 +70,11 @@ console.log(
     service: "qq-agents-game-p0",
     port,
     externalProbeStatus: "unverified",
-    invitations: "written-to-private-data-directory",
+    invitations: invitations.length
+      ? "written-to-private-data-directory"
+      : "no-new-invitations",
+    invitationCount: invitations.length,
+    invitationStatus: invitations.length === 2 ? "created" : "capacity-limited",
     expiresInMinutes: 15,
   }),
 );
