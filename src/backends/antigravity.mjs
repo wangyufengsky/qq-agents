@@ -11,6 +11,7 @@ import { ExternalTools } from "./external.mjs";
 import { assertSession, sessionSignature } from "./session-contract.mjs";
 import { BackendTurnFailure } from "./turn-failure.mjs";
 import { mcpResult } from "../tools/index.mjs";
+import { AntigravityMedia } from "./antigravity-media.mjs";
 import { safeToolFailure } from "../tools/errors.mjs";
 
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
@@ -30,6 +31,35 @@ function responseOccupancy(usage) {
   return Number.isSafeInteger(tokens) && counts[0] + counts[2] > 0
     ? tokens
     : null;
+}
+/** The MCP catalogue retains full descriptions. The repeated parameter guide only
+ * needs structural constraints; do not drop a property literally named description.
+ * @param {any} schema @returns {any} */
+export function antigravitySchemaContract(schema) {
+  if (!schema || typeof schema !== "object" || Array.isArray(schema))
+    return schema;
+  const { description: _description, ...result } = schema;
+  for (const key of ["properties", "$defs", "definitions", "patternProperties"])
+    if (result[key])
+      result[key] = Object.fromEntries(
+        Object.entries(result[key]).map(([name, value]) => [
+          name,
+          antigravitySchemaContract(value),
+        ]),
+      );
+  for (const key of [
+    "items",
+    "additionalProperties",
+    "not",
+    "if",
+    "then",
+    "else",
+  ])
+    if (result[key]) result[key] = antigravitySchemaContract(result[key]);
+  for (const key of ["anyOf", "oneOf", "allOf", "prefixItems"])
+    if (Array.isArray(result[key]))
+      result[key] = result[key].map(antigravitySchemaContract);
+  return result;
 }
 /** @type {WeakSet<import("node:child_process").ChildProcess>} */
 const terminatedGroups = new WeakSet();
@@ -211,9 +241,9 @@ export class AntigravityBackend {
   }
   /** @param {import("./session-contract.mjs").ToolSpec[]} tools */
   sessionSignature(tools) {
-    // Existing native sessions retain their old system prompt. Hand off once
-    // rather than resume a session without the explicit parameter contract.
-    return "antigravity-tools-v2:" + sessionSignature(this, tools);
+    // Native sessions retain their old prompt and native tool contract. Hand off
+    // once to install the turn-scoped image reader instead of arbitrary file access.
+    return "antigravity-tools-v3:" + sessionSignature(this, tools);
   }
   profileArgs() {
     return ["--gemini_dir", this.profile, "--app_data_dir", "cli"];
@@ -389,6 +419,7 @@ export class AntigravityBackend {
     }
     const token = randomBytes(32).toString("hex");
     let live = true;
+    const media = new AntigravityMedia();
     const names = new Set(params.tools.map((tool) => tool.name));
     const server = http.createServer(async (req, res) => {
       const reply = (
@@ -407,7 +438,7 @@ export class AntigravityBackend {
       )
         return reply(403, { error: "ANTIGRAVITY_TURN_INACTIVE" });
       if (req.method === "GET" && req.url === "/catalog")
-        return reply(200, { tools: params.tools });
+        return reply(200, { tools: params.tools, images: media.catalog() });
       if (req.method !== "POST" || req.url !== "/call") return reply(404, {});
       let spec;
       try {
@@ -422,7 +453,9 @@ export class AntigravityBackend {
         spec = params.tools.find((tool) => tool.name === value.name);
         const result = await params.callTool(value.name, value.arguments || {});
         if (!live || params.signal.aborted) return reply(403, {});
-        reply(200, mcpResult(result));
+        const content = await media.fromTool(mcpResult(result), params.signal);
+        if (!live || params.signal.aborted) return reply(403, {});
+        reply(200, content);
       } catch (error) {
         const failure = safeToolFailure(error);
         reply(200, {
@@ -517,7 +550,7 @@ export class AntigravityBackend {
       )
         managedFile(
           agentFile,
-          `---\nname: qq-agents\ndescription: QQ Agents restricted role\nmainAgent: true\nsubagent: false\ntools:\n  - finish\nenable_mcp_tools: true\ncommandExecutionPolicy: off\n---\n${params.instructions || ""}\n\nUse only the qq-agents MCP tools. Call call_mcp_tool with ServerName="qq-agents", ToolName equal to an allowed name, and Arguments matching that tool's JSON schema below. Do not guess parameter names or read framework source to discover arguments. The current chat and authorization are bound by the bridge; never add target, chatId or context fields unless the schema requires them. Ordinary assistant text is never delivered to QQ. No native task, filesystem, shell, browser, scheduling or subagent actions are authorized.\n\nAllowed tool argument schemas (required fields and additionalProperties are binding):\n${params.tools.map(({ name, inputSchema }) => JSON.stringify({ name, inputSchema })).join("\n")}\n`,
+          `---\nname: qq-agents\ndescription: QQ Agents restricted role\nmainAgent: true\nsubagent: false\ntools:\n  - finish\n  - view_file\nenable_mcp_tools: true\ncommandExecutionPolicy: off\n---\n${params.instructions || ""}\n\nUse the qq-agents MCP tools for actions. Call call_mcp_tool with ServerName="qq-agents", ToolName equal to an allowed name, and Arguments matching that tool's JSON schema below. Do not guess parameter names or read framework source to discover arguments. The current chat and authorization are bound by the bridge; never add target, chatId or context fields unless the schema requires them. Ordinary assistant text is never delivered to QQ. Only native view_file on the exact image paths returned by an authorized tool in the CURRENT turn is allowed. Always call view_file before describing those pixels; MCP path text is not visual evidence. Never read other files or reuse a previous turn image path; request the original bridge tool again. No native task, filesystem writes, shell, browser, scheduling or subagent actions are authorized.\n\nAllowed tool argument schemas keyed by ToolName (required fields and additionalProperties are binding):\n${JSON.stringify(Object.fromEntries(params.tools.map(({ name, inputSchema }) => [name, antigravitySchemaContract(inputSchema)])))}\n`,
         );
       const settings = path.join(workspace, "settings.json");
       managedFile(
@@ -528,12 +561,14 @@ export class AntigravityBackend {
           permissions: {
             deny: [
               "command(*)",
-              "read_file(*)",
               "write_file(*)",
               "read_url(*)",
               "execute_url(*)",
             ],
-            allow: [...names].map((name) => `mcp(qq-agents/${name})`),
+            allow: [
+              ...[...names].map((name) => `mcp(qq-agents/${name})`),
+              `read_file(${media.prepare().replaceAll("\\", "/")}/*)`,
+            ],
           },
         }),
       );
@@ -686,6 +721,7 @@ export class AntigravityBackend {
       throw error;
     } finally {
       live = false;
+      media.close();
       params.signal.removeEventListener("abort", abort);
       if (force) clearTimeout(force);
       if (child) this.stop(child, "SIGKILL");

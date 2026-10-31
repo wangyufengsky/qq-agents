@@ -177,6 +177,10 @@ function splitPngs(data, count) {
   return images;
 }
 
+/** @param {Buffer} data
+ * @param {{width: number, height: number}} info
+ * @param {{index: number}[]} frames
+ * @param {{command?: string, signal?: AbortSignal, timeoutMs?: number, maxOutputBytes?: number}} [options] */
 export async function decodeGif(
   data,
   info,

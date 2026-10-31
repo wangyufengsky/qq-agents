@@ -1,10 +1,31 @@
 // @ts-check
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { pathToFileURL } from "node:url";
 
-/** @param {unknown} value @param {string[]} names */
-export function antigravityToolAllowed(value, names) {
+/** @param {unknown} value @param {string[]} names
+ * @param {{path: string, sha256: string, bytes: number}[]} [images] */
+export function antigravityToolAllowed(value, names, images = []) {
   const call = /** @type {any} */ (value);
+  if (call?.name === "view_file") {
+    const file = images.find((image) => image.path === call.args?.AbsolutePath);
+    if (!file || Object.keys(call.args).some((key) => key !== "AbsolutePath"))
+      return false;
+    try {
+      const stat = fs.lstatSync(file.path);
+      return (
+        stat.isFile() &&
+        !stat.isSymbolicLink() &&
+        stat.size === file.bytes &&
+        stat.size <= 8 * 1024 * 1024 &&
+        createHash("sha256")
+          .update(fs.readFileSync(file.path))
+          .digest("hex") === file.sha256
+      );
+    } catch {
+      return false;
+    }
+  }
   return (
     call?.name === "finish" ||
     (call?.name === "call_mcp_tool" &&
@@ -39,6 +60,7 @@ export async function guardMain() {
     allowed = antigravityToolAllowed(
       JSON.parse(input).toolCall,
       catalogue.tools.map((/** @type {any} */ tool) => tool.name),
+      catalogue.images || [],
     );
   } catch {
     // Failure to read policy or validate the active turn always denies execution.
