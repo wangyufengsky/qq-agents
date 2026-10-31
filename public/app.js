@@ -725,6 +725,9 @@ function render() {
 }
 // Runtime settings: who may take part first, then the full config and the
 // migration notes folded with their state in the title line.
+function allowedGroupIds(a) {
+  return [...new Set([...a.allow.groups, ...(config.privateLikeGroups || [])])];
+}
 function settingsMarkup() {
   const paused = config.agents.filter((a) => a.paused).length,
     linked = status.connections.filter((c) => c.connected).length;
@@ -744,7 +747,15 @@ function settingsMarkup() {
     '<p>先运行迁移预检，再导入到新数据目录。旧文件、原登录目录和 Docker 数据都保留。</p><p class="mono">npm run migrate -- --source /path/to/old-instance --agent agent-a --data /path/to/new-data</p><p class="hint">默认只生成统计预检。实际导入需 --apply；目标目录有运行锁时会拒绝。迁移不会修改旧实例，也不会启动 QQ。</p><div class="card-actions"><button data-do="download-config">导出配置</button></div>',
     { summary: "先预检再导入 · 旧实例保持不变 · 可导出配置" },
   );
-  return control + full + migrate;
+  const privateGroups = fold(
+    "settings-private-like-groups",
+    "私聊模式群",
+    `<p>群内所有角色采用私聊的唤醒与回复规则，无需 @ 即可参与；保留冷却、发送限额、暂停与静默。适用于当前及以后新增的角色，QQ 账号需要已经加入该群。</p><p class="hint">这是聊天策略，不增加管理员或工具权限；主动联系仍需在角色的空闲时间设置中允许。移除后恢复各角色的普通群白名单和策略。</p><p>已配置：${esc((config.privateLikeGroups || []).join("、") || "暂无")}</p><div class="card-actions"><button data-do="private-like-groups">配置私聊模式群</button></div>`,
+    {
+      summary: `${config.privateLikeGroups?.length || 0} 个群 · 对所有角色生效`,
+    },
+  );
+  return control + privateGroups + full + migrate;
 }
 function bindOperations(root) {
   root
@@ -869,7 +880,7 @@ function agentCard(a) {
   const toggleOff = disabledReason([
     [status.mode === "isolated" && !a.paused, "isolatedAgent"],
   ]);
-  return `<article class="card"><div class="row"><div class="identity"><span class="avatar">${esc(avatarChar(a.name))}</span><div><h3>${esc(a.name)}</h3><span class="hint mono">${esc(a.id)}</span></div></div>${tag(a.paused ? "已暂停" : status.globalPaused ? "全局暂停" : "允许参与", a.paused ? "off" : status.globalPaused ? "warn" : "live")}</div><dl class="agent-meta"><dt>QQ 账号</dt><dd>${esc(c?.label)}</dd><dt>后端 / 模型</dt><dd>${esc(b?.label)} / <span class="mono">${esc(a.model || b?.model || "后端默认")}</span></dd><dt>后端连接</dt><dd>${esc(backendLabels[status.backends?.find((x) => x.id === a.backendId)?.state] || "尚未检测")}</dd><dt>参与率</dt><dd>${Math.round(a.wake.participation * 100)}%${meter(a.wake.participation)}</dd><dt>来源范围</dt><dd>${a.allow.groups.length} 个群 · ${a.allow.users.length} 位私聊对象</dd></dl>${blockersMarkup(s)}${s?.error ? `<p class="hint">${esc(s.error)}</p>` : ""}<div class="card-actions"><button data-do="role" data-id="${esc(a.id)}">${icon("pulse", "sm")}查看动态</button><button data-do="edit-agent" data-id="${esc(a.id)}">${icon("settings", "sm")}配置角色</button><button class="ghost" data-do="toggle" data-id="${esc(a.id)}" ${disabledAttr(toggleOff)}>${icon(a.paused ? "play" : "pause", "sm")}${a.paused ? "解除角色暂停" : "暂停角色"}</button></div>${disabledHints(toggleOff)}</article>`;
+  return `<article class="card"><div class="row"><div class="identity"><span class="avatar">${esc(avatarChar(a.name))}</span><div><h3>${esc(a.name)}</h3><span class="hint mono">${esc(a.id)}</span></div></div>${tag(a.paused ? "已暂停" : status.globalPaused ? "全局暂停" : "允许参与", a.paused ? "off" : status.globalPaused ? "warn" : "live")}</div><dl class="agent-meta"><dt>QQ 账号</dt><dd>${esc(c?.label)}</dd><dt>后端 / 模型</dt><dd>${esc(b?.label)} / <span class="mono">${esc(a.model || b?.model || "后端默认")}</span></dd><dt>后端连接</dt><dd>${esc(backendLabels[status.backends?.find((x) => x.id === a.backendId)?.state] || "尚未检测")}</dd><dt>参与率</dt><dd>${Math.round(a.wake.participation * 100)}%${meter(a.wake.participation)}</dd><dt>来源范围</dt><dd>${allowedGroupIds(a).length} 个群 · ${a.allow.users.length} 位私聊对象</dd></dl>${blockersMarkup(s)}${s?.error ? `<p class="hint">${esc(s.error)}</p>` : ""}<div class="card-actions"><button data-do="role" data-id="${esc(a.id)}">${icon("pulse", "sm")}查看动态</button><button data-do="edit-agent" data-id="${esc(a.id)}">${icon("settings", "sm")}配置角色</button><button class="ghost" data-do="toggle" data-id="${esc(a.id)}" ${disabledAttr(toggleOff)}>${icon(a.paused ? "play" : "pause", "sm")}${a.paused ? "解除角色暂停" : "暂停角色"}</button></div>${disabledHints(toggleOff)}</article>`;
 }
 const recoveryText = (r) => {
   if (!r) return "";
@@ -1261,6 +1272,25 @@ async function operate(kind, id) {
     download(config, "qq-unified-config.json");
     return;
   }
+  if (kind === "private-like-groups") {
+    editing = { type: "privateLikeGroups" };
+    $("#edit-title").textContent = "私聊模式群";
+    $("#edit-fields").innerHTML = ids(
+      "privateLikeGroups",
+      "私聊模式群名单",
+      config.privateLikeGroups || [],
+      {
+        kind: "group",
+        hint: "保存后即时生效，当前及以后新增的所有角色自动获得这些群的聊天准入；保留角色原有暂停设置。",
+      },
+    );
+    $("#editor").showModal();
+    await fillIds(
+      $("#edit-fields"),
+      config.agents.map((a) => a.id),
+    );
+    return;
+  }
   if (kind === "advanced") {
     editing = { type: "advanced" };
     $("#edit-title").textContent = "完整配置";
@@ -1360,7 +1390,19 @@ const knownName = (x) =>
 async function fillIds(root, agentId) {
   const boxes = [...(root?.querySelectorAll?.("[data-ids]") || [])];
   if (!boxes.length || !agentId) return;
-  const known = await knownTargets(agentId);
+  const sources = await Promise.all(
+    (Array.isArray(agentId) ? agentId : [agentId]).map(knownTargets),
+  );
+  const known = Object.fromEntries(
+    ["groups", "people"].map((kind) => [
+      kind,
+      [
+        ...new Map(
+          sources.flatMap((source) => source[kind]).map((row) => [row.id, row]),
+        ).values(),
+      ],
+    ]),
+  );
   for (const box of boxes) {
     const rows = box.dataset.ids === "group" ? known.groups : known.people,
       names = new Map(rows.map((x) => [x.id, knownName(x)]));
@@ -1878,7 +1920,11 @@ $("#edit-form").onsubmit = (e) => {
     let next = structuredClone(config);
     let githubCredential;
     if (editing.type === "advanced") next = JSON.parse($("#config-json").value);
-    else {
+    else if (editing.type === "privateLikeGroups") {
+      next.privateLikeGroups = idsList(
+        new FormData(e.target).get("privateLikeGroups"),
+      );
+    } else {
       const f = new FormData(e.target),
         get = (k) => String(f.get(k) || "");
       let row = { ...editing.row, id: get("id") };
@@ -2177,7 +2223,7 @@ async function loadConversations() {
   );
   if (tab !== "memory" || $("#memory-agent")?.value !== agentId) return;
   const allowed = new Set([
-    ...a.allow.groups.map((x) => "group:" + x),
+    ...allowedGroupIds(a).map((x) => "group:" + x),
     ...a.allow.users.map((x) => "private:" + x),
   ]);
   // Allow-listed sources with no stored state yet are still pickable.

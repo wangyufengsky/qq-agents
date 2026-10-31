@@ -1,3 +1,4 @@
+import { allowed } from "../core/config.mjs";
 import { recallBoundary } from "../core/recall-boundary.mjs";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -403,7 +404,7 @@ export async function legacyTool(runtime, ctx, name, args) {
     if (
       !ctx.conversation.startsWith("group:") ||
       !cfg.enabled ||
-      !a.allow.groups.includes(args.groupId) ||
+      !allowed(a, "group:" + args.groupId, runtime.config) ||
       !cfg.links.some(
         (l) =>
           l.from === from &&

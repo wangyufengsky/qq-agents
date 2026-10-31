@@ -480,7 +480,7 @@ function drawScheduleForm(task) {
       jitterMin: a.scheduler.jitterMin,
     };
   const targets = [
-    ...a.allow.groups.map((x) => ["group:" + x, "群 " + x]),
+    ...allowedGroupIds(a).map((x) => ["group:" + x, "群 " + x]),
     ...a.allow.users.map((x) => ["private:" + x, "私聊 " + x]),
   ];
   const live = status.mode !== "isolated" && !status.globalPaused;
@@ -913,7 +913,7 @@ async function renderProtectedWork(id) {
   if (tab !== "operations" || id !== parityAgentId) return;
   const targets = [
     ...a.allow.users.map((x) => ["private:" + x, "私聊 " + x]),
-    ...a.allow.groups.map((x) => ["group:" + x, "群 " + x]),
+    ...allowedGroupIds(a).map((x) => ["group:" + x, "群 " + x]),
   ];
   $("#protected-work").innerHTML =
     `<div class="section-title"><h2>受保护工作 · ${tasks.length}</h2><div class="section-actions"><button type="button" id="work-refresh">刷新</button><button type="button" class="primary" id="work-create-open" aria-expanded="false" aria-controls="work-create">+ 新建任务</button></div></div><form id="work-create" class="card" hidden><h3>新建受保护任务</h3><p class="hint">工作任务有独立模型会话。私有资料和运维结果留在这里；普通聊天与上网照常。批准会将所示文字解除工作保护，加入所选聊天及角色普通记忆；原始资料仍隔离，不自动发送 QQ。</p><label>任务说明<textarea name="instruction" required maxlength="12000" rows="3" placeholder="只填写本任务需要处理的内容"></textarea></label><label>私有仓库<select name="repository"><option value="">不读取私有仓库</option>${parityOptions(a.github.privateRepositories.map((x) => [x, x]))}</select></label><label class="check"><input name="operations" type="checkbox" ${a.operations.enabled ? "" : "disabled"}>仅运维任务（与仓库任务分开；操作仍逐项确认）</label><div class="card-actions"><button class="primary">创建受保护任务</button><button type="button" id="work-create-cancel">取消</button></div></form>${

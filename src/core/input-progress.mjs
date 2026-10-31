@@ -58,6 +58,7 @@ export function observeInput(runtime, ctx, items) {
       ...mem.state(ctx.conversation),
       replyInputSeq: latest,
       replyBatchSends: 0,
+      replyBatchPeer: false,
     });
   }
   observePeerInput(runtime, ctx, items);

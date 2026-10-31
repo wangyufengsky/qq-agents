@@ -17,6 +17,7 @@ const browserScripts = {
     "$",
     "action",
     "advanced",
+    "allowedGroupIds",
     "agentDefaults",
     "api",
     "area",

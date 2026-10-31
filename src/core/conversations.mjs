@@ -1,6 +1,6 @@
 import { recallPage } from "./recall-boundary.mjs";
 import { looksLikeUnfinished } from "../../vendor/legacy/v2-wait.js";
-import { allowed } from "./config.mjs";
+import { allowed, isPrivateLikeGroup } from "./config.mjs";
 import { references, quotedSender } from "./person-cards.mjs";
 
 const priorities = {
@@ -90,7 +90,12 @@ export class ConversationEngine {
       return wc.poke && e.targetId === accountId ? "poke" : null;
     if (e.kind === "notice.join") return wc.joins ? "join" : null;
     if (!["message.received", "notice.file"].includes(e.kind)) return null;
-    if (wc.private && e.conversation.startsWith("private:")) return "private";
+    if (
+      wc.private &&
+      (e.conversation.startsWith("private:") ||
+        isPrivateLikeGroup(this.runtime.config, e.conversation))
+    )
+      return "private";
     if (
       wc.mentions &&
       e.segments.some(
@@ -420,7 +425,7 @@ export class ConversationEngine {
       const conversation = row.conversation;
       if (
         !a ||
-        !allowed(a, conversation) ||
+        !allowed(a, conversation, this.runtime.config) ||
         !runtime.writable(a, conversation)
       ) {
         runtime.memory.due.defer(row, now + 30000);

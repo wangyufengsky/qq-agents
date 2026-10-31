@@ -359,7 +359,7 @@ export class AppBrowsing {
       throw Error("APP_CARD_SOURCE_DENIED");
     if (
       event.connectionId !== a.connectionId ||
-      !allowed(a, event.conversation)
+      !allowed(a, event.conversation, this.runtime.config)
     )
       throw Error("APP_CARD_SOURCE_DENIED");
     const source = {
