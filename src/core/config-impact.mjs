@@ -75,6 +75,7 @@ export function configImpact(before, after) {
     backends: _b,
     port: _p,
     globalPaused: _g,
+    privateLikeGroups: _privateLikeGroups,
     ...oldGlobal
   } = before;
   const {
@@ -83,6 +84,7 @@ export function configImpact(before, after) {
     backends: _nb,
     port: _np,
     globalPaused: _ng,
+    privateLikeGroups: _newPrivateLikeGroups,
     ...newGlobal
   } = after;
   const globalChanged = !isDeepStrictEqual(oldGlobal, newGlobal);

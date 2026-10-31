@@ -1,3 +1,4 @@
+import { allowedGroups } from "./config.mjs";
 import { defaultConfig } from "./default-config.mjs";
 
 // The go-live checklist the console shows first. It only reads config and the
@@ -52,10 +53,18 @@ function agentSteps(config, status, a) {
         recovery: cs?.recovery?.state || null,
       },
     }),
-    step("whitelist", a.allow.groups.length + a.allow.users.length > 0, true, {
-      ...ids,
-      detail: { groups: a.allow.groups.length, users: a.allow.users.length },
-    }),
+    step(
+      "whitelist",
+      allowedGroups(a, config).length + a.allow.users.length > 0,
+      true,
+      {
+        ...ids,
+        detail: {
+          groups: allowedGroups(a, config).length,
+          users: a.allow.users.length,
+        },
+      },
+    ),
     step("global-pause", !config.globalPaused, true),
     step("agent-pause", !a.paused, true, ids),
     // Unchecked is advisory: the first turn probes the backend anyway.

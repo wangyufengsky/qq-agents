@@ -26,6 +26,7 @@ export function defaultConfig() {
     mode: "isolated",
     port: 3210,
     globalPaused: true,
+    privateLikeGroups: [],
     connections: [
       {
         id: "napcat-a",

@@ -159,7 +159,7 @@ export class TaskScheduler {
     if (
       !t.targets.length ||
       t.targets.length > 10 ||
-      t.targets.some((x) => !allowed(a, x))
+      t.targets.some((x) => !allowed(a, x, this.runtime.config))
     )
       throw Error("TASK_TARGET_NOT_ALLOWED");
     if (

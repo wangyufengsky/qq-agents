@@ -266,3 +266,25 @@ test("peer configuration changes leave another role's active turn and capability
     0,
   );
 });
+
+test("private-like group policy changes update turn context while reusing the loaded model session", async (t) => {
+  const f = setup(t),
+    scope = "group:20000";
+  await f.runtime.wake("agent-0", scope);
+  const session = f.memory.state(scope).session.id;
+  const instructions = f.prompts.at(-1).instructions;
+  for (const enabled of [true, false, true]) {
+    const next = structuredClone(f.runtime.config);
+    next.privateLikeGroups = enabled ? ["20000"] : [];
+    await f.runtime.changeConfig(next, f.configStore.revision);
+    await f.runtime.wake("agent-0", scope);
+    assert.equal(f.memory.state(scope).session.id, session);
+    assert.equal(f.prompts.at(-1).instructions, instructions);
+    assert.match(
+      f.prompts.at(-1).prompt,
+      enabled ? /当前聊天策略[^\n]*私聊模式群/ : /当前聊天策略[^\n]*普通群聊/,
+    );
+  }
+  assert.equal(f.creates(), 1);
+  assert.equal(f.memory.identity.list("session_history").length, 0);
+});

@@ -34,7 +34,7 @@ import { filesSchema } from "./policy.mjs";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { commitConfig } from "./config-updates.mjs";
-import { allowed, inSilence } from "./config.mjs";
+import { allowed, inSilence, isPrivateLikeGroup } from "./config.mjs";
 import { normalizeEvent, OneBot } from "../transport/onebot.mjs";
 import { BanterCoordinator } from "../../vendor/local-bridge/banter.mjs";
 import { dispatchTool } from "../tools/index.mjs";
@@ -330,7 +330,7 @@ export class Runtime {
     }
     if (inSilence(a, this.clock())) codes.push("QUIET_HOURS");
     if (conversation === undefined) return codes;
-    if (!allowed(a, conversation)) codes.push("NOT_ALLOWED");
+    if (!allowed(a, conversation, this.config)) codes.push("NOT_ALLOWED");
     const state = this.memory.bind(a.id).state(conversation);
     if (state.paused) codes.push("CONVERSATION_PAUSED");
     // The turn that chose to go quiet may still finish bookkeeping; deliverNow blocks its sends.
@@ -541,7 +541,7 @@ export class Runtime {
     for (const a of this.config.agents.filter(
       (a) => a.connectionId === connectionId,
     )) {
-      if (!allowed(a, e.conversation)) continue;
+      if (!allowed(a, e.conversation, this.config)) continue;
       const mem = this.memory.bind(a.id);
       assertMessageAccount(mem, connectionId, c.accountId);
       if (
@@ -634,7 +634,10 @@ export class Runtime {
       const peer = this.config.connections.some(
         (c) => c.accountId === e.senderId,
       );
-      if (e.conversation.startsWith("group:")) {
+      if (
+        e.conversation.startsWith("group:") &&
+        !isPrivateLikeGroup(this.config, e.conversation)
+      ) {
         const decision = this.banter.observe({
           groupId: e.conversation.split(":")[1],
           messageId: e.messageId || key,
@@ -699,7 +702,7 @@ export class Runtime {
   }
   async resetSession(agentId, conversation) {
     const a = this.agent(agentId);
-    if (conversation !== SUBJECT && !allowed(a, conversation))
+    if (conversation !== SUBJECT && !allowed(a, conversation, this.config))
       throw Error("INVALID_CONVERSATION");
     this.revokeCapabilities(agentId, conversation);
     const ctx = this.running.get(agentId + "|" + conversation);
@@ -713,7 +716,10 @@ export class Runtime {
   async recoverProtectedConversation(agentId, conversation) {
     const a = this.agent(agentId),
       m = this.memory.bind(agentId);
-    if (!allowed(a, conversation) || githubPrivateContext(a, conversation))
+    if (
+      !allowed(a, conversation, this.config) ||
+      githubPrivateContext(a, conversation)
+    )
       throw Error("INVALID_CONVERSATION");
     const before = m.state(conversation);
     if (!before.paused) throw Error("RECOVERY_REQUIRES_PAUSED_CONVERSATION");

@@ -201,7 +201,7 @@ export async function fileTool(runtime, ctx, tool, args) {
       const event = ownedEvent(runtime, ctx, args.eventId);
       if (
         event.connectionId !== a.connectionId ||
-        !allowed(a, event.conversation)
+        !allowed(a, event.conversation, runtime.config)
       )
         throw Error("FILE_SOURCE_DENIED");
       const attachment = event.payload?.segments?.filter(

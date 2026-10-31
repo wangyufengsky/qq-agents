@@ -708,3 +708,79 @@ test("queued work becomes eligible when a multi-agent config commit finishes", a
   await saving;
   assert.equal(f.runtime.conversations.tick().examined, 1);
 });
+
+test("private-like group console saves the global list through the revisioned API and preserves role settings", async (t) => {
+  const f = fixture(t, { cfg: config(2) });
+  const request = await httpConfig(t, f);
+  const original = structuredClone(f.runtime.config);
+  const nodes = new Map();
+  const node = (selector) => {
+    if (!nodes.has(selector))
+      nodes.set(selector, {
+        close() {},
+        showModal() {},
+        addEventListener() {},
+        querySelectorAll: () => [],
+      });
+    return nodes.get(selector);
+  };
+  const sandbox = vm.createContext({
+    document: {
+      querySelector: node,
+      querySelectorAll: () => [],
+      body: { classList: { remove() {}, toggle() {} } },
+    },
+    sessionStorage: { getItem: () => "" },
+    setInterval() {},
+    setTimeout() {},
+    clearTimeout() {},
+    structuredClone,
+    FormData: class {
+      constructor(fields) {
+        return fields;
+      }
+    },
+    fetch: request,
+    initial: { config: original, revision: f.configStore.revision },
+  });
+  vm.runInContext(
+    fs.readFileSync(new URL("../public/app.js", import.meta.url), "utf8"),
+    sandbox,
+  );
+  const run = (code) => vm.runInContext(code, sandbox);
+  run(
+    "config = initial.config; revision = initial.revision; render = () => {}; var submitted; action = fn => submitted = fn();",
+  );
+  await run('operate("private-like-groups")');
+  assert.equal(node("#edit-title").textContent, "私聊模式群");
+  assert.match(node("#edit-fields").innerHTML, /当前及以后新增的所有角色/);
+  const submit = async (value) => {
+    node("#edit-form").onsubmit({
+      preventDefault() {},
+      target: new Map([["privateLikeGroups", value]]),
+    });
+    await run("submitted");
+  };
+  await submit("20002, 20002，20003");
+  assert.deepEqual(f.runtime.config.privateLikeGroups, ["20002", "20003"]);
+  assert.deepEqual(f.runtime.config.agents, original.agents);
+  assert.match(node("#notice").textContent, /保持不变/);
+  assert.deepEqual(
+    JSON.parse(fs.readFileSync(f.configStore.file)).privateLikeGroups,
+    ["20002", "20003"],
+  );
+  assert.deepEqual(Array.from(run("allowedGroupIds(config.agents[0])")), [
+    "20000",
+    "20001",
+    "20002",
+    "20003",
+  ]);
+  await run('operate("private-like-groups")');
+  await submit("");
+  assert.deepEqual(f.runtime.config.privateLikeGroups, []);
+  const external = structuredClone(f.runtime.config);
+  external.privateLikeGroups = ["20004"];
+  await f.runtime.changeConfig(external, f.configStore.revision);
+  await assert.rejects(submit("20005"), /配置已变化/);
+  assert.deepEqual(f.runtime.config.privateLikeGroups, ["20004"]);
+});

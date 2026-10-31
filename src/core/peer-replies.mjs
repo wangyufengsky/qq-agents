@@ -1,12 +1,14 @@
+import { isPrivateLikeGroup } from "./config.mjs";
 import { liveInput } from "./live-input.mjs";
-// A peer's private message may renew a bounded reply batch after a quiet
+// Private chats and private-like groups renew bounded peer replies after a quiet
 // interval. It never supplies human request, disclosure or intent authority.
-export function privatePeer(runtime, ctx) {
+export function replyPeers(runtime, ctx) {
   const a = runtime.agent(ctx.agentId);
-  return runtime.config.connections.find(
+  return runtime.config.connections.filter(
     (c) =>
       c.id !== a.connectionId &&
-      ctx.conversation === "private:" + c.accountId &&
+      (ctx.conversation === "private:" + c.accountId ||
+        isPrivateLikeGroup(runtime.config, ctx.conversation)) &&
       runtime.config.agents.some((peer) => peer.connectionId === c.id),
   );
 }
@@ -21,9 +23,9 @@ export function peerReplyLastAttemptAt(state) {
 }
 
 export function observePeerInput(runtime, ctx, items) {
-  const peer = privatePeer(runtime, ctx);
+  const peers = replyPeers(runtime, ctx);
   if (
-    !peer ||
+    !peers.length ||
     ctx.intentOnly ||
     ctx.activeIntentId ||
     ctx.scheduleRunId ||
@@ -51,7 +53,9 @@ export function observePeerInput(runtime, ctx, items) {
       !row ||
       row.seq !== item.seq ||
       row.seq <= baseline ||
-      row.sender_id !== peer.accountId ||
+      (isPrivateLikeGroup(runtime.config, ctx.conversation) &&
+        row.seq <= (state.replyInputSeq || 0)) ||
+      !peers.some((peer) => row.sender_id === peer.accountId) ||
       item.body !== row.body
     )
       continue;
@@ -66,7 +70,9 @@ export function observePeerInput(runtime, ctx, items) {
     // Consume even inputs received during cooldown: reading them again later
     // cannot manufacture a new conversation opportunity.
     peerReplyInputSeq: latest,
-    ...(renew ? { peerReplyWindowAt: now, replyBatchSends: 0 } : {}),
+    ...(renew
+      ? { peerReplyWindowAt: now, replyBatchSends: 0, replyBatchPeer: true }
+      : {}),
   });
   if (renew) ctx.replyBatchSends = 0;
 }

@@ -205,7 +205,7 @@ export class SubjectCoordinator {
     );
   }
   targetAllowed(a, target) {
-    if (!allowed(a, target)) return false;
+    if (!allowed(a, target, this.runtime.config)) return false;
     const [kind, id] = target.split(":");
     const peers = this.runtime.config.connections
       .filter((c) => c.id !== a.connectionId)

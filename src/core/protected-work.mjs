@@ -293,7 +293,7 @@ export class ProtectedWork {
       args.digest !== t.result.digest
     )
       throw Error("PROTECTED_WORK_REVIEW_STALE");
-    if (!args.target || !allowed(r.agent(args.agentId), args.target))
+    if (!args.target || !allowed(r.agent(args.agentId), args.target, r.config))
       throw Error("INVALID_CONVERSATION");
     const m = r.memory.bind(args.agentId);
     const released = m.store.transaction(() => {

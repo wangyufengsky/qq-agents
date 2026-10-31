@@ -1,4 +1,4 @@
-import { validateConfig } from "./config.mjs";
+import { isPrivateLikeGroup, validateConfig } from "./config.mjs";
 import { configImpact } from "./config-impact.mjs";
 import { SUBJECT } from "./lifecycle.mjs";
 import { BanterCoordinator } from "../../vendor/local-bridge/banter.mjs";
@@ -60,6 +60,39 @@ export async function commitConfig(runtime, next, revision) {
     }
   };
   try {
+    await apply(() => {
+      // Drop ordinary wakes created under the old group policy without replacing sessions
+      // or resetting budgets. Delivery rechecks current admission even for active turns.
+      for (const group of new Set([
+        ...(before.privateLikeGroups || []),
+        ...next.privateLikeGroups,
+      ])) {
+        const conversation = "group:" + group;
+        if (
+          isPrivateLikeGroup(before, conversation) ===
+          isPrivateLikeGroup(next, conversation)
+        )
+          continue;
+        runtime.banter.groups.delete(group);
+        for (const a of next.agents) {
+          const mem = runtime.memory.bind(a.id),
+            state = mem.state(conversation);
+          // Pre-switch arrivals are not new peer opportunities, including messages
+          // read by a still-active turn while the ordinary policy was in effect.
+          state.peerReplyInputSeq = Math.max(
+            state.peerReplyInputSeq || 0,
+            state.lastReceivedSeq || 0,
+          );
+          state.pendingWakes = (state.pendingWakes || []).filter(
+            (wake) => wake.taskRunId || wake.intentId,
+          );
+          delete state.wakeBatchAt;
+          delete state.wakeBatchSenders;
+          if (!state.pendingWakes.length) delete state.wakeDueAt;
+          mem.setState(conversation, state);
+        }
+      }
+    });
     await Promise.all(
       [...impact.paused].map((id) => apply(() => runtime.cancel(id))),
     );
