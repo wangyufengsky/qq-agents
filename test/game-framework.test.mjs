@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { fixture, config, raw, context } from "./helpers.mjs";
 import { GameHost } from "../src/games/framework/host.mjs";
-import { secret } from "../src/games/core/value.mjs";
+import { secret, digest } from "../src/games/core/value.mjs";
 import { registerChoiceProbe } from "../src/games/fixtures/choice-probe.mjs";
 import { createGameHttp } from "../src/games/core/http.mjs";
 import { renderGame } from "../src/games/framework/page.mjs";
@@ -745,4 +745,39 @@ test("retrying an older claim returns its original fence and never replaces the 
   assert.equal(second.fencingToken, 2);
   assert.throws(() => f.h.jobs.renew(first), /GAME_EXECUTION_STALE/);
   f.h.jobs.settle(second, { terminal: true });
+});
+
+test("private invitation tokens survive the unified sender Markdown conversion", async (t) => {
+  const f = setup(t),
+    token = "a".repeat(10) + "__abc__" + "b".repeat(26),
+    original = f.h.identity.invite.bind(f.h.identity);
+  f.h.identity.invite = (...args) => {
+    const invitation = original(...args),
+      row = f.k.store.db
+        .prepare("SELECT data FROM game_bindings WHERE id=?")
+        .get(invitation.bindingId),
+      data = JSON.parse(row.data);
+    data.tokenHash = digest(token);
+    f.k.store.db
+      .prepare("UPDATE game_bindings SET data=? WHERE id=?")
+      .run(JSON.stringify(data), invitation.bindingId);
+    return { ...invitation, invite: token };
+  };
+  const result = await create(f);
+  assert.equal(result.delivery, "sent");
+  const text = f.runtime.transports
+    .get("qq-0")
+    .sent[0].segments.map((s) => s.data.text || "")
+    .join("");
+  const link = new URL(text.match(/http:\/\/[^\s]+/)[0]);
+  assert.equal(link.searchParams.get("invite"), token);
+  assert.ok(text.includes("%5F%5Fabc%5F%5F"));
+  assert.ok(
+    f.h.identity.request(
+      result.roomId,
+      link.searchParams.get("binding"),
+      link.searchParams.get("invite"),
+      secret(),
+    ).challenge,
+  );
 });

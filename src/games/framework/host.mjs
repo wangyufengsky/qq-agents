@@ -347,7 +347,11 @@ export class GameHost {
         room.participants[0].participantId,
       );
       url +=
-        "?binding=" + invitation.bindingId + "&invite=" + invitation.invite;
+        "?binding=" +
+        invitation.bindingId +
+        "&invite=" +
+        // The unified sender converts Markdown; encode underscores before it sees the URL.
+        encodeURIComponent(invitation.invite).replace(/_/g, "%5F");
     }
     const result = { roomId, delivery: "pending", requestId: args.requestId };
     // Persist before sending. A crash/unknown receipt never mints a replacement secret.
