@@ -242,6 +242,8 @@ test("peer configuration changes leave another role's active turn and capability
         });
       }),
   });
+  // This tests session continuity, independently of estimated capacity guards.
+  f.runtime.agent("agent-0").contextPolicy.capacityTokens = 65536;
   const job = f.runtime.wake("agent-0", "group:20000");
   const ctx = f.runtime.running.get("agent-0|group:20000");
   try {

@@ -94,4 +94,14 @@ node scripts/antigravity-chat-acceptance.mjs --allow-real-models --extended --co
 
 实现参考官方 [headless 协议](https://antigravity.google/docs/cli/headless/)、[MCP](https://antigravity.google/docs/mcp/) 和 [hooks](https://antigravity.google/docs/hooks/)；CLI 能力变化以实际版本验收为准。
 
+### 群聊到私聊的真实记忆验收
+
+```sh
+node scripts/antigravity-memory-acceptance.mjs --allow-real-models --command agy --model <模型目录中的ID>
+```
+
+脚本通过真实 Runtime、默认工具目录和独立临时角色运行四个模型回合：群聊收到随机暗号、独立私聊检索群聊原始记录、连续分页穿过较新的私聊记录、错误来源参数按提示恢复。私聊开场不得包含暗号，也不能复用群聊原生会话；只检查最终答案还不够，必须看到工具实际读到了原始群记录。夹具还植入其他角色与受保护来源的不同暗号，检查它们没有进入模型输入或工具结果。
+
+所有记录均为合成数据，发送只进入假 QQ 网关，不读取生产记忆、修改权限或接入真实 QQ。读取群聊历史不得推进群聊已读水位。临时角色容量为 `65536`，首次模拟回复上限默认 `120000 ms`，可显式调整；这些是验收参数，不修改现有角色配置。私有证据目录保存实际 CLI 版本、模型、逐回合结果与调用摘要，不提交模型会话。检索参数与分页语义见 [场景记忆](MEMORY-DESIGN.md#从私聊回忆群聊)。
+
 长会话行为参考官方 [上下文与自动 checkpoint](https://antigravity.google/docs/cli/commands/context/)。
