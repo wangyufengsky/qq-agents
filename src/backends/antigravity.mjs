@@ -397,15 +397,19 @@ export class AntigravityBackend {
         !fs.existsSync(file) ||
         fs.lstatSync(file).isSymbolicLink() ||
         bound?.id !== params.session.id ||
-        !this.acceptsSession(
-          {
-            backend: "antigravity",
-            id: bound?.id,
-            signature: bound?.signature,
-          },
-          params.tools,
-          bound?.contract,
-        )
+        (!(
+          params.session.nativeSignature &&
+          bound?.signature === params.session.nativeSignature
+        ) &&
+          !this.acceptsSession(
+            {
+              backend: "antigravity",
+              id: bound?.id,
+              signature: bound?.signature,
+            },
+            params.tools,
+            bound?.contract,
+          ))
       ) {
         params.saveSession(null);
         throw Error("ANTIGRAVITY_SESSION_UNAVAILABLE");

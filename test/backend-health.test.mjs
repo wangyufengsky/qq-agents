@@ -109,3 +109,46 @@ test("DSH health reads grouped provider catalog and verifies configured model av
   backend.config.model = "missing";
   await assert.rejects(backend.health(), /BACKEND_MODEL_UNAVAILABLE/);
 });
+
+test("Codex RPC retains protocol codes needed to distinguish temporary resume rejection", async () => {
+  const rpc = new CodexRpc({
+    spawnProcess: () => {
+      const child = new EventEmitter();
+      child.stdout = new PassThrough();
+      child.stderr = new PassThrough();
+      child.kill = () => true;
+      child.stdin = new Writable({
+        write(chunk, encoding, done) {
+          const request = JSON.parse(String(chunk));
+          if (request.id !== undefined)
+            queueMicrotask(() =>
+              child.stdout.write(
+                JSON.stringify({
+                  id: request.id,
+                  ...(request.method === "thread/resume"
+                    ? {
+                        error: {
+                          code: -32600,
+                          message: `thread ${request.params.threadId} is closing; retry thread/resume after the thread is closed`,
+                        },
+                      }
+                    : { result: {} }),
+                }) + "\n",
+              ),
+            );
+          done();
+        },
+      });
+      return child;
+    },
+  });
+  try {
+    await rpc.start();
+    await assert.rejects(
+      rpc.request("thread/resume", { threadId: "synthetic-thread" }),
+      (error) => error.rpcRejected === true && error.rpcCode === -32600,
+    );
+  } finally {
+    rpc.close();
+  }
+});

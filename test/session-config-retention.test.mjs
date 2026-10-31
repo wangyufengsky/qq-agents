@@ -7,6 +7,17 @@ import {
 } from "../src/backends/session-contract.mjs";
 const cases = [
   [
+    "unused backend default model",
+    (c) => (c.backends[0].model = "unused-default"),
+    true,
+  ],
+  ["scheduler task limit", (c) => (c.agents[0].scheduler.maxTasks = 40), true],
+  [
+    "scheduler time zone",
+    (c) => (c.agents[0].scheduler.timezone = "UTC"),
+    true,
+  ],
+  [
     "subject tool budget",
     (c) => (c.agents[0].subject.maxToolCallsPerTurn = 30),
     true,
@@ -102,6 +113,7 @@ const cases = [
 async function runCase(t, name, change, expectedRetain, scope, active) {
   const cfg = config(2);
   Object.assign(cfg.agents[0], {
+    model: "role-fixed-model",
     appearance: "固定形象",
     ownerIds: ["30000", "30001"],
     aliases: ["first", "second"],

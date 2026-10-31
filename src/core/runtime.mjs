@@ -98,6 +98,7 @@ export class Runtime {
     this.work = new Set();
     this.retiredResources = new Set();
     this.closed = false;
+    this.configDrain = null;
     this.reconfiguringAgents = new Set();
     this.reconfiguringConnections = new Set();
     this.delivery = new DeliveryService(this);
@@ -314,7 +315,11 @@ export class Runtime {
     if (this.closed) codes.push("RUNTIME_CLOSING");
     if (this.maintenance.active && !this.maintenance.allows(ctx))
       codes.push("UPDATE_IN_PROGRESS");
-    if (this.reconfiguringAgents.has(a.id)) codes.push("RECONFIGURING");
+    if (
+      this.reconfiguringAgents.has(a.id) &&
+      !this.configDrain?.contexts.has(ctx)
+    )
+      codes.push("RECONFIGURING");
     if (
       this.backendConnections.blocked.has(a.id) &&
       !this.backendConnections.drainingContexts.has(ctx)
@@ -517,6 +522,8 @@ export class Runtime {
   async pause(agentId, paused = true) {
     if (this.closed) throw Error("RUNTIME_CLOSING");
     if (agentId !== "all") this.agent(agentId);
+    if (paused)
+      this.configDrain?.controller.abort(Error("CONFIG_DRAIN_CANCELLED"));
     while (this.configChanging) await this.configSettled;
     const next = structuredClone(this.config);
     if (agentId === "all") next.globalPaused = paused;
@@ -534,6 +541,7 @@ export class Runtime {
   async setMode(mode, revision) {
     if (this.closed) throw Error("RUNTIME_CLOSING");
     if (mode === "isolated") {
+      this.configDrain?.controller.abort(Error("CONFIG_DRAIN_CANCELLED"));
       while (this.configChanging) await this.configSettled;
       revision = this.configStore.revision;
     }
@@ -1012,6 +1020,7 @@ export class Runtime {
   close() {
     if (this.closing) return this.closing;
     this.closed = true;
+    this.configDrain?.controller.abort(Error("RUNTIME_CLOSING"));
     this.updates?.close();
     clearInterval(this.ticker);
     this.autoResume.cancel("stopped");

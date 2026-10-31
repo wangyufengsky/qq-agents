@@ -39,6 +39,7 @@ import { recallBoundary, recallPage } from "./recall-boundary.mjs";
 import {
   retireSession,
   sessionReference,
+  upgradeSessionReference,
   recoverSessions,
 } from "./session-records.mjs";
 export const SUBJECT = "@subject";
@@ -441,10 +442,10 @@ export class ContextLifecycle {
       };
       const tools = toolSpecs(r.toolsFor(a, row.conversation));
       if (acceptsSession(backend, s.session, tools, s.backendContract)) {
-        s.session = {
-          ...s.session,
-          signature: sessionSignature(backend, tools),
-        };
+        s.session = upgradeSessionReference(
+          s.session,
+          sessionSignature(backend, tools),
+        );
         s.backendContract = sessionContract(backend, tools);
       }
       m.setState(row.conversation, s);
@@ -519,7 +520,7 @@ export class ContextLifecycle {
       s = m.state(ctx.conversation);
     }
     if (s.session && signature && s.session.signature !== signature) {
-      s = { ...s, session: { ...s.session, signature } };
+      s = { ...s, session: upgradeSessionReference(s.session, signature) };
       m.setState(ctx.conversation, s);
     }
     ctx.selfVersion = self.version;

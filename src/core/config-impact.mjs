@@ -31,6 +31,24 @@ function connectionOperational(value) {
   } = value;
   return rest;
 }
+/** @param {Entity} value */
+function connectionIdentity(value) {
+  const {
+    httpUrl: _h,
+    wsUrl: _w,
+    tokenEnv: _t,
+    ...rest
+  } = connectionOperational(value);
+  return rest;
+}
+/** @param {Configuration} config @param {string} agentId */
+function agentBackend(config, agentId) {
+  const a = config.agents.find((a) => a.id === agentId);
+  if (!a) return undefined;
+  const b = config.backends.find((b) => b.id === a.backendId);
+  if (!b) return undefined;
+  return backendSessionConfig({ ...b, model: a.model || b.model });
+}
 /** @param {Agent} value */
 function agentPolicy(value) {
   // Scheduling, display and limits do not revoke a transcript's authority.
@@ -43,6 +61,7 @@ function agentPolicy(value) {
     selfPolicy: _s,
     persona: _persona,
     effort: _effort,
+    model: _model,
     ...rest
   } = value;
   const {
@@ -55,8 +74,25 @@ function agentPolicy(value) {
     sessionMode: _mode,
     ...subject
   } = value.subject;
+  const {
+    timezone: _tz,
+    maxTasks: _max,
+    perTaskPerDay: _task,
+    totalPerDay: _total,
+    perGroupPerDay: _group,
+    minIntervalMin: _interval,
+    missedGraceMin: _grace,
+    jitterMin: _jitter,
+    quietEnabled: _quiet,
+    quietAllDay: _day,
+    quietStart: _start,
+    quietEnd: _end,
+    holidays: _holidays,
+    ...scheduler
+  } = value.scheduler;
   return {
     ...rest,
+    scheduler,
     tools: unordered(value.tools),
     ownerIds: unordered(value.ownerIds),
     aliases: unordered(value.aliases),
@@ -146,15 +182,36 @@ export function configImpact(before, after) {
     ...newGlobal
   } = after;
   const globalChanged = !isDeepStrictEqual(oldGlobal, newGlobal);
-  for (const a of [...before.agents, ...after.agents])
-    if (
+  const identityConnections = changed(
+    before.connections,
+    after.connections,
+    connectionIdentity,
+  );
+  const drainAgentIds = new Set();
+  for (const id of new Set(
+    [...before.agents, ...after.agents].map((a) => a.id),
+  )) {
+    const a =
+      after.agents.find((a) => a.id === id) ||
+      before.agents.find((a) => a.id === id);
+    if (!a) continue;
+    const nativeChanged = !isDeepStrictEqual(
+      agentBackend(before, id),
+      agentBackend(after, id),
+    );
+    const revoked =
       globalChanged ||
-      connectionIds.has(a.connectionId) ||
-      backendIds.has(a.backendId)
-    ) {
-      agentIds.add(a.id);
-      backendAgentIds.add(a.id);
+      agentIds.has(id) ||
+      identityConnections.has(a.connectionId) ||
+      nativeChanged;
+    if (revoked) {
+      agentIds.add(id);
+      backendAgentIds.add(id);
+    } else if (connectionIds.has(a.connectionId)) {
+      agentIds.add(id);
+      drainAgentIds.add(id);
     }
+  }
   const intervalIds = after.agents
     .filter(
       (a) =>
@@ -184,7 +241,11 @@ export function configImpact(before, after) {
     )
       resumed.add(a.id);
   }
+  // A transaction containing revocation or pause keeps the immediate safety path.
+  if (paused.size || [...agentIds].some((id) => !drainAgentIds.has(id)))
+    drainAgentIds.clear();
   return {
+    drainAgentIds,
     agentIds,
     backendAgentIds,
     connectionIds,

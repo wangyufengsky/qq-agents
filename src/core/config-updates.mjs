@@ -1,5 +1,6 @@
 import { isPrivateLikeGroup, validateConfig } from "./config.mjs";
 import { configImpact, changedConfigFields } from "./config-impact.mjs";
+import { waitForDrain } from "../updates/drain.mjs";
 import { SUBJECT } from "./lifecycle.mjs";
 import { BanterCoordinator } from "../../vendor/local-bridge/banter.mjs";
 
@@ -22,37 +23,17 @@ export async function commitConfig(runtime, next, revision) {
   for (const id of connectionIds)
     if (runtime.lifecycle?.owned.has(id))
       throw Error("STOP_MANAGED_QQ_PROCESSES_BEFORE_CONFIG_EDIT");
-  // Disk commit precedes revocation, with no await between the two.
   const finishing = [
     ...new Set([...runtime.capabilities.values(), ...runtime.running.values()]),
   ]
     .filter((ctx) => agentIds.has(ctx.agentId) && ctx.done)
     .map((ctx) => ctx.done);
-  runtime.configStore.save(next, revision);
   runtime.configChanging = true;
   let settle;
   // Lets a safety control (pause) wait out this commit instead of failing.
   runtime.configSettled = new Promise((resolve) => (settle = resolve));
   runtime.reconfiguringAgents = agentIds;
   runtime.reconfiguringConnections = connectionIds;
-  for (const [token, ctx] of runtime.capabilities)
-    if (agentIds.has(ctx.agentId)) {
-      runtime.abortContext(
-        ctx,
-        "configuration",
-        changedConfigFields(before, next, ctx.agentId),
-      );
-      runtime.capabilities.delete(token);
-    }
-  for (const ctx of runtime.running.values())
-    if (agentIds.has(ctx.agentId))
-      runtime.abortContext(
-        ctx,
-        "configuration",
-        changedConfigFields(before, next, ctx.agentId),
-      );
-  for (const key of runtime.pending.keys())
-    if (agentIds.has(key.split("|")[0])) runtime.pending.delete(key);
   let failed = false;
   const report = (cause, retry) => {
     failed = true;
@@ -69,6 +50,70 @@ export async function commitConfig(runtime, next, revision) {
     }
   };
   try {
+    if (impact.drainAgentIds.size) {
+      const contexts = new Set(
+        [...runtime.capabilities.values(), ...runtime.running.values()].filter(
+          (ctx) => impact.drainAgentIds.has(ctx.agentId),
+        ),
+      );
+      const pending = new Set(
+        [...contexts].filter((ctx) => ctx.done).map((ctx) => ctx.done),
+      );
+      for (const promise of pending) {
+        const done = () => pending.delete(promise);
+        promise.then(done, done);
+      }
+      const controller = new AbortController();
+      runtime.configDrain = {
+        contexts,
+        controller,
+        deadline:
+          Math.max(Date.now(), ...[...contexts].map((ctx) => ctx.expires)) +
+          40000,
+      };
+      try {
+        await waitForDrain(
+          async () => ({
+            active: true,
+            deadline: runtime.configDrain.deadline,
+            pending:
+              pending.size +
+              [...contexts].filter(
+                (ctx) => !ctx.done && runtime.capabilities.has(ctx.token),
+              ).length +
+              [...connectionIds].filter((id) => runtime.sendChains.has(id))
+                .length,
+          }),
+          controller.signal,
+        );
+      } catch (error) {
+        controller.signal.throwIfAborted();
+        if (error.message === "UPDATE_DRAIN_TIMEOUT")
+          throw Error("CONFIG_DRAIN_TIMEOUT", { cause: error });
+        throw error;
+      }
+      runtime.configDrain = null;
+    }
+    // Commit before revoking permissions; a failed disk write leaves old work usable.
+    runtime.configStore.save(next, revision);
+    for (const [token, ctx] of runtime.capabilities)
+      if (agentIds.has(ctx.agentId)) {
+        runtime.abortContext(
+          ctx,
+          "configuration",
+          changedConfigFields(before, next, ctx.agentId),
+        );
+        runtime.capabilities.delete(token);
+      }
+    for (const ctx of runtime.running.values())
+      if (agentIds.has(ctx.agentId))
+        runtime.abortContext(
+          ctx,
+          "configuration",
+          changedConfigFields(before, next, ctx.agentId),
+        );
+    for (const key of runtime.pending.keys())
+      if (agentIds.has(key.split("|")[0])) runtime.pending.delete(key);
     await apply(() => {
       // Drop ordinary wakes created under the old group policy without replacing sessions
       // or resetting budgets. Delivery rechecks current admission even for active turns.
@@ -171,6 +216,7 @@ export async function commitConfig(runtime, next, revision) {
       ...(failed ? { warnings: ["CONFIG_RECONFIGURE_FAILED"] } : {}),
     };
   } finally {
+    runtime.configDrain = null;
     runtime.reconfiguringAgents = new Set();
     runtime.reconfiguringConnections = new Set();
     runtime.configChanging = false;

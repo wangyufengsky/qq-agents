@@ -10,8 +10,27 @@ export function sessionReference(session) {
     ...(typeof session.backend === "string"
       ? { backend: session.backend.slice(0, 64) }
       : {}),
+    ...(session.backend === "antigravity" &&
+    typeof session.nativeSignature === "string" &&
+    /^antigravity-tools-v3:contract-v[23]:[a-f0-9]{64}$/.test(
+      session.nativeSignature,
+    )
+      ? { nativeSignature: session.nativeSignature }
+      : {}),
     ...(typeof session.signature === "string"
       ? { signature: session.signature.slice(0, 128) }
+      : {}),
+  };
+}
+// Only called after the complete old contract was verified. The native binding
+// may still carry that signature until the first successful post-upgrade turn.
+export function upgradeSessionReference(session, signature) {
+  return {
+    ...session,
+    signature,
+    ...(session.backend === "antigravity" &&
+    /:contract-v[23]:/.test(session.signature)
+      ? { nativeSignature: session.signature }
       : {}),
   };
 }

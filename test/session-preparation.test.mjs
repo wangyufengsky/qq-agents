@@ -13,6 +13,7 @@ for (const mode of [
   "openai-401",
   "openai-429",
   "openai-key-missing",
+  "codex-closing",
   "codex-missing",
   "dsh-missing",
   "dsh-follow-missing",
@@ -43,6 +44,13 @@ for (const mode of [
         rpc.request = async (method, args) => {
           if (method === "thread/start")
             return { thread: { id: "codex-session" } };
+          if (method === "thread/resume" && fail && mode === "codex-closing")
+            throw Object.assign(
+              Error(
+                `thread ${args.threadId} is closing; retry thread/resume after the thread is closed`,
+              ),
+              { rpcRejected: true, rpcCode: -32600 },
+            );
           if (method === "thread/resume" && fail)
             throw Object.assign(Error("SYNTHETIC_TRANSPORT_FAILURE"), {
               rpcRejected: mode === "codex-missing",

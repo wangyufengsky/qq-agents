@@ -28,7 +28,7 @@ export class CodexRpc extends EventEmitter {
       if (message.id !== undefined && !message.method) {
         const item=this.pending.get(message.id); if(!item)return;
         this.pending.delete(message.id); clearTimeout(item.timer);
-        message.error ? item.reject(Object.assign(new Error(message.error.message || 'CODEX_RPC_ERROR'), { rpcRejected: true })) : item.resolve(message.result);
+        message.error ? item.reject(Object.assign(new Error(message.error.message || 'CODEX_RPC_ERROR'), { rpcRejected: true, rpcCode: message.error.code })) : item.resolve(message.result);
       } else if (message.method && message.id !== undefined) this.emit('request',message);
       else if(message.method) this.emit('notification',message);
     });

@@ -486,3 +486,49 @@ for (const mode of ["timeout", "pause", "shutdown"])
     assert.equal(r.backendConnections.blocked.size, 0);
     assert.equal(r.backendConnections.drainingContexts.size, 0);
   });
+
+test("manual recovery waits for finalization after the model capability is gone", async (t) => {
+  const f = await setup(t),
+    r = f.runtime;
+  let release,
+    entered,
+    closed = 0;
+  const ready = new Promise((resolve) => (entered = resolve)),
+    gate = new Promise((resolve) => (release = resolve));
+  r.backendFactory = () => ({
+    models: async () => [],
+    close: async () => {
+      closed++;
+    },
+    run: async (p) => {
+      p.saveSession({ backend: "codex", id: "finalizing-session" });
+      p.onUsage({
+        source: "measured",
+        contextTokens: 1000,
+        capacityTokens: 1000000,
+      });
+    },
+  });
+  const finish = r.contexts.finish.bind(r.contexts);
+  r.contexts.finish = async (...args) => {
+    entered();
+    await gate;
+    return finish(...args);
+  };
+  const job = r.wake("agent-0", "group:20000");
+  await ready;
+  assert.equal(r.capabilities.size, 0);
+  assert.equal(r.running.size, 1);
+  const recovery = r.backendConnections.recover("fixture");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(closed, 0);
+  assert.equal(r.backendConnections.snapshot("fixture").waitingForTurns, 1);
+  release();
+  await job;
+  await recovery;
+  assert.equal(closed, 1);
+  assert.equal(
+    f.store.bind("agent-0").state("group:20000").session.id,
+    "finalizing-session",
+  );
+});

@@ -66,8 +66,8 @@
     {
       "path": "vendor/local-bridge/codex-rpc.mjs",
       "origin": "local-bridge",
-      "sha256": "e2bafecfd719af1fcbd550369de9ca2469185b675d877101778bc818432a2da0",
-      "modification": "Mark decoded JSON-RPC rejections separately from transport failures before turn submission."
+      "sha256": "8cc4b34e4781eb3edee0b325aee797c7163f238e1096aaea9349820537f2aa8e",
+      "modification": "Preserve JSON-RPC rejection codes separately from transport failures, allowing verified temporary thread-closing responses before input to retain the session."
     },
     {
       "path": "vendor/social-reader/LICENSE",

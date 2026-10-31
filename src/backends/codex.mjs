@@ -328,7 +328,11 @@ export class CodexBackend {
             config: policy,
           });
         } catch (/** @type {any} */ error) {
-          if (error.rpcRejected)
+          const closing =
+            error.rpcCode === -32600 &&
+            error.message ===
+              `thread ${threadId} is closing; retry thread/resume after the thread is closed`;
+          if (error.rpcRejected && !closing)
             throw new SessionUnavailableFailure("CODEX_SESSION_UNAVAILABLE");
           throw error;
         }

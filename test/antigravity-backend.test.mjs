@@ -685,3 +685,35 @@ test("Antigravity resumes a proven compatible binding and refreshes optional arg
   );
   assert.equal(launches.length, 2);
 });
+
+test("Antigravity consumes a verified legacy binding after compatible request settings change", async (t) => {
+  const { backend, params, sessions, launches } = setup(t, "usage");
+  await backend.run(params);
+  const { legacySessionSignature } =
+    await import("../src/backends/session-contract.mjs");
+  const { upgradeSessionReference, sessionReference } =
+    await import("../src/core/session-records.mjs");
+  const old = {
+    ...sessions.at(-1),
+    signature: legacySessionSignature(backend, params.tools),
+  };
+  fs.writeFileSync(
+    path.join(launches[0].options.cwd, "session.json"),
+    JSON.stringify({ id: old.id, signature: old.signature }),
+  );
+  assert(backend.acceptsSession(old, params.tools));
+  const migrated = sessionReference(
+    upgradeSessionReference(old, backend.sessionSignature(params.tools)),
+  );
+  backend.config.effort = "high";
+  assert(backend.acceptsSession(migrated, params.tools));
+  await backend.run({ ...params, session: migrated, instructions: undefined });
+  assert.equal(sessions.at(-1).id, old.id);
+  assert.equal(sessions.at(-1).nativeSignature, undefined);
+  assert.equal(
+    JSON.parse(
+      fs.readFileSync(path.join(launches[1].options.cwd, "session.json")),
+    ).signature,
+    backend.sessionSignature(params.tools),
+  );
+});
