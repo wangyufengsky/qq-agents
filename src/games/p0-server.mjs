@@ -173,6 +173,13 @@ export function createP0Server({ database, publicOrigin, clock = Date.now }) {
         !(url.pathname === "/health" && req.headers.host === localHost)
       )
         throw failure("INVALID_HOST", 403);
+      // Only the loopback-bound upstream is reachable. The configured tunnel
+      // must overwrite this header so its HTTP endpoint cannot serve the app.
+      if (publicOrigin && req.headers.host !== localHost) {
+        if (req.headers["x-forwarded-proto"] !== "https")
+          throw failure("HTTPS_REQUIRED", 403);
+        res.setHeader("strict-transport-security", "max-age=86400");
+      }
       if (req.method === "GET" && url.pathname === "/health")
         return json({ service: "qq-agents-game-p0", challenge });
       if (

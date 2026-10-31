@@ -32,7 +32,25 @@ node scripts/game-p0.mjs --data /absolute/private/game-p0-data --port 35821 --pu
 
 不要添加将 Host 改成管理台地址的参数，不能把 upstream 换成 QQ Agents 管理端口。这里的 HTTPS origin 必须与浏览器打开的域名一致，不带路径、查询或尾随斜杠。没有域名证书、CORS 或管理台配置需要修改。
 
+公网模式要求受信任隧道覆盖 `X-Forwarded-Proto: https`，并设置 HSTS；隧道的明文 HTTP 入口会被应用拒绝。不要让公网客户端自行控制该转发头。只有本机 `/health` 可以直接用回环 HTTP 检查。
+
 Quick Tunnel 是试玩入口：无在线保证、地址重建会变、最多 200 个在途请求、不支持 SSE；P0 使用短轮询。学校/公司网络和手机流量须分别验证，不能从一种网络推出另一种网络可用。[官方限制](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/)
+
+### Quick Tunnel 无法连接时的可替换实验入口
+
+Cloudflare 分配了域名但边缘连接失败时，不代表应用已公开可用。先区分 QUIC 超时、HTTP/2 握手失败和本机服务故障；不要关闭证书验证。需要替换入口时，可以用 localhost.run 的无需账号临时 HTTPS 隧道：
+
+```sh
+ssh -F /dev/null -o IdentityFile=none -o IdentityAgent=none \
+  -o UserKnownHostsFile=/absolute/private/p0-known-hosts \
+  -o StrictHostKeyChecking=accept-new -o ExitOnForwardFailure=yes \
+  -o ServerAliveInterval=15 -R 80:127.0.0.1:35821 nokey@localhost.run \
+  -- --inject-http-proxy-headers
+```
+
+这条命令不读取个人 SSH 配置或密钥，首次主机密钥写入专用文件，之后拒绝密钥变化。先结束原 P0 进程，再用新域名作为 `--public-origin` 启动；只有 P0 测试端口被转发。显式保留 `--inject-http-proxy-headers`，不假定服务默认注入；缺少此标记时应用会返回 `HTTPS_REQUIRED`。
+
+此服务也会终止 HTTPS 并转发测试流量，域名定期变化且限速。只用合成测试数据，仍须独立挑战和手机验收，不能声称正式稳定入口。参见 [官方基础说明](https://localhost.run/docs/)、[无需密钥模式](https://localhost.run/docs/faq#i-dont-want-to-use-an-ssh-key)、[免费限制](https://localhost.run/docs/forever-free)。
 
 ## 健康验证不等于手机通过
 

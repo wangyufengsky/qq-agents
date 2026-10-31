@@ -33,6 +33,7 @@ async function fixture(t, options = {}) {
           headers: {
             host: new URL(address.origin).host,
             origin: address.origin,
+            ...(options.publicOrigin ? { "x-forwarded-proto": "https" } : {}),
             ...(cookie ? { cookie } : {}),
             ...headers,
           },
@@ -108,12 +109,20 @@ const move = (expectedRevision = 0, x = 7, y = 7) => ({
 test("P0 invite preview is non-consuming, explicit exchange creates a secure scoped session", async (t) => {
   const f = await fixture(t, { publicOrigin: "https://game.example" });
   const query = new URL(f.invite.url).search;
+  assert.equal(
+    (await f.call(query, { headers: { "x-forwarded-proto": "http" } })).status,
+    403,
+  );
   for (let i = 0; i < 2; i++) {
     const response = await f.call(query);
     assert.equal(response.status, 200);
     assert.match(await response.text(), /确认加入测试房间/);
     assert.equal(response.headers.get("set-cookie"), null);
     assert.equal(response.headers.get("referrer-policy"), "no-referrer");
+    assert.equal(
+      response.headers.get("strict-transport-security"),
+      "max-age=86400",
+    );
   }
   assert.equal((await f.call("/state")).status, 401);
   const response = await f.join();
