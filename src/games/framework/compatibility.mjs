@@ -13,7 +13,9 @@ export function checkGameCompatibility(database) {
   const db = new DatabaseSync(database, { readOnly: true });
   try {
     if (
-      db.prepare("PRAGMA application_id").get()?.application_id !== 1363625777
+      db.prepare("PRAGMA application_id").get()?.application_id !==
+        1363625777 ||
+      db.prepare("PRAGMA user_version").get()?.user_version !== 1
     )
       fail("GAME_DATABASE_INCOMPATIBLE");
     const rows = db.prepare("SELECT data FROM game_rooms").all();

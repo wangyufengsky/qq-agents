@@ -98,6 +98,13 @@ test("exact legacy rooms survive reopening without rewriting identity; preflight
       kernel.store.room(roomId).moduleRef.moduleDigest,
       "1".repeat(64),
     );
+    room.moduleRef = releases[0].ref;
+    kernel.store.save(room);
+    kernel.store.db.exec("PRAGMA user_version=2");
+    assert.throws(
+      () => checkGameCompatibility(database),
+      /GAME_DATABASE_INCOMPATIBLE/,
+    );
   } finally {
     kernel.close();
   }
