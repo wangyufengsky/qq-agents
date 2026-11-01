@@ -412,7 +412,7 @@ for (const type of ["dsh", "codex"]) {
     f = setup(t, type, {
       beforeEnd: async (attempt) => {
         if (attempt === 1) {
-          f.runtime.sendChains.set(
+          f.runtime.delivery.queues.set(
             "qq-0",
             new Promise((r) => {
               unlock = r;

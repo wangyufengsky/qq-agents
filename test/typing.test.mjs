@@ -169,7 +169,7 @@ test("first reply waits inside delivery drain; confirmed duplicate and later sen
   assert.equal(f.sent(), 2);
 });
 
-test("parallel sends share a first-reply wait through the connection chain", async (t) => {
+test("parallel sends in one turn share the first-reply wait", async (t) => {
   const f = setup(t);
   const ps = ["one", "two"].map((requestId) =>
     f.runtime.send(f.ctx, { requestId, text: "你好" }),
@@ -178,6 +178,158 @@ test("parallel sends share a first-reply wait through the connection chain", asy
   t.mock.timers.tick(200);
   await Promise.all(ps);
   assert.equal(f.sent(), 2);
+});
+
+for (const separateContexts of [false, true])
+  for (const limit of [1, 5])
+    test(`same-chat sends preserve call order across unequal typing delays: contexts=${separateContexts}, limit=${limit}`, async (t) => {
+      const f = setup(t);
+      f.runtime.agent("agent-0").maxConsecutiveSends = limit;
+      const first = f.runtime.send(f.ctx, {
+        requestId: "long-first",
+        text: "长".repeat(6),
+      });
+      const secondContext = separateContexts ? context(f.runtime) : f.ctx;
+      const second = f.runtime.send(secondContext, {
+        requestId: "short-second",
+        text: "短",
+      });
+      const rejected =
+        limit === 1 ? assert.rejects(second, /REPLY_BURST_LIMIT/) : null;
+      await flush();
+      t.mock.timers.tick(100);
+      await flush();
+      assert.equal(f.sent(), 0);
+      t.mock.timers.tick(500);
+      assert.equal((await first).status, "sent");
+      await flush();
+      if (separateContexts) t.mock.timers.tick(100);
+      if (rejected) await rejected;
+      else assert.equal((await second).status, "sent");
+      const sent = f.runtime.transports.get("qq-0").sent;
+      assert.equal(sent.length, limit === 1 ? 1 : 2);
+      assert.equal(
+        f.store.bind("agent-0").delivery("long-first").status,
+        "sent",
+      );
+      assert.deepEqual(sent[0].segments, [
+        { type: "text", data: { text: "长".repeat(6) } },
+      ]);
+    });
+
+for (const conversation of ["group:20001", "private:30000"])
+  test(
+    "typing in one chat does not block another chat: " + conversation,
+    async (t) => {
+      const f = setup(t);
+      const slow = f.runtime.send(f.ctx, {
+        requestId: "slow-chat",
+        text: "长".repeat(60),
+      });
+      const other = context(f.runtime, "agent-0", conversation);
+      const fast = f.runtime.send(other, {
+        requestId: "fast-chat",
+        text: "短",
+      });
+      await flush();
+      t.mock.timers.tick(100);
+      await flush();
+      const mem = f.store.bind("agent-0");
+      assert.equal(mem.delivery("fast-chat")?.status, "sent");
+      assert.equal(mem.delivery("slow-chat"), undefined);
+      assert.equal((await fast).status, "sent");
+      assert.equal(f.runtime.sendChains.size, 1);
+      assert.equal(f.runtime.maintenance.begin().pending, 1);
+      t.mock.timers.tick(5900);
+      assert.equal((await slow).status, "sent");
+      await flush();
+      assert.equal(f.runtime.sendChains.size, 0);
+      assert.equal(f.runtime.maintenance.snapshot().pending, 0);
+    },
+  );
+
+test("voice typing does not block actions and ready sends remain serialized", async (t) => {
+  const f = setup(t);
+  f.runtime.voices = {
+    metadata: () => ({ id: "voice-fixture", title: "语音", sources: [] }),
+    segment: async () => ({ type: "record", data: { file: "fixture" } }),
+  };
+  const voice = f.runtime.callTool(f.ctx, "qq_send_voice", {
+    requestId: "voice-wait",
+    audioId: "voice-fixture",
+  });
+  await flush();
+  const other = context(f.runtime, "agent-0", "group:20001");
+  const actionReceipt = Promise.withResolvers();
+  let actionStarted = false;
+  const action = f.runtime.deliver(other, {
+    requestId: "other-action",
+    intent: { kind: "fixture-action" },
+    action: true,
+    send: () => {
+      actionStarted = true;
+      return actionReceipt.promise;
+    },
+  });
+  await flush();
+  assert.equal(actionStarted, true);
+  t.mock.timers.tick(2000);
+  await flush();
+  assert.equal(f.sent(), 0);
+  assert.equal(f.store.bind("agent-0").delivery("voice-wait"), undefined);
+  actionReceipt.resolve({ confirmed: true });
+  assert.equal((await action).actionConfirmed, true);
+  assert.equal((await voice).status, "sent");
+  assert.equal(f.sent(), 1);
+});
+
+test("a retry during network delivery waits for the queued receipt without typing again", async (t) => {
+  const f = setup(t);
+  const gateway = Promise.withResolvers();
+  let calls = 0;
+  f.runtime.transports.get("qq-0").send = () => {
+    calls++;
+    return gateway.promise;
+  };
+  const args = { requestId: "in-flight", text: "你好" };
+  const first = f.runtime.send(f.ctx, args);
+  await flush();
+  t.mock.timers.tick(200);
+  await flush();
+  assert.equal(calls, 1);
+  const retry = f.runtime.send(context(f.runtime), args);
+  await flush();
+  gateway.resolve({ messageId: "10000" });
+  assert.equal((await first).status, "sent");
+  assert.equal((await retry).duplicate, true);
+  assert.equal(calls, 1);
+});
+
+test("typing cannot cross a recovery delivery fence", async (t) => {
+  const f = setup(t);
+  const pending = f.runtime.send(f.ctx, {
+    requestId: "recovery-wait",
+    text: "你好",
+  });
+  const rejected = assert.rejects(pending, /RECOVERY_DELIVERY_BLOCKED/);
+  await flush();
+  assert.equal(f.ctx.pendingDeliveries, 1);
+  f.ctx.recoveryDeliveryBlocked = true;
+  t.mock.timers.tick(200);
+  await rejected;
+  assert.equal(f.sent(), 0);
+  assert.equal(f.store.bind("agent-0").delivery("recovery-wait"), undefined);
+});
+
+test("concurrent same-ID requests recheck receipts after typing", async (t) => {
+  const f = setup(t);
+  const args = { requestId: "same-id", text: "你好" };
+  const sends = [f.runtime.send(f.ctx, args), f.runtime.send(f.ctx, args)];
+  await flush();
+  t.mock.timers.tick(200);
+  const results = await Promise.all(sends);
+  assert.equal(results.filter((r) => r.duplicate).length, 1);
+  assert.equal(f.sent(), 1);
 });
 
 test("burst uses next length after first, explicit gap overrides it, and new input keeps prefix receipts", async (t) => {

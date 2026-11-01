@@ -44,6 +44,8 @@ export class DeliveryService {
   constructor(runtime) {
     this.runtime = runtime;
     this.chains = new Map();
+    this.queues = new Map();
+    this.conversations = new Map();
     this.reconciled = new Set();
   }
   async send(
@@ -128,36 +130,73 @@ export class DeliveryService {
     const runtime = this.runtime;
     const a = runtime.assertActive(ctx);
     ctx.pendingDeliveries = (ctx.pendingDeliveries || 0) + 1;
+    // Drain tracking includes typing, but only ready deliveries occupy the queue.
     const previous = this.chains.get(a.connectionId);
-    const result = previous
-      ? previous.catch(() => {}).then(() => this.deliverNow(ctx, operation))
-      : this.deliverNow(ctx, operation);
-    this.chains.set(a.connectionId, result);
+    const key = a.connectionId + "|" + ctx.conversation;
+    const priorConversation = this.conversations.get(key);
+    // Preserve call order within a chat, without holding other chats behind its typing.
+    const result = priorConversation
+      ? priorConversation
+          .catch(() => {})
+          .then(() => this.deliverAfterTyping(ctx, operation))
+      : this.deliverAfterTyping(ctx, operation);
+    this.conversations.set(key, result);
+    const drained = Promise.allSettled([previous, result]);
+    this.chains.set(a.connectionId, drained);
+    drained.then(() => {
+      if (this.chains.get(a.connectionId) === drained)
+        this.chains.delete(a.connectionId);
+    });
     try {
       return await result;
     } finally {
       ctx.pendingDeliveries--;
-      if (this.chains.get(a.connectionId) === result)
-        this.chains.delete(a.connectionId);
+      if (this.conversations.get(key) === result)
+        this.conversations.delete(key);
     }
   }
-  async deliverNow(
+  async deliverAfterTyping(ctx, operation) {
+    if (operation.typingText !== undefined) {
+      const { receipt } = this.checkDelivery(ctx, operation, {
+        beforeTyping: true,
+      });
+      if (!receipt) {
+        const wait = waitFirstReply(
+          this.runtime,
+          ctx,
+          operation.typingText,
+          operation.typingFallbackMs,
+        );
+        if (wait) await wait;
+      }
+    }
+    const a = this.runtime.assertActive(ctx);
+    const previous = this.queues.get(a.connectionId);
+    const result = previous
+      ? previous.catch(() => {}).then(() => this.deliverNow(ctx, operation))
+      : this.deliverNow(ctx, operation);
+    this.queues.set(a.connectionId, result);
+    try {
+      return await result;
+    } finally {
+      if (this.queues.get(a.connectionId) === result)
+        this.queues.delete(a.connectionId);
+    }
+  }
+  checkDelivery(
     ctx,
     {
       requestId,
       intent,
       body = "",
       metadata = {},
-      send,
       action = false,
       actionBudget,
-      validate,
-      typingText,
-      typingFallbackMs,
     },
+    { beforeTyping = false } = {},
   ) {
     const runtime = this.runtime;
-    let a = runtime.assertActive(ctx);
+    const a = runtime.assertActive(ctx);
     const mem = runtime.memory.bind(a.id);
     assertMessageAccount(
       mem,
@@ -183,12 +222,16 @@ export class DeliveryService {
       throw Error("SENSITIVE_OUTPUT_BLOCKED");
     const previous = mem.delivery(requestId);
     if (previous) {
+      // An in-flight receipt may settle before our queue slot; only skip typing here.
+      if (beforeTyping) return { receipt: previous };
       mem.reserveDelivery(requestId, ctx.conversation, intent);
       if (previous.status === "sent")
         return {
-          status: "sent",
-          messageId: previous.message_id,
-          duplicate: true,
+          receipt: {
+            status: "sent",
+            messageId: previous.message_id,
+            duplicate: true,
+          },
         };
       throw Error(
         "DELIVERY_ALREADY_ATTEMPTED_" + previous.status.toUpperCase(),
@@ -200,21 +243,22 @@ export class DeliveryService {
     if (ctx.recoveryDeliveryBlocked) throw Error("RECOVERY_DELIVERY_BLOCKED");
     if (metadata.mediaId)
       runtime.generatedImages.assertDelivery(ctx, metadata.mediaId, requestId);
-    const typingWait = waitFirstReply(
-      runtime,
-      ctx,
-      typingText,
-      typingFallbackMs,
-    );
-    if (typingWait) {
-      await typingWait;
-      // Waiting is outside the ledger transaction; recheck authority before reserving anything.
-      a = runtime.assertActive(ctx);
-      runtime.assertDisclosure(ctx);
-      if (!cleanupAction) runtime.subject.beforeDelivery(ctx);
-      if (mem.state(ctx.conversation).silenceUntil > runtime.now())
-        throw Error("CONVERSATION_SILENCED");
-    }
+    return { a, mem, proactive, requestId, cleanupAction };
+  }
+  async deliverNow(ctx, operation) {
+    const runtime = this.runtime;
+    const { a, mem, proactive, requestId, cleanupAction, receipt } =
+      this.checkDelivery(ctx, operation);
+    if (receipt) return receipt;
+    const {
+      intent,
+      body = "",
+      metadata = {},
+      send,
+      action = false,
+      actionBudget,
+      validate,
+    } = operation;
     validate?.();
     const state = mem.state(ctx.conversation),
       now = runtime.now();
