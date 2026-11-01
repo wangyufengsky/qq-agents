@@ -86,12 +86,20 @@ export class GameHost {
               if (this.child.connected)
                 this.child.send({ retry: message.retry, result });
             })
-            .catch(() => {
+            .catch((/** @type {unknown} */ error) => {
+              const code =
+                error instanceof Error &&
+                [
+                  "GAME_RETRY_LIMIT",
+                  "GAME_OUTCOME_UNKNOWN",
+                  "GAME_BUDGET_EXHAUSTED",
+                  "GAME_BACKEND_BUSY",
+                  "GAME_JOB_NOT_RUNNABLE",
+                ].includes(error.message)
+                  ? error.message
+                  : "GAME_RETRY_UNAVAILABLE";
               if (this.child.connected)
-                this.child.send({
-                  retry: message.retry,
-                  error: "GAME_RETRY_UNAVAILABLE",
-                });
+                this.child.send({ retry: message.retry, error: code });
             }),
           "games",
         );

@@ -73,7 +73,20 @@ const http = createGameHttp({
       retries.set(id, (message) => {
         clearTimeout(timer);
         retries.delete(id);
-        if (message.error) reject(Error("GAME_RETRY_UNAVAILABLE"));
+        if (message.error)
+          reject(
+            Error(
+              [
+                "GAME_RETRY_LIMIT",
+                "GAME_OUTCOME_UNKNOWN",
+                "GAME_BUDGET_EXHAUSTED",
+                "GAME_BACKEND_BUSY",
+                "GAME_JOB_NOT_RUNNABLE",
+              ].includes(message.error)
+                ? message.error
+                : "GAME_RETRY_UNAVAILABLE",
+            ),
+          );
         else resolve(message.result);
       });
       process.send?.({ retry: id, roomId, principalId });
