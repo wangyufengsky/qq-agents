@@ -97,6 +97,8 @@
 
 ### PR 4：作息与忙闲
 
+已由 [PR #123](https://github.com/wangyufengsky/qq-agents/pull/123) 实现；默认关闭，正式配置与边界见 [配置说明](../CONFIGURATION.md#作息与忙闲behaviorrhythm)。真实 QQ 作息体验需在测试账号单独验收。
+
 **目标**：角色有睡觉时段和偶尔的慢回复，回复时机像一个有生活的人。
 
 **配置**（`behavior.rhythm`，默认 `enabled: false`，开启前行为完全不变）：
