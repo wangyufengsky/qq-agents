@@ -164,6 +164,9 @@ async function sampleConfig() {
       users: ["30000001", "30000002"],
     },
     wake: { participation: 0.025, cooldownMs: 2500, questions: true },
+    behavior: {
+      actions: { recall: true, recallWindowMs: 45000, recallMaxPerHour: 2 },
+    },
     voice: {
       asr: {
         enabled: true,
@@ -431,4 +434,25 @@ test("a new role starts with empty number lists that still take typed numbers", 
       participation: 0.05,
     },
   );
+});
+
+test("recall controls preserve explicit settings and allow changing limits or disabling", async () => {
+  const config = await sampleConfig(),
+    run = editor(config),
+    original = config.agents[0];
+  const html = run(
+    'agentForm.build(config.agents[0], input("id", "稳定 ID", config.agents[0].id, "readonly"))',
+  );
+  const parse = (changes) =>
+    run("agentForm.parse.bind(agentForm)")(
+      formOf(html, changes),
+      structuredClone(original),
+    ).row.behavior.actions;
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(parse({}))),
+    original.behavior.actions,
+  );
+  assert.equal(parse({ recallEnabled: undefined }).recall, false);
+  assert.equal(parse({ recallWindowMs: "60000" }).recallWindowMs, 60000);
+  assert.equal(parse({ recallMaxPerHour: "4" }).recallMaxPerHour, 4);
 });
