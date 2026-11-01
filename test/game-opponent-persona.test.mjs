@@ -266,6 +266,21 @@ test("avatar bytes are typed by signature and only accepted from QQ image hosts"
     null,
   );
   assert.equal(await fetchQqAvatar("../x", { fetch: reply(png) }), null);
+  // A chunked response without Content-Length is cancelled once it crosses the cap.
+  let pulled = 0,
+    cancelled = false;
+  const endless = new ReadableStream({
+    pull(controller) {
+      pulled++;
+      controller.enqueue(pulled === 1 ? png : new Uint8Array(65536));
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+  assert.equal(await fetchQqAvatar("10000", { fetch: reply(endless) }), null);
+  assert.equal(cancelled, true);
+  assert.ok(pulled <= 6);
 });
 
 test("the host caches avatars, retries failures hourly and only fetches for live game agents", async (t) => {

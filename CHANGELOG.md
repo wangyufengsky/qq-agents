@@ -9,7 +9,7 @@
 ### 网页游戏对手名字、头像与落子台词（[#117](https://github.com/wangyufengsky/qq-agents/pull/117)）
 
 - 新建房间的 AI 座位使用角色游戏名 `games.publicName`，留空时用角色名，不再统一显示“AI 对手”；页面和视图都不含 QQ 号。
-- 新增 `games.avatar`（默认 `"qq"`）：`live` 模式下桥接以固定地址下载本连接账号的 QQ 头像，限 256 KB，按文件头校验格式后交给游戏子进程，以内容摘要路径在游戏源站提供；游戏页 CSP 只增加同源 `img-src`。参与者视图新增 `presentation.avatars`。
+- 新增 `games.avatar`（默认 `"qq"`）：`live` 模式下桥接以固定地址下载本连接账号的 QQ 头像，边读边限 256 KB（无长度头的分块响应超限即取消），按文件头校验格式后交给游戏子进程，以内容摘要路径在游戏源站提供；游戏页 CSP 只增加同源 `img-src`。参与者视图新增 `presentation.avatars`。
 - `game_act` 新增可选 `remark`，由 `games.remarks`（默认开启）和 `games.remarkStyle` 控制。台词换行压平、最多 30 字，含链接或标记时丢弃但不影响落子；仅随成功落子保存为平台数据，视图新增 `remarks`（最近 32 条），不改规则状态、不单独增加版本，不发送 QQ，也不进聊天记忆。真人提交台词返回 `REMARK_DENIED`。
 - 兼容性：旧房间的 AI 标签保持原值，规则摘要与模块/UI 版本不变；现有网页暂不展示头像和台词，留给后续前端改版。
 

@@ -34,6 +34,25 @@ export function avatarPath(avatar) {
   return `/avatars/${digest(avatar.body).slice(0, 32)}.${ext}`;
 }
 
+/** Chunked responses may omit Content-Length; stop reading as soon as the cap is crossed.
+ * @param {Response} response */
+async function readCapped(response) {
+  if (!response.body) return null;
+  const reader = response.body.getReader(),
+    chunks = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) return Buffer.concat(chunks);
+    size += value.length;
+    if (size > maxBytes) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+}
+
 /** Fixed URL with no model-controlled input; any failure leaves the letter fallback.
  * @param {string} accountId @param {{fetch?:typeof fetch,timeoutMs?:number}} [options] */
 export async function fetchQqAvatar(
@@ -53,9 +72,9 @@ export async function fetchQqAvatar(
       Number(response.headers.get("content-length") || 0) > maxBytes
     )
       return null;
-    const body = Buffer.from(await response.arrayBuffer());
-    const type = body.length <= maxBytes ? avatarType(body) : null;
-    return type ? { type, body } : null;
+    const body = await readCapped(response);
+    const type = body ? avatarType(body) : null;
+    return body && type ? { type, body } : null;
   } catch {
     return null;
   }
