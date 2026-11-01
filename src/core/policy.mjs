@@ -42,6 +42,19 @@ export const behaviorSchema = z
       })
       .strict()
       .prefault({}),
+    typing: z
+      .object({
+        enabled: z.boolean().default(true),
+        msPerChar: ms(0, 2000, 180),
+        jitter: probability.default(0.35),
+        minMs: ms(0, 30000, 600),
+        maxMs: ms(0, 30000, 12000),
+        firstReply: z.boolean().default(true),
+        firstReplyMaxMs: ms(0, 30000, 6000),
+      })
+      .strict()
+      .prefault({})
+      .refine((x) => x.maxMs >= x.minMs, "INVALID_TIME_RANGE"),
     toneCheck: z
       .object({
         mode: z.enum(["off", "warn"]).default("warn"),

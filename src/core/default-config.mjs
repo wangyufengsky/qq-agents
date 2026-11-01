@@ -95,6 +95,15 @@ export function defaultConfig() {
         // goes offline; the administrator turns it on per agent.
         behavior: {
           actions: { react: false, reactMaxPerMinute: 3 },
+          typing: {
+            enabled: true,
+            msPerChar: 180,
+            jitter: 0.35,
+            minMs: 600,
+            maxMs: 12000,
+            firstReply: true,
+            firstReplyMaxMs: 6000,
+          },
           toneCheck: { mode: "warn", phrases: [], maxLinesCasual: 6 },
           outageNotice: { enabled: false },
         },
@@ -129,6 +138,15 @@ export function defaultConfig() {
         maxConsecutiveSends: 3,
         behavior: {
           actions: { react: false, reactMaxPerMinute: 3 },
+          typing: {
+            enabled: true,
+            msPerChar: 180,
+            jitter: 0.35,
+            minMs: 600,
+            maxMs: 12000,
+            firstReply: true,
+            firstReplyMaxMs: 6000,
+          },
           toneCheck: { mode: "warn", phrases: [], maxLinesCasual: 6 },
           outageNotice: { enabled: false },
         },

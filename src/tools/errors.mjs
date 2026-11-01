@@ -94,6 +94,8 @@ export function safeToolFailure(error) {
       "This turn was woken only for proactive intentions. A successful cancel/defer remains saved, but does not authorize another proactive send. Read conversation_read or qq_wait_for_messages: fully reading a genuinely new human message received after this wake allows an ordinary reply when no intent is selected. If there is no new input, finish without sending. Do not repeat the blocked burst or change requestId to bypass the gate; preserve all existing receipts.",
     INTENT_CORRECTION_REVIEW_REQUIRED:
       "This intention depends on a corrected belief. Read memory_corrections and the intention, then cancel/update it or mark a genuinely unrelated dependency unaffected. Do not send from this intention until review is complete; preserve existing receipts.",
+    TYPING_NEW_INPUT_REVIEW_REQUIRED:
+      "New human input arrived during typing. Nothing was sent or reserved. Fully read the new messages with conversation_read or qq_wait_for_messages (use memory_read pagination for truncated bodies), then decide whether the planned reply still fits. A metadata-only or truncated read does not clear this gate. Do not mark unread input as processed or replay an unknown delivery.",
     INTENT_STALE_REFRESH_REQUIRED:
       "New input arrived after this intent wake's snapshot. Do not retry the stale proactive decision. If no intent is selected, fully read the new human input to reply normally. If an intent is already selected, finish this turn for the next opportunity; do not mark unhandled input as processed. Preserve the intention and all delivery receipts, without replaying under a new requestId.",
     GITHUB_AUTH_UNAVAILABLE:

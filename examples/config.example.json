@@ -71,6 +71,15 @@
           "react": false,
           "reactMaxPerMinute": 3
         },
+        "typing": {
+          "enabled": true,
+          "msPerChar": 180,
+          "jitter": 0.35,
+          "minMs": 600,
+          "maxMs": 12000,
+          "firstReply": true,
+          "firstReplyMaxMs": 6000
+        },
         "toneCheck": {
           "mode": "warn",
           "phrases": [],
@@ -112,6 +121,15 @@
         "actions": {
           "react": false,
           "reactMaxPerMinute": 3
+        },
+        "typing": {
+          "enabled": true,
+          "msPerChar": 180,
+          "jitter": 0.35,
+          "minMs": 600,
+          "maxMs": 12000,
+          "firstReply": true,
+          "firstReplyMaxMs": 6000
         },
         "toneCheck": {
           "mode": "warn",
