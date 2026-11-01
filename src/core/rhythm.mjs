@@ -19,16 +19,13 @@ export function sleepWindow(behavior, now) {
   const local = zonedParts(now, timezone);
   const start = minutes(rhythm.sleep.start),
     end = minutes(rhythm.sleep.end);
-  const minute = local.hour * 60 + local.minute;
   const overnight = start > end;
-  const asleep = overnight
-    ? minute >= start || minute < end
-    : minute >= start && minute < end;
-  if (!asleep) return null;
-  const startDay = overnight && minute < end ? addDays(local, -1) : local;
-  const endDay = overnight ? addDays(startDay, 1) : startDay;
-  return {
-    start: zonedToUtc(
+  // Resolve wall-clock boundaries first. On a repeated DST hour the scheduler's
+  // timezone helper selects the earlier occurrence; membership must use those
+  // same absolute instants, not the wall-clock minute appearing a second time.
+  for (const startDay of [local, addDays(local, -1)]) {
+    const endDay = overnight ? addDays(startDay, 1) : startDay;
+    const from = zonedToUtc(
       {
         ...startDay,
         hour: Math.floor(start / 60),
@@ -36,13 +33,15 @@ export function sleepWindow(behavior, now) {
         second: 0,
       },
       timezone,
-    ),
-    end: zonedToUtc(
+    );
+    const until = zonedToUtc(
       { ...endDay, hour: Math.floor(end / 60), minute: end % 60, second: 0 },
       timezone,
-    ),
-    timezone,
-  };
+    );
+    if (now >= from && now < until)
+      return { start: from, end: until, timezone };
+  }
+  return null;
 }
 
 /** One draw per sleep interval is shared by every chat and survives process restarts.

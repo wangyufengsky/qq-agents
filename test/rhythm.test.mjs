@@ -249,3 +249,30 @@ test("pausing while sleep is pending never wakes the role at sunrise", async (t)
   f.runtime.conversations.tick();
   assert.equal(f.wakes.length, 0);
 });
+
+test("DST repeated-hour boundaries use the same absolute interval for state and wakeups", (t) => {
+  const f = setup(
+    t,
+    {
+      timezone: "America/New_York",
+      sleep: { start: "23:00", end: "01:30" },
+      wakeJitterMs: 0,
+      lateReply: { probability: 0, minMs: 60000, maxMs: 60000 },
+    },
+    "2026-11-01T06:15:00Z",
+  );
+  assert.equal(sleepWindow(f.agent.behavior, f.runtime.now()), null);
+  assert.equal(rhythmStatus(f.runtime, f.agent).state, "awake");
+  f.runtime.conversations.request(f.agent.id, "group:20000", "message");
+  assert.equal(f.wakes.length, 1);
+  f.agent.behavior.rhythm.sleep = { start: "01:30", end: "02:30" };
+  const window = sleepWindow(f.agent.behavior, f.runtime.now());
+  assert.equal(window.start, Date.parse("2026-11-01T05:30:00Z"));
+  assert.equal(window.end, Date.parse("2026-11-01T07:30:00Z"));
+  assert.equal(rhythmStatus(f.runtime, f.agent).state, "sleeping");
+  f.runtime.conversations.request(f.agent.id, "group:20001", "message");
+  assert.equal(
+    f.store.bind(f.agent.id).state("group:20001").wakeDueAt,
+    window.end,
+  );
+});
