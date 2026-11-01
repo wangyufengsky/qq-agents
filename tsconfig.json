@@ -57,6 +57,7 @@
     "src/memory/migration-apply.mjs",
     "src/core/protected-mind.mjs",
     "src/core/person-cards.mjs",
+    "src/core/elsewhere.mjs",
     "src/core/mood.mjs",
     "src/core/floor.mjs",
     "src/core/runtime-status.mjs",

@@ -30,6 +30,13 @@ export const behaviorSchema = z
     maxSendPerHour: ms(1, 1000, 60),
     conversationMaxSendPerMinute: z.number().int().min(1).max(60).optional(),
     conversationMaxSendPerHour: z.number().int().min(1).max(1000).optional(),
+    elsewhere: z
+      .object({
+        enabled: z.boolean().default(true),
+        windowMs: ms(600000, 86400000, 21600000),
+      })
+      .strict()
+      .prefault({}),
     actions: z
       .object({
         react: z.boolean().default(false),

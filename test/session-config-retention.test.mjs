@@ -7,6 +7,16 @@ import {
 } from "../src/backends/session-contract.mjs";
 const cases = [
   [
+    "elsewhere display disabled",
+    (c) => (c.agents[0].behavior.elsewhere.enabled = false),
+    true,
+  ],
+  [
+    "elsewhere display window",
+    (c) => (c.agents[0].behavior.elsewhere.windowMs = 43200000),
+    true,
+  ],
+  [
     "unused backend default model",
     (c) => (c.backends[0].model = "unused-default"),
     true,
