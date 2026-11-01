@@ -351,7 +351,7 @@ async function renderSchedules() {
       ])}
       ${parityCheck("rhythmOwners", "主人私聊可叫醒", b.rhythm.urgentOwners)}
       ${range("rhythmJitter", "起床后随机延后上限", b.rhythm.wakeJitterMs / 60000, { min: 0, max: 120, step: 1, unit: " 分钟" })}
-      ${range("rhythmProbability", "普通消息偶尔慢回复", b.rhythm.lateReply.probability * 100, { min: 0, max: 100, step: 1, unit: "%" })}
+      ${range("rhythmProbability", "普通消息偶尔慢回复", b.rhythm.lateReply.probability, { min: 0, max: 1, step: 0.01, unit: "%" })}
       ${range("rhythmMin", "慢回复最少等待", b.rhythm.lateReply.minMs / 60000, { min: 0, max: 60, step: 1, unit: " 分钟" })}${range("rhythmMax", "慢回复最多等待", b.rhythm.lateReply.maxMs / 60000, { min: 0, max: 60, step: 1, unit: " 分钟" })}
       </div><p class="hint">默认关闭。时区示例：Asia/Shanghai。只推迟普通唤醒，定时任务和已选定意图不受影响；睡觉时暂停空闲活动和主动联系，额度不增加。被 @ 或被引用不套用随机慢回复；睡觉期间遵循所选的处理方式。</p>`,
       {
@@ -438,7 +438,7 @@ async function renderSchedules() {
         urgentOwners: f.has("rhythmOwners"),
         wakeJitterMs: Math.round(num("rhythmJitter") * 60000),
         lateReply: {
-          probability: num("rhythmProbability") / 100,
+          probability: num("rhythmProbability"),
           minMs: Math.round(num("rhythmMin") * 60000),
           maxMs: Math.round(num("rhythmMax") * 60000),
         },
@@ -463,9 +463,13 @@ async function renderSchedules() {
         poke: f.has("poke"),
         joins: f.has("joins"),
       });
-      await api("/api/config", { config: next, revision }, "PUT");
+      const result = await api(
+        "/api/config",
+        { config: next, revision },
+        "PUT",
+      );
       await load();
-      notice("作息已保存；已有连接需手动重连");
+      notice(savedNotice(result));
     });
   $("#schedule-settings").onsubmit = (e) =>
     action(async () => {

@@ -322,7 +322,7 @@ test("wake and scheduler forms save the same shapes as before", async () => {
   await k.run("renderSchedules()");
   const submit = (id, values) =>
     k.node(id).onsubmit({ preventDefault() {}, target: values });
-  await submit("#behavior-form", {
+  const values = {
     rhythmEnabled: "on",
     rhythmTimezone: "Asia/Tokyo",
     rhythmStart: "23:00",
@@ -330,7 +330,7 @@ test("wake and scheduler forms save the same shapes as before", async () => {
     rhythmMode: "defer",
     rhythmOwners: "on",
     rhythmJitter: "0.25",
-    rhythmProbability: "25",
+    rhythmProbability: "0.25",
     rhythmMin: "1.5",
     rhythmMax: "8",
     keywords: "早安,开会",
@@ -346,8 +346,43 @@ test("wake and scheduler forms save the same shapes as before", async () => {
     sendHour: "10",
     conversationSendMinute: "",
     conversationSendHour: "",
-  });
+  };
+  const html = k.node("#parity-body").innerHTML;
+  const initial =
+    /<input type="range" data-range="rhythmProbability" min="0" max="1" step="0.01" value="0.1" data-unit="%"><input type="hidden" name="rhythmProbability" value="([^"]+)"><output>10%<\/output>/.exec(
+      html,
+    );
+  assert.ok(
+    initial,
+    "the actual percentage helper renders a normalized probability as 10%",
+  );
+  assert.match(
+    html,
+    /data-range="typingJitter"[^]*?value="0.35"[^]*?<output>35%<\/output>/,
+  );
+  // Saving untouched markup preserves the stored probability, even when other settings change.
+  await submit("#behavior-form", { ...values, rhythmProbability: initial[1] });
   const agent = () => k.config().agents[0];
+  assert.equal(agent().behavior.rhythm.lateReply.probability, 0.1);
+  assert.match(k.notices.at(-1), /已保存并生效/);
+  assert.doesNotMatch(k.notices.at(-1), /需手动重连|需要手动重新连接/);
+  const output = { textContent: "10%" },
+    hidden = { value: initial[1] };
+  const slider = {
+    type: "range",
+    value: "0.25",
+    dataset: { unit: "%" },
+    parentElement: {
+      querySelector: (selector) => (selector === "output" ? output : hidden),
+    },
+  };
+  k.fire("input", slider);
+  assert.equal(output.textContent, "25%");
+  assert.equal(hidden.value, "0.25");
+  await submit("#behavior-form", {
+    ...values,
+    rhythmProbability: hidden.value,
+  });
   assert.deepEqual(agent().wake.keywords, ["早安", "开会"]);
   assert.deepEqual(agent().wake.speakerIds, ["30000", "30001"]);
   assert.equal(agent().wake.poke, true);

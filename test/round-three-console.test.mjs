@@ -40,6 +40,7 @@ test("console saves role and optional conversation budgets and explicit schedule
     action: (fn) => fn(),
     load: async () => {},
     notice() {},
+    savedNotice: () => "已保存并生效",
     api: async (url, payload) => {
       if (url.startsWith("/api/schedules")) return { tasks: [], history: [] };
       assert.equal(url, "/api/config");
@@ -67,7 +68,7 @@ test("console saves role and optional conversation budgets and explicit schedule
     rhythmMode: "defer",
     rhythmOwners: "on",
     rhythmJitter: "20",
-    rhythmProbability: "25",
+    rhythmProbability: "0.25",
     rhythmMin: "2",
     rhythmMax: "8",
 

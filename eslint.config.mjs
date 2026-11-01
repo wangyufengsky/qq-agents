@@ -44,6 +44,7 @@ const browserScripts = {
     "render",
     "revision",
     "roleId",
+    "savedNotice",
     "select",
     "setGlobalPaused",
     "status",
