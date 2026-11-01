@@ -479,3 +479,12 @@ test("signed OneBot message IDs remain valid reaction targets and observations",
   assert.equal(observations.length, 1);
   assert.match(observations[0].body, /消息 -50000/);
 });
+
+test("own-account messages echoed as ordinary message events retain their reaction observations", async (t) => {
+  const f = setup(t);
+  // This is the shape already accepted by Runtime's ownEcho detection.
+  target(f, "50004", { direction: "in", senderId: "10000" });
+  await f.runtime.ingest("qq-0", reaction({ message_id: 50004 }));
+  assert.equal(f.mem.search({ kind: "notice.reaction" }).items.length, 1);
+  assert.equal(f.mem.state("group:20000").lastReceivedSeq, undefined);
+});

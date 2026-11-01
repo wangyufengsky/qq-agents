@@ -57,9 +57,9 @@ export function ownsReactionTarget(memory, connection, event) {
       },
       event.reaction.messageId,
     );
-    return (
-      !!row && row.direction === "out" && row.sender_id === connection.accountId
-    );
+    // Some gateways echo messages from this account as ordinary inbound
+    // message events. The scoped sender account, not the event direction, owns it.
+    return !!row && row.sender_id === connection.accountId;
   } catch (error) {
     // An ambiguous target cannot establish that someone reacted to us. Other
     // storage errors must still reach diagnostics instead of silently losing data.
