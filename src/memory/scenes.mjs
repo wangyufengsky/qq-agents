@@ -1,3 +1,4 @@
+import { recallAnnotation } from "./recalls.mjs";
 import { timeBasis, timelineAnchor, timelineNeighbors } from "./timeline.mjs";
 import { resolveMessage, scopeFor } from "./message-ids.mjs";
 const messageKinds = [
@@ -155,8 +156,14 @@ export function sceneForMatch(db, agentId, anchor, { before, after, seconds }) {
     timeKnown,
     participantsScope: "returned-neighborhood-only",
     participants: sceneParticipants(messages),
-    messages,
-    quoted,
+    messages: messages.map((m) => ({
+      ...m,
+      ...recallAnnotation(db, agentId, m.id),
+    })),
+    quoted: quoted.map((m) => ({
+      ...m,
+      ...recallAnnotation(db, agentId, m.id),
+    })),
     contextTruncated: more,
     ordering: "message-time-then-archive-order",
     timeBasis: provenance(anchor).timeBasis,

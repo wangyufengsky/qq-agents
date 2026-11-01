@@ -67,6 +67,11 @@
       },
       "maxConsecutiveSends": 3,
       "behavior": {
+        "actions": {
+          "recall": false,
+          "recallWindowMs": 110000,
+          "recallMaxPerHour": 3
+        },
         "typing": {
           "enabled": true,
           "msPerChar": 180,
@@ -129,6 +134,11 @@
       },
       "maxConsecutiveSends": 3,
       "behavior": {
+        "actions": {
+          "recall": false,
+          "recallWindowMs": 110000,
+          "recallMaxPerHour": 3
+        },
         "typing": {
           "enabled": true,
           "msPerChar": 180,
