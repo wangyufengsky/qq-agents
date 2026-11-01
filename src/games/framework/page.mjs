@@ -13,7 +13,11 @@ export function renderGame(snapshot, roomId) {
     : snapshot.lifecycle === "finished" && !view?.result
       ? "房主已结束房间，不计胜负。"
       : !view
-        ? "等待双方加入，房主开始。"
+        ? snapshot.owner
+          ? snapshot.readyToStart
+            ? "双方已就绪，点击开始对局。"
+            : "你是房主，等待对方就绪后开始对局。"
+          : "已加入，等待房主开始对局。"
         : view.result
           ? view.result.kind === "draw"
             ? "满盘和棋。"

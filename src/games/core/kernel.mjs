@@ -381,6 +381,11 @@ export class GameKernel {
       participants: this.roster(room),
       viewer: access.member?.participantId ?? null,
       owner: access.owner,
+      readyToStart:
+        room.lifecycle === "waiting" &&
+        room.participants.every(
+          (/** @type {any} */ p) => p.confirmed && !p.revoked,
+        ),
       decision: room.decision,
       closeReason: room.closeReason,
       snapshotAt: this.clock(),

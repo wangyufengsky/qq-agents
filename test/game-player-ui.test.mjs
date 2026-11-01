@@ -3,12 +3,13 @@ import assert from "node:assert/strict";
 import vm from "node:vm";
 import { readFileSync } from "node:fs";
 
-function browser(snapshot) {
+function browser(snapshot, { authenticated = true, binding = null } = {}) {
   const nodes = new Map(),
     listeners = new Map(),
     calls = [],
     timers = [];
   const element = () => ({
+    value: "12345678",
     children: [],
     dataset: {},
     classList: { toggle() {} },
@@ -24,7 +25,7 @@ function browser(snapshot) {
     if (!nodes.has(id)) nodes.set(id, element());
     return nodes.get(id);
   };
-  node("main").dataset = { room: "room", authenticated: "true" };
+  node("main").dataset = { room: "room", authenticated: String(authenticated) };
   node("board").children = Array.from({ length: 225 }, (_, index) =>
     Object.assign(element(), { dataset: { index } }),
   );
@@ -41,7 +42,12 @@ function browser(snapshot) {
       addEventListener: (name, fn) => listeners.set(name, fn),
     },
     window: { addEventListener() {} },
-    sessionStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+    sessionStorage: {
+      getItem: (key) =>
+        key.endsWith(":binding") && binding ? JSON.stringify(binding) : null,
+      setItem() {},
+      removeItem() {},
+    },
     fetch: async (path) => {
       calls.push(path);
       const data = calls.length === 1 ? await response : snapshot;
@@ -170,4 +176,27 @@ test("background poll leaves confirmation clickable and a late poll cannot repla
   await flush();
   assert.equal(b.node("revision").textContent, "版本 3");
   assert.equal(b.node("status").textContent, "操作已确认。");
+});
+
+test("joining as ready owner explicitly prompts start rather than waiting for another host", async () => {
+  const snapshot = {
+    revision: 1,
+    viewer: "human",
+    owner: true,
+    lifecycle: "waiting",
+    readyToStart: true,
+  };
+  const b = browser(snapshot, {
+    authenticated: false,
+    binding: {
+      bindingId: "binding",
+      challenge: "challenge",
+      expiresAt: Date.now() + 60000,
+    },
+  });
+  b.resolve({ joined: true });
+  await b.node("exchange").onclick();
+  await flush();
+  assert.equal(b.node("status").textContent, "双方已就绪，点击开始对局。");
+  assert.equal(b.node("summary").textContent, "双方已就绪，点击开始对局。");
 });

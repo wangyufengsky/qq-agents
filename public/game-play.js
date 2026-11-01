@@ -100,6 +100,13 @@
     resigning = false;
     render();
   }
+  function waitingText() {
+    return snapshot.owner
+      ? snapshot.readyToStart
+        ? "双方已就绪，点击开始对局。"
+        : "你是房主，等待对方就绪后开始对局。"
+      : "已加入，等待房主开始对局。";
+  }
   function render() {
     $("join").disabled = busy;
     $("join").hidden = sessionEstablished;
@@ -126,7 +133,7 @@
       snapshot.lifecycle === "finished" && !view?.result
         ? "房主已结束房间 · 不计胜负"
         : !view
-          ? "等待双方加入，房主开始。"
+          ? waitingText()
           : view.result
             ? view.result.kind === "draw"
               ? "满盘和棋"
@@ -200,7 +207,8 @@
           close: "结束房间",
         }[type];
         if (type === "start") button.className = "primary";
-        button.disabled = !writable();
+        button.disabled =
+          !writable() || (type === "start" && !snapshot.readyToStart);
         button.onclick = () => submit(`room.${type}`, {});
         $("controls").append(button);
       }
@@ -354,7 +362,11 @@
     $("code-label").hidden = true;
     try {
       await sync();
-      status("已加入，等待房主开始。");
+      status(
+        snapshot.lifecycle === "waiting"
+          ? waitingText()
+          : "已加入，棋局已同步。",
+      );
     } finally {
       schedule();
     }
