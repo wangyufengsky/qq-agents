@@ -311,6 +311,19 @@ export function createServer({
           .parse(await readBody(512));
         return send(runtime.games.verifyEntry(data.challenge, data.external));
       }
+      if (req.method === "POST" && url.pathname === "/api/games/abandon") {
+        const data = z
+          .strictObject({
+            decisionId: z.uuid(),
+            acknowledgeRemoteUnknown: z.literal(true),
+            reason: z.enum([
+              "remote_stopped_verified",
+              "accept_remote_uncertainty",
+            ]),
+          })
+          .parse(await readBody(512));
+        return send(runtime.games.abandon(data.decisionId, data.reason));
+      }
       if (req.method === "POST" && url.pathname === "/api/games/retry") {
         const data = z
           .strictObject({ decisionId: z.uuid() })

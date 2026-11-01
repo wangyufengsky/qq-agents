@@ -32,7 +32,7 @@ async function body(req) {
   }
 }
 /** Loopback-only transport for the isolated P1a harness. No management routes or actor issuer.
- * @param {{kernel:import('./kernel.mjs').GameKernel,identity:import('./identity.mjs').GameIdentity,assets:Map<string,{type:string,body:string|Buffer}>,render:(snapshot:any|null,roomId:string)=>string,confirm?:(roomId:string,bindingId:string,challenge:string)=>void,publicOrigin?:string,publicJoin?:boolean,health?:()=>unknown,authorize?:(roomId:string)=>Promise<boolean>}} options */
+ * @param {{kernel:import('./kernel.mjs').GameKernel,identity:import('./identity.mjs').GameIdentity,assets:Map<string,{type:string,body:string|Buffer}>,render:(snapshot:any|null,roomId:string)=>string,confirm?:(roomId:string,bindingId:string,challenge:string)=>void,publicOrigin?:string,publicJoin?:boolean,health?:()=>unknown,authorize?:(roomId:string)=>Promise<boolean>,retry?:(roomId:string,actor:object)=>Promise<any>}} options */
 export function createGameHttp({
   kernel,
   identity,

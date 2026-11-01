@@ -19,6 +19,7 @@ export class GameHost {
     this.ready = false;
     this.closed = false;
     this.pumping = false;
+    /** @type {any} */ this.childFailure = null;
     /** @type {any} */ this.child = null;
     /** @type {any} */ this.kernel = null;
     /** @type {any} */ this.identity = null;
@@ -77,6 +78,34 @@ export class GameHost {
     );
     this.child.on("message", (/** @type {any} */ message) => {
       if (message?.ready === true) this.ready = true;
+      if (
+        typeof message?.retry === "string" &&
+        typeof message.roomId === "string"
+      ) {
+        this.runtime.trackJob(
+          this.retryOwner(message.roomId, message.principalId)
+            .then((result) => {
+              if (this.child.connected)
+                this.child.send({ retry: message.retry, result });
+            })
+            .catch((/** @type {unknown} */ error) => {
+              const code =
+                error instanceof Error &&
+                [
+                  "GAME_RETRY_LIMIT",
+                  "GAME_OUTCOME_UNKNOWN",
+                  "GAME_BUDGET_EXHAUSTED",
+                  "GAME_BACKEND_BUSY",
+                  "GAME_JOB_NOT_RUNNABLE",
+                ].includes(error.message)
+                  ? error.message
+                  : "GAME_RETRY_UNAVAILABLE";
+              if (this.child.connected)
+                this.child.send({ retry: message.retry, error: code });
+            }),
+          "games",
+        );
+      }
       if (message?.admission && typeof message.roomId === "string") {
         let allowed = false;
         try {
@@ -89,11 +118,27 @@ export class GameHost {
       }
     });
     this.child.on("error", () => {
+      this.childFailure = { code: "GAME_SERVICE_START_FAILED" };
+      this.runtime.diagnostics.report(Error("GAME_SERVICE_START_FAILED"), {
+        component: "games",
+      });
       this.ready = false;
     });
-    this.child.on("exit", () => {
-      this.ready = false;
-    });
+    this.child.on(
+      "exit",
+      (/** @type {number|null} */ code, /** @type {string|null} */ signal) => {
+        this.childFailure = {
+          code: "GAME_SERVICE_EXITED",
+          exitCode: code,
+          signal,
+        };
+        this.ready = false;
+        if (!this.closed)
+          this.runtime.diagnostics.report(Error("GAME_SERVICE_EXITED"), {
+            component: "games",
+          });
+      },
+    );
   }
   /** @param {string} roomId @returns {any} */
   source(roomId) {
@@ -140,19 +185,15 @@ export class GameHost {
     if (r.backendConnections.blocked.has(a.id)) return "BACKEND_UNAVAILABLE";
     for (const other of r.running.values())
       if (
-        other !== ctx &&
-        r.config.agents.find((/** @type {any} */ a) => a.id === other.agentId)
-          ?.backendId === a.backendId
+        (other !== ctx && other.agentId === job.agentId) ||
+        other.roomId === job.roomId
       )
         return "GAME_BACKEND_BUSY";
     for (const row of this.kernel.store.db
       .prepare("SELECT data FROM game_jobs WHERE status='outcome_unknown'")
       .all()) {
       const other = JSON.parse(row.data);
-      if (
-        r.config.agents.find((/** @type {any} */ a) => a.id === other.agentId)
-          ?.backendId === a.backendId
-      )
+      if (other.agentId === job.agentId || other.roomId === job.roomId)
         return "GAME_OUTCOME_UNKNOWN";
     }
     return null;
@@ -242,6 +283,8 @@ export class GameHost {
           budgets: this.jobs.budgetStatus(agent.id),
         }),
       ),
+
+      childFailure: this.childFailure,
       jobs: this.kernel.store.db
         .prepare(
           "SELECT id,room_id,status,data FROM game_jobs ORDER BY rowid DESC LIMIT 100",
@@ -681,22 +724,10 @@ export class GameHost {
     )
       fail("GAME_REQUEST_CAPACITY", 429);
   }
-  /** @param {string} backendId */
+  /** Unknown remote games do not own the local chat execution slot. @param {string} backendId */
   busy(backendId) {
-    return (
-      [...this.worker.active.values()].some(
-        (ctx) => ctx.backendId === backendId,
-      ) ||
-      (this.kernel &&
-        this.kernel.store.db
-          .prepare("SELECT data FROM game_jobs WHERE status='outcome_unknown'")
-          .all()
-          .some(
-            (/** @type {any} */ row) =>
-              this.runtime.config.agents.find(
-                (/** @type {any} */ a) => a.id === JSON.parse(row.data).agentId,
-              )?.backendId === backendId,
-          ))
+    return [...this.worker.active.values()].some(
+      (ctx) => ctx.backendId === backendId,
     );
   }
   tick() {
@@ -725,6 +756,35 @@ export class GameHost {
       "games",
     );
   }
+  /** @param {string} id @param {string} reason */
+  abandon(id, reason) {
+    this.ensure();
+    const job = this.jobs.get(id);
+    if (this.worker.active.has(job.run?.runId)) fail("GAME_BACKEND_BUSY", 409);
+    return this.jobs.abandon(id, reason);
+  }
+  /** The public child supplies only authenticated ownership; source permissions are rechecked here.
+   * @param {string} roomId @param {string} principal */
+  async retryOwner(roomId, principal) {
+    this.ensure();
+    const room = this.kernel.store.room(roomId);
+    if (room.owner !== principal) fail("ROOM_OWNER_REQUIRED", 403);
+    const reason = this.permission(this.source(roomId));
+    if (reason) fail(reason, 403);
+    if (!room.decision) fail("GAME_JOB_NOT_RUNNABLE", 409);
+    const job = this.jobs.get(room.decision.decisionId);
+    if (!(
+      (job.status === "model_failed" && job.run?.terminal === true) ||
+      (job.status === "delivery_failed" && !job.run)
+    ))
+      fail("GAME_OUTCOME_UNKNOWN", 409);
+    if (!this.jobs.ownerRetryable(job.decisionId))
+      fail("GAME_RETRY_LIMIT", 409);
+    this.jobs.receive(job.decisionId);
+    const task = this.worker.run(job.decisionId);
+    this.runtime.trackWork(task);
+    return this.jobs.publicStatus(roomId);
+  }
   /** An administrator may retry only after exact native terminal proof. @param {string} id */
   async retry(id) {
     this.ensure();
@@ -751,10 +811,16 @@ export class GameHost {
       this.jobs.receive(id),
     );
     for (const row of this.kernel.store.db
-      .prepare("SELECT id FROM game_jobs WHERE status IN ('queued','blocked')")
+      .prepare(
+        "SELECT id FROM game_jobs WHERE status IN ('queued','blocked','model_failed')",
+      )
       .all()) {
       const job = this.jobs.get(row.id);
-      if (!this.jobs.current(job)) continue;
+      if (
+        !this.jobs.current(job) ||
+        (job.status === "model_failed" && !this.jobs.automaticRetry(row.id))
+      )
+        continue;
       const task = this.worker.run(row.id).catch(() => {});
       this.runtime.trackWork(task);
     }

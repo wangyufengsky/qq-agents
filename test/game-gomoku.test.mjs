@@ -321,3 +321,15 @@ test("gomoku renders an authorized board without scripts and no board on an unau
   assert.match(html, /刷新快照/);
   assert.doesNotMatch(renderGomoku(null, "example"), /H8 黑子/);
 });
+
+test("AI display derives a two dimensional board without changing the participant projection", async () => {
+  const { describeGomokuView } =
+    await import("../src/games/gomoku/describe.mjs");
+  const view = { board: Array(225).fill(0) };
+  view.board[17] = 2;
+  const display = describeGomokuView(view);
+  assert.equal(display.board[1][2], 2);
+  assert.equal(display.board.length, 15);
+  display.board[1][2] = 1;
+  assert.equal(view.board[17], 2);
+});

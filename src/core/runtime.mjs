@@ -166,7 +166,15 @@ export class Runtime {
   }
   tick() {
     if (this.closed) return;
-    this.games.tick();
+    try {
+      this.games.tick();
+      this.faults.delete("games");
+    } catch (cause) {
+      this.faults.set("games", "GAME_TICK_FAILED");
+      this.diagnostics.report(Error("GAME_TICK_FAILED", { cause }), {
+        component: "games",
+      });
+    }
     if (this.maintenance.active) return;
     if (!this.nextCursorCleanupAt || this.now() >= this.nextCursorCleanupAt) {
       new AppCursors(this.memory).cleanup(this.now());
