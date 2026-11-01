@@ -6,7 +6,7 @@
 
 ## 未发布
 
-### 网页游戏对手名字、头像与落子台词（PR 待创建）
+### 网页游戏对手名字、头像与落子台词（[#117](https://github.com/wangyufengsky/qq-agents/pull/117)）
 
 - 新建房间的 AI 座位使用角色游戏名 `games.publicName`，留空时用角色名，不再统一显示“AI 对手”；页面和视图都不含 QQ 号。
 - 新增 `games.avatar`（默认 `"qq"`）：`live` 模式下桥接以固定地址下载本连接账号的 QQ 头像，限 256 KB，按文件头校验格式后交给游戏子进程，以内容摘要路径在游戏源站提供；游戏页 CSP 只增加同源 `img-src`。参与者视图新增 `presentation.avatars`。
