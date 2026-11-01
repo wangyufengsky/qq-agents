@@ -72,6 +72,8 @@
 
 ### PR 3：去 AI 腔——说话样本、提示与发送前口吻检查
 
+已由 [PR #121](https://github.com/wangyufengsky/qq-agents/pull/121) 实现（待合并）：`toneCheck` 默认提醒；同回合同 requestId 同纯文本确认放行，既有回执保持幂等；主人私聊只豁免行数，文件、合并转发与程序固定发送不检查。模板与编辑帮助建议增加说话样本，已有 Self 不改写；聊天稳定协议变化按摘要交接一次。实际配置、管理台入口和连发处理见 [配置说明](../CONFIGURATION.md#发送前口吻提醒behaviortonecheck)，Self 样本见 [Self 与会话](../SELF-CONTEXT.md)。
+
 **3a. Self 说话样本**
 
 - Self 初始化模板（`identity.mjs` 的 `initialize` 使用的 `agent.persona`）的推荐格式里增加一节“说话样本”：5–10 句这个角色真实会说的话，体现口头禅、标点习惯（例如句尾不用句号）、笑的写法、常见长度。只是模板与管理台占位提示的变化，**不改已建立的 Self**。
