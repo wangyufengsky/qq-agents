@@ -95,6 +95,8 @@ export function defaultConfig() {
         // goes offline; the administrator turns it on per agent.
         behavior: {
           actions: {
+            react: false,
+            reactMaxPerMinute: 3,
             recall: false,
             recallWindowMs: 110000,
             recallMaxPerHour: 3,
@@ -151,6 +153,8 @@ export function defaultConfig() {
         maxConsecutiveSends: 3,
         behavior: {
           actions: {
+            react: false,
+            reactMaxPerMinute: 3,
             recall: false,
             recallWindowMs: 110000,
             recallMaxPerHour: 3,

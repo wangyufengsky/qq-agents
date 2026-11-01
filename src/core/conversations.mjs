@@ -88,6 +88,7 @@ export class ConversationEngine {
       ...a.wake,
       ...this.state(a.id, e.conversation).wakeConfig?.triggers,
     };
+    if (e.kind === "notice.reaction") return null;
     // Only a poke aimed at this account is a wake; pokes between other members are just observed.
     if (e.kind === "notice.poke")
       return wc.poke && e.targetId === accountId ? "poke" : null;

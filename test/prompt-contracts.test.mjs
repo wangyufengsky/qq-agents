@@ -204,6 +204,36 @@ test("chat and idle time both ask for views that hold under pushback and change 
   }
 });
 
+test("reaction expression advice is chat-only and requires an offered reaction tool", async () => {
+  const { stableInstructions } = await import("../src/core/prompts.mjs");
+  const a = config(1).agents[0],
+    self = { version: 1, body: "平时说话简短" };
+  const without = stableInstructions(
+    a,
+    self,
+    false,
+    {},
+    { toolNames: ["qq_send"] },
+  );
+  const withReaction = stableInstructions(
+    a,
+    self,
+    false,
+    {},
+    { toolNames: ["qq_send", "qq_react"] },
+  );
+  const subject = stableInstructions(
+    a,
+    self,
+    true,
+    {},
+    { toolNames: ["qq_react"] },
+  );
+  assert.doesNotMatch(without, /有时贴个表情就够了/);
+  assert.match(withReaction, /有时贴个表情就够了/);
+  assert.doesNotMatch(subject, /有时贴个表情就够了/);
+});
+
 test("chat tone protocol rebuilds an old stable contract once without editing Self", async (t) => {
   const { createHash } = await import("node:crypto");
   const cfg = config(1);
@@ -280,26 +310,47 @@ test("positive silence and derived familiarity update the protocol once without 
   assert.deepEqual(memory.identity.current(), self);
 });
 
-test("silence suggests reactions only when the current tool catalog allows qq_react", async () => {
+test("silence follows reaction configuration and the currently offered read tool", async (t) => {
   const { stableInstructions } = await import("../src/core/prompts.mjs");
-  const agent = config(1).agents[0],
+  const { runtime } = fixture(t),
+    agent = runtime.agent("agent-0"),
     self = { version: 1, body: "测试人格" };
-  const closed = stableInstructions(
+  agent.tools.push("qq_react");
+  for (const setting of [undefined, false, true]) {
+    if (setting === undefined) delete agent.behavior.actions.react;
+    else agent.behavior.actions.react = setting;
+    const names = runtime.toolsFor(agent, "group:20000");
+    const instructions = stableInstructions(
+      agent,
+      self,
+      false,
+      {},
+      { toolNames: names },
+    );
+    assert.equal(names.includes("qq_react"), setting === true);
+    if (setting === true) {
+      assert.match(instructions, /不回、只贴表情、简短接一句、让话题自然结束/);
+      assert.match(instructions, /有时贴个表情就够了/);
+    } else {
+      assert.match(instructions, /不回、简短接一句、让话题自然结束/);
+      assert.doesNotMatch(instructions, /只贴表情|有时贴个表情/);
+    }
+    assert.doesNotMatch(instructions, /只贴表情包|发个表情包/);
+  }
+  const noRead = stableInstructions(
+    agent,
+    self,
+    false,
+    {},
+    { toolNames: ["qq_react"] },
+  );
+  assert.doesNotMatch(noRead, /读完后可以用 qq_mark_read/);
+  const withRead = stableInstructions(
     agent,
     self,
     false,
     {},
     { toolNames: ["qq_mark_read"] },
   );
-  assert.match(closed, /不回、简短接一句、让话题自然结束/);
-  assert.doesNotMatch(closed, /只贴表情|只贴表情包/);
-  const opened = stableInstructions(
-    agent,
-    self,
-    false,
-    {},
-    { toolNames: ["qq_mark_read", "qq_react"] },
-  );
-  assert.match(opened, /不回、只贴表情、简短接一句、让话题自然结束/);
-  assert.doesNotMatch(opened, /只贴表情包/);
+  assert.match(withRead, /读完后可以用 qq_mark_read/);
 });

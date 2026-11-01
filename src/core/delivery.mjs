@@ -169,11 +169,11 @@ export class DeliveryService {
     // Recall only removes an already-confirmed message. A completed contact
     // intent must not prevent that cleanup; fresh outward actions still need
     // the ordinary intent decision and contact checks.
-    const proactive =
-      action && actionBudget?.kind === "recall"
-        ? null
-        : runtime.subject.beforeDelivery(ctx);
-    if (proactive && !actionBudget) requestId = "intent:" + proactive.id;
+    const cleanupAction = action && actionBudget?.kind === "recall";
+    const proactive = cleanupAction
+      ? null
+      : runtime.subject.beforeDelivery(ctx);
+    if (proactive) requestId = "intent:" + proactive.id;
     if (typeof requestId !== "string" || !requestId || requestId.length > 200)
       throw Error("INVALID_REQUEST_ID");
     runtime.assertDisclosure(ctx);
@@ -211,8 +211,7 @@ export class DeliveryService {
       // Waiting is outside the ledger transaction; recheck authority before reserving anything.
       a = runtime.assertActive(ctx);
       runtime.assertDisclosure(ctx);
-      if (!(action && actionBudget?.kind === "recall"))
-        runtime.subject.beforeDelivery(ctx);
+      if (!cleanupAction) runtime.subject.beforeDelivery(ctx);
       if (mem.state(ctx.conversation).silenceUntil > runtime.now())
         throw Error("CONVERSATION_SILENCED");
     }
@@ -259,6 +258,7 @@ export class DeliveryService {
     }
     const transport = runtime.transports.get(a.connectionId);
     if (!transport?.connected) throw Error("QQ_NOT_CONNECTED");
+    const actionKind = action ? actionBudget?.kind || intent?.kind : null;
     const event = {
       connectionId: a.connectionId,
       conversation: ctx.conversation,
@@ -268,7 +268,9 @@ export class DeliveryService {
       payload: {
         requestId,
         ...metadata,
-        ...(actionBudget ? { actionKind: actionBudget.kind } : {}),
+        ...(action
+          ? { deliveryType: "action", ...(actionKind ? { actionKind } : {}) }
+          : {}),
         protectedRepositories: privateGithubSources(ctx, runtime),
       },
     };
@@ -307,7 +309,7 @@ export class DeliveryService {
               }
           : {}),
       });
-      if (!actionBudget) runtime.subject.reserveContact(ctx, proactive);
+      if (!cleanupAction) runtime.subject.reserveContact(ctx, proactive);
       mem.append({
         ...event,
         dedupe: "send:" + requestId + ":pending",
@@ -326,7 +328,7 @@ export class DeliveryService {
       // Paused or cancelled before the gateway call: nothing left the process.
       mem.store.transaction(() => {
         mem.completeDelivery(requestId, "failed");
-        if (!actionBudget) runtime.subject.delivered(ctx, "failed");
+        if (!cleanupAction) runtime.subject.delivered(ctx, "failed");
       });
       mem.append({
         ...event,
@@ -346,7 +348,7 @@ export class DeliveryService {
         receipt.messageId == null ? null : String(receipt.messageId);
       mem.store.transaction(() => {
         mem.completeDelivery(requestId, "sent", messageId);
-        if (!actionBudget) runtime.subject.delivered(ctx, "sent");
+        if (!cleanupAction) runtime.subject.delivered(ctx, "sent");
       });
       if (!actionBudget) {
         ctx.confirmedSends = (ctx.confirmedSends || 0) + 1;
@@ -390,7 +392,7 @@ export class DeliveryService {
         throw Error("DELIVERY_CONFIRMED_AUDIT_FAILED", { cause: e });
       mem.store.transaction(() => {
         mem.completeDelivery(requestId, status);
-        if (!actionBudget) runtime.subject.delivered(ctx, status);
+        if (!cleanupAction) runtime.subject.delivered(ctx, status);
       });
       mem.append({
         ...event,
