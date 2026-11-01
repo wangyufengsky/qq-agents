@@ -91,7 +91,7 @@ worker 领取不可变的 jobKey/runId/fencingToken，租约 60 秒，每 15 秒
 普通回归只使用临时数据、假网关和假后端：
 
 ```sh
-node --test --test-timeout=120000 test/game-framework.test.mjs test/game-core.test.mjs test/game-http.test.mjs test/game-gomoku.test.mjs test/backends.test.mjs
+node --test --test-timeout=120000 test/game-framework.test.mjs test/game-core.test.mjs test/game-p1a-http.test.mjs test/game-gomoku-http.test.mjs test/game-gomoku.test.mjs test/backends.test.mjs
 npm run verify
 ```
 

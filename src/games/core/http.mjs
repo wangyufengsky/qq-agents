@@ -1,7 +1,7 @@
 // @ts-check
 import http from "node:http";
 import { z } from "zod";
-import { GameError, fail, parse, secret } from "./value.mjs";
+import { GameError, digest, fail, parse, secret } from "./value.mjs";
 
 const tokenSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 const joinSchema = z.strictObject({ bindingId: z.uuid(), invite: tokenSchema });
@@ -32,7 +32,7 @@ async function body(req) {
   }
 }
 /** Loopback-only transport for the isolated P1a harness. No management routes or actor issuer.
- * @param {{kernel:import('./kernel.mjs').GameKernel,identity:import('./identity.mjs').GameIdentity,assets:Map<string,{type:string,body:string|Buffer}>,render:(snapshot:any|null,roomId:string)=>string,confirm?:(roomId:string,bindingId:string,challenge:string)=>void,publicOrigin?:string,publicJoin?:boolean,health?:()=>unknown,authorize?:(roomId:string)=>Promise<boolean>}} options */
+ * @param {{kernel:import('./kernel.mjs').GameKernel,identity:import('./identity.mjs').GameIdentity,assets:Map<string,{type:string,body:string|Buffer}>,render:(snapshot:any|null,roomId:string)=>string,confirm?:(roomId:string,bindingId:string,challenge:string)=>void,publicOrigin?:string,publicJoin?:boolean,health?:()=>unknown,authorize?:(roomId:string)=>Promise<boolean>,retry?:(roomId:string,actor:object)=>Promise<unknown>}} options */
 export function createGameHttp({
   kernel,
   identity,
@@ -43,15 +43,26 @@ export function createGameHttp({
   publicJoin = false,
   health,
   authorize,
+  retry,
 }) {
   if (publicOrigin) {
     const u = new URL(publicOrigin);
     if (u.protocol !== "https:" || u.origin !== publicOrigin)
       fail("INVALID_PUBLIC_ORIGIN", 400);
   }
-  let origin = "",
-    windowAt = 0,
-    count = 0;
+  let origin = "";
+  /** @type {Map<string,{at:number,count:number}>} */
+  const rates = new Map();
+  /** @param {string} key @param {number} limit */
+  function throttle(key, limit) {
+    const now = Date.now();
+    for (const [id, value] of rates)
+      if (now - value.at >= 1000) rates.delete(id);
+    const bucket = rates.get(key) || { at: now, count: 0 };
+    if (!rates.has(key) && rates.size >= 4096) fail("RATE_LIMITED", 429);
+    rates.set(key, bucket);
+    if (++bucket.count > limit) fail("RATE_LIMITED", 429);
+  }
   /** @param {import('node:http').IncomingMessage} req @param {string} name */
   const cookie = (req, name) =>
     (req.headers.cookie || "")
@@ -77,12 +88,6 @@ export function createGameHttp({
       res.end(JSON.stringify(value));
     };
     try {
-      const now = Date.now();
-      if (now - windowAt >= 1000) {
-        windowAt = now;
-        count = 0;
-      }
-      if (++count > 120) fail("RATE_LIMITED", 429);
       if (
         req.headers.host !== new URL(origin).host ||
         req.headers.forwarded ||
@@ -122,11 +127,27 @@ export function createGameHttp({
               },
         );
       const match =
-        /^\/rooms\/([a-f0-9-]{36})(?:\/(join|view|actions|events)(?:\/([a-f0-9-]{36}))?)?$/.exec(
+        /^\/rooms\/([a-f0-9-]{36})(?:\/(join|view|actions|events|retry)(?:\/([a-f0-9-]{36}))?)?$/.exec(
           url.pathname,
         );
       if (!match) fail("NOT_FOUND", 404);
       const [, roomId, route, actionId] = match;
+      let trusted = false;
+      const credential = cookie(req, "game_" + roomId);
+      if (credential) {
+        try {
+          identity.session(roomId, credential);
+          trusted = true;
+        } catch {
+          /* Invalid cookies stay in the anonymous bucket. */
+        }
+      }
+      throttle(
+        trusted
+          ? "session:" + digest(credential)
+          : "anonymous:" + req.socket.remoteAddress,
+        trusted ? 120 : 60,
+      );
       if (authorize && !(await authorize(roomId))) fail("GAME_BLOCKED", 403);
       const sessionName = "game_" + roomId,
         browserName = "binding_" + roomId;
@@ -167,13 +188,18 @@ export function createGameHttp({
         const input = parse(
           z.union([
             joinSchema,
-            z.strictObject({ bindingId: z.uuid() }),
+            z.strictObject({
+              bindingId: z.uuid(),
+              code: z.string().max(8).optional(),
+            }),
             ...(publicJoin ? [z.strictObject({ start: z.literal(true) })] : []),
           ]),
           await body(req),
         );
         if (Object.hasOwn(input, "start")) {
-          const browser = secret(),
+          const browser = /^[A-Za-z0-9_-]{43}$/.test(cookie(req, browserName))
+              ? cookie(req, browserName)
+              : secret(),
             pending = identity.requestPublic(roomId, browser);
           setCookie(browserName, browser, 900);
           return json(pending);
@@ -194,16 +220,30 @@ export function createGameHttp({
           setCookie(browserName, browser, 900);
           return json({ bindingId: request.bindingId, ...pending });
         }
-        const request = parse(z.strictObject({ bindingId: z.uuid() }), input);
+        const request = parse(
+          z.strictObject({
+            bindingId: z.uuid(),
+            code: z.string().max(8).optional(),
+          }),
+          input,
+        );
         const joined = identity.exchange(
           roomId,
           request.bindingId,
           cookie(req, browserName),
+          request.code,
         );
         setCookie(sessionName, joined.session, 86400);
         return json({ joined: true, location: `/rooms/${roomId}` });
       }
       const actor = identity.session(roomId, cookie(req, sessionName));
+      if (req.method === "POST" && route === "retry") {
+        if (!kernel.access(kernel.store.room(roomId), actor).owner)
+          fail("ROOM_CONTROL_DENIED", 403);
+        parse(z.strictObject({}), await body(req));
+        if (!retry) fail("RETRY_UNAVAILABLE", 409);
+        return json(await retry(roomId, actor));
+      }
       if (req.method === "GET" && route === "view")
         return json(kernel.view(roomId, actor));
       if (req.method === "GET" && route === "events")

@@ -34,7 +34,15 @@ export function gameDatabase({
     .exec(`CREATE TABLE IF NOT EXISTS game_host_rooms(id TEXT PRIMARY KEY,data TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS game_host_requests(id TEXT PRIMARY KEY,data TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS game_entry(id INTEGER PRIMARY KEY CHECK(id=1),data TEXT NOT NULL);`);
-  const identity = new GameIdentity(kernel),
+  const identity = new GameIdentity(kernel, {
+      dualConfirmation: true,
+      isPublicRoom: (id) => {
+        const row = kernel.store.db
+          .prepare("SELECT data FROM game_host_rooms WHERE id=?")
+          .get(id);
+        return !!row && JSON.parse(String(row.data)).group === true;
+      },
+    }),
     jobs = new GameJobs(kernel, { gate, limits });
   return { kernel, identity, jobs };
 }
