@@ -586,8 +586,11 @@ test("external verification is tied to the current entry boot and never inferred
 });
 
 test("private QQ confirmation binds the private source without granting another browser", async (t) => {
-  const f = setup(t),
-    { roomId } = await create(f),
+  const f = setup(t);
+  // This fixture has no host tick; confirmation must not depend on disk or runner speed.
+  const now = f.runtime.now();
+  f.runtime.now = () => now;
+  const { roomId } = await create(f),
     room = f.k.store.room(roomId),
     actor = f.k.actor(room.owner),
     browser = secret();
@@ -1172,4 +1175,20 @@ test("new-room throttling is shared across senders in one source conversation", 
   assert.equal((await create(f, "group:20000", "30000")).roomId, first.roomId);
   const other = await create(f, "private:30000", "30000");
   assert.notEqual(other.roomId, first.roomId);
+});
+
+test("source authorization expires at its deadline until the host refreshes it", async (t) => {
+  const f = setup(t);
+  let now = f.runtime.now();
+  f.runtime.now = () => now;
+  const { roomId } = await create(f);
+  join(f, roomId);
+  const actor = f.k.actor(f.k.store.room(roomId).owner);
+  const deadline = f.h.source(roomId).accessUntil;
+  now = deadline - 1;
+  assert.equal(f.k.view(roomId, actor).roomId, roomId);
+  now = deadline;
+  assert.throws(() => f.k.view(roomId, actor), /ROOM_UNAVAILABLE/);
+  f.h.refreshAccess(roomId);
+  assert.equal(f.k.view(roomId, actor).roomId, roomId);
 });
