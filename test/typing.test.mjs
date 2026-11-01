@@ -169,7 +169,7 @@ test("first reply waits inside delivery drain; confirmed duplicate and later sen
   assert.equal(f.sent(), 2);
 });
 
-test("parallel sends finish typing before entering the connection queue", async (t) => {
+test("parallel sends in one turn share the first-reply wait", async (t) => {
   const f = setup(t);
   const ps = ["one", "two"].map((requestId) =>
     f.runtime.send(f.ctx, { requestId, text: "你好" }),
@@ -179,6 +179,43 @@ test("parallel sends finish typing before entering the connection queue", async 
   await Promise.all(ps);
   assert.equal(f.sent(), 2);
 });
+
+for (const separateContexts of [false, true])
+  for (const limit of [1, 5])
+    test(`same-chat sends preserve call order across unequal typing delays: contexts=${separateContexts}, limit=${limit}`, async (t) => {
+      const f = setup(t);
+      f.runtime.agent("agent-0").maxConsecutiveSends = limit;
+      const first = f.runtime.send(f.ctx, {
+        requestId: "long-first",
+        text: "长".repeat(6),
+      });
+      const secondContext = separateContexts ? context(f.runtime) : f.ctx;
+      const second = f.runtime.send(secondContext, {
+        requestId: "short-second",
+        text: "短",
+      });
+      const rejected =
+        limit === 1 ? assert.rejects(second, /REPLY_BURST_LIMIT/) : null;
+      await flush();
+      t.mock.timers.tick(100);
+      await flush();
+      assert.equal(f.sent(), 0);
+      t.mock.timers.tick(500);
+      assert.equal((await first).status, "sent");
+      await flush();
+      if (separateContexts) t.mock.timers.tick(100);
+      if (rejected) await rejected;
+      else assert.equal((await second).status, "sent");
+      const sent = f.runtime.transports.get("qq-0").sent;
+      assert.equal(sent.length, limit === 1 ? 1 : 2);
+      assert.equal(
+        f.store.bind("agent-0").delivery("long-first").status,
+        "sent",
+      );
+      assert.deepEqual(sent[0].segments, [
+        { type: "text", data: { text: "长".repeat(6) } },
+      ]);
+    });
 
 for (const conversation of ["group:20001", "private:30000"])
   test(

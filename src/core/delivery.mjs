@@ -45,6 +45,7 @@ export class DeliveryService {
     this.runtime = runtime;
     this.chains = new Map();
     this.queues = new Map();
+    this.conversations = new Map();
     this.reconciled = new Set();
   }
   async send(
@@ -131,7 +132,15 @@ export class DeliveryService {
     ctx.pendingDeliveries = (ctx.pendingDeliveries || 0) + 1;
     // Drain tracking includes typing, but only ready deliveries occupy the queue.
     const previous = this.chains.get(a.connectionId);
-    const result = this.deliverAfterTyping(ctx, operation);
+    const key = a.connectionId + "|" + ctx.conversation;
+    const priorConversation = this.conversations.get(key);
+    // Preserve call order within a chat, without holding other chats behind its typing.
+    const result = priorConversation
+      ? priorConversation
+          .catch(() => {})
+          .then(() => this.deliverAfterTyping(ctx, operation))
+      : this.deliverAfterTyping(ctx, operation);
+    this.conversations.set(key, result);
     const drained = Promise.allSettled([previous, result]);
     this.chains.set(a.connectionId, drained);
     drained.then(() => {
@@ -142,6 +151,8 @@ export class DeliveryService {
       return await result;
     } finally {
       ctx.pendingDeliveries--;
+      if (this.conversations.get(key) === result)
+        this.conversations.delete(key);
     }
   }
   async deliverAfterTyping(ctx, operation) {
