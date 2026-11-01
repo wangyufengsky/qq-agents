@@ -114,13 +114,14 @@ function quoted(memory, row, id) {
 export function closenessEvents(memory, personId, now, accountId) {
   const rows = memory.db
     .prepare(
-      "SELECT * FROM events WHERE agent_id=? AND occurred_at>=? AND occurred_at<=? AND kind IN ('message.received','message.sent') AND (sender_id=? OR direction='out') ORDER BY occurred_at,seq",
+      "SELECT * FROM events WHERE agent_id=? AND occurred_at>=? AND occurred_at<=? AND kind IN ('message.received','message.sent') AND (sender_id=? OR direction='out') AND (conversation=? OR conversation LIKE 'group:%') ORDER BY occurred_at,seq",
     )
     .iterate(
       memory.agentId,
       new Date(now - WINDOW).toISOString(),
       new Date(now).toISOString(),
       personId,
+      "private:" + personId,
     );
   const result = [];
   const seen = new Set();
@@ -156,6 +157,10 @@ export function closenessEvents(memory, personId, now, accountId) {
       directed ||= replies.some((id) => {
         if (id == null) return false;
         const original = quoted(memory, row, String(id));
+        if (!original) return false;
+        const source = JSON.parse(original.payload || "{}");
+        if (source.protectedOperations || source.protectedRepositories?.length)
+          return false;
         return incoming
           ? sentLedger(memory, original)
           : original?.sender_id === personId &&
@@ -204,7 +209,12 @@ export function personCloseness(memory, personId, now, accountId) {
   const card = row ? JSON.parse(row.value) : null;
   const cached = card?.closeness;
   if (CLOSENESS_TIERS.includes(cached?.override))
-    return { tier: cached.override, at: now, overridden: true };
+    return {
+      tier: cached.override,
+      override: cached.override,
+      at: now,
+      overridden: true,
+    };
   if (
     CLOSENESS_TIERS.includes(cached?.tier) &&
     cached.accountId === accountId &&

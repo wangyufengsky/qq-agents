@@ -222,6 +222,19 @@ test("private contacts count, unrelated groups/notices/unknown output do not; ex
   assert.ok(computed.rounds > 1.9);
   assert.equal(closenessEvents(memory, "30001", NOW, "10000").length, 0);
   record(memory, { payload: { protectedOperations: true } });
+  const protectedMessage = record(memory, {
+    direction: "out",
+    conversation: "group:20000",
+    payload: { protectedOperations: true },
+    at: NOW - 1000,
+  });
+  const protectedId = memory.db
+    .prepare("SELECT message_id FROM events WHERE id=?")
+    .get(protectedMessage.id).message_id;
+  record(memory, {
+    conversation: "group:20000",
+    payload: { segments: [{ type: "reply", data: { id: protectedId } }] },
+  });
   assert.equal(closenessEvents(memory, "30000", NOW, "10000").length, 4);
 });
 
@@ -464,3 +477,76 @@ test("console edits overrides with CAS and displays tier; QQ output and Self nev
   );
   assert.deepEqual(memory.identity.current(), before);
 });
+
+test("a cold card does not inspect ledgers for other people's private output", (t) => {
+  const { store } = fixture(t),
+    memory = store.bind("agent-0");
+  for (let i = 0; i < 20; i++)
+    record(memory, { conversation: "private:30001", direction: "out" });
+  record(memory, { at: NOW - 1000 });
+  record(memory, { direction: "out" });
+  let reads = 0;
+  const delivery = memory.delivery.bind(memory);
+  memory.delivery = (id) => {
+    reads++;
+    return delivery(id);
+  };
+  const events = closenessEvents(memory, "30000", NOW, "10000");
+  assert.equal(events.length, 2);
+  assert.equal(reads, 1);
+});
+
+for (const selected of [true, false])
+  test(`person_notes ${selected ? "selected IDs" : "pagination"} refreshes old and expired cards without marking speech or participation`, async (t) => {
+    const { runtime, store } = fixture(t),
+      memory = store.bind("agent-0");
+    runtime.clock = () => new Date(NOW);
+    runtime.agent("agent-0").tools.push("person_notes");
+    card(memory);
+    const ctx = context(runtime),
+      args = selected ? { personIds: ["30000"] } : {};
+    const before = memory.state(ctx.conversation);
+    const count = memory.db
+      .prepare("SELECT count(*) AS n FROM events WHERE agent_id=?")
+      .get(memory.agentId).n;
+    const read = async () =>
+      (await runtime.callTool(ctx, "person_notes", args)).items[0];
+    assert.equal((await read()).closeness.tier, "陌生");
+    let raw = memory.identity.personCard("30000");
+    raw.closeness = { tier: "很熟", at: NOW - 2 * DAY, accountId: "10000" };
+    memory.db
+      .prepare(
+        "UPDATE person_notes SET value=? WHERE agent_id=? AND person_id=?",
+      )
+      .run(JSON.stringify(raw), memory.agentId, "30000");
+    assert.equal((await read()).closeness.tier, "陌生");
+    assert.equal(memory.identity.personCard("30000").closeness.at, NOW);
+    memory.identity.savePersonCard(
+      {
+        personId: "30000",
+        body: "固定印象",
+        expectedRevision: 1,
+        closenessOverride: "熟",
+      },
+      { author: "admin", now: NOW },
+    );
+    const fixed = await read();
+    assert.equal(fixed.closeness.tier, "熟");
+    assert.equal(fixed.closeness.override, "熟");
+    assert.equal(fixed.closeness.overridden, true);
+    const after = memory.state(ctx.conversation);
+    for (const key of [
+      "personCardsShown",
+      "readThroughSeq",
+      "replyBatchSends",
+      "lastReceivedSeq",
+    ])
+      assert.deepEqual(after[key], before[key]);
+    assert.equal(
+      memory.db
+        .prepare("SELECT count(*) AS n FROM events WHERE agent_id=?")
+        .get(memory.agentId).n,
+      count,
+    );
+    assert.equal(ctx.sendCount, 0);
+  });

@@ -258,10 +258,7 @@ test("positive silence and derived familiarity update the protocol once without 
   });
   await runtime.wake("agent-0", "group:20000");
   const instruction = captured[0].instructions;
-  assert.match(
-    instruction,
-    /不回、只贴表情或表情包、简短接一句、让话题自然结束/,
-  );
+  assert.match(instruction, /不回、简短接一句、让话题自然结束/);
   assert.match(instruction, /已读不回也很自然/);
   assert.match(instruction, /不通过假装没看见或故意记错/);
   assert.match(instruction, /不改变权限、白名单、冷却或预算/);
@@ -281,4 +278,28 @@ test("positive silence and derived familiarity update the protocol once without 
   assert.equal(captured[1].session, null);
   assert.equal(captured[2].session.id, "silence-fixture");
   assert.deepEqual(memory.identity.current(), self);
+});
+
+test("silence suggests reactions only when the current tool catalog allows qq_react", async () => {
+  const { stableInstructions } = await import("../src/core/prompts.mjs");
+  const agent = config(1).agents[0],
+    self = { version: 1, body: "测试人格" };
+  const closed = stableInstructions(
+    agent,
+    self,
+    false,
+    {},
+    { toolNames: ["qq_mark_read"] },
+  );
+  assert.match(closed, /不回、简短接一句、让话题自然结束/);
+  assert.doesNotMatch(closed, /只贴表情|只贴表情包/);
+  const opened = stableInstructions(
+    agent,
+    self,
+    false,
+    {},
+    { toolNames: ["qq_mark_read", "qq_react"] },
+  );
+  assert.match(opened, /不回、只贴表情、简短接一句、让话题自然结束/);
+  assert.doesNotMatch(opened, /只贴表情包/);
 });
