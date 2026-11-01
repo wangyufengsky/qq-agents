@@ -6,7 +6,7 @@
 
 ## 未发布
 
-### 编码助手约定更新
+### 编码助手约定更新（[#111](https://github.com/wangyufengsky/qq-agents/pull/111)）
 
 - `AGENTS.md` 的模块表补上 `src/games/`、`src/updates/` 和 Antigravity 后端，并新增“按任务找入口”表。另新增“常见陷阱”清单，列出错误码登记、工具注册链、默认值同步、类型检查范围和管理台全局符号等容易漏掉的步骤。
 - 明确 worktree 统一用 `codex/` 前缀，放在仓库外的固定父目录；合并后列出已合并的 worktree，经用户确认再清理。补充 CI 偶发超时的重跑判断，并说明合并后部署与 AI 更新手册停止点的关系。
