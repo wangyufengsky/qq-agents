@@ -240,13 +240,15 @@ export async function legacyTool(runtime, ctx, name, args) {
           }),
         );
       } catch (e) {
+        const failure = safeToolFailure(e);
         return {
           status: "stopped",
           receipts,
           failedIndex: i,
-          error: e.message,
-          hint: safeToolFailure(e).hint,
-          doNotReplay: true,
+          error: failure.code,
+          hint: failure.hint,
+          ...(failure.matches ? { matches: failure.matches } : {}),
+          doNotReplay: failure.code !== "TONE_REVIEW_SUGGESTED",
         };
       }
     }
