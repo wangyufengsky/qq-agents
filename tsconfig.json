@@ -15,6 +15,7 @@
     "src/memory/recalls.mjs",
     "src/backends/*.mjs",
     "src/core/config-impact.mjs",
+    "src/core/typing-indicator.mjs",
     "src/core/default-config.mjs",
     "src/memory/conversation-state.mjs",
     "src/memory/conversation-due.mjs",

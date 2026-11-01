@@ -1,6 +1,7 @@
 // @ts-check
 import timers from "node:timers/promises";
 import { humanInput } from "./input-progress.mjs";
+import { startTypingIndicator } from "./typing-indicator.mjs";
 import { mdToPlain } from "../../vendor/dsh-qq/md-to-plain.js";
 
 /** @typedef {import("zod").infer<typeof import("./policy.mjs").behaviorSchema>} Behavior */
@@ -57,20 +58,25 @@ export async function waitTyping(
           )
           .get(ctx.agentId, ctx.conversation).seq
       : null;
-  await timers.setTimeout(ms, undefined, { signal: ctx.controller.signal });
-  runtime.assertActive(ctx);
-  if (snapshot === null) return;
-  const observed = Math.max(ctx.inputBaseline || 0, ctx.replyInputSeq || 0);
-  const fresh = mem.db
-    .prepare(
-      "SELECT id,seq FROM events WHERE agent_id=? AND conversation=? AND seq>? ORDER BY seq DESC",
-    )
-    .all(ctx.agentId, ctx.conversation, Math.max(snapshot, observed))
-    .find((/** @type {any} */ row) => humanInput(runtime, ctx, row.id));
-  if (fresh) {
-    // Persist the review fence for this turn: merely retrying must not hide unread input.
-    ctx.typingReviewSeq = fresh.seq;
-    throw Error("TYPING_NEW_INPUT_REVIEW_REQUIRED");
+  const stopIndicator = startTypingIndicator(runtime, ctx);
+  try {
+    await timers.setTimeout(ms, undefined, { signal: ctx.controller.signal });
+    runtime.assertActive(ctx);
+    if (snapshot === null) return;
+    const observed = Math.max(ctx.inputBaseline || 0, ctx.replyInputSeq || 0);
+    const fresh = mem.db
+      .prepare(
+        "SELECT id,seq FROM events WHERE agent_id=? AND conversation=? AND seq>? ORDER BY seq DESC",
+      )
+      .all(ctx.agentId, ctx.conversation, Math.max(snapshot, observed))
+      .find((/** @type {any} */ row) => humanInput(runtime, ctx, row.id));
+    if (fresh) {
+      // Persist the review fence for this turn: merely retrying must not hide unread input.
+      ctx.typingReviewSeq = fresh.seq;
+      throw Error("TYPING_NEW_INPUT_REVIEW_REQUIRED");
+    }
+  } finally {
+    stopIndicator();
   }
 }
 

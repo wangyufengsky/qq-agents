@@ -101,6 +101,7 @@ export function defaultConfig() {
           },
           typing: {
             enabled: true,
+            indicator: true,
             msPerChar: 180,
             jitter: 0.35,
             minMs: 600,
@@ -156,6 +157,7 @@ export function defaultConfig() {
           },
           typing: {
             enabled: true,
+            indicator: true,
             msPerChar: 180,
             jitter: 0.35,
             minMs: 600,
