@@ -25,6 +25,11 @@ import { createHash, randomUUID } from "node:crypto";
 
 const json = JSON.stringify;
 const parse = (s) => JSON.parse(s);
+// New action attempts carry an explicit type. The bounded legacy kinds were
+// already persisted before that marker; body wording never establishes a type.
+const actionDelivery = (payload) =>
+  payload.deliveryType === "action" ||
+  ["react", "recall", "poke"].includes(payload.actionKind);
 const now = () => new Date().toISOString();
 const hash = (s) => createHash("sha256").update(s).digest("hex");
 const text = (s, max = 2 * 1024 * 1024) => {
@@ -1070,30 +1075,38 @@ class AgentMemory {
       const row = this.delivery(requestId);
       if (!row) throw Error("DELIVERY_NOT_FOUND");
       if (row.status !== "unknown") throw Error("DELIVERY_ALREADY_SETTLED");
-      this.completeDelivery(requestId, resolution, messageId);
       const attempt = this.db
         .prepare(
           "SELECT connection_id,sender_id,body,payload FROM events WHERE agent_id=? AND dedupe=?",
         )
         .get(this.agentId, "send:" + requestId + ":pending");
+      const payload = attempt ? parse(attempt.payload) : {};
+      const action = actionDelivery(payload);
+      // An action has no new QQ message identity, even if an administrator's
+      // reconciliation request happens to include a message ID.
+      const resolvedMessageId = action ? null : messageId;
+      this.completeDelivery(requestId, resolution, resolvedMessageId);
       this.append({
         dedupe: "send:" + requestId + ":reconciled",
         connectionId: attempt?.connection_id || "",
         conversation: row.conversation,
         senderId: attempt?.sender_id ?? null,
-        kind: "message.send-result",
+        kind:
+          action && resolution === "sent"
+            ? "action.confirmed"
+            : "message.send-result",
         direction: "out",
         status: resolution === "sent" ? "confirmed" : "failed",
         body: attempt?.body || "",
         // Inherit the attempt's payload so repository/operations protection
         // follows the copied body, as the delivery's own send-result does.
         payload: {
-          ...(attempt ? parse(attempt.payload) : {}),
+          ...payload,
           requestId,
           reconciledBy: by,
           previousStatus: "unknown",
           resolution,
-          ...(messageId ? { messageId } : {}),
+          ...(resolvedMessageId ? { messageId: resolvedMessageId } : {}),
         },
       });
       return { requestId, status: resolution };
@@ -1121,10 +1134,13 @@ class AgentMemory {
     const since = new Date(Date.now() - 10 * 60000).toISOString();
     const candidates = this.db
       .prepare(
-        "SELECT d.request_id AS requestId, e.body FROM deliveries d JOIN events e ON e.agent_id=d.agent_id AND e.dedupe='send:' || d.request_id || ':pending' WHERE d.agent_id=? AND d.conversation=? AND d.status='unknown' AND d.created_at>=?",
+        "SELECT d.request_id AS requestId, e.body, e.payload FROM deliveries d JOIN events e ON e.agent_id=d.agent_id AND e.dedupe='send:' || d.request_id || ':pending' WHERE d.agent_id=? AND d.conversation=? AND d.status='unknown' AND d.created_at>=?",
       )
       .all(this.agentId, conversation, since)
-      .filter((row) => squash(row.body) === want);
+      .filter(
+        (row) =>
+          !actionDelivery(parse(row.payload)) && squash(row.body) === want,
+      );
     if (candidates.length !== 1) return null;
     return this.reconcileDelivery(candidates[0].requestId, "sent", {
       by: "gateway-echo",

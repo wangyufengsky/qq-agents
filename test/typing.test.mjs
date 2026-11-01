@@ -60,6 +60,7 @@ function receive(
 test("typing defaults fill old configuration, retain explicit values and reject invalid bounds", () => {
   assert.deepEqual(defaults.typing, {
     enabled: true,
+    indicator: true,
     msPerChar: 180,
     jitter: 0.35,
     minMs: 600,

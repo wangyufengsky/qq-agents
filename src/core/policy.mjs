@@ -85,6 +85,7 @@ export const behaviorSchema = z
     typing: z
       .object({
         enabled: z.boolean().default(true),
+        indicator: z.boolean().default(true),
         msPerChar: ms(0, 2000, 180),
         jitter: probability.default(0.35),
         minMs: ms(0, 30000, 600),

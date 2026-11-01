@@ -258,6 +258,7 @@ export class DeliveryService {
     }
     const transport = runtime.transports.get(a.connectionId);
     if (!transport?.connected) throw Error("QQ_NOT_CONNECTED");
+    const actionKind = action ? actionBudget?.kind || intent?.kind : null;
     const event = {
       connectionId: a.connectionId,
       conversation: ctx.conversation,
@@ -267,7 +268,9 @@ export class DeliveryService {
       payload: {
         requestId,
         ...metadata,
-        ...(actionBudget ? { actionKind: actionBudget.kind } : {}),
+        ...(action
+          ? { deliveryType: "action", ...(actionKind ? { actionKind } : {}) }
+          : {}),
         protectedRepositories: privateGithubSources(ctx, runtime),
       },
     };
