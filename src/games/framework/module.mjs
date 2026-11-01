@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { gomoku } from "../gomoku/module.mjs";
+import { describeGomokuView } from "../gomoku/describe.mjs";
 import { digest, fail } from "../core/value.mjs";
 import releases from "./compatible-releases.json" with { type: "json" };
 
@@ -22,6 +23,7 @@ export function registerGomokuP2(registry) {
   const ref = registry.register(
     {
       ...gomoku,
+      describeView: describeGomokuView,
       manifest: {
         ...gomoku.manifest,
         moduleVersion: gameModuleVersion,

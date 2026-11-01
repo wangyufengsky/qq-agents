@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { gameDatabase } from "./database.mjs";
 import { createGameHttp } from "../core/http.mjs";
 import { renderGame } from "./page.mjs";
-import { secret } from "../core/value.mjs";
+import { secret, GameError } from "../core/value.mjs";
 const [database, port, publicOrigin = ""] = process.argv.slice(2);
 const { kernel, identity } = gameDatabase({ database });
 const boot = secret(),
@@ -59,7 +59,7 @@ const http = createGameHttp({
   authorize,
   retry: async (/** @type {string} */ roomId, /** @type {object} */ actor) => {
     if (!process.connected || retries.size >= 120)
-      throw Error("GAME_SERVICE_UNAVAILABLE");
+      throw new GameError("GAME_SERVICE_UNAVAILABLE", 503);
     const principalId = kernel.access(
       kernel.store.room(roomId),
       actor,
@@ -68,14 +68,14 @@ const http = createGameHttp({
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         retries.delete(id);
-        reject(Error("GAME_RETRY_TIMEOUT"));
+        reject(new GameError("GAME_RETRY_TIMEOUT", 503));
       }, 2000);
       retries.set(id, (message) => {
         clearTimeout(timer);
         retries.delete(id);
         if (message.error)
           reject(
-            Error(
+            new GameError(
               [
                 "GAME_RETRY_LIMIT",
                 "GAME_OUTCOME_UNKNOWN",

@@ -163,6 +163,8 @@ test("AI is isolated from chat state, gets only game tools, and commits a fenced
     const data = JSON.parse(p.prompt);
     assert.equal(p.session, null);
     assert.equal(p.game, true);
+    assert.match(data.display.text, /A B C D E F G H I J K L M N O/);
+    assert.equal(data.display.ownColor, "白子 O");
     assert.equal(p.prompt.includes("CHAT_SECRET"), false);
     assert.equal(p.instructions.includes("SELF_SECRET"), false);
     assert.deepEqual(
@@ -1156,6 +1158,7 @@ test("legacy in-flight reservations keep a usable settlement scope after migrati
     .prepare("UPDATE game_budgets SET scope='agent:agent-0' WHERE scope=?")
     .run(run.budgetScopes[1]);
   delete job.run.budgetScopes;
+  job.run.submitted = true;
   f.h.jobs.save(job);
   await f.h.close();
   const restored = (f.runtime.games = new GameHost(f.runtime, {
@@ -1479,4 +1482,49 @@ test("group confirmation keeps group revocation and private admission boundaries
   f.runtime.connection("qq-0").accountId = "10002";
   await send(7103, true);
   assert.equal(f.h.identity.load(roomId, proof.bindingId).confirmed, false);
+});
+
+test("real game child preserves a bounded owner retry rejection through IPC and HTTP", async (t) => {
+  const f = setup(t),
+    { id, roomId } = await decision(f);
+  const session = join(f, roomId);
+  f.h.jobs.receive(id);
+  for (let i = 0; i < 3; i++) {
+    const run = f.h.jobs.claim(id, "worker", "ipc-attempt-" + i);
+    f.h.jobs.settle(run, { terminal: true });
+  }
+  await f.h.close();
+  const probe = http.createServer();
+  await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
+  f.runtime.config.games.port = probe.address().port;
+  await new Promise((resolve) => probe.close(resolve));
+  const host = (f.runtime.games = new GameHost(f.runtime));
+  host.ensure();
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(Error("CHILD_START_TIMEOUT")), 10000);
+    host.child.once("message", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    host.child.once("error", reject);
+  });
+  const origin = `http://127.0.0.1:${f.runtime.config.games.port}`;
+  const response = await fetch(`${origin}/rooms/${roomId}/retry`, {
+    method: "POST",
+    headers: {
+      origin,
+      "content-type": "application/json",
+      cookie: `game_${roomId}=${session}`,
+    },
+    body: "{}",
+  });
+  assert.equal(response.status, 409);
+  assert.deepEqual(await response.json(), { error: "GAME_RETRY_LIMIT" });
+  assert.equal(host.jobs.get(id).status, "model_failed");
+  assert.equal(
+    host.kernel.store.db
+      .prepare("SELECT count(*) AS n FROM game_attempts WHERE job_id=?")
+      .get(id).n,
+    3,
+  );
 });

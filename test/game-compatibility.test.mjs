@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -8,7 +8,9 @@ import { GameRegistry } from "../src/games/core/registry.mjs";
 import {
   registerGomokuP2,
   gomokuSources,
+  gameUiVersion,
 } from "../src/games/framework/module.mjs";
+import { canonical, digest } from "../src/games/core/value.mjs";
 import { gameDatabase } from "../src/games/framework/database.mjs";
 import { checkGameCompatibility } from "../src/games/framework/compatibility.mjs";
 import releases from "../src/games/framework/compatible-releases.json" with { type: "json" };
@@ -108,4 +110,30 @@ test("exact legacy rooms survive reopening without rewriting identity; preflight
   } finally {
     kernel.close();
   }
+});
+
+test("published UI assets have an independent immutable version snapshot", () => {
+  const files = [
+    "src/games/framework/page.mjs",
+    "public/game-play.js",
+    "public/game-play.css",
+  ];
+  const actual = digest(
+    canonical(
+      Object.fromEntries(
+        files.map((file) => [
+          file,
+          digest(readFileSync(new URL("../" + file, import.meta.url))),
+        ]),
+      ),
+    ),
+  );
+  const published = {
+    3: "1ac250ef2332fe6895526d496f60ae6f0d50521889ce71002dc7f39be54b38cc",
+  };
+  assert.equal(
+    actual,
+    published[gameUiVersion],
+    "publish a new UI version and retain prior release checksums when assets change",
+  );
 });
