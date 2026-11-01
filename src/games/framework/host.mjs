@@ -353,19 +353,16 @@ export class GameHost {
    * @param {any} ctx @param {{roomId:string,eventId:string}} args */
   async rejoin(ctx, args) {
     this.ensure();
+    if (!/^[a-f0-9-]{36}$/.test(args.roomId))
+      fail("GAME_REQUEST_REQUIRED", 403);
     const source = this.authenticated(
         ctx,
         args.eventId,
-        /^重新加入游戏\s+[a-f0-9-]{36}$/,
+        new RegExp("^重新加入游戏\\s+" + args.roomId + "$"),
       ),
       original = this.chatAccess(ctx, args.roomId);
     if (Object.entries(source).some(([key, value]) => original[key] !== value))
       fail("ROOM_UNAVAILABLE", 403);
-    const event = this.runtime.memory.db
-      .prepare("SELECT body FROM events WHERE id=?")
-      .get(args.eventId);
-    if (event.body.trim().split(/\s+/).at(-1) !== args.roomId)
-      fail("GAME_REQUEST_REQUIRED", 403);
     if (!this.status().ready) fail("GAME_SERVICE_UNAVAILABLE", 503);
     if (
       (this.launch && !this.policy.publicOrigin) ||

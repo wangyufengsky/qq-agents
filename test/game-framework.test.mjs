@@ -941,3 +941,28 @@ test("an unknown re-entry delivery is not repeated and source account changes de
   f.runtime.connection("qq-0").accountId = "10002";
   await assert.rejects(f.h.rejoin(result.ctx, args), /GAMES_DISABLED/);
 });
+
+test("group re-entry accepts a trailing mention and revokes outstanding group challenges", async (t) => {
+  const f = setup(t),
+    result = await create(f, "group:20000"),
+    old = f.h.identity.requestPublic(result.roomId, secret());
+  await f.runtime.ingestEvent(
+    "qq-0",
+    raw(988, {
+      user_id: 30000,
+      group_id: 20000,
+      message: [
+        { type: "text", data: { text: `重新加入游戏 ${result.roomId} ` } },
+        { type: "at", data: { qq: f.runtime.connection("qq-0").accountId } },
+      ],
+    }),
+  );
+  const sent = f.runtime.transports.get("qq-0").sent;
+  assert.equal(sent.length, 2);
+  assert.match(sent.at(-1).segments[0].data.text, /五子棋邀请/);
+  assert.throws(
+    () => f.h.identity.load(result.roomId, old.bindingId),
+    /INVITATION_UNAVAILABLE/,
+  );
+  assert.ok(f.h.identity.requestPublic(result.roomId, secret()).challenge);
+});
