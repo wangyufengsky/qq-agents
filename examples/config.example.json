@@ -67,6 +67,15 @@
       },
       "maxConsecutiveSends": 3,
       "behavior": {
+        "typing": {
+          "enabled": true,
+          "msPerChar": 180,
+          "jitter": 0.35,
+          "minMs": 600,
+          "maxMs": 12000,
+          "firstReply": true,
+          "firstReplyMaxMs": 6000
+        },
         "outageNotice": {
           "enabled": false
         }
@@ -100,6 +109,15 @@
       },
       "maxConsecutiveSends": 3,
       "behavior": {
+        "typing": {
+          "enabled": true,
+          "msPerChar": 180,
+          "jitter": 0.35,
+          "minMs": 600,
+          "maxMs": 12000,
+          "firstReply": true,
+          "firstReplyMaxMs": 6000
+        },
         "outageNotice": {
           "enabled": false
         }

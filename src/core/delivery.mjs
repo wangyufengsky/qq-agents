@@ -1,3 +1,4 @@
+import { waitFirstReply } from "./typing.mjs";
 import { recallBoundary } from "./recall-boundary.mjs";
 import { containsCredential } from "./secrets.mjs";
 import { beforeShareDelivery } from "../apps/sharing.mjs";
@@ -98,6 +99,7 @@ export class DeliveryService {
       requestId,
       intent: segments,
       body: archiveBody ?? text,
+      typingText: text + (mediaId ? "◻" : ""),
       metadata: {
         replyTo,
         requestedReplyTo,
@@ -131,7 +133,16 @@ export class DeliveryService {
   }
   async deliverNow(
     ctx,
-    { requestId, intent, body = "", metadata = {}, send, action = false },
+    {
+      requestId,
+      intent,
+      body = "",
+      metadata = {},
+      send,
+      action = false,
+      typingText,
+      typingFallbackMs,
+    },
   ) {
     const runtime = this.runtime;
     const a = runtime.assertActive(ctx),
@@ -171,6 +182,21 @@ export class DeliveryService {
     if (ctx.recoveryDeliveryBlocked) throw Error("RECOVERY_DELIVERY_BLOCKED");
     if (metadata.mediaId)
       runtime.generatedImages.assertDelivery(ctx, metadata.mediaId, requestId);
+    const typingWait = waitFirstReply(
+      runtime,
+      ctx,
+      typingText,
+      typingFallbackMs,
+    );
+    if (typingWait) {
+      await typingWait;
+      // Waiting is outside the ledger transaction; recheck authority before reserving anything.
+      runtime.assertActive(ctx);
+      runtime.assertDisclosure(ctx);
+      runtime.subject.beforeDelivery(ctx);
+      if (mem.state(ctx.conversation).silenceUntil > runtime.now())
+        throw Error("CONVERSATION_SILENCED");
+    }
     const state = mem.state(ctx.conversation),
       now = runtime.now();
     const batchUsed = proactive
