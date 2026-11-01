@@ -256,6 +256,22 @@ test("unknown same-message same-face actions cannot be replayed under a fresh ID
     /REACT_ALREADY_ATTEMPTED/,
   );
   assert.equal(f.mem.delivery("new-id"), undefined);
+  // Historical imports may retain two original observations of one wire ID.
+  // An exact UUID must not turn that into permission to replay an unknown action.
+  const duplicate = target(f, "50001", {
+    dedupe: "same-wire-observation",
+    kind: "message.sent",
+    direction: "out",
+    senderId: "10000",
+  });
+  f.mem.db
+    .prepare("UPDATE events SET message_id=? WHERE id=?")
+    .run("50000", duplicate.id);
+  assert.notEqual(duplicate.id, source.id);
+  await assert.rejects(
+    call(f, args("another-observation", duplicate.id), context(f.runtime)),
+    /REACT_ALREADY_ATTEMPTED/,
+  );
 });
 
 test("unsupported gateway errors stay failed rather than unknown, without leaking provider text", async (t) => {

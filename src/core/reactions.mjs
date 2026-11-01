@@ -82,6 +82,8 @@ export async function react(runtime, ctx, args) {
     face = qqFace({ id: args.faceId });
   if (!face.name || face.id === null) throw Error("REACT_FACE_UNKNOWN");
   const target = targetMessage(runtime, ctx, args.messageRef);
+  const namespace =
+    runtime.connection(a.connectionId).messageIdNamespace || "onebot";
   const actionBudget = {
     kind: "react",
     maxPerMinute: a.behavior.actions.reactMaxPerMinute,
@@ -92,7 +94,12 @@ export async function react(runtime, ctx, args) {
       requestId: args.requestId,
       intent: { kind: "react", messageId: target.messageId, faceId: face.id },
       body: `[贴表情:${face.name}]`,
-      metadata: { reactedEventId: target.row.id, reactionFaceId: face.id },
+      metadata: {
+        reactedEventId: target.row.id,
+        reactedMessageId: target.messageId,
+        reactionFaceId: face.id,
+        referenceNamespace: namespace,
+      },
       action: true,
       actionBudget,
       validate: () => {
@@ -110,9 +117,17 @@ export async function react(runtime, ctx, args) {
         // message/face. This survives restart and is checked inside the send chain.
         const attempted = memory.db
           .prepare(
-            `SELECT 1 FROM events e JOIN deliveries d ON d.agent_id=e.agent_id AND d.request_id=json_extract(e.payload,'$.requestId') WHERE e.agent_id=? AND e.connection_id=? AND e.conversation=? AND e.kind='message.send-attempt' AND json_extract(e.payload,'$.reactedEventId')=? AND json_extract(e.payload,'$.reactionFaceId')=? AND d.status IN ('pending','unknown') LIMIT 1`,
+            `SELECT 1 FROM events e JOIN deliveries d ON d.agent_id=e.agent_id AND d.request_id=json_extract(e.payload,'$.requestId') WHERE e.agent_id=? AND e.connection_id=? AND e.conversation=? AND e.kind='message.send-attempt' AND (json_extract(e.payload,'$.reactedEventId')=? OR (json_extract(e.payload,'$.reactedMessageId')=? AND json_extract(e.payload,'$.referenceNamespace')=?)) AND json_extract(e.payload,'$.reactionFaceId')=? AND d.status IN ('pending','unknown') LIMIT 1`,
           )
-          .get(a.id, a.connectionId, ctx.conversation, target.row.id, face.id);
+          .get(
+            a.id,
+            a.connectionId,
+            ctx.conversation,
+            target.row.id,
+            target.messageId,
+            namespace,
+            face.id,
+          );
         if (attempted) throw Error("REACT_ALREADY_ATTEMPTED");
       },
       send: (/** @type {any} */ transport) =>
