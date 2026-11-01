@@ -1,6 +1,6 @@
 # 让角色更像人：节奏、口吻、作息与关系
 
-基线：PR #119 / 7ada579。本文是交给开发者的设计文档，**不是已实现功能**。分三档、七个 PR 逐个实现、验证和合并；每个 PR 都按 [AGENTS.md](../../AGENTS.md) 与 [CONTRIBUTING.md](../../CONTRIBUTING.md) 的完整流程交付。
+基线：PR #119 / 7ada579。本文是交给开发者的设计文档，**不表示全部已经实现**；各节以注明的实现 PR 为准，其余仍为设计。分三档、七个 PR 逐个实现、验证和合并；每个 PR 都按 [AGENTS.md](../../AGENTS.md) 与 [CONTRIBUTING.md](../../CONTRIBUTING.md) 的完整流程交付。
 
 ## 现状
 
@@ -29,6 +29,8 @@
 ## 第一档
 
 ### PR 1：按长度计算的打字节奏
+
+已由 [PR #122](https://github.com/wangyufengsky/qq-agents/pull/122) 实现；实际配置与边界见[打字节奏](../CONFIGURATION.md#打字节奏behaviortyping)。首条等待在幂等检查后、预留账本与额度前进行；超过三秒遇到尚未完整阅读的真人消息会返回 `TYPING_NEW_INPUT_REVIEW_REQUIRED`，摘要截断时须用 `memory_read` 分页后重新决定。连发中间保持原回执语义，语音使用已有转写或合成文字，无文字时按两秒计。
 
 **目标**：短句快、长段慢；首条回复也有与长度相称的打字时间。
 

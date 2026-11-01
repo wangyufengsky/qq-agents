@@ -1,3 +1,4 @@
+import { waitFirstReply } from "./typing.mjs";
 import { recallBoundary } from "./recall-boundary.mjs";
 import { containsCredential } from "./secrets.mjs";
 import { beforeShareDelivery } from "../apps/sharing.mjs";
@@ -108,6 +109,7 @@ export class DeliveryService {
       requestId,
       intent: segments,
       body: archiveBody ?? text,
+      typingText: text + (mediaId ? "◻" : ""),
       metadata: {
         replyTo,
         requestedReplyTo,
@@ -150,11 +152,13 @@ export class DeliveryService {
       action = false,
       actionBudget,
       validate,
+      typingText,
+      typingFallbackMs,
     },
   ) {
     const runtime = this.runtime;
-    const a = runtime.assertActive(ctx),
-      mem = runtime.memory.bind(a.id);
+    let a = runtime.assertActive(ctx);
+    const mem = runtime.memory.bind(a.id);
     assertMessageAccount(
       mem,
       a.connectionId,
@@ -196,6 +200,22 @@ export class DeliveryService {
     if (ctx.recoveryDeliveryBlocked) throw Error("RECOVERY_DELIVERY_BLOCKED");
     if (metadata.mediaId)
       runtime.generatedImages.assertDelivery(ctx, metadata.mediaId, requestId);
+    const typingWait = waitFirstReply(
+      runtime,
+      ctx,
+      typingText,
+      typingFallbackMs,
+    );
+    if (typingWait) {
+      await typingWait;
+      // Waiting is outside the ledger transaction; recheck authority before reserving anything.
+      a = runtime.assertActive(ctx);
+      runtime.assertDisclosure(ctx);
+      if (!(action && actionBudget?.kind === "recall"))
+        runtime.subject.beforeDelivery(ctx);
+      if (mem.state(ctx.conversation).silenceUntil > runtime.now())
+        throw Error("CONVERSATION_SILENCED");
+    }
     validate?.();
     const state = mem.state(ctx.conversation),
       now = runtime.now();
