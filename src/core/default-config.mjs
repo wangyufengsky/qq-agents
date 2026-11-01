@@ -82,7 +82,8 @@ export function defaultConfig() {
         connectionId: "napcat-a",
         backendId: "dsh-desktop",
         paused: true,
-        persona: "请在管理台设置此角色的人格。",
+        persona:
+          "请在管理台设置此角色的人格。\n\n说话样本：填写 5–10 句这个角色真实会说的话，体现口头禅、标点习惯、笑的写法与常见长度。",
         aliases: [],
         ownerIds: [],
         allow: {
@@ -98,6 +99,7 @@ export function defaultConfig() {
             recallWindowMs: 110000,
             recallMaxPerHour: 3,
           },
+          toneCheck: { mode: "warn", phrases: [], maxLinesCasual: 6 },
           outageNotice: { enabled: false },
         },
         network: {
@@ -120,7 +122,8 @@ export function defaultConfig() {
         connectionId: "napcat-b",
         backendId: "codex-cli",
         paused: true,
-        persona: "请在管理台设置此角色的人格。",
+        persona:
+          "请在管理台设置此角色的人格。\n\n说话样本：填写 5–10 句这个角色真实会说的话，体现口头禅、标点习惯、笑的写法与常见长度。",
         aliases: [],
         ownerIds: [],
         allow: {
@@ -134,6 +137,7 @@ export function defaultConfig() {
             recallWindowMs: 110000,
             recallMaxPerHour: 3,
           },
+          toneCheck: { mode: "warn", phrases: [], maxLinesCasual: 6 },
           outageNotice: { enabled: false },
         },
         network: {

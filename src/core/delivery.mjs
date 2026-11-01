@@ -5,6 +5,7 @@ import { appService } from "../apps/tools.mjs";
 import { privateGithubSources } from "../github/policy.mjs";
 import { taintMedia } from "../tools/legacy.mjs";
 import { mdToPlain } from "../../vendor/dsh-qq/md-to-plain.js";
+import { checkTone } from "./tone-check.mjs";
 import { reserveSendBudget } from "./send-budget.mjs";
 import { replyPeers, peerReplyLastAttemptAt } from "./peer-replies.mjs";
 import {
@@ -60,6 +61,15 @@ export class DeliveryService {
     runtime.assertSafeOutput(ctx, text);
     text = mdToPlain(text);
     if (!text && !mediaId) throw Error("EMPTY_MESSAGE");
+    // Existing receipts must retain their duplicate/conflict/unknown semantics;
+    // only a new valid request can receive a pre-delivery wording reminder.
+    if (
+      typeof requestId === "string" &&
+      requestId &&
+      requestId.length <= 200 &&
+      !mem.delivery(requestId)
+    )
+      checkTone(ctx, a, requestId, text);
     const segments = [];
     const connection = runtime.connection(a.connectionId),
       namespace = connection.messageIdNamespace || "onebot",

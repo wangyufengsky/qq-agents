@@ -456,3 +456,45 @@ test("recall controls preserve explicit settings and allow changing limits or di
   assert.equal(parse({ recallWindowMs: "60000" }).recallWindowMs, 60000);
   assert.equal(parse({ recallMaxPerHour: "4" }).recallMaxPerHour, 4);
 });
+
+test("tone reminder settings round-trip and edit separately from Self samples", async () => {
+  const config = await sampleConfig();
+  config.agents[0].behavior.toneCheck = {
+    mode: "off",
+    phrases: ["自定义套话", "另一句话"],
+    maxLinesCasual: 12,
+  };
+  const run = editor(config),
+    html = run('agentForm.build(config.agents[0], "")');
+  assert.match(html, /说话样本/);
+  assert.match(html, /不会覆盖已建立的 Self/);
+  const parse = (set) =>
+    JSON.parse(
+      JSON.stringify(
+        run("agentForm.parse.bind(agentForm)")(
+          formOf(html, set),
+          config.agents[0],
+        ).row,
+      ),
+    );
+  assert.deepEqual(
+    parse({}).behavior.toneCheck,
+    config.agents[0].behavior.toneCheck,
+  );
+  assert.deepEqual(
+    parse({
+      toneCheckMode: "warn",
+      toneCheckPhrases: "新短语\n 再一句 \n",
+      toneCheckMaxLines: "8",
+    }).behavior.toneCheck,
+    {
+      mode: "warn",
+      phrases: ["新短语", "再一句"],
+      maxLinesCasual: 8,
+    },
+  );
+  assert.equal(
+    parse({ toneCheckMode: "warn" }).persona,
+    config.agents[0].persona,
+  );
+});
