@@ -60,10 +60,12 @@ export function ownsReactionTarget(memory, connection, event) {
     return (
       !!row && row.direction === "out" && row.sender_id === connection.accountId
     );
-  } catch {
-    // An ambiguous or unverifiable target cannot establish that someone reacted
-    // to us. Drop it instead of exposing unrelated group traffic to this role.
-    return false;
+  } catch (error) {
+    // An ambiguous target cannot establish that someone reacted to us. Other
+    // storage errors must still reach diagnostics instead of silently losing data.
+    if (error instanceof Error && error.message === "AMBIGUOUS_MESSAGE_ID")
+      return false;
+    throw error;
   }
 }
 

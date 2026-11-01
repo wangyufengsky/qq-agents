@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { config, fixture, context, settle } from "./helpers.mjs";
+import { config, fixture, context, raw, settle } from "./helpers.mjs";
 import { validateConfig } from "../src/core/config.mjs";
 import { OneBot, normalizeEvent } from "../src/transport/onebot.mjs";
 import { dispatchTool } from "../src/tools/index.mjs";
@@ -334,10 +334,12 @@ test("NapCat reaction notices normalize added/removed facts without using the ta
 });
 
 test("only reactions on this role's own scoped messages are archived, without new input or wakeups", async (t) => {
-  let runs = 0;
+  let runs = 0,
+    latestPrompt = "";
   const f = setup(t, {
-    run: async () => {
+    run: async (p) => {
       runs++;
+      latestPrompt = p.prompt;
     },
   });
   target(f, "50000", { direction: "out", senderId: "10000" });
@@ -348,12 +350,12 @@ test("only reactions on this role's own scoped messages are archived, without ne
     senderId: "10000",
   });
   f.mem.setState("group:20000", {
-    lastReceivedSeq: 7,
+    lastReceivedSeq: 2,
     lastIncomingAt: 1234,
     replyBatchSends: 3,
-    readThroughSeq: 6,
+    readThroughSeq: 2,
   });
-  f.mem.setState("@subject", { lastActivitySeq: 7 });
+  f.mem.setState("@subject", { lastActivitySeq: 2 });
   const before = f.mem.state("group:20000");
   const subject = f.mem.state("@subject");
   let notifications = 0;
@@ -391,6 +393,11 @@ test("only reactions on this role's own scoped messages are archived, without ne
     ),
     null,
   );
+  await f.runtime.ingest("qq-0", raw(60000));
+  await settle(f.runtime);
+  assert.equal(runs, 1);
+  assert.match(latestPrompt, /贴表情/);
+  assert.match(latestPrompt, /取消贴表情/);
 });
 
 test("reaction preserves selected intention state and retains intent-only and recovery fences", async (t) => {
@@ -439,4 +446,20 @@ test("queued reaction uses the latest per-minute quota", async (t) => {
   await first;
   await assert.rejects(queued, /REACT_RATE_LIMITED/);
   assert.equal(f.mem.delivery("queued-quota"), undefined);
+});
+
+test("signed OneBot message IDs remain valid reaction targets and observations", async (t) => {
+  const f = setup(t);
+  target(f, "-50000", { direction: "out", senderId: "10000" });
+  assert.equal((await call(f, args("negative-id", "-50000"))).status, "sent");
+  assert.deepEqual(f.calls, [{ messageId: "-50000", faceId: "28" }]);
+  const notice = reaction({ message_id: -50000 });
+  assert.equal(
+    normalizeEvent(notice, config(1).connections[0]).reaction.messageId,
+    "-50000",
+  );
+  await f.runtime.ingest("qq-0", notice);
+  const observations = f.mem.search({ kind: "notice.reaction" }).items;
+  assert.equal(observations.length, 1);
+  assert.match(observations[0].body, /消息 -50000/);
 });

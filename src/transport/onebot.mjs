@@ -40,7 +40,7 @@ export function normalizeEvent(raw, connection) {
       !isGroup ||
       typeof raw.is_add !== "boolean" ||
       !/^\d+$/.test(String(raw.user_id)) ||
-      !/^\d+$/.test(String(raw.message_id)) ||
+      !/^-?\d+$/.test(String(raw.message_id)) ||
       !Array.isArray(raw.likes) ||
       !raw.likes.length
     )
