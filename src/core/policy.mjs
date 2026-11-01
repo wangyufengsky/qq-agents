@@ -34,6 +34,7 @@ export const behaviorSchema = z
       .object({
         enabled: z.boolean().default(true),
         windowMs: ms(600000, 86400000, 21600000),
+        ownLookbackMs: ms(600000, 86400000, 86400000),
       })
       .strict()
       .prefault({}),

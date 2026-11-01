@@ -69,7 +69,8 @@
       "behavior": {
         "elsewhere": {
           "enabled": true,
-          "windowMs": 21600000
+          "windowMs": 21600000,
+          "ownLookbackMs": 86400000
         },
         "actions": {
           "react": false,
@@ -143,7 +144,8 @@
       "behavior": {
         "elsewhere": {
           "enabled": true,
-          "windowMs": 21600000
+          "windowMs": 21600000,
+          "ownLookbackMs": 86400000
         },
         "actions": {
           "react": false,

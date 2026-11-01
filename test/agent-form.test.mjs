@@ -551,6 +551,10 @@ test("elsewhere switch and window round-trip in the role editor", async () => {
     parse({ elsewhereEnabled: undefined, elsewhereWindowMinutes: "720" }),
     { enabled: false, windowMs: 43200000 },
   );
+  assert.deepEqual(parse({ elsewhereOwnLookbackMinutes: "120" }), {
+    ...config.agents[0].behavior.elsewhere,
+    ownLookbackMs: 7200000,
+  });
   // A stored window that is not a whole slider step survives an untouched save.
   const odd = structuredClone(config.agents[0]);
   odd.behavior.elsewhere = { enabled: false, windowMs: 1234567 };
@@ -585,5 +589,6 @@ test("a role without stored elsewhere settings keeps the defaults implicit", asy
   assert.deepEqual(validateConfig(config).agents[0].behavior.elsewhere, {
     enabled: true,
     windowMs: 21600000,
+    ownLookbackMs: 86400000,
   });
 });

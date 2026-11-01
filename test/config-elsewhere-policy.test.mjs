@@ -6,10 +6,11 @@ test("elsewhere defaults missing policy and preserves explicit opt-out", () => {
   assert.deepEqual(behaviorSchema.parse({}).elsewhere, {
     enabled: true,
     windowMs: 21600000,
+    ownLookbackMs: 86400000,
   });
   assert.deepEqual(
     behaviorSchema.parse({ elsewhere: { enabled: false } }).elsewhere,
-    { enabled: false, windowMs: 21600000 },
+    { enabled: false, windowMs: 21600000, ownLookbackMs: 86400000 },
   );
 });
 test("elsewhere accepts only bounded integer windows and known fields", () => {
