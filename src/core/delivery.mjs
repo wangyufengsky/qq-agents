@@ -145,8 +145,8 @@ export class DeliveryService {
     },
   ) {
     const runtime = this.runtime;
-    const a = runtime.assertActive(ctx),
-      mem = runtime.memory.bind(a.id);
+    let a = runtime.assertActive(ctx);
+    const mem = runtime.memory.bind(a.id);
     assertMessageAccount(
       mem,
       a.connectionId,
@@ -191,7 +191,7 @@ export class DeliveryService {
     if (typingWait) {
       await typingWait;
       // Waiting is outside the ledger transaction; recheck authority before reserving anything.
-      runtime.assertActive(ctx);
+      a = runtime.assertActive(ctx);
       runtime.assertDisclosure(ctx);
       runtime.subject.beforeDelivery(ctx);
       if (mem.state(ctx.conversation).silenceUntil > runtime.now())

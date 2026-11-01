@@ -417,3 +417,27 @@ test("burst long inter-message typing ignores fresh input and cancellation prese
   assert.equal(m.delivery("long-burst:1").status, "sent");
   assert.equal(m.delivery("long-burst:2"), undefined);
 });
+
+test("typing rechecks a lower hot-updated send quota before reserving delivery", async (t) => {
+  const f = setup(t);
+  const fixed = context(f.runtime);
+  fixed.internalDelivery = true;
+  await f.runtime.send(fixed, {
+    requestId: "existing-budget",
+    text: "固定文字",
+  });
+  const p = f.runtime.send(f.ctx, {
+    requestId: "quota-changed",
+    text: "等待发送",
+  });
+  const rejected = assert.rejects(p, /SEND_RATE_LIMIT/);
+  await flush();
+  const next = structuredClone(f.runtime.config);
+  next.agents[0].behavior.maxSendPerMinute = 1;
+  await f.runtime.changeConfig(next, f.configStore.revision);
+  assert.equal(f.ctx.controller.signal.aborted, false);
+  t.mock.timers.tick(400);
+  await rejected;
+  assert.equal(f.sent(), 1);
+  assert.equal(f.store.bind("agent-0").delivery("quota-changed"), undefined);
+});
