@@ -70,6 +70,7 @@ export function sourceHandoff(memory, conversation) {
     return {
       id,
       ...memory.corrections.annotation("event", id),
+      ...memory.recallAnnotation(id),
       available: true,
       kind: row.kind,
       direction: row.direction,

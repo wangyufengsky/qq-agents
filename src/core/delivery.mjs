@@ -150,6 +150,8 @@ export class DeliveryService {
       metadata = {},
       send,
       action = false,
+      actionBudget,
+      validate,
       typingText,
       typingFallbackMs,
     },
@@ -164,7 +166,13 @@ export class DeliveryService {
     );
     if (mem.state(ctx.conversation).silenceUntil > runtime.now())
       throw Error("CONVERSATION_SILENCED");
-    const proactive = runtime.subject.beforeDelivery(ctx);
+    // Recall only removes an already-confirmed message. A completed contact
+    // intent must not prevent that cleanup; fresh outward actions still need
+    // the ordinary intent decision and contact checks.
+    const cleanupAction = action && actionBudget?.kind === "recall";
+    const proactive = cleanupAction
+      ? null
+      : runtime.subject.beforeDelivery(ctx);
     if (proactive) requestId = "intent:" + proactive.id;
     if (typeof requestId !== "string" || !requestId || requestId.length > 200)
       throw Error("INVALID_REQUEST_ID");
@@ -203,10 +211,11 @@ export class DeliveryService {
       // Waiting is outside the ledger transaction; recheck authority before reserving anything.
       a = runtime.assertActive(ctx);
       runtime.assertDisclosure(ctx);
-      runtime.subject.beforeDelivery(ctx);
+      if (!cleanupAction) runtime.subject.beforeDelivery(ctx);
       if (mem.state(ctx.conversation).silenceUntil > runtime.now())
         throw Error("CONVERSATION_SILENCED");
     }
+    validate?.();
     const state = mem.state(ctx.conversation),
       now = runtime.now();
     const batchUsed = proactive
@@ -227,7 +236,26 @@ export class DeliveryService {
       a.maxConsecutiveSends ?? a.maxSendsPerTurn,
       ordinaryPeer ? runtime.config.peerLimit.maxMessages : Infinity,
     );
-    if (batchUsed >= batchLimit) throw Error("REPLY_BURST_LIMIT");
+    if (!actionBudget && batchUsed >= batchLimit)
+      throw Error("REPLY_BURST_LIMIT");
+    if (actionBudget) {
+      for (const [duration, limit] of [
+        [60000, actionBudget.maxPerMinute],
+        [3600000, actionBudget.maxPerHour],
+      ]) {
+        if (limit == null) continue;
+        const used = mem.db
+          .prepare(
+            "SELECT count(*) AS n FROM events WHERE agent_id=? AND kind='message.send-attempt' AND json_extract(payload,'$.actionKind')=? AND observed_at>?",
+          )
+          .get(
+            a.id,
+            actionBudget.kind,
+            new Date(now - duration).toISOString(),
+          ).n;
+        if (used >= limit) throw Error(actionBudget.errorCode);
+      }
+    }
     const transport = runtime.transports.get(a.connectionId);
     if (!transport?.connected) throw Error("QQ_NOT_CONNECTED");
     const event = {
@@ -239,6 +267,7 @@ export class DeliveryService {
       payload: {
         requestId,
         ...metadata,
+        ...(actionBudget ? { actionKind: actionBudget.kind } : {}),
         protectedRepositories: privateGithubSources(ctx, runtime),
       },
     };
@@ -261,7 +290,7 @@ export class DeliveryService {
         state.replyBatchLastAttemptAt == null
           ? { replyBatchLastAttemptAt: peerReplyLastAttemptAt(state) }
           : {}),
-        ...(!proactive && !ctx.internalDelivery
+        ...(!actionBudget && !proactive && !ctx.internalDelivery
           ? ctx.scheduleRunId
             ? {
                 scheduleReplyCounts: {
@@ -277,7 +306,7 @@ export class DeliveryService {
               }
           : {}),
       });
-      runtime.subject.reserveContact(ctx, proactive);
+      if (!cleanupAction) runtime.subject.reserveContact(ctx, proactive);
       mem.append({
         ...event,
         dedupe: "send:" + requestId + ":pending",
@@ -285,17 +314,18 @@ export class DeliveryService {
         status: "pending",
       });
     });
-    ctx.replyBatchSends = (ctx.replyBatchSends ?? ctx.sendCount) + 1;
+    if (!actionBudget)
+      ctx.replyBatchSends = (ctx.replyBatchSends ?? ctx.sendCount) + 1;
     ctx.deliveryAttempted = true;
     this.reconciled.add(a.id);
-    ctx.sendCount++;
+    if (!actionBudget) ctx.sendCount++;
     try {
       runtime.assertActive(ctx);
     } catch (e) {
       // Paused or cancelled before the gateway call: nothing left the process.
       mem.store.transaction(() => {
         mem.completeDelivery(requestId, "failed");
-        runtime.subject.delivered(ctx, "failed");
+        if (!cleanupAction) runtime.subject.delivered(ctx, "failed");
       });
       mem.append({
         ...event,
@@ -315,10 +345,12 @@ export class DeliveryService {
         receipt.messageId == null ? null : String(receipt.messageId);
       mem.store.transaction(() => {
         mem.completeDelivery(requestId, "sent", messageId);
-        runtime.subject.delivered(ctx, "sent");
+        if (!cleanupAction) runtime.subject.delivered(ctx, "sent");
       });
-      ctx.confirmedSends = (ctx.confirmedSends || 0) + 1;
-      runtime.conversations.sent(ctx);
+      if (!actionBudget) {
+        ctx.confirmedSends = (ctx.confirmedSends || 0) + 1;
+        runtime.conversations.sent(ctx);
+      }
       const record = mem.append({
         ...event,
         dedupe: "send:" + requestId + ":sent",
@@ -357,7 +389,7 @@ export class DeliveryService {
         throw Error("DELIVERY_CONFIRMED_AUDIT_FAILED", { cause: e });
       mem.store.transaction(() => {
         mem.completeDelivery(requestId, status);
-        runtime.subject.delivered(ctx, status);
+        if (!cleanupAction) runtime.subject.delivered(ctx, status);
       });
       mem.append({
         ...event,
@@ -366,6 +398,12 @@ export class DeliveryService {
         status,
         payload: { ...event.payload, ...(reason ? { reason } : {}) },
       });
+      if (
+        status === "failed" &&
+        e.reason === "ACTION_UNSUPPORTED" &&
+        actionBudget?.kind === "recall"
+      )
+        throw Error("RECALL_UNSUPPORTED", { cause: e });
       throw Error(
         "DELIVERY_" +
           status.toUpperCase() +

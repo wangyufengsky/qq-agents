@@ -66,6 +66,8 @@ export function chatHistory(history) {
         "sourceEventId",
         "outcome",
         "notice",
+        "recalled",
+        "recallNotice",
       ];
       const item = Object.fromEntries(
         keys
@@ -127,6 +129,8 @@ export function chatHandoff(handoff, { replay = false } = {}) {
           id: s.id,
           available: s.available,
           corrections: s.corrections,
+          recalled: s.recalled,
+          recallNotice: s.recallNotice,
           kind: s.kind,
           epistemic: s.epistemic,
           platform: s.platform,

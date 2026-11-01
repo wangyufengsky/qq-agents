@@ -135,7 +135,8 @@ test("only current-chat message records and wire IDs resolve, and only known sta
 test("reaction has an action receipt and idempotency while exhausted text budget remains exhausted", async (t) => {
   const f = setup(t);
   target(f);
-  const limit = f.runtime.agent("agent-0").maxConsecutiveSends;
+  const agent = f.runtime.agent("agent-0");
+  const limit = agent.maxConsecutiveSends ?? agent.maxSendsPerTurn;
   f.mem.setState(f.ctx.conversation, {
     replyBatchSends: limit,
     lastAiReplyAt: 1234,
@@ -210,7 +211,8 @@ test("reactions continue to obey role total limits, pause, silence and revoked s
   const g = setup(t);
   target(g);
   g.mem.setState(g.ctx.conversation, { silenceUntil: g.runtime.now() + 60000 });
-  await assert.rejects(call(g, args("silenced")), /CONVERSATION_SILENCED/);
+  await assert.rejects(call(g, args("silenced")), /AGENT_PAUSED_OR_EXPIRED/);
+  assert.equal(g.mem.delivery("silenced"), undefined);
   g.mem.setState(g.ctx.conversation, { silenceUntil: 0 });
   g.runtime.agent("agent-0").behavior.actions.react = false;
   await assert.rejects(call(g, args("revoked")), /TOOL_DISABLED/);
@@ -322,6 +324,14 @@ test("unsupported gateway errors stay failed rather than unknown, without leakin
   const error = await unavailable.react("50000", "28").catch((e) => e);
   assert.equal(error.reason, "ACTION_UNSUPPORTED");
   assert.doesNotMatch(JSON.stringify(error), /private provider data/);
+  const missingRoute = new OneBot(config(1).connections[0], {
+    fetchImpl: async () =>
+      new Response("private provider HTML", { status: 404 }),
+  });
+  const missing = await missingRoute.react("50000", "28").catch((e) => e);
+  assert.equal(missing.message, "ONEBOT_REJECTED");
+  assert.equal(missing.reason, "ACTION_UNSUPPORTED");
+  assert.doesNotMatch(JSON.stringify(missing), /private provider HTML/);
 });
 
 test("NapCat reaction notices normalize added/removed facts without using the target as their identity", () => {

@@ -59,6 +59,7 @@ export function chatRecall(runtime, ctx, history, handoff, throughSeq) {
       id: row.id,
       seq: row.seq,
       type: row.kind,
+      ...memory.recallAnnotation(row.id),
       bodyOmitted: true,
       notice: "原文超出本次材料预算；需要时完整续读，不据此猜测内容。",
       continuation: { tool: "memory_read", id: row.id, offset: 0 },
@@ -146,6 +147,7 @@ export function chatRecall(runtime, ctx, history, handoff, throughSeq) {
     const pointer = {
       id,
       occurredAt: row.occurred_at,
+      ...memory.recallAnnotation(row.id),
       bodyOmitted: true,
       ...memory.corrections.annotation("event", id),
       continuation: { tool: "memory_read", id, offset: 0 },

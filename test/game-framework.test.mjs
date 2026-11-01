@@ -1206,6 +1206,9 @@ test("public admission never opens a write transaction and still enforces immedi
 
 test("new-room throttling is shared across senders in one source conversation", async (t) => {
   const f = setup(t);
+  // No host tick renews this fixture's lease; throttling must not depend on disk speed.
+  const now = f.runtime.now();
+  f.runtime.now = () => now;
   const first = await create(f, "group:20000", "30000");
   const second = await create(f, "group:20000", "30001");
   const third = await create(f, "group:20000", "30002");
@@ -1264,8 +1267,11 @@ test("recovery proves unsubmitted attempts, preserves unknown evidence and fence
 });
 
 test("terminal failures allow only one automatic retry and game tick failure does not stop chat scheduling", async (t) => {
-  const f = setup(t),
-    { id } = await decision(f);
+  const f = setup(t);
+  // Lease expiry has its own test; retry semantics must not depend on runner speed.
+  const now = f.runtime.now();
+  f.runtime.now = () => now;
+  const { id } = await decision(f);
   f.h.jobs.receive(id);
   for (let i = 0; i < 2; i++) {
     const run = f.h.jobs.claim(id, "worker", "claim-" + i);

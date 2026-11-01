@@ -69,7 +69,10 @@
       "behavior": {
         "actions": {
           "react": false,
-          "reactMaxPerMinute": 3
+          "reactMaxPerMinute": 3,
+          "recall": false,
+          "recallWindowMs": 110000,
+          "recallMaxPerHour": 3
         },
         "typing": {
           "enabled": true,
@@ -120,7 +123,10 @@
       "behavior": {
         "actions": {
           "react": false,
-          "reactMaxPerMinute": 3
+          "reactMaxPerMinute": 3,
+          "recall": false,
+          "recallWindowMs": 110000,
+          "recallMaxPerHour": 3
         },
         "typing": {
           "enabled": true,

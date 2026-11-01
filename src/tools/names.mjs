@@ -1,5 +1,6 @@
 // Shared by configuration defaults and the tool registry without loading handlers.
 export const TOOL_NAMES = Object.freeze([
+  "qq_recall",
   "protected_work_submit",
   "github_capabilities",
   "github_search",

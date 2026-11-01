@@ -164,6 +164,9 @@ async function sampleConfig() {
       users: ["30000001", "30000002"],
     },
     wake: { participation: 0.025, cooldownMs: 2500, questions: true },
+    behavior: {
+      actions: { recall: true, recallWindowMs: 45000, recallMaxPerHour: 2 },
+    },
     voice: {
       asr: {
         enabled: true,
@@ -433,37 +436,25 @@ test("a new role starts with empty number lists that still take typed numbers", 
   );
 });
 
-test("reaction switch and per-minute quota round-trip in the role editor", async () => {
-  const config = await sampleConfig();
-  config.agents[0].behavior.actions = {
-    ...config.agents[0].behavior.actions,
-    react: true,
-    reactMaxPerMinute: 7,
-  };
-  const run = editor(config),
-    html = run('agentForm.build(config.agents[0], "")');
-  assert.match(html, /贴表情回应/);
-  const parse = (set) =>
-    JSON.parse(
-      JSON.stringify(
-        run("agentForm.parse.bind(agentForm)")(
-          formOf(html, set),
-          config.agents[0],
-        ).row,
-      ),
-    );
-  assert.deepEqual(
-    parse({}).behavior.actions,
-    config.agents[0].behavior.actions,
+test("recall controls preserve explicit settings and allow changing limits or disabling", async () => {
+  const config = await sampleConfig(),
+    run = editor(config),
+    original = config.agents[0];
+  const html = run(
+    'agentForm.build(config.agents[0], input("id", "稳定 ID", config.agents[0].id, "readonly"))',
   );
+  const parse = (changes) =>
+    run("agentForm.parse.bind(agentForm)")(
+      formOf(html, changes),
+      structuredClone(original),
+    ).row.behavior.actions;
   assert.deepEqual(
-    parse({ reactEnabled: undefined, reactMaxPerMinute: "4" }).behavior.actions,
-    {
-      ...config.agents[0].behavior.actions,
-      react: false,
-      reactMaxPerMinute: 4,
-    },
+    JSON.parse(JSON.stringify(parse({}))),
+    original.behavior.actions,
   );
+  assert.equal(parse({ recallEnabled: undefined }).recall, false);
+  assert.equal(parse({ recallWindowMs: "60000" }).recallWindowMs, 60000);
+  assert.equal(parse({ recallMaxPerHour: "4" }).recallMaxPerHour, 4);
 });
 
 test("tone reminder settings round-trip and edit separately from Self samples", async () => {
@@ -505,5 +496,38 @@ test("tone reminder settings round-trip and edit separately from Self samples", 
   assert.equal(
     parse({ toneCheckMode: "warn" }).persona,
     config.agents[0].persona,
+  );
+});
+
+test("reaction switch and per-minute quota round-trip in the role editor", async () => {
+  const config = await sampleConfig();
+  config.agents[0].behavior.actions = {
+    ...config.agents[0].behavior.actions,
+    react: true,
+    reactMaxPerMinute: 7,
+  };
+  const run = editor(config),
+    html = run('agentForm.build(config.agents[0], "")');
+  assert.match(html, /贴表情回应/);
+  const parse = (set) =>
+    JSON.parse(
+      JSON.stringify(
+        run("agentForm.parse.bind(agentForm)")(
+          formOf(html, set),
+          config.agents[0],
+        ).row,
+      ),
+    );
+  assert.deepEqual(
+    parse({}).behavior.actions,
+    config.agents[0].behavior.actions,
+  );
+  assert.deepEqual(
+    parse({ reactEnabled: undefined, reactMaxPerMinute: "4" }).behavior.actions,
+    {
+      ...config.agents[0].behavior.actions,
+      react: false,
+      reactMaxPerMinute: 4,
+    },
   );
 });

@@ -10,9 +10,19 @@ const QQ = /^\d{5,12}$/;
 // only when an archived message kept no segments.
 const MENTION = /\[提及 QQ:(\d{5,12})\]/g;
 const QUOTE = /\[引用:([^\]\s]{1,128})\]/g;
-// What a session has seen: this card, at this revision.
+// Source withdrawal changes the projection without revising the impression.
+// Show that update once, then retain the same quiet card behavior.
 /** @param {any} card */
-const seenKey = (card) => `${card.id}:${card.revision}`;
+export const personCardSeenKey = (card) =>
+  `${card.id}:${card.revision}${
+    card.recalledEvidence?.length
+      ? ":recalled:" +
+        card.recalledEvidence
+          .map((/** @type {any} */ source) => source.recalled.eventId)
+          .sort()
+          .join(",")
+      : ""
+  }`;
 
 /** @param {any} event An archived events row. */
 export function references(event) {
@@ -94,19 +104,22 @@ export function personCardsForTurn(memory, conversation, items, options) {
   )) {
     if (cards.length >= MAX_CARDS_PER_TURN) break;
     const card = memory.identity.personCard(id);
-    if (!card || shown[id] === seenKey(card)) continue;
+    if (!card || shown[id] === personCardSeenKey(card)) continue;
     const nickname = lastName(memory, id);
     cards.push({
       personId: card.personId,
       ...(nickname ? { nickname } : {}),
       call: card.call,
       impression: card.body,
+      ...(card.recalledEvidence?.length
+        ? { recalledEvidence: card.recalledEvidence }
+        : {}),
       ...memory.corrections.annotation("person", card.id, card.revision),
       revision: card.revision,
       updatedAt: card.updatedAt,
       ...(card.author === "admin" ? { editedBy: "admin" } : {}),
     });
-    shown[id] = seenKey(card);
+    shown[id] = personCardSeenKey(card);
   }
   return { cards, shown };
 }
@@ -118,7 +131,7 @@ export function markPersonCardShown(memory, conversation, card) {
     ...state,
     personCardsShown: {
       ...state.personCardsShown,
-      [card.personId]: seenKey(card),
+      [card.personId]: personCardSeenKey(card),
     },
   });
 }

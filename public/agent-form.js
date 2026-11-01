@@ -32,6 +32,7 @@ const AGENT_TOOL_GROUPS = [
       qq_wait_for_messages: "等待对方继续说完",
       qq_send_poke: "拍一拍",
       qq_react: "给消息贴表情回应",
+      qq_recall: "撤回自己刚发的消息",
       qq_forward_read: "展开合并转发",
       qq_forward_send: "发送合并转发",
       qq_cross_group_query: "查询已授权的跨群统计",
@@ -419,6 +420,30 @@ const agentForm = {
             { min: 1, max: 60, step: 1, unit: "次" },
           ) +
           '<p class="hint">默认关闭，还需在“聊天发言”里允许贴表情工具。只作用于当前会话的已知消息，使用标准 QQ 表情；计入总发送限速，不占用或恢复文字回复额度。收到别人给本角色消息贴的表情只记为观察，不触发回复。</p>',
+      ) +
+      advanced(
+        this.foldTitle(
+          "撤回自己消息",
+          row.behavior?.actions?.recall ? "已开启" : "已关闭",
+        ),
+        check(
+          "recallEnabled",
+          "允许撤回自己刚发的消息",
+          row.behavior?.actions?.recall,
+        ) +
+          range(
+            "recallWindowMs",
+            "撤回窗口",
+            row.behavior?.actions?.recallWindowMs ?? 110000,
+            { min: 1000, max: 110000, step: 1000, unit: "毫秒" },
+          ) +
+          range(
+            "recallMaxPerHour",
+            "每小时最多撤回",
+            row.behavior?.actions?.recallMaxPerHour ?? 3,
+            { min: 1, max: 60, step: 1, unit: "次" },
+          ) +
+          '<p class="hint">还需在聊天工具中允许“撤回自己刚发的消息”。只限本角色本会话已确认发送的消息；撤回计入总限速，不恢复文字回复额度。失败或未知结果不自动重试，原文保留并标注撤回。</p>',
       ) +
       advanced(
         this.foldTitle(
@@ -1101,6 +1126,21 @@ const agentForm = {
           reactMaxPerMinute: f.has("reactMaxPerMinute")
             ? Number(get("reactMaxPerMinute"))
             : (original.behavior?.actions?.reactMaxPerMinute ?? 3),
+          recall: f.has("recallWindowMs")
+            ? f.has("recallEnabled")
+            : original.behavior?.actions?.recall,
+          recallWindowMs: edited(
+            "recallWindowMs",
+            original.behavior?.actions?.recallWindowMs ?? 110000,
+            Number,
+            original.behavior?.actions?.recallWindowMs,
+          ),
+          recallMaxPerHour: edited(
+            "recallMaxPerHour",
+            original.behavior?.actions?.recallMaxPerHour ?? 3,
+            Number,
+            original.behavior?.actions?.recallMaxPerHour,
+          ),
         },
         toneCheck: {
           ...original.behavior?.toneCheck,

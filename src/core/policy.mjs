@@ -30,18 +30,21 @@ export const behaviorSchema = z
     maxSendPerHour: ms(1, 1000, 60),
     conversationMaxSendPerMinute: z.number().int().min(1).max(60).optional(),
     conversationMaxSendPerHour: z.number().int().min(1).max(1000).optional(),
+    actions: z
+      .object({
+        react: z.boolean().default(false),
+        reactMaxPerMinute: ms(1, 60, 3),
+        recall: z.boolean().default(false),
+        recallWindowMs: ms(1, 110000, 110000),
+        recallMaxPerHour: ms(1, 60, 3),
+      })
+      .strict()
+      .prefault({}),
     burstMax: ms(1, 10, 8),
     burstMinMs: ms(0, 10000, 1000),
     burstMaxMs: ms(0, 10000, 3000),
     longGapProbability: probability.default(0.2),
     longGapMs: ms(0, 30000, 8000),
-    actions: z
-      .object({
-        react: z.boolean().default(false),
-        reactMaxPerMinute: ms(1, 60, 3),
-      })
-      .strict()
-      .prefault({}),
     typing: z
       .object({
         enabled: z.boolean().default(true),
