@@ -203,3 +203,43 @@ test("chat and idle time both ask for views that hold under pushback and change 
     assert.match(p.instructions, /之前为什么那么想/);
   }
 });
+
+test("chat tone protocol rebuilds an old stable contract once without editing Self", async (t) => {
+  const { createHash } = await import("node:crypto");
+  const cfg = config(1);
+  cfg.agents[0].contextPolicy.capacityTokens = 65536;
+  cfg.agents[0].persona = "喜欢慢慢说话。\n\n说话样本：\n嗯，刚看到";
+  const captured = [];
+  const { runtime, store } = fixture(t, {
+    cfg,
+    run: async (p) => {
+      captured.push(p);
+      p.saveSession({ id: "tone-fixture", backend: "fixture" });
+    },
+  });
+  await runtime.wake("agent-0", "group:20000");
+  const mem = store.bind("agent-0"),
+    state = mem.state("group:20000");
+  assert.match(captured[0].instructions, /Self 的说话样本/);
+  assert.match(captured[0].instructions, /闲聊通常一两句/);
+  assert.match(captured[0].instructions, /不必每条都以问题结尾/);
+  const old = captured[0].instructions
+    .split("\n")
+    .filter((line) => !line.startsWith("QQ 聊天按当前 Self"))
+    .join("\n");
+  mem.setState("group:20000", {
+    ...state,
+    loadedInstructionsHash: createHash("sha256").update(old).digest("hex"),
+  });
+  await runtime.wake("agent-0", "group:20000");
+  await runtime.wake("agent-0", "group:20000");
+  assert.equal(captured[1].session, null);
+  assert.equal(captured[2].session.id, "tone-fixture");
+  assert.equal(mem.identity.history().length, 1);
+  const current = mem.identity.current();
+  mem.identity.initialize(
+    { ...runtime.agent("agent-0"), persona: "新模板\n\n说话样本：另外的句子" },
+    runtime.now(),
+  );
+  assert.deepEqual(mem.identity.current(), current);
+});
