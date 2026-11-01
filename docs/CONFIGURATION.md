@@ -223,6 +223,12 @@ QQ 掉线、自动重连用完次数时，管理台会显示，但主人在 QQ �
 
 **不发的情况**：没有填写主人 QQ（诊断 `OUTAGE_NOTICE_NO_OWNER`）；找不到可以代发的角色（`OUTAGE_NOTICE_NO_SENDER`），例如实例里只有一个角色、其他角色的 QQ 也掉了或都暂停了，或者主人不在它们的私聊白名单里。只有一个角色的实例因此不会发送这类提示。
 
+## 人物卡的相处档位
+
+在人物卡编辑中选择“相处档位”：自动计算，或固定为陌生 / 认识 / 熟 / 很熟。固定值保存在本角色 `person_notes.value` 的可选 `closeness.override` 字段中，角色后续更新称呼与印象会保留它；切回自动会清除固定值和旧缓存后重算。管理 API 沿用 `POST /api/person-card` 的 `action: "edit"` 和 `expectedRevision`，`closenessOverride` 接受这四个中文档位，`null` 表示恢复自动，省略表示保留当前设置；只有管理员可修改固定值。
+
+自动缓存为 `closeness` 的 `tier` / `at` 等可选字段，有效期 24 小时；旧人物卡无此字段时按需计算。缓存不改变人物卡正文或 Self，不授予 QQ 发送/主动联系/外部访问权限。分数、半衰期、阈值与群聊指向规则见[功能说明](FEATURES.md#沉默留白与相处档位)。
+
 ## 作息与忙闲（behavior.rhythm）
 
 在管理台「作息」的「唤醒与回复节奏 → 作息与慢回复」中按角色开启。默认关闭，旧配置继续使用原唤醒时机；开启后只会推迟普通唤醒，不增加回复额度。`timezone` 留空时跟随 `behavior.proactive.timezone`。

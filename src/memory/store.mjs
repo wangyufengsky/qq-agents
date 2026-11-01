@@ -1,3 +1,4 @@
+import { withoutClosenessCache } from "../core/closeness.mjs";
 import { recallAnnotation } from "./recalls.mjs";
 import fs from "node:fs";
 import { Corrections } from "./corrections.mjs";
@@ -1196,6 +1197,10 @@ class AgentMemory {
           `SELECT * FROM ${name} WHERE agent_id=?${name === "events" ? " ORDER BY seq" : name === "moods" ? " ORDER BY rowid" : ""}`,
         )
         .all(this.agentId);
+    tables.person_notes = tables.person_notes.map((row) => ({
+      ...row,
+      value: json(withoutClosenessCache(parse(row.value))),
+    }));
     tables.diary_revisions = this.db
       .prepare(
         "SELECT r.* FROM diary_revisions r JOIN diaries d ON d.id=r.id WHERE d.agent_id=?",

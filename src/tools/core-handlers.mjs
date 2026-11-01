@@ -1,3 +1,4 @@
+import { personCloseness } from "../core/closeness.mjs";
 import { recallMessage } from "../core/message-recall.mjs";
 import { deliveryPage } from "../core/chat-context.mjs";
 import { githubMarker, privateGithubSources } from "../github/policy.mjs";
@@ -146,7 +147,19 @@ async function handle_qq_send(runtime, ctx, args, name) {
   // Someone addressed before they spoke here has not had their card shown.
   // It comes once with the receipt, so the rest of the turn can use it.
   const mem = runtime.memory.bind(ctx.agentId),
-    card = mem.identity.personCard(args.atUserId);
+    saved = mem.identity.personCard(args.atUserId),
+    card = saved
+      ? {
+          ...saved,
+          closeness: personCloseness(
+            mem,
+            saved.personId,
+            runtime.now(),
+            runtime.connection(runtime.agent(ctx.agentId).connectionId)
+              .accountId,
+          ),
+        }
+      : null;
   if (
     !card ||
     // The same seen key as person-cards.mjs: this card, at this revision.
@@ -161,6 +174,7 @@ async function handle_qq_send(runtime, ctx, args, name) {
       personId: card.personId,
       call: card.call,
       impression: card.body,
+      closeness: card.closeness,
       ...(card.recalledEvidence?.length
         ? { recalledEvidence: card.recalledEvidence }
         : {}),

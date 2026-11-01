@@ -566,6 +566,7 @@ export class ContextLifecycle {
         ? null
         : personCardsForTurn(m, ctx.conversation, history.items, {
             fresh: ctx.initialSession,
+            now: r.now(),
             accountId: r.connection(a.connectionId).accountId,
           });
     const between =

@@ -2,6 +2,7 @@
 // A model session meets a person card once: when that person first comes up
 // there, and again only after the card changes. A new session starts with
 // none seen, so a card never repeats turn after turn.
+import { personCloseness } from "./closeness.mjs";
 import { resolveMessage, scopeFor } from "../memory/message-ids.mjs";
 
 const MAX_CARDS_PER_TURN = 10;
@@ -10,19 +11,22 @@ const QQ = /^\d{5,12}$/;
 // only when an archived message kept no segments.
 const MENTION = /\[提及 QQ:(\d{5,12})\]/g;
 const QUOTE = /\[引用:([^\]\s]{1,128})\]/g;
-// Source withdrawal changes the projection without revising the impression.
+// Source withdrawal and derived familiarity can change without a new card revision.
 // Show that update once, then retain the same quiet card behavior.
 /** @param {any} card */
-export const personCardSeenKey = (card) =>
-  `${card.id}:${card.revision}${
-    card.recalledEvidence?.length
-      ? ":recalled:" +
-        card.recalledEvidence
-          .map((/** @type {any} */ source) => source.recalled.eventId)
-          .sort()
-          .join(",")
-      : ""
-  }`;
+export const personCardSeenKey = (card) => {
+  const recalled = (card.recalledEvidence || [])
+    .map((/** @type {any} */ source) => source.recalled.eventId)
+    .sort()
+    .join(",");
+  const relationship = card.closeness
+    ? ":closeness:" +
+      card.closeness.tier +
+      ":" +
+      (card.closeness.overridden ? "fixed" : "auto")
+    : "";
+  return `${card.id}:${card.revision}${recalled ? ":recalled:" + recalled : ""}${relationship}`;
+};
 
 /** @param {any} event An archived events row. */
 export function references(event) {
@@ -89,7 +93,7 @@ function lastName(memory, id) {
  * @param {any} memory Bound agent memory.
  * @param {string} conversation
  * @param {any[]} items Records this turn shows the model.
- * @param {{fresh: boolean, accountId: string}} options
+ * @param {{fresh: boolean, accountId: string, now?: number}} options
  */
 export function personCardsForTurn(memory, conversation, items, options) {
   const shown = options.fresh
@@ -104,6 +108,13 @@ export function personCardsForTurn(memory, conversation, items, options) {
   )) {
     if (cards.length >= MAX_CARDS_PER_TURN) break;
     const card = memory.identity.personCard(id);
+    if (card)
+      card.closeness = personCloseness(
+        memory,
+        id,
+        options.now ?? Date.now(),
+        options.accountId,
+      );
     if (!card || shown[id] === personCardSeenKey(card)) continue;
     const nickname = lastName(memory, id);
     cards.push({
@@ -111,6 +122,7 @@ export function personCardsForTurn(memory, conversation, items, options) {
       ...(nickname ? { nickname } : {}),
       call: card.call,
       impression: card.body,
+      closeness: card.closeness,
       ...(card.recalledEvidence?.length
         ? { recalledEvidence: card.recalledEvidence }
         : {}),

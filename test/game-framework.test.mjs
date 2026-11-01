@@ -10,11 +10,18 @@ import { createGameHttp } from "../src/games/core/http.mjs";
 import { renderGame } from "../src/games/framework/page.mjs";
 import { buildChildEnv } from "../src/core/child-env.mjs";
 
-function setup(t, run = async () => {}) {
+function setup(t, run = async () => {}, { realClock = false } = {}) {
   const cfg = config(1);
   cfg.games.enabled = true;
   cfg.agents[0].games.enabled = true;
   const f = fixture(t, { cfg, run });
+  // In-process fixtures have no host tick to renew the source access lease.
+  // Keep authorization independent of disk/runner speed; deadline tests advance
+  // their own clock, while real game children must share the wall clock.
+  if (!realClock) {
+    const now = f.runtime.now();
+    f.runtime.now = () => now;
+  }
   f.runtime.games = new GameHost(f.runtime, { launch: false });
   const h = f.runtime.games;
   h.ensure();
@@ -617,9 +624,6 @@ test("external verification is tied to the current entry boot and never inferred
 
 test("private QQ confirmation binds the private source without granting another browser", async (t) => {
   const f = setup(t);
-  // This fixture has no host tick; confirmation must not depend on disk or runner speed.
-  const now = f.runtime.now();
-  f.runtime.now = () => now;
   const { roomId } = await create(f),
     room = f.k.store.room(roomId),
     actor = f.k.actor(room.owner),
@@ -665,7 +669,7 @@ test("private QQ confirmation binds the private source without granting another 
 });
 
 test("separate game process starts with only game routes and stops on bridge close", async (t) => {
-  const f = setup(t);
+  const f = setup(t, undefined, { realClock: true });
   await f.h.close();
   const probe = http.createServer();
   await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
@@ -1206,9 +1210,6 @@ test("public admission never opens a write transaction and still enforces immedi
 
 test("new-room throttling is shared across senders in one source conversation", async (t) => {
   const f = setup(t);
-  // No host tick renews this fixture's lease; throttling must not depend on disk speed.
-  const now = f.runtime.now();
-  f.runtime.now = () => now;
   const first = await create(f, "group:20000", "30000");
   const second = await create(f, "group:20000", "30001");
   const third = await create(f, "group:20000", "30002");
@@ -1268,9 +1269,6 @@ test("recovery proves unsubmitted attempts, preserves unknown evidence and fence
 
 test("terminal failures allow only one automatic retry and game tick failure does not stop chat scheduling", async (t) => {
   const f = setup(t);
-  // Lease expiry has its own test; retry semantics must not depend on runner speed.
-  const now = f.runtime.now();
-  f.runtime.now = () => now;
   const { id } = await decision(f);
   f.h.jobs.receive(id);
   for (let i = 0; i < 2; i++) {
@@ -1366,7 +1364,7 @@ test("owner retries have a durable three-attempt ceiling including automatic att
 });
 
 test("unexpected game child exit exposes only stable diagnostics and numeric exit details", async (t) => {
-  const f = setup(t);
+  const f = setup(t, undefined, { realClock: true });
   await f.h.close();
   const probe = http.createServer();
   await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
@@ -1494,11 +1492,19 @@ test("group confirmation keeps group revocation and private admission boundaries
 });
 
 test("real game child preserves a bounded owner retry rejection through IPC and HTTP", async (t) => {
-  const f = setup(t),
-    { id, roomId } = await decision(f);
+  const f = setup(t, undefined, { realClock: true }),
+    { roomId } = await create(f);
+  // Real-clock preparation and child startup can outlive the lease without a host tick.
+  // Revalidate the existing source at each handoff rather than extending its deadline.
+  f.h.refreshAccess(roomId);
   const session = join(f, roomId);
+  act(f, roomId, "room.start");
+  f.h.refreshAccess(roomId);
+  act(f, roomId, "game.place", { x: 7, y: 7 });
+  const id = f.k.store.room(roomId).decision.decisionId;
   f.h.jobs.receive(id);
   for (let i = 0; i < 3; i++) {
+    f.h.refreshAccess(roomId);
     const run = f.h.jobs.claim(id, "worker", "ipc-attempt-" + i);
     f.h.jobs.settle(run, { terminal: true });
   }
@@ -1517,6 +1523,7 @@ test("real game child preserves a bounded owner retry rejection through IPC and 
     });
     host.child.once("error", reject);
   });
+  host.refreshAccess(roomId);
   const origin = `http://127.0.0.1:${f.runtime.config.games.port}`;
   const response = await fetch(`${origin}/rooms/${roomId}/retry`, {
     method: "POST",
@@ -1546,6 +1553,7 @@ test("source authorization expires at its deadline until the host refreshes it",
   join(f, roomId);
   const actor = f.k.actor(f.k.store.room(roomId).owner);
   const deadline = f.h.source(roomId).accessUntil;
+  assert.equal(deadline, now + 3000);
   now = deadline - 1;
   assert.equal(f.k.view(roomId, actor).roomId, roomId);
   now = deadline;

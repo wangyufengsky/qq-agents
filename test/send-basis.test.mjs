@@ -186,11 +186,12 @@ test("qq_send brings the card of someone addressed before they spoke, once per v
     personId: "30000",
     call: "阿明",
     impression: "说话很直的老朋友",
+    closeness: { tier: "陌生", at: c.updatedAt, overridden: false },
     revision: 1,
   });
   assert.equal(
     f.m.state(group).personCardsShown["30000"],
-    `${c.id}:1`,
+    `${c.id}:1:closeness:陌生:auto`,
     "later turns of this session know it",
   );
   const second = await f.tool(ctx, {
