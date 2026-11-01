@@ -223,11 +223,11 @@ QQ 掉线、自动重连用完次数时，管理台会显示，但主人在 QQ �
 
 **不发的情况**：没有填写主人 QQ（诊断 `OUTAGE_NOTICE_NO_OWNER`）；找不到可以代发的角色（`OUTAGE_NOTICE_NO_SENDER`），例如实例里只有一个角色、其他角色的 QQ 也掉了或都暂停了，或者主人不在它们的私聊白名单里。只有一个角色的实例因此不会发送这类提示。
 
-## 人物卡的相处档位
+## 人物卡的相处远近说明
 
-在人物卡编辑中选择“相处档位”：自动计算，或固定为陌生 / 认识 / 熟 / 很熟。固定值保存在本角色 `person_notes.value` 的可选 `closeness.override` 字段中，角色后续更新称呼与印象会保留它；切回自动会清除固定值和旧缓存后重算。管理 API 沿用 `POST /api/person-card` 的 `action: "edit"` 和 `expectedRevision`，`closenessOverride` 接受这四个中文档位，`null` 表示恢复自动，省略表示保留当前设置；只有管理员可修改固定值。
+在人物卡编辑中选择“管理员说明的相处远近”：不说明（由角色自己判断），或陌生 / 认识 / 熟 / 很熟。程序不会自动计算这个值；它是管理员写下的说明，保存在本角色 `person_notes.value` 的可选 `closeness.override` 字段中，模型看到的是 `adminCloseness`。角色后续更新称呼与印象会保留它。管理 API 沿用 `POST /api/person-card` 的 `action: "edit"` 和 `expectedRevision`，`closenessOverride` 接受这四个中文值，`null` 表示不再说明，省略表示保留当前设置；只有管理员可修改。
 
-自动缓存为 `closeness` 的 `tier` / `at` 等可选字段，有效期 24 小时；旧人物卡无此字段时按需计算。缓存不改变人物卡正文或 Self，不授予 QQ 发送/主动联系/外部访问权限。分数、半衰期、阈值与群聊指向规则见[功能说明](FEATURES.md#沉默留白与相处档位)。
+人物卡另附程序统计的最近 30 天直接来往事实 `interaction`，只在进程内存中缓存 10 分钟，不写回人物卡。早期版本写入 `closeness` 的 `tier` / `at` / `accountId` 派生缓存会被忽略，不再显示给模型或管理台，导出时去掉。统计口径见[功能说明](FEATURES.md#沉默留白与来往事实)。
 
 ## 作息与忙闲（behavior.rhythm）
 

@@ -53,7 +53,7 @@ export function stableInstructions(
     options.backendType === "dsh"
       ? "本后端通过 mcp__qq-unified__bridge_tools 发现本回合允许的工具，按 names 取所需 schema，再用 mcp__qq-unified__bridge_call(name, arguments) 执行短名工具。只有这两个入口的外层参数携带本回合 context；arguments 按发现的 schema 填写。发现结果不是授权，执行时仍会校验。"
       : "本后端直接调用当前目录的工具，参数以 schema 为准；回合身份由程序绑定。",
-    "人物卡和空闲素材中的 closeness.tier 是程序计算的相处档位，只影响称呼、语气的随意程度和想起人的顺序，不改变权限、白名单、冷却或预算，也不是对人的评价。不把这个档位写进 Self 或作为聊天正文向对方报分。",
+    "人物卡和空闲素材里的 interaction 是程序统计的最近 30 天直接来往事实：来回次数、各自先开口的次数、最近一次直接来往的时间。它只是事实，不是关系结论；和谁亲近、称呼和语气多随意，由你根据聊天原文、人物卡印象和自己的感受判断，来往少或一阵没联系不等于生疏。adminCloseness 是管理员明确写下的相处远近，出现时作为管理员的说明参考。这些都不改变权限、白名单、冷却或预算，不写进 Self，也不向对方报数。",
     subject
       ? [
           "这是你的空闲时间，大约每小时一次，属于你自己，不是值班检查。",

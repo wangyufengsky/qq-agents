@@ -2,7 +2,7 @@
 // A model session meets a person card once: when that person first comes up
 // there, and again only after the card changes. A new session starts with
 // none seen, so a card never repeats turn after turn.
-import { personCloseness } from "./closeness.mjs";
+import { adminCloseness, personInteraction } from "./closeness.mjs";
 import { resolveMessage, scopeFor } from "../memory/message-ids.mjs";
 
 const MAX_CARDS_PER_TURN = 10;
@@ -11,7 +11,7 @@ const QQ = /^\d{5,12}$/;
 // only when an archived message kept no segments.
 const MENTION = /\[提及 QQ:(\d{5,12})\]/g;
 const QUOTE = /\[引用:([^\]\s]{1,128})\]/g;
-// Source withdrawal and derived familiarity can change without a new card revision.
+// Source withdrawal and an administrator closeness can change without a new card revision.
 // Show that update once, then retain the same quiet card behavior.
 /** @param {any} card */
 export const personCardSeenKey = (card) => {
@@ -19,12 +19,10 @@ export const personCardSeenKey = (card) => {
     .map((/** @type {any} */ source) => source.recalled.eventId)
     .sort()
     .join(",");
-  const relationship = card.closeness
-    ? ":closeness:" +
-      card.closeness.tier +
-      ":" +
-      (card.closeness.overridden ? "fixed" : "auto")
-    : "";
+  // Contact counts move every day and are not a reason to show a card again;
+  // an administrator's statement is.
+  const admin = card.adminCloseness ?? adminCloseness(card);
+  const relationship = admin ? ":admin-closeness:" + admin : "";
   return `${card.id}:${card.revision}${recalled ? ":recalled:" + recalled : ""}${relationship}`;
 };
 
@@ -108,21 +106,21 @@ export function personCardsForTurn(memory, conversation, items, options) {
   )) {
     if (cards.length >= MAX_CARDS_PER_TURN) break;
     const card = memory.identity.personCard(id);
-    if (card)
-      card.closeness = personCloseness(
-        memory,
-        id,
-        options.now ?? Date.now(),
-        options.accountId,
-      );
     if (!card || shown[id] === personCardSeenKey(card)) continue;
+    const admin = adminCloseness(card);
     const nickname = lastName(memory, id);
     cards.push({
       personId: card.personId,
       ...(nickname ? { nickname } : {}),
       call: card.call,
       impression: card.body,
-      closeness: card.closeness,
+      interaction: personInteraction(
+        memory,
+        id,
+        options.now ?? Date.now(),
+        options.accountId,
+      ),
+      ...(admin ? { adminCloseness: admin } : {}),
       ...(card.recalledEvidence?.length
         ? { recalledEvidence: card.recalledEvidence }
         : {}),

@@ -296,7 +296,7 @@ test("positive silence and derived familiarity update the protocol once without 
     state = memory.state("group:20000"),
     self = memory.identity.current();
   const old = instruction.replace(
-    /人物卡和空闲素材中的 closeness\.tier[^\n]*/g,
+    /人物卡和空闲素材里的 interaction[^\n]*/g,
     "旧聊天协议",
   );
   memory.setState("group:20000", {

@@ -1,4 +1,4 @@
-import { personCloseness } from "../core/closeness.mjs";
+import { withInteraction } from "../core/closeness.mjs";
 import { recallMessage } from "../core/message-recall.mjs";
 import { deliveryPage } from "../core/chat-context.mjs";
 import { githubMarker, privateGithubSources } from "../github/policy.mjs";
@@ -149,16 +149,12 @@ async function handle_qq_send(runtime, ctx, args, name) {
   const mem = runtime.memory.bind(ctx.agentId),
     saved = mem.identity.personCard(args.atUserId),
     card = saved
-      ? {
-          ...saved,
-          closeness: personCloseness(
-            mem,
-            saved.personId,
-            runtime.now(),
-            runtime.connection(runtime.agent(ctx.agentId).connectionId)
-              .accountId,
-          ),
-        }
+      ? withInteraction(
+          mem,
+          saved,
+          runtime.now(),
+          runtime.connection(runtime.agent(ctx.agentId).connectionId).accountId,
+        )
       : null;
   if (
     !card ||
@@ -174,7 +170,8 @@ async function handle_qq_send(runtime, ctx, args, name) {
       personId: card.personId,
       call: card.call,
       impression: card.body,
-      closeness: card.closeness,
+      interaction: card.interaction,
+      ...(card.adminCloseness ? { adminCloseness: card.adminCloseness } : {}),
       ...(card.recalledEvidence?.length
         ? { recalledEvidence: card.recalledEvidence }
         : {}),
