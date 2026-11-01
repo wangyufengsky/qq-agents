@@ -127,7 +127,15 @@ test("group join requires the exact QQ sender and source; confirmation secrets a
     () => f.h.identity.exchange(roomId, proof.bindingId, browser),
     /JOIN_UNCONFIRMED/,
   );
-  await f.runtime.ingestEvent("qq-0", message(3, 30000));
+  await f.runtime.ingestEvent(
+    "qq-0",
+    raw(3, {
+      user_id: 30000,
+      message_type: "private",
+      group_id: undefined,
+      message: [{ type: "text", data: { text: body } }],
+    }),
+  );
   const session = f.h.identity.exchange(
     roomId,
     proof.bindingId,
@@ -1015,7 +1023,23 @@ test("QQ confirmation rejection replies reveal no challenge and normalize fullwi
   let sent = JSON.stringify(f.runtime.transports.get("qq-0").sent);
   assert.match(sent, /仅限原游戏发起人/);
   assert.equal(sent.includes(proof.challenge), false);
-  await send(7002, 30000, body.replaceAll(" ", "　"));
+  await send(7003, 30000, body);
+  assert.equal(
+    JSON.stringify(f.runtime.transports.get("qq-0").sent).includes(
+      "游戏网页验证码",
+    ),
+    false,
+  );
+  await f.runtime.ingestEvent(
+    "qq-0",
+    raw(7002, {
+      user_id: 30000,
+      message_type: "private",
+      group_id: undefined,
+      message: [{ type: "text", data: { text: body.replaceAll(" ", "　") } }],
+    }),
+  );
+  await Promise.all([...f.runtime.jobs]);
   assert.match(
     JSON.stringify(f.runtime.transports.get("qq-0").sent),
     /游戏网页验证码/,
@@ -1026,4 +1050,46 @@ test("QQ confirmation rejection replies reveal no challenge and normalize fullwi
     ).includes(proof.challenge),
     false,
   );
+});
+
+test("group confirmation keeps group revocation and private admission boundaries", async (t) => {
+  const f = setup(t),
+    { roomId } = await create(f, "group:20000"),
+    proof = f.h.identity.requestPublic(roomId, secret());
+  const text = `确认游戏 ${roomId} ${proof.bindingId} ${proof.challenge}`;
+  const send = async (id, privateMessage) => {
+    await f.runtime.ingestEvent(
+      "qq-0",
+      raw(id, {
+        self_id: Number(f.runtime.connection("qq-0").accountId),
+        user_id: 30000,
+        group_id: privateMessage ? undefined : 20000,
+        message_type: privateMessage ? "private" : "group",
+        message: [{ type: "text", data: { text } }],
+      }),
+    );
+    await Promise.all([...f.runtime.jobs]);
+  };
+  const agent = f.runtime.config.agents[0];
+  agent.allow.groups = [];
+  await send(7101, true);
+  assert.equal(f.h.identity.load(roomId, proof.bindingId).confirmed, false);
+  assert.equal(
+    JSON.stringify(f.runtime.transports.get("qq-0").sent).includes(
+      "游戏网页验证码",
+    ),
+    false,
+  );
+  agent.allow.groups = ["20000"];
+  agent.allow.users = [];
+  await send(7102, false);
+  assert.match(
+    JSON.stringify(f.runtime.transports.get("qq-0").sent),
+    /私聊准入、暂停或静默设置阻止确认/,
+  );
+  assert.equal(f.h.identity.load(roomId, proof.bindingId).confirmed, false);
+  agent.allow.users = ["30000"];
+  f.runtime.connection("qq-0").accountId = "10002";
+  await send(7103, true);
+  assert.equal(f.h.identity.load(roomId, proof.bindingId).confirmed, false);
 });

@@ -507,10 +507,19 @@ export class GameHost {
       try {
         const source = this.source(match[1]);
         if (
+          source.group &&
+          source.senderId === e.senderId &&
+          source.conversation === e.conversation &&
+          this.runtime.blockers(a, "private:" + source.senderId).length
+        )
+          fail("BINDING_PRIVATE_UNAVAILABLE", 403);
+        if (
           this.permission(source) ||
           source.agentId !== a.id ||
           source.connectionId !== a.connectionId ||
-          source.conversation !== e.conversation ||
+          (source.group
+            ? e.conversation !== "private:" + source.senderId
+            : source.conversation !== e.conversation) ||
           source.senderId !== e.senderId
         )
           fail("BINDING_SOURCE_DENIED", 403);
@@ -543,12 +552,16 @@ export class GameHost {
         );
       } catch (error) {
         const message =
-          error instanceof Error && error.message === "BINDING_SOURCE_DENIED"
-            ? "游戏身份确认失败：仅限原游戏发起人在原 QQ 会话确认。"
+          error instanceof Error &&
+          error.message === "BINDING_PRIVATE_UNAVAILABLE"
+            ? "游戏身份确认暂不可用：原发起人的私聊准入、暂停或静默设置阻止确认，请联系部署者检查；群内不会发送验证码。"
             : error instanceof Error &&
-                error.message === "INVITATION_UNAVAILABLE"
-              ? "游戏身份确认已过期或失效，请在原 QQ 会话发送：重新加入游戏 <房间编号>。"
-              : "游戏身份确认无效或已使用，请核对本人网页，必要时重新加入游戏。";
+                error.message === "BINDING_SOURCE_DENIED"
+              ? "游戏身份确认失败：仅限原游戏发起人确认；群游戏请将本人网页口令私聊原角色，验证码不在群内发送。"
+              : error instanceof Error &&
+                  error.message === "INVITATION_UNAVAILABLE"
+                ? "游戏身份确认已过期或失效，请在原 QQ 会话发送：重新加入游戏 <房间编号>。"
+                : "游戏身份确认无效或已使用，请核对本人网页，必要时重新加入游戏。";
         this.runtime.trackJob(
           this.runtime.withContext(
             a.id,

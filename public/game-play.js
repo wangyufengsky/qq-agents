@@ -31,6 +31,10 @@
     messages[error.message] || "请求暂未完成，请稍后同步";
   const executionText = (value) =>
     ({
+      model_failed: "模型执行失败",
+      delivery_failed: "任务投递失败",
+      outcome_unknown: "结果未知，禁止再次执行",
+      abandoned: "已停止，保留未确认记录",
       queued: "排队中",
       running: "思考中",
       succeeded: "已完成",
@@ -52,7 +56,9 @@
     storageReady = true,
     fresh = false,
     failures = 0,
-    timer = null;
+    timer = null,
+    epoch = 0,
+    polling = false;
   try {
     pending = JSON.parse(sessionStorage.getItem(key) || "null");
     sessionStorage.setItem(`${key}:probe`, "1");
@@ -213,9 +219,12 @@
       throw Error("LOCAL_STORAGE_UNAVAILABLE");
     }
   }
-  async function sync() {
+  async function sync(background = false) {
+    const started = epoch,
+      current = () => !background || started === epoch;
     try {
       const next = await request("/view");
+      if (!current()) return;
       if (snapshot && next.revision < snapshot.revision) return;
       if (snapshot?.revision !== next.revision) clearSelection();
       if (pending && pending.viewer !== next.viewer) forgetPending();
@@ -226,19 +235,26 @@
       if (pending) {
         try {
           const receipt = await request(`/actions/${pending.request.actionId}`);
-          if (receipt.revision > snapshot.revision)
-            snapshot = await request("/view");
+          if (!current()) return;
+          if (receipt.revision > snapshot.revision) {
+            const updated = await request("/view");
+            if (!current()) return;
+            if (updated.revision >= snapshot.revision) snapshot = updated;
+          }
           forgetPending();
           clearSelection();
           status("操作已确认。");
         } catch (error) {
+          if (!current()) return;
           if (error.message !== "ACTION_UNCONFIRMED") throw error;
         }
       }
+      if (!current()) return;
       fresh = true;
       failures = 0;
       render();
     } catch (error) {
+      if (!current()) return;
       clearSelection();
       fresh = false;
       failures = Math.min(5, failures + 1);
@@ -248,6 +264,7 @@
   async function exclusive(fn) {
     if (busy) return false;
     busy = true;
+    epoch++;
     render();
     try {
       await fn();
@@ -316,11 +333,11 @@
   function showBinding() {
     $("binding").hidden = false;
     $("binding").textContent =
-      `请回原 QQ 会话发送：确认游戏 ${roomId} ${binding.bindingId} ${binding.challenge}`;
+      `请私聊原 QQ 角色发送（群游戏也须私聊）：确认游戏 ${roomId} ${binding.bindingId} ${binding.challenge}`;
     $("exchange").hidden = false;
     $("code-label").hidden = false;
     status(
-      "只发送你本人网页显示的口令。收到 QQ 回执后，在这里输入8位验证码再继续加入。",
+      "只在私聊原角色时发送本人网页口令；群游戏也须私聊；若私聊无回应，请联系部署者检查私聊准入、暂停或静默设置。收到 QQ 回执后，在这里输入8位验证码再继续加入。",
     );
   }
   async function joined() {
@@ -426,7 +443,20 @@
     if (document.hidden || !sessionEstablished) return;
     timer = setTimeout(
       async () => {
-        if (!busy) await exclusive(sync);
+        if (!busy && !polling) {
+          polling = true;
+          const started = epoch;
+          try {
+            await sync(true);
+          } catch (error) {
+            if (started === epoch) {
+              status(errorText(error));
+              render();
+            }
+          } finally {
+            polling = false;
+          }
+        }
         schedule();
       },
       Math.min(25000, 2500 * 2 ** failures) * (0.8 + Math.random() * 0.4),
