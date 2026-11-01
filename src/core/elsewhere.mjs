@@ -1,7 +1,113 @@
 // @ts-check
-import { interactionEvents } from "./closeness.mjs";
-import { peopleInTurn } from "./person-cards.mjs";
+import { interactionEvents, sentLedger } from "./closeness.mjs";
+import { peopleInTurn, quotedSender } from "./person-cards.mjs";
 import { recallBoundary } from "./recall-boundary.mjs";
+
+const WORDS_PER_CHAT = 3;
+const WORDS_PER_TURN = 8;
+const EXCERPT_CHARS = 80;
+
+/** Whom one of the agent's own messages was addressed to, only when the
+ * message itself says so: an at or a reply. Never inferred from timing.
+ * @param {any} memory @param {any} row @param {any} payload */
+function addressees(memory, row, payload) {
+  const to = new Set();
+  if (payload.atUserId != null) to.add(String(payload.atUserId));
+  for (const s of Array.isArray(payload.segments) ? payload.segments : [])
+    if (s?.type === "at" && s.data?.qq != null) to.add(String(s.data.qq));
+  if (payload.replyTo != null) {
+    const sender = quotedSender(memory.db, row, String(payload.replyTo));
+    if (sender) to.add(String(sender));
+  }
+  return [...to];
+}
+
+/**
+ * The agent's own confirmed words in other chats that this model session has
+ * not yet been told about. A session starts from the agent's last confirmed
+ * message in this chat, so it hears what it said elsewhere since it last
+ * spoke here; afterwards only newer words appear.
+ * @param {any} runtime @param {any} ctx @param {any} memory @param {any} boundary
+ * @param {{fresh: boolean, now: number, lookbackMs: number}} options */
+function ownWords(runtime, ctx, memory, boundary, { fresh, now, lookbackMs }) {
+  const sent =
+    "agent_id=? AND kind='message.sent' AND direction='out' AND status='confirmed'";
+  let through = fresh
+    ? undefined
+    : memory.state(ctx.conversation).elsewhereWordsThroughSeq;
+  if (!Number.isInteger(through))
+    through =
+      memory.db
+        .prepare(
+          `SELECT MAX(seq) AS seq FROM events WHERE ${sent} AND conversation=?`,
+        )
+        .get(ctx.agentId, ctx.conversation).seq || 0;
+  const rows = memory.db
+    .prepare(
+      `SELECT * FROM events WHERE ${sent} AND seq>? AND occurred_at>=? AND occurred_at<=? AND conversation<>? AND (conversation LIKE 'group:%' OR conversation LIKE 'private:%') ORDER BY seq DESC`,
+    )
+    .all(
+      ctx.agentId,
+      through,
+      new Date(now - lookbackMs).toISOString(),
+      new Date(now).toISOString(),
+      ctx.conversation,
+    );
+  const items = [],
+    /** @type {Record<string, number>} */ more = {},
+    perChat = new Map(),
+    privateChats = new Set();
+  let privateMessages = 0,
+    latest = through;
+  for (const row of rows) {
+    const payload = JSON.parse(row.payload || "{}");
+    if (
+      payload.protectedOperations ||
+      payload.protectedRepositories?.length ||
+      !boundary.allowed({ ...row, payload }) ||
+      !sentLedger(memory, row)
+    )
+      continue;
+    latest = Math.max(latest, row.seq);
+    // Words said in someone's private chat stay there: not the text, and not
+    // whose chat it was, only that some were said.
+    if (row.conversation.startsWith("private:")) {
+      privateMessages++;
+      privateChats.add(row.conversation);
+      continue;
+    }
+    const count = perChat.get(row.conversation) || 0;
+    if (count >= WORDS_PER_CHAT || items.length >= WORDS_PER_TURN) {
+      more[row.conversation] = (more[row.conversation] || 0) + 1;
+      continue;
+    }
+    perChat.set(row.conversation, count + 1);
+    const text = [...(row.body || "")];
+    const to = addressees(memory, row, payload);
+    items.push({
+      where: row.conversation,
+      at: row.occurred_at,
+      to: to.length ? to : "unclear",
+      excerpt: text.slice(0, EXCERPT_CHARS).join(""),
+      ...(text.length > EXCERPT_CHARS ? { truncated: true } : {}),
+      continuation: { tool: "memory_read", id: row.id },
+      seq: row.seq,
+    });
+  }
+  return {
+    items: items.reverse().map(({ seq: _seq, ...item }) => item),
+    more,
+    ...(privateMessages
+      ? {
+          otherPrivate: {
+            messages: privateMessages,
+            chats: privateChats.size,
+          },
+        }
+      : {}),
+    through: latest,
+  };
+}
 
 // This read-only projection never advances source chat watermarks.
 /** @param {any} runtime @param {any} ctx @param {any[]} historyItems
@@ -89,5 +195,10 @@ export function elsewhereForTurn(
     items.push(item);
     if (item.continuation.id === latestId) shown[item.personId] = latestId;
   }
-  return { items, more, shown };
+  const words = ownWords(runtime, ctx, memory, boundary, {
+    fresh,
+    now,
+    lookbackMs: config.ownLookbackMs ?? 86400000,
+  });
+  return { items, more, shown, words };
 }

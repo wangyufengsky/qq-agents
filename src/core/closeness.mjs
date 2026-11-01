@@ -83,7 +83,7 @@ export function interactionFacts(events, personId, now) {
 }
 
 /** @param {any} memory @param {any} row */
-function sentLedger(memory, row) {
+export function sentLedger(memory, row) {
   if (
     row?.kind !== "message.sent" ||
     row.direction !== "out" ||

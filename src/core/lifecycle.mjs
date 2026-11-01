@@ -44,6 +44,36 @@ import {
   recoverSessions,
 } from "./session-records.mjs";
 export const SUBJECT = "@subject";
+// One line for both parts of what happened elsewhere; empty parts are left out.
+function elsewhereLine(elsewhere) {
+  const withThem = elsewhere?.items.length,
+    words = elsewhere?.words,
+    own = words && (words.items.length || words.otherPrivate);
+  if (!withThem && !own) return "";
+  return `别处近况（程序统计的索引，不是完整原文；要用时按 continuation 回查。items 是本轮这些人和你在别处的直接来往，fromPrivate 是对方私聊里的事，不要在群里提起内容，除非对方先提。yourWords 是你自己最近在别的群里说过的话：to 只按 @ 和引用判断，unclear 表示没有明确对象，不要替自己猜；truncated 的摘录只是开头，涉及答应、承诺或结论时先回查上下文再认账；otherPrivate 只告诉你在别人私聊里也说过话，内容不在这里。其他会话的经历由你结合场合判断怎么用）：${JSON.stringify(
+    {
+      ...(withThem
+        ? {
+            items: elsewhere.items,
+            ...(Object.keys(elsewhere.more).length
+              ? { more: elsewhere.more }
+              : {}),
+          }
+        : {}),
+      ...(own
+        ? {
+            yourWords: {
+              items: words.items,
+              ...(Object.keys(words.more).length ? { more: words.more } : {}),
+              ...(words.otherPrivate
+                ? { otherPrivate: words.otherPrivate }
+                : {}),
+            },
+          }
+        : {}),
+    },
+  )}`;
+}
 // The initial prompt gives each record once. Sources already in the new
 // messages or the free-time logs, intents already in the handoff, and timed
 // tasks in the coming-up list are not repeated elsewhere.
@@ -535,6 +565,7 @@ export class ContextLifecycle {
         "personCardsShown",
         "personItemsShown",
         "elsewhereShown",
+        "elsewhereWordsThroughSeq",
         "scheduleShown",
         "moodShown",
       ].map((key) => [key, s[key]]),
@@ -625,7 +656,10 @@ export class ContextLifecycle {
       );
     }
     // Index metadata still carries source provenance, without marking it read.
-    for (const item of elsewhere?.items || [])
+    for (const item of [
+      ...(elsewhere?.items || []),
+      ...(elsewhere?.words.items || []),
+    ])
       ctx.privateRead.add(item.continuation.id);
     r.subject.trackForTurn(ctx);
     ctx.persistTaint?.();
@@ -672,9 +706,7 @@ export class ContextLifecycle {
       people?.cards.length
         ? `人物卡（你自己记下的称呼与印象，是看法不是事实；称呼按 call。来源和版本用 person_notes 按 personId 回查，更新前先读当前版本，再用 person_note 保存）：${JSON.stringify(chatPersonCards(people.cards))}`
         : "",
-      elsewhere?.items.length
-        ? `别处近况（程序按你自己参与的直接来往统计，只是索引，不是原文；要用时按 continuation 回查。fromPrivate 是对方私聊里的事，不要在群里提起内容，除非对方先提；其他会话的经历由你结合场合判断怎么用）：${JSON.stringify({ items: elsewhere.items, ...(Object.keys(elsewhere.more).length ? { more: elsewhere.more } : {}) })}`
-        : "",
+      elsewhereLine(elsewhere),
       between?.items.length
         ? `你和这些人之间还没了结的事（你自己用 person_item 记下的）：boundary 是对方的相处边界，照着调整；promise 是你答应对方的事，做到了就回来交代，做不成就坦白，交代后用 person_item 关掉；shared 是一起经历过的事，合适时自然接回来，不必硬提。fromPrivate 的记在别的私聊里，只用来调整你自己的做法，不要在这里提起内容。${JSON.stringify({ items: between.items, ...(Object.keys(between.more).length ? { more: between.more } : {}) })}`
         : "",
@@ -725,9 +757,12 @@ export class ContextLifecycle {
       lastTurnId: ctx.turnId,
       ...(people ? { personCardsShown: people.shown } : {}),
       ...(elsewhere
-        ? { elsewhereShown: elsewhere.shown }
+        ? {
+            elsewhereShown: elsewhere.shown,
+            elsewhereWordsThroughSeq: elsewhere.words.through,
+          }
         : ctx.initialSession && /^(group|private):/.test(ctx.conversation)
-          ? { elsewhereShown: {} }
+          ? { elsewhereShown: {}, elsewhereWordsThroughSeq: undefined }
           : {}),
       ...(between ? { personItemsShown: between.shown } : {}),
       ...(schedule ? { scheduleShown: schedule.shown } : {}),
@@ -762,6 +797,13 @@ export class ContextLifecycle {
               personId,
               revision,
             })),
+          }
+        : {}),
+      ...(elsewhere?.words.items.length
+        ? {
+            elsewhereWords: elsewhere.words.items.map(
+              ({ where, continuation }) => ({ where, id: continuation.id }),
+            ),
           }
         : {}),
       ...(elsewhere?.items.length

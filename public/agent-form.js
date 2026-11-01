@@ -277,7 +277,9 @@ const agentForm = {
       notices = row.behavior || {},
       on = (v) => (v ? "开" : "关"),
       elsewhereMinutes =
-        (row.behavior?.elsewhere?.windowMs ?? 21600000) / 60000;
+        (row.behavior?.elsewhere?.windowMs ?? 21600000) / 60000,
+      ownWordsMinutes =
+        (row.behavior?.elsewhere?.ownLookbackMs ?? 86400000) / 60000;
     const toolCount = row.tools.filter((t) => tools.includes(t)).length;
     return (
       '<div class="form-grid agent-form">' +
@@ -465,7 +467,13 @@ const agentForm = {
             step: 10,
             unit: "分钟",
           }) +
-          '<p class="hint">只给来源、时间、条数和回查入口，不带原文，不发送消息。只统计本角色亲自参与、已在原会话处理过的来往；对方私聊里的事在群里会提醒角色不要主动提起。不推进已读、不增加回复额度或权限；修改后从下一回合生效，不重建模型会话。</p>',
+          range(
+            "elsewhereOwnLookbackMinutes",
+            "自己在别处说的话最长回看",
+            ownWordsMinutes,
+            { min: 10, max: 1440, step: 10, unit: "分钟" },
+          ) +
+          '<p class="hint">两部分：一是本轮这些人和本角色在别处的直接来往，只给来源、时间、条数和回查入口；二是本角色自己最近在别的群里说过的话，给短摘录、对象（只按 @ 和引用判断）和截断标记，从上次在当前聊天发言之后开始，最长按上面的回看时间。在别人私聊里说的话只给条数，不给原文和对象。不发送消息、不推进已读、不增加回复额度或权限；修改后从下一回合生效，不重建模型会话。</p>',
       ) +
       advanced(
         this.foldTitle(
@@ -1178,6 +1186,12 @@ const agentForm = {
             (original.behavior?.elsewhere?.windowMs ?? 21600000) / 60000,
             (v) => Math.round(Number(v) * 60000),
             original.behavior?.elsewhere?.windowMs,
+          ),
+          ownLookbackMs: edited(
+            "elsewhereOwnLookbackMinutes",
+            (original.behavior?.elsewhere?.ownLookbackMs ?? 86400000) / 60000,
+            (v) => Math.round(Number(v) * 60000),
+            original.behavior?.elsewhere?.ownLookbackMs,
           ),
         },
         toneCheck: {
