@@ -550,3 +550,72 @@ for (const selected of [true, false])
     );
     assert.equal(ctx.sendCount, 0);
   });
+
+test("withdrawn evidence and cached familiarity share one card key and survive all read/write projections", async (t) => {
+  const { runtime, store } = fixture(t),
+    memory = store.bind("agent-0"),
+    agent = runtime.agent("agent-0");
+  agent.behavior.actions.recall = true;
+  agent.tools.push("qq_recall", "person_notes", "person_note");
+  runtime.transports.get("qq-0").recall = async () => ({ confirmed: true });
+  const ctx = context(runtime),
+    original = await runtime.send(ctx, {
+      requestId: "source",
+      text: "原始话语",
+    });
+  memory.identity.savePersonCard(
+    { personId: "30000", body: "原始印象", evidence: [original.recordId] },
+    { author: "admin", now: runtime.now() },
+  );
+  const conversation = "private:30000",
+    options = { fresh: false, accountId: "10000" };
+  const first = personCardsForTurn(memory, conversation, [], options);
+  memory.setState(conversation, { personCardsShown: first.shown });
+  assert.equal(
+    personCardsForTurn(memory, conversation, [], options).cards.length,
+    0,
+  );
+  const withdrawn = await runtime.callTool(ctx, "qq_recall", {
+    requestId: "withdraw",
+    messageRef: original.recordId,
+  });
+  const second = personCardsForTurn(memory, conversation, [], options);
+  assert.equal(
+    second.cards[0].recalledEvidence[0].recalled.eventId,
+    withdrawn.recordId,
+  );
+  assert.equal(second.cards[0].closeness.tier, "陌生");
+  memory.setState(conversation, { personCardsShown: second.shown });
+  let raw = memory.identity.personCard("30000");
+  raw.closeness = { tier: "熟", at: Date.now(), accountId: "10000" };
+  memory.db
+    .prepare("UPDATE person_notes SET value=? WHERE agent_id=? AND person_id=?")
+    .run(JSON.stringify(raw), memory.agentId, "30000");
+  const third = personCardsForTurn(memory, conversation, [], options);
+  assert.equal(third.cards[0].closeness.tier, "熟");
+  assert.equal(third.cards[0].recalledEvidence[0].id, original.recordId);
+  memory.setState(conversation, { personCardsShown: third.shown });
+  assert.equal(
+    personCardsForTurn(memory, conversation, [], options).cards.length,
+    0,
+  );
+  const read = (
+    await runtime.callTool(ctx, "person_notes", { personIds: ["30000"] })
+  ).items[0];
+  assert.equal(read.closeness.tier, "熟");
+  assert.equal(read.recalledEvidence[0].id, original.recordId);
+  const written = await runtime.callTool(ctx, "person_note", {
+    personId: "30000",
+    body: "更新印象",
+    evidence: [original.recordId],
+    expectedRevision: 1,
+  });
+  assert.equal(written.closeness.tier, "熟");
+  assert.equal(written.recalledEvidence[0].id, original.recordId);
+  const receipt = await runtime.callTool(ctx, "qq_send", {
+    requestId: "follow-up",
+    text: "说明",
+    atUserId: "30000",
+  });
+  assert.equal(receipt.personCard, undefined);
+});

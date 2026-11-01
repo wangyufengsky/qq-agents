@@ -385,10 +385,11 @@ function executeMindTool(runtime, ctx, name, args) {
     };
   }
   if (name === "person_note") {
-    const card = identity.savePersonCard(args, {
+    const saved = identity.savePersonCard(args, {
       writtenIn: ctx.conversation,
       now,
     });
+    const card = identity.personCard(saved.personId);
     card.closeness = personCloseness(
       m,
       card.personId,

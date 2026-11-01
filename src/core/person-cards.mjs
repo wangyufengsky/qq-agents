@@ -11,10 +11,22 @@ const QQ = /^\d{5,12}$/;
 // only when an archived message kept no segments.
 const MENTION = /\[提及 QQ:(\d{5,12})\]/g;
 const QUOTE = /\[引用:([^\]\s]{1,128})\]/g;
-// What a session has seen: this card, at this revision.
+// Source withdrawal and derived familiarity can change without a new card revision.
+// Show that update once, then retain the same quiet card behavior.
 /** @param {any} card */
-export const personCardSeenKey = (card) =>
-  `${card.id}:${card.revision}${card.closeness ? ":closeness:" + card.closeness.tier + ":" + (card.closeness.overridden ? "fixed" : "auto") : ""}`;
+export const personCardSeenKey = (card) => {
+  const recalled = (card.recalledEvidence || [])
+    .map((/** @type {any} */ source) => source.recalled.eventId)
+    .sort()
+    .join(",");
+  const relationship = card.closeness
+    ? ":closeness:" +
+      card.closeness.tier +
+      ":" +
+      (card.closeness.overridden ? "fixed" : "auto")
+    : "";
+  return `${card.id}:${card.revision}${recalled ? ":recalled:" + recalled : ""}${relationship}`;
+};
 
 /** @param {any} event An archived events row. */
 export function references(event) {
@@ -95,18 +107,14 @@ export function personCardsForTurn(memory, conversation, items, options) {
     options.accountId,
   )) {
     if (cards.length >= MAX_CARDS_PER_TURN) break;
-    const saved = memory.identity.personCard(id);
-    const card = saved
-      ? {
-          ...saved,
-          closeness: personCloseness(
-            memory,
-            id,
-            options.now ?? Date.now(),
-            options.accountId,
-          ),
-        }
-      : null;
+    const card = memory.identity.personCard(id);
+    if (card)
+      card.closeness = personCloseness(
+        memory,
+        id,
+        options.now ?? Date.now(),
+        options.accountId,
+      );
     if (!card || shown[id] === personCardSeenKey(card)) continue;
     const nickname = lastName(memory, id);
     cards.push({
@@ -115,6 +123,9 @@ export function personCardsForTurn(memory, conversation, items, options) {
       call: card.call,
       impression: card.body,
       closeness: card.closeness,
+      ...(card.recalledEvidence?.length
+        ? { recalledEvidence: card.recalledEvidence }
+        : {}),
       ...memory.corrections.annotation("person", card.id, card.revision),
       revision: card.revision,
       updatedAt: card.updatedAt,

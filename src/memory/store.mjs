@@ -1,4 +1,5 @@
 import { withoutClosenessCache } from "../core/closeness.mjs";
+import { recallAnnotation } from "./recalls.mjs";
 import fs from "node:fs";
 import { Corrections } from "./corrections.mjs";
 import { qqFaces } from "../transport/qq-faces.mjs";
@@ -67,6 +68,9 @@ function budget(items, maxChars) {
         id: item.id,
         type: item.type,
         seq: item.seq,
+        ...(item.recalled
+          ? { recalled: item.recalled, recallNotice: item.recallNotice }
+          : {}),
         conversation: item.conversation,
         disclosure: item.disclosure,
         ...(item.updatedAt ? { updatedAt: item.updatedAt } : {}),
@@ -106,6 +110,7 @@ export class MemoryStore {
         this.db.exec(`
       CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE NOT NULL,agent_id TEXT NOT NULL,dedupe TEXT NOT NULL,connection_id TEXT NOT NULL,conversation TEXT NOT NULL,kind TEXT NOT NULL,direction TEXT NOT NULL,status TEXT NOT NULL,message_id TEXT,sender_id TEXT,occurred_at TEXT NOT NULL,observed_at TEXT NOT NULL,body TEXT NOT NULL,payload TEXT NOT NULL,origin TEXT NOT NULL,UNIQUE(agent_id,dedupe));
       CREATE INDEX IF NOT EXISTS events_scope ON events(agent_id,conversation,seq);
+      CREATE INDEX IF NOT EXISTS events_recall_projection ON events(agent_id,json_extract(payload,'$.recalledEventId')) WHERE kind='action.confirmed';
       CREATE INDEX IF NOT EXISTS events_scene ON events(agent_id,connection_id,conversation,seq);
       CREATE INDEX IF NOT EXISTS events_message_ref ON events(agent_id,connection_id,conversation,message_id);
       CREATE INDEX IF NOT EXISTS events_people ON events(agent_id,sender_id,occurred_at);
@@ -330,6 +335,9 @@ class AgentMemory {
       };
     return undefined;
   }
+  recallAnnotation(id) {
+    return recallAnnotation(this.db, this.agentId, id);
+  }
   event(row, current, summary = false) {
     const transcript = row.kind === "voice.transcript",
       voiceTranscript = this.voiceTranscript(row, summary),
@@ -369,6 +377,7 @@ class AgentMemory {
       ...(faces ? { qqFaces: faces } : {}),
       ...provenance(row),
       ...this.corrections.annotation("event", row.id),
+      ...this.recallAnnotation(row.id),
       ...(!summary ? { payload: parse(row.payload) } : {}),
     };
   }
@@ -644,6 +653,9 @@ class AgentMemory {
       updatedAt: item.updatedAt,
       writtenAt: item.writtenAt,
       occurredAt: item.occurredAt,
+      ...(item.recalled
+        ? { recalled: item.recalled, recallNotice: item.recallNotice }
+        : {}),
       conversation: item.conversation,
       senderId: item.senderId,
       senderName: item.senderName,
@@ -846,9 +858,12 @@ class AgentMemory {
           id: r.id,
           conversation: r.conversation,
           at: r.at,
-          text: Array.from(r.body || "")
-            .slice(0, 120)
-            .join(""),
+          ...this.recallAnnotation(r.id),
+          text:
+            (this.recallAnnotation(r.id).recallNotice || "") +
+            Array.from(r.body || "")
+              .slice(0, 120)
+              .join(""),
         });
       byRevision.set(r.revision, group);
     }

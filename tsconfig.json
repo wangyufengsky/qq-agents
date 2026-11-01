@@ -11,6 +11,8 @@
   },
   "include": [
     "src/core/closeness.mjs",
+    "src/core/message-recall.mjs",
+    "src/memory/recalls.mjs",
     "src/backends/*.mjs",
     "src/core/config-impact.mjs",
     "src/core/default-config.mjs",

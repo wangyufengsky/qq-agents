@@ -4,15 +4,15 @@
 
 ## 实现记录
 
-| 计划序号 | 改进                     | 对应 PR                                                     | 实现与合并状态                         |
-| -------- | ------------------------ | ----------------------------------------------------------- | -------------------------------------- |
-| 1        | 按长度计算的打字节奏     | [#122](https://github.com/wangyufengsky/qq-agents/pull/122) | 已实现并合并。                         |
-| 2        | 私聊正在输入             | [#126](https://github.com/wangyufengsky/qq-agents/pull/126) | 实现 PR 已建立，合并状态以链接为准。   |
-| 3        | 说话样本、提示与口吻提醒 | [#121](https://github.com/wangyufengsky/qq-agents/pull/121) | 已实现并合并。                         |
-| 4        | 作息与忙闲               | [#123](https://github.com/wangyufengsky/qq-agents/pull/123) | 实现 PR 已建立，合并状态以链接为准。   |
-| 5        | 贴表情回应               | 待补实际 PR                                                 | 开发与组合验证中。                     |
-| 6        | 撤回自己消息             | [#124](https://github.com/wangyufengsky/qq-agents/pull/124) | 实现 PR 已建立，合并状态以链接为准。   |
-| 7        | 沉默留白与关系温度       | [#125](https://github.com/wangyufengsky/qq-agents/pull/125) | 已实现；当前 PR 的合并状态以链接为准。 |
+| 计划序号 | 改进                     | 对应 PR                                                     | 代码状态 |
+| -------- | ------------------------ | ----------------------------------------------------------- | -------- |
+| 1        | 按长度计算的打字节奏     | [#122](https://github.com/wangyufengsky/qq-agents/pull/122) | 已实现。 |
+| 2        | 私聊正在输入             | [#126](https://github.com/wangyufengsky/qq-agents/pull/126) | 已实现。 |
+| 3        | 说话样本、提示与口吻提醒 | [#121](https://github.com/wangyufengsky/qq-agents/pull/121) | 已实现。 |
+| 4        | 作息与忙闲               | [#123](https://github.com/wangyufengsky/qq-agents/pull/123) | 已实现。 |
+| 5        | 贴表情回应               | [#127](https://github.com/wangyufengsky/qq-agents/pull/127) | 已实现。 |
+| 6        | 撤回自己消息             | [#124](https://github.com/wangyufengsky/qq-agents/pull/124) | 已实现。 |
+| 7        | 沉默留白与关系温度       | [#125](https://github.com/wangyufengsky/qq-agents/pull/125) | 已实现。 |
 
 代码和自动化验收即使全部完成，也不等于已经部署。实际部署涉及能力默认值变化时仍需另行确认；真实 QQ 效果与一周口吻观察另行验收，本轮代码记录不代表已上线、已部署或已完成实测。
 
@@ -88,7 +88,7 @@
 
 ### PR 3：去 AI 腔——说话样本、提示与发送前口吻检查
 
-已由 [PR #121](https://github.com/wangyufengsky/qq-agents/pull/121) 实现（待合并）：`toneCheck` 默认提醒；同回合同 requestId 同纯文本确认放行，既有回执保持幂等；主人私聊只豁免行数，文件、合并转发与程序固定发送不检查。模板与编辑帮助建议增加说话样本，已有 Self 不改写；聊天稳定协议变化按摘要交接一次。实际配置、管理台入口和连发处理见 [配置说明](../CONFIGURATION.md#发送前口吻提醒behaviortonecheck)，Self 样本见 [Self 与会话](../SELF-CONTEXT.md)。
+已由 [PR #121](https://github.com/wangyufengsky/qq-agents/pull/121) 实现：`toneCheck` 默认提醒；同回合同 requestId 同纯文本确认放行，既有回执保持幂等；主人私聊只豁免行数，文件、合并转发与程序固定发送不检查。模板与编辑帮助建议增加说话样本，已有 Self 不改写；聊天稳定协议变化按摘要交接一次。实际配置、管理台入口和连发处理见 [配置说明](../CONFIGURATION.md#发送前口吻提醒behaviortonecheck)，Self 样本见 [Self 与会话](../SELF-CONTEXT.md)。
 
 **3a. Self 说话样本**
 
@@ -163,6 +163,8 @@
 **测试**：解析非本会话消息被拒；未知表情被拒；暂停时拒绝；动作写账本且重复 requestId 不重发；开关关闭时工具不可见、执行也拒绝；收到的回应不唤醒且不推进水位。
 
 ### PR 6：撤回自己刚发的消息
+
+已由 [PR #124](https://github.com/wangyufengsky/qq-agents/pull/124) 实现（默认关闭；合并状态以 PR 为准）。实现同时拒绝同一目标换 `requestId` 重试，明确失败和未知结果均保留尝试；撤回来源改变后，已经见过的人物卡再呈现一次更新。旧库只兼容建立撤回投影查询索引，不改数据记录、表字段或导出格式。实际用法见[功能说明](../FEATURES.md#撤回自己刚发的消息)和[配置说明](../CONFIGURATION.md#撤回自己刚发的消息)。
 
 **目标**：角色发错字或说错话时，能在 QQ 允许的时间内撤回并补一句。
 
