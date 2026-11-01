@@ -6,7 +6,7 @@
 
 ## 未发布
 
-### 普通聊天展示别处近况（PR 待补）
+### 普通聊天展示别处近况（[#132](https://github.com/wangyufengsky/qq-agents/pull/132)）
 
 - 为本轮涉及的人展示本角色最近在其他群聊或私聊的直接来往索引，含群到群来源；只给时间、条数与回查入口，不自动带入原文。补充去重、已处理水位、已确认投递、角色隔离和受保护来源回归，背景见 [Issue #131](https://github.com/wangyufengsky/qq-agents/issues/131)。
 - 新增 `behavior.elsewhere.enabled`（默认开启）与 `windowMs`（默认 6 小时，允许 10 分钟–24 小时），保留已有显式关闭；每人最多 2 个来源、每轮最多 6 条，有更新才重新展示，管理台暂不增加设置或回合详情。

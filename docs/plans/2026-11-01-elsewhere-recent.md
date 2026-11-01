@@ -1,6 +1,6 @@
 # 别处近况：让角色记得刚在别的聊天里和谁说过话
 
-实施记录，设计基线：PR #128 / f47fc4c，实施跟踪：[Issue #131](https://github.com/wangyufengsky/qq-agents/issues/131)。以下方案已实现，离线验收使用临时数据和假网关；CI 与合并状态以实施 PR 为准，部署版本以实际运行进程为准。交付遵循 [AGENTS.md](../../AGENTS.md) 与 [CONTRIBUTING.md](../../CONTRIBUTING.md)。
+实施记录，设计基线：PR #128 / f47fc4c，实施跟踪：[Issue #131](https://github.com/wangyufengsky/qq-agents/issues/131) / [PR #132](https://github.com/wangyufengsky/qq-agents/pull/132)。以下方案已实现，离线验收使用临时数据和假网关；CI 与合并状态以实施 PR 为准，部署版本以实际运行进程为准。交付遵循 [AGENTS.md](../../AGENTS.md) 与 [CONTRIBUTING.md](../../CONTRIBUTING.md)。
 
 ## 背景
 
