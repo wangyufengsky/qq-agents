@@ -152,7 +152,13 @@ export class DeliveryService {
     );
     if (mem.state(ctx.conversation).silenceUntil > runtime.now())
       throw Error("CONVERSATION_SILENCED");
-    const proactive = runtime.subject.beforeDelivery(ctx);
+    // Recall only removes an already-confirmed message. A completed contact
+    // intent must not prevent that cleanup; fresh outward actions still need
+    // the ordinary intent decision and contact checks.
+    const proactive =
+      action && actionBudget?.kind === "recall"
+        ? null
+        : runtime.subject.beforeDelivery(ctx);
     if (proactive && !actionBudget) requestId = "intent:" + proactive.id;
     if (typeof requestId !== "string" || !requestId || requestId.length > 200)
       throw Error("INVALID_REQUEST_ID");

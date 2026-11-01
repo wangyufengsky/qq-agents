@@ -453,3 +453,120 @@ test("queued action uses a newly lowered hourly recall policy", async (t) => {
   await assert.rejects(second, /RECALL_RATE_LIMITED/);
   assert.equal(f.mem.delivery("second"), undefined);
 });
+
+for (const expectsResponse of [false, true])
+  test(`a confirmed proactive message can be recalled after its intent becomes ${expectsResponse ? "awaiting-response" : "completed"}`, async (t) => {
+    const f = setup(t),
+      agent = f.runtime.agent("agent-0");
+    agent.subject.enabled = true;
+    agent.subject.groups = ["20000"];
+    agent.tools.push("intent_decide");
+    const intent = f.runtime.subject.create(f.ctx, {
+      topic: "一次问候",
+      target: f.ctx.conversation,
+      reason: "测试机会",
+      background: "",
+      evidence: [],
+      expiresAt: Date.now() + 60000,
+      expectsResponse,
+    });
+    const handed = f.runtime.subject.transition(
+      agent.id,
+      intent,
+      "handedoff",
+      "test handoff",
+    );
+    f.runtime.subject.begin(f.ctx, [{ reason: "intent", intentId: handed.id }]);
+    await f.runtime.callTool(f.ctx, "intent_decide", {
+      id: handed.id,
+      expectedRevision: handed.revision,
+      action: "send",
+      reason: "测试现场合适",
+    });
+    const original = await sent(f);
+    const state = f.mem.identity.get("intentions", handed.id).status;
+    assert.equal(state, expectsResponse ? "awaiting-response" : "completed");
+    assert.equal(f.mem.state("@subject").contacts.length, 1);
+    assert.equal((await recall(f, original.recordId)).actionConfirmed, true);
+    assert.equal(f.mem.identity.get("intentions", handed.id).status, state);
+    assert.equal(f.mem.state("@subject").contacts.length, 1);
+    assert.equal(f.mem.delivery("recall").status, "sent");
+    assert.equal(
+      f.mem.delivery("intent:" + handed.id).message_id,
+      original.messageId,
+    );
+    await assert.rejects(
+      f.runtime.deliver(f.ctx, {
+        requestId: "new-react",
+        intent: { kind: "react" },
+        action: true,
+        actionBudget: {
+          kind: "react",
+          maxPerMinute: 3,
+          errorCode: "REACT_RATE_LIMITED",
+        },
+        send: async () => ({ confirmed: true }),
+      }),
+      /INTENT_NO_LONGER_ALLOWED/,
+    );
+  });
+
+test("unselected intent may clean up an owned message but recall cannot carry text or authorize a fresh send", async (t) => {
+  const f = setup(t),
+    original = await sent(f),
+    agent = f.runtime.agent("agent-0");
+  agent.subject.enabled = true;
+  agent.subject.groups = ["20000"];
+  const intent = f.runtime.subject.create(f.ctx, {
+    topic: "待定问候",
+    target: f.ctx.conversation,
+    reason: "测试机会",
+    background: "",
+    evidence: [],
+    expiresAt: Date.now() + 60000,
+    expectsResponse: false,
+  });
+  const handed = f.runtime.subject.transition(
+    agent.id,
+    intent,
+    "handedoff",
+    "test handoff",
+  );
+  const ctx = context(f.runtime);
+  f.runtime.subject.begin(ctx, [{ reason: "intent", intentId: handed.id }]);
+  await assert.rejects(
+    f.runtime.callTool(ctx, "qq_recall", {
+      requestId: "extra-text",
+      messageRef: original.recordId,
+      text: "新文字",
+    }),
+  );
+  assert.equal(f.mem.delivery("extra-text"), undefined);
+  await assert.rejects(
+    sent(f, "before-recall", ctx),
+    /INTENT_DECISION_REQUIRED/,
+  );
+  await recall(f, original.recordId, "cleanup", ctx);
+  await assert.rejects(
+    sent(f, "after-recall", ctx),
+    /INTENT_DECISION_REQUIRED/,
+  );
+  await assert.rejects(
+    f.runtime.deliver(ctx, {
+      requestId: "new-react",
+      intent: { kind: "react" },
+      action: true,
+      actionBudget: {
+        kind: "react",
+        maxPerMinute: 3,
+        errorCode: "REACT_RATE_LIMITED",
+      },
+      send: async () => ({ confirmed: true }),
+    }),
+    /INTENT_DECISION_REQUIRED/,
+  );
+  assert.equal(f.transport.sent.length, 1);
+  assert.equal(f.mem.state("@subject").contacts?.length || 0, 0);
+  assert.equal(f.mem.identity.get("intentions", handed.id).status, "handedoff");
+  assert.equal(ctx.activeIntentId, undefined);
+});
