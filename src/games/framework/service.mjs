@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { gameDatabase } from "./database.mjs";
 import { createGameHttp } from "../core/http.mjs";
 import { renderGame } from "./page.mjs";
-import { secret } from "../core/value.mjs";
+import { secret, GameError } from "../core/value.mjs";
 const [database, port, publicOrigin = ""] = process.argv.slice(2);
 const { kernel, identity } = gameDatabase({ database });
 const boot = secret(),
@@ -27,7 +27,10 @@ const assets = new Map(
 );
 /** @type {Map<string,(value:boolean)=>void>} */
 const admissions = new Map();
+/** @type {Map<string,(message:any)=>void>} */
+const retries = new Map();
 process.on("message", (/** @type {any} */ message) => {
+  if (message?.retry) retries.get(message.retry)?.(message);
   if (message?.admission)
     admissions.get(message.admission)?.(message.allowed === true);
 });
@@ -54,14 +57,46 @@ const http = createGameHttp({
   publicOrigin,
   publicJoin: true,
   authorize,
+  retry: async (/** @type {string} */ roomId, /** @type {object} */ actor) => {
+    if (!process.connected || retries.size >= 120)
+      throw new GameError("GAME_SERVICE_UNAVAILABLE", 503);
+    const principalId = kernel.access(
+      kernel.store.room(roomId),
+      actor,
+    ).principal;
+    const id = randomUUID();
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        retries.delete(id);
+        reject(new GameError("GAME_RETRY_TIMEOUT", 503));
+      }, 2000);
+      retries.set(id, (message) => {
+        clearTimeout(timer);
+        retries.delete(id);
+        if (message.error)
+          reject(
+            new GameError(
+              [
+                "GAME_RETRY_LIMIT",
+                "GAME_OUTCOME_UNKNOWN",
+                "GAME_BUDGET_EXHAUSTED",
+                "GAME_BACKEND_BUSY",
+                "GAME_JOB_NOT_RUNNABLE",
+              ].includes(message.error)
+                ? message.error
+                : "GAME_RETRY_UNAVAILABLE",
+            ),
+          );
+        else resolve(message.result);
+      });
+      process.send?.({ retry: id, roomId, principalId });
+    });
+  },
   health: () => ({ service: "qq-agents-games", boot, challenge }),
 });
 await http.listen(Number(port));
 process.send?.({ ready: true, boot });
-const timer = setInterval(() => kernel.sweep(), 1000);
-timer.unref();
 const stop = async () => {
-  clearInterval(timer);
   await http.close();
   kernel.close();
   process.exit(0);

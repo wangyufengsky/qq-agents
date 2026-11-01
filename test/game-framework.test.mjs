@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { fixture, config, raw, context } from "./helpers.mjs";
 import { GameHost } from "../src/games/framework/host.mjs";
-import { secret, digest } from "../src/games/core/value.mjs";
+import { canonical, secret, digest } from "../src/games/core/value.mjs";
 import { registerChoiceProbe } from "../src/games/fixtures/choice-probe.mjs";
 import { createGameHttp } from "../src/games/core/http.mjs";
 import { renderGame } from "../src/games/framework/page.mjs";
@@ -20,12 +20,12 @@ function setup(t, run = async () => {}) {
   h.ensure();
   return { ...f, h, k: h.kernel };
 }
-async function create(f, conversation = "private:30000") {
+async function create(f, conversation = "private:30000", senderId = "30000") {
   const mem = f.store.bind("agent-0");
   const event = mem.append({
     kind: "message.received",
     conversation,
-    senderId: "30000",
+    senderId,
     direction: "in",
     body: "下五子棋",
     observedAt: f.runtime.now(),
@@ -57,8 +57,18 @@ function join(f, roomId) {
     inv.invite,
     browser,
   );
-  f.h.identity.confirm(roomId, inv.bindingId, proof.challenge, actor);
-  return f.h.identity.exchange(roomId, inv.bindingId, browser).session;
+  const { code } = f.h.identity.confirm(
+    roomId,
+    inv.bindingId,
+    proof.challenge,
+    actor,
+  );
+  return f.h.identity.exchange(roomId, inv.bindingId, browser, code).session;
+}
+function confirmationCode(f) {
+  return JSON.stringify(f.runtime.transports.get("qq-0").sent).match(
+    /游戏网页验证码[：:]([0-9]{8})/,
+  )?.[1];
 }
 function act(f, roomId, type, payload = {}) {
   const room = f.k.store.room(roomId);
@@ -117,11 +127,20 @@ test("group join requires the exact QQ sender and source; confirmation secrets a
     () => f.h.identity.exchange(roomId, proof.bindingId, browser),
     /JOIN_UNCONFIRMED/,
   );
-  await f.runtime.ingestEvent("qq-0", message(3, 30000));
+  await f.runtime.ingestEvent(
+    "qq-0",
+    raw(3, {
+      user_id: 30000,
+      message_type: "private",
+      group_id: undefined,
+      message: [{ type: "text", data: { text: body } }],
+    }),
+  );
   const session = f.h.identity.exchange(
     roomId,
     proof.bindingId,
     browser,
+    confirmationCode(f),
   ).session;
   assert.equal(
     f.k.view(roomId, f.h.identity.session(roomId, session)).owner,
@@ -144,6 +163,8 @@ test("AI is isolated from chat state, gets only game tools, and commits a fenced
     const data = JSON.parse(p.prompt);
     assert.equal(p.session, null);
     assert.equal(p.game, true);
+    assert.match(data.display.text, /A B C D E F G H I J K L M N O/);
+    assert.equal(data.display.ownColor, "白子 O");
     assert.equal(p.prompt.includes("CHAT_SECRET"), false);
     assert.equal(p.instructions.includes("SELF_SECRET"), false);
     assert.deepEqual(
@@ -188,6 +209,8 @@ test("expired leases cannot revive, and unresolved native runs block newer decis
     { roomId, id } = await decision(f);
   f.h.jobs.receive(id);
   const run = f.h.jobs.claim(id, "worker", "claim");
+  f.h.jobs.observe(run, { submitted: true });
+  run.submitted = true;
   assert.deepEqual(f.h.jobs.claim(id, "worker", "claim"), run);
   const job = f.h.jobs.get(id);
   job.run.leaseUntil = f.runtime.now() - 1;
@@ -242,7 +265,9 @@ test("pause, disconnect, unsupported backend and finite budgets gate AI attempts
   assert.throws(() => f.h.jobs.claim(id, "w", "5"), /GAME_BUDGET_EXHAUSTED/);
   assert.equal(
     f.k.store.db
-      .prepare("SELECT attempts FROM game_budgets WHERE scope='framework'")
+      .prepare(
+        "SELECT attempts FROM game_budgets WHERE scope LIKE 'framework:day:%'",
+      )
       .get().attempts,
     1,
   );
@@ -509,7 +534,9 @@ test("source pause rejects late AI writes and terminal failure retains reserved 
   assert.equal(f.h.jobs.get(id).status, "model_failed");
   assert.equal(
     f.k.store.db
-      .prepare("SELECT tokens FROM game_budgets WHERE scope='framework'")
+      .prepare(
+        "SELECT tokens FROM game_budgets WHERE scope LIKE 'framework:day:%'",
+      )
       .get().tokens,
     f.h.policy.reservedTokensPerAttempt,
   );
@@ -538,14 +565,21 @@ test("same browser can recover a lost join response; a second browser cannot reu
     invite.invite,
     browser,
   );
-  f.h.identity.confirm(roomId, invite.bindingId, recovered.challenge, actor);
-  assert.ok(f.h.identity.exchange(roomId, invite.bindingId, browser).session);
+  const { code } = f.h.identity.confirm(
+    roomId,
+    invite.bindingId,
+    recovered.challenge,
+    actor,
+  );
+  assert.ok(
+    f.h.identity.exchange(roomId, invite.bindingId, browser, code).session,
+  );
 });
 
 test("external verification is tied to the current entry boot and never inferred from local health", (t) => {
   const f = setup(t);
   f.runtime.config.games.publicOrigin = "https://games.example.test";
-  f.h.settings = JSON.stringify(f.h.policy);
+  f.h.settings = canonical(f.h.policy);
   f.k.store.db.prepare("INSERT INTO game_entry VALUES(1,?)").run(
     JSON.stringify({
       boot: secret(),
@@ -567,7 +601,7 @@ test("external verification is tied to the current entry boot and never inferred
   f.runtime.config.games.publicOrigin = "https://replacement.example.test";
   assert.equal(f.h.status().ready, false);
   assert.equal(f.h.status().externallyVerified, false);
-  f.h.settings = JSON.stringify(f.h.policy);
+  f.h.settings = canonical(f.h.policy);
   assert.equal(f.h.status().externallyVerified, false);
 
   f.k.store.db.prepare("UPDATE game_entry SET data=?").run(
@@ -582,8 +616,11 @@ test("external verification is tied to the current entry boot and never inferred
 });
 
 test("private QQ confirmation binds the private source without granting another browser", async (t) => {
-  const f = setup(t),
-    { roomId } = await create(f),
+  const f = setup(t);
+  // This fixture has no host tick; confirmation must not depend on disk or runner speed.
+  const now = f.runtime.now();
+  f.runtime.now = () => now;
+  const { roomId } = await create(f),
     room = f.k.store.room(roomId),
     actor = f.k.actor(room.owner),
     browser = secret();
@@ -617,7 +654,14 @@ test("private QQ confirmation binds the private source without granting another 
     () => f.h.identity.exchange(roomId, invite.bindingId, secret()),
     /JOIN_UNCONFIRMED/,
   );
-  assert.ok(f.h.identity.exchange(roomId, invite.bindingId, browser).session);
+  assert.ok(
+    f.h.identity.exchange(
+      roomId,
+      invite.bindingId,
+      browser,
+      confirmationCode(f),
+    ).session,
+  );
 });
 
 test("separate game process starts with only game routes and stops on bridge close", async (t) => {
@@ -653,6 +697,8 @@ test("separate game process starts with only game routes and stops on bridge clo
   await host.close();
   assert.equal(host.ready, false);
   assert.notEqual(host.child.exitCode, null);
+  assert.equal(host.childFailure.code, "GAME_SERVICE_EXITED");
+  assert.equal(host.childFailure.exitCode, 0);
 });
 
 test("chat wakes remain queued while a game owns the backend", (t) => {
@@ -704,7 +750,9 @@ test("reopening the game database preserves unknown native runs, budgets and out
   );
   assert.equal(
     restored.kernel.store.db
-      .prepare("SELECT attempts FROM game_budgets WHERE scope='framework'")
+      .prepare(
+        "SELECT attempts FROM game_budgets WHERE scope LIKE 'framework:day:%'",
+      )
       .get().attempts,
     1,
   );
@@ -842,13 +890,15 @@ test("re-entry retains the same seat and game, revokes old invitations and rotat
     token = invitation.searchParams.get("invite"),
     browser = secret();
   const proof = f.h.identity.request(result.roomId, binding, token, browser);
-  f.h.identity.confirm(
+  const { code } = f.h.identity.confirm(
     result.roomId,
     binding,
     proof.challenge,
     f.k.actor(before.owner),
   );
-  assert.ok(f.h.identity.exchange(result.roomId, binding, browser).session);
+  assert.ok(
+    f.h.identity.exchange(result.roomId, binding, browser, code).session,
+  );
   assert.throws(() => f.h.identity.session(result.roomId, session));
   const count = sent.length;
   assert.deepEqual(await f.h.rejoin(result.ctx, args), rejoined);
@@ -886,7 +936,7 @@ test("re-entry rejects other senders, stale events, wrong rooms, changed origins
     f.h.rejoin(result.ctx, args),
     /GAME_SERVICE_UNAVAILABLE/,
   );
-  f.h.settings = JSON.stringify(f.h.policy);
+  f.h.settings = canonical(f.h.policy);
   await assert.rejects(
     f.h.rejoin(result.ctx, args),
     /EXTERNAL_VERIFICATION_REQUIRED/,
@@ -965,4 +1015,578 @@ test("group re-entry accepts a trailing mention and revokes outstanding group ch
     /INVITATION_UNAVAILABLE/,
   );
   assert.ok(f.h.identity.requestPublic(result.roomId, secret()).challenge);
+});
+
+test("UTC daily budgets survive restart and late settlement charges the original day", async (t) => {
+  const f = setup(t),
+    { roomId, id } = await decision(f);
+  let now = f.k.clock();
+  f.k.clock = () => now;
+  f.h.jobs.gate = () => null;
+  f.k.allow = () => true;
+  const room = f.k.store.room(roomId);
+  room.deadline = now + 3 * 86400000;
+  f.k.store.save(room);
+  f.h.jobs.limits.totalAttempts = 1;
+  f.h.jobs.receive(id);
+  const run = f.h.jobs.claim(id, "daily", "first");
+  const oldScope = run.budgetScopes[2];
+  assert.equal(f.h.jobs.budgetStatus()[0].remainingAttempts, 0);
+  assert.equal(f.h.jobs.budgetStatus(undefined, roomId)[1].resetAt, null);
+  now = (Math.floor(now / 86400000) + 1) * 86400000;
+  assert.equal(f.h.jobs.budgetStatus()[0].remainingAttempts, 1);
+  f.h.jobs.settle(run, { terminal: true, tokens: 12 });
+  assert.equal(
+    f.k.store.db
+      .prepare("SELECT tokens FROM game_budgets WHERE scope=?")
+      .get(oldScope).tokens,
+    12,
+  );
+  const second = f.h.jobs.claim(id, "daily", "second");
+  assert.notEqual(second.budgetScopes[2], oldScope);
+  assert.equal(f.h.jobs.budgetStatus()[0].remainingAttempts, 0);
+  assert.equal(
+    f.h.jobs.budgetStatus(undefined, roomId)[1].remainingAttempts,
+    126,
+  );
+  await f.h.close();
+  f.runtime.now = () => now;
+  const restored = (f.runtime.games = new GameHost(f.runtime, {
+    launch: false,
+  }));
+  restored.ensure();
+  restored.jobs.limits.totalAttempts = 1;
+  assert.equal(restored.jobs.budgetStatus()[0].remainingAttempts, 0);
+});
+
+test("legacy lifetime budget totals migrate once into the upgrade UTC day", async (t) => {
+  const f = setup(t);
+  f.k.store.db
+    .prepare("INSERT INTO game_budgets VALUES('framework',5,1234)")
+    .run();
+  f.k.store.db
+    .prepare("INSERT INTO game_budgets VALUES('agent:agent-0',4,1200)")
+    .run();
+  for (let i = 0; i < 2; i++) {
+    await f.runtime.games.close();
+    const host = (f.runtime.games = new GameHost(f.runtime, { launch: false }));
+    host.ensure();
+    assert.equal(host.jobs.budgetStatus()[0].remainingAttempts, 507);
+    assert.equal(host.jobs.budgetStatus("agent-0")[1].remainingAttempts, 252);
+  }
+});
+
+test("same authenticated source reuses a room and historical rooms do not consume active capacity", async (t) => {
+  const f = setup(t);
+  f.k.maxRooms = 1;
+  const first = await create(f),
+    reused = await create(f);
+  assert.equal(reused.roomId, first.roomId);
+  assert.equal(
+    f.k.store.db.prepare("SELECT count(*) AS n FROM game_rooms").get().n,
+    1,
+  );
+  act(f, first.roomId, "room.close");
+  const second = await create(f);
+  assert.notEqual(second.roomId, first.roomId);
+  act(f, second.roomId, "room.close");
+  const third = await create(f);
+  act(f, third.roomId, "room.close");
+  await assert.rejects(create(f), /GAME_SOURCE_RATE_LIMIT/);
+});
+
+test("failed invitation preparation rolls back room, seat confirmation and request together", async (t) => {
+  const f = setup(t);
+  f.h.identity.invite = () => {
+    throw Error("INVITATION_PREPARE_FAILED");
+  };
+  await assert.rejects(create(f), /GAME_STORAGE_FAILURE/);
+  for (const table of [
+    "game_rooms",
+    "game_creations",
+    "game_host_rooms",
+    "game_host_requests",
+    "game_bindings",
+  ])
+    assert.equal(
+      f.k.store.db.prepare(`SELECT count(*) AS n FROM ${table}`).get().n,
+      0,
+    );
+  assert.equal(f.runtime.transports.get("qq-0").sent.length, 0);
+});
+
+test("configuration key ordering preserves admission and authorization polling avoids writes", async (t) => {
+  const f = setup(t),
+    { roomId } = await create(f);
+  f.runtime.config.games = Object.fromEntries(
+    Object.entries(f.runtime.config.games).reverse(),
+  );
+  assert.equal(f.h.status().ready, true);
+  const before = f.k.store.db.prepare("SELECT total_changes() AS n").get().n;
+  f.h.refreshAccess(roomId);
+  f.h.refreshAccess(roomId);
+  assert.equal(
+    f.k.store.db.prepare("SELECT total_changes() AS n").get().n,
+    before,
+  );
+});
+
+test("new rooms and request IDs cannot evade the same UTC day's total allowance", async (t) => {
+  const f = setup(t),
+    first = await decision(f);
+  f.h.jobs.limits.totalAttempts = 1;
+  f.h.jobs.receive(first.id);
+  const run = f.h.jobs.claim(first.id, "window", "one");
+  f.h.jobs.settle(run, { terminal: true });
+  act(f, first.roomId, "room.close");
+  const second = await decision(f);
+  assert.notEqual(second.roomId, first.roomId);
+  f.h.jobs.receive(second.id);
+  assert.throws(
+    () => f.h.jobs.claim(second.id, "window", "two"),
+    /GAME_BUDGET_EXHAUSTED/,
+  );
+});
+
+test("legacy in-flight reservations keep a usable settlement scope after migration", async (t) => {
+  const f = setup(t),
+    { id } = await decision(f);
+  f.h.jobs.receive(id);
+  const run = f.h.jobs.claim(id, "legacy", "one"),
+    job = f.h.jobs.get(id);
+  f.k.store.db
+    .prepare("UPDATE game_budgets SET scope='framework' WHERE scope=?")
+    .run(run.budgetScopes[2]);
+  f.k.store.db
+    .prepare("UPDATE game_budgets SET scope='agent:agent-0' WHERE scope=?")
+    .run(run.budgetScopes[1]);
+  delete job.run.budgetScopes;
+  job.run.submitted = true;
+  f.h.jobs.save(job);
+  await f.h.close();
+  const restored = (f.runtime.games = new GameHost(f.runtime, {
+    launch: false,
+  }));
+  restored.ensure();
+  restored.jobs.settle(run, { terminal: true, tokens: 15 });
+  assert.equal(
+    restored.jobs.budgetStatus()[0].remainingTokens,
+    restored.jobs.limits.totalTokens - 15,
+  );
+  assert.equal(
+    restored.jobs.budgetStatus("agent-0")[1].remainingTokens,
+    restored.jobs.limits.agentTokens - 15,
+  );
+});
+
+test("public admission never opens a write transaction and still enforces immediate revocation", async (t) => {
+  const f = setup(t),
+    { roomId } = await create(f);
+  const transaction = f.k.store.transaction;
+  f.k.store.transaction = () => {
+    throw Error("UNEXPECTED_WRITE_TRANSACTION");
+  };
+  try {
+    assert.equal(f.h.admit(roomId), true);
+    f.runtime.config.globalPaused = true;
+    assert.equal(f.h.admit(roomId), false);
+    f.runtime.config.globalPaused = false;
+  } finally {
+    f.k.store.transaction = transaction;
+  }
+  act(f, roomId, "room.close");
+  const source = f.h.source(roomId);
+  source.accessUntil = 0;
+  f.k.store.db
+    .prepare("UPDATE game_host_rooms SET data=? WHERE id=?")
+    .run(JSON.stringify(source), roomId);
+  f.h.refreshAccess();
+  assert.ok(f.h.source(roomId).accessUntil > f.runtime.now());
+});
+
+test("new-room throttling is shared across senders in one source conversation", async (t) => {
+  const f = setup(t);
+  const first = await create(f, "group:20000", "30000");
+  const second = await create(f, "group:20000", "30001");
+  const third = await create(f, "group:20000", "30002");
+  assert.equal(new Set([first.roomId, second.roomId, third.roomId]).size, 3);
+  await assert.rejects(
+    create(f, "group:20000", "30003"),
+    /GAME_SOURCE_RATE_LIMIT/,
+  );
+  assert.equal((await create(f, "group:20000", "30000")).roomId, first.roomId);
+  const other = await create(f, "private:30000", "30000");
+  assert.notEqual(other.roomId, first.roomId);
+});
+
+test("recovery proves unsubmitted attempts, preserves unknown evidence and fences administrative abandonment", async (t) => {
+  const f = setup(t),
+    { id, roomId } = await decision(f);
+  f.h.jobs.receive(id);
+  const first = f.h.jobs.claim(id, "worker", "claim-one");
+  f.h.jobs.recover();
+  assert.equal(f.h.jobs.get(id).run.terminal, true);
+  assert.equal(f.h.jobs.automaticRetry(id), true);
+  const second = f.h.jobs.claim(id, "worker", "claim-two");
+  f.h.jobs.observe(second, { submitted: true });
+  f.h.jobs.recover();
+  assert.equal(f.h.jobs.get(id).status, "outcome_unknown");
+  assert.equal(f.h.jobs.automaticRetry(id), false);
+  assert.throws(
+    () => f.h.jobs.claim(id, "worker", "claim-three"),
+    /GAME_OUTCOME_UNKNOWN/,
+  );
+  const result = f.h.abandon(id, "accept_remote_uncertainty");
+  assert.deepEqual(result, { status: "abandoned", remoteTerminal: false });
+  assert.equal(f.h.jobs.get(id).run.terminal, false);
+  assert.equal(f.h.jobs.unresolved(roomId), false);
+  const room = f.k.store.room(roomId);
+  assert.throws(
+    () => f.h.jobs.validate(room, room.participants[1], second),
+    /GAME_EXECUTION_STALE/,
+  );
+  const attempts = f.k.store.db
+    .prepare("SELECT data FROM game_attempts WHERE job_id=?")
+    .all(id);
+  assert.equal(attempts.length, 2);
+  assert.ok(JSON.parse(attempts[1].data).abandonedAt <= f.runtime.now());
+  assert.throws(
+    () => f.h.jobs.settle(second, { terminal: true }),
+    /GAME_EXECUTION_STALE/,
+  );
+  assert.equal(
+    f.k.store.db.prepare("SELECT count(*) AS n FROM game_abandoned_runs").get()
+      .n,
+    1,
+  );
+  assert.equal(f.h.jobs.get(id).run.runId, second.runId);
+  assert.notEqual(first.runId, second.runId);
+});
+
+test("terminal failures allow only one automatic retry and game tick failure does not stop chat scheduling", async (t) => {
+  const f = setup(t),
+    { id } = await decision(f);
+  f.h.jobs.receive(id);
+  for (let i = 0; i < 2; i++) {
+    const run = f.h.jobs.claim(id, "worker", "claim-" + i);
+    f.h.jobs.settle(run, { terminal: true, code: "GAME_MODEL_FAILED" });
+    assert.equal(f.h.jobs.automaticRetry(id), i === 0);
+  }
+  let scheduled = false;
+  f.runtime.games.tick = () => {
+    throw Error("PRIVATE_PROVIDER_TEXT");
+  };
+  f.runtime.scheduler.tick = () => {
+    scheduled = true;
+  };
+  f.runtime.tick();
+  assert.equal(scheduled, true);
+  assert.equal(f.runtime.faults.get("games"), "GAME_TICK_FAILED");
+});
+
+test("owner retry rejects unknown and wrong owners; abandonment survives deletion and fences a newer decision", async (t) => {
+  const f = setup(t),
+    { id, roomId } = await decision(f);
+  f.h.jobs.receive(id);
+  const run = f.h.jobs.claim(id, "worker", "original");
+  f.h.jobs.observe(run, { submitted: true });
+  f.h.jobs.recover();
+  await assert.rejects(
+    f.h.retryOwner(roomId, "another-owner"),
+    /ROOM_OWNER_REQUIRED/,
+  );
+  await assert.rejects(
+    f.h.retryOwner(roomId, f.k.store.room(roomId).owner),
+    /GAME_OUTCOME_UNKNOWN/,
+  );
+  f.h.abandon(id, "accept_remote_uncertainty");
+  act(f, roomId, "room.pause");
+  act(f, roomId, "room.resume");
+  const next = f.k.store.room(roomId).decision.decisionId;
+  f.h.jobs.receive(next);
+  const newer = f.h.jobs.claim(next, "worker", "newer");
+  assert.ok(newer);
+  assert.throws(
+    () => f.h.jobs.observe(run, { backendTurn: "late" }),
+    /GAME_EXECUTION_STALE/,
+  );
+  assert.throws(
+    () =>
+      f.h.jobs.validate(
+        f.k.store.room(roomId),
+        f.k.store.room(roomId).participants[1],
+        run,
+      ),
+    /GAME_EXECUTION_STALE/,
+  );
+  f.k.store.db.prepare("DELETE FROM game_rooms WHERE id=?").run(roomId);
+  assert.equal(
+    f.k.store.db.prepare("SELECT count(*) AS n FROM game_abandoned_runs").get()
+      .n,
+    1,
+  );
+});
+
+test("an unknown game preserves native evidence while normal chat can run", async (t) => {
+  let chatRuns = 0;
+  const f = setup(t, async ({ game }) => {
+    if (!game) chatRuns++;
+  });
+  const { id } = await decision(f);
+  f.h.jobs.receive(id);
+  const run = f.h.jobs.claim(id, "worker", "unknown");
+  f.h.jobs.observe(run, { submitted: true });
+  f.h.jobs.recover();
+  await f.runtime.runTurn("agent-0", "private:30000");
+  assert.equal(chatRuns, 1);
+  assert.equal(f.h.jobs.get(id).status, "outcome_unknown");
+  assert.equal(f.h.jobs.get(id).run.terminal, false);
+  assert.equal(f.h.gate(f.h.jobs.get(id)), "GAME_OUTCOME_UNKNOWN");
+});
+
+test("owner retries have a durable three-attempt ceiling including automatic attempts", async (t) => {
+  const f = setup(t),
+    { id, roomId } = await decision(f);
+  f.h.jobs.receive(id);
+  for (let i = 0; i < 3; i++) {
+    const run = f.h.jobs.claim(id, "worker", "attempt-" + i);
+    f.h.jobs.settle(run, { terminal: true });
+    assert.equal(f.h.jobs.publicStatus(roomId).retryable, i < 2);
+  }
+  await assert.rejects(
+    f.h.retryOwner(roomId, f.k.store.room(roomId).owner),
+    /GAME_RETRY_LIMIT/,
+  );
+});
+
+test("unexpected game child exit exposes only stable diagnostics and numeric exit details", async (t) => {
+  const f = setup(t);
+  await f.h.close();
+  const probe = http.createServer();
+  await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
+  f.runtime.config.games.port = probe.address().port;
+  await new Promise((resolve) => probe.close(resolve));
+  const host = (f.runtime.games = new GameHost(f.runtime));
+  host.ensure();
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(Error("CHILD_START_TIMEOUT")), 10000);
+    host.child.once("message", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    host.child.once("error", reject);
+  });
+  const exited = new Promise((resolve) => host.child.once("exit", resolve));
+  host.child.kill("SIGKILL");
+  await exited;
+  assert.equal(host.status().ready, false);
+  assert.deepEqual(host.status().childFailure, {
+    code: "GAME_SERVICE_EXITED",
+    exitCode: null,
+    signal: "SIGKILL",
+  });
+  assert.ok(
+    f.runtime.diagnostics
+      .snapshot()
+      .some(
+        (entry) =>
+          entry.code === "GAME_SERVICE_EXITED" && entry.component === "games",
+      ),
+  );
+});
+
+test("QQ confirmation rejection replies reveal no challenge and normalize fullwidth text", async (t) => {
+  const f = setup(t),
+    { roomId } = await create(f, "group:20000"),
+    browser = secret();
+  const proof = f.h.identity.requestPublic(roomId, browser);
+  const send = async (id, user, text) => {
+    await f.runtime.ingestEvent(
+      "qq-0",
+      raw(id, {
+        user_id: user,
+        group_id: 20000,
+        message: [{ type: "text", data: { text } }],
+      }),
+    );
+    await Promise.all([...f.runtime.jobs]);
+  };
+  const body = `确认游戏 ${roomId} ${proof.bindingId} ${proof.challenge}`;
+  await send(7001, 30001, body);
+  let sent = JSON.stringify(f.runtime.transports.get("qq-0").sent);
+  assert.match(sent, /仅限原游戏发起人/);
+  assert.equal(sent.includes(proof.challenge), false);
+  await send(7003, 30000, body);
+  assert.equal(
+    JSON.stringify(f.runtime.transports.get("qq-0").sent).includes(
+      "游戏网页验证码",
+    ),
+    false,
+  );
+  await f.runtime.ingestEvent(
+    "qq-0",
+    raw(7002, {
+      user_id: 30000,
+      message_type: "private",
+      group_id: undefined,
+      message: [{ type: "text", data: { text: body.replaceAll(" ", "　") } }],
+    }),
+  );
+  await Promise.all([...f.runtime.jobs]);
+  assert.match(
+    JSON.stringify(f.runtime.transports.get("qq-0").sent),
+    /游戏网页验证码/,
+  );
+  assert.equal(
+    JSON.stringify(
+      f.store.db.prepare("SELECT body,payload FROM events").all(),
+    ).includes(proof.challenge),
+    false,
+  );
+});
+
+test("group confirmation keeps group revocation and private admission boundaries", async (t) => {
+  const f = setup(t),
+    { roomId } = await create(f, "group:20000"),
+    proof = f.h.identity.requestPublic(roomId, secret());
+  const text = `确认游戏 ${roomId} ${proof.bindingId} ${proof.challenge}`;
+  const send = async (id, privateMessage) => {
+    await f.runtime.ingestEvent(
+      "qq-0",
+      raw(id, {
+        self_id: Number(f.runtime.connection("qq-0").accountId),
+        user_id: 30000,
+        group_id: privateMessage ? undefined : 20000,
+        message_type: privateMessage ? "private" : "group",
+        message: [{ type: "text", data: { text } }],
+      }),
+    );
+    await Promise.all([...f.runtime.jobs]);
+  };
+  const agent = f.runtime.config.agents[0];
+  agent.allow.groups = [];
+  await send(7101, true);
+  assert.equal(f.h.identity.load(roomId, proof.bindingId).confirmed, false);
+  assert.equal(
+    JSON.stringify(f.runtime.transports.get("qq-0").sent).includes(
+      "游戏网页验证码",
+    ),
+    false,
+  );
+  agent.allow.groups = ["20000"];
+  agent.allow.users = [];
+  await send(7102, false);
+  assert.match(
+    JSON.stringify(f.runtime.transports.get("qq-0").sent),
+    /私聊准入、暂停或静默设置阻止确认/,
+  );
+  assert.equal(f.h.identity.load(roomId, proof.bindingId).confirmed, false);
+  agent.allow.users = ["30000"];
+  f.runtime.connection("qq-0").accountId = "10002";
+  await send(7103, true);
+  assert.equal(f.h.identity.load(roomId, proof.bindingId).confirmed, false);
+});
+
+test("real game child preserves a bounded owner retry rejection through IPC and HTTP", async (t) => {
+  const f = setup(t),
+    { id, roomId } = await decision(f);
+  const session = join(f, roomId);
+  f.h.jobs.receive(id);
+  for (let i = 0; i < 3; i++) {
+    const run = f.h.jobs.claim(id, "worker", "ipc-attempt-" + i);
+    f.h.jobs.settle(run, { terminal: true });
+  }
+  await f.h.close();
+  const probe = http.createServer();
+  await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
+  f.runtime.config.games.port = probe.address().port;
+  await new Promise((resolve) => probe.close(resolve));
+  const host = (f.runtime.games = new GameHost(f.runtime));
+  host.ensure();
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(Error("CHILD_START_TIMEOUT")), 10000);
+    host.child.once("message", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    host.child.once("error", reject);
+  });
+  const origin = `http://127.0.0.1:${f.runtime.config.games.port}`;
+  const response = await fetch(`${origin}/rooms/${roomId}/retry`, {
+    method: "POST",
+    headers: {
+      origin,
+      "content-type": "application/json",
+      cookie: `game_${roomId}=${session}`,
+    },
+    body: "{}",
+  });
+  assert.equal(response.status, 409);
+  assert.deepEqual(await response.json(), { error: "GAME_RETRY_LIMIT" });
+  assert.equal(host.jobs.get(id).status, "model_failed");
+  assert.equal(
+    host.kernel.store.db
+      .prepare("SELECT count(*) AS n FROM game_attempts WHERE job_id=?")
+      .get(id).n,
+    3,
+  );
+});
+
+test("source authorization expires at its deadline until the host refreshes it", async (t) => {
+  const f = setup(t);
+  let now = f.runtime.now();
+  f.runtime.now = () => now;
+  const { roomId } = await create(f);
+  join(f, roomId);
+  const actor = f.k.actor(f.k.store.room(roomId).owner);
+  const deadline = f.h.source(roomId).accessUntil;
+  now = deadline - 1;
+  assert.equal(f.k.view(roomId, actor).roomId, roomId);
+  now = deadline;
+  assert.throws(() => f.k.view(roomId, actor), /ROOM_UNAVAILABLE/);
+  f.h.refreshAccess(roomId);
+  assert.equal(f.k.view(roomId, actor).roomId, roomId);
+});
+
+test("active shared backends remain exclusive while unknown games only fence their owner", async (t) => {
+  const f = setup(t),
+    { id } = await decision(f),
+    job = f.h.jobs.get(id);
+  const other = {
+    agentId: "agent-peer",
+    backendId: f.runtime.agent(job.agentId).backendId,
+  };
+  f.runtime.running.set("peer-chat", other);
+  assert.equal(f.h.gate(job), "GAME_BACKEND_BUSY");
+  other.backendId = "another-backend";
+  assert.equal(f.h.gate(job), null);
+  f.runtime.running.delete("peer-chat");
+  const peerRoom = await create(f, "group:20000", "30001");
+  const unknown = {
+    ...job,
+    decisionId: randomUUID(),
+    roomId: peerRoom.roomId,
+    agentId: "agent-peer",
+    status: "outcome_unknown",
+  };
+  f.k.store.db
+    .prepare("INSERT INTO game_jobs(id,room_id,status,data) VALUES(?,?,?,?)")
+    .run(
+      unknown.decisionId,
+      unknown.roomId,
+      unknown.status,
+      JSON.stringify(unknown),
+    );
+  assert.equal(f.h.gate(job), null);
+  unknown.agentId = job.agentId;
+  f.h.jobs.save(unknown);
+  assert.equal(f.h.gate(job), "GAME_OUTCOME_UNKNOWN");
+});
+
+test("group invitations direct the sender to private QQ confirmation", async (t) => {
+  const f = setup(t);
+  await create(f, "group:20000");
+  const sent = JSON.stringify(f.runtime.transports.get("qq-0").sent);
+  assert.match(sent, /私聊原 QQ 角色/);
+  assert.doesNotMatch(sent, /在此会话发送/);
 });

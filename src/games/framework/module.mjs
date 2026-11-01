@@ -1,25 +1,44 @@
 // @ts-check
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { gomoku } from "../gomoku/module.mjs";
-/** UI v2 adds genuine source confirmation while preserving the published v1 bundle. @param {import('../core/registry.mjs').GameRegistry} registry */
+import { describeGomokuView } from "../gomoku/describe.mjs";
+import { digest, fail } from "../core/value.mjs";
+import releases from "./compatible-releases.json" with { type: "json" };
+
+export const gameModuleVersion = "3";
+export const gameUiVersion = "3";
+const require = createRequire(import.meta.url);
+/** Rule identity excludes unrelated dependencies and presentation assets. */
+export function gomokuSources() {
+  return {
+    "rules.mjs": readFileSync(new URL("../gomoku/module.mjs", import.meta.url)),
+    "zod.version": require("zod/package.json").version,
+  };
+}
+/** Explicit historical references preserve room/decision identity without rewriting stored state.
+ * @param {import('../core/registry.mjs').GameRegistry} registry */
 export function registerGomokuP2(registry) {
-  return registry.register(
+  const sources = gomokuSources();
+  const ref = registry.register(
     {
       ...gomoku,
-      manifest: { ...gomoku.manifest, moduleVersion: "2", uiVersion: "2" },
+      describeView: describeGomokuView,
+      manifest: {
+        ...gomoku.manifest,
+        moduleVersion: gameModuleVersion,
+        uiVersion: gameUiVersion,
+      },
     },
-    Object.fromEntries(
-      [
-        ["rules.mjs", "../gomoku/module.mjs"],
-        ["module.mjs", "./module.mjs"],
-        ["page.mjs", "./page.mjs"],
-        ["game-play.js", "../../../public/game-play.js"],
-        ["game-play.css", "../../../public/game-play.css"],
-        ["package-lock.json", "../../../package-lock.json"],
-      ].map(([key, file]) => [
-        key,
-        readFileSync(new URL(file, import.meta.url)),
-      ]),
-    ),
+    sources,
   );
+  for (const release of releases) {
+    if (
+      digest(sources["rules.mjs"]) !== release.rulesDigest ||
+      sources["zod.version"] !== release.zod
+    )
+      fail("GAME_COMPATIBILITY_RULES_CHANGED");
+    registry.registerCompatible(release.ref, ref);
+  }
+  return ref;
 }

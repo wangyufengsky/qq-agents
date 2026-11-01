@@ -52,6 +52,7 @@
     "src/core/runtime-status.mjs",
     "src/core/maintenance.mjs",
     "src/updates/drain.mjs",
+    "src/updates/startup-target.mjs",
     "src/memory/search.mjs",
     "src/tools/screenshots.mjs",
     "scripts/privacy-rules.mjs",
@@ -66,6 +67,7 @@
     "src/games/gomoku/*.mjs",
     "scripts/game-p1b.mjs",
     "src/games/framework/*.mjs",
-    "scripts/game-p2-acceptance.mjs"
+    "scripts/game-p2-acceptance.mjs",
+    "scripts/game-compatibility.mjs"
   ]
 }

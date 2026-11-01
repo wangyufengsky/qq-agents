@@ -657,3 +657,71 @@ test("AI room owners cannot use control actions to bypass the missing P2 executi
   code(() => f.act(roomId, "a", "room.close"), "P2_NOT_IMPLEMENTED");
   assert.equal(f.k.store.room(roomId).lifecycle, "waiting");
 });
+
+test("creation tombstones expire after seven days while recent deleted rooms stay idempotent", (t) => {
+  const f = setup(t),
+    first = f.create();
+  f.k.store.db.prepare("DELETE FROM game_rooms WHERE id=?").run(first.roomId);
+  assert.throws(
+    () => f.k.createRoom(f.actor("a"), first.request),
+    /ROOM_UNAVAILABLE/,
+  );
+  f.advance(7 * 86400000);
+  const next = f.k.createRoom(f.actor("a"), first.request);
+  assert.notEqual(next.roomId, first.roomId);
+  assert.equal(
+    f.k.store.db.prepare("SELECT count(*) AS n FROM game_creations").get().n,
+    1,
+  );
+});
+
+test("historical room capacity prunes only terminal rooms and keeps creation tombstones", (t) => {
+  const f = setup(t, choiceProbe, { maxRooms: 1, maxHistoryRooms: 1 });
+  const first = f.create();
+  f.act(first.roomId, "a", "room.close");
+  const second = f.create();
+  f.act(second.roomId, "a", "room.close");
+  f.k.sweep();
+  assert.equal(
+    f.k.store.db.prepare("SELECT count(*) AS n FROM game_rooms").get().n,
+    1,
+  );
+  assert.equal(
+    f.k.store.db.prepare("SELECT count(*) AS n FROM game_creations").get().n,
+    2,
+  );
+  const deleted = [first, second].find(
+    (created) =>
+      !f.k.store.db
+        .prepare("SELECT id FROM game_rooms WHERE id=?")
+        .get(created.roomId),
+  );
+  assert.throws(
+    () => f.k.createRoom(f.actor("a"), deleted.request),
+    /ROOM_UNAVAILABLE/,
+  );
+});
+
+test("legacy creation tombstones receive one full upgrade retention period", (t) => {
+  const f = setup(t),
+    first = f.create();
+  f.k.store.db.exec("DROP TABLE game_creation_expiries");
+  const before = f.k.clock();
+  f.restart();
+  assert.equal(
+    f.k.store.db.prepare("SELECT expires_at FROM game_creation_expiries").get()
+      .expires_at,
+    before + 7 * 86400000,
+  );
+  assert.equal(
+    f.k.createRoom(f.actor("a"), first.request).roomId,
+    first.roomId,
+  );
+  f.advance(1000);
+  f.restart();
+  assert.equal(
+    f.k.store.db.prepare("SELECT expires_at FROM game_creation_expiries").get()
+      .expires_at,
+    before + 7 * 86400000,
+  );
+});

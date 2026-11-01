@@ -7,7 +7,9 @@
   "games": {
     "enabled": false,
     "port": 35824,
-    "publicOrigin": ""
+    "publicOrigin": "",
+    "maxRooms": 32,
+    "maxHistoryRooms": 256
   },
   "connections": [
     {

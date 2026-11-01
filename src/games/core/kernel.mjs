@@ -54,18 +54,23 @@ export class GameKernel {
   ai = null;
   /** @type {WeakMap<object,string>} */
   #actors = new WeakMap();
-  /** @param {{database:string,registry:import('./registry.mjs').GameRegistry,clock?:()=>number,allow?:(principal:string,roomId:string)=>boolean,maxRooms?:number}} options */
+  /** @param {{database:string,registry:import('./registry.mjs').GameRegistry,clock?:()=>number,allow?:(principal:string,roomId:string)=>boolean,maxRooms?:number,maxHistoryRooms?:number}} options */
   constructor({
     database,
     registry,
     clock = Date.now,
     allow = () => true,
     maxRooms = 64,
+    maxHistoryRooms = 1024,
   }) {
-    this.store = new GameStore(database);
+    this.store = new GameStore(database, clock);
     this.registry = registry;
     this.clock = clock;
     this.allow = allow;
+    this.maxHistoryRooms = parse(
+      z.number().int().min(1).max(16384),
+      maxHistoryRooms,
+    );
     this.maxRooms = parse(z.number().int().min(1).max(4096), maxRooms);
   }
   /** Host-only authentication boundary: never expose this issuer as an HTTP endpoint.
@@ -118,6 +123,11 @@ export class GameKernel {
       request = parse(creation, input),
       fingerprint = digest(bounded(request, limits.action));
     return this.store.transaction(() => {
+      this.store.db
+        .prepare(
+          "DELETE FROM game_creations WHERE (principal,request_id) IN (SELECT principal,request_id FROM game_creation_expiries WHERE expires_at<=?)",
+        )
+        .run(this.clock());
       const previous = this.store.db
         .prepare(
           "SELECT * FROM game_creations WHERE principal=? AND request_id=?",
@@ -131,8 +141,11 @@ export class GameKernel {
       }
       if (
         Number(
-          this.store.db.prepare("SELECT count(*) AS n FROM game_rooms").get()
-            ?.n,
+          this.store.db
+            .prepare(
+              "SELECT count(*) AS n FROM game_rooms WHERE json_extract(data,'$.lifecycle') IN ('waiting','active','paused')",
+            )
+            .get()?.n,
         ) >= this.maxRooms ||
         Number(
           this.store.db
@@ -199,6 +212,9 @@ export class GameKernel {
       this.store.db
         .prepare("INSERT INTO game_creations VALUES(?,?,?,?)")
         .run(principal, request.requestId, fingerprint, room.id);
+      this.store.db
+        .prepare("INSERT INTO game_creation_expiries VALUES(?,?,?)")
+        .run(principal, request.requestId, now + 7 * 86400000);
       return { roomId: room.id };
     });
   }
@@ -271,6 +287,11 @@ export class GameKernel {
    * @param {string} [roomId] */
   sweep(roomId) {
     return this.store.transaction(() => {
+      this.store.db
+        .prepare(
+          "DELETE FROM game_creations WHERE (principal,request_id) IN (SELECT principal,request_id FROM game_creation_expiries WHERE expires_at<=?)",
+        )
+        .run(this.clock());
       const rows = roomId
         ? [{ id: roomId }]
         : this.store.db.prepare("SELECT id FROM game_rooms").all();
@@ -291,6 +312,17 @@ export class GameKernel {
             room,
             room.lifecycle === "active" ? "room.paused" : "room.expired",
           );
+      }
+      const history = this.store.db
+        .prepare(
+          "SELECT id FROM game_rooms WHERE json_extract(data,'$.lifecycle') IN ('finished','expired') ORDER BY json_extract(data,'$.deleteAt') DESC",
+        )
+        .all();
+      for (const row of history.slice(this.maxHistoryRooms)) {
+        if (!this.ai?.unresolved(String(row.id)))
+          this.store.db
+            .prepare("DELETE FROM game_rooms WHERE id=?")
+            .run(row.id);
       }
     });
   }
@@ -381,6 +413,11 @@ export class GameKernel {
       participants: this.roster(room),
       viewer: access.member?.participantId ?? null,
       owner: access.owner,
+      readyToStart:
+        room.lifecycle === "waiting" &&
+        room.participants.every(
+          (/** @type {any} */ p) => p.confirmed && !p.revoked,
+        ),
       decision: room.decision,
       closeReason: room.closeReason,
       snapshotAt: this.clock(),

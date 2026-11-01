@@ -321,3 +321,34 @@ test("gomoku renders an authorized board without scripts and no board on an unau
   assert.match(html, /刷新快照/);
   assert.doesNotMatch(renderGomoku(null, "example"), /H8 黑子/);
 });
+
+test("AI display derives a two dimensional board without changing the participant projection", async () => {
+  const { describeGomokuView } =
+    await import("../src/games/gomoku/describe.mjs");
+  const view = { board: Array(225).fill(0) };
+  view.board[17] = 2;
+  const display = describeGomokuView(view);
+  assert.equal(display.board[1][2], 2);
+  assert.equal(display.board.length, 15);
+  display.board[1][2] = 1;
+  assert.equal(view.board[17], 2);
+});
+
+test("AI text coordinates, last move and own color agree with the public projection", async () => {
+  const { describeGomokuView } =
+    await import("../src/games/gomoku/describe.mjs");
+  const board = Array(225).fill(0);
+  board[7 * 15 + 7] = 1;
+  board[8 * 15 + 14] = 2;
+  const display = describeGomokuView({
+    board,
+    color: "white",
+    lastMove: { x: 14, y: 8 },
+  });
+  assert.equal(display.ownColor, "白子 O");
+  assert.equal(display.lastMove, "O9 (x=14, y=8)");
+  assert.equal(display.board[7][7], 1);
+  assert.match(display.text.split("\n")[0], /A B C D E F G H I J K L M N O/);
+  assert.equal(display.text.split("\n")[8].trim().split(/\s+/)[8], "X");
+  assert.equal(display.text.split("\n")[9].trim().split(/\s+/)[15], "O");
+});

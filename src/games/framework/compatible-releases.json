@@ -1,0 +1,28 @@
+[
+  {
+    "commit": "4a63eb645de79e02604aacd7448e516c13b24a00",
+    "rulesDigest": "6633aceccdaa792735342e0b938df97e444b7057f823136821059f8c51aaefc9",
+    "zod": "4.6.7",
+    "ref": {
+      "gameType": "gomoku",
+      "moduleVersion": "2",
+      "moduleApiVersion": 1,
+      "rulesVersion": "1",
+      "stateSchemaVersion": "1",
+      "uiVersion": "2",
+      "capabilities": ["turn-sequential-v1"],
+      "participants": {
+        "min": 2,
+        "max": 2,
+        "kinds": ["human", "ai"]
+      },
+      "limits": {
+        "action": 1024,
+        "state": 4096,
+        "view": 4096,
+        "random": 0
+      },
+      "moduleDigest": "4b8a02a05e7800630707476bd62e7f5766bb939875bac1dcf820179df2a07ead"
+    }
+  }
+]

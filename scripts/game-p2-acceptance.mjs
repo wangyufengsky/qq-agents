@@ -114,8 +114,18 @@ try {
       invitation.invite,
       browser,
     );
-  h.identity.confirm(room.id, invitation.bindingId, proof.challenge, actor);
-  h.identity.exchange(room.id, invitation.bindingId, browser);
+  const confirmation = h.identity.confirm(
+    room.id,
+    invitation.bindingId,
+    proof.challenge,
+    actor,
+  );
+  h.identity.exchange(
+    room.id,
+    invitation.bindingId,
+    browser,
+    confirmation.code,
+  );
   const act = (/** @type {string} */ type, /** @type {any} */ payload = {}) =>
     k.act(room.id, actor, {
       actionId: randomUUID(),
@@ -150,8 +160,10 @@ try {
     scopeIsolated: !!job.run.session,
     attempts: Number(
       k.store.db
-        .prepare("SELECT attempts FROM game_budgets WHERE scope='framework'")
-        .get().attempts,
+        .prepare(
+          "SELECT count(*) AS attempts FROM game_attempts WHERE job_id=?",
+        )
+        .get(id).attempts,
     ),
   };
   fs.writeFileSync(

@@ -1,0 +1,35 @@
+# 游戏模块优化与验收索引
+
+本轮对应游戏优化清单的 25 项，按运行恢复、容量持久化、玩家入口和升级兼容分组交付。测试使用临时 SQLite、假 QQ 网关和假模型；浏览器引擎验收不等同手机 QQ、公网独立网络或真实模型完整对局。
+
+| 编号 | 优化与边界                                                                                                              | 回归入口                                                            |
+| ---- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| 1    | 未知游戏执行不阻断普通聊天；同角色/房间游戏仍隔离。未提交崩溃可恢复，管理员结案保留远端未知事实、预算和独立审计。       | `test/game-framework.test.mjs`                                      |
+| 2    | 无关依赖/UI不进入规则源摘要；已登记旧引用仅在规则指纹一致时兼容；候选发布只读预检。                                     | `test/game-compatibility.test.mjs`、`test/managed-updates.test.mjs` |
+| 3    | 游戏 tick 故障独立诊断，其他运行时调度继续。                                                                            | `test/game-framework.test.mjs`                                      |
+| 4    | 角色与总预算按 UTC 自然日记账，房间预算累计；持久保存窗口及预留来源，支持跨日结算。                                     | `test/game-framework.test.mjs`                                      |
+| 5    | 建房幂等保留七天，有效期内即使房间已清理也不能用原请求重新建房。                                                        | `test/game-core.test.mjs`                                           |
+| 6    | 活动和历史房间分别限额；同来源发送者复用未结束房间，建房有频率限制。                                                    | `test/game-framework.test.mjs`、`test/game-core.test.mjs`           |
+| 7    | 可信网页会话和匿名请求使用独立配额；同浏览器复用绑定槽，满额时可回原 QQ 重新加入。                                      | `test/game-p1a-http.test.mjs`、`test/game-identity.test.mjs`        |
+| 8    | 已确认终态且未完成当前决策时仅有限自动重试；房主主动重试也有持久次数与预算上限，未知执行不能重试。                      | `test/game-framework.test.mjs`、`test/game-player-ui.test.mjs`      |
+| 9    | 模块从公开投影派生二维棋盘、坐标与颜色说明；通用 worker 不读取私有棋局。                                                | `test/game-gomoku.test.mjs`、`test/game-framework.test.mjs`         |
+| 10   | 房主在棋盘上方看到开始按钮与对应身份提示。                                                                              | `test/game-player-ui.test.mjs`                                      |
+| 11   | 常见游戏状态与错误使用中文文案，不虚称已通知部署者。                                                                    | `test/game-player-ui.test.mjs`                                      |
+| 12   | 后台轮询不占用动作提交锁，陈旧轮询不得覆盖提交结果。                                                                    | `test/game-player-ui.test.mjs`                                      |
+| 13   | QQ 确认成功/失败有回执；群游戏也由发起人私聊原角色确认，QQ 端独立验证码须填回原浏览器，有过期、尝试次数和一次兑换限制。 | `test/game-identity.test.mjs`、`test/game-framework.test.mjs`       |
+| 14   | 非己方回合明确说明认输条件；没有新增绕过决策的平台放弃动作。                                                            | `test/game-player-ui.test.mjs`                                      |
+| 15   | 建房与来源认证共用命令规范化，兼容回复段与全角空白。                                                                    | `test/game-framework.test.mjs`                                      |
+| 16   | 每次网页鉴权只读核验目标来源；权限缓存只由 tick 批量维护。                                                              | `test/game-framework.test.mjs`                                      |
+| 17   | 建房、宿主来源、参与者确认与请求登记原子提交，失败全部回滚。                                                            | `test/game-framework.test.mjs`                                      |
+| 18   | QQ 邀请与确认回执在跟踪任务中投递，不阻塞入站处理；继续使用统一发送器和原幂等账本。                                     | `test/game-framework.test.mjs`                                      |
+| 19   | 框架父进程负责 sweep，网页子进程不再重复定时写库；独立夹具保留自身清理。                                                | 框架与独立 CLI 测试                                                 |
+| 20   | 公共房间判断由宿主注入，身份核心层不再依赖宿主表。                                                                      | 身份及独立 CLI 测试                                                 |
+| 21   | 保留事务 outbox/inbox，记录其崩溃恢复与幂等登记用途。                                                                   | `test/game-framework.test.mjs`                                      |
+| 22   | P2 指南验证命令指向真实存在的游戏测试。                                                                                 | `docs/WEB-GAME-P2.md`                                               |
+| 23   | 使用规范化 JSON 比较策略，等价键顺序不会导致入口失效。                                                                  | `test/game-framework.test.mjs`                                      |
+| 24   | 子进程异常退出留下退出状态与安全诊断，不自动循环拉起。                                                                  | `test/game-framework.test.mjs`                                      |
+| 25   | 生产注册表不再加载专用 v1；P1b 独立入口保留。                                                                           | `test/game-compatibility.test.mjs`、`test/game-p1b-cli.test.mjs`    |
+
+预算窗口是固定 UTC 自然日，并非滑动日/周双窗口；现有显式上限保留。公开绑定槽仍有有限容量，回原 QQ 重新加入是明确的恢复路径，不通过挤掉其他正在确认的浏览器腾位。未知远端运行的行政结案不证明远端已经停止。版本回退必须配套升级前的一致游戏数据库备份，不能只切回旧代码。
+
+发布验收运行 `npm run verify`，并以最新 PR 提交的 Windows 预检、三平台完整验证和 Docker 冒烟全部通过为准。实际部署前后证据保存在私有运维目录，不把真实身份、口令、配置和聊天放入本索引。

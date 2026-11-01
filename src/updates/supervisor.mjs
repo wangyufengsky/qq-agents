@@ -3,8 +3,7 @@ import path from "node:path";
 import { fork } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { FrameworkKnowledge } from "../core/framework-knowledge.mjs";
-import { UpgradeManager, finalPhases, safeUpdateError } from "./manager.mjs";
+import { UpgradeManager, safeUpdateError } from "./manager.mjs";
 import { updateChannel } from "./managed-client.mjs";
 import { waitForDrain } from "./drain.mjs";
 import {
@@ -13,7 +12,7 @@ import {
   restoreData,
   updateDirectory,
 } from "./installation.mjs";
-import { compareVersions } from "./releases.mjs";
+import { resolveManagedStartup } from "./startup-target.mjs";
 
 export class ManagedHost {
   constructor({ root, args, notify = () => {} }) {
@@ -256,69 +255,22 @@ export async function supervise(argv = process.argv.slice(2)) {
   };
   try {
     reclaim(path.join(root, "process.lock"), home, recover);
-    const bundledRoot = fileURLToPath(new URL("../..", import.meta.url));
-    const identity = new FrameworkKnowledge({ root: bundledRoot }).version;
-    const bundled = {
-      codeRoot: bundledRoot,
-      commit: identity.commit,
-      version: identity.packageVersion,
-    };
-    const validInstallation = (value, allowBundledReplacement = false) => {
-      if (
-        !value ||
-        typeof value.codeRoot !== "string" ||
-        !fs.existsSync(value.codeRoot)
-      )
-        throw Error("UPDATE_STATE_INVALID");
-      const resolved = fs.realpathSync(value.codeRoot);
-      if (
-        resolved !== fs.realpathSync(bundledRoot) &&
-        !resolved.startsWith(
-          fs.realpathSync(home) + path.sep + "releases" + path.sep,
-        )
-      )
-        throw Error("UPDATE_STATE_INVALID");
-      // A replacement image can install newer files at the same bundled path.
-      // Interrupted transactions must still use their exact recorded identity.
-      if (
-        allowBundledReplacement &&
-        resolved === fs.realpathSync(bundledRoot) &&
-        compareVersions(bundled.version, value.version) === 1
-      )
-        return bundled;
-      const actual = new FrameworkKnowledge({ root: resolved }).version;
-      if (
-        actual.commit !== value.commit ||
-        actual.packageVersion !== value.version
-      )
-        throw Error("UPDATE_STATE_INVALID");
-      return { ...value, codeRoot: resolved };
-    };
-    const pointer = path.join(home, "current.json"),
-      journal = path.join(home, "transaction.json");
-    const previous = fs.existsSync(journal)
-      ? readState(journal)
-      : { phase: "idle" };
-    const interrupted =
-      !finalPhases.has(previous.phase) ||
-      previous.phase === "recovery-required";
-    let current = fs.existsSync(pointer)
-      ? validInstallation(readState(pointer), !interrupted)
-      : bundled;
+    const {
+      current,
+      bundled,
+      previous,
+      interrupted,
+      pointer,
+      journal,
+      replacePointer,
+    } = resolveManagedStartup({ root, recover });
     if (interrupted) {
-      if (!recover) throw Error("UPDATE_RECOVERY_REQUIRED");
-      if (previous.committing) current = validInstallation(previous.to);
-      else {
-        current = validInstallation(previous.from);
-        if (previous.backupReady) {
-          const expected = path.join(home, `backup-${previous.id}`);
-          if (previous.backup !== expected) throw Error("UPDATE_STATE_INVALID");
-          restoreData(
-            root,
-            expected,
-            path.join(home, `interrupted-${randomUUID()}`),
-          );
-        }
+      if (!previous.committing && previous.backupReady) {
+        restoreData(
+          root,
+          previous.backup,
+          path.join(home, `interrupted-${randomUUID()}`),
+        );
       }
       writeState(pointer, current);
       writeState(journal, {
@@ -327,13 +279,7 @@ export async function supervise(argv = process.argv.slice(2)) {
         error: "UPDATE_RECOVERY_REQUIRED",
         finishedAt: Date.now(),
       });
-    } else if (
-      (current === bundled && fs.existsSync(pointer)) ||
-      compareVersions(bundled.version, current.version) === 1
-    ) {
-      current = bundled;
-      writeState(pointer, bundled);
-    }
+    } else if (replacePointer) writeState(pointer, bundled);
     const args = argv.filter(
       (arg, i) =>
         arg !== "--recover" &&

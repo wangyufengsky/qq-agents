@@ -23,9 +23,92 @@ export class GameJobs {
       CREATE TABLE IF NOT EXISTS game_outbox(id TEXT PRIMARY KEY, attempts INTEGER NOT NULL, next_at INTEGER NOT NULL, status TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS game_inbox(id TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS game_budgets(scope TEXT PRIMARY KEY, attempts INTEGER NOT NULL, tokens INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS game_abandoned_runs(run_id TEXT PRIMARY KEY, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS game_attempts(run_id TEXT PRIMARY KEY, job_id TEXT NOT NULL, data TEXT NOT NULL);
     `);
+    // Charge existing lifetime totals to the upgrade day rather than silently resetting them.
+    const day = Math.floor(kernel.clock() / 86400000);
+    kernel.store.transaction(() => {
+      for (const row of kernel.store.db
+        .prepare(
+          "SELECT * FROM game_budgets WHERE scope='framework' OR scope LIKE 'agent:%' AND scope NOT LIKE '%:day:%'",
+        )
+        .all()) {
+        kernel.store.db
+          .prepare(
+            "INSERT INTO game_budgets VALUES(?,?,?) ON CONFLICT(scope) DO UPDATE SET attempts=attempts+excluded.attempts,tokens=tokens+excluded.tokens",
+          )
+          .run(String(row.scope) + ":day:" + day, row.attempts, row.tokens);
+        kernel.store.db
+          .prepare("DELETE FROM game_budgets WHERE scope=?")
+          .run(row.scope);
+      }
+      for (const row of kernel.store.db
+        .prepare(
+          "SELECT id,data FROM game_jobs WHERE json_extract(data,'$.run.runId') IS NOT NULL AND json_extract(data,'$.run.budgetScopes') IS NULL",
+        )
+        .all()) {
+        const job = JSON.parse(String(row.data));
+        job.run.budgetScopes = [
+          "room:" + job.roomId,
+          "agent:" + job.agentId + ":day:" + day,
+          "framework:day:" + day,
+        ];
+        kernel.store.db
+          .prepare("UPDATE game_jobs SET data=? WHERE id=?")
+          .run(JSON.stringify(job), row.id);
+        kernel.store.db
+          .prepare("UPDATE game_attempts SET data=? WHERE run_id=?")
+          .run(JSON.stringify(job.run), job.run.runId);
+      }
+    });
     kernel.ai = this;
+  }
+  /** The UTC day is persisted in scope keys; restarting never refreshes a reservation.
+   * @param {string} [agentId] @param {string} [roomId] */
+  budgetStatus(agentId, roomId) {
+    const day = Math.floor(this.kernel.clock() / 86400000);
+    const scopes = [
+      {
+        scope: "framework:day:" + day,
+        attempts: this.limits.totalAttempts,
+        tokens: this.limits.totalTokens,
+        resetAt: (day + 1) * 86400000,
+      },
+      ...(agentId
+        ? [
+            {
+              scope: "agent:" + agentId + ":day:" + day,
+              attempts: this.limits.agentAttempts,
+              tokens: this.limits.agentTokens,
+              resetAt: (day + 1) * 86400000,
+            },
+          ]
+        : []),
+      ...(roomId
+        ? [
+            {
+              scope: "room:" + roomId,
+              attempts: this.limits.roomAttempts,
+              tokens: this.limits.roomTokens,
+              resetAt: null,
+            },
+          ]
+        : []),
+    ];
+    return scopes.map((limit) => {
+      const used = this.kernel.store.db
+        .prepare("SELECT attempts,tokens FROM game_budgets WHERE scope=?")
+        .get(limit.scope);
+      return {
+        ...limit,
+        remainingAttempts: Math.max(
+          0,
+          limit.attempts - Number(used?.attempts || 0),
+        ),
+        remainingTokens: Math.max(0, limit.tokens - Number(used?.tokens || 0)),
+      };
+    });
   }
   /** @param {any} job */
   enqueue(job) {
@@ -186,11 +269,15 @@ export class GameJobs {
       }
       // A new decision cannot evade an earlier unproven run in this room.
       const active = this.kernel.store.db
-        .prepare("SELECT data FROM game_jobs WHERE room_id=? AND id!=?")
+        .prepare(
+          "SELECT data FROM game_jobs WHERE room_id=? AND id!=? AND status!='abandoned'",
+        )
         .all(job.roomId, id)
         .map((row) => JSON.parse(String(row.data)));
       if (active.some((j) => j.run && !j.run.terminal))
         fail("GAME_OUTCOME_UNKNOWN");
+      const now = this.kernel.clock(),
+        day = Math.floor(now / 86400000);
       const scopes = [
         [
           "room:" + job.roomId,
@@ -198,11 +285,15 @@ export class GameJobs {
           this.limits.roomTokens,
         ],
         [
-          "agent:" + job.agentId,
+          "agent:" + job.agentId + ":day:" + day,
           this.limits.agentAttempts,
           this.limits.agentTokens,
         ],
-        ["framework", this.limits.totalAttempts, this.limits.totalTokens],
+        [
+          "framework:day:" + day,
+          this.limits.totalAttempts,
+          this.limits.totalTokens,
+        ],
       ];
       for (const [scope, attempts, tokens] of scopes) {
         const used = this.kernel.store.db
@@ -220,7 +311,6 @@ export class GameJobs {
             "INSERT INTO game_budgets VALUES(?,1,?) ON CONFLICT(scope) DO UPDATE SET attempts=attempts+1,tokens=tokens+excluded.tokens",
           )
           .run(scope, this.limits.attemptTokens);
-      const now = this.kernel.clock();
       job.fence++;
       job.run = {
         jobKey: id,
@@ -235,6 +325,7 @@ export class GameJobs {
         session: null,
         backendTurn: null,
         reservedTokens: this.limits.attemptTokens,
+        budgetScopes: scopes.map(([scope]) => scope),
       };
       job.status = "running";
       job.reason = null;
@@ -251,6 +342,7 @@ export class GameJobs {
     const job = this.get(execution.jobKey),
       run = job.run;
     if (
+      job.status === "abandoned" ||
       !run ||
       run.runId !== execution.runId ||
       run.fencingToken !== execution.fencingToken
@@ -326,7 +418,7 @@ export class GameJobs {
         Number(result.tokens) >= 0
       ) {
         const delta = Number(result.tokens) - job.run.reservedTokens;
-        for (const scope of [
+        for (const scope of job.run.budgetScopes || [
           "room:" + job.roomId,
           "agent:" + job.agentId,
           "framework",
@@ -342,24 +434,78 @@ export class GameJobs {
         .run(JSON.stringify(job.run), job.run.runId);
     });
   }
-  /** A crash or lease expiry does not prove that the remote model stopped. */
+  /** Explicit administrative abandonment fences callbacks without claiming remote termination.
+   * @param {string} id @param {string} reason */
+  abandon(id, reason) {
+    return this.kernel.store.transaction(() => {
+      const job = this.get(id);
+      if (job.status !== "outcome_unknown" || !job.run || job.run.terminal)
+        fail("GAME_JOB_NOT_UNKNOWN", 409);
+      job.run.abandonedAt = this.kernel.clock();
+      job.run.administration = { actor: "admin", reason };
+      this.kernel.store.db
+        .prepare("INSERT INTO game_abandoned_runs VALUES(?,?)")
+        .run(job.run.runId, JSON.stringify({ ...job, status: "abandoned" }));
+      job.status = "abandoned";
+      job.reason = "GAME_RUN_ADMIN_ABANDONED";
+      job.fence++;
+      this.save(job);
+      this.kernel.store.db
+        .prepare("UPDATE game_attempts SET data=? WHERE run_id=?")
+        .run(JSON.stringify(job.run), job.run.runId);
+      return { status: job.status, remoteTerminal: false };
+    });
+  }
+  /** Player clicks share a persistent three-attempt ceiling with automatic attempts. @param {string} id */
+  ownerRetryable(id) {
+    const job = this.get(id);
+    const attempts = this.kernel.store.db
+      .prepare("SELECT count(*) AS n FROM game_attempts WHERE job_id=?")
+      .get(id);
+    return (
+      Number(attempts?.n || 0) < 3 &&
+      this.current(job) &&
+      ((job.status === "model_failed" && job.run?.terminal === true) ||
+        (job.status === "delivery_failed" && !job.run))
+    );
+  }
+  /** @param {string} id */
+  automaticRetry(id) {
+    const job = this.get(id);
+    const attempts = this.kernel.store.db
+      .prepare("SELECT count(*) AS n FROM game_attempts WHERE job_id=?")
+      .get(id);
+    return (
+      job.status === "model_failed" &&
+      job.run?.terminal === true &&
+      Number(attempts?.n || 0) < 2 &&
+      this.current(job)
+    );
+  }
+  /** A crash does not prove remote termination after submission. */
   recover() {
     for (const row of this.kernel.store.db
       .prepare("SELECT id FROM game_jobs WHERE status='running'")
-      .all())
-      this.kernel.store.transaction(() => {
-        const job = this.get(String(row.id));
+      .all()) {
+      const job = this.get(String(row.id));
+      if (job.run?.submitted === false) {
+        this.settle(job.run, {
+          terminal: true,
+          code: "GAME_RUN_NOT_SUBMITTED",
+        });
+      } else {
         job.status = "outcome_unknown";
         job.reason = "OUTCOME_UNKNOWN";
         this.save(job);
-      });
+      }
+    }
   }
   /** Never delete the only evidence of an unresolved remote attempt. @param {string} roomId */
   unresolved(roomId) {
     return (
       this.kernel.store.db
         .prepare(
-          "SELECT 1 FROM game_jobs WHERE room_id=? AND json_extract(data,'$.run.runId') IS NOT NULL AND json_extract(data,'$.run.terminal')=0 LIMIT 1",
+          "SELECT 1 FROM game_jobs WHERE room_id=? AND status!='abandoned' AND json_extract(data,'$.run.runId') IS NOT NULL AND json_extract(data,'$.run.terminal')=0 LIMIT 1",
         )
         .get(roomId) !== undefined
     );
@@ -374,6 +520,11 @@ export class GameJobs {
       .get(id);
     if (!row) return null;
     const job = JSON.parse(String(row.data));
-    return { status: String(row.status), reason: job.reason || null };
+    const status = String(row.status);
+    return {
+      status,
+      reason: job.reason || null,
+      retryable: this.ownerRetryable(id),
+    };
   }
 }

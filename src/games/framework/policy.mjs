@@ -22,6 +22,7 @@ export const gamePolicy = z
         }
       }, "Use an exact HTTPS origin"),
     maxRooms: z.number().int().min(1).max(128).default(32),
+    maxHistoryRooms: z.number().int().min(1).max(4096).default(256),
     maxAttemptsPerRoom: z.number().int().min(1).max(256).default(128),
     maxAttemptsPerAgent: z.number().int().min(1).max(1024).default(256),
     maxAttemptsTotal: z.number().int().min(1).max(4096).default(512),

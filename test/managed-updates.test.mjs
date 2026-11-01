@@ -874,3 +874,118 @@ for (const committing of [false, true])
       assert.equal((await exited)[0], 0);
     },
   );
+
+test("staging with existing game rooms refuses a release without compatibility preflight", async (t) => {
+  const f = source(t);
+  const dataRoot = temp(t);
+  fs.mkdirSync(path.join(dataRoot, "games"));
+  fs.writeFileSync(path.join(dataRoot, "games", "rooms.sqlite"), "synthetic");
+  await assert.rejects(
+    stageRelease({ ...f, dataRoot, tag: "v2.0.0" }),
+    /GAME_COMPATIBILITY_CHECK_UNAVAILABLE/,
+  );
+});
+
+function startupInstallation(directory, version, commit) {
+  fs.mkdirSync(directory, { recursive: true });
+  fs.writeFileSync(
+    path.join(directory, "package.json"),
+    JSON.stringify({ version }),
+  );
+  return { codeRoot: directory, version, commit };
+}
+test("read-only startup selection preserves interrupted fallback and commit targets without changing state", async (t) => {
+  const { resolveManagedStartup } =
+    await import("../src/updates/startup-target.mjs");
+  const { frameworkBuildDigest } =
+    await import("../src/core/framework-knowledge.mjs");
+  const root = temp(t),
+    home = path.join(root, updateDirectory);
+  const from = startupInstallation(
+    path.join(home, "releases", "old"),
+    "2.0.0",
+    "a".repeat(40),
+  );
+  const to = startupInstallation(
+    path.join(home, "releases", "new"),
+    "3.0.0",
+    "b".repeat(40),
+  );
+  const bundled = startupInstallation(
+    path.join(root, "bootstrap"),
+    "1.0.0",
+    "c".repeat(40),
+  );
+  for (const value of [from, to, bundled])
+    fs.writeFileSync(
+      path.join(value.codeRoot, "framework-build.json"),
+      JSON.stringify({
+        commit: value.commit,
+        buildDigest: frameworkBuildDigest(value.codeRoot),
+      }),
+    );
+  const pointer = path.join(home, "current.json"),
+    journal = path.join(home, "transaction.json");
+  fs.writeFileSync(pointer, JSON.stringify(to));
+  for (const committing of [false, true]) {
+    const previous = { phase: "checking", from, to, committing };
+    fs.writeFileSync(journal, JSON.stringify(previous));
+    assert.throws(
+      () => resolveManagedStartup({ root, bundledRoot: bundled.codeRoot }),
+      /UPDATE_RECOVERY_REQUIRED/,
+    );
+    assert.deepEqual(
+      resolveManagedStartup({
+        root,
+        bundledRoot: bundled.codeRoot,
+        recover: true,
+      }).current,
+      {
+        ...(committing ? to : from),
+        codeRoot: fs.realpathSync((committing ? to : from).codeRoot),
+      },
+    );
+    assert.deepEqual(readState(pointer), to);
+    assert.deepEqual(readState(journal), previous);
+  }
+});
+
+test("startup selection rejects unknown identities and out-of-release pointers", async (t) => {
+  const { resolveManagedStartup } =
+    await import("../src/updates/startup-target.mjs");
+  const root = temp(t),
+    home = path.join(root, updateDirectory),
+    bundledRoot = fileURLToPath(new URL("..", import.meta.url));
+  fs.mkdirSync(home);
+  const pointer = path.join(home, "current.json");
+  const unknown = startupInstallation(
+    path.join(home, "releases", "unknown"),
+    "99.0.0",
+    "a".repeat(40),
+  );
+  const outside = startupInstallation(
+    path.join(root, "outside"),
+    "99.0.0",
+    "b".repeat(40),
+  );
+  for (const value of [unknown, outside]) {
+    fs.writeFileSync(pointer, JSON.stringify(value));
+    assert.throws(
+      () => resolveManagedStartup({ root, bundledRoot }),
+      /UPDATE_STATE_INVALID/,
+    );
+    assert.deepEqual(readState(pointer), value);
+  }
+});
+
+test("startup pointer parse failures expose only a stable state error", async (t) => {
+  const { resolveManagedStartup } =
+    await import("../src/updates/startup-target.mjs");
+  const root = temp(t),
+    home = path.join(root, updateDirectory);
+  fs.mkdirSync(home);
+  fs.writeFileSync(path.join(home, "current.json"), '{"private-fixture":');
+  assert.throws(() => resolveManagedStartup({ root }), {
+    message: "UPDATE_STATE_INVALID",
+  });
+});

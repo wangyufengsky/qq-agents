@@ -99,7 +99,8 @@ button:focus-visible {
   flex-wrap: wrap;
   margin: 12px 0 22px;
 }
-#confirm {
+#confirm,
+.primary {
   background: #185a43;
   color: white;
 }
