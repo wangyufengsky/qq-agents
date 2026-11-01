@@ -18,10 +18,10 @@ import releases from "../src/games/framework/compatible-releases.json" with { ty
 test("published rule digest is stable and unrelated/UI resources are not rule dependencies", () => {
   const registry = new GameRegistry();
   const ref = registerGomokuP2(registry);
-  assert.equal(ref.moduleVersion, "3");
+  assert.equal(ref.moduleVersion, "4");
   assert.equal(
     ref.moduleDigest,
-    "c0b24a9a41e56149e2bd5209f6604e0eed372758861203309530518988278811",
+    "8980a74ad57aa1099ba71e1afdda7a3569357f5e54cb608ed8863bbbea9c2c05",
     "publish a new module version when rules or schemas change",
   );
   assert.deepEqual(Object.keys(gomokuSources()).sort(), [
@@ -34,6 +34,13 @@ test("published rule digest is stable and unrelated/UI resources are not rule de
   );
   const legacy = releases[0].ref;
   assert.deepEqual(registry.resolve(legacy).ref, legacy);
+  // Rooms created by the v3 page keep their exact reference and load the v4 UI.
+  const v3 = releases.find((r) => r.ref.moduleVersion === "3").ref;
+  assert.equal(
+    v3.moduleDigest,
+    "c0b24a9a41e56149e2bd5209f6604e0eed372758861203309530518988278811",
+  );
+  assert.deepEqual(registry.resolve(v3).ref, v3);
   assert.throws(
     () => registry.resolve({ ...legacy, moduleDigest: "0".repeat(64) }),
     /GAME_MODULE_UNAVAILABLE/,
@@ -52,7 +59,7 @@ test("exact legacy rooms survive reopening without rewriting identity; preflight
   const { roomId } = kernel.createRoom(kernel.actor("owner"), {
     requestId: randomUUID(),
     gameType: "gomoku",
-    moduleVersion: "3",
+    moduleVersion: "4",
     options: {},
     participants: [
       { principalId: "owner", kind: "human", label: "玩家" },
@@ -130,6 +137,7 @@ test("published UI assets have an independent immutable version snapshot", () =>
   );
   const published = {
     3: "6560dc73544fda1a2e7931b41eb50aa88d4e1d57cd3a157a0e54ec17ab3e2221",
+    4: "a8d3c71547ddcae874590ada72faba7824636fcb53ab28ee3bc0a104545220dc",
   };
   assert.equal(
     actual,
