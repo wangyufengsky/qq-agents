@@ -4,6 +4,7 @@ import path from "node:path";
 import { fork } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { gameDatabase } from "./database.mjs";
+import { gameModuleVersion } from "./module.mjs";
 import { GameWorker } from "./worker.mjs";
 import { buildChildEnv } from "../../core/child-env.mjs";
 import { digest, fail } from "../core/value.mjs";
@@ -314,7 +315,7 @@ export class GameHost {
       { roomId } = this.kernel.createRoom(owner, {
         requestId: args.requestId,
         gameType: "gomoku",
-        moduleVersion: "2",
+        moduleVersion: gameModuleVersion,
         options: {},
         participants: [
           { principalId: principal, kind: "human", label: "玩家" },

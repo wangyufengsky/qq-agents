@@ -92,6 +92,7 @@ export async function command(
 export async function stageRelease({
   home,
   codeRoot,
+  dataRoot,
   tag,
   container = false,
   signal,
@@ -174,6 +175,16 @@ export async function stageRelease({
     cwd: destination,
     signal,
   });
+  if (dataRoot && fs.existsSync(path.join(dataRoot, "games", "rooms.sqlite"))) {
+    const script = path.join(destination, "scripts", "game-compatibility.mjs");
+    if (!fs.existsSync(script))
+      throw Error("GAME_COMPATIBILITY_CHECK_UNAVAILABLE");
+    await run(
+      process.execPath,
+      [script, path.join(dataRoot, "games", "rooms.sqlite")],
+      { cwd: destination, signal },
+    );
+  }
   const check = new FrameworkKnowledge({ root: codeRoot }).version;
   if (check.commit !== installed.commit || check.modified !== false)
     throw Error("UPDATE_LOCAL_CHANGES");

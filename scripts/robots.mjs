@@ -103,7 +103,23 @@ async function connectAndResume() {
     await api("pause", { paused: false });
   }
 }
+function checkGames() {
+  const database = path.join(root, "games", "rooms.sqlite");
+  if (!fs.existsSync(database)) return;
+  const script = path.join(codeRoot, "scripts", "game-compatibility.mjs");
+  if (!fs.existsSync(script))
+    throw Error("GAME_COMPATIBILITY_CHECK_UNAVAILABLE");
+  try {
+    execFileSync(process.execPath, [script, database], {
+      stdio: "pipe",
+      timeout: 15000,
+    });
+  } catch {
+    throw Error("GAME_DEPLOYMENT_INCOMPATIBLE");
+  }
+}
 async function start() {
+  checkGames();
   await native.start();
   await native.waitReady(
     config.connections.filter((c) => c.enabled).map((c) => c.id),
@@ -202,6 +218,7 @@ try {
   if (command === "start") await start();
   else if (command === "stop") await stop();
   else if (command === "restart") {
+    checkGames();
     if (verifiedBridge() && (await portBusy(config.port)))
       await waitForDrain(() => api("maintenance", {}));
     await stop();

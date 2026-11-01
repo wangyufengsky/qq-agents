@@ -50,6 +50,7 @@ const manifestSchema = z.strictObject({
 
 export class GameRegistry {
   modules = new Map();
+  compatible = new Map();
   /** Trusted, statically imported code only. Sources cover its complete bundle, including UI/schema dependencies.
    * @param {Definition} definition @param {Record<string,string|Buffer>} sources */
   register(definition, sources) {
@@ -113,8 +114,33 @@ export class GameRegistry {
     if (!module) fail("GAME_MODULE_UNAVAILABLE", 503);
     return module;
   }
+  /** Only reviewed, exact historical references may reuse identical rules. UI delivery is versioned separately.
+   * @param {any} ref @param {any} target */
+  registerCompatible(ref, target) {
+    const { moduleDigest, ...manifest } = ref;
+    parse(manifestSchema, manifest, "GAME_MODULE_INVALID");
+    if (!/^[a-f0-9]{64}$/.test(moduleDigest)) fail("GAME_MODULE_INVALID");
+    const module = this.resolve(target);
+    for (const key of [
+      "gameType",
+      "rulesVersion",
+      "stateSchemaVersion",
+      "moduleApiVersion",
+    ])
+      if (ref[key] !== module.ref[key]) fail("GAME_MODULE_INVALID");
+    this.compatible.set(
+      canonical(ref),
+      Object.freeze({
+        ...module,
+        ref: immutable(ref),
+        manifest: immutable(manifest),
+      }),
+    );
+  }
   /** @param {any} ref */
   resolve(ref) {
+    const compatible = this.compatible.get(canonical(ref));
+    if (compatible) return compatible;
     const module = this.select(ref.gameType, ref.moduleVersion);
     if (canonical(module.ref) !== canonical(ref))
       fail("GAME_MODULE_UNAVAILABLE", 503);

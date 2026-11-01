@@ -874,3 +874,14 @@ for (const committing of [false, true])
       assert.equal((await exited)[0], 0);
     },
   );
+
+test("staging with existing game rooms refuses a release without compatibility preflight", async (t) => {
+  const f = source(t);
+  const dataRoot = temp(t);
+  fs.mkdirSync(path.join(dataRoot, "games"));
+  fs.writeFileSync(path.join(dataRoot, "games", "rooms.sqlite"), "synthetic");
+  await assert.rejects(
+    stageRelease({ ...f, dataRoot, tag: "v2.0.0" }),
+    /GAME_COMPATIBILITY_CHECK_UNAVAILABLE/,
+  );
+});

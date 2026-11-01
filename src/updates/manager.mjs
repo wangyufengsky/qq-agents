@@ -151,6 +151,7 @@ export class UpgradeManager {
       const candidate = await this.stage({
         home: this.home,
         codeRoot: this.current.codeRoot,
+        dataRoot: this.root,
         tag,
         container: this.container,
         signal: this.controller.signal,

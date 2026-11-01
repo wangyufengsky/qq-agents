@@ -66,6 +66,7 @@
     "src/games/gomoku/*.mjs",
     "scripts/game-p1b.mjs",
     "src/games/framework/*.mjs",
-    "scripts/game-p2-acceptance.mjs"
+    "scripts/game-p2-acceptance.mjs",
+    "scripts/game-compatibility.mjs"
   ]
 }

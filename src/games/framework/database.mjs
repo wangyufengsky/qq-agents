@@ -2,7 +2,6 @@
 import { GameRegistry } from "../core/registry.mjs";
 import { GameKernel } from "../core/kernel.mjs";
 import { GameIdentity } from "../core/identity.mjs";
-import { registerGomoku } from "../gomoku/module.mjs";
 import { registerGomokuP2 } from "./module.mjs";
 import { GameJobs } from "./jobs.mjs";
 /** @param {{database:string,clock?:()=>number,maxRooms?:number,gate?:(job:any)=>string|null,limits?:any}} options */
@@ -14,7 +13,6 @@ export function gameDatabase({
   limits,
 }) {
   const registry = new GameRegistry();
-  registerGomoku(registry);
   registerGomokuP2(registry);
   const kernel = new GameKernel({
     database,
