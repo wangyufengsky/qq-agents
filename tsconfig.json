@@ -39,6 +39,7 @@
     "src/core/mind-policy.mjs",
     "src/core/policy.mjs",
     "src/core/typing.mjs",
+    "src/core/tone-check.mjs",
     "src/memory/migrate.mjs",
     "src/tools/errors.mjs",
     "scripts/memory-benchmark.mjs",

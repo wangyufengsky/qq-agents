@@ -441,3 +441,20 @@ test("typing rechecks a lower hot-updated send quota before reserving delivery",
   assert.equal(f.sent(), 1);
   assert.equal(f.store.bind("agent-0").delivery("quota-changed"), undefined);
 });
+
+test("tone review runs before typing, then exact confirmation waits and retains duplicate receipts", async (t) => {
+  const f = setup(t);
+  const args = { requestId: "review-before-typing", text: "总结一下" };
+  await assert.rejects(f.runtime.send(f.ctx, args), /TONE_REVIEW_SUGGESTED/);
+  assert.equal(f.ctx.pendingDeliveries || 0, 0);
+  assert.equal(f.store.bind("agent-0").delivery(args.requestId), undefined);
+  const p = f.runtime.send(f.ctx, args);
+  await flush();
+  t.mock.timers.tick(399);
+  await flush();
+  assert.equal(f.sent(), 0);
+  t.mock.timers.tick(1);
+  assert.equal((await p).status, "sent");
+  assert.equal((await f.runtime.send(f.ctx, args)).duplicate, true);
+  assert.equal(f.sent(), 1);
+});
