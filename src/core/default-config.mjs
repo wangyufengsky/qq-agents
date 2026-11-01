@@ -94,6 +94,15 @@ export function defaultConfig() {
         // Two agents on two QQ accounts can tell each other's owners when one
         // goes offline; the administrator turns it on per agent.
         behavior: {
+          typing: {
+            enabled: true,
+            msPerChar: 180,
+            jitter: 0.35,
+            minMs: 600,
+            maxMs: 12000,
+            firstReply: true,
+            firstReplyMaxMs: 6000,
+          },
           toneCheck: { mode: "warn", phrases: [], maxLinesCasual: 6 },
           outageNotice: { enabled: false },
           rhythm: {
@@ -135,6 +144,15 @@ export function defaultConfig() {
         },
         maxConsecutiveSends: 3,
         behavior: {
+          typing: {
+            enabled: true,
+            msPerChar: 180,
+            jitter: 0.35,
+            minMs: 600,
+            maxMs: 12000,
+            firstReply: true,
+            firstReplyMaxMs: 6000,
+          },
           toneCheck: { mode: "warn", phrases: [], maxLinesCasual: 6 },
           outageNotice: { enabled: false },
           rhythm: {

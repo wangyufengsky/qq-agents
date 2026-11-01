@@ -353,11 +353,24 @@ async function renderSchedules() {
       ${range("rhythmJitter", "起床后随机延后上限", b.rhythm.wakeJitterMs / 60000, { min: 0, max: 120, step: 1, unit: " 分钟" })}
       ${range("rhythmProbability", "普通消息偶尔慢回复", b.rhythm.lateReply.probability * 100, { min: 0, max: 100, step: 1, unit: "%" })}
       ${range("rhythmMin", "慢回复最少等待", b.rhythm.lateReply.minMs / 60000, { min: 0, max: 60, step: 1, unit: " 分钟" })}${range("rhythmMax", "慢回复最多等待", b.rhythm.lateReply.maxMs / 60000, { min: 0, max: 60, step: 1, unit: " 分钟" })}
-      </div><p class="hint">默认关闭。时区示例：Asia/Shanghai。只推迟普通唤醒，定时任务和已选定意图不受影响；睡觉时暂停空闲活动和主动联系，额度不增加。被 @ 或被引用不套用随机慢回复，但睡觉时仍等到起床。</p>`,
+      </div><p class="hint">默认关闭。时区示例：Asia/Shanghai。只推迟普通唤醒，定时任务和已选定意图不受影响；睡觉时暂停空闲活动和主动联系，额度不增加。被 @ 或被引用不套用随机慢回复；睡觉期间遵循所选的处理方式。</p>`,
       {
         summary: b.rhythm.enabled
           ? `${esc(b.rhythm.sleep.start)}–${esc(b.rhythm.sleep.end)}`
           : "未开启",
+        cls: "fold-inner",
+      },
+    )}${fold(
+      "schedule-typing",
+      "打字节奏",
+      `<div class="form-grid">${parityCheck("typingEnabled", "按内容长度等待", b.typing.enabled)}${parityCheck("typingFirst", "首条也等待", b.typing.firstReply)}
+    ${range("typingChar", "每字耗时", b.typing.msPerChar, { min: 0, max: 2000, step: 10, unit: " 毫秒" })}${range("typingJitter", "打字抖动", b.typing.jitter, { min: 0, max: 1, step: 0.01, unit: "%" })}
+    ${range("typingMin", "单条最短等待", b.typing.minMs / 1000, { min: 0, max: 30, step: 0.1, unit: " 秒" })}${range("typingMax", "单条最长等待", b.typing.maxMs / 1000, { min: 0, max: 30, step: 0.1, unit: " 秒" })}${range("typingFirstMax", "首条最长等待", b.typing.firstReplyMaxMs / 1000, { min: 0, max: 30, step: 0.1, unit: " 秒" })}
+    </div><p class="hint">短句快、长段慢；表情、链接和图片各按一字计。连发时偶尔叠加走神停顿，显式 gapMs 优先。关闭后恢复原来的随机连发间隔，首条不等；固定定时文字和故障提示不等待。首条等待超过三秒时遇到新消息，会先让角色读完再决定。</p>`,
+      {
+        summary: b.typing.enabled
+          ? "按长度等待 · 首条最多 " + b.typing.firstReplyMaxMs / 1000 + " 秒"
+          : "已关闭 · 原随机间隔",
         cls: "fold-inner",
       },
     )}<button class="primary">保存唤醒与节奏</button></form>`,
@@ -400,6 +413,16 @@ async function renderSchedules() {
         maxWakePerHour: num("wakeHour"),
         maxSendPerHour: num("sendHour"),
         maxSendPerMinute: num("sendMinute"),
+        typing: {
+          ...agent.behavior.typing,
+          enabled: f.has("typingEnabled"),
+          firstReply: f.has("typingFirst"),
+          msPerChar: num("typingChar"),
+          jitter: num("typingJitter"),
+          minMs: Math.round(num("typingMin") * 1000),
+          maxMs: Math.round(num("typingMax") * 1000),
+          firstReplyMaxMs: Math.round(num("typingFirstMax") * 1000),
+        },
       });
       agent.behavior.rhythm = {
         enabled: f.has("rhythmEnabled"),
