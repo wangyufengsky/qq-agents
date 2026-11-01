@@ -141,7 +141,14 @@ export class OneBot extends EventEmitter {
         redirect: "error",
       },
     );
-    if (!response.ok) throw Error("ONEBOT_HTTP_ERROR");
+    if (!response.ok) {
+      if (action === "delete_msg" && response.status === 404) {
+        const error = Error("ONEBOT_REJECTED");
+        error.reason = "ACTION_UNSUPPORTED";
+        throw error;
+      }
+      throw Error("ONEBOT_HTTP_ERROR");
+    }
     const chunks = [];
     let bytes = 0;
     for await (const chunk of response.body) {
@@ -163,9 +170,23 @@ export class OneBot extends EventEmitter {
       // offline mid-send); the message can still go out afterwards.
       else if (/Timeout: NTEvent/i.test(detail))
         error.reason = "GATEWAY_TIMEOUT";
+      if (
+        action === "delete_msg" &&
+        error.reason !== "GATEWAY_TIMEOUT" &&
+        (body.retcode === 1404 ||
+          body.retcode === 404 ||
+          /unsupported|not supported|unknown (?:api|action)|不支持|接口不存在/i.test(
+            detail,
+          ))
+      )
+        error.reason = "ACTION_UNSUPPORTED";
       throw error;
     }
     return body.data;
+  }
+  async recall(messageId) {
+    await this.call("delete_msg", { message_id: String(messageId) });
+    return { confirmed: true };
   }
   async status() {
     const login = await this.call("get_login_info");

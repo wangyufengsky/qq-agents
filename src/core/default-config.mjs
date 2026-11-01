@@ -94,6 +94,11 @@ export function defaultConfig() {
         // Two agents on two QQ accounts can tell each other's owners when one
         // goes offline; the administrator turns it on per agent.
         behavior: {
+          actions: {
+            recall: false,
+            recallWindowMs: 110000,
+            recallMaxPerHour: 3,
+          },
           typing: {
             enabled: true,
             msPerChar: 180,
@@ -136,6 +141,11 @@ export function defaultConfig() {
         },
         maxConsecutiveSends: 3,
         behavior: {
+          actions: {
+            recall: false,
+            recallWindowMs: 110000,
+            recallMaxPerHour: 3,
+          },
           typing: {
             enabled: true,
             msPerChar: 180,
