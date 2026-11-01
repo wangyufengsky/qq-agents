@@ -403,13 +403,26 @@ export class IdentityMemory {
   // how they get along. Every conversation shares it, like Self, so it never
   // holds protected material. Recent revisions stay for review.
   personCard(personId) {
-    return decode(
-      this.db
-        .prepare(
-          "SELECT value FROM person_notes WHERE agent_id=? AND person_id=?",
-        )
-        .get(this.agentId, String(personId)),
+    return this.personCardView(
+      decode(
+        this.db
+          .prepare(
+            "SELECT value FROM person_notes WHERE agent_id=? AND person_id=?",
+          )
+          .get(this.agentId, String(personId)),
+      ),
     );
+  }
+  personCardView(card) {
+    if (!card) return card;
+    const annotate = (value) => ({
+      ...value,
+      recalledEvidence: (value.evidence || []).flatMap((id) => {
+        const annotation = this.mem.recallAnnotation(id);
+        return annotation.recalled ? [{ id, ...annotation }] : [];
+      }),
+    });
+    return { ...annotate(card), history: (card.history || []).map(annotate) };
   }
   personCards() {
     return this.db
@@ -417,7 +430,7 @@ export class IdentityMemory {
         "SELECT value FROM person_notes WHERE agent_id=? ORDER BY json_extract(value,'$.updatedAt') DESC",
       )
       .all(this.agentId)
-      .map(decode);
+      .map((row) => this.personCardView(decode(row)));
   }
   savePersonCard(
     { personId, call = "", body, evidence = [], expectedRevision = 0 },
@@ -465,7 +478,9 @@ export class IdentityMemory {
               writtenIn: old.writtenIn,
               updatedAt: old.updatedAt,
             },
-            ...old.history,
+            ...old.history.map(
+              ({ recalledEvidence: _recalled, ...entry }) => entry,
+            ),
           ].slice(0, 10)
         : [],
     };

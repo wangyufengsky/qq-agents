@@ -332,6 +332,10 @@ export function evidenceView(memory, record) {
     };
   return {
     ...snapshot,
+    references: snapshot.references.map((ref) => ({
+      ...ref,
+      ...memory.recallAnnotation(ref.id),
+    })),
     availability: snapshot.references.map((ref) => {
       const row =
         ref.type === "diary"
@@ -348,6 +352,7 @@ export function evidenceView(memory, record) {
           .get(ref.id, ref.revision);
       return {
         id: ref.id,
+        ...memory.recallAnnotation(ref.id),
         available: !!row,
         revisionAvailable,
         currentRevision: row?.revision,

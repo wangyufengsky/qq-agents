@@ -54,6 +54,15 @@ const animation = z
   .strict()
   .optional();
 export const definitions = {
+  qq_recall: [
+    "撤回自己在当前聊天刚确认发出的消息。messageRef 用记录 ID 或本会话消息号；默认限 110 秒、每小时 3 次。超时或未知结果不可换 requestId 重试，撤回不恢复回复额度，原始经历保留。",
+    z
+      .object({
+        requestId: str.min(1).max(200),
+        messageRef: str.min(1).max(200),
+      })
+      .strict(),
+  ],
   protected_work_submit: [
     "提交本受保护任务的待审阅结果。只有控制台批准的精确文字才会交回指定聊天；此调用不发送 QQ。",
     z.object({ text: z.string().trim().min(1).max(12000) }).strict(),
