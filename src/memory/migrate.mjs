@@ -1,4 +1,5 @@
 // @ts-check
+import { withoutClosenessCache } from "../core/closeness.mjs";
 export { inspectLegacy, importLegacy } from "./legacy-import.mjs";
 import { validateExport } from "./export-format.mjs";
 import {
@@ -110,6 +111,10 @@ export function restoreExport(memory, data) {
     for (const [table, cols] of Object.entries(columns)) {
       for (const original of data.tables[table] || []) {
         const row = { ...original };
+        if (table === "person_notes")
+          row.value = JSON.stringify(
+            withoutClosenessCache(JSON.parse(row.value)),
+          );
         if (cols.includes("agent_id") && row.agent_id !== memory.agentId)
           throw Error("EXPORT_FOREIGN_AGENT");
         if (

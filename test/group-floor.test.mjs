@@ -116,7 +116,7 @@ test("a group turn says who is talking to whom, which questions others answered,
   await f.ingest(14, [reply(900), text("等等我？")], 30001);
   floor = floorIn(f.prompts.at(-1));
   assert.deepEqual(floor.toYou, [ids14(m)]);
-  assert.match(f.instructions[0], /问题已经有人答了，就不再补一篇总结/);
+  assert.match(f.instructions[0], /问题已有回应时，让对话自然往下走/);
 });
 
 test("a private chat carries no group floor", async (t) => {

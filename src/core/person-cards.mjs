@@ -2,6 +2,7 @@
 // A model session meets a person card once: when that person first comes up
 // there, and again only after the card changes. A new session starts with
 // none seen, so a card never repeats turn after turn.
+import { personCloseness } from "./closeness.mjs";
 import { resolveMessage, scopeFor } from "../memory/message-ids.mjs";
 
 const MAX_CARDS_PER_TURN = 10;
@@ -12,7 +13,8 @@ const MENTION = /\[提及 QQ:(\d{5,12})\]/g;
 const QUOTE = /\[引用:([^\]\s]{1,128})\]/g;
 // What a session has seen: this card, at this revision.
 /** @param {any} card */
-const seenKey = (card) => `${card.id}:${card.revision}`;
+export const personCardSeenKey = (card) =>
+  `${card.id}:${card.revision}${card.closeness ? ":closeness:" + card.closeness.tier + ":" + (card.closeness.overridden ? "fixed" : "auto") : ""}`;
 
 /** @param {any} event An archived events row. */
 export function references(event) {
@@ -79,7 +81,7 @@ function lastName(memory, id) {
  * @param {any} memory Bound agent memory.
  * @param {string} conversation
  * @param {any[]} items Records this turn shows the model.
- * @param {{fresh: boolean, accountId: string}} options
+ * @param {{fresh: boolean, accountId: string, now?: number}} options
  */
 export function personCardsForTurn(memory, conversation, items, options) {
   const shown = options.fresh
@@ -93,20 +95,32 @@ export function personCardsForTurn(memory, conversation, items, options) {
     options.accountId,
   )) {
     if (cards.length >= MAX_CARDS_PER_TURN) break;
-    const card = memory.identity.personCard(id);
-    if (!card || shown[id] === seenKey(card)) continue;
+    const saved = memory.identity.personCard(id);
+    const card = saved
+      ? {
+          ...saved,
+          closeness: personCloseness(
+            memory,
+            id,
+            options.now ?? Date.now(),
+            options.accountId,
+          ),
+        }
+      : null;
+    if (!card || shown[id] === personCardSeenKey(card)) continue;
     const nickname = lastName(memory, id);
     cards.push({
       personId: card.personId,
       ...(nickname ? { nickname } : {}),
       call: card.call,
       impression: card.body,
+      closeness: card.closeness,
       ...memory.corrections.annotation("person", card.id, card.revision),
       revision: card.revision,
       updatedAt: card.updatedAt,
       ...(card.author === "admin" ? { editedBy: "admin" } : {}),
     });
-    shown[id] = seenKey(card);
+    shown[id] = personCardSeenKey(card);
   }
   return { cards, shown };
 }
@@ -118,7 +132,7 @@ export function markPersonCardShown(memory, conversation, card) {
     ...state,
     personCardsShown: {
       ...state.personCardsShown,
-      [card.personId]: seenKey(card),
+      [card.personId]: personCardSeenKey(card),
     },
   });
 }

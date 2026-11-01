@@ -1,3 +1,4 @@
+import { personCloseness } from "./core/closeness.mjs";
 import { readFileText } from "./tools/file-text.mjs";
 import { fileProjects, projectFiles } from "./core/project-files.mjs";
 import {
@@ -406,7 +407,18 @@ export function createServer({
             runtime.config.connections.find((c) => c.id === a.connectionId)
               ?.accountId,
           ),
-          cards = m.identity.personCards(),
+          cards = m.identity.personCards().map((card) => ({
+            ...card,
+            closeness: {
+              ...card.closeness,
+              ...personCloseness(
+                m,
+                card.personId,
+                runtime.now(),
+                runtime.connection(a.connectionId).accountId,
+              ),
+            },
+          })),
           cardOf = new Map(cards.map((c) => [c.personId, c])),
           namesOf = (qq) =>
             JSON.parse(
@@ -583,6 +595,7 @@ export function createServer({
               personId: data.personId,
               call: data.call ?? "",
               body: data.body,
+              closenessOverride: data.closenessOverride,
               expectedRevision: data.expectedRevision,
             },
             { writtenIn: "console", author: "admin", now: runtime.now() },

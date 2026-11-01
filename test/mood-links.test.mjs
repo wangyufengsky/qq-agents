@@ -293,6 +293,7 @@ function consoleScripts(api) {
     esc: (x) =>
       String(x ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`),
     input: () => "",
+    select: () => "",
     render: () => rendered.push(sandbox.tab),
     CustomEvent,
     document: {

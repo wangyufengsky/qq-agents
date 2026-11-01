@@ -10,6 +10,7 @@
     "skipLibCheck": true
   },
   "include": [
+    "src/core/closeness.mjs",
     "src/backends/*.mjs",
     "src/core/config-impact.mjs",
     "src/core/default-config.mjs",

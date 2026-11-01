@@ -1,3 +1,4 @@
+import { personCloseness } from "../core/closeness.mjs";
 import {
   activityFields,
   projectReadSchema,
@@ -388,6 +389,12 @@ function executeMindTool(runtime, ctx, name, args) {
       writtenIn: ctx.conversation,
       now,
     });
+    card.closeness = personCloseness(
+      m,
+      card.personId,
+      now,
+      runtime.connection(a.connectionId).accountId,
+    );
     markPersonCardShown(m, ctx.conversation, card);
     return card;
   }

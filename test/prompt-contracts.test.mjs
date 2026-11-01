@@ -243,3 +243,42 @@ test("chat tone protocol rebuilds an old stable contract once without editing Se
   );
   assert.deepEqual(mem.identity.current(), current);
 });
+
+test("positive silence and derived familiarity update the protocol once without rewriting Self", async (t) => {
+  const { createHash } = await import("node:crypto");
+  const cfg = config(1),
+    captured = [];
+  cfg.agents[0].contextPolicy.capacityTokens = 65536;
+  const { runtime, store } = fixture(t, {
+    cfg,
+    run: async (p) => {
+      captured.push(p);
+      p.saveSession({ id: "silence-fixture", backend: "fixture" });
+    },
+  });
+  await runtime.wake("agent-0", "group:20000");
+  const instruction = captured[0].instructions;
+  assert.match(
+    instruction,
+    /不回、只贴表情或表情包、简短接一句、让话题自然结束/,
+  );
+  assert.match(instruction, /已读不回也很自然/);
+  assert.match(instruction, /不通过假装没看见或故意记错/);
+  assert.match(instruction, /不改变权限、白名单、冷却或预算/);
+  const memory = store.bind("agent-0"),
+    state = memory.state("group:20000"),
+    self = memory.identity.current();
+  const old = instruction.replace(
+    /人物卡和空闲素材中的 closeness\.tier[^\n]*/g,
+    "旧聊天协议",
+  );
+  memory.setState("group:20000", {
+    ...state,
+    loadedInstructionsHash: createHash("sha256").update(old).digest("hex"),
+  });
+  await runtime.wake("agent-0", "group:20000");
+  await runtime.wake("agent-0", "group:20000");
+  assert.equal(captured[1].session, null);
+  assert.equal(captured[2].session.id, "silence-fixture");
+  assert.deepEqual(memory.identity.current(), self);
+});

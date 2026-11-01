@@ -1,3 +1,4 @@
+import { withoutClosenessCache } from "../core/closeness.mjs";
 import fs from "node:fs";
 import { DatabaseSync, backup } from "node:sqlite";
 import { parentPort, workerData } from "node:worker_threads";
@@ -85,6 +86,10 @@ try {
         `SELECT r.* FROM ${from}${name === "events" ? " ORDER BY r.seq" : name === "moods" ? " ORDER BY r.rowid" : ""}`,
       )
       .iterate(agentId)) {
+      if (name === "person_notes")
+        row.value = JSON.stringify(
+          withoutClosenessCache(JSON.parse(row.value)),
+        );
       const json = Buffer.from(JSON.stringify(row));
       if (json.length > limits.rowBytes) throw Error("EXPORT_ROW_BUDGET");
       if (count++) write(",");

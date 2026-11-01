@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { CLOSENESS_TIERS } from "../core/closeness.mjs";
 import { freezeEvidence, evidenceView } from "./evidence.mjs";
 import { mergeProtection } from "./protection.mjs";
 const encode = JSON.stringify;
@@ -420,11 +421,25 @@ export class IdentityMemory {
       .map(decode);
   }
   savePersonCard(
-    { personId, call = "", body, evidence = [], expectedRevision = 0 },
+    {
+      personId,
+      call = "",
+      body,
+      evidence = [],
+      expectedRevision = 0,
+      closenessOverride,
+    },
     { writtenIn, author = "agent", now },
   ) {
     personId = String(personId);
     if (!/^\d{5,12}$/.test(personId)) throw Error("INVALID_PERSON");
+    if (
+      closenessOverride !== undefined &&
+      (author !== "admin" ||
+        (closenessOverride !== null &&
+          !CLOSENESS_TIERS.includes(closenessOverride)))
+    )
+      throw Error("INVALID_CLOSENESS");
     if (
       typeof call !== "string" ||
       call.trim().length > 40 ||
@@ -449,6 +464,14 @@ export class IdentityMemory {
       call: call.trim(),
       body: body.trim(),
       evidence,
+      ...(closenessOverride !== undefined
+        ? {
+            closeness:
+              closenessOverride === null ? {} : { override: closenessOverride },
+          }
+        : old?.closeness
+          ? { closeness: old.closeness }
+          : {}),
       revision: (old?.revision || 0) + 1,
       author,
       writtenIn: writtenIn ?? null,

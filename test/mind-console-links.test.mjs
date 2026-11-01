@@ -57,6 +57,7 @@ function scripts(names, extra = {}) {
     esc: (x) =>
       String(x ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`),
     input: () => "",
+    select: () => "",
     conversationLabel: (c) =>
       c.replace(/^group:/, "群 ").replace(/^private:/, "私聊 "),
     tag: () => "",
