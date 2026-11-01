@@ -33,6 +33,7 @@ import {
   peopleInTurn,
 } from "./person-cards.mjs";
 import { moodForTurn } from "./mood.mjs";
+import { elsewhereForTurn } from "./elsewhere.mjs";
 import { floorForTurn } from "./floor.mjs";
 import { taskBrief } from "./scheduler.mjs";
 import { recallBoundary, recallPage } from "./recall-boundary.mjs";
@@ -533,6 +534,7 @@ export class ContextLifecycle {
       [
         "personCardsShown",
         "personItemsShown",
+        "elsewhereShown",
         "scheduleShown",
         "moodShown",
       ].map((key) => [key, s[key]]),
@@ -569,6 +571,11 @@ export class ContextLifecycle {
             now: r.now(),
             accountId: r.connection(a.connectionId).accountId,
           });
+    const elsewhere = elsewhereForTurn(r, ctx, history.items, {
+      fresh: ctx.initialSession,
+      now: r.now(),
+      accountId: r.connection(a.connectionId).accountId,
+    });
     const between =
       ctx.conversation === SUBJECT
         ? null
@@ -617,6 +624,9 @@ export class ContextLifecycle {
         "intent",
       );
     }
+    // Index metadata still carries source provenance, without marking it read.
+    for (const item of elsewhere?.items || [])
+      ctx.privateRead.add(item.continuation.id);
     r.subject.trackForTurn(ctx);
     ctx.persistTaint?.();
     const materials =
@@ -661,6 +671,9 @@ export class ContextLifecycle {
       // Last, closest to the reply, where an address is most likely heeded.
       people?.cards.length
         ? `人物卡（你自己记下的称呼与印象，是看法不是事实；称呼按 call。来源和版本用 person_notes 按 personId 回查，更新前先读当前版本，再用 person_note 保存）：${JSON.stringify(chatPersonCards(people.cards))}`
+        : "",
+      elsewhere?.items.length
+        ? `别处近况（程序按你自己参与的直接来往统计，只是索引，不是原文；要用时按 continuation 回查。fromPrivate 是对方私聊里的事，不要在群里提起内容，除非对方先提；其他会话的经历由你结合场合判断怎么用）：${JSON.stringify({ items: elsewhere.items, ...(Object.keys(elsewhere.more).length ? { more: elsewhere.more } : {}) })}`
         : "",
       between?.items.length
         ? `你和这些人之间还没了结的事（你自己用 person_item 记下的）：boundary 是对方的相处边界，照着调整；promise 是你答应对方的事，做到了就回来交代，做不成就坦白，交代后用 person_item 关掉；shared 是一起经历过的事，合适时自然接回来，不必硬提。fromPrivate 的记在别的私聊里，只用来调整你自己的做法，不要在这里提起内容。${JSON.stringify({ items: between.items, ...(Object.keys(between.more).length ? { more: between.more } : {}) })}`
@@ -711,6 +724,11 @@ export class ContextLifecycle {
         : {}),
       lastTurnId: ctx.turnId,
       ...(people ? { personCardsShown: people.shown } : {}),
+      ...(elsewhere
+        ? { elsewhereShown: elsewhere.shown }
+        : ctx.initialSession && /^(group|private):/.test(ctx.conversation)
+          ? { elsewhereShown: {} }
+          : {}),
       ...(between ? { personItemsShown: between.shown } : {}),
       ...(schedule ? { scheduleShown: schedule.shown } : {}),
       moodShown: mood.shown,
@@ -744,6 +762,17 @@ export class ContextLifecycle {
               personId,
               revision,
             })),
+          }
+        : {}),
+      ...(elsewhere?.items.length
+        ? {
+            elsewhere: elsewhere.items.map(
+              ({ personId, where, continuation }) => ({
+                personId,
+                where,
+                id: continuation.id,
+              }),
+            ),
           }
         : {}),
       ...(between?.items.length

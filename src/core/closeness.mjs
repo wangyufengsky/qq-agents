@@ -16,7 +16,7 @@ const EPISODE_GAP = 6 * 3600000;
 export const INTERACTION_CACHE_MS = 10 * 60000;
 const CACHE_LIMIT = 500;
 
-/** @typedef {{ personId: string, conversation: string, direction: string, at: number, kind: string, status?: string, sent?: boolean, messageKey?: string }} Interaction */
+/** @typedef {{ personId: string, conversation: string, direction: string, at: number, kind: string, status?: string, sent?: boolean, messageKey?: string, id: string, seq: number }} Interaction */
 /** Plain counts from archived, explicitly directed speech; no weighting, no tiers.
  * @param {Interaction[]} events @param {string} personId @param {number} now */
 export function interactionFacts(events, personId, now) {
@@ -113,15 +113,22 @@ function quoted(memory, row, id) {
 
 /** Normalize actual directed contacts; merely sharing a group is insufficient.
  * @param {any} memory @param {string} personId @param {number} now @param {string} accountId
+ * @param {{since?: number, allowed?: (row: any) => boolean}} [options]
  * @returns {Interaction[]} */
-export function interactionEvents(memory, personId, now, accountId) {
+export function interactionEvents(
+  memory,
+  personId,
+  now,
+  accountId,
+  options = {},
+) {
   const rows = memory.db
     .prepare(
       "SELECT * FROM events WHERE agent_id=? AND occurred_at>=? AND occurred_at<=? AND kind IN ('message.received','message.sent') AND (sender_id=? OR direction='out') AND (conversation=? OR conversation LIKE 'group:%') ORDER BY occurred_at,seq",
     )
     .iterate(
       memory.agentId,
-      new Date(now - WINDOW).toISOString(),
+      new Date(options.since ?? now - WINDOW).toISOString(),
       new Date(now).toISOString(),
       personId,
       "private:" + personId,
@@ -130,6 +137,7 @@ export function interactionEvents(memory, personId, now, accountId) {
   const seen = new Set();
   for (const row of rows) {
     const p = JSON.parse(row.payload || "{}");
+    if (options.allowed && !options.allowed({ ...row, payload: p })) continue;
     if (p.protectedOperations || p.protectedRepositories?.length) continue;
     const incoming =
       row.kind === "message.received" &&
@@ -190,6 +198,8 @@ export function interactionEvents(memory, personId, now, accountId) {
     if (keys.some((/** @type {string} */ key) => seen.has(key))) continue;
     for (const key of keys) seen.add(key);
     result.push({
+      id: row.id,
+      seq: row.seq,
       messageKey: keys[0],
       personId,
       conversation: row.conversation,
