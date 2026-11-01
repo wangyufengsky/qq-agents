@@ -1,3 +1,4 @@
+import { reactionDefinitions, reactionTool } from "./reactions.mjs";
 import { gameDefinitions, gameTool } from "../games/framework/tools.mjs";
 import { definitions } from "./definitions.mjs";
 import { TOOL_NAMES } from "./names.mjs";
@@ -19,6 +20,7 @@ const handlers = {
 for (const [group, dispatch] of [
   [appDefinitions, appTool],
   [gameDefinitions, gameTool],
+  [reactionDefinitions, reactionTool],
   [githubDefinitions, githubTool],
   [mindDefinitions, mindTool],
   [fileDefinitions, fileTool],

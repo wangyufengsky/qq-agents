@@ -65,6 +65,11 @@ export function scopedCatalog(runtime, ctx, input) {
 }
 
 export function toolAvailable(agent, name, conversation) {
+  if (name === "qq_react")
+    return (
+      agent.behavior.actions?.react === true &&
+      /^(private|group):/.test(conversation)
+    );
   if (name === "qq_recall")
     return (
       agent.behavior?.actions?.recall === true &&

@@ -52,6 +52,10 @@ export function safeToolFailure(error) {
     };
   /** @type {Record<string, string>} */
   const hints = {
+    REACT_ALREADY_ATTEMPTED:
+      "This message and face already have a pending or unknown reaction. Do not submit the same reaction with another requestId. Inspect the original delivery receipt; waiting, rewriting the reference or starting another turn does not establish non-delivery.",
+    REACT_UNSUPPORTED:
+      "The gateway does not support this reaction action. No reaction was confirmed. Do not retry another message, face or requestId to work around missing gateway support.",
     INVALID_MEMORY_SCOPE:
       "The source selector is invalid, not an empty memory result. memory_search conversationType=group/private filters a kind of chat. conversation must be an exact source key such as group:20000 or private:30000; do not use group/private or wildcard keys. Omit conversation to search your own memories across chats, then use the returned source key. conversation_read without conversation only reads the current chat. Keep protected-source restrictions unchanged.",
     DELIVERY_UNKNOWN:

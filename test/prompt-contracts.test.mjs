@@ -204,6 +204,36 @@ test("chat and idle time both ask for views that hold under pushback and change 
   }
 });
 
+test("reaction expression advice is chat-only and requires an offered reaction tool", async () => {
+  const { stableInstructions } = await import("../src/core/prompts.mjs");
+  const a = config(1).agents[0],
+    self = { version: 1, body: "平时说话简短" };
+  const without = stableInstructions(
+    a,
+    self,
+    false,
+    {},
+    { toolNames: ["qq_send"] },
+  );
+  const withReaction = stableInstructions(
+    a,
+    self,
+    false,
+    {},
+    { toolNames: ["qq_send", "qq_react"] },
+  );
+  const subject = stableInstructions(
+    a,
+    self,
+    true,
+    {},
+    { toolNames: ["qq_react"] },
+  );
+  assert.doesNotMatch(without, /有时贴个表情或发个表情包就够了/);
+  assert.match(withReaction, /有时贴个表情或发个表情包就够了/);
+  assert.doesNotMatch(subject, /有时贴个表情或发个表情包就够了/);
+});
+
 test("chat tone protocol rebuilds an old stable contract once without editing Self", async (t) => {
   const { createHash } = await import("node:crypto");
   const cfg = config(1);

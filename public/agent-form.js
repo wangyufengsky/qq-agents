@@ -31,6 +31,7 @@ const AGENT_TOOL_GROUPS = [
       qq_delivery_status: "查看投递结果",
       qq_wait_for_messages: "等待对方继续说完",
       qq_send_poke: "拍一拍",
+      qq_react: "给消息贴表情回应",
       qq_recall: "撤回自己刚发的消息",
       qq_forward_read: "展开合并转发",
       qq_forward_send: "发送合并转发",
@@ -401,6 +402,24 @@ const agentForm = {
             (row.behavior?.toneCheck?.phrases || []).join("\n"),
           ) +
           '<p class="hint">默认提醒“希望对你有帮助”“总结一下”等助手套话，以及普通聊天中的过长消息。主人私聊只豁免行数；程序固定文字、合并转发和文件不检查。提醒发生在投递前，模型可改写，或在同一回合用相同请求编号和相同正文确认发送；所有发送权限和限额照常生效。</p>',
+      ) +
+      advanced(
+        this.foldTitle(
+          "贴表情回应",
+          row.behavior?.actions?.react ? "已开启" : "未开启",
+        ),
+        check(
+          "reactEnabled",
+          "允许给消息贴 QQ 表情",
+          row.behavior?.actions?.react,
+        ) +
+          range(
+            "reactMaxPerMinute",
+            "每分钟最多贴表情次数",
+            row.behavior?.actions?.reactMaxPerMinute ?? 3,
+            { min: 1, max: 60, step: 1, unit: "次" },
+          ) +
+          '<p class="hint">默认关闭，还需在“聊天发言”里允许贴表情工具。只作用于当前会话的已知消息，使用标准 QQ 表情；计入总发送限速，不占用或恢复文字回复额度。收到别人给本角色消息贴的表情只记为观察，不触发回复。</p>',
       ) +
       advanced(
         this.foldTitle(
@@ -1103,6 +1122,10 @@ const agentForm = {
         ...original.behavior,
         actions: {
           ...original.behavior?.actions,
+          react: f.has("reactEnabled"),
+          reactMaxPerMinute: f.has("reactMaxPerMinute")
+            ? Number(get("reactMaxPerMinute"))
+            : (original.behavior?.actions?.reactMaxPerMinute ?? 3),
           recall: f.has("recallWindowMs")
             ? f.has("recallEnabled")
             : original.behavior?.actions?.recall,

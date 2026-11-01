@@ -68,6 +68,8 @@
       "maxConsecutiveSends": 3,
       "behavior": {
         "actions": {
+          "react": false,
+          "reactMaxPerMinute": 3,
           "recall": false,
           "recallWindowMs": 110000,
           "recallMaxPerHour": 3
@@ -136,6 +138,8 @@
       "maxConsecutiveSends": 3,
       "behavior": {
         "actions": {
+          "react": false,
+          "reactMaxPerMinute": 3,
           "recall": false,
           "recallWindowMs": 110000,
           "recallMaxPerHour": 3

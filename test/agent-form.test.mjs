@@ -498,3 +498,36 @@ test("tone reminder settings round-trip and edit separately from Self samples", 
     config.agents[0].persona,
   );
 });
+
+test("reaction switch and per-minute quota round-trip in the role editor", async () => {
+  const config = await sampleConfig();
+  config.agents[0].behavior.actions = {
+    ...config.agents[0].behavior.actions,
+    react: true,
+    reactMaxPerMinute: 7,
+  };
+  const run = editor(config),
+    html = run('agentForm.build(config.agents[0], "")');
+  assert.match(html, /贴表情回应/);
+  const parse = (set) =>
+    JSON.parse(
+      JSON.stringify(
+        run("agentForm.parse.bind(agentForm)")(
+          formOf(html, set),
+          config.agents[0],
+        ).row,
+      ),
+    );
+  assert.deepEqual(
+    parse({}).behavior.actions,
+    config.agents[0].behavior.actions,
+  );
+  assert.deepEqual(
+    parse({ reactEnabled: undefined, reactMaxPerMinute: "4" }).behavior.actions,
+    {
+      ...config.agents[0].behavior.actions,
+      react: false,
+      reactMaxPerMinute: 4,
+    },
+  );
+});
