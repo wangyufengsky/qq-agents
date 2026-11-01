@@ -218,7 +218,7 @@ test("QQ-only second proof is one-time, browser-bound and durably attempt-limite
   );
 });
 
-test("public binding reuses browser slot and never evicts another pending proof", (t) => {
+test("public binding reuses browser slot and full rooms rotate only unconfirmed public requests", (t) => {
   const f = fixture(t),
     browser = secret();
   f.identity.isPublicRoom = () => true;
@@ -226,18 +226,53 @@ test("public binding reuses browser slot and never evicts another pending proof"
   const again = f.identity.requestPublic(f.roomId, browser);
   assert.equal(first.bindingId, again.bindingId);
   assert.notEqual(first.challenge, again.challenge);
-  for (let i = 0; i < 5; i++) f.identity.requestPublic(f.roomId, secret());
+  const count = () =>
+    Number(
+      f.kernel.store.db
+        .prepare("SELECT count(*) AS n FROM game_bindings WHERE room_id=?")
+        .get(f.roomId).n,
+    );
+  // The fixture already holds direct invitations; those are never displaced.
+  const invitations = count() - 1;
+  const confirmedBrowser = secret(),
+    confirmed = f.identity.requestPublic(f.roomId, confirmedBrowser);
+  f.identity.confirm(
+    f.roomId,
+    confirmed.bindingId,
+    confirmed.challenge,
+    f.actor("fixture-owner"),
+  );
+  while (count() < 64) f.identity.requestPublic(f.roomId, secret());
+  // A flood past capacity evicts the oldest unconfirmed request, not the seat.
+  const fresh = f.identity.requestPublic(f.roomId, secret());
+  assert.equal(count(), 64);
+  assert.ok(f.identity.load(f.roomId, fresh.bindingId));
+  rejects(
+    () => f.identity.load(f.roomId, first.bindingId),
+    "INVITATION_UNAVAILABLE",
+  );
+  assert.equal(f.identity.pending(f.roomId, browser), false);
+  assert.equal(f.identity.pending(f.roomId, confirmedBrowser), true);
+  assert.equal(f.identity.load(f.roomId, confirmed.bindingId).confirmed, true);
+  assert.equal(
+    Number(
+      f.kernel.store.db
+        .prepare(
+          "SELECT count(*) AS n FROM game_bindings WHERE room_id=? AND json_extract(data,'$.tokenHash') IS NOT NULL",
+        )
+        .get(f.roomId).n,
+    ),
+    invitations,
+  );
+  // With only confirmed proofs and invitations left, capacity still fails closed.
+  f.kernel.store.db
+    .prepare(
+      "UPDATE game_bindings SET data=json_set(data,'$.confirmed',json('true')) WHERE room_id=?",
+    )
+    .run(f.roomId);
   rejects(
     () => f.identity.requestPublic(f.roomId, secret()),
     "BINDING_CAPACITY",
-  );
-  assert.equal(
-    f.identity.load(f.roomId, again.bindingId).browserHash.length,
-    64,
-  );
-  assert.equal(
-    f.identity.requestPublic(f.roomId, browser).bindingId,
-    first.bindingId,
   );
 });
 

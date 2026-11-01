@@ -143,10 +143,24 @@ export function createGameHttp({
           /* Invalid cookies stay in the anonymous bucket. */
         }
       }
+      const browser = trusted ? "" : cookie(req, "binding_" + roomId);
+      const pending = !!browser && identity.pending(roomId, browser);
+      // Behind the public tunnel every socket address is loopback, so the
+      // anonymous bucket is effectively shared. Keep a browser that already
+      // holds a server-issued join request out of it, and scope it per room
+      // (unknown rooms share one key) so one flooded room cannot block others.
+      const known =
+        !trusted &&
+        !pending &&
+        !!kernel.store.db
+          .prepare("SELECT 1 FROM game_rooms WHERE id=?")
+          .get(roomId);
       throttle(
         trusted
           ? "session:" + digest(credential)
-          : "anonymous:" + req.socket.remoteAddress,
+          : pending
+            ? "binding:" + digest(browser)
+            : `anonymous:${known ? roomId : "-"}:${req.socket.remoteAddress}`,
         trusted ? 120 : 60,
       );
       if (authorize && !(await authorize(roomId))) fail("GAME_BLOCKED", 403);

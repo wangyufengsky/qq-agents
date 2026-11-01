@@ -3,7 +3,11 @@ import { randomUUID, randomInt } from "node:crypto";
 import { digest, fail, secret } from "./value.mjs";
 
 const ttl = 15 * 60_000,
-  sessionTtl = 24 * 60 * 60_000;
+  sessionTtl = 24 * 60 * 60_000,
+  // Rows are small; the cap only bounds storage. Anyone holding a group link can
+  // open requests, so a full room rotates its oldest unconfirmed public request
+  // instead of locking the seat until the earliest one expires.
+  publicCapacity = 64;
 export class GameIdentity {
   /* Public eligibility belongs to the host adapter, never to core storage. */
   /** @param {import('./kernel.mjs').GameKernel} kernel @param {{isPublicRoom?:(id:string)=>boolean,dualConfirmation?:boolean}} [options] */
@@ -161,9 +165,20 @@ export class GameIdentity {
           k.store.db
             .prepare("SELECT count(*) AS n FROM game_bindings WHERE room_id=?")
             .get(roomId)?.n,
-        ) >= 8
-      )
-        fail("BINDING_CAPACITY", 429);
+        ) >= publicCapacity
+      ) {
+        // Confirmed proofs and direct invitations need the real QQ sender or
+        // owner, so they are never displaced by anonymous requests.
+        const oldest = k.store.db
+          .prepare(
+            "SELECT id FROM game_bindings WHERE room_id=? AND json_extract(data,'$.tokenHash') IS NULL AND json_extract(data,'$.confirmed')=0 ORDER BY json_extract(data,'$.expiresAt'), rowid LIMIT 1",
+          )
+          .get(roomId);
+        if (!oldest) fail("BINDING_CAPACITY", 429);
+        k.store.db
+          .prepare("DELETE FROM game_bindings WHERE id=?")
+          .run(oldest.id);
+      }
       const bindingId = randomUUID(),
         challenge = secret(),
         expiresAt = k.clock() + 900000;
@@ -181,6 +196,16 @@ export class GameIdentity {
         .run(bindingId, roomId, JSON.stringify(data));
       return { bindingId, challenge, expiresAt };
     });
+  }
+  /** Rate-limit tier only: a live server-side row proves the browser value was issued here.
+   * @param {string} roomId @param {string} browser */
+  pending(roomId, browser) {
+    if (!/^[A-Za-z0-9_-]{43}$/.test(browser)) return false;
+    return !!this.kernel.store.db
+      .prepare(
+        "SELECT 1 FROM game_bindings WHERE room_id=? AND json_extract(data,'$.browserHash')=? AND json_extract(data,'$.expiresAt')>?",
+      )
+      .get(roomId, digest(browser), this.kernel.clock());
   }
   /** Host adapter must derive actor from the authenticated source message, never the browser.
    * @param {string} roomId @param {string} bindingId @param {string} challenge @param {object} actor */
