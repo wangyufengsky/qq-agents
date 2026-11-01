@@ -275,7 +275,9 @@ const agentForm = {
     const asr = row.voice?.asr || {},
       backend = this.backendOf(row.backendId),
       notices = row.behavior || {},
-      on = (v) => (v ? "开" : "关");
+      on = (v) => (v ? "开" : "关"),
+      elsewhereMinutes =
+        (row.behavior?.elsewhere?.windowMs ?? 21600000) / 60000;
     const toolCount = row.tools.filter((t) => tools.includes(t)).length;
     return (
       '<div class="form-grid agent-form">' +
@@ -444,6 +446,26 @@ const agentForm = {
             { min: 1, max: 60, step: 1, unit: "次" },
           ) +
           '<p class="hint">还需在聊天工具中允许“撤回自己刚发的消息”。只限本角色本会话已确认发送的消息；撤回计入总限速，不恢复文字回复额度。失败或未知结果不自动重试，原文保留并标注撤回。</p>',
+      ) +
+      advanced(
+        this.foldTitle(
+          "别处近况",
+          row.behavior?.elsewhere?.enabled === false
+            ? "已关闭"
+            : `最近 ${elsewhereMinutes} 分钟`,
+        ),
+        check(
+          "elsewhereEnabled",
+          "聊天时附上对方最近在别的聊天里和本角色的直接来往",
+          row.behavior?.elsewhere?.enabled !== false,
+        ) +
+          range("elsewhereWindowMinutes", "回看时间窗口", elsewhereMinutes, {
+            min: 10,
+            max: 1440,
+            step: 10,
+            unit: "分钟",
+          }) +
+          '<p class="hint">只给来源、时间、条数和回查入口，不带原文，不发送消息。只统计本角色亲自参与、已在原会话处理过的来往；对方私聊里的事在群里会提醒角色不要主动提起。不推进已读、不增加回复额度或权限；修改后从下一回合生效，不重建模型会话。</p>',
       ) +
       advanced(
         this.foldTitle(
@@ -1140,6 +1162,22 @@ const agentForm = {
             original.behavior?.actions?.recallMaxPerHour ?? 3,
             Number,
             original.behavior?.actions?.recallMaxPerHour,
+          ),
+        },
+        // A form without these fields keeps the stored switch and window.
+        elsewhere: {
+          ...original.behavior?.elsewhere,
+          enabled:
+            !f.has("elsewhereWindowMinutes") ||
+            f.has("elsewhereEnabled") ===
+              (original.behavior?.elsewhere?.enabled ?? true)
+              ? original.behavior?.elsewhere?.enabled
+              : f.has("elsewhereEnabled"),
+          windowMs: edited(
+            "elsewhereWindowMinutes",
+            (original.behavior?.elsewhere?.windowMs ?? 21600000) / 60000,
+            (v) => Math.round(Number(v) * 60000),
+            original.behavior?.elsewhere?.windowMs,
           ),
         },
         toneCheck: {

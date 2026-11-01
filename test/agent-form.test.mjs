@@ -531,3 +531,59 @@ test("reaction switch and per-minute quota round-trip in the role editor", async
     },
   );
 });
+
+test("elsewhere switch and window round-trip in the role editor", async () => {
+  const config = await sampleConfig();
+  config.agents[0].behavior.elsewhere = { enabled: true, windowMs: 3600000 };
+  const run = editor(config),
+    html = run('agentForm.build(config.agents[0], "")');
+  assert.match(html, /别处近况/);
+  assert.match(html, /最近 60 分钟/);
+  const parse = (set, original = config.agents[0]) =>
+    JSON.parse(
+      JSON.stringify(
+        run("agentForm.parse.bind(agentForm)")(formOf(html, set), original).row
+          .behavior.elsewhere,
+      ),
+    );
+  assert.deepEqual(parse({}), config.agents[0].behavior.elsewhere);
+  assert.deepEqual(
+    parse({ elsewhereEnabled: undefined, elsewhereWindowMinutes: "720" }),
+    { enabled: false, windowMs: 43200000 },
+  );
+  // A stored window that is not a whole slider step survives an untouched save.
+  const odd = structuredClone(config.agents[0]);
+  odd.behavior.elsewhere = { enabled: false, windowMs: 1234567 };
+  const oddHtml = editor({ ...config, agents: [odd] })(
+    'agentForm.build(config.agents[0], "")',
+  );
+  assert.match(oddHtml, /别处近况[\s\S]*?已关闭/);
+  assert.deepEqual(
+    JSON.parse(
+      JSON.stringify(
+        run("agentForm.parse.bind(agentForm)")(formOf(oddHtml), odd).row
+          .behavior.elsewhere,
+      ),
+    ),
+    odd.behavior.elsewhere,
+  );
+});
+
+test("a role without stored elsewhere settings keeps the defaults implicit", async () => {
+  const config = await sampleConfig();
+  delete config.agents[0].behavior.elsewhere;
+  const run = editor(config),
+    html = run('agentForm.build(config.agents[0], "")');
+  assert.match(html, /最近 360 分钟/);
+  const row = run("agentForm.parse.bind(agentForm)")(
+    formOf(html),
+    config.agents[0],
+  ).row;
+  assert.deepEqual(JSON.parse(JSON.stringify(row.behavior.elsewhere)), {});
+  const { validateConfig } = await import("../src/core/config.mjs");
+  config.agents[0].behavior = row.behavior;
+  assert.deepEqual(validateConfig(config).agents[0].behavior.elsewhere, {
+    enabled: true,
+    windowMs: 21600000,
+  });
+});
