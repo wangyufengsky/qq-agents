@@ -6,13 +6,35 @@ import { randomUUID } from "node:crypto";
 import { gameDatabase } from "./database.mjs";
 import { gameModuleVersion } from "./module.mjs";
 import { GameWorker } from "./worker.mjs";
+import { fetchQqAvatar } from "./avatar.mjs";
 import { buildChildEnv } from "../../core/child-env.mjs";
 import { canonical, digest, fail } from "../core/value.mjs";
 
+/** Page-facing opponent name: explicit game name, else the agent name; never the QQ account.
+ * @param {any} agent */
+export function gameName(agent) {
+  const name = (agent.games?.publicName || agent.name || "")
+    // eslint-disable-next-line no-control-regex -- deliberately strips control characters
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .trim();
+  return Array.from(name || "AI 对手")
+    .slice(0, 24)
+    .join("");
+}
+
 /** The only bridge between authenticated QQ intake and the game database. */
 export class GameHost {
-  /** @param {any} runtime @param {{database?:string,launch?:boolean}} [options] */
-  constructor(runtime, { database, launch = true } = {}) {
+  /** @param {any} runtime @param {{database?:string,launch?:boolean,fetchAvatar?:typeof fetchQqAvatar}} [options] */
+  constructor(
+    runtime,
+    { database, launch = true, fetchAvatar = fetchQqAvatar } = {},
+  ) {
+    this.fetchAvatar = fetchAvatar;
+    /** @type {Map<string,{type:string,body:Buffer,at:number}|null>} */
+    this.avatars = new Map();
+    this.avatarRefresh = false;
+    /** @type {Map<string,number>} */
+    this.avatarFailures = new Map();
     this.runtime = runtime;
     this.launch = launch;
     this.database = database;
@@ -77,7 +99,12 @@ export class GameHost {
       },
     );
     this.child.on("message", (/** @type {any} */ message) => {
-      if (message?.ready === true) this.ready = true;
+      if (message?.ready === true) {
+        this.ready = true;
+        // A restarted child starts empty; resend the cache and refresh stale entries.
+        for (const agentId of this.avatars.keys()) this.pushAvatar(agentId);
+        this.refreshAvatars();
+      }
       if (
         typeof message?.retry === "string" &&
         typeof message.roomId === "string"
@@ -139,6 +166,65 @@ export class GameHost {
           });
       },
     );
+  }
+  /** Avatars are display-only: fetched outside any turn, cached, and served by the child under a hash path. */
+  refreshAvatars() {
+    if (this.avatarRefresh || !this.child || !this.ready) return;
+    const now = this.runtime.now(),
+      due = [];
+    for (const a of this.runtime.config.agents) {
+      const wanted =
+        this.runtime.config.mode === "live" &&
+        a.games?.enabled &&
+        a.games.avatar === "qq";
+      const cached = this.avatars.get(a.id);
+      if (!wanted) {
+        if (cached !== undefined) {
+          this.avatars.delete(a.id);
+          this.pushAvatar(a.id);
+        }
+        continue;
+      }
+      // Failures retry hourly; successes refresh daily.
+      if (
+        cached === undefined ||
+        (now - (cached?.at ?? 0) >= 86400000 &&
+          now - (this.avatarFailures.get(a.id) ?? 0) >= 3600000)
+      )
+        due.push(a);
+    }
+    if (!due.length) return;
+    this.avatarRefresh = true;
+    this.runtime.trackJob(
+      (async () => {
+        for (const a of due) {
+          const avatar = await this.fetchAvatar(
+            String(this.runtime.connection(a.connectionId).accountId),
+          );
+          if (avatar) {
+            this.avatars.set(a.id, { ...avatar, at: this.runtime.now() });
+            this.avatarFailures.delete(a.id);
+          } else {
+            if (!this.avatars.get(a.id)) this.avatars.set(a.id, null);
+            this.avatarFailures.set(a.id, this.runtime.now());
+          }
+          this.pushAvatar(a.id);
+        }
+      })().finally(() => {
+        this.avatarRefresh = false;
+      }),
+      "games",
+    );
+  }
+  /** @param {string} agentId */
+  pushAvatar(agentId) {
+    const avatar = this.avatars.get(agentId);
+    if (this.child?.connected)
+      this.child.send({
+        avatar: avatar
+          ? { agentId, type: avatar.type, body: avatar.body.toString("base64") }
+          : { agentId, remove: true },
+      });
   }
   /** @param {string} roomId @returns {any} */
   source(roomId) {
@@ -438,7 +524,7 @@ export class GameHost {
               principalId: "agent:" + a.id,
               kind: "ai",
               agentId: a.id,
-              label: "AI 对手",
+              label: gameName(a),
             },
           ],
         });
@@ -800,6 +886,7 @@ export class GameHost {
     }
     this.ensure();
     this.refreshAccess();
+    this.refreshAvatars();
     for (const [runId, ctx] of this.worker.active) {
       const row = this.kernel.store.db
         .prepare(

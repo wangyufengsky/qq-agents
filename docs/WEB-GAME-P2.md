@@ -24,10 +24,18 @@ P2 将五子棋接到真实 QQ 来源和 Codex 适配器。日常聊天与游戏
 {
   "games": {
     "enabled": true,
-    "publicPersona": "谨慎的五子棋对手。"
+    "publicPersona": "谨慎的五子棋对手。",
+    "publicName": "阿檀",
+    "avatar": "qq",
+    "remarks": true,
+    "remarkStyle": "俏皮，偶尔嘴硬"
   }
 }
 ```
+
+网页上对手的名字取 `publicName`，留空时用角色 `name`；页面和视图不包含 QQ 号。`avatar` 默认 `"qq"`：仅在 `live` 模式且该角色启用游戏时，桥接用固定地址下载本连接账号的 QQ 头像（不超过 256 KB，按文件头识别 JPEG/PNG/GIF/WebP），交给游戏子进程，以内容摘要路径 `/avatars/<摘要>.<扩展名>` 在游戏源站提供；成功每日刷新，失败每小时重试，期间页面用首字头像。设为 `"none"` 不下载头像。
+
+`remarks` 默认开启：AI 落子时可在 `game_act` 附带一句 `remark`，`remarkStyle` 只用于提示台词风格。台词换行压平，最多 30 字，含链接、尖括号或 CQ 码时丢弃但落子照常提交；只有落子成功才保存，保存在房间的平台数据中（最近 32 条），不进规则状态、不单独增加版本，不发送到 QQ，也不写入聊天记忆。真人参与者提交 `remark` 会被拒绝（`REMARK_DENIED`）。
 
 `publicPersona` 是公开游戏设定，不复制聊天 persona、Self、记忆或会话历史。需要通过模型发起创建/关闭时，再向该角色的 `tools` 增加 `game_create`、`game_close`；管理台角色工具分组可选择它们。`game_view` 和 `game_act` 只在独立游戏回合开放，普通聊天目录不会展示它们。
 

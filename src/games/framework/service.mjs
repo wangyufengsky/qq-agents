@@ -6,6 +6,7 @@ import { gameDatabase } from "./database.mjs";
 import { createGameHttp } from "../core/http.mjs";
 import { renderGame } from "./page.mjs";
 import { secret, GameError } from "../core/value.mjs";
+import { avatarPath, avatarType } from "./avatar.mjs";
 const [database, port, publicOrigin = ""] = process.argv.slice(2);
 const { kernel, identity } = gameDatabase({ database });
 const boot = secret(),
@@ -25,12 +26,41 @@ const assets = new Map(
     },
   ]),
 );
+/** @type {Map<string,string>} agentId -> served avatar path */
+const avatars = new Map();
+/** The bridge owns fetching; this process only revalidates bytes and serves them by hash.
+ * @param {any} input */
+function setAvatar(input) {
+  if (typeof input?.agentId !== "string") return;
+  const previous = avatars.get(input.agentId);
+  avatars.delete(input.agentId);
+  if (previous && ![...avatars.values()].includes(previous))
+    assets.delete(previous);
+  if (input.remove || typeof input.body !== "string") return;
+  const body = Buffer.from(input.body, "base64"),
+    type = avatarType(body);
+  if (!type || type !== input.type || body.length > 262144) return;
+  const path = avatarPath({ type, body });
+  assets.set(path, { type, body });
+  avatars.set(input.agentId, path);
+}
+/** Presentation sits beside the participant view, never inside rules state. @param {any} snapshot */
+function decorate(snapshot) {
+  /** @type {Record<string,string>} */
+  const byParticipant = {};
+  for (const p of kernel.store.room(snapshot.roomId).participants) {
+    const path = p.agentId && avatars.get(p.agentId);
+    if (path) byParticipant[p.participantId] = path;
+  }
+  return { ...snapshot, presentation: { avatars: byParticipant } };
+}
 /** @type {Map<string,(value:boolean)=>void>} */
 const admissions = new Map();
 /** @type {Map<string,(message:any)=>void>} */
 const retries = new Map();
 process.on("message", (/** @type {any} */ message) => {
   if (message?.retry) retries.get(message.retry)?.(message);
+  if (message?.avatar) setAvatar(message.avatar);
   if (message?.admission)
     admissions.get(message.admission)?.(message.allowed === true);
 });
@@ -54,6 +84,7 @@ const http = createGameHttp({
   identity,
   assets,
   render: renderGame,
+  decorate,
   publicOrigin,
   publicJoin: true,
   authorize,

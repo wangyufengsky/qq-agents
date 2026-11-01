@@ -32,7 +32,7 @@ async function body(req) {
   }
 }
 /** Loopback-only transport for the isolated P1a harness. No management routes or actor issuer.
- * @param {{kernel:import('./kernel.mjs').GameKernel,identity:import('./identity.mjs').GameIdentity,assets:Map<string,{type:string,body:string|Buffer}>,render:(snapshot:any|null,roomId:string)=>string,confirm?:(roomId:string,bindingId:string,challenge:string)=>void,publicOrigin?:string,publicJoin?:boolean,health?:()=>unknown,authorize?:(roomId:string)=>Promise<boolean>,retry?:(roomId:string,actor:object)=>Promise<unknown>}} options */
+ * @param {{kernel:import('./kernel.mjs').GameKernel,identity:import('./identity.mjs').GameIdentity,assets:Map<string,{type:string,body:string|Buffer}>,render:(snapshot:any|null,roomId:string)=>string,confirm?:(roomId:string,bindingId:string,challenge:string)=>void,publicOrigin?:string,publicJoin?:boolean,health?:()=>unknown,authorize?:(roomId:string)=>Promise<boolean>,retry?:(roomId:string,actor:object)=>Promise<unknown>,decorate?:(snapshot:any)=>any}} options */
 export function createGameHttp({
   kernel,
   identity,
@@ -44,6 +44,7 @@ export function createGameHttp({
   health,
   authorize,
   retry,
+  decorate = (snapshot) => snapshot,
 }) {
   if (publicOrigin) {
     const u = new URL(publicOrigin);
@@ -77,7 +78,7 @@ export function createGameHttp({
       "referrer-policy": "no-referrer",
       "x-content-type-options": "nosniff",
       "content-security-policy":
-        "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+        "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
     }))
       res.setHeader(k, v);
     /** @param {unknown} value @param {number} [status] */
@@ -161,9 +162,11 @@ export function createGameHttp({
         let snapshot = null;
         if (cookie(req, sessionName)) {
           try {
-            snapshot = kernel.view(
-              roomId,
-              identity.session(roomId, cookie(req, sessionName)),
+            snapshot = decorate(
+              kernel.view(
+                roomId,
+                identity.session(roomId, cookie(req, sessionName)),
+              ),
             );
           } catch (error) {
             // Rotated/expired credentials must not block a fresh invitation's landing page.
@@ -245,7 +248,7 @@ export function createGameHttp({
         return json(await retry(roomId, actor));
       }
       if (req.method === "GET" && route === "view")
-        return json(kernel.view(roomId, actor));
+        return json(decorate(kernel.view(roomId, actor)));
       if (req.method === "GET" && route === "events")
         return json(
           kernel.events(
