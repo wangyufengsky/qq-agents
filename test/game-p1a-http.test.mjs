@@ -250,3 +250,38 @@ test("anonymous floods cannot spend trusted room session allowance; fake cookies
   });
   assert.equal(trusted.status, 200);
 });
+
+test("anonymous floods stay per room and cannot starve a browser holding an issued join request", async (t) => {
+  const f = await fixture(t),
+    url = new URL(f.invitations[0].url);
+  const pending = await f.call(f.base + "/join", {
+    method: "POST",
+    body: {
+      bindingId: url.searchParams.get("binding"),
+      invite: url.searchParams.get("invite"),
+    },
+  });
+  assert.equal(pending.status, 200);
+  const browser = pending.headers.get("set-cookie").split(";")[0];
+  let limited = false;
+  for (let i = 0; i < 65; i++)
+    if ((await f.call(f.base)).status === 429) limited = true;
+  assert.equal(limited, true);
+  // A forged binding cookie has no server-side row and stays anonymous.
+  assert.equal(
+    (
+      await f.call(f.base, {
+        headers: { cookie: `binding_${f.roomId}=${"A".repeat(43)}` },
+      })
+    ).status,
+    429,
+  );
+  const joined = await f.call(f.base + "/join", {
+    method: "POST",
+    body: { bindingId: url.searchParams.get("binding") },
+    headers: { cookie: browser },
+  });
+  assert.equal(joined.status, 200);
+  const other = f.service.createRoom();
+  assert.equal((await f.call(`/rooms/${other.roomId}`)).status, 200);
+});
