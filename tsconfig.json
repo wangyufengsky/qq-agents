@@ -42,6 +42,8 @@
     "src/core/policy.mjs",
     "src/core/reactions.mjs",
     "src/tools/reactions.mjs",
+
+    "src/core/rhythm.mjs",
     "src/core/typing.mjs",
     "src/core/tone-check.mjs",
     "src/memory/migrate.mjs",

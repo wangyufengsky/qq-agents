@@ -45,6 +45,43 @@ export const behaviorSchema = z
     burstMaxMs: ms(0, 10000, 3000),
     longGapProbability: probability.default(0.2),
     longGapMs: ms(0, 30000, 8000),
+    rhythm: z
+      .object({
+        enabled: z.boolean().default(false),
+        timezone: timezone.optional(),
+        sleep: z
+          .object({
+            start: z
+              .string()
+              .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
+              .default("01:00"),
+            end: z
+              .string()
+              .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
+              .default("08:30"),
+          })
+          .strict()
+          .prefault({}),
+        sleepMode: z.enum(["defer", "slow"]).default("defer"),
+        urgentOwners: z.boolean().default(true),
+        wakeJitterMs: ms(0, 7200000, 1800000),
+        lateReply: z
+          .object({
+            probability: probability.default(0.1),
+            minMs: ms(0, 3600000, 60000),
+            maxMs: ms(0, 3600000, 600000),
+          })
+          .strict()
+          .prefault({}),
+      })
+      .strict()
+      .prefault({})
+      .refine(
+        (r) =>
+          r.sleep.start !== r.sleep.end &&
+          r.lateReply.maxMs >= r.lateReply.minMs,
+        "INVALID_TIME_RANGE",
+      ),
     typing: z
       .object({
         enabled: z.boolean().default(true),

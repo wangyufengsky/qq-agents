@@ -733,6 +733,7 @@ export class Runtime {
           seq: archived.seq,
           senderId: e.senderId,
           addressed,
+          direct: this.conversations.direct(a, e, c.accountId, archived),
         });
         continue;
       }
@@ -740,6 +741,7 @@ export class Runtime {
         seq: archived.seq,
         senderId: e.senderId,
         addressed,
+        direct: this.conversations.direct(a, e, c.accountId, archived),
       });
       results.push({ agentId: a.id, ...wake });
     }

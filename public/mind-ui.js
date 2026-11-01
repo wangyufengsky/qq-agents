@@ -33,6 +33,7 @@ const subjectCheckStates = {
   recovering: "后端恢复中",
   running: "正在思考",
   "budget-exhausted": "检查额度已用完",
+  sleeping: "睡觉中",
   waiting: "等待下次检查",
   due: "已到时间，等待执行",
 };
