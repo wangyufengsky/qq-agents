@@ -6,6 +6,13 @@
 
 ## 未发布
 
+### 网页游戏对手名字、头像与落子台词（[#117](https://github.com/wangyufengsky/qq-agents/pull/117)）
+
+- 新建房间的 AI 座位使用角色游戏名 `games.publicName`，留空时用角色名，不再统一显示“AI 对手”；页面和视图都不含 QQ 号。
+- 新增 `games.avatar`（默认 `"qq"`）：`live` 模式下桥接以固定地址下载本连接账号的 QQ 头像，边读边限 256 KB（无长度头的分块响应超限即取消），按文件头校验格式后交给游戏子进程，以内容摘要路径在游戏源站提供；游戏页 CSP 只增加同源 `img-src`。参与者视图新增 `presentation.avatars`。
+- `game_act` 新增可选 `remark`，由 `games.remarks`（默认开启）和 `games.remarkStyle` 控制。台词换行压平、最多 30 字，含链接或标记时丢弃但不影响落子；仅随成功落子保存为平台数据，视图新增 `remarks`（最近 32 条），不改规则状态、不单独增加版本，不发送 QQ，也不进聊天记忆。真人提交台词返回 `REMARK_DENIED`。
+- 兼容性：旧房间的 AI 标签保持原值，规则摘要与模块/UI 版本不变；现有网页暂不展示头像和台词，留给后续前端改版。
+
 ### 网页游戏模块兼容与联合验收（[#114](https://github.com/wangyufengsky/qq-agents/pull/114)）
 
 - 游戏模块升级兼容：新建房使用模块/UI v3，规则摘要隔离无关依赖和 UI 资源；登记过精确摘要的旧 v2 房间保留引用，按相同规则继续读取。新增只读部署预检及规则快照，启停预检与托管启动器共用实际发布选择逻辑，避免旧启动目录误拒绝当前发布；生产入口不再加载 P1b 专用 v1（[#114](https://github.com/wangyufengsky/qq-agents/pull/114)）。

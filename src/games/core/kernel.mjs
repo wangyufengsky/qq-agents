@@ -34,7 +34,29 @@ export const actionSchema = z.strictObject({
     .min(0)
     .max(Number.MAX_SAFE_INTEGER - 1),
   action: z.strictObject({ type: z.string().max(64), payload: z.unknown() }),
+  // Presentation-only line from an AI participant; never rules state or a revision input.
+  remark: z.string().max(120).optional(),
 });
+const remarkLimit = 30,
+  remarkHistory = 32;
+/** Links, markup and control characters are dropped rather than failing a legal move.
+ * @param {string|undefined} text */
+export function cleanRemark(text) {
+  if (typeof text !== "string") return "";
+  const flat = text
+    // eslint-disable-next-line no-control-regex -- deliberately strips control characters
+    .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (
+    !flat ||
+    /https?:|www\.|[a-z0-9-]+\.(?:com|cn|net|org|io|me|cc|top|xyz)\b|[<>]|\[CQ:/i.test(
+      flat,
+    )
+  )
+    return "";
+  return Array.from(flat).slice(0, remarkLimit).join("");
+}
 const outcomeSchema = z.strictObject({
   kind: z.enum(["win", "draw", "loss"]),
   winners: z.array(z.string()).max(8),
@@ -420,6 +442,7 @@ export class GameKernel {
         ),
       decision: room.decision,
       closeReason: room.closeReason,
+      remarks: room.remarks || [],
       snapshotAt: this.clock(),
       view:
         room.state !== null && access.member
@@ -446,6 +469,8 @@ export class GameKernel {
         return JSON.parse(String(previous.receipt));
       }
       this.checkTime(room);
+      if (request.remark !== undefined && access.member?.kind !== "ai")
+        fail("REMARK_DENIED", 403);
       if (access.member?.kind === "ai") {
         if (!this.ai) fail("P2_NOT_IMPLEMENTED", 403);
         this.ai.validate(room, access.member, execution);
@@ -554,6 +579,18 @@ export class GameKernel {
         (room.lifecycle === "paused" ? durations.paused : durations.active);
       if (room.lifecycle === "finished")
         room.deleteAt = this.clock() + durations.retained;
+      const remark = type.startsWith("room.")
+        ? ""
+        : cleanRemark(request.remark);
+      if (remark)
+        room.remarks = [
+          ...(room.remarks || []),
+          {
+            participantId: access.member.participantId,
+            revision: room.revision,
+            text: remark,
+          },
+        ].slice(-remarkHistory);
       this.decision(room, next);
       this.notify(room, "view_changed");
       this.store.save(room);
