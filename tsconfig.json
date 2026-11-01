@@ -52,6 +52,7 @@
     "src/core/runtime-status.mjs",
     "src/core/maintenance.mjs",
     "src/updates/drain.mjs",
+    "src/updates/startup-target.mjs",
     "src/memory/search.mjs",
     "src/tools/screenshots.mjs",
     "scripts/privacy-rules.mjs",

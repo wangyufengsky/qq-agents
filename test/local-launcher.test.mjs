@@ -411,3 +411,112 @@ test("native readiness retries response-body timeout but rejects malformed statu
   );
   assert.equal(bad.elapsed(), 0);
 });
+
+test(
+  "managed launcher preflights the selected release instead of its obsolete bootstrap checker",
+  { skip: process.platform === "win32" },
+  async (t) => {
+    const { frameworkBuildDigest } =
+      await import("../src/core/framework-knowledge.mjs");
+    const root = temp(t),
+      source = fileURLToPath(new URL("..", import.meta.url)),
+      bootstrap = path.join(root, "bootstrap"),
+      release = path.join(root, "updates-runtime", "releases", "synthetic");
+    fs.mkdirSync(path.join(bootstrap, "scripts"), { recursive: true });
+    fs.mkdirSync(path.join(bootstrap, "src", "updates"), { recursive: true });
+    writeJson(path.join(bootstrap, "package.json"), { version: "0.0.0" });
+    fs.writeFileSync(
+      path.join(bootstrap, "scripts", "game-compatibility.mjs"),
+      'throw Error("GAME_OLD_CHECKER");\n',
+    );
+    fs.writeFileSync(
+      path.join(bootstrap, "src", "updates", "supervisor.mjs"),
+      `import { supervise } from ${JSON.stringify(new URL("../src/updates/supervisor.mjs", import.meta.url).href)};\nawait supervise();\n`,
+    );
+    fs.mkdirSync(release, { recursive: true });
+    for (const name of [
+      "src",
+      "scripts",
+      "public",
+      "vendor",
+      "docs",
+      "README.md",
+      "NOTICE.md",
+      "package.json",
+      "package-lock.json",
+    ])
+      fs.cpSync(path.join(source, name), path.join(release, name), {
+        recursive: true,
+      });
+    fs.symlinkSync(
+      path.join(source, "node_modules"),
+      path.join(release, "node_modules"),
+      "dir",
+    );
+    const pkg = JSON.parse(
+      fs.readFileSync(path.join(release, "package.json"), "utf8"),
+    );
+    pkg.version = "99.0.0";
+    writeJson(path.join(release, "package.json"), pkg);
+    fs.writeFileSync(
+      path.join(release, "scripts", "game-compatibility.mjs"),
+      'console.log("compatible");\n',
+    );
+    const commit = "b".repeat(40);
+    writeJson(path.join(release, "framework-build.json"), {
+      commit,
+      buildDigest: frameworkBuildDigest(release),
+    });
+    const pointer = { codeRoot: release, version: pkg.version, commit };
+    writeJson(path.join(root, "updates-runtime", "current.json"), pointer);
+    fs.mkdirSync(path.join(root, "games"));
+    fs.writeFileSync(
+      path.join(root, "games", "rooms.sqlite"),
+      "synthetic preflight input",
+    );
+    const probe = http.createServer();
+    await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
+    const value = config(0);
+    value.mode = "isolated";
+    value.port = probe.address().port;
+    await new Promise((resolve) => probe.close(resolve));
+    writeJson(path.join(root, "config.json"), value);
+    writeJson(path.join(root, "deployment.json"), {
+      codeRoot: bootstrap,
+      managedUpdates: true,
+    });
+    const launch = (action) =>
+      exec(
+        process.execPath,
+        [path.join(source, "scripts", "robots.mjs"), action, "--data", root],
+        { timeout: 45000 },
+      );
+    await assert.rejects(
+      exec(process.execPath, [
+        path.join(bootstrap, "scripts", "game-compatibility.mjs"),
+      ]),
+    );
+    try {
+      await launch("start");
+      await launch("restart");
+      const token = fs
+        .readFileSync(path.join(root, "admin-token"), "utf8")
+        .trim();
+      const state = await (
+        await fetch(`http://127.0.0.1:${value.port}/api/updates`, {
+          headers: { "x-admin-token": token },
+        })
+      ).json();
+      assert.equal(state.installed.commit, commit);
+      assert.equal(state.installed.version, pkg.version);
+      assert.deepEqual(
+        JSON.parse(
+          fs.readFileSync(path.join(root, "updates-runtime", "current.json")),
+        ),
+        pointer,
+      );
+    } finally {
+      await launch("stop");
+    }
+  },
+);

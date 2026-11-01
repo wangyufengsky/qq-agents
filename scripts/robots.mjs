@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, execFileSync } from "node:child_process";
+import { resolveManagedStartup } from "../src/updates/startup-target.mjs";
 import { waitForDrain } from "../src/updates/drain.mjs";
 import {
   NativeQQ,
@@ -106,7 +107,11 @@ async function connectAndResume() {
 function checkGames() {
   const database = path.join(root, "games", "rooms.sqlite");
   if (!fs.existsSync(database)) return;
-  const script = path.join(codeRoot, "scripts", "game-compatibility.mjs");
+  const target =
+    deployment.managedUpdates === true
+      ? resolveManagedStartup({ root, bundledRoot: codeRoot }).current.codeRoot
+      : codeRoot;
+  const script = path.join(target, "scripts", "game-compatibility.mjs");
   if (!fs.existsSync(script))
     throw Error("GAME_COMPATIBILITY_CHECK_UNAVAILABLE");
   try {
