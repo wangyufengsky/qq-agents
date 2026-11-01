@@ -545,6 +545,7 @@ test("same browser can recover a lost join response; a second browser cannot reu
 test("external verification is tied to the current entry boot and never inferred from local health", (t) => {
   const f = setup(t);
   f.runtime.config.games.publicOrigin = "https://games.example.test";
+  f.h.settings = JSON.stringify(f.h.policy);
   f.k.store.db.prepare("INSERT INTO game_entry VALUES(1,?)").run(
     JSON.stringify({
       boot: secret(),
@@ -563,6 +564,12 @@ test("external verification is tied to the current entry boot and never inferred
     /EXTERNAL_VERIFICATION_REQUIRED/,
   );
   assert.equal(f.h.verifyEntry("known-test-challenge", true).verified, true);
+  f.runtime.config.games.publicOrigin = "https://replacement.example.test";
+  assert.equal(f.h.status().ready, false);
+  assert.equal(f.h.status().externallyVerified, false);
+  f.h.settings = JSON.stringify(f.h.policy);
+  assert.equal(f.h.status().externallyVerified, false);
+
   f.k.store.db.prepare("UPDATE game_entry SET data=?").run(
     JSON.stringify({
       boot: secret(),
@@ -780,4 +787,182 @@ test("private invitation tokens survive the unified sender Markdown conversion",
       secret(),
     ).challenge,
   );
+});
+
+function rejoinEvent(
+  f,
+  roomId,
+  {
+    senderId = "30000",
+    conversation = "private:30000",
+    body = `重新加入游戏 ${roomId}`,
+  } = {},
+) {
+  return f.store.bind("agent-0").append({
+    kind: "message.received",
+    conversation,
+    senderId,
+    direction: "in",
+    body,
+    observedAt: f.runtime.now(),
+    payload: { trustedInput: true },
+    dedupe: randomUUID(),
+  });
+}
+
+test("re-entry retains the same seat and game, revokes old invitations and rotates the browser on exchange", async (t) => {
+  const f = setup(t),
+    result = await create(f),
+    session = join(f, result.roomId);
+  act(f, result.roomId, "room.start");
+  const before = f.k.store.room(result.roomId),
+    old = f.h.identity.invite(
+      result.roomId,
+      f.k.actor(before.owner),
+      before.participants[0].participantId,
+    );
+  const event = rejoinEvent(f, result.roomId),
+    args = { roomId: result.roomId, eventId: event.id };
+  const rejoined = await f.h.rejoin(result.ctx, args);
+  assert.equal(rejoined.roomId, result.roomId);
+  assert.deepEqual(f.k.store.room(result.roomId), before);
+  assert.throws(
+    () => f.h.identity.load(result.roomId, old.bindingId),
+    /INVITATION_UNAVAILABLE/,
+  );
+  assert.ok(f.h.identity.session(result.roomId, session));
+  const sent = f.runtime.transports.get("qq-0").sent;
+  const invitation = new URL(
+    sent
+      .at(-1)
+      .segments.find((s) => s.type === "text")
+      .data.text.match(/https?:\/\/\S+/)[0],
+  );
+  const binding = invitation.searchParams.get("binding"),
+    token = invitation.searchParams.get("invite"),
+    browser = secret();
+  const proof = f.h.identity.request(result.roomId, binding, token, browser);
+  f.h.identity.confirm(
+    result.roomId,
+    binding,
+    proof.challenge,
+    f.k.actor(before.owner),
+  );
+  assert.ok(f.h.identity.exchange(result.roomId, binding, browser).session);
+  assert.throws(() => f.h.identity.session(result.roomId, session));
+  const count = sent.length;
+  assert.deepEqual(await f.h.rejoin(result.ctx, args), rejoined);
+  assert.equal(sent.length, count);
+});
+
+test("re-entry rejects other senders, stale events, wrong rooms, changed origins and closed games", async (t) => {
+  const f = setup(t),
+    result = await create(f),
+    roomId = result.roomId;
+  const event = rejoinEvent(f, roomId, { senderId: "30001" });
+  await assert.rejects(
+    f.h.rejoin(result.ctx, { roomId, eventId: event.id }),
+    /ROOM_UNAVAILABLE/,
+  );
+  const mismatch = rejoinEvent(f, randomUUID());
+  await assert.rejects(
+    f.h.rejoin(result.ctx, { roomId, eventId: mismatch.id }),
+    /GAME_REQUEST_REQUIRED/,
+  );
+  const old = rejoinEvent(f, roomId);
+  f.store.db
+    .prepare("UPDATE events SET observed_at=? WHERE id=?")
+    .run(f.runtime.now() - 600001, old.id);
+  await assert.rejects(
+    f.h.rejoin(result.ctx, { roomId, eventId: old.id }),
+    /GAME_REQUEST_EXPIRED/,
+  );
+  const good = rejoinEvent(f, roomId),
+    args = { roomId, eventId: good.id };
+  f.runtime.config.games.publicOrigin = "https://new.example.test";
+  assert.equal(f.h.status().ready, false);
+  assert.equal(f.h.status().externallyVerified, false);
+  await assert.rejects(
+    f.h.rejoin(result.ctx, args),
+    /GAME_SERVICE_UNAVAILABLE/,
+  );
+  f.h.settings = JSON.stringify(f.h.policy);
+  await assert.rejects(
+    f.h.rejoin(result.ctx, args),
+    /EXTERNAL_VERIFICATION_REQUIRED/,
+  );
+  f.k.store.db
+    .prepare("INSERT INTO game_entry VALUES(1,?)")
+    .run(
+      JSON.stringify({ publicOrigin: f.h.policy.publicOrigin, verified: true }),
+    );
+  assert.equal((await f.h.rejoin(result.ctx, args)).delivery, "sent");
+  act(f, roomId, "room.close");
+  const closed = rejoinEvent(f, roomId);
+  await assert.rejects(
+    f.h.rejoin(result.ctx, { roomId, eventId: closed.id }),
+    /ROOM_CLOSED/,
+  );
+});
+
+test("QQ re-entry command uses the source event once and never invokes the chat model", async (t) => {
+  let calls = 0;
+  const f = setup(t, async () => {
+      calls++;
+    }),
+    result = await create(f);
+  const message = raw(987, {
+    user_id: 30000,
+    group_id: undefined,
+    message_type: "private",
+    message: [
+      { type: "text", data: { text: `重新加入游戏 ${result.roomId}` } },
+    ],
+  });
+  await f.runtime.ingestEvent("qq-0", message);
+  const sent = f.runtime.transports.get("qq-0").sent;
+  assert.equal(sent.length, 2);
+  assert.match(sent.at(-1).segments[0].data.text, /五子棋邀请/);
+  await f.runtime.ingestEvent("qq-0", message);
+  assert.equal(sent.length, 2);
+  assert.equal(calls, 0);
+});
+
+test("an unknown re-entry delivery is not repeated and source account changes deny re-entry", async (t) => {
+  const f = setup(t),
+    result = await create(f),
+    event = rejoinEvent(f, result.roomId),
+    args = { roomId: result.roomId, eventId: event.id };
+  const transport = f.runtime.transports.get("qq-0");
+  transport.failure = "UNCONFIRMED";
+  assert.equal((await f.h.rejoin(result.ctx, args)).delivery, "unknown");
+  assert.equal((await f.h.rejoin(result.ctx, args)).delivery, "unknown");
+  assert.equal(transport.sent.length, 2);
+  f.runtime.connection("qq-0").accountId = "10002";
+  await assert.rejects(f.h.rejoin(result.ctx, args), /GAMES_DISABLED/);
+});
+
+test("group re-entry accepts a trailing mention and revokes outstanding group challenges", async (t) => {
+  const f = setup(t),
+    result = await create(f, "group:20000"),
+    old = f.h.identity.requestPublic(result.roomId, secret());
+  await f.runtime.ingestEvent(
+    "qq-0",
+    raw(988, {
+      user_id: 30000,
+      group_id: 20000,
+      message: [
+        { type: "text", data: { text: `重新加入游戏 ${result.roomId} ` } },
+        { type: "at", data: { qq: f.runtime.connection("qq-0").accountId } },
+      ],
+    }),
+  );
+  const sent = f.runtime.transports.get("qq-0").sent;
+  assert.equal(sent.length, 2);
+  assert.match(sent.at(-1).segments[0].data.text, /五子棋邀请/);
+  assert.throws(
+    () => f.h.identity.load(result.roomId, old.bindingId),
+    /INVITATION_UNAVAILABLE/,
+  );
+  assert.ok(f.h.identity.requestPublic(result.roomId, secret()).challenge);
 });
