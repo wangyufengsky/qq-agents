@@ -28,6 +28,7 @@ test("console saves role and optional conversation budgets and explicit schedule
     ids: () => "",
     fillIds: async () => {},
     range: () => "",
+    select: () => "",
     structuredClone,
     find: (table, id) => sandbox.config[table].find((x) => x.id === id),
     document: { querySelectorAll: () => [] },
@@ -59,6 +60,17 @@ test("console saves role and optional conversation budgets and explicit schedule
   const submit = (id, values) =>
     $(id).onsubmit({ preventDefault() {}, target: values });
   const values = {
+    rhythmEnabled: "on",
+    rhythmTimezone: "Asia/Tokyo",
+    rhythmStart: "23:00",
+    rhythmEnd: "08:00",
+    rhythmMode: "defer",
+    rhythmOwners: "on",
+    rhythmJitter: "20",
+    rhythmProbability: "25",
+    rhythmMin: "2",
+    rhythmMax: "8",
+
     observe: "300",
     quiet: "10",
     batch: "4",

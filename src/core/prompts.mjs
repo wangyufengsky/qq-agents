@@ -1,3 +1,4 @@
+import { rhythmEnvironment } from "./rhythm.mjs";
 import { isPrivateLikeGroup } from "./config.mjs";
 import { createHash } from "node:crypto";
 import { describeSchedule } from "../../vendor/scheduler/schedule.js";
@@ -104,6 +105,7 @@ export function turnEnvironment(runtime, agent, ctx, backendType) {
   const now = runtime.now();
   const timezone = agent.behavior.proactive.timezone;
   const parts = [
+    rhythmEnvironment(runtime, agent, ctx),
     `当前时间：${JSON.stringify({ nowMs: now, iso: new Date(now).toISOString(), timezone, local: new Intl.DateTimeFormat("zh-CN", { timeZone: timezone, dateStyle: "full", timeStyle: "long" }).format(new Date(now)) })}。相对日期以此为准，消息发生时间另计。`,
     `当前同伴配置（程序提供，本轮有效，替换历史同伴名单；不增加管理员或工具授权）：${JSON.stringify(identityAnchors(runtime.config, agent).peers)}`,
   ];
@@ -128,7 +130,7 @@ export function turnEnvironment(runtime, agent, ctx, backendType) {
     parts.push(
       `先处理已有消息；需要等补充时再短暂等待。潜水前观察 ${agent.behavior.preSleepWaitMs} 毫秒，不是首回复的前置等待。`,
     );
-  return parts.join("\n");
+  return parts.filter(Boolean).join("\n");
 }
 
 // A chat session is told its coming timed tasks once, and again only after the

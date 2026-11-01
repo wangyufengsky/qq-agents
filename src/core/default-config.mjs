@@ -94,6 +94,14 @@ export function defaultConfig() {
         // goes offline; the administrator turns it on per agent.
         behavior: {
           outageNotice: { enabled: false },
+          rhythm: {
+            enabled: false,
+            sleep: { start: "01:00", end: "08:30" },
+            sleepMode: "defer",
+            urgentOwners: true,
+            wakeJitterMs: 1800000,
+            lateReply: { probability: 0.1, minMs: 60000, maxMs: 600000 },
+          },
         },
         network: {
           publicUrls: [],
@@ -125,6 +133,14 @@ export function defaultConfig() {
         maxConsecutiveSends: 3,
         behavior: {
           outageNotice: { enabled: false },
+          rhythm: {
+            enabled: false,
+            sleep: { start: "01:00", end: "08:30" },
+            sleepMode: "defer",
+            urgentOwners: true,
+            wakeJitterMs: 1800000,
+            lateReply: { probability: 0.1, minMs: 60000, maxMs: 600000 },
+          },
         },
         network: {
           publicUrls: [],
