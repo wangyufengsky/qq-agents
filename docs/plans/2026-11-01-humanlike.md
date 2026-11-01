@@ -4,15 +4,15 @@
 
 ## 实现记录
 
-| 计划序号 | 改进                     | 对应 PR                                                     | 代码状态 |
-| -------- | ------------------------ | ----------------------------------------------------------- | -------- |
-| 1        | 按长度计算的打字节奏     | [#122](https://github.com/wangyufengsky/qq-agents/pull/122) | 已实现。 |
-| 2        | 私聊正在输入             | [#126](https://github.com/wangyufengsky/qq-agents/pull/126) | 已实现。 |
-| 3        | 说话样本、提示与口吻提醒 | [#121](https://github.com/wangyufengsky/qq-agents/pull/121) | 已实现。 |
-| 4        | 作息与忙闲               | [#123](https://github.com/wangyufengsky/qq-agents/pull/123) | 已实现。 |
-| 5        | 贴表情回应               | [#127](https://github.com/wangyufengsky/qq-agents/pull/127) | 已实现。 |
-| 6        | 撤回自己消息             | [#124](https://github.com/wangyufengsky/qq-agents/pull/124) | 已实现。 |
-| 7        | 沉默留白与关系温度       | [#125](https://github.com/wangyufengsky/qq-agents/pull/125) | 已实现。 |
+| 计划序号 | 改进                     | 对应 PR                                                     | 代码状态                                      |
+| -------- | ------------------------ | ----------------------------------------------------------- | --------------------------------------------- |
+| 1        | 按长度计算的打字节奏     | [#122](https://github.com/wangyufengsky/qq-agents/pull/122) | 已实现。                                      |
+| 2        | 私聊正在输入             | [#126](https://github.com/wangyufengsky/qq-agents/pull/126) | 已实现。                                      |
+| 3        | 说话样本、提示与口吻提醒 | [#121](https://github.com/wangyufengsky/qq-agents/pull/121) | 已实现。                                      |
+| 4        | 作息与忙闲               | [#123](https://github.com/wangyufengsky/qq-agents/pull/123) | 已实现。                                      |
+| 5        | 贴表情回应               | [#127](https://github.com/wangyufengsky/qq-agents/pull/127) | 已实现。                                      |
+| 6        | 撤回自己消息             | [#124](https://github.com/wangyufengsky/qq-agents/pull/124) | 已实现。                                      |
+| 7        | 沉默留白与关系温度       | [#125](https://github.com/wangyufengsky/qq-agents/pull/125) | 已实现；关系温度后续改为只给来往事实，见 7b。 |
 
 代码和自动化验收即使全部完成，也不等于已经部署。实际部署涉及能力默认值变化时仍需另行确认；真实 QQ 效果与一周口吻观察另行验收，本轮代码记录不代表已上线、已部署或已完成实测。
 
@@ -206,7 +206,7 @@
 
 ### PR 7：沉默与留白、关系温度
 
-已由 [PR #125](https://github.com/wangyufengsky/qq-agents/pull/125) 实现，实际算法、固定阈值、群聊指向与消息去重、24 小时缓存和管理员固定值的规则见[功能说明](../FEATURES.md#沉默留白与相处档位)。角色保存印象保留管理员固定值，导出/导入清除派生缓存后重算并保留固定值；档位变化会让已见人物卡再显示一次。该派生提示与排序不改变任何权限、冷却或额度，也不写进 Self 或自动加入 QQ 正文。
+已由 [PR #125](https://github.com/wangyufengsky/qq-agents/pull/125) 实现。**7b 随后调整**：程序不再自动计算“陌生 / 认识 / 熟 / 很熟”档位，不按半衰期衰减，也不对联系目标排序；人物卡与空闲素材只附最近 30 天直接来往的事实计数（`interaction`），亲近程度和语气由角色自己判断，管理员说明的相处远近（`adminCloseness`）保留。原因：程序按来往次数给关系定档会替模型做主观判断，模型容易照着标签改变语气，衰减还会把久未联系的老朋友算成生疏。现行规则见[功能说明](../FEATURES.md#沉默留白与来往事实)，下方 7b 原文保留为最初设计记录。
 
 **7a. 沉默与留白**（只改提示，不加机制）：
 

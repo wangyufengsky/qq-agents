@@ -1,4 +1,4 @@
-import { personCloseness } from "../core/closeness.mjs";
+import { withInteraction } from "../core/closeness.mjs";
 import {
   activityFields,
   projectReadSchema,
@@ -389,10 +389,9 @@ function executeMindTool(runtime, ctx, name, args) {
       writtenIn: ctx.conversation,
       now,
     });
-    const card = identity.personCard(saved.personId);
-    card.closeness = personCloseness(
+    const card = withInteraction(
       m,
-      card.personId,
+      identity.personCard(saved.personId),
       now,
       runtime.connection(a.connectionId).accountId,
     );
@@ -401,10 +400,9 @@ function executeMindTool(runtime, ctx, name, args) {
   }
   if (name === "person_notes") {
     const viewCard = (card) => ({
-      ...card,
-      closeness: personCloseness(
+      ...withInteraction(
         m,
-        card.personId,
+        card,
         now,
         runtime.connection(a.connectionId).accountId,
       ),

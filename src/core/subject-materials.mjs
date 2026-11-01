@@ -1,4 +1,4 @@
-import { personCloseness, rankReachTargets } from "./closeness.mjs";
+import { adminCloseness, personInteraction } from "./closeness.mjs";
 import { APP_CAPABILITIES } from "../apps/adapter.mjs";
 import { APP_LEDGER, inAppHours } from "../apps/policy.mjs";
 import { githubMarker } from "../github/policy.mjs";
@@ -23,10 +23,13 @@ const clip = (text, max) => {
 function cardBrief(memory, target, now, accountId) {
   const id = /^private:(\d+)$/.exec(target)?.[1];
   const card = id && memory.identity.personCard(id);
-  if (!card)
-    return id ? { closeness: personCloseness(memory, id, now, accountId) } : {};
+  if (!id) return {};
+  const interaction = personInteraction(memory, id, now, accountId);
+  if (!card) return { interaction };
+  const admin = adminCloseness(card);
   return {
-    closeness: personCloseness(memory, id, now, accountId),
+    interaction,
+    ...(admin ? { adminCloseness: admin } : {}),
     call: card.call,
     impression: clip(card.body, IMPRESSION_CHARS),
     ...memory.corrections.annotation("person", card.id, card.revision),
@@ -172,20 +175,19 @@ export function subjectMaterials(runtime, ctx) {
     nextContactAt: iso(
       (subject.lastContactAt || 0) + a.subject.contactCooldownMs,
     ),
-    targets: rankReachTargets(
-      runtime.subject.reachableTargets(a).map((x) => ({
-        ...x,
-        ...cardBrief(
-          m,
-          x.target,
-          now,
-          runtime.connection(a.connectionId).accountId,
-        ),
-        lastHeardAt: lastAt.get(a.id, x.target, "message.received")?.at || null,
-        lastSaidAt: lastAt.get(a.id, x.target, "message.sent")?.at || null,
-        cooldownUntil: iso(m.state(x.target).proactiveCooldownUntil || 0),
-      })),
-    ),
+    // Listed in configuration order: whom to think of is the agent's choice.
+    targets: runtime.subject.reachableTargets(a).map((x) => ({
+      ...x,
+      ...cardBrief(
+        m,
+        x.target,
+        now,
+        runtime.connection(a.connectionId).accountId,
+      ),
+      lastHeardAt: lastAt.get(a.id, x.target, "message.received")?.at || null,
+      lastSaidAt: lastAt.get(a.id, x.target, "message.sent")?.at || null,
+      cooldownUntil: iso(m.state(x.target).proactiveCooldownUntil || 0),
+    })),
   };
   const reads = (m.state(APP_LEDGER).calls || []).filter(
     (t) => t > now - DAY,

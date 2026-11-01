@@ -1,21 +1,31 @@
 // @ts-check
+// The program counts directed contact; it does not judge a relationship.
+// How close someone is, and how casually to speak, is the agent's own reading
+// of the conversations and its person card. Only an administrator may state a
+// closeness, and that statement is shown as the administrator's.
 import { resolveMessage, scopeFor } from "../memory/message-ids.mjs";
 
+// Values an administrator may set on a card. Never derived by the program.
 export const CLOSENESS_TIERS = Object.freeze(["陌生", "认识", "熟", "很熟"]);
-export const CLOSENESS_THRESHOLDS = Object.freeze([0, 4, 16, 48]);
-export const CLOSENESS_DAY = 86400000;
-export const CLOSENESS_CACHE_MS = CLOSENESS_DAY;
-const WINDOW = 30 * CLOSENESS_DAY;
-const HALF_LIFE = 14 * CLOSENESS_DAY;
+export const INTERACTION_DAY = 86400000;
+export const INTERACTION_WINDOW_DAYS = 30;
+const WINDOW = INTERACTION_WINDOW_DAYS * INTERACTION_DAY;
 const EPISODE_GAP = 6 * 3600000;
+// A projection is recomputed at most this often per role, person and account.
+// It is kept in memory only: reading a card never writes it back.
+export const INTERACTION_CACHE_MS = 10 * 60000;
+const CACHE_LIMIT = 500;
 
 /** @typedef {{ personId: string, conversation: string, direction: string, at: number, kind: string, status?: string, sent?: boolean, messageKey?: string }} Interaction */
-/** Calculate only from archived, explicitly directed speech, without mutating it.
+/** Plain counts from archived, explicitly directed speech; no weighting, no tiers.
  * @param {Interaction[]} events @param {string} personId @param {number} now */
-export function closeness(events, personId, now) {
-  let rounds = 0,
-    incomingOpenings = 0,
-    respondedOpenings = 0;
+export function interactionFacts(events, personId, now) {
+  let exchanges = 0,
+    theyStarted = 0,
+    youStarted = 0,
+    youStartedAnswered = 0,
+    /** @type {number | null} */
+    last = null;
   /** @type {Map<string, {at:number,direction:string,opener:string,responded:boolean}>} */
   const chats = new Map();
   const seenMessages = new Set();
@@ -35,10 +45,11 @@ export function closeness(events, personId, now) {
     .sort((a, b) => a.at - b.at)) {
     if (event.messageKey && seenMessages.has(event.messageKey)) continue;
     if (event.messageKey) seenMessages.add(event.messageKey);
-    const weight = 2 ** (-(now - event.at) / HALF_LIFE);
+    last = event.at;
     const previous = chats.get(event.conversation);
     if (!previous || event.at - previous.at >= EPISODE_GAP) {
-      if (event.direction === "in") incomingOpenings += weight;
+      if (event.direction === "in") theyStarted++;
+      else youStarted++;
       chats.set(event.conversation, {
         at: event.at,
         direction: event.direction,
@@ -48,34 +59,26 @@ export function closeness(events, personId, now) {
       continue;
     }
     if (event.direction !== previous.direction) {
-      rounds += weight;
+      exchanges++;
       if (
         previous.opener === "out" &&
         !previous.responded &&
         event.direction === "in"
       ) {
-        respondedOpenings += weight;
+        youStartedAnswered++;
         previous.responded = true;
       }
     }
     previous.at = event.at;
     previous.direction = event.direction;
   }
-  // Unanswered one-sided chatter cannot create familiarity by itself.
-  const score =
-    rounds +
-    Math.min(rounds, incomingOpenings * 0.5) +
-    Math.min(rounds, respondedOpenings * 0.5);
-  let level = 0;
-  for (let index = 1; index < CLOSENESS_THRESHOLDS.length; index++)
-    if (score >= CLOSENESS_THRESHOLDS[index]) level = index;
   return {
-    tier: CLOSENESS_TIERS[level],
-    at: now,
-    score,
-    rounds,
-    incomingOpenings,
-    respondedOpenings,
+    windowDays: INTERACTION_WINDOW_DAYS,
+    exchanges,
+    theyStarted,
+    youStarted,
+    youStartedAnswered,
+    lastDirectAt: last === null ? null : new Date(last).toISOString(),
   };
 }
 
@@ -111,7 +114,7 @@ function quoted(memory, row, id) {
 /** Normalize actual directed contacts; merely sharing a group is insufficient.
  * @param {any} memory @param {string} personId @param {number} now @param {string} accountId
  * @returns {Interaction[]} */
-export function closenessEvents(memory, personId, now, accountId) {
+export function interactionEvents(memory, personId, now, accountId) {
   const rows = memory.db
     .prepare(
       "SELECT * FROM events WHERE agent_id=? AND occurred_at>=? AND occurred_at<=? AND kind IN ('message.received','message.sent') AND (sender_id=? OR direction='out') AND (conversation=? OR conversation LIKE 'group:%') ORDER BY occurred_at,seq",
@@ -200,46 +203,53 @@ export function closenessEvents(memory, personId, now, accountId) {
   return result;
 }
 
-/** Cache only a derived tier, scoped to this role's own card and current account.
+/** @type {WeakMap<object, Map<string, {at: number, facts: any}>>} */
+const caches = new WeakMap();
+
+/** Facts about directed contact with one person, cached briefly in memory.
  * @param {any} memory @param {string} personId @param {number} now @param {string} accountId */
-export function personCloseness(memory, personId, now, accountId) {
-  const row = memory.db
-    .prepare("SELECT value FROM person_notes WHERE agent_id=? AND person_id=?")
-    .get(memory.agentId, personId);
-  const card = row ? JSON.parse(row.value) : null;
-  const cached = card?.closeness;
-  if (CLOSENESS_TIERS.includes(cached?.override))
-    return {
-      tier: cached.override,
-      override: cached.override,
-      at: now,
-      overridden: true,
-    };
-  if (
-    CLOSENESS_TIERS.includes(cached?.tier) &&
-    cached.accountId === accountId &&
-    Number.isFinite(cached.at) &&
-    now >= cached.at &&
-    now - cached.at < CLOSENESS_CACHE_MS
-  )
-    return { tier: cached.tier, at: cached.at, overridden: false };
-  const computed = closeness(
-    closenessEvents(memory, personId, now, accountId),
+export function personInteraction(memory, personId, now, accountId) {
+  let cache = caches.get(memory.db);
+  if (!cache) caches.set(memory.db, (cache = new Map()));
+  const key = JSON.stringify([memory.agentId, personId, accountId]);
+  const hit = cache.get(key);
+  if (hit && now >= hit.at && now - hit.at < INTERACTION_CACHE_MS)
+    return hit.facts;
+  const facts = interactionFacts(
+    interactionEvents(memory, personId, now, accountId),
     personId,
     now,
   );
-  if (card) {
-    card.closeness = { tier: computed.tier, at: now, accountId };
-    memory.db
-      .prepare(
-        "UPDATE person_notes SET value=? WHERE agent_id=? AND person_id=?",
-      )
-      .run(JSON.stringify(card), memory.agentId, personId);
-  }
-  return { tier: computed.tier, at: now, overridden: false };
+  cache.delete(key);
+  cache.set(key, { at: now, facts });
+  // Insertion order makes the first key the least recently computed.
+  if (cache.size > CACHE_LIMIT)
+    cache.delete(/** @type {string} */ (cache.keys().next().value));
+  return facts;
 }
 
-/** Derived caches are disposable; administrator overrides are durable intent.
+/** The administrator's statement, if any. Legacy derived tiers are ignored.
+ * @param {any} card */
+export function adminCloseness(card) {
+  const value = card?.closeness?.override;
+  return CLOSENESS_TIERS.includes(value) ? value : undefined;
+}
+
+/** A card as the agent or console sees it: stored legacy caches never leave,
+ * contact facts and an administrator's statement are attached separately.
+ * @param {any} memory @param {any} card @param {number} now @param {string} accountId */
+export function withInteraction(memory, card, now, accountId) {
+  const { closeness: _, ...rest } = card;
+  const admin = adminCloseness(card);
+  return {
+    ...rest,
+    interaction: personInteraction(memory, card.personId, now, accountId),
+    ...(admin ? { adminCloseness: admin } : {}),
+  };
+}
+
+/** Derived caches from earlier versions are disposable; administrator
+ * statements are durable intent.
  * @param {any} card @returns {any} */
 export function withoutClosenessCache(card) {
   const result = { ...card };
@@ -251,19 +261,4 @@ export function withoutClosenessCache(card) {
   if (Array.isArray(result.history))
     result.history = result.history.map(withoutClosenessCache);
   return result;
-}
-
-/** @param {any[]} targets */
-export function rankReachTargets(targets) {
-  return targets
-    .map((target, index) => ({ target, index }))
-    .sort(
-      (a, b) =>
-        Math.max(0, CLOSENESS_TIERS.indexOf(b.target.closeness?.tier)) -
-          Math.max(0, CLOSENESS_TIERS.indexOf(a.target.closeness?.tier)) ||
-        (Date.parse(a.target.lastSaidAt || "") || 0) -
-          (Date.parse(b.target.lastSaidAt || "") || 0) ||
-        a.index - b.index,
-    )
-    .map(({ target }) => target);
 }
