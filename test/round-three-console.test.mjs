@@ -84,6 +84,7 @@ test("console saves role and optional conversation budgets and explicit schedule
     keywords: "",
     speakers: "",
     typingEnabled: "on",
+    typingIndicator: "on",
     typingFirst: "on",
     typingChar: "123",
     typingJitter: "0.37",
@@ -95,6 +96,7 @@ test("console saves role and optional conversation budgets and explicit schedule
   assert.equal(saved.agents[0].behavior.batchWindowMs, 4000);
   assert.deepEqual(saved.agents[0].behavior.typing, {
     enabled: true,
+    indicator: true,
     firstReply: true,
     msPerChar: 123,
     jitter: 0.37,
@@ -114,9 +116,11 @@ test("console saves role and optional conversation budgets and explicit schedule
   );
   const disabledTyping = { ...values };
   delete disabledTyping.typingEnabled;
+  delete disabledTyping.typingIndicator;
   delete disabledTyping.typingFirst;
   await submit("#behavior-form", disabledTyping);
   assert.equal(saved.agents[0].behavior.typing.enabled, false);
+  assert.equal(saved.agents[0].behavior.typing.indicator, false);
   assert.equal(saved.agents[0].behavior.typing.firstReply, false);
   assert.equal(saved.agents[0].behavior.typing.jitter, 0.37);
   await submit("#schedule-settings", {

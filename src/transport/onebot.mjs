@@ -334,6 +334,16 @@ export class OneBot extends EventEmitter {
       });
     });
   }
+  async setTyping(conversation, { signal } = {}) {
+    const target = /^private:(\d+)$/.exec(conversation)?.[1];
+    if (!target || signal?.aborted) return;
+    return this.call(
+      "set_input_status",
+      { user_id: target, event_type: 1 },
+      1000,
+      { signal, maxBytes: 4096 },
+    );
+  }
   async send(conversation, segments) {
     const [kind, target] = conversation.split(":");
     if (!["group", "private"].includes(kind) || !/^\d+$/.test(target))
