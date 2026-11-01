@@ -1,4 +1,5 @@
 // @ts-check
+import { rhythmStatus } from "./rhythm.mjs";
 import { sourceCounts } from "./outbound-policy.mjs";
 
 // Explicit allowlist: capabilities and backend credentials never enter this view.
@@ -25,6 +26,7 @@ export function runtimeStatus(runtime) {
       return {
         id: a.id,
         paused: a.paused,
+        rhythm: rhythmStatus(runtime, a),
         activeTurns: [...runtime.running.values()].filter(
           (c) => c.agentId === a.id,
         ).length,

@@ -635,6 +635,7 @@ export class ContextLifecycle {
         ? { reason: "protected-work-withheld" }
         : reason,
     );
+    ctx.rhythmWake = reasons.find((reason) => reason.rhythmWake)?.rhythmWake;
     const environment = turnEnvironment(r, a, ctx, backendType);
     const corrections = m.corrections.forPeople(
       peopleInTurn(

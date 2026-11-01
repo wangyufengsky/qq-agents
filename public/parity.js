@@ -340,6 +340,27 @@ async function renderSchedules() {
     <p class="hint">角色总额度由所有群和私聊共享，文本、文件及其他投递统一计数；失败或未知回执也占用额度。连续回复批次另按角色设置限制。</p></div>`,
       { summary: esc(wakeMoreSummary(b)), cls: "fold-inner" },
     )}${fold(
+      "schedule-rhythm",
+      "作息与慢回复",
+      `<div class="form-grid">${parityCheck("rhythmEnabled", "启用作息", b.rhythm.enabled)}
+      ${parityField("rhythmTimezone", "时区（留空跟随主动联系）", b.rhythm.timezone || "", "text", "Asia/Shanghai")}
+      ${parityField("rhythmStart", "入睡时间", b.rhythm.sleep.start, "time")}${parityField("rhythmEnd", "起床时间", b.rhythm.sleep.end, "time")}
+      ${select("rhythmMode", "睡觉时收到消息", b.rhythm.sleepMode, [
+        ["defer", "起床后处理"],
+        ["slow", "慢一些回复"],
+      ])}
+      ${parityCheck("rhythmOwners", "主人私聊可叫醒", b.rhythm.urgentOwners)}
+      ${range("rhythmJitter", "起床后随机延后上限", b.rhythm.wakeJitterMs / 60000, { min: 0, max: 120, step: 1, unit: " 分钟" })}
+      ${range("rhythmProbability", "普通消息偶尔慢回复", b.rhythm.lateReply.probability * 100, { min: 0, max: 100, step: 1, unit: "%" })}
+      ${range("rhythmMin", "慢回复最少等待", b.rhythm.lateReply.minMs / 60000, { min: 0, max: 60, step: 1, unit: " 分钟" })}${range("rhythmMax", "慢回复最多等待", b.rhythm.lateReply.maxMs / 60000, { min: 0, max: 60, step: 1, unit: " 分钟" })}
+      </div><p class="hint">默认关闭。时区示例：Asia/Shanghai。只推迟普通唤醒，定时任务和已选定意图不受影响；睡觉时暂停空闲活动和主动联系，额度不增加。被 @ 或被引用不套用随机慢回复；睡觉期间遵循所选的处理方式。</p>`,
+      {
+        summary: b.rhythm.enabled
+          ? `${esc(b.rhythm.sleep.start)}–${esc(b.rhythm.sleep.end)}`
+          : "未开启",
+        cls: "fold-inner",
+      },
+    )}${fold(
       "schedule-typing",
       "打字节奏",
       `<div class="form-grid">${parityCheck("typingEnabled", "按内容长度等待", b.typing.enabled)}${parityCheck("typingFirst", "首条也等待", b.typing.firstReply)}
@@ -403,6 +424,24 @@ async function renderSchedules() {
           firstReplyMaxMs: Math.round(num("typingFirstMax") * 1000),
         },
       });
+      agent.behavior.rhythm = {
+        enabled: f.has("rhythmEnabled"),
+        ...(String(f.get("rhythmTimezone")).trim()
+          ? { timezone: String(f.get("rhythmTimezone")).trim() }
+          : {}),
+        sleep: {
+          start: String(f.get("rhythmStart")),
+          end: String(f.get("rhythmEnd")),
+        },
+        sleepMode: String(f.get("rhythmMode")),
+        urgentOwners: f.has("rhythmOwners"),
+        wakeJitterMs: Math.round(num("rhythmJitter") * 60000),
+        lateReply: {
+          probability: num("rhythmProbability") / 100,
+          minMs: Math.round(num("rhythmMin") * 60000),
+          maxMs: Math.round(num("rhythmMax") * 60000),
+        },
+      };
       for (const [input, key] of [
         ["conversationSendMinute", "conversationMaxSendPerMinute"],
         ["conversationSendHour", "conversationMaxSendPerHour"],
