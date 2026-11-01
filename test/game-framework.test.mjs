@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { fixture, config, raw, context } from "./helpers.mjs";
 import { GameHost } from "../src/games/framework/host.mjs";
-import { secret, digest } from "../src/games/core/value.mjs";
+import { canonical, secret, digest } from "../src/games/core/value.mjs";
 import { registerChoiceProbe } from "../src/games/fixtures/choice-probe.mjs";
 import { createGameHttp } from "../src/games/core/http.mjs";
 import { renderGame } from "../src/games/framework/page.mjs";
@@ -20,12 +20,12 @@ function setup(t, run = async () => {}) {
   h.ensure();
   return { ...f, h, k: h.kernel };
 }
-async function create(f, conversation = "private:30000") {
+async function create(f, conversation = "private:30000", senderId = "30000") {
   const mem = f.store.bind("agent-0");
   const event = mem.append({
     kind: "message.received",
     conversation,
-    senderId: "30000",
+    senderId,
     direction: "in",
     body: "下五子棋",
     observedAt: f.runtime.now(),
@@ -242,7 +242,9 @@ test("pause, disconnect, unsupported backend and finite budgets gate AI attempts
   assert.throws(() => f.h.jobs.claim(id, "w", "5"), /GAME_BUDGET_EXHAUSTED/);
   assert.equal(
     f.k.store.db
-      .prepare("SELECT attempts FROM game_budgets WHERE scope='framework'")
+      .prepare(
+        "SELECT attempts FROM game_budgets WHERE scope LIKE 'framework:day:%'",
+      )
       .get().attempts,
     1,
   );
@@ -509,7 +511,9 @@ test("source pause rejects late AI writes and terminal failure retains reserved 
   assert.equal(f.h.jobs.get(id).status, "model_failed");
   assert.equal(
     f.k.store.db
-      .prepare("SELECT tokens FROM game_budgets WHERE scope='framework'")
+      .prepare(
+        "SELECT tokens FROM game_budgets WHERE scope LIKE 'framework:day:%'",
+      )
       .get().tokens,
     f.h.policy.reservedTokensPerAttempt,
   );
@@ -545,7 +549,7 @@ test("same browser can recover a lost join response; a second browser cannot reu
 test("external verification is tied to the current entry boot and never inferred from local health", (t) => {
   const f = setup(t);
   f.runtime.config.games.publicOrigin = "https://games.example.test";
-  f.h.settings = JSON.stringify(f.h.policy);
+  f.h.settings = canonical(f.h.policy);
   f.k.store.db.prepare("INSERT INTO game_entry VALUES(1,?)").run(
     JSON.stringify({
       boot: secret(),
@@ -567,7 +571,7 @@ test("external verification is tied to the current entry boot and never inferred
   f.runtime.config.games.publicOrigin = "https://replacement.example.test";
   assert.equal(f.h.status().ready, false);
   assert.equal(f.h.status().externallyVerified, false);
-  f.h.settings = JSON.stringify(f.h.policy);
+  f.h.settings = canonical(f.h.policy);
   assert.equal(f.h.status().externallyVerified, false);
 
   f.k.store.db.prepare("UPDATE game_entry SET data=?").run(
@@ -704,7 +708,9 @@ test("reopening the game database preserves unknown native runs, budgets and out
   );
   assert.equal(
     restored.kernel.store.db
-      .prepare("SELECT attempts FROM game_budgets WHERE scope='framework'")
+      .prepare(
+        "SELECT attempts FROM game_budgets WHERE scope LIKE 'framework:day:%'",
+      )
       .get().attempts,
     1,
   );
@@ -886,7 +892,7 @@ test("re-entry rejects other senders, stale events, wrong rooms, changed origins
     f.h.rejoin(result.ctx, args),
     /GAME_SERVICE_UNAVAILABLE/,
   );
-  f.h.settings = JSON.stringify(f.h.policy);
+  f.h.settings = canonical(f.h.policy);
   await assert.rejects(
     f.h.rejoin(result.ctx, args),
     /EXTERNAL_VERIFICATION_REQUIRED/,
@@ -965,4 +971,205 @@ test("group re-entry accepts a trailing mention and revokes outstanding group ch
     /INVITATION_UNAVAILABLE/,
   );
   assert.ok(f.h.identity.requestPublic(result.roomId, secret()).challenge);
+});
+
+test("UTC daily budgets survive restart and late settlement charges the original day", async (t) => {
+  const f = setup(t),
+    { roomId, id } = await decision(f);
+  let now = f.k.clock();
+  f.k.clock = () => now;
+  f.h.jobs.gate = () => null;
+  f.k.allow = () => true;
+  const room = f.k.store.room(roomId);
+  room.deadline = now + 3 * 86400000;
+  f.k.store.save(room);
+  f.h.jobs.limits.totalAttempts = 1;
+  f.h.jobs.receive(id);
+  const run = f.h.jobs.claim(id, "daily", "first");
+  const oldScope = run.budgetScopes[2];
+  assert.equal(f.h.jobs.budgetStatus()[0].remainingAttempts, 0);
+  assert.equal(f.h.jobs.budgetStatus(undefined, roomId)[1].resetAt, null);
+  now = (Math.floor(now / 86400000) + 1) * 86400000;
+  assert.equal(f.h.jobs.budgetStatus()[0].remainingAttempts, 1);
+  f.h.jobs.settle(run, { terminal: true, tokens: 12 });
+  assert.equal(
+    f.k.store.db
+      .prepare("SELECT tokens FROM game_budgets WHERE scope=?")
+      .get(oldScope).tokens,
+    12,
+  );
+  const second = f.h.jobs.claim(id, "daily", "second");
+  assert.notEqual(second.budgetScopes[2], oldScope);
+  assert.equal(f.h.jobs.budgetStatus()[0].remainingAttempts, 0);
+  assert.equal(
+    f.h.jobs.budgetStatus(undefined, roomId)[1].remainingAttempts,
+    126,
+  );
+  await f.h.close();
+  f.runtime.now = () => now;
+  const restored = (f.runtime.games = new GameHost(f.runtime, {
+    launch: false,
+  }));
+  restored.ensure();
+  restored.jobs.limits.totalAttempts = 1;
+  assert.equal(restored.jobs.budgetStatus()[0].remainingAttempts, 0);
+});
+
+test("legacy lifetime budget totals migrate once into the upgrade UTC day", async (t) => {
+  const f = setup(t);
+  f.k.store.db
+    .prepare("INSERT INTO game_budgets VALUES('framework',5,1234)")
+    .run();
+  f.k.store.db
+    .prepare("INSERT INTO game_budgets VALUES('agent:agent-0',4,1200)")
+    .run();
+  for (let i = 0; i < 2; i++) {
+    await f.runtime.games.close();
+    const host = (f.runtime.games = new GameHost(f.runtime, { launch: false }));
+    host.ensure();
+    assert.equal(host.jobs.budgetStatus()[0].remainingAttempts, 507);
+    assert.equal(host.jobs.budgetStatus("agent-0")[1].remainingAttempts, 252);
+  }
+});
+
+test("same authenticated source reuses a room and historical rooms do not consume active capacity", async (t) => {
+  const f = setup(t);
+  f.k.maxRooms = 1;
+  const first = await create(f),
+    reused = await create(f);
+  assert.equal(reused.roomId, first.roomId);
+  assert.equal(
+    f.k.store.db.prepare("SELECT count(*) AS n FROM game_rooms").get().n,
+    1,
+  );
+  act(f, first.roomId, "room.close");
+  const second = await create(f);
+  assert.notEqual(second.roomId, first.roomId);
+  act(f, second.roomId, "room.close");
+  const third = await create(f);
+  act(f, third.roomId, "room.close");
+  await assert.rejects(create(f), /GAME_SOURCE_RATE_LIMIT/);
+});
+
+test("failed invitation preparation rolls back room, seat confirmation and request together", async (t) => {
+  const f = setup(t);
+  f.h.identity.invite = () => {
+    throw Error("INVITATION_PREPARE_FAILED");
+  };
+  await assert.rejects(create(f), /GAME_STORAGE_FAILURE/);
+  for (const table of [
+    "game_rooms",
+    "game_creations",
+    "game_host_rooms",
+    "game_host_requests",
+    "game_bindings",
+  ])
+    assert.equal(
+      f.k.store.db.prepare(`SELECT count(*) AS n FROM ${table}`).get().n,
+      0,
+    );
+  assert.equal(f.runtime.transports.get("qq-0").sent.length, 0);
+});
+
+test("configuration key ordering preserves admission and authorization polling avoids writes", async (t) => {
+  const f = setup(t),
+    { roomId } = await create(f);
+  f.runtime.config.games = Object.fromEntries(
+    Object.entries(f.runtime.config.games).reverse(),
+  );
+  assert.equal(f.h.status().ready, true);
+  const before = f.k.store.db.prepare("SELECT total_changes() AS n").get().n;
+  f.h.refreshAccess(roomId);
+  f.h.refreshAccess(roomId);
+  assert.equal(
+    f.k.store.db.prepare("SELECT total_changes() AS n").get().n,
+    before,
+  );
+});
+
+test("new rooms and request IDs cannot evade the same UTC day's total allowance", async (t) => {
+  const f = setup(t),
+    first = await decision(f);
+  f.h.jobs.limits.totalAttempts = 1;
+  f.h.jobs.receive(first.id);
+  const run = f.h.jobs.claim(first.id, "window", "one");
+  f.h.jobs.settle(run, { terminal: true });
+  act(f, first.roomId, "room.close");
+  const second = await decision(f);
+  assert.notEqual(second.roomId, first.roomId);
+  f.h.jobs.receive(second.id);
+  assert.throws(
+    () => f.h.jobs.claim(second.id, "window", "two"),
+    /GAME_BUDGET_EXHAUSTED/,
+  );
+});
+
+test("legacy in-flight reservations keep a usable settlement scope after migration", async (t) => {
+  const f = setup(t),
+    { id } = await decision(f);
+  f.h.jobs.receive(id);
+  const run = f.h.jobs.claim(id, "legacy", "one"),
+    job = f.h.jobs.get(id);
+  f.k.store.db
+    .prepare("UPDATE game_budgets SET scope='framework' WHERE scope=?")
+    .run(run.budgetScopes[2]);
+  f.k.store.db
+    .prepare("UPDATE game_budgets SET scope='agent:agent-0' WHERE scope=?")
+    .run(run.budgetScopes[1]);
+  delete job.run.budgetScopes;
+  f.h.jobs.save(job);
+  await f.h.close();
+  const restored = (f.runtime.games = new GameHost(f.runtime, {
+    launch: false,
+  }));
+  restored.ensure();
+  restored.jobs.settle(run, { terminal: true, tokens: 15 });
+  assert.equal(
+    restored.jobs.budgetStatus()[0].remainingTokens,
+    restored.jobs.limits.totalTokens - 15,
+  );
+  assert.equal(
+    restored.jobs.budgetStatus("agent-0")[1].remainingTokens,
+    restored.jobs.limits.agentTokens - 15,
+  );
+});
+
+test("public admission never opens a write transaction and still enforces immediate revocation", async (t) => {
+  const f = setup(t),
+    { roomId } = await create(f);
+  const transaction = f.k.store.transaction;
+  f.k.store.transaction = () => {
+    throw Error("UNEXPECTED_WRITE_TRANSACTION");
+  };
+  try {
+    assert.equal(f.h.admit(roomId), true);
+    f.runtime.config.globalPaused = true;
+    assert.equal(f.h.admit(roomId), false);
+    f.runtime.config.globalPaused = false;
+  } finally {
+    f.k.store.transaction = transaction;
+  }
+  act(f, roomId, "room.close");
+  const source = f.h.source(roomId);
+  source.accessUntil = 0;
+  f.k.store.db
+    .prepare("UPDATE game_host_rooms SET data=? WHERE id=?")
+    .run(JSON.stringify(source), roomId);
+  f.h.refreshAccess();
+  assert.ok(f.h.source(roomId).accessUntil > f.runtime.now());
+});
+
+test("new-room throttling is shared across senders in one source conversation", async (t) => {
+  const f = setup(t);
+  const first = await create(f, "group:20000", "30000");
+  const second = await create(f, "group:20000", "30001");
+  const third = await create(f, "group:20000", "30002");
+  assert.equal(new Set([first.roomId, second.roomId, third.roomId]).size, 3);
+  await assert.rejects(
+    create(f, "group:20000", "30003"),
+    /GAME_SOURCE_RATE_LIMIT/,
+  );
+  assert.equal((await create(f, "group:20000", "30000")).roomId, first.roomId);
+  const other = await create(f, "private:30000", "30000");
+  assert.notEqual(other.roomId, first.roomId);
 });

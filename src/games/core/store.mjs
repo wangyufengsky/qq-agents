@@ -3,8 +3,8 @@ import { DatabaseSync } from "node:sqlite";
 import { GameError, fail } from "./value.mjs";
 
 export class GameStore {
-  /** @param {string} database */
-  constructor(database) {
+  /** @param {string} database @param {()=>number} [clock] */
+  constructor(database, clock = Date.now) {
     this.db = new DatabaseSync(database);
     try {
       const tables = this.db
@@ -32,6 +32,19 @@ export class GameStore {
         CREATE TABLE IF NOT EXISTS game_bindings(id TEXT PRIMARY KEY, room_id TEXT NOT NULL REFERENCES game_rooms(id) ON DELETE CASCADE, data TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS game_sessions(hash TEXT PRIMARY KEY, room_id TEXT NOT NULL REFERENCES game_rooms(id) ON DELETE CASCADE, data TEXT NOT NULL);
         PRAGMA application_id=1363625777; PRAGMA user_version=1; COMMIT;`);
+      this.transaction(() => {
+        // A side table preserves the original INSERT shape for rollback to older releases.
+        this.db.exec(`CREATE TABLE IF NOT EXISTS game_creation_expiries(
+          principal TEXT NOT NULL, request_id TEXT NOT NULL, expires_at INTEGER NOT NULL,
+          PRIMARY KEY(principal,request_id),
+          FOREIGN KEY(principal,request_id) REFERENCES game_creations(principal,request_id) ON DELETE CASCADE);
+          CREATE INDEX IF NOT EXISTS game_creation_expiries_time ON game_creation_expiries(expires_at);`);
+        this.db
+          .prepare(
+            "INSERT OR IGNORE INTO game_creation_expiries SELECT principal,request_id,? FROM game_creations",
+          )
+          .run(clock() + 7 * 86400000);
+      });
     } catch (error) {
       this.db.close();
       throw error;
@@ -39,6 +52,7 @@ export class GameStore {
   }
   /** @template T @param {()=>T} fn @returns {T} */
   transaction(fn) {
+    if (this.db.isTransaction) return fn();
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const result = fn();
