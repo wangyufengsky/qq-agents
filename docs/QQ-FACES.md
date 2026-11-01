@@ -9,3 +9,13 @@ OneBot 的 `face` 消息段以 `data.id` 提供标准 QQ 表情编号。桥接�
 `src/transport/qq-face-names.json` 包含 329 对编号与中文名称事实，提取自 NapCatQQ 的 [face_config.json](https://github.com/NapNeko/NapCatQQ/blob/main/packages/napcat-core/external/face_config.json)，原始 Git blob 为 `ba937ea96f315235c80e34039d5c039f9b8e2d3c`，核对日期 2026-10-30。仅保留 `QSid` 和移除开头 `/` 的 `QDes`，未包含图像、动画或上游程序实现。更新编号表时需核对来源及已有编号含义，未知的新编号保持可见。
 
 协议形状参考 NapCatQQ [消息格式兼容说明](https://napneko.github.io/develop/msg)。
+
+## 给消息贴表情回应
+
+`qq_react` 把标准 QQ 表情贴在当前会话的一条已知消息上，可以代替一条文字回复；它和发送 `face` 消息段是两种动作。发出默认关闭，管理台入口、额度与幂等说明见 [配置说明](CONFIGURATION.md#给消息贴表情behavioractions)。表情名称只是图标名称，不证明对方情绪，收到的回应也不构成新的请求或授权。
+
+实现已只读核对 NapCat 4.18.38 的动作与事件源码：`set_msg_emoji_like` 使用 `message_id`、`emoji_id` 和 `set: true`；消息号先由本会话记录解析成网关编号，不能直接采用陌生编号。HTTP/OneBot 确认成功才算动作成功；不支持接口的网关会返回稳定错误码，超时仍是结果未知。此核对不是实机投递验收。
+
+群通知 `group_msg_emoji_like` 的 `message_id` 是被回应消息，`likes` 是 `[{emoji_id, count}]`，`is_add` 区分贴上和撤销，`user_id`、`group_id` 标识操作者与会话。桥接仅归档能在当前角色、连接、群和网关命名空间确认属于本角色的消息；别人消息、未知消息和跨群同号都丢弃。记录正文为 `[贴表情] QQ:<操作者> → 消息 <消息号>：<表情名>`，撤销显示 `[取消贴表情]`；未知表情保留编号，不猜名称。最多展开 32 个表情，完整网关通知保留在原始事件中。
+
+通知作为 `notice.reaction` 观察保存，被回应消息号放在 `payload.reaction.messageId`，不冒充通知本身的消息 ID，避免同一消息上的多个回应被错误去重。回应不唤醒、不延长聊天安静等待、不推进新消息/已读/空闲活动水位；下次正常聊天材料中会看到原观察。

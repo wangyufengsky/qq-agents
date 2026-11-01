@@ -35,6 +35,13 @@ export const behaviorSchema = z
     burstMaxMs: ms(0, 10000, 3000),
     longGapProbability: probability.default(0.2),
     longGapMs: ms(0, 30000, 8000),
+    actions: z
+      .object({
+        react: z.boolean().default(false),
+        reactMaxPerMinute: ms(1, 60, 3),
+      })
+      .strict()
+      .prefault({}),
     proactive: z
       .object({
         enabled: z.boolean().default(false),

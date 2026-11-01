@@ -79,6 +79,7 @@ export const TOOL_NAMES = Object.freeze([
   "game_view",
   "game_act",
   "game_close",
+  "qq_react",
   "memory_search",
   "memory_related",
   "memory_read",

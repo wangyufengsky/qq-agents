@@ -93,6 +93,7 @@ export function defaultConfig() {
         // Two agents on two QQ accounts can tell each other's owners when one
         // goes offline; the administrator turns it on per agent.
         behavior: {
+          actions: { react: false, reactMaxPerMinute: 3 },
           outageNotice: { enabled: false },
         },
         network: {
@@ -124,6 +125,7 @@ export function defaultConfig() {
         },
         maxConsecutiveSends: 3,
         behavior: {
+          actions: { react: false, reactMaxPerMinute: 3 },
           outageNotice: { enabled: false },
         },
         network: {

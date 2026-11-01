@@ -38,6 +38,8 @@
     "src/core/local-secrets.mjs",
     "src/core/mind-policy.mjs",
     "src/core/policy.mjs",
+    "src/core/reactions.mjs",
+    "src/tools/reactions.mjs",
     "src/memory/migrate.mjs",
     "src/tools/errors.mjs",
     "scripts/memory-benchmark.mjs",

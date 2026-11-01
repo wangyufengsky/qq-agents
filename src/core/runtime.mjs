@@ -1,3 +1,4 @@
+import { ownsReactionTarget } from "./reactions.mjs";
 import { GameHost, sensitiveGameMessage } from "../games/framework/host.mjs";
 import { ProtectedWork, isWorkScope } from "./protected-work.mjs";
 import { recallBoundary } from "./recall-boundary.mjs";
@@ -589,6 +590,8 @@ export class Runtime {
       if (!allowed(a, e.conversation, this.config)) continue;
       const mem = this.memory.bind(a.id);
       assertMessageAccount(mem, connectionId, c.accountId);
+      if (e.kind === "notice.reaction" && !ownsReactionTarget(mem, c, e))
+        continue;
       if (
         ownEcho &&
         confirmedMessage(
@@ -647,14 +650,18 @@ export class Runtime {
                 messageNamespace: c.messageIdNamespace || "onebot",
                 segments: e.segments,
                 raw: e.raw,
+                ...(e.reaction ? { reaction: e.reaction } : {}),
                 timeKnown: e.timeKnown,
               },
       });
-      mem.person(e.senderId, e.senderName);
+      if (e.kind !== "notice.reaction") mem.person(e.senderId, e.senderName);
       if (!archived.inserted) {
         results.push({ agentId: a.id, duplicate: true });
         continue;
       }
+      // Reactions remain readable observations. They do not advance new-message
+      // watermarks, wake/quiet-window waiters, activity clocks or reply authority.
+      if (e.kind === "notice.reaction") continue;
       const state = mem.state(e.conversation);
       state.lastReceivedSeq = archived.seq;
       state.lastObservedAt = e.occurredAt;

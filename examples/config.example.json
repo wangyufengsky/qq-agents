@@ -67,6 +67,10 @@
       },
       "maxConsecutiveSends": 3,
       "behavior": {
+        "actions": {
+          "react": false,
+          "reactMaxPerMinute": 3
+        },
         "outageNotice": {
           "enabled": false
         }
@@ -100,6 +104,10 @@
       },
       "maxConsecutiveSends": 3,
       "behavior": {
+        "actions": {
+          "react": false,
+          "reactMaxPerMinute": 3
+        },
         "outageNotice": {
           "enabled": false
         }
