@@ -416,7 +416,7 @@ test("only reactions on this role's own scoped messages are archived, without ne
   assert.match(latestPrompt, /取消贴表情/);
 });
 
-test("reaction preserves selected intention state and retains intent-only and recovery fences", async (t) => {
+test("reaction retains intent-only and recovery fences", async (t) => {
   const f = setup(t);
   target(f);
   f.ctx.intentOnly = true;
@@ -424,28 +424,79 @@ test("reaction preserves selected intention state and retains intent-only and re
   f.ctx.intentOnly = false;
   f.ctx.recoveryDeliveryBlocked = true;
   await assert.rejects(call(f, args("recovery")), /RECOVERY_DELIVERY_BLOCKED/);
-  f.ctx.recoveryDeliveryBlocked = false;
-  let checked = 0,
-    completed = 0,
-    reserved = 0;
-  f.runtime.subject.beforeDelivery = () => {
-    checked++;
-    return { id: "selected-intent" };
-  };
-  f.runtime.subject.delivered = () => {
-    completed++;
-  };
-  f.runtime.subject.reserveContact = () => {
-    reserved++;
-  };
-  const result = await call(f, args("reaction-only"));
-  assert.equal(result.actionConfirmed, true);
-  assert.equal(checked, 1);
-  assert.equal(completed, 0);
-  assert.equal(reserved, 0);
-  assert.equal(f.mem.delivery("intent:selected-intent"), undefined);
-  assert.equal(f.mem.delivery("reaction-only").status, "sent");
+  assert.equal(f.calls.length, 0);
 });
+
+for (const outcome of ["completed", "awaiting-response", "failed", "unknown"])
+  test(`selected intention reaction charges contact and reaches ${outcome} without a text reply`, async (t) => {
+    const f = setup(t);
+    target(f);
+    const a = f.runtime.agent("agent-0");
+    a.subject.enabled = true;
+    a.subject.groups = ["20000"];
+    a.subject.maxContactsPerDay = 1;
+    const i = f.runtime.subject.create(f.ctx, {
+      topic: "用一个表情接话",
+      target: f.ctx.conversation,
+      reason: "已有合适的聊天机会",
+      expiresAt: f.runtime.now() + 60000,
+      expectsResponse: outcome === "awaiting-response",
+    });
+    f.runtime.subject.transition(f.ctx.agentId, i, "selected", "现场合适");
+    f.ctx.activeIntentId = i.id;
+    f.ctx.intentOnly = true;
+    f.ctx.intentSnapshotSeq =
+      f.mem.state(f.ctx.conversation).lastReceivedSeq || 0;
+    f.mem.setState(f.ctx.conversation, {
+      ...f.mem.state(f.ctx.conversation),
+      replyBatchSends: 2,
+    });
+    let attempts = 0;
+    f.runtime.transports.get("qq-0").react = async () => {
+      attempts++;
+      assert.equal(f.mem.delivery("intent:" + i.id).status, "pending");
+      assert.equal(f.mem.state("@subject").contacts.length, 1);
+      if (outcome === "failed") throw Error("ONEBOT_REJECTED");
+      if (outcome === "unknown")
+        throw Object.assign(Error("ONEBOT_REJECTED"), {
+          reason: "GATEWAY_TIMEOUT",
+        });
+      return { confirmed: true };
+    };
+    if (["failed", "unknown"].includes(outcome))
+      await assert.rejects(
+        call(f, args("model-request")),
+        outcome === "failed" ? /DELIVERY_FAILED/ : /DELIVERY_UNKNOWN/,
+      );
+    else
+      assert.equal(
+        (await call(f, args("model-request"))).actionConfirmed,
+        true,
+      );
+    assert.equal(f.mem.identity.get("intentions", i.id).status, outcome);
+    assert.equal(f.mem.state("@subject").contacts.length, 1);
+    assert(
+      f.mem.state(f.ctx.conversation).proactiveCooldownUntil > f.runtime.now(),
+    );
+    assert.equal(f.mem.state(f.ctx.conversation).replyBatchSends, 2);
+    assert.equal(f.mem.state(f.ctx.conversation).replyCheckAt, null);
+    assert.equal(f.ctx.confirmedSends, 0);
+    assert.equal(f.mem.delivery("model-request"), undefined);
+    const repeated = await call(f, args("model-request")).catch((error) => {
+      assert.match(
+        error.message,
+        /INTENT_NO_LONGER_ALLOWED|PROACTIVE_COOLDOWN|DELIVERY_ALREADY_ATTEMPTED/,
+      );
+      return null;
+    });
+    if (repeated) assert.equal(repeated.duplicate, true);
+    assert.equal(attempts, 1);
+    assert.equal(f.mem.state("@subject").contacts.length, 1);
+    assert.equal(
+      f.runtime.subject.contactOpportunity(a, f.ctx.conversation),
+      false,
+    );
+  });
 
 test("queued reaction uses the latest per-minute quota", async (t) => {
   const f = setup(t);
