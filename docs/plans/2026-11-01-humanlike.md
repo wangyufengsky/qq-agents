@@ -1,6 +1,6 @@
 # 让角色更像人：节奏、口吻、作息与关系
 
-基线：PR #119 / 7ada579。本文是交给开发者的设计文档，**不是已实现功能**。分三档、七个 PR 逐个实现、验证和合并；每个 PR 都按 [AGENTS.md](../../AGENTS.md) 与 [CONTRIBUTING.md](../../CONTRIBUTING.md) 的完整流程交付。
+基线：PR #119 / 7ada579。本文是交给开发者的设计文档，**不表示全部已经实现**；各节以注明的实现 PR 为准，其余仍为设计。分三档、七个 PR 逐个实现、验证和合并；每个 PR 都按 [AGENTS.md](../../AGENTS.md) 与 [CONTRIBUTING.md](../../CONTRIBUTING.md) 的完整流程交付。
 
 ## 现状
 
@@ -29,6 +29,8 @@
 ## 第一档
 
 ### PR 1：按长度计算的打字节奏
+
+已由 [PR #122](https://github.com/wangyufengsky/qq-agents/pull/122) 实现；实际配置与边界见[打字节奏](../CONFIGURATION.md#打字节奏behaviortyping)。首条等待在幂等检查后、预留账本与额度前进行；超过三秒遇到尚未完整阅读的真人消息会返回 `TYPING_NEW_INPUT_REVIEW_REQUIRED`，摘要截断时须用 `memory_read` 分页后重新决定。连发中间保持原回执语义，语音使用已有转写或合成文字，无文字时按两秒计。
 
 **目标**：短句快、长段慢；首条回复也有与长度相称的打字时间。
 
@@ -71,6 +73,8 @@
 **测试**：假网关记录调用；群聊不调用；网关报错时发送仍成功；暂停后不调用。
 
 ### PR 3：去 AI 腔——说话样本、提示与发送前口吻检查
+
+已由 [PR #121](https://github.com/wangyufengsky/qq-agents/pull/121) 实现（待合并）：`toneCheck` 默认提醒；同回合同 requestId 同纯文本确认放行，既有回执保持幂等；主人私聊只豁免行数，文件、合并转发与程序固定发送不检查。模板与编辑帮助建议增加说话样本，已有 Self 不改写；聊天稳定协议变化按摘要交接一次。实际配置、管理台入口和连发处理见 [配置说明](../CONFIGURATION.md#发送前口吻提醒behaviortonecheck)，Self 样本见 [Self 与会话](../SELF-CONTEXT.md)。
 
 **3a. Self 说话样本**
 

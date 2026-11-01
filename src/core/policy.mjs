@@ -35,6 +35,28 @@ export const behaviorSchema = z
     burstMaxMs: ms(0, 10000, 3000),
     longGapProbability: probability.default(0.2),
     longGapMs: ms(0, 30000, 8000),
+    typing: z
+      .object({
+        enabled: z.boolean().default(true),
+        indicator: z.boolean().default(true),
+        msPerChar: ms(0, 2000, 180),
+        jitter: probability.default(0.35),
+        minMs: ms(0, 30000, 600),
+        maxMs: ms(0, 30000, 12000),
+        firstReply: z.boolean().default(true),
+        firstReplyMaxMs: ms(0, 30000, 6000),
+      })
+      .strict()
+      .prefault({})
+      .refine((x) => x.maxMs >= x.minMs, "INVALID_TIME_RANGE"),
+    toneCheck: z
+      .object({
+        mode: z.enum(["off", "warn"]).default("warn"),
+        phrases: z.array(z.string().trim().min(1).max(100)).max(50).default([]),
+        maxLinesCasual: ms(1, 100, 6),
+      })
+      .strict()
+      .prefault({}),
     proactive: z
       .object({
         enabled: z.boolean().default(false),

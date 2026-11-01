@@ -1,3 +1,4 @@
+import { waitFirstReply } from "./typing.mjs";
 import { recallBoundary } from "./recall-boundary.mjs";
 import { containsCredential } from "./secrets.mjs";
 import { beforeShareDelivery } from "../apps/sharing.mjs";
@@ -5,6 +6,7 @@ import { appService } from "../apps/tools.mjs";
 import { privateGithubSources } from "../github/policy.mjs";
 import { taintMedia } from "../tools/legacy.mjs";
 import { mdToPlain } from "../../vendor/dsh-qq/md-to-plain.js";
+import { checkTone } from "./tone-check.mjs";
 import { reserveSendBudget } from "./send-budget.mjs";
 import { replyPeers, peerReplyLastAttemptAt } from "./peer-replies.mjs";
 import {
@@ -60,6 +62,15 @@ export class DeliveryService {
     runtime.assertSafeOutput(ctx, text);
     text = mdToPlain(text);
     if (!text && !mediaId) throw Error("EMPTY_MESSAGE");
+    // Existing receipts must retain their duplicate/conflict/unknown semantics;
+    // only a new valid request can receive a pre-delivery wording reminder.
+    if (
+      typeof requestId === "string" &&
+      requestId &&
+      requestId.length <= 200 &&
+      !mem.delivery(requestId)
+    )
+      checkTone(ctx, a, requestId, text);
     const segments = [];
     const connection = runtime.connection(a.connectionId),
       namespace = connection.messageIdNamespace || "onebot",
@@ -98,6 +109,7 @@ export class DeliveryService {
       requestId,
       intent: segments,
       body: archiveBody ?? text,
+      typingText: text + (mediaId ? "◻" : ""),
       metadata: {
         replyTo,
         requestedReplyTo,
@@ -131,11 +143,20 @@ export class DeliveryService {
   }
   async deliverNow(
     ctx,
-    { requestId, intent, body = "", metadata = {}, send, action = false },
+    {
+      requestId,
+      intent,
+      body = "",
+      metadata = {},
+      send,
+      action = false,
+      typingText,
+      typingFallbackMs,
+    },
   ) {
     const runtime = this.runtime;
-    const a = runtime.assertActive(ctx),
-      mem = runtime.memory.bind(a.id);
+    let a = runtime.assertActive(ctx);
+    const mem = runtime.memory.bind(a.id);
     assertMessageAccount(
       mem,
       a.connectionId,
@@ -171,6 +192,21 @@ export class DeliveryService {
     if (ctx.recoveryDeliveryBlocked) throw Error("RECOVERY_DELIVERY_BLOCKED");
     if (metadata.mediaId)
       runtime.generatedImages.assertDelivery(ctx, metadata.mediaId, requestId);
+    const typingWait = waitFirstReply(
+      runtime,
+      ctx,
+      typingText,
+      typingFallbackMs,
+    );
+    if (typingWait) {
+      await typingWait;
+      // Waiting is outside the ledger transaction; recheck authority before reserving anything.
+      a = runtime.assertActive(ctx);
+      runtime.assertDisclosure(ctx);
+      runtime.subject.beforeDelivery(ctx);
+      if (mem.state(ctx.conversation).silenceUntil > runtime.now())
+        throw Error("CONVERSATION_SILENCED");
+    }
     const state = mem.state(ctx.conversation),
       now = runtime.now();
     const batchUsed = proactive

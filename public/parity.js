@@ -339,6 +339,19 @@ async function renderSchedules() {
     ${parityOptionalNumber("conversationSendMinute", "单会话投递上限／分钟（可选）", b.conversationMaxSendPerMinute)}${parityOptionalNumber("conversationSendHour", "单会话投递上限／小时（可选）", b.conversationMaxSendPerHour)}
     <p class="hint">角色总额度由所有群和私聊共享，文本、文件及其他投递统一计数；失败或未知回执也占用额度。连续回复批次另按角色设置限制。</p></div>`,
       { summary: esc(wakeMoreSummary(b)), cls: "fold-inner" },
+    )}${fold(
+      "schedule-typing",
+      "打字节奏",
+      `<div class="form-grid">${parityCheck("typingEnabled", "按内容长度等待", b.typing.enabled)}${parityCheck("typingFirst", "首条也等待", b.typing.firstReply)}${parityCheck("typingIndicator", "私聊“正在输入”", b.typing.indicator)}
+    ${range("typingChar", "每字耗时", b.typing.msPerChar, { min: 0, max: 2000, step: 10, unit: " 毫秒" })}${range("typingJitter", "打字抖动", b.typing.jitter, { min: 0, max: 1, step: 0.01, unit: "%" })}
+    ${range("typingMin", "单条最短等待", b.typing.minMs / 1000, { min: 0, max: 30, step: 0.1, unit: " 秒" })}${range("typingMax", "单条最长等待", b.typing.maxMs / 1000, { min: 0, max: 30, step: 0.1, unit: " 秒" })}${range("typingFirstMax", "首条最长等待", b.typing.firstReplyMaxMs / 1000, { min: 0, max: 30, step: 0.1, unit: " 秒" })}
+    </div><p class="hint">短句快、长段慢；表情、链接和图片各按一字计。连发时偶尔叠加走神停顿，显式 gapMs 优先。关闭后恢复原来的随机连发间隔，首条不等；固定定时文字和故障提示不等待。私聊输入状态尽力显示，网关不支持时照常发送。首条等待超过三秒时遇到新消息，会先让角色读完再决定。</p>`,
+      {
+        summary: b.typing.enabled
+          ? "按长度等待 · 首条最多 " + b.typing.firstReplyMaxMs / 1000 + " 秒"
+          : "已关闭 · 原随机间隔",
+        cls: "fold-inner",
+      },
     )}<button class="primary">保存唤醒与节奏</button></form>`,
       { summary: esc(wakeSummary(a)) },
     )}
@@ -379,6 +392,17 @@ async function renderSchedules() {
         maxWakePerHour: num("wakeHour"),
         maxSendPerHour: num("sendHour"),
         maxSendPerMinute: num("sendMinute"),
+        typing: {
+          ...agent.behavior.typing,
+          enabled: f.has("typingEnabled"),
+          indicator: f.has("typingIndicator"),
+          firstReply: f.has("typingFirst"),
+          msPerChar: num("typingChar"),
+          jitter: num("typingJitter"),
+          minMs: Math.round(num("typingMin") * 1000),
+          maxMs: Math.round(num("typingMax") * 1000),
+          firstReplyMaxMs: Math.round(num("typingFirstMax") * 1000),
+        },
       });
       for (const [input, key] of [
         ["conversationSendMinute", "conversationMaxSendPerMinute"],

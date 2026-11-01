@@ -2,7 +2,7 @@ import { allowed } from "../core/config.mjs";
 import { recallBoundary } from "../core/recall-boundary.mjs";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
-import { setTimeout as delay } from "node:timers/promises";
+import { burstDelay, waitTyping } from "../core/typing.mjs";
 import { ownedEvent, readForward, forwardPayload } from "./forward.mjs";
 import { safeFetchBuffer } from "../../vendor/social-reader/safe-fetch.js";
 import { modelScheduleSchema } from "./schedule-schema.mjs";
@@ -220,17 +220,13 @@ export async function legacyTool(runtime, ctx, name, args) {
     const receipts = [];
     for (let i = 0; i < args.messages.length; i++) {
       if (i) {
-        const gap =
-          args.gapMs ??
-          (runtime.random() < a.behavior.longGapProbability
-            ? a.behavior.longGapMs
-            : a.behavior.burstMinMs +
-              Math.round(
-                runtime.random() *
-                  (a.behavior.burstMaxMs - a.behavior.burstMinMs),
-              ));
-        await delay(gap, undefined, { signal: ctx.controller.signal });
-        runtime.assertActive(ctx);
+        const gap = burstDelay(
+          args.messages[i],
+          a.behavior,
+          runtime.random,
+          args.gapMs,
+        );
+        await waitTyping(runtime, ctx, gap);
       }
       try {
         receipts.push(
@@ -240,13 +236,15 @@ export async function legacyTool(runtime, ctx, name, args) {
           }),
         );
       } catch (e) {
+        const failure = safeToolFailure(e);
         return {
           status: "stopped",
           receipts,
           failedIndex: i,
-          error: e.message,
-          hint: safeToolFailure(e).hint,
-          doNotReplay: true,
+          error: failure.code,
+          hint: failure.hint,
+          ...(failure.matches ? { matches: failure.matches } : {}),
+          doNotReplay: failure.code !== "TONE_REVIEW_SUGGESTED",
         };
       }
     }
@@ -303,10 +301,21 @@ export async function legacyTool(runtime, ctx, name, args) {
     const m = runtime.voices.metadata(a.id, args.audioId);
     taintMedia(ctx, m);
     disclose(runtime, ctx);
+    const transcript = m.sources
+      ?.map(
+        (source) =>
+          source.eventId &&
+          mem.db
+            .prepare("SELECT body FROM events WHERE agent_id=? AND dedupe=?")
+            .get(a.id, transcriptKey(source.eventId)),
+      )
+      .find((row) => row?.body)?.body;
     return runtime.deliver(ctx, {
       requestId: args.requestId,
       intent: { kind: "voice", ...args },
       body: `[语音:${m.title}]`,
+      typingText: m.spokenText || transcript || "",
+      typingFallbackMs: 2000,
       metadata: { audioId: m.id, duration: m.duration },
       send: async (transport) => {
         const segment = await runtime.voices.segment(a.id, m.id, a.voice, args);
