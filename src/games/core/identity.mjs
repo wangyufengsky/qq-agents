@@ -1,13 +1,19 @@
 // @ts-check
-import { randomUUID } from "node:crypto";
+import { randomUUID, randomInt } from "node:crypto";
 import { digest, fail, secret } from "./value.mjs";
 
 const ttl = 15 * 60_000,
   sessionTtl = 24 * 60 * 60_000;
 export class GameIdentity {
-  /** @param {import('./kernel.mjs').GameKernel} kernel */
-  constructor(kernel) {
+  /* Public eligibility belongs to the host adapter, never to core storage. */
+  /** @param {import('./kernel.mjs').GameKernel} kernel @param {{isPublicRoom?:(id:string)=>boolean,dualConfirmation?:boolean}} [options] */
+  constructor(
+    kernel,
+    { isPublicRoom = () => false, dualConfirmation = false } = {},
+  ) {
     this.kernel = kernel;
+    this.isPublicRoom = isPublicRoom;
+    this.dualConfirmation = dualConfirmation;
   }
   /** Internal adapter boundary; the host must authenticate the actual role before issuing actor.
    * @param {string} roomId @param {object} actor @param {string} agentId */
@@ -114,11 +120,9 @@ export class GameIdentity {
     return k.store.transaction(() => {
       const room = k.store.room(roomId);
       k.checkTime(room);
-      const source = k.store.db
-        .prepare("SELECT data FROM game_host_rooms WHERE id=?")
-        .get(roomId);
-      if (!source || !JSON.parse(String(source.data)).group)
-        fail("INVITATION_REQUIRED", 403);
+      if (!this.isPublicRoom(roomId)) fail("INVITATION_REQUIRED", 403);
+      if (!/^[A-Za-z0-9_-]{43}$/.test(browser))
+        fail("INVITATION_UNAVAILABLE", 403);
       if (!["waiting", "active", "paused"].includes(room.lifecycle))
         fail("JOIN_DENIED", 403);
       const member = room.participants.find(
@@ -131,6 +135,27 @@ export class GameIdentity {
           "DELETE FROM game_bindings WHERE room_id=? AND json_extract(data,'$.expiresAt')<=?",
         )
         .run(roomId, k.clock());
+      const existing = k.store.db
+        .prepare(
+          "SELECT id,data FROM game_bindings WHERE room_id=? AND json_extract(data,'$.browserHash')=?",
+        )
+        .get(roomId, digest(browser));
+      if (existing) {
+        const data = JSON.parse(String(existing.data));
+        // Reuse the same browser slot without displacing another pending confirmation.
+        const challenge = secret();
+        data.challengeHash = digest(challenge);
+        data.confirmed = false;
+        delete data.exchangeHash;
+        k.store.db
+          .prepare("UPDATE game_bindings SET data=? WHERE id=?")
+          .run(JSON.stringify(data), existing.id);
+        return {
+          bindingId: String(existing.id),
+          challenge,
+          expiresAt: data.expiresAt,
+        };
+      }
       if (
         Number(
           k.store.db
@@ -174,20 +199,47 @@ export class GameIdentity {
         access.member.revoked
       )
         fail("BINDING_DENIED", 403);
+      if (data.confirmed) fail("BINDING_DENIED", 403);
+      const code = this.dualConfirmation
+        ? String(randomInt(10000000, 100000000))
+        : null;
+      data.exchangeHash = code ? digest(code) : null;
+      data.exchangeAttempts = 0;
+      data.exchangeExpiresAt = k.clock() + 5 * 60_000;
       data.confirmed = true;
       k.store.db
         .prepare("UPDATE game_bindings SET data=? WHERE id=?")
         .run(JSON.stringify(data), bindingId);
-      return { confirmed: true };
+      return { confirmed: true, code };
     });
   }
-  /** @param {string} roomId @param {string} bindingId @param {string} browser */
-  exchange(roomId, bindingId, browser) {
+  /** @param {string} roomId @param {string} bindingId @param {string} browser @param {string} [code] */
+  exchange(roomId, bindingId, browser, code = "") {
     const k = this.kernel;
-    return k.store.transaction(() => {
+    const result = k.store.transaction(() => {
       const room = k.store.room(roomId);
       k.checkTime(room);
       const data = this.load(roomId, bindingId);
+      if (
+        data.confirmed &&
+        data.browserHash === digest(browser) &&
+        this.dualConfirmation
+      ) {
+        if (
+          !data.exchangeHash ||
+          data.exchangeAttempts >= 5 ||
+          data.exchangeExpiresAt <= k.clock()
+        )
+          return { error: "BINDING_CODE_EXPIRED" };
+        if (data.exchangeHash !== digest(code)) {
+          data.exchangeAttempts++;
+          k.store.db
+            .prepare("UPDATE game_bindings SET data=? WHERE id=?")
+            .run(JSON.stringify(data), bindingId);
+          // Return before throwing so the attempt counter commits with the same lock as exchange.
+          return { error: "BINDING_CODE_INVALID" };
+        }
+      }
       if (!data.confirmed || data.browserHash !== digest(browser))
         fail("JOIN_UNCONFIRMED", 403);
       const { member } = k.access(room, k.actor(data.principalId));
@@ -221,6 +273,9 @@ export class GameIdentity {
       k.store.db.prepare("DELETE FROM game_bindings WHERE id=?").run(bindingId);
       return { session, expiresAt };
     });
+    if ("error" in result)
+      return fail(result.error || "BINDING_CODE_INVALID", 403);
+    return { session: result.session, expiresAt: result.expiresAt };
   }
   /** @param {string} roomId @param {string} token */
   session(roomId, token) {

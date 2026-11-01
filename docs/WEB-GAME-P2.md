@@ -100,7 +100,7 @@ outbox/inbox 仍保留：即使当前登记接收器和生产者同进程，它�
 普通回归只使用临时数据、假网关和假后端：
 
 ```sh
-node --test --test-timeout=120000 test/game-framework.test.mjs test/game-core.test.mjs test/game-http.test.mjs test/game-gomoku.test.mjs test/backends.test.mjs
+node --test --test-timeout=120000 test/game-framework.test.mjs test/game-core.test.mjs test/game-p1a-http.test.mjs test/game-gomoku-http.test.mjs test/game-gomoku.test.mjs test/backends.test.mjs
 npm run verify
 ```
 

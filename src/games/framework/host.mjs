@@ -347,7 +347,11 @@ export class GameHost {
               .join("")
               .trim()
           : row.body.trim()
-      ).match(command)
+      )
+        .normalize("NFKC")
+        .replace(/\s+/gu, " ")
+        .trim()
+        .match(command)
     )
       fail("GAME_REQUEST_REQUIRED", 403);
     if (this.runtime.now() - Number(row.observed_at) > 600000)
@@ -632,15 +636,17 @@ export class GameHost {
   }
   /** Trusted transport intake, before any model is woken. @param {any} a @param {any} e @param {any} archived */
   async command(a, e, archived) {
-    const match =
-      /确认游戏\s+([a-f0-9-]{36})\s+([a-f0-9-]{36})\s+([A-Za-z0-9_-]{43})/.exec(
-        e.body,
-      );
     const text = e.segments
       .filter((/** @type {any} */ s) => s.type === "text")
       .map((/** @type {any} */ s) => s.data?.text || "")
       .join("")
+      .normalize("NFKC")
+      .replace(/\s+/gu, " ")
       .trim();
+    const match =
+      /^确认游戏\s+([a-f0-9-]{36})\s+([a-f0-9-]{36})\s+([A-Za-z0-9_-]{43})$/.exec(
+        text,
+      );
     const create = /^下五子棋[！!。]?$/.test(text),
       rejoin = /^重新加入游戏\s+([a-f0-9-]{36})$/.exec(text);
     if (!match && !create && !rejoin) return false;
@@ -651,21 +657,74 @@ export class GameHost {
       try {
         const source = this.source(match[1]);
         if (
+          source.group &&
+          source.senderId === e.senderId &&
+          source.conversation === e.conversation &&
+          this.runtime.blockers(a, "private:" + source.senderId).length
+        )
+          fail("BINDING_PRIVATE_UNAVAILABLE", 403);
+        if (
+          this.permission(source) ||
           source.agentId !== a.id ||
           source.connectionId !== a.connectionId ||
-          source.conversation !== e.conversation ||
+          (source.group
+            ? e.conversation !== "private:" + source.senderId
+            : source.conversation !== e.conversation) ||
           source.senderId !== e.senderId
         )
-          return true;
+          fail("BINDING_SOURCE_DENIED", 403);
         const room = this.kernel.store.room(match[1]);
-        this.identity.confirm(
+        const confirmation = this.identity.confirm(
           match[1],
           match[2],
           match[3],
           this.kernel.actor(room.owner),
         );
-      } catch {
-        /* The browser retains an unconfirmed state for invalid QQ proofs. */
+        this.runtime.trackJob(
+          this.runtime.withContext(
+            a.id,
+            e.conversation,
+            async (/** @type {any} */ ctx) => {
+              await this.runtime.send(
+                ctx,
+                {
+                  requestId: "game-confirm:" + archived.id,
+                  text:
+                    "游戏网页验证码：" +
+                    confirmation.code +
+                    "\n仅在你本人打开的游戏网页输入。不要把验证码告诉他人；未申请加入请忽略。有效期5分钟。",
+                },
+                { archiveBody: "[游戏身份确认回执；验证码不进入聊天上下文]" },
+              );
+            },
+          ),
+          "game-confirmation",
+        );
+      } catch (error) {
+        const message =
+          error instanceof Error &&
+          error.message === "BINDING_PRIVATE_UNAVAILABLE"
+            ? "游戏身份确认暂不可用：原发起人的私聊准入、暂停或静默设置阻止确认，请联系部署者检查；群内不会发送验证码。"
+            : error instanceof Error &&
+                error.message === "BINDING_SOURCE_DENIED"
+              ? "游戏身份确认失败：仅限原游戏发起人确认；群游戏请将本人网页口令私聊原角色，验证码不在群内发送。"
+              : error instanceof Error &&
+                  error.message === "INVITATION_UNAVAILABLE"
+                ? "游戏身份确认已过期或失效，请在原 QQ 会话发送：重新加入游戏 <房间编号>。"
+                : "游戏身份确认无效或已使用，请核对本人网页，必要时重新加入游戏。";
+        this.runtime.trackJob(
+          this.runtime.withContext(
+            a.id,
+            e.conversation,
+            async (/** @type {any} */ ctx) => {
+              await this.runtime.send(ctx, {
+                requestId: "game-confirm-rejected:" + archived.id,
+                text: message,
+              });
+            },
+          ),
+          "game-confirmation-rejected",
+        );
       }
       return true;
     }
@@ -678,33 +737,36 @@ export class GameHost {
       )
     )
       return false;
-    await this.runtime.withContext(
-      a.id,
-      e.conversation,
-      async (/** @type {any} */ ctx) => {
-        const task = rejoin
-          ? this.rejoin(ctx, { roomId: rejoin[1], eventId: archived.id })
-          : this.create(ctx, {
-              eventId: archived.id,
-              requestId: randomUUID(),
-              gameType: "gomoku",
-              options: {},
-            });
-        await task.catch(async (/** @type {any} */ error) => {
-          const code = /^[A-Z_]+$/.test(error.message)
-            ? error.message
-            : "GAME_CREATE_UNAVAILABLE";
-          await this.runtime
-            .send(ctx, {
-              requestId: "game-unavailable:" + archived.id,
-              text:
-                "暂时无法进入游戏：" +
-                code +
-                "。请联系部署者检查游戏入口与角色设置。",
-            })
-            .catch(() => {});
-        });
-      },
+    this.runtime.trackJob(
+      this.runtime.withContext(
+        a.id,
+        e.conversation,
+        async (/** @type {any} */ ctx) => {
+          const task = rejoin
+            ? this.rejoin(ctx, { roomId: rejoin[1], eventId: archived.id })
+            : this.create(ctx, {
+                eventId: archived.id,
+                requestId: randomUUID(),
+                gameType: "gomoku",
+                options: {},
+              });
+          await task.catch(async (/** @type {any} */ error) => {
+            const code = /^[A-Z_]+$/.test(error.message)
+              ? error.message
+              : "GAME_CREATE_UNAVAILABLE";
+            await this.runtime
+              .send(ctx, {
+                requestId: "game-unavailable:" + archived.id,
+                text:
+                  "暂时无法进入游戏：" +
+                  code +
+                  "。请联系部署者检查游戏入口与角色设置。",
+              })
+              .catch(() => {});
+          });
+        },
+      ),
+      "game-command",
     );
     return true;
   }
@@ -846,7 +908,7 @@ export class GameHost {
 }
 /** Redact before persistence, including gateway echoes whose delivery outcome is unknown. @param {string} body */
 export function sensitiveGameMessage(body) {
-  return /确认游戏\s+[a-f0-9-]{36}|\/rooms\/[a-f0-9-]{36}\?[^\s]*invite=/.test(
-    body,
+  return /游戏网页验证码[：:]|确认游戏\s+[a-f0-9-]{36}|\/rooms\/[a-f0-9-]{36}\?[^\s]*invite=/.test(
+    body.normalize("NFKC"),
   );
 }

@@ -233,3 +233,20 @@ test("a stale seat cookie cannot prevent reopening a newly issued invitation", a
     200,
   );
 });
+
+test("anonymous floods cannot spend trusted room session allowance; fake cookies share anonymous quota", async (t) => {
+  const f = await fixture(t),
+    authenticated = await f.join(0);
+  let limited = false;
+  for (let i = 0; i < 65; i++) {
+    const response = await f.call(f.base + "/view", {
+      headers: { cookie: `game_${f.roomId}=fake-${i}` },
+    });
+    if (response.status === 429) limited = true;
+  }
+  assert.equal(limited, true);
+  const trusted = await f.call(f.base + "/view", {
+    headers: { cookie: authenticated },
+  });
+  assert.equal(trusted.status, 200);
+});

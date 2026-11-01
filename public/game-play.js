@@ -8,6 +8,44 @@
     },
     coord = (i) =>
       `${String.fromCharCode(65 + (i % 15))}${Math.floor(i / 15) + 1}`;
+  const messages = {
+    AUTH_REQUIRED: "网页身份已过期，请重新加入",
+    JOIN_UNCONFIRMED: "请先回原 QQ 会话确认身份",
+    BINDING_CODE_INVALID: "验证码不正确，请核对 QQ 回执",
+    BINDING_CODE_EXPIRED: "验证码已过期或尝试过多，请重新获取邀请",
+    INVITATION_UNAVAILABLE: "邀请已失效，请在原 QQ 会话重新加入",
+    RATE_LIMITED: "请求过于频繁，请稍后再试",
+    BINDING_CAPACITY:
+      "待确认人数已满，请回原 QQ 会话发送：重新加入游戏 " + roomId + "",
+    GAME_BLOCKED: "当前角色或房间暂不可用",
+    REVISION_CONFLICT: "棋局已有更新",
+    NOT_YOUR_TURN: "当前不是你的回合",
+    LOCAL_STORAGE_UNAVAILABLE: "浏览器无法保存操作，请换系统浏览器",
+    GAME_RETRY_LIMIT: "本回合已达到玩家重试上限，请停止重试并核对状态",
+    GAME_OUTCOME_UNKNOWN: "AI 执行结果尚不明确，请等待核对，不能再次执行",
+    GAME_BUDGET_EXHAUSTED: "游戏调用额度已用尽，请等待额度恢复或结束房间",
+    RETRY_UNAVAILABLE: "当前无法重试 AI 回合",
+    RETRY_DENIED: "当前不满足安全重试条件",
+  };
+  const errorText = (error) =>
+    messages[error.message] || "请求暂未完成，请稍后同步";
+  const executionText = (value) =>
+    ({
+      model_failed: "模型执行失败",
+      delivery_failed: "任务投递失败",
+      outcome_unknown: "结果未知，禁止再次执行",
+      abandoned: "已停止，保留未确认记录",
+      queued: "排队中",
+      running: "思考中",
+      succeeded: "已完成",
+      failed: "执行失败",
+      unknown: "结果待核对",
+      blocked: "已阻断",
+      idle: "等待行动",
+      ready: "准备就绪",
+      completed: "已完成",
+      cancelled: "已取消",
+    })[value] || "等待状态核对";
   let sessionEstablished =
       document.querySelector("main").dataset.authenticated === "true",
     snapshot = null,
@@ -18,7 +56,9 @@
     storageReady = true,
     fresh = false,
     failures = 0,
-    timer = null;
+    timer = null,
+    epoch = 0,
+    polling = false;
   try {
     pending = JSON.parse(sessionStorage.getItem(key) || "null");
     sessionStorage.setItem(`${key}:probe`, "1");
@@ -60,16 +100,26 @@
     resigning = false;
     render();
   }
+  function waitingText() {
+    return snapshot.owner
+      ? snapshot.readyToStart
+        ? "双方已就绪，点击开始对局。"
+        : "你是房主，等待对方就绪后开始对局。"
+      : "已加入，等待房主开始对局。";
+  }
   function render() {
     $("join").disabled = busy;
     $("join").hidden = sessionEstablished;
+    $("identity").textContent = sessionEstablished
+      ? "已验证原 QQ 身份 · 本浏览器可操作自己的座位"
+      : "尚未验证身份 · 请在你本人打开的网页完成 QQ 双端确认";
     if (!snapshot) return;
     $("game").hidden = false;
     $("join").hidden = true;
     const view = snapshot.view,
       board = view?.board || Array(225).fill(0);
     $("ai-status").textContent = snapshot.execution
-      ? `AI 状态：${snapshot.execution.status}${snapshot.execution.reason ? " · " + snapshot.execution.reason : ""}`
+      ? `AI 状态：${executionText(snapshot.execution.status)}${snapshot.execution.reason ? " · 暂不可继续，请核对后重试" : ""}`
       : "";
     $("revision").textContent = `版本 ${snapshot.revision}`;
     $("lifecycle").textContent = {
@@ -83,7 +133,7 @@
       snapshot.lifecycle === "finished" && !view?.result
         ? "房主已结束房间 · 不计胜负"
         : !view
-          ? "等待双方加入，房主开始。"
+          ? waitingText()
           : view.result
             ? view.result.kind === "draw"
               ? "满盘和棋"
@@ -130,6 +180,12 @@
     $("retry").hidden = !pending;
     $("retry").disabled = busy || !storageReady;
     $("resign").disabled = !playable();
+    $("resign-help").textContent =
+      snapshot.lifecycle === "active" && !view?.canAct
+        ? "当前是对方回合，暂不能认输；请等待对方完成。房主结束房间不计胜负。"
+        : "自己的回合可认输；房主结束房间不计作对手获胜。";
+    $("ai-retry").hidden = !snapshot.owner || !snapshot.execution?.retryable;
+    $("ai-retry").disabled = !writable();
     $("confirm-resign").hidden = $("cancel-resign").hidden = !resigning;
     $("confirm-resign").disabled = !playable();
     $("controls").replaceChildren();
@@ -145,12 +201,14 @@
       for (const type of types) {
         const button = document.createElement("button");
         button.textContent = {
-          start: "开始",
+          start: "开始对局",
           pause: "暂停",
           resume: "恢复",
           close: "结束房间",
         }[type];
-        button.disabled = !writable();
+        if (type === "start") button.className = "primary";
+        button.disabled =
+          !writable() || (type === "start" && !snapshot.readyToStart);
         button.onclick = () => submit(`room.${type}`, {});
         $("controls").append(button);
       }
@@ -169,9 +227,13 @@
       throw Error("LOCAL_STORAGE_UNAVAILABLE");
     }
   }
-  async function sync() {
+  async function sync(background = false) {
+    const started = epoch,
+      current = () => !background || started === epoch;
     try {
       const next = await request("/view");
+      if (!current()) return;
+      if (snapshot && next.revision < snapshot.revision) return;
       if (snapshot?.revision !== next.revision) clearSelection();
       if (pending && pending.viewer !== next.viewer) forgetPending();
       if (failures && !pending) status("连接已恢复，已重新同步。");
@@ -181,19 +243,26 @@
       if (pending) {
         try {
           const receipt = await request(`/actions/${pending.request.actionId}`);
-          if (receipt.revision > snapshot.revision)
-            snapshot = await request("/view");
+          if (!current()) return;
+          if (receipt.revision > snapshot.revision) {
+            const updated = await request("/view");
+            if (!current()) return;
+            if (updated.revision >= snapshot.revision) snapshot = updated;
+          }
           forgetPending();
           clearSelection();
           status("操作已确认。");
         } catch (error) {
+          if (!current()) return;
           if (error.message !== "ACTION_UNCONFIRMED") throw error;
         }
       }
+      if (!current()) return;
       fresh = true;
       failures = 0;
       render();
     } catch (error) {
+      if (!current()) return;
       clearSelection();
       fresh = false;
       failures = Math.min(5, failures + 1);
@@ -201,14 +270,15 @@
     }
   }
   async function exclusive(fn) {
-    if (busy) return;
+    if (busy) return false;
     busy = true;
+    epoch++;
     render();
     try {
       await fn();
     } catch (error) {
       status(
-        `操作未确认：${error.message}。当前棋局可能已过时，请查询原操作或等待同步。`,
+        `操作未确认：${errorText(error)}。当前棋局可能已过时，请查询原操作或等待同步。`,
       );
     } finally {
       busy = false;
@@ -229,7 +299,7 @@
         forgetPending();
         clearSelection();
         await sync();
-        status(`操作已拒绝：${error.message}。请重新选择。`);
+        status(`操作已拒绝：${errorText(error)}。请重新选择。`);
         return;
       }
       fresh = false;
@@ -271,9 +341,12 @@
   function showBinding() {
     $("binding").hidden = false;
     $("binding").textContent =
-      `请回原 QQ 会话发送：确认游戏 ${roomId} ${binding.bindingId} ${binding.challenge}`;
+      `请私聊原 QQ 角色发送（群游戏也须私聊）：确认游戏 ${roomId} ${binding.bindingId} ${binding.challenge}`;
     $("exchange").hidden = false;
-    status("等待原 QQ 身份确认。确认后点击继续加入。");
+    $("code-label").hidden = false;
+    status(
+      "只在私聊原角色时发送本人网页口令；群游戏也须私聊；若私聊无回应，请联系部署者检查私聊准入、暂停或静默设置。收到 QQ 回执后，在这里输入8位验证码再继续加入。",
+    );
   }
   async function joined() {
     sessionEstablished = true;
@@ -286,15 +359,23 @@
     binding = null;
     $("binding").hidden = true;
     $("exchange").hidden = true;
+    $("code-label").hidden = true;
     try {
       await sync();
-      status("已加入，等待房主开始。");
+      status(
+        snapshot.lifecycle === "waiting"
+          ? waitingText()
+          : "已加入，棋局已同步。",
+      );
     } finally {
       schedule();
     }
   }
   async function exchange() {
-    await request("/join", { bindingId: binding.bindingId });
+    await request("/join", {
+      bindingId: binding.bindingId,
+      code: $("binding-code").value.trim(),
+    });
     await joined();
   }
   $("exchange").onclick = () => exclusive(exchange);
@@ -313,7 +394,12 @@
           await exchange();
           return;
         } catch (error) {
-          if (error.message !== "JOIN_UNCONFIRMED") throw error;
+          if (
+            !["JOIN_UNCONFIRMED", "BINDING_CODE_INVALID"].includes(
+              error.message,
+            )
+          )
+            throw error;
         }
         showBinding();
         return;
@@ -343,6 +429,12 @@
     clearSelection();
     render();
   };
+  $("ai-retry").onclick = () =>
+    exclusive(async () => {
+      await request("/retry", {});
+      await sync();
+      status("已提交有限重试，请等待状态更新。");
+    });
   $("retry").onclick = () => exclusive(resolvePending);
   $("resign").onclick = () => {
     if (playable()) {
@@ -363,7 +455,20 @@
     if (document.hidden || !sessionEstablished) return;
     timer = setTimeout(
       async () => {
-        if (!busy) await exclusive(sync);
+        if (!busy && !polling) {
+          polling = true;
+          const started = epoch;
+          try {
+            await sync(true);
+          } catch (error) {
+            if (started === epoch) {
+              status(errorText(error));
+              render();
+            }
+          } finally {
+            polling = false;
+          }
+        }
         schedule();
       },
       Math.min(25000, 2500 * 2 ** failures) * (0.8 + Math.random() * 0.4),
@@ -373,7 +478,10 @@
     clearSelection();
     fresh = false;
     render();
-    if (sessionEstablished) void exclusive(sync).finally(schedule);
+    if (sessionEstablished) {
+      if (busy) schedule();
+      else void exclusive(sync).finally(schedule);
+    }
   }
   document.addEventListener("visibilitychange", () => {
     clearTimeout(timer);

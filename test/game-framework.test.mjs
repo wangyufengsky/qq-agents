@@ -57,8 +57,18 @@ function join(f, roomId) {
     inv.invite,
     browser,
   );
-  f.h.identity.confirm(roomId, inv.bindingId, proof.challenge, actor);
-  return f.h.identity.exchange(roomId, inv.bindingId, browser).session;
+  const { code } = f.h.identity.confirm(
+    roomId,
+    inv.bindingId,
+    proof.challenge,
+    actor,
+  );
+  return f.h.identity.exchange(roomId, inv.bindingId, browser, code).session;
+}
+function confirmationCode(f) {
+  return JSON.stringify(f.runtime.transports.get("qq-0").sent).match(
+    /游戏网页验证码[：:]([0-9]{8})/,
+  )?.[1];
 }
 function act(f, roomId, type, payload = {}) {
   const room = f.k.store.room(roomId);
@@ -117,11 +127,20 @@ test("group join requires the exact QQ sender and source; confirmation secrets a
     () => f.h.identity.exchange(roomId, proof.bindingId, browser),
     /JOIN_UNCONFIRMED/,
   );
-  await f.runtime.ingestEvent("qq-0", message(3, 30000));
+  await f.runtime.ingestEvent(
+    "qq-0",
+    raw(3, {
+      user_id: 30000,
+      message_type: "private",
+      group_id: undefined,
+      message: [{ type: "text", data: { text: body } }],
+    }),
+  );
   const session = f.h.identity.exchange(
     roomId,
     proof.bindingId,
     browser,
+    confirmationCode(f),
   ).session;
   assert.equal(
     f.k.view(roomId, f.h.identity.session(roomId, session)).owner,
@@ -544,8 +563,15 @@ test("same browser can recover a lost join response; a second browser cannot reu
     invite.invite,
     browser,
   );
-  f.h.identity.confirm(roomId, invite.bindingId, recovered.challenge, actor);
-  assert.ok(f.h.identity.exchange(roomId, invite.bindingId, browser).session);
+  const { code } = f.h.identity.confirm(
+    roomId,
+    invite.bindingId,
+    recovered.challenge,
+    actor,
+  );
+  assert.ok(
+    f.h.identity.exchange(roomId, invite.bindingId, browser, code).session,
+  );
 });
 
 test("external verification is tied to the current entry boot and never inferred from local health", (t) => {
@@ -623,7 +649,14 @@ test("private QQ confirmation binds the private source without granting another 
     () => f.h.identity.exchange(roomId, invite.bindingId, secret()),
     /JOIN_UNCONFIRMED/,
   );
-  assert.ok(f.h.identity.exchange(roomId, invite.bindingId, browser).session);
+  assert.ok(
+    f.h.identity.exchange(
+      roomId,
+      invite.bindingId,
+      browser,
+      confirmationCode(f),
+    ).session,
+  );
 });
 
 test("separate game process starts with only game routes and stops on bridge close", async (t) => {
@@ -852,13 +885,15 @@ test("re-entry retains the same seat and game, revokes old invitations and rotat
     token = invitation.searchParams.get("invite"),
     browser = secret();
   const proof = f.h.identity.request(result.roomId, binding, token, browser);
-  f.h.identity.confirm(
+  const { code } = f.h.identity.confirm(
     result.roomId,
     binding,
     proof.challenge,
     f.k.actor(before.owner),
   );
-  assert.ok(f.h.identity.exchange(result.roomId, binding, browser).session);
+  assert.ok(
+    f.h.identity.exchange(result.roomId, binding, browser, code).session,
+  );
   assert.throws(() => f.h.identity.session(result.roomId, session));
   const count = sent.length;
   assert.deepEqual(await f.h.rejoin(result.ctx, args), rejoined);
@@ -1352,4 +1387,96 @@ test("unexpected game child exit exposes only stable diagnostics and numeric exi
           entry.code === "GAME_SERVICE_EXITED" && entry.component === "games",
       ),
   );
+});
+
+test("QQ confirmation rejection replies reveal no challenge and normalize fullwidth text", async (t) => {
+  const f = setup(t),
+    { roomId } = await create(f, "group:20000"),
+    browser = secret();
+  const proof = f.h.identity.requestPublic(roomId, browser);
+  const send = async (id, user, text) => {
+    await f.runtime.ingestEvent(
+      "qq-0",
+      raw(id, {
+        user_id: user,
+        group_id: 20000,
+        message: [{ type: "text", data: { text } }],
+      }),
+    );
+    await Promise.all([...f.runtime.jobs]);
+  };
+  const body = `确认游戏 ${roomId} ${proof.bindingId} ${proof.challenge}`;
+  await send(7001, 30001, body);
+  let sent = JSON.stringify(f.runtime.transports.get("qq-0").sent);
+  assert.match(sent, /仅限原游戏发起人/);
+  assert.equal(sent.includes(proof.challenge), false);
+  await send(7003, 30000, body);
+  assert.equal(
+    JSON.stringify(f.runtime.transports.get("qq-0").sent).includes(
+      "游戏网页验证码",
+    ),
+    false,
+  );
+  await f.runtime.ingestEvent(
+    "qq-0",
+    raw(7002, {
+      user_id: 30000,
+      message_type: "private",
+      group_id: undefined,
+      message: [{ type: "text", data: { text: body.replaceAll(" ", "　") } }],
+    }),
+  );
+  await Promise.all([...f.runtime.jobs]);
+  assert.match(
+    JSON.stringify(f.runtime.transports.get("qq-0").sent),
+    /游戏网页验证码/,
+  );
+  assert.equal(
+    JSON.stringify(
+      f.store.db.prepare("SELECT body,payload FROM events").all(),
+    ).includes(proof.challenge),
+    false,
+  );
+});
+
+test("group confirmation keeps group revocation and private admission boundaries", async (t) => {
+  const f = setup(t),
+    { roomId } = await create(f, "group:20000"),
+    proof = f.h.identity.requestPublic(roomId, secret());
+  const text = `确认游戏 ${roomId} ${proof.bindingId} ${proof.challenge}`;
+  const send = async (id, privateMessage) => {
+    await f.runtime.ingestEvent(
+      "qq-0",
+      raw(id, {
+        self_id: Number(f.runtime.connection("qq-0").accountId),
+        user_id: 30000,
+        group_id: privateMessage ? undefined : 20000,
+        message_type: privateMessage ? "private" : "group",
+        message: [{ type: "text", data: { text } }],
+      }),
+    );
+    await Promise.all([...f.runtime.jobs]);
+  };
+  const agent = f.runtime.config.agents[0];
+  agent.allow.groups = [];
+  await send(7101, true);
+  assert.equal(f.h.identity.load(roomId, proof.bindingId).confirmed, false);
+  assert.equal(
+    JSON.stringify(f.runtime.transports.get("qq-0").sent).includes(
+      "游戏网页验证码",
+    ),
+    false,
+  );
+  agent.allow.groups = ["20000"];
+  agent.allow.users = [];
+  await send(7102, false);
+  assert.match(
+    JSON.stringify(f.runtime.transports.get("qq-0").sent),
+    /私聊准入、暂停或静默设置阻止确认/,
+  );
+  assert.equal(f.h.identity.load(roomId, proof.bindingId).confirmed, false);
+  agent.allow.users = ["30000"];
+  f.runtime.connection("qq-0").accountId = "10002";
+  await send(7103, true);
+  assert.equal(f.h.identity.load(roomId, proof.bindingId).confirmed, false);
 });

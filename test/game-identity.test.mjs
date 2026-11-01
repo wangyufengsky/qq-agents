@@ -174,3 +174,107 @@ test("challenge cannot bind another room and owner cannot confirm the guest iden
     "INVITATION_UNAVAILABLE",
   );
 });
+
+test("QQ-only second proof is one-time, browser-bound and durably attempt-limited", (t) => {
+  const f = fixture(t),
+    browser = secret();
+  f.identity.dualConfirmation = true;
+  const pending = f.identity.request(f.roomId, f.bindingId, f.invite, browser);
+  const { code } = f.identity.confirm(
+    f.roomId,
+    f.bindingId,
+    pending.challenge,
+    f.actor("fixture-owner"),
+  );
+  assert.match(code, /^[0-9]{8}$/);
+  rejects(
+    () => f.identity.exchange(f.roomId, f.bindingId, secret(), code),
+    "JOIN_UNCONFIRMED",
+  );
+  rejects(
+    () =>
+      f.identity.confirm(
+        f.roomId,
+        f.bindingId,
+        pending.challenge,
+        f.actor("fixture-owner"),
+      ),
+    "BINDING_DENIED",
+  );
+  for (let i = 0; i < 5; i++)
+    rejects(
+      () => f.identity.exchange(f.roomId, f.bindingId, browser, "wrong"),
+      "BINDING_CODE_INVALID",
+    );
+  rejects(
+    () => f.identity.exchange(f.roomId, f.bindingId, browser, code),
+    "BINDING_CODE_EXPIRED",
+  );
+  assert.equal(
+    JSON.stringify(
+      f.kernel.store.db.prepare("SELECT data FROM game_bindings").all(),
+    ).includes(code),
+    false,
+  );
+});
+
+test("public binding reuses browser slot and never evicts another pending proof", (t) => {
+  const f = fixture(t),
+    browser = secret();
+  f.identity.isPublicRoom = () => true;
+  const first = f.identity.requestPublic(f.roomId, browser);
+  const again = f.identity.requestPublic(f.roomId, browser);
+  assert.equal(first.bindingId, again.bindingId);
+  assert.notEqual(first.challenge, again.challenge);
+  for (let i = 0; i < 5; i++) f.identity.requestPublic(f.roomId, secret());
+  rejects(
+    () => f.identity.requestPublic(f.roomId, secret()),
+    "BINDING_CAPACITY",
+  );
+  assert.equal(
+    f.identity.load(f.roomId, again.bindingId).browserHash.length,
+    64,
+  );
+  assert.equal(
+    f.identity.requestPublic(f.roomId, browser).bindingId,
+    first.bindingId,
+  );
+});
+
+test("second proof expires independently and successful exchange consumes invitation", (t) => {
+  const f = fixture(t),
+    browser = secret();
+  f.identity.dualConfirmation = true;
+  const p = f.identity.request(f.roomId, f.bindingId, f.invite, browser);
+  const { code } = f.identity.confirm(
+    f.roomId,
+    f.bindingId,
+    p.challenge,
+    f.actor("fixture-owner"),
+  );
+  const joined = f.identity.exchange(f.roomId, f.bindingId, browser, code);
+  assert.ok(f.identity.session(f.roomId, joined.session));
+  rejects(
+    () => f.identity.exchange(f.roomId, f.bindingId, browser, code),
+    "INVITATION_UNAVAILABLE",
+  );
+  const room = f.kernel.store.room(f.roomId);
+  const inv = f.identity.invite(
+    f.roomId,
+    f.actor("fixture-owner"),
+    room.participants[0].participantId,
+  );
+  const next = f.identity.request(f.roomId, inv.bindingId, inv.invite, browser);
+  const confirmation = f.identity.confirm(
+    f.roomId,
+    inv.bindingId,
+    next.challenge,
+    f.actor("fixture-owner"),
+  );
+  f.advance(5 * 60_000);
+  rejects(
+    () =>
+      f.identity.exchange(f.roomId, inv.bindingId, browser, confirmation.code),
+    "BINDING_CODE_EXPIRED",
+  );
+});
