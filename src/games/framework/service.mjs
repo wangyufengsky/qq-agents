@@ -58,10 +58,7 @@ const http = createGameHttp({
 });
 await http.listen(Number(port));
 process.send?.({ ready: true, boot });
-const timer = setInterval(() => kernel.sweep(), 1000);
-timer.unref();
 const stop = async () => {
-  clearInterval(timer);
   await http.close();
   kernel.close();
   process.exit(0);

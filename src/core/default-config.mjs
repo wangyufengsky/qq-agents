@@ -28,7 +28,13 @@ export function defaultConfig() {
     port: 3210,
     globalPaused: true,
     privateLikeGroups: [],
-    games: { enabled: false, port: 35824, publicOrigin: "" },
+    games: {
+      enabled: false,
+      port: 35824,
+      publicOrigin: "",
+      maxRooms: 32,
+      maxHistoryRooms: 256,
+    },
     connections: [
       {
         id: "napcat-a",

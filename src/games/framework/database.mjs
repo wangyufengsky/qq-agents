@@ -4,11 +4,12 @@ import { GameKernel } from "../core/kernel.mjs";
 import { GameIdentity } from "../core/identity.mjs";
 import { registerGomokuP2 } from "./module.mjs";
 import { GameJobs } from "./jobs.mjs";
-/** @param {{database:string,clock?:()=>number,maxRooms?:number,gate?:(job:any)=>string|null,limits?:any}} options */
+/** @param {{database:string,clock?:()=>number,maxRooms?:number,maxHistoryRooms?:number,gate?:(job:any)=>string|null,limits?:any}} options */
 export function gameDatabase({
   database,
   clock = Date.now,
   maxRooms = 32,
+  maxHistoryRooms = 256,
   gate,
   limits,
 }) {
@@ -19,6 +20,7 @@ export function gameDatabase({
     registry,
     clock,
     maxRooms,
+    maxHistoryRooms,
     allow: (_principal, roomId) => {
       const row = kernel.store.db
         .prepare("SELECT data FROM game_host_rooms WHERE id=?")

@@ -25,7 +25,89 @@ export class GameJobs {
       CREATE TABLE IF NOT EXISTS game_budgets(scope TEXT PRIMARY KEY, attempts INTEGER NOT NULL, tokens INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS game_attempts(run_id TEXT PRIMARY KEY, job_id TEXT NOT NULL, data TEXT NOT NULL);
     `);
+    // Charge existing lifetime totals to the upgrade day rather than silently resetting them.
+    const day = Math.floor(kernel.clock() / 86400000);
+    kernel.store.transaction(() => {
+      for (const row of kernel.store.db
+        .prepare(
+          "SELECT * FROM game_budgets WHERE scope='framework' OR scope LIKE 'agent:%' AND scope NOT LIKE '%:day:%'",
+        )
+        .all()) {
+        kernel.store.db
+          .prepare(
+            "INSERT INTO game_budgets VALUES(?,?,?) ON CONFLICT(scope) DO UPDATE SET attempts=attempts+excluded.attempts,tokens=tokens+excluded.tokens",
+          )
+          .run(String(row.scope) + ":day:" + day, row.attempts, row.tokens);
+        kernel.store.db
+          .prepare("DELETE FROM game_budgets WHERE scope=?")
+          .run(row.scope);
+      }
+      for (const row of kernel.store.db
+        .prepare(
+          "SELECT id,data FROM game_jobs WHERE json_extract(data,'$.run.runId') IS NOT NULL AND json_extract(data,'$.run.budgetScopes') IS NULL",
+        )
+        .all()) {
+        const job = JSON.parse(String(row.data));
+        job.run.budgetScopes = [
+          "room:" + job.roomId,
+          "agent:" + job.agentId + ":day:" + day,
+          "framework:day:" + day,
+        ];
+        kernel.store.db
+          .prepare("UPDATE game_jobs SET data=? WHERE id=?")
+          .run(JSON.stringify(job), row.id);
+        kernel.store.db
+          .prepare("UPDATE game_attempts SET data=? WHERE run_id=?")
+          .run(JSON.stringify(job.run), job.run.runId);
+      }
+    });
     kernel.ai = this;
+  }
+  /** The UTC day is persisted in scope keys; restarting never refreshes a reservation.
+   * @param {string} [agentId] @param {string} [roomId] */
+  budgetStatus(agentId, roomId) {
+    const day = Math.floor(this.kernel.clock() / 86400000);
+    const scopes = [
+      {
+        scope: "framework:day:" + day,
+        attempts: this.limits.totalAttempts,
+        tokens: this.limits.totalTokens,
+        resetAt: (day + 1) * 86400000,
+      },
+      ...(agentId
+        ? [
+            {
+              scope: "agent:" + agentId + ":day:" + day,
+              attempts: this.limits.agentAttempts,
+              tokens: this.limits.agentTokens,
+              resetAt: (day + 1) * 86400000,
+            },
+          ]
+        : []),
+      ...(roomId
+        ? [
+            {
+              scope: "room:" + roomId,
+              attempts: this.limits.roomAttempts,
+              tokens: this.limits.roomTokens,
+              resetAt: null,
+            },
+          ]
+        : []),
+    ];
+    return scopes.map((limit) => {
+      const used = this.kernel.store.db
+        .prepare("SELECT attempts,tokens FROM game_budgets WHERE scope=?")
+        .get(limit.scope);
+      return {
+        ...limit,
+        remainingAttempts: Math.max(
+          0,
+          limit.attempts - Number(used?.attempts || 0),
+        ),
+        remainingTokens: Math.max(0, limit.tokens - Number(used?.tokens || 0)),
+      };
+    });
   }
   /** @param {any} job */
   enqueue(job) {
@@ -191,6 +273,8 @@ export class GameJobs {
         .map((row) => JSON.parse(String(row.data)));
       if (active.some((j) => j.run && !j.run.terminal))
         fail("GAME_OUTCOME_UNKNOWN");
+      const now = this.kernel.clock(),
+        day = Math.floor(now / 86400000);
       const scopes = [
         [
           "room:" + job.roomId,
@@ -198,11 +282,15 @@ export class GameJobs {
           this.limits.roomTokens,
         ],
         [
-          "agent:" + job.agentId,
+          "agent:" + job.agentId + ":day:" + day,
           this.limits.agentAttempts,
           this.limits.agentTokens,
         ],
-        ["framework", this.limits.totalAttempts, this.limits.totalTokens],
+        [
+          "framework:day:" + day,
+          this.limits.totalAttempts,
+          this.limits.totalTokens,
+        ],
       ];
       for (const [scope, attempts, tokens] of scopes) {
         const used = this.kernel.store.db
@@ -220,7 +308,6 @@ export class GameJobs {
             "INSERT INTO game_budgets VALUES(?,1,?) ON CONFLICT(scope) DO UPDATE SET attempts=attempts+1,tokens=tokens+excluded.tokens",
           )
           .run(scope, this.limits.attemptTokens);
-      const now = this.kernel.clock();
       job.fence++;
       job.run = {
         jobKey: id,
@@ -235,6 +322,7 @@ export class GameJobs {
         session: null,
         backendTurn: null,
         reservedTokens: this.limits.attemptTokens,
+        budgetScopes: scopes.map(([scope]) => scope),
       };
       job.status = "running";
       job.reason = null;
@@ -326,7 +414,7 @@ export class GameJobs {
         Number(result.tokens) >= 0
       ) {
         const delta = Number(result.tokens) - job.run.reservedTokens;
-        for (const scope of [
+        for (const scope of job.run.budgetScopes || [
           "room:" + job.roomId,
           "agent:" + job.agentId,
           "framework",

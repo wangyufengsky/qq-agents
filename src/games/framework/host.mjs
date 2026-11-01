@@ -7,7 +7,7 @@ import { gameDatabase } from "./database.mjs";
 import { gameModuleVersion } from "./module.mjs";
 import { GameWorker } from "./worker.mjs";
 import { buildChildEnv } from "../../core/child-env.mjs";
-import { digest, fail } from "../core/value.mjs";
+import { canonical, digest, fail } from "../core/value.mjs";
 
 /** The only bridge between authenticated QQ intake and the game database. */
 export class GameHost {
@@ -46,6 +46,7 @@ export class GameHost {
         database,
         clock: () => this.runtime.now(),
         maxRooms: p.maxRooms,
+        maxHistoryRooms: p.maxHistoryRooms,
         gate: (job) => this.gate(job),
         limits: {
           roomAttempts: p.maxAttemptsPerRoom,
@@ -60,7 +61,7 @@ export class GameHost {
     );
     this.jobs.recover();
     this.refreshAccess();
-    this.settings = JSON.stringify(p);
+    this.settings = canonical(p);
     if (!this.launch) {
       this.ready = true;
       return;
@@ -79,11 +80,7 @@ export class GameHost {
       if (message?.admission && typeof message.roomId === "string") {
         let allowed = false;
         try {
-          this.refreshAccess();
-          const source = this.source(message.roomId);
-          allowed =
-            source.access === true &&
-            this.settings === JSON.stringify(this.policy);
+          allowed = this.admit(message.roomId);
         } catch {
           /* Unknown rooms fail closed. */
         }
@@ -132,7 +129,7 @@ export class GameHost {
       ctx = this.worker.active.get(job.run?.runId);
     const permission = this.permission(source, ctx);
     if (permission) return permission;
-    if (!this.ready || this.settings !== JSON.stringify(this.policy))
+    if (!this.ready || this.settings !== canonical(this.policy))
       return "GAME_SERVICE_UNAVAILABLE";
     if (!r.transports.get(a.connectionId)?.connected) return "QQ_NOT_CONNECTED";
     if (
@@ -160,27 +157,60 @@ export class GameHost {
     }
     return null;
   }
-  refreshAccess() {
-    if (!this.kernel) return;
-    for (const row of this.kernel.store.db
-      .prepare("SELECT id,data FROM game_host_rooms")
-      .all()) {
-      const source = JSON.parse(row.data);
-      // Revocations fail closed even if the public child survives a bridge failure.
-      source.access = !this.permission(
+  /** Public admission is read-only; periodic host ticks maintain the child's short authorization cache.
+   * @param {string} roomId */
+  admit(roomId) {
+    const source = this.source(roomId);
+    return (
+      !this.permission(
         source,
         [...this.worker.active.values()].find(
           (ctx) =>
             ctx.agentId === source.agentId &&
             ctx.source === source.conversation,
         ),
-      );
-      source.accessUntil = this.runtime.now() + 3000;
-      this.kernel.store.db
-        .prepare("UPDATE game_host_rooms SET data=? WHERE id=?")
-        .run(JSON.stringify(source), row.id);
-    }
+      ) && this.settings === canonical(this.policy)
+    );
   }
+  /** @param {string} [roomId] */
+  refreshAccess(roomId) {
+    if (!this.kernel) return;
+    this.kernel.store.transaction(() => {
+      if (!roomId)
+        this.kernel.store.db.exec(
+          "DELETE FROM game_host_rooms WHERE id NOT IN (SELECT id FROM game_rooms)",
+        );
+      const rows = roomId
+        ? this.kernel.store.db
+            .prepare("SELECT id,data FROM game_host_rooms WHERE id=?")
+            .all(roomId)
+        : this.kernel.store.db
+            .prepare("SELECT id,data FROM game_host_rooms")
+            .all();
+      for (const row of rows) {
+        const source = JSON.parse(row.data);
+        const access = !this.permission(
+          source,
+          [...this.worker.active.values()].find(
+            (ctx) =>
+              ctx.agentId === source.agentId &&
+              ctx.source === source.conversation,
+          ),
+        );
+        if (
+          source.access === access &&
+          source.accessUntil > this.runtime.now() + 1500
+        )
+          continue;
+        source.access = access;
+        source.accessUntil = this.runtime.now() + 3000;
+        this.kernel.store.db
+          .prepare("UPDATE game_host_rooms SET data=? WHERE id=?")
+          .run(JSON.stringify(source), row.id);
+      }
+    });
+  }
+
   status() {
     if (!this.kernel) return { enabled: this.policy.enabled, ready: false };
     const entry = this.kernel.store.db
@@ -188,15 +218,29 @@ export class GameHost {
       .get();
     return {
       enabled: this.policy.enabled,
-      ready: this.ready && this.settings === JSON.stringify(this.policy),
+      ready: this.ready && this.settings === canonical(this.policy),
       origin:
         this.policy.publicOrigin || `http://127.0.0.1:${this.policy.port}`,
       externallyVerified: !!(
         this.ready &&
-        this.settings === JSON.stringify(this.policy) &&
+        this.settings === canonical(this.policy) &&
         entry &&
         JSON.parse(entry.data).publicOrigin === this.policy.publicOrigin &&
         JSON.parse(entry.data).verified
+      ),
+      budgets: this.jobs.budgetStatus(),
+      roomBudgets: this.kernel.store.db
+        .prepare("SELECT id FROM game_rooms")
+        .all()
+        .map((/** @type {any} */ row) => ({
+          roomId: row.id,
+          budget: this.jobs.budgetStatus(undefined, row.id).at(-1),
+        })),
+      agentBudgets: this.runtime.config.agents.map(
+        (/** @type {any} */ agent) => ({
+          agentId: agent.id,
+          budgets: this.jobs.budgetStatus(agent.id),
+        }),
       ),
       jobs: this.kernel.store.db
         .prepare(
@@ -300,6 +344,7 @@ export class GameHost {
       "qq:" +
       digest(
         JSON.stringify([
+          source.agentId,
           source.connectionId,
           source.conversation,
           source.senderId,
@@ -310,46 +355,69 @@ export class GameHost {
       .prepare("SELECT data FROM game_host_requests WHERE id=?")
       .get(requestKey);
     if (previous) return JSON.parse(previous.data).result;
-    this.requestCapacity();
-    const owner = this.kernel.actor(principal),
-      { roomId } = this.kernel.createRoom(owner, {
-        requestId: args.requestId,
-        gameType: "gomoku",
-        moduleVersion: gameModuleVersion,
-        options: {},
-        participants: [
-          { principalId: principal, kind: "human", label: "玩家" },
-          {
-            principalId: "agent:" + a.id,
-            kind: "ai",
-            agentId: a.id,
-            label: "AI 对手",
-          },
-        ],
-      });
-    this.kernel.store.db
-      .prepare("INSERT OR IGNORE INTO game_host_rooms VALUES(?,?)")
-      .run(
+    const prepared = this.kernel.store.transaction(() => {
+      this.requestCapacity();
+      const existing = this.kernel.store.db
+        .prepare(
+          "SELECT r.id,h.data FROM game_rooms r JOIN game_host_rooms h ON h.id=r.id WHERE json_extract(r.data,'$.lifecycle') IN ('waiting','active','paused')",
+        )
+        .all()
+        .find((/** @type {any} */ row) => {
+          const previous = JSON.parse(row.data);
+          return [
+            "agentId",
+            "connectionId",
+            "accountId",
+            "backendId",
+            "conversation",
+            "senderId",
+            "group",
+          ].every((key) => previous[key] === /** @type {any} */ (source)[key]);
+        });
+      if (existing)
+        return this.prepareInvitation(
+          existing.id,
+          source,
+          args.requestId,
+          requestKey,
+        );
+      this.sourceCapacity(source);
+      const owner = this.kernel.actor(principal),
+        { roomId } = this.kernel.createRoom(owner, {
+          requestId: args.requestId,
+          gameType: "gomoku",
+          moduleVersion: gameModuleVersion,
+          options: {},
+          participants: [
+            { principalId: principal, kind: "human", label: "玩家" },
+            {
+              principalId: "agent:" + a.id,
+              kind: "ai",
+              agentId: a.id,
+              label: "AI 对手",
+            },
+          ],
+        });
+      this.kernel.store.db
+        .prepare("INSERT OR IGNORE INTO game_host_rooms VALUES(?,?)")
+        .run(
+          roomId,
+          JSON.stringify({
+            ...source,
+            access: true,
+            accessUntil: this.runtime.now() + 3000,
+          }),
+        );
+      this.identity.confirmAgent(
         roomId,
-        JSON.stringify({
-          ...source,
-          access: true,
-          accessUntil: this.runtime.now() + 3000,
-        }),
+        this.kernel.actor("agent:" + a.id),
+        a.id,
       );
-    this.identity.confirmAgent(
-      roomId,
-      this.kernel.actor("agent:" + a.id),
-      a.id,
-    );
-    return this.deliverInvitation(
-      ctx,
-      roomId,
-      source,
-      args.requestId,
-      requestKey,
-    );
+      return this.prepareInvitation(roomId, source, args.requestId, requestKey);
+    });
+    return this.sendInvitation(ctx, prepared);
   }
+
   /** Re-entry derives identity from a fresh source message, never from a browser-supplied account.
    * @param {any} ctx @param {{roomId:string,eventId:string}} args */
   async rejoin(ctx, args) {
@@ -376,17 +444,14 @@ export class GameHost {
       .prepare("SELECT data FROM game_host_requests WHERE id=?")
       .get(requestKey);
     if (previous) return JSON.parse(previous.data).result;
-    this.requestCapacity();
-    return this.deliverInvitation(
-      ctx,
-      args.roomId,
-      source,
-      requestId,
-      requestKey,
-    );
+    const prepared = this.kernel.store.transaction(() => {
+      this.requestCapacity();
+      return this.prepareInvitation(args.roomId, source, requestId, requestKey);
+    });
+    return this.sendInvitation(ctx, prepared);
   }
-  /** @param {any} ctx @param {string} roomId @param {any} source @param {string} requestId @param {string} requestKey */
-  async deliverInvitation(ctx, roomId, source, requestId, requestKey) {
+  /** @param {string} roomId @param {any} source @param {string} requestId @param {string} requestKey */
+  prepareInvitation(roomId, source, requestId, requestKey) {
     const room = this.kernel.store.room(roomId),
       owner = this.kernel.actor(room.owner);
     // Minting also revokes outstanding group challenges; no seat or game state is replaced.
@@ -415,6 +480,11 @@ export class GameHost {
         requestKey,
         JSON.stringify({ createdAt: this.runtime.now(), result }),
       );
+    return { result, url, requestKey };
+  }
+  /** @param {any} ctx @param {any} prepared */
+  async sendInvitation(ctx, { result, url, requestKey }) {
+    const requestId = result.requestId;
     try {
       const receipt = await this.runtime.send(
         ctx,
@@ -437,6 +507,42 @@ export class GameHost {
         requestKey,
       );
     return result;
+  }
+  /** New-room rate limits are shared by senders in the same authenticated source conversation. @param {any} source */
+  sourceCapacity(source) {
+    const key = digest(
+      canonical([
+        source.agentId,
+        source.connectionId,
+        source.accountId,
+        source.backendId,
+        source.conversation,
+      ]),
+    );
+    const now = this.runtime.now();
+    this.kernel.store.db.exec(
+      "CREATE TABLE IF NOT EXISTS game_source_rates(id TEXT PRIMARY KEY, started_at INTEGER NOT NULL, count INTEGER NOT NULL)",
+    );
+    this.kernel.store.db
+      .prepare("DELETE FROM game_source_rates WHERE started_at<=?")
+      .run(now - 60000);
+    if (
+      Number(
+        this.kernel.store.db
+          .prepare("SELECT count(*) AS n FROM game_source_rates")
+          .get().n,
+      ) >= 4096
+    )
+      fail("GAME_SOURCE_RATE_LIMIT", 429);
+    const row = this.kernel.store.db
+      .prepare("SELECT count FROM game_source_rates WHERE id=?")
+      .get(key);
+    if (Number(row?.count || 0) >= 3) fail("GAME_SOURCE_RATE_LIMIT", 429);
+    this.kernel.store.db
+      .prepare(
+        "INSERT INTO game_source_rates VALUES(?,?,1) ON CONFLICT(id) DO UPDATE SET count=count+1",
+      )
+      .run(key, now);
   }
   /** @param {any} ctx @param {string} roomId */
   chatAccess(ctx, roomId) {
