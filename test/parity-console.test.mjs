@@ -323,6 +323,16 @@ test("wake and scheduler forms save the same shapes as before", async () => {
   const submit = (id, values) =>
     k.node(id).onsubmit({ preventDefault() {}, target: values });
   await submit("#behavior-form", {
+    rhythmEnabled: "on",
+    rhythmTimezone: "Asia/Tokyo",
+    rhythmStart: "23:00",
+    rhythmEnd: "08:00",
+    rhythmMode: "defer",
+    rhythmOwners: "on",
+    rhythmJitter: "0.25",
+    rhythmProbability: "25",
+    rhythmMin: "1.5",
+    rhythmMax: "8",
     keywords: "早安,开会",
     speakers: "30000,30001",
     poke: "on",
@@ -344,6 +354,15 @@ test("wake and scheduler forms save the same shapes as before", async () => {
   assert.equal(agent().wake.joins, false);
   assert.equal(agent().behavior.batchWindowMs, 4000);
   assert.equal(agent().behavior.quietAfterNewMs, 10000);
+  assert.deepEqual(agent().behavior.rhythm, {
+    enabled: true,
+    timezone: "Asia/Tokyo",
+    sleep: { start: "23:00", end: "08:00" },
+    sleepMode: "defer",
+    urgentOwners: true,
+    wakeJitterMs: 15000,
+    lateReply: { probability: 0.25, minMs: 90000, maxMs: 480000 },
+  });
   await submit("#schedule-settings", {
     enabled: "on",
     quietEnabled: "on",

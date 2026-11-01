@@ -1,3 +1,4 @@
+import { refreshRhythm } from "./rhythm.mjs";
 import { isPrivateLikeGroup, validateConfig } from "./config.mjs";
 import { configImpact, changedConfigFields } from "./config-impact.mjs";
 import { waitForDrain } from "../updates/drain.mjs";
@@ -97,6 +98,7 @@ export async function commitConfig(runtime, next, revision) {
     }
     // Commit before revoking permissions; a failed disk write leaves old work usable.
     runtime.configStore.save(next, revision);
+    refreshRhythm(runtime, before, next);
     for (const [token, ctx] of runtime.capabilities)
       if (agentIds.has(ctx.agentId)) {
         runtime.abortContext(

@@ -1,3 +1,4 @@
+import { deferForRhythm } from "./rhythm.mjs";
 import { recallPage } from "./recall-boundary.mjs";
 import { looksLikeUnfinished } from "../../vendor/legacy/v2-wait.js";
 import { allowed, isPrivateLikeGroup } from "./config.mjs";
@@ -37,7 +38,9 @@ function slide(a, state, now, senderId) {
     now + batchWindowMs,
   );
   // A later rate-limit retry stays in place.
-  state.wakeDueAt = Math.max(state.wakeDueAt ?? due, due);
+  const next = Math.max(state.rhythmBaseDueAt ?? state.wakeDueAt ?? due, due);
+  if (state.rhythmBaseDueAt !== undefined) state.rhythmBaseDueAt = next;
+  state.wakeDueAt = Math.max(state.wakeDueAt ?? next, next);
 }
 export class ConversationEngine {
   constructor(runtime) {
@@ -127,6 +130,25 @@ export class ConversationEngine {
       [a.name, ...a.aliases].some((n) => n && e.body.includes(n))
     );
   }
+  direct(a, e, accountId, archived) {
+    if (
+      e.segments.some(
+        (s) => s.type === "at" && String(s.data?.qq) === accountId,
+      )
+    )
+      return true;
+    if (!archived?.id) return false;
+    const memory = this.runtime.memory.bind(a.id);
+    const row = memory.db
+      .prepare("SELECT * FROM events WHERE agent_id=? AND id=?")
+      .get(a.id, archived.id);
+    return (
+      !!row &&
+      references(row).replies.some(
+        (id) => quotedSender(memory.db, row, id) === accountId,
+      )
+    );
+  }
   request(
     id,
     conversation,
@@ -139,6 +161,7 @@ export class ConversationEngine {
       immediate = false,
       senderId = null,
       addressed = false,
+      direct = false,
     } = {},
   ) {
     const a = this.runtime.agent(id),
@@ -147,6 +170,12 @@ export class ConversationEngine {
     // Timers left behind by wakes that were dropped elsewhere must not shape a new batch.
     if (!state.pendingWakes?.length) {
       delete state.wakeDueAt;
+      delete state.rhythmBaseDueAt;
+      delete state.rhythmDirect;
+      delete state.rhythmLateChecked;
+      delete state.rhythmLateUntil;
+      delete state.rhythmDeferredUntil;
+      delete state.rhythmSleepPeriod;
       endBatch(state);
     }
     state.pendingWakes ||= [];
@@ -179,8 +208,16 @@ export class ConversationEngine {
       // Later chat wakes may join an immediate wake but never postpone it.
       endBatch(state);
       state.wakeDueAt = Math.min(state.wakeDueAt ?? now, now);
+      if (state.rhythmBaseDueAt !== undefined)
+        state.rhythmBaseDueAt = state.wakeDueAt;
     } else if (state.wakeDueAt === undefined || state.wakeBatchAt !== undefined)
       slide(a, state, now, senderId);
+    if (direct) state.rhythmDirect = true;
+    const exempt = state.pendingWakes.some((x) => x.taskRunId || x.intentId);
+    deferForRhythm(this.runtime, a, state, conversation, {
+      exempt,
+      direct: state.rhythmDirect === true,
+    });
     this.write(id, conversation, state);
     return this.flush(id, conversation);
   }
@@ -207,6 +244,14 @@ export class ConversationEngine {
       runtime.games.busy(a.backendId)
     )
       return { queued: true };
+    if (state.pendingWakes?.length) {
+      const before = state.wakeDueAt;
+      deferForRhythm(runtime, a, state, conversation, {
+        exempt: state.pendingWakes.some((x) => x.taskRunId || x.intentId),
+        direct: state.rhythmDirect === true,
+      });
+      if (state.wakeDueAt !== before) this.write(id, conversation, state);
+    }
     if (!state.pendingWakes?.length || state.wakeDueAt > now)
       return { queued: true };
     const recent = (state.wakeTimes || []).filter((t) => t > now - 3600000);
@@ -219,6 +264,7 @@ export class ConversationEngine {
     const retryAt = Math.max(...waits);
     if (retryAt > now) {
       state.wakeDueAt = retryAt;
+      if (state.rhythmBaseDueAt !== undefined) state.rhythmBaseDueAt = retryAt;
       this.write(id, conversation, state);
       return { queued: true, rateLimited: true };
     }
@@ -243,7 +289,15 @@ export class ConversationEngine {
       }
       return x.taskRunId || !x.seq || x.seq > (state.readThroughSeq || 0);
     });
+    const rhythmWake =
+      state.rhythmDeferredUntil <= now ? state.rhythmSleepPeriod : null;
     state.pendingWakes = [];
+    delete state.rhythmDeferredUntil;
+    delete state.rhythmSleepPeriod;
+    delete state.rhythmBaseDueAt;
+    delete state.rhythmDirect;
+    delete state.rhythmLateChecked;
+    delete state.rhythmLateUntil;
     delete state.wakeDueAt;
     endBatch(state);
     if (!pending.length) {
@@ -259,6 +313,7 @@ export class ConversationEngine {
     if (state.wakeConfig)
       state.wakeConfig = { ...state.wakeConfig, sleepUntil: null };
     this.write(id, conversation, state);
+    if (rhythmWake) pending[0].rhythmWake = rhythmWake;
     const job = runtime.wake(id, conversation, { reasons: pending });
     runtime.trackJob(job, id);
     return { started: true };
