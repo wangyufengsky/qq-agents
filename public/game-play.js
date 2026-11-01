@@ -341,7 +341,7 @@
   function showBinding() {
     $("binding").hidden = false;
     $("binding").textContent =
-      `请私聊原 QQ 角色发送（群游戏也须私聊）：确认游戏 ${roomId} ${binding.bindingId} ${binding.challenge}`;
+      `确认游戏 ${roomId} ${binding.bindingId} ${binding.challenge}`;
     $("exchange").hidden = false;
     $("code-label").hidden = false;
     status(

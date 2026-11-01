@@ -184,10 +184,7 @@ export class GameHost {
       return "GAME_BACKEND_UNSUPPORTED";
     if (r.backendConnections.blocked.has(a.id)) return "BACKEND_UNAVAILABLE";
     for (const other of r.running.values())
-      if (
-        (other !== ctx && other.agentId === job.agentId) ||
-        other.roomId === job.roomId
-      )
+      if (other !== ctx && other.backendId === a.backendId)
         return "GAME_BACKEND_BUSY";
     for (const row of this.kernel.store.db
       .prepare("SELECT data FROM game_jobs WHERE status='outcome_unknown'")
@@ -538,7 +535,9 @@ export class GameHost {
         {
           requestId: "game-invite:" + requestId,
           text:
-            "五子棋邀请：" + url + "\n打开后在此会话发送网页显示的确认口令。",
+            "五子棋邀请：" +
+            url +
+            "\n打开后请私聊原 QQ 角色发送网页显示的确认口令；群游戏也须私聊。",
         },
         { archiveBody: "[网页游戏邀请已投递；私密链接不进入聊天上下文]" },
       );

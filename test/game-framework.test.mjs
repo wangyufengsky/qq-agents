@@ -1547,3 +1547,46 @@ test("source authorization expires at its deadline until the host refreshes it",
   f.h.refreshAccess(roomId);
   assert.equal(f.k.view(roomId, actor).roomId, roomId);
 });
+
+test("active shared backends remain exclusive while unknown games only fence their owner", async (t) => {
+  const f = setup(t),
+    { id } = await decision(f),
+    job = f.h.jobs.get(id);
+  const other = {
+    agentId: "agent-peer",
+    backendId: f.runtime.agent(job.agentId).backendId,
+  };
+  f.runtime.running.set("peer-chat", other);
+  assert.equal(f.h.gate(job), "GAME_BACKEND_BUSY");
+  other.backendId = "another-backend";
+  assert.equal(f.h.gate(job), null);
+  f.runtime.running.delete("peer-chat");
+  const peerRoom = await create(f, "group:20000", "30001");
+  const unknown = {
+    ...job,
+    decisionId: randomUUID(),
+    roomId: peerRoom.roomId,
+    agentId: "agent-peer",
+    status: "outcome_unknown",
+  };
+  f.k.store.db
+    .prepare("INSERT INTO game_jobs(id,room_id,status,data) VALUES(?,?,?,?)")
+    .run(
+      unknown.decisionId,
+      unknown.roomId,
+      unknown.status,
+      JSON.stringify(unknown),
+    );
+  assert.equal(f.h.gate(job), null);
+  unknown.agentId = job.agentId;
+  f.h.jobs.save(unknown);
+  assert.equal(f.h.gate(job), "GAME_OUTCOME_UNKNOWN");
+});
+
+test("group invitations direct the sender to private QQ confirmation", async (t) => {
+  const f = setup(t);
+  await create(f, "group:20000");
+  const sent = JSON.stringify(f.runtime.transports.get("qq-0").sent);
+  assert.match(sent, /私聊原 QQ 角色/);
+  assert.doesNotMatch(sent, /在此会话发送/);
+});

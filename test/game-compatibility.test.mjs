@@ -129,7 +129,7 @@ test("published UI assets have an independent immutable version snapshot", () =>
     ),
   );
   const published = {
-    3: "1ac250ef2332fe6895526d496f60ae6f0d50521889ce71002dc7f39be54b38cc",
+    3: "6560dc73544fda1a2e7931b41eb50aa88d4e1d57cd3a157a0e54ec17ab3e2221",
   };
   assert.equal(
     actual,

@@ -200,3 +200,22 @@ test("joining as ready owner explicitly prompts start rather than waiting for an
   assert.equal(b.node("status").textContent, "双方已就绪，点击开始对局。");
   assert.equal(b.node("summary").textContent, "双方已就绪，点击开始对局。");
 });
+
+test("the selectable binding contains only the command accepted by QQ", () => {
+  const b = browser(
+    {},
+    {
+      authenticated: false,
+      binding: {
+        bindingId: "binding",
+        challenge: "challenge",
+        expiresAt: Date.now() + 60000,
+      },
+    },
+  );
+  assert.equal(
+    b.node("binding").textContent,
+    "确认游戏 room binding challenge",
+  );
+  assert.match(b.node("status").textContent, /群游戏也须私聊/);
+});
