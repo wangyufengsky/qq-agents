@@ -219,3 +219,114 @@ test("the selectable binding contains only the command accepted by QQ", () => {
   );
   assert.match(b.node("status").textContent, /群游戏也须私聊/);
 });
+
+function persona(overrides = {}) {
+  const board = Array(225).fill(0);
+  return {
+    revision: 4,
+    viewer: "human",
+    owner: true,
+    lifecycle: "active",
+    participants: [
+      { participantId: "human", seat: 0, kind: "human", label: "玩家" },
+      { participantId: "ai", seat: 1, kind: "ai", label: "阿檀" },
+    ],
+    presentation: { avatars: { ai: "/avatars/" + "a".repeat(32) + ".jpg" } },
+    remarks: [
+      { participantId: "ai", revision: 2, text: "先试试水" },
+      { participantId: "ai", revision: 4, text: "主人上当！" },
+    ],
+    view: { board, canAct: true, color: "black", lastMove: { x: 8, y: 7 } },
+    ...overrides,
+  };
+}
+
+test("opponent name, hash avatar and the current move's remark are shown; the log lists all remarks", async () => {
+  const snap = persona();
+  const b = browser(snap);
+  b.resolve(snap);
+  await flush();
+  assert.equal(b.node("opponent-name").textContent, "阿檀");
+  assert.equal(b.node("opponent-avatar").src, snap.presentation.avatars.ai);
+  assert.equal(b.node("opponent-avatar").hidden, false);
+  assert.equal(b.node("opponent-initial").hidden, true);
+  assert.equal(b.node("me-chip").className, "chip b");
+  assert.equal(b.node("ai-chip").className, "chip w");
+  assert.equal(b.node("me-side").className, "side on");
+  assert.equal(b.node("say").hidden, false);
+  assert.equal(b.node("say-text").textContent, "主人上当！");
+  assert.deepEqual(
+    b.node("remarks").children.map((x) => x.textContent),
+    ["主人上当！", "先试试水"],
+  );
+});
+
+test("a stale remark hides the bubble, unknown avatar paths fall back to the initial, and mute hides remarks", async () => {
+  const snap = persona({
+    revision: 5,
+    presentation: { avatars: { ai: "https://evil.test/a.png" } },
+  });
+  const b = browser(snap);
+  b.resolve(snap);
+  await flush();
+  assert.equal(b.node("say").hidden, true);
+  assert.equal(b.node("opponent-avatar").hidden, true);
+  assert.equal(b.node("opponent-initial").hidden, false);
+  assert.equal(b.node("opponent-initial").textContent, "阿");
+  b.node("mute").onclick();
+  assert.equal(b.node("remarks").hidden, true);
+  assert.equal(b.node("mute").textContent, "显示台词");
+});
+
+test("the bubble shows thinking on the AI turn and the confirm button names the selected point", async () => {
+  const snap = persona({
+    revision: 5,
+    execution: { status: "running" },
+    view: {
+      board: Array(225).fill(0),
+      canAct: false,
+      color: "black",
+      lastMove: null,
+    },
+  });
+  const b = browser(snap);
+  b.resolve(snap);
+  await flush();
+  assert.equal(b.node("ai-side").className, "side r on");
+  assert.equal(b.node("say").hidden, false);
+  assert.match(b.node("say-text").textContent, /阿檀 正在想/);
+  const mine = persona({ revision: 6, remarks: [] });
+  const c = browser(mine);
+  c.resolve(mine);
+  await flush();
+  c.node("board").children[16].onclick();
+  assert.equal(c.node("confirm").textContent, "落子 B2");
+  assert.equal(c.node("zoom").children.length, 25);
+});
+
+test("a finished game highlights the five-stone line through the last move", async () => {
+  const board = Array(225).fill(0);
+  for (let x = 3; x <= 7; x++) board[7 * 15 + x] = 1;
+  const snap = persona({
+    lifecycle: "finished",
+    remarks: [],
+    view: {
+      board,
+      canAct: false,
+      color: "black",
+      lastMove: { x: 7, y: 7 },
+      result: { kind: "win", winners: ["human"], reasonCode: "FIVE" },
+    },
+  });
+  const b = browser(snap);
+  b.resolve(snap);
+  await flush();
+  const winning = b
+    .node("board")
+    .children.filter((c) => / win/.test(c.className))
+    .map((c) => c.dataset.index);
+  assert.deepEqual(
+    winning.sort((a, c) => a - c),
+    [108, 109, 110, 111, 112],
+  );
+});

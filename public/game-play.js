@@ -7,7 +7,8 @@
       $("status").textContent = text;
     },
     coord = (i) =>
-      `${String.fromCharCode(65 + (i % 15))}${Math.floor(i / 15) + 1}`;
+      `${String.fromCharCode(65 + (i % 15))}${Math.floor(i / 15) + 1}`,
+    muteKey = "game-play:mute-remarks";
   const messages = {
     AUTH_REQUIRED: "网页身份已过期，请重新加入",
     JOIN_UNCONFIRMED: "请先回原 QQ 会话确认身份",
@@ -58,7 +59,14 @@
     failures = 0,
     timer = null,
     epoch = 0,
-    polling = false;
+    polling = false,
+    muted = false;
+  // Remark muting is a per-browser preference; storage failures just keep remarks visible.
+  try {
+    muted = localStorage.getItem(muteKey) === "1";
+  } catch {
+    muted = false;
+  }
   try {
     pending = JSON.parse(sessionStorage.getItem(key) || "null");
     sessionStorage.setItem(`${key}:probe`, "1");
@@ -107,17 +115,111 @@
         : "你是房主，等待对方就绪后开始对局。"
       : "已加入，等待房主开始对局。";
   }
+  // The view carries no winning line, so derive it from the last move and the public board.
+  function winningLine(board, view) {
+    if (!view?.result || view.result.kind !== "win" || !view.lastMove)
+      return [];
+    const { x, y } = view.lastMove,
+      stone = board[y * 15 + x];
+    if (!stone) return [];
+    for (const [dx, dy] of [
+      [1, 0],
+      [0, 1],
+      [1, 1],
+      [1, -1],
+    ]) {
+      const line = [y * 15 + x];
+      for (const sign of [1, -1])
+        for (let k = 1; k < 15; k++) {
+          const nx = x + dx * k * sign,
+            ny = y + dy * k * sign;
+          if (nx < 0 || ny < 0 || nx > 14 || ny > 14) break;
+          if (board[ny * 15 + nx] !== stone) break;
+          line.push(ny * 15 + nx);
+        }
+      if (line.length >= 5) return line;
+    }
+    return [];
+  }
+  function renderOpponent(view) {
+    const other = (snapshot.participants || []).find(
+        (p) => p.participantId !== snapshot.viewer,
+      ),
+      name = other?.label || "AI 对手",
+      avatar =
+        (other && snapshot.presentation?.avatars?.[other.participantId]) || "";
+    $("opponent-name").textContent = name;
+    $("opponent-initial").textContent = Array.from(name)[0] || "AI";
+    const usable = /^\/avatars\/[a-f0-9]{32}\.(?:jpg|png|gif|webp)$/.test(
+      avatar,
+    );
+    if (usable && $("opponent-avatar").getAttribute?.("src") !== avatar)
+      $("opponent-avatar").src = avatar;
+    $("opponent-avatar").hidden = !usable;
+    $("opponent-initial").hidden = usable;
+    const color = view?.color;
+    $("me-chip").className = color
+      ? `chip ${color === "black" ? "b" : "w"}`
+      : "chip";
+    $("ai-chip").className = color
+      ? `chip ${color === "black" ? "w" : "b"}`
+      : "chip";
+    $("me-sub").textContent = color
+      ? color === "black"
+        ? "执黑"
+        : "执白"
+      : "玩家";
+    $("ai-sub").textContent = color
+      ? color === "black"
+        ? "执白"
+        : "执黑"
+      : "AI 对手";
+    const live = snapshot.lifecycle === "active" && view && !view.result;
+    $("me-side").className = `side${live && view.canAct ? " on" : ""}`;
+    $("ai-side").className = `side r${live && !view.canAct ? " on" : ""}`;
+    const remarks = (snapshot.remarks || []).filter(
+        (r) => other && r.participantId === other.participantId,
+      ),
+      latest = remarks.at(-1),
+      thinking =
+        live &&
+        !view.canAct &&
+        ["queued", "running"].includes(snapshot.execution?.status);
+    // A remark belongs to the move that produced it; the next move clears the bubble.
+    const current = latest && latest.revision === snapshot.revision;
+    $("say").hidden = muted || !(current || thinking);
+    $("say-text").className = `bubble${thinking ? " typing" : ""}`;
+    $("say-text").textContent = thinking
+      ? `${name} 正在想…`
+      : current
+        ? latest.text
+        : "";
+    $("remarks").replaceChildren();
+    for (const remark of remarks.slice().reverse()) {
+      const item = document.createElement("li");
+      item.textContent = remark.text;
+      $("remarks").append(item);
+    }
+    $("remarks").hidden = muted;
+    $("remarks-empty").hidden = muted || remarks.length > 0;
+    $("mute").textContent = muted ? "显示台词" : "不看台词";
+    $("mute").setAttribute("aria-pressed", String(muted));
+  }
   function render() {
     $("join").disabled = busy;
     $("join").hidden = sessionEstablished;
+    $("join-panel").hidden = sessionEstablished;
     $("identity").textContent = sessionEstablished
       ? "已验证原 QQ 身份 · 本浏览器可操作自己的座位"
       : "尚未验证身份 · 请在你本人打开的网页完成 QQ 双端确认";
     if (!snapshot) return;
     $("game").hidden = false;
     $("join").hidden = true;
+    $("join-panel").hidden = true;
     const view = snapshot.view,
-      board = view?.board || Array(225).fill(0);
+      board = view?.board || Array(225).fill(0),
+      win = new Set(winningLine(board, view));
+    renderOpponent(view);
     $("ai-status").textContent = snapshot.execution
       ? `AI 状态：${executionText(snapshot.execution.status)}${snapshot.execution.reason ? " · 暂不可继续，请核对后重试" : ""}`
       : "";
@@ -142,8 +244,7 @@
     for (const cell of $("board").children) {
       const i = Number(cell.dataset.index),
         stone = board[i];
-      cell.textContent = ["·", "●", "○"][stone];
-      cell.className = `cell stone-${stone}${selected === i ? " selected" : ""}${view?.lastMove && view.lastMove.y * 15 + view.lastMove.x === i ? " last" : ""}`;
+      cell.className = `pt s${stone}${selected === i ? ` ghost ${view?.color === "white" ? "g2" : "g1"}` : ""}${view?.lastMove && view.lastMove.y * 15 + view.lastMove.x === i ? " last" : ""}${win.has(i) ? " win" : ""}`;
       cell.setAttribute(
         "aria-label",
         `${coord(i)} ${["空位", "黑子", "白子"][stone]}`,
@@ -153,29 +254,33 @@
     }
     $("selection").textContent =
       selected === null
-        ? "先点棋盘选位，再在放大区域核对，最后确认落点。"
-        : `已选 ${coord(selected)}，请核对局部放大后确认。`;
+        ? playable()
+          ? "轮到你：点棋盘选位，在放大区核对后落子。"
+          : "点棋盘选位，在放大区核对后落子。"
+        : `已选 ${coord(selected)}，可在放大区微调，确认后落子。`;
     $("zoom").replaceChildren();
+    $("zoom").hidden = selected === null;
     if (selected !== null) {
-      const left = Math.min(12, Math.max(0, (selected % 15) - 1)),
-        top = Math.min(12, Math.max(0, Math.floor(selected / 15) - 1));
-      for (let y = top; y < top + 3; y++)
-        for (let x = left; x < left + 3; x++) {
+      const left = Math.min(10, Math.max(0, (selected % 15) - 2)),
+        top = Math.min(10, Math.max(0, Math.floor(selected / 15) - 2));
+      for (let y = top; y < top + 5; y++)
+        for (let x = left; x < left + 5; x++) {
           const index = y * 15 + x,
             stone = board[index],
             b = document.createElement("button");
-          b.textContent = `${coord(index)} ${["·", "●", "○"][stone]}`;
+          b.className = `pt s${stone}${selected === index ? ` ghost ${view?.color === "white" ? "g2" : "g1"}` : ""}`;
           b.setAttribute(
             "aria-label",
             `放大 ${coord(index)} ${["空位", "黑子", "白子"][stone]}`,
           );
-          b.classList.toggle("selected", selected === index);
           b.disabled = !playable() || !!stone;
           b.onclick = () => select(index);
           $("zoom").append(b);
         }
     }
     $("confirm").disabled = !playable() || selected === null;
+    $("confirm").textContent =
+      selected === null ? "落子" : `落子 ${coord(selected)}`;
     $("cancel").disabled = busy || selected === null;
     $("retry").hidden = !pending;
     $("retry").disabled = busy || !storageReady;
@@ -436,6 +541,15 @@
       status("已提交有限重试，请等待状态更新。");
     });
   $("retry").onclick = () => exclusive(resolvePending);
+  $("mute").onclick = () => {
+    muted = !muted;
+    try {
+      localStorage.setItem(muteKey, muted ? "1" : "0");
+    } catch {
+      /* The toggle still applies for this page view. */
+    }
+    if (snapshot) render();
+  };
   $("resign").onclick = () => {
     if (playable()) {
       clearSelection();

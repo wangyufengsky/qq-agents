@@ -6,8 +6,8 @@ import { describeGomokuView } from "../gomoku/describe.mjs";
 import { digest, fail } from "../core/value.mjs";
 import releases from "./compatible-releases.json" with { type: "json" };
 
-export const gameModuleVersion = "3";
-export const gameUiVersion = "3";
+export const gameModuleVersion = "4";
+export const gameUiVersion = "4";
 const require = createRequire(import.meta.url);
 /** Rule identity excludes unrelated dependencies and presentation assets. */
 export function gomokuSources() {
