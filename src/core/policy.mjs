@@ -42,6 +42,14 @@ export const behaviorSchema = z
       })
       .strict()
       .prefault({}),
+    toneCheck: z
+      .object({
+        mode: z.enum(["off", "warn"]).default("warn"),
+        phrases: z.array(z.string().trim().min(1).max(100)).max(50).default([]),
+        maxLinesCasual: ms(1, 100, 6),
+      })
+      .strict()
+      .prefault({}),
     proactive: z
       .object({
         enabled: z.boolean().default(false),

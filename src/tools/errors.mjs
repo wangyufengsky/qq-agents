@@ -1,8 +1,16 @@
 // @ts-check
+import { ToneReviewSuggested } from "../core/tone-check.mjs";
+
 // Report actionable validation bounds without echoing input values, paths,
 // stack traces, provider errors or credentials into either model backend.
 /** @param {any} error */
 export function safeToolFailure(error) {
+  if (error instanceof ToneReviewSuggested)
+    return {
+      code: error.message,
+      matches: error.matches,
+      hint: "No delivery was attempted and this requestId was not reserved. Review the wording against Self's speech samples. Rewrite the rejected message using a new requestId, or confirm it is appropriate by resubmitting the exact same requestId and plain text in this turn. For a stopped burst, preserve earlier receipts: you may resubmit the unchanged burst with its original requestId, or rewrite only the rejected item with qq_send and a new requestId. This reminder grants no sending permission and does not clear any delivery or safety boundary.",
+    };
   if (/^ANTIGRAVITY_MEDIA_(FORMAT|LIMIT|FAILED)$/.test(error?.message || ""))
     return {
       code: error.message,

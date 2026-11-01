@@ -370,7 +370,37 @@ const agentForm = {
             "persona",
             "初始化模板（仅建立首版 self；已有 self 请在专页编辑）",
             row.persona || "",
-          ),
+          ) +
+          '<p class="hint">推荐在模板里写性格与喜好，再加“说话样本”：5–10 句这个角色真实会说的话，体现口头禅、标点习惯、笑的写法和常见长度。样本属于可成长的 Self；此处不会覆盖已建立的 Self。</p>',
+      ) +
+      advanced(
+        this.foldTitle(
+          "发送前口吻提醒",
+          row.behavior?.toneCheck?.mode === "off"
+            ? "已关闭"
+            : "提醒一次后可确认发送",
+        ),
+        select(
+          "toneCheckMode",
+          "口吻检查",
+          row.behavior?.toneCheck?.mode ?? "warn",
+          [
+            ["warn", "提醒"],
+            ["off", "关闭"],
+          ],
+        ) +
+          range(
+            "toneCheckMaxLines",
+            "普通聊天单条行数上限",
+            row.behavior?.toneCheck?.maxLinesCasual ?? 6,
+            { min: 1, max: 100, step: 1, unit: "行" },
+          ) +
+          area(
+            "toneCheckPhrases",
+            "追加提醒短语（每行一个，最多 50 个，每个最多 100 字）",
+            (row.behavior?.toneCheck?.phrases || []).join("\n"),
+          ) +
+          '<p class="hint">默认提醒“希望对你有帮助”“总结一下”等助手套话，以及普通聊天中的过长消息。主人私聊只豁免行数；程序固定文字、合并转发和文件不检查。提醒发生在投递前，模型可改写，或在同一回合用相同请求编号和相同正文确认发送；所有发送权限和限额照常生效。</p>',
       ) +
       advanced(
         this.foldTitle(
@@ -1071,6 +1101,18 @@ const agentForm = {
           reactMaxPerMinute: f.has("reactMaxPerMinute")
             ? Number(get("reactMaxPerMinute"))
             : (original.behavior?.actions?.reactMaxPerMinute ?? 3),
+        },
+        toneCheck: {
+          ...original.behavior?.toneCheck,
+          mode: f.has("toneCheckMode")
+            ? get("toneCheckMode")
+            : (original.behavior?.toneCheck?.mode ?? "warn"),
+          phrases: f.has("toneCheckPhrases")
+            ? lines("toneCheckPhrases")
+            : (original.behavior?.toneCheck?.phrases ?? []),
+          maxLinesCasual: f.has("toneCheckMaxLines")
+            ? Number(get("toneCheckMaxLines"))
+            : (original.behavior?.toneCheck?.maxLinesCasual ?? 6),
         },
         failureNotice: {
           ...original.behavior?.failureNotice,
