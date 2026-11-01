@@ -187,10 +187,16 @@ export class GameHost {
       .get();
     return {
       enabled: this.policy.enabled,
-      ready: this.ready,
+      ready: this.ready && this.settings === JSON.stringify(this.policy),
       origin:
         this.policy.publicOrigin || `http://127.0.0.1:${this.policy.port}`,
-      externallyVerified: entry ? JSON.parse(entry.data).verified : false,
+      externallyVerified: !!(
+        this.ready &&
+        this.settings === JSON.stringify(this.policy) &&
+        entry &&
+        JSON.parse(entry.data).publicOrigin === this.policy.publicOrigin &&
+        JSON.parse(entry.data).verified
+      ),
       jobs: this.kernel.store.db
         .prepare(
           "SELECT id,room_id,status,data FROM game_jobs ORDER BY rowid DESC LIMIT 100",
@@ -230,8 +236,8 @@ export class GameHost {
       .run(JSON.stringify(entry));
     return { verified: true };
   }
-  /** @param {any} ctx @param {string} eventId */
-  authenticated(ctx, eventId) {
+  /** @param {any} ctx @param {string} eventId @param {RegExp} [command] */
+  authenticated(ctx, eventId, command = /^下五子棋[！!。]?$/) {
     const a = this.runtime.assertActive(ctx);
     const row = this.runtime.memory.db
       .prepare(
@@ -253,7 +259,7 @@ export class GameHost {
               .join("")
               .trim()
           : row.body.trim()
-      ).match(/^下五子棋[！!。]?$/)
+      ).match(command)
     )
       fail("GAME_REQUEST_REQUIRED", 403);
     if (this.runtime.now() - Number(row.observed_at) > 600000)
@@ -276,7 +282,7 @@ export class GameHost {
     if (reason) fail(reason, 403);
     if (args.gameType !== "gomoku" || Object.keys(args.options || {}).length)
       fail("GAME_NOT_AVAILABLE", 400);
-    if (!this.ready) fail("GAME_SERVICE_UNAVAILABLE", 503);
+    if (!this.status().ready) fail("GAME_SERVICE_UNAVAILABLE", 503);
     if (
       (this.launch && !this.policy.publicOrigin) ||
       (this.policy.publicOrigin && !this.status().externallyVerified)
@@ -330,22 +336,72 @@ export class GameHost {
           accessUntil: this.runtime.now() + 3000,
         }),
       );
-    const room = this.kernel.store.room(roomId);
     this.identity.confirmAgent(
       roomId,
       this.kernel.actor("agent:" + a.id),
       a.id,
+    );
+    return this.deliverInvitation(
+      ctx,
+      roomId,
+      source,
+      args.requestId,
+      requestKey,
+    );
+  }
+  /** Re-entry derives identity from a fresh source message, never from a browser-supplied account.
+   * @param {any} ctx @param {{roomId:string,eventId:string}} args */
+  async rejoin(ctx, args) {
+    this.ensure();
+    const source = this.authenticated(
+        ctx,
+        args.eventId,
+        /^重新加入游戏\s+[a-f0-9-]{36}$/,
+      ),
+      original = this.chatAccess(ctx, args.roomId);
+    if (Object.entries(source).some(([key, value]) => original[key] !== value))
+      fail("ROOM_UNAVAILABLE", 403);
+    const event = this.runtime.memory.db
+      .prepare("SELECT body FROM events WHERE id=?")
+      .get(args.eventId);
+    if (event.body.trim().split(/\s+/).at(-1) !== args.roomId)
+      fail("GAME_REQUEST_REQUIRED", 403);
+    if (!this.status().ready) fail("GAME_SERVICE_UNAVAILABLE", 503);
+    if (
+      (this.launch && !this.policy.publicOrigin) ||
+      (this.policy.publicOrigin && !this.status().externallyVerified)
+    )
+      fail("EXTERNAL_VERIFICATION_REQUIRED", 403);
+    const requestId = args.eventId,
+      requestKey = "rejoin:" + digest(JSON.stringify([source, requestId]));
+    const previous = this.kernel.store.db
+      .prepare("SELECT data FROM game_host_requests WHERE id=?")
+      .get(requestKey);
+    if (previous) return JSON.parse(previous.data).result;
+    this.requestCapacity();
+    return this.deliverInvitation(
+      ctx,
+      args.roomId,
+      source,
+      requestId,
+      requestKey,
+    );
+  }
+  /** @param {any} ctx @param {string} roomId @param {any} source @param {string} requestId @param {string} requestKey */
+  async deliverInvitation(ctx, roomId, source, requestId, requestKey) {
+    const room = this.kernel.store.room(roomId),
+      owner = this.kernel.actor(room.owner);
+    // Minting also revokes outstanding group challenges; no seat or game state is replaced.
+    const invitation = this.identity.invite(
+      roomId,
+      owner,
+      room.participants[0].participantId,
     );
     let url =
       (this.policy.publicOrigin || `http://127.0.0.1:${this.policy.port}`) +
       "/rooms/" +
       roomId;
     if (!source.group) {
-      const invitation = this.identity.invite(
-        roomId,
-        owner,
-        room.participants[0].participantId,
-      );
       url +=
         "?binding=" +
         invitation.bindingId +
@@ -353,7 +409,7 @@ export class GameHost {
         // The unified sender converts Markdown; encode underscores before it sees the URL.
         encodeURIComponent(invitation.invite).replace(/_/g, "%5F");
     }
-    const result = { roomId, delivery: "pending", requestId: args.requestId };
+    const result = { roomId, delivery: "pending", requestId };
     // Persist before sending. A crash/unknown receipt never mints a replacement secret.
     this.kernel.store.db
       .prepare("INSERT INTO game_host_requests VALUES(?,?)")
@@ -365,7 +421,7 @@ export class GameHost {
       const receipt = await this.runtime.send(
         ctx,
         {
-          requestId: "game-invite:" + args.requestId,
+          requestId: "game-invite:" + requestId,
           text:
             "五子棋邀请：" + url + "\n打开后在此会话发送网页显示的确认口令。",
         },
@@ -433,14 +489,14 @@ export class GameHost {
       /确认游戏\s+([a-f0-9-]{36})\s+([a-f0-9-]{36})\s+([A-Za-z0-9_-]{43})/.exec(
         e.body,
       );
-    const create = /^下五子棋[！!。]?$/.test(
-      e.segments
-        .filter((/** @type {any} */ s) => s.type === "text")
-        .map((/** @type {any} */ s) => s.data?.text || "")
-        .join("")
-        .trim(),
-    );
-    if (!match && !create) return false;
+    const text = e.segments
+      .filter((/** @type {any} */ s) => s.type === "text")
+      .map((/** @type {any} */ s) => s.data?.text || "")
+      .join("")
+      .trim();
+    const create = /^下五子棋[！!。]?$/.test(text),
+      rejoin = /^重新加入游戏\s+([a-f0-9-]{36})$/.exec(text);
+    if (!match && !create && !rejoin) return false;
     if (!this.policy.enabled || !a.games.enabled) return !!match;
     if (this.runtime.blockers(a, e.conversation).length) return true;
     this.ensure();
@@ -479,12 +535,15 @@ export class GameHost {
       a.id,
       e.conversation,
       async (/** @type {any} */ ctx) => {
-        await this.create(ctx, {
-          eventId: archived.id,
-          requestId: randomUUID(),
-          gameType: "gomoku",
-          options: {},
-        }).catch(async (/** @type {any} */ error) => {
+        const task = rejoin
+          ? this.rejoin(ctx, { roomId: rejoin[1], eventId: archived.id })
+          : this.create(ctx, {
+              eventId: archived.id,
+              requestId: randomUUID(),
+              gameType: "gomoku",
+              options: {},
+            });
+        await task.catch(async (/** @type {any} */ error) => {
           const code = /^[A-Z_]+$/.test(error.message)
             ? error.message
             : "GAME_CREATE_UNAVAILABLE";
@@ -492,7 +551,7 @@ export class GameHost {
             .send(ctx, {
               requestId: "game-unavailable:" + archived.id,
               text:
-                "暂时无法创建游戏：" +
+                "暂时无法进入游戏：" +
                 code +
                 "。请联系部署者检查游戏入口与角色设置。",
             })

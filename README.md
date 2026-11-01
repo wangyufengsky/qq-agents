@@ -239,6 +239,7 @@ node src/main.mjs --data /path/to/private-data --port 3210
 - [网页游戏 P0 公网与手机验证](docs/WEB-GAME-P0.md) · [多游戏框架契约 v0.5（分阶段实施，五子棋为首个试点）](docs/plans/WEB-GAME-v0.5.md)
 - [网页游戏 P1a 通用内核与非棋盘夹具](docs/WEB-GAME-P1A.md) · [P1b 五子棋规则与界面](docs/WEB-GAME-P1B.md)（P1 入口仅本机合成身份）
 - [网页游戏 P2：QQ 身份、邀请与隔离 AI 回合](docs/WEB-GAME-P2.md)（默认关闭，首个后端为 Codex）
+- [网页游戏 P3：公网部署与真实手机对战验收](docs/WEB-GAME-P3.md)（原 QQ 来源重入、换域与实机记录）
 - [安全策略与漏洞报告](SECURITY.md)
 
 **参与贡献**
