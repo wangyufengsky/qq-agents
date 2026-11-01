@@ -53,6 +53,8 @@ export function config(n = 3) {
       paused: false,
       allow: { groups: ["20000", "20001"], users: ["30000"] },
       wake: { participation: 1, cooldownMs: 0 },
+      // Timing is tested with fake clocks; unrelated fixtures must not wait for typing.
+      behavior: { typing: { enabled: false } },
       tools: [
         "memory_search",
         "memory_read",
