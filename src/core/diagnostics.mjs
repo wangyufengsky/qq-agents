@@ -29,6 +29,7 @@ const conflicts = new Set([
   "DELIVERY_ALREADY_SETTLED",
 ]);
 const components = new Set([
+  "games",
   "http",
   "runtime",
   "scheduler",

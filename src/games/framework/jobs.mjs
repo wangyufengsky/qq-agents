@@ -23,6 +23,7 @@ export class GameJobs {
       CREATE TABLE IF NOT EXISTS game_outbox(id TEXT PRIMARY KEY, attempts INTEGER NOT NULL, next_at INTEGER NOT NULL, status TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS game_inbox(id TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS game_budgets(scope TEXT PRIMARY KEY, attempts INTEGER NOT NULL, tokens INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS game_abandoned_runs(run_id TEXT PRIMARY KEY, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS game_attempts(run_id TEXT PRIMARY KEY, job_id TEXT NOT NULL, data TEXT NOT NULL);
     `);
     kernel.ai = this;
@@ -186,7 +187,9 @@ export class GameJobs {
       }
       // A new decision cannot evade an earlier unproven run in this room.
       const active = this.kernel.store.db
-        .prepare("SELECT data FROM game_jobs WHERE room_id=? AND id!=?")
+        .prepare(
+          "SELECT data FROM game_jobs WHERE room_id=? AND id!=? AND status!='abandoned'",
+        )
         .all(job.roomId, id)
         .map((row) => JSON.parse(String(row.data)));
       if (active.some((j) => j.run && !j.run.terminal))
@@ -251,6 +254,7 @@ export class GameJobs {
     const job = this.get(execution.jobKey),
       run = job.run;
     if (
+      job.status === "abandoned" ||
       !run ||
       run.runId !== execution.runId ||
       run.fencingToken !== execution.fencingToken
@@ -342,24 +346,78 @@ export class GameJobs {
         .run(JSON.stringify(job.run), job.run.runId);
     });
   }
-  /** A crash or lease expiry does not prove that the remote model stopped. */
+  /** Explicit administrative abandonment fences callbacks without claiming remote termination.
+   * @param {string} id @param {string} reason */
+  abandon(id, reason) {
+    return this.kernel.store.transaction(() => {
+      const job = this.get(id);
+      if (job.status !== "outcome_unknown" || !job.run || job.run.terminal)
+        fail("GAME_JOB_NOT_UNKNOWN", 409);
+      job.run.abandonedAt = this.kernel.clock();
+      job.run.administration = { actor: "admin", reason };
+      this.kernel.store.db
+        .prepare("INSERT INTO game_abandoned_runs VALUES(?,?)")
+        .run(job.run.runId, JSON.stringify({ ...job, status: "abandoned" }));
+      job.status = "abandoned";
+      job.reason = "GAME_RUN_ADMIN_ABANDONED";
+      job.fence++;
+      this.save(job);
+      this.kernel.store.db
+        .prepare("UPDATE game_attempts SET data=? WHERE run_id=?")
+        .run(JSON.stringify(job.run), job.run.runId);
+      return { status: job.status, remoteTerminal: false };
+    });
+  }
+  /** Player clicks share a persistent three-attempt ceiling with automatic attempts. @param {string} id */
+  ownerRetryable(id) {
+    const job = this.get(id);
+    const attempts = this.kernel.store.db
+      .prepare("SELECT count(*) AS n FROM game_attempts WHERE job_id=?")
+      .get(id);
+    return (
+      Number(attempts?.n || 0) < 3 &&
+      this.current(job) &&
+      ((job.status === "model_failed" && job.run?.terminal === true) ||
+        (job.status === "delivery_failed" && !job.run))
+    );
+  }
+  /** @param {string} id */
+  automaticRetry(id) {
+    const job = this.get(id);
+    const attempts = this.kernel.store.db
+      .prepare("SELECT count(*) AS n FROM game_attempts WHERE job_id=?")
+      .get(id);
+    return (
+      job.status === "model_failed" &&
+      job.run?.terminal === true &&
+      Number(attempts?.n || 0) < 2 &&
+      this.current(job)
+    );
+  }
+  /** A crash does not prove remote termination after submission. */
   recover() {
     for (const row of this.kernel.store.db
       .prepare("SELECT id FROM game_jobs WHERE status='running'")
-      .all())
-      this.kernel.store.transaction(() => {
-        const job = this.get(String(row.id));
+      .all()) {
+      const job = this.get(String(row.id));
+      if (job.run?.submitted === false) {
+        this.settle(job.run, {
+          terminal: true,
+          code: "GAME_RUN_NOT_SUBMITTED",
+        });
+      } else {
         job.status = "outcome_unknown";
         job.reason = "OUTCOME_UNKNOWN";
         this.save(job);
-      });
+      }
+    }
   }
   /** Never delete the only evidence of an unresolved remote attempt. @param {string} roomId */
   unresolved(roomId) {
     return (
       this.kernel.store.db
         .prepare(
-          "SELECT 1 FROM game_jobs WHERE room_id=? AND json_extract(data,'$.run.runId') IS NOT NULL AND json_extract(data,'$.run.terminal')=0 LIMIT 1",
+          "SELECT 1 FROM game_jobs WHERE room_id=? AND status!='abandoned' AND json_extract(data,'$.run.runId') IS NOT NULL AND json_extract(data,'$.run.terminal')=0 LIMIT 1",
         )
         .get(roomId) !== undefined
     );
@@ -374,6 +432,11 @@ export class GameJobs {
       .get(id);
     if (!row) return null;
     const job = JSON.parse(String(row.data));
-    return { status: String(row.status), reason: job.reason || null };
+    const status = String(row.status);
+    return {
+      status,
+      reason: job.reason || null,
+      retryable: this.ownerRetryable(id),
+    };
   }
 }

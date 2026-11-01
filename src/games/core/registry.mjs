@@ -46,7 +46,7 @@ const manifestSchema = z.strictObject({
     random: z.number().int().min(0).max(limits.random),
   }),
 });
-/** @typedef {{manifest:any, schemas:{options:import('zod').ZodType,state:import('zod').ZodType,view:import('zod').ZodType,outcome:import('zod').ZodType,actions:Record<string,import('zod').ZodType>}, create:(...args:any[])=>any,applyAction:(...args:any[])=>any,nextActor:(...args:any[])=>any,outcome:(...args:any[])=>any,projectView:(...args:any[])=>any}} Definition */
+/** @typedef {{manifest:any, schemas:{options:import('zod').ZodType,state:import('zod').ZodType,view:import('zod').ZodType,outcome:import('zod').ZodType,actions:Record<string,import('zod').ZodType>}, create:(...args:any[])=>any,applyAction:(...args:any[])=>any,nextActor:(...args:any[])=>any,outcome:(...args:any[])=>any,projectView:(...args:any[])=>any,describeView?:(view:any)=>any}} Definition */
 
 export class GameRegistry {
   modules = new Map();

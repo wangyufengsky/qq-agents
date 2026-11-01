@@ -27,7 +27,10 @@ const assets = new Map(
 );
 /** @type {Map<string,(value:boolean)=>void>} */
 const admissions = new Map();
+/** @type {Map<string,(message:any)=>void>} */
+const retries = new Map();
 process.on("message", (/** @type {any} */ message) => {
+  if (message?.retry) retries.get(message.retry)?.(message);
   if (message?.admission)
     admissions.get(message.admission)?.(message.allowed === true);
 });
@@ -54,6 +57,28 @@ const http = createGameHttp({
   publicOrigin,
   publicJoin: true,
   authorize,
+  retry: async (/** @type {string} */ roomId, /** @type {object} */ actor) => {
+    if (!process.connected || retries.size >= 120)
+      throw Error("GAME_SERVICE_UNAVAILABLE");
+    const principalId = kernel.access(
+      kernel.store.room(roomId),
+      actor,
+    ).principal;
+    const id = randomUUID();
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        retries.delete(id);
+        reject(Error("GAME_RETRY_TIMEOUT"));
+      }, 2000);
+      retries.set(id, (message) => {
+        clearTimeout(timer);
+        retries.delete(id);
+        if (message.error) reject(Error("GAME_RETRY_UNAVAILABLE"));
+        else resolve(message.result);
+      });
+      process.send?.({ retry: id, roomId, principalId });
+    });
+  },
   health: () => ({ service: "qq-agents-games", boot, challenge }),
 });
 await http.listen(Number(port));

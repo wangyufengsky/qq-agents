@@ -188,6 +188,8 @@ test("expired leases cannot revive, and unresolved native runs block newer decis
     { roomId, id } = await decision(f);
   f.h.jobs.receive(id);
   const run = f.h.jobs.claim(id, "worker", "claim");
+  f.h.jobs.observe(run, { submitted: true });
+  run.submitted = true;
   assert.deepEqual(f.h.jobs.claim(id, "worker", "claim"), run);
   const job = f.h.jobs.get(id);
   job.run.leaseUntil = f.runtime.now() - 1;
@@ -653,6 +655,8 @@ test("separate game process starts with only game routes and stops on bridge clo
   await host.close();
   assert.equal(host.ready, false);
   assert.notEqual(host.child.exitCode, null);
+  assert.equal(host.childFailure.code, "GAME_SERVICE_EXITED");
+  assert.equal(host.childFailure.exitCode, 0);
 });
 
 test("chat wakes remain queued while a game owns the backend", (t) => {
@@ -965,4 +969,180 @@ test("group re-entry accepts a trailing mention and revokes outstanding group ch
     /INVITATION_UNAVAILABLE/,
   );
   assert.ok(f.h.identity.requestPublic(result.roomId, secret()).challenge);
+});
+
+test("recovery proves unsubmitted attempts, preserves unknown evidence and fences administrative abandonment", async (t) => {
+  const f = setup(t),
+    { id, roomId } = await decision(f);
+  f.h.jobs.receive(id);
+  const first = f.h.jobs.claim(id, "worker", "claim-one");
+  f.h.jobs.recover();
+  assert.equal(f.h.jobs.get(id).run.terminal, true);
+  assert.equal(f.h.jobs.automaticRetry(id), true);
+  const second = f.h.jobs.claim(id, "worker", "claim-two");
+  f.h.jobs.observe(second, { submitted: true });
+  f.h.jobs.recover();
+  assert.equal(f.h.jobs.get(id).status, "outcome_unknown");
+  assert.equal(f.h.jobs.automaticRetry(id), false);
+  assert.throws(
+    () => f.h.jobs.claim(id, "worker", "claim-three"),
+    /GAME_OUTCOME_UNKNOWN/,
+  );
+  const result = f.h.abandon(id, "accept_remote_uncertainty");
+  assert.deepEqual(result, { status: "abandoned", remoteTerminal: false });
+  assert.equal(f.h.jobs.get(id).run.terminal, false);
+  assert.equal(f.h.jobs.unresolved(roomId), false);
+  const room = f.k.store.room(roomId);
+  assert.throws(
+    () => f.h.jobs.validate(room, room.participants[1], second),
+    /GAME_EXECUTION_STALE/,
+  );
+  const attempts = f.k.store.db
+    .prepare("SELECT data FROM game_attempts WHERE job_id=?")
+    .all(id);
+  assert.equal(attempts.length, 2);
+  assert.ok(JSON.parse(attempts[1].data).abandonedAt <= f.runtime.now());
+  assert.throws(
+    () => f.h.jobs.settle(second, { terminal: true }),
+    /GAME_EXECUTION_STALE/,
+  );
+  assert.equal(
+    f.k.store.db.prepare("SELECT count(*) AS n FROM game_abandoned_runs").get()
+      .n,
+    1,
+  );
+  assert.equal(f.h.jobs.get(id).run.runId, second.runId);
+  assert.notEqual(first.runId, second.runId);
+});
+
+test("terminal failures allow only one automatic retry and game tick failure does not stop chat scheduling", async (t) => {
+  const f = setup(t),
+    { id } = await decision(f);
+  f.h.jobs.receive(id);
+  for (let i = 0; i < 2; i++) {
+    const run = f.h.jobs.claim(id, "worker", "claim-" + i);
+    f.h.jobs.settle(run, { terminal: true, code: "GAME_MODEL_FAILED" });
+    assert.equal(f.h.jobs.automaticRetry(id), i === 0);
+  }
+  let scheduled = false;
+  f.runtime.games.tick = () => {
+    throw Error("PRIVATE_PROVIDER_TEXT");
+  };
+  f.runtime.scheduler.tick = () => {
+    scheduled = true;
+  };
+  f.runtime.tick();
+  assert.equal(scheduled, true);
+  assert.equal(f.runtime.faults.get("games"), "GAME_TICK_FAILED");
+});
+
+test("owner retry rejects unknown and wrong owners; abandonment survives deletion and fences a newer decision", async (t) => {
+  const f = setup(t),
+    { id, roomId } = await decision(f);
+  f.h.jobs.receive(id);
+  const run = f.h.jobs.claim(id, "worker", "original");
+  f.h.jobs.observe(run, { submitted: true });
+  f.h.jobs.recover();
+  await assert.rejects(
+    f.h.retryOwner(roomId, "another-owner"),
+    /ROOM_OWNER_REQUIRED/,
+  );
+  await assert.rejects(
+    f.h.retryOwner(roomId, f.k.store.room(roomId).owner),
+    /GAME_OUTCOME_UNKNOWN/,
+  );
+  f.h.abandon(id, "accept_remote_uncertainty");
+  act(f, roomId, "room.pause");
+  act(f, roomId, "room.resume");
+  const next = f.k.store.room(roomId).decision.decisionId;
+  f.h.jobs.receive(next);
+  const newer = f.h.jobs.claim(next, "worker", "newer");
+  assert.ok(newer);
+  assert.throws(
+    () => f.h.jobs.observe(run, { backendTurn: "late" }),
+    /GAME_EXECUTION_STALE/,
+  );
+  assert.throws(
+    () =>
+      f.h.jobs.validate(
+        f.k.store.room(roomId),
+        f.k.store.room(roomId).participants[1],
+        run,
+      ),
+    /GAME_EXECUTION_STALE/,
+  );
+  f.k.store.db.prepare("DELETE FROM game_rooms WHERE id=?").run(roomId);
+  assert.equal(
+    f.k.store.db.prepare("SELECT count(*) AS n FROM game_abandoned_runs").get()
+      .n,
+    1,
+  );
+});
+
+test("an unknown game preserves native evidence while normal chat can run", async (t) => {
+  let chatRuns = 0;
+  const f = setup(t, async ({ game }) => {
+    if (!game) chatRuns++;
+  });
+  const { id } = await decision(f);
+  f.h.jobs.receive(id);
+  const run = f.h.jobs.claim(id, "worker", "unknown");
+  f.h.jobs.observe(run, { submitted: true });
+  f.h.jobs.recover();
+  await f.runtime.runTurn("agent-0", "private:30000");
+  assert.equal(chatRuns, 1);
+  assert.equal(f.h.jobs.get(id).status, "outcome_unknown");
+  assert.equal(f.h.jobs.get(id).run.terminal, false);
+  assert.equal(f.h.gate(f.h.jobs.get(id)), "GAME_OUTCOME_UNKNOWN");
+});
+
+test("owner retries have a durable three-attempt ceiling including automatic attempts", async (t) => {
+  const f = setup(t),
+    { id, roomId } = await decision(f);
+  f.h.jobs.receive(id);
+  for (let i = 0; i < 3; i++) {
+    const run = f.h.jobs.claim(id, "worker", "attempt-" + i);
+    f.h.jobs.settle(run, { terminal: true });
+    assert.equal(f.h.jobs.publicStatus(roomId).retryable, i < 2);
+  }
+  await assert.rejects(
+    f.h.retryOwner(roomId, f.k.store.room(roomId).owner),
+    /GAME_RETRY_LIMIT/,
+  );
+});
+
+test("unexpected game child exit exposes only stable diagnostics and numeric exit details", async (t) => {
+  const f = setup(t);
+  await f.h.close();
+  const probe = http.createServer();
+  await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
+  f.runtime.config.games.port = probe.address().port;
+  await new Promise((resolve) => probe.close(resolve));
+  const host = (f.runtime.games = new GameHost(f.runtime));
+  host.ensure();
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(Error("CHILD_START_TIMEOUT")), 10000);
+    host.child.once("message", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    host.child.once("error", reject);
+  });
+  const exited = new Promise((resolve) => host.child.once("exit", resolve));
+  host.child.kill("SIGKILL");
+  await exited;
+  assert.equal(host.status().ready, false);
+  assert.deepEqual(host.status().childFailure, {
+    code: "GAME_SERVICE_EXITED",
+    exitCode: null,
+    signal: "SIGKILL",
+  });
+  assert.ok(
+    f.runtime.diagnostics
+      .snapshot()
+      .some(
+        (entry) =>
+          entry.code === "GAME_SERVICE_EXITED" && entry.component === "games",
+      ),
+  );
 });

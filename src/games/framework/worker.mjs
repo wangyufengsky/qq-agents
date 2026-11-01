@@ -92,6 +92,7 @@ export class GameWorker {
           inputSchema,
         };
       });
+      const snapshot = k.view(job.roomId, actor);
       await backend.run({
         conversation: undefined,
         game: true,
@@ -107,7 +108,10 @@ export class GameWorker {
             agentId: a.id,
             moduleRef: job.moduleRef,
           },
-          snapshot: k.view(job.roomId, actor),
+          snapshot,
+          ...(module.describeView
+            ? { display: module.describeView(structuredClone(snapshot.view)) }
+            : {}),
           actions: Object.fromEntries(
             Object.entries(module.schemas.actions).map(([name, schema]) => [
               name,
