@@ -314,8 +314,16 @@ test("OneBot classifies QQ Zone replies without keeping raw text", async () => {
     assert.equal(e.reason, "QZONE_REJECTED");
     return true;
   });
-  // Unreadable replies and HTTP errors stay unknown: the post may be live.
-  for (const reply of ["<html>verify</html>", { status: 502, body: {} }]) {
+  // Unreadable replies, HTTP errors and replies without a stated status stay
+  // unknown: the post may be live.
+  for (const reply of [
+    "<html>verify</html>",
+    { status: 502, body: {} },
+    { body: {} },
+    { body: { code: "", tid: "x" } },
+    { body: { code: null, message: "x" } },
+    { body: { code: 0, subcode: "?", tid: "x" } },
+  ]) {
     ({ bot } = qzoneBot([cookies("uin=o0010000; p_skey=abc"), reply]));
     await assert.rejects(bot.qzonePost({ content: "甲" }), (e) => {
       assert.notEqual(e.message, "ONEBOT_REJECTED");

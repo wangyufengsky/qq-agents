@@ -1,6 +1,5 @@
 // @ts-check
 import { assertMessageAccount } from "../memory/message-ids.mjs";
-import { profileConversation } from "./profile.mjs";
 
 // Gateway failure causes that keep their own error code instead of the
 // generic delivery failure; anything else stays DELIVERY_FAILED/UNKNOWN.
@@ -11,12 +10,20 @@ const QZONE_REASONS = /** @type {Record<string, string>} */ ({
   QQ_ACCOUNT_MISMATCH: "QQ_ACCOUNT_MISMATCH",
 });
 
-/** QQ Zone posts are public like the profile, so they share its owner-only scope.
- * @param {any} runtime @param {any} ctx
+/** QQ Zone posts are public, so only an owner's private chat may publish;
+ * unlike the profile, free time is not included yet.
+ * @param {any} agent @param {string} conversation
  */
+export function qzoneConversation(agent, conversation) {
+  return (agent.ownerIds || []).some(
+    (/** @type {string} */ id) => conversation === `private:${id}`,
+  );
+}
+
+/** @param {any} runtime @param {any} ctx */
 function active(runtime, ctx) {
   const a = runtime.assertActive(ctx);
-  if (!a.behavior.actions?.qzone || !profileConversation(a, ctx.conversation))
+  if (!a.behavior.actions?.qzone || !qzoneConversation(a, ctx.conversation))
     throw Error("TOOL_DISABLED");
   if (runtime.protectedWork?.context(ctx))
     throw Error("PROTECTED_WORK_OUTBOUND_DENIED");

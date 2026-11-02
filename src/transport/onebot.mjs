@@ -179,6 +179,17 @@ function qzoneBody(text) {
   }
 }
 
+/** A status the endpoint actually stated; anything else is not a verdict.
+ * @param {unknown} value
+ */
+function qzoneStatus(value) {
+  return typeof value === "number" && Number.isInteger(value)
+    ? value
+    : typeof value === "string" && /^-?\d+$/.test(value)
+      ? Number(value)
+      : null;
+}
+
 /** @param {any} body */
 function qzoneRejection(body) {
   const error = Error("ONEBOT_REJECTED");
@@ -577,11 +588,13 @@ export class OneBot extends EventEmitter {
         }).toString(),
       },
     );
-    if (body == null) throw Error("QZONE_RESPONSE_UNREADABLE");
-    if (
-      Number(body.code) !== 0 ||
-      (body.subcode != null && Number(body.subcode) !== 0)
-    )
+    const code = qzoneStatus(body?.code),
+      subcode = qzoneStatus(body?.subcode);
+    // Only an explicit non-zero status proves nothing was published; a reply
+    // without one may follow a live post and must stay unknown.
+    if (code == null || (body.subcode != null && subcode == null))
+      throw Error("QZONE_RESPONSE_UNREADABLE");
+    if (code !== 0 || (subcode != null && subcode !== 0))
       throw qzoneRejection(body);
     return { confirmed: typeof body.tid === "string" && body.tid !== "" };
   }
@@ -604,7 +617,9 @@ export class OneBot extends EventEmitter {
       { headers: session.headers },
     );
     if (body == null) throw Error("QZONE_RESPONSE_UNREADABLE");
-    if (Number(body.code) !== 0) throw qzoneRejection(body);
+    const code = qzoneStatus(body?.code);
+    if (code == null) throw Error("QZONE_RESPONSE_UNREADABLE");
+    if (code !== 0) throw qzoneRejection(body);
     return (Array.isArray(body.msglist) ? body.msglist : [])
       .slice(0, limit)
       .map((/** @type {any} */ post) => ({

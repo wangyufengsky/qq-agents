@@ -302,7 +302,7 @@ QQ 掉线、自动重连用完次数时，管理台会显示，但主人在 QQ �
 | `profile`          | `false` | 允许读取并修改本角色 QQ 账号的昵称、个性签名和头像。                        |
 | `profileMaxPerDay` | `3`     | 昵称、签名、头像合计每 24 小时的修改尝试上限，范围 1–20；失败和未知也计入。 |
 
-两个工具只在本角色主人（`ownerIds`）的私聊里出现和执行；群聊、其他私聊、空闲时间（`@subject`）和受保护工作都不可用。执行主动意图或定时任务的回合也会被拒绝（`PROFILE_ORDINARY_TURN_REQUIRED`），避免资料修改被当成那次联系的结果。
+两个工具只在本角色主人（`ownerIds`）的私聊和角色自己的空闲时间（`@subject`）里出现和执行；群聊、其他私聊和受保护工作都不可用，别人没法在聊天里诱导角色改资料。执行主动意图或定时任务的回合也会被拒绝（`PROFILE_ORDINARY_TURN_REQUIRED`），避免资料修改被当成那次联系的结果。空闲时间改资料不算主动联系，不占联系额度和冷却，但遵守安静时段（`QUIET_HOURS`）；全局暂停、角色暂停或隔离模式下空闲回合本身不会运行到这里。空闲时间读过的聊天记录和来自聊天的图片都算别处内容，需要披露授权。
 
 - `qq_profile_read` 通过网关 `get_stranger_info` 读取自己的昵称和签名，核对返回的账号与连接一致。
 - `qq_profile_update` 接受 `requestId`，以及 `nickname`（1–24 字）、`signature`（1–80 字）、`mediaId` 三者之一。文字去掉首尾空白，不能含换行或控制字符；头像只能用本角色图片库里的 PNG、JPEG 或 WebP 图片（不超过 5 MB），不接受链接或本机路径。三者分别调用 NapCat 的 `set_qq_profile`、`set_self_longnick`、`set_qq_avatar`。
@@ -325,7 +325,7 @@ QQ 掉线、自动重连用完次数时，管理台会显示，但主人在 QQ �
 - `qzone_read` 接受可选 `limit`（1–10，默认 5），返回自己最近说说的编号、文字（最多 1000 字）、时间、评论数和图片数，不返回评论内容。
 - `qzone_post` 接受 `requestId` 和 `content`（1–1000 字，可换行，不能含其他控制字符或方向覆盖字符），只发所有人可见的纯文字说说；暂不支持带图。
 
-说说对所有人可见，所以本回合读过的内容来自其他聊天时，按外部调用要求管理员披露授权（`PRIVATE_RECOLLECTION_EXTERNAL_CALL_BLOCKED`）；含疑似凭据的文字被拒绝。发布走统一动作账本：暂停、静默、总分钟/小时发送限速照常生效，不占用或恢复文字回复额度；同一 `requestId` 只返回原回执。取 cookie 失败或 QQ 空间明确返回错误码记为失败：登录失效返回 `QZONE_LOGIN_REQUIRED`，其他拒绝（包括疑似风控、频率限制）返回 `QZONE_REJECTED`，网关不支持 `get_cookies` 返回 `QZONE_UNSUPPORTED`。网络错误、HTTP 错误、无法解析的回复或成功但没有说说编号都记为 `unknown`，因为说说可能已经发出；此时任何新的 `requestId` 都会被拒绝（`QZONE_POST_UNCONFIRMED`），需管理员在 QQ 空间和管理台核对。读取失败统一返回 `QZONE_READ_FAILED`，不透出网页原文。
+说说对所有人可见，所以本回合读过的内容来自其他聊天时，按外部调用要求管理员披露授权（`PRIVATE_RECOLLECTION_EXTERNAL_CALL_BLOCKED`）；含疑似凭据的文字被拒绝。发布走统一动作账本：暂停、静默、总分钟/小时发送限速照常生效，不占用或恢复文字回复额度；同一 `requestId` 只返回原回执。取 cookie 失败或 QQ 空间明确返回错误码记为失败：登录失效返回 `QZONE_LOGIN_REQUIRED`，其他拒绝（包括疑似风控、频率限制）返回 `QZONE_REJECTED`，网关不支持 `get_cookies` 返回 `QZONE_UNSUPPORTED`。网络错误、HTTP 错误、无法解析的回复、没有明确数字状态码的回复，或成功但没有说说编号，都记为 `unknown`，因为说说可能已经发出；此时任何新的 `requestId` 都会被拒绝（`QZONE_POST_UNCONFIRMED`），需管理员在 QQ 空间和管理台核对。读取失败统一返回 `QZONE_READ_FAILED`，不透出网页原文。
 
 ## 撤回自己刚发的消息
 

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { toolSpecs } from "./specs.mjs";
 import { profileConversation } from "../core/profile.mjs";
+import { qzoneConversation } from "../core/qzone.mjs";
 
 export const discoveryInput = z
   .object({
@@ -79,7 +80,7 @@ export function toolAvailable(agent, name, conversation) {
   if (name === "qzone_read" || name === "qzone_post")
     return (
       agent.behavior?.actions?.qzone === true &&
-      profileConversation(agent, conversation)
+      qzoneConversation(agent, conversation)
     );
   if (name === "qq_recall")
     return (

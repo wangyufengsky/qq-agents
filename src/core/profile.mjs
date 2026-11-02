@@ -1,16 +1,22 @@
 // @ts-check
 import { assertMessageAccount } from "../memory/message-ids.mjs";
 import { taintMedia } from "../tools/legacy.mjs";
+import { SUBJECT } from "./lifecycle.mjs";
+import { inSilence } from "./config.mjs";
 
 const AVATAR_MAX_BYTES = 5 * 1024 * 1024;
 const AVATAR_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 
-/** The account profile is public, so only an owner's private chat may change it.
+/** The account profile is public, so besides the role's own free time only an
+ * owner's private chat may change it; no other chat can talk the role into it.
  * @param {any} agent @param {string} conversation
  */
 export function profileConversation(agent, conversation) {
-  return (agent.ownerIds || []).some(
-    (/** @type {string} */ id) => conversation === `private:${id}`,
+  return (
+    conversation === SUBJECT ||
+    (agent.ownerIds || []).some(
+      (/** @type {string} */ id) => conversation === `private:${id}`,
+    )
   );
 }
 
@@ -25,6 +31,10 @@ function active(runtime, ctx) {
   // the message it was created for.
   if (ctx.activeIntentId || ctx.intentOnly || ctx.scheduleRunId)
     throw Error("PROFILE_ORDINARY_TURN_REQUIRED");
+  // Free-time review may run in quiet hours; a public account change must
+  // honor them like chat output does. Pause and isolation already end the turn.
+  if (ctx.conversation === SUBJECT && inSilence(a, runtime.clock()))
+    throw Error("QUIET_HOURS");
   return a;
 }
 

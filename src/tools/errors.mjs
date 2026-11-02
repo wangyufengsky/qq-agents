@@ -57,7 +57,7 @@ export function safeToolFailure(error) {
     PROFILE_UPDATE_UNCONFIRMED:
       "An earlier change of this profile field is still pending or unknown and may already be visible. Do not submit it again with another requestId; the administrator reconciles it in the console.",
     PROFILE_ORDINARY_TURN_REQUIRED:
-      "Profile changes are only available in an ordinary reply turn of the owner's private chat, not while carrying out a proactive intent or scheduled task. Nothing was changed.",
+      "Profile changes are only available in your own free time or an ordinary reply turn of the owner's private chat, not while carrying out a proactive intent or scheduled task. Nothing was changed.",
     QZONE_POST_UNCONFIRMED:
       "An earlier QQ Zone post is still pending or unknown and may already be public. Do not post again with another requestId; the administrator reconciles it in the console.",
     QZONE_ORDINARY_TURN_REQUIRED:
