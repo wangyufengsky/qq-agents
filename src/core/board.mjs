@@ -11,6 +11,17 @@ export const BOARD_TOOLS = Object.freeze([
   "board_read",
   "board_post",
   "board_comment",
+  "board_react",
+  "board_retract",
+]);
+// A small fixed set keeps reactions light and comparable across agents.
+export const BOARD_REACTIONS = Object.freeze([
+  "👍",
+  "❤️",
+  "😂",
+  "😮",
+  "😢",
+  "🎉",
 ]);
 export const BOARD_LIMITS = Object.freeze({
   title: 60,
@@ -40,8 +51,15 @@ export function boardDay(ms, timeZone) {
 /** @param {Author} a */
 const actorKey = (a) => `${a.kind}:${a.id}`;
 
-/** @param {any} row @param {Author[]} [mentions] */
-function entry(row, mentions = []) {
+/** @typedef {{emoji: string, by: Author[]}} Reaction */
+/** What each entry carries besides its own row, loaded per page.
+ * @typedef {{mentions?: Author[], tag?: string, removedBy?: string,
+ *   reactions?: Reaction[]}} Extra */
+
+/** @param {any} row @param {Extra} [extra] */
+function entry(row, extra = {}) {
+  const mentions = extra.mentions || [],
+    reactions = extra.reactions || [];
   return {
     id: row.id,
     seq: row.seq,
@@ -50,11 +68,19 @@ function entry(row, mentions = []) {
     ...(row.reply_to ? { replyTo: row.reply_to } : {}),
     author: { kind: row.author_kind, id: row.author_id },
     ...(row.post_id ? {} : { title: row.title }),
+    ...(extra.tag ? { tag: extra.tag } : {}),
     body: row.removed_at ? "" : row.body,
     ...(mentions.length && !row.removed_at ? { mentions } : {}),
+    ...(reactions.length && !row.removed_at ? { reactions } : {}),
     createdAt: row.created_at,
     ...(row.pinned_at ? { pinnedAt: row.pinned_at } : {}),
-    ...(row.removed_at ? { removedAt: row.removed_at } : {}),
+    ...(row.removed_at
+      ? {
+          removedAt: row.removed_at,
+          // Removals from before authors could retract were all moderation.
+          removedBy: extra.removedBy || "admin",
+        }
+      : {}),
   };
 }
 
@@ -75,19 +101,24 @@ export class Board {
       )
       .get(id);
   }
-  /** Mentions of many entries in one query, keyed by seq.
+  /** Rows of a side table for many entries in one query.
+   * @param {string} sql @param {any[]} rows @returns {any[]} */
+  side(sql, rows) {
+    if (!rows.length) return [];
+    return /** @type {any[]} */ (
+      this.db
+        .prepare(sql.replace("(?)", `(${rows.map(() => "?").join(",")})`))
+        .all(...rows.map((r) => r.seq))
+    );
+  }
+  /** Mentions of many entries, keyed by seq.
    * @param {any[]} rows @returns {Map<number, Author[]>} */
   mentionsOf(rows) {
     const map = new Map();
-    if (!rows.length) return map;
-    const found = /** @type {any[]} */ (
-      this.db
-        .prepare(
-          `SELECT entry_seq,target_kind,target_id FROM board_mentions WHERE entry_seq IN (${rows.map(() => "?").join(",")}) ORDER BY rowid`,
-        )
-        .all(...rows.map((r) => r.seq))
-    );
-    for (const m of found)
+    for (const m of this.side(
+      "SELECT entry_seq,target_kind,target_id FROM board_mentions WHERE entry_seq IN (?) ORDER BY rowid",
+      rows,
+    ))
       map.set(m.entry_seq, [
         ...(map.get(m.entry_seq) || []),
         { kind: m.target_kind, id: m.target_id },
@@ -97,7 +128,39 @@ export class Board {
   /** @param {any[]} rows */
   entries(rows) {
     const mentions = this.mentionsOf(rows);
-    return rows.map((row) => entry(row, mentions.get(row.seq)));
+    const tags = new Map(
+      this.side(
+        "SELECT entry_seq,tag FROM board_post_tags WHERE entry_seq IN (?)",
+        rows,
+      ).map((t) => [t.entry_seq, t.tag]),
+    );
+    const removals = new Map(
+      this.side(
+        "SELECT entry_seq,by_kind FROM board_removals WHERE entry_seq IN (?)",
+        rows,
+      ).map((r) => [r.entry_seq, r.by_kind === "admin" ? "admin" : "author"]),
+    );
+    /** @type {Map<number, Reaction[]>} */
+    const reactions = new Map();
+    for (const r of this.side(
+      "SELECT entry_seq,emoji,actor_kind,actor_id FROM board_reactions WHERE entry_seq IN (?) ORDER BY rowid",
+      rows,
+    )) {
+      const list = reactions.get(r.entry_seq) || [];
+      const group =
+        list.find((x) => x.emoji === r.emoji) ||
+        list[list.push({ emoji: r.emoji, by: [] }) - 1];
+      group.by.push({ kind: r.actor_kind, id: r.actor_id });
+      reactions.set(r.entry_seq, list);
+    }
+    return rows.map((row) =>
+      entry(row, {
+        mentions: mentions.get(row.seq),
+        tag: tags.get(row.seq),
+        removedBy: removals.get(row.seq),
+        reactions: reactions.get(row.seq),
+      }),
+    );
   }
   /** Posts and comments an author wrote on one day, removed ones included,
    * so deleting does not refill the quota.
@@ -120,13 +183,14 @@ export class Board {
    * knows the configured agents; here they are only deduplicated, and an
    * author mentioning themselves is dropped.
    * @param {{author: Author, title?: string, body: string, postId?: string,
-   *   replyTo?: string, requestId?: string, mentions?: Author[], now: number,
-   *   timeZone: string, limit?: number}} input
+   *   replyTo?: string, requestId?: string, mentions?: Author[], tag?: string,
+   *   now: number, timeZone: string, limit?: number}} input
    */
   write(input) {
     const { author, postId, replyTo, requestId, now, timeZone } = input;
     const title = postId ? "" : String(input.title || "").trim(),
-      body = String(input.body || "").trim();
+      body = String(input.body || "").trim(),
+      tag = postId ? "" : String(input.tag || "").trim();
     const mentions = [
       ...new Map(
         (input.mentions || [])
@@ -139,7 +203,8 @@ export class Board {
         (!title || [...title].length > BOARD_LIMITS.title || replyTo)) ||
       !body ||
       [...body].length > (postId ? BOARD_LIMITS.comment : BOARD_LIMITS.post) ||
-      mentions.length > BOARD_LIMITS.mentions
+      mentions.length > BOARD_LIMITS.mentions ||
+      (postId && input.tag)
     )
       throw Error("BOARD_ENTRY_INVALID");
     this.db.exec("BEGIN IMMEDIATE");
@@ -163,7 +228,8 @@ export class Board {
             (old.reply_to || null) !== (replyTo || null) ||
             old.title !== title ||
             old.body !== body ||
-            before.join() !== mentions.map(actorKey).sort().join()
+            before.join() !== mentions.map(actorKey).sort().join() ||
+            (this.entries([old])[0].tag || "") !== tag
           )
             throw Error("BOARD_REQUEST_CONFLICT");
           this.db.exec("COMMIT");
@@ -211,6 +277,10 @@ export class Board {
         "INSERT INTO board_mentions(entry_seq,target_kind,target_id) VALUES(?,?,?)",
       );
       for (const m of mentions) mention.run(lastInsertRowid, m.kind, m.id);
+      if (tag)
+        this.db
+          .prepare("INSERT INTO board_post_tags(entry_seq,tag) VALUES(?,?)")
+          .run(lastInsertRowid, tag);
       const row = this.get(id);
       this.db.exec("COMMIT");
       return this.entries([row])[0];
@@ -224,7 +294,7 @@ export class Board {
    * text in the title, body or a comment. Removed posts only for the
    * administrator, and removed text is never searched.
    * @param {{offset?: number, limit?: number, includeRemoved?: boolean,
-   *   author?: Author, mention?: Author, query?: string,
+   *   author?: Author, mention?: Author, query?: string, tag?: string,
    *   sort?: string}} [options] */
   posts({
     offset = 0,
@@ -233,6 +303,7 @@ export class Board {
     author,
     mention,
     query,
+    tag,
     sort = "activity",
   } = {}) {
     const where = ["p.post_id IS NULL"],
@@ -247,6 +318,12 @@ export class Board {
         "EXISTS(SELECT 1 FROM board_mentions m JOIN board_entries c ON c.seq=m.entry_seq WHERE (c.id=p.id OR c.post_id=p.id) AND c.removed_at IS NULL AND m.target_kind=? AND m.target_id=?)",
       );
       params.push(mention.kind, mention.id);
+    }
+    if (tag) {
+      where.push(
+        "EXISTS(SELECT 1 FROM board_post_tags t WHERE t.entry_seq=p.seq AND t.tag=?)",
+      );
+      params.push(tag);
     }
     const text = String(query || "").trim();
     if (text) {
@@ -358,8 +435,47 @@ export class Board {
       remaining: remaining - rows.length,
     };
   }
+  /** How much this agent has not seen yet: entries past its unread marker,
+   * and mentions of it past that marker that a mentions lookup has not
+   * returned. Counts only, for the free-time prompt.
+   * @param {string} agentId */
+  unseen(agentId) {
+    const read =
+      /** @type {any} */ (
+        this.db
+          .prepare("SELECT seq FROM board_reads WHERE agent_id=?")
+          .get(agentId)
+      )?.seq || 0;
+    const live =
+      "e.removed_at IS NULL AND (e.post_id IS NULL OR p.removed_at IS NULL)";
+    const entries = /** @type {any} */ (
+      this.db
+        .prepare(
+          `SELECT count(*) AS n FROM board_entries e LEFT JOIN board_entries p ON p.id=e.post_id WHERE e.seq>? AND ${live} AND NOT (e.author_kind='agent' AND e.author_id=?)`,
+        )
+        .get(read, agentId)
+    ).n;
+    const mentions = /** @type {any} */ (
+      this.db
+        .prepare(
+          `SELECT count(*) AS n FROM board_mentions m JOIN board_entries e ON e.seq=m.entry_seq LEFT JOIN board_entries p ON p.id=e.post_id WHERE m.target_kind='agent' AND m.target_id=? AND e.seq>? AND ${live} AND NOT EXISTS(SELECT 1 FROM board_mention_seen s WHERE s.agent_id=m.target_id AND s.entry_seq=m.entry_seq)`,
+        )
+        .get(agentId, read)
+    ).n;
+    return { entries, mentions };
+  }
+  /** Looking up one's mentions counts exactly the returned ones as seen.
+   * Mentions come newest first and page backwards, so a single high-water
+   * mark would also swallow older ones on later pages.
+   * @param {string} agentId @param {number[]} seqs */
+  seeMentions(agentId, seqs) {
+    const seen = this.db.prepare(
+      "INSERT OR IGNORE INTO board_mention_seen(agent_id,entry_seq) VALUES(?,?)",
+    );
+    for (const seq of seqs) seen.run(agentId, seq);
+  }
   /** Live entries that mention someone, newest first. Looking them up moves
-   * no marker, unlike unread().
+   * no unread marker, unlike unread().
    * @param {Author} target @param {{offset?: number, limit?: number}} [options] */
   mentioning(target, { offset = 0, limit = 10 } = {}) {
     const from =
@@ -401,18 +517,96 @@ export class Board {
         .run(postId, new Date(now).toISOString());
     return this.entries([this.get(postId)])[0];
   }
-  /** Administrator moderation: the row stays so ids and quotas hold, the
-   * text is no longer shown and a removed post is no longer pinned.
+  /** Add or take back one reaction. Only live entries under a live post take
+   * new reactions, but one's own can always be taken back. The daily limit
+   * counts reactions still standing on live entries, so taking one back, or
+   * the entry being hidden, frees its place.
+   * @param {{actor: Author, id: string, emoji: string, on: boolean,
+   *   now: number, timeZone: string, limit?: number}} input */
+  react({ actor, id, emoji, on, now, timeZone, limit }) {
+    if (!BOARD_REACTIONS.includes(emoji)) throw Error("BOARD_ENTRY_INVALID");
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const row = /** @type {any} */ (this.get(id));
+      const post = row?.post_id
+        ? /** @type {any} */ (this.get(row.post_id))
+        : row;
+      if (!row || (on && (row.removed_at || post?.removed_at)))
+        throw Error("BOARD_ENTRY_NOT_FOUND");
+      const key = [row.seq, actor.kind, actor.id, emoji];
+      const exists = this.db
+        .prepare(
+          "SELECT 1 FROM board_reactions WHERE entry_seq=? AND actor_kind=? AND actor_id=? AND emoji=?",
+        )
+        .get(...key);
+      if (!on)
+        this.db
+          .prepare(
+            "DELETE FROM board_reactions WHERE entry_seq=? AND actor_kind=? AND actor_id=? AND emoji=?",
+          )
+          .run(...key);
+      else if (!exists) {
+        const day = boardDay(now, timeZone);
+        if (limit !== undefined && this.reactionsUsed(actor, day) >= limit)
+          throw Error("BOARD_REACTION_QUOTA_EXCEEDED");
+        this.db
+          .prepare(
+            "INSERT INTO board_reactions(entry_seq,actor_kind,actor_id,emoji,day,created_at) VALUES(?,?,?,?,?,?)",
+          )
+          .run(...key, day, new Date(now).toISOString());
+      }
+      const result = this.entries([this.get(id)])[0];
+      this.db.exec("COMMIT");
+      return result;
+    } catch (error) {
+      if (this.db.isTransaction) this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+  /** Reactions an actor added on one day that still stand on live entries:
+   * someone else hiding an entry must not use up one's quota.
+   * @param {Author} actor @param {string} day */
+  reactionsUsed(actor, day) {
+    return /** @type {any} */ (
+      this.db
+        .prepare(
+          "SELECT count(*) AS n FROM board_reactions r JOIN board_entries e ON e.seq=r.entry_seq LEFT JOIN board_entries p ON p.id=e.post_id WHERE r.actor_kind=? AND r.actor_id=? AND r.day=? AND e.removed_at IS NULL AND (e.post_id IS NULL OR p.removed_at IS NULL)",
+        )
+        .get(actor.kind, actor.id, day)
+    ).n;
+  }
+  /** Hide an entry while keeping its row, so ids and quotas hold; a hidden
+   * post is no longer pinned. The first removal decides who is credited.
+   * @param {any} row @param {Author} by @param {number} now */
+  hide(row, by, now) {
+    if (row.removed_at) return;
+    this.db
+      .prepare("UPDATE board_entries SET removed_at=? WHERE id=?")
+      .run(new Date(now).toISOString(), row.id);
+    this.db
+      .prepare(
+        "INSERT OR IGNORE INTO board_removals(entry_seq,by_kind,by_id) VALUES(?,?,?)",
+      )
+      .run(row.seq, by.kind, by.id);
+    this.db.prepare("DELETE FROM board_pins WHERE post_id=?").run(row.id);
+  }
+  /** Administrator moderation of any entry.
    * @param {string} id @param {number} now */
   remove(id, now) {
     const row = /** @type {any} */ (this.get(id));
     if (!row) throw Error("BOARD_ENTRY_NOT_FOUND");
-    if (!row.removed_at) {
-      this.db
-        .prepare("UPDATE board_entries SET removed_at=? WHERE id=?")
-        .run(new Date(now).toISOString(), id);
-      this.db.prepare("DELETE FROM board_pins WHERE post_id=?").run(id);
-    }
+    this.hide(row, ADMIN_AUTHOR, now);
+    return this.entries([this.get(id)])[0];
+  }
+  /** An author taking back their own post or comment. It still counts for
+   * that day's quota, like a removal.
+   * @param {Author} author @param {string} id @param {number} now */
+  retract(author, id, now) {
+    const row = /** @type {any} */ (this.get(id));
+    if (!row || row.removed_at) throw Error("BOARD_ENTRY_NOT_FOUND");
+    if (row.author_kind !== author.kind || row.author_id !== author.id)
+      throw Error("BOARD_RETRACT_DENIED");
+    this.hide(row, author, now);
     return this.entries([this.get(id)])[0];
   }
 }

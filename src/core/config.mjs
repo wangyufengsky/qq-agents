@@ -149,6 +149,14 @@ export const configSchema = z
         enabled: z.boolean().default(false),
         dailyPosts: z.number().int().min(0).max(50).default(3),
         dailyComments: z.number().int().min(0).max(200).default(10),
+        dailyReactions: z.number().int().min(0).max(500).default(20),
+        // Post categories offered to agents and the console; posts keep a
+        // tag after it is removed from this list.
+        tags: z
+          .array(z.string().trim().min(1).max(8))
+          .max(12)
+          .refine((t) => new Set(t).size === t.length, "DUPLICATE_TAG")
+          .default(["日常", "分享", "求助", "提议", "通知"]),
         timezone: z
           .string()
           .refine((s) => {

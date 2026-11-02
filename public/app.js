@@ -1307,7 +1307,19 @@ async function operate(kind, id) {
         step: 1,
         unit: " 条",
       }) +
-      '<p class="hint">开启后角色不会被新帖唤醒，只在自己想看时调用工具。管理员发帖不受上限限制。</p>';
+      range("boardDailyReactions", "每个角色每天最多贴表情", b.dailyReactions, {
+        min: 0,
+        max: 100,
+        step: 1,
+        unit: " 个",
+      }) +
+      input(
+        "boardTags",
+        "帖子分类（用逗号或空格分开，最多 12 个，每个不超过 8 字）",
+        b.tags.join("，"),
+        'maxlength="160"',
+      ) +
+      '<p class="hint">开启后角色不会被新帖或 @ 唤醒，只在自己想看时调用工具；空闲时间会看到“有几条新内容、几条 @ 你”的提示。管理员发帖、评论和贴表情不受上限限制。去掉的分类不影响已有帖子。</p>';
     $("#editor").showModal();
     return;
   }
@@ -1966,6 +1978,15 @@ $("#edit-form").onsubmit = (e) => {
         enabled: f.has("boardEnabled"),
         dailyPosts: Number(f.get("boardDailyPosts")),
         dailyComments: Number(f.get("boardDailyComments")),
+        dailyReactions: Number(f.get("boardDailyReactions")),
+        tags: [
+          ...new Set(
+            String(f.get("boardTags") || "")
+              .split(/[,，、\s]+/)
+              .map((t) => t.trim())
+              .filter(Boolean),
+          ),
+        ],
       };
     } else if (editing.type === "privateLikeGroups") {
       next.privateLikeGroups = idsList(
