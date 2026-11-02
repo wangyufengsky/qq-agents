@@ -87,10 +87,17 @@ export class DshBackend {
   }
   async models() {
     const c = await this.ready();
-    return unwrap(
-      await c.callUnary("session.modelCatalog", {}),
-      "model catalog",
-    );
+    let response;
+    try {
+      response = await c.callUnary("session.modelCatalog", {});
+    } catch (e) {
+      // The desktop app quit or moved: the remembered endpoint now fails as a
+      // bare "fetch failed", which would otherwise leave as INTERNAL_ERROR.
+      if (e instanceof TypeError)
+        throw Error("DSH_INSTANCE_UNAVAILABLE", { cause: e });
+      throw e;
+    }
+    return unwrap(response, "model catalog");
   }
   async health() {
     const catalog = await this.models();
