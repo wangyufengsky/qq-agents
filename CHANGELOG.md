@@ -17,7 +17,7 @@
 - 从 0.5.5 用一键升级时，0.5.5 的升级器还不会等待活跃回合结束；首次升级请按 [AI 更新手册](docs/AI-UPDATE.md) 等待回合结束再切换。
 - 数据库只新增可选状态字段与兼容索引，导出格式不变；依赖、Node.js 要求和镜像构建不变。
 
-### 版本发布准备（[#PR](https://github.com/wangyufengsky/qq-agents/pull/PR)）
+### 版本发布准备（[#136](https://github.com/wangyufengsky/qq-agents/pull/136)）
 
 - 将包与锁文件版本统一为 `0.5.6`，整理本版本更新日志并补充升级须知；更正拟人化设计文档中已合并 PR 的过时状态说明。GitHub 标签与 Release 在发布检查通过后创建。版本发布不代表已更新任何实际部署。
 
