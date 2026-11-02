@@ -501,7 +501,7 @@ const agentForm = {
             row.behavior?.actions?.qzoneMaxPerDay ?? 2,
             { min: 1, max: 10, step: 1, unit: "条" },
           ) +
-          '<p class="hint">实验功能，默认关闭，还需在“聊天发言”里允许说说工具。NapCat 没有正式接口，借 QQ 登录 cookie 调用 QQ 空间网页接口，可能随时失效或触发账号风控。只在主人私聊的普通回合可用，只发所有人可见的纯文字；计入总发送限速，失败或未知结果不自动重试。</p>',
+          '<p class="hint">实验功能，默认关闭，还需在“聊天发言”里允许说说工具。NapCat 没有正式接口，借 QQ 登录 cookie 调用 QQ 空间网页接口，可能随时失效或触发账号风控。只在主人私聊的普通回合和角色自己的空闲时间可用（空闲时遵守安静时段），只发所有人可见的纯文字；计入总发送限速，失败或未知结果不自动重试。</p>',
       ) +
       advanced(
         this.foldTitle(

@@ -10,6 +10,7 @@ function setup(t, actions = { qzone: true }) {
   const cfg = config(2);
   cfg.agents[0].ownerIds = ["30000"];
   cfg.agents[0].allow.users.push("30001");
+  cfg.agents[0].subject = { enabled: true };
   cfg.agents[0].behavior.actions = actions;
   cfg.agents[0].tools.push("qzone_read", "qzone_post");
   const f = fixture(t, { cfg: validateConfig(cfg) });
@@ -39,6 +40,7 @@ test("qzone tools default off and only appear in an owner's private chat", async
   const cfg = config(1);
   cfg.agents[0].ownerIds = ["30000"];
   cfg.agents[0].tools.push("qzone_read", "qzone_post");
+  cfg.agents[0].subject = { enabled: true };
   const { runtime } = fixture(t, { cfg: validateConfig(cfg) }),
     a = runtime.agent("agent-0"),
     ctx = context(runtime, "agent-0", OWNER);
@@ -52,12 +54,9 @@ test("qzone tools default off and only appear in an owner's private chat", async
   a.behavior.actions.qzone = true;
   assert(runtime.toolsFor(a, OWNER).includes("qzone_post"));
   assert(runtime.toolsFor(a, OWNER).includes("qzone_read"));
-  for (const elsewhere of [
-    "group:20000",
-    "private:30001",
-    "@subject",
-    "@work:x",
-  ])
+  assert(runtime.toolsFor(a, "@subject").includes("qzone_post"));
+  assert(runtime.toolsFor(a, "@subject").includes("qzone_read"));
+  for (const elsewhere of ["group:20000", "private:30001", "@work:x"])
     assert(!runtime.toolsFor(a, elsewhere).includes("qzone_post"));
 });
 
@@ -224,6 +223,55 @@ test("gateway without cookie support reports QZONE_UNSUPPORTED", async (t) => {
     post(f, { requestId: "missing", content: "甲" }),
     /QZONE_UNSUPPORTED/,
   );
+});
+
+test("free time can post without counting as a contact", async (t) => {
+  const f = setup(t);
+  const ctx = context(f.runtime, "agent-0", "@subject");
+  const before = structuredClone(f.mem.state("@subject"));
+  const result = await post(
+    f,
+    { requestId: "idle-1", content: "空闲时写的说说" },
+    ctx,
+  );
+  assert.equal(result.status, "sent");
+  assert.deepEqual(f.calls, [{ content: "空闲时写的说说" }]);
+  const after = f.mem.state("@subject");
+  assert.equal(after.lastContactAt, before.lastContactAt);
+  assert.deepEqual(after.contacts || [], before.contacts || []);
+  const read = await f.runtime.callTool(ctx, "qzone_read", {});
+  assert.equal(read.posts.length, 1);
+});
+
+test("free-time posts drawing on chat recollections still need a grant", async (t) => {
+  const f = setup(t);
+  const ctx = context(f.runtime, "agent-0", "@subject");
+  ctx.privateRead.add("evt-group-message");
+  await assert.rejects(
+    post(f, { requestId: "idle-leak", content: "群里看到的话" }, ctx),
+    /PRIVATE_RECOLLECTION_EXTERNAL_CALL_BLOCKED/,
+  );
+  assert.equal(f.calls.length, 0);
+});
+
+test("free-time posts respect quiet hours", async (t) => {
+  const f = setup(t);
+  const a = f.runtime.agent("agent-0");
+  a.subject.reviewInSilence = true;
+  a.silence = [
+    {
+      start: "00:00",
+      end: "23:59",
+      days: [0, 1, 2, 3, 4, 5, 6],
+      timezone: "UTC",
+    },
+  ];
+  const ctx = context(f.runtime, "agent-0", "@subject");
+  await assert.rejects(
+    post(f, { requestId: "quiet", content: "安静时段" }, ctx),
+    /QUIET_HOURS/,
+  );
+  assert.equal(f.calls.length, 0);
 });
 
 test("qzoneToken matches the QQ Zone page hash", () => {

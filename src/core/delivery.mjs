@@ -206,11 +206,11 @@ export class DeliveryService {
     if (mem.state(ctx.conversation).silenceUntil > runtime.now())
       throw Error("CONVERSATION_SILENCED");
     // Recall only removes an already-confirmed message, and a profile change
-    // contacts nobody (it is also allowed in free time). A completed contact
+    // or QQ Zone post contacts nobody (both are also allowed in free time). A completed contact
     // intent must not prevent either; fresh outward actions still need the
     // ordinary intent decision and contact checks.
     const contactFreeAction =
-      action && ["recall", "profile"].includes(actionBudget?.kind);
+      action && ["recall", "profile", "qzone"].includes(actionBudget?.kind);
     const proactive = contactFreeAction
       ? null
       : runtime.subject.beforeDelivery(ctx);

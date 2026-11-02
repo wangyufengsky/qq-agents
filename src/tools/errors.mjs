@@ -61,7 +61,7 @@ export function safeToolFailure(error) {
     QZONE_POST_UNCONFIRMED:
       "An earlier QQ Zone post is still pending or unknown and may already be public. Do not post again with another requestId; the administrator reconciles it in the console.",
     QZONE_ORDINARY_TURN_REQUIRED:
-      "QQ Zone is only available in an ordinary reply turn of the owner's private chat, not while carrying out a proactive intent or scheduled task. Nothing was posted.",
+      "QQ Zone is only available in your own free time or an ordinary reply turn of the owner's private chat, not while carrying out a proactive intent or scheduled task. Nothing was posted.",
     QZONE_UNSUPPORTED:
       "The gateway cannot provide QQ Zone access. Nothing was posted. Do not retry with another requestId.",
     QZONE_LOGIN_REQUIRED:

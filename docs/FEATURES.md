@@ -231,7 +231,7 @@ macOS 本机 TTS：将角色 `voice.tts` 配为 `{"enabled":true,"voice":"Tingti
 
 ## 发 QQ 空间说说（实验）
 
-管理员可按角色开启 `behavior.actions.qzone` 并允许 `qzone_read`、`qzone_post`，让角色在主人私聊里查看自己最近的说说并发布所有人可见的纯文字说说。NapCat 没有正式接口，程序借 QQ 登录 cookie 调用 QQ 空间网页接口，可能随时失效或触发风控，因此默认关闭、每天最多 2 次尝试，走统一动作账本，结果未知时不换编号重试；参数见[配置说明](CONFIGURATION.md#发-qq-空间说说实验)。
+管理员可按角色开启 `behavior.actions.qzone` 并允许 `qzone_read`、`qzone_post`，让角色在主人私聊或自己的空闲时间里查看自己最近的说说并发布所有人可见的纯文字说说。NapCat 没有正式接口，程序借 QQ 登录 cookie 调用 QQ 空间网页接口，可能随时失效或触发风控，因此默认关闭、每天最多 2 次尝试，走统一动作账本，结果未知时不换编号重试；参数见[配置说明](CONFIGURATION.md#发-qq-空间说说实验)。
 
 ## 撤回自己刚发的消息
 

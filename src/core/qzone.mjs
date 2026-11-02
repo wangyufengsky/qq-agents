@@ -1,5 +1,8 @@
 // @ts-check
 import { assertMessageAccount } from "../memory/message-ids.mjs";
+import { SUBJECT } from "./lifecycle.mjs";
+import { inSilence } from "./config.mjs";
+import { profileConversation } from "./profile.mjs";
 
 // Gateway failure causes that keep their own error code instead of the
 // generic delivery failure; anything else stays DELIVERY_FAILED/UNKNOWN.
@@ -10,20 +13,13 @@ const QZONE_REASONS = /** @type {Record<string, string>} */ ({
   QQ_ACCOUNT_MISMATCH: "QQ_ACCOUNT_MISMATCH",
 });
 
-/** QQ Zone posts are public, so only an owner's private chat may publish;
- * unlike the profile, free time is not included yet.
- * @param {any} agent @param {string} conversation
+/** QQ Zone posts are public like the profile, so they share its scope: the
+ * role's own free time or an owner's private chat.
+ * @param {any} runtime @param {any} ctx
  */
-export function qzoneConversation(agent, conversation) {
-  return (agent.ownerIds || []).some(
-    (/** @type {string} */ id) => conversation === `private:${id}`,
-  );
-}
-
-/** @param {any} runtime @param {any} ctx */
 function active(runtime, ctx) {
   const a = runtime.assertActive(ctx);
-  if (!a.behavior.actions?.qzone || !qzoneConversation(a, ctx.conversation))
+  if (!a.behavior.actions?.qzone || !profileConversation(a, ctx.conversation))
     throw Error("TOOL_DISABLED");
   if (runtime.protectedWork?.context(ctx))
     throw Error("PROTECTED_WORK_OUTBOUND_DENIED");
@@ -31,6 +27,10 @@ function active(runtime, ctx) {
   // the message it was created for.
   if (ctx.activeIntentId || ctx.intentOnly || ctx.scheduleRunId)
     throw Error("QZONE_ORDINARY_TURN_REQUIRED");
+  // A public post from free-time review must honor quiet hours like chat
+  // output does. Pause and isolation already end the turn.
+  if (ctx.conversation === SUBJECT && inSilence(a, runtime.clock()))
+    throw Error("QUIET_HOURS");
   return a;
 }
 

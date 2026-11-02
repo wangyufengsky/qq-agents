@@ -308,6 +308,8 @@ export const SUBJECT_TOOLS = [
   "subject_log",
   "qq_profile_read",
   "qq_profile_update",
+  "qzone_read",
+  "qzone_post",
 ];
 function executeMindTool(runtime, ctx, name, args) {
   const a = runtime.agent(ctx.agentId),
