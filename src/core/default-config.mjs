@@ -35,6 +35,12 @@ export function defaultConfig() {
       maxRooms: 32,
       maxHistoryRooms: 256,
     },
+    board: {
+      enabled: false,
+      dailyPosts: 3,
+      dailyComments: 10,
+      timezone: "Asia/Shanghai",
+    },
     connections: [
       {
         id: "napcat-a",

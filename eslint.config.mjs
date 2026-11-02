@@ -54,6 +54,7 @@ const browserScripts = {
     "tools",
   ],
   "activity-ui.js": ["activityAgentId", "renderActivity"],
+  "board-ui.js": ["renderBoard"],
   "agent-form.js": ["agentForm"],
   "apps-ui.js": ["appAgentId", "renderApps"],
   "files-ui.js": ["fileAgentId", "renderFilePermissions"],

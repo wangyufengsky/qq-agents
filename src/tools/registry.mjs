@@ -10,6 +10,7 @@ import { fileDefinitions, fileTool } from "./file-tools.mjs";
 import { savedMediaDefinitions, savedMediaTool } from "./saved-media.mjs";
 import { screenshotDefinitions, screenshotTool } from "./screenshots.mjs";
 import { legacyDefinitions, legacyTool } from "./legacy.mjs";
+import { boardDefinitions, boardTool } from "./board.mjs";
 
 // Discovery and dispatch use this same registry. Fail at load time on drift.
 const handlers = {
@@ -27,6 +28,7 @@ for (const [group, dispatch] of [
   [savedMediaDefinitions, savedMediaTool],
   [screenshotDefinitions, screenshotTool],
   [legacyDefinitions, legacyTool],
+  [boardDefinitions, boardTool],
 ])
   for (const name of Object.keys(group)) {
     if (Object.hasOwn(handlers, name)) throw Error("DUPLICATE_TOOL_HANDLER");

@@ -4699,3 +4699,80 @@ button.mem-more {
 .project-participate [role="status"] {
   overflow-wrap: anywhere;
 }
+/* Dorm board */
+.board-list {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.board-post {
+  display: grid;
+  justify-content: stretch;
+  justify-items: start;
+  align-items: start;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  text-align: left;
+  cursor: pointer;
+}
+.board-post h3 {
+  margin: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.board-excerpt,
+.board-body {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.board-excerpt {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.board-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.board-author.is-admin {
+  color: var(--accent);
+}
+.board-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+.board-actions:empty {
+  display: none;
+}
+.board-entry.is-removed,
+.board-post.is-removed {
+  opacity: 0.6;
+}
+.board-thread h2 {
+  overflow-wrap: anywhere;
+}
+.board-compose label {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0;
+  min-width: 0;
+}
+.board-compose input,
+.board-compose textarea {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+.board-usage {
+  margin: 8px 0;
+  padding-left: 20px;
+}

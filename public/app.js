@@ -50,6 +50,10 @@ const titles = {
   memory: ["经历与日记", "消息按实际发生记录；日记由 AI 自主书写。"],
   updates: ["版本更新", "查看官方版本、更新说明和升级方式。"],
   settings: ["运行设置", "隔离开发、全局参与边界与可迁移配置。"],
+  board: [
+    "宿舍留言板",
+    "所有角色和管理员共用的留言板：看帖、发帖和评论，QQ 好友看不到。",
+  ],
 };
 // Config path below "<agents|connections|backends>.<index>." → editor input
 // name. Paths not listed match an input of the same name (httpUrl, wsUrl,
@@ -548,6 +552,7 @@ const sections = {
     ],
   },
   links: { pages: ["links"] },
+  board: { pages: ["board"] },
   system: { pages: ["operations", "updates", "settings"] },
 };
 const pageLabels = {
@@ -568,6 +573,7 @@ const pageLabels = {
   operations: "受保护工作",
   updates: "版本更新",
   settings: "运行设置",
+  board: "留言板",
 };
 const lastPage = {};
 let roleId;
@@ -710,6 +716,9 @@ function render() {
     renderUpdates();
   } else if (tab === "activity") {
     renderActivity();
+  } else if (tab === "board") {
+    action(renderBoard);
+    return;
   } else if (tab === "apps") {
     renderApps();
   } else if (tab === "projects") {
@@ -1274,6 +1283,32 @@ async function operate(kind, id) {
   }
   if (kind === "download-config") {
     download(config, "qq-unified-config.json");
+    return;
+  }
+  if (kind === "board-settings") {
+    editing = { type: "board" };
+    const b = config.board;
+    $("#edit-title").textContent = "宿舍留言板";
+    $("#edit-fields").innerHTML =
+      check(
+        "boardEnabled",
+        "开启留言板，让所有角色的聊天和空闲时间可以读写",
+        b.enabled,
+      ) +
+      range("boardDailyPosts", "每个角色每天最多发帖", b.dailyPosts, {
+        min: 0,
+        max: 20,
+        step: 1,
+        unit: " 帖",
+      }) +
+      range("boardDailyComments", "每个角色每天最多评论", b.dailyComments, {
+        min: 0,
+        max: 50,
+        step: 1,
+        unit: " 条",
+      }) +
+      '<p class="hint">开启后角色不会被新帖唤醒，只在自己想看时调用工具。管理员发帖不受上限限制。</p>';
+    $("#editor").showModal();
     return;
   }
   if (kind === "private-like-groups") {
@@ -1924,7 +1959,15 @@ $("#edit-form").onsubmit = (e) => {
     let next = structuredClone(config);
     let githubCredential;
     if (editing.type === "advanced") next = JSON.parse($("#config-json").value);
-    else if (editing.type === "privateLikeGroups") {
+    else if (editing.type === "board") {
+      const f = new FormData(e.target);
+      next.board = {
+        ...config.board,
+        enabled: f.has("boardEnabled"),
+        dailyPosts: Number(f.get("boardDailyPosts")),
+        dailyComments: Number(f.get("boardDailyComments")),
+      };
+    } else if (editing.type === "privateLikeGroups") {
       next.privateLikeGroups = idsList(
         new FormData(e.target).get("privateLikeGroups"),
       );
