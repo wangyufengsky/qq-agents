@@ -1,5 +1,6 @@
 import { reactionDefinitions, reactionTool } from "./reactions.mjs";
 import { profileDefinitions, profileTool } from "./profile.mjs";
+import { qzoneDefinitions, qzoneTool } from "./qzone.mjs";
 import { gameDefinitions, gameTool } from "../games/framework/tools.mjs";
 import { definitions } from "./definitions.mjs";
 import { TOOL_NAMES } from "./names.mjs";
@@ -24,6 +25,7 @@ for (const [group, dispatch] of [
   [gameDefinitions, gameTool],
   [reactionDefinitions, reactionTool],
   [profileDefinitions, profileTool],
+  [qzoneDefinitions, qzoneTool],
   [githubDefinitions, githubTool],
   [mindDefinitions, mindTool],
   [fileDefinitions, fileTool],

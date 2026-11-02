@@ -6,6 +6,14 @@
 
 ## 未发布
 
+### 实验：角色可发 QQ 空间说说
+
+- 新增 `qzone_read` 和 `qzone_post`：在主人私聊里，角色可以查看自己 QQ 空间最近的说说（文字、时间、评论数、图片数），并发布所有人可见的纯文字说说。NapCat 没有正式接口，网关用 `get_cookies` 取得本账号 QQ 空间网页 cookie、计算 `g_tk`，调用网页端 `emotion_cgi_publish_v6`/`emotion_cgi_msglist_v6`；接口不公开、可能失效或触发风控，尚未经真实账号验收。cookie 与 `g_tk` 只在网关调用内存中使用，不写日志、事件、账本，也不返回模型。
+- 由新开关 `behavior.actions.qzone`（默认关闭）和 `behavior.actions.qzoneMaxPerDay`（默认每天 2 次，失败、被拒和未知也计入）控制，管理台「配置角色」新增“发 QQ 空间说说（实验）”折叠项。群聊、其他私聊、空闲时间、受保护工作，以及执行主动意图或定时任务的回合都不可用。
+- 发布走统一动作账本：暂停、静默、总发送限速、幂等回执照常生效，不占用文字回复额度；跨聊天来源的内容按外部调用要求披露授权，疑似凭据被拒绝。网络错误或无法确认的回复记为 `unknown`，之后新的 `requestId` 一律被拒绝，直到管理员核对。
+- 新增错误码 `QZONE_ORDINARY_TURN_REQUIRED`、`QZONE_RATE_LIMITED`、`QZONE_UNSUPPORTED`、`QZONE_POST_UNCONFIRMED`、`QZONE_LOGIN_REQUIRED`、`QZONE_REJECTED`、`QZONE_READ_FAILED`。
+- 兼容性：配置 `behavior.actions` 新增两个有默认值的字段，启动后会写入 `config.json`；回退到更早版本前要先恢复升级前备份的配置。数据库和导出格式不变。新角色的默认工具目录包含两个新工具，已有角色的工具白名单不自动扩充；开关关闭时工具不展示，会话工具集不变。
+
 ### 角色可修改自己的 QQ 昵称、签名和头像（[#140](https://github.com/wangyufengsky/qq-agents/pull/140)）
 
 - 新增 `qq_profile_read` 和 `qq_profile_update`：在主人私聊里，角色可以查看自己 QQ 账号的昵称和个性签名，并修改昵称、签名或头像，每次只改一项；头像只能用自己图片库里的 PNG/JPEG/WebP 图片。网关调用 NapCat 的 `get_stranger_info`、`set_qq_profile`、`set_self_longnick`、`set_qq_avatar`。

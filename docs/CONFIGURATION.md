@@ -309,6 +309,24 @@ QQ 掉线、自动重连用完次数时，管理台会显示，但主人在 QQ �
 
 资料对所有人可见，所以图片或本回合读过的内容来自其他聊天时，按外部调用要求管理员披露授权（`PRIVATE_RECOLLECTION_EXTERNAL_CALL_BLOCKED`）；含疑似凭据的文字被拒绝。修改走统一动作账本：暂停、静默、总分钟/小时发送限速照常生效，不占用或恢复文字回复额度；同一 `requestId` 只返回原回执。网关明确拒绝记为失败，超时或不能确认记为 `unknown`；同一项资料有 `pending` 或 `unknown` 尝试时，新的 `requestId` 也会被拒绝（`PROFILE_UPDATE_UNCONFIRMED`），需管理员在管理台核对。网关不支持时返回 `PROFILE_UNSUPPORTED`。
 
+## 发 QQ 空间说说（实验）
+
+在角色配置的“发 QQ 空间说说（实验）”中开启开关，并在“能力 → 聊天发言”允许 `qzone_read` 和 `qzone_post`。配置位于 `behavior.actions`：
+
+| 字段             | 默认值  | 说明                                                              |
+| ---------------- | ------- | ----------------------------------------------------------------- |
+| `qzone`          | `false` | 允许读取本角色 QQ 空间最近的说说，并发布所有人可见的纯文字说说。  |
+| `qzoneMaxPerDay` | `2`     | 每 24 小时的发布尝试上限，范围 1–10；失败、被拒和未知结果也计入。 |
+
+这是实验功能：NapCat 没有发说说的正式接口，程序用网关 `get_cookies`（域名 `user.qzone.qq.com`）取得本账号的网页登录 cookie，按 QQ 空间网页的算法从 `p_skey` 计算 `g_tk`，再调用 QQ 空间网页端的 `emotion_cgi_publish_v6`（发布）和 `emotion_cgi_msglist_v6`（读取）。这些网页接口不公开、随时可能变化，频繁调用或内容异常可能触发腾讯风控（验证、限制发布甚至影响账号），所以默认关闭、每日上限较低。cookie 和 `g_tk` 只在网关调用期间留在内存里，不写日志、事件、账本，也不返回给模型。
+
+两个工具只在本角色主人（`ownerIds`）的私聊里出现和执行；群聊、其他私聊、空闲时间（`@subject`）和受保护工作都不可用。执行主动意图或定时任务的回合会被拒绝（`QZONE_ORDINARY_TURN_REQUIRED`）。
+
+- `qzone_read` 接受可选 `limit`（1–10，默认 5），返回自己最近说说的编号、文字（最多 1000 字）、时间、评论数和图片数，不返回评论内容。
+- `qzone_post` 接受 `requestId` 和 `content`（1–1000 字，可换行，不能含其他控制字符或方向覆盖字符），只发所有人可见的纯文字说说；暂不支持带图。
+
+说说对所有人可见，所以本回合读过的内容来自其他聊天时，按外部调用要求管理员披露授权（`PRIVATE_RECOLLECTION_EXTERNAL_CALL_BLOCKED`）；含疑似凭据的文字被拒绝。发布走统一动作账本：暂停、静默、总分钟/小时发送限速照常生效，不占用或恢复文字回复额度；同一 `requestId` 只返回原回执。取 cookie 失败或 QQ 空间明确返回错误码记为失败：登录失效返回 `QZONE_LOGIN_REQUIRED`，其他拒绝（包括疑似风控、频率限制）返回 `QZONE_REJECTED`，网关不支持 `get_cookies` 返回 `QZONE_UNSUPPORTED`。网络错误、HTTP 错误、无法解析的回复或成功但没有说说编号都记为 `unknown`，因为说说可能已经发出；此时任何新的 `requestId` 都会被拒绝（`QZONE_POST_UNCONFIRMED`），需管理员在 QQ 空间和管理台核对。读取失败统一返回 `QZONE_READ_FAILED`，不透出网页原文。
+
 ## 撤回自己刚发的消息
 
 在角色配置的“撤回自己消息”中开启开关，并允许 `qq_recall` 工具。配置位于 `behavior.actions`：
