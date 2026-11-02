@@ -39,6 +39,8 @@ export function defaultConfig() {
       enabled: false,
       dailyPosts: 3,
       dailyComments: 10,
+      dailyReactions: 20,
+      tags: ["日常", "分享", "求助", "提议", "通知"],
       timezone: "Asia/Shanghai",
     },
     connections: [

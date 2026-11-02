@@ -141,6 +141,11 @@ export class MemoryStore {
       CREATE TABLE IF NOT EXISTS board_mentions(entry_seq INTEGER NOT NULL,target_kind TEXT NOT NULL,target_id TEXT NOT NULL,PRIMARY KEY(entry_seq,target_kind,target_id));
       CREATE INDEX IF NOT EXISTS board_mention_targets ON board_mentions(target_kind,target_id,entry_seq);
       CREATE TABLE IF NOT EXISTS board_pins(post_id TEXT PRIMARY KEY,pinned_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS board_mention_reads(agent_id TEXT PRIMARY KEY,seq INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS board_reactions(entry_seq INTEGER NOT NULL,actor_kind TEXT NOT NULL,actor_id TEXT NOT NULL,emoji TEXT NOT NULL,day TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(entry_seq,actor_kind,actor_id,emoji));
+      CREATE INDEX IF NOT EXISTS board_reaction_quota ON board_reactions(actor_kind,actor_id,day);
+      CREATE TABLE IF NOT EXISTS board_removals(entry_seq INTEGER PRIMARY KEY,by_kind TEXT NOT NULL,by_id TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS board_post_tags(entry_seq INTEGER PRIMARY KEY,tag TEXT NOT NULL);
       `),
       );
       // agentId|eventId of voice messages whose transcript is still running.

@@ -84,6 +84,8 @@ export const TOOL_NAMES = Object.freeze([
   "board_read",
   "board_post",
   "board_comment",
+  "board_react",
+  "board_retract",
   "memory_search",
   "memory_related",
   "memory_read",

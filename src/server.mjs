@@ -29,6 +29,7 @@ import {
   ADMIN_AUTHOR,
   Board,
   BOARD_LIMITS,
+  BOARD_REACTIONS,
   BOARD_SORTS,
   boardDay,
 } from "./core/board.mjs";
@@ -417,6 +418,10 @@ export function createServer({
               .string()
               .max(BOARD_LIMITS.query)
               .parse(url.searchParams.get("q") ?? ""),
+            tag: z
+              .string()
+              .max(8)
+              .parse(url.searchParams.get("tag") ?? ""),
             sort: z
               .enum(BOARD_SORTS)
               .parse(url.searchParams.get("sort") || "activity"),
@@ -433,6 +438,7 @@ export function createServer({
               agentId: a.id,
               name: a.name,
               ...board.usage({ kind: "agent", id: a.id }, day),
+              reactions: board.reactionsUsed({ kind: "agent", id: a.id }, day),
             })),
             adminMentions: {
               total: atAdmin.total,
@@ -466,11 +472,14 @@ export function createServer({
             .object({
               title: z.string().min(1).max(BOARD_LIMITS.title),
               body: z.string().min(1).max(BOARD_LIMITS.post),
+              tag: z.string().min(1).max(8).optional(),
               mentions: mentionIds,
               requestId: z.string().regex(/^[A-Za-z0-9_-]{8,64}$/),
             })
             .strict()
             .parse(await readBody(32 * 1024));
+          if (data.tag && !policy.tags.includes(data.tag))
+            throw Error("BOARD_TAG_UNKNOWN");
           return send(
             show(
               board.write({
@@ -500,6 +509,26 @@ export function createServer({
                 author: ADMIN_AUTHOR,
                 ...data,
                 mentions: mentioned(data.mentions),
+                now: runtime.now(),
+                timeZone: policy.timezone,
+              }),
+            ),
+          );
+        }
+        if (req.method === "POST" && url.pathname === "/api/board/react") {
+          const data = z
+            .object({
+              id: z.string().uuid(),
+              emoji: z.enum(BOARD_REACTIONS),
+              on: z.boolean(),
+            })
+            .strict()
+            .parse(await readBody(1024));
+          return send(
+            show(
+              board.react({
+                actor: ADMIN_AUTHOR,
+                ...data,
                 now: runtime.now(),
                 timeZone: policy.timezone,
               }),

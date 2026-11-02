@@ -5191,7 +5191,8 @@ button.mem-more {
   gap: 8px;
   padding: 14px 18px 10px;
   border-radius: 2px 2px 10px 2px;
-  transform: rotate(var(--tilt, 0deg));
+  /* Comments lean a quarter as much as notes on the wall. */
+  transform: rotate(calc(var(--tilt, 0deg) / 4));
 }
 .board-reply.is-nested {
   margin-left: clamp(16px, 5vw, 44px);
@@ -5402,4 +5403,122 @@ button.mem-more {
   .board-note:focus-within {
     transform: none;
   }
+}
+/* Note tilts as classes: the console CSP blocks inline style attributes. */
+.tilt-0 {
+  --tilt: -1.6deg;
+}
+.tilt-1 {
+  --tilt: 0.9deg;
+}
+.tilt-2 {
+  --tilt: -0.6deg;
+}
+.tilt-3 {
+  --tilt: 1.4deg;
+}
+.tilt-4 {
+  --tilt: -1.1deg;
+}
+.tilt-5 {
+  --tilt: 0.4deg;
+}
+/* Board tags and reactions */
+.board-label {
+  align-self: flex-start;
+  padding: 1px 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--paper-ink);
+  background: rgba(43, 39, 32, 0.08);
+  border: 1px dashed rgba(43, 39, 32, 0.28);
+  border-radius: var(--r-pill);
+}
+.board-sheet .board-label {
+  justify-self: start;
+}
+.board-reacts {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.board-react-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.board-paper .board-react,
+.board-react-add summary,
+.board-react-add button {
+  min-height: 26px;
+  padding: 0 9px;
+  font-size: 13px;
+  color: var(--paper-ink);
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(43, 39, 32, 0.18);
+  border-radius: var(--r-pill);
+}
+.board-paper .board-react:hover,
+.board-react-add summary:hover,
+.board-react-add button:hover {
+  background: rgba(255, 255, 255, 0.85);
+  border-color: rgba(43, 39, 32, 0.35);
+}
+.board-paper .board-react.is-mine {
+  color: #fff;
+  background: #3b5d96;
+  border-color: #3b5d96;
+}
+.board-react-add {
+  position: relative;
+}
+.board-react-add summary {
+  display: inline-flex;
+  align-items: center;
+  list-style: none;
+  cursor: pointer;
+  color: var(--paper-sub);
+}
+.board-react-add summary::-webkit-details-marker {
+  display: none;
+}
+.board-react-add summary::marker {
+  content: "";
+}
+/* The console styles every summary as a fold header; this one is a chip. */
+.board-paper .board-react-add > summary,
+.board-paper .board-react-add[open] > summary {
+  padding: 0 9px;
+  color: var(--paper-sub);
+  background: rgba(255, 255, 255, 0.55);
+}
+.board-paper .board-react-add > summary::before,
+.board-paper .board-react-add > summary::after {
+  display: none;
+}
+.board-react-add > div {
+  position: absolute;
+  z-index: 5;
+  bottom: calc(100% + 6px);
+  left: 0;
+  display: flex;
+  gap: 4px;
+  padding: 6px;
+  background: #fffdf6;
+  border-radius: var(--r-md);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+}
+.board-react-add button {
+  padding: 0 6px;
+  font-size: 16px;
+  background: transparent;
+  border-color: transparent;
+}
+.board-compose select {
+  width: auto;
+  justify-self: start;
+  color: var(--paper-ink);
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(43, 39, 32, 0.22);
 }

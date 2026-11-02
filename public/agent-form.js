@@ -195,6 +195,8 @@ const AGENT_TOOL_GROUPS = [
       board_read: "读留言板",
       board_post: "在留言板发帖",
       board_comment: "评论留言板帖子",
+      board_react: "给留言板内容贴表情",
+      board_retract: "撤回自己写的留言",
     },
   },
   {

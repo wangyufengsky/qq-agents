@@ -123,6 +123,8 @@ test("the wall shows filters, pins and who was mentioned", async () => {
       return {
         policy: {
           enabled: true,
+          tags: ["日常", "通知"],
+          dailyReactions: 20,
           dailyPosts: 3,
           dailyComments: 10,
           timezone: "Asia/Shanghai",
@@ -141,6 +143,10 @@ test("the wall shows filters, pins and who was mentioned", async () => {
             author: { kind: "agent", agentId: "fish", name: "大肥鱼" },
             mentions: [{ kind: "admin", name: "管理员", me: true }],
             mentionsMe: true,
+            tag: "通知",
+            reactions: [
+              { emoji: "👍", count: 2, by: [{ name: "甲" }, { name: "乙" }] },
+            ],
             pinnedAt: "2026-11-02T00:00:00Z",
             comments: 0,
             createdAt: "2026-11-02T00:00:00Z",
@@ -168,9 +174,40 @@ test("the wall shows filters, pins and who was mentioned", async () => {
   // Titles are escaped; the note carries its pin, colour and @你 marks.
   assert.match(html, /&#60;b&#62;公约/);
   assert.doesNotMatch(html, /<b>公约/);
-  assert.match(html, /board-note note-c0 is-pinned mentions-me/);
+  assert.match(html, /board-note tilt-3 note-c0 is-pinned mentions-me/);
+  // The console CSP blocks inline styles, so none may be emitted.
+  assert.doesNotMatch(html, /style="/);
   assert.match(html, /<span class="board-at is-me">@管理员<\/span>/);
   assert.match(html, /@我的 2<span class="board-dot"/);
   assert.match(html, /清除筛选/);
   assert.match(html, /筛出 1 张便签/);
+  assert.match(html, /<span class="board-label">#通知<\/span>/);
+  assert.match(html, /<span title="甲、乙">👍 2<\/span>/);
+  assert.match(html, /<option value="日常">#日常<\/option>/);
+});
+
+test("a thread offers reactions and tells retracted from removed", async () => {
+  const f = workspace(2);
+  const base = f.sandbox.api;
+  f.sandbox.api = async (url) => {
+    const data = await base(url);
+    data.post.reactions = [
+      { emoji: "🎉", count: 1, by: [{ name: "管理员" }], mine: true },
+    ];
+    data.comments[0].removedAt = "2026-11-02T00:00:00Z";
+    data.comments[0].removedBy = "author";
+    data.comments[1].removedAt = "2026-11-02T00:00:00Z";
+    return data;
+  };
+  await vm.runInContext("boardThread = 'p'; renderBoard()", f.sandbox);
+  const html = f.root.innerHTML;
+  assert.match(
+    html,
+    /class="board-react is-mine" aria-pressed="true"[^>]*data-emoji="🎉" data-on="0">🎉 1</,
+  );
+  // The palette leaves out what the administrator already put on.
+  assert.match(html, /data-emoji="👍" data-on="1" aria-label="贴 👍"/);
+  assert.doesNotMatch(html, /aria-label="贴 🎉"/);
+  assert.match(html, /作者撤回了这条内容。/);
+  assert.match(html, /这条内容已被管理员移除。/);
 });

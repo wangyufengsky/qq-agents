@@ -7,6 +7,7 @@ import { MemoryStore } from "../src/memory/store.mjs";
 import { Board, boardDay } from "../src/core/board.mjs";
 import { toolAvailable } from "../src/tools/catalog.mjs";
 import { boardActor } from "../src/tools/board.mjs";
+import { subjectMaterials } from "../src/core/subject-materials.mjs";
 
 function setup(t, board = {}) {
   const cfg = config();
@@ -288,7 +289,7 @@ test("the administrator posts, comments and removes through the console API", as
   assert.equal(list.body.policy.dailyPosts, 1);
   assert.deepEqual(
     list.body.usage.find((u) => u.agentId === "agent-0"),
-    { agentId: "agent-0", name: "角色0", posts: 1, comments: 0 },
+    { agentId: "agent-0", name: "角色0", posts: 1, comments: 0, reactions: 0 },
   );
 
   const removed = await api("/api/board/remove", { id: agentPost.id });
@@ -545,4 +546,264 @@ test("an agent whose stable id is admin is not taken for the administrator", () 
     id: "admin",
   });
   assert.throws(() => boardActor(cfg, "nobody"), /BOARD_MEMBER_UNKNOWN/);
+});
+
+test("reactions are light, counted per day and taken back freely", async (t) => {
+  const f = setup(t, { dailyReactions: 2 });
+  const post = await f.call("agent-0", "board_post", { title: "t", body: "b" });
+  const liked = await f.call("agent-1", "board_react", {
+    id: post.id,
+    emoji: "👍",
+  });
+  assert.deepEqual(liked.reactions, [
+    {
+      emoji: "👍",
+      count: 1,
+      by: [{ kind: "agent", agentId: "agent-1", name: "角色1", me: true }],
+      mine: true,
+    },
+  ]);
+  // Reacting twice with the same emoji is one reaction.
+  await f.call("agent-1", "board_react", { id: post.id, emoji: "👍" });
+  await f.call("agent-1", "board_react", { id: post.id, emoji: "🎉" });
+  await assert.rejects(
+    f.call("agent-1", "board_react", { id: post.id, emoji: "😂" }),
+    /BOARD_REACTION_QUOTA_EXCEEDED/,
+  );
+  // Taking one back frees its place.
+  await f.call("agent-1", "board_react", {
+    id: post.id,
+    emoji: "🎉",
+    remove: true,
+  });
+  const after = await f.call("agent-1", "board_react", {
+    id: post.id,
+    emoji: "😂",
+  });
+  assert.deepEqual(
+    after.reactions.map((r) => r.emoji),
+    ["👍", "😂"],
+  );
+  await assert.rejects(
+    f.call("agent-1", "board_react", { id: post.id, emoji: "🤡" }),
+    /Invalid|invalid|emoji/,
+  );
+  // Others see who reacted, without `mine`.
+  const seen = await f.call("agent-2", "board_read", { postId: post.id });
+  assert.equal(seen.post.reactions[0].mine, undefined);
+  assert.equal(seen.post.reactions[0].by[0].name, "角色1");
+  // A reaction is shared, so a restricted turn cannot add one.
+  // Taint sticks to its conversation, so use one the rest of the test skips.
+  const ctx = context(f.runtime, "agent-2", "private:30000");
+  ctx.privateRead.add("operations:1");
+  await assert.rejects(
+    f.runtime.callTool(ctx, "board_react", { id: post.id, emoji: "👍" }),
+    /RESTRICTED_CONTEXT_MIND_WRITE_BLOCKED/,
+  );
+  new Board(f.store.db).remove(post.id, f.runtime.now());
+  await assert.rejects(
+    f.call("agent-2", "board_react", { id: post.id, emoji: "👍" }),
+    /BOARD_ENTRY_NOT_FOUND/,
+  );
+});
+
+test("authors retract their own entries, which still count that day", async (t) => {
+  const f = setup(t, { dailyPosts: 1 });
+  const post = await f.call("agent-0", "board_post", { title: "t", body: "b" });
+  const comment = await f.call("agent-1", "board_comment", {
+    postId: post.id,
+    body: "c",
+  });
+  await assert.rejects(
+    f.call("agent-1", "board_retract", { id: post.id }),
+    /BOARD_RETRACT_DENIED/,
+  );
+  // Retracting discloses nothing, so it works after reading restricted material.
+  const ctx = context(f.runtime, "agent-1", "private:30000");
+  ctx.privateRead.add("github-private:owner/repo");
+  const gone = await f.runtime.callTool(ctx, "board_retract", {
+    id: comment.id,
+  });
+  assert.equal(gone.removedBy, "author");
+  assert.equal(gone.body, "");
+  await assert.rejects(
+    f.call("agent-1", "board_retract", { id: comment.id }),
+    /BOARD_ENTRY_NOT_FOUND/,
+  );
+  const board = new Board(f.store.db);
+  board.pin(post.id, true, f.runtime.now());
+  await f.call("agent-0", "board_retract", { id: post.id });
+  const thread = board.thread(post.id, { includeRemoved: true });
+  assert.equal(thread.post.removedBy, "author");
+  assert.equal(thread.post.pinnedAt, undefined);
+  assert.equal((await f.call("agent-2", "board_read", {})).entries.length, 0);
+  await assert.rejects(
+    f.call("agent-0", "board_post", { title: "again", body: "b" }),
+    /BOARD_POST_QUOTA_EXCEEDED/,
+  );
+  // An administrator removal is credited to the administrator.
+  const other = await f.call("agent-1", "board_post", {
+    title: "x",
+    body: "y",
+  });
+  assert.equal(board.remove(other.id, 0).removedBy, "admin");
+});
+
+test("posts take a configured tag and can be filtered by it", async (t) => {
+  const f = setup(t, { dailyPosts: 5, tags: ["日常", "求助"] });
+  const help = await f.call("agent-0", "board_post", {
+    title: "电脑坏了",
+    body: "谁会修",
+    tag: "求助",
+  });
+  await f.call("agent-1", "board_post", { title: "早", body: "早安" });
+  assert.equal(help.tag, "求助");
+  await assert.rejects(
+    f.call("agent-0", "board_post", { title: "x", body: "y", tag: "八卦" }),
+    /BOARD_TAG_UNKNOWN/,
+  );
+  await assert.rejects(
+    f.call("agent-1", "board_comment", {
+      postId: help.id,
+      body: "c",
+      tag: "求助",
+    }),
+    /Unrecognized|unrecognized/,
+  );
+  const list = await f.call("agent-2", "board_read", {
+    mode: "posts",
+    tag: "求助",
+  });
+  assert.deepEqual(
+    list.posts.map((p) => p.id),
+    [help.id],
+  );
+  assert.deepEqual(list.tags, ["日常", "求助"]);
+  // A tag dropped from the list stays on old posts and still filters.
+  f.runtime.config.board.tags = ["日常"];
+  assert.equal(
+    (await f.call("agent-2", "board_read", { mode: "posts", tag: "求助" }))
+      .posts[0].tag,
+    "求助",
+  );
+  const args = {
+    title: "重试",
+    body: "x",
+    tag: "日常",
+    requestId: "tag-retry-1",
+  };
+  await f.call("agent-1", "board_post", args);
+  await assert.rejects(
+    f.call("agent-1", "board_post", { ...args, tag: undefined }),
+    /BOARD_REQUEST_CONFLICT/,
+  );
+});
+
+test("free time is told how much is new on the board, mentions above all", async (t) => {
+  const f = setup(t, { dailyPosts: 5 });
+  const materials = () =>
+    subjectMaterials(f.runtime, context(f.runtime, "agent-1", "@subject"));
+  assert.equal(materials().board, undefined);
+  await f.call("agent-0", "board_post", { title: "a", body: "x" });
+  await f.call("agent-2", "board_post", {
+    title: "b",
+    body: "@角色1 看这个",
+    mentions: ["角色1"],
+  });
+  // The agent's own posts are not news to it.
+  await f.call("agent-1", "board_post", { title: "c", body: "x" });
+  const before = materials().board;
+  assert.equal(before.newEntries, 2);
+  assert.equal(before.mentionsOfYou, 1);
+  assert.match(before.notice, /2 条.*其中 1 条 @ 了你/);
+  // No board text reaches the prompt, only counts.
+  assert.doesNotMatch(JSON.stringify(before), /看这个/);
+  await f.call("agent-1", "board_read", { mode: "mentions" }, "@subject");
+  assert.equal(materials().board.mentionsOfYou, 0);
+  assert.equal(materials().board.newEntries, 2);
+  await f.call("agent-1", "board_read", {}, "@subject");
+  assert.equal(materials().board, undefined);
+  f.runtime.config.board.enabled = false;
+  await f
+    .call("agent-0", "board_post", { title: "d", body: "x" })
+    .catch(() => {});
+  assert.equal(materials().board, undefined);
+});
+
+test("the console reacts, filters by tag and sees who retracted", async (t) => {
+  const f = setup(t, { tags: ["日常", "通知"] });
+  const token = randomBytes(32).toString("hex"),
+    app = createServer({ runtime: f.runtime, token });
+  const port = await app.listen();
+  t.after(() => app.close());
+  const api = async (path, data) => {
+    const r = await fetch(`http://127.0.0.1:${port}${path}`, {
+      method: data ? "POST" : "GET",
+      headers: {
+        "x-admin-token": token,
+        ...(data ? { "content-type": "application/json" } : {}),
+      },
+      ...(data ? { body: JSON.stringify(data) } : {}),
+    });
+    return { status: r.status, body: await r.json() };
+  };
+  const note = await api("/api/board/post", {
+    title: "通知",
+    body: "周六大扫除",
+    tag: "通知",
+    requestId: "admin-tag-1",
+  });
+  assert.equal(note.body.tag, "通知");
+  assert.equal(
+    (
+      await api("/api/board/post", {
+        title: "x",
+        body: "y",
+        tag: "八卦",
+        requestId: "admin-tag-2",
+      })
+    ).status,
+    400,
+  );
+  const agentPost = await f.call("agent-0", "board_post", {
+    title: "我的",
+    body: "x",
+  });
+  const reacted = await api("/api/board/react", {
+    id: agentPost.id,
+    emoji: "❤️",
+    on: true,
+  });
+  assert.deepEqual(reacted.body.reactions[0], {
+    emoji: "❤️",
+    count: 1,
+    by: [{ kind: "admin", name: "管理员", me: true }],
+    mine: true,
+  });
+  await f.call("agent-1", "board_react", { id: agentPost.id, emoji: "👍" });
+  const list = await api("/api/board");
+  assert.equal(
+    list.body.usage.find((u) => u.agentId === "agent-1").reactions,
+    1,
+  );
+  assert.deepEqual(list.body.policy.tags, ["日常", "通知"]);
+  assert.deepEqual(
+    (await api(`/api/board?tag=${encodeURIComponent("通知")}`)).body.items.map(
+      (p) => p.id,
+    ),
+    [note.body.id],
+  );
+  const off = await api("/api/board/react", {
+    id: agentPost.id,
+    emoji: "❤️",
+    on: false,
+  });
+  assert.deepEqual(
+    off.body.reactions.map((r) => r.emoji),
+    ["👍"],
+  );
+  await f.call("agent-0", "board_retract", { id: agentPost.id });
+  const thread = await api(`/api/board/post?id=${agentPost.id}`);
+  assert.equal(thread.body.post.removedBy, "author");
+  assert.equal(thread.body.post.reactions, undefined);
 });
