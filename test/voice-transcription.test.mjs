@@ -542,3 +542,50 @@ test("the role form saves transcription settings and keeps them when untouched",
     [true, "asr", "transcribe", 4194304, 2500, { language: "zh" }, 90],
   );
 });
+
+test("automatic ASR cannot export audio retaining peer-space protection from an earlier source", async (t) => {
+  const f = setup(t);
+  await f.runtime.voices.put(
+    "agent-0",
+    wav(),
+    f.runtime.agent("agent-0").voice,
+    { protectedPeerQzoneTargets: ["30000"] },
+  );
+  await f.runtime.ingest("qq-0", privateVoice(84));
+  await drain(f);
+  assert.equal(f.records.length, 1);
+  assert.equal(f.calls.length, 0);
+  assert.equal(rows(f, "voice.transcript").length, 0);
+  assert(codes(f).includes("VOICE_TRANSCRIPTION_DENIED"));
+});
+
+test("transcript derivatives union durable source and audio protection", (t) => {
+  const f = setup(t);
+  const source = f.m.append({
+    dedupe: "protected-voice-source",
+    conversation: GROUP,
+    kind: "message.received",
+    direction: "in",
+    senderId: "30000",
+    body: "voice",
+    payload: { protectedPeerQzoneTargets: ["30000"] },
+  });
+  const row = f.m.db.prepare("SELECT * FROM events WHERE id=?").get(source.id);
+  f.runtime.transcripts.store(
+    { eventId: source.id, conversation: GROUP, seq: source.seq },
+    f.runtime.agent("agent-0"),
+    row,
+    {
+      id: "protected-audio",
+      duration: 1,
+      protectedPeerQzoneTargets: ["30001"],
+    },
+    "private transcript",
+    { serverId: "fixture", tool: "transcribe" },
+  );
+  const [transcript] = rows(f, "voice.transcript");
+  assert.deepEqual(JSON.parse(transcript.payload).protectedPeerQzoneTargets, [
+    "30000",
+    "30001",
+  ]);
+});

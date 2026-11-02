@@ -1,3 +1,4 @@
+import { mergeProtection } from "../memory/protection.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
@@ -75,6 +76,7 @@ export class MediaStore {
       mimeType,
       bytes: buffer.length,
       ...meta,
+      ...mergeProtection(existing, meta),
       protectedOperations:
         existing?.protectedOperations || meta.protectedOperations || false,
       protectedRepositories: [
@@ -300,6 +302,7 @@ export class MediaStore {
         sourceType: "image",
         sourceIndex: index,
         conversation: event.conversation,
+        ...mergeProtection(event),
         protectedOperations: event.protectedOperations === true,
       });
     } finally {

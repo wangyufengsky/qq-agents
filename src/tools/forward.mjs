@@ -1,3 +1,6 @@
+import { mergeProtection } from "../memory/protection.mjs";
+import { contextProtection } from "../core/protected-mind.mjs";
+import { trackPeerQzone } from "../core/peer-qzone-protection.mjs";
 import { recallBoundary } from "../core/recall-boundary.mjs";
 import { createHash } from "node:crypto";
 import { mdToPlain } from "../../vendor/dsh-qq/md-to-plain.js";
@@ -18,6 +21,8 @@ export function ownedEvent(runtime, ctx, id) {
   if (!row) throw Error("RECORD_NOT_FOUND");
   const event = mem.event(row, ctx.conversation);
   recallBoundary(runtime, ctx).assert(event);
+  trackPeerQzone(ctx, event);
+  ctx.persistTaint?.();
   if (event.conversation !== ctx.conversation) {
     ctx.privateRead.add(event.id);
     ctx.persistTaint?.();
@@ -143,6 +148,11 @@ function confirmedForward(runtime, ctx, root) {
   )
     return null;
   return {
+    protection: mergeProtection(
+      sent,
+      sent.payload,
+      ...sources.map((row) => row && JSON.parse(row.payload)),
+    ),
     eventId: sent.id,
     connectionId: sent.connectionId,
     data: { messages: snapshot.messages },
@@ -166,6 +176,41 @@ export async function readForward(
   const root = ownedEvent(runtime, ctx, eventId),
     mem = runtime.memory.bind(ctx.agentId);
   const confirmed = confirmedForward(runtime, ctx, root);
+  const protection = mergeProtection(
+    root,
+    root.payload,
+    confirmed?.protection,
+    contextProtection(runtime, ctx),
+  );
+  const strengthen = (extra = {}) => {
+    const inherited = mergeProtection(protection, extra);
+    recallBoundary(runtime, ctx).assert(inherited);
+    trackPeerQzone(ctx, inherited);
+    for (const repo of inherited.protectedRepositories || [])
+      ctx.privateRead.add("github-private:" + repo);
+    if (inherited.protectedOperations)
+      ctx.privateRead.add("operations:forward:" + eventId);
+    ctx.persistTaint?.();
+    // Cached content stays immutable; provenance may only become more restrictive.
+    // Upgrade all descendants before returning, including nodes outside this page.
+    mem.store.transaction(() => {
+      const rows = mem.db
+        .prepare(
+          "SELECT id,payload FROM events WHERE agent_id=? AND kind IN ('forward.archive','forward.node') AND json_extract(payload,'$.rootEventId')=?",
+        )
+        .all(ctx.agentId, eventId);
+      for (const row of rows) {
+        const payload = JSON.parse(row.payload);
+        const next = { ...payload, ...mergeProtection(payload, inherited) };
+        if (JSON.stringify(next) !== row.payload)
+          mem.db
+            .prepare("UPDATE events SET payload=? WHERE agent_id=? AND id=?")
+            .run(JSON.stringify(next), ctx.agentId, row.id);
+      }
+    });
+    return inherited;
+  };
+  strengthen();
   const localRoot = root.type === "message.sent" && confirmed;
   const roots = localRoot
     ? ["sent:" + confirmed.eventId]
@@ -260,6 +305,7 @@ export async function readForward(
     }
     visited.add(entry.id);
     const confirmedSource = confirmedResources.get(entry.id);
+    let resourceProtection = strengthen(confirmedSource?.protection);
     const key = `forward-resource:${eventId}:${hash(entry.id)}`;
     let cached = mem.db
         .prepare("SELECT payload FROM events WHERE agent_id=? AND dedupe=?")
@@ -269,6 +315,9 @@ export async function readForward(
       warning;
     if (cached) {
       const archive = JSON.parse(cached.payload);
+      resourceProtection = strengthen(
+        mergeProtection(resourceProtection, archive),
+      );
       data = archive.data;
       source = archive.source || "gateway";
       warning = archive.warning;
@@ -316,6 +365,7 @@ export async function readForward(
         kind: "forward.archive",
         body: "合并转发原始归档",
         payload: {
+          ...resourceProtection,
           rootEventId: eventId,
           resourceId: entry.id,
           data,
@@ -359,6 +409,7 @@ export async function readForward(
           ? { occurredAt: time.toISOString() }
           : {}),
         payload: {
+          ...resourceProtection,
           segments: segs,
           node,
           rootEventId: eventId,

@@ -1,4 +1,5 @@
 // @ts-check
+import { peerQzoneSources, trackPeerQzone } from "./peer-qzone-protection.mjs";
 import { githubMarker, privateGithubSources } from "../github/policy.mjs";
 import { sourceClass } from "./outbound-policy.mjs";
 
@@ -6,6 +7,7 @@ import { sourceClass } from "./outbound-policy.mjs";
 /** @param {any} runtime @param {any} ctx */
 export function contextProtection(runtime, ctx) {
   return {
+    protectedPeerQzoneTargets: peerQzoneSources(runtime, ctx),
     protectedRepositories: privateGithubSources(ctx, runtime),
     protectedOperations: [...ctx.privateRead].some(
       (/** @type {string} */ id) =>
@@ -20,6 +22,7 @@ export function trackMindRecords(runtime, ctx, notes, kind = "work-note") {
   for (const note of notes || []) {
     if (!note?.id) continue;
     ctx.privateRead.add(note.id);
+    trackPeerQzone(ctx, note);
     for (const id of note.evidence || []) ctx.privateRead.add(id);
     for (const repo of note.protectedRepositories || [])
       ctx.privateRead.add(githubMarker(repo));

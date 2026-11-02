@@ -1,3 +1,5 @@
+import { peerQzoneSources } from "../core/peer-qzone-protection.mjs";
+import { mergeProtection } from "../memory/protection.mjs";
 import { recallBoundary } from "../core/recall-boundary.mjs";
 import { z } from "zod";
 import { imageMime } from "./media.mjs";
@@ -45,9 +47,10 @@ export function saveFileImage(runtime, ctx, fileId, extra = {}) {
     sourceType: "saved-file-image",
     conversation: ctx.conversation,
     sources: meta.sources,
-    protectedOperations: meta.protectedOperations,
-    protectedRepositories: meta.protectedRepositories,
     ...extra,
+    ...mergeProtection(meta, extra, {
+      protectedPeerQzoneTargets: peerQzoneSources(runtime, ctx),
+    }),
   });
   return {
     mediaId: saved.id,

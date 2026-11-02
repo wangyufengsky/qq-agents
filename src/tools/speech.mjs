@@ -1,3 +1,4 @@
+import { peerQzoneSources } from "../core/peer-qzone-protection.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { execFile } from "node:child_process";
@@ -44,6 +45,7 @@ export async function synthesize(runtime, ctx, { text }) {
       generatedBy: "macos-say",
       spokenText: text,
       protectedRepositories: privateGithubSources(ctx, runtime),
+      protectedPeerQzoneTargets: peerQzoneSources(runtime, ctx),
       protectedOperations: [...ctx.privateRead].some((x) =>
         /^(operations|operations-result):/.test(x),
       ),

@@ -112,6 +112,7 @@ export function subjectMaterials(runtime, ctx) {
           found: (p.found || []).map((f) => f.title),
           next: p.next || "",
           ...(p.restReason ? { restReason: p.restReason } : {}),
+          protectedPeerQzoneTargets: p.protectedPeerQzoneTargets,
           protectedRepositories: p.protectedRepositories,
           protectedOperations: p.protectedOperations,
         };
@@ -159,6 +160,7 @@ export function subjectMaterials(runtime, ctx) {
       target: i.target,
       status: i.status,
       last: i.history?.at(-1)?.reason || null,
+      protectedPeerQzoneTargets: i.protectedPeerQzoneTargets,
       protectedRepositories: i.protectedRepositories,
       protectedOperations: i.protectedOperations,
     }));
@@ -242,11 +244,19 @@ export function subjectMaterials(runtime, ctx) {
       : null;
   const protection = contextProtection(runtime, ctx);
   const restricted =
+    protection.protectedPeerQzoneTargets.length > 0 ||
     protection.protectedOperations ||
     protection.protectedRepositories.length > 0;
-  const strip = ({ protectedRepositories, protectedOperations, ...rest }) => ({
+  const strip = ({
+    protectedPeerQzoneTargets,
+    protectedRepositories,
+    protectedOperations,
+    ...rest
+  }) => ({
     ...rest,
-    ...(protectedRepositories?.length || protectedOperations
+    ...(protectedPeerQzoneTargets?.length ||
+    protectedRepositories?.length ||
+    protectedOperations
       ? { protected: true }
       : {}),
   });

@@ -1,3 +1,4 @@
+import { peerQzoneSources } from "./peer-qzone-protection.mjs";
 import { createHash } from "node:crypto";
 import { humanInput } from "./input-progress.mjs";
 import { publicUrl } from "../apps/urls.mjs";
@@ -20,6 +21,7 @@ export function publicRequestUrl(value) {
   return u.href;
 }
 export function sourceClass(runtime, ctx, id) {
+  if (id.startsWith("peer-qzone:")) return "peer-qzone";
   if (id.startsWith("github-private:")) return "private-repository";
   if (/^(operations|operations-result):/.test(id)) return "operations";
   if (id.startsWith("context:"))
@@ -41,6 +43,8 @@ export function sourceClass(runtime, ctx, id) {
       return "operations";
     if (JSON.parse(row.payload).protectedRepositories?.length)
       return "private-repository";
+    if (JSON.parse(row.payload).protectedPeerQzoneTargets?.length)
+      return "peer-qzone";
     const app = JSON.parse(row.payload).app;
     if (app?.origin === "app-browser" && !app.source) return "public-platform";
     const source = app?.source?.conversation || row.conversation;
@@ -56,9 +60,10 @@ export function sourceClass(runtime, ctx, id) {
   if (diary) {
     if (JSON.parse(diary.metadata).protectedRepositories?.length)
       return "private-repository";
-    return JSON.parse(diary.metadata).protectedOperations
-      ? "operations"
-      : "personal-diary";
+    if (JSON.parse(diary.metadata).protectedOperations) return "operations";
+    if (JSON.parse(diary.metadata).protectedPeerQzoneTargets?.length)
+      return "peer-qzone";
+    return "personal-diary";
   }
   // Deleted legacy records and frozen handoffs retain their protection.
   const note = m.db
@@ -70,6 +75,7 @@ export function sourceClass(runtime, ctx, id) {
     const value = JSON.parse(note.value);
     if (value.protectedRepositories?.length) return "private-repository";
     if (value.protectedOperations) return "operations";
+    if (value.protectedPeerQzoneTargets?.length) return "peer-qzone";
     return "personal-mind-record";
   }
   return "unknown-legacy";
@@ -281,7 +287,11 @@ export function authorizeExternal(
       }
     });
   // Fixed reads have no model-controlled outbound text/URLs; only caller-owned provenance may set this flag.
-  if (!githubRestricted && (fixed || requested || configured))
+  if (
+    !githubRestricted &&
+    !peerQzoneSources(runtime, ctx).length &&
+    (fixed || requested || configured)
+  )
     return {
       requested,
       basis: fixed
@@ -298,7 +308,9 @@ export function authorizeExternal(
   if (
     autonomouslyAllowed(runtime, ctx, request) &&
     !githubRestricted &&
-    !records.some((id) => sourceClass(runtime, ctx, id) === "operations")
+    !records.some((id) =>
+      ["operations", "peer-qzone"].includes(sourceClass(runtime, ctx, id)),
+    )
   )
     return { requested: false, basis: "autonomous-network-permission" };
   if (!records.length)

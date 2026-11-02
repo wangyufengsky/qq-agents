@@ -4,7 +4,13 @@ import { ConfigStore } from "../src/core/config.mjs";
 import { temp } from "./helpers.mjs";
 import { MemoryStore } from "../src/memory/store.mjs";
 import { Runtime } from "../src/core/runtime.mjs";
-import { fixture, config, context, settle } from "./helpers.mjs";
+import {
+  fixture,
+  config,
+  context,
+  settle,
+  disclosureApproval,
+} from "./helpers.mjs";
 import { TaskScheduler } from "../src/core/scheduler.mjs";
 import { TOOL_NAMES, toolSpecs } from "../src/tools/index.mjs";
 
@@ -351,5 +357,59 @@ test("preview marks scheduler quiet hours for group targets but not private targ
     f.s
       .preview("agent-0", { ...input, targets: ["private:30000"] })
       .every((r) => !r.silenced),
+  );
+});
+
+test("peer-tainted owners cannot persist text or AI tasks even with cross-target scheduling and a disclosure grant", async (t) => {
+  const f = setup(t),
+    agent = f.runtime.agent("agent-0"),
+    owner = context(f.runtime, "agent-0", "private:30000");
+  Object.assign(agent.scheduler, {
+    allowAiOtherTargets: true,
+    confirmAiOtherTargets: false,
+  });
+  const existing = f.s.create(
+    "agent-0",
+    task({ targets: ["group:20000"] }),
+    owner,
+  );
+  owner.privateRead.add("peer-qzone:30000");
+  f.runtime.assertDisclosure(owner);
+  assert.throws(
+    () => f.runtime.assertDisclosure(owner, { external: true }),
+    /EXTERNAL_CALL_BLOCKED/,
+  );
+  f.runtime.grant(disclosureApproval(owner));
+  for (const targets of [["group:20000"], ["private:30000"]])
+    for (const kind of ["text", "ai"]) {
+      const input = task({
+        targets,
+        kind,
+        text: "PEER_SCHEDULE_PRIVATE_TEXT",
+        instruction: "PEER_SCHEDULE_PRIVATE_INSTRUCTION",
+      });
+      await assert.rejects(
+        f.runtime.callTool(owner, "qq_schedule_create", input),
+        /RESTRICTED_CONTEXT_MIND_WRITE_BLOCKED/,
+      );
+      await assert.rejects(
+        f.runtime.callTool(owner, "qq_schedule_update", {
+          id: existing.id,
+          patch: input,
+        }),
+        /RESTRICTED_CONTEXT_MIND_WRITE_BLOCKED/,
+      );
+    }
+  assert.equal(f.s.state("agent-0").tasks.length, 1);
+  assert.equal(f.s.state("agent-0").tasks[0].text, "喝水");
+  assert.equal(f.s.list("agent-0", owner).length, 1);
+  f.advance(60001);
+  f.runtime.tick();
+  await settle(f.runtime);
+  const sent = f.runtime.transports.get("qq-0").sent;
+  assert.equal(sent.length, 1);
+  assert.doesNotMatch(
+    JSON.stringify(sent) + JSON.stringify(f.s.state("agent-0")),
+    /PEER_SCHEDULE_PRIVATE/,
   );
 });

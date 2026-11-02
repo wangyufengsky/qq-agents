@@ -1,3 +1,4 @@
+import { mergeProtection } from "./protection.mjs";
 import { withoutClosenessCache } from "../core/closeness.mjs";
 import { recallAnnotation } from "./recalls.mjs";
 import fs from "node:fs";
@@ -80,6 +81,7 @@ function budget(items, maxChars) {
         disclosure: item.disclosure,
         ...(item.updatedAt ? { updatedAt: item.updatedAt } : {}),
         summaryOmitted: true,
+        ...mergeProtection(item),
         ...(item.protectedOperations ? { protectedOperations: true } : {}),
         ...(item.protectedRepositories?.length
           ? { protectedRepositories: item.protectedRepositories }
@@ -321,6 +323,7 @@ class AgentMemory {
         status: outcome.status,
       },
       notice: "发送尝试；正文和发送结果只在 outcome 这条记录里出现一次。",
+      ...mergeProtection(payload),
       protectedRepositories: payload.protectedRepositories || [],
       ...(payload.protectedOperations === true
         ? { protectedOperations: true }
@@ -373,6 +376,7 @@ class AgentMemory {
       direction: row.direction,
       origin: row.origin,
       disclosure: disclosure(row.conversation, current),
+      ...mergeProtection(parse(row.payload)),
       protectedRepositories: parse(row.payload).protectedRepositories || [],
       ...(parse(row.payload).protectedOperations === true
         ? { protectedOperations: true }
@@ -415,6 +419,7 @@ class AgentMemory {
       metadata: parse(row.metadata),
       disclosure: "agent-judged-diary",
       privacy: "personal-diary",
+      ...mergeProtection(parse(row.metadata)),
       protectedOperations: parse(row.metadata).protectedOperations === true,
       protectedRepositories: parse(row.metadata).protectedRepositories || [],
     };
@@ -702,6 +707,7 @@ class AgentMemory {
       totalChars: complete.length,
       disclosure: item.disclosure,
       conversation: item.conversation,
+      ...mergeProtection(item),
       protectedOperations: item.protectedOperations === true,
       protectedRepositories: item.protectedRepositories || [],
     };
@@ -799,20 +805,23 @@ class AgentMemory {
     writtenIn = null,
     protectedOperations = false,
     protectedRepositories = [],
+    protectedPeerQzoneTargets = [],
   ) {
     text(title, 300);
     text(body, 32000);
     if (!title.trim() || !body.trim()) throw Error("EMPTY_DIARY");
     // Only a reference to the mood in effect, never a copy of it.
     const mood = this.identity.currentMood(Date.now()),
+      evidenceMetadata = this.metadata({ people, tags, evidence }),
       metadata = {
-        ...this.metadata({ people, tags, evidence }),
+        ...evidenceMetadata,
+        ...mergeProtection(evidenceMetadata, {
+          protectedPeerQzoneTargets,
+          protectedOperations,
+          protectedRepositories,
+        }),
         writtenIn,
         ...(mood ? { moodId: mood.id } : {}),
-        ...(protectedOperations ? { protectedOperations: true } : {}),
-        ...(protectedRepositories.length
-          ? { protectedRepositories: [...new Set(protectedRepositories)] }
-          : {}),
       },
       id = randomUUID(),
       time = now();
@@ -976,12 +985,21 @@ class AgentMemory {
           .get(this.agentId, id, this.agentId, id)
       )
         throw Error("EVIDENCE_NOT_OWNED");
-    return { people, tags, evidence };
+    const protection = evidence.map((id) => {
+      const row = this.db
+        .prepare(
+          "SELECT payload AS metadata FROM events WHERE agent_id=? AND id=? UNION ALL SELECT metadata FROM diaries WHERE agent_id=? AND id=?",
+        )
+        .get(this.agentId, id, this.agentId, id);
+      return row ? parse(row.metadata) : {};
+    });
+    return { people, tags, evidence, ...mergeProtection(...protection) };
   }
   diaryRevise(
     { id, expectedRevision, title, body, people, tags, evidence },
     protectedOperations = false,
     protectedRepositories = [],
+    protectedPeerQzoneTargets = [],
   ) {
     text(title, 300);
     text(body, 32000);
@@ -993,29 +1011,21 @@ class AgentMemory {
       if (!old) throw Error("RECORD_NOT_FOUND");
       if (old.revision !== expectedRevision) throw Error("REVISION_CONFLICT");
       const previous = parse(old.metadata),
+        evidenceMetadata = this.metadata({
+          people: people ?? previous.people,
+          tags: tags ?? previous.tags,
+          evidence: evidence ?? previous.evidence,
+        }),
         metadata = {
-          ...this.metadata({
-            people: people ?? previous.people,
-            tags: tags ?? previous.tags,
-            evidence: evidence ?? previous.evidence,
+          ...evidenceMetadata,
+          ...mergeProtection(previous, evidenceMetadata, {
+            protectedPeerQzoneTargets,
+            protectedOperations,
+            protectedRepositories,
           }),
           ...(previous.writtenIn ? { writtenIn: previous.writtenIn } : {}),
           // The mood it was written in, not the mood at revision time.
           ...(previous.moodId ? { moodId: previous.moodId } : {}),
-          ...(previous.protectedRepositories?.length ||
-          protectedRepositories.length
-            ? {
-                protectedRepositories: [
-                  ...new Set([
-                    ...(previous.protectedRepositories || []),
-                    ...protectedRepositories,
-                  ]),
-                ],
-              }
-            : {}),
-          ...(previous.protectedOperations || protectedOperations
-            ? { protectedOperations: true }
-            : {}),
         };
       const revision = old.revision + 1,
         time = now();

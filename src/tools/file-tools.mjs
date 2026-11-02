@@ -1,3 +1,8 @@
+import { createHash } from "node:crypto";
+import {
+  trackPeerQzone,
+  peerQzoneSources,
+} from "../core/peer-qzone-protection.mjs";
 import { readFileText, TEXT_FILE } from "./file-text.mjs";
 import { recallBoundary } from "../core/recall-boundary.mjs";
 import { z } from "zod";
@@ -75,6 +80,7 @@ function active(runtime, ctx, permission) {
   return a;
 }
 function protect(ctx, meta) {
+  trackPeerQzone(ctx, meta);
   for (const repo of meta.protectedRepositories || [])
     ctx.privateRead.add(githubMarker(repo));
   if (meta.protectedOperations)
@@ -158,15 +164,35 @@ export async function fileTool(runtime, ctx, tool, args) {
       runtime.assertSafeOutput(ctx, args.text);
       if (!TEXT_FILE.test(args.name))
         throw Error("TEXT_FILE_EXTENSION_REQUIRED");
-      return files.put(
+      const buffer = Buffer.from(args.text);
+      let previous;
+      try {
+        previous = files.metadata(
+          a.id,
+          createHash("sha256").update(buffer).digest("hex"),
+        );
+      } catch (error) {
+        if (error.message !== "FILE_NOT_FOUND") throw error;
+      }
+      if (previous) {
+        recallBoundary(runtime, ctx).assert(previous);
+        protect(ctx, previous);
+      }
+      // A newly authored text contains only this caller's supplied bytes and
+      // metadata. Existing metadata is checked before merging so a hash hit
+      // cannot reveal older sources, while protected local authoring remains valid.
+      const saved = files.put(
         a.id,
-        Buffer.from(args.text),
+        buffer,
         args.name,
         a.files,
         { kind: "generated-text", conversation: ctx.conversation },
         restricted,
         privateGithubSources(ctx, runtime),
+        peerQzoneSources(runtime, ctx),
       );
+      protect(ctx, saved);
+      return saved;
     }
     if (tool === "file_import") {
       const saved = files.import(
@@ -176,12 +202,17 @@ export async function fileTool(runtime, ctx, tool, args) {
         a.files,
       );
       recallBoundary(runtime, ctx).assert(saved);
+      protect(ctx, saved);
       return saved;
     }
     // Ordinary downloads are covered by the persistent file permission. The
     // existing operations-content restriction still applies to outbound URLs.
     runtime.assertDisclosure(ctx);
-    if (privateGithubSources(ctx, runtime).length && args.url)
+    if (
+      (privateGithubSources(ctx, runtime).length ||
+        peerQzoneSources(runtime, ctx).length) &&
+      args.url
+    )
       runtime.authorizeExternal(ctx, {
         tool: "file_download",
         args: { url: args.url },
@@ -291,8 +322,11 @@ export async function fileTool(runtime, ctx, tool, args) {
         ...(source.kind === "web" ? { origin: result.origin } : {}),
       },
       restricted,
+      privateGithubSources(ctx, runtime),
+      peerQzoneSources(runtime, ctx),
     );
     recallBoundary(runtime, ctx).assert(saved);
+    protect(ctx, saved);
     return saved;
   });
 }
