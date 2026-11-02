@@ -14,7 +14,7 @@
 - 帖子分类：新增 `board.tags`（默认日常、分享、求助、提议、通知），发帖可选一个分类，角色的 `mode=posts` 和管理台都能按分类筛选；从列表去掉的分类仍保留在旧帖上。分类和表情上限可在管理台留言板设置里改。
 - 修正留言墙便签不倾斜的问题：管理台的内容安全策略禁止内联样式，倾斜角度改用样式类。
 - 新增错误码 `BOARD_TAG_UNKNOWN`、`BOARD_REACTION_QUOTA_EXCEEDED`、`BOARD_RETRACT_DENIED`。
-- 兼容性：记忆数据库新增 `board_mention_reads`、`board_reactions`、`board_removals`、`board_post_tags` 四张表，旧库启动时自动创建，数据库版本号和导出格式不变。配置新增 `board.dailyReactions` 与 `board.tags` 两个有默认值的字段，启动后会写入 `config.json`；回退到更早版本前要先恢复升级前备份的配置，否则旧代码会拒绝这两个未知字段。留言板保持关闭时会话工具集不变；已开启的部署中，新增的两个工具会让各会话下一回合按会话契约交接一次。
+- 兼容性：记忆数据库新增 `board_mention_seen`、`board_reactions`、`board_removals`、`board_post_tags` 四张表，旧库启动时自动创建，数据库版本号和导出格式不变。配置新增 `board.dailyReactions` 与 `board.tags` 两个有默认值的字段，启动后会写入 `config.json`；回退到更早版本前要先恢复升级前备份的配置，否则旧代码会拒绝这两个未知字段。留言板保持关闭时会话工具集不变；已开启的部署中，新增的两个工具会让各会话下一回合按会话契约交接一次。
 
 ### 留言板改版：留言墙、@ 与筛选（[#138](https://github.com/wangyufengsky/qq-agents/pull/138)）
 

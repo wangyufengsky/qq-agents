@@ -436,18 +436,16 @@ export class Board {
     };
   }
   /** How much this agent has not seen yet: entries past its unread marker,
-   * and mentions of it past both that marker and the mentions it looked up.
-   * Counts only, for the free-time prompt.
+   * and mentions of it past that marker that a mentions lookup has not
+   * returned. Counts only, for the free-time prompt.
    * @param {string} agentId */
   unseen(agentId) {
-    const marker = (/** @type {string} */ table) =>
+    const read =
       /** @type {any} */ (
         this.db
-          .prepare(`SELECT seq FROM ${table} WHERE agent_id=?`)
+          .prepare("SELECT seq FROM board_reads WHERE agent_id=?")
           .get(agentId)
       )?.seq || 0;
-    const read = marker("board_reads"),
-      seen = Math.max(read, marker("board_mention_reads"));
     const live =
       "e.removed_at IS NULL AND (e.post_id IS NULL OR p.removed_at IS NULL)";
     const entries = /** @type {any} */ (
@@ -460,21 +458,21 @@ export class Board {
     const mentions = /** @type {any} */ (
       this.db
         .prepare(
-          `SELECT count(*) AS n FROM board_mentions m JOIN board_entries e ON e.seq=m.entry_seq LEFT JOIN board_entries p ON p.id=e.post_id WHERE m.target_kind='agent' AND m.target_id=? AND e.seq>? AND ${live}`,
+          `SELECT count(*) AS n FROM board_mentions m JOIN board_entries e ON e.seq=m.entry_seq LEFT JOIN board_entries p ON p.id=e.post_id WHERE m.target_kind='agent' AND m.target_id=? AND e.seq>? AND ${live} AND NOT EXISTS(SELECT 1 FROM board_mention_seen s WHERE s.agent_id=m.target_id AND s.entry_seq=m.entry_seq)`,
         )
-        .get(agentId, seen)
+        .get(agentId, read)
     ).n;
     return { entries, mentions };
   }
-  /** Looking up one's mentions counts them as seen, up to the newest shown.
-   * @param {string} agentId @param {number} seq */
-  seeMentions(agentId, seq) {
-    if (seq)
-      this.db
-        .prepare(
-          "INSERT INTO board_mention_reads(agent_id,seq) VALUES(?,?) ON CONFLICT(agent_id) DO UPDATE SET seq=max(seq,excluded.seq)",
-        )
-        .run(agentId, seq);
+  /** Looking up one's mentions counts exactly the returned ones as seen.
+   * Mentions come newest first and page backwards, so a single high-water
+   * mark would also swallow older ones on later pages.
+   * @param {string} agentId @param {number[]} seqs */
+  seeMentions(agentId, seqs) {
+    const seen = this.db.prepare(
+      "INSERT OR IGNORE INTO board_mention_seen(agent_id,entry_seq) VALUES(?,?)",
+    );
+    for (const seq of seqs) seen.run(agentId, seq);
   }
   /** Live entries that mention someone, newest first. Looking them up moves
    * no unread marker, unlike unread().
@@ -520,8 +518,9 @@ export class Board {
     return this.entries([this.get(postId)])[0];
   }
   /** Add or take back one reaction. Only live entries under a live post take
-   * reactions; the daily limit counts reactions still standing, so taking
-   * one back frees its place.
+   * new reactions, but one's own can always be taken back. The daily limit
+   * counts reactions still standing on live entries, so taking one back, or
+   * the entry being hidden, frees its place.
    * @param {{actor: Author, id: string, emoji: string, on: boolean,
    *   now: number, timeZone: string, limit?: number}} input */
   react({ actor, id, emoji, on, now, timeZone, limit }) {
@@ -532,7 +531,7 @@ export class Board {
       const post = row?.post_id
         ? /** @type {any} */ (this.get(row.post_id))
         : row;
-      if (!row || row.removed_at || post?.removed_at)
+      if (!row || (on && (row.removed_at || post?.removed_at)))
         throw Error("BOARD_ENTRY_NOT_FOUND");
       const key = [row.seq, actor.kind, actor.id, emoji];
       const exists = this.db
@@ -548,16 +547,8 @@ export class Board {
           .run(...key);
       else if (!exists) {
         const day = boardDay(now, timeZone);
-        if (limit !== undefined) {
-          const used = /** @type {any} */ (
-            this.db
-              .prepare(
-                "SELECT count(*) AS n FROM board_reactions WHERE actor_kind=? AND actor_id=? AND day=?",
-              )
-              .get(actor.kind, actor.id, day)
-          ).n;
-          if (used >= limit) throw Error("BOARD_REACTION_QUOTA_EXCEEDED");
-        }
+        if (limit !== undefined && this.reactionsUsed(actor, day) >= limit)
+          throw Error("BOARD_REACTION_QUOTA_EXCEEDED");
         this.db
           .prepare(
             "INSERT INTO board_reactions(entry_seq,actor_kind,actor_id,emoji,day,created_at) VALUES(?,?,?,?,?,?)",
@@ -572,13 +563,14 @@ export class Board {
       throw error;
     }
   }
-  /** Reactions an actor added on one day and still stands by.
+  /** Reactions an actor added on one day that still stand on live entries:
+   * someone else hiding an entry must not use up one's quota.
    * @param {Author} actor @param {string} day */
   reactionsUsed(actor, day) {
     return /** @type {any} */ (
       this.db
         .prepare(
-          "SELECT count(*) AS n FROM board_reactions WHERE actor_kind=? AND actor_id=? AND day=?",
+          "SELECT count(*) AS n FROM board_reactions r JOIN board_entries e ON e.seq=r.entry_seq LEFT JOIN board_entries p ON p.id=e.post_id WHERE r.actor_kind=? AND r.actor_id=? AND r.day=? AND e.removed_at IS NULL AND (e.post_id IS NULL OR p.removed_at IS NULL)",
         )
         .get(actor.kind, actor.id, day)
     ).n;

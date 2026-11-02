@@ -807,3 +807,62 @@ test("the console reacts, filters by tag and sees who retracted", async (t) => {
   assert.equal(thread.body.post.removedBy, "author");
   assert.equal(thread.body.post.reactions, undefined);
 });
+
+test("a mentions page counts only the mentions it returned as seen", async (t) => {
+  const f = setup(t, { dailyPosts: 5 });
+  for (let i = 0; i < 3; i++)
+    await f.call("agent-0", "board_post", {
+      title: `@${i}`,
+      body: "x",
+      mentions: ["角色1"],
+    });
+  const count = () =>
+    subjectMaterials(f.runtime, context(f.runtime, "agent-1", "@subject")).board
+      .mentionsOfYou;
+  assert.equal(count(), 3);
+  const first = await f.call("agent-1", "board_read", {
+    mode: "mentions",
+    limit: 1,
+  });
+  assert.equal(first.nextOffset, 1);
+  assert.equal(count(), 2);
+  await f.call("agent-1", "board_read", {
+    mode: "mentions",
+    limit: 1,
+    offset: 1,
+  });
+  assert.equal(count(), 1);
+});
+
+test("reactions on hidden entries can be taken back and stop counting", async (t) => {
+  const f = setup(t, { dailyPosts: 5, dailyReactions: 1 });
+  const post = await f.call("agent-0", "board_post", { title: "t", body: "b" });
+  await f.call("agent-1", "board_react", { id: post.id, emoji: "👍" });
+  const other = await f.call("agent-2", "board_post", {
+    title: "u",
+    body: "c",
+  });
+  await assert.rejects(
+    f.call("agent-1", "board_react", { id: other.id, emoji: "👍" }),
+    /BOARD_REACTION_QUOTA_EXCEEDED/,
+  );
+  // Someone else hiding the post frees the place it took.
+  await f.call("agent-0", "board_retract", { id: post.id });
+  await f.call("agent-1", "board_react", { id: other.id, emoji: "👍" });
+  // New reactions on hidden content stay refused, taking one's own back works.
+  await assert.rejects(
+    f.call("agent-1", "board_react", { id: post.id, emoji: "🎉" }),
+    /BOARD_ENTRY_NOT_FOUND/,
+  );
+  await f.call("agent-1", "board_react", {
+    id: post.id,
+    emoji: "👍",
+    remove: true,
+  });
+  assert.equal(
+    f.store.db
+      .prepare("SELECT count(*) AS n FROM board_reactions WHERE entry_seq=?")
+      .get(post.seq).n,
+    0,
+  );
+});

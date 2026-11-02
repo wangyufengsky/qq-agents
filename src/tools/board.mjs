@@ -214,7 +214,10 @@ export function boardTool(runtime, ctx, name, args) {
     }
     if (args.mode === "mentions") {
       const page = board.mentioning(me, args);
-      board.seeMentions(a.id, page.items[0]?.seq);
+      board.seeMentions(
+        a.id,
+        page.items.map((x) => x.seq),
+      );
       return {
         entries: page.items.map(show),
         total: page.total,
