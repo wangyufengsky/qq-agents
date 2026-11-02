@@ -286,6 +286,7 @@ export class DeliveryService {
       for (const [duration, limit] of [
         [60000, actionBudget.maxPerMinute],
         [3600000, actionBudget.maxPerHour],
+        [86400000, actionBudget.maxPerDay],
       ]) {
         if (limit == null) continue;
         const used = mem.db

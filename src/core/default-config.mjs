@@ -113,6 +113,8 @@ export function defaultConfig() {
             recall: false,
             recallWindowMs: 110000,
             recallMaxPerHour: 3,
+            profile: false,
+            profileMaxPerDay: 3,
           },
           typing: {
             enabled: true,
@@ -176,6 +178,8 @@ export function defaultConfig() {
             recall: false,
             recallWindowMs: 110000,
             recallMaxPerHour: 3,
+            profile: false,
+            profileMaxPerDay: 3,
           },
           typing: {
             enabled: true,

@@ -142,6 +142,16 @@ export function normalizeEvent(raw, connection) {
   };
 }
 
+// Account actions whose missing gateway support is reported as unsupported
+// rather than as an opaque failure.
+const actionUnsupportedChecks = new Set([
+  "delete_msg",
+  "set_msg_emoji_like",
+  "set_qq_profile",
+  "set_self_longnick",
+  "set_qq_avatar",
+]);
+
 export class OneBot extends EventEmitter {
   constructor(config, { fetchImpl = fetch, WebSocketImpl = WebSocket } = {}) {
     super();
@@ -194,10 +204,7 @@ export class OneBot extends EventEmitter {
       throw Error("ONEBOT_UNREACHABLE", { cause });
     }
     if (!response.ok) {
-      if (
-        ["delete_msg", "set_msg_emoji_like"].includes(action) &&
-        response.status === 404
-      ) {
+      if (actionUnsupportedChecks.has(action) && response.status === 404) {
         const error = Error("ONEBOT_REJECTED");
         error.reason = "ACTION_UNSUPPORTED";
         throw error;
@@ -226,7 +233,7 @@ export class OneBot extends EventEmitter {
       else if (/Timeout: NTEvent/i.test(detail))
         error.reason = "GATEWAY_TIMEOUT";
       if (
-        ["delete_msg", "set_msg_emoji_like"].includes(action) &&
+        actionUnsupportedChecks.has(action) &&
         error.reason !== "GATEWAY_TIMEOUT" &&
         (body.retcode === 1404 ||
           body.retcode === 404 ||
@@ -395,6 +402,39 @@ export class OneBot extends EventEmitter {
       emoji_id: String(faceId),
       set: true,
     });
+    if (
+      result === false ||
+      result?.result === false ||
+      (typeof result?.result === "number" && result.result !== 0)
+    )
+      throw Error("ONEBOT_REJECTED");
+    return { confirmed: true };
+  }
+  async profile() {
+    const info = await this.call(
+      "get_stranger_info",
+      { user_id: this.config.accountId, no_cache: true },
+      10000,
+      { maxBytes: 65536 },
+    );
+    if (String(info?.user_id) !== this.config.accountId)
+      throw Error("QQ_ACCOUNT_MISMATCH");
+    const text = (/** @type {unknown} */ value) =>
+      typeof value === "string" ? value.slice(0, 200) : null;
+    return {
+      nickname: text(info.nickname),
+      signature: text(info.long_nick ?? info.longNick ?? info.sign),
+    };
+  }
+  // NapCat keeps the stored signature and gender when set_qq_profile omits them.
+  async updateProfile({ nickname, signature, image }) {
+    const [action, params] =
+      nickname !== undefined
+        ? ["set_qq_profile", { nickname }]
+        : signature !== undefined
+          ? ["set_self_longnick", { longNick: signature }]
+          : ["set_qq_avatar", { file: "base64://" + image.toString("base64") }];
+    const result = await this.call(action, params, 30000);
     if (
       result === false ||
       result?.result === false ||

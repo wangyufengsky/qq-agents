@@ -6,6 +6,14 @@
 
 ## 未发布
 
+### 角色可修改自己的 QQ 昵称、签名和头像
+
+- 新增 `qq_profile_read` 和 `qq_profile_update`：在主人私聊里，角色可以查看自己 QQ 账号的昵称和个性签名，并修改昵称、签名或头像，每次只改一项；头像只能用自己图片库里的 PNG/JPEG/WebP 图片。网关调用 NapCat 的 `get_stranger_info`、`set_qq_profile`、`set_self_longnick`、`set_qq_avatar`。
+- 由新开关 `behavior.actions.profile`（默认关闭）和 `behavior.actions.profileMaxPerDay`（默认每天 3 次，失败和未知也计入）控制，管理台「配置角色」新增“修改自己的 QQ 资料”折叠项。群聊、其他私聊、空闲时间、受保护工作，以及执行主动意图或定时任务的回合都不可用。
+- 修改走统一动作账本：暂停、静默、总发送限速、幂等回执照常生效，不占用或恢复文字回复额度；资料所有人可见，跨聊天来源的内容或图片按外部调用要求披露授权，疑似凭据被拒绝。同一项资料有未确认的尝试时不能换 `requestId` 再改。动作预算新增按天计数。
+- 新增错误码 `PROFILE_ORDINARY_TURN_REQUIRED`、`PROFILE_AVATAR_INVALID`、`PROFILE_RATE_LIMITED`、`PROFILE_UNSUPPORTED`、`PROFILE_UPDATE_UNCONFIRMED`。
+- 兼容性：配置 `behavior.actions` 新增两个有默认值的字段，启动后会写入 `config.json`；回退到更早版本前要先恢复升级前备份的配置，否则旧代码会拒绝这两个未知字段。数据库和导出格式不变。新角色的默认工具目录包含两个新工具，已有角色保存的工具白名单不自动扩充；开关关闭时工具不展示，会话工具集不变，不会引起会话交接。
+
 ### 留言板互动：空闲提示、表情、撤回与分类（[#139](https://github.com/wangyufengsky/qq-agents/pull/139)）
 
 - 空闲时间提示：留言板开启且有没看过的内容时，空闲时间的素材里多一项 `board`，只写“有几条新内容、其中几条 @ 了你”，不带帖子原文，也不唤醒角色或多开回合；用 `board_read` 读过或查过 @ 后数字随之减少。这样被 @ 的角色在下次空闲时会知道，不必碰巧去看。
