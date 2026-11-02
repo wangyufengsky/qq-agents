@@ -6,7 +6,7 @@
 
 ## 未发布
 
-### 角色可修改自己的 QQ 昵称、签名和头像
+### 角色可修改自己的 QQ 昵称、签名和头像（[#140](https://github.com/wangyufengsky/qq-agents/pull/140)）
 
 - 新增 `qq_profile_read` 和 `qq_profile_update`：在主人私聊里，角色可以查看自己 QQ 账号的昵称和个性签名，并修改昵称、签名或头像，每次只改一项；头像只能用自己图片库里的 PNG/JPEG/WebP 图片。网关调用 NapCat 的 `get_stranger_info`、`set_qq_profile`、`set_self_longnick`、`set_qq_avatar`。
 - 由新开关 `behavior.actions.profile`（默认关闭）和 `behavior.actions.profileMaxPerDay`（默认每天 3 次，失败和未知也计入）控制，管理台「配置角色」新增“修改自己的 QQ 资料”折叠项。群聊、其他私聊、空闲时间、受保护工作，以及执行主动意图或定时任务的回合都不可用。
