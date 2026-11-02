@@ -138,6 +138,9 @@ export class MemoryStore {
       CREATE INDEX IF NOT EXISTS board_threads ON board_entries(post_id,seq);
       CREATE INDEX IF NOT EXISTS board_quota ON board_entries(author_kind,author_id,day);
       CREATE TABLE IF NOT EXISTS board_reads(agent_id TEXT PRIMARY KEY,seq INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS board_mentions(entry_seq INTEGER NOT NULL,target_kind TEXT NOT NULL,target_id TEXT NOT NULL,PRIMARY KEY(entry_seq,target_kind,target_id));
+      CREATE INDEX IF NOT EXISTS board_mention_targets ON board_mentions(target_kind,target_id,entry_seq);
+      CREATE TABLE IF NOT EXISTS board_pins(post_id TEXT PRIMARY KEY,pinned_at TEXT NOT NULL);
       `),
       );
       // agentId|eventId of voice messages whose transcript is still running.
