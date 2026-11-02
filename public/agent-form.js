@@ -36,6 +36,7 @@ const AGENT_TOOL_GROUPS = [
       qq_peer_profile_read: "读取当前聊天对象的 QQ 基本资料",
       qq_profile_read: "查看自己的 QQ 资料",
       qq_profile_update: "修改自己的昵称、签名或头像",
+      qq_peer_qzone_read: "读取当前聊天对象的 QQ 空间说说（实验）",
       qzone_read: "查看自己最近的 QQ 空间说说",
       qzone_post: "发 QQ 空间说说（实验）",
       qq_forward_read: "展开合并转发",
@@ -498,6 +499,19 @@ const agentForm = {
             { min: 1, max: 20, step: 1, unit: "次" },
           ) +
           '<p class="hint">默认关闭，还需在“聊天发言”里允许资料工具。只在主人私聊的普通回合和角色自己的空闲时间可用；头像只能用自己图片库里的图片。资料所有人可见，计入总发送限速；失败或未知结果不自动重试。</p>',
+      ) +
+      advanced(
+        this.foldTitle(
+          "读取聊天对象的 QQ 空间（实验）",
+          row.behavior?.actions?.peerQzone ? "已开启" : "已关闭",
+        ),
+        '<input type="hidden" name="peerQzonePresent" value="1">' +
+          check(
+            "peerQzoneEnabled",
+            "允许读取当前私聊对象或当前群成员的最近说说",
+            row.behavior?.actions?.peerQzone,
+          ) +
+          '<p class="hint">默认关闭，还需在聊天发言中允许 qq_peer_qzone_read。仅文字、时间、图片数和评论数；不读取评论或图片内容。好友可见资料不是群公开资料。在群里读取会使该模型会话后续回复持续受披露限制，重启与新回合也不会自动解除，外发需要管理员批准。空间网页接口可能失效或触发风控；读取不授予回复额度。</p>',
       ) +
       advanced(
         this.foldTitle(
@@ -1251,6 +1265,9 @@ const agentForm = {
             Number,
             original.behavior?.actions?.profileMaxPerDay,
           ),
+          peerQzone: f.has("peerQzonePresent")
+            ? f.has("peerQzoneEnabled")
+            : original.behavior?.actions?.peerQzone,
           qzone: f.has("qzoneMaxPerDay")
             ? f.has("qzoneEnabled")
             : original.behavior?.actions?.qzone,

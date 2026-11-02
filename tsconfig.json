@@ -50,6 +50,7 @@
     "src/tools/reactions.mjs",
     "src/tools/profile.mjs",
     "src/core/qzone.mjs",
+    "src/core/peer-qzone.mjs",
     "src/tools/qzone.mjs",
 
     "src/core/rhythm.mjs",

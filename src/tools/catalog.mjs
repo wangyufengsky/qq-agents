@@ -81,6 +81,11 @@ export function toolAvailable(agent, name, conversation) {
       agent.behavior?.actions?.profile === true &&
       profileConversation(agent, conversation)
     );
+  if (name === "qq_peer_qzone_read")
+    return (
+      agent.behavior?.actions?.peerQzone === true &&
+      /^(private|group):[1-9]\d{4,19}$/.test(conversation)
+    );
   if (name === "qzone_read" || name === "qzone_post")
     return (
       agent.behavior?.actions?.qzone === true &&

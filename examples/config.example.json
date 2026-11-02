@@ -89,6 +89,7 @@
           "peerProfile": false,
           "profile": false,
           "profileMaxPerDay": 3,
+          "peerQzone": false,
           "qzone": false,
           "qzoneMaxPerDay": 2
         },
@@ -169,6 +170,7 @@
           "peerProfile": false,
           "profile": false,
           "profileMaxPerDay": 3,
+          "peerQzone": false,
           "qzone": false,
           "qzoneMaxPerDay": 2
         },
