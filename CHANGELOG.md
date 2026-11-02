@@ -6,7 +6,7 @@
 
 ## 未发布
 
-### 实验：角色可发 QQ 空间说说
+### 实验：角色可发 QQ 空间说说（[#141](https://github.com/wangyufengsky/qq-agents/pull/141)）
 
 - 新增 `qzone_read` 和 `qzone_post`：在主人私聊里，角色可以查看自己 QQ 空间最近的说说（文字、时间、评论数、图片数），并发布所有人可见的纯文字说说。NapCat 没有正式接口，网关用 `get_cookies` 取得本账号 QQ 空间网页 cookie、计算 `g_tk`，调用网页端 `emotion_cgi_publish_v6`/`emotion_cgi_msglist_v6`；接口不公开、可能失效或触发风控，尚未经真实账号验收。cookie 与 `g_tk` 只在网关调用内存中使用，不写日志、事件、账本，也不返回模型。
 - 由新开关 `behavior.actions.qzone`（默认关闭）和 `behavior.actions.qzoneMaxPerDay`（默认每天 2 次，失败、被拒和未知也计入）控制，管理台「配置角色」新增“发 QQ 空间说说（实验）”折叠项。群聊、其他私聊、空闲时间、受保护工作，以及执行主动意图或定时任务的回合都不可用。
