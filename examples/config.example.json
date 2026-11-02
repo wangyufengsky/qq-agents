@@ -88,6 +88,7 @@
           "recallMaxPerHour": 3,
           "profile": false,
           "profileMaxPerDay": 3,
+          "peerQzone": false,
           "qzone": false,
           "qzoneMaxPerDay": 2
         },
@@ -167,6 +168,7 @@
           "recallMaxPerHour": 3,
           "profile": false,
           "profileMaxPerDay": 3,
+          "peerQzone": false,
           "qzone": false,
           "qzoneMaxPerDay": 2
         },
