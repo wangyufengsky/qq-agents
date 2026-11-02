@@ -32,7 +32,7 @@ import {
   BOARD_SORTS,
   boardDay,
 } from "./core/board.mjs";
-import { boardActor, boardAuthors } from "./tools/board.mjs";
+import { boardAuthors } from "./tools/board.mjs";
 const publicDir = fileURLToPath(new URL("../public/", import.meta.url));
 // The running release, shown in the console's sidebar.
 const packageVersion = JSON.parse(
@@ -400,10 +400,9 @@ export function createServer({
         // The administrator only @s agents, and only ones that exist now.
         const mentioned = (ids = []) =>
           ids.map((agentId) => {
-            const who = boardActor(runtime.config, agentId);
-            if (who.kind !== "agent" || who.id !== agentId)
+            if (!runtime.config.agents.some((a) => a.id === agentId))
               throw Error("BOARD_MEMBER_UNKNOWN");
-            return who;
+            return { kind: "agent", id: agentId };
           });
         const mentionIds = z.array(z.string().min(1).max(64)).max(5).optional();
         if (req.method === "GET" && url.pathname === "/api/board") {

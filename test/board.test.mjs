@@ -6,6 +6,7 @@ import { createServer } from "../src/server.mjs";
 import { MemoryStore } from "../src/memory/store.mjs";
 import { Board, boardDay } from "../src/core/board.mjs";
 import { toolAvailable } from "../src/tools/catalog.mjs";
+import { boardActor } from "../src/tools/board.mjs";
 
 function setup(t, board = {}) {
   const cfg = config();
@@ -523,4 +524,25 @@ test("the console filters, pins and @s agents through the API", async (t) => {
   assert.equal((await api("/api/board")).body.adminMentions.total, 0);
   const thread = await api(`/api/board/post?id=${admin.body.id}`);
   assert.equal(thread.body.members.length, 3);
+});
+
+test("an agent whose stable id is admin is not taken for the administrator", () => {
+  const cfg = {
+    agents: [
+      { id: "admin", name: "阿德" },
+      { id: "fish", name: "管理员小助手" },
+    ],
+  };
+  assert.deepEqual(boardActor(cfg, "admin"), { kind: "agent", id: "admin" });
+  assert.deepEqual(boardActor(cfg, "@阿德"), { kind: "agent", id: "admin" });
+  assert.deepEqual(boardActor(cfg, "管理员"), { kind: "admin", id: "admin" });
+  assert.deepEqual(boardActor(cfg, "管理员小助手"), {
+    kind: "agent",
+    id: "fish",
+  });
+  assert.deepEqual(boardActor({ agents: [] }, "admin"), {
+    kind: "admin",
+    id: "admin",
+  });
+  assert.throws(() => boardActor(cfg, "nobody"), /BOARD_MEMBER_UNKNOWN/);
 });
