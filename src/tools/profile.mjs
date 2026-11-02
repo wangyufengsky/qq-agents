@@ -1,5 +1,6 @@
 // @ts-check
 import { z } from "zod";
+import { readPeerProfile } from "../core/peer-profile.mjs";
 import { readProfile, updateProfile } from "../core/profile.mjs";
 
 // Single line, no control characters: these fields are shown next to the account.
@@ -12,6 +13,17 @@ const line = (/** @type {number} */ max) =>
     .regex(/^[^\p{Cc}\p{Cf}]+$/u);
 
 export const profileDefinitions = {
+  qq_peer_profile_read: [
+    "只读当前私聊对象或当前群成员的 QQ 基本资料。私聊省略 userId 即当前对象，不能查询其他人；群聊必须指定当前群成员的 userId。只返回昵称、签名、群名片和群内身份等基本字段，不修改资料。",
+    z
+      .object({
+        userId: z
+          .string()
+          .regex(/^[1-9][0-9]{4,19}$/)
+          .optional(),
+      })
+      .strict(),
+  ],
   qq_profile_read: [
     "读取自己 QQ 账号当前的昵称和个性签名。只在主人私聊或自己的空闲时间可用，不修改任何资料。",
     z.object({}).strict(),
@@ -40,6 +52,8 @@ export const profileDefinitions = {
 
 /** @param {any} runtime @param {any} ctx @param {string} name @param {any} args */
 export function profileTool(runtime, ctx, name, args) {
+  if (name === "qq_peer_profile_read")
+    return readPeerProfile(runtime, ctx, args);
   if (name === "qq_profile_read") return readProfile(runtime, ctx);
   if (name === "qq_profile_update") return updateProfile(runtime, ctx, args);
   throw Error("UNKNOWN_TOOL");

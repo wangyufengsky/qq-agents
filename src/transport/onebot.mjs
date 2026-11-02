@@ -462,6 +462,43 @@ export class OneBot extends EventEmitter {
       throw Error("ONEBOT_REJECTED");
     return { confirmed: true };
   }
+  async peerProfile({ userId, groupId }) {
+    const info = await this.call(
+      groupId ? "get_group_member_info" : "get_stranger_info",
+      {
+        user_id: userId,
+        ...(groupId ? { group_id: groupId } : {}),
+        no_cache: true,
+      },
+      10000,
+      { maxBytes: 65536 },
+    );
+    // The uncached member lookup is the live membership check, not historical chat data.
+    if (
+      String(info?.user_id) !== userId ||
+      (groupId && String(info?.group_id) !== groupId)
+    )
+      throw Error("PEER_PROFILE_IDENTITY_MISMATCH");
+    const text = (value) =>
+      typeof value === "string" ? value.slice(0, 200) : null;
+    return {
+      userId,
+      nickname: text(info.nickname),
+      signature: groupId
+        ? null
+        : text(info.long_nick ?? info.longNick ?? info.sign),
+      ...(groupId
+        ? {
+            groupId,
+            card: text(info.card),
+            title: text(info.title),
+            role: ["owner", "admin", "member"].includes(info.role)
+              ? info.role
+              : null,
+          }
+        : {}),
+    };
+  }
   async profile() {
     const info = await this.call(
       "get_stranger_info",
