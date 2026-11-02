@@ -71,6 +71,11 @@ export function toolAvailable(agent, name, conversation) {
       agent.behavior.actions?.react === true &&
       /^(private|group):/.test(conversation)
     );
+  if (name === "qq_group_info_read" || name === "qq_group_members_read")
+    return (
+      agent.behavior?.actions?.groupRead === true &&
+      /^group:[1-9]\d{0,19}$/.test(conversation)
+    );
   if (name === "qq_peer_profile_read")
     return (
       agent.behavior?.actions?.peerProfile === true &&

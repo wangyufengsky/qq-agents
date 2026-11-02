@@ -11,6 +11,9 @@
   },
   "include": [
     "src/core/peer-profile.mjs",
+    "src/core/group-read.mjs",
+    "src/tools/group-read.mjs",
+    "src/transport/group-read.mjs",
     "src/core/board.mjs",
     "src/core/peer-qzone-protection.mjs",
     "src/core/closeness.mjs",

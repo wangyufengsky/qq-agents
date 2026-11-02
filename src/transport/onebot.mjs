@@ -1,3 +1,4 @@
+import { readGroupGateway } from "./group-read.mjs";
 import { EventEmitter } from "node:events";
 import WebSocket from "ws";
 import { attachmentName } from "./attachments.mjs";
@@ -142,7 +143,7 @@ export function normalizeEvent(raw, connection) {
   };
 }
 
-// Account actions whose missing gateway support is reported as unsupported
+// Gateway actions whose missing support is reported as unsupported
 // rather than as an opaque failure.
 const actionUnsupportedChecks = new Set([
   "delete_msg",
@@ -151,6 +152,8 @@ const actionUnsupportedChecks = new Set([
   "set_self_longnick",
   "set_qq_avatar",
   "get_cookies",
+  "get_group_info",
+  "get_group_member_list",
 ]);
 
 const QZONE_ORIGIN = "https://user.qzone.qq.com";
@@ -477,6 +480,12 @@ export class OneBot extends EventEmitter {
     )
       throw Error("ONEBOT_REJECTED");
     return { confirmed: true };
+  }
+  groupInfo(args) {
+    return readGroupGateway(this, "info", args);
+  }
+  groupMembers(args) {
+    return readGroupGateway(this, "members", args);
   }
   async peerProfile({ userId, groupId }) {
     const info = await this.call(

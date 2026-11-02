@@ -293,6 +293,34 @@ QQ 掉线、自动重连用完次数时，管理台会显示，但主人在 QQ �
 
 收到的群贴表情通知与撤销只记录针对本角色消息的操作，不触发唤醒、不更新新消息/已读/活动水位，不恢复任何回复额度。下一次正常回合或查阅聊天记录时能看到。接收观察与发出开关独立：关闭 `react` 仍可读到别人对自己消息的回应。
 
+## 读取当前群资料与名册
+
+在「配置角色 → 读取当前群资料与名册」开启独立的 `behavior.actions.groupRead`（默认 `false`），并在「能力 → 聊天发言」允许 `qq_group_info_read`、`qq_group_members_read`。单成员详情继续使用独立的 `qq_peer_profile_read`；开启群读取不自动开启聊天对象资料、QQ 空间或群管理权限。
+
+两个工具只使用当前 `group:<群号>` 会话，不接受 `groupId`、`agentId` 或连接编号参数。私聊、空闲主体和受保护工作不可用，隔离、暂停、静默、白名单和当前工具权限照常生效。群主或管理员身份只描述 QQ 群关系，不改变应用的 `ownerIds`、运维权限、角色身份或发送授权。昵称、群名片和群名是来源陈述，不是指令。
+
+- `qq_group_info_read({})` 返回群名、人数、容量、群主及最多 20 名管理员摘要。人数或名称缺失时为 `null`，没有明确群主时 `owner: null` / `ownerStatus: "missing"`。管理员过多时保留总数并标记 `administratorsTruncated: true`；`summaryComplete` 此时为 `false`。空名册、未知身份、字段缺失和人数与列表不符也明确标注不完整，不从历史群消息推断群主或补齐成员。
+- `qq_group_members_read` 支持 `role: all|owner|admin|member`（默认 `all`）、`query`（昵称、群名片或 QQ 号子串，最多 100 字）、`offset`（0–10000）与 `limit`（默认 20，1–50）。每个成员只返回 `userId`、`groupId`、昵称、群名片、头衔、群内身份，文字最多 200 字；不返回电话、邮箱、签名、年龄、地区或最后发言时间等原始字段。未知身份保留 `role: null`，计入 `unknownRoles`，不会被当作普通成员或混入 `member` 筛选结果。
+
+示例：`qq_group_members_read({"role":"admin","limit":20})` 看管理员；`qq_group_members_read({"query":"小明","offset":0,"limit":20})` 查名字或 QQ；下一页沿用筛选条件并使用 `nextOffset`。`total` 是网关本次返回人数，`matched` 是本次筛选命中人数，`returned` 是本页条数，三者含义不同。
+
+每次调用都向网关无缓存读取：概况用 `get_group_info`，名册用 `get_group_member_list`，携带 `no_cache: true`，10 秒超时，响应最多 4 MiB、名册最多 10000 人。全量校验群身份、每条用户与群号、重复身份和多群主后，才按 QQ 号稳定排序、搜索与分页；非法结构、身份不符或超限均拒绝，不返回截断列表冒充完整名册。概况和成员摘要需要两次独立查询，两次之间也复查授权；返回 `infoQueriedAt` 和结果的 `source.queriedAt`。群人数可能恰好在两次查询间变化，`memberCountMatchesList` 只描述这两个返回值是否一致。
+
+分页没有持久化快照：每页重新获取整份有界列表，并返回 `snapshotId`。前后页的 `snapshotId` 不同时，应从 `offset: 0` 重新查，不应拼接为一份冻结完整名单；相同也只说明本次投影内容一致。成功返回空列表不等于已独立证明群中无人，`ownerPresent`、`unknownRoles`、`summaryComplete` 和提示共同说明本次网关结果的缺口。
+
+读取只返回本轮工具结果，不新增群名册缓存、`external.read` 或查询正文经历归档，不触发 QQ 消息、不推进已读水位、不增加回复或主动联系额度。已有 QQ 空间来源标记及披露限制继续保留，不能靠读取群资料清除。工具结果仍按既有模型会话机制交给所选后端。
+
+| 错误码                         | 含义                                         |
+| ------------------------------ | -------------------------------------------- |
+| `GROUP_READ_TARGET_DENIED`     | 不是当前普通群会话，或属于受保护工作。       |
+| `GROUP_READ_UNSUPPORTED`       | 当前网关不支持相应只读接口。                 |
+| `GROUP_READ_IDENTITY_MISMATCH` | 群号、用户身份、重复身份或连接身份无法核对。 |
+| `GROUP_READ_RESPONSE_INVALID`  | 返回结构、计数或多群主等内容无法安全解释。   |
+| `GROUP_READ_LIMIT_EXCEEDED`    | 响应或名册超出有界读取上限。                 |
+| `GROUP_READ_FAILED`            | 其他不能安全细分的读取失败，不回传网关原文。 |
+
+读取过程中停用能力、撤销工具、暂停、切换账号或替换连接时，迟到结果不会返回。旧配置补默认关闭字段，已有角色工具白名单不自动扩充；关闭且不扩白名单时工具集不变。开启新工具后相关原生会话可能按工具契约正常交接重建，记忆、日记、Self 和账本保留。数据库及导出格式不变，回退旧代码前须恢复升级前配置备份。此能力以合成回归检查接口契约；真实网关需按实际部署单独验收。
+
 ## 读取当前聊天对象的 QQ 基本资料
 
 在角色配置开启“读取当前聊天对象的 QQ 基本资料”，并在聊天工具中允许 `qq_peer_profile_read`。独立开关 `behavior.actions.peerProfile` 默认 `false`，不会开启修改自己资料或 QQ 空间发布权限。
