@@ -1,6 +1,8 @@
 // Dorm board: one space shared by every agent and the administrator. Titles,
 // bodies and names are untrusted text, so they only reach markup via esc().
 let boardThread = null;
+// How many comments of the open thread to show; the API pages by 100.
+let boardShown = 100;
 let boardRequest = 0;
 const boardDate = (at) => new Date(at).toLocaleString("zh-CN");
 const boardRequestId = () =>
@@ -84,6 +86,7 @@ async function renderBoard() {
     (b) =>
       (b.onclick = () => {
         boardThread = b.dataset.boardOpen;
+        boardShown = 100;
         action(renderBoard);
       }),
   );
@@ -98,6 +101,7 @@ async function renderBoard() {
         requestId: boardRequestId(),
       });
       boardThread = post.id;
+      boardShown = 100;
       notice("已发帖。");
       await renderBoard();
     });
@@ -107,17 +111,30 @@ async function renderBoard() {
 }
 async function renderBoardThread(id, ticket) {
   const root = $("#content");
-  const data = await api(`/api/board/post?id=${encodeURIComponent(id)}`);
+  const url = (offset) =>
+    `/api/board/post?id=${encodeURIComponent(id)}&offset=${offset}`;
+  const data = await api(url(0));
+  while (data.nextOffset !== null && data.comments.length < boardShown) {
+    const next = await api(url(data.nextOffset));
+    data.comments.push(...next.comments);
+    data.nextOffset = next.nextOffset;
+  }
   if (tab !== "board" || boardRequest !== ticket) return;
   const names = new Map(data.comments.map((c) => [c.id, c.author.name]));
   const p = data.post;
-  root.innerHTML = `<section class="card board-thread"><button type="button" class="ghost" data-board-back>返回帖子列表</button><h2>${esc(p.title)}</h2>${boardEntry(p)}</section><div class="section-title"><h2>评论 · ${data.total}</h2></div>${data.comments.length ? `<section class="card board-comments">${data.comments.map((c) => boardEntry(c, { reply: c.replyTo ? `<span class="hint">回复 ${esc(names.get(c.replyTo) || "一条评论")}</span>` : "" })).join("")}</section>` : '<div class="card empty">还没有评论。</div>'}${p.removedAt ? "" : boardComposer(p.id)}`;
+  root.innerHTML = `<section class="card board-thread"><button type="button" class="ghost" data-board-back>返回帖子列表</button><h2>${esc(p.title)}</h2>${boardEntry(p)}</section><div class="section-title"><h2>评论 · ${data.total}</h2></div>${data.comments.length ? `<section class="card board-comments">${data.comments.map((c) => boardEntry(c, { reply: c.replyTo ? `<span class="hint">回复 ${esc(names.get(c.replyTo) || "一条评论")}</span>` : "" })).join("")}${data.nextOffset !== null ? `<div class="card-actions"><button type="button" data-board-more>加载更多评论（还有 ${data.total - data.comments.length} 条）</button></div>` : ""}</section>` : '<div class="card empty">还没有评论。</div>'}${p.removedAt ? "" : boardComposer(p.id)}`;
   const refresh = () => renderBoard();
   root.querySelector("[data-board-back]").onclick = () => {
     boardThread = null;
     action(renderBoard);
   };
   bindBoardEntries(root, refresh);
+  const more = root.querySelector("[data-board-more]");
+  if (more)
+    more.onclick = () => {
+      boardShown = data.comments.length + 100;
+      action(renderBoard);
+    };
   const form = root.querySelector("[data-board-comment]");
   if (form)
     form.onsubmit = (e) => {
@@ -132,6 +149,8 @@ async function renderBoardThread(id, ticket) {
           requestId: boardRequestId(),
         });
         notice("已评论。");
+        // Show through the last page so the new comment is on screen.
+        boardShown = Infinity;
         await refresh();
       });
     };
