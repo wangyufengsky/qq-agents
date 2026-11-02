@@ -6,6 +6,15 @@
 
 ## 未发布
 
+### 网关不可达与请求错误不再报成内部错误（[#135](https://github.com/wangyufengsky/qq-agents/pull/135)）
+
+- NapCat 的 HTTP 接口连不上时（进程未运行、端口拒绝、地址无法解析），OneBot 请求改为返回已登记的 `ONEBOT_UNREACHABLE`（503，可重试），不再以 `INTERNAL_ERROR`/500 离开进程。QQ 掉线期间在管理台点“连接”会看到准确原因，自动重连的最近失败原因也从泛化的 `CONNECTION_FAILED` 变为该错误码。请求超时和主动取消保持原有错误名，图片下载等既有映射不变；发送失败仍按“结果未知”记账，不改变投递对账。
+- `doctor` 检查 OneBot 时继续显示底层原因（如 `ECONNREFUSED`、`ENOTFOUND`）及对应修复提示。
+- DSH 桌面实例退出或换了地址后，读取模型目录（管理台“模型目录”、`robots.mjs --resume` 的就绪检查）返回已登记的 `DSH_INSTANCE_UNAVAILABLE`（503），不再是 `INTERNAL_ERROR`。
+- 登记 OpenAI 兼容后端已在使用的 `OPENAI_*` 错误码，它们经管理接口返回时不再变成 `INTERNAL_ERROR`；`OPENAI_UNREACHABLE` 归为 503。
+- 处理函数主动抛出的 `INVALID_REQUEST`（例如带多余字段的维护请求）返回 400，不再让诊断归类自身出错而直接断开连接；读取聊天时间线既没有来源也没有锚点时返回 `INVALID_MEMORY_SCOPE`（400）。
+- 补充网关拒绝连接、超时与取消、管理台连接、DSH 实例消失、维护请求、时间线参数及 doctor 提示的回归测试。不改变配置、权限默认值和数据库格式。
+
 ### 别处近况补上自己在别处说过的话（[#134](https://github.com/wangyufengsky/qq-agents/pull/134)）
 
 - 别处近况一行新增 `yourWords`：本角色最近在别的群里已确认发出的话，给 80 字以内摘录、来源群、对象和回查入口，不再要求与本轮的人有 @ 或引用来往。原因：上线后主人在群里很少 @ 角色，私聊回合的别处近况常常为空，角色感知不到自己刚在群里说过什么。

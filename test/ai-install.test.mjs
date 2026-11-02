@@ -359,3 +359,34 @@ test("doctor never starts a Codex app-server while a console holds the data dire
   const check = report.checks.find((c) => c.id === "backend:codex");
   assert.equal(check.status, "skip");
 });
+
+test("doctor names the socket failure behind an unreachable NapCat", async (t) => {
+  const root = temp(t);
+  init({ root, answers: answers(), env: {} });
+  const refused = () =>
+    Promise.reject(
+      new TypeError("fetch failed", {
+        cause: Object.assign(Error("connect ECONNREFUSED"), {
+          code: "ECONNREFUSED",
+        }),
+      }),
+    );
+  let report = await runDoctor({
+    root,
+    env: {},
+    probeBackends: false,
+    fetchImpl: refused,
+  });
+  let check = report.checks.find((c) => c.id === "onebot:qq-main");
+  assert.equal(check.detail, "ECONNREFUSED");
+  assert.match(check.fix, /NapCat 正在运行/);
+  report = await runDoctor({
+    root,
+    env: {},
+    probeBackends: false,
+    fetchImpl: () => Promise.reject(new TypeError("fetch failed")),
+  });
+  check = report.checks.find((c) => c.id === "onebot:qq-main");
+  assert.equal(check.detail, "ONEBOT_UNREACHABLE");
+  assert.match(check.fix, /连不上 NapCat/);
+});

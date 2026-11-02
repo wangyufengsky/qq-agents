@@ -67,6 +67,8 @@ const onebotFix = {
     "找不到 OneBot 主机：Docker 服务名只能在容器网络内解析，请在 qq-agents 容器里运行 doctor",
   ONEBOT_TIMEOUT:
     "NapCat 没有响应：确认 QQ 已登录完成（扫码后需要等几秒），再重试",
+  ONEBOT_UNREACHABLE:
+    "连不上 NapCat：确认 NapCat 正在运行，且 OneBot HTTP 服务器的地址和端口与配置一致",
 };
 const backendFix = {
   OPENAI_AUTH_FAILED: "API key 被拒绝：重新运行 setup secret 写入正确的 key",
@@ -235,7 +237,14 @@ export async function runDoctor({
           `logged in as the configured account${status.online ? ", online" : ", but not online"}`,
         );
       } catch (error) {
-        const code = codeOf(error);
+        // The socket-level code (refused, unknown host) says more to an
+        // installer than the generic outage code it is wrapped in.
+        const network =
+          error?.message === "ONEBOT_UNREACHABLE"
+            ? codeOf(error.cause)
+            : undefined;
+        const code =
+          network && network !== "CHECK_FAILED" ? network : codeOf(error);
         add(
           "onebot:" + c.id,
           "fail",

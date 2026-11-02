@@ -7,6 +7,7 @@ import { DshBackend } from "../src/backends/dsh.mjs";
 import { CodexRpc } from "../vendor/local-bridge/codex-rpc.mjs";
 import { sessionSignature } from "../src/backends/session-contract.mjs";
 import { config, temp } from "./helpers.mjs";
+import { classifyError } from "../src/core/diagnostics.mjs";
 
 test("Codex health probes fresh account and models instead of reporting a cached catalog", async (t) => {
   const cfg = config(1),
@@ -108,6 +109,33 @@ test("DSH health reads grouped provider catalog and verifies configured model av
   assert.equal((await backend.health()).models.length, 1);
   backend.config.model = "missing";
   await assert.rejects(backend.health(), /BACKEND_MODEL_UNAVAILABLE/);
+});
+
+test("DSH model catalog from a vanished desktop instance reports DSH_INSTANCE_UNAVAILABLE", async (t) => {
+  const cfg = config(1);
+  const backend = new DshBackend(cfg.backends[0], cfg.agents[0], {
+    root: temp(t),
+    client: {
+      callUnary: async () => {
+        throw new TypeError("fetch failed");
+      },
+    },
+  });
+  t.after(() => backend.close());
+  const error = await backend.models().catch((e) => e);
+  assert.equal(error.message, "DSH_INSTANCE_UNAVAILABLE");
+  assert.deepEqual(classifyError(error), {
+    code: "DSH_INSTANCE_UNAVAILABLE",
+    status: 503,
+    retryable: true,
+  });
+  // A protocol-level refusal is not a lost instance and keeps its own error.
+  backend.client = {
+    callUnary: async () => {
+      throw Error("BACKEND_MODEL_UNAVAILABLE");
+    },
+  };
+  await assert.rejects(backend.models(), /BACKEND_MODEL_UNAVAILABLE/);
 });
 
 test("Codex RPC retains protocol codes needed to distinguish temporary resume rejection", async () => {
