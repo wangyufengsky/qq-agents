@@ -113,9 +113,9 @@ export async function externalResult(runtime, ctx, args, result) {
         item.mimeType,
         meta,
       );
-      recallBoundary(runtime, ctx).assert(
-        runtime.media.metadata(ctx.agentId, m.id),
-      );
+      const stored = runtime.media.metadata(ctx.agentId, m.id);
+      recallBoundary(runtime, ctx).assert(stored);
+      taintMedia(ctx, stored);
       addText(JSON.stringify({ generatedMedia: m }));
       content.push(runtime.media.read(ctx.agentId, m.id));
     } else {
@@ -132,6 +132,7 @@ export async function externalResult(runtime, ctx, args, result) {
           title: "外部工具音频",
         });
       recallBoundary(runtime, ctx).assert(m);
+      taintMedia(ctx, m);
       addText(JSON.stringify({ generatedAudio: m }));
       content.push(runtime.voices.read(ctx.agentId, m.id));
     }

@@ -1,3 +1,4 @@
+import { peerQzoneSources } from "./peer-qzone-protection.mjs";
 import { containsCredential } from "./secrets.mjs";
 import { randomUUID } from "node:crypto";
 import { allowed, inSilence } from "./config.mjs";
@@ -142,6 +143,10 @@ export class TaskScheduler {
   validate(id, input, ctx, old = {}) {
     const a = this.authorize(id, ctx),
       p = a.scheduler;
+    // A later dispatch creates a fresh context. A disclosure grant for this
+    // turn cannot authorize saving peer material for that future recipient.
+    if (ctx && peerQzoneSources(this.runtime, ctx).length)
+      throw Error("RESTRICTED_CONTEXT_MIND_WRITE_BLOCKED");
     const t = { ...old, ...input };
     if (!["text", "ai"].includes(t.kind)) throw Error("INVALID_TASK_KIND");
     if (typeof t.name !== "string" || t.name.length > 100)

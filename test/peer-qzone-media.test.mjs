@@ -228,3 +228,56 @@ test("verified export restore reconstructs native image protection without copyi
     0,
   );
 });
+
+test("external image and audio hash collisions restore protection before returning bytes", async (t) => {
+  for (const kind of ["image", "audio"]) {
+    const f = fixture(t, { cfg: config(1) }),
+      ctx = context(f.runtime, "agent-0", "private:30000");
+    f.runtime.media = new MediaStore(path.join(f.root, "media"));
+    f.runtime.voices = new VoiceStore(path.join(f.root, "voices"), {
+      probe: async () => ({ ok: true, codec: "pcm", duration: 1 }),
+    });
+    const buffer = kind === "image" ? png : Buffer.alloc(44);
+    if (kind === "audio") {
+      buffer.write("RIFF");
+      buffer.write("WAVE", 8);
+      await f.runtime.voices.put(
+        "agent-0",
+        buffer,
+        f.runtime.agent("agent-0").voice,
+        protection,
+      );
+    } else f.runtime.media.put("agent-0", buffer, "image/png", protection);
+    const response = {
+      content: [
+        {
+          type: kind,
+          mimeType: kind === "image" ? "image/png" : "audio/wav",
+          data: buffer.toString("base64"),
+        },
+      ],
+    };
+    await externalResult(
+      f.runtime,
+      ctx,
+      { serverId: "fixture", tool: kind },
+      response,
+    );
+    assert(ctx.privateRead.has("peer-qzone:30000"));
+    assert(
+      f.store
+        .bind("agent-0")
+        .state("private:30000")
+        .disclosureTaint.includes("peer-qzone:30000"),
+    );
+    await assert.rejects(
+      externalResult(
+        f.runtime,
+        context(f.runtime),
+        { serverId: "fixture", tool: kind },
+        response,
+      ),
+      /RECALL_SOURCE_NOT_ALLOWED/,
+    );
+  }
+});

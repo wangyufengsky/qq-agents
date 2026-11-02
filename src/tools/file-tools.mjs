@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   trackPeerQzone,
   peerQzoneSources,
@@ -163,9 +164,26 @@ export async function fileTool(runtime, ctx, tool, args) {
       runtime.assertSafeOutput(ctx, args.text);
       if (!TEXT_FILE.test(args.name))
         throw Error("TEXT_FILE_EXTENSION_REQUIRED");
-      return files.put(
+      const buffer = Buffer.from(args.text);
+      let previous;
+      try {
+        previous = files.metadata(
+          a.id,
+          createHash("sha256").update(buffer).digest("hex"),
+        );
+      } catch (error) {
+        if (error.message !== "FILE_NOT_FOUND") throw error;
+      }
+      if (previous) {
+        recallBoundary(runtime, ctx).assert(previous);
+        protect(ctx, previous);
+      }
+      // A newly authored text contains only this caller's supplied bytes and
+      // metadata. Existing metadata is checked before merging so a hash hit
+      // cannot reveal older sources, while protected local authoring remains valid.
+      const saved = files.put(
         a.id,
-        Buffer.from(args.text),
+        buffer,
         args.name,
         a.files,
         { kind: "generated-text", conversation: ctx.conversation },
@@ -173,6 +191,8 @@ export async function fileTool(runtime, ctx, tool, args) {
         privateGithubSources(ctx, runtime),
         peerQzoneSources(runtime, ctx),
       );
+      protect(ctx, saved);
+      return saved;
     }
     if (tool === "file_import") {
       const saved = files.import(
@@ -182,6 +202,7 @@ export async function fileTool(runtime, ctx, tool, args) {
         a.files,
       );
       recallBoundary(runtime, ctx).assert(saved);
+      protect(ctx, saved);
       return saved;
     }
     // Ordinary downloads are covered by the persistent file permission. The
@@ -305,6 +326,7 @@ export async function fileTool(runtime, ctx, tool, args) {
       peerQzoneSources(runtime, ctx),
     );
     recallBoundary(runtime, ctx).assert(saved);
+    protect(ctx, saved);
     return saved;
   });
 }

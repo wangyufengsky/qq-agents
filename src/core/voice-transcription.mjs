@@ -1,3 +1,4 @@
+import { mergeProtection } from "../memory/protection.mjs";
 import { allowed } from "./config.mjs";
 import { knownErrorCodes } from "./error-codes.mjs";
 import { sourceClass } from "./outbound-policy.mjs";
@@ -192,6 +193,10 @@ export class VoiceTranscription {
       // An opaque SILK file has no measurable length to hold to the limit.
       if (!(audio.duration > 0))
         throw Error("VOICE_TRANSCRIPTION_FORMAT_UNSUPPORTED");
+      // Content-addressed audio can retain protected provenance even when a
+      // fresh conversation has not read its original source event.
+      if (audio.protectedPeerQzoneTargets?.length)
+        throw Error("VOICE_TRANSCRIPTION_DENIED");
       // The download took time: pause, protection, allowlist and limits are
       // checked again, and the call uses the settings in force now.
       a = r.agent(job.agentId);
@@ -264,6 +269,7 @@ export class VoiceTranscription {
       occurredAt: row.occurred_at,
       body: text.slice(0, MAX_TEXT),
       payload: {
+        ...mergeProtection(JSON.parse(row.payload), audio),
         sourceEventId: job.eventId,
         sourceMessageId: row.message_id,
         audioId: audio.id,

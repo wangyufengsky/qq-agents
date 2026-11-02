@@ -1,5 +1,6 @@
 // @ts-check
 import { z } from "zod";
+import { peerQzoneSources } from "../core/peer-qzone-protection.mjs";
 import { capturePublicPage } from "./public-screenshot.mjs";
 import { saveFileImage } from "./saved-media.mjs";
 import { imageMime } from "./media.mjs";
@@ -117,6 +118,7 @@ export async function screenshotTool(runtime, ctx, name, args) {
       },
       false,
       privateGithubSources(ctx, runtime),
+      peerQzoneSources(runtime, ctx),
     );
     return {
       ...saveFileImage(runtime, ctx, file.fileId, {

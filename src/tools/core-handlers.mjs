@@ -244,6 +244,11 @@ async function handle_sticker_list(runtime, ctx, args, name) {
   return rows;
 }
 async function handle_sticker_collect(runtime, ctx, args, name) {
+  const meta = runtime.media.metadata(ctx.agentId, args.mediaId);
+  recallBoundary(runtime, ctx).assert(meta);
+  taintMedia(ctx, meta);
+  if (peerQzoneSources(runtime, ctx).length)
+    throw Error("RESTRICTED_CONTEXT_MIND_WRITE_BLOCKED");
   return runtime.media.collect(ctx.agentId, args.mediaId, args);
 }
 async function handle_sticker_read(runtime, ctx, args, name) {

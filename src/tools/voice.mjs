@@ -221,6 +221,7 @@ export class VoiceStore {
       {
         sourceEventId: event.id,
         conversation: event.conversation,
+        ...mergeProtection(event, event.payload),
         title: "收到的语音",
       },
     );

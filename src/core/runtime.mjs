@@ -1,3 +1,4 @@
+import { contextProtection } from "./protected-mind.mjs";
 import {
   peerQzoneSources,
   peerQzoneMarker,
@@ -932,6 +933,7 @@ export class Runtime {
           payload: {
             tool: name,
             request: args,
+            ...contextProtection(this, ctx),
             epistemic: "external-source-claim",
             truncated: JSON.stringify(result).length > 20000,
           },
