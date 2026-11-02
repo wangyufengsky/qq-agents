@@ -306,6 +306,8 @@ export const SUBJECT_TOOLS = [
   "intent_list",
   "intent_update",
   "subject_log",
+  "qq_profile_read",
+  "qq_profile_update",
 ];
 function executeMindTool(runtime, ctx, name, args) {
   const a = runtime.agent(ctx.agentId),

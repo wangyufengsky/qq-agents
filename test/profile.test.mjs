@@ -18,6 +18,7 @@ function setup(t, actions = { profile: true }) {
   const cfg = config(2);
   cfg.agents[0].ownerIds = ["30000"];
   cfg.agents[0].allow.users.push("30001");
+  cfg.agents[0].subject = { enabled: true };
   cfg.agents[0].behavior.actions = actions;
   cfg.agents[0].tools.push("qq_profile_read", "qq_profile_update");
   const f = fixture(t, { cfg: validateConfig(cfg) });
@@ -66,12 +67,8 @@ test("profile tools default off and only appear in an owner's private chat", asy
   a.behavior.actions.profile = true;
   assert(runtime.toolsFor(a, OWNER).includes("qq_profile_update"));
   assert(runtime.toolsFor(a, OWNER).includes("qq_profile_read"));
-  for (const elsewhere of [
-    "group:20000",
-    "private:30001",
-    "@subject",
-    "@work:x",
-  ])
+  assert(runtime.toolsFor(a, "@subject").includes("qq_profile_update"));
+  for (const elsewhere of ["group:20000", "private:30001", "@work:x"])
     assert(!runtime.toolsFor(a, elsewhere).includes("qq_profile_update"));
 });
 
@@ -303,4 +300,65 @@ test("OneBot maps profile changes to NapCat actions and rejects failed results",
     data: { user_id: 99999, nickname: "别人" },
   };
   await assert.rejects(bot.profile(), /QQ_ACCOUNT_MISMATCH/);
+});
+
+test("free time can change the profile without counting as a contact", async (t) => {
+  const f = setup(t);
+  const ctx = context(f.runtime, "agent-0", "@subject");
+  const before = structuredClone(f.mem.state("@subject"));
+  const result = await update(
+    f,
+    { requestId: "idle-1", nickname: "空闲改名" },
+    ctx,
+  );
+  assert.equal(result.status, "sent");
+  assert.deepEqual(f.calls, [{ nickname: "空闲改名" }]);
+  const after = f.mem.state("@subject");
+  assert.equal(after.lastContactAt, before.lastContactAt);
+  assert.deepEqual(after.contacts || [], before.contacts || []);
+  // Ordinary QQ messages stay unavailable in free time.
+  await assert.rejects(
+    f.runtime.callTool(ctx, "qq_send", { requestId: "idle-msg", text: "嗨" }),
+  );
+});
+
+test("free-time avatars and recollections from chats still need a grant", async (t) => {
+  const f = setup(t);
+  const ctx = context(f.runtime, "agent-0", "@subject");
+  const fromChat = f.runtime.media.put("agent-0", png, "image/png", {
+    saved: true,
+    conversation: OWNER,
+    sourceEventId: "evt-owner",
+  });
+  await assert.rejects(
+    update(f, { requestId: "idle-avatar", mediaId: fromChat.id }, ctx),
+    /PRIVATE_RECOLLECTION_EXTERNAL_CALL_BLOCKED/,
+  );
+  const fresh = context(f.runtime, "agent-0", "@subject");
+  fresh.privateRead.add("evt-group-message");
+  await assert.rejects(
+    update(f, { requestId: "idle-sign", signature: "群里看到的话" }, fresh),
+    /PRIVATE_RECOLLECTION_EXTERNAL_CALL_BLOCKED/,
+  );
+  assert.equal(f.calls.length, 0);
+});
+
+test("free-time profile changes respect quiet hours", async (t) => {
+  const f = setup(t);
+  const a = f.runtime.agent("agent-0");
+  a.subject.reviewInSilence = true;
+  a.silence = [
+    {
+      start: "00:00",
+      end: "23:59",
+      days: [0, 1, 2, 3, 4, 5, 6],
+      timezone: "UTC",
+    },
+  ];
+  const ctx = context(f.runtime, "agent-0", "@subject");
+  await assert.rejects(
+    update(f, { requestId: "quiet", nickname: "安静时段" }, ctx),
+    /QUIET_HOURS/,
+  );
+  assert.equal(f.calls.length, 0);
 });

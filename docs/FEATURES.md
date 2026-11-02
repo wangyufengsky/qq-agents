@@ -227,7 +227,7 @@ macOS 本机 TTS：将角色 `voice.tts` 配为 `{"enabled":true,"voice":"Tingti
 
 ## 修改自己的 QQ 资料
 
-管理员可按角色开启 `behavior.actions.profile` 并允许 `qq_profile_read`、`qq_profile_update`，让角色在主人私聊里查看和修改自己 QQ 账号的昵称、个性签名或头像（头像取自自己的图片库）。默认关闭，每天合计最多 3 次尝试，走统一动作账本，结果未知时不换编号重试；参数见[配置说明](CONFIGURATION.md#修改自己的-qq-资料)。
+管理员可按角色开启 `behavior.actions.profile` 并允许 `qq_profile_read`、`qq_profile_update`，让角色在主人私聊或自己的空闲时间里查看和修改自己 QQ 账号的昵称、个性签名或头像（头像取自自己的图片库）。默认关闭，每天合计最多 3 次尝试，走统一动作账本，结果未知时不换编号重试；参数见[配置说明](CONFIGURATION.md#修改自己的-qq-资料)。
 
 ## 撤回自己刚发的消息
 
