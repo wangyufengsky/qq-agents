@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { toolSpecs } from "./specs.mjs";
+import { profileConversation } from "../core/profile.mjs";
 
 export const discoveryInput = z
   .object({
@@ -69,6 +70,11 @@ export function toolAvailable(agent, name, conversation) {
     return (
       agent.behavior.actions?.react === true &&
       /^(private|group):/.test(conversation)
+    );
+  if (name === "qq_profile_read" || name === "qq_profile_update")
+    return (
+      agent.behavior?.actions?.profile === true &&
+      profileConversation(agent, conversation)
     );
   if (name === "qq_recall")
     return (

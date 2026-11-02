@@ -33,6 +33,8 @@ const AGENT_TOOL_GROUPS = [
       qq_send_poke: "拍一拍",
       qq_react: "给消息贴表情回应",
       qq_recall: "撤回自己刚发的消息",
+      qq_profile_read: "查看自己的 QQ 资料",
+      qq_profile_update: "修改自己的昵称、签名或头像",
       qq_forward_read: "展开合并转发",
       qq_forward_send: "发送合并转发",
       qq_cross_group_query: "查询已授权的跨群统计",
@@ -462,6 +464,24 @@ const agentForm = {
             { min: 1, max: 60, step: 1, unit: "次" },
           ) +
           '<p class="hint">还需在聊天工具中允许“撤回自己刚发的消息”。只限本角色本会话已确认发送的消息；撤回计入总限速，不恢复文字回复额度。失败或未知结果不自动重试，原文保留并标注撤回。</p>',
+      ) +
+      advanced(
+        this.foldTitle(
+          "修改自己的 QQ 资料",
+          row.behavior?.actions?.profile ? "已开启" : "已关闭",
+        ),
+        check(
+          "profileEnabled",
+          "允许修改自己的昵称、签名和头像",
+          row.behavior?.actions?.profile,
+        ) +
+          range(
+            "profileMaxPerDay",
+            "每天最多修改",
+            row.behavior?.actions?.profileMaxPerDay ?? 3,
+            { min: 1, max: 20, step: 1, unit: "次" },
+          ) +
+          '<p class="hint">默认关闭，还需在“聊天发言”里允许资料工具。只在主人私聊的普通回合和角色自己的空闲时间可用；头像只能用自己图片库里的图片。资料所有人可见，计入总发送限速；失败或未知结果不自动重试。</p>',
       ) +
       advanced(
         this.foldTitle(
@@ -1184,6 +1204,15 @@ const agentForm = {
             original.behavior?.actions?.recallMaxPerHour ?? 3,
             Number,
             original.behavior?.actions?.recallMaxPerHour,
+          ),
+          profile: f.has("profileMaxPerDay")
+            ? f.has("profileEnabled")
+            : original.behavior?.actions?.profile,
+          profileMaxPerDay: edited(
+            "profileMaxPerDay",
+            original.behavior?.actions?.profileMaxPerDay ?? 3,
+            Number,
+            original.behavior?.actions?.profileMaxPerDay,
           ),
         },
         // A form without these fields keeps the stored switch and window.

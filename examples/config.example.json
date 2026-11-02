@@ -85,7 +85,9 @@
           "reactMaxPerMinute": 3,
           "recall": false,
           "recallWindowMs": 110000,
-          "recallMaxPerHour": 3
+          "recallMaxPerHour": 3,
+          "profile": false,
+          "profileMaxPerDay": 3
         },
         "typing": {
           "enabled": true,
@@ -160,7 +162,9 @@
           "reactMaxPerMinute": 3,
           "recall": false,
           "recallWindowMs": 110000,
-          "recallMaxPerHour": 3
+          "recallMaxPerHour": 3,
+          "profile": false,
+          "profileMaxPerDay": 3
         },
         "typing": {
           "enabled": true,

@@ -54,6 +54,12 @@ export function safeToolFailure(error) {
   const hints = {
     REACT_ALREADY_ATTEMPTED:
       "This message and face already have a pending or unknown reaction. Do not submit the same reaction with another requestId. Inspect the original delivery receipt; waiting, rewriting the reference or starting another turn does not establish non-delivery.",
+    PROFILE_UPDATE_UNCONFIRMED:
+      "An earlier change of this profile field is still pending or unknown and may already be visible. Do not submit it again with another requestId; the administrator reconciles it in the console.",
+    PROFILE_ORDINARY_TURN_REQUIRED:
+      "Profile changes are only available in your own free time or an ordinary reply turn of the owner's private chat, not while carrying out a proactive intent or scheduled task. Nothing was changed.",
+    PROFILE_UNSUPPORTED:
+      "The gateway does not support this profile action. Nothing was confirmed. Do not retry with another field or requestId to work around it.",
     REACT_UNSUPPORTED:
       "The gateway does not support this reaction action. No reaction was confirmed. Do not retry another message, face or requestId to work around missing gateway support.",
     INVALID_MEMORY_SCOPE:

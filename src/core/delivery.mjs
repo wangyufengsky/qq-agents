@@ -205,11 +205,13 @@ export class DeliveryService {
     );
     if (mem.state(ctx.conversation).silenceUntil > runtime.now())
       throw Error("CONVERSATION_SILENCED");
-    // Recall only removes an already-confirmed message. A completed contact
-    // intent must not prevent that cleanup; fresh outward actions still need
-    // the ordinary intent decision and contact checks.
-    const cleanupAction = action && actionBudget?.kind === "recall";
-    const proactive = cleanupAction
+    // Recall only removes an already-confirmed message, and a profile change
+    // contacts nobody (it is also allowed in free time). A completed contact
+    // intent must not prevent either; fresh outward actions still need the
+    // ordinary intent decision and contact checks.
+    const contactFreeAction =
+      action && ["recall", "profile"].includes(actionBudget?.kind);
+    const proactive = contactFreeAction
       ? null
       : runtime.subject.beforeDelivery(ctx);
     if (proactive) requestId = "intent:" + proactive.id;
@@ -243,11 +245,11 @@ export class DeliveryService {
     if (ctx.recoveryDeliveryBlocked) throw Error("RECOVERY_DELIVERY_BLOCKED");
     if (metadata.mediaId)
       runtime.generatedImages.assertDelivery(ctx, metadata.mediaId, requestId);
-    return { a, mem, proactive, requestId, cleanupAction };
+    return { a, mem, proactive, requestId, contactFreeAction };
   }
   async deliverNow(ctx, operation) {
     const runtime = this.runtime;
-    const { a, mem, proactive, requestId, cleanupAction, receipt } =
+    const { a, mem, proactive, requestId, contactFreeAction, receipt } =
       this.checkDelivery(ctx, operation);
     if (receipt) return receipt;
     const {
@@ -286,6 +288,7 @@ export class DeliveryService {
       for (const [duration, limit] of [
         [60000, actionBudget.maxPerMinute],
         [3600000, actionBudget.maxPerHour],
+        [86400000, actionBudget.maxPerDay],
       ]) {
         if (limit == null) continue;
         const used = mem.db
@@ -353,7 +356,7 @@ export class DeliveryService {
               }
           : {}),
       });
-      if (!cleanupAction) runtime.subject.reserveContact(ctx, proactive);
+      if (!contactFreeAction) runtime.subject.reserveContact(ctx, proactive);
       mem.append({
         ...event,
         dedupe: "send:" + requestId + ":pending",
@@ -372,7 +375,7 @@ export class DeliveryService {
       // Paused or cancelled before the gateway call: nothing left the process.
       mem.store.transaction(() => {
         mem.completeDelivery(requestId, "failed");
-        if (!cleanupAction) runtime.subject.delivered(ctx, "failed");
+        if (!contactFreeAction) runtime.subject.delivered(ctx, "failed");
       });
       mem.append({
         ...event,
@@ -392,7 +395,7 @@ export class DeliveryService {
         receipt.messageId == null ? null : String(receipt.messageId);
       mem.store.transaction(() => {
         mem.completeDelivery(requestId, "sent", messageId);
-        if (!cleanupAction) runtime.subject.delivered(ctx, "sent");
+        if (!contactFreeAction) runtime.subject.delivered(ctx, "sent");
       });
       if (!actionBudget) {
         ctx.confirmedSends = (ctx.confirmedSends || 0) + 1;
@@ -436,7 +439,7 @@ export class DeliveryService {
         throw Error("DELIVERY_CONFIRMED_AUDIT_FAILED", { cause: e });
       mem.store.transaction(() => {
         mem.completeDelivery(requestId, status);
-        if (!cleanupAction) runtime.subject.delivered(ctx, status);
+        if (!contactFreeAction) runtime.subject.delivered(ctx, status);
       });
       mem.append({
         ...event,
