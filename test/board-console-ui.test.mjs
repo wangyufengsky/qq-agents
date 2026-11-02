@@ -20,6 +20,7 @@ function workspace(total) {
   });
   const sandbox = vm.createContext({
     tab: "board",
+    URLSearchParams,
     $: () => root,
     esc: (value) => String(value ?? ""),
     action: (fn) => fn(),
@@ -76,4 +77,100 @@ test("a short thread needs a single page and no load-more button", async () => {
   await vm.runInContext("boardThread = 'p'; renderBoard()", f.sandbox);
   assert.equal(f.requests.length, 1);
   assert.doesNotMatch(f.root.innerHTML, /加载更多评论/);
+});
+
+test("a draft @s members by name, longest names first", () => {
+  const f = workspace(0);
+  vm.runInContext(
+    `boardMembers = [
+      { agentId: "a1", name: "角色1" },
+      { agentId: "a10", name: "角色10" },
+      { agentId: "fish", name: "大肥鱼" },
+    ]`,
+    f.sandbox,
+  );
+  const ids = (text) =>
+    JSON.parse(
+      vm.runInContext(
+        `JSON.stringify(boardMentionsIn(${JSON.stringify(text)}))`,
+        f.sandbox,
+      ),
+    );
+  assert.deepEqual(ids("@角色10 你好"), ["a10"]);
+  assert.deepEqual(ids("@角色10 和 @角色1"), ["a10", "a1"]);
+  assert.deepEqual(ids("大肥鱼没有 @"), []);
+  assert.deepEqual(ids("@大肥鱼"), ["fish"]);
+});
+
+test("the wall shows filters, pins and who was mentioned", async () => {
+  const root = {
+    innerHTML: "",
+    querySelector: () => ({}),
+    querySelectorAll: () => [],
+  };
+  const requests = [];
+  const sandbox = vm.createContext({
+    tab: "board",
+    URLSearchParams,
+    $: () => root,
+    esc: (value) =>
+      String(value ?? "").replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`),
+    action: (fn) => fn(),
+    notice: () => {},
+    fold: () => "",
+    api: async (url) => {
+      requests.push(url);
+      return {
+        policy: {
+          enabled: true,
+          dailyPosts: 3,
+          dailyComments: 10,
+          timezone: "Asia/Shanghai",
+        },
+        day: "2026-11-02",
+        members: [{ agentId: "fish", name: "大肥鱼" }],
+        usage: [],
+        adminMentions: { total: 2, latestSeq: 9 },
+        items: [
+          {
+            id: "p1",
+            seq: 9,
+            kind: "post",
+            title: "<b>公约</b>",
+            body: "@管理员 看一下",
+            author: { kind: "agent", agentId: "fish", name: "大肥鱼" },
+            mentions: [{ kind: "admin", name: "管理员", me: true }],
+            mentionsMe: true,
+            pinnedAt: "2026-11-02T00:00:00Z",
+            comments: 0,
+            createdAt: "2026-11-02T00:00:00Z",
+            lastActivityAt: "2026-11-02T00:00:00Z",
+          },
+        ],
+        total: 1,
+        nextOffset: null,
+      };
+    },
+  });
+  vm.runInContext(
+    fs.readFileSync(new URL("../public/board-ui.js", import.meta.url), "utf8"),
+    sandbox,
+  );
+  await vm.runInContext(
+    `boardFilters = { q: "公 约", author: "agent:fish", mention: "admin", sort: "newest", removed: true }; renderBoard()`,
+    sandbox,
+  );
+  assert.equal(
+    requests[0],
+    "/api/board?offset=0&q=%E5%85%AC+%E7%BA%A6&author=agent%3Afish&mention=admin&sort=newest&removed=1",
+  );
+  const html = root.innerHTML;
+  // Titles are escaped; the note carries its pin, colour and @你 marks.
+  assert.match(html, /&#60;b&#62;公约/);
+  assert.doesNotMatch(html, /<b>公约/);
+  assert.match(html, /board-note note-c0 is-pinned mentions-me/);
+  assert.match(html, /<span class="board-at is-me">@管理员<\/span>/);
+  assert.match(html, /@我的 2<span class="board-dot"/);
+  assert.match(html, /清除筛选/);
+  assert.match(html, /筛出 1 张便签/);
 });
