@@ -1,3 +1,4 @@
+import { peerQzoneSources } from "../core/peer-qzone-protection.mjs";
 import { taintMedia } from "../tools/legacy.mjs";
 import { createHash } from "node:crypto";
 import { contentIdentity } from "./urls.mjs";
@@ -10,8 +11,9 @@ const terminal = new Set([
   "unknown",
 ]);
 const hash = (s) => createHash("sha256").update(s).digest("hex");
-function unrestricted(ctx) {
+function unrestricted(runtime, ctx) {
   if (
+    peerQzoneSources(runtime, ctx).length > 0 ||
     [...ctx.privateRead].some((id) =>
       /^(operations|operations-result|github-private):/.test(id),
     )
@@ -81,7 +83,7 @@ export function assertShare(
   target,
   { intentId, requestId } = {},
 ) {
-  unrestricted(ctx);
+  unrestricted(service.runtime, ctx);
   const r = service.runtime,
     a = service.active(ctx, record.platform, { sharing: true });
   if (
@@ -218,7 +220,7 @@ export async function sendShare(service, ctx, { recordId, comment, mediaId }) {
     if (meta?.appRecordId !== recordId)
       throw Error("APP_IMAGE_SOURCE_MISMATCH");
     taintMedia(ctx, meta);
-    unrestricted(ctx);
+    unrestricted(service.runtime, ctx);
     r.assertDisclosure(ctx);
     segments.push(r.media.segment(ctx.agentId, mediaId));
   }

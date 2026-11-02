@@ -1,3 +1,7 @@
+import {
+  trackPeerQzone,
+  peerQzoneSources,
+} from "../core/peer-qzone-protection.mjs";
 import { readFileText, TEXT_FILE } from "./file-text.mjs";
 import { recallBoundary } from "../core/recall-boundary.mjs";
 import { z } from "zod";
@@ -75,6 +79,7 @@ function active(runtime, ctx, permission) {
   return a;
 }
 function protect(ctx, meta) {
+  trackPeerQzone(ctx, meta);
   for (const repo of meta.protectedRepositories || [])
     ctx.privateRead.add(githubMarker(repo));
   if (meta.protectedOperations)
@@ -166,6 +171,7 @@ export async function fileTool(runtime, ctx, tool, args) {
         { kind: "generated-text", conversation: ctx.conversation },
         restricted,
         privateGithubSources(ctx, runtime),
+        peerQzoneSources(runtime, ctx),
       );
     }
     if (tool === "file_import") {
@@ -181,7 +187,11 @@ export async function fileTool(runtime, ctx, tool, args) {
     // Ordinary downloads are covered by the persistent file permission. The
     // existing operations-content restriction still applies to outbound URLs.
     runtime.assertDisclosure(ctx);
-    if (privateGithubSources(ctx, runtime).length && args.url)
+    if (
+      (privateGithubSources(ctx, runtime).length ||
+        peerQzoneSources(runtime, ctx).length) &&
+      args.url
+    )
       runtime.authorizeExternal(ctx, {
         tool: "file_download",
         args: { url: args.url },
@@ -291,6 +301,8 @@ export async function fileTool(runtime, ctx, tool, args) {
         ...(source.kind === "web" ? { origin: result.origin } : {}),
       },
       restricted,
+      privateGithubSources(ctx, runtime),
+      peerQzoneSources(runtime, ctx),
     );
     recallBoundary(runtime, ctx).assert(saved);
     return saved;

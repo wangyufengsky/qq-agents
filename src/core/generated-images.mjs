@@ -1,3 +1,5 @@
+import { peerQzoneSources } from "./peer-qzone-protection.mjs";
+import { mergeProtection } from "../memory/protection.mjs";
 import { recallBoundary } from "./recall-boundary.mjs";
 import { createHash } from "node:crypto";
 import { generationError } from "../backends/generated-image-file.mjs";
@@ -42,8 +44,30 @@ export class GeneratedImages {
         this.runtime.now(),
       );
     ctx.imageSession = sessionId;
+    this.taint(ctx);
   }
+  sessionProtection(agentId, sessionId) {
+    const state = this.runtime.memory
+      .bind(agentId)
+      .state("@image-session-protection:" + sessionId);
+    return { protectedPeerQzoneTargets: state.protectedPeerQzoneTargets || [] };
+  }
+
   taint(ctx) {
+    if (ctx.imageSession) {
+      const protection = mergeProtection(
+        this.sessionProtection(ctx.agentId, ctx.imageSession),
+        { protectedPeerQzoneTargets: peerQzoneSources(this.runtime, ctx) },
+      );
+      if (protection.protectedPeerQzoneTargets?.length)
+        // Runtime scopes travel through identity export; native session caches do not.
+        this.runtime.memory
+          .bind(ctx.agentId)
+          .setState(
+            "@image-session-protection:" + ctx.imageSession,
+            protection,
+          );
+    }
     if (ctx.imageSession && protectedRead(ctx))
       this.db
         .prepare(
@@ -87,17 +111,25 @@ export class GeneratedImages {
         // Stored media is gone or unreadable: regenerate below.
       }
     }
+    const peerProtection = this.sessionProtection(ctx.agentId, sessionId);
     if (stored) {
-      if (source.protected_operations) {
+      if (
+        source.protected_operations ||
+        peerProtection.protectedPeerQzoneTargets.length
+      ) {
         const meta = this.runtime.media.metadata(ctx.agentId, existing.mediaId);
-        if (!meta.protectedOperations) {
-          this.runtime.media.put(
-            ctx.agentId,
-            Buffer.from(stored.data, "base64"),
-            stored.mimeType,
-            { ...meta, protectedOperations: true },
-          );
-        }
+        this.runtime.media.put(
+          ctx.agentId,
+          Buffer.from(stored.data, "base64"),
+          stored.mimeType,
+          {
+            ...meta,
+            ...mergeProtection(meta, peerProtection),
+            protectedOperations: !!(
+              meta.protectedOperations || source.protected_operations
+            ),
+          },
+        );
       }
       return existing;
     }
@@ -124,6 +156,7 @@ export class GeneratedImages {
             kind: "generated",
             title: "生成图",
             createdAt: value.createdAt,
+            ...peerProtection,
             protectedOperations: !!source.protected_operations,
             generatedArtifactId: id,
           },
@@ -175,6 +208,12 @@ export class GeneratedImages {
       .all(a.id, ctx.conversation, a.backendId, sessionOffset);
     const recoveryErrors = [];
     for (const { session_id: id } of sessions.slice(0, 5)) {
+      if (
+        !recallBoundary(this.runtime, ctx).allowed(
+          this.sessionProtection(a.id, id),
+        )
+      )
+        continue;
       try {
         const items = await backend.imageHistory(id);
         this.runtime.assertActive(ctx);
@@ -196,13 +235,16 @@ export class GeneratedImages {
     this.runtime.assertActive(ctx);
     const rows = this.db
       .prepare(
-        "SELECT g.value,s.protected_operations FROM image_generations g LEFT JOIN image_sessions s ON s.agent_id=g.agent_id AND s.session_id=g.session_id WHERE g.agent_id=? AND g.conversation=? ORDER BY g.at DESC,g.id LIMIT ? OFFSET ?",
+        "SELECT g.value,g.session_id,s.protected_operations FROM image_generations g LEFT JOIN image_sessions s ON s.agent_id=g.agent_id AND s.session_id=g.session_id WHERE g.agent_id=? AND g.conversation=? ORDER BY g.at DESC,g.id LIMIT ? OFFSET ?",
       )
       .all(ctx.agentId, ctx.conversation, limit + 1, offset);
     const boundary = recallBoundary(this.runtime, ctx);
     const items = rows.slice(0, limit).flatMap((row) => {
       const value = JSON.parse(row.value);
       if (
+        !boundary.allowed(
+          this.sessionProtection(ctx.agentId, row.session_id),
+        ) ||
         (row.protected_operations &&
           !boundary.allowed({ protectedOperations: true })) ||
         (value.mediaId &&

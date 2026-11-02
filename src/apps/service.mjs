@@ -159,7 +159,7 @@ export class AppBrowsing {
     if (
       (!fixed || sharing) &&
       [...ctx.privateRead].some((id) =>
-        ["operations", "private-repository"].includes(
+        ["operations", "private-repository", "peer-qzone"].includes(
           sourceClass(this.runtime, ctx, id),
         ),
       )

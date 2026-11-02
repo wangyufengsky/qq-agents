@@ -138,7 +138,12 @@ export function interactionEvents(
   for (const row of rows) {
     const p = JSON.parse(row.payload || "{}");
     if (options.allowed && !options.allowed({ ...row, payload: p })) continue;
-    if (p.protectedOperations || p.protectedRepositories?.length) continue;
+    if (
+      p.protectedOperations ||
+      p.protectedRepositories?.length ||
+      p.protectedPeerQzoneTargets?.length
+    )
+      continue;
     const incoming =
       row.kind === "message.received" &&
       row.direction === "in" &&
@@ -170,7 +175,11 @@ export function interactionEvents(
         const original = quoted(memory, row, String(id));
         if (!original) return false;
         const source = JSON.parse(original.payload || "{}");
-        if (source.protectedOperations || source.protectedRepositories?.length)
+        if (
+          source.protectedOperations ||
+          source.protectedRepositories?.length ||
+          source.protectedPeerQzoneTargets?.length
+        )
           return false;
         return incoming
           ? sentLedger(memory, original)

@@ -80,7 +80,7 @@ export class VoiceTranscription {
     // nothing out unprompted, the same as autonomous network grants.
     if (
       (state.disclosureTaint || []).some((id) =>
-        ["operations", "private-repository"].includes(
+        ["operations", "private-repository", "peer-qzone"].includes(
           sourceClass(r, { agentId: a.id }, id),
         ),
       )

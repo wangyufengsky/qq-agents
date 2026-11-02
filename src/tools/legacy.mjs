@@ -1,3 +1,4 @@
+import { trackPeerQzone } from "../core/peer-qzone-protection.mjs";
 import { allowed } from "../core/config.mjs";
 import { recallBoundary } from "../core/recall-boundary.mjs";
 import { createHash, randomUUID } from "node:crypto";
@@ -195,6 +196,7 @@ export const legacyDefinitions = {
   ops_result: ["仅原管理员私聊读取已确认请求的结果。", object({ id })],
 };
 export function taintMedia(ctx, meta) {
+  trackPeerQzone(ctx, meta);
   for (const repo of meta?.protectedRepositories || [])
     ctx.privateRead.add("github-private:" + repo);
   if (meta?.protectedOperations)

@@ -515,7 +515,11 @@ export class SubjectCoordinator {
     );
   }
   canAutoDisclose(agent, item) {
-    return !item.protectedOperations && !item.protectedRepositories?.length;
+    return (
+      !item.protectedOperations &&
+      !item.protectedRepositories?.length &&
+      !item.protectedPeerQzoneTargets?.length
+    );
   }
   finish(ctx, outcome) {
     const m = this.memory(ctx.agentId),

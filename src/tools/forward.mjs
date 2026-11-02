@@ -1,3 +1,4 @@
+import { trackPeerQzone } from "../core/peer-qzone-protection.mjs";
 import { recallBoundary } from "../core/recall-boundary.mjs";
 import { createHash } from "node:crypto";
 import { mdToPlain } from "../../vendor/dsh-qq/md-to-plain.js";
@@ -18,6 +19,8 @@ export function ownedEvent(runtime, ctx, id) {
   if (!row) throw Error("RECORD_NOT_FOUND");
   const event = mem.event(row, ctx.conversation);
   recallBoundary(runtime, ctx).assert(event);
+  trackPeerQzone(ctx, event);
+  ctx.persistTaint?.();
   if (event.conversation !== ctx.conversation) {
     ctx.privateRead.add(event.id);
     ctx.persistTaint?.();

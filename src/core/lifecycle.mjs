@@ -1,3 +1,4 @@
+import { trackPeerQzone } from "./peer-qzone-protection.mjs";
 import { activityForTurn } from "../tools/activities.mjs";
 import {
   sessionContract,
@@ -135,6 +136,7 @@ export class ContextLifecycle {
       }
     this.runtime.observeInput(ctx, items);
     for (const row of items) {
+      trackPeerQzone(ctx, row);
       if (row.id && row.privacy !== "public") ctx.privateRead.add(row.id);
       for (const repo of row.protectedRepositories || [])
         ctx.privateRead.add(githubMarker(repo));

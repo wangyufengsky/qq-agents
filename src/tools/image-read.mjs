@@ -1,3 +1,4 @@
+import { mergeProtection } from "../memory/protection.mjs";
 import { imageMime, MAX_IMAGE_SOURCE_BYTES } from "./media.mjs";
 import { imageDownloadError } from "./image-download.mjs";
 import { attachmentName } from "../transport/attachments.mjs";
@@ -88,6 +89,7 @@ export async function readEventImage(
     sourceType: "file",
     sourceIndex: index,
     conversation: event.conversation,
+    ...mergeProtection(event, meta),
     protectedOperations:
       event.protectedOperations === true || meta.protectedOperations,
     sources: meta.sources,

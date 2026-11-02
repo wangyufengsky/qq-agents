@@ -91,6 +91,7 @@ export class ProtectedWork {
       ),
     ].filter(Boolean);
     for (const value of values) {
+      if (value.protectedPeerQzoneTargets?.length) return false;
       const scope = value.conversation || value.writtenIn?.conversation;
       if (isWorkScope(scope) && scope !== ctx.conversation) return false;
       if (
@@ -122,6 +123,7 @@ export class ProtectedWork {
     ];
     for (const id of ids) {
       if (!id || seen.has(id)) continue;
+      if (sourceClass(this.runtime, ctx, id) === "peer-qzone") return false;
       seen.add(id);
       const db = this.runtime.memory.bind(ctx.agentId).db;
       const event = prepared(

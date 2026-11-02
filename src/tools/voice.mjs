@@ -1,3 +1,4 @@
+import { mergeProtection } from "../memory/protection.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -115,6 +116,7 @@ export class VoiceStore {
             textSource: "tts-input-not-asr",
           }
         : {}),
+      ...mergeProtection(old, meta),
       protectedOperations:
         old?.protectedOperations || meta.protectedOperations || false,
       protectedRepositories: [
