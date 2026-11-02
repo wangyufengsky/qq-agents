@@ -1,5 +1,6 @@
 // @ts-check
 import { reactionDefinitions } from "./reactions.mjs";
+import { groupReadDefinitions } from "./group-read.mjs";
 import { profileDefinitions } from "./profile.mjs";
 import { qzoneDefinitions } from "./qzone.mjs";
 import { gameDefinitions } from "../games/framework/tools.mjs";
@@ -80,6 +81,7 @@ export const definitions = {
   ...appDefinitions,
   ...gameDefinitions,
   ...reactionDefinitions,
+  ...groupReadDefinitions,
   ...profileDefinitions,
   ...qzoneDefinitions,
   ...boardDefinitions,

@@ -33,6 +33,8 @@ const AGENT_TOOL_GROUPS = [
       qq_send_poke: "拍一拍",
       qq_react: "给消息贴表情回应",
       qq_recall: "撤回自己刚发的消息",
+      qq_group_info_read: "查看当前群概况、群主和管理员摘要",
+      qq_group_members_read: "分页读取当前群成员名册",
       qq_peer_profile_read: "读取当前聊天对象的 QQ 基本资料",
       qq_profile_read: "查看自己的 QQ 资料",
       qq_profile_update: "修改自己的昵称、签名或头像",
@@ -468,6 +470,19 @@ const agentForm = {
             { min: 1, max: 60, step: 1, unit: "次" },
           ) +
           '<p class="hint">还需在聊天工具中允许“撤回自己刚发的消息”。只限本角色本会话已确认发送的消息；撤回计入总限速，不恢复文字回复额度。失败或未知结果不自动重试，原文保留并标注撤回。</p>',
+      ) +
+      advanced(
+        this.foldTitle(
+          "读取当前群资料与名册",
+          row.behavior?.actions?.groupRead ? "已开启" : "已关闭",
+        ),
+        '<input type="hidden" name="groupReadPresent" value="1">' +
+          check(
+            "groupReadEnabled",
+            "允许读取当前群概况和分页成员名册",
+            row.behavior?.actions?.groupRead,
+          ) +
+          '<p class="hint">默认关闭，还需允许对应聊天工具。只在当前群使用，不能填写其他群号；不改群资料、不授予应用管理权限、不增加回复额度。每页独立实时查询，名册可能变化；单成员详情用基本资料工具。</p>',
       ) +
       advanced(
         this.foldTitle(
@@ -1253,6 +1268,9 @@ const agentForm = {
             Number,
             original.behavior?.actions?.recallMaxPerHour,
           ),
+          groupRead: f.has("groupReadPresent")
+            ? f.has("groupReadEnabled")
+            : original.behavior?.actions?.groupRead,
           peerProfile: f.has("peerProfilePresent")
             ? f.has("peerProfileEnabled")
             : original.behavior?.actions?.peerProfile,
