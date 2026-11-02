@@ -89,6 +89,8 @@ export function toolAvailable(agent, name, conversation) {
       agent.scheduler.enabled &&
       agent.ownerIds.some((id) => conversation === `private:${id}`)
     );
+  // Protected work never reaches the shared board, whatever the scope list says.
+  if (name.startsWith("board_")) return !conversation.startsWith("@work:");
   if (name === "protected_work_submit")
     return conversation.startsWith("@work:");
   if (name.startsWith("ops_"))

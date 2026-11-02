@@ -26,6 +26,7 @@ import { appDefinitions } from "../apps/tools.mjs";
 import { ContextLifecycle, SUBJECT } from "./lifecycle.mjs";
 import { SubjectCoordinator } from "./subject.mjs";
 import { CHAT_MIND_TOOLS, SUBJECT_TOOLS } from "../tools/mind.mjs";
+import { BOARD_TOOLS } from "./board.mjs";
 import {
   githubPrivateContext,
   githubMarker,
@@ -290,6 +291,7 @@ export class Runtime {
                   a.tools.includes(n),
               ),
               ...a.subject.readTools.filter((n) => a.tools.includes(n)),
+              ...BOARD_TOOLS,
             ]),
           ]
         : [
@@ -298,6 +300,7 @@ export class Runtime {
                 (n) => n !== "self_update" && n !== "self_review",
               ),
               ...CHAT_MIND_TOOLS,
+              ...BOARD_TOOLS,
             ]),
           ];
     const imageGeneration = backendCapabilities(
@@ -319,6 +322,9 @@ export class Runtime {
       (name) =>
         toolAvailable(a, name, conversation) &&
         (!name.startsWith("game_") || this.config.games.enabled) &&
+        // Every chat and free-time session may use the board once it is on;
+        // like mind tools it does not depend on each role's saved list.
+        (!name.startsWith("board_") || this.config.board.enabled) &&
         (name !== "generated_image_list" || imageGeneration),
     );
   }

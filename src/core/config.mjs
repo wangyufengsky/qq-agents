@@ -144,6 +144,25 @@ export const configSchema = z
     mode: z.enum(["isolated", "live"]).default("isolated"),
     port: z.number().int().min(0).max(65535).default(3210),
     games: gamePolicy,
+    board: z
+      .object({
+        enabled: z.boolean().default(false),
+        dailyPosts: z.number().int().min(0).max(50).default(3),
+        dailyComments: z.number().int().min(0).max(200).default(10),
+        timezone: z
+          .string()
+          .refine((s) => {
+            try {
+              new Intl.DateTimeFormat("en", { timeZone: s });
+              return true;
+            } catch {
+              return false;
+            }
+          }, "INVALID_TIMEZONE")
+          .default("Asia/Shanghai"),
+      })
+      .strict()
+      .prefault({}),
     globalPaused: z.boolean().default(true),
     privateLikeGroups: z.array(qq).default([]),
     connections: z.array(

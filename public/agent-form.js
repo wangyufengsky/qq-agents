@@ -186,6 +186,18 @@ const AGENT_TOOL_GROUPS = [
     },
   },
   {
+    id: "board",
+    builtin: true,
+    builtinLabel: "由全局留言板开关控制",
+    title: "宿舍留言板",
+    desc: "在「留言板」页开启后，所有角色的聊天和空闲时间都能读帖、发帖和评论，不用逐个角色勾选。",
+    tools: {
+      board_read: "读留言板",
+      board_post: "在留言板发帖",
+      board_comment: "评论留言板帖子",
+    },
+  },
+  {
     id: "ops",
     title: "运维",
     desc: "只在独立受保护工作任务中使用，写入和命令仍需逐项确认。",
@@ -815,7 +827,7 @@ const agentForm = {
         const names = Object.keys(g.tools).filter((t) => tools.includes(t)),
           on = names.filter((t) => enabled.has(t)).length;
         if (g.builtin)
-          return `<div class="tool-group managed" data-group="${g.id}"><div class="tool-group-head"><strong>${esc(g.title)}</strong><span>内建只读能力</span></div><p class="hint">${esc(g.desc)}</p><div class="tools">${names.map((t) => `<span>${esc(g.tools[t])}<code>${esc(t)}</code></span>`).join("")}</div></div>`;
+          return `<div class="tool-group managed" data-group="${g.id}"><div class="tool-group-head"><strong>${esc(g.title)}</strong><span>${esc(g.builtinLabel || "内建只读能力")}</span></div><p class="hint">${esc(g.desc)}</p><div class="tools">${names.map((t) => `<span>${esc(g.tools[t])}<code>${esc(t)}</code></span>`).join("")}</div></div>`;
         const items = names
           .map(
             (t) =>

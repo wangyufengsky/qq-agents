@@ -13,6 +13,7 @@
     <script src="/app.js" defer></script>
     <script src="/agent-form.js" defer></script>
     <script src="/activity-ui.js" defer></script>
+    <script src="/board-ui.js" defer></script>
     <script src="/parity.js" defer></script>
     <script src="/document-reader.js" defer></script>
     <script src="/files-ui.js" defer></script>
@@ -57,6 +58,11 @@
       <symbol id="i-sparkle" viewBox="0 0 24 24">
         <path
           d="M12 3l1.8 5.6L19.5 10l-5.7 1.6L12 17l-1.8-5.4L4.5 10l5.7-1.4z"
+        />
+      </symbol>
+      <symbol id="i-note" viewBox="0 0 24 24">
+        <path
+          d="M5 4h14a1 1 0 0 1 1 1v10.5L15.5 20H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zM8 9h8M8 13h5M15 20v-4.5h5"
         />
       </symbol>
       <symbol id="i-book" viewBox="0 0 24 24">
@@ -129,6 +135,8 @@
           <svg class="i"><use href="#i-bot" /></svg><span>角色</span></button
         ><button data-section="links">
           <svg class="i"><use href="#i-link" /></svg><span>连接</span></button
+        ><button data-section="board">
+          <svg class="i"><use href="#i-note" /></svg><span>留言板</span></button
         ><button data-section="system">
           <svg class="i"><use href="#i-settings" /></svg><span>系统</span>
         </button>

@@ -25,6 +25,8 @@ import { mcpResult, TOOL_NAMES } from "./tools/index.mjs";
 import { readiness } from "./core/readiness.mjs";
 import { defaultAgentCapabilities } from "./core/default-config.mjs";
 import { activityPage, homeSummary } from "./core/activity.mjs";
+import { ADMIN_AUTHOR, Board, BOARD_LIMITS, boardDay } from "./core/board.mjs";
+import { boardAuthors } from "./tools/board.mjs";
 const publicDir = fileURLToPath(new URL("../public/", import.meta.url));
 // The running release, shown in the console's sidebar.
 const packageVersion = JSON.parse(
@@ -214,6 +216,7 @@ export function createServer({
           "/onboarding-ui.js",
           "/updates-ui.js",
           "/activity-ui.js",
+          "/board-ui.js",
           "/style.css",
           "/agent-form.css",
         ].includes(url.pathname)
@@ -360,6 +363,103 @@ export function createServer({
             data.token,
           ),
         );
+      }
+      if (url.pathname.startsWith("/api/board")) {
+        // The administrator reads every entry, removed ones included, and
+        // writes without the agents' daily quota. Writing works while the
+        // board is off so it can be prepared before agents see it.
+        const board = new Board(runtime.memory.db),
+          policy = runtime.config.board,
+          show = boardAuthors(runtime.config),
+          page = (key, max) =>
+            z.coerce
+              .number()
+              .int()
+              .min(0)
+              .max(max)
+              .parse(url.searchParams.get(key) ?? 0);
+        if (req.method === "GET" && url.pathname === "/api/board") {
+          const day = boardDay(runtime.now(), policy.timezone);
+          const posts = board.posts({
+            offset: page("offset", 1e6),
+            limit: BOARD_LIMITS.page,
+            includeRemoved: true,
+          });
+          return send({
+            policy,
+            day,
+            usage: runtime.config.agents.map((a) => ({
+              agentId: a.id,
+              name: a.name,
+              ...board.usage({ kind: "agent", id: a.id }, day),
+            })),
+            ...posts,
+            items: posts.items.map(show),
+          });
+        }
+        if (req.method === "GET" && url.pathname === "/api/board/post") {
+          const thread = board.thread(
+            z.string().uuid().parse(url.searchParams.get("id")),
+            {
+              offset: page("offset", 1e6),
+              limit: 100,
+              includeRemoved: true,
+            },
+          );
+          return send({
+            ...thread,
+            post: show(thread.post),
+            comments: thread.comments.map(show),
+          });
+        }
+        if (req.method === "POST" && url.pathname === "/api/board/post") {
+          const data = z
+            .object({
+              title: z.string().min(1).max(BOARD_LIMITS.title),
+              body: z.string().min(1).max(BOARD_LIMITS.post),
+              requestId: z.string().regex(/^[A-Za-z0-9_-]{8,64}$/),
+            })
+            .strict()
+            .parse(await readBody(32 * 1024));
+          return send(
+            show(
+              board.write({
+                author: ADMIN_AUTHOR,
+                ...data,
+                now: runtime.now(),
+                timeZone: policy.timezone,
+              }),
+            ),
+          );
+        }
+        if (req.method === "POST" && url.pathname === "/api/board/comment") {
+          const data = z
+            .object({
+              postId: z.string().uuid(),
+              body: z.string().min(1).max(BOARD_LIMITS.comment),
+              replyTo: z.string().uuid().optional(),
+              requestId: z.string().regex(/^[A-Za-z0-9_-]{8,64}$/),
+            })
+            .strict()
+            .parse(await readBody(32 * 1024));
+          return send(
+            show(
+              board.write({
+                author: ADMIN_AUTHOR,
+                ...data,
+                now: runtime.now(),
+                timeZone: policy.timezone,
+              }),
+            ),
+          );
+        }
+        if (req.method === "POST" && url.pathname === "/api/board/remove") {
+          const data = z
+            .object({ id: z.string().uuid() })
+            .strict()
+            .parse(await readBody(1024));
+          return send(show(board.remove(data.id, runtime.now())));
+        }
       }
       if (req.method === "GET" && url.pathname === "/api/projects/compare") {
         const a = runtime.agent(url.searchParams.get("agentId"));
