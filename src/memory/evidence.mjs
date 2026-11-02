@@ -89,7 +89,9 @@ export function freezeEvidence(
         app = p.app;
       if (
         !allowProtected &&
-        (p.protectedOperations || p.protectedRepositories?.length)
+        (p.protectedOperations ||
+          p.protectedRepositories?.length ||
+          p.protectedPeerQzoneTargets?.length)
       )
         throw Error("RESTRICTED_EVIDENCE_NOT_ALLOWED_IN_MIND");
       let parents = Array.isArray(p.evidence) ? p.evidence : [];
@@ -242,7 +244,9 @@ export function freezeEvidence(
       const metadata = JSON.parse(diary.metadata);
       if (
         !allowProtected &&
-        (metadata.protectedOperations || metadata.protectedRepositories?.length)
+        (metadata.protectedOperations ||
+          metadata.protectedRepositories?.length ||
+          metadata.protectedPeerQzoneTargets?.length)
       )
         throw Error("RESTRICTED_EVIDENCE_NOT_ALLOWED_IN_MIND");
       const parents = metadata.evidence || [];

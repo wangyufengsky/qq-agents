@@ -1,3 +1,4 @@
+import { peerQzoneSources } from "../core/peer-qzone-protection.mjs";
 import { withInteraction } from "../core/closeness.mjs";
 import {
   activityFields,
@@ -331,7 +332,8 @@ function executeMindTool(runtime, ctx, name, args) {
       "project",
       "mood_set",
     ].includes(name) &&
-    (privateGithubSources(ctx, runtime).length > 0 ||
+    (peerQzoneSources(runtime, ctx).length > 0 ||
+      privateGithubSources(ctx, runtime).length > 0 ||
       [...ctx.privateRead].some((id) =>
         /^(operations|operations-result|github-private):/.test(id),
       ))

@@ -1,3 +1,4 @@
+import { mergeProtection } from "../memory/protection.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -33,6 +34,9 @@ const metadataSchema = z
           .passthrough(),
       )
       .max(100),
+    protectedPeerQzoneTargets: z
+      .array(z.string().regex(/^[1-9]\d{4,19}$/))
+      .optional(),
     protectedOperations: z.boolean().optional(),
     protectedRepositories: z.array(z.string().min(1)).optional(),
     protectionUnknown: z.boolean().optional(),
@@ -238,6 +242,7 @@ export class FileStore {
     source = {},
     protectedOperations = false,
     protectedRepositories = [],
+    protectedPeerQzoneTargets = [],
   ) {
     fileName(name);
     if (!Buffer.isBuffer(buffer) || buffer.length > policy.maxBytes)
@@ -269,6 +274,7 @@ export class FileStore {
       sha256: fileId,
       createdAt: old?.createdAt || new Date().toISOString(),
       sources: sources.slice(-100),
+      ...mergeProtection(old, { protectedPeerQzoneTargets }),
       protectedOperations: old?.protectedOperations || protectedOperations,
       protectedRepositories: [
         ...new Set([

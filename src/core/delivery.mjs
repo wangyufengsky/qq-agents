@@ -1,3 +1,4 @@
+import { peerQzoneSources } from "./peer-qzone-protection.mjs";
 import { waitFirstReply } from "./typing.mjs";
 import { recallBoundary } from "./recall-boundary.mjs";
 import { containsCredential } from "./secrets.mjs";
@@ -318,6 +319,7 @@ export class DeliveryService {
         ...(action
           ? { deliveryType: "action", ...(actionKind ? { actionKind } : {}) }
           : {}),
+        protectedPeerQzoneTargets: peerQzoneSources(runtime, ctx),
         protectedRepositories: privateGithubSources(ctx, runtime),
       },
     };

@@ -1,3 +1,4 @@
+import { peerQzoneSources } from "../core/peer-qzone-protection.mjs";
 import { z } from "zod";
 import {
   ADMIN_AUTHOR,
@@ -165,6 +166,7 @@ function assertShareable(runtime, ctx) {
   if (runtime.protectedWork?.context(ctx))
     throw Error("PROTECTED_WORK_OUTBOUND_DENIED");
   if (
+    peerQzoneSources(runtime, ctx).length > 0 ||
     [...ctx.privateRead].some((source) =>
       /^(operations|operations-result|github-private):/.test(source),
     )

@@ -1,3 +1,7 @@
+import {
+  trackPeerQzone,
+  peerQzoneSources,
+} from "../core/peer-qzone-protection.mjs";
 import { allowed } from "../core/config.mjs";
 import { recallBoundary } from "../core/recall-boundary.mjs";
 import { createHash, randomUUID } from "node:crypto";
@@ -195,6 +199,7 @@ export const legacyDefinitions = {
   ops_result: ["仅原管理员私聊读取已确认请求的结果。", object({ id })],
 };
 export function taintMedia(ctx, meta) {
+  trackPeerQzone(ctx, meta);
   for (const repo of meta?.protectedRepositories || [])
     ctx.privateRead.add("github-private:" + repo);
   if (meta?.protectedOperations)
@@ -471,6 +476,13 @@ export async function legacyTool(runtime, ctx, name, args) {
     }
   }
   if (name.startsWith("qq_official_sticker")) {
+    if (
+      ["qq_official_sticker_collect", "qq_official_sticker_remark"].includes(
+        name,
+      ) &&
+      peerQzoneSources(runtime, ctx).length
+    )
+      throw Error("RESTRICTED_CONTEXT_MIND_WRITE_BLOCKED");
     const t = runtime.transports.get(a.connectionId);
     if (!t?.connected) throw Error("QQ_NOT_CONNECTED");
     if (name === "qq_official_stickers") {
@@ -506,7 +518,10 @@ export async function legacyTool(runtime, ctx, name, args) {
       .entries?.find((x) => x.id === args.id);
     if (name === "qq_official_sticker_read") {
       if (!entry?.url) throw Error("STICKER_NOT_LISTED");
-      const r = await safeFetchBuffer(entry.url, 8 * 1024 * 1024),
+      const r = await (runtime.fetchOfficialStickerImage || safeFetchBuffer)(
+          entry.url,
+          8 * 1024 * 1024,
+        ),
         b = Buffer.isBuffer(r) ? r : r.buffer;
       const mime =
         b[0] === 137
@@ -522,12 +537,17 @@ export async function legacyTool(runtime, ctx, name, args) {
         officialId: entry.id,
         conversation: ctx.conversation,
       });
+      const stored = runtime.media.metadata(a.id, m.id);
+      recallBoundary(runtime, ctx).assert(stored);
+      taintMedia(ctx, stored);
       return { ...m, content: [runtime.media.read(a.id, m.id)] };
     }
     if (name === "qq_official_sticker_collect") {
       const meta = runtime.media.metadata(a.id, args.mediaId);
       if (!meta) throw Error("MEDIA_NOT_FOUND");
       taintMedia(ctx, meta);
+      if (peerQzoneSources(runtime, ctx).length)
+        throw Error("RESTRICTED_CONTEXT_MIND_WRITE_BLOCKED");
       disclose(runtime, ctx);
       return runtime.deliver(ctx, {
         requestId: args.requestId,

@@ -1,3 +1,7 @@
+import {
+  peerQzoneSources,
+  peerQzoneContext,
+} from "./peer-qzone-protection.mjs";
 import { sourceClass } from "./outbound-policy.mjs";
 
 // Boundary checks run per row and per referenced ID; compile each query once.
@@ -24,6 +28,12 @@ export function storedMindRecords(db, agentId, id) {
 export function recallBoundary(runtime, ctx, { publicOnly = false } = {}) {
   const privileged = !publicOnly && !!runtime.protectedWork?.context(ctx);
   const restricted = (value) =>
+    (value?.protectedPeerQzoneTargets?.length > 0 &&
+      (publicOnly ||
+        !peerQzoneContext(
+          value.protectedPeerQzoneTargets,
+          ctx.conversation,
+        ))) ||
     value?.protectedOperations === true ||
     value?.protectedRepositories?.length > 0;
   const classes = new Map();
@@ -33,7 +43,41 @@ export function recallBoundary(runtime, ctx, { publicOnly = false } = {}) {
     return ["operations", "private-repository"].includes(classes.get(id));
   }
   function allowed(row) {
-    if (privileged) return runtime.protectedWork.canRead(ctx, row);
+    const ids = [
+      row?.id,
+      ...(row?.evidence || []),
+      ...(row?.metadata?.evidence || []),
+      ...(row?.counterEvidence || []),
+      ...(row?.evidenceSnapshot?.references || []).map((ref) => ref.id),
+      ...(row?.counterEvidenceSnapshot?.references || []).map((ref) => ref.id),
+      ...(row?.sources || []).flatMap((s) => [
+        s.eventId,
+        s.sourceEventId,
+        s.recordId,
+      ]),
+    ].filter((id) => typeof id === "string");
+    const targets = peerQzoneSources(runtime, ctx, ids);
+    if (
+      targets.length &&
+      (publicOnly || !peerQzoneContext(targets, ctx.conversation))
+    )
+      return false;
+    if (privileged) {
+      if (
+        [
+          row,
+          row?.metadata,
+          row?.payload,
+          ...(row?.sources || []),
+          ...(row?.evidenceSnapshot?.references || []).map((r) => r.metadata),
+          ...(row?.counterEvidenceSnapshot?.references || []).map(
+            (r) => r.metadata,
+          ),
+        ].some((v) => v?.protectedPeerQzoneTargets?.length)
+      )
+        return false;
+      return runtime.protectedWork.canRead(ctx, row);
+    }
     if (
       row?.conversation?.startsWith("@work:") ||
       row?.writtenIn?.conversation?.startsWith("@work:")

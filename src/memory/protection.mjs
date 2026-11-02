@@ -3,6 +3,17 @@
 // information already incorporated into a saved record.
 /** @param {...any} records */
 export function mergeProtection(...records) {
+  const targets = new Set();
+  for (const record of records) {
+    const values = record?.protectedPeerQzoneTargets;
+    if (values === undefined) continue;
+    if (
+      !Array.isArray(values) ||
+      values.some((v) => typeof v !== "string" || !/^[1-9]\d{4,19}$/.test(v))
+    )
+      throw Error("INVALID_PROTECTION_METADATA");
+    for (const id of values) targets.add(id);
+  }
   const repositories = new Set();
   for (const record of records) {
     const values = record?.protectedRepositories;
@@ -15,6 +26,7 @@ export function mergeProtection(...records) {
     for (const repo of values) repositories.add(repo.toLowerCase());
   }
   return {
+    ...(targets.size ? { protectedPeerQzoneTargets: [...targets].sort() } : {}),
     ...(records.some((r) => r?.protectedOperations === true)
       ? { protectedOperations: true }
       : {}),

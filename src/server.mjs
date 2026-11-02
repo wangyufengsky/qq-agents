@@ -56,7 +56,11 @@ function subjectActivity(m, agentId, now) {
         found: (p.found || []).map((f) => f.title),
         next: p.next || "",
         restReason: p.restReason || null,
-        protected: !!(p.protectedRepositories?.length || p.protectedOperations),
+        protected: !!(
+          p.protectedPeerQzoneTargets?.length ||
+          p.protectedRepositories?.length ||
+          p.protectedOperations
+        ),
         turnId: p.turnId || null,
       };
     });

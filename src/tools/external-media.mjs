@@ -1,3 +1,4 @@
+import { peerQzoneSources } from "../core/peer-qzone-protection.mjs";
 import { recallBoundary } from "../core/recall-boundary.mjs";
 import { audioType } from "./voice.mjs";
 import { taintMedia } from "./legacy.mjs";
@@ -96,6 +97,11 @@ export async function externalResult(runtime, ctx, args, result) {
       conversation: ctx.conversation,
       sourceType: "external-tool-result",
       untrusted: true,
+      protectedPeerQzoneTargets: peerQzoneSources(
+        runtime,
+        ctx,
+        ctx.privateRead || [],
+      ),
       protectedOperations: [...(ctx.privateRead || [])].some((id) =>
         /^(operations|operations-result|github-private):/.test(id),
       ),
@@ -107,7 +113,9 @@ export async function externalResult(runtime, ctx, args, result) {
         item.mimeType,
         meta,
       );
-      recallBoundary(runtime, ctx).assert(m);
+      const stored = runtime.media.metadata(ctx.agentId, m.id);
+      recallBoundary(runtime, ctx).assert(stored);
+      taintMedia(ctx, stored);
       addText(JSON.stringify({ generatedMedia: m }));
       content.push(runtime.media.read(ctx.agentId, m.id));
     } else {
@@ -124,6 +132,7 @@ export async function externalResult(runtime, ctx, args, result) {
           title: "外部工具音频",
         });
       recallBoundary(runtime, ctx).assert(m);
+      taintMedia(ctx, m);
       addText(JSON.stringify({ generatedAudio: m }));
       content.push(runtime.voices.read(ctx.agentId, m.id));
     }

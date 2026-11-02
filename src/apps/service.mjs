@@ -1,3 +1,7 @@
+import { contextProtection } from "../core/protected-mind.mjs";
+import { mergeProtection } from "../memory/protection.mjs";
+import { recallBoundary } from "../core/recall-boundary.mjs";
+import { trackPeerQzone } from "../core/peer-qzone-protection.mjs";
 import { randomUUID } from "node:crypto";
 import { AppCursors } from "./cursors.mjs";
 import { AppAdapter } from "./adapter.mjs";
@@ -159,7 +163,7 @@ export class AppBrowsing {
     if (
       (!fixed || sharing) &&
       [...ctx.privateRead].some((id) =>
-        ["operations", "private-repository"].includes(
+        ["operations", "private-repository", "peer-qzone"].includes(
           sourceClass(this.runtime, ctx, id),
         ),
       )
@@ -193,7 +197,13 @@ export class AppBrowsing {
     }
     return a;
   }
-  record(ctx, value) {
+  record(ctx, value, { fixed = false } = {}) {
+    // Only a server-validated fixed feed is independent of model parameters.
+    // Dynamic/derived results may echo a query and inherit its full context.
+    const protection = mergeProtection(
+      value,
+      fixed ? {} : contextProtection(this.runtime, ctx),
+    );
     const result = this.memory(ctx.agentId).append({
       connectionId: this.runtime.agent(ctx.agentId).connectionId,
       conversation: ctx.conversation,
@@ -201,13 +211,13 @@ export class AppBrowsing {
       direction: "internal",
       status: value.ok === false ? "failed" : "observed",
       body: clean(value.title || value.error || "App 浏览记录", 500),
-      payload: { app: value },
+      payload: { app: value, ...protection },
       dedupe: "app:" + randomUUID(),
       origin: "app-browser",
     });
     const id = result.id || result.event?.id || result.record?.id;
     if (!id) throw Error("APP_RECORD_STORE_FAILED");
-    return { recordId: id, ...value };
+    return { recordId: id, ...value, ...protection };
   }
   get(ctx, id) {
     const row = this.memory(ctx.agentId)
@@ -216,7 +226,15 @@ export class AppBrowsing {
       )
       .get(id, ctx.agentId);
     if (!row) throw Error("APP_RECORD_NOT_FOUND");
-    const value = JSON.parse(row.payload).app;
+    const payload = JSON.parse(row.payload);
+    recallBoundary(this.runtime, ctx).assert({ id: row.id, payload });
+    const protection = mergeProtection(payload);
+    trackPeerQzone(ctx, protection);
+    if (protection.protectedPeerQzoneTargets?.length) {
+      ctx.privateRead.add(row.id);
+      ctx.persistTaint?.();
+    }
+    const value = payload.app;
     if (!value) throw Error("APP_RECORD_NOT_FOUND");
     if (
       (row.conversation !== ctx.conversation &&
@@ -227,7 +245,7 @@ export class AppBrowsing {
       ctx.privateRead.add(row.id);
       ctx.persistTaint?.();
     }
-    return { recordId: row.id, ...value };
+    return { recordId: row.id, ...value, ...protection };
   }
   // Reads spent against the daily budget, which counts the last 24 hours.
   readsLastDay(agentId) {
@@ -262,9 +280,9 @@ export class AppBrowsing {
   }
   readStored(ctx, { recordId, offset = 0, maxChars = 6000 }) {
     const record = this.get(ctx, recordId);
-    this.active(ctx, record.platform, {
-      fixed: record.origin === "app-browser" && !record.source,
-    });
+    // get() enforces the durable source boundary; a local stored read sends
+    // no URL or query to a provider and may be read back by its source owner.
+    this.active(ctx, record.platform, { fixed: true });
     return this.preview(record, maxChars, offset);
   }
   history(agentId, offset = 0) {
@@ -447,7 +465,8 @@ export class AppBrowsing {
           !job.query) ||
         (["read", "comments"].includes(operation) &&
           prior?.origin === "app-browser" &&
-          !prior.source);
+          !prior.source &&
+          !prior.protectedPeerQzoneTargets?.length);
       const requested = requestedByHuman(r, ctx, request, requestEventId);
       this.active(ctx, job.platform, { network: true, requested, fixed });
       r.authorizeExternal(ctx, request, { requestEventId, fixed });
@@ -565,7 +584,7 @@ export class AppBrowsing {
           );
           return items.map((item) =>
             this.preview(
-              this.record(ctx, item),
+              this.record(ctx, item, { fixed }),
               Math.min(6000, Math.floor(12000 / job.limit)),
             ),
           );
@@ -602,15 +621,19 @@ export class AppBrowsing {
         const code = /^APP_[A-Z_]+$/.test(error.message)
           ? error.message
           : "APP_READ_FAILED";
-        this.record(ctx, {
-          ok: false,
-          origin: "app-browser",
-          platform: job.platform,
-          operation,
-          error: code,
-          fetchedAt: new Date(r.now()).toISOString(),
-          untrustedContent: true,
-        });
+        this.record(
+          ctx,
+          {
+            ok: false,
+            origin: "app-browser",
+            platform: job.platform,
+            operation,
+            error: code,
+            fetchedAt: new Date(r.now()).toISOString(),
+            untrustedContent: true,
+          },
+          { fixed },
+        );
         // eslint-disable-next-line preserve-caught-error -- only the sanitized APP_* code may leave; the upstream error text must not.
         throw Error(code);
       }

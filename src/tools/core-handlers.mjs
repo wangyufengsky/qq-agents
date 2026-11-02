@@ -1,3 +1,7 @@
+import {
+  peerQzoneSources,
+  trackPeerQzone,
+} from "../core/peer-qzone-protection.mjs";
 import { withInteraction } from "../core/closeness.mjs";
 import { recallMessage } from "../core/message-recall.mjs";
 import { deliveryPage } from "../core/chat-context.mjs";
@@ -15,6 +19,12 @@ import {
 } from "../core/person-cards.mjs";
 function track(ctx, items) {
   for (const row of items) {
+    trackPeerQzone(ctx, row);
+    for (const item of [
+      ...(row.scene?.messages || []),
+      ...(row.scene?.quoted || []),
+    ])
+      trackPeerQzone(ctx, item);
     for (const item of [
       row,
       ...(row.scene?.messages || []),
@@ -134,11 +144,13 @@ async function handle_diary_write(runtime, ctx, args, name) {
         },
         protectedOperations,
         privateGithubSources(ctx, runtime),
+        peerQzoneSources(runtime, ctx),
       )
     : mem.diaryRevise(
         args,
         protectedOperations,
         privateGithubSources(ctx, runtime),
+        peerQzoneSources(runtime, ctx),
       );
 }
 async function handle_qq_send(runtime, ctx, args, name) {
@@ -232,6 +244,11 @@ async function handle_sticker_list(runtime, ctx, args, name) {
   return rows;
 }
 async function handle_sticker_collect(runtime, ctx, args, name) {
+  const meta = runtime.media.metadata(ctx.agentId, args.mediaId);
+  recallBoundary(runtime, ctx).assert(meta);
+  taintMedia(ctx, meta);
+  if (peerQzoneSources(runtime, ctx).length)
+    throw Error("RESTRICTED_CONTEXT_MIND_WRITE_BLOCKED");
   return runtime.media.collect(ctx.agentId, args.mediaId, args);
 }
 async function handle_sticker_read(runtime, ctx, args, name) {
