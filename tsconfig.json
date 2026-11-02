@@ -10,6 +10,7 @@
     "skipLibCheck": true
   },
   "include": [
+    "src/core/peer-profile.mjs",
     "src/core/board.mjs",
     "src/core/closeness.mjs",
     "src/core/message-recall.mjs",

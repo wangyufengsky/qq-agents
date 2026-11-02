@@ -71,6 +71,11 @@ export function toolAvailable(agent, name, conversation) {
       agent.behavior.actions?.react === true &&
       /^(private|group):/.test(conversation)
     );
+  if (name === "qq_peer_profile_read")
+    return (
+      agent.behavior?.actions?.peerProfile === true &&
+      /^(private|group):/.test(conversation)
+    );
   if (name === "qq_profile_read" || name === "qq_profile_update")
     return (
       agent.behavior?.actions?.profile === true &&

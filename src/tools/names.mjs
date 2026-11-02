@@ -81,6 +81,7 @@ export const TOOL_NAMES = Object.freeze([
   "game_act",
   "game_close",
   "qq_react",
+  "qq_peer_profile_read",
   "qq_profile_read",
   "qq_profile_update",
   "qzone_read",
