@@ -473,11 +473,12 @@ const agentForm = {
           "读取当前聊天对象的 QQ 基本资料",
           row.behavior?.actions?.peerProfile ? "已开启" : "已关闭",
         ),
-        check(
-          "peerProfileEnabled",
-          "允许读取当前私聊对象和当前群成员的基本资料",
-          row.behavior?.actions?.peerProfile,
-        ) +
+        '<input type="hidden" name="peerProfilePresent" value="1">' +
+          check(
+            "peerProfileEnabled",
+            "允许读取当前私聊对象和当前群成员的基本资料",
+            row.behavior?.actions?.peerProfile,
+          ) +
           '<p class="hint">还需允许同名聊天工具；仅返回昵称、签名、群名片和群内身份，不支持任意他人或空闲主体查询。</p>',
       ) +
       advanced(
@@ -1238,7 +1239,9 @@ const agentForm = {
             Number,
             original.behavior?.actions?.recallMaxPerHour,
           ),
-          peerProfile: f.has("peerProfileEnabled"),
+          peerProfile: f.has("peerProfilePresent")
+            ? f.has("peerProfileEnabled")
+            : original.behavior?.actions?.peerProfile,
           profile: f.has("profileMaxPerDay")
             ? f.has("profileEnabled")
             : original.behavior?.actions?.profile,
