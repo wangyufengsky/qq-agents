@@ -6,7 +6,7 @@
 
 ## 未发布
 
-### 网关不可达与请求错误不再报成内部错误
+### 网关不可达与请求错误不再报成内部错误（[#135](https://github.com/wangyufengsky/qq-agents/pull/135)）
 
 - NapCat 的 HTTP 接口连不上时（进程未运行、端口拒绝、地址无法解析），OneBot 请求改为返回已登记的 `ONEBOT_UNREACHABLE`（503，可重试），不再以 `INTERNAL_ERROR`/500 离开进程。QQ 掉线期间在管理台点“连接”会看到准确原因，自动重连的最近失败原因也从泛化的 `CONNECTION_FAILED` 变为该错误码。请求超时和主动取消保持原有错误名，图片下载等既有映射不变；发送失败仍按“结果未知”记账，不改变投递对账。
 - `doctor` 检查 OneBot 时继续显示底层原因（如 `ECONNREFUSED`、`ENOTFOUND`）及对应修复提示。
