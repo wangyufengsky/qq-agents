@@ -592,3 +592,23 @@ test("a role without stored elsewhere settings keeps the defaults implicit", asy
     ownLookbackMs: 86400000,
   });
 });
+
+test("peer profile checkbox preserves missing form fields and supports explicit disabling", async () => {
+  const config = await sampleConfig();
+  config.agents[0].behavior.actions.peerProfile = true;
+  const run = editor(config),
+    original = config.agents[0];
+  const html = run('agentForm.build(config.agents[0], "")');
+  const parse = (changes) =>
+    run("agentForm.parse.bind(agentForm)")(
+      formOf(html, changes),
+      structuredClone(original),
+    ).row.behavior.actions.peerProfile;
+  assert.equal(parse({}), true);
+  assert.equal(parse({ peerProfileEnabled: undefined }), false);
+  assert.equal(
+    parse({ peerProfilePresent: undefined, peerProfileEnabled: undefined }),
+    true,
+  );
+  assert.equal(parse({ peerProfilePresent: undefined }), true);
+});

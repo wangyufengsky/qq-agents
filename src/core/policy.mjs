@@ -45,6 +45,7 @@ export const behaviorSchema = z
         recall: z.boolean().default(false),
         recallWindowMs: ms(1, 110000, 110000),
         recallMaxPerHour: ms(1, 60, 3),
+        peerProfile: z.boolean().default(false),
         profile: z.boolean().default(false),
         profileMaxPerDay: ms(1, 20, 3),
         qzone: z.boolean().default(false),
