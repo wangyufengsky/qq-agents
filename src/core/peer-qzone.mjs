@@ -53,7 +53,10 @@ export async function readPeerQzone(runtime, ctx, args) {
       member = await transport.peerProfile({ userId, groupId });
     } catch (error) {
       recheck();
-      const code = /** @type {any} */ (error)?.message;
+      const code =
+        /** @type {any} */ (error)?.reason === "ACTION_UNSUPPORTED"
+          ? "PEER_PROFILE_UNSUPPORTED"
+          : /** @type {any} */ (error)?.message;
       // eslint-disable-next-line preserve-caught-error -- membership failures may include gateway response bytes.
       throw Error(
         [
@@ -96,6 +99,37 @@ export async function readPeerQzone(runtime, ctx, args) {
   recheck();
   if (!Array.isArray(posts) || posts.length > (args.limit ?? 5))
     throw Error("QZONE_RESPONSE_UNREADABLE");
+  // Alternative transports have the same boundary as OneBot: raw response
+  // properties must never reach a model-facing result or durable source body.
+  posts = posts.map((post) => {
+    if (
+      !post ||
+      typeof post !== "object" ||
+      Array.isArray(post) ||
+      typeof post.id !== "string" ||
+      !post.id ||
+      post.id.length > 200 ||
+      typeof post.text !== "string" ||
+      ![post.comments, post.images].every(
+        (value) =>
+          Number.isSafeInteger(value) && value >= 0 && value <= 1000000000,
+      ) ||
+      !(
+        post.createdAt === null ||
+        (typeof post.createdAt === "string" &&
+          Number.isFinite(Date.parse(post.createdAt)))
+      )
+    )
+      throw Error("QZONE_RESPONSE_UNREADABLE");
+    return {
+      id: post.id,
+      text: post.text.slice(0, 1000),
+      createdAt:
+        post.createdAt === null ? null : new Date(post.createdAt).toISOString(),
+      comments: post.comments,
+      images: post.images,
+    };
+  });
   const checkedAt = new Date(runtime.now()).toISOString();
   const provenance = {
     tool: "qq_peer_qzone_read",
@@ -103,6 +137,8 @@ export async function readPeerQzone(runtime, ctx, args) {
     conversation: ctx.conversation,
     checkedAt,
     visibility: "account-visible-not-group-public",
+    targetBinding: "current-chat-request",
+    responseIdentity: "validated-when-provided-not-independently-proven",
     untrusted: true,
     epistemic: "external-source-claim",
   };

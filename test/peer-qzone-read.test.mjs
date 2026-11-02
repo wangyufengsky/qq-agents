@@ -278,3 +278,68 @@ test("failure classes stay sanitized and a successful empty result is distinct",
   assert(result.source.recordId);
   assert(f.ctx.privateRead.has("peer-qzone:" + person));
 });
+
+test("the core projects transport rows before returning or archiving and rejects invalid rows without taint", async (t) => {
+  const f = setup(t);
+  f.transport.peerQzoneRecent = async () => [
+    {
+      id: "safe",
+      text: "x".repeat(1200),
+      createdAt: null,
+      comments: 1,
+      images: 0,
+      cookie: "COOKIE_FIXTURE_SECRET",
+      raw: "RAW_FIXTURE_SECRET",
+      url: "https://example.com/signed?token=fixture",
+    },
+  ];
+  const result = await read(f);
+  assert.deepEqual(Object.keys(result.posts[0]).sort(), [
+    "comments",
+    "createdAt",
+    "id",
+    "images",
+    "text",
+  ]);
+  assert.equal(result.posts[0].text.length, 1000);
+  const row = f.m.db
+    .prepare("SELECT body,payload FROM events WHERE id=?")
+    .get(result.source.recordId);
+  assert.doesNotMatch(
+    JSON.stringify(result) + row.body + row.payload,
+    /COOKIE_FIXTURE_SECRET|RAW_FIXTURE_SECRET|signed\?token/,
+  );
+  const invalid = setup(t);
+  for (const post of [
+    null,
+    {},
+    { id: "x", text: "x", createdAt: null, comments: -1, images: 0 },
+    { id: "x", text: "x", createdAt: "bad", comments: 0, images: 0 },
+    { id: "x", text: "x", createdAt: null, comments: 0, images: 1e12 },
+  ]) {
+    invalid.transport.peerQzoneRecent = async () => [post];
+    await assert.rejects(read(invalid), /QZONE_RESPONSE_UNREADABLE/);
+  }
+  assert.equal(
+    invalid.m.db
+      .prepare("SELECT COUNT(*) AS n FROM events WHERE kind='external.read'")
+      .get().n,
+    0,
+  );
+  assert(!invalid.ctx.privateRead.has("peer-qzone:" + person));
+});
+
+test("an unsupported current-group membership lookup fails before space access", async (t) => {
+  const f = setup(t),
+    ctx = context(f.runtime, "agent-0", group);
+  f.transport.peerProfile = async () => {
+    const error = Error("ONEBOT_REJECTED");
+    error.reason = "ACTION_UNSUPPORTED";
+    throw error;
+  };
+  await assert.rejects(
+    read(f, { userId: person }, ctx),
+    /PEER_PROFILE_UNSUPPORTED/,
+  );
+  assert.equal(f.calls.length, 0);
+});

@@ -568,7 +568,9 @@ export class OneBot extends EventEmitter {
       error.reason =
         cause?.reason === "ACTION_UNSUPPORTED"
           ? "ACTION_UNSUPPORTED"
-          : "QZONE_LOGIN_REQUIRED";
+          : strictAccount
+            ? "QZONE_READ_FAILED"
+            : "QZONE_LOGIN_REQUIRED";
       throw error;
     }
     const jar = new Map();
@@ -642,6 +644,8 @@ export class OneBot extends EventEmitter {
         );
       throw Error("QZONE_HTTP_ERROR");
     }
+    if (peerRead && !response.body)
+      throw peerQzoneFailure("QZONE_RESPONSE_UNREADABLE");
     const chunks = [];
     let bytes = 0;
     for await (const chunk of response.body) {
