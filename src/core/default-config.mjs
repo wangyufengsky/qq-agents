@@ -115,6 +115,8 @@ export function defaultConfig() {
             recallMaxPerHour: 3,
             profile: false,
             profileMaxPerDay: 3,
+            qzone: false,
+            qzoneMaxPerDay: 2,
           },
           typing: {
             enabled: true,
@@ -180,6 +182,8 @@ export function defaultConfig() {
             recallMaxPerHour: 3,
             profile: false,
             profileMaxPerDay: 3,
+            qzone: false,
+            qzoneMaxPerDay: 2,
           },
           typing: {
             enabled: true,

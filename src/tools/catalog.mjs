@@ -76,6 +76,11 @@ export function toolAvailable(agent, name, conversation) {
       agent.behavior?.actions?.profile === true &&
       profileConversation(agent, conversation)
     );
+  if (name === "qzone_read" || name === "qzone_post")
+    return (
+      agent.behavior?.actions?.qzone === true &&
+      profileConversation(agent, conversation)
+    );
   if (name === "qq_recall")
     return (
       agent.behavior?.actions?.recall === true &&

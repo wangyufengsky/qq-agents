@@ -35,6 +35,8 @@ const AGENT_TOOL_GROUPS = [
       qq_recall: "撤回自己刚发的消息",
       qq_profile_read: "查看自己的 QQ 资料",
       qq_profile_update: "修改自己的昵称、签名或头像",
+      qzone_read: "查看自己最近的 QQ 空间说说",
+      qzone_post: "发 QQ 空间说说（实验）",
       qq_forward_read: "展开合并转发",
       qq_forward_send: "发送合并转发",
       qq_cross_group_query: "查询已授权的跨群统计",
@@ -482,6 +484,24 @@ const agentForm = {
             { min: 1, max: 20, step: 1, unit: "次" },
           ) +
           '<p class="hint">默认关闭，还需在“聊天发言”里允许资料工具。只在主人私聊的普通回合和角色自己的空闲时间可用；头像只能用自己图片库里的图片。资料所有人可见，计入总发送限速；失败或未知结果不自动重试。</p>',
+      ) +
+      advanced(
+        this.foldTitle(
+          "发 QQ 空间说说（实验）",
+          row.behavior?.actions?.qzone ? "已开启" : "已关闭",
+        ),
+        check(
+          "qzoneEnabled",
+          "允许读取和发布自己的 QQ 空间说说",
+          row.behavior?.actions?.qzone,
+        ) +
+          range(
+            "qzoneMaxPerDay",
+            "每天最多发",
+            row.behavior?.actions?.qzoneMaxPerDay ?? 2,
+            { min: 1, max: 10, step: 1, unit: "条" },
+          ) +
+          '<p class="hint">实验功能，默认关闭，还需在“聊天发言”里允许说说工具。NapCat 没有正式接口，借 QQ 登录 cookie 调用 QQ 空间网页接口，可能随时失效或触发账号风控。只在主人私聊的普通回合和角色自己的空闲时间可用（空闲时遵守安静时段），只发所有人可见的纯文字；计入总发送限速，失败或未知结果不自动重试。</p>',
       ) +
       advanced(
         this.foldTitle(
@@ -1213,6 +1233,15 @@ const agentForm = {
             original.behavior?.actions?.profileMaxPerDay ?? 3,
             Number,
             original.behavior?.actions?.profileMaxPerDay,
+          ),
+          qzone: f.has("qzoneMaxPerDay")
+            ? f.has("qzoneEnabled")
+            : original.behavior?.actions?.qzone,
+          qzoneMaxPerDay: edited(
+            "qzoneMaxPerDay",
+            original.behavior?.actions?.qzoneMaxPerDay ?? 2,
+            Number,
+            original.behavior?.actions?.qzoneMaxPerDay,
           ),
         },
         // A form without these fields keeps the stored switch and window.

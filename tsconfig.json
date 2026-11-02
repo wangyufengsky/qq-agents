@@ -47,6 +47,8 @@
     "src/core/profile.mjs",
     "src/tools/reactions.mjs",
     "src/tools/profile.mjs",
+    "src/core/qzone.mjs",
+    "src/tools/qzone.mjs",
 
     "src/core/rhythm.mjs",
     "src/core/typing.mjs",

@@ -87,7 +87,9 @@
           "recallWindowMs": 110000,
           "recallMaxPerHour": 3,
           "profile": false,
-          "profileMaxPerDay": 3
+          "profileMaxPerDay": 3,
+          "qzone": false,
+          "qzoneMaxPerDay": 2
         },
         "typing": {
           "enabled": true,
@@ -164,7 +166,9 @@
           "recallWindowMs": 110000,
           "recallMaxPerHour": 3,
           "profile": false,
-          "profileMaxPerDay": 3
+          "profileMaxPerDay": 3,
+          "qzone": false,
+          "qzoneMaxPerDay": 2
         },
         "typing": {
           "enabled": true,

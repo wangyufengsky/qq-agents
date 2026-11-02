@@ -58,6 +58,16 @@ export function safeToolFailure(error) {
       "An earlier change of this profile field is still pending or unknown and may already be visible. Do not submit it again with another requestId; the administrator reconciles it in the console.",
     PROFILE_ORDINARY_TURN_REQUIRED:
       "Profile changes are only available in your own free time or an ordinary reply turn of the owner's private chat, not while carrying out a proactive intent or scheduled task. Nothing was changed.",
+    QZONE_POST_UNCONFIRMED:
+      "An earlier QQ Zone post is still pending or unknown and may already be public. Do not post again with another requestId; the administrator reconciles it in the console.",
+    QZONE_ORDINARY_TURN_REQUIRED:
+      "QQ Zone is only available in your own free time or an ordinary reply turn of the owner's private chat, not while carrying out a proactive intent or scheduled task. Nothing was posted.",
+    QZONE_UNSUPPORTED:
+      "The gateway cannot provide QQ Zone access. Nothing was posted. Do not retry with another requestId.",
+    QZONE_LOGIN_REQUIRED:
+      "QQ Zone did not accept the account's web login, so nothing was posted or read. Tell the owner the QQ login may need refreshing; do not retry right away.",
+    QZONE_REJECTED:
+      "QQ Zone refused the request, possibly as risk control or a temporary limit. Nothing was posted. Do not retry right away or with another requestId.",
     PROFILE_UNSUPPORTED:
       "The gateway does not support this profile action. Nothing was confirmed. Do not retry with another field or requestId to work around it.",
     REACT_UNSUPPORTED:
