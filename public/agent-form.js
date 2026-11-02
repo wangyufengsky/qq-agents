@@ -33,6 +33,7 @@ const AGENT_TOOL_GROUPS = [
       qq_send_poke: "拍一拍",
       qq_react: "给消息贴表情回应",
       qq_recall: "撤回自己刚发的消息",
+      qq_peer_profile_read: "读取当前聊天对象的 QQ 基本资料",
       qq_profile_read: "查看自己的 QQ 资料",
       qq_profile_update: "修改自己的昵称、签名或头像",
       qq_peer_qzone_read: "读取当前聊天对象的 QQ 空间说说（实验）",
@@ -467,6 +468,19 @@ const agentForm = {
             { min: 1, max: 60, step: 1, unit: "次" },
           ) +
           '<p class="hint">还需在聊天工具中允许“撤回自己刚发的消息”。只限本角色本会话已确认发送的消息；撤回计入总限速，不恢复文字回复额度。失败或未知结果不自动重试，原文保留并标注撤回。</p>',
+      ) +
+      advanced(
+        this.foldTitle(
+          "读取当前聊天对象的 QQ 基本资料",
+          row.behavior?.actions?.peerProfile ? "已开启" : "已关闭",
+        ),
+        '<input type="hidden" name="peerProfilePresent" value="1">' +
+          check(
+            "peerProfileEnabled",
+            "允许读取当前私聊对象和当前群成员的基本资料",
+            row.behavior?.actions?.peerProfile,
+          ) +
+          '<p class="hint">还需允许同名聊天工具；仅返回昵称、签名、群名片和群内身份，不支持任意他人或空闲主体查询。</p>',
       ) +
       advanced(
         this.foldTitle(
@@ -1239,6 +1253,9 @@ const agentForm = {
             Number,
             original.behavior?.actions?.recallMaxPerHour,
           ),
+          peerProfile: f.has("peerProfilePresent")
+            ? f.has("peerProfileEnabled")
+            : original.behavior?.actions?.peerProfile,
           profile: f.has("profileMaxPerDay")
             ? f.has("profileEnabled")
             : original.behavior?.actions?.profile,
