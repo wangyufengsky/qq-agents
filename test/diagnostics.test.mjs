@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { fixture } from "./helpers.mjs";
+import { config, fixture } from "./helpers.mjs";
+import { OneBot } from "../src/transport/onebot.mjs";
 import { createServer } from "../src/server.mjs";
 import { Diagnostics, classifyError } from "../src/core/diagnostics.mjs";
 
@@ -144,4 +145,99 @@ test("owner command failures retain safe diagnostics without exposing command te
     true,
   );
   assert.doesNotMatch(JSON.stringify(recent), /30000|\/ops|\/remind/);
+});
+
+test("an unreachable OneBot gateway is a retryable outage, while timeouts and cancellations keep their names", async () => {
+  const refused = () =>
+    Promise.reject(
+      new TypeError("fetch failed", {
+        cause: Object.assign(Error("connect ECONNREFUSED 127.0.0.1:3000"), {
+          code: "ECONNREFUSED",
+        }),
+      }),
+    );
+  const bot = new OneBot(config(1).connections[0], { fetchImpl: refused });
+  const error = await bot.call("get_login_info").catch((e) => e);
+  assert.equal(error.message, "ONEBOT_UNREACHABLE");
+  assert.equal(error.cause.cause.code, "ECONNREFUSED");
+  assert.deepEqual(classifyError(error), {
+    code: "ONEBOT_UNREACHABLE",
+    status: 503,
+    retryable: true,
+  });
+  // Callers map TimeoutError (image downloads) and treat aborts as cancellation.
+  const hang = (_url, { signal }) =>
+    new Promise((_resolve, reject) =>
+      signal.addEventListener("abort", () => reject(signal.reason)),
+    );
+  const slow = new OneBot(config(1).connections[0], { fetchImpl: hang });
+  assert.equal(
+    (await slow.call("get_status", {}, 5).catch((e) => e)).name,
+    "TimeoutError",
+  );
+  const stop = new AbortController();
+  const cancelled = slow.call("get_status", {}, 10000, { signal: stop.signal });
+  stop.abort();
+  assert.equal((await cancelled.catch((e) => e)).name, "AbortError");
+});
+
+test("admin connect against a down gateway answers 503 ONEBOT_UNREACHABLE instead of INTERNAL_ERROR", async (t) => {
+  const f = fixture(t);
+  f.runtime.transports.get("qq-0")?.close?.();
+  f.runtime.transports.delete("qq-0");
+  f.runtime.transportFactory = (c) =>
+    new OneBot(c, {
+      fetchImpl: () => Promise.reject(new TypeError("fetch failed")),
+    });
+  const app = createServer({
+    runtime: f.runtime,
+    token: "synthetic-admin",
+    allowLive: true,
+  });
+  const port = await app.listen();
+  t.after(() => app.close());
+  const post = (route, body) =>
+    fetch(`http://127.0.0.1:${port}${route}`, {
+      method: "POST",
+      headers: {
+        "x-admin-token": "synthetic-admin",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+  const connect = await post("/api/connection", {
+    id: "qq-0",
+    action: "connect",
+  });
+  assert.equal(connect.status, 503);
+  const body = await connect.json();
+  assert.equal(body.error, "ONEBOT_UNREACHABLE");
+  assert.equal(body.retryable, true);
+  // A malformed maintenance request is the caller's mistake, not a crash.
+  const drain = await post("/api/maintenance", { unexpected: true });
+  assert.equal(drain.status, 400);
+  assert.equal((await drain.json()).error, "INVALID_REQUEST");
+  // A timeline read with neither source nor anchor is rejected up front.
+  const timeline = await fetch(
+    `http://127.0.0.1:${port}/api/memory/conversation?agentId=agent-0`,
+    { headers: { "x-admin-token": "synthetic-admin" } },
+  );
+  assert.equal(timeline.status, 400);
+  assert.equal((await timeline.json()).error, "INVALID_MEMORY_SCOPE");
+});
+
+test("backend error codes the OpenAI adapter throws leave the process as themselves", () => {
+  for (const code of [
+    "OPENAI_API_KEY_ENV_MISSING",
+    "OPENAI_UNREACHABLE",
+    "OPENAI_HTTP_ERROR",
+    "OPENAI_MALFORMED_RESPONSE",
+    "OPENAI_AUTH_FAILED",
+    "OPENAI_SESSION_INVALID",
+    "OPENAI_SESSION_MISSING",
+    "OPENAI_MODEL_REQUIRED",
+    "OPENAI_RECOVERY_STATE_UNVERIFIED",
+  ])
+    assert.equal(classifyError(Error(code)).code, code);
+  assert.equal(classifyError(Error("OPENAI_UNREACHABLE")).status, 503);
 });

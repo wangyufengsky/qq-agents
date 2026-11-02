@@ -58,7 +58,7 @@ export function classifyError(error) {
   )
     status = 500;
   if (
-    /(?:_UNAVAILABLE|_NOT_CONNECTED|_OFFLINE|_DISCONNECTED|_TIMEOUT)$/.test(
+    /(?:_UNAVAILABLE|_UNREACHABLE|_NOT_CONNECTED|_OFFLINE|_DISCONNECTED|_TIMEOUT)$/.test(
       code,
     ) ||
     code === "RUNTIME_CLOSING"
@@ -76,7 +76,8 @@ export function classifyError(error) {
   else if (code.startsWith("INVALID_")) status = 400;
   if (/(?:_DENIED|_NOT_ALLOWED|_PRIVATE_ONLY|_OPERATIONS_ONLY)$/.test(code))
     status = 403;
-  const fields = code === "INVALID_REQUEST" ? validationFields(error) : [];
+  // A handler may also throw a plain INVALID_REQUEST, which has no issues.
+  const fields = error instanceof ZodError ? validationFields(error) : [];
   return {
     code,
     status,

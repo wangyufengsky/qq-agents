@@ -172,16 +172,27 @@ export class OneBot extends EventEmitter {
     { maxBytes = 2 * 1024 * 1024, signal } = {},
   ) {
     const deadline = AbortSignal.timeout(timeoutMs);
-    const response = await this.fetch(
-      this.config.httpUrl.replace(/\/$/, "") + "/" + action,
-      {
-        method: "POST",
-        headers: this.headers(),
-        body: JSON.stringify(params),
-        signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
-        redirect: "error",
-      },
-    );
+    const headers = this.headers();
+    let response;
+    try {
+      response = await this.fetch(
+        this.config.httpUrl.replace(/\/$/, "") + "/" + action,
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify(params),
+          signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
+          redirect: "error",
+        },
+      );
+    } catch (cause) {
+      // Timeouts and cancellations keep their own error names, which callers
+      // already map. A bare "fetch failed" (gateway down, refused, DNS) would
+      // otherwise leave the process as INTERNAL_ERROR instead of a retryable
+      // gateway outage.
+      if (deadline.aborted || signal?.aborted) throw cause;
+      throw Error("ONEBOT_UNREACHABLE", { cause });
+    }
     if (!response.ok) {
       if (
         ["delete_msg", "set_msg_emoji_like"].includes(action) &&

@@ -710,6 +710,10 @@ class AgentMemory {
     current = "",
   ) {
     recallScope(conversation);
+    // Without an anchor the timeline needs a source; an unbound value would
+    // otherwise fail inside SQLite as an unclassified error.
+    if (!aroundId && typeof conversation !== "string")
+      throw Error("INVALID_MEMORY_SCOPE");
     num(limit, 20, 1, 50);
     num(maxChars, 12000, 512, 16000);
     num(afterSeq, 0, 0, Number.MAX_SAFE_INTEGER);
