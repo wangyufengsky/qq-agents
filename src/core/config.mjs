@@ -257,6 +257,19 @@ export const configSchema = z
           requestTimeoutMs: z.number().int().min(5000).max(600000).optional(),
           vision: z.boolean().optional(),
           sendEffort: z.boolean().optional(),
+          cliReuse: z
+            .object({
+              enabled: z.boolean().default(false),
+              idleTimeoutMs: z
+                .number()
+                .int()
+                .min(1000)
+                .max(3600000)
+                .default(600000),
+              maxIdleProcesses: z.number().int().min(1).max(16).default(2),
+            })
+            .strict()
+            .optional(),
           recovery: z
             .object({
               autoReconnect: z.boolean().default(false),
@@ -303,6 +316,11 @@ export const configSchema = z
                 backend.effort,
               )),
           "Antigravity uses its managed CLI profile and a supported effort level",
+        )
+        .refine(
+          (backend) =>
+            backend.cliReuse === undefined || backend.type === "antigravity",
+          "CLI reuse settings require Antigravity",
         )
         .refine(
           (backend) =>

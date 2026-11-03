@@ -22,6 +22,7 @@ import {
 import { mcpResult } from "../tools/index.mjs";
 import { AntigravityMedia } from "./antigravity-media.mjs";
 import { safeToolFailure } from "../tools/errors.mjs";
+import { AntigravityStreamWorker } from "./antigravity-stream.mjs";
 
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -41,7 +42,7 @@ function responseOccupancy(usage) {
     ? tokens
     : null;
 }
-export { antigravitySchemaContract };
+export { antigravitySchemaContract, responseOccupancy };
 /** @type {WeakSet<import("node:child_process").ChildProcess>} */
 const terminatedGroups = new WeakSet();
 function isolatedEnv() {
@@ -219,6 +220,8 @@ export class AntigravityBackend {
     /** @type {Set<{abort: () => void, done: Promise<unknown>}>} */
     this.active = new Set();
     this.conversations = new Set();
+    /** @type {Map<string, AntigravityStreamWorker>} */
+    this.workers = new Map();
     this.closing = false;
   }
   /** @param {import("./session-contract.mjs").ToolSpec[]} tools */
@@ -360,12 +363,8 @@ export class AntigravityBackend {
       throw Error("BACKEND_MODEL_UNAVAILABLE");
     return { models, endpoint: "stdio" };
   }
-  /** @param {RunParams} params */
-  async run(params) {
-    if (this.closing) throw Error("ANTIGRAVITY_CLOSED");
-    if (params.signal.aborted) throw Error("ABORTED");
-    const signature = this.sessionSignature(params.tools);
-    assertSession(params.session, "antigravity", signature);
+  /** @param {RunParams} params @param {string} signature */
+  prepare(params, signature) {
     this.checkProfile();
     const key = createHash("sha256")
       .update(params.conversation || "subject")
@@ -415,6 +414,258 @@ export class AntigravityBackend {
         throw Error("ANTIGRAVITY_SESSION_UNAVAILABLE");
       }
     }
+    return { key, workspace, custom, agents, binding, signature };
+  }
+  /** @param {RunParams} params @param {ReturnType<AntigravityBackend["prepare"]>} details
+   * @param {AntigravityMedia} media @param {boolean} [reuse] @param {string} [mediaRoot] */
+  configure(
+    params,
+    { workspace, custom, agents },
+    media,
+    reuse = false,
+    mediaRoot,
+  ) {
+    const names = new Set(
+      reuse ? ["qq_turn_call"] : params.tools.map((tool) => tool.name),
+    );
+    let hook = [process.execPath, path.join(here, "antigravity-guard.mjs")]
+      .map((v) => antigravityShellQuote(v))
+      .join(" ");
+    if (process.platform === "win32") {
+      // The CLI escapes quoted hook commands before invoking cmd.exe. A
+      // relative batch name avoids that extra quoting while keeping paths
+      // with spaces inside the bridge-owned script and preserving stdin.
+      managedFile(
+        path.join(workspace, "qq-agents-hook.cmd"),
+        `@echo off\r\nchcp 65001 >nul\r\n${hook}\r\nexit /b %errorlevel%\r\n`,
+      );
+      hook = "qq-agents-hook.cmd";
+    }
+    managedFile(
+      path.join(custom, "hooks.json"),
+      JSON.stringify({
+        "qq-agents": {
+          PreToolUse: [
+            {
+              matcher: "*",
+              hooks: [{ type: "command", command: hook, timeout: 5 }],
+            },
+          ],
+        },
+      }),
+    );
+    managedFile(
+      path.join(custom, "mcp_config.json"),
+      JSON.stringify({
+        mcpServers: {
+          "qq-agents": {
+            command: process.execPath,
+            args: [path.join(here, "antigravity-mcp.mjs")],
+            enabledTools: [...names],
+            timeoutSeconds: 660,
+          },
+        },
+      }),
+    );
+    const agentFile = path.join(agents, "qq-agents.md");
+    const routing = reuse
+      ? 'Use only call_mcp_tool with ServerName="qq-agents", ToolName="qq_turn_call" and Arguments={"epoch":the current bridge epoch,"name":an allowed logical tool name,"arguments":that tool arguments}. The epoch is a public routing label, not authorization. Take it only from the current bridge input, never a historical turn. Tool schemas below describe logical arguments inside the envelope. '
+      : "";
+    if (
+      !params.session ||
+      params.instructions !== undefined ||
+      !fs.existsSync(agentFile)
+    )
+      managedFile(
+        agentFile,
+        `---\nname: qq-agents\ndescription: QQ Agents restricted role\nmainAgent: true\nsubagent: false\ntools:\n  - finish\n  - view_file\nenable_mcp_tools: true\ncommandExecutionPolicy: off\n---\n${params.instructions || ""}\n\n${routing}Use the qq-agents MCP tools for actions. ${reuse ? "" : 'Call call_mcp_tool with ServerName="qq-agents", ToolName equal to an allowed name, and Arguments matching that tool\'s JSON schema below. '}Do not guess parameter names or read framework source to discover arguments. The current chat and authorization are bound by the bridge; never add target, chatId or context fields unless the schema requires them. Ordinary assistant text is never delivered to QQ. Only native view_file on the exact image paths returned by an authorized tool in the CURRENT turn is allowed. Always call view_file before describing those pixels; MCP path text is not visual evidence. Never read other files or reuse a previous turn image path; request the original bridge tool again. No native task, filesystem writes, shell, browser, scheduling or subagent actions are authorized.\n\nAllowed tool argument schemas keyed by ToolName (required fields and additionalProperties are binding):\n${JSON.stringify(Object.fromEntries(params.tools.map(({ name, inputSchema }) => [name, antigravitySchemaContract(inputSchema)])))}\n`,
+      );
+    else {
+      // Preserve the role instructions while refreshing compatible optional fields.
+      if (fs.lstatSync(agentFile).isSymbolicLink())
+        throw Error("ANTIGRAVITY_WORKSPACE_UNSAFE");
+      const previous = fs.readFileSync(agentFile, "utf8");
+      const marker =
+        "\n\nAllowed tool argument schemas keyed by ToolName (required fields and additionalProperties are binding):\n";
+      const offset = previous.lastIndexOf(marker);
+      if (offset < 0) throw Error("ANTIGRAVITY_WORKSPACE_UNSAFE");
+      managedFile(
+        agentFile,
+        previous.slice(0, offset) +
+          marker +
+          JSON.stringify(
+            Object.fromEntries(
+              params.tools.map(({ name, inputSchema }) => [
+                name,
+                antigravitySchemaContract(inputSchema),
+              ]),
+            ),
+          ) +
+          "\n",
+      );
+    }
+    const settings = path.join(workspace, "settings.json");
+    managedFile(
+      settings,
+      JSON.stringify({
+        toolPermission: "request-review",
+        useG1Credits: false,
+        permissions: {
+          deny: [
+            "command(*)",
+            "write_file(*)",
+            "read_url(*)",
+            "execute_url(*)",
+          ],
+          allow: [
+            ...[...names].map((name) => `mcp(qq-agents/${name})`),
+            `read_file(${(mediaRoot || media.prepare()).replaceAll("\\", "/")}/*)`,
+          ],
+        },
+      }),
+    );
+    return settings;
+  }
+  /** @param {RunParams} params @param {string} workspace @param {string} settings
+   * @param {string} endpoint @param {string} token */
+  spawnCli(params, workspace, settings, endpoint, token) {
+    const childEnv = isolatedEnv();
+    if (process.platform === "win32") {
+      // The CLI may execute hooks outside the chat workspace. Resolve only
+      // this bridge-owned batch entry through the turn's child environment.
+      childEnv.PATH = [workspace, childEnv.PATH]
+        .filter(Boolean)
+        .join(path.delimiter);
+    }
+    return this.spawn(
+      this.config.command || "agy",
+      [
+        ...this.profileArgs(),
+        "--settings",
+        settings,
+        "--agent",
+        "qq-agents",
+        "--disable-slash-commands",
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        ...(this.config.model ? ["--model", this.config.model] : []),
+        ...(this.config.effort ? ["--effort", this.config.effort] : []),
+        ...(params.session ? ["--conversation", params.session.id] : []),
+      ],
+      {
+        cwd: workspace,
+        env: {
+          ...childEnv,
+          QQ_AGY_ENDPOINT: endpoint,
+          QQ_AGY_TOKEN: token,
+        },
+        stdio: ["pipe", "pipe", "pipe"],
+        detached: process.platform !== "win32",
+        windowsHide: true,
+      },
+    );
+  }
+  /** @param {RunParams} params @param {ReturnType<AntigravityBackend["prepare"]>} details @param {string} id */
+  bindSession(params, details, id) {
+    managedFile(
+      details.binding,
+      JSON.stringify({
+        id,
+        signature: details.signature,
+        contract: sessionContract(this, params.tools),
+      }),
+    );
+    params.saveSession({
+      backend: "antigravity",
+      id,
+      signature: details.signature,
+    });
+  }
+  /** @param {RunParams} params */
+  async runReusable(params) {
+    const start = performance.now();
+    if (this.closing) throw Error("ANTIGRAVITY_CLOSED");
+    if (params.signal.aborted) throw Error("ABORTED");
+    const signature = this.sessionSignature(params.tools);
+    assertSession(params.session, "antigravity", signature);
+    const details = this.prepare(params, signature);
+    this.conversations.add(details.key);
+    let worker = this.workers.get(details.key);
+    let finishDone = () => {};
+    const entry = {
+      abort: () => {
+        if (worker) void worker.close();
+      },
+      done: new Promise((resolve) => {
+        finishDone = () => resolve(undefined);
+      }),
+    };
+    this.active.add(entry);
+    try {
+      if (worker && !worker.matches(params, signature)) {
+        await worker.close();
+        worker = undefined;
+      }
+      if (this.closing || params.signal.aborted) throw Error("ABORTED");
+      if (!worker) {
+        worker = new AntigravityStreamWorker(this, details, params);
+        this.workers.set(details.key, worker);
+      }
+      const preparationMs = performance.now() - start;
+      await worker.run({
+        ...params,
+        onTiming: (value) =>
+          params.onTiming?.({
+            ...value,
+            elapsedMs: preparationMs + value.elapsedMs,
+          }),
+      });
+      if (worker.available && !this.closing) {
+        worker.idle(this.config.cliReuse?.idleTimeoutMs ?? 600000);
+        const idle = [...this.workers.values()]
+          .filter((value) => !value.turn)
+          .sort((a, b) => a.lastUsed - b.lastUsed);
+        const limit = this.config.cliReuse?.maxIdleProcesses ?? 2;
+        for (const unused of idle.slice(0, Math.max(0, idle.length - limit)))
+          await unused.close();
+      }
+    } catch (error) {
+      const submitted = worker?.inputSubmitted;
+      if (worker) await worker.close();
+      if (
+        params.session &&
+        !params.signal.aborted &&
+        error instanceof Error &&
+        !submitted
+      )
+        throw new SessionPreparationFailure(error);
+      if (fs.existsSync(details.binding)) managedFile(details.binding, "{}\n");
+      params.saveSession(null);
+      throw error;
+    } finally {
+      this.active.delete(entry);
+      this.conversations.delete(details.key);
+      finishDone();
+    }
+  }
+  /** @param {RunParams} params */
+  async run(params) {
+    if (this.config.cliReuse?.enabled) return this.runReusable(params);
+    const timingStart = performance.now();
+    const timing = (/** @type {string} */ phase) =>
+      params.onTiming?.({
+        phase,
+        elapsedMs: performance.now() - timingStart,
+        processReused: false,
+      });
+    if (this.closing) throw Error("ANTIGRAVITY_CLOSED");
+    if (params.signal.aborted) throw Error("ABORTED");
+    const signature = this.sessionSignature(params.tools);
+    assertSession(params.session, "antigravity", signature);
+    const details = this.prepare(params, signature);
+    const { key, workspace, binding } = details;
     const token = randomBytes(32).toString("hex");
     let live = true;
     const media = new AntigravityMedia();
@@ -428,12 +679,11 @@ export class AntigravityBackend {
         res.writeHead(status, { "content-type": "application/json" });
         res.end(JSON.stringify(body));
       };
-      if (
-        !live ||
-        params.signal.aborted ||
-        req.headers.authorization !== `Bearer ${token}` ||
-        req.headers.origin
-      )
+      if (req.headers.authorization !== `Bearer ${token}` || req.headers.origin)
+        return reply(403, { error: "ANTIGRAVITY_TURN_INACTIVE" });
+      if (req.method === "GET" && req.url === "/lease")
+        return reply(200, { alive: true });
+      if (!live || params.signal.aborted)
         return reply(403, { error: "ANTIGRAVITY_TURN_INACTIVE" });
       if (req.method === "GET" && req.url === "/catalog")
         return reply(200, { tools: params.tools, images: media.catalog() });
@@ -512,120 +762,11 @@ export class AntigravityBackend {
     this.active.add(entry);
     params.signal.addEventListener("abort", abort, { once: true });
     try {
-      const hook = [process.execPath, path.join(here, "antigravity-guard.mjs")]
-        .map((v) => antigravityShellQuote(v))
-        .join(" ");
-      managedFile(
-        path.join(custom, "hooks.json"),
-        JSON.stringify({
-          "qq-agents": {
-            PreToolUse: [
-              {
-                matcher: "*",
-                hooks: [{ type: "command", command: hook, timeout: 5 }],
-              },
-            ],
-          },
-        }),
-      );
-      managedFile(
-        path.join(custom, "mcp_config.json"),
-        JSON.stringify({
-          mcpServers: {
-            "qq-agents": {
-              command: process.execPath,
-              args: [path.join(here, "antigravity-mcp.mjs")],
-              enabledTools: [...names],
-              timeoutSeconds: 660,
-            },
-          },
-        }),
-      );
-      const agentFile = path.join(agents, "qq-agents.md");
-      if (
-        !params.session ||
-        params.instructions !== undefined ||
-        !fs.existsSync(agentFile)
-      )
-        managedFile(
-          agentFile,
-          `---\nname: qq-agents\ndescription: QQ Agents restricted role\nmainAgent: true\nsubagent: false\ntools:\n  - finish\n  - view_file\nenable_mcp_tools: true\ncommandExecutionPolicy: off\n---\n${params.instructions || ""}\n\nUse the qq-agents MCP tools for actions. Call call_mcp_tool with ServerName="qq-agents", ToolName equal to an allowed name, and Arguments matching that tool's JSON schema below. Do not guess parameter names or read framework source to discover arguments. The current chat and authorization are bound by the bridge; never add target, chatId or context fields unless the schema requires them. Ordinary assistant text is never delivered to QQ. Only native view_file on the exact image paths returned by an authorized tool in the CURRENT turn is allowed. Always call view_file before describing those pixels; MCP path text is not visual evidence. Never read other files or reuse a previous turn image path; request the original bridge tool again. No native task, filesystem writes, shell, browser, scheduling or subagent actions are authorized.\n\nAllowed tool argument schemas keyed by ToolName (required fields and additionalProperties are binding):\n${JSON.stringify(Object.fromEntries(params.tools.map(({ name, inputSchema }) => [name, antigravitySchemaContract(inputSchema)])))}\n`,
-        );
-      else {
-        // Preserve the role instructions while refreshing compatible optional fields.
-        if (fs.lstatSync(agentFile).isSymbolicLink())
-          throw Error("ANTIGRAVITY_WORKSPACE_UNSAFE");
-        const previous = fs.readFileSync(agentFile, "utf8");
-        const marker =
-          "\n\nAllowed tool argument schemas keyed by ToolName (required fields and additionalProperties are binding):\n";
-        const offset = previous.lastIndexOf(marker);
-        if (offset < 0) throw Error("ANTIGRAVITY_WORKSPACE_UNSAFE");
-        managedFile(
-          agentFile,
-          previous.slice(0, offset) +
-            marker +
-            JSON.stringify(
-              Object.fromEntries(
-                params.tools.map(({ name, inputSchema }) => [
-                  name,
-                  antigravitySchemaContract(inputSchema),
-                ]),
-              ),
-            ) +
-            "\n",
-        );
-      }
-      const settings = path.join(workspace, "settings.json");
-      managedFile(
-        settings,
-        JSON.stringify({
-          toolPermission: "request-review",
-          useG1Credits: false,
-          permissions: {
-            deny: [
-              "command(*)",
-              "write_file(*)",
-              "read_url(*)",
-              "execute_url(*)",
-            ],
-            allow: [
-              ...[...names].map((name) => `mcp(qq-agents/${name})`),
-              `read_file(${media.prepare().replaceAll("\\", "/")}/*)`,
-            ],
-          },
-        }),
-      );
+      const settings = this.configure(params, details, media);
       if (params.signal.aborted || cancelled || this.closing)
         throw Error("ABORTED");
-      child = this.spawn(
-        this.config.command || "agy",
-        [
-          ...this.profileArgs(),
-          "--settings",
-          settings,
-          "--agent",
-          "qq-agents",
-          "--disable-slash-commands",
-          "--input-format",
-          "stream-json",
-          "--output-format",
-          "stream-json",
-          ...(this.config.model ? ["--model", this.config.model] : []),
-          ...(this.config.effort ? ["--effort", this.config.effort] : []),
-          ...(params.session ? ["--conversation", params.session.id] : []),
-        ],
-        {
-          cwd: workspace,
-          env: {
-            ...isolatedEnv(),
-            QQ_AGY_ENDPOINT: endpoint,
-            QQ_AGY_TOKEN: token,
-          },
-          stdio: ["pipe", "pipe", "pipe"],
-          detached: process.platform !== "win32",
-          windowsHide: true,
-        },
-      );
+      child = this.spawnCli(params, workspace, settings, endpoint, token);
+      timing("prepared");
       let buffer = "",
         diagnostic = "",
         bytes = 0,
@@ -633,6 +774,7 @@ export class AntigravityBackend {
         initializedId = "";
       /** @type {any} */ let terminal;
       let lastResponseStep = -1;
+      let responseSeen = false;
       /** @type {number | null} */ let contextTokens = null;
       /** @type {Error | undefined} */ let protocolError;
       const fail = () => {
@@ -660,6 +802,7 @@ export class AntigravityBackend {
               )
                 return fail();
               initialized = true;
+              timing("initialized");
               initializedId = event.conversation_id;
               if (live && !cancelled && !params.signal.aborted) {
                 managedFile(
@@ -692,8 +835,14 @@ export class AntigravityBackend {
                   lastResponseStep = step.step_index;
                   contextTokens = null;
                 }
-                if (step.state === "DONE")
+                if (step.state === "DONE") {
                   contextTokens = responseOccupancy(step.usage);
+                  if (!responseSeen) {
+                    responseSeen = true;
+                    timing("firstResponse");
+                  }
+                  timing("lastResponse");
+                }
               }
             } else if (event.event === "result") {
               if (
@@ -703,6 +852,7 @@ export class AntigravityBackend {
               )
                 return fail();
               terminal = event.result;
+              timing("terminal");
               // Revoke before process teardown; a trailing tool cannot use a completed turn.
               live = false;
             }
@@ -724,6 +874,7 @@ export class AntigravityBackend {
       // Prompts and credentials never appear in process arguments. EOF ends this
       // turn's process after its result; subsequent turns explicitly resume by ID.
       inputSubmitted = true;
+      timing("inputSubmitted");
       params.onInputSubmitted?.();
       child.stdin?.end(
         JSON.stringify({ event: "user", message: { content: params.prompt } }) +
@@ -766,10 +917,14 @@ export class AntigravityBackend {
       this.active.delete(entry);
       finishDone();
       this.conversations.delete(key);
+      timing("complete");
     }
   }
   async cancel() {
     for (const entry of this.active) entry.abort();
+    await Promise.all(
+      [...this.workers.values()].map((worker) => worker.close()),
+    );
     await Promise.all([...this.active].map((e) => e.done));
   }
   async close() {

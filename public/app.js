@@ -1859,6 +1859,26 @@ function backendForm(row, id, html) {
     `<datalist id="backend-models">${backendModelOptions(catalog)}</datalist><datalist id="backend-providers">${backendProviderOptions(catalog)}</datalist><datalist id="backend-presets">${datalistOptions([["qq-unified", "本项目生成的 preset"]])}</datalist>`;
   const rare =
     linkFor(
+      "antigravity",
+      check(
+        "cliReuseEnabled",
+        "保持聊天进程就绪（减少连续对话等待）",
+        row.cliReuse?.enabled,
+      ) +
+        input(
+          "cliReuseIdleSeconds",
+          "空闲保留时间（秒）",
+          (row.cliReuse?.idleTimeoutMs ?? 600000) / 1000,
+          'type="number" min="1" max="3600" step="0.001"',
+        ) +
+        input(
+          "cliReuseMaxIdle",
+          "最多保留空闲聊天数",
+          row.cliReuse?.maxIdleProcesses ?? 2,
+          'type="number" min="1" max="16"',
+        ),
+    ) +
+    linkFor(
       "openai",
       input(
         "contextWindow",
@@ -2052,6 +2072,16 @@ $("#edit-form").onsubmit = (e) => {
           preset: get("preset"),
           command: get("command"),
           toolServers: JSON.parse(get("toolServers") || "[]"),
+          cliReuse:
+            get("type") === "antigravity"
+              ? {
+                  enabled: f.has("cliReuseEnabled"),
+                  idleTimeoutMs: Math.round(
+                    Number(get("cliReuseIdleSeconds")) * 1000,
+                  ),
+                  maxIdleProcesses: Number(get("cliReuseMaxIdle")),
+                }
+              : undefined,
           // The ...row spread keeps unlisted fields; OpenAI-only ones must not
           // survive a type change, and an emptied key field means no key.
           ...(get("type") === "openai"

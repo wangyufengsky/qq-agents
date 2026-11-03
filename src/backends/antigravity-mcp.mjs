@@ -52,3 +52,32 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   }
 });
 await server.connect(new StdioServerTransport());
+
+// Windows cannot kill a tree through an already exited root PID. A bridge-owned
+// MCP helper therefore watches the bridge itself, including while its CLI is idle.
+// Two failures tolerate brief event-loop stalls without leaving an orphan behind.
+let checkingLease = false,
+  leaseFailures = 0;
+const leaseTimer = setInterval(async () => {
+  if (checkingLease) return;
+  checkingLease = true;
+  try {
+    const response = await fetch(new URL("/lease", endpoint), {
+      headers: { authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(5000),
+      redirect: "error",
+    });
+    if (!response.ok || (await response.json()).alive !== true)
+      throw Error("ANTIGRAVITY_TURN_INACTIVE");
+    leaseFailures = 0;
+  } catch {
+    if (++leaseFailures >= 2) {
+      clearInterval(leaseTimer);
+      // This is the bridge helper only, never the CLI, a QQ process or another MCP.
+      process.exit(0);
+    }
+  } finally {
+    checkingLease = false;
+  }
+}, 1000);
+leaseTimer.unref();

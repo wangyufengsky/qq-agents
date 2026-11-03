@@ -13,7 +13,9 @@ import {
 /** Native view_file must only see pixels returned by an authorized tool in this turn.
  * CLI MCP offloading alone does not reliably attach later images to model input. */
 export class AntigravityMedia {
-  constructor() {
+  /** @param {string} [root] */
+  constructor(root) {
+    this.root = root;
     /** @type {string | null} */
     this.directory = null;
     /** @type {Map<string, {path: string, sha256: string, bytes: number}>} */
@@ -22,7 +24,9 @@ export class AntigravityMedia {
     this.closed = false;
   }
   prepare() {
-    this.directory ??= fs.mkdtempSync(path.join(os.tmpdir(), "qq-agy-media-"));
+    this.directory ??= fs.mkdtempSync(
+      path.join(this.root || os.tmpdir(), "qq-agy-media-"),
+    );
     fs.chmodSync(this.directory, 0o700);
     return this.directory;
   }
