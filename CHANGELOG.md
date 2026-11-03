@@ -6,7 +6,7 @@
 
 ## 未发布
 
-### 文件库文本稿版本修订（`file_revise`）
+### 文件库文本稿版本修订（`file_revise`，[#151](https://github.com/wangyufengsky/qq-agents/pull/151)）
 
 - 新工具 `file_revise({baseFileId, text, name?, note?})`：角色读过自己文件库里的某一版文本稿后提交改好的全文，作为新版本保存；旧版原样保留，新版记录上一版、版本号、修订所在聊天和可选修订说明。起因是角色写小练习时只能保留原稿再另存补页，没法跨几天打磨同一份稿子。
 - 基础版已有更新版本时返回新登记的 `FILE_REVISION_CONFLICT`，附带最新版 `latestFileId`/`latestVersion`，不写入任何内容，提醒先读最新版再改，绝不悄悄覆盖。全文与当前版本相同时返回 `unchanged: true`，不重复建版本；改回更早版本或库里其他文件的原文时返回 `FILE_REVISION_CONTENT_EXISTS` 和那个文件的 `fileId`。检查与写入在角色文件库锁内同步完成，并发提交同一版本只有一次成功。
