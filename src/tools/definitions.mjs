@@ -305,12 +305,14 @@ export const definitions = {
       .strict(),
   ],
   web_fetch: [
-    "读取公开网页文本，阻止内网地址与危险重定向。",
+    "读取公开网页，阻止内网地址与危险重定向。默认 mode text 返回去掉导航、脚本等后的网页正文（优先 article/main），非 HTML 原样返回；mode raw 返回源码。按 nextOffset 续读同一页面，nextOffset 为 null 才算读到下载内容的末尾；downloadTruncated 为 true 时页面超过下载上限，totalChars 为 null，读到末尾也不能说读过全文。授权只看 url，offset、maxChars 和 mode 不影响授权。",
     z
       .object({
         url: str,
         requestEventId: str.optional(),
-        maxChars: z.number().int().min(100).max(16000).optional(),
+        offset: z.number().int().min(0).default(0),
+        maxChars: z.number().int().min(100).max(16000).default(12000),
+        mode: z.enum(["text", "raw"]).default("text"),
       })
       .strict(),
   ],

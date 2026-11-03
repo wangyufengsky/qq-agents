@@ -12,6 +12,7 @@ import { externalArguments, externalResult } from "./external-media.mjs";
 import { taintMedia } from "./legacy.mjs";
 import { SocialReader } from "../../vendor/social-reader/reader.mjs";
 import { safeFetch } from "../../vendor/social-reader/safe-fetch.js";
+import { WEB_FETCH_DOWNLOAD_CHARS, webPage } from "./web-text.mjs";
 import { recallBoundary, recallPage } from "../core/recall-boundary.mjs";
 import {
   markPersonCardShown,
@@ -316,10 +317,13 @@ async function handle_web_fetch(runtime, ctx, args, name) {
   runtime.authorizeExternal(ctx, request, {
     requestEventId: args.requestEventId,
   });
-  if (name === "web_fetch")
-    return (runtime.fetchPublicPage || safeFetch)(
+  if (name === "web_fetch") {
+    // The download limit is separate from the page window, so offset pages
+    // through the same extracted text. offset/mode stay local and never enter
+    // the authorization request above.
+    const page = await (runtime.fetchPublicPage || safeFetch)(
       args.url,
-      args.maxChars || 12000,
+      WEB_FETCH_DOWNLOAD_CHARS,
       {
         authorize: (url) =>
           runtime.authorizeExternal(
@@ -330,6 +334,12 @@ async function handle_web_fetch(runtime, ctx, args, name) {
           ),
       },
     );
+    return webPage(page, {
+      offset: args.offset,
+      maxChars: args.maxChars,
+      mode: args.mode,
+    });
+  }
   runtime.social ??= new SocialReader();
   if (name === "social_search") return runtime.social.perform("search", args);
   if (name === "social_read") return runtime.social.perform("read", args);

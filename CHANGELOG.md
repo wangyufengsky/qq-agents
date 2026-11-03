@@ -6,6 +6,13 @@
 
 ## 未发布
 
+### `web_fetch` 返回网页正文并支持按游标续读
+
+- 读长网页时正文常在中途被截断、无法续读，维基等页面的正文被导航和脚本淹没。`web_fetch` 现在默认对 HTML 提取可读正文：去掉脚本、样式、导航、页眉页脚、侧栏、表单控件、隐藏元素和常见菜单/分类栏，优先 `<article>`/`<main>`，块级元素换行、解码常见实体并压缩空白；非 HTML（纯文本、JSON 等）原样返回，新增 `mode: "raw"` 取源码。提取在桥接侧完成，不引入新依赖。
+- 新增 `offset`，返回 `offset`、`nextOffset`、`totalChars`，语义与 `file_read` 一致，工具说明写明 `nextOffset` 为 `null` 才算读完。下载上限与返回窗口分开（单次最多 1,000,000 字符），续读在同一页面提取后的正文上切片；超过下载上限时如实返回 `downloadTruncated`、`availableChars`，`totalChars` 为 `null`。返回字段由 `body`/`truncated` 改为 `text`/`downloadTruncated` 等。
+- 内网地址、DNS 固定和逐跳重定向检查不变；授权仍只针对 `url`，`offset`/`maxChars`/`mode` 不进入授权请求，已批准或已登记的 URL 换页不会失配。vendored `safe-fetch.js` 只增加返回响应 `Content-Type`，来源说明已更新。
+- 兼容性：无配置、数据库或导出格式变化。`web_fetch` 的说明和参数 schema 变化，启用该工具的角色原生会话可能按工具契约正常交接重建，持久记忆、日记、Self 和账本保留。未进行真实模型回合验收。
+
 ### 当前群概况、群主与分页成员名册只读工具（[#147](https://github.com/wangyufengsky/qq-agents/pull/147)）
 
 - 新增 `qq_group_info_read` 和 `qq_group_members_read`，由独立 `behavior.actions.groupRead` 控制且默认关闭。只读取当前群概况、群主/最多 20 名管理员摘要，以及按角色、名字/QQ 搜索的有限分页名册；既有 `qq_peer_profile_read` 继续提供单成员详情。不接任意群号，不提供群修改。Closes #146。

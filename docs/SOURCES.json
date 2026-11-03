@@ -99,7 +99,9 @@
     {
       "path": "vendor/social-reader/safe-fetch.js",
       "origin": "local-bridge",
-      "sha256": "34dcaf7aa6b632826ba56af1173e40930579bb2701abeb213d52f141bc78a124"
+      "sha256": "dc084c9a6f1f20ebff619343569b54d0a640a6e96a89cca788a0cf79732ca2c3",
+      "upstreamSha256": "34dcaf7aa6b632826ba56af1173e40930579bb2701abeb213d52f141bc78a124",
+      "modification": "Call a caller-supplied authorize hook for the initial URL and every redirect target; report the response Content-Type with text results so the bridge can extract readable HTML text. Address, DNS and redirect checks are unchanged."
     },
     {
       "path": "vendor/legacy/forward.js",
