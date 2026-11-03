@@ -354,3 +354,20 @@ test("silence follows reaction configuration and the currently offered read tool
   );
   assert.match(withRead, /读完后可以用 qq_mark_read/);
 });
+
+test("image placeholder hint follows whether qq_image_read is actually offered", async (t) => {
+  const hint = /qq_image_read 带这条消息的经历 id 读取/;
+  for (const offered of [false, true]) {
+    const cfg = config(1),
+      captured = [];
+    if (offered) cfg.agents[0].tools.push("qq_image_read");
+    const { runtime } = fixture(t, { cfg, run: async (p) => captured.push(p) });
+    await runtime.wake("agent-0", "group:20000");
+    assert.equal(
+      captured[0].tools.some((x) => x.name === "qq_image_read"),
+      offered,
+    );
+    if (offered) assert.match(captured[0].instructions, hint);
+    else assert.doesNotMatch(captured[0].instructions, hint);
+  }
+});

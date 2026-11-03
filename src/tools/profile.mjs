@@ -14,7 +14,7 @@ const line = (/** @type {number} */ max) =>
 
 export const profileDefinitions = {
   qq_peer_profile_read: [
-    "只读当前私聊对象或当前群成员的 QQ 基本资料。私聊省略 userId 即当前对象，不能查询其他人；群聊必须指定当前群成员的 userId。只返回昵称、签名、群名片和群内身份等基本字段，不修改资料。",
+    "只读当前聊天对象的 QQ 基本资料：私聊读当前对方（省略 userId 即可，不能指定别人）；群聊必须填当前群成员的 userId。空闲时间不可用，不能查询任意 QQ 号或其他聊天的人。只返回昵称、签名、群名片和群内身份等基本字段，不修改资料。",
     z
       .object({
         userId: z
@@ -25,7 +25,7 @@ export const profileDefinitions = {
       .strict(),
   ],
   qq_profile_read: [
-    "读取自己 QQ 账号当前的昵称和个性签名。只在主人私聊或自己的空闲时间可用，不修改任何资料。",
+    "读取自己 QQ 账号当前的昵称和个性签名。只在主人私聊或自己的空闲时间可用，不修改任何资料。查看当前聊天对象的资料请用 qq_peer_profile_read。",
     z.object({}).strict(),
   ],
   qq_profile_update: [
