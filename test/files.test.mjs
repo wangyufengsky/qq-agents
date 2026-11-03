@@ -825,3 +825,225 @@ test("file_read returns exactly a short file's own bytes, not a shared pool arou
   assert.equal(read.totalChars, 1);
   assert.equal(read.nextOffset, null);
 });
+
+test("file_read query finds every hit with offsets that file_read can resume from", async (t) => {
+  const { runtime, ctx } = await setup(t);
+  const text = [
+    "第一行",
+    "第二行",
+    "灯塔在雾里亮了",
+    "第四行",
+    "第五行",
+    "第六行",
+    "Lighthouse 再次出现：LIGHTHOUSE",
+    "末行",
+  ].join("\n");
+  const file = await call(runtime, ctx, "file_create", {
+    name: "notes.txt",
+    text,
+  });
+  const found = await call(runtime, ctx, "file_read", {
+    fileId: file.fileId,
+    query: "lighthouse",
+  });
+  assert.equal(found.contentRead, true);
+  assert.equal(found.matchCount, 2);
+  assert.equal(found.truncated, false);
+  assert.equal(found.nextOffset, null);
+  assert.equal(found.totalChars, text.length);
+  assert.deepEqual(
+    found.matches.map((m) => m.offset),
+    [text.indexOf("Lighthouse"), text.indexOf("LIGHTHOUSE")],
+  );
+  assert.deepEqual(
+    found.matches.map((m) => m.line),
+    [7, 7],
+  );
+  // Two lines either side of the hit, and nothing beyond them.
+  assert.equal(
+    found.matches[0].context,
+    "第五行\n第六行\nLighthouse 再次出现：LIGHTHOUSE\n末行",
+  );
+  assert.equal(
+    text.slice(found.matches[0].contextOffset).startsWith("第五行"),
+    true,
+  );
+  const cjk = await call(runtime, ctx, "file_read", {
+    fileId: file.fileId,
+    query: "灯塔",
+  });
+  assert.equal(cjk.matches[0].line, 3);
+  assert.equal(cjk.matches[0].context, text.split("\n").slice(0, 5).join("\n"));
+  const resumed = await call(runtime, ctx, "file_read", {
+    fileId: file.fileId,
+    offset: cjk.matches[0].offset,
+    maxChars: 512,
+  });
+  assert(resumed.text.startsWith("灯塔在雾里亮了"));
+  // Regex syntax is plain text, not a pattern.
+  const literal = await call(runtime, ctx, "file_read", {
+    fileId: file.fileId,
+    query: "第.行",
+  });
+  assert.equal(literal.matchCount, 0);
+  assert.deepEqual(literal.matches, []);
+  assert.equal(literal.truncated, false);
+  assert.equal(literal.nextOffset, null);
+});
+
+test("file_read query scans a large text, including hits across page boundaries", async (t) => {
+  const { runtime, ctx } = await setup(t);
+  const filler = "字".repeat(16000 - 2);
+  const tail = "尾".repeat(400000);
+  const text = filler + "守夜人之歌" + tail + "守夜人";
+  const file = runtime.files.put(
+    "agent-0",
+    Buffer.from(text),
+    "ocr.txt",
+    runtime.agent("agent-0").files,
+    { conversation: ctx.conversation },
+  );
+  const found = await call(runtime, ctx, "file_read", {
+    fileId: file.fileId,
+    query: "守夜人",
+  });
+  assert.deepEqual(
+    found.matches.map((m) => m.offset),
+    [16000 - 2, text.length - 3],
+  );
+  // The first hit straddles where a 16000-character page would end.
+  const page = await call(runtime, ctx, "file_read", {
+    fileId: file.fileId,
+    maxChars: 16000,
+  });
+  assert(page.text.endsWith("守夜"));
+  assert.equal(page.text.includes("守夜人"), false);
+  const atHit = await call(runtime, ctx, "file_read", {
+    fileId: file.fileId,
+    offset: found.matches[0].offset,
+    maxChars: 512,
+  });
+  assert(atHit.text.startsWith("守夜人之歌"));
+  // A single long line is clipped instead of returning the whole file.
+  for (const m of found.matches) assert(m.context.length <= 3 + 600);
+  const later = await call(runtime, ctx, "file_read", {
+    fileId: file.fileId,
+    query: "守夜人",
+    offset: found.matches[0].offset + 1,
+  });
+  assert.equal(later.offset, found.matches[0].offset + 1);
+  assert.deepEqual(
+    later.matches.map((m) => m.offset),
+    [text.length - 3],
+  );
+  const past = await call(runtime, ctx, "file_read", {
+    fileId: file.fileId,
+    query: "守夜人",
+    offset: text.length + 10,
+  });
+  assert.equal(past.offset, text.length);
+  assert.equal(past.matchCount, 0);
+});
+
+test("file_read query returns at most 20 hits and a cursor that continues the search", async (t) => {
+  const { runtime, ctx } = await setup(t);
+  const text = Array.from({ length: 45 }, (_, i) => `第${i}段 key`).join("\n");
+  const file = await call(runtime, ctx, "file_create", {
+    name: "many.md",
+    text,
+  });
+  const seen = [];
+  let offset = 0,
+    pages = 0;
+  for (;;) {
+    const found = await call(runtime, ctx, "file_read", {
+      fileId: file.fileId,
+      query: "KEY",
+      offset,
+    });
+    pages++;
+    assert(found.matches.length <= 20);
+    assert.equal(found.format, "markdown");
+    assert.equal(found.matchCount, 45 - seen.length);
+    seen.push(...found.matches.map((m) => m.offset));
+    if (!found.truncated) {
+      assert.equal(found.nextOffset, null);
+      break;
+    }
+    assert.equal(found.matches.length, 20);
+    assert(found.nextOffset > found.matches.at(-1).offset);
+    offset = found.nextOffset;
+  }
+  assert.equal(pages, 3);
+  assert.equal(new Set(seen).size, 45);
+  assert.deepEqual(
+    seen.map((at) => text.slice(at, at + 3)),
+    Array(45).fill("key"),
+  );
+  assert.deepEqual(
+    seen.slice(0, 3).map((at) => text.slice(0, at).split("\n").length),
+    [1, 2, 3],
+  );
+});
+
+test("file_read query keeps the read's permission and protection checks", async (t) => {
+  const { runtime, ctx } = await setup(t);
+  const policy = runtime.agent("agent-0").files;
+  const secret = runtime.files.put(
+    "agent-0",
+    Buffer.from("ops notes"),
+    "ops.txt",
+    policy,
+    {},
+    true,
+  );
+  await assert.rejects(
+    call(runtime, ctx, "file_read", { fileId: secret.fileId, query: "ops" }),
+    /RECALL_SOURCE_NOT_ALLOWED/,
+  );
+  const elsewhere = runtime.files.put(
+    "agent-0",
+    Buffer.from("written in a private chat"),
+    "draft.txt",
+    policy,
+    { conversation: "private:30000", eventId: "event-elsewhere" },
+  );
+  const found = await call(runtime, ctx, "file_read", {
+    fileId: elsewhere.fileId,
+    query: "private",
+  });
+  assert.equal(found.matchCount, 1);
+  assert.equal(ctx.privateRead.has("event-elsewhere"), true);
+  await assert.rejects(
+    call(runtime, runtime.makeContext("agent-1", "group:20000"), "file_read", {
+      fileId: elsewhere.fileId,
+      query: "private",
+    }),
+    /FILE_NOT_FOUND/,
+  );
+  const image = runtime.files.put(
+    "agent-0",
+    Buffer.from("not really a png"),
+    "photo.png",
+    policy,
+  );
+  await assert.rejects(
+    call(runtime, ctx, "file_read", { fileId: image.fileId, query: "png" }),
+    /FILE_NOT_TEXT/,
+  );
+  await assert.rejects(
+    call(runtime, ctx, "file_read", { fileId: elsewhere.fileId, query: "  " }),
+    /FILE_SEARCH_QUERY_INVALID/,
+  );
+  await assert.rejects(
+    call(runtime, ctx, "file_read", {
+      fileId: elsewhere.fileId,
+      query: "x".repeat(201),
+    }),
+  );
+  policy.enabled = false;
+  await assert.rejects(
+    call(runtime, ctx, "file_read", { fileId: elsewhere.fileId, query: "a" }),
+    /FILE_PERMISSION_DISABLED|TOOL_/,
+  );
+});
