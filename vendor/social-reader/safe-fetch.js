@@ -282,6 +282,7 @@ function attemptOnce(url, address, limit, binary, budgetMs) {
           return;
         }
         const chunks = [];
+        const contentType = String(res.headers['content-type'] || '');
         const decoder = binary ? null : new StringDecoder('utf8');
         let size = 0;
         const appendText = (text) => {
@@ -290,7 +291,7 @@ function attemptOnce(url, address, limit, binary, budgetMs) {
           chunks.push(points.slice(0, remaining).join(''));
           size += Math.min(points.length, remaining);
           if (size >= limit) {
-            done({ statusCode, body: chunks.join(''), truncated: true });
+            done({ statusCode, contentType, body: chunks.join(''), truncated: true });
             res.destroy();
           }
         };
@@ -310,7 +311,7 @@ function attemptOnce(url, address, limit, binary, budgetMs) {
           if (binary) done({ statusCode, buffer: Buffer.concat(chunks) });
           else {
             appendText(decoder.end());
-            done({ statusCode, body: chunks.join(''), truncated: false });
+            done({ statusCode, contentType, body: chunks.join(''), truncated: false });
           }
         });
       });
@@ -382,6 +383,7 @@ export async function safeFetch(urlString, maxChars = 50000, { authorize = () =>
     return {
       url: url.toString(),
       statusCode: result.statusCode,
+      contentType: result.contentType,
       truncated: result.truncated,
       body,
     };
