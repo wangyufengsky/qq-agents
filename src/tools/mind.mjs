@@ -303,6 +303,7 @@ export const SUBJECT_TOOLS = [
   "file_list",
   "file_read",
   "file_create",
+  "file_revise",
   "intent_create",
   "intent_list",
   "intent_update",

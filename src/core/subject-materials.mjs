@@ -302,7 +302,7 @@ export function subjectMaterials(runtime, ctx) {
       ? {
           projects: {
             notice:
-              "你自己的长期小项目。可以接着推进一步（先用 file_read 读回 files 里的上一稿），卡住了就记 blocker，没兴趣了可以 paused，做完或决定放弃就写 outcome 结束；不必每次都做，也不为凑进度编造进展。",
+              "你自己的长期小项目。可以接着推进一步（先用 file_read 读回 files 里的上一稿，改好用 file_revise 存成新版本，再把新 fileId 记进 files），卡住了就记 blocker，没兴趣了可以 paused，做完或决定放弃就写 outcome 结束；不必每次都做，也不为凑进度编造进展。",
             active: active.map(projectBrief),
             ...(paused.length
               ? { paused: paused.map((p) => ({ id: p.id, title: p.title })) }

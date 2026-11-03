@@ -16,12 +16,14 @@ const name = z.string().min(1).max(200),
   id = z.string().regex(/^[a-f0-9]{64}$/);
 export const fileDefinitions = {
   file_list: [
-    "查询自己的独立文件库及可导入目录编号。文件元信息不代表已经阅读内容；要看正文用 file_read。",
+    "查询自己的独立文件库及可导入目录编号。文件元信息不代表已经阅读内容；要看正文用 file_read。默认每条修订链只列最新版；allVersions=true 连旧版一起列，versionsOf=某个 fileId 按版本从旧到新列出它所在的整条修订链。每项带 version、revisionOf（上一版）、latest 和 latestFileId。",
     z
       .object({
         query: z.string().max(100).optional(),
         offset: z.number().int().min(0).optional(),
         limit: z.number().int().min(1).max(50).optional(),
+        allVersions: z.boolean().optional(),
+        versionsOf: id.optional(),
       })
       .strict(),
   ],
@@ -51,6 +53,17 @@ export const fileDefinitions = {
   file_create: [
     "在自己的文件库生成 UTF-8 文本附件，例如 txt、md、csv、json。不能声称生成了 PDF/Office 格式；不会执行内容。",
     z.object({ name, text: z.string().max(200000) }).strict(),
+  ],
+  file_revise: [
+    "修订自己文件库里的文本稿：先 file_read 读当前版本，再把改好的全文作为新版本提交。baseFileId 填你读过的那一版；旧版原样保留，新版记录上一版、版本号、修订说明和来源，保护标记从旧稿继承。若 baseFileId 已有更新的版本，返回 FILE_REVISION_CONFLICT 和 latestFileId，什么都不写入：先 file_read 最新版再改，不要拿旧稿覆盖。全文与当前版本相同时返回 unchanged=true，不另建版本。name 省略时沿用旧名；不会执行内容。",
+    z
+      .object({
+        baseFileId: id,
+        text: z.string().max(200000),
+        name: name.optional(),
+        note: z.string().min(1).max(200).optional(),
+      })
+      .strict(),
   ],
   file_import: [
     "从管理员指定的目录导入文件。只接受目录编号及相对路径，不接受任意本机绝对路径。",
@@ -109,7 +122,11 @@ export async function fileTool(runtime, ctx, tool, args) {
   const a = active(runtime, ctx),
     files = runtime.files;
   if (tool === "file_list") {
-    const result = files.list(a.id, args);
+    const { allVersions, ...rest } = args;
+    const result = files.list(a.id, {
+      ...rest,
+      latestOnly: !allVersions && !args.versionsOf,
+    });
     result.items = recallBoundary(runtime, ctx).rows(result.items);
     result.items.forEach((m) => protect(ctx, m));
     return {
@@ -139,6 +156,9 @@ export async function fileTool(runtime, ctx, tool, args) {
         ...args,
         maxBytes: a.files.maxBytes,
       }),
+      // Reading an older draft is fine, but the reader must know before it
+      // revises that newer work exists.
+      ...files.versionOf(a.id, args.fileId),
       contentRead: true,
     };
   }
@@ -202,6 +222,52 @@ export async function fileTool(runtime, ctx, tool, args) {
         restricted,
         privateGithubSources(ctx, runtime),
         peerQzoneSources(runtime, ctx),
+      );
+      protect(ctx, saved);
+      return saved;
+    }
+    if (tool === "file_revise") {
+      active(runtime, ctx, "create");
+      runtime.assertSafeOutput(ctx, args.text);
+      if (args.note !== undefined) runtime.assertSafeOutput(ctx, args.note);
+      const base = files.metadata(a.id, args.baseFileId);
+      recallBoundary(runtime, ctx).assert(base);
+      if (!TEXT_FILE.test(base.name)) throw Error("FILE_NOT_TEXT");
+      const name = args.name ?? base.name;
+      if (!TEXT_FILE.test(name)) throw Error("TEXT_FILE_EXTENSION_REQUIRED");
+      // The base's provenance joins this turn before anything is written, so
+      // a revision taints the caller exactly like reading the base did.
+      protect(ctx, base);
+      const buffer = Buffer.from(args.text);
+      let previous;
+      try {
+        previous = files.metadata(
+          a.id,
+          createHash("sha256").update(buffer).digest("hex"),
+        );
+      } catch (error) {
+        if (error.message !== "FILE_NOT_FOUND") throw error;
+      }
+      // Same check as file_create: a hash hit must not reveal what this
+      // context may not read.
+      if (previous) recallBoundary(runtime, ctx).assert(previous);
+      const saved = files.revise(
+        a.id,
+        args.baseFileId,
+        buffer,
+        name,
+        a.files,
+        {
+          conversation: ctx.conversation,
+          ...(args.note !== undefined ? { note: args.note } : {}),
+        },
+        {
+          protectedOperations: [...ctx.privateRead].some((x) =>
+            /^(operations|operations-result):/.test(x),
+          ),
+          protectedRepositories: privateGithubSources(ctx, runtime),
+          protectedPeerQzoneTargets: peerQzoneSources(runtime, ctx),
+        },
       );
       protect(ctx, saved);
       return saved;
