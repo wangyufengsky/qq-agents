@@ -11,6 +11,23 @@ export function safeToolFailure(error) {
       matches: error.matches,
       hint: "No delivery was attempted and this requestId was not reserved. Review the wording against Self's speech samples. Rewrite the rejected message using a new requestId, or confirm it is appropriate by resubmitting the exact same requestId and plain text in this turn. For a stopped burst, preserve earlier receipts: you may resubmit the unchanged burst with its original requestId, or rewrite only the rejected item with qq_send and a new requestId. This reminder grants no sending permission and does not clear any delivery or safety boundary.",
     };
+  // A file ID is a content digest, never content, so returning it lets the
+  // caller reread the right version without exposing anything new.
+  if (
+    /^FILE_REVISION_(CONFLICT|CONTENT_EXISTS)$/.test(error?.message || "") &&
+    /^[a-f0-9]{64}$/.test(error.latestFileId || "")
+  )
+    return {
+      code: error.message,
+      latestFileId: error.latestFileId,
+      ...(Number.isSafeInteger(error.latestVersion)
+        ? { latestVersion: error.latestVersion }
+        : {}),
+      hint:
+        error.message === "FILE_REVISION_CONFLICT"
+          ? "Nothing was written. baseFileId is no longer the newest version of this draft. file_read latestFileId in full, merge your changes into that text, and submit file_revise again with baseFileId set to latestFileId. Never resubmit the old draft over newer work."
+          : "Nothing was written. This exact text is already stored in your library as latestFileId (for example an earlier version), and one file cannot belong to two places in a version chain. Change the text, or use latestFileId as it is.",
+    };
   if (/^ANTIGRAVITY_MEDIA_(FORMAT|LIMIT|FAILED)$/.test(error?.message || ""))
     return {
       code: error.message,

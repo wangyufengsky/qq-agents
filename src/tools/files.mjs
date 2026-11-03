@@ -112,6 +112,83 @@ function readRegular(file, maxBytes) {
     fs.closeSync(fd);
   }
 }
+export class FileRevisionConflict extends Error {
+  constructor(code, latest) {
+    super(code);
+    this.latestFileId = latest.fileId;
+    if (latest.version) this.latestVersion = latest.version;
+  }
+}
+const revisionMarker = (meta) =>
+  meta.sources.findLast(
+    (s) => s.kind === "revision" && validId.test(s.revisionOf),
+  );
+// Lineage lives in a passthrough source entry, so metadata written here stays
+// readable by earlier releases, which simply list each version as a file.
+function versionIndex(items) {
+  const byId = new Map(items.map((m) => [m.fileId, m])),
+    children = new Map();
+  const parent = (meta) => {
+    const id = revisionMarker(meta)?.revisionOf;
+    return id && id !== meta.fileId && byId.has(id) ? id : undefined;
+  };
+  for (const meta of items) {
+    const id = parent(meta);
+    if (id) children.set(id, [...(children.get(id) || []), meta]);
+  }
+  const version = (meta) => {
+    const value = revisionMarker(meta)?.revision;
+    return Number.isSafeInteger(value) && value > 1 ? value : 1;
+  };
+  const latest = (fileId) => {
+    let current = byId.get(fileId);
+    const seen = new Set([fileId]);
+    for (;;) {
+      // Branches only arise from damaged or hand-edited libraries; follow the
+      // newest so a conflict always points somewhere readable.
+      const next = (children.get(current.fileId) || [])
+        .filter((m) => !seen.has(m.fileId))
+        .sort(
+          (a, b) =>
+            b.createdAt.localeCompare(a.createdAt) ||
+            a.fileId.localeCompare(b.fileId),
+        )[0];
+      if (!next) return current;
+      seen.add(next.fileId);
+      current = next;
+    }
+  };
+  const chain = (fileId) => {
+    let root = fileId;
+    const seen = new Set([root]);
+    for (let up = parent(byId.get(root)); up && !seen.has(up);) {
+      seen.add(up);
+      root = up;
+      up = parent(byId.get(root));
+    }
+    const members = [root],
+      visited = new Set(members);
+    for (let i = 0; i < members.length; i++)
+      for (const child of children.get(members[i]) || [])
+        if (!visited.has(child.fileId)) {
+          visited.add(child.fileId);
+          members.push(child.fileId);
+        }
+    return members;
+  };
+  const annotate = (meta) => {
+    const revisionOf = parent(meta) ?? revisionMarker(meta)?.revisionOf,
+      newest = byId.has(meta.fileId) ? latest(meta.fileId) : meta;
+    return {
+      ...meta,
+      version: version(meta),
+      ...(revisionOf ? { revisionOf } : {}),
+      latest: newest.fileId === meta.fileId,
+      latestFileId: newest.fileId,
+    };
+  };
+  return { byId, latest, chain, annotate, version };
+}
 export class FileStore {
   constructor(root, { download = downloadFile } = {}) {
     this.root = path.resolve(root);
@@ -216,14 +293,41 @@ export class FileStore {
       orphanFiles: extraFiles,
     };
   }
-  list(agentId, { offset = 0, limit = 30, query = "" } = {}) {
+  list(
+    agentId,
+    {
+      offset = 0,
+      limit = 30,
+      query = "",
+      latestOnly = false,
+      versionsOf = undefined,
+    } = {},
+  ) {
     const scanned = this.scan(agentId);
-    const items = scanned.items.sort(
-      (a, b) =>
-        b.createdAt.localeCompare(a.createdAt) ||
-        a.fileId.localeCompare(b.fileId),
-    );
-    const filtered = items.filter((x) => x.name.includes(query));
+    const versions = versionIndex(scanned.items);
+    const items = scanned.items
+      .map((meta) => versions.annotate(meta))
+      .sort(
+        (a, b) =>
+          b.createdAt.localeCompare(a.createdAt) ||
+          a.fileId.localeCompare(b.fileId),
+      );
+    let filtered = items.filter((x) => x.name.includes(query));
+    if (latestOnly) filtered = filtered.filter((x) => x.latest);
+    if (versionsOf !== undefined) {
+      if (!validId.test(versionsOf)) throw Error("INVALID_FILE_ID");
+      if (!versions.byId.has(versionsOf)) throw Error("FILE_NOT_FOUND");
+      const chain = new Set(versions.chain(versionsOf));
+      // A history view reads oldest first, like the drafts were written.
+      filtered = filtered
+        .filter((x) => chain.has(x.fileId))
+        .sort(
+          (a, b) =>
+            a.version - b.version ||
+            a.createdAt.localeCompare(b.createdAt) ||
+            a.fileId.localeCompare(b.fileId),
+        );
+    }
     return {
       ...scanned,
       items: filtered.slice(offset, offset + limit),
@@ -243,6 +347,7 @@ export class FileStore {
     protectedOperations = false,
     protectedRepositories = [],
     protectedPeerQzoneTargets = [],
+    { inheritedSources = [], protectionUnknown = false } = {},
   ) {
     fileName(name);
     if (!Buffer.isBuffer(buffer) || buffer.length > policy.maxBytes)
@@ -265,8 +370,9 @@ export class FileStore {
     const usage = this.scan(agentId);
     if (!usage.usageComplete) throw Error("FILE_QUOTA_UNAVAILABLE");
     const sources = [...(old?.sources || [])];
-    if (!sources.some((s) => JSON.stringify(s) === JSON.stringify(source)))
-      sources.push(source);
+    for (const entry of [...inheritedSources, source])
+      if (!sources.some((s) => JSON.stringify(s) === JSON.stringify(entry)))
+        sources.push(entry);
     const meta = {
       fileId,
       name,
@@ -282,7 +388,9 @@ export class FileStore {
           ...protectedRepositories,
         ]),
       ],
-      ...(old?.protectionUnknown ? { protectionUnknown: true } : {}),
+      ...(old?.protectionUnknown || protectionUnknown
+        ? { protectionUnknown: true }
+        : {}),
       contentRead: false,
     };
     const metaBytes = Buffer.byteLength(JSON.stringify(meta, null, 2) + "\n");
@@ -312,6 +420,92 @@ export class FileStore {
       fs.rmSync(temp, { force: true });
     }
     return meta;
+  }
+  // Content addressing keeps every earlier version intact; a revision is a new
+  // file whose provenance names the version it was written from. The check
+  // and write below are synchronous, so callers holding acquire() cannot race.
+  revise(agentId, baseFileId, buffer, name, policy, source, protection = {}) {
+    const base = this.metadata(agentId, baseFileId);
+    if (!Buffer.isBuffer(buffer) || buffer.length > policy.maxBytes)
+      throw Error("FILE_TOO_LARGE");
+    const versions = versionIndex(this.scan(agentId).items);
+    if (!versions.byId.has(baseFileId)) {
+      // Surface the precise damage instead of revising an unreadable base.
+      this.read(agentId, baseFileId, 52428800);
+      throw Error("FILE_INTEGRITY_FAILED");
+    }
+    const fileId = hash(buffer),
+      latest = versions.latest(baseFileId);
+    if (fileId === baseFileId || fileId === latest.fileId)
+      return {
+        ...versions.annotate(fileId === baseFileId ? base : latest),
+        unchanged: true,
+      };
+    if (latest.fileId !== baseFileId)
+      throw new FileRevisionConflict(
+        "FILE_REVISION_CONFLICT",
+        versions.annotate(latest),
+      );
+    let existing;
+    try {
+      existing = this.metadata(agentId, fileId);
+    } catch (error) {
+      if (error.message !== "FILE_NOT_FOUND") throw error;
+    }
+    // Reusing another file's ID would rewrite its lineage or form a cycle.
+    if (existing || hasEntry(path.join(this.dir(agentId), fileId + ".bin")))
+      throw new FileRevisionConflict(
+        "FILE_REVISION_CONTENT_EXISTS",
+        existing ? versions.annotate(existing) : { fileId },
+      );
+    const marker = {
+      ...source,
+      kind: "revision",
+      revisionOf: baseFileId,
+      revision: versions.version(base) + 1,
+    };
+    // Each file carries one lineage marker. Inherited markers keep their
+    // conversation as plain provenance, so protection never washes out.
+    const inherited = [];
+    for (const entry of base.sources) {
+      const kept =
+        entry.kind === "revision"
+          ? { kind: "generated-text", conversation: entry.conversation }
+          : entry;
+      if (!inherited.some((s) => JSON.stringify(s) === JSON.stringify(kept)))
+        inherited.push(kept);
+    }
+    if (inherited.length >= 100) throw Error("FILE_METADATA_TOO_LARGE");
+    const saved = this.put(
+      agentId,
+      buffer,
+      name,
+      policy,
+      marker,
+      base.protectedOperations || protection.protectedOperations === true,
+      [
+        ...(base.protectedRepositories || []),
+        ...(protection.protectedRepositories || []),
+      ],
+      [
+        ...(base.protectedPeerQzoneTargets || []),
+        ...(protection.protectedPeerQzoneTargets || []),
+      ],
+      {
+        inheritedSources: inherited,
+        protectionUnknown: base.protectionUnknown === true,
+      },
+    );
+    return versionIndex([...versions.byId.values(), saved]).annotate(saved);
+  }
+  // Version facts for one file, computed from the current library.
+  versionOf(agentId, fileId) {
+    const versions = versionIndex(this.scan(agentId).items);
+    const meta = versions.byId.get(fileId);
+    if (!meta) return { version: 1, latest: true, latestFileId: fileId };
+    const { version, revisionOf, latest, latestFileId } =
+      versions.annotate(meta);
+    return { version, revisionOf, latest, latestFileId };
   }
   read(agentId, fileId, maxBytes) {
     const meta = this.metadata(agentId, fileId);
