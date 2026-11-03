@@ -8,7 +8,7 @@
 
 ### `web_fetch` 返回网页正文并支持按游标续读（[#150](https://github.com/wangyufengsky/qq-agents/pull/150)）
 
-- 读长网页时正文常在中途被截断、无法续读，维基等页面的正文被导航和脚本淹没。`web_fetch` 现在默认对 HTML 提取可读正文：去掉脚本、样式、导航、页眉页脚、侧栏、表单控件、隐藏元素和常见菜单/分类栏，优先 `<article>`/`<main>`，块级元素换行、解码常见实体并压缩空白；非 HTML（纯文本、JSON 等）原样返回，新增 `mode: "raw"` 取源码。提取在桥接侧完成，不引入新依赖。
+- 读长网页时正文常在中途被截断、无法续读，维基等页面的正文被导航和脚本淹没。`web_fetch` 现在默认对 HTML 提取可读正文：去掉脚本、样式、导航、页眉页脚、侧栏、表单控件、隐藏元素和常见菜单/分类栏，优先 `<article>`/`<main>`，块级元素换行、解码常见实体并压缩空白；非 HTML（纯文本、JSON 等）原样返回，新增 `mode: "raw"` 取源码。按 HTML 规则处理 `p`、`li`、`dt`/`dd`、表格行与单元格的隐式闭合，隐藏的段落或列表项不会连带隐藏后续兄弟元素；扫描、属性解析和无响应头时的 HTML 识别都是线性的，恶意标记不会卡住主线程。提取在桥接侧完成，不引入新依赖。
 - 新增 `offset`，返回 `offset`、`nextOffset`、`totalChars`，语义与 `file_read` 一致，工具说明写明 `nextOffset` 为 `null` 才算读完。下载上限与返回窗口分开（单次最多 1,000,000 字符），续读在同一页面提取后的正文上切片；超过下载上限时如实返回 `downloadTruncated`、`availableChars`，`totalChars` 为 `null`。返回字段由 `body`/`truncated` 改为 `text`/`downloadTruncated` 等。
 - 内网地址、DNS 固定和逐跳重定向检查不变；授权仍只针对 `url`，`offset`/`maxChars`/`mode` 不进入授权请求，已批准或已登记的 URL 换页不会失配。vendored `safe-fetch.js` 只增加返回响应 `Content-Type`，来源说明已更新。
 - 兼容性：无配置、数据库或导出格式变化。`web_fetch` 的说明和参数 schema 变化，启用该工具的角色原生会话可能按工具契约正常交接重建，持久记忆、日记、Self 和账本保留。未进行真实模型回合验收。

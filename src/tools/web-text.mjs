@@ -48,6 +48,34 @@ const LINE = new Set(
   ),
 );
 const CELL = new Set(["td", "th"]);
+// Implied end tags (HTML parsing spec, simplified): a start tag closes an open
+// element it cannot nest in, searching down to a boundary. Without this, a
+// hidden <p> or <li> would hide every following sibling.
+const SCOPE = ["button", "table", "td", "th", "caption", "object", "template"];
+const CLOSES_P = new Set(
+  "address article aside blockquote details dialog div dl dd dt fieldset figcaption figure footer form h1 h2 h3 h4 h5 h6 header hr li main menu nav ol p pre section table ul".split(
+    " ",
+  ),
+);
+/** @type {Record<string, [Set<string>, Set<string>]>} */
+const IMPLIED = {
+  li: [new Set(["li"]), new Set(["ul", "ol", "menu", ...SCOPE])],
+  dt: [new Set(["dt", "dd"]), new Set(["dl", ...SCOPE])],
+  dd: [new Set(["dt", "dd"]), new Set(["dl", ...SCOPE])],
+  // Popping back to the previous row also closes its open cells.
+  tr: [
+    new Set(["tr"]),
+    new Set(["table", "thead", "tbody", "tfoot", "template"]),
+  ],
+  td: [new Set(["td", "th"]), new Set(["tr", "table", "template"])],
+  th: [new Set(["td", "th"]), new Set(["tr", "table", "template"])],
+  option: [new Set(["option"]), new Set(["select", "datalist", "optgroup"])],
+  optgroup: [new Set(["option", "optgroup"]), new Set(["select", "datalist"])],
+};
+const P_SCOPE = new Set(SCOPE);
+// Real implied closes sit near the top of the stack; the cap keeps a deep
+// stack of unrelated elements from making each start tag a full scan.
+const IMPLIED_DEPTH = 256;
 /** @type {Record<string, string>} */
 const NAMED = {
   amp: "&",
@@ -111,7 +139,50 @@ export function decodeEntities(text) {
   );
 }
 
-const ATTRIBUTE = /([^\s=/>"']+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g;
+/**
+ * Parse attribute names and values by index. A regex with optional quoted
+ * groups rescans to the end of the tag at every name after an unclosed quote,
+ * which is quadratic on one hostile tag.
+ * @param {string} attrs
+ */
+function parseAttributes(attrs) {
+  /** @type {Map<string, string>} */
+  const values = new Map();
+  const space = (/** @type {string} */ c) => c <= " ";
+  let i = 0;
+  while (i < attrs.length) {
+    while (i < attrs.length && (space(attrs[i]) || attrs[i] === "/")) i++;
+    const start = i;
+    while (i < attrs.length && !space(attrs[i]) && !"=/>".includes(attrs[i]))
+      i++;
+    if (i === start) {
+      i++;
+      continue;
+    }
+    const name = attrs.slice(start, i).toLowerCase();
+    let j = i;
+    while (j < attrs.length && space(attrs[j])) j++;
+    let value = "";
+    if (attrs[j] === "=") {
+      j++;
+      while (j < attrs.length && space(attrs[j])) j++;
+      const quote = attrs[j];
+      if (quote === '"' || quote === "'") {
+        const close = attrs.indexOf(quote, j + 1);
+        const stop = close < 0 ? attrs.length : close;
+        value = attrs.slice(j + 1, stop);
+        j = stop + 1;
+      } else {
+        const from = j;
+        while (j < attrs.length && !space(attrs[j])) j++;
+        value = attrs.slice(from, j);
+      }
+      i = j;
+    }
+    if (!values.has(name)) values.set(name, value);
+  }
+  return values;
+}
 
 // Class/id words that mark widgets around the text (Wikipedia language menus,
 // navboxes and category bars, share and cookie bars). Only whole words split on
@@ -137,11 +208,7 @@ function chromeWords(value) {
 function chromeByAttributes(attrs) {
   // Cheap prefilter: skip tags that carry none of these attribute names.
   if (!/hidden|role|style|class|id/i.test(attrs)) return false;
-  /** @type {Map<string, string>} */
-  const values = new Map();
-  ATTRIBUTE.lastIndex = 0;
-  for (let m; (m = ATTRIBUTE.exec(attrs));)
-    values.set(m[1].toLowerCase(), m[2] ?? m[3] ?? m[4] ?? "");
+  const values = parseAttributes(attrs);
   if (values.has("hidden")) return true;
   if (values.get("aria-hidden")?.toLowerCase() === "true") return true;
   if (CHROME_ROLES.has(String(values.get("role")).toLowerCase())) return true;
@@ -173,6 +240,21 @@ function tagEnd(html, from, noClose) {
   return -1;
 }
 
+// Tail scans by index: `/\n*$/` or `/ +$/` restart at every position of a long
+// run and are quadratic on preformatted text.
+/** @param {string} text @param {string} char */
+function trailing(text, char) {
+  let n = 0;
+  while (n < text.length && text[text.length - 1 - n] === char) n++;
+  return n;
+}
+/** @param {string} line */
+function trimSpacesEnd(line) {
+  let end = line.length;
+  while (end && (line[end - 1] === " " || line[end - 1] === "\t")) end--;
+  return end === line.length ? line : line.slice(0, end);
+}
+
 /**
  * Append-only text buffer that tracks its own tail. Inspecting a growing
  * concatenated string (out[out.length - 1]) flattens it each time, which is
@@ -191,19 +273,20 @@ class Out {
     if (!text) return;
     this.parts.push(text);
     this.started ||= /\S/.test(text);
-    const trailing = /\n*$/.exec(text)?.[0].length || 0;
+    const newlines = trailing(text, "\n");
     this.newlines =
-      trailing === text.length ? this.newlines + trailing : trailing;
+      newlines === text.length ? this.newlines + newlines : newlines;
     this.space = text.endsWith(" ");
   }
   /** @param {number} count */
   breakLine(count) {
     if (this.space) {
       const last = this.parts.length - 1;
-      this.parts[last] = this.parts[last].replace(/ +$/, "");
+      const part = this.parts[last];
+      this.parts[last] = part.slice(0, part.length - trailing(part, " "));
       this.space = false;
-      const trailing = /\n*$/.exec(this.parts[last])?.[0].length || 0;
-      if (trailing) this.newlines = trailing;
+      const newlines = trailing(this.parts[last], "\n");
+      if (newlines) this.newlines = newlines;
     }
     if (!this.started) return;
     if (this.newlines < count) {
@@ -265,6 +348,16 @@ function collect(html, { dropForms }) {
     }
     if (skipAt >= stack.length) skipAt = -1;
   };
+  /** @param {Set<string>} names @param {Set<string>} stops */
+  const closeOpen = (names, stops) => {
+    if (![...names].some((name) => open.get(name))) return;
+    const floor = Math.max(0, stack.length - IMPLIED_DEPTH);
+    for (let i = stack.length - 1; i >= floor; i--) {
+      if (names.has(stack[i])) return popTo(i);
+      if (stops.has(stack[i])) return;
+    }
+  };
+  const P_ONLY = new Set(["p"]);
   let pos = 0;
   while (pos < html.length) {
     const lt = html.indexOf("<", pos);
@@ -319,6 +412,10 @@ function collect(html, { dropForms }) {
       pos = after < 0 ? html.length : after + 1;
       continue;
     }
+    // Closing an implied element may also end a hidden one, so do it before
+    // deciding visibility and line breaks for this tag.
+    if (CLOSES_P.has(name)) closeOpen(P_ONLY, P_SCOPE);
+    if (Object.hasOwn(IMPLIED, name)) closeOpen(...IMPLIED[name]);
     if (VOID.has(name) || attrs.endsWith("/")) {
       if (skipAt < 0 && (name === "br" || name === "hr"))
         breakLine(name === "hr" ? 2 : 1);
@@ -328,7 +425,6 @@ function collect(html, { dropForms }) {
       if (PARAGRAPH.has(name)) breakLine(2);
       else if (LINE.has(name)) breakLine(1);
       else if (CELL.has(name)) emit(" ");
-      if (name === "li") emit("• ");
     }
     stack.push(name);
     open.set(name, (open.get(name) || 0) + 1);
@@ -343,6 +439,7 @@ function collect(html, { dropForms }) {
       (name === "header" && !inArticle && !inMain) ||
       chromeByAttributes(attrs);
     if (skipAt < 0 && chrome) skipAt = stack.length - 1;
+    if (name === "li" && skipAt < 0) emit("• ");
   }
   return {
     title,
@@ -357,7 +454,9 @@ function collect(html, { dropForms }) {
 /** @param {string} text */
 function tidy(text) {
   return text
-    .replace(/[ \t]+$/gm, "")
+    .split("\n")
+    .map(trimSpacesEnd)
+    .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
@@ -399,9 +498,19 @@ export function looksLikeHtml(contentType, body) {
     .trim()
     .toLowerCase();
   if (type) return type === "text/html" || type === "application/xhtml+xml";
-  // Without a header, only sniff unambiguous document starts.
-  return /^\s*(?:<!--[\s\S]*?-->\s*)*<(?:!doctype\s+html|html[\s>]|head[\s>]|body[\s>])/i.test(
-    body.replace(/^\uFEFF/, ""),
+  // Without a header, only sniff unambiguous document starts. Leading
+  // comments are skipped by index; a nested repeated regex backtracks
+  // exponentially on many comments followed by plain text.
+  let i = body.startsWith("\uFEFF") ? 1 : 0;
+  for (;;) {
+    while (i < body.length && body[i] <= " ") i++;
+    if (!body.startsWith("<!--", i)) break;
+    const end = body.indexOf("-->", i + 4);
+    if (end < 0) return false;
+    i = end + 3;
+  }
+  return /^<(?:!doctype\s+html|html[\s>]|head[\s>]|body[\s>])/i.test(
+    body.slice(i, i + 64),
   );
 }
 

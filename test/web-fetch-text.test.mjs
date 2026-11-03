@@ -88,14 +88,70 @@ test("class and id words drop widgets but keep content wrappers", () => {
   assert.doesNotMatch(text, /Deutsch|\[edit\]|navbox|Categories|Share this/);
 });
 
+test("implied end tags keep a hidden p, li, dd or cell from hiding its siblings", () => {
+  assert.equal(
+    htmlToText(
+      "<body><p hidden>hidden<p>Visible paragraph<p>Another paragraph</body>",
+    ).text,
+    "Visible paragraph\n\nAnother paragraph",
+  );
+  assert.equal(
+    htmlToText("<ul><li hidden>hidden<li>Visible one<li>Visible two</ul>").text,
+    "• Visible one\n• Visible two",
+  );
+  assert.equal(
+    htmlToText("<dl><dt hidden>gone<dd>Definition<dt>Term</dl>").text,
+    "Definition\nTerm",
+  );
+  assert.equal(
+    htmlToText(
+      "<table><tr hidden><td>gone<tr><td hidden>gone<td>Cell<th>Head</table>",
+    ).text,
+    "Cell Head",
+  );
+  // A block start tag closes an open <p>; nested lists keep their own items.
+  assert.equal(
+    htmlToText("<p style='display:none'>gone<div>Block</div>").text,
+    "Block",
+  );
+  assert.equal(
+    htmlToText("<ul><li>outer<ul><li hidden>gone<li>inner</ul><li>next</ul>")
+      .text,
+    "• outer\n\n• inner\n\n• next",
+  );
+  assert.equal(
+    htmlToText("<select><option hidden>a<option>b</select><p>after").text,
+    "after",
+  );
+});
+
 test("hostile markup stays linear and unterminated tags do not leak", () => {
   const started = Date.now();
   htmlToText("<p x='".repeat(50000) + "<div>".repeat(50000));
   htmlToText("<div>".repeat(50000) + "</span>".repeat(100000));
   htmlToText("<p>abc def </p>".repeat(60000));
+  // Long whitespace runs in <pre>, an unclosed quote in one huge tag, and
+  // many unclosed raw elements must not trigger regex rescans.
+  htmlToText("<pre>" + "\n".repeat(200000) + "x" + " ".repeat(200000) + "y");
+  htmlToText("<div class='" + 'a="b='.repeat(100000) + ">text</div>");
+  htmlToText("<script>".repeat(50000));
+  htmlToText(
+    "<p>x" +
+      "<button>".repeat(300) +
+      "<b>".repeat(20000) +
+      "<div>".repeat(20000),
+  );
   assert.ok(Date.now() - started < 5000);
   assert.equal(htmlToText("<p>kept</p><a href='x").text, "kept");
   assert.equal(htmlToText('<a title="1 > 0">link</a>').text, "link");
+});
+
+test("sniffing leading comments is linear and rejects unclosed comments", () => {
+  const started = Date.now();
+  assert.equal(looksLikeHtml("", "<!--x-->".repeat(100000) + "plain"), false);
+  assert.equal(looksLikeHtml("", "<!--x-->\n".repeat(1000) + "<html>"), true);
+  assert.equal(looksLikeHtml("", "<!-- open " + "-".repeat(100000)), false);
+  assert.ok(Date.now() - started < 1000);
 });
 
 test("content type decides extraction; non-HTML text is returned verbatim", () => {
