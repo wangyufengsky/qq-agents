@@ -36,6 +36,7 @@
 | `file_read`     | 分页读取本主体文件库里的 UTF-8 文本文件，按 `nextOffset` 续读；填 `query` 时改为关键词搜索 |
 | `file_download` | 公开 HTTP(S) URL，或已观察记录的 `eventId` + 附件序号，二选一                              |
 | `file_create`   | 创建 UTF-8 文本附件；支持 txt/md/csv/json/tsv/log/xml/yaml/yml                             |
+| `file_revise`   | 以读过的某一版为基础提交文本新版本，旧版保留；基础版已过时则拒绝并返回最新版 `fileId`      |
 | `file_import`   | 从管理员配置的目录编号及相对路径导入                                                       |
 | `qq_send_file`  | 用 `fileId` 和唯一 `requestId` 向当前绑定会话发送                                          |
 
@@ -44,6 +45,18 @@
 下载不会执行、解压或解释文件。工具返回 `contentRead=false`，不能据此声称读懂 PDF、Word、Excel 或压缩包。`file_read` 只读文本扩展名（与 `file_create` 相同）且是有效 UTF-8 的文件，其他文件返回 `FILE_NOT_TEXT`；开启文件库时它和其他文件工具一起加入 `tools`；之前保存的配置里只要有 `file_list`，升级后同样可用。读取结果带 `contentRead=true`、`totalChars` 和 `nextOffset`，`nextOffset` 为 null 才算读完。受保护文件读不到（`RECALL_SOURCE_NOT_ALLOWED`），来自其他聊天的文件读过后本回合按读过那里的资料处理，与 `qq_send_file` 相同。文本生成不会把普通文字冒充 Office/PDF 格式。来自现有运维文件读取的受限内容仍保留原披露限制，普通文件收发不进入运维确认队列。
 
 `file_read` 填写 `query`（1–200 字符）时改为搜索，不返回分页正文：从 `offset` 起按纯文本、不区分大小写查找，不支持正则（查询按字面转义，避免回溯型正则拖垮进程）。每次最多返回 20 处命中，每处带字符偏移 `offset`（与分页读取同一坐标，可直接作为 `file_read` 的 `offset` 续读整段）、行号 `line`，以及命中行前后各两行的 `context` 和其起点 `contextOffset`；超长行在命中前后各截取 300 字符。`matchCount` 是从 `offset` 起的命中数（最多计到 10000，`matchCountLimited` 标明封顶），`truncated` 为 true 时用 `nextOffset` 作为下次的 `offset` 继续搜索。搜索与读取走同一套权限、受保护文件拒绝和跨聊天来源处理；文件内容与分页读取一样一次解码在 `maxBytes` 上限内，命中跨越分页边界同样能找到。只看过片段不算读过全文。
+
+### 文本稿修订与版本链
+
+`file_revise({baseFileId, text, name?, note?})` 用于跨几天慢慢打磨同一份稿子：先 `file_read` 读当前版本，再把改好的全文作为新版本提交。它和 `file_create` 使用同一项“文本文件生成”权限（`files.create`），同样做凭据过滤、只接受文本扩展名；基础版也必须是文本文件。工具白名单里有 `file_create` 的角色（包括升级前保存的配置）会自动获得 `file_revise`，管理台勾选“生成文本文件”时一并显示为已开启；去掉 `file_create` 时它也随之移除。它不能写其他目录、不发送任何内容，只是在自己的库里多存一个文件。
+
+- **旧版保留**：`fileId` 是内容摘要，新版本是另一个文件，旧版原样留在库里。没有删除旧版本的工具。
+- **来源与版本**：新版本的 `sources` 里有一条 `kind: "revision"` 记录，写明上一版 `revisionOf`、版本号 `revision`、修订所在的聊天和可选的修订说明 `note`（最多 200 字符）；名字省略时沿用上一版。上一版的全部来源一并继承，更早的修订记录保留所在聊天作为来源，所以跨聊天来源、运维、私有仓库和 QQ 空间保护只会累积，不会因为修订被洗掉；本回合已读过的受保护资料也照常并入。提交修订等同读过上一版，本回合按读过它的来源处理；受保护、当前聊天读不到的稿子也不能修订（`RECALL_SOURCE_NOT_ALLOWED`）。
+- **冲突拒绝**：如果 `baseFileId` 已经有了更新的版本，返回 `FILE_REVISION_CONFLICT`，附带 `latestFileId` 和 `latestVersion`，什么都不写入；角色应先 `file_read` 最新版、合并改动，再以最新版为基础提交。检查和写入在同一角色的文件库锁内同步完成，两次同时提交同一版本只有一次成功，另一次得到 `FILE_TRANSFER_BUSY` 或冲突。
+- **相同内容**：全文与基础版（或基础版已过时、但与最新版）完全相同时返回该版本并带 `unchanged: true`，不新建版本。改回某个更早版本或库里其他文件的原文时返回 `FILE_REVISION_CONTENT_EXISTS` 和那个文件的 `fileId`：同一文件不能同时出现在版本链的两个位置，稍作改动再提交即可。
+- **查看版本链**：`file_list` 每项带 `version`、`revisionOf`（如有）、`latest` 和 `latestFileId`，默认每条链只列最新版；`allVersions: true` 列出全部版本，`versionsOf: <fileId>` 按版本从旧到新列出该文件所在的整条链。`file_read` 的结果同样带这几项，读到旧版时 `latest` 为 false，可据此改读最新版。
+- **配额**：每个旧版本都按原大小计入文件库容量和文件数，不会自动清理；稿子很长、改得很频繁时请留意用量。
+- **兼容与回退**：版本信息只存在已有的 `sources` 字段里，元数据不新增顶层字段，旧文件读出来是第 1 版且为最新版，无需迁移。回退到旧代码时，修订过的版本仍能正常读取、列出和发送，只是作为互不相关的普通文件出现、不再按链折叠；回退不会把它们判为损坏。
 
 图片附件可另用 `qq_image_read({id: "<附件经历ID>", source: "file", index: 0})` 读取像素；无普通图片段时可省略 `source`。这个入口通过同一个 `file_download` 授权路径下载，仍要求文件接收权限、工具白名单、来源白名单及文件库配额，不能绕过文件权限。校验为 GIF 后返回多帧，其他支持格式返回图片；GIF 原图另限 20 MiB、其他格式 8 MiB。读取结果保留文件库中相同内容的已有来源和运维限制；后续可用返回的 `mediaId` 在 `sticker_read` 中继续读图。
 

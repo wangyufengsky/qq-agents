@@ -324,6 +324,9 @@ export class Runtime {
     // grants both, and configurations saved before file_read existed get it
     // without an edit.
     if (selected.includes("file_list")) selected.push("file_read");
+    // Revising writes a new text file under the same create permission and
+    // keeps the old one, so it goes with file_create, including older configs.
+    if (selected.includes("file_create")) selected.push("file_revise");
     if (conversation !== SUBJECT && selected.includes("qq_send"))
       selected.push("qq_delivery_status");
     return [...new Set(selected)].filter(

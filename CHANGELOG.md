@@ -13,6 +13,14 @@
 - 内网地址、DNS 固定和逐跳重定向检查不变；授权仍只针对 `url`，`offset`/`maxChars`/`mode` 不进入授权请求，已批准或已登记的 URL 换页不会失配。vendored `safe-fetch.js` 只增加返回响应 `Content-Type`，来源说明已更新。
 - 兼容性：无配置、数据库或导出格式变化。`web_fetch` 的说明和参数 schema 变化，启用该工具的角色原生会话可能按工具契约正常交接重建，持久记忆、日记、Self 和账本保留。未进行真实模型回合验收。
 
+### 文件库文本稿版本修订（`file_revise`，[#151](https://github.com/wangyufengsky/qq-agents/pull/151)）
+
+- 新工具 `file_revise({baseFileId, text, name?, note?})`：角色读过自己文件库里的某一版文本稿后提交改好的全文，作为新版本保存；旧版原样保留，新版记录上一版、版本号、修订所在聊天和可选修订说明。起因是角色写小练习时只能保留原稿再另存补页，没法跨几天打磨同一份稿子。
+- 基础版已有更新版本时返回新登记的 `FILE_REVISION_CONFLICT`，附带最新版 `latestFileId`/`latestVersion`，不写入任何内容，提醒先读最新版再改，绝不悄悄覆盖。全文与当前版本相同时返回 `unchanged: true`，不重复建版本；改回更早版本或库里其他文件的原文时返回 `FILE_REVISION_CONTENT_EXISTS` 和那个文件的 `fileId`。检查与写入在角色文件库锁内同步完成，并发提交同一版本只有一次成功。
+- 来源与保护从旧稿继承并与本回合合并，只会变严：跨聊天来源、运维、私有仓库和 QQ 空间保护标记都保留；当前聊天读不到的受保护稿子不能修订，提交修订按读过旧稿处理本回合的来源。权限沿用 `file_create`（`files.create`）和同样的凭据过滤、文本扩展名限制。
+- `file_list` 每项带 `version`、`revisionOf`、`latest`、`latestFileId`，默认每条修订链只列最新版，新增 `allVersions` 和 `versionsOf` 查看旧版和整条链；`file_read` 结果同样带版本信息。不提供删除旧版本的功能，旧版本计入文件库容量和文件数配额。
+- 兼容性：版本信息写在已有、允许附加字段的 `sources` 条目里，元数据不新增顶层字段，不改 SQLite、导出格式或默认配置；旧文件按第 1 版读取，无需迁移。回退到旧代码时修订版本仍能正常读取和发送，只是作为普通文件列出、不再折叠成链。文件库仍不在 SQLite 导出和 `scripts/backup.mjs` 范围内，备份需连同数据目录的 `files/`。工具白名单里已有 `file_create` 的角色（含升级前保存的配置）自动获得 `file_revise`，不需要改配置；`file_list`/`file_read` 说明与参数也有变化，相关原生会话会按工具契约正常交接重建，持久记忆、日记、Self 和账本保留。
+
 ### 文件库文本关键词搜索（`file_read` 的 `query`，[#149](https://github.com/wangyufengsky/qq-agents/pull/149)）
 
 - `file_read` 新增可选 `query`：在自己文件库的文本文件里按纯文本、不区分大小写搜索，返回命中的字符偏移（与分页读取同一坐标，可直接续读）、行号、前后各两行上下文（单侧最多 300 字符）、命中数和继续搜索的 `nextOffset`，每次最多 20 处。解决角色在上百万字符的 OCR 文本里只能靠猜 offset 二分查找的问题。不新增工具，工具集与配置不变。
