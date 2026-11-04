@@ -1,3 +1,4 @@
+import { homeModeration } from "./tools/home.mjs";
 import { serveHomePreview } from "./home/static.mjs";
 import { withInteraction } from "./core/closeness.mjs";
 import { readFileText } from "./tools/file-text.mjs";
@@ -320,6 +321,31 @@ export function createServer({
         return send({ error: "UNAUTHORIZED" }, 401);
       if (url.pathname === "/api/home/overview" && req.method === "GET")
         return send(runtime.home.overview());
+      if (url.pathname === "/api/home/content" && req.method === "GET")
+        return send(
+          runtime.home.rooms.display(url.searchParams.get("agentId")),
+        );
+      if (url.pathname === "/api/home/moderate" && req.method === "POST") {
+        try {
+          return send(
+            runtime.home.rooms.moderate(
+              url.searchParams.get("agentId"),
+              homeModeration.parse(await readBody(2048)),
+            ),
+          );
+        } catch (error) {
+          if (
+            [
+              "HOME_ITEM_CONFLICT",
+              "HOME_IDENTITY_CHANGED",
+              "HOME_REQUEST_CONFLICT",
+              "UPDATE_IN_PROGRESS",
+            ].includes(error.message)
+          )
+            return send({ error: error.message }, 409);
+          throw error;
+        }
+      }
       if (url.pathname === "/api/home/scene") {
         const type = url.searchParams.get("type"),
           agentId = url.searchParams.get("agentId") ?? undefined;

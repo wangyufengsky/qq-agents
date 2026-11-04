@@ -13,6 +13,7 @@ import { fileDefinitions, fileTool } from "./file-tools.mjs";
 import { savedMediaDefinitions, savedMediaTool } from "./saved-media.mjs";
 import { screenshotDefinitions, screenshotTool } from "./screenshots.mjs";
 import { legacyDefinitions, legacyTool } from "./legacy.mjs";
+import { homeDefinitions, homeTool } from "./home.mjs";
 import { boardDefinitions, boardTool } from "./board.mjs";
 
 // Discovery and dispatch use this same registry. Fail at load time on drift.
@@ -35,6 +36,7 @@ for (const [group, dispatch] of [
   [screenshotDefinitions, screenshotTool],
   [legacyDefinitions, legacyTool],
   [boardDefinitions, boardTool],
+  [homeDefinitions, homeTool],
 ])
   for (const name of Object.keys(group)) {
     if (Object.hasOwn(handlers, name)) throw Error("DUPLICATE_TOOL_HANDLER");

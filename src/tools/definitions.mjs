@@ -13,6 +13,7 @@ import { screenshotDefinitions } from "./screenshots.mjs";
 import { z } from "zod";
 import { qqSegmentsSchema } from "./qq-message.mjs";
 import { legacyDefinitions } from "./legacy.mjs";
+import { homeDefinitions } from "./home.mjs";
 import { boardDefinitions } from "./board.mjs";
 const str = z.string(),
   limit = z.number().int().min(1).max(50).optional(),
@@ -86,6 +87,7 @@ export const definitions = {
   ...profileDefinitions,
   ...qzoneDefinitions,
   ...boardDefinitions,
+  ...homeDefinitions,
   memory_search: [
     "检索自己的跨会话经历/日记，私聊也能回忆自己的普通群聊记录。conversationType=group/private筛选聊天类型；conversation仅接受具体来源键。省略来源筛选会跨会话搜索。hasMore时用continueWith续查，不能将第一页当成全部记忆。相邻发言不等于同一话题，按ID展开原文并判断适合表达的回忆。",
     z

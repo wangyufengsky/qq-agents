@@ -195,6 +195,22 @@ const AGENT_TOOL_GROUPS = [
     },
   },
   {
+    id: "home",
+    builtin: true,
+    builtinLabel: "由本角色的小窝开关控制",
+    title: "纸页小窝",
+    desc: "默认关闭。启用后所有会话可读自己的展示，只有主人格可布置；文字发布需要另开发布开关。",
+    tools: {
+      room_read: "读取自己的展示",
+      room_scene_read: "读取房间与公共布局",
+      room_scene_patch: "主人格布置",
+      room_scene_undo: "主人格撤销布置",
+      room_publish: "主人格发布文字",
+      room_retract: "主人格撤回文字",
+      room_operation_status: "查询历史操作回执",
+    },
+  },
+  {
     id: "board",
     builtin: true,
     builtinLabel: "由全局留言板开关控制",
@@ -700,6 +716,30 @@ const agentForm = {
             "定时静默（JSON：start、end、days 0—6、timezone；起止相同须 allDay:true，00:00 表示日历整日）",
             JSON.stringify(row.silence, null, 2),
           )}</details>`,
+      ) +
+      advanced(
+        this.foldTitle(
+          "纸页小窝",
+          row.home?.enabled
+            ? row.home.publishing
+              ? "布置与文字发布已开启"
+              : "仅布置与读取"
+            : "已关闭",
+        ),
+        '<input type="hidden" name="homeSettingsShown" value="1">' +
+          check("homeEnabled", "启用小窝读取和主人格布置", row.home?.enabled) +
+          check(
+            "homePublishing",
+            "允许主人格主动发布文字",
+            row.home?.publishing,
+          ) +
+          input(
+            "homeMaxWrites",
+            "每天最多布置或发布次数（UTC）",
+            row.home?.maxWritesPerDay ?? 20,
+            'type="number" min="1" max="100"',
+          ) +
+          '<p class="hint">仅向实例管理员及房主自己的会话展示；其他会话只读，公共空间仍由管理员布置。关闭会隐藏展示文字，不自动撤回；管理员可在小窝面板隐藏内容。撤回不占发布额度。启用不唤醒角色，也不发送 QQ 消息。</p>',
       ) +
       advanced(
         this.foldTitle(
@@ -1410,6 +1450,17 @@ const agentForm = {
           ),
         },
       },
+      ...(f.has("homeSettingsShown")
+        ? {
+            home: {
+              enabled: f.has("homeEnabled"),
+              publishing: f.has("homePublishing"),
+              maxWritesPerDay: Number(
+                get("homeMaxWrites") || original.home?.maxWritesPerDay || 20,
+              ),
+            },
+          }
+        : {}),
       github: {
         ...original.github,
         enabled: f.has("githubEnabled"),
