@@ -1,4 +1,4 @@
-/* global document, innerWidth */
+/* global document, innerWidth, requestAnimationFrame */
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -146,6 +146,61 @@ try {
     "stale browser cannot overwrite another save",
     f.runtime.home.read("living").layout.palette === "blue" &&
       (await page.locator("#save").isDisabled()),
+  );
+  await page.click("#discard");
+  await ready(page, "#living");
+  await page.clock.install();
+  const oldEnvelope = f.runtime.home.read("living");
+  f.runtime.home.saveShared("living", {
+    layout: { ...oldEnvelope.layout, palette: "cream" },
+    expectedRevision: oldEnvelope.layoutRevision,
+    rosterRevision: oldEnvelope.rosterRevision,
+    requestId: "delayed-poll-save",
+  });
+  let releasePoll, pollArrived;
+  const released = new Promise((resolve) => {
+    releasePoll = resolve;
+  });
+  const arrived = new Promise((resolve) => {
+    pollArrived = resolve;
+  });
+  await page.route("**/api/home/scene?type=living", async (r) => {
+    const response = await r.fetch();
+    pollArrived();
+    await released;
+    await r.fulfill({ response });
+  });
+  await page.clock.runFor(10000);
+  await arrived;
+  await editor(page);
+  await page.selectOption("#palette", "rose");
+  releasePoll();
+  await page.waitForResponse((r) =>
+    r.url().includes("/api/home/scene?type=living"),
+  );
+  await page.evaluate(
+    () =>
+      new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve)),
+      ),
+  );
+  check(
+    "late poll never replaces a draft started during the request",
+    (await page
+      .locator("body")
+      .evaluate((n) => n.classList.contains("palette-rose"))) &&
+      (await page.locator("#layout-status").textContent()).includes(
+        `版本 ${oldEnvelope.layoutRevision}`,
+      ),
+  );
+  await page.unroute("**/api/home/scene?type=living");
+  await page.click("#save");
+  await page.waitForFunction(() =>
+    document.getElementById("save-status").textContent.includes("已有新版本"),
+  );
+  check(
+    "late-poll draft retains its original expected revision",
+    f.runtime.home.read("living").layout.palette === "cream",
   );
   await page.click("#discard");
   await ready(page, "#living");

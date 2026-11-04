@@ -654,7 +654,8 @@ setInterval(async () => {
     renewLease();
     if (!dirty) {
       const next = await api(sceneURL(route));
-      if (currentTicket !== ticket) return;
+      // Editing may begin while the layout request is in flight.
+      if (currentTicket !== ticket || dirty) return;
       if (next.layoutRevision !== envelope.layoutRevision) {
         envelope = next;
         draft = structuredClone(next.layout);

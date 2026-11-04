@@ -330,3 +330,54 @@ test("HTTP stale writes return 409 and never impersonate a board reader", async 
     409,
   );
 });
+
+test("hall undo filters removed doors but still validates the surviving furniture", async (t) => {
+  const f = fixture(t),
+    h = f.runtime.home;
+  const first = {
+    ...defaultLayout("hall"),
+    palette: "blue",
+    objects: { "door-agent-0": { dx: 1 }, plant: { scale: 0.9 } },
+  };
+  h.saveShared("hall", shared(f, first, 0, "hall-undo-first"));
+  h.saveShared(
+    "hall",
+    shared(f, { ...first, palette: "rose" }, 1, "hall-undo-second"),
+  );
+  const next = structuredClone(f.runtime.config);
+  next.agents.shift();
+  await f.runtime.commitConfig(next, f.runtime.configStore.revision);
+  const undo = h.saveShared("hall", {
+    expectedRevision: 2,
+    rosterRevision: h.rosterRevision(),
+    requestId: "hall-undo-after-delete",
+    undoRevision: 1,
+  });
+  assert.equal(undo.layoutRevision, 3);
+  assert.equal(undo.layout.palette, "blue");
+  assert.deepEqual(undo.layout.objects, { plant: { scale: 0.9 } });
+  assert.equal(h.read("hall").layout.palette, "blue");
+  assert.throws(
+    () => h.saveShared("hall", shared(f, first, 3, "new-write-old-door")),
+    /HOME_SCENE_INVALID/,
+  );
+  f.store.db
+    .prepare(
+      "UPDATE home_layouts SET layout=? WHERE scene_key=? AND revision=1",
+    )
+    .run(
+      JSON.stringify({ ...first, objects: { plant: { scale: 5 } } }),
+      "shared:hall",
+    );
+  assert.throws(
+    () =>
+      h.saveShared("hall", {
+        expectedRevision: 3,
+        rosterRevision: h.rosterRevision(),
+        requestId: "invalid-history-undo",
+        undoRevision: 1,
+      }),
+    /HOME_SCENE_INVALID/,
+  );
+  assert.equal(h.read("hall").layoutRevision, 3);
+});

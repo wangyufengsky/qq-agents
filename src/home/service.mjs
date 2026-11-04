@@ -90,12 +90,7 @@ export class HomeService {
   read(type, agentId) {
     const key = this.target(type, agentId),
       result = this.store.read(key, defaultLayout(type));
-    if (type === "hall") {
-      const allowed = new Set(homeTemplate(type, this.ids()).allInstanceIds);
-      result.layout.objects = Object.fromEntries(
-        Object.entries(result.layout.objects).filter(([id]) => allowed.has(id)),
-      );
-    }
+    result.layout = this.visibleLayout(result.layout, type);
     return {
       ...result,
       ownerAgentId: agentId || null,
@@ -104,6 +99,18 @@ export class HomeService {
       contentRevision: 0,
       rosterRevision: this.rosterRevision(),
       capabilities: { read: true, write: type !== "room", publish: false },
+    };
+  }
+  /** Removed residents must not block restoration of the remaining public space.
+   * @param {any} layout @param {string} type */
+  visibleLayout(layout, type) {
+    if (type !== "hall") return layout;
+    const allowed = new Set(homeTemplate(type, this.ids()).allInstanceIds);
+    return {
+      ...layout,
+      objects: Object.fromEntries(
+        Object.entries(layout.objects).filter(([id]) => allowed.has(id)),
+      ),
     };
   }
   /** @param {string} type @param {any} data */
@@ -123,7 +130,12 @@ export class HomeService {
         key,
         data,
         defaultLayout(type),
-        (v) => validateLayout(v, type, this.ids()),
+        (v) =>
+          validateLayout(
+            data.undoRevision === undefined ? v : this.visibleLayout(v, type),
+            type,
+            this.ids(),
+          ),
         this.runtime.now(),
       ),
       rosterRevision: this.rosterRevision(),
