@@ -16,3 +16,7 @@ The vendored forward helper changes only its Markdown-helper import path. The so
 Current npm dependency licenses are recorded in package-lock.json. Distributed copies must preserve the applicable upstream copyright and license notices. The root LICENSE contains the MIT license; historical upstream commentary does not add permissions for external applications.
 
 - QQ system-face identifier/name facts are referenced from NapNeko/NapCatQQ `packages/napcat-core/external/face_config.json`, Git blob `ba937ea96f315235c80e34039d5c039f9b8e2d3c`. Only identifier/name pairs are included; no QQ artwork, animation, or NapCat implementation is bundled. See docs/QQ-FACES.md.
+
+## 纸页小窝生成素材
+
+`public/home-preview/assets/` 的 26 张手绘纸板与纸片由维护者委托 OpenAI imagegen 生成，作为 QQ Agents 项目贡献按根目录 MIT 许可提供。来源、提示词、原图哈希及 WebP 转换记录见 [素材说明](docs/AI-HOME-ASSETS.md)；原始用户参考附件不包含在发布素材中。

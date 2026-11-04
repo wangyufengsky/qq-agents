@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#faf4e8" />
+    <title>纸页小窝 · 场景预览</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <a class="skip" href="#scene-actions">跳到文字入口</a>
+    <header class="masthead">
+      <a class="brand" href="#living"
+        ><span class="book-mark" aria-hidden="true">⌑</span
+        ><span>纸页小窝<small>把生活，轻轻放进一页纸里</small></span></a
+      >
+      <span class="demo-badge">场景预览 · 全部为示例</span>
+    </header>
+    <main>
+      <nav id="breadcrumb" aria-label="当前位置"></nav>
+      <div class="page-heading">
+        <div>
+          <p id="eyebrow" class="eyebrow"></p>
+          <h1 id="title"></h1>
+          <p id="subtitle"></p>
+        </div>
+        <button
+          id="settings-toggle"
+          aria-expanded="false"
+          aria-controls="settings"
+        >
+          布置这页纸 <span aria-hidden="true">↗</span>
+        </button>
+      </div>
+      <section id="stage" aria-label="纸片场景"></section>
+      <div id="state-message" role="status"></div>
+      <nav id="scene-actions" aria-label="场景文字入口"></nav>
+      <div id="pagination"></div>
+      <section id="settings" class="settings" hidden>
+        <div class="settings-heading">
+          <div>
+            <h2>纸板与纸片</h2>
+            <p>
+              这里的布置仅保存在本浏览器，仅用于场景预览，不保存到角色房间。
+            </p>
+          </div>
+          <button id="reset">恢复本页默认布置</button>
+        </div>
+        <div class="settings-grid">
+          <label
+            >纸板与织物配色<select id="palette">
+              <option value="cream">暖木奶油</option>
+              <option value="blue">清晨浅蓝</option>
+              <option value="rose">柔和豆沙</option>
+            </select></label
+          >
+          <label
+            >示例居民数<select id="residents">
+              <option>0</option>
+              <option>1</option>
+              <option>2</option>
+              <option selected>3</option>
+              <option>4</option>
+              <option>7</option>
+            </select></label
+          >
+          <label
+            >页面状态<select id="page-state">
+              <option value="ready">正常</option>
+              <option value="empty">暂无公开内容</option>
+              <option value="loading">加载中</option>
+              <option value="denied">无阅读权限</option>
+              <option value="error">请求失败</option>
+              <option value="missing">素材缺失</option>
+            </select></label
+          >
+          <label
+            >示例内容<select id="sample-content">
+              <option value="empty">保持空白</option>
+              <option value="sample">显示明确标注的示例</option>
+            </select></label
+          >
+          <label class="check"
+            ><input id="motion" type="checkbox" checked />减少动态效果</label
+          >
+        </div>
+        <div class="editor">
+          <label>选择纸片<select id="object-select"></select></label>
+          <div id="object-editor"></div>
+        </div>
+        <div class="settings-footer">
+          <button id="undo">撤销本页上次布置</button
+          ><button id="export">导出场景配置</button
+          ><a
+            href="https://github.com/wangyufengsky/qq-agents/blob/main/docs/AI-HOME-ASSETS.md"
+            rel="noreferrer"
+            >素材说明 ↗</a
+          >
+        </div>
+        <p class="boundary">
+          原型控件用于评审，不代表访客获得正式房间写权限。正式产品仍由主人格在授权范围内布置。
+        </p>
+      </section>
+      <footer class="page-footer">
+        <span>纸板承载空间 · 纸片承载物件 · 入口承载功能</span
+        ><a href="/">返回管理台</a>
+      </footer>
+    </main>
+    <dialog id="reader" aria-labelledby="reader-title">
+      <div class="reader-head">
+        <p class="eyebrow">一页小小的记录</p>
+        <button id="close-reader" aria-label="关闭面板">×</button>
+      </div>
+      <h2 id="reader-title"></h2>
+      <div id="reader-content"></div>
+      <button id="reader-back">返回当前场景</button>
+    </dialog>
+    <div id="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="app.mjs"></script>
+  </body>
+</html>

@@ -321,7 +321,8 @@ nav {
 .nav-cap:first-child {
   padding-top: 4px;
 }
-nav button {
+nav button,
+nav .home-preview-link {
   position: relative;
   display: flex;
   align-items: center;
@@ -338,7 +339,8 @@ nav button {
   font-weight: 400;
   text-align: left;
 }
-nav button:hover {
+nav button:hover,
+nav .home-preview-link:hover {
   background: var(--fill-3);
   color: var(--ink);
   border-color: transparent;
@@ -362,6 +364,10 @@ nav button.active::before {
 }
 nav button.active svg.i {
   color: var(--accent);
+}
+.home-preview-link {
+  min-height: 44px;
+  white-space: nowrap;
 }
 .nav-foot {
   margin-top: auto;
@@ -1707,7 +1713,8 @@ dialog footer {
     margin: 0 -16px;
     padding: 0 16px 4px;
   }
-  nav button {
+  nav button,
+  nav .home-preview-link {
     width: auto;
     flex: none;
   }

@@ -126,6 +126,10 @@ export default [
       "no-unused-vars": ["error", { ...unusedVars, vars: "local" }],
     },
   },
+  {
+    files: ["public/home-preview/*.mjs"],
+    languageOptions: { sourceType: "module", globals: globals.browser },
+  },
   ...Object.keys(browserScripts).map((file) => ({
     files: [`public/${file}`],
     languageOptions: { globals: sharedFrom(file) },
