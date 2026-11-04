@@ -1,4 +1,5 @@
 // @ts-check
+import { HomeRooms } from "./rooms.mjs";
 import { randomUUID, createHash } from "node:crypto";
 import { HomeStore } from "./store.mjs";
 import { defaultLayout, validateLayout, homeTemplate } from "./layout.mjs";
@@ -9,6 +10,7 @@ export class HomeService {
     this.store = new HomeStore(runtime.memory.db);
     this.identityReady = false;
     this.syncAgents();
+    this.rooms = new HomeRooms(this);
   }
   syncAgents() {
     this.identityReady = false;
@@ -96,7 +98,10 @@ export class HomeService {
       ownerAgentId: agentId || null,
       identityGeneration:
         type === "room" ? this.generation(agentId || "") : null,
-      contentRevision: 0,
+      contentRevision:
+        type === "room"
+          ? this.rooms.store.revision(this.generation(agentId || ""))
+          : 0,
       rosterRevision: this.rosterRevision(),
       capabilities: { read: true, write: type !== "room", publish: false },
     };
@@ -140,37 +145,5 @@ export class HomeService {
       ),
       rosterRevision: this.rosterRevision(),
     };
-  }
-  /** Future subject-tool adapter only; deliberately not exposed as an HTTP write route in this PR.
-   * @param {any} ctx @param {any} data @param {string} generation */
-  saveRoom(ctx, data, generation) {
-    const r = this.runtime;
-    if (
-      !ctx ||
-      r.capabilities.get(ctx.token) !== ctx ||
-      ctx.conversation !== "@subject" ||
-      ctx.controller?.signal.aborted ||
-      ctx.expires <= Date.now()
-    )
-      throw Error("HOME_WRITE_DENIED");
-    if (
-      r.closed ||
-      r.config.globalPaused ||
-      r.agent(ctx.agentId).paused ||
-      r.configChanging ||
-      r.maintenance.snapshot().active
-    )
-      throw Error("HOME_WRITE_DENIED");
-    r.assertActive(ctx);
-    if (ctx.privateRead?.size) throw Error("HOME_WRITE_DENIED");
-    if (this.generation(ctx.agentId) !== generation)
-      throw Error("HOME_WRITE_DENIED");
-    return this.store.commit(
-      this.target("room", ctx.agentId),
-      data,
-      defaultLayout("room"),
-      (v) => validateLayout(v, "room"),
-      r.now(),
-    );
   }
 }

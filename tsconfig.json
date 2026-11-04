@@ -95,6 +95,9 @@
     "public/home-preview/scene.mjs",
     "src/home/layout.mjs",
     "src/home/store.mjs",
-    "src/home/service.mjs"
+    "src/home/service.mjs",
+    "src/home/policy.mjs",
+    "src/home/room-store.mjs",
+    "src/home/rooms.mjs"
   ]
 }

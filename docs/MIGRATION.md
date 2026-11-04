@@ -135,4 +135,4 @@ schema 6 新增 message_aliases 和 message_observations。明确别名解析统
 
 ## 小窝布局数据
 
-真实小窝增量创建 `home_identities`、`home_layouts`、`home_operations` 三张实例级表，现有 schema 版本、配置和角色工具不变。完整 SQLite 在线备份与整体恢复包含这些表；单角色导出不包含布局、公共空间和回执。不要把单角色记忆导出当作完整小窝备份。回退保留升级前备份，详见 [纸页小窝](AI-HOME.md#数据与兼容性)。
+真实小窝增量创建 `home_identities`、`home_layouts`、`home_operations` 三张实例级表，原布局阶段保留现有 schema 版本。文字发布阶段再增量创建 `home_rooms`、`home_items`、`home_write_usage`，并增加默认关闭的 `agents[].home`；旧角色缺省也关闭，已显式配置保持原值。启用时按工具契约交接相关会话。完整 SQLite 在线备份与整体恢复包含这些表；单角色导出不包含布局、公共空间和回执。不要把单角色记忆导出当作完整小窝备份。回退保留升级前备份，详见 [纸页小窝](AI-HOME.md#数据与兼容性)。
