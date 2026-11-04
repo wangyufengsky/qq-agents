@@ -2,7 +2,17 @@
 
 English | [中文](README.md)
 
-QQ Agents runs several AI characters from one local admin console. Each character is tied to its own QQ account (through NapCat/OneBot), gets its replies from an AI backend — DSH, Codex, Antigravity CLI or any OpenAI-compatible API — and keeps its own persona, memory, diary and permissions. A fresh setup starts isolated and fully paused, so nothing reaches QQ until you open the gates one by one.
+**A self-hosted QQ AI chatbot console with independent characters, long-term memory and per-character permissions.**
+
+Run multiple AI characters on QQ through **NapCat / OneBot**, each with a separate QQ account, persona, memory and diary. Manage them in one local web console and choose **DSH, Codex, Antigravity CLI or an OpenAI-compatible API** as the backend. Connect external **Model Context Protocol (MCP)** tools when needed. New installations start isolated and fully paused until you configure and enable them.
+
+[Quick start](#quick-start) · [Screenshots](#a-look-at-the-console) · [AI backends](#choosing-a-backend) · [AI-assisted setup](#let-an-ai-assistant-install-it)
+
+- **Independent characters:** separate identities, long-term records and chat permissions.
+- **Local administration:** inspect activity, configure connections and pause all characters from your browser.
+- **Start without a QQ login:** explore the isolated console first; connect NapCat and an AI backend when ready.
+
+The console and detailed guides are in **Chinese**. This README provides an English overview and setup path. Local storage does not mean offline operation: configured remote AI and tool services receive the data needed for their functions.
 
 ![The console home page: one card per character with whether it can speak, its latest reply and the last 24 hours of activity](docs/images/console-home.png)
 
@@ -42,33 +52,52 @@ Model sessions are separate from long-term records. Completed sessions with comp
 
 ## A look at the console
 
-Everything is configured and operated from a local web console (in Chinese). These screenshots come from a demo setup; the characters, QQ numbers, group and messages are fictional.
+The local web console is in Chinese. These existing demo screenshots use fictional characters, QQ numbers, groups and messages; they do not show real accounts or current connection status. Expand a section for a readable full-width screenshot, then click the image to open the original.
 
-<table>
-  <tr>
-    <td width="50%"><img src="docs/images/console-activity.png" alt="Character activity"></td>
-    <td width="50%"><img src="docs/images/console-memory.png" alt="Memory and diary"></td>
-  </tr>
-  <tr>
-    <td><b>Activity</b>: one entry per chat reply or free-time turn, with what the character read, what it said and which tools it used, including reply checks where it chose to stay quiet.</td>
-    <td><b>Memory and diary</b>: messages are kept in the character's own history in the order they happened; a search hit comes back as a scene with the messages around it and who said what.</td>
-  </tr>
-  <tr>
-    <td><img src="docs/images/console-mind.png" alt="Self"></td>
-    <td><img src="docs/images/console-links.png" alt="QQ accounts and AI backends"></td>
-  </tr>
-  <tr>
-    <td><b>Self</b>: name and appearance are fixed identity anchors; personality and ways of relating live in a versioned self that can grow, and administrators can review and restore it.</td>
-    <td><b>Connections</b>: each character has its own QQ account (the logged-in number is checked before connecting); DSH, Codex, Antigravity CLI and OpenAI-compatible backends are checked and recovered independently.</td>
-  </tr>
-  <tr>
-    <td><img src="docs/images/console-role-settings.png" alt="Character settings"></td>
-    <td>
-      <b>Character settings</b>: persona, allowlists, wake rules, participation rate and file, browsing and voice permissions are set per character.<br><br>
-      <b>Pause all</b> at the top stops every character at once, and every start begins globally paused until you open it again.
-    </td>
-  </tr>
-</table>
+<details>
+<summary><strong>Inspect character activity</strong></summary>
+
+Review what each turn read, said and called, including reply checks where the character stayed quiet.
+
+[![Inspect character activity](docs/images/console-activity.png)](docs/images/console-activity.png)
+
+</details>
+
+<details>
+<summary><strong>Browse memory and diaries</strong></summary>
+
+Keep history separate per character and inspect search results with surrounding messages and speaker context.
+
+[![Browse memory and diaries](docs/images/console-memory.png)](docs/images/console-memory.png)
+
+</details>
+
+<details>
+<summary><strong>Review versioned Self</strong></summary>
+
+Inspect the evolving personality and ways of relating, and restore a previous version when needed.
+
+[![Review versioned Self](docs/images/console-mind.png)](docs/images/console-mind.png)
+
+</details>
+
+<details>
+<summary><strong>Connect QQ accounts and AI backends</strong></summary>
+
+Manage NapCat/OneBot connections and model backends separately, with account checks before connecting.
+
+[![Connect QQ accounts and AI backends](docs/images/console-links.png)](docs/images/console-links.png)
+
+</details>
+
+<details>
+<summary><strong>Set character permissions</strong></summary>
+
+Configure personas, allowlists, wake rules, participation rates and file, browsing and voice permissions per character.
+
+[![Set character permissions](docs/images/console-role-settings.png)](docs/images/console-role-settings.png)
+
+</details>
 
 ## Choosing a backend
 
