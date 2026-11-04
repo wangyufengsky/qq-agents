@@ -6,12 +6,20 @@ import { createServer } from "../src/server.mjs";
 import { Lifecycle } from "../src/transport/lifecycle.mjs";
 
 test("shutdown waits for an in-flight HTTP tool receipt after its model turn cancels", async (t) => {
+  const backendRunEntered = Promise.withResolvers();
   const f = fixture(t, {
     cfg: config(1),
     run: ({ signal }) =>
-      new Promise((resolve) =>
-        signal.addEventListener("abort", resolve, { once: true }),
-      ),
+      new Promise((resolve) => {
+        if (signal.aborted) {
+          // AbortSignal does not replay an abort event registered after cancellation.
+          backendRunEntered.resolve();
+          resolve();
+          return;
+        }
+        signal.addEventListener("abort", resolve, { once: true });
+        backendRunEntered.resolve();
+      }),
   });
   const app = createServer({ runtime: f.runtime, token: "synthetic-admin" });
   const port = await app.listen();
@@ -41,6 +49,7 @@ test("shutdown waits for an in-flight HTTP tool receipt after its model turn can
     .then((response) => response.json())
     .catch(() => null);
   await started.promise;
+  await backendRunEntered.promise;
   let closed = false;
   const shutdown = f.runtime.close().then(() => {
     closed = true;

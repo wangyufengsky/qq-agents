@@ -4,7 +4,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
-import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { temp } from "./helpers.mjs";
 
@@ -58,8 +57,14 @@ test(
       const exited = once(child, "exit");
       let output = "",
         errors = "";
-      child.stdout.on("data", (chunk) => {
-        output += chunk;
+      const ready = new Promise((resolve) => {
+        child.stdout.on("data", (chunk) => {
+          output += chunk;
+          const url = output.match(
+            /QQ Agents: (http:\/\/127\.0\.0\.1:\d+) \|/,
+          )?.[1];
+          if (url) resolve(url);
+        });
       });
       child.stderr.on("data", (chunk) => {
         errors += chunk;
@@ -67,13 +72,15 @@ test(
       t.after(() => {
         if (child.exitCode === null) child.kill("SIGKILL");
       });
-      let url;
-      for (let i = 0; i < 1000; i++) {
-        url = output.match(/http:\/\/127\.0\.0\.1:\d+/)?.[0];
-        if (url || child.exitCode !== null) break;
-        await delay(5);
-      }
-      assert(url, "package startup failed: " + errors);
+      // Readiness is an event; the existing test deadline bounds a stalled boot.
+      const url = await Promise.race([
+        ready,
+        exited.then(([code, signal]) => {
+          throw Error(
+            `package exited before ready (code=${code}, signal=${signal}): ${errors}`,
+          );
+        }),
+      ]);
       const token = fs
         .readFileSync(path.join(data, "admin-token"), "utf8")
         .trim();

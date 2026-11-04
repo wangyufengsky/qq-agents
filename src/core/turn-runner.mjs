@@ -12,11 +12,25 @@ import {
   recordBackendTurn,
   recordInputSubmission,
   recordBackendTiming,
+  recordBackendDiagnostic,
   retireSession,
 } from "./session-records.mjs";
 
 // Wake reasons where someone spoke to the agent, not just near it.
 const ADDRESSED = new Set(["private", "mention", "name"]);
+
+function workerRetirementReported(memory, turnId) {
+  const row = memory.db
+    .prepare("SELECT value FROM model_turns WHERE agent_id=? AND id=?")
+    .get(memory.agentId, turnId);
+  if (!row) return false;
+  const record = JSON.parse(row.value);
+  return (
+    record.status === "running" &&
+    record.backendOutcome === "success" &&
+    record.sessionDisposition === "retiring"
+  );
+}
 
 // Owns a model turn through finalization; done settles only after all bookkeeping.
 export class TurnRunner {
@@ -110,7 +124,11 @@ export class TurnRunner {
               !runtime.capabilities.has(token) ||
               controller.signal.aborted ||
               runtime.closed,
-            reason: controller.signal.aborted ? "cancelled" : "backend-failure",
+            reason: controller.signal.aborted
+              ? "cancelled"
+              : session === null && workerRetirementReported(mem, ctx.turnId)
+                ? "backend-worker-unavailable"
+                : "backend-failure",
           }),
         onBackendTurn: (reference) =>
           !runtime.stopped && recordBackendTurn(mem, ctx.turnId, reference),
@@ -118,6 +136,9 @@ export class TurnRunner {
           !runtime.stopped && recordInputSubmission(mem, ctx.turnId),
         onTiming: (timing) =>
           !runtime.stopped && recordBackendTiming(mem, ctx.turnId, timing),
+        onDiagnostic: (event, attempt) =>
+          !runtime.stopped &&
+          recordBackendDiagnostic(mem, ctx.turnId, event, attempt),
         onImageSession: (id) =>
           !runtime.stopped && runtime.generatedImages.begin(ctx, id),
         onGeneratedImage: (id, item) =>

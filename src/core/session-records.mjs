@@ -47,6 +47,171 @@ function patchTurn(memory, id, patch) {
   if (row)
     memory.identity.put("model_turns", { ...JSON.parse(row.value), ...patch });
 }
+const diagnosticFields = {
+  origin: new Set([
+    "terminal",
+    "process-exit",
+    "stdin",
+    "protocol",
+    "finalization",
+  ]),
+  phase: new Set([
+    "preparing",
+    "running",
+    "terminal-observed",
+    "settling",
+    "settled",
+  ]),
+  terminalStatus: new Set(["SUCCESS", "ERROR", "CANCELLED", "unrecognized"]),
+  signal: new Set([
+    "SIGABRT",
+    "SIGALRM",
+    "SIGBREAK",
+    "SIGBUS",
+    "SIGCHLD",
+    "SIGCONT",
+    "SIGFPE",
+    "SIGHUP",
+    "SIGILL",
+    "SIGINT",
+    "SIGKILL",
+    "SIGPIPE",
+    "SIGPOLL",
+    "SIGPROF",
+    "SIGPWR",
+    "SIGQUIT",
+    "SIGSEGV",
+    "SIGSTOP",
+    "SIGSYS",
+    "SIGTERM",
+    "SIGTRAP",
+    "SIGTSTP",
+    "SIGTTIN",
+    "SIGTTOU",
+    "SIGURG",
+    "SIGUSR1",
+    "SIGUSR2",
+    "SIGVTALRM",
+    "SIGWINCH",
+    "SIGXCPU",
+    "SIGXFSZ",
+  ]),
+  ioCode: new Set([
+    "EACCES",
+    "EAGAIN",
+    "EBADF",
+    "EBUSY",
+    "ECONNRESET",
+    "EEXIST",
+    "EIO",
+    "EISDIR",
+    "EMFILE",
+    "ENOENT",
+    "ENOSPC",
+    "ENOTDIR",
+    "EPERM",
+    "EPIPE",
+    "ETIMEDOUT",
+    "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
+    "ERR_STREAM_DESTROYED",
+    "ERR_STREAM_PREMATURE_CLOSE",
+    "ERR_STREAM_WRITE_AFTER_END",
+    "PROCESS_SPAWN_FAILED",
+    "PROTOCOL_READ_FAILED",
+    "STDIN_CLOSE_FAILED",
+    "STDIN_WRITE_FAILED",
+  ]),
+  backendOutcome: new Set(["success", "failed", "cancelled"]),
+  workerOutcome: new Set(["healthy", "recycled", "exit-warning"]),
+  sessionDisposition: new Set(["retained", "retiring", "retired"]),
+};
+const diagnosticSummaryFields = [
+  "backendOutcome",
+  "workerOutcome",
+  "sessionDisposition",
+];
+
+// Provider events can carry private text and nested payloads, so only copy
+// primitive fields whose values have an explicit runtime allowlist.
+export function sanitizeBackendDiagnostic(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  let descriptors;
+  try {
+    descriptors = Object.getOwnPropertyDescriptors(value);
+  } catch {
+    return null;
+  }
+  const safe = {};
+  for (const [field, allowed] of Object.entries(diagnosticFields)) {
+    const descriptor = descriptors[field];
+    if (!descriptor || !Object.hasOwn(descriptor, "value")) continue;
+    if (typeof descriptor.value === "string" && allowed.has(descriptor.value))
+      safe[field] = descriptor.value;
+  }
+  for (const field of ["trustedTerminal", "wrapperError"])
+    if (
+      descriptors[field] &&
+      Object.hasOwn(descriptors[field], "value") &&
+      typeof descriptors[field].value === "boolean"
+    )
+      safe[field] = descriptors[field].value;
+  const exitCode = descriptors.exitCode?.value;
+  if (
+    descriptors.exitCode &&
+    Object.hasOwn(descriptors.exitCode, "value") &&
+    Number.isSafeInteger(exitCode) &&
+    exitCode >= -2147483648 &&
+    exitCode <= 2147483647
+  )
+    safe.exitCode = exitCode;
+  const elapsedMs = descriptors.elapsedMs?.value;
+  if (
+    descriptors.elapsedMs &&
+    Object.hasOwn(descriptors.elapsedMs, "value") &&
+    Number.isFinite(elapsedMs) &&
+    elapsedMs >= 0 &&
+    elapsedMs <= 86400000
+  )
+    safe.elapsedMs = Math.round(elapsedMs);
+  const attempt = descriptors.attempt?.value;
+  if (
+    descriptors.attempt &&
+    Object.hasOwn(descriptors.attempt, "value") &&
+    Number.isInteger(attempt) &&
+    attempt >= 0 &&
+    attempt <= 1
+  )
+    safe.attempt = attempt;
+  return Object.keys(safe).length ? safe : null;
+}
+
+export function recordBackendDiagnostic(memory, turnId, event, attempt) {
+  const diagnostic = sanitizeBackendDiagnostic(event);
+  if (!diagnostic || typeof turnId !== "string" || !turnId) return false;
+  if (Number.isInteger(attempt) && attempt >= 0 && attempt <= 1)
+    diagnostic.attempt = attempt;
+  return memory.store.transaction(() => {
+    const row = turnRecord(memory, turnId);
+    if (!row) return false;
+    const record = JSON.parse(row.value);
+    if (record.status !== "running") return false;
+    const previous = Array.isArray(record.backendDiagnostics)
+      ? record.backendDiagnostics.map(sanitizeBackendDiagnostic).filter(Boolean)
+      : [];
+    const next = {
+      ...record,
+      backendDiagnostics: [...previous.slice(-15), diagnostic],
+    };
+    for (const field of diagnosticSummaryFields) {
+      const value = diagnostic[field] ?? record[field];
+      if (diagnosticFields[field].has(value)) next[field] = value;
+      else delete next[field];
+    }
+    memory.identity.put("model_turns", next);
+    return true;
+  });
+}
+
 const retirementSources = new Set([
   "configuration",
   "global-pause",
@@ -175,7 +340,7 @@ function archive(
     const details = {
       source: retirementSources.has(source)
         ? source
-        : reason === "backend-failure"
+        : ["backend-failure", "backend-worker-unavailable"].includes(reason)
           ? "backend"
           : reason === "process-recovery"
             ? "process-recovery"
@@ -224,6 +389,12 @@ export function retireSession(
       owner = turnId ?? value.lastTurnId;
     const owns = !turnId || !value.lastTurnId || value.lastTurnId === turnId;
     const record = turnRecord(memory, owner);
+    const recordValue = record && JSON.parse(record.value);
+    const updateDisposition =
+      recordValue &&
+      (recordValue.sessionDisposition === "retiring" ||
+        (Array.isArray(recordValue.backendDiagnostics) &&
+          recordValue.backendDiagnostics.length > 0));
     const previous =
       session ||
       (owns ? value.session : null) ||
@@ -244,6 +415,18 @@ export function retireSession(
         usage: null,
         lifecycle: { status: "retired", reason, at },
       });
+    // Persist the outcome only after archival and scope clearing both succeed.
+    if (updateDisposition && (previous || owns)) {
+      const current = turnRecord(memory, owner);
+      if (current) {
+        const turn = JSON.parse(current.value);
+        if (turn.sessionDisposition !== "retired")
+          memory.identity.put("model_turns", {
+            ...turn,
+            sessionDisposition: "retired",
+          });
+      }
+    }
   });
 }
 

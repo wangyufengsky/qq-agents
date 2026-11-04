@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import crossSpawn from "cross-spawn";
 import { execFileSync } from "node:child_process";
 import { buildChildEnv } from "../core/child-env.mjs";
+import { sanitizeBackendDiagnostic } from "../core/session-records.mjs";
 import { ExternalTools } from "./external.mjs";
 import {
   assertSession,
@@ -18,6 +19,8 @@ import {
 import {
   BackendTurnFailure,
   SessionPreparationFailure,
+  SessionUnavailableFailure,
+  beforeSessionInput,
 } from "./turn-failure.mjs";
 import { mcpResult } from "../tools/index.mjs";
 import { AntigravityMedia } from "./antigravity-media.mjs";
@@ -43,6 +46,28 @@ function responseOccupancy(usage) {
     : null;
 }
 export { antigravitySchemaContract, responseOccupancy };
+/** Emit only fixed diagnostic fields; provider text must never leave the adapter.
+ * @param {RunParams} params @param {number} start @param {Record<string, unknown>} value */
+export function antigravityDiagnostic(params, start, value) {
+  const event = sanitizeBackendDiagnostic({
+    ...value,
+    ...("terminalStatus" in value
+      ? {
+          terminalStatus: ["SUCCESS", "ERROR", "CANCELLED"].includes(
+            /** @type {string} */ (value.terminalStatus),
+          )
+            ? value.terminalStatus
+            : "unrecognized",
+        }
+      : {}),
+    elapsedMs: Math.min(86400000, Math.max(0, performance.now() - start)),
+  });
+  try {
+    params.onDiagnostic?.(event);
+  } catch {
+    console.warn("Antigravity diagnostic recording failed");
+  }
+}
 /** @type {WeakSet<import("node:child_process").ChildProcess>} */
 const terminatedGroups = new WeakSet();
 function isolatedEnv() {
@@ -170,8 +195,8 @@ function stopTree(child, signal) {
       child.kill(signal);
   }
 }
-/** @param {string} text @param {string} status */
-export function antigravityFailure(text, status = "ERROR") {
+/** @param {string} text @param {string} status @param {boolean} hookDenied */
+export function antigravityFailure(text, status = "ERROR", hookDenied = false) {
   // Match categories only. Provider diagnostics never become an error message.
   const category = /RESOURCE_EXHAUSTED|quota|429/i.test(text)
     ? "quota"
@@ -181,7 +206,7 @@ export function antigravityFailure(text, status = "ERROR") {
       ? "authentication"
       : /context.*(?:limit|exceed)|too many tokens/i.test(text)
         ? "context-limit"
-        : /permission|hook|denied/i.test(text)
+        : /permission|hook|denied/i.test(text) || hookDenied
           ? "permission"
           : /CANCELED|INTERRUPTED/.test(status)
             ? "cancelled"
@@ -411,7 +436,7 @@ export class AntigravityBackend {
           ))
       ) {
         params.saveSession(null);
-        throw Error("ANTIGRAVITY_SESSION_UNAVAILABLE");
+        throw new SessionUnavailableFailure("ANTIGRAVITY_SESSION_UNAVAILABLE");
       }
     }
     return { key, workspace, custom, agents, binding, signature };
@@ -583,6 +608,27 @@ export class AntigravityBackend {
       signature: details.signature,
     });
   }
+  /** Unverified native recovery is retired independently of the model outcome.
+   * @param {RunParams} params @param {string} binding @param {number} start */
+  retireCompletedSession(params, binding, start) {
+    // Revoke the persisted reference even if a local binding cannot be replaced.
+    antigravityDiagnostic(params, start, {
+      origin: "finalization",
+      phase: "settled",
+      sessionDisposition: "retiring",
+    });
+    params.saveSession(null);
+    antigravityDiagnostic(params, start, {
+      origin: "finalization",
+      phase: "settled",
+      sessionDisposition: "retired",
+    });
+    try {
+      if (fs.existsSync(binding)) managedFile(binding, "{}\n");
+    } catch {
+      console.warn("Antigravity retired binding cleanup failed");
+    }
+  }
   /** @param {RunParams} params */
   async runReusable(params) {
     const start = performance.now();
@@ -590,9 +636,14 @@ export class AntigravityBackend {
     if (params.signal.aborted) throw Error("ABORTED");
     const signature = this.sessionSignature(params.tools);
     assertSession(params.session, "antigravity", signature);
-    const details = this.prepare(params, signature);
-    this.conversations.add(details.key);
+    const details = await beforeSessionInput(params.session, async () => {
+      const prepared = this.prepare(params, signature);
+      // Acquire ownership before the preparation wrapper yields to another run.
+      this.conversations.add(prepared.key);
+      return prepared;
+    });
     let worker = this.workers.get(details.key);
+    let inputSubmitted = false;
     let finishDone = () => {};
     const entry = {
       abort: () => {
@@ -616,12 +667,24 @@ export class AntigravityBackend {
       const preparationMs = performance.now() - start;
       await worker.run({
         ...params,
+        onInputSubmitted: () => {
+          params.onInputSubmitted?.();
+          inputSubmitted = true;
+        },
         onTiming: (value) =>
           params.onTiming?.({
             ...value,
             elapsedMs: preparationMs + value.elapsedMs,
           }),
       });
+      if (!worker.available)
+        this.retireCompletedSession(params, details.binding, start);
+      else
+        antigravityDiagnostic(params, start, {
+          origin: "finalization",
+          phase: "settled",
+          sessionDisposition: "retained",
+        });
       if (worker.available && !this.closing) {
         worker.idle(this.config.cliReuse?.idleTimeoutMs ?? 600000);
         const idle = [...this.workers.values()]
@@ -639,13 +702,19 @@ export class AntigravityBackend {
         }
       }
     } catch (error) {
-      const submitted = worker?.inputSubmitted;
-      if (worker) await worker.close();
+      if (worker) {
+        try {
+          await worker.close();
+        } catch {
+          // Teardown cannot replace the input-stage evidence or the original failure.
+          console.warn("Antigravity worker cleanup failed");
+        }
+      }
       if (
         params.session &&
         !params.signal.aborted &&
         error instanceof Error &&
-        !submitted
+        !inputSubmitted
       )
         throw new SessionPreparationFailure(error);
       if (fs.existsSync(details.binding)) managedFile(details.binding, "{}\n");
@@ -671,10 +740,19 @@ export class AntigravityBackend {
     if (params.signal.aborted) throw Error("ABORTED");
     const signature = this.sessionSignature(params.tools);
     assertSession(params.session, "antigravity", signature);
-    const details = this.prepare(params, signature);
+    const details = await beforeSessionInput(params.session, async () =>
+      this.prepare(params, signature),
+    );
     const { key, workspace, binding } = details;
     const token = randomBytes(32).toString("hex");
     let live = true;
+    let hookDenied = false;
+    let ioFailed = false;
+    let diagnosticActive = true;
+    let terminalObserved = false;
+    const pending = new Set();
+    const diagnosticEvent = (/** @type {Record<string, unknown>} */ value) =>
+      diagnosticActive && antigravityDiagnostic(params, timingStart, value);
     const media = new AntigravityMedia();
     const names = new Set(params.tools.map((tool) => tool.name));
     const server = http.createServer(async (req, res) => {
@@ -692,6 +770,11 @@ export class AntigravityBackend {
         return reply(200, { alive: true });
       if (!live || params.signal.aborted)
         return reply(403, { error: "ANTIGRAVITY_TURN_INACTIVE" });
+      if (req.method === "POST" && req.url === "/hook-denied") {
+        // The trusted hook reports only a denial bit, never paths or arguments.
+        hookDenied = true;
+        return reply(200, {});
+      }
       if (req.method === "GET" && req.url === "/catalog")
         return reply(200, { tools: params.tools, images: media.catalog() });
       if (req.method !== "POST" || req.url !== "/call") return reply(404, {});
@@ -706,7 +789,22 @@ export class AntigravityBackend {
         if (!live || params.signal.aborted || !names.has(value.name))
           return reply(403, {});
         spec = params.tools.find((tool) => tool.name === value.name);
-        const result = await params.callTool(value.name, value.arguments || {});
+        const accepted = Promise.resolve().then(() => {
+          if (
+            cancelled ||
+            params.signal.aborted ||
+            (!live && !terminalObserved)
+          )
+            throw Error("ABORTED");
+          return params.callTool(value.name, value.arguments || {});
+        });
+        pending.add(accepted);
+        let result;
+        try {
+          result = await accepted;
+        } finally {
+          pending.delete(accepted);
+        }
         if (!live || params.signal.aborted) return reply(403, {});
         const content = await media.fromTool(mcpResult(result), params.signal);
         if (!live || params.signal.aborted) return reply(403, {});
@@ -747,10 +845,13 @@ export class AntigravityBackend {
     let force;
     let cancelled = false;
     let inputSubmitted = false;
+    let abortSettlement = () => {};
+    let modelSucceeded = false;
     const abort = () => {
       if (cancelled) return;
       cancelled = true;
       live = false;
+      abortSettlement();
       server.closeAllConnections();
       if (child) {
         this.stop(child, "SIGINT");
@@ -785,6 +886,12 @@ export class AntigravityBackend {
       /** @type {number | null} */ let contextTokens = null;
       /** @type {Error | undefined} */ let protocolError;
       const fail = () => {
+        diagnosticEvent({
+          origin: "protocol",
+          phase: "running",
+          trustedTerminal: false,
+          backendOutcome: "failed",
+        });
         protocolError = Error("ANTIGRAVITY_PROTOCOL_ERROR");
         live = false;
         if (child) this.stop(child, "SIGKILL");
@@ -803,6 +910,7 @@ export class AntigravityBackend {
             const event = JSON.parse(line);
             if (event.event === "init") {
               if (
+                terminal ||
                 initialized ||
                 !uuid.test(event.conversation_id) ||
                 (params.session && params.session.id !== event.conversation_id)
@@ -855,11 +963,19 @@ export class AntigravityBackend {
               if (
                 !initialized ||
                 terminal ||
-                event.result?.conversation_id !== initializedId
+                event.result?.conversation_id !== initializedId ||
+                (event.result?.status === "SUCCESS" && !responseSeen)
               )
                 return fail();
               terminal = event.result;
+              terminalObserved = true;
               timing("terminal");
+              diagnosticEvent({
+                origin: "terminal",
+                phase: "terminal-observed",
+                terminalStatus: terminal.status,
+                trustedTerminal: true,
+              });
               // Revoke before process teardown; a trailing tool cannot use a completed turn.
               live = false;
             }
@@ -872,17 +988,55 @@ export class AntigravityBackend {
         diagnostic = (diagnostic + data).slice(-65536);
       });
       const completed = new Promise((resolve, reject) => {
-        child?.once("error", () => reject(Error("ANTIGRAVITY_NOT_FOUND")));
-        child?.once("close", resolve);
-        child?.stdin?.once("error", () => {
-          /* Process exit is classified below. */
+        child?.once("error", () => {
+          diagnosticEvent({
+            origin: "process-exit",
+            phase: terminal ? "settling" : "preparing",
+            trustedTerminal:
+              Boolean(terminal) && !protocolError && !buffer.trim(),
+            workerOutcome: "exit-warning",
+          });
+          if (terminal) {
+            ioFailed = true;
+            resolve(null);
+          } else reject(Error("ANTIGRAVITY_NOT_FOUND"));
+        });
+        child?.once("close", (code, signal) => {
+          live = false;
+          diagnosticEvent({
+            origin: "process-exit",
+            phase: "settling",
+            trustedTerminal:
+              Boolean(terminal) && !protocolError && !buffer.trim(),
+            exitCode: code,
+            signal,
+            wrapperError: diagnostic.includes("AGY_BACKGROUND_START_FAILED"),
+            workerOutcome:
+              code === 0 && !signal && !ioFailed ? "recycled" : "exit-warning",
+          });
+          resolve(code);
+        });
+        child?.stdin?.once("error", (error) => {
+          ioFailed = true;
+          diagnosticEvent({
+            origin: "stdin",
+            phase: terminal ? "settling" : "running",
+            ioCode: /** @type {NodeJS.ErrnoException} */ (error).code,
+            trustedTerminal:
+              Boolean(terminal) && !protocolError && !buffer.trim(),
+            workerOutcome: "exit-warning",
+          });
+          if (!terminal) {
+            reject(antigravityFailure(diagnostic));
+          }
+          if (child) this.stop(child, "SIGKILL");
         });
       });
       // Prompts and credentials never appear in process arguments. EOF ends this
       // turn's process after its result; subsequent turns explicitly resume by ID.
-      inputSubmitted = true;
-      timing("inputSubmitted");
       params.onInputSubmitted?.();
+      timing("inputSubmitted");
+      inputSubmitted = true;
       child.stdin?.end(
         JSON.stringify({ event: "user", message: { content: params.prompt } }) +
           "\n",
@@ -890,10 +1044,33 @@ export class AntigravityBackend {
       const code = await completed;
       if (cancelled || params.signal.aborted) throw Error("ABORTED");
       if (protocolError) throw protocolError;
-      if (buffer.trim() || code !== 0 || terminal?.status !== "SUCCESS")
+      if (buffer.trim()) {
+        fail();
+        throw protocolError;
+      }
+      if (!terminal)
+        throw antigravityFailure(diagnostic, undefined, hookDenied);
+      let rejectCancelled = () => {};
+      const cancellation = new Promise((_, reject) => {
+        rejectCancelled = () => reject(Error("ABORTED"));
+        abortSettlement = rejectCancelled;
+        params.signal.addEventListener("abort", rejectCancelled, {
+          once: true,
+        });
+      });
+      try {
+        await Promise.race([Promise.allSettled([...pending]), cancellation]);
+      } finally {
+        abortSettlement = () => {};
+        params.signal.removeEventListener("abort", rejectCancelled);
+      }
+      if (cancelled || params.signal.aborted) throw Error("ABORTED");
+      if (protocolError) throw protocolError;
+      if (terminal?.status !== "SUCCESS")
         throw antigravityFailure(
           diagnostic + " " + (terminal?.error || ""),
           terminal?.status,
+          hookDenied,
         );
       if (contextTokens !== null)
         params.onUsage?.({
@@ -902,7 +1079,32 @@ export class AntigravityBackend {
           basis:
             "Antigravity latest completed agent_response input_tokens + cache_read_tokens + output_tokens; excludes cumulative result and auxiliary steps",
         });
+      modelSucceeded = true;
+      diagnosticEvent({
+        origin: "finalization",
+        phase: "settled",
+        trustedTerminal: true,
+        backendOutcome: "success",
+      });
+      if (code !== 0 || child.signalCode || ioFailed)
+        this.retireCompletedSession(params, binding, timingStart);
+      else
+        diagnosticEvent({
+          origin: "finalization",
+          phase: "settled",
+          sessionDisposition: "retained",
+        });
     } catch (error) {
+      diagnosticEvent({
+        origin: "finalization",
+        phase: "settled",
+        backendOutcome:
+          cancelled || params.signal.aborted
+            ? "cancelled"
+            : modelSucceeded
+              ? "success"
+              : "failed",
+      });
       if (
         params.session &&
         !params.signal.aborted &&
@@ -914,8 +1116,14 @@ export class AntigravityBackend {
       params.saveSession(null);
       throw error;
     } finally {
+      diagnosticActive = false;
       live = false;
-      media.close();
+      try {
+        media.close();
+      } catch {
+        // Local media cleanup must not turn a confirmed success into a backend failure.
+        console.warn("Antigravity turn media cleanup failed");
+      }
       params.signal.removeEventListener("abort", abort);
       if (force) clearTimeout(force);
       if (child) this.stop(child, "SIGKILL");
