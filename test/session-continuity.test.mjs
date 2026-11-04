@@ -11,9 +11,199 @@ import { Runtime } from "../src/core/runtime.mjs";
 import { ConfigStore } from "../src/core/config.mjs";
 import { restoreExport } from "../src/memory/migrate.mjs";
 import { MemoryStore } from "../src/memory/store.mjs";
-import { retireSession } from "../src/core/session-records.mjs";
+import {
+  recordBackendDiagnostic,
+  retireSession,
+  sanitizeBackendDiagnostic,
+} from "../src/core/session-records.mjs";
 const chat = "group:20000",
   tick = () => new Promise((r) => setImmediate(r));
+
+test("backend diagnostics are allowlisted, bounded, and compatible with legacy exports", (t) => {
+  const source = new MemoryStore(":memory:"),
+    memory = source.bind("agent-0");
+  t.after(() => source.close());
+  memory.identity.put("model_turns", {
+    id: "legacy-running",
+    conversation: chat,
+    status: "running",
+    legacyField: "kept",
+  });
+  memory.identity.put("model_turns", {
+    id: "legacy-completed",
+    conversation: chat,
+    status: "completed",
+    legacyField: "unchanged",
+  });
+  const event = {
+    origin: "process-exit",
+    phase: "terminal-observed",
+    terminalStatus: "ERROR",
+    trustedTerminal: true,
+    exitCode: 23,
+    signal: "SIGTERM",
+    ioCode: "EPIPE",
+    wrapperError: false,
+    elapsedMs: 12.6,
+    backendOutcome: "failed",
+    workerOutcome: "recycled",
+    sessionDisposition: "retired",
+    attempt: 0,
+    providerText: "private provider detail",
+    nested: { token: "must-not-persist" },
+  };
+  assert.deepEqual(sanitizeBackendDiagnostic(event), {
+    origin: "process-exit",
+    phase: "terminal-observed",
+    terminalStatus: "ERROR",
+    signal: "SIGTERM",
+    ioCode: "EPIPE",
+    backendOutcome: "failed",
+    workerOutcome: "recycled",
+    sessionDisposition: "retired",
+    attempt: 0,
+    trustedTerminal: true,
+    wrapperError: false,
+    exitCode: 23,
+    elapsedMs: 13,
+  });
+  assert.equal(
+    sanitizeBackendDiagnostic({ origin: "provider text", phase: "unknown" }),
+    null,
+  );
+  assert.deepEqual(sanitizeBackendDiagnostic({ exitCode: -2147483648 }), {
+    exitCode: -2147483648,
+  });
+  assert.equal(sanitizeBackendDiagnostic({ exitCode: -2147483649 }), null);
+  assert.equal(sanitizeBackendDiagnostic({ attempt: 2 }), null);
+  assert.equal(
+    recordBackendDiagnostic(memory, "legacy-running", event, 0),
+    true,
+  );
+  for (let i = 0; i < 16; i++)
+    assert.equal(
+      recordBackendDiagnostic(
+        memory,
+        "legacy-running",
+        {
+          origin: "protocol",
+          phase: "running",
+          elapsedMs: i,
+          backendOutcome: "success",
+        },
+        i % 2,
+      ),
+      true,
+    );
+  assert.equal(
+    recordBackendDiagnostic(memory, "legacy-completed", {
+      origin: "protocol",
+      phase: "settled",
+      backendOutcome: "failed",
+    }),
+    false,
+  );
+  const running = memory.identity.get("model_turns", "legacy-running");
+  assert.equal(running.backendDiagnostics.length, 16);
+  assert.equal(running.backendDiagnostics[0].elapsedMs, 0);
+  assert(
+    running.backendDiagnostics.every((entry) => [0, 1].includes(entry.attempt)),
+  );
+  assert.equal(running.backendOutcome, "success");
+  assert.equal(running.workerOutcome, "recycled");
+  assert.equal(running.sessionDisposition, "retired");
+  assert.equal(running.legacyField, "kept");
+  assert.equal(
+    JSON.stringify(memory.identity.list("model_turns")).includes(
+      "private provider detail",
+    ),
+    false,
+  );
+  assert.equal(
+    JSON.stringify(memory.identity.list("model_turns")).includes(
+      "must-not-persist",
+    ),
+    false,
+  );
+
+  const restored = new MemoryStore(":memory:");
+  t.after(() => restored.close());
+  restoreExport(restored.bind("agent-0"), source.bind("agent-0").export());
+  assert.deepEqual(
+    restored
+      .bind("agent-0")
+      .identity.list("model_turns")
+      .sort((a, b) => a.id.localeCompare(b.id)),
+    memory.identity
+      .list("model_turns")
+      .sort((a, b) => a.id.localeCompare(b.id)),
+  );
+  assert.equal(
+    restored.bind("agent-0").identity.get("model_turns", "legacy-completed")
+      .backendDiagnostics,
+    undefined,
+  );
+});
+
+test("successful retirement updates diagnosed turns and leaves legacy turns unchanged", (t) => {
+  const store = new MemoryStore(":memory:"),
+    memory = store.bind("agent-0"),
+    legacyScope = "group:20001";
+  t.after(() => store.close());
+  const turnId = "failed-backend-turn",
+    session = { backend: "codex", id: "failed-backend-session" };
+  memory.identity.put("model_turns", {
+    id: turnId,
+    conversation: chat,
+    status: "running",
+    backendId: "backend-0",
+    backendSession: session,
+  });
+  memory.setState(chat, {
+    ...memory.state(chat),
+    session,
+    lastTurnId: turnId,
+  });
+  assert.equal(
+    recordBackendDiagnostic(memory, turnId, {
+      origin: "finalization",
+      phase: "settled",
+      backendOutcome: "failed",
+      workerOutcome: "exit-warning",
+      sessionDisposition: "retained",
+    }),
+    true,
+  );
+  retireSession(memory, chat, "backend-worker-unavailable", Date.now(), {
+    turnId,
+    backendId: "backend-0",
+  });
+  const retired = memory.identity.get("model_turns", turnId);
+  const history = memory.identity
+    .list("session_history")
+    .find((entry) => entry.turnId === turnId);
+  assert.equal(retired.sessionDisposition, "retired");
+  assert.equal(history.reason, "backend-worker-unavailable");
+  assert.equal(history.details.source, "backend");
+  assert.equal(memory.state(chat).session, null);
+
+  memory.identity.put("model_turns", {
+    id: "legacy-turn",
+    conversation: legacyScope,
+    status: "running",
+  });
+  memory.setState(legacyScope, {
+    ...memory.state(legacyScope),
+    session: { backend: "codex", id: "legacy-session" },
+    lastTurnId: "legacy-turn",
+  });
+  retireSession(memory, legacyScope, "process-recovery", Date.now(), {
+    turnId: "legacy-turn",
+  });
+  const legacy = memory.identity.get("model_turns", "legacy-turn");
+  assert.equal(legacy.sessionDisposition, undefined);
+  assert.equal(legacy.backendDiagnostics, undefined);
+});
 
 if (process.argv[2] === "--crash-compaction") {
   const root = process.argv[3],

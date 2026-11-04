@@ -27,6 +27,7 @@ import { isDeepStrictEqual } from "node:util";
  *   onBackendTurn?: (turn: {turnId: string, inputAccepted?: boolean}) => void,
  *   onInputSubmitted?: () => void,
  *   onTiming?: (timing: {phase: string, elapsedMs: number, processReused?: boolean}) => void,
+ *   onDiagnostic?: (event: unknown, attempt?: number) => void,
  *   recovery?: import("./turn-failure.mjs").RecoveryFailure,
  *   onImageSession?: (sessionId: string) => void,
  *   onGeneratedImage?: (sessionId: string, item: any) => void,

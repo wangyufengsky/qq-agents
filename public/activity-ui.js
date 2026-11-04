@@ -53,6 +53,28 @@ const activityStatus = {
   interrupted: "被中断",
   running: "进行中",
 };
+const activityBackendOutcome = {
+  success: "模型成功",
+  failed: "模型回合失败",
+  cancelled: "模型已取消",
+};
+const activityProcessOutcome = {
+  healthy: "进程正常",
+  recycled: "进程已回收",
+  "exit-warning": "进程退出告警",
+};
+const activitySessionDisposition = {
+  retained: "会话保留",
+  retiring: "会话退休未完成",
+  retired: "会话已退休",
+};
+const activityDiagnosticOrigin = {
+  finalization: "回合收尾",
+  protocol: "协议检查",
+  "process-exit": "进程退出",
+  stdin: "进程输入通道",
+  terminal: "模型结果",
+};
 const intentWords = {
   waiting: "等待时机",
   handedoff: "已交给聊天",
@@ -78,6 +100,71 @@ function activityTitle(e) {
   }
   const why = [...new Set(e.reasons.map((r) => activityReasons[r] || r))];
   return `${activityWhere(e)}${why.length ? " · " + why.join("、") : ""}`;
+}
+function activityDiagnosticSummary(d) {
+  if (!d || typeof d !== "object" || Array.isArray(d)) return "";
+  const parts = [];
+  if (Object.hasOwn(activityDiagnosticOrigin, d.origin))
+    parts.push(activityDiagnosticOrigin[d.origin]);
+  if (Object.hasOwn(activityBackendOutcome, d.backendOutcome))
+    parts.push(activityBackendOutcome[d.backendOutcome]);
+  if (Object.hasOwn(activityProcessOutcome, d.workerOutcome))
+    parts.push(activityProcessOutcome[d.workerOutcome]);
+  if (Object.hasOwn(activitySessionDisposition, d.sessionDisposition))
+    parts.push(activitySessionDisposition[d.sessionDisposition]);
+  if (d.trustedTerminal === true) parts.push("模型终态已确认");
+  else if (d.trustedTerminal === false) parts.push("模型终态未确认");
+  if (d.wrapperError === true) parts.push("启动器告警");
+  if (
+    Number.isSafeInteger(d.exitCode) &&
+    d.exitCode >= -2147483648 &&
+    d.exitCode <= 2147483647
+  )
+    parts.push(`进程退出码 ${d.exitCode}`);
+  return parts.join(" · ");
+}
+function activityOutcomeTags(e) {
+  const tags = [];
+  const failedAfterDelivery =
+    e.status === "failed" && e.sent.some((s) => !s.action);
+  const hasBackendOutcome = Object.hasOwn(
+    activityBackendOutcome,
+    e.backendOutcome,
+  );
+  if (
+    hasBackendOutcome &&
+    !(failedAfterDelivery && e.backendOutcome === "failed")
+  )
+    tags.push(
+      tag(
+        activityBackendOutcome[e.backendOutcome],
+        e.backendOutcome === "failed" ? "warn" : "",
+      ),
+    );
+  if (failedAfterDelivery) tags.push(tag("消息已送达，回合后续失败", "warn"));
+  else if (!hasBackendOutcome && Object.hasOwn(activityStatus, e.status))
+    tags.push(tag(activityStatus[e.status], "warn"));
+  else if (
+    hasBackendOutcome &&
+    e.status === "failed" &&
+    e.backendOutcome !== "failed"
+  )
+    tags.push(tag(activityStatus.failed, "warn"));
+  if (Object.hasOwn(activityProcessOutcome, e.workerOutcome))
+    tags.push(
+      tag(
+        activityProcessOutcome[e.workerOutcome],
+        e.workerOutcome === "exit-warning" ? "warn" : "",
+      ),
+    );
+  if (Object.hasOwn(activitySessionDisposition, e.sessionDisposition))
+    tags.push(
+      tag(
+        activitySessionDisposition[e.sessionDisposition],
+        ["retiring", "retired"].includes(e.sessionDisposition) ? "warn" : "",
+      ),
+    );
+  return tags.join("");
 }
 function activityTime(e) {
   const at = new Date(e.startedAt);
@@ -160,6 +247,16 @@ function activityEntry(e) {
     e.kind === "subject" &&
     (e.log?.did === "rested" || (!e.log && !e.tools?.total));
   const parts = [];
+  const confirmedSent = [
+    e.sent.filter((s) => !s.action).length
+      ? `消息已送达 ${e.sent.filter((s) => !s.action).length} 条`
+      : "",
+    e.sent.filter((s) => s.action).length
+      ? `动作已确认 ${e.sent.filter((s) => s.action).length} 项`
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
   if (e.log) {
     parts.push(
       `<p class="act-summary" title="${esc(e.log.summary)}">${esc(e.log.summary)}</p>`,
@@ -181,7 +278,7 @@ function activityEntry(e) {
     parts.push('<p class="hint">读了新消息，这次没有开口。</p>');
   if (e.sent.length)
     parts.push(
-      `<div class="act-box"><p class="hint">发出 ${e.sent.length} 条</p>${e.sent
+      `<div class="act-box"><p class="hint">${confirmedSent}</p>${e.sent
         .slice(0, 3)
         .map(
           (s) =>
@@ -193,8 +290,23 @@ function activityEntry(e) {
     );
   if (e.failedSends)
     parts.push(
-      `<p class="hint">有 ${e.failedSends} 条发送失败或结果未知，可在概览的待核对发送中处理。</p>`,
+      `<p class="hint">有 ${e.failedSends} 条发送失败，可在概览的待核对发送中处理。</p>`,
     );
+  if (e.unknownSends)
+    parts.push(
+      `<p class="hint">有 ${e.unknownSends} 条发送结果未知（原因未记录），可在概览的待核对发送中处理。</p>`,
+    );
+  const diagnosticSummaries = Array.isArray(e.backendDiagnostics)
+    ? e.backendDiagnostics.map(activityDiagnosticSummary).filter(Boolean)
+    : [];
+  if (diagnosticSummaries.length)
+    parts.push(
+      `<details class="act-more"><summary>后端记录 ${diagnosticSummaries.length} 条</summary>${diagnosticSummaries
+        .map((summary) => `<p class="hint">${esc(summary)}</p>`)
+        .join("")}</details>`,
+    );
+  else if (e.backendOutcome === "failed" || e.status === "failed")
+    parts.push('<p class="hint">失败原因未记录。</p>');
   parts.push(activityBrowsing(e.browsing));
   if (e.externalReads)
     parts.push(`<p class="hint">联网读取 ${e.externalReads} 次</p>`);
@@ -222,9 +334,7 @@ function activityEntry(e) {
       ? `工具：${e.tools.names.map(esc).join("、")}${e.tools.failed ? `（失败 ${e.tools.failed} 次）` : ""}`
       : "没有调用工具"
     : "";
-  const status = activityStatus[e.status]
-    ? tag(activityStatus[e.status], "warn")
-    : "";
+  const status = activityOutcomeTags(e);
   // One head line whatever happened: a dot for chat or free time, the title
   // (cut, full on hover), any trouble, and when. Long text below is clamped.
   const title = activityTitle(e);

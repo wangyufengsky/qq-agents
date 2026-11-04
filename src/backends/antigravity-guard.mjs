@@ -94,7 +94,26 @@ export async function guardMain() {
     });
     if (!response.ok) throw Error();
     const catalogue = /** @type {any} */ (await response.json());
-    allowed = antigravityHookAllowed(JSON.parse(input), catalogue);
+    const value = JSON.parse(input);
+    allowed = antigravityHookAllowed(value, catalogue);
+    if (
+      !allowed &&
+      (!catalogue.turnEpoch ||
+        (value.conversationId === catalogue.conversationId &&
+          Number.isSafeInteger(value.stepIdx) &&
+          value.stepIdx > catalogue.minimumStep))
+    ) {
+      // Report only current-turn denials; stale hooks cannot taint another turn.
+      const route = catalogue.turnEpoch
+        ? `/hook-denied?epoch=${encodeURIComponent(catalogue.turnEpoch)}`
+        : "/hook-denied";
+      await fetch(new URL(route, endpoint), {
+        method: "POST",
+        headers: { authorization: `Bearer ${process.env.QQ_AGY_TOKEN || ""}` },
+        signal: AbortSignal.timeout(1000),
+        redirect: "error",
+      }).catch(() => {});
+    }
   } catch {
     // Failure to read policy or validate the active turn always denies execution.
   }

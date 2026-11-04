@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import http from "node:http";
+import { EventEmitter } from "node:events";
+import { PassThrough, Writable } from "node:stream";
 import { spawn, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
@@ -23,6 +25,7 @@ import { toolSpecs } from "../src/tools/specs.mjs";
 import { AntigravityMedia } from "../src/backends/antigravity-media.mjs";
 import { colorGrid } from "../scripts/fixtures/antigravity-media.mjs";
 import { registry } from "../src/tools/registry.mjs";
+import { SessionPreparationFailure } from "../src/backends/turn-failure.mjs";
 
 const fixture = fileURLToPath(
   new URL("./antigravity-fixture.mjs", import.meta.url),
@@ -32,7 +35,12 @@ const tool = {
   description: "Synthetic test",
   inputSchema: { type: "object", properties: {} },
 };
-function setup(t, mode = "success", root = temp(t)) {
+function setup(
+  t,
+  mode = "success",
+  root = temp(t),
+  { fakeChild = false } = {},
+) {
   const cfg = config();
   const backendConfig = validateConfig({
     ...cfg,
@@ -50,13 +58,23 @@ function setup(t, mode = "success", root = temp(t)) {
   const backend = new AntigravityBackend(backendConfig, cfg.agents[0], {
     root,
     spawn(command, args, options) {
-      const child = spawn(process.execPath, [fixture, ...args], {
-        ...options,
-        env: { ...options.env, AGY_FIXTURE_MODE: mode },
-      });
+      const child = fakeChild
+        ? createFakeChild()
+        : spawn(process.execPath, [fixture, ...args], {
+            ...options,
+            env: { ...options.env, AGY_FIXTURE_MODE: mode },
+          });
       launches.push({ command, args, options, pid: child.pid });
+      if (fakeChild) launches.at(-1).child = child;
       return child;
     },
+    ...(fakeChild
+      ? {
+          stop(child, signal) {
+            child.kill(signal);
+          },
+        }
+      : {}),
   });
   t.after(() => backend.close());
   const controller = new AbortController();
@@ -84,6 +102,151 @@ function setup(t, mode = "success", root = temp(t)) {
     root,
     backendConfig,
   };
+}
+
+function createFakeChild() {
+  const child = new EventEmitter();
+  child.pid = 5252;
+  child.exitCode = null;
+  child.signalCode = null;
+  child.inputs = [];
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  let inputBuffer = "";
+  let resolveInput;
+  child.inputReady = new Promise((resolve) => {
+    resolveInput = resolve;
+  });
+  child.stdin = new Writable({
+    write(chunk, _encoding, callback) {
+      inputBuffer += chunk.toString();
+      while (inputBuffer.includes("\n")) {
+        const end = inputBuffer.indexOf("\n");
+        const line = inputBuffer.slice(0, end);
+        inputBuffer = inputBuffer.slice(end + 1);
+        if (line.trim()) {
+          const input = JSON.parse(line);
+          child.inputs.push(input);
+          resolveInput(input);
+          resolveInput = () => {};
+        }
+      }
+      callback();
+    },
+  });
+  child.kill = (signal) => {
+    child.killedBy = signal;
+    return true;
+  };
+  child.emitFrames = (...frames) =>
+    child.stdout.write(
+      `${frames.map((frame) => JSON.stringify(frame)).join("\n")}\n`,
+    );
+  child.closeWith = (code, signal = null) => {
+    child.exitCode = signal ? null : code;
+    child.signalCode = signal;
+    child.emit("close", code, signal);
+  };
+  child.breakStdin = (code = "EPIPE") => {
+    const error = Object.assign(Error("SYNTHETIC_PRIVATE_IO_DETAIL"), { code });
+    child.stdin.emit("error", error);
+  };
+  return child;
+}
+
+function successfulFrames(id) {
+  return [
+    {
+      event: "init",
+      conversation_id: id,
+      init: { agent: "qq-agents-fixture" },
+    },
+    {
+      event: "step_update",
+      step_update: {
+        conversation_id: id,
+        step_index: 1,
+        step_type: "agent_response",
+        state: "DONE",
+        usage: { input_tokens: 10, output_tokens: 2, cache_read_tokens: 1 },
+      },
+    },
+    {
+      event: "result",
+      result: {
+        status: "SUCCESS",
+        conversation_id: id,
+        response: "Synthetic success.",
+      },
+    },
+  ];
+}
+
+function assertSafeDiagnostics(entries) {
+  const enums = {
+    origin: ["terminal", "process-exit", "stdin", "protocol", "finalization"],
+    phase: ["preparing", "running", "settling", "terminal-observed", "settled"],
+    terminalStatus: ["SUCCESS", "ERROR", "CANCELLED", "unrecognized"],
+    ioCode: [
+      "EPIPE",
+      "ECONNRESET",
+      "ERR_STREAM_DESTROYED",
+      "ERR_STREAM_WRITE_AFTER_END",
+    ],
+    signal: ["SIGINT", "SIGTERM", "SIGKILL", "SIGABRT", "SIGSEGV"],
+    workerOutcome: ["recycled", "exit-warning", "healthy"],
+    sessionDisposition: ["retained", "retiring", "retired"],
+    backendOutcome: ["success", "failed", "cancelled"],
+  };
+  const allowedFields = new Set([
+    ...Object.keys(enums),
+    "trustedTerminal",
+    "exitCode",
+    "elapsedMs",
+    "wrapperError",
+  ]);
+  for (const entry of entries) {
+    assert.deepEqual(
+      Object.keys(entry).filter((key) => !allowedFields.has(key)),
+      [],
+      "diagnostics expose only approved fields",
+    );
+    for (const [key, allowed] of Object.entries(enums))
+      if (key in entry) assert(allowed.includes(entry[key]), `${key} is safe`);
+    if ("trustedTerminal" in entry)
+      assert.equal(typeof entry.trustedTerminal, "boolean");
+    if ("exitCode" in entry)
+      assert(
+        Number.isSafeInteger(entry.exitCode) &&
+          entry.exitCode >= -2147483648 &&
+          entry.exitCode <= 2147483647,
+      );
+    if ("elapsedMs" in entry)
+      assert(
+        Number.isFinite(entry.elapsedMs) &&
+          entry.elapsedMs >= 0 &&
+          entry.elapsedMs <= 86400000,
+      );
+    if ("wrapperError" in entry)
+      assert.equal(typeof entry.wrapperError, "boolean");
+  }
+  assert(!JSON.stringify(entries).includes("SYNTHETIC_PRIVATE_IO_DETAIL"));
+}
+
+function startFakeTurn(fixture, overrides = {}) {
+  let markSubmitted;
+  const inputSubmitted = new Promise((resolve) => {
+    markSubmitted = resolve;
+  });
+  const run = fixture.backend.run({
+    ...fixture.params,
+    ...overrides,
+    onInputSubmitted() {
+      overrides.onInputSubmitted?.();
+      markSubmitted();
+    },
+  });
+  return { run, inputSubmitted };
 }
 
 test("Antigravity registers without changing existing backend defaults", async (t) => {
@@ -147,6 +310,270 @@ test("Antigravity resumes only its bound conversation and keeps prompts off argv
   );
   assert.equal(sessions.at(-1), null);
   assert.equal(launches.length, 2);
+});
+
+test("Antigravity keeps DONE+SUCCESS successful after a nonzero CLI exit and retires its session", async (t) => {
+  const fixture = setup(t, "success-exit");
+  const diagnostics = [];
+  await fixture.backend.run({
+    ...fixture.params,
+    onDiagnostic: (event) => diagnostics.push(event),
+  });
+
+  assert(fixture.sessions[0]);
+  assert.equal(fixture.sessions.at(-1), null);
+  assert.equal(fixture.launches.length, 1);
+  assert(
+    diagnostics.some(
+      (event) =>
+        event.origin === "terminal" &&
+        event.terminalStatus === "SUCCESS" &&
+        event.trustedTerminal === true,
+    ),
+  );
+  assert(
+    diagnostics.some(
+      (event) =>
+        event.origin === "process-exit" &&
+        event.exitCode === 7 &&
+        event.trustedTerminal === true,
+    ),
+  );
+  assert(
+    diagnostics.some(
+      (event) =>
+        event.origin === "finalization" && event.backendOutcome === "success",
+    ),
+  );
+  assert(
+    diagnostics.some(
+      (event) =>
+        event.origin === "finalization" &&
+        event.sessionDisposition === "retiring",
+    ),
+  );
+  assert(
+    diagnostics.some(
+      (event) =>
+        event.origin === "finalization" &&
+        event.sessionDisposition === "retired",
+    ),
+  );
+  assertSafeDiagnostics(diagnostics);
+  assert(!JSON.stringify(diagnostics).includes("PRIVATE_SYNTHETIC_PROMPT"));
+});
+
+test("Antigravity rejects an explicit SUCCESS result with no completed response", async (t) => {
+  const fixture = setup(t, "no-response");
+  await assert.rejects(
+    fixture.backend.run(fixture.params),
+    /ANTIGRAVITY_PROTOCOL_ERROR/,
+  );
+  assert.equal(fixture.sessions.at(-1), null);
+  assert.equal(fixture.launches.length, 1);
+});
+
+test("Antigravity keeps trusted success after stdin EPIPE and retires the session", async (t) => {
+  const fixture = setup(t, "success", temp(t), { fakeChild: true });
+  const diagnostics = [];
+  const observed = [];
+  const { run, inputSubmitted } = startFakeTurn(fixture, {
+    onDiagnostic(event) {
+      diagnostics.push(event);
+      observed.push({ event, session: fixture.sessions.at(-1) });
+    },
+  });
+  await inputSubmitted;
+  const child = fixture.launches[0].child;
+  await child.inputReady;
+  const sessionId = "00000000-0000-4000-8000-000000000201";
+  child.emitFrames(...successfulFrames(sessionId));
+  child.breakStdin("EPIPE");
+  child.closeWith(7);
+
+  await run;
+  assert.equal(fixture.sessions.at(-1), null);
+  assert(diagnostics.some((event) => event.ioCode === "EPIPE"));
+  assert(
+    diagnostics.some(
+      (event) => event.backendOutcome === "success" && event.trustedTerminal,
+    ),
+  );
+  const retiring = observed.find(
+    ({ event }) => event.sessionDisposition === "retiring",
+  );
+  const retired = observed.find(
+    ({ event }) => event.sessionDisposition === "retired",
+  );
+  assert(retiring?.session);
+  assert.equal(retired?.session, null);
+  assertSafeDiagnostics(diagnostics);
+});
+
+test("Antigravity rejects stdin EPIPE before any terminal result", async (t) => {
+  const fixture = setup(t, "success", temp(t), { fakeChild: true });
+  const diagnostics = [];
+  const { run, inputSubmitted } = startFakeTurn(fixture, {
+    onDiagnostic: (event) => diagnostics.push(event),
+  });
+  const rejected = assert.rejects(run);
+  await inputSubmitted;
+  const child = fixture.launches[0].child;
+  await child.inputReady;
+  child.emitFrames({
+    event: "init",
+    conversation_id: "00000000-0000-4000-8000-000000000202",
+    init: { agent: "qq-agents-fixture" },
+  });
+  child.breakStdin("EPIPE");
+
+  await rejected;
+  assert.equal(fixture.sessions.at(-1), null);
+  assert(diagnostics.some((event) => event.ioCode === "EPIPE"));
+  assert(diagnostics.some((event) => event.backendOutcome === "failed"));
+  assert(!diagnostics.some((event) => event.backendOutcome === "success"));
+  assertSafeDiagnostics(diagnostics);
+});
+
+test("Antigravity cancellation wins while an accepted terminal tool call is settling", async (t) => {
+  const fixture = setup(t, "success", temp(t), { fakeChild: true });
+  let enterTool;
+  const toolEntered = new Promise((resolve) => {
+    enterTool = resolve;
+  });
+  let settleTool;
+  const toolGate = new Promise((resolve) => {
+    settleTool = resolve;
+  });
+  let terminalSeen;
+  const terminalObserved = new Promise((resolve) => {
+    terminalSeen = resolve;
+  });
+  const diagnostics = [];
+  const { run, inputSubmitted } = startFakeTurn(fixture, {
+    async callTool() {
+      enterTool();
+      return toolGate;
+    },
+    onDiagnostic(event) {
+      diagnostics.push(event);
+      if (event.origin === "terminal") terminalSeen();
+    },
+  });
+  await inputSubmitted;
+  const child = fixture.launches[0].child;
+  await child.inputReady;
+  const sessionId = "00000000-0000-4000-8000-000000000203";
+  child.emitFrames(successfulFrames(sessionId)[0]);
+  const request = fetch(
+    `${fixture.launches[0].options.env.QQ_AGY_ENDPOINT}/call`,
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${fixture.launches[0].options.env.QQ_AGY_TOKEN}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ name: "probe", arguments: {} }),
+    },
+  ).catch(() => null);
+  await toolEntered;
+  child.emitFrames(...successfulFrames(sessionId).slice(1));
+  await terminalObserved;
+  child.closeWith(0);
+  await new Promise((resolve) => setImmediate(resolve));
+  fixture.controller.abort();
+
+  await assert.rejects(run, /ABORTED/);
+  settleTool({ content: [{ type: "text", text: "late fixture result" }] });
+  await request;
+  assert.equal(fixture.sessions.at(-1), null);
+  assert(diagnostics.some((event) => event.backendOutcome === "cancelled"));
+  assert(!diagnostics.some((event) => event.backendOutcome === "success"));
+  assertSafeDiagnostics(diagnostics);
+});
+
+test("Antigravity keeps a bound session when per-turn preparation fails before input", async (t) => {
+  const { backend, params, sessions, launches } = setup(t);
+  await backend.run(params);
+  const session = sessions.at(-1);
+  assert(session);
+  const bindingFile = path.join(launches[0].options.cwd, "session.json");
+  const binding = fs.readFileSync(bindingFile, "utf8");
+  const originalPrepare = backend.prepare;
+  let inputSubmissions = 0;
+
+  backend.prepare = () => {
+    throw Error("SYNTHETIC_PREPARE_FAILURE");
+  };
+  try {
+    await assert.rejects(
+      backend.run({
+        ...params,
+        session,
+        onInputSubmitted: () => inputSubmissions++,
+      }),
+      (error) => {
+        assert(error instanceof SessionPreparationFailure);
+        assert.equal(error.message, "SYNTHETIC_PREPARE_FAILURE");
+        return true;
+      },
+    );
+  } finally {
+    backend.prepare = originalPrepare;
+  }
+
+  assert.equal(inputSubmissions, 0);
+  assert.equal(launches.length, 1);
+  assert.deepEqual(sessions.at(-1), session);
+  assert.equal(fs.readFileSync(bindingFile, "utf8"), binding);
+
+  await backend.run({
+    ...params,
+    session,
+    onInputSubmitted: () => inputSubmissions++,
+  });
+  assert.equal(inputSubmissions, 1);
+  assert.equal(launches.length, 2);
+  assert(launches[1].args.includes(session.id));
+  assert.equal(sessions.at(-1).id, session.id);
+  assert.equal(JSON.parse(fs.readFileSync(bindingFile, "utf8")).id, session.id);
+});
+
+test("Antigravity keeps a per-turn session when the input callback throws before stdin", async (t) => {
+  const { backend, params, sessions, calls, launches } = setup(t);
+  await backend.run(params);
+  const session = sessions.at(-1);
+  assert(session);
+  const bindingFile = path.join(launches[0].options.cwd, "session.json");
+  const binding = fs.readFileSync(bindingFile, "utf8");
+  const callCount = calls.length;
+  let callbackCalls = 0;
+
+  await assert.rejects(
+    backend.run({
+      ...params,
+      session,
+      onInputSubmitted() {
+        callbackCalls++;
+        throw Error("SYNTHETIC_INPUT_CALLBACK_FAILURE");
+      },
+    }),
+    (error) =>
+      error instanceof SessionPreparationFailure &&
+      error.message === "SYNTHETIC_INPUT_CALLBACK_FAILURE",
+  );
+
+  assert.equal(callbackCalls, 1);
+  assert.equal(launches.length, 2);
+  assert.equal(calls.length, callCount);
+  assert.equal(sessions.at(-1).id, session.id);
+  assert.equal(fs.readFileSync(bindingFile, "utf8"), binding);
+
+  await backend.run({ ...params, session });
+  assert.equal(launches.length, 3);
+  assert.equal(calls.length, callCount + 1);
+  assert.equal(sessions.at(-1).id, session.id);
+  assert.equal(JSON.parse(fs.readFileSync(bindingFile, "utf8")).id, session.id);
 });
 
 test("Antigravity makes only allowed parameter schemas visible before the first call", async (t) => {

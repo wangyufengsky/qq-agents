@@ -45,7 +45,22 @@ if (args.includes("models")) {
       response: "Assistant text is never a delivery.",
     },
   };
-  if (mode === "usage" || mode === "invalid-usage") {
+  const responseStep = (step_index = 1) =>
+    event({
+      event: "step_update",
+      step_update: {
+        conversation_id: id,
+        step_index,
+        step_type: "agent_response",
+        state: "DONE",
+        usage: { input_tokens: 10, output_tokens: 2, cache_read_tokens: 1 },
+      },
+    });
+  if (mode === "success-exit") {
+    responseStep();
+    event(result);
+    process.exitCode = 7;
+  } else if (mode === "usage" || mode === "invalid-usage") {
     const step = (step_index, usage, extra = {}) =>
       event({
         event: "step_update",
@@ -98,11 +113,14 @@ if (args.includes("models")) {
     });
     try {
       await client.connect(transport);
-      const result = await client.callTool({ name: "probe", arguments: {} });
+      const mediaResult = await client.callTool({
+        name: "probe",
+        arguments: {},
+      });
       fs.writeFileSync(
         path.join(process.cwd(), "media-result.json"),
         JSON.stringify({
-          ...result,
+          ...mediaResult,
           observedImages: (
             await (await fetch(endpoint + "/catalog", { headers })).json()
           ).images.map((image) =>
@@ -113,6 +131,7 @@ if (args.includes("models")) {
     } finally {
       await client.close();
     }
+    responseStep();
     event(result);
   } else if (mode === "schema-error") {
     const response = await call("probe");
@@ -124,12 +143,16 @@ if (args.includes("models")) {
       JSON.stringify(error).includes("PRIVATE_ARGUMENT")
     )
       throw Error("TOOL_SCHEMA_RECOVERY_MISSING");
+    responseStep();
     event(result);
   } else if (mode === "malformed") process.stdout.write("not JSON\n");
+  else if (mode === "no-response") event(result);
   else if (mode === "wrong-result") {
+    responseStep();
     result.result.conversation_id = randomUUID();
     event(result);
   } else if (mode === "duplicate-result") {
+    responseStep();
     event(result);
     event(result);
   } else if (mode === "quota") {
@@ -183,6 +206,7 @@ if (args.includes("models")) {
     )
       throw Error("ORIGIN_ALLOWED");
     if (!(await call("probe")).ok) throw Error("TOOL_FAILED");
+    responseStep();
     event(result);
     await new Promise((resolve) => setTimeout(resolve, 30));
     if ((await call("probe")).status !== 403)

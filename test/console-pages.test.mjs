@@ -283,3 +283,90 @@ test("activity keeps a slim filter bar and one head line per entry, long text cu
   a.sandbox.entry = { ...a.sandbox.entry, seen: { personCards: [] } };
   assert.doesNotMatch(a.run("activityEntry(entry)"), /act-basis/);
 });
+
+test("activity separates delivery, model, process and session outcomes", () => {
+  const a = activityScripts();
+  a.sandbox.entry = {
+    kind: "chat",
+    conversation: "group:20000",
+    reasons: [],
+    status: "failed",
+    startedAt: T0,
+    endedAt: T0 + 1000,
+    backendOutcome: "failed",
+    workerOutcome: "exit-warning",
+    sessionDisposition: "retiring",
+    backendDiagnostics: [
+      {
+        origin: "process-exit",
+        exitCode: 7,
+        workerOutcome: "exit-warning",
+        summary: "private diagnostic summary",
+        providerText: "private provider response",
+      },
+    ],
+    sent: [{ text: "confirmed message", action: false }],
+    failedSends: 1,
+    unknownSends: 1,
+    browsing: { items: [], searches: [], failures: [] },
+    diaries: [],
+    intents: { created: [], decided: [] },
+    tools: null,
+  };
+  const failed = a.run("activityEntry(entry)");
+  assert.match(failed, /进程退出告警/);
+  assert.match(failed, /会话退休未完成/);
+  assert.match(failed, /消息已送达，回合后续失败/);
+  assert.match(failed, /消息已送达 1 条/);
+  assert.match(failed, /1 条发送失败/);
+  assert.match(failed, /1 条发送结果未知（原因未记录）/);
+  assert.match(failed, /进程退出 · 进程退出告警 · 进程退出码 7/);
+  assert.doesNotMatch(
+    failed,
+    /private diagnostic summary|private provider response/,
+  );
+
+  a.sandbox.entry = {
+    ...a.sandbox.entry,
+    status: "completed-no-send",
+    backendOutcome: "success",
+    workerOutcome: "recycled",
+    sessionDisposition: "retired",
+    backendDiagnostics: [],
+    sent: [],
+    failedSends: 0,
+    unknownSends: 0,
+  };
+  const success = a.run("activityEntry(entry)");
+  assert.match(success, /模型成功/);
+  assert.match(success, /进程已回收/);
+  assert.match(success, /会话已退休/);
+  assert.doesNotMatch(success, /消息已送达|失败原因未记录/);
+
+  a.sandbox.entry = {
+    ...a.sandbox.entry,
+    status: "failed",
+    sent: [{ text: "confirmed message", action: false }],
+  };
+  const localFailure = a.run("activityEntry(entry)");
+  assert.match(localFailure, /模型成功/);
+  assert.match(localFailure, /消息已送达，回合后续失败/);
+
+  a.sandbox.entry = {
+    ...a.sandbox.entry,
+    status: "completed-no-send",
+    sent: [{ text: "confirmed action", action: true }],
+  };
+  const action = a.run("activityEntry(entry)");
+  assert.match(action, /动作已确认 1 项/);
+  assert.doesNotMatch(action, /消息已送达/);
+
+  a.sandbox.entry = {
+    ...a.sandbox.entry,
+    status: "failed",
+    backendOutcome: undefined,
+    workerOutcome: undefined,
+    sessionDisposition: undefined,
+  };
+  assert.match(a.run("activityEntry(entry)"), /失败原因未记录/);
+});
