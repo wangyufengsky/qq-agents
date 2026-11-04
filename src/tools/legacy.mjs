@@ -12,6 +12,7 @@ import { safeFetchBuffer } from "../../vendor/social-reader/safe-fetch.js";
 import { modelScheduleSchema } from "./schedule-schema.mjs";
 import { safeToolFailure } from "./errors.mjs";
 import { transcriptKey } from "../memory/store.mjs";
+import { qqMessage, qqSegmentsSchema } from "./qq-message.mjs";
 
 const str = z.string(),
   id = str.min(1).max(200),
@@ -61,10 +62,18 @@ export const legacyDefinitions = {
     }),
   ],
   qq_send_burst: [
-    "自然分条补充时使用：messages 中每个元素是一条独立 QQ 消息，正文换行不会分条。按 self 与场景决定长短和条数，不强制连发或机械切碎长文。省略 gapMs 使用配置的自然间隔；每条独立回执，未知结果停止，不自动重发。",
+    "自然分条补充时使用：messages 中每个元素是一条独立 QQ 消息，可以是文字字符串或 {segments:[{type:'text',text:'好呀'},{type:'face',id:'20'}]}；每条最多32段、累计文字2000字符，表情只用已登记编号，20=偷笑。正文换行不会分条，接收说明 [QQ表情：名称] 写进文字不会转换成表情。按 self 与场景决定长短和条数，不强制连发或机械切碎长文。省略 gapMs 使用配置的自然间隔；每条独立回执，未知结果停止，不自动重发。",
     object({
       requestId: id,
-      messages: z.array(str.min(1).max(2000)).min(1).max(10),
+      messages: z
+        .array(
+          z.union([
+            str.min(1).max(2000),
+            object({ segments: qqSegmentsSchema }),
+          ]),
+        )
+        .min(1)
+        .max(10),
       gapMs: z.number().int().min(0).max(30000).optional(),
     }),
   ],
@@ -222,11 +231,24 @@ export async function legacyTool(runtime, ctx, name, args) {
     return runtime.conversations.setWake(ctx, args);
   if (name === "qq_send_burst") {
     if (args.messages.length > a.behavior.burstMax) throw Error("BURST_LIMIT");
+    // Reject an invalid later item before the first message leaves QQ.
+    const messages = args.messages.map((message) => {
+      const input = typeof message === "string" ? { text: message } : message;
+      const normalized = qqMessage(input, 2000);
+      runtime.assertSafeOutput(ctx, normalized.sourceText);
+      runtime.assertSafeOutput(ctx, normalized.text);
+      runtime.assertSafeOutput(ctx, normalized.body);
+      return {
+        input,
+        typingText:
+          typeof message === "string" ? message : normalized.typingText,
+      };
+    });
     const receipts = [];
     for (let i = 0; i < args.messages.length; i++) {
       if (i) {
         const gap = burstDelay(
-          args.messages[i],
+          messages[i].typingText,
           a.behavior,
           runtime.random,
           args.gapMs,
@@ -237,7 +259,7 @@ export async function legacyTool(runtime, ctx, name, args) {
         receipts.push(
           await runtime.send(ctx, {
             requestId: args.requestId + ":" + i,
-            text: args.messages[i],
+            ...messages[i].input,
           }),
         );
       } catch (e) {

@@ -628,6 +628,7 @@ export class Runtime {
       if (ownEcho)
         mem.reconcileFromEcho({
           conversation: e.conversation,
+          segments: e.segments,
           text: e.segments
             .filter((s) => s.type === "text")
             .map((s) => s.data?.text || "")

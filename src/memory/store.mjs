@@ -1140,12 +1140,34 @@ class AgentMemory {
     });
   }
   // QQ's own copy of a send the gateway could not confirm settles it: same
-  // conversation, the same text, within ten minutes, and only one candidate.
-  // An image-only send has no text to match and stays for the administrator.
-  reconcileFromEcho({ conversation, text, messageId }) {
+  // conversation, matching content, within ten minutes, and only one candidate.
+  // Rich sends with unverifiable media/references stay for the administrator.
+  reconcileFromEcho({ conversation, text, segments, messageId }) {
     const squash = (s) => String(s || "").replace(/\s+/g, "");
     const want = squash(text);
-    if (!want || !messageId) return null;
+    if (!messageId) return null;
+    // Compare real face identifiers, never their textual display labels. Keep
+    // legacy text matching separate so a literal marker cannot confirm a face.
+    const content = (parts) => {
+      if (!Array.isArray(parts) || !parts.length) return null;
+      const result = [];
+      for (const part of parts) {
+        if (part.type === "text" && typeof part.data?.text === "string") {
+          const value = part.data.text;
+          if (!value) continue;
+          if (result.at(-1)?.type === "text") result.at(-1).text += value;
+          else result.push({ type: "text", text: value });
+        } else if (
+          part.type === "face" &&
+          /^\d{1,6}$/.test(String(part.data?.id))
+        ) {
+          result.push({ type: "face", id: String(Number(part.data.id)) });
+        } else return null;
+      }
+      return result.length ? JSON.stringify(result) : null;
+    };
+    const echoContent = content(segments);
+    if (!want && !echoContent) return null;
     // A replayed echo is one QQ message, not a new one: it must not settle a
     // later send with the same text. Skip a message id already archived
     // here or already given to a delivery.
@@ -1164,10 +1186,20 @@ class AgentMemory {
         "SELECT d.request_id AS requestId, e.body, e.payload FROM deliveries d JOIN events e ON e.agent_id=d.agent_id AND e.dedupe='send:' || d.request_id || ':pending' WHERE d.agent_id=? AND d.conversation=? AND d.status='unknown' AND d.created_at>=?",
       )
       .all(this.agentId, conversation, since)
-      .filter(
-        (row) =>
-          !actionDelivery(parse(row.payload)) && squash(row.body) === want,
-      );
+      .filter((row) => {
+        const payload = parse(row.payload);
+        if (actionDelivery(payload)) return false;
+        if (payload.segments !== undefined) {
+          const attempted = content(payload.segments);
+          return (
+            echoContent !== null &&
+            attempted !== null &&
+            attempted === echoContent
+          );
+        }
+        if (segments?.some((part) => part.type === "face")) return false;
+        return !!want && squash(row.body) === want;
+      });
     if (candidates.length !== 1) return null;
     return this.reconcileDelivery(candidates[0].requestId, "sent", {
       by: "gateway-echo",
