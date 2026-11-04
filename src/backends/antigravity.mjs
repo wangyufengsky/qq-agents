@@ -628,8 +628,15 @@ export class AntigravityBackend {
           .filter((value) => !value.turn)
           .sort((a, b) => a.lastUsed - b.lastUsed);
         const limit = this.config.cliReuse?.maxIdleProcesses ?? 2;
-        for (const unused of idle.slice(0, Math.max(0, idle.length - limit)))
-          await unused.close();
+        for (const unused of idle.slice(0, Math.max(0, idle.length - limit))) {
+          try {
+            await unused.close();
+          } catch {
+            // Pool housekeeping must not invalidate a completed turn or expose
+            // cleanup diagnostics that may contain private filesystem details.
+            console.warn("Antigravity idle worker cleanup failed");
+          }
+        }
       }
     } catch (error) {
       const submitted = worker?.inputSubmitted;

@@ -438,6 +438,55 @@ test("closes workers at the idle timeout and evicts idle processes above the poo
   await waitFor(() => exited(pooled.launches[0].child), "evicted process exit");
 });
 
+test("idle eviction cleanup failure preserves the successful turn and its session", async (t) => {
+  const { backend, launches, calls, chat } = setup(t, { maxIdleProcesses: 1 });
+  const oldest = chat("private:pool-cleanup-oldest");
+  const newest = chat("private:pool-cleanup-newest");
+  await oldest.run("success");
+  const oldWorker = [...backend.workers.values()][0];
+  const oldSession = oldest.state.session;
+  const remove = fs.rmSync;
+  const removal = t.mock.method(fs, "rmSync", (target, options) => {
+    if (target === oldWorker.mediaRoot)
+      throw Error("SYNTHETIC_PRIVATE_LOCK_DETAIL");
+    return remove(target, options);
+  });
+  const warning = t.mock.method(console, "warn", () => {});
+  t.after(() => {
+    removal.mock.restore();
+    remove(oldWorker.mediaRoot, { recursive: true, force: true });
+  });
+
+  await newest.run("success");
+  const session = newest.state.session;
+  assert(session);
+  assert(newest.state.saved.every((value) => value !== null));
+  assert.deepEqual(oldest.state.session, oldSession);
+  assert.equal(backend.workers.size, 1);
+  const worker = [...backend.workers.values()][0];
+  assert.equal(worker.nativeId, session.id);
+  assert.equal(worker.available, true);
+  assert.equal(
+    JSON.parse(fs.readFileSync(worker.details.binding)).id,
+    session.id,
+  );
+  assert.equal(backend.active.size, 0);
+  assert.equal(backend.conversations.size, 0);
+  await waitFor(() => exited(launches[0].child), "failed-cleanup process exit");
+  assert.deepEqual(
+    warning.mock.calls.map((call) => call.arguments),
+    [["Antigravity idle worker cleanup failed"]],
+  );
+
+  await newest.run("success");
+  assert.deepEqual(newest.state.session, session);
+  assert.equal(launches.length, 2);
+  assert.equal(calls.length, 3);
+  await backend.close();
+  assert.equal(backend.workers.size, 0);
+  await waitFor(() => exited(launches[1].child), "successful worker shutdown");
+});
+
 test("restarts the CLI when effort or the bound native session changes", async (t) => {
   const { backend, launches, chat } = setup(t);
   const conversation = chat("private:worker-signature-changes");
