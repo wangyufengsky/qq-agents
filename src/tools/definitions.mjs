@@ -11,6 +11,7 @@ import { fileDefinitions } from "./file-tools.mjs";
 import { savedMediaDefinitions } from "./saved-media.mjs";
 import { screenshotDefinitions } from "./screenshots.mjs";
 import { z } from "zod";
+import { qqSegmentsSchema } from "./qq-message.mjs";
 import { legacyDefinitions } from "./legacy.mjs";
 import { homeDefinitions } from "./home.mjs";
 import { boardDefinitions } from "./board.mjs";
@@ -187,11 +188,12 @@ export const definitions = {
       .strict(),
   ],
   qq_send: [
-    "向服务端绑定的当前会话发送文字或已登记图片。普通回复可选 readThroughSeq 提交本回合实际处理的连续已读水位，要求 qq_mark_read 仍启用且未选择主动意图，只在本次投递确认成功且回合仍有效时生效；省略时保持原行为。同一 requestId 的重复调用只能补写首次已确认回执绑定的水位，不能借重复调用处理后到消息。存在水位时返回 readCheckpoint={throughSeq,applied}；applied=false 仍表示消息已发送，可用原 requestId 补写同一水位。requestId唯一，超时未知绝不换ID重发。",
+    "向服务端绑定的当前会话发送文字、标准 QQ 表情或已登记图片。text 与 segments 只能选一个；segments 按顺序混排文字和表情，最多32段、累计文字8000字符，纯表情也可发送。例如 [{type:'text',text:'好呀'},{type:'face',id:'20'}]；20=偷笑、5=流泪、14=微笑、28=憨笑、76=赞。只用已登记编号，不猜名称；[QQ表情：名称] 是接收说明，写进 text 只会发送文字。mediaId 仍可追加图片。普通回复可选 readThroughSeq 提交本回合实际处理的连续已读水位，要求 qq_mark_read 仍启用且未选择主动意图，只在本次投递确认成功且回合仍有效时生效；省略时保持原行为。同一 requestId 的重复调用只能补写首次已确认回执绑定的水位，不能借重复调用处理后到消息。存在水位时返回 readCheckpoint={throughSeq,applied}；applied=false 仍表示消息已发送，可用原 requestId 补写同一水位。requestId唯一，超时未知绝不换ID重发。",
     z
       .object({
         requestId: str.min(1).max(200),
         text: str.max(8000).optional(),
+        segments: qqSegmentsSchema.optional(),
         replyTo: str.optional(),
         atUserId: str.optional(),
         mediaId: str.optional(),

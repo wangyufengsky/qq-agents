@@ -69,6 +69,8 @@ export function safeToolFailure(error) {
     };
   /** @type {Record<string, string>} */
   const hints = {
+    INVALID_QQ_FACE:
+      "No message was sent. Use a registered standard QQ face ID in segments, such as {type:'face',id:'20'} for 偷笑. Do not guess an unknown ID or use a textual [QQ表情：名称] marker as a send command.",
     REACT_ALREADY_ATTEMPTED:
       "This message and face already have a pending or unknown reaction. Do not submit the same reaction with another requestId. Inspect the original delivery receipt; waiting, rewriting the reference or starting another turn does not establish non-delivery.",
     PROFILE_UPDATE_UNCONFIRMED:
