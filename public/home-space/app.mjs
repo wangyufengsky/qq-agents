@@ -13,7 +13,7 @@ const labels = {
   back: "返回走廊",
   board: "打开留言板",
   guide: "翻开参观小册",
-  intro: "查看公开介绍",
+  intro: "查看介绍卡",
   works: "查看作品展示",
 };
 const hints = {
@@ -24,6 +24,8 @@ const hints = {
   HOME_LAYOUT_BOUNDS: "部分纸片超出纸板，请缩小或调整位置。",
   HOME_LAYOUT_OVERLAP: "家具重叠过多，请调整位置。",
   HOME_SCENE_INVALID: "布置不符合素材或配置规则。",
+  HOME_ITEM_CONFLICT: "条目已变化，请重新读取后核对。",
+  HOME_IDENTITY_CHANGED: "房间身份已变化，请重新读取。",
   HOME_WRITE_DENIED: "当前没有修改此空间的权限。",
   HOME_ROOM_NOT_FOUND: "房间已不存在，请返回走廊。",
   UPDATE_IN_PROGRESS: "服务维护中，请稍后重试。",
@@ -44,7 +46,9 @@ let overview = null,
   lastFocus = null,
   readerAction = "",
   boardView = null,
-  pending = null;
+  pending = null,
+  contentTimer,
+  contentTicket = 0;
 const esc = (value) =>
   String(value ?? "").replace(
     /[&<>"']/g,
@@ -83,6 +87,8 @@ function clearView(message = "登录或连接需要重新验证。") {
   pending = null;
   dirty = false;
   blocked = false;
+  clearTimeout(contentTimer);
+  contentTicket++;
   boardView?.close();
   boardView = null;
   if ($("reader").open) $("reader").close();
@@ -319,7 +325,7 @@ function draw() {
     route.type === "hall"
       ? `${overview.residents.length} 位居民 · 离线也保留房间`
       : route.type === "room"
-        ? "房间布置由主人格决定。介绍与作品发布功能尚未接入。"
+        ? "房间由主人格布置，介绍和作品只展示主人格明确发布的文字。"
         : overview.boardEnabled
           ? "翻翻留言，再去走廊逛一逛。"
           : "留言板对角色暂未开放；管理员仍可浏览和管理。";
@@ -525,9 +531,127 @@ async function save(undo = false) {
     draw();
   }
 }
+async function loadContent() {
+  if (
+    !overview ||
+    route?.type !== "room" ||
+    !["intro", "works"].includes(readerAction)
+  )
+    return;
+  const request = ++contentTicket,
+    pageTicket = ticket,
+    owner = route.agentId,
+    action = readerAction;
+  try {
+    const value = await api(
+      "/api/home/content?" + new URLSearchParams({ agentId: owner }),
+    );
+    if (
+      request !== contentTicket ||
+      pageTicket !== ticket ||
+      !$("reader").open ||
+      readerAction !== action
+    )
+      return;
+    if (value.identityGeneration !== envelope.identityGeneration) {
+      clearView("房间身份已变化，请重新读取。");
+      return;
+    }
+    clearTimeout(contentTimer);
+    const root = $("reader-content");
+    root.replaceChildren();
+    if (!value.publishing)
+      root.append(el("p", "", "此角色的文字展示能力尚未开启或已关闭。"));
+    const items = value.items.filter((i) =>
+      action === "intro" ? i.slot === "intro" : i.slot !== "intro",
+    );
+    for (const item of items) {
+      const card = el("section", "home-text-card");
+      card.append(
+        el(
+          "h3",
+          "",
+          item.visible
+            ? item.title
+            : item.slot === "intro"
+              ? "介绍卡"
+              : `作品 ${item.slot.slice(5)}`,
+        ),
+      );
+      card.append(
+        el(
+          "p",
+          "home-text",
+          item.visible
+            ? item.body
+            : item.state === "hidden"
+              ? "内容已被管理员隐藏。"
+              : item.state === "retracted"
+                ? "主人格已撤回此内容。"
+                : "尚未展示文字。",
+        ),
+      );
+      card.append(el("small", "", `条目版本 ${item.itemRevision}`));
+      if (item.state === "published" || item.state === "hidden")
+        card.append(
+          button(
+            item.state === "hidden"
+              ? "解除隐藏限制（不恢复正文）"
+              : "隐藏此内容",
+            async () => {
+              if (
+                !confirm(
+                  item.state === "hidden"
+                    ? "解除后仍为空白，需要主人格重新选择发布，继续吗？"
+                    : "隐藏会清除当前展示正文，并阻止普通重发，继续吗？",
+                )
+              )
+                return;
+              root.replaceChildren(el("p", "", "正在更新展示状态…"));
+              clearTimeout(contentTimer);
+              contentTicket++;
+              try {
+                await api(
+                  "/api/home/moderate?" +
+                    new URLSearchParams({ agentId: owner }),
+                  {
+                    identityGeneration: value.identityGeneration,
+                    slot: item.slot,
+                    expectedItemRevision: item.itemRevision,
+                    requestId: crypto.randomUUID(),
+                    action: item.state === "hidden" ? "release" : "hide",
+                  },
+                );
+              } catch (e) {
+                toast(e.message);
+              }
+              await loadContent();
+            },
+          ),
+        );
+      root.append(card);
+    }
+    contentTimer = setTimeout(() => {
+      contentTicket++;
+      root.replaceChildren(
+        el("p", "", "内容验证已到期，已隐藏旧正文；连接恢复后重新读取。"),
+      );
+    }, 15000);
+  } catch (e) {
+    if (request === contentTicket) {
+      clearTimeout(contentTimer);
+      $("reader-content").replaceChildren(
+        el("p", "", "无法确认内容状态，已隐藏旧正文。"),
+      );
+      toast(e.message);
+    }
+  }
+}
 function openReader(action) {
   const dialog = $("reader");
   if (!dialog.open) lastFocus = document.activeElement;
+  clearTimeout(contentTimer);
+  contentTicket++;
   readerAction = action;
   boardView?.close();
   boardView = null;
@@ -535,7 +659,7 @@ function openReader(action) {
   $("reader-title").textContent = {
     board: "客厅留言板",
     guide: "参观小册",
-    intro: "公开介绍",
+    intro: "介绍卡",
     works: "作品展示",
   }[action];
   if (action === "board") {
@@ -559,12 +683,18 @@ function openReader(action) {
     boardView.render().catch((e) => toast(e.message));
     return;
   }
+  if (["intro", "works"].includes(action)) {
+    $("reader-content").append(el("p", "", "正在读取已发布文字…"));
+    if (!dialog.open) dialog.showModal();
+    loadContent();
+    return;
+  }
   $("reader-content").append(
     el(
       "p",
       "",
       action === "guide"
-        ? "这里展示本实例已配置的居民。离线和暂停不移除房间；浏览不会唤醒角色。公共布置由管理员保存，个人房间写入与内容发布将在主人格工具接入后开放。"
+        ? "这里展示本实例已配置的居民。离线和暂停不移除房间；浏览不会唤醒角色。公共布置由管理员保存，个人房间由自己的主人格在能力开启后布置和发布。展示文字仅向实例管理员与房主自己的会话开放，其他会话不能代写。"
         : action === "intro"
           ? "尚未公开介绍。"
           : "这里还没有公开作品。",
@@ -573,6 +703,8 @@ function openReader(action) {
   if (!dialog.open) dialog.showModal();
 }
 $("reader").addEventListener("close", () => {
+  clearTimeout(contentTimer);
+  contentTicket++;
   boardView?.close();
   boardView = null;
   readerAction = "";
@@ -647,6 +779,8 @@ setInterval(async () => {
     const presentationChanged =
       JSON.stringify(info) !== JSON.stringify(overview);
     overview = info;
+    if (["intro", "works"].includes(readerAction)) await loadContent();
+    if (currentTicket !== ticket) return;
     if (presentationChanged) {
       draw();
       editor();

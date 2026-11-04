@@ -152,3 +152,18 @@
     flex-wrap: wrap;
   }
 }
+
+.home-text-card {
+  padding: 18px 0;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.home-text {
+  white-space: pre-wrap;
+  line-height: 1.8;
+}
+.home-text-card small {
+  display: block;
+  margin-bottom: 12px;
+  color: var(--muted);
+}

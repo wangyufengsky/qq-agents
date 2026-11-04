@@ -1,3 +1,4 @@
+import { homePolicySchema } from "../home/policy.mjs";
 import { gamePolicy, agentGamePolicy } from "../games/framework/policy.mjs";
 import fs from "node:fs";
 import { TOOL_NAMES } from "../tools/names.mjs";
@@ -372,6 +373,7 @@ export const configSchema = z
           contextPolicy: contextPolicySchema,
           subject: subjectPolicySchema,
           games: agentGamePolicy,
+          home: homePolicySchema,
           behavior: behaviorSchema,
           scheduler: schedulerSchema,
           voice: voiceSchema,

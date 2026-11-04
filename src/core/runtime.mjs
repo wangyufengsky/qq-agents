@@ -1,3 +1,4 @@
+import { HOME_TOOLS } from "../home/policy.mjs";
 import { HomeService } from "../home/service.mjs";
 import { contextProtection } from "./protected-mind.mjs";
 import {
@@ -331,6 +332,7 @@ export class Runtime {
     if (selected.includes("file_create")) selected.push("file_revise");
     if (conversation !== SUBJECT && selected.includes("qq_send"))
       selected.push("qq_delivery_status");
+    selected.push(...HOME_TOOLS);
     return [...new Set(selected)].filter(
       (name) =>
         toolAvailable(a, name, conversation) &&

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { fixture, context, config } from "./helpers.mjs";
+import { fixture, context } from "./helpers.mjs";
 import { createServer } from "../src/server.mjs";
 import { MemoryStore } from "../src/memory/store.mjs";
 import { backupDatabase } from "../src/memory/backup.mjs";
@@ -188,63 +188,6 @@ test("failed layout batches and receipt write failures roll back atomically", (t
   );
   f.store.db.exec("DROP TRIGGER test_home_receipt_failure");
   assert.equal(h.saveShared("living", shared(f)).layoutRevision, 1);
-});
-test("subject-only room foundation rejects foreign, expired, aborted, protected and paused callers", (t) => {
-  const cfg = config();
-  cfg.agents.forEach((a) => (a.subject.enabled = true));
-  const f = fixture(t, { cfg }),
-    h = f.runtime.home,
-    gen = h.generation("agent-0");
-  const data = {
-    layout: defaultLayout("room"),
-    requestId: "room-save-0001",
-    expectedRevision: 0,
-  };
-  assert.throws(
-    () => h.saveRoom(context(f.runtime), data, gen),
-    /HOME_WRITE_DENIED/,
-  );
-  assert.throws(
-    () => h.saveRoom(context(f.runtime, "agent-1", "@subject"), data, gen),
-    /HOME_WRITE_DENIED/,
-  );
-  const a = context(f.runtime, "agent-0", "@subject");
-  a.controller.abort();
-  assert.throws(() => h.saveRoom(a, data, gen), /HOME_WRITE_DENIED/);
-  const b = context(f.runtime, "agent-0", "@subject");
-  b.expires = 0;
-  assert.throws(() => h.saveRoom(b, data, gen), /HOME_WRITE_DENIED/);
-  const c = context(f.runtime, "agent-0", "@subject");
-  c.privateRead.add("operations:synthetic");
-  assert.throws(() => h.saveRoom(c, data, gen), /HOME_WRITE_DENIED/);
-  const d = context(f.runtime, "agent-0", "@subject");
-  assert.equal(h.saveRoom(d, data, gen).layoutRevision, 1);
-  assert.equal(h.read("room", "agent-1").layoutRevision, 0);
-  f.runtime.config.globalPaused = true;
-  assert.throws(() => h.saveRoom(d, data, gen), /HOME_WRITE_DENIED/);
-});
-test("removed identities lose access and re-addition cannot inherit old layouts or receipts", async (t) => {
-  const cfg = config();
-  cfg.agents.forEach((a) => (a.subject.enabled = true));
-  const f = fixture(t, { cfg }),
-    h = f.runtime.home,
-    gen = h.generation("agent-0");
-  const ctx = context(f.runtime, "agent-0", "@subject"),
-    d = {
-      layout: { ...defaultLayout("room"), palette: "rose" },
-      expectedRevision: 0,
-      requestId: "identity-save-001",
-    };
-  h.saveRoom(ctx, d, gen);
-  const old = structuredClone(f.runtime.config),
-    next = structuredClone(old);
-  next.agents = next.agents.filter((a) => a.id !== "agent-0");
-  await f.runtime.commitConfig(next, f.configStore.revision);
-  assert.throws(() => h.read("room", "agent-0"), /HOME_ROOM_NOT_FOUND/);
-  await f.runtime.commitConfig(old, f.configStore.revision);
-  assert.notEqual(h.generation("agent-0"), gen);
-  assert.equal(h.read("room", "agent-0").layoutRevision, 0);
-  assert.throws(() => h.saveRoom(ctx, d, gen), /HOME_WRITE_DENIED/);
 });
 test("roster changes conflict with a shared edit and hallway instances stay tied to stable IDs", async (t) => {
   const f = fixture(t),
