@@ -1,0 +1,210 @@
+[
+  {
+    "assetId": "room-board",
+    "name": "空房间纸板",
+    "tool": "OpenAI built-in imagegen",
+    "prompt": "Use the provided image as a style reference AND remove every furnishing: produce an entirely EMPTY warm cream paper pop-up book room base. Landscape 3:2. Retain only the rounded layered cream book-page border, narrow honey wood inner frame, binding loops on the far left, warm cream fibrous watercolor wall, thin wooden baseboard at y=80%, honey wood floor from y=80% to y=94%. No door, window, wall art, shelf, desk, bed, rug, cards, curtains, plants, lamps, furniture, shadows from removed objects or text. Straight on with slight floor perspective. This empty cardboard stage will receive independent transparent cutout objects in a web prototype. Quiet beautiful hand-drawn warm paper texture precisely matching the reference. Opaque full frame.",
+    "reference": "room-style-v1.png",
+    "provenance": "本任务按用户提供参考图委托生成；未下载第三方素材。"
+  },
+  {
+    "assetId": "door",
+    "name": "拱形房门",
+    "tool": "OpenAI built-in imagegen",
+    "prompt": "Use case: stylized-concept. Production asset for a configurable paper pop-up book room. Match reference image exactly in medium: hand-painted watercolor plus colored pencil on warm fibrous paper, irregular fine brown outlines, honey oak wood, cream cardstock cut edges, subtle handmade paper texture. Front view with extremely slight view of top surfaces, NOT isometric, NOT realistic 3D. The provided picture is a STYLE REFERENCE ONLY. Generate ONLY the named single object in isolation, not the room. A TRUE transparent alpha background, no white or checkerboard background, no floor, no room, no extra unrelated objects. Single object centered and filling most of canvas with a small safe transparent margin, never clipped. Warm upper left light, only small soft contact shadows attached to object, no large external floor shadow. Cream die-cut outline and subtle thickness. No text, letters, logo, labels, watermark, characters, or UI. Object: one tall closed arched honey wooden door with its complete matching frame, two hinges left and round brass knob right. Plain wood panels. NO attached nameplate, no sign, no wall. Tall portrait silhouette.",
+    "reference": "room-style-v1.png",
+    "provenance": "本任务按用户提供参考图委托生成；未下载第三方素材。"
+  },
+  {
+    "assetId": "desk",
+    "name": "抽屉书桌",
+    "tool": "OpenAI built-in imagegen",
+    "prompt": "Use case: stylized-concept. Production asset for a configurable paper pop-up book room. Match reference image exactly in medium: hand-painted watercolor plus colored pencil on warm fibrous paper, irregular fine brown outlines, honey oak wood, cream cardstock cut edges, subtle handmade paper texture. Front view with extremely slight view of top surfaces, NOT isometric, NOT realistic 3D. The provided picture is a STYLE REFERENCE ONLY. Generate ONLY the named single object in isolation, not the room. A TRUE transparent alpha background, no white or checkerboard background, no floor, no room, no extra unrelated objects. Single object centered and filling most of canvas with a small safe transparent margin, never clipped. Warm upper left light, only small soft contact shadows attached to object, no large external floor shadow. Cream die-cut outline and subtle thickness. No text, letters, logo, labels, watermark, characters, or UI. Object: one honey oak writing desk with a single wide drawer and round brass drawer knob, four visible stable wooden legs, EMPTY clean top. No lamp, card, books, chair or props. Broad landscape silhouette.",
+    "reference": "room-style-v1.png",
+    "provenance": "本任务按用户提供参考图委托生成；未下载第三方素材。"
+  },
+  {
+    "assetId": "shelf",
+    "name": "三格展示架",
+    "tool": "OpenAI built-in imagegen",
+    "prompt": "Use case: stylized-concept. Production asset for a configurable paper pop-up book room. Match reference image exactly in medium: hand-painted watercolor plus colored pencil on warm fibrous paper, irregular fine brown outlines, honey oak wood, cream cardstock cut edges, subtle handmade paper texture. Front view with extremely slight view of top surfaces, NOT isometric, NOT realistic 3D. The provided picture is a STYLE REFERENCE ONLY. Generate ONLY the named single object in isolation, not the room. A TRUE transparent alpha background, no white or checkerboard background, no floor, no room, no extra unrelated objects. Single object centered and filling most of canvas with a small safe transparent margin, never clipped. Warm upper left light, only small soft contact shadows attached to object, no large external floor shadow. Cream die-cut outline and subtle thickness. No text, letters, logo, labels, watermark, characters, or UI. Object: one freestanding narrow honey wooden display bookcase, THREE empty open compartments stacked vertically, chunky rounded wood frame, small base. All three compartments EMPTY. No books or cards. Upright portrait silhouette.",
+    "reference": "room-style-v1.png",
+    "provenance": "本任务按用户提供参考图委托生成；未下载第三方素材。"
+  },
+  {
+    "assetId": "bed",
+    "name": "绿色被子木床",
+    "tool": "OpenAI built-in imagegen",
+    "prompt": "Use case: stylized-concept. Production asset for a configurable paper pop-up book room. Match reference image exactly in medium: hand-painted watercolor plus colored pencil on warm fibrous paper, irregular fine brown outlines, honey oak wood, cream cardstock cut edges, subtle handmade paper texture. Front view with extremely slight view of top surfaces, NOT isometric, NOT realistic 3D. The provided picture is a STYLE REFERENCE ONLY. Generate ONLY the named single object in isolation, not the room. A TRUE transparent alpha background, no white or checkerboard background, no floor, no room, no extra unrelated objects. Single object centered and filling most of canvas with a small safe transparent margin, never clipped. Warm upper left light, only small soft contact shadows attached to object, no large external floor shadow. Cream die-cut outline and subtle thickness. No text, letters, logo, labels, watermark, characters, or UI. Object: one low honey wooden single bed, FRONT LONG SIDE seen straight-on, cream pillow at right, sage green quilt, wood headboard on right, four short legs. No floor or rug. Match bed in reference. Wide low landscape silhouette.",
+    "reference": "room-style-v1.png",
+    "provenance": "本任务按用户提供参考图委托生成；未下载第三方素材。"
+  },
+  {
+    "assetId": "window",
+    "name": "四格木窗",
+    "tool": "OpenAI built-in imagegen",
+    "prompt": "Use case: stylized-concept. Production asset for a configurable paper pop-up book room. Match reference image exactly in medium: hand-painted watercolor plus colored pencil on warm fibrous paper, irregular fine brown outlines, honey oak wood, cream cardstock cut edges, subtle handmade paper texture. Front view with extremely slight view of top surfaces, NOT isometric, NOT realistic 3D. The provided picture is a STYLE REFERENCE ONLY. Generate ONLY the named single object in isolation, not the room. A TRUE transparent alpha background, no white or checkerboard background, no floor, no room, no extra unrelated objects. Single object centered and filling most of canvas with a small safe transparent margin, never clipped. Warm upper left light, only small soft contact shadows attached to object, no large external floor shadow. Cream die-cut outline and subtle thickness. No text, letters, logo, labels, watermark, characters, or UI. Object: one square honey wooden window frame with four panes showing soft pale blue sky and green treetops. NO curtains or curtain rod or surrounding wall. Cream cardstock outer edge. Square silhouette.",
+    "reference": "room-style-v1.png",
+    "provenance": "本任务按用户提供参考图委托生成；未下载第三方素材。"
+  },
+  {
+    "assetId": "curtains",
+    "name": "侧束长窗帘",
+    "tool": "OpenAI built-in imagegen",
+    "prompt": "Use case: stylized-concept. Production asset for a configurable paper pop-up book room. Match reference image exactly in medium: hand-painted watercolor plus colored pencil on warm fibrous paper, irregular fine brown outlines, honey oak wood, cream cardstock cut edges, subtle handmade paper texture. Front view with extremely slight view of top surfaces, NOT isometric, NOT realistic 3D. The provided picture is a STYLE REFERENCE ONLY. Generate ONLY the named single object in isolation, not the room. A TRUE transparent alpha background, no white or checkerboard background, no floor, no room, no extra unrelated objects. Single object centered and filling most of canvas with a small safe transparent margin, never clipped. Warm upper left light, only small soft contact shadows attached to object, no large external floor shadow. Cream die-cut outline and subtle thickness. No text, letters, logo, labels, watermark, characters, or UI. Object: one PAIR of cream side-tied curtains with sage ties, connected ONLY by a slim honey wood curtain rod across top. The large central opening between curtains must be fully TRANSPARENT. No window, panes, sky, wall, floor. Two long side curtains and rod as one transparent cutout. Nearly square proportions.",
+    "reference": "room-style-v1.png",
+    "provenance": "本任务按用户提供参考图委托生成；未下载第三方素材。"
+  },
+  {
+    "assetId": "lamp",
+    "name": "绿色桌灯",
+    "tool": "OpenAI built-in imagegen",
+    "prompt": "Use case: stylized-concept. Production asset for a configurable paper pop-up book room. Match reference image exactly in medium: hand-painted watercolor plus colored pencil on warm fibrous paper, irregular fine brown outlines, honey oak wood, cream cardstock cut edges, subtle handmade paper texture. Front view with extremely slight view of top surfaces, NOT isometric, NOT realistic 3D. The provided picture is a STYLE REFERENCE ONLY. Generate ONLY the named single object in isolation, not the room. A TRUE transparent alpha background, no white or checkerboard background, no floor, no room, no extra unrelated objects. Single object centered and filling most of canvas with a small safe transparent margin, never clipped. Warm upper left light, only small soft contact shadows attached to object, no large external floor shadow. Cream die-cut outline and subtle thickness. No text, letters, logo, labels, watermark, characters, or UI. Object: one small sage green adjustable vintage desk lamp, curved arm, circular base, hood angled down/right. Quiet cream interior of shade, NO glowing beam. No desk or props. Upright silhouette.",
+    "reference": "room-style-v1.png",
+    "provenance": "本任务按用户提供参考图委托生成；未下载第三方素材。"
+  },
+  {
+    "assetId": "plant",
+    "name": "小盆栽",
+    "tool": "OpenAI built-in imagegen",
+    "prompt": "Use case: stylized-concept. Production asset for a configurable paper pop-up book room. Match reference image exactly in medium: hand-painted watercolor plus colored pencil on warm fibrous paper, irregular fine brown outlines, honey oak wood, cream cardstock cut edges, subtle handmade paper texture. Front view with extremely slight view of top surfaces, NOT isometric, NOT realistic 3D. The provided picture is a STYLE REFERENCE ONLY. Generate ONLY the named single object in isolation, not the room. A TRUE transparent alpha background, no white or checkerboard background, no floor, no room, no extra unrelated objects. Single object centered and filling most of canvas with a small safe transparent margin, never clipped. Warm upper left light, only small soft contact shadows attached to object, no large external floor shadow. Cream die-cut outline and subtle thickness. No text, letters, logo, labels, watermark, characters, or UI. Object: one small potted plant with six rounded sage green leaves on slender stems in a simple cream terracotta flower pot. NO shelf or furniture. Compact upright silhouette.",
+    "reference": "room-style-v1.png",
+    "provenance": "本任务按用户提供参考图委托生成；未下载第三方素材。"
+  },
+  {
+    "assetId": "rug",
+    "name": "圆角编织地毯",
+    "tool": "OpenAI built-in imagegen",
+    "prompt": "Use case: stylized-concept. Production asset for a configurable paper pop-up book room. Match reference image exactly in medium: hand-painted watercolor plus colored pencil on warm fibrous paper, irregular fine brown outlines, honey oak wood, cream cardstock cut edges, subtle handmade paper texture. Front view with extremely slight view of top surfaces, NOT isometric, NOT realistic 3D. The provided picture is a STYLE REFERENCE ONLY. Generate ONLY the named single object in isolation, not the room. A TRUE transparent alpha background, no white or checkerboard background, no floor, no room, no extra unrelated objects. Single object centered and filling most of canvas with a small safe transparent margin, never clipped. Warm upper left light, only small soft contact shadows attached to object, no large external floor shadow. Cream die-cut outline and subtle thickness. No text, letters, logo, labels, watermark, characters, or UI. Object: one wide rounded rectangular cream woven rug with double muted sage green border and short cream fringe on left and right ends. Very slight downward view, broad flat horizontal silhouette (approximately 3 to 1). No floor beneath.",
+    "reference": "room-style-v1.png",
+    "provenance": "本任务按用户提供参考图委托生成；未下载第三方素材。"
+  },
+  {
+    "assetId": "wall-art",
+    "name": "山丘挂画",
+    "tool": "OpenAI built-in imagegen",
+    "prompt": "Use case: stylized-concept. Production asset for a configurable paper pop-up book room. Match reference image exactly in medium: hand-painted watercolor plus colored pencil on warm fibrous paper, irregular fine brown outlines, honey oak wood, cream cardstock cut edges, subtle handmade paper texture. Front view with extremely slight view of top surfaces, NOT isometric, NOT realistic 3D. The provided picture is a STYLE REFERENCE ONLY. Generate ONLY the named single object in isolation, not the room. A TRUE transparent alpha background, no white or checkerboard background, no floor, no room, no extra unrelated objects. Single object centered and filling most of canvas with a small safe transparent margin, never clipped. Warm upper left light, only small soft contact shadows attached to object, no large external floor shadow. Cream die-cut outline and subtle thickness. No text, letters, logo, labels, watermark, characters, or UI. Object: a small honey wooden picture frame containing a simple watercolor landscape of two sage hills, pale blue sky and two cream clouds. Rounded rectangular frame with cream cardstock outer edge. No wall or hardware. Landscape silhouette.",
+    "reference": "room-style-v1.png",
+    "provenance": "本任务按用户提供参考图委托生成；未下载第三方素材。"
+  },
+  {
+    "assetId": "card",
+    "name": "空白介绍卡",
+    "tool": "OpenAI built-in imagegen",
+    "prompt": "Use case: stylized-concept. Production asset for a configurable paper pop-up book room. Match reference image exactly in medium: hand-painted watercolor plus colored pencil on warm fibrous paper, irregular fine brown outlines, honey oak wood, cream cardstock cut edges, subtle handmade paper texture. Front view with extremely slight view of top surfaces, NOT isometric, NOT realistic 3D. The provided picture is a STYLE REFERENCE ONLY. Generate ONLY the named single object in isolation, not the room. A TRUE transparent alpha background, no white or checkerboard background, no floor, no room, no extra unrelated objects. Single object centered and filling most of canvas with a small safe transparent margin, never clipped. Warm upper left light, only small soft contact shadows attached to object, no large external floor shadow. Cream die-cut outline and subtle thickness. No text, letters, logo, labels, watermark, characters, or UI. Object: one BLANK folded cream cardstock tent card, front panel large and completely empty, slight visible triangular folded support on its right. Thin handdrawn brown edge, subtle fibrous paper. Landscape silhouette about 1.7 to 1. NO text, symbols, illustration or table.",
+    "reference": "room-style-v1.png",
+    "provenance": "本任务按用户提供参考图委托生成；未下载第三方素材。"
+  },
+  {
+    "assetId": "sofa",
+    "name": "奶油绿双人沙发",
+    "tool": "OpenAI built-in imagegen",
+    "prompt": "Use case: stylized-concept. Production asset for a configurable paper pop-up book room. Match reference image exactly in medium: hand-painted watercolor plus colored pencil on warm fibrous paper, irregular fine brown outlines, honey oak wood, cream cardstock cut edges, subtle handmade paper texture. Front view with extremely slight view of top surfaces, NOT isometric, NOT realistic 3D. The provided picture is a STYLE REFERENCE ONLY. Generate ONLY the named single object in isolation, not the room. A TRUE transparent alpha background, no white or checkerboard background, no floor, no room, no extra unrelated objects. Single object centered and filling most of canvas with a small safe transparent margin, never clipped. Warm upper left light, only small soft contact shadows attached to object, no large external floor shadow. Cream die-cut outline and subtle thickness. No text, letters, logo, labels, watermark, characters, or UI. Object: one cozy small two-seat sofa with honey wooden frame and short legs, cream seat cushions, sage green rounded back cushions and cream armrests. No loose pillows, books or props. Wide front-facing silhouette.",
+    "reference": "room-style-v1.png",
+    "provenance": "本任务按用户提供参考图委托生成；未下载第三方素材。"
+  },
+  {
+    "assetId": "coffee-table",
+    "name": "圆角木茶几",
+    "tool": "OpenAI built-in imagegen",
+    "prompt": "Use case: stylized-concept. Production asset for a configurable paper pop-up book room. Match reference image exactly in medium: hand-painted watercolor plus colored pencil on warm fibrous paper, irregular fine brown outlines, honey oak wood, cream cardstock cut edges, subtle handmade paper texture. Front view with extremely slight view of top surfaces, NOT isometric, NOT realistic 3D. The provided picture is a STYLE REFERENCE ONLY. Generate ONLY the named single object in isolation, not the room. A TRUE transparent alpha background, no white or checkerboard background, no floor, no room, no extra unrelated objects. Single object centered and filling most of canvas with a small safe transparent margin, never clipped. Warm upper left light, only small soft contact shadows attached to object, no large external floor shadow. Cream die-cut outline and subtle thickness. No text, letters, logo, labels, watermark, characters, or UI. Object: one low broad honey wooden coffee table with softly rounded rectangular top, four short stable legs. EMPTY top, no shelf and no props. Wider and much LOWER than a writing desk. Front view with a little top surface visible.",
+    "reference": "room-style-v1.png",
+    "provenance": "本任务按用户提供参考图委托生成；未下载第三方素材。"
+  },
+  {
+    "assetId": "noticeboard",
+    "name": "空白留言板",
+    "tool": "OpenAI built-in imagegen",
+    "prompt": "Use case: stylized-concept. Production asset for a configurable paper pop-up book room. Match reference image exactly in medium: hand-painted watercolor plus colored pencil on warm fibrous paper, irregular fine brown outlines, honey oak wood, cream cardstock cut edges, subtle handmade paper texture. Front view with extremely slight view of top surfaces, NOT isometric, NOT realistic 3D. The provided picture is a STYLE REFERENCE ONLY. Generate ONLY the named single object in isolation, not the room. A TRUE transparent alpha background, no white or checkerboard background, no floor, no room, no extra unrelated objects. Single object centered and filling most of canvas with a small safe transparent margin, never clipped. Warm upper left light, only small soft contact shadows attached to object, no large external floor shadow. Cream die-cut outline and subtle thickness. No text, letters, logo, labels, watermark, characters, or UI. Object: one landscape wall-mounted cork notice board in a honey wooden rounded frame. Three completely BLANK cream paper notes pinned inside, generous empty note surfaces, no words, doodles, marks or decoration. No wall. Broad landscape silhouette.",
+    "reference": "room-style-v1.png",
+    "provenance": "本任务按用户提供参考图委托生成；未下载第三方素材。"
+  },
+  {
+    "assetId": "guide",
+    "name": "空白参观小册",
+    "tool": "OpenAI built-in imagegen",
+    "prompt": "Use case: stylized-concept. Production asset for a configurable paper pop-up book room. Match reference image exactly in medium: hand-painted watercolor plus colored pencil on warm fibrous paper, irregular fine brown outlines, honey oak wood, cream cardstock cut edges, subtle handmade paper texture. Front view with extremely slight view of top surfaces, NOT isometric, NOT realistic 3D. The provided picture is a STYLE REFERENCE ONLY. Generate ONLY the named single object in isolation, not the room. A TRUE transparent alpha background, no white or checkerboard background, no floor, no room, no extra unrelated objects. Single object centered and filling most of canvas with a small safe transparent margin, never clipped. Warm upper left light, only small soft contact shadows attached to object, no large external floor shadow. Cream die-cut outline and subtle thickness. No text, letters, logo, labels, watermark, characters, or UI. Object: one small open cream illustrated-paper booklet resting flat and seen at a gentle downward angle, two BLANK pages, warm tan cover, fine brown edges, subtle page thickness. No text, symbols, bookmarks, images or table. Wide horizontal silhouette.",
+    "reference": "room-style-v1.png",
+    "provenance": "本任务按用户提供参考图委托生成；未下载第三方素材。"
+  },
+  {
+    "assetId": "nameplate",
+    "name": "空白纸门牌",
+    "tool": "OpenAI built-in imagegen",
+    "prompt": "Use case: stylized-concept. Production asset for a configurable paper pop-up book room. Match reference image exactly in medium: hand-painted watercolor plus colored pencil on warm fibrous paper, irregular fine brown outlines, honey oak wood, cream cardstock cut edges, subtle handmade paper texture. Front view with extremely slight view of top surfaces, NOT isometric, NOT realistic 3D. The provided picture is a STYLE REFERENCE ONLY. Generate ONLY the named single object in isolation, not the room. A TRUE transparent alpha background, no white or checkerboard background, no floor, no room, no extra unrelated objects. Single object centered and filling most of canvas with a small safe transparent margin, never clipped. Warm upper left light, only small soft contact shadows attached to object, no large external floor shadow. Cream die-cut outline and subtle thickness. No text, letters, logo, labels, watermark, characters, or UI. Object: one small blank cream paper nameplate with subtle honey wood backing and a tiny round brass fastener at each end. Scalloped rounded rectangle, horizontal 2.4 to 1 proportions, broad perfectly blank center. No lettering, door or background.",
+    "reference": "room-style-v1.png",
+    "provenance": "本任务按用户提供参考图委托生成；未下载第三方素材。"
+  },
+  {
+    "assetId": "desk-simple",
+    "name": "简洁写字桌",
+    "tool": "OpenAI built-in imagegen",
+    "prompt": "Use case: stylized-concept. Production asset for a configurable paper pop-up book room. Match reference image exactly in medium: hand-painted watercolor plus colored pencil on warm fibrous paper, irregular fine brown outlines, honey oak wood, cream cardstock cut edges, subtle handmade paper texture. Front view with extremely slight view of top surfaces, NOT isometric, NOT realistic 3D. The provided picture is a STYLE REFERENCE ONLY. Generate ONLY the named single object in isolation, not the room. A TRUE transparent alpha background, no white or checkerboard background, no floor, no room, no extra unrelated objects. Single object centered and filling most of canvas with a small safe transparent margin, never clipped. Warm upper left light, only small soft contact shadows attached to object, no large external floor shadow. Cream die-cut outline and subtle thickness. No text, letters, logo, labels, watermark, characters, or UI. Object: one honey oak writing desk with clean open apron and straight legs, NO drawer, EMPTY top. Match the reference writing desk's front-facing camera, approximate 1.6 width to 1 height ratio, and honey wood material so it can replace the desk in exactly the same space. No chair, objects, floor or room.",
+    "reference": "room-style-v1.png",
+    "provenance": "本任务按用户提供参考图委托生成；未下载第三方素材。"
+  },
+  {
+    "assetId": "shelf-wide",
+    "name": "双层开放书架",
+    "tool": "OpenAI built-in imagegen",
+    "prompt": "Use case: stylized-concept. Production asset for a configurable paper pop-up book room. Match reference image exactly in medium: hand-painted watercolor plus colored pencil on warm fibrous paper, irregular fine brown outlines, honey oak wood, cream cardstock cut edges, subtle handmade paper texture. Front view with extremely slight view of top surfaces, NOT isometric, NOT realistic 3D. The provided picture is a STYLE REFERENCE ONLY. Generate ONLY the named single object in isolation, not the room. A TRUE transparent alpha background, no white or checkerboard background, no floor, no room, no extra unrelated objects. Single object centered and filling most of canvas with a small safe transparent margin, never clipped. Warm upper left light, only small soft contact shadows attached to object, no large external floor shadow. Cream die-cut outline and subtle thickness. No text, letters, logo, labels, watermark, characters, or UI. Object: one freestanding honey wooden open display bookcase with TWO empty shelves, each divided by one central upright into two empty compartments. Overall upright rectangle about 0.85 width to 1 height, chunky rounded frame and short feet. No books, paper, ornaments or floor.",
+    "reference": "room-style-v1.png",
+    "provenance": "本任务按用户提供参考图委托生成；未下载第三方素材。"
+  },
+  {
+    "assetId": "floor-lamp",
+    "name": "奶油落地灯",
+    "tool": "OpenAI built-in imagegen",
+    "prompt": "Use case: stylized-concept. Production asset for a configurable paper pop-up book room. Match reference image exactly in medium: hand-painted watercolor plus colored pencil on warm fibrous paper, irregular fine brown outlines, honey oak wood, cream cardstock cut edges, subtle handmade paper texture. Front view with extremely slight view of top surfaces, NOT isometric, NOT realistic 3D. The provided picture is a STYLE REFERENCE ONLY. Generate ONLY the named single object in isolation, not the room. A TRUE transparent alpha background, no white or checkerboard background, no floor, no room, no extra unrelated objects. Single object centered and filling most of canvas with a small safe transparent margin, never clipped. Warm upper left light, only small soft contact shadows attached to object, no large external floor shadow. Cream die-cut outline and subtle thickness. No text, letters, logo, labels, watermark, characters, or UI. Object: one tall slender standing floor lamp, rounded cream fabric shade with delicate brown outline, thin honey wooden stem and circular honey wood base. Quiet warm shade, NO glowing beam. Upright narrow silhouette, no other objects or floor.",
+    "reference": "room-style-v1.png",
+    "provenance": "本任务按用户提供参考图委托生成；未下载第三方素材。"
+  },
+  {
+    "assetId": "plant-tall",
+    "name": "落地橄榄绿盆栽",
+    "tool": "OpenAI built-in imagegen",
+    "prompt": "Use case: stylized-concept. Production asset for a configurable paper pop-up book room. Match reference image exactly in medium: hand-painted watercolor plus colored pencil on warm fibrous paper, irregular fine brown outlines, honey oak wood, cream cardstock cut edges, subtle handmade paper texture. Front view with extremely slight view of top surfaces, NOT isometric, NOT realistic 3D. The provided picture is a STYLE REFERENCE ONLY. Generate ONLY the named single object in isolation, not the room. A TRUE transparent alpha background, no white or checkerboard background, no floor, no room, no extra unrelated objects. Single object centered and filling most of canvas with a small safe transparent margin, never clipped. Warm upper left light, only small soft contact shadows attached to object, no large external floor shadow. Cream die-cut outline and subtle thickness. No text, letters, logo, labels, watermark, characters, or UI. Object: one taller houseplant, elegant slender branching stems with small rounded muted olive and sage leaves, in a honey terracotta tapered pot. Height about 2.7 times width. Airy compact canopy, no shelf, floor, flowers or furniture.\nFraming refinement: Edit this single isolated paper plant asset. Keep the existing exact watercolor, sage leaves, honey terracotta pot, cream die-cut outline and front-facing shape. Repair framing only: FULL plant and FULL paper cut edge must be visible, especially the top leaf tip and the leftmost leaf edges that touch the canvas. Add a clear transparent margin on ALL sides at least 6% of image width. Make the whole plant slightly smaller within the frame. Preserve transparent background, no wall, no ground, no extra objects, no text. Keep same paper illustration and original colors.",
+    "reference": "room-style-v1.png",
+    "provenance": "本任务按用户提供参考图委托生成；未下载第三方素材。"
+  },
+  {
+    "assetId": "curtains-short",
+    "name": "短款荷叶窗帘",
+    "tool": "OpenAI built-in imagegen",
+    "prompt": "Use case: stylized-concept. Production asset for a configurable paper pop-up book room. Match reference image exactly in medium: hand-painted watercolor plus colored pencil on warm fibrous paper, irregular fine brown outlines, honey oak wood, cream cardstock cut edges, subtle handmade paper texture. Front view with extremely slight view of top surfaces, NOT isometric, NOT realistic 3D. The provided picture is a STYLE REFERENCE ONLY. Generate ONLY the named single object in isolation, not the room. A TRUE transparent alpha background, no white or checkerboard background, no floor, no room, no extra unrelated objects. Single object centered and filling most of canvas with a small safe transparent margin, never clipped. Warm upper left light, only small soft contact shadows attached to object, no large external floor shadow. Cream die-cut outline and subtle thickness. No text, letters, logo, labels, watermark, characters, or UI. Object: a PAIR of SHORT cream cafe side curtains with muted sage green hem, a slim honey wooden rod connecting at top. Wide aspect about 1.5 to 1. Central opening FULLY TRANSPARENT, no glass, frame, window, wall or sky. Soft scalloped hem and delicate paper folds. Match the long curtain asset's material and colors but clearly short, light and simple.",
+    "reference": "room-style-v1.png",
+    "provenance": "本任务按用户提供参考图委托生成；未下载第三方素材。"
+  },
+  {
+    "assetId": "bed-blue",
+    "name": "淡蓝床品木床",
+    "tool": "OpenAI built-in imagegen",
+    "prompt": "Precise recolor edit of this isolated paper cutout asset. Recolor ONLY the sage green quilt to soft muted dusty blue. Preserve EXACT object shape, outline, silhouette, paper texture, highlights, cream cut-paper edges, camera, proportions, position and all other colors. Preserve warm honey wood and cream sections entirely. Keep fully transparent alpha background. No new objects, labels, text, floor or scene. Match original dimensions and composition. This is a registered palette variant of the original asset, not a redesign.",
+    "reference": "assets/bed.png",
+    "provenance": "本任务按用户提供参考图委托生成；未下载第三方素材。"
+  },
+  {
+    "assetId": "bed-rose",
+    "name": "豆沙床品木床",
+    "tool": "OpenAI built-in imagegen",
+    "prompt": "Precise recolor edit of this isolated paper cutout asset. Recolor ONLY the sage green quilt to soft muted dusty rose. Preserve EXACT object shape, outline, silhouette, paper texture, highlights, cream cut-paper edges, camera, proportions, position and all other colors. Preserve warm honey wood and cream sections entirely. Keep fully transparent alpha background. No new objects, labels, text, floor or scene. Match original dimensions and composition. This is a registered palette variant of the original asset, not a redesign.",
+    "reference": "assets/bed.png",
+    "provenance": "本任务按用户提供参考图委托生成；未下载第三方素材。"
+  },
+  {
+    "assetId": "rug-blue",
+    "name": "淡蓝编织地毯",
+    "tool": "OpenAI built-in imagegen",
+    "prompt": "Precise recolor edit of this isolated paper cutout asset. Recolor ONLY the sage green border to soft muted dusty blue. Preserve EXACT object shape, outline, silhouette, paper texture, highlights, cream cut-paper edges, camera, proportions, position and all other colors. Preserve warm honey wood and cream sections entirely. Keep fully transparent alpha background. No new objects, labels, text, floor or scene. Match original dimensions and composition. This is a registered palette variant of the original asset, not a redesign.",
+    "reference": "assets/rug.png",
+    "provenance": "本任务按用户提供参考图委托生成；未下载第三方素材。"
+  },
+  {
+    "assetId": "rug-rose",
+    "name": "豆沙编织地毯",
+    "tool": "OpenAI built-in imagegen",
+    "prompt": "Precise recolor edit of this isolated paper cutout asset. Recolor ONLY the sage green border to soft muted dusty rose. Preserve EXACT object shape, outline, silhouette, paper texture, highlights, cream cut-paper edges, camera, proportions, position and all other colors. Preserve warm honey wood and cream sections entirely. Keep fully transparent alpha background. No new objects, labels, text, floor or scene. Match original dimensions and composition. This is a registered palette variant of the original asset, not a redesign.",
+    "reference": "assets/rug.png",
+    "provenance": "本任务按用户提供参考图委托生成；未下载第三方素材。"
+  }
+]

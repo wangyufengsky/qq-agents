@@ -1,3 +1,4 @@
+import { serveHomePreview } from "./home/static.mjs";
 import { withInteraction } from "./core/closeness.mjs";
 import { readFileText } from "./tools/file-text.mjs";
 import { fileProjects, projectFiles } from "./core/project-files.mjs";
@@ -209,6 +210,7 @@ export function createServer({
     try {
       if (stopping || runtime.closed) throw Error("RUNTIME_CLOSING");
       const url = new URL(req.url, "http://" + req.headers.host);
+      if (serveHomePreview(req, res, url.pathname)) return;
       if (
         req.method === "GET" &&
         [
