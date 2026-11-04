@@ -633,13 +633,16 @@ test(
     );
     t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
     const { request, store, app } = await setup(t, { tempRoot });
-    for (let i = 0; i < 80; i++)
-      store.bind("agent-0").append({
-        dedupe: "stop-" + i,
-        conversation: "group:20000",
-        kind: "message.received",
-        body: "x".repeat(64000),
-      });
+    // Measure shutdown and cleanup, not 80 synchronous fixture commits.
+    store.transaction(() => {
+      for (let i = 0; i < 80; i++)
+        store.bind("agent-0").append({
+          dedupe: "stop-" + i,
+          conversation: "group:20000",
+          kind: "message.received",
+          body: "x".repeat(64000),
+        });
+    });
     const download = request("/api/export?agentId=agent-0")
       .then((res) => res.arrayBuffer())
       .catch(() => {});
