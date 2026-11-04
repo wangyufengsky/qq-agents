@@ -85,6 +85,46 @@ export function recordInputSubmission(memory, turnId) {
     patchTurn(memory, turnId, { inputStage: "submission-attempted" });
 }
 
+// Store fixed timing fields only; provider events may contain private payloads.
+export function recordBackendTiming(memory, turnId, timing) {
+  const phases = new Set([
+    "prepared",
+    "inputSubmitted",
+    "initialized",
+    "firstResponse",
+    "lastResponse",
+    "terminal",
+    "complete",
+  ]);
+  if (
+    !timing ||
+    !phases.has(timing.phase) ||
+    !Number.isFinite(timing.elapsedMs) ||
+    timing.elapsedMs < 0 ||
+    timing.elapsedMs > 86400000
+  )
+    return;
+  const row = turnRecord(memory, turnId);
+  if (!row) return;
+  const record = JSON.parse(row.value);
+  if (record.status !== "running") return;
+  const previous = record.backendTiming || { unit: "ms", phases: {} };
+  patchTurn(memory, turnId, {
+    backendTiming: {
+      unit: "ms",
+      phases: {
+        ...previous.phases,
+        [timing.phase]: Math.round(timing.elapsedMs),
+      },
+      ...(typeof timing.processReused === "boolean"
+        ? { processReused: timing.processReused }
+        : typeof previous.processReused === "boolean"
+          ? { processReused: previous.processReused }
+          : {}),
+    },
+  });
+}
+
 // Only call for scopes with no active owner (startup, or before the next turn).
 // A failed archival/terminal write leaves running durable and retries here.
 export function recoverSessions(memory, at, scope) {

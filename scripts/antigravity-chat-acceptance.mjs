@@ -20,6 +20,10 @@ const { values } = parseArgs({
     command: { type: "string", default: "agy" },
     model: { type: "string" },
     extended: { type: "boolean", default: false },
+    "cli-reuse": { type: "boolean", default: false },
+    effort: { type: "string", default: "" },
+    rounds: { type: "string", default: "3" },
+    "capacity-tokens": { type: "string", default: "32768" },
     "max-first-send-ms": { type: "string", default: "30000" },
   },
 });
@@ -27,6 +31,14 @@ if (!values["allow-real-models"] || !values.model)
   throw Error("ANTIGRAVITY_ACCEPTANCE_REQUIRES_OPT_IN_AND_MODEL");
 const maxFirstSendMs = Number(values["max-first-send-ms"]);
 assert(Number.isFinite(maxFirstSendMs) && maxFirstSendMs > 0);
+const rounds = Number(values.rounds);
+assert(Number.isSafeInteger(rounds) && rounds >= 3 && rounds <= 50);
+const capacityTokens = Number(values["capacity-tokens"]);
+assert(
+  Number.isSafeInteger(capacityTokens) &&
+    capacityTokens >= 1024 &&
+    capacityTokens <= 10000000,
+);
 // No existing configuration, chat, login profile or QQ transport is opened.
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "qq-agy-chat-acceptance-"));
 fs.chmodSync(root, 0o700);
@@ -51,7 +63,8 @@ const cfg = validateConfig({
       type: "antigravity",
       command: values.command,
       model: values.model,
-      effort: "",
+      effort: values.effort,
+      ...(values["cli-reuse"] ? { cliReuse: { enabled: true } } : {}),
     },
   ],
   agents: [
@@ -66,7 +79,8 @@ const cfg = validateConfig({
       allow: { groups: ["20000"], users: ["30000"] },
       subject: { enabled: false },
       wake: { cooldownMs: 0 },
-      behavior: { turnTimeoutMs: 180000 },
+      behavior: { turnTimeoutMs: 180000, typing: { enabled: false } },
+      contextPolicy: { capacityTokens },
     },
   ],
 });
@@ -77,6 +91,7 @@ const marker = "SYNTHETIC_" + randomBytes(8).toString("hex");
 const imageEvents = new Set(),
   mediaIds = new Set();
 let sentCount = 0;
+let cliProcesses = 0;
 const cliVersion = execFileSync(values.command, ["--version"], {
   encoding: "utf8",
   timeout: 30000,
@@ -102,6 +117,7 @@ const runtime = new Runtime({
     const backend = new AntigravityBackend(config, agent, {
       root,
       spawn(command, args, options) {
+        if (args.includes("--input-format")) cliProcesses++;
         const child = crossSpawn(command, args, options);
         let buffer = "";
         child.stdout?.on("data", (chunk) => {
@@ -193,6 +209,11 @@ const cases = [
   },
   { name: "chat-3", body: "好的，再简短打个招呼，我们继续聊。" },
 ];
+for (let index = 3; index < rounds; index++)
+  cases.push({
+    name: `chat-${index + 1}`,
+    body: "再简短打个招呼，我们继续聊。",
+  });
 try {
   if (values.extended) {
     const media = acceptanceMedia(root);
@@ -243,7 +264,7 @@ try {
   for (const [index, scenario] of cases.entries()) {
     // A low limit exercises the real pressure guard without spending a model window.
     // Restore only the isolated fixture's capacity before the fresh-session handoff.
-    if (index >= 3)
+    if (index >= rounds)
       runtime.config.agents[0].contextPolicy.capacityTokens = scenario.pressure
         ? 4096
         : 65536;
@@ -331,6 +352,7 @@ try {
       continued: !!before && before === state.session?.id,
       sessionKept: !!state.session,
       status: turn.status,
+      backendTiming: turn.backendTiming,
       failedTools: turn.toolCalls
         .filter((c) => !c.ok)
         .map((c) => ({ name: c.name, code: c.code })),
@@ -413,6 +435,12 @@ try {
         passed: !process.exitCode,
         maxFirstSendMs,
         extended: values.extended,
+        cliReuse: values["cli-reuse"],
+        cliProcesses,
+        rounds,
+        capacityTokens,
+        effort: values.effort,
+        typingEnabled: false,
         cliVersion,
         model: values.model,
         realQQ: false,

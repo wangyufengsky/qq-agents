@@ -12,6 +12,7 @@ import { isDeepStrictEqual } from "node:util";
  *   requestTimeoutMs?: number, vision?: boolean, sendEffort?: boolean,
  *   recovery: {autoReconnect: boolean, dshInstance?: string}, command: string,
  *   env?: Record<string, string>, home?: string, preset: string, model: string, effort: string,
+ *   cliReuse?: {enabled: boolean, idleTimeoutMs: number, maxIdleProcesses: number},
  *   toolServers: ToolServerConfig[]}} BackendConfig
  * @typedef {{id: string}} BackendAgent
  * @typedef {{onDisconnect?: (error: Error) => void}} DisconnectHook Assigned by BackendConnections.
@@ -25,6 +26,7 @@ import { isDeepStrictEqual } from "node:util";
  *   saveSession: (session: StoredSession | null) => void,
  *   onBackendTurn?: (turn: {turnId: string, inputAccepted?: boolean}) => void,
  *   onInputSubmitted?: () => void,
+ *   onTiming?: (timing: {phase: string, elapsedMs: number, processReused?: boolean}) => void,
  *   recovery?: import("./turn-failure.mjs").RecoveryFailure,
  *   onImageSession?: (sessionId: string) => void,
  *   onGeneratedImage?: (sessionId: string, item: any) => void,
@@ -80,7 +82,11 @@ export function backendSessionConfig(config) {
         vision: config.vision === true,
       };
     case "antigravity":
-      return { ...shared, command: config.command };
+      return {
+        ...shared,
+        command: config.command,
+        ...(config.cliReuse?.enabled ? { cliDispatch: "epoch-v1" } : {}),
+      };
   }
 }
 /** @param {BackendConfig} config */
@@ -97,6 +103,7 @@ export const OPENAI_DEFAULTS = {
 export function backendRequestConfig(config) {
   return {
     effort: config.effort,
+    ...(config.type === "antigravity" ? { cliReuse: config.cliReuse } : {}),
     ...(config.type === "openai"
       ? {
           contextWindow: config.contextWindow,

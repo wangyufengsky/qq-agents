@@ -4,8 +4,9 @@ import fs from "node:fs";
 import { pathToFileURL } from "node:url";
 
 /** @param {unknown} value @param {string[]} names
- * @param {{path: string, sha256: string, bytes: number}[]} [images] */
-export function antigravityToolAllowed(value, names, images = []) {
+ * @param {{path: string, sha256: string, bytes: number}[]} [images]
+ * @param {string} [epoch] */
+export function antigravityToolAllowed(value, names, images = [], epoch) {
   const call = /** @type {any} */ (value);
   if (call?.name === "view_file") {
     const file = images.find((image) => image.path === call.args?.AbsolutePath);
@@ -26,11 +27,47 @@ export function antigravityToolAllowed(value, names, images = []) {
       return false;
     }
   }
+  if (epoch && call?.name === "call_mcp_tool") {
+    const args = call.args?.Arguments;
+    return Boolean(
+      call.args?.ServerName === "qq-agents" &&
+      call.args?.ToolName === "qq_turn_call" &&
+      args?.epoch === epoch &&
+      names.includes(args?.name) &&
+      args.arguments &&
+      typeof args.arguments === "object" &&
+      !Array.isArray(args.arguments) &&
+      Object.keys(args).every((key) =>
+        ["epoch", "name", "arguments"].includes(key),
+      ),
+    );
+  }
   return (
     call?.name === "finish" ||
     (call?.name === "call_mcp_tool" &&
       call.args?.ServerName === "qq-agents" &&
       names.includes(call.args?.ToolName))
+  );
+}
+
+/** A native finish/view_file has no MCP envelope. Bind it to the native step
+ * watermark; prompt text can quote old epochs and cannot identify authority.
+ * @param {any} input @param {any} catalogue */
+export function antigravityHookAllowed(input, catalogue) {
+  if (
+    catalogue.turnEpoch &&
+    (input.conversationId !== catalogue.conversationId ||
+      !Number.isSafeInteger(input.stepIdx) ||
+      input.stepIdx <= catalogue.minimumStep)
+  )
+    return false;
+  return antigravityToolAllowed(
+    input.toolCall,
+    (catalogue.turnTools || catalogue.tools).map(
+      (/** @type {any} */ tool) => tool.name,
+    ),
+    catalogue.images || [],
+    catalogue.turnEpoch,
   );
 }
 
@@ -57,11 +94,7 @@ export async function guardMain() {
     });
     if (!response.ok) throw Error();
     const catalogue = /** @type {any} */ (await response.json());
-    allowed = antigravityToolAllowed(
-      JSON.parse(input).toolCall,
-      catalogue.tools.map((/** @type {any} */ tool) => tool.name),
-      catalogue.images || [],
-    );
+    allowed = antigravityHookAllowed(JSON.parse(input), catalogue);
   } catch {
     // Failure to read policy or validate the active turn always denies execution.
   }

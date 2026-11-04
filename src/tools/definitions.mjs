@@ -185,7 +185,7 @@ export const definitions = {
       .strict(),
   ],
   qq_send: [
-    "向服务端绑定的当前会话发送文字或已登记图片。requestId唯一，超时未知绝不换ID重发。",
+    "向服务端绑定的当前会话发送文字或已登记图片。普通回复可选 readThroughSeq 提交本回合实际处理的连续已读水位，要求 qq_mark_read 仍启用且未选择主动意图，只在本次投递确认成功且回合仍有效时生效；省略时保持原行为。同一 requestId 的重复调用只能补写首次已确认回执绑定的水位，不能借重复调用处理后到消息。存在水位时返回 readCheckpoint={throughSeq,applied}；applied=false 仍表示消息已发送，可用原 requestId 补写同一水位。requestId唯一，超时未知绝不换ID重发。",
     z
       .object({
         requestId: str.min(1).max(200),
@@ -193,6 +193,12 @@ export const definitions = {
         replyTo: str.optional(),
         atUserId: str.optional(),
         mediaId: str.optional(),
+        readThroughSeq: z
+          .number()
+          .int()
+          .min(0)
+          .max(Number.MAX_SAFE_INTEGER)
+          .optional(),
       })
       .strict(),
   ],

@@ -11,6 +11,7 @@ import {
   saveSession,
   recordBackendTurn,
   recordInputSubmission,
+  recordBackendTiming,
   retireSession,
 } from "./session-records.mjs";
 
@@ -115,6 +116,8 @@ export class TurnRunner {
           !runtime.stopped && recordBackendTurn(mem, ctx.turnId, reference),
         onInputSubmitted: () =>
           !runtime.stopped && recordInputSubmission(mem, ctx.turnId),
+        onTiming: (timing) =>
+          !runtime.stopped && recordBackendTiming(mem, ctx.turnId, timing),
         onImageSession: (id) =>
           !runtime.stopped && runtime.generatedImages.begin(ctx, id),
         onGeneratedImage: (id, item) =>
