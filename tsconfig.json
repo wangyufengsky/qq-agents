@@ -92,6 +92,9 @@
     "src/games/framework/*.mjs",
     "scripts/game-p2-acceptance.mjs",
     "scripts/game-compatibility.mjs",
-    "public/home-preview/scene.mjs"
+    "public/home-preview/scene.mjs",
+    "src/home/layout.mjs",
+    "src/home/store.mjs",
+    "src/home/service.mjs"
   ]
 }

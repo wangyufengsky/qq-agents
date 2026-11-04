@@ -1,6 +1,7 @@
 import { catalog } from "./catalog.mjs";
 import { createTemplate } from "./templates.mjs";
-import { makeScene, validateScene, resolveScene } from "./scene.mjs";
+import { renderPaperBoard } from "./paper-board.mjs";
+import { makeScene, validateScene } from "./scene.mjs";
 // Preview preferences never read service credentials or role data.
 (() => {
   "use strict";
@@ -112,97 +113,42 @@ import { makeScene, validateScene, resolveScene } from "./scene.mjs";
   function config() {
     return createTemplate(current.type, prefs.count, current.page || 1);
   }
-  function resolved(o) {
-    return resolveScene(scenePrefs(), config(), catalog, mobile.matches).find(
-      (v) => v.id === o.id,
-    );
-  }
-  function cutout(assetId) {
-    const asset = catalog[assetId];
-    if (!asset) return el("span", "missing-object", "纸片缺失");
-    const span = el("span", "cutout");
-    const [x, y, w, h] = asset.bounds;
-    span.style.aspectRatio = `${w}/${h}`;
-    const img = el("img");
-    img.alt = "";
-    img.src = asset.file;
-    img.draggable = false;
-    img.style.width = `${(asset.width / w) * 100}%`;
-    img.style.height = `${(asset.height / h) * 100}%`;
-    img.style.left = `${(-x / w) * 100}%`;
-    img.style.top = `${(-y / h) * 100}%`;
-    img.addEventListener("error", () => {
-      span.replaceChildren(el("span", "missing-object", "纸片加载失败"));
-    });
-    span.append(img);
-    return span;
-  }
-  function objectNode(o, action) {
-    const v = resolved(o);
-    if (v.hidden) return null;
-    const n = action
-      ? btn("", () => act(action), "paper-object")
-      : el("div", "paper-object");
-    n.dataset.instance = o.id;
-    n.dataset.asset = v.asset;
-    n.style.left = `${v.x}%`;
-    n.style.bottom = `${100 - v.y}%`;
-    n.style.width = `${v.w}%`;
-    n.style.zIndex = String(v.z);
-    if (action)
-      n.setAttribute(
-        "aria-label",
+  function board(objects, hotspots, cls = "") {
+    return renderPaperBoard({
+      template: { ...config(), hotspots },
+      scene: scenePrefs(),
+      mobile: mobile.matches,
+      objects,
+      kind: cls,
+      onAction: act,
+      label: (action) =>
         action.startsWith("room:")
           ? `进入示例住户 ${action.split(":")[1]} 的房间`
           : actions[action],
-      );
-    const art =
-      prefs.state === "missing" && ["shelf", "board"].includes(o.id)
-        ? el("span", "missing-object", "素材缺失\n入口仍可用")
-        : cutout(v.asset);
-    if (v.flip) art.style.transform = "scaleX(-1)";
-    n.append(art);
-    if (action)
-      n.append(
-        el(
-          "span",
-          "label",
-          action.startsWith("room:") ? "进入房间" : actions[action],
-        ),
-      );
-    if (o.id.startsWith("sign-")) {
-      const id = Number(o.id.slice(5));
-      const name = el("span", "door-name", `示例住户 ${id}`);
-      name.style.top = "23%";
-      n.append(name);
-    }
-    if (o.id.startsWith("door-")) {
-      const id = Number(o.id.slice(5));
-      const status = ["在线", "离线", "暂停"][(id - 1) % 3];
-      const line = el("span", "door-status");
-      line.append(
-        el(
-          "i",
-          `status-dot ${status === "离线" ? "offline" : status === "暂停" ? "paused" : ""}`,
-        ),
-        document.createTextNode(`${status} · 示例状态`),
-      );
-      n.append(line);
-    }
-    return n;
-  }
-  function board(objects, hotspots, cls = "") {
-    const b = el("div", `board ${cls}`);
-    const base = el("img", "board-base");
-    base.src = catalog[config().boardAssetId]?.file || "assets/room-board.webp";
-    base.alt = "暖纸纹房间纸板";
-    base.draggable = false;
-    b.append(base);
-    for (const o of objects) {
-      const n = objectNode(o, hotspots[o.id]);
-      if (n) b.append(n);
-    }
-    return b;
+      missing: (o) =>
+        prefs.state === "missing" && ["shelf", "board"].includes(o.id),
+      decorate: (n, o) => {
+        if (o.id.startsWith("sign-")) {
+          const id = Number(o.id.slice(5));
+          const name = el("span", "door-name", `示例住户 ${id}`);
+          name.style.top = "23%";
+          n.append(name);
+        }
+        if (o.id.startsWith("door-")) {
+          const id = Number(o.id.slice(5));
+          const status = ["在线", "离线", "暂停"][(id - 1) % 3];
+          const line = el("span", "door-status");
+          line.append(
+            el(
+              "i",
+              `status-dot ${status === "离线" ? "offline" : status === "暂停" ? "paused" : ""}`,
+            ),
+            document.createTextNode(`${status} · 示例状态`),
+          );
+          n.append(line);
+        }
+      },
+    });
   }
   function renderStage() {
     const { objects, hotspots } = config();

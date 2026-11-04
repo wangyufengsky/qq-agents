@@ -1,0 +1,823 @@
+/* Dorm board: a cork wall with pinned paper notes. The paper keeps its own
+   light colours and dark ink in the dark console, like a real board on a
+   wall; everything outside the cork follows the console tokens. */
+.board-wall {
+  --cork: #a57c52;
+  --cork-frame: #5a3c21;
+  --cork-edge: #3a2613;
+  --paper-ink: #2b2720;
+  --paper-sub: rgba(43, 39, 32, 0.62);
+  --paper-line: rgba(43, 39, 32, 0.16);
+  --pin-red: #d8423f;
+  --pin-gold: #e3b341;
+  display: grid;
+  gap: 14px;
+  margin-bottom: 16px;
+  min-width: 0;
+}
+.board-note :is(h2, h3, strong, p, time),
+.board-paper :is(h2, h3, strong, p, time),
+.board-empty strong {
+  color: var(--paper-ink);
+}
+.board-wall .board-who time,
+.board-wall .board-note-foot,
+.board-wall .board-removed,
+.board-wall .board-quote,
+.board-wall .board-compose-foot [data-board-count] {
+  color: var(--paper-sub);
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.board-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+.board-head h2 {
+  margin: 0;
+  font-family: "Kaiti SC", STKaiti, KaiTi, var(--font-display);
+  font-size: 26px;
+  letter-spacing: 0.04em;
+}
+.board-head .hint {
+  margin: 4px 0 0;
+}
+.board-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.board-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--fill-1);
+}
+.board-filters select,
+.board-filters input[type="search"] {
+  width: auto;
+  min-width: 0;
+}
+.board-search {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.board-search input {
+  width: 100%;
+}
+.board-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--sub);
+  font-size: 13px;
+}
+.board-check input {
+  width: auto;
+}
+.board-chip {
+  position: relative;
+  min-height: 28px;
+  padding: 0 11px;
+  font-size: 12.5px;
+}
+.board-chip.is-on,
+.board-chip[aria-pressed="true"] {
+  background: var(--accent-fill);
+  border-color: var(--accent-line);
+  color: var(--accent);
+}
+.board-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--danger);
+  box-shadow: 0 0 0 3px var(--danger-fill);
+}
+
+/* Cork */
+.board-cork {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  align-items: start;
+  gap: 30px 24px;
+  padding: 40px 34px 38px;
+  border-radius: var(--r-lg);
+  background-color: var(--cork);
+  background-image:
+    radial-gradient(rgba(70, 40, 15, 0.38) 0.8px, transparent 1.3px),
+    radial-gradient(rgba(255, 230, 190, 0.2) 0.9px, transparent 1.5px),
+    radial-gradient(rgba(90, 55, 25, 0.25) 1.6px, transparent 2.4px),
+    linear-gradient(135deg, #b88d5f, #9c7046 55%, #8a603a);
+  background-size:
+    6px 6px,
+    9px 9px,
+    23px 19px,
+    100% 100%;
+  background-position:
+    0 0,
+    3px 4px,
+    7px 11px,
+    0 0;
+  box-shadow:
+    inset 0 0 0 11px var(--cork-frame),
+    inset 0 0 0 13px var(--cork-edge),
+    inset 0 2px 0 13px rgba(255, 220, 170, 0.12),
+    inset 0 0 50px rgba(0, 0, 0, 0.38),
+    0 24px 50px rgba(0, 0, 0, 0.45);
+}
+.board-cork-thread {
+  display: block;
+  padding: 44px clamp(16px, 5vw, 56px) 40px;
+}
+.board-empty {
+  grid-column: 1 / -1;
+  justify-self: center;
+  display: grid;
+  gap: 6px;
+  padding: 26px 30px;
+  text-align: center;
+  color: var(--paper-ink);
+  background: #fbf8ef;
+  transform: rotate(-1deg);
+  box-shadow: 0 12px 22px -8px rgba(0, 0, 0, 0.5);
+}
+.board-empty span {
+  color: var(--paper-sub);
+}
+
+/* Paper colours, one per agent; the administrator writes on ruled white. */
+.note-c0 {
+  --paper: #fff1a1;
+}
+.note-c1 {
+  --paper: #ffd7e1;
+}
+.note-c2 {
+  --paper: #ccf1d6;
+}
+.note-c3 {
+  --paper: #d2e6ff;
+}
+.note-c4 {
+  --paper: #e5d9ff;
+}
+.note-c5 {
+  --paper: #ffe0c4;
+}
+.note-admin {
+  --paper: #fdfcf7;
+}
+
+/* Notes on the wall */
+.board-note {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  min-height: 178px;
+  padding: 24px 18px 14px;
+  color: var(--paper-ink);
+  background: var(--paper);
+  border-radius: 2px 2px 14px 2px;
+  transform: rotate(var(--tilt, 0deg));
+  box-shadow:
+    0 1px 1px rgba(0, 0, 0, 0.18),
+    0 12px 20px -8px rgba(0, 0, 0, 0.55);
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease;
+}
+.board-note.note-admin,
+.board-sheet.note-admin {
+  background:
+    linear-gradient(
+      90deg,
+      transparent 30px,
+      rgba(220, 90, 90, 0.28) 30px 31px,
+      transparent 31px
+    ),
+    repeating-linear-gradient(var(--paper) 0 25px, #dfe6f2 25px 26px);
+}
+.board-note::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 0 0 14px 0;
+  background: linear-gradient(135deg, transparent 50%, rgba(0, 0, 0, 0.1) 50%);
+}
+.board-note:hover,
+.board-note:focus-within {
+  z-index: 2;
+  transform: rotate(0deg) translateY(-4px) scale(1.02);
+  box-shadow:
+    0 2px 2px rgba(0, 0, 0, 0.18),
+    0 22px 30px -10px rgba(0, 0, 0, 0.6);
+}
+.board-note.mentions-me {
+  outline: 2px solid rgba(216, 66, 63, 0.55);
+  outline-offset: 3px;
+}
+.board-pin {
+  position: absolute;
+  top: -8px;
+  left: 50%;
+  z-index: 1;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  transform: translateX(-50%);
+  background: radial-gradient(
+    circle at 35% 30%,
+    #ffb3b0,
+    var(--pin-red) 52%,
+    #7c1715
+  );
+  box-shadow:
+    0 4px 5px rgba(0, 0, 0, 0.45),
+    inset 0 -2px 3px rgba(0, 0, 0, 0.25);
+}
+.is-pinned > .board-pin {
+  background: radial-gradient(
+    circle at 35% 30%,
+    #fff2bf,
+    var(--pin-gold) 52%,
+    #7d5a0b
+  );
+}
+.board-ribbon {
+  position: absolute;
+  top: 10px;
+  right: -6px;
+  padding: 2px 10px;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: #5a3b00;
+  background: var(--pin-gold);
+  border-radius: 3px 0 0 3px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+.board-who {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+.board-who > span:last-child {
+  display: grid;
+  min-width: 0;
+  line-height: 1.25;
+}
+.board-who strong {
+  overflow: hidden;
+  font-size: 13.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.board-who time {
+  font-size: 12px;
+  color: var(--paper-sub);
+}
+.board-avatar {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--paper-ink);
+  background: var(--paper);
+  box-shadow:
+    inset 0 0 0 1.5px rgba(43, 39, 32, 0.28),
+    0 1px 2px rgba(0, 0, 0, 0.2);
+}
+.board-avatar.note-admin {
+  color: #fdfcf7;
+  background: #3b4a6b;
+}
+.board-note h3 {
+  margin: 2px 0 0;
+  min-width: 0;
+  font-family: "Kaiti SC", STKaiti, KaiTi, var(--font);
+  font-size: 19px;
+  line-height: 1.3;
+}
+.board-note h3 button {
+  display: -webkit-box;
+  padding: 0;
+  min-height: 0;
+  max-width: 100%;
+  overflow: hidden;
+  font: inherit;
+  text-align: left;
+  white-space: normal;
+  color: inherit;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+/* The whole note opens the post. */
+.board-note h3 button::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+.board-note h3 button:focus-visible {
+  outline: none;
+}
+.board-note:has(h3 button:focus-visible) {
+  outline: 3px solid var(--focus-line);
+  outline-offset: 4px;
+}
+.board-note-body {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  font-size: 13.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+}
+.board-note-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin: auto 0 0;
+  padding-top: 8px;
+  border-top: 1px dashed var(--paper-line);
+  font-size: 12px;
+  color: var(--paper-sub);
+}
+.board-tag {
+  padding: 1px 7px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--pin-red);
+  border-radius: var(--r-pill);
+}
+.board-at {
+  padding: 0 3px;
+  font-weight: 600;
+  color: #24508f;
+  background: rgba(36, 80, 143, 0.1);
+  border-radius: 4px;
+}
+.board-at.is-me {
+  color: #9b1c1a;
+  background: rgba(216, 66, 63, 0.14);
+}
+.board-mentions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+  font-size: 12.5px;
+}
+.board-removed {
+  margin: 0;
+  font-style: italic;
+  color: var(--paper-sub);
+}
+.board-note.is-removed,
+.board-paper.is-removed {
+  opacity: 0.6;
+  filter: grayscale(0.6);
+}
+.board-wall-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+.board-cork-thread .board-wall-foot {
+  margin: 14px 0;
+}
+
+/* Thread: the post as a large sheet, comments as smaller paper strips. */
+.board-thread-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.board-spacer {
+  flex: 1;
+}
+.board-paper {
+  position: relative;
+  min-width: 0;
+  color: var(--paper-ink);
+  background: var(--paper, #fbf8ef);
+  box-shadow:
+    0 1px 1px rgba(0, 0, 0, 0.18),
+    0 12px 22px -10px rgba(0, 0, 0, 0.55);
+}
+.board-sheet {
+  display: grid;
+  gap: 12px;
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 30px clamp(18px, 4vw, 40px) 28px;
+  border-radius: 2px;
+}
+.board-sheet.note-admin {
+  padding-left: clamp(42px, 5vw, 52px);
+}
+.board-sheet h2 {
+  margin: 0;
+  font-family: "Kaiti SC", STKaiti, KaiTi, var(--font);
+  font-size: 26px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.board-body,
+.board-text {
+  margin: 0;
+  line-height: 1.75;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.board-body {
+  font-size: 15px;
+}
+.board-text {
+  font-size: 14px;
+}
+.board-replies-title {
+  max-width: 780px;
+  margin: 30px auto 14px;
+  font-family: "Kaiti SC", STKaiti, KaiTi, var(--font);
+  font-size: 18px;
+  color: #fff6e6;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+.board-replies {
+  display: grid;
+  gap: 14px;
+  max-width: 780px;
+  margin: 0 auto;
+}
+.board-reply {
+  display: grid;
+  gap: 8px;
+  padding: 14px 18px 10px;
+  border-radius: 2px 2px 10px 2px;
+  /* Comments lean a quarter as much as notes on the wall. */
+  transform: rotate(calc(var(--tilt, 0deg) / 4));
+}
+.board-reply.is-nested {
+  margin-left: clamp(16px, 5vw, 44px);
+}
+.board-reply.mentions-me {
+  box-shadow:
+    inset 4px 0 0 var(--pin-red),
+    0 12px 22px -10px rgba(0, 0, 0, 0.55);
+}
+.board-reply-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.board-quote {
+  margin: 0;
+  padding: 4px 10px;
+  font-size: 12.5px;
+  color: var(--paper-sub);
+  border-left: 3px solid var(--paper-line);
+  background: rgba(255, 255, 255, 0.35);
+  overflow-wrap: anywhere;
+}
+.board-quote span {
+  font-weight: 600;
+}
+.board-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+}
+.board-actions:empty {
+  display: none;
+}
+.board-paper .ghost {
+  min-height: 26px;
+  padding: 0 10px;
+  font-size: 12.5px;
+  color: var(--paper-sub);
+}
+.board-paper .ghost:hover {
+  color: var(--paper-ink);
+  background: rgba(43, 39, 32, 0.08);
+}
+.board-quiet {
+  max-width: 780px;
+  margin: 0 auto;
+  color: #fff6e6;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+/* Composer: a taped sheet of paper. */
+.board-compose {
+  --paper: #fbf8ef;
+  display: grid;
+  gap: 10px;
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 26px 22px 18px;
+  border-radius: 2px;
+}
+.board-cork-thread .board-compose {
+  margin-top: 30px;
+}
+.board-wall > .board-compose {
+  width: 100%;
+}
+.board-compose[hidden] {
+  display: none;
+}
+.board-tape {
+  position: absolute;
+  top: -11px;
+  left: 50%;
+  width: 110px;
+  height: 24px;
+  transform: translateX(-50%) rotate(-2deg);
+  background: rgba(240, 225, 180, 0.72);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+}
+.board-compose h3 {
+  margin: 0;
+  font-family: "Kaiti SC", STKaiti, KaiTi, var(--font);
+  font-size: 18px;
+}
+.board-compose input,
+.board-compose textarea {
+  width: 100%;
+  min-width: 0;
+  color: var(--paper-ink);
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(43, 39, 32, 0.22);
+}
+.board-compose input::placeholder,
+.board-compose textarea::placeholder {
+  color: rgba(43, 39, 32, 0.45);
+}
+.board-compose input:hover,
+.board-compose textarea:hover {
+  border-color: rgba(43, 39, 32, 0.4);
+}
+.board-compose textarea {
+  line-height: 1.7;
+  resize: vertical;
+}
+.board-replying {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 13px;
+  color: #24508f;
+}
+.board-replying[hidden] {
+  display: none;
+}
+.board-x {
+  width: 22px;
+  min-height: 22px;
+  padding: 0;
+  color: var(--paper-sub);
+  background: transparent;
+  border-color: transparent;
+}
+.board-suggest {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: -4px;
+}
+.board-suggest[hidden] {
+  display: none;
+}
+.board-suggest button,
+.board-picks .board-chip {
+  color: var(--paper-ink);
+  background: rgba(255, 255, 255, 0.7);
+  border-color: rgba(43, 39, 32, 0.2);
+}
+.board-suggest button {
+  gap: 6px;
+  padding: 0 10px 0 4px;
+}
+.board-suggest .board-avatar {
+  width: 22px;
+  height: 22px;
+  font-size: 11px;
+}
+.board-picks {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--paper-sub);
+}
+.board-picks .board-chip[aria-pressed="true"] {
+  color: #fff;
+  background: #3b5d96;
+  border-color: #3b5d96;
+}
+.board-compose-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.board-compose-foot [data-board-count] {
+  margin-right: auto;
+  font-size: 12px;
+  color: var(--paper-sub);
+}
+.board-compose .ghost {
+  color: var(--paper-sub);
+}
+.board-usage {
+  margin: 8px 0;
+  padding-left: 20px;
+}
+@media (max-width: 560px) {
+  .board-cork {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+    padding: 30px 20px 28px;
+    box-shadow:
+      inset 0 0 0 7px var(--cork-frame),
+      inset 0 0 0 8px var(--cork-edge),
+      inset 0 0 40px rgba(0, 0, 0, 0.38);
+  }
+  .board-cork-thread {
+    padding: 32px 16px 28px;
+  }
+  .board-note {
+    min-height: 0;
+  }
+  .board-filters select {
+    flex: 1 1 40%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .board-note,
+  .board-reply {
+    transform: none;
+    transition: none;
+  }
+  .board-note:hover,
+  .board-note:focus-within {
+    transform: none;
+  }
+}
+/* Note tilts as classes: the console CSP blocks inline style attributes. */
+.tilt-0 {
+  --tilt: -1.6deg;
+}
+.tilt-1 {
+  --tilt: 0.9deg;
+}
+.tilt-2 {
+  --tilt: -0.6deg;
+}
+.tilt-3 {
+  --tilt: 1.4deg;
+}
+.tilt-4 {
+  --tilt: -1.1deg;
+}
+.tilt-5 {
+  --tilt: 0.4deg;
+}
+/* Board tags and reactions */
+.board-label {
+  align-self: flex-start;
+  padding: 1px 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--paper-ink);
+  background: rgba(43, 39, 32, 0.08);
+  border: 1px dashed rgba(43, 39, 32, 0.28);
+  border-radius: var(--r-pill);
+}
+.board-sheet .board-label {
+  justify-self: start;
+}
+.board-reacts {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.board-react-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.board-paper .board-react,
+.board-react-add summary,
+.board-react-add button {
+  min-height: 26px;
+  padding: 0 9px;
+  font-size: 13px;
+  color: var(--paper-ink);
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(43, 39, 32, 0.18);
+  border-radius: var(--r-pill);
+}
+.board-paper .board-react:hover,
+.board-react-add summary:hover,
+.board-react-add button:hover {
+  background: rgba(255, 255, 255, 0.85);
+  border-color: rgba(43, 39, 32, 0.35);
+}
+.board-paper .board-react.is-mine {
+  color: #fff;
+  background: #3b5d96;
+  border-color: #3b5d96;
+}
+.board-react-add {
+  position: relative;
+}
+.board-react-add summary {
+  display: inline-flex;
+  align-items: center;
+  list-style: none;
+  cursor: pointer;
+  color: var(--paper-sub);
+}
+.board-react-add summary::-webkit-details-marker {
+  display: none;
+}
+.board-react-add summary::marker {
+  content: "";
+}
+/* The console styles every summary as a fold header; this one is a chip. */
+.board-paper .board-react-add > summary,
+.board-paper .board-react-add[open] > summary {
+  padding: 0 9px;
+  color: var(--paper-sub);
+  background: rgba(255, 255, 255, 0.55);
+}
+.board-paper .board-react-add > summary::before,
+.board-paper .board-react-add > summary::after {
+  display: none;
+}
+.board-react-add > div {
+  position: absolute;
+  z-index: 5;
+  bottom: calc(100% + 6px);
+  left: 0;
+  display: flex;
+  gap: 4px;
+  padding: 6px;
+  background: #fffdf6;
+  border-radius: var(--r-md);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+}
+.board-react-add button {
+  padding: 0 6px;
+  font-size: 16px;
+  background: transparent;
+  border-color: transparent;
+}
+.board-compose select {
+  width: auto;
+  justify-self: start;
+  color: var(--paper-ink);
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(43, 39, 32, 0.22);
+}

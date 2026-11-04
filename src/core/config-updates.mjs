@@ -150,6 +150,7 @@ export async function commitConfig(runtime, next, revision) {
         }
       }
     });
+    await apply(() => runtime.home.syncAgents());
     await Promise.all(
       [...impact.paused].map((id) =>
         apply(() =>

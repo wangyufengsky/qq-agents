@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>纸页小窝</title>
+    <link rel="stylesheet" href="/home-preview/style.css" />
+    <link rel="stylesheet" href="/board.css" />
+    <link rel="stylesheet" href="/home-space/style.css" />
+    <script src="/board-ui.js" defer></script>
+    <script type="module" src="/home-space/app.mjs"></script>
+  </head>
+  <body>
+    <a class="skip" href="#scene-actions">跳到文字入口</a>
+    <header class="masthead">
+      <a class="brand" href="#living">纸页小窝</a
+      ><span class="demo-badge">实例内空间 · 管理员浏览</span
+      ><a href="/">返回管理台</a>
+    </header>
+    <main>
+      <section id="gate" role="status">
+        <p>正在验证管理员登录…</p>
+        <a href="/">前往管理台登录</a><button id="retry">重新连接</button
+        ><button id="gate-hall">返回走廊</button>
+      </section>
+      <section id="home-content" hidden>
+        <nav id="breadcrumb" aria-label="当前位置"></nav>
+        <div class="page-heading">
+          <div>
+            <p id="eyebrow" class="eyebrow"></p>
+            <h1 id="title"></h1>
+            <p id="subtitle"></p>
+          </div>
+          <button id="refresh">刷新当前页面</button>
+        </div>
+        <section id="stage" aria-label="纸片场景"></section>
+        <nav id="scene-actions" aria-label="场景文字入口"></nav>
+        <div id="pagination"></div>
+        <p id="layout-status" role="status"></p>
+        <details id="editor" class="settings">
+          <summary>布置公共空间</summary>
+          <p>只保存家具和配色。个人房间由其主人格布置。</p>
+          <label
+            >配色<select id="palette">
+              <option value="cream">暖木奶油</option>
+              <option value="blue">清晨浅蓝</option>
+              <option value="rose">柔和豆沙</option>
+            </select></label
+          ><label>选择纸片<select id="object-select"></select></label>
+          <div id="object-editor"></div>
+          <div class="settings-footer">
+            <button id="save" class="primary">保存布置</button
+            ><button id="undo">撤销最近一次保存</button
+            ><button id="reset">恢复默认草稿</button
+            ><button id="discard">放弃草稿并重读</button>
+          </div>
+          <p id="save-status" role="status"></p>
+        </details>
+        <footer class="page-footer">
+          <span>纸板承载空间 · 纸片承载物件</span
+          ><a href="/home-preview/">查看示例与本机布置预览</a>
+        </footer>
+      </section>
+    </main>
+    <dialog id="reader" aria-labelledby="reader-title">
+      <div class="reader-head">
+        <h2 id="reader-title"></h2>
+        <button id="close-reader" aria-label="关闭面板">×</button>
+      </div>
+      <div id="reader-content"></div>
+      <button id="reader-back">返回当前场景</button>
+    </dialog>
+    <div id="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>

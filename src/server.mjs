@@ -230,6 +230,7 @@ export function createServer({
           "/updates-ui.js",
           "/activity-ui.js",
           "/board-ui.js",
+          "/board.css",
           "/style.css",
           "/agent-form.css",
         ].includes(url.pathname)
@@ -317,6 +318,30 @@ export function createServer({
       }
       if (!downloadAgentId && !equal(req.headers["x-admin-token"], token))
         return send({ error: "UNAUTHORIZED" }, 401);
+      if (url.pathname === "/api/home/overview" && req.method === "GET")
+        return send(runtime.home.overview());
+      if (url.pathname === "/api/home/scene") {
+        const type = url.searchParams.get("type"),
+          agentId = url.searchParams.get("agentId") ?? undefined;
+        if (req.method === "GET") return send(runtime.home.read(type, agentId));
+        if (req.method === "PUT" && agentId === undefined) {
+          try {
+            return send(runtime.home.saveShared(type, await readBody(32768)));
+          } catch (error) {
+            if (
+              [
+                "HOME_REVISION_CONFLICT",
+                "HOME_ROSTER_CONFLICT",
+                "HOME_REQUEST_CONFLICT",
+                "UPDATE_IN_PROGRESS",
+              ].includes(error.message)
+            )
+              return send({ error: error.message }, 409);
+            throw error;
+          }
+        }
+        return send({ error: "HOME_WRITE_DENIED" }, 403);
+      }
       if (req.method === "GET" && url.pathname === "/api/games")
         return send(runtime.games.status());
       if (req.method === "POST" && url.pathname === "/api/games/verify-entry") {

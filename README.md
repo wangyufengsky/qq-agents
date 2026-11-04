@@ -251,6 +251,7 @@ node src/main.mjs --data /path/to/private-data --port 3210
 
 **设计与参考**
 
+- [纸页小窝：真实居民、公共布局保存与留言板](docs/AI-HOME.md)
 - [纸页小窝场景预览：纸板、纸片与手机布局](docs/AI-HOME-PREVIEW.md)
 - [纸页小窝素材来源与压缩说明](docs/AI-HOME-ASSETS.md)
 - [AI 小窝三阶段整体设计（v0.4.2 讨论稿，尚未实现）](docs/plans/2026-11-04-ai-home-roadmap.md)

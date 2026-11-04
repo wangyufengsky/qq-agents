@@ -1,0 +1,164 @@
+// @ts-check
+import { randomUUID, createHash } from "node:crypto";
+import { HomeStore } from "./store.mjs";
+import { defaultLayout, validateLayout, homeTemplate } from "./layout.mjs";
+export class HomeService {
+  /** @param {any} runtime */
+  constructor(runtime) {
+    this.runtime = runtime;
+    this.store = new HomeStore(runtime.memory.db);
+    this.identityReady = false;
+    this.syncAgents();
+  }
+  syncAgents() {
+    this.identityReady = false;
+    const db = this.runtime.memory.db,
+      ids = new Set(this.ids());
+    this.runtime.memory.transaction(() => {
+      for (const row of db
+        .prepare("SELECT agent_id,active FROM home_identities")
+        .all())
+        if (!ids.has(row.agent_id))
+          db.prepare(
+            "UPDATE home_identities SET active=0 WHERE agent_id=?",
+          ).run(row.agent_id);
+      for (const id of ids) {
+        const prior = db
+          .prepare("SELECT active FROM home_identities WHERE agent_id=?")
+          .get(id);
+        if (!prior?.active)
+          db.prepare(
+            "INSERT OR REPLACE INTO home_identities(agent_id,generation,active) VALUES(?,?,1)",
+          ).run(id, randomUUID());
+      }
+    });
+    this.identityReady = true;
+  }
+  ids() {
+    return this.runtime.config.agents.map((/** @type {any} */ a) => a.id);
+  }
+  /** @param {string} id */
+  generation(id) {
+    if (!this.identityReady) throw Error("HOME_UNAVAILABLE");
+    if (!this.ids().includes(id)) throw Error("HOME_ROOM_NOT_FOUND");
+    const row = this.runtime.memory.db
+      .prepare(
+        "SELECT generation FROM home_identities WHERE agent_id=? AND active=1",
+      )
+      .get(id);
+    if (!row) throw Error("HOME_UNAVAILABLE");
+    return row.generation;
+  }
+  rosterRevision() {
+    return createHash("sha256")
+      .update(
+        JSON.stringify(
+          this.ids().map((/** @type {string} */ id) => [
+            id,
+            this.generation(id),
+          ]),
+        ),
+      )
+      .digest("hex");
+  }
+  overview() {
+    const r = this.runtime;
+    return {
+      rosterRevision: this.rosterRevision(),
+      boardEnabled: r.config.board.enabled,
+      residents: r.config.agents.map((/** @type {any} */ a) => ({
+        id: a.id,
+        name: a.name,
+        state:
+          a.paused || r.config.globalPaused
+            ? "paused"
+            : r.transports.get(a.connectionId)?.connected
+              ? "online"
+              : "offline",
+      })),
+    };
+  }
+  /** @param {string} type @param {string} [agentId] */
+  target(type, agentId) {
+    if (!["living", "hall", "room"].includes(type))
+      throw Error("HOME_SCENE_INVALID");
+    if (type === "room") return "room:" + this.generation(agentId || "");
+    if (agentId !== undefined) throw Error("HOME_SCENE_INVALID");
+    return "shared:" + type;
+  }
+  /** @param {string} type @param {string} [agentId] */
+  read(type, agentId) {
+    const key = this.target(type, agentId),
+      result = this.store.read(key, defaultLayout(type));
+    if (type === "hall") {
+      const allowed = new Set(homeTemplate(type, this.ids()).allInstanceIds);
+      result.layout.objects = Object.fromEntries(
+        Object.entries(result.layout.objects).filter(([id]) => allowed.has(id)),
+      );
+    }
+    return {
+      ...result,
+      ownerAgentId: agentId || null,
+      identityGeneration:
+        type === "room" ? this.generation(agentId || "") : null,
+      contentRevision: 0,
+      rosterRevision: this.rosterRevision(),
+      capabilities: { read: true, write: type !== "room", publish: false },
+    };
+  }
+  /** @param {string} type @param {any} data */
+  saveShared(type, data) {
+    if (!["living", "hall"].includes(type)) throw Error("HOME_WRITE_DENIED");
+    if (
+      this.runtime.closed ||
+      this.runtime.updateMaintenance ||
+      this.runtime.maintenance.snapshot().active
+    )
+      throw Error("UPDATE_IN_PROGRESS");
+    if (data.rosterRevision !== this.rosterRevision())
+      throw Error("HOME_ROSTER_CONFLICT");
+    const key = this.target(type);
+    return {
+      ...this.store.commit(
+        key,
+        data,
+        defaultLayout(type),
+        (v) => validateLayout(v, type, this.ids()),
+        this.runtime.now(),
+      ),
+      rosterRevision: this.rosterRevision(),
+    };
+  }
+  /** Future subject-tool adapter only; deliberately not exposed as an HTTP write route in this PR.
+   * @param {any} ctx @param {any} data @param {string} generation */
+  saveRoom(ctx, data, generation) {
+    const r = this.runtime;
+    if (
+      !ctx ||
+      r.capabilities.get(ctx.token) !== ctx ||
+      ctx.conversation !== "@subject" ||
+      ctx.controller?.signal.aborted ||
+      ctx.expires <= Date.now()
+    )
+      throw Error("HOME_WRITE_DENIED");
+    if (
+      r.closed ||
+      r.config.globalPaused ||
+      r.agent(ctx.agentId).paused ||
+      r.configChanging ||
+      r.maintenance.snapshot().active
+    )
+      throw Error("HOME_WRITE_DENIED");
+    r.assertActive(ctx);
+    if (ctx.privateRead?.size) throw Error("HOME_WRITE_DENIED");
+    if (this.generation(ctx.agentId) !== generation)
+      throw Error("HOME_WRITE_DENIED");
+    return this.store.commit(
+      this.target("room", ctx.agentId),
+      data,
+      defaultLayout("room"),
+      (v) => validateLayout(v, "room"),
+      r.now(),
+    );
+  }
+}

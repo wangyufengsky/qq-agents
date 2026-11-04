@@ -1,3 +1,4 @@
+import { HomeService } from "../home/service.mjs";
 import { contextProtection } from "./protected-mind.mjs";
 import {
   peerQzoneSources,
@@ -128,6 +129,7 @@ export class Runtime {
       const self = this.memory.bind(a.id).identity.initialize(a, this.now());
       this.contexts.upgradeInstructions(a, self);
     }
+    this.home = new HomeService(this);
     this.banter = new BanterCoordinator({
       botIds: this.config.connections.map((c) => c.accountId),
       ...this.config.peerLimit,
