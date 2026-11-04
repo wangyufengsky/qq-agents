@@ -1,3 +1,4 @@
+import { HOME_READ_TOOLS, HOME_TOOLS } from "../home/policy.mjs";
 import { z } from "zod";
 import { toolSpecs } from "./specs.mjs";
 import { profileConversation } from "../core/profile.mjs";
@@ -66,6 +67,13 @@ export function scopedCatalog(runtime, ctx, input) {
 }
 
 export function toolAvailable(agent, name, conversation) {
+  if (HOME_TOOLS.includes(name))
+    return (
+      agent.home?.enabled === true &&
+      (HOME_READ_TOOLS.includes(name) ||
+        (conversation === "@subject" &&
+          (name !== "room_publish" || agent.home.publishing === true)))
+    );
   if (name === "qq_react")
     return (
       agent.behavior.actions?.react === true &&

@@ -1,3 +1,4 @@
+import { HOME_READ_TOOLS } from "../home/policy.mjs";
 import { randomUUID, createHash } from "node:crypto";
 import { z } from "zod";
 import { allowed } from "./config.mjs";
@@ -221,6 +222,7 @@ export class ProtectedWork {
     const task = this.task(agent.id, scope);
     if (!task || terminal.has(task.status)) return [];
     return [
+      ...(agent.home?.enabled ? HOME_READ_TOOLS : []),
       "protected_work_submit",
       "memory_read",
       "memory_search",

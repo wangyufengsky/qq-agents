@@ -612,3 +612,27 @@ test("peer profile checkbox preserves missing form fields and supports explicit 
   );
   assert.equal(parse({ peerProfilePresent: undefined }), true);
 });
+
+test("home settings default off, round trip explicitly and preserve policy when absent", async () => {
+  const cfg = await sampleConfig(),
+    run = editor(cfg),
+    row = cfg.agents[0];
+  row.home = { enabled: true, publishing: true, maxWritesPerDay: 7 };
+  const html = run("agentForm.build.bind(agentForm)")(row, "");
+  const parse = run("agentForm.parse.bind(agentForm)");
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(parse(formOf(html), row).row.home)),
+    row.home,
+  );
+  const off = parse(
+    formOf(html, { homeEnabled: undefined, homePublishing: undefined }),
+    row,
+  ).row.home;
+  assert.equal(off.enabled, false);
+  assert.equal(off.publishing, false);
+  const absent = parse(
+    formOf(html, { homeSettingsShown: undefined, homeEnabled: undefined }),
+    row,
+  ).row.home;
+  assert.deepEqual(JSON.parse(JSON.stringify(absent)), row.home);
+});
