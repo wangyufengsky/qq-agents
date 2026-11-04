@@ -6,7 +6,7 @@ import { beforeShareDelivery } from "../apps/sharing.mjs";
 import { appService } from "../apps/tools.mjs";
 import { privateGithubSources } from "../github/policy.mjs";
 import { taintMedia } from "../tools/legacy.mjs";
-import { mdToPlain } from "../../vendor/dsh-qq/md-to-plain.js";
+import { qqMessage } from "../tools/qq-message.mjs";
 import { checkTone } from "./tone-check.mjs";
 import { reserveSendBudget } from "./send-budget.mjs";
 import { replyPeers, peerReplyLastAttemptAt } from "./peer-replies.mjs";
@@ -51,7 +51,14 @@ export class DeliveryService {
   }
   async send(
     ctx,
-    { requestId, text = "", replyTo, atUserId, mediaId },
+    {
+      requestId,
+      text,
+      segments: requestedSegments,
+      replyTo,
+      atUserId,
+      mediaId,
+    },
     { archiveBody } = {},
   ) {
     const runtime = this.runtime;
@@ -60,11 +67,14 @@ export class DeliveryService {
     if (runtime.protectedWork?.context(ctx))
       throw Error("PROTECTED_WORK_OUTBOUND_DENIED");
     runtime.assertDisclosure(ctx);
-    if (typeof text !== "string" || text.length > 8000 || (!text && !mediaId))
+    if (!text && requestedSegments === undefined && !mediaId)
       throw Error("INVALID_MESSAGE");
+    const message = qqMessage({ text, segments: requestedSegments });
+    runtime.assertSafeOutput(ctx, message.sourceText);
+    text = message.text;
     runtime.assertSafeOutput(ctx, text);
-    text = mdToPlain(text);
-    if (!text && !mediaId) throw Error("EMPTY_MESSAGE");
+    runtime.assertSafeOutput(ctx, message.body);
+    if (!message.segments.length && !mediaId) throw Error("EMPTY_MESSAGE");
     // Existing receipts must retain their duplicate/conflict/unknown semantics;
     // only a new valid request can receive a pre-delivery wording reminder.
     if (
@@ -100,7 +110,7 @@ export class DeliveryService {
       if (!/^\d+$/.test(String(atUserId))) throw Error("INVALID_PERSON");
       segments.push({ type: "at", data: { qq: String(atUserId) } });
     }
-    if (text) segments.push({ type: "text", data: { text } });
+    segments.push(...message.segments);
     if (mediaId) {
       if (!runtime.media) throw Error("MEDIA_UNAVAILABLE");
       const meta = runtime.media.metadata(a.id, mediaId);
@@ -111,14 +121,25 @@ export class DeliveryService {
     return this.deliver(ctx, {
       requestId,
       intent: segments,
-      body: archiveBody ?? text,
-      typingText: text + (mediaId ? "◻" : ""),
+      body: archiveBody ?? message.body,
+      typingText: message.typingText + (mediaId ? "◻" : ""),
       metadata: {
         replyTo,
         requestedReplyTo,
         referenceNamespace: namespace,
         atUserId,
         mediaId,
+        ...(requestedSegments !== undefined
+          ? {
+              // Media bytes already live in the owned media store, not in
+              // replayable chat metadata or model-readable history payloads.
+              segments: segments.map((part) =>
+                part.type === "image"
+                  ? { type: "image", data: { mediaId } }
+                  : part,
+              ),
+            }
+          : {}),
         // Fixed control text is not worded from a card or a mood.
         ...(ctx.internalDelivery
           ? {}

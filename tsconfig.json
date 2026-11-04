@@ -31,6 +31,7 @@
     "src/core/features.mjs",
     "src/mcp.mjs",
     "src/tools/definitions.mjs",
+    "src/tools/qq-message.mjs",
     "scripts/default-config.mjs",
     "scripts/backup.mjs",
     "scripts/check.mjs",
