@@ -5,7 +5,11 @@ import path from "node:path";
 import http from "node:http";
 import { randomBytes } from "node:crypto";
 import { AntigravityMedia } from "./antigravity-media.mjs";
-import { antigravityFailure, responseOccupancy } from "./antigravity.mjs";
+import {
+  antigravityFailure,
+  antigravityDiagnostic,
+  responseOccupancy,
+} from "./antigravity.mjs";
 import { mcpResult } from "../tools/index.mjs";
 import { safeToolFailure } from "../tools/errors.mjs";
 
@@ -102,6 +106,45 @@ export class AntigravityStreamWorker {
       !turn.params.signal.aborted
     );
   }
+  /** Accepted calls keep their original authority while terminal settlement waits.
+   * @param {any} turn */
+  active(turn) {
+    return (
+      this.turn === turn &&
+      !turn.settled &&
+      !turn.failed &&
+      !turn.params.signal.aborted
+    );
+  }
+  /** @param {any} turn @param {Record<string, unknown>} event */
+  report(turn, event) {
+    if (this.turn !== turn || turn.settled) return;
+    antigravityDiagnostic(turn.params, turn.start, {
+      phase: turn.terminal ? "settling" : "running",
+      trustedTerminal: Boolean(turn.terminal) && !turn.failed,
+      ...event,
+    });
+  }
+  /** Resource health cannot overwrite an already validated terminal.
+   * @param {Record<string, unknown>} event */
+  resourceFailure(event) {
+    const turn = this.turn;
+    if (turn && event.workerOutcome === "exit-warning")
+      turn.resourceWarning = true;
+    if (turn)
+      this.report(turn, {
+        ...event,
+        ...(turn.resourceWarning ? { workerOutcome: "exit-warning" } : {}),
+        wrapperError: this.diagnostic.includes("AGY_BACKGROUND_START_FAILED"),
+      });
+    this.closed = true;
+    if (this.child) this.owner.stop(this.child, "SIGKILL");
+    if (turn && !turn.settled && !turn.terminal) {
+      this.fail(antigravityFailure(this.diagnostic));
+    } else if (!turn || turn.settled) {
+      void this.close().catch(() => {});
+    }
+  }
   /** @param {any} turn @param {http.IncomingMessage} req @param {http.ServerResponse} res */
   async request(turn, req, res) {
     const reply = (
@@ -122,6 +165,12 @@ export class AntigravityStreamWorker {
       return reply(200, { alive: true });
     if (!this.live(turn))
       return reply(403, { error: "ANTIGRAVITY_TURN_INACTIVE" });
+    if (req.method === "POST" && req.url?.startsWith("/hook-denied")) {
+      if (req.url !== `/hook-denied?epoch=${turn.epoch}`)
+        return reply(403, { error: "ANTIGRAVITY_TURN_INACTIVE" });
+      turn.hookDenied = true;
+      return reply(200, {});
+    }
     if (req.method === "GET" && req.url === "/catalog")
       return reply(200, {
         tools: [dispatch],
@@ -160,12 +209,12 @@ export class AntigravityStreamWorker {
       );
       if (!spec) return reply(403, { error: "ANTIGRAVITY_TURN_INACTIVE" });
       const pending = Promise.resolve().then(async () => {
-        if (!this.live(turn)) throw Error("ANTIGRAVITY_TURN_INACTIVE");
+        if (!this.active(turn)) throw Error("ANTIGRAVITY_TURN_INACTIVE");
         const result = await turn.params.callTool(
           envelope.name,
           envelope.arguments,
         );
-        if (!this.live(turn)) throw Error("ANTIGRAVITY_TURN_INACTIVE");
+        if (!this.active(turn)) throw Error("ANTIGRAVITY_TURN_INACTIVE");
         return turn.media.fromTool(mcpResult(result), turn.params.signal);
       });
       turn.pending.add(pending);
@@ -219,6 +268,10 @@ export class AntigravityStreamWorker {
       contextTokens: /** @type {number | null} */ (null),
       bytes: 0,
       terminal: null,
+      settled: false,
+      failed: false,
+      resourceWarning: false,
+      hookDenied: false,
       media: new AntigravityMedia(this.mediaRoot),
       pending: new Set(),
       inputSubmitted: false,
@@ -233,6 +286,11 @@ export class AntigravityStreamWorker {
     void result.catch(() => {});
     this.turn = turn;
     const abort = () => {
+      this.report(turn, {
+        origin: "finalization",
+        backendOutcome: "cancelled",
+      });
+      turn.failed = true;
       turn.live = false;
       turn.reject(Error("ABORTED"));
       void this.close().catch(() => {});
@@ -269,20 +327,36 @@ export class AntigravityStreamWorker {
         this.child.stderr?.on("data", (chunk) => {
           this.diagnostic = (this.diagnostic + chunk).slice(-65536);
         });
-        this.child.once("error", () =>
-          this.fail(Error("ANTIGRAVITY_NOT_FOUND")),
-        );
-        this.child.once("close", (code) => {
-          const current = this.turn;
-          if (current && !current.terminal)
-            this.fail(antigravityFailure(this.diagnostic));
-          else if (current && code !== 0)
-            this.fail(antigravityFailure(this.diagnostic));
-          this.closed = true;
-          void this.close().catch(() => {});
+        this.child.once("error", () => {
+          if (this.turn?.terminal)
+            this.resourceFailure({
+              origin: "process-exit",
+              workerOutcome: "exit-warning",
+            });
+          else {
+            if (this.turn)
+              this.report(this.turn, {
+                origin: "process-exit",
+                trustedTerminal: false,
+                workerOutcome: "exit-warning",
+              });
+            this.fail(Error("ANTIGRAVITY_NOT_FOUND"));
+          }
         });
-        this.child.stdin?.on("error", () =>
-          this.fail(antigravityFailure(this.diagnostic)),
+        this.child.once("close", (code, signal) =>
+          this.resourceFailure({
+            origin: "process-exit",
+            exitCode: code,
+            signal,
+            workerOutcome: code === 0 && !signal ? "recycled" : "exit-warning",
+          }),
+        );
+        this.child.stdin?.on("error", (error) =>
+          this.resourceFailure({
+            origin: "stdin",
+            ioCode: /** @type {NodeJS.ErrnoException} */ (error).code,
+            workerOutcome: "exit-warning",
+          }),
         );
       }
       this.timing(turn, "prepared");
@@ -301,9 +375,21 @@ export class AntigravityStreamWorker {
     } finally {
       turn.live = false;
       params.signal.removeEventListener("abort", abort);
-      turn.media.close();
+      try {
+        turn.media.close();
+      } catch {
+        // Finalization must release turn ownership even when Windows locks media.
+        console.warn("Antigravity turn media cleanup failed");
+      }
       this.lastUsed = Date.now();
       if (this.turn === turn) this.turn = null;
+      if (this.closed) {
+        try {
+          await this.close();
+        } catch {
+          console.warn("Antigravity worker cleanup failed");
+        }
+      }
       this.timing(turn, "complete");
     }
   }
@@ -329,7 +415,9 @@ export class AntigravityStreamWorker {
         return this.fail(Error("ANTIGRAVITY_PROTOCOL_ERROR"));
       }
     }
-    if (turn?.terminal && this.buffer.trim())
+    // An idle worker has no input that could own a partial trailing frame.
+    // Recycle it now so stale bytes cannot fail the next turn's preparation.
+    if ((!turn || turn.terminal) && this.buffer.trim())
       this.fail(Error("ANTIGRAVITY_PROTOCOL_ERROR"));
   }
   /** @param {any} event */
@@ -391,6 +479,11 @@ export class AntigravityStreamWorker {
       turn.terminal = event.result;
       turn.live = false;
       this.timing(turn, "terminal");
+      this.report(turn, {
+        origin: "terminal",
+        phase: "terminal-observed",
+        terminalStatus: event.result.status,
+      });
       // Parse the complete output chunk first, so duplicate terminal frames fail.
       setImmediate(() => {
         void this.finish(turn);
@@ -401,11 +494,20 @@ export class AntigravityStreamWorker {
   async finish(turn) {
     try {
       await Promise.allSettled([...turn.pending]);
-      if (this.turn !== turn || this.closed || turn.params.signal.aborted)
+      if (
+        this.turn !== turn ||
+        turn.failed ||
+        turn.settled ||
+        turn.params.signal.aborted
+      )
         return;
       if (turn.terminal.status !== "SUCCESS")
         return this.fail(
-          antigravityFailure(this.diagnostic, turn.terminal.status),
+          antigravityFailure(
+            this.diagnostic + " " + (turn.terminal.error || ""),
+            turn.terminal.status,
+            turn.hookDenied,
+          ),
         );
       if (turn.contextTokens !== null)
         turn.params.onUsage?.({
@@ -414,6 +516,13 @@ export class AntigravityStreamWorker {
           basis:
             "Antigravity latest completed agent_response input_tokens + cache_read_tokens + output_tokens; excludes cumulative result and auxiliary steps",
         });
+      this.report(turn, {
+        origin: "finalization",
+        phase: "settled",
+        backendOutcome: "success",
+        ...(this.closed ? {} : { workerOutcome: "healthy" }),
+      });
+      turn.settled = true;
       turn.resolve();
     } catch {
       this.fail(Error("ANTIGRAVITY_PROTOCOL_ERROR"));
@@ -421,7 +530,18 @@ export class AntigravityStreamWorker {
   }
   /** @param {Error} error */
   fail(error) {
-    if (this.turn) {
+    if (this.turn && !this.turn.settled) {
+      this.report(this.turn, {
+        origin:
+          error.message === "ANTIGRAVITY_PROTOCOL_ERROR"
+            ? "protocol"
+            : "finalization",
+        backendOutcome: "failed",
+        ...(error.message === "ANTIGRAVITY_PROTOCOL_ERROR"
+          ? { trustedTerminal: false }
+          : {}),
+      });
+      this.turn.failed = true;
       this.turn.live = false;
       this.turn.reject(error);
     }
@@ -439,7 +559,8 @@ export class AntigravityStreamWorker {
     if (this.closePromise) return this.closePromise;
     this.closed = true;
     if (this.idleTimer) clearTimeout(this.idleTimer);
-    if (this.turn) {
+    if (this.turn && !this.turn.settled) {
+      this.turn.failed = true;
       this.turn.live = false;
       this.turn.reject(Error("ABORTED"));
     }

@@ -165,9 +165,15 @@ export async function runWithRecovery(
   /** @type {RecoveryFailure | undefined} */
   let recovery;
   for (let attempt = 0; ; attempt++) {
+    // A continuation must not inherit late diagnostics from its predecessor.
+    let diagnosticLease = true;
     try {
       return await backend.run({
         ...params,
+        onDiagnostic: params.onDiagnostic
+          ? (event) =>
+              diagnosticLease ? params.onDiagnostic?.(event, attempt) : false
+          : undefined,
         session,
         recovery,
         ...(recovery
@@ -185,6 +191,7 @@ export async function runWithRecovery(
         },
       });
     } catch (error) {
+      diagnosticLease = false;
       onFailure?.(error, attempt);
       if (
         params.signal.aborted ||
@@ -197,6 +204,8 @@ export async function runWithRecovery(
         throw error;
       recovery = error;
       onRecovery?.(error, attempt + 1);
+    } finally {
+      diagnosticLease = false;
     }
   }
 }

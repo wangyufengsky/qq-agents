@@ -30,6 +30,18 @@ function app(m, conversation, s, value) {
     payload: { app: { ok: true, origin: "app-browser", ...value } },
   });
 }
+function deliveryEvent(m, dedupe, conversation, s, kind, status, payload = {}) {
+  return m.append({
+    dedupe,
+    conversation,
+    kind,
+    status,
+    direction: kind === "message.sent" ? "out" : "internal",
+    observedAt: at(s),
+    body: kind === "message.sent" ? "已确认的消息" : "",
+    payload,
+  });
+}
 function seed(m) {
   turn(m, "free", "@subject", 0, {
     toolCalls: [
@@ -149,6 +161,116 @@ test("filters and pagination skip internal learner turns", (t) => {
     ["c4", "c3", "c2", "c1", "c0", "chat", "free"],
   );
   assert.equal(second.nextBefore, null);
+});
+
+test("activity separates model, process, session and confirmed delivery evidence", (t) => {
+  const { store } = fixture(t);
+  const m = store.bind("agent-0");
+  turn(m, "failed-after-send", "group:20000", 100, {
+    status: "failed",
+    modelOutcome: "failed",
+    backendOutcome: "failed",
+    workerOutcome: "exit-warning",
+    sessionDisposition: "retiring",
+    backendSession: { backend: "antigravity", id: "private-session-id" },
+    backendDiagnostics: [
+      {
+        origin: "process-exit",
+        phase: "settling",
+        attempt: 0,
+        exitCode: 7,
+        workerOutcome: "exit-warning",
+        summary: "private diagnostic summary",
+        providerText: "private provider response",
+      },
+    ],
+  });
+  deliveryEvent(
+    m,
+    "confirmed-after-failure",
+    "group:20000",
+    120,
+    "message.sent",
+    "confirmed",
+  );
+  deliveryEvent(
+    m,
+    "unknown-after-failure",
+    "group:20000",
+    130,
+    "message.send-result",
+    "unknown",
+    {
+      reason: "PRIVATE_GATEWAY_DETAIL",
+    },
+  );
+  turn(m, "successful-no-send", "private:30000", 300, {
+    status: "completed-no-send",
+    backendOutcome: "success",
+    workerOutcome: "recycled",
+    sessionDisposition: "retired",
+  });
+  turn(m, "legacy-failed", "group:20001", 500, {
+    status: "failed",
+    modelOutcome: "failed",
+  });
+
+  const items = new Map(
+    activityPage(store, "agent-0", { now: T0 + 3600000 }).items.map((item) => [
+      item.turnId,
+      item,
+    ]),
+  );
+  const failed = items.get("failed-after-send");
+  assert.equal(failed.backendOutcome, "failed");
+  assert.equal(failed.workerOutcome, "exit-warning");
+  assert.equal(failed.sessionDisposition, "retiring");
+  assert.equal(failed.sent.length, 1);
+  assert.equal(failed.failedSends, 0);
+  assert.equal(failed.unknownSends, 1);
+  assert.deepEqual(failed.backendDiagnostics, [
+    {
+      origin: "process-exit",
+      phase: "settling",
+      attempt: 0,
+      exitCode: 7,
+      workerOutcome: "exit-warning",
+      summary: "进程退出 · 进程退出告警 · 进程退出码 7",
+    },
+  ]);
+  assert.equal(
+    m.identity.get("model_turns", "failed-after-send").backendSession.id,
+    "private-session-id",
+  );
+  assert(!JSON.stringify(failed).includes("private-session-id"));
+  assert(!JSON.stringify(failed).includes("PRIVATE_GATEWAY_DETAIL"));
+  assert(!JSON.stringify(failed).includes("private diagnostic summary"));
+  assert(!JSON.stringify(failed).includes("private provider response"));
+
+  const success = items.get("successful-no-send");
+  assert.equal(success.backendOutcome, "success");
+  assert.equal(success.workerOutcome, "recycled");
+  assert.equal(success.sessionDisposition, "retired");
+  assert.deepEqual(success.sent, []);
+  assert.deepEqual(success.backendDiagnostics, []);
+
+  const legacy = items.get("legacy-failed");
+  assert.equal(legacy.backendOutcome, "failed");
+  assert.deepEqual(legacy.backendDiagnostics, []);
+  const legacySummary = homeSummary(store, "agent-0", {
+    now: T0 + 3600000,
+  }).latest;
+  assert.equal(legacySummary.summary, "模型回合失败");
+  assert.equal(legacySummary.backendOutcome, "failed");
+  assert.equal(legacySummary.backendDiagnostics, undefined);
+
+  turn(m, "failed-after-model-success", "group:20002", 600, {
+    status: "failed",
+    backendOutcome: "success",
+  });
+  const latest = homeSummary(store, "agent-0", { now: T0 + 3600000 }).latest;
+  assert.equal(latest.summary, "模型成功 · 回合失败");
+  assert.equal(latest.backendOutcome, "success");
 });
 
 test("the activity API validates the filter", async (t) => {

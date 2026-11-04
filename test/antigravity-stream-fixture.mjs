@@ -262,6 +262,7 @@ async function handleInput(line) {
   }
 
   const terminal = result(mode === "failure" ? "ERROR" : "SUCCESS");
+  if (mode === "wrong-result") terminal.result.conversation_id = randomUUID();
   event(terminal);
   record({
     type: "terminal",

@@ -4,6 +4,8 @@ import { CodexBackend } from "../src/backends/codex.mjs";
 import assert from "node:assert/strict";
 import { config, fixture } from "./helpers.mjs";
 import { DshBackend } from "../src/backends/dsh.mjs";
+import { BackendTurnFailure } from "../src/backends/turn-failure.mjs";
+import { retireSession } from "../src/core/session-records.mjs";
 
 const chat = "group:20000";
 const malformed = {
@@ -235,6 +237,157 @@ function setup(t, type, options = {}) {
     attempts: () => (client.prompts || client.starts).length,
   };
 }
+
+test("diagnostics follow their running turn across recovery and classify worker retirement", async (t) => {
+  const f = fixture(t, { cfg: config(1) }),
+    memory = f.store.bind("agent-0"),
+    agent = f.runtime.config.agents[0],
+    backendType = f.runtime.config.backends.find(
+      (backend) => backend.id === agent.backendId,
+    ).type;
+  let calls = 0;
+  const callbacks = [];
+  f.runtime.backends.set("agent-0", {
+    async run(params) {
+      calls++;
+      callbacks.push(params.onDiagnostic);
+      if (calls === 1) {
+        params.saveSession({ backend: backendType, id: "diagnostic-session" });
+        params.onDiagnostic({
+          origin: "protocol",
+          phase: "running",
+          backendOutcome: "failed",
+          workerOutcome: "healthy",
+          sessionDisposition: "retained",
+          privateText: "must-not-persist",
+        });
+        const error = new BackendTurnFailure(
+          backendType,
+          "responseStreamDisconnected",
+          "response-stream",
+          "native-turn",
+          true,
+        );
+        error.sessionReusable = true;
+        throw error;
+      }
+      assert.equal(
+        callbacks[0]({
+          origin: "protocol",
+          phase: "settled",
+          backendOutcome: "failed",
+          sessionDisposition: "retained",
+        }),
+        false,
+      );
+      params.onDiagnostic({
+        origin: "finalization",
+        phase: "settled",
+        terminalStatus: "SUCCESS",
+        trustedTerminal: true,
+        backendOutcome: "success",
+        workerOutcome: "exit-warning",
+        sessionDisposition: "retiring",
+      });
+      params.saveSession(null);
+      params.onDiagnostic({
+        origin: "finalization",
+        phase: "settled",
+        sessionDisposition: "retired",
+      });
+    },
+  });
+
+  assert.equal(
+    (await f.runtime.wake("agent-0", chat)).status,
+    "completed-no-send",
+  );
+  const firstTurn = memory.identity.list("model_turns")[0];
+  assert.equal(calls, 2);
+  assert.equal(firstTurn.backendDiagnostics.length, 3);
+  assert.deepEqual(
+    firstTurn.backendDiagnostics.map(({ attempt }) => attempt),
+    [0, 1, 1],
+  );
+  assert.deepEqual(
+    firstTurn.backendDiagnostics.map(({ origin, phase }) => ({
+      origin,
+      phase,
+    })),
+    [
+      { origin: "protocol", phase: "running" },
+      { origin: "finalization", phase: "settled" },
+      { origin: "finalization", phase: "settled" },
+    ],
+  );
+  assert.equal(firstTurn.backendOutcome, "success");
+  assert.equal(firstTurn.workerOutcome, "exit-warning");
+  assert.equal(firstTurn.sessionDisposition, "retired");
+  assert.equal(firstTurn.terminalStatus, undefined);
+  assert.equal(
+    memory.identity.list("session_history")[0].reason,
+    "backend-worker-unavailable",
+  );
+  assert.equal(
+    memory.identity.list("session_history")[0].details.source,
+    "backend",
+  );
+  assert.equal(memory.state(chat).session, null);
+  assert.equal(
+    callbacks[0]({ origin: "protocol", phase: "running", ioCode: "EPIPE" }),
+    false,
+  );
+  assert.equal(
+    memory.identity.get("model_turns", firstTurn.id).backendDiagnostics.length,
+    3,
+  );
+});
+
+test("failed worker retirement remains visible when saveSession throws", async (t) => {
+  const f = fixture(t, { cfg: config(1) }),
+    memory = f.store.bind("agent-0"),
+    agent = f.runtime.config.agents[0],
+    backendType = f.runtime.config.backends.find(
+      (backend) => backend.id === agent.backendId,
+    ).type;
+  memory.db.exec(
+    "CREATE TRIGGER reject_worker_retirement BEFORE INSERT ON session_history BEGIN SELECT RAISE(ABORT,'retirement write failed'); END",
+  );
+  f.runtime.backends.set("agent-0", {
+    async run(params) {
+      params.saveSession({ backend: backendType, id: "still-live-session" });
+      params.onDiagnostic({
+        origin: "finalization",
+        phase: "settled",
+        terminalStatus: "SUCCESS",
+        backendOutcome: "success",
+        sessionDisposition: "retiring",
+      });
+      params.saveSession(null);
+    },
+  });
+
+  await assert.rejects(
+    f.runtime.wake("agent-0", chat),
+    /retirement write failed/,
+  );
+  assert.equal(memory.state(chat).session.id, "still-live-session");
+  assert.equal(memory.identity.list("session_history").length, 0);
+  const turn = memory.identity.list("model_turns")[0];
+  assert.equal(turn.backendOutcome, "success");
+  assert.equal(turn.backendDiagnostics.at(-1).terminalStatus, "SUCCESS");
+  assert.equal(turn.sessionDisposition, "retiring");
+  memory.db.exec("DROP TRIGGER reject_worker_retirement");
+  retireSession(memory, chat, "lifecycle", Date.now(), {
+    turnId: turn.id,
+    backendId: agent.backendId,
+  });
+  assert.equal(
+    memory.identity.get("model_turns", turn.id).sessionDisposition,
+    "retired",
+  );
+});
+
 for (const type of ["dsh", "codex"]) {
   test(`${type} resumes once without recreating session or capability`, async (t) => {
     let f;

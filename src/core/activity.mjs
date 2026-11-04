@@ -1,6 +1,8 @@
 // A role's activity timeline: one entry per model turn (a chat reply or a
 // free-time turn), with what that turn actually did attached. Records are
 // linked by conversation and the turn's time window; nothing is stored here.
+import { sanitizeBackendDiagnostic } from "./session-records.mjs";
+
 const SUBJECT = "@subject";
 const GRACE_MS = 5000;
 const EVENT_KINDS = [
@@ -12,6 +14,28 @@ const EVENT_KINDS = [
   "external.read",
   "github.read",
 ];
+const DIAGNOSTIC_ORIGINS = {
+  finalization: "回合收尾",
+  protocol: "协议检查",
+  "process-exit": "进程退出",
+  stdin: "进程输入通道",
+  terminal: "模型结果",
+};
+const BACKEND_OUTCOME_SUMMARIES = {
+  success: "模型成功",
+  failed: "模型回合失败",
+  cancelled: "模型已取消",
+};
+const WORKER_OUTCOME_SUMMARIES = {
+  healthy: "进程正常",
+  recycled: "进程已回收",
+  "exit-warning": "进程退出告警",
+};
+const SESSION_DISPOSITION_SUMMARIES = {
+  retained: "会话保留",
+  retiring: "会话退休未完成",
+  retired: "会话已退休",
+};
 const iso = (ms) => new Date(ms).toISOString();
 const clip = (s, n) => {
   const t = String(s || "")
@@ -26,6 +50,60 @@ const parse = (s) => {
     return {};
   }
 };
+function diagnosticSummary(diagnostic) {
+  const parts = [];
+  if (Object.hasOwn(DIAGNOSTIC_ORIGINS, diagnostic.origin))
+    parts.push(DIAGNOSTIC_ORIGINS[diagnostic.origin]);
+  if (Object.hasOwn(BACKEND_OUTCOME_SUMMARIES, diagnostic.backendOutcome))
+    parts.push(BACKEND_OUTCOME_SUMMARIES[diagnostic.backendOutcome]);
+  if (Object.hasOwn(WORKER_OUTCOME_SUMMARIES, diagnostic.workerOutcome))
+    parts.push(WORKER_OUTCOME_SUMMARIES[diagnostic.workerOutcome]);
+  if (
+    Object.hasOwn(SESSION_DISPOSITION_SUMMARIES, diagnostic.sessionDisposition)
+  )
+    parts.push(SESSION_DISPOSITION_SUMMARIES[diagnostic.sessionDisposition]);
+  if (diagnostic.trustedTerminal === true) parts.push("模型终态已确认");
+  else if (diagnostic.trustedTerminal === false) parts.push("模型终态未确认");
+  if (diagnostic.wrapperError === true) parts.push("启动器告警");
+  if (diagnostic.ioCode) parts.push("输入通道异常");
+  if (Number.isSafeInteger(diagnostic.exitCode))
+    parts.push(`进程退出码 ${diagnostic.exitCode}`);
+  return parts.join(" · ") || "后端诊断记录";
+}
+function safeBackendDiagnostic(value) {
+  const result = sanitizeBackendDiagnostic(value);
+  return result ? { ...result, summary: diagnosticSummary(result) } : null;
+}
+function safeTurnOutcomes(turn) {
+  const safe = sanitizeBackendDiagnostic(turn) || {};
+  const legacyOutcome = sanitizeBackendDiagnostic({
+    backendOutcome: turn.modelOutcome,
+  })?.backendOutcome;
+  const backendOutcome = safe.backendOutcome || legacyOutcome;
+  return {
+    ...(backendOutcome ? { backendOutcome } : {}),
+    ...(safe.workerOutcome ? { workerOutcome: safe.workerOutcome } : {}),
+    ...(safe.sessionDisposition
+      ? { sessionDisposition: safe.sessionDisposition }
+      : {}),
+    backendDiagnostics: Array.isArray(turn.backendDiagnostics)
+      ? turn.backendDiagnostics
+          .slice(-16)
+          .map(safeBackendDiagnostic)
+          .filter(Boolean)
+      : [],
+  };
+}
+function outcomeSummary(outcomes, status) {
+  const parts = [
+    BACKEND_OUTCOME_SUMMARIES[outcomes.backendOutcome],
+    WORKER_OUTCOME_SUMMARIES[outcomes.workerOutcome],
+    SESSION_DISPOSITION_SUMMARIES[outcomes.sessionDisposition],
+  ].filter(Boolean);
+  if (status === "failed" && outcomes.backendOutcome !== "failed")
+    parts.push("回合失败");
+  return parts.join(" · ");
+}
 const isTimelineConversation = (c) =>
   c === SUBJECT || c.startsWith("group:") || c.startsWith("private:");
 
@@ -243,9 +321,10 @@ export function activityPage(
         };
       });
     const failedSends = mine.filter(
-      (e) =>
-        e.kind === "message.send-result" &&
-        ["failed", "unknown"].includes(e.status),
+      (e) => e.kind === "message.send-result" && e.status === "failed",
+    ).length;
+    const unknownSends = mine.filter(
+      (e) => e.kind === "message.send-result" && e.status === "unknown",
     ).length;
     const writes = diaries
       .filter((d) => within(t, d.updatedAt))
@@ -295,6 +374,7 @@ export function activityPage(
     ).length;
     const calls = Array.isArray(t.toolCalls) ? t.toolCalls : null;
     const seen = refs.seen(t);
+    const outcomes = safeTurnOutcomes(t);
     // Where this turn's messages sit in the chat: its first sent message (an
     // action has no place on the message timeline), else what it last heard.
     const contextId =
@@ -316,6 +396,7 @@ export function activityPage(
       startedAt: t.startedAt,
       endedAt: t.endedAt || null,
       status: t.status,
+      ...outcomes,
       tools: calls && {
         total: calls.length,
         failed: calls.filter((c) => !c.ok).length,
@@ -324,6 +405,7 @@ export function activityPage(
       log: log || null,
       sent,
       failedSends,
+      unknownSends,
       browsing: browsing(mine.filter((e) => e.kind === "app.observation")),
       externalReads: reads,
       diaries: writes,
@@ -419,6 +501,18 @@ export function homeSummary(memory, agentId, { now = Date.now() } = {}) {
           conversation: latest.conversation,
           startedAt: latest.startedAt,
           did: latest.log?.did || null,
+          ...(latest.backendOutcome
+            ? { backendOutcome: latest.backendOutcome }
+            : {}),
+          ...(latest.workerOutcome
+            ? { workerOutcome: latest.workerOutcome }
+            : {}),
+          ...(latest.sessionDisposition
+            ? { sessionDisposition: latest.sessionDisposition }
+            : {}),
+          ...(outcomeSummary(latest, latest.status)
+            ? { summary: outcomeSummary(latest, latest.status) }
+            : {}),
           text:
             latest.log?.summary ||
             latest.sent[0]?.text ||

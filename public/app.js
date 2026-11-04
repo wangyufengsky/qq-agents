@@ -978,6 +978,13 @@ const backendErrors = {
     "Antigravity 需要 Git 来建立独立工作区，请先安装 Git。",
   ANTIGRAVITY_WORKSPACE_UNSAFE:
     "Antigravity 工作区隔离检查失败，已停止加载上级目录配置。",
+  ANTIGRAVITY_AUTHENTICATION:
+    "Antigravity 登录失效，请完成官方登录后再恢复连接。",
+  ANTIGRAVITY_QUOTA: "Antigravity 额度耗尽或请求受限，本轮不会自动重试。",
+  ANTIGRAVITY_CONTEXT_LIMIT:
+    "Antigravity 模型上下文达到上限，旧会话已退休，本轮不会自动重试。",
+  ANTIGRAVITY_PERMISSION:
+    "Antigravity 工具或文件读取被拒绝，请按当前回合工具目录重新读取资料。",
   DSH_NOT_FOUND: "未找到 DSH，请先打开桌面应用，再恢复连接。",
   DSH_INSTANCE_UNAVAILABLE:
     "绑定的 DSH 实例尚未就绪。请等待启动完成，或选择其他实例。",
