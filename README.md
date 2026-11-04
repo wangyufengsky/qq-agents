@@ -2,7 +2,11 @@
 
 [English](README.en.md) | 中文
 
-QQ Agents 用一个本机管理台同时管理多个 AI 角色：每个角色绑定一个 QQ 账号（通过 NapCat/OneBot 接入），由 DSH、Codex、Antigravity CLI 或任意 OpenAI 兼容 API 作为 AI 后端生成回复，并拥有各自独立的人格、记忆、日记和权限。所有新配置默认处于隔离模式并全部暂停，确认无误后再逐步放开。
+**自托管 QQ AI 机器人管理台：多个独立角色，长期记忆，按角色控制权限。**
+
+QQ Agents 通过 NapCat / OneBot 为每个 AI 角色连接独立 QQ 账号，在一个本机网页中管理人格、记忆、日记和群聊/私聊权限。支持 DSH、Codex、Antigravity CLI 和 OpenAI 兼容 API，并可接入外部 MCP 工具。新配置默认隔离并全部暂停，确认配置后再逐步上线。
+
+[快速开始](#快速开始) · [界面截图](#界面一览) · [选择 AI 后端](#ai-后端怎么选) · [让 AI 帮你安装](#让-ai-帮你装)
 
 ![管理台首页：每个角色一张卡片，显示能否发言、最近一次回复和 24 小时内的活动](docs/images/console-home.png)
 
@@ -42,33 +46,52 @@ QQ Agents 是一个**可以直接部署的自托管应用**：在自己的机器
 
 ## 界面一览
 
-管理台是一个本机网页，所有配置和日常运维都在这里完成。下面的截图来自演示环境，角色、QQ 号、群号和聊天内容都是虚构的。
+管理台是本机网页，界面使用中文。以下为已有演示环境截图，角色、QQ 号、群号和聊天内容均为虚构示例，不代表真实账号或在线状态。点击展开可查看大图，点击图片可打开原图。
 
-<table>
-  <tr>
-    <td width="50%"><img src="docs/images/console-activity.png" alt="角色动态"></td>
-    <td width="50%"><img src="docs/images/console-memory.png" alt="记忆与日记"></td>
-  </tr>
-  <tr>
-    <td><b>动态</b>：每次聊天回复或空闲时间是一条记录，写清楚这一回合读了什么、说了什么、用了哪些工具；“回复检查”时没有开口也会如实记下。</td>
-    <td><b>记忆与日记</b>：消息按实际发生的时间存进角色自己的经历。搜索命中一条时，会连同前后几条组成场景片段一起给出，并标明谁说了什么。</td>
-  </tr>
-  <tr>
-    <td><img src="docs/images/console-mind.png" alt="Self"></td>
-    <td><img src="docs/images/console-links.png" alt="QQ 账号与 AI 后端"></td>
-  </tr>
-  <tr>
-    <td><b>Self</b>：名字和外形是固定的身份锚点；性格与相处方式写在可以成长的 self 里，按版本保存，管理员可以查看和恢复。</td>
-    <td><b>连接</b>：每个角色绑定自己的 QQ 账号（连接前核对登录的 QQ 号）；DSH、Codex、Antigravity CLI、OpenAI 兼容 API 等后端各自检测、各自恢复。</td>
-  </tr>
-  <tr>
-    <td><img src="docs/images/console-role-settings.png" alt="角色设置"></td>
-    <td>
-      <b>角色设置</b>：每个角色单独设置人格、白名单、唤醒方式和参与率，以及文件、浏览、语音等权限。<br><br>
-      顶部的<b>全部暂停</b>随时可以让所有角色停下来；每次启动后也总是先处于全局暂停，确认无误再放开。
-    </td>
-  </tr>
-</table>
+<details>
+<summary><strong>查看角色动态</strong></summary>
+
+检查每次回合读了什么、说了什么、使用了哪些工具，也记录保持沉默的回复检查。
+
+[![查看角色动态](docs/images/console-activity.png)](docs/images/console-activity.png)
+
+</details>
+
+<details>
+<summary><strong>查看记忆与日记</strong></summary>
+
+按角色保存经历，搜索时保留消息前后文和发言者。
+
+[![查看记忆与日记](docs/images/console-memory.png)](docs/images/console-memory.png)
+
+</details>
+
+<details>
+<summary><strong>查看 Self</strong></summary>
+
+检查版本化的角色性格与相处方式，并在需要时恢复。
+
+[![查看 Self](docs/images/console-mind.png)](docs/images/console-mind.png)
+
+</details>
+
+<details>
+<summary><strong>配置 QQ 账号与 AI 后端</strong></summary>
+
+分别管理 NapCat/OneBot 连接和模型后端，接入前核对账号。
+
+[![配置 QQ 账号与 AI 后端](docs/images/console-links.png)](docs/images/console-links.png)
+
+</details>
+
+<details>
+<summary><strong>设置角色权限</strong></summary>
+
+逐个设置人格、白名单、唤醒方式、参与率和文件、浏览、语音权限。
+
+[![设置角色权限](docs/images/console-role-settings.png)](docs/images/console-role-settings.png)
+
+</details>
 
 ## AI 后端怎么选
 
