@@ -54,7 +54,7 @@ const browserScripts = {
     "tools",
   ],
   "activity-ui.js": ["activityAgentId", "renderActivity"],
-  "board-ui.js": ["renderBoard"],
+  "board-ui.js": ["renderBoard", "createBoardView"],
   "agent-form.js": ["agentForm"],
   "apps-ui.js": ["appAgentId", "renderApps"],
   "files-ui.js": ["fileAgentId", "renderFilePermissions"],
@@ -127,7 +127,7 @@ export default [
     },
   },
   {
-    files: ["public/home-preview/*.mjs"],
+    files: ["public/home-preview/*.mjs", "public/home-space/*.mjs"],
     languageOptions: { sourceType: "module", globals: globals.browser },
   },
   ...Object.keys(browserScripts).map((file) => ({

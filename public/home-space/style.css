@@ -1,0 +1,154 @@
+:root {
+  --r-sm: 6px;
+  --r-md: 10px;
+  --sub: var(--muted);
+  --fill-1: #fffaf0;
+  --fill-2: #f2e8d5;
+  --fill-3: #e9dcc4;
+  --line-2: var(--line);
+  --ink-strong: var(--ink);
+  --danger: #a33b31;
+  --float: var(--paper);
+}
+#gate {
+  padding: 32px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--paper);
+}
+#gate a {
+  text-decoration: underline;
+  margin-right: 20px;
+}
+#editor {
+  padding: 22px;
+  display: block;
+}
+#editor summary {
+  cursor: pointer;
+  font-weight: 600;
+  min-height: 44px;
+}
+#editor > label {
+  display: inline-grid;
+  gap: 8px;
+  margin: 12px 16px 18px 0;
+}
+#object-editor {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+#object-editor label {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+#object-editor .check {
+  display: flex;
+}
+#reader {
+  width: min(1040px, calc(100% - 24px));
+  max-width: 1040px;
+}
+#reader textarea {
+  width: 100%;
+  font: inherit;
+}
+#reader input,
+#reader select {
+  max-width: 100%;
+  min-height: 44px;
+}
+#reader .board-note {
+  position: relative;
+  inset: auto;
+  transform: none;
+  width: auto;
+  max-width: none;
+  text-align: left;
+}
+#reader .board-note strong {
+  font-size: inherit;
+}
+#reader .board-wall {
+  min-width: 0;
+}
+#reader .board-filters {
+  flex-wrap: wrap;
+}
+#reader .board-filters > * {
+  max-width: 100%;
+  min-width: 0;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.hint {
+  color: var(--muted);
+  font-size: 13px;
+}
+.card {
+  padding: 16px;
+}
+.card-actions {
+  display: flex;
+  gap: 10px;
+}
+.board-spacer {
+  flex: 1;
+}
+.pill {
+  border: 1px solid var(--line);
+  padding: 5px 9px;
+  border-radius: 20px;
+  font-size: 12px;
+}
+#reader .board-head {
+  position: static;
+  background: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+#reader [data-board-count] {
+  font-size: 12px;
+}
+#layout-status {
+  text-align: center;
+  color: var(--muted);
+}
+.door-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 640px) {
+  .masthead {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .masthead .demo-badge {
+    font-size: 10px;
+  }
+  #object-editor {
+    grid-template-columns: 1fr 1fr;
+  }
+  .page-heading {
+    align-items: start;
+  }
+  #editor {
+    padding: 14px;
+  }
+  #reader {
+    padding: 16px;
+  }
+  #reader .board-thread-bar {
+    flex-wrap: wrap;
+  }
+}

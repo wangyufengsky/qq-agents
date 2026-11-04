@@ -3,6 +3,29 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import vm from "node:vm";
 
+// Probe lexical helpers inside one mount; browser acceptance exercises the public factory.
+function loadRenderer(sandbox) {
+  const source = fs.readFileSync(
+    new URL("../public/board-ui.js", import.meta.url),
+    "utf8",
+  );
+  const instrumented = source.replace(
+    "  return {\n    render: renderBoard,",
+    `
+  for (const key of ["boardThread", "boardShown", "boardMembers", "boardFilters"])
+    Object.defineProperty(globalThis, key, { get: () => eval(key), set: value => eval(key + " = value") });
+  globalThis.boardMentionsIn = boardMentionsIn;
+  globalThis.renderBoard = renderBoard;
+  return {
+    render: renderBoard,`,
+  );
+  vm.runInContext(instrumented, sandbox);
+  vm.runInContext(
+    'createBoardView({getRoot:()=>$("#content"),isActive:()=>tab==="board",api:(...args)=>globalThis.api(...args),esc,notice,action,fold,operate:()=>{}})',
+    sandbox,
+  );
+}
+
 // A thread with more comments than one API page (100).
 function workspace(total) {
   const requests = [];
@@ -49,10 +72,7 @@ function workspace(total) {
       };
     },
   });
-  vm.runInContext(
-    fs.readFileSync(new URL("../public/board-ui.js", import.meta.url), "utf8"),
-    sandbox,
-  );
+  loadRenderer(sandbox);
   return { sandbox, root, requests };
 }
 
@@ -158,10 +178,7 @@ test("the wall shows filters, pins and who was mentioned", async () => {
       };
     },
   });
-  vm.runInContext(
-    fs.readFileSync(new URL("../public/board-ui.js", import.meta.url), "utf8"),
-    sandbox,
-  );
+  loadRenderer(sandbox);
   await vm.runInContext(
     `boardFilters = { q: "公 约", author: "agent:fish", mention: "admin", sort: "newest", removed: true }; renderBoard()`,
     sandbox,

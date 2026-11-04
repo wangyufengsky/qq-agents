@@ -85,22 +85,60 @@ function parentOf(o, type) {
   );
 }
 
-export function createTemplate(type, count = 3, page = 1) {
+/** @param {string} type @param {number} count @param {number} page @param {string[]|null} residentIds @returns {import("./scene.mjs").Template} */
+export function createTemplate(type, count = 3, page = 1, residentIds = null) {
   if (
     !["living", "hall", "room"].includes(type) ||
     !Number.isInteger(count) ||
     count < 0 ||
-    count > 7 ||
+    count > 1000 ||
     !Number.isInteger(page) ||
     page < 1 ||
     page > Math.max(1, Math.ceil(count / 3))
   )
     throw Error("HOME_SCENE_INVALID");
   const template = layout(type, count, page);
+  if (residentIds) {
+    if (
+      residentIds.length !== count ||
+      new Set(residentIds).size !== count ||
+      residentIds.some((id) => !/^[A-Za-z0-9_.-]{1,64}$/.test(id))
+    )
+      throw Error("HOME_SCENE_INVALID");
+    const rename = (id) =>
+      id.replace(
+        /^(door|sign)-(\d+)$/,
+        (_, prefix, n) => `${prefix}-${residentIds[Number(n) - 1]}`,
+      );
+    template.objects = template.objects.map((o) => ({
+      ...o,
+      id: rename(o.id),
+    }));
+    template.hotspots = Object.fromEntries(
+      Object.entries(template.hotspots).map(([id, action]) => [
+        rename(id),
+        action,
+      ]),
+    );
+  }
+
   return {
     ...template,
     templateId: `paperbook-${type}-v1`,
     boardAssetId: "room-board",
+    allInstanceIds:
+      type === "hall"
+        ? [
+            "plant",
+            ...Array.from(
+              { length: Math.max(count, residentIds ? 0 : 7) },
+              (_, i) => [
+                `door-${residentIds?.[i] ?? i + 1}`,
+                `sign-${residentIds?.[i] ?? i + 1}`,
+              ],
+            ).flat(),
+          ]
+        : template.objects.map((o) => o.id),
     objects: template.objects.map((o) => ({
       ...o,
       anchorId: o.id,

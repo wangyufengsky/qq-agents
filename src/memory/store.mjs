@@ -139,6 +139,9 @@ export class MemoryStore {
       CREATE TABLE IF NOT EXISTS board_entries(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE NOT NULL,post_id TEXT,reply_to TEXT,author_kind TEXT NOT NULL,author_id TEXT NOT NULL,request_id TEXT,title TEXT NOT NULL,body TEXT NOT NULL,day TEXT NOT NULL,created_at TEXT NOT NULL,removed_at TEXT,UNIQUE(author_kind,author_id,request_id));
       CREATE INDEX IF NOT EXISTS board_threads ON board_entries(post_id,seq);
       CREATE INDEX IF NOT EXISTS board_quota ON board_entries(author_kind,author_id,day);
+      CREATE TABLE IF NOT EXISTS home_identities(agent_id TEXT PRIMARY KEY,generation TEXT NOT NULL,active INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS home_layouts(scene_key TEXT NOT NULL,revision INTEGER NOT NULL,layout TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(scene_key,revision));
+      CREATE TABLE IF NOT EXISTS home_operations(scene_key TEXT NOT NULL,request_id TEXT NOT NULL,digest TEXT NOT NULL,result TEXT NOT NULL,PRIMARY KEY(scene_key,request_id));
       CREATE TABLE IF NOT EXISTS board_reads(agent_id TEXT PRIMARY KEY,seq INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS board_mentions(entry_seq INTEGER NOT NULL,target_kind TEXT NOT NULL,target_id TEXT NOT NULL,PRIMARY KEY(entry_seq,target_kind,target_id));
       CREATE INDEX IF NOT EXISTS board_mention_targets ON board_mentions(target_kind,target_id,entry_seq);

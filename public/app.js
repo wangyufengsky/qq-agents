@@ -18,7 +18,7 @@ let token = sessionStorage.getItem("qq-unified-token") || "",
   tools = [],
   agentDefaults = {},
   status,
-  tab = "overview",
+  tab = globalThis.location?.search === "?view=board" ? "board" : "overview",
   editing,
   errorFilter = "",
   globalPausePending = false;

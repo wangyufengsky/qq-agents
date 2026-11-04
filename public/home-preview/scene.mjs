@@ -3,7 +3,7 @@ import { catalogVersion } from "./catalog.mjs";
 
 /** @typedef {{x:number,y:number,w:number}} Anchor */
 /** @typedef {{id:string,asset:string,anchorId:string,parentId:string|null,base:Anchor,phone:Anchor|null,z:number,zone:string,variants:string[]}} Instance */
-/** @typedef {{templateId:string,boardAssetId:string,objects:Instance[],hotspots:Record<string,string>}} Template */
+/** @typedef {{templateId:string,boardAssetId:string,objects:Instance[],allInstanceIds?:string[],hotspots:Record<string,string>}} Template */
 /** @typedef {{asset?:string,assetVersion?:number,dx?:number,dy?:number,scale?:number,z?:number,hidden?:boolean,flip?:boolean}} Override */
 /** @typedef {{schemaVersion:number,kind:string,sceneId:string,templateId:string,assetCatalogVersion:string,palette:string,objects:Record<string,Override>}} Scene */
 /** @typedef {Record<string,{assetVersion:number}>} Catalog */
@@ -59,9 +59,11 @@ export function validateScene(value, template, catalog) {
       "objects",
     ]) ||
     value.schemaVersion !== 1 ||
-    value.kind !== "scene-preview-only" ||
+    !["scene-preview-only", "scene-layout"].includes(String(value.kind)) ||
     typeof value.sceneId !== "string" ||
-    !/^(living|hall|room-[1-8])$/.test(value.sceneId) ||
+    !(value.kind === "scene-layout"
+      ? /^(living|hall|room)$/.test(value.sceneId)
+      : /^(living|hall|room-[1-8])$/.test(value.sceneId)) ||
     value.templateId !== template.templateId ||
     value.templateId !==
       `paperbook-${value.sceneId.startsWith("room-") ? "room" : value.sceneId}-v1` ||
@@ -73,7 +75,8 @@ export function validateScene(value, template, catalog) {
     return invalid();
   // Hall pages share one preference map, but unknown instances are never accepted.
   const validIds =
-    template.templateId === "paperbook-hall-v1"
+    template.allInstanceIds ||
+    (template.templateId === "paperbook-hall-v1"
       ? [
           "plant",
           ...Array.from({ length: 7 }, (_, i) => [
@@ -81,7 +84,7 @@ export function validateScene(value, template, catalog) {
             `sign-${i + 1}`,
           ]).flat(),
         ]
-      : template.objects.map((o) => o.id);
+      : template.objects.map((o) => o.id));
   for (const [id, p] of Object.entries(value.objects)) {
     if (
       !validIds.includes(id) ||
