@@ -1162,3 +1162,59 @@ test("a non-yielding model closes the window without inventing a partner respons
     1,
   );
 });
+
+test("terminal invitation processing exposes only safe receipts without Self or memory tools", async (t) => {
+  const f = setup(t),
+    r = f.runtime,
+    invitation = await pendingInvitation(f);
+  f.store.db
+    .prepare("UPDATE home_social_invitations SET status='declined' WHERE id=?")
+    .run(invitation.id);
+  const before = f.requests.length;
+  f.setScript(() => []);
+  await f.process("agent-1", { kind: "invitation", id: invitation.id });
+  await f.pump();
+  const input = f.requests[before].body;
+  assert.deepEqual(input.tools.map((x) => x.function.name).sort(), [
+    "home_social_capabilities",
+    "home_social_operation_read",
+    "home_visit_invitation_read",
+  ]);
+  assert.equal(
+    JSON.stringify(input.messages).includes(invitation.purpose),
+    false,
+  );
+  assert.match(input.messages[0].content, /Self固定版本：null/);
+  assert.equal(r.subjectExecution.busy("agent-1"), false);
+});
+
+test("current invitation state denies stale broad tool lists in actual dispatch", async (t) => {
+  const f = setup(t),
+    r = f.runtime,
+    invitation = await pendingInvitation(f);
+  const ctx = boundContext(f, "agent-1", {
+    kind: "invitation",
+    id: invitation.id,
+  });
+  ctx.allowedTools = [
+    ...r.socialRuntime.tools(ctx),
+    "diary_write",
+    "subject_log",
+  ];
+  assert.equal(ctx.allowedTools.includes("self_read"), true);
+  f.store.db
+    .prepare("UPDATE home_social_invitations SET status='cancelled' WHERE id=?")
+    .run(invitation.id);
+  ctx.socialBinding.readOnly = false;
+  for (const name of [
+    "self_read",
+    "person_notes",
+    "mood_read",
+    "diary_write",
+    "subject_log",
+    "home_visit_send",
+  ])
+    await assert.rejects(r.executeTool(ctx, name, {}), /TOOL_DISABLED/);
+  assert.equal(r.socialRuntime.tools(ctx).length, 3);
+  r.capabilities.delete(ctx.token);
+});

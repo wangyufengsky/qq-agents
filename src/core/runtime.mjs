@@ -951,6 +951,8 @@ export class Runtime {
   }
   async executeTool(ctx, name, args = {}) {
     const a = this.assertActive(ctx);
+    if (ctx.runtimeKind === "subject-social")
+      this.socialRuntime.assertToolAllowed(ctx, name);
     for (const repo of privateGithubSources(ctx, this))
       ctx.privateRead.add(githubMarker(repo));
     for (const marker of socialSources(this, ctx)) ctx.privateRead.add(marker);
