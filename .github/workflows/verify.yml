@@ -77,10 +77,6 @@ jobs:
         if: runner.os == 'Windows'
         timeout-minutes: 4
         run: node --test --test-timeout=120000 test/home-browser-process.test.mjs test/home-scene-view.test.mjs
-      - name: Diagnose filtered PowerShell startup on Windows
-        if: always() && runner.os == 'Windows'
-        timeout-minutes: 2
-        run: node scripts/home-powershell-diagnostics.mjs
       - run: npm run verify
   docker:
     runs-on: ubuntu-latest

@@ -51,8 +51,9 @@ export async function prepareHomeBrowserJob(controlFile, control) {
       "-ControlFile",
       controlFile,
     ],
-    { stdio: "ignore", windowsHide: true, detached: true },
+    { stdio: ["pipe", "ignore", "ignore"], windowsHide: true, detached: true },
   );
+  helper.stdin?.on("error", () => {});
   record(helper.pid ? "spawned" : "not-started", helper.pid);
   // libuv assigns non-detached Windows children to the parent Node kill job.
   // This guardian must survive that parent long enough to verify its own job.
@@ -72,7 +73,8 @@ export async function prepareHomeBrowserJob(controlFile, control) {
     } catch {
       /* Exit can follow capture-directory cleanup. */
     }
-    failed = true;
+    // The console host may exit after the authenticated guardian FreeConsole.
+    // Only a ready receipt identifies the independent native Job owner.
   });
   const deadline = Date.now() + 8000;
   while (!failed && Date.now() < deadline) {

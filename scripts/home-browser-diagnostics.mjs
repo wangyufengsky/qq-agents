@@ -68,20 +68,8 @@ async function probe(name, launch) {
   }
 }
 try {
-  const cold = await probe("cold-owned-renderer", () =>
-    renderHomeScene(
-      {
-        type: "room",
-        template: homeTemplate("room"),
-        view: { layout: defaultLayout("room") },
-        residents: [],
-      },
-      {
-        executablePath,
-        launchTimeoutMs: 15000,
-        signal: AbortSignal.timeout(20000),
-      },
-    ),
+  const cold = await probe("cold-stock-playwright-same-path", () =>
+    chromium.launch({ executablePath, env, timeout: 15000, headless: true }),
   );
   if (!cold) process.exitCode = 1;
   const realpath = await fs.realpath(executablePath);

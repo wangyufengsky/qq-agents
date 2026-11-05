@@ -107,7 +107,6 @@
     "src/home/browser-launcher.mjs",
     "src/home/browser-job.mjs",
     "scripts/home-browser-diagnostics.mjs",
-    "scripts/home-powershell-diagnostics.mjs",
     "src/tools/media-lease.mjs",
     "public/home-space/scene-decoration.mjs",
     "src/home/project-snapshots.mjs",

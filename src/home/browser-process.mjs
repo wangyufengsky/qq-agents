@@ -20,6 +20,20 @@ function alive(pid) {
  * @param {string} controlFile @param {{nonce:string}} control */
 async function helperSettled(controlFile, control) {
   try {
+    try {
+      const guardian = JSON.parse(
+        await fs.readFile(controlFile + ".job-guardian", "utf8"),
+      );
+      if (
+        guardian.nonce !== control.nonce ||
+        !Number.isSafeInteger(guardian.pid) ||
+        alive(guardian.pid)
+      )
+        return false;
+    } catch (error) {
+      if (/** @type {NodeJS.ErrnoException} */ (error).code !== "ENOENT")
+        return false;
+    }
     const helper = JSON.parse(
       await fs.readFile(controlFile + ".job-helper", "utf8"),
     );

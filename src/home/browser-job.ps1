@@ -25,6 +25,7 @@ public static class HomeBrowserJob {
  [DllImport("kernel32.dll", SetLastError=true)] public static extern IntPtr CreateJobObject(IntPtr attributes, string name);
  [DllImport("kernel32.dll", SetLastError=true)] public static extern bool SetInformationJobObject(IntPtr job, int type, ref Extended info, uint size);
  [DllImport("kernel32.dll", SetLastError=true)] public static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+ [DllImport("kernel32.dll", SetLastError=true)] public static extern bool FreeConsole();
  [DllImport("kernel32.dll", SetLastError=true)] public static extern bool GetNamedPipeServerProcessId(IntPtr pipe, out uint pid);
  [DllImport("kernel32.dll", SetLastError=true)] public static extern IntPtr OpenProcess(uint rights, bool inherit, uint pid);
  [DllImport("kernel32.dll", SetLastError=true)] public static extern bool GetProcessTimes(IntPtr process, out long created, out long exited, out long kernel, out long user);
@@ -43,6 +44,8 @@ $assigned = $false
 try {
  $control = Get-Content -LiteralPath $ControlFile -Raw | ConvertFrom-Json
  if ($control.stopping) { exit 0 }
+ $guardian = @{ nonce=$control.nonce; pid=$PID } | ConvertTo-Json -Compress
+ [System.IO.File]::WriteAllText($ControlFile + '.job-guardian', $guardian, [System.Text.UTF8Encoding]::new($false))
  # The authenticated pipe identifies the live wrapper even when conhost is
  # the guardian's direct parent. No caller-supplied PID grants kill authority.
  Report-State 'authenticating'
@@ -74,6 +77,8 @@ try {
  Report-State 'assigning'
  if (-not [HomeBrowserJob]::AssignProcessToJobObject($job,$parentHandle)) { throw 'assign' }
  $assigned = $true
+ # Release the VT before admission: wrapper pipe EOF must not close the Job owner.
+ if (-not [HomeBrowserJob]::FreeConsole()) { throw 'detach-console' }
  Report-State 'writing-ready'
  $ready = @{ nonce=$control.nonce; parentPid=$parentId; created=[string]$created; helperPid=$PID; hostPid=$hostRecord.pid } | ConvertTo-Json -Compress
  [System.IO.File]::WriteAllText($ControlFile + '.job-ready', $ready, [System.Text.UTF8Encoding]::new($false))
