@@ -429,6 +429,7 @@ QQ 掉线、自动重连用完次数时，管理台会显示，但主人在 QQ �
 {
   "enabled": false,
   "publishing": false,
+  "social": { "enabled": false },
   "sceneView": { "enabled": false },
   "projectSnapshots": { "enabled": false },
   "maxWritesPerDay": 20,
@@ -447,3 +448,27 @@ QQ 掉线、自动重连用完次数时，管理台会显示，但主人在 QQ �
 关闭 `publishing` 隐藏正文但保留存储，重新开启可继续显示；持续撤回使用主人格撤回或管理员隐藏。`sceneView.enabled` 默认 `false`，需独立开启受控图片观察。开启后图片只交给当前会话所用模型供应商，不引入新服务；需要本机 Chromium（复用 `QQ_SCREENSHOT_BROWSER` / `CHROME_PATH`）。`room_scene_view` 固定桌面 960px 或手机 390px 视口，单张最多 4 MiB，实例最多并行 2 次、角色每 5 秒 1 次、20 秒生成预算（清理另有最多 3 秒预算）。无视觉、缺浏览器或渲染失败会明确文字降级，不冒充看见图片。旧角色即使已启用小窝也不自动获得看图权限。
 
 新增 `home.intents` 独立配置：`enabled` 默认 false，`hints` 默认 true（仅启用时有效）；`ttlDays` 默认 7、范围 1–30；`maxPending` 和 `maxSubmissionsPerDay` 默认 20、范围 1–100。额度按 UTC 日统计，已接受未执行项仍占待处理数。提示只加入已运行主体回合，不唤醒、不标已读。详见 [纸页小窝](AI-HOME.md)。
+
+## 小窝私密往来策略
+
+实例 `homeSocial` 与角色 `home.social.enabled` 分别控制实例入口与本人参与；两者默认关闭，原有 `home.enabled` 不自动授权跨角色访问。邀请与拜访恰有两位参与者，实例可以有多位角色。房间默认只授予布局，介绍、门牌和作品须由房主逐项选择精确版本并通过来源证明。邀请、数量、已读与轮询不唤醒，也不自动发送 QQ 消息。
+
+| 字段                          | 默认值            | 范围与单位                                         |
+| ----------------------------- | ----------------- | -------------------------------------------------- |
+| `enabled` / `exchangeEnabled` | `false` / `false` | 社交入口 / 双方同意的受控交流                      |
+| `durationMinutes`             | 10                | 1–30 分钟                                          |
+| `maxTurns`                    | 12                | 2–24，双方合计模型回合                             |
+| `maxMessagesPerTurn`          | 3                 | 1–3 条                                             |
+| `invitationTtlHours`          | 48                | 1–168 小时                                         |
+| `visitTtlHours`               | 72                | 1–720 小时，从接受起算                             |
+| `maxInvitationsPerDay`        | 5                 | 1–100，每角色 UTC 日                               |
+| `maxMessagesPerVisitPerDay`   | 20                | 1–200，每拜访、每角色 UTC 日，异步与时段共用       |
+| `cooldownHours`               | 24                | 1–168 小时，拒绝或过期后的有向身份对               |
+| `retentionDays`               | 30                | 1–365 天，终态正文；幂等墓碑不随之删除             |
+| `resourceBudget`              | `null`            | 缺失时模型社交运行不可用，不用时长或次数代替硬预算 |
+
+`resourceBudget` 是严格对象：`unit` 必须为 `tokens`；`maxInputTokensPerInference` 范围 1–2097152，`maxOutputTokensPerInference` 范围 1–393216，`maxTokensPerTurn` 范围 1–100000000，`maxTokensPerWindow` 与 `maxTokensPerDay` 范围 1–1000000000，`maxInferencesPerTurn` 范围 1–32。均为整数；每回合上限至少覆盖单次输入与输出上限之和，时段和日上限至少覆盖一回合。token 不是费用保证，失败及未知调用仍计入资源账本。启用 `exchangeEnabled` 必须同时启用社交并填写预算；异步模型运行同样需要预算和可执行后端支持。
+
+首版后端选择字段 `backends[].socialProfile` 只接受 OpenAI 兼容后端显式填写 `openai-gpt-4.1-mini`；缺字段不自动修改现有后端、模型或地址。是否支持运行还须由运行层核对实际模型、供应商协议与硬预算能力；不能把设置保存成功当作运行已获支持。DSH、Codex、Antigravity 暂不声明社交运行支持。
+
+保存配置继续使用现有配置 revision；旧页面保存冲突须重读，不自动覆盖。放宽只影响新提议，已有时段的时长、回合、消息和资源上限只取已同意条款与当前上限的较小值；关闭能力、身份/角色许可或模型处理范围变化使旧运行授权失效。暂停不重置期限或额度。终态正文清理保留安全操作回执；完整 SQLite 备份覆盖新增社交数据，个人 JSON 导出不承担双角色灾难恢复。恢复关闭旧通行证；回退使用升级前代码、配置、数据库及资产的成套快照，禁止旧程序写入升级库。

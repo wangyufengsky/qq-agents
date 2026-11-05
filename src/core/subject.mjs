@@ -518,6 +518,7 @@ export class SubjectCoordinator {
     return (
       !item.protectedOperations &&
       !item.protectedRepositories?.length &&
+      !item.protectedSocialSources?.length &&
       !item.protectedPeerQzoneTargets?.length
     );
   }

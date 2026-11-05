@@ -1,4 +1,5 @@
 // @ts-check
+import { migrateSocialItemProofs } from "../core/social-protection.mjs";
 import { createHash, randomUUID } from "node:crypto";
 import { HomeStore } from "./store.mjs";
 import { defaultLayout, validateLayout } from "./layout.mjs";
@@ -19,6 +20,7 @@ export class RoomStore {
   /** @param {any} db */
   constructor(db) {
     this.db = db;
+    migrateSocialItemProofs(db);
     this.layouts = new HomeStore(db);
   }
   /** @param {string} generation */
@@ -194,6 +196,11 @@ export class RoomStore {
         body,
         new Date(now).toISOString(),
       );
+    this.db
+      .prepare(
+        "DELETE FROM home_social_item_proofs WHERE generation=? AND slot=?",
+      )
+      .run(generation, slot);
     this.db
       .prepare("DELETE FROM home_item_sources WHERE generation=? AND slot=?")
       .run(generation, slot);

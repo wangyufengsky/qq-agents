@@ -1,6 +1,10 @@
 import { QzoneApprovals } from "./qzone-approvals.mjs";
 import { HOME_TOOLS } from "../home/policy.mjs";
 import { HomeService } from "../home/service.mjs";
+import {
+  assertNoSocialDisclosure,
+  socialSources,
+} from "./social-protection.mjs";
 import { contextProtection } from "./protected-mind.mjs";
 import {
   peerQzoneSources,
@@ -237,6 +241,8 @@ export class Runtime {
       shownSeq: 0,
     };
     ctx.persistTaint = () => {
+      for (const marker of socialSources(this, ctx))
+        ctx.privateRead.add(marker);
       for (const id of peerQzoneSources(this, ctx))
         ctx.privateRead.add(peerQzoneMarker(id));
       const current = mem.state(conversation);
@@ -890,6 +896,7 @@ export class Runtime {
     const a = this.assertActive(ctx);
     for (const repo of privateGithubSources(ctx, this))
       ctx.privateRead.add(githubMarker(repo));
+    for (const marker of socialSources(this, ctx)) ctx.privateRead.add(marker);
     for (const id of peerQzoneSources(this, ctx))
       ctx.privateRead.add(peerQzoneMarker(id));
     ctx.persistTaint?.();
@@ -985,10 +992,12 @@ export class Runtime {
     return result;
   }
   assertDisclosure(ctx, { external = false } = {}) {
+    assertNoSocialDisclosure(this, ctx);
     if (this.protectedWork?.context(ctx))
       throw Error("PROTECTED_WORK_OUTBOUND_DENIED");
     for (const repo of privateGithubSources(ctx, this))
       ctx.privateRead.add(githubMarker(repo));
+    for (const marker of socialSources(this, ctx)) ctx.privateRead.add(marker);
     for (const id of peerQzoneSources(this, ctx))
       ctx.privateRead.add(peerQzoneMarker(id));
     ctx.persistTaint?.();
