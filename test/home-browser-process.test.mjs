@@ -33,7 +33,7 @@ async function contact(pipe, nonce, action = "ping") {
     });
   });
 }
-function wrapper(marker, controlFile, root) {
+function wrapper(marker, controlFile, root, executable = process.execPath) {
   return spawn(
     process.execPath,
     [
@@ -41,7 +41,7 @@ function wrapper(marker, controlFile, root) {
         new URL("../src/home/browser-launcher.mjs", import.meta.url),
       ),
       marker,
-      process.execPath,
+      executable,
       path.join(root, "profile"),
       controlFile,
     ],
@@ -338,4 +338,156 @@ while (true) {
   t.diagnostic(
     "CDP pipe challenge: 3 fixed requests, 3 matching responses; owned cleanup confirmed",
   );
+});
+
+test("owned CDP pipes preserve fragmented binary traffic, backpressure and EOF", async (t) => {
+  const { createHash } = await import("node:crypto");
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "home-cdp-bytes-"));
+  const marker = path.join(root, "wrapper.pid"),
+    controlFile = path.join(root, "control.json"),
+    readyFile = path.join(root, "ready"),
+    eofFile = path.join(root, "eof");
+  const browser = `const fs=require('node:fs');fs.writeFileSync(${JSON.stringify(readyFile)},'ready');const b=Buffer.alloc(8192);let n;while((n=fs.readSync(3,b,0,b.length,null))>0)fs.writeSync(4,b.subarray(0,n));fs.writeFileSync(${JSON.stringify(eofFile)},'eof');setInterval(()=>{},1000);`;
+  const control = {
+    nonce: randomUUID(),
+    endpoint: endpoint(root, "control"),
+    arguments: ["-e", browser],
+  };
+  await fs.writeFile(controlFile, JSON.stringify(control), { mode: 0o600 });
+  const child = wrapper(marker, controlFile, root);
+  t.after(async () => {
+    await stopHomeBrowser(marker, control);
+    await exited(child);
+    await fs.rm(root, {
+      recursive: true,
+      force: true,
+      maxRetries: 3,
+      retryDelay: 100,
+    });
+  });
+  const input = child.stdio[3],
+    output = child.stdio[4];
+  const payload = Buffer.alloc(4 * 1024 * 1024);
+  for (let i = 0; i < payload.length; i++) payload[i] = i % 251;
+  const hash = createHash("sha256"),
+    complete = Promise.withResolvers();
+  let bytes = 0;
+  output.on("data", (chunk) => {
+    bytes += chunk.length;
+    hash.update(chunk);
+    if (bytes >= payload.length) complete.resolve();
+  });
+  output.on("error", complete.reject);
+  input.on("error", complete.reject);
+  output.pause();
+  for (let i = 0; i < 1500; i++) {
+    try {
+      await fs.access(readyFile);
+      break;
+    } catch {
+      await pause(10);
+    }
+  }
+  await fs.access(readyFile);
+  // Fragment writes and temporarily stop reading to exercise both pipe buffers.
+  for (let offset = 0; offset < payload.length; offset += 7919)
+    input.write(payload.subarray(offset, offset + 7919));
+  input.end();
+  await pause(50);
+  output.resume();
+  await complete.promise;
+  assert.equal(bytes, payload.length);
+  assert.equal(
+    hash.digest("hex"),
+    createHash("sha256").update(payload).digest("hex"),
+  );
+  for (let i = 0; i < 500; i++) {
+    try {
+      await fs.access(eofFile);
+      break;
+    } catch {
+      await pause(10);
+    }
+  }
+  await fs.access(eofFile);
+  await stopHomeBrowser(marker, control);
+  await exited(child);
+  if (process.platform === "win32") await assertOwnedPipeWriteFailure(t);
+});
+
+async function assertOwnedPipeWriteFailure(t) {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "home-cdp-pipe-error-"));
+  const marker = path.join(root, "wrapper.pid"),
+    controlFile = path.join(root, "control.json"),
+    readyFile = path.join(root, "ready");
+  // The browser stays alive after closing its input. Only the wrapper's pipe
+  // error handler may terminate this owned tree; no simulated child exit helps.
+  const browser = `const fs=require('node:fs');fs.closeSync(3);fs.writeFileSync(${JSON.stringify(readyFile)},String(process.pid));setInterval(()=>{},1000);`;
+  const control = {
+    nonce: randomUUID(),
+    endpoint: endpoint(root, "control"),
+    arguments: ["-e", browser],
+  };
+  await fs.writeFile(controlFile, JSON.stringify(control), { mode: 0o600 });
+  const child = wrapper(marker, controlFile, root);
+  t.after(async () => {
+    await stopHomeBrowser(marker, control);
+    await exited(child);
+    await fs.rm(root, {
+      recursive: true,
+      force: true,
+      maxRetries: 3,
+      retryDelay: 100,
+    });
+  });
+  for (let i = 0; i < 1500; i++) {
+    try {
+      await fs.access(readyFile);
+      break;
+    } catch {
+      await pause(10);
+    }
+  }
+  const browserPid = Number(await fs.readFile(readyFile, "utf8"));
+  child.stdio[3].on("error", () => {});
+  child.stdio[3].end(Buffer.alloc(1024 * 1024));
+  await exited(child);
+  await stopHomeBrowser(marker, control);
+  assert.throws(() => process.kill(browserPid, 0), { code: "ESRCH" });
+}
+
+test("owned browser spawn failure retains its stable state and confirms cleanup", async (t) => {
+  const root = await fs.mkdtemp(
+    path.join(os.tmpdir(), "home-cdp-spawn-error-"),
+  );
+  const marker = path.join(root, "wrapper.pid"),
+    controlFile = path.join(root, "control.json");
+  const control = {
+    nonce: randomUUID(),
+    endpoint: endpoint(root, "control"),
+    arguments: [],
+  };
+  await fs.writeFile(controlFile, JSON.stringify(control), { mode: 0o600 });
+  const child = wrapper(
+    marker,
+    controlFile,
+    root,
+    path.join(root, "missing-browser.exe"),
+  );
+  t.after(async () => {
+    await stopHomeBrowser(marker, control);
+    await exited(child);
+    await fs.rm(root, {
+      recursive: true,
+      force: true,
+      maxRetries: 3,
+      retryDelay: 100,
+    });
+  });
+  await exited(child);
+  const state = JSON.parse(
+    await fs.readFile(controlFile + ".browser-state", "utf8"),
+  );
+  assert.equal(state.stage, "spawn-error");
+  await stopHomeBrowser(marker, control);
 });
