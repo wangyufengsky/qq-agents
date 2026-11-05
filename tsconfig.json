@@ -95,6 +95,7 @@
     "scripts/game-compatibility.mjs",
     "public/home-preview/scene.mjs",
     "public/home-space/book.mjs",
+    "public/home-space/interiors.mjs",
     "src/home/layout.mjs",
     "src/home/store.mjs",
     "src/home/service.mjs",

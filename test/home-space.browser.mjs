@@ -106,7 +106,7 @@ try {
   await page.selectOption("#palette", "blue");
   await page.click("#save");
   await page.waitForFunction(() =>
-    document.getElementById("layout-status").textContent.includes("版本 1"),
+    document.getElementById("toast").textContent.includes("布置已保存"),
   );
   await page.reload();
   await ready(page, "#living");
@@ -127,7 +127,7 @@ try {
   await editor(page);
   await page.click("#undo");
   await page.waitForFunction(() =>
-    document.getElementById("layout-status").textContent.includes("版本 2"),
+    document.getElementById("toast").textContent.includes("撤销后的新版本"),
   );
   check(
     "undo appends a revision",
@@ -193,9 +193,7 @@ try {
     (await page
       .locator("body")
       .evaluate((n) => n.classList.contains("palette-rose"))) &&
-      (await page.locator("#layout-status").textContent()).includes(
-        `版本 ${oldEnvelope.layoutRevision}`,
-      ),
+      (await page.locator("#layout-status").textContent()).includes("正在试摆"),
   );
   await page.unroute("**/api/home/scene?type=living");
   await page.click("#save");
@@ -329,8 +327,11 @@ try {
   await page.goto(base + "/?view=board");
   await page.locator("[data-board-open]").first().waitFor();
   check(
-    "original console board still reads same data",
-    (await page.locator("#content").textContent()).includes("合成验收便签"),
+    "legacy board bookmark opens the same board inside the home",
+    page.url().includes("/home-space/") &&
+      (await page.locator("#reader-content").textContent()).includes(
+        "合成验收便签",
+      ),
   );
   check("no browser script errors", errors.length === 0);
   await fs.writeFile(

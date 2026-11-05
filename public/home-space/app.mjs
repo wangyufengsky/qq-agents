@@ -3,6 +3,7 @@ import { createTemplate } from "../home-preview/templates.mjs";
 import { makeScene } from "../home-preview/scene.mjs";
 import { paperElement as el } from "../home-preview/paper-board.mjs";
 import { renderBookScene, createPageTurn, turnDirection } from "./book.mjs";
+import { renderGuide, renderBoardPreferences } from "./interiors.mjs";
 const pageTurn = createPageTurn(document.getElementById("stage"));
 const $ = (id) => document.getElementById(id),
   mobile = matchMedia("(max-width:640px)");
@@ -236,8 +237,29 @@ function act(action) {
   } else openReader(action);
 }
 function decorate(node, o) {
+  if ($("editor").open && envelope?.capabilities.write) {
+    node.classList.add("editable-piece");
+    node.classList.toggle("selected-piece", selection === o.id);
+    node.tabIndex = 0;
+    node.setAttribute("role", "button");
+    node.setAttribute("aria-label", `布置${catalog[o.asset].name}`);
+    const choose = (event) => {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      selection = o.id;
+      editor();
+      draw();
+      $("stage")
+        .querySelector(`[data-instance="${CSS.escape(o.id)}"]`)
+        ?.focus({ preventScroll: true });
+    };
+    node.addEventListener("click", choose, true);
+    node.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") choose(event);
+    });
+  }
   if (route.type !== "hall") {
-    const text = { nameplate: "走廊", board: "留言", guide: "小册" }[o.id];
+    const text = { nameplate: "走廊" }[o.id];
     if (text) node.append(el("span", `object-ink ink-${o.id}`, text));
     return;
   }
@@ -367,8 +389,11 @@ function draw(direction = 0) {
   $("edit-toggle").hidden = !envelope.capabilities.write;
   $("edit-toggle").textContent = dirty ? "布置 · 未保存" : "布置";
   $("edit-toggle").setAttribute("aria-expanded", String($("editor").open));
-  $("layout-status").textContent =
-    `布局版本 ${envelope.layoutRevision}${dirty ? " · 草稿尚未保存" : ""}${blocked ? " · 已有变化，请重读后核对" : ""}`;
+  $("layout-status").textContent = blocked
+    ? "布置已有变化，请重读后核对。"
+    : dirty
+      ? "正在试摆，记得保存。"
+      : "布置已收好。";
   $("save").disabled = !dirty || blocked;
   $("undo").disabled = dirty || blocked || envelope.layoutRevision === 0;
   return pageTurn.show(page, direction);
@@ -399,6 +424,27 @@ function editor() {
   if (!t.objects.some((o) => o.id === selection))
     selection = t.objects[0]?.id || "";
   select.value = selection;
+  const strip = $("object-strip");
+  strip.replaceChildren();
+  for (const object of t.objects) {
+    const asset = catalog[draft.objects[object.id]?.asset || object.asset];
+    const choice = button("", () => {
+      selection = object.id;
+      editor();
+      draw();
+      strip
+        .querySelector(`[data-object="${CSS.escape(object.id)}"]`)
+        ?.focus({ preventScroll: true });
+    });
+    choice.dataset.object = object.id;
+    choice.setAttribute("aria-label", `选择${asset.name}`);
+    choice.setAttribute("aria-pressed", String(selection === object.id));
+    const art = el("img");
+    art.src = new URL(`../home-preview/${asset.file}`, import.meta.url).href;
+    art.alt = "";
+    choice.append(art, el("span", "", asset.name));
+    strip.append(choice);
+  }
   $("palette").value = draft.palette;
   editorFields();
 }
@@ -573,14 +619,32 @@ async function loadContent() {
     }
     clearTimeout(contentTimer);
     const root = $("reader-content");
+    const openItems = new Set(
+      [...root.querySelectorAll(".home-text-card")]
+        .filter((card) => card.querySelector("details")?.open)
+        .map((card) => card.dataset.slot),
+    );
+    const readingPositions = new Map(
+      [...root.querySelectorAll(".home-text-card")].map((card) => [
+        card.dataset.slot,
+        {
+          revision: card.dataset.revision,
+          top: card.querySelector(".home-text")?.scrollTop || 0,
+        },
+      ]),
+    );
     root.replaceChildren();
     if (!value.publishing)
-      root.append(el("p", "", "此角色的文字展示能力尚未开启或已关闭。"));
+      root.append(
+        el("p", "display-note", "这里暂时安静，等主人放上新的文字。"),
+      );
     const items = value.items.filter((i) =>
       action === "intro" ? i.slot === "intro" : i.slot !== "intro",
     );
     for (const item of items) {
       const card = el("section", "home-text-card");
+      card.dataset.slot = item.slot;
+      card.dataset.revision = String(item.itemRevision);
       card.append(
         el(
           "h3",
@@ -605,9 +669,14 @@ async function loadContent() {
                 : "尚未展示文字。",
         ),
       );
-      card.append(el("small", "", `条目版本 ${item.itemRevision}`));
+      const management = el("details", "item-management");
+      management.open = openItems.has(item.slot);
+      management.append(
+        el("summary", "", "管理这张纸"),
+        el("small", "", `条目版本 ${item.itemRevision}`),
+      );
       if (item.state === "published" || item.state === "hidden")
-        card.append(
+        management.append(
           button(
             item.state === "hidden"
               ? "解除隐藏限制（不恢复正文）"
@@ -643,7 +712,12 @@ async function loadContent() {
             },
           ),
         );
+      card.append(management);
       root.append(card);
+      // A lease refresh must not move the reader back to the top of unchanged text.
+      const position = readingPositions.get(item.slot);
+      if (position?.revision === card.dataset.revision)
+        card.querySelector(".home-text").scrollTop = position.top;
     }
     contentTimer = setTimeout(() => {
       contentTicket++;
@@ -690,10 +764,15 @@ function openReader(action) {
           .then(fn)
           .catch((e) => toast(e.message)),
       fold: (id, title, body, { summary }) =>
-        `<details class="card"><summary>${esc(title)} · ${esc(summary)}</summary>${body}</details>`,
-      operate: () => {
-        location.href = "/?view=board";
-      },
+        `<details class="board-settings"><summary>留言板约定</summary><div class="board-settings-body"><p>${esc(summary)}</p>${body}</div></details>`,
+      operate: () =>
+        renderBoardPreferences({
+          root: $("reader-content").querySelector(".board-settings-body"),
+          api,
+          isActive: () => dialog.open && readerAction === "board" && !!overview,
+          onSaved: () => boardView?.render(),
+          onError: (error) => toast(error.message),
+        }),
     });
     dialog.showModal();
     boardView.render().catch((e) => toast(e.message));
@@ -705,17 +784,7 @@ function openReader(action) {
     loadContent();
     return;
   }
-  $("reader-content").append(
-    el(
-      "p",
-      "",
-      action === "guide"
-        ? "这里展示本实例已配置的居民。离线和暂停不移除房间；浏览不会唤醒角色。公共布置由管理员保存，个人房间由自己的主人格在能力开启后布置和发布。展示文字仅向实例管理员与房主自己的会话开放，其他会话不能代写。"
-        : action === "intro"
-          ? "尚未公开介绍。"
-          : "这里还没有公开作品。",
-    ),
-  );
+  renderGuide($("reader-content"));
   if (!dialog.open) dialog.showModal();
 }
 $("reader").addEventListener("close", () => {
@@ -734,6 +803,10 @@ $("close-reader").onclick = $("reader-back").onclick = () =>
 $("brand-home").onclick = (e) => {
   e.preventDefault();
   if (overview) act("living");
+};
+$("console-return").onclick = (event) => {
+  if (dirty && !confirm("离开后会放弃尚未保存的草稿，继续吗？"))
+    event.preventDefault();
 };
 $("bookmark-living").onclick = () => act("living");
 $("bookmark-hall").onclick = () => act(route.type === "room" ? "back" : "hall");
@@ -759,9 +832,10 @@ $("edit-toggle").onclick = () => {
   $("editor").open = !$("editor").open;
   if ($("editor").open) $("editor").scrollIntoView({ block: "nearest" });
 };
-$("editor").addEventListener("toggle", () =>
-  $("edit-toggle").setAttribute("aria-expanded", String($("editor").open)),
-);
+$("editor").addEventListener("toggle", () => {
+  $("edit-toggle").setAttribute("aria-expanded", String($("editor").open));
+  draw();
+});
 $("palette").onchange = () => {
   draft.palette = $("palette").value;
   dirty = true;
@@ -852,4 +926,12 @@ setInterval(async () => {
     /* api clears inaccessible content and the lease bounds stale reads. */
   }
 }, 10000);
-refresh();
+refresh().then(() => {
+  if (
+    new URLSearchParams(location.search).get("open") === "board" &&
+    overview
+  ) {
+    history.replaceState(null, "", "/home-space/" + location.hash);
+    openReader("board");
+  }
+});

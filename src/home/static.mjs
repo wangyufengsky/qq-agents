@@ -21,7 +21,16 @@ export function serveHomePreview(req, res, pathname) {
     ["/home-space/", ["index.html", "text/html; charset=utf-8"]],
     ["/home-space/app.mjs", ["app.mjs", "text/javascript; charset=utf-8"]],
     ["/home-space/book.mjs", ["book.mjs", "text/javascript; charset=utf-8"]],
+    [
+      "/home-space/interiors.mjs",
+      ["interiors.mjs", "text/javascript; charset=utf-8"],
+    ],
     ["/home-space/style.css", ["style.css", "text/css; charset=utf-8"]],
+    ["/home-space/interiors.css", ["interiors.css", "text/css; charset=utf-8"]],
+    [
+      "/home-space/paper-nest-hand-v1.530.woff2",
+      ["paper-nest-hand-v1.530.woff2", "font/woff2"],
+    ],
   ]);
   if (
     !live &&
@@ -61,6 +70,9 @@ export function serveHomePreview(req, res, pathname) {
       );
       res.writeHead(200, {
         ...headers,
+        ...(contentType === "font/woff2"
+          ? { "cache-control": "public, max-age=31536000, immutable" }
+          : {}),
         "content-type": contentType,
         "content-length": data.length,
       });
