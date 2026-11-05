@@ -76,7 +76,13 @@ server.listen(control.endpoint, async () => {
     executablePath,
     // Only the renderer owns this private record; bridge arguments cannot set it.
     control.arguments,
-    { stdio: ["ignore", "inherit", "inherit", 3, 4], windowsHide: true },
+    {
+      stdio:
+        process.platform === "win32"
+          ? ["ignore", "inherit", "inherit", "pipe", "pipe"]
+          : ["ignore", "inherit", "inherit", 3, 4],
+      windowsHide: true,
+    },
   );
   // Main-browser exit does not prove its descendants have exited. While this
   // wrapper still owns its live group, close the whole tree on every exit path.
@@ -99,6 +105,7 @@ server.listen(control.endpoint, async () => {
       /* Diagnostics cannot prevent cleanup. */
     }
   };
+  let stopAfterOutputDrain = stopTree;
   child.on("spawn", () => record("spawned"));
   child.on("error", () => {
     record("spawn-error");
@@ -106,6 +113,53 @@ server.listen(control.endpoint, async () => {
   });
   child.on("exit", (code) => {
     record("exited", code);
-    stopTree();
+    stopAfterOutputDrain();
   });
+  if (process.platform === "win32" && child.stdio[3] && child.stdio[4]) {
+    // Fresh Chromium pipe endpoints avoid forwarding the wrapper's inherited
+    // Windows handles a second time. Relay bytes with stream backpressure; no
+    // protocol parsing, extra endpoint, retry, or launch budget is introduced.
+    const input = new net.Socket({ fd: 3, readable: true, writable: false });
+    const output = new net.Socket({ fd: 4, readable: false, writable: true });
+    const browserInput = /** @type {import("node:stream").Duplex} */ (
+      child.stdio[3]
+    );
+    const browserOutput = /** @type {import("node:stream").Readable} */ (
+      child.stdio[4]
+    );
+    for (const stream of [input, output, browserInput, browserOutput])
+      stream.on("error", stopTree);
+    /** @type {ReturnType<typeof setTimeout> | undefined} */
+    let drainTimer;
+    stopAfterOutputDrain = () => {
+      if (output.writableFinished || output.destroyed) return stopTree();
+      // Reuse the renderer's existing 500ms close grace. This cannot extend the
+      // caller's launch/close budget; errors and authenticated cancellation still
+      // stop immediately. Descendants holding fd 4 cannot make this wait forever.
+      if (!drainTimer) {
+        drainTimer = setTimeout(stopTree, 500);
+        drainTimer.unref();
+      }
+    };
+    output.on("finish", () => {
+      clearTimeout(drainTimer);
+      stopTree();
+    });
+    let parentInputEnded = false;
+    input.on("end", () => {
+      parentInputEnded = true;
+    });
+    // A remote input can close cleanly before any write fails. Do not confuse
+    // that with our own normal upstream EOF, which may still have output pending.
+    const remoteInputClosed = () => {
+      if (!parentInputEnded) stopAfterOutputDrain();
+    };
+    browserInput.on("end", remoteInputClosed);
+    browserInput.on("close", remoteInputClosed);
+    // stdio pipes are duplex. Consume the unused reverse half so remote EOF is
+    // observable even when its disappearance does not produce a write error.
+    browserInput.resume();
+    input.pipe(browserInput);
+    browserOutput.pipe(output);
+  }
 });
