@@ -3,11 +3,13 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { execFileSync } from "node:child_process";
-import { chromium } from "playwright-core";
+// Enable only fixed synthetic browser commands, before Playwright reads DEBUG.
+process.env.DEBUG = "pw:browser,pw:protocol";
+const { chromium } = await import("playwright-core");
 import { findScreenshotBrowser } from "../src/tools/public-screenshot.mjs";
 import { buildChildEnv } from "../src/core/child-env.mjs";
 import { homeBrowserArguments } from "../src/home/browser-process.mjs";
-import { renderHomeScene } from "../src/home/scene-view.mjs";
+const { renderHomeScene } = await import("../src/home/scene-view.mjs");
 import { homeTemplate, defaultLayout } from "../src/home/layout.mjs";
 
 // Fixed, empty-profile CI probes distinguish packaging, flags and pipe forwarding.

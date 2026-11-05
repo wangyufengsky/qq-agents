@@ -87,7 +87,12 @@ server.listen(control.endpoint, async () => {
     try {
       fs.writeFileSync(
         controlFile + ".browser-state",
-        JSON.stringify({ stage, code }),
+        JSON.stringify({
+          stage,
+          code,
+          at: Date.now(),
+          wrapperUptimeMs: Math.round(process.uptime() * 1000),
+        }),
         { mode: 0o600 },
       );
     } catch {

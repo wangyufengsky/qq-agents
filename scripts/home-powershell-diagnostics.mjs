@@ -1,5 +1,7 @@
 // @ts-check
 import path from "node:path";
+import fs from "node:fs/promises";
+import os from "node:os";
 import { spawn } from "node:child_process";
 import { buildChildEnv } from "../src/core/child-env.mjs";
 if (process.platform !== "win32") process.exit(0);
@@ -26,94 +28,68 @@ console.log(
     ),
   }),
 );
-/** Fixed, credential-free probes isolate host startup from module discovery.
- * @param {string} name @param {NodeJS.ProcessEnv} env @param {boolean} directImport */
-async function probe(name, env, directImport) {
-  const started = Date.now();
-  const command = `$ErrorActionPreference='Stop';[Console]::WriteLine('entered');try {${directImport ? "Import-Module (Join-Path $PSHOME 'Modules\\Microsoft.PowerShell.Utility\\Microsoft.PowerShell.Utility.psd1');[Console]::WriteLine('utility-imported');" : ""}$null=@{safe=$true}|ConvertTo-Json -Compress;[Console]::WriteLine('json-ready');$null=Get-CimInstance Win32_Process -Filter "ProcessId = $PID";[Console]::WriteLine('cim-ready')}catch{[Console]::WriteLine('failed:'+$_.Exception.HResult);exit 1}`;
-  await new Promise((resolve) => {
-    const child = spawn(
-      path.join(system, "System32", "conhost.exe"),
-      [
-        "--headless",
-        executable,
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-Command",
-        command,
-      ],
-      {
-        env,
-        detached: true,
-        windowsHide: true,
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
-    let output = "",
-      stderrBytes = 0,
-      timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGKILL");
-    }, 12000);
-    child.stdout.on("data", (data) => {
-      output += data;
-      const lines = output.split(/\r?\n/);
-      output = lines.pop() || "";
-      for (const phase of lines)
-        if (
-          /^(entered|utility-imported|json-ready|cim-ready|failed:-?\d+)$/.test(
-            phase,
-          )
-        )
-          console.log(
-            JSON.stringify({ name, phase, elapsedMs: Date.now() - started }),
-          );
-    });
-    child.stderr.on("data", (data) => {
-      stderrBytes += data.length;
-    });
-    child.on("error", (error) => {
-      clearTimeout(timer);
-      console.log(
-        JSON.stringify({
-          name,
-          spawnCode: /** @type {NodeJS.ErrnoException} */ (error).code,
-        }),
+// Every probe writes a private file before using Console or loading modules.
+// Headless hosts may consume stdout themselves; exit=0 is not execution proof.
+const root = await fs.mkdtemp(path.join(os.tmpdir(), "home-ps-probe-"));
+try {
+  for (const mode of [
+    "direct-attached",
+    "host-null-hidden",
+    "host-pipe-hidden",
+    "host-pipe-visible",
+  ]) {
+    const marker = path.join(root, mode + ".json");
+    const started = Date.now();
+    const command = `[IO.File]::WriteAllText('${marker.replaceAll("'", "''")}', 'entered');`;
+    await new Promise((resolve) => {
+      const hosted = mode !== "direct-attached";
+      const child = spawn(
+        hosted ? path.join(system, "System32", "conhost.exe") : executable,
+        [
+          ...(hosted ? ["--headless", executable] : []),
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          command,
+        ],
+        {
+          env: filtered,
+          detached: hosted,
+          windowsHide: mode !== "host-pipe-visible",
+          stdio: [mode.includes("pipe") ? "pipe" : "ignore", "pipe", "pipe"],
+        },
       );
-      resolve(undefined);
+      let stderrBytes = 0;
+      child.stdout?.resume();
+      child.stderr?.on("data", (data) => {
+        stderrBytes += data.length;
+      });
+      const timer = setTimeout(() => child.kill("SIGKILL"), 12000);
+      child.once("error", () => {
+        clearTimeout(timer);
+        resolve(undefined);
+      });
+      child.once("close", async (code) => {
+        clearTimeout(timer);
+        let entered = false;
+        try {
+          entered = (await fs.readFile(marker, "utf8")) === "entered";
+        } catch {
+          /* Missing marker proves no script execution. */
+        }
+        console.log(
+          JSON.stringify({
+            mode,
+            code,
+            entered,
+            stderrBytes,
+            elapsedMs: Date.now() - started,
+          }),
+        );
+        resolve(undefined);
+      });
     });
-    child.on("close", (code, signal) => {
-      clearTimeout(timer);
-      console.log(
-        JSON.stringify({
-          name,
-          code,
-          signal,
-          timedOut,
-          stderrBytes,
-          elapsedMs: Date.now() - started,
-        }),
-      );
-      resolve(undefined);
-    });
-  });
+  }
+} finally {
+  await fs.rm(root, { recursive: true, force: true });
 }
-await probe("filtered-auto-discovery", filtered, false);
-await probe("filtered-fixed-utility-import", filtered, true);
-await probe(
-  "filtered-fixed-system-module-path",
-  {
-    ...filtered,
-    PSModulePath: path.join(
-      system,
-      "System32",
-      "WindowsPowerShell",
-      "v1.0",
-      "Modules",
-    ),
-  },
-  false,
-);

@@ -204,6 +204,10 @@ export async function homeBrowserStatus(marker, control) {
     setup: stage(setup),
     child: stage(child),
     childCode: Number.isInteger(child?.code) ? child.code : null,
+    childEventAt: Number.isSafeInteger(child?.at) ? child.at : null,
+    wrapperUptimeMs: Number.isSafeInteger(child?.wrapperUptimeMs)
+      ? child.wrapperUptimeMs
+      : null,
     ready: ready?.nonce === control.nonce,
     clean: complete?.nonce === control.nonce && complete.cleaned === true,
     wrapperAlive: Number.isSafeInteger(pid) && pid > 0 ? alive(pid) : false,
