@@ -228,7 +228,14 @@ export async function renderHomeScene(
       // A cleanup failure keeps the slot reserved rather than overlapping trees.
       if (cleared) {
         active--;
-        await fs.rm(directory, { recursive: true, force: true });
+        // Windows may release a profile lock just after confirmed process exit.
+        // Bound retries; persistent deletion failure still rejects the render.
+        await fs.rm(directory, {
+          recursive: true,
+          force: true,
+          maxRetries: 3,
+          retryDelay: 100,
+        });
       }
     }
   }
