@@ -76,7 +76,13 @@ server.listen(control.endpoint, async () => {
     executablePath,
     // Only the renderer owns this private record; bridge arguments cannot set it.
     control.arguments,
-    { stdio: ["ignore", "inherit", "inherit", 3, 4], windowsHide: true },
+    {
+      stdio:
+        process.platform === "win32"
+          ? ["ignore", "inherit", "inherit", "pipe", "pipe"]
+          : ["ignore", "inherit", "inherit", 3, 4],
+      windowsHide: true,
+    },
   );
   // Main-browser exit does not prove its descendants have exited. While this
   // wrapper still owns its live group, close the whole tree on every exit path.
@@ -108,4 +114,21 @@ server.listen(control.endpoint, async () => {
     record("exited", code);
     stopTree();
   });
+  if (process.platform === "win32" && child.stdio[3] && child.stdio[4]) {
+    // Fresh Chromium pipe endpoints avoid forwarding the wrapper's inherited
+    // Windows handles a second time. Relay bytes with stream backpressure; no
+    // protocol parsing, extra endpoint, retry, or launch budget is introduced.
+    const input = new net.Socket({ fd: 3, readable: true, writable: false });
+    const output = new net.Socket({ fd: 4, readable: false, writable: true });
+    const browserInput = /** @type {import("node:stream").Writable} */ (
+      child.stdio[3]
+    );
+    const browserOutput = /** @type {import("node:stream").Readable} */ (
+      child.stdio[4]
+    );
+    for (const stream of [input, output, browserInput, browserOutput])
+      stream.on("error", stopTree);
+    input.pipe(browserInput);
+    browserOutput.pipe(output);
+  }
 });
