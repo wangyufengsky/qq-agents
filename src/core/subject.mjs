@@ -592,6 +592,7 @@ export class SubjectCoordinator {
         !this.internalAllowed(a) ||
         rhythmStatus(r, a, true).state === "sleeping" ||
         r.running.has(a.id + "|" + SUBJECT) ||
+        r.subjectExecution?.busy(a.id) ||
         r.games.busy(a.backendId)
       )
         continue;

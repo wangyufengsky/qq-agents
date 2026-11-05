@@ -1,9 +1,15 @@
 import { QzoneApprovals } from "./qzone-approvals.mjs";
+import { SubjectExecution } from "./subject-execution.mjs";
+import { SocialRuntime } from "../home/social-runtime.mjs";
 import { HOME_TOOLS } from "../home/policy.mjs";
 import { HomeService } from "../home/service.mjs";
 import {
   assertNoSocialDisclosure,
   socialSources,
+  socialContextAllowed,
+  assertSocialSend,
+  trackSocial,
+  assertRoomItemShareable,
 } from "./social-protection.mjs";
 import { contextProtection } from "./protected-mind.mjs";
 import {
@@ -107,6 +113,7 @@ export class Runtime {
     // Replaced by main.mjs when the console starts with `--live --resume`.
     this.autoResume = new AutoResume(this);
     this.running = new Map();
+    this.subjectExecution = new SubjectExecution();
     this.pending = new Map();
     this.capabilities = new Map();
     this.faults = new Map();
@@ -136,6 +143,16 @@ export class Runtime {
       this.contexts.upgradeInstructions(a, self);
     }
     this.home = new HomeService(this);
+    this.homeSocialSources = {
+      assertSend: assertSocialSend,
+      trackSource: trackSocial,
+      assertRoomItem: assertRoomItemShareable,
+      sources: socialSources,
+    };
+    this.socialSourceAllowed = socialContextAllowed;
+    this.homeSocial = this.home.social;
+    this.socialRuntime = new SocialRuntime(this);
+    if (this.homeSocial) this.homeSocial.store.interruptRuntime(randomUUID());
     this.qzoneApprovals = new QzoneApprovals(this);
     this.banter = new BanterCoordinator({
       botIds: this.config.connections.map((c) => c.accountId),
@@ -192,7 +209,19 @@ export class Runtime {
         component: "games",
       });
     }
-    if (this.maintenance.active) return;
+    if (
+      this.homeSocial?.maintain &&
+      (!this.nextSocialMaintenanceAt ||
+        this.now() >= this.nextSocialMaintenanceAt)
+    ) {
+      this.homeSocial.maintain();
+      this.nextSocialMaintenanceAt = this.now() + 60000;
+    }
+    if (this.maintenance.active) {
+      this.socialRuntime?.stop("maintenance");
+      return;
+    }
+    if (this.homeSocial) this.socialRuntime.tick();
     if (!this.nextCursorCleanupAt || this.now() >= this.nextCursorCleanupAt) {
       new AppCursors(this.memory).cleanup(this.now());
       this.nextCursorCleanupAt = this.now() + 60000;
@@ -286,6 +315,12 @@ export class Runtime {
     return c;
   }
   toolsFor(a, conversation) {
+    if (conversation?.startsWith("@social:"))
+      return this.config.homeSocial?.enabled
+        ? this.socialRuntime
+            .tools({ conversation })
+            .filter((n) => toolAvailable(a, n, conversation))
+        : [];
     if (isWorkScope(conversation))
       return this.protectedWork.tools(a, conversation);
     const selected =
@@ -322,6 +357,8 @@ export class Runtime {
               ...BOARD_TOOLS,
             ]),
           ];
+    if (conversation === SUBJECT && this.config.homeSocial?.enabled)
+      selected.push("home_social_capabilities", "home_social_process");
     const imageGeneration = backendCapabilities(
       this.config.backends.find((b) => b.id === a.backendId)?.type,
     ).imageGeneration;
@@ -371,6 +408,16 @@ export class Runtime {
     if (conversation === SUBJECT) {
       if (!codes.length && !this.subject.internalAllowed(a))
         codes.push("SUBJECT_NOT_ALLOWED");
+      return codes;
+    }
+    if (
+      ctx?.runtimeKind === "subject-social" &&
+      conversation?.startsWith("@social:")
+    ) {
+      if (this.config.mode !== "live") codes.push("ISOLATED_MODE");
+      if (this.config.globalPaused) codes.push("GLOBAL_PAUSED");
+      if (a.paused) codes.push("AGENT_PAUSED");
+      if (!this.config.homeSocial?.enabled) codes.push("SOCIAL_DISABLED");
       return codes;
     }
     if (this.config.mode !== "live") codes.push("ISOLATED_MODE");
