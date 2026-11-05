@@ -437,3 +437,85 @@ test("a console started without live authority cannot publish an approved draft"
     false,
   );
 });
+
+for (const kind of ["chat", "other-post", "other-conversation"])
+  test(`an existing ${kind} receipt cannot masquerade as a new draft`, async (t) => {
+    const f = setup(t);
+    const payload =
+      kind === "chat"
+        ? [{ type: "text", data: { text: "other message" } }]
+        : {
+            kind: "qzone",
+            content: kind === "other-post" ? "other content" : CONTENT,
+          };
+    f.mem.reserveDelivery(
+      "draft-1",
+      kind === "other-conversation" ? "@subject" : OWNER,
+      payload,
+    );
+    f.mem.completeDelivery("draft-1", "sent");
+    await assert.rejects(post(f), /IDEMPOTENCY_CONFLICT/);
+    assert.equal(f.runtime.qzoneApprovals.list().length, 0);
+    assert.equal(f.calls.length, 0);
+  });
+
+test("a ledger collision after proposal closes the draft as failed across retries and restart", async (t) => {
+  const f = setup(t);
+  await post(f);
+  const input = decision(f);
+  f.mem.reserveDelivery("draft-1", OWNER, {
+    kind: "qzone",
+    content: "another post",
+  });
+  f.mem.completeDelivery("draft-1", "sent");
+  await assert.rejects(
+    f.runtime.qzoneApprovals.act(input),
+    /IDEMPOTENCY_CONFLICT/,
+  );
+  assert.equal((await post(f)).status, "failed");
+  assert.equal(f.mem.delivery("draft-1").status, "sent");
+  const runtime = await restored(t, f);
+  const next = context(runtime, "agent-0", OWNER);
+  assert.equal(
+    (
+      await runtime.callTool(next, "qzone_post", {
+        requestId: "draft-1",
+        content: CONTENT,
+      })
+    ).status,
+    "failed",
+  );
+  assert.equal(f.calls.length, 0);
+});
+
+test("crash recovery never adopts a different payload's sent receipt", async (t) => {
+  const f = setup(t);
+  await post(f);
+  f.store.db.prepare("UPDATE qzone_approvals SET state='submitting'").run();
+  f.mem.reserveDelivery("draft-1", OWNER, {
+    kind: "qzone",
+    content: "another post",
+  });
+  f.mem.completeDelivery("draft-1", "sent");
+  const runtime = await restored(t, f);
+  const next = context(runtime, "agent-0", OWNER);
+  assert.equal(
+    (
+      await runtime.callTool(next, "qzone_post", {
+        requestId: "draft-1",
+        content: CONTENT,
+      })
+    ).status,
+    "failed",
+  );
+  assert.equal(f.calls.length, 0);
+});
+
+test("a matching old post receipt needs no new approval and is never resent", async (t) => {
+  const f = setup(t);
+  f.mem.reserveDelivery("draft-1", OWNER, { kind: "qzone", content: CONTENT });
+  f.mem.completeDelivery("draft-1", "sent");
+  assert.equal((await post(f)).status, "sent");
+  assert.equal(f.runtime.qzoneApprovals.list().length, 0);
+  assert.equal(f.calls.length, 0);
+});

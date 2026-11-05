@@ -14,6 +14,12 @@ const decision = z
   .strict();
 const digest = (/** @type {any} */ value) =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex");
+/** The delivery namespace also contains chat messages and other actions.
+ * @param {any} receipt @param {{conversation:string,content:string}} value
+ */
+const samePost = (receipt, value) =>
+  receipt.conversation === value.conversation &&
+  receipt.payload_hash === digest({ kind: "qzone", content: value.content });
 
 /** A post approval owns immutable text, never a live model capability. */
 export class QzoneApprovals {
@@ -25,9 +31,7 @@ export class QzoneApprovals {
     for (const row of this.db
       .prepare("SELECT * FROM qzone_approvals WHERE state='submitting'")
       .all()) {
-      const receipt = runtime.memory
-        .bind(row.agent_id)
-        .delivery(row.request_id);
+      const receipt = this.deliveryFor(row);
       this.setState(
         row.id,
         receipt
@@ -37,6 +41,17 @@ export class QzoneApprovals {
           : "failed",
       );
     }
+  }
+  /** A same-ID receipt is evidence only when both the action and scope match.
+   * @param {any} row
+   */
+  deliveryFor(row) {
+    const receipt = this.runtime.memory
+      .bind(row.agent_id)
+      .delivery(row.request_id);
+    return receipt && samePost(receipt, JSON.parse(row.value))
+      ? receipt
+      : undefined;
   }
   /** @param {string} id @param {string} state */
   setState(id, state) {
@@ -78,9 +93,7 @@ export class QzoneApprovals {
    */
   receipt(row) {
     if (["sent", "failed", "unknown"].includes(row.state)) {
-      const delivery = this.runtime.memory
-        .bind(row.agent_id)
-        .delivery(row.request_id);
+      const delivery = this.deliveryFor(row);
       if (delivery && delivery.status !== "pending") {
         row.state = delivery.status;
         this.setState(row.id, row.state);
@@ -115,6 +128,21 @@ export class QzoneApprovals {
       )
         throw Error("QZONE_APPROVAL_CONFLICT");
       return this.receipt(previous);
+    }
+    const delivered = r.memory.bind(a.id).delivery(args.requestId);
+    if (delivered) {
+      if (
+        !samePost(delivered, {
+          conversation: ctx.conversation,
+          content: args.content,
+        })
+      )
+        throw Error("IDEMPOTENCY_CONFLICT");
+      if (delivered.status !== "sent")
+        throw Error(
+          "DELIVERY_ALREADY_ATTEMPTED_" + delivered.status.toUpperCase(),
+        );
+      return { requestId: args.requestId, status: "sent", duplicate: true };
     }
     // Generic turn-wide grants must not authorize a different public post.
     const probe = { ...ctx, grants: new Set() };
@@ -230,7 +258,8 @@ export class QzoneApprovals {
           this.setState(row.id, "sent");
           return result;
         } catch (error) {
-          const receipt = r.memory.bind(agentId).delivery(row.request_id);
+          const existing = r.memory.bind(agentId).delivery(row.request_id);
+          const receipt = this.deliveryFor(row);
           // Preflight failures are safe to retry by another explicit approval;
           // a ledger reservation can never be retried by this approval.
           this.setState(
@@ -239,9 +268,11 @@ export class QzoneApprovals {
               ? receipt.status === "pending"
                 ? "unknown"
                 : receipt.status
-              : r.now() >= row.expires_at
-                ? "expired"
-                : "awaiting_approval",
+              : existing
+                ? "failed"
+                : r.now() >= row.expires_at
+                  ? "expired"
+                  : "awaiting_approval",
           );
           throw error;
         }
