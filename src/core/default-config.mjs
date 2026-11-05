@@ -91,7 +91,12 @@ export function defaultConfig() {
         connectionId: "napcat-a",
         backendId: "dsh-desktop",
         paused: true,
-        home: { enabled: false, publishing: false, maxWritesPerDay: 20 },
+        home: {
+          enabled: false,
+          publishing: false,
+          projectSnapshots: { enabled: false },
+          maxWritesPerDay: 20,
+        },
         persona:
           "请在管理台设置此角色的人格。\n\n说话样本：填写 5–10 句这个角色真实会说的话，体现口头禅、标点习惯、笑的写法与常见长度。",
         aliases: [],
@@ -164,7 +169,12 @@ export function defaultConfig() {
         connectionId: "napcat-b",
         backendId: "codex-cli",
         paused: true,
-        home: { enabled: false, publishing: false, maxWritesPerDay: 20 },
+        home: {
+          enabled: false,
+          publishing: false,
+          projectSnapshots: { enabled: false },
+          maxWritesPerDay: 20,
+        },
         persona:
           "请在管理台设置此角色的人格。\n\n说话样本：填写 5–10 句这个角色真实会说的话，体现口头禅、标点习惯、笑的写法与常见长度。",
         aliases: [],

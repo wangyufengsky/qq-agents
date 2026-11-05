@@ -72,7 +72,10 @@ export function toolAvailable(agent, name, conversation) {
       agent.home?.enabled === true &&
       (HOME_READ_TOOLS.includes(name) ||
         (conversation === "@subject" &&
-          (name !== "room_publish" || agent.home.publishing === true)))
+          ((name !== "room_publish" && name !== "room_publish_snapshot") ||
+            agent.home.publishing === true) &&
+          (name !== "room_publish_snapshot" ||
+            agent.home.projectSnapshots?.enabled === true)))
     );
   if (name === "qq_react")
     return (

@@ -418,9 +418,14 @@ QQ 掉线、自动重连用完次数时，管理台会显示，但主人在 QQ �
 `agents[].home` 是逐角色策略，管理台角色高级设置可编辑。缺省为：
 
 ```json
-{ "enabled": false, "publishing": false, "maxWritesPerDay": 20 }
+{
+  "enabled": false,
+  "publishing": false,
+  "projectSnapshots": { "enabled": false },
+  "maxWritesPerDay": 20
+}
 ```
 
-`enabled` 开放所有会话读取自己的房间，以及自己的主人格布置；`publishing` 还需在 `enabled` 开启时才允许主人格发布并显示原创文字。两个开关默认关闭，旧角色不会自动获得能力。`maxWritesPerDay` 范围 1–100，UTC 日内累计布置/发布成功次数，撤回、只读、预览和幂等重取不占额度。小窝工具由这些策略控制，不靠通用工具勾选扩大权限。展示对象固定为实例管理员和房主自己的会话，不开放其他角色或公网访客；启用不授权 QQ 发送、自动唤醒或发布私人资料。
+`enabled` 开放所有会话读取自己的房间，以及自己的主人格布置；`publishing` 还需在 `enabled` 开启时才允许主人格发布并显示原创文字。这些开关默认关闭，旧角色不会自动获得新能力。`projectSnapshots.enabled` 额外开放本人可信项目原稿的固定版本文字副本，仍须同时启用 `enabled` 与 `publishing`；关闭后隐藏副本正文与出处，普通原创文字继续沿用原权限。门牌短语属于 `publishing`，不额外扩大权限。`maxWritesPerDay` 范围 1–100，UTC 日内累计布置/发布成功次数，撤回、只读、预览和幂等重取不占额度。小窝工具由这些策略控制，不靠通用工具勾选扩大权限。展示对象固定为实例管理员和房主自己的会话，不开放其他角色或公网访客；启用不授权 QQ 发送、自动唤醒或发布私人资料。
 
 关闭 `publishing` 隐藏正文但保留存储，重新开启可继续显示；持续撤回使用主人格撤回或管理员隐藏。小窝意图和图片快照尚未实现。详见 [纸页小窝](AI-HOME.md)。

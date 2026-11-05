@@ -100,6 +100,7 @@ export const TOOL_NAMES = Object.freeze([
   "room_scene_patch",
   "room_scene_undo",
   "room_publish",
+  "room_publish_snapshot",
   "room_retract",
   "room_operation_status",
   "memory_search",

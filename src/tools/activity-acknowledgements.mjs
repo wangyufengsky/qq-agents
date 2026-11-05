@@ -1,3 +1,4 @@
+import { projectSnapshotProof } from "../home/project-snapshots.mjs";
 // Explicit checkpoints let a role finish reading a backlog across bounded
 // turns. They never change the draft, choices or whose turn it is.
 export function acknowledgeActivity(runtime, ctx, args, old) {
@@ -69,6 +70,7 @@ export function acknowledgeActivity(runtime, ctx, args, old) {
       files: [],
       author: "agent",
       action: "acknowledge",
+      homeSnapshotProvenance: projectSnapshotProof(runtime, ctx, old, args),
       administratorContributionsRead: read.revisions,
     };
     memory.db
