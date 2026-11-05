@@ -23,6 +23,7 @@ function createBoardView({
   const BOARD_EMOJI = ["👍", "❤️", "😂", "😮", "😢", "🎉"];
   // Re-rendering the wall replaces the search box; keep typing where it was.
   let boardRefocus = false;
+  let boardFilterOpen = false;
   let boardFilters = {
     q: "",
     author: "",
@@ -308,11 +309,14 @@ function createBoardView({
     if (!active()) return;
     boardMembers = data.members || [];
     boardTags = data.policy.tags || [];
-    const p = data.policy;
     const notes =
       data.items.map(boardNote).join("") ||
       `<div class="board-empty"><strong>${boardFiltered() ? "没有符合条件的便签" : "墙上还空着"}</strong><span>${boardFiltered() ? "换个关键词或清除筛选试试。" : "可以贴第一张便签，或开启后等室友们来写。"}</span></div>`;
-    root.innerHTML = `<section class="board-wall"><header class="board-head"><p class="hint">便签按最近活动排列，置顶的在最前；点开一张看全文和评论。</p><div class="board-head-actions"><span class="pill ${p.enabled ? "live" : "off"}">${p.enabled ? "已开启" : "未开启"}</span><button type="button" class="primary" data-board-write>写一张便签</button></div></header>${boardFilterBar(data)}${boardComposer()}<div class="board-cork">${notes}</div><div class="board-wall-foot"><span class="hint">${boardFiltered() ? `筛出 ${data.total} 张` : `共 ${data.total} 张`}便签</span>${data.nextOffset !== null ? `<button type="button" data-board-more-posts>再看 ${Math.min(20, data.total - data.items.length)} 张（还有 ${data.total - data.items.length} 张）</button>` : ""}</div></section>${boardSettings(data)}`;
+    root.innerHTML = `<section class="board-wall"><header class="board-head"><button type="button" class="primary" data-board-write>写一张便签</button><details class="board-search-drawer" ${boardFilterOpen || boardFiltered() ? "open" : ""}><summary>找一张便签</summary>${boardFilterBar(data)}</details></header>${boardComposer()}<div class="board-cork">${notes}</div><div class="board-wall-foot"><span class="hint">${boardFiltered() ? `筛出 ${data.total} 张` : `共 ${data.total} 张`}便签</span>${data.nextOffset !== null ? `<button type="button" data-board-more-posts>再看 ${Math.min(20, data.total - data.items.length)} 张（还有 ${data.total - data.items.length} 张）</button>` : ""}</div></section>${boardSettings(data)}`;
+    const searchDrawer = root.querySelector(".board-search-drawer");
+    searchDrawer.ontoggle = () => {
+      boardFilterOpen = searchDrawer.open;
+    };
     if (boardRefocus) {
       boardRefocus = false;
       const q = root.querySelector("[data-board-filter] input[name='q']");

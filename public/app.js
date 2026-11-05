@@ -11,6 +11,9 @@ const $ = (s) => document.querySelector(s),
           "'": "&#39;",
         })[c],
     );
+// Old bookmarks enter the same home surface as the primary navigation.
+if (globalThis.location?.search === "?view=board")
+  globalThis.location.replace("/home-space/?open=board#living");
 let configMigrationWarnings = [];
 let token = sessionStorage.getItem("qq-unified-token") || "",
   config,
@@ -18,7 +21,7 @@ let token = sessionStorage.getItem("qq-unified-token") || "",
   tools = [],
   agentDefaults = {},
   status,
-  tab = globalThis.location?.search === "?view=board" ? "board" : "overview",
+  tab = "overview",
   editing,
   errorFilter = "",
   globalPausePending = false;

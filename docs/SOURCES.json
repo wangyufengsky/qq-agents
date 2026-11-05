@@ -28,6 +28,12 @@
       "commit": "32bc17d707397af48368db759548806763bca6aa",
       "license": "MIT",
       "note": "Read-only endpoint and response-shape reference. No package installed or executed."
+    },
+    {
+      "repository": "https://github.com/lxgw/LxgwWenKai",
+      "commit": "4becfb4d5cf0c92cfdb60a6e9b504bda43315325",
+      "license": "OFL-1.1",
+      "note": "LXGW WenKai Regular v1.530, renamed to Paper Nest Hand and converted to WOFF2 for local web delivery. Glyph outlines unchanged."
     }
   ],
   "vendoredFiles": [
@@ -152,6 +158,14 @@
       "sourcePath": "internal/api/signer.go",
       "sha256": "c11408aca5fdda1e232ff874a5e1ed03f61cf01bbf851779d384c5ec5cfba395",
       "modification": "JavaScript port of read API signature algorithm; compatibility vectors retained in app-adapters tests."
+    },
+    {
+      "path": "public/home-space/paper-nest-hand-v1.530.woff2",
+      "origin": "lxgw/LxgwWenKai",
+      "sourcePath": "release v1.530/LXGWWenKai-Regular.ttf",
+      "sha256": "22d510156a20f65aef8504580905045fed4be344b97f04a1776375850136912d",
+      "upstreamSha256": "2d73eea94ad808999d90c0000c239a84a33b09d4bc6ab6c5b8bbf1eda8a7fc8b",
+      "modification": "Full glyph set retained; family names changed to Paper Nest Hand to respect reserved names; WOFF2 conversion with fontTools 4.68.0. Original OFL retained in vendor/fonts/LXGW-OFL.txt."
     }
   ]
 }

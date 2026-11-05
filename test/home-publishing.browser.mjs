@@ -89,6 +89,7 @@ try {
       ),
     );
   }
+  await page.locator(".item-management summary").click();
   await page.getByRole("button", { name: "隐藏此内容", exact: true }).click();
   await page.waitForFunction(() =>
     document
@@ -99,6 +100,7 @@ try {
     "admin hide removes original body",
     !(await page.locator("#reader-content").textContent()).includes(payload),
   );
+  await page.locator(".item-management summary").click();
   await page
     .getByRole("button", { name: "解除隐藏限制（不恢复正文）", exact: true })
     .click();
@@ -144,7 +146,7 @@ try {
     () =>
       document
         .getElementById("reader-content")
-        .textContent.includes("尚未开启或已关闭"),
+        .textContent.includes("这里暂时安静"),
     null,
     { timeout: 16000 },
   );

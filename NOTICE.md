@@ -19,4 +19,6 @@ Current npm dependency licenses are recorded in package-lock.json. Distributed c
 
 ## 纸页小窝生成素材
 
+纸页小窝的 `Paper Nest Hand` 网页字体源自 [LXGW WenKai Regular v1.530](https://github.com/lxgw/LxgwWenKai/releases/tag/v1.530)，按 SIL Open Font License 1.1 分发。字体由 LXGW 基于 Fontworks Klee 开发；完整版权和许可保留在 `vendor/fonts/LXGW-OFL.txt`。本项目为遵守保留字体名称要求更改了字体家族名，并转换为 WOFF2；未修改或删减字形，转换版本与哈希记录在 `docs/SOURCES.json`。
+
 `public/home-preview/assets/` 的 26 张手绘纸板与纸片由维护者委托 OpenAI imagegen 生成，作为 QQ Agents 项目贡献按根目录 MIT 许可提供。来源、提示词、原图哈希及 WebP 转换记录见 [素材说明](docs/AI-HOME-ASSETS.md)；原始用户参考附件不包含在发布素材中。

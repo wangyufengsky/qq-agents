@@ -170,6 +170,18 @@ test("home sample routes keep console host/origin checks, deny writes and arbitr
   assert.equal(image.status, 200);
   assert.equal(image.headers.get("content-type"), "image/webp");
   assert.equal(await image.text(), "");
+  const font = await fetch(base + "/home-space/paper-nest-hand-v1.530.woff2", {
+    method: "HEAD",
+  });
+  assert.equal(font.status, 200);
+  assert.equal(font.headers.get("content-type"), "font/woff2");
+  assert.match(font.headers.get("cache-control"), /immutable/);
+  assert.equal(await font.text(), "");
+  assert.equal((await fetch(base + "/home-space/unknown.woff2")).status, 404);
+  assert.equal(
+    (await fetch(base + "/home-space/")).headers.get("cache-control"),
+    "no-store",
+  );
   assert.equal(
     (await fetch(base + "/home-preview/", { method: "POST" })).status,
     405,

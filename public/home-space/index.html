@@ -4,9 +4,17 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>纸页小窝</title>
+    <link
+      rel="preload"
+      href="/home-space/paper-nest-hand-v1.530.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
     <link rel="stylesheet" href="/home-preview/style.css" />
     <link rel="stylesheet" href="/board.css" />
     <link rel="stylesheet" href="/home-space/style.css" />
+    <link rel="stylesheet" href="/home-space/interiors.css" />
     <script src="/board-ui.js" defer></script>
     <script type="module" src="/home-space/app.mjs"></script>
   </head>
@@ -23,6 +31,7 @@
         </button>
         <button id="menu-toggle" aria-label="更多入口">···</button>
       </div>
+      <a id="console-return" href="/" aria-label="返回管理台">← 管理台</a>
     </header>
     <main>
       <section id="gate" role="status">
@@ -46,16 +55,19 @@
         </footer>
         <div id="pagination"></div>
         <details id="editor" class="settings">
-          <summary>布置公共空间</summary>
+          <summary>布置小窝 <span>收起工具匣 ↑</span></summary>
           <p id="layout-status" role="status"></p>
-          <p>只保存家具和配色。个人房间由其主人格布置。</p>
+          <p class="toolbox-hint">挑一件家具，挪到喜欢的位置。</p>
+          <div id="object-strip" role="group" aria-label="选择家具"></div>
           <label
             >配色<select id="palette">
               <option value="cream">暖木奶油</option>
               <option value="blue">清晨浅蓝</option>
               <option value="rose">柔和豆沙</option>
             </select></label
-          ><label>选择纸片<select id="object-select"></select></label>
+          ><label class="sr-only"
+            >选择纸片<select id="object-select"></select
+          ></label>
           <div id="object-editor"></div>
           <div class="settings-footer">
             <button id="save" class="primary">保存布置</button
@@ -82,8 +94,6 @@
       </div>
       <nav class="paper-links" aria-label="小窝操作">
         <button id="refresh">刷新当前页面</button>
-        <a href="/">返回管理台</a>
-        <a href="/home-preview/">查看示例与布置预览</a>
       </nav>
     </dialog>
     <dialog id="reader" class="paper-dialog" aria-labelledby="reader-title">
