@@ -843,11 +843,62 @@ test("source reads enforce retention deadlines before delayed cleanup materializ
     .prepare("UPDATE home_social_visits SET status='active',expires_at=?")
     .run(now + day);
   f.db
-    .prepare("UPDATE home_social_invitations SET decided_at=?")
+    .prepare(
+      "UPDATE home_social_invitations SET status='declined',decided_at=?",
+    )
     .run(now - 30 * day);
-  assert.equal(socialContextAllowed(f.runtime, f.ctx, [invitation]), false);
+  const invitationContext = {
+    ...f.ctx,
+    socialBinding: {
+      ...f.ctx.socialBinding,
+      target: { kind: "invitation", id: f.invitationId },
+    },
+  };
+  assert.equal(
+    socialContextAllowed(f.runtime, invitationContext, [invitation]),
+    false,
+  );
   assert.equal(
     f.db.prepare("SELECT body_cleared_at FROM home_social_messages").get()
+      .body_cleared_at,
+    null,
+  );
+});
+
+test("accepted invitation retention follows its associated visit termination", (t) => {
+  const f = setup(t),
+    day = 86400000;
+  let now = f.runtime.now();
+  f.runtime.now = () => now;
+  const marker = socialInvitationMarker(f.invitationId, 1);
+  f.db
+    .prepare("UPDATE home_social_invitations SET decided_at=?,expires_at=?")
+    .run(now - 59 * day, now - 57 * day);
+  f.db
+    .prepare(
+      "UPDATE home_social_visits SET status='ended',ended_at=?,expires_at=?",
+    )
+    .run(now - 29 * day, now - 29 * day);
+  const invitationContext = {
+    ...f.ctx,
+    socialBinding: {
+      ...f.ctx.socialBinding,
+      target: { kind: "invitation", id: f.invitationId },
+    },
+  };
+  assert.equal(
+    socialContextAllowed(f.runtime, invitationContext, [marker]),
+    true,
+  );
+  assert.equal(socialContextAllowed(f.runtime, f.ctx, [marker]), true);
+  now += day;
+  assert.equal(
+    socialContextAllowed(f.runtime, invitationContext, [marker]),
+    false,
+  );
+  assert.equal(socialContextAllowed(f.runtime, f.ctx, [marker]), false);
+  assert.equal(
+    f.db.prepare("SELECT body_cleared_at FROM home_social_invitations").get()
       .body_cleared_at,
     null,
   );
