@@ -49,19 +49,28 @@ export function socialRecordSources(record) {
     throw Error("INVALID_PROTECTION_METADATA");
   return [...new Set(values)].sort();
 }
+// Cache statements, never resolved metadata: revocation and source changes stay live.
+/** @type {WeakMap<object, any>} */
+const sourceLookups = new WeakMap();
 /** @param {any} runtime @param {any} ctx @param {Iterable<string>} [ids] @returns {string[]} */
 export function socialSources(runtime, ctx, ids = ctx.privateRead || []) {
   const sources = new Set();
   const pending = [...ids],
     seen = new Set();
-  const lookup = runtime.memory.db.prepare(
-    "SELECT payload AS metadata FROM events WHERE agent_id=?1 AND id=?2 UNION ALL SELECT metadata FROM diaries WHERE agent_id=?1 AND id=?2 UNION ALL SELECT value FROM work_notes WHERE agent_id=?1 AND id=?2 UNION ALL SELECT value FROM intentions WHERE agent_id=?1 AND id=?2 UNION ALL SELECT value FROM self_candidates WHERE agent_id=?1 AND id=?2",
-  );
+  const db = runtime.memory.db;
+  let lookup = sourceLookups.get(db);
+  if (!lookup) {
+    lookup = db.prepare(
+      "SELECT payload AS metadata FROM events WHERE agent_id=?1 AND id=?2 UNION ALL SELECT metadata FROM diaries WHERE agent_id=?1 AND id=?2 UNION ALL SELECT value FROM work_notes WHERE agent_id=?1 AND id=?2 UNION ALL SELECT value FROM intentions WHERE agent_id=?1 AND id=?2 UNION ALL SELECT value FROM self_candidates WHERE agent_id=?1 AND id=?2",
+    );
+    sourceLookups.set(db, lookup);
+  }
+  // Ordinary conversations accumulate durable taint across turns. Traverse the
+  // complete finite graph; visited IDs bound cycles without discarding sources.
   while (pending.length) {
     const id = pending.pop();
     if (typeof id !== "string" || seen.has(id)) continue;
     seen.add(id);
-    if (seen.size > 1000) throw Error("SOCIAL_SOURCE_DENIED");
     if (/^social(?::|-grant:|-invitation:)/.test(id)) {
       if (!parseSocialMarker(id)) throw Error("INVALID_PROTECTION_METADATA");
       sources.add(id);
