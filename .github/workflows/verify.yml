@@ -72,7 +72,7 @@ jobs:
       - name: Smoke-test the first owned scene render on Linux
         if: runner.os == 'Linux'
         timeout-minutes: 3
-        run: node scripts/home-scene-cold-smoke.mjs --observe-cold-start
+        run: node test/home-scene-cold.browser.mjs
       - name: Preflight Windows owned browser startup and native cleanup
         if: runner.os == 'Windows'
         timeout-minutes: 4

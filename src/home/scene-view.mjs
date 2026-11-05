@@ -97,11 +97,7 @@ export async function renderHomeScene(
     /** @type {import("playwright-core").LaunchOptions & {signal?: AbortSignal}} */
     const launchOptions = {
       signal,
-      timeout: Math.max(
-        1, // Only internal synthetic diagnostics may override the default sub-budget.
-        // Bridge calls retain their independent 20-second generation signal.
-        Math.min(30000, launchTimeoutMs),
-      ),
+      timeout: Math.max(1, Math.min(15000, launchTimeoutMs)),
       executablePath: process.execPath,
       ignoreDefaultArgs: true,
       env: buildChildEnv("browser"),
