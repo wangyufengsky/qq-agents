@@ -2096,7 +2096,7 @@ $("#edit-form").onsubmit = (e) => {
                 socialProfile:
                   get("type") === "openai"
                     ? get("socialProfile") || null
-                    : null,
+                    : undefined,
               }
             : {}),
           effort: get("effort"),
