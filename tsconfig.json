@@ -117,6 +117,12 @@
     "src/home/social-policy.mjs",
     "src/home/social-service.mjs",
     "src/home/social-recovery.mjs",
-    "scripts/home-social-recover.mjs"
+    "scripts/home-social-recover.mjs",
+    "src/core/subject-execution.mjs",
+    "src/home/social-runtime.mjs",
+    "src/home/social-exchange.mjs",
+    "src/home/social-resources.mjs",
+    "src/home/social-tool-names.mjs",
+    "src/tools/home-social.mjs"
   ]
 }

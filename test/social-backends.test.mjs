@@ -53,6 +53,121 @@ function fixture() {
   return { params, reserved, settled, bodies };
 }
 
+test("input consumption acknowledgement precedes tools and snapshots each HTTP input", async () => {
+  const f = fixture(),
+    pending = ["initial"],
+    order = [],
+    seen = [];
+  f.params.captureInputConsumption = () => pending.slice();
+  f.params.onInputConsumed = async (ticket) => {
+    seen.push(ticket);
+    order.push("consumed");
+    pending.length = 0;
+  };
+  f.params.callTool = async () => {
+    order.push("tool-read");
+    pending.push("tool-result");
+    return { ok: true };
+  };
+  let round = 0;
+  f.params.fetch = async () => {
+    order.push("http");
+    return {
+      ok: true,
+      json: async () => ({
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+        choices: [
+          {
+            message: round++
+              ? { content: "done" }
+              : {
+                  tool_calls: [
+                    {
+                      id: "call",
+                      type: "function",
+                      function: { name: "home_visit_send", arguments: "{}" },
+                    },
+                  ],
+                },
+          },
+        ],
+      }),
+    };
+  };
+  await runOpenAISocial(f.params);
+  assert.deepEqual(seen, [["initial"], ["tool-result"]]);
+  assert.deepEqual(order, [
+    "http",
+    "consumed",
+    "tool-read",
+    "http",
+    "consumed",
+  ]);
+});
+
+test("unconsumed tool results and rejected model requests never acknowledge input", async () => {
+  for (const failure of ["budget", "usage", "lease", "transport"]) {
+    const f = fixture();
+    let confirmed = 0,
+      checks = 0;
+    f.params.onInputConsumed = async () => {
+      confirmed++;
+    };
+    if (failure === "budget")
+      f.params.budget.reserveInference = async () => {
+        throw Error("SOCIAL_RESOURCE_LIMIT");
+      };
+    if (failure === "usage")
+      f.params.fetch = async () => ({
+        ok: true,
+        json: async () => ({ choices: [{ message: { content: "done" } }] }),
+      });
+    if (failure === "lease")
+      f.params.beforeInput = async () => {
+        if (++checks === 3) throw Error("AUDIENCE_DENIED");
+      };
+    if (failure === "transport")
+      f.params.fetch = async () => {
+        throw Error("SYNTHETIC_NETWORK_FAILURE");
+      };
+    await assert.rejects(runOpenAISocial(f.params));
+    assert.equal(confirmed, 0, failure);
+  }
+  const f = fixture(),
+    tickets = [];
+  let pending = [];
+  f.params.maxInferences = 1;
+  f.params.captureInputConsumption = () => pending.slice();
+  f.params.onInputConsumed = async (ticket) => {
+    tickets.push(ticket);
+  };
+  f.params.callTool = async () => {
+    pending.push("new unread result");
+    return { ok: true };
+  };
+  f.params.fetch = async () => ({
+    ok: true,
+    json: async () => ({
+      usage: { prompt_tokens: 10, completion_tokens: 5 },
+      choices: [
+        {
+          message: {
+            tool_calls: [
+              {
+                id: "call",
+                type: "function",
+                function: { name: "home_visit_send", arguments: "{}" },
+              },
+            ],
+          },
+        },
+      ],
+    }),
+  });
+  await assert.rejects(runOpenAISocial(f.params), /SOCIAL_INFERENCE_LIMIT/);
+  assert.deepEqual(tickets, [[]]);
+});
+
 test("invalid endpoint errors never include original URL", () => {
   assert.throws(
     () =>

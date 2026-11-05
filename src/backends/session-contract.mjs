@@ -8,7 +8,7 @@ import { isDeepStrictEqual } from "node:util";
  *   headers: Record<string, string>, args: string[], env: Record<string, string>,
  *   allowedTools: string[]}} ToolServerConfig
  * @typedef {{id: string, type: "dsh" | "codex" | "openai" | "antigravity", label: string, provider: string,
- *   baseUrl?: string, apiKeyEnv?: string, contextWindow?: number, maxToolRounds?: number,
+ *   baseUrl?: string, apiKeyEnv?: string, contextWindow?: number, maxToolRounds?: number, socialProfile?: string|null,
  *   requestTimeoutMs?: number, vision?: boolean, sendEffort?: boolean,
  *   recovery: {autoReconnect: boolean, dshInstance?: string}, command: string,
  *   env?: Record<string, string>, home?: string, preset: string, model: string, effort: string,

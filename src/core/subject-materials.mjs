@@ -324,6 +324,12 @@ export function subjectMaterials(runtime, ctx) {
         }
       : {}),
     shares: shares.map(strip),
+    ...(runtime.config.homeSocial?.enabled &&
+    a.home?.enabled &&
+    a.home.social?.enabled &&
+    !restricted
+      ? { homeSocial: runtime.socialRuntime.capabilities(ctx, {}) }
+      : {}),
     ...(board ? { board } : {}),
     ...(a.home?.enabled &&
     a.home.intents?.enabled &&
