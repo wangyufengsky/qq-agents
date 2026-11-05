@@ -1,0 +1,62 @@
+// @ts-check
+import fs from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { spawn } from "node:child_process";
+
+/** Establish a native kill-on-close job before the wrapper may spawn Chromium.
+ * @param {string} controlFile @param {{nonce:string}} control */
+export async function prepareHomeBrowserJob(controlFile, control) {
+  if (process.platform !== "win32") return;
+  const helper = spawn(
+    path.join(
+      process.env.SystemRoot || "C:\\Windows",
+      "System32",
+      "WindowsPowerShell",
+      "v1.0",
+      "powershell.exe",
+    ),
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      fileURLToPath(new URL("./browser-job.ps1", import.meta.url)),
+      "-ControlFile",
+      controlFile,
+    ],
+    { stdio: "ignore", windowsHide: true },
+  );
+  let failed = false;
+  helper.on("error", () => {
+    failed = true;
+  });
+  helper.on("exit", () => {
+    failed = true;
+  });
+  const deadline = Date.now() + 8000;
+  while (!failed && Date.now() < deadline) {
+    try {
+      const ready = JSON.parse(
+        await fs.readFile(controlFile + ".job-ready", "utf8"),
+      );
+      if (
+        ready.nonce !== control.nonce ||
+        ready.parentPid !== process.pid ||
+        !ready.created ||
+        ready.helperPid !== helper.pid
+      )
+        throw Error("HOME_SCENE_RENDER_FAILED");
+      return;
+    } catch (error) {
+      if (
+        /** @type {NodeJS.ErrnoException} */ (error).code !== "ENOENT" &&
+        !(error instanceof SyntaxError)
+      )
+        throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw Error("HOME_SCENE_RENDER_FAILED");
+}

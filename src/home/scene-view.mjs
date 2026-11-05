@@ -3,6 +3,11 @@
 import { mediaLease } from "../tools/media-lease.mjs";
 import { buildChildEnv } from "../core/child-env.mjs";
 import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
+import { stopHomeBrowser, homeBrowserArguments } from "./browser-process.mjs";
 import { chromium } from "playwright-core";
 import { findScreenshotBrowser } from "../tools/public-screenshot.mjs";
 import { homeTemplate, validateLayout } from "./layout.mjs";
@@ -20,6 +25,7 @@ const allowed = new Map(
     ["/home-space/scene-decoration.mjs", "text/javascript"],
     ["/home-preview/style.css", "text/css"],
     ["/home-space/style.css", "text/css"],
+    ["/home-space/interiors.css", "text/css"],
     ["/home-space/paper-nest-hand-v1.530.woff2", "font/woff2"],
     ...Object.values(catalog).map((a) => [
       `/home-preview/${a.file}`,
@@ -32,12 +38,17 @@ let active = 0;
 const last = new WeakMap();
 
 // The isolated browser receives only packaged files and a single authorized snapshot.
-// No listener, authenticated browser profile, arbitrary URL or durable image is exposed.
+// No web listener, authenticated browser profile, arbitrary URL or durable image is exposed.
 /** @param {any} snapshot
- * @param {{viewport?: string, signal?: AbortSignal, executablePath?: string}} options */
+ * @param {{viewport?: string, signal?: AbortSignal, executablePath?: string, launchTimeoutMs?: number}} options */
 export async function renderHomeScene(
   snapshot,
-  { viewport = "desktop", signal, executablePath } = {},
+  {
+    viewport = "desktop",
+    signal,
+    executablePath,
+    launchTimeoutMs = process.platform === "win32" ? 10000 : 5000,
+  } = {},
 ) {
   if (active >= 2) throw Error("HOME_SCENE_BUSY");
   signal?.throwIfAborted();
@@ -45,21 +56,58 @@ export async function renderHomeScene(
   active++;
   /** @type {import("playwright-core").Browser | undefined} */
   let browser;
-  const abort = () => {
-    void browser?.close().catch(() => {});
-  };
+  let directory;
   try {
-    browser = await chromium.launch({
-      executablePath,
-      headless: true,
+    directory = await fs.mkdtemp(path.join(os.tmpdir(), "qq-home-browser-"));
+  } catch (error) {
+    active--;
+    throw error;
+  }
+  const marker = path.join(directory, "wrapper.pid");
+  const control = {
+    arguments: homeBrowserArguments(path.join(directory, "profile")),
+    nonce: randomUUID(),
+    endpoint:
+      process.platform === "win32"
+        ? String.raw`\\.\pipe\qq-home-browser-${randomUUID()}`
+        : path.join(directory, "control.sock"),
+  };
+  let stopping;
+  const stop = () => (stopping ||= stopHomeBrowser(marker, control));
+  const abort = () => {
+    void stop().catch(() => {});
+  };
+  signal?.addEventListener("abort", abort, { once: true });
+  try {
+    await fs.chmod(directory, 0o700);
+    const controlFile = path.join(directory, "control.json");
+    await fs.writeFile(controlFile, JSON.stringify(control), {
+      mode: 0o600,
+      flag: "wx",
+    });
+    const profile = path.join(directory, "profile");
+    await fs.mkdir(profile, { mode: 0o700 });
+    // Pinned Playwright 1.64.1 forwards signal to launch cancellation although
+    // LaunchOptions omits it. The wrapper supplies independently owned cleanup.
+    /** @type {import("playwright-core").LaunchOptions & {signal?: AbortSignal}} */
+    const launchOptions = {
+      signal,
+      timeout: Math.max(
+        1,
+        Math.min(process.platform === "win32" ? 10000 : 5000, launchTimeoutMs),
+      ),
+      executablePath: process.execPath,
+      ignoreDefaultArgs: true,
       env: buildChildEnv("browser"),
       args: [
-        "--disable-background-networking",
-        "--disable-component-update",
-        "--no-first-run",
+        fileURLToPath(new URL("./browser-launcher.mjs", import.meta.url)),
+        marker,
+        executablePath,
+        profile,
+        controlFile,
       ],
-    });
-    signal?.addEventListener("abort", abort, { once: true });
+    };
+    browser = await chromium.launch(launchOptions);
     signal?.throwIfAborted();
     const context = await browser.newContext({
       viewport: { width: viewport === "mobile" ? 390 : 960, height: 760 },
@@ -74,7 +122,7 @@ export async function renderHomeScene(
       if (u.pathname === "/")
         return route.fulfill({
           contentType: "text/html",
-          body: '<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="/home-preview/style.css"><link rel="stylesheet" href="/home-space/style.css"><body><div id="stage"><div class="book-page"><div class="book-face" id="scene"></div></div></div>',
+          body: '<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="/home-preview/style.css"><link rel="stylesheet" href="/home-space/style.css"><link rel="stylesheet" href="/home-space/interiors.css"><body><div id="stage"><div class="book-page"><div class="book-face" id="scene"></div></div></div>',
         });
       const contentType = allowed.get(u.pathname);
       if (!contentType) return route.abort();
@@ -154,8 +202,22 @@ export async function renderHomeScene(
     throw Error("HOME_SCENE_RENDER_FAILED", { cause: e });
   } finally {
     signal?.removeEventListener("abort", abort);
-    await browser?.close().catch(() => {});
-    active--;
+    let cleared = false;
+    try {
+      if (browser)
+        await Promise.race([
+          browser.close().catch(() => {}),
+          new Promise((resolve) => setTimeout(resolve, 500)),
+        ]);
+      await stop();
+      cleared = true;
+    } finally {
+      // A cleanup failure keeps the slot reserved rather than overlapping trees.
+      if (cleared) {
+        active--;
+        await fs.rm(directory, { recursive: true, force: true });
+      }
+    }
   }
 }
 

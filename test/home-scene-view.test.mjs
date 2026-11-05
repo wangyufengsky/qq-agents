@@ -44,7 +44,8 @@ test("real browser renders persisted scene with the packaged desktop and mobile 
   let executablePath;
   try {
     executablePath = findScreenshotBrowser();
-  } catch {
+  } catch (error) {
+    if (process.platform === "win32" && process.env.CI) throw error;
     t.skip("local Chromium unavailable; browser acceptance remains required");
     return;
   }
@@ -276,9 +277,11 @@ test("OpenAI batch retract cannot first deliver or persist stale scene text or p
       },
       callTool: async (name) => {
         if (name === "room_scene_view")
-          return homeSceneView(f.runtime, f.ctx, { type: "room" }, async () =>
-            Buffer.from("synthetic-pixels"),
-          );
+          return homeSceneView(f.runtime, f.ctx, { type: "room" }, async () => {
+            if (mode === "render-failed")
+              throw Error("SCREENSHOT_BROWSER_MISSING");
+            return Buffer.from("synthetic-pixels");
+          });
         return f.runtime.executeTool(f.ctx, "room_retract", {
           identityGeneration: view.identityGeneration,
           requestId: "batch-retract",
@@ -292,5 +295,109 @@ test("OpenAI batch retract cannot first deliver or persist stale scene text or p
       fs.readFileSync(backend.file(saved.id), "utf8").includes(marker),
       false,
     );
+  }
+});
+
+test(
+  "stalled browser startup aborts, times out and releases its process and slots",
+  { skip: process.platform === "win32" },
+  async (t) => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const { temp } = await import("./helpers.mjs");
+    const root = temp(t);
+    const executablePath = path.join(root, "synthetic-browser");
+    const marker = path.join(root, "pid");
+    fs.writeFileSync(
+      executablePath,
+      `#!/usr/bin/env node\nrequire('node:fs').writeFileSync(${JSON.stringify(marker)}, String(process.pid)); setInterval(() => {}, 1000);\n`,
+      { mode: 0o700 },
+    );
+    const snapshot = {
+      type: "room",
+      view: { layout: defaultLayout("room") },
+      template: homeTemplate("room"),
+      residents: [],
+    };
+    for (const mode of ["cancel", "timeout", "cancel"]) {
+      fs.rmSync(marker, { force: true });
+      const controller = new AbortController();
+      const pending = renderHomeScene(snapshot, {
+        executablePath,
+        signal: controller.signal,
+        launchTimeoutMs: mode === "timeout" ? 4000 : 5000,
+      });
+      let launchError;
+      const rejected = assert.rejects(pending, (error) => {
+        launchError = error;
+        return true;
+      });
+      for (let n = 0; n < 300 && !fs.existsSync(marker); n++)
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      assert.equal(fs.existsSync(marker), true, launchError?.cause?.message);
+      const pid = Number(fs.readFileSync(marker, "utf8"));
+      const started = Date.now();
+      if (mode === "cancel") controller.abort();
+      await rejected;
+      assert.ok(Date.now() - started < (mode === "timeout" ? 6000 : 2000));
+      for (let n = 0; n < 200; n++) {
+        try {
+          process.kill(pid, 0);
+        } catch {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+    }
+    const first = new AbortController(),
+      second = new AbortController();
+    const one = assert.rejects(
+      renderHomeScene(snapshot, { executablePath, signal: first.signal }),
+    );
+    const two = assert.rejects(
+      renderHomeScene(snapshot, { executablePath, signal: second.signal }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    first.abort();
+    await assert.rejects(
+      renderHomeScene(snapshot, { executablePath }),
+      /HOME_SCENE_BUSY/,
+    );
+    second.abort();
+    await Promise.all([one, two]);
+  },
+);
+
+test("directory removal failure does not exhaust confirmed-clean browser slots", async () => {
+  const fs = await import("node:fs/promises");
+  const original = fs.default.rm;
+  const leftovers = new Set();
+  fs.default.rm = async (target, options) => {
+    if (String(target).includes("qq-home-browser-")) {
+      leftovers.add(target);
+      throw Object.assign(Error("synthetic locked directory"), {
+        code: "EPERM",
+      });
+    }
+    return original(target, options);
+  };
+  try {
+    for (let i = 0; i < 3; i++) {
+      await assert.rejects(
+        renderHomeScene({}, { executablePath: process.execPath }),
+        (error) => error.code === "EPERM",
+      );
+    }
+    assert.equal(leftovers.size, 3);
+  } finally {
+    fs.default.rm = original;
+    for (const target of leftovers)
+      await original(target, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      });
   }
 });

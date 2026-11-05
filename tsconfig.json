@@ -103,6 +103,9 @@
     "src/home/room-store.mjs",
     "src/home/rooms.mjs",
     "src/home/scene-view.mjs",
+    "src/home/browser-process.mjs",
+    "src/home/browser-launcher.mjs",
+    "src/home/browser-job.mjs",
     "src/tools/media-lease.mjs",
     "public/home-space/scene-decoration.mjs"
   ]
