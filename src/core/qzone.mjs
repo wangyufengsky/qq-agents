@@ -63,6 +63,16 @@ export async function readQzone(runtime, ctx, args) {
 
 /** @param {any} runtime @param {any} ctx @param {{requestId: string, content: string}} args */
 export async function postQzone(runtime, ctx, args) {
+  active(runtime, ctx);
+  const pending = runtime.qzoneApprovals.prepare(ctx, args);
+  if (pending) return pending;
+  return sendQzone(runtime, ctx, args);
+}
+
+/** @param {any} runtime @param {any} ctx @param {{requestId:string,content:string}} args
+ * @param {() => void} [validateApproval]
+ */
+export async function sendQzone(runtime, ctx, args, validateApproval) {
   const a = active(runtime, ctx);
   // Everyone who can see the account sees its posts, so recollections from
   // other chats need the same grant as an external call.
@@ -81,6 +91,13 @@ export async function postQzone(runtime, ctx, args) {
       action: true,
       actionBudget,
       validate: () => {
+        validateApproval?.();
+        // Parallel reads must not turn a queued autonomous post into a broad
+        // turn-grant disclosure. Only an approved fixed draft owns its grants.
+        runtime.assertDisclosure(
+          validateApproval ? ctx : { ...ctx, grants: new Set() },
+          { external: true },
+        );
         actionBudget.maxPerDay = active(
           runtime,
           ctx,

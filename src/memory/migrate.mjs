@@ -86,6 +86,15 @@ export function restoreExport(memory, data) {
     projects: ["agent_id", "id", "value"],
     memory_corrections: ["agent_id", "id", "value"],
     activity_history: ["agent_id", "project_id", "revision", "value"],
+    qzone_approvals: [
+      "id",
+      "agent_id",
+      "request_id",
+      "state",
+      "created_at",
+      "expires_at",
+      "value",
+    ],
   };
   // An empty target identity can be restored beside other identities. Remap only local seq watermarks.
   if (
@@ -111,6 +120,12 @@ export function restoreExport(memory, data) {
     for (const [table, cols] of Object.entries(columns)) {
       for (const original of data.tables[table] || []) {
         const row = { ...original };
+        // An agent export transports history, not authority to publish from this instance.
+        if (
+          table === "qzone_approvals" &&
+          ["awaiting_approval", "submitting"].includes(row.state)
+        )
+          row.state = "cancelled";
         // Imported role data is not an attestation by this instance. Keep drafts, discard display authority.
         if (table === "projects" || table === "activity_history")
           row.value = JSON.stringify(

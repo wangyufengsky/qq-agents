@@ -1,3 +1,4 @@
+import { QzoneApprovals } from "./qzone-approvals.mjs";
 import { HOME_TOOLS } from "../home/policy.mjs";
 import { HomeService } from "../home/service.mjs";
 import { contextProtection } from "./protected-mind.mjs";
@@ -131,6 +132,7 @@ export class Runtime {
       this.contexts.upgradeInstructions(a, self);
     }
     this.home = new HomeService(this);
+    this.qzoneApprovals = new QzoneApprovals(this);
     this.banter = new BanterCoordinator({
       botIds: this.config.connections.map((c) => c.accountId),
       ...this.config.peerLimit,

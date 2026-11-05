@@ -164,9 +164,9 @@ test("recollections from other chats need a disclosure grant before posting", as
     options = o;
     throw Error("PRIVATE_RECOLLECTION_EXTERNAL_CALL_BLOCKED");
   };
-  await assert.rejects(
-    post(f, { requestId: "leak", content: "别人的事" }),
-    /PRIVATE_RECOLLECTION_EXTERNAL_CALL_BLOCKED/,
+  assert.equal(
+    (await post(f, { requestId: "leak", content: "别人的事" })).status,
+    "awaiting_approval",
   );
   assert.deepEqual(options, { external: true });
   assert.equal(f.calls.length, 0);
@@ -247,9 +247,10 @@ test("free-time posts drawing on chat recollections still need a grant", async (
   const f = setup(t);
   const ctx = context(f.runtime, "agent-0", "@subject");
   ctx.privateRead.add("evt-group-message");
-  await assert.rejects(
-    post(f, { requestId: "idle-leak", content: "群里看到的话" }, ctx),
-    /PRIVATE_RECOLLECTION_EXTERNAL_CALL_BLOCKED/,
+  assert.equal(
+    (await post(f, { requestId: "idle-leak", content: "群里看到的话" }, ctx))
+      .status,
+    "awaiting_approval",
   );
   assert.equal(f.calls.length, 0);
 });

@@ -967,6 +967,7 @@ export function createServer({
         const status = runtime.status();
         return send({
           ...status,
+          qzoneApprovals: runtime.qzoneApprovals.list(),
           version: packageVersion,
           updateNotice: runtime.updates
             ? {
@@ -1317,6 +1318,12 @@ export function createServer({
               : runtime.protectedWork.create(data),
           );
         }
+      }
+      if (req.method === "POST" && url.pathname === "/api/qzone/approval") {
+        const data = await readBody();
+        if (data.action === "approve" && !allowLive)
+          throw Error("ISOLATED_MODE");
+        return send(await runtime.qzoneApprovals.act(data));
       }
       if (req.method === "POST" && url.pathname === "/api/disclosure") {
         const data = await readBody();
