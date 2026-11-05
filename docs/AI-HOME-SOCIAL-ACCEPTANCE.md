@@ -8,10 +8,10 @@
 
 | 项目                             | 实际结果                                                                                         |
 | -------------------------------- | ------------------------------------------------------------------------------------------------ |
-| 统一代码基线                     | `9ff30c49cc3f11f41f381c3fa9542f7024f06eae`，工作区干净                                           |
-| 统一构建摘要                     | `ebc3597af92720758cd698a286bb87a5b1bba794aaac4075072a032867193e22`                               |
-| 完整 `npm run verify`            | 2269 项测试，2266 通过、0 失败、3 项平台条件跳过；其他阶段全部通过                               |
-| 恢复、规模与真实管理 HTTP 定向   | 11/11 通过                                                                                       |
+| 统一代码基线                     | `43d21ec57dd60ca36a5dab60a61d9a82e83c66f6`，工作区干净                                           |
+| 统一构建摘要                     | `7ab8643a4e477299967ceb801627c5035dc87df056e277125a4edfcce67c2c65`                               |
+| 完整 `npm run verify`            | 2276 项测试，2273 通过、0 失败、3 项平台条件跳过；其他阶段全部通过                               |
+| 恢复、规模与真实管理 HTTP 定向   | 12/12 通过                                                                                       |
 | 真实管理服务与正式页面浏览器集成 | 通过，无 API 拦截；合成数据、375px、审计、隐藏、终止与零 AI 已读变化                             |
 | 独立旧版基线                     | `fc3ca92a30969b915e1cf8851b5e662b2d4074d8`，工作区干净                                           |
 | 旧版构建摘要                     | `0b5e463505c6bab37d13eb549f3beb99494f97029443472b018cc291adc97ba4`                               |
@@ -20,7 +20,7 @@
 | 首版支持与启用状态               | 精确硬预算 OpenAI profile；新开关默认关闭，测试不改变生产能力                                    |
 | 真实模型、QQ 与公网手机验收      | 未进行                                                                                           |
 
-S2-00 契约见 [#176](https://github.com/wangyufengsky/qq-agents/pull/176)，存储见 [#177](https://github.com/wangyufengsky/qq-agents/pull/177)，后端前置见 [#178](https://github.com/wangyufengsky/qq-agents/pull/178)，来源保护见 [#179](https://github.com/wangyufengsky/qq-agents/pull/179)，邀请服务见 [#180](https://github.com/wangyufengsky/qq-agents/pull/180)，独立交流见 [#181](https://github.com/wangyufengsky/qq-agents/pull/181)，管理 UI 见 [#182](https://github.com/wangyufengsky/qq-agents/pull/182)。每个 PR 合并前仍须通过其最新提交的五项必需检查；实际服务切换、暂停偏好、备份和运行版本证明留在部署私有交付记录，不写入公开仓库。
+S2-00 契约见 [#176](https://github.com/wangyufengsky/qq-agents/pull/176)，存储见 [#177](https://github.com/wangyufengsky/qq-agents/pull/177)，后端前置见 [#178](https://github.com/wangyufengsky/qq-agents/pull/178)，来源保护见 [#179](https://github.com/wangyufengsky/qq-agents/pull/179)，邀请服务见 [#180](https://github.com/wangyufengsky/qq-agents/pull/180)，独立交流见 [#181](https://github.com/wangyufengsky/qq-agents/pull/181)，管理 UI 见 [#182](https://github.com/wangyufengsky/qq-agents/pull/182)。受控浏览器管道诊断见 [#183](https://github.com/wangyufengsky/qq-agents/pull/183)，该诊断不代表 Windows Chrome 偶发启动问题已经修复。每个 PR 合并前仍须通过其最新提交的五项必需检查；实际服务切换、暂停偏好、备份和运行版本证明留在部署私有交付记录，不写入公开仓库。
 
 ## 工作包与证据矩阵
 
