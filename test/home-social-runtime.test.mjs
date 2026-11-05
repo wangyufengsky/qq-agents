@@ -1218,3 +1218,78 @@ test("current invitation state denies stale broad tool lists in actual dispatch"
   assert.equal(r.socialRuntime.tools(ctx).length, 3);
   r.capabilities.delete(ctx.token);
 });
+
+test("cached ordinary OpenAI adapters refresh social profiles without replacing chat history", async (t) => {
+  for (const removal of ["null", "omitted"]) {
+    const f = setup(t),
+      r = f.runtime;
+    const initial = structuredClone(r.config);
+    delete initial.backends[0].socialProfile;
+    initial.backends[0].contextWindow = 1000000;
+    await r.changeConfig(initial, f.configStore.revision);
+    const adapter = r.backendConnections.adapter(r.agent("agent-0"));
+    const socialFetch = adapter.fetch;
+    adapter.fetch = async () => ({
+      ok: true,
+      json: async () => ({
+        choices: [
+          {
+            message: { role: "assistant", content: "ordinary synthetic reply" },
+          },
+        ],
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+      }),
+    });
+    let session;
+    await adapter.run({
+      signal: new AbortController().signal,
+      tools: [],
+      prompt: "ordinary synthetic input",
+      saveSession: (value) => {
+        session = value;
+      },
+    });
+    adapter.fetch = socialFetch;
+    const history = adapter.load(session.id);
+    assert.equal(r.socialRuntime.backendCapability("agent-0").supported, false);
+    await assert.rejects(
+      f.process("agent-0", { kind: "compose", id: "agent-1" }),
+      /SOCIAL_BACKEND_UNSUPPORTED/,
+    );
+    const enabled = structuredClone(r.config);
+    enabled.backends[0].socialProfile = "openai-gpt-4.1-mini";
+    await r.changeConfig(enabled, f.configStore.revision);
+    assert.equal(r.socialRuntime.backendCapability("agent-0").supported, true);
+    f.setScript(() => []);
+    await f.process("agent-0", { kind: "compose", id: "agent-1" });
+    await f.pump();
+    assert.equal(f.requests.length, 1);
+    assert.equal(r.backends.get("agent-0"), adapter);
+    assert.equal(adapter.config.socialProfile, "openai-gpt-4.1-mini");
+    assert.deepEqual(adapter.load(session.id), history);
+    const queued = await f.process("agent-0", {
+      kind: "compose",
+      id: "agent-1",
+    });
+    const disabled = structuredClone(r.config);
+    if (removal === "null") disabled.backends[0].socialProfile = null;
+    else delete disabled.backends[0].socialProfile;
+    await r.changeConfig(disabled, f.configStore.revision);
+    assert.equal(r.backendConnections.adapter(r.agent("agent-0")), adapter);
+    assert.equal(adapter.config.socialProfile, null);
+    assert.equal(r.socialRuntime.backendCapability("agent-0").supported, false);
+    await assert.rejects(
+      f.process("agent-0", { kind: "compose", id: "agent-1" }),
+      /SOCIAL_BACKEND_UNSUPPORTED/,
+    );
+    await f.pump();
+    assert.notEqual(
+      f.store.db
+        .prepare("SELECT status FROM home_social_turns WHERE id=?")
+        .get(queued.result.turnId).status,
+      "queued",
+    );
+    assert.equal(f.requests.length, 1);
+    assert.deepEqual(adapter.load(session.id), history);
+  }
+});
