@@ -52,14 +52,16 @@ const op = (apply, rest = {}) => ({
 
 test("additive migration preserves schema six and original home revisions", (t) => {
   const dir = mkdtempSync(path.join(tmpdir(), "home-social-test-"));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const file = path.join(dir, "memory.sqlite");
   let memory = new MemoryStore(file);
   memory.db.prepare("INSERT INTO home_rooms VALUES('old-generation',7)").run();
   memory.db.exec("DROP TABLE home_social_operations");
   memory.close();
   memory = new MemoryStore(file);
-  t.after(() => memory.close());
+  t.after(() => {
+    memory.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
   assert.equal(memory.db.prepare("PRAGMA user_version").get().user_version, 6);
   assert.equal(
     memory.db.prepare("SELECT content_revision FROM home_rooms").get()
