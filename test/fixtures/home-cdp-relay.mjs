@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import { Transform } from "node:stream";
 
 const [traceFile, executable, ...args] = process.argv.slice(2);
+const started = performance.now();
 const methods = new Set([
   "Browser.getVersion",
   "Target.setAutoAttach",
@@ -12,7 +13,7 @@ const methods = new Set([
 ]);
 /** @type {Map<number,string>} */
 const requests = new Map();
-/** @type {Array<{direction:string,method:string,id:number|null}>} */
+/** @type {Array<{direction:string,method:string,id:number|null,elapsedMs:number}>} */
 const frames = [];
 const save = () => fs.writeFileSync(traceFile, JSON.stringify(frames));
 save();
@@ -50,7 +51,12 @@ function observe(direction) {
               ? "event"
               : requests.get(id) || "other";
         if (frames.length < 20) {
-          frames.push({ direction, method, id });
+          frames.push({
+            direction,
+            method,
+            id,
+            elapsedMs: Math.round(performance.now() - started),
+          });
           save();
         }
       }
