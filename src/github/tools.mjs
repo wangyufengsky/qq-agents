@@ -5,10 +5,13 @@ import { assertCredentials } from "../core/outbound-policy.mjs";
 import { z } from "zod";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { repositoryName, githubMarker } from "./policy.mjs";
 
 const exec = promisify(execFile);
+// Cache complete, checked snapshots within one turn, never visibility grants.
+/** @type {WeakMap<object, {scope: string, reads: Map<string, Promise<any>>}>} */
+const turnReads = new WeakMap();
 const query = z
   .string()
   .trim()
@@ -103,9 +106,20 @@ async function credential(policy) {
 /** @param {Runtime} runtime @param {TurnContext} ctx @param {GithubPolicy} policy */
 async function client(runtime, ctx, policy) {
   const token = await credential(policy);
-  runtime.assertActive(ctx);
+  assertConfig(runtime, ctx, policy);
+  const scope = JSON.stringify([
+    ctx.agentId,
+    ctx.conversation,
+    policy,
+    createHash("sha256").update(token).digest("hex"),
+  ]);
+  let cache = turnReads.get(ctx);
+  if (cache?.scope !== scope) {
+    cache = { scope, reads: new Map() };
+    turnReads.set(ctx, cache);
+  }
   /** @param {string} endpoint @param {Record<string, unknown>} [params] */
-  return async (endpoint, params = {}, anonymous = false) => {
+  const get = async (endpoint, params = {}) => {
     const url = new URL(endpoint, "https://api.github.com");
     if (url.origin !== "https://api.github.com")
       throw Error("GITHUB_ORIGIN_DENIED");
@@ -124,7 +138,7 @@ async function client(runtime, ctx, policy) {
         signal,
         headers: {
           Accept: "application/vnd.github+json",
-          ...(!anonymous ? { Authorization: `Bearer ${token}` } : {}),
+          Authorization: `Bearer ${token}`,
           "X-GitHub-Api-Version": "2022-11-28",
           "User-Agent": "qq-bridge-unified-readonly",
         },
@@ -169,10 +183,81 @@ async function client(runtime, ctx, policy) {
       );
     }
   };
+  return { get, reads: cache.reads };
 }
 /** @param {string} repository */
 function repoPath(repository) {
   return "/repos/" + repository.split("/").map(encodeURIComponent).join("/");
+}
+/** @param {any} info @param {string} repository */
+function validateRepository(info, repository) {
+  if (
+    String(info.full_name).toLowerCase() !== repository ||
+    typeof info.private !== "boolean"
+  )
+    throw Error("GITHUB_RESPONSE_INVALID");
+  // Internal visibility must not be accepted as a public repository.
+  if (
+    !info.private &&
+    info.visibility !== undefined &&
+    info.visibility !== "public"
+  )
+    throw Error("GITHUB_REPOSITORY_DENIED");
+  return info;
+}
+/** @param {any} before @param {any} after */
+function assertPublicUnchanged(before, after) {
+  if (after.private || before.id !== after.id)
+    throw Error("GITHUB_REPOSITORY_DENIED");
+}
+/** @param {any} get @param {any} args @param {boolean} privateAllowed */
+async function readSnapshot(get, args, privateAllowed) {
+  const endpoint = repoPath(args.repository);
+  const info = validateRepository(await get(endpoint), args.repository);
+  if (info.private && !privateAllowed) throw Error("GITHUB_REPOSITORY_DENIED");
+  const file = await get(
+    endpoint +
+      "/contents/" +
+      args.path.split("/").map(encodeURIComponent).join("/"),
+    { ref: args.ref },
+  );
+  // Authenticated Contents responses do not include visibility. Recheck before
+  // exposing or retaining bytes, including when a public repo changes mid-read.
+  if (!info.private)
+    assertPublicUnchanged(
+      info,
+      validateRepository(await get(endpoint), args.repository),
+    );
+  if (Array.isArray(file))
+    return {
+      private: info.private,
+      type: "directory",
+      items: file.map((f) => ({
+        name: String(f.name).slice(0, 200),
+        path: String(f.path).slice(0, 400),
+        type: f.type,
+        size: f.size,
+      })),
+    };
+  if (
+    file.type !== "file" ||
+    file.submodule_git_url ||
+    file.target ||
+    file.encoding !== "base64" ||
+    file.size > 524288 ||
+    typeof file.content !== "string"
+  )
+    throw Error("GITHUB_FILE_UNSUPPORTED_OR_TOO_LARGE");
+  let text;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(
+      Buffer.from(file.content, "base64"),
+    );
+  } catch {
+    throw Error("GITHUB_BINARY_UNSUPPORTED");
+  }
+  if (text.includes("\0")) throw Error("GITHUB_BINARY_UNSUPPORTED");
+  return { private: info.private, type: "file", sha: file.sha, text };
 }
 /** @param {Runtime} runtime @param {any} agent @param {TurnContext} ctx @param {string} repository */
 function allowedPrivate(runtime, agent, ctx, repository) {
@@ -220,7 +305,7 @@ function save(runtime, ctx, name, args, result, repository) {
 /** @param {Runtime} runtime @param {TurnContext} ctx @param {string} name @param {any} args */
 export async function githubTool(runtime, ctx, name, args) {
   const agent = runtime.assertActive(ctx),
-    policy = agent.github;
+    policy = structuredClone(agent.github);
   if (!policy?.enabled) throw Error("GITHUB_DISABLED");
   if (name === "github_capabilities")
     return {
@@ -263,84 +348,104 @@ export async function githubTool(runtime, ctx, name, args) {
       /[\x00-\x1f]/.test(args.path))
   )
     throw Error("GITHUB_PATH_INVALID");
-  const get = await client(runtime, ctx, policy);
+  const { get, reads } = await client(runtime, ctx, policy);
+  if (name === "github_read") {
+    const key = JSON.stringify([
+      repository,
+      args.path,
+      args.ref ?? null,
+      !!privateAllowed,
+    ]);
+    let pending = reads.get(key);
+    if (!pending) {
+      pending = readSnapshot(get, args, !!privateAllowed);
+      reads.set(key, pending);
+      // A failure must not poison later explicit attempts in the same turn.
+      pending.catch(() => reads.delete(key));
+    }
+    const snapshot = await pending;
+    assertConfig(runtime, ctx, policy);
+    const result = {
+      repository,
+      private: snapshot.private,
+      path: args.path,
+      type: snapshot.type,
+      ...(snapshot.type === "directory"
+        ? {
+            items: snapshot.items.slice(args.offset, args.offset + 50),
+            nextOffset:
+              args.offset + 50 < snapshot.items.length
+                ? args.offset + 50
+                : null,
+          }
+        : {
+            ref: args.ref,
+            sha: snapshot.sha,
+            text: snapshot.text.slice(args.offset, args.offset + args.maxChars),
+            totalChars: snapshot.text.length,
+            nextOffset:
+              args.offset + args.maxChars < snapshot.text.length
+                ? args.offset + args.maxChars
+                : null,
+          }),
+    };
+    return save(runtime, ctx, name, args, result, repository);
+  }
   let info;
   if (repository) {
-    info = await get(repoPath(repository), {}, !privateAllowed);
-    if (
-      String(info.full_name).toLowerCase() !== repository ||
-      typeof info.private !== "boolean"
-    )
-      throw Error("GITHUB_RESPONSE_INVALID");
+    info = validateRepository(await get(repoPath(repository)), repository);
     if (info.private && !privateAllowed)
       throw Error("GITHUB_REPOSITORY_DENIED");
   }
-  if (name === "github_read") {
-    const file = await get(
-      repoPath(repository) +
-        "/contents/" +
-        args.path.split("/").map(encodeURIComponent).join("/"),
-      { ref: args.ref },
-      !info.private,
-    );
-    let result;
-    if (Array.isArray(file))
-      result = {
-        repository,
-        private: info.private,
-        path: args.path,
-        type: "directory",
-        items: file.slice(args.offset, args.offset + 50).map((f) => ({
-          name: String(f.name).slice(0, 200),
-          path: String(f.path).slice(0, 400),
-          type: f.type,
-          size: f.size,
-        })),
-        nextOffset: args.offset + 50 < file.length ? args.offset + 50 : null,
-      };
-    else {
-      if (
-        file.type !== "file" ||
-        file.submodule_git_url ||
-        file.target ||
-        file.encoding !== "base64" ||
-        file.size > 524288 ||
-        typeof file.content !== "string"
-      )
-        throw Error("GITHUB_FILE_UNSUPPORTED_OR_TOO_LARGE");
-      let text;
-      try {
-        text = new TextDecoder("utf-8", { fatal: true }).decode(
-          Buffer.from(file.content, "base64"),
-        );
-      } catch {
-        throw Error("GITHUB_BINARY_UNSUPPORTED");
-      }
-      if (text.includes("\0")) throw Error("GITHUB_BINARY_UNSUPPORTED");
-      result = {
-        repository,
-        private: info.private,
-        path: args.path,
-        ref: args.ref,
-        sha: file.sha,
-        type: "file",
-        text: text.slice(args.offset, args.offset + args.maxChars),
-        totalChars: text.length,
-        nextOffset:
-          args.offset + args.maxChars < text.length
-            ? args.offset + args.maxChars
-            : null,
-      };
-    }
-    return save(runtime, ctx, name, args, result, repository);
-  }
   const q = `${args.query} ${repository ? "repo:" + repository : "is:public"}`;
-  const data = await get("/search/" + args.kind, {
-    q,
-    page: args.page,
-    per_page: args.limit,
-  });
-  if (!Array.isArray(data.items)) throw Error("GITHUB_RESPONSE_INVALID");
+  let data;
+  if (args.kind === "issues") {
+    // Some authenticated tokens require separate issue/PR queries. Fetch the
+    // prefix needed for this page so merging cannot silently drop either type.
+    const end = args.page * args.limit,
+      batches = [];
+    for (const type of ["issue", "pull-request"]) {
+      const batch = await get("/search/issues", {
+        q: `${q} is:${type}`,
+        page: 1,
+        per_page: end,
+        sort: "created",
+        order: "desc",
+      });
+      if (!Array.isArray(batch.items)) throw Error("GITHUB_RESPONSE_INVALID");
+      batches.push(batch);
+    }
+    const combined = batches
+      .flatMap((batch) => batch.items)
+      .sort(
+        (a, b) =>
+          String(b.created_at || "").localeCompare(
+            String(a.created_at || ""),
+          ) ||
+          String(a.repository_url || "").localeCompare(
+            String(b.repository_url || ""),
+          ) ||
+          Number(b.number) - Number(a.number),
+      );
+    data = {
+      items: combined.slice(end - args.limit, end),
+      incomplete_results: batches.some(
+        (batch) => batch.incomplete_results === true,
+      ),
+    };
+  } else {
+    data = await get("/search/" + args.kind, {
+      q,
+      page: args.page,
+      per_page: args.limit,
+    });
+    if (!Array.isArray(data.items)) throw Error("GITHUB_RESPONSE_INVALID");
+  }
+  if (repository && !info.private)
+    assertPublicUnchanged(
+      info,
+      validateRepository(await get(repoPath(repository)), repository),
+    );
   const items = [],
     checked = new Map();
   for (const item of data.items.slice(0, args.limit)) {
@@ -358,12 +463,15 @@ export async function githubTool(runtime, ctx, name, args) {
     if (repository && repo !== repository) continue;
     const metadata = repository
       ? info
-      : checked.get(repo) || (await get(repoPath(repo), {}, true));
+      : checked.get(repo) || (await get(repoPath(repo)));
     checked.set(repo, metadata);
     // Independently verify each repository; never trust query qualifiers for privacy.
     if (
       String(metadata.full_name).toLowerCase() !== repo ||
       typeof metadata.private !== "boolean" ||
+      (!metadata.private &&
+        metadata.visibility !== undefined &&
+        metadata.visibility !== "public") ||
       (metadata.private &&
         (!repository || !allowedPrivate(runtime, agent, ctx, repo)))
     )
