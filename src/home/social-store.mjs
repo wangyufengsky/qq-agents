@@ -139,12 +139,15 @@ export class SocialStore {
     });
   }
   /** A proven rollback gets a durable safe receipt, never the refused draft.
-   * @param {{actorIdentity:SocialIdentity,requestId:string,kind:string,payload:any,safeReason:string,authorize?:(gate:any)=>void}} input */
-  recordNotSent({ safeReason, ...input }) {
+   * @param {{actorIdentity:SocialIdentity,requestId:string,kind:string,payload:any,safeReason:string,resultReference?:any,authorize?:(gate:any)=>void}} input */
+  recordNotSent({ safeReason, resultReference, ...input }) {
     return this.execute({
       ...input,
       outcome: "not_sent",
-      apply: () => ({ safeError: safeReason }),
+      apply: () => ({
+        safeError: safeReason,
+        ...(resultReference ? { resultReference } : {}),
+      }),
     });
   }
   /** @param {any} row @param {boolean} historicalReplay */
@@ -201,7 +204,7 @@ export class SocialStore {
       .run(now, reasonCode, generation, generation);
     this.db
       .prepare(
-        "UPDATE home_social_visits SET status='invalidated',revision=revision+1,fence=fence+1,ended_at=?,closed_reason=? WHERE status='active' AND (host_generation=? OR guest_generation=?)",
+        "UPDATE home_social_visits SET status='invalidated',revision=revision+1,fence=fence+1,ended_at=min(?,expires_at),closed_reason=? WHERE status='active' AND (host_generation=? OR guest_generation=?)",
       )
       .run(now, reasonCode, generation, generation);
     this.db
@@ -316,7 +319,7 @@ export class SocialStore {
         .run(now);
       this.db
         .prepare(
-          "UPDATE home_social_visits SET status='invalidated',revision=revision+1,fence=fence+1,ended_at=?,closed_reason='recovery_invalidated' WHERE status='active'",
+          "UPDATE home_social_visits SET status='invalidated',revision=revision+1,fence=fence+1,ended_at=min(?,expires_at),closed_reason='recovery_invalidated' WHERE status='active'",
         )
         .run(now);
       this.db

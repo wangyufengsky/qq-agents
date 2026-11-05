@@ -22,7 +22,9 @@ function setup(t) {
   f.runtime.homeSocial = s;
   let now = 1800000000000;
   f.runtime.now = () => now;
+  const realSources = s.sources;
   s.sources = {
+    allowed: () => true,
     assertSend: (_r, c) => {
       if (c.restricted) {
         c.socialSendingClosed = true;
@@ -46,6 +48,7 @@ function setup(t) {
       .run(identity.generation);
     const c = f.runtime.makeContext(agentId, "@subject"),
       turnId = randomUUID();
+    c.privateRead = new Set();
     c.runtimeKind = "subject-social";
     c.socialBinding = {
       ...base,
@@ -100,6 +103,7 @@ function setup(t) {
   return {
     ...f,
     s,
+    realSources,
     ctx,
     invite,
     accept,
@@ -574,4 +578,321 @@ test("before-input leases reject a reduced room grant and a withdrawn message", 
   assert.throws(() => {
     for (const guard of fresh.socialInputLeases) guard();
   }, /AUDIENCE_DENIED/);
+});
+
+test("real source gates preserve invitation/message audiences and close sends after restricted recall", (t) => {
+  const f = setup(t);
+  f.s.sources = f.realSources;
+  const visitId = f.visit(),
+    a = f.ctx("agent-0", { kind: "visit", id: visitId });
+  const sent = f.s.send(a, {
+    requestId: "message-0001",
+    visitId,
+    expectedVisitRevision: 1,
+    body: "合成私密交流",
+  });
+  assert.equal(sent.status, "committed");
+  const b = f.ctx("agent-1", { kind: "visit", id: visitId }),
+    view = f.s.visitRead(b, { visitId });
+  assert.equal(view.messages[0].body, "合成私密交流");
+  assert.ok(
+    [...b.privateRead].includes(`social:${visitId}:${sent.result.messageId}`),
+  );
+  const reply = f.s.send(b, {
+    requestId: "message-0002",
+    visitId,
+    expectedVisitRevision: 2,
+    body: "同一拜访的合成回复",
+  });
+  assert.equal(reply.status, "committed");
+  const row = f.s.db
+    .prepare("SELECT source_labels FROM home_social_messages WHERE id=?")
+    .get(reply.result.messageId);
+  assert.ok(
+    JSON.parse(row.source_labels).includes(
+      `social:${visitId}:${sent.result.messageId}`,
+    ),
+  );
+  b.privateRead.add("operations:synthetic-proof");
+  const denied = f.s.send(b, {
+    requestId: "message-0003",
+    visitId,
+    expectedVisitRevision: 3,
+    body: "不应离开的草稿",
+  });
+  assert.equal(denied.status, "not_sent");
+  assert.equal(b.socialSendingClosed, true);
+  assert.equal(
+    f.s.db.prepare("SELECT count(*) n FROM home_social_messages").get().n,
+    2,
+  );
+});
+
+test("new attested originals can be shared by exact item version, legacy unknown originals cannot", async (t) => {
+  const f = setup(t);
+  f.s.sources = f.realSources;
+  const owner = f.runtime.makeContext("agent-0", "@subject"),
+    room = await f.runtime.executeTool(owner, "room_read", {});
+  await f.runtime.executeTool(owner, "room_publish", {
+    requestId: "publish-0001",
+    identityGeneration: room.identityGeneration,
+    slot: "intro",
+    expectedItemRevision: 0,
+    title: "合成原作",
+    body: "房主明确提供的合成正文",
+    source: "original-text",
+  });
+  const item = f.runtime.home.rooms.store.item(
+      room.identityGeneration,
+      "intro",
+    ),
+    selection = {
+      slot: "intro",
+      itemId: item.item_id,
+      itemRevision: item.revision,
+    };
+  const invitation = f.invite("invite-0001", {
+    scope: ["layout", "intro"],
+    selectedItems: [selection],
+  });
+  const visitId = f.accept(invitation.result.invitationId).result.visitId;
+  const guest = f.ctx("agent-1", { kind: "visit", id: visitId }),
+    view = f.s.roomRead(guest, { visitId });
+  assert.equal(view.items[0].body, "房主明确提供的合成正文");
+  f.s.db
+    .prepare(
+      "DELETE FROM home_social_item_proofs WHERE generation=? AND slot='intro'",
+    )
+    .run(room.identityGeneration);
+  assert.throws(() => {
+    for (const guard of guest.socialInputLeases) guard();
+  }, /SOCIAL_SOURCE_DENIED/);
+  assert.throws(() => f.s.roomRead(guest, { visitId }), /SOCIAL_SOURCE_DENIED/);
+});
+
+test("lock-time expiry gives exact not_sent and end convergence without quota mutation", (t) => {
+  const f = setup(t),
+    visitId = f.visit(),
+    a = f.ctx("agent-0", { kind: "visit", id: visitId }),
+    expires = f.s.assertVisit(f.s.identity("agent-0"), visitId).expires_at;
+  f.runtime.now = () => (f.s.db.isTransaction ? expires : expires - 1);
+  const result = f.s.send(a, {
+    requestId: "message-0001",
+    visitId,
+    expectedVisitRevision: 1,
+    body: "锁等待到期后不提交",
+  });
+  assert.equal(result.status, "not_sent");
+  assert.equal(result.result.safeError, "VISIT_CLOSED");
+  assert.equal(
+    f.s.db.prepare("SELECT count(*) n FROM home_social_messages").get().n,
+    0,
+  );
+  assert.equal(
+    f.s.usage(f.s.identity("agent-0").generation, visitId, "message", expires),
+    0,
+  );
+  const ended = f.s.end(a, {
+    requestId: "ending-0001",
+    visitId,
+    expectedVisitRevision: 0,
+  });
+  assert.equal(ended.result.alreadyClosed, true);
+  assert.equal(ended.result.state, "expired");
+  assert.equal(
+    f.s.db.prepare("SELECT ended_at FROM home_social_visits").get().ended_at,
+    expires,
+  );
+});
+
+test("expired invitations cool down from their original deadline, not each retry", (t) => {
+  const f = setup(t),
+    id = f.invite().result.invitationId,
+    expires = f.s.assertInvitation(f.s.identity("agent-0"), id).expires_at;
+  f.setNow(expires + 24 * 3600000);
+  assert.equal(f.invite("invite-0002").result.state, "pending");
+  assert.equal(
+    f.s.db
+      .prepare("SELECT decided_at FROM home_social_invitations WHERE id=?")
+      .get(id).decided_at,
+    expires,
+  );
+});
+
+test("maintenance and delayed reads apply retention without reviving expired bodies", (t) => {
+  const f = setup(t),
+    visitId = f.visit(),
+    a = f.ctx("agent-0", { kind: "visit", id: visitId });
+  f.s.send(a, {
+    requestId: "message-0001",
+    visitId,
+    expectedVisitRevision: 1,
+    body: "到期应清理的合成正文",
+  });
+  const expires = f.s.db
+    .prepare("SELECT expires_at FROM home_social_visits")
+    .get().expires_at;
+  f.setNow(expires + 31 * 86400000);
+  const before = f.s.adminRead("instance-administrator", {
+    kind: "visit",
+    id: visitId,
+  });
+  assert.equal("body" in before.messages[0], false);
+  const first = f.s.maintain(),
+    events = f.s.db
+      .prepare("SELECT count(*) n FROM home_social_events")
+      .get().n;
+  assert.equal(first.visits, 1);
+  assert.equal(
+    f.s.db.prepare("SELECT ended_at FROM home_social_visits").get().ended_at,
+    expires,
+  );
+  assert.equal(
+    f.s.db.prepare("SELECT body FROM home_social_messages").get().body,
+    "",
+  );
+  f.s.maintain();
+  assert.equal(
+    f.s.db.prepare("SELECT count(*) n FROM home_social_events").get().n,
+    events,
+  );
+});
+
+test("recovery stays disabled across restart and deliberate re-enable never revives old passes", async (t) => {
+  const f = setup(t),
+    visitId = f.visit();
+  f.s.store.invalidateRestoredAuthority({ recoveryEpoch: randomUUID() });
+  f.runtime.home.syncAgents();
+  assert.equal(f.s.policy().enabled, 0);
+  let next = structuredClone(f.runtime.config);
+  next.homeSocial.enabled = false;
+  await f.runtime.changeConfig(next, f.configStore.revision);
+  next = structuredClone(f.runtime.config);
+  next.homeSocial.enabled = true;
+  await f.runtime.changeConfig(next, f.configStore.revision);
+  assert.equal(f.s.policy().enabled, 1);
+  assert.throws(
+    () => f.ctx("agent-0", { kind: "visit", id: visitId }),
+    /AUDIENCE_DENIED/,
+  );
+  assert.equal(
+    f.s.db
+      .prepare("SELECT status FROM home_social_visits WHERE id=?")
+      .get(visitId).status,
+    "invalidated",
+  );
+});
+
+test("administrator overview paginates metadata only and moderation never impersonates a role", (t) => {
+  const f = setup(t),
+    visitId = f.visit(),
+    a = f.ctx("agent-0", { kind: "visit", id: visitId }),
+    sent = f.s.send(a, {
+      requestId: "message-0001",
+      visitId,
+      expectedVisitRevision: 1,
+      body: "管理读取前不可见正文",
+    }),
+    p = "instance-administrator";
+  const first = f.s.adminOverview(p, { limit: 1 });
+  assert.equal(first.items.length, 1);
+  assert.ok(first.nextCursor);
+  assert.equal(JSON.stringify(first).includes("合成邀请"), false);
+  assert.equal(JSON.stringify(first).includes("管理读取前不可见正文"), false);
+  const second = f.s.adminOverview(p, { limit: 1, cursor: first.nextCursor });
+  assert.equal(second.items.length, 1);
+  assert.notEqual(first.items[0].kind, second.items[0].kind);
+  const args = {
+    requestId: "moderate-0001",
+    action: "hide-message",
+    targetId: sent.result.messageId,
+    expectedRevision: 1,
+    policyRevision: f.s.policy().revision,
+  };
+  const result = f.s.moderate(p, args);
+  assert.equal(result.result.changed, true);
+  assert.equal(f.s.moderate(p, args).historicalReplay, true);
+  const audit = f.s.db
+    .prepare(
+      "SELECT * FROM home_social_admin_access_audit WHERE action='hide-message'",
+    )
+    .all();
+  assert.equal(audit.length, 2);
+  assert.ok(audit.every((row) => row.principal === p));
+  assert.throws(() => f.s.moderate(p, { ...args, body: "管理员不能代说话" }));
+});
+
+test("operation lookup checks original entity ACL and cannot cross a bound visit", (t) => {
+  const f = setup(t),
+    visitA = f.visit(),
+    actor = f.ctx("agent-0", { kind: "visit", id: visitA });
+  f.s.send(actor, {
+    requestId: "message-original",
+    visitId: visitA,
+    expectedVisitRevision: 1,
+    body: "拜访A合成消息",
+  });
+  f.s.store.execute({
+    actorIdentity: f.s.identity("agent-0"),
+    requestId: "process-original",
+    kind: "social-process",
+    payload: { target: { kind: "visit", id: visitA } },
+    apply: () => ({ turnId: actor.socialBinding.turnId, queued: true }),
+  });
+  assert.equal(
+    f.s.operationRead(actor, { requestId: "process-original" }).result.turnId,
+    actor.socialBinding.turnId,
+  );
+  const compose = f.ctx("agent-0", { kind: "compose", id: "agent-2" }),
+    inv = f.s.invite(compose, {
+      requestId: "invite-third",
+      targetAgentId: "agent-2",
+      roomOwnerAgentId: "agent-0",
+      purpose: "另一个合成拜访",
+    }),
+    recipient = f.ctx("agent-2", {
+      kind: "invitation",
+      id: inv.result.invitationId,
+    });
+  const accepted = f.s.decide(recipient, {
+      requestId: "accept-third",
+      invitationId: inv.result.invitationId,
+      expectedInvitationRevision: 1,
+      decision: "accept",
+    }),
+    visitB = accepted.result.visitId;
+  let other = f.ctx("agent-0", { kind: "visit", id: visitB });
+  assert.throws(
+    () => f.s.operationRead(other, { requestId: "message-original" }),
+    /AUDIENCE_DENIED/,
+  );
+  assert.throws(
+    () => f.s.operationRead(other, { requestId: "process-original" }),
+    /AUDIENCE_DENIED/,
+  );
+  assert.equal(
+    f.s.operationRead(other, { requestId: "unknown-original" }).status,
+    "unknown",
+  );
+  const own = f.ctx("agent-0", { kind: "visit", id: visitA });
+  assert.equal(
+    f.s.operationRead(own, { requestId: "message-original" }).status,
+    "committed",
+  );
+  const block = f.ctx("agent-0", { kind: "compose", id: "agent-1" });
+  f.s.block(block, {
+    requestId: "block-original",
+    targetAgentId: "agent-1",
+    blocked: true,
+    expectedPolicyRevision: f.s.policy().revision,
+  });
+  other = f.ctx("agent-0", { kind: "visit", id: visitB });
+  assert.throws(
+    () => f.s.operationRead(other, { requestId: "message-original" }),
+    /AUDIENCE_DENIED/,
+  );
+  assert.equal(
+    f.s.operationRead(other, { requestId: "unknown-original" }).status,
+    "unknown",
+  );
 });

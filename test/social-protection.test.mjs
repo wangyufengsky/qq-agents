@@ -826,9 +826,9 @@ test("source reads enforce retention deadlines before delayed cleanup materializ
   const invitation = socialInvitationMarker(f.invitationId, 1);
   f.db
     .prepare(
-      "UPDATE home_social_visits SET status='ended',ended_at=?,expires_at=?",
+      "UPDATE home_social_visits SET status='ended',started_at=?,ended_at=?,expires_at=?",
     )
-    .run(now - 30 * day + 1, now + day);
+    .run(now - 31 * day, now - 30 * day + 1, now + day);
   assert.equal(socialContextAllowed(f.runtime, f.ctx, [f.marker]), true);
   f.db.prepare("UPDATE home_social_visits SET ended_at=?").run(now - 30 * day);
   assert.equal(socialContextAllowed(f.runtime, f.ctx, [f.marker]), false);
@@ -872,13 +872,15 @@ test("accepted invitation retention follows its associated visit termination", (
   f.runtime.now = () => now;
   const marker = socialInvitationMarker(f.invitationId, 1);
   f.db
-    .prepare("UPDATE home_social_invitations SET decided_at=?,expires_at=?")
-    .run(now - 59 * day, now - 57 * day);
+    .prepare(
+      "UPDATE home_social_invitations SET created_at=?,decided_at=?,expires_at=?",
+    )
+    .run(now - 60 * day, now - 59 * day, now - 57 * day);
   f.db
     .prepare(
-      "UPDATE home_social_visits SET status='ended',ended_at=?,expires_at=?",
+      "UPDATE home_social_visits SET status='ended',started_at=?,ended_at=?,expires_at=?",
     )
-    .run(now - 29 * day, now - 29 * day);
+    .run(now - 59 * day, now - 29 * day, now - 29 * day);
   const invitationContext = {
     ...f.ctx,
     socialBinding: {

@@ -67,11 +67,7 @@ export class HomeSocialService {
       r.maintenance.active
     )
       throw Error("PAUSED");
-    if (
-      write &&
-      (r.config.mode !== "live" || r.config.globalPaused || a.paused)
-    )
-      throw Error("PAUSED");
+    if (write && !r.subject.internalAllowed(a)) throw Error("PAUSED");
     return a;
   }
   /** @param {string} agentId */
@@ -158,6 +154,8 @@ export class HomeSocialService {
         (row.status !== "pending" || now >= row.expires_at)
       )
         throw Error("INVITATION_EXPIRED");
+      if (target.kind === "visit" && row.status === "invalidated")
+        throw Error("AUDIENCE_DENIED");
       host = row.host_generation;
       guest = row.guest_generation;
       deadline =
@@ -176,8 +174,8 @@ export class HomeSocialService {
     };
   }
   /** Read-only fence check, safe within another domain's transaction.
-   * @param {any} ctx */
-  assertBinding(ctx) {
+   * @param {any} ctx @param {{allowExpired?:boolean}} [options] */
+  assertBinding(ctx, { allowExpired = false } = {}) {
     const r = this.runtime,
       b = ctx?.socialBinding;
     if (
@@ -193,11 +191,16 @@ export class HomeSocialService {
       throw Error("IDENTITY_DENIED");
     const identity = b.actorIdentity;
     this.assertActor(identity);
-    if (
-      b.policyRevision !== this.policy().revision ||
-      this.runtime.now() >= b.deadline
-    )
+    if (b.policyRevision !== this.policy().revision)
       throw Error("AUDIENCE_DENIED");
+    if (!allowExpired && this.runtime.now() >= b.deadline)
+      throw Error(
+        b.target.kind === "invitation"
+          ? "INVITATION_EXPIRED"
+          : b.target.kind === "visit"
+            ? "VISIT_CLOSED"
+            : "SOCIAL_TURN_CLOSED",
+      );
     if (b.target.kind !== "compose")
       this.assertPair(b.targetHostGeneration, b.targetGuestGeneration);
     else {
@@ -246,9 +249,9 @@ export class HomeSocialService {
       throw Error("SOCIAL_TURN_CLOSED");
     return identity;
   }
-  /** @param {any} ctx @param {string} kind @param {string} id */
-  bound(ctx, kind, id) {
-    const identity = this.assertBinding(ctx);
+  /** @param {any} ctx @param {string} kind @param {string} id @param {boolean} [allowExpired] */
+  bound(ctx, kind, id, allowExpired = false) {
+    const identity = this.assertBinding(ctx, { allowExpired });
     if (
       ctx.socialBinding.target.kind !== kind ||
       ctx.socialBinding.target.id !== id
@@ -279,6 +282,15 @@ export class HomeSocialService {
       this.sources.trackSource || this.runtime.homeSocialSources?.trackSource;
     if (!track) throw Error("SOURCE_RESTRICTED");
     track(ctx, { protectedSocialSources: labels });
+    const sources =
+        this.sources.sources || this.runtime.homeSocialSources?.sources,
+      allowed = this.sources.allowed || this.runtime.homeSocialSources?.allowed;
+    if (
+      !sources ||
+      !allowed ||
+      !allowed(this.runtime, ctx, sources(this.runtime, ctx))
+    )
+      throw Error("SOURCE_RESTRICTED");
   }
   /** @param {string} kind @param {string} id @param {string} actor @param {number} now @param {any} [metadata] */
   event(kind, id, actor, now, metadata = {}) {
@@ -344,6 +356,31 @@ export class HomeSocialService {
       throw Error("INVALID_CURSOR");
     return result.after;
   }
+  /** @param {any} visit @param {number} [now] */
+  retained(visit, now = this.runtime.now()) {
+    const terminalAt =
+      visit.status === "active" ? visit.expires_at : visit.ended_at;
+    return (
+      now < terminalAt + this.runtime.config.homeSocial.retentionDays * 86400000
+    );
+  }
+  /** @param {any} invitation */
+  invitationRetained(invitation) {
+    if (invitation.body_cleared_at) return false;
+    if (invitation.status === "accepted") {
+      const visit = this.db
+        .prepare("SELECT * FROM home_social_visits WHERE invitation_id=?")
+        .get(invitation.id);
+      return !!visit && this.retained(visit);
+    }
+    return (
+      (invitation.status === "pending" &&
+        this.runtime.now() < invitation.expires_at) ||
+      this.runtime.now() <
+        (invitation.decided_at || invitation.expires_at) +
+          this.runtime.config.homeSocial.retentionDays * 86400000
+    );
+  }
   /** @param {any} row */
   invitationMeta(row) {
     return {
@@ -377,7 +414,10 @@ export class HomeSocialService {
       initiatorGeneration: row.initiator_generation,
       recipientGeneration: row.recipient_generation,
       roomId: row.room_id,
-      state: row.status,
+      state:
+        row.status === "pending" && this.runtime.now() >= row.expires_at
+          ? "expired"
+          : row.status,
       createdAt: row.created_at,
       expiresAt: row.expires_at,
       requestedScope: parse(row.requested_scope).scope,
@@ -418,7 +458,10 @@ export class HomeSocialService {
         generation: row.guest_generation,
       },
       roomId: row.room_id,
-      state: row.status,
+      state:
+        row.status === "active" && this.runtime.now() >= row.expires_at
+          ? "expired"
+          : row.status,
       visitRevision: row.revision,
       startedAt: row.started_at,
       expiresAt: row.expires_at,
@@ -457,19 +500,26 @@ export class HomeSocialService {
         })),
     };
   }
-  /** @param {any} ctx @param {string} kind @param {any} input @param {(gate:any)=>any} apply @param {(identity:any)=>void} [extra] */
-  execute(ctx, kind, input, apply, extra = () => {}) {
-    const identity = this.assertBinding(ctx);
+  /** @param {any} ctx @param {string} kind @param {any} input @param {(gate:any)=>any} apply @param {(identity:any)=>void} [extra] @param {boolean} [allowExpired] */
+  execute(ctx, kind, input, apply, extra = () => {}, allowExpired = false) {
+    const identity = this.assertBinding(ctx, { allowExpired });
     return this.store.execute({
       actorIdentity: identity,
       requestId: input.requestId,
       kind,
       payload: input,
       authorize: () => {
-        this.assertBinding(ctx);
+        this.assertBinding(ctx, { allowExpired });
         extra(identity);
       },
-      apply,
+      apply: (gate) => ({
+        ...apply(gate),
+        resultReference: {
+          target: ctx.socialBinding.target,
+          hostGeneration: ctx.socialBinding.targetHostGeneration,
+          guestGeneration: ctx.socialBinding.targetGuestGeneration,
+        },
+      }),
     });
   }
   /** @param {any} ctx @param {any} input */
@@ -505,10 +555,10 @@ export class HomeSocialService {
           .prepare(
             "UPDATE home_social_invitations SET status='expired',revision=revision+1,decided_at=?,closed_reason='expired' WHERE id=?",
           )
-          .run(now, prior.id);
+          .run(prior.expires_at, prior.id);
       const latest =
         prior?.status === "pending" && now >= prior.expires_at
-          ? { ...prior, status: "expired", decided_at: now }
+          ? { ...prior, status: "expired", decided_at: prior.expires_at }
           : prior;
       if (
         latest?.status === "pending" ||
@@ -640,7 +690,7 @@ export class HomeSocialService {
     const a = socialToolSchemas.home_visit_invitation_read.parse(input),
       identity = this.bound(ctx, "invitation", a.invitationId),
       row = this.assertInvitation(identity, a.invitationId);
-    if (row.body_cleared_at) throw Error("AUDIENCE_DENIED");
+    if (!this.invitationRetained(row)) throw Error("AUDIENCE_DENIED");
     this.track(ctx, [
       `social-invitation:${row.id}:${row.revision}`,
       ...parse(row.source_labels),
@@ -723,7 +773,11 @@ export class HomeSocialService {
       }
       const proposal = parse(row.requested_scope),
         scope = a.scope ?? proposal.scope,
-        selected = a.selectedItems ?? proposal.selectedItems;
+        selected =
+          a.selectedItems ??
+          proposal.selectedItems.filter((/** @type {any} */ i) =>
+            scope.includes(i.slot),
+          );
       if (scope.some((/** @type {string} */ s) => !proposal.scope.includes(s)))
         throw Error("AUDIENCE_DENIED");
       const host = {
@@ -810,6 +864,63 @@ export class HomeSocialService {
       };
     });
   }
+  /** @param {any} window @param {number} now @param {string} reason */
+  closeWindow(window, now, reason) {
+    if (!["proposed", "active"].includes(window.status)) return false;
+    this.db
+      .prepare(
+        "UPDATE home_social_windows SET status='closed',revision=revision+1,fence=fence+1,closed_at=?,closed_reason=? WHERE id=?",
+      )
+      .run(now, reason, window.id);
+    this.db
+      .prepare(
+        "UPDATE home_social_turns SET status='cancelled',fence=fence+1,finished_at=? WHERE window_id=? AND status IN ('queued','running','reserved')",
+      )
+      .run(now, window.id);
+    this.db
+      .prepare(
+        "UPDATE home_social_dispatches SET status='cancelled',fence=fence+1,finished_at=? WHERE window_id=? AND status IN ('queued','claimed')",
+      )
+      .run(now, window.id);
+    return true;
+  }
+  /** Background-only materialization; reads never invoke this or create events. */
+  maintain() {
+    const result = this.store.transaction((now) => {
+      const invitations = this.db
+        .prepare(
+          "SELECT * FROM home_social_invitations WHERE status='pending' AND expires_at<=?",
+        )
+        .all(now);
+      for (const row of invitations) {
+        this.db
+          .prepare(
+            "UPDATE home_social_invitations SET status='expired',revision=revision+1,decided_at=expires_at,closed_reason='expired' WHERE id=?",
+          )
+          .run(row.id);
+        this.event("invitation_expired", row.id, "system", now);
+      }
+      const visits = this.db
+        .prepare(
+          "SELECT * FROM home_social_visits WHERE status='active' AND expires_at<=?",
+        )
+        .all(now);
+      for (const visit of visits) this.closeVisit(visit, now, "expired", null);
+      for (const window of this.db
+        .prepare(
+          "SELECT * FROM home_social_windows WHERE (status='proposed' AND expires_at<=?) OR (status='active' AND deadline<=?)",
+        )
+        .all(now, now))
+        this.closeWindow(window, now, "expired");
+      return { invitations: invitations.length, visits: visits.length };
+    });
+    const cleared = this.store.pruneBodies({
+      before:
+        this.runtime.now() -
+        this.runtime.config.homeSocial.retentionDays * 86400000,
+    });
+    return { ...result, cleared };
+  }
   /** @param {any} row @param {number} now @param {string} state @param {string|null} actor */
   closeVisit(row, now, state, actor) {
     if (row.status !== "active") return false;
@@ -817,7 +928,7 @@ export class HomeSocialService {
       .prepare(
         "UPDATE home_social_visits SET status=?,revision=revision+1,fence=fence+1,ended_at=?,ended_by=?,closed_reason=? WHERE id=? AND status='active'",
       )
-      .run(state, now, actor, state, row.id);
+      .run(state, Math.min(now, row.expires_at), actor, state, row.id);
     this.db
       .prepare(
         "UPDATE home_social_grants SET revoked_at=?,revision=revision+1,fence=fence+1 WHERE visit_id=? AND revoked_at IS NULL",
@@ -851,6 +962,65 @@ export class HomeSocialService {
     this.event(state, row.id, actor || "system", now);
     return true;
   }
+  /** @param {any} visit @param {string|null} viewer @param {any} [window] */
+  usageDTO(visit, viewer, window = null) {
+    const now = this.runtime.now(),
+      cfg = this.runtime.config.homeSocial,
+      limits = window ? parse(window.effective_limits) : cfg;
+    const rows = this.db
+      .prepare(
+        "SELECT actor_generation,mode,resources_used,resources_reserved FROM home_social_turns WHERE visit_id=?",
+      )
+      .all(visit.id);
+    const sum = (/** @type {string} */ key, /** @type {string} */ mode) =>
+      rows
+        .filter(
+          (/** @type {any} */ row) =>
+            row.mode === mode && (!viewer || row.actor_generation === viewer),
+        )
+        .reduce(
+          (/** @type {number} */ n, /** @type {any} */ row) =>
+            n + (parse(row[key]).tokens || 0),
+          0,
+        );
+    const participants = viewer
+      ? [viewer]
+      : [visit.host_generation, visit.guest_generation];
+    const daily = participants.map((generation) => ({
+      identityGeneration: generation,
+      committed: this.usage(generation, visit.id, "message", now),
+      limit: cfg.maxMessagesPerVisitPerDay,
+    }));
+    return {
+      windowTurns: {
+        used: window?.turns_used || 0,
+        reserved: window?.turns_reserved || 0,
+        limit: limits.maxTurns,
+      },
+      windowResources: {
+        used: window ? parse(window.resources_used).tokens || 0 : 0,
+        reserved: window ? parse(window.resources_reserved).tokens || 0 : 0,
+        limit: limits.resourceBudget?.maxTokensPerWindow ?? null,
+        unit: "tokens",
+      },
+      asyncResources: {
+        used: sum("resources_used", "async"),
+        reserved: sum("resources_reserved", "async"),
+        limit: null,
+        limits: {
+          perTurn: cfg.resourceBudget?.maxTokensPerTurn ?? null,
+          perDay: cfg.resourceBudget?.maxTokensPerDay ?? null,
+        },
+        unit: "tokens",
+      },
+      dailyMessages: {
+        committed: daily.reduce((n, row) => n + row.committed, 0),
+        limit: daily.reduce((n, row) => n + row.limit, 0),
+        byParticipant: daily,
+        resetsAt: Date.parse(day(now)) + 86400000,
+      },
+    };
+  }
   /** @param {any} ctx @param {any} input */
   visitRead(ctx, input) {
     const a = socialToolSchemas.home_visit_read.parse(input),
@@ -869,7 +1039,13 @@ export class HomeSocialService {
           "SELECT * FROM home_social_messages WHERE visit_id=? AND sequence>? ORDER BY sequence LIMIT ?",
         )
         .all(row.id, after, a.limit + 1),
-      items = rows.slice(0, a.limit);
+      items = rows
+        .slice(0, a.limit)
+        .map((/** @type {any} */ m) =>
+          this.retained(row)
+            ? m
+            : { ...m, body: "", body_cleared_at: this.runtime.now() },
+        );
     const labels = items
       .filter(
         (/** @type {any} */ m) =>
@@ -886,6 +1062,7 @@ export class HomeSocialService {
       this.assertVisit(identity, row.id);
       if (this.runtime.now() >= inputExpiresAt) throw Error("AUDIENCE_DENIED");
       for (const old of items) {
+        if (old.retracted_at || old.hidden_at || old.body_cleared_at) continue;
         const current = this.db
           .prepare(
             "SELECT revision,retracted_at,hidden_at,body_cleared_at FROM home_social_messages WHERE id=? AND visit_id=?",
@@ -949,12 +1126,15 @@ export class HomeSocialService {
         row.status === "active" && now < row.expires_at
           ? ["send", "end", "retract"]
           : ["retract"],
-      usage: {
-        dailyMessages: {
-          committed: this.usage(identity.generation, row.id, "message", now),
-          limit: this.runtime.config.homeSocial.maxMessagesPerVisitPerDay,
-        },
-      },
+      usage: this.usageDTO(
+        row,
+        identity.generation,
+        this.db
+          .prepare(
+            "SELECT * FROM home_social_windows WHERE visit_id=? ORDER BY created_at DESC LIMIT 1",
+          )
+          .get(row.id),
+      ),
     };
   }
   /** @param {any} ctx @param {any} input */
@@ -989,7 +1169,7 @@ export class HomeSocialService {
   /** @param {any} ctx @param {any} input */
   send(ctx, input) {
     const a = socialToolSchemas.home_visit_send.parse(input),
-      identity = this.bound(ctx, "visit", a.visitId);
+      identity = this.bound(ctx, "visit", a.visitId, true);
     try {
       return this.execute(ctx, "send", a, ({ now, nextSequence }) => {
         const row = this.assertVisit(identity, a.visitId, {
@@ -1077,6 +1257,11 @@ export class HomeSocialService {
         kind: "send",
         payload: a,
         safeReason: code,
+        resultReference: {
+          target: { kind: "visit", id: a.visitId },
+          hostGeneration: ctx.socialBinding.targetHostGeneration,
+          guestGeneration: ctx.socialBinding.targetGuestGeneration,
+        },
         authorize: () => {
           this.store.assertIdentity(identity);
           this.assertVisit(identity, a.visitId);
@@ -1093,39 +1278,46 @@ export class HomeSocialService {
   /** @param {any} ctx @param {any} input */
   end(ctx, input) {
     const a = socialToolSchemas.home_visit_end.parse(input),
-      identity = this.bound(ctx, "visit", a.visitId);
-    return this.execute(ctx, "end", a, ({ now }) => {
-      const row = this.assertVisit(identity, a.visitId);
-      if (row.status !== "active")
+      identity = this.bound(ctx, "visit", a.visitId, true);
+    return this.execute(
+      ctx,
+      "end",
+      a,
+      ({ now }) => {
+        const row = this.assertVisit(identity, a.visitId);
+        if (row.status !== "active")
+          return {
+            ok: true,
+            changed: false,
+            alreadyClosed: true,
+            ...this.visitMeta(row),
+          };
+        if (now >= row.expires_at) {
+          this.closeVisit(row, now, "expired", null);
+          return {
+            ok: true,
+            changed: false,
+            alreadyClosed: true,
+            state: "expired",
+            visitId: row.id,
+            visitRevision: row.revision + 1,
+          };
+        }
+        if (row.revision !== a.expectedVisitRevision)
+          throw Error("REVISION_CONFLICT");
+        this.closeVisit(row, now, "ended", identity.generation);
         return {
           ok: true,
-          changed: false,
-          alreadyClosed: true,
-          ...this.visitMeta(row),
-        };
-      if (now >= row.expires_at) {
-        this.closeVisit(row, now, "expired", null);
-        return {
-          ok: true,
-          changed: false,
-          alreadyClosed: true,
-          state: "expired",
+          changed: true,
+          alreadyClosed: false,
+          state: "ended",
           visitId: row.id,
           visitRevision: row.revision + 1,
         };
-      }
-      if (row.revision !== a.expectedVisitRevision)
-        throw Error("REVISION_CONFLICT");
-      this.closeVisit(row, now, "ended", identity.generation);
-      return {
-        ok: true,
-        changed: true,
-        alreadyClosed: false,
-        state: "ended",
-        visitId: row.id,
-        visitRevision: row.revision + 1,
-      };
-    });
+      },
+      () => {},
+      true,
+    );
   }
   /** @param {any} ctx @param {any} input */
   retract(ctx, input) {
@@ -1404,7 +1596,88 @@ export class HomeSocialService {
   operationRead(ctx, input) {
     const a = socialToolSchemas.home_social_operation_read.parse(input),
       identity = this.assertBinding(ctx);
-    return this.store.operationRead(identity, a.requestId);
+    const receipt = this.store.operationRead(identity, a.requestId);
+    if (!("result" in receipt) || receipt.status === "unknown")
+      return {
+        requestId: a.requestId,
+        status: "unknown",
+        historicalReplay: true,
+      };
+    const result = receipt.result,
+      binding = ctx.socialBinding;
+    let reference = result.resultReference;
+    if (!reference && result.turnId) {
+      const turn = this.db
+        .prepare(
+          "SELECT * FROM home_social_turns WHERE id=? AND actor_generation=?",
+        )
+        .get(result.turnId, identity.generation);
+      if (turn)
+        reference = {
+          target: { kind: turn.target_kind, id: turn.target_id },
+          hostGeneration: turn.target_host_generation,
+          guestGeneration: turn.target_guest_generation,
+        };
+    }
+    let visitId = result.visitId,
+      invitationId = result.invitationId;
+    if (result.messageId)
+      visitId = this.db
+        .prepare("SELECT visit_id FROM home_social_messages WHERE id=?")
+        .get(result.messageId)?.visit_id;
+    if (!visitId && result.windowId)
+      visitId = this.db
+        .prepare("SELECT visit_id FROM home_social_windows WHERE id=?")
+        .get(result.windowId)?.visit_id;
+    if (!visitId && reference?.target.kind === "visit")
+      visitId = reference.target.id;
+    if (!invitationId && reference?.target.kind === "invitation")
+      invitationId = reference.target.id;
+    const pairMatches = (
+      /** @type {string} */ host,
+      /** @type {string} */ guest,
+    ) =>
+      same(
+        [host, guest].sort(),
+        [binding.targetHostGeneration, binding.targetGuestGeneration].sort(),
+      );
+    if (visitId) {
+      const visit = this.assertVisit(identity, visitId);
+      if (
+        visit.status === "invalidated" ||
+        !(
+          (binding.target.kind === "visit" && binding.target.id === visit.id) ||
+          (binding.target.kind === "invitation" &&
+            binding.target.id === visit.invitation_id) ||
+          (binding.target.kind === "compose" &&
+            pairMatches(visit.host_generation, visit.guest_generation))
+        )
+      )
+        throw Error("AUDIENCE_DENIED");
+    } else if (invitationId) {
+      const invitation = this.assertInvitation(identity, invitationId);
+      if (invitation.status === "invalidated") throw Error("AUDIENCE_DENIED");
+      const visit =
+        binding.target.kind === "visit"
+          ? this.assertVisit(identity, binding.target.id)
+          : null;
+      if (!(
+        (binding.target.kind === "invitation" &&
+          binding.target.id === invitation.id) ||
+        visit?.invitation_id === invitation.id ||
+        (binding.target.kind === "compose" &&
+          pairMatches(invitation.host_generation, invitation.guest_generation))
+      ))
+        throw Error("AUDIENCE_DENIED");
+    } else if (
+      reference?.target.kind === "compose" &&
+      binding.target.kind === "compose" &&
+      pairMatches(reference.hostGeneration, reference.guestGeneration)
+    ) {
+      if (receipt.kind !== "block")
+        this.assertPair(reference.hostGeneration, reference.guestGeneration);
+    } else throw Error("AUDIENCE_DENIED");
+    return receipt;
   }
   /** @param {any} principal */
   assertAdmin(principal) {
@@ -1457,27 +1730,26 @@ export class HomeSocialService {
         ? " WHERE host_agent_id=? OR guest_agent_id=?"
         : "",
       args = a.agentId ? [a.agentId, a.agentId] : [];
-    const all = [
-      ...this.db
-        .prepare("SELECT * FROM home_social_invitations" + filter)
-        .all(...args)
-        .map((/** @type {any} */ row) => ({
-          kind: "invitation",
-          ...this.invitationMeta(row),
-        })),
-      ...this.db
-        .prepare("SELECT * FROM home_social_visits" + filter)
-        .all(...args)
-        .map((/** @type {any} */ row) => ({
-          kind: "visit",
-          ...this.visitMeta(row),
-        })),
-    ].sort((a, b) => (a.kind + a.id).localeCompare(b.kind + b.id));
+    // List pages select metadata only; neither invitation prose nor message bodies enter memory.
+    const from = `WITH overview AS (
+      SELECT 'invitation' AS kind,id,revision,host_agent_id,host_generation,guest_agent_id,guest_generation,room_id,status,created_at,expires_at,requested_scope,effective_scope,initiator_generation,recipient_generation,NULL AS invitation_id,NULL AS started_at,NULL AS ended_at,NULL AS closed_reason FROM home_social_invitations
+      UNION ALL
+      SELECT 'visit',id,revision,host_agent_id,host_generation,guest_agent_id,guest_generation,room_id,status,started_at,expires_at,NULL,NULL,NULL,NULL,invitation_id,started_at,ended_at,closed_reason FROM home_social_visits
+    ) SELECT * FROM overview`;
+    const rows = this.db
+        .prepare(from + filter + " ORDER BY kind,id LIMIT ? OFFSET ?")
+        .all(...args, a.limit + 1, after),
+      items = rows.slice(0, a.limit);
     return {
-      items: all.slice(after, after + a.limit),
+      items: items.map((/** @type {any} */ row) => ({
+        kind: row.kind,
+        ...(row.kind === "invitation"
+          ? this.invitationMeta(row)
+          : this.visitMeta(row)),
+      })),
       nextCursor:
-        after + a.limit < all.length
-          ? this.cursor(binding, after + a.limit)
+        rows.length > a.limit
+          ? this.cursor(binding, after + items.length)
           : null,
       policyRevision: this.policy().revision,
       serverNow: this.runtime.now(),
@@ -1495,7 +1767,8 @@ export class HomeSocialService {
         const row = this.db
           .prepare("SELECT * FROM home_social_invitations WHERE id=?")
           .get(a.id);
-        if (!row || row.body_cleared_at) throw Error("AUDIENCE_DENIED");
+        if (!row || !this.invitationRetained(row))
+          throw Error("AUDIENCE_DENIED");
         output = {
           ...this.invitationMeta(row),
           purpose: row.purpose,
@@ -1520,7 +1793,11 @@ export class HomeSocialService {
               "SELECT * FROM home_social_messages WHERE visit_id=? AND sequence>? ORDER BY sequence LIMIT ?",
             )
             .all(a.id, after, a.limit + 1),
-          items = rows.slice(0, a.limit);
+          items = rows
+            .slice(0, a.limit)
+            .map((/** @type {any} */ m) =>
+              this.retained(row) ? m : { ...m, body: "", body_cleared_at: now },
+            );
         const grant = this.db
             .prepare("SELECT * FROM home_social_grants WHERE visit_id=?")
             .get(a.id),
@@ -1559,12 +1836,21 @@ export class HomeSocialService {
               ? { body: m.body }
               : {}),
           })),
+          requestedScope: parse(
+            this.db
+              .prepare(
+                "SELECT requested_scope FROM home_social_invitations WHERE id=?",
+              )
+              .get(row.invitation_id).requested_scope,
+          ).scope,
           grantRevision: grant?.revision,
           effectiveScope: grant && !grant.revoked_at ? parse(grant.scope) : [],
           grantExpiresAt: grant?.expires_at,
+          usage: this.usageDTO(row, null, window),
           window: window
             ? {
                 id: window.id,
+                revision: window.revision,
                 state: window.status,
                 termsRevision: window.terms_revision,
                 effectiveLimits: parse(window.effective_limits),
@@ -1610,6 +1896,29 @@ export class HomeSocialService {
   }
   /** @param {any} principal @param {any} input */
   moderate(principal, input) {
+    let parsed;
+    try {
+      this.assertAdmin(principal);
+      parsed = moderateSchema.parse(input);
+      return this.moderateInternal(principal, parsed);
+    } catch (error) {
+      this.auditAdminAccess({
+        principal,
+        targetKind: parsed ? "moderation" : "unknown",
+        targetId: parsed?.targetId || "unknown",
+        action: parsed?.action || "moderate",
+        authorized: principal === SOCIAL_ADMIN_PRINCIPAL,
+        outcome: "denied",
+        safeError:
+          error instanceof Error && /^[A-Z_]+$/.test(error.message)
+            ? error.message
+            : "INVALID_REQUEST",
+      });
+      throw error;
+    }
+  }
+  /** @param {any} principal @param {any} input */
+  moderateInternal(principal, input) {
     this.assertAdmin(principal);
     const a = moderateSchema.parse(input);
     const admin = {
@@ -1685,11 +1994,7 @@ export class HomeSocialService {
           revision: row.revision,
         };
       if (row.revision !== a.expectedRevision) throw Error("REVISION_CONFLICT");
-      this.db
-        .prepare(
-          "UPDATE home_social_windows SET status='closed',revision=revision+1,fence=fence+1,closed_at=?,closed_reason='administrator' WHERE id=?",
-        )
-        .run(now, row.id);
+      this.closeWindow(row, now, "administrator");
       return { changed: true, windowId: row.id, revision: row.revision + 1 };
     });
   }
@@ -1705,12 +2010,30 @@ export class HomeSocialService {
             "SELECT * FROM home_social_operations WHERE actor_generation=? AND request_id=?",
           )
           .get(identity.generation, input.requestId);
+      const audit = () =>
+        this.db
+          .prepare(
+            "INSERT INTO home_social_admin_access_audit VALUES(?,?,?,?,?,?,?,?,?)",
+          )
+          .run(
+            randomUUID(),
+            SOCIAL_ADMIN_PRINCIPAL,
+            "moderation",
+            input.targetId,
+            input.action,
+            1,
+            "success",
+            null,
+            now,
+          );
       if (prior) {
         if (prior.payload_hash !== hash) throw Error("IDEMPOTENCY_MISMATCH");
+        audit();
         return this.store.receipt(prior, true);
       }
       const result = apply({ now }),
         operationId = randomUUID();
+      audit();
       this.db
         .prepare("INSERT INTO home_social_operations VALUES(?,?,?,?,?,?,?,?,?)")
         .run(
@@ -1752,6 +2075,10 @@ export class HomeSocialService {
       agents: r.config.agents.map((/** @type {any} */ a) => ({
         id: a.id,
         paused: a.paused,
+        subjectEnabled: a.subject.enabled,
+        proactiveEnabled: a.behavior.proactive.enabled,
+        offlineReview: a.subject.offlineReview,
+        reviewInSilence: a.subject.reviewInSilence,
         enabled: a.home?.enabled,
         social: a.home?.social?.enabled,
         publishing: a.home?.publishing,
@@ -1843,12 +2170,7 @@ export class HomeSocialService {
           "UPDATE home_social_windows SET effective_limits=?,deadline=? WHERE id=?",
         )
         .run(JSON.stringify(limits), deadline, window.id);
-      if (exhausted)
-        this.db
-          .prepare(
-            "UPDATE home_social_windows SET status='closed',revision=revision+1,fence=fence+1,closed_at=?,closed_reason='limits_reduced' WHERE id=?",
-          )
-          .run(now, window.id);
+      if (exhausted) this.closeWindow(window, now, "limits_reduced");
     }
     this.db
       .prepare(

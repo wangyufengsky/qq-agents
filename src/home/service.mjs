@@ -1,5 +1,12 @@
-import { HomeSocialService } from "./social-service.mjs";
 // @ts-check
+import {
+  assertSocialSend,
+  trackSocial,
+  socialSources,
+  socialContextAllowed,
+  assertRoomItemShareable,
+} from "../core/social-protection.mjs";
+import { HomeSocialService } from "./social-service.mjs";
 import { HomeRooms } from "./rooms.mjs";
 import { randomUUID, createHash } from "node:crypto";
 import { HomeStore } from "./store.mjs";
@@ -10,7 +17,16 @@ export class HomeService {
     this.runtime = runtime;
     this.store = new HomeStore(runtime.memory.db);
     this.identityReady = false;
-    this.social = new HomeSocialService(runtime, this);
+    this.social = new HomeSocialService(runtime, this, {
+      assertSend: assertSocialSend,
+      sources: socialSources,
+      allowed: socialContextAllowed,
+      assertRoomItem: assertRoomItemShareable,
+      trackSource: (/** @type {any} */ ctx, /** @type {any} */ record) => {
+        trackSocial(ctx, record);
+        ctx.persistTaint?.();
+      },
+    });
     this.syncAgents();
     this.rooms = new HomeRooms(this);
   }

@@ -1,6 +1,5 @@
+// @ts-check
 import { HOME_SOCIAL_DEFAULTS } from "../home/social-policy.mjs";
-// @ts-check
-// @ts-check
 // Runtime defaults are source code; examples are generated documentation.
 import { validateConfig } from "./config.mjs";
 

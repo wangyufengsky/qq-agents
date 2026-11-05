@@ -735,6 +735,11 @@ const agentForm = {
         '<input type="hidden" name="homeSettingsShown" value="1">' +
           check("homeEnabled", "启用小窝读取和主人格布置", row.home?.enabled) +
           check(
+            "homeSocialEnabled",
+            "允许主体自主参与小窝社交（仍需实例启用和双方同意）",
+            row.home?.social?.enabled ?? false,
+          ) +
+          check(
             "homeSceneView",
             "允许受控场景图片读取（需要本机 Chromium）",
             row.home?.sceneView?.enabled,
@@ -1498,6 +1503,10 @@ const agentForm = {
         ? {
             home: {
               enabled: f.has("homeEnabled"),
+              ...(original.home?.social !== undefined ||
+              f.has("homeSocialEnabled")
+                ? { social: { enabled: f.has("homeSocialEnabled") } }
+                : {}),
               sceneView: { enabled: f.has("homeSceneView") },
               publishing: f.has("homePublishing"),
               projectSnapshots: { enabled: f.has("homeProjectSnapshots") },
