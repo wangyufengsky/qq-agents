@@ -322,5 +322,11 @@ export function subjectMaterials(runtime, ctx) {
       : {}),
     shares: shares.map(strip),
     ...(board ? { board } : {}),
+    ...(a.home?.enabled &&
+    a.home.intents?.enabled &&
+    a.home.intents.hints &&
+    !restricted
+      ? { home: runtime.home.rooms.intents.hint(a.id) }
+      : {}),
   };
 }

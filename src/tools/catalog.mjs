@@ -1,4 +1,8 @@
-import { HOME_READ_TOOLS, HOME_TOOLS } from "../home/policy.mjs";
+import {
+  HOME_INTENT_TOOLS,
+  HOME_READ_TOOLS,
+  HOME_TOOLS,
+} from "../home/policy.mjs";
 import { z } from "zod";
 import { toolSpecs } from "./specs.mjs";
 import { profileConversation } from "../core/profile.mjs";
@@ -70,9 +74,12 @@ export function toolAvailable(agent, name, conversation) {
   if (HOME_TOOLS.includes(name))
     return (
       agent.home?.enabled === true &&
-      (HOME_READ_TOOLS.includes(name) ||
-        (conversation === "@subject" &&
-          (name !== "room_publish" || agent.home.publishing === true)))
+      (HOME_INTENT_TOOLS.includes(name)
+        ? agent.home.intents?.enabled === true &&
+          (name !== "room_intent_resolve" || conversation === "@subject")
+        : HOME_READ_TOOLS.includes(name) ||
+          (conversation === "@subject" &&
+            (name !== "room_publish" || agent.home.publishing === true)))
     );
   if (name === "qq_react")
     return (

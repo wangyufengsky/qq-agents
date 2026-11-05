@@ -1,4 +1,5 @@
 // @ts-check
+import { HomeIntents } from "./intents.mjs";
 import { RoomStore } from "./room-store.mjs";
 import { HOME_AUDIENCE, HOME_READ_TOOLS } from "./policy.mjs";
 import { homeTemplate, validateLayout } from "./layout.mjs";
@@ -13,6 +14,7 @@ export class HomeRooms {
     this.home = home;
     this.runtime = home.runtime;
     this.store = new RoomStore(home.runtime.memory.db);
+    this.intents = new HomeIntents(this);
   }
   /** @param {any} ctx @param {boolean} [write] */
   authorize(ctx, write = false) {
@@ -30,7 +32,7 @@ export class HomeRooms {
     return a;
   }
   /** Layout choices carry no free text, but protected turns still cannot affect shared display. @param {any} ctx */
-  shareable(ctx) {
+  shareable(ctx, layoutProposal = false) {
     const r = this.runtime,
       p = contextProtection(r, ctx);
     if (
@@ -58,7 +60,13 @@ export class HomeRooms {
           "private-conversation",
           "group-conversation",
           "unknown-legacy",
-        ].includes(sourceClass(r, ctx, id))
+        ]
+          .filter(
+            (kind) =>
+              !layoutProposal ||
+              !["private-conversation", "group-conversation"].includes(kind),
+          )
+          .includes(sourceClass(r, ctx, id))
       )
         throw Error("HOME_SOURCE_DENIED");
       // Own diaries can cite older chat records; the intermediate record is not declassification.
@@ -114,6 +122,8 @@ export class HomeRooms {
   }
   /** @param {any} ctx @param {string} name @param {any} args */
   tool(ctx, name, args) {
+    if (name.startsWith("room_intent_"))
+      return this.intents.tool(ctx, name, args);
     const a = this.authorize(ctx, !HOME_READ_TOOLS.includes(name)),
       generation = this.home.generation(a.id);
     if (
@@ -190,6 +200,8 @@ export class HomeRooms {
           : "无法确认该请求结果；不要换 requestId 猜测重做。",
       };
     }
+    if (args.requestId.startsWith("intent_") && !ctx.homeIntentExecution)
+      throw Error("HOME_REQUEST_CONFLICT");
     // Even a replay must pass today's permissions and source boundaries.
     if (name !== "room_retract") this.shareable(ctx);
     if (name === "room_publish") {
@@ -276,6 +288,7 @@ export class HomeRooms {
       name === "room_retract" ? null : a.home.maxWritesPerDay,
       now,
       apply,
+      ctx.homeIntentExecution,
     );
     const current = this.display(a.id);
     this.observed(ctx, current);
