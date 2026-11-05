@@ -94,7 +94,13 @@ export async function runOpenAISocial(params) {
         await check();
         if (call.type !== "function" || !names.has(call.function?.name))
           throw Error("SOCIAL_TOOL_DENIED");
-        const args = JSON.parse(call.function.arguments || "{}");
+        let args;
+        try {
+          args = JSON.parse(call.function.arguments || "{}");
+        } catch {
+          // JSON errors may quote private provider output; only emit our safe code.
+          throw Error("SOCIAL_RESPONSE_INVALID");
+        }
         const answer = await callTool(call.function.name, args);
         const text = JSON.stringify(answer);
         if (Buffer.byteLength(text) > params.maxToolResultBytes)
