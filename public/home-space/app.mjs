@@ -1,3 +1,4 @@
+import { createSocialView } from "./social.mjs";
 import { decorateSceneObject } from "./scene-decoration.mjs";
 import { catalog } from "../home-preview/catalog.mjs";
 import { createTemplate } from "../home-preview/templates.mjs";
@@ -47,6 +48,7 @@ let overview = null,
   lastFocus = null,
   readerAction = "",
   boardView = null,
+  socialView = null,
   pending = null,
   contentTimer,
   contentTicket = 0;
@@ -90,6 +92,8 @@ function clearView(message = "登录或连接需要重新验证。") {
   blocked = false;
   clearTimeout(contentTimer);
   contentTicket++;
+  socialView?.close();
+  socialView = null;
   boardView?.close();
   boardView = null;
   if ($("reader").open) $("reader").close();
@@ -98,6 +102,7 @@ function clearView(message = "登录或连接需要重新验证。") {
   for (const id of ["entries", "menu"]) if ($(id).open) $(id).close();
   $("editor").open = false;
   $("home-tools").hidden = true;
+  $("social-room-open").hidden = true;
   $("stage").inert = false;
   for (const id of [
     "stage",
@@ -146,7 +151,7 @@ async function api(url, body, method) {
   }
   if (startEpoch !== epoch || credential !== token())
     throw Error("HOME_VIEW_EXPIRED");
-  if (response.status === 401 || response.status === 403) {
+  if ([401, 403, 410].includes(response.status)) {
     clearView("登录已失效或当前没有权限，请重新登录。");
     throw Error("UNAUTHORIZED");
   }
@@ -503,6 +508,7 @@ async function refresh(animate = false) {
     if (next.rosterRevision !== info.rosterRevision)
       throw Error("居民列表已变化，请重试。");
     route = nextRoute;
+    $("social-room-open").hidden = route.type !== "room";
     envelope = next;
     draft = structuredClone(next.layout);
     dirty = false;
@@ -736,6 +742,8 @@ function openReader(action) {
   clearTimeout(contentTimer);
   contentTicket++;
   readerAction = action;
+  socialView?.close();
+  socialView = null;
   boardView?.close();
   boardView = null;
   $("reader-content").replaceChildren();
@@ -744,7 +752,19 @@ function openReader(action) {
     guide: "参观小册",
     intro: "介绍卡",
     works: "作品展示",
+    social: "往来管理",
   }[action];
+  if (action === "social") {
+    socialView = createSocialView({
+      root: $("reader-content"),
+      api,
+      isActive: () => dialog.open && readerAction === "social" && !!overview,
+      agentId: route?.agentId,
+    });
+    if (!dialog.open) dialog.showModal();
+    socialView.render();
+    return;
+  }
   if (action === "board") {
     boardView = window.createBoardView({
       getRoot: () => $("reader-content"),
@@ -783,6 +803,8 @@ function openReader(action) {
 $("reader").addEventListener("close", () => {
   clearTimeout(contentTimer);
   contentTicket++;
+  socialView?.close();
+  socialView = null;
   boardView?.close();
   boardView = null;
   readerAction = "";
@@ -928,3 +950,10 @@ refresh().then(() => {
     openReader("board");
   }
 });
+
+$("social-open").onclick = () => {
+  $("menu").close();
+  openReader("social");
+};
+
+$("social-room-open").onclick = () => openReader("social");

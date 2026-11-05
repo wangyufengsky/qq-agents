@@ -1870,6 +1870,19 @@ function backendForm(row, id, html) {
         'placeholder="例如 QQ_UNIFIED_DEEPSEEK_KEY；本机服务留空"',
       ),
     ) +
+    linkFor(
+      "openai",
+      select(
+        "socialProfile",
+        "小窝社交运行配置（可选）",
+        row.socialProfile || "",
+        [
+          ["", "不启用社交后端配置"],
+          ["openai-gpt-4.1-mini", "官方 OpenAI gpt-4.1-mini-2025-04-14"],
+        ],
+      ) +
+        '<p class="hint">只选择能力配置，不自动替换模型或服务地址；首版其他后端不支持社交模型运行。</p>',
+    ) +
     `<p class="hint" id="backend-models-state">${esc(backendCatalogState(catalog))}${readOff ? " " + esc(readOff) : ""}</p>` +
     linkFor(
       "dsh",
@@ -2078,6 +2091,14 @@ $("#edit-form").onsubmit = (e) => {
           type: get("type"),
           provider: get("type") === "antigravity" ? "" : get("provider"),
           model: get("model"),
+          ...(get("socialProfile") || row.socialProfile !== undefined
+            ? {
+                socialProfile:
+                  get("type") === "openai"
+                    ? get("socialProfile") || null
+                    : null,
+              }
+            : {}),
           effort: get("effort"),
           baseUrl:
             get("type") === "antigravity"

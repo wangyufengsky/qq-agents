@@ -179,6 +179,28 @@ export function createServer({
       });
       res.end(JSON.stringify(data));
     };
+    let socialReadAudited = false;
+    const socialReadRequest =
+      req.url?.split("?")[0] === "/api/home-social/read";
+    const auditSocialRejection = (code) => {
+      if (!socialReadRequest || socialReadAudited) return;
+      socialReadAudited = true;
+      (runtime.homeSocial || runtime.home?.social)?.auditAdminAccess({
+        principal: equal(req.headers["x-admin-token"], token)
+          ? "instance-administrator"
+          : "unauthenticated",
+        targetKind: "unknown",
+        targetId: "unknown",
+        action: "read",
+        authorized: false,
+        outcome: "denied",
+        safeError: code,
+      });
+    };
+    const deny = (code, status) => {
+      auditSocialRejection(code);
+      return send({ error: code }, status);
+    };
     // The console is only served under a loopback name, even when the socket
     // listens on 0.0.0.0 inside a container: a host port mapping such as
     // 127.0.0.1:8080:3210 is admitted through publicPort, and any other name
@@ -192,15 +214,14 @@ export function createServer({
           `[::1]:${port}`,
         ]),
     );
-    if (!expectedHosts.has(req.headers.host))
-      return send({ error: "INVALID_HOST" }, 403);
+    if (!expectedHosts.has(req.headers.host)) return deny("INVALID_HOST", 403);
     if (
       req.headers.origin &&
       req.headers.origin !== `http://${req.headers.host}`
     )
-      return send({ error: "CROSS_ORIGIN" }, 403);
+      return deny("CROSS_ORIGIN", 403);
     if (req.headers["sec-fetch-site"] === "cross-site")
-      return send({ error: "CROSS_SITE" }, 403);
+      return deny("CROSS_SITE", 403);
     const readBody = async (limit, ctx) => {
       const data = await body(req, limit);
       if (stopping || runtime.closed) throw Error("RUNTIME_CLOSING");
@@ -318,7 +339,66 @@ export function createServer({
         if (stopping || runtime.closed) throw Error("RUNTIME_CLOSING");
       }
       if (!downloadAgentId && !equal(req.headers["x-admin-token"], token))
-        return send({ error: "UNAUTHORIZED" }, 401);
+        return deny("UNAUTHORIZED", 401);
+      if (url.pathname.startsWith("/api/home-social/")) {
+        const auth = "instance-administrator";
+        const service = runtime.homeSocial || runtime.home?.social;
+        if (!service) return deny("HOME_UNAVAILABLE", 503);
+        if (
+          url.pathname === "/api/home-social/overview" &&
+          req.method === "GET"
+        ) {
+          const query = Object.fromEntries(url.searchParams);
+          if (Object.hasOwn(query, "limit")) query.limit = Number(query.limit);
+          return send(service.adminOverview(auth, query));
+        }
+        const action = {
+          "/api/home-social/read": "adminRead",
+          "/api/home-social/moderate": "moderate",
+        }[url.pathname];
+        if (!action) return send({ error: "NOT_FOUND" }, 404);
+        if (req.method !== "POST") return deny("METHOD", 405);
+        let input;
+        try {
+          input = await readBody(8192);
+        } catch (error) {
+          auditSocialRejection(
+            [
+              "BODY_TOO_LARGE",
+              "INVALID_JSON_BODY",
+              "RUNTIME_CLOSING",
+              "UPDATE_IN_PROGRESS",
+            ].includes(error.message)
+              ? error.message
+              : "INVALID_JSON_BODY",
+          );
+          throw error;
+        }
+        try {
+          // The service owns business-denial and successful-read audit transactions.
+          if (action === "adminRead") socialReadAudited = true;
+          return send(await service[action](auth, input));
+        } catch (error) {
+          if (
+            [
+              "REVISION_CONFLICT",
+              "IDEMPOTENCY_MISMATCH",
+              "CONFIG_CONFLICT",
+            ].includes(error.message)
+          )
+            return send({ error: error.message }, 409);
+          if (
+            [
+              "AUDIENCE_DENIED",
+              "IDENTITY_DENIED",
+              "SOURCE_RESTRICTED",
+            ].includes(error.message)
+          )
+            return send({ error: error.message }, 403);
+          throw error;
+        }
+      }
+
       if (url.pathname === "/api/home/overview" && req.method === "GET")
         return send(runtime.home.overview());
       if (url.pathname === "/api/home/content" && req.method === "GET")
@@ -1491,6 +1571,7 @@ export function createServer({
         requestId,
         durationMs: Date.now() - startedAt,
       });
+      auditSocialRejection(failure.code);
       send(
         {
           error: failure.code,
