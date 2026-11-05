@@ -1,0 +1,72 @@
+.social-notice {
+  color: var(--muted, #665e51);
+  line-height: 1.7;
+}
+.social-row,
+.social-message {
+  padding: 1rem 0;
+  border-bottom: 1px solid #d8cebb;
+}
+.social-row h3,
+.social-message h4 {
+  margin: 0 0 0.5rem;
+}
+.social-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.8;
+}
+.social-usage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: 0.6rem;
+}
+.social-usage dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.social-settings {
+  display: grid;
+  gap: 1rem;
+}
+.social-settings label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.social-settings input[type="number"] {
+  width: 6rem;
+  min-width: 0;
+}
+.social-settings-fold {
+  margin-top: 1.5rem;
+}
+#reader[data-kind="social"] button,
+#reader[data-kind="social"] summary {
+  min-height: 44px;
+}
+#reader[data-kind="social"] p,
+#reader[data-kind="social"] h3 {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 640px) {
+  .social-usage {
+    grid-template-columns: 1fr;
+  }
+  .social-usage dd {
+    margin-bottom: 0.7rem;
+  }
+}
+.social-settings select {
+  min-width: 0;
+  max-width: 100%;
+}
+.social-budget {
+  min-width: 0;
+  margin: 0;
+  padding: 0.75rem;
+  border: 1px solid #d8cebb;
+  display: grid;
+  gap: 0.75rem;
+}
