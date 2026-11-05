@@ -49,6 +49,7 @@ test("real browser renders persisted scene with the packaged desktop and mobile 
     t.skip("local Chromium unavailable; browser acceptance remains required");
     return;
   }
+  await checkChromePipeStages(t, executablePath);
   const snapshot = {
     type: "room",
     view: { layout: defaultLayout("room") },
@@ -597,3 +598,73 @@ test("MCP delivery rejects invalid observations and validator errors while ordin
     }
   });
 });
+
+async function checkChromePipeStages(t, executablePath) {
+  const fs = await import("node:fs/promises"),
+    os = await import("node:os"),
+    path = await import("node:path"),
+    { fileURLToPath } = await import("node:url"),
+    { randomUUID } = await import("node:crypto"),
+    { chromium } = await import("playwright-core"),
+    { buildChildEnv } = await import("../src/core/child-env.mjs"),
+    { homeBrowserArguments, stopHomeBrowser } =
+      await import("../src/home/browser-process.mjs");
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "home-chrome-cdp-"));
+  const marker = path.join(root, "wrapper.pid"),
+    controlFile = path.join(root, "control.json"),
+    traceFile = path.join(root, "fixed-protocol-ids.json");
+  const control = {
+    nonce: randomUUID(),
+    endpoint:
+      process.platform === "win32"
+        ? String.raw`\\.\pipe\qq-home-cdp-${randomUUID()}`
+        : path.join(root, "control.sock"),
+    arguments: [
+      fileURLToPath(new URL("./fixtures/home-cdp-relay.mjs", import.meta.url)),
+      traceFile,
+      executablePath,
+      ...homeBrowserArguments(path.join(root, "profile")),
+    ],
+  };
+  await fs.writeFile(controlFile, JSON.stringify(control), { mode: 0o600 });
+  let browser;
+  try {
+    browser = await chromium.launch({
+      executablePath: process.execPath,
+      ignoreDefaultArgs: true,
+      timeout: 15000,
+      env: buildChildEnv("browser"),
+      args: [
+        fileURLToPath(
+          new URL("../src/home/browser-launcher.mjs", import.meta.url),
+        ),
+        marker,
+        process.execPath,
+        path.join(root, "profile"),
+        controlFile,
+      ],
+    });
+    assert.ok(browser.version());
+  } finally {
+    try {
+      if (browser)
+        await Promise.race([
+          browser.close().catch(() => {}),
+          new Promise((resolve) => setTimeout(resolve, 500)),
+        ]);
+    } finally {
+      // The relay writes only bounded, reviewed method labels and numeric ids.
+      const frames = JSON.parse(
+        await fs.readFile(traceFile, "utf8").catch(() => "[]"),
+      );
+      t.diagnostic(JSON.stringify({ name: "chrome-cdp-pipe-stages", frames }));
+      await stopHomeBrowser(marker, control);
+      await fs.rm(root, {
+        recursive: true,
+        force: true,
+        maxRetries: 3,
+        retryDelay: 100,
+      });
+    }
+  }
+}

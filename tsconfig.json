@@ -108,6 +108,7 @@
     "src/home/browser-launcher.mjs",
     "src/home/browser-job.mjs",
     "test/home-scene-cold.browser.mjs",
+    "test/fixtures/home-cdp-relay.mjs",
     "src/tools/media-lease.mjs",
     "public/home-space/scene-decoration.mjs",
     "src/home/project-snapshots.mjs",
