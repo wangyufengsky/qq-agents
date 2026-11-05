@@ -49,6 +49,7 @@ export async function runOpenAISocial(params) {
       if (inferences >= current.maxInferences)
         throw Error("SOCIAL_INFERENCE_LIMIT");
       const outputCap = Math.min(params.outputCap, current.outputCap);
+      let consumption;
       const result = await boundedInference(
         budget,
         binding,
@@ -58,6 +59,7 @@ export async function runOpenAISocial(params) {
         async () => {
           // Recheck after reservation: waiting for the store can cross a fence.
           await check();
+          consumption = params.captureInputConsumption?.();
           const options = {
             method: "POST",
             redirect: "error",
@@ -91,6 +93,9 @@ export async function runOpenAISocial(params) {
       const calls = message.tool_calls || [];
       if (!Array.isArray(calls) || calls.length > params.maxCallsPerInference)
         throw Error("SOCIAL_TOOL_LIMIT");
+      // Only this request's already prepared input can be acknowledged. Tool
+      // reads executed below belong to a later model request, never this one.
+      await params.onInputConsumed?.(consumption);
       if (!calls.length)
         return { status: "completed", inferences: inferences + 1 };
       messages.push({

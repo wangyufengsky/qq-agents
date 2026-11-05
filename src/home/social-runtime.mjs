@@ -626,6 +626,10 @@ export class SocialRuntime {
             if (ctx.socialYielded) throw Error("SOCIAL_TURN_CLOSED");
           },
           shouldStop: () => ctx.socialYielded,
+          captureInputConsumption: () =>
+            this.service.captureInputConsumption(ctx),
+          onInputConsumed: (/** @type {any} */ ticket) =>
+            this.service.confirmInputConsumed(ctx, ticket),
           callTool: (/** @type {string} */ name, /** @type {any} */ args) =>
             this.callTool(ctx, name, args),
           budget: new SocialResources(r, ctx),

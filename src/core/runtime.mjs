@@ -148,11 +148,11 @@ export class Runtime {
       trackSource: trackSocial,
       assertRoomItem: assertRoomItemShareable,
       sources: socialSources,
+      allowed: socialContextAllowed,
     };
     this.socialSourceAllowed = socialContextAllowed;
     this.homeSocial = this.home.social;
     this.socialRuntime = new SocialRuntime(this);
-    if (this.homeSocial) this.homeSocial.store.interruptRuntime(randomUUID());
     this.qzoneApprovals = new QzoneApprovals(this);
     this.banter = new BanterCoordinator({
       botIds: this.config.connections.map((c) => c.accountId),
@@ -184,8 +184,18 @@ export class Runtime {
     tracked.then(() => this.jobs.delete(tracked));
     return tracked;
   }
+  // Constructing another service client is not a process restart. The owning
+  // entry point runs this barrier before exposing APIs or starting dispatch.
+  initializeRuntime() {
+    if (this.runtimeInitialized) return { initialized: false };
+    if (this.closed) throw Error("RUNTIME_CLOSING");
+    if (this.homeSocial) this.homeSocial.store.interruptRuntime(randomUUID());
+    this.runtimeInitialized = true;
+    return { initialized: true };
+  }
   startTimers() {
     if (this.closed || this.ticker) return;
+    this.initializeRuntime();
     this.ticker = setInterval(() => {
       try {
         this.tick();

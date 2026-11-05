@@ -4,6 +4,296 @@ import { randomUUID } from "node:crypto";
 import { fixture, config, context, settle } from "./helpers.mjs";
 import { validateConfig } from "../src/core/config.mjs";
 import { OpenAIBackend } from "../src/backends/openai.mjs";
+import { SOCIAL_ADMIN_PRINCIPAL } from "../src/home/social-policy.mjs";
+import { Runtime } from "../src/core/runtime.mjs";
+
+test("constructing a service client does not interrupt another authorized turn", async (t) => {
+  const f = setup(t),
+    r = f.runtime;
+  const queued = await f.process("agent-0", { kind: "compose", id: "agent-1" });
+  const observer = new Runtime({
+    memory: f.store,
+    configStore: f.configStore,
+    backendFactory: () => ({ run: async () => {}, close: async () => {} }),
+  });
+  try {
+    assert.equal(
+      f.store.db
+        .prepare("SELECT status FROM home_social_turns WHERE id=?")
+        .get(queued.result.turnId).status,
+      "queued",
+    );
+  } finally {
+    await observer.close();
+  }
+  assert.equal(r.runtimeInitialized, undefined);
+});
+
+test("explicit process initialization interrupts active windows once and never replays unknown HTTP", async (t) => {
+  const f = setup(t),
+    r = f.runtime,
+    v = await visitFixture(f);
+  const a = boundContext(f, "agent-0", { kind: "visit", id: v.id }),
+    p = r.socialRuntime.exchange.propose(a, {
+      requestId: randomUUID(),
+      visitId: v.id,
+    }).result;
+  r.capabilities.delete(a.token);
+  f.store.db
+    .prepare("UPDATE home_social_turns SET status='completed' WHERE id=?")
+    .run(a.socialBinding.turnId);
+  const b = boundContext(f, "agent-1", { kind: "visit", id: v.id });
+  r.socialRuntime.exchange.decide(b, {
+    requestId: randomUUID(),
+    windowId: p.windowId,
+    expectedWindowRevision: 1,
+    termsRevision: p.termsRevision,
+    accept: true,
+  });
+  r.capabilities.delete(b.token);
+  f.store.db
+    .prepare("UPDATE home_social_turns SET status='completed' WHERE id=?")
+    .run(b.socialBinding.turnId);
+  const pending = f.store.db
+      .prepare("SELECT * FROM home_social_turns WHERE window_id=?")
+      .get(p.windowId),
+    reservation = randomUUID();
+  f.store.db
+    .prepare(
+      "INSERT INTO home_social_inference_reservations(id,run_id,request_id,turn_id,actor_generation,mode,status,reserved,created_at) VALUES(?,?,?,?,?,'window','unknown','{\"tokens\":123}',?)",
+    )
+    .run(
+      reservation,
+      pending.id,
+      "unknown-start",
+      pending.id,
+      pending.actor_generation,
+      r.now(),
+    );
+  const before = f.requests.length;
+  assert.deepEqual(r.initializeRuntime(), { initialized: true });
+  assert.equal(
+    f.store.db
+      .prepare("SELECT status FROM home_social_windows WHERE id=?")
+      .get(p.windowId).status,
+    "interrupted",
+  );
+  assert.equal(
+    f.store.db
+      .prepare(
+        "SELECT status FROM home_social_inference_reservations WHERE id=?",
+      )
+      .get(reservation).status,
+    "unknown",
+  );
+  await f.pump();
+  assert.equal(f.requests.length, before);
+  const fresh = await f.process("agent-0", { kind: "visit", id: v.id });
+  r.startTimers();
+  clearInterval(r.ticker);
+  r.ticker = null;
+  assert.equal(
+    f.store.db
+      .prepare("SELECT status FROM home_social_turns WHERE id=?")
+      .get(fresh.result.turnId).status,
+    "queued",
+  );
+  assert.deepEqual(r.initializeRuntime(), { initialized: false });
+});
+
+test("only recipient consumption marks viewed without business revisions, events or visit cursors", async (t) => {
+  const f = setup(t),
+    inv = await pendingInvitation(f),
+    db = f.store.db;
+  f.setScript(() => []);
+  const events = db
+    .prepare("SELECT count(*) n FROM home_social_events")
+    .get().n;
+  await f.process("agent-0", { kind: "invitation", id: inv.id });
+  await f.pump();
+  assert.equal(
+    db.prepare("SELECT recipient_viewed_at FROM home_social_invitations").get()
+      .recipient_viewed_at,
+    null,
+  );
+  await f.process("agent-1", { kind: "invitation", id: inv.id });
+  await f.pump();
+  const first = db
+    .prepare("SELECT recipient_viewed_at,revision FROM home_social_invitations")
+    .get();
+  assert.notEqual(first.recipient_viewed_at, null);
+  assert.equal(first.revision, inv.revision);
+  await f.process("agent-1", { kind: "invitation", id: inv.id });
+  await f.pump();
+  assert.equal(
+    db.prepare("SELECT recipient_viewed_at FROM home_social_invitations").get()
+      .recipient_viewed_at,
+    first.recipient_viewed_at,
+  );
+  assert.equal(
+    db.prepare("SELECT count(*) n FROM home_social_events").get().n,
+    events,
+  );
+  assert.equal(
+    db.prepare("SELECT count(*) n FROM home_social_read_cursors").get().n,
+    0,
+  );
+});
+
+test("recipient view is acknowledged only after successful leased model consumption, before tools", async (t) => {
+  const f = setup(t),
+    r = f.runtime,
+    inv = await pendingInvitation(f),
+    entered = Promise.withResolvers(),
+    release = Promise.withResolvers(),
+    db = f.store.db;
+  const c = context(r, "agent-1", "@subject");
+  r.socialRuntime.capabilities(c, {});
+  r.capabilities.delete(c.token);
+  r.homeSocial.adminRead(SOCIAL_ADMIN_PRINCIPAL, {
+    kind: "invitation",
+    id: inv.id,
+  });
+  assert.equal(
+    db.prepare("SELECT recipient_viewed_at FROM home_social_invitations").get()
+      .recipient_viewed_at,
+    null,
+  );
+  let viewedBeforeTool = false;
+  const call = r.callTool.bind(r);
+  r.callTool = async (ctx, name, args) => {
+    if (name === "home_visit_decide")
+      viewedBeforeTool =
+        db
+          .prepare("SELECT recipient_viewed_at FROM home_social_invitations")
+          .get().recipient_viewed_at !== null;
+    return call(ctx, name, args);
+  };
+  f.setScript((_agent, b, round) =>
+    round
+      ? []
+      : [
+          [
+            "home_visit_decide",
+            {
+              requestId: randomUUID(),
+              invitationId: b.target.id,
+              expectedInvitationRevision: inv.revision,
+              decision: "accept",
+            },
+          ],
+        ],
+  );
+  f.setResponseGate(async () => {
+    entered.resolve();
+    await release.promise;
+  });
+  await f.process("agent-1", { kind: "invitation", id: inv.id });
+  r.socialRuntime.tick();
+  await entered.promise;
+  assert.equal(
+    db.prepare("SELECT recipient_viewed_at FROM home_social_invitations").get()
+      .recipient_viewed_at,
+    null,
+  );
+  release.resolve();
+  await settle(r);
+  assert.equal(viewedBeforeTool, true);
+  assert.notEqual(
+    db.prepare("SELECT recipient_viewed_at FROM home_social_invitations").get()
+      .recipient_viewed_at,
+    null,
+  );
+  assert.equal(
+    db.prepare("SELECT count(*) n FROM home_social_read_cursors").get().n,
+    0,
+  );
+});
+
+for (const failure of [
+  "budget",
+  "preflight-revoke",
+  "inflight-cancel",
+  "transport",
+])
+  test(`invitation remains unviewed when model consumption fails: ${failure}`, async (t) => {
+    const f = setup(t),
+      r = f.runtime,
+      inv = await pendingInvitation(f),
+      db = f.store.db,
+      before = f.requests.length;
+    f.setScript(() => []);
+    if (failure === "budget")
+      db.prepare(
+        "INSERT INTO home_social_usage(actor_generation,day,scope,kind,used,reserved) VALUES(?,?,'social','tokens',?,0)",
+      ).run(
+        r.home.generation("agent-1"),
+        new Date(r.now()).toISOString().slice(0, 10),
+        r.config.homeSocial.resourceBudget.maxTokensPerDay - 1,
+      );
+    if (failure === "preflight-revoke") {
+      const factory = r.backendFactory;
+      r.backendFactory = (...args) => {
+        const adapter = factory(...args),
+          run = adapter.runSocial.bind(adapter);
+        adapter.runSocial = (params) =>
+          run({
+            ...params,
+            beforeInput: () => {
+              r.config.globalPaused = true;
+              return params.beforeInput();
+            },
+          });
+        return adapter;
+      };
+    }
+    if (failure === "transport")
+      f.setResponseGate(async () => {
+        throw Error("SYNTHETIC_TRANSPORT_FAILURE");
+      });
+    if (failure === "inflight-cancel") {
+      const entered = Promise.withResolvers(),
+        release = Promise.withResolvers();
+      f.setResponseGate(async () => {
+        entered.resolve();
+        await release.promise;
+      });
+      await f.process("agent-1", { kind: "invitation", id: inv.id });
+      r.socialRuntime.tick();
+      await entered.promise;
+      const actor = boundContext(f, "agent-0", {
+        kind: "invitation",
+        id: inv.id,
+      });
+      r.homeSocial.decide(actor, {
+        requestId: randomUUID(),
+        invitationId: inv.id,
+        expectedInvitationRevision: inv.revision,
+        decision: "cancel",
+      });
+      r.capabilities.delete(actor.token);
+      db.prepare(
+        "UPDATE home_social_turns SET status='completed' WHERE id=?",
+      ).run(actor.socialBinding.turnId);
+      release.resolve();
+      await settle(r);
+    } else {
+      await f.process("agent-1", { kind: "invitation", id: inv.id });
+      await f.pump();
+    }
+    assert.equal(
+      db
+        .prepare("SELECT recipient_viewed_at FROM home_social_invitations")
+        .get().recipient_viewed_at,
+      null,
+    );
+    if (["budget", "preflight-revoke"].includes(failure))
+      assert.equal(f.requests.length, before);
+    assert.equal(
+      db.prepare("SELECT count(*) n FROM home_social_read_cursors").get().n,
+      0,
+    );
+  });
 
 test("cleanup database failure cannot retain actor capability, active ownership or unresolved done", async (t) => {
   const f = setup(t),
@@ -399,6 +689,29 @@ function setup(t) {
     process,
     pump,
   };
+}
+
+async function pendingInvitation(f) {
+  f.setScript((_agent, _binding, round) =>
+    round
+      ? []
+      : [
+          [
+            "home_visit_invite",
+            {
+              requestId: randomUUID(),
+              targetAgentId: "agent-1",
+              roomOwnerAgentId: "agent-1",
+              purpose: "Synthetic complete invitation",
+              scope: ["layout"],
+              selectedItems: [],
+            },
+          ],
+        ],
+  );
+  await f.process("agent-0", { kind: "compose", id: "agent-1" });
+  await f.pump();
+  return f.store.db.prepare("SELECT * FROM home_social_invitations").get();
 }
 
 async function visitFixture(f) {
