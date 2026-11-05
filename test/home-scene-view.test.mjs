@@ -55,7 +55,49 @@ test("real browser renders persisted scene with the packaged desktop and mobile 
     template: homeTemplate("room"),
     residents: [],
   };
-  const desktop = await renderHomeScene(snapshot, { executablePath });
+  let desktop, renderFailure;
+  const nativeStarted = performance.now();
+  // Keep the native renderer first: a diagnostic browser must not prewarm away
+  // the cold failure. A successful probe never replaces that original failure.
+  try {
+    desktop = await renderHomeScene(snapshot, { executablePath });
+  } catch (error) {
+    renderFailure = error;
+  }
+  t.diagnostic(
+    JSON.stringify({
+      name: "native-cold",
+      status: renderFailure ? "failed" : "success",
+      elapsedMs: Math.round(performance.now() - nativeStarted),
+    }),
+  );
+  try {
+    await checkChromePipeStages(t, executablePath);
+  } catch (error) {
+    if (!renderFailure) throw error;
+    t.diagnostic(
+      "chrome-cdp-pipe-stages: probe also failed; original renderer failure preserved",
+    );
+  }
+  if (renderFailure) {
+    // This control only diagnoses cold cost versus the inherited native pipe.
+    // Its success cannot rescue the initial failure or produce the required image.
+    const warmStarted = performance.now();
+    let warmStatus = "success";
+    try {
+      await renderHomeScene(snapshot, { executablePath });
+    } catch {
+      warmStatus = "failed";
+    }
+    t.diagnostic(
+      JSON.stringify({
+        name: "native-warm-diagnostic",
+        status: warmStatus,
+        elapsedMs: Math.round(performance.now() - warmStarted),
+      }),
+    );
+    throw renderFailure;
+  }
   assert.equal(desktop.readUInt32BE(16), 960);
   assert.equal(desktop.readUInt32BE(20), 640);
   snapshot.view.layout.palette = "rose";
@@ -597,3 +639,85 @@ test("MCP delivery rejects invalid observations and validator errors while ordin
     }
   });
 });
+
+async function checkChromePipeStages(t, executablePath) {
+  const fs = await import("node:fs/promises"),
+    os = await import("node:os"),
+    path = await import("node:path"),
+    { fileURLToPath } = await import("node:url"),
+    { randomUUID } = await import("node:crypto"),
+    { chromium } = await import("playwright-core"),
+    { buildChildEnv } = await import("../src/core/child-env.mjs"),
+    { homeBrowserArguments, stopHomeBrowser } =
+      await import("../src/home/browser-process.mjs");
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "home-chrome-cdp-"));
+  const marker = path.join(root, "wrapper.pid"),
+    controlFile = path.join(root, "control.json"),
+    traceFile = path.join(root, "fixed-protocol-ids.json");
+  const control = {
+    nonce: randomUUID(),
+    endpoint:
+      process.platform === "win32"
+        ? String.raw`\\.\pipe\qq-home-cdp-${randomUUID()}`
+        : path.join(root, "control.sock"),
+    arguments: [
+      fileURLToPath(new URL("./fixtures/home-cdp-relay.mjs", import.meta.url)),
+      traceFile,
+      executablePath,
+      ...homeBrowserArguments(path.join(root, "profile")),
+    ],
+  };
+  await fs.writeFile(controlFile, JSON.stringify(control), { mode: 0o600 });
+  let browser;
+  const started = performance.now();
+  try {
+    browser = await chromium.launch({
+      executablePath: process.execPath,
+      ignoreDefaultArgs: true,
+      timeout: 15000,
+      env: buildChildEnv("browser"),
+      args: [
+        fileURLToPath(
+          new URL("../src/home/browser-launcher.mjs", import.meta.url),
+        ),
+        marker,
+        process.execPath,
+        path.join(root, "profile"),
+        controlFile,
+      ],
+    });
+    assert.ok(browser.version());
+  } finally {
+    try {
+      if (browser)
+        await Promise.race([
+          browser.close().catch(() => {}),
+          new Promise((resolve) => setTimeout(resolve, 500)),
+        ]);
+    } finally {
+      // The relay writes only bounded, reviewed method labels and numeric ids.
+      const frames = JSON.parse(
+        await fs.readFile(traceFile, "utf8").catch(() => "[]"),
+      );
+      const version = browser?.version();
+      t.diagnostic(
+        JSON.stringify({
+          name: "chrome-cdp-pipe-stages",
+          elapsedMs: Math.round(performance.now() - started),
+          version:
+            typeof version === "string" && /^\d+(?:\.\d+){1,3}$/.test(version)
+              ? version
+              : null,
+          frames,
+        }),
+      );
+      await stopHomeBrowser(marker, control);
+      await fs.rm(root, {
+        recursive: true,
+        force: true,
+        maxRetries: 3,
+        retryDelay: 100,
+      });
+    }
+  }
+}
