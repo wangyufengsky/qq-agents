@@ -91,7 +91,9 @@ export function socialSafeExportRow(table, original) {
   /** @type {Record<string, any>} */
   const parsed = {};
   for (const key of ["payload", "metadata", "value"])
-    if (typeof row[key] === "string") {
+    // Without a literal social token or JSON escape, this field cannot encode
+    // a social label. Avoid duplicating large ordinary rows in bounded workers.
+    if (typeof row[key] === "string" && /social|\\/i.test(row[key])) {
       try {
         parsed[key] = JSON.parse(row[key]);
       } catch {

@@ -1067,3 +1067,45 @@ test("social export and restore preserve other protection identifiers for later 
     "",
   );
 });
+
+test("social export prefilter still checks escaped keys and marker text", () => {
+  const marker = socialMarker(randomUUID(), randomUUID());
+  for (const payload of [
+    JSON.stringify({ protectedSocialSources: [marker] }),
+    JSON.stringify({ protectedSocialSources: [marker] }).replaceAll(
+      "s",
+      "\\u0073",
+    ),
+    JSON.stringify({ evidence: [marker] }).replaceAll("s", "\\u0073"),
+    JSON.stringify({ evidence: [marker.toUpperCase()] }),
+  ]) {
+    const result = socialSafeExportRow("events", { body: "private", payload });
+    assert.equal(result.body, "");
+    assert.ok(
+      JSON.stringify(JSON.parse(result.payload))
+        .toLowerCase()
+        .includes("social:"),
+    );
+  }
+  const mixed = {
+    protectedSocialSources: [marker],
+    protectedRepositories: ["owner/private"],
+    protectedPeerQzoneTargets: ["30000"],
+    protectedOperations: true,
+  };
+  const nested = socialSafeExportRow("events", {
+    body: "private",
+    payload: JSON.stringify({ frozen: { ...mixed, body: "nested private" } })
+      .replaceAll("S", "\\u0053")
+      .replaceAll("s", "\\u0073"),
+  });
+  assert.equal(nested.body, "");
+  const frozen = JSON.parse(nested.payload).frozen;
+  assert.equal(frozen.body, "");
+  assert.deepEqual(mergeProtection(frozen), mixed);
+  const ordinary = {
+    body: "ordinary",
+    payload: JSON.stringify({ text: "plain" }),
+  };
+  assert.deepEqual(socialSafeExportRow("events", ordinary), ordinary);
+});
