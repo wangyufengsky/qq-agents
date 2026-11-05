@@ -89,13 +89,33 @@ export const homeDefinitions = {
     z.object({ ...scene, undoRevision: homeRevision }).strict(),
   ],
   room_publish: [
-    "主人格明确发布自己愿意展示的原创文字到 intro 或三个 work 槽位，仅实例管理员和自己的会话可见，不发 QQ。先 room_read 取得当前版本；不贴私人聊天、他人资料、凭据或受保护工作，不接受文件引用。修改原稿不自动更新展示。管理员隐藏的槽位不能重发绕过。",
+    "主人格明确发布自己愿意展示的原创文字到 tagline、intro 或三个 work 槽位；tagline 正文最多80字符，仅实例管理员和自己的会话可见，不发 QQ。先 room_read 取得当前版本；不贴私人聊天、他人资料、凭据或受保护工作，不接受文件引用。修改原稿不自动更新展示。管理员隐藏的槽位不能重发绕过。",
     z
       .object({
         ...item,
         title: z.string().trim().min(1).max(80),
         body: z.string().trim().min(1).max(6000),
         source: z.literal("original-text"),
+      })
+      .strict()
+      .refine(
+        (v) => v.slot !== "tagline" || v.body.length <= 80,
+        "门牌短语最多80字符",
+      ),
+  ],
+  room_publish_snapshot: [
+    "主人格发布本人已保存项目原稿的固定版本副本到三个 work 槽位。必须明确 project-draft、项目 ID 和精确 revision；仅接受服务端可信来源证明，旧稿或管理员/聊天派生稿不能直接发布。先 room_read；原稿变化不自动更新，回执不含正文，不接受路径、URL或聊天截图。",
+    z
+      .object({
+        ...item,
+        slot: z.enum(["work-1", "work-2", "work-3"]),
+        source: z
+          .object({
+            type: z.literal("project-draft"),
+            id: z.string().uuid(),
+            revision: z.number().int().positive(),
+          })
+          .strict(),
       })
       .strict(),
   ],

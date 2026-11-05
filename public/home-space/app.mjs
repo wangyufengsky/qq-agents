@@ -259,13 +259,26 @@ function decorate(node, o) {
     });
   }
   if (route.type !== "hall") {
-    const text = { nameplate: "走廊" }[o.id];
-    if (text) node.append(el("span", `object-ink ink-${o.id}`, text));
+    const text = {
+      nameplate:
+        route.type === "room"
+          ? overview.residents.find((r) => r.id === route.agentId)?.tagline ||
+            name(route.agentId)
+          : "走廊",
+    }[o.id];
+    if (text) {
+      const ink = el("span", `object-ink ink-${o.id}`, text);
+      ink.title = text;
+      node.append(ink);
+    }
     return;
   }
   if (o.id.startsWith("sign-")) {
     const n = el("span", "door-name", name(o.id.slice(5)));
-    n.title = name(o.id.slice(5));
+    const resident = overview.residents.find((r) => r.id === o.id.slice(5));
+    n.textContent = resident?.tagline || name(o.id.slice(5));
+    n.title = `${name(o.id.slice(5))}${resident?.tagline ? " · " + resident.tagline : ""}`;
+    node.setAttribute("aria-label", n.title);
     node.append(n);
   }
   if (o.id.startsWith("door-")) {
@@ -639,7 +652,9 @@ async function loadContent() {
         el("p", "display-note", "这里暂时安静，等主人放上新的文字。"),
       );
     const items = value.items.filter((i) =>
-      action === "intro" ? i.slot === "intro" : i.slot !== "intro",
+      action === "intro"
+        ? ["intro", "tagline"].includes(i.slot)
+        : i.slot.startsWith("work-"),
     );
     for (const item of items) {
       const card = el("section", "home-text-card");
@@ -651,9 +666,11 @@ async function loadContent() {
           "",
           item.visible
             ? item.title
-            : item.slot === "intro"
-              ? "介绍卡"
-              : `作品 ${item.slot.slice(5)}`,
+            : item.slot === "tagline"
+              ? "门牌短语"
+              : item.slot === "intro"
+                ? "介绍卡"
+                : `作品 ${item.slot.slice(5)}`,
         ),
       );
       card.append(
@@ -670,6 +687,14 @@ async function loadContent() {
         ),
       );
       const management = el("details", "item-management");
+      if (item.source)
+        management.append(
+          el(
+            "p",
+            "display-note",
+            `来源：项目原稿 ${item.source.id} · 固定版本 ${item.source.revision}`,
+          ),
+        );
       management.open = openItems.has(item.slot);
       management.append(
         el("summary", "", "管理这张纸"),

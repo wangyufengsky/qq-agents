@@ -210,6 +210,7 @@ const AGENT_TOOL_GROUPS = [
       room_scene_patch: "主人格布置",
       room_scene_undo: "主人格撤销布置",
       room_publish: "主人格发布文字",
+      room_publish_snapshot: "主人格发布项目文字快照",
       room_retract: "主人格撤回文字",
       room_operation_status: "查询历史操作回执",
     },
@@ -736,6 +737,11 @@ const agentForm = {
             "homePublishing",
             "允许主人格主动发布文字",
             row.home?.publishing,
+          ) +
+          check(
+            "homeProjectSnapshots",
+            "允许可信项目原稿固定版本展示",
+            row.home?.projectSnapshots?.enabled,
           ) +
           check(
             "homeIntents",
@@ -1487,6 +1493,7 @@ const agentForm = {
             home: {
               enabled: f.has("homeEnabled"),
               publishing: f.has("homePublishing"),
+              projectSnapshots: { enabled: f.has("homeProjectSnapshots") },
               intents: {
                 enabled: f.has("homeIntents"),
                 hints: f.has("homeIntentHints"),

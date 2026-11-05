@@ -56,8 +56,8 @@ export class HomeIntents {
     return {
       pending: count,
       layoutRevision: this.rooms.store.layout(generation).layoutRevision,
-      publishedSlots: this.rooms.store
-        .content(generation, a.home.publishing)
+      publishedSlots: this.rooms
+        .display(agentId)
         .items.filter((/** @type {any} */ item) => item.visible).length,
       notice:
         "小窝提议可用 room_intent_list 查看；查看、接受和执行分开，可以不处理。",

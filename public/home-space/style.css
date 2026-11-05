@@ -123,7 +123,8 @@
   text-align: center;
   color: var(--muted);
 }
-.door-name {
+.door-name,
+.ink-nameplate {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

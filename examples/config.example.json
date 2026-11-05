@@ -69,6 +69,9 @@
       "home": {
         "enabled": false,
         "publishing": false,
+        "projectSnapshots": {
+          "enabled": false
+        },
         "maxWritesPerDay": 20,
         "intents": {
           "enabled": false,
@@ -163,6 +166,9 @@
       "home": {
         "enabled": false,
         "publishing": false,
+        "projectSnapshots": {
+          "enabled": false
+        },
         "maxWritesPerDay": 20,
         "intents": {
           "enabled": false,

@@ -620,6 +620,7 @@ test("home settings default off, round trip explicitly and preserve policy when 
   row.home = {
     enabled: true,
     publishing: true,
+    projectSnapshots: { enabled: true },
     maxWritesPerDay: 7,
     intents: {
       enabled: true,

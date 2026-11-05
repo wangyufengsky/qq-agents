@@ -1,3 +1,4 @@
+import { projectSnapshotProof } from "../home/project-snapshots.mjs";
 import { peerQzoneSources } from "../core/peer-qzone-protection.mjs";
 import { withInteraction } from "../core/closeness.mjs";
 import {
@@ -495,7 +496,13 @@ function executeMindTool(runtime, ctx, name, args) {
       old?.activity
     )
       return writeActivity(runtime, ctx, args, old);
-    return identity.saveProject(args, { writtenIn: ctx.conversation, now });
+    return identity.saveProject(
+      {
+        ...args,
+        homeSnapshotProvenance: projectSnapshotProof(runtime, ctx, old, args),
+      },
+      { writtenIn: ctx.conversation, now },
+    );
   }
   if (name === "projects") return readProjects(runtime, ctx, args);
   if (name === "mood_set") {

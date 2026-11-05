@@ -94,6 +94,7 @@ export function defaultConfig() {
         home: {
           enabled: false,
           publishing: false,
+          projectSnapshots: { enabled: false },
           maxWritesPerDay: 20,
           intents: {
             enabled: false,
@@ -178,6 +179,7 @@ export function defaultConfig() {
         home: {
           enabled: false,
           publishing: false,
+          projectSnapshots: { enabled: false },
           maxWritesPerDay: 20,
           intents: {
             enabled: false,

@@ -139,6 +139,7 @@ export class MemoryStore {
       CREATE TABLE IF NOT EXISTS board_entries(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE NOT NULL,post_id TEXT,reply_to TEXT,author_kind TEXT NOT NULL,author_id TEXT NOT NULL,request_id TEXT,title TEXT NOT NULL,body TEXT NOT NULL,day TEXT NOT NULL,created_at TEXT NOT NULL,removed_at TEXT,UNIQUE(author_kind,author_id,request_id));
       CREATE INDEX IF NOT EXISTS board_threads ON board_entries(post_id,seq);
       CREATE INDEX IF NOT EXISTS board_quota ON board_entries(author_kind,author_id,day);
+      CREATE TABLE IF NOT EXISTS home_item_sources(generation TEXT NOT NULL,slot TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(generation,slot));
       CREATE TABLE IF NOT EXISTS home_intents (
       generation TEXT NOT NULL, id TEXT PRIMARY KEY, request_id TEXT NOT NULL,
       digest TEXT NOT NULL, source_session TEXT NOT NULL, state TEXT NOT NULL,
