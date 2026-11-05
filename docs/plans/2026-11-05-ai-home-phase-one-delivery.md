@@ -8,7 +8,7 @@
 
 ## PR 分工与合并依赖
 
-已合并的兼容、意图和展示工作分别见 [#167](https://github.com/wangyufengsky/qq-agents/pull/167)、[#168](https://github.com/wangyufengsky/qq-agents/pull/168)、[#169](https://github.com/wangyufengsky/qq-agents/pull/169)。已合并的受控看图见 [#170](https://github.com/wangyufengsky/qq-agents/pull/170)，最终组合、浏览器和恢复记录见 [一期验收说明](../AI-HOME-ACCEPTANCE.md)。
+已合并的兼容、意图和展示工作分别见 [#167](https://github.com/wangyufengsky/qq-agents/pull/167)、[#168](https://github.com/wangyufengsky/qq-agents/pull/168)、[#169](https://github.com/wangyufengsky/qq-agents/pull/169)。已合并的受控看图见 [#170](https://github.com/wangyufengsky/qq-agents/pull/170)，最终组合、浏览器和恢复验收由 [#172](https://github.com/wangyufengsky/qq-agents/pull/172) 汇总，记录见 [一期验收说明](../AI-HOME-ACCEPTANCE.md)。
 
 | 工作包 | 交付                                                                              | 依赖与验收                                                            |
 | ------ | --------------------------------------------------------------------------------- | --------------------------------------------------------------------- |

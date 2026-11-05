@@ -12,7 +12,7 @@
 | 持久意图、实际已读、接受与执行分开、原子关联回执、取消/过期、防重恢复 | [#168](https://github.com/wangyufengsky/qq-agents/pull/168)；`home-intents.test.mjs`                                                                   |
 | 独立门牌短语与可信固定版本项目稿快照                                  | [#169](https://github.com/wangyufengsky/qq-agents/pull/169)；`home-publishing.test.mjs`、`home-project-snapshots.test.mjs`、`home-display.browser.mjs` |
 | 受控真实图片、相同正式渲染与素材、视觉降级、撤权及迟到输入失效        | [#170](https://github.com/wangyufengsky/qq-agents/pull/170)；`home-scene-view.test.mjs`、OpenAI/Antigravity 媒体回归                                   |
-| 跨功能组合、完整恢复、旧版回滚与资源/可访问性验收                     | 最终整合 PR；`home-phase-one.test.mjs`、`home-upgrade.mjs`、`home-performance.browser.mjs`                                                             |
+| 跨功能组合、完整恢复、旧版回滚与资源/可访问性验收                     | [#172](https://github.com/wangyufengsky/qq-agents/pull/172)；`home-phase-one.test.mjs`、`home-upgrade.mjs`、`home-performance.browser.mjs`             |
 
 旧稿中的推荐方案按下列规则落实：可调整范围为打包素材和三种预设配色；作品引用仅限有完整来源证明的本人固定版本文字项目稿；没有跨角色房间正文、外部访客、任意文件/URL、自动生图或自动 QQ 分享。原子事务同时保存实际写入和意图回执，因此不存在需要在两次提交之间恢复的“已写入但意图未记录”状态；重启只读取已保存结果，不自行重做未知操作。
 
