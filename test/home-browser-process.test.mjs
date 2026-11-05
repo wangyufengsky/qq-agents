@@ -73,7 +73,7 @@ for (const termination of ["browser-exit", "wrapper-exit"])
       workerEndpoint = endpoint(root, "worker"),
       workerNonce = randomUUID();
     const worker = `const net=require('node:net'),fs=require('node:fs');const server=net.createServer(s=>s.once('data',d=>{if(d.toString().trim()===${JSON.stringify("stop:" + workerNonce)})process.exit(0);else if(d.toString().trim()===${JSON.stringify("ping:" + workerNonce)})s.end('alive');else s.destroy();}));server.listen(${JSON.stringify(workerEndpoint)},()=>fs.writeFileSync(${JSON.stringify(workerReady)},String(process.pid)));`;
-    const browser = `const fs=require('node:fs');const c=require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(worker)}],{stdio:'ignore'});c.unref();const timer=setInterval(()=>{if(fs.existsSync(${JSON.stringify(workerReady)})){clearInterval(timer);${termination === "browser-exit" ? "process.exit(0)" : "setInterval(()=>{},1000)"}}},10);`;
+    const browser = `const fs=require('node:fs');const c=require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(worker)}],{stdio:'ignore',detached:process.platform==='win32'});c.unref();const timer=setInterval(()=>{if(fs.existsSync(${JSON.stringify(workerReady)})){clearInterval(timer);${termination === "browser-exit" ? "process.exit(0)" : "setInterval(()=>{},1000)"}}},10);`;
     const control = {
       nonce: randomUUID(),
       endpoint: endpoint(root, "control"),
@@ -194,3 +194,53 @@ test("packaged native Job helper participates in the release build identity", as
   await fs.appendFile(file, "\n# synthetic change\n");
   assert.notEqual(frameworkBuildDigest(root), before);
 });
+
+test(
+  "Windows cancellation before native ready confirms the detached helper exits",
+  { skip: process.platform !== "win32" },
+  async (t) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "home-job-cancel-"));
+    const marker = path.join(root, "wrapper.pid"),
+      controlFile = path.join(root, "control.json"),
+      spawned = path.join(root, "spawned");
+    const control = {
+      nonce: randomUUID(),
+      endpoint: endpoint(root, "control"),
+      arguments: [
+        "-e",
+        `require('node:fs').writeFileSync(${JSON.stringify(spawned)},'unexpected')`,
+      ],
+    };
+    await fs.writeFile(controlFile, JSON.stringify(control), { mode: 0o600 });
+    const child = wrapper(marker, controlFile, root);
+    t.after(async () => {
+      await stopHomeBrowser(marker, control).catch(() => {});
+      await fs.rm(root, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      });
+    });
+    let helper;
+    for (let i = 0; i < 500 && !helper?.pid; i++) {
+      try {
+        helper = JSON.parse(
+          await fs.readFile(controlFile + ".job-helper", "utf8"),
+        );
+      } catch {
+        /* Wait for the actual spawn receipt, not a timing guess. */
+      }
+      if (!helper?.pid) await pause(1);
+    }
+    assert.ok(helper?.pid);
+    assert.doesNotThrow(() => process.kill(helper.pid, 0));
+    await assert.rejects(fs.access(controlFile + ".job-ready"), {
+      code: "ENOENT",
+    });
+    await stopHomeBrowser(marker, control);
+    await exited(child);
+    assert.throws(() => process.kill(helper.pid, 0), { code: "ESRCH" });
+    await assert.rejects(fs.access(spawned), { code: "ENOENT" });
+  },
+);

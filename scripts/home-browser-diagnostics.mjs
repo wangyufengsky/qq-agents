@@ -47,6 +47,7 @@ async function probe(name, launch) {
     console.log(
       JSON.stringify({ name, ok: true, elapsedMs: Date.now() - started }),
     );
+    return true;
   } catch (error) {
     const e = /** @type {any} */ (error);
     console.log(
@@ -59,9 +60,26 @@ async function probe(name, launch) {
         browserState: e.browserState,
       }),
     );
+    return false;
   }
 }
 try {
+  const cold = await probe("cold-owned-renderer", () =>
+    renderHomeScene(
+      {
+        type: "room",
+        template: homeTemplate("room"),
+        view: { layout: defaultLayout("room") },
+        residents: [],
+      },
+      {
+        executablePath,
+        launchTimeoutMs: 5000,
+        signal: AbortSignal.timeout(20000),
+      },
+    ),
+  );
+  if (!cold) process.exitCode = 1;
   const realpath = await fs.realpath(executablePath);
   console.log(
     JSON.stringify({

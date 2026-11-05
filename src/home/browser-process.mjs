@@ -16,9 +16,26 @@ function alive(pid) {
     throw error;
   }
 }
+/** A PID receipt confirms exit only; it never grants authority to signal a PID.
+ * @param {string} controlFile @param {{nonce:string}} control */
+async function helperSettled(controlFile, control) {
+  try {
+    const helper = JSON.parse(
+      await fs.readFile(controlFile + ".job-helper", "utf8"),
+    );
+    if (helper.nonce !== control.nonce) return false;
+    if (["not-started", "exited"].includes(helper.state)) return true;
+    return (
+      Number.isSafeInteger(helper.pid) && helper.pid > 1 && !alive(helper.pid)
+    );
+  } catch (error) {
+    return /** @type {NodeJS.ErrnoException} */ (error).code === "ENOENT";
+  }
+}
 /** @param {string} controlFile @param {{nonce:string}} control */
 async function jobSettled(controlFile, control) {
   if (process.platform !== "win32") return true;
+  if (!(await helperSettled(controlFile, control))) return false;
   let established = false;
   try {
     const ready = JSON.parse(
@@ -102,21 +119,50 @@ export async function stopHomeBrowser(marker, control) {
 /** Fixed flags for the packaged renderer; never accepted from bridge arguments.
  * @param {string} profile */
 export function homeBrowserArguments(profile) {
+  // Parameter facts aligned with playwright-core 1.64.1 chromiumSwitches and
+  // Chromium headless defaults. Dependency upgrades must rerun cold startup CI.
   return [
+    "--disable-field-trial-config",
+    "--disable-background-networking",
+    "--disable-background-timer-throttling",
+    "--disable-backgrounding-occluded-windows",
+    "--disable-back-forward-cache",
+    "--disable-breakpad",
+    "--disable-client-side-phishing-detection",
+    "--disable-component-extensions-with-background-pages",
+    "--disable-component-update",
+    "--no-default-browser-check",
+    "--disable-default-apps",
+    "--disable-dev-shm-usage",
+    "--disable-edgeupdater",
+    "--disable-extensions",
+    "--disable-features=AvoidUnnecessaryBeforeUnloadCheckSync,DestroyProfileOnBrowserClose,DialMediaRouteProvider,GlobalMediaControls,HttpsUpgrades,LensOverlay,MediaRouter,PaintHolding,ThirdPartyStoragePartitioning,BlockOriginHeaderModificationOnRedirect,AvoidCorsURLLoaderRestartOnRedirect,Translate,AutoDeElevate,OptimizationHints,NetworkTimeServiceQuerying,AimEnabled,msForceBrowserSignIn,msEdgeUpdateLaunchServicesPreferredVersion",
+    "--enable-features=CDPScreenshotNewSurface",
+    "--allow-pre-commit-input",
+    "--disable-hang-monitor",
+    "--disable-ipc-flooding-protection",
+    "--disable-popup-blocking",
+    "--disable-prompt-on-repost",
+    "--disable-renderer-backgrounding",
+    "--disable-updater-scheduler",
+    "--force-color-profile=srgb",
+    "--metrics-recording-only",
+    "--no-first-run",
+    "--disable-sync",
+    "--password-store=basic",
+    "--use-mock-keychain",
+    "--no-service-autorun",
+    "--export-tagged-pdf",
+    "--disable-search-engine-choice-screen",
+    "--unsafely-disable-devtools-self-xss-warnings",
+    "--edge-skip-compat-layer-relaunch",
+    "--disable-infobars",
+    "--enable-unsafe-swiftshader",
     "--headless",
     "--hide-scrollbars",
     "--mute-audio",
+    "--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4",
     "--no-sandbox",
-    "--disable-background-networking",
-    "--disable-component-update",
-    "--disable-default-apps",
-    "--disable-extensions",
-    "--disable-sync",
-    "--disable-dev-shm-usage",
-    "--no-first-run",
-    "--no-default-browser-check",
-    "--password-store=basic",
-    "--use-mock-keychain",
     "--remote-debugging-pipe",
     "--no-startup-window",
     `--user-data-dir=${profile}`,
@@ -138,7 +184,8 @@ export async function homeBrowserStatus(marker, control) {
     ready = await read(".job-ready"),
     complete = await read(".job-clean"),
     setup = await read(".job-launch-state"),
-    child = await read(".browser-state");
+    child = await read(".browser-state"),
+    helper = await read(".job-helper");
   const stage = (/** @type {any} */ value) =>
     typeof value?.stage === "string" && /^[a-z-]{1,64}$/.test(value.stage)
       ? value.stage
@@ -159,8 +206,14 @@ export async function homeBrowserStatus(marker, control) {
     ready: ready?.nonce === control.nonce,
     clean: complete?.nonce === control.nonce && complete.cleaned === true,
     wrapperAlive: Number.isSafeInteger(pid) && pid > 0 ? alive(pid) : false,
-    helperAlive: Number.isSafeInteger(ready?.helperPid)
-      ? alive(ready.helperPid)
-      : false,
+    helperState:
+      typeof helper?.state === "string" && /^[a-z-]{1,32}$/.test(helper.state)
+        ? helper.state
+        : "unavailable",
+    helperAlive: Number.isSafeInteger(helper?.pid)
+      ? alive(helper.pid)
+      : Number.isSafeInteger(ready?.helperPid)
+        ? alive(ready.helperPid)
+        : false,
   };
 }

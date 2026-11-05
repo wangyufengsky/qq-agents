@@ -4,7 +4,7 @@ $script:phase = 'compiling'
 function Report-State([string]$Stage, [int]$Code=0, [int]$Active=-1) {
  $script:phase = $Stage
  try {
-  $state = @{ stage=$Stage; code=$Code; active=$Active } | ConvertTo-Json -Compress
+  $state = '{"stage":"' + $Stage + '","code":' + $Code + ',"active":' + $Active + '}'
   [System.IO.File]::WriteAllText($ControlFile + '.job-state', $state, [System.Text.UTF8Encoding]::new($false))
  } catch { }
 }

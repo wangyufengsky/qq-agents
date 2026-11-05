@@ -304,13 +304,90 @@ test(
   async (t) => {
     const fs = await import("node:fs");
     const path = await import("node:path");
-    const { temp } = await import("./helpers.mjs");
-    const root = temp(t);
+    const os = await import("node:os");
+    const net = await import("node:net");
+    const { randomUUID } = await import("node:crypto");
+    const { execFileSync } = await import("node:child_process");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "home-stall-test-"));
+    const nonce = randomUUID(),
+      records = path.join(root, "records");
+    const readRecords = () =>
+      fs.existsSync(records)
+        ? fs
+            .readFileSync(records, "utf8")
+            .trim()
+            .split("\n")
+            .filter(Boolean)
+            .map((line) => JSON.parse(line))
+        : [];
+    const contact = (endpoint, action = "ping") =>
+      new Promise((resolve) => {
+        const socket = net.connect(endpoint);
+        let response = "";
+        const finish = (value) => {
+          socket.destroy();
+          resolve(value);
+        };
+        socket.setTimeout(100, () => finish(false));
+        socket.on("error", () => finish(false));
+        socket.on("close", () => finish(false));
+        socket.on("connect", () => socket.write(`${action}:${nonce}\n`));
+        socket.on("data", (data) => {
+          response += data;
+          if (response.includes("alive")) finish(true);
+        });
+      });
+    const assertStopped = async ({ pid, endpoint }) => {
+      assert.equal(
+        await contact(endpoint),
+        false,
+        "owned synthetic browser still executes its authenticated endpoint",
+      );
+      try {
+        process.kill(pid, 0);
+      } catch (error) {
+        assert.equal(error.code, "ESRCH");
+        return;
+      }
+      let state;
+      try {
+        state = execFileSync("/bin/ps", ["-p", String(pid), "-o", "stat="], {
+          encoding: "utf8",
+        }).trim();
+      } catch (error) {
+        // Reaping between pid0 and ps is also a completed stop, not a live worker.
+        try {
+          process.kill(pid, 0);
+        } catch (gone) {
+          assert.equal(gone.code, "ESRCH");
+          return;
+        }
+        throw error;
+      }
+      assert.match(
+        state,
+        /^Z/,
+        `owned synthetic browser still executing: ${state}`,
+      );
+      console.log(
+        JSON.stringify({ cleanupEvidence: "stopped-unreaped-zombie", state }),
+      );
+    };
+    t.after(async () => {
+      for (const record of readRecords())
+        await contact(record.endpoint, "stop");
+      fs.rmSync(root, { recursive: true, force: true });
+    });
     const executablePath = path.join(root, "synthetic-browser");
     const marker = path.join(root, "pid");
     fs.writeFileSync(
       executablePath,
-      `#!/usr/bin/env node\nrequire('node:fs').writeFileSync(${JSON.stringify(marker)}, String(process.pid)); setInterval(() => {}, 1000);\n`,
+      [
+        "#!/usr/bin/env node",
+        `const net=require('node:net'),fs=require('node:fs'),path=require('node:path');const endpoint=path.join(${JSON.stringify(root)},'f'+process.pid+'.sock');`,
+        `const server=net.createServer(s=>s.once('data',d=>{const v=d.toString().trim();if(v===${JSON.stringify("stop:" + nonce)})process.exit(0);else if(v===${JSON.stringify("ping:" + nonce)})s.end('alive');else s.destroy();}));`,
+        `server.listen(endpoint,()=>{const row={pid:process.pid,endpoint};fs.appendFileSync(${JSON.stringify(records)},JSON.stringify(row)+${JSON.stringify("\n")});fs.writeFileSync(${JSON.stringify(marker)},JSON.stringify(row));});`,
+      ].join("\n"),
       { mode: 0o700 },
     );
     const snapshot = {
@@ -332,10 +409,19 @@ test(
         launchError = error;
         return true;
       });
-      for (let n = 0; n < 300 && !fs.existsSync(marker); n++)
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      assert.equal(fs.existsSync(marker), true, launchError?.cause?.message);
-      const pid = Number(fs.readFileSync(marker, "utf8"));
+      let record;
+      for (let n = 0; n < 300 && !record; n++) {
+        try {
+          record = JSON.parse(fs.readFileSync(marker, "utf8"));
+        } catch (error) {
+          if (error.code !== "ENOENT" && !(error instanceof SyntaxError))
+            throw error;
+        }
+        if (!record) await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      assert.ok(record, launchError?.cause?.message);
+      const pid = record.pid;
+      assert.equal(await contact(record.endpoint), true);
       const started = Date.now();
       if (mode === "cancel") controller.abort();
       await rejected;
@@ -348,7 +434,7 @@ test(
         }
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
-      assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+      await assertStopped(record);
     }
     const first = new AbortController(),
       second = new AbortController();
@@ -366,6 +452,7 @@ test(
     );
     second.abort();
     await Promise.all([one, two]);
+    for (const record of readRecords()) await assertStopped(record);
   },
 );
 
