@@ -24,7 +24,7 @@ const fields = [
   ["invitationTtlHours", "邀请有效小时数", 48, 1, 168],
   ["visitTtlHours", "拜访有效小时数", 72, 1, 720],
   ["maxInvitationsPerDay", "每角色每日邀请次数", 5, 1, 100],
-  ["maxMessagesPerVisitPerDay", "每拜访每角色每日成功消息条数", 20, 1, 1000],
+  ["maxMessagesPerVisitPerDay", "每拜访每角色每日成功消息条数", 20, 1, 200],
   ["cooldownHours", "拒绝或到期后冷却小时数", 24, 1, 168],
   ["retentionDays", "终态正文保留天数", 30, 1, 365],
 ];
