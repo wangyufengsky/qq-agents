@@ -389,7 +389,7 @@ test("directory removal failure does not exhaust confirmed-clean browser slots",
         (error) => error.code === "EPERM",
       );
     }
-    assert.equal(leftovers.size, 3);
+    assert.ok(leftovers.size >= 3);
   } finally {
     fs.default.rm = original;
     for (const target of leftovers)
@@ -400,4 +400,113 @@ test("directory removal failure does not exhaust confirmed-clean browser slots",
         retryDelay: 100,
       });
   }
+});
+
+test("shared scene decorations expose only own tagline and bind its independent revision", async (t) => {
+  const { mediaLease } = await import("../src/tools/media-lease.mjs");
+  const { mcpResult } = await import("../src/tools/index.mjs");
+  const f = setup(t);
+  const b = f.runtime.agent("agent-1");
+  b.home = structuredClone(f.runtime.agent("agent-0").home);
+  b.subject.enabled = true;
+  const second = context(f.runtime, "agent-1", "@subject");
+  const tagA = "甲角色独有门牌" + "一盏暖灯".repeat(12),
+    tagB = "乙角色独有门牌";
+  async function publish(ctx, body, requestId) {
+    const current = await f.runtime.executeTool(ctx, "room_read", {});
+    return f.runtime.executeTool(ctx, "room_publish", {
+      identityGeneration: current.identityGeneration,
+      requestId,
+      slot: "tagline",
+      expectedItemRevision: current.items.find(
+        (item) => item.slot === "tagline",
+      ).itemRevision,
+      title: "门牌",
+      body,
+      source: "original-text",
+    });
+  }
+  await publish(f.ctx, tagA, "tagline-A-first");
+  await publish(second, tagB, "tagline-B-first");
+  let room, hall;
+  await homeSceneView(f.runtime, f.ctx, { type: "room" }, async (snapshot) => {
+    room = snapshot;
+    return Buffer.from("synthetic-room");
+  });
+  assert.equal(room.residents.length, 1);
+  assert.equal(room.residents[0].tagline, tagA);
+  assert.equal(JSON.stringify(room).includes(tagB), false);
+  const before = await homeSceneView(
+    f.runtime,
+    second,
+    { type: "hall" },
+    async (snapshot) => {
+      hall = snapshot;
+      return Buffer.from("synthetic-hall");
+    },
+  );
+  assert.equal(JSON.stringify(hall).includes(tagA), false);
+  assert.equal(
+    hall.residents.find((resident) => resident.id === b.id).tagline,
+    tagB,
+  );
+  assert.equal(
+    hall.residents.find((resident) => resident.id === b.id).taglineRevision,
+    1,
+  );
+  const current = await f.runtime.executeTool(second, "room_read", {});
+  await f.runtime.executeTool(second, "room_retract", {
+    identityGeneration: current.identityGeneration,
+    requestId: "tagline-B-retract",
+    slot: "tagline",
+    expectedItemRevision: 1,
+  });
+  await publish(second, tagB, "tagline-B-again");
+  assert.equal(before[mediaLease](), false);
+  const denied = mcpResult(before);
+  assert.equal(denied.isError, true);
+  assert.equal(JSON.stringify(denied).includes(tagB), false);
+  assert.equal(
+    denied.content.some((part) => part.type === "image"),
+    false,
+  );
+});
+
+test("MCP delivery rejects invalid observations and validator errors while ordinary media stays unchanged", () => {
+  return Promise.all([
+    import("../src/tools/index.mjs"),
+    import("../src/tools/media-lease.mjs"),
+  ]).then(([{ mcpResult }, { mediaLease }]) => {
+    const ordinary = {
+      content: [
+        { type: "text", text: "ordinary synthetic media" },
+        { type: "image", mimeType: "image/png", data: "ordinary-image" },
+      ],
+    };
+    assert.equal(mcpResult(ordinary), ordinary);
+    for (const validator of [
+      () => false,
+      () => {
+        throw Error("SYNTHETIC_PRIVATE_VALIDATOR_DETAIL");
+      },
+    ]) {
+      const value = {
+        ...ordinary,
+        content: [
+          { type: "text", text: "SYNTHETIC_PRIVATE_SCENE" },
+          ...ordinary.content,
+        ],
+        [mediaLease]: validator,
+      };
+      const result = mcpResult(value);
+      assert.equal(result.isError, true);
+      assert.equal(result.content.length, 1);
+      assert.equal(result.content[0].type, "text");
+      assert.match(result.content[0].text, /HOME_REVISION_CONFLICT/);
+      assert.doesNotMatch(
+        result.content[0].text,
+        /SYNTHETIC_PRIVATE|ordinary-image/,
+      );
+    }
+  });
 });

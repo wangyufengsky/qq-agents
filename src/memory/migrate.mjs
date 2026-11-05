@@ -111,6 +111,13 @@ export function restoreExport(memory, data) {
     for (const [table, cols] of Object.entries(columns)) {
       for (const original of data.tables[table] || []) {
         const row = { ...original };
+        // Imported role data is not an attestation by this instance. Keep drafts, discard display authority.
+        if (table === "projects" || table === "activity_history")
+          row.value = JSON.stringify(
+            JSON.parse(row.value, (key, value) =>
+              key === "homeSnapshotProvenance" ? null : value,
+            ),
+          );
         if (table === "person_notes")
           row.value = JSON.stringify(
             withoutClosenessCache(JSON.parse(row.value)),

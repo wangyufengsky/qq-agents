@@ -10,6 +10,28 @@ export async function dispatchTool(runtime, ctx, name, input) {
   return definition.handler(runtime, ctx, args, name);
 }
 export function mcpResult(value) {
+  if (typeof value?.[mediaLease] === "function") {
+    let current = false;
+    try {
+      current = value[mediaLease]() === true;
+    } catch {
+      // Revoked observations must not surface their data or validator errors.
+    }
+    if (!current)
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              error: "HOME_REVISION_CONFLICT",
+              notice:
+                "场景观察权限或版本已变化；正文和图片未交付，请重新读取当前场景。",
+            }),
+          },
+        ],
+      };
+  }
   return value?.content
     ? value
     : {

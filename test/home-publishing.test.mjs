@@ -56,6 +56,7 @@ test("home defaults deny discovery and forged dispatch, with immediate revocatio
   assert.deepEqual(f.runtime.agent("agent-0").home, {
     enabled: false,
     publishing: false,
+    projectSnapshots: { enabled: false },
     maxWritesPerDay: 20,
     sceneView: { enabled: false },
     intents: {
@@ -475,4 +476,56 @@ test("ordinary own diary is usable but nested diary evidence cannot launder chat
     f.call("room_publish", await publication(f, "derived-denied")),
     /HOME_SOURCE_DENIED/,
   );
+});
+
+test("tagline has an independent revision and administrator-only overview visibility", async (t) => {
+  const f = setup(t),
+    p = await publication(f, "tagline-0001", "tagline");
+  await f.call("room_publish", { ...p, body: "纸页间的小小问候" });
+  assert.equal(
+    f.runtime.home.overview().residents[0].tagline,
+    "纸页间的小小问候",
+  );
+  assert.equal(
+    f.runtime.home.overview("agent-1").residents[0].tagline,
+    undefined,
+  );
+  assert.equal(
+    JSON.stringify(
+      await f.call(
+        "room_scene_read",
+        { type: "hall" },
+        context(f.runtime, "agent-1", "@subject"),
+      ),
+    ).includes("纸页间的小小问候"),
+    false,
+  );
+  assert.equal((await f.call("room_read")).items[0].itemRevision, 0);
+  await assert.rejects(
+    f.call("room_publish", {
+      ...(await publication(f, "tagline-long", "tagline")),
+      body: "长".repeat(81),
+    }),
+  );
+  assert.throws(
+    () =>
+      f.runtime.home.rooms.tool(f.ctx, "room_publish", {
+        ...p,
+        requestId: "tagline-core-limit",
+        expectedItemRevision: 1,
+        body: "长".repeat(81),
+      }),
+    /HOME_ITEM_INVALID/,
+  );
+  f.runtime.agent("agent-0").home.publishing = false;
+  assert.equal(f.runtime.home.overview().residents[0].tagline, undefined);
+  f.runtime.agent("agent-0").home.publishing = true;
+  f.runtime.home.rooms.moderate("agent-0", {
+    identityGeneration: p.identityGeneration,
+    requestId: "tagline-hide",
+    slot: "tagline",
+    expectedItemRevision: 1,
+    action: "hide",
+  });
+  assert.equal(f.runtime.home.overview().residents[0].tagline, undefined);
 });

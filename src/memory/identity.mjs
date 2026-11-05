@@ -722,6 +722,7 @@ export class IdentityMemory {
       status,
       outcome = "",
       expectedRevision = 0,
+      homeSnapshotProvenance = null,
     },
     { writtenIn, now },
   ) {
@@ -776,6 +777,7 @@ export class IdentityMemory {
       : [];
     const value = {
       id: old?.id || randomUUID(),
+      homeSnapshotProvenance,
       title: title === undefined ? old.title : title.trim(),
       why: why === undefined ? old.why : why.trim(),
       status: nextStatus,

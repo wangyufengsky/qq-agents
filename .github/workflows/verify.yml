@@ -69,6 +69,14 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+      - name: Diagnose packaged browser startup on Linux
+        if: runner.os == 'Linux'
+        timeout-minutes: 3
+        run: node scripts/home-browser-diagnostics.mjs
+      - name: Preflight Windows owned browser startup and native cleanup
+        if: runner.os == 'Windows'
+        timeout-minutes: 4
+        run: node --test --test-timeout=120000 test/home-browser-process.test.mjs test/home-scene-view.test.mjs
       - run: npm run verify
   docker:
     runs-on: ubuntu-latest

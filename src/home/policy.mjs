@@ -16,6 +16,7 @@ export const HOME_WRITE_TOOLS = Object.freeze([
   "room_scene_patch",
   "room_scene_undo",
   "room_publish",
+  "room_publish_snapshot",
   "room_retract",
 ]);
 export const HOME_TOOLS = Object.freeze([
@@ -28,6 +29,7 @@ export const HOME_SLOTS = /** @type {const} */ ([
   "work-1",
   "work-2",
   "work-3",
+  "tagline",
 ]);
 export const HOME_AUDIENCE = "instance-administrator-and-owner";
 export const homePolicySchema = z
@@ -35,6 +37,10 @@ export const homePolicySchema = z
     enabled: z.boolean().default(false),
     publishing: z.boolean().default(false),
     sceneView: z
+      .object({ enabled: z.boolean().default(false) })
+      .strict()
+      .default({ enabled: false }),
+    projectSnapshots: z
       .object({ enabled: z.boolean().default(false) })
       .strict()
       .default({ enabled: false }),
@@ -61,6 +67,7 @@ export const homePolicySchema = z
     enabled: false,
     publishing: false,
     sceneView: { enabled: false },
+    projectSnapshots: { enabled: false },
     maxWritesPerDay: 20,
     intents: {
       enabled: false,

@@ -621,6 +621,7 @@ test("home settings default off, round trip explicitly and preserve policy when 
     enabled: true,
     publishing: true,
     sceneView: { enabled: true },
+    projectSnapshots: { enabled: true },
     maxWritesPerDay: 7,
     intents: {
       enabled: true,

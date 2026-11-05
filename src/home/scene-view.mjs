@@ -7,7 +7,11 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { stopHomeBrowser, homeBrowserArguments } from "./browser-process.mjs";
+import {
+  stopHomeBrowser,
+  homeBrowserArguments,
+  homeBrowserStatus,
+} from "./browser-process.mjs";
 import { chromium } from "playwright-core";
 import { findScreenshotBrowser } from "../tools/public-screenshot.mjs";
 import { homeTemplate, validateLayout } from "./layout.mjs";
@@ -56,6 +60,7 @@ export async function renderHomeScene(
   active++;
   /** @type {import("playwright-core").Browser | undefined} */
   let browser;
+  let connected = false;
   let directory;
   try {
     directory = await fs.mkdtemp(path.join(os.tmpdir(), "qq-home-browser-"));
@@ -108,6 +113,7 @@ export async function renderHomeScene(
       ],
     };
     browser = await chromium.launch(launchOptions);
+    connected = true;
     signal?.throwIfAborted();
     const context = await browser.newContext({
       viewport: { width: viewport === "mobile" ? 390 : 960, height: 760 },
@@ -175,6 +181,7 @@ export async function renderHomeScene(
               decorateSceneObject(node, o, {
                 type: snapshot.type,
                 residents: snapshot.residents,
+                ownerAgentId: snapshot.view.ownerAgentId,
               });
             },
           }),
@@ -199,7 +206,12 @@ export async function renderHomeScene(
   } catch (e) {
     signal?.throwIfAborted();
     if (e instanceof Error && e.message === "HOME_SCENE_BUSY") throw e;
-    throw Error("HOME_SCENE_RENDER_FAILED", { cause: e });
+    const failure = Error("HOME_SCENE_RENDER_FAILED", { cause: e });
+    Object.assign(failure, {
+      connected,
+      browserState: await homeBrowserStatus(marker, control),
+    });
+    throw failure;
   } finally {
     signal?.removeEventListener("abort", abort);
     let cleared = false;
@@ -244,6 +256,27 @@ function snapshot(runtime, ctx, type, page = 1) {
   const scenePage = homeScenePage(type, runtime.home.ids(), page);
   const view = runtime.home.read(type, type === "room" ? a.id : undefined);
   validateLayout(view.layout, type, runtime.home.ids());
+  const ownDisplay = runtime.home.rooms.display(a.id);
+  const ownTagline = ownDisplay.items.find(
+    (/** @type {any} */ item) => item.slot === "tagline",
+  );
+  const residents =
+    type === "living"
+      ? []
+      : runtime.home
+          .overview(a.id)
+          .residents.filter((/** @type {any} */ resident) =>
+            type === "room"
+              ? resident.id === a.id
+              : scenePage.template.objects.some(
+                  (object) => object.id === "door-" + resident.id,
+                ),
+          )
+          .map((/** @type {any} */ resident) =>
+            resident.id === a.id
+              ? { ...resident, taglineRevision: ownTagline?.itemRevision || 0 }
+              : resident,
+          );
   return {
     type,
     view,
@@ -253,15 +286,8 @@ function snapshot(runtime, ctx, type, page = 1) {
     assetVersions: Object.fromEntries(
       Object.entries(catalog).map(([id, asset]) => [id, asset.assetVersion]),
     ),
-    content: type === "room" ? runtime.home.rooms.display(a.id) : null,
-    residents:
-      type === "hall"
-        ? runtime.home
-            .overview(a.id)
-            .residents.filter((/** @type {any} */ r) =>
-              scenePage.template.objects.some((o) => o.id === "door-" + r.id),
-            )
-        : [],
+    content: type === "room" ? ownDisplay : null,
+    residents,
   };
 }
 /** @param {any} runtime @param {any} ctx @param {any} args

@@ -1,8 +1,12 @@
 // @ts-check
 // Both the interactive page and the isolated snapshot decorate the same paper objects.
 /** @param {HTMLElement} node @param {{id:string}} object
- * @param {{type:string,residents:{id:string,name:string,state:string}[]}} options */
-export function decorateSceneObject(node, object, { type, residents }) {
+ * @param {{type:string,ownerAgentId?:string,residents:{id:string,name:string,state:string,tagline?:string}[]}} options */
+export function decorateSceneObject(
+  node,
+  object,
+  { type, residents, ownerAgentId },
+) {
   /** @param {string} className @param {string} [text] */
   const el = (className, text) => {
     const n = document.createElement("span");
@@ -11,15 +15,22 @@ export function decorateSceneObject(node, object, { type, residents }) {
     return n;
   };
   if (type !== "hall") {
-    if (object.id === "nameplate")
-      node.append(el("object-ink ink-nameplate", "走廊"));
+    if (object.id === "nameplate") {
+      const owner = residents.find((r) => r.id === ownerAgentId);
+      const text =
+        type === "room" ? owner?.tagline || owner?.name || "房间" : "走廊";
+      const ink = el("object-ink ink-nameplate", text);
+      ink.title = text;
+      node.append(ink);
+    }
     return;
   }
   const resident = residents.find((r) => r.id === object.id.slice(5));
   if (object.id.startsWith("sign-")) {
     const name = resident?.name || "房间";
-    const n = el("door-name", name);
-    n.title = name;
+    const n = el("door-name", resident?.tagline || name);
+    n.title = name + (resident?.tagline ? " · " + resident.tagline : "");
+    node.setAttribute("aria-label", n.title);
     node.append(n);
   }
   if (object.id.startsWith("door-")) {

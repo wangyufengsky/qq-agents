@@ -262,6 +262,7 @@ function decorate(node, o) {
   decorateSceneObject(node, o, {
     type: route.type,
     residents: overview.residents,
+    ownerAgentId: route.agentId,
   });
 }
 function draw(direction = 0) {
@@ -619,7 +620,9 @@ async function loadContent() {
         el("p", "display-note", "这里暂时安静，等主人放上新的文字。"),
       );
     const items = value.items.filter((i) =>
-      action === "intro" ? i.slot === "intro" : i.slot !== "intro",
+      action === "intro"
+        ? ["intro", "tagline"].includes(i.slot)
+        : i.slot.startsWith("work-"),
     );
     for (const item of items) {
       const card = el("section", "home-text-card");
@@ -631,9 +634,11 @@ async function loadContent() {
           "",
           item.visible
             ? item.title
-            : item.slot === "intro"
-              ? "介绍卡"
-              : `作品 ${item.slot.slice(5)}`,
+            : item.slot === "tagline"
+              ? "门牌短语"
+              : item.slot === "intro"
+                ? "介绍卡"
+                : `作品 ${item.slot.slice(5)}`,
         ),
       );
       card.append(
@@ -650,6 +655,14 @@ async function loadContent() {
         ),
       );
       const management = el("details", "item-management");
+      if (item.source)
+        management.append(
+          el(
+            "p",
+            "display-note",
+            `来源：项目原稿 ${item.source.id} · 固定版本 ${item.source.revision}`,
+          ),
+        );
       management.open = openItems.has(item.slot);
       management.append(
         el("summary", "", "管理这张纸"),

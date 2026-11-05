@@ -58,5 +58,10 @@ export async function prepareHomeBrowserJob(controlFile, control) {
     }
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
+  await fs.writeFile(
+    controlFile + ".job-launch-state",
+    JSON.stringify({ stage: failed ? "helper-exited" : "setup-timeout" }),
+    { mode: 0o600 },
+  );
   throw Error("HOME_SCENE_RENDER_FAILED");
 }

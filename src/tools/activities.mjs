@@ -1,3 +1,4 @@
+import { projectSnapshotProof } from "../home/project-snapshots.mjs";
 import { acknowledgeActivity } from "./activity-acknowledgements.mjs";
 import { z } from "zod";
 import { humanInput } from "../core/input-progress.mjs";
@@ -248,6 +249,7 @@ export function writeActivity(runtime, ctx, args, old) {
             ],
           }
         : {}),
+      homeSnapshotProvenance: projectSnapshotProof(runtime, ctx, old, args),
       ...(args.draft ? { draft: args.draft, draftAuthor: "agent" } : {}),
       ...(source
         ? {

@@ -1,5 +1,15 @@
 param([Parameter(Mandatory=$true)][string]$ControlFile)
 $ErrorActionPreference = 'Stop'
+$script:phase = 'compiling'
+function Report-State([string]$Stage, [int]$Code=0, [int]$Active=-1) {
+ $script:phase = $Stage
+ try {
+  $state = @{ stage=$Stage; code=$Code; active=$Active } | ConvertTo-Json -Compress
+  [System.IO.File]::WriteAllText($ControlFile + '.job-state', $state, [System.Text.UTF8Encoding]::new($false))
+ } catch { }
+}
+Report-State 'compiling'
+
 Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
@@ -34,11 +44,13 @@ try {
  if ($control.stopping) { exit 0 }
  # The helper accepts no PID. Open its actual parent's handle before asking that
  # live parent to authenticate; PID reuse after the handshake cannot retarget it.
+ Report-State 'opening-parent'
  $parentId = [uint32](Get-CimInstance Win32_Process -Filter "ProcessId = $PID").ParentProcessId
  $parentHandle = [HomeBrowserJob]::OpenProcess(0x101101, $false, $parentId)
  if ($parentHandle -eq [IntPtr]::Zero) { throw 'parent' }
  [long]$created=0; [long]$exited=0; [long]$kernel=0; [long]$user=0
  if (-not [HomeBrowserJob]::GetProcessTimes($parentHandle,[ref]$created,[ref]$exited,[ref]$kernel,[ref]$user)) { throw 'identity' }
+ Report-State 'authenticating'
  $pipeName = $control.endpoint.Substring(9)
  $pipe = [System.IO.Pipes.NamedPipeClientStream]::new('.', $pipeName, [System.IO.Pipes.PipeDirection]::InOut)
  try {
@@ -48,6 +60,7 @@ try {
   $writer.WriteLine('job:' + $control.nonce)
   if ($reader.ReadLine() -ne 'authorized') { throw 'authority' }
  } finally { $pipe.Dispose() }
+ Report-State 'creating-job'
  $job = [HomeBrowserJob]::CreateJobObject([IntPtr]::Zero, $null)
  if ($job -eq [IntPtr]::Zero) { throw 'job' }
  $info = New-Object HomeBrowserJob+Extended
@@ -55,22 +68,34 @@ try {
  $basic.Flags = 0x2000 # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
  $info.Basic = $basic
  if (-not [HomeBrowserJob]::SetInformationJobObject($job,9,[ref]$info,[System.Runtime.InteropServices.Marshal]::SizeOf($info))) { throw 'limits' }
+ Report-State 'assigning'
  if (-not [HomeBrowserJob]::AssignProcessToJobObject($job,$parentHandle)) { throw 'assign' }
  $assigned = $true
+ Report-State 'writing-ready'
  $ready = @{ nonce=$control.nonce; parentPid=$parentId; created=[string]$created; helperPid=$PID } | ConvertTo-Json -Compress
  [System.IO.File]::WriteAllText($ControlFile + '.job-ready', $ready, [System.Text.UTF8Encoding]::new($false))
+ Report-State 'waiting-parent'
  [void][HomeBrowserJob]::WaitForSingleObject($parentHandle, [uint32]::MaxValue)
 } catch {
+ Report-State ('failed-' + $script:phase) $_.Exception.HResult
  [Console]::Error.WriteLine('HOME_SCENE_RENDER_FAILED')
  exit 1
 } finally {
+ # Job accounting retains terminated members while external process references
+ # remain open. Release this identity/wait handle before waiting for Active=0.
+ if ($parentHandle -ne [IntPtr]::Zero) {
+  [void][HomeBrowserJob]::CloseHandle($parentHandle)
+  $parentHandle = [IntPtr]::Zero
+ }
  # The helper was born before assignment and stays outside the job. Its handle
  # closure kills every job member, including descendants of an exited browser.
  if ($job -ne [IntPtr]::Zero) {
   if ($assigned) {
+   Report-State 'terminating'
    [void][HomeBrowserJob]::TerminateJobObject($job, 0)
    $accounting = New-Object HomeBrowserJob+Accounting
    [uint32]$returned=0
+   Report-State 'querying'
    $cleanupDeadline = [DateTime]::UtcNow.AddSeconds(1)
    do {
     $queried = [HomeBrowserJob]::QueryInformationJobObject($job,1,[ref]$accounting,[System.Runtime.InteropServices.Marshal]::SizeOf($accounting),[ref]$returned)
@@ -78,12 +103,15 @@ try {
    } while ((-not $queried -or $accounting.Active -ne 0) -and [DateTime]::UtcNow -lt $cleanupDeadline)
    if (-not $queried -or $accounting.Active -ne 0) {
     [void][HomeBrowserJob]::CloseHandle($job); $job = [IntPtr]::Zero
+    Report-State 'cleanup-failed' ([System.Runtime.InteropServices.Marshal]::GetLastWin32Error()) $accounting.Active
     throw 'HOME_SCENE_RENDER_FAILED'
    }
+   Report-State 'writing-clean' 0 $accounting.Active
    $complete = @{ nonce=$control.nonce; parentPid=$parentId; helperPid=$PID; cleaned=$true } | ConvertTo-Json -Compress
    $temporary = $ControlFile + '.job-clean.tmp'
    [System.IO.File]::WriteAllText($temporary, $complete, [System.Text.UTF8Encoding]::new($false))
    [System.IO.File]::Move($temporary, $ControlFile + '.job-clean')
+   Report-State 'cleaned' 0 0
   }
   [void][HomeBrowserJob]::CloseHandle($job)
  }

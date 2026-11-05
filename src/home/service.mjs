@@ -63,7 +63,8 @@ export class HomeService {
       )
       .digest("hex");
   }
-  overview() {
+  /** @param {string} [viewerAgentId] */
+  overview(viewerAgentId) {
     const r = this.runtime;
     return {
       rosterRevision: this.rosterRevision(),
@@ -71,6 +72,14 @@ export class HomeService {
       residents: r.config.agents.map((/** @type {any} */ a) => ({
         id: a.id,
         name: a.name,
+        ...(viewerAgentId === undefined || viewerAgentId === a.id
+          ? (() => {
+              const item = this.rooms
+                .display(a.id)
+                .items.find((i) => i.slot === "tagline");
+              return item?.visible ? { tagline: item.body } : {};
+            })()
+          : {}),
         state:
           a.paused || r.config.globalPaused
             ? "paused"

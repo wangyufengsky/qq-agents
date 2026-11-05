@@ -80,6 +80,27 @@ server.listen(control.endpoint, async () => {
   );
   // Main-browser exit does not prove its descendants have exited. While this
   // wrapper still owns its live group, close the whole tree on every exit path.
-  child.on("error", stopTree);
-  child.on("exit", stopTree);
+  const record = (
+    /** @type {string} */ stage,
+    /** @type {number | null} */ code = null,
+  ) => {
+    try {
+      fs.writeFileSync(
+        controlFile + ".browser-state",
+        JSON.stringify({ stage, code }),
+        { mode: 0o600 },
+      );
+    } catch {
+      /* Diagnostics cannot prevent cleanup. */
+    }
+  };
+  child.on("spawn", () => record("spawned"));
+  child.on("error", () => {
+    record("spawn-error");
+    stopTree();
+  });
+  child.on("exit", (code) => {
+    record("exited", code);
+    stopTree();
+  });
 });

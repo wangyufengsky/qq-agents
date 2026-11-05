@@ -94,7 +94,9 @@ export async function stopHomeBrowser(marker, control) {
     if (!alive(pid) && (await jobSettled(controlFile, control))) return;
     await delay(10);
   }
-  throw Error("HOME_SCENE_RENDER_FAILED");
+  throw Error("HOME_SCENE_RENDER_FAILED", {
+    cause: await homeBrowserStatus(marker, control),
+  });
 }
 
 /** Fixed flags for the packaged renderer; never accepted from bridge arguments.
@@ -119,4 +121,46 @@ export function homeBrowserArguments(profile) {
     "--no-startup-window",
     `--user-data-dir=${profile}`,
   ];
+}
+
+/** Only fixed stages, numeric errors and status booleans enter diagnostics.
+ * @param {string} marker @param {{nonce:string}} control */
+export async function homeBrowserStatus(marker, control) {
+  const controlFile = path.join(path.dirname(marker), "control.json");
+  const read = async (/** @type {string} */ suffix) => {
+    try {
+      return JSON.parse(await fs.readFile(controlFile + suffix, "utf8"));
+    } catch {
+      return null;
+    }
+  };
+  const state = await read(".job-state"),
+    ready = await read(".job-ready"),
+    complete = await read(".job-clean"),
+    setup = await read(".job-launch-state"),
+    child = await read(".browser-state");
+  const stage = (/** @type {any} */ value) =>
+    typeof value?.stage === "string" && /^[a-z-]{1,64}$/.test(value.stage)
+      ? value.stage
+      : "unavailable";
+  let pid = 0;
+  try {
+    pid = Number(await fs.readFile(marker, "utf8"));
+  } catch {
+    /* No PID means startup did not announce itself. */
+  }
+  return {
+    stage: stage(state),
+    code: Number.isInteger(state?.code) ? state.code : 0,
+    active: Number.isInteger(state?.active) ? state.active : -1,
+    setup: stage(setup),
+    child: stage(child),
+    childCode: Number.isInteger(child?.code) ? child.code : null,
+    ready: ready?.nonce === control.nonce,
+    clean: complete?.nonce === control.nonce && complete.cleaned === true,
+    wrapperAlive: Number.isSafeInteger(pid) && pid > 0 ? alive(pid) : false,
+    helperAlive: Number.isSafeInteger(ready?.helperPid)
+      ? alive(ready.helperPid)
+      : false,
+  };
 }

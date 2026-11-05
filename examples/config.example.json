@@ -72,6 +72,9 @@
         "sceneView": {
           "enabled": false
         },
+        "projectSnapshots": {
+          "enabled": false
+        },
         "maxWritesPerDay": 20,
         "intents": {
           "enabled": false,
@@ -167,6 +170,9 @@
         "enabled": false,
         "publishing": false,
         "sceneView": {
+          "enabled": false
+        },
+        "projectSnapshots": {
           "enabled": false
         },
         "maxWritesPerDay": 20,
