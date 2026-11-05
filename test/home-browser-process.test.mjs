@@ -7,6 +7,7 @@ import net from "node:net";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { buildChildEnv } from "../src/core/child-env.mjs";
 import { stopHomeBrowser } from "../src/home/browser-process.mjs";
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const endpoint = (root, label) =>
@@ -47,6 +48,7 @@ function wrapper(marker, controlFile, root) {
       detached: process.platform !== "win32",
       stdio: ["ignore", "ignore", "pipe", "pipe", "pipe"],
       windowsHide: true,
+      env: buildChildEnv("browser"),
     },
   );
 }

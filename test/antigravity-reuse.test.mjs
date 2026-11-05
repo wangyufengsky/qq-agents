@@ -763,9 +763,13 @@ test("closes workers at the idle timeout and evicts idle processes above the poo
   const pooled = setup(t, { maxIdleProcesses: 1 });
   const oldest = pooled.chat("private:pool-oldest");
   const newest = pooled.chat("private:pool-newest");
+  let wallTime = Date.now();
+  const clock = t.mock.method(Date, "now", () => wallTime);
   await oldest.run("success");
-  await new Promise((resolve) => setTimeout(resolve, 30));
+  // LRU order follows completed use, even when the system clock moves backward.
+  wallTime -= 1000;
   await newest.run("success");
+  clock.mock.restore();
   assert.equal(pooled.backend.workers.size, 1);
   assert.equal(
     [...pooled.backend.workers.values()][0].nativeId,

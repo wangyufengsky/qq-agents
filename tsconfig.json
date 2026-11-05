@@ -106,7 +106,7 @@
     "src/home/browser-process.mjs",
     "src/home/browser-launcher.mjs",
     "src/home/browser-job.mjs",
-    "scripts/home-browser-diagnostics.mjs",
+    "scripts/home-scene-cold-smoke.mjs",
     "src/tools/media-lease.mjs",
     "public/home-space/scene-decoration.mjs",
     "src/home/project-snapshots.mjs",

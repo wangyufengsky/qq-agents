@@ -381,7 +381,8 @@ export class AntigravityStreamWorker {
         // Finalization must release turn ownership even when Windows locks media.
         console.warn("Antigravity turn media cleanup failed");
       }
-      this.lastUsed = Date.now();
+      // In-memory LRU order must survive wall-clock corrections.
+      this.lastUsed = performance.now();
       if (this.turn === turn) this.turn = null;
       if (this.closed) {
         try {

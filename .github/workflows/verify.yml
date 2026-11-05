@@ -69,10 +69,10 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-      - name: Diagnose packaged browser startup on Linux
+      - name: Smoke-test the first owned scene render on Linux
         if: runner.os == 'Linux'
         timeout-minutes: 3
-        run: node scripts/home-browser-diagnostics.mjs
+        run: node scripts/home-scene-cold-smoke.mjs
       - name: Preflight Windows owned browser startup and native cleanup
         if: runner.os == 'Windows'
         timeout-minutes: 4

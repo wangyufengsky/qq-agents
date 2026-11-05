@@ -89,10 +89,10 @@ const browserCandidates = {
     "/Applications/Chromium.app/Contents/MacOS/Chromium",
   ],
   linux: [
-    "/usr/bin/chromium",
-    "/usr/bin/chromium-browser",
     "/usr/bin/google-chrome",
     "/usr/bin/google-chrome-stable",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
     "/snap/bin/chromium",
   ],
 };

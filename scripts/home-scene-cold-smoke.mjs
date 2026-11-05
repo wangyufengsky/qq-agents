@@ -1,28 +1,11 @@
 // @ts-check
-import fs from "node:fs/promises";
 import { findScreenshotBrowser } from "../src/tools/public-screenshot.mjs";
 import { renderHomeScene } from "../src/home/scene-view.mjs";
 import { homeTemplate, defaultLayout } from "../src/home/layout.mjs";
 
 // This is the first browser launch in a fresh runner, without version probes or
 // profile warming. Only packaged synthetic content reaches the owned renderer.
-let executablePath = findScreenshotBrowser();
-if (process.platform === "linux") {
-  // Temporary single-variable evidence: stable Chrome is first, never warmed by
-  // a preceding Chromium/default-Playwright probe. Remove after finder acceptance.
-  for (const candidate of [
-    "/usr/bin/google-chrome",
-    "/usr/bin/google-chrome-stable",
-  ]) {
-    try {
-      await fs.access(candidate);
-      executablePath = candidate;
-      break;
-    } catch {
-      /* Try the other fixed stable installation path. */
-    }
-  }
-}
+const executablePath = findScreenshotBrowser();
 const started = Date.now();
 try {
   const png = await renderHomeScene(

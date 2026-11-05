@@ -40,11 +40,13 @@ public static class HomeBrowserJob {
  [DllImport("kernel32.dll")] public static extern bool CloseHandle(IntPtr handle);
 }
 '@
+Report-State 'compiled'
 $job = [IntPtr]::Zero
 $parentHandle = [IntPtr]::Zero
 $assigned = $false
 try {
- $control = Get-Content -LiteralPath $ControlFile -Raw | ConvertFrom-Json
+ Report-State 'reading-control'
+ $control = [System.IO.File]::ReadAllText($ControlFile) | ConvertFrom-Json
  if ($control.stopping) { exit 0 }
  $guardian = @{ nonce=$control.nonce; pid=$PID } | ConvertTo-Json -Compress
  [System.IO.File]::WriteAllText($ControlFile + '.job-guardian', $guardian, [System.Text.UTF8Encoding]::new($false))
@@ -66,7 +68,7 @@ try {
   $writer.WriteLine('job:' + $control.nonce)
   if ($reader.ReadLine() -ne 'authorized') { throw 'authority' }
  } finally { $pipe.Dispose() }
- $hostRecord = Get-Content -LiteralPath ($ControlFile + '.job-helper') -Raw | ConvertFrom-Json
+ $hostRecord = [System.IO.File]::ReadAllText($ControlFile + '.job-helper') | ConvertFrom-Json
  if ($hostRecord.nonce -ne $control.nonce -or -not $hostRecord.pid) { throw 'host-identity' }
  Report-State 'creating-job'
  $job = [HomeBrowserJob]::CreateJobObject([IntPtr]::Zero, $null)
