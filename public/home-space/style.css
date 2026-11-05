@@ -167,3 +167,488 @@
   margin-bottom: 12px;
   color: var(--muted);
 }
+
+/* The room artwork owns the page; surrounding controls stay on the paper edge. */
+:root {
+  --ink: #574530;
+  --muted: #88775d;
+  --paper: #fff9e9;
+  --back: #f3eddf;
+  --accent: #67714a;
+  --line: #d7cab1;
+}
+body {
+  background: var(--back);
+}
+.masthead,
+main {
+  max-width: 1160px;
+  padding: 0 48px;
+}
+.masthead {
+  height: 94px;
+  border: 0;
+  flex-wrap: nowrap;
+}
+.brand {
+  gap: 13px;
+  font-family: "Kaiti SC", "STKaiti", "Songti SC", serif;
+  font-size: 29px;
+  letter-spacing: 4px;
+  min-width: 0;
+}
+.brand:hover {
+  text-decoration: none;
+}
+.nest-seal {
+  display: grid;
+  place-items: center;
+  width: 27px;
+  height: 31px;
+  border: 1px solid #75805c;
+  border-radius: 4px 3px 5px 2px;
+  color: var(--accent);
+  font-size: 17px;
+  letter-spacing: 0;
+  transform: rotate(-5deg);
+}
+#home-tools {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+#home-tools button,
+.book-footer button {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: var(--muted);
+  padding: 6px 4px;
+  min-width: 44px;
+  font-size: 13px;
+}
+#menu-toggle {
+  font-size: 24px !important;
+  letter-spacing: 2px;
+}
+#gate {
+  margin: 24px 0;
+  border-radius: 4px;
+}
+.book-workspace {
+  position: relative;
+}
+#stage {
+  position: relative;
+  perspective: 2200px;
+  isolation: isolate;
+  margin: 0;
+}
+.book-page {
+  position: relative;
+  aspect-ratio: 3/2;
+  transform-origin: 2.5% 50%;
+  transform-style: preserve-3d;
+  z-index: 1;
+}
+.book-face {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  transform: rotateY(0deg);
+}
+#stage .board {
+  width: 100%;
+  height: 100%;
+  aspect-ratio: auto;
+  filter: none;
+  animation: none;
+}
+.book-heading {
+  position: absolute;
+  top: 7.2%;
+  left: 7.8%;
+  right: 8%;
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  pointer-events: none;
+  color: #6b4c2c;
+}
+.book-heading span {
+  font-family: "Songti SC", serif;
+  font-size: 11px;
+  letter-spacing: 1px;
+  flex-shrink: 0;
+}
+.book-heading h2 {
+  font-family: "Kaiti SC", "STKaiti", "Songti SC", serif;
+  font-weight: 500;
+  font-size: 22px;
+  line-height: 1.3;
+  letter-spacing: 3px;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#bookmarks {
+  position: absolute;
+  right: -28px;
+  top: 52px;
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+#bookmarks button {
+  writing-mode: vertical-rl;
+  min-width: 44px;
+  padding: 16px 10px;
+  border: 0;
+  border-radius: 0 4px 6px 0;
+  letter-spacing: 5px;
+  font-family: "Songti SC", serif;
+  font-size: 13px;
+  color: #77694f;
+  background: #ded3bc;
+  box-shadow: 1px 2px 2px #6c52301a;
+  transition: transform 180ms;
+}
+#bookmarks [aria-current="page"] {
+  background: var(--accent);
+  color: #fff6e4;
+  transform: translateX(3px);
+}
+#bookmarks button:hover {
+  transform: translateX(5px);
+}
+.paper-object:not(button) {
+  pointer-events: none;
+}
+.paper-object .object-ink {
+  position: absolute;
+  left: 0;
+  right: 0;
+  color: #79552c;
+  font-family: "Songti SC", serif;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+  pointer-events: none;
+}
+.paper-object .ink-nameplate {
+  top: 20%;
+}
+.paper-object .ink-board {
+  top: 65%;
+}
+.paper-object .ink-guide {
+  top: 35%;
+  font-size: 11px;
+}
+.paper-object .door-name {
+  top: 20%;
+  left: 8%;
+  width: 84%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font-family: "Songti SC", serif;
+}
+.page-corner {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 84px;
+  height: 84px;
+  padding: 57px 7px 5px 19px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-family: "Songti SC", serif;
+  font-size: 11px;
+  white-space: nowrap;
+  text-align: right;
+  isolation: isolate;
+}
+.page-corner::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  clip-path: polygon(100% 0, 100% 100%, 0 100%);
+  background: linear-gradient(45deg, #f5e8cd 24%, #fcf3df 55%, #dec6a0 100%);
+  transition: transform 180ms;
+}
+.page-corner::after {
+  content: "↗";
+  position: absolute;
+  right: 12px;
+  bottom: 28px;
+  font-size: 20px;
+}
+.page-corner:hover {
+  background: transparent;
+}
+.page-corner:hover::before {
+  transform: scale(1.06);
+}
+.book-footer {
+  display: grid;
+  grid-template-columns: 1fr minmax(0, 2fr) 1fr;
+  align-items: center;
+  min-height: 58px;
+  font-family: "Songti SC", serif;
+  font-size: 12px;
+  color: var(--muted);
+}
+#page-back {
+  grid-column: 1;
+  justify-self: start;
+}
+#folio {
+  grid-column: 2;
+  grid-row: 1;
+  text-align: center;
+  letter-spacing: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#entry-toggle {
+  grid-column: 3;
+  grid-row: 1;
+  justify-self: end;
+}
+#pagination {
+  margin: 0 0 18px;
+}
+#pagination button {
+  min-width: 0;
+  border: 0;
+  background: transparent;
+}
+.book-old {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+}
+.book-turning {
+  z-index: 5;
+  pointer-events: none;
+}
+.book-turning::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 2%;
+  background: linear-gradient(
+    90deg,
+    #c8b48c,
+    #eee0c2 12%,
+    #faf0d9 85%,
+    #d0ba92
+  );
+  transform: rotateY(180deg);
+  backface-visibility: hidden;
+}
+.book-shadow {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  background: linear-gradient(90deg, #45311b00, #45311b45 45%, #45311b00);
+  pointer-events: none;
+  opacity: 0;
+}
+#editor:not([open]) {
+  display: none;
+}
+#editor {
+  margin: 8px 0 24px;
+  border-radius: 3px;
+  background: var(--paper);
+}
+#layout-status {
+  text-align: left;
+  font-size: 12px;
+}
+.paper-dialog,
+#reader {
+  width: min(620px, calc(100% - 32px));
+  max-width: 1040px;
+  border-radius: 3px 5px 6px 3px;
+  border: 1px solid #decdb1;
+  padding: 28px 32px;
+  background: var(--paper);
+  box-shadow: 0 15px 45px #50382135;
+}
+.paper-dialog[open] {
+  animation: unfold-note 220ms ease-out;
+}
+.paper-dialog::backdrop {
+  background: #6a543233;
+  backdrop-filter: blur(3px);
+}
+.paper-dialog h2 {
+  font-family: "Kaiti SC", "STKaiti", "Songti SC", serif;
+  font-size: 27px;
+  font-weight: 500;
+  letter-spacing: 3px;
+  margin: 8px 0 22px;
+}
+#reader[data-kind="board"] {
+  width: min(1040px, calc(100% - 32px));
+}
+#scene-actions,
+.paper-links {
+  display: flex;
+  flex-direction: column;
+  margin: 12px 0 0;
+  gap: 0;
+}
+#scene-actions button,
+.paper-links button,
+.paper-links a {
+  min-height: 44px;
+  padding: 12px 0;
+  text-align: left;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  font-size: 14px;
+}
+@keyframes unfold-note {
+  from {
+    opacity: 0;
+    transform: translateY(12px) rotate(-1deg);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (max-width: 740px) {
+  .masthead,
+  main {
+    padding-left: 25px;
+    padding-right: 37px;
+  }
+  .masthead {
+    height: 82px;
+  }
+  .brand {
+    font-size: 25px;
+  }
+  #home-tools {
+    gap: 4px;
+  }
+  #bookmarks {
+    top: 34px;
+  }
+}
+@media (max-width: 640px) {
+  .masthead,
+  main {
+    padding-left: 10px;
+    padding-right: 22px;
+  }
+  .masthead {
+    height: 86px;
+    gap: 8px;
+  }
+  .brand {
+    gap: 9px;
+    font-size: 24px;
+    letter-spacing: 3px;
+  }
+  .nest-seal {
+    width: 22px;
+    height: 27px;
+    font-size: 14px;
+  }
+  #home-tools {
+    gap: 0;
+    flex-shrink: 0;
+  }
+  #home-tools button {
+    font-size: 12px;
+  }
+  .book-page {
+    aspect-ratio: 3/4;
+  }
+  .book-heading {
+    top: 8%;
+    left: 11%;
+    gap: 12px;
+  }
+  .book-heading span {
+    font-size: 10px;
+  }
+  .book-heading h2 {
+    font-size: 21px;
+  }
+  #bookmarks {
+    right: -19px;
+    top: 39px;
+    gap: 10px;
+  }
+  #bookmarks button {
+    padding: 12px 5px;
+    min-width: 32px;
+    min-height: 56px;
+    font-size: 12px;
+    letter-spacing: 4px;
+  }
+  .paper-object .object-ink,
+  .paper-object .door-name {
+    font-size: 11px;
+  }
+  .paper-object .ink-nameplate {
+    top: 18%;
+  }
+  .paper-object .door-status {
+    font-size: 11px;
+  }
+  .page-corner {
+    width: 70px;
+    height: 70px;
+    padding-top: 46px;
+    font-size: 10px;
+  }
+  .book-footer {
+    min-height: 54px;
+    font-size: 11px;
+  }
+  .book-footer button {
+    font-size: 11px;
+  }
+  #pagination {
+    gap: 10px;
+  }
+  #pagination button {
+    font-size: 11px;
+    padding: 8px 3px;
+  }
+  .paper-dialog,
+  #reader {
+    padding: 20px;
+  }
+  .paper-dialog h2 {
+    font-size: 24px;
+  }
+  #scene-actions button {
+    flex: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .paper-dialog[open],
+  #bookmarks button,
+  .page-corner::before {
+    animation: none;
+    transition: none;
+  }
+}

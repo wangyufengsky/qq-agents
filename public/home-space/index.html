@@ -11,11 +11,18 @@
     <script type="module" src="/home-space/app.mjs"></script>
   </head>
   <body>
-    <a class="skip" href="#scene-actions">跳到文字入口</a>
+    <a class="skip" href="#scene-actions">跳到本页入口</a>
     <header class="masthead">
-      <a class="brand" href="#living">纸页小窝</a
-      ><span class="demo-badge">实例内空间 · 管理员浏览</span
-      ><a href="/">返回管理台</a>
+      <a id="brand-home" class="brand" href="#living"
+        ><span class="nest-seal" aria-hidden="true">窝</span
+        ><span>纸页小窝</span></a
+      >
+      <div id="home-tools" hidden>
+        <button id="edit-toggle" aria-expanded="false" aria-controls="editor">
+          布置
+        </button>
+        <button id="menu-toggle" aria-label="更多入口">···</button>
+      </div>
     </header>
     <main>
       <section id="gate" role="status">
@@ -24,21 +31,23 @@
         ><button id="gate-hall">返回走廊</button>
       </section>
       <section id="home-content" hidden>
-        <nav id="breadcrumb" aria-label="当前位置"></nav>
-        <div class="page-heading">
-          <div>
-            <p id="eyebrow" class="eyebrow"></p>
-            <h1 id="title"></h1>
-            <p id="subtitle"></p>
-          </div>
-          <button id="refresh">刷新当前页面</button>
+        <h1 id="title" class="sr-only"></h1>
+        <div class="book-workspace">
+          <nav id="bookmarks" aria-label="小窝书签">
+            <button id="bookmark-living">客厅</button>
+            <button id="bookmark-hall">走廊</button>
+          </nav>
+          <section id="stage" aria-label="纸片场景"></section>
         </div>
-        <section id="stage" aria-label="纸片场景"></section>
-        <nav id="scene-actions" aria-label="场景文字入口"></nav>
+        <footer class="book-footer">
+          <button id="page-back" hidden>← 客厅</button>
+          <span id="folio" aria-live="polite"></span>
+          <button id="entry-toggle">本页入口</button>
+        </footer>
         <div id="pagination"></div>
-        <p id="layout-status" role="status"></p>
         <details id="editor" class="settings">
           <summary>布置公共空间</summary>
+          <p id="layout-status" role="status"></p>
           <p>只保存家具和配色。个人房间由其主人格布置。</p>
           <label
             >配色<select id="palette">
@@ -56,13 +65,28 @@
           </div>
           <p id="save-status" role="status"></p>
         </details>
-        <footer class="page-footer">
-          <span>纸板承载空间 · 纸片承载物件</span
-          ><a href="/home-preview/">查看示例与本机布置预览</a>
-        </footer>
       </section>
     </main>
-    <dialog id="reader" aria-labelledby="reader-title">
+    <dialog id="entries" class="paper-dialog" aria-labelledby="entries-title">
+      <div class="reader-head">
+        <h2 id="entries-title">本页入口</h2>
+        <button id="close-entries" aria-label="收起本页入口">×</button>
+      </div>
+      <p id="subtitle"></p>
+      <nav id="scene-actions" aria-label="场景文字入口"></nav>
+    </dialog>
+    <dialog id="menu" class="paper-dialog" aria-labelledby="menu-title">
+      <div class="reader-head">
+        <h2 id="menu-title">小窝目录</h2>
+        <button id="close-menu" aria-label="收起小窝目录">×</button>
+      </div>
+      <nav class="paper-links" aria-label="小窝操作">
+        <button id="refresh">刷新当前页面</button>
+        <a href="/">返回管理台</a>
+        <a href="/home-preview/">查看示例与布置预览</a>
+      </nav>
+    </dialog>
+    <dialog id="reader" class="paper-dialog" aria-labelledby="reader-title">
       <div class="reader-head">
         <h2 id="reader-title"></h2>
         <button id="close-reader" aria-label="关闭面板">×</button>

@@ -1,10 +1,9 @@
 import { catalog } from "../home-preview/catalog.mjs";
 import { createTemplate } from "../home-preview/templates.mjs";
 import { makeScene } from "../home-preview/scene.mjs";
-import {
-  renderPaperBoard,
-  paperElement as el,
-} from "../home-preview/paper-board.mjs";
+import { paperElement as el } from "../home-preview/paper-board.mjs";
+import { renderBookScene, createPageTurn, turnDirection } from "./book.mjs";
+const pageTurn = createPageTurn(document.getElementById("stage"));
 const $ = (id) => document.getElementById(id),
   mobile = matchMedia("(max-width:640px)");
 const labels = {
@@ -93,10 +92,14 @@ function clearView(message = "登录或连接需要重新验证。") {
   boardView = null;
   if ($("reader").open) $("reader").close();
   readerAction = "";
+  pageTurn.clear();
+  for (const id of ["entries", "menu"]) if ($(id).open) $(id).close();
+  $("editor").open = false;
+  $("home-tools").hidden = true;
+  $("stage").inert = false;
   for (const id of [
     "stage",
     "scene-actions",
-    "breadcrumb",
     "pagination",
     "reader-content",
     "object-editor",
@@ -106,7 +109,7 @@ function clearView(message = "登录或连接需要重新验证。") {
   for (const id of [
     "title",
     "subtitle",
-    "eyebrow",
+    "folio",
     "layout-status",
     "save-status",
   ])
@@ -210,6 +213,7 @@ function actionLabel(action) {
     : labels[action];
 }
 function navigate(hash) {
+  if (`#${hash}` === location.hash) return;
   if (dirty && !confirm("离开后会放弃尚未保存的草稿，继续吗？")) return;
   if (route?.type === "hall" && hash.startsWith("room/"))
     returnHall = {
@@ -220,6 +224,7 @@ function navigate(hash) {
   location.hash = hash;
 }
 function act(action) {
+  if ($("entries").open) $("entries").close();
   if (action === "living" || action === "hall")
     navigate(action === "hall" ? "hall/1" : "living");
   else if (action === "back") {
@@ -231,10 +236,14 @@ function act(action) {
   } else openReader(action);
 }
 function decorate(node, o) {
-  if (route.type !== "hall") return;
+  if (route.type !== "hall") {
+    const text = { nameplate: "走廊", board: "留言", guide: "小册" }[o.id];
+    if (text) node.append(el("span", `object-ink ink-${o.id}`, text));
+    return;
+  }
   if (o.id.startsWith("sign-")) {
     const n = el("span", "door-name", name(o.id.slice(5)));
-    n.style.top = "23%";
+    n.title = name(o.id.slice(5));
     node.append(n);
   }
   if (o.id.startsWith("door-")) {
@@ -253,74 +262,72 @@ function decorate(node, o) {
     node.append(tag);
   }
 }
-function draw() {
-  if (!overview || !envelope) return;
+function draw(direction = 0) {
+  if (!overview || !envelope) return Promise.resolve();
   const t = template(),
     stage = $("stage"),
-    board = (objects, kind = "") =>
-      renderPaperBoard({
-        template: t,
-        scene: draft,
-        mobile: mobile.matches,
-        objects,
-        kind,
-        onAction: act,
-        label: actionLabel,
-        decorate,
-      });
-  document.body.className = `palette-${draft.palette} reduce-motion`;
-  stage.replaceChildren();
-  if (route.type === "hall" && mobile.matches && overview.residents.length) {
-    for (const door of t.objects.filter((o) => o.id.startsWith("door-")))
-      stage.append(
-        board(
-          t.objects.filter(
-            (o) =>
-              o.id === door.id ||
-              o.id === "sign-" + door.id.slice(5) ||
-              o.id === "plant",
-          ),
-          "hall-board",
-        ),
-      );
-  } else
-    stage.append(
-      board(
-        t.objects.filter(
-          (o) =>
-            !(mobile.matches && route.type === "room" && o.zone === "nook"),
-        ),
-        route.type,
+    page = el("div", "book-page"),
+    face = el("div", "book-face"),
+    scene = renderBookScene({
+      template: t,
+      scene: draft,
+      mobile: mobile.matches,
+      kind: route.type,
+      onAction: act,
+      label: actionLabel,
+      decorate,
+    });
+  document.body.className = `palette-${draft.palette}`;
+  const heading = el("div", "book-heading"),
+    chapter = { living: "第 一 页", hall: "第 二 页", room: "第 三 页" }[
+      route.type
+    ],
+    title =
+      route.type === "living"
+        ? "客厅"
+        : route.type === "hall"
+          ? "走廊"
+          : `${name(route.agentId)} 的房间`;
+  heading.append(el("span", "", chapter), el("h2", "", title));
+  const corner = button(
+    route.type === "living"
+      ? "去走廊"
+      : route.type === "hall"
+        ? "回客厅"
+        : "回走廊",
+    () =>
+      act(
+        route.type === "living"
+          ? "hall"
+          : route.type === "hall"
+            ? "living"
+            : "back",
       ),
-    );
+  );
+  corner.className = "page-corner";
+  corner.setAttribute("aria-label", `翻页${corner.textContent}`);
+  face.append(scene, heading, corner);
+  page.append(face);
   if (route.type === "hall" && !overview.residents.length) {
     const note = el("div", "board-note");
     note.append(
       el("strong", "", "走廊还很安静"),
       el("p", "", "当前尚未配置居民。"),
     );
-    stage.firstChild.append(note);
-  }
-  if (route.type === "room" && mobile.matches) {
-    const nook = el("section", "mobile-nook");
-    nook.append(
-      el("div", "scene-caption", "同一间房 · 休息角"),
-      board(t.objects.filter((o) => o.zone === "nook")),
-    );
-    stage.append(nook);
+    face.append(note);
   }
   stage.dataset.route = location.hash || "#living";
-  $("title").textContent =
-    route.type === "living"
-      ? "一起坐一会儿"
-      : route.type === "hall"
-        ? "每扇门后，都是一页生活"
-        : `${name(route.agentId)} 的房间`;
-  $("eyebrow").textContent = {
-    living: "第一章 / 客厅",
-    hall: "第二章 / 房间走廊",
-    room: "第三章 / 个人房间",
-  }[route.type];
+  $("title").textContent = title;
+  $("folio").textContent =
+    `${{ living: "01", hall: "02", room: "03" }[route.type]} / ${title}`;
+  for (const type of ["living", "hall"]) {
+    const active =
+      route.type === type || (type === "hall" && route.type === "room");
+    if (active) $("bookmark-" + type).setAttribute("aria-current", "page");
+    else $("bookmark-" + type).removeAttribute("aria-current");
+  }
+  $("page-back").hidden = route.type === "living";
+  $("page-back").textContent = route.type === "hall" ? "← 客厅" : "← 走廊";
   $("subtitle").textContent =
     route.type === "hall"
       ? `${overview.residents.length} 位居民 · 离线也保留房间`
@@ -329,17 +336,6 @@ function draw() {
         : overview.boardEnabled
           ? "翻翻留言，再去走廊逛一逛。"
           : "留言板对角色暂未开放；管理员仍可浏览和管理。";
-  const crumbs = $("breadcrumb");
-  crumbs.replaceChildren(button("客厅", () => act("living")));
-  if (route.type !== "living")
-    crumbs.append(
-      el("span", "", " / "),
-      button("房间走廊", () =>
-        route.type === "room" ? act("back") : act("hall"),
-      ),
-    );
-  if (route.type === "room")
-    crumbs.append(el("span", "", ` / ${name(route.agentId)}`));
   const nav = $("scene-actions");
   nav.replaceChildren();
   const actions =
@@ -355,7 +351,7 @@ function draw() {
         : ["back", "living", "intro", "works"];
   actions.forEach((a) => nav.append(button(actionLabel(a), () => act(a))));
   $("pagination").replaceChildren();
-  if (route.type === "hall") {
+  if (route.type === "hall" && overview.residents.length > 3) {
     const max = Math.max(1, Math.ceil(overview.residents.length / 3)),
       prev = button("← 上一段走廊", () => navigate(`hall/${route.page - 1}`)),
       next = button("下一段走廊 →", () => navigate(`hall/${route.page + 1}`));
@@ -368,10 +364,14 @@ function draw() {
     );
   }
   $("editor").hidden = !envelope.capabilities.write;
+  $("edit-toggle").hidden = !envelope.capabilities.write;
+  $("edit-toggle").textContent = dirty ? "布置 · 未保存" : "布置";
+  $("edit-toggle").setAttribute("aria-expanded", String($("editor").open));
   $("layout-status").textContent =
     `布局版本 ${envelope.layoutRevision}${dirty ? " · 草稿尚未保存" : ""}${blocked ? " · 已有变化，请重读后核对" : ""}`;
   $("save").disabled = !dirty || blocked;
   $("undo").disabled = dirty || blocked || envelope.layoutRevision === 0;
+  return pageTurn.show(page, direction);
 }
 function edit(key, value) {
   if (!envelope?.capabilities.write) return;
@@ -456,7 +456,13 @@ function editorFields() {
     root.append(label);
   }
 }
-async function refresh() {
+async function refresh(animate = false) {
+  pageTurn.finish();
+  $("stage").inert = true;
+  $("editor").inert = true;
+  $("entry-toggle").disabled = true;
+  $("edit-toggle").disabled = true;
+  if ($("entries").open) $("entries").close();
   const request = ++ticket,
     oldRoute = route,
     oldFocus = returnHall;
@@ -478,8 +484,16 @@ async function refresh() {
     renewLease();
     $("gate").hidden = true;
     $("home-content").hidden = false;
-    draw();
+    $("home-tools").hidden = false;
+    if (animate) $("editor").open = false;
+    const drawing = draw(animate ? turnDirection(oldRoute, nextRoute) : 0);
     editor();
+    await drawing;
+    if (request !== ticket) return;
+    $("stage").inert = false;
+    $("editor").inert = false;
+    $("entry-toggle").disabled = false;
+    $("edit-toggle").disabled = false;
     $("save-status").textContent = "";
     if (oldRoute?.type === "room" && oldFocus?.hash === location.hash) {
       document
@@ -648,6 +662,8 @@ async function loadContent() {
   }
 }
 function openReader(action) {
+  if (!overview || !envelope || $("stage").inert) return;
+  $("reader").dataset.kind = action;
   const dialog = $("reader");
   if (!dialog.open) lastFocus = document.activeElement;
   clearTimeout(contentTimer);
@@ -709,10 +725,43 @@ $("reader").addEventListener("close", () => {
   boardView = null;
   readerAction = "";
   $("reader-content").replaceChildren();
-  if (lastFocus?.isConnected) lastFocus.focus();
+  if (lastFocus?.isConnected && lastFocus.getClientRects().length)
+    lastFocus.focus();
+  else if (overview) $("entry-toggle").focus();
 });
 $("close-reader").onclick = $("reader-back").onclick = () =>
   $("reader").close();
+$("brand-home").onclick = (e) => {
+  e.preventDefault();
+  if (overview) act("living");
+};
+$("bookmark-living").onclick = () => act("living");
+$("bookmark-hall").onclick = () => act(route.type === "room" ? "back" : "hall");
+$("page-back").onclick = () => act(route.type === "hall" ? "living" : "back");
+$("entry-toggle").onclick = () => $("entries").showModal();
+$("menu-toggle").onclick = () => $("menu").showModal();
+for (const id of ["entries", "menu"]) {
+  $("close-" + id).onclick = () => $(id).close();
+  $(id).addEventListener("click", (event) => {
+    if (event.target === $(id)) {
+      const r = $(id).getBoundingClientRect();
+      if (
+        event.clientX < r.left ||
+        event.clientX > r.right ||
+        event.clientY < r.top ||
+        event.clientY > r.bottom
+      )
+        $(id).close();
+    }
+  });
+}
+$("edit-toggle").onclick = () => {
+  $("editor").open = !$("editor").open;
+  if ($("editor").open) $("editor").scrollIntoView({ block: "nearest" });
+};
+$("editor").addEventListener("toggle", () =>
+  $("edit-toggle").setAttribute("aria-expanded", String($("editor").open)),
+);
 $("palette").onchange = () => {
   draft.palette = $("palette").value;
   dirty = true;
@@ -733,24 +782,26 @@ $("reset").onclick = () => {
   editor();
 };
 $("discard").onclick = $("refresh").onclick = () => {
-  if (!dirty || confirm("放弃尚未保存的草稿并重读？")) refresh();
+  if (!dirty || confirm("放弃尚未保存的草稿并重读？")) {
+    if ($("menu").open) $("menu").close();
+    refresh();
+  }
 };
-$("retry").onclick = refresh;
+$("retry").onclick = () => refresh();
 $("gate-hall").onclick = () => {
   if (location.hash === "#hall/1") refresh();
   else location.hash = "hall/1";
 };
 window.addEventListener("hashchange", () => {
   if ($("reader").open) $("reader").close();
-  refresh();
+  refresh(true);
 });
 mobile.addEventListener("change", () => {
   if (overview && envelope) draw();
 });
 document.querySelector(".skip").onclick = (e) => {
   e.preventDefault();
-  $("scene-actions").tabIndex = -1;
-  $("scene-actions").focus();
+  if (overview) $("entries").showModal();
 };
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) clearView("页面已隐藏，返回后重新验证。");

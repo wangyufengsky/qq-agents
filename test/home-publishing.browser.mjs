@@ -59,6 +59,7 @@ try {
         !document.getElementById("home-content").hidden &&
         document.getElementById("stage").dataset.route === "#room/agent-0",
     );
+    await page.click("#entry-toggle");
     await page
       .locator("#scene-actions")
       .getByRole("button", { name: "查看介绍卡", exact: true })
