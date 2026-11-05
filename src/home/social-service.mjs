@@ -831,12 +831,14 @@ export class HomeSocialService {
       `social-invitation:${row.id}:${row.revision}`,
       ...parse(row.source_labels),
     ]);
-    const expiresAt = Math.min(this.runtime.now() + 15000, row.expires_at);
+    // Page DTO expiry is separate from a model input revalidated on every use.
     this.lease(ctx, () => {
       this.assertBinding(ctx);
       const current = this.assertInvitation(identity, row.id);
       if (
-        this.runtime.now() >= expiresAt ||
+        this.runtime.now() >= current.expires_at ||
+        current.status !== "pending" ||
+        !this.invitationRetained(current) ||
         current.revision !== row.revision ||
         current.body_cleared_at
       )
@@ -1277,11 +1279,18 @@ export class HomeSocialService {
         ...parse(m.source_labels),
       ]);
     if (labels.length) this.track(ctx, labels);
-    const inputExpiresAt = this.runtime.now() + 15000;
     this.lease(ctx, () => {
       this.assertBinding(ctx);
-      this.assertVisit(identity, row.id);
-      if (this.runtime.now() >= inputExpiresAt) throw Error("AUDIENCE_DENIED");
+      const currentVisit = this.assertVisit(identity, row.id);
+      // Recheck actual retention and versions instead of expiring unchanged input.
+      if (
+        !this.retained(currentVisit) &&
+        items.some(
+          (/** @type {any} */ m) =>
+            m.body && !m.retracted_at && !m.hidden_at && !m.body_cleared_at,
+        )
+      )
+        throw Error("AUDIENCE_DENIED");
       for (const old of items) {
         if (old.retracted_at || old.hidden_at || old.body_cleared_at) continue;
         const current = this.db
@@ -1650,18 +1659,10 @@ export class HomeSocialService {
         itemRevision: item.itemRevision,
       });
     }
-    const inputExpiresAt = Math.min(
-      now + 15000,
-      grant.expires_at,
-      visit.expires_at,
-    );
     this.lease(ctx, () => {
       this.assertBinding(ctx);
       const current = this.assertGrant(identity, visit.id, this.runtime.now());
-      if (
-        current.grant.revision !== grant.revision ||
-        this.runtime.now() >= inputExpiresAt
-      )
+      if (current.grant.revision !== grant.revision)
         throw Error("AUDIENCE_DENIED");
       for (const item of selected) {
         if (!proof) throw Error("SOURCE_RESTRICTED");
