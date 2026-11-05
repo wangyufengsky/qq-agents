@@ -126,7 +126,24 @@ export class HomeSocialService {
       .get(invitationId, identity.generation, identity.generation);
     if (!row) throw Error("AUDIENCE_DENIED");
     this.assertPair(row.host_generation, row.guest_generation);
+    if (row.status === "invalidated") throw Error("AUDIENCE_DENIED");
+    if (row.status === "accepted") {
+      const visit = this.db
+        .prepare("SELECT * FROM home_social_visits WHERE invitation_id=?")
+        .get(row.id);
+      if (
+        !visit ||
+        visit.status === "invalidated" ||
+        visit.host_generation !== row.host_generation ||
+        visit.guest_generation !== row.guest_generation
+      )
+        throw Error("AUDIENCE_DENIED");
+    }
     return row;
+  }
+  /** @param {any} invitation @param {number} [now] */
+  invitationReadOnly(invitation, now = this.runtime.now()) {
+    return invitation.status !== "pending" || now >= invitation.expires_at;
   }
   /** Returns a server-owned target for a queue; it never opens a model session.
    * @param {any} identity @param {any} input */
@@ -134,7 +151,10 @@ export class HomeSocialService {
     this.assertActor(identity);
     const target = socialTargetSchema.parse(input),
       now = this.runtime.now();
-    let host, guest, deadline;
+    let host,
+      guest,
+      deadline,
+      readOnly = false;
     if (target.kind === "compose") {
       const other = this.identity(target.id);
       if (identity.generation === other.generation)
@@ -149,17 +169,16 @@ export class HomeSocialService {
         target.kind === "invitation"
           ? this.assertInvitation(identity, target.id)
           : this.assertVisit(identity, target.id, { now });
-      if (
-        target.kind === "invitation" &&
-        (row.status !== "pending" || now >= row.expires_at)
-      )
-        throw Error("INVITATION_EXPIRED");
+      if (target.kind === "invitation")
+        readOnly = this.invitationReadOnly(row, now);
       if (target.kind === "visit" && row.status === "invalidated")
         throw Error("AUDIENCE_DENIED");
       host = row.host_generation;
       guest = row.guest_generation;
       deadline =
-        row.status === "active" || row.status === "pending"
+        !readOnly &&
+        ["active", "pending"].includes(row.status) &&
+        now < row.expires_at
           ? row.expires_at
           : now + this.runtime.config.homeSocial.durationMinutes * 60000;
     }
@@ -170,6 +189,7 @@ export class HomeSocialService {
       targetGuestGeneration: guest,
       policyRevision: this.policy().revision,
       configRevision: this.runtime.configStore.revision,
+      readOnly,
       deadline,
     };
   }
@@ -528,11 +548,22 @@ export class HomeSocialService {
       requestId: input.requestId,
       kind,
       payload: input,
-      authorize: () => {
+      authorize: (gate) => {
         this.assertBinding(ctx, {
           allowExpired,
           allowClosedEnd: endConvergence,
         });
+        // Terminal invitation contexts expose safe state and receipts, never a new write.
+        // Derive this from current rows, since queued bindings may predate the decision.
+        if (
+          ctx.socialBinding.target.kind === "invitation" &&
+          !gate.replay &&
+          this.invitationReadOnly(
+            this.assertInvitation(identity, ctx.socialBinding.target.id),
+            gate.now,
+          )
+        )
+          throw Error("AUDIENCE_DENIED");
         extra(identity);
       },
       apply: (gate) => ({
@@ -713,6 +744,26 @@ export class HomeSocialService {
     const a = socialToolSchemas.home_visit_invitation_read.parse(input),
       identity = this.bound(ctx, "invitation", a.invitationId),
       row = this.assertInvitation(identity, a.invitationId);
+    if (this.invitationReadOnly(row)) {
+      ctx.socialPendingInvitations?.delete(row.id);
+      const visit =
+        row.status === "accepted"
+          ? this.db
+              .prepare(
+                "SELECT id FROM home_social_visits WHERE invitation_id=?",
+              )
+              .get(row.id)
+          : null;
+      return {
+        ...this.invitationMeta(row),
+        ...(visit ? { visitId: visit.id } : {}),
+        readOnly: true,
+        operationStatusOnly: true,
+        policyRevision: this.policy().revision,
+        lease: { expiresAt: this.runtime.now() + 15000 },
+        permittedActions: ["operation-read"],
+      };
+    }
     if (!this.invitationRetained(row)) throw Error("AUDIENCE_DENIED");
     this.track(ctx, [
       `social-invitation:${row.id}:${row.revision}`,
@@ -1728,6 +1779,7 @@ export class HomeSocialService {
           guestGeneration: turn.target_guest_generation,
         };
     }
+    let current;
     let visitId = result.visitId,
       invitationId = result.invitationId;
     if (result.messageId)
@@ -1752,6 +1804,12 @@ export class HomeSocialService {
       );
     if (visitId) {
       const visit = this.assertVisit(identity, visitId);
+      current = {
+        kind: "visit",
+        id: visit.id,
+        state: this.visitMeta(visit).state,
+        revision: visit.revision,
+      };
       if (
         visit.status === "invalidated" ||
         !(
@@ -1765,6 +1823,12 @@ export class HomeSocialService {
         throw Error("AUDIENCE_DENIED");
     } else if (invitationId) {
       const invitation = this.assertInvitation(identity, invitationId);
+      current = {
+        kind: "invitation",
+        id: invitation.id,
+        state: this.invitationMeta(invitation).state,
+        revision: invitation.revision,
+      };
       if (invitation.status === "invalidated") throw Error("AUDIENCE_DENIED");
       const visit =
         binding.target.kind === "visit"
@@ -1783,10 +1847,15 @@ export class HomeSocialService {
       binding.target.kind === "compose" &&
       pairMatches(reference.hostGeneration, reference.guestGeneration)
     ) {
+      current = {
+        kind: "compose",
+        id: binding.target.id,
+        policyRevision: this.policy().revision,
+      };
       if (receipt.kind !== "block")
         this.assertPair(reference.hostGeneration, reference.guestGeneration);
     } else throw Error("AUDIENCE_DENIED");
-    return receipt;
+    return { ...receipt, current };
   }
   /** @param {any} principal */
   assertAdmin(principal) {

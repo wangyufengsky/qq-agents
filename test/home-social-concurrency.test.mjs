@@ -796,4 +796,211 @@ if (!isMainThread) {
       );
     }
   });
+
+  test("S2-06: a lost accept reply can be reconciled from its original invitation in a fresh context", async (t) => {
+    const f = await setup(t),
+      invitationId = f.invitation(),
+      recipient = await f.client("agent-1", {
+        kind: "invitation",
+        id: invitationId,
+      });
+    const args = {
+      requestId: "accept-lost-original",
+      invitationId,
+      expectedInvitationRevision: 1,
+      decision: "accept",
+    };
+    recipient.call("decide", args, false, { dropReply: true });
+    await recipient.event("response-lost");
+    const visitId = f.memory.db
+      .prepare("SELECT id FROM home_social_visits WHERE invitation_id=?")
+      .get(invitationId).id;
+    const visitCtx = socialContext(f.runtime, f.service, "agent-1", {
+      kind: "visit",
+      id: visitId,
+    });
+    assert.equal(
+      f.service.operationRead(visitCtx, { requestId: args.requestId }).status,
+      "committed",
+    );
+    const fresh = socialContext(f.runtime, f.service, "agent-1", {
+        kind: "invitation",
+        id: invitationId,
+      }),
+      safe = f.service.invitationRead(fresh, { invitationId });
+    assert.equal(safe.state, "accepted");
+    assert.equal("purpose" in safe, false);
+    assert.equal("reason" in safe, false);
+    assert.equal(fresh.socialPendingInvitations, undefined);
+    const receipt = f.service.operationRead(fresh, {
+      requestId: args.requestId,
+    });
+    assert.equal(receipt.status, "committed");
+    assert.equal(receipt.result.visitId, visitId);
+    assert.throws(() =>
+      f.service.decide(fresh, {
+        ...args,
+        requestId: "accept-terminal-new",
+        expectedInvitationRevision: 2,
+      }),
+    );
+    assert.equal(
+      f.memory.db.prepare("SELECT count(*) n FROM home_social_visits").get().n,
+      1,
+    );
+  });
+
+  test("S2-06: decline, cancel and expiry retain original-key read-only reconciliation without a visit", async (t) => {
+    for (const decision of ["decline", "cancel", "expired"]) {
+      const f = await setup(t),
+        invitationId = f.invitation(),
+        actorId = decision === "decline" ? "agent-1" : "agent-0";
+      const expires = f.memory.db
+        .prepare("SELECT expires_at FROM home_social_invitations WHERE id=?")
+        .get(invitationId).expires_at;
+      let originalKey, originalArgs;
+      if (decision === "expired") {
+        originalKey = f.memory.db
+          .prepare(
+            "SELECT request_id FROM home_social_operations WHERE kind='invite'",
+          )
+          .get().request_id;
+        Atomics.store(f.clock, 0, BigInt(expires));
+      } else {
+        const pending = socialContext(f.runtime, f.service, actorId, {
+          kind: "invitation",
+          id: invitationId,
+        });
+        originalArgs = {
+          requestId: `terminal-${decision}-original`,
+          invitationId,
+          expectedInvitationRevision: 1,
+          decision,
+        };
+        originalKey = originalArgs.requestId;
+        f.service.decide(pending, originalArgs);
+      }
+      const ctx = socialContext(f.runtime, f.service, actorId, {
+          kind: "invitation",
+          id: invitationId,
+        }),
+        meta = f.service.invitationRead(ctx, { invitationId });
+      assert.equal(meta.readOnly, true);
+      assert.equal(
+        meta.state,
+        decision === "decline"
+          ? "declined"
+          : decision === "cancel"
+            ? "cancelled"
+            : "expired",
+      );
+      assert.deepEqual(meta.permittedActions, ["operation-read"]);
+      assert.equal("purpose" in meta, false);
+      assert.equal("reason" in meta, false);
+      assert.equal(ctx.socialPendingInvitations, undefined);
+      const receipt = f.service.operationRead(ctx, { requestId: originalKey });
+      assert.equal(receipt.status, "committed");
+      assert.equal(receipt.current.state, meta.state);
+      assert.equal(
+        f.service.operationRead(ctx, { requestId: "unknown-terminal-key" })
+          .status,
+        "unknown",
+      );
+      const count = f.memory.db
+        .prepare("SELECT count(*) n FROM home_social_operations")
+        .get().n;
+      assert.throws(() =>
+        f.service.decide(ctx, {
+          requestId: `terminal-${decision}-new`,
+          invitationId,
+          expectedInvitationRevision: meta.invitationRevision,
+          decision: "accept",
+        }),
+      );
+      assert.throws(
+        () =>
+          f.service.block(ctx, {
+            requestId: `terminal-${decision}-block`,
+            targetAgentId: actorId === "agent-0" ? "agent-1" : "agent-0",
+            expectedPolicyRevision: f.service.policy().revision,
+            blocked: true,
+          }),
+        /AUDIENCE_DENIED/,
+      );
+      if (originalArgs)
+        assert.equal(
+          f.service.decide(ctx, originalArgs).historicalReplay,
+          true,
+        );
+      assert.equal(
+        f.memory.db
+          .prepare("SELECT count(*) n FROM home_social_operations")
+          .get().n,
+        count,
+      );
+      assert.equal(
+        f.memory.db.prepare("SELECT count(*) n FROM home_social_visits").get()
+          .n,
+        0,
+      );
+      assert.equal(
+        f.memory.db
+          .prepare("SELECT expires_at FROM home_social_invitations WHERE id=?")
+          .get(invitationId).expires_at,
+        expires,
+      );
+    }
+  });
+
+  test("S2-06: revoked, blocked and replaced identities cannot reopen terminal invitation receipts", async (t) => {
+    for (const mode of ["block", "invalidated", "generation"]) {
+      const f = await setup(t),
+        id = f.invitation(),
+        recipient = socialContext(f.runtime, f.service, "agent-1", {
+          kind: "invitation",
+          id,
+        });
+      f.service.decide(recipient, {
+        requestId: "decline-revoked-original",
+        invitationId: id,
+        expectedInvitationRevision: 1,
+        decision: "decline",
+      });
+      if (mode === "block") {
+        const actor = socialContext(f.runtime, f.service, "agent-0", {
+          kind: "compose",
+          id: "agent-1",
+        });
+        f.service.block(actor, {
+          requestId: "block-terminal-pair",
+          targetAgentId: "agent-1",
+          expectedPolicyRevision: f.service.policy().revision,
+          blocked: true,
+        });
+      }
+      if (mode === "invalidated")
+        f.memory.db
+          .prepare(
+            "UPDATE home_social_invitations SET status='invalidated' WHERE id=?",
+          )
+          .run(id);
+      if (mode === "generation")
+        f.memory.db
+          .prepare(
+            "UPDATE home_identities SET generation=? WHERE agent_id='agent-1'",
+          )
+          .run(randomUUID());
+      assert.throws(() =>
+        socialContext(f.runtime, f.service, "agent-1", {
+          kind: "invitation",
+          id,
+        }),
+      );
+      assert.throws(() =>
+        f.service.operationRead(recipient, {
+          requestId: "decline-revoked-original",
+        }),
+      );
+    }
+  });
 }
