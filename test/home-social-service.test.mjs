@@ -4,9 +4,10 @@ import { randomUUID } from "node:crypto";
 import { fixture, config } from "./helpers.mjs";
 import { validateConfig } from "../src/core/config.mjs";
 import { HOME_SOCIAL_DEFAULTS } from "../src/home/social-policy.mjs";
+import { HomeSocialService } from "../src/home/social-service.mjs";
 
-function setup(t) {
-  const cfg = config();
+function setup(t, n = 3) {
+  const cfg = config(n);
   cfg.homeSocial = { ...HOME_SOCIAL_DEFAULTS, enabled: true };
   for (const a of cfg.agents) {
     a.home = {
@@ -895,4 +896,182 @@ test("operation lookup checks original entity ACL and cannot cross a bound visit
     f.s.operationRead(other, { requestId: "unknown-original" }).status,
     "unknown",
   );
+});
+
+test("inbox pagination does not lose visible invitations after blocked, deleted or disabled candidates", async (t) => {
+  for (const mode of ["blocked", "deleted", "disabled"]) {
+    const f = setup(t, 8),
+      ids = [];
+    for (let i = 1; i <= 6; i++) {
+      const ctx = f.ctx(`agent-${i}`, { kind: "compose", id: "agent-0" });
+      ids.push(
+        f.s.invite(ctx, {
+          requestId: `inbox-${mode}-${i}`,
+          targetAgentId: "agent-0",
+          roomOwnerAgentId: "agent-0",
+          purpose: `Synthetic inbox purpose ${i}`,
+        }).result.invitationId,
+      );
+    }
+    if (mode === "blocked")
+      for (const i of [1, 3]) {
+        const ctx = f.ctx("agent-0", { kind: "compose", id: `agent-${i}` });
+        f.s.block(ctx, {
+          requestId: `block-inbox-${i}`,
+          targetAgentId: `agent-${i}`,
+          blocked: true,
+          expectedPolicyRevision: f.s.policy().revision,
+        });
+      }
+    else {
+      const next = structuredClone(f.runtime.config);
+      if (mode === "deleted")
+        next.agents = next.agents.filter(
+          (a) => !["agent-1", "agent-3"].includes(a.id),
+        );
+      else
+        for (const a of next.agents)
+          if (["agent-1", "agent-3"].includes(a.id))
+            a.home.social.enabled = false;
+      await f.runtime.changeConfig(next, f.configStore.revision);
+    }
+    const ctx = f.ctx("agent-0", { kind: "compose", id: "agent-7" }),
+      seen = [];
+    let cursor;
+    for (let pages = 0; pages < 10; pages++) {
+      const page = f.s.inbox(ctx, { limit: 1, ...(cursor ? { cursor } : {}) });
+      assert.equal(JSON.stringify(page.items).includes(ids[0]), false);
+      assert.equal(JSON.stringify(page.items).includes(ids[2]), false);
+      assert.equal(
+        JSON.stringify(page.items).includes("Synthetic inbox purpose"),
+        false,
+      );
+      seen.push(...page.items.map((item) => item.id));
+      cursor = page.nextCursor;
+      if (!cursor) break;
+    }
+    assert.equal(cursor, null);
+    assert.deepEqual(seen, [ids[1], ids[3], ids[4], ids[5]]);
+    assert.equal(new Set(seen).size, seen.length);
+  }
+});
+
+test("inbox scans at most 200 denied tombstones and returns a private continuation to a visible tail", (t) => {
+  const f = setup(t, 4),
+    host = f.s.identity("agent-0"),
+    guest = f.s.identity("agent-1");
+  // Old terminal metadata can outlive body retention and current invitation quotas.
+  f.s.store.transaction((now) => {
+    const insert = f.s.db.prepare(
+      "INSERT INTO home_social_invitations(id,host_agent_id,host_generation,guest_agent_id,guest_generation,initiator_generation,recipient_generation,room_id,audience,requested_scope,status,policy_revision,created_at,expires_at,decided_at) VALUES(?,?,?,?,?,?,?,?,?,?,'declined',0,?,?,?)",
+    );
+    for (let i = 0; i < 201; i++)
+      insert.run(
+        randomUUID(),
+        host.agentId,
+        host.generation,
+        guest.agentId,
+        guest.generation,
+        guest.generation,
+        host.generation,
+        "room:" + host.generation,
+        JSON.stringify([host.generation, guest.generation]),
+        JSON.stringify({ scope: ["layout"], selectedItems: [] }),
+        now - 86400000 * 90 + i,
+        now - 86400000 * 89 + i,
+        now - 86400000 * 90 + i + 1,
+      );
+  });
+  const block = f.ctx("agent-0", { kind: "compose", id: "agent-1" });
+  f.s.block(block, {
+    requestId: "block-inbox-tombstones",
+    targetAgentId: "agent-1",
+    blocked: true,
+    expectedPolicyRevision: f.s.policy().revision,
+  });
+  const sender = f.ctx("agent-2", { kind: "compose", id: "agent-0" }),
+    expected = f.s.invite(sender, {
+      requestId: "inbox-visible-tail",
+      targetAgentId: "agent-0",
+      roomOwnerAgentId: "agent-0",
+      purpose: "Synthetic visible tail",
+    }).result.invitationId;
+  const ctx = f.ctx("agent-0", { kind: "compose", id: "agent-3" }),
+    limits = [],
+    prepare = f.s.db.prepare.bind(f.s.db);
+  f.s.db.prepare = (sql) => {
+    const statement = prepare(sql);
+    return sql.includes("FROM home_social_invitations WHERE (host_generation=")
+      ? {
+          all: (...args) => {
+            limits.push(args.at(-1));
+            return statement.all(...args);
+          },
+        }
+      : statement;
+  };
+  try {
+    const first = f.s.inbox(ctx, { limit: 1 });
+    assert.deepEqual(first.items, []);
+    assert.ok(first.nextCursor);
+    const next = f.s.inbox(ctx, { limit: 1, cursor: first.nextCursor });
+    assert.deepEqual(
+      next.items.map((item) => item.id),
+      [expected],
+    );
+    assert.equal(next.nextCursor, null);
+    assert.ok(limits.length === 2 && limits.every((limit) => limit <= 201));
+    assert.equal(
+      Buffer.from(first.nextCursor.slice(4), "base64url")
+        .toString("utf8")
+        .includes(host.generation),
+      false,
+    );
+  } finally {
+    f.s.db.prepare = prepare;
+  }
+});
+
+test("inbox cursors reject changed readers, tampering, oversized tokens and new service-instance keys", (t) => {
+  const f = setup(t, 4);
+  for (const i of [1, 2]) {
+    const c = f.ctx(`agent-${i}`, { kind: "compose", id: "agent-0" });
+    f.s.invite(c, {
+      requestId: `cursor-inbox-${i}`,
+      targetAgentId: "agent-0",
+      roomOwnerAgentId: "agent-0",
+      purpose: "Synthetic cursor fixture",
+    });
+  }
+  let owner = f.ctx("agent-0", { kind: "compose", id: "agent-3" });
+  const first = f.s.inbox(owner, { limit: 1 }),
+    token = first.nextCursor;
+  assert.ok(token);
+  owner = f.ctx("agent-0", { kind: "compose", id: "agent-3" });
+  assert.equal(f.s.inbox(owner, { limit: 1, cursor: token }).items.length, 1);
+  const other = f.ctx("agent-2", { kind: "compose", id: "agent-3" });
+  assert.throws(
+    () => f.s.inbox(other, { limit: 1, cursor: token }),
+    /INVALID_CURSOR/,
+  );
+  for (const bad of [
+    "",
+    "in1.bad",
+    "in1." + "a".repeat(600),
+    token.slice(0, -4) + (token.at(-4) === "a" ? "b" : "a") + token.slice(-3),
+  ])
+    assert.throws(
+      () => f.s.inbox(owner, { limit: 1, cursor: bad }),
+      /INVALID_CURSOR/,
+    );
+  const restarted = new HomeSocialService(
+    f.runtime,
+    f.runtime.home,
+    f.s.sources,
+  );
+  assert.throws(
+    () => restarted.inbox(owner, { limit: 1, cursor: token }),
+    /INVALID_CURSOR/,
+  );
+  assert.equal(f.s.inbox(owner, { limit: 1, cursor: token }).items.length, 1);
 });

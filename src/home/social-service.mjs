@@ -1,5 +1,12 @@
 // @ts-check
-import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
+import {
+  createHash,
+  createHmac,
+  createCipheriv,
+  createDecipheriv,
+  randomBytes,
+  randomUUID,
+} from "node:crypto";
 import { SocialStore } from "./social-store.mjs";
 import { homeTemplate } from "./layout.mjs";
 import {
@@ -39,6 +46,7 @@ export class HomeSocialService {
     /** @type {any} */
     this.db = this.store.db;
     this.cursorSecret = randomBytes(32);
+    this.inboxCursorSecret = randomBytes(32);
     this.sources = sources;
   }
   policy() {
@@ -387,6 +395,53 @@ export class HomeSocialService {
       throw Error("INVALID_CURSOR");
     return result.after;
   }
+  /** Scan positions are private: skipped rows must not expose global row IDs.
+   * @param {any} binding @param {number} after */
+  inboxCursor(binding, after) {
+    const iv = randomBytes(12),
+      cipher = createCipheriv("aes-256-gcm", this.inboxCursorSecret, iv);
+    cipher.setAAD(Buffer.from("home-social-inbox-v1"));
+    const encrypted = Buffer.concat([
+      cipher.update(JSON.stringify({ binding, after }), "utf8"),
+      cipher.final(),
+    ]);
+    return (
+      "in1." +
+      Buffer.concat([iv, cipher.getAuthTag(), encrypted]).toString("base64url")
+    );
+  }
+  /** @param {string|undefined} token @param {any} binding */
+  inboxAfter(token, binding) {
+    if (token === undefined) return 0;
+    try {
+      if (token.length > 512 || !/^in1\.[A-Za-z0-9_-]+$/.test(token))
+        throw Error("INVALID_CURSOR");
+      const data = Buffer.from(token.slice(4), "base64url");
+      if (data.length < 29) throw Error("INVALID_CURSOR");
+      const decipher = createDecipheriv(
+        "aes-256-gcm",
+        this.inboxCursorSecret,
+        data.subarray(0, 12),
+      );
+      decipher.setAAD(Buffer.from("home-social-inbox-v1"));
+      decipher.setAuthTag(data.subarray(12, 28));
+      const value = parse(
+        Buffer.concat([
+          decipher.update(data.subarray(28)),
+          decipher.final(),
+        ]).toString("utf8"),
+      );
+      if (
+        !same(value.binding, binding) ||
+        !Number.isSafeInteger(value.after) ||
+        value.after < 0
+      )
+        throw Error("INVALID_CURSOR");
+      return value.after;
+    } catch {
+      throw Error("INVALID_CURSOR");
+    }
+  }
   /** @param {any} visit @param {number} [now] */
   retained(visit, now = this.runtime.now()) {
     const terminalAt =
@@ -710,27 +765,34 @@ export class HomeSocialService {
         reader: identity.generation,
         policy: this.policy().revision,
       };
-    const after = this.after(a.cursor, binding),
-      rows = this.db
-        .prepare(
-          "SELECT rowid AS cursor_key,* FROM home_social_invitations WHERE (host_generation=? OR guest_generation=?) AND rowid>? ORDER BY rowid LIMIT ?",
-        )
-        .all(identity.generation, identity.generation, after, a.limit + 1);
-    const visible = rows.filter((/** @type {any} */ row) => {
-        try {
-          this.assertPair(row.host_generation, row.guest_generation);
-          return true;
-        } catch {
-          return false;
-        }
-      }),
-      items = visible.slice(0, a.limit);
+    const after = this.inboxAfter(a.cursor, binding),
+      scanLimit = 200;
+    const rows = this.db
+      .prepare(
+        "SELECT rowid AS cursor_key,id,host_agent_id,host_generation,guest_agent_id,guest_generation,initiator_generation,recipient_generation,room_id,status,revision,created_at,expires_at,recipient_viewed_at,requested_scope,effective_scope FROM home_social_invitations WHERE (host_generation=? OR guest_generation=?) AND rowid>? ORDER BY rowid LIMIT ?",
+      )
+      .all(identity.generation, identity.generation, after, scanLimit + 1);
+    const items = [];
+    let scanned = 0,
+      position = after;
+    // Advance over denied candidates as well as visible ones; a full denied scan may yield an empty continuation page.
+    while (
+      scanned < Math.min(scanLimit, rows.length) &&
+      items.length < a.limit
+    ) {
+      const row = rows[scanned++];
+      position = row.cursor_key;
+      try {
+        this.assertPair(row.host_generation, row.guest_generation);
+      } catch {
+        continue;
+      }
+      items.push(this.invitationMeta(row));
+    }
     return {
-      items: items.map((/** @type {any} */ row) => this.invitationMeta(row)),
+      items,
       nextCursor:
-        visible.length > a.limit
-          ? this.cursor(binding, items.at(-1).cursor_key)
-          : null,
+        scanned < rows.length ? this.inboxCursor(binding, position) : null,
       policyRevision: this.policy().revision,
     };
   }
