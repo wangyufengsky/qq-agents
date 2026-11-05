@@ -308,3 +308,38 @@ test("initial personal project evidence survives derivation and is checked for l
     /HOME_SOURCE_DENIED/,
   );
 });
+
+test("intent hints count only currently visible display slots when snapshot publishing is disabled", async (t) => {
+  const f = setup(t),
+    a = f.runtime.agent("agent-0");
+  a.home.intents.enabled = true;
+  const p = await draft(f);
+  await f.call("room_publish_snapshot", await args(f, p));
+  const view = await f.call("room_read");
+  await f.call("room_publish", {
+    identityGeneration: view.identityGeneration,
+    expectedItemRevision: 0,
+    slot: "intro",
+    requestId: "hint-original-intro",
+    title: "原创介绍",
+    body: "独立原创文字继续显示",
+    source: "original-text",
+  });
+  const hint = () => f.runtime.home.rooms.intents.hint("agent-0");
+  assert.equal(hint().publishedSlots, 2);
+  a.home.projectSnapshots.enabled = false;
+  assert.equal(hint().publishedSlots, 1);
+  assert.equal(
+    f.runtime.home.rooms
+      .display("agent-0")
+      .items.find((item) => item.slot === "work-1").visible,
+    false,
+  );
+  a.home.projectSnapshots.enabled = true;
+  assert.equal(hint().publishedSlots, 2);
+  a.home.publishing = false;
+  assert.equal(hint().publishedSlots, 0);
+  a.home.enabled = false;
+  assert.equal(hint(), null);
+  assert.equal(f.runtime.jobs.size, 0);
+});

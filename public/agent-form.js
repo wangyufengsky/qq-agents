@@ -201,6 +201,10 @@ const AGENT_TOOL_GROUPS = [
     title: "纸页小窝",
     desc: "默认关闭。启用后所有会话可读自己的展示，只有主人格可布置；文字发布需要另开发布开关。",
     tools: {
+      room_intent_submit: "递交自己的小窝提议",
+      room_intent_list: "查看自己的小窝提议",
+      room_intent_resolve: "主人格处理小窝提议",
+      room_intent_cancel: "取消尚未执行的提议",
       room_read: "读取自己的展示",
       room_scene_read: "读取房间与公共布局",
       room_scene_patch: "主人格布置",
@@ -738,6 +742,34 @@ const agentForm = {
             "homeProjectSnapshots",
             "允许可信项目原稿固定版本展示",
             row.home?.projectSnapshots?.enabled,
+          ) +
+          check(
+            "homeIntents",
+            "允许其他会话向自己的主人格提交小窝提议",
+            row.home?.intents?.enabled,
+          ) +
+          check(
+            "homeIntentHints",
+            "在已运行的主体回合提示待处理数量（不唤醒）",
+            row.home?.intents?.hints ?? true,
+          ) +
+          input(
+            "homeIntentTtl",
+            "提议有效天数",
+            row.home?.intents?.ttlDays ?? 7,
+            'type="number" min="1" max="30"',
+          ) +
+          input(
+            "homeIntentPending",
+            "最多待处理提议",
+            row.home?.intents?.maxPending ?? 20,
+            'type="number" min="1" max="100"',
+          ) +
+          input(
+            "homeIntentDaily",
+            "每天最多提交提议（UTC）",
+            row.home?.intents?.maxSubmissionsPerDay ?? 20,
+            'type="number" min="1" max="100"',
           ) +
           input(
             "homeMaxWrites",
@@ -1462,6 +1494,13 @@ const agentForm = {
               enabled: f.has("homeEnabled"),
               publishing: f.has("homePublishing"),
               projectSnapshots: { enabled: f.has("homeProjectSnapshots") },
+              intents: {
+                enabled: f.has("homeIntents"),
+                hints: f.has("homeIntentHints"),
+                ttlDays: Number(get("homeIntentTtl") || 7),
+                maxPending: Number(get("homeIntentPending") || 20),
+                maxSubmissionsPerDay: Number(get("homeIntentDaily") || 20),
+              },
               maxWritesPerDay: Number(
                 get("homeMaxWrites") || original.home?.maxWritesPerDay || 20,
               ),

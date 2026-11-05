@@ -140,6 +140,12 @@ export class MemoryStore {
       CREATE INDEX IF NOT EXISTS board_threads ON board_entries(post_id,seq);
       CREATE INDEX IF NOT EXISTS board_quota ON board_entries(author_kind,author_id,day);
       CREATE TABLE IF NOT EXISTS home_item_sources(generation TEXT NOT NULL,slot TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(generation,slot));
+      CREATE TABLE IF NOT EXISTS home_intents (
+      generation TEXT NOT NULL, id TEXT PRIMARY KEY, request_id TEXT NOT NULL,
+      digest TEXT NOT NULL, source_session TEXT NOT NULL, state TEXT NOT NULL,
+      proposal TEXT, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
+      last_viewed_at INTEGER, resolved_at INTEGER, last_attempt_at INTEGER, last_attempt_error TEXT, operation_request_id TEXT, receipt TEXT,
+      UNIQUE(generation,request_id));
       CREATE TABLE IF NOT EXISTS home_rooms(generation TEXT PRIMARY KEY,content_revision INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS home_items(generation TEXT NOT NULL,slot TEXT NOT NULL,item_id TEXT NOT NULL,revision INTEGER NOT NULL,state TEXT NOT NULL,title TEXT NOT NULL,body TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(generation,slot));
       CREATE TABLE IF NOT EXISTS home_write_usage(generation TEXT NOT NULL,day TEXT NOT NULL,writes INTEGER NOT NULL,PRIMARY KEY(generation,day));

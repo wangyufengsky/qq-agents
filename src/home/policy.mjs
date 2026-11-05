@@ -1,5 +1,11 @@
 // @ts-check
 import { z } from "zod";
+export const HOME_INTENT_TOOLS = Object.freeze([
+  "room_intent_submit",
+  "room_intent_list",
+  "room_intent_resolve",
+  "room_intent_cancel",
+]);
 export const HOME_READ_TOOLS = Object.freeze([
   "room_read",
   "room_scene_read",
@@ -13,6 +19,7 @@ export const HOME_WRITE_TOOLS = Object.freeze([
   "room_retract",
 ]);
 export const HOME_TOOLS = Object.freeze([
+  ...HOME_INTENT_TOOLS,
   ...HOME_READ_TOOLS,
   ...HOME_WRITE_TOOLS,
 ]);
@@ -32,6 +39,22 @@ export const homePolicySchema = z
       .object({ enabled: z.boolean().default(false) })
       .strict()
       .default({ enabled: false }),
+    intents: z
+      .object({
+        enabled: z.boolean().default(false),
+        hints: z.boolean().default(true),
+        ttlDays: z.number().int().min(1).max(30).default(7),
+        maxPending: z.number().int().min(1).max(100).default(20),
+        maxSubmissionsPerDay: z.number().int().min(1).max(100).default(20),
+      })
+      .strict()
+      .default({
+        enabled: false,
+        hints: true,
+        ttlDays: 7,
+        maxPending: 20,
+        maxSubmissionsPerDay: 20,
+      }),
     maxWritesPerDay: z.number().int().min(1).max(100).default(20),
   })
   .strict()
@@ -40,6 +63,13 @@ export const homePolicySchema = z
     publishing: false,
     projectSnapshots: { enabled: false },
     maxWritesPerDay: 20,
+    intents: {
+      enabled: false,
+      hints: true,
+      ttlDays: 7,
+      maxPending: 20,
+      maxSubmissionsPerDay: 20,
+    },
   });
 export const homeRevision = z
   .number()

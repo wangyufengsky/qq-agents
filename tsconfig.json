@@ -102,6 +102,7 @@
     "src/home/policy.mjs",
     "src/home/room-store.mjs",
     "src/home/rooms.mjs",
-    "src/home/project-snapshots.mjs"
+    "src/home/project-snapshots.mjs",
+    "src/home/intents.mjs"
   ]
 }

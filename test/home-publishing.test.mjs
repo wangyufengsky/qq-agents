@@ -58,6 +58,13 @@ test("home defaults deny discovery and forged dispatch, with immediate revocatio
     publishing: false,
     projectSnapshots: { enabled: false },
     maxWritesPerDay: 20,
+    intents: {
+      enabled: false,
+      hints: true,
+      ttlDays: 7,
+      maxPending: 20,
+      maxSubmissionsPerDay: 20,
+    },
   });
   for (const scope of ["group:20000", "private:30000", "@subject"]) {
     assert.equal(
