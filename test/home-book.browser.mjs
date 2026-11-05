@@ -225,6 +225,21 @@ try {
             imgs.every((i) => i.complete && i.naturalWidth > 0),
           ),
       );
+      if (hash === "living") {
+        await page.locator("#bookmark-living").hover();
+        await page.locator("#bookmarks").evaluate(async (node) => {
+          await Promise.all(
+            node.getAnimations({ subtree: true }).map((a) => a.finished),
+          );
+        });
+        check(
+          `hovered bookmark stays inside viewport ${width}`,
+          await page.evaluate(
+            () => document.documentElement.scrollWidth <= innerWidth,
+          ),
+        );
+        await page.mouse.move(0, 0);
+      }
       if (width === 390 || width === 1024)
         await page.screenshot({
           path: path.join(output, `${hash.replaceAll("/", "-")}-${width}.png`),
