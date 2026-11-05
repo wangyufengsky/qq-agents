@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { MemoryStore } from "../src/memory/store.mjs";
@@ -131,7 +133,9 @@ test("restore refuses active or incomplete destinations without inventing config
   fs.rmSync(path.join(f.root, "config.json"));
   assert.throws(
     () => prepareSocialRecovery(f.root, { retentionDays: 30 }),
-    /ENOENT/,
+    (error) =>
+      error.message === "SOCIAL_RECOVERY_INPUT_INVALID" &&
+      !Object.hasOwn(error, "cause"),
   );
   assert.equal(fs.existsSync(path.join(f.root, "config.json")), false);
 });
@@ -200,4 +204,59 @@ test("recovery holds the real process lock through validation and always release
   );
   const afterFailure = acquireProcessLock(f.root);
   afterFailure.release();
+});
+
+test("recovery CLI contains malformed and missing inputs without leaking private bytes", (t) => {
+  for (const scenario of ["malformed", "missing", "database", "usage"]) {
+    const f = setup(t);
+    const configFile = path.join(f.root, "config.json");
+    const databaseFile = path.join(f.root, "memory.sqlite");
+    const marker = "SYNTHETIC_RECOVERY_SECRET_MARKER";
+    if (scenario === "malformed")
+      fs.writeFileSync(configFile, '{"agents":[],"secret":' + marker + "}");
+    if (scenario === "missing") fs.rmSync(configFile);
+    if (scenario === "database") fs.writeFileSync(databaseFile, marker);
+    const beforeConfig = fs.existsSync(configFile)
+      ? fs.readFileSync(configFile)
+      : null;
+    const beforeDatabase = fs.readFileSync(databaseFile);
+    const result = spawnSync(
+      process.execPath,
+      [
+        fileURLToPath(
+          new URL("../scripts/home-social-recover.mjs", import.meta.url),
+        ),
+        ...(scenario === "usage"
+          ? []
+          : ["--data", f.root, "--retention-days", "30"]),
+      ],
+      { encoding: "utf8", env: { ...process.env, NODE_NO_WARNINGS: "1" } },
+    );
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, "");
+    const expected = {
+      malformed: "SOCIAL_RECOVERY_CONFIG_INVALID",
+      missing: "SOCIAL_RECOVERY_INPUT_INVALID",
+      database: "SOCIAL_RECOVERY_FAILED",
+      usage: "SOCIAL_RECOVERY_USAGE",
+    }[scenario];
+    assert.equal(result.stderr, JSON.stringify({ error: expected }) + "\n");
+    assert.equal(result.stderr.includes(marker), false);
+    assert.equal(result.stderr.includes(f.root), false);
+    assert.equal(result.stderr.includes(" at "), false);
+    if (beforeConfig)
+      assert.deepEqual(fs.readFileSync(configFile), beforeConfig);
+    else assert.equal(fs.existsSync(configFile), false);
+    assert.deepEqual(fs.readFileSync(databaseFile), beforeDatabase);
+    const lock = acquireProcessLock(f.root);
+    lock.release();
+    if (scenario === "malformed") {
+      assert.throws(
+        () => prepareSocialRecovery(f.root, { retentionDays: 30 }),
+        (error) => error.message === expected && !Object.hasOwn(error, "cause"),
+      );
+      const afterFailure = acquireProcessLock(f.root);
+      afterFailure.release();
+    }
+  }
 });

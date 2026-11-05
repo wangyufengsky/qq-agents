@@ -30,10 +30,23 @@ export function prepareSocialRecovery(
     const configFile = path.join(root, "config.json");
     const databaseFile = path.join(root, "memory.sqlite");
     // Refuse missing inputs and links: this command must never create an empty restore.
-    for (const file of [configFile, databaseFile])
-      if (!fs.lstatSync(file).isFile())
-        throw Error("SOCIAL_RECOVERY_INPUT_INVALID");
-    const config = JSON.parse(fs.readFileSync(configFile, "utf8"));
+    let configText;
+    try {
+      for (const file of [configFile, databaseFile])
+        if (!fs.lstatSync(file).isFile())
+          throw Error("SOCIAL_RECOVERY_INPUT_INVALID");
+      configText = fs.readFileSync(configFile, "utf8");
+    } catch {
+      // Native filesystem errors contain destination paths.
+      throw Error("SOCIAL_RECOVERY_INPUT_INVALID");
+    }
+    let config;
+    try {
+      config = JSON.parse(configText);
+    } catch {
+      // SyntaxError messages can include fragments of private configuration.
+      throw Error("SOCIAL_RECOVERY_CONFIG_INVALID");
+    }
     if (!config || typeof config !== "object" || !Array.isArray(config.agents))
       throw Error("SOCIAL_RECOVERY_CONFIG_INVALID");
     const now = clock();
