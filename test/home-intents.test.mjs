@@ -359,3 +359,39 @@ test("maintenance blocks ordinary submit and cancel without granting subject wri
     "pending",
   );
 });
+
+test("every retained furniture operation rejects hidden text or invalid versions before later reset or overwrite", async (t) => {
+  const f = setup(t);
+  for (const [index, ending] of [
+    [{ action: "reset-object", instanceId: "desk" }],
+    [
+      {
+        action: "object",
+        instanceId: "desk",
+        value: { asset: "desk", assetVersion: 1 },
+      },
+    ],
+  ].entries()) {
+    for (const [field, value] of [
+      ["asset", "Synthetic private chat text"],
+      ["assetVersion", 999],
+    ]) {
+      const proposal = {
+        kind: "room_scene_patch",
+        operations: [
+          { action: "object", instanceId: "desk", value: { [field]: value } },
+          ...ending,
+        ],
+      };
+      await assert.rejects(
+        submit(f, f.chat, `retained-${index}-${field}`, proposal),
+        /HOME_SCENE_INVALID/,
+      );
+    }
+  }
+  assert.equal(
+    f.store.db.prepare("SELECT COUNT(*) n FROM home_intents").get().n,
+    0,
+  );
+  assert.equal((await f.call("room_intent_list")).items.length, 0);
+});

@@ -1,6 +1,8 @@
 // @ts-check
 import { createHash, randomUUID } from "node:crypto";
 import { homeTemplate, validateLayout } from "./layout.mjs";
+import { validateScene } from "../../public/home-preview/scene.mjs";
+import { catalog } from "../../public/home-preview/catalog.mjs";
 /** Intent payloads are immutable proposals, not authority transferred from another session. */
 export class HomeIntents {
   /** @param {any} rooms */
@@ -111,7 +113,8 @@ export class HomeIntents {
       if (args.proposal.kind === "room_scene_patch") {
         // Restrict every string to real furniture/palette choices before crossing sessions.
         const layout = rooms.store.layout(generation).layout,
-          ids = new Set(homeTemplate("room").allInstanceIds);
+          template = homeTemplate("room"),
+          ids = new Set(template.allInstanceIds);
         for (const op of args.proposal.operations) {
           if (op.action === "palette") layout.palette = op.palette;
           else {
@@ -124,6 +127,9 @@ export class HomeIntents {
                 ...op.value,
               };
           }
+          // The stored proposal retains every operation, including values overwritten later.
+          // Validate strings/versions per step, while geometry remains an atomic batch check.
+          validateScene(layout, template, catalog);
         }
         validateLayout(layout, "room");
       }
