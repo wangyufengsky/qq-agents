@@ -49,14 +49,29 @@ test("real browser renders persisted scene with the packaged desktop and mobile 
     t.skip("local Chromium unavailable; browser acceptance remains required");
     return;
   }
-  await checkChromePipeStages(t, executablePath);
   const snapshot = {
     type: "room",
     view: { layout: defaultLayout("room") },
     template: homeTemplate("room"),
     residents: [],
   };
-  const desktop = await renderHomeScene(snapshot, { executablePath });
+  let desktop, renderFailure;
+  // Keep the native renderer first: a diagnostic browser must not prewarm away
+  // the cold failure. A successful probe never replaces that original failure.
+  try {
+    desktop = await renderHomeScene(snapshot, { executablePath });
+  } catch (error) {
+    renderFailure = error;
+  }
+  try {
+    await checkChromePipeStages(t, executablePath);
+  } catch (error) {
+    if (!renderFailure) throw error;
+    t.diagnostic(
+      "chrome-cdp-pipe-stages: probe also failed; original renderer failure preserved",
+    );
+  }
+  if (renderFailure) throw renderFailure;
   assert.equal(desktop.readUInt32BE(16), 960);
   assert.equal(desktop.readUInt32BE(20), 640);
   snapshot.view.layout.palette = "rose";
