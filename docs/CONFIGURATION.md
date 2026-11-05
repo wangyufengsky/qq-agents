@@ -25,7 +25,7 @@ OneBot 令牌填写环境变量名 `tokenEnv`，配置里只保存变量名，�
 
 `type: "antigravity"` 使用官方 `agy` headless CLI。管理台和安装向导均支持；按角色隔离 profile，按聊天明确续接，工具继续执行统一权限检查。它不需要 `baseUrl` 或 API 密钥，不自动切换现有角色。支持范围、配置片段与真实模型隔离验收见 [Antigravity 指南](ANTIGRAVITY.md)。
 
-Antigravity 可选 `cliReuse` 只适用于此后端：`enabled` 默认 `false`；`idleTimeoutMs` 默认 `600000`，范围 `1000–3600000`；`maxIdleProcesses` 默认 `2`，范围 `1–16`。开启时按聊天复用 CLI，空闲时撤销工具权限；取消和会话交接仍按原契约处理。启停复用改变原生路由契约并交接相关会话；两个资源保留参数不改变会话身份。管理台高级设置可配置，详情及分段计时口径见 [连续对话](ANTIGRAVITY.md#连续对话与分段耗时)。
+Antigravity 可选 `cliReuse` 只适用于此后端：`enabled` 在新安装默认配置中为 `true`，现有显式值保留，旧配置缺少 `board` 或 `board.enabled` 时仍为 `false`；`idleTimeoutMs` 默认 `600000`，范围 `1000–3600000`；`maxIdleProcesses` 默认 `2`，范围 `1–16`。开启时按聊天复用 CLI，空闲时撤销工具权限；取消和会话交接仍按原契约处理。启停复用改变原生路由契约并交接相关会话；两个资源保留参数不改变会话身份。管理台高级设置可配置，详情及分段计时口径见 [连续对话](ANTIGRAVITY.md#连续对话与分段耗时)。
 
 ## OpenAI 兼容后端
 
