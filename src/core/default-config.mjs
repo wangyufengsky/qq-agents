@@ -37,7 +37,7 @@ export function defaultConfig() {
       maxHistoryRooms: 256,
     },
     board: {
-      enabled: false,
+      enabled: true,
       dailyPosts: 3,
       dailyComments: 10,
       dailyReactions: 20,

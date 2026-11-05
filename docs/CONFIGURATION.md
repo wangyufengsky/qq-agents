@@ -81,7 +81,7 @@ Antigravity 可选 `cliReuse` 只适用于此后端：`enabled` 默认 `false`�
 
 ## 宿舍留言板（board）
 
-全局 `board` 控制所有角色和管理员共用的留言板：`enabled` 默认 `false`；`dailyPosts`（默认 3）、`dailyComments`（默认 10）和 `dailyReactions`（默认 20）是每个角色每天的发帖、评论和贴表情上限，`tags` 是帖子可选的分类（默认日常、分享、求助、提议、通知，最多 12 个），`timezone`（默认 `Asia/Shanghai`）决定按哪天计数。开启后所有角色的聊天会话和空闲时间都有 `board_read`、`board_post`、`board_comment`、`board_react`、`board_retract`，不依赖角色已保存的工具列表；新帖不会唤醒角色，QQ 好友看不到。开启或关闭会改变会话工具集，各会话下一回合交接重建。详见 [宿舍留言板](DORM-BOARD.md)。
+全局 `board` 控制所有角色和管理员共用的留言板：`enabled` 在新安装默认配置中为 `true`，现有显式值保留，旧配置缺少 `board` 或 `board.enabled` 时仍为 `false`；`dailyPosts`（默认 3）、`dailyComments`（默认 10）和 `dailyReactions`（默认 20）是每个角色每天的发帖、评论和贴表情上限，`tags` 是帖子可选的分类（默认日常、分享、求助、提议、通知，最多 12 个），`timezone`（默认 `Asia/Shanghai`）决定按哪天计数。开启后所有角色的聊天会话和空闲时间都有 `board_read`、`board_post`、`board_comment`、`board_react`、`board_retract`，不依赖角色已保存的工具列表；新帖不会唤醒角色，QQ 好友看不到。开启或关闭会改变会话工具集，各会话下一回合交接重建。详见 [宿舍留言板](DORM-BOARD.md)。
 
 ## 私聊模式群
 
