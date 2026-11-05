@@ -40,8 +40,13 @@ jobs:
         if: runner.os == 'Linux'
         timeout-minutes: 6
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ffmpeg
+          # Hosted runners prefer Azure through this mirror list; use Ubuntu's HTTPS archives.
+          # Preserve the source suites, components and Signed-By verification.
+          test -f /etc/apt/apt-mirrors.txt
+          printf 'https://archive.ubuntu.com/ubuntu/\tpriority:1\nhttps://security.ubuntu.com/ubuntu/\tpriority:2\n' | sudo tee /etc/apt/apt-mirrors.txt
+          apt_options=(-o Acquire::Retries=1 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15)
+          sudo apt-get "${apt_options[@]}" -o APT::Update::Error-Mode=any update
+          sudo apt-get "${apt_options[@]}" install -y --no-install-recommends ffmpeg
           ffmpeg -version | head -1
           ffprobe -version | head -1
       - name: Install media test tools on macOS
