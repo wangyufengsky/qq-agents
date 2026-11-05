@@ -622,6 +622,13 @@ test("home settings default off, round trip explicitly and preserve policy when 
     publishing: true,
     sceneView: { enabled: true },
     maxWritesPerDay: 7,
+    intents: {
+      enabled: true,
+      hints: false,
+      ttlDays: 3,
+      maxPending: 5,
+      maxSubmissionsPerDay: 9,
+    },
   };
   const html = run("agentForm.build.bind(agentForm)")(row, "");
   const parse = run("agentForm.parse.bind(agentForm)");

@@ -147,6 +147,7 @@ export const configSchema = z
     games: gamePolicy,
     board: z
       .object({
+        // Missing persisted fields retain the legacy disabled policy; new installs set true explicitly.
         enabled: z.boolean().default(false),
         dailyPosts: z.number().int().min(0).max(50).default(3),
         dailyComments: z.number().int().min(0).max(200).default(10),

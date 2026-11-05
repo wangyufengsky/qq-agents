@@ -23,7 +23,7 @@ function setup(t, board = {}) {
   return f;
 }
 
-test("the board is off by default and its tools stay hidden", async (t) => {
+test("legacy board omission keeps its tools hidden", async (t) => {
   const f = fixture(t);
   assert.equal(f.runtime.config.board.enabled, false);
   assert.equal(f.runtime.config.board.dailyPosts, 3);

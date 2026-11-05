@@ -107,6 +107,7 @@
     "src/home/browser-launcher.mjs",
     "src/home/browser-job.mjs",
     "src/tools/media-lease.mjs",
-    "public/home-space/scene-decoration.mjs"
+    "public/home-space/scene-decoration.mjs",
+    "src/home/intents.mjs"
   ]
 }
