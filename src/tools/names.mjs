@@ -1,4 +1,5 @@
 // Shared by configuration defaults and the tool registry without loading handlers.
+import { SOCIAL_TOOLS } from "../home/social-tool-names.mjs";
 export const TOOL_NAMES = Object.freeze([
   "qq_recall",
   "protected_work_submit",
@@ -108,6 +109,7 @@ export const TOOL_NAMES = Object.freeze([
   "room_publish_snapshot",
   "room_retract",
   "room_operation_status",
+  ...SOCIAL_TOOLS,
   "memory_search",
   "memory_related",
   "memory_read",

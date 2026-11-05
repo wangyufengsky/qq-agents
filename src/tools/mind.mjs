@@ -19,6 +19,7 @@ import { recallBoundary } from "../core/recall-boundary.mjs";
 import {
   contextProtection,
   trackMindRecords,
+  trackSocialMindOutput,
 } from "../core/protected-mind.mjs";
 import {
   markPersonCardShown,
@@ -352,6 +353,8 @@ function executeMindTool(runtime, ctx, name, args) {
       current: (() => {
         const current = identity.withEvidence(identity.current());
         recallBoundary(runtime, ctx).assert(current);
+        if (ctx.runtimeKind === "subject-social")
+          trackMindRecords(runtime, ctx, [current], "self");
         return current;
       })(),
       turnSelfVersion: ctx.selfVersion,
@@ -577,6 +580,7 @@ function executeMindTool(runtime, ctx, name, args) {
 // including when the live record has subsequently disappeared.
 export function mindTool(runtime, ctx, name, args) {
   const result = executeMindTool(runtime, ctx, name, args);
+  trackSocialMindOutput(runtime, ctx, result);
   if (name === "work_note" || name === "work_notes")
     trackMindRecords(
       runtime,

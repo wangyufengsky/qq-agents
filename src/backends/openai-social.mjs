@@ -1,5 +1,6 @@
 // @ts-check
 import { boundedInference, socialProviderProfile } from "./social-budget.mjs";
+import { safeToolFailure } from "../tools/errors.mjs";
 
 /** Stateless, bridge-owned loop: no ordinary backend session or file history.
  * @param {any} params */
@@ -41,15 +42,24 @@ export async function runOpenAISocial(params) {
   try {
     for (; inferences < params.maxInferences; inferences++) {
       await check();
+      const current = params.limitsForInference?.() || {
+        outputCap: params.outputCap,
+        maxInferences: params.maxInferences,
+      };
+      if (inferences >= current.maxInferences)
+        throw Error("SOCIAL_INFERENCE_LIMIT");
+      const outputCap = Math.min(params.outputCap, current.outputCap);
+      let consumption;
       const result = await boundedInference(
         budget,
         binding,
         inferences,
         profile.inputUpperBound,
-        params.outputCap,
+        outputCap,
         async () => {
           // Recheck after reservation: waiting for the store can cross a fence.
           await check();
+          consumption = params.captureInputConsumption?.();
           const options = {
             method: "POST",
             redirect: "error",
@@ -60,7 +70,7 @@ export async function runOpenAISocial(params) {
               messages,
               store: false,
               n: 1,
-              [profile.outputParameter]: params.outputCap,
+              [profile.outputParameter]: outputCap,
               ...(tools.length
                 ? { tools, tool_choice: "auto", parallel_tool_calls: false }
                 : {}),
@@ -83,6 +93,9 @@ export async function runOpenAISocial(params) {
       const calls = message.tool_calls || [];
       if (!Array.isArray(calls) || calls.length > params.maxCallsPerInference)
         throw Error("SOCIAL_TOOL_LIMIT");
+      // Only this request's already prepared input can be acknowledged. Tool
+      // reads executed below belong to a later model request, never this one.
+      await params.onInputConsumed?.(consumption);
       if (!calls.length)
         return { status: "completed", inferences: inferences + 1 };
       messages.push({
@@ -101,7 +114,15 @@ export async function runOpenAISocial(params) {
           // JSON errors may quote private provider output; only emit our safe code.
           throw Error("SOCIAL_RESPONSE_INVALID");
         }
-        const answer = await callTool(call.function.name, args);
+        let answer;
+        try {
+          answer = await callTool(call.function.name, args);
+        } catch (error) {
+          signal.throwIfAborted();
+          answer = { isError: true, ...safeToolFailure(error) };
+        }
+        if (params.shouldStop?.())
+          return { status: "completed", inferences: inferences + 1 };
         const text = JSON.stringify(answer);
         if (Buffer.byteLength(text) > params.maxToolResultBytes)
           throw Error("SOCIAL_TOOL_RESULT_LIMIT");

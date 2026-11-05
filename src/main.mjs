@@ -99,6 +99,7 @@ try {
     memory,
     backendFactory: (c, a) => registry.create(c, a, { root }),
   }));
+  runtime.initializeRuntime();
   runtime.updateMaintenance = args.includes("--upgrade-hold");
   runtime.media = new MediaStore(path.join(root, "media"));
   runtime.framework = new FrameworkKnowledge();

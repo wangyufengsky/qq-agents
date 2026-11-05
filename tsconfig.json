@@ -116,6 +116,12 @@
     "src/home/social-schema.mjs",
     "src/home/social-store.mjs",
     "src/home/social-policy.mjs",
-    "src/home/social-service.mjs"
+    "src/home/social-service.mjs",
+    "src/core/subject-execution.mjs",
+    "src/home/social-runtime.mjs",
+    "src/home/social-exchange.mjs",
+    "src/home/social-resources.mjs",
+    "src/home/social-tool-names.mjs",
+    "src/tools/home-social.mjs"
   ]
 }

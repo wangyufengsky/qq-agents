@@ -253,6 +253,7 @@ node src/main.mjs --data /path/to/private-data --port 3210
 
 - [纸页小窝：真实居民、公共布局保存与留言板](docs/AI-HOME.md)
 - [小窝社交后端预算与临时上下文前置契约](docs/SOCIAL-BACKENDS.md)
+- [独立主体社交回合、双向同意与有界交流时段](docs/HOME-SOCIAL-RUNTIME.md)
 - [纸页小窝场景预览：纸板、纸片与手机布局](docs/AI-HOME-PREVIEW.md)
 - [纸页小窝素材来源与压缩说明](docs/AI-HOME-ASSETS.md)
 - [AI 小窝一期完成计划与验收跟踪](docs/plans/2026-11-05-ai-home-phase-one-delivery.md)
