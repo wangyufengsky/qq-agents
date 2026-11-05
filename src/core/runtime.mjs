@@ -921,7 +921,16 @@ export class Runtime {
       this.protectedWork.record(
         ctx,
         "tool",
-        JSON.stringify({ name, result }).slice(0, 24000),
+        JSON.stringify({
+          name,
+          result:
+            name === "room_scene_view" && result?.content
+              ? {
+                  ...result,
+                  content: result.content.filter((c) => c.type !== "image"),
+                }
+              : result,
+        }).slice(0, 24000),
       );
     if (
       ["web_fetch", "social_read", "social_search", "social_comments"].includes(

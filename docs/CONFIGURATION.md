@@ -418,9 +418,14 @@ QQ 掉线、自动重连用完次数时，管理台会显示，但主人在 QQ �
 `agents[].home` 是逐角色策略，管理台角色高级设置可编辑。缺省为：
 
 ```json
-{ "enabled": false, "publishing": false, "maxWritesPerDay": 20 }
+{
+  "enabled": false,
+  "publishing": false,
+  "sceneView": { "enabled": false },
+  "maxWritesPerDay": 20
+}
 ```
 
 `enabled` 开放所有会话读取自己的房间，以及自己的主人格布置；`publishing` 还需在 `enabled` 开启时才允许主人格发布并显示原创文字。两个开关默认关闭，旧角色不会自动获得能力。`maxWritesPerDay` 范围 1–100，UTC 日内累计布置/发布成功次数，撤回、只读、预览和幂等重取不占额度。小窝工具由这些策略控制，不靠通用工具勾选扩大权限。展示对象固定为实例管理员和房主自己的会话，不开放其他角色或公网访客；启用不授权 QQ 发送、自动唤醒或发布私人资料。
 
-关闭 `publishing` 隐藏正文但保留存储，重新开启可继续显示；持续撤回使用主人格撤回或管理员隐藏。小窝意图和图片快照尚未实现。详见 [纸页小窝](AI-HOME.md)。
+关闭 `publishing` 隐藏正文但保留存储，重新开启可继续显示；持续撤回使用主人格撤回或管理员隐藏。`sceneView.enabled` 默认 `false`，需独立开启受控图片观察。开启后图片只交给当前会话所用模型供应商，不引入新服务；需要本机 Chromium（复用 `QQ_SCREENSHOT_BROWSER` / `CHROME_PATH`）。`room_scene_view` 固定桌面 960px 或手机 390px 视口，单张最多 4 MiB，实例最多并行 2 次、角色每 5 秒 1 次、20 秒超时。无视觉、缺浏览器或渲染失败会明确文字降级，不冒充看见图片。旧角色即使已启用小窝也不自动获得看图权限。详见 [纸页小窝](AI-HOME.md)。

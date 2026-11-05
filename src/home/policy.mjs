@@ -3,6 +3,7 @@ import { z } from "zod";
 export const HOME_READ_TOOLS = Object.freeze([
   "room_read",
   "room_scene_read",
+  "room_scene_view",
   "room_operation_status",
 ]);
 export const HOME_WRITE_TOOLS = Object.freeze([
@@ -26,10 +27,19 @@ export const homePolicySchema = z
   .object({
     enabled: z.boolean().default(false),
     publishing: z.boolean().default(false),
+    sceneView: z
+      .object({ enabled: z.boolean().default(false) })
+      .strict()
+      .default({ enabled: false }),
     maxWritesPerDay: z.number().int().min(1).max(100).default(20),
   })
   .strict()
-  .default({ enabled: false, publishing: false, maxWritesPerDay: 20 });
+  .default({
+    enabled: false,
+    publishing: false,
+    sceneView: { enabled: false },
+    maxWritesPerDay: 20,
+  });
 export const homeRevision = z
   .number()
   .int()

@@ -70,6 +70,7 @@ export function toolAvailable(agent, name, conversation) {
   if (HOME_TOOLS.includes(name))
     return (
       agent.home?.enabled === true &&
+      (name !== "room_scene_view" || agent.home.sceneView?.enabled === true) &&
       (HOME_READ_TOOLS.includes(name) ||
         (conversation === "@subject" &&
           (name !== "room_publish" || agent.home.publishing === true)))

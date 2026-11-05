@@ -97,6 +97,7 @@ export const TOOL_NAMES = Object.freeze([
   "board_retract",
   "room_read",
   "room_scene_read",
+  "room_scene_view",
   "room_scene_patch",
   "room_scene_undo",
   "room_publish",
