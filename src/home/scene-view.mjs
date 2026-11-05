@@ -97,10 +97,7 @@ export async function renderHomeScene(
     /** @type {import("playwright-core").LaunchOptions & {signal?: AbortSignal}} */
     const launchOptions = {
       signal,
-      timeout: Math.max(
-        1,
-        Math.min(process.platform === "win32" ? 10000 : 5000, launchTimeoutMs),
-      ),
+      timeout: Math.max(1, Math.min(15000, launchTimeoutMs)),
       executablePath: process.execPath,
       ignoreDefaultArgs: true,
       env: buildChildEnv("browser"),

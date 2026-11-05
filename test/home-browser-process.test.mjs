@@ -108,7 +108,10 @@ for (const termination of ["browser-exit", "wrapper-exit"])
       );
       assert.equal(ready.parentPid, Number(await fs.readFile(marker, "utf8")));
       assert.ok(
-        ready.created && ready.helperPid,
+        ready.created &&
+          ready.helperPid &&
+          ready.hostPid &&
+          ready.helperPid !== ready.hostPid,
         "real native Job Object handshake did not run",
       );
     }
@@ -119,6 +122,8 @@ for (const termination of ["browser-exit", "wrapper-exit"])
       );
       assert.equal(clean.cleaned, true);
       assert.equal(clean.nonce, control.nonce);
+      assert.throws(() => process.kill(clean.helperPid, 0), { code: "ESRCH" });
+      assert.throws(() => process.kill(clean.hostPid, 0), { code: "ESRCH" });
       const workerPid = Number(await fs.readFile(workerReady, "utf8"));
       assert.throws(() => process.kill(workerPid, 0), { code: "ESRCH" });
     }

@@ -24,15 +24,24 @@ export async function prepareHomeBrowserJob(controlFile, control) {
   // An attempt receipt precedes spawn, so a missing receipt proves no helper was
   // ever created. An interrupted starting receipt remains an unknown, not success.
   record("starting", undefined);
+  // DETACHED_PROCESS alone makes Windows PowerShell exit without executing.
+  // The fixed system console host supplies a headless console while retaining
+  // independence from the wrapper's libuv kill-on-close job.
   const helper = spawn(
     path.join(
       process.env.SystemRoot || "C:\\Windows",
       "System32",
-      "WindowsPowerShell",
-      "v1.0",
-      "powershell.exe",
+      "conhost.exe",
     ),
     [
+      "--headless",
+      path.join(
+        process.env.SystemRoot || "C:\\Windows",
+        "System32",
+        "WindowsPowerShell",
+        "v1.0",
+        "powershell.exe",
+      ),
       "-NoProfile",
       "-NonInteractive",
       "-ExecutionPolicy",
@@ -75,7 +84,7 @@ export async function prepareHomeBrowserJob(controlFile, control) {
         ready.nonce !== control.nonce ||
         ready.parentPid !== process.pid ||
         !ready.created ||
-        ready.helperPid !== helper.pid
+        ready.hostPid !== helper.pid
       )
         throw Error("HOME_SCENE_RENDER_FAILED");
       return;

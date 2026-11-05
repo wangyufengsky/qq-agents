@@ -50,6 +50,7 @@ async function jobSettled(controlFile, control) {
       complete.nonce === control.nonce &&
       complete.parentPid === ready.parentPid &&
       complete.helperPid === ready.helperPid &&
+      complete.hostPid === ready.hostPid &&
       ready.nonce === control.nonce &&
       Number.isSafeInteger(ready.helperPid) &&
       !alive(ready.helperPid)

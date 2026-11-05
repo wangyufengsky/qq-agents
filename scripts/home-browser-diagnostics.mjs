@@ -43,7 +43,9 @@ async function probe(name, launch) {
   const started = Date.now();
   try {
     const result = await launch();
+    const launchedMs = Date.now() - started;
     if (result?.close) await result.close();
+    console.log(JSON.stringify({ name, phase: "connected", launchedMs }));
     console.log(
       JSON.stringify({ name, ok: true, elapsedMs: Date.now() - started }),
     );
@@ -74,7 +76,7 @@ try {
       },
       {
         executablePath,
-        launchTimeoutMs: 5000,
+        launchTimeoutMs: 15000,
         signal: AbortSignal.timeout(20000),
       },
     ),
@@ -117,7 +119,19 @@ try {
     ),
   );
   await probe("direct-playwright-defaults", () =>
-    chromium.launch({ executablePath, env, timeout: 5000, headless: true }),
+    chromium.launch({
+      executablePath,
+      env,
+      timeout: 5000,
+      headless: true,
+      logger: {
+        isEnabled: () => true,
+        log(name, severity, message) {
+          if (String(message).startsWith("<launching>"))
+            console.log(JSON.stringify({ name: "stock-argv", message }));
+        },
+      },
+    }),
   );
   for (const candidate of [
     "/usr/bin/google-chrome",

@@ -33,8 +33,10 @@ async function probe(name, env, directImport) {
   const command = `$ErrorActionPreference='Stop';[Console]::WriteLine('entered');try {${directImport ? "Import-Module (Join-Path $PSHOME 'Modules\\Microsoft.PowerShell.Utility\\Microsoft.PowerShell.Utility.psd1');[Console]::WriteLine('utility-imported');" : ""}$null=@{safe=$true}|ConvertTo-Json -Compress;[Console]::WriteLine('json-ready');$null=Get-CimInstance Win32_Process -Filter "ProcessId = $PID";[Console]::WriteLine('cim-ready')}catch{[Console]::WriteLine('failed:'+$_.Exception.HResult);exit 1}`;
   await new Promise((resolve) => {
     const child = spawn(
-      executable,
+      path.join(system, "System32", "conhost.exe"),
       [
+        "--headless",
+        executable,
         "-NoProfile",
         "-NonInteractive",
         "-ExecutionPolicy",

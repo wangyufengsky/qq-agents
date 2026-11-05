@@ -25,6 +25,7 @@ public static class HomeBrowserJob {
  [DllImport("kernel32.dll", SetLastError=true)] public static extern IntPtr CreateJobObject(IntPtr attributes, string name);
  [DllImport("kernel32.dll", SetLastError=true)] public static extern bool SetInformationJobObject(IntPtr job, int type, ref Extended info, uint size);
  [DllImport("kernel32.dll", SetLastError=true)] public static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+ [DllImport("kernel32.dll", SetLastError=true)] public static extern bool GetNamedPipeServerProcessId(IntPtr pipe, out uint pid);
  [DllImport("kernel32.dll", SetLastError=true)] public static extern IntPtr OpenProcess(uint rights, bool inherit, uint pid);
  [DllImport("kernel32.dll", SetLastError=true)] public static extern bool GetProcessTimes(IntPtr process, out long created, out long exited, out long kernel, out long user);
  [DllImport("kernel32.dll")] public static extern uint WaitForSingleObject(IntPtr handle, uint timeout);
@@ -42,24 +43,26 @@ $assigned = $false
 try {
  $control = Get-Content -LiteralPath $ControlFile -Raw | ConvertFrom-Json
  if ($control.stopping) { exit 0 }
- # The helper accepts no PID. Open its actual parent's handle before asking that
- # live parent to authenticate; PID reuse after the handshake cannot retarget it.
- Report-State 'opening-parent'
- $parentId = [uint32](Get-CimInstance Win32_Process -Filter "ProcessId = $PID").ParentProcessId
- $parentHandle = [HomeBrowserJob]::OpenProcess(0x101101, $false, $parentId)
- if ($parentHandle -eq [IntPtr]::Zero) { throw 'parent' }
- [long]$created=0; [long]$exited=0; [long]$kernel=0; [long]$user=0
- if (-not [HomeBrowserJob]::GetProcessTimes($parentHandle,[ref]$created,[ref]$exited,[ref]$kernel,[ref]$user)) { throw 'identity' }
+ # The authenticated pipe identifies the live wrapper even when conhost is
+ # the guardian's direct parent. No caller-supplied PID grants kill authority.
  Report-State 'authenticating'
  $pipeName = $control.endpoint.Substring(9)
  $pipe = [System.IO.Pipes.NamedPipeClientStream]::new('.', $pipeName, [System.IO.Pipes.PipeDirection]::InOut)
  try {
   $pipe.Connect(3000)
+  [uint32]$parentId=0
+  if (-not [HomeBrowserJob]::GetNamedPipeServerProcessId($pipe.SafePipeHandle.DangerousGetHandle(),[ref]$parentId)) { throw 'server-identity' }
+  $parentHandle = [HomeBrowserJob]::OpenProcess(0x101101, $false, $parentId)
+  if ($parentHandle -eq [IntPtr]::Zero) { throw 'parent' }
+  [long]$created=0; [long]$exited=0; [long]$kernel=0; [long]$user=0
+  if (-not [HomeBrowserJob]::GetProcessTimes($parentHandle,[ref]$created,[ref]$exited,[ref]$kernel,[ref]$user)) { throw 'identity' }
   $writer = [System.IO.StreamWriter]::new($pipe); $writer.AutoFlush = $true
   $reader = [System.IO.StreamReader]::new($pipe)
   $writer.WriteLine('job:' + $control.nonce)
   if ($reader.ReadLine() -ne 'authorized') { throw 'authority' }
  } finally { $pipe.Dispose() }
+ $hostRecord = Get-Content -LiteralPath ($ControlFile + '.job-helper') -Raw | ConvertFrom-Json
+ if ($hostRecord.nonce -ne $control.nonce -or -not $hostRecord.pid) { throw 'host-identity' }
  Report-State 'creating-job'
  $job = [HomeBrowserJob]::CreateJobObject([IntPtr]::Zero, $null)
  if ($job -eq [IntPtr]::Zero) { throw 'job' }
@@ -72,7 +75,7 @@ try {
  if (-not [HomeBrowserJob]::AssignProcessToJobObject($job,$parentHandle)) { throw 'assign' }
  $assigned = $true
  Report-State 'writing-ready'
- $ready = @{ nonce=$control.nonce; parentPid=$parentId; created=[string]$created; helperPid=$PID } | ConvertTo-Json -Compress
+ $ready = @{ nonce=$control.nonce; parentPid=$parentId; created=[string]$created; helperPid=$PID; hostPid=$hostRecord.pid } | ConvertTo-Json -Compress
  [System.IO.File]::WriteAllText($ControlFile + '.job-ready', $ready, [System.Text.UTF8Encoding]::new($false))
  Report-State 'waiting-parent'
  [void][HomeBrowserJob]::WaitForSingleObject($parentHandle, [uint32]::MaxValue)
@@ -107,7 +110,7 @@ try {
     throw 'HOME_SCENE_RENDER_FAILED'
    }
    Report-State 'writing-clean' 0 $accounting.Active
-   $complete = @{ nonce=$control.nonce; parentPid=$parentId; helperPid=$PID; cleaned=$true } | ConvertTo-Json -Compress
+   $complete = @{ nonce=$control.nonce; parentPid=$parentId; helperPid=$PID; hostPid=$hostRecord.pid; cleaned=$true } | ConvertTo-Json -Compress
    $temporary = $ControlFile + '.job-clean.tmp'
    [System.IO.File]::WriteAllText($temporary, $complete, [System.Text.UTF8Encoding]::new($false))
    [System.IO.File]::Move($temporary, $ControlFile + '.job-clean')
