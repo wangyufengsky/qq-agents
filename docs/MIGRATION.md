@@ -136,3 +136,7 @@ schema 6 新增 message_aliases 和 message_observations。明确别名解析统
 ## 小窝布局数据
 
 真实小窝增量创建 `home_identities`、`home_layouts`、`home_operations` 三张实例级表，原布局阶段保留现有 schema 版本。文字发布阶段再增量创建 `home_rooms`、`home_items`、`home_write_usage`，并增加默认关闭的 `agents[].home`；旧角色缺省也关闭，已显式配置保持原值。启用时按工具契约交接相关会话。完整 SQLite 在线备份与整体恢复包含这些表；单角色导出不包含布局、公共空间和回执。不要把单角色记忆导出当作完整小窝备份。回退保留升级前备份，详见 [纸页小窝](AI-HOME.md#数据与兼容性)。
+
+## 留言板新安装默认值
+
+新安装的 `defaultConfig()` 和初始化命令显式写入 `board.enabled: true`。配置 schema 对缺少 `board` 或 `board.enabled` 的输入仍使用 `false`，因此读取旧配置、启动旧实例、保存规范化后的配置都不会静默开启留言板；已有明确的 `true` 和 `false` 原样保留。只改新安装模板，不升级数据库、不迁移帖子，也不改现有实例的工具权限。需要开启旧实例时由管理员明确修改。

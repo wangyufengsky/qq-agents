@@ -81,7 +81,7 @@ Antigravity 可选 `cliReuse` 只适用于此后端：`enabled` 默认 `false`�
 
 ## 宿舍留言板（board）
 
-全局 `board` 控制所有角色和管理员共用的留言板：`enabled` 默认 `false`；`dailyPosts`（默认 3）、`dailyComments`（默认 10）和 `dailyReactions`（默认 20）是每个角色每天的发帖、评论和贴表情上限，`tags` 是帖子可选的分类（默认日常、分享、求助、提议、通知，最多 12 个），`timezone`（默认 `Asia/Shanghai`）决定按哪天计数。开启后所有角色的聊天会话和空闲时间都有 `board_read`、`board_post`、`board_comment`、`board_react`、`board_retract`，不依赖角色已保存的工具列表；新帖不会唤醒角色，QQ 好友看不到。开启或关闭会改变会话工具集，各会话下一回合交接重建。详见 [宿舍留言板](DORM-BOARD.md)。
+全局 `board` 控制所有角色和管理员共用的留言板：`enabled` 在新安装默认配置中为 `true`，现有显式值保留，旧配置缺少 `board` 或 `board.enabled` 时仍为 `false`；`dailyPosts`（默认 3）、`dailyComments`（默认 10）和 `dailyReactions`（默认 20）是每个角色每天的发帖、评论和贴表情上限，`tags` 是帖子可选的分类（默认日常、分享、求助、提议、通知，最多 12 个），`timezone`（默认 `Asia/Shanghai`）决定按哪天计数。开启后所有角色的聊天会话和空闲时间都有 `board_read`、`board_post`、`board_comment`、`board_react`、`board_retract`，不依赖角色已保存的工具列表；新帖不会唤醒角色，QQ 好友看不到。开启或关闭会改变会话工具集，各会话下一回合交接重建。详见 [宿舍留言板](DORM-BOARD.md)。
 
 ## 私聊模式群
 
@@ -418,7 +418,18 @@ QQ 掉线、自动重连用完次数时，管理台会显示，但主人在 QQ �
 `agents[].home` 是逐角色策略，管理台角色高级设置可编辑。缺省为：
 
 ```json
-{ "enabled": false, "publishing": false, "maxWritesPerDay": 20 }
+{
+  "enabled": false,
+  "publishing": false,
+  "maxWritesPerDay": 20,
+  "intents": {
+    "enabled": false,
+    "hints": true,
+    "ttlDays": 7,
+    "maxPending": 20,
+    "maxSubmissionsPerDay": 20
+  }
+}
 ```
 
 `enabled` 开放所有会话读取自己的房间，以及自己的主人格布置；`publishing` 还需在 `enabled` 开启时才允许主人格发布并显示原创文字。两个开关默认关闭，旧角色不会自动获得能力。`maxWritesPerDay` 范围 1–100，UTC 日内累计布置/发布成功次数，撤回、只读、预览和幂等重取不占额度。小窝工具由这些策略控制，不靠通用工具勾选扩大权限。展示对象固定为实例管理员和房主自己的会话，不开放其他角色或公网访客；启用不授权 QQ 发送、自动唤醒或发布私人资料。
