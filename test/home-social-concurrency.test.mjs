@@ -766,8 +766,8 @@ if (!isMainThread) {
     );
   });
 
-  test("S2-06: revoked versions, expired input leases and unregistered capabilities cannot confirm viewing", async (t) => {
-    for (const mode of ["version", "lease", "capability"]) {
+  test("S2-06: revoked versions, expired invitations and unregistered capabilities cannot confirm viewing", async (t) => {
+    for (const mode of ["version", "expiry", "capability"]) {
       const f = await setup(t),
         id = f.invitation(),
         recipient = socialContext(f.runtime, f.service, "agent-1", {
@@ -782,8 +782,12 @@ if (!isMainThread) {
             "UPDATE home_social_invitations SET revision=revision+1 WHERE id=?",
           )
           .run(id);
-      if (mode === "lease")
+      if (mode === "expiry") {
+        f.memory.db
+          .prepare("UPDATE home_social_invitations SET expires_at=? WHERE id=?")
+          .run(INITIAL_TIME + 15000, id);
         Atomics.store(f.clock, 0, BigInt(INITIAL_TIME + 15000));
+      }
       if (mode === "capability") f.runtime.capabilities.delete(recipient.token);
       assert.throws(() => f.service.confirmInputConsumed(recipient, ticket));
       assert.equal(

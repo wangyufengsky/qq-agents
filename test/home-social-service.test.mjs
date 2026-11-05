@@ -1075,3 +1075,77 @@ test("inbox cursors reject changed readers, tampering, oversized tokens and new 
   );
   assert.equal(f.s.inbox(owner, { limit: 1, cursor: token }).items.length, 1);
 });
+
+test("model input guards revalidate unchanged invitation, messages and room after page leases expire", (t) => {
+  const f = setup(t);
+  const invitationId = f.invite().result.invitationId;
+  const recipient = f.ctx("agent-1", { kind: "invitation", id: invitationId });
+  const invitation = f.s.invitationRead(recipient, { invitationId });
+  const ticket = f.s.captureInputConsumption(recipient);
+  f.setNow(f.now() + 16000);
+  assert.ok(f.now() > invitation.lease.expiresAt);
+  for (const guard of recipient.socialInputLeases) assert.equal(guard(), true);
+  assert.equal(f.s.confirmInputConsumed(recipient, ticket).confirmed, 1);
+  const visitId = f.accept(invitationId).result.visitId;
+  const owner = f.ctx("agent-0", { kind: "visit", id: visitId });
+  f.s.send(owner, {
+    requestId: randomUUID(),
+    visitId,
+    expectedVisitRevision: 1,
+    body: "Synthetic retained input",
+  });
+  const reader = f.ctx("agent-1", { kind: "visit", id: visitId });
+  const messages = f.s.visitRead(reader, { visitId });
+  const room = f.s.roomRead(reader, { visitId });
+  f.setNow(f.now() + 16000);
+  assert.ok(f.now() > messages.lease.expiresAt);
+  assert.ok(f.now() > room.lease.expiresAt);
+  for (const guard of reader.socialInputLeases) assert.equal(guard(), true);
+  // The same captured room input must still fail at the actual grant deadline.
+  f.s.db
+    .prepare("UPDATE home_social_grants SET expires_at=? WHERE visit_id=?")
+    .run(f.now(), visitId);
+  assert.throws(() => {
+    for (const guard of reader.socialInputLeases) guard();
+  });
+});
+
+test("model input guards reject actual invitation expiry and message retention cutoff", (t) => {
+  const f = setup(t);
+  const invitationId = f.invite().result.invitationId;
+  const recipient = f.ctx("agent-1", { kind: "invitation", id: invitationId });
+  f.s.invitationRead(recipient, { invitationId });
+  const ticket = f.s.captureInputConsumption(recipient);
+  f.s.db
+    .prepare("UPDATE home_social_invitations SET expires_at=? WHERE id=?")
+    .run(f.now() + 16000, invitationId);
+  f.setNow(f.now() + 16000);
+  assert.throws(() => f.s.confirmInputConsumed(recipient, ticket));
+  assert.equal(
+    f.s.db
+      .prepare(
+        "SELECT recipient_viewed_at FROM home_social_invitations WHERE id=?",
+      )
+      .get(invitationId).recipient_viewed_at,
+    null,
+  );
+  const second = setup(t);
+  const visitId = second.visit();
+  const owner = second.ctx("agent-0", { kind: "visit", id: visitId });
+  second.s.send(owner, {
+    requestId: randomUUID(),
+    visitId,
+    expectedVisitRevision: 1,
+    body: "Synthetic retained history",
+  });
+  const reader = second.ctx("agent-1", { kind: "visit", id: visitId });
+  second.s.visitRead(reader, { visitId });
+  second.s.db
+    .prepare(
+      "UPDATE home_social_visits SET status='ended',ended_at=? WHERE id=?",
+    )
+    .run(second.now() - 30 * 86400000, visitId);
+  assert.throws(() => {
+    for (const guard of reader.socialInputLeases) guard();
+  }, /AUDIENCE_DENIED/);
+});
