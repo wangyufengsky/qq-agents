@@ -166,3 +166,41 @@ test("missing usage and cap violations cannot release reservations", async () =>
   await assert.rejects(runOpenAISocial(f.params), /SOCIAL_USAGE_UNVERIFIED/);
   assert.equal(f.settled[0].status, "unknown");
 });
+
+test("malformed tool arguments expose only a stable code and never invoke a tool", async () => {
+  const f = fixture();
+  let calls = 0;
+  f.params.callTool = async () => {
+    calls++;
+  };
+  f.params.fetch = async () => ({
+    ok: true,
+    json: async () => ({
+      usage: { prompt_tokens: 10, completion_tokens: 5 },
+      choices: [
+        {
+          message: {
+            tool_calls: [
+              {
+                id: "call",
+                type: "function",
+                function: {
+                  name: "home_visit_send",
+                  arguments: "SYNTHETIC_PRIVATE_ARGUMENT",
+                },
+              },
+            ],
+          },
+        },
+      ],
+    }),
+  });
+  await assert.rejects(runOpenAISocial(f.params), (error) => {
+    assert.equal(error.message, "SOCIAL_RESPONSE_INVALID");
+    assert.equal(error.cause, undefined);
+    assert.equal(error.stack.includes("SYNTHETIC_PRIVATE_ARGUMENT"), false);
+    return true;
+  });
+  assert.equal(calls, 0);
+  assert.equal(f.settled[0].status, "completed");
+});
