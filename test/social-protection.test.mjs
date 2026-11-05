@@ -1109,3 +1109,24 @@ test("social export prefilter still checks escaped keys and marker text", () => 
   };
   assert.deepEqual(socialSafeExportRow("events", ordinary), ordinary);
 });
+
+test("social export labels in one field redact all sibling JSON fields", () => {
+  const marker = socialMarker(randomUUID(), randomUUID());
+  for (const protectedField of ["metadata", "payload", "value"]) {
+    const original = {
+      body: "private body",
+      payload: JSON.stringify({ text: "private payload" }),
+      metadata: JSON.stringify({ text: "private metadata" }),
+      value: JSON.stringify({ text: "private value" }),
+      [protectedField]: JSON.stringify({ protectedSocialSources: [marker] }),
+    };
+    const row = socialSafeExportRow("events", original);
+    assert.equal(row.body, "");
+    for (const field of ["metadata", "payload", "value"])
+      if (field === protectedField)
+        assert.deepEqual(JSON.parse(row[field]).protectedSocialSources, [
+          marker,
+        ]);
+      else assert.equal(JSON.parse(row[field]).text, "");
+  }
+});

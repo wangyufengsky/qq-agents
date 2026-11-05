@@ -88,12 +88,19 @@ function redactSocial(value, key = "") {
 /** @param {string} table @param {any} original @returns {any} */
 export function socialSafeExportRow(table, original) {
   const row = { ...original };
+  const fields = ["payload", "metadata", "value"];
+  // Only skip the whole row when no field can encode a social label. A label
+  // in one field protects prose in every other field of the same record.
+  if (
+    !fields.some(
+      (key) => typeof row[key] === "string" && /social|\\/i.test(row[key]),
+    )
+  )
+    return row;
   /** @type {Record<string, any>} */
   const parsed = {};
-  for (const key of ["payload", "metadata", "value"])
-    // Without a literal social token or JSON escape, this field cannot encode
-    // a social label. Avoid duplicating large ordinary rows in bounded workers.
-    if (typeof row[key] === "string" && /social|\\/i.test(row[key])) {
+  for (const key of fields)
+    if (typeof row[key] === "string") {
       try {
         parsed[key] = JSON.parse(row[key]);
       } catch {
