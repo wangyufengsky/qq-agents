@@ -45,6 +45,7 @@ function setup(t) {
     messageId = randomUUID();
   const host = f.runtime.home.generation("agent-0"),
     guest = f.runtime.home.generation("agent-1");
+  db.prepare("UPDATE home_social_policy SET enabled=1 WHERE singleton=1").run();
   const invitationId = randomUUID();
   db.prepare(
     "INSERT INTO home_social_invitations(id,host_agent_id,host_generation,guest_agent_id,guest_generation,initiator_generation,recipient_generation,room_id,audience,requested_scope,status,policy_revision,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?,?,?,'accepted',0,?,?)",
@@ -298,6 +299,8 @@ test("personal exports and imported snapshots strip text but retain durable soci
 test("unavailable social authority tables fail closed", (t) => {
   const f = fixture(t),
     ctx = context(f.runtime, "agent-0", "@subject");
+  f.runtime.config.homeSocial = { enabled: true, retentionDays: 30 };
+  f.store.db.exec("DROP TABLE home_social_policy");
   ctx.runtimeKind = "subject-social";
   ctx.socialBinding = {
     target: { kind: "visit", id: randomUUID() },
@@ -981,4 +984,84 @@ test("complete cyclic evidence traversal finds social sources beyond 1000 record
     /SOCIAL_SOURCE_DENIED/,
   );
   assert.equal(f.runtime.transports.get("qq-0").sent.length, 0);
+});
+
+test("social export and restore preserve other protection identifiers for later revision", async (t) => {
+  const f = setup(t),
+    m = f.store.bind("agent-0");
+  f.ctx.privateRead.add(f.marker);
+  const diary = await f.runtime.executeTool(f.ctx, "diary_write", {
+    title: "MIXED_PRIVATE_TEXT",
+    body: "MIXED_PRIVATE_TEXT",
+    evidence: [],
+    people: [],
+    tags: [],
+  });
+  const labels = {
+    protectedSocialSources: [f.marker],
+    protectedPeerQzoneTargets: ["30000"],
+    protectedRepositories: ["example/private-project"],
+    protectedOperations: true,
+  };
+  const metadata = JSON.parse(
+    m.db.prepare("SELECT metadata FROM diaries WHERE id=?").get(diary.id)
+      .metadata,
+  );
+  m.db.prepare("UPDATE diaries SET metadata=? WHERE id=?").run(
+    JSON.stringify({
+      ...metadata,
+      ...labels,
+      frozen: { ...labels, body: "MIXED_PRIVATE_TEXT" },
+    }),
+    diary.id,
+  );
+  const exported = m.export();
+  const assertRedaction = (data) => {
+    assert.equal(JSON.stringify(data).includes("MIXED_PRIVATE_TEXT"), false);
+    const row = data.tables.diaries.find((item) => item.id === diary.id);
+    const saved = JSON.parse(row.metadata);
+    assert.deepEqual(mergeProtection(saved), labels);
+    assert.deepEqual(mergeProtection(saved.frozen), labels);
+    assert.equal(saved.frozen.body, "");
+  };
+  assertRedaction(exported);
+  const output = path.join(f.root, "mixed-social-export.json");
+  await exportToFile(f.store, "agent-0", output);
+  assertRedaction(JSON.parse(await fs.readFile(output, "utf8")));
+  const target = fixture(t, { cfg: config(2) });
+  for (const table of Object.keys(exported.tables)) {
+    if (
+      target.store.db
+        .prepare(`PRAGMA table_info(${table})`)
+        .all()
+        .some((column) => column.name === "agent_id")
+    )
+      target.store.db
+        .prepare(`DELETE FROM ${table} WHERE agent_id=?`)
+        .run("agent-0");
+  }
+  const restored = target.store.bind("agent-0");
+  restoreExport(restored, exported);
+  assertRedaction(restored.export());
+  assert.deepEqual(
+    restored.diaryRevise({
+      id: diary.id,
+      expectedRevision: 1,
+      title: "updated",
+      body: "updated",
+      evidence: [],
+      people: [],
+      tags: [],
+    }),
+    { id: diary.id, revision: 2 },
+  );
+  const revised = JSON.parse(
+    restored.db.prepare("SELECT metadata FROM diaries WHERE id=?").get(diary.id)
+      .metadata,
+  );
+  assert.deepEqual(mergeProtection(revised), labels);
+  assert.equal(
+    restored.export().tables.diaries.find((item) => item.id === diary.id).body,
+    "",
+  );
 });
