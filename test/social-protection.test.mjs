@@ -905,3 +905,80 @@ test("accepted invitation retention follows its associated visit termination", (
     null,
   );
 });
+
+test("ordinary persisted taint above 1000 sources still executes tools and sends", async (t) => {
+  const f = fixture(t),
+    m = f.store.bind("agent-0"),
+    ids = [];
+  assert.equal(f.runtime.config.homeSocial?.enabled === true, false);
+  for (let i = 0; i < 1002; i++)
+    ids.push(
+      m.append({
+        dedupe: `ordinary-many-${i}`,
+        conversation: "group:20000",
+        kind: "message.received",
+        body: "ordinary same-chat material",
+      }).id,
+    );
+  m.setState("group:20000", {
+    ...m.state("group:20000"),
+    disclosureTaint: ids,
+  });
+  const ctx = context(f.runtime);
+  assert.equal(ctx.privateRead.size, 1002);
+  await f.runtime.executeTool(ctx, "diary_write", {
+    title: "ordinary diary",
+    body: "ordinary material",
+    evidence: [],
+    people: [],
+    tags: [],
+  });
+  const receipt = await f.runtime.executeTool(ctx, "qq_send", {
+    requestId: "ordinary-many-send",
+    text: "ordinary reply",
+  });
+  assert.equal(receipt.status, "sent");
+  assert.equal(f.runtime.transports.get("qq-0").sent.length, 1);
+  assert.ok(m.state("group:20000").disclosureTaint.length >= 1002);
+});
+
+test("complete cyclic evidence traversal finds social sources beyond 1000 records", async (t) => {
+  const f = fixture(t),
+    m = f.store.bind("agent-0"),
+    marker = socialMarker(randomUUID(), randomUUID());
+  let previous;
+  for (let i = 0; i < 1002; i++)
+    previous = m.append({
+      dedupe: `deep-social-${i}`,
+      conversation: "group:20000",
+      kind: "message.received",
+      body: "derived material",
+      payload: previous
+        ? { evidence: [previous.id] }
+        : { protectedSocialSources: [marker] },
+    });
+  // A cycle must terminate without truncating the rest of the finite graph.
+  const leaf = m.db
+    .prepare("SELECT id FROM events WHERE dedupe='deep-social-0'")
+    .get();
+  m.db.prepare("UPDATE events SET payload=? WHERE id=?").run(
+    JSON.stringify({
+      protectedSocialSources: [marker],
+      evidence: [previous.id],
+    }),
+    leaf.id,
+  );
+  const ctx = context(f.runtime);
+  ctx.privateRead.add(previous.id);
+  assert.deepEqual(socialSources(f.runtime, ctx), [marker]);
+  ctx.persistTaint();
+  assert.ok(ctx.privateRead.has(marker));
+  await assert.rejects(
+    f.runtime.executeTool(ctx, "qq_send", {
+      requestId: "deep-social-denied",
+      text: "must remain private",
+    }),
+    /SOCIAL_SOURCE_DENIED/,
+  );
+  assert.equal(f.runtime.transports.get("qq-0").sent.length, 0);
+});
