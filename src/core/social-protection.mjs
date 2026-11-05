@@ -103,7 +103,7 @@ export function socialContextAllowed(runtime, ctx, sources) {
       return false;
     const retained = (/** @type {any} */ row, invitation = false) => {
       const terminalAt = invitation
-        ? row.status === "pending"
+        ? ["pending", "accepted"].includes(row.status)
           ? null
           : (row.decided_at ?? row.expires_at)
         : row.status === "active" && row.expires_at > now
