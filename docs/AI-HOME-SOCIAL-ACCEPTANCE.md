@@ -8,9 +8,9 @@
 
 | 项目                             | 实际结果                                                                                         |
 | -------------------------------- | ------------------------------------------------------------------------------------------------ |
-| 统一代码基线                     | `f1434a27ae01d34edfe7cef825d841963dfdee70`，工作区干净                                           |
-| 统一构建摘要                     | `9454801617e31e2b073c3a273e4a83093cb0e188624628270e303bab19df058e`                               |
-| 完整 `npm run verify`            | 2284 项测试，2281 通过、0 失败、3 项平台条件跳过；其他阶段全部通过                               |
+| 统一代码基线                     | `2840feb21a38285977ac78cc4d3e2e763f73134e`，工作区干净                                           |
+| 统一构建摘要                     | `e59f3bdb7a406d26ab67500e85dca9eb321d9845bd19d50b266814ba35f65000`                               |
+| 完整 `npm run verify`            | 2288 项测试，2285 通过、0 失败、3 项平台条件跳过；其他阶段全部通过                               |
 | 恢复、规模与真实管理 HTTP 定向   | 12/12 通过                                                                                       |
 | 真实管理服务与正式页面浏览器集成 | 通过，无 API 拦截；合成数据、375px、审计、隐藏、终止与零 AI 已读变化                             |
 | 独立旧版基线                     | `fc3ca92a30969b915e1cf8851b5e662b2d4074d8`，工作区干净                                           |
@@ -20,7 +20,7 @@
 | 首版支持与启用状态               | 精确硬预算 OpenAI profile；新开关默认关闭，测试不改变生产能力                                    |
 | 真实模型、QQ 与公网手机验收      | 未进行                                                                                           |
 
-S2-00 契约见 [#176](https://github.com/wangyufengsky/qq-agents/pull/176)，存储见 [#177](https://github.com/wangyufengsky/qq-agents/pull/177)，后端前置见 [#178](https://github.com/wangyufengsky/qq-agents/pull/178)，来源保护见 [#179](https://github.com/wangyufengsky/qq-agents/pull/179)，邀请服务见 [#180](https://github.com/wangyufengsky/qq-agents/pull/180)，独立交流见 [#181](https://github.com/wangyufengsky/qq-agents/pull/181)，管理 UI 见 [#182](https://github.com/wangyufengsky/qq-agents/pull/182)。受控浏览器管道诊断见 [#183](https://github.com/wangyufengsky/qq-agents/pull/183)，该诊断不代表 Windows Chrome 偶发启动问题已经修复。每个 PR 合并前仍须通过其最新提交的五项必需检查；实际服务切换、暂停偏好、备份和运行版本证明留在部署私有交付记录，不写入公开仓库。
+S2-00 契约见 [#176](https://github.com/wangyufengsky/qq-agents/pull/176)，存储见 [#177](https://github.com/wangyufengsky/qq-agents/pull/177)，后端前置见 [#178](https://github.com/wangyufengsky/qq-agents/pull/178)，来源保护见 [#179](https://github.com/wangyufengsky/qq-agents/pull/179)，邀请服务见 [#180](https://github.com/wangyufengsky/qq-agents/pull/180)，独立交流见 [#181](https://github.com/wangyufengsky/qq-agents/pull/181)，管理 UI 见 [#182](https://github.com/wangyufengsky/qq-agents/pull/182)。Windows 受控浏览器管道兼容修复见 [#183](https://github.com/wangyufengsky/qq-agents/pull/183)，不据此断言已确认首次启动超时的全部系统成因。每个 PR 合并前仍须通过其最新提交的五项必需检查；实际服务切换、暂停偏好、备份和运行版本证明留在部署私有交付记录，不写入公开仓库。
 
 ## 工作包与证据矩阵
 
@@ -107,6 +107,8 @@ S2-00 契约见 [#176](https://github.com/wangyufengsky/qq-agents/pull/176)，�
 - 终态正文保留期到点立即停止源读取，不等待后台清理写入墓碑。已接受邀请的目的跟随关联拜访的终态保留期，避免长拜访刚结束就提前失去合规历史。
 - 升级脚本先校验配置；后续 Runtime 初始化失败关闭 MemoryStore，避免在 fixture 尚未登记时遗留数据库句柄。
 - 在实际社交 HTTP 已开始后注入 context 持久化失败，修复后 done 正常结算，capability、running 与 active 均被释放，turn 记录 `SOCIAL_CONTEXT_FINALIZATION_FAILED` 并进入安全隔离路径；不会因清理失败继续调度下一方。
+
+Windows 受控浏览器使用新建管道转接原始 CDP 字节，保留原 Job 归属、背压及权限边界；原生首次启动仍须出图，后置诊断不将首次失败改成成功。4MiB 碎片、正常 EOF、远端断开、写完立即退出的尾部完整性、继承 fd4 的后代清理及可执行文件缺失均有真实进程回归。退出排空最多复用既有 500 毫秒关闭宽限，完成即清理，错误与取消立即终止；不增加启动预算或重试，POSIX 保留原路径。最终 Windows 预检已通过，完整跨平台检查仍按每个 PR 最新提交核对。
 
 合成跨版本演练使用升级前与升级后两个独立检查点：旧程序读取升级前快照，新程序恢复升级后快照并执行恢复屏障，旧、新检查点均保留。不得让旧程序直接写升级后的数据库，也不把恢复旧快照描述为自动合并升级后消息。离线备份的到期轮换仍属部署运维责任；删除运行库正文不等于删除离线备份。
 
