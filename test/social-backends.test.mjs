@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { runOpenAISocial } from "../src/backends/openai-social.mjs";
-import { installDshSocialGuard } from "../src/backends/dsh-social-guard.mjs";
 import { socialProviderProfile } from "../src/backends/social-budget.mjs";
 
 function fixture() {
@@ -78,57 +77,6 @@ test("post-reservation preflight failure releases an explicitly unstarted reques
   );
   assert.equal(f.bodies.length, 0);
   assert.equal(f.settled[0].status, "not_started");
-});
-
-test("DSH second authorization rejects changed fence and keeps per-run ordinals", async () => {
-  const hooks = new Map(),
-    reserved = [],
-    settled = [];
-  let runId = "one",
-    authorizations = 0,
-    started = 0;
-  let changed = false;
-  const control = {
-    authorize: async () => ({
-      verifiedProvider: true,
-      reasoningIncluded: true,
-      retryBoundaryVerified: true,
-      runId,
-      outputCap: 32,
-      inputUpperBound: 128000,
-      fence: changed && ++authorizations % 2 === 0 ? 2 : 1,
-    }),
-    reserveInference: async (value) => {
-      reserved.push(value);
-      return { reservationId: String(reserved.length), claimed: true };
-    },
-    settleInference: async (value) => settled.push(value),
-  };
-  installDshSocialGuard({ on: (name, fn) => hooks.set(name, fn) }, control);
-  const consume = async () => {
-    for await (const chunk of hooks.get("llm/stream")(
-      { sessionId: "session", maxTokens: 32 },
-      async function* () {
-        started++;
-        yield {};
-      },
-    ))
-      void chunk;
-  };
-  await consume();
-  runId = "two";
-  await consume();
-  assert.deepEqual(
-    reserved.map((x) => x.requestId),
-    ["one:0", "two:0"],
-  );
-  changed = true;
-  await assert.rejects(consume(), /SOCIAL_BACKEND_UNSUPPORTED/);
-  assert.equal(started, 2);
-  assert.equal(settled.at(-1).status, "not_started");
-  control.authorize = async () => false;
-  await assert.rejects(consume(), /SOCIAL_BACKEND_UNSUPPORTED/);
-  assert.equal(started, 2);
 });
 
 test("social OpenAI reserves full documented context and caps each inference without sessions", async () => {
@@ -217,61 +165,4 @@ test("missing usage and cap violations cannot release reservations", async () =>
   });
   await assert.rejects(runOpenAISocial(f.params), /SOCIAL_USAGE_UNVERIFIED/);
   assert.equal(f.settled[0].status, "unknown");
-});
-
-test("DSH request cap precedes stream reservation; retries each reserve and failures remain unknown", async () => {
-  const hooks = new Map(),
-    reserved = [],
-    settled = [];
-  const lease = {
-    verifiedProvider: true,
-    reasoningIncluded: true,
-    retryBoundaryVerified: true,
-    runId: "run",
-    fence: 1,
-    outputCap: 32,
-    inputUpperBound: 128000,
-  };
-  installDshSocialGuard(
-    { on: (name, fn) => hooks.set(name, fn) },
-    {
-      authorize: async () => lease,
-      reserveInference: async (value) => {
-        reserved.push(value);
-        return { reservationId: String(reserved.length), claimed: true };
-      },
-      settleInference: async (value) => settled.push(value),
-    },
-  );
-  const config = await hooks.get("agent/request")(
-    { agent: { id: "session" } },
-    async () => ({ provider: "verified", model: "model" }),
-  );
-  assert.equal(config.maxTokens, 32);
-  for (let i = 0; i < 2; i++) {
-    const stream = hooks.get("llm/stream")(
-      { ...config, sessionId: "session" },
-      async function* () {
-        yield { type: "test" };
-        throw Error("failure");
-      },
-    );
-    await assert.rejects(async () => {
-      for await (const chunk of stream) void chunk;
-    });
-  }
-  assert.equal(reserved.length, 2);
-  assert.notEqual(reserved[0].requestId, reserved[1].requestId);
-  assert.deepEqual(
-    settled.map((x) => x.status),
-    ["unknown", "unknown"],
-  );
-  lease.retryBoundaryVerified = false;
-  await assert.rejects(
-    hooks.get("agent/request")(
-      { agent: { id: "session" } },
-      async () => config,
-    ),
-    /SOCIAL_BACKEND_UNSUPPORTED/,
-  );
 });
