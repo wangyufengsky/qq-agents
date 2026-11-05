@@ -111,6 +111,8 @@
     "src/tools/media-lease.mjs",
     "public/home-space/scene-decoration.mjs",
     "src/home/project-snapshots.mjs",
-    "src/home/intents.mjs"
+    "src/home/intents.mjs",
+    "src/home/social-schema.mjs",
+    "src/home/social-store.mjs"
   ]
 }
