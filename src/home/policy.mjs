@@ -9,6 +9,7 @@ export const HOME_INTENT_TOOLS = Object.freeze([
 export const HOME_READ_TOOLS = Object.freeze([
   "room_read",
   "room_scene_read",
+  "room_scene_view",
   "room_operation_status",
 ]);
 export const HOME_WRITE_TOOLS = Object.freeze([
@@ -35,6 +36,10 @@ export const homePolicySchema = z
   .object({
     enabled: z.boolean().default(false),
     publishing: z.boolean().default(false),
+    sceneView: z
+      .object({ enabled: z.boolean().default(false) })
+      .strict()
+      .default({ enabled: false }),
     projectSnapshots: z
       .object({ enabled: z.boolean().default(false) })
       .strict()
@@ -61,6 +66,7 @@ export const homePolicySchema = z
   .default({
     enabled: false,
     publishing: false,
+    sceneView: { enabled: false },
     projectSnapshots: { enabled: false },
     maxWritesPerDay: 20,
     intents: {

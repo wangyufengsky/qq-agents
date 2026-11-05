@@ -102,6 +102,13 @@
     "src/home/policy.mjs",
     "src/home/room-store.mjs",
     "src/home/rooms.mjs",
+    "src/home/scene-view.mjs",
+    "src/home/browser-process.mjs",
+    "src/home/browser-launcher.mjs",
+    "src/home/browser-job.mjs",
+    "test/home-scene-cold.browser.mjs",
+    "src/tools/media-lease.mjs",
+    "public/home-space/scene-decoration.mjs",
     "src/home/project-snapshots.mjs",
     "src/home/intents.mjs"
   ]

@@ -921,7 +921,16 @@ export class Runtime {
       this.protectedWork.record(
         ctx,
         "tool",
-        JSON.stringify({ name, result }).slice(0, 24000),
+        JSON.stringify({
+          name,
+          result:
+            name === "room_scene_view"
+              ? {
+                  notice:
+                    "受控场景观察仅交付当前回合，不在工具工作日志保留正文与图片。",
+                }
+              : result,
+        }).slice(0, 24000),
       );
     if (
       ["web_fetch", "social_read", "social_search", "social_comments"].includes(

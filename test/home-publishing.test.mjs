@@ -58,6 +58,7 @@ test("home defaults deny discovery and forged dispatch, with immediate revocatio
     publishing: false,
     projectSnapshots: { enabled: false },
     maxWritesPerDay: 20,
+    sceneView: { enabled: false },
     intents: {
       enabled: false,
       hints: true,

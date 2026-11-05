@@ -1,4 +1,5 @@
 // @ts-check
+import { mediaLease } from "../tools/media-lease.mjs";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -22,6 +23,10 @@ export class AntigravityMedia {
     this.files = new Map();
     this.bytes = 0;
     this.closed = false;
+    /** @type {Map<string, (() => boolean)[]>} */
+    this.leases = new Map();
+    /** @type {Set<string>} */
+    this.unrestricted = new Set();
   }
   prepare() {
     this.directory ??= fs.mkdtempSync(
@@ -144,6 +149,13 @@ export class AntigravityMedia {
       this.files.set(file.sha256, file);
       this.bytes += file.bytes;
     }
+    if (typeof result[mediaLease] === "function")
+      for (const p of prepared)
+        this.leases.set(p.sha256, [
+          ...(this.leases.get(p.sha256) || []),
+          result[mediaLease],
+        ]);
+    else for (const p of prepared) this.unrestricted.add(p.sha256);
     let index = 0;
     return {
       ...result,
@@ -158,11 +170,24 @@ export class AntigravityMedia {
     };
   }
   catalog() {
+    for (const [sha, leases] of this.leases) {
+      if (!this.unrestricted.has(sha) && !leases.some((lease) => lease())) {
+        const file = this.files.get(sha);
+        if (file) {
+          fs.rmSync(file.path, { force: true });
+          this.bytes -= file.bytes;
+        }
+        this.files.delete(sha);
+        this.leases.delete(sha);
+      }
+    }
     return [...this.files.values()];
   }
   close() {
     this.closed = true;
     this.files.clear();
+    this.leases.clear();
+    this.unrestricted.clear();
     if (this.directory)
       fs.rmSync(this.directory, { recursive: true, force: true });
   }

@@ -242,6 +242,40 @@ test("screenshot browser: explicit path first, then platform paths, else a clear
     }),
     "/opt/chrome",
   );
+  const both = (p) =>
+    [
+      "/usr/bin/google-chrome",
+      "/usr/bin/google-chrome-stable",
+      "/usr/bin/chromium",
+    ].includes(p);
+  assert.equal(
+    findScreenshotBrowser({ env: {}, platform: "linux", exists: both }),
+    "/usr/bin/google-chrome",
+  );
+  assert.equal(
+    findScreenshotBrowser({
+      env: {},
+      platform: "linux",
+      exists: (p) => p !== "/usr/bin/google-chrome" && both(p),
+    }),
+    "/usr/bin/google-chrome-stable",
+  );
+  assert.equal(
+    findScreenshotBrowser({
+      env: { CHROME_PATH: "/usr/bin/chromium" },
+      platform: "linux",
+      exists: both,
+    }),
+    "/usr/bin/chromium",
+  );
+  assert.equal(
+    findScreenshotBrowser({
+      env: { QQ_SCREENSHOT_BROWSER: "/usr/bin/chromium" },
+      platform: "linux",
+      exists: both,
+    }),
+    "/usr/bin/chromium",
+  );
   // A wrong explicit path is reported, not silently swapped for a probed one.
   for (const CHROME_PATH of ["/missing/chrome", "chromium"])
     assert.throws(

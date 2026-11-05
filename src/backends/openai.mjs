@@ -1,4 +1,5 @@
 // @ts-check
+import { mediaLease } from "../tools/media-lease.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -231,7 +232,27 @@ export class OpenAIBackend {
   store(session) {
     const file = this.file(session.id),
       tmp = file + "." + process.pid + ".tmp";
-    fs.writeFileSync(tmp, JSON.stringify(session), { mode: 0o600 });
+    fs.writeFileSync(
+      tmp,
+      JSON.stringify(session, (_key, value) =>
+        typeof value?.[mediaLease] === "function"
+          ? {
+              ...(value.role
+                ? {
+                    role: value.role,
+                    tool_call_id: value.tool_call_id,
+                    content:
+                      "受控场景观察未持久保存；需要时重新读取当前授权版本。",
+                  }
+                : {
+                    type: "text",
+                    text: "受控场景图片未持久保存；需要时重新调用 room_scene_view 取得当前授权版本。",
+                  }),
+            }
+          : value,
+      ),
+      { mode: 0o600 },
+    );
     fs.renameSync(tmp, file);
   }
   /** @param {import("./session-contract.mjs").ToolSpec[]} tools */
@@ -265,6 +286,9 @@ export class OpenAIBackend {
       if (c.type === "text") texts.push(c.text);
       else if (c.type === "image" && this.config.vision)
         images.push({
+          ...(typeof result[mediaLease] === "function"
+            ? { [mediaLease]: result[mediaLease] }
+            : {}),
           type: "image_url",
           image_url: { url: `data:${c.mimeType};base64,${c.data}` },
         });
@@ -283,6 +307,9 @@ export class OpenAIBackend {
       );
     return {
       tool: {
+        ...(typeof result[mediaLease] === "function"
+          ? { [mediaLease]: result[mediaLease] }
+          : {}),
         role: "tool",
         tool_call_id: call.id,
         content: texts.join("\n") || (result.isError ? "工具调用失败" : "完成"),
@@ -375,6 +402,24 @@ export class OpenAIBackend {
           );
         /** @type {any} */
         let failure;
+        // A later tool in the same batch can retract the scene before model input.
+        for (const message of state.messages) {
+          if (
+            typeof (/** @type {any} */ (message)[mediaLease]) === "function" &&
+            !(/** @type {any} */ (message)[mediaLease]())
+          )
+            message.content =
+              "受控场景观察授权或版本已失效，正文与图片未交付；需要时重新读取。";
+          if (Array.isArray(message.content))
+            message.content = message.content.map((part) =>
+              typeof part[mediaLease] === "function" && !part[mediaLease]()
+                ? {
+                    type: "text",
+                    text: "受控场景图片授权或版本已失效，未交付该图片；需要时重新读取。",
+                  }
+                : part,
+            );
+        }
         onInputSubmitted?.();
         const result = await this.request("/chat/completions", {
           signal: controller.signal,

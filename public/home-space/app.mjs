@@ -1,3 +1,4 @@
+import { decorateSceneObject } from "./scene-decoration.mjs";
 import { catalog } from "../home-preview/catalog.mjs";
 import { createTemplate } from "../home-preview/templates.mjs";
 import { makeScene } from "../home-preview/scene.mjs";
@@ -258,44 +259,11 @@ function decorate(node, o) {
       if (event.key === "Enter" || event.key === " ") choose(event);
     });
   }
-  if (route.type !== "hall") {
-    const text = {
-      nameplate:
-        route.type === "room"
-          ? overview.residents.find((r) => r.id === route.agentId)?.tagline ||
-            name(route.agentId)
-          : "走廊",
-    }[o.id];
-    if (text) {
-      const ink = el("span", `object-ink ink-${o.id}`, text);
-      ink.title = text;
-      node.append(ink);
-    }
-    return;
-  }
-  if (o.id.startsWith("sign-")) {
-    const n = el("span", "door-name", name(o.id.slice(5)));
-    const resident = overview.residents.find((r) => r.id === o.id.slice(5));
-    n.textContent = resident?.tagline || name(o.id.slice(5));
-    n.title = `${name(o.id.slice(5))}${resident?.tagline ? " · " + resident.tagline : ""}`;
-    node.setAttribute("aria-label", n.title);
-    node.append(n);
-  }
-  if (o.id.startsWith("door-")) {
-    const state = overview.residents.find((r) => r.id === o.id.slice(5))?.state;
-    const tag = el("span", "door-status");
-    tag.append(
-      el(
-        "i",
-        `status-dot ${state === "online" ? "" : state === "paused" ? "paused" : "offline"}`,
-      ),
-      document.createTextNode(
-        { online: "在线", offline: "离线", paused: "暂停" }[state] ||
-          "状态未知",
-      ),
-    );
-    node.append(tag);
-  }
+  decorateSceneObject(node, o, {
+    type: route.type,
+    residents: overview.residents,
+    ownerAgentId: route.agentId,
+  });
 }
 function draw(direction = 0) {
   if (!overview || !envelope) return Promise.resolve();

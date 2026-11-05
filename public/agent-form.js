@@ -207,6 +207,7 @@ const AGENT_TOOL_GROUPS = [
       room_intent_cancel: "取消尚未执行的提议",
       room_read: "读取自己的展示",
       room_scene_read: "读取房间与公共布局",
+      room_scene_view: "读取受控场景图片",
       room_scene_patch: "主人格布置",
       room_scene_undo: "主人格撤销布置",
       room_publish: "主人格发布文字",
@@ -733,6 +734,11 @@ const agentForm = {
         ),
         '<input type="hidden" name="homeSettingsShown" value="1">' +
           check("homeEnabled", "启用小窝读取和主人格布置", row.home?.enabled) +
+          check(
+            "homeSceneView",
+            "允许受控场景图片读取（需要本机 Chromium）",
+            row.home?.sceneView?.enabled,
+          ) +
           check(
             "homePublishing",
             "允许主人格主动发布文字",
@@ -1492,6 +1498,7 @@ const agentForm = {
         ? {
             home: {
               enabled: f.has("homeEnabled"),
+              sceneView: { enabled: f.has("homeSceneView") },
               publishing: f.has("homePublishing"),
               projectSnapshots: { enabled: f.has("homeProjectSnapshots") },
               intents: {

@@ -74,6 +74,7 @@ export function toolAvailable(agent, name, conversation) {
   if (HOME_TOOLS.includes(name))
     return (
       agent.home?.enabled === true &&
+      (name !== "room_scene_view" || agent.home.sceneView?.enabled === true) &&
       (HOME_INTENT_TOOLS.includes(name)
         ? agent.home.intents?.enabled === true &&
           (name !== "room_intent_resolve" || conversation === "@subject")

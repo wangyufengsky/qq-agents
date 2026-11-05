@@ -22,6 +22,10 @@ export function serveHomePreview(req, res, pathname) {
     ["/home-space/app.mjs", ["app.mjs", "text/javascript; charset=utf-8"]],
     ["/home-space/book.mjs", ["book.mjs", "text/javascript; charset=utf-8"]],
     [
+      "/home-space/scene-decoration.mjs",
+      ["scene-decoration.mjs", "text/javascript; charset=utf-8"],
+    ],
+    [
       "/home-space/interiors.mjs",
       ["interiors.mjs", "text/javascript; charset=utf-8"],
     ],
