@@ -40,21 +40,47 @@ function setup(t) {
     messageId = randomUUID();
   const host = f.runtime.home.generation("agent-0"),
     guest = f.runtime.home.generation("agent-1");
-  db.exec(`CREATE TABLE home_social_policy(singleton INTEGER PRIMARY KEY,enabled INTEGER); INSERT INTO home_social_policy VALUES(1,1);
-    CREATE TABLE home_social_visits(id TEXT PRIMARY KEY,host_agent_id TEXT,host_generation TEXT,guest_agent_id TEXT,guest_generation TEXT,status TEXT);
-    CREATE TABLE home_social_messages(id TEXT PRIMARY KEY,visit_id TEXT,retracted_at INTEGER,hidden_at INTEGER,body_cleared_at INTEGER);
-    CREATE TABLE home_social_blocks(actor_generation TEXT,target_generation TEXT,active INTEGER);`);
-  db.prepare("INSERT INTO home_social_visits VALUES(?,?,?,?,?,?)").run(
-    visitId,
+  db.prepare("UPDATE home_social_policy SET enabled=1 WHERE singleton=1").run();
+  const invitationId = randomUUID();
+  db.prepare(
+    "INSERT INTO home_social_invitations(id,host_agent_id,host_generation,guest_agent_id,guest_generation,initiator_generation,recipient_generation,room_id,audience,requested_scope,status,policy_revision,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?,?,?,'accepted',0,?,?)",
+  ).run(
+    invitationId,
     "agent-0",
     host,
     "agent-1",
     guest,
-    "active",
+    host,
+    guest,
+    "room:" + host,
+    JSON.stringify([host, guest]),
+    JSON.stringify({ scope: ["layout"], selectedItems: [] }),
+    Date.now(),
+    Date.now() + 60000,
   );
-  db.prepare("INSERT INTO home_social_messages VALUES(?,?,NULL,NULL,NULL)").run(
+  db.prepare(
+    "INSERT INTO home_social_visits(id,invitation_id,host_agent_id,host_generation,guest_agent_id,guest_generation,room_id,pair_key,status,policy_revision,started_at,expires_at) VALUES(?,?,?,?,?,?,?,?,'active',0,?,?)",
+  ).run(
+    visitId,
+    invitationId,
+    "agent-0",
+    host,
+    "agent-1",
+    guest,
+    "room:" + host,
+    [host, guest].sort().join(":"),
+    Date.now(),
+    Date.now() + 60000,
+  );
+  db.prepare(
+    "INSERT INTO home_social_messages(id,visit_id,author_agent_id,author_generation,sequence,source_labels,audience,created_at) VALUES(?,?,?,?,1,'[]',?,?)",
+  ).run(
     messageId,
     visitId,
+    "agent-0",
+    host,
+    JSON.stringify([host, guest]),
+    Date.now(),
   );
   const marker = socialMarker(visitId, messageId),
     ctx = context(f.runtime, "agent-0", "@subject");
@@ -63,19 +89,6 @@ function setup(t) {
     target: { kind: "visit", id: visitId },
     actorIdentity: { agentId: "agent-0", generation: host },
   };
-  const invitationId = randomUUID();
-  db.exec(`ALTER TABLE home_social_visits ADD COLUMN invitation_id TEXT;
-    ALTER TABLE home_social_visits ADD COLUMN room_id TEXT;
-    ALTER TABLE home_social_visits ADD COLUMN expires_at INTEGER;
-    ALTER TABLE home_social_visits ADD COLUMN ended_at INTEGER;
-    CREATE TABLE home_social_invitations(id TEXT PRIMARY KEY,host_agent_id TEXT,host_generation TEXT,guest_agent_id TEXT,guest_generation TEXT,status TEXT,revision INTEGER,expires_at INTEGER,body_cleared_at INTEGER,decided_at INTEGER);
-    CREATE TABLE home_social_grants(visit_id TEXT PRIMARY KEY,invitation_id TEXT,room_id TEXT,host_generation TEXT,guest_generation TEXT,scope TEXT,selected_item_revisions TEXT,revision INTEGER,expires_at INTEGER,revoked_at INTEGER);`);
-  db.prepare(
-    "UPDATE home_social_visits SET invitation_id=?,room_id=?,expires_at=?",
-  ).run(invitationId, "room:" + host, Date.now() + 60000);
-  db.prepare(
-    "INSERT INTO home_social_invitations VALUES(?,?,?,?,?,'accepted',1,?,NULL,NULL)",
-  ).run(invitationId, "agent-0", host, "agent-1", guest, Date.now() + 60000);
   return {
     ...f,
     db,
@@ -170,7 +183,11 @@ test("revocation, block, generation replacement and tombstones close derived rea
   const { host_generation: host, guest_generation: guest } = f.db
     .prepare("SELECT * FROM home_social_visits")
     .get();
-  f.db.prepare("INSERT INTO home_social_blocks VALUES(?,?,1)").run(host, guest);
+  f.db
+    .prepare(
+      "INSERT INTO home_social_blocks(actor_generation,target_generation,revision,active,created_at) VALUES(?,?,1,1,0)",
+    )
+    .run(host, guest);
   assert.equal(socialContextAllowed(f.runtime, f.ctx, [f.marker]), false);
   f.db.exec("DELETE FROM home_social_blocks");
   f.db
@@ -277,6 +294,8 @@ test("personal exports and imported snapshots strip text but retain durable soci
 test("unavailable social authority tables fail closed", (t) => {
   const f = fixture(t),
     ctx = context(f.runtime, "agent-0", "@subject");
+  f.runtime.config.homeSocial = { enabled: true, retentionDays: 30 };
+  f.store.db.exec("DROP TABLE home_social_policy");
   ctx.runtimeKind = "subject-social";
   ctx.socialBinding = {
     target: { kind: "visit", id: randomUUID() },
@@ -401,7 +420,9 @@ function installGrant(f, selected = []) {
   f.runtime.config.agents[0].home.publishing = true;
   const scope = ["layout", ...selected.map((item) => item.slot)];
   f.db
-    .prepare("INSERT INTO home_social_grants VALUES(?,?,?,?,?,?,?,1,?,NULL)")
+    .prepare(
+      "INSERT INTO home_social_grants(visit_id,invitation_id,room_id,host_generation,guest_generation,scope,selected_item_revisions,revision,policy_revision,expires_at,revoked_at) VALUES(?,?,?,?,?,?,?,1,0,?,NULL)",
+    )
     .run(
       f.visitId,
       f.invitationId,
@@ -849,13 +870,15 @@ test("accepted invitation retention follows its associated visit termination", (
   f.runtime.now = () => now;
   const marker = socialInvitationMarker(f.invitationId, 1);
   f.db
-    .prepare("UPDATE home_social_invitations SET decided_at=?,expires_at=?")
-    .run(now - 59 * day, now - 57 * day);
+    .prepare(
+      "UPDATE home_social_invitations SET created_at=?,decided_at=?,expires_at=?",
+    )
+    .run(now - 60 * day, now - 59 * day, now - 57 * day);
   f.db
     .prepare(
-      "UPDATE home_social_visits SET status='ended',ended_at=?,expires_at=?",
+      "UPDATE home_social_visits SET status='ended',started_at=?,ended_at=?,expires_at=?",
     )
-    .run(now - 29 * day, now - 29 * day);
+    .run(now - 59 * day, now - 29 * day, now - 29 * day);
   const invitationContext = {
     ...f.ctx,
     socialBinding: {

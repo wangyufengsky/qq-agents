@@ -1,4 +1,5 @@
 import { socialSafeExportRow, mergeProtection } from "./protection.mjs";
+import { migrateHomeSocial } from "../home/social-schema.mjs";
 import { withoutClosenessCache } from "../core/closeness.mjs";
 import { recallAnnotation } from "./recalls.mjs";
 import fs from "node:fs";
@@ -171,6 +172,7 @@ export class MemoryStore {
       if (version < 4) this.transaction(() => migrateIdentity(this.db));
       migrateTimeline(this.db, version);
       migrateMessageIds(this.db, version);
+      migrateHomeSocial(this.db);
       this.due = new ConversationDue(this.db);
       this.transaction(() => this.due.initialize());
     } catch (error) {
