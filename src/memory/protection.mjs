@@ -55,6 +55,9 @@ function hasSocial(value) {
 function redactSocial(value, key = "") {
   if (key === "protectedSocialSources")
     return socialRecordSources({ protectedSocialSources: value });
+  // Other audience labels remain authoritative after restoring redacted prose.
+  if (key === "protectedPeerQzoneTargets" || key === "protectedRepositories")
+    return mergeProtection({ [key]: value })[key] || [];
   if (typeof value === "string" && parseSocialMarker(value) !== null)
     return value;
   if (typeof value === "string")
