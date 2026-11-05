@@ -68,8 +68,8 @@ export class RoomStore {
     return row ? JSON.parse(row.result) : null;
   }
   /** One namespace spans every owner operation, independent of model session lifetime.
-   * @param {string} generation @param {string} kind @param {any} args @param {number|null} quota @param {number} now @param {()=>any} apply */
-  execute(generation, kind, args, quota, now, apply) {
+   * @param {string} generation @param {string} kind @param {any} args @param {number|null} quota @param {number} now @param {()=>any} apply @param {any} [intent] */
+  execute(generation, kind, args, quota, now, apply, intent) {
     const key = "room:" + generation,
       digest = createHash("sha256")
         .update(JSON.stringify(canonical({ kind, args })))
@@ -90,6 +90,7 @@ export class RoomStore {
           historical: true,
         };
       }
+      intent?.before();
       const day = new Date(now).toISOString().slice(0, 10);
       if (quota !== null) {
         const n =
@@ -119,6 +120,7 @@ export class RoomStore {
             "INSERT INTO home_write_usage(generation,day,writes) VALUES(?,?,1) ON CONFLICT(generation,day) DO UPDATE SET writes=writes+1",
           )
           .run(generation, day);
+      intent?.after(result);
       this.db.exec("COMMIT");
       return { ...result, replayed: false, historical: false };
     } catch (error) {
