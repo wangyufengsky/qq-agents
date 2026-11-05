@@ -217,6 +217,35 @@ const AGENT_TOOL_GROUPS = [
     },
   },
   {
+    id: "home-social",
+    builtin: true,
+    builtinLabel: "由实例社交与角色参与开关共同控制",
+    title: "小窝往来",
+    desc: "普通主体只查看安全数量并选择独立处理；邀请、接受与发言在专用社交回合中完成。需要合格后端和明确预算，不发送QQ。",
+    tools: {
+      home_social_capabilities: "查看社交许可与后端支持",
+      home_social_process: "排队独立异步处理",
+      home_visit_invite: "邀请或申请拜访",
+      home_visit_inbox: "读取当前往来列表",
+      home_visit_invitation_read: "读取绑定邀请",
+      home_visit_decide: "自主决定邀请",
+      home_visit_read: "读取拜访消息",
+      home_visit_mark_read: "确认实际已读水位",
+      home_visit_send: "提交本人社交消息",
+      home_visit_end: "结束拜访",
+      home_visit_retract: "撤回本人消息",
+      home_visit_room_read: "读取临时获准房间",
+      home_visit_grant_reduce: "缩小房间授权",
+      home_social_block: "设置往来屏蔽",
+      home_social_operation_read: "核对原请求回执",
+      home_exchange_propose: "提议有界交流时段",
+      home_exchange_decide: "确认精确时段条款",
+      home_exchange_status: "查看时段与额度",
+      home_exchange_yield: "封口本轮消息批次",
+      home_exchange_close: "关闭交流时段",
+    },
+  },
+  {
     id: "board",
     builtin: true,
     builtinLabel: "由全局留言板开关控制",
@@ -734,6 +763,11 @@ const agentForm = {
         ),
         '<input type="hidden" name="homeSettingsShown" value="1">' +
           check("homeEnabled", "启用小窝读取和主人格布置", row.home?.enabled) +
+          check(
+            "homeSocialEnabled",
+            "允许主体自主参与小窝社交（仍需实例启用和双方同意）",
+            row.home?.social?.enabled ?? false,
+          ) +
           check(
             "homeSceneView",
             "允许受控场景图片读取（需要本机 Chromium）",
@@ -1498,6 +1532,10 @@ const agentForm = {
         ? {
             home: {
               enabled: f.has("homeEnabled"),
+              ...(original.home?.social !== undefined ||
+              f.has("homeSocialEnabled")
+                ? { social: { enabled: f.has("homeSocialEnabled") } }
+                : {}),
               sceneView: { enabled: f.has("homeSceneView") },
               publishing: f.has("homePublishing"),
               projectSnapshots: { enabled: f.has("homeProjectSnapshots") },

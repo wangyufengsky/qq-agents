@@ -1,3 +1,4 @@
+import { trackSocial } from "../core/social-protection.mjs";
 import {
   trackPeerQzone,
   peerQzoneSources,
@@ -209,6 +210,7 @@ export const legacyDefinitions = {
 };
 export function taintMedia(ctx, meta) {
   trackPeerQzone(ctx, meta);
+  trackSocial(ctx, meta);
   for (const repo of meta?.protectedRepositories || [])
     ctx.privateRead.add("github-private:" + repo);
   if (meta?.protectedOperations)

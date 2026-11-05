@@ -244,17 +244,20 @@ export function subjectMaterials(runtime, ctx) {
       : null;
   const protection = contextProtection(runtime, ctx);
   const restricted =
+    protection.protectedSocialSources.length > 0 ||
     protection.protectedPeerQzoneTargets.length > 0 ||
     protection.protectedOperations ||
     protection.protectedRepositories.length > 0;
   const strip = ({
+    protectedSocialSources,
     protectedPeerQzoneTargets,
     protectedRepositories,
     protectedOperations,
     ...rest
   }) => ({
     ...rest,
-    ...(protectedPeerQzoneTargets?.length ||
+    ...(protectedSocialSources?.length ||
+    protectedPeerQzoneTargets?.length ||
     protectedRepositories?.length ||
     protectedOperations
       ? { protected: true }
@@ -321,6 +324,12 @@ export function subjectMaterials(runtime, ctx) {
         }
       : {}),
     shares: shares.map(strip),
+    ...(runtime.config.homeSocial?.enabled &&
+    a.home?.enabled &&
+    a.home.social?.enabled &&
+    !restricted
+      ? { homeSocial: runtime.socialRuntime.capabilities(ctx, {}) }
+      : {}),
     ...(board ? { board } : {}),
     ...(a.home?.enabled &&
     a.home.intents?.enabled &&

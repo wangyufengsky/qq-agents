@@ -56,6 +56,7 @@ test("home defaults deny discovery and forged dispatch, with immediate revocatio
   assert.deepEqual(f.runtime.agent("agent-0").home, {
     enabled: false,
     publishing: false,
+    social: { enabled: false },
     projectSnapshots: { enabled: false },
     maxWritesPerDay: 20,
     sceneView: { enabled: false },

@@ -649,3 +649,26 @@ test("home settings default off, round trip explicitly and preserve policy when 
   ).row.home;
   assert.deepEqual(JSON.parse(JSON.stringify(absent)), row.home);
 });
+
+test("social participation remains default off and round trips independently of room reading", async () => {
+  const cfg = await sampleConfig(),
+    run = editor(cfg),
+    row = cfg.agents[0];
+  const build = run("agentForm.build.bind(agentForm)"),
+    parse = run("agentForm.parse.bind(agentForm)");
+  const html = build(row, "");
+  assert.equal(
+    parse(formOf(html), row).row.home.social?.enabled ?? false,
+    false,
+  );
+  const enabled = parse(formOf(html, { homeSocialEnabled: "on" }), row).row;
+  assert.equal(enabled.home.social.enabled, true);
+  assert.equal(enabled.home.enabled, row.home.enabled);
+  const next = build(enabled, "");
+  assert.equal(parse(formOf(next), enabled).row.home.social.enabled, true);
+  assert.equal(
+    parse(formOf(next, { homeSocialEnabled: undefined }), enabled).row.home
+      .social.enabled,
+    false,
+  );
+});

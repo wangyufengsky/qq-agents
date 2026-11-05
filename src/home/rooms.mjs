@@ -1,4 +1,5 @@
 // @ts-check
+import { recordSocialItemProof } from "../core/social-protection.mjs";
 import { resolveProjectSnapshot } from "./project-snapshots.mjs";
 import { HomeIntents } from "./intents.mjs";
 import { RoomStore } from "./room-store.mjs";
@@ -38,6 +39,7 @@ export class HomeRooms {
       p = contextProtection(r, ctx);
     if (
       r.protectedWork.context(ctx) ||
+      p.protectedSocialSources.length ||
       p.protectedOperations ||
       p.protectedRepositories.length ||
       p.protectedPeerQzoneTargets.length
@@ -282,7 +284,8 @@ export class HomeRooms {
           name === "room_publish_snapshot"
             ? resolveProjectSnapshot(this, ctx, args.source)
             : null;
-        return this.store.writeItem(
+        this.shareable(ctx);
+        const result = this.store.writeItem(
           generation,
           args.slot,
           args.expectedItemRevision,
@@ -292,6 +295,18 @@ export class HomeRooms {
           now,
           snapshot?.source,
         );
+        if (name === "room_publish")
+          recordSocialItemProof(this.runtime.memory.db, {
+            generation,
+            slot: args.slot,
+            itemId: result.itemId,
+            itemRevision: result.itemRevision,
+            title: args.title,
+            body: args.body,
+            sourceIds: ctx.privateRead,
+            now,
+          });
+        return result;
       }
       if (name !== "room_retract") throw Error("UNKNOWN_TOOL");
       if (!old) throw Error("HOME_ITEM_NOT_FOUND");

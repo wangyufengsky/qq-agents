@@ -38,6 +38,19 @@ export class TurnRunner {
     this.runtime = runtime;
   }
   async runTurn(agentId, conversation, { reasons = [] } = {}) {
+    if (conversation !== SUBJECT) this.runtime.socialRuntime?.preempt(agentId);
+    const release =
+      conversation === SUBJECT
+        ? this.runtime.subjectExecution.acquire(agentId, {})
+        : () => {};
+    if (!release) return { status: "queued" };
+    try {
+      return await this.runOrdinaryTurn(agentId, conversation, { reasons });
+    } finally {
+      release();
+    }
+  }
+  async runOrdinaryTurn(agentId, conversation, { reasons = [] } = {}) {
     const runtime = this.runtime;
     if (runtime.closed) throw Error("RUNTIME_CLOSING");
     const a = runtime.agent(agentId);

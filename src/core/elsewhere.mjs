@@ -62,6 +62,7 @@ function ownWords(runtime, ctx, memory, boundary, { fresh, now, lookbackMs }) {
   for (const row of rows) {
     const payload = JSON.parse(row.payload || "{}");
     if (
+      payload.protectedSocialSources?.length ||
       payload.protectedPeerQzoneTargets?.length ||
       payload.protectedOperations ||
       payload.protectedRepositories?.length ||

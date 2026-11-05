@@ -1,5 +1,6 @@
 // @ts-check
 import { mediaLease } from "../tools/media-lease.mjs";
+import { runOpenAISocial } from "./openai-social.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -70,6 +71,25 @@ function forgetSentImages(messages) {
 // so there is no remote session to verify: a step is persisted only once the
 // assistant message and every tool result for it are complete.
 export class OpenAIBackend {
+  /** Isolated social execution never enters the ordinary session loop.
+   * @param {any} params */
+  async runSocial(params) {
+    const controller = new AbortController();
+    this.active.add(controller);
+    try {
+      return await runOpenAISocial({
+        ...params,
+        signal: AbortSignal.any([params.signal, controller.signal]),
+        endpoint: this.endpoint("/chat/completions"),
+        model: this.config.model,
+        profileId: this.config.socialProfile,
+        headers: () => this.headers(),
+        fetch: this.fetch,
+      });
+    } finally {
+      this.active.delete(controller);
+    }
+  }
   /**
    * @param {BackendConfig} config
    * @param {import("./session-contract.mjs").BackendAgent} agent

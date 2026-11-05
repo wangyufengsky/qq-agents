@@ -36,6 +36,10 @@ export const homePolicySchema = z
   .object({
     enabled: z.boolean().default(false),
     publishing: z.boolean().default(false),
+    social: z
+      .object({ enabled: z.boolean().default(false) })
+      .strict()
+      .prefault({}),
     sceneView: z
       .object({ enabled: z.boolean().default(false) })
       .strict()
@@ -66,6 +70,7 @@ export const homePolicySchema = z
   .default({
     enabled: false,
     publishing: false,
+    social: { enabled: false },
     sceneView: { enabled: false },
     projectSnapshots: { enabled: false },
     maxWritesPerDay: 20,

@@ -516,9 +516,12 @@ test("cancelling one conversation leaves another reused worker running", async (
 
 test("a cancellation during terminal MCP completion retires the session", async (t) => {
   const gate = deferred();
+  const sequence = [];
   const { backend, launches, calls, chat } = setup(t, {
     callTool: async (name, args) => {
+      sequence.push("tool");
       calls.push({ name, args });
+      updateControl(launches[0], { pendingEntered: true });
       return gate.promise;
     },
   });
@@ -526,13 +529,20 @@ test("a cancellation during terminal MCP completion retires the session", async 
   const terminal = deferred();
   const run = conversation.run("pending-terminal", {
     onTiming(value) {
-      if (value.phase === "terminal") terminal.resolve();
+      if (value.phase === "terminal") {
+        sequence.push("terminal");
+        terminal.resolve();
+      }
     },
   });
 
+  // Attach immediately so an early assertion or teardown cannot leak rejection.
+  void run.catch(() => {});
   await terminal.promise;
   assert.equal(calls.length, 1);
+  sequence.push("cancel");
   conversation.controller.abort();
+  assert.deepEqual(sequence, ["tool", "terminal", "cancel"]);
   await assert.rejects(run, /ABORTED/);
   gate.resolve({
     content: [{ type: "text", text: "late synthetic tool result" }],
@@ -551,6 +561,7 @@ test("an accepted terminal tool call settles before successful completion", asyn
   const { backend, launches, calls, chat } = setup(t, {
     callTool: async (name, args) => {
       calls.push({ name, args });
+      updateControl(launches[0], { pendingEntered: true });
       return gate.promise;
     },
   });
@@ -567,6 +578,7 @@ test("an accepted terminal tool call settles before successful completion", asyn
       completed = true;
     });
 
+  void run.catch(() => {});
   await terminal.promise;
   assert.equal(calls.length, 1);
   await new Promise((resolve) => setTimeout(resolve, 25));

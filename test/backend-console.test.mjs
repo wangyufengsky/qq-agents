@@ -102,4 +102,95 @@ test("console recovery and automatic-recovery controls call real admin routes wi
     /type="button" data-backend-candidate=/,
   );
   assert.match(node("#edit-fields").innerHTML, /&lt;unsafe&gt;/);
+  const form = vm.runInContext(
+    'backendForm({...config.backends[0],type:"openai",model:"keep-model",baseUrl:"https://example.com/v1"},"fixture","")',
+    sandbox,
+  );
+  assert.match(form, /name="socialProfile"/);
+  assert.match(form, /openai-gpt-4.1-mini/);
+  assert.match(form, /value="keep-model"/);
+  assert.match(form, /value="https:\/\/example.com\/v1"/);
+  sandbox.FormData = class {
+    constructor(target) {
+      return target;
+    }
+  };
+  sandbox.formValues = new Map(
+    Object.entries({
+      id: "fixture",
+      type: "openai",
+      label: "fixture",
+      model: "keep-model",
+      baseUrl: "https://example.com/v1",
+      socialProfile: "openai-gpt-4.1-mini",
+      effort: "high",
+      toolServers: "[]",
+    }),
+  );
+  vm.runInContext(
+    'editing={type:"backends",id:"fixture"}; api=async(url,body)=>{globalThis.savedConfig=body.config;globalThis.savedBackend=body.config.backends[0];return {warnings:[]}};load=async()=>{};action=(fn)=>{globalThis.pendingSave=fn()};',
+    sandbox,
+  );
+  vm.runInContext(
+    'document.querySelector("#edit-form").onsubmit({preventDefault(){},target:formValues})',
+    sandbox,
+  );
+  await sandbox.pendingSave;
+  assert.equal(sandbox.savedBackend.socialProfile, "openai-gpt-4.1-mini");
+  assert.equal(sandbox.savedBackend.model, "keep-model");
+  assert.equal(sandbox.savedBackend.baseUrl, "https://example.com/v1");
+  const openai = structuredClone(sandbox.savedBackend);
+  for (const profile of ["openai-gpt-4.1-mini", null]) {
+    for (const type of ["codex", "dsh", "antigravity"]) {
+      sandbox.sourceBackend = structuredClone(openai);
+      vm.runInContext(
+        'config.backends[0]=sourceBackend;editing={type:"backends",id:"fixture",row:sourceBackend}',
+        sandbox,
+      );
+      // Emptying the selector persists null while the backend remains OpenAI.
+      sandbox.formValues.set("type", "openai");
+      sandbox.formValues.set("baseUrl", "https://example.com/v1");
+      sandbox.formValues.set("socialProfile", profile || "");
+      vm.runInContext(
+        'document.querySelector("#edit-form").onsubmit({preventDefault(){},target:formValues})',
+        sandbox,
+      );
+      await sandbox.pendingSave;
+      assert.equal(sandbox.savedBackend.socialProfile, profile);
+      sandbox.sourceBackend = structuredClone(sandbox.savedBackend);
+      vm.runInContext(
+        'config.backends[0]=sourceBackend;editing={type:"backends",id:"fixture",row:sourceBackend}',
+        sandbox,
+      );
+      sandbox.formValues.set("type", type);
+      sandbox.formValues.set("baseUrl", "");
+      sandbox.formValues.set("cliReuseIdleSeconds", "120");
+      sandbox.formValues.set("cliReuseMaxIdle", "1");
+      vm.runInContext(
+        'document.querySelector("#edit-form").onsubmit({preventDefault(){},target:formValues})',
+        sandbox,
+      );
+      await sandbox.pendingSave;
+      const payload = JSON.parse(JSON.stringify(sandbox.savedConfig));
+      assert.equal(Object.hasOwn(payload.backends[0], "socialProfile"), false);
+      const response = await fetch(`http://127.0.0.1:${port}/api/config`, {
+        method: "PUT",
+        headers: {
+          "x-admin-token": "test-admin",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          config: payload,
+          revision: f.configStore.revision,
+        }),
+      });
+      assert.equal(
+        response.status,
+        200,
+        `${profile} -> ${type}: ${JSON.stringify(await response.json())}`,
+      );
+      assert.equal(f.runtime.config.backends[0].type, type);
+      assert.equal(f.runtime.config.backends[0].socialProfile, undefined);
+    }
+  }
 });

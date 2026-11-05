@@ -72,8 +72,16 @@ export class SocialStore {
       throw error;
     }
   }
-  /** @param {{actorIdentity:SocialIdentity,requestId:string,kind:string,payload:any,authorize?:(gate:any)=>void,apply:(gate:any)=>any}} input */
-  execute({ actorIdentity, requestId, kind, payload, authorize, apply }) {
+  /** @param {{actorIdentity:SocialIdentity,requestId:string,kind:string,payload:any,authorize?:(gate:any)=>void,outcome?:"committed"|"not_sent",apply:(gate:any)=>any}} input */
+  execute({
+    actorIdentity,
+    requestId,
+    kind,
+    payload,
+    authorize,
+    apply,
+    outcome = "committed",
+  }) {
     if (
       !/^[A-Za-z0-9_-]{8,80}$/.test(requestId) ||
       !/^[a-z][a-z0-9_-]{0,79}$/.test(kind)
@@ -110,7 +118,7 @@ export class SocialStore {
         kind,
         payload_hash: hash,
         operation_id: operationId,
-        status: "committed",
+        status: outcome,
         result: JSON.stringify(result),
         created_at: now,
       };
@@ -128,6 +136,18 @@ export class SocialStore {
           now,
         );
       return this.receipt(record, false);
+    });
+  }
+  /** A proven rollback gets a durable safe receipt, never the refused draft.
+   * @param {{actorIdentity:SocialIdentity,requestId:string,kind:string,payload:any,safeReason:string,resultReference?:any,authorize?:(gate:any)=>void}} input */
+  recordNotSent({ safeReason, resultReference, ...input }) {
+    return this.execute({
+      ...input,
+      outcome: "not_sent",
+      apply: () => ({
+        safeError: safeReason,
+        ...(resultReference ? { resultReference } : {}),
+      }),
     });
   }
   /** @param {any} row @param {boolean} historicalReplay */
@@ -168,60 +188,66 @@ export class SocialStore {
   }
   /** @param {SocialIdentity} identity @param {string} [reasonCode] */
   invalidateIdentity(identity, reasonCode = "identity_invalidated") {
-    return this.transaction((now) => {
-      const generation = identity.generation;
-      this.db
-        .prepare(
-          "UPDATE home_social_invitations SET status='invalidated',revision=revision+1,decided_at=?,closed_reason=? WHERE status='pending' AND (host_generation=? OR guest_generation=?)",
-        )
-        .run(now, reasonCode, generation, generation);
-      this.db
-        .prepare(
-          "UPDATE home_social_visits SET status='invalidated',revision=revision+1,fence=fence+1,ended_at=?,closed_reason=? WHERE status='active' AND (host_generation=? OR guest_generation=?)",
-        )
-        .run(now, reasonCode, generation, generation);
-      this.db
-        .prepare(
-          "UPDATE home_social_grants SET revoked_at=?,revision=revision+1,fence=fence+1 WHERE revoked_at IS NULL AND (host_generation=? OR guest_generation=?)",
-        )
-        .run(now, generation, generation);
-      const visits =
-        "SELECT id FROM home_social_visits WHERE host_generation=? OR guest_generation=?";
-      this.db
-        .prepare(
-          `UPDATE home_social_windows SET status='invalidated',revision=revision+1,fence=fence+1,closed_at=?,closed_reason=? WHERE status IN ('proposed','active') AND visit_id IN (${visits})`,
-        )
-        .run(now, reasonCode, generation, generation);
-      this.db
-        .prepare(
-          `UPDATE home_social_turns SET status='cancelled',fence=fence+1,finished_at=? WHERE status IN ('queued','running','reserved') AND (target_host_generation=? OR target_guest_generation=?)`,
-        )
-        .run(now, generation, generation);
-      this.db
-        .prepare(
-          `UPDATE home_social_dispatches SET status='cancelled',fence=fence+1,finished_at=? WHERE status IN ('queued','claimed') AND (target_host_generation=? OR target_guest_generation=?)`,
-        )
-        .run(now, generation, generation);
-      this.db
-        .prepare(
-          `UPDATE home_social_contexts SET status='invalidated',epoch=epoch+1,fence=fence+1,updated_at=? WHERE status<>'invalidated' AND (target_host_generation=? OR target_guest_generation=?)`,
-        )
-        .run(now, generation, generation);
-      this.db
-        .prepare(
-          `UPDATE home_social_outbox SET status='cancelled',fence=fence+1,finished_at=? WHERE status IN ('pending','claimed') AND (entity_id IN (${visits}) OR entity_id IN (SELECT id FROM home_social_invitations WHERE host_generation=? OR guest_generation=?) OR entity_id IN (SELECT id FROM home_social_contexts WHERE target_host_generation=? OR target_guest_generation=?))`,
-        )
-        .run(
-          now,
-          generation,
-          generation,
-          generation,
-          generation,
-          generation,
-          generation,
-        );
-      return { invalidated: true };
-    });
+    return this.transaction((now) =>
+      this.invalidateIdentityInTransaction(identity, reasonCode, now),
+    );
+  }
+  /** Shared with identity synchronization; the caller owns the transaction.
+   * @param {SocialIdentity} identity @param {string} reasonCode @param {number} now */
+  invalidateIdentityInTransaction(identity, reasonCode, now) {
+    if (!this.db.isTransaction) throw Error("SOCIAL_TRANSACTION_REQUIRED");
+    const generation = identity.generation;
+    this.db
+      .prepare(
+        "UPDATE home_social_invitations SET status='invalidated',revision=revision+1,decided_at=?,closed_reason=? WHERE status='pending' AND (host_generation=? OR guest_generation=?)",
+      )
+      .run(now, reasonCode, generation, generation);
+    this.db
+      .prepare(
+        "UPDATE home_social_visits SET status='invalidated',revision=revision+1,fence=fence+1,ended_at=min(?,expires_at),closed_reason=? WHERE status='active' AND (host_generation=? OR guest_generation=?)",
+      )
+      .run(now, reasonCode, generation, generation);
+    this.db
+      .prepare(
+        "UPDATE home_social_grants SET revoked_at=?,revision=revision+1,fence=fence+1 WHERE revoked_at IS NULL AND (host_generation=? OR guest_generation=?)",
+      )
+      .run(now, generation, generation);
+    const visits =
+      "SELECT id FROM home_social_visits WHERE host_generation=? OR guest_generation=?";
+    this.db
+      .prepare(
+        `UPDATE home_social_windows SET status='invalidated',revision=revision+1,fence=fence+1,closed_at=?,closed_reason=? WHERE status IN ('proposed','active') AND visit_id IN (${visits})`,
+      )
+      .run(now, reasonCode, generation, generation);
+    this.db
+      .prepare(
+        `UPDATE home_social_turns SET status='cancelled',fence=fence+1,finished_at=? WHERE status IN ('queued','running','reserved') AND (target_host_generation=? OR target_guest_generation=?)`,
+      )
+      .run(now, generation, generation);
+    this.db
+      .prepare(
+        `UPDATE home_social_dispatches SET status='cancelled',fence=fence+1,finished_at=? WHERE status IN ('queued','claimed') AND (target_host_generation=? OR target_guest_generation=?)`,
+      )
+      .run(now, generation, generation);
+    this.db
+      .prepare(
+        `UPDATE home_social_contexts SET status='invalidated',epoch=epoch+1,fence=fence+1,updated_at=? WHERE status<>'invalidated' AND (target_host_generation=? OR target_guest_generation=?)`,
+      )
+      .run(now, generation, generation);
+    this.db
+      .prepare(
+        `UPDATE home_social_outbox SET status='cancelled',fence=fence+1,finished_at=? WHERE status IN ('pending','claimed') AND (entity_id IN (${visits}) OR entity_id IN (SELECT id FROM home_social_invitations WHERE host_generation=? OR guest_generation=?) OR entity_id IN (SELECT id FROM home_social_contexts WHERE target_host_generation=? OR target_guest_generation=?))`,
+      )
+      .run(
+        now,
+        generation,
+        generation,
+        generation,
+        generation,
+        generation,
+        generation,
+      );
+    return { invalidated: true };
   }
   /** Ordinary restarts preserve logical visits and conservative resource reservations.
    * @param {string} runtimeEpoch */
@@ -293,7 +319,7 @@ export class SocialStore {
         .run(now);
       this.db
         .prepare(
-          "UPDATE home_social_visits SET status='invalidated',revision=revision+1,fence=fence+1,ended_at=?,closed_reason='recovery_invalidated' WHERE status='active'",
+          "UPDATE home_social_visits SET status='invalidated',revision=revision+1,fence=fence+1,ended_at=min(?,expires_at),closed_reason='recovery_invalidated' WHERE status='active'",
         )
         .run(now);
       this.db
