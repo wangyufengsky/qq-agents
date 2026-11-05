@@ -81,7 +81,7 @@ jobs:
       - name: Preflight Windows owned browser startup and native cleanup
         if: runner.os == 'Windows'
         timeout-minutes: 4
-        run: node --test --test-timeout=120000 test/home-browser-process.test.mjs test/home-scene-view.test.mjs
+        run: node --test --test-concurrency=1 --test-timeout=120000 test/home-browser-process.test.mjs test/home-scene-view.test.mjs
       - run: npm run verify
   docker:
     runs-on: ubuntu-latest
