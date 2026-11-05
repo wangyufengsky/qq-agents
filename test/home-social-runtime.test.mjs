@@ -585,6 +585,98 @@ test("backend processing-scope change during HTTP prevents late model tools", as
   assert.equal(r.subjectExecution.busy("agent-0"), false);
 });
 
+for (const revoked of [false, true]) {
+  test(`slow invitation HTTP rechecks current authority before consumption: revoked=${revoked}`, async (t) => {
+    const f = setup(t),
+      r = f.runtime,
+      inv = await pendingInvitation(f),
+      db = f.store.db;
+    let now = r.now();
+    r.now = () => now;
+    f.setResponseGate(async (_agent, _binding, round) => {
+      now += 20000;
+      if (revoked && round === 0)
+        db.prepare(
+          "UPDATE home_social_invitations SET revision=revision+1 WHERE id=?",
+        ).run(inv.id);
+    });
+    f.setScript((_agent, binding, round) =>
+      round
+        ? []
+        : [
+            [
+              "home_visit_decide",
+              {
+                requestId: randomUUID(),
+                invitationId: binding.target.id,
+                expectedInvitationRevision: inv.revision,
+                decision: "accept",
+              },
+            ],
+          ],
+    );
+    await f.process("agent-1", { kind: "invitation", id: inv.id });
+    await f.pump();
+    const row = db
+      .prepare(
+        "SELECT recipient_viewed_at FROM home_social_invitations WHERE id=?",
+      )
+      .get(inv.id);
+    assert.equal(row.recipient_viewed_at !== null, !revoked);
+    assert.equal(
+      db.prepare("SELECT count(*) n FROM home_social_visits").get().n,
+      revoked ? 0 : 1,
+    );
+    assert.equal(r.subjectExecution.busy("agent-1"), false);
+  });
+
+  test(`slow multi-inference visit HTTP preserves room revocation checks: revoked=${revoked}`, async (t) => {
+    const f = setup(t),
+      r = f.runtime,
+      visit = await visitFixture(f),
+      db = f.store.db;
+    let now = r.now();
+    r.now = () => now;
+    const before = f.requests.length;
+    f.setResponseGate(async (_agent, _binding, round) => {
+      now += 20000;
+      if (revoked && round === 1)
+        db.prepare(
+          "UPDATE home_social_grants SET revision=revision+1 WHERE visit_id=?",
+        ).run(visit.id);
+    });
+    f.setScript((_agent, binding, round) =>
+      round === 0
+        ? [["home_visit_room_read", { visitId: binding.target.id }]]
+        : round === 1
+          ? [
+              [
+                "home_visit_send",
+                {
+                  requestId: randomUUID(),
+                  visitId: binding.target.id,
+                  expectedVisitRevision: visit.revision,
+                  body: "Synthetic authorized slow response",
+                },
+              ],
+            ]
+          : [],
+    );
+    await f.process("agent-0", { kind: "visit", id: visit.id });
+    await f.pump();
+    assert.ok(f.requests.length >= before + 2);
+    assert.equal(
+      db
+        .prepare("SELECT count(*) n FROM home_social_messages WHERE visit_id=?")
+        .get(visit.id).n,
+      revoked ? 0 : 1,
+    );
+    assert.equal(r.subjectExecution.busy("agent-0"), false);
+    for (const transport of r.transports.values())
+      assert.equal(transport.sent.length, 0);
+  });
+}
+
 function setup(t) {
   const cfg = config(2);
   cfg.homeSocial = {
