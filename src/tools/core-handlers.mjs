@@ -1,3 +1,4 @@
+import { trackSocial, socialSources } from "../core/social-protection.mjs";
 import {
   peerQzoneSources,
   trackPeerQzone,
@@ -21,11 +22,14 @@ import {
 function track(ctx, items) {
   for (const row of items) {
     trackPeerQzone(ctx, row);
+    trackSocial(ctx, row);
     for (const item of [
       ...(row.scene?.messages || []),
       ...(row.scene?.quoted || []),
-    ])
+    ]) {
       trackPeerQzone(ctx, item);
+      trackSocial(ctx, item);
+    }
     for (const item of [
       row,
       ...(row.scene?.messages || []),
@@ -146,12 +150,14 @@ async function handle_diary_write(runtime, ctx, args, name) {
         protectedOperations,
         privateGithubSources(ctx, runtime),
         peerQzoneSources(runtime, ctx),
+        socialSources(runtime, ctx),
       )
     : mem.diaryRevise(
         args,
         protectedOperations,
         privateGithubSources(ctx, runtime),
         peerQzoneSources(runtime, ctx),
+        socialSources(runtime, ctx),
       );
 }
 function assertReadCheckpoint(ctx, throughSeq) {
@@ -413,7 +419,10 @@ async function handle_sticker_collect(runtime, ctx, args, name) {
   const meta = runtime.media.metadata(ctx.agentId, args.mediaId);
   recallBoundary(runtime, ctx).assert(meta);
   taintMedia(ctx, meta);
-  if (peerQzoneSources(runtime, ctx).length)
+  if (
+    socialSources(runtime, ctx).length ||
+    peerQzoneSources(runtime, ctx).length
+  )
     throw Error("RESTRICTED_CONTEXT_MIND_WRITE_BLOCKED");
   return runtime.media.collect(ctx.agentId, args.mediaId, args);
 }

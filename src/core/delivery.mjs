@@ -1,3 +1,4 @@
+import { assertNoSocialDisclosure } from "./social-protection.mjs";
 import { peerQzoneSources } from "./peer-qzone-protection.mjs";
 import { waitFirstReply } from "./typing.mjs";
 import { recallBoundary } from "./recall-boundary.mjs";
@@ -66,6 +67,7 @@ export class DeliveryService {
       mem = runtime.memory.bind(a.id);
     if (runtime.protectedWork?.context(ctx))
       throw Error("PROTECTED_WORK_OUTBOUND_DENIED");
+    assertNoSocialDisclosure(runtime, ctx);
     runtime.assertDisclosure(ctx);
     if (!text && requestedSegments === undefined && !mediaId)
       throw Error("INVALID_MESSAGE");
@@ -239,6 +241,7 @@ export class DeliveryService {
     if (proactive) requestId = "intent:" + proactive.id;
     if (typeof requestId !== "string" || !requestId || requestId.length > 200)
       throw Error("INVALID_REQUEST_ID");
+    assertNoSocialDisclosure(runtime, ctx);
     runtime.assertDisclosure(ctx);
     beforeShareDelivery(appService(runtime), ctx, metadata);
     const serialized = JSON.stringify(intent);

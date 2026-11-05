@@ -1,3 +1,4 @@
+import { socialSources } from "../core/social-protection.mjs";
 import { peerQzoneSources } from "../core/peer-qzone-protection.mjs";
 import { z } from "zod";
 import {
@@ -166,6 +167,7 @@ function assertShareable(runtime, ctx) {
   if (runtime.protectedWork?.context(ctx))
     throw Error("PROTECTED_WORK_OUTBOUND_DENIED");
   if (
+    socialSources(runtime, ctx).length > 0 ||
     peerQzoneSources(runtime, ctx).length > 0 ||
     [...ctx.privateRead].some((source) =>
       /^(operations|operations-result|github-private):/.test(source),

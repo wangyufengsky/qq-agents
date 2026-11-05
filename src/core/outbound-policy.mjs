@@ -1,3 +1,7 @@
+import {
+  assertNoSocialDisclosure,
+  parseSocialMarker,
+} from "./social-protection.mjs";
 import { peerQzoneSources } from "./peer-qzone-protection.mjs";
 import { createHash } from "node:crypto";
 import { humanInput } from "./input-progress.mjs";
@@ -21,6 +25,7 @@ export function publicRequestUrl(value) {
   return u.href;
 }
 export function sourceClass(runtime, ctx, id) {
+  if (parseSocialMarker(id)) return "social-private";
   if (id.startsWith("peer-qzone:")) return "peer-qzone";
   if (id.startsWith("github-private:")) return "private-repository";
   if (/^(operations|operations-result):/.test(id)) return "operations";
@@ -43,6 +48,8 @@ export function sourceClass(runtime, ctx, id) {
       return "operations";
     if (JSON.parse(row.payload).protectedRepositories?.length)
       return "private-repository";
+    if (JSON.parse(row.payload).protectedSocialSources?.length)
+      return "social-private";
     if (JSON.parse(row.payload).protectedPeerQzoneTargets?.length)
       return "peer-qzone";
     const app = JSON.parse(row.payload).app;
@@ -61,6 +68,8 @@ export function sourceClass(runtime, ctx, id) {
     if (JSON.parse(diary.metadata).protectedRepositories?.length)
       return "private-repository";
     if (JSON.parse(diary.metadata).protectedOperations) return "operations";
+    if (JSON.parse(diary.metadata).protectedSocialSources?.length)
+      return "social-private";
     if (JSON.parse(diary.metadata).protectedPeerQzoneTargets?.length)
       return "peer-qzone";
     return "personal-diary";
@@ -75,6 +84,7 @@ export function sourceClass(runtime, ctx, id) {
     const value = JSON.parse(note.value);
     if (value.protectedRepositories?.length) return "private-repository";
     if (value.protectedOperations) return "operations";
+    if (value.protectedSocialSources?.length) return "social-private";
     if (value.protectedPeerQzoneTargets?.length) return "peer-qzone";
     return "personal-mind-record";
   }
@@ -250,6 +260,7 @@ export function authorizeExternal(
   { requestEventId, fixed = false, privateRepository } = {},
 ) {
   runtime.assertActive(ctx);
+  assertNoSocialDisclosure(runtime, ctx);
   if (runtime.protectedWork?.context(ctx))
     throw Error("PROTECTED_WORK_OUTBOUND_DENIED");
   assertCredentials(runtime, ctx, request);
