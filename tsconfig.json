@@ -59,7 +59,6 @@
     "src/core/qzone-approvals.mjs",
     "src/core/peer-qzone.mjs",
     "src/tools/qzone.mjs",
-
     "src/core/rhythm.mjs",
     "src/core/typing.mjs",
     "src/core/tone-check.mjs",
@@ -116,6 +115,8 @@
     "src/home/social-schema.mjs",
     "src/home/social-store.mjs",
     "src/home/social-policy.mjs",
-    "src/home/social-service.mjs"
+    "src/home/social-service.mjs",
+    "src/home/social-recovery.mjs",
+    "scripts/home-social-recover.mjs"
   ]
 }
