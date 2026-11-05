@@ -39,12 +39,15 @@ function setup(t) {
   }
   const f = fixture(t, { cfg }),
     db = f.store.db;
-  f.runtime.config.homeSocial = { enabled: true, retentionDays: 30 };
-  for (const a of f.runtime.config.agents) a.home.social = { enabled: true };
   const visitId = randomUUID(),
     messageId = randomUUID();
   const host = f.runtime.home.generation("agent-0"),
     guest = f.runtime.home.generation("agent-1");
+  assert.equal(
+    db.prepare("SELECT enabled FROM home_social_policy WHERE singleton=1").get()
+      .enabled,
+    1,
+  );
   const invitationId = randomUUID();
   db.prepare(
     "INSERT INTO home_social_invitations(id,host_agent_id,host_generation,guest_agent_id,guest_generation,initiator_generation,recipient_generation,room_id,audience,requested_scope,status,policy_revision,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?,?,?,'accepted',0,?,?)",
@@ -298,7 +301,7 @@ test("personal exports and imported snapshots strip text but retain durable soci
 test("unavailable social authority tables fail closed", (t) => {
   const f = fixture(t),
     ctx = context(f.runtime, "agent-0", "@subject");
-  f.runtime.config.homeSocial = { enabled: true, retentionDays: 30 };
+  f.runtime.config.homeSocial.enabled = true;
   f.store.db.exec("DROP TABLE home_social_policy");
   ctx.runtimeKind = "subject-social";
   ctx.socialBinding = {
