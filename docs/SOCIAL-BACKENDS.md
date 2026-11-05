@@ -15,15 +15,9 @@
 - [OpenAI completion 参数与推理 token 上限](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)
 - [官方 GPT-4.1 mini 上下文与输出容量](https://developers.openai.com/api/docs/models/gpt-4.1-mini)
 
-## DSH guard 及支持门
+## 首版支持范围
 
-`installDshSocialGuard` 是供独立社交 preset 使用的可测试 hook 模块，尚未注册为生产 preset。它不能单独证明某个已安装 DSH 后端合格。
-
-已只读核验 Harness 0.2.1-rc.5 的 agent loop：`agent/request` 可设置逐推理 `maxTokens`，`llm/stream` 可在实际模型流前拒绝调用；DeepSeek adapter 会发送 `max_tokens`。公共 session RPC 没有等价预算字段。
-
-接入者须提供可信控制通道，将新 session 与 runId/身份/epoch/fence 绑定，并验证精确 provider 的 reasoning 上限和每次付费尝试的重试边界。未明确验证的 provider 一律拒绝。guard 每次 stream 单独预留，流失败或完成均暂记 unknown，保留最坏预算，直到另有经过验证的 usage 投影。request hook 的逐推理 cap 不等于整个 turn 的资源预算。
-
-自动标题、compaction、辅助模型、子代理及 adapter 内重试必须关闭或纳入逐次预留；插件 hook 位置不足以覆盖时不得宣称支持。现有测试只验证模拟 hook 顺序、逐次重试预留和失败占用，不代表真实 Harness/provider 已通过验收。集成仍需独立社交 preset、能力握手和有回执清理，不修改普通 preset 或 Harness 应用源码。
+维护者已选择首版只支持具备上述硬预算契约的 OpenAI 兼容后端。DSH、Codex、Antigravity 的普通聊天功能保持原样；社交运行暂不支持，不自动替换后端、模型或凭据。未来接入必须独立证明逐请求预算、临时上下文、重试与清理，不以协议兼容或事后用量视为满足契约。
 
 ## 存储适配
 
