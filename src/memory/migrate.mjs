@@ -1,4 +1,5 @@
 // @ts-check
+import { socialSafeExportRow } from "./protection.mjs";
 import { withoutClosenessCache } from "../core/closeness.mjs";
 export { inspectLegacy, importLegacy } from "./legacy-import.mjs";
 import { validateExport } from "./export-format.mjs";
@@ -119,7 +120,7 @@ export function restoreExport(memory, data) {
   memory.store.transaction(() => {
     for (const [table, cols] of Object.entries(columns)) {
       for (const original of data.tables[table] || []) {
-        const row = { ...original };
+        const row = socialSafeExportRow(table, original);
         // An agent export transports history, not authority to publish from this instance.
         if (
           table === "qzone_approvals" &&

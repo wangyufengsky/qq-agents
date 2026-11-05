@@ -10,6 +10,7 @@
     "skipLibCheck": true
   },
   "include": [
+    "src/core/social-protection.mjs",
     "src/core/peer-profile.mjs",
     "src/core/group-read.mjs",
     "src/tools/group-read.mjs",

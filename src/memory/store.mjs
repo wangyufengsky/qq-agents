@@ -1,5 +1,5 @@
 import { migrateHomeSocial } from "../home/social-schema.mjs";
-import { mergeProtection } from "./protection.mjs";
+import { socialSafeExportRow, mergeProtection } from "./protection.mjs";
 import { withoutClosenessCache } from "../core/closeness.mjs";
 import { recallAnnotation } from "./recalls.mjs";
 import fs from "node:fs";
@@ -823,6 +823,7 @@ class AgentMemory {
     protectedOperations = false,
     protectedRepositories = [],
     protectedPeerQzoneTargets = [],
+    protectedSocialSources = [],
   ) {
     text(title, 300);
     text(body, 32000);
@@ -833,6 +834,7 @@ class AgentMemory {
       metadata = {
         ...evidenceMetadata,
         ...mergeProtection(evidenceMetadata, {
+          protectedSocialSources,
           protectedPeerQzoneTargets,
           protectedOperations,
           protectedRepositories,
@@ -1017,6 +1019,7 @@ class AgentMemory {
     protectedOperations = false,
     protectedRepositories = [],
     protectedPeerQzoneTargets = [],
+    protectedSocialSources = [],
   ) {
     text(title, 300);
     text(body, 32000);
@@ -1036,6 +1039,7 @@ class AgentMemory {
         metadata = {
           ...evidenceMetadata,
           ...mergeProtection(previous, evidenceMetadata, {
+            protectedSocialSources,
             protectedPeerQzoneTargets,
             protectedOperations,
             protectedRepositories,
@@ -1282,6 +1286,8 @@ class AgentMemory {
         "SELECT r.* FROM diary_revisions r JOIN diaries d ON d.id=r.id WHERE d.agent_id=?",
       )
       .all(this.agentId);
+    for (const [table, rows] of Object.entries(tables))
+      tables[table] = rows.map((row) => socialSafeExportRow(table, row));
     return { version: 1, agentId: this.agentId, exportedAt: now(), tables };
   }
 }
