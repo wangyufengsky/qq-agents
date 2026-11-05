@@ -563,6 +563,63 @@ test("failed public reads are not cached and cached reads still enforce pause an
   assert.equal(f.publicCalls.length, 3);
 });
 
+test("authenticated issue and PR search splits qualifiers and merges complete bounded pages", async (t) => {
+  const f = publicSetup(t),
+    fetch = f.runtime.githubFetch,
+    searches = [];
+  f.runtime.githubFetch = async (url, init) => {
+    const u = new URL(url);
+    if (u.pathname !== "/search/issues") return fetch(url, init);
+    assert.equal(init.headers.Authorization, "Bearer fixture-read-token");
+    const q = u.searchParams.get("q");
+    if (!/ is:(issue|pull-request)$/.test(q)) return json({}, 422);
+    assert.ok(q.startsWith("example repo:public/demo "));
+    assert.equal(u.searchParams.get("page"), "1");
+    assert.equal(u.searchParams.get("sort"), "created");
+    const pull = q.endsWith("is:pull-request");
+    const numbers = pull ? [4, 2] : [5, 3, 1];
+    const count = Number(u.searchParams.get("per_page"));
+    searches.push({ pull, count });
+    return json({
+      incomplete_results: pull,
+      items: numbers.slice(0, count).map((number) => ({
+        repository_url: "https://api.github.com/repos/public/demo",
+        number,
+        title: String(number),
+        created_at: `2026-01-0${number}T00:00:00Z`,
+        ...(pull ? { pull_request: {} } : {}),
+      })),
+    });
+  };
+  const args = {
+    kind: "issues",
+    query: "example",
+    repository: "public/demo",
+    limit: 2,
+  };
+  const first = await f.runtime.callTool(f.ctx, "github_search", args);
+  const second = await f.runtime.callTool(f.ctx, "github_search", {
+    ...args,
+    page: 2,
+  });
+  const third = await f.runtime.callTool(f.ctx, "github_search", {
+    ...args,
+    page: 3,
+  });
+  assert.deepEqual(
+    [...first.items, ...second.items, ...third.items].map((x) => x.number),
+    [5, 4, 3, 2, 1],
+  );
+  assert.equal(first.items[1].url, "https://github.com/public/demo/pull/4");
+  assert.equal(first.incomplete, true);
+  assert.equal(first.nextPage, 2);
+  assert.equal(third.nextPage, null);
+  assert.deepEqual(
+    searches.map((x) => x.count),
+    [2, 2, 4, 4, 6, 6],
+  );
+});
+
 test("scoped public search rechecks visibility after receiving authenticated results", async (t) => {
   const f = publicSetup(t),
     fetch = f.runtime.githubFetch;

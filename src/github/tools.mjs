@@ -398,12 +398,49 @@ export async function githubTool(runtime, ctx, name, args) {
       throw Error("GITHUB_REPOSITORY_DENIED");
   }
   const q = `${args.query} ${repository ? "repo:" + repository : "is:public"}`;
-  const data = await get("/search/" + args.kind, {
-    q,
-    page: args.page,
-    per_page: args.limit,
-  });
-  if (!Array.isArray(data.items)) throw Error("GITHUB_RESPONSE_INVALID");
+  let data;
+  if (args.kind === "issues") {
+    // Some authenticated tokens require separate issue/PR queries. Fetch the
+    // prefix needed for this page so merging cannot silently drop either type.
+    const end = args.page * args.limit,
+      batches = [];
+    for (const type of ["issue", "pull-request"]) {
+      const batch = await get("/search/issues", {
+        q: `${q} is:${type}`,
+        page: 1,
+        per_page: end,
+        sort: "created",
+        order: "desc",
+      });
+      if (!Array.isArray(batch.items)) throw Error("GITHUB_RESPONSE_INVALID");
+      batches.push(batch);
+    }
+    const combined = batches
+      .flatMap((batch) => batch.items)
+      .sort(
+        (a, b) =>
+          String(b.created_at || "").localeCompare(
+            String(a.created_at || ""),
+          ) ||
+          String(a.repository_url || "").localeCompare(
+            String(b.repository_url || ""),
+          ) ||
+          Number(b.number) - Number(a.number),
+      );
+    data = {
+      items: combined.slice(end - args.limit, end),
+      incomplete_results: batches.some(
+        (batch) => batch.incomplete_results === true,
+      ),
+    };
+  } else {
+    data = await get("/search/" + args.kind, {
+      q,
+      page: args.page,
+      per_page: args.limit,
+    });
+    if (!Array.isArray(data.items)) throw Error("GITHUB_RESPONSE_INVALID");
+  }
   if (repository && !info.private)
     assertPublicUnchanged(
       info,
