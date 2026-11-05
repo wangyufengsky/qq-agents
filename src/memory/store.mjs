@@ -127,6 +127,8 @@ export class MemoryStore {
       CREATE TABLE IF NOT EXISTS people(agent_id TEXT NOT NULL,qq TEXT NOT NULL,names TEXT NOT NULL,PRIMARY KEY(agent_id,qq));
       CREATE TABLE IF NOT EXISTS deliveries(agent_id TEXT NOT NULL,request_id TEXT NOT NULL,conversation TEXT NOT NULL,payload_hash TEXT NOT NULL,status TEXT NOT NULL,message_id TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(agent_id,request_id));
       CREATE INDEX IF NOT EXISTS deliveries_message ON deliveries(agent_id,conversation,message_id);
+      CREATE TABLE IF NOT EXISTS qzone_approvals(id TEXT PRIMARY KEY,agent_id TEXT NOT NULL,request_id TEXT NOT NULL,state TEXT NOT NULL,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,value TEXT NOT NULL,UNIQUE(agent_id,request_id));
+      CREATE INDEX IF NOT EXISTS qzone_approvals_state ON qzone_approvals(agent_id,state,created_at);
       CREATE INDEX IF NOT EXISTS deliveries_status ON deliveries(agent_id,status);
       CREATE TABLE IF NOT EXISTS runtime(agent_id TEXT NOT NULL,conversation TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(agent_id,conversation));
       CREATE TABLE IF NOT EXISTS migrations(agent_id TEXT NOT NULL,source TEXT NOT NULL,digest TEXT NOT NULL,imported_at TEXT NOT NULL,PRIMARY KEY(agent_id,source,digest));
@@ -1262,6 +1264,7 @@ class AgentMemory {
       "projects",
       "memory_corrections",
       "activity_history",
+      "qzone_approvals",
     ])
       tables[name] = this.db
         .prepare(

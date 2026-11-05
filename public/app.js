@@ -683,9 +683,10 @@ function render() {
         (n, a) => n + (a.unresolvedDeliveries || 0),
         0,
       ),
-      grants = status.disclosureRequests.length,
+      posts = status.qzoneApprovals || [],
+      grants = status.disclosureRequests.length + posts.length,
       errors = (status.recentErrors || []).length;
-    content.innerHTML = `<div class="home${homeEntrance()}">${homeHero(grants + waiting)}<div class="home-roles" id="home-roles">${homeRolesMarkup()}</div>${grants + waiting ? `<div class="section-title" id="home-todo"><h2>需要处理</h2></div>${grants ? `<div class="card"><h3>受限动作授权 · ${grants}</h3>${status.disclosureRequests.map((r, i) => `<div class="record"><strong>${esc(find("agents", r.agentId)?.name)} → ${esc(r.conversation)}</strong><p>${r.records.length} 条资料涉及${r.reason === "external-service" ? "外部服务调用" : "本地运维内容"}。${r.request ? "批准仅对当前回合、所示请求参数及资料集合有效。" : "批准仅对当前回合、当前会话所示资料集合有效。"}</p><p class="mono">${esc(r.records.join("\n"))}</p>${r.request ? `<pre>${esc(JSON.stringify(r.request, null, 2))}</pre><p>${esc(JSON.stringify(r.sourceClasses))}</p>` : ""}<button data-do="grant" data-id="${i}">批准本次披露</button></div>`).join("")}</div>` : ""}${waiting ? `<div class="card"><h3>待核对发送 · ${waiting}</h3><p class="hint">网络结果未知的发送不会自动重发。请在 QQ 中查看对应会话后标记结果。</p><div id="unresolved-deliveries">读取中…</div></div>` : ""}` : ""}</div>`;
+    content.innerHTML = `<div class="home${homeEntrance()}">${homeHero(grants + waiting)}<div class="home-roles" id="home-roles">${homeRolesMarkup()}</div>${grants + waiting ? `<div class="section-title" id="home-todo"><h2>需要处理</h2></div>${grants ? `<div class="card"><h3>受限动作授权 · ${grants}</h3>${qzoneApprovalMarkup(posts)}${status.disclosureRequests.map((r, i) => `<div class="record"><strong>${esc(find("agents", r.agentId)?.name)} → ${esc(r.conversation)}</strong><p>${r.records.length} 条资料涉及${r.reason === "external-service" ? "外部服务调用" : "本地运维内容"}。${r.request ? "批准仅对当前回合、所示请求参数及资料集合有效。" : "批准仅对当前回合、当前会话所示资料集合有效。"}</p><p class="mono">${esc(r.records.join("\n"))}</p>${r.request ? `<pre>${esc(JSON.stringify(r.request, null, 2))}</pre><p>${esc(JSON.stringify(r.sourceClasses))}</p>` : ""}<button data-do="grant" data-id="${i}">批准本次披露</button></div>`).join("")}</div>` : ""}${waiting ? `<div class="card"><h3>待核对发送 · ${waiting}</h3><p class="hint">网络结果未知的发送不会自动重发。请在 QQ 中查看对应会话后标记结果。</p><div id="unresolved-deliveries">读取中…</div></div>` : ""}` : ""}</div>`;
     renderOnboarding(content);
     if (waiting) action(renderUnresolved);
     content.insertAdjacentHTML(
@@ -1275,6 +1276,18 @@ async function operate(kind, id) {
     await api("/api/connection", {
       id,
       action: connected ? "disconnect" : "connect",
+    });
+    await load();
+    return;
+  }
+  if (kind === "qzone-approve" || kind === "qzone-cancel") {
+    const r = status.qzoneApprovals.find((item) => item.approvalId === id);
+    if (!r) return;
+    await api("/api/qzone/approval", {
+      approvalId: r.approvalId,
+      agentId: r.agentId,
+      digest: r.digest,
+      action: kind === "qzone-approve" ? "approve" : "cancel",
     });
     await load();
     return;
@@ -2586,3 +2599,12 @@ setInterval(() => {
       } else render();
     });
 }, 5000);
+
+function qzoneApprovalMarkup(posts) {
+  return posts
+    .map(
+      (r) =>
+        `<div class="record"><strong>${esc(find("agents", r.agentId)?.name)} · 待发布说说</strong><p>账号 ${esc(r.accountId)} · 所有人可见</p><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(r.content)}</pre><p>涉及 ${r.sources.length} 条来源；批准只发布以上原文。有效期至 ${esc(new Date(r.expiresAt).toLocaleString())}。</p>${r.status === "submitting" ? "<p>正在发布，请勿重复提交；结果以发送账本为准。</p>" : `<button data-do="qzone-approve" data-id="${esc(r.approvalId)}">批准并发布这条说说</button> <button data-do="qzone-cancel" data-id="${esc(r.approvalId)}">取消申请</button>`}</div>`,
+    )
+    .join("");
+}
