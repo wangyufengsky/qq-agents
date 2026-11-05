@@ -107,6 +107,7 @@ export function backendRequestConfig(config) {
     ...(config.type === "antigravity" ? { cliReuse: config.cliReuse } : {}),
     ...(config.type === "openai"
       ? {
+          socialProfile: config.socialProfile ?? null,
           contextWindow: config.contextWindow,
           maxToolRounds: config.maxToolRounds ?? OPENAI_DEFAULTS.maxToolRounds,
           requestTimeoutMs:
