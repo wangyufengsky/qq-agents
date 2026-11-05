@@ -9,6 +9,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { buildChildEnv } from "../src/core/child-env.mjs";
 import { stopHomeBrowser } from "../src/home/browser-process.mjs";
+import { chromium } from "playwright-core";
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const endpoint = (root, label) =>
   process.platform === "win32"
@@ -251,3 +252,90 @@ test(
     await assert.rejects(fs.access(spawned), { code: "ENOENT" });
   },
 );
+
+test("owned wrapper inherits bidirectional CDP pipes through native admission", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "home-cdp-test-"));
+  const marker = path.join(root, "wrapper.pid"),
+    controlFile = path.join(root, "control.json"),
+    traceFile = path.join(root, "protocol-counts.json");
+  // Unlike the tree-only helpers, this child must receive Playwright's actual
+  // NUL-framed commands on fd 3 and return responses on fd 4. No TCP substitute.
+  const protocol = String.raw`
+const fs = require('node:fs');
+const trace = [];
+let pending = Buffer.alloc(0);
+const chunk = Buffer.alloc(4096);
+while (true) {
+  const n = fs.readSync(3, chunk, 0, chunk.length, null);
+  if (!n) process.exit(2);
+  pending = Buffer.concat([pending, chunk.subarray(0, n)]);
+  if (pending.length > 16384) process.exit(3);
+  let end;
+  while ((end = pending.indexOf(0)) >= 0) {
+    const { id, method } = JSON.parse(pending.subarray(0, end).toString());
+    pending = pending.subarray(end + 1);
+    if (!Number.isSafeInteger(id) || !['Browser.getVersion', 'Target.setAutoAttach', 'Browser.close'].includes(method)) process.exit(4);
+    trace.push({ id, method });
+    fs.writeFileSync(${JSON.stringify(traceFile)}, JSON.stringify(trace));
+    const result = method === 'Browser.getVersion'
+      ? { protocolVersion: '1.3', product: 'Chrome/123.0.0.0', revision: 'synthetic', userAgent: 'HeadlessChrome/123.0.0.0', jsVersion: 'synthetic' }
+      : {};
+    fs.writeSync(4, JSON.stringify({ id, result }) + '\0');
+    if (method === 'Browser.close') process.exit(0);
+  }
+}`;
+  const control = {
+    nonce: randomUUID(),
+    endpoint: endpoint(root, "control"),
+    arguments: ["-e", protocol],
+  };
+  await fs.writeFile(controlFile, JSON.stringify(control), { mode: 0o600 });
+  let browser;
+  t.after(async () => {
+    try {
+      await browser?.close();
+    } finally {
+      await stopHomeBrowser(marker, control);
+      await fs.rm(root, {
+        recursive: true,
+        force: true,
+        maxRetries: 3,
+        retryDelay: 100,
+      });
+    }
+  });
+  browser = await chromium.launch({
+    executablePath: process.execPath,
+    ignoreDefaultArgs: true,
+    timeout: 15000,
+    env: buildChildEnv("browser"),
+    args: [
+      fileURLToPath(
+        new URL("../src/home/browser-launcher.mjs", import.meta.url),
+      ),
+      marker,
+      process.execPath,
+      path.join(root, "profile"),
+      controlFile,
+    ],
+  });
+  assert.equal(browser.version(), "123.0.0.0");
+  if (process.platform === "win32") {
+    const ready = JSON.parse(
+      await fs.readFile(controlFile + ".job-ready", "utf8"),
+    );
+    assert.equal(ready.nonce, control.nonce);
+    assert.equal(ready.parentPid, Number(await fs.readFile(marker, "utf8")));
+  }
+  await browser.close();
+  await stopHomeBrowser(marker, control);
+  const trace = JSON.parse(await fs.readFile(traceFile, "utf8"));
+  assert.deepEqual(
+    trace.map((entry) => entry.method),
+    ["Browser.getVersion", "Target.setAutoAttach", "Browser.close"],
+  );
+  assert.equal(new Set(trace.map((entry) => entry.id)).size, 3);
+  t.diagnostic(
+    "CDP pipe challenge: 3 fixed requests, 3 matching responses; owned cleanup confirmed",
+  );
+});
