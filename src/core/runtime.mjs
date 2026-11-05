@@ -924,10 +924,10 @@ export class Runtime {
         JSON.stringify({
           name,
           result:
-            name === "room_scene_view" && result?.content
+            name === "room_scene_view"
               ? {
-                  ...result,
-                  content: result.content.filter((c) => c.type !== "image"),
+                  notice:
+                    "受控场景观察仅交付当前回合，不在工具工作日志保留正文与图片。",
                 }
               : result,
         }).slice(0, 24000),

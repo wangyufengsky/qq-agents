@@ -1,3 +1,4 @@
+import { mediaLease } from "./media-lease.mjs";
 import { registry } from "./registry.mjs";
 export { TOOL_NAMES, toolSpecs } from "./specs.mjs";
 export async function dispatchTool(runtime, ctx, name, input) {
@@ -11,5 +12,10 @@ export async function dispatchTool(runtime, ctx, name, input) {
 export function mcpResult(value) {
   return value?.content
     ? value
-    : { content: [{ type: "text", text: JSON.stringify(value) }] };
+    : {
+        ...(typeof value?.[mediaLease] === "function"
+          ? { [mediaLease]: value[mediaLease] }
+          : {}),
+        content: [{ type: "text", text: JSON.stringify(value) }],
+      };
 }

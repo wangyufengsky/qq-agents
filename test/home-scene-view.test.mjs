@@ -189,3 +189,108 @@ test("hall snapshots expose bounded first and last page for dynamic rosters", ()
   }
   assert.throws(() => homeScenePage("room", [], 2), /HOME_SCENE_INVALID/);
 });
+
+test("OpenAI batch retract cannot first deliver or persist stale scene text or pixels", async (t) => {
+  const { OpenAIBackend } = await import("../src/backends/openai.mjs");
+  const fs = await import("node:fs");
+  for (const mode of ["image", "unsupported", "render-failed"]) {
+    const vision = mode !== "unsupported";
+    const f = setup(t);
+    const view = await f.runtime.executeTool(f.ctx, "room_read", {});
+    const marker = "SYNTHETIC_WITHDRAWN_SCENE_TEXT";
+    await f.runtime.executeTool(f.ctx, "room_publish", {
+      identityGeneration: view.identityGeneration,
+      requestId: "batch-publish",
+      slot: "intro",
+      expectedItemRevision: 0,
+      title: "合成标题",
+      body: marker,
+      source: "original-text",
+    });
+    f.runtime.config.backends.find(
+      (b) => b.id === f.runtime.agent("agent-0").backendId,
+    ).type = "openai";
+    f.runtime.config.backends.find(
+      (b) => b.id === f.runtime.agent("agent-0").backendId,
+    ).vision = vision;
+    let requests = 0,
+      saved;
+    const backend = new OpenAIBackend(
+      {
+        baseUrl: "https://synthetic.example.test/v1",
+        model: "synthetic",
+        vision,
+        toolServers: [],
+      },
+      { id: "batch" },
+      {
+        root: f.root,
+        fetch: async (_url, init) => {
+          requests++;
+          if (requests === 1)
+            return new Response(
+              JSON.stringify({
+                choices: [
+                  {
+                    message: {
+                      content: null,
+                      tool_calls: [
+                        {
+                          id: "view",
+                          type: "function",
+                          function: {
+                            name: "room_scene_view",
+                            arguments: "{}",
+                          },
+                        },
+                        {
+                          id: "retract",
+                          type: "function",
+                          function: { name: "room_retract", arguments: "{}" },
+                        },
+                      ],
+                    },
+                  },
+                ],
+              }),
+            );
+          assert.equal(init.body.includes(marker), false);
+          assert.equal(init.body.includes("image_url"), false);
+          assert.equal(
+            fs.readFileSync(backend.file(saved.id), "utf8").includes(marker),
+            false,
+          );
+          return new Response(
+            JSON.stringify({ choices: [{ message: { content: "完成" } }] }),
+          );
+        },
+      },
+    );
+    await backend.run({
+      prompt: "合成批次",
+      tools: [],
+      signal: f.ctx.controller.signal,
+      session: null,
+      saveSession: (s) => {
+        saved = s;
+      },
+      callTool: async (name) => {
+        if (name === "room_scene_view")
+          return homeSceneView(f.runtime, f.ctx, { type: "room" }, async () =>
+            Buffer.from("synthetic-pixels"),
+          );
+        return f.runtime.executeTool(f.ctx, "room_retract", {
+          identityGeneration: view.identityGeneration,
+          requestId: "batch-retract",
+          slot: "intro",
+          expectedItemRevision: 1,
+        });
+      },
+    });
+    assert.equal(requests, 2);
+    assert.equal(
+      fs.readFileSync(backend.file(saved.id), "utf8").includes(marker),
+      false,
+    );
+  }
+});

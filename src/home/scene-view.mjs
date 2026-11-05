@@ -214,7 +214,18 @@ export async function homeSceneView(
   const backend = runtime.config.backends.find(
     (/** @type {any} */ b) => b.id === runtime.agent(ctx.agentId).backendId,
   );
+  const lease = () => {
+    try {
+      return (
+        JSON.stringify(snapshot(runtime, ctx, args.type, args.page)) ===
+        JSON.stringify(before)
+      );
+    } catch {
+      return false;
+    }
+  };
   const description = {
+    [mediaLease]: lease,
     ...before,
     viewport: args.viewport,
     capturedAt: new Date(runtime.now()).toISOString(),
@@ -268,16 +279,7 @@ export async function homeSceneView(
   )
     throw Error("HOME_REVISION_CONFLICT");
   return {
-    [mediaLease]: () => {
-      try {
-        return (
-          JSON.stringify(snapshot(runtime, ctx, args.type, args.page)) ===
-          JSON.stringify(before)
-        );
-      } catch {
-        return false;
-      }
-    },
+    [mediaLease]: lease,
     content: [
       {
         type: "text",

@@ -237,8 +237,17 @@ export class OpenAIBackend {
       JSON.stringify(session, (_key, value) =>
         typeof value?.[mediaLease] === "function"
           ? {
-              type: "text",
-              text: "受控场景图片未持久保存；需要时重新调用 room_scene_view 取得当前授权版本。",
+              ...(value.role
+                ? {
+                    role: value.role,
+                    tool_call_id: value.tool_call_id,
+                    content:
+                      "受控场景观察未持久保存；需要时重新读取当前授权版本。",
+                  }
+                : {
+                    type: "text",
+                    text: "受控场景图片未持久保存；需要时重新调用 room_scene_view 取得当前授权版本。",
+                  }),
             }
           : value,
       ),
@@ -298,6 +307,9 @@ export class OpenAIBackend {
       );
     return {
       tool: {
+        ...(typeof result[mediaLease] === "function"
+          ? { [mediaLease]: result[mediaLease] }
+          : {}),
         role: "tool",
         tool_call_id: call.id,
         content: texts.join("\n") || (result.isError ? "工具调用失败" : "完成"),
@@ -392,6 +404,12 @@ export class OpenAIBackend {
         let failure;
         // A later tool in the same batch can retract the scene before model input.
         for (const message of state.messages) {
+          if (
+            typeof (/** @type {any} */ (message)[mediaLease]) === "function" &&
+            !(/** @type {any} */ (message)[mediaLease]())
+          )
+            message.content =
+              "受控场景观察授权或版本已失效，正文与图片未交付；需要时重新读取。";
           if (Array.isArray(message.content))
             message.content = message.content.map((part) =>
               typeof part[mediaLease] === "function" && !part[mediaLease]()
