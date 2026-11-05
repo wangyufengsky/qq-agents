@@ -172,7 +172,7 @@
 /* The room artwork owns the page; surrounding controls stay on the paper edge. */
 :root {
   --ink: #574530;
-  --muted: #88775d;
+  --muted: #75644e;
   --paper: #fff9e9;
   --back: #f3eddf;
   --accent: #67714a;
@@ -311,7 +311,7 @@ main {
   letter-spacing: 5px;
   font-family: "Songti SC", serif;
   font-size: 13px;
-  color: #77694f;
+  color: #685a41;
   background: #ded3bc;
   box-shadow: 1px 2px 2px #6c52301a;
   transition: transform 180ms;
