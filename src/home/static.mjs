@@ -20,6 +20,7 @@ export function serveHomePreview(req, res, pathname) {
   const liveFiles = new Map([
     ["/home-space/", ["index.html", "text/html; charset=utf-8"]],
     ["/home-space/app.mjs", ["app.mjs", "text/javascript; charset=utf-8"]],
+    ["/home-space/book.mjs", ["book.mjs", "text/javascript; charset=utf-8"]],
     ["/home-space/style.css", ["style.css", "text/css; charset=utf-8"]],
   ]);
   if (

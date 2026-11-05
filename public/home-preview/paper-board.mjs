@@ -6,6 +6,13 @@ export function paperElement(tag, className = "", text) {
   if (text !== undefined) node.textContent = text;
   return node;
 }
+/**
+ * @param {{template: import("./scene.mjs").Template, scene: import("./scene.mjs").Scene,
+ * mobile?: boolean, objects?: import("./scene.mjs").Instance[], kind?: string,
+ * onAction?: (action: string) => void, label?: (action: string) => string,
+ * decorate?: (node: HTMLElement, object: import("./scene.mjs").Instance) => void,
+ * missing?: (object: import("./scene.mjs").Instance) => boolean}} options
+ */
 export function renderPaperBoard({
   template,
   scene,

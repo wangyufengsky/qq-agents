@@ -33,7 +33,8 @@ async function ready(page, hash) {
   await page.waitForFunction(
     (h) =>
       !document.getElementById("home-content").hidden &&
-      document.getElementById("stage").dataset.route === h,
+      document.getElementById("stage").dataset.route === h &&
+      !document.getElementById("stage").inert,
     hash,
   );
 }
@@ -43,7 +44,8 @@ async function go(page, hash) {
   await ready(page, `#${hash}`);
 }
 async function editor(page) {
-  await page.locator("#editor").evaluate((n) => (n.open = true));
+  if (!(await page.locator("#editor").evaluate((n) => n.open)))
+    await page.click("#edit-toggle");
 }
 async function request(url, body) {
   const r = await fetch(base + url, {
@@ -57,6 +59,7 @@ async function request(url, body) {
 try {
   const context = await browser.newContext({
       viewport: { width: 1440, height: 1100 },
+      reducedMotion: "reduce",
     }),
     page = await context.newPage();
   page.on("pageerror", (e) => errors.push(e.message));
@@ -89,6 +92,7 @@ try {
     (await page.locator("#title").textContent()).includes("角色3") &&
       !(await page.locator("#editor").isVisible()),
   );
+  await page.click("#entry-toggle");
   await page.locator("#scene-actions button").first().click();
   await ready(page, "#hall/2");
   check(
@@ -210,6 +214,7 @@ try {
     requestId: "browser-seed-post",
   });
   const reads = f.store.db.prepare("SELECT * FROM board_reads").all();
+  await page.click("#entry-toggle");
   await page
     .locator("#scene-actions button")
     .filter({ hasText: "打开留言板" })
@@ -266,6 +271,7 @@ try {
       });
     }
     await go(page, "living");
+    await page.click("#entry-toggle");
     await page
       .locator("#scene-actions button")
       .filter({ hasText: "打开留言板" })
@@ -295,6 +301,7 @@ try {
   }
   await go(page, "room/agent-0");
   await page.evaluate(() => sessionStorage.removeItem("qq-unified-token"));
+  await page.click("#menu-toggle");
   await page.click("#refresh");
   await page.waitForFunction(
     () => document.getElementById("home-content").hidden,
@@ -309,6 +316,7 @@ try {
   );
   await go(page, "hall/1");
   await page.route("**/api/home/overview", (r) => r.abort());
+  await page.click("#menu-toggle");
   await page.click("#refresh");
   await page.waitForFunction(
     () => document.getElementById("home-content").hidden,
