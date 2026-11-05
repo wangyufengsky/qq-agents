@@ -146,7 +146,11 @@ test("public search excludes private results and never grants arbitrary endpoint
         x.url.origin === "https://api.github.com",
     ),
   );
-  assert.ok(f.calls.slice(1).every((x) => !x.headers.Authorization));
+  assert.ok(
+    f.calls.every(
+      (x) => x.headers.Authorization === "Bearer fixture-read-token",
+    ),
+  );
   const before = f.calls.length;
   for (const query of [
     "repo:fixture/other",
@@ -168,12 +172,18 @@ test("private files are bounded, allowlisted, owner-scoped, and protected across
     f.runtime.callTool(f.ctx, "github_read", { repository: other }),
     /REPOSITORY_DENIED/,
   );
-  assert.equal(f.calls.at(-1).headers.Authorization, undefined);
+  assert.equal(
+    f.calls.at(-1).headers.Authorization,
+    "Bearer fixture-read-token",
+  );
   await assert.rejects(
     f.runtime.callTool(context(f.runtime), "github_read", { repository: repo }),
     /PROTECTED_WORK_REQUIRED/,
   );
-  assert.equal(f.calls.at(-1).headers.Authorization, undefined);
+  assert.equal(
+    f.calls.at(-1).headers.Authorization,
+    "Bearer fixture-read-token",
+  );
   work(f);
   const r = await f.runtime.callTool(f.ctx, "github_read", {
     repository: repo,
@@ -369,30 +379,304 @@ test("private GitHub records cannot escape through saved files or download URLs"
   assert.equal(f.runtime.transports.get("qq-0").sent.length, 0);
 });
 
-test("a public allowlisted repository becoming private cannot leak through authenticated content reads", async (t) => {
-  const f = work(setup(t));
-  let anonymousContent = false;
+test("public reads authenticate, share concurrent snapshots and paginate without more HTTP requests", async (t) => {
+  const f = publicSetup(t);
+  const args = { repository: "public/demo", path: "README.md", maxChars: 512 };
+  const [first, duplicate] = await Promise.all([
+    f.runtime.callTool(f.ctx, "github_read", args),
+    f.runtime.callTool(f.ctx, "github_read", args),
+  ]);
+  assert.equal(first.text, duplicate.text);
+  assert.equal(first.nextOffset, 512);
+  assert.equal(f.publicCalls.length, 3);
+  assert.ok(
+    f.publicCalls.every((c) => c.authorization === "Bearer fixture-read-token"),
+  );
+  const next = await f.runtime.callTool(f.ctx, "github_read", {
+    ...args,
+    offset: 512,
+  });
+  assert.equal(next.text, f.publicText.slice(512, 1024));
+  assert.equal(next.nextOffset, 1024);
+  assert.equal(f.publicCalls.length, 3);
+  assert.equal(f.store.bind("agent-0").state("@github").count, 3);
+  const directory = await f.runtime.callTool(f.ctx, "github_read", {
+    repository: "public/demo",
+  });
+  assert.equal(directory.items.length, 50);
+  const tail = await f.runtime.callTool(f.ctx, "github_read", {
+    repository: "public/demo",
+    offset: directory.nextOffset,
+  });
+  assert.equal(tail.items.length, 5);
+  assert.equal(f.publicCalls.length, 6);
+  assert.equal(f.store.bind("agent-0").state("@github").count, 6);
+});
+
+function publicSetup(t) {
+  const f = setup(t);
+  f.publicCalls = [];
+  f.publicText = "public snapshot text ".repeat(100);
+  f.visibility = "public";
   f.runtime.githubFetch = async (url, init) => {
-    if (new URL(url).pathname === `/repos/${repo}`)
-      return json({ full_name: repo, private: false });
-    anonymousContent = !init.headers.Authorization;
-    return anonymousContent
-      ? json({}, 404)
-      : json({
+    const u = new URL(url);
+    f.publicCalls.push({
+      pathname: u.pathname,
+      ref: u.searchParams.get("ref"),
+      authorization: init.headers.Authorization,
+    });
+    if (!init.headers.Authorization)
+      return json({}, 403, { "x-ratelimit-remaining": "0" });
+    if (u.pathname === "/repos/public/demo")
+      return json({
+        id: 7,
+        full_name: "public/demo",
+        private: f.visibility === "private",
+        visibility: f.visibility,
+      });
+    if (u.pathname === "/repos/public/demo/contents/")
+      return json(
+        Array.from({ length: 55 }, (_, i) => ({
+          name: `file${i}`,
+          path: `file${i}`,
           type: "file",
-          size: 12,
-          encoding: "base64",
-          content: Buffer.from("private-code").toString("base64"),
-        });
+          size: 1,
+        })),
+      );
+    return json({
+      type: "file",
+      sha: "public-sha",
+      size: Buffer.byteLength(f.publicText),
+      encoding: "base64",
+      content: Buffer.from(f.publicText).toString("base64"),
+    });
+  };
+  return f;
+}
+
+test("public snapshots are scoped to turn, role, ref, policy and credential", async (t) => {
+  const f = publicSetup(t),
+    args = { repository: "public/demo", path: "README.md" };
+  await f.runtime.callTool(f.ctx, "github_read", args);
+  await f.runtime.callTool(f.ctx, "github_read", { ...args, ref: "release" });
+  assert.equal(f.publicCalls.length, 6);
+  await f.runtime.callTool(
+    context(f.runtime, "agent-0", f.ctx.conversation),
+    "github_read",
+    args,
+  );
+  await f.runtime.callTool(context(f.runtime, "agent-1"), "github_read", args);
+  assert.equal(f.publicCalls.length, 12);
+  process.env.QQ_GITHUB_TEST_TOKEN = "rotated-fixture-read-token";
+  await f.runtime.callTool(f.ctx, "github_read", args);
+  assert.equal(f.publicCalls.length, 15);
+  assert.equal(
+    f.publicCalls.at(-1).authorization,
+    "Bearer rotated-fixture-read-token",
+  );
+  f.runtime.agent("agent-0").github.maxRequestsPerDay = 151;
+  await f.runtime.callTool(f.ctx, "github_read", args);
+  assert.equal(f.publicCalls.length, 18);
+});
+
+test("cached public snapshots never authorize fresh reads after a repository becomes private", async (t) => {
+  const f = publicSetup(t),
+    args = { repository: "public/demo", path: "README.md", maxChars: 512 };
+  await f.runtime.callTool(f.ctx, "github_read", args);
+  const original = f.publicText;
+  f.visibility = "private";
+  f.publicText = "new private content";
+  const next = await f.runtime.callTool(f.ctx, "github_read", {
+    ...args,
+    offset: 512,
+  });
+  assert.equal(next.text, original.slice(512, 1024));
+  assert.equal(f.publicCalls.length, 3);
+  await assert.rejects(
+    f.runtime.callTool(f.ctx, "github_read", { ...args, path: "secret.md" }),
+    /REPOSITORY_DENIED/,
+  );
+  await assert.rejects(
+    f.runtime.callTool(
+      context(f.runtime, "agent-0", f.ctx.conversation),
+      "github_read",
+      args,
+    ),
+    /REPOSITORY_DENIED/,
+  );
+  assert.equal(f.publicCalls.length, 5);
+});
+
+test("public content is withheld if visibility or repository identity changes during the read", async (t) => {
+  for (const changed of [
+    { private: true, visibility: "private" },
+    { private: false, visibility: "internal" },
+    { id: 8 },
+  ]) {
+    const f = publicSetup(t),
+      fetch = f.runtime.githubFetch;
+    let read = false;
+    f.runtime.githubFetch = async (url, init) => {
+      const response = await fetch(url, init);
+      if (new URL(url).pathname.includes("/contents/")) read = true;
+      else if (read) return json({ ...(await response.json()), ...changed });
+      return response;
+    };
+    await assert.rejects(
+      f.runtime.callTool(f.ctx, "github_read", {
+        repository: "public/demo",
+        path: "README.md",
+      }),
+      /REPOSITORY_DENIED/,
+    );
+    assert.equal(
+      f.store.db
+        .prepare("SELECT count(*) AS n FROM events WHERE kind='github.read'")
+        .get().n,
+      0,
+    );
+  }
+});
+
+test("failed public reads are not cached and cached reads still enforce pause and private scope", async (t) => {
+  const f = publicSetup(t),
+    fetch = f.runtime.githubFetch;
+  const args = { repository: "public/demo", path: "README.md" };
+  f.runtime.githubFetch = async () => json({}, 429);
+  await assert.rejects(
+    f.runtime.callTool(f.ctx, "github_read", args),
+    /GITHUB_RATE_LIMITED/,
+  );
+  f.runtime.githubFetch = fetch;
+  await f.runtime.callTool(f.ctx, "github_read", args);
+  f.runtime.agent("agent-0").github.privateRepositories.push("public/demo");
+  await assert.rejects(
+    f.runtime.callTool(f.ctx, "github_read", args),
+    /PROTECTED_WORK_REQUIRED/,
+  );
+  f.runtime.agent("agent-0").github.privateRepositories.pop();
+  f.ctx.controller.abort();
+  await assert.rejects(
+    f.runtime.callTool(f.ctx, "github_read", args),
+    /PAUSED_OR_EXPIRED/,
+  );
+  assert.equal(f.publicCalls.length, 3);
+});
+
+test("authenticated issue and PR search splits qualifiers and merges complete bounded pages", async (t) => {
+  const f = publicSetup(t),
+    fetch = f.runtime.githubFetch,
+    searches = [];
+  f.runtime.githubFetch = async (url, init) => {
+    const u = new URL(url);
+    if (u.pathname !== "/search/issues") return fetch(url, init);
+    assert.equal(init.headers.Authorization, "Bearer fixture-read-token");
+    const q = u.searchParams.get("q");
+    if (!/ is:(issue|pull-request)$/.test(q)) return json({}, 422);
+    assert.ok(q.startsWith("example repo:public/demo "));
+    assert.equal(u.searchParams.get("page"), "1");
+    assert.equal(u.searchParams.get("sort"), "created");
+    const pull = q.endsWith("is:pull-request");
+    const numbers = pull ? [4, 2] : [5, 3, 1];
+    const count = Number(u.searchParams.get("per_page"));
+    searches.push({ pull, count });
+    return json({
+      incomplete_results: pull,
+      items: numbers.slice(0, count).map((number) => ({
+        repository_url: "https://api.github.com/repos/public/demo",
+        number,
+        title: String(number),
+        created_at: `2026-01-0${number}T00:00:00Z`,
+        ...(pull ? { pull_request: {} } : {}),
+      })),
+    });
+  };
+  const args = {
+    kind: "issues",
+    query: "example",
+    repository: "public/demo",
+    limit: 2,
+  };
+  const first = await f.runtime.callTool(f.ctx, "github_search", args);
+  const second = await f.runtime.callTool(f.ctx, "github_search", {
+    ...args,
+    page: 2,
+  });
+  const third = await f.runtime.callTool(f.ctx, "github_search", {
+    ...args,
+    page: 3,
+  });
+  assert.deepEqual(
+    [...first.items, ...second.items, ...third.items].map((x) => x.number),
+    [5, 4, 3, 2, 1],
+  );
+  assert.equal(first.items[1].url, "https://github.com/public/demo/pull/4");
+  assert.equal(first.incomplete, true);
+  assert.equal(first.nextPage, 2);
+  assert.equal(third.nextPage, null);
+  assert.deepEqual(
+    searches.map((x) => x.count),
+    [2, 2, 4, 4, 6, 6],
+  );
+});
+
+test("scoped public search rechecks visibility after receiving authenticated results", async (t) => {
+  const f = publicSetup(t),
+    fetch = f.runtime.githubFetch;
+  f.runtime.githubFetch = async (url, init) => {
+    if (new URL(url).pathname.startsWith("/search/")) {
+      f.visibility = "private";
+      return json({
+        items: [
+          { full_name: "public/demo", description: "private search body" },
+        ],
+      });
+    }
+    return fetch(url, init);
+  };
+  await assert.rejects(
+    f.runtime.callTool(f.ctx, "github_search", {
+      query: "example",
+      repository: "public/demo",
+    }),
+    /REPOSITORY_DENIED/,
+  );
+  assert.equal(
+    f.store.db
+      .prepare("SELECT count(*) AS n FROM events WHERE kind='github.read'")
+      .get().n,
+    0,
+  );
+});
+
+test("public allowlisted content changing visibility stays withheld even inside protected work", async (t) => {
+  const f = work(setup(t));
+  let changed = false;
+  f.runtime.githubFetch = async (url, init) => {
+    assert.equal(init.headers.Authorization, "Bearer fixture-read-token");
+    if (new URL(url).pathname === `/repos/${repo}`)
+      return json({ id: 9, full_name: repo, private: changed });
+    changed = true;
+    return json({
+      type: "file",
+      size: 12,
+      encoding: "base64",
+      content: Buffer.from("private-code").toString("base64"),
+    });
   };
   await assert.rejects(
     f.runtime.callTool(f.ctx, "github_read", {
       repository: repo,
       path: "README.md",
     }),
-    /ACCESS_DENIED/,
+    /REPOSITORY_DENIED/,
   );
-  assert.equal(anonymousContent, true);
+  assert.equal(
+    f.store.db
+      .prepare("SELECT count(*) AS n FROM events WHERE kind='github.read'")
+      .get().n,
+    0,
+  );
 });
 
 test("isolated GitHub reads still reject capabilities embedded in paths before network I/O", async (t) => {
