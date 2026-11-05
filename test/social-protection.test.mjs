@@ -34,7 +34,7 @@ function setup(t) {
   cfg.agents[0].subject.enabled = true;
   const f = fixture(t, { cfg }),
     db = f.store.db;
-  f.runtime.config.homeSocial = { enabled: true };
+  f.runtime.config.homeSocial = { enabled: true, retentionDays: 30 };
   for (const a of f.runtime.config.agents) a.home.social = { enabled: true };
   const visitId = randomUUID(),
     messageId = randomUUID();
@@ -67,13 +67,14 @@ function setup(t) {
   db.exec(`ALTER TABLE home_social_visits ADD COLUMN invitation_id TEXT;
     ALTER TABLE home_social_visits ADD COLUMN room_id TEXT;
     ALTER TABLE home_social_visits ADD COLUMN expires_at INTEGER;
-    CREATE TABLE home_social_invitations(id TEXT PRIMARY KEY,host_agent_id TEXT,host_generation TEXT,guest_agent_id TEXT,guest_generation TEXT,status TEXT,revision INTEGER,expires_at INTEGER,body_cleared_at INTEGER);
+    ALTER TABLE home_social_visits ADD COLUMN ended_at INTEGER;
+    CREATE TABLE home_social_invitations(id TEXT PRIMARY KEY,host_agent_id TEXT,host_generation TEXT,guest_agent_id TEXT,guest_generation TEXT,status TEXT,revision INTEGER,expires_at INTEGER,body_cleared_at INTEGER,decided_at INTEGER);
     CREATE TABLE home_social_grants(visit_id TEXT PRIMARY KEY,invitation_id TEXT,room_id TEXT,host_generation TEXT,guest_generation TEXT,scope TEXT,selected_item_revisions TEXT,revision INTEGER,expires_at INTEGER,revoked_at INTEGER);`);
   db.prepare(
     "UPDATE home_social_visits SET invitation_id=?,room_id=?,expires_at=?",
   ).run(invitationId, "room:" + host, Date.now() + 60000);
   db.prepare(
-    "INSERT INTO home_social_invitations VALUES(?,?,?,?,?,'accepted',1,?,NULL)",
+    "INSERT INTO home_social_invitations VALUES(?,?,?,?,?,'accepted',1,?,NULL,NULL)",
   ).run(invitationId, "agent-0", host, "agent-1", guest, Date.now() + 60000);
   return {
     ...f,
@@ -694,5 +695,137 @@ test("new original attestation is exact, transactional and never inherited by le
     f.db.prepare("SELECT item_revision FROM home_social_item_proofs").get()
       .item_revision,
     3,
+  );
+});
+
+test("QQ forward readers remain unavailable in a subject-social capability scope", async (t) => {
+  const f = setup(t),
+    m = f.store.bind("agent-0");
+  f.runtime.agent("agent-0").tools.push("qq_forward_read");
+  trackSocial(f.ctx, { protectedSocialSources: [f.marker] });
+  const root = m.append({
+    dedupe: "mixed-forward-root",
+    conversation: "private:30000",
+    kind: "message.received",
+    body: "private merged forward",
+    senderId: "30000",
+    payload: {
+      segments: [{ type: "forward", data: { id: "private-resource" } }],
+    },
+  });
+  let calls = 0;
+  f.runtime.transports.get("qq-0").call = async () => {
+    calls++;
+    return { messages: [] };
+  };
+  await assert.rejects(
+    f.runtime.executeTool(f.ctx, "qq_forward_read", {
+      eventId: root.id,
+      limit: 1,
+      maxChars: 1000,
+    }),
+    /TOOL_DISABLED/,
+  );
+  assert.equal(calls, 0);
+  assert.equal(
+    m.db
+      .prepare("SELECT count(*) n FROM events WHERE kind='forward.node'")
+      .get().n,
+    0,
+  );
+});
+
+test("legacy mixed source metadata cannot hide QQ origin behind a social marker", (t) => {
+  const f = setup(t),
+    m = f.store.bind("agent-0");
+  for (const conversation of ["private:30000", "group:20000"]) {
+    const record = m.append({
+      dedupe: "mixed-compat:" + conversation,
+      conversation,
+      kind: "forward.node",
+      body: "PRIVATE_COMPAT_TEXT",
+      payload: { protectedSocialSources: [f.marker] },
+    });
+    const bound = {
+      ...f.ctx,
+      privateRead: new Set([record.id]),
+      socialSendingClosed: false,
+    };
+    assert.throws(
+      () =>
+        assertSocialSend(f.runtime, bound, { kind: "visit", id: f.visitId }),
+      /SOCIAL_SOURCE_DENIED/,
+    );
+  }
+  for (const scope of ["private:30000", "group:20000"]) {
+    const record = m.append({
+      dedupe: "derived-compat:" + scope,
+      conversation: "@social:synthetic-run",
+      kind: "external.read",
+      body: "PRIVATE_COMPAT_TEXT",
+      payload: {
+        protectedSocialSources: [f.marker],
+        app: { source: { conversation: scope } },
+      },
+    });
+    const bound = {
+      ...f.ctx,
+      privateRead: new Set([record.id]),
+      socialSendingClosed: false,
+    };
+    assert.throws(
+      () =>
+        assertSocialSend(f.runtime, bound, { kind: "visit", id: f.visitId }),
+      /SOCIAL_SOURCE_DENIED/,
+    );
+  }
+  const social = m.append({
+    dedupe: "valid-social-origin",
+    conversation: "@social:synthetic-run",
+    kind: "subject.log",
+    body: "same visit",
+    payload: { protectedSocialSources: [f.marker] },
+  });
+  assert.doesNotThrow(() =>
+    assertSocialSend(
+      f.runtime,
+      { ...f.ctx, privateRead: new Set([social.id]) },
+      { kind: "visit", id: f.visitId },
+    ),
+  );
+});
+
+test("source reads enforce retention deadlines before delayed cleanup materializes tombstones", (t) => {
+  const f = setup(t),
+    day = 86400000,
+    now = f.runtime.now();
+  f.runtime.now = () => now;
+  const invitation = socialInvitationMarker(f.invitationId, 1);
+  f.db
+    .prepare(
+      "UPDATE home_social_visits SET status='ended',ended_at=?,expires_at=?",
+    )
+    .run(now - 30 * day + 1, now + day);
+  assert.equal(socialContextAllowed(f.runtime, f.ctx, [f.marker]), true);
+  f.db.prepare("UPDATE home_social_visits SET ended_at=?").run(now - 30 * day);
+  assert.equal(socialContextAllowed(f.runtime, f.ctx, [f.marker]), false);
+  assert.equal(socialContextAllowed(f.runtime, f.ctx, [invitation]), false);
+  f.db
+    .prepare(
+      "UPDATE home_social_visits SET status='active',ended_at=NULL,expires_at=?",
+    )
+    .run(now - 30 * day);
+  assert.equal(socialContextAllowed(f.runtime, f.ctx, [f.marker]), false);
+  f.db
+    .prepare("UPDATE home_social_visits SET status='active',expires_at=?")
+    .run(now + day);
+  f.db
+    .prepare("UPDATE home_social_invitations SET decided_at=?")
+    .run(now - 30 * day);
+  assert.equal(socialContextAllowed(f.runtime, f.ctx, [invitation]), false);
+  assert.equal(
+    f.db.prepare("SELECT body_cleared_at FROM home_social_messages").get()
+      .body_cleared_at,
+    null,
   );
 });

@@ -98,6 +98,23 @@ export function socialContextAllowed(runtime, ctx, sources) {
   try {
     const db = runtime.memory.db;
     const now = runtime.now();
+    const retention = runtime.config.homeSocial.retentionDays;
+    if (!Number.isInteger(retention) || retention < 1 || retention > 365)
+      return false;
+    const retained = (/** @type {any} */ row, invitation = false) => {
+      const terminalAt = invitation
+        ? row.status === "pending"
+          ? null
+          : (row.decided_at ?? row.expires_at)
+        : row.status === "active" && row.expires_at > now
+          ? null
+          : Math.min(row.ended_at ?? row.expires_at, row.expires_at);
+      return (
+        terminalAt === null ||
+        (Number.isSafeInteger(terminalAt) &&
+          now < terminalAt + retention * 86400000)
+      );
+    };
     if (
       !db
         .prepare("SELECT enabled FROM home_social_policy WHERE singleton=1")
@@ -150,7 +167,11 @@ export function socialContextAllowed(runtime, ctx, sources) {
     )
       return false;
     const visit = binding.target.kind === "visit" ? target : null;
-    if (visit && !["active", "ended", "expired"].includes(visit.status))
+    if (
+      visit &&
+      (!["active", "ended", "expired"].includes(visit.status) ||
+        !retained(visit))
+    )
       return false;
     return sources.every((marker) => {
       const source = parseSocialMarker(marker);
@@ -162,6 +183,7 @@ export function socialContextAllowed(runtime, ctx, sources) {
         if (
           !invitation ||
           invitation.revision !== source.revision ||
+          !retained(invitation, true) ||
           invitation.body_cleared_at ||
           invitation.hidden_at ||
           invitation.retracted_at ||
@@ -178,13 +200,12 @@ export function socialContextAllowed(runtime, ctx, sources) {
           );
         if (invitation.status === "accepted") {
           const acceptedVisit = db
-            .prepare(
-              "SELECT status FROM home_social_visits WHERE invitation_id=?",
-            )
+            .prepare("SELECT * FROM home_social_visits WHERE invitation_id=?")
             .get(invitation.id);
           if (
             !acceptedVisit ||
-            !["active", "ended", "expired"].includes(acceptedVisit.status)
+            !["active", "ended", "expired"].includes(acceptedVisit.status) ||
+            !retained(acceptedVisit)
           )
             return false;
         }
@@ -290,7 +311,7 @@ export function assertSocialSend(runtime, ctx, target) {
     const pending = [...(ctx.privateRead || [])],
       seen = new Set();
     const lookup = runtime.memory.db.prepare(
-      "SELECT payload AS value FROM events WHERE agent_id=?1 AND id=?2 UNION ALL SELECT metadata AS value FROM diaries WHERE agent_id=?1 AND id=?2 UNION ALL SELECT value FROM work_notes WHERE agent_id=?1 AND id=?2 UNION ALL SELECT value FROM intentions WHERE agent_id=?1 AND id=?2 UNION ALL SELECT value FROM self_candidates WHERE agent_id=?1 AND id=?2",
+      "SELECT conversation AS origin_conversation,payload AS value FROM events WHERE agent_id=?1 AND id=?2 UNION ALL SELECT NULL,metadata AS value FROM diaries WHERE agent_id=?1 AND id=?2 UNION ALL SELECT conversation,value FROM work_notes WHERE agent_id=?1 AND id=?2 UNION ALL SELECT NULL,value FROM intentions WHERE agent_id=?1 AND id=?2 UNION ALL SELECT NULL,value FROM self_candidates WHERE agent_id=?1 AND id=?2",
     );
     while (pending.length) {
       const id = pending.pop();
@@ -310,6 +331,26 @@ export function assertSocialSend(runtime, ctx, target) {
         throw Error("SOCIAL_SOURCE_DENIED");
       for (const row of lookup.all(ctx.agentId, id)) {
         const value = JSON.parse(row.value);
+        // Social provenance supplements existing source audiences. It never
+        // replaces the original QQ scope or a frozen derivative's lineage.
+        const scopes = [
+          row.origin_conversation,
+          value.conversation,
+          value.writtenIn?.conversation,
+          value.createdIn?.conversation,
+          value.app?.source?.conversation,
+          value.source?.conversation,
+          ...(value.sources || []).map(
+            (/** @type {any} */ source) => source.conversation,
+          ),
+        ];
+        if (
+          scopes.some(
+            (scope) =>
+              typeof scope === "string" && /^(private|group):/.test(scope),
+          )
+        )
+          throw Error("SOCIAL_SOURCE_DENIED");
         if (
           value.protectedOperations ||
           value.protectedRepositories?.length ||
@@ -319,6 +360,21 @@ export function assertSocialSend(runtime, ctx, target) {
         pending.push(
           ...(value.evidence || []),
           ...(value.counterEvidence || []),
+          ...[
+            value.rootEventId,
+            value.sourceEventId,
+            value.source?.eventId,
+          ].filter((/** @type {any} */ id) => typeof id === "string"),
+          ...(value.sources || [])
+            .flatMap((/** @type {any} */ source) => [
+              source.eventId,
+              source.sourceEventId,
+              source.recordId,
+            ])
+            .filter((/** @type {any} */ id) => typeof id === "string"),
+          ...(value.evidenceSnapshot?.references || [])
+            .map((/** @type {any} */ reference) => reference.id)
+            .filter((/** @type {any} */ id) => typeof id === "string"),
         );
       }
     }
