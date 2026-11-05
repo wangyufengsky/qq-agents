@@ -146,7 +146,8 @@ async function handleInput(line) {
     await waitForControl("release");
   } else if (mode === "pending-terminal") {
     void postTool(epoch, "pending");
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    // The parent acknowledges actual tool admission, not elapsed wall time.
+    await waitForControl("pendingEntered");
     lastStep += 1;
     event({
       event: "step_update",
