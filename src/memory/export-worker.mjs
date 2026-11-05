@@ -1,3 +1,4 @@
+import { socialSafeExportRow } from "./protection.mjs";
 import { withoutClosenessCache } from "../core/closeness.mjs";
 import fs from "node:fs";
 import { DatabaseSync, backup } from "node:sqlite";
@@ -80,12 +81,13 @@ try {
     write((i ? "," : "") + JSON.stringify(name) + ":[");
     digest.update(name + "\n");
     let count = 0;
-    for (const row of db
+    for (const original of db
       .prepare(
         // Restore assigns new rowids in file order; moods find the latest by rowid.
         `SELECT r.* FROM ${from}${name === "events" ? " ORDER BY r.seq" : name === "moods" ? " ORDER BY r.rowid" : ""}`,
       )
       .iterate(agentId)) {
+      const row = socialSafeExportRow(name, original);
       if (name === "person_notes")
         row.value = JSON.stringify(
           withoutClosenessCache(JSON.parse(row.value)),

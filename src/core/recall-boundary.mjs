@@ -1,4 +1,9 @@
 import {
+  socialSources,
+  socialRecordSources,
+  socialContextAllowed,
+} from "./social-protection.mjs";
+import {
   peerQzoneSources,
   peerQzoneContext,
 } from "./peer-qzone-protection.mjs";
@@ -56,6 +61,27 @@ export function recallBoundary(runtime, ctx, { publicOnly = false } = {}) {
         s.recordId,
       ]),
     ].filter((id) => typeof id === "string");
+    const values = [
+      row,
+      row?.metadata,
+      row?.payload,
+      ...(row?.sources || []),
+      ...(row?.evidenceSnapshot?.references || []).map((r) => r.metadata),
+      ...(row?.counterEvidenceSnapshot?.references || []).map(
+        (r) => r.metadata,
+      ),
+    ];
+    const social = [
+      ...new Set([
+        ...socialSources(runtime, ctx, ids),
+        ...values.flatMap(socialRecordSources),
+      ]),
+    ];
+    if (
+      social.length &&
+      (publicOnly || !socialContextAllowed(runtime, ctx, social))
+    )
+      return false;
     const targets = peerQzoneSources(runtime, ctx, ids);
     if (
       targets.length &&

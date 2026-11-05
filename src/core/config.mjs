@@ -1,3 +1,4 @@
+import { homeSocialPolicySchema } from "../home/social-policy.mjs";
 import { homePolicySchema } from "../home/policy.mjs";
 import { gamePolicy, agentGamePolicy } from "../games/framework/policy.mjs";
 import fs from "node:fs";
@@ -145,6 +146,7 @@ export const configSchema = z
     mode: z.enum(["isolated", "live"]).default("isolated"),
     port: z.number().int().min(0).max(65535).default(3210),
     games: gamePolicy,
+    homeSocial: homeSocialPolicySchema,
     board: z
       .object({
         // Missing persisted fields retain the legacy disabled policy; new installs set true explicitly.
@@ -259,6 +261,7 @@ export const configSchema = z
           requestTimeoutMs: z.number().int().min(5000).max(600000).optional(),
           vision: z.boolean().optional(),
           sendEffort: z.boolean().optional(),
+          socialProfile: z.enum(["openai-gpt-4.1-mini"]).nullable().optional(),
           cliReuse: z
             .object({
               enabled: z.boolean().default(false),
@@ -354,6 +357,7 @@ export const configSchema = z
               "requestTimeoutMs",
               "vision",
               "sendEffort",
+              "socialProfile",
             ].every((k) => backend[k] === undefined),
           "These settings apply to an OpenAI-compatible backend",
         ),

@@ -1,4 +1,12 @@
 // @ts-check
+import {
+  assertSocialSend,
+  trackSocial,
+  socialSources,
+  socialContextAllowed,
+  assertRoomItemShareable,
+} from "../core/social-protection.mjs";
+import { HomeSocialService } from "./social-service.mjs";
 import { HomeRooms } from "./rooms.mjs";
 import { randomUUID, createHash } from "node:crypto";
 import { HomeStore } from "./store.mjs";
@@ -9,6 +17,16 @@ export class HomeService {
     this.runtime = runtime;
     this.store = new HomeStore(runtime.memory.db);
     this.identityReady = false;
+    this.social = new HomeSocialService(runtime, this, {
+      assertSend: assertSocialSend,
+      sources: socialSources,
+      allowed: socialContextAllowed,
+      assertRoomItem: assertRoomItemShareable,
+      trackSource: (/** @type {any} */ ctx, /** @type {any} */ record) => {
+        trackSocial(ctx, record);
+        ctx.persistTaint?.();
+      },
+    });
     this.syncAgents();
     this.rooms = new HomeRooms(this);
   }
@@ -16,14 +34,21 @@ export class HomeService {
     this.identityReady = false;
     const db = this.runtime.memory.db,
       ids = new Set(this.ids());
-    this.runtime.memory.transaction(() => {
+    this.social.store.transaction((now) => {
       for (const row of db
-        .prepare("SELECT agent_id,active FROM home_identities")
+        .prepare("SELECT agent_id,generation,active FROM home_identities")
         .all())
-        if (!ids.has(row.agent_id))
+        if (!ids.has(row.agent_id)) {
+          if (row.active)
+            this.social.store.invalidateIdentityInTransaction(
+              { agentId: row.agent_id, generation: row.generation },
+              "identity_invalidated",
+              now,
+            );
           db.prepare(
             "UPDATE home_identities SET active=0 WHERE agent_id=?",
           ).run(row.agent_id);
+        }
       for (const id of ids) {
         const prior = db
           .prepare("SELECT active FROM home_identities WHERE agent_id=?")
@@ -33,6 +58,7 @@ export class HomeService {
             "INSERT OR REPLACE INTO home_identities(agent_id,generation,active) VALUES(?,?,1)",
           ).run(id, randomUUID());
       }
+      this.social.syncPolicyInTransaction(now);
     });
     this.identityReady = true;
   }

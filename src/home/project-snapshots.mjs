@@ -63,6 +63,7 @@ export function resolveProjectSnapshot(rooms, ctx, source) {
     project.activity?.mode !== "console" ||
     project.activity?.conversation !== "@subject" ||
     project.files?.length ||
+    project.protectedSocialSources?.length ||
     project.protectedOperations ||
     project.protectedRepositories?.length ||
     project.protectedPeerQzoneTargets?.length ||

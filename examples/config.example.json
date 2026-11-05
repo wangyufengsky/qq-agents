@@ -3,6 +3,20 @@
   "mode": "isolated",
   "port": 3210,
   "globalPaused": true,
+  "homeSocial": {
+    "enabled": false,
+    "exchangeEnabled": false,
+    "durationMinutes": 10,
+    "maxTurns": 12,
+    "maxMessagesPerTurn": 3,
+    "invitationTtlHours": 48,
+    "visitTtlHours": 72,
+    "maxInvitationsPerDay": 5,
+    "maxMessagesPerVisitPerDay": 20,
+    "cooldownHours": 24,
+    "retentionDays": 30,
+    "resourceBudget": null
+  },
   "privateLikeGroups": [],
   "games": {
     "enabled": false,
@@ -69,6 +83,9 @@
       "home": {
         "enabled": false,
         "publishing": false,
+        "social": {
+          "enabled": false
+        },
         "sceneView": {
           "enabled": false
         },
@@ -169,6 +186,9 @@
       "home": {
         "enabled": false,
         "publishing": false,
+        "social": {
+          "enabled": false
+        },
         "sceneView": {
           "enabled": false
         },

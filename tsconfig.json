@@ -10,6 +10,7 @@
     "skipLibCheck": true
   },
   "include": [
+    "src/core/social-protection.mjs",
     "src/core/peer-profile.mjs",
     "src/core/group-read.mjs",
     "src/tools/group-read.mjs",
@@ -111,6 +112,10 @@
     "src/tools/media-lease.mjs",
     "public/home-space/scene-decoration.mjs",
     "src/home/project-snapshots.mjs",
-    "src/home/intents.mjs"
+    "src/home/intents.mjs",
+    "src/home/social-schema.mjs",
+    "src/home/social-store.mjs",
+    "src/home/social-policy.mjs",
+    "src/home/social-service.mjs"
   ]
 }

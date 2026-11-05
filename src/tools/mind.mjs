@@ -1,4 +1,5 @@
 import { projectSnapshotProof } from "../home/project-snapshots.mjs";
+import { socialSources } from "../core/social-protection.mjs";
 import { peerQzoneSources } from "../core/peer-qzone-protection.mjs";
 import { withInteraction } from "../core/closeness.mjs";
 import {
@@ -334,7 +335,8 @@ function executeMindTool(runtime, ctx, name, args) {
       "project",
       "mood_set",
     ].includes(name) &&
-    (peerQzoneSources(runtime, ctx).length > 0 ||
+    (socialSources(runtime, ctx).length > 0 ||
+      peerQzoneSources(runtime, ctx).length > 0 ||
       privateGithubSources(ctx, runtime).length > 0 ||
       [...ctx.privateRead].some((id) =>
         /^(operations|operations-result|github-private):/.test(id),
