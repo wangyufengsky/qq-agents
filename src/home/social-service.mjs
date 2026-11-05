@@ -126,7 +126,24 @@ export class HomeSocialService {
       .get(invitationId, identity.generation, identity.generation);
     if (!row) throw Error("AUDIENCE_DENIED");
     this.assertPair(row.host_generation, row.guest_generation);
+    if (row.status === "invalidated") throw Error("AUDIENCE_DENIED");
+    if (row.status === "accepted") {
+      const visit = this.db
+        .prepare("SELECT * FROM home_social_visits WHERE invitation_id=?")
+        .get(row.id);
+      if (
+        !visit ||
+        visit.status === "invalidated" ||
+        visit.host_generation !== row.host_generation ||
+        visit.guest_generation !== row.guest_generation
+      )
+        throw Error("AUDIENCE_DENIED");
+    }
     return row;
+  }
+  /** @param {any} invitation @param {number} [now] */
+  invitationReadOnly(invitation, now = this.runtime.now()) {
+    return invitation.status !== "pending" || now >= invitation.expires_at;
   }
   /** Returns a server-owned target for a queue; it never opens a model session.
    * @param {any} identity @param {any} input */
@@ -134,7 +151,10 @@ export class HomeSocialService {
     this.assertActor(identity);
     const target = socialTargetSchema.parse(input),
       now = this.runtime.now();
-    let host, guest, deadline;
+    let host,
+      guest,
+      deadline,
+      readOnly = false;
     if (target.kind === "compose") {
       const other = this.identity(target.id);
       if (identity.generation === other.generation)
@@ -149,17 +169,16 @@ export class HomeSocialService {
         target.kind === "invitation"
           ? this.assertInvitation(identity, target.id)
           : this.assertVisit(identity, target.id, { now });
-      if (
-        target.kind === "invitation" &&
-        (row.status !== "pending" || now >= row.expires_at)
-      )
-        throw Error("INVITATION_EXPIRED");
+      if (target.kind === "invitation")
+        readOnly = this.invitationReadOnly(row, now);
       if (target.kind === "visit" && row.status === "invalidated")
         throw Error("AUDIENCE_DENIED");
       host = row.host_generation;
       guest = row.guest_generation;
       deadline =
-        row.status === "active" || row.status === "pending"
+        !readOnly &&
+        ["active", "pending"].includes(row.status) &&
+        now < row.expires_at
           ? row.expires_at
           : now + this.runtime.config.homeSocial.durationMinutes * 60000;
     }
@@ -170,12 +189,13 @@ export class HomeSocialService {
       targetGuestGeneration: guest,
       policyRevision: this.policy().revision,
       configRevision: this.runtime.configStore.revision,
+      readOnly,
       deadline,
     };
   }
   /** Read-only fence check, safe within another domain's transaction.
-   * @param {any} ctx @param {{allowExpired?:boolean}} [options] */
-  assertBinding(ctx, { allowExpired = false } = {}) {
+   * @param {any} ctx @param {{allowExpired?:boolean,allowClosedEnd?:boolean}} [options] */
+  assertBinding(ctx, { allowExpired = false, allowClosedEnd = false } = {}) {
     const r = this.runtime,
       b = ctx?.socialBinding;
     if (
@@ -217,6 +237,7 @@ export class HomeSocialService {
       )
     )
       throw Error("IDENTITY_DENIED");
+    let terminalVisit;
     if (b.target.kind === "compose") {
       if (b.target.id !== identity.generation) throw Error("IDENTITY_DENIED");
     } else {
@@ -224,6 +245,7 @@ export class HomeSocialService {
         b.target.kind === "invitation"
           ? this.assertInvitation(identity, b.target.id)
           : this.assertVisit(identity, b.target.id);
+      if (b.target.kind === "visit") terminalVisit = row;
       if (
         row.host_generation !== b.targetHostGeneration ||
         row.guest_generation !== b.targetGuestGeneration
@@ -241,12 +263,21 @@ export class HomeSocialService {
       turn.target_host_generation !== b.targetHostGeneration ||
       turn.target_guest_generation !== b.targetGuestGeneration ||
       turn.epoch !== b.epoch ||
-      turn.fence !== b.fence ||
       turn.mode !== b.runMode ||
-      turn.window_id !== (b.windowId ?? null) ||
-      turn.status !== "running"
+      turn.window_id !== (b.windowId ?? null)
     )
       throw Error("SOCIAL_TURN_CLOSED");
+    const live = turn.status === "running" && turn.fence === b.fence;
+    // Only an already-entered end may converge after this visit's normal close.
+    // Capability, policy, identity, participants and every immutable binding above still apply.
+    const converging =
+      allowClosedEnd &&
+      terminalVisit &&
+      ["ended", "expired"].includes(terminalVisit.status) &&
+      turn.status === "cancelled" &&
+      turn.fence === b.fence + 1 &&
+      turn.safe_error === "VISIT_CLOSED";
+    if (!live && !converging) throw Error("SOCIAL_TURN_CLOSED");
     return identity;
   }
   /** @param {any} ctx @param {string} kind @param {string} id @param {boolean} [allowExpired] */
@@ -413,6 +444,7 @@ export class HomeSocialService {
       },
       initiatorGeneration: row.initiator_generation,
       recipientGeneration: row.recipient_generation,
+      recipientViewedAt: row.recipient_viewed_at,
       roomId: row.room_id,
       state:
         row.status === "pending" && this.runtime.now() >= row.expires_at
@@ -500,16 +532,38 @@ export class HomeSocialService {
         })),
     };
   }
-  /** @param {any} ctx @param {string} kind @param {any} input @param {(gate:any)=>any} apply @param {(identity:any)=>void} [extra] @param {boolean} [allowExpired] */
-  execute(ctx, kind, input, apply, extra = () => {}, allowExpired = false) {
+  /** @param {any} ctx @param {string} kind @param {any} input @param {(gate:any)=>any} apply @param {(identity:any)=>void} [extra] @param {boolean} [allowExpired] @param {boolean} [endConvergence] */
+  execute(
+    ctx,
+    kind,
+    input,
+    apply,
+    extra = () => {},
+    allowExpired = false,
+    endConvergence = false,
+  ) {
     const identity = this.assertBinding(ctx, { allowExpired });
     return this.store.execute({
       actorIdentity: identity,
       requestId: input.requestId,
       kind,
       payload: input,
-      authorize: () => {
-        this.assertBinding(ctx, { allowExpired });
+      authorize: (gate) => {
+        this.assertBinding(ctx, {
+          allowExpired,
+          allowClosedEnd: endConvergence,
+        });
+        // Terminal invitation contexts expose safe state and receipts, never a new write.
+        // Derive this from current rows, since queued bindings may predate the decision.
+        if (
+          ctx.socialBinding.target.kind === "invitation" &&
+          !gate.replay &&
+          this.invitationReadOnly(
+            this.assertInvitation(identity, ctx.socialBinding.target.id),
+            gate.now,
+          )
+        )
+          throw Error("AUDIENCE_DENIED");
         extra(identity);
       },
       apply: (gate) => ({
@@ -690,6 +744,26 @@ export class HomeSocialService {
     const a = socialToolSchemas.home_visit_invitation_read.parse(input),
       identity = this.bound(ctx, "invitation", a.invitationId),
       row = this.assertInvitation(identity, a.invitationId);
+    if (this.invitationReadOnly(row)) {
+      ctx.socialPendingInvitations?.delete(row.id);
+      const visit =
+        row.status === "accepted"
+          ? this.db
+              .prepare(
+                "SELECT id FROM home_social_visits WHERE invitation_id=?",
+              )
+              .get(row.id)
+          : null;
+      return {
+        ...this.invitationMeta(row),
+        ...(visit ? { visitId: visit.id } : {}),
+        readOnly: true,
+        operationStatusOnly: true,
+        policyRevision: this.policy().revision,
+        lease: { expiresAt: this.runtime.now() + 15000 },
+        permittedActions: ["operation-read"],
+      };
+    }
     if (!this.invitationRetained(row)) throw Error("AUDIENCE_DENIED");
     this.track(ctx, [
       `social-invitation:${row.id}:${row.revision}`,
@@ -706,6 +780,11 @@ export class HomeSocialService {
       )
         throw Error("AUDIENCE_DENIED");
       return true;
+    });
+    ctx.socialPendingInvitations ||= new Map();
+    ctx.socialPendingInvitations.set(row.id, {
+      revision: row.revision,
+      recipientGeneration: row.recipient_generation,
     });
     return {
       ...this.invitationMeta(row),
@@ -724,6 +803,80 @@ export class HomeSocialService {
             ]
           : [],
     };
+  }
+  /** Internal HTTP preflight snapshot; model tools cannot confirm their own reads.
+   * @param {any} ctx */
+  captureInputConsumption(ctx) {
+    this.assertBinding(ctx);
+    const invitations = [
+      ...(ctx.socialPendingInvitations || new Map()).entries(),
+    ].map(([id, value]) =>
+      Object.freeze({
+        id,
+        revision: value.revision,
+        recipientGeneration: value.recipientGeneration,
+      }),
+    );
+    return Object.freeze({ invitations: Object.freeze(invitations) });
+  }
+  /** Commit only server-captured input acknowledged by a successful, still-authorized inference.
+   * @param {any} ctx @param {any} ticket */
+  confirmInputConsumed(ctx, ticket) {
+    const identity = this.assertBinding(ctx),
+      pending = ctx.socialPendingInvitations;
+    if (!ticket || !Array.isArray(ticket.invitations))
+      throw Error("AUDIENCE_DENIED");
+    const matched = ticket.invitations.filter((/** @type {any} */ item) => {
+      const current = pending?.get(item.id);
+      return (
+        current &&
+        current.revision === item.revision &&
+        current.recipientGeneration === item.recipientGeneration
+      );
+    });
+    if (!matched.length) return { confirmed: 0 };
+    const result = this.store.transaction((now) => {
+      this.assertBinding(ctx);
+      for (const lease of ctx.socialInputLeases || []) lease();
+      const sources =
+          this.sources.sources || this.runtime.homeSocialSources?.sources,
+        allowed =
+          this.sources.allowed || this.runtime.homeSocialSources?.allowed;
+      if (
+        !sources ||
+        !allowed ||
+        !allowed(this.runtime, ctx, sources(this.runtime, ctx))
+      )
+        throw Error("SOURCE_RESTRICTED");
+      let confirmed = 0;
+      for (const item of matched) {
+        this.bound(ctx, "invitation", item.id);
+        const row = this.assertInvitation(identity, item.id);
+        if (
+          row.revision !== item.revision ||
+          row.recipient_generation !== item.recipientGeneration ||
+          !this.invitationRetained(row)
+        )
+          throw Error("AUDIENCE_DENIED");
+        if (identity.generation !== row.recipient_generation) continue;
+        this.db
+          .prepare(
+            "UPDATE home_social_invitations SET recipient_viewed_at=coalesce(recipient_viewed_at,?) WHERE id=? AND revision=? AND recipient_generation=?",
+          )
+          .run(now, item.id, item.revision, identity.generation);
+        if (row.recipient_viewed_at === null) confirmed++;
+      }
+      return { confirmed };
+    });
+    for (const item of matched) {
+      const current = pending.get(item.id);
+      if (
+        current?.revision === item.revision &&
+        current.recipientGeneration === item.recipientGeneration
+      )
+        pending.delete(item.id);
+    }
+    return result;
   }
   /** @param {any} ctx @param {any} input */
   decide(ctx, input) {
@@ -941,9 +1094,15 @@ export class HomeSocialService {
       .run(now, state, row.id);
     this.db
       .prepare(
-        "UPDATE home_social_turns SET status='cancelled',fence=fence+1,finished_at=? WHERE visit_id=? AND status IN ('queued','running','reserved')",
+        "UPDATE home_social_turns SET status='cancelled',fence=fence+1,finished_at=?,safe_error=? WHERE visit_id=? AND status IN ('queued','running','reserved')",
       )
-      .run(now, row.id);
+      .run(
+        now,
+        ["ended", "expired"].includes(state)
+          ? "VISIT_CLOSED"
+          : "AUDIENCE_DENIED",
+        row.id,
+      );
     this.db
       .prepare(
         "UPDATE home_social_dispatches SET status='cancelled',fence=fence+1,finished_at=? WHERE visit_id=? AND status IN ('queued','claimed')",
@@ -1317,6 +1476,7 @@ export class HomeSocialService {
       },
       () => {},
       true,
+      true,
     );
   }
   /** @param {any} ctx @param {any} input */
@@ -1619,6 +1779,7 @@ export class HomeSocialService {
           guestGeneration: turn.target_guest_generation,
         };
     }
+    let current;
     let visitId = result.visitId,
       invitationId = result.invitationId;
     if (result.messageId)
@@ -1643,6 +1804,12 @@ export class HomeSocialService {
       );
     if (visitId) {
       const visit = this.assertVisit(identity, visitId);
+      current = {
+        kind: "visit",
+        id: visit.id,
+        state: this.visitMeta(visit).state,
+        revision: visit.revision,
+      };
       if (
         visit.status === "invalidated" ||
         !(
@@ -1656,6 +1823,12 @@ export class HomeSocialService {
         throw Error("AUDIENCE_DENIED");
     } else if (invitationId) {
       const invitation = this.assertInvitation(identity, invitationId);
+      current = {
+        kind: "invitation",
+        id: invitation.id,
+        state: this.invitationMeta(invitation).state,
+        revision: invitation.revision,
+      };
       if (invitation.status === "invalidated") throw Error("AUDIENCE_DENIED");
       const visit =
         binding.target.kind === "visit"
@@ -1674,10 +1847,15 @@ export class HomeSocialService {
       binding.target.kind === "compose" &&
       pairMatches(reference.hostGeneration, reference.guestGeneration)
     ) {
+      current = {
+        kind: "compose",
+        id: binding.target.id,
+        policyRevision: this.policy().revision,
+      };
       if (receipt.kind !== "block")
         this.assertPair(reference.hostGeneration, reference.guestGeneration);
     } else throw Error("AUDIENCE_DENIED");
-    return receipt;
+    return { ...receipt, current };
   }
   /** @param {any} principal */
   assertAdmin(principal) {
