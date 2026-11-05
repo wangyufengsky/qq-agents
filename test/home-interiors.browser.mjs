@@ -315,6 +315,27 @@ try {
         .evaluate((n) => n.scrollHeight > n.clientHeight),
     );
     if (width === 390 || width === 1440) await shot(`works-${width}`);
+    if (width === 1440) {
+      const text = page.locator('[data-slot="work-1"] .home-text');
+      await text.evaluate((n) => (n.scrollTop = 250));
+      const previousParagraph = await text.elementHandle();
+      await page.waitForResponse((response) =>
+        response.url().includes("/api/home/content?"),
+      );
+      await page.waitForFunction(
+        (node) => !node.isConnected,
+        previousParagraph,
+      );
+      await page.waitForFunction(
+        () =>
+          document.querySelector('[data-slot="work-1"] .home-text')
+            .scrollTop === 250,
+      );
+      check(
+        "content refresh preserves long-text reading position",
+        await text.evaluate((n) => n.scrollTop === 250),
+      );
+    }
     await page.click("#close-reader");
   }
   await page.goto(base + "/?view=board");

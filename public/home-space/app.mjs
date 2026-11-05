@@ -624,6 +624,15 @@ async function loadContent() {
         .filter((card) => card.querySelector("details")?.open)
         .map((card) => card.dataset.slot),
     );
+    const readingPositions = new Map(
+      [...root.querySelectorAll(".home-text-card")].map((card) => [
+        card.dataset.slot,
+        {
+          revision: card.dataset.revision,
+          top: card.querySelector(".home-text")?.scrollTop || 0,
+        },
+      ]),
+    );
     root.replaceChildren();
     if (!value.publishing)
       root.append(
@@ -635,6 +644,7 @@ async function loadContent() {
     for (const item of items) {
       const card = el("section", "home-text-card");
       card.dataset.slot = item.slot;
+      card.dataset.revision = String(item.itemRevision);
       card.append(
         el(
           "h3",
@@ -704,6 +714,10 @@ async function loadContent() {
         );
       card.append(management);
       root.append(card);
+      // A lease refresh must not move the reader back to the top of unchanged text.
+      const position = readingPositions.get(item.slot);
+      if (position?.revision === card.dataset.revision)
+        card.querySelector(".home-text").scrollTop = position.top;
     }
     contentTimer = setTimeout(() => {
       contentTicket++;
