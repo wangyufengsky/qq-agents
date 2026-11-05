@@ -75,6 +75,8 @@ async function open(codeRoot, directory, initialize = false) {
     memory.close();
     throw error;
   }
+  // Match the process entry point while keeping the historical baseline compatible.
+  runtime.initializeRuntime?.();
   // A date boundary must not look like lost board usage during a restore.
   runtime.clock = () => Date.UTC(2026, 10, 5, 4);
   for (const c of runtime.config.connections)
