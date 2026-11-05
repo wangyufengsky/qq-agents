@@ -8,8 +8,10 @@ function Report-State([string]$Stage, [int]$Code=0, [int]$Active=-1) {
   [System.IO.File]::WriteAllText($ControlFile + '.job-state', $state, [System.Text.UTF8Encoding]::new($false))
  } catch { }
 }
+# Resolve the known system module directly instead of scanning user module paths.
+Report-State 'loading-utility'
+Import-Module ($PSHOME + '\Modules\Microsoft.PowerShell.Utility\Microsoft.PowerShell.Utility.psd1')
 Report-State 'compiling'
-
 Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;

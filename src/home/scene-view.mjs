@@ -51,7 +51,7 @@ export async function renderHomeScene(
     viewport = "desktop",
     signal,
     executablePath,
-    launchTimeoutMs = process.platform === "win32" ? 10000 : 5000,
+    launchTimeoutMs = 15000,
   } = {},
 ) {
   if (active >= 2) throw Error("HOME_SCENE_BUSY");
