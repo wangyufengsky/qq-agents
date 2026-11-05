@@ -39,7 +39,7 @@ function setup(t) {
   }
   const f = fixture(t, { cfg }),
     db = f.store.db;
-  f.runtime.config.homeSocial = { enabled: true };
+  f.runtime.config.homeSocial = { enabled: true, retentionDays: 30 };
   for (const a of f.runtime.config.agents) a.home.social = { enabled: true };
   const visitId = randomUUID(),
     messageId = randomUUID();
@@ -718,5 +718,190 @@ test("new original attestation is exact, transactional and never inherited by le
     f.db.prepare("SELECT item_revision FROM home_social_item_proofs").get()
       .item_revision,
     3,
+  );
+});
+
+test("QQ forward readers remain unavailable in a subject-social capability scope", async (t) => {
+  const f = setup(t),
+    m = f.store.bind("agent-0");
+  f.runtime.agent("agent-0").tools.push("qq_forward_read");
+  trackSocial(f.ctx, { protectedSocialSources: [f.marker] });
+  const root = m.append({
+    dedupe: "mixed-forward-root",
+    conversation: "private:30000",
+    kind: "message.received",
+    body: "private merged forward",
+    senderId: "30000",
+    payload: {
+      segments: [{ type: "forward", data: { id: "private-resource" } }],
+    },
+  });
+  let calls = 0;
+  f.runtime.transports.get("qq-0").call = async () => {
+    calls++;
+    return { messages: [] };
+  };
+  await assert.rejects(
+    f.runtime.executeTool(f.ctx, "qq_forward_read", {
+      eventId: root.id,
+      limit: 1,
+      maxChars: 1000,
+    }),
+    /TOOL_DISABLED/,
+  );
+  assert.equal(calls, 0);
+  assert.equal(
+    m.db
+      .prepare("SELECT count(*) n FROM events WHERE kind='forward.node'")
+      .get().n,
+    0,
+  );
+});
+
+test("legacy mixed source metadata cannot hide QQ origin behind a social marker", (t) => {
+  const f = setup(t),
+    m = f.store.bind("agent-0");
+  for (const conversation of ["private:30000", "group:20000"]) {
+    const record = m.append({
+      dedupe: "mixed-compat:" + conversation,
+      conversation,
+      kind: "forward.node",
+      body: "PRIVATE_COMPAT_TEXT",
+      payload: { protectedSocialSources: [f.marker] },
+    });
+    const bound = {
+      ...f.ctx,
+      privateRead: new Set([record.id]),
+      socialSendingClosed: false,
+    };
+    assert.throws(
+      () =>
+        assertSocialSend(f.runtime, bound, { kind: "visit", id: f.visitId }),
+      /SOCIAL_SOURCE_DENIED/,
+    );
+  }
+  for (const scope of ["private:30000", "group:20000"]) {
+    const record = m.append({
+      dedupe: "derived-compat:" + scope,
+      conversation: "@social:synthetic-run",
+      kind: "external.read",
+      body: "PRIVATE_COMPAT_TEXT",
+      payload: {
+        protectedSocialSources: [f.marker],
+        app: { source: { conversation: scope } },
+      },
+    });
+    const bound = {
+      ...f.ctx,
+      privateRead: new Set([record.id]),
+      socialSendingClosed: false,
+    };
+    assert.throws(
+      () =>
+        assertSocialSend(f.runtime, bound, { kind: "visit", id: f.visitId }),
+      /SOCIAL_SOURCE_DENIED/,
+    );
+  }
+  const social = m.append({
+    dedupe: "valid-social-origin",
+    conversation: "@social:synthetic-run",
+    kind: "subject.log",
+    body: "same visit",
+    payload: { protectedSocialSources: [f.marker] },
+  });
+  assert.doesNotThrow(() =>
+    assertSocialSend(
+      f.runtime,
+      { ...f.ctx, privateRead: new Set([social.id]) },
+      { kind: "visit", id: f.visitId },
+    ),
+  );
+});
+
+test("source reads enforce retention deadlines before delayed cleanup materializes tombstones", (t) => {
+  const f = setup(t),
+    day = 86400000,
+    now = f.runtime.now();
+  f.runtime.now = () => now;
+  const invitation = socialInvitationMarker(f.invitationId, 1);
+  f.db
+    .prepare(
+      "UPDATE home_social_visits SET status='ended',started_at=?,ended_at=?,expires_at=?",
+    )
+    .run(now - 31 * day, now - 30 * day + 1, now + day);
+  assert.equal(socialContextAllowed(f.runtime, f.ctx, [f.marker]), true);
+  f.db.prepare("UPDATE home_social_visits SET ended_at=?").run(now - 30 * day);
+  assert.equal(socialContextAllowed(f.runtime, f.ctx, [f.marker]), false);
+  assert.equal(socialContextAllowed(f.runtime, f.ctx, [invitation]), false);
+  f.db
+    .prepare(
+      "UPDATE home_social_visits SET status='active',ended_at=NULL,expires_at=?",
+    )
+    .run(now - 30 * day);
+  assert.equal(socialContextAllowed(f.runtime, f.ctx, [f.marker]), false);
+  f.db
+    .prepare("UPDATE home_social_visits SET status='active',expires_at=?")
+    .run(now + day);
+  f.db
+    .prepare(
+      "UPDATE home_social_invitations SET status='declined',decided_at=?",
+    )
+    .run(now - 30 * day);
+  const invitationContext = {
+    ...f.ctx,
+    socialBinding: {
+      ...f.ctx.socialBinding,
+      target: { kind: "invitation", id: f.invitationId },
+    },
+  };
+  assert.equal(
+    socialContextAllowed(f.runtime, invitationContext, [invitation]),
+    false,
+  );
+  assert.equal(
+    f.db.prepare("SELECT body_cleared_at FROM home_social_messages").get()
+      .body_cleared_at,
+    null,
+  );
+});
+
+test("accepted invitation retention follows its associated visit termination", (t) => {
+  const f = setup(t),
+    day = 86400000;
+  let now = f.runtime.now();
+  f.runtime.now = () => now;
+  const marker = socialInvitationMarker(f.invitationId, 1);
+  f.db
+    .prepare(
+      "UPDATE home_social_invitations SET created_at=?,decided_at=?,expires_at=?",
+    )
+    .run(now - 60 * day, now - 59 * day, now - 57 * day);
+  f.db
+    .prepare(
+      "UPDATE home_social_visits SET status='ended',started_at=?,ended_at=?,expires_at=?",
+    )
+    .run(now - 59 * day, now - 29 * day, now - 29 * day);
+  const invitationContext = {
+    ...f.ctx,
+    socialBinding: {
+      ...f.ctx.socialBinding,
+      target: { kind: "invitation", id: f.invitationId },
+    },
+  };
+  assert.equal(
+    socialContextAllowed(f.runtime, invitationContext, [marker]),
+    true,
+  );
+  assert.equal(socialContextAllowed(f.runtime, f.ctx, [marker]), true);
+  now += day;
+  assert.equal(
+    socialContextAllowed(f.runtime, invitationContext, [marker]),
+    false,
+  );
+  assert.equal(socialContextAllowed(f.runtime, f.ctx, [marker]), false);
+  assert.equal(
+    f.db.prepare("SELECT body_cleared_at FROM home_social_invitations").get()
+      .body_cleared_at,
+    null,
   );
 });
