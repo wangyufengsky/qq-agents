@@ -1185,6 +1185,57 @@ test("Antigravity registers exact image bytes through its real MCP subprocess", 
   assert(!fs.existsSync(target));
 });
 
+test("Antigravity social adapter delivers only current registered pixels through MCP and native hooks", async (t) => {
+  const { backend, params, launches } = setup(t, "media");
+  const image = {
+    type: "image",
+    mimeType: "image/png",
+    data: colorGrid(["red", "green", "blue", "yellow"]).toString("base64"),
+  };
+  await backend.run({
+    ...params,
+    social: true,
+    callTool: async () => ({ content: [image] }),
+  });
+  const workspace = launches[0].options.cwd;
+  const result = JSON.parse(
+    fs.readFileSync(path.join(workspace, "media-result.json"), "utf8"),
+  );
+  assert.deepEqual(result.nativeImageApprovals, [
+    ["auto_approve", "auto_approve"],
+  ]);
+  assert.deepEqual(result.observedImages, [image.data]);
+  const target = JSON.parse(
+    /Path=(".*?") to inspect/.exec(result.content[0].text)[1],
+  );
+  assert(!fs.existsSync(target));
+  assert.equal(
+    antigravityToolAllowed(
+      { name: "read_file", args: { Path: target } },
+      [],
+      [],
+    ),
+    false,
+  );
+  assert.equal(
+    antigravityToolAllowed(
+      { name: "view_file", args: { AbsolutePath: target } },
+      [],
+      [],
+    ),
+    false,
+  );
+  const settings = JSON.parse(
+    fs.readFileSync(path.join(workspace, "settings.json"), "utf8"),
+  );
+  assert.equal(settings.permissions.allow.length, 2);
+  assert.equal(settings.permissions.allow[0], "mcp(qq-agents/probe)");
+  assert.equal(
+    settings.permissions.allow[1],
+    `read_file(${path.dirname(target).replaceAll("\\", "/")}/*)`,
+  );
+});
+
 test("Antigravity pressure handoff keeps original source evidence without acknowledging replay", async (t) => {
   const { backend } = setup(t, "usage");
   const cfg = config(1);
@@ -1337,20 +1388,25 @@ test("Antigravity refreshes legacy image guidance without replacing its native s
   );
   const old = fs
     .readFileSync(agentFile, "utf8")
-    .replace("  - read_file\n", "")
+    .replace("  - view_file\n", "  - read_file\n  - view_file\n")
     .replace(
       "Only native read_file (Path) or legacy view_file (AbsolutePath)",
       "Only native view_file",
     )
     .replace("Always call the native image reader", "Always call view_file");
   fs.writeFileSync(agentFile, old);
-  for (let turn = 0; turn < 2; turn++) {
+  for (let turn = 0; turn < 3; turn++) {
+    if (turn === 2)
+      fs.writeFileSync(
+        agentFile,
+        old.replace("  - read_file\n  - view_file\n", ""),
+      );
     await backend.run({ ...params, session, instructions: undefined });
     const guide = fs.readFileSync(agentFile, "utf8");
     assert.equal(sessions.at(-1).id, session.id);
     assert.equal(backend.sessionSignature(params.tools), signature);
-    assert.equal((guide.match(/ {2}- read_file\n/g) || []).length, 1);
-    assert.match(guide, / {2}- view_file\n/);
+    assert.doesNotMatch(guide, /^ {2}- read_file$/m);
+    assert.equal((guide.match(/ {2}- view_file\n/g) || []).length, 1);
     assert.match(
       guide,
       /Only native read_file \(Path\) or legacy view_file \(AbsolutePath\)/,

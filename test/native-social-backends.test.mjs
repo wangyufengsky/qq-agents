@@ -275,7 +275,7 @@ test("DSH social requires guarded preset, freezes a current capability and drain
   await assert.rejects(backend.runSocial(params), /SOCIAL_BACKEND_UNSUPPORTED/);
 });
 
-test("Antigravity social bypasses reusable workers, exposes no file tool, and removes native transcripts", async (t) => {
+test("Antigravity social bypasses workers, scopes image readers, and removes native transcripts", async (t) => {
   const cfg = config(),
     root = temp(t);
   let settings,
@@ -341,10 +341,17 @@ test("Antigravity social bypasses reusable workers, exposes no file tool, and re
   await backend.runSocial(socialParams());
   assert.equal(spawned, 1);
   assert.equal(backend.workers.size, 0);
-  assert.doesNotMatch(agent, /^ {2}- view_file$/m);
-  assert.deepEqual(settings.permissions.allow, [
+  assert.match(agent, /^ {2}- view_file$/m);
+  assert.doesNotMatch(agent, /^ {2}- read_file$/m);
+  assert.equal(
+    settings.permissions.allow[0],
     "mcp(qq-agents/home_social_capabilities)",
-  ]);
+  );
+  assert.equal(settings.permissions.allow.length, 2);
+  assert.match(
+    settings.permissions.allow[1],
+    /^read_file\(.+qq-agy-media-[^/]+\/\*\)$/,
+  );
   assert.deepEqual(fs.readdirSync(path.join(backend.root, "workspaces")), []);
   assert.deepEqual(
     fs.readdirSync(path.join(backend.profile, "cli", "conversations")),
