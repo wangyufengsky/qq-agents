@@ -1485,7 +1485,7 @@ test("a fresh room read must revalidate its delivery even when an older copy is 
 });
 
 test("room letters filter by host while visit histories include both roles and bind pagination", (t) => {
-  const f = setup(t, 4),
+  const f = setup(t, 5),
     admin = "instance-administrator";
   function createVisit(host, guest) {
     const invitation = f.s.invite(f.ctx(host, { kind: "compose", id: guest }), {
@@ -1518,6 +1518,8 @@ test("room letters filter by host while visit histories include both roles and b
     [latestRoomVisit],
   );
   assert.ok(first.nextCursor);
+  f.setNow(f.now() + 1000);
+  const newerRoomVisit = createVisit("agent-0", "agent-4");
   const second = f.s.adminOverview(admin, {
     ...roomFilter,
     cursor: first.nextCursor,
@@ -1533,8 +1535,25 @@ test("room letters filter by host while visit histories include both roles and b
   });
   assert.deepEqual(
     new Set(history.items.map((item) => item.id)),
-    new Set([firstRoomVisit, latestRoomVisit, awayVisit]),
+    new Set([firstRoomVisit, latestRoomVisit, newerRoomVisit, awayVisit]),
   );
+  const paged = [];
+  let cursor;
+  do {
+    const page = f.s.adminOverview(admin, {
+      agentId: "agent-0",
+      kind: "visit",
+      limit: 1,
+      cursor,
+    });
+    paged.push(...page.items.map((item) => item.id));
+    cursor = page.nextCursor || undefined;
+  } while (cursor);
+  assert.deepEqual(
+    paged,
+    history.items.map((item) => item.id),
+  );
+  assert.equal(new Set(paged).size, 4);
   assert.ok(history.items.every((item) => item.kind === "visit"));
   assert.doesNotMatch(JSON.stringify(history), /合成访问经历/);
   const intersection = f.s.adminOverview(admin, {
