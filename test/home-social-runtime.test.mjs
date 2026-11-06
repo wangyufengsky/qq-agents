@@ -1387,9 +1387,12 @@ test("cached ordinary OpenAI adapters refresh social profiles without replacing 
 });
 
 async function turnOnlyWindow(f, maximum = 12) {
+  return agreeWindow(f, await visitFixture(f), maximum);
+}
+
+async function agreeWindow(f, visit, maximum = 12) {
   const r = f.runtime,
-    db = f.store.db,
-    visit = await visitFixture(f);
+    db = f.store.db;
   r.config.homeSocial.resourceBudget = null;
   r.config.homeSocial.maxTurns = maximum;
   const a = boundContext(f, "agent-0", { kind: "visit", id: visit.id });
@@ -1884,31 +1887,91 @@ test("ordinary room withdrawal preserves the conversation and fresh room reads r
   assert.equal(r.socialRuntime.windowSessions.size, 0);
 });
 
-test("replacing a backend adapter cannot silently resume a window with only delta input", async (t) => {
+test("a replaced adapter rebuilds a successful sealed window turn with readable history and handoff", async (t) => {
   const f = setup(t),
-    r = f.runtime;
-  const { windowId } = await turnOnlyWindow(f, 6);
-  f.setScript((_agent, binding) => windowReply(f, binding));
-  await f.pump();
-  await f.pump();
+    r = f.runtime,
+    db = f.store.db;
+  const { visit, windowId } = await turnOnlyWindow(f, 6);
+  const pendingText = "Synthetic pending topic about the copper kite",
+    agreementText = "Synthetic agreement to finish the kite tomorrow";
   const old = r.backendConnections.adapter(r.agent("agent-0"));
-  await old.close();
-  let calls = 0;
+  const run = old.runSocial.bind(old);
+  let sentId;
+  old.runSocial = (params) =>
+    run({
+      ...params,
+      callTool: async (name, args) => {
+        const result = await params.callTool(
+          name,
+          name === "home_exchange_yield"
+            ? {
+                ...args,
+                handoff: {
+                  pendingTopics: [
+                    { text: pendingText, sourceMessageIds: [sentId] },
+                  ],
+                  agreements: [
+                    { text: agreementText, sourceMessageIds: [sentId] },
+                  ],
+                },
+              }
+            : args,
+        );
+        if (name === "home_visit_send") sentId = result.result.messageId;
+        return result;
+      },
+    });
+  f.setScript((_agent, binding) =>
+    windowReply(f, binding, "Synthetic copper kite source"),
+  );
+  await f.pump();
+  await f.pump();
+  const previous = db
+    .prepare(
+      "SELECT * FROM home_social_turns WHERE window_id=? AND actor_generation=? AND status='completed' ORDER BY created_at DESC LIMIT 1",
+    )
+    .get(windowId, r.home.generation("agent-0"));
+  assert.equal(previous.status, "completed");
+  assert.equal(previous.batch_sealed, 1);
+  let disposed = 0,
+    rebuilt;
+  const close = old.closeSocialSessions.bind(old);
+  old.closeSocialSessions = async (...args) => {
+    await close(...args);
+    disposed++;
+  };
   r.backends.set("agent-0", {
     close: async () => {},
-    runSocial: async () => {
-      calls++;
+    closeSocialSessions: async () => {},
+    runSocial: async (params) => {
+      assert.equal(disposed, 1, "the old capsule closes before new input");
+      rebuilt = inputState(params.prompt);
+      assert.equal(rebuilt.continuation, false);
+      assert.equal(rebuilt.state.messages.length, 2);
+      assert.ok(
+        rebuilt.state.messages.some((message) => message.messageId === sentId),
+      );
+      assert.equal(rebuilt.handoff.pendingTopics[0].text, pendingText);
+      assert.equal(rebuilt.handoff.agreements[0].text, agreementText);
+      await params.beforeInput();
+      await params.onRunStarted();
+      for (const [name, args] of windowReply(f, params.binding))
+        await params.callTool(name, args);
     },
   });
   await f.pump();
-  assert.equal(calls, 0);
+  assert.ok(rebuilt);
+  const window = db
+    .prepare("SELECT * FROM home_social_windows WHERE id=?")
+    .get(windowId);
+  assert.equal(window.status, "active");
+  assert.equal(window.turns_used, 3);
   assert.equal(
-    f.store.db
-      .prepare("SELECT status FROM home_social_windows WHERE id=?")
-      .get(windowId).status,
-    "closed",
+    db
+      .prepare("SELECT count(*) n FROM home_social_messages WHERE visit_id=?")
+      .get(visit.id).n,
+    3,
   );
-  assert.equal(r.socialRuntime.windowSessions.size, 0);
 });
 
 for (const removal of ["retracted_at", "hidden_at"])
@@ -1995,5 +2058,483 @@ test("OpenAI window tool results are not history before the next HTTP input", as
       .prepare("SELECT status FROM home_social_windows WHERE id=?")
       .get(windowId).status,
     "closed",
+  );
+});
+
+async function handoffReply(f, params, handoff) {
+  await params.beforeInput();
+  await params.onRunStarted();
+  const [send, yieldTurn] = windowReply(f, params.binding);
+  const sent = await params.callTool(...send);
+  const note =
+    typeof handoff === "function" ? handoff(sent.result.messageId) : handoff;
+  await params.callTool(yieldTurn[0], {
+    ...yieldTurn[1],
+    ...(note === undefined ? {} : { handoff: note }),
+  });
+  return sent.result.messageId;
+}
+
+function closeTestWindow(f, windowId) {
+  const r = f.runtime;
+  r.homeSocial.store.transaction((now) =>
+    r.socialRuntime.exchange.closeRow(
+      f.store.db
+        .prepare("SELECT * FROM home_social_windows WHERE id=?")
+        .get(windowId),
+      now,
+      "participant_closed",
+    ),
+  );
+  r.socialRuntime.cancelStale();
+}
+
+test("handoff stays out of normal continuation and an omitted update survives into a fresh visit session", async (t) => {
+  const f = setup(t),
+    r = f.runtime;
+  const { visit, windowId } = await turnOnlyWindow(f, 6);
+  const topic = "Synthetic unfinished copper kite topic";
+  let rounds = 0,
+    recovered;
+  const prompts = [];
+  for (const agent of ["agent-0", "agent-1"])
+    r.backends.set(agent, {
+      close: async () => {},
+      closeSocialSessions: async () => {},
+      runSocial: async (params) => {
+        const input = inputState(params.prompt);
+        prompts.push({ agent, input });
+        if (!params.binding.windowId) {
+          recovered = input;
+          await params.beforeInput();
+          await params.onRunStarted();
+          return;
+        }
+        const save = agent === "agent-0" && rounds++ === 0;
+        await handoffReply(
+          f,
+          params,
+          save
+            ? (messageId) => ({
+                pendingTopics: [{ text: topic, sourceMessageIds: [messageId] }],
+                agreements: [],
+              })
+            : undefined,
+        );
+      },
+    });
+  for (let i = 0; i < 3; i++) await f.pump();
+  const continued = prompts.find(
+    (item) => item.agent === "agent-0" && item.input.continuation,
+  );
+  assert.ok(continued);
+  assert.equal(Object.hasOwn(continued.input, "handoff"), false);
+  closeTestWindow(f, windowId);
+  await settle(r);
+  await f.process("agent-0", { kind: "visit", id: visit.id });
+  await f.pump();
+  assert.equal(recovered.continuation, false);
+  assert.equal(recovered.handoff.pendingTopics[0].text, topic);
+  assert.equal(recovered.handoff.agreements.length, 0);
+  assert.ok(
+    recovered.handoff.references.some(
+      (reference) => reference.body === "Synthetic continuation",
+    ),
+  );
+});
+
+test("explicit empty handoff clears the old note without reviving it on a fresh session", async (t) => {
+  const f = setup(t),
+    r = f.runtime;
+  const { visit, windowId } = await turnOnlyWindow(f, 6);
+  let ownTurns = 0,
+    recovered;
+  for (const agent of ["agent-0", "agent-1"])
+    r.backends.set(agent, {
+      close: async () => {},
+      closeSocialSessions: async () => {},
+      runSocial: async (params) => {
+        if (!params.binding.windowId) {
+          recovered = inputState(params.prompt);
+          await params.beforeInput();
+          await params.onRunStarted();
+          return;
+        }
+        const turn = agent === "agent-0" ? ++ownTurns : 0;
+        await handoffReply(
+          f,
+          params,
+          turn === 1
+            ? (messageId) => ({
+                pendingTopics: [
+                  {
+                    text: "Synthetic cleared topic",
+                    sourceMessageIds: [messageId],
+                  },
+                ],
+                agreements: [],
+              })
+            : turn === 2
+              ? { pendingTopics: [], agreements: [] }
+              : undefined,
+        );
+      },
+    });
+  for (let i = 0; i < 3; i++) await f.pump();
+  closeTestWindow(f, windowId);
+  await settle(r);
+  await f.process("agent-0", { kind: "visit", id: visit.id });
+  await f.pump();
+  assert.deepEqual(recovered.handoff?.pendingTopics || [], []);
+  assert.deepEqual(recovered.handoff?.agreements || [], []);
+  assert.doesNotMatch(JSON.stringify(recovered), /Synthetic cleared topic/);
+});
+
+for (const phase of ["transport", "after-yield"])
+  test(`failed or unknown window input cannot be replayed as a fresh adapter handoff: ${phase}`, async (t) => {
+    const f = setup(t),
+      r = f.runtime,
+      db = f.store.db;
+    const { windowId } = await turnOnlyWindow(f, 6);
+    let attempts = 0;
+    r.backends.set("agent-0", {
+      close: async () => {},
+      closeSocialSessions: async () => {},
+      runSocial: async (params) => {
+        attempts++;
+        if (phase === "after-yield")
+          await handoffReply(f, params, (messageId) => ({
+            pendingTopics: [
+              {
+                text: "Synthetic uncompleted handoff",
+                sourceMessageIds: [messageId],
+              },
+            ],
+            agreements: [],
+          }));
+        else {
+          await params.beforeInput();
+          await params.onRunStarted();
+        }
+        throw Error(
+          phase === "transport"
+            ? "SOCIAL_INFERENCE_UNKNOWN"
+            : "SOCIAL_TURN_FAILED",
+        );
+      },
+    });
+    await f.pump();
+    let replayed = 0;
+    r.backends.set("agent-0", {
+      close: async () => {},
+      runSocial: async () => {
+        replayed++;
+      },
+    });
+    for (let i = 0; i < 2; i++) await f.pump();
+    const window = db
+      .prepare("SELECT * FROM home_social_windows WHERE id=?")
+      .get(windowId);
+    assert.equal(attempts, 1);
+    assert.equal(replayed, 0);
+    assert.equal(window.turns_used, 1);
+    assert.equal(window.status, "closed");
+    assert.equal(
+      db
+        .prepare(
+          "SELECT count(*) n FROM home_social_dispatches WHERE window_id=? AND status='queued'",
+        )
+        .get(windowId).n,
+      0,
+    );
+  });
+
+test("handoff references beyond the first history page do not skip unread messages on continuation", async (t) => {
+  const f = setup(t),
+    r = f.runtime,
+    db = f.store.db;
+  const visit = await visitFixture(f);
+  const sourceIds = [];
+  const insert = db.prepare(
+    "INSERT INTO home_social_messages(id,visit_id,author_agent_id,author_generation,sequence,body,source_labels,audience,created_at) VALUES(?,?,?,?,?,?,'[]',?,?)",
+  );
+  for (let sequence = 1; sequence <= 25; sequence++) {
+    const id = randomUUID();
+    sourceIds.push(id);
+    insert.run(
+      id,
+      visit.id,
+      "agent-1",
+      r.home.generation("agent-1"),
+      sequence,
+      `Synthetic paging reference ${sequence}`,
+      JSON.stringify([visit.host_generation, visit.guest_generation]),
+      r.now(),
+    );
+  }
+  db.prepare("UPDATE home_social_visits SET next_sequence=26 WHERE id=?").run(
+    visit.id,
+  );
+  const first = await agreeWindow(f, visit, 6);
+  const topic = "Synthetic pending topic linked to page two";
+  let phase = "save",
+    fresh,
+    continued;
+  for (const agent of ["agent-0", "agent-1"])
+    r.backends.set(agent, {
+      close: async () => {},
+      closeSocialSessions: async () => {},
+      runSocial: async (params) => {
+        const input = inputState(params.prompt);
+        if (phase === "save") {
+          assert.equal(agent, "agent-0");
+          await params.beforeInput();
+          await params.onRunStarted();
+          const page = await params.callTool("home_visit_read", {
+            visitId: visit.id,
+            cursor: input.state.nextCursor,
+            limit: 20,
+          });
+          assert.ok(
+            page.messages.some(
+              (message) => message.messageId === sourceIds[24],
+            ),
+          );
+          const [send, yieldTurn] = windowReply(f, params.binding);
+          await params.callTool(...send);
+          await params.callTool(yieldTurn[0], {
+            ...yieldTurn[1],
+            handoff: {
+              pendingTopics: [
+                { text: topic, sourceMessageIds: [sourceIds[24]] },
+              ],
+              agreements: [],
+            },
+          });
+          return;
+        }
+        if (agent === "agent-0") {
+          if (input.continuation) continued = input;
+          else fresh = input;
+        }
+        await handoffReply(f, params);
+      },
+    });
+  await f.pump();
+  closeTestWindow(f, first.windowId);
+  await settle(r);
+  phase = "resume";
+  await agreeWindow(f, visit, 6);
+  for (let i = 0; i < 3; i++) await f.pump();
+  assert.equal(fresh.continuation, false);
+  assert.equal(fresh.handoff.pendingTopics[0].text, topic);
+  assert.ok(
+    fresh.handoff.references.some(
+      (reference) => reference.messageId === sourceIds[24],
+    ),
+  );
+  assert.deepEqual(
+    fresh.state.messages.map((message) => message.sequence),
+    Array.from({ length: 20 }, (_, i) => i + 1),
+  );
+  assert.ok(fresh.state.nextCursor);
+  assert.equal(continued.continuation, true);
+  assert.equal(Object.hasOwn(continued, "handoff"), false);
+  assert.ok(
+    continued.state.messages.some((message) => message.sequence === 21),
+  );
+  assert.ok(
+    continued.state.messages.some((message) => message.sequence === 25),
+  );
+});
+
+test("restart interrupts the old window while new authorization restores the visit handoff", async (t) => {
+  const f = setup(t),
+    r = f.runtime,
+    db = f.store.db;
+  const { visit, windowId } = await turnOnlyWindow(f, 6);
+  const topic = "Synthetic durable unfinished topic after restart";
+  const inputs = [];
+  let saved = false;
+  for (const agent of ["agent-0", "agent-1"])
+    r.backends.set(agent, {
+      close: async () => {},
+      closeSocialSessions: async () => {},
+      runSocial: async (params) => {
+        const input = inputState(params.prompt);
+        inputs.push({ binding: params.binding, input });
+        if (!params.binding.windowId) {
+          await params.beforeInput();
+          await params.onRunStarted();
+          return;
+        }
+        await handoffReply(
+          f,
+          params,
+          !saved && agent === "agent-0"
+            ? (messageId) => ({
+                pendingTopics: [{ text: topic, sourceMessageIds: [messageId] }],
+                agreements: [],
+              })
+            : undefined,
+        );
+        saved = true;
+      },
+    });
+  await f.pump();
+  assert.equal(inputs.length, 1);
+  assert.deepEqual(r.initializeRuntime(), { initialized: true });
+  await f.pump();
+  assert.equal(inputs.length, 1, "restart must not replay the old actor run");
+  assert.equal(
+    db
+      .prepare("SELECT status FROM home_social_windows WHERE id=?")
+      .get(windowId).status,
+    "interrupted",
+  );
+  await f.process("agent-0", { kind: "visit", id: visit.id });
+  await f.pump();
+  const async = inputs.at(-1);
+  assert.equal(async.binding.runMode, "async");
+  assert.equal(async.input.continuation, false);
+  assert.equal(async.input.handoff.pendingTopics[0].text, topic);
+  const next = await agreeWindow(f, visit, 4);
+  await f.pump();
+  const restarted = inputs.at(-1);
+  assert.notEqual(next.windowId, windowId);
+  assert.equal(restarted.binding.windowId, next.windowId);
+  assert.equal(restarted.input.continuation, false);
+  assert.equal(restarted.input.handoff.pendingTopics[0].text, topic);
+  assert.equal(
+    inputs.filter((item) => item.binding.windowId === windowId).length,
+    1,
+  );
+});
+
+for (const removal of ["retracted_at", "hidden_at"])
+  for (const timing of ["before", "after"])
+    test(`rebuilt handoff source ${removal} changes ${timing} input delivery`, async (t) => {
+      const f = setup(t),
+        r = f.runtime,
+        db = f.store.db;
+      const { visit, windowId } = await turnOnlyWindow(f, 6);
+      let sourceId;
+      r.backends.set("agent-0", {
+        close: async () => {},
+        closeSocialSessions: async () => {},
+        runSocial: async (params) => {
+          sourceId = await handoffReply(f, params, (messageId) => ({
+            pendingTopics: [
+              {
+                text: "Synthetic leased handoff topic",
+                sourceMessageIds: [messageId],
+              },
+            ],
+            agreements: [],
+          }));
+        },
+      });
+      f.setScript((_agent, binding) => windowReply(f, binding));
+      await f.pump();
+      await f.pump();
+      let entered = 0,
+        started = 0,
+        denied = false,
+        sent = false,
+        yielded = false;
+      r.backends.set("agent-0", {
+        close: async () => {},
+        closeSocialSessions: async () => {},
+        runSocial: async (params) => {
+          entered++;
+          const input = inputState(params.prompt);
+          assert.equal(input.continuation, false);
+          assert.equal(input.handoff.references[0].messageId, sourceId);
+          const remove = () =>
+            db
+              .prepare(
+                `UPDATE home_social_messages SET ${removal}=?,revision=revision+1 WHERE id=?`,
+              )
+              .run(r.now(), sourceId);
+          if (timing === "before") remove();
+          try {
+            await params.beforeInput();
+          } catch (error) {
+            denied = true;
+            throw error;
+          }
+          await params.onRunStarted();
+          started++;
+          if (timing === "after") remove();
+          const [send, yieldTurn] = windowReply(
+            f,
+            params.binding,
+            "Synthetic reply after delivered handoff",
+          );
+          const receipt = await params.callTool(...send);
+          sent = receipt.status === "committed";
+          const batch = await params.callTool(...yieldTurn);
+          yielded = batch.status === "committed";
+        },
+      });
+      await f.pump();
+      const window = db
+        .prepare("SELECT * FROM home_social_windows WHERE id=?")
+        .get(windowId);
+      assert.equal(entered, 1);
+      assert.equal(started, timing === "after" ? 1 : 0);
+      assert.equal(denied, timing === "before");
+      assert.equal(sent, timing === "after");
+      assert.equal(yielded, timing === "after");
+      assert.equal(window.status, timing === "after" ? "active" : "closed");
+      assert.equal(window.turns_used, timing === "after" ? 3 : 2);
+      assert.equal(
+        db
+          .prepare(
+            "SELECT count(*) n FROM home_social_messages WHERE visit_id=?",
+          )
+          .get(visit.id).n,
+        timing === "after" ? 3 : 2,
+      );
+    });
+
+test("failed old-session cleanup blocks adapter rebuild without charging another actor run", async (t) => {
+  const f = setup(t),
+    r = f.runtime,
+    db = f.store.db;
+  const { windowId } = await turnOnlyWindow(f, 6);
+  f.setScript((_agent, binding) => windowReply(f, binding));
+  await f.pump();
+  await f.pump();
+  const old = r.backendConnections.adapter(r.agent("agent-0"));
+  let cleanupAttempts = 0,
+    calls = 0;
+  old.closeSocialSessions = async () => {
+    cleanupAttempts++;
+    throw Error("SOCIAL_CONTEXT_FINALIZATION_FAILED");
+  };
+  r.backends.set("agent-0", {
+    close: async () => {},
+    closeSocialSessions: async () => {},
+    runSocial: async () => {
+      calls++;
+    },
+  });
+  await f.pump();
+  const window = db
+    .prepare("SELECT * FROM home_social_windows WHERE id=?")
+    .get(windowId);
+  assert.ok(cleanupAttempts > 0);
+  assert.equal(calls, 0);
+  assert.equal(window.status, "closed");
+  assert.equal(window.turns_used, 2);
+  assert.equal(window.turns_reserved, 0);
+  assert.equal(
+    db
+      .prepare(
+        "SELECT count(*) n FROM home_social_dispatches WHERE window_id=? AND status='queued'",
+      )
+      .get(windowId).n,
+    0,
   );
 });
