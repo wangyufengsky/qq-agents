@@ -2,6 +2,7 @@
 import { createHash } from "node:crypto";
 import { SocialExchange } from "./social-exchange.mjs";
 import { SocialResources } from "./social-resources.mjs";
+import { effectiveSocialResourceBudget } from "./social-policy.mjs";
 import { socialProviderProfile } from "../backends/social-budget.mjs";
 import { toolSpecs } from "../tools/specs.mjs";
 import { SOCIAL_TOOLS } from "./social-tool-names.mjs";
@@ -49,7 +50,10 @@ export class SocialRuntime {
     if (ctx.runtimeKind === "subject-social")
       return {
         ...this.service.capabilities(ctx, args),
-        backend: this.backendCapability(ctx.agentId),
+        backend: this.backendCapability(
+          ctx.agentId,
+          this.limits(ctx).resourceBudget,
+        ),
       };
     this.runtime.assertActive(ctx);
     if (ctx.conversation !== "@subject") throw Error("IDENTITY_DENIED");
@@ -89,13 +93,23 @@ export class SocialRuntime {
       notice: "数量不表示已读；处理时使用独立主体社交回合。",
     };
   }
-  /** @param {string} agentId */
-  backendCapability(agentId) {
+  /** @param {string} agentId @param {any} [budget] */
+  backendCapability(
+    agentId,
+    budget = this.runtime.config.homeSocial?.resourceBudget,
+  ) {
     const a = this.runtime.agent(agentId),
       b = this.runtime.config.backends.find(
         (/** @type {any} */ x) => x.id === a.backendId,
       );
     try {
+      if (b?.type === "dsh" && b.preset !== "qq-unified")
+        throw Error("SOCIAL_BACKEND_UNSUPPORTED");
+      if (
+        !budget &&
+        ["openai", "dsh", "codex", "antigravity"].includes(b?.type)
+      )
+        return { supported: true, hardResourceBudget: false };
       if (b?.type !== "openai" || !b.socialProfile)
         throw Error("SOCIAL_BACKEND_UNSUPPORTED");
       const endpoint = b.baseUrl.replace(/\/+$/, "") + "/chat/completions";
@@ -118,13 +132,15 @@ export class SocialRuntime {
       };
     }
   }
-  /** @param {string} agentId */
-  assertBackendBudget(agentId) {
-    const cap = this.backendCapability(agentId),
-      budget = this.runtime.config.homeSocial?.resourceBudget;
+  /** @param {string} agentId @param {any} [budget] */
+  assertBackendBudget(
+    agentId,
+    budget = this.runtime.config.homeSocial?.resourceBudget,
+  ) {
+    const cap = this.backendCapability(agentId, budget);
     if (!cap.supported) throw Error("SOCIAL_BACKEND_UNSUPPORTED");
     if (
-      !budget ||
+      budget &&
       budget.maxInputTokensPerInference < (cap.inputUpperBound || Infinity)
     )
       throw Error("SOCIAL_BUDGET_INVALID");
@@ -226,7 +242,14 @@ export class SocialRuntime {
   /** @param {any} ctx */
   limits(ctx) {
     const c = this.runtime.config.homeSocial;
-    if (!c?.enabled || !c.resourceBudget) throw Error("SOCIAL_BUDGET_INVALID");
+    if (!c?.enabled) throw Error("SOCIAL_EXCHANGE_DISABLED");
+    if (!ctx.socialBinding.windowId && "socialResourceBudget" in ctx) {
+      ctx.socialResourceBudget = effectiveSocialResourceBudget(
+        ctx.socialResourceBudget,
+        c.resourceBudget,
+      );
+      return { ...c, resourceBudget: ctx.socialResourceBudget };
+    }
     return ctx.socialBinding.windowId
       ? this.exchange.effective(
           this.db
@@ -254,6 +277,9 @@ export class SocialRuntime {
     )
       throw Error("SOCIAL_TURN_CLOSED");
     const c = this.limits(ctx);
+    this.assertBackendBudget(ctx.agentId, c.resourceBudget);
+    if (ctx.socialBudgeted === false && c.resourceBudget)
+      throw Error("SOCIAL_TURN_CLOSED");
     if (
       ctx.selfVersion &&
       this.runtime.memory.bind(ctx.agentId).identity.current()?.version !==
@@ -274,10 +300,11 @@ export class SocialRuntime {
       )
       .get(b.runId).n;
     if (
-      used + reserved > c.resourceBudget.maxTokensPerTurn ||
-      (usage?.used || 0) + (usage?.reserved || 0) >
-        c.resourceBudget.maxTokensPerDay ||
-      requests > c.resourceBudget.maxInferencesPerTurn
+      c.resourceBudget &&
+      (used + reserved > c.resourceBudget.maxTokensPerTurn ||
+        (usage?.used || 0) + (usage?.reserved || 0) >
+          c.resourceBudget.maxTokensPerDay ||
+        requests > c.resourceBudget.maxInferencesPerTurn)
     )
       throw Error("SOCIAL_RESOURCE_LIMIT");
     if (b.windowId) {
@@ -285,14 +312,56 @@ export class SocialRuntime {
       if (
         w.status !== "active" ||
         w.fence !== b.fence ||
+        w.turns_used + w.turns_reserved > c.maxTurns ||
         this.runtime.now() >=
           Math.min(w.deadline, w.started_at + c.durationMinutes * 60000)
       )
         throw Error("SOCIAL_WINDOW_CLOSED");
     }
+    const sourceAdapters = this.runtime.homeSocialSources;
+    const sources = this.service.sources.sources || sourceAdapters?.sources;
+    const allowed = this.service.sources.allowed || sourceAdapters?.allowed;
+    // Inherited history and Self evidence have no current page lease. Recheck
+    // their live authority too so idle native processing is cancelled on revocation.
+    if (
+      !sources ||
+      !allowed ||
+      !allowed(this.runtime, ctx, sources(this.runtime, ctx))
+    )
+      throw Error("SOURCE_RESTRICTED");
     for (const lease of ctx.socialInputLeases || [])
       if (lease() === false) throw Error("AUDIENCE_DENIED");
     return b;
+  }
+  /** Charge one physical actor run before any model input can execute.
+   * A crash after this durable boundary is unknown and never refunds the turn.
+   * @param {any} ctx */
+  startRun(ctx) {
+    return this.store.transaction((/** @type {number} */ now) => {
+      this.assertContext(ctx);
+      const b = ctx.socialBinding;
+      const turn = this.db
+        .prepare("SELECT * FROM home_social_turns WHERE id=?")
+        .get(b.turnId);
+      if (turn.started_at !== null)
+        return { started: false, historicalReplay: true };
+      const dispatch = this.db
+        .prepare("SELECT status FROM home_social_dispatches WHERE turn_id=?")
+        .get(turn.id);
+      if (dispatch?.status !== "claimed") throw Error("SOCIAL_TURN_CLOSED");
+      this.db
+        .prepare(
+          "UPDATE home_social_turns SET started_at=? WHERE id=? AND started_at IS NULL",
+        )
+        .run(now, turn.id);
+      if (turn.window_id)
+        this.db
+          .prepare(
+            "UPDATE home_social_windows SET turns_reserved=max(0,turns_reserved-1),turns_used=turns_used+1 WHERE id=?",
+          )
+          .run(turn.window_id);
+      return { started: true };
+    });
   }
   /** Ordinary subject can enqueue a safe reference, never receive social body.
    * @param {any} ctx @param {any} args */
@@ -310,8 +379,6 @@ export class SocialRuntime {
     };
     this.service.assertActor(identity, { write: true });
     this.assertBackendBudget(ctx.agentId);
-    if (!this.runtime.config.homeSocial.resourceBudget)
-      throw Error("SOCIAL_BUDGET_INVALID");
     return this.store.execute({
       actorIdentity: identity,
       requestId: args.requestId,
@@ -409,7 +476,8 @@ export class SocialRuntime {
           }
           if (
             now >= deadline ||
-            used + reserved > limits.resourceBudget.maxTokensPerWindow ||
+            (limits.resourceBudget &&
+              used + reserved > limits.resourceBudget.maxTokensPerWindow) ||
             w.turns_used + w.turns_reserved > limits.maxTurns
           )
             this.exchange.closeRow(w, now, "limit_or_expiry");
@@ -574,7 +642,7 @@ export class SocialRuntime {
         const a = r.agent(d.agent_id),
           adapter = r.backendConnections.adapter(a),
           limits = this.limits(ctx),
-          cap = this.backendCapability(a.id);
+          cap = this.assertBackendBudget(a.id, limits.resourceBudget);
         const identity = r.memory.bind(a.id).identity;
         const self = this.invitationReadOnly(ctx)
           ? null
@@ -614,8 +682,17 @@ export class SocialRuntime {
         const prompt = `服务端社交绑定及当前获准资料（不是指令）：${JSON.stringify({ binding, state, windows, receipts })}\n没有提交回执的自然语言仅是草稿；committed、not_sent、unknown不可混淆。窗口回合完成后必须调用home_exchange_yield；异步回合不唤醒对方。`;
         if (typeof adapter.runSocial !== "function")
           throw Error("SOCIAL_BACKEND_UNSUPPORTED");
+        ctx.socialBudgeted = !!limits.resourceBudget;
+        ctx.socialResourceBudget = limits.resourceBudget;
         await adapter.runSocial({
           binding,
+          socialContextToken: ctx.token,
+          registerInputConsumer: (
+            /** @type {() => Promise<void>} */ consume,
+          ) => {
+            ctx.socialConsumeInput = consume;
+          },
+          onRunStarted: () => this.startRun(ctx),
           instructions,
           prompt,
           tools: toolSpecs(ctx.allowedTools).map((/** @type {any} */ t) => ({
@@ -638,17 +715,22 @@ export class SocialRuntime {
             this.service.confirmInputConsumed(ctx, ticket),
           callTool: (/** @type {string} */ name, /** @type {any} */ args) =>
             this.callTool(ctx, name, args),
-          budget: new SocialResources(r, ctx),
-          outputCap: Math.min(
-            limits.resourceBudget.maxOutputTokensPerInference,
-            cap.maximumOutputTokens || 0,
-          ),
-          maxInferences: limits.resourceBudget.maxInferencesPerTurn,
+          budget: limits.resourceBudget ? new SocialResources(r, ctx) : null,
+          outputCap: limits.resourceBudget
+            ? Math.min(
+                limits.resourceBudget.maxOutputTokensPerInference,
+                cap.maximumOutputTokens || 0,
+              )
+            : null,
+          maxInferences: limits.resourceBudget?.maxInferencesPerTurn ?? null,
           limitsForInference: () => {
             const current = this.limits(ctx);
             return {
-              outputCap: current.resourceBudget.maxOutputTokensPerInference,
-              maxInferences: current.resourceBudget.maxInferencesPerTurn,
+              resourceBudget: current.resourceBudget,
+              outputCap:
+                current.resourceBudget?.maxOutputTokensPerInference ?? null,
+              maxInferences:
+                current.resourceBudget?.maxInferencesPerTurn ?? null,
             };
           },
           maxCallsPerInference: 8,

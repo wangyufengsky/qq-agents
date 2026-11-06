@@ -101,6 +101,13 @@ try {
         nextCursor: cursor ? null : "messages-page-2",
         usage: {
           windowTurns: { used: 2, reserved: 1, limit: 12 },
+          windowResources: {
+            used: 0,
+            reserved: 0,
+            limit: null,
+            usageAvailable: false,
+            unit: "tokens",
+          },
           asyncResources: {
             used: 300,
             reserved: 100,
@@ -140,6 +147,12 @@ try {
   );
   assert.ok(await page.getByText("本时段模型回合", { exact: true }).count());
   assert.ok(await page.getByText("每日成功消息", { exact: true }).count());
+  assert.ok(
+    await page.getByText("后端未提供可信用量", { exact: false }).count(),
+  );
+  assert.ok(
+    await page.getByText("未设 token 硬上限", { exact: false }).count(),
+  );
   assert.ok(
     await page
       .getByText("累计值不与每日上限直接比较", { exact: false })
@@ -200,6 +213,10 @@ try {
       saves++;
       assert.ok(body.revision);
       assert.equal(body.config.homeSocial.durationMinutes, 11);
+      if (saves === 2) {
+        assert.equal(body.config.homeSocial.exchangeEnabled, true);
+        assert.equal(body.config.homeSocial.resourceBudget, null);
+      }
       return route.fulfill({
         status: configFailure === "CONFIG_CONFLICT" ? 409 : 400,
         json: { error: configFailure },
@@ -223,15 +240,24 @@ try {
     await page.locator('input[name="maxInputTokensPerInference"]').inputValue(),
     "",
   );
+  assert.equal(await page.locator('input[name="maxTurns"]').inputValue(), "12");
+  await page.locator('input[name="enabled"]').check();
   await page.locator('input[name="exchangeEnabled"]').check();
   const before = saves;
+  const noBudgetSave = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/config") &&
+      response.request().method() === "PUT",
+  );
   await page.getByRole("button", { name: "保存实例设置", exact: true }).click();
+  await noBudgetSave;
   await page
-    .getByText("启用受控交流前，请先配置可执行的模型资源预算。", {
-      exact: true,
-    })
+    .getByText("配置已有新版本，草稿已保留。", { exact: false })
     .waitFor();
-  assert.equal(saves, before);
+  assert.equal(saves, before + 1);
+  assert.ok(
+    await page.getByText("一方执行一次计 1 回合", { exact: false }).count(),
+  );
   await page.locator('select[name="budgetMode"]').selectOption("configured");
   for (const [key, value] of Object.entries({
     maxInputTokensPerInference: 1047576,

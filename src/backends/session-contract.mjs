@@ -20,12 +20,13 @@ import { isDeepStrictEqual } from "node:util";
  * @typedef {{name: string, description?: string, inputSchema?: object}} ToolSpec
  * @typedef {{source: string, contextTokens: number, capacityTokens?: number,
  *   cumulativeTokens?: number, basis: string}} UsageReport
- * @typedef {{conversation?: string, game?: boolean, protectedWork?: boolean, prompt: string, instructions?: string,
+ * @typedef {{conversation?: string, game?: boolean, protectedWork?: boolean, social?: boolean, prompt: string, instructions?: string,
  *   onUsage?: (usage: UsageReport) => void, signal: AbortSignal, tools: ToolSpec[],
  *   callTool: (name: string, args: any) => Promise<unknown>, session?: StoredSession | null,
  *   saveSession: (session: StoredSession | null) => void,
  *   onBackendTurn?: (turn: {turnId: string, inputAccepted?: boolean}) => void,
  *   onInputSubmitted?: () => void,
+ *   beforeInputSubmitted?: () => Promise<void>,
  *   onTiming?: (timing: {phase: string, elapsedMs: number, processReused?: boolean}) => void,
  *   onDiagnostic?: (event: unknown, attempt?: number) => void,
  *   recovery?: import("./turn-failure.mjs").RecoveryFailure,

@@ -1385,3 +1385,295 @@ test("cached ordinary OpenAI adapters refresh social profiles without replacing 
     assert.deepEqual(adapter.load(session.id), history);
   }
 });
+
+async function turnOnlyWindow(f, maximum = 12) {
+  const r = f.runtime,
+    db = f.store.db,
+    visit = await visitFixture(f);
+  r.config.homeSocial.resourceBudget = null;
+  r.config.homeSocial.maxTurns = maximum;
+  const a = boundContext(f, "agent-0", { kind: "visit", id: visit.id });
+  const p = r.socialRuntime.exchange.propose(a, {
+    requestId: randomUUID(),
+    visitId: visit.id,
+  }).result;
+  const b = boundContext(f, "agent-1", { kind: "visit", id: visit.id });
+  r.socialRuntime.exchange.decide(b, {
+    requestId: randomUUID(),
+    windowId: p.windowId,
+    expectedWindowRevision: 1,
+    termsRevision: p.termsRevision,
+    accept: true,
+  });
+  for (const ctx of [a, b]) {
+    r.capabilities.delete(ctx.token);
+    db.prepare(
+      "UPDATE home_social_turns SET status='completed' WHERE id=?",
+    ).run(ctx.socialBinding.turnId);
+  }
+  return { visit, windowId: p.windowId };
+}
+
+test("turn-only exchange counts twelve alternating actor runs once despite multiple messages and start callbacks", async (t) => {
+  const f = setup(t),
+    r = f.runtime,
+    db = f.store.db;
+  const { visit, windowId } = await turnOnlyWindow(f);
+  const authors = [];
+  for (const agentId of ["agent-0", "agent-1"])
+    r.backends.set(agentId, {
+      close: async () => {},
+      runSocial: async (params) => {
+        assert.equal(params.budget, null);
+        assert.equal(params.maxInferences, null);
+        assert.equal(params.outputCap, null);
+        await params.beforeInput();
+        assert.deepEqual(await params.onRunStarted(), { started: true });
+        assert.equal((await params.onRunStarted()).historicalReplay, true);
+        authors.push(agentId);
+        for (let n = 0; n < 2; n++) {
+          const current = db
+            .prepare("SELECT revision FROM home_social_visits WHERE id=?")
+            .get(visit.id);
+          const sent = await params.callTool("home_visit_send", {
+            requestId: randomUUID(),
+            visitId: visit.id,
+            expectedVisitRevision: current.revision,
+            body: "Synthetic turn-only message",
+          });
+          assert.equal(sent.status, "committed");
+        }
+        const w = db
+          .prepare("SELECT revision FROM home_social_windows WHERE id=?")
+          .get(windowId);
+        await params.callTool("home_exchange_yield", {
+          requestId: randomUUID(),
+          windowId,
+          expectedWindowRevision: w.revision,
+        });
+      },
+    });
+  for (let n = 0; n < 14; n++) await f.pump();
+  const window = db
+    .prepare("SELECT * FROM home_social_windows WHERE id=?")
+    .get(windowId);
+  assert.deepEqual(
+    authors,
+    Array.from({ length: 12 }, (_, n) => `agent-${n % 2}`),
+  );
+  assert.equal(window.turns_used, 12);
+  assert.equal(window.turns_reserved, 0);
+  assert.equal(window.status, "closed");
+  assert.equal(
+    db
+      .prepare("SELECT count(*) n FROM home_social_messages WHERE visit_id=?")
+      .get(visit.id).n,
+    24,
+  );
+  assert.equal(
+    db
+      .prepare(
+        "SELECT count(*) n FROM home_social_inference_reservations WHERE turn_id IN (SELECT id FROM home_social_turns WHERE window_id=?)",
+      )
+      .get(windowId).n,
+    0,
+  );
+  assert.equal(
+    r.homeSocial.usageDTO(visit, null, window).windowResources.usageAvailable,
+    false,
+  );
+});
+
+for (const phase of ["before", "after", "restart"])
+  test(`turn-only failure ${phase} start preserves exact charge and never dispatches again`, async (t) => {
+    const f = setup(t),
+      r = f.runtime,
+      db = f.store.db;
+    const { windowId } = await turnOnlyWindow(f);
+    let entered = 0;
+    r.backends.set("agent-0", {
+      close: async () => {},
+      runSocial: async (params) => {
+        entered++;
+        if (phase !== "before") await params.onRunStarted();
+        if (phase === "restart")
+          r.homeSocial.store.interruptRuntime("synthetic-restart");
+        throw Error("SOCIAL_TURN_FAILED");
+      },
+    });
+    await f.pump();
+    await f.pump();
+    const window = db
+      .prepare("SELECT * FROM home_social_windows WHERE id=?")
+      .get(windowId);
+    assert.equal(window.turns_used, phase === "before" ? 0 : 1);
+    assert.equal(window.turns_reserved, 0);
+    assert.equal(entered, 1);
+    assert.equal(
+      db
+        .prepare(
+          "SELECT count(*) n FROM home_social_dispatches WHERE window_id=? AND status='queued'",
+        )
+        .get(windowId).n,
+      0,
+    );
+  });
+
+test("turn-only backend support covers all four types while explicit budgets retain precise profile requirements", (t) => {
+  const f = setup(t),
+    r = f.runtime,
+    budget = r.config.homeSocial.resourceBudget;
+  r.config.homeSocial.resourceBudget = null;
+  for (const type of ["dsh", "codex", "antigravity", "openai"]) {
+    r.config.backends[0].type = type;
+    r.config.backends[0].preset = "qq-unified";
+    assert.equal(r.socialRuntime.backendCapability("agent-0").supported, true);
+    assert.equal(
+      r.socialRuntime.backendCapability("agent-0", budget).supported,
+      type === "openai",
+    );
+  }
+});
+
+test("adding a hard token budget during a turn-only run prevents all further input and tools", async (t) => {
+  const f = setup(t),
+    r = f.runtime,
+    db = f.store.db;
+  const budget = structuredClone(r.config.homeSocial.resourceBudget);
+  const { windowId } = await turnOnlyWindow(f);
+  let continued = false;
+  r.backends.set("agent-0", {
+    close: async () => {},
+    runSocial: async (params) => {
+      await params.onRunStarted();
+      r.config.homeSocial.resourceBudget = budget;
+      assert.throws(() => params.beforeInput(), /SOCIAL_TURN_CLOSED/);
+      await assert.rejects(
+        params.callTool("home_exchange_status", { windowId }),
+        /SOCIAL_TURN_CLOSED/,
+      );
+      continued = true;
+      throw Error("SOCIAL_TURN_CLOSED");
+    },
+  });
+  await f.pump();
+  assert.equal(continued, true);
+  const w = db
+    .prepare("SELECT * FROM home_social_windows WHERE id=?")
+    .get(windowId);
+  assert.equal(w.turns_used, 1);
+  assert.equal(w.status, "closed");
+  assert.equal(
+    r.homeSocial.usageDTO(
+      db.prepare("SELECT * FROM home_social_visits").get(),
+      null,
+      w,
+    ).windowResources.usageAvailable,
+    false,
+  );
+});
+
+test("DSH capability rejects presets that expose ordinary tools", (t) => {
+  const f = setup(t),
+    r = f.runtime;
+  r.config.homeSocial.resourceBudget = null;
+  r.config.backends[0].type = "dsh";
+  r.config.backends[0].preset = "ordinary-preset";
+  assert.equal(r.socialRuntime.backendCapability("agent-0").supported, false);
+});
+
+test("an explicit async budget remains binding after its global configuration is removed", async (t) => {
+  const f = setup(t),
+    r = f.runtime,
+    budget = structuredClone(r.config.homeSocial.resourceBudget);
+  let checked = false;
+  r.backends.set("agent-0", {
+    close: async () => {},
+    runSocial: async (params) => {
+      await params.onRunStarted();
+      r.config.homeSocial.resourceBudget = null;
+      assert.deepEqual(params.limitsForInference().resourceBudget, budget);
+      assert.equal(
+        params.limitsForInference().outputCap,
+        budget.maxOutputTokensPerInference,
+      );
+      checked = true;
+    },
+  });
+  await f.process("agent-0", { kind: "compose", id: "agent-1" });
+  await f.pump();
+  assert.equal(checked, true);
+});
+
+for (const change of ["revoked", "expired", "configuration"])
+  test(`native-style inherited sources cancel without another model input: ${change}`, async (t) => {
+    const f = setup(t),
+      r = f.runtime,
+      db = f.store.db;
+    const visit = await visitFixture(f);
+    r.config.homeSocial.resourceBudget = null;
+    const entered = Promise.withResolvers();
+    let runs = 0,
+      stopped = false,
+      lateWriteRejected = false;
+    r.backends.set("agent-0", {
+      close: async () => {},
+      runSocial: async (params) => {
+        await params.beforeInput();
+        await params.onRunStarted();
+        if (!runs++) {
+          await params.callTool("home_visit_room_read", { visitId: visit.id });
+          return;
+        }
+        // The next physical session inherits source markers, but does not read the
+        // room again or invoke another beforeInput while native reasoning is busy.
+        entered.resolve();
+        await new Promise((resolve) =>
+          params.signal.addEventListener("abort", resolve, { once: true }),
+        );
+        stopped = true;
+        await assert.rejects(
+          params.callTool("home_visit_send", {
+            requestId: randomUUID(),
+            visitId: visit.id,
+            expectedVisitRevision: visit.revision,
+            body: "Synthetic late write denied",
+          }),
+        );
+        lateWriteRejected = true;
+      },
+    });
+    await f.process("agent-0", { kind: "visit", id: visit.id });
+    await f.pump();
+    await f.process("agent-0", { kind: "visit", id: visit.id });
+    r.socialRuntime.tick();
+    await entered.promise;
+    const active = r.socialRuntime.active.get("agent-0");
+    assert.ok(
+      [...active.privateRead].some((marker) =>
+        marker.startsWith("social-grant:"),
+      ),
+    );
+    if (change === "configuration") {
+      const next = structuredClone(r.config);
+      next.agents[0].home.social.enabled = false;
+      await r.changeConfig(next, f.configStore.revision);
+    } else {
+      const column = change === "revoked" ? "revoked_at" : "expires_at";
+      db.prepare(
+        `UPDATE home_social_grants SET ${column}=? WHERE visit_id=?`,
+      ).run(r.now(), visit.id);
+      r.socialRuntime.tick();
+      await settle(r);
+    }
+    assert.equal(active.controller.signal.aborted, true);
+    assert.equal(stopped, true);
+    assert.equal(lateWriteRejected, true);
+    assert.equal(
+      db
+        .prepare("SELECT count(*) n FROM home_social_messages WHERE visit_id=?")
+        .get(visit.id).n,
+      0,
+    );
+    assert.equal(r.socialRuntime.active.size, 0);
+  });
