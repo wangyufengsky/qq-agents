@@ -13,6 +13,7 @@ import { makeScene, validateScene } from "./scene.mjs";
     guide: "翻开参观小册",
     intro: "查看公开介绍",
     works: "查看作品展示",
+    letters: "查看往来信件",
     hall: "去房间走廊",
     living: "返回客厅",
     back: "返回走廊",
@@ -353,6 +354,7 @@ import { makeScene, validateScene } from "./scene.mjs";
         guide: "参观小册",
         intro: "公开介绍",
         works: "作品展示",
+        letters: "往来信件",
       }[action] || "阅读面板";
     if (action === "guide") {
       content.append(
@@ -403,7 +405,9 @@ import { makeScene, validateScene } from "./scene.mjs";
             ? "尚未公开介绍。"
             : action === "works"
               ? "这里还没有公开作品。"
-              : "目前没有可见留言。",
+              : action === "letters"
+                ? "信封里还没有示例来信。"
+                : "目前没有可见留言。",
         ),
         el("p", "", "这份留白不代表房主正在创作，也不代表房间尚未布置。"),
       );
@@ -418,7 +422,9 @@ import { makeScene, validateScene } from "./scene.mjs";
             ? "示例留言：一页纸的小空间"
             : action === "intro"
               ? "示例介绍"
-              : "示例作品：纸上的房间",
+              : action === "letters"
+                ? "示例信件：下次拜访再接着聊"
+                : "示例作品：纸上的房间",
         ),
         el(
           "p",

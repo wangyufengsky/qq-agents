@@ -1,0 +1,188 @@
+.social-letters {
+  color: #584932;
+  font-family: "Kaiti SC", "STKaiti", "Songti SC", serif;
+  line-height: 1.7;
+  min-width: 0;
+}
+.social-letters button,
+.social-letters summary {
+  min-height: 44px;
+  cursor: pointer;
+  font: inherit;
+}
+.social-letters > button,
+.social-letters .letter-paper > button,
+.social-letters .letter-metadata button,
+.social-letters .letter-message-menu button {
+  margin: 0.3rem 0.4rem 0.3rem 0;
+  padding: 0.5rem 0.8rem;
+  border: 1px solid #cdbd9d;
+  border-radius: 3px;
+  background: #fffaf0;
+  color: #685735;
+}
+.social-letters :is(button, summary):focus-visible {
+  outline: 2px solid #727950;
+  outline-offset: 4px;
+}
+.social-letters .letter-kicker {
+  margin: 0 0 0.5rem;
+  color: #8b7550;
+  letter-spacing: 0.15em;
+  font-size: 0.85rem;
+}
+.social-letters .letter-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.8rem 0;
+}
+.social-letters .letter-envelope {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  align-items: center;
+  gap: 0 1rem;
+  width: 100%;
+  padding: 1rem 0.5rem;
+  border: 0;
+  border-bottom: 1px solid #dfd2bb;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  transition: background 180ms;
+}
+.social-letters .letter-envelope img {
+  grid-row: span 2;
+  width: 100%;
+  height: 84px;
+  object-fit: contain;
+  filter: drop-shadow(0 3px 2px #6d4c2224);
+  transition: transform 180ms;
+}
+.social-letters .letter-envelope:hover {
+  background: #f5ecd94d;
+}
+.social-letters .letter-envelope:hover img {
+  transform: rotate(-3deg) translateY(-2px);
+}
+.social-letters .letter-address {
+  display: grid;
+  min-width: 0;
+}
+.social-letters .letter-address strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 1.15rem;
+  font-weight: 500;
+}
+.social-letters .letter-address small,
+.social-letters .social-notice,
+.social-letters .social-message small {
+  color: #85745a;
+  font-size: 0.85rem;
+}
+.social-letters .letter-open {
+  font-size: 0.85rem;
+  color: #6d764e;
+}
+.social-letters .letter-paper {
+  margin-top: 1rem;
+  padding: 1.6rem 2rem;
+  border: 1px solid #e4d8bf;
+  background: #fffdf5;
+  box-shadow:
+    3px 5px 0 #e9dfcd66,
+    0 4px 16px #6d4c2212;
+  animation: letter-unfold 220ms ease-out;
+}
+.social-letters .letter-title {
+  margin: 0 0 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid #d9cbb2;
+  color: #695331;
+  font-size: 1.5rem;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.social-letters .social-message {
+  padding: 1rem 0;
+  border-bottom: 1px dashed #e6dcc9;
+}
+.social-letters .social-message h4 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 500;
+}
+.social-letters .social-body {
+  margin: 0.6rem 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.9;
+}
+.social-letters .letter-metadata {
+  margin-top: 1.5rem;
+  padding-top: 0.8rem;
+  border-top: 1px solid #e2d5bf;
+  color: #85745a;
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+.social-letters .letter-metadata summary {
+  padding: 0.4rem 0;
+}
+.social-letters .social-usage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: 0.5rem;
+}
+.social-letters .social-usage dd {
+  margin: 0;
+}
+@keyframes letter-unfold {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (max-width: 480px) {
+  .social-letters .letter-paper {
+    padding: 1rem;
+  }
+  .social-letters .letter-envelope {
+    grid-template-columns: 72px minmax(0, 1fr);
+    gap: 0 0.7rem;
+  }
+  .social-letters .social-usage {
+    grid-template-columns: 1fr;
+  }
+  .social-letters .social-usage dd {
+    margin-bottom: 0.5rem;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .social-letters *,
+  .social-letters *::before,
+  .social-letters *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+.social-letters .letter-message-menu {
+  color: #85745a;
+  font-size: 0.8rem;
+  margin-top: 0.5rem;
+}
+.social-letters .letter-message-menu summary {
+  width: fit-content;
+  padding: 0.5rem 0;
+}
+
+.social-letters .letter-title:focus {
+  outline: none;
+}
