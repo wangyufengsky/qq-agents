@@ -238,6 +238,7 @@ export function createServer({
         [
           "/",
           "/app.js",
+          "/visits-ui.js",
           "/parity.js",
           "/agent-form.js",
           "/files-ui.js",

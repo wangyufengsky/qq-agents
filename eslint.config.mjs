@@ -53,6 +53,7 @@ const browserScripts = {
     "token",
     "tools",
   ],
+  "visits-ui.js": ["renderVisits", "closeVisits"],
   "activity-ui.js": ["activityAgentId", "renderActivity"],
   "board-ui.js": ["renderBoard", "createBoardView"],
   "agent-form.js": ["agentForm"],

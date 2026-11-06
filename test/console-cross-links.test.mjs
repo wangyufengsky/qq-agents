@@ -451,7 +451,7 @@ test("memory results name speakers by their card and open it under the searched 
     ["#memory-source", ""],
   ])
     node(id).value = value;
-  vm.runInContext('roleId = "agent-0"', sandbox);
+  vm.runInContext('roleId = "agent-0"; tab = "memory"', sandbox);
   await vm.runInContext("searchMemory()", sandbox);
   const results = node("#memory-results");
   const html = results.innerHTML;

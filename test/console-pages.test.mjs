@@ -32,6 +32,9 @@ function stubNode() {
     dataset: {},
     classList: { add() {}, remove() {}, toggle() {} },
     addEventListener() {},
+    close() {
+      this.open = false;
+    },
     insertAdjacentHTML() {},
     querySelectorAll: () => [],
   };
@@ -132,7 +135,7 @@ test("memory shows the latest records first, a compact search and the sessions f
   );
   assert.equal(
     c.node("#memory-results-head").textContent,
-    "最近的经历和日记 · 3 条",
+    "最近的经历档案 · 3 条",
   );
   const results = c.node("#memory-results").innerHTML;
   assert.match(
@@ -153,7 +156,7 @@ test("memory shows the latest records first, a compact search and the sessions f
   await c.run("searchMemory()");
   assert.equal(
     c.node("#memory-results-head").textContent,
-    "“蛋糕”的经历和日记 · 1 条",
+    "“蛋糕”的经历档案 · 1 条",
   );
   assert.equal(c.run("conversationsSummary([])"), "还没有会话");
   assert.equal(
@@ -370,3 +373,84 @@ test("activity separates delivery, model, process and session outcomes", () => {
   };
   assert.match(a.run("activityEntry(entry)"), /失败原因未记录/);
 });
+
+test("memory and diary menus keep their own record type, search filters and full readers", async (t) => {
+  const f = fixture(t),
+    m = f.store.bind("agent-0");
+  heard(m, "private:30000", "30000", 0, "合成经历原文");
+  m.diaryWrite({ title: "合成日记标题", body: "仅日记里出现的正文" });
+  const c = await consolePage(t, f);
+  c.node("#memory-agent").value = "agent-0";
+  c.node("#memory-query").value = "";
+  c.node("#memory-person").value = "";
+  c.node("#memory-source").value = "";
+  c.run('tab = "memory"; roleId = "agent-0"; render();');
+  await c.run("searchMemory()");
+  assert.equal(c.node("#memory-type").value, "event");
+  assert.match(c.node("#memory-results").innerHTML, /合成经历原文/);
+  assert.doesNotMatch(
+    c.node("#memory-results").innerHTML,
+    /仅日记里出现的正文/,
+  );
+  const navigation = c.node("#section-bar").innerHTML;
+  assert.match(navigation, /data-page="memory"[^>]*>记忆</);
+  assert.match(navigation, /data-page="diary"[^>]*>日记</);
+  assert.match(navigation, /data-page="visits"[^>]*>访问</);
+  c.run('tab = "diary"; render();');
+  await c.run("searchMemory()");
+  assert.equal(c.node("#memory-type").value, "diary");
+  assert.match(c.node("#memory-results").innerHTML, /仅日记里出现的正文/);
+  assert.doesNotMatch(c.node("#memory-results").innerHTML, /合成经历原文/);
+  assert.match(c.node("#content").innerHTML, /id="memory-person"/);
+  assert.match(c.node("#content").innerHTML, /id="memory-source"/);
+  c.node("#memory-query").value = "查无此内容";
+  await c.run("searchMemory()");
+  assert.doesNotMatch(
+    c.node("#memory-results").innerHTML,
+    /仅日记里出现的正文/,
+  );
+});
+
+test("leaving a record page invalidates an unfinished search before it can paint another menu", async (t) => {
+  const f = fixture(t),
+    c = await consolePage(t, f);
+  c.node("#memory-agent").value = "agent-0";
+  c.node("#memory-query").value = "";
+  c.node("#memory-type").value = "event";
+  c.node("#memory-person").value = "";
+  c.node("#memory-source").value = "";
+  c.run(
+    'tab = "memory"; var heldResolve; var originalApi = api; api = (url, ...args) => url.startsWith("/api/memory?") ? new Promise(resolve => heldResolve = resolve) : originalApi(url, ...args); var delayedSearch = searchMemory();',
+  );
+  c.run('tab = "settings"; render();');
+  c.run(
+    'heldResolve({items:[{id:"synthetic-old-record",body:"上一页的私人正文"}],diaries:[],people:{}})',
+  );
+  await c.run("delayedSearch");
+  assert.doesNotMatch(c.node("#content").innerHTML, /上一页的私人正文/);
+  assert.doesNotMatch(
+    c.node("#memory-results").innerHTML || "",
+    /上一页的私人正文/,
+  );
+});
+
+for (const helper of [
+  "readConversation({agentId:'agent-0',aroundId:'synthetic-anchor'})",
+  "readRelated('synthetic-anchor')",
+])
+  test(`late auxiliary reader cannot reopen the previous role after navigation: ${helper}`, async (t) => {
+    const f = fixture(t),
+      c = await consolePage(t, f);
+    c.node("#memory-agent").value = "agent-0";
+    c.run(
+      'roleId = "agent-0"; tab = "memory"; var heldReaderResolve; var originalReaderApi = api; api = (url, ...args) => (url.includes("/api/memory/conversation?") || url.includes("/api/memory/related?")) ? new Promise(resolve => heldReaderResolve = resolve) : originalReaderApi(url, ...args); var renderVisits = () => {};',
+    );
+    c.run(`var delayedReader = ${helper};`);
+    c.run('roleId = "agent-1"; tab = "visits"; render();');
+    c.run(
+      'heldReaderResolve({items:[{id:"synthetic-record",body:"旧角色迟到的私人原文",record:{id:"synthetic-related",body:"旧角色迟到的私人原文"},links:[]}],nextAfterSeq:null})',
+    );
+    await c.run("delayedReader");
+    assert.notEqual(c.node("#editor").open, true);
+    assert.doesNotMatch(c.node("#edit-fields").innerHTML || "", /旧角色迟到/);
+  });
