@@ -467,7 +467,7 @@ function editorFields() {
     input.step = step;
     input.value = p[key] ?? def;
     input.setAttribute("aria-label", title);
-    input.onchange = () => {
+    input.oninput = () => {
       out.value = input.value;
       edit(key, Number(input.value));
     };
