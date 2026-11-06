@@ -6,7 +6,7 @@
 
 ## 未发布
 
-### Antigravity ACP 图片直接输入
+### Antigravity ACP 图片直接输入（[#195](https://github.com/wangyufengsky/qq-agents/pull/195)）
 
 - 新增可选择的 ACP 通道，让已授权桥接工具的图片直接进入模型，减少原生读文件往返；保留 headless 兼容路径和原有默认值。
 - 保留图片格式、容量、来源租约和工具白名单检查，ACP 不开放原生文件读取或客户端终端能力；补充协议拒绝、图片检查与隔离真实模型验收。
