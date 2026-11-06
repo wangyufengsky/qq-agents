@@ -1,4 +1,5 @@
 // @ts-check
+import { closeSocialSessions } from "./social-sessions.mjs";
 import fs from "node:fs";
 import { runNativeSocial } from "./native-social.mjs";
 import {
@@ -284,6 +285,10 @@ export class CodexBackend {
   /** @param {StoredSession | null | undefined} session @param {import("./session-contract.mjs").ToolSpec[]} tools @param {import("./session-contract.mjs").SessionContract} [previous] */
   acceptsSession(session, tools, previous) {
     return acceptsSession(this, session, tools, previous);
+  }
+  /** @param {{windowId?: string, actorGeneration?: string}} [filter] */
+  async closeSocialSessions(filter = {}) {
+    await closeSocialSessions(this, filter);
   }
   /** @param {any} params */
   async runSocial(params) {
@@ -573,6 +578,7 @@ export class CodexBackend {
   async close() {
     this.closing = true;
     await this.cancel();
+    await this.closeSocialSessions();
     this.rpc.close();
     await this.external.close();
   }

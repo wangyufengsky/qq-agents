@@ -1007,4 +1007,48 @@ if (!isMainThread) {
       );
     }
   });
+  test("read acknowledgement converges after a concurrent message commits on another connection", async (t) => {
+    const f = await setup(t),
+      visitId = f.visit();
+    const a = await f.client("agent-0", { kind: "visit", id: visitId });
+    const b = await f.client("agent-1", { kind: "visit", id: visitId });
+    const first = await a.call("send", {
+      requestId: "read-race-first",
+      visitId,
+      expectedVisitRevision: 1,
+      body: "Synthetic first displayed message",
+    });
+    assert.equal(first.value.status, "committed");
+    const view = await b.call("visitRead", { visitId });
+    assert.equal(view.value.messages[0].sequence, 1);
+    const read = await queued(b, "markRead", {
+      requestId: "read-race-confirm",
+      visitId,
+      expectedVisitRevision: 2,
+      lastDisplayedSequence: 1,
+    });
+    const arrived = await a.call("send", {
+      requestId: "read-race-arrival",
+      visitId,
+      expectedVisitRevision: 2,
+      body: "Synthetic arrival before read lock",
+    });
+    assert.equal(arrived.value.status, "committed");
+    b.release();
+    const acknowledged = await read.outcome;
+    assert.equal(acknowledged.error, undefined);
+    assert.equal(acknowledged.value.result.lastReadSequence, 1);
+    assert.equal(
+      f.memory.db
+        .prepare("SELECT revision FROM home_social_visits WHERE id=?")
+        .get(visitId).revision,
+      3,
+    );
+    assert.equal(
+      f.memory.db
+        .prepare("SELECT last_read_sequence FROM home_social_read_cursors")
+        .get().last_read_sequence,
+      1,
+    );
+  });
 }

@@ -1,4 +1,8 @@
 import test from "node:test";
+import fs from "node:fs";
+import path from "node:path";
+import { OpenAIBackend } from "../src/backends/openai.mjs";
+import { config, temp } from "./helpers.mjs";
 import assert from "node:assert/strict";
 import { runOpenAISocial } from "../src/backends/openai-social.mjs";
 import { socialProviderProfile } from "../src/backends/social-budget.mjs";
@@ -407,4 +411,262 @@ test("round-only execution rejects before starting and stops on cancellation wit
   assert.equal(f.bodies.length, 1);
   await assert.rejects(runOpenAISocial(f.params), /ABORTED/);
   assert.equal(f.bodies.length, 1);
+});
+
+function windowBinding(runId, windowId = "window-one", actor = "host") {
+  return {
+    runId,
+    windowId,
+    actorIdentity: { agentId: `agent-${actor}`, generation: actor },
+    target: { kind: "visit", id: `visit-${windowId}` },
+    targetHostGeneration: "host",
+    targetGuestGeneration: "guest",
+    epoch: "synthetic-epoch",
+    backendContract: "synthetic-backend-contract",
+  };
+}
+function socialBackend(t) {
+  const f = fixture(),
+    cfg = config();
+  Object.assign(f.params, {
+    budget: null,
+    profileId: null,
+    outputCap: null,
+    maxInferences: null,
+  });
+  const backend = new OpenAIBackend(
+    {
+      ...cfg.backends[0],
+      type: "openai",
+      baseUrl: "https://compatible.example/v1",
+      model: "fixture-model",
+      apiKeyEnv: "",
+    },
+    cfg.agents[0],
+    { root: temp(t), fetch: (...args) => f.params.fetch(...args) },
+  );
+  t.after(() => backend.close());
+  return { ...f, backend };
+}
+
+test("OpenAI social keeps one system and incremental user input per window while ordinary sessions stay separate", async (t) => {
+  const f = socialBackend(t);
+  const ordinaryFile = path.join(f.backend.dir, "ordinary-session.json");
+  fs.writeFileSync(ordinaryFile, "synthetic ordinary chat data");
+  for (const index of [1, 2, 3])
+    await f.backend.runSocial({
+      ...f.params,
+      binding: windowBinding(`run-${index}`),
+      prompt: `new message ${index}`,
+      session: { id: "ordinary-session" },
+    });
+  const messages = f.bodies[2].messages;
+  assert.equal(
+    messages.filter((message) => message.role === "system").length,
+    1,
+  );
+  assert.deepEqual(
+    messages
+      .filter((message) => message.role === "user")
+      .map((message) => message.content),
+    ["new message 1", "new message 2", "new message 3"],
+  );
+  assert.equal(
+    messages.filter((message) => message.role === "assistant").length,
+    2,
+  );
+  assert.equal(
+    fs.readFileSync(ordinaryFile, "utf8"),
+    "synthetic ordinary chat data",
+  );
+  assert.deepEqual(fs.readdirSync(f.backend.dir), ["ordinary-session.json"]);
+  await f.backend.closeSocialSessions({ windowId: "window-one" });
+  await assert.rejects(
+    f.backend.runSocial({ ...f.params, binding: windowBinding("closed-run") }),
+    /SOCIAL_TURN_CLOSED/,
+  );
+  assert.equal(f.bodies.length, 3);
+});
+
+test("OpenAI social histories are isolated across actors and windows and cleared on adapter close", async (t) => {
+  const f = socialBackend(t);
+  for (const [runId, windowId, actor, prompt] of [
+    ["r1", "w1", "host", "host private window input"],
+    ["r2", "w1", "guest", "guest input"],
+    ["r3", "w2", "host", "another window input"],
+  ]) {
+    await f.backend.runSocial({
+      ...f.params,
+      binding: windowBinding(runId, windowId, actor),
+      prompt,
+    });
+  }
+  for (const body of f.bodies) assert.equal(body.messages.length, 2);
+  assert.doesNotMatch(JSON.stringify(f.bodies[1]), /host private window input/);
+  assert.doesNotMatch(
+    JSON.stringify(f.bodies[2]),
+    /host private window input|guest input/,
+  );
+  await f.backend.close();
+  assert.equal(f.backend.socialSessionPool.capsules.size, 0);
+});
+
+test("OpenAI yielded history answers every tool call before reuse and never executes calls after sealing", async (t) => {
+  const f = socialBackend(t);
+  let yielded = false,
+    requests = 0;
+  const tools = [
+    {
+      type: "function",
+      function: { name: "home_exchange_yield", parameters: { type: "object" } },
+    },
+    ...f.params.tools,
+  ];
+  const calls = [];
+  f.params.fetch = async (_url, options) => {
+    f.bodies.push(JSON.parse(options.body));
+    return {
+      ok: true,
+      json: async () => ({
+        choices: [
+          {
+            message:
+              ++requests === 1
+                ? {
+                    tool_calls: [
+                      {
+                        id: "sealed-call",
+                        type: "function",
+                        function: {
+                          name: "home_exchange_yield",
+                          arguments: "{}",
+                        },
+                      },
+                      {
+                        id: "unexecuted-call",
+                        type: "function",
+                        function: { name: "home_visit_send", arguments: "{}" },
+                      },
+                    ],
+                  }
+                : { content: "continue normally" },
+          },
+        ],
+      }),
+    };
+  };
+  const params = {
+    ...f.params,
+    tools,
+    maxCallsPerInference: 2,
+    shouldStop: () => yielded,
+    beforeInput: async () => {
+      if (yielded) throw Error("SOCIAL_TURN_CLOSED");
+    },
+    callTool: async (name) => {
+      calls.push(name);
+      yielded = true;
+      return { batchSealed: true };
+    },
+  };
+  await f.backend.runSocial({
+    ...params,
+    binding: windowBinding("yield-first"),
+  });
+  yielded = false;
+  await f.backend.runSocial({
+    ...params,
+    binding: windowBinding("yield-second"),
+    prompt: "new response",
+  });
+  assert.deepEqual(calls, ["home_exchange_yield"]);
+  const messages = f.bodies[1].messages;
+  assert.deepEqual(
+    messages
+      .filter((message) => message.role === "tool")
+      .map((message) => message.tool_call_id),
+    ["sealed-call", "unexecuted-call"],
+  );
+  assert.equal(
+    JSON.parse(
+      messages.find((message) => message.tool_call_id === "sealed-call")
+        .content,
+    ).batchSealed,
+    true,
+  );
+  assert.equal(
+    JSON.parse(
+      messages.find((message) => message.tool_call_id === "unexecuted-call")
+        .content,
+    ).code,
+    "SOCIAL_TURN_CLOSED",
+  );
+  assert.equal(messages.at(-1).content, "new response");
+});
+
+test("OpenAI unknown continuation closes its history without replay or replacement", async (t) => {
+  const f = socialBackend(t);
+  await f.backend.runSocial({
+    ...f.params,
+    binding: windowBinding("known-run"),
+  });
+  let failures = 0;
+  f.params.fetch = async () => {
+    failures++;
+    throw Error("SYNTHETIC_UNKNOWN");
+  };
+  await assert.rejects(
+    f.backend.runSocial({ ...f.params, binding: windowBinding("unknown-run") }),
+    /SYNTHETIC_UNKNOWN/,
+  );
+  assert.equal(f.backend.socialSessionPool.capsules.size, 0);
+  await assert.rejects(
+    f.backend.runSocial({
+      ...f.params,
+      binding: windowBinding("never-replay"),
+    }),
+    /SOCIAL_TURN_CLOSED/,
+  );
+  assert.equal(failures, 1);
+});
+
+test("explicitly truncated OpenAI output closes its window without tools or automatic reconstruction", async (t) => {
+  for (const reason of ["length", "content_filter"]) {
+    const f = socialBackend(t);
+    let calls = 0;
+    f.params.fetch = async (_url, options) => {
+      f.bodies.push(JSON.parse(options.body));
+      return {
+        ok: true,
+        json: async () => ({
+          choices: [
+            {
+              finish_reason: reason,
+              message: { content: "incomplete synthetic output" },
+            },
+          ],
+        }),
+      };
+    };
+    const params = {
+      ...f.params,
+      binding: windowBinding("truncated-run"),
+      callTool: async () => {
+        calls++;
+      },
+    };
+    await assert.rejects(
+      f.backend.runSocial(params),
+      /SOCIAL_RESPONSE_INVALID/,
+    );
+    await assert.rejects(
+      f.backend.runSocial({
+        ...params,
+        binding: windowBinding("no-reconstruction"),
+      }),
+      /SOCIAL_TURN_CLOSED/,
+    );
+    assert.equal(f.bodies.length, 1);
+    assert.equal(calls, 0);
+  }
 });

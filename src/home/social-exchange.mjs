@@ -1,5 +1,6 @@
 // @ts-check
 import { randomUUID, createHash } from "node:crypto";
+import { socialWindowMessageReadable } from "../core/social-protection.mjs";
 import { effectiveSocialResourceBudget } from "./social-policy.mjs";
 
 const parse = (/** @type {string} */ value) => JSON.parse(value);
@@ -480,11 +481,13 @@ export class SocialExchange {
       socialBinding: {
         actorIdentity: next,
         target: { kind: "visit", id: w.visit_id },
+        windowId: w.id,
+        windowFence: w.fence,
       },
     };
     const candidates = this.db
       .prepare(
-        "SELECT m.source_labels FROM home_social_events e JOIN home_social_messages m ON m.id=json_extract(e.metadata,'$.messageId') WHERE e.type='message_committed' AND json_extract(e.metadata,'$.turnId')=? AND m.visit_id=? AND m.retracted_at IS NULL AND m.hidden_at IS NULL AND m.body_cleared_at IS NULL",
+        "SELECT m.* FROM home_social_events e JOIN home_social_messages m ON m.id=json_extract(e.metadata,'$.messageId') WHERE e.type='message_committed' AND json_extract(e.metadata,'$.turnId')=? AND m.visit_id=? AND m.retracted_at IS NULL AND m.hidden_at IS NULL AND m.body_cleared_at IS NULL",
       )
       .all(turn.id, w.visit_id);
     const readable = candidates.some((/** @type {any} */ row) => {
@@ -494,7 +497,8 @@ export class SocialExchange {
             this.runtime,
             descriptor,
             parse(row.source_labels),
-          ) === true
+          ) === true ||
+          socialWindowMessageReadable(this.runtime, descriptor, row)
         );
       } catch {
         return false;

@@ -1,4 +1,10 @@
 // @ts-check
+import {
+  captureSocialWindowHistory,
+  admitSocialWindowMessage,
+  socialWindowHistoryAllowed,
+  socialInputLeaseAllowed,
+} from "../core/social-protection.mjs";
 import { effectiveSocialResourceBudget } from "./social-policy.mjs";
 import {
   createHash,
@@ -317,20 +323,34 @@ export class HomeSocialService {
     return sources(this.runtime, ctx);
   }
   /** @param {any} ctx @param {string[]} labels */
-  track(ctx, labels) {
+  track(ctx, labels, historicalMessage = false) {
     const track =
       this.sources.trackSource || this.runtime.homeSocialSources?.trackSource;
     if (!track) throw Error("SOURCE_RESTRICTED");
-    track(ctx, { protectedSocialSources: labels });
+    const fresh = { ...ctx, privateRead: new Set(labels) };
     const sources =
         this.sources.sources || this.runtime.homeSocialSources?.sources,
       allowed = this.sources.allowed || this.runtime.homeSocialSources?.allowed;
     if (
       !sources ||
       !allowed ||
-      !allowed(this.runtime, ctx, sources(this.runtime, ctx))
+      !(historicalMessage
+        ? socialWindowHistoryAllowed(
+            this.runtime,
+            ctx,
+            sources(this.runtime, fresh),
+          )
+        : allowed(this.runtime, fresh, sources(this.runtime, fresh)))
     )
       throw Error("SOURCE_RESTRICTED");
+    track(ctx, { protectedSocialSources: labels });
+    const turn =
+      ctx.socialBinding?.turnId &&
+      this.db
+        .prepare("SELECT started_at FROM home_social_turns WHERE id=?")
+        .get(ctx.socialBinding.turnId);
+    if (turn?.started_at !== null && turn?.started_at !== undefined)
+      captureSocialWindowHistory(this.runtime, ctx, labels);
   }
   /** @param {string} kind @param {string} id @param {string} actor @param {number} now @param {any} [metadata] */
   event(kind, id, actor, now, metadata = {}) {
@@ -797,8 +817,12 @@ export class HomeSocialService {
       policyRevision: this.policy().revision,
     };
   }
-  /** @param {any} ctx @param {()=>boolean} guard */
-  lease(ctx, guard) {
+  /** @param {any} ctx @param {any} guard @param {string[]|null} [sourceIds] */
+  lease(ctx, guard, sourceIds = null) {
+    if (sourceIds) {
+      guard.socialHistoryLease = true;
+      guard.socialSourceIds = [...sourceIds];
+    }
     ctx.socialInputLeases ||= new Set();
     ctx.socialInputLeases.add(guard);
   }
@@ -902,7 +926,9 @@ export class HomeSocialService {
     if (!matched.length) return { confirmed: 0 };
     const result = this.store.transaction((now) => {
       this.assertBinding(ctx);
-      for (const lease of ctx.socialInputLeases || []) lease();
+      for (const lease of ctx.socialInputLeases || [])
+        if (!socialInputLeaseAllowed(this.runtime, ctx, lease))
+          throw Error("AUDIENCE_DENIED");
       const sources =
           this.sources.sources || this.runtime.homeSocialSources?.sources,
         allowed =
@@ -1286,47 +1312,73 @@ export class HomeSocialService {
             ? m
             : { ...m, body: "", body_cleared_at: this.runtime.now() },
         );
-    const labels = items
-      .filter(
-        (/** @type {any} */ m) =>
-          m.body && !m.retracted_at && !m.hidden_at && !m.body_cleared_at,
-      )
-      .flatMap((/** @type {any} */ m) => [
-        `social:${row.id}:${m.id}`,
-        ...parse(m.source_labels),
-      ]);
-    if (labels.length) this.track(ctx, labels);
-    this.lease(ctx, () => {
-      this.assertBinding(ctx);
-      const currentVisit = this.assertVisit(identity, row.id);
-      // Recheck actual retention and versions instead of expiring unchanged input.
+    const labels = [];
+    for (const message of items) {
       if (
-        !this.retained(currentVisit) &&
-        items.some(
-          (/** @type {any} */ m) =>
-            m.body && !m.retracted_at && !m.hidden_at && !m.body_cleared_at,
-        )
+        !message.body ||
+        message.retracted_at ||
+        message.hidden_at ||
+        message.body_cleared_at
       )
-        throw Error("AUDIENCE_DENIED");
-      for (const old of items) {
-        if (old.retracted_at || old.hidden_at || old.body_cleared_at) continue;
-        const current = this.db
-          .prepare(
-            "SELECT revision,retracted_at,hidden_at,body_cleared_at FROM home_social_messages WHERE id=? AND visit_id=?",
-          )
-          .get(old.id, row.id);
+        continue;
+      const messageLabels = [
+        `social:${row.id}:${message.id}`,
+        ...parse(message.source_labels),
+      ];
+      const historical = admitSocialWindowMessage(this.runtime, ctx, message);
+      this.track(ctx, messageLabels, historical);
+      labels.push(...messageLabels);
+    }
+    this.lease(
+      ctx,
+      () => {
+        this.assertBinding(ctx);
+        const currentVisit = this.assertVisit(identity, row.id);
+        // Recheck actual retention and versions instead of expiring unchanged input.
         if (
-          !current ||
-          current.revision !== old.revision ||
-          current.retracted_at !== old.retracted_at ||
-          current.hidden_at !== old.hidden_at ||
-          current.body_cleared_at !== old.body_cleared_at
+          !this.retained(currentVisit) &&
+          items.some(
+            (/** @type {any} */ m) =>
+              m.body && !m.retracted_at && !m.hidden_at && !m.body_cleared_at,
+          )
         )
           throw Error("AUDIENCE_DENIED");
-      }
-      return true;
-    });
+        for (const old of items) {
+          if (old.retracted_at || old.hidden_at || old.body_cleared_at)
+            continue;
+          const current = this.db
+            .prepare(
+              "SELECT revision,retracted_at,hidden_at,body_cleared_at FROM home_social_messages WHERE id=? AND visit_id=?",
+            )
+            .get(old.id, row.id);
+          if (
+            !current ||
+            current.revision !== old.revision ||
+            current.retracted_at !== old.retracted_at ||
+            current.hidden_at !== old.hidden_at ||
+            current.body_cleared_at !== old.body_cleared_at
+          )
+            throw Error("AUDIENCE_DENIED");
+        }
+        return true;
+      },
+      labels,
+    );
     const max = items.at(-1)?.sequence || after;
+    ctx.socialDisplayedMessages ||= new Map();
+    const displayed = ctx.socialDisplayedMessages.get(row.id) || new Map();
+    for (const message of items)
+      if (
+        message.body &&
+        !message.retracted_at &&
+        !message.hidden_at &&
+        !message.body_cleared_at
+      )
+        displayed.set(message.sequence, {
+          id: message.id,
+          revision: message.revision,
+        });
+    ctx.socialDisplayedMessages.set(row.id, displayed);
     ctx.socialDisplayed ||= new Map();
     ctx.socialDisplayed.set(
       row.id,
@@ -1394,9 +1446,28 @@ export class HomeSocialService {
       identity = this.bound(ctx, "visit", a.visitId);
     return this.execute(ctx, "mark_read", a, ({ now }) => {
       const row = this.assertVisit(identity, a.visitId);
-      if (row.revision !== a.expectedVisitRevision)
-        throw Error("REVISION_CONFLICT");
       if (a.lastDisplayedSequence > (ctx.socialDisplayed?.get(row.id) || 0))
+        throw Error("AUDIENCE_DENIED");
+      const shown = ctx.socialDisplayedMessages
+        ?.get(row.id)
+        ?.get(a.lastDisplayedSequence);
+      const current =
+        shown &&
+        this.db
+          .prepare(
+            "SELECT id,revision,retracted_at,hidden_at,body_cleared_at FROM home_social_messages WHERE visit_id=? AND sequence=?",
+          )
+          .get(row.id, a.lastDisplayedSequence);
+      if (
+        !shown ||
+        !current ||
+        current.id !== shown.id ||
+        current.revision !== shown.revision ||
+        current.retracted_at ||
+        current.hidden_at ||
+        current.body_cleared_at ||
+        !this.retained(row)
+      )
         throw Error("AUDIENCE_DENIED");
       this.db
         .prepare(
@@ -1683,15 +1754,20 @@ export class HomeSocialService {
         throw Error("AUDIENCE_DENIED");
       for (const item of selected) {
         if (!proof) throw Error("SOURCE_RESTRICTED");
-        proof(this.runtime, ctx, {
-          hostGeneration: host.generation,
-          slot: item.slot,
-          itemId: item.itemId,
-          itemRevision: item.itemRevision,
-        });
+        proof(
+          this.runtime,
+          ctx,
+          {
+            hostGeneration: host.generation,
+            slot: item.slot,
+            itemId: item.itemId,
+            itemRevision: item.itemRevision,
+          },
+          [`social-grant:${visit.id}:${grant.revision}`],
+        );
       }
       return true;
-    });
+    }, [`social-grant:${visit.id}:${grant.revision}`]);
     this.track(ctx, [`social-grant:${visit.id}:${grant.revision}`]);
     const result = {
       visitId: visit.id,

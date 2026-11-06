@@ -1677,3 +1677,209 @@ for (const change of ["revoked", "expired", "configuration"])
     );
     assert.equal(r.socialRuntime.active.size, 0);
   });
+
+function inputState(prompt) {
+  return JSON.parse(prompt.slice(prompt.indexOf("{")).split("\n")[0]);
+}
+
+function windowReply(f, binding, body = "Synthetic continuation") {
+  const db = f.store.db;
+  return [
+    [
+      "home_visit_send",
+      {
+        requestId: randomUUID(),
+        visitId: binding.target.id,
+        expectedVisitRevision: db
+          .prepare("SELECT revision FROM home_social_visits WHERE id=?")
+          .get(binding.target.id).revision,
+        body,
+      },
+    ],
+    [
+      "home_exchange_yield",
+      {
+        requestId: randomUUID(),
+        windowId: binding.windowId,
+        expectedWindowRevision: db
+          .prepare("SELECT revision FROM home_social_windows WHERE id=?")
+          .get(binding.windowId).revision,
+      },
+    ],
+  ];
+}
+
+test("window continuation appends new input once and disposes both actor histories at its limit", async (t) => {
+  const f = setup(t),
+    r = f.runtime;
+  const { windowId } = await turnOnlyWindow(f, 6);
+  const before = f.requests.length;
+  f.setScript((_agent, binding) => windowReply(f, binding));
+  for (let i = 0; i < 7; i++) await f.pump();
+  const requests = f.requests.slice(before);
+  assert.equal(requests.length, 6);
+  for (const agent of ["agent-0", "agent-1"]) {
+    const own = requests.filter((x) => x.agentId === agent);
+    assert.equal(own.length, 3);
+    const seen = new Set();
+    for (const [index, request] of own.entries()) {
+      const messages = request.body.messages;
+      assert.equal(messages.filter((x) => x.role === "system").length, 1);
+      assert.equal(messages.filter((x) => x.role === "user").length, index + 1);
+      const state = inputState(
+        messages.filter((x) => x.role === "user").at(-1).content,
+      );
+      assert.equal(state.continuation, index > 0);
+      for (const m of state.state.messages) {
+        assert.equal(seen.has(m.messageId), false);
+        seen.add(m.messageId);
+      }
+    }
+    assert.equal(
+      r.backendConnections.adapter(r.agent(agent)).socialSessionPool.capsules
+        .size,
+      0,
+    );
+  }
+  assert.equal(r.socialRuntime.windowSessions.size, 0);
+  assert.equal(
+    f.store.db
+      .prepare("SELECT status FROM home_social_windows WHERE id=?")
+      .get(windowId).status,
+    "closed",
+  );
+});
+
+test("initial history pagination exposes all forty-five messages and next turn does not replay them", async (t) => {
+  const f = setup(t),
+    r = f.runtime,
+    db = f.store.db;
+  const { visit } = await turnOnlyWindow(f, 4);
+  const insert = db.prepare(
+    "INSERT INTO home_social_messages(id,visit_id,author_agent_id,author_generation,sequence,body,source_labels,audience,created_at) VALUES(?,?,?,?,?,?,'[]',?,?)",
+  );
+  for (let i = 1; i <= 45; i++)
+    insert.run(
+      randomUUID(),
+      visit.id,
+      visit.host_agent_id,
+      visit.host_generation,
+      i,
+      `Synthetic history item ${i}`,
+      JSON.stringify([visit.host_generation, visit.guest_generation]),
+      r.now(),
+    );
+  db.prepare("UPDATE home_social_visits SET next_sequence=46 WHERE id=?").run(
+    visit.id,
+  );
+  const received = new Map(),
+    prompts = [];
+  for (const agent of ["agent-0", "agent-1"])
+    r.backends.set(agent, {
+      close: async () => {},
+      closeSocialSessions: async () => {},
+      runSocial: async (params) => {
+        await params.beforeInput();
+        await params.onRunStarted();
+        const input = inputState(params.prompt);
+        prompts.push({ agent, input });
+        assert.match(params.prompt, /home_visit_read/);
+        let page = input.state;
+        const seen = [];
+        while (true) {
+          seen.push(...page.messages.map((x) => x.sequence));
+          if (!page.nextCursor) break;
+          page = await params.callTool("home_visit_read", {
+            visitId: visit.id,
+            cursor: page.nextCursor,
+            limit: 20,
+          });
+        }
+        if (!received.has(agent)) received.set(agent, seen);
+        for (const [name, args] of windowReply(f, params.binding))
+          await params.callTool(name, args);
+      },
+    });
+  for (let i = 0; i < 5; i++) await f.pump();
+  assert.deepEqual(
+    received.get("agent-0"),
+    Array.from({ length: 45 }, (_, i) => i + 1),
+  );
+  assert.equal(prompts.length, 4);
+  for (const { input } of prompts.filter((x) => x.input.continuation))
+    assert.ok(input.state.messages.every((x) => x.sequence > 45));
+});
+
+test("idle actor sessions close on pause before another model run starts", async (t) => {
+  const f = setup(t),
+    r = f.runtime;
+  const { windowId } = await turnOnlyWindow(f, 6);
+  f.setScript((_agent, binding) => windowReply(f, binding));
+  await f.pump();
+  const adapter = r.backendConnections.adapter(r.agent("agent-0"));
+  assert.equal(adapter.socialSessionPool.capsules.size, 1);
+  const before = f.requests.length;
+  r.config.globalPaused = true;
+  r.socialRuntime.cancelStale();
+  await settle(r);
+  assert.equal(adapter.socialSessionPool.capsules.size, 0);
+  assert.equal(r.socialRuntime.windowSessions.size, 0);
+  assert.equal(f.requests.length, before);
+  assert.equal(
+    f.store.db
+      .prepare("SELECT status FROM home_social_windows WHERE id=?")
+      .get(windowId).status,
+    "closed",
+  );
+});
+
+test("ordinary room withdrawal preserves the conversation and fresh room reads remain denied", async (t) => {
+  const f = setup(t),
+    r = f.runtime,
+    db = f.store.db;
+  const { visit, windowId } = await turnOnlyWindow(f, 6);
+  const before = f.requests.length;
+  let changed = false;
+  f.setResponseGate(async (_agent, binding, round) => {
+    const turn = f.runs.filter((x) => x.windowId === windowId).length;
+    if (turn === 3 && round === 0) {
+      db.prepare(
+        "UPDATE home_social_grants SET revision=revision+1,revoked_at=? WHERE visit_id=?",
+      ).run(r.now(), visit.id);
+      changed = true;
+    }
+  });
+  f.setScript((_agent, binding, round) => {
+    const turn = f.runs.filter((x) => x.windowId === windowId).length;
+    if (turn <= 2 && round === 0)
+      return [["home_visit_room_read", { visitId: visit.id }]];
+    if (turn === 4 && round === 0)
+      return [["home_visit_room_read", { visitId: visit.id }]];
+    return windowReply(
+      f,
+      binding,
+      "Synthetic friendly continuation after room changes",
+    );
+  });
+  for (let i = 0; i < 7; i++) await f.pump();
+  assert.equal(changed, true);
+  const row = db
+    .prepare("SELECT * FROM home_social_windows WHERE id=?")
+    .get(windowId);
+  assert.equal(row.turns_used, 6);
+  assert.equal(row.status, "closed");
+  assert.equal(
+    db
+      .prepare("SELECT count(*) n FROM home_social_messages WHERE visit_id=?")
+      .get(visit.id).n,
+    6,
+  );
+  const denied = f.requests
+    .slice(before)
+    .flatMap((x) => x.body.messages)
+    .filter((x) => x.role === "tool")
+    .map((x) => JSON.parse(x.content))
+    .some((x) => x.isError);
+  assert.equal(denied, true);
+  assert.equal(r.socialRuntime.windowSessions.size, 0);
+});

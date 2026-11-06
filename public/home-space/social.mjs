@@ -404,7 +404,7 @@ export function createSocialView({ root, api, isActive, agentId }) {
       el(
         "p",
         "social-notice",
-        "默认双方合计 12 回合：一方执行一次计 1 回合，回合内工具续推理不另计回合。按回合运行不设 token 硬上限，时长、消息额度与撤权检查仍生效。保存不代表双方已同意；放宽只影响新提议，也不会自动开启角色参与。",
+        "默认双方合计 12 回合，一方运行一次计 1 回合。同一时段各自接着自己的会话聊；退出、暂停或到期就结束。保存设置不会自动开启角色参与。",
       ),
     );
     const submit = document.createElement("button");
