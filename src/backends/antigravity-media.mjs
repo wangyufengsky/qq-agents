@@ -11,7 +11,7 @@ import {
   inspectGif,
 } from "../tools/animation.mjs";
 
-/** Native view_file must only see pixels returned by an authorized tool in this turn.
+/** Native image readers must only see pixels returned by an authorized tool in this turn.
  * CLI MCP offloading alone does not reliably attach later images to model input. */
 export class AntigravityMedia {
   /** @param {string} [root] */
@@ -164,7 +164,7 @@ export class AntigravityMedia {
         const file = this.files.get(prepared[index++].sha256);
         return {
           type: "text",
-          text: `Image ${index}: pixels are not yet visible. Call native view_file with AbsolutePath=${JSON.stringify(file?.path)} to inspect this exact image before describing it. This path is authorized only for this turn. Preserve the original frame timing and sampled/complete metadata; do not infer unseen frames.`,
+          text: `Image ${index}: pixels are not yet visible. Call native read_file with Path=${JSON.stringify(file?.path)} to inspect this exact image before describing it; legacy view_file with AbsolutePath=${JSON.stringify(file?.path)} is also supported. This path is authorized only for this turn. Preserve the original frame timing and sampled/complete metadata; do not infer unseen frames.`,
         };
       }),
     };

@@ -23,6 +23,7 @@ import { buildChildEnv } from "../src/core/child-env.mjs";
 import { config, temp, fixture as runtimeFixture } from "./helpers.mjs";
 import { toolSpecs } from "../src/tools/specs.mjs";
 import { AntigravityMedia } from "../src/backends/antigravity-media.mjs";
+import { mediaLease } from "../src/tools/media-lease.mjs";
 import { colorGrid } from "../scripts/fixtures/antigravity-media.mjs";
 import { registry } from "../src/tools/registry.mjs";
 import { SessionPreparationFailure } from "../src/backends/turn-failure.mjs";
@@ -963,10 +964,13 @@ test("Antigravity failure classification never exposes provider diagnostics", ()
 });
 
 test("Antigravity hook process denies invalid, expired and unavailable policies", async (t) => {
-  let active = true;
+  let active = true,
+    leased = true,
+    scope = {};
   const media = new AntigravityMedia();
   t.after(() => media.close());
   media.result({
+    [mediaLease]: () => leased,
     content: [
       {
         type: "image",
@@ -982,7 +986,9 @@ test("Antigravity hook process denies invalid, expired and unavailable policies"
   const server = http.createServer((req, res) => {
     const valid = active && req.headers.authorization === "Bearer synthetic";
     res.writeHead(valid ? 200 : 403, { "content-type": "application/json" });
-    res.end(JSON.stringify({ tools: [tool], images: media.catalog() }));
+    res.end(
+      JSON.stringify({ tools: [tool], images: media.catalog(), ...scope }),
+    );
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => server.close());
@@ -990,7 +996,7 @@ test("Antigravity hook process denies invalid, expired and unavailable policies"
   const hook = fileURLToPath(
     new URL("../src/backends/antigravity-guard.mjs", import.meta.url),
   );
-  async function guard(input, token = "synthetic") {
+  async function guard(input, token = "synthetic", metadata = {}) {
     const child = spawn(process.execPath, [hook], {
       env: {
         ...buildChildEnv("antigravity"),
@@ -1004,7 +1010,9 @@ test("Antigravity hook process denies invalid, expired and unavailable policies"
     });
     const done = new Promise((resolve) => child.once("close", resolve));
     child.stdin.end(
-      typeof input === "string" ? input : JSON.stringify({ toolCall: input }),
+      typeof input === "string"
+        ? input
+        : JSON.stringify({ ...metadata, toolCall: input }),
     );
     assert.equal(await done, 0);
     return JSON.parse(output).decision;
@@ -1015,6 +1023,66 @@ test("Antigravity hook process denies invalid, expired and unavailable policies"
   };
   assert.equal(await guard(call), "auto_approve");
   assert.equal(await guard(imageCall), "auto_approve");
+  const nativeImageCall = {
+    name: "read_file",
+    args: { Path: imageCall.args.AbsolutePath },
+  };
+  assert.equal(await guard(nativeImageCall), "auto_approve");
+  for (const [name, key] of [
+    ["read_file", "Path"],
+    ["view_file", "AbsolutePath"],
+  ]) {
+    assert.equal(
+      await guard({
+        name,
+        args: { [key]: imageCall.args.AbsolutePath, StartLine: 1 },
+      }),
+      "deny",
+    );
+    assert.equal(await guard({ name, args: { [key]: hook } }), "deny");
+    assert.equal(
+      await guard({
+        name,
+        args: {
+          [key === "Path" ? "AbsolutePath" : "Path"]:
+            imageCall.args.AbsolutePath,
+        },
+      }),
+      "deny",
+    );
+  }
+  const originalImage = fs.readFileSync(imageCall.args.AbsolutePath);
+  const changedImage = Buffer.from(originalImage);
+  changedImage[changedImage.length - 1] ^= 1;
+  fs.writeFileSync(imageCall.args.AbsolutePath, changedImage);
+  assert.equal(await guard(nativeImageCall), "deny");
+  fs.writeFileSync(imageCall.args.AbsolutePath, originalImage);
+  scope = {
+    turnEpoch: "synthetic-current-epoch",
+    conversationId: "synthetic-conversation",
+    minimumStep: 4,
+  };
+  const currentStep = { conversationId: "synthetic-conversation", stepIdx: 5 };
+  assert.equal(
+    await guard(nativeImageCall, "synthetic", currentStep),
+    "auto_approve",
+  );
+  assert.equal(
+    await guard(imageCall, "synthetic", currentStep),
+    "auto_approve",
+  );
+  for (const metadata of [
+    { ...currentStep, stepIdx: 4 },
+    { ...currentStep, conversationId: "previous-conversation" },
+  ]) {
+    assert.equal(await guard(nativeImageCall, "synthetic", metadata), "deny");
+    assert.equal(await guard(imageCall, "synthetic", metadata), "deny");
+  }
+  scope = {};
+  leased = false;
+  assert.equal(await guard(nativeImageCall), "deny");
+  assert.equal(await guard(imageCall), "deny");
+  assert.equal(media.catalog().length, 0);
   assert.equal(
     await guard({ name: "view_file", args: { AbsolutePath: hook } }),
     "deny",
@@ -1102,12 +1170,17 @@ test("Antigravity registers exact image bytes through its real MCP subprocess", 
   );
   assert.equal(result.content.filter((c) => c.type === "image").length, 0);
   assert.equal(result.content[0].text, "frame 0");
-  assert.match(result.content[1].text, /Image 1:.*view_file/);
+  assert.match(result.content[1].text, /Image 1:.*read_file with Path=/);
+  assert.match(result.content[1].text, /legacy view_file with AbsolutePath=/);
   assert.equal(result.content[2].text, "frame 1");
-  assert.match(result.content[3].text, /Image 2:.*view_file/);
+  assert.match(result.content[3].text, /Image 2:.*read_file with Path=/);
+  assert.deepEqual(result.nativeImageApprovals, [
+    ["auto_approve", "auto_approve"],
+    ["auto_approve", "auto_approve"],
+  ]);
   assert.deepEqual(result.observedImages, [content[1].data, content[3].data]);
   const target = JSON.parse(
-    /AbsolutePath=(".*?") to inspect/.exec(result.content[1].text)[1],
+    /Path=(".*?") to inspect/.exec(result.content[1].text)[1],
   );
   assert(!fs.existsSync(target));
 });
@@ -1249,6 +1322,41 @@ test("Antigravity resumes a proven compatible binding and refreshes optional arg
     /ANTIGRAVITY_SESSION_UNAVAILABLE/,
   );
   assert.equal(launches.length, 2);
+});
+
+test("Antigravity refreshes legacy image guidance without replacing its native session", async (t) => {
+  const { backend, params, sessions, launches } = setup(t, "usage");
+  await backend.run(params);
+  const session = sessions.at(-1),
+    signature = backend.sessionSignature(params.tools);
+  const agentFile = path.join(
+    launches[0].options.cwd,
+    ".agents",
+    "agents",
+    "qq-agents.md",
+  );
+  const old = fs
+    .readFileSync(agentFile, "utf8")
+    .replace("  - read_file\n", "")
+    .replace(
+      "Only native read_file (Path) or legacy view_file (AbsolutePath)",
+      "Only native view_file",
+    )
+    .replace("Always call the native image reader", "Always call view_file");
+  fs.writeFileSync(agentFile, old);
+  for (let turn = 0; turn < 2; turn++) {
+    await backend.run({ ...params, session, instructions: undefined });
+    const guide = fs.readFileSync(agentFile, "utf8");
+    assert.equal(sessions.at(-1).id, session.id);
+    assert.equal(backend.sessionSignature(params.tools), signature);
+    assert.equal((guide.match(/ {2}- read_file\n/g) || []).length, 1);
+    assert.match(guide, / {2}- view_file\n/);
+    assert.match(
+      guide,
+      /Only native read_file \(Path\) or legacy view_file \(AbsolutePath\)/,
+    );
+    assert(guide.includes(params.instructions));
+  }
 });
 
 test("Antigravity consumes a verified legacy binding after compatible request settings change", async (t) => {

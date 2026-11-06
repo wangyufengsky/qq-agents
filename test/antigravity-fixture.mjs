@@ -117,14 +117,52 @@ if (args.includes("models")) {
         name: "probe",
         arguments: {},
       });
+      const images = (
+        await (await fetch(endpoint + "/catalog", { headers })).json()
+      ).images;
+      const nativeImageApprovals = await Promise.all(
+        images.map(async (image) => {
+          const approvals = [];
+          for (const toolCall of [
+            { name: "read_file", args: { Path: image.path } },
+            { name: "view_file", args: { AbsolutePath: image.path } },
+          ]) {
+            const hook = spawn(
+              process.execPath,
+              [
+                fileURLToPath(
+                  new URL(
+                    "../src/backends/antigravity-guard.mjs",
+                    import.meta.url,
+                  ),
+                ),
+              ],
+              { env: process.env },
+            );
+            let output = "";
+            hook.stdout.on("data", (data) => {
+              output += data;
+            });
+            const done = once(hook, "close");
+            hook.stdin.end(JSON.stringify({ toolCall }));
+            const [code] = await done;
+            if (code !== 0) throw Error("SYNTHETIC_IMAGE_HOOK_FAILED");
+            approvals.push(JSON.parse(output).decision);
+          }
+          return approvals;
+        }),
+      );
       fs.writeFileSync(
         path.join(process.cwd(), "media-result.json"),
         JSON.stringify({
           ...mediaResult,
-          observedImages: (
-            await (await fetch(endpoint + "/catalog", { headers })).json()
-          ).images.map((image) =>
-            fs.readFileSync(image.path).toString("base64"),
+          nativeImageApprovals,
+          observedImages: images.map((image, index) =>
+            nativeImageApprovals[index].every(
+              (decision) => decision === "auto_approve",
+            )
+              ? fs.readFileSync(image.path).toString("base64")
+              : null,
           ),
         }),
       );

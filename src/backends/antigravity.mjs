@@ -505,7 +505,7 @@ export class AntigravityBackend {
     )
       managedFile(
         agentFile,
-        `---\nname: qq-agents\ndescription: QQ Agents restricted role\nmainAgent: true\nsubagent: false\ntools:\n  - finish\n${params.social ? "" : "  - view_file\n"}enable_mcp_tools: true\ncommandExecutionPolicy: off\n---\n${params.instructions || ""}\n\n${routing}Use the qq-agents MCP tools for actions. ${reuse ? "" : 'Call call_mcp_tool with ServerName="qq-agents", ToolName equal to an allowed name, and Arguments matching that tool\'s JSON schema below. '}Do not guess parameter names or read framework source to discover arguments. The current chat and authorization are bound by the bridge; never add target, chatId or context fields unless the schema requires them. Ordinary assistant text is never delivered to QQ. Only native view_file on the exact image paths returned by an authorized tool in the CURRENT turn is allowed. Always call view_file before describing those pixels; MCP path text is not visual evidence. Never read other files or reuse a previous turn image path; request the original bridge tool again. No native task, filesystem writes, shell, browser, scheduling or subagent actions are authorized.\n\nAllowed tool argument schemas keyed by ToolName (required fields and additionalProperties are binding):\n${JSON.stringify(Object.fromEntries(params.tools.map(({ name, inputSchema }) => [name, antigravitySchemaContract(inputSchema)])))}\n`,
+        `---\nname: qq-agents\ndescription: QQ Agents restricted role\nmainAgent: true\nsubagent: false\ntools:\n  - finish\n${params.social ? "" : "  - read_file\n  - view_file\n"}enable_mcp_tools: true\ncommandExecutionPolicy: off\n---\n${params.instructions || ""}\n\n${routing}Use the qq-agents MCP tools for actions. ${reuse ? "" : 'Call call_mcp_tool with ServerName="qq-agents", ToolName equal to an allowed name, and Arguments matching that tool\'s JSON schema below. '}Do not guess parameter names or read framework source to discover arguments. The current chat and authorization are bound by the bridge; never add target, chatId or context fields unless the schema requires them. Ordinary assistant text is never delivered to QQ. Only native read_file (Path) or legacy view_file (AbsolutePath) on the exact image paths returned by an authorized tool in the CURRENT turn is allowed. Always call the native image reader before describing those pixels; MCP path text is not visual evidence. Never read other files or reuse a previous turn image path; request the original bridge tool again. No native task, filesystem writes, shell, browser, scheduling or subagent actions are authorized.\n\nAllowed tool argument schemas keyed by ToolName (required fields and additionalProperties are binding):\n${JSON.stringify(Object.fromEntries(params.tools.map(({ name, inputSchema }) => [name, antigravitySchemaContract(inputSchema)])))}\n`,
       );
     else {
       // Preserve the role instructions while refreshing compatible optional fields.
@@ -518,7 +518,21 @@ export class AntigravityBackend {
       if (offset < 0) throw Error("ANTIGRAVITY_WORKSPACE_UNSAFE");
       managedFile(
         agentFile,
-        previous.slice(0, offset) +
+        // Image aliases keep the same scoped capability and native transcript.
+        previous
+          .slice(0, offset)
+          .replace(
+            "\ntools:\n  - finish\n  - view_file\n",
+            "\ntools:\n  - finish\n  - read_file\n  - view_file\n",
+          )
+          .replace(
+            "Only native view_file on the exact image paths",
+            "Only native read_file (Path) or legacy view_file (AbsolutePath) on the exact image paths",
+          )
+          .replace(
+            "Always call view_file before describing those pixels",
+            "Always call the native image reader before describing those pixels",
+          ) +
           marker +
           JSON.stringify(
             Object.fromEntries(
