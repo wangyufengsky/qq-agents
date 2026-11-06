@@ -44,7 +44,7 @@ async function go(page, hash) {
   await ready(page, `#${hash}`);
 }
 async function editor(page) {
-  if (!(await page.locator("#editor").evaluate((n) => n.open)))
+  if (!(await page.locator("#editor").isVisible()))
     await page.click("#edit-toggle");
 }
 async function request(url, body) {
@@ -168,6 +168,7 @@ try {
       await page.getByRole("slider", { name: "横向偏移" }).inputValue(),
     ) === savedPlant.dx,
   );
+  await page.locator("#editor-more summary").click();
   await page.click("#undo");
   await page.waitForFunction(() =>
     document.getElementById("toast").textContent.includes("撤销后的新版本"),
@@ -187,14 +188,17 @@ try {
       .evaluate((n) => n.classList.contains("palette-blue")),
   );
   await editor(page);
+  await page.locator("#editor-more summary").click();
   await page.click("#reset");
   check(
     "reset is only an unsaved draft",
     f.runtime.home.read("living").layout.palette === "blue",
   );
+  await page.locator("#editor-more summary").click();
   await page.click("#discard");
   await ready(page, "#living");
   await editor(page);
+  await page.locator("#editor-more summary").click();
   await page.click("#undo");
   await page.waitForFunction(() =>
     document.getElementById("toast").textContent.includes("撤销后的新版本"),
@@ -221,6 +225,7 @@ try {
     f.runtime.home.read("living").layout.palette === "blue" &&
       (await page.locator("#save").isDisabled()),
   );
+  await page.locator("#editor-more summary").click();
   await page.click("#discard");
   await ready(page, "#living");
   await page.clock.install();
@@ -274,6 +279,7 @@ try {
     "late-poll draft retains its original expected revision",
     f.runtime.home.read("living").layout.palette === "cream",
   );
+  await page.locator("#editor-more summary").click();
   await page.click("#discard");
   await ready(page, "#living");
   const post = await request("/api/board/post", {
@@ -318,7 +324,8 @@ try {
     fullPage: true,
   });
   await page.click("#close-reader");
-  await page.locator("#editor").evaluate((n) => (n.open = false));
+  if (await page.locator("#editor").isVisible())
+    await page.click("#editor-close");
   await page.screenshot({
     path: path.join(output, "living-desktop.png"),
     fullPage: true,

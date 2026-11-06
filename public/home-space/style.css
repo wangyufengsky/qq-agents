@@ -464,9 +464,6 @@ main {
   pointer-events: none;
   opacity: 0;
 }
-#editor:not([open]) {
-  display: none;
-}
 #editor {
   margin: 8px 0 24px;
   border-radius: 3px;
