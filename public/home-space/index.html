@@ -42,43 +42,66 @@
       </section>
       <section id="home-content" hidden>
         <h1 id="title" class="sr-only"></h1>
-        <div class="book-workspace">
-          <nav id="bookmarks" aria-label="小窝书签">
-            <button id="bookmark-living">客厅</button>
-            <button id="bookmark-hall">走廊</button>
-          </nav>
-          <section id="stage" aria-label="纸片场景"></section>
-        </div>
-        <footer class="book-footer">
-          <button id="page-back" hidden>← 客厅</button>
-          <span id="folio" aria-live="polite"></span>
-          <button id="social-room-open" hidden>主体邀请入口</button>
-          <button id="entry-toggle">本页入口</button>
-        </footer>
-        <div id="pagination"></div>
-        <details id="editor" class="settings">
-          <summary>布置小窝 <span>收起工具匣 ↑</span></summary>
-          <p id="layout-status" role="status"></p>
-          <p class="toolbox-hint">挑一件家具，挪到喜欢的位置。</p>
-          <div id="object-strip" role="group" aria-label="选择家具"></div>
-          <label
-            >配色<select id="palette">
-              <option value="cream">暖木奶油</option>
-              <option value="blue">清晨浅蓝</option>
-              <option value="rose">柔和豆沙</option>
-            </select></label
-          ><label class="sr-only"
-            >选择纸片<select id="object-select"></select
-          ></label>
-          <div id="object-editor"></div>
-          <div class="settings-footer">
-            <button id="save" class="primary">保存布置</button
-            ><button id="undo">撤销最近一次保存</button
-            ><button id="reset">恢复默认草稿</button
-            ><button id="discard">放弃草稿并重读</button>
+        <div id="scene-column">
+          <div class="book-workspace">
+            <nav id="bookmarks" aria-label="小窝书签">
+              <button id="bookmark-living">客厅</button>
+              <button id="bookmark-hall">走廊</button>
+            </nav>
+            <section id="stage" aria-label="纸片场景"></section>
           </div>
-          <p id="save-status" role="status"></p>
-        </details>
+          <footer class="book-footer">
+            <button id="page-back" hidden>← 客厅</button>
+            <span id="folio" aria-live="polite"></span>
+            <button id="social-room-open" hidden>主体邀请入口</button>
+            <button id="entry-toggle">本页入口</button>
+          </footer>
+          <div id="pagination"></div>
+        </div>
+        <aside
+          id="editor"
+          class="settings"
+          aria-labelledby="editor-title"
+          hidden
+        >
+          <header class="editor-heading">
+            <div>
+              <h2 id="editor-title">布置小窝</h2>
+              <p id="selected-object"></p>
+            </div>
+            <button id="editor-close" aria-label="收起布置面板">收起 ×</button>
+          </header>
+          <div id="editor-body">
+            <p class="toolbox-hint">点选家具，边调边看。</p>
+            <div id="object-strip" role="group" aria-label="选择家具"></div>
+            <label
+              >配色<select id="palette">
+                <option value="cream">暖木奶油</option>
+                <option value="blue">清晨浅蓝</option>
+                <option value="rose">柔和豆沙</option>
+              </select></label
+            >
+            <label class="sr-only"
+              >选择纸片<select id="object-select"></select
+            ></label>
+            <div id="object-editor"></div>
+          </div>
+          <footer class="settings-footer">
+            <p id="layout-status" role="status"></p>
+            <div class="editor-actions">
+              <button id="save" class="primary">保存布置</button>
+              <details id="editor-more">
+                <summary>更多操作</summary>
+                <div>
+                  <button id="undo">撤销最近一次保存</button>
+                  <button id="reset">恢复默认草稿</button>
+                  <button id="discard">放弃草稿并重读</button>
+                </div>
+              </details>
+            </div>
+            <p id="save-status" role="status"></p>
+          </footer>
+        </aside>
       </section>
     </main>
     <dialog id="entries" class="paper-dialog" aria-labelledby="entries-title">
