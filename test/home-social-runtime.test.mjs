@@ -1883,3 +1883,30 @@ test("ordinary room withdrawal preserves the conversation and fresh room reads r
   assert.equal(denied, true);
   assert.equal(r.socialRuntime.windowSessions.size, 0);
 });
+
+test("replacing a backend adapter cannot silently resume a window with only delta input", async (t) => {
+  const f = setup(t),
+    r = f.runtime;
+  const { windowId } = await turnOnlyWindow(f, 6);
+  f.setScript((_agent, binding) => windowReply(f, binding));
+  await f.pump();
+  await f.pump();
+  const old = r.backendConnections.adapter(r.agent("agent-0"));
+  await old.close();
+  let calls = 0;
+  r.backends.set("agent-0", {
+    close: async () => {},
+    runSocial: async () => {
+      calls++;
+    },
+  });
+  await f.pump();
+  assert.equal(calls, 0);
+  assert.equal(
+    f.store.db
+      .prepare("SELECT status FROM home_social_windows WHERE id=?")
+      .get(windowId).status,
+    "closed",
+  );
+  assert.equal(r.socialRuntime.windowSessions.size, 0);
+});

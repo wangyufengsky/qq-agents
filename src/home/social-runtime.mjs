@@ -678,6 +678,10 @@ export class SocialRuntime {
           adapter = r.backendConnections.adapter(a),
           limits = this.limits(ctx),
           cap = this.assertBackendBudget(a.id, limits.resourceBudget);
+        // Reconnecting a backend loses its private capsule; do not feed a fresh
+        // session only the delta intended for an existing conversation.
+        if (ctx.socialSession?.adapter && ctx.socialSession.adapter !== adapter)
+          throw Error("SOCIAL_WINDOW_CLOSED");
         if (ctx.socialSession) ctx.socialSession.adapter = adapter;
         const identity = r.memory.bind(a.id).identity;
         const self = this.invitationReadOnly(ctx)
