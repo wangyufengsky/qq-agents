@@ -918,3 +918,89 @@ test("protected work creation and exact-result release require administrator cre
   assert.equal((await result.json()).sent, false);
   assert.equal(f.runtime.transports.get("qq-0").sent.length, 0);
 });
+
+test("native social bridge routes through social authority before input acknowledgement", async (t) => {
+  const { request, runtime } = await setup(t);
+  runtime.config.homeSocial.enabled = true;
+  runtime.agent("agent-0").home.enabled = true;
+  runtime.agent("agent-0").home.social.enabled = true;
+  const ctx = context(runtime, "agent-0", "@social:fixture");
+  ctx.runtimeKind = "subject-social";
+  ctx.allowedTools = ["home_visit_inbox"];
+  let valid = true;
+  const order = [];
+  runtime.socialRuntime.assertContext = () => {
+    if (!valid) throw Error("SOCIAL_TURN_CLOSED");
+    order.push("context");
+  };
+  runtime.socialRuntime.assertToolAllowed = (_ctx, name) => {
+    order.push("allow");
+  };
+  runtime.socialRuntime.callTool = async (actual, name, args) => {
+    assert.equal(actual, ctx);
+    assert.equal(name, "home_visit_inbox");
+    assert.deepEqual(args, {});
+    order.push("social-call");
+    return { items: [] };
+  };
+  ctx.socialConsumeInput = async () => order.push("consumed");
+  const post = async (route, body) =>
+    (
+      await request(route, {
+        auth: false,
+        method: "POST",
+        headers: { "x-agent-capability": ctx.token },
+        body: JSON.stringify(body),
+      })
+    ).json();
+  assert.equal(
+    (await post("/agent/tools", { name: "home_visit_inbox", arguments: {} }))
+      .isError,
+    undefined,
+  );
+  assert.deepEqual(order, [
+    "context",
+    "allow",
+    "consumed",
+    "social-call",
+    "context",
+  ]);
+  order.length = 0;
+  assert.equal(
+    (await post("/agent/tools", { name: "qq_send", arguments: {} })).isError,
+    true,
+  );
+  assert.deepEqual(order, ["context", "allow"]);
+  order.length = 0;
+  runtime.agent("agent-0").home.social.enabled = false;
+  assert.equal(
+    (await post("/agent/tools", { name: "home_visit_inbox", arguments: {} }))
+      .isError,
+    true,
+  );
+  assert.deepEqual(order, ["context", "allow"]);
+  order.length = 0;
+  valid = false;
+  assert.equal(
+    (await post("/agent/tools", { name: "home_visit_inbox", arguments: {} }))
+      .isError,
+    true,
+  );
+  assert.equal((await post("/agent/catalog", {})).isError, true);
+  assert.deepEqual(order, []);
+  valid = true;
+  runtime.agent("agent-0").home.social.enabled = true;
+  runtime.socialRuntime.callTool = async () => {
+    valid = false;
+    return { body: "REVOKED_SYNTHETIC_BODY" };
+  };
+  const revoked = await post("/agent/tools", {
+    name: "home_visit_inbox",
+    arguments: {},
+  });
+  assert.equal(revoked.isError, true);
+  assert.equal(
+    JSON.stringify(revoked).includes("REVOKED_SYNTHETIC_BODY"),
+    false,
+  );
+});

@@ -1,4 +1,5 @@
 // @ts-check
+import { effectiveSocialResourceBudget } from "./social-policy.mjs";
 import {
   createHash,
   createHmac,
@@ -1192,7 +1193,7 @@ export class HomeSocialService {
       limits = window ? parse(window.effective_limits) : cfg;
     const rows = this.db
       .prepare(
-        "SELECT actor_generation,mode,resources_used,resources_reserved FROM home_social_turns WHERE visit_id=?",
+        "SELECT actor_generation,mode,resources_used,resources_reserved,started_at,(SELECT count(*) FROM home_social_inference_reservations i WHERE i.turn_id=home_social_turns.id) AS metered FROM home_social_turns WHERE visit_id=?",
       )
       .all(visit.id);
     const sum = (/** @type {string} */ key, /** @type {string} */ mode) =>
@@ -1206,6 +1207,20 @@ export class HomeSocialService {
             n + (parse(row[key]).tokens || 0),
           0,
         );
+    const unmeteredAsync = rows.some(
+      (/** @type {any} */ row) =>
+        row.mode === "async" &&
+        (!viewer || row.actor_generation === viewer) &&
+        row.started_at !== null &&
+        !row.metered,
+    );
+    const unmeteredWindow =
+      window &&
+      this.db
+        .prepare(
+          "SELECT count(*) n FROM home_social_turns t WHERE t.window_id=? AND t.started_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM home_social_inference_reservations i WHERE i.turn_id=t.id)",
+        )
+        .get(window.id).n > 0;
     const participants = viewer
       ? [viewer]
       : [visit.host_generation, visit.guest_generation];
@@ -1221,12 +1236,14 @@ export class HomeSocialService {
         limit: limits.maxTurns,
       },
       windowResources: {
+        usageAvailable: !!limits.resourceBudget && !unmeteredWindow,
         used: window ? parse(window.resources_used).tokens || 0 : 0,
         reserved: window ? parse(window.resources_reserved).tokens || 0 : 0,
         limit: limits.resourceBudget?.maxTokensPerWindow ?? null,
         unit: "tokens",
       },
       asyncResources: {
+        usageAvailable: !!cfg.resourceBudget && !unmeteredAsync,
         used: sum("resources_used", "async"),
         reserved: sum("resources_reserved", "async"),
         limit: null,
@@ -2310,7 +2327,6 @@ export class HomeSocialService {
     const permission = {
       enabled: cfg.enabled,
       exchangeEnabled: cfg.exchangeEnabled,
-      resourceEnabled: !!cfg.resourceBudget,
       mode: r.config.mode,
       globalPaused: r.config.globalPaused,
       agents: r.config.agents.map((/** @type {any} */ a) => ({
@@ -2329,7 +2345,11 @@ export class HomeSocialService {
       })),
       backends: r.config.backends,
     };
-    const rightsChanged = !same(previous.permission, permission);
+    const previousPermission = previous.permission && {
+      ...previous.permission,
+    };
+    if (previousPermission) delete previousPermission.resourceEnabled;
+    const rightsChanged = !same(previousPermission, permission);
     const recoveryBlocked =
       !!p.recovery_epoch &&
       !p.enabled &&
@@ -2383,15 +2403,10 @@ export class HomeSocialService {
         limits = { ...old };
       for (const key of ["durationMinutes", "maxTurns", "maxMessagesPerTurn"])
         limits[key] = Math.min(old[key], cfg[key]);
-      if (old.resourceBudget && cfg.resourceBudget) {
-        limits.resourceBudget = { ...old.resourceBudget };
-        for (const key of Object.keys(old.resourceBudget))
-          if (key !== "unit")
-            limits.resourceBudget[key] = Math.min(
-              old.resourceBudget[key],
-              cfg.resourceBudget[key],
-            );
-      }
+      limits.resourceBudget = effectiveSocialResourceBudget(
+        old.resourceBudget,
+        cfg.resourceBudget,
+      );
       const deadline =
         window.deadline === null
           ? null

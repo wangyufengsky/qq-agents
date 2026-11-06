@@ -31,6 +31,7 @@ export class SocialResources {
       const c = this.runtime.socialRuntime.limits(this.ctx),
         budget = c.resourceBudget,
         total = args.inputUpperBound + args.outputCap;
+      if (!budget) throw Error("SOCIAL_BUDGET_INVALID");
       if (
         args.inputUpperBound <= 0 ||
         args.outputCap <= 0 ||
@@ -188,17 +189,6 @@ export class SocialResources {
           row.id,
         );
       if (status !== "unknown") this.delta(turn, r.day, -r.tokens, actual);
-      if (status !== "not_started" && turn.started_at === null) {
-        this.db
-          .prepare("UPDATE home_social_turns SET started_at=? WHERE id=?")
-          .run(now, turn.id);
-        if (turn.window_id)
-          this.db
-            .prepare(
-              "UPDATE home_social_windows SET turns_reserved=max(0,turns_reserved-1),turns_used=turns_used+1 WHERE id=?",
-            )
-            .run(turn.window_id);
-      }
       return { status };
     });
   }

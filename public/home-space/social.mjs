@@ -67,6 +67,17 @@ const time = (value) =>
   value ? new Date(value).toLocaleString("zh-CN") : "未设置";
 const label = (state) => states[state] || "状态待核验";
 const quantity = (value) => (value == null ? "待核对" : String(value));
+export function socialResourceSummary(data, async = false) {
+  const cap = (value) =>
+    value === null ? "未设 token 硬上限" : `${quantity(value)} token`;
+  const measured =
+    data?.usageAvailable === false
+      ? "后端未提供可信用量"
+      : `${quantity(data?.used)}已用 / ${quantity(data?.reserved)}预留（token）`;
+  return async
+    ? `本拜访累计${measured}；每回合${cap(data?.limits?.perTurn)}，每日${cap(data?.limits?.perDay)}，累计值不与每日上限直接比较`
+    : `${measured}；时段${cap(data?.limit)}`;
+}
 
 // Each view owns its generation and lease so unrelated scene polling cannot renew private text.
 export function createSocialView({ root, api, isActive, agentId }) {
@@ -199,8 +210,8 @@ export function createSocialView({ root, api, isActive, agentId }) {
         let summary;
         if (title === "每日成功消息")
           summary = `${quantity(data?.committed)} 已提交 / ${quantity(data?.limit)} 双方合计上限`;
-        else if (title === "异步运行资源")
-          summary = `本拜访累计${quantity(data?.used)}已用 / ${quantity(data?.reserved)}预留（token）；每回合上限${quantity(data?.limits?.perTurn)}，每日上限${quantity(data?.limits?.perDay)}，累计值不与每日上限直接比较`;
+        else if (title === "异步运行资源" || title === "时段模型资源")
+          summary = socialResourceSummary(data, title === "异步运行资源");
         else
           summary = `${quantity(data?.used)} 已用 / ${quantity(data?.reserved)} 预留 / ${quantity(data?.limit)} 上限${data?.unit ? `（${data.unit}）` : ""}`;
         list.append(el("dt", "", title), el("dd", "", summary));
@@ -347,8 +358,8 @@ export function createSocialView({ root, api, isActive, agentId }) {
       budgetMode = document.createElement("select");
     budgetMode.name = "budgetMode";
     for (const [value, title] of [
-      ["unconfigured", "未配置（社交模型运行不可用）"],
-      ["configured", "配置 token 预算"],
+      ["unconfigured", "按回合运行（不设 token 硬上限）"],
+      ["configured", "可选：配置 token 硬预算"],
     ]) {
       const option = document.createElement("option");
       option.value = value;
@@ -359,7 +370,7 @@ export function createSocialView({ root, api, isActive, agentId }) {
     budgetLabel.append(budgetMode);
     form.append(budgetLabel);
     const budgetGroup = el("fieldset", "social-budget");
-    budgetGroup.append(el("legend", "", "模型资源硬上限"));
+    budgetGroup.append(el("legend", "", "可选模型资源硬上限"));
     for (const [key, title, max] of socialBudgetFields) {
       const row = el("label", "", title),
         input = document.createElement("input");
@@ -386,14 +397,14 @@ export function createSocialView({ root, api, isActive, agentId }) {
       el(
         "p",
         "social-notice",
-        "首版仅支持官方 OpenAI gpt-4.1-mini-2025-04-14 社交配置；其他后端暂不支持。该配置每次推理预留 1,047,576 输入 token 加输出上限，成功核对后按实际结算；结果未知时保留预留。预算不自动启用社交，也不会替换模型或服务地址。",
+        "DSH、Codex、Antigravity 可使用现有后端按回合运行，无需填写 token 预算或选择社交 profile；DSH 须使用 qq-unified preset。可选硬预算仍仅支持官方 OpenAI gpt-4.1-mini-2025-04-14 配置；每次推理预留 1,047,576 输入 token 加输出上限，结果未知时保留预留。保存不会替换模型、服务地址或凭据。",
       ),
     );
     form.append(
       el(
         "p",
         "social-notice",
-        "12 回合指双方合计。保存不代表双方已同意；放宽只影响新提议。模型资源硬上限须在后端配置完成后才能启用受控交流。",
+        "默认双方合计 12 回合：一方执行一次计 1 回合，回合内工具续推理不另计回合。按回合运行不设 token 硬上限，时长、消息额度与撤权检查仍生效。保存不代表双方已同意；放宽只影响新提议，也不会自动开启角色参与。",
       ),
     );
     const submit = document.createElement("button");
@@ -410,11 +421,6 @@ export function createSocialView({ root, api, isActive, agentId }) {
           budgetMode.value,
           Object.fromEntries(new FormData(form)),
         );
-        if (
-          form.elements.namedItem("exchangeEnabled").checked &&
-          !resourceBudget
-        )
-          throw Error("启用受控交流前，请先配置可执行的模型资源预算。");
       } catch (error) {
         status.textContent = error.message;
         return;
@@ -447,8 +453,8 @@ export function createSocialView({ root, api, isActive, agentId }) {
               : ["CONFIG_SCHEMA_INVALID", "INVALID_REQUEST"].includes(
                     error.code,
                   )
-                ? "服务端拒绝配置：请核对整数范围、预算与后端能力。草稿已保留。"
-                : "设置未保存，草稿已保留。请核对配置与资源预算。";
+                ? "服务端拒绝配置：请核对整数范围、可选预算与后端能力。草稿已保留。"
+                : "设置未保存，草稿已保留。请核对配置与可选资源预算。";
       } finally {
         if (alive(id)) submit.disabled = false;
       }

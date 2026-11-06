@@ -107,6 +107,16 @@ test("console recovery and automatic-recovery controls call real admin routes wi
     sandbox,
   );
   assert.match(form, /name="socialProfile"/);
+  assert.match(form, /小窝社交 token 硬预算配置（可选）/);
+  for (const type of ["dsh", "codex", "antigravity"]) {
+    sandbox.backendType = type;
+    const native = vm.runInContext(
+      'backendForm({...config.backends[0],type:backendType},"fixture","")',
+      sandbox,
+    );
+    assert.match(native, /无需社交 profile 或 token 硬预算/);
+    assert.match(native, /DSH 须使用 qq-unified preset/);
+  }
   assert.match(form, /openai-gpt-4.1-mini/);
   assert.match(form, /value="keep-model"/);
   assert.match(form, /value="https:\/\/example.com\/v1"/);

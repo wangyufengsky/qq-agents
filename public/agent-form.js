@@ -221,7 +221,7 @@ const AGENT_TOOL_GROUPS = [
     builtin: true,
     builtinLabel: "由实例社交与角色参与开关共同控制",
     title: "小窝往来",
-    desc: "普通主体只查看安全数量并选择独立处理；邀请、接受与发言在专用社交回合中完成。需要合格后端和明确预算，不发送QQ。",
+    desc: "普通主体只查看安全数量并选择独立处理；邀请、接受与发言在专用社交回合中完成。默认双方合计12回合，一方执行一次计1回合；可用现有本机后端，不要求token硬预算，不发送QQ。",
     tools: {
       home_social_capabilities: "查看社交许可与后端支持",
       home_social_process: "排队独立异步处理",

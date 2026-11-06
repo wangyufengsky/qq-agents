@@ -319,3 +319,92 @@ test("malformed tool arguments expose only a stable code and never invoke a tool
   assert.equal(calls, 0);
   assert.equal(f.settled[0].status, "completed");
 });
+
+test("round-only OpenAI supports compatible endpoints without a token profile", async () => {
+  const f = fixture();
+  Object.assign(f.params, {
+    budget: null,
+    profileId: null,
+    endpoint: "https://compatible.example/v1/chat/completions",
+    model: "fixture-model",
+    outputCap: null,
+    maxInferences: null,
+  });
+  const order = [];
+  let calls = 0;
+  f.params.onRunStarted = async () => order.push("started");
+  f.params.fetch = async (_url, options) => {
+    order.push("request");
+    f.bodies.push(JSON.parse(options.body));
+    return {
+      ok: true,
+      json: async () => ({
+        choices: [
+          {
+            message:
+              ++calls < 3
+                ? {
+                    tool_calls: [
+                      {
+                        id: `call-${calls}`,
+                        type: "function",
+                        function: {
+                          name: "home_visit_send",
+                          arguments: "{}",
+                        },
+                      },
+                    ],
+                  }
+                : { content: "draft only" },
+          },
+        ],
+      }),
+    };
+  };
+  assert.deepEqual(await runOpenAISocial(f.params), {
+    status: "completed",
+    inferences: 3,
+  });
+  assert.deepEqual(order, [
+    "started",
+    "request",
+    "started",
+    "request",
+    "started",
+    "request",
+  ]);
+  assert.equal(f.reserved.length, 0);
+  assert.equal(f.settled.length, 0);
+  for (const body of f.bodies) {
+    assert.equal(body.model, "fixture-model");
+    assert.equal(Object.hasOwn(body, "max_completion_tokens"), false);
+    assert.equal(Object.hasOwn(body, "max_tokens"), false);
+  }
+});
+
+test("round-only execution rejects before starting and stops on cancellation without replay", async () => {
+  const f = fixture();
+  Object.assign(f.params, {
+    budget: null,
+    profileId: null,
+    outputCap: null,
+    maxInferences: null,
+  });
+  f.params.onRunStarted = async () => {
+    throw Error("SOCIAL_TURN_CLOSED");
+  };
+  await assert.rejects(runOpenAISocial(f.params), /SOCIAL_TURN_CLOSED/);
+  assert.equal(f.bodies.length, 0);
+  const controller = new AbortController();
+  f.params.signal = controller.signal;
+  f.params.onRunStarted = async () => {};
+  f.params.fetch = async (_url, options) => {
+    f.bodies.push(JSON.parse(options.body));
+    controller.abort();
+    throw Error("SYNTHETIC_DISCONNECT");
+  };
+  await assert.rejects(runOpenAISocial(f.params), /SYNTHETIC_DISCONNECT/);
+  assert.equal(f.bodies.length, 1);
+  await assert.rejects(runOpenAISocial(f.params), /ABORTED/);
+  assert.equal(f.bodies.length, 1);
+});

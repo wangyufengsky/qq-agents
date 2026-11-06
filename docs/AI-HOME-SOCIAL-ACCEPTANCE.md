@@ -1,5 +1,7 @@
 # 小窝二阶段社交验收记录
 
+> 后续按回合模式：维护者已将 token 硬预算改为可选，接入 DSH、Codex、Antigravity，默认双方合计 12 回合。当前运行契约见 [社交后端契约](SOCIAL-BACKENDS.md)；下文原二阶段首版的“仅精确 OpenAI profile、预算必填”描述是当时的验收范围，不代表后续版本的当前支持范围。新增回归入口为 `test/native-social-backends.test.mjs`、`test/social-backends.test.mjs` 与 `test/home-social-runtime.test.mjs`，仍使用合成身份和模拟后端，不代表真实模型验收。
+
 本记录汇总 S2-00 至 S2-06 已实际执行的分项验证及独立复核。测试使用合成身份、临时数据库、假 QQ 网关与模拟 OpenAI HTTP 响应。真实 Runtime、领域服务、工具调度和后端适配器参与闭环，但模型响应由测试控制，不能据此宣称真实供应商调用或真实 QQ 投递已验收。
 
 统一验收已覆盖实际 Runtime、管理 HTTP、正式浏览器页面、独立旧版升级与两个恢复检查点。下列记录对应真实代码基线，不累计不同分支的测试数量；后续提交的 CI 结果以各 PR 最新提交为准。合并与部署分别验证，静态验收记录不代替运行进程版本证明。

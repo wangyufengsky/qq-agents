@@ -308,7 +308,7 @@ test("inference reservations enforce per-turn/day cap; not_started releases and 
   );
   assert.equal(
     f.db.prepare("SELECT started_at FROM home_social_turns").get().started_at,
-    1000,
+    null,
   );
 });
 
@@ -486,3 +486,26 @@ for (const maximum of [2, 12])
       "closed",
     );
   });
+
+test("turn-only windows accept no token budget and later tightening cannot relax accepted limits", (t) => {
+  const f = setup(t),
+    explicit = structuredClone(f.config.homeSocial.resourceBudget);
+  f.config.homeSocial.resourceBudget = null;
+  const proposal = f.exchange.propose(f.context("ga"), {
+    requestId: "turn-only-propose",
+    visitId: "visit",
+  }).result;
+  let w = f.db
+    .prepare("SELECT * FROM home_social_windows WHERE id=?")
+    .get(proposal.windowId);
+  assert.equal(f.exchange.effective(w).resourceBudget, null);
+  f.config.homeSocial.resourceBudget = explicit;
+  const tightened = f.exchange.effective(w);
+  assert.deepEqual(tightened.resourceBudget, explicit);
+  f.db
+    .prepare("UPDATE home_social_windows SET effective_limits=? WHERE id=?")
+    .run(JSON.stringify(tightened), w.id);
+  w = f.db.prepare("SELECT * FROM home_social_windows WHERE id=?").get(w.id);
+  f.config.homeSocial.resourceBudget = null;
+  assert.deepEqual(f.exchange.effective(w).resourceBudget, explicit);
+});

@@ -116,17 +116,17 @@ function setup(t, n = 3) {
   };
 }
 
-test("strict config defaults disable old roles and reject missing or invalid resource budgets", () => {
+test("strict config defaults disable old roles and allow turn-only exchange with valid limits", () => {
   const cfg = config();
   assert.equal(cfg.homeSocial.enabled, false);
   assert.equal(cfg.homeSocial.resourceBudget, null);
   assert.equal(cfg.agents[0].home.social.enabled, false);
-  assert.throws(() =>
-    validateConfig({
-      ...cfg,
-      homeSocial: { ...cfg.homeSocial, enabled: true, exchangeEnabled: true },
-    }),
-  );
+  const enabled = validateConfig({
+    ...cfg,
+    homeSocial: { ...cfg.homeSocial, enabled: true, exchangeEnabled: true },
+  });
+  assert.equal(enabled.homeSocial.resourceBudget, null);
+  assert.equal(enabled.homeSocial.maxTurns, 12);
   assert.throws(() =>
     validateConfig({
       ...cfg,
