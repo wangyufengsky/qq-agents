@@ -650,3 +650,11 @@ main {
     transition: none;
   }
 }
+
+.paper-object[data-instance="envelope"] {
+  min-width: 44px;
+  min-height: 44px;
+}
+#reader[data-kind="letters"] {
+  width: min(760px, calc(100% - 32px));
+}

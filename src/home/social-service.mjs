@@ -371,7 +371,7 @@ export class HomeSocialService {
       .run(generation, day(now), scope, kind);
   }
   /** Opaque cursors bind the reader, target and current authorization version.
-   * @param {any} binding @param {number} after */
+   * @param {any} binding @param {number|{createdAt:number,id:string}} after */
   cursor(binding, after) {
     const value = Buffer.from(JSON.stringify({ binding, after })).toString(
       "base64url",
@@ -400,11 +400,13 @@ export class HomeSocialService {
     } catch {
       throw Error("INVALID_CURSOR");
     }
-    if (
-      !same(result.binding, binding) ||
-      !Number.isSafeInteger(result.after) ||
-      result.after < 0
-    )
+    const positionValid =
+      binding.kind === "admin-overview" && binding.recordKind === "visit"
+        ? Number.isSafeInteger(result.after?.createdAt) &&
+          typeof result.after?.id === "string" &&
+          result.after.id.length > 0
+        : Number.isSafeInteger(result.after) && result.after >= 0;
+    if (!same(result.binding, binding) || !positionValid)
       throw Error("INVALID_CURSOR");
     return result.after;
   }
@@ -2051,12 +2053,30 @@ export class HomeSocialService {
         kind: "admin-overview",
         policy: this.policy().revision,
         agentId: a.agentId || null,
+        roomOwnerAgentId: a.roomOwnerAgentId || null,
+        recordKind: a.kind || null,
       },
       after = this.after(a.cursor, binding);
-    const filter = a.agentId
-        ? " WHERE host_agent_id=? OR guest_agent_id=?"
-        : "",
-      args = a.agentId ? [a.agentId, a.agentId] : [];
+    const filters = [],
+      args = [];
+    if (a.agentId) {
+      filters.push("(host_agent_id=? OR guest_agent_id=?)");
+      args.push(a.agentId, a.agentId);
+    }
+    if (a.roomOwnerAgentId) {
+      filters.push("host_agent_id=?");
+      args.push(a.roomOwnerAgentId);
+    }
+    if (a.kind) {
+      filters.push("kind=?");
+      args.push(a.kind);
+    }
+    if (a.kind === "visit" && after) {
+      filters.push("(created_at<? OR (created_at=? AND id>?))");
+      args.push(after.createdAt, after.createdAt, after.id);
+    }
+    const filter = filters.length ? " WHERE " + filters.join(" AND ") : "",
+      order = a.kind === "visit" ? "created_at DESC,id" : "kind,id";
     // List pages select metadata only; neither invitation prose nor message bodies enter memory.
     const from = `WITH overview AS (
       SELECT 'invitation' AS kind,id,revision,host_agent_id,host_generation,guest_agent_id,guest_generation,room_id,status,created_at,expires_at,requested_scope,effective_scope,initiator_generation,recipient_generation,NULL AS invitation_id,NULL AS started_at,NULL AS ended_at,NULL AS closed_reason FROM home_social_invitations
@@ -2064,8 +2084,8 @@ export class HomeSocialService {
       SELECT 'visit',id,revision,host_agent_id,host_generation,guest_agent_id,guest_generation,room_id,status,started_at,expires_at,NULL,NULL,NULL,NULL,invitation_id,started_at,ended_at,closed_reason FROM home_social_visits
     ) SELECT * FROM overview`;
     const rows = this.db
-        .prepare(from + filter + " ORDER BY kind,id LIMIT ? OFFSET ?")
-        .all(...args, a.limit + 1, after),
+        .prepare(from + filter + " ORDER BY " + order + " LIMIT ? OFFSET ?")
+        .all(...args, a.limit + 1, a.kind === "visit" ? 0 : after),
       items = rows.slice(0, a.limit);
     return {
       items: items.map((/** @type {any} */ row) => ({
@@ -2076,7 +2096,12 @@ export class HomeSocialService {
       })),
       nextCursor:
         rows.length > a.limit
-          ? this.cursor(binding, after + items.length)
+          ? this.cursor(
+              binding,
+              a.kind === "visit"
+                ? { createdAt: items.at(-1).created_at, id: items.at(-1).id }
+                : after + items.length,
+            )
           : null,
       policyRevision: this.policy().revision,
       serverNow: this.runtime.now(),

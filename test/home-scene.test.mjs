@@ -15,7 +15,7 @@ import { fixture } from "./helpers.mjs";
 
 const room = () => createTemplate("room");
 test("home assets have verified WebP bytes, bounded display rectangles and provenance", () => {
-  assert.equal(Object.keys(catalog).length, 26);
+  assert.equal(Object.keys(catalog).length, 27);
   let total = 0;
   for (const [id, a] of Object.entries(catalog)) {
     const b = fs.readFileSync(
@@ -101,6 +101,7 @@ test("home catalog variants and palettes preserve semantic entries", () => {
   assert.equal(objects.find((o) => o.id === "bed").asset, "bed-blue");
   assert.equal(objects.find((o) => o.id === "rug").asset, "rug-blue");
   assert.equal(t.hotspots.shelf, "works");
+  assert.equal(t.hotspots.envelope, "letters");
   assert.ok(!JSON.stringify(scene).includes('"base"'));
 });
 test("home rejects invalid saved layouts, unknown fields, versions and unsafe substitutions", () => {

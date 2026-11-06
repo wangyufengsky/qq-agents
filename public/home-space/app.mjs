@@ -17,6 +17,7 @@ const labels = {
   guide: "翻开参观小册",
   intro: "查看介绍卡",
   works: "查看作品展示",
+  letters: "查看往来信件",
 };
 const hints = {
   HOME_REVISION_CONFLICT:
@@ -105,7 +106,6 @@ function clearView(message = "登录或连接需要重新验证。") {
   $("editor").hidden = true;
   document.body.classList.remove("editing");
   $("home-tools").hidden = true;
-  $("social-room-open").hidden = true;
   $("stage").inert = false;
   for (const id of [
     "stage",
@@ -365,7 +365,7 @@ function draw(direction = 0) {
               (x, i, a) => a.indexOf(x) === i,
             ),
           ]
-        : ["back", "living", "intro", "works"];
+        : ["back", "living", "intro", "works", "letters"];
   actions.forEach((a) => nav.append(button(actionLabel(a), () => act(a))));
   $("pagination").replaceChildren();
   if (route.type === "hall" && overview.residents.length > 3) {
@@ -520,7 +520,6 @@ async function refresh(animate = false) {
     if (next.rosterRevision !== info.rosterRevision)
       throw Error("居民列表已变化，请重试。");
     route = nextRoute;
-    $("social-room-open").hidden = route.type !== "room";
     envelope = next;
     draft = structuredClone(next.layout);
     dirty = false;
@@ -766,13 +765,19 @@ function openReader(action) {
     intro: "介绍卡",
     works: "作品展示",
     social: "往来管理",
+    letters: `${name(route.agentId)}的信件`,
   }[action];
-  if (action === "social") {
+  if (action === "social" || action === "letters") {
     socialView = createSocialView({
       root: $("reader-content"),
       api,
-      isActive: () => dialog.open && readerAction === "social" && !!overview,
-      agentId: route?.agentId,
+      isActive: () => dialog.open && readerAction === action && !!overview,
+      ...(action === "letters"
+        ? {
+            roomOwnerAgentId: route.agentId,
+            presentation: "letters",
+          }
+        : {}),
     });
     if (!dialog.open) dialog.showModal();
     socialView.render();
@@ -991,5 +996,3 @@ $("social-open").onclick = () => {
   $("menu").close();
   openReader("social");
 };
-
-$("social-room-open").onclick = () => openReader("social");

@@ -442,4 +442,21 @@ export const catalog = {
     attribution:
       "QQ Agents commissioned AI artwork; see docs/AI-HOME-ASSETS.md",
   },
+  envelope: {
+    name: "墙上往来信封",
+    file: "assets/envelope.webp",
+    width: 1536,
+    height: 1024,
+    bounds: [21, 32, 1506, 992],
+    assetVersion: 1,
+    sha256: "8f3f9237ccef756b8ae38d2f808c609df3706e06ed495c558a7637cb7ca31885",
+    bytes: 129262,
+    transparent: true,
+    sourceSha256:
+      "75fcb066090b79b56d0887068b3b3e21732b68b332765abc4ad558a2bff2f747",
+    sourceBytes: 2093163,
+    license: "MIT",
+    attribution:
+      "QQ Agents commissioned AI artwork; see docs/AI-HOME-ASSETS.md",
+  },
 };

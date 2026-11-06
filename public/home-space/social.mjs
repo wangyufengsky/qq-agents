@@ -80,20 +80,40 @@ export function socialResourceSummary(data, async = false) {
 }
 
 // Each view owns its generation and lease so unrelated scene polling cannot renew private text.
-export function createSocialView({ root, api, isActive, agentId }) {
+export function createSocialView({
+  root,
+  api,
+  isActive,
+  agentId,
+  roomOwnerAgentId,
+  presentation,
+}) {
+  const letters = presentation === "letters";
+  if (letters) root.classList.add("social-letters");
+  const letterTitle = (value) => {
+    const counterpart =
+      agentId && value.owner?.agentId !== agentId ? value.owner : value.visitor;
+    return roomOwnerAgentId || agentId
+      ? `与${counterpart?.name || "访客"}的往来`
+      : `${value.owner?.name || "房主"}与${value.visitor?.name || "访客"}的往来`;
+  };
   let generation = 0,
     timer,
+    listCursor = null,
     closed = false;
   const alive = (id) => !closed && isActive() && id === generation;
   function clear(message) {
     generation++;
     clearTimeout(timer);
     root.replaceChildren(el("p", "social-notice", message));
+    if (letters && !closed) root.append(button("重新读取信件", render));
   }
   async function request(url, body, method) {
     const id = ++generation;
     clearTimeout(timer);
-    root.replaceChildren(el("p", "", "正在核验往来权限…"));
+    root.replaceChildren(
+      el("p", "social-notice", letters ? "正在取出信件…" : "正在核验往来权限…"),
+    );
     try {
       const value = await api(url, body, method);
       if (!alive(id)) return null;
@@ -104,7 +124,12 @@ export function createSocialView({ root, api, isActive, agentId }) {
       return null;
     }
   }
-  function header() {
+  function header(detail = false) {
+    if (letters) {
+      root.append(el("p", "letter-kicker", "往来信件"));
+      if (!detail) root.append(button("刷新信件", render));
+      return;
+    }
     root.append(
       el(
         "p",
@@ -149,27 +174,43 @@ export function createSocialView({ root, api, isActive, agentId }) {
       return;
     }
     root.replaceChildren();
-    header();
+    header(true);
     root.append(
-      button("返回往来列表", render),
-      el("h3", "", label(value.state)),
+      button(letters ? "收起信纸" : "返回往来列表", async () => {
+        await render(letters ? listCursor : null);
+        if (letters && alive(generation))
+          root
+            .querySelector(`[data-letter-id="${CSS.escape(item.id)}"]`)
+            ?.focus();
+      }),
     );
-    if (value.purpose) root.append(el("p", "social-body", value.purpose));
+    const paper = letters ? el("article", "letter-paper") : root,
+      metadata = letters ? el("details", "letter-metadata") : root;
+    if (letters) {
+      const heading = el("h3", "letter-title", letterTitle(value));
+      heading.tabIndex = -1;
+      paper.append(heading);
+      metadata.append(el("summary", "", "往来详情与管理"));
+      root.append(paper);
+      heading.focus({ preventScroll: true });
+    }
+    metadata.append(el("h3", "", label(value.state)));
+    if (value.purpose) metadata.append(el("p", "social-body", value.purpose));
     if (value.reason)
-      root.append(el("p", "social-body", `可见理由：${value.reason}`));
+      metadata.append(el("p", "social-body", `可见理由：${value.reason}`));
     for (const [title, scope] of [
       ["申请范围", value.requestedScope],
       ["实际获准范围", value.effectiveScope],
     ])
       if (scope !== undefined)
-        root.append(
+        metadata.append(
           el(
             "p",
             "",
             `${title}：${Array.isArray(scope) ? scope.map((slot) => ({ layout: "布局", intro: "介绍", tagline: "门牌", "work-1": "作品1", "work-2": "作品2", "work-3": "作品3" })[slot] || "范围待核验").join("、") || "无房间访问" : "尚未获准房间访问"}`,
           ),
         );
-    root.append(
+    metadata.append(
       el(
         "p",
         "",
@@ -177,7 +218,7 @@ export function createSocialView({ root, api, isActive, agentId }) {
       ),
     );
     if (value.window) {
-      root.append(
+      metadata.append(
         el("h4", "", "交流时段"),
         el(
           "p",
@@ -187,7 +228,7 @@ export function createSocialView({ root, api, isActive, agentId }) {
       );
       if (value.window.effectiveLimits) {
         const limits = value.window.effectiveLimits;
-        root.append(
+        metadata.append(
           el(
             "p",
             "",
@@ -196,7 +237,7 @@ export function createSocialView({ root, api, isActive, agentId }) {
         );
       }
       if (value.window.closeReason)
-        root.append(el("p", "", `关闭原因：${value.window.closeReason}`));
+        metadata.append(el("p", "", `关闭原因：${value.window.closeReason}`));
     }
     if (value.usage) {
       const usage = value.usage;
@@ -216,13 +257,13 @@ export function createSocialView({ root, api, isActive, agentId }) {
           summary = `${quantity(data?.used)} 已用 / ${quantity(data?.reserved)} 预留 / ${quantity(data?.limit)} 上限${data?.unit ? `（${data.unit}）` : ""}`;
         list.append(el("dt", "", title), el("dd", "", summary));
       }
-      root.append(list);
+      metadata.append(list);
       for (const daily of usage.dailyMessages?.byParticipant || []) {
         const participant = [value.owner, value.visitor].find(
           (identity) =>
             identity?.identityGeneration === daily.identityGeneration,
         );
-        root.append(
+        metadata.append(
           el(
             "p",
             "",
@@ -231,7 +272,7 @@ export function createSocialView({ root, api, isActive, agentId }) {
         );
       }
       if (usage.dailyMessages?.resetsAt)
-        root.append(
+        metadata.append(
           el(
             "small",
             "",
@@ -263,30 +304,34 @@ export function createSocialView({ root, api, isActive, agentId }) {
       if (
         value.permittedActions?.includes("hide-message") &&
         message.state === "committed"
-      )
-        row.append(
-          button("隐藏这条消息（管理操作）", () =>
-            moderate(
-              "hide-message",
-              message.messageId,
-              message.messageRevision,
-              value,
-              item,
-            ),
+      ) {
+        const control = button("隐藏这条消息（管理操作）", () =>
+          moderate(
+            "hide-message",
+            message.messageId,
+            message.messageRevision,
+            value,
+            item,
           ),
         );
+        if (letters) {
+          const menu = el("details", "letter-message-menu");
+          menu.append(el("summary", "", "管理"), control);
+          row.append(menu);
+        } else row.append(control);
+      }
       messages.append(row);
     }
-    root.append(messages);
+    paper.append(messages);
     if (value.nextCursor)
-      root.append(
-        button("下一页消息（重新核验权限）", () =>
+      paper.append(
+        button(letters ? "继续读下一页" : "下一页消息（重新核验权限）", () =>
           detail(item, value.nextCursor),
         ),
       );
-    if (cursor) root.append(button("从首条重新读取", () => detail(item)));
+    if (cursor) paper.append(button("从首条重新读取", () => detail(item)));
     for (const receipt of value.operations || [])
-      root.append(
+      metadata.append(
         el(
           "p",
           "social-receipt",
@@ -303,9 +348,10 @@ export function createSocialView({ root, api, isActive, agentId }) {
       ["terminate-visit", "终止拜访（管理操作）", value.id, value.revision],
     ])
       if (target && value.permittedActions?.includes(action))
-        root.append(
+        metadata.append(
           button(text, () => moderate(action, target, revision, value, item)),
         );
+    if (letters) paper.append(metadata);
   }
   async function moderate(action, targetId, expectedRevision, value, item) {
     if (!confirm("此操作会立即收回相关互动权限。继续管理操作吗？")) return;
@@ -464,6 +510,8 @@ export function createSocialView({ root, api, isActive, agentId }) {
     if (typeof cursor !== "string") cursor = null;
     const query = new URLSearchParams();
     if (agentId) query.set("agentId", agentId);
+    if (roomOwnerAgentId) query.set("roomOwnerAgentId", roomOwnerAgentId);
+    if (letters) query.set("kind", "visit");
     if (cursor) query.set("cursor", cursor);
     const response = await request(
       "/api/home-social/overview" + (query.size ? "?" + query : ""),
@@ -473,11 +521,43 @@ export function createSocialView({ root, api, isActive, agentId }) {
       clear("往来列表格式需要重新核验。");
       return;
     }
+    listCursor = cursor;
     root.replaceChildren();
     header();
-    const list = el("section", "social-list");
-    list.setAttribute("aria-label", "往来记录");
-    for (const item of response.value.items || []) {
+    const list = el(
+      letters ? "ol" : "section",
+      letters ? "letter-list" : "social-list",
+    );
+    list.setAttribute("aria-label", letters ? "往来信件" : "往来记录");
+    const items = letters
+      ? response.value.items.filter((item) => item.kind === "visit")
+      : response.value.items;
+    for (const item of items) {
+      if (letters) {
+        const row = el("li"),
+          envelope = button("", () => detail(item)),
+          art = el("img"),
+          address = el("span", "letter-address");
+        envelope.className = "letter-envelope";
+        envelope.dataset.letterId = item.id;
+        envelope.setAttribute("aria-label", `展开${letterTitle(item)}`);
+        art.src = new URL(
+          "../home-preview/assets/envelope.webp",
+          import.meta.url,
+        ).href;
+        art.alt = "";
+        art.draggable = false;
+        const title = el("strong", "", letterTitle(item));
+        title.title = title.textContent;
+        address.append(
+          title,
+          el("small", "", `${label(item.state)} · ${time(item.startedAt)}`),
+        );
+        envelope.append(art, address, el("span", "letter-open", "展开信纸 →"));
+        row.append(envelope);
+        list.append(row);
+        continue;
+      }
       const row = el("article", "social-row");
       row.append(
         el(
@@ -490,14 +570,26 @@ export function createSocialView({ root, api, isActive, agentId }) {
       );
       list.append(row);
     }
-    if (!response.value.items?.length)
-      list.append(el("p", "", "尚无可显示的往来记录。"));
+    if (!items.length)
+      list.append(
+        el(
+          letters ? "li" : "p",
+          "social-notice",
+          letters ? "信封里还没有来信。" : "尚无可显示的往来记录。",
+        ),
+      );
     root.append(list);
     if (response.value.nextCursor)
       root.append(
-        button("下一页往来", () => render(response.value.nextCursor)),
+        button(letters ? "下一页信件" : "下一页往来", () =>
+          render(response.value.nextCursor),
+        ),
       );
-    if (cursor) root.append(button("返回第一页往来", () => render()));
+    if (cursor)
+      root.append(
+        button(letters ? "返回第一页信件" : "返回第一页往来", () => render()),
+      );
+    if (letters) return;
     const fold = el("details", "social-settings-fold");
     fold.append(
       el("summary", "", "实例社交设置"),
@@ -510,6 +602,8 @@ export function createSocialView({ root, api, isActive, agentId }) {
     close() {
       closed = true;
       clear("往来面板已关闭。");
+      root.replaceChildren();
+      root.classList.remove("social-letters");
     },
   };
 }

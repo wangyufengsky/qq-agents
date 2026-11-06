@@ -14,6 +14,9 @@ const $ = (s) => document.querySelector(s),
 // Old bookmarks enter the same home surface as the primary navigation.
 if (globalThis.location?.search === "?view=board")
   globalThis.location.replace("/home-space/?open=board#living");
+const initialRecordPage = globalThis.location?.search
+  ? new URLSearchParams(globalThis.location.search)
+  : null;
 let configMigrationWarnings = [];
 let token = sessionStorage.getItem("qq-unified-token") || "",
   config,
@@ -21,7 +24,13 @@ let token = sessionStorage.getItem("qq-unified-token") || "",
   tools = [],
   agentDefaults = {},
   status,
-  tab = "overview",
+  tab =
+    initialRecordPage?.get("view") === "memory" &&
+    initialRecordPage.get("type") === "diary"
+      ? "diary"
+      : ["memory", "diary", "visits"].includes(initialRecordPage?.get("view"))
+        ? initialRecordPage.get("view")
+        : "overview",
   editing,
   errorFilter = "",
   globalPausePending = false;
@@ -50,7 +59,9 @@ const titles = {
   agents: ["角色", "人格与经历归属于稳定身份，切换后端也能延续。"],
   connections: ["QQ 账号", "每个 QQ 账号独立连接，启停连接不影响登录数据。"],
   backends: ["AI 后端", "管理 DSH、Codex 与各自的模型和工具。"],
-  memory: ["经历与日记", "消息按实际发生记录；日记由 AI 自主书写。"],
+  memory: ["记忆", "查看实际发生的消息与经历，按人物、来源和关键词回查。"],
+  diary: ["日记", "阅读角色自主书写的日记、正文与修订历史。"],
+  visits: ["访问", "查看角色作客或接待时留下的访问经历与对话记录。"],
   updates: ["版本更新", "查看官方版本、更新说明和升级方式。"],
   settings: ["运行设置", "隔离开发、全局参与边界与可迁移配置。"],
   board: [
@@ -227,6 +238,7 @@ $("#token").onkeydown = (e) => {
   if (e.key === "Enter") $("#login-button").click();
 };
 $("#logout").onclick = () => {
+  if (typeof closeVisits === "function") closeVisits();
   sessionStorage.removeItem("qq-unified-token");
   location.reload();
 };
@@ -544,6 +556,8 @@ const sections = {
       "mood",
       "people",
       "memory",
+      "diary",
+      "visits",
       "subject",
       "projects",
       "intents",
@@ -568,7 +582,9 @@ const pageLabels = {
   projects: "项目与活动",
   intents: "主动联系",
   sessions: "会话",
-  memory: "记忆与日记",
+  memory: "记忆",
+  diary: "日记",
+  visits: "访问",
   schedule: "作息与定时",
   apps: "浏览与分享",
   permissions: "文件",
@@ -579,7 +595,7 @@ const pageLabels = {
   board: "留言板",
 };
 const lastPage = {};
-let roleId;
+let roleId = initialRecordPage?.get("agentId") || undefined;
 const sectionOf = (page) =>
   Object.keys(sections).find((s) => sections[s].pages.includes(page)) || "home";
 function syncRole() {
@@ -636,6 +652,19 @@ function renderSectionBar(section) {
   if (add) add.onclick = () => action(() => operate("add", "agents"));
 }
 function render() {
+  memorySearchRequest++;
+  memoryReaderRequest++;
+  if (typeof closeVisits === "function") closeVisits();
+  if (
+    editing?.type === "read" &&
+    editing.agentId &&
+    roleId &&
+    editing.agentId !== roleId
+  ) {
+    $("#edit-fields").textContent = "";
+    $("#editor").close();
+    editing = null;
+  }
   renderGlobalPauseControl();
   if (typeof renderUpdateBadge === "function")
     renderUpdateBadge(status?.updateNotice);
@@ -731,8 +760,10 @@ function render() {
     renderFilePermissions();
   } else if (["schedule", "voices", "operations"].includes(tab)) {
     renderParity(tab);
-  } else if (tab === "memory") {
+  } else if (["memory", "diary"].includes(tab)) {
     renderMemory(content);
+  } else if (tab === "visits") {
+    action(() => renderVisits(content));
   } else {
     content.innerHTML = settingsMarkup();
   }
@@ -2192,37 +2223,48 @@ function sceneMarkup(scene, people = {}) {
     `<li><small>${esc(m.occurredAt)} · ${memorySpeaker(m.senderId, m.senderName, people)}${m.matched ? " · 命中" : ""}</small><p>${esc(m.recallNotice || "")}${esc(m.body)}${m.bodyTruncated ? "…（原文未完整展示）" : ""}</p>${m.replyTo.length ? `<small>引用：${m.replyTo.map((r) => esc(r.messageId) + (r.status === "observed" ? "（有原文）" : "（未取得原文）")).join("、")}</small>` : ""} <button type="button" data-read="${esc(m.id)}">读原文</button></li>`;
   return `<details open><summary>${esc(source.name || "名称未记录")} · ${esc(source.conversation)} · 场景片段</summary><p class="hint">以下是时间相邻的消息，不代表同一话题。名称${source.nameObservedAt ? "观察于 " + esc(source.nameObservedAt) : "未知"}。</p><p>片段内发言者：${scene.participants.map((p) => memorySpeaker(p.id, p.observedNames.join(" / "), people, `${Number(p.messageCount)} 条`)).join("、") || "未知"}。这不是全群成员名单。</p><ol>${scene.messages.map(line).join("")}</ol>${scene.quoted.length ? `<p>另取的引用原文（不计入片段参与者）：</p><ol>${scene.quoted.map(line).join("")}</ol>` : ""}${scene.contextTruncated ? '<p class="hint">上下文受结果预算限制，已收缩；可继续展开。</p>' : ""}${!scene.timeKnown ? '<p class="hint">原消息时间不可靠，未自动拼接相邻发言。</p>' : ""}${scene.sharedRecords?.length ? `<p class="hint">${scene.sharedRecords.length} 条重叠记录已在本页前面的片段展示，按原记录 ID 去重。</p>` : ""}<button type="button" data-context="${esc(scene.anchorId)}">查看更多前后文</button> <button type="button" data-related="${esc(scene.anchorId)}">跨时间引用 / 撤回</button></details>`;
 }
-async function readRelated(id, afterSeq = 0) {
+async function readRelated(
+  id,
+  afterSeq = 0,
+  agentId = $("#memory-agent").value,
+) {
+  const request = ++memoryReaderRequest;
   await action(async () => {
     const r = await api(
       "/api/memory/related?" +
         new URLSearchParams({
-          agentId: $("#memory-agent").value,
+          agentId,
           id,
           afterSeq,
         }),
     );
-    editing = { type: "read" };
+    if (request !== memoryReaderRequest) return;
+    editing = { type: "read", agentId };
     $("#edit-title").textContent = "明确引用与撤回";
     $("#edit-fields").innerHTML =
       `<p class="hint">这里只展示明确关系。引用不自动等于更正、赞同或因果；撤回不证明原话真假。可继续读原文判断。</p>${r.items.map((x) => `<article class="record"><small>${esc(x.record.senderName || "名字未记录")}（${esc(x.record.senderId || "未知")}）· ${esc(x.record.occurredAt || "")}</small><p>${esc(x.record.recallNotice || "")}${esc(x.record.body || "摘要省略")}</p>${(x.links || []).map((l) => `<p>${l.relation === "recall-notice" ? "撤回通知" : "明确引用"} → ${esc(l.toMessageId)} ${l.toId ? `<button type="button" data-read="${esc(l.toId)}">引用原文</button>` : "（原文未归档）"}</p>`).join("")}<button type="button" data-read="${esc(x.record.id)}">读原文</button></article>`).join("") || "没有已归档的明确关系；不代表没有后续。"}${r.nextAfterSeq !== null ? '<button type="button" id="more-relations">继续读取关系</button>' : ""}`;
     $("#edit-fields")
       .querySelectorAll("[data-read]")
-      .forEach((b) => (b.onclick = () => readMemory(b.dataset.read)));
+      .forEach(
+        (b) => (b.onclick = () => readMemory(b.dataset.read, { agentId })),
+      );
     if (r.nextAfterSeq !== null)
-      $("#more-relations").onclick = () => readRelated(id, r.nextAfterSeq);
+      $("#more-relations").onclick = () =>
+        readRelated(id, r.nextAfterSeq, agentId);
     $("#edit-form footer").hidden = true;
     if (!$("#editor").open) $("#editor").showModal();
   });
 }
 // Other pages (a person card) pass their own agentId; the memory page uses its picker.
 async function readConversation(args) {
+  const request = ++memoryReaderRequest;
   const agentId = args.agentId || $("#memory-agent").value;
   await action(async () => {
     const r = await api(
       "/api/memory/conversation?" + new URLSearchParams({ ...args, agentId }),
     );
-    editing = { type: "read" };
+    if (request !== memoryReaderRequest) return;
+    editing = { type: "read", agentId };
     $("#edit-title").textContent = "同一来源的前后文";
     $("#edit-fields").innerHTML =
       `<p class="hint">原始记录按归档顺序排列；不是自动识别的话题。${r.truncated ? "本页受字符预算限制。" : ""}</p>${r.items.map((m) => `<article class="record"><small>${esc(m.conversation)} · ${esc(m.senderName || m.senderId || "身份未知")} · ${esc(m.occurredAt || "时间未知")}</small><p>${esc(m.recallNotice || "")}${esc(m.body || "摘要未展示")} ${m.bodyTruncated ? "（可读原文）" : ""}</p><button type="button" data-read="${esc(m.id)}">读原文</button></article>`).join("") || "没有更多记录"}${r.items.length ? '<button type="button" id="older-context">更早记录</button> <button type="button" id="newer-context">更晚记录</button>' : ""}`;
@@ -2252,10 +2294,12 @@ async function readConversation(args) {
 // when nothing is asked), then each conversation's state folded below.
 function renderMemory(content) {
   const agentId = roleId || config.agents[0]?.id;
-  content.innerHTML = `<section class="card mem-search"><label class="mem-agent">角色<select id="memory-agent">${config.agents.map((a) => `<option value="${esc(a.id)}" ${a.id === agentId ? "selected" : ""}>${esc(a.name)}</option>`).join("")}</select></label><div class="mem-bar"><label class="mem-query">关键词<input id="memory-query" type="search" placeholder="约定、上次、某件事…"></label><label>类型<select id="memory-type"><option value="all">全部</option><option value="event">经历档案</option><option value="diary">个人日记</option></select></label><label>人物<input id="memory-person" list="memory-people" inputmode="numeric" autocomplete="off" placeholder="QQ 号或从列表选"><datalist id="memory-people"></datalist></label><label>来源<select id="memory-source"><option value="">全部来源</option></select></label><label id="memory-source-manual-field" hidden>手动来源<input id="memory-source-manual" placeholder="group:10000 或 private:10000"></label><div class="mem-go"><button class="primary" id="search-memory">搜索</button><button class="ghost" id="export-memory">导出</button></div></div><div class="mem-source" id="memory-source-bar" hidden><p class="hint" id="memory-source-state"></p><div class="card-actions"><button id="reset-session">重置此来源模型上下文</button><button id="pause-conversation">暂停此来源</button><button id="resume-conversation">解除此来源暂停 / 静默</button></div></div></section><section class="card mem-results"><div class="mem-results-head"><strong id="memory-results-head">最近的经历和日记</strong><span class="hint">原始消息是“某人说过的话”，不自动等同于已核实事实；旧笔记标注 legacy 来源。</span></div><div id="memory-results" class="empty">读取中…</div></section>${fold("memory-conversations", "会话状态", '<p class="hint">按会话单独暂停只影响此角色在该来源的参与；角色暂停和全局暂停仍独立生效。</p><div id="memory-conversations">读取中…</div>', { summary: '<span id="memory-conversations-summary">读取中…</span>' })}`;
+  const recordType = tab === "diary" ? "diary" : "event";
+  content.innerHTML = `<section class="card mem-search"><label class="mem-agent">角色<select id="memory-agent">${config.agents.map((a) => `<option value="${esc(a.id)}" ${a.id === agentId ? "selected" : ""}>${esc(a.name)}</option>`).join("")}</select></label><div class="mem-bar"><label class="mem-query">关键词<input id="memory-query" type="search" placeholder="约定、上次、某件事…"></label><input id="memory-type" type="hidden" value="${recordType}"><label>人物<input id="memory-person" list="memory-people" inputmode="numeric" autocomplete="off" placeholder="QQ 号或从列表选"><datalist id="memory-people"></datalist></label><label>来源<select id="memory-source"><option value="">全部来源</option></select></label><label id="memory-source-manual-field" hidden>手动来源<input id="memory-source-manual" placeholder="group:10000 或 private:10000"></label><div class="mem-go"><button class="primary" id="search-memory">搜索</button><button class="ghost" id="export-memory">导出</button></div></div><div class="mem-source" id="memory-source-bar" hidden><p class="hint" id="memory-source-state"></p><div class="card-actions"><button id="reset-session">重置此来源模型上下文</button><button id="pause-conversation">暂停此来源</button><button id="resume-conversation">解除此来源暂停 / 静默</button></div></div></section><section class="card mem-results"><div class="mem-results-head"><strong id="memory-results-head">${recordType === "diary" ? "最近的日记" : "最近的记忆"}</strong><span class="hint">${recordType === "diary" ? "日记是角色自己的记录和理解；可阅读全文、切换修订版本。" : "原始消息是“某人说过的话”，不自动等同于已核实事实；旧笔记标注 legacy 来源。"}</span></div><div id="memory-results" class="empty">读取中…</div></section>${fold("memory-conversations", "会话状态", '<p class="hint">按会话单独暂停只影响此角色在该来源的参与；角色暂停和全局暂停仍独立生效。</p><div id="memory-conversations">读取中…</div>', { summary: '<span id="memory-conversations-summary">读取中…</span>' })}`;
+  $("#memory-type").value = recordType;
   $("#memory-agent").onchange = () => {
-    action(loadConversations);
-    searchMemory();
+    roleId = $("#memory-agent").value;
+    render();
   };
   $("#memory-source").onchange = () => {
     $("#memory-source-manual-field").hidden =
@@ -2276,7 +2320,11 @@ function renderMemory(content) {
   // The people this role has met, offered for the person filter.
   knownTargets(agentId).then((known) => {
     const list = $("#memory-people");
-    if (tab !== "memory" || !list || $("#memory-agent")?.value !== agentId)
+    if (
+      !["memory", "diary"].includes(tab) ||
+      !list ||
+      $("#memory-agent")?.value !== agentId
+    )
       return;
     list.innerHTML = known.people
       .map(
@@ -2367,7 +2415,11 @@ async function loadConversations() {
   const rows = await api(
     "/api/conversations?agentId=" + encodeURIComponent(agentId),
   );
-  if (tab !== "memory" || $("#memory-agent")?.value !== agentId) return;
+  if (
+    !["memory", "diary"].includes(tab) ||
+    $("#memory-agent")?.value !== agentId
+  )
+    return;
   const allowed = new Set([
     ...allowedGroupIds(a).map((x) => "group:" + x),
     ...a.allow.users.map((x) => "private:" + x),
@@ -2462,7 +2514,12 @@ async function searchMemory(cursor = null) {
     if (memorySource()) q.set("conversation", memorySource());
     const result = await api("/api/memory?" + q);
     // A newer search (another role, another query) owns the list now.
-    if (request !== memorySearchRequest) return;
+    if (
+      request !== memorySearchRequest ||
+      !["memory", "diary"].includes(tab) ||
+      $("#memory-agent")?.value !== agentId
+    )
+      return;
     const rows = [...result.items, ...result.diaries],
       people = result.people || {};
     const asked = [
@@ -2512,14 +2569,22 @@ async function searchMemory(cursor = null) {
 }
 let memoryReaderRequest = 0;
 async function readMemory(id, options = {}) {
-  const request = ++memoryReaderRequest;
+  let request = ++memoryReaderRequest;
   const agentId = options.agentId || $("#memory-agent").value;
   await action(async () => {
     const query = new URLSearchParams({ agentId, id });
     if (options.revision !== undefined) query.set("revision", options.revision);
     const r = await api("/api/memory/view?" + query);
     if (request !== memoryReaderRequest) return;
-    const reader = { type: "read" };
+    const recordPage = r.type === "diary" ? "diary" : "memory";
+    if (tab !== recordPage || roleId !== agentId) {
+      roleId = agentId;
+      tab = recordPage;
+      if (editing?.type === "read") editing = null;
+      render();
+      request = ++memoryReaderRequest;
+    }
+    const reader = { type: "read", agentId };
     editing = reader;
     $("#edit-title").textContent = r.title || "经历原文";
     $("#edit-fields").innerHTML =

@@ -47,7 +47,7 @@ async function setup(t) {
     fs.readFileSync(new URL("../public/app.js", import.meta.url), "utf8"),
     sandbox,
   );
-  vm.runInContext("config = initialConfig", sandbox);
+  vm.runInContext("config = initialConfig; render = () => {}", sandbox);
   return { ...f, request, node, sandbox };
 }
 
@@ -61,6 +61,8 @@ test("diary reader shows plain paragraphs and appends the full long body instead
   f.sandbox.diaryId = d.id;
   await vm.runInContext("readMemory(diaryId)", f.sandbox);
   assert.equal(f.node("#edit-title").textContent, "今天的日记");
+  assert.equal(vm.runInContext("tab", f.sandbox), "diary");
+  assert.equal(vm.runInContext("roleId", f.sandbox), "agent-0");
   assert.equal(f.node("#memory-reader-body").textContent, body.slice(0, 8000));
   assert.doesNotMatch(
     f.node("#edit-fields").innerHTML,

@@ -25,13 +25,19 @@ function layout(type, count, page) {
         item("card", "card", 55, 61, 10, 6, [78, 61, 16]),
         item("lamp", "lamp", 44, 61, 8, 5, [62, 61, 12]),
         item("art", "wall-art", 48, 39, 15, 2, [45, 31, 20]),
+        item("envelope", "envelope", 63, 49, 10, 4, [61, 48, 14]),
         item("window", "window", 81, 44, 19, 2, [77, 35, 29]),
         item("curtains", "curtains", 81, 46, 24, 3, [77, 37, 35]),
         item("bed", "bed", 80, 82, 31, 4, [61, 82, 61], "nook"),
         item("plant", "plant", 65, 82, 7, 5, [19, 82, 16], "nook"),
         item("rug", "rug", 55, 94, 39, 1, [53, 94, 62], "nook"),
       ],
-      hotspots: { door: "back", card: "intro", shelf: "works" },
+      hotspots: {
+        door: "back",
+        card: "intro",
+        shelf: "works",
+        envelope: "letters",
+      },
     };
   if (type === "living")
     return {
