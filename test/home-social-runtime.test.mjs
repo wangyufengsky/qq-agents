@@ -1910,3 +1910,90 @@ test("replacing a backend adapter cannot silently resume a window with only delt
   );
   assert.equal(r.socialRuntime.windowSessions.size, 0);
 });
+
+for (const removal of ["retracted_at", "hidden_at"])
+  test(`a newly prepared window message is not history before model delivery: ${removal}`, async (t) => {
+    const f = setup(t),
+      r = f.runtime,
+      db = f.store.db;
+    const { visit, windowId } = await turnOnlyWindow(f, 6);
+    f.setScript((_agent, binding) => windowReply(f, binding));
+    await f.pump();
+    let denied = false,
+      started = 0;
+    r.backends.set("agent-1", {
+      close: async () => {},
+      runSocial: async (params) => {
+        const input = inputState(params.prompt);
+        assert.equal(input.state.messages.length, 1);
+        db.prepare(
+          `UPDATE home_social_messages SET ${removal}=?,revision=revision+1 WHERE id=?`,
+        ).run(r.now(), input.state.messages[0].messageId);
+        try {
+          await params.beforeInput();
+        } catch {
+          denied = true;
+          throw Error("AUDIENCE_DENIED");
+        }
+        await params.onRunStarted();
+        started++;
+      },
+    });
+    await f.pump();
+    assert.equal(denied, true);
+    assert.equal(started, 0);
+    const window = db
+      .prepare("SELECT * FROM home_social_windows WHERE id=?")
+      .get(windowId);
+    assert.equal(window.turns_used, 1);
+    assert.equal(window.status, "closed");
+    assert.equal(
+      db
+        .prepare("SELECT count(*) n FROM home_social_messages WHERE visit_id=?")
+        .get(visit.id).n,
+      1,
+    );
+  });
+
+test("OpenAI window tool results are not history before the next HTTP input", async (t) => {
+  const f = setup(t),
+    r = f.runtime,
+    db = f.store.db;
+  const { visit, windowId } = await turnOnlyWindow(f, 6);
+  const adapter = r.backendConnections.adapter(r.agent("agent-0"));
+  const run = adapter.runSocial.bind(adapter);
+  adapter.runSocial = (params) => {
+    const call = params.callTool;
+    return run({
+      ...params,
+      callTool: async (name, args) => {
+        const result = await call(name, args);
+        if (name === "home_visit_room_read")
+          db.prepare(
+            "UPDATE home_social_grants SET revision=revision+1,revoked_at=? WHERE visit_id=?",
+          ).run(r.now(), visit.id);
+        return result;
+      },
+    });
+  };
+  const before = f.requests.length;
+  f.setScript((_agent, binding, round) =>
+    round === 0
+      ? [["home_visit_room_read", { visitId: visit.id }]]
+      : windowReply(f, binding),
+  );
+  await f.pump();
+  assert.equal(f.requests.length - before, 1);
+  assert.equal(
+    db
+      .prepare("SELECT count(*) n FROM home_social_messages WHERE visit_id=?")
+      .get(visit.id).n,
+    0,
+  );
+  assert.equal(
+    db
+      .prepare("SELECT status FROM home_social_windows WHERE id=?")
+      .get(windowId).status,
+    "closed",
+  );
+});

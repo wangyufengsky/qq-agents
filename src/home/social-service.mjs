@@ -1,6 +1,5 @@
 // @ts-check
 import {
-  captureSocialWindowHistory,
   admitSocialWindowMessage,
   socialWindowHistoryAllowed,
   socialInputLeaseAllowed,
@@ -344,13 +343,6 @@ export class HomeSocialService {
     )
       throw Error("SOURCE_RESTRICTED");
     track(ctx, { protectedSocialSources: labels });
-    const turn =
-      ctx.socialBinding?.turnId &&
-      this.db
-        .prepare("SELECT started_at FROM home_social_turns WHERE id=?")
-        .get(ctx.socialBinding.turnId);
-    if (turn?.started_at !== null && turn?.started_at !== undefined)
-      captureSocialWindowHistory(this.runtime, ctx, labels);
   }
   /** @param {string} kind @param {string} id @param {string} actor @param {number} now @param {any} [metadata] */
   event(kind, id, actor, now, metadata = {}) {
@@ -821,6 +813,7 @@ export class HomeSocialService {
   lease(ctx, guard, sourceIds = null) {
     if (sourceIds) {
       guard.socialHistoryLease = true;
+      guard.socialHistoryDelivered = false;
       guard.socialSourceIds = [...sourceIds];
     }
     ctx.socialInputLeases ||= new Set();

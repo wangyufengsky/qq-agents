@@ -192,6 +192,21 @@ export class SocialRuntime {
           );
       });
     const result = await this.runtime.callTool(ctx, name, args);
+    if (
+      [
+        "home_visit_read",
+        "home_visit_room_read",
+        ...SOCIAL_MEMORY_TOOLS,
+      ].includes(name)
+    ) {
+      this.assertContext(ctx);
+      if (SOCIAL_MEMORY_TOOLS.includes(name))
+        recallBoundary(this.runtime, ctx).assert(result);
+      // OpenAI tool results remain in the bridge until the next HTTP input;
+      // native tool replies are delivered directly to their running backend.
+      if (ctx.socialNativeToolDelivery)
+        captureSocialWindowHistory(this.runtime, ctx);
+    }
     if (key && ["committed", "not_sent", "unknown"].includes(result?.status))
       this.store.transaction(() => {
         const row = this.db
@@ -683,6 +698,10 @@ export class SocialRuntime {
         if (ctx.socialSession?.adapter && ctx.socialSession.adapter !== adapter)
           throw Error("SOCIAL_WINDOW_CLOSED");
         if (ctx.socialSession) ctx.socialSession.adapter = adapter;
+        ctx.socialNativeToolDelivery =
+          r.config.backends.find(
+            (/** @type {any} */ backend) => backend.id === a.backendId,
+          )?.type !== "openai";
         const identity = r.memory.bind(a.id).identity;
         const self = this.invitationReadOnly(ctx)
           ? null

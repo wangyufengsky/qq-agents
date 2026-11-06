@@ -366,11 +366,29 @@ function historicalMarker(history, marker) {
 export function socialWindowHistoryAllowed(runtime, ctx, sources) {
   if (!historyScopeAllowed(runtime, ctx))
     return socialContextAllowed(runtime, ctx, sources);
+  const pending = pendingWindowMessages(runtime, ctx);
+  if (pending === null) return false;
   return sources.every(
     (marker) =>
       socialContextAllowed(runtime, ctx, [marker]) ||
-      historicalMarker(ctx.socialHistory, marker),
+      historicalMarker(ctx.socialHistory, marker) ||
+      pending.some((entry) => entry.labels.includes(marker)),
   );
+}
+/** Pending message lineage authorizes preparation only while its new carrier is
+ * visible. It becomes session history at the physical input delivery boundary.
+ * @param {any} runtime @param {any} ctx @returns {any[]|null} */
+function pendingWindowMessages(runtime, ctx) {
+  const result = [];
+  for (const message of ctx.socialPendingWindowMessages?.values() || []) {
+    const lineage = windowMessageLineage(runtime, ctx, message);
+    if (!lineage) return null;
+    result.push({
+      ...lineage,
+      marker: socialMarker(lineage.visitId, lineage.messageId),
+    });
+  }
+  return result;
 }
 /** Register only currently authorized input (or history already admitted here).
  * The caller invokes this at physical input delivery, never to authorize a read.
@@ -381,18 +399,43 @@ export function captureSocialWindowHistory(
   ids = ctx.privateRead || [],
 ) {
   if (!historyScopeAllowed(runtime, ctx)) return false;
-  const sources = socialSources(runtime, ctx, ids);
-  if (!socialWindowHistoryAllowed(runtime, ctx, sources))
+  const sources = socialSources(runtime, ctx, ids),
+    requested = new Set(sources);
+  const pending = pendingWindowMessages(runtime, ctx);
+  if (pending === null || !socialWindowHistoryAllowed(runtime, ctx, sources))
     throw Error("SOCIAL_SOURCE_DENIED");
+  const delivered = pending.filter((entry) => requested.has(entry.marker));
+  const guards = [...(ctx.socialInputLeases || [])].filter(
+    (guard) =>
+      guard.socialHistoryLease &&
+      guard.socialHistoryDelivered !== true &&
+      guard.socialSourceIds.some((/** @type {string} */ marker) =>
+        requested.has(marker),
+      ),
+  );
+  // A new read cannot borrow an older admission of the same source identifier.
+  for (const guard of guards)
+    if (guard() === false) throw Error("AUDIENCE_DENIED");
+  const additions = [];
   for (const marker of sources) {
+    if (
+      !socialContextAllowed(runtime, ctx, [marker]) &&
+      !historicalMarker(ctx.socialHistory, marker) &&
+      !delivered.some((entry) => entry.labels.includes(marker))
+    )
+      throw Error("SOCIAL_SOURCE_DENIED");
     const source = parseSocialMarker(marker);
     if (
       source &&
       ["message", "grant"].includes(source.kind) &&
       source.id === ctx.socialHistory.visitId
     )
-      ctx.socialHistory.sources.add(marker);
+      additions.push(marker);
   }
+  for (const marker of additions) ctx.socialHistory.sources.add(marker);
+  for (const guard of guards) guard.socialHistoryDelivered = true;
+  for (const entry of delivered)
+    ctx.socialPendingWindowMessages.delete(entry.messageId);
   return true;
 }
 /** A stale ordinary display lease is not a request to fetch the old body again.
@@ -407,6 +450,8 @@ export function socialInputLeaseAllowed(runtime, ctx, guard) {
   return (
     historyScopeAllowed(runtime, ctx) &&
     guard.socialHistoryLease === true &&
+    guard.socialHistoryDelivered === true &&
+    pendingWindowMessages(runtime, ctx) !== null &&
     Array.isArray(guard.socialSourceIds) &&
     guard.socialSourceIds.length > 0 &&
     guard.socialSourceIds.every((/** @type {string} */ marker) =>
@@ -503,19 +548,18 @@ function windowMessageLineage(runtime, ctx, message) {
 export function socialWindowMessageReadable(runtime, ctx, message) {
   return !!windowMessageLineage(runtime, ctx, message);
 }
-/** Admit a currently visible new message from this window. Its historical lineage
+/** Stage a currently visible new message from this window. Its historical lineage
  * is not a grant to reread the original withdrawn message or room document.
  * @param {any} runtime @param {any} ctx @param {any} message */
 export function admitSocialWindowMessage(runtime, ctx, message) {
   if (!historyScopeAllowed(runtime, ctx)) return false;
   const lineage = windowMessageLineage(runtime, ctx, message);
   if (!lineage) return false;
-  for (const marker of lineage.labels)
-    if (historicalMarker(lineage.sender, marker))
-      ctx.socialHistory.sources.add(marker);
-  ctx.socialHistory.sources.add(
-    socialMarker(lineage.visitId, lineage.messageId),
-  );
+  ctx.socialPendingWindowMessages ||= new Map();
+  ctx.socialPendingWindowMessages.set(lineage.messageId, {
+    id: message.id,
+    revision: message.revision,
+  });
   return true;
 }
 /** No general disclosure grant can widen the audience of social private material.

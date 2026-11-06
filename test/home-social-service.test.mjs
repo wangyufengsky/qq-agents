@@ -1260,6 +1260,7 @@ test("same-window history permits ordinary replies after room changes without gr
   });
   assert.equal(sent.status, "committed");
   const view = f.s.visitRead(b, { visitId: f.visitId });
+  captureSocialWindowHistory(f.runtime, b);
   assert.equal(
     view.messages[0].body,
     "Synthetic continued ordinary conversation",
@@ -1410,5 +1411,75 @@ test("unsubmitted ordinary input cannot borrow window history to survive revoked
   assert.throws(
     () => captureSocialWindowHistory(f.runtime, a),
     /SOCIAL_SOURCE_DENIED/,
+  );
+});
+
+for (const change of ["retracted", "hidden"])
+  test(`prepared new message is not historical input before delivery: ${change}`, (t) => {
+    const f = windowFixture(t),
+      a = f.actor("agent-0"),
+      b = f.actor("agent-1");
+    f.s.roomRead(a, { visitId: f.visitId });
+    captureSocialWindowHistory(f.runtime, a);
+    f.s.db
+      .prepare(
+        "UPDATE home_social_grants SET revision=revision+1,scope='[]' WHERE visit_id=?",
+      )
+      .run(f.visitId);
+    const sent = f.s.send(a, {
+      requestId: randomUUID(),
+      visitId: f.visitId,
+      expectedVisitRevision: 1,
+      body: "Synthetic prepared new body",
+    });
+    assert.equal(sent.status, "committed");
+    const prepared = f.s.visitRead(b, { visitId: f.visitId });
+    assert.equal(prepared.messages[0].body, "Synthetic prepared new body");
+    assert.equal(b.socialHistory.sources.size, 0);
+    const id = sent.result.messageId;
+    const column = change === "retracted" ? "retracted_at" : "hidden_at";
+    f.s.db
+      .prepare(
+        `UPDATE home_social_messages SET ${column}=?,revision=revision+1 WHERE id=?`,
+      )
+      .run(f.now(), id);
+    assert.equal(
+      socialWindowHistoryAllowed(f.runtime, b, socialSources(f.runtime, b)),
+      false,
+    );
+    assert.equal(
+      [...b.socialInputLeases].every((guard) =>
+        socialInputLeaseAllowed(f.runtime, b, guard),
+      ),
+      false,
+    );
+    let delivered = 0;
+    assert.throws(() => {
+      captureSocialWindowHistory(f.runtime, b);
+      delivered++;
+    }, /SOCIAL_SOURCE_DENIED|AUDIENCE_DENIED/);
+    assert.equal(delivered, 0);
+    assert.equal(b.socialHistory.sources.size, 0);
+  });
+
+test("a fresh room read must revalidate its delivery even when an older copy is already historical", (t) => {
+  const f = windowFixture(t),
+    a = f.actor("agent-0");
+  f.s.roomRead(a, { visitId: f.visitId });
+  captureSocialWindowHistory(f.runtime, a);
+  f.s.roomRead(a, { visitId: f.visitId });
+  const guards = [...a.socialInputLeases];
+  assert.equal(guards[0].socialHistoryDelivered, true);
+  assert.equal(guards[1].socialHistoryDelivered, false);
+  f.s.db
+    .prepare(
+      "UPDATE home_social_grants SET revision=revision+1,scope='[]' WHERE visit_id=?",
+    )
+    .run(f.visitId);
+  assert.equal(socialInputLeaseAllowed(f.runtime, a, guards[0]), true);
+  assert.equal(socialInputLeaseAllowed(f.runtime, a, guards[1]), false);
+  assert.throws(
+    () => captureSocialWindowHistory(f.runtime, a),
+    /AUDIENCE_DENIED/,
   );
 });
