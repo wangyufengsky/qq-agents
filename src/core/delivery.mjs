@@ -1,3 +1,4 @@
+import { assertHomeSceneMedia } from "../home/scene-media.mjs";
 import { assertNoSocialDisclosure } from "./social-protection.mjs";
 import { peerQzoneSources } from "./peer-qzone-protection.mjs";
 import { waitFirstReply } from "./typing.mjs";
@@ -268,8 +269,15 @@ export class DeliveryService {
     // request ID, wording, media, action or target. Same-ID receipt reads above
     // remain available; new deliveries are fenced for this continuation.
     if (ctx.recoveryDeliveryBlocked) throw Error("RECOVERY_DELIVERY_BLOCKED");
-    if (metadata.mediaId)
+    if (metadata.mediaId) {
+      assertHomeSceneMedia(
+        runtime,
+        ctx,
+        runtime.media.metadata(a.id, metadata.mediaId),
+        { sharing: true },
+      );
       runtime.generatedImages.assertDelivery(ctx, metadata.mediaId, requestId);
+    }
     return { a, mem, proactive, requestId, contactFreeAction };
   }
   async deliverNow(ctx, operation) {

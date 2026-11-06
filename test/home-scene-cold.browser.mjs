@@ -1,6 +1,8 @@
 // @ts-check
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
+import path from "node:path";
+import { MediaStore } from "../src/tools/media.mjs";
 import { fixture, config, context } from "./helpers.mjs";
 import { findScreenshotBrowser } from "../src/tools/public-screenshot.mjs";
 import { homeSceneView, renderHomeScene } from "../src/home/scene-view.mjs";
@@ -34,6 +36,8 @@ const f = fixture(
   { after: (/** @type {() => unknown} */ fn) => cleanup.push(fn) },
   { cfg },
 );
+const media = new MediaStore(path.join(f.root, "media"));
+Object.assign(f.runtime, { media });
 const ctx = context(f.runtime, "agent-0", "@subject");
 /** @type {any} */
 let observedFailure;
@@ -70,6 +74,7 @@ try {
         .text,
     );
     assert.equal(text.imageAvailable, true);
+    assert.equal(text.mediaId, media.metadata(ctx.agentId, text.mediaId).id);
     console.log(
       JSON.stringify({
         mode: "image",

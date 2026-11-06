@@ -7,7 +7,14 @@ import {
   renderHomeScene,
 } from "../src/home/scene-view.mjs";
 import { homeTemplate, defaultLayout } from "../src/home/layout.mjs";
+import path from "node:path";
+import { MediaStore } from "../src/tools/media.mjs";
 import { findScreenshotBrowser } from "../src/tools/public-screenshot.mjs";
+
+const png = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=",
+  "base64",
+);
 
 function setup(t) {
   const cfg = config();
@@ -18,20 +25,29 @@ function setup(t) {
     sceneView: { enabled: true },
   };
   const f = fixture(t, { cfg });
+  f.runtime.media = new MediaStore(path.join(f.root, "media"));
   return { ...f, ctx: context(f.runtime, "agent-0", "@subject") };
 }
-test("scene view is opt-in, own-target only and text fallback is explicit", async (t) => {
+test("scene view is opt-in, own-target only and image sharing does not require model vision", async (t) => {
   const f = setup(t);
   const a = f.runtime.agent("agent-0");
   const backend = f.runtime.config.backends.find((b) => b.id === a.backendId);
   backend.type = "openai";
   backend.vision = false;
-  const result = await homeSceneView(f.runtime, f.ctx, {
-    type: "room",
-    viewport: "mobile",
-  });
-  assert.equal(result.imageAvailable, false);
-  assert.equal(result.reason, "VISION_UNSUPPORTED");
+  const result = await homeSceneView(
+    f.runtime,
+    f.ctx,
+    {
+      type: "room",
+      viewport: "mobile",
+    },
+    async () => png,
+  );
+  assert.equal(result.imageAvailable, true);
+  assert.equal(result.modelImageAttached, false);
+  assert.ok(result.mediaId);
+  assert.equal(result.content, undefined);
+  assert.equal(result.effectiveScene.visibleObjectCount, 13);
   assert.equal(result.view.ownerAgentId, a.id);
   assert.equal(result.view.layoutRevision, 0);
   a.home.sceneView.enabled = false;
@@ -40,6 +56,24 @@ test("scene view is opt-in, own-target only and text fallback is explicit", asyn
     /HOME_SCENE_VIEW_DISABLED/,
   );
 });
+test("formal tool dispatch keeps failed scene descriptions out of MCP content arrays", async (t) => {
+  const f = setup(t);
+  const previous = process.env.QQ_SCREENSHOT_BROWSER;
+  process.env.QQ_SCREENSHOT_BROWSER = "/synthetic-missing-home-browser";
+  t.after(() => {
+    if (previous === undefined) delete process.env.QQ_SCREENSHOT_BROWSER;
+    else process.env.QQ_SCREENSHOT_BROWSER = previous;
+  });
+  const result = await f.runtime.callTool(f.ctx, "room_scene_view", {
+    type: "room",
+  });
+  assert.equal(result.imageAvailable, false);
+  assert.ok(result.roomContent);
+  assert.equal(result.content, undefined);
+  assert.equal(result.mediaId, undefined);
+  assert.equal(result.effectiveScene.visibleObjectCount, 13);
+});
+
 test("real browser renders persisted scene with the packaged desktop and mobile renderer", async (t) => {
   let executablePath;
   try {
@@ -182,6 +216,45 @@ test("scene image survives MCP and existing OpenAI and Antigravity input adapter
   assert.equal(media.catalog().length, 0);
 });
 
+test("social room snapshots include furniture and name without private display slots or share media", async (t) => {
+  const f = setup(t);
+  const room = await f.runtime.executeTool(f.ctx, "room_read", {});
+  for (const slot of ["tagline", "intro"]) {
+    await f.runtime.executeTool(f.ctx, "room_publish", {
+      identityGeneration: room.identityGeneration,
+      requestId: "private-" + slot,
+      slot,
+      expectedItemRevision: 0,
+      title: "合成资料",
+      body: "PRIVATE_ROOM_" + slot,
+      source: "original-text",
+    });
+  }
+  f.ctx.runtimeKind = "subject-social";
+  let rendered;
+  const result = await homeSceneView(
+    f.runtime,
+    f.ctx,
+    { type: "room" },
+    async (snapshot) => {
+      rendered = snapshot;
+      return png;
+    },
+  );
+  const description = JSON.parse(result.content[0].text);
+  assert.equal(rendered.roomContent, undefined);
+  assert.equal(rendered.residents[0].tagline, undefined);
+  assert.equal(rendered.residents[0].name, f.runtime.agent(f.ctx.agentId).name);
+  assert.doesNotMatch(JSON.stringify(description), /PRIVATE_ROOM_/);
+  assert.equal(description.mediaId, undefined);
+  assert.equal(description.effectiveScene.visibleObjectCount, 13);
+  assert.equal(result.content[1].type, "image");
+  await assert.rejects(
+    homeSceneView(f.runtime, f.ctx, { type: "hall" }),
+    /HOME_SOURCE_DENIED/,
+  );
+});
+
 test("native media dedup preserves independently authorized sources", async () => {
   const { AntigravityMedia } =
     await import("../src/backends/antigravity-media.mjs");
@@ -322,7 +395,7 @@ test("OpenAI batch retract cannot first deliver or persist stale scene text or p
           return homeSceneView(f.runtime, f.ctx, { type: "room" }, async () => {
             if (mode === "render-failed")
               throw Error("SCREENSHOT_BROWSER_MISSING");
-            return Buffer.from("synthetic-pixels");
+            return png;
           });
         return f.runtime.executeTool(f.ctx, "room_retract", {
           identityGeneration: view.identityGeneration,
@@ -560,7 +633,7 @@ test("shared scene decorations expose only own tagline and bind its independent 
   let room, hall;
   await homeSceneView(f.runtime, f.ctx, { type: "room" }, async (snapshot) => {
     room = snapshot;
-    return Buffer.from("synthetic-room");
+    return png;
   });
   assert.equal(room.residents.length, 1);
   assert.equal(room.residents[0].tagline, tagA);

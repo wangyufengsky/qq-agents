@@ -8,9 +8,10 @@ import { pathToFileURL } from "node:url";
  * @param {string} [epoch] */
 export function antigravityToolAllowed(value, names, images = [], epoch) {
   const call = /** @type {any} */ (value);
-  if (call?.name === "view_file") {
-    const file = images.find((image) => image.path === call.args?.AbsolutePath);
-    if (!file || Object.keys(call.args).some((key) => key !== "AbsolutePath"))
+  if (call?.name === "read_file" || call?.name === "view_file") {
+    const pathKey = call.name === "read_file" ? "Path" : "AbsolutePath";
+    const file = images.find((image) => image.path === call.args?.[pathKey]);
+    if (!file || Object.keys(call.args).some((key) => key !== pathKey))
       return false;
     try {
       const stat = fs.lstatSync(file.path);
@@ -50,7 +51,7 @@ export function antigravityToolAllowed(value, names, images = [], epoch) {
   );
 }
 
-/** A native finish/view_file has no MCP envelope. Bind it to the native step
+/** A native finish/image reader has no MCP envelope. Bind it to the native step
  * watermark; prompt text can quote old epochs and cannot identify authority.
  * @param {any} input @param {any} catalogue */
 export function antigravityHookAllowed(input, catalogue) {

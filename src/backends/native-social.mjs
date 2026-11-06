@@ -4,12 +4,43 @@ import { SOCIAL_TOOLS } from "../home/social-tool-names.mjs";
 
 const allowed = new Set([
   ...SOCIAL_TOOLS.filter((name) => name !== "home_social_process"),
+  "room_scene_view",
   "self_read",
   "work_notes",
   "person_notes",
   "person_items",
   "mood_read",
 ]);
+
+/** Only the controlled scene tool may add pixels outside the text quota.
+ * @param {string} name @param {any} result @param {number} maxTextBytes */
+export function assertSocialToolResult(name, result, maxTextBytes) {
+  const content = Array.isArray(result?.content) ? result.content : [],
+    images = content.filter((/** @type {any} */ item) => item.type === "image");
+  if (images.length) {
+    if (
+      name !== "room_scene_view" ||
+      images.length !== 1 ||
+      images[0].mimeType !== "image/png" ||
+      typeof images[0].data !== "string" ||
+      images[0].data.length > Math.ceil((4 * 1024 * 1024) / 3) * 4 ||
+      Buffer.from(images[0].data, "base64").length > 4 * 1024 * 1024
+    )
+      throw Error("SOCIAL_TOOL_RESULT_LIMIT");
+  }
+  const text = JSON.stringify(
+    images.length
+      ? {
+          ...result,
+          content: content.map((/** @type {any} */ item) =>
+            item.type === "image" ? { ...item, data: "" } : item,
+          ),
+        }
+      : result,
+  );
+  if (Buffer.byteLength(text || "") > maxTextBytes)
+    throw Error("SOCIAL_TOOL_RESULT_LIMIT");
+}
 
 /** Each window owns a separate session per actor; submitted prompts never retry.
  * @param {any} backend @param {any} params
@@ -83,9 +114,7 @@ export async function runNativeSocial(backend, params, dispose) {
         // never of tool results that have not reached a later model request.
         await consume();
         const result = await params.callTool(name, args);
-        const text = JSON.stringify(result);
-        if (Buffer.byteLength(text || "") > params.maxToolResultBytes)
-          throw Error("SOCIAL_TOOL_RESULT_LIMIT");
+        assertSocialToolResult(name, result, params.maxToolResultBytes);
         if (!params.shouldStop?.()) await check();
         return result;
       },

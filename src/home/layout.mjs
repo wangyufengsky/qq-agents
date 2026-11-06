@@ -20,6 +20,28 @@ export function homeTemplate(type, ids = []) {
 export function defaultLayout(type) {
   return { ...makeScene(homeTemplate(type), type), kind: "scene-layout" };
 }
+/** @param {import("../../public/home-preview/scene.mjs").Scene} layout
+ * @param {import("../../public/home-preview/scene.mjs").Template} template */
+export function describeHomeScene(layout, template) {
+  const objects = resolveScene(layout, template, catalog).map((o) => ({
+      id: o.id,
+      asset: o.asset,
+      name: catalog[/** @type {keyof typeof catalog} */ (o.asset)].name,
+      hidden: o.hidden,
+    })),
+    hiddenObjectCount = objects.filter((o) => o.hidden).length;
+  return {
+    objects,
+    templateObjectCount: objects.length,
+    visibleObjectCount: objects.length - hiddenObjectCount,
+    hiddenObjectCount,
+    customizedObjectCount: objects.filter((o) =>
+      Object.hasOwn(layout.objects, o.id),
+    ).length,
+    notice:
+      "这是模板与自定义覆盖合成后的实际物件清单；layout.objects 只保存自定义覆盖，为空仍有默认家具。customizedObjectCount 是当前模板内的自定义覆盖条目数，不含配色；隐藏状态包含父物件的影响。",
+  };
+}
 /** @param {any} value @param {string} type @param {string[]} ids */
 export function validateLayout(value, type, ids = []) {
   if (value?.kind !== "scene-layout" || value?.sceneId !== type)

@@ -1,3 +1,5 @@
+import { assertHomeSceneMedia } from "../home/scene-media.mjs";
+import { mediaLease } from "./media-lease.mjs";
 import { trackSocial, socialSources } from "../core/social-protection.mjs";
 import {
   peerQzoneSources,
@@ -429,12 +431,23 @@ async function handle_sticker_collect(runtime, ctx, args, name) {
 async function handle_sticker_read(runtime, ctx, args, name) {
   const meta = runtime.media.metadata(ctx.agentId, args.mediaId);
   taintMedia(ctx, meta);
-  return runtime.media.view(
+  const result = await runtime.media.view(
     ctx.agentId,
     args.mediaId,
     args.animation,
     ctx.controller.signal,
   );
+  if (meta?.homeScene)
+    result[mediaLease] = () => {
+      try {
+        runtime.assertActive(ctx);
+        assertHomeSceneMedia(runtime, ctx, meta);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+  return result;
 }
 async function handle_voice_synthesize(runtime, ctx, args, name) {
   return synthesize(runtime, ctx, args);

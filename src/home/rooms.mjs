@@ -4,7 +4,7 @@ import { resolveProjectSnapshot } from "./project-snapshots.mjs";
 import { HomeIntents } from "./intents.mjs";
 import { RoomStore } from "./room-store.mjs";
 import { HOME_AUDIENCE, HOME_READ_TOOLS } from "./policy.mjs";
-import { homeTemplate, validateLayout } from "./layout.mjs";
+import { describeHomeScene, homeTemplate, validateLayout } from "./layout.mjs";
 import { catalog } from "../../public/home-preview/catalog.mjs";
 import { contextProtection } from "../core/protected-mind.mjs";
 import { sourceClass } from "../core/outbound-policy.mjs";
@@ -153,6 +153,19 @@ export class HomeRooms {
             a.home.publishing &&
             a.home.projectSnapshots?.enabled === true,
         },
+        itemsNotice:
+          "items 是介绍、作品与门牌短语的文字展示槽，不是家具；空文字槽不表示房间没有默认家具。家具请读 room_scene_read.effectiveScene。",
+        enabledFeatures: {
+          home: a.home.enabled === true,
+          publishing: a.home.publishing === true,
+          social:
+            this.runtime.config.homeSocial.enabled === true &&
+            a.home.social.enabled === true,
+          subject: a.subject.enabled === true,
+          intents: a.home.intents.enabled === true,
+        },
+        capabilityNotice:
+          "capabilities 是本轮可执行权限；enabledFeatures 是配置启用状态，不保证当前已运行或取得对方同意。普通聊天只读房间，提议功能启用时可用 room_intent_submit 递交给 @subject 主人格；布置、发布及发起串门由主人格负责，实际社交对话在独立社交上下文执行。",
         limits: {
           slots: 5,
           tagline: 80,
@@ -176,6 +189,7 @@ export class HomeRooms {
           publish: false,
         },
         template,
+        effectiveScene: describeHomeScene(view.layout, template),
         assets: Object.fromEntries(
           [
             ...new Set(

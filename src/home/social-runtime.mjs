@@ -6,6 +6,7 @@ import { SocialResources } from "./social-resources.mjs";
 import { effectiveSocialResourceBudget } from "./social-policy.mjs";
 import { socialProviderProfile } from "../backends/social-budget.mjs";
 import { toolSpecs } from "../tools/specs.mjs";
+import { toolAvailable } from "../tools/catalog.mjs";
 import { SOCIAL_TOOLS } from "./social-tool-names.mjs";
 import { recallBoundary } from "../core/recall-boundary.mjs";
 import { trackSocialMindOutput } from "../core/protected-mind.mjs";
@@ -193,6 +194,7 @@ export class SocialRuntime {
           );
       });
     const result = await this.runtime.callTool(ctx, name, args);
+    if (name === "room_scene_view") this.assertContext(ctx);
     if (
       [
         "home_visit_read",
@@ -650,7 +652,9 @@ export class SocialRuntime {
         ctx.socialSession = session;
         ctx.socialHistory = session.history;
       }
-      ctx.allowedTools = this.tools(ctx);
+      ctx.allowedTools = this.tools(ctx).filter((name) =>
+        toolAvailable(r.agent(ctx.agentId), name, ctx.conversation),
+      );
       ctx.socialYielded = false;
       const inherited = this.db
         .prepare(
@@ -1018,6 +1022,7 @@ export class SocialRuntime {
         "home_social_capabilities",
         "home_visit_invitation_read",
         "home_social_operation_read",
+        "room_scene_view",
       ].includes(name)
     )
       throw Error("TOOL_DISABLED");
@@ -1029,8 +1034,9 @@ export class SocialRuntime {
         "home_social_capabilities",
         "home_visit_invitation_read",
         "home_social_operation_read",
+        "room_scene_view",
       ];
-    return [...SOCIAL_TOOLS, ...SOCIAL_MEMORY_TOOLS].filter(
+    return [...SOCIAL_TOOLS, ...SOCIAL_MEMORY_TOOLS, "room_scene_view"].filter(
       (name) => name !== "home_social_process",
     );
   }
