@@ -103,7 +103,8 @@ strong {
     opacity 160ms,
     transform 160ms;
 }
-.paper-object:is(:hover, :focus-visible) {
+/* Raising a door would cover its separately rendered nameplate. */
+.paper-object:not(:has(.door-status)):is(:hover, :focus-visible) {
   z-index: 20 !important;
 }
 .paper-object:is(:hover, :focus-visible) .label {
@@ -728,132 +729,324 @@ strong {
   }
 }
 
-/* The editing controls live in a wooden box beneath the current room. */
+/* Dock controls beside the scene; only the inspector scrolls while arranging. */
+body.editing {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.editing .masthead {
+  width: 100%;
+  flex: 0 0 auto;
+}
+.editing main {
+  width: 100%;
+  max-width: 1600px;
+  flex: 1;
+  min-height: 0;
+  padding-bottom: 12px;
+}
+.editing #home-content {
+  height: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 24px;
+}
+.editing #scene-column {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto auto;
+}
+.editing .book-workspace {
+  min-height: 0;
+  margin-right: 28px;
+  container-type: size;
+  display: grid;
+  place-items: center;
+}
+.editing #stage {
+  width: min(100cqw, 150cqh);
+}
+.editing #bookmarks {
+  top: 12px;
+}
+.editing .book-footer {
+  min-height: 44px;
+}
+.editing #pagination {
+  margin: 0;
+  gap: 8px;
+}
 #editor {
-  margin: 22px 0 30px;
-  padding: 22px 26px 20px;
-  border: 10px solid #c99d66;
-  border-radius: 16px 13px 19px 14px;
+  min-height: 0;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  border: 6px solid #c99d66;
+  border-radius: 12px 10px 15px 11px;
   background: var(--wood-grain), #e8ce9c;
   box-shadow:
     inset 0 2px 8px #94704433,
-    0 9px 18px #87603820;
+    0 5px 12px #87603820;
+  animation: open-toolbox 180ms ease-out;
 }
-#editor[open] {
-  animation: open-toolbox 220ms ease-out;
-}
-#editor summary {
+.editor-heading {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  gap: 12px;
-  font-size: 25px;
-  list-style: none;
+  justify-content: space-between;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 10px 12px;
+  border-bottom: 1px solid #bc965e88;
 }
-#editor summary::-webkit-details-marker {
-  display: none;
-}
-#editor summary span {
-  font-size: 15px;
-  color: #8f7047;
-}
-#layout-status {
+.editor-heading h2 {
   margin: 0;
+  font-size: 23px;
+  line-height: 1.3;
+}
+#selected-object {
+  margin: 2px 0 0;
+  color: #81623e;
+  font-size: 14px;
+}
+#editor-close {
+  flex-shrink: 0;
+  border: 0;
+  padding: 4px 8px;
+  background: transparent;
   font-size: 15px;
 }
-.toolbox-hint {
-  font-size: 17px;
-  margin: 8px 0 14px;
+#editor-body {
+  /* Keep the hidden keyboard selector inside the scrolling inspector. */
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #bc965e transparent;
+  padding: 10px 12px;
+}
+#editor .toolbox-hint {
+  font-size: 14px;
+  margin: 0 0 6px;
 }
 #object-strip {
   display: flex;
-  gap: 12px;
+  gap: 6px;
   overflow-x: auto;
-  padding: 5px 3px 15px;
+  padding: 5px 3px 10px;
   scrollbar-width: thin;
   scrollbar-color: #bc965e transparent;
 }
 #object-strip button {
-  flex: 0 0 94px;
+  flex: 0 0 72px;
   display: grid;
   justify-items: center;
-  gap: 4px;
+  gap: 2px;
   border: 1px solid transparent;
   border-radius: 5px;
-  padding: 6px;
+  padding: 4px;
   background: #fff4d36b;
   color: #81623e;
-  font-size: 14px;
+  font-size: 13px;
 }
 #object-strip button img {
-  height: 65px;
-  width: 75px;
+  height: 42px;
+  width: 60px;
   object-fit: contain;
 }
 #object-strip button[aria-pressed="true"] {
   border-color: #8c9c6a;
   background: #f1efd3;
-  box-shadow: 1px 3px 4px #97703c20;
 }
-#editor > label:not(.sr-only) {
+#editor-body > label:not(.sr-only) {
   display: flex;
   align-items: center;
-  gap: 14px;
-  font-size: 17px;
+  gap: 12px;
+  margin: 8px 0;
+  font-size: 15px;
 }
 #editor select {
+  min-width: 0;
   max-width: 100%;
-  padding: 5px 9px;
+  min-height: 36px;
+  padding: 4px 6px;
   border: 0;
   border-bottom: 1px solid #bca276;
   border-radius: 0;
   background: #fff6e1b8;
-  font-size: 17px;
+  font-size: 15px;
 }
 #object-editor {
-  gap: 14px 24px;
-  padding: 22px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 14px;
+  margin: 0;
+  padding: 10px;
   border-radius: 3px;
   background: #fff5de;
-  box-shadow: 1px 3px 4px #96703c20;
 }
 #object-editor label {
-  font-size: 17px;
+  font-size: 15px;
+  gap: 3px;
+}
+#object-editor label:first-child {
+  grid-column: 1 / -1;
 }
 #object-editor input {
+  min-width: 0;
+  max-width: 100%;
   accent-color: #8b9a69;
 }
+#object-editor input[type="range"] {
+  width: 100%;
+  margin: 0;
+  min-height: 28px;
+}
 #object-editor output {
-  font-size: 14px;
-  color: #9d8358;
+  font-size: 13px;
+  color: #806740;
+}
+#object-editor .check {
+  align-items: center;
+  font-size: 13px;
 }
 #editor .settings-footer {
+  margin: 0;
+  display: block;
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border-top: 1px solid #bc965e88;
+  position: relative;
+}
+#editor #layout-status,
+#editor #save-status {
+  font-size: 13px;
+  margin: 0;
+}
+#save-status:empty {
+  display: none;
+}
+.editor-actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 12px 22px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 #editor .settings-footer button {
-  padding: 5px 12px;
+  padding: 6px 10px;
   border: 0;
-  border-bottom: 1px solid #a78959;
-  border-radius: 0;
+  border-radius: 3px;
   background: transparent;
   color: #715532;
-  font-size: 17px;
+  font-size: 15px;
 }
 #editor .settings-footer #save {
   background: #e2e5c7;
-  border-color: #9ba775;
-  border-radius: 3px;
+  border: 1px solid #9ba775;
+}
+#editor-more summary {
+  cursor: pointer;
+  padding: 10px 4px;
+  min-height: 44px;
+  font-size: 14px;
+}
+#editor-more > div {
+  position: absolute;
+  right: 6px;
+  bottom: calc(100% - 4px);
+  display: grid;
+  padding: 6px;
+  background: #fff5df;
+  border: 1px solid #bc965e;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px #67451b33;
+  z-index: 2;
+}
+/* Door hints belong above the artwork, away from the presence badge below. */
+.paper-object:has(.door-status) .label {
+  top: auto;
+  bottom: calc(100% + 8px);
+  width: max-content;
+  max-width: min(220px, 40vw);
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 @keyframes open-toolbox {
   from {
     opacity: 0;
-    transform: translateY(12px);
+    transform: translateX(12px);
   }
   to {
     opacity: 1;
     transform: none;
+  }
+}
+@media (max-width: 900px) and (min-height: 501px) {
+  .editing #home-content {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1.1fr) minmax(0, 1fr);
+    gap: 10px;
+  }
+}
+@media (max-width: 640px) {
+  .editing #stage {
+    width: min(100cqw, 75cqh);
+  }
+  .editing main {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+  .editing .book-workspace {
+    margin-right: 18px;
+  }
+  .editing #bookmarks {
+    right: -17px;
+    top: 4px;
+    gap: 5px;
+  }
+  .editing #bookmarks button {
+    min-height: 44px;
+    padding: 5px;
+  }
+  .editing .book-footer,
+  .editing #pagination {
+    font-size: 12px;
+  }
+}
+@media (max-height: 600px) and (min-aspect-ratio: 1/1) {
+  .editing .masthead {
+    height: 64px;
+    grid-template-columns: 1fr auto auto;
+    grid-template-rows: auto;
+    gap: 12px;
+  }
+  .editing .brand {
+    grid-row: 1;
+    font-size: 22px;
+  }
+  .editing #console-return {
+    grid-column: 3;
+    grid-row: 1;
+    font-size: 12px;
+  }
+  .editing #home-content {
+    grid-template-columns: minmax(0, 1fr) min(300px, 48%);
+    grid-template-rows: minmax(0, 1fr);
+    gap: 12px;
+  }
+  #editor .editor-heading {
+    padding: 4px 8px;
+  }
+  #editor .editor-heading h2 {
+    font-size: 19px;
+  }
+  #editor .settings-footer {
+    padding: 4px 8px;
   }
 }
 
@@ -1008,27 +1201,10 @@ strong {
   #reader[data-kind="intro"] .home-text-card {
     padding: 24px;
   }
-  #editor {
-    padding: 15px 12px;
-    border-width: 7px;
-  }
-  #editor summary {
-    font-size: 23px;
-  }
-  #editor summary span {
-    font-size: 12px;
-  }
-  #object-editor {
-    padding: 17px;
-    gap: 16px;
-  }
-  #object-editor label:first-child {
-    grid-column: 1 / -1;
-  }
 }
 @media (prefers-reduced-motion: reduce) {
   .guide-page,
-  #editor[open] {
+  #editor {
     animation: none;
   }
   .paper-object .label {

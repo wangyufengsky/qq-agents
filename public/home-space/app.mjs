@@ -37,6 +37,7 @@ let overview = null,
   draft = null,
   route = null,
   dirty = false,
+  editing = false,
   blocked = false,
   selection = "",
   ticket = 0,
@@ -100,7 +101,9 @@ function clearView(message = "登录或连接需要重新验证。") {
   readerAction = "";
   pageTurn.clear();
   for (const id of ["entries", "menu"]) if ($(id).open) $(id).close();
-  $("editor").open = false;
+  editing = false;
+  $("editor").hidden = true;
+  document.body.classList.remove("editing");
   $("home-tools").hidden = true;
   $("social-room-open").hidden = true;
   $("stage").inert = false;
@@ -110,6 +113,7 @@ function clearView(message = "登录或连接需要重新验证。") {
     "pagination",
     "reader-content",
     "object-editor",
+    "object-strip",
     "object-select",
   ])
     $(id).replaceChildren();
@@ -118,6 +122,7 @@ function clearView(message = "登录或连接需要重新验证。") {
     "subtitle",
     "folio",
     "layout-status",
+    "selected-object",
     "save-status",
   ])
     $(id).textContent = "";
@@ -243,7 +248,7 @@ function act(action) {
   } else openReader(action);
 }
 function decorate(node, o) {
-  if ($("editor").open && envelope?.capabilities.write) {
+  if (editing && envelope?.capabilities.write) {
     node.classList.add("editable-piece");
     node.classList.toggle("selected-piece", selection === o.id);
     node.tabIndex = 0;
@@ -286,6 +291,10 @@ function draw(direction = 0) {
       decorate,
     });
   document.body.className = `palette-${draft.palette}`;
+  document.body.classList.toggle(
+    "editing",
+    editing && envelope.capabilities.write,
+  );
   const heading = el("div", "book-heading"),
     chapter = { living: "第 一 页", hall: "第 二 页", room: "第 三 页" }[
       route.type
@@ -371,10 +380,11 @@ function draw(direction = 0) {
       next,
     );
   }
-  $("editor").hidden = !envelope.capabilities.write;
+  $("editor").hidden = !editing || !envelope.capabilities.write;
   $("edit-toggle").hidden = !envelope.capabilities.write;
-  $("edit-toggle").textContent = dirty ? "布置 · 未保存" : "布置";
-  $("edit-toggle").setAttribute("aria-expanded", String($("editor").open));
+  $("edit-toggle").textContent =
+    `${editing ? "收起布置" : "布置"}${dirty ? " · 未保存" : ""}`;
+  $("edit-toggle").setAttribute("aria-expanded", String(editing));
   $("layout-status").textContent = blocked
     ? "布置已有变化，请重读后核对。"
     : dirty
@@ -439,6 +449,8 @@ function editorFields() {
   root.replaceChildren();
   const o = template().objects.find((o) => o.id === selection);
   if (!o) return;
+  $("selected-object").textContent =
+    catalog[draft.objects[o.id]?.asset || o.asset].name;
   const p = draft.objects[o.id] || {};
   const l = el("label", "", "款式"),
     s = el("select");
@@ -518,7 +530,8 @@ async function refresh(animate = false) {
     $("gate").hidden = true;
     $("home-content").hidden = false;
     $("home-tools").hidden = false;
-    if (animate) $("editor").open = false;
+    if (animate || !next.capabilities.write) editing = false;
+    $("editor-more").open = false;
     const drawing = draw(animate ? turnDirection(oldRoute, nextRoute) : 0);
     editor();
     await drawing;
@@ -843,13 +856,35 @@ for (const id of ["entries", "menu"]) {
     }
   });
 }
-$("edit-toggle").onclick = () => {
-  $("editor").open = !$("editor").open;
-  if ($("editor").open) $("editor").scrollIntoView({ block: "nearest" });
-};
-$("editor").addEventListener("toggle", () => {
-  $("edit-toggle").setAttribute("aria-expanded", String($("editor").open));
+function setEditing(open) {
+  editing = open && envelope?.capabilities.write === true;
+  $("editor-more").open = false;
   draw();
+  if (editing) {
+    window.scrollTo(0, 0);
+    $("editor-close").focus({ preventScroll: true });
+  } else $("edit-toggle").focus({ preventScroll: true });
+}
+$("edit-toggle").onclick = () => setEditing(!editing);
+$("editor-close").onclick = () => setEditing(false);
+$("editor-more").addEventListener("click", (event) => {
+  if (event.target.closest("button")) {
+    $("editor-more").open = false;
+    $("editor-more").querySelector("summary").focus({ preventScroll: true });
+  }
+});
+document.addEventListener("keydown", (event) => {
+  if (
+    event.key !== "Escape" ||
+    !editing ||
+    document.querySelector("dialog[open]")
+  )
+    return;
+  event.preventDefault();
+  if ($("editor-more").open) {
+    $("editor-more").open = false;
+    $("editor-more").querySelector("summary").focus();
+  } else setEditing(false);
 });
 $("palette").onchange = () => {
   draft.palette = $("palette").value;
@@ -859,7 +894,8 @@ $("palette").onchange = () => {
 };
 $("object-select").onchange = () => {
   selection = $("object-select").value;
-  editorFields();
+  editor();
+  draw();
 };
 $("save").onclick = () => save();
 $("undo").onclick = () => save(true);
