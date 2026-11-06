@@ -274,11 +274,11 @@ export class OpenAIBackend {
                     role: value.role,
                     tool_call_id: value.tool_call_id,
                     content:
-                      "受控场景观察未持久保存；需要时重新读取当前授权版本。",
+                      "受控场景观察未写入会话记录；需要时重新读取当前授权版本。",
                   }
                 : {
                     type: "text",
-                    text: "受控场景图片未持久保存；需要时重新调用 room_scene_view 取得当前授权版本。",
+                    text: "受控场景图片未写入会话记录；本人房间照片可用 media_list 找回，或重新调用 room_scene_view 查看当前场景。",
                   }),
             }
           : value,

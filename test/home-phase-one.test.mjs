@@ -60,6 +60,15 @@ test("combined home tools keep hallway text scoped and invalidate prior scene de
   const f = setup(t, { sceneView: true }),
     marker = "只属于第一位房主的合成门牌";
   await publish(f, "tagline", marker, "combined-tagline");
+  // This regression checks the explicit no-browser text path; real pixels are covered separately.
+  const previousBrowser = process.env.QQ_SCREENSHOT_BROWSER;
+  process.env.QQ_SCREENSHOT_BROWSER = path.join(f.root, "missing-browser");
+  t.after(() => {
+    if (previousBrowser === undefined) delete process.env.QQ_SCREENSHOT_BROWSER;
+    else process.env.QQ_SCREENSHOT_BROWSER = previousBrowser;
+  });
+  let now = f.runtime.now();
+  f.runtime.clock = () => now;
   const other = context(f.runtime, "agent-1", "@subject");
   const foreign = await f.call(
     "room_scene_view",
@@ -67,10 +76,12 @@ test("combined home tools keep hallway text scoped and invalidate prior scene de
     other,
   );
   assert.equal(foreign.imageAvailable, false);
+  assert.equal(foreign.reason, "SCREENSHOT_BROWSER_MISSING");
   assert.equal(JSON.stringify(foreign).includes(marker), false);
   const own = await f.call("room_scene_view", { type: "hall", page: 1 });
   assert.ok(JSON.stringify(own).includes(marker));
   assert.equal(own[mediaLease](), true);
+  now += 5000;
   const end = await f.call("room_scene_view", { type: "hall", page: 3 });
   assert.equal(end.page, 3);
   assert.equal(end.pages, 3);
@@ -85,6 +96,7 @@ test("combined home tools keep hallway text scoped and invalidate prior scene de
     requestId: "combined-retract",
   });
   assert.equal(own[mediaLease](), false);
+  now += 5000;
   assert.equal(
     JSON.stringify(await f.call("room_scene_view", { type: "hall" })).includes(
       marker,
