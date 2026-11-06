@@ -120,6 +120,15 @@ export function migrateHomeSocial(db) {
         status TEXT NOT NULL CHECK(status IN ('reserved','completed','not_started','unknown')),
         reserved TEXT NOT NULL, actual TEXT, created_at INTEGER NOT NULL, settled_at INTEGER,
         UNIQUE(run_id,request_id));
+      CREATE TABLE IF NOT EXISTS home_social_handoffs (
+        turn_id TEXT PRIMARY KEY REFERENCES home_social_turns(id),
+        actor_generation TEXT NOT NULL, visit_id TEXT NOT NULL REFERENCES home_social_visits(id),
+        host_generation TEXT NOT NULL, guest_generation TEXT NOT NULL,
+        value TEXT NOT NULL, source_ids TEXT NOT NULL, source_labels TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        CHECK(host_generation<>guest_generation),
+        CHECK(actor_generation IN (host_generation,guest_generation)));
+      CREATE INDEX IF NOT EXISTS home_social_handoff_lookup ON home_social_handoffs(actor_generation,visit_id,created_at);
       CREATE TABLE IF NOT EXISTS home_social_dispatches (
         id TEXT PRIMARY KEY, dedupe_key TEXT NOT NULL UNIQUE, turn_id TEXT NOT NULL UNIQUE,
         visit_id TEXT, window_id TEXT, actor_generation TEXT NOT NULL,

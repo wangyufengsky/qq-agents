@@ -1,5 +1,6 @@
 // @ts-check
 import { z } from "zod";
+import { socialHandoffSchema } from "../home/social-handoff.mjs";
 import {
   socialToolSchemas,
   socialTargetSchema,
@@ -92,8 +93,8 @@ Object.assign(socialDefinitions, {
     z.object({ windowId: z.uuid() }).strict(),
   ],
   home_exchange_yield: [
-    "显式封口本人当前消息批次并结束回合；清理完成后最多触发一次对方接话，空批次关闭时段。",
-    z.object(base).strict(),
+    "显式封口本人当前消息批次并结束回合；自动整理未完话题与约定到handoff并引用实际读过或本人已提交的sourceMessageIds，空数组表示没有待续事项。清理完成后最多触发一次对方接话，空批次关闭时段。",
+    z.object({ ...base, handoff: socialHandoffSchema.optional() }).strict(),
   ],
   home_exchange_close: [
     "关闭交流时段并撤回同意，拒绝迟到提交；拜访仍可在将来独立获准的异步回合交流。",

@@ -212,6 +212,11 @@ export class SocialStore {
         "UPDATE home_social_grants SET revoked_at=?,revision=revision+1,fence=fence+1 WHERE revoked_at IS NULL AND (host_generation=? OR guest_generation=?)",
       )
       .run(now, generation, generation);
+    this.db
+      .prepare(
+        "DELETE FROM home_social_handoffs WHERE host_generation=? OR guest_generation=?",
+      )
+      .run(generation, generation);
     const visits =
       "SELECT id FROM home_social_visits WHERE host_generation=? OR guest_generation=?";
     this.db
@@ -307,6 +312,7 @@ export class SocialStore {
           historicalReplay: true,
         };
       this.interrupt(now, "recovery_invalidated");
+      this.db.prepare("DELETE FROM home_social_handoffs").run();
       this.db
         .prepare(
           "UPDATE home_social_policy SET enabled=0,exchange_enabled=0,revision=revision+1,recovery_epoch=? WHERE singleton=1",
@@ -351,6 +357,11 @@ export class SocialStore {
           "UPDATE home_social_messages SET body='',body_cleared_at=? WHERE body_cleared_at IS NULL AND visit_id IN (SELECT id FROM home_social_visits WHERE status<>'active' AND ended_at<=?)",
         )
         .run(now, before).changes;
+      this.db
+        .prepare(
+          "DELETE FROM home_social_handoffs WHERE visit_id IN (SELECT id FROM home_social_visits WHERE status<>'active' AND ended_at<=?)",
+        )
+        .run(before).changes;
       const invitations = this.db
         .prepare(
           "UPDATE home_social_invitations SET purpose='',reason='',body_cleared_at=? WHERE body_cleared_at IS NULL AND ((status IN ('declined','cancelled','expired','invalidated') AND decided_at<=?) OR (status='accepted' AND id IN (SELECT invitation_id FROM home_social_visits WHERE status<>'active' AND ended_at<=?)))",

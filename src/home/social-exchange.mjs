@@ -1,5 +1,6 @@
 // @ts-check
 import { randomUUID, createHash } from "node:crypto";
+import { saveSocialHandoff } from "./social-handoff.mjs";
 import { socialWindowMessageReadable } from "../core/social-protection.mjs";
 import { effectiveSocialResourceBudget } from "./social-policy.mjs";
 
@@ -445,6 +446,8 @@ export class SocialExchange {
           throw Error("SOCIAL_WINDOW_CLOSED");
         if (w.revision !== args.expectedWindowRevision)
           throw Error("REVISION_CONFLICT");
+        if (args.handoff !== undefined)
+          saveSocialHandoff(this.runtime, ctx, args.handoff, now);
         this.db
           .prepare("UPDATE home_social_turns SET batch_sealed=1 WHERE id=?")
           .run(turn.id);

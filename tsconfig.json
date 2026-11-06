@@ -114,6 +114,7 @@
     "src/home/project-snapshots.mjs",
     "src/home/intents.mjs",
     "src/home/social-schema.mjs",
+    "src/home/social-handoff.mjs",
     "src/home/social-store.mjs",
     "src/home/social-policy.mjs",
     "src/home/social-service.mjs",
