@@ -104,6 +104,7 @@
     "src/home/room-store.mjs",
     "src/home/rooms.mjs",
     "src/home/scene-view.mjs",
+    "src/home/scene-media.mjs",
     "src/home/browser-process.mjs",
     "src/home/browser-launcher.mjs",
     "src/home/browser-job.mjs",

@@ -1,3 +1,4 @@
+import { assertHomeSceneMedia } from "../home/scene-media.mjs";
 import {
   socialSources,
   socialRecordSources,
@@ -48,6 +49,11 @@ export function recallBoundary(runtime, ctx, { publicOnly = false } = {}) {
     return ["operations", "private-repository"].includes(classes.get(id));
   }
   function allowed(row) {
+    try {
+      assertHomeSceneMedia(runtime, ctx, row);
+    } catch {
+      return false;
+    }
     const ids = [
       row?.id,
       ...(row?.evidence || []),
