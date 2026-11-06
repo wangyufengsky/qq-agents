@@ -236,7 +236,10 @@ export class AntigravityBackend {
   ) {
     this.config = { ...config, type: /** @type {const} */ ("antigravity") };
     this.agent = agent;
-    this.sessionProtocol = "antigravity-tools-v3";
+    this.sessionProtocol =
+      config.cliProtocol === "acp"
+        ? "antigravity-acp-v1"
+        : "antigravity-tools-v3";
     this.spawn = spawn;
     this.stop = stop;
     this.root = privateDirectory(
@@ -549,6 +552,21 @@ export class AntigravityBackend {
           "\n",
       );
     }
+    if (this.config.cliProtocol === "acp") {
+      // Replace only bridge-owned guidance, preserving arbitrary role instructions.
+      const headless =
+        "Only native read_file (Path) or legacy view_file (AbsolutePath) on the exact image paths returned by an authorized tool in the CURRENT turn is allowed. Always call the native image reader before describing those pixels; MCP path text is not visual evidence. Never read other files or reuse a previous turn image path; request the original bridge tool again. ";
+      managedFile(
+        agentFile,
+        fs
+          .readFileSync(agentFile, "utf8")
+          .replace("  - view_file\n", "")
+          .replace(
+            headless,
+            "Authorized MCP image content blocks contain visible pixels. Inspect those pixels directly; never read files to view an image. ",
+          ),
+      );
+    }
     const settings = path.join(workspace, "settings.json");
     managedFile(
       settings,
@@ -564,7 +582,11 @@ export class AntigravityBackend {
           ],
           allow: [
             ...[...names].map((name) => `mcp(qq-agents/${name})`),
-            `read_file(${(mediaRoot || media.prepare()).replaceAll("\\", "/")}/*)`,
+            ...(this.config.cliProtocol === "acp"
+              ? []
+              : [
+                  `read_file(${(mediaRoot || media.prepare()).replaceAll("\\", "/")}/*)`,
+                ]),
           ],
         },
       }),
@@ -582,6 +604,29 @@ export class AntigravityBackend {
         .filter(Boolean)
         .join(path.delimiter);
     }
+    if (this.config.cliProtocol === "acp")
+      return this.spawn(
+        process.execPath,
+        [
+          path.join(here, "antigravity-acp.mjs"),
+          JSON.stringify({
+            command: this.config.command || "agy",
+            profile: this.profile,
+            settings,
+            workspace,
+            model: this.config.model,
+            effort: this.config.effort,
+            session: params.session?.id,
+          }),
+        ],
+        {
+          cwd: workspace,
+          env: { ...childEnv, QQ_AGY_ENDPOINT: endpoint, QQ_AGY_TOKEN: token },
+          stdio: ["pipe", "pipe", "pipe"],
+          detached: process.platform !== "win32",
+          windowsHide: true,
+        },
+      );
     return this.spawn(
       this.config.command || "agy",
       [
@@ -777,7 +822,11 @@ export class AntigravityBackend {
   }
   /** @param {RunParams} params */
   async run(params) {
-    if (!params.social && this.config.cliReuse?.enabled)
+    if (
+      this.config.cliProtocol !== "acp" &&
+      !params.social &&
+      this.config.cliReuse?.enabled
+    )
       return this.runReusable(params);
     const timingStart = performance.now();
     const timing = (/** @type {string} */ phase) =>
@@ -803,7 +852,10 @@ export class AntigravityBackend {
     const pending = new Set();
     const diagnosticEvent = (/** @type {Record<string, unknown>} */ value) =>
       diagnosticActive && antigravityDiagnostic(params, timingStart, value);
-    const media = new AntigravityMedia();
+    const media = new AntigravityMedia(
+      undefined,
+      this.config.cliProtocol === "acp",
+    );
     const names = new Set(params.tools.map((tool) => tool.name));
     const server = http.createServer(async (req, res) => {
       const reply = (
@@ -828,6 +880,7 @@ export class AntigravityBackend {
       if (req.method === "GET" && req.url === "/catalog")
         return reply(200, {
           tools: params.tools,
+          nativeMcp: this.config.cliProtocol === "acp",
           images: media.catalog(),
         });
       if (req.method !== "POST" || req.url !== "/call") return reply(404, {});

@@ -262,6 +262,7 @@ export const configSchema = z
           vision: z.boolean().optional(),
           sendEffort: z.boolean().optional(),
           socialProfile: z.enum(["openai-gpt-4.1-mini"]).nullable().optional(),
+          cliProtocol: z.enum(["headless", "acp"]).optional(),
           cliReuse: z
             .object({
               enabled: z.boolean().default(false),
@@ -326,6 +327,11 @@ export const configSchema = z
           (backend) =>
             backend.cliReuse === undefined || backend.type === "antigravity",
           "CLI reuse settings require Antigravity",
+        )
+        .refine(
+          (backend) =>
+            backend.cliProtocol === undefined || backend.type === "antigravity",
+          "CLI protocol requires Antigravity",
         )
         .refine(
           (backend) =>

@@ -176,6 +176,7 @@ test("console recovery and automatic-recovery controls call real admin routes wi
       sandbox.formValues.set("baseUrl", "");
       sandbox.formValues.set("cliReuseIdleSeconds", "120");
       sandbox.formValues.set("cliReuseMaxIdle", "1");
+      sandbox.formValues.set("cliProtocol", "acp");
       vm.runInContext(
         'document.querySelector("#edit-form").onsubmit({preventDefault(){},target:formValues})',
         sandbox,
@@ -201,6 +202,10 @@ test("console recovery and automatic-recovery controls call real admin routes wi
       );
       assert.equal(f.runtime.config.backends[0].type, type);
       assert.equal(f.runtime.config.backends[0].socialProfile, undefined);
+      assert.equal(
+        f.runtime.config.backends[0].cliProtocol,
+        type === "antigravity" ? "acp" : undefined,
+      );
     }
   }
 });

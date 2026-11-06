@@ -12,6 +12,7 @@ import { isDeepStrictEqual } from "node:util";
  *   requestTimeoutMs?: number, vision?: boolean, sendEffort?: boolean,
  *   recovery: {autoReconnect: boolean, dshInstance?: string}, command: string,
  *   env?: Record<string, string>, home?: string, preset: string, model: string, effort: string,
+ *   cliProtocol?: "headless" | "acp",
  *   cliReuse?: {enabled: boolean, idleTimeoutMs: number, maxIdleProcesses: number},
  *   toolServers: ToolServerConfig[]}} BackendConfig
  * @typedef {{id: string}} BackendAgent
@@ -87,7 +88,11 @@ export function backendSessionConfig(config) {
       return {
         ...shared,
         command: config.command,
-        ...(config.cliReuse?.enabled ? { cliDispatch: "epoch-v1" } : {}),
+        ...(config.cliProtocol === "acp"
+          ? { cliProtocol: "acp-v1" }
+          : config.cliReuse?.enabled
+            ? { cliDispatch: "epoch-v1" }
+            : {}),
       };
   }
 }

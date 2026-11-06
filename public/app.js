@@ -1931,11 +1931,16 @@ function backendForm(row, id, html) {
   const rare =
     linkFor(
       "antigravity",
-      check(
-        "cliReuseEnabled",
-        "保持聊天进程就绪（减少连续对话等待）",
-        row.cliReuse?.enabled,
-      ) +
+      select("cliProtocol", "图片与会话通道", row.cliProtocol || "headless", [
+        ["headless", "Headless（兼容模式）"],
+        ["acp", "ACP（图片直接输入，需 CLI 支持）"],
+      ]) +
+        '<p class="hint">ACP 按回合启动并续接会话；以下进程保留设置仅用于 Headless。</p>' +
+        check(
+          "cliReuseEnabled",
+          "保持聊天进程就绪（减少连续对话等待）",
+          row.cliReuse?.enabled,
+        ) +
         input(
           "cliReuseIdleSeconds",
           "空闲保留时间（秒）",
@@ -2151,6 +2156,10 @@ $("#edit-form").onsubmit = (e) => {
           preset: get("preset"),
           command: get("command"),
           toolServers: JSON.parse(get("toolServers") || "[]"),
+          cliProtocol:
+            get("type") === "antigravity"
+              ? get("cliProtocol") || row.cliProtocol || "headless"
+              : undefined,
           cliReuse:
             get("type") === "antigravity"
               ? {
