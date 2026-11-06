@@ -2051,12 +2051,26 @@ export class HomeSocialService {
         kind: "admin-overview",
         policy: this.policy().revision,
         agentId: a.agentId || null,
+        roomOwnerAgentId: a.roomOwnerAgentId || null,
+        recordKind: a.kind || null,
       },
       after = this.after(a.cursor, binding);
-    const filter = a.agentId
-        ? " WHERE host_agent_id=? OR guest_agent_id=?"
-        : "",
-      args = a.agentId ? [a.agentId, a.agentId] : [];
+    const filters = [],
+      args = [];
+    if (a.agentId) {
+      filters.push("(host_agent_id=? OR guest_agent_id=?)");
+      args.push(a.agentId, a.agentId);
+    }
+    if (a.roomOwnerAgentId) {
+      filters.push("host_agent_id=?");
+      args.push(a.roomOwnerAgentId);
+    }
+    if (a.kind) {
+      filters.push("kind=?");
+      args.push(a.kind);
+    }
+    const filter = filters.length ? " WHERE " + filters.join(" AND ") : "",
+      order = a.kind === "visit" ? "created_at DESC,id" : "kind,id";
     // List pages select metadata only; neither invitation prose nor message bodies enter memory.
     const from = `WITH overview AS (
       SELECT 'invitation' AS kind,id,revision,host_agent_id,host_generation,guest_agent_id,guest_generation,room_id,status,created_at,expires_at,requested_scope,effective_scope,initiator_generation,recipient_generation,NULL AS invitation_id,NULL AS started_at,NULL AS ended_at,NULL AS closed_reason FROM home_social_invitations
@@ -2064,7 +2078,7 @@ export class HomeSocialService {
       SELECT 'visit',id,revision,host_agent_id,host_generation,guest_agent_id,guest_generation,room_id,status,started_at,expires_at,NULL,NULL,NULL,NULL,invitation_id,started_at,ended_at,closed_reason FROM home_social_visits
     ) SELECT * FROM overview`;
     const rows = this.db
-        .prepare(from + filter + " ORDER BY kind,id LIMIT ? OFFSET ?")
+        .prepare(from + filter + " ORDER BY " + order + " LIMIT ? OFFSET ?")
         .all(...args, a.limit + 1, after),
       items = rows.slice(0, a.limit);
     return {

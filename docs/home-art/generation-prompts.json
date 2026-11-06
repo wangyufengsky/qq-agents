@@ -206,5 +206,13 @@
     "prompt": "Precise recolor edit of this isolated paper cutout asset. Recolor ONLY the sage green border to soft muted dusty rose. Preserve EXACT object shape, outline, silhouette, paper texture, highlights, cream cut-paper edges, camera, proportions, position and all other colors. Preserve warm honey wood and cream sections entirely. Keep fully transparent alpha background. No new objects, labels, text, floor or scene. Match original dimensions and composition. This is a registered palette variant of the original asset, not a redesign.",
     "reference": "assets/rug.png",
     "provenance": "本任务按用户提供参考图委托生成；未下载第三方素材。"
+  },
+  {
+    "assetId": "envelope",
+    "name": "墙上信封",
+    "tool": "OpenAI built-in imagegen",
+    "prompt": "Use case: illustration-story. Create ONE transparent-background game/UI prop for a cozy hand-drawn paper pop-up book room. Subject: a single closed cream parchment envelope hanging from a short curved natural twine loop above it, as a wall-mounted correspondence pocket. Front-on flat view, no perspective or surrounding room. Envelope width approximately 1.5 times its height, triangular folded flap and a small round muted terracotta wax seal, softly rounded handmade paper cutout silhouette. Warm fine brown pencil outlines, subtle watercolor/colored pencil paper texture, warm cream cut edges and a very light self-shadow between paper layers, matching honey wood and cream picture-book furnishings. Center entire prop with generous transparent padding, keep the loop fully visible. No letters, no writing, no typography, no characters, no wall/background, no UI frame, no extra objects. Genuine alpha transparency outside the single envelope-and-loop cutout. Warm, welcoming, simple and legible at small display sizes.",
+    "reference": "envelope-source-v1",
+    "provenance": "本任务按小窝纸页风格委托生成，并以同一工具清理对象外背景、保留信封与挂环的透明裁切；未下载第三方素材。"
   }
 ]

@@ -173,7 +173,12 @@ export const socialToolSchemas = {
   home_social_operation_read: z.object({ requestId: homeRequestId }).strict(),
 };
 export const adminOverviewSchema = z
-  .object({ agentId: z.string().min(1).max(64).optional(), ...pagination })
+  .object({
+    agentId: z.string().min(1).max(64).optional(),
+    roomOwnerAgentId: z.string().min(1).max(64).optional(),
+    kind: z.enum(["invitation", "visit"]).optional(),
+    ...pagination,
+  })
   .strict();
 export const adminReadSchema = z
   .object({ kind: z.enum(["invitation", "visit"]), id, ...pagination })

@@ -34,6 +34,7 @@ export function serveHomePreview(req, res, pathname) {
       ["social.mjs", "text/javascript; charset=utf-8"],
     ],
     ["/home-space/social.css", ["social.css", "text/css; charset=utf-8"]],
+    ["/home-space/letters.css", ["letters.css", "text/css; charset=utf-8"]],
     ["/home-space/style.css", ["style.css", "text/css; charset=utf-8"]],
     ["/home-space/interiors.css", ["interiors.css", "text/css; charset=utf-8"]],
     [

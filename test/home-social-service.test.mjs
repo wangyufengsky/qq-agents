@@ -1483,3 +1483,86 @@ test("a fresh room read must revalidate its delivery even when an older copy is 
     /AUDIENCE_DENIED/,
   );
 });
+
+test("room letters filter by host while visit histories include both roles and bind pagination", (t) => {
+  const f = setup(t, 4),
+    admin = "instance-administrator";
+  function createVisit(host, guest) {
+    const invitation = f.s.invite(f.ctx(host, { kind: "compose", id: guest }), {
+      requestId: randomUUID(),
+      targetAgentId: guest,
+      roomOwnerAgentId: host,
+      purpose: "合成访问经历",
+      scope: ["layout"],
+      selectedItems: [],
+    });
+    const invitationId = invitation.result.invitationId;
+    const recipient = f.ctx(guest, { kind: "invitation", id: invitationId });
+    f.s.invitationRead(recipient, { invitationId });
+    return f.s.decide(recipient, {
+      requestId: randomUUID(),
+      invitationId,
+      expectedInvitationRevision: 1,
+      decision: "accept",
+    }).result.visitId;
+  }
+  const firstRoomVisit = createVisit("agent-0", "agent-1");
+  f.setNow(f.now() + 1000);
+  const latestRoomVisit = createVisit("agent-0", "agent-2");
+  const awayVisit = createVisit("agent-3", "agent-0");
+  createVisit("agent-1", "agent-2");
+  const roomFilter = { roomOwnerAgentId: "agent-0", kind: "visit", limit: 1 };
+  const first = f.s.adminOverview(admin, roomFilter);
+  assert.deepEqual(
+    first.items.map((item) => item.id),
+    [latestRoomVisit],
+  );
+  assert.ok(first.nextCursor);
+  const second = f.s.adminOverview(admin, {
+    ...roomFilter,
+    cursor: first.nextCursor,
+  });
+  assert.deepEqual(
+    second.items.map((item) => item.id),
+    [firstRoomVisit],
+  );
+  assert.equal(second.nextCursor, null);
+  const history = f.s.adminOverview(admin, {
+    agentId: "agent-0",
+    kind: "visit",
+  });
+  assert.deepEqual(
+    new Set(history.items.map((item) => item.id)),
+    new Set([firstRoomVisit, latestRoomVisit, awayVisit]),
+  );
+  assert.ok(history.items.every((item) => item.kind === "visit"));
+  assert.doesNotMatch(JSON.stringify(history), /合成访问经历/);
+  const intersection = f.s.adminOverview(admin, {
+    agentId: "agent-1",
+    roomOwnerAgentId: "agent-0",
+    kind: "visit",
+  });
+  assert.deepEqual(
+    intersection.items.map((item) => item.id),
+    [firstRoomVisit],
+  );
+  for (const override of [
+    { roomOwnerAgentId: "agent-3" },
+    { kind: "invitation" },
+    { agentId: "agent-1" },
+  ])
+    assert.throws(
+      () =>
+        f.s.adminOverview(admin, {
+          ...roomFilter,
+          ...override,
+          cursor: first.nextCursor,
+        }),
+      /INVALID_CURSOR/,
+    );
+  assert.throws(() => f.s.adminOverview(admin, { kind: "message" }));
+  assert.equal(
+    f.s.db.prepare("SELECT count(*) n FROM home_social_read_cursors").get().n,
+    0,
+  );
+});
