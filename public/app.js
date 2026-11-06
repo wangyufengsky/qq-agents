@@ -1874,14 +1874,18 @@ function backendForm(row, id, html) {
       "openai",
       select(
         "socialProfile",
-        "小窝社交运行配置（可选）",
+        "小窝社交 token 硬预算配置（可选）",
         row.socialProfile || "",
         [
-          ["", "不启用社交后端配置"],
+          ["", "不配置 token 硬预算"],
           ["openai-gpt-4.1-mini", "官方 OpenAI gpt-4.1-mini-2025-04-14"],
         ],
       ) +
-        '<p class="hint">只选择能力配置，不自动替换模型或服务地址；首版其他后端不支持社交模型运行。</p>',
+        '<p class="hint">仅用于可选 token 硬预算，不自动替换模型或服务地址。</p>',
+    ) +
+    linkFor(
+      "dsh codex antigravity",
+      '<p class="hint">小窝社交可沿用此后端按回合运行，无需社交 profile 或 token 硬预算；DSH 须使用 qq-unified preset，仍需实例、角色开关及双方同意。</p>',
     ) +
     `<p class="hint" id="backend-models-state">${esc(backendCatalogState(catalog))}${readOff ? " " + esc(readOff) : ""}</p>` +
     linkFor(

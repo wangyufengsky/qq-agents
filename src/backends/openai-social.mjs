@@ -15,16 +15,17 @@ export async function runOpenAISocial(params) {
     beforeInput,
     callTool,
   } = params;
-  const profile = socialProviderProfile(profileId, endpoint, model);
+  const profile = budget
+    ? socialProviderProfile(profileId, endpoint, model)
+    : null;
   for (const n of [
-    params.outputCap,
-    params.maxInferences,
+    ...(budget ? [params.outputCap, params.maxInferences] : []),
     params.maxCallsPerInference,
     params.maxToolResultBytes,
   ])
     if (!Number.isSafeInteger(n) || n <= 0)
       throw Error("SOCIAL_BUDGET_INVALID");
-  if (params.outputCap > profile.maxOutput)
+  if (profile && params.outputCap > profile.maxOutput)
     throw Error("SOCIAL_BUDGET_INVALID");
   /** @type {Array<{role: string, content?: any, tool_calls?: any[], tool_call_id?: string}>} */
   const messages = [
@@ -40,52 +41,61 @@ export async function runOpenAISocial(params) {
     if (signal.aborted) throw Error("ABORTED");
   };
   try {
-    for (; inferences < params.maxInferences; inferences++) {
+    for (; !budget || inferences < params.maxInferences; inferences++) {
       await check();
       const current = params.limitsForInference?.() || {
         outputCap: params.outputCap,
         maxInferences: params.maxInferences,
       };
-      if (inferences >= current.maxInferences)
+      if (budget && inferences >= current.maxInferences)
         throw Error("SOCIAL_INFERENCE_LIMIT");
-      const outputCap = Math.min(params.outputCap, current.outputCap);
+      const outputCap = budget
+        ? Math.min(params.outputCap, current.outputCap)
+        : null;
       let consumption;
-      const result = await boundedInference(
-        budget,
-        binding,
-        inferences,
-        profile.inputUpperBound,
-        outputCap,
-        async () => {
-          // Recheck after reservation: waiting for the store can cross a fence.
-          await check();
-          consumption = params.captureInputConsumption?.();
-          const options = {
-            method: "POST",
-            redirect: "error",
-            signal,
-            headers: params.headers(),
-            body: JSON.stringify({
-              model,
-              messages,
-              store: false,
-              n: 1,
-              [profile.outputParameter]: outputCap,
-              ...(tools.length
-                ? { tools, tool_choice: "auto", parallel_tool_calls: false }
-                : {}),
-            }),
-          };
-          return async () => {
-            const response = await (params.fetch || globalThis.fetch)(
-              endpoint,
-              options,
-            );
-            if (!response.ok) throw Error("SOCIAL_PROVIDER_FAILED");
-            return response.json();
-          };
-        },
-      );
+      const prepare = async () => {
+        // Recheck immediately before every model request, including tool continuations.
+        await check();
+        consumption = params.captureInputConsumption?.();
+        const options = {
+          method: "POST",
+          redirect: "error",
+          signal,
+          headers: params.headers(),
+          body: JSON.stringify({
+            model,
+            messages,
+            store: false,
+            n: 1,
+            ...(profile ? { [profile.outputParameter]: outputCap } : {}),
+            ...(tools.length
+              ? { tools, tool_choice: "auto", parallel_tool_calls: false }
+              : {}),
+          }),
+        };
+        // A run is charged once before execution, independently of token settlement.
+        await params.onRunStarted?.();
+        return async () => {
+          const response = await (params.fetch || globalThis.fetch)(
+            endpoint,
+            options,
+          );
+          if (!response.ok) throw Error("SOCIAL_PROVIDER_FAILED");
+          return response.json();
+        };
+      };
+      const result = profile
+        ? await boundedInference(
+            budget,
+            binding,
+            inferences,
+            profile.inputUpperBound,
+            /** @type {number} */ (outputCap),
+            prepare,
+          )
+        : await (
+            await prepare()
+          )();
       await check();
       const message = result?.choices?.[0]?.message;
       if (!message || typeof message !== "object")

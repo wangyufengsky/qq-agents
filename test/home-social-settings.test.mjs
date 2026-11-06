@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   socialBudgetValues,
   socialBudgetFields,
+  socialResourceSummary,
 } from "../public/home-space/social.mjs";
 const valid = () => ({
   maxInputTokensPerInference: "1047576",
@@ -40,4 +41,28 @@ test("social budgets require per-turn coverage and window/day coverage", () => {
       () => socialBudgetValues("configured", { ...valid(), [key]: "1" }),
       /每时段和每日/,
     );
+});
+
+test("round-based resource summaries distinguish uncapped, unavailable and unknown limits", () => {
+  const unmetered = socialResourceSummary({
+    used: 0,
+    reserved: 0,
+    limit: null,
+    usageAvailable: false,
+  });
+  assert.match(unmetered, /后端未提供可信用量/);
+  assert.match(unmetered, /未设 token 硬上限/);
+  assert.doesNotMatch(unmetered, /0已用/);
+  const metered = socialResourceSummary({ used: 10, reserved: 20, limit: 100 });
+  assert.match(metered, /10已用 \/ 20预留/);
+  assert.match(metered, /时段100 token/);
+  const async = socialResourceSummary(
+    {
+      usageAvailable: false,
+      limits: { perTurn: null, perDay: null },
+    },
+    true,
+  );
+  assert.match(async, /每回合未设 token 硬上限，每日未设 token 硬上限/);
+  assert.match(socialResourceSummary(undefined), /待核对/);
 });

@@ -1,5 +1,6 @@
 // @ts-check
 import { randomUUID, createHash } from "node:crypto";
+import { effectiveSocialResourceBudget } from "./social-policy.mjs";
 
 const parse = (/** @type {string} */ value) => JSON.parse(value);
 const digest = (/** @type {unknown} */ value) =>
@@ -37,8 +38,7 @@ export class SocialExchange {
       authorize: () => this.binding(ctx),
       apply: (/** @type {any} */ { now }) => {
         const config = this.runtime.config.homeSocial;
-        if (!config?.exchangeEnabled || !config.resourceBudget)
-          throw Error("SOCIAL_EXCHANGE_DISABLED");
+        if (!config?.exchangeEnabled) throw Error("SOCIAL_EXCHANGE_DISABLED");
         const visit = this.service.assertVisit(b.actorIdentity, args.visitId, {
           active: true,
         });
@@ -250,12 +250,11 @@ export class SocialExchange {
   effective(w) {
     const old = parse(w.effective_limits),
       c = this.runtime.config.homeSocial;
-    if (!c?.exchangeEnabled || !c.resourceBudget)
-      throw Error("SOCIAL_EXCHANGE_DISABLED");
-    const budget = { ...old.resourceBudget };
-    for (const key of Object.keys(budget))
-      if (typeof budget[key] === "number")
-        budget[key] = Math.min(budget[key], c.resourceBudget[key]);
+    if (!c?.exchangeEnabled) throw Error("SOCIAL_EXCHANGE_DISABLED");
+    const budget = effectiveSocialResourceBudget(
+      old.resourceBudget,
+      c.resourceBudget,
+    );
     return {
       ...old,
       durationMinutes: Math.min(old.durationMinutes, c.durationMinutes),
@@ -347,11 +346,9 @@ export class SocialExchange {
       status: w.status,
       windowRevision: w.revision,
       termsRevision: w.terms_revision,
-      effectiveLimits:
-        this.runtime.config.homeSocial?.resourceBudget &&
-        this.runtime.config.homeSocial?.exchangeEnabled
-          ? this.effective(w)
-          : parse(w.effective_limits),
+      effectiveLimits: this.runtime.config.homeSocial?.exchangeEnabled
+        ? this.effective(w)
+        : parse(w.effective_limits),
       resourcesUsed: parse(w.resources_used),
       resourcesReserved: parse(w.resources_reserved),
       turnsUsed: w.turns_used,

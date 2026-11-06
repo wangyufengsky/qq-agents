@@ -278,11 +278,10 @@ export function createServer({
         const ctx = runtime.capability(req.headers["x-agent-capability"]);
         if (req.method !== "POST") return send({ error: "METHOD" }, 405);
         try {
-          return send(
-            mcpResult(
-              scopedCatalog(runtime, ctx, await readBody(undefined, ctx)),
-            ),
-          );
+          const catalogRequest = await readBody(undefined, ctx);
+          if (ctx.runtimeKind === "subject-social")
+            runtime.socialRuntime.assertContext(ctx);
+          return send(mcpResult(scopedCatalog(runtime, ctx, catalogRequest)));
         } catch (e) {
           runtime.diagnostics.report(e, {
             component: "http",
@@ -304,9 +303,20 @@ export function createServer({
         if (req.method !== "POST") return send({ error: "METHOD" }, 405);
         const data = await readBody(undefined, ctx);
         try {
-          return send(
-            mcpResult(await runtime.callTool(ctx, data.name, data.arguments)),
-          );
+          if (ctx.runtimeKind === "subject-social") {
+            runtime.socialRuntime.assertContext(ctx);
+            runtime.socialRuntime.assertToolAllowed(ctx, data.name);
+            // The current catalogue is the same authority used by bridge_tools.
+            // A rejected tool name must not acknowledge any model input.
+            scopedCatalog(runtime, ctx, { names: [data.name] });
+            await ctx.socialConsumeInput?.();
+          }
+          const result = await (ctx.runtimeKind === "subject-social"
+            ? runtime.socialRuntime.callTool(ctx, data.name, data.arguments)
+            : runtime.callTool(ctx, data.name, data.arguments));
+          if (ctx.runtimeKind === "subject-social")
+            runtime.socialRuntime.assertContext(ctx);
+          return send(mcpResult(result));
         } catch (e) {
           runtime.diagnostics.report(e, {
             component: "http",

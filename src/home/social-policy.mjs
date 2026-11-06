@@ -58,10 +58,10 @@ export const homeSocialPolicySchema = z
   })
   .strict()
   .superRefine((v, ctx) => {
-    if (v.exchangeEnabled && (!v.enabled || !v.resourceBudget))
+    if (v.exchangeEnabled && !v.enabled)
       ctx.addIssue({
         code: "custom",
-        message: "SOCIAL_RESOURCE_BUDGET_REQUIRED",
+        message: "SOCIAL_EXCHANGE_DISABLED",
       });
   })
   .prefault({});
@@ -189,3 +189,16 @@ export const moderateSchema = z
   .strict();
 
 export const SOCIAL_CORE_TOOLS = Object.freeze(Object.keys(socialToolSchemas));
+
+/** Accepted resource limits can tighten, but removing a configured budget never
+ * relaxes an already accepted window. Null represents a turn-only window.
+ * @param {any} accepted @param {any} current */
+export function effectiveSocialResourceBudget(accepted, current) {
+  if (!accepted) return current ? { ...current } : null;
+  if (!current) return { ...accepted };
+  const result = { ...accepted };
+  for (const key of Object.keys(result))
+    if (typeof result[key] === "number")
+      result[key] = Math.min(result[key], current[key]);
+  return result;
+}
