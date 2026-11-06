@@ -530,3 +530,111 @@ test("tagline has an independent revision and administrator-only overview visibi
   });
   assert.equal(f.runtime.home.overview().residents[0].tagline, undefined);
 });
+
+test("home reads distinguish default visible furniture, sparse overrides and text slots", async (t) => {
+  const f = setup(t),
+    chat = context(f.runtime, "agent-0", "private:30000"),
+    agent = f.runtime.agent("agent-0");
+  f.runtime.config.homeSocial.enabled = true;
+  agent.home.social.enabled = true;
+  agent.home.intents.enabled = true;
+  const room = await f.call("room_read", {}, chat),
+    scene = await f.call("room_scene_read", {}, chat);
+  assert.equal(room.items.length, 5);
+  assert.ok(room.items.every((item) => item.itemId === null));
+  assert.match(room.itemsNotice, /文字/);
+  assert.deepEqual(room.enabledFeatures, {
+    home: true,
+    publishing: true,
+    social: true,
+    subject: true,
+    intents: true,
+  });
+  assert.equal(room.capabilities.layout, false);
+  assert.equal(room.capabilities.publish, false);
+  assert.match(room.capabilityNotice, /room_intent_submit/);
+  assert.match(room.capabilityNotice, /@subject/);
+  assert.deepEqual(scene.layout.objects, {});
+  assert.equal(
+    scene.effectiveScene.templateObjectCount,
+    scene.template.objects.length,
+  );
+  assert.equal(
+    scene.effectiveScene.visibleObjectCount,
+    scene.template.objects.length,
+  );
+  assert.equal(scene.effectiveScene.hiddenObjectCount, 0);
+  assert.equal(scene.effectiveScene.customizedObjectCount, 0);
+  assert.deepEqual(
+    scene.effectiveScene.objects.find((o) => o.id === "desk"),
+    {
+      id: "desk",
+      asset: "desk",
+      name: "抽屉书桌",
+      hidden: false,
+    },
+  );
+  assert.match(scene.effectiveScene.notice, /默认/);
+  assert.equal(scene.capabilities.write, false);
+  assert.equal(count(f, "home_layouts"), 0);
+  assert.equal(
+    f.runtime.toolsFor(agent, chat.conversation).includes("room_scene_patch"),
+    false,
+  );
+  assert.equal(
+    f.runtime
+      .toolsFor(agent, chat.conversation)
+      .includes("home_social_process"),
+    false,
+  );
+  assert.equal(
+    f.runtime.toolsFor(agent, chat.conversation).includes("room_intent_submit"),
+    true,
+  );
+  assert.equal(
+    f.runtime.toolsFor(agent, "@subject").includes("home_social_process"),
+    true,
+  );
+  agent.home.social.enabled = false;
+  assert.equal(
+    (await f.call("room_read", {}, chat)).enabledFeatures.social,
+    false,
+  );
+});
+
+test("effective furniture follows palette, hidden inheritance and undo without expanding stored overrides", async (t) => {
+  const f = setup(t),
+    p = await patch(f);
+  p.operations = [
+    { action: "palette", palette: "blue" },
+    { action: "object", instanceId: "desk", value: { hidden: true } },
+  ];
+  await f.call("room_scene_patch", p);
+  const after = await f.call("room_scene_read"),
+    effective = after.effectiveScene;
+  assert.deepEqual(Object.keys(after.layout.objects), ["desk"]);
+  assert.equal(effective.customizedObjectCount, 1);
+  for (const id of ["desk", "card", "lamp"])
+    assert.equal(effective.objects.find((o) => o.id === id).hidden, true);
+  assert.equal(effective.visibleObjectCount, after.template.objects.length - 3);
+  assert.equal(effective.hiddenObjectCount, 3);
+  assert.equal(effective.objects.find((o) => o.id === "bed").asset, "bed-blue");
+  assert.equal(effective.objects.find((o) => o.id === "rug").asset, "rug-blue");
+  await f.call("room_scene_undo", {
+    identityGeneration: after.identityGeneration,
+    requestId: "layout-undo-effective-0001",
+    expectedLayoutRevision: after.layoutRevision,
+    undoRevision: 0,
+  });
+  const undone = await f.call("room_scene_read");
+  assert.deepEqual(undone.layout.objects, {});
+  assert.equal(undone.effectiveScene.customizedObjectCount, 0);
+  assert.equal(
+    undone.effectiveScene.visibleObjectCount,
+    undone.template.objects.length,
+  );
+  assert.equal(
+    undone.effectiveScene.objects.find((o) => o.id === "bed").asset,
+    "bed",
+  );
+});
