@@ -88,6 +88,12 @@ export class OpenAIBackend {
         endpoint: this.endpoint("/chat/completions"),
         model: this.config.model,
         profileId: this.config.socialProfile,
+        vision: this.config.vision === true,
+        formatToolResult: (
+          /** @type {any} */ call,
+          /** @type {any} */ result,
+          /** @type {AbortSignal} */ signal,
+        ) => this.toolMessages(call, async () => result, signal),
         headers: () => this.headers(),
         fetch: this.fetch,
         sessionPool: socialSessionPool(this, async () => {}),

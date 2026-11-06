@@ -1307,7 +1307,25 @@ test("current invitation state denies stale broad tool lists in actual dispatch"
     "home_visit_send",
   ])
     await assert.rejects(r.executeTool(ctx, name, {}), /TOOL_DISABLED/);
-  assert.equal(r.socialRuntime.tools(ctx).length, 3);
+  assert.equal(r.socialRuntime.tools(ctx).length, 4);
+  assert.ok(r.socialRuntime.tools(ctx).includes("room_scene_view"));
+  assert.equal(r.socialRuntime.tools(ctx).includes("room_read"), false);
+  assert.doesNotThrow(() =>
+    r.socialRuntime.assertToolAllowed(ctx, "room_scene_view"),
+  );
+  assert.equal(
+    r
+      .toolsFor(r.agent("agent-1"), ctx.conversation)
+      .includes("room_scene_view"),
+    false,
+  );
+  r.agent("agent-1").home.sceneView.enabled = true;
+  assert.equal(
+    r
+      .toolsFor(r.agent("agent-1"), ctx.conversation)
+      .includes("room_scene_view"),
+    true,
+  );
   r.capabilities.delete(ctx.token);
 });
 
