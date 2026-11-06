@@ -1,4 +1,5 @@
 // @ts-check
+import { closeSocialSessions, socialSessionPool } from "./social-sessions.mjs";
 import { mediaLease } from "../tools/media-lease.mjs";
 import { runOpenAISocial } from "./openai-social.mjs";
 import fs from "node:fs";
@@ -71,6 +72,10 @@ function forgetSentImages(messages) {
 // so there is no remote session to verify: a step is persisted only once the
 // assistant message and every tool result for it are complete.
 export class OpenAIBackend {
+  /** @param {{windowId?: string, actorGeneration?: string}} [filter] */
+  async closeSocialSessions(filter = {}) {
+    await closeSocialSessions(this, filter);
+  }
   /** Isolated social execution never enters the ordinary session loop.
    * @param {any} params */
   async runSocial(params) {
@@ -85,6 +90,7 @@ export class OpenAIBackend {
         profileId: this.config.socialProfile,
         headers: () => this.headers(),
         fetch: this.fetch,
+        sessionPool: socialSessionPool(this, async () => {}),
       });
     } finally {
       this.active.delete(controller);
@@ -528,6 +534,7 @@ export class OpenAIBackend {
   async close() {
     this.closing = true;
     await this.cancel();
+    await this.closeSocialSessions();
     await this.external.close();
   }
 }

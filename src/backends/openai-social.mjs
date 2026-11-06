@@ -1,8 +1,10 @@
 // @ts-check
+import { SocialSessionPool } from "./social-sessions.mjs";
+import { canonical } from "./session-contract.mjs";
 import { boundedInference, socialProviderProfile } from "./social-budget.mjs";
 import { safeToolFailure } from "../tools/errors.mjs";
 
-/** Stateless, bridge-owned loop: no ordinary backend session or file history.
+/** Bridge-owned window history remains separate from ordinary backend sessions.
  * @param {any} params */
 export async function runOpenAISocial(params) {
   const {
@@ -11,7 +13,7 @@ export async function runOpenAISocial(params) {
     model,
     profileId,
     budget,
-    signal,
+    signal: callerSignal,
     beforeInput,
     callTool,
   } = params;
@@ -27,12 +29,19 @@ export async function runOpenAISocial(params) {
       throw Error("SOCIAL_BUDGET_INVALID");
   if (profile && params.outputCap > profile.maxOutput)
     throw Error("SOCIAL_BUDGET_INVALID");
-  /** @type {Array<{role: string, content?: any, tool_calls?: any[], tool_call_id?: string}>} */
-  const messages = [
-    { role: "system", content: params.instructions },
-    { role: "user", content: params.prompt },
-  ];
   const tools = structuredClone(params.tools || []);
+  const pool = params.sessionPool || new SocialSessionPool(async () => {});
+  const capsule = await pool.acquire(
+    binding,
+    JSON.stringify(canonical({ endpoint, model, tools })),
+  );
+  const signal = AbortSignal.any([callerSignal, capsule.controller.signal]);
+  /** @type {Array<{role: string, content?: any, tool_calls?: any[], tool_call_id?: string}>} */
+  const messages = capsule.messages;
+  if (!messages.length)
+    messages.push({ role: "system", content: params.instructions });
+  messages.push({ role: "user", content: params.prompt });
+  let completed = false;
   const names = new Set(tools.map((/** @type {any} */ t) => t.function?.name));
   let inferences = 0;
   const check = async () => {
@@ -97,23 +106,55 @@ export async function runOpenAISocial(params) {
             await prepare()
           )();
       await check();
-      const message = result?.choices?.[0]?.message;
+      const choice = result?.choices?.[0];
+      if (["length", "content_filter"].includes(choice?.finish_reason))
+        throw Error("SOCIAL_RESPONSE_INVALID");
+      const message = choice?.message;
       if (!message || typeof message !== "object")
         throw Error("SOCIAL_RESPONSE_INVALID");
       const calls = message.tool_calls || [];
       if (!Array.isArray(calls) || calls.length > params.maxCallsPerInference)
         throw Error("SOCIAL_TOOL_LIMIT");
+      if (
+        calls.some(
+          (call) =>
+            call?.type !== "function" || !names.has(call.function?.name),
+        )
+      )
+        throw Error("SOCIAL_TOOL_DENIED");
+      if (
+        calls.some((call) => typeof call.id !== "string" || !call.id) ||
+        new Set(calls.map((call) => call.id)).size !== calls.length
+      )
+        throw Error("SOCIAL_RESPONSE_INVALID");
       // Only this request's already prepared input can be acknowledged. Tool
       // reads executed below belong to a later model request, never this one.
       await params.onInputConsumed?.(consumption);
-      if (!calls.length)
+      if (!calls.length) {
+        messages.push({ role: "assistant", content: message.content ?? null });
+        if (signal.aborted) throw Error("ABORTED");
+        completed = true;
         return { status: "completed", inferences: inferences + 1 };
+      }
       messages.push({
         role: "assistant",
         content: message.content ?? null,
         tool_calls: calls,
       });
+      let sealed = false;
       for (const call of calls) {
+        if (sealed) {
+          // A sealed batch still owes answers for every provider tool call.
+          messages.push({
+            role: "tool",
+            tool_call_id: call.id,
+            content: JSON.stringify({
+              isError: true,
+              code: "SOCIAL_TURN_CLOSED",
+            }),
+          });
+          continue;
+        }
         await check();
         if (call.type !== "function" || !names.has(call.function?.name))
           throw Error("SOCIAL_TOOL_DENIED");
@@ -131,18 +172,22 @@ export async function runOpenAISocial(params) {
           signal.throwIfAborted();
           answer = { isError: true, ...safeToolFailure(error) };
         }
-        if (params.shouldStop?.())
-          return { status: "completed", inferences: inferences + 1 };
+        sealed = !!params.shouldStop?.();
+        if (!sealed) await check();
         const text = JSON.stringify(answer);
         if (Buffer.byteLength(text) > params.maxToolResultBytes)
           throw Error("SOCIAL_TOOL_RESULT_LIMIT");
         messages.push({ role: "tool", tool_call_id: call.id, content: text });
       }
+      if (sealed) {
+        if (signal.aborted) throw Error("ABORTED");
+        completed = true;
+        return { status: "completed", inferences: inferences + 1 };
+      }
     }
     throw Error("SOCIAL_INFERENCE_LIMIT");
   } finally {
-    // Only the logical ledger survives; the next run reconstructs current input.
-    messages.length = 0;
+    await pool.release(capsule, completed && !signal.aborted);
     tools.length = 0;
   }
 }

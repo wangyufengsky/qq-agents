@@ -1,4 +1,5 @@
 // @ts-check
+import { closeSocialSessions } from "./social-sessions.mjs";
 import fs from "node:fs";
 import { runNativeSocial } from "./native-social.mjs";
 import path from "node:path";
@@ -220,6 +221,10 @@ export class DshBackend {
   acceptsSession(session, tools, previous) {
     return acceptsSession(this, session, tools, previous);
   }
+  /** @param {{windowId?: string, actorGeneration?: string}} [filter] */
+  async closeSocialSessions(filter = {}) {
+    await closeSocialSessions(this, filter);
+  }
   /** @param {any} params */
   async runSocial(params) {
     if (
@@ -232,7 +237,7 @@ export class DshBackend {
       this,
       {
         ...params,
-        prompt: `${params.prompt}\ncontext=${params.socialContextToken}（仅用于本回合bridge_tools/bridge_call外层，不得披露）。`,
+        prompt: `${params.prompt}\n本轮唯一有效的能力凭据 context=${params.socialContextToken}。历史中的context均已失效；只复制本轮这一个值用于bridge_tools/bridge_call外层，不得披露。`,
       },
       async (session) => {
         if (!session) return;
@@ -463,6 +468,7 @@ export class DshBackend {
   async close() {
     this.closing = true;
     await this.cancel();
+    await this.closeSocialSessions();
     this.streamAbort?.abort();
     await this.pump;
     await this.external.close();

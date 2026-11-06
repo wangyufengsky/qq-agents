@@ -295,6 +295,273 @@ export function socialContextAllowed(runtime, ctx, sources) {
     return false;
   }
 }
+/** A process-local history capability, never authority for fetching current bodies.
+ * @param {any} binding */
+export function createSocialWindowHistory(binding) {
+  return {
+    windowId: binding.windowId,
+    visitId: binding.target?.kind === "visit" ? binding.target.id : null,
+    actorGeneration: binding.actorIdentity?.generation,
+    hostGeneration: binding.targetHostGeneration,
+    guestGeneration: binding.targetGuestGeneration,
+    epoch: binding.epoch,
+    fence: binding.windowFence,
+    sources: new Set(),
+  };
+}
+/** @param {any} runtime @param {any} ctx @param {any} [history] */
+function historyScopeAllowed(runtime, ctx, history = ctx.socialHistory) {
+  try {
+    const b = ctx.socialBinding,
+      h = history;
+    if (
+      !h ||
+      !(h.sources instanceof Set) ||
+      ctx.runtimeKind !== "subject-social" ||
+      b?.runMode !== "window" ||
+      b.target?.kind !== "visit" ||
+      h.windowId !== b.windowId ||
+      h.visitId !== b.target.id ||
+      h.actorGeneration !== b.actorIdentity?.generation ||
+      h.hostGeneration !== b.targetHostGeneration ||
+      h.guestGeneration !== b.targetGuestGeneration ||
+      h.epoch !== b.epoch ||
+      h.fence !== b.windowFence
+    )
+      return false;
+    runtime.homeSocial.assertBinding(ctx);
+    const visit = runtime.homeSocial.assertVisit(b.actorIdentity, h.visitId, {
+      active: true,
+    });
+    const window = runtime.memory.db
+      .prepare("SELECT * FROM home_social_windows WHERE id=?")
+      .get(h.windowId);
+    return (
+      !!window &&
+      window.visit_id === visit.id &&
+      window.status === "active" &&
+      window.epoch === h.epoch &&
+      window.fence === h.fence &&
+      runtime.now() < window.deadline &&
+      visit.host_generation === h.hostGeneration &&
+      visit.guest_generation === h.guestGeneration
+    );
+  } catch {
+    return false;
+  }
+}
+/** @param {any} history @param {string} marker */
+function historicalMarker(history, marker) {
+  const source = parseSocialMarker(marker);
+  return (
+    !!source &&
+    ["message", "grant"].includes(source.kind) &&
+    source.id === history.visitId &&
+    history.sources.has(marker)
+  );
+}
+/** Ordinary same-window replies may use already delivered history. Other uses
+ * keep socialContextAllowed, including recall and current-body reads.
+ * @param {any} runtime @param {any} ctx @param {string[]} sources */
+export function socialWindowHistoryAllowed(runtime, ctx, sources) {
+  if (!historyScopeAllowed(runtime, ctx))
+    return socialContextAllowed(runtime, ctx, sources);
+  const pending = pendingWindowMessages(runtime, ctx);
+  if (pending === null) return false;
+  return sources.every(
+    (marker) =>
+      socialContextAllowed(runtime, ctx, [marker]) ||
+      historicalMarker(ctx.socialHistory, marker) ||
+      pending.some((entry) => entry.labels.includes(marker)),
+  );
+}
+/** Pending message lineage authorizes preparation only while its new carrier is
+ * visible. It becomes session history at the physical input delivery boundary.
+ * @param {any} runtime @param {any} ctx @returns {any[]|null} */
+function pendingWindowMessages(runtime, ctx) {
+  const result = [];
+  for (const message of ctx.socialPendingWindowMessages?.values() || []) {
+    const lineage = windowMessageLineage(runtime, ctx, message);
+    if (!lineage) return null;
+    result.push({
+      ...lineage,
+      marker: socialMarker(lineage.visitId, lineage.messageId),
+    });
+  }
+  return result;
+}
+/** Register only currently authorized input (or history already admitted here).
+ * The caller invokes this at physical input delivery, never to authorize a read.
+ * @param {any} runtime @param {any} ctx @param {Iterable<string>} [ids] */
+export function captureSocialWindowHistory(
+  runtime,
+  ctx,
+  ids = ctx.privateRead || [],
+) {
+  if (!historyScopeAllowed(runtime, ctx)) return false;
+  const sources = socialSources(runtime, ctx, ids),
+    requested = new Set(sources);
+  const pending = pendingWindowMessages(runtime, ctx);
+  if (pending === null || !socialWindowHistoryAllowed(runtime, ctx, sources))
+    throw Error("SOCIAL_SOURCE_DENIED");
+  const delivered = pending.filter((entry) => requested.has(entry.marker));
+  const guards = [...(ctx.socialInputLeases || [])].filter(
+    (guard) =>
+      guard.socialHistoryLease &&
+      guard.socialHistoryDelivered !== true &&
+      guard.socialSourceIds.some((/** @type {string} */ marker) =>
+        requested.has(marker),
+      ),
+  );
+  // A new read cannot borrow an older admission of the same source identifier.
+  for (const guard of guards)
+    if (guard() === false) throw Error("AUDIENCE_DENIED");
+  const additions = [];
+  for (const marker of sources) {
+    if (
+      !socialContextAllowed(runtime, ctx, [marker]) &&
+      !historicalMarker(ctx.socialHistory, marker) &&
+      !delivered.some((entry) => entry.labels.includes(marker))
+    )
+      throw Error("SOCIAL_SOURCE_DENIED");
+    const source = parseSocialMarker(marker);
+    if (
+      source &&
+      ["message", "grant"].includes(source.kind) &&
+      source.id === ctx.socialHistory.visitId
+    )
+      additions.push(marker);
+  }
+  for (const marker of additions) ctx.socialHistory.sources.add(marker);
+  for (const guard of guards) guard.socialHistoryDelivered = true;
+  for (const entry of delivered)
+    ctx.socialPendingWindowMessages.delete(entry.messageId);
+  return true;
+}
+/** A stale ordinary display lease is not a request to fetch the old body again.
+ * Structural authority is still checked before granting the history exception.
+ * @param {any} runtime @param {any} ctx @param {any} guard */
+export function socialInputLeaseAllowed(runtime, ctx, guard) {
+  try {
+    if (guard() !== false) return true;
+  } catch {
+    /* Try only the scoped history capability below. */
+  }
+  return (
+    historyScopeAllowed(runtime, ctx) &&
+    guard.socialHistoryLease === true &&
+    guard.socialHistoryDelivered === true &&
+    pendingWindowMessages(runtime, ctx) !== null &&
+    Array.isArray(guard.socialSourceIds) &&
+    guard.socialSourceIds.length > 0 &&
+    guard.socialSourceIds.every((/** @type {string} */ marker) =>
+      historicalMarker(ctx.socialHistory, marker),
+    )
+  );
+}
+/** Resolve only a currently visible message committed within the active window.
+ * The sender's process-local history proves lineage, never visibility of the old source.
+ * @param {any} runtime @param {any} ctx @param {any} message */
+function windowMessageLineage(runtime, ctx, message) {
+  try {
+    const b = ctx.socialBinding,
+      db = runtime.memory.db;
+    if (
+      ctx.runtimeKind !== "subject-social" ||
+      b?.target?.kind !== "visit" ||
+      !b.windowId
+    )
+      return null;
+    const visit = runtime.homeSocial.assertVisit(b.actorIdentity, b.target.id, {
+      active: true,
+    });
+    const window = db
+      .prepare("SELECT * FROM home_social_windows WHERE id=?")
+      .get(b.windowId);
+    if (
+      !window ||
+      window.status !== "active" ||
+      window.visit_id !== visit.id ||
+      runtime.now() >= window.deadline ||
+      window.fence !== b.windowFence
+    )
+      return null;
+    const current = db
+      .prepare("SELECT * FROM home_social_messages WHERE id=? AND visit_id=?")
+      .get(message.id, visit.id);
+    if (
+      !current ||
+      current.retracted_at ||
+      current.hidden_at ||
+      current.body_cleared_at ||
+      !current.body ||
+      current.revision !== message.revision
+    )
+      return null;
+    const turn = db
+      .prepare(
+        "SELECT t.* FROM home_social_events e JOIN home_social_turns t ON t.id=json_extract(e.metadata,'$.turnId') WHERE e.type='message_committed' AND e.entity_id=? AND json_extract(e.metadata,'$.messageId')=?",
+      )
+      .get(visit.id, current.id);
+    if (
+      !turn ||
+      turn.window_id !== window.id ||
+      turn.actor_generation !== current.author_generation ||
+      ![visit.host_generation, visit.guest_generation].includes(
+        turn.actor_generation,
+      )
+    )
+      return null;
+    const sender = runtime.socialRuntime?.historyForWindow?.(
+      window.id,
+      turn.actor_generation,
+    );
+    if (
+      !sender ||
+      sender.visitId !== visit.id ||
+      sender.windowId !== window.id ||
+      sender.epoch !== window.epoch ||
+      sender.fence !== window.fence ||
+      sender.hostGeneration !== visit.host_generation ||
+      sender.guestGeneration !== visit.guest_generation ||
+      sender.actorGeneration !== turn.actor_generation ||
+      !(sender.sources instanceof Set)
+    )
+      return null;
+    const labels = JSON.parse(current.source_labels);
+    if (
+      !Array.isArray(labels) ||
+      !labels.every(
+        (marker) =>
+          socialContextAllowed(runtime, ctx, [marker]) ||
+          historicalMarker(sender, marker),
+      )
+    )
+      return null;
+    return { labels, sender, visitId: visit.id, messageId: current.id };
+  } catch {
+    return null;
+  }
+}
+/** Preflight for scheduling only; it neither returns bodies nor admits history.
+ * @param {any} runtime @param {any} ctx @param {any} message */
+export function socialWindowMessageReadable(runtime, ctx, message) {
+  return !!windowMessageLineage(runtime, ctx, message);
+}
+/** Stage a currently visible new message from this window. Its historical lineage
+ * is not a grant to reread the original withdrawn message or room document.
+ * @param {any} runtime @param {any} ctx @param {any} message */
+export function admitSocialWindowMessage(runtime, ctx, message) {
+  if (!historyScopeAllowed(runtime, ctx)) return false;
+  const lineage = windowMessageLineage(runtime, ctx, message);
+  if (!lineage) return false;
+  ctx.socialPendingWindowMessages ||= new Map();
+  ctx.socialPendingWindowMessages.set(lineage.messageId, {
+    id: message.id,
+    revision: message.revision,
+  });
+  return true;
+}
 /** No general disclosure grant can widen the audience of social private material.
  * @param {any} runtime @param {any} ctx */
 export function assertNoSocialDisclosure(runtime, ctx) {
@@ -315,7 +582,7 @@ export function assertSocialSend(runtime, ctx, target) {
     )
       throw Error("SOCIAL_SOURCE_DENIED");
     const sources = socialSources(runtime, ctx);
-    if (!socialContextAllowed(runtime, ctx, sources))
+    if (!socialWindowHistoryAllowed(runtime, ctx, sources))
       throw Error("SOCIAL_SOURCE_DENIED");
     const pending = [...(ctx.privateRead || [])],
       seen = new Set();

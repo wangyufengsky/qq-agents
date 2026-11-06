@@ -256,7 +256,12 @@ try {
     .waitFor();
   assert.equal(saves, before + 1);
   assert.ok(
-    await page.getByText("一方执行一次计 1 回合", { exact: false }).count(),
+    await page.getByText("一方运行一次计 1 回合", { exact: false }).count(),
+  );
+  assert.ok(
+    await page
+      .getByText("同一时段各自接着自己的会话聊", { exact: false })
+      .count(),
   );
   await page.locator('select[name="budgetMode"]').selectOption("configured");
   for (const [key, value] of Object.entries({

@@ -1,4 +1,5 @@
 // @ts-check
+import { closeSocialSessions } from "./social-sessions.mjs";
 import { runNativeSocial } from "./native-social.mjs";
 import fs from "node:fs";
 import path from "node:path";
@@ -731,12 +732,14 @@ export class AntigravityBackend {
       finishDone();
     }
   }
+  /** @param {{windowId?: string, actorGeneration?: string}} [filter] */
+  async closeSocialSessions(filter = {}) {
+    await closeSocialSessions(this, filter);
+  }
   /** @param {any} params */
   async runSocial(params) {
-    return runNativeSocial(this, params, async (session) => {
-      const key = createHash("sha256")
-        .update(`@social:${params.binding.runId}`)
-        .digest("hex");
+    return runNativeSocial(this, params, async (session, conversation) => {
+      const key = createHash("sha256").update(conversation).digest("hex");
       try {
         fs.rmSync(path.join(this.root, "workspaces", key), {
           recursive: true,
@@ -1183,6 +1186,7 @@ export class AntigravityBackend {
   async close() {
     this.closing = true;
     await this.cancel();
+    await this.closeSocialSessions();
     await this.external.close();
   }
 }
