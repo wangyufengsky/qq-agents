@@ -92,6 +92,7 @@ function agentPolicy(value) {
   } = value.scheduler;
   return {
     ...rest,
+    imageInputEnabled: value.behavior.imageInput.enabled,
     scheduler,
     tools: unordered(value.tools),
     ownerIds: unordered(value.ownerIds),

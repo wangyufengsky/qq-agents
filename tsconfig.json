@@ -126,6 +126,8 @@
     "src/home/social-exchange.mjs",
     "src/home/social-resources.mjs",
     "src/home/social-tool-names.mjs",
-    "src/tools/home-social.mjs"
+    "src/tools/home-social.mjs",
+    "src/core/message-images.mjs",
+    "src/tools/image-preview.mjs"
   ]
 }

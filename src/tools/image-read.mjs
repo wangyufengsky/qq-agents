@@ -10,8 +10,8 @@ export async function readEventImage(
   ctx,
   event,
   { source, index = 0 },
+  signal = ctx.controller.signal,
 ) {
-  const signal = ctx.controller.signal;
   const segments = event.payload?.segments || [];
   source ||= segments.some((s) => s.type === "image") ? "image" : "file";
   if (source === "image") {

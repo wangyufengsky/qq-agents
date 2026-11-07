@@ -217,3 +217,21 @@ test("ACP native MCP aliases require exact server, tool and active catalogue", (
       false,
     );
 });
+
+test("ACP prompt includes labelled images directly without filesystem reads", async () => {
+  const f = fake();
+  await runAcp(options, "look", () => {}, f.launch, [
+    {
+      eventId: "fixture",
+      index: 0,
+      label: "picture",
+      mimeType: "image/png",
+      data: "cGl4ZWxz",
+    },
+  ]);
+  assert.deepEqual(f.calls.at(-1).params.prompt, [
+    { type: "text", text: "look" },
+    { type: "text", text: "picture" },
+    { type: "image", mimeType: "image/png", data: "cGl4ZWxz" },
+  ]);
+});

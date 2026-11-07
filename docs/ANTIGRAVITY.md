@@ -67,9 +67,11 @@ Windows 的工具安全 hook 通过工作区内由桥接生成的批处理入口
 
 CLI 可能从其他目录执行 hook，因此 Windows 回合子进程的 PATH 前置当前桥接工作区，让批处理入口可被找到；不修改系统、服务父进程或其他聊天的 PATH。验证必须覆盖异目录执行，仅在工作区内运行批处理不足以证明真实 CLI 可用。
 
-当前支持文本输入、工具调用、显式会话续接、模型目录和取消。ACP 直接传递已授权工具返回的 MCP `image` 内容块；headless 通过受限原生 `read_file` / `view_file` 读取临时图片。未接入原生生图和直接图片附件输入，也没有可由框架主动调用的原生压缩接口。
+当前支持文本输入、工具调用、显式会话续接、模型目录和取消。ACP 直接传递已授权工具返回的 MCP `image` 内容块；headless 通过受限原生 `read_file` / `view_file` 读取临时图片。未接入原生生图和文件附件自动输入，也没有可由框架主动调用的原生压缩接口。
 
 ### ACP 图片直接输入
+
+角色开启 `behavior.imageInput.enabled` 后，当前新消息的图片预览直接随 ACP 提示输入，不需要模型调用图片工具；历史图、原图细读和 GIF 后续帧仍使用工具。详见 [新消息自动看图](CONFIGURATION.md#新消息自动看图behaviorimageinput)。
 
 后端高级设置中的“图片与会话通道”可选择 ACP，对应 `cliProtocol: "acp"`。省略或设为 `headless` 保留原有行为。启用前用实际 CLI、模型运行下述隔离验收；ACP 握手必须声明图片能力，不支持时明确失败，不自动换通道或重放输入。
 
@@ -157,3 +159,5 @@ node scripts/antigravity-memory-acceptance.mjs --allow-real-models --command agy
 所有记录均为合成数据，发送只进入假 QQ 网关，不读取生产记忆、修改权限或接入真实 QQ。读取群聊历史不得推进群聊已读水位。临时角色容量为 `65536`，首次模拟回复上限默认 `120000 ms`，可显式调整；这些是验收参数，不修改现有角色配置。私有证据目录保存实际 CLI 版本、模型、逐回合结果与调用摘要，不提交模型会话。检索参数与分页语义见 [场景记忆](MEMORY-DESIGN.md#从私聊回忆群聊)。
 
 长会话行为参考官方 [上下文与自动 checkpoint](https://antigravity.google/docs/cli/commands/context/)。
+
+桥接独立 profile 会预先写入固定的 swarm 插件关闭配置，避免 CLI 自动启用插件后造成续接失败。已有 profile 若包含额外配置仍拒绝运行，应先核对来源并保留备份，不得删除安全检查或允许任意插件。

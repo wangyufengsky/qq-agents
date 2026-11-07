@@ -275,13 +275,31 @@ export class AntigravityBackend {
     // would make an agent inherit tools or executable hooks outside its contract.
     for (const name of fs.readdirSync(configuration))
       if (
-        !["mcp_config.json", "projects", ".migrated"].includes(name) ||
+        !["mcp_config.json", "projects", ".migrated", "config.json"].includes(
+          name,
+        ) ||
         fs.lstatSync(path.join(configuration, name)).isSymbolicLink()
       )
         throw Error("ANTIGRAVITY_PROFILE_UNSAFE");
     for (const name of ["GEMINI.md", "AGENTS.md", "skills", "hooks.json"])
       if (fs.existsSync(path.join(this.profile, name)))
         throw Error("ANTIGRAVITY_PROFILE_UNSAFE");
+    // New CLI versions persist a default swarm plugin on first use. Pin it off
+    // before startup; only this exact inert configuration is permitted on reuse.
+    const pluginConfig = path.join(configuration, "config.json");
+    const disabledPlugins = { plugins: { swarm: { enabled: false } } };
+    if (fs.existsSync(pluginConfig)) {
+      try {
+        if (
+          JSON.stringify(JSON.parse(fs.readFileSync(pluginConfig, "utf8"))) !==
+          JSON.stringify(disabledPlugins)
+        )
+          throw Error();
+      } catch {
+        throw Error("ANTIGRAVITY_PROFILE_UNSAFE");
+      }
+    }
+    managedFile(pluginConfig, JSON.stringify(disabledPlugins) + "\n");
     const mcp = path.join(configuration, "mcp_config.json");
     if (fs.existsSync(mcp)) {
       if (fs.lstatSync(mcp).isSymbolicLink())
@@ -1146,8 +1164,15 @@ export class AntigravityBackend {
       timing("inputSubmitted");
       inputSubmitted = true;
       child.stdin?.end(
-        JSON.stringify({ event: "user", message: { content: params.prompt } }) +
-          "\n",
+        JSON.stringify({
+          event: "user",
+          message: {
+            content: params.prompt,
+            ...(this.config.cliProtocol === "acp"
+              ? { inputImages: params.inputImages }
+              : {}),
+          },
+        }) + "\n",
       );
       const code = await completed;
       if (cancelled || params.signal.aborted) throw Error("ABORTED");

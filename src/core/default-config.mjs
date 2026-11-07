@@ -119,6 +119,14 @@ export function defaultConfig() {
         // Two agents on two QQ accounts can tell each other's owners when one
         // goes offline; the administrator turns it on per agent.
         behavior: {
+          imageInput: {
+            enabled: false,
+            maxImages: 4,
+            maxEdge: 1280,
+            maxBytes: 4194304,
+            timeoutMs: 6000,
+            animationFrames: 2,
+          },
           elsewhere: {
             enabled: true,
             windowMs: 21600000,
@@ -204,6 +212,14 @@ export function defaultConfig() {
         },
         maxConsecutiveSends: 3,
         behavior: {
+          imageInput: {
+            enabled: false,
+            maxImages: 4,
+            maxEdge: 1280,
+            maxBytes: 4194304,
+            timeoutMs: 6000,
+            animationFrames: 2,
+          },
           elsewhere: {
             enabled: true,
             windowMs: 21600000,

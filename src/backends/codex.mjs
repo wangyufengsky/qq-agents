@@ -304,6 +304,7 @@ export class CodexBackend {
   /** @param {RunParams} params */
   async run({
     prompt,
+    inputImages = [],
     instructions,
     onUsage,
     signal,
@@ -443,7 +444,20 @@ export class CodexBackend {
       onInputSubmitted?.();
       const receipt = await this.rpc.request("turn/start", {
         threadId,
-        input: [{ type: "text", text: prompt, text_elements: [] }],
+        input: [
+          { type: "text", text: prompt, text_elements: [] },
+          ...inputImages.flatMap((image) => [
+            { type: "text", text: image.label, text_elements: [] },
+            ...(image.data
+              ? [
+                  {
+                    type: "image",
+                    url: `data:${image.mimeType};base64,${image.data}`,
+                  },
+                ]
+              : []),
+          ]),
+        ],
         ...(this.config.model ? { model: this.config.model } : {}),
         effort: this.config.effort || "high",
       });

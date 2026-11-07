@@ -1446,3 +1446,21 @@ test("Antigravity consumes a verified legacy binding after compatible request se
     backend.sessionSignature(params.tools),
   );
 });
+
+test("Antigravity pins the auto-created swarm plugin off and rejects modified profile settings", (t) => {
+  const { backend } = setup(t);
+  backend.checkProfile();
+  const file = path.join(backend.profile, "config", "config.json");
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), {
+    plugins: { swarm: { enabled: false } },
+  });
+  backend.checkProfile();
+  for (const value of [
+    { plugins: { swarm: { enabled: true } } },
+    { plugins: { swarm: { enabled: false } }, permissions: "all" },
+    {},
+  ]) {
+    fs.writeFileSync(file, JSON.stringify(value));
+    assert.throws(() => backend.checkProfile(), /ANTIGRAVITY_PROFILE_UNSAFE/);
+  }
+});

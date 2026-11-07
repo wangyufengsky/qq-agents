@@ -6,8 +6,15 @@ const LIMIT = 128 * 1024 * 1024;
 /** Translate ACP into the existing supervisor's terminal protocol. The supervisor
  * still owns tool authorization, cancellation, session binding and send settlement.
  * @param {any} options @param {string} prompt
- * @param {(event: any) => void} emit @param {typeof spawn} [launch] */
-export async function runAcp(options, prompt, emit, launch = spawn) {
+ * @param {(event: any) => void} emit @param {typeof spawn} [launch]
+ * @param {import("./session-contract.mjs").InputImage[]} [inputImages] */
+export async function runAcp(
+  options,
+  prompt,
+  emit,
+  launch = spawn,
+  inputImages = [],
+) {
   const child = launch(
     options.command,
     [
@@ -162,6 +169,12 @@ export async function runAcp(options, prompt, emit, launch = spawn) {
               prompt
             : prompt,
         },
+        ...inputImages.flatMap((image) => [
+          { type: "text", text: image.label },
+          ...(image.data
+            ? [{ type: "image", mimeType: image.mimeType, data: image.data }]
+            : []),
+        ]),
       ],
     });
     if (closed || result.stopReason !== "end_turn")
@@ -198,8 +211,12 @@ async function main() {
   const message = JSON.parse(input);
   if (message.event !== "user" || typeof message.message?.content !== "string")
     throw Error("ANTIGRAVITY_PROTOCOL_ERROR");
-  await runAcp(JSON.parse(process.argv[2]), message.message.content, (event) =>
-    process.stdout.write(JSON.stringify(event) + "\n"),
+  await runAcp(
+    JSON.parse(process.argv[2]),
+    message.message.content,
+    (event) => process.stdout.write(JSON.stringify(event) + "\n"),
+    undefined,
+    message.message.inputImages || [],
   );
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)

@@ -68,3 +68,17 @@ npm run memory:backup -- --source /path/to/instance/memory.sqlite --destination 
 ## Self / 上下文 / 主体意图
 
 独立环境可选择 `--case self-context` 跑五回合候选、主体采纳、目标发言、取消、原生压缩及重建回忆；`--case subject-cost` 每后端严格四次无新事项检查，对比复用两次和各自新建两次；`--case intent-receipt` 验证最终目标发送、outbox 与联系预算/冷却。它们均只向脚本创建的本机网关写入，必须 `--allow-real-models`，保留实际输出供人工阅读。self-context 使用全新合成数据目录，复用旧数据可能使模型合理地继续观察候选而不再次采纳。生成的 DSH preset 需包含同一隔离服务域的 compaction provider 与 compact 命令。结果解释、失败及限制见 [本轮报告](history/QUALITY-SELF-CONTEXT.md)。
+
+## 消息图片直接输入
+
+```sh
+node scripts/message-image-acceptance.mjs --allow-real-models --backend-config /path/to/private-backend.json
+# Codex 需要独立测试登录；仅将已授权登录文件复制到脚本新建的专用测试 home
+node scripts/message-image-acceptance.mjs --allow-real-models --backend-config /path/to/private-codex-backend.json --codex-auth /path/to/authorized/auth.json
+```
+
+私有 JSON 是一个后端配置对象；分别提供 DSH、Codex 和 `cliProtocol: "acp"` 的 Antigravity 配置。脚本仅创建隔离工作区和全新原生测试会话，不读取 QQ 数据，不连接 QQ 传输。DSH 使用已安装的受限 `qq-unified` preset，不提供桥接能力凭据且禁止工具调用；不会修改宿主 preset 或既有聊天会话。Codex/ACP 仅提供记录合成答案的 `probe_answer` 工具，不开放读图、文件或外部动作。
+
+每个后端运行三轮：两轮分别输入两张新生成的随机四色图，检查图序和格子颜色；第三轮不附图，必须报告空结果，不能沿用旧图。图片经实际预览编码器生成，答案不写入提示或文件名。记录零读图工具调用与原生会话续接；DSH 检查该隔离会话的文字答案，Codex/ACP 检查答案工具参数。证据保存在脚本输出的私有临时目录；部署验收应复制到持久私有目录，不提交登录、会话或原始后端记录。
+
+此验收证明所选版本、模型与合成负载下的直接视觉输入，不代表真实 QQ 上游下载、复杂文字或所有动图已通过。完整 Runtime 的权限、超时、去重、多图和 GIF 边界由 `test/message-images.test.mjs` 覆盖。

@@ -110,6 +110,14 @@
       },
       "maxConsecutiveSends": 3,
       "behavior": {
+        "imageInput": {
+          "enabled": false,
+          "maxImages": 4,
+          "maxEdge": 1280,
+          "maxBytes": 4194304,
+          "timeoutMs": 6000,
+          "animationFrames": 2
+        },
         "elsewhere": {
           "enabled": true,
           "windowMs": 21600000,
@@ -213,6 +221,14 @@
       },
       "maxConsecutiveSends": 3,
       "behavior": {
+        "imageInput": {
+          "enabled": false,
+          "maxImages": 4,
+          "maxEdge": 1280,
+          "maxBytes": 4194304,
+          "timeoutMs": 6000,
+          "animationFrames": 2
+        },
         "elsewhere": {
           "enabled": true,
           "windowMs": 21600000,

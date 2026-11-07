@@ -16,6 +16,17 @@ export const timezone = z.string().refine((s) => {
 }, "INVALID_TIMEZONE");
 export const behaviorSchema = z
   .object({
+    imageInput: z
+      .object({
+        enabled: z.boolean().default(false),
+        maxImages: ms(1, 8, 4),
+        maxEdge: ms(512, 1536, 1280),
+        maxBytes: ms(262144, 8388608, 4194304),
+        timeoutMs: ms(1000, 10000, 6000),
+        animationFrames: ms(1, 3, 2),
+      })
+      .strict()
+      .prefault({}),
     batchWindowMs: ms(0, 60000, 0),
     batchMaxMs: ms(0, 60000, 0),
     maxWakePerMinute: ms(1, 60, 6),
