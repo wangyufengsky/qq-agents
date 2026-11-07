@@ -760,6 +760,7 @@ test("mind export restores all tables, remaps activity watermarks and refuses ex
   });
   runtime.contexts.seen(ctx, [e]);
   m.setState("@subject", { activityCursor: e.seq, lastActivitySeq: e.seq });
+  m.setState(ctx.conversation, { imageInputThroughSeq: e.seq });
   const { restoreExport } = await import("../src/memory/migrate.mjs"),
     target = new MemoryStore(path.join(root, "mind-restored.sqlite"));
   t.after(() => target.close());
@@ -772,6 +773,7 @@ test("mind export restores all tables, remaps activity watermarks and refuses ex
       .get(e.id).seq;
   assert.notEqual(mapped, e.seq);
   assert.equal(restored.state("@subject").activityCursor, mapped);
+  assert.equal(restored.state(ctx.conversation).imageInputThroughSeq, mapped);
   assert.equal(
     restored.identity.get("self_candidates", c.id).evidence[0],
     e.id,

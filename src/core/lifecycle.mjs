@@ -830,7 +830,12 @@ export class ContextLifecycle {
     });
     ctx.estimatedAdded =
       prompt.length + (ctx.initialSession ? instructions.length : 0);
-    return { instructions, prompt, session: s.session };
+    return {
+      instructions,
+      prompt,
+      session: s.session,
+      newMessages: history.items,
+    };
   }
   usage(ctx, value) {
     const m = this.runtime.memory.bind(ctx.agentId),
@@ -943,12 +948,15 @@ export class ContextLifecycle {
     if (!usage || usage.at < ctx.turnStartedAt)
       usage = {
         source: "estimated",
-        contextTokens: (s.usage?.contextTokens || 0) + ctx.estimatedAdded,
+        contextTokens:
+          (s.usage?.contextTokens || 0) +
+          ctx.estimatedAdded +
+          (ctx.estimatedImageTokens || 0),
         capacityTokens:
           s.usage?.capacityTokens || a.contextPolicy.capacityTokens,
         at: r.now(),
         basis:
-          "tracked text characters plus tool output; conservative estimate, excludes unknown backend overhead",
+          "tracked text characters plus tool output and image allowance; conservative estimate, excludes unknown backend overhead",
       };
     const capacity =
       usage.capacityTokens > 0

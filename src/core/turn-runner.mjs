@@ -1,3 +1,4 @@
+import { prepareMessageImages } from "./message-images.mjs";
 import { randomUUID } from "node:crypto";
 import { SUBJECT } from "./lifecycle.mjs";
 import { toolSpecs } from "../tools/specs.mjs";
@@ -116,7 +117,21 @@ export class TurnRunner {
       const prepared = runtime.contexts.prepare(ctx, backend, reasons, tools);
       if (ctx.initialSession)
         ctx.estimatedAdded += JSON.stringify(tools).length;
+      // Keep the existing synchronous admission path when automatic media is off.
+      const imageInput = a.behavior.imageInput.enabled
+        ? await prepareMessageImages(
+            runtime,
+            ctx,
+            backend.config
+              ? backend
+              : runtime.config.backends.find((b) => b.id === a.backendId),
+            prepared,
+          )
+        : { images: [], beforeSubmit() {}, submitted() {} };
+      runtime.assertActive(ctx);
       await this.runBackend(ctx, backend, {
+        inputImages: imageInput.images,
+        beforeInputSubmitted: imageInput.beforeSubmit,
         agent: a,
         conversation,
         prompt: prepared.prompt,
@@ -145,8 +160,12 @@ export class TurnRunner {
           }),
         onBackendTurn: (reference) =>
           !runtime.stopped && recordBackendTurn(mem, ctx.turnId, reference),
-        onInputSubmitted: () =>
-          !runtime.stopped && recordInputSubmission(mem, ctx.turnId),
+        onInputSubmitted: () => {
+          if (!runtime.stopped) {
+            imageInput.submitted();
+            recordInputSubmission(mem, ctx.turnId);
+          }
+        },
         onTiming: (timing) =>
           !runtime.stopped && recordBackendTiming(mem, ctx.turnId, timing),
         onDiagnostic: (event, attempt) =>

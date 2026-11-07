@@ -484,3 +484,30 @@ DSH、Codex、Antigravity 可沿用角色现有后端按回合运行，使用独
 ### Antigravity 图片通道
 
 `backends[].cliProtocol` 仅用于 Antigravity，可选 `headless` / `acp`，省略时保持 headless。ACP 将已授权工具返回的图片内容块直接送给模型，保留媒体检查与工具权限；要求 CLI 声明图片能力并通过隔离验收。ACP 当前按回合启动与续接，`cliReuse` 设置仅对 headless 生效。切换协议会重建对应模型会话一次，详见 [Antigravity 图片输入](ANTIGRAVITY.md#ACP-图片直接输入)。其他后端和已有显式配置不变。
+
+## 新消息自动看图（behavior.imageInput）
+
+角色高级设置的“新消息自动看图”可将新消息图片预览随文字送入 DSH、Codex 或 Antigravity ACP，模型不用先调用图片工具。仍需允许 `qq_image_read`；Antigravity headless 和 OpenAI 兼容后端继续按原有工具方式读取。缺省关闭，升级不自动改变已有角色的图片读取方式。
+
+```json
+{
+  "behavior": {
+    "imageInput": {
+      "enabled": true,
+      "maxImages": 4,
+      "maxEdge": 1280,
+      "maxBytes": 4194304,
+      "timeoutMs": 6000,
+      "animationFrames": 2
+    }
+  }
+}
+```
+
+`maxImages` 是每回合最多附带的画面数（1–8，GIF 每帧也占一个名额）；`maxEdge` 是预览最长边（512–1536，不放大小图）；`maxBytes` 是预览总字节上限（256 KiB–8 MiB）；`timeoutMs` 是整个图片准备阶段的截止时间（1–10 秒）；`animationFrames` 是每张 GIF 最多采样帧数（1–3）。每张预览最多 1 MiB。静态图及解码后的 GIF 帧转为 JPEG；透明区域与小字细节应以原图读取为准。需要已有 FFmpeg 依赖，缺少或解码失败时图片标记为未附上，文字回合继续。
+
+图片预留按每幅 4096 token 保守估算，附图预留不超过上下文容量的四分之一，并扣除已有会话占用与回复预留，因此实际数量可能小于 `maxImages`。回合结束优先使用后端实测占用，缺少实测时累加文字估算与图片预留；这不是提供商精确计费或模型窗口的声明。
+
+仅自动处理本轮已展示的、当前聊天及当前账号的新入站图片消息。撤回、来源保护、图片工具权限与暂停状态在读取和实际提交前重新检查。文件附件不自动下载；历史回放、已提交图片及错误续接不重复附图。未附上的图片明确标注原因；原图、长图小字与 GIF 后续帧用 `qq_image_read` / `sticker_read` 按需读取。自动附图可能增加模型图片用量，不能保证固定响应耗时。
+
+开启会更新对应角色的看图提示契约，原生模型会话按既有机制交接重建，长期记忆、Self 和投递账本保留。关闭开关会撤销活跃回合，避免已准备的图片继续输入；调整尺寸和数量不会自行扩大读取权限。

@@ -600,6 +600,19 @@ const agentForm = {
       ) +
       advanced(
         this.foldTitle(
+          "新消息自动看图",
+          row.behavior?.imageInput?.enabled ? "已开启" : "已关闭",
+        ),
+        '<input type="hidden" name="imageInputPresent" value="1">' +
+          check(
+            "imageInputEnabled",
+            "将新消息图片预览随文字交给模型",
+            row.behavior?.imageInput?.enabled,
+          ) +
+          '<p class="hint">支持 DSH、Codex 和 Antigravity ACP，仍需允许 qq_image_read。每回合默认最多 4 张画面、最长边 1280 像素，GIF 默认采样 2 帧；原图和后续帧可按需读取。历史回放不重复附图，失败或超限会明确标注。自动附图会增加模型图片用量。</p>',
+      ) +
+      advanced(
+        this.foldTitle(
           "别处近况",
           row.behavior?.elsewhere?.enabled === false
             ? "已关闭"
@@ -1416,6 +1429,12 @@ const agentForm = {
             Number,
             original.behavior?.actions?.qzoneMaxPerDay,
           ),
+        },
+        imageInput: {
+          ...original.behavior?.imageInput,
+          enabled: f.has("imageInputPresent")
+            ? f.has("imageInputEnabled")
+            : original.behavior?.imageInput?.enabled,
         },
         // A form without these fields keeps the stored switch and window.
         elsewhere: {

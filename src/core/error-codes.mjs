@@ -2,6 +2,8 @@
 // Only reviewed, literal codes may leave the process. Never echo an arbitrary error message.
 export const knownErrorCodes = new Set(
   `
+IMAGE_PREVIEW_FAILED
+IMAGE_INPUT_UNAVAILABLE
 IDENTITY_DENIED
 SOURCE_RESTRICTED
 AUDIENCE_DENIED

@@ -254,6 +254,7 @@ export class DshBackend {
   async run({
     conversation,
     prompt,
+    inputImages = [],
     instructions,
     onUsage,
     signal,
@@ -384,6 +385,18 @@ export class DshBackend {
                   ? instructions + "\n\n" + prompt
                   : prompt,
             },
+            ...inputImages.flatMap((image) => [
+              { type: /** @type {const} */ ("text"), text: image.label },
+              ...(image.data
+                ? [
+                    {
+                      type: /** @type {const} */ ("image"),
+                      mediaType: /** @type {"image/jpeg"} */ (image.mimeType),
+                      data: image.data,
+                    },
+                  ]
+                : []),
+            ]),
           ],
         }),
         "prompt",

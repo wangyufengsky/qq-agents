@@ -717,3 +717,72 @@ test("Codex game terminal proof matches the native thread, turn and terminal sta
   thread.id = "different-thread";
   assert.equal((await backend.gameRunState(run)).terminal, false);
 });
+
+for (const kind of ["codex", "dsh"])
+  test(`${kind} accepts labelled images on the initial prompt without invoking a tool`, async (t) => {
+    const rpc = new Rpc();
+    const dsh = dshFake();
+    const backend =
+      kind === "codex"
+        ? new CodexBackend(config().backends[0], config().agents[0], {
+            root: temp(t),
+            rpc,
+          })
+        : new DshBackend(
+            { id: "dsh", preset: "qq-unified" },
+            config().agents[0],
+            { root: temp(t), client: dsh.client },
+          );
+    t.after(() => backend.close());
+    let toolCalls = 0;
+    const inputImages = [
+      {
+        eventId: "fixture",
+        index: 0,
+        label: "picture one",
+        mimeType: "image/png",
+        data: "cGl4ZWxz",
+      },
+      { eventId: "fixture", index: 1, label: "unavailable" },
+    ];
+    const running = backend.run({
+      prompt: "look",
+      inputImages,
+      tools: [],
+      signal: new AbortController().signal,
+      saveSession() {},
+      callTool: async () => {
+        toolCalls++;
+      },
+    });
+    await tick();
+    if (kind === "codex") {
+      const input = rpc.calls.find((c) => c.method === "turn/start").args.input;
+      assert.deepEqual(input.slice(1), [
+        { type: "text", text: "picture one", text_elements: [] },
+        { type: "image", url: "data:image/png;base64,cGl4ZWxz" },
+        { type: "text", text: "unavailable", text_elements: [] },
+      ]);
+      rpc.complete();
+    } else {
+      const input = dsh.client.calls.find((c) => c.name === "prompt").args
+        .content;
+      assert.deepEqual(input.slice(1), [
+        { type: "text", text: "picture one" },
+        { type: "image", mediaType: "image/png", data: "cGl4ZWxz" },
+        { type: "text", text: "unavailable" },
+      ]);
+      dsh.push({
+        payload: {
+          type: "session/event",
+          sessionId: "s",
+          event: {
+            type: "turn/end",
+            data: { turn: "t", reason: { kind: "completed" } },
+          },
+        },
+      });
+    }
+    await running;
+    assert.equal(toolCalls, 0);
+  });

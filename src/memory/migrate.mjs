@@ -156,6 +156,7 @@ export function restoreExport(memory, data) {
             "activityCursor",
             "lastActivitySeq",
             "feedThroughSeq",
+            "imageInputThroughSeq",
           ])
             if (state[key] !== undefined)
               state[key] = seqs.get(state[key]) ?? 0;
