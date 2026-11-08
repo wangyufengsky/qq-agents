@@ -38,7 +38,7 @@ export class TurnRunner {
   constructor(runtime) {
     this.runtime = runtime;
   }
-  async runTurn(agentId, conversation, { reasons = [] } = {}) {
+  async runTurn(agentId, conversation, { reasons = [], timingId } = {}) {
     if (conversation !== SUBJECT) this.runtime.socialRuntime?.preempt(agentId);
     const release =
       conversation === SUBJECT
@@ -46,12 +46,24 @@ export class TurnRunner {
         : () => {};
     if (!release) return { status: "queued" };
     try {
-      return await this.runOrdinaryTurn(agentId, conversation, { reasons });
+      const result = await this.runOrdinaryTurn(agentId, conversation, {
+        reasons,
+        timingId,
+      });
+      if (!result) this.runtime.messageTiming?.finish(timingId, "skipped");
+      return result;
+    } catch (error) {
+      this.runtime.messageTiming?.finish(timingId, "failed");
+      throw error;
     } finally {
       release();
     }
   }
-  async runOrdinaryTurn(agentId, conversation, { reasons = [] } = {}) {
+  async runOrdinaryTurn(
+    agentId,
+    conversation,
+    { reasons = [], timingId } = {},
+  ) {
     const runtime = this.runtime;
     if (runtime.closed) throw Error("RUNTIME_CLOSING");
     const a = runtime.agent(agentId);
@@ -73,6 +85,7 @@ export class TurnRunner {
     const ctx = runtime.makeContext(agentId, conversation),
       { token, controller } = ctx;
     ctx.freshSubject = freshSubject;
+    ctx.messageTimingId = timingId;
     let resolveDone;
     ctx.done = new Promise((resolve) => {
       resolveDone = resolve;
@@ -95,6 +108,8 @@ export class TurnRunner {
       );
     ctx.allowedTools = runtime.toolsFor(a, conversation);
     runtime.running.set(runKey, ctx);
+    runtime.messageTiming?.mark(timingId, "processingStarted");
+    runtime.conversations.timing?.occupy(agentId, conversation);
     const state = mem.state(conversation);
     state.lastWakeAt = runtime.now();
     state.pendingWake = false;
@@ -162,6 +177,7 @@ export class TurnRunner {
           !runtime.stopped && recordBackendTurn(mem, ctx.turnId, reference),
         onInputSubmitted: () => {
           if (!runtime.stopped) {
+            runtime.messageTiming?.mark(timingId, "backendInputSubmitted");
             imageInput.submitted();
             recordInputSubmission(mem, ctx.turnId);
           }
@@ -251,6 +267,7 @@ export class TurnRunner {
             runtime.scheduler.finish(agentId, reason.taskRunId, outcome);
         // Allow the next queued wake to start; ctx.done still covers all finalization.
         runtime.running.delete(runKey);
+        runtime.conversations.timing?.release(agentId, conversation);
         if (
           !controller.signal.aborted &&
           !runtime.closed &&
@@ -260,7 +277,20 @@ export class TurnRunner {
           runtime.conversations.finish(ctx);
       } finally {
         clearTimeout(timer);
-        if (runtime.running.get(runKey) === ctx) runtime.running.delete(runKey);
+        if (runtime.running.get(runKey) === ctx) {
+          runtime.running.delete(runKey);
+          runtime.conversations.timing?.release(agentId, conversation);
+        }
+        if (timingId !== undefined) {
+          runtime.messageTiming.mark(timingId, "turnFinished");
+          if (ctx.pendingDeliveries) ctx.messageTimingTerminal = outcome;
+          else
+            runtime.messageTiming.finishTurn(
+              timingId,
+              outcome,
+              ctx.messageTimingToolOutcome,
+            );
+        }
         resolveDone();
       }
     }

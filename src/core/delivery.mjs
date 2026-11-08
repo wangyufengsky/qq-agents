@@ -2,6 +2,7 @@ import { assertHomeSceneMedia } from "../home/scene-media.mjs";
 import { assertNoSocialDisclosure } from "./social-protection.mjs";
 import { peerQzoneSources } from "./peer-qzone-protection.mjs";
 import { assertInputReviewed } from "./input-review.mjs";
+import { timedDeliveryFailure } from "./message-timing-runtime.mjs";
 import { recallBoundary } from "./recall-boundary.mjs";
 import { containsCredential } from "./secrets.mjs";
 import { beforeShareDelivery } from "../apps/sharing.mjs";
@@ -158,6 +159,23 @@ export class DeliveryService {
   async deliver(ctx, operation) {
     const runtime = this.runtime;
     const a = runtime.assertActive(ctx);
+    const capture = runtime.messageTiming;
+    const timingId = ctx.messageTimingId;
+    let timingIndex;
+    if (
+      timingId !== undefined &&
+      !ctx.internalDelivery &&
+      ![
+        "recall",
+        "profile",
+        "qzone",
+        "official-collect",
+        "official-remark",
+      ].includes(operation.actionBudget?.kind || operation.intent?.kind)
+    ) {
+      timingIndex = capture.startDelivery(timingId);
+      if (timingIndex !== undefined) operation = { ...operation, timingIndex };
+    }
     ctx.pendingDeliveries = (ctx.pendingDeliveries || 0) + 1;
     // Drain tracking includes media preparation, before acquiring the connection queue.
     const previous = this.chains.get(a.connectionId);
@@ -177,9 +195,25 @@ export class DeliveryService {
         this.chains.delete(a.connectionId);
     });
     try {
-      return await result;
+      const receipt = await result;
+      if (receipt?.duplicate)
+        capture?.finishDelivery(timingId, timingIndex, "duplicate");
+      return receipt;
+    } catch (error) {
+      capture?.finishDelivery(
+        timingId,
+        timingIndex,
+        timedDeliveryFailure(error),
+      );
+      throw error;
     } finally {
       ctx.pendingDeliveries--;
+      if (!ctx.pendingDeliveries && ctx.messageTimingTerminal)
+        capture?.finishTurn(
+          timingId,
+          ctx.messageTimingTerminal,
+          ctx.messageTimingToolOutcome,
+        );
       if (this.conversations.get(key) === result)
         this.conversations.delete(key);
     }
@@ -201,6 +235,15 @@ export class DeliveryService {
     );
   }
   async enqueue(ctx, operation) {
+    const capture =
+      operation.timingIndex === undefined
+        ? undefined
+        : this.runtime.messageTiming;
+    capture?.markDelivery(
+      ctx.messageTimingId,
+      operation.timingIndex,
+      "conversationReady",
+    );
     const checked = this.checkDelivery(ctx, operation, { beforeQueue: true });
     if (!checked.receipt) {
       // Existing authorization and budget denials take precedence over a
@@ -225,14 +268,30 @@ export class DeliveryService {
           !this.reconciled.has(checked.a.id),
         );
         if (reviewError) throw reviewError;
-        operation = {
-          ...operation,
-          prepared: await operation.prepare(transport),
-        };
+        const started = capture?.clock();
+        try {
+          operation = {
+            ...operation,
+            prepared: await operation.prepare(transport),
+          };
+        } finally {
+          if (started !== undefined)
+            capture.interval(
+              ctx.messageTimingId,
+              "preparation",
+              started,
+              capture.clock(),
+            );
+        }
       }
     }
     const a = this.runtime.assertActive(ctx);
     const previous = this.queues.get(a.connectionId);
+    capture?.markDelivery(
+      ctx.messageTimingId,
+      operation.timingIndex,
+      "queueEntered",
+    );
     const result = previous
       ? previous.catch(() => {}).then(() => this.deliverNow(ctx, operation))
       : this.deliverNow(ctx, operation);
@@ -367,6 +426,17 @@ export class DeliveryService {
   }
   async deliverNow(ctx, operation) {
     const runtime = this.runtime;
+    const capture =
+      operation.timingIndex === undefined ? undefined : runtime.messageTiming;
+    const mark =
+      capture &&
+      ((phase) =>
+        capture.markDelivery(
+          ctx.messageTimingId,
+          operation.timingIndex,
+          phase,
+        ));
+    mark?.("queueLeft");
     const checked = this.checkDelivery(ctx, operation);
     const { a, mem, proactive, requestId, contactFreeAction, receipt } =
       checked;
@@ -449,6 +519,7 @@ export class DeliveryService {
         status: "pending",
       });
     });
+    mark?.("reserved");
     if (!actionBudget)
       ctx.replyBatchSends = (ctx.replyBatchSends ?? ctx.sendCount) + 1;
     ctx.deliveryAttempted = true;
@@ -472,9 +543,11 @@ export class DeliveryService {
       throw e;
     }
     try {
+      mark?.("submitted");
       const receipt = await send(transport, operation.prepared);
       if (action ? receipt?.confirmed !== true : receipt?.messageId == null)
         throw Error("DELIVERY_UNCONFIRMED");
+      mark?.("gatewayConfirmed");
       // Record confirmed delivery even if the user pauses while its network request is in flight.
       const messageId =
         receipt.messageId == null ? null : String(receipt.messageId);
@@ -490,6 +563,12 @@ export class DeliveryService {
         }
         if (!contactFreeAction) runtime.subject.delivered(ctx, "sent");
       });
+      mark?.("ledgerConfirmed");
+      capture?.finishDelivery(
+        ctx.messageTimingId,
+        operation.timingIndex,
+        "confirmed",
+      );
       for (const { id, version } of inputReview?.accepted || [])
         (ctx.confirmedReviewInput ??= new Map()).set(id, version);
       if (!actionBudget) {
@@ -536,6 +615,11 @@ export class DeliveryService {
         mem.completeDelivery(requestId, status);
         if (!contactFreeAction) runtime.subject.delivered(ctx, status);
       });
+      capture?.finishDelivery(
+        ctx.messageTimingId,
+        operation.timingIndex,
+        status,
+      );
       mem.append({
         ...event,
         dedupe: "send:" + requestId + ":" + status,

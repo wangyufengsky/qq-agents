@@ -65,6 +65,10 @@ import { TaskScheduler } from "./scheduler.mjs";
 import { Operations } from "./operations.mjs";
 import { VoiceTranscription } from "./voice-transcription.mjs";
 import { MaintenanceDrain } from "./maintenance.mjs";
+import {
+  isTimedSendTool,
+  timedDeliveryFailure,
+} from "./message-timing-runtime.mjs";
 
 // Adds or removes a feature's tools while keeping the existing order, so saving
 // an unchanged permission page does not count as a policy change.
@@ -95,6 +99,7 @@ export class Runtime {
     clock = () => new Date(),
     random = Math.random,
     diagnostics = new Diagnostics(),
+    messageTiming = undefined,
   }) {
     Object.assign(this, {
       configStore,
@@ -104,6 +109,7 @@ export class Runtime {
       clock,
       random,
       diagnostics,
+      messageTiming,
     });
     this.transports = new Map();
     this.connecting = new Set();
@@ -210,6 +216,7 @@ export class Runtime {
   }
   tick() {
     if (this.closed) return;
+    this.messageTiming?.sweep();
     try {
       this.games.tick();
       this.faults.delete("games");
@@ -670,6 +677,7 @@ export class Runtime {
   }
   async ingestEvent(connectionId, raw) {
     if (this.closed) throw Error("RUNTIME_CLOSING");
+    const receivedAt = this.messageTiming?.clock();
     const c = this.connection(connectionId),
       e = normalizeEvent(raw, c);
     if (!e) return { ignored: true };
@@ -817,8 +825,10 @@ export class Runtime {
       const reason = this.conversations.reason(a, e, c.accountId, archived),
         addressed = this.conversations.addressed(a, e, c.accountId);
       if (voice) voice.reason = reason;
+      const inboundAt =
+        redactConfirmation || redactGame ? undefined : receivedAt;
       if (!reason) {
-        this.conversations.extend(a.id, e.conversation, e.senderId);
+        this.conversations.extend(a.id, e.conversation, e.senderId, inboundAt);
         continue;
       }
       if (!this.writable(a, e.conversation)) {
@@ -832,6 +842,7 @@ export class Runtime {
           senderId: e.senderId,
           addressed,
           direct: this.conversations.direct(a, e, c.accountId, archived),
+          inboundAt,
         });
         continue;
       }
@@ -840,6 +851,7 @@ export class Runtime {
         senderId: e.senderId,
         addressed,
         direct: this.conversations.direct(a, e, c.accountId, archived),
+        inboundAt,
       });
       results.push({ agentId: a.id, ...wake });
     }
@@ -935,6 +947,10 @@ export class Runtime {
   async runTool(ctx, name, args = {}) {
     const startedAt = Date.now(),
       calls = (ctx.toolCalls ||= []);
+    const tracedSend =
+      ctx.messageTimingId !== undefined && isTimedSendTool(name);
+    if (tracedSend)
+      this.messageTiming.mark(ctx.messageTimingId, "sendRequested");
     try {
       // Reserved before any await, so concurrent calls share one budget.
       if (ctx.conversation === SUBJECT && name !== "subject_log") {
@@ -948,6 +964,8 @@ export class Runtime {
         calls.push({ name, ok: true, ms: Date.now() - startedAt });
       return result;
     } catch (error) {
+      if (tracedSend)
+        ctx.messageTimingToolOutcome = timedDeliveryFailure(error);
       if (calls.length < 50)
         calls.push({
           name,

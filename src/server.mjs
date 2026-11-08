@@ -1,3 +1,4 @@
+import { disabledMessageTimingSnapshot } from "./core/message-timing.mjs";
 import { homeModeration } from "./tools/home.mjs";
 import { serveHomePreview } from "./home/static.mjs";
 import { withInteraction } from "./core/closeness.mjs";
@@ -1054,6 +1055,13 @@ export function createServer({
           return send(snapshot());
         }
       }
+      if (
+        req.method === "GET" &&
+        url.pathname === "/api/diagnostics/message-timing"
+      )
+        return send(
+          runtime.messageTiming?.snapshot() ?? disabledMessageTimingSnapshot(),
+        );
       if (req.method === "GET" && url.pathname === "/api/status") {
         const status = runtime.status();
         return send({

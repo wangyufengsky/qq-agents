@@ -39,12 +39,14 @@ const deliveryOutcome = z.enum([
 const phases = z.enum([
   "firstInbound",
   "lastInbound",
+  "batchStarted",
   "batchReady",
   "dispatched",
   "processingStarted",
   "backendInputSubmitted",
   "sendRequested",
   "draftStored",
+  "turnFinished",
   "finished",
 ]);
 const deliveryPhases = z.enum([
@@ -226,6 +228,24 @@ export class MessageTiming {
     return number;
   }
 
+  /** @param {number} number */
+  hasOpen(number) {
+    const entry = this.#open.get(number);
+    return !!entry && this.clock() - entry.startedAt < this.retentionMs;
+  }
+
+  /** @param {number} number */
+  clearFirstInbound(number) {
+    const entry = this.#open.get(number);
+    if (entry) delete entry.value.marks.firstInbound;
+  }
+
+  /** @param {number} number */
+  clearPolicy(number) {
+    const entry = this.#open.get(number);
+    if (entry) delete entry.value.policy;
+  }
+
   /**
    * @param {number | undefined} number
    * @param {keyof TimingSample["marks"]} phase
@@ -236,8 +256,12 @@ export class MessageTiming {
     if (!entry || !phases.options.includes(phase)) return;
     const elapsed = this.#relative(entry, at);
     if (elapsed === undefined) return;
-    if (phase === "lastInbound" || phase === "batchReady")
-      entry.value.marks[phase] = elapsed;
+    if (phase === "lastInbound")
+      entry.value.marks.lastInbound = Math.max(
+        entry.value.marks.lastInbound ?? elapsed,
+        elapsed,
+      );
+    else if (phase === "batchReady") entry.value.marks.batchReady = elapsed;
     else entry.value.marks[phase] ??= elapsed;
   }
 
@@ -326,8 +350,39 @@ export class MessageTiming {
     this.#counts.completed++;
   }
 
-  snapshot() {
+  /**
+   * @param {number | undefined} number
+   * @param {string | undefined} status
+   * @param {TimingDelivery["outcome"]} [toolOutcome]
+   */
+  finishTurn(number, status, toolOutcome) {
+    const sample = this.#open.get(number ?? 0)?.value;
+    if (!sample) return;
+    const results = sample.deliveries.map(({ outcome }) => outcome);
+    const confirmed = results.includes("confirmed");
+    const last = results.at(-1) ?? toolOutcome;
+    this.finish(
+      number,
+      confirmed
+        ? "confirmed"
+        : results.includes("unknown")
+          ? "unknown"
+          : sample.omittedDeliveries
+            ? "censored"
+            : status === "cancelled" || status === "failed"
+              ? status
+              : last && last !== "duplicate" && last !== "unfinished"
+                ? last
+                : "completed-no-send",
+    );
+  }
+
+  sweep() {
     this.#prune(this.clock());
+  }
+
+  snapshot() {
+    this.sweep();
     /** @type {TimingSnapshot} */
     const value = {
       schemaVersion: 1,

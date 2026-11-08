@@ -167,6 +167,7 @@ test("response attribution clips spans and counts shared time once", () => {
   const id = timing.start("group");
   timing.mark(id, "firstInbound");
   timing.mark(id, "lastInbound", 6);
+  timing.mark(id, "batchStarted");
   timing.mark(id, "batchReady", 4);
   timing.mark(id, "backendInputSubmitted", 8);
   timing.mark(id, "sendRequested", 10);

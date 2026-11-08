@@ -73,6 +73,7 @@ function trialPlan(seed, index) {
     modelMs: 750 + next(106) * clockStepMs,
     gatewayMs: 80 + next(13) * clockStepMs,
     replyChars: [5, 17, 40][next(3)],
+    reviewMs: 200 + next(31) * clockStepMs,
   };
 }
 
@@ -156,6 +157,7 @@ function shownItems(items) {
 }
 
 const lastItem = (mask) => 31 - Math.clz32(mask);
+const bitCount = (mask) => mask.toString(2).replaceAll("0", "").length;
 
 function openingHistory(prompt) {
   const prefix = "新增消息：";
@@ -222,6 +224,7 @@ function attachProbe(runtime, timing, policy) {
         open.add(pending);
       }
       timing.mark(pending.id, "lastInbound", receivingAt);
+      timing.mark(pending.id, "batchStarted", state.wakeBatchAt);
       timing.mark(pending.id, "batchReady", state.wakeDueAt);
     }
     return result;
@@ -414,7 +417,8 @@ export async function runBenchmarkTrial(
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "qq-timing-benchmark-"));
   const timing = new MessageTiming({ clock: () => Date.now() });
   let memory, runtime, probe, captured;
-  let firstConfirmedAt, latestConfirmedAt;
+  let firstConfirmedAt, latestConfirmedAt, fullyCoveredAt;
+  let missedAtSubmission = 0;
   let arrived = 0,
     acknowledged = 0,
     nextTurn = 0,
@@ -425,6 +429,7 @@ export async function runBenchmarkTrial(
     confirmed: 0,
     staleSubmissions: 0,
     missedSupplements: 0,
+    incompleteSubmissions: 0,
     duplicateResponses: 0,
     intentionallySilentTurns: 0,
     reviewChallenges: 0,
@@ -448,9 +453,9 @@ export async function runBenchmarkTrial(
       const latest = lastItem(read);
       if (latest < arrived - 1) quality.staleSubmissions++;
       const missing = expected & ~(read | acknowledged);
-      quality.missedSupplements += missing
-        .toString(2)
-        .replaceAll("0", "").length;
+      if (missing) quality.incompleteSubmissions++;
+      quality.missedSupplements += bitCount(missing);
+      missedAtSubmission |= missing;
       if (responded.has(read)) quality.duplicateResponses++;
       responded.add(read);
       quality.gatewayCalls++;
@@ -481,8 +486,11 @@ export async function runBenchmarkTrial(
     let inputReview;
     for (let attempt = 0; attempt < 12; attempt++) {
       if ((read & ~acknowledged) === 0) {
-        quality.intentionallySilentTurns++;
-        if (trace) trace.intentional = true;
+        if (((1 << arrived) - 1) & ~acknowledged) quality.missingModelInput++;
+        else {
+          quality.intentionallySilentTurns++;
+          if (trace) trace.intentional = true;
+        }
         return;
       }
       const text = "B" + read.toString(36) + ":" + "答".repeat(plan.replyChars);
@@ -497,6 +505,8 @@ export async function runBenchmarkTrial(
           firstConfirmedAt ??= Date.now();
           if (lastItem(acknowledged) === arrivals.length - 1)
             latestConfirmedAt ??= Date.now();
+          if (acknowledged === (1 << arrivals.length) - 1)
+            fullyCoveredAt ??= Date.now();
           quality.confirmed++;
           return;
         }
@@ -517,6 +527,9 @@ export async function runBenchmarkTrial(
           read |= await readAvailable(p.callTool, 0);
           inputReview = undefined;
         }
+        await promisedTimers.setTimeout(plan.reviewMs, undefined, {
+          signal: p.signal,
+        });
       }
     }
     quality.otherToolFailures++;
@@ -588,9 +601,18 @@ export async function runBenchmarkTrial(
           latestConfirmedAt === undefined
             ? null
             : latestConfirmedAt - epoch - arrivals.at(-1),
+        lastInboundToFullCoverageMs:
+          fullyCoveredAt === undefined
+            ? null
+            : fullyCoveredAt - epoch - arrivals.at(-1),
       },
       quality: {
         ...quality,
+        uniqueMissedAtSubmission: bitCount(missedAtSubmission),
+        unacknowledgedInputsAtHorizon: bitCount(
+          ((1 << arrived) - 1) & ~acknowledged,
+        ),
+        fullyCovered: fullyCoveredAt === undefined ? 0 : 1,
         inbound: arrived,
         latestUnconfirmed: lastItem(acknowledged) < arrivals.length - 1 ? 1 : 0,
         arrivalsBeyondHorizon: arrivals.length - arrived,
@@ -671,6 +693,7 @@ export async function runMessageTimingBenchmark({
       const quality = {};
       const firstResponses = [];
       const latestResponses = [];
+      const fullCoverageResponses = [];
       const combined = new MessageTiming().snapshot();
       let legacyFirstReplyProbe = false;
       for (let index = 0; index < samples; index++) {
@@ -683,6 +706,7 @@ export async function runMessageTimingBenchmark({
         legacyFirstReplyProbe = result.legacyFirstReplyProbe;
         firstResponses.push(result.response.firstInboundToFirstConfirmationMs);
         latestResponses.push(result.response.lastInboundToLatestConfirmationMs);
+        fullCoverageResponses.push(result.response.lastInboundToFullCoverageMs);
         addCounters(quality, result.quality);
         addCounters(combined.counts, result.timing.counts);
         for (const sample of result.timing.samples)
@@ -704,6 +728,7 @@ export async function runMessageTimingBenchmark({
         trialTimings: {
           firstInboundToFirstConfirmation: trialDistribution(firstResponses),
           lastInboundToLatestConfirmation: trialDistribution(latestResponses),
+          lastInboundToFullCoverage: trialDistribution(fullCoverageResponses),
         },
         timing: analyzeMessageTiming(combined).overall,
       });

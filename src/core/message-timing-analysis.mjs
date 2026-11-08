@@ -8,6 +8,7 @@ import { messageTimingSnapshotSchema } from "./message-timing.mjs";
 const tracePairs = /** @type {const} */ ({
   firstInboundToReady: ["firstInbound", "batchReady"],
   lastInboundToReady: ["lastInbound", "batchReady"],
+  batchStartedToReady: ["batchStarted", "batchReady"],
   readyToDispatch: ["batchReady", "dispatched"],
   dispatchToProcessing: ["dispatched", "processingStarted"],
   firstInboundToProcessing: ["firstInbound", "processingStarted"],
@@ -129,7 +130,7 @@ function observedSpans(sample) {
     marks.batchReady !== undefined &&
     marks.batchReady <= (marks.dispatched ?? marks.finished ?? 0)
   )
-    add("aggregation", marks.firstInbound, marks.batchReady);
+    add("aggregation", marks.batchStarted, marks.batchReady);
   add("modelToSendRequest", marks.backendInputSubmitted, marks.sendRequested);
   for (const { marks: delivery } of sample.deliveries) {
     add("conversationQueue", delivery.requested, delivery.conversationReady);

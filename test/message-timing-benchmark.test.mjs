@@ -78,6 +78,91 @@ test("continuous arrival fixture scores an actual stale legacy send", async (t) 
   }
 });
 
+function withFilteredOpening(source, filter) {
+  const prefix = "新增消息：";
+  return {
+    ...source,
+    Runtime: class extends source.Runtime {
+      constructor(options) {
+        let turn = 0;
+        super({
+          ...options,
+          backendFactory: (...args) => {
+            const backend = options.backendFactory(...args);
+            const run = backend.run;
+            backend.run = (parameters) => {
+              turn++;
+              return run({
+                ...parameters,
+                prompt: parameters.prompt
+                  .split("\n")
+                  .map((line) => {
+                    if (!line.startsWith(prefix)) return line;
+                    return (
+                      prefix +
+                      JSON.stringify(
+                        filter(JSON.parse(line.slice(prefix.length)), turn),
+                      )
+                    );
+                  })
+                  .join("\n"),
+              });
+            };
+            return backend;
+          },
+        });
+      }
+    },
+  };
+}
+
+test("latest confirmation does not hide an earlier unacknowledged fixture input", async (t) => {
+  const source = withFilteredOpening(
+    await loadBenchmarkSource(repoRoot),
+    (page) => ({
+      ...page,
+      items: page.items.filter(({ body }) => body !== "fixture item 1"),
+    }),
+  );
+  const trial = await runBenchmarkTrial(source, {
+    ...base,
+    scenario: "fragments",
+    timers: t.mock.timers,
+  });
+  assert.equal(trial.quality.latestUnconfirmed, 0);
+  assert.equal(trial.quality.staleSubmissions, 0);
+  assert.equal(trial.quality.incompleteSubmissions, 1);
+  assert.equal(trial.quality.uniqueMissedAtSubmission, 1);
+  assert.equal(trial.quality.unacknowledgedInputsAtHorizon, 1);
+  assert.equal(trial.quality.fullyCovered, 0);
+  assert.notEqual(trial.response.lastInboundToLatestConfirmationMs, null);
+  assert.equal(trial.response.lastInboundToFullCoverageMs, null);
+});
+
+test("a wake that receives only already acknowledged content is a presentation gap", async (t) => {
+  const source = withFilteredOpening(
+    await loadBenchmarkSource(repoRoot),
+    (page, turn) =>
+      turn === 1
+        ? page
+        : {
+            ...page,
+            truncated: false,
+            items: page.items.filter(({ body }) => body === "fixture item 0"),
+          },
+  );
+  const trial = await runBenchmarkTrial(source, {
+    ...base,
+    scenario: "continuous",
+    index: 2,
+    timers: t.mock.timers,
+  });
+  assert(trial.quality.missingModelInput > 0);
+  assert.equal(trial.quality.intentionallySilentTurns, 0);
+  assert(trial.quality.unacknowledgedInputsAtHorizon > 0);
+  assert.equal(trial.response.lastInboundToFullCoverageMs, null);
+});
+
 test("observation cutoff keeps in-flight work out of the confirmation distribution", async (t) => {
   const source = await loadBenchmarkSource(repoRoot);
   const result = await runBenchmarkTrial(source, {
