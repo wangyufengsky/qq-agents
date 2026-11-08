@@ -9,11 +9,11 @@ const flush = async () => {
   for (let i = 0; i < 3; i++)
     await new Promise((resolve) => setImmediate(resolve));
 };
-function setup(t, conversation = "private:30000") {
+function setup(t, conversation = "private:30000", run) {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const cfg = config(1);
   cfg.agents[0].tools.push("qq_send_burst");
-  const f = fixture(t, { cfg });
+  const f = fixture(t, { cfg, run });
   const ctx = context(f.runtime, "agent-0", conversation);
   const agent = f.runtime.agent("agent-0");
   agent.behavior.typing ??= {};
@@ -97,6 +97,7 @@ test("input status is cosmetic: one request, no chat event, receipt or send budg
   const m = f.store.bind("agent-0");
   const before = m.db.prepare("SELECT COUNT(*) AS n FROM events").get().n;
   const stop = startTypingIndicator(f.runtime, f.ctx);
+  t.mock.timers.tick(500);
   await flush();
   assert.equal(f.calls.length, 1);
   assert.equal(f.calls[0].conversation, "private:30000");
@@ -120,6 +121,7 @@ test("input status gateway failures produce only one sanitized diagnostic", asyn
     throw Error("untrusted gateway detail");
   };
   const stop = startTypingIndicator(f.runtime, f.ctx);
+  t.mock.timers.tick(500);
   await flush();
   assert.equal(f.runtime.diagnostics.snapshot().length, 1);
   assert.equal(
@@ -144,6 +146,7 @@ test("input status times out once even when an unsupported transport ignores can
     return new Promise(() => {});
   };
   const stop = startTypingIndicator(f.runtime, f.ctx);
+  t.mock.timers.tick(500);
   await flush();
   t.mock.timers.tick(999);
   await flush();
@@ -158,7 +161,7 @@ test("input status times out once even when an unsupported transport ignores can
   assert.equal(f.runtime.diagnostics.snapshot()[0].count, 1);
 });
 
-for (const cause of ["typing-finished", "turn-aborted"])
+for (const cause of ["turn-finished", "turn-aborted"])
   test(
     "cosmetic request cancellation is not a gateway failure: " + cause,
     async (t) => {
@@ -172,9 +175,9 @@ for (const cause of ["typing-finished", "turn-aborted"])
           });
         });
       const stop = startTypingIndicator(f.runtime, f.ctx);
+      t.mock.timers.tick(500);
       await flush();
-      t.mock.timers.tick(600);
-      if (cause === "typing-finished") stop();
+      if (cause === "turn-finished") stop();
       else f.ctx.controller.abort();
       await flush();
       assert.equal(signal.aborted, true);
@@ -189,7 +192,6 @@ for (const reason of [
   "group",
   "internal",
   "indicator-disabled",
-  "typing-disabled",
   "disconnected",
   "isolated",
   "paused",
@@ -203,14 +205,15 @@ for (const reason of [
       if (reason === "internal") f.ctx.internalDelivery = true;
       if (reason === "indicator-disabled")
         f.agent.behavior.typing.indicator = false;
-      if (reason === "typing-disabled") f.agent.behavior.typing.enabled = false;
       if (reason === "disconnected") f.transport.connected = false;
       if (reason === "isolated") f.runtime.config.mode = "isolated";
       if (reason === "paused") f.agent.paused = true;
       if (reason === "revoked") f.agent.allow.users = [];
       if (reason === "expired") f.ctx.expires = Date.now() - 1;
-      startTypingIndicator(f.runtime, f.ctx)();
+      const stop = startTypingIndicator(f.runtime, f.ctx);
+      t.mock.timers.tick(500);
       await flush();
+      stop();
       assert.equal(f.calls.length, 0);
       assert.equal(f.runtime.diagnostics.snapshot().length, 0);
     },
@@ -220,6 +223,7 @@ test("a pause before the scheduled request starts prevents a late indication", a
   const f = setup(t);
   const stop = startTypingIndicator(f.runtime, f.ctx);
   f.agent.paused = true;
+  t.mock.timers.tick(500);
   await flush();
   stop();
   assert.equal(f.calls.length, 0);
@@ -241,58 +245,126 @@ test("a first private reply sends immediately without starting a synthetic typin
   assert.equal(f.calls.length, 0);
 });
 
-test("each private burst typing wait starts one input status request", async (t) => {
+test("private burst gaps alone do not start an input status request", async (t) => {
   const f = setup(t);
-  Object.assign(f.agent.behavior.typing, {
-    msPerChar: 100,
-    minMs: 0,
-    jitter: 0,
-  });
-  f.agent.behavior.longGapProbability = 0;
   const p = f.runtime.callTool(f.ctx, "qq_send_burst", {
     requestId: "indicator-burst",
-    messages: ["一", "二二", "三三三"],
+    messages: ["第一条", "第二条", "第三条"],
+    gapMs: 900,
   });
   await flush();
-  assert.equal(f.calls.length, 1);
   assert.equal(f.transport.sent.length, 1);
-  t.mock.timers.tick(200);
+  t.mock.timers.tick(900);
   await flush();
   assert.equal(f.transport.sent.length, 2);
-  assert.equal(f.calls.length, 2);
-  t.mock.timers.tick(300);
+  t.mock.timers.tick(900);
   assert.equal((await p).receipts.length, 3);
-  assert.equal(f.calls.length, 2);
+  assert.equal(f.calls.length, 0);
+});
+
+test("a fast private backend response completes and never schedules a late input status", async (t) => {
+  const f = setup(t, "private:30000", async (p) => {
+    await p.callTool("qq_send", { requestId: "fast", text: "你好" });
+  });
+  assert.equal(
+    (await f.runtime.wake(f.ctx.agentId, f.ctx.conversation)).status,
+    "sent",
+  );
+  assert.equal(f.transport.sent.length, 1);
+  t.mock.timers.tick(2000);
+  await flush();
+  assert.equal(f.calls.length, 0);
+});
+
+test("slow private processing starts once at 500 ms independently of burst typing and never delays a reply", async (t) => {
+  const proceed = Promise.withResolvers();
+  const f = setup(t, "private:30000", async (p) => {
+    await proceed.promise;
+    await p.callTool("qq_send", { requestId: "slow", text: "你好" });
+  });
+  f.agent.behavior.typing.enabled = false;
+  f.transport.setTyping = (conversation, options) => {
+    f.calls.push({ conversation, ...options });
+    return new Promise(() => {});
+  };
+  const turn = f.runtime.wake(f.ctx.agentId, f.ctx.conversation);
+  t.mock.timers.tick(499);
+  await flush();
+  assert.equal(f.calls.length, 0);
+  t.mock.timers.tick(1);
+  await flush();
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.calls[0].conversation, f.ctx.conversation);
+  assert.equal(f.calls[0].signal.aborted, false);
+  proceed.resolve();
+  assert.equal((await turn).status, "sent");
+  assert.equal(f.transport.sent.length, 1);
+  assert.equal(f.calls[0].signal.aborted, true);
+  t.mock.timers.tick(5000);
+  await flush();
+  assert.equal(f.calls.length, 1);
   assert.equal(f.runtime.diagnostics.snapshot().length, 0);
 });
 
-test("pausing an active typing wait cancels its input status and prevents delivery", async (t) => {
-  const f = setup(t);
-  let signal;
-  f.transport.setTyping = (_conversation, options) => {
-    signal = options.signal;
-    return new Promise(() => {});
-  };
-  const p = f.runtime.callTool(f.ctx, "qq_send_burst", {
-    requestId: "paused-indicator",
-    messages: ["第一条", "后续"],
-    gapMs: 600,
+for (const outcome of ["completed-no-send", "failed", "cancelled"])
+  test("processing releases pending input status on " + outcome, async (t) => {
+    const proceed = Promise.withResolvers();
+    const f = setup(t, "private:30000", async ({ signal }) => {
+      signal.addEventListener("abort", () => proceed.resolve(), { once: true });
+      await proceed.promise;
+      if (outcome === "failed") throw Error("SYNTHETIC_BACKEND_FAILURE");
+    });
+    f.transport.setTyping = (conversation, options) => {
+      f.calls.push({ conversation, ...options });
+      return new Promise(() => {});
+    };
+    const turn = f.runtime.wake(f.ctx.agentId, f.ctx.conversation);
+    t.mock.timers.tick(500);
+    await flush();
+    assert.equal(f.calls.length, 1);
+    if (outcome === "cancelled") await f.runtime.pause("agent-0");
+    else proceed.resolve();
+    assert.equal((await turn).status, outcome);
+    assert.equal(f.calls[0].signal.aborted, true);
+    t.mock.timers.tick(5000);
+    await flush();
+    assert.equal(f.calls.length, 1);
+    assert.equal(f.transport.sent.length, 0);
+    assert(
+      !f.runtime.diagnostics
+        .snapshot()
+        .some(({ code }) => code === "TYPING_INDICATOR_UNAVAILABLE"),
+    );
   });
-  const rejected = assert.rejects(p, /AbortError|AGENT_PAUSED_OR_EXPIRED/);
+
+test("slow group processing does not schedule a private status request", async (t) => {
+  const proceed = Promise.withResolvers();
+  const f = setup(t, "group:20000", () => proceed.promise);
+  const turn = f.runtime.wake(f.ctx.agentId, f.ctx.conversation);
+  t.mock.timers.tick(1000);
   await flush();
-  await f.runtime.pause("agent-0");
-  await rejected;
-  assert.equal(signal.aborted, true);
-  assert.equal(f.transport.sent.length, 1);
-  assert.equal(
-    f.store.bind("agent-0").delivery("paused-indicator:0").status,
-    "sent",
-  );
-  assert.equal(
-    f.store.bind("agent-0").delivery("paused-indicator:1"),
-    undefined,
-  );
-  t.mock.timers.tick(2000);
+  assert.equal(f.calls.length, 0);
+  proceed.resolve();
+  assert.equal((await turn).status, "completed-no-send");
+});
+
+test("waiting for input preparation does not start the backend typing timer", async (t) => {
+  const prepared = Promise.withResolvers();
+  const handled = Promise.withResolvers();
+  const f = setup(t, "private:30000", () => handled.promise);
+  t.mock.method(f.runtime.transcripts, "settle", () => prepared.promise);
+  const turn = f.runtime.wake(f.ctx.agentId, f.ctx.conversation);
+  t.mock.timers.tick(1000);
   await flush();
-  assert.equal(f.runtime.diagnostics.snapshot().length, 0);
+  assert.equal(f.calls.length, 0);
+  prepared.resolve();
+  await flush();
+  t.mock.timers.tick(499);
+  await flush();
+  assert.equal(f.calls.length, 0);
+  t.mock.timers.tick(1);
+  await flush();
+  assert.equal(f.calls.length, 1);
+  handled.resolve();
+  assert.equal((await turn).status, "completed-no-send");
 });

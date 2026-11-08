@@ -1,3 +1,4 @@
+import { safeToolFailure } from "../src/tools/errors.mjs";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -154,17 +155,24 @@ export function disclosureApproval(ctx, pending = ctx.disclosureRequest) {
 
 // A synthetic model explicitly accepts a reviewed reply when the full input
 // has already been displayed. This does not fill gaps or bypass send policy.
-export async function sendReviewed(call, args) {
+export async function sendReviewed(call, args, continueDraft) {
   let result;
   try {
     result = await call(args);
   } catch (error) {
     if (error?.message !== "INPUT_REVIEW_REQUIRED" || !error.inputReview?.token)
       throw error;
-    result = error;
+    result = safeToolFailure(error);
   }
   const token = result.inputReview?.token;
-  return token
-    ? call({ ...args, inputReview: { token, decision: "continue" } })
-    : result;
+  if (!token) return result;
+  const inputReview = { token, decision: "continue" };
+  return result.draft && continueDraft
+    ? continueDraft({
+        action: "continue",
+        draftId: result.draft.draftId,
+        expectedVersion: result.draft.version,
+        inputReview,
+      })
+    : call({ ...args, inputReview });
 }

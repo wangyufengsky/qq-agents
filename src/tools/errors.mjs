@@ -2,10 +2,31 @@
 import { ToneReviewSuggested } from "../core/tone-check.mjs";
 import { InputReviewRequired } from "../core/input-review.mjs";
 
+const draftFailures = new WeakMap();
+
+/** @param {object} error @param {object} draft */
+export function attachDraftFailure(error, draft) {
+  draftFailures.set(error, draft);
+}
+
 // Report actionable validation bounds without echoing input values, paths,
 // stack traces, provider errors or credentials into either model backend.
 /** @param {any} error */
 export function safeToolFailure(error) {
+  const draft = draftFailures.get(error);
+  const failure = safeFailure(error);
+  if (!draft) return failure;
+  const hint =
+    error instanceof ToneReviewSuggested
+      ? "Review the wording. Use qq_draft revise to edit an unsent item or qq_draft continue with its current version to confirm it."
+      : error instanceof InputReviewRequired
+        ? "Read the current input and decide whether to revise, discard, or continue this exact draft version with the review token. Earlier receipts remain final."
+        : failure.hint;
+  return { ...failure, hint, draft };
+}
+
+/** @param {any} error */
+function safeFailure(error) {
   if (error instanceof InputReviewRequired)
     return {
       code: error.message,
@@ -100,6 +121,10 @@ export function safeToolFailure(error) {
       "The gateway does not support this reaction action. No reaction was confirmed. Do not retry another message, face or requestId to work around missing gateway support.",
     INVALID_MEMORY_SCOPE:
       "The source selector is invalid, not an empty memory result. memory_search conversationType=group/private filters a kind of chat. conversation must be an exact source key such as group:20000 or private:30000; do not use group/private or wildcard keys. Omit conversation to search your own memories across chats, then use the returned source key. conversation_read without conversation only reads the current chat. Keep protected-source restrictions unchanged.",
+    QQ_DRAFT_DELIVERY_UNRESOLVED:
+      "A prior delivery in this chat is pending or unknown. Check qq_delivery_status; only a verified receipt or an administrator's explicit verdict settles it. Do not try another request ID, wording, or send tool.",
+    QQ_DRAFT_CONTINUE_REQUIRED:
+      "Use qq_draft to read, revise, discard, or explicitly continue the saved version. Repeating the original send call only returns the existing status.",
     DELIVERY_UNKNOWN:
       "The gateway could not confirm whether this message reached QQ (for example QQ dropped offline mid-send); it may already be visible. Do not send it again or change requestId. The program marks it sent when QQ's own copy arrives, otherwise the administrator checks it in the console.",
     MOOD_CHANGE_NEEDS_CAUSE:

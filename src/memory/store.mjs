@@ -1,7 +1,7 @@
 import { migrateHomeSocial } from "../home/social-schema.mjs";
 import { socialSafeExportRow, mergeProtection } from "./protection.mjs";
 import { withoutClosenessCache } from "../core/closeness.mjs";
-import { recallAnnotation } from "./recalls.mjs";
+import { RECALL_NOTICE_BODY, recallAnnotation } from "./recalls.mjs";
 import fs from "node:fs";
 import { Corrections } from "./corrections.mjs";
 import { qqFaces } from "../transport/qq-faces.mjs";
@@ -24,6 +24,11 @@ import { around } from "./around.mjs";
 import { migrateMessageIds, observeKnownMessage } from "./message-ids.mjs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import {
+  createDraftTables,
+  MEMORY_DRAFT_SCHEMA_VERSION,
+  QQDraftStore,
+} from "./qq-drafts.mjs";
 import { createHash, randomUUID } from "node:crypto";
 
 const json = JSON.stringify;
@@ -106,7 +111,8 @@ export class MemoryStore {
     this.db = new DatabaseSync(file);
     try {
       const version = this.db.prepare("PRAGMA user_version").get().user_version;
-      if (version > 6) throw Error("MEMORY_SCHEMA_NEWER_THAN_CODE");
+      if (version > MEMORY_DRAFT_SCHEMA_VERSION)
+        throw Error("MEMORY_SCHEMA_NEWER_THAN_CODE");
       if (file !== ":memory:") fs.chmodSync(file, 0o600);
       // Connection settings must take effect before opening a schema transaction.
       this.db.exec(
@@ -172,6 +178,11 @@ export class MemoryStore {
       if (version < 4) this.transaction(() => migrateIdentity(this.db));
       migrateTimeline(this.db, version);
       migrateMessageIds(this.db, version);
+      if (version < MEMORY_DRAFT_SCHEMA_VERSION)
+        this.transaction(() => {
+          createDraftTables(this.db);
+          this.db.exec(`PRAGMA user_version=${MEMORY_DRAFT_SCHEMA_VERSION}`);
+        });
       migrateHomeSocial(this.db);
       this.due = new ConversationDue(this.db);
       this.transaction(() => this.due.initialize());
@@ -356,8 +367,20 @@ class AgentMemory {
     if (!Array.isArray(segments) || !segments.some((s) => s?.type === "record"))
       return undefined;
     const t = this.db
-      .prepare("SELECT id,body FROM events WHERE agent_id=? AND dedupe=?")
-      .get(this.agentId, transcriptKey(row.id));
+      .prepare(
+        `SELECT id,body,payload FROM events WHERE agent_id=? AND dedupe=? AND kind='voice.transcript'
+        AND connection_id=? AND conversation=?`,
+      )
+      .get(
+        this.agentId,
+        transcriptKey(row.id),
+        row.connection_id,
+        row.conversation,
+      );
+    // A parent's readable metadata cannot grant the transcript's independent
+    // audience. Protected transcripts remain separate records for that audience.
+    if (t && Object.keys(mergeProtection(parse(t.payload))).length)
+      return undefined;
     if (t)
       return {
         id: t.id,
@@ -376,6 +399,8 @@ class AgentMemory {
     return recallAnnotation(this.db, this.agentId, id);
   }
   event(row, current, summary = false) {
+    const recall = row.kind === "message.recalled";
+    const body = recall ? RECALL_NOTICE_BODY : row.body;
     const transcript = row.kind === "voice.transcript",
       voiceTranscript = this.voiceTranscript(row, summary),
       faces = qqFaces(parse(row.payload).segments);
@@ -406,8 +431,8 @@ class AgentMemory {
       epistemic: transcript
         ? "Machine transcription of a voice message; may contain recognition errors and is not the speaker's verified words"
         : "Observed speech/event; not independently verified fact",
-      body: summary ? row.body.slice(0, 200) : row.body,
-      bodyTruncated: summary && row.body.length > 200,
+      body: summary ? body.slice(0, 200) : body,
+      bodyTruncated: summary && body.length > 200,
       ...(transcript
         ? { sourceEventId: parse(row.payload).sourceEventId }
         : {}),
@@ -416,7 +441,7 @@ class AgentMemory {
       ...provenance(row),
       ...this.corrections.annotation("event", row.id),
       ...this.recallAnnotation(row.id),
-      ...(!summary ? { payload: parse(row.payload) } : {}),
+      ...(!summary && !recall ? { payload: parse(row.payload) } : {}),
     };
   }
   diary(row, summary = false) {
@@ -1138,7 +1163,7 @@ class AgentMemory {
       // reconciliation request happens to include a message ID.
       const resolvedMessageId = action ? null : messageId;
       this.completeDelivery(requestId, resolution, resolvedMessageId);
-      this.append({
+      const archive = this.append({
         dedupe: "send:" + requestId + ":reconciled",
         connectionId: attempt?.connection_id || "",
         conversation: row.conversation,
@@ -1161,13 +1186,31 @@ class AgentMemory {
           ...(resolvedMessageId ? { messageId: resolvedMessageId } : {}),
         },
       });
+      if (resolution === "sent") {
+        const drafts = new QQDraftStore(this.store);
+        if (
+          drafts.recordConfirmation(this.agentId, requestId, {
+            action,
+            messageNamespace: payload.referenceNamespace || "onebot",
+          })
+        )
+          drafts.recordArchive(this.agentId, requestId, archive.id);
+      }
       return { requestId, status: resolution };
     });
   }
   // QQ's own copy of a send the gateway could not confirm settles it: same
   // conversation, matching content, within ten minutes, and only one candidate.
   // Rich sends with unverifiable media/references stay for the administrator.
-  reconcileFromEcho({ conversation, text, segments, messageId }) {
+  reconcileFromEcho({
+    connectionId,
+    accountId,
+    namespace,
+    conversation,
+    text,
+    segments,
+    messageId,
+  }) {
     const squash = (s) => String(s || "").replace(/\s+/g, "");
     const want = squash(text);
     if (!messageId) return null;
@@ -1208,12 +1251,40 @@ class AgentMemory {
     const since = new Date(Date.now() - 10 * 60000).toISOString();
     const candidates = this.db
       .prepare(
-        "SELECT d.request_id AS requestId, e.body, e.payload FROM deliveries d JOIN events e ON e.agent_id=d.agent_id AND e.dedupe='send:' || d.request_id || ':pending' WHERE d.agent_id=? AND d.conversation=? AND d.status='unknown' AND d.created_at>=?",
+        `SELECT d.request_id AS requestId,e.body,e.payload,e.connection_id,e.sender_id,
+          EXISTS(SELECT 1 FROM qq_draft_items i WHERE i.agent_id=d.agent_id AND i.delivery_request_id=d.request_id) AS draftLinked
+          FROM deliveries d JOIN events e ON e.agent_id=d.agent_id AND e.dedupe='send:' || d.request_id || ':pending'
+          WHERE d.agent_id=? AND d.conversation=? AND d.status='unknown' AND d.created_at>=?`,
       )
       .all(this.agentId, conversation, since)
       .filter((row) => {
         const payload = parse(row.payload);
         if (actionDelivery(payload)) return false;
+        if (
+          connectionId &&
+          (row.connection_id !== connectionId ||
+            row.sender_id !== accountId ||
+            (payload.referenceNamespace &&
+              payload.referenceNamespace !== namespace))
+        )
+          return false;
+        if (row.draftLinked) {
+          if (
+            row.connection_id !== connectionId ||
+            row.sender_id !== accountId ||
+            payload.referenceNamespace !== namespace ||
+            payload.mediaId ||
+            payload.audioId ||
+            payload.atUserId ||
+            payload.requestedReplyTo ||
+            payload.eventIds
+          )
+            return false;
+          const attempted = content(
+            payload.segments ?? [{ type: "text", data: { text: row.body } }],
+          );
+          return attempted !== null && attempted === echoContent;
+        }
         if (payload.segments !== undefined) {
           const attempted = content(payload.segments);
           return (
@@ -1275,6 +1346,8 @@ class AgentMemory {
       "memory_corrections",
       "activity_history",
       "qzone_approvals",
+      "qq_drafts",
+      "qq_draft_items",
     ])
       tables[name] = this.db
         .prepare(

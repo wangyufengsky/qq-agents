@@ -62,7 +62,7 @@ test("additive migration preserves schema six and original home revisions", (t) 
     memory.close();
     rmSync(dir, { recursive: true, force: true });
   });
-  assert.equal(memory.db.prepare("PRAGMA user_version").get().user_version, 6);
+  assert.equal(memory.db.prepare("PRAGMA user_version").get().user_version, 7);
   assert.equal(
     memory.db.prepare("SELECT content_revision FROM home_rooms").get()
       .content_revision,

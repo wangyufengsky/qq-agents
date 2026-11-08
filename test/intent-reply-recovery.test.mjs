@@ -56,6 +56,7 @@ test("cancelled intent wake can reply after reading new human input without repl
             requestId: "reply",
             messages: ["synthetic reply"],
           },
+          (args) => p.callTool("qq_draft", args),
         );
         assert.equal(sent.status, "sent", JSON.stringify(sent));
         const duplicate = await p.callTool("qq_send_burst", {
@@ -98,10 +99,14 @@ async function cancelled(t, beforeBegin = async () => {}) {
   return { ...f, ctx, i };
 }
 const send = (f, id = "reply") =>
-  sendReviewed((args) => f.runtime.callTool(f.ctx, "qq_send", args), {
-    requestId: id,
-    text: "synthetic reply",
-  });
+  sendReviewed(
+    (args) => f.runtime.callTool(f.ctx, "qq_send", args),
+    {
+      requestId: id,
+      text: "synthetic reply",
+    },
+    (args) => f.runtime.callTool(f.ctx, "qq_draft", args),
+  );
 async function incoming(f, extra = {}) {
   await f.runtime.ingest("qq-0", raw(1, extra));
   return f.store

@@ -7,14 +7,13 @@ import { allowed } from "../core/config.mjs";
 import { recallBoundary } from "../core/recall-boundary.mjs";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
-import { burstDelay, waitTyping } from "../core/typing.mjs";
 import { ownedEvent, readForward, forwardPayload } from "./forward.mjs";
 import { safeFetchBuffer } from "../../vendor/social-reader/safe-fetch.js";
 import { modelScheduleSchema } from "./schedule-schema.mjs";
-import { safeToolFailure } from "./errors.mjs";
 import { inputReviewSchema } from "./input-review.mjs";
+import { sendDraftTool } from "./qq-drafts.mjs";
 import { transcriptKey } from "../memory/store.mjs";
-import { qqMessage, qqSegmentsSchema } from "./qq-message.mjs";
+import { qqSegmentsSchema } from "./qq-message.mjs";
 
 const str = z.string(),
   id = str.min(1).max(200),
@@ -235,6 +234,25 @@ export function taintMedia(ctx, meta) {
 function disclose(runtime, ctx) {
   runtime.assertDisclosure(ctx);
 }
+export function sendVoice(runtime, ctx, args, options) {
+  const a = runtime.assertActive(ctx);
+  const m = runtime.voices.metadata(a.id, args.audioId);
+  recallBoundary(runtime, ctx).assert(m);
+  taintMedia(ctx, m);
+  disclose(runtime, ctx);
+  const { inputReview, ...voiceArgs } = args;
+  return runtime.deliver(ctx, {
+    requestId: args.requestId,
+    inputReview,
+    intent: { kind: "voice", ...voiceArgs },
+    body: `[语音:${m.title}]`,
+    metadata: { audioId: m.id, duration: m.duration },
+    ...options,
+    prepare: () => runtime.voices.segment(a.id, m.id, a.voice, voiceArgs),
+    send: (transport, segment) => transport.send(ctx.conversation, [segment]),
+  });
+}
+
 export async function legacyTool(runtime, ctx, name, args) {
   const a = runtime.assertActive(ctx),
     mem = runtime.memory.bind(a.id);
@@ -242,72 +260,8 @@ export async function legacyTool(runtime, ctx, name, args) {
     return runtime.conversations.wait(ctx, args);
   if (name === "qq_set_wake_config")
     return runtime.conversations.setWake(ctx, args);
-  if (name === "qq_send_burst") {
-    if (args.messages.length > a.behavior.burstMax) throw Error("BURST_LIMIT");
-    // Reject an invalid later item before the first message leaves QQ.
-    const messages = args.messages.map((message) => {
-      const input = typeof message === "string" ? { text: message } : message;
-      const normalized = qqMessage(input, 2000);
-      if (!normalized.segments.length) throw Error("EMPTY_MESSAGE");
-      runtime.assertSafeOutput(ctx, normalized.sourceText);
-      runtime.assertSafeOutput(ctx, normalized.text);
-      runtime.assertSafeOutput(ctx, normalized.body);
-      return {
-        input,
-        typingText:
-          typeof message === "string" ? message : normalized.typingText,
-      };
-    });
-    const receipts = [];
-    let sentHere = false;
-    const reviewIntent = {
-      kind: "burst",
-      messages: args.messages,
-      gapMs: args.gapMs,
-    };
-    for (let i = 0; i < args.messages.length; i++) {
-      if (i) {
-        const gap = burstDelay(
-          messages[i].typingText,
-          a.behavior,
-          runtime.random,
-          args.gapMs,
-        );
-        await waitTyping(runtime, ctx, gap);
-      }
-      try {
-        const receipt = await runtime.send(
-          ctx,
-          {
-            requestId: args.requestId + ":" + i,
-            inputReview: sentHere ? undefined : args.inputReview,
-            ...messages[i].input,
-          },
-          // Only a new confirmed send in this invocation starts a burst.
-          // A duplicate prefix must not exempt its first real delivery.
-          { burstContinuation: sentHere, reviewIntent },
-        );
-        receipts.push(receipt);
-        sentHere ||= !receipt.duplicate;
-      } catch (e) {
-        const failure = safeToolFailure(e);
-        return {
-          status: "stopped",
-          receipts,
-          failedIndex: i,
-          error: failure.code,
-          hint: failure.hint,
-          ...(failure.matches ? { matches: failure.matches } : {}),
-          ...(failure.inputReview ? { inputReview: failure.inputReview } : {}),
-          doNotReplay: ![
-            "TONE_REVIEW_SUGGESTED",
-            "INPUT_REVIEW_REQUIRED",
-          ].includes(failure.code),
-        };
-      }
-    }
-    return { status: "sent", receipts };
-  }
+  if (name === "qq_send_burst" || name === "qq_send_voice")
+    return sendDraftTool(runtime, ctx, name, args);
   if (name === "qq_list_voices") {
     const r = runtime.voices.list(a.id, args);
     r.items = recallBoundary(runtime, ctx).rows(r.items);
@@ -354,21 +308,6 @@ export async function legacyTool(runtime, ctx, name, args) {
         runtime.voices.read(a.id, m.id),
       ],
     };
-  }
-  if (name === "qq_send_voice") {
-    const m = runtime.voices.metadata(a.id, args.audioId);
-    taintMedia(ctx, m);
-    disclose(runtime, ctx);
-    const { inputReview, ...voiceArgs } = args;
-    return runtime.deliver(ctx, {
-      requestId: args.requestId,
-      inputReview,
-      intent: { kind: "voice", ...voiceArgs },
-      body: `[语音:${m.title}]`,
-      metadata: { audioId: m.id, duration: m.duration },
-      prepare: () => runtime.voices.segment(a.id, m.id, a.voice, voiceArgs),
-      send: (transport, segment) => transport.send(ctx.conversation, [segment]),
-    });
   }
   if (name === "qq_forward_read") return readForward(runtime, ctx, args);
   if (name === "qq_forward_send") {

@@ -2,6 +2,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mergeProtection } from "./protection.mjs";
 
+export const MEMORY_DRAFT_SCHEMA_VERSION = 7;
 export const DRAFT_LIFETIME_MS = 7 * 86400000;
 
 /** @param {import("node:sqlite").DatabaseSync} db */
@@ -162,7 +163,7 @@ export class QQDraftStore {
 
   /** @param {DraftScope} scope */
   unresolved(scope) {
-    return this.db
+    const linked = this.db
       .prepare(
         `SELECT g.id AS draftId,i.position,coalesce(d.status,'unknown') AS status,i.delivery_request_id AS requestId
       FROM qq_drafts g JOIN qq_draft_items i ON i.draft_id=g.id ${receiptJoin}
@@ -171,6 +172,28 @@ export class QQDraftStore {
       ORDER BY g.created_at,i.position LIMIT 1`,
       )
       .get(...scopeArgs(scope));
+    if (linked) return linked;
+    // An older version may have sent before a draft existed. Its scoped
+    // attempt still provides evidence of an unresolved chat contact.
+    return this.db
+      .prepare(
+        `SELECT d.status,d.request_id AS requestId
+      FROM deliveries d JOIN events e ON e.agent_id=d.agent_id AND e.dedupe='send:'||d.request_id||':pending'
+      WHERE d.agent_id=? AND e.connection_id=? AND e.sender_id=? AND d.conversation=?
+        AND e.conversation=d.conversation AND d.status IN ('pending','unknown')
+        AND (coalesce(json_extract(e.payload,'$.deliveryType'),'')<>'action' OR json_extract(e.payload,'$.fileId') IS NOT NULL)
+      LIMIT 1`,
+      )
+      .get(...scopeArgs(scope));
+  }
+
+  /** @param {DraftScope} scope @param {string} toolName @param {string} requestId */
+  find(scope, toolName, requestId) {
+    return this.db
+      .prepare(
+        `SELECT id,request_hash FROM qq_drafts WHERE ${scopeSQL} AND tool_name=? AND request_id=?`,
+      )
+      .get(...scopeArgs(scope), toolName, requestId);
   }
 
   /** @param {DraftScope} scope @param {DraftInputGroup} draft */
@@ -185,11 +208,7 @@ export class QQDraftStore {
           ]),
         )
         .digest("hex");
-      const prior = this.db
-        .prepare(
-          `SELECT id,request_hash FROM qq_drafts WHERE ${scopeSQL} AND tool_name=? AND request_id=?`,
-        )
-        .get(...scopeArgs(scope), toolName, requestId);
+      const prior = this.find(scope, toolName, requestId);
       if (prior) {
         if (prior.request_hash !== digest) throw Error("IDEMPOTENCY_CONFLICT");
         return { draft: this.read(scope, String(prior.id)), created: false };
@@ -322,6 +341,7 @@ export class QQDraftStore {
   /** @param {DraftScope} scope @param {DraftItemRef} ref @param {string} requestId */
   bindDelivery(scope, ref, requestId) {
     if (!this.db.isTransaction) throw Error("QQ_DRAFT_TRANSACTION_REQUIRED");
+    if (this.unresolved(scope)) throw Error("QQ_DRAFT_DELIVERY_UNRESOLVED");
     const draft = this.assertEditable(scope, ref.id, ref.revision);
     if (draft.items[ref.position]?.status !== "unsubmitted")
       throw Error("QQ_DRAFT_ITEM_LOCKED");
@@ -388,8 +408,31 @@ export class QQDraftStore {
   }
 
   /** @param {string} agentId @param {string} requestId @param {string} recordId */
+  verifyArchive(agentId, requestId, recordId) {
+    const matched = this.db
+      .prepare(
+        `SELECT 1 FROM qq_draft_items i JOIN qq_drafts g ON g.id=i.draft_id
+      JOIN deliveries d ON d.agent_id=i.agent_id AND d.request_id=i.delivery_request_id
+      JOIN events e ON e.id=? AND e.agent_id=i.agent_id AND e.connection_id=g.connection_id
+        AND e.conversation=g.conversation AND e.sender_id=g.account_id
+      WHERE i.agent_id=? AND i.delivery_request_id=? AND d.status='sent'
+        AND e.status='confirmed' AND e.direction='out' AND json_extract(e.payload,'$.requestId')=?
+        AND (
+          (e.dedupe='send:'||i.delivery_request_id||':sent' AND e.message_id IS d.message_id
+            AND e.kind=CASE WHEN json_extract(i.confirmation,'$.action')=1 THEN 'action.confirmed' ELSE 'message.sent' END)
+          OR (e.dedupe='send:'||i.delivery_request_id||':reconciled'
+            AND json_extract(e.payload,'$.resolution')='sent'
+            AND json_extract(e.payload,'$.messageId') IS d.message_id
+            AND e.kind=CASE WHEN json_extract(i.confirmation,'$.action')=1 THEN 'action.confirmed' ELSE 'message.send-result' END))`,
+      )
+      .get(recordId, agentId, requestId, requestId);
+    if (!matched) throw Error("QQ_DRAFT_ARCHIVE_MISMATCH");
+  }
+
+  /** @param {string} agentId @param {string} requestId @param {string} recordId */
   recordArchive(agentId, requestId, recordId) {
     if (!this.db.isTransaction) throw Error("QQ_DRAFT_TRANSACTION_REQUIRED");
+    this.verifyArchive(agentId, requestId, recordId);
     this.db
       .prepare(
         `UPDATE qq_draft_items SET archive_record_id=?

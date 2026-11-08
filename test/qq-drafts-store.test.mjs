@@ -239,6 +239,7 @@ test("a confirmation marker survives before local archiving and never regresses 
       conversation: scope.conversation,
       kind: "message.sent",
       direction: "out",
+      senderId: scope.accountId,
       status: "confirmed",
       messageId: "30000",
       body: "示例",

@@ -210,7 +210,14 @@ test("concurrent sends reserve the same burst; failed and unknown attempts consu
       /DELIVERY_(FAILED|UNKNOWN)/,
     );
     await assert.rejects(send(f, ctx, "failure-" + i), /ALREADY_ATTEMPTED/);
-    await assert.rejects(send(f, ctx, "replacement-" + i), /REPLY_BURST_LIMIT/);
+    await assert.rejects(
+      send(f, ctx, "replacement-" + i),
+      i === 0 ? /REPLY_BURST_LIMIT/ : /QQ_DRAFT_DELIVERY_UNRESOLVED/,
+    );
+    assert.equal(
+      f.store.bind(ctx.agentId).state(ctx.conversation).replyBatchSends,
+      1,
+    );
   }
 });
 
@@ -733,10 +740,14 @@ test("backend run closures share the durable policy through both prompt protocol
             false,
           );
           await callTool("conversation_read", { afterSeq: row.seq - 1 });
-          await sendReviewed((args) => callTool("qq_send", args), {
-            requestId: type + ":" + n,
-            text: "backend answer",
-          });
+          await sendReviewed(
+            (args) => callTool("qq_send", args),
+            {
+              requestId: type + ":" + n,
+              text: "backend answer",
+            },
+            (args) => callTool("qq_draft", args),
+          );
           sends++;
         }
       },
