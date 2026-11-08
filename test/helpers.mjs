@@ -151,3 +151,20 @@ export function disclosureApproval(ctx, pending = ctx.disclosureRequest) {
     ...(pending.requestId ? { requestId: pending.requestId } : {}),
   };
 }
+
+// A synthetic model explicitly accepts a reviewed reply when the full input
+// has already been displayed. This does not fill gaps or bypass send policy.
+export async function sendReviewed(call, args) {
+  let result;
+  try {
+    result = await call(args);
+  } catch (error) {
+    if (error?.message !== "INPUT_REVIEW_REQUIRED" || !error.inputReview?.token)
+      throw error;
+    result = error;
+  }
+  const token = result.inputReview?.token;
+  return token
+    ? call({ ...args, inputReview: { token, decision: "continue" } })
+    : result;
+}

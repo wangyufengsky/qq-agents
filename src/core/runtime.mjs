@@ -257,8 +257,17 @@ export class Runtime {
       !this.protectedWork.active(agentId, conversation)
     )
       throw Error("PROTECTED_WORK_NOT_ACTIVE");
-    const recallGeneration =
-      mem.state(conversation).recallRecovery?.generation || 0;
+    const state = mem.state(conversation);
+    const recallGeneration = state.recallRecovery?.generation || 0;
+    // Inherit the old read cursor once. New read marks remain independent of
+    // the send review, including when the next turn opens another context.
+    if (
+      /^(group|private):/.test(conversation) &&
+      state.inputReviewFromSeq === undefined
+    ) {
+      state.inputReviewFromSeq = state.readThroughSeq || 0;
+      mem.setState(conversation, state);
+    }
     const ctx = {
       token: randomBytes(32).toString("base64url"),
       agentId,
@@ -270,6 +279,8 @@ export class Runtime {
       grants: new Set(),
       sendCount: 0,
       replyBatchSends: mem.state(conversation).replyBatchSends || 0,
+      reviewReadSeq: state.inputReviewFromSeq || 0,
+      reviewSentSeq: state.inputReviewThroughSeq || 0,
       inputBaseline: Math.max(
         mem.state(conversation).readThroughSeq || 0,
         mem.state(conversation).replyInputSeq || 0,

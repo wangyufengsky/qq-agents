@@ -1,3 +1,4 @@
+import { recordReviewPresentation } from "./input-review.mjs";
 import { deferForRhythm } from "./rhythm.mjs";
 import { recallPage } from "./recall-boundary.mjs";
 import { looksLikeUnfinished } from "../../vendor/legacy/v2-wait.js";
@@ -450,6 +451,7 @@ export class ConversationEngine {
         ),
       );
       runtime.contexts.seen(ctx, messages.items);
+      recordReviewPresentation(runtime, ctx, messages.items);
       ctx.feedThroughSeq = Math.max(
         ctx.feedThroughSeq || 0,
         messages.nextAfterSeq || 0,

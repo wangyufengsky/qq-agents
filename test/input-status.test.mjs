@@ -226,70 +226,19 @@ test("a pause before the scheduled request starts prevents a late indication", a
   assert.equal(f.runtime.diagnostics.snapshot().length, 0);
 });
 
-test("private input status runs concurrently and never extends a short first reply", async (t) => {
+test("a first private reply sends immediately without starting a synthetic typing request", async (t) => {
   const f = setup(t);
-  let signal;
-  f.transport.setTyping = (_conversation, options) => {
-    signal = options.signal;
-    return new Promise(() => {});
-  };
-  const p = f.runtime.send(f.ctx, {
-    requestId: "parallel-indicator",
-    text: "你好",
-  });
-  await flush();
-  assert.equal(f.ctx.pendingDeliveries, 1);
-  t.mock.timers.tick(599);
-  await flush();
-  assert.equal(f.transport.sent.length, 0);
-  t.mock.timers.tick(1);
-  assert.equal((await p).status, "sent");
-  assert.equal(signal.aborted, true);
-  t.mock.timers.tick(1000);
-  await flush();
-  assert.equal(f.transport.sent.length, 1);
-  assert.equal(f.runtime.diagnostics.snapshot().length, 0);
-});
-
-test("input status rejection cannot fail or slow the awaited message", async (t) => {
-  const f = setup(t);
-  f.transport.setTyping = async () => {
-    throw Error("ONEBOT_REJECTED");
-  };
-  const p = f.runtime.send(f.ctx, {
-    requestId: "unsupported-indicator",
-    text: "你好",
-  });
-  await flush();
-  assert.equal(f.runtime.diagnostics.snapshot()[0].count, 1);
-  t.mock.timers.tick(600);
-  assert.equal((await p).status, "sent");
-  assert.equal(f.transport.sent.length, 1);
   assert.equal(
-    f.store.bind("agent-0").delivery("unsupported-indicator").status,
+    (
+      await f.runtime.send(f.ctx, {
+        requestId: "immediate-first",
+        text: "你好".repeat(60),
+      })
+    ).status,
     "sent",
   );
-});
-
-test("input status timeout does not shorten or lengthen a longer typing delay", async (t) => {
-  const f = setup(t);
-  Object.assign(f.agent.behavior.typing, { minMs: 2000, maxMs: 2000 });
-  f.transport.setTyping = () => new Promise(() => {});
-  const p = f.runtime.send(f.ctx, {
-    requestId: "timeout-indicator",
-    text: "你好",
-  });
-  await flush();
-  t.mock.timers.tick(1000);
-  await flush();
-  assert.equal(f.runtime.diagnostics.snapshot()[0].count, 1);
-  assert.equal(f.transport.sent.length, 0);
-  t.mock.timers.tick(999);
-  await flush();
-  assert.equal(f.transport.sent.length, 0);
-  t.mock.timers.tick(1);
-  assert.equal((await p).status, "sent");
-  assert.equal(f.runtime.diagnostics.snapshot()[0].count, 1);
+  assert.equal(f.transport.sent.length, 1);
+  assert.equal(f.calls.length, 0);
 });
 
 test("each private burst typing wait starts one input status request", async (t) => {
@@ -306,17 +255,14 @@ test("each private burst typing wait starts one input status request", async (t)
   });
   await flush();
   assert.equal(f.calls.length, 1);
-  t.mock.timers.tick(100);
-  await flush();
   assert.equal(f.transport.sent.length, 1);
-  assert.equal(f.calls.length, 2);
   t.mock.timers.tick(200);
   await flush();
   assert.equal(f.transport.sent.length, 2);
-  assert.equal(f.calls.length, 3);
+  assert.equal(f.calls.length, 2);
   t.mock.timers.tick(300);
   assert.equal((await p).receipts.length, 3);
-  assert.equal(f.calls.length, 3);
+  assert.equal(f.calls.length, 2);
   assert.equal(f.runtime.diagnostics.snapshot().length, 0);
 });
 
@@ -327,17 +273,25 @@ test("pausing an active typing wait cancels its input status and prevents delive
     signal = options.signal;
     return new Promise(() => {});
   };
-  const p = f.runtime.send(f.ctx, {
+  const p = f.runtime.callTool(f.ctx, "qq_send_burst", {
     requestId: "paused-indicator",
-    text: "你好",
+    messages: ["第一条", "后续"],
+    gapMs: 600,
   });
   const rejected = assert.rejects(p, /AbortError|AGENT_PAUSED_OR_EXPIRED/);
   await flush();
   await f.runtime.pause("agent-0");
   await rejected;
   assert.equal(signal.aborted, true);
-  assert.equal(f.transport.sent.length, 0);
-  assert.equal(f.store.bind("agent-0").delivery("paused-indicator"), undefined);
+  assert.equal(f.transport.sent.length, 1);
+  assert.equal(
+    f.store.bind("agent-0").delivery("paused-indicator:0").status,
+    "sent",
+  );
+  assert.equal(
+    f.store.bind("agent-0").delivery("paused-indicator:1"),
+    undefined,
+  );
   t.mock.timers.tick(2000);
   await flush();
   assert.equal(f.runtime.diagnostics.snapshot().length, 0);

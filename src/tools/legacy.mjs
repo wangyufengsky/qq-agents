@@ -12,6 +12,7 @@ import { ownedEvent, readForward, forwardPayload } from "./forward.mjs";
 import { safeFetchBuffer } from "../../vendor/social-reader/safe-fetch.js";
 import { modelScheduleSchema } from "./schedule-schema.mjs";
 import { safeToolFailure } from "./errors.mjs";
+import { inputReviewSchema } from "./input-review.mjs";
 import { transcriptKey } from "../memory/store.mjs";
 import { qqMessage, qqSegmentsSchema } from "./qq-message.mjs";
 
@@ -66,6 +67,7 @@ export const legacyDefinitions = {
     "自然分条补充时使用：messages 中每个元素是一条独立 QQ 消息，可以是文字字符串或 {segments:[{type:'text',text:'好呀'},{type:'face',id:'20'}]}；每条最多32段、累计文字2000字符，表情只用已登记编号，20=偷笑。正文换行不会分条，接收说明 [QQ表情：名称] 写进文字不会转换成表情。按 self 与场景决定长短和条数，不强制连发或机械切碎长文。省略 gapMs 使用配置的自然间隔；每条独立回执，未知结果停止，不自动重发。",
     object({
       requestId: id,
+      inputReview: inputReviewSchema,
       messages: z
         .array(
           z.union([
@@ -98,6 +100,7 @@ export const legacyDefinitions = {
     "向绑定会话发送自己的语音，可调音量或响度；只能用库内 audioId。",
     object({
       requestId: id,
+      inputReview: inputReviewSchema,
       audioId: id,
       volume: z.number().min(0.1).max(4).optional(),
       normalize: z.boolean().optional(),
@@ -130,11 +133,19 @@ export const legacyDefinitions = {
   ],
   qq_forward_send: [
     "将自己的已观察记录作为合并转发发送；返回 eventId 可继续展开。保留来源署名，跨会话内容由你结合场景判断是否适合发送。",
-    object({ requestId: id, eventIds: z.array(id).min(1).max(50) }),
+    object({
+      requestId: id,
+      eventIds: z.array(id).min(1).max(50),
+      inputReview: inputReviewSchema,
+    }),
   ],
   qq_send_poke: [
     "拍一拍当前私聊对象或当前群的成员；成功是动作回执，不伪造消息 ID。",
-    object({ requestId: id, userId: str.regex(/^[1-9]\d*$/).optional() }),
+    object({
+      requestId: id,
+      userId: str.regex(/^[1-9]\d*$/).optional(),
+      inputReview: inputReviewSchema,
+    }),
   ],
   qq_schedule_create: [
     "仅管理员私聊登记结构化定时任务。其他目标须在允许范围且开启跨目标登记；是否需控制台确认由管理员配置决定。以返回的 enabled、pendingConfirm 和 scheduledAt 判断是否生效，待确认或禁用时不可承诺会执行。",
@@ -248,6 +259,12 @@ export async function legacyTool(runtime, ctx, name, args) {
       };
     });
     const receipts = [];
+    let sentHere = false;
+    const reviewIntent = {
+      kind: "burst",
+      messages: args.messages,
+      gapMs: args.gapMs,
+    };
     for (let i = 0; i < args.messages.length; i++) {
       if (i) {
         const gap = burstDelay(
@@ -259,12 +276,19 @@ export async function legacyTool(runtime, ctx, name, args) {
         await waitTyping(runtime, ctx, gap);
       }
       try {
-        receipts.push(
-          await runtime.send(ctx, {
+        const receipt = await runtime.send(
+          ctx,
+          {
             requestId: args.requestId + ":" + i,
+            inputReview: sentHere ? undefined : args.inputReview,
             ...messages[i].input,
-          }),
+          },
+          // Only a new confirmed send in this invocation starts a burst.
+          // A duplicate prefix must not exempt its first real delivery.
+          { burstContinuation: sentHere, reviewIntent },
         );
+        receipts.push(receipt);
+        sentHere ||= !receipt.duplicate;
       } catch (e) {
         const failure = safeToolFailure(e);
         return {
@@ -274,7 +298,11 @@ export async function legacyTool(runtime, ctx, name, args) {
           error: failure.code,
           hint: failure.hint,
           ...(failure.matches ? { matches: failure.matches } : {}),
-          doNotReplay: failure.code !== "TONE_REVIEW_SUGGESTED",
+          ...(failure.inputReview ? { inputReview: failure.inputReview } : {}),
+          doNotReplay: ![
+            "TONE_REVIEW_SUGGESTED",
+            "INPUT_REVIEW_REQUIRED",
+          ].includes(failure.code),
         };
       }
     }
@@ -331,27 +359,15 @@ export async function legacyTool(runtime, ctx, name, args) {
     const m = runtime.voices.metadata(a.id, args.audioId);
     taintMedia(ctx, m);
     disclose(runtime, ctx);
-    const transcript = m.sources
-      ?.map(
-        (source) =>
-          source.eventId &&
-          mem.db
-            .prepare("SELECT body FROM events WHERE agent_id=? AND dedupe=?")
-            .get(a.id, transcriptKey(source.eventId)),
-      )
-      .find((row) => row?.body)?.body;
+    const { inputReview, ...voiceArgs } = args;
     return runtime.deliver(ctx, {
       requestId: args.requestId,
-      intent: { kind: "voice", ...args },
+      inputReview,
+      intent: { kind: "voice", ...voiceArgs },
       body: `[语音:${m.title}]`,
-      typingText: m.spokenText || transcript || "",
-      typingFallbackMs: 2000,
       metadata: { audioId: m.id, duration: m.duration },
-      send: async (transport) => {
-        const segment = await runtime.voices.segment(a.id, m.id, a.voice, args);
-        runtime.assertActive(ctx);
-        return transport.send(ctx.conversation, [segment]);
-      },
+      prepare: () => runtime.voices.segment(a.id, m.id, a.voice, voiceArgs),
+      send: (transport, segment) => transport.send(ctx.conversation, [segment]),
     });
   }
   if (name === "qq_forward_read") return readForward(runtime, ctx, args);
@@ -387,6 +403,8 @@ export async function legacyTool(runtime, ctx, name, args) {
     const receipt = await runtime.deliver(ctx, {
       requestId: args.requestId,
       intent: { kind: "forward", eventIds: args.eventIds },
+      reviewIntent: { kind: "forward", nodes },
+      inputReview: args.inputReview,
       body: "[合并转发] " + events.length + " 条记录",
       metadata: { eventIds: args.eventIds, forwardSnapshot: snapshot },
       send: (t) => t.sendForward(ctx.conversation, nodes),
@@ -409,17 +427,19 @@ export async function legacyTool(runtime, ctx, name, args) {
       requestId: args.requestId,
       intent: { kind: "poke", userId },
       body: `[拍一拍:${userId}]`,
+      inputReview: args.inputReview,
       action: true,
+      prepare: group
+        ? async (t) => {
+            const member = await t.call("get_group_member_info", {
+              group_id: Number(ctx.conversation.split(":")[1]),
+              user_id: Number(userId),
+            });
+            if (String(member?.user_id) !== userId)
+              throw Error("POKE_MEMBER_NOT_FOUND");
+          }
+        : undefined,
       send: async (t) => {
-        if (group) {
-          const member = await t.call("get_group_member_info", {
-            group_id: Number(ctx.conversation.split(":")[1]),
-            user_id: Number(userId),
-          });
-          if (String(member?.user_id) !== userId)
-            throw Error("POKE_MEMBER_NOT_FOUND");
-        }
-        runtime.assertActive(ctx);
         await t.call(group ? "group_poke" : "send_poke", {
           user_id: Number(userId),
           ...(group

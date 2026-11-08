@@ -8,6 +8,7 @@ import {
 import { withInteraction } from "../core/closeness.mjs";
 import { recallMessage } from "../core/message-recall.mjs";
 import { deliveryPage } from "../core/chat-context.mjs";
+import { recordReviewPresentation } from "../core/input-review.mjs";
 import { githubMarker, privateGithubSources } from "../github/policy.mjs";
 import { readEventImage } from "./image-read.mjs";
 import { synthesize } from "./speech.mjs";
@@ -96,23 +97,39 @@ async function handle_memory_related(runtime, ctx, args, name) {
 async function handle_memory_read(runtime, ctx, args, name) {
   const mem = runtime.memory.bind(ctx.agentId);
 
-  recallBoundary(runtime, ctx).assert(mem.readRecord(args, ctx.conversation));
-  const r = mem.read(args, ctx.conversation);
+  const item = mem.readRecord(args, ctx.conversation);
+  recallBoundary(runtime, ctx).assert(item);
+  let version;
+  const r = mem.read(args, ctx.conversation, {
+    item,
+    captureVersion: (value) => {
+      version = value;
+    },
+  });
   track(ctx, [r]);
   const pages = (ctx.inputPages ??= new Map());
   const old = pages.get(r.id);
-  const chunk =
-    r.offset === 0
-      ? r.chunk
-      : old?.offset === r.offset
-        ? old.chunk + r.chunk
-        : null;
-  if (chunk !== null) {
-    if (r.nextOffset === null) {
+  const continues =
+    r.offset === 0 || (old?.offset === r.offset && old.version === version);
+  if (!continues) {
+    if (old && old.version !== version) {
       pages.delete(r.id);
-      runtime.observeInput(ctx, [JSON.parse(chunk)]);
-    } else if (pages.size < 10 && chunk.length <= 2100000)
-      pages.set(r.id, { chunk, offset: r.nextOffset });
+      return {
+        ...r,
+        presentationRestart: { tool: "memory_read", id: r.id, offset: 0 },
+      };
+    }
+    return r;
+  }
+  pages.delete(r.id);
+  if (r.nextOffset === null) {
+    runtime.observeInput(ctx, [item]);
+    recordReviewPresentation(runtime, ctx, [item]);
+  } else {
+    // Keep offsets and digests only. Archive projections can exceed the size
+    // of their source messages when payloads carry both raw and decoded forms.
+    if (pages.size === 10) pages.delete(pages.keys().next().value);
+    pages.set(r.id, { version, offset: r.nextOffset });
   }
   return r;
 }
@@ -133,6 +150,7 @@ async function handle_conversation_read(runtime, ctx, args, name) {
   );
   track(ctx, r.items);
   runtime.contexts.seen(ctx, r.items);
+  recordReviewPresentation(runtime, ctx, r.items);
   return r;
 }
 async function handle_diary_write(runtime, ctx, args, name) {
@@ -182,7 +200,6 @@ function readCheckpointToolEnabled(runtime, ctx) {
     runtime.toolsFor(runtime.agent(ctx.agentId), ctx.conversation)
   ).includes("qq_mark_read");
 }
-const inFlightReadCheckpointIntents = new WeakMap();
 function readCheckpointReceipts(mem, conversation) {
   const receipts = mem.state(conversation).readCheckpointReceipts;
   if (receipts == null) return {};
@@ -265,42 +282,25 @@ async function handle_qq_send(runtime, ctx, args, name) {
       throw Error("TOOL_NOT_ALLOWED");
     assertReadCheckpoint(ctx, args.readThroughSeq);
   }
-  const mem = runtime.memory.bind(ctx.agentId),
-    receipts = readCheckpointReceipts(mem, ctx.conversation),
-    hasIntent = Object.hasOwn(receipts, args.requestId),
-    priorIntent = hasIntent ? receipts[args.requestId] : null,
-    existingDelivery = mem.delivery(args.requestId),
-    admissionKey = JSON.stringify([ctx.agentId, args.requestId]);
-  let activeIntents = inFlightReadCheckpointIntents.get(runtime);
-  if (!activeIntents) {
-    activeIntents = new Map();
-    inFlightReadCheckpointIntents.set(runtime, activeIntents);
-  }
-  const activeIntent = activeIntents.get(admissionKey);
-  let intent = priorIntent,
-    ownsAdmission = false;
-  if (!activeIntent) {
-    if (!intent && !existingDelivery && args.readThroughSeq !== undefined)
-      intent = saveReadCheckpointIntent(
-        mem,
-        ctx.conversation,
-        args.requestId,
-        args.readThroughSeq,
-        ctx.shownSeq,
-      );
-    activeIntents.set(
-      admissionKey,
-      intent || { throughSeq: null, shownSeq: ctx.shownSeq },
-    );
-    ownsAdmission = true;
-  } else if (!intent) intent = activeIntent;
-  let receipt;
-  try {
-    receipt = await runtime.send(ctx, args);
-  } finally {
-    if (ownsAdmission) activeIntents.delete(admissionKey);
-  }
+  const mem = runtime.memory.bind(ctx.agentId);
+  const shownSeq = ctx.shownSeq;
+  const receipt = await runtime.send(ctx, args, {
+    onReserve: () => {
+      if (args.readThroughSeq !== undefined)
+        saveReadCheckpointIntent(
+          mem,
+          ctx.conversation,
+          args.requestId,
+          args.readThroughSeq,
+          shownSeq,
+        );
+    },
+  });
   if (receipt.status !== "sent") return receipt;
+  const receipts = readCheckpointReceipts(mem, ctx.conversation);
+  const intent = Object.hasOwn(receipts, args.requestId)
+    ? receipts[args.requestId]
+    : null;
   const checkpoint = checkpointFromIntent(intent);
   const readCheckpoint =
     intent && Number.isSafeInteger(intent.throughSeq) && intent.throughSeq >= 0
