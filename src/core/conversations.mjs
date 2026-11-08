@@ -1,3 +1,4 @@
+import { ConversationTiming } from "./message-timing-runtime.mjs";
 import { recordReviewPresentation } from "./input-review.mjs";
 import { deferForRhythm } from "./rhythm.mjs";
 import { recallPage } from "./recall-boundary.mjs";
@@ -42,10 +43,13 @@ function slide(a, state, now, senderId) {
   const next = Math.max(state.rhythmBaseDueAt ?? state.wakeDueAt ?? due, due);
   if (state.rhythmBaseDueAt !== undefined) state.rhythmBaseDueAt = next;
   state.wakeDueAt = Math.max(state.wakeDueAt ?? next, next);
+  return due;
 }
 export class ConversationEngine {
   constructor(runtime) {
     this.runtime = runtime;
+    this.timing =
+      runtime.messageTiming && new ConversationTiming(runtime.messageTiming);
     this.waiters = new Map();
     this.ticking = false;
   }
@@ -164,13 +168,17 @@ export class ConversationEngine {
       senderId = null,
       addressed = false,
       direct = false,
+      inboundAt,
     } = {},
   ) {
     const a = this.runtime.agent(id),
       state = this.state(id, conversation),
-      now = this.now();
+      now = this.now(),
+      observedAt = this.timing?.timing.clock();
     // Timers left behind by wakes that were dropped elsewhere must not shape a new batch.
-    if (!state.pendingWakes?.length) {
+    const newBatch = !state.pendingWakes?.length;
+    if (newBatch) {
+      this.timing?.take(id, conversation, false);
       delete state.wakeDueAt;
       delete state.rhythmBaseDueAt;
       delete state.rhythmDirect;
@@ -206,14 +214,16 @@ export class ConversationEngine {
         .filter((x) => !x.taskRunId && !x.intentId)
         .slice(-20);
     state.pendingWakes = [...tasks, ...ordinary];
+    let batchDue;
     if (immediate) {
       // Later chat wakes may join an immediate wake but never postpone it.
       endBatch(state);
       state.wakeDueAt = Math.min(state.wakeDueAt ?? now, now);
+      batchDue = now;
       if (state.rhythmBaseDueAt !== undefined)
         state.rhythmBaseDueAt = state.wakeDueAt;
     } else if (state.wakeDueAt === undefined || state.wakeBatchAt !== undefined)
-      slide(a, state, now, senderId);
+      batchDue = slide(a, state, now, senderId);
     if (direct) state.rhythmDirect = true;
     const exempt = state.pendingWakes.some((x) => x.taskRunId || x.intentId);
     deferForRhythm(this.runtime, a, state, conversation, {
@@ -221,18 +231,39 @@ export class ConversationEngine {
       direct: state.rhythmDirect === true,
     });
     this.write(id, conversation, state);
+    this.timing?.observe(id, conversation, a.behavior, {
+      inboundAt,
+      newBatch,
+      started: state.wakeBatchAt,
+      due: batchDue,
+      immediate,
+      wallNow: now,
+      at: observedAt,
+      busy: this.runtime.running.has(id + "|" + conversation),
+    });
     return this.flush(id, conversation);
   }
   // A follow-up that wakes nothing on its own still lets a sender in the pending batch finish.
-  extend(id, conversation, senderId) {
+  extend(id, conversation, senderId, inboundAt) {
     const state = this.state(id, conversation);
     if (
       !state.pendingWakes?.length ||
       !state.wakeBatchSenders?.includes(senderId)
     )
       return;
-    slide(this.runtime.agent(id), state, this.now());
+    const a = this.runtime.agent(id),
+      now = this.now(),
+      observedAt = this.timing?.timing.clock();
+    const due = slide(a, state, now);
     this.write(id, conversation, state);
+    this.timing?.observe(id, conversation, a.behavior, {
+      inboundAt,
+      started: state.wakeBatchAt,
+      due,
+      wallNow: now,
+      at: observedAt,
+      busy: this.runtime.running.has(id + "|" + conversation),
+    });
   }
   flush(id, conversation) {
     const runtime = this.runtime,
@@ -246,6 +277,7 @@ export class ConversationEngine {
       runtime.games.busy(a.backendId)
     )
       return { queued: true };
+    const measured = this.timing?.get(id, conversation);
     if (state.pendingWakes?.length) {
       const before = state.wakeDueAt;
       deferForRhythm(runtime, a, state, conversation, {
@@ -253,17 +285,41 @@ export class ConversationEngine {
         direct: state.rhythmDirect === true,
       });
       if (state.wakeDueAt !== before) this.write(id, conversation, state);
+      if (measured) {
+        const rhythmAt = Math.max(
+          state.rhythmLateUntil || 0,
+          state.rhythmDeferredUntil || 0,
+        );
+        this.timing.defer(
+          measured,
+          "rhythm",
+          rhythmAt > (state.rhythmBaseDueAt ?? state.wakeDueAt ?? 0)
+            ? rhythmAt
+            : 0,
+          now,
+        );
+      }
     }
     if (!state.pendingWakes?.length || state.wakeDueAt > now)
       return { queued: true };
     const recent = (state.wakeTimes || []).filter((t) => t > now - 3600000);
     const minute = recent.filter((t) => t > now - 60000);
-    const waits = [(state.lastWakeAt || 0) + a.wake.cooldownMs];
+    const cooldownAt = (state.lastWakeAt || 0) + a.wake.cooldownMs;
+    const waits = [cooldownAt];
     if (minute.length >= a.behavior.maxWakePerMinute)
       waits.push(minute[minute.length - a.behavior.maxWakePerMinute] + 60000);
     if (recent.length >= a.behavior.maxWakePerHour)
       waits.push(recent[recent.length - a.behavior.maxWakePerHour] + 3600000);
     const retryAt = Math.max(...waits);
+    if (measured) {
+      this.timing.defer(measured, "cooldown", cooldownAt, now);
+      this.timing.defer(
+        measured,
+        "wakeRateLimit",
+        Math.max(0, ...waits.slice(1)),
+        now,
+      );
+    }
     if (retryAt > now) {
       state.wakeDueAt = retryAt;
       if (state.rhythmBaseDueAt !== undefined) state.rhythmBaseDueAt = retryAt;
@@ -303,6 +359,7 @@ export class ConversationEngine {
     delete state.wakeDueAt;
     endBatch(state);
     if (!pending.length) {
+      this.timing?.take(id, conversation, false);
       this.write(id, conversation, state);
       return { skipped: true };
     }
@@ -316,7 +373,11 @@ export class ConversationEngine {
       state.wakeConfig = { ...state.wakeConfig, sleepUntil: null };
     this.write(id, conversation, state);
     if (rhythmWake) pending[0].rhythmWake = rhythmWake;
-    const job = runtime.wake(id, conversation, { reasons: pending });
+    const timingId = this.timing?.take(id, conversation, true);
+    const job = runtime.wake(id, conversation, {
+      reasons: pending,
+      ...(timingId === undefined ? {} : { timingId }),
+    });
     runtime.trackJob(job, id);
     return { started: true };
   }

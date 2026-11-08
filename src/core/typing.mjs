@@ -42,6 +42,19 @@ export function burstDelay(text, behavior, random, gapMs) {
 export async function waitTyping(runtime, ctx, ms) {
   runtime.assertActive(ctx);
   if (ctx.internalDelivery || ms <= 0) return;
-  await timers.setTimeout(ms, undefined, { signal: ctx.controller.signal });
-  runtime.assertActive(ctx);
+  const capture =
+    ctx.messageTimingId === undefined ? undefined : runtime.messageTiming;
+  const started = capture?.clock();
+  try {
+    await timers.setTimeout(ms, undefined, { signal: ctx.controller.signal });
+    runtime.assertActive(ctx);
+  } finally {
+    if (started !== undefined)
+      capture.interval(
+        ctx.messageTimingId,
+        "simulation",
+        started,
+        capture.clock(),
+      );
+  }
 }

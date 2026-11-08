@@ -385,6 +385,7 @@ export async function sendDraftTool(
       ...contextProtection(runtime, ctx),
     },
   });
+  if (created) runtime.messageTiming?.mark(ctx.messageTimingId, "draftStored");
   if (!created || legacyDeliveries?.size) {
     if (burst) return response(draft, { duplicate: true });
     const item = draftSummary(draft).items[0];
@@ -551,15 +552,15 @@ export async function draftTool(runtime, ctx, _toolName, args) {
   if (args.action === "revise") {
     const input = safeInput(runtime, ctx, draft.toolName, args.input);
     runtime.assertDisclosure(ctx);
-    return draftSummary(
-      runtime.drafts.revise(
-        scope,
-        draft.id,
-        args.expectedVersion,
-        [{ position: args.position, input }],
-        mergeProtection(contextProtection(runtime, ctx), draft.value),
-      ),
+    const revised = runtime.drafts.revise(
+      scope,
+      draft.id,
+      args.expectedVersion,
+      [{ position: args.position, input }],
+      mergeProtection(contextProtection(runtime, ctx), draft.value),
     );
+    runtime.messageTiming?.mark(ctx.messageTimingId, "draftStored");
+    return draftSummary(revised);
   }
   assertOrigin(runtime, ctx, draft);
   if (runtime.drafts.unresolved(scope))

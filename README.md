@@ -239,6 +239,7 @@ node src/main.mjs --data /path/to/private-data --port 3210
 - [聊天接续：历史原文、未完成笔记与已读边界](docs/CHAT-CONTEXT.md)
 - [发送前审阅：新输入、续读与明确重提](docs/CHAT-CONTEXT.md#发送前审阅)
 - [连续聊天与联网策略](docs/CHAT-NETWORK-POLICY.md)
+- [消息链路时序观测与合成基准](docs/MESSAGE-TIMING.md)
 - [自主文件收发](docs/FILE-TRANSFER.md)
 - [图片、截图与文件资料库](docs/SAVED-MEDIA.md)
 - [平台浏览与分享](docs/APP-EXPLORATION-IMPLEMENTATION.md)
