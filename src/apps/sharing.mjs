@@ -186,7 +186,11 @@ export async function fetchImage(service, ctx, { recordId, index = 0 }) {
     notice: "登记成功不代表已理解图片；需实际查看图片后才能描述。",
   };
 }
-export async function sendShare(service, ctx, { recordId, comment, mediaId }) {
+export async function sendShare(
+  service,
+  ctx,
+  { recordId, comment, mediaId, inputReview },
+) {
   const r = service.runtime,
     record = service.get(ctx, recordId);
   const i = ctx.activeIntentId
@@ -236,6 +240,7 @@ export async function sendShare(service, ctx, { recordId, comment, mediaId }) {
   return r.deliver(ctx, {
     requestId,
     intent: { type: "app-share", recordId, comment, mediaId },
+    inputReview,
     body,
     metadata: { appShare, segments },
     send: (transport) => transport.send(ctx.conversation, segments),

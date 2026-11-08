@@ -23,7 +23,7 @@ function load(mem, now) {
     throw Error("SEND_BUDGET_CORRUPT");
   return recent(budget.sendTimes, now);
 }
-export function reserveSendBudget(
+export function checkSendBudget(
   mem,
   behavior,
   conversationTimes,
@@ -58,6 +58,22 @@ export function reserveSendBudget(
         behavior.conversationMaxSendPerMinute)
   )
     throw Error("CONVERSATION_SEND_RATE_LIMIT");
+  return { total, local };
+}
+export function reserveSendBudget(
+  mem,
+  behavior,
+  conversationTimes,
+  now,
+  reconcile,
+) {
+  const { total, local } = checkSendBudget(
+    mem,
+    behavior,
+    conversationTimes,
+    now,
+    reconcile,
+  );
   mem.setState(key, { version: 1, sendTimes: [...total, now] });
   return [...local, now];
 }

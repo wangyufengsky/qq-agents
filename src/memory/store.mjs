@@ -708,12 +708,16 @@ class AgentMemory {
       ...(item.qqFaces ? { qqFaces: item.qqFaces } : {}),
     };
   }
-  read({ id, offset = 0, maxChars = 8000, revision }, current = "") {
+  read(
+    { id, offset = 0, maxChars = 8000, revision },
+    current = "",
+    { item = this.readRecord({ id, revision }, current), captureVersion } = {},
+  ) {
     num(offset, 0, 0, 10000000);
     num(maxChars, 8000, 512, 16000);
-    const item = this.readRecord({ id, revision }, current);
     const complete = json(item),
       chunk = complete.slice(offset, offset + maxChars);
+    captureVersion?.(hash(complete));
     return {
       id,
       format: "json-text-chunk",

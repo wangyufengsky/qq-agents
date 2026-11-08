@@ -188,15 +188,28 @@ test("draining admits existing HTTP tools and receipts, queues new input, and bl
       await receipt.promise;
       return { messageId: "drained-receipt" };
     };
-    const tool = request(
-      "/agent/tools",
-      {
-        name: "qq_send",
-        arguments: { requestId: "drained-delivery", text: "synthetic" },
-      },
-      ctx.token,
+    const call = (name, args) =>
+      request("/agent/tools", { name, arguments: args }, ctx.token);
+    const draft = { requestId: "drained-delivery", text: "synthetic" };
+    const blocked = await call("qq_send", draft);
+    assert.equal(
+      JSON.parse(blocked.data.content[0].text).code,
+      "INPUT_REVIEW_REQUIRED",
     );
-    await sending.promise;
+    assert.equal((await call("conversation_read", {})).data.isError, undefined);
+    const ready = await call("qq_send", draft);
+    const { inputReview } = JSON.parse(ready.data.content[0].text);
+    assert(inputReview.token);
+    const tool = call("qq_send", {
+      ...draft,
+      inputReview: { token: inputReview.token, decision: "continue" },
+    });
+    await Promise.race([
+      sending.promise,
+      tool.then(() => {
+        throw Error("SEND_NOT_STARTED");
+      }),
+    ]);
     assert.ok(f.runtime.maintenance.snapshot().pending >= 2);
     receipt.resolve();
     assert.equal((await tool).data.isError, undefined);
