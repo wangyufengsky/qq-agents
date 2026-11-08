@@ -36,12 +36,17 @@ export async function loadBenchmarkSource(repoRoot) {
   if (!/^[a-f0-9]{40}$/.test(revision)) throw Error("INVALID_BENCHMARK_SOURCE");
   const load = (file) =>
     import(pathToFileURL(path.resolve(repoRoot, file)).href);
-  const [{ Runtime }, { ConfigStore, validateConfig }, { MemoryStore }] =
-    await Promise.all([
-      load("src/core/runtime.mjs"),
-      load("src/core/config.mjs"),
-      load("src/memory/store.mjs"),
-    ]);
+  const [
+    { Runtime },
+    { ConfigStore, validateConfig },
+    { MemoryStore },
+    { safeToolFailure },
+  ] = await Promise.all([
+    load("src/core/runtime.mjs"),
+    load("src/core/config.mjs"),
+    load("src/memory/store.mjs"),
+    load("src/tools/errors.mjs"),
+  ]);
   return {
     revision,
     modified: !!git(
@@ -57,6 +62,7 @@ export async function loadBenchmarkSource(repoRoot) {
     ConfigStore,
     validateConfig,
     MemoryStore,
+    safeToolFailure,
   };
 }
 
@@ -150,7 +156,13 @@ function shownItems(items) {
   let mask = 0;
   for (const item of items || []) {
     const index = /^fixture item (\d{1,2})$/.exec(item.body)?.[1];
-    if (index !== undefined && !item.bodyTruncated && !item.summaryOmitted)
+    if (
+      index !== undefined &&
+      !item.bodyTruncated &&
+      !item.summaryOmitted &&
+      !item.bodyOmitted &&
+      !item.withheld
+    )
       mask |= 1 << Number(index);
   }
   return mask;
@@ -185,12 +197,14 @@ function attemptOutcome(error) {
   const code = error?.message;
   if (
     code === "INPUT_REVIEW_REQUIRED" ||
-    code === "TYPING_NEW_INPUT_REVIEW_REQUIRED"
+    code === "TYPING_NEW_INPUT_REVIEW_REQUIRED" ||
+    code === "QQ_DRAFT_CONTINUE_REQUIRED"
   )
     return "review-required";
   if (
     code === "DELIVERY_UNKNOWN" ||
-    code === "DELIVERY_ALREADY_ATTEMPTED_UNKNOWN"
+    code === "DELIVERY_ALREADY_ATTEMPTED_UNKNOWN" ||
+    code === "QQ_DRAFT_DELIVERY_UNRESOLVED"
   )
     return "unknown";
   if (typeof code === "string" && /(?:^|_)RATE_LIMIT(?:ED)?$/.test(code))
@@ -297,6 +311,15 @@ function attachProbe(runtime, timing, policy) {
     if (name === "qq_send") timing.mark(contexts.get(ctx)?.id, "sendRequested");
     return callTool(ctx, name, args);
   };
+
+  if (runtime.drafts) {
+    const stage = runtime.drafts.stage.bind(runtime.drafts);
+    runtime.drafts.stage = (...args) => {
+      const result = stage(...args);
+      if (result.created) timing.mark(active?.id, "draftStored");
+      return result;
+    };
+  }
 
   const service = runtime.delivery;
   const deliver = service.deliver.bind(service);
@@ -436,6 +459,9 @@ export async function runBenchmarkTrial(
     otherToolFailures: 0,
     missingModelInput: 0,
     openingContinuations: 0,
+    reviewOriginalInputs: 0,
+    draftRevisions: 0,
+    draftContinueCalls: 0,
   };
 
   const transport = {
@@ -483,7 +509,7 @@ export async function runBenchmarkTrial(
       quality.missingModelInput++;
       return;
     }
-    let inputReview;
+    let inputReview, draft, draftText;
     for (let attempt = 0; attempt < 12; attempt++) {
       if ((read & ~acknowledged) === 0) {
         if (((1 << arrived) - 1) & ~acknowledged) quality.missingModelInput++;
@@ -495,11 +521,35 @@ export async function runBenchmarkTrial(
       }
       const text = "B" + read.toString(36) + ":" + "答".repeat(plan.replyChars);
       try {
-        const receipt = await p.callTool("qq_send", {
-          requestId: "fixture-turn-" + turn,
-          text,
-          ...(inputReview ? { inputReview } : {}),
-        });
+        if (draft && text !== draftText) {
+          draft = await p.callTool("qq_draft", {
+            action: "revise",
+            draftId: draft.draftId,
+            expectedVersion: draft.version,
+            position: 0,
+            input: { text },
+          });
+          draftText = text;
+          inputReview = undefined;
+          quality.draftRevisions++;
+        }
+        let receipt;
+        if (draft) {
+          quality.draftContinueCalls++;
+          receipt = await p.callTool("qq_draft", {
+            action: "continue",
+            draftId: draft.draftId,
+            expectedVersion: draft.version,
+            ...(inputReview ? { inputReview } : {}),
+          });
+        } else {
+          draftText = text;
+          receipt = await p.callTool("qq_send", {
+            requestId: "fixture-turn-" + turn,
+            text,
+            ...(inputReview ? { inputReview } : {}),
+          });
+        }
         if (receipt?.status === "sent" && !receipt.duplicate) {
           acknowledged |= read;
           firstConfirmedAt ??= Date.now();
@@ -518,11 +568,14 @@ export async function runBenchmarkTrial(
           return;
         }
         quality.reviewChallenges++;
-        if (error.inputReview?.token) {
-          inputReview = {
-            token: error.inputReview.token,
-            decision: "continue",
-          };
+        const failure = source.safeToolFailure(error);
+        draft = failure.draft ?? draft;
+        const challenge = failure.inputReview;
+        const included = shownItems(challenge?.items);
+        quality.reviewOriginalInputs += bitCount(included & ~read);
+        read |= included;
+        if (challenge?.token) {
+          inputReview = { token: challenge.token, decision: "continue" };
         } else {
           read |= await readAvailable(p.callTool, 0);
           inputReview = undefined;
