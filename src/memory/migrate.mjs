@@ -147,19 +147,30 @@ export function restoreExport(memory, data) {
             .get(row.id, memory.agentId)
         )
           throw Error("EXPORT_FOREIGN_DIARY");
-        if (table === "runtime" && !empty) {
+        if (table === "runtime") {
           const state = JSON.parse(row.value);
-          for (const key of [
-            "readThroughSeq",
-            "lastReceivedSeq",
-            "seenThroughSeq",
-            "activityCursor",
-            "lastActivitySeq",
-            "feedThroughSeq",
-            "imageInputThroughSeq",
-          ])
-            if (state[key] !== undefined)
-              state[key] = seqs.get(state[key]) ?? 0;
+          if (
+            /^(group|private):/.test(row.conversation) &&
+            (state.inputReviewFromSeq !== undefined ||
+              state.inputReviewThroughSeq !== undefined)
+          ) {
+            // Restored content is not proof that this runtime presented it or
+            // approved it for delivery. A local backup still preserves events.
+            state.inputReviewFromSeq = 0;
+            delete state.inputReviewThroughSeq;
+          }
+          if (!empty)
+            for (const key of [
+              "readThroughSeq",
+              "lastReceivedSeq",
+              "seenThroughSeq",
+              "activityCursor",
+              "lastActivitySeq",
+              "feedThroughSeq",
+              "imageInputThroughSeq",
+            ])
+              if (state[key] !== undefined)
+                state[key] = seqs.get(state[key]) ?? 0;
           row.value = JSON.stringify(state);
         }
         if (table === "message_progress" && !empty) row.seq = seqs.get(row.seq);

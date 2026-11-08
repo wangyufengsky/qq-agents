@@ -179,6 +179,23 @@ export function chatStatus(runtime, ctx, history, handoff) {
   const lines = [
     `处理水位：已处理至 seq=${state.readThroughSeq || 0}；本轮已展示的连续水位=${ctx.shownSeq || 0}。展示不等于处理，结束前只提交实际处理过的部分。`,
   ];
+  if (
+    ctx.allowedTools?.some((name) =>
+      [
+        "qq_send",
+        "qq_send_burst",
+        "qq_send_voice",
+        "qq_forward_send",
+        "qq_send_file",
+        "app_share_send",
+        "qq_send_poke",
+        "qq_react",
+      ].includes(name),
+    )
+  )
+    lines.push(
+      "发送前遇到 INPUT_REVIEW_REQUIRED 时，先按返回的入口完整阅读，重新判断是否发送。读完后对准备发送的确切内容取得 token，再用 inputReview={token,decision:'continue'} 明确提交。也可以修改或放弃；普通群仅对确实无关的输入按记录 ID 给出原因。审阅和已读分别提交。",
+    );
   const incomplete = history.items.filter(
     (x) => x.bodyTruncated || x.summaryOmitted,
   );

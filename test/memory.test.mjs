@@ -240,6 +240,31 @@ test("legacy import is idempotent, preserves source bytes and marks missing hist
   assert.equal(a.state("group:20000").paused, true);
   assert.ok(!JSON.stringify(a.export()).includes("do-not-import"));
 });
+test("restoring a review checkpoint preserves history and read position but not local review evidence", (t) => {
+  const { a } = setup(t);
+  const conversation = "group:20000";
+  const first = a.append(event(1));
+  a.setState(conversation, {
+    readThroughSeq: first.seq,
+    inputReviewFromSeq: first.seq,
+    inputReviewThroughSeq: first.seq,
+  });
+  const restored = new MemoryStore(":memory:");
+  try {
+    const other = restored.bind("agent-b");
+    other.append(event(1));
+    const mem = restored.bind(a.agentId);
+    restoreExport(mem, a.export());
+    const imported = mem.readRecord({ id: first.id });
+    assert.notEqual(imported.seq, first.seq);
+    assert.equal(mem.state(conversation).readThroughSeq, imported.seq);
+    assert.equal(mem.state(conversation).inputReviewFromSeq, 0);
+    assert.equal(mem.state(conversation).inputReviewThroughSeq, undefined);
+  } finally {
+    restored.close();
+  }
+});
+
 test("export and restore preserve messages, diary revisions, references and watermarks", (t) => {
   const { a, root } = setup(t);
   const e = a.append(event(1));

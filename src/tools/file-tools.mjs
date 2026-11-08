@@ -1,3 +1,4 @@
+import { inputReviewSchema } from "./input-review.mjs";
 import { createHash } from "node:crypto";
 import {
   trackPeerQzone,
@@ -81,6 +82,7 @@ export const fileDefinitions = {
         requestId: z.string().min(1).max(200),
         fileId: id,
         name: name.optional(),
+        inputReview: inputReviewSchema,
       })
       .strict(),
   ],
@@ -173,6 +175,7 @@ export async function fileTool(runtime, ctx, tool, args) {
     return runtime.deliver(ctx, {
       requestId: args.requestId,
       intent: { type: "file", fileId: meta.fileId, name: displayName },
+      inputReview: args.inputReview,
       body: `[文件] ${displayName}`,
       metadata: { fileId: meta.fileId, name: displayName, bytes: meta.bytes },
       action: true,

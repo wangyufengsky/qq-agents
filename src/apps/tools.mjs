@@ -1,4 +1,5 @@
 // @ts-check
+import { inputReviewSchema } from "../tools/input-review.mjs";
 import { z } from "zod";
 import { APP_NAMES } from "./urls.mjs";
 import { proposeShare, sendShare, fetchImage } from "./sharing.mjs";
@@ -43,6 +44,7 @@ export const appDefinitions = {
       .object({
         recordId,
         comment: z.string().min(1).max(1500),
+        inputReview: inputReviewSchema,
         mediaId: z
           .string()
           .regex(/^[a-f0-9]{64}$/)

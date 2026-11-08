@@ -1,4 +1,5 @@
 // @ts-check
+import { inputReviewSchema } from "./input-review.mjs";
 import { z } from "zod";
 import { react } from "../core/reactions.mjs";
 
@@ -10,6 +11,7 @@ export const reactionDefinitions = {
         requestId: z.string().min(1).max(200),
         messageRef: z.string().min(1).max(200),
         faceId: z.string().regex(/^\d{1,6}$/),
+        inputReview: inputReviewSchema,
       })
       .strict(),
   ],
