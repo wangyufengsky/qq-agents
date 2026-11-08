@@ -187,6 +187,9 @@ test("benchmark retains each scenario and changes one batch parameter at a time"
     seed: base.seed,
   });
   assert.equal(report.synthetic, true);
+  assert.match(report.runner.revision, /^[a-f0-9]{40}$/);
+  assert.match(report.runner.sha256, /^[a-f0-9]{64}$/);
+  assert.equal(typeof report.runner.modified, "boolean");
   assert.equal(report.cases.length, 12);
   const cases = Object.fromEntries(
     report.cases.map((row) => [row.label + ":" + row.scenario, row]),

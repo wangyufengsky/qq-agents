@@ -2,11 +2,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mock } from "node:test";
 import promisedTimers, {
   setImmediate as yieldLoop,
 } from "node:timers/promises";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { MessageTiming } from "../../src/core/message-timing.mjs";
 import { analyzeMessageTiming } from "../../src/core/message-timing-analysis.mjs";
 
@@ -25,7 +26,7 @@ const scenarios = {
   continuous: Array.from({ length: 16 }, (_, index) => index * 1200),
 };
 
-export async function loadBenchmarkSource(repoRoot) {
+function checkoutVersion(repoRoot, files) {
   const git = (...args) =>
     execFileSync("git", args, {
       cwd: repoRoot,
@@ -34,6 +35,40 @@ export async function loadBenchmarkSource(repoRoot) {
     }).trim();
   const revision = git("rev-parse", "HEAD");
   if (!/^[a-f0-9]{40}$/.test(revision)) throw Error("INVALID_BENCHMARK_SOURCE");
+  return {
+    revision,
+    modified: !!git(
+      "status",
+      "--porcelain",
+      "--untracked-files=all",
+      "--",
+      ...files,
+    ),
+  };
+}
+
+function runnerVersion() {
+  const root = fileURLToPath(new URL("../..", import.meta.url));
+  const files = [
+    "scripts/message-timing.mjs",
+    "scripts/fixtures/message-timing-benchmark.mjs",
+    "src/core/message-timing.mjs",
+    "src/core/message-timing-analysis.mjs",
+  ];
+  const hash = createHash("sha256");
+  for (const file of files) {
+    const data = fs.readFileSync(path.join(root, file));
+    hash.update(file + ":" + data.length + "\n").update(data);
+  }
+  return { ...checkoutVersion(root, files), sha256: hash.digest("hex") };
+}
+
+export async function loadBenchmarkSource(repoRoot) {
+  const checkout = checkoutVersion(repoRoot, [
+    "src",
+    "vendor",
+    "package-lock.json",
+  ]);
   const load = (file) =>
     import(pathToFileURL(path.resolve(repoRoot, file)).href);
   const [
@@ -48,16 +83,7 @@ export async function loadBenchmarkSource(repoRoot) {
     load("src/tools/errors.mjs"),
   ]);
   return {
-    revision,
-    modified: !!git(
-      "status",
-      "--porcelain",
-      "--untracked-files=all",
-      "--",
-      "src",
-      "vendor",
-      "package-lock.json",
-    ),
+    ...checkout,
     Runtime,
     ConfigStore,
     validateConfig,
@@ -720,6 +746,7 @@ export async function runMessageTimingBenchmark({
     seed > 0xffffffff
   )
     throw Error("INVALID_BENCHMARK_OPTIONS");
+  const runner = runnerVersion();
   const source = await loadBenchmarkSource(repoRoot);
   const baseline = baselineRoot
     ? await loadBenchmarkSource(baselineRoot)
@@ -790,6 +817,8 @@ export async function runMessageTimingBenchmark({
   return {
     schemaVersion: 1,
     synthetic: true,
+    runner,
+    node: process.version,
     seed,
     trialsPerCell: samples,
     clockStepMs,
