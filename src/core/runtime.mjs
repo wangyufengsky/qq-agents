@@ -71,6 +71,7 @@ import { MaintenanceDrain } from "./maintenance.mjs";
 import {
   isTimedSendTool,
   timedDeliveryFailure,
+  timedStoppedSend,
 } from "./message-timing-runtime.mjs";
 
 // Adds or removes a feature's tools while keeping the existing order, so saving
@@ -974,7 +975,7 @@ export class Runtime {
       }
       const result = await this.executeTool(ctx, name, args);
       if (tracedSend && result?.status === "stopped") {
-        const reason = timedDeliveryFailure(result.error);
+        const reason = timedStoppedSend(result, ctx.controller.signal.aborted);
         ctx.messageTimingToolOutcome = reason;
         this.messageTiming.stop(ctx.messageTimingId, reason);
       }

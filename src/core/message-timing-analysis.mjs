@@ -16,7 +16,6 @@ const tracePairs = /** @type {const} */ ({
   processingToBackendInput: ["processingStarted", "backendInputSubmitted"],
   backendInputToSendRequest: ["backendInputSubmitted", "sendRequested"],
   processingToSendRequest: ["processingStarted", "sendRequested"],
-  sendRequestToDraftStored: ["sendRequested", "draftStored"],
 });
 const deliveryPairs = /** @type {const} */ ({
   conversationQueue: ["requested", "conversationReady"],

@@ -43,6 +43,7 @@ const policyDenials = new Set([
 
 /** @param {unknown} error @returns {DeliveryOutcome} */
 export function timedDeliveryFailure(error) {
+  if (error instanceof Error && error.name === "AbortError") return "cancelled";
   const code =
     error instanceof Error
       ? error.message
@@ -65,6 +66,23 @@ export function timedDeliveryFailure(error) {
   if (code && policyDenials.has(code)) return "policy-blocked";
   if (code && /(?:^|_)RATE_LIMIT(?:ED)?$/.test(code)) return "rate-limited";
   return "failed";
+}
+
+/**
+ * @param {{error?: unknown, draft?: {items?: {status?: string}[]}}} result
+ * @param {boolean} aborted
+ * @returns {DeliveryOutcome}
+ */
+export function timedStoppedSend(result, aborted) {
+  if (aborted && result.error === "TOOL_FAILED") return "cancelled";
+  if (
+    result.error === "QQ_DRAFT_CONTINUE_REQUIRED" &&
+    result.draft?.items?.some(
+      ({ status }) => status === "pending" || status === "unknown",
+    )
+  )
+    return "unresolved-delivery";
+  return timedDeliveryFailure(result.error);
 }
 
 // Correlate only the pending work observed by this process. The keyed digests

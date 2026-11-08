@@ -270,33 +270,34 @@ test("a turn completing before its issued send still records the later authorita
   }
 });
 
-for (const revise of [false, true])
+for (const revise of ["never", "before", "after"])
   test(
     "only draft continue marks the first send request, revised=" + revise,
     async (t) => {
-      let draft, discardable;
+      let draft, discardable, other;
       const f = setup(t, {
         run: async (p) => {
           p.onInputSubmitted();
           f.at(5);
           assert.equal(
             (await p.callTool("qq_draft", { action: "list" })).items.length,
-            2,
+            other ? 3 : 2,
           );
           f.at(8);
           await p.callTool("qq_draft", { action: "read", draftId: draft.id });
           f.at(12);
-          const expectedVersion = revise
-            ? (
-                await p.callTool("qq_draft", {
-                  action: "revise",
-                  draftId: draft.id,
-                  expectedVersion: draft.revision,
-                  position: 0,
-                  input: { text: "修改后的合成回复" },
-                })
-              ).version
-            : draft.revision;
+          const expectedVersion =
+            revise === "before"
+              ? (
+                  await p.callTool("qq_draft", {
+                    action: "revise",
+                    draftId: draft.id,
+                    expectedVersion: draft.revision,
+                    position: 0,
+                    input: { text: "修改后的合成回复" },
+                  })
+                ).version
+              : draft.revision;
           f.at(15);
           await p.callTool("qq_draft", {
             action: "discard",
@@ -323,6 +324,16 @@ for (const revise of [false, true])
             inputReview: { token: challenge.token, decision: "continue" },
           });
           assert.equal(sent.status, "sent");
+          if (other) {
+            f.at(50);
+            await p.callTool("qq_draft", {
+              action: "revise",
+              draftId: other.id,
+              expectedVersion: other.revision,
+              position: 0,
+              input: { text: "另外一份合成草稿" },
+            });
+          }
         },
       });
       const scope = {
@@ -340,11 +351,23 @@ for (const revise of [false, true])
         }).draft;
       draft = stage("timing-continue-fixture");
       discardable = stage("timing-discard-fixture");
+      if (revise === "after") other = stage("timing-later-fixture");
       await f.runtime.ingest("qq-0", raw(1));
       await settle(f.runtime);
-      const [sample] = f.timing.snapshot().samples;
+      const snapshot = f.timing.snapshot();
+      const [sample] = snapshot.samples;
       assert.equal(sample.marks.sendRequested, 20);
-      assert.equal(sample.marks.draftStored, revise ? 12 : undefined);
+      assert.equal(
+        sample.marks.draftStored,
+        revise === "before" ? 12 : other ? 50 : undefined,
+      );
+      assert.equal(
+        Object.hasOwn(
+          analyzeMessageTiming(snapshot).overall.traceTimings,
+          "sendRequestToDraftStored",
+        ),
+        false,
+      );
       assert.equal(sample.deliveries[0].outcome, "review-required");
       assert.equal(sample.deliveries[1].marks.ledgerConfirmed, 30);
     },
@@ -388,6 +411,79 @@ test("a partially confirmed burst retains its structured stop reason", async (t)
   assert.deepEqual(analyzeMessageTiming(snapshot).overall.stoppedBy, {
     "review-required": 1,
   });
+});
+
+test("a cancelled burst gap preserves the prior confirmation and records cancellation", async (t) => {
+  let result;
+  const reachedGateway = Promise.withResolvers();
+  const f = setup(t, {
+    configure(a) {
+      a.tools.push("qq_send_burst");
+    },
+    run: async (p) => {
+      p.onInputSubmitted();
+      result = await p.callTool("qq_send_burst", {
+        requestId: "timing-cancelled-burst-fixture",
+        messages: ["第一条合成回复", "第二条合成回复"],
+        gapMs: 30000,
+      });
+    },
+  });
+  const send = f.transport.send.bind(f.transport);
+  f.transport.send = async (...args) => {
+    const receipt = await send(...args);
+    reachedGateway.resolve();
+    return receipt;
+  };
+  await f.runtime.ingest("qq-0", raw(1));
+  await reachedGateway.promise;
+  await yieldLoop();
+  f.at(20);
+  await f.runtime.cancel("agent-0");
+  await settle(f.runtime);
+  assert.equal(result.status, "stopped");
+  assert.equal(result.error, "TOOL_FAILED");
+  assert.equal(f.transport.sent.length, 1);
+  const [sample] = f.timing.snapshot().samples;
+  assert.equal(sample.outcome, "confirmed");
+  assert.equal(sample.stoppedBy, "cancelled");
+  assert.deepEqual(sample.intervals, [
+    { kind: "simulation", start: 0, end: 20 },
+  ]);
+});
+
+test("replaying a historical unresolved burst records a lock without another send", async (t) => {
+  const results = [];
+  const f = setup(t, {
+    configure(a) {
+      a.tools.push("qq_send_burst");
+    },
+    run: async (p) => {
+      p.onInputSubmitted();
+      results.push(
+        await p.callTool("qq_send_burst", {
+          requestId: "timing-old-burst-fixture",
+          messages: ["第一条合成回复", "第二条合成回复"],
+          gapMs: 0,
+        }),
+      );
+    },
+  });
+  f.transport.failure = "ONEBOT_UNREACHABLE";
+  await f.runtime.ingest("qq-0", raw(1));
+  await settle(f.runtime);
+  await f.runtime.ingest("qq-0", raw(2));
+  await settle(f.runtime);
+  assert.equal(f.transport.sent.length, 1);
+  assert.equal(results[0].error, "DELIVERY_UNKNOWN");
+  assert.equal(results[1].error, "QQ_DRAFT_CONTINUE_REQUIRED");
+  assert.equal(results[1].draft.items[0].status, "unknown");
+  const [initial, replay] = f.timing.snapshot().samples;
+  assert.equal(initial.outcome, "unknown");
+  assert.equal(replay.outcome, "unresolved-delivery");
+  assert.equal(replay.stoppedBy, "unresolved-delivery");
+  assert.equal(replay.marks.draftStored, undefined);
+  assert.deepEqual(replay.deliveries, []);
 });
 
 test("an unconfirmed OneBot submission stays unknown in timing analysis", async (t) => {
