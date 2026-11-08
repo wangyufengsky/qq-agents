@@ -24,6 +24,8 @@
     "src/backends/*.mjs",
     "src/core/config-impact.mjs",
     "src/core/typing-indicator.mjs",
+    "src/core/input-review.mjs",
+    "src/tools/input-review.mjs",
     "src/core/default-config.mjs",
     "src/memory/conversation-state.mjs",
     "src/memory/conversation-due.mjs",

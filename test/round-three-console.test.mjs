@@ -86,12 +86,10 @@ test("console saves role and optional conversation budgets and explicit schedule
     speakers: "",
     typingEnabled: "on",
     typingIndicator: "on",
-    typingFirst: "on",
     typingChar: "123",
     typingJitter: "0.37",
     typingMin: "0.67",
     typingMax: "10.25",
-    typingFirstMax: "5.87",
   };
   await submit("#behavior-form", values);
   assert.equal(saved.agents[0].behavior.batchWindowMs, 4000);
@@ -103,7 +101,7 @@ test("console saves role and optional conversation budgets and explicit schedule
     jitter: 0.37,
     minMs: 670,
     maxMs: 10250,
-    firstReplyMaxMs: 5870,
+    firstReplyMaxMs: 6000,
   });
   assert.equal(saved.agents[0].behavior.batchMaxMs, 12000);
   assert.equal(saved.agents[0].behavior.maxSendPerMinute, 2);
@@ -118,11 +116,10 @@ test("console saves role and optional conversation budgets and explicit schedule
   const disabledTyping = { ...values };
   delete disabledTyping.typingEnabled;
   delete disabledTyping.typingIndicator;
-  delete disabledTyping.typingFirst;
   await submit("#behavior-form", disabledTyping);
   assert.equal(saved.agents[0].behavior.typing.enabled, false);
   assert.equal(saved.agents[0].behavior.typing.indicator, false);
-  assert.equal(saved.agents[0].behavior.typing.firstReply, false);
+  assert.equal(saved.agents[0].behavior.typing.firstReply, true);
   assert.equal(saved.agents[0].behavior.typing.jitter, 0.37);
   await submit("#schedule-settings", {
     enabled: "on",

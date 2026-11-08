@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fixture, config, context, raw } from "./helpers.mjs";
+import { fixture, config, context, raw, sendReviewed } from "./helpers.mjs";
 import { safeToolFailure } from "../src/tools/errors.mjs";
 
 function enabled() {
@@ -50,10 +50,13 @@ test("cancelled intent wake can reply after reading new human input without repl
         assert.deepEqual(blocked.receipts, []);
         assert.equal(f.runtime.transports.get("qq-0").sent.length, 0);
         await p.callTool("conversation_read", {});
-        const sent = await p.callTool("qq_send_burst", {
-          requestId: "reply",
-          messages: ["synthetic reply"],
-        });
+        const sent = await sendReviewed(
+          (args) => p.callTool("qq_send_burst", args),
+          {
+            requestId: "reply",
+            messages: ["synthetic reply"],
+          },
+        );
         assert.equal(sent.status, "sent", JSON.stringify(sent));
         const duplicate = await p.callTool("qq_send_burst", {
           requestId: "reply",
@@ -95,7 +98,7 @@ async function cancelled(t, beforeBegin = async () => {}) {
   return { ...f, ctx, i };
 }
 const send = (f, id = "reply") =>
-  f.runtime.callTool(f.ctx, "qq_send", {
+  sendReviewed((args) => f.runtime.callTool(f.ctx, "qq_send", args), {
     requestId: id,
     text: "synthetic reply",
   });

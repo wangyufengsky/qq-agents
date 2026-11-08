@@ -69,7 +69,7 @@ export function ownsReactionTarget(memory, connection, event) {
   }
 }
 
-/** @param {any} runtime @param {any} ctx @param {{requestId: string, messageRef: string, faceId: string}} args */
+/** @param {any} runtime @param {any} ctx @param {{requestId: string, messageRef: string, faceId: string, inputReview?: import("./input-review.mjs").InputReview}} args */
 export async function react(runtime, ctx, args) {
   const active = () => {
     const a = runtime.assertActive(ctx);
@@ -94,6 +94,7 @@ export async function react(runtime, ctx, args) {
       requestId: args.requestId,
       intent: { kind: "react", messageId: target.messageId, faceId: face.id },
       body: `[贴表情:${face.name}]`,
+      inputReview: args.inputReview,
       metadata: {
         reactedEventId: target.row.id,
         reactedMessageId: target.messageId,

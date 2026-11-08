@@ -177,7 +177,8 @@ test("pausing during audio processing prevents the eventual network request", as
   });
   await f.runtime.pause("agent-0", true);
   release({ type: "record", data: { file: "base64://fixture" } });
-  await assert.rejects(sending, /UNKNOWN/);
+  await assert.rejects(sending, /AGENT_PAUSED_OR_EXPIRED/);
+  assert.equal(f.store.bind(a.id).delivery("late-voice"), undefined);
   assert.equal(f.runtime.transports.get(a.connectionId).sent.length, 0);
 });
 test("forward traversal handles nesting, cycles, raw archive, images and paginated long text", async (t) => {
@@ -634,7 +635,8 @@ test("disabled packet rejection is a failed action with an actionable reason and
   const f = setup(t),
     ctx = context(f.runtime);
   let calls = 0;
-  f.runtime.transports.get("qq-0").call = async () => {
+  f.runtime.transports.get("qq-0").call = async (action) => {
+    if (action === "get_group_member_info") return { user_id: 30000 };
     calls++;
     throw Object.assign(Error("ONEBOT_REJECTED"), {
       reason: "PACKET_BACKEND_DISABLED",

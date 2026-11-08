@@ -1,4 +1,5 @@
 // @ts-check
+import { inputReviewSchema } from "./input-review.mjs";
 import { reactionDefinitions } from "./reactions.mjs";
 import { groupReadDefinitions } from "./group-read.mjs";
 import { profileDefinitions } from "./profile.mjs";
@@ -199,6 +200,7 @@ export const definitions = {
         replyTo: str.optional(),
         atUserId: str.optional(),
         mediaId: str.optional(),
+        inputReview: inputReviewSchema,
         readThroughSeq: z
           .number()
           .int()

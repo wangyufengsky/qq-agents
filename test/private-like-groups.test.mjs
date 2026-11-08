@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fixture, config, context, raw } from "./helpers.mjs";
+import { fixture, config, context, raw, sendReviewed } from "./helpers.mjs";
 import { allowed, allowedGroups, validateConfig } from "../src/core/config.mjs";
 import { readiness } from "../src/core/readiness.mjs";
 import { humanInput, observeInput } from "../src/core/input-progress.mjs";
@@ -55,7 +55,10 @@ function setup(t, privateLike = true) {
       now += ms;
     },
     send: (id, target = ctx) =>
-      f.runtime.send(target, { requestId: id, text: "synthetic reply" }),
+      sendReviewed((args) => f.runtime.send(target, args), {
+        requestId: id,
+        text: "synthetic reply",
+      }),
   };
 }
 

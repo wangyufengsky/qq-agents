@@ -12,6 +12,7 @@ import {
   context,
   raw,
   disclosureApproval,
+  sendReviewed,
 } from "./helpers.mjs";
 import { AppBrowsing } from "../src/apps/service.mjs";
 import { appsPolicySchema, inAppHours } from "../src/apps/policy.mjs";
@@ -103,7 +104,10 @@ async function incoming(
   return row;
 }
 const send = (f, ctx, id) =>
-  f.runtime.send(ctx, { requestId: id, text: "synthetic response" });
+  sendReviewed((args) => f.runtime.send(ctx, args), {
+    requestId: id,
+    text: "synthetic response",
+  });
 function recall(
   f,
   ctx,
@@ -729,7 +733,7 @@ test("backend run closures share the durable policy through both prompt protocol
             false,
           );
           await callTool("conversation_read", { afterSeq: row.seq - 1 });
-          await callTool("qq_send", {
+          await sendReviewed((args) => callTool("qq_send", args), {
             requestId: type + ":" + n,
             text: "backend answer",
           });

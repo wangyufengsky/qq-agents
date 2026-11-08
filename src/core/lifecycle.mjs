@@ -38,6 +38,7 @@ import { elsewhereForTurn } from "./elsewhere.mjs";
 import { floorForTurn } from "./floor.mjs";
 import { taskBrief } from "./scheduler.mjs";
 import { recallBoundary, recallPage } from "./recall-boundary.mjs";
+import { recordReviewPresentation } from "./input-review.mjs";
 import {
   retireSession,
   sessionReference,
@@ -713,6 +714,7 @@ export class ContextLifecycle {
         ? `你和这些人之间还没了结的事（你自己用 person_item 记下的）：boundary 是对方的相处边界，照着调整；promise 是你答应对方的事，做到了就回来交代，做不成就坦白，交代后用 person_item 关掉；shared 是一起经历过的事，合适时自然接回来，不必硬提。fromPrivate 的记在别的私聊里，只用来调整你自己的做法，不要在这里提起内容。${JSON.stringify({ items: between.items, ...(Object.keys(between.more).length ? { more: between.more } : {}) })}`
         : "",
     ];
+    const openingHistory = chatHistory(history);
     const prompt = (
       !/^(group|private):/.test(ctx.conversation)
         ? [
@@ -737,7 +739,7 @@ export class ContextLifecycle {
               replay.earlierOmitted)
               ? `最近对话（历史回放）：${JSON.stringify(replay)}`
               : "",
-            `新增消息：${JSON.stringify(chatHistory(history))}`,
+            `新增消息：${JSON.stringify(openingHistory)}`,
             ...chatStatus(r, ctx, history, handoff),
             ...details,
             handoff
@@ -749,6 +751,15 @@ export class ContextLifecycle {
     )
       .filter(Boolean)
       .join("\n\n");
+    recordReviewPresentation(
+      r,
+      ctx,
+      openingHistory.items.map((item) => ({
+        ...item,
+        conversation: ctx.conversation,
+      })),
+    );
+    ctx.openingReviewInput = new Map(ctx.presentedReviewInput);
     m.setState(ctx.conversation, {
       ...m.state(ctx.conversation),
       loadedSelfVersion: self.version,

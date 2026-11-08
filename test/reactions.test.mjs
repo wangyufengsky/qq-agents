@@ -30,7 +30,7 @@ function target(f, id = "50000", extra = {}) {
     senderId: "30000",
     messageId: id,
     body: "一条已知消息",
-    payload: { trustedInput: true, messageNamespace: "onebot" },
+    payload: { trustedInput: false, messageNamespace: "onebot" },
     ...extra,
   });
 }
