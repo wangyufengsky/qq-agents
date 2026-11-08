@@ -366,7 +366,7 @@ async function renderSchedules() {
       `<div class="form-grid">${parityCheck("typingEnabled", "连发间隔按内容长度计算", b.typing.enabled)}${parityCheck("typingIndicator", "私聊“正在输入”", b.typing.indicator)}
     ${range("typingChar", "每字耗时", b.typing.msPerChar, { min: 0, max: 2000, step: 10, unit: " 毫秒" })}${range("typingJitter", "打字抖动", b.typing.jitter, { min: 0, max: 1, step: 0.01, unit: "%" })}
     ${range("typingMin", "单条最短等待", b.typing.minMs / 1000, { min: 0, max: 30, step: 0.1, unit: " 秒" })}${range("typingMax", "单条最长等待", b.typing.maxMs / 1000, { min: 0, max: 30, step: 0.1, unit: " 秒" })}
-    </div><p class="hint">连发间隔可随内容长度变化，表情、链接和图片各按一字计。显式 gapMs 优先，关闭后使用原随机间隔。首条直接进入发送流程，提交前有新消息时先审阅。私聊连发间隔可尽力显示输入状态，网关不支持时照常发送。</p>`,
+    </div><p class="hint">连发间隔可随内容长度变化，表情、链接和图片各按一字计。显式 gapMs 优先，关闭后使用原随机间隔。首条直接进入发送流程，提交前有新消息时先审阅。私聊模型处理满 500 毫秒后尽力显示输入状态，网关不支持时照常发送。</p>`,
       {
         summary: b.typing.enabled ? "按内容长度计算" : "已关闭 · 原随机间隔",
         cls: "fold-inner",

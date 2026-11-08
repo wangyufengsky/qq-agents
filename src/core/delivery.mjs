@@ -3,6 +3,7 @@ import { assertNoSocialDisclosure } from "./social-protection.mjs";
 import { peerQzoneSources } from "./peer-qzone-protection.mjs";
 import { assertInputReviewed } from "./input-review.mjs";
 import { timedDeliveryFailure } from "./message-timing-runtime.mjs";
+import { draftScope, recoverDraftArchives } from "./draft-delivery.mjs";
 import { recallBoundary } from "./recall-boundary.mjs";
 import { containsCredential } from "./secrets.mjs";
 import { beforeShareDelivery } from "../apps/sharing.mjs";
@@ -63,7 +64,7 @@ export class DeliveryService {
       mediaId,
       inputReview,
     },
-    { archiveBody, burstContinuation, reviewIntent, onReserve } = {},
+    { archiveBody, reviewIntent, reviewOptions, onReserve, replyEventId } = {},
   ) {
     const runtime = this.runtime;
     const a = runtime.assertActive(ctx),
@@ -100,7 +101,18 @@ export class DeliveryService {
         connectionId: a.connectionId,
         conversation: ctx.conversation,
       };
-      const own = resolveMessage(mem.db, scope, replyTo);
+      const own = replyEventId
+        ? mem.db
+            .prepare(
+              "SELECT * FROM events WHERE id=? AND agent_id=? AND connection_id=? AND conversation=?",
+            )
+            .get(
+              replyEventId,
+              scope.agentId,
+              scope.connectionId,
+              scope.conversation,
+            )
+        : resolveMessage(mem.db, scope, replyTo);
       if (!own) throw Error("UNKNOWN_REPLY_TARGET");
       replyTo = gatewayMessageId(
         mem.db,
@@ -128,8 +140,8 @@ export class DeliveryService {
       intent: segments,
       body: archiveBody ?? message.body,
       inputReview,
-      burstContinuation,
       reviewIntent,
+      reviewOptions,
       onReserve,
       metadata: {
         replyTo,
@@ -221,7 +233,6 @@ export class DeliveryService {
   review(ctx, operation, checked) {
     if (
       ctx.internalDelivery ||
-      operation.burstContinuation ||
       checked.contactFreeAction ||
       ["official-collect", "official-remark"].includes(operation.intent?.kind)
     )
@@ -232,6 +243,7 @@ export class DeliveryService {
       checked.requestId,
       operation.reviewIntent ?? operation.intent,
       operation.inputReview,
+      operation.reviewOptions,
     );
   }
   async enqueue(ctx, operation) {
@@ -364,6 +376,7 @@ export class DeliveryService {
     // request ID, wording, media, action or target. Same-ID receipt reads above
     // remain available; new deliveries are fenced for this continuation.
     if (ctx.recoveryDeliveryBlocked) throw Error("RECOVERY_DELIVERY_BLOCKED");
+    this.assertDraftDelivery(ctx, contactFreeAction);
     if (metadata.mediaId) {
       assertHomeSceneMedia(
         runtime,
@@ -374,6 +387,13 @@ export class DeliveryService {
       runtime.generatedImages.assertDelivery(ctx, metadata.mediaId, requestId);
     }
     return { a, mem, proactive, requestId, contactFreeAction };
+  }
+  assertDraftDelivery(ctx, contactFreeAction) {
+    if (
+      !contactFreeAction &&
+      this.runtime.drafts.unresolved(draftScope(this.runtime, ctx))
+    )
+      throw Error("QQ_DRAFT_DELIVERY_UNRESOLVED");
   }
   checkSendPolicy(ctx, operation, { a, mem, proactive }) {
     const { actionBudget, validate } = operation;
@@ -475,6 +495,7 @@ export class DeliveryService {
     mem.store.transaction(() => {
       // Intake writes and reservation share this database. Keep the last input
       // check inside its write transaction, with no await before gateway submission.
+      this.assertDraftDelivery(ctx, contactFreeAction);
       const sendTimes = reserveSendBudget(
         mem,
         a.behavior,
@@ -510,7 +531,7 @@ export class DeliveryService {
               }
           : {}),
       });
-      operation.onReserve?.();
+      operation.onReserve?.(requestId, inputReview);
       if (!contactFreeAction) runtime.subject.reserveContact(ctx, proactive);
       mem.append({
         ...event,
@@ -542,27 +563,57 @@ export class DeliveryService {
       });
       throw e;
     }
+    let acknowledged = false;
     try {
       mark?.("submitted");
       const receipt = await send(transport, operation.prepared);
       if (action ? receipt?.confirmed !== true : receipt?.messageId == null)
         throw Error("DELIVERY_UNCONFIRMED");
       mark?.("gatewayConfirmed");
+      acknowledged = true;
       // Record confirmed delivery even if the user pauses while its network request is in flight.
       const messageId =
         receipt.messageId == null ? null : String(receipt.messageId);
-      mem.store.transaction(() => {
+      const confirmation = {
+        action,
+        messageNamespace:
+          runtime.connection(a.connectionId).messageIdNamespace || "onebot",
+        ...(receipt.fileId ? { gatewayFileId: receipt.fileId } : {}),
+      };
+      let draftLinked;
+      const persistConfirmation = () => {
         mem.completeDelivery(requestId, "sent", messageId);
-        if (inputReview) {
-          const current = mem.state(ctx.conversation);
-          if (inputReview.throughSeq > (current.inputReviewThroughSeq || 0))
-            mem.setState(ctx.conversation, {
-              ...current,
-              inputReviewThroughSeq: inputReview.throughSeq,
-            });
-        }
-        if (!contactFreeAction) runtime.subject.delivered(ctx, "sent");
-      });
+        draftLinked = runtime.drafts.recordConfirmation(
+          a.id,
+          requestId,
+          confirmation,
+        );
+      };
+      try {
+        mem.store.transaction(() => {
+          persistConfirmation();
+          if (inputReview) {
+            const current = mem.state(ctx.conversation);
+            if (inputReview.throughSeq > (current.inputReviewThroughSeq || 0))
+              mem.setState(ctx.conversation, {
+                ...current,
+                inputReviewThroughSeq: inputReview.throughSeq,
+              });
+          }
+          if (!contactFreeAction) runtime.subject.delivered(ctx, "sent");
+        });
+      } catch (error) {
+        // Optional review or intent bookkeeping must not erase a received ACK.
+        mem.store.transaction(persistConfirmation);
+        runtime.diagnostics.report(
+          Error("DELIVERY_CONFIRMED_AUDIT_FAILED", { cause: error }),
+          {
+            component: "runtime",
+            agentId: a.id,
+            conversation: ctx.conversation,
+          },
+        );
+      }
       mark?.("ledgerConfirmed");
       capture?.finishDelivery(
         ctx.messageTimingId,
@@ -575,24 +626,48 @@ export class DeliveryService {
         ctx.confirmedSends = (ctx.confirmedSends || 0) + 1;
         runtime.conversations.sent(ctx);
       }
-      const record = mem.append({
-        ...event,
-        dedupe: "send:" + requestId + ":sent",
-        messageId,
-        payload: {
-          ...event.payload,
-          messageNamespace:
-            runtime.connection(a.connectionId).messageIdNamespace || "onebot",
-          ...(receipt.fileId ? { gatewayFileId: receipt.fileId } : {}),
-        },
-        kind: action ? "action.confirmed" : "message.sent",
-        status: "confirmed",
-      });
+      let record;
+      if (draftLinked) {
+        try {
+          record = recoverDraftArchives(
+            runtime.memory,
+            runtime.drafts,
+            a.id,
+            requestId,
+          );
+        } catch (error) {
+          runtime.diagnostics.report(
+            Error("DELIVERY_CONFIRMED_AUDIT_FAILED", { cause: error }),
+            {
+              component: "runtime",
+              agentId: a.id,
+              conversation: ctx.conversation,
+            },
+          );
+        }
+      } else
+        record = mem.append({
+          ...event,
+          dedupe: "send:" + requestId + ":sent",
+          messageId,
+          payload: {
+            ...event.payload,
+            messageNamespace:
+              runtime.connection(a.connectionId).messageIdNamespace || "onebot",
+            ...(receipt.fileId ? { gatewayFileId: receipt.fileId } : {}),
+          },
+          kind: action ? "action.confirmed" : "message.sent",
+          status: "confirmed",
+        });
       return {
         status: "sent",
         messageId,
         // The archived record, which mind tools accept as evidence.
-        ...(record?.id ? { recordId: record.id } : {}),
+        ...(record?.id
+          ? { recordId: record.id }
+          : draftLinked
+            ? { archivePending: true }
+            : {}),
         ...(action ? { actionConfirmed: true } : {}),
         ...(receipt.fileId ? { gatewayFileId: receipt.fileId } : {}),
       };
@@ -609,7 +684,7 @@ export class DeliveryService {
         ? e.reason
         : undefined;
       // A later audit failure must never downgrade an already-confirmed receipt.
-      if (mem.delivery(requestId)?.status === "sent")
+      if (acknowledged)
         throw Error("DELIVERY_CONFIRMED_AUDIT_FAILED", { cause: e });
       mem.store.transaction(() => {
         mem.completeDelivery(requestId, status);

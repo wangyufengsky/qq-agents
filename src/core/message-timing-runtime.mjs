@@ -18,9 +18,11 @@ const sendTools = new Set([
   "app_share_send",
 ]);
 
-/** @param {string} name */
-export function isTimedSendTool(name) {
-  return sendTools.has(name);
+/** @param {string} name @param {{action?: unknown} | null | undefined} args */
+export function isTimedSendTool(name, args) {
+  return (
+    sendTools.has(name) || (name === "qq_draft" && args?.action === "continue")
+  );
 }
 
 const policyDenials = new Set([
@@ -28,6 +30,12 @@ const policyDenials = new Set([
   "CONVERSATION_SILENCED",
   "FILE_PERMISSION_DISABLED",
   "QQ_NOT_CONNECTED",
+  "INTENT_DECISION_REQUIRED",
+  "PRIVATE_RECOLLECTION_REQUIRES_DISCLOSURE_GRANT",
+  "PROTECTED_WORK_OUTBOUND_DENIED",
+  "QQ_DRAFT_SOURCE_RECALLED",
+  "QQ_DRAFT_TURN_EXPIRED",
+  "RECOVERY_DELIVERY_BLOCKED",
   "REPLY_BURST_LIMIT",
   "TOOL_DISABLED",
   "TOOL_NOT_ALLOWED",
@@ -35,11 +43,23 @@ const policyDenials = new Set([
 
 /** @param {unknown} error @returns {DeliveryOutcome} */
 export function timedDeliveryFailure(error) {
-  const code = error instanceof Error ? error.message : undefined;
-  if (code === "INPUT_REVIEW_REQUIRED") return "review-required";
+  const code =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : undefined;
+  if (
+    code === "INPUT_REVIEW_REQUIRED" ||
+    code === "QQ_DRAFT_CONTINUE_REQUIRED" ||
+    code === "TONE_REVIEW_SUGGESTED"
+  )
+    return "review-required";
+  if (code === "QQ_DRAFT_DELIVERY_UNRESOLVED") return "unresolved-delivery";
   if (
     code === "DELIVERY_UNKNOWN" ||
-    code === "DELIVERY_ALREADY_ATTEMPTED_UNKNOWN"
+    code === "DELIVERY_ALREADY_ATTEMPTED_UNKNOWN" ||
+    code === "DELIVERY_CONFIRMED_AUDIT_FAILED"
   )
     return "unknown";
   if (code && policyDenials.has(code)) return "policy-blocked";

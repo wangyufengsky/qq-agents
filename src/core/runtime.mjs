@@ -25,6 +25,9 @@ import { containsCredential } from "./secrets.mjs";
 import { sessionReference, recordRetirementCause } from "./session-records.mjs";
 import { isDeepStrictEqual } from "node:util";
 import { DeliveryService } from "./delivery.mjs";
+import { recoverDraftArchives } from "./draft-delivery.mjs";
+import { QQDraftStore } from "../memory/qq-drafts.mjs";
+import { attachReviewOriginals } from "./input-review.mjs";
 import { TurnRunner } from "./turn-runner.mjs";
 import { runtimeStatus } from "./runtime-status.mjs";
 import { observeInput } from "./input-progress.mjs";
@@ -130,6 +133,7 @@ export class Runtime {
     this.configDrain = null;
     this.reconfiguringAgents = new Set();
     this.reconfiguringConnections = new Set();
+    this.drafts = new QQDraftStore(memory, { clock: () => this.now() });
     this.delivery = new DeliveryService(this);
     this.sendChains = this.delivery.chains;
     this.maintenance = new MaintenanceDrain(this);
@@ -196,6 +200,11 @@ export class Runtime {
     if (this.runtimeInitialized) return { initialized: false };
     if (this.closed) throw Error("RUNTIME_CLOSING");
     if (this.homeSocial) this.homeSocial.store.interruptRuntime(randomUUID());
+    try {
+      recoverDraftArchives(this.memory, this.drafts);
+    } catch (error) {
+      this.diagnostics.report(error, { component: "runtime" });
+    }
     this.runtimeInitialized = true;
     return { initialized: true };
   }
@@ -403,6 +412,7 @@ export class Runtime {
     // Revising writes a new text file under the same create permission and
     // keeps the old one, so it goes with file_create, including older configs.
     if (selected.includes("file_create")) selected.push("file_revise");
+    if (toolAvailable(a, "qq_draft", conversation)) selected.push("qq_draft");
     if (conversation !== SUBJECT && selected.includes("qq_send"))
       selected.push("qq_delivery_status");
     selected.push(...HOME_TOOLS);
@@ -715,6 +725,9 @@ export class Runtime {
       }
       if (ownEcho)
         mem.reconcileFromEcho({
+          connectionId,
+          accountId: c.accountId,
+          namespace: c.messageIdNamespace || "onebot",
           conversation: e.conversation,
           segments: e.segments,
           text: e.segments
@@ -948,7 +961,7 @@ export class Runtime {
     const startedAt = Date.now(),
       calls = (ctx.toolCalls ||= []);
     const tracedSend =
-      ctx.messageTimingId !== undefined && isTimedSendTool(name);
+      ctx.messageTimingId !== undefined && isTimedSendTool(name, args);
     if (tracedSend)
       this.messageTiming.mark(ctx.messageTimingId, "sendRequested");
     try {
@@ -960,10 +973,16 @@ export class Runtime {
         ctx.subjectToolReservations = (ctx.subjectToolReservations || 0) + 1;
       }
       const result = await this.executeTool(ctx, name, args);
+      if (tracedSend && result?.status === "stopped") {
+        const reason = timedDeliveryFailure(result.error);
+        ctx.messageTimingToolOutcome = reason;
+        this.messageTiming.stop(ctx.messageTimingId, reason);
+      }
       if (calls.length < 50)
         calls.push({ name, ok: true, ms: Date.now() - startedAt });
       return result;
     } catch (error) {
+      attachReviewOriginals(this, ctx, error);
       if (tracedSend)
         ctx.messageTimingToolOutcome = timedDeliveryFailure(error);
       if (calls.length < 50)

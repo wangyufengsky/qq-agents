@@ -1,5 +1,6 @@
 // @ts-check
 import { socialSafeExportRow } from "./protection.mjs";
+import { QQDraftStore } from "./qq-drafts.mjs";
 import { withoutClosenessCache } from "../core/closeness.mjs";
 export { inspectLegacy, importLegacy } from "./legacy-import.mjs";
 import { validateExport } from "./export-format.mjs";
@@ -12,6 +13,11 @@ export function restoreExport(memory, data) {
   if (![1, 2].includes(data.version) || data.agentId !== memory.agentId)
     throw Error("EXPORT_IDENTITY_MISMATCH");
   validateExport(data);
+  if (
+    Object.hasOwn(data.tables, "qq_drafts") !==
+    Object.hasOwn(data.tables, "qq_draft_items")
+  )
+    throw Error("EXPORT_INTEGRITY_FAILED");
   const columns = {
     events: [
       "seq",
@@ -87,6 +93,33 @@ export function restoreExport(memory, data) {
     projects: ["agent_id", "id", "value"],
     memory_corrections: ["agent_id", "id", "value"],
     activity_history: ["agent_id", "project_id", "revision", "value"],
+    qq_drafts: [
+      "id",
+      "agent_id",
+      "connection_id",
+      "account_id",
+      "conversation",
+      "tool_name",
+      "request_id",
+      "request_hash",
+      "revision",
+      "created_at",
+      "expires_at",
+      "imported",
+      "value",
+    ],
+    qq_draft_items: [
+      "agent_id",
+      "draft_id",
+      "position",
+      "revision",
+      "request_id",
+      "value",
+      "abandoned",
+      "delivery_request_id",
+      "confirmation",
+      "archive_record_id",
+    ],
     qzone_approvals: [
       "id",
       "agent_id",
@@ -121,6 +154,32 @@ export function restoreExport(memory, data) {
     for (const [table, cols] of Object.entries(columns)) {
       for (const original of data.tables[table] || []) {
         const row = socialSafeExportRow(table, original);
+        // Portable role data preserves evidence and unresolved locks, but does
+        // not authorize running an old draft on this instance.
+        if (table === "qq_drafts") {
+          row.imported = 1;
+          const {
+            basis,
+            baseline: _baseline,
+            origin: _origin,
+            ...metadata
+          } = JSON.parse(row.value);
+          row.value = JSON.stringify({
+            ...metadata,
+            ...(basis
+              ? {
+                  historicalBasis: (basis.items || []).map(
+                    (/** @type {{id:string,kind:string}} */ { id, kind }) => ({
+                      id,
+                      kind,
+                    }),
+                  ),
+                }
+              : {}),
+          });
+        }
+        if (table === "deliveries" && row.status === "pending")
+          row.status = "unknown";
         // An agent export transports history, not authority to publish from this instance.
         if (
           table === "qzone_approvals" &&
@@ -200,6 +259,48 @@ export function restoreExport(memory, data) {
           seqs.set(row.seq, Number(result.lastInsertRowid));
       }
     }
+    if (
+      memory.db
+        .prepare(
+          `SELECT 1 FROM qq_draft_items i
+      JOIN qq_drafts g ON g.id=i.draft_id
+      JOIN deliveries d ON d.agent_id=i.agent_id AND d.request_id=i.delivery_request_id
+      LEFT JOIN events a ON a.agent_id=i.agent_id AND a.dedupe='send:'||i.delivery_request_id||':pending'
+      WHERE i.agent_id=? AND (d.conversation<>g.conversation OR a.id IS NULL
+        OR a.connection_id<>g.connection_id OR a.conversation<>g.conversation OR a.sender_id IS NOT g.account_id
+        OR a.kind<>'message.send-attempt' OR a.direction<>'out'
+        OR json_extract(a.payload,'$.requestId') IS NOT i.delivery_request_id
+        OR (i.confirmation IS NOT NULL AND (d.status<>'sent' OR NOT json_valid(i.confirmation)
+          OR coalesce(json_type(i.confirmation,'$.action'),'') NOT IN ('true','false')
+          OR json_type(i.confirmation,'$.messageNamespace') IS NOT 'text')))
+      LIMIT 1`,
+        )
+        .get(memory.agentId)
+    )
+      throw Error("QQ_DRAFT_DELIVERY_MISMATCH");
+    if (
+      memory.db
+        .prepare(
+          `SELECT g.id FROM qq_drafts g LEFT JOIN qq_draft_items i ON i.draft_id=g.id
+      WHERE g.agent_id=? GROUP BY g.id
+      HAVING count(i.position)<1 OR count(i.position)>10
+        OR min(i.position)<>0 OR max(i.position)<>count(i.position)-1 LIMIT 1`,
+        )
+        .get(memory.agentId)
+    )
+      throw Error("QQ_DRAFT_INVALID");
+    const drafts = new QQDraftStore(memory.store);
+    for (const item of memory.db
+      .prepare(
+        `SELECT delivery_request_id,archive_record_id
+      FROM qq_draft_items WHERE agent_id=? AND archive_record_id IS NOT NULL`,
+      )
+      .all(memory.agentId))
+      drafts.verifyArchive(
+        memory.agentId,
+        item.delivery_request_id,
+        item.archive_record_id,
+      );
     validateRestoredAliases(memory);
     validateRestoredObservations(memory);
   });

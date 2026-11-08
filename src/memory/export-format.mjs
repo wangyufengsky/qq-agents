@@ -26,6 +26,8 @@ export const EXPORT_TABLES = [
   "memory_corrections",
   "activity_history",
   "qzone_approvals",
+  "qq_drafts",
+  "qq_draft_items",
 ];
 // Appended after v2 shipped. An older v2 export simply lacks them; their
 // absence must not fail the checksum of the tables it does carry.
@@ -37,6 +39,8 @@ const ADDED_AFTER_V2 = new Set([
   "memory_corrections",
   "activity_history",
   "qzone_approvals",
+  "qq_drafts",
+  "qq_draft_items",
 ]);
 
 /** @param {{version: number, agentId: string, exportedAt: string}} header */

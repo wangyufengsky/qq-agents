@@ -17,6 +17,7 @@ const outcome = z.enum([
   "completed-no-send",
   "intentional-no-reply",
   "review-required",
+  "unresolved-delivery",
   "policy-blocked",
   "rate-limited",
   "failed",
@@ -29,6 +30,7 @@ const deliveryOutcome = z.enum([
   "confirmed",
   "duplicate",
   "review-required",
+  "unresolved-delivery",
   "policy-blocked",
   "rate-limited",
   "failed",
@@ -92,6 +94,7 @@ const sample = z.strictObject({
   intervals: z.array(interval).max(limits.intervals),
   omittedDeliveries: count,
   omittedIntervals: count,
+  stoppedBy: deliveryOutcome.optional(),
   outcome,
 });
 
@@ -350,6 +353,13 @@ export class MessageTiming {
     this.#counts.completed++;
   }
 
+  /** @param {number} number @param {TimingDelivery["outcome"]} reason */
+  stop(number, reason) {
+    const sample = this.#open.get(number)?.value;
+    if (sample && deliveryOutcome.options.includes(reason))
+      sample.stoppedBy = reason;
+  }
+
   /**
    * @param {number | undefined} number
    * @param {string | undefined} status
@@ -360,7 +370,7 @@ export class MessageTiming {
     if (!sample) return;
     const results = sample.deliveries.map(({ outcome }) => outcome);
     const confirmed = results.includes("confirmed");
-    const last = results.at(-1) ?? toolOutcome;
+    const last = toolOutcome ?? results.at(-1);
     this.finish(
       number,
       confirmed

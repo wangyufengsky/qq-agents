@@ -229,10 +229,10 @@ function attemptOutcome(error) {
     return "review-required";
   if (
     code === "DELIVERY_UNKNOWN" ||
-    code === "DELIVERY_ALREADY_ATTEMPTED_UNKNOWN" ||
-    code === "QQ_DRAFT_DELIVERY_UNRESOLVED"
+    code === "DELIVERY_ALREADY_ATTEMPTED_UNKNOWN"
   )
     return "unknown";
+  if (code === "QQ_DRAFT_DELIVERY_UNRESOLVED") return "unresolved-delivery";
   if (typeof code === "string" && /(?:^|_)RATE_LIMIT(?:ED)?$/.test(code))
     return "rate-limited";
   return "failed";
@@ -343,6 +343,12 @@ function attachProbe(runtime, timing, policy) {
     runtime.drafts.stage = (...args) => {
       const result = stage(...args);
       if (result.created) timing.mark(active?.id, "draftStored");
+      return result;
+    };
+    const revise = runtime.drafts.revise.bind(runtime.drafts);
+    runtime.drafts.revise = (...args) => {
+      const result = revise(...args);
+      timing.mark(active?.id, "draftStored");
       return result;
     };
   }

@@ -201,12 +201,19 @@ test("a stopped burst reports matches and can confirm unchanged without replayin
   const first = await runtime.callTool(ctx, "qq_send_burst", args);
   assert.equal(first.failedIndex, 1);
   assert.deepEqual(first.matches.phrases, ["我理解你的感受"]);
-  assert.equal(first.doNotReplay, false);
+  assert.equal(first.doNotReplay, true);
   assert.equal(first.receipts.length, 1);
   assert.equal(store.bind("agent-0").delivery("burst:1"), undefined);
-  const confirmed = await runtime.callTool(ctx, "qq_send_burst", args);
+  const repeated = await runtime.callTool(ctx, "qq_send_burst", args);
+  assert.equal(repeated.status, "stopped");
+  assert.equal(repeated.receipts[0].duplicate, true);
+  const confirmed = await runtime.callTool(ctx, "qq_draft", {
+    action: "continue",
+    draftId: first.draft.draftId,
+    expectedVersion: first.draft.version,
+  });
   assert.equal(confirmed.status, "sent");
-  assert.equal(confirmed.receipts[0].duplicate, true);
+  assert.equal(confirmed.receipts[0].recordId, first.receipts[0].recordId);
   assert.equal(runtime.transports.get("qq-0").sent.length, 2);
 });
 

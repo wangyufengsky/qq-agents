@@ -1,3 +1,4 @@
+import { startTypingIndicator } from "./typing-indicator.mjs";
 import { prepareMessageImages } from "./message-images.mjs";
 import { randomUUID } from "node:crypto";
 import { SUBJECT } from "./lifecycle.mjs";
@@ -332,6 +333,7 @@ export class TurnRunner {
     const runtime = this.runtime;
     const mem = runtime.memory.bind(ctx.agentId);
     let recoveryStarted = false;
+    const stopTyping = startTypingIndicator(runtime, ctx);
     try {
       const result = await runWithRecovery(backend, params, {
         onFailure: (error, attempt) => {
@@ -387,6 +389,8 @@ export class TurnRunner {
         !ctx.controller.signal.aborted &&
         runtime.capabilities.has(ctx.token);
       throw error;
+    } finally {
+      stopTyping();
     }
   }
 }

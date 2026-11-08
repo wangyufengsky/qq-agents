@@ -1,5 +1,6 @@
 // @ts-check
 import { inputReviewSchema } from "./input-review.mjs";
+import { draftDefinitions } from "./qq-drafts.mjs";
 import { reactionDefinitions } from "./reactions.mjs";
 import { groupReadDefinitions } from "./group-read.mjs";
 import { profileDefinitions } from "./profile.mjs";
@@ -79,6 +80,7 @@ export const definitions = {
   ...githubDefinitions,
   ...mindDefinitions,
   ...legacyDefinitions,
+  ...draftDefinitions,
   ...fileDefinitions,
   ...savedMediaDefinitions,
   ...screenshotDefinitions,

@@ -1,4 +1,5 @@
 import { inputReviewSchema } from "./input-review.mjs";
+import { sendDraftTool } from "./qq-drafts.mjs";
 import { createHash } from "node:crypto";
 import {
   trackPeerQzone,
@@ -120,6 +121,35 @@ function suggestedName(raw) {
     return "download.bin";
   }
 }
+export function sendFile(runtime, ctx, args, options) {
+  const a = active(runtime, ctx, "send"),
+    files = runtime.files;
+  const meta = files.metadata(a.id, args.fileId);
+  recallBoundary(runtime, ctx).assert(meta);
+  if (meta.bytes > a.files.maxBytes) throw Error("FILE_TOO_LARGE");
+  protect(ctx, meta);
+  const displayName = fileName(args.name || meta.name);
+  return runtime.deliver(ctx, {
+    requestId: args.requestId,
+    intent: { type: "file", fileId: meta.fileId, name: displayName },
+    inputReview: args.inputReview,
+    body: `[文件] ${displayName}`,
+    metadata: { fileId: meta.fileId, name: displayName, bytes: meta.bytes },
+    action: true,
+    ...options,
+    validate: () => {
+      const current = active(runtime, ctx, "send");
+      if (meta.bytes > current.files.maxBytes) throw Error("FILE_TOO_LARGE");
+      recallBoundary(runtime, ctx).assert(files.metadata(a.id, args.fileId));
+    },
+    prepare: () =>
+      files.read(a.id, args.fileId, active(runtime, ctx, "send").files.maxBytes)
+        .buffer,
+    send: (transport, buffer) =>
+      transport.sendFile(ctx.conversation, buffer, displayName),
+  });
+}
+
 export async function fileTool(runtime, ctx, tool, args) {
   const a = active(runtime, ctx),
     files = runtime.files;
@@ -167,28 +197,7 @@ export async function fileTool(runtime, ctx, tool, args) {
 
   if (tool === "qq_send_file") {
     active(runtime, ctx, "send");
-    const meta = files.metadata(a.id, args.fileId);
-    recallBoundary(runtime, ctx).assert(meta);
-    if (meta.bytes > a.files.maxBytes) throw Error("FILE_TOO_LARGE");
-    protect(ctx, meta);
-    const displayName = fileName(args.name || meta.name);
-    return runtime.deliver(ctx, {
-      requestId: args.requestId,
-      intent: { type: "file", fileId: meta.fileId, name: displayName },
-      inputReview: args.inputReview,
-      body: `[文件] ${displayName}`,
-      metadata: { fileId: meta.fileId, name: displayName, bytes: meta.bytes },
-      action: true,
-      send: (transport) => {
-        const current = active(runtime, ctx, "send");
-        const { buffer } = files.read(
-          a.id,
-          args.fileId,
-          current.files.maxBytes,
-        );
-        return transport.sendFile(ctx.conversation, buffer, displayName);
-      },
-    });
+    return sendDraftTool(runtime, ctx, tool, args);
   }
   return files.acquire(a.id, async () => {
     const restricted = [...ctx.privateRead].some((x) =>

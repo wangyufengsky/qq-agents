@@ -366,10 +366,11 @@ test("failed peer attempts consume budget and cooldown; confirmed retries stay i
   f.runtime.transports.get("qq-0").failure = "TIMEOUT";
   await assert.rejects(f.send("unknown"), /DELIVERY_UNKNOWN/);
   await f.incoming();
-  await assert.rejects(f.send("replacement"), /REPLY_BURST_LIMIT/);
+  await assert.rejects(f.send("replacement"), /QQ_DRAFT_DELIVERY_UNRESOLVED/);
   f.advance(2000);
   await f.incoming();
   await assert.rejects(f.send("unknown"), /ALREADY_ATTEMPTED/);
   f.runtime.transports.get("qq-0").failure = null;
+  f.store.bind("agent-0").reconcileDelivery("unknown", "failed");
   await f.send("fresh-reply");
 });

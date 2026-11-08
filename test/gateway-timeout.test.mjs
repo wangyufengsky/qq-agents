@@ -59,7 +59,10 @@ test("a gateway timeout leaves the outcome unknown instead of failed", async (t)
     throw Error("ONEBOT_REJECTED");
   };
   await assert.rejects(
-    runtime.send(context(runtime), { requestId: "t-2", text: "被拒绝" }),
+    runtime.send(context(runtime, "agent-0", "group:20001"), {
+      requestId: "t-2",
+      text: "被拒绝",
+    }),
     /^Error: DELIVERY_FAILED$/,
   );
   assert.equal(mem.delivery("t-2").status, "failed");
@@ -121,11 +124,27 @@ test("an ambiguous or image-only echo is left for the administrator", async (t) 
   transport.send = async () => {
     throw timeout();
   };
-  for (const requestId of ["a-1", "a-2"])
-    await assert.rejects(
-      runtime.send(context(runtime), { requestId, text: "同一句话" }),
-      /UNKNOWN/,
-    );
+  await assert.rejects(
+    runtime.send(context(runtime), { requestId: "a-1", text: "同一句话" }),
+    /DELIVERY_UNKNOWN/,
+  );
+  // A legacy database can contain multiple uncertain attempts from before the
+  // scoped fence. Preserve ambiguity when reconciling this historical case.
+  mem.reserveDelivery("a-2", "group:20000", [
+    { type: "text", data: { text: "同一句话" } },
+  ]);
+  mem.append({
+    dedupe: "send:a-2:pending",
+    connectionId: "qq-0",
+    conversation: "group:20000",
+    senderId: "10000",
+    body: "同一句话",
+    kind: "message.send-attempt",
+    direction: "out",
+    status: "pending",
+    payload: { requestId: "a-2" },
+  });
+  mem.completeDelivery("a-2", "unknown");
   await echo(runtime, 601, [text("同一句话")]);
   assert.equal(mem.delivery("a-1").status, "unknown");
   assert.equal(mem.delivery("a-2").status, "unknown");

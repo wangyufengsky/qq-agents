@@ -1,4 +1,6 @@
 // @ts-check
+export const RECALL_NOTICE_BODY = "[消息已撤回]";
+
 // Projection-only annotations preserve immutable archive bodies and evidence digests.
 /** @param {import("node:sqlite").DatabaseSync} db @param {string} agentId @param {string} id */
 export function recallAnnotation(db, agentId, id) {

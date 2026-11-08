@@ -12,6 +12,7 @@ import { analyzeMessageTiming } from "../src/core/message-timing-analysis.mjs";
 import { Runtime } from "../src/core/runtime.mjs";
 import { MemoryStore } from "../src/memory/store.mjs";
 import { createServer } from "../src/server.mjs";
+import { safeToolFailure } from "../src/tools/errors.mjs";
 import { config, FakeTransport, raw, settle, temp } from "./helpers.mjs";
 
 const epoch = Date.UTC(2030, 0, 1);
@@ -122,6 +123,7 @@ test("real intake, scheduler, model and connection queue share one measured resp
       processingStarted: 7000,
       backendInputSubmitted: 7000,
       sendRequested: 7100,
+      draftStored: 7100,
       turnFinished: 8500,
       finished: 8500,
     });
@@ -268,22 +270,153 @@ test("a turn completing before its issued send still records the later authorita
   }
 });
 
+for (const revise of [false, true])
+  test(
+    "only draft continue marks the first send request, revised=" + revise,
+    async (t) => {
+      let draft, discardable;
+      const f = setup(t, {
+        run: async (p) => {
+          p.onInputSubmitted();
+          f.at(5);
+          assert.equal(
+            (await p.callTool("qq_draft", { action: "list" })).items.length,
+            2,
+          );
+          f.at(8);
+          await p.callTool("qq_draft", { action: "read", draftId: draft.id });
+          f.at(12);
+          const expectedVersion = revise
+            ? (
+                await p.callTool("qq_draft", {
+                  action: "revise",
+                  draftId: draft.id,
+                  expectedVersion: draft.revision,
+                  position: 0,
+                  input: { text: "修改后的合成回复" },
+                })
+              ).version
+            : draft.revision;
+          f.at(15);
+          await p.callTool("qq_draft", {
+            action: "discard",
+            draftId: discardable.id,
+            expectedVersion: discardable.revision,
+          });
+          const continuation = {
+            action: "continue",
+            draftId: draft.id,
+            expectedVersion,
+          };
+          let challenge;
+          f.at(20);
+          await assert.rejects(
+            p.callTool("qq_draft", continuation),
+            (error) => {
+              challenge = safeToolFailure(error).inputReview;
+              return error.message === "INPUT_REVIEW_REQUIRED";
+            },
+          );
+          f.at(30);
+          const sent = await p.callTool("qq_draft", {
+            ...continuation,
+            inputReview: { token: challenge.token, decision: "continue" },
+          });
+          assert.equal(sent.status, "sent");
+        },
+      });
+      const scope = {
+        agentId: "agent-0",
+        connectionId: "qq-0",
+        accountId: "10000",
+        conversation: target,
+      };
+      const stage = (requestId) =>
+        f.runtime.drafts.stage(scope, {
+          toolName: "qq_send",
+          requestId,
+          items: [{ requestId, input: { text: "暂存的合成回复" } }],
+          value: { baseline: { readSeq: 0, sentSeq: 0 } },
+        }).draft;
+      draft = stage("timing-continue-fixture");
+      discardable = stage("timing-discard-fixture");
+      await f.runtime.ingest("qq-0", raw(1));
+      await settle(f.runtime);
+      const [sample] = f.timing.snapshot().samples;
+      assert.equal(sample.marks.sendRequested, 20);
+      assert.equal(sample.marks.draftStored, revise ? 12 : undefined);
+      assert.equal(sample.deliveries[0].outcome, "review-required");
+      assert.equal(sample.deliveries[1].marks.ledgerConfirmed, 30);
+    },
+  );
+
+test("a partially confirmed burst retains its structured stop reason", async (t) => {
+  let calls = 0,
+    result;
+  const f = setup(t, {
+    configure(a) {
+      a.tools.push("qq_send_burst");
+    },
+    run: async (p) => {
+      if (++calls > 1) return;
+      p.onInputSubmitted();
+      result = await p.callTool("qq_send_burst", {
+        requestId: "timing-burst-fixture",
+        messages: ["第一条合成回复", "第二条合成回复"],
+        gapMs: 0,
+      });
+    },
+  });
+  const send = f.transport.send.bind(f.transport);
+  f.transport.send = async (...args) => {
+    const receipt = await send(...args);
+    f.at(10);
+    await f.runtime.ingest("qq-0", raw(2));
+    return receipt;
+  };
+  await f.runtime.ingest("qq-0", raw(1));
+  await settle(f.runtime);
+  assert.equal(result.status, "stopped");
+  assert.equal(result.error, "INPUT_REVIEW_REQUIRED");
+  assert.equal(f.transport.sent.length, 1);
+  const snapshot = f.timing.snapshot();
+  const sample = snapshot.samples.find(({ stoppedBy }) => stoppedBy);
+  assert.equal(sample.outcome, "confirmed");
+  assert.equal(sample.stoppedBy, "review-required");
+  assert.equal(sample.deliveries[0].marks.ledgerConfirmed, 10);
+  assert.equal(sample.deliveries[1].marks.submitted, undefined);
+  assert.deepEqual(analyzeMessageTiming(snapshot).overall.stoppedBy, {
+    "review-required": 1,
+  });
+});
+
 test("an unconfirmed OneBot submission stays unknown in timing analysis", async (t) => {
+  let calls = 0;
   const f = setup(t, {
     run: async (p) => {
       p.onInputSubmitted();
-      try {
-        await p.callTool("qq_send", fixtureSend("timing-unknown-fixture"));
-      } catch (error) {
-        assert.equal(error.message, "DELIVERY_UNKNOWN");
+      if (++calls === 1) {
+        await assert.rejects(
+          p.callTool("qq_send", fixtureSend("timing-unknown-fixture")),
+          /DELIVERY_UNKNOWN/,
+        );
+      } else {
+        await assert.rejects(
+          p.callTool("qq_send", fixtureSend("timing-new-fixture")),
+          /QQ_DRAFT_DELIVERY_UNRESOLVED/,
+        );
       }
     },
   });
   f.transport.failure = "ONEBOT_UNREACHABLE";
   await f.runtime.ingest("qq-0", raw(1));
   await settle(f.runtime);
+  await f.runtime.ingest("qq-0", raw(2));
+  await settle(f.runtime);
   const snapshot = f.timing.snapshot();
-  const [sample] = snapshot.samples;
+  const [sample, blocked] = snapshot.samples;
+  assert.equal(blocked.outcome, "unresolved-delivery");
+  assert.deepEqual(blocked.deliveries, []);
   assert.equal(sample.outcome, "unknown");
   assert.equal(sample.deliveries[0].outcome, "unknown");
   assert.equal(sample.deliveries[0].marks.ledgerConfirmed, undefined);
@@ -291,6 +424,12 @@ test("an unconfirmed OneBot submission stays unknown in timing analysis", async 
     analyzeMessageTiming(snapshot).overall.firstConfirmationSamples,
     0,
   );
+  const memory = f.runtime.memory.bind("agent-0");
+  memory.reconcileDelivery("timing-unknown-fixture", "sent", {
+    messageId: "50000",
+  });
+  assert.equal(memory.delivery("timing-unknown-fixture").status, "sent");
+  assert.deepEqual(f.timing.snapshot(), snapshot);
 });
 
 for (const capture of [false, true])

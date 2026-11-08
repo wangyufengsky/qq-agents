@@ -157,7 +157,7 @@ function observedByKind(spans) {
   return totals;
 }
 
-/** @param {TimingSample[] | TimingDelivery[]} items */
+/** @param {{outcome: string}[]} items */
 function outcomes(items) {
   /** @type {Record<string, number>} */
   const counts = {};
@@ -201,6 +201,11 @@ function summarize(samples) {
   return {
     samples: samples.length,
     outcomes: outcomes(samples),
+    stoppedBy: outcomes(
+      samples.flatMap(({ stoppedBy }) =>
+        stoppedBy ? [{ outcome: stoppedBy }] : [],
+      ),
+    ),
     firstConfirmationSamples: firstConfirmations.filter(
       (value) => value !== undefined,
     ).length,

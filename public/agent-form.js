@@ -184,6 +184,16 @@ const AGENT_TOOL_GROUPS = [
     },
   },
   {
+    id: "chat-drafts",
+    builtin: true,
+    builtinLabel: "随对应聊天发送权限提供",
+    title: "待发草稿",
+    desc: "查看当前聊天尚未发出的稿件。显式继续时仍要通过原有发送权限和输入审阅。",
+    tools: {
+      qq_draft: "查看、修改、放弃或继续待发草稿",
+    },
+  },
+  {
     id: "framework",
     builtin: true,
     title: "框架自查",

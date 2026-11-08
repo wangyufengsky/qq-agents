@@ -270,13 +270,12 @@ test("internal deliveries skip burst typing waits", async (t) => {
   assert.equal(f.sent(), 2);
 });
 
-test("burst inter-message wait is still cancellable and preserves the confirmed prefix", async (t) => {
+test("burst review stops between items and preserves the confirmed prefix", async (t) => {
   const f = setup(t);
   const p = f.runtime.callTool(f.ctx, "qq_send_burst", {
     requestId: "long-burst",
     messages: ["一", "二".repeat(40), "三".repeat(40)],
   });
-  const rejected = assert.rejects(p, /AbortError|AGENT_PAUSED_OR_EXPIRED/);
   await flush();
   f.store.bind("agent-0").append({
     dedupe: "burst-new-input",
@@ -284,17 +283,21 @@ test("burst inter-message wait is still cancellable and preserves the confirmed 
     connectionId: "qq-0",
     kind: "message.received",
     senderId: "30000",
-    body: "阶段一保持原连发语义",
+    body: "条件写错了，先别发",
     payload: { trustedInput: true },
   });
   t.mock.timers.tick(4000);
   await flush();
-  assert.equal(f.sent(), 2);
-  await f.runtime.pause("agent-0");
-  await rejected;
+  assert.equal(f.sent(), 1);
+  const result = await p;
+  assert.equal(result.error, "INPUT_REVIEW_REQUIRED");
+  assert.deepEqual(
+    result.draft.items.map(({ status }) => status),
+    ["sent", "unsubmitted", "unsubmitted"],
+  );
   const m = f.store.bind("agent-0");
   assert.equal(m.delivery("long-burst:0").status, "sent");
-  assert.equal(m.delivery("long-burst:1").status, "sent");
+  assert.equal(m.delivery("long-burst:1"), undefined);
   assert.equal(m.delivery("long-burst:2"), undefined);
 });
 
