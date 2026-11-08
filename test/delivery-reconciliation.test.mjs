@@ -17,7 +17,14 @@ async function unknownSend(runtime, requestId, text = "晚上八点见") {
 test("unknown receipts are listed with their attempted text", async (t) => {
   const { runtime, store } = fixture(t);
   await unknownSend(runtime, "u-1");
-  await runtime.send(context(runtime), { requestId: "ok-1", text: "fine" });
+  await assert.rejects(
+    runtime.send(context(runtime), { requestId: "ok-1", text: "fine" }),
+    /QQ_DRAFT_DELIVERY_UNRESOLVED/,
+  );
+  await runtime.send(context(runtime, "agent-0", "group:20001"), {
+    requestId: "ok-1",
+    text: "fine",
+  });
   const mem = store.bind("agent-0");
   assert.equal(mem.unresolvedDeliveryCount(), 1);
   const page = mem.unresolvedDeliveries();

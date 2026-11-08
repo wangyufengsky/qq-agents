@@ -400,7 +400,7 @@ test("a queued autonomous post cannot inherit a later generic disclosure grant",
   assert.equal((await post(f)).status, "awaiting_approval");
 });
 
-test("an old SQLite database receives the approval table without changing schema version", async (t) => {
+test("an old SQLite database receives the approval table during schema initialization", async (t) => {
   const f = setup(t);
   const file = path.join(f.root, "old.sqlite");
   const old = new MemoryStore(file);
@@ -414,7 +414,7 @@ test("an old SQLite database receives the approval table without changing schema
   );
   assert.equal(
     upgraded.db.prepare("PRAGMA user_version").get().user_version,
-    6,
+    7,
   );
 });
 

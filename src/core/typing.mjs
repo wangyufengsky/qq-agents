@@ -1,6 +1,5 @@
 // @ts-check
 import timers from "node:timers/promises";
-import { startTypingIndicator } from "./typing-indicator.mjs";
 import { mdToPlain } from "../../vendor/dsh-qq/md-to-plain.js";
 
 /** @typedef {import("zod").infer<typeof import("./policy.mjs").behaviorSchema>} Behavior */
@@ -43,11 +42,6 @@ export function burstDelay(text, behavior, random, gapMs) {
 export async function waitTyping(runtime, ctx, ms) {
   runtime.assertActive(ctx);
   if (ctx.internalDelivery || ms <= 0) return;
-  const stopIndicator = startTypingIndicator(runtime, ctx);
-  try {
-    await timers.setTimeout(ms, undefined, { signal: ctx.controller.signal });
-    runtime.assertActive(ctx);
-  } finally {
-    stopIndicator();
-  }
+  await timers.setTimeout(ms, undefined, { signal: ctx.controller.signal });
+  runtime.assertActive(ctx);
 }

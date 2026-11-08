@@ -55,6 +55,7 @@ export const TOOL_NAMES = Object.freeze([
   "ops_read",
   "ops_propose",
   "ops_result",
+  "qq_draft",
   "file_list",
   "file_read",
   "file_download",

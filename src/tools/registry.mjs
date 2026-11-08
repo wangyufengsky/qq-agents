@@ -6,6 +6,7 @@ import { gameDefinitions, gameTool } from "../games/framework/tools.mjs";
 import { definitions } from "./definitions.mjs";
 import { TOOL_NAMES } from "./names.mjs";
 import { coreHandlers } from "./core-handlers.mjs";
+import { draftDefinitions, draftTool } from "./qq-drafts.mjs";
 import { appDefinitions, appTool } from "../apps/tools.mjs";
 import { githubDefinitions, githubTool } from "../github/tools.mjs";
 import { mindDefinitions, mindTool } from "./mind.mjs";
@@ -36,6 +37,7 @@ for (const [group, dispatch] of [
   [savedMediaDefinitions, savedMediaTool],
   [screenshotDefinitions, screenshotTool],
   [legacyDefinitions, legacyTool],
+  [draftDefinitions, draftTool],
   [boardDefinitions, boardTool],
   [homeDefinitions, homeTool],
   [socialDefinitions, socialTool],

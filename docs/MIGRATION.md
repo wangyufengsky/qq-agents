@@ -37,6 +37,8 @@ npm run export -- --data /path/to/new-data --agent agent-a --file /path/to/priva
 npm run export -- --data /path/to/restore-data --agent agent-a --file /path/to/private-export.json --restore
 ```
 
+包含消息草稿的角色归档保留草稿和账本关联。导入的草稿只供查看，未决投递仍需核对。原库序号、发送审阅令牌、旧回合授权都不用于恢复发送。原有未包含草稿的归档仍可恢复。数据库升级至结构版本 7，回退旧代码时使用升级前的一致 SQLite 备份。
+
 恢复不覆盖已有目标主体。可以逐主体恢复到一个新 SQLite 数据库；跨主体冲突会事务回退，局部 seq 水位按需重映射，证据 ID 和日记修订保留。备份需另含 `media/` 和 `voices/`；JSON 中是媒体引用，不包含全部图片字节。凭据、角色配置和模型 home 需要按用户选择单独保留在本机。
 
 ## 旧语音、作息与任务

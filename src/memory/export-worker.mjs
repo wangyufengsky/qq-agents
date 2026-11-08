@@ -4,6 +4,7 @@ import fs from "node:fs";
 import { DatabaseSync, backup } from "node:sqlite";
 import { parentPort, workerData } from "node:worker_threads";
 import { EXPORT_TABLES, exportDigest } from "./export-format.mjs";
+import { MEMORY_DRAFT_SCHEMA_VERSION } from "./qq-drafts.mjs";
 
 const { source, snapshot, output, agentId, limits } = workerData;
 const cancelled = new Int32Array(workerData.cancelled);
@@ -43,7 +44,10 @@ try {
   db.close();
   db = new DatabaseSync(snapshot, { readOnly: true });
   db.exec("PRAGMA cache_size=-2048; PRAGMA mmap_size=0");
-  if (db.prepare("PRAGMA user_version").get().user_version !== 6)
+  if (
+    db.prepare("PRAGMA user_version").get().user_version !==
+    MEMORY_DRAFT_SCHEMA_VERSION
+  )
     throw Error("UNSUPPORTED_EXPORT_SCHEMA");
   fd = fs.openSync(output, "wx", 0o600);
   let bytes = 0;

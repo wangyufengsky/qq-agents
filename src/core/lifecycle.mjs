@@ -39,6 +39,7 @@ import { floorForTurn } from "./floor.mjs";
 import { taskBrief } from "./scheduler.mjs";
 import { recallBoundary, recallPage } from "./recall-boundary.mjs";
 import { recordReviewPresentation } from "./input-review.mjs";
+import { draftHints } from "../tools/qq-drafts.mjs";
 import {
   retireSession,
   sessionReference,
@@ -98,6 +99,12 @@ function dropRepeats(handoff, history, materials, schedule) {
     handoff.scheduled = handoff.scheduled.filter(
       (t) => !schedule.listed.includes(t.id),
     );
+}
+function draftPrompt(runtime, ctx) {
+  const page = draftHints(runtime, ctx);
+  return page.items.length || page.nextOffset !== null
+    ? `本聊天待处理草稿（qq_draft 查看原稿、修改、放弃或显式继续；已发送和未知项不可重发）：${JSON.stringify(page)}`
+    : "";
 }
 export class ContextLifecycle {
   constructor(runtime) {
@@ -741,6 +748,7 @@ export class ContextLifecycle {
               : "",
             `新增消息：${JSON.stringify(openingHistory)}`,
             ...chatStatus(r, ctx, history, handoff),
+            ctx.allowedTools?.includes("qq_draft") ? draftPrompt(r, ctx) : "",
             ...details,
             handoff
               ? `程序交接状态：${JSON.stringify(chatHandoff(handoff, { replay: !!replay }))}`

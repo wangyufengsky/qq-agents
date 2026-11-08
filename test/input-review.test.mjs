@@ -61,7 +61,7 @@ async function blocked(promise) {
     failure = safeToolFailure(error);
     return failure.code === "INPUT_REVIEW_REQUIRED";
   });
-  return failure.inputReview;
+  return { ...failure.inputReview, draft: failure.draft };
 }
 async function readAll(f, ctx, id) {
   let offset = 0;
@@ -87,17 +87,17 @@ for (const firstReplyMaxMs of [0, 100, 6000])
           const change = await incoming(f, 2, "刚才说错了", { user_id: 10001 });
           const pending = args("new-reply");
           const review = await blocked(p.callTool("qq_send", pending));
-          assert.equal(review.token, undefined);
+          assert.match(review.token, /^[a-f0-9]{64}$/);
           assert.equal(review.items[0].id, change.id);
+          assert.equal(review.items[0].body, "刚才说错了");
           assert.equal(f.mem.delivery(pending.requestId), undefined);
-          await p.callTool("conversation_read", { afterSeq: change.seq - 1 });
-          const ready = await blocked(p.callTool("qq_send", pending));
-          assert.equal(ready.missing, 0);
           assert.equal(
             (
-              await p.callTool("qq_send", {
-                ...pending,
-                inputReview: confirm(ready),
+              await p.callTool("qq_draft", {
+                action: "continue",
+                draftId: review.draft.draftId,
+                expectedVersion: review.draft.version,
+                inputReview: confirm(review),
               })
             ).status,
             "sent",
@@ -262,17 +262,16 @@ test("voice conversion can yield before the commit fence but cannot consume an o
   await entered.promise;
   const fresh = await incoming(f, 1, "这时收到补充");
   prepared.resolve({ type: "record", data: { file: "fixture" } });
-  assert.equal((await rejected).items[0].id, fresh.id);
+  const ready = await rejected;
+  assert.equal(ready.items[0].id, fresh.id);
   assert.equal(f.mem.delivery(input.requestId), undefined);
   assert.equal(f.transport.sent.length, 0);
-  await readAll(f, f.ctx, fresh.id);
-  const ready = await blocked(
-    f.runtime.callTool(f.ctx, "qq_send_voice", input),
-  );
   assert.equal(
     (
-      await f.runtime.callTool(f.ctx, "qq_send_voice", {
-        ...input,
+      await f.runtime.callTool(f.ctx, "qq_draft", {
+        action: "continue",
+        draftId: ready.draft.draftId,
+        expectedVersion: ready.draft.version,
         inputReview: confirm(ready),
       })
     ).status,
@@ -294,23 +293,43 @@ test("a duplicate burst prefix cannot authorize a new tail and the token binds t
     messages: ["第一条", "旧第二条", "旧第三条"],
     gapMs: 0,
   };
+  await assert.rejects(
+    f.runtime.callTool(f.ctx, "qq_send_burst", {
+      ...burst,
+      messages: ["更改历史第一条", "旧第二条", "旧第三条"],
+    }),
+    /IDEMPOTENCY_CONFLICT/,
+  );
   const stop = await f.runtime.callTool(f.ctx, "qq_send_burst", burst);
-  assert.equal(stop.error, "INPUT_REVIEW_REQUIRED");
-  assert.equal(stop.failedIndex, 1);
+  assert.equal(stop.error, "QQ_DRAFT_CONTINUE_REQUIRED");
   assert.equal(stop.receipts[0].duplicate, true);
   assert.equal(f.mem.delivery("burst:1"), undefined);
-  await readAll(f, f.ctx, row.id);
-  const ready = await f.runtime.callTool(f.ctx, "qq_send_burst", burst);
-  const change = await f.runtime.callTool(f.ctx, "qq_send_burst", {
-    ...burst,
-    messages: ["第一条", "旧第二条", "改第三条"],
+  const continuation = {
+    action: "continue",
+    draftId: stop.draft.draftId,
+    expectedVersion: stop.draft.version,
+  };
+  const ready = await f.runtime.callTool(f.ctx, "qq_draft", continuation);
+  assert.equal(ready.error, "INPUT_REVIEW_REQUIRED");
+  assert.equal(ready.failedIndex, 1);
+  assert.equal(ready.inputReview.items[0].id, row.id);
+  const edited = await f.runtime.callTool(f.ctx, "qq_draft", {
+    ...continuation,
+    action: "revise",
+    position: 2,
+    input: { text: "改第三条" },
+  });
+  const change = await f.runtime.callTool(f.ctx, "qq_draft", {
+    ...continuation,
+    expectedVersion: edited.version,
     inputReview: confirm(ready.inputReview),
   });
   assert.equal(change.error, "INPUT_REVIEW_REQUIRED");
   assert.notEqual(change.inputReview.token, ready.inputReview.token);
-  const sent = await f.runtime.callTool(f.ctx, "qq_send_burst", {
-    ...burst,
-    inputReview: confirm(ready.inputReview),
+  const sent = await f.runtime.callTool(f.ctx, "qq_draft", {
+    ...continuation,
+    expectedVersion: edited.version,
+    inputReview: confirm(change.inputReview),
   });
   assert.equal(sent.status, "sent");
   assert.equal(f.transport.sent.length, 3);
@@ -441,7 +460,14 @@ test("a blocked checkpoint is not reserved or recovered by a later duplicate", a
     undefined,
   );
   assert.equal(
-    (await send({ ...draft, inputReview: confirm(review) })).status,
+    (
+      await f.runtime.callTool(f.ctx, "qq_draft", {
+        action: "continue",
+        draftId: review.draft.draftId,
+        expectedVersion: review.draft.version,
+        inputReview: confirm(review),
+      })
+    ).status,
     "sent",
   );
   const duplicate = await send({ ...draft, readThroughSeq: row.seq });

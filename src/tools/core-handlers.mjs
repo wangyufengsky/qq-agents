@@ -9,6 +9,7 @@ import { withInteraction } from "../core/closeness.mjs";
 import { recallMessage } from "../core/message-recall.mjs";
 import { deliveryPage } from "../core/chat-context.mjs";
 import { recordReviewPresentation } from "../core/input-review.mjs";
+import { sendDraftTool } from "./qq-drafts.mjs";
 import { githubMarker, privateGithubSources } from "../github/policy.mjs";
 import { readEventImage } from "./image-read.mjs";
 import { synthesize } from "./speech.mjs";
@@ -284,7 +285,7 @@ async function handle_qq_send(runtime, ctx, args, name) {
   }
   const mem = runtime.memory.bind(ctx.agentId);
   const shownSeq = ctx.shownSeq;
-  const receipt = await runtime.send(ctx, args, {
+  const receipt = await sendDraftTool(runtime, ctx, "qq_send", args, {
     onReserve: () => {
       if (args.readThroughSeq !== undefined)
         saveReadCheckpointIntent(
