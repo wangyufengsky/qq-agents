@@ -22,6 +22,7 @@
 ### 版本发布准备（[#224](https://github.com/wangyufengsky/qq-agents/pull/224)）
 
 - 将包和锁文件版本统一为 `0.5.8`，将此前未发布条目归入本版本，整理能力开关、结构升级和回退说明。
+- 将锁文件的下载地址统一到 npm 官方源，修复镜像服务错误导致的 CI 和容器构建失败。依赖版本和完整性校验值保持一致。
 
 ### 私聊模式群优先引用回复（[#221](https://github.com/wangyufengsky/qq-agents/pull/221)）
 
