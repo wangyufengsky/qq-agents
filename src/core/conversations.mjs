@@ -1,6 +1,7 @@
 import { ConversationTiming } from "./message-timing-runtime.mjs";
 import { presentationCheckpoint } from "./input-review.mjs";
-import { deferForRhythm } from "./rhythm.mjs";
+import { deferForRhythm, refreshAgentRhythm } from "./rhythm.mjs";
+import { interruptRoleRest, roleRest } from "./role-rest.mjs";
 import { recallPage } from "./recall-boundary.mjs";
 import { looksLikeUnfinished } from "../../vendor/legacy/v2-wait.js";
 import { allowed, isPrivateLikeGroup } from "./config.mjs";
@@ -169,10 +170,20 @@ export class ConversationEngine {
       addressed = false,
       direct = false,
       inboundAt,
+      allowRestInterrupt = false,
     } = {},
   ) {
-    const a = this.runtime.agent(id),
-      state = this.state(id, conversation),
+    const a = this.runtime.agent(id);
+    if (
+      allowRestInterrupt &&
+      interruptRoleRest(this.runtime, a, conversation, {
+        seq,
+        senderId,
+        direct,
+      })
+    )
+      refreshAgentRhythm(this.runtime, a);
+    const state = this.state(id, conversation),
       now = this.now(),
       observedAt = this.timing?.timing.clock();
     // Timers left behind by wakes that were dropped elsewhere must not shape a new batch.
@@ -185,6 +196,8 @@ export class ConversationEngine {
       delete state.rhythmLateChecked;
       delete state.rhythmLateUntil;
       delete state.rhythmDeferredUntil;
+      delete state.roleRestDeferred;
+      delete state.roleRestWake;
       delete state.rhythmSleepPeriod;
       endBatch(state);
     }
@@ -228,6 +241,7 @@ export class ConversationEngine {
     const exempt = state.pendingWakes.some((x) => x.taskRunId || x.intentId);
     deferForRhythm(this.runtime, a, state, conversation, {
       exempt,
+      scheduled: state.pendingWakes.some((x) => x.taskRunId),
       direct: state.rhythmDirect === true,
     });
     this.write(id, conversation, state);
@@ -279,9 +293,13 @@ export class ConversationEngine {
       return { queued: true };
     const measured = this.timing?.get(id, conversation);
     if (state.pendingWakes?.length) {
+      const scheduled = state.pendingWakes.some((x) => x.taskRunId);
+      const rest = roleRest(runtime, a);
+      if (rest && rest.until == null && !scheduled) return { queued: true };
       const before = state.wakeDueAt;
       deferForRhythm(runtime, a, state, conversation, {
         exempt: state.pendingWakes.some((x) => x.taskRunId || x.intentId),
+        scheduled,
         direct: state.rhythmDirect === true,
       });
       if (state.wakeDueAt !== before) this.write(id, conversation, state);
@@ -348,9 +366,12 @@ export class ConversationEngine {
       return x.taskRunId || !x.seq || x.seq > (state.readThroughSeq || 0);
     });
     const rhythmWake =
-      state.rhythmDeferredUntil <= now ? state.rhythmSleepPeriod : null;
+      state.roleRestWake ??
+      (state.rhythmDeferredUntil <= now ? state.rhythmSleepPeriod : null);
     state.pendingWakes = [];
     delete state.rhythmDeferredUntil;
+    delete state.roleRestDeferred;
+    delete state.roleRestWake;
     delete state.rhythmSleepPeriod;
     delete state.rhythmBaseDueAt;
     delete state.rhythmDirect;
@@ -409,6 +430,7 @@ export class ConversationEngine {
       s.replyCheckAt = this.now() + a.behavior.replyCheckMs;
     if (s.noActionCount >= a.behavior.noActionLimit) s.replyCheckAt = null;
     this.write(a.id, ctx.conversation, s);
+    this.runtime.subjectInbox.dispatch(a);
     this.flush(a.id, ctx.conversation);
   }
   setWake(ctx, { sleepMs, infinite = false, triggers, mode = "diving" }) {

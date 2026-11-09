@@ -698,6 +698,8 @@ export class ContextLifecycle {
     ])
       ctx.privateRead.add(item.continuation.id);
     r.subject.trackForTurn(ctx);
+    const proposals =
+      ctx.conversation === SUBJECT ? r.subjectInbox.offer(ctx, a) : null;
     ctx.persistTaint?.();
     const materials =
       ctx.conversation === SUBJECT ? subjectMaterials(r, ctx) : null;
@@ -754,6 +756,9 @@ export class ContextLifecycle {
             `唤醒原因（资料）: ${JSON.stringify(wake)}`,
             environment,
             handoff ? `程序交接状态：${JSON.stringify(handoff)}` : "",
+            proposals
+              ? `会话交给你的提议（资料，时效由你判断；用 subject_inbox_decide 处理或暂缓）：${JSON.stringify(proposals)}`
+              : "",
             ctx.conversation === SUBJECT
               ? `空闲时间素材：${JSON.stringify(materials)}`
               : `新增消息：${JSON.stringify(history)}`,
