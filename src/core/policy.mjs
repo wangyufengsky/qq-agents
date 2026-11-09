@@ -29,6 +29,7 @@ export const behaviorSchema = z
       .strict()
       .prefault({}),
     focusedGroupReply: z.boolean().default(false),
+    compactChatGroups: z.array(z.string().regex(/^\d{5,12}$/)).default([]),
     relationshipRecallGroups: z
       .array(z.string().regex(/^\d{5,12}$/))
       .default([]),

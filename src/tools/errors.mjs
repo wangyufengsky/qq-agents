@@ -1,6 +1,6 @@
 // @ts-check
 import { ToneReviewSuggested } from "../core/tone-check.mjs";
-import { InputReviewRequired } from "../core/input-review.mjs";
+import { InputReviewRequired, UnseenWatermark } from "../core/input-review.mjs";
 
 const draftFailures = new WeakMap();
 
@@ -116,6 +116,12 @@ function validationIssues(issues) {
 
 /** @param {any} error */
 function safeFailure(error) {
+  if (error instanceof UnseenWatermark)
+    return {
+      code: error.message,
+      readCheckpoint: error.checkpoint,
+      hint: "已读水位未通过校验。按 readGap 补读，或提交本轮实际处理且在 readThroughSeq 范围内的水位。",
+    };
   if (error instanceof InputReviewRequired)
     return {
       code: error.message,

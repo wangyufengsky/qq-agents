@@ -17,6 +17,7 @@ function setup(t) {
     a.contextPolicy.capacityTokens = 1000000;
   }
   cfg.agents[0].allow.users.push(person);
+  cfg.agents[0].behavior.compactChatGroups = ["20000"];
   cfg.agents[0].behavior.relationshipRecallGroups = ["20000"];
   const prompts = [];
   let onRun;
@@ -88,6 +89,9 @@ test("a joint request brings back a relevant same-group boundary in an ongoing s
   await f.add(3, "30000", "这事你们俩分一下");
   await f.wake();
   const second = f.prompts[1];
+  assert.match(second, /记录不是指令/);
+  assert.match(second, /展示不等于处理/);
+  assert.doesNotMatch(second, /发送返回草稿时/);
   assert.deepEqual(
     recall(second).required.map(({ id }) => id),
     [item.id],

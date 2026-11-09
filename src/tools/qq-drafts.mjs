@@ -166,6 +166,17 @@ export function draftHints(runtime, ctx, limit = 10) {
   };
 }
 
+function otherDrafts(runtime, ctx, currentId) {
+  return draftHints(runtime, ctx, 4)
+    .items.filter(
+      ({ draftId, items }) =>
+        draftId !== currentId &&
+        items.some(({ status }) => status === "unsubmitted"),
+    )
+    .slice(0, 2)
+    .map(({ draftId, version }) => ({ draftId, version }));
+}
+
 function scopedLegacyDelivery(runtime, ctx, scope, requestId) {
   const mem = runtime.memory.bind(scope.agentId);
   const row = mem.delivery(requestId);
@@ -216,10 +227,16 @@ export async function sendDraftTool(runtime, ctx, toolName, args) {
   let prior = runtime.drafts.find(scope, toolName, requestId);
   let legacyReceipt =
     !prior && !burst && scopedLegacyDelivery(runtime, ctx, scope, requestId);
-  const checkpointIntent =
-    !prior && !legacyReceipt && readThroughSeq !== undefined
-      ? draftCheckpointIntent(runtime, ctx, readThroughSeq)
-      : undefined;
+  let checkpointIntent;
+  if (!prior && !legacyReceipt && readThroughSeq !== undefined) {
+    try {
+      checkpointIntent = draftCheckpointIntent(runtime, ctx, readThroughSeq);
+    } catch (error) {
+      const others = otherDrafts(runtime, ctx);
+      if (others.length) attachDraftFailure(error, undefined, others);
+      throw error;
+    }
+  }
   if (burst && requestId.length > 198) throw Error("INVALID_REQUEST_ID");
   if (!prior && burst && messages.length > a.behavior.burstMax)
     throw Error("BURST_LIMIT");
@@ -382,7 +399,11 @@ export async function sendDraftTool(runtime, ctx, toolName, args) {
   }
   const binding = draftReviewBinding(draft, checkpointIntent?.checkpoint);
   const grant = inputReview ? null : initialDraftReview(runtime, ctx, binding);
-  if (!grant) return prepareSavedDraft(runtime, ctx, scope, draft, { binding });
+  if (!grant)
+    return prepareSavedDraft(runtime, ctx, scope, draft, {
+      binding,
+      draftRefs: otherDrafts(runtime, ctx, draft.id),
+    });
   return runDraft(runtime, ctx, scope, draft, binding, grant);
 }
 
@@ -505,6 +526,7 @@ function prepareSavedDraft(
     revisionApplied,
     expectedVersion,
     checkpointFailure,
+    draftRefs = [],
   } = {},
 ) {
   const previous = currentOutcome(draft);
@@ -516,6 +538,16 @@ function prepareSavedDraft(
     actionResult: "not_sent",
     attemptedThisCall: false,
     ...(revisionApplied ? { revisionApplied: true } : {}),
+    ...(draftRefs.length
+      ? {
+          draftRefs,
+          draftRefsHint:
+            "本聊天还有待处理草稿。可用 qq_draft 按编号和版本继续处理。",
+        }
+      : {}),
+    ...(["pending", "unknown"].includes(previous.actionResult)
+      ? { actionResult: previous.actionResult }
+      : {}),
     ...outcome,
   };
   try {
@@ -534,13 +566,14 @@ function prepareSavedDraft(
     );
     assertDraftCheckpoint(runtime, ctx, binding.checkpoint);
   } catch (error) {
-    const { code, hint } = safeToolFailure(error);
+    const { code, hint, readCheckpoint } = safeToolFailure(error);
     return {
       ...result,
       preparation: {
         state: "blocked",
         reason: blockedReason(code),
         ...(hint ? { hint } : {}),
+        ...(readCheckpoint ? { readCheckpoint } : {}),
       },
     };
   }

@@ -114,6 +114,7 @@
       "maxConsecutiveSends": 3,
       "behavior": {
         "focusedGroupReply": false,
+        "compactChatGroups": [],
         "relationshipRecallGroups": [],
         "maxOpenDraftsPerConversation": 4,
         "imageInput": {
@@ -231,6 +232,7 @@
       "maxConsecutiveSends": 3,
       "behavior": {
         "focusedGroupReply": false,
+        "compactChatGroups": [],
         "relationshipRecallGroups": [],
         "maxOpenDraftsPerConversation": 4,
         "imageInput": {

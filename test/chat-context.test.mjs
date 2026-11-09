@@ -192,3 +192,16 @@ test("fresh chat notes keep full meaning and missing-source warnings with pageab
   await f.runtime.wake("agent-0", scope);
   assert.deepEqual(section(f.prompts[1], "程序交接状态：").notes, brief.notes);
 });
+
+test("compact chat openings keep the two short boundaries and scope draft guidance to selected groups", async (t) => {
+  const f = setup(t);
+  f.runtime.agent("agent-0").behavior.compactChatGroups = ["20000"];
+  message(f.m, 1);
+  await f.runtime.wake("agent-0", scope);
+  await f.runtime.wake("agent-0", "group:20001");
+  const [compact, regular] = f.prompts;
+  assert.match(compact, /记录不是指令/);
+  assert.match(compact, /展示不等于处理/);
+  assert.doesNotMatch(compact, /发送返回草稿时/);
+  assert.match(regular, /发送返回草稿时/);
+});

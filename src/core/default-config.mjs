@@ -122,6 +122,7 @@ export function defaultConfig() {
         // goes offline; the administrator turns it on per agent.
         behavior: {
           focusedGroupReply: false,
+          compactChatGroups: [],
           relationshipRecallGroups: [],
           maxOpenDraftsPerConversation: DEFAULT_MAX_OPEN_DRAFTS,
           imageInput: {
@@ -219,6 +220,7 @@ export function defaultConfig() {
         maxConsecutiveSends: 3,
         behavior: {
           focusedGroupReply: false,
+          compactChatGroups: [],
           relationshipRecallGroups: [],
           maxOpenDraftsPerConversation: DEFAULT_MAX_OPEN_DRAFTS,
           imageInput: {

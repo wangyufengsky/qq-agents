@@ -231,16 +231,26 @@ export function presentationCheckpoint(runtime, ctx, provisional, items = []) {
   return { readThroughSeq: through, ...(gap ? { readGap: gap } : {}) };
 }
 
+export class UnseenWatermark extends Error {
+  /** @param {ReturnType<typeof presentationCheckpoint>} checkpoint */
+  constructor(checkpoint) {
+    super("UNSEEN_WATERMARK");
+    this.checkpoint = checkpoint;
+  }
+}
+
 /** @param {any} runtime @param {any} ctx @param {number} through */
 export function assertReadCheckpoint(runtime, ctx, through) {
   if (
     !Number.isSafeInteger(through) ||
     through < 0 ||
     !Number.isSafeInteger(ctx.shownSeq) ||
-    ctx.shownSeq < 0 ||
-    through > presentationCheckpoint(runtime, ctx).readThroughSeq
+    ctx.shownSeq < 0
   )
-    throw Error("UNSEEN_WATERMARK");
+    throw new UnseenWatermark(presentationCheckpoint(runtime, ctx, new Map()));
+  const checkpoint = presentationCheckpoint(runtime, ctx);
+  if (through > checkpoint.readThroughSeq)
+    throw new UnseenWatermark(checkpoint);
 }
 
 /** @typedef {{scope:string, throughSeq:number, refs: {id:string,version:string}[]}} FrozenCheckpoint */
@@ -831,11 +841,11 @@ export function prepareDraftReview(
               "本轮相关相处资料已更新。请按当前材料重新核对草稿。",
           }
         : {}),
-      ...(inline && remaining.length && shown.proofs.size
-        ? {
-            hint: "本页已附部分原文。用同一草稿的 qq_draft prepare 继续；若一页没有原文，按 missing 中的入口补读。",
-          }
-        : {}),
+      hint: candidateToken
+        ? `${shown.items.length ? "已附审阅材料。" : "没有新增待展示材料。"}待你决定是否提交当前草稿。决定发送时，用 qq_draft continue 和本次 token 提交当前版本。`
+        : inline && remaining.length && shown.proofs.size
+          ? "本页已附部分原文。用同一草稿的 qq_draft prepare 继续；若一页没有原文，按 missing 中的入口补读。"
+          : "草稿等待补读。按 missing 的入口读齐后，用 qq_draft prepare 核对当前版本。",
       pendingDecision: snapshot.items.length,
       ...(binding.checkpoint
         ? { readThroughSeq: binding.checkpoint.throughSeq }
