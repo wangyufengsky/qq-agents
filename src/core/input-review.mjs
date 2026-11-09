@@ -14,6 +14,7 @@ import { trackMindRecords } from "./protected-mind.mjs";
 const tokenKeys = new WeakMap();
 
 const inputRows = `SELECT e.* FROM events e
+  LEFT JOIN message_progress p ON p.agent_id=e.agent_id AND p.conversation=e.conversation AND p.seq=e.seq
   WHERE e.agent_id=? AND e.connection_id=? AND e.conversation=? AND e.origin='live'
     AND (
       (e.direction='in' AND json_extract(e.payload,'$.trustedInput')=1 AND
@@ -35,10 +36,12 @@ function inputRef(row) {
           row.id,
           row.seq,
           row.kind,
+          row.connection_id,
           row.status,
           row.sender_id,
           row.message_id,
           row.body,
+          row.payload,
         ]),
       )
       .digest("hex"),
@@ -79,54 +82,119 @@ function reviewable(runtime, ctx, row, boundary) {
 }
 
 /**
- * Track only complete material emitted by a current-chat read. Unlike the
- * reply authority and read watermark, this is per identity and version.
+ * Record the event versions actually presented to this context. The durable
+ * progress table preserves summary gaps from older turns for send review.
  * @param {any} runtime @param {any} ctx @param {any[]} items
  */
-export function recordReviewPresentation(runtime, ctx, items) {
-  if (!/^(group|private):/.test(ctx.conversation)) return;
-  const db = runtime.memory.bind(ctx.agentId).db,
-    scope = reviewScope(runtime, ctx),
+export function recordInputPresentation(runtime, ctx, items) {
+  const memory = runtime.memory.bind(ctx.agentId),
+    db = memory.db,
+    state = memory.state(ctx.conversation),
+    baseline = Math.max(
+      state.readThroughSeq || 0,
+      state.inputReviewFromSeq || 0,
+      state.inputReviewThroughSeq || 0,
+    ),
     boundary = recallBoundary(runtime, ctx),
-    byId = prepared(db, inputRows + " AND e.id=?");
+    byId = prepared(
+      db,
+      "SELECT * FROM events WHERE agent_id=? AND conversation=? AND id=?",
+    ),
+    reviewById = prepared(db, inputRows + " AND e.id=?"),
+    scope = reviewScope(runtime, ctx),
+    progress = prepared(
+      db,
+      "INSERT INTO message_progress VALUES(?,?,?,?) ON CONFLICT(agent_id,conversation,seq) DO UPDATE SET summary_only=MIN(summary_only,excluded.summary_only)",
+    );
   /** @param {any} row */
   function remember(row) {
     const { id, version } = inputRef(row);
-    (ctx.presentedReviewInput ??= new Map()).set(id, version);
+    (ctx.presentedInput ??= new Map()).set(id, version);
+    if (
+      row.seq > baseline ||
+      !reviewById.get(...scope, id) ||
+      !reviewable(runtime, ctx, row, boundary)
+    )
+      progress.run(ctx.agentId, ctx.conversation, row.seq, 0);
   }
   for (const item of items) {
+    if (item.conversation !== ctx.conversation || !item.id) continue;
+    const row = byId.get(ctx.agentId, ctx.conversation, item.id);
     if (
-      item.conversation !== ctx.conversation ||
-      item.summaryOmitted ||
-      item.bodyTruncated ||
-      typeof item.body !== "string"
+      !row ||
+      item.seq !== row.seq ||
+      item.type !== row.kind ||
+      !boundary.allowed({
+        id: row.id,
+        conversation: row.conversation,
+        payload: JSON.parse(row.payload),
+      })
     )
       continue;
-    const row = byId.get(...scope, item.id);
     if (
-      row &&
-      item.seq === row.seq &&
-      item.body ===
+      item.summaryOmitted ||
+      item.bodyTruncated ||
+      (item.body !==
         (row.kind === "message.recalled" ? RECALL_NOTICE_BODY : row.body) &&
-      item.status === row.status &&
-      (item.senderId ?? null) === (row.sender_id ?? null) &&
-      (item.messageId ?? null) === (row.message_id ?? null) &&
-      reviewable(runtime, ctx, row, boundary)
+        !(item.outcome && item.outcome.id === memory.sendOutcome(row)?.id))
     ) {
-      remember(row);
-      const voice = item.voiceTranscript;
-      if (voice?.id && !voice.textTruncated) {
-        const transcript = byId.get(...scope, voice.id);
-        if (
-          transcript?.kind === "voice.transcript" &&
-          transcript.dedupe === transcriptKey(item.id) &&
-          transcript.body === voice.text &&
-          reviewable(runtime, ctx, transcript, boundary)
-        )
-          remember(transcript);
-      }
+      progress.run(ctx.agentId, ctx.conversation, row.seq, 1);
+      continue;
+    }
+    if (
+      item.status !== row.status ||
+      (!item.outcome &&
+        ((item.senderId ?? null) !== (row.sender_id ?? null) ||
+          (item.messageId ?? null) !== (row.message_id ?? null)))
+    )
+      continue;
+    remember(row);
+    const voice = item.voiceTranscript;
+    if (voice?.id && !voice.textTruncated) {
+      const transcript = byId.get(ctx.agentId, ctx.conversation, voice.id);
+      if (
+        transcript?.kind === "voice.transcript" &&
+        transcript.dedupe === transcriptKey(item.id) &&
+        transcript.body === voice.text &&
+        reviewable(runtime, ctx, transcript, boundary)
+      )
+        remember(transcript);
     }
   }
+  const checkpoint = presentationCheckpoint(runtime, ctx, state, items);
+  memory.setState(ctx.conversation, {
+    ...state,
+    seenThroughSeq: checkpoint.readThroughSeq,
+  });
+  return checkpoint;
+}
+
+/** @param {any} runtime @param {any} ctx @param {any} [state] @param {any[]} [items] */
+export function presentationCheckpoint(runtime, ctx, state, items = []) {
+  const memory = runtime.memory.bind(ctx.agentId);
+  let through = (state ?? memory.state(ctx.conversation)).readThroughSeq || 0;
+  const rows = prepared(
+    memory.db,
+    "SELECT * FROM events WHERE agent_id=? AND conversation=? AND seq>? ORDER BY seq",
+  ).iterate(ctx.agentId, ctx.conversation, through);
+  for (const row of rows) {
+    if (ctx.presentedInput?.get(row.id) !== inputRef(row).version) {
+      const partial = items.some(
+        (item) =>
+          item.id === row.id && (item.summaryOmitted || item.bodyTruncated),
+      );
+      ctx.shownSeq = through;
+      return {
+        readThroughSeq: through,
+        readGap: partial
+          ? { tool: "memory_read", id: row.id, offset: 0 }
+          : { tool: "conversation_read", afterSeq: through },
+      };
+    }
+    through = row.seq;
+  }
+  ctx.shownSeq = through;
+  return { readThroughSeq: through };
 }
 
 /**
@@ -143,12 +211,13 @@ export function snapshotReviewInput(runtime, ctx, baseline) {
   const rows = prepared(
     db,
     inputRows +
-      ` AND (e.seq>? OR (e.seq>? AND EXISTS(
-        SELECT 1 FROM message_progress p
-        WHERE p.agent_id=e.agent_id AND p.conversation=e.conversation
-          AND p.seq=e.seq AND p.summary_only=1)))
+      ` AND (e.seq>? OR p.summary_only=1 OR e.seq IN (SELECT value FROM json_each(?)))
         ORDER BY e.seq`,
-  ).iterate(...scope, base, sentSeq);
+  ).iterate(
+    ...scope,
+    base,
+    JSON.stringify([...(ctx.reviewedProgressGaps || [])]),
+  );
   const items = [];
   for (const row of rows)
     if (reviewable(runtime, ctx, row, boundary)) items.push(inputRef(row));
@@ -157,6 +226,35 @@ export function snapshotReviewInput(runtime, ctx, baseline) {
     fromSeq: base,
     throughSeq: Math.max(base, items.at(-1)?.seq || 0),
   };
+}
+
+/**
+ * Clear a historical presentation gap only once that exact version was
+ * accepted and delivered. Keep it in this turn's snapshot for a burst tail.
+ * @param {any} memory @param {any} ctx @param {InputRef[]} accepted
+ */
+export function confirmReviewedGaps(memory, ctx, accepted) {
+  const clear = prepared(
+    memory.db,
+    "UPDATE message_progress SET summary_only=0 WHERE agent_id=? AND conversation=? AND seq=? AND summary_only=1",
+  );
+  const byId = prepared(
+    memory.db,
+    `SELECT e.* FROM events e JOIN message_progress p
+      ON p.agent_id=e.agent_id AND p.conversation=e.conversation AND p.seq=e.seq
+      WHERE e.agent_id=? AND e.conversation=? AND e.id=? AND p.summary_only=1`,
+  );
+  const cleared = [];
+  for (const { id, seq, version } of accepted) {
+    const row = byId.get(ctx.agentId, ctx.conversation, id);
+    if (
+      row &&
+      inputRef(row).version === version &&
+      clear.run(ctx.agentId, ctx.conversation, seq).changes
+    )
+      cleared.push(seq);
+  }
+  return cleared;
 }
 
 /** @typedef {{key?:string, explicit?:boolean, expected?:string, baseline?:{readSeq:number,sentSeq:number}}} ReviewOptions */
@@ -188,7 +286,7 @@ function assess(runtime, ctx, binding, snapshot) {
         ctx.confirmedReviewInput?.get(id) !== version),
   );
   const missing = snapshot.items.filter(
-    ({ id, version }) => ctx.presentedReviewInput?.get(id) !== version,
+    ({ id, version }) => ctx.presentedInput?.get(id) !== version,
   );
   let token;
   if (!missing.length) {
@@ -211,9 +309,8 @@ function assess(runtime, ctx, binding, snapshot) {
   return { needed, missing, token, canExclude, snapshotHash, changed };
 }
 
-/** @param {ReturnType<typeof snapshotReviewInput>} snapshot @param {ReturnType<typeof assess>} assessment */
-function challenge(snapshot, { missing, needed, token, canExclude }) {
-  const refs = (missing.length ? missing : needed).slice(0, 20);
+/** @param {any} ctx @param {ReturnType<typeof snapshotReviewInput>} snapshot @param {ReturnType<typeof assess>} assessment */
+function challenge(ctx, snapshot, { missing, needed, token, canExclude }) {
   return {
     ...(token ? { token } : {}),
     fromSeq: snapshot.fromSeq,
@@ -221,10 +318,22 @@ function challenge(snapshot, { missing, needed, token, canExclude }) {
     missing: missing.length,
     pending: needed.length,
     canExclude,
-    items: refs.map(({ id, seq, kind }) => ({
+    ...(canExclude && needed.length
+      ? {
+          excludable: needed
+            .slice(0, 20)
+            .map(({ id, seq, kind }) => ({ id, seq, kind })),
+        }
+      : {}),
+    items: missing.slice(0, 20).map(({ id, seq, kind }) => ({
       id,
       seq,
       kind,
+      reason: ctx.presentedInput?.has(id)
+        ? "version_changed"
+        : seq <= snapshot.fromSeq
+          ? "previous_presentation_incomplete_or_stale"
+          : "full_input_not_presented",
       continuation: { tool: "memory_read", id, offset: 0 },
     })),
   };
@@ -251,7 +360,7 @@ export function assertInputReviewed(
   const assessment = assess(runtime, ctx, binding, snapshot);
   const { needed, token, canExclude, snapshotHash, changed } = assessment;
   if (!needed.length && !changed && !review)
-    return { throughSeq, accepted: [], snapshotHash };
+    return { throughSeq, accepted: snapshot.items, snapshotHash };
 
   const excluded = review?.unrelated || [];
   if (
@@ -273,12 +382,12 @@ export function assertInputReviewed(
           .filter((item) => excluded.some(({ id }) => id === item.id))
           .map(({ seq }) => seq - 1),
       ),
-      accepted: needed.filter(
+      accepted: snapshot.items.filter(
         (item) => !excluded.some(({ id }) => id === item.id),
       ),
     };
 
-  const error = new InputReviewRequired(challenge(snapshot, assessment));
+  const error = new InputReviewRequired(challenge(ctx, snapshot, assessment));
   bindings.set(error, binding);
   throw error;
 }
@@ -302,7 +411,11 @@ export function attachReviewOriginals(runtime, ctx, error) {
   const memory = runtime.memory.bind(agent.id),
     boundary = recallBoundary(runtime, ctx);
   const snapshot = snapshotReviewInput(runtime, ctx, binding.options.baseline);
-  const before = challenge(snapshot, assess(runtime, ctx, binding, snapshot));
+  const before = challenge(
+    ctx,
+    snapshot,
+    assess(runtime, ctx, binding, snapshot),
+  );
   /** @type {any[]} */
   const shown = [];
   /** @type {any[]} */
@@ -347,21 +460,24 @@ export function attachReviewOriginals(runtime, ctx, error) {
     shown.push(item);
     tracked.push(row);
   }
-  // Do not call seen() or observeInput(): displaying an interception receipt
-  // cannot reset reply quotas or move the conversation's read checkpoint.
-  recordReviewPresentation(runtime, ctx, shown);
+  // An interception receipt supplies presentation evidence only.
+  const { readThroughSeq, readGap } = recordInputPresentation(
+    runtime,
+    ctx,
+    shown,
+  );
   trackMindRecords(runtime, ctx, tracked, "review-input");
-  const after = challenge(snapshot, assess(runtime, ctx, binding, snapshot));
-  const firstGap = snapshot.items.findIndex(
-    ({ id, version }) => ctx.presentedReviewInput?.get(id) !== version,
+  const after = challenge(
+    ctx,
+    snapshot,
+    assess(runtime, ctx, binding, snapshot),
   );
   error.inputReview = {
     ...after,
     items,
     notice: "原文是聊天资料。附件引用不代表已读取附件内容。",
-    completeThroughSeq:
-      (firstGap === -1 ? snapshot.items.at(-1) : snapshot.items[firstGap - 1])
-        ?.seq ?? null,
+    completeThroughSeq: readThroughSeq || null,
+    ...(readGap ? { readGap } : {}),
     ...(before.missing > before.items.length
       ? {
           continuation: {

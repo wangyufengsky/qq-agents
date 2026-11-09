@@ -25,6 +25,91 @@ export function safeToolFailure(error) {
   return { ...failure, hint, draft };
 }
 
+const validationCodes = new Set([
+  "too_big",
+  "too_small",
+  "invalid_type",
+  "invalid_value",
+  "invalid_format",
+  "invalid_union",
+  "unrecognized_keys",
+  "not_multiple_of",
+  "invalid_key",
+  "invalid_element",
+  "custom",
+]);
+const validationTypes = new Set([
+  "string",
+  "number",
+  "int",
+  "boolean",
+  "object",
+  "array",
+  "null",
+  "undefined",
+  "bigint",
+  "date",
+  "map",
+  "set",
+  "file",
+  "nan",
+]);
+const validationFormats = new Set([
+  "regex",
+  "email",
+  "url",
+  "uuid",
+  "datetime",
+  "date",
+  "time",
+  "ipv4",
+  "ipv6",
+  "base64",
+  "base64url",
+  "starts_with",
+  "ends_with",
+  "includes",
+]);
+
+/** @param {any[]} issues */
+function validationIssues(issues) {
+  /** @type {Record<string, unknown>[]} */
+  const projected = [];
+  /** @param {any} issue @param {string} parent */
+  function append(issue, parent) {
+    if (projected.length === 8) return;
+    let field = parent;
+    for (const part of (issue.path || []).slice(0, 8)) {
+      if (Number.isSafeInteger(part) && part >= 0) field += `[${part}]`;
+      else if (
+        typeof part === "string" &&
+        /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(part)
+      )
+        field += (field ? "." : "") + part;
+      else break;
+    }
+    const safe = {
+      field: field || "$",
+      code: validationCodes.has(issue.code) ? issue.code : "invalid_argument",
+      ...(validationTypes.has(issue.expected)
+        ? { expected: issue.expected }
+        : {}),
+      ...(validationFormats.has(issue.format) ? { format: issue.format } : {}),
+      ...(Number.isFinite(issue.minimum) ? { minimum: issue.minimum } : {}),
+      ...(Number.isFinite(issue.maximum) ? { maximum: issue.maximum } : {}),
+    };
+    if (
+      !projected.some((entry) => JSON.stringify(entry) === JSON.stringify(safe))
+    )
+      projected.push(safe);
+    if (issue.code === "invalid_union")
+      for (const branch of issue.errors || [])
+        for (const child of branch) append(child, field);
+  }
+  for (const issue of issues) append(issue, "");
+  return projected;
+}
+
 /** @param {any} error */
 function safeFailure(error) {
   if (error instanceof InputReviewRequired)
@@ -73,26 +158,7 @@ function safeFailure(error) {
   if (error?.name === "ZodError" && Array.isArray(error.issues))
     return {
       code: "INVALID_TOOL_ARGUMENTS",
-      issues: error.issues.slice(0, 8).map((/** @type {any} */ issue) => ({
-        field: (issue.path || [])
-          .filter(
-            (/** @type {unknown} */ p) =>
-              typeof p === "string" && /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(p),
-          )
-          .slice(0, 4)
-          .join("."),
-        code: [
-          "too_big",
-          "too_small",
-          "invalid_type",
-          "invalid_value",
-          "unrecognized_keys",
-        ].includes(issue.code)
-          ? issue.code
-          : "invalid_argument",
-        ...(Number.isFinite(issue.minimum) ? { minimum: issue.minimum } : {}),
-        ...(Number.isFinite(issue.maximum) ? { maximum: issue.maximum } : {}),
-      })),
+      issues: validationIssues(error.issues),
       hint: "Correct the named arguments within these bounds, or omit optional budgets and use pagination. The operation did not succeed. Do not infer unread content or claim successful delivery.",
     };
   /** @type {Record<string, string>} */

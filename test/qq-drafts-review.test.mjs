@@ -66,9 +66,9 @@ function send(f, draft, inputReview) {
         text: "测试回复",
       });
 }
-async function blocked(f, draft) {
+async function blocked(f, draft, inputReview) {
   let result;
-  await assert.rejects(send(f, draft), (error) => {
+  await assert.rejects(send(f, draft, inputReview), (error) => {
     result = safeToolFailure(error);
     return result.code === "INPUT_REVIEW_REQUIRED";
   });
@@ -238,8 +238,12 @@ test("a partial burst returns its confirmed prefix and never replays it after re
   assert.equal(gateway.sent.length, 1);
   assert.equal(f.ctx.requestEvents.size, 0);
   assert.equal(f.mem.state(f.ctx.conversation).replyBatchSends, 1);
+  const pending = await send(f, out.draft);
+  assert.equal(pending.error, "INPUT_REVIEW_REQUIRED");
+  assert.deepEqual(pending.inputReview.items, []);
+  assert.equal(pending.inputReview.token, out.inputReview.token);
   const sent = await send(f, out.draft, {
-    token: out.inputReview.token,
+    token: pending.inputReview.token,
     decision: "continue",
   });
   assert.equal(sent.status, "sent");
@@ -288,4 +292,57 @@ test("pagination cannot combine versions when a transcript changes the projectio
   const ready = await blocked(f, first.draft);
   assert.equal(ready.missing, 0);
   assert.match(ready.token, /^[a-f0-9]{64}$/);
+});
+
+test("revising a draft rebinds the token and keeps the originals already presented in this context", async (t) => {
+  const f = make(t);
+  await f.runtime.ingest("qq-0", raw(1, { message: "首次展示原文" }));
+  const original = await blocked(f);
+  const revised = await f.runtime.callTool(f.ctx, "qq_draft", {
+    action: "revise",
+    draftId: original.draft.draftId,
+    expectedVersion: original.draft.version,
+    position: 0,
+    input: { text: "改过的回复" },
+  });
+  const confirm = ({ token }) => ({ token, decision: "continue" });
+  const stale = await blocked(f, revised, confirm(original));
+  assert.deepEqual(stale.items, []);
+  assert.equal(stale.missing, 0);
+  assert.notEqual(stale.token, original.token);
+  assert.equal(f.runtime.transports.get("qq-0").sent.length, 0);
+
+  const replacement = { ...f, ctx: context(f.runtime) };
+  const afterContextChange = await blocked(
+    replacement,
+    revised,
+    confirm(stale),
+  );
+  assert.equal(afterContextChange.items[0].id, original.items[0].id);
+  assert.notEqual(afterContextChange.token, stale.token);
+  assert.equal(
+    (await send(replacement, revised, confirm(afterContextChange))).status,
+    "sent",
+  );
+  assert.equal(f.runtime.transports.get("qq-0").sent.length, 1);
+});
+
+test("a pending draft does not prevent a read checkpoint for a complete review receipt", async (t) => {
+  const f = make(t);
+  await f.runtime.ingest("qq-0", raw(1, { message: "完整回执原文" }));
+  const review = await blocked(f);
+  const seq = review.items[0].seq;
+  assert.equal(review.completeThroughSeq, seq);
+  assert.equal(f.ctx.requestEvents.size, 0);
+  assert.equal(f.mem.state(f.ctx.conversation).replyInputSeq || 0, 0);
+  assert.equal(f.mem.state(f.ctx.conversation).readThroughSeq || 0, 0);
+  const duplicate = await f.runtime.callTool(f.ctx, "qq_mark_read", {
+    throughSeq: seq,
+  });
+  assert.equal(duplicate.readThroughSeq, seq);
+  const draft = await f.runtime.callTool(f.ctx, "qq_draft", {
+    action: "read",
+    draftId: review.draft.draftId,
+  });
+  assert.equal(draft.items[0].status, "unsubmitted");
 });

@@ -608,3 +608,71 @@ test("qq_mark_read keeps the existing safe-watermark behavior", async (t) => {
     /UNSEEN_WATERMARK/,
   );
 });
+
+test("complete memory pages repair the first gap without lending presentation to a different context", async (t) => {
+  const { runtime, store } = setup(t);
+  const ctx = context(runtime);
+  const mem = store.bind(ctx.agentId);
+  const first = mem.append({
+    dedupe: "long-gap",
+    conversation: ctx.conversation,
+    kind: "message.received",
+    body: "较长内容".repeat(1000),
+  });
+  const tail = mem.append({
+    dedupe: "short-after-gap",
+    conversation: ctx.conversation,
+    kind: "message.received",
+    body: "后一条",
+  });
+  const call = (tool, args) => runtime.callTool(ctx, tool, args);
+  const skipped = await call("conversation_read", { afterSeq: first.seq });
+  assert.equal(skipped.nextAfterSeq, tail.seq);
+  assert.equal(skipped.readThroughSeq, 0);
+  assert.deepEqual(skipped.readGap, { tool: "conversation_read", afterSeq: 0 });
+  const truncated = await call("conversation_read", { maxChars: 512 });
+  assert(truncated.items[0].bodyTruncated || truncated.items[0].summaryOmitted);
+  assert.equal(truncated.readThroughSeq, 0);
+  assert.deepEqual(truncated.readGap, {
+    tool: "memory_read",
+    id: first.id,
+    offset: 0,
+  });
+  await assert.rejects(
+    call("qq_mark_read", { throughSeq: tail.seq }),
+    /UNSEEN_WATERMARK/,
+  );
+  const page = await call("memory_read", { id: first.id, maxChars: 512 });
+  assert(page.nextOffset);
+  assert.equal(page.readThroughSeq, undefined);
+  let offset = page.nextOffset;
+  while (offset !== null) {
+    const result = await call("memory_read", {
+      id: first.id,
+      offset,
+      maxChars: 512,
+    });
+    offset = result.nextOffset;
+    if (offset === null) assert.equal(result.readThroughSeq, tail.seq);
+  }
+  assert.equal(mem.state(ctx.conversation).readThroughSeq || 0, 0);
+  const other = context(runtime);
+  await assert.rejects(
+    runtime.callTool(other, "qq_mark_read", { throughSeq: tail.seq }),
+    /UNSEEN_WATERMARK/,
+  );
+
+  mem.db
+    .prepare("UPDATE events SET body=? WHERE id=?")
+    .run("修改过的正文", first.id);
+  await assert.rejects(
+    call("qq_mark_read", { throughSeq: tail.seq }),
+    /UNSEEN_WATERMARK/,
+  );
+  const reread = await call("memory_read", { id: first.id });
+  assert.equal(reread.readThroughSeq, tail.seq);
+  assert.equal(
+    (await call("qq_mark_read", { throughSeq: tail.seq })).readThroughSeq,
+    tail.seq,
+  );
+});

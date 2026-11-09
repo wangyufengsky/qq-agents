@@ -130,8 +130,17 @@ test("conversation_read remains current-chat by default and exact-source reads p
   const { runtime, store } = fixture(t),
     mem = store.bind("agent-0");
   const ctx = context(runtime, "agent-0", "private:30000");
-  append(mem, "group", "group:20000", "GROUP_HISTORY");
-  append(mem, "private", "private:30000", "PRIVATE_HISTORY");
+  const own = append(mem, "private", "private:30000", "PRIVATE_HISTORY");
+  const allowed = append(mem, "group", "group:20000", "GROUP_HISTORY");
+  const withheld = append(
+    mem,
+    "protected",
+    "group:20000",
+    "PROTECTED_GROUP_HISTORY",
+    {
+      protectedOperations: true,
+    },
+  );
   const local = await runtime.callTool(ctx, "conversation_read", {});
   assert.equal(local.scope.conversation, "private:30000");
   assert.match(local.notice, /memory_search with conversationType/);
@@ -140,7 +149,22 @@ test("conversation_read remains current-chat by default and exact-source reads p
     conversation: "group:20000",
   });
   assert.equal(group.markReadEligible, false);
-  assert(group.items.every((x) => x.conversation === "group:20000"));
+  assert.equal(group.readThroughSeq, null);
+  assert.equal(group.withheld, 1);
+  assert.deepEqual(
+    group.items.map(({ id }) => id),
+    [allowed.id],
+  );
+  assert(ctx.privateRead.has(allowed.id));
+  assert(
+    context(runtime, ctx.agentId, ctx.conversation).privateRead.has(allowed.id),
+  );
+  assert(!ctx.privateRead.has(withheld.id));
+  assert.equal(ctx.shownSeq, own.seq);
+  await assert.rejects(
+    runtime.callTool(ctx, "qq_mark_read", { throughSeq: allowed.seq }),
+    /UNSEEN_WATERMARK/,
+  );
   // A source filter cannot accidentally include unrelated standalone diaries.
   mem.diaryWrite({ title: "日记", body: "PRIVATE_DIARY" });
   const search = await runtime.callTool(ctx, "memory_search", {

@@ -153,7 +153,8 @@ test("a new context must explicitly review the saved draft even after seeing its
   f.runtime.abortContext(ctx, "test-ended");
   const next = context(f.runtime);
   await f.runtime.callTool(next, "conversation_read", {});
-  next.openingReviewInput = new Map(next.presentedReviewInput);
+  next.openingReviewInput = new Map(next.presentedInput);
+  assert.equal(next.openingReviewInput.size, 1);
   const input = {
     action: "continue",
     draftId: first.draft.draftId,
