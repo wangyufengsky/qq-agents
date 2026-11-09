@@ -1,3 +1,5 @@
+import { homeDefinitions } from "./home.mjs";
+import { homeGeneration, homeRevision } from "../home/policy.mjs";
 import { projectSnapshotProof } from "../home/project-snapshots.mjs";
 import { socialSources } from "../core/social-protection.mjs";
 import { peerQzoneSources } from "../core/peer-qzone-protection.mjs";
@@ -269,7 +271,35 @@ export const mindDefinitions = {
       .object({
         requestId: text.regex(/^[A-Za-z0-9_-]{1,100}$/),
         usefulUntil: timestamp.optional(),
+        identityGeneration: homeGeneration.optional(),
         proposal: z.discriminatedUnion("kind", [
+          ...homeDefinitions.room_intent_submit[1].shape.proposal.options,
+          z
+            .object({
+              kind: z.literal("focus"),
+              durationMs: restFields.durationMs.optional(),
+              note: text.max(400),
+            })
+            .strict(),
+          z
+            .object({
+              kind: z.literal("reflection"),
+              evidence: ids.min(1).max(8),
+              note: text.max(400).optional(),
+            })
+            .strict(),
+          z
+            .object({
+              kind: z.literal("social"),
+              target: z.discriminatedUnion("kind", [
+                z
+                  .object({ kind: z.literal("compose"), id: text.max(64) })
+                  .strict(),
+                z.object({ kind: z.literal("visit"), id: z.uuid() }).strict(),
+              ]),
+              note: text.max(400).optional(),
+            })
+            .strict(),
           z
             .object({
               kind: z.literal("rest"),
@@ -300,12 +330,29 @@ export const mindDefinitions = {
       .strict(),
   ],
   subject_inbox_list: [
-    "主人格按页查看当前可处理的休息、联系和工作接力提议。已经看过但没处理的也在这里。",
+    "主人格查看当前可处理的全部会话提议。来源聊天只能查看自己已收到的决定回执。",
     z.object({ offset: z.number().int().min(0).default(0) }).strict(),
   ],
   subject_inbox_decide: [
-    "主人格决定提议。rest 选时长和叫醒条件；contact 生成由目标聊天自行决定的问候机会，须填 expiresAt，可定 eligibleAt；take 取回现有项目或笔记，需再用原工具推进；defer 定下次 reviewAt；dismiss 放下。时间用 Unix 毫秒。",
+    "主人格处理提议。rest 选休息时长；focus 选专注时长并暂缓新的主动联系；take 接下工作或相处回顾；social 排队受控串门或共同活动；accept 采纳原有联系或小窝提议，小窝执行用 execute 并传当前版本；contact 另设联系有效期；defer 指定再看时间，dismiss 放下。",
     z.discriminatedUnion("action", [
+      z.object({ ...reviewFields, action: z.literal("accept") }).strict(),
+      z
+        .object({
+          ...reviewFields,
+          action: z.literal("execute"),
+          expectedLayoutRevision: homeRevision.optional(),
+          expectedItemRevision: homeRevision.optional(),
+        })
+        .strict(),
+      z
+        .object({
+          ...reviewFields,
+          action: z.literal("focus"),
+          durationMs: restFields.durationMs,
+        })
+        .strict(),
+      z.object({ ...reviewFields, action: z.literal("social") }).strict(),
       z
         .object({ ...reviewFields, action: z.literal("rest"), ...restFields })
         .strict(),

@@ -9,10 +9,11 @@ const other = "group:20001";
 const owner = "private:30000";
 const subject = "@subject";
 
-function setup(t, run) {
+function setup(t, run, configure = () => {}) {
   const cfg = config(2);
   Object.assign(cfg.agents[0].subject, { enabled: true, inboxEnabled: true });
   cfg.agents[0].ownerIds = ["30000"];
+  configure(cfg);
   const f = fixture(t, { cfg, run });
   let now = Date.now();
   f.runtime.clock = () => new Date(now);
@@ -299,4 +300,198 @@ test("a deferred proposal survives coordinator replacement and wakes only when d
   await settle(f.runtime);
   assert.equal(prompts.length, 1);
   assert.match(prompts[0], /durable/);
+});
+
+test("old room and contact tools wake one subject review, then report decisions only in the source chat", async (t) => {
+  const seen = [];
+  let contactId, roomId;
+  const f = setup(
+    t,
+    async (p) => {
+      seen.push({ conversation: p.conversation, prompt: p.prompt });
+      if (p.conversation !== subject) return;
+      const pending = await p.callTool("subject_inbox_list", {});
+      assert.equal(pending.items.length, 2);
+      for (const item of pending.items)
+        await p.callTool("subject_inbox_decide", {
+          id: item.id,
+          expectedRevision: item.revision,
+          action: "accept",
+        });
+    },
+    (cfg) => {
+      cfg.agents[0].home = { enabled: true, intents: { enabled: true } };
+    },
+  );
+  const chat = context(f.runtime);
+  const read = await f.runtime.callTool(chat, "room_read", {});
+  roomId = (
+    await f.runtime.callTool(chat, "room_intent_submit", {
+      identityGeneration: read.identityGeneration,
+      requestId: "legacy-room-1",
+      proposal: {
+        kind: "room_scene_patch",
+        operations: [{ action: "palette", palette: "rose" }],
+      },
+    })
+  ).intentId;
+  contactId = (
+    await f.runtime.callTool(chat, "intent_create", {
+      topic: "找对方问候",
+      reason: "想问候",
+      target: owner,
+      expiresAt: f.runtime.now() + 60000,
+    })
+  ).id;
+  f.runtime.tick();
+  await settle(f.runtime);
+  assert.deepEqual(
+    seen.map((x) => x.conversation),
+    [subject],
+  );
+  assert.match(seen[0].prompt, new RegExp("room:" + roomId));
+  assert.match(seen[0].prompt, new RegExp("contact:" + contactId));
+  assert.equal(
+    (await f.runtime.callTool(chat, "subject_inbox_list", {})).items.length,
+    2,
+  );
+  await f.runtime.wake(agentId, other);
+  assert.doesNotMatch(seen.at(-1).prompt, /提议回执/);
+  await f.runtime.wake(agentId, group);
+  assert.match(seen.at(-1).prompt, /提议回执/);
+  assert.doesNotMatch(seen.at(-1).prompt, /operations.*palette/);
+  await f.runtime.wake(agentId, group);
+  assert.doesNotMatch(seen.at(-1).prompt, /提议回执/);
+  f.runtime.tick();
+  await settle(f.runtime);
+  assert.equal(seen.at(-1).conversation, owner);
+});
+
+test("unified room submissions still require the old identity and atomic execution contract", async (t) => {
+  const f = setup(t, undefined, (cfg) => {
+    cfg.agents[0].home = { enabled: true, intents: { enabled: true } };
+  });
+  const chat = context(f.runtime),
+    ctx = context(f.runtime, agentId, subject);
+  const room = await f.runtime.callTool(chat, "room_read", {});
+  const proposal = {
+    kind: "room_scene_patch",
+    operations: [{ action: "palette", palette: "rose" }],
+  };
+  await assert.rejects(
+    f.runtime.callTool(chat, "subject_inbox_submit", {
+      requestId: "unified-room",
+      proposal,
+    }),
+    /INVALID_REQUEST/,
+  );
+  const receipt = await f.runtime.callTool(chat, "subject_inbox_submit", {
+    requestId: "unified-room",
+    identityGeneration: room.identityGeneration,
+    proposal,
+  });
+  const list = await f.runtime.callTool(ctx, "subject_inbox_list", {});
+  assert.equal(list.items[0].id, receipt.id);
+  assert.equal(list.items[0].proposal.roomKind, "room_scene_patch");
+  await assert.rejects(
+    f.runtime.callTool(
+      chat,
+      "subject_inbox_submit",
+      submission("unified-room", { kind: "rest" }),
+    ),
+    /IDEMPOTENCY_CONFLICT/,
+  );
+  await f.runtime.callTool(
+    chat,
+    "subject_inbox_submit",
+    submission("native-room", { kind: "rest" }),
+  );
+  await assert.rejects(
+    f.runtime.callTool(chat, "subject_inbox_submit", {
+      requestId: "native-room",
+      identityGeneration: room.identityGeneration,
+      proposal,
+    }),
+    /IDEMPOTENCY_CONFLICT/,
+  );
+  const accepted = await f.runtime.callTool(
+    ctx,
+    "subject_inbox_decide",
+    resolve(receipt.id, "accept"),
+  );
+  assert.equal(accepted.status, "accepted");
+  const scene = await f.runtime.callTool(ctx, "room_scene_read", {});
+  const args = {
+    ...resolve(receipt.id, "execute", {
+      expectedLayoutRevision: scene.layoutRevision,
+    }),
+    expectedRevision: 2,
+  };
+  assert.equal(
+    (await f.runtime.callTool(ctx, "subject_inbox_decide", args)).committed,
+    true,
+  );
+  assert.equal(
+    (await f.runtime.callTool(ctx, "subject_inbox_decide", args)).status,
+    "executed",
+  );
+});
+
+test("focus holds proactive contacts and leaves normal chat eligible until its deadline", async (t) => {
+  const f = setup(t);
+  const request = await f.runtime.callTool(
+    context(f.runtime),
+    "subject_inbox_submit",
+    submission("focus", { kind: "focus", note: "整理示例" }),
+  );
+  const ctx = context(f.runtime, agentId, subject);
+  const r = await f.runtime.callTool(
+    ctx,
+    "subject_inbox_decide",
+    resolve(request.id, "focus", { durationMs: 60000 }),
+  );
+  assert.equal(r.focus.until, f.runtime.now() + 60000);
+  const agent = f.runtime.agent(agentId);
+  assert.equal(f.runtime.subject.contactOpportunity(agent, owner), false);
+  assert.equal(f.runtime.writable(agent, group), true);
+  f.advance(60000);
+  assert.equal(f.runtime.subject.contactOpportunity(agent, owner), true);
+});
+
+test("reflection accepts only nonprotected evidence from the source chat", async (t) => {
+  const f = setup(t);
+  const chat = context(f.runtime);
+  const make = (conversation, dedupe, payload) =>
+    f.memory.append({
+      conversation,
+      dedupe,
+      payload,
+      connectionId: "qq-0",
+      kind: "message.received",
+      direction: "in",
+      body: "测试素材",
+    });
+  const ok = make(group, "reflect");
+  const foreign = make(other, "reflect-foreign");
+  const guarded = make(group, "reflect-guarded", { protectedOperations: true });
+  const submit = (id) =>
+    f.runtime.callTool(
+      chat,
+      "subject_inbox_submit",
+      submission("reflect-" + id, { kind: "reflection", evidence: [id] }),
+    );
+  await assert.rejects(submit(foreign.id), /EVIDENCE_NOT_OWNED_OR_MISSING/);
+  await assert.rejects(submit(guarded.id), /SUBJECT_INBOX_SOURCE_DENIED/);
+  const intent = await submit(ok.id);
+  const ctx = context(f.runtime, agentId, subject);
+  const taken = await f.runtime.callTool(
+    ctx,
+    "subject_inbox_decide",
+    resolve(intent.id, "take"),
+  );
+  assert.deepEqual(taken.evidence, [ok.id]);
+  const feedback = (await f.runtime.callTool(chat, "subject_inbox_list", {}))
+    .items[0];
+  assert.equal(feedback.status, "accepted");
+  assert.equal(feedback.evidence, undefined);
 });

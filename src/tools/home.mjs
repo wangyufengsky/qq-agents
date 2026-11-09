@@ -16,7 +16,7 @@ const item = {
 const scene = { ...base, expectedLayoutRevision: homeRevision };
 export const homeDefinitions = {
   room_intent_submit: [
-    "向自己的 @subject 主人格递交一项小窝提议，不唤醒、不执行。家具提议不带正文；文字提议不得包含聊天或受保护来源。先 room_read 取得身份代次。同一 requestId 只递交一次。",
+    "向自己的 @subject 主人格递交一项小窝提议，启用统一会话提议时会安排主人格查看；由主人格决定是否执行。家具提议不带正文；文字提议不得包含聊天或受保护来源。先 room_read 取得身份代次。同一 requestId 只递交一次。",
     z
       .object({
         ...base,
