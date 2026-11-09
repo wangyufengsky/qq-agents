@@ -159,47 +159,61 @@ export function failureSummary(error) {
 }
 
 // Retry a continuation, never the original prompt or a tools/call. The same
-// runtime capability, disclosure state, limits and receipt ledger stay in use.
+// logical turn, disclosure state, limits and receipt ledger stay in use.
 /**
  * @param {{run(params: import("./session-contract.mjs").RunParams): Promise<unknown>}} backend
  * @param {import("./session-contract.mjs").RunParams} params
  * @param {{onFailure?: (error: unknown, attempt: number) => void,
- *   onRecovery?: (error: BackendTurnFailure, attempt: number) => void}} [hooks]
+ *   onLateSession?: (session: import("./session-contract.mjs").StoredSession) => void,
+ *   onRecovery?: (error: BackendTurnFailure, attempt: number) => string | void}} [hooks]
  */
 export async function runWithRecovery(
   backend,
   params,
-  { onFailure, onRecovery } = {},
+  { onFailure, onLateSession, onRecovery } = {},
 ) {
   let session = params.session;
   /** @type {RecoveryFailure | undefined} */
   let recovery;
-  const { finalizeToolOutput, commitToolOutput } = params;
+  let recoveryEnvironment = "";
   for (let attempt = 0; ; attempt++) {
-    // A continuation must not inherit late diagnostics from its predecessor.
-    let diagnosticLease = true;
+    let active = true;
+    // Backends get an attempt-scoped interface. Late notifications can be
+    // discarded, but a late tool call must fail before it can change state.
+    /** @template {any[]} A @template R @param {((...args: A) => R) | undefined} callback */
+    const notify = (callback) =>
+      callback &&
+      ((/** @type {A} */ ...args) => (active ? callback(...args) : undefined));
+    /** @template {any[]} A @template R @param {(...args: A) => R} callback */
+    const requireActive =
+      (callback) =>
+      (/** @type {A} */ ...args) =>
+        active
+          ? callback(...args)
+          : Promise.reject(Error("INPUT_EPOCH_CHANGED"));
     try {
       return await backend.run({
         ...params,
-        onDiagnostic: params.onDiagnostic
-          ? (event) =>
-              diagnosticLease ? params.onDiagnostic?.(event, attempt) : false
-          : undefined,
-        onInputSubmitted: params.onInputSubmitted
-          ? () => {
-              if (diagnosticLease) params.onInputSubmitted?.();
-            }
-          : undefined,
-        finalizeToolOutput: finalizeToolOutput
-          ? (original, options) => {
-              if (!diagnosticLease) throw Error("INPUT_EPOCH_CHANGED");
-              return finalizeToolOutput(original, options);
-            }
-          : undefined,
-        commitToolOutput: commitToolOutput
-          ? (receipt, text) =>
-              diagnosticLease && commitToolOutput(receipt, text)
-          : undefined,
+        onDiagnostic:
+          params.onDiagnostic &&
+          ((event) => active && params.onDiagnostic?.(event, attempt)),
+        onInputSubmitted: notify(params.onInputSubmitted),
+        beforeInputSubmitted:
+          params.beforeInputSubmitted &&
+          requireActive(params.beforeInputSubmitted),
+        onBackendTurn: notify(params.onBackendTurn),
+        onTiming: notify(params.onTiming),
+        onUsage: notify(params.onUsage),
+        onImageSession: notify(params.onImageSession),
+        onGeneratedImage: notify(params.onGeneratedImage),
+        onImageError: notify(params.onImageError),
+        callTool: requireActive(params.callTool),
+        finalizeToolOutput:
+          params.finalizeToolOutput && requireActive(params.finalizeToolOutput),
+        commitToolOutput:
+          params.commitToolOutput &&
+          ((receipt, text) =>
+            active && params.commitToolOutput?.(receipt, text)),
         session,
         recovery,
         ...(recovery
@@ -209,16 +223,21 @@ export async function runWithRecovery(
                 "上一轮因可恢复的生成错误结束。继续尚未完成的部分，不要重做已经成功的工具操作；已发送或投递结果未知的 QQ 消息不得重发，不得换 requestId 或改写文案重发。依据保留的工具结果继续；若已完成则结束本轮。" +
                 (recovery.deliveryBlocked
                   ? " 本轮之前已有投递尝试，发送已锁定；只允许查询原回执，不再新增任何 QQ 投递。"
-                  : ""),
+                  : "") +
+                recoveryEnvironment,
             }
           : {}),
         saveSession: (value) => {
+          if (!active) {
+            if (value && value.id !== session?.id) onLateSession?.(value);
+            return;
+          }
           session = value;
           params.saveSession(value);
         },
       });
     } catch (error) {
-      diagnosticLease = false;
+      active = false;
       onFailure?.(error, attempt);
       if (
         params.signal.aborted ||
@@ -230,9 +249,9 @@ export async function runWithRecovery(
       )
         throw error;
       recovery = error;
-      onRecovery?.(error, attempt + 1);
+      recoveryEnvironment = onRecovery?.(error, attempt + 1) || "";
     } finally {
-      diagnosticLease = false;
+      active = false;
     }
   }
 }
