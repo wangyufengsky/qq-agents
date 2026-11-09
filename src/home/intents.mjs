@@ -40,6 +40,44 @@ export class HomeIntents {
       ...(row.receipt ? { receipt: JSON.parse(row.receipt) } : {}),
     };
   }
+  /** @param {string} agentId @param {number} now @param {string} [source] */
+  inboxRows(agentId, now, source) {
+    const generation = this.rooms.home.generation(agentId);
+    this.expire(generation, now);
+    return this.db
+      .prepare(
+        source
+          ? "SELECT id,source_session,state,created_at,expires_at,last_viewed_at,resolved_at FROM home_intents WHERE generation=? AND source_session=? ORDER BY coalesce(resolved_at,created_at) DESC LIMIT 64"
+          : "SELECT id,source_session,state,proposal,created_at,expires_at,last_viewed_at,resolved_at FROM home_intents WHERE generation=? AND state IN ('pending','accepted')",
+      )
+      .all(generation, ...(source ? [source] : []));
+  }
+  /** @param {string} agentId @param {string} source @param {string} requestId */
+  inboxRequestExists(agentId, source, requestId) {
+    return !!this.db
+      .prepare(
+        "SELECT 1 FROM home_intents WHERE generation=? AND source_session=? AND request_id=?",
+      )
+      .get(this.rooms.home.generation(agentId), source, requestId);
+  }
+  /** @param {string} agentId @param {string} id @param {number} now */
+  inboxItem(agentId, id, now) {
+    const generation = this.rooms.home.generation(agentId);
+    this.expire(generation, now);
+    return this.db
+      .prepare(
+        "SELECT id,source_session,state,expires_at FROM home_intents WHERE generation=? AND id=?",
+      )
+      .get(generation, id);
+  }
+  /** @param {string} agentId @param {string} id @param {number} now */
+  inboxViewed(agentId, id, now) {
+    this.db
+      .prepare(
+        "UPDATE home_intents SET last_viewed_at=? WHERE generation=? AND id=? AND state IN ('pending','accepted')",
+      )
+      .run(now, this.rooms.home.generation(agentId), id);
+  }
   /** Counts do not mark anything viewed and never schedule a subject turn. @param {string} agentId */
   hint(agentId) {
     const r = this.rooms.runtime,

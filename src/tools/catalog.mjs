@@ -79,7 +79,10 @@ export function toolAvailable(agent, name, conversation) {
       subjectInboxEnabled(agent) &&
       (name === "subject_inbox_submit"
         ? /^(group|private):\d+$/.test(conversation)
-        : conversation === "@subject")
+        : name === "subject_inbox_list"
+          ? conversation === "@subject" ||
+            /^(group|private):\d+$/.test(conversation)
+          : conversation === "@subject")
     );
   if (name === "file_delete")
     return (

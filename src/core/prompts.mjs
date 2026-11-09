@@ -155,7 +155,7 @@ export function turnEnvironment(runtime, agent, ctx, backendType) {
     );
   if (ctx.allowedTools?.includes("subject_inbox_submit"))
     parts.push(
-      "想在聊天结束后休息、及时联系另一个已授权的会话，或把项目、工作笔记交给空闲时的自己时，可以用 subject_inbox_submit。提议只是交给主人格考虑，先把当前聊天自然收好。",
+      "可用 subject_inbox_submit 把休息、联系、工作接力、专注、相处回顾、串门和共同活动、小窝布置或发布提议交给主人格。决定回执在本会话之后的开场可见；先把当前聊天自然收好。",
     );
   if (ctx.allowedTools?.includes("subject_rest"))
     parts.push(

@@ -93,6 +93,11 @@ export function subjectMaterials(runtime, ctx) {
   const a = runtime.agent(ctx.agentId),
     m = runtime.memory.bind(a.id),
     now = runtime.now();
+  const focus = runtime.subjectInbox.focus(a);
+  if (focus) {
+    ctx.privateRead.add(`context:${focus.source}`);
+    ctx.persistTaint?.();
+  }
   const boundary = recallBoundary(runtime, ctx, {
     publicOnly: ctx.freshSubject === true,
   });
@@ -280,6 +285,7 @@ export function subjectMaterials(runtime, ctx) {
     notice: ctx.freshSubject
       ? "本轮是新的空闲上下文，自动素材和交接已隔离受保护内容；原始记录仍保留。主动读取受保护记忆会限制本轮外网调用。旧日志中的权限判断不是当前授权，请以当前工具配置、参数 schema 和 contextGate 为准。"
       : "当前上下文已读来源继续生效；历史平台探测成功不代表当前上下文有联网权限。",
+    ...(focus ? { focus: { until: focus.until, note: focus.note } } : {}),
     lastLogs: logs.map(strip),
     recent: {
       conversations,
