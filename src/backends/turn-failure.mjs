@@ -57,6 +57,16 @@ export function dshTurnFailure(reason, turnId) {
       String(turnId),
       true,
     );
+  // The native terminal reason classifies a provider transport failure;
+  // a bridge-side loss of the event subscription proves no terminal outcome.
+  if (reason?.kind === "error" && code === "TRANSPORT")
+    return new BackendTurnFailure(
+      "dsh",
+      code,
+      "response-stream",
+      String(turnId),
+      true,
+    );
   const category = reason?.kind === "cancelled" ? "cancelled" : "unknown";
   return new BackendTurnFailure("dsh", "TURN_FAILED", category, String(turnId));
 }
