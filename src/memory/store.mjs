@@ -1143,8 +1143,8 @@ class AgentMemory {
       )
       .run(status, messageId, now(), this.agentId, requestId);
   }
-  // The authoritative confirmation and the reviewed inputs describe the same
-  // submission, regardless of which source confirmed it.
+  // A receipt is the authoritative fact. Local review projection must not
+  // participate in this transaction or an already-sent request can regress.
   confirmDelivery(
     requestId,
     messageId,
@@ -1156,6 +1156,15 @@ class AgentMemory {
       if (!delivery) throw Error("DELIVERY_NOT_FOUND");
       if (!["pending", "unknown"].includes(delivery.status))
         throw Error("DELIVERY_ALREADY_SETTLED");
+      this.completeDelivery(requestId, "sent", messageId);
+      return drafts.recordConfirmation(this.agentId, requestId, confirmation);
+    };
+    return this.db.isTransaction ? settle() : this.store.transaction(settle);
+  }
+  projectConfirmedDeliveryReview(requestId) {
+    return this.store.transaction(() => {
+      const delivery = this.delivery(requestId);
+      if (delivery?.status !== "sent") return [];
       const attempt = this.db
         .prepare(
           `SELECT sender_id, connection_id, conversation, payload FROM events
@@ -1201,16 +1210,9 @@ class AgentMemory {
                 typeof ref?.id === "string" && typeof ref.version === "string",
             )
           : [];
-      this.completeDelivery(requestId, "sent", messageId);
-      const draftLinked = drafts.recordConfirmation(
-        this.agentId,
-        requestId,
-        confirmation,
-      );
       for (const ref of reviewed) writeReviewed(this.db, scope, requestId, ref);
-      return { draftLinked, reviewed };
-    };
-    return this.db.isTransaction ? settle() : this.store.transaction(settle);
+      return reviewed;
+    });
   }
   unresolvedDeliveryCount() {
     return this.db
@@ -1234,7 +1236,7 @@ class AgentMemory {
     resolution,
     { by = "administrator", messageId = null } = {},
   ) {
-    return this.store.transaction(() => {
+    const result = this.store.transaction(() => {
       const row = this.delivery(requestId);
       if (!row) throw Error("DELIVERY_NOT_FOUND");
       if (row.status !== "unknown") throw Error("DELIVERY_ALREADY_SETTLED");
@@ -1254,7 +1256,7 @@ class AgentMemory {
       // reconciliation request happens to include a message ID.
       const resolvedMessageId = action ? null : messageId;
       const drafts = new QQDraftStore(this.store);
-      const confirmation =
+      const draftLinked =
         resolution === "sent"
           ? this.confirmDelivery(
               requestId,
@@ -1292,10 +1294,18 @@ class AgentMemory {
           ...(resolvedMessageId ? { messageId: resolvedMessageId } : {}),
         },
       });
-      if (confirmation?.draftLinked)
+      if (draftLinked)
         drafts.recordArchive(this.agentId, requestId, archive.id);
       return { requestId, status: resolution };
     });
+    if (resolution === "sent") {
+      try {
+        this.projectConfirmedDeliveryReview(requestId);
+      } catch {
+        return { ...result, reviewRecorded: false };
+      }
+    }
+    return result;
   }
   // QQ's own copy of a send the gateway could not confirm settles it: same
   // conversation, matching content, within ten minutes, and only one candidate.

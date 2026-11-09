@@ -634,12 +634,20 @@ export class DeliveryService {
         messageNamespace,
         ...(receipt.fileId ? { gatewayFileId: receipt.fileId } : {}),
       };
-      const { draftLinked, reviewed } = mem.confirmDelivery(
+      const draftLinked = mem.confirmDelivery(
         requestId,
         messageId,
         confirmation,
         runtime.drafts,
       );
+      let reviewed = [],
+        reviewRecorded = true;
+      try {
+        reviewed = mem.projectConfirmedDeliveryReview(requestId);
+      } catch (error) {
+        reviewRecorded = false;
+        reportAuditFailure(error);
+      }
       if (!contactFreeAction) {
         try {
           mem.store.transaction(() => runtime.subject.delivered(ctx, "sent"));
@@ -702,6 +710,7 @@ export class DeliveryService {
       return {
         status: "sent",
         messageId,
+        ...(reviewRecorded ? {} : { reviewRecorded: false }),
         ...(submitted ? { requestId } : {}),
         // The archived record, which mind tools accept as evidence.
         ...(record?.id
