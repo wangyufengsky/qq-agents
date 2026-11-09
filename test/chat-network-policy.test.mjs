@@ -13,6 +13,7 @@ import {
   raw,
   disclosureApproval,
   sendReviewed,
+  deliverFixtureToolOutput,
 } from "./helpers.mjs";
 import { AppBrowsing } from "../src/apps/service.mjs";
 import { appsPolicySchema, inAppHours } from "../src/apps/policy.mjs";
@@ -104,10 +105,19 @@ async function incoming(
   return row;
 }
 const send = (f, ctx, id) =>
-  sendReviewed((args) => f.runtime.send(ctx, args), {
-    requestId: id,
-    text: "synthetic response",
-  });
+  sendReviewed(
+    async (args) => {
+      try {
+        return await f.runtime.send(ctx, args);
+      } catch (error) {
+        throw await f.runtime.directToolOutput(ctx, error);
+      }
+    },
+    {
+      requestId: id,
+      text: "synthetic response",
+    },
+  );
 function recall(
   f,
   ctx,
@@ -727,21 +737,17 @@ test("backend run closures share the durable policy through both prompt protocol
     let runs = 0,
       sends = 0;
     f.runtime.backends.set("agent-0", {
-      run: async ({
-        callTool: invoke,
-        onInputSubmitted,
-        onToolResultSubmitted,
-        prompt,
-      }) => {
-        onInputSubmitted();
+      run: async (params) => {
+        const { prompt } = params;
+        params.onInputSubmitted();
         const callTool = async (name, args) => {
           try {
-            const result = await invoke(name, args);
-            onToolResultSubmitted(result);
-            return result;
+            return await deliverFixtureToolOutput(
+              params,
+              await params.callTool(name, args),
+            );
           } catch (error) {
-            onToolResultSubmitted(error);
-            throw error;
+            throw await deliverFixtureToolOutput(params, error);
           }
         };
         runs++;

@@ -230,8 +230,9 @@ test(
     const output = await sending;
     assert.equal(mutation.code, "DRAFT_EXECUTING");
     assert.equal(abandonment.code, "DRAFT_EXECUTING");
-    assert.equal(output.code, "INPUT_REVIEW_REQUIRED");
-    assert(output.inputReview.items.some(({ id }) => id === fresh.id));
+    assert.equal(output.actionResult, "not_sent");
+    assert.equal(output.attemptedThisCall, false);
+    assert(output.preparation.items.some(({ id }) => id === fresh.id));
     assert.equal(output.draft.items[0].status, "unsubmitted");
     assert.deepEqual(attemptBodies(f.mem), []);
     assert.equal(f.gateway.sent.length, 0);

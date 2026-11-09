@@ -1,4 +1,5 @@
 // @ts-check
+import { finalizeMcpOutput, toolOutputText } from "./tool-output.mjs";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -10,8 +11,6 @@ import {
   antigravityDiagnostic,
   responseOccupancy,
 } from "./antigravity.mjs";
-import { mcpResult } from "../tools/index.mjs";
-import { safeToolFailure } from "../tools/errors.mjs";
 
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 const maxOutput = 16 * 1024 * 1024;
@@ -181,6 +180,7 @@ export class AntigravityStreamWorker {
         images: turn.media.catalog(),
       });
     if (req.method !== "POST" || req.url !== "/call") return reply(404, {});
+    /** @type {import("./session-contract.mjs").ToolSpec | undefined} */
     let spec;
     try {
       let body = "";
@@ -209,8 +209,6 @@ export class AntigravityStreamWorker {
       );
       if (!spec) return reply(403, { error: "ANTIGRAVITY_TURN_INACTIVE" });
       await turn.inputSubmission;
-      /** @type {unknown} */
-      let original;
       const pending = Promise.resolve().then(async () => {
         if (!this.active(turn)) throw Error("ANTIGRAVITY_TURN_INACTIVE");
         const result = await turn.params.callTool(
@@ -218,16 +216,18 @@ export class AntigravityStreamWorker {
           envelope.arguments,
         );
         if (!this.active(turn)) throw Error("ANTIGRAVITY_TURN_INACTIVE");
-        original = result;
-        return turn.media.fromTool(mcpResult(result), turn.params.signal);
+        return finalizeMcpOutput(turn.params, result, (value) =>
+          turn.media.fromTool(value, turn.params.signal),
+        );
       });
       turn.pending.add(pending);
       try {
-        const content = await pending;
+        const { wire: content, receipt } = await pending;
         if (!this.live(turn))
           return reply(403, { error: "ANTIGRAVITY_TURN_INACTIVE" });
         res.once("finish", () => {
-          if (this.live(turn)) turn.params.onToolResultSubmitted?.(original);
+          if (this.live(turn))
+            turn.params.commitToolOutput?.(receipt, toolOutputText(content));
         });
         reply(200, content);
       } finally {
@@ -236,24 +236,26 @@ export class AntigravityStreamWorker {
     } catch (error) {
       if (!this.live(turn))
         return reply(403, { error: "ANTIGRAVITY_TURN_INACTIVE" });
+      const { wire: content, receipt } = await finalizeMcpOutput(
+        turn.params,
+        error,
+        (value) => {
+          if (spec && value.isError) {
+            const failure = JSON.parse(value.content[0].text);
+            if (failure.code === "INVALID_TOOL_ARGUMENTS")
+              value.content[0].text = JSON.stringify({
+                ...failure,
+                tool: { name: spec.name, inputSchema: spec.inputSchema },
+              });
+          }
+          return value;
+        },
+      );
       res.once("finish", () => {
-        if (this.live(turn)) turn.params.onToolResultSubmitted?.(error);
+        if (this.live(turn))
+          turn.params.commitToolOutput?.(receipt, toolOutputText(content));
       });
-      const failure = safeToolFailure(error);
-      reply(200, {
-        isError: true,
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify({
-              ...failure,
-              ...(failure.code === "INVALID_TOOL_ARGUMENTS" && spec
-                ? { tool: { name: spec.name, inputSchema: spec.inputSchema } }
-                : {}),
-            }),
-          },
-        ],
-      });
+      reply(200, content);
     }
   }
   /** @param {import("./session-contract.mjs").RunParams} params */

@@ -1,3 +1,4 @@
+import { deriveRelayToken } from "../src/core/relay-auth.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
@@ -39,6 +40,9 @@ test("shutdown waits for an in-flight HTTP tool receipt after its model turn can
     method: "POST",
     headers: {
       "x-agent-capability": ctx.token,
+      "x-agent-relay-token": deriveRelayToken("synthetic-admin"),
+      "x-agent-output-protocol": "stdio-v1",
+      "x-agent-output-request": "1",
       "content-type": "application/json",
     },
     body: JSON.stringify({

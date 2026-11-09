@@ -16,13 +16,11 @@ import {
   writeReviewed,
   readInputDisposition,
 } from "../memory/input-state.mjs";
+import { isDeepStrictEqual } from "node:util";
 import { trackMindRecords } from "./protected-mind.mjs";
 
 /** @typedef {{id: string, seq: number, kind: string, version: string}} InputRef */
 /** @typedef {{token: string, decision: "continue", unrelated?: {id: string, reason: string}[]}} InputReview */
-
-/** @type {WeakMap<object, Buffer>} */
-const tokenKeys = new WeakMap();
 
 /** @param {any} row @returns {InputRef} */
 function inputRef(row) {
@@ -237,6 +235,59 @@ export function freezeInputCheckpoint(runtime, ctx, throughSeq) {
   return { scope, throughSeq, refs };
 }
 
+/** @param {any} runtime @param {any} ctx @param {any} db @param {string} scope @param {any[]} rows @param {any} boundary @param {number} through @param {FrozenCheckpoint} expected */
+function assertFrozenRows(
+  runtime,
+  ctx,
+  db,
+  scope,
+  rows,
+  boundary,
+  through,
+  expected,
+) {
+  const refs = new Map(expected.refs.map(({ id, version }) => [id, version]));
+  const byId = prepared(
+    db,
+    "SELECT * FROM events WHERE agent_id=? AND conversation=? AND id=?",
+  );
+  if (
+    expected.scope !== scope ||
+    expected.throughSeq !== through ||
+    rows.some((row) => refs.get(row.id) !== row.version) ||
+    expected.refs.some(({ id, version }) => {
+      const row = byId.get(ctx.agentId, ctx.conversation, id);
+      return (
+        !row ||
+        row.seq > through ||
+        findInput(db, scope, id)?.version !== version ||
+        !eligible(runtime, ctx, row) ||
+        !visible(runtime, ctx, row, boundary)
+      );
+    })
+  )
+    throw Error("UNSEEN_WATERMARK");
+}
+
+/** @param {any} runtime @param {any} ctx @param {FrozenCheckpoint} expected */
+export function assertFrozenInputCheckpoint(runtime, ctx, expected) {
+  assertReadCheckpoint(runtime, ctx, expected.throughSeq);
+  const { db, scope } = inputs(runtime, ctx);
+  const rows = [...processingInputRows(db, scope, expected.throughSeq)].filter(
+    (row) => eligible(runtime, ctx, row),
+  );
+  assertFrozenRows(
+    runtime,
+    ctx,
+    db,
+    scope,
+    rows,
+    recallBoundary(runtime, ctx),
+    expected.throughSeq,
+    expected,
+  );
+}
+
 /** @param {any} runtime @param {any} ctx @param {number} through @param {{id:string,version:string}[]} [noReply] @param {FrozenCheckpoint} [expected] */
 export function processInput(runtime, ctx, through, noReply = [], expected) {
   const { memory, db, scope, state } = inputs(runtime, ctx);
@@ -250,27 +301,17 @@ export function processInput(runtime, ctx, through, noReply = [], expected) {
       db,
       "SELECT * FROM events WHERE agent_id=? AND conversation=? AND id=?",
     );
-    if (expected) {
-      const refs = new Map(
-        expected.refs.map(({ id, version }) => [id, version]),
+    if (expected)
+      assertFrozenRows(
+        runtime,
+        ctx,
+        db,
+        scope,
+        rows,
+        boundary,
+        through,
+        expected,
       );
-      if (
-        expected.scope !== scope ||
-        expected.throughSeq !== through ||
-        rows.some((row) => refs.get(row.id) !== row.version) ||
-        expected.refs.some(({ id, version }) => {
-          const row = byId.get(ctx.agentId, ctx.conversation, id);
-          return (
-            !row ||
-            row.seq > through ||
-            findInput(db, scope, id)?.version !== version ||
-            !eligible(runtime, ctx, row) ||
-            !visible(runtime, ctx, row, boundary)
-          );
-        })
-      )
-        throw Error("UNSEEN_WATERMARK");
-    }
     if (
       rows.some(
         (row) =>
@@ -373,10 +414,119 @@ export function recordReviewedDelivery(memory, scope, deliveryId, accepted) {
   for (const ref of accepted) writeReviewed(memory.db, scope, deliveryId, ref);
 }
 
-/** @typedef {{key?:string, explicit?:boolean, expected?:string, baseline?:ReviewBaseline, generation?:number}} ReviewOptions */
-/** @typedef {{requestId:string, intent:any, options:ReviewOptions}} ReviewBinding */
-/** @type {WeakMap<InputReviewRequired, ReviewBinding>} */
-const bindings = new WeakMap();
+/** @typedef {{draftId:string, version:number, content:unknown, baseline?:ReviewBaseline, checkpoint?:any}} DraftBinding */
+/** @typedef {ReturnType<typeof snapshotReviewInput>} ReviewSnapshot */
+/** @typedef {{scope:string, throughSeq:number, accepted:InputRef[], snapshotHash:string}} ReviewedInput */
+/** @typedef {{binding:DraftBinding, epoch:string, snapshot:ReviewSnapshot, policy:boolean, checkpoint:any, generation:number, generations:Map<string,number>, review?:ReviewedInput, executionId?:string, original?:DraftGrant, confirmation?:string}} DraftGrant */
+/** @type {WeakMap<object, {epoch:string, draft:Map<string,DraftGrant>, generations:Map<string,number>, legacy:Map<string,string>, legacyKey:Buffer}>} */
+const grants = new WeakMap();
+
+/** @param {any} ctx */
+function grantState(ctx) {
+  const state = grants.get(ctx);
+  if (state?.epoch === ctx.inputEpoch && state) return state;
+  const next = {
+    epoch: ctx.inputEpoch,
+    draft: new Map(),
+    generations: new Map(),
+    legacy: new Map(),
+    legacyKey: randomBytes(32),
+  };
+  grants.set(ctx, next);
+  return next;
+}
+
+/** @param {ReviewSnapshot} snapshot */
+function snapshotDigest(snapshot) {
+  return createHash("sha256")
+    .update(JSON.stringify([snapshot.revision, snapshot.items]))
+    .digest("hex");
+}
+
+/** @param {any} runtime @param {any} ctx */
+function allowsExclusion(runtime, ctx) {
+  return (
+    ctx.conversation.startsWith("group:") &&
+    !isPrivateLikeGroup(runtime.config, ctx.conversation)
+  );
+}
+
+/** @param {any} ctx @param {ReviewSnapshot} snapshot */
+function missingInput(ctx, snapshot) {
+  return snapshot.items.filter(
+    ({ id, version }) => ctx.presentedInput?.get(id) !== version,
+  );
+}
+
+/** @param {ReviewSnapshot} snapshot @param {InputReview["unrelated"]} excluded */
+function reviewed(snapshot, excluded = []) {
+  const rejected = new Set(excluded.map(({ id }) => id));
+  return {
+    snapshotHash: snapshotDigest(snapshot),
+    scope: snapshot.scope,
+    throughSeq: Math.min(
+      snapshot.throughSeq,
+      ...snapshot.items
+        .filter(({ id }) => rejected.has(id))
+        .map(({ seq }) => seq - 1),
+    ),
+    accepted: snapshot.items.filter(({ id }) => !rejected.has(id)),
+  };
+}
+
+/** @param {InputReview|undefined} confirmation @param {boolean} policy @param {InputRef[]} needed */
+function validConfirmation(confirmation, policy, needed) {
+  return (
+    confirmation?.decision === "continue" &&
+    (!confirmation.unrelated?.length ||
+      (policy &&
+        confirmation.unrelated.every(
+          ({ id, reason }) =>
+            reason.trim() && needed.some((item) => item.id === id),
+        )))
+  );
+}
+
+/** @param {ReviewSnapshot} snapshot */
+function blockedReason(snapshot) {
+  if (!snapshot.blocked) return null;
+  return snapshot.blocked.toUpperCase();
+}
+
+/** @param {any} runtime @param {any} ctx @param {DraftGrant} grant @param {DraftBinding} binding */
+function grantMismatch(runtime, ctx, grant, binding) {
+  if (grant.epoch !== ctx.inputEpoch) return "CONTEXT_CHANGED";
+  if (
+    grant.binding.draftId !== binding.draftId ||
+    grant.binding.version !== binding.version ||
+    !isDeepStrictEqual(grant.binding.content, binding.content) ||
+    !isDeepStrictEqual(grant.binding.baseline, binding.baseline)
+  )
+    return "DRAFT_CHANGED";
+  if (grant.policy !== allowsExclusion(runtime, ctx)) return "POLICY_CHANGED";
+  const current = snapshotReviewInput(runtime, ctx, binding.baseline);
+  if (current.scope !== grant.snapshot.scope) return "CONTEXT_CHANGED";
+  if (current.blocked) return blockedReason(current);
+  if (snapshotDigest(current) !== snapshotDigest(grant.snapshot)) {
+    const versions = new Map(
+      grant.snapshot.items.map(({ id, version }) => [id, version]),
+    );
+    return current.items.some(
+      ({ id, version }) => versions.has(id) && versions.get(id) !== version,
+    )
+      ? "INPUT_VERSION_CHANGED"
+      : "NEW_INPUT";
+  }
+  return null;
+}
+
+export class DraftReviewInterrupted extends Error {
+  /** @param {string} reason */
+  constructor(reason) {
+    super("INPUT_REVIEW_REQUIRED");
+    this.reason = reason;
+  }
+}
 
 export class InputReviewRequired extends Error {
   /** @param {Record<string, unknown>} inputReview */
@@ -386,188 +536,109 @@ export class InputReviewRequired extends Error {
   }
 }
 
-/** @param {any} runtime @param {any} ctx @param {ReviewBinding} binding @param {ReturnType<typeof snapshotReviewInput>} snapshot @param {Map<string,string>} [provisional] */
-function assess(runtime, ctx, binding, snapshot, provisional) {
-  const snapshotHash = createHash("sha256")
-    .update(JSON.stringify([snapshot.revision, snapshot.items]))
-    .digest("hex");
-  const changed =
-    binding.options.expected !== undefined &&
-    binding.options.expected !== snapshotHash;
-  const needed = snapshot.items.filter(
-    ({ id, version }) =>
-      changed ||
-      binding.options.explicit ||
-      (ctx.openingReviewInput?.get(id) !== version &&
-        ctx.confirmedReviewInput?.get(id) !== version),
-  );
-  const missing = snapshot.items.filter(
-    ({ id, version }) =>
-      (provisional?.get(id) ?? ctx.presentedInput?.get(id)) !== version,
-  );
-  let token;
-  if (!missing.length && !snapshot.blocked) {
-    const key = tokenKeys.get(ctx) ?? randomBytes(32);
-    tokenKeys.set(ctx, key);
-    token = createHmac("sha256", key)
-      .update(
-        JSON.stringify([
-          inputScope(runtime, ctx),
-          ctx.inputEpoch,
-          binding.options.key ?? binding.requestId,
-          binding.options.generation ?? 0,
-          binding.intent,
-          snapshot.items,
-        ]),
-      )
-      .digest("hex");
-  }
-  const canExclude =
-    ctx.conversation.startsWith("group:") &&
-    !isPrivateLikeGroup(runtime.config, ctx.conversation);
-  return { needed, missing, token, canExclude, snapshotHash, changed };
-}
-
-/** @param {any} ctx @param {ReturnType<typeof snapshotReviewInput>} snapshot @param {ReturnType<typeof assess>} assessment */
-function challenge(ctx, snapshot, { missing, needed, token, canExclude }) {
+/** @param {any} runtime @param {any} ctx @param {DraftBinding} binding @param {ReviewSnapshot} snapshot @returns {DraftGrant} */
+function draftGrant(runtime, ctx, binding, snapshot) {
+  const { generations } = grantState(ctx);
   return {
-    ...(token ? { token } : {}),
-    ...(snapshot.blocked ? { blocked: snapshot.blocked } : {}),
-    fromSeq: snapshot.fromSeq,
-    throughSeq: snapshot.throughSeq,
-    missing: missing.length,
-    pending: needed.length,
-    canExclude,
-    ...(canExclude && needed.length
-      ? {
-          excludable: needed
-            .slice(0, 20)
-            .map(({ id, seq, kind }) => ({ id, seq, kind })),
-        }
-      : {}),
-    items: missing.slice(0, 20).map(({ id, seq, kind }) => ({
-      id,
-      seq,
-      kind,
-      reason: ctx.presentedInput?.has(id)
-        ? "version_changed"
-        : seq <= snapshot.fromSeq
-          ? "previous_presentation_incomplete_or_stale"
-          : "full_input_not_presented",
-      continuation: { tool: "memory_read", id, offset: 0 },
-    })),
+    binding,
+    epoch: ctx.inputEpoch,
+    snapshot,
+    generations,
+    generation: generations.get(binding.draftId) ?? 0,
+    policy: allowsExclusion(runtime, ctx),
+    checkpoint: binding.checkpoint,
   };
 }
 
-/**
- * The token binds exact outbound contents and the full current input snapshot.
- * It conveys neither reply authority nor a read mark.
- * @param {any} runtime @param {any} ctx
- * @param {string} requestId @param {any} intent @param {InputReview | undefined} review
- * @param {ReviewOptions} [options]
- */
-export function assertInputReviewed(
-  runtime,
-  ctx,
-  requestId,
-  intent,
-  review,
-  options = {},
-) {
-  const binding = { requestId, intent, options };
-  const snapshot = snapshotReviewInput(runtime, ctx, options.baseline);
-  const { throughSeq } = snapshot;
-  const assessment = assess(runtime, ctx, binding, snapshot);
-  const { needed, token, canExclude, snapshotHash, changed } = assessment;
-  if (!snapshot.blocked && !needed.length && !changed && !review)
-    return {
-      throughSeq,
-      scope: snapshot.scope,
-      accepted: snapshot.items,
-      snapshotHash,
-    };
-
-  const excluded = review?.unrelated || [];
+/** @param {any} runtime @param {any} ctx @param {DraftBinding} binding */
+export function initialDraftReview(runtime, ctx, binding) {
+  const snapshot = snapshotReviewInput(runtime, ctx, binding.baseline);
   if (
-    token !== undefined &&
-    review?.token === token &&
-    review.decision === "continue" &&
-    (!excluded.length ||
-      (canExclude &&
-        excluded.every(
-          ({ id, reason }) =>
-            reason.trim() && needed.some((item) => item.id === id),
-        )))
+    snapshot.blocked ||
+    (ctx.requiresInputSubmission && !ctx.openingCommitted) ||
+    snapshot.items.some(
+      ({ id, version }) => ctx.openingReviewInput?.get(id) !== version,
+    )
   )
-    return {
-      snapshotHash,
-      scope: snapshot.scope,
-      throughSeq: Math.min(
-        throughSeq,
-        ...needed
-          .filter((item) => excluded.some(({ id }) => id === item.id))
-          .map(({ seq }) => seq - 1),
-      ),
-      accepted: snapshot.items.filter(
-        (item) => !excluded.some(({ id }) => id === item.id),
-      ),
-    };
-
-  const error = new InputReviewRequired(challenge(ctx, snapshot, assessment));
-  bindings.set(error, binding);
-  throw error;
+    return null;
+  const grant = draftGrant(runtime, ctx, binding, snapshot);
+  grant.review = reviewed(snapshot);
+  return grant;
 }
 
-/**
- * A tool error can carry actual readable input. Assemble the bounded projection
- * after the reservation rolled back and sign only after the final page is set.
- * @param {any} runtime @param {any} ctx @param {any} error
- */
-export function attachReviewOriginals(runtime, ctx, error) {
-  const binding = bindings.get(error);
-  if (!binding) return;
-  bindings.delete(error);
-  let agent;
-  try {
-    agent = runtime.assertActive(ctx);
-  } catch {
-    error.inputReview = {};
-    return;
-  }
-  const memory = runtime.memory.bind(agent.id),
-    boundary = recallBoundary(runtime, ctx);
-  const snapshot = snapshotReviewInput(runtime, ctx, binding.options.baseline);
-  const before = challenge(
-    ctx,
-    snapshot,
-    assess(runtime, ctx, binding, snapshot),
-  );
-  /** @type {any[]} */
-  const shown = [];
-  /** @type {any[]} */
+/** @param {any} runtime @param {any} ctx @param {DraftBinding} binding @param {InputReview|undefined} confirmation */
+export function validateDraftGrant(runtime, ctx, binding, confirmation) {
+  const grant = confirmation && grantState(ctx).draft.get(confirmation.token);
+  if (!grant) return { reason: "CONTEXT_CHANGED" };
+  if (
+    grant.binding.draftId !== binding.draftId ||
+    grant.binding.version !== binding.version ||
+    !isDeepStrictEqual(grant.binding.content, binding.content)
+  )
+    return { reason: "DRAFT_CHANGED" };
+  if (!validConfirmation(confirmation, grant.policy, grant.snapshot.items))
+    return { reason: "INVALID_CONFIRMATION" };
+  const decision = JSON.stringify(confirmation?.unrelated ?? []);
+  if (grant.executionId)
+    return grant.confirmation === decision
+      ? { replay: grant.executionId }
+      : { reason: "INVALID_CONFIRMATION" };
+  if ((grant.generations.get(binding.draftId) ?? 0) !== grant.generation)
+    return { reason: "DRAFT_CHANGED" };
+  const reason = grantMismatch(runtime, ctx, grant, binding);
+  if (reason) return { reason };
+  if (missingInput(ctx, grant.snapshot).length) return { reason: "READ_GAP" };
+  const review = reviewed(grant.snapshot, confirmation?.unrelated);
+  return {
+    grant: { ...grant, original: grant, review, confirmation: decision },
+    review,
+  };
+}
+
+/** @param {DraftGrant} grant @param {string} executionId */
+export function claimDraftGrant(grant, executionId) {
+  const original = grant.original ?? grant;
+  original.executionId = executionId;
+  original.confirmation = grant.confirmation;
+  original.generations.set(original.binding.draftId, original.generation + 1);
+}
+
+/** @param {any} runtime @param {any} ctx @param {DraftBinding} binding @param {DraftGrant|null} grant */
+export function assertDraftReview(runtime, ctx, binding, grant) {
+  if (!grant?.review) throw new DraftReviewInterrupted("READ_GAP");
+  const reason = grantMismatch(runtime, ctx, grant, binding);
+  if (reason) throw new DraftReviewInterrupted(reason);
+  if (missingInput(ctx, grant.snapshot).length)
+    throw new DraftReviewInterrupted("READ_GAP");
+  return grant.review;
+}
+
+/** @param {any} runtime @param {any} ctx @param {string} id */
+export function presentationVersion(runtime, ctx, id) {
+  const { db, scope } = inputs(runtime, ctx);
+  return findInput(db, scope, id)?.version;
+}
+
+/** @param {any} runtime @param {any} ctx @param {InputRef[]} missing */
+function reviewMaterials(runtime, ctx, missing) {
+  const agent = runtime.assertActive(ctx);
+  const memory = runtime.memory.bind(agent.id);
+  const boundary = recallBoundary(runtime, ctx);
+  const items = [];
   const tracked = [];
-  const versions = new Map(
-    snapshot.items.map(({ id, version }) => [id, version]),
-  );
-  /** @type {any[]} */
-  const items = before.items.map((ref) => ({ ...ref, bodyOmitted: true }));
-  for (const [index, ref] of before.items.entries()) {
+  let bytes = 0;
+  for (const ref of missing.slice(0, 20)) {
     const row = memory.readRecord({ id: ref.id }, ctx.conversation);
     if (
       row.connectionId !== agent.connectionId ||
       row.conversation !== ctx.conversation ||
       !boundary.allowed(row)
-    ) {
-      items[index] = {
-        id: ref.id,
-        seq: ref.seq,
-        kind: ref.kind,
-        withheld: true,
-      };
+    )
       continue;
-    }
     const item = {
-      ...ref,
+      id: ref.id,
+      seq: ref.seq,
+      kind: ref.kind,
       conversation: row.conversation,
       source: row.source,
       type: row.type,
@@ -577,50 +648,258 @@ export function attachReviewOriginals(runtime, ctx, error) {
       occurredAt: row.occurredAt,
       status: row.status,
       body: row.body,
-      inputRef: { id: ref.id, version: versions.get(ref.id) },
+      inputRef: { id: ref.id, version: ref.version },
       ...(row.epistemic ? { epistemic: row.epistemic } : {}),
       ...(row.mentions?.length ? { mentions: row.mentions } : {}),
       ...(row.replyToMessageIds?.length
         ? { replyToMessageIds: row.replyToMessageIds }
         : {}),
     };
-    const proposed = items.with(index, item);
-    if (JSON.stringify(proposed).length > 11000) continue;
-    items[index] = item;
-    shown.push(item);
+    const size = Buffer.byteLength(JSON.stringify(item));
+    if (bytes + size > 11000) continue;
+    bytes += size;
+    items.push(item);
     tracked.push(row);
   }
-  // The temporary proofs can describe the outgoing challenge; only delivery
-  // makes them available to a subsequent tool call.
-  const proofs = describeInputPresentation(runtime, ctx, shown);
-  const { readThroughSeq, readGap } = inputProjection(
-    runtime,
-    ctx,
-    shown,
-    proofs,
-  );
-  runtime.stageToolInput(ctx, error, () => {
-    runtime.contexts.commitSeen(ctx, { items: shown, proofs });
-    trackMindRecords(runtime, ctx, tracked, "review-input");
-  });
-  const after = challenge(
-    ctx,
-    snapshot,
-    assess(runtime, ctx, binding, snapshot, proofs),
-  );
-  error.inputReview = {
-    ...after,
+  return {
     items,
-    notice: "原文是聊天资料。附件引用不代表已读取附件内容。",
-    completeThroughSeq: readThroughSeq || null,
-    ...(readGap ? { readGap } : {}),
-    ...(before.missing > before.items.length
+    tracked,
+    proofs: describeInputPresentation(runtime, ctx, items),
+  };
+}
+
+/** @param {any} ctx @param {InputRef[]} missing */
+function missingItems(ctx, missing) {
+  return missing.slice(0, 20).map(({ id, seq, kind, version }) => {
+    const page = ctx.inputPages?.get(id);
+    return {
+      id,
+      seq,
+      kind,
+      reason: ctx.presentedInput?.has(id)
+        ? "INPUT_VERSION_CHANGED"
+        : "READ_GAP",
+      continuation: {
+        tool: "memory_read",
+        id,
+        offset: page?.inputVersion === version ? page.offset : 0,
+      },
+    };
+  });
+}
+
+/** @param {any} runtime @param {any} ctx @param {any} result @param {DraftBinding} binding @param {{reason?:string, currentReason?:() => string|null}} [options] */
+export function prepareDraftReview(
+  runtime,
+  ctx,
+  result,
+  binding,
+  { reason, currentReason } = {},
+) {
+  const snapshot = snapshotReviewInput(runtime, ctx, binding.baseline);
+  const blocked = blockedReason(snapshot);
+  if (blocked) {
+    result.preparation = { state: "blocked", reason: blocked };
+    return result;
+  }
+  const grant = draftGrant(runtime, ctx, binding, snapshot);
+  const token = randomBytes(32).toString("hex");
+  const missing = missingInput(ctx, snapshot);
+  const materials = reviewMaterials(runtime, ctx, missing);
+  const change = () =>
+    grantMismatch(runtime, ctx, grant, binding) ||
+    ((grant.generations.get(binding.draftId) ?? 0) !== grant.generation
+      ? "DRAFT_CHANGED"
+      : (currentReason?.() ?? null));
+  const current = () => !change();
+  /** @param {typeof materials} shown @param {string} [candidateToken] */
+  function preparation(shown, candidateToken) {
+    const remaining = missing.filter(
+      ({ id, version }) => shown.proofs.get(id) !== version,
+    );
+    return {
+      state: candidateToken ? "ready" : "needs_input",
+      ...(candidateToken ? { token: candidateToken } : {}),
+      reason:
+        reason ?? (remaining.length ? "READ_GAP" : "REVIEW_DECISION_REQUIRED"),
+      missing: missingItems(ctx, remaining),
+      pendingDecision: snapshot.items.length,
+      ...(binding.checkpoint
+        ? { readThroughSeq: binding.checkpoint.throughSeq }
+        : {}),
+      items: shown.items,
+      fromSeq: snapshot.fromSeq,
+      throughSeq: snapshot.throughSeq,
+      canExclude: grant.policy,
+      ...(grant.policy
+        ? {
+            excludable: snapshot.items
+              .slice(0, 20)
+              .map(({ id, seq, kind }) => ({ id, seq, kind })),
+          }
+        : {}),
+    };
+  }
+  const empty = { items: [], tracked: [], proofs: new Map() };
+  result.preparation = preparation(empty);
+  const variants = [];
+  const ready = missing.every(
+    ({ id, version }) => materials.proofs.get(id) === version,
+  );
+  // Keep complete material that fits. A trimmed candidate always loses its token.
+  for (let length = materials.items.length; length >= 0; length--) {
+    const items = materials.items.slice(0, length);
+    const ids = new Set(items.map(({ id }) => id));
+    const shown = {
+      items,
+      tracked: materials.tracked.slice(0, length),
+      proofs: new Map([...materials.proofs].filter(([id]) => ids.has(id))),
+    };
+    const canGrant = ready && length === materials.items.length;
+    const value = {
+      ...result,
+      preparation: preparation(shown, canGrant ? token : undefined),
+    };
+    variants.push({
+      value,
+      expected: JSON.parse(JSON.stringify(value)),
+      current,
+      commit: () => {
+        if (!current()) return false;
+        if (shown.items.length) {
+          runtime.contexts.commitSeen(ctx, shown);
+          trackMindRecords(runtime, ctx, shown.tracked, "review-input");
+        }
+        if (canGrant && !missingInput(ctx, snapshot).length)
+          grantState(ctx).draft.set(token, grant);
+        return true;
+      },
+    });
+  }
+  variants.push({
+    render: () => ({
+      ...result,
+      preparation: {
+        state: "blocked",
+        reason: change() || "TOOL_OUTPUT_INCOMPLETE",
+      },
+    }),
+  });
+  runtime.stageToolOutput(ctx, result, variants);
+  return result;
+}
+
+/**
+ * Compatibility projection for non-draft sends. Grant activation still uses
+ * the same final tool delivery as ordinary reads and draft preparation.
+ * @param {any} runtime @param {any} ctx @param {string} requestId @param {any} intent
+ * @param {InputReview|undefined} review
+ */
+export function assertInputReviewed(runtime, ctx, requestId, intent, review) {
+  const snapshot = snapshotReviewInput(runtime, ctx);
+  const digest = snapshotDigest(snapshot);
+  const policy = allowsExclusion(runtime, ctx);
+  const needed = snapshot.items.filter(
+    ({ id, version }) =>
+      ctx.openingReviewInput?.get(id) !== version &&
+      ctx.confirmedReviewInput?.get(id) !== version,
+  );
+  if (!snapshot.blocked && !needed.length && !review) return reviewed(snapshot);
+  const missing = missingInput(ctx, snapshot);
+  const binding = JSON.stringify([
+    snapshot.scope,
+    digest,
+    policy,
+    requestId,
+    intent,
+  ]);
+  if (
+    !snapshot.blocked &&
+    !missing.length &&
+    validConfirmation(review, policy, needed) &&
+    grantState(ctx).legacy.get(review?.token || "") === binding
+  )
+    return reviewed(snapshot, review?.unrelated);
+
+  const challenge = {
+    ...(snapshot.blocked ? { blocked: snapshot.blocked } : {}),
+    fromSeq: snapshot.fromSeq,
+    throughSeq: snapshot.throughSeq,
+    missing: missing.length,
+    pending: needed.length,
+    canExclude: policy,
+    ...(policy && needed.length
       ? {
-          continuation: {
-            tool: "conversation_read",
-            afterSeq: before.items.at(-1)?.seq ?? before.fromSeq,
-          },
+          excludable: needed
+            .slice(0, 20)
+            .map(({ id, seq, kind }) => ({ id, seq, kind })),
         }
       : {}),
+    items: missingItems(ctx, missing).map((item) => ({
+      ...item,
+      reason: ctx.presentedInput?.has(item.id)
+        ? "version_changed"
+        : item.seq <= snapshot.fromSeq
+          ? "previous_presentation_incomplete_or_stale"
+          : "full_input_not_presented",
+    })),
   };
+  const error = new InputReviewRequired(challenge);
+  if (snapshot.blocked) throw error;
+  const shown = reviewMaterials(runtime, ctx, missing);
+  const remaining = missing.filter(
+    ({ id, version }) => shown.proofs.get(id) !== version,
+  );
+  const token = !remaining.length
+    ? createHmac("sha256", grantState(ctx).legacyKey)
+        .update(binding)
+        .digest("hex")
+    : undefined;
+  const materialById = new Map(shown.items.map((item) => [item.id, item]));
+  const expanded = new InputReviewRequired({
+    ...challenge,
+    ...(token ? { token } : {}),
+    missing: remaining.length,
+    items: challenge.items.map(
+      (item) => materialById.get(item.id) ?? { ...item, bodyOmitted: true },
+    ),
+  });
+  const current = () => {
+    const now = snapshotReviewInput(runtime, ctx);
+    return (
+      !now.blocked &&
+      now.scope === snapshot.scope &&
+      digest === snapshotDigest(now) &&
+      policy === allowsExclusion(runtime, ctx)
+    );
+  };
+  runtime.stageToolOutput(ctx, error, [
+    {
+      value: expanded,
+      matches: (/** @type {any} */ actual) =>
+        actual?.code === "INPUT_REVIEW_REQUIRED" &&
+        isDeepStrictEqual(
+          JSON.parse(JSON.stringify(expanded.inputReview)),
+          actual.inputReview,
+        ),
+      current,
+      commit: () => {
+        if (!current()) return false;
+        if (shown.items.length) {
+          runtime.contexts.commitSeen(ctx, shown);
+          trackMindRecords(runtime, ctx, shown.tracked, "review-input");
+        }
+        if (token && !missingInput(ctx, snapshot).length)
+          grantState(ctx).legacy.set(token, binding);
+        return true;
+      },
+    },
+    {
+      value: error,
+      matches: (/** @type {any} */ actual) =>
+        actual?.code === "INPUT_REVIEW_REQUIRED" &&
+        isDeepStrictEqual(challenge, actual.inputReview),
+    },
+  ]);
+  throw error;
 }

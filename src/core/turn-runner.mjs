@@ -159,7 +159,10 @@ export class TurnRunner {
         tools,
         callTool: (name, args) =>
           runtime.callTool(ctx, name, args, { deferInput: true }),
-        onToolResultSubmitted: (result) => runtime.commitToolInput(ctx, result),
+        finalizeToolOutput: (original, options) =>
+          runtime.finalizeToolOutput(ctx, original, options),
+        commitToolOutput: (receipt, text) =>
+          runtime.commitToolOutput(ctx, receipt, text),
         session: prepared.session,
         saveSession: (session) =>
           !runtime.stopped &&

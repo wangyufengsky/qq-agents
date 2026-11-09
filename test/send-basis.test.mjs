@@ -231,9 +231,13 @@ test("qq_send brings the card of someone addressed before they spoke, once per v
     { requestId: "q6", text: "大家好" },
   ])
     assert.deepEqual(Object.keys(await f.tool(ctx, args)).sort(), [
+      "actionResult",
+      "attemptedThisCall",
       "draft",
       "messageId",
+      "receipts",
       "recordId",
+      "remaining",
       "requestId",
       "status",
     ]);

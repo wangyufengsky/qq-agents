@@ -56,10 +56,20 @@ function setup(t) {
       now += ms;
     },
     send: (id, target = ctx) =>
-      sendReviewed((args) => f.runtime.send(target, args), {
-        requestId: id,
-        text: "synthetic reply",
-      }),
+      sendReviewed(
+        async (args) => {
+          try {
+            return await f.runtime.send(target, args);
+          } catch (error) {
+            await f.runtime.directToolOutput(target, error);
+            throw error;
+          }
+        },
+        {
+          requestId: id,
+          text: "synthetic reply",
+        },
+      ),
   };
 }
 

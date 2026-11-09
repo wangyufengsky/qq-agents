@@ -27,7 +27,8 @@ import { isDeepStrictEqual } from "node:util";
 import { DeliveryService } from "./delivery.mjs";
 import { recoverDraftArchives } from "./draft-delivery.mjs";
 import { QQDraftStore } from "../memory/qq-drafts.mjs";
-import { attachReviewOriginals } from "./input-review.mjs";
+import { inputScope } from "../memory/input-state.mjs";
+import { safeToolFailure } from "../tools/errors.mjs";
 import { TurnRunner } from "./turn-runner.mjs";
 import { runtimeStatus } from "./runtime-status.mjs";
 import { observeInput } from "./input-progress.mjs";
@@ -943,33 +944,142 @@ export class Runtime {
   runBackend(...args) {
     return this.turns.runBackend(...args);
   }
-  stageToolInput(ctx, result, commit) {
-    (ctx.stagedToolInputs ??= new WeakMap()).set(result, commit);
+  stageToolInput(ctx, result, commit, records) {
+    const expected = JSON.parse(JSON.stringify(result));
+    const allowed = () => {
+      const visible = recallBoundary(this, ctx).rows(records);
+      return (
+        visible.length === records.length &&
+        visible.every((row, index) => row === records[index])
+      );
+    };
+    this.stageToolOutput(ctx, result, [
+      {
+        value: result,
+        expected,
+        current: () => {
+          if (!allowed()) throw Error("RECALL_SOURCE_NOT_ALLOWED");
+          return true;
+        },
+        commit: commit && (() => allowed() && commit()),
+      },
+    ]);
   }
-  commitToolInput(ctx, result) {
-    const commit = ctx.stagedToolInputs?.get(result);
-    if (commit) {
-      ctx.stagedToolInputs.delete(result);
-      if (
-        this.capabilities.get(ctx.token) !== ctx ||
-        ctx.controller.signal.aborted
-      )
-        return result;
+  stageToolOutput(ctx, result, variants) {
+    (ctx.stagedToolOutputs ??= new WeakMap()).set(result, {
+      epoch: ctx.inputEpoch,
+      scope: /^(group|private):/.test(ctx.conversation)
+        ? inputScope(this, ctx)
+        : null,
+      variants,
+    });
+  }
+  activeOutputEpoch(ctx, epoch, scope) {
+    return (
+      this.capabilities.get(ctx.token) === ctx &&
+      !ctx.controller.signal.aborted &&
+      ctx.expires > Date.now() &&
+      ctx.inputEpoch === epoch &&
+      (!scope || inputScope(this, ctx) === scope)
+    );
+  }
+  async finalizeToolOutput(ctx, original, { encode, maxBytes = Infinity }) {
+    const plan = ctx.stagedToolOutputs?.get(original);
+    if (!plan) return { wire: (await encode(original)).wire };
+    ctx.stagedToolOutputs.delete(original);
+    const stale = () => !this.activeOutputEpoch(ctx, plan.epoch, plan.scope);
+    if (stale()) throw Error("INPUT_EPOCH_CHANGED");
+
+    for (const variant of plan.variants) {
+      const { matches, commit, current } = variant;
+      if (current && !current()) continue;
+      const value = variant.render ? variant.render() : variant.value;
+      const expected = variant.render
+        ? JSON.parse(JSON.stringify(value))
+        : variant.expected;
+      const { wire, text } = await encode(value);
+      if (stale()) throw Error("INPUT_EPOCH_CHANGED");
+      const bytes = Buffer.byteLength(
+        typeof wire === "string" ? wire : JSON.stringify(wire),
+      );
+      if (bytes > maxBytes || (current && !current())) continue;
+      if (!expected && !matches) return { wire };
+      let actual;
       try {
-        commit();
-      } catch (error) {
-        this.contexts.resetInputEvidence(ctx);
-        delete ctx.stagedOpening;
-        this.diagnostics.report(
-          Error("INPUT_PRESENTATION_COMMIT_FAILED", { cause: error }),
-          {
-            component: "runtime",
-            agentId: ctx.agentId,
-            conversation: ctx.conversation,
-          },
-        );
+        actual = JSON.parse(text);
+      } catch {
+        // Only a structured, complete tool result can prove presentation.
       }
+      if (!(matches ? matches(actual) : isDeepStrictEqual(expected, actual))) {
+        if (plan.variants.length === 1 && value === original) return { wire };
+        continue;
+      }
+      if (!commit) return { wire };
+      const receipt = randomUUID();
+      let pending = ctx.toolOutputReceipts;
+      if (pending?.epoch !== plan.epoch)
+        pending = ctx.toolOutputReceipts = {
+          epoch: plan.epoch,
+          entries: new Map(),
+        };
+      pending.entries.set(receipt, {
+        digest: createHash("sha256").update(text).digest("hex"),
+        scope: plan.scope,
+        commit,
+      });
+      return { wire, receipt };
     }
+
+    throw Error("TOOL_OUTPUT_INCOMPLETE");
+  }
+  commitToolOutput(ctx, receipt, observedText) {
+    if (!receipt || typeof observedText !== "string") return false;
+    return this.commitToolOutputDigest(
+      ctx,
+      receipt,
+      createHash("sha256").update(observedText).digest("hex"),
+    );
+  }
+  commitToolOutputDigest(ctx, receipt, digest) {
+    const pending = ctx.toolOutputReceipts;
+    const entry = pending?.entries.get(receipt);
+    if (!entry) return false;
+    pending.entries.delete(receipt);
+    try {
+      if (
+        entry.digest !== digest ||
+        !this.activeOutputEpoch(ctx, pending.epoch, entry.scope)
+      )
+        return false;
+      return entry.commit() !== false;
+    } catch (error) {
+      this.contexts.resetInputEvidence(ctx);
+      delete ctx.stagedOpening;
+      this.diagnostics.report(
+        Error("INPUT_PRESENTATION_COMMIT_FAILED", { cause: error }),
+        {
+          component: "runtime",
+          agentId: ctx.agentId,
+          conversation: ctx.conversation,
+        },
+      );
+      return false;
+    }
+  }
+  async directToolOutput(ctx, result) {
+    if (!ctx.stagedToolOutputs?.has(result)) return result;
+    const { wire, receipt } = await this.finalizeToolOutput(ctx, result, {
+      encode: (value) => {
+        const text = JSON.stringify(
+          value instanceof Error ? safeToolFailure(value) : value,
+        );
+        return { wire: text, text };
+      },
+    });
+    if (receipt) this.commitToolOutput(ctx, receipt, wire);
+    const output = JSON.parse(wire);
+    if (!(result instanceof Error)) return output;
+    result.inputReview = output.inputReview;
     return result;
   }
   callTool(...args) {
@@ -995,22 +1105,21 @@ export class Runtime {
       }
       const result = await this.executeTool(ctx, name, args);
       if (ctx.inputEpoch !== epoch) {
-        ctx.stagedToolInputs?.delete(result);
+        ctx.stagedToolOutputs?.delete(result);
         throw Error("INPUT_EPOCH_CHANGED");
       }
-      if (tracedSend && result?.status === "stopped") {
+      if (tracedSend && (result?.status === "stopped" || result?.preparation)) {
         const reason = timedStoppedSend(result, ctx.controller.signal.aborted);
         ctx.messageTimingToolOutcome = reason;
         this.messageTiming.stop(ctx.messageTimingId, reason);
       }
       if (calls.length < 50)
         calls.push({ name, ok: true, ms: Date.now() - startedAt });
-      return deferInput ? result : this.commitToolInput(ctx, result);
+      return deferInput ? result : await this.directToolOutput(ctx, result);
     } catch (error) {
       if (ctx.inputEpoch !== epoch)
         throw Error("INPUT_EPOCH_CHANGED", { cause: error });
-      attachReviewOriginals(this, ctx, error);
-      if (!deferInput) this.commitToolInput(ctx, error);
+      if (!deferInput) await this.directToolOutput(ctx, error);
       if (tracedSend)
         ctx.messageTimingToolOutcome = timedDeliveryFailure(error);
       if (calls.length < 50)

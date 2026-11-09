@@ -23,6 +23,7 @@ import { MemoryStore } from "../src/memory/store.mjs";
 import { Runtime } from "../src/core/runtime.mjs";
 import { BackendRegistry } from "../src/backends/index.mjs";
 import { createServer } from "../src/server.mjs";
+import { writeRelayToken } from "../src/core/relay-auth.mjs";
 import { MediaStore } from "../src/tools/media.mjs";
 import { VoiceStore } from "../src/tools/voice.mjs";
 import { FileStore } from "../src/tools/files.mjs";
@@ -65,6 +66,7 @@ const tokenFile = path.join(root, "admin-token");
 if (!fs.existsSync(tokenFile))
   fs.writeFileSync(tokenFile, randomBytes(32).toString("hex"), { mode: 0o600 });
 const token = fs.readFileSync(tokenFile, "utf8").trim();
+writeRelayToken(root, token);
 const inputs = args.includes("--inputs")
   ? JSON.parse(fs.readFileSync(opt("--inputs"), "utf8"))
   : null;

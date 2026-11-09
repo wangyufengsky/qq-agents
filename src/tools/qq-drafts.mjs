@@ -7,18 +7,24 @@ import {
   validateDraftInput,
 } from "../core/draft-input.mjs";
 import {
+  activeDraftExecution,
+  assertDraftCheckpoint,
   assertDraftIdle,
   assertDraftOrigin,
   claimDraftExecution,
   draftCheckpointIntent,
+  draftReviewBinding,
   draftScope,
   releaseDraftExecution,
   repairDeliveryCheckpoint,
-  rotateDraftReview,
+  replayDraftExecution,
 } from "../core/draft-delivery.mjs";
 import {
-  attachReviewOriginals,
+  DraftReviewInterrupted,
+  initialDraftReview,
+  prepareDraftReview,
   snapshotReviewInput,
+  validateDraftGrant,
 } from "../core/input-review.mjs";
 import {
   contextProtection,
@@ -64,9 +70,10 @@ const contents = z.union([
     .strict(),
 ]);
 const position = z.number().int().min(0).max(9);
+const readThroughSeq = z.number().int().nonnegative().optional();
 export const draftDefinitions = {
   qq_draft: [
-    "查看当前聊天保存的待发草稿。list 列编号，read 按 position 展开一项，revise 修改未提交项，discard 放弃剩余未提交项，continue 明确核对并继续。修改、放弃和继续须填当前 expectedVersion。已发不重发，未知先核对，重启不会续发。读完新增输入后，用回执令牌继续该版本。",
+    "处理当前聊天的草稿。list 列出草稿，read 按 position 查看一项，prepare 核对当前版本和新增输入。revise 保存新版并返回该版的准备结果，discard 放弃剩余未提交项。准备结果为 needs_input 时按分页入口补齐，再调用 prepare；ready 时主体决定是否以 inputReview={token,decision:'continue'} 提交该版本。没有 token 的 continue 只核对。已发不重发，未知先核对。",
     z.discriminatedUnion("action", [
       z
         .object({
@@ -88,9 +95,13 @@ export const draftDefinitions = {
           ...ref,
           position,
           input: contents,
+          readThroughSeq,
         })
         .strict(),
       z.object({ action: z.literal("discard"), ...ref }).strict(),
+      z
+        .object({ action: z.literal("prepare"), ...ref, readThroughSeq })
+        .strict(),
       z
         .object({
           action: z.literal("continue"),
@@ -109,6 +120,12 @@ function draftSummary(draft) {
     tool: draft.toolName,
     imported: draft.imported,
     expiresAt: draft.expiresAt,
+    ...(draft.value.checkpointIntent?.checkpoint?.throughSeq !== undefined
+      ? {
+          requestedReadThroughSeq:
+            draft.value.checkpointIntent.checkpoint.throughSeq,
+        }
+      : {}),
     items: draft.items.map(
       ({
         position: index,
@@ -146,28 +163,6 @@ export function draftHints(runtime, ctx, limit = 10) {
       .map(({ id }) => draftSummary(runtime.drafts.read(scope, id))),
     nextOffset: entries.nextOffset,
   };
-}
-
-function response(draft, { duplicate = false } = {}) {
-  const summary = draftSummary(draft);
-  const receipts = summary.items
-    .filter((item) => item.status === "sent")
-    .map((item) => ({
-      status: "sent",
-      requestId: item.requestId,
-      messageId: item.messageId ?? null,
-      ...(item.recordId ? { recordId: item.recordId } : {}),
-      ...(duplicate ? { duplicate: true } : {}),
-    }));
-  return draft.items.every((item) => item.status === "sent")
-    ? { status: "sent", receipts, draft: summary }
-    : {
-        status: "stopped",
-        receipts,
-        error: "QQ_DRAFT_CONTINUE_REQUIRED",
-        draft: summary,
-        doNotReplay: true,
-      };
 }
 
 function scopedLegacyDelivery(runtime, ctx, scope, requestId) {
@@ -249,6 +244,8 @@ export async function sendDraftTool(runtime, ctx, toolName, args) {
     const { code, hint } = safeToolFailure(error);
     return {
       status: "stopped",
+      actionResult: "not_sent",
+      attemptedThisCall: false,
       receipts: [],
       failedIndex: 0,
       error: code,
@@ -281,7 +278,12 @@ export async function sendDraftTool(runtime, ctx, toolName, args) {
       scope,
       requestId,
     );
-    return readCheckpoint ? { ...receipt, readCheckpoint } : receipt;
+    return {
+      ...receipt,
+      actionResult: "sent",
+      attemptedThisCall: false,
+      ...(readCheckpoint ? { readCheckpoint } : {}),
+    };
   }
   if (!prior && ctx.recoveryDeliveryBlocked)
     throw Error("RECOVERY_DELIVERY_BLOCKED");
@@ -349,7 +351,7 @@ export async function sendDraftTool(runtime, ctx, toolName, args) {
       attachDraftFailure(error, draftSummary(draft));
       throw error;
     }
-    if (burst) return response(draft, { duplicate: true });
+    if (burst) return currentOutcome(draft, true);
     const item = draftSummary(draft).items[0];
     if (item.status === "sent") {
       const readCheckpoint =
@@ -359,6 +361,8 @@ export async function sendDraftTool(runtime, ctx, toolName, args) {
         ...item,
         messageId: item.messageId ?? null,
         duplicate: true,
+        actionResult: "sent",
+        attemptedThisCall: false,
         ...(readCheckpoint ? { readCheckpoint } : {}),
       };
     }
@@ -370,7 +374,10 @@ export async function sendDraftTool(runtime, ctx, toolName, args) {
     attachDraftFailure(error, draftSummary(draft));
     throw error;
   }
-  return runDraft(runtime, ctx, scope, draft, inputReview);
+  const binding = draftReviewBinding(draft, checkpointIntent?.checkpoint);
+  const grant = inputReview ? null : initialDraftReview(runtime, ctx, binding);
+  if (!grant) return prepareSavedDraft(runtime, ctx, scope, draft, { binding });
+  return runDraft(runtime, ctx, scope, draft, binding, grant);
 }
 
 function deliverItem(runtime, ctx, toolName, args, options) {
@@ -383,113 +390,285 @@ function deliverItem(runtime, ctx, toolName, args, options) {
   });
 }
 
+function currentOutcome(draft, duplicate = false) {
+  const summary = draftSummary(draft);
+  const receipts = summary.items
+    .filter((item) => item.status === "sent")
+    .map(({ requestId, messageId, recordId }) => ({
+      status: "sent",
+      requestId,
+      messageId: messageId ?? null,
+      ...(recordId ? { recordId } : {}),
+      ...(duplicate ? { duplicate: true } : {}),
+    }));
+  const status = summary.items.every((item) => item.status === "sent")
+    ? "sent"
+    : "stopped";
+  const statuses = new Set(summary.items.map((item) => item.status));
+  return {
+    status,
+    actionResult: statuses.has("unknown")
+      ? "unknown"
+      : statuses.has("pending")
+        ? "pending"
+        : status === "sent"
+          ? "sent"
+          : receipts.length
+            ? "partially_sent"
+            : statuses.has("failed")
+              ? "failed"
+              : "not_sent",
+    attemptedThisCall: false,
+    draft: summary,
+    receipts,
+    remaining: summary.items.filter(({ status }) => status === "unsubmitted"),
+    ...(status !== "sent" ? { doNotReplay: true } : {}),
+  };
+}
+
+function blockedReason(code) {
+  switch (code) {
+    case "AGENT_PAUSED_OR_EXPIRED":
+    case "INPUT_EPOCH_CHANGED":
+    case "QQ_DRAFT_TURN_EXPIRED":
+      return "CONTEXT_CHANGED";
+    case "QQ_DRAFT_SOURCE_RECALLED":
+    case "UNKNOWN_REPLY_TARGET":
+      return "SOURCE_CHANGED";
+    case "TOOL_DISABLED":
+    case "TOOL_NOT_ALLOWED":
+      return "POLICY_CHANGED";
+    case "UNSEEN_WATERMARK":
+      return "READ_GAP";
+    case "QQ_DRAFT_DELIVERY_UNRESOLVED":
+    case "RECOVERY_DELIVERY_BLOCKED":
+      return "DELIVERY_UNRESOLVED";
+    case "QQ_DRAFT_REVISION_CONFLICT":
+      return "DRAFT_CHANGED";
+    default:
+      return code;
+  }
+}
+
+function assertPreparable(runtime, ctx, scope, draft) {
+  assertDraftTool(runtime, ctx, draft.toolName);
+  assertDraftIdle(runtime, draft.id);
+  const current = runtime.drafts.assertEditable(
+    scope,
+    draft.id,
+    draft.revision,
+  );
+  if (
+    current.items.some(
+      ({ status }, index) => status !== draft.items[index].status,
+    )
+  )
+    throw Error("QQ_DRAFT_REVISION_CONFLICT");
+  if (ctx.recoveryDeliveryBlocked || runtime.drafts.unresolved(scope))
+    throw Error("QQ_DRAFT_DELIVERY_UNRESOLVED");
+  if (!draft.items.some(({ status }) => status === "unsubmitted"))
+    throw Error("QQ_DRAFT_SETTLED");
+  // Evaluate disclosure on a temporary evidence set. Only real output or
+  // submission should write the turn's durable disclosure provenance.
+  const evidence = {
+    ...ctx,
+    privateRead: new Set(ctx.privateRead),
+    persistTaint: undefined,
+  };
+  trackMindRecords(runtime, evidence, [draft.value], "qq-draft");
+  assertDraftOrigin(runtime, ctx, draft, evidence);
+  for (const item of draft.items)
+    if (item.status === "unsubmitted")
+      validateDraftInput(runtime, ctx, scope, draft.toolName, item.value, {
+        resolving: false,
+        evidence,
+      });
+  runtime.assertDisclosure(evidence);
+}
+
+function prepareSavedDraft(
+  runtime,
+  ctx,
+  scope,
+  draft,
+  {
+    readThroughSeq,
+    binding,
+    reason,
+    outcome,
+    revisionApplied,
+    expectedVersion,
+    checkpointFailure,
+  } = {},
+) {
+  const previous = currentOutcome(draft);
+  const result = {
+    ...(draft.toolName === "qq_send_burst" ? { status: "stopped" } : {}),
+    draft: previous.draft,
+    receipts: previous.receipts,
+    remaining: previous.remaining,
+    actionResult: "not_sent",
+    attemptedThisCall: false,
+    ...(revisionApplied ? { revisionApplied: true } : {}),
+    ...outcome,
+  };
+  try {
+    if (checkpointFailure) throw checkpointFailure;
+    if (expectedVersion !== undefined && expectedVersion !== draft.revision)
+      throw Error("QQ_DRAFT_REVISION_CONFLICT");
+    assertPreparable(runtime, ctx, scope, draft);
+    const intent = draft.value.checkpointIntent;
+    binding ??= draftReviewBinding(
+      draft,
+      readThroughSeq !== undefined
+        ? draftCheckpointIntent(runtime, ctx, readThroughSeq).checkpoint
+        : intent?.epoch === ctx.inputEpoch
+          ? intent?.checkpoint
+          : undefined,
+    );
+    assertDraftCheckpoint(runtime, ctx, binding.checkpoint);
+  } catch (error) {
+    const { code, hint } = safeToolFailure(error);
+    return {
+      ...result,
+      preparation: {
+        state: "blocked",
+        reason: blockedReason(code),
+        ...(hint ? { hint } : {}),
+      },
+    };
+  }
+  return prepareDraftReview(runtime, ctx, result, binding, {
+    reason,
+    currentReason: () => {
+      try {
+        assertPreparable(runtime, ctx, scope, draft);
+        assertDraftCheckpoint(runtime, ctx, binding.checkpoint);
+        return null;
+      } catch (error) {
+        return blockedReason(safeToolFailure(error).code);
+      }
+    },
+  });
+}
+
 async function runDraft(
   runtime,
   ctx,
   scope,
   draft,
-  inputReview,
-  { explicit = false } = {},
+  binding,
+  grant,
+  explicit = false,
 ) {
-  const { execution, active, replay } = claimDraftExecution(
+  trackMindRecords(runtime, ctx, [draft.value], "qq-draft");
+  const execution = claimDraftExecution(
     runtime,
     ctx,
     scope,
     draft,
-    inputReview,
-    explicit,
+    binding,
+    grant,
   );
-  if (active || replay) {
-    const current = response(runtime.drafts.read(scope, draft.id), {
-      duplicate: true,
-    });
-    if (!active) return current;
-    return {
-      status: "pending",
-      draft: current.draft,
-      receipts: current.receipts,
-      doNotReplay: true,
-    };
-  }
+  let result, interrupted;
   try {
-    if (explicit) assertDraftOrigin(runtime, ctx, draft);
-    if (runtime.drafts.unresolved(scope))
-      throw Error("QQ_DRAFT_DELIVERY_UNRESOLVED");
-    return await deliverDraft(runtime, ctx, scope, draft, execution);
+    result = await deliverDraft(runtime, ctx, scope, draft, execution);
+  } catch (error) {
+    const saved = runtime.drafts.read(scope, draft.id);
+    const facts = currentOutcome(saved);
+    const { status, actionResult } = facts;
+    if (error instanceof DraftReviewInterrupted) {
+      interrupted = { draft: saved, reason: error.reason };
+      result = {
+        ...facts,
+        actionResult: facts.receipts.length ? "partially_sent" : "not_sent",
+        attemptedThisCall: execution.reserved,
+      };
+    } else {
+      attachDraftFailure(error, facts.draft);
+      const failedIndex = execution.failedIndex;
+      if (!explicit && draft.toolName !== "qq_send_burst" && status !== "sent")
+        throw error;
+      const failure = safeToolFailure(error);
+      result =
+        status === "sent"
+          ? { ...facts, attemptedThisCall: execution.reserved }
+          : {
+              ...facts,
+              attemptedThisCall: execution.reserved,
+              failedIndex,
+              error: failure.code,
+              ...(failure.hint ? { hint: failure.hint } : {}),
+              ...(failure.matches ? { matches: failure.matches } : {}),
+              ...(explicit && !execution.reserved && actionResult === "not_sent"
+                ? {
+                    preparation: {
+                      state: "blocked",
+                      reason: blockedReason(failure.code),
+                    },
+                  }
+                : {}),
+            };
+    }
   } finally {
-    releaseDraftExecution(runtime, execution);
+    // The old token can only query this execution, never its newly prepared tail.
+    releaseDraftExecution(
+      runtime,
+      ctx,
+      execution,
+      explicit ? result : undefined,
+    );
   }
+  if (interrupted)
+    return prepareSavedDraft(runtime, ctx, scope, interrupted.draft, {
+      binding,
+      reason: interrupted.reason,
+      outcome: result,
+    });
+  return result;
 }
 
 async function deliverDraft(runtime, ctx, scope, draft, execution) {
   const burst = draft.toolName === "qq_send_burst";
   const receipts = [];
   for (const item of execution.manifest) {
-    try {
-      const a = assertDraftTool(runtime, ctx, draft.toolName);
-      if (receipts.length)
-        await waitTyping(
-          runtime,
-          ctx,
-          burstDelay(
-            qqMessage(item.value).typingText,
-            a.behavior,
-            runtime.random,
-            draft.value.gapMs,
-          ),
-        );
-      const args = validateDraftInput(
+    execution.failedIndex = item.position;
+    const a = assertDraftTool(runtime, ctx, draft.toolName);
+    if (receipts.length)
+      await waitTyping(
         runtime,
         ctx,
-        scope,
-        draft.toolName,
-        item.value,
-        {
-          resolving: false,
-        },
+        burstDelay(
+          qqMessage(item.value).typingText,
+          a.behavior,
+          runtime.random,
+          draft.value.gapMs,
+        ),
       );
-      const receipt = await deliverItem(
-        runtime,
-        ctx,
-        draft.toolName,
-        {
-          ...args,
-          requestId: item.requestId,
-          inputReview: execution.inputReview,
-        },
-        {
-          submission: { execution, item },
-        },
-      );
-      receipts.push(receipt);
-    } catch (error) {
-      const saved = response(runtime.drafts.read(scope, draft.id));
-      attachDraftFailure(error, saved.draft);
-      if (!burst) throw error;
-      rotateDraftReview(execution);
-      attachReviewOriginals(runtime, ctx, error);
-      const failure = safeToolFailure(error);
-      const result = {
-        status: "stopped",
-        receipts: saved.receipts,
-        failedIndex: item.position,
-        error: failure.code,
-        hint: failure.hint,
-        ...(failure.matches ? { matches: failure.matches } : {}),
-        ...(failure.inputReview ? { inputReview: failure.inputReview } : {}),
-        draft: saved.draft,
-        doNotReplay: true,
-      };
-      runtime.stageToolInput(ctx, result, () =>
-        runtime.commitToolInput(ctx, error),
-      );
-      return result;
-    }
+    const args = validateDraftInput(
+      runtime,
+      ctx,
+      scope,
+      draft.toolName,
+      item.value,
+      { resolving: false },
+    );
+    const receipt = await deliverItem(
+      runtime,
+      ctx,
+      draft.toolName,
+      { ...args, requestId: item.requestId },
+      { submission: { execution, item } },
+    );
+    receipts.push(receipt);
   }
   const saved = runtime.drafts.read(scope, draft.id);
-  if (!burst && receipts.length)
-    return { ...receipts[0], draft: draftSummary(saved) };
-  return response(saved);
+  const facts = currentOutcome(saved);
+  return {
+    ...facts,
+    ...(!burst && receipts.length ? receipts[0] : {}),
+    attemptedThisCall: execution.reserved,
+  };
 }
 
 export async function draftTool(runtime, ctx, _toolName, args) {
@@ -515,8 +694,8 @@ export async function draftTool(runtime, ctx, _toolName, args) {
   const draft = runtime.drafts.read(scope, args.draftId);
   assertDraftTool(runtime, ctx, draft.toolName);
   boundary.assert(draft.value);
-  trackMindRecords(runtime, ctx, [draft.value], "qq-draft");
   if (args.action === "read") {
+    trackMindRecords(runtime, ctx, [draft.value], "qq-draft");
     const item =
       draft.items[
         args.position ??
@@ -535,8 +714,9 @@ export async function draftTool(runtime, ctx, _toolName, args) {
     return draftSummary(
       runtime.drafts.discard(scope, draft.id, args.expectedVersion),
     );
-  runtime.drafts.assertEditable(scope, draft.id, args.expectedVersion);
   if (args.action === "revise") {
+    trackMindRecords(runtime, ctx, [draft.value], "qq-draft");
+    runtime.drafts.assertEditable(scope, draft.id, args.expectedVersion);
     const input = validateDraftInput(
       runtime,
       ctx,
@@ -545,17 +725,74 @@ export async function draftTool(runtime, ctx, _toolName, args) {
       args.input,
     );
     runtime.assertDisclosure(ctx);
+    let checkpointIntent, checkpointFailure;
+    if (args.readThroughSeq !== undefined) {
+      try {
+        checkpointIntent = draftCheckpointIntent(
+          runtime,
+          ctx,
+          args.readThroughSeq,
+        );
+      } catch (error) {
+        checkpointIntent = null;
+        checkpointFailure = error;
+      }
+    }
     const revised = runtime.drafts.revise(
       scope,
       draft.id,
       args.expectedVersion,
       [{ position: args.position, input }],
       mergeProtection(contextProtection(runtime, ctx), draft.value),
+      checkpointIntent,
     );
     runtime.messageTiming?.mark(ctx.messageTimingId, "draftStored");
-    return draftSummary(revised);
+    return prepareSavedDraft(runtime, ctx, scope, revised, {
+      revisionApplied: true,
+      checkpointFailure,
+    });
   }
-  return runDraft(runtime, ctx, scope, draft, args.inputReview, {
-    explicit: true,
-  });
+  if (args.action === "prepare" || !args.inputReview)
+    return prepareSavedDraft(runtime, ctx, scope, draft, args);
+
+  const facts = currentOutcome(draft);
+  const unresolved = ["unknown", "pending"].includes(facts.actionResult)
+    ? { actionResult: facts.actionResult }
+    : undefined;
+  if (args.expectedVersion !== draft.revision)
+    return prepareSavedDraft(runtime, ctx, scope, draft, {
+      ...args,
+      outcome: unresolved,
+    });
+
+  const binding = draftReviewBinding(draft);
+  const validated = validateDraftGrant(runtime, ctx, binding, args.inputReview);
+  if (validated.replay) {
+    if (activeDraftExecution(runtime, draft.id)?.id === validated.replay)
+      return {
+        ...facts,
+        status: "pending",
+        actionResult: "pending",
+        doNotReplay: true,
+      };
+    const replay = replayDraftExecution(ctx, validated.replay);
+    if (replay) return { ...replay, attemptedThisCall: false, duplicate: true };
+  }
+  if (!validated.grant)
+    return prepareSavedDraft(runtime, ctx, scope, draft, {
+      reason: validated.reason,
+      outcome: unresolved,
+    });
+  binding.checkpoint = validated.grant.checkpoint;
+  try {
+    assertPreparable(runtime, ctx, scope, draft);
+    assertDraftCheckpoint(runtime, ctx, binding.checkpoint);
+  } catch (error) {
+    const { code } = safeToolFailure(error);
+    return {
+      ...facts,
+      preparation: { state: "blocked", reason: blockedReason(code) },
+    };
+  }
+  return runDraft(runtime, ctx, scope, draft, binding, validated.grant, true);
 }

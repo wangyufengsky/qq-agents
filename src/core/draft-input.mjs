@@ -39,7 +39,7 @@ export function validateDraftInput(
   scope,
   toolName,
   input,
-  { resolving = true } = {},
+  { resolving = true, evidence = ctx } = {},
 ) {
   const a = assertDraftTool(runtime, ctx, toolName);
   const mem = runtime.memory.bind(a.id);
@@ -54,7 +54,7 @@ export function validateDraftInput(
       throw Error(file ? "FILE_LIBRARY_UNAVAILABLE" : "VOICE_UNAVAILABLE");
     const meta = lib.metadata(a.id, file ? input.fileId : input.audioId);
     boundary.assert(meta);
-    trackMindRecords(runtime, ctx, [meta], "draft-media");
+    trackMindRecords(runtime, evidence, [meta], "draft-media");
     if (!file) {
       runtime.assertSafeOutput(ctx, meta.title || "");
       return input;
@@ -79,7 +79,7 @@ export function validateDraftInput(
     if (!runtime.media) throw Error("MEDIA_UNAVAILABLE");
     const meta = runtime.media.metadata(a.id, input.mediaId);
     boundary.assert(meta);
-    trackMindRecords(runtime, ctx, [meta], "draft-media");
+    trackMindRecords(runtime, evidence, [meta], "draft-media");
   }
   if (!input.replyTo) return input;
   assertMessageAccount(mem, scope.connectionId, scope.accountId);
@@ -106,6 +106,6 @@ export function validateDraftInput(
       !liveInput(runtime, a.id, ctx.conversation, row.id))
   )
     throw Error("QQ_DRAFT_SOURCE_RECALLED");
-  trackMindRecords(runtime, ctx, [source], "draft-reply");
+  trackMindRecords(runtime, evidence, [source], "draft-reply");
   return { ...input, replyEventId: row.id };
 }

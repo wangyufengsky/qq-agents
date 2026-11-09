@@ -194,7 +194,7 @@ export function chatStatus(runtime, ctx, history, handoff) {
     )
   )
     lines.push(
-      "发送前遇到 INPUT_REVIEW_REQUIRED 时，先按返回的入口完整阅读，重新判断是否发送。读完后对准备发送的确切内容取得 token，再用 inputReview={token,decision:'continue'} 明确提交。也可以修改或放弃；普通群仅对确实无关的输入按记录 ID 给出原因。审阅和已读分别提交。",
+      "发送返回草稿时，先看 preparation。needs_input 按入口补齐原文，再用 qq_draft prepare 核对当前版本。ready 后自行决定，可修改或放弃，也可带 inputReview={token,decision:'continue'} 提交。普通群仅对确实无关的输入按记录 ID 给出原因。审阅和已读分别提交。",
     );
   const incomplete = history.items.filter(
     (x) => x.bodyTruncated || x.summaryOmitted,

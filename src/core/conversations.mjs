@@ -525,8 +525,7 @@ export class ConversationEngine {
       const staged = runtime.contexts.stageSeen(ctx, messages.items);
       Object.assign(messages, staged.checkpoint);
       ctx.waitObservedMs = (ctx.waitObservedMs || 0) + (Date.now() - realStart);
-      ctx.observationSatisfied =
-        reason === "messages" ||
+      ctx.observationSatisfied ||=
         ctx.waitObservedMs >= a.behavior.preSleepWaitMs;
       const result = {
         reason,
@@ -536,13 +535,19 @@ export class ConversationEngine {
           looksLikeUnfinished(x.body || x.summary),
         ),
       };
-      runtime.stageToolInput(ctx, result, () => {
-        runtime.contexts.commitSeen(ctx, staged);
-        ctx.feedThroughSeq = Math.max(
-          ctx.feedThroughSeq || 0,
-          messages.nextAfterSeq || 0,
-        );
-      });
+      runtime.stageToolInput(
+        ctx,
+        result,
+        () => {
+          runtime.contexts.commitSeen(ctx, staged);
+          ctx.observationSatisfied ||= reason === "messages";
+          ctx.feedThroughSeq = Math.max(
+            ctx.feedThroughSeq || 0,
+            messages.nextAfterSeq || 0,
+          );
+        },
+        messages.items,
+      );
       return result;
     } finally {
       if (ctx.inputEpoch === epoch) {

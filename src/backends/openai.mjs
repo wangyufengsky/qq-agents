@@ -20,6 +20,8 @@ import {
   beforeSessionInput,
 } from "./turn-failure.mjs";
 
+const MAX_TOOL_RESPONSE_BYTES = 65536;
+
 const SESSION_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const DEFAULT_INSTRUCTIONS = "你是独立 QQ 人格，只通过启用的 QQ 发送工具投递。";
@@ -295,25 +297,56 @@ export class OpenAIBackend {
   acceptsSession(session, tools, previous) {
     return acceptsSession(this, session, tools, previous);
   }
-  /** @param {any} call @param {RunParams["callTool"]} callTool @param {AbortSignal} signal */
-  async toolMessages(call, callTool, signal) {
-    let result, original;
+  /** @param {any} call @param {RunParams["callTool"]} callTool @param {AbortSignal} signal @param {RunParams["finalizeToolOutput"]} [finalizeToolOutput] */
+  async toolMessages(call, callTool, signal, finalizeToolOutput) {
+    let original,
+      failed = false;
     try {
       const args = call.function?.arguments
         ? JSON.parse(call.function.arguments)
         : {};
       original = await callTool(call.function?.name, args);
-      result = mcpResult(original);
     } catch (error) {
       original = error;
-      result = {
-        isError: true,
-        content: [
-          { type: "text", text: JSON.stringify(safeToolFailure(error)) },
-        ],
-      };
+      failed = true;
     }
     if (signal.aborted) throw Error("ABORTED");
+    const encodeError = (/** @type {unknown} */ value) => ({
+      isError: true,
+      content: [{ type: "text", text: JSON.stringify(value) }],
+    });
+    const encode = (/** @type {any} */ value) => {
+      const wire = this.encodeToolMessages(
+        call,
+        failed
+          ? encodeError(
+              value instanceof Error || value === original
+                ? safeToolFailure(value)
+                : value,
+            )
+          : mcpResult(value),
+      );
+      return { wire, text: wire.tool.content };
+    };
+    try {
+      const { wire, receipt } = finalizeToolOutput
+        ? await finalizeToolOutput(original, {
+            encode,
+            maxBytes: MAX_TOOL_RESPONSE_BYTES,
+          })
+        : { wire: encode(original).wire, receipt: undefined };
+      if (signal.aborted) throw Error("ABORTED");
+      return { ...wire, receipt };
+    } catch (error) {
+      if (signal.aborted) throw Error("ABORTED", { cause: error });
+      return {
+        ...this.encodeToolMessages(call, encodeError(safeToolFailure(error))),
+        receipt: undefined,
+      };
+    }
+  }
+  /** @param {any} call @param {ReturnType<typeof mcpResult>} result */
+  encodeToolMessages(call, result) {
     const texts = [],
       images = [];
     for (const c of result.content || []) {
@@ -340,7 +373,6 @@ export class OpenAIBackend {
         `工具结果附带 ${images.length} 张图片，见本轮工具结果之后的图片消息。`,
       );
     return {
-      original,
       tool: {
         ...(typeof result[mediaLease] === "function"
           ? { [mediaLease]: result[mediaLease] }
@@ -372,7 +404,8 @@ export class OpenAIBackend {
     saveSession,
     onBackendTurn,
     onInputSubmitted,
-    onToolResultSubmitted,
+    finalizeToolOutput,
+    commitToolOutput,
     beforeInputSubmitted,
     recovery,
   }) {
@@ -460,6 +493,14 @@ export class OpenAIBackend {
                 : part,
             );
         }
+        // Only results still present with the exact encoded content enter
+        // this request. The provider response is their delivery boundary.
+        const submittedResults = pendingResults
+          .splice(0)
+          .filter(
+            ({ tool, text }) =>
+              state.messages.includes(tool) && tool.content === text,
+          );
         const result = await this.request("/chat/completions", {
           signal: controller.signal,
           body: {
@@ -478,15 +519,24 @@ export class OpenAIBackend {
         // The images this request carried have been seen; keep only a note.
         forgetSentImages(state.messages);
         const message = result?.choices?.[0]?.message;
-        if (!message || typeof message !== "object")
+        const calls = Array.isArray(message?.tool_calls)
+          ? message.tool_calls.filter(
+              (/** @type {any} */ c) => c?.type === "function" && c.id,
+            )
+          : [];
+        if (
+          typeof message?.content !== "string" &&
+          typeof message?.refusal !== "string" &&
+          typeof message?.reasoning_content !== "string" &&
+          !calls.length
+        )
           throw openaiTurnFailure(Error("OPENAI_MALFORMED_RESPONSE"), turnId);
         if (!inputSubmitted) {
           inputSubmitted = true;
           onInputSubmitted?.();
         }
-        for (const entry of pendingResults.splice(0))
-          if (entry.tool.content === entry.content)
-            onToolResultSubmitted?.(entry.original);
+        for (const { receipt, text } of submittedResults)
+          commitToolOutput?.(receipt, text);
         const u = result.usage;
         if (Number.isFinite(u?.prompt_tokens))
           onUsage?.({
@@ -495,11 +545,6 @@ export class OpenAIBackend {
             capacityTokens,
             basis: "last chat completion prompt plus completion tokens",
           });
-        const calls = Array.isArray(message.tool_calls)
-          ? message.tool_calls.filter(
-              (/** @type {any} */ c) => c?.type === "function" && c.id,
-            )
-          : [];
         /** @type {ChatMessage[]} */
         const step = [
           {
@@ -522,12 +567,14 @@ export class OpenAIBackend {
             call,
             callTool,
             controller.signal,
+            finalizeToolOutput,
           );
-          pendingResults.push({
-            original: answer.original,
-            tool: answer.tool,
-            content: answer.tool.content,
-          });
+          if (answer.receipt)
+            pendingResults.push({
+              receipt: answer.receipt,
+              tool: answer.tool,
+              text: answer.tool.content,
+            });
           step.push(answer.tool);
           images.push(...answer.images);
         }

@@ -18,10 +18,13 @@ const sendTools = new Set([
   "app_share_send",
 ]);
 
-/** @param {string} name @param {{action?: unknown} | null | undefined} args */
+/** @param {string} name @param {{action?: unknown, inputReview?: {token?: unknown}} | null | undefined} args */
 export function isTimedSendTool(name, args) {
   return (
-    sendTools.has(name) || (name === "qq_draft" && args?.action === "continue")
+    sendTools.has(name) ||
+    (name === "qq_draft" &&
+      args?.action === "continue" &&
+      typeof args.inputReview?.token === "string")
   );
 }
 
@@ -69,12 +72,25 @@ export function timedDeliveryFailure(error) {
 }
 
 /**
- * @param {{error?: unknown, draft?: {items?: {status?: string}[]}}} result
+ * @param {{error?: unknown, actionResult?: string, attemptedThisCall?: boolean, preparation?: {state?: string, reason?: string}, draft?: {items?: {status?: string}[]}}} result
  * @param {boolean} aborted
  * @returns {DeliveryOutcome}
  */
 export function timedStoppedSend(result, aborted) {
   if (aborted && result.error === "TOOL_FAILED") return "cancelled";
+  if (
+    !result.attemptedThisCall &&
+    ["pending", "unknown"].includes(result.actionResult ?? "")
+  )
+    return "unresolved-delivery";
+  if (result.preparation) {
+    if (result.preparation.reason === "DELIVERY_UNRESOLVED")
+      return "unresolved-delivery";
+    if (!result.error)
+      return result.preparation.state === "blocked"
+        ? "policy-blocked"
+        : "review-required";
+  }
   if (
     result.error === "QQ_DRAFT_CONTINUE_REQUIRED" &&
     result.draft?.items?.some(

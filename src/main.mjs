@@ -16,6 +16,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { isIP } from "node:net";
 import { randomBytes } from "node:crypto";
+import { writeRelayToken } from "./core/relay-auth.mjs";
 import { defaultConfig } from "./core/default-config.mjs";
 import { ConfigStore } from "./core/config.mjs";
 import { MemoryStore } from "./memory/store.mjs";
@@ -90,6 +91,7 @@ try {
   fs.chmodSync(tokenFile, 0o600);
   const token = fs.readFileSync(tokenFile, "utf8").trim();
   if (!/^[a-f0-9]{64}$/.test(token)) throw Error("INVALID_ADMIN_TOKEN_FILE");
+  writeRelayToken(root, token);
   const memory = (lifecycle.memory = new MemoryStore(
     path.join(root, "memory.sqlite"),
   ));

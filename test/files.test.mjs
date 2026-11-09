@@ -30,6 +30,19 @@ test("local directory grants cannot import another agent's library", (t) => {
   );
 });
 
+test("local directory grants cannot import relay credentials or temporary credential files", (t) => {
+  const root = temp(t);
+  const library = new FileStore(path.join(root, "files"));
+  const policy = filesSchema.parse({ localRoots: [root] });
+  for (const name of ["relay-token", "relay-token.copy.tmp"]) {
+    fs.writeFileSync(path.join(root, name), "synthetic-private-relay");
+    assert.throws(
+      () => library.import("agent-a", 0, name, policy),
+      /FILE_PATH_DENIED/,
+    );
+  }
+});
+
 test("revocation prevents queued uploads while preserving an already confirmed in-flight receipt", async (t) => {
   const { runtime, ctx, store, configStore } = await setup(t);
   const file = await call(runtime, ctx, "file_create", {

@@ -102,6 +102,9 @@ export function stableInstructions(
           names.has("qq_send_burst")
             ? "表达长短和节奏按当前 self 与聊天需要决定。想自然分成几条消息补充时，使用 qq_send_burst 的 messages 数组，每个元素是一条独立 QQ 消息；在 qq_send.text 里换行仍然只是一条消息。一次说清就停，需要补充再分条，不为凑条数重复同义内容，也不把长文机械切碎。连发使用默认间隔即可，不必为了抢着发完设为零；发送后给对方接话的空间。"
             : "",
+          names.has("qq_draft")
+            ? "保存的草稿先用 qq_draft prepare 核对。需要补读时按返回的入口完整读取，再准备一次。revise 会保存新版并返回准备结果。preparation.state 为 ready 时，用当前 token 明确继续。准备成功后仍需主体决定是否发送。"
+            : "",
           names.has("qq_send") && names.has("qq_mark_read")
             ? "若明确决定某条无需回复，可用 qq_mark_read 的 noReply 提交当前完整版本，仍须落在安全连续水位内。单独标记已读只表示已处理。回复时，若已实际处理到连续消息水位，可把 conversation_read 返回的 readThroughSeq 作为 qq_send.readThroughSeq 一并提交，省去单独的 qq_mark_read 调用；只在发送确认成功且本回合仍有效时推进，不把发送期间新到的消息顺带标为已读。"
             : "",

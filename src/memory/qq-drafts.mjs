@@ -332,8 +332,8 @@ export class QQDraftStore {
     return draft;
   }
 
-  /** @param {DraftScope} scope @param {string} id @param {number} revision @param {DraftEdit[]} edits @param {object} protection */
-  revise(scope, id, revision, edits, protection) {
+  /** @param {DraftScope} scope @param {string} id @param {number} revision @param {DraftEdit[]} edits @param {object} protection @param {object|null} [checkpointIntent] */
+  revise(scope, id, revision, edits, protection, checkpointIntent) {
     return this.store.transaction(() => {
       const draft = this.assertEditable(scope, id, revision);
       const positions = new Set();
@@ -363,6 +363,7 @@ export class QQDraftStore {
         JSON.stringify({
           ...draft.value,
           ...mergeProtection(draft.value, protection),
+          ...(checkpointIntent !== undefined ? { checkpointIntent } : {}),
         }),
         next,
         id,

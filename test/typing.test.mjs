@@ -290,7 +290,8 @@ test("burst review stops between items and preserves the confirmed prefix", asyn
   await flush();
   assert.equal(f.sent(), 1);
   const result = await p;
-  assert.equal(result.error, "INPUT_REVIEW_REQUIRED");
+  assert.equal(result.actionResult, "partially_sent");
+  assert.equal(result.preparation.reason, "NEW_INPUT");
   assert.deepEqual(
     result.draft.items.map(({ status }) => status),
     ["sent", "unsubmitted", "unsubmitted"],

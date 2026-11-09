@@ -9,7 +9,11 @@ import { withInteraction } from "../core/closeness.mjs";
 import { recallMessage } from "../core/message-recall.mjs";
 import { deliveryPage } from "../core/chat-context.mjs";
 import { rememberSources } from "../core/context-handoff.mjs";
-import { assertReadCheckpoint, processInput } from "../core/input-review.mjs";
+import {
+  assertReadCheckpoint,
+  presentationVersion,
+  processInput,
+} from "../core/input-review.mjs";
 import { sendDraftTool } from "./qq-drafts.mjs";
 import { githubMarker, privateGithubSources } from "../github/policy.mjs";
 import { readEventImage } from "./image-read.mjs";
@@ -109,6 +113,10 @@ async function handle_memory_read(runtime, ctx, args, name) {
     },
   });
   track(ctx, [r]);
+  const stage = (result, commit) => {
+    runtime.stageToolInput(ctx, result, commit, [item]);
+    return result;
+  };
   const pages = (ctx.inputPages ??= new Map());
   const old = pages.get(r.id);
   const continues =
@@ -116,12 +124,12 @@ async function handle_memory_read(runtime, ctx, args, name) {
   if (!continues) {
     if (old && old.version !== version) {
       pages.delete(r.id);
-      return {
+      return stage({
         ...r,
         presentationRestart: { tool: "memory_read", id: r.id, offset: 0 },
-      };
+      });
     }
-    return r;
+    return stage(r);
   }
   if (r.nextOffset === null) {
     if (
@@ -138,20 +146,26 @@ async function handle_memory_read(runtime, ctx, args, name) {
         ...staged.checkpoint,
         ...(inputRefs.length ? { inputRefs } : {}),
       };
-      runtime.stageToolInput(ctx, result, () => {
+      return stage(result, () => {
         pages.delete(r.id);
         runtime.contexts.commitSeen(ctx, staged);
       });
-      return result;
     }
   } else {
-    runtime.stageToolInput(ctx, r, () => {
+    const inputVersion =
+      item.conversation === ctx.conversation &&
+      /^(group|private):/.test(ctx.conversation)
+        ? presentationVersion(runtime, ctx, r.id)
+        : undefined;
+    return stage(r, () => {
+      const delivered = pages.get(r.id);
+      if (delivered?.version === version && delivered.offset > r.offset) return;
       pages.delete(r.id);
       if (pages.size === 10) pages.delete(pages.keys().next().value);
-      pages.set(r.id, { version, offset: r.nextOffset });
+      pages.set(r.id, { version, inputVersion, offset: r.nextOffset });
     });
   }
-  return r;
+  return stage(r);
 }
 async function handle_conversation_read(runtime, ctx, args, name) {
   const mem = runtime.memory.bind(ctx.agentId);
@@ -172,17 +186,23 @@ async function handle_conversation_read(runtime, ctx, args, name) {
   if (!r.markReadEligible) {
     if (r.items.some((item) => item.conversation === ctx.conversation))
       rememberSources(mem, ctx.conversation, r.items);
+    runtime.stageToolInput(ctx, r, undefined, r.items);
     return r;
   }
   const staged = runtime.contexts.stageSeen(ctx, r.items);
   const result = { ...r, ...staged.checkpoint };
-  runtime.stageToolInput(ctx, result, () => {
-    runtime.contexts.commitSeen(ctx, staged);
-    ctx.conversationPageThroughSeq = Math.max(
-      ctx.conversationPageThroughSeq || 0,
-      r.items.at(-1)?.seq || 0,
-    );
-  });
+  runtime.stageToolInput(
+    ctx,
+    result,
+    () => {
+      runtime.contexts.commitSeen(ctx, staged);
+      ctx.conversationPageThroughSeq = Math.max(
+        ctx.conversationPageThroughSeq || 0,
+        r.items.at(-1)?.seq || 0,
+      );
+    },
+    r.items,
+  );
   return result;
 }
 async function handle_diary_write(runtime, ctx, args, name) {
