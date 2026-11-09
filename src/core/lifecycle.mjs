@@ -22,6 +22,11 @@ import { mergeProtection } from "../memory/protection.mjs";
 import { rememberSources, sourceHandoff } from "./context-handoff.mjs";
 import { chatRecall } from "./chat-recall.mjs";
 import {
+  groupRecall,
+  groupRecallLine,
+  groupRecallMaterial,
+} from "./group-recall.mjs";
+import {
   chatHistory,
   chatPersonCards,
   chatHandoff,
@@ -643,13 +648,23 @@ export class ContextLifecycle {
               ctx.conversation,
             ),
           );
-    const openingHistory = chatHistory(history);
     const focus = this.focusedOpening(ctx, m, reasons, history.items);
+    const accountId = r.connection(a.connectionId).accountId;
+    const relationship = groupRecall(r, ctx, history, focus, accountId);
+    const correctionAllowed = relationship?.correctionAllowed;
+    const openingHistory = chatHistory(history, correctionAllowed);
+    const relationshipMaterial = groupRecallMaterial(relationship);
+    if (relationshipMaterial) {
+      ctx.openingGroupRecall = JSON.stringify(relationshipMaterial);
+      ctx.currentGroupRecall = () =>
+        groupRecallMaterial(groupRecall(r, ctx, history, focus, accountId));
+    }
+    const relationshipLine = groupRecallLine(ctx, relationshipMaterial);
     ctx.focusedReplyId = focus?.id;
     const separateFocus =
       focus && !history.items.some(({ id }) => id === focus.id);
     const focusedMessage = separateFocus
-      ? chatHistory({ items: [focus] }).items[0]
+      ? chatHistory({ items: [focus] }, correctionAllowed).items[0]
       : null;
     ctx.stagedOpening = this.stageSeen(
       ctx,
@@ -676,20 +691,22 @@ export class ContextLifecycle {
       );
     ctx.feedThroughSeq = history.nextAfterSeq || s.feedThroughSeq || 0;
     const people =
-      ctx.conversation === SUBJECT
+      relationship || ctx.conversation === SUBJECT
         ? null
         : personCardsForTurn(m, ctx.conversation, history.items, {
             fresh: ctx.initialSession,
             now: r.now(),
             accountId: r.connection(a.connectionId).accountId,
           });
-    const elsewhere = elsewhereForTurn(r, ctx, history.items, {
-      fresh: ctx.initialSession,
-      now: r.now(),
-      accountId: r.connection(a.connectionId).accountId,
-    });
+    const elsewhere = relationship
+      ? null
+      : elsewhereForTurn(r, ctx, history.items, {
+          fresh: ctx.initialSession,
+          now: r.now(),
+          accountId,
+        });
     const between =
-      ctx.conversation === SUBJECT
+      relationship || ctx.conversation === SUBJECT
         ? null
         : personItemsForTurn(m, ctx.conversation, history.items, {
             fresh: ctx.initialSession,
@@ -752,7 +769,14 @@ export class ContextLifecycle {
     if (handoff) dropRepeats(handoff, history, materials, schedule);
     const replay =
       handoff && /^(group|private):/.test(ctx.conversation)
-        ? chatRecall(r, ctx, history, handoff, s.readThroughSeq || 0)
+        ? chatRecall(
+            r,
+            ctx,
+            history,
+            handoff,
+            s.readThroughSeq || 0,
+            correctionAllowed,
+          )
         : null;
     const scene = `当前场景 ${ctx.conversation}。本回合采用 self v${self.version}。主人/管理员：${a.ownerIds.join(",") || "未设置"}。`;
     const wake = reasons.map((reason) =>
@@ -765,14 +789,9 @@ export class ContextLifecycle {
     );
     ctx.rhythmWake = reasons.find((reason) => reason.rhythmWake)?.rhythmWake;
     const environment = turnEnvironment(r, a, ctx, backendType);
-    const corrections = m.corrections.forPeople(
-      peopleInTurn(
-        m,
-        ctx.conversation,
-        history.items,
-        r.connection(a.connectionId).accountId,
-      ),
-    );
+    const corrections = m.corrections
+      .forPeople(peopleInTurn(m, ctx.conversation, history.items, accountId))
+      .filter((entry) => !correctionAllowed || correctionAllowed(entry));
     const activities = activityForTurn(m, ctx.conversation);
     const details = [
       activities.length
@@ -826,6 +845,7 @@ export class ContextLifecycle {
               ? `本轮可优先引用回复：用 qq_send 的 replyTo=${JSON.stringify(focus.messageId)} 回复这条来信。只针对这条消息及明确引用它的补充，遇到续读入口先读齐。旧积压保留，之后按处理水位继续；不要为这条引用回复提交跨过缺口的已读水位。${focusedMessage ? ` 当前来信：${JSON.stringify(focusedMessage)}` : ""}`
               : "",
             `新增消息：${JSON.stringify(openingHistory)}`,
+            relationshipLine,
             feedback?.length
               ? `你在本会话递交的提议回执（资料，不代表已投递或对方已同意）：${JSON.stringify(feedback)}`
               : "",
@@ -833,7 +853,7 @@ export class ContextLifecycle {
             ctx.allowedTools?.includes("qq_draft") ? draftPrompt(r, ctx) : "",
             ...details,
             handoff
-              ? `程序交接状态：${JSON.stringify(chatHandoff(handoff, { replay: !!replay }))}`
+              ? `程序交接状态：${JSON.stringify(chatHandoff(handoff, { replay: !!replay, correctionAllowed }))}`
               : "",
             environment,
             ...wakeBackground(wake),
@@ -909,6 +929,16 @@ export class ContextLifecycle {
                 id: continuation.id,
               }),
             ),
+          }
+        : {}),
+      ...(relationshipMaterial
+        ? {
+            groupRecall: {
+              required: relationshipMaterial.required.length,
+              optional: relationshipMaterial.optional.length,
+              moreRequired: relationshipMaterial.moreRequired || 0,
+              unresolvedQuote: Boolean(relationshipMaterial.quoteNeedsReview),
+            },
           }
         : {}),
       ...(between?.items.length

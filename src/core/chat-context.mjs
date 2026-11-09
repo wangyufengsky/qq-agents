@@ -39,7 +39,7 @@ export function deliveryPage(
   };
 }
 
-export function chatHistory(history) {
+export function chatHistory(history, correctionAllowed) {
   return {
     ...history,
     source: undefined,
@@ -79,6 +79,8 @@ export function chatHistory(history) {
           )
           .map((key) => [key, row[key]]),
       );
+      if (correctionAllowed && item.corrections)
+        item.corrections = item.corrections.filter(correctionAllowed);
       if (row.bodyTruncated || row.summaryOmitted)
         item.continuation = { tool: "memory_read", id: row.id, offset: 0 };
       return item;
@@ -93,7 +95,7 @@ export function chatPersonCards(cards) {
   );
 }
 
-function chatNote(note) {
+function chatNote(note, correctionAllowed) {
   const unavailable = (note.sources || []).filter(
     (source) => !source.available,
   ).length;
@@ -101,7 +103,9 @@ function chatNote(note) {
     body: note.body,
     writtenAt: new Date(note.writtenAt).toISOString(),
     uncertainty: note.uncertainty,
-    corrections: note.corrections,
+    corrections: correctionAllowed
+      ? note.corrections?.filter(correctionAllowed)
+      : note.corrections,
     ...(unavailable
       ? {
           sourceWarning: `${unavailable} 条原始来源已不可用，不能补猜内容；用 work_notes 核对。`,
@@ -111,7 +115,10 @@ function chatNote(note) {
   };
 }
 
-export function chatHandoff(handoff, { replay = false } = {}) {
+export function chatHandoff(
+  handoff,
+  { replay = false, correctionAllowed } = {},
+) {
   if (!handoff) return null;
   const result = {};
   const sources = replay
@@ -128,7 +135,9 @@ export function chatHandoff(handoff, { replay = false } = {}) {
         .map((s) => ({
           id: s.id,
           available: s.available,
-          corrections: s.corrections,
+          corrections: correctionAllowed
+            ? s.corrections?.filter(correctionAllowed)
+            : s.corrections,
           recalled: s.recalled,
           recallNotice: s.recallNotice,
           kind: s.kind,
@@ -153,7 +162,9 @@ export function chatHandoff(handoff, { replay = false } = {}) {
         }
       : handoff.continuity;
   if (handoff.notes?.length) {
-    result.notes = handoff.notes.map(chatNote);
+    result.notes = handoff.notes.map((note) =>
+      chatNote(note, correctionAllowed),
+    );
     result.notesNotice =
       "未完成工作笔记：保留正文与不确定性，是工作解释而非客观事实；writtenAt 是记录时间，不是事件发生时间。来源及完整字段用 work_notes 读取，按 nextOffset 续页。";
     result.notesContinuation = { tool: "work_notes", offset: 0 };

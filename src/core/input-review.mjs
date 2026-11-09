@@ -2,6 +2,7 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { isPrivateLikeGroup } from "./config.mjs";
 import { liveInput, recordedInput } from "./live-input.mjs";
+import { trackGroupRecall } from "./group-recall.mjs";
 import { quotedMessage, references } from "./person-cards.mjs";
 import { transcriptKey } from "../memory/store.mjs";
 import { RECALL_NOTICE_BODY } from "../memory/recalls.mjs";
@@ -483,7 +484,7 @@ export function snapshotReviewInput(runtime, ctx, baseline, replyEventId) {
 /** @typedef {{draftId:string, version:number, content:unknown, baseline?:ReviewBaseline, checkpoint?:any, replyEventId?:string}} DraftBinding */
 /** @typedef {ReturnType<typeof snapshotReviewInput>} ReviewSnapshot */
 /** @typedef {{scope:string, throughSeq:number, accepted:InputRef[], snapshotHash:string}} ReviewedInput */
-/** @typedef {{binding:DraftBinding, epoch:string, snapshot:ReviewSnapshot, policy:boolean, checkpoint:any, generation:number, generations:Map<string,number>, review?:ReviewedInput, executionId?:string, original?:DraftGrant, confirmation?:string}} DraftGrant */
+/** @typedef {{binding:DraftBinding, epoch:string, snapshot:ReviewSnapshot, policy:boolean, checkpoint:any, generation:number, generations:Map<string,number>, groupRecall?:string, review?:ReviewedInput, executionId?:string, original?:DraftGrant, confirmation?:string}} DraftGrant */
 /** @type {WeakMap<object, {epoch:string, draft:Map<string,DraftGrant>, generations:Map<string,number>, legacy:Map<string,string>, legacyKey:Buffer}>} */
 const grants = new WeakMap();
 
@@ -576,6 +577,8 @@ function grantMismatch(runtime, ctx, grant, binding) {
   )
     return "DRAFT_CHANGED";
   if (grant.policy !== allowsExclusion(runtime, ctx)) return "POLICY_CHANGED";
+  if (grant.groupRecall !== JSON.stringify(ctx.currentGroupRecall?.()))
+    return "GROUP_RECALL_CHANGED";
   const current = snapshotReviewInput(
     runtime,
     ctx,
@@ -614,8 +617,8 @@ export class InputReviewRequired extends Error {
   }
 }
 
-/** @param {any} runtime @param {any} ctx @param {DraftBinding} binding @param {ReviewSnapshot} snapshot @returns {DraftGrant} */
-function draftGrant(runtime, ctx, binding, snapshot) {
+/** @param {any} runtime @param {any} ctx @param {DraftBinding} binding @param {ReviewSnapshot} snapshot @param {string} [groupRecall] @returns {DraftGrant} */
+function draftGrant(runtime, ctx, binding, snapshot, groupRecall) {
   const { generations } = grantState(ctx);
   return {
     binding,
@@ -625,6 +628,7 @@ function draftGrant(runtime, ctx, binding, snapshot) {
     generation: generations.get(binding.draftId) ?? 0,
     policy: allowsExclusion(runtime, ctx),
     checkpoint: binding.checkpoint,
+    groupRecall,
   };
 }
 
@@ -644,7 +648,9 @@ export function initialDraftReview(runtime, ctx, binding) {
     )
   )
     return null;
-  const grant = draftGrant(runtime, ctx, binding, snapshot);
+  const groupRecall = JSON.stringify(ctx.currentGroupRecall?.());
+  if (groupRecall !== ctx.openingGroupRecall) return null;
+  const grant = draftGrant(runtime, ctx, binding, snapshot, groupRecall);
   grant.review = reviewed(snapshot);
   return grant;
 }
@@ -790,7 +796,10 @@ export function prepareDraftReview(
     result.preparation = { state: "blocked", reason: blocked };
     return result;
   }
-  const grant = draftGrant(runtime, ctx, binding, snapshot);
+  const groupRecall = ctx.currentGroupRecall?.();
+  const recallVersion = JSON.stringify(groupRecall);
+  const recallChanged = recallVersion !== ctx.openingGroupRecall;
+  const grant = draftGrant(runtime, ctx, binding, snapshot, recallVersion);
   const token = randomBytes(32).toString("hex");
   const missing = missingInput(ctx, snapshot);
   const materials = reviewMaterials(runtime, ctx, missing);
@@ -815,6 +824,13 @@ export function prepareDraftReview(
       reason:
         reason ?? (remaining.length ? "READ_GAP" : "REVIEW_DECISION_REQUIRED"),
       missing: missingItems(ctx, remaining, pointerLimit),
+      ...(recallChanged
+        ? {
+            groupRecall: groupRecall ?? { required: [], optional: [] },
+            groupRecallNotice:
+              "本轮相关相处资料已更新。请按当前材料重新核对草稿。",
+          }
+        : {}),
       ...(inline && remaining.length && shown.proofs.size
         ? {
             hint: "本页已附部分原文。用同一草稿的 qq_draft prepare 继续；若一页没有原文，按 missing 中的入口补读。",
@@ -867,6 +883,7 @@ export function prepareDraftReview(
           runtime.contexts.commitSeen(ctx, shown);
           trackMindRecords(runtime, ctx, shown.tracked, "review-input");
         }
+        if (recallChanged) trackGroupRecall(ctx, groupRecall);
         if (canGrant && !missingInput(ctx, snapshot).length)
           grantState(ctx).draft.set(token, grant);
         return true;

@@ -8,7 +8,14 @@ const KINDS =
 
 // Historical speech is a separate, read-only projection. Never call seen() or
 // observeInput() for it: replay cannot grant authority or advance watermarks.
-export function chatRecall(runtime, ctx, history, handoff, throughSeq) {
+export function chatRecall(
+  runtime,
+  ctx,
+  history,
+  handoff,
+  throughSeq,
+  correctionAllowed,
+) {
   const memory = runtime.memory.bind(ctx.agentId);
   const boundary = recallBoundary(runtime, ctx);
   const read = memory.db.prepare(
@@ -36,11 +43,16 @@ export function chatRecall(runtime, ctx, history, handoff, throughSeq) {
       "历史回放，不是新来信，不改变处理水位。items 按本聊天账本顺序连续选取；quoted 是明确引用的较早消息；earlier 中本轮未完成笔记关联的来源可展开，其余起始线索只留时间与回查入口，不代表仍与当前话题有关。继续旧任务且条件不全时先回查，不凭省略内容猜测。",
   };
   const project = (row) =>
-    chatHistory({
-      items: [
-        memory.feedEvent(row, ctx.conversation, new Set(), { fullText: true }),
-      ],
-    }).items[0];
+    chatHistory(
+      {
+        items: [
+          memory.feedEvent(row, ctx.conversation, new Set(), {
+            fullText: true,
+          }),
+        ],
+      },
+      correctionAllowed,
+    ).items[0];
   const available = (row) =>
     row && boundary.allowed(memory.event(row, ctx.conversation, true));
   function add(key, item, budget = MAX_CHARS - 300, prepend = false) {
@@ -149,7 +161,11 @@ export function chatRecall(runtime, ctx, history, handoff, throughSeq) {
       occurredAt: row.occurred_at,
       ...memory.recallAnnotation(row.id),
       bodyOmitted: true,
-      ...memory.corrections.annotation("event", id),
+      corrections: memory.corrections
+        .annotation("event", id)
+        .corrections?.filter(
+          (entry) => !correctionAllowed || correctionAllowed(entry),
+        ),
       continuation: { tool: "memory_read", id, offset: 0 },
     };
     const item = noted.has(id) ? project(row) : pointer;
