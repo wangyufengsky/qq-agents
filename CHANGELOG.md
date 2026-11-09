@@ -6,6 +6,10 @@
 
 ## 未发布
 
+### 工具输出边界测试（[#209](https://github.com/wangyufengsky/qq-agents/pull/209)）
+
+- 先关闭测试 HTTP 服务和后端，等待测试启动的子进程退出，再清理运行时、数据库和临时目录，避免 Antigravity 流式夹具在目录删除期间继续写日志。 Antigravity 单次和流式夹具先确认父进程已经处理终态，再验证晚到工具调用被拒绝。
+
 ### 控制台启动测试（[#208](https://github.com/wangyufengsky/qq-agents/pull/208)）
 
 - 容器监听测试等到启动地址和监听提示均已收到再检查输出，覆盖两行日志分批到达的情况。
