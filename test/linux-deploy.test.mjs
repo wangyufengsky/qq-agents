@@ -189,15 +189,17 @@ async function boot(t, extra) {
 
 test("--host 0.0.0.0 boots a reachable console and invalid hosts fail closed", async (t) => {
   const app = await boot(t, ["--host", "0.0.0.0"]);
+  const listening = /Listening on 0\.0\.0\.0:\d+/;
   let url;
-  // A loaded Windows runner can take well over 5s to start the child.
-  for (const end = Date.now() + 60_000; !url && Date.now() < end;) {
-    url = app.output().match(/http:\/\/127\.0\.0\.1:\d+/)?.[0];
-    if (app.child.exitCode !== null) break;
+  // The two startup lines can arrive in separate chunks on a loaded runner.
+  for (const end = Date.now() + 60_000; Date.now() < end;) {
+    const output = app.output();
+    url = output.match(/http:\/\/127\.0\.0\.1:\d+/)?.[0];
+    if ((url && listening.test(output)) || app.child.exitCode !== null) break;
     await delay(5);
   }
   assert(url, app.output());
-  assert.match(app.output(), /Listening on 0\.0\.0\.0:\d+/);
+  assert.match(app.output(), listening);
   const token = fs
     .readFileSync(path.join(app.root, "data", "admin-token"), "utf8")
     .trim();
