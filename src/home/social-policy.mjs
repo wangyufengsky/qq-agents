@@ -1,5 +1,18 @@
 // @ts-check
 import { z } from "zod";
+import {
+  backendSessionConfig,
+  canonical,
+} from "../backends/session-contract.mjs";
+
+/** @param {any} backend @param {string} [model] */
+export function socialBackendContract(backend, model) {
+  if (!backend) return null;
+  return canonical({
+    ...backendSessionConfig({ ...backend, model: model || backend.model }),
+    socialProfile: backend.socialProfile ?? null,
+  });
+}
 import { homeRequestId, homeRevision } from "./policy.mjs";
 
 export const SOCIAL_ADMIN_PRINCIPAL = "instance-administrator";
