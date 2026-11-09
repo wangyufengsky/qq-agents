@@ -3,7 +3,10 @@ import { createHash } from "node:crypto";
 import { SocialExchange } from "./social-exchange.mjs";
 import { readSocialHandoff } from "./social-handoff.mjs";
 import { SocialResources } from "./social-resources.mjs";
-import { effectiveSocialResourceBudget } from "./social-policy.mjs";
+import {
+  effectiveSocialResourceBudget,
+  socialBackendContract,
+} from "./social-policy.mjs";
 import { socialProviderProfile } from "../backends/social-budget.mjs";
 import { toolSpecs } from "../tools/specs.mjs";
 import { toolAvailable } from "../tools/catalog.mjs";
@@ -51,7 +54,7 @@ export class SocialRuntime {
         (/** @type {any} */ x) => x.id === a.backendId,
       );
     return createHash("sha256")
-      .update(JSON.stringify({ backend: b, model: a.model, effort: a.effort }))
+      .update(JSON.stringify(socialBackendContract(b, a.model)))
       .digest("hex");
   }
   /** @param {any} ctx @param {any} args */
@@ -492,7 +495,7 @@ export class SocialRuntime {
             reserved = JSON.parse(w.resources_reserved).tokens || 0;
           const terms = JSON.parse(w.terms);
           if (w.status === "proposed" && now > terms.latestStartAt) {
-            this.exchange.closeRow(w, now, "expired");
+            this.store.closeWindow(w, now, "expired");
             continue;
           }
           if (
@@ -509,9 +512,9 @@ export class SocialRuntime {
               used + reserved > limits.resourceBudget.maxTokensPerWindow) ||
             w.turns_used + w.turns_reserved > limits.maxTurns
           )
-            this.exchange.closeRow(w, now, "limit_or_expiry");
+            this.store.closeWindow(w, now, "limit_or_expiry");
         } catch {
-          this.exchange.closeRow(w, now, "authorization_changed");
+          this.store.closeWindow(w, now, "authorization_changed");
         }
       }
     });
@@ -937,7 +940,7 @@ export class SocialRuntime {
             if (ctx)
               this.db
                 .prepare(
-                  "UPDATE home_social_contexts SET status='disposed',updated_at=? WHERE id=?",
+                  "UPDATE home_social_contexts SET status='disposed',updated_at=? WHERE id=? AND status='running'",
                 )
                 .run(now, turn.id);
             if (turn.window_id) {
@@ -950,7 +953,7 @@ export class SocialRuntime {
                     now,
                   );
                 } catch {
-                  this.exchange.closeRow(
+                  this.store.closeWindow(
                     this.db
                       .prepare("SELECT * FROM home_social_windows WHERE id=?")
                       .get(turn.window_id),
@@ -962,7 +965,7 @@ export class SocialRuntime {
                 const w = this.db
                   .prepare("SELECT * FROM home_social_windows WHERE id=?")
                   .get(turn.window_id);
-                this.exchange.closeRow(w, now, "turn_failed");
+                this.store.closeWindow(w, now, "turn_failed");
               }
             }
           });
@@ -982,7 +985,7 @@ export class SocialRuntime {
                 )
                 .run(failureCode, now, d.id);
               if (d.window_id)
-                this.exchange.closeRow(
+                this.store.closeWindow(
                   this.db
                     .prepare("SELECT * FROM home_social_windows WHERE id=?")
                     .get(d.window_id),
@@ -1081,7 +1084,6 @@ export class SocialRuntime {
           w.status !== "active" ||
           w.fence !== b.windowFence ||
           this.runtime.now() >= w.deadline ||
-          b.policyRevision !== this.service.policy().revision ||
           b.backendContract !== this.backendContract(b.actorIdentity.agentId)
         )
           throw Error("SOCIAL_WINDOW_CLOSED");
@@ -1103,7 +1105,7 @@ export class SocialRuntime {
           .get(b.windowId);
         if (w?.status === "active")
           this.store.transaction((/** @type {number} */ now) =>
-            this.exchange.closeRow(w, now, "authorization_changed"),
+            this.store.closeWindow(w, now, "authorization_changed"),
           );
       }
       this.windowSessions.delete(key);
@@ -1135,7 +1137,7 @@ export class SocialRuntime {
           "SELECT * FROM home_social_windows WHERE status IN ('proposed','active')",
         )
         .all())
-        this.exchange.closeRow(w, now, reason);
+        this.store.closeWindow(w, now, reason);
     });
     for (const ctx of this.active.values()) ctx.controller.abort();
     this.sweepSessions();
@@ -1150,7 +1152,7 @@ export class SocialRuntime {
           "SELECT w.* FROM home_social_windows w JOIN home_social_visits v ON v.id=w.visit_id WHERE w.status='active' AND (v.host_generation=? OR v.guest_generation=?)",
         )
         .all(generation, generation))
-        this.exchange.closeRow(w, now, "human_priority");
+        this.store.closeWindow(w, now, "human_priority");
     });
     this.active.get(agentId)?.controller.abort();
     this.cancelStale();
