@@ -30,6 +30,9 @@ export const behaviorSchema = z
       .prefault({}),
     focusedGroupReply: z.boolean().default(false),
     compactChatGroups: z.array(z.string().regex(/^\d{5,12}$/)).default([]),
+    relationshipRecallGroups: z
+      .array(z.string().regex(/^\d{5,12}$/))
+      .default([]),
     batchWindowMs: ms(0, 60000, 0),
     batchMaxMs: ms(0, 60000, 0),
     maxWakePerMinute: ms(1, 60, 6),

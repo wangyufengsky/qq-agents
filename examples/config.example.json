@@ -115,6 +115,7 @@
       "behavior": {
         "focusedGroupReply": false,
         "compactChatGroups": [],
+        "relationshipRecallGroups": [],
         "maxOpenDraftsPerConversation": 4,
         "imageInput": {
           "enabled": false,
@@ -232,6 +233,7 @@
       "behavior": {
         "focusedGroupReply": false,
         "compactChatGroups": [],
+        "relationshipRecallGroups": [],
         "maxOpenDraftsPerConversation": 4,
         "imageInput": {
           "enabled": false,

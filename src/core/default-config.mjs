@@ -123,6 +123,7 @@ export function defaultConfig() {
         behavior: {
           focusedGroupReply: false,
           compactChatGroups: [],
+          relationshipRecallGroups: [],
           maxOpenDraftsPerConversation: DEFAULT_MAX_OPEN_DRAFTS,
           imageInput: {
             enabled: false,
@@ -220,6 +221,7 @@ export function defaultConfig() {
         behavior: {
           focusedGroupReply: false,
           compactChatGroups: [],
+          relationshipRecallGroups: [],
           maxOpenDraftsPerConversation: DEFAULT_MAX_OPEN_DRAFTS,
           imageInput: {
             enabled: false,
