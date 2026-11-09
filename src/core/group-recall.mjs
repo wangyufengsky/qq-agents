@@ -64,81 +64,88 @@ export function groupRecall(runtime, ctx, history, focus, accountId) {
       result.required.push(entry);
     else result.moreRequired = (result.moreRequired || 0) + 1;
   };
-  const current = focus
-    ? live(focus.id)
-    : history.items
-        .filter((item) => item.direction === "in")
-        .map((item) => live(item.id))
-        .filter(Boolean)
-        .at(-1);
-  if (!visible(current)) return result;
-
-  const { mentions, replies } = references(current);
-  const targets = replies.map((id) => quotedMessage(memory.db, current, id));
-  const addressed = new Set([
-    ...mentions.filter((id) => id !== "all"),
-    ...targets
-      .filter(Boolean)
-      .map((row) => (row.direction === "out" ? accountId : row.sender_id))
-      .filter(Boolean),
-  ]);
-  if (addressed.size && !addressed.has(accountId)) return result;
-
+  const incoming = (
+    focus
+      ? [focus]
+      : history.items.filter((item) => item.direction === "in").reverse()
+  )
+    .map(({ id }) => live(id))
+    .filter(visible);
   const peers = new Set(
     runtime.config.agents
       .filter((peer) => peer.id !== ctx.agentId)
       .map((peer) => runtime.connection(peer.connectionId).accountId),
   );
-  const people = new Set([current.sender_id, ...addressed]);
-  people.delete(accountId);
-  // A joint request without explicit targets can name a peer only when exactly
-  // one other configured role spoke recently in this same source.
-  if (!addressed.size && JOINT.test(current.body)) {
-    const recent = prepared(
-      memory.db,
-      `SELECT id,sender_id,observed_at FROM events
-       WHERE agent_id=? AND connection_id=? AND conversation=? AND seq<?
-       AND kind='message.received' ORDER BY seq DESC LIMIT 12`,
-    ).all(ctx.agentId, agent.connectionId, ctx.conversation, current.seq);
-    const participants = new Set(
-      recent
-        .filter(
-          (row) =>
-            peers.has(row.sender_id) &&
-            Date.parse(current.observed_at) - Date.parse(row.observed_at) <=
-              300000 &&
-            visible(live(row.id)),
-        )
-        .map((row) => row.sender_id),
-    );
-    if (participants.size === 1) people.add([...participants][0]);
-  }
-
+  const people = new Map();
   const currentIds = new Set(history.items.map(({ id }) => id));
   if (focus) currentIds.add(focus.id);
   const cited = new Set();
-  for (const row of targets) {
-    if (!available(row)) {
-      result.quoteNeedsReview = true;
-      continue;
+  for (const current of incoming) {
+    const { mentions, replies } = references(current);
+    const targets = replies.map((id) => quotedMessage(memory.db, current, id));
+    const addressed = new Set([
+      ...mentions.filter((id) => id !== "all"),
+      ...targets
+        .filter(available)
+        .map((row) => (row.direction === "out" ? accountId : row.sender_id))
+        .filter(Boolean),
+    ]);
+    if (addressed.size && !addressed.has(accountId)) continue;
+    for (const id of [current.sender_id, ...addressed])
+      if (id && id !== accountId) people.set(id, true);
+
+    // An unnamed joint request can refer to a peer only when that role is
+    // the sole recent peer speaker in this group.
+    if (!addressed.size && JOINT.test(current.body)) {
+      const recent = prepared(
+        memory.db,
+        `SELECT id,sender_id,observed_at FROM events
+         WHERE agent_id=? AND connection_id=? AND conversation=? AND seq<?
+         AND kind='message.received' ORDER BY seq DESC LIMIT 12`,
+      ).all(ctx.agentId, agent.connectionId, ctx.conversation, current.seq);
+      const participants = new Set(
+        recent
+          .filter((row) => {
+            const age =
+              Date.parse(current.observed_at) - Date.parse(row.observed_at);
+            return (
+              peers.has(row.sender_id) &&
+              age >= 0 &&
+              age <= 300000 &&
+              visible(live(row.id))
+            );
+          })
+          .map((row) => row.sender_id),
+      );
+      if (participants.size === 1) {
+        const [id] = participants;
+        if (!people.has(id)) people.set(id, false);
+      }
     }
-    if (cited.has(row.id)) continue;
-    cited.add(row.id);
-    if (result.optional.length >= MAX_OPTIONAL || currentIds.has(row.id))
-      continue;
-    result.optional.push({
-      id: row.id,
-      quotedBy: current.id,
-      senderId: row.direction === "out" ? accountId : row.sender_id,
-      occurredAt: row.occurred_at,
-      ...(row.body.length <= 500
-        ? { body: row.body }
-        : { continuation: { tool: "memory_read", id: row.id, offset: 0 } }),
-      ...annotation("event", row.id),
-    });
+
+    for (const row of targets) {
+      if (!available(row)) {
+        result.quoteNeedsReview = true;
+        continue;
+      }
+      if (cited.has(row.id)) continue;
+      cited.add(row.id);
+      if (result.optional.length >= MAX_OPTIONAL || currentIds.has(row.id))
+        continue;
+      result.optional.push({
+        id: row.id,
+        quotedBy: current.id,
+        senderId: row.direction === "out" ? accountId : row.sender_id,
+        occurredAt: row.occurred_at,
+        ...(row.body.length <= 500
+          ? { body: row.body }
+          : { continuation: { tool: "memory_read", id: row.id, offset: 0 } }),
+        ...annotation("event", row.id),
+      });
+    }
   }
 
-  for (const personId of people) {
+  for (const [personId, direct] of people) {
     const card = memory.identity.personCard(personId);
     if (
       card?.call &&
@@ -171,12 +178,7 @@ export function groupRecall(runtime, ctx, history, focus, accountId) {
       };
       const review = annotation("item", item.id, item.revision);
       if (item.kind === "boundary") {
-        if (
-          personId !== current.sender_id &&
-          !addressed.has(personId) &&
-          !ASSIGNMENT.test(item.body)
-        )
-          continue;
+        if (!direct && !ASSIGNMENT.test(item.body)) continue;
         if (!known.some((row) => row.sender_id === personId)) continue;
         require({
           ...subject,

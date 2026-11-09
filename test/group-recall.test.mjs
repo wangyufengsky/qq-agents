@@ -13,6 +13,7 @@ function setup(t) {
   for (const a of cfg.agents) {
     a.wake.participation = 0;
     a.wake.names = false;
+    a.wake.mentions = false;
     a.contextPolicy.capacityTokens = 1000000;
   }
   cfg.agents[0].allow.users.push(person);
@@ -197,4 +198,23 @@ test("a recalled quote leaves a review note and never replays the withdrawn body
   assert.deepEqual(material.optional, []);
   assert.match(material.quoteNeedsReview, /撤回/);
   assert.doesNotMatch(next, /夹具撤回内容/);
+});
+
+test("a later side conversation does not hide an earlier addressed request in the same batch", async (t) => {
+  const f = setup(t);
+  const original = await f.add(1, person, "夹具里的分工原话");
+  const item = boundary(f, original, "先等本人确认接活");
+  await f.wake();
+  await f.add(2, person, [at("10000"), reply("1"), text("麻烦接着说一下")]);
+  await f.add(3, "30000", [at("30001"), text("旁人对话")]);
+  await f.wake();
+  const material = recall(f.prompts.at(-1));
+  assert.deepEqual(
+    material?.required.map(({ id }) => id),
+    [item.id],
+  );
+  assert.deepEqual(
+    material?.optional.map(({ id }) => id),
+    [original.id],
+  );
 });
