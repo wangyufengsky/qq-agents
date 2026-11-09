@@ -139,3 +139,32 @@ test("recalling the quoted wake input before confirmation blocks the focused dra
   assert.equal(f.sent().length, 0);
   assert.deepEqual(f.reviewed(), []);
 });
+
+test("a recalled follow-up must be shown before its draft can be confirmed again", async (t) => {
+  let challenged, result;
+  const f = await group(t, async ({ callTool }) => {
+    await f.ingest(43, quoted(42, "合成补充原文"));
+    const first = await callTool("qq_send", reply);
+    await f.runtime.ingest(
+      "qq-0",
+      raw(43, {
+        post_type: "notice",
+        notice_type: "group_recall",
+      }),
+    );
+    challenged = await callTool("qq_draft", resumeDraft(first));
+    result = await callTool("qq_draft", resumeDraft(challenged));
+  });
+  await f.wake();
+  assert.equal(challenged?.attemptedThisCall, false);
+  assert.deepEqual(
+    challenged.preparation.items.map((item) => [
+      item.kind,
+      item.messageId,
+      item.body,
+    ]),
+    [["message.recalled", "43", "[消息已撤回]"]],
+  );
+  assert.equal(result?.actionResult, "sent");
+  assert.equal(f.sent().length, 1);
+});

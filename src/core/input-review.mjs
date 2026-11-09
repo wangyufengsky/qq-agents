@@ -412,13 +412,20 @@ function inFocusedReview(db, row, focus, related) {
   if (row.seq <= focus.seq) return false;
   if (row.kind === "voice.transcript")
     return related.has(JSON.parse(row.payload).sourceEventId);
+  // A recall replaces the follow-up's visible text, but keeps its membership
+  // in this review. Resolve the original in the notice's gateway namespace.
+  const source =
+    row.kind === "message.recalled" && row.message_id
+      ? quotedMessage(db, row, row.message_id)
+      : row;
   if (
-    row.kind !== "message.received" ||
-    !references(row).replies.includes(focus.message_id) ||
-    quotedMessage(db, row, focus.message_id)?.id !== focus.id
+    source?.kind !== "message.received" ||
+    source.seq <= focus.seq ||
+    !references(source).replies.includes(focus.message_id) ||
+    quotedMessage(db, source, focus.message_id)?.id !== focus.id
   )
     return false;
-  related.add(row.id);
+  related.add(source.id);
   return true;
 }
 
