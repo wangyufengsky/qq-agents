@@ -13,7 +13,6 @@ import {
   processingInputRows,
   reviewInputRows,
   writeProcessed,
-  writeReviewed,
   readInputDisposition,
 } from "../memory/input-state.mjs";
 import { isDeepStrictEqual } from "node:util";
@@ -426,11 +425,6 @@ export function snapshotReviewInput(runtime, ctx, baseline) {
     observedIds,
     blocked,
   };
-}
-
-/** @param {any} memory @param {string} scope @param {string} deliveryId @param {InputRef[]} accepted */
-export function recordReviewedDelivery(memory, scope, deliveryId, accepted) {
-  for (const ref of accepted) writeReviewed(memory.db, scope, deliveryId, ref);
 }
 
 /** @typedef {{draftId:string, version:number, content:unknown, baseline?:ReviewBaseline, checkpoint?:any}} DraftBinding */
