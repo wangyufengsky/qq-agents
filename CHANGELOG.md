@@ -6,7 +6,7 @@
 
 ## 未发布
 
-### 修复 Antigravity ACP 聊天审阅回执过长
+### 修复 Antigravity ACP 聊天审阅回执过长（[#217](https://github.com/wangyufengsky/qq-agents/pull/217)）
 
 - Antigravity ACP 的草稿审阅会按实际输出大小拆分，聊天与记忆补读使用更小的分页。模型可在聊天中直接收到补读入口和提交凭证，避免长结果被 CLI 改写成文件位置而中断回复。沿用原有权限、版本校验与投递账本，无配置或数据库迁移。
 
