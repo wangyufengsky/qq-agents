@@ -603,6 +603,12 @@ test("files lead with the library and fold the permissions with what is allowed"
     /data-fold="files-permissions" open>/,
   );
 
+  assert.match(
+    html,
+    /<input type="checkbox" name="delete"[^>]*>.*允许删除自己生成的文件/,
+  );
+  assert.doesNotMatch(html, /<input type="checkbox" name="delete"[^>]*checked/);
+
   const summary = (f) => p.run(`fileSummary(${JSON.stringify(f)})`);
   const base = JSON.parse(p.run("JSON.stringify(config.agents[0].files)"));
   assert.equal(summary({ ...base, enabled: false }), "未开启");
@@ -612,10 +618,11 @@ test("files lead with the library and fold the permissions with what is allowed"
       download: true,
       send: true,
       create: true,
+      delete: true,
       maxBytes: 0.5 * MiB,
       localRoots: ["/srv/a", "/srv/b"],
     }),
-    "已允许下载链接、接收、发送、生成文本 · 上限 0.5 MiB · 2 个导入目录",
+    "已允许下载链接、接收、发送、生成、修订文本、删除自己生成的文件 · 上限 0.5 MiB · 2 个导入目录",
   );
   assert.equal(
     summary({ ...base, receive: false }),
@@ -649,7 +656,7 @@ test("each file is one line: kind, cut name, size and date, download at the end"
   assert.equal(p.run("fileSize(900)"), "900 字节");
 });
 
-test("saving file permissions sends the same policy as before", async () => {
+test("saving file permissions sends deletion independently of authoring", async () => {
   const p = await files({ localRoots: ["/srv/old"] });
   const saved = JSON.parse(p.run("JSON.stringify(config.agents[0].files)"));
   await p.$("#file-permissions").onsubmit({
@@ -658,6 +665,7 @@ test("saving file permissions sends the same policy as before", async () => {
       enabled: "on",
       download: "on",
       send: "on",
+      delete: "on",
       maxMiB: "0.5",
       totalMiB: "1024",
       maxFiles: "200",
@@ -678,6 +686,7 @@ test("saving file permissions sends the same policy as before", async () => {
         receive: false,
         send: true,
         create: false,
+        delete: true,
         maxBytes: 0.5 * MiB,
         maxTotalBytes: 1024 * MiB,
         maxFiles: 200,

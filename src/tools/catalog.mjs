@@ -84,6 +84,12 @@ export function toolAvailable(agent, name, conversation) {
             /^(group|private):\d+$/.test(conversation)
           : conversation === "@subject")
     );
+  if (name === "file_delete")
+    return (
+      agent.files?.enabled === true &&
+      agent.files.delete === true &&
+      profileConversation(agent, conversation)
+    );
   if (name === "qq_draft")
     return (
       /^(private|group):\d+$/.test(conversation) &&
