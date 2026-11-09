@@ -167,7 +167,7 @@ export class SocialExchange {
         )
           throw Error("REVISION_CONFLICT");
         if (!args.accept) {
-          this.closeRow(w, now, "declined");
+          this.store.closeWindow(w, now, "declined");
           return { windowId: w.id, changed: true, status: "closed" };
         }
         const consent = [
@@ -211,7 +211,7 @@ export class SocialExchange {
         latestStartAt: terms.latestStartAt,
       };
     if (now > terms.latestStartAt || now >= w.expires_at) {
-      this.closeRow(w, now, "expired");
+      this.store.closeWindow(w, now, "expired");
       return { windowId: w.id, status: "expired", changed: true };
     }
     const identity = terms.firstSpeakerIdentity,
@@ -358,40 +358,6 @@ export class SocialExchange {
       deadline: w.deadline,
     };
   }
-  /** @param {any} w @param {number} now @param {string} reason */
-  closeRow(w, now, reason) {
-    if (!["active", "proposed"].includes(w.status)) return false;
-    this.db
-      .prepare(
-        "UPDATE home_social_windows SET status=?,revision=revision+1,fence=fence+1,closed_at=?,closed_reason=? WHERE id=?",
-      )
-      .run(
-        reason === "expired"
-          ? "expired"
-          : reason === "declined"
-            ? "declined"
-            : "closed",
-        now,
-        reason,
-        w.id,
-      );
-    this.db
-      .prepare(
-        "UPDATE home_social_turns SET status='cancelled',fence=fence+1,finished_at=? WHERE window_id=? AND status IN ('queued','running','reserved')",
-      )
-      .run(now, w.id);
-    this.db
-      .prepare(
-        "UPDATE home_social_dispatches SET status='cancelled',fence=fence+1,finished_at=? WHERE window_id=? AND status IN ('queued','claimed')",
-      )
-      .run(now, w.id);
-    this.db
-      .prepare(
-        "UPDATE home_social_outbox SET status='cancelled',fence=fence+1,finished_at=? WHERE entity_id=? AND status IN ('pending','claimed')",
-      )
-      .run(now, w.visit_id);
-    return true;
-  }
   /** @param {any} ctx @param {any} args */
   close(ctx, args) {
     const b = this.binding(ctx);
@@ -412,7 +378,7 @@ export class SocialExchange {
           };
         if (w.revision !== args.expectedWindowRevision)
           throw Error("REVISION_CONFLICT");
-        this.closeRow(w, now, "participant_closed");
+        this.store.closeWindow(w, now, "participant_closed");
         return { changed: true, windowId: w.id, status: "closed" };
       },
     });
@@ -515,7 +481,7 @@ export class SocialExchange {
         Math.min(w.deadline, w.started_at + limits.durationMinutes * 60000) ||
       w.turns_used + w.turns_reserved >= limits.maxTurns
     ) {
-      this.closeRow(w, now, "batch_complete");
+      this.store.closeWindow(w, now, "batch_complete");
       return;
     }
     this.enqueue(
