@@ -1,12 +1,32 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { pathToFileURL, fileURLToPath } from "node:url";
-import { once } from "node:events";
+import { spawn } from "node:child_process";
 const repo = fileURLToPath(new URL("..", import.meta.url));
 const { fixture, config, raw, relayEnvironment } = await import(
   pathToFileURL(repo + "/test/helpers.mjs")
 );
 const { createServer } = await import(pathToFileURL(repo + "/src/server.mjs"));
+
+function outputFixture(t, options) {
+  // Close resources using the fixture before its database and directory.
+  const cleanup = new AsyncDisposableStack();
+  t.after(() => cleanup.disposeAsync());
+  return { ...fixture({ after: (fn) => cleanup.defer(fn) }, options), cleanup };
+}
+
+function spawnFixture(...args) {
+  const child = spawn(...args);
+  const closed = new Promise((resolve) => child.once("close", resolve));
+  return {
+    child,
+    async close() {
+      if (child.exitCode === null && child.signalCode === null) child.kill();
+      await closed;
+    },
+  };
+}
+
 for (const altered of [false, true])
   test(`HTTP final output ${altered ? "missing" : "retains"} original material`, async (t) => {
     const cfg = config(1);
@@ -16,7 +36,7 @@ for (const altered of [false, true])
       private: false,
       participation: 0,
     });
-    const f = fixture(t, { cfg });
+    const f = outputFixture(t, { cfg });
     const ctx = f.runtime.makeContext("agent-0", "group:20000");
     await f.runtime.ingest(
       "qq-0",
@@ -40,8 +60,8 @@ for (const altered of [false, true])
         return result;
       });
     const app = createServer({ runtime: f.runtime, token: "synthetic-admin" });
+    f.cleanup.defer(() => app.close());
     const port = await app.listen();
-    t.after(() => app.close());
     const response = await fetch(`http://127.0.0.1:${port}/agent/tools`, {
       method: "POST",
       headers: {
@@ -81,7 +101,7 @@ for (const altered of [false, true])
       private: false,
       participation: 0,
     });
-    const f = fixture(t, { cfg });
+    const f = outputFixture(t, { cfg });
     const ctx = f.runtime.makeContext("agent-0", "group:20000");
     await f.runtime.ingest(
       "qq-0",
@@ -109,6 +129,10 @@ for (const altered of [false, true])
     const backend = new CodexBackend(cfg.backends[0], cfg.agents[0], {
       root: f.root,
       rpc,
+    });
+    f.cleanup.defer(() => {
+      backend.active.clear();
+      return backend.close();
     });
     const originalCall = f.runtime.callTool.bind(f.runtime);
     backend.active.set("synthetic-thread", {
@@ -139,7 +163,6 @@ for (const altered of [false, true])
         arguments: { id: row.id },
       },
     });
-    backend.active.clear();
     assert.equal(rpc.frames.length, 1);
     if (altered) {
       assert(!JSON.stringify(rpc.frames).includes("synthetic dynamic frame"));
@@ -169,7 +192,7 @@ for (const altered of [false, true])
       private: false,
       participation: 0,
     });
-    const f = fixture(t, { cfg });
+    const f = outputFixture(t, { cfg });
     const key = "QQ_SYNTHETIC_OUTPUT_TEST_KEY";
     const before = process.env[key];
     process.env[key] = "synthetic";
@@ -279,8 +302,6 @@ for (const altered of [false, true])
     }
   });
 
-const { spawn } = await import("node:child_process");
-
 test(
   "DSH relay HTTP success cannot substitute for failed stdio output",
   { timeout: 10000 },
@@ -292,7 +313,7 @@ test(
       private: false,
       participation: 0,
     });
-    const f = fixture(t, { cfg });
+    const f = outputFixture(t, { cfg });
     const ctx = f.runtime.makeContext("agent-0", "group:20000");
     await f.runtime.ingest(
       "qq-0",
@@ -309,8 +330,8 @@ test(
       .get();
     const original = f.runtime.callTool.bind(f.runtime);
     const app = createServer({ runtime: f.runtime, token: "synthetic-admin" });
+    f.cleanup.defer(() => app.close());
     const port = await app.listen();
-    t.after(() => app.close());
     const inject = `const write=process.stdout.write.bind(process.stdout);
  process.stdout.write=(frame, callback)=>{
   if(JSON.parse(String(frame)).id!==2) return write(frame,callback);
@@ -320,7 +341,7 @@ test(
  };`;
     const preload =
       "data:text/javascript;base64," + Buffer.from(inject).toString("base64");
-    const child = spawn(
+    const relay = spawnFixture(
       process.execPath,
       ["--import", preload, repo + "/src/mcp.mjs"],
       {
@@ -332,16 +353,11 @@ test(
         stdio: ["pipe", "pipe", "pipe"],
       },
     );
+    f.cleanup.defer(() => relay.close());
+    const { child } = relay;
     const failed = Promise.withResolvers();
     child.stderr.on("data", (chunk) => {
       if (String(chunk).includes("SYNTHETIC_STDOUT_FAILURE")) failed.resolve();
-    });
-    t.after(async () => {
-      if (child.exitCode === null && child.signalCode === null) {
-        const exited = once(child, "exit");
-        child.kill();
-        await exited;
-      }
     });
     let buffer = "";
     const initialized = Promise.withResolvers();
@@ -400,7 +416,7 @@ test(
       private: false,
       participation: 0,
     });
-    const f = fixture(t, { cfg });
+    const f = outputFixture(t, { cfg });
     const ctx = f.runtime.makeContext("agent-0", "group:20000");
     await f.runtime.ingest(
       "qq-0",
@@ -416,9 +432,9 @@ test(
       )
       .get();
     const app = createServer({ runtime: f.runtime, token: "synthetic-admin" });
+    f.cleanup.defer(() => app.close());
     const port = await app.listen();
-    t.after(() => app.close());
-    const child = spawn(process.execPath, [repo + "/src/mcp.mjs"], {
+    const relay = spawnFixture(process.execPath, [repo + "/src/mcp.mjs"], {
       env: {
         ...process.env,
         QQ_UNIFIED_URL: `http://127.0.0.1:${port}`,
@@ -426,14 +442,9 @@ test(
       },
       stdio: ["pipe", "pipe", "pipe"],
     });
+    f.cleanup.defer(() => relay.close());
+    const { child } = relay;
     child.stderr.resume();
-    t.after(async () => {
-      if (child.exitCode === null && child.signalCode === null) {
-        const exited = once(child, "exit");
-        child.kill();
-        await exited;
-      }
-    });
     let buffer = "";
     const pending = new Map();
     child.stdout.on("data", (data) => {
@@ -524,7 +535,7 @@ for (const reuse of [false, true])
           private: false,
           participation: 0,
         });
-        const f = fixture(t, { cfg });
+        const f = outputFixture(t, { cfg });
         const ctx = f.runtime.makeContext("agent-0", "group:20000");
         await f.runtime.ingest(
           "qq-0",
@@ -566,10 +577,11 @@ for (const reuse of [false, true])
             return value;
           },
         );
+        const children = [];
         const backend = new AntigravityBackend(agy, cfg.agents[0], {
           root: f.root,
-          spawn: (_command, args, options) =>
-            spawn(
+          spawn: (_command, args, options) => {
+            const fixture = spawnFixture(
               process.execPath,
               [
                 repo +
@@ -587,9 +599,19 @@ for (const reuse of [false, true])
                   AGY_STREAM_FIXTURE_CONTROL: f.root + "/control.json",
                 },
               },
-            ),
+            );
+            children.push(fixture);
+            return fixture.child;
+          },
         });
-        t.after(() => backend.close());
+        f.cleanup.defer(async () => {
+          try {
+            await backend.close();
+          } finally {
+            // The backend stops its workers, but the test owns their process lifetime.
+            await Promise.all(children.map((child) => child.close()));
+          }
+        });
         await backend.run({
           conversation: "group:20000",
           prompt: "synthetic prompt",
@@ -623,6 +645,7 @@ for (const reuse of [false, true])
           commitToolOutput: (receipt, text) =>
             f.runtime.commitToolOutput(ctx, receipt, text),
         });
+        if (!reuse) assert.equal(children[0].child.exitCode, 0);
         assert.equal(output.length, altered === "failure" ? 0 : 1);
         if (altered) {
           assert(
@@ -661,7 +684,7 @@ for (const kind of ["codex", "openai"])
       private: false,
       participation: 0,
     });
-    const f = fixture(t, { cfg });
+    const f = outputFixture(t, { cfg });
     const ctx = f.runtime.makeContext("agent-0", "group:20000");
     await f.runtime.ingest(
       "qq-0",
@@ -700,6 +723,10 @@ for (const kind of ["codex", "openai"])
         root: f.root,
         rpc: new Rpc(),
       });
+      f.cleanup.defer(() => {
+        backend.active.clear();
+        return backend.close();
+      });
       backend.active.set("thread", {
         turnId: "turn",
         signal: ctx.controller.signal,
@@ -716,13 +743,13 @@ for (const kind of ["codex", "openai"])
           arguments: {},
         },
       });
-      backend.active.clear();
     } else {
       const backend = new OpenAIBackend(
         { ...cfg.backends[0], vision: false },
         cfg.agents[0],
         { root: f.root },
       );
+      f.cleanup.defer(() => backend.close());
       const answer = await backend.toolMessages(
         { id: "call", function: { name: "synthetic-poke", arguments: "{}" } },
         async () => attempt(),

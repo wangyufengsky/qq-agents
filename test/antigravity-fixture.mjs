@@ -6,6 +6,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { fileURLToPath } from "node:url";
 import { once } from "node:events";
+import { waitForTerminalObservation } from "./antigravity-fixture-terminal.mjs";
 
 const args = process.argv.slice(2);
 const flag = (name) => args[args.indexOf(name) + 1];
@@ -246,7 +247,7 @@ if (args.includes("models")) {
     if (!(await call("probe")).ok) throw Error("TOOL_FAILED");
     responseStep();
     event(result);
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await waitForTerminalObservation(endpoint, headers);
     if ((await call("probe")).status !== 403)
       throw Error("COMPLETED_TURN_ALLOWED");
   }
