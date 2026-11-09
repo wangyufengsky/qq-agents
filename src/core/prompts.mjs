@@ -153,6 +153,14 @@ export function turnEnvironment(runtime, agent, ctx, backendType) {
     parts.push(
       `本回合工具额度（替换历史工具额度）：最多调用 ${ctx.subjectToolBudget} 个工具，subject_log 不计入；额度在本回合开始时确定。`,
     );
+  if (ctx.allowedTools?.includes("subject_inbox_submit"))
+    parts.push(
+      "想在聊天结束后休息、及时联系另一个已授权的会话，或把项目、工作笔记交给空闲时的自己时，可以用 subject_inbox_submit。提议只是交给主人格考虑，先把当前聊天自然收好。",
+    );
+  if (ctx.allowedTools?.includes("subject_rest"))
+    parts.push(
+      "你可以自主用 subject_rest 决定休息多久，当前及其他正在进行的回合收尾后开始。也可以考虑会话递来的提议，决定现在做、稍后再看或放下。",
+    );
   if (ctx.conversation.startsWith("group:"))
     parts.push(
       isPrivateLikeGroup(runtime.config, ctx.conversation)

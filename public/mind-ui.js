@@ -254,7 +254,7 @@ function subjectFormMarkup(a) {
   return mindFold(
     "subject-settings",
     "空闲时间设置与联系范围",
-    `<form id="subject-form"><div class="form-grid">${check("enabled", "启用主体空闲思考", enabled)}${check("owners", "允许主动联系主人", p.owners)}${check("peers", "允许主动联系同伴角色", p.peers)}${ids("groups", "明确启用的群", p.groups, { kind: "group" })}${ids("users", "额外启用的私聊", p.users, { kind: "person", hint: "联系范围还受回复白名单约束。" })}</div><div class="form-grid">${input("interval", "检查间隔（分钟）", p.intervalMs / 60000, 'type="number" min="1" required')}${input("checks", "24 小时检查上限", p.maxChecksPerDay, 'type="number" min="1" required')}${input("contacts", "24 小时主动联系上限", p.maxContactsPerDay, 'type="number" min="1" required')}${range("toolCalls", "每次空闲时间最多调用工具数", p.maxToolCallsPerTurn ?? 8, { min: 1, max: 30, step: 1, unit: " 个" })}${input("cooldown", "联系冷却（分钟）", p.contactCooldownMs / 60000, 'type="number" min="1" required')}${input("unanswered", "未回应冷却（小时）", p.unansweredCooldownMs / 3600000, 'type="number" min="1" required')}</div>${advanced("离线与勿扰时", `${check("offlineReview", "离线时允许内部回顾", p.offlineReview)}${check("reviewInSilence", "勿扰期间允许内部回顾", p.reviewInSilence)}`)}<p class="hint">全局暂停会阻止模型检查；每次空闲时间结束，主体会用日志记下做了什么或为什么休息。仅修改检查间隔和次数会立即生效，保留连接与当前回合；修改权限或联系范围会结束该角色当前的回合，QQ 连接不受影响。</p><button class="primary">保存空闲时间设置</button></form>`,
+    `<form id="subject-form"><div class="form-grid">${check("enabled", "启用主体空闲思考", enabled)}${check("inboxEnabled", "允许会话提议与自主休息", p.inboxEnabled)}${check("owners", "允许主动联系主人", p.owners)}${check("peers", "允许主动联系同伴角色", p.peers)}${ids("groups", "明确启用的群", p.groups, { kind: "group" })}${ids("users", "额外启用的私聊", p.users, { kind: "person", hint: "联系范围还受回复白名单约束。" })}</div><div class="form-grid">${input("interval", "检查间隔（分钟）", p.intervalMs / 60000, 'type="number" min="1" required')}${input("checks", "24 小时检查上限", p.maxChecksPerDay, 'type="number" min="1" required')}${input("contacts", "24 小时主动联系上限", p.maxContactsPerDay, 'type="number" min="1" required')}${range("toolCalls", "每次空闲时间最多调用工具数", p.maxToolCallsPerTurn ?? 8, { min: 1, max: 30, step: 1, unit: " 个" })}${input("cooldown", "联系冷却（分钟）", p.contactCooldownMs / 60000, 'type="number" min="1" required')}${input("unanswered", "未回应冷却（小时）", p.unansweredCooldownMs / 3600000, 'type="number" min="1" required')}</div>${advanced("离线与勿扰时", `${check("offlineReview", "离线时允许内部回顾", p.offlineReview)}${check("reviewInSilence", "勿扰期间允许内部回顾", p.reviewInSilence)}`)}<p class="hint">全局暂停会阻止模型检查；每次空闲时间结束，主体会用日志记下做了什么或为什么休息。仅修改检查间隔和次数会立即生效，保留连接与当前回合；修改权限或联系范围会结束该角色当前的回合，QQ 连接不受影响。</p><button class="primary">保存空闲时间设置</button></form>`,
     { summary: esc(summary) },
   );
 }
@@ -438,6 +438,7 @@ function bindSubject(a) {
             .filter(Boolean);
       Object.assign(agent.subject, {
         enabled: f.has("enabled"),
+        inboxEnabled: f.has("inboxEnabled"),
         owners: f.has("owners"),
         peers: f.has("peers"),
         offlineReview: f.has("offlineReview"),

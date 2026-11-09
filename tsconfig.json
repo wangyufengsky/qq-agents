@@ -71,6 +71,7 @@
     "src/core/peer-qzone.mjs",
     "src/tools/qzone.mjs",
     "src/core/rhythm.mjs",
+    "src/core/role-rest.mjs",
     "src/core/typing.mjs",
     "src/core/tone-check.mjs",
     "src/memory/migrate.mjs",

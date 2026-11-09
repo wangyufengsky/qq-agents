@@ -1,4 +1,5 @@
 // @ts-check
+import { roleRest, settleRoleRest, subjectInboxEnabled } from "./role-rest.mjs";
 import {
   zonedParts,
   zonedToUtc,
@@ -49,6 +50,28 @@ export function sleepWindow(behavior, now) {
  */
 export function rhythmStatus(runtime, agent, persist = false) {
   const rhythm = agent.behavior.rhythm;
+  const timezone = rhythm?.timezone || agent.behavior.proactive.timezone;
+  const rest = roleRest(runtime, agent);
+  if (rest) {
+    if (rest.until == null)
+      return { state: "rest-pending", label: "准备休息，等当前回合收尾" };
+    const wake = new Intl.DateTimeFormat("zh-CN", {
+      timeZone: timezone,
+      month: "numeric",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    }).format(rest.until);
+    return {
+      state: "sleeping",
+      label: `自主休息中，预计 ${wake} 起床`,
+      until: rest.until,
+      start: rest.start,
+      end: rest.until,
+      timezone,
+    };
+  }
   if (!rhythm?.enabled) return { state: "disabled", label: "作息未开启" };
   const now = runtime.now(),
     memory = runtime.memory.bind(agent.id);
@@ -68,7 +91,6 @@ export function rhythmStatus(runtime, agent, persist = false) {
   }
   const sleeping =
     !!window || (saved?.key === key && saved.until > now && saved.start <= now);
-  const timezone = rhythm.timezone || agent.behavior.proactive.timezone;
   if (sleeping) {
     const wake = new Intl.DateTimeFormat("zh-CN", {
       timeZone: timezone,
@@ -104,7 +126,7 @@ export const urgentOwner = (agent, conversation) =>
 
 /** Only postpones ordinary wakeups; it never grants a new wake or reply budget.
  * @param {any} runtime @param {any} agent @param {any} state @param {string} conversation
- * @param {{exempt?: boolean, direct?: boolean}} [options]
+ * @param {{exempt?: boolean, scheduled?: boolean, direct?: boolean}} [options]
  */
 export function deferForRhythm(
   runtime,
@@ -116,6 +138,27 @@ export function deferForRhythm(
   const rhythm = agent.behavior.rhythm;
   if (state.rhythmBaseDueAt !== undefined)
     state.wakeDueAt = state.rhythmBaseDueAt;
+  const rest = roleRest(runtime, agent);
+  if (rest?.until && !options.scheduled) {
+    state.rhythmBaseDueAt ??= state.wakeDueAt;
+    state.roleRestDeferred = true;
+    delete state.roleRestWake;
+    state.rhythmDeferredUntil = rest.until;
+    state.rhythmSleepPeriod = {
+      start: rest.start,
+      end: rest.until,
+      timezone: rhythm?.timezone || agent.behavior.proactive.timezone,
+    };
+    state.wakeDueAt = Math.max(state.wakeDueAt ?? runtime.now(), rest.until);
+    return;
+  }
+  if (state.roleRestDeferred) {
+    delete state.roleRestDeferred;
+    if (state.rhythmDeferredUntil <= runtime.now())
+      state.roleRestWake = state.rhythmSleepPeriod;
+    delete state.rhythmSleepPeriod;
+    delete state.rhythmDeferredUntil;
+  }
   if (!rhythm?.enabled || options.exempt || urgentOwner(agent, conversation)) {
     resetRhythmState(state);
     return;
@@ -157,10 +200,12 @@ export function deferForRhythm(
 
 /** @param {any} runtime @param {any} agent @param {any} ctx */
 export function rhythmEnvironment(runtime, agent, ctx) {
-  if (!agent.behavior.rhythm?.enabled) return "";
   const status = rhythmStatus(runtime, agent);
+  if (status.state === "disabled" && !ctx.rhythmWake) return "";
   const label =
-    status.state === "sleeping" && urgentOwner(agent, ctx.conversation)
+    status.state === "sleeping" &&
+    !roleRest(runtime, agent) &&
+    urgentOwner(agent, ctx.conversation)
       ? "睡觉中被主人叫醒"
       : status.label;
   const woke = ctx.rhythmWake;
@@ -185,9 +230,32 @@ export function resetRhythmState(state) {
   delete state.rhythmLateChecked;
 }
 
-/** Rebuild due indexes immediately on edits, even for wakes scheduled hours ahead.
- * @param {any} runtime @param {any} before @param {any} after
+/** Rebuild due indexes even for wakes originally scheduled hours ahead.
+ * @param {any} runtime @param {any} agent @param {boolean} [reset]
  */
+export function refreshAgentRhythm(runtime, agent, reset = false) {
+  const memory = runtime.memory.bind(agent.id);
+  for (const row of memory.db
+    .prepare(
+      "SELECT conversation FROM runtime WHERE agent_id=? AND json_extract(value,'$.pendingWakes[0]') IS NOT NULL",
+    )
+    .all(agent.id)) {
+    const state = memory.state(row.conversation);
+    if (reset) resetRhythmState(state);
+    deferForRhythm(runtime, agent, state, row.conversation, {
+      exempt: state.pendingWakes.some(
+        (/** @type {any} */ wake) => wake.taskRunId || wake.intentId,
+      ),
+      scheduled: state.pendingWakes.some(
+        (/** @type {any} */ wake) => wake.taskRunId,
+      ),
+      direct: state.rhythmDirect === true,
+    });
+    memory.setState(row.conversation, state);
+  }
+}
+
+/** @param {any} runtime @param {any} before @param {any} after */
 export function refreshRhythm(runtime, before, after) {
   for (const agent of after.agents) {
     const old = before.agents.find((/** @type {any} */ a) => a.id === agent.id);
@@ -197,22 +265,11 @@ export function refreshRhythm(runtime, before, after) {
         a?.behavior.proactive.timezone,
         a?.ownerIds,
       ]);
-    if (policy(old) === policy(agent)) continue;
-    const memory = runtime.memory.bind(agent.id);
-    for (const row of memory.db
-      .prepare(
-        "SELECT conversation,value FROM runtime WHERE agent_id=? AND json_extract(value,'$.pendingWakes[0]') IS NOT NULL",
-      )
-      .all(agent.id)) {
-      const state = memory.state(row.conversation);
-      resetRhythmState(state);
-      deferForRhythm(runtime, agent, state, row.conversation, {
-        exempt: state.pendingWakes.some(
-          (/** @type {any} */ wake) => wake.taskRunId || wake.intentId,
-        ),
-        direct: state.rhythmDirect === true,
-      });
-      memory.setState(row.conversation, state);
-    }
+    const changed = policy(old) !== policy(agent);
+    const cleared =
+      !subjectInboxEnabled(agent) &&
+      subjectInboxEnabled(old) &&
+      settleRoleRest(runtime, agent);
+    if (changed || cleared) refreshAgentRhythm(runtime, agent, changed);
   }
 }

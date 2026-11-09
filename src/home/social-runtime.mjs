@@ -12,6 +12,7 @@ import { toolSpecs } from "../tools/specs.mjs";
 import { toolAvailable } from "../tools/catalog.mjs";
 import { SOCIAL_TOOLS } from "./social-tool-names.mjs";
 import { recallBoundary } from "../core/recall-boundary.mjs";
+import { roleRest } from "../core/role-rest.mjs";
 import { trackSocialMindOutput } from "../core/protected-mind.mjs";
 import {
   createSocialWindowHistory,
@@ -448,6 +449,7 @@ export class SocialRuntime {
         seen.add(d.actor_generation);
         if (
           this.active.has(d.agent_id) ||
+          roleRest(this.runtime, this.runtime.agent(d.agent_id)) ||
           this.runtime.subjectExecution.busy(d.agent_id) ||
           [...this.runtime.running.values()].some(
             (/** @type {any} */ x) => x.agentId === d.agent_id,

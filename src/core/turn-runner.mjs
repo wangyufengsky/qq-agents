@@ -185,6 +185,7 @@ export class TurnRunner {
         onInputSubmitted: () => {
           if (!runtime.stopped && !controller.signal.aborted) {
             runtime.contexts.commitOpening(ctx);
+            ctx.subjectInboxInputSubmitted = true;
             ctx.backendInputEpoch = ctx.inputEpoch;
             runtime.messageTiming?.mark(timingId, "backendInputSubmitted");
             imageInput.submitted();
@@ -251,6 +252,7 @@ export class TurnRunner {
       try {
         try {
           runtime.subject.finish(ctx, outcome);
+          runtime.subjectInbox.finish(ctx, outcome);
           if (ctx.turnId) await runtime.contexts.finish(ctx, outcome, backend);
         } catch (error) {
           runtime.faults.set(agentId, "CONTEXT_FINALIZATION_FAILED");
