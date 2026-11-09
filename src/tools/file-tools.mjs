@@ -67,6 +67,10 @@ export const fileDefinitions = {
       })
       .strict(),
   ],
+  file_delete: [
+    "永久删除自己生成的一份文件或最末版本。先用 file_list 核对 fileId、文件名和版本，确认确实不再需要再删除。旧版如有后续版本会被拒绝；删除最新版后，上一版会重新成为最新版。管理员导入、下载、受保护文件不能删除。库内正文会被移除，同样的字节不能重新入库；已发到 QQ 的副本不会撤回。只在主人私聊或自己的空闲时间可用。返回 removed=true 才算删除成功。",
+    z.object({ fileId: id }).strict(),
+  ],
   file_import: [
     "从管理员指定的目录导入文件。只接受目录编号及相对路径，不接受任意本机绝对路径。",
     z
@@ -200,6 +204,12 @@ export async function fileTool(runtime, ctx, tool, args) {
     return sendDraftTool(runtime, ctx, tool, args);
   }
   return files.acquire(a.id, async () => {
+    if (tool === "file_delete") {
+      active(runtime, ctx, "delete");
+      return files.deleteGenerated(a.id, args.fileId, (meta) =>
+        recallBoundary(runtime, ctx, { publicOnly: true }).assert(meta),
+      );
+    }
     const restricted = [...ctx.privateRead].some((x) =>
       /^(operations|operations-result):/.test(x),
     );

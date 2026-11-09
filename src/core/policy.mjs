@@ -329,6 +329,7 @@ export const filesSchema = z
     receive: z.boolean().default(true),
     send: z.boolean().default(true),
     create: z.boolean().default(true),
+    delete: z.boolean().default(false),
     maxBytes: ms(1024, 52428800, 20971520),
     maxTotalBytes: ms(1024, 5368709120, 209715200),
     maxFiles: ms(1, 10000, 1000),

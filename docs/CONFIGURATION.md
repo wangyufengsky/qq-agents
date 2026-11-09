@@ -66,7 +66,7 @@ Antigravity 可选 `cliReuse` 只适用于此后端：`enabled` 默认 `false`�
 
 ## 在管理台配置角色
 
-新建角色、缺省配置和管理台添加角色使用一致的能力默认值：完整工具目录默认勾选，自主联网、平台浏览与分享、文件收发、GitHub、定时任务、TTS、跨群查询和运维工具开关默认开启。已有显式 `false`、平台选择和工具列表（包括空列表）保持原样，不在升级时覆盖。
+新建角色、缺省配置和管理台添加角色使用一致的能力默认值：完整工具目录默认勾选，自主联网、平台浏览与分享、文件收发、GitHub、定时任务、TTS、跨群查询和运维工具开关默认开启。已有显式 `false`、平台选择和工具列表（包括空列表）保持原样，不在升级时覆盖。 角色自主删除自己生成的文件由 `agents[].files.delete` 单独授权，默认关闭。
 
 网页游戏是默认能力策略的例外：全局 `games.enabled` 和角色 `games.enabled` 均默认关闭；需单独设置公网入口并完成外部验证，首个适配后端为 Codex，见 [P2 游戏配置](WEB-GAME-P2.md)。游戏公开设定 `games.publicPersona` 不继承聊天 persona 或 Self；对手显示名 `games.publicName`、头像 `games.avatar`（默认 `"qq"`，仅 `live` 模式下载本账号 QQ 头像）和落子台词 `games.remarks`/`games.remarkStyle` 也只作用于游戏网页。
 
