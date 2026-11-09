@@ -108,7 +108,9 @@ export class Operations {
         (p) =>
           p === ".." ||
           p.startsWith(".") ||
-          /^(?:auth|config|credentials|admin-token|secrets)(?:\.|$)/i.test(p),
+          /^(?:auth|config|credentials|admin-token|relay-token|secrets)(?:\.|$)/i.test(
+            p,
+          ),
       )
     )
       throw Error("OPERATIONS_PATH_DENIED");

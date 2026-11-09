@@ -417,13 +417,13 @@ export class SubjectCoordinator {
       throw Error("INTENT_STALE_REFRESH_REQUIRED");
     return i;
   }
-  beforeDelivery(ctx) {
+  beforeDelivery(ctx, evidence = ctx) {
     if (ctx.conversation === SUBJECT) throw Error("SUBJECT_CANNOT_SEND_QQ");
     if (ctx.intentOnly && !ctx.activeIntentId)
       throw Error("INTENT_DECISION_REQUIRED");
     if (!ctx.activeIntentId) return null;
     const i = this.assertFresh(ctx);
-    trackMindRecords(this.runtime, ctx, [i], "intent");
+    trackMindRecords(this.runtime, evidence, [i], "intent");
     const s = this.memory(ctx.agentId).state(SUBJECT),
       a = this.runtime.agent(ctx.agentId),
       now = this.runtime.now();

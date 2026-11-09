@@ -19,6 +19,6 @@ export const inputReviewSchema = z
   })
   .strict()
   .describe(
-    "Only after complete reading and a deliberate decision to send these exact contents, copy the token returned by INPUT_REVIEW_REQUIRED. In ordinary group chats you may name reviewed unrelated input IDs and their reasons.",
+    "Only after complete reading and a deliberate decision to send these exact contents, copy the current preparation.token for qq_draft, or the compatibility review token for a non-draft action. In ordinary group chats you may name reviewed unrelated input IDs and their reasons.",
   )
   .optional();

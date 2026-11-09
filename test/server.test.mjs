@@ -9,9 +9,15 @@ import vm from "node:vm";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { createServer } from "../src/server.mjs";
+import { deriveRelayToken } from "../src/core/relay-auth.mjs";
 import { VoiceStore } from "../src/tools/voice.mjs";
 import { wav } from "./audio-fixture.mjs";
-import { fixture, context, disclosureApproval } from "./helpers.mjs";
+import {
+  fixture,
+  context,
+  disclosureApproval,
+  relayEnvironment,
+} from "./helpers.mjs";
 async function setup(t, exportOptions) {
   const f = fixture(t),
     token = randomBytes(32).toString("hex"),
@@ -670,7 +676,7 @@ test("static console has CSP and never exposes admin token", async (t) => {
   );
 });
 test("MCP stdio handshake and memory roundtrip use live scoped capability", async (t) => {
-  const { base, runtime, store } = await setup(t);
+  const { base, runtime, store, root, token } = await setup(t);
   const ctx = context(runtime);
   store.bind("agent-0").append({
     dedupe: "mcp",
@@ -681,7 +687,11 @@ test("MCP stdio handshake and memory roundtrip use live scoped capability", asyn
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: ["src/mcp.mjs"],
-    env: { PATH: process.env.PATH, QQ_UNIFIED_URL: base },
+    env: {
+      PATH: process.env.PATH,
+      QQ_UNIFIED_URL: base,
+      ...relayEnvironment(root, token),
+    },
     stderr: "pipe",
   });
   const client = new Client({ name: "test", version: "1" });
@@ -729,6 +739,125 @@ test("MCP stdio handshake and memory roundtrip use live scoped capability", asyn
     arguments: { context: ctx.token, name: "memory_search", arguments: {} },
   });
   assert.equal(paused.isError, true);
+});
+
+test("relay receipt issuance and acknowledgement require a key independent of the model capability", async (t) => {
+  const { request, runtime, token } = await setup(t);
+  const ctx = context(runtime);
+  ctx.requiresInputSubmission = true;
+  let confirmed = 0;
+  runtime.callTool = async (ctx) => {
+    const result = { synthetic: "review material" };
+    runtime.stageToolInput(
+      ctx,
+      result,
+      () => {
+        confirmed++;
+      },
+      [],
+    );
+    return result;
+  };
+  const post = (route, data, key, stdio = true) =>
+    request(route, {
+      auth: false,
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-agent-capability": ctx.token,
+        ...(stdio ? { "x-agent-output-protocol": "stdio-v1" } : {}),
+        "x-agent-output-request": "9",
+        ...(key ? { "x-agent-relay-token": key } : {}),
+      },
+      body: JSON.stringify(data),
+    });
+  const args = { name: "conversation_read", arguments: {} };
+  const key = deriveRelayToken(token);
+  assert.notEqual(key, token);
+  const unopened = await post("/agent/tools", args);
+  assert.equal(
+    JSON.parse((await unopened.json()).content[0].text).code,
+    "BACKEND_INPUT_NOT_SUBMITTED",
+  );
+
+  ctx.backendInputEpoch = ctx.inputEpoch;
+  for (const wrong of [undefined, ctx.token, token]) {
+    const rejected = await post("/agent/tools", args, wrong);
+    assert.equal(rejected.headers.get("x-agent-output-receipt"), null);
+    assert.equal(
+      JSON.parse((await rejected.json()).content[0].text).code,
+      "MCP_RELAY_AUTH_REQUIRED",
+    );
+  }
+  const unmarked = await post("/agent/tools", args, key, false);
+  assert.equal(unmarked.headers.get("x-agent-output-receipt"), null);
+  assert.equal(
+    JSON.parse((await unmarked.json()).content[0].text).code,
+    "MCP_RELAY_AUTH_REQUIRED",
+  );
+  const issue = async () => {
+    const response = await post("/agent/tools", args, key);
+    const ack = {
+      receipt: response.headers.get("x-agent-output-receipt"),
+      digest: response.headers.get("x-agent-output-digest"),
+      requestId: "9",
+    };
+    assert.deepEqual(JSON.parse((await response.json()).content[0].text), {
+      synthetic: "review material",
+    });
+    assert.ok(ack.receipt);
+    assert.ok(ack.digest);
+    return ack;
+  };
+  const acknowledge = async (ack) =>
+    (await (await post("/agent/output-ack", ack, key)).json()).accepted;
+  const ack = await issue();
+  for (const wrong of [undefined, ctx.token, token]) {
+    const rejected = await post("/agent/output-ack", ack, wrong);
+    assert.equal(rejected.status, 403);
+    assert.equal((await rejected.json()).accepted, false);
+  }
+  assert.equal(confirmed, 0);
+  assert.equal(await acknowledge(ack), true);
+  assert.equal(await acknowledge(ack), false);
+  for (const mismatch of [{ requestId: "10" }, { digest: "0".repeat(64) }]) {
+    const rejected = await issue();
+    assert.equal(await acknowledge({ ...rejected, ...mismatch }), false);
+    assert.equal(await acknowledge(rejected), false);
+  }
+
+  const expired = await issue();
+  runtime.contexts.resetInputEvidence(ctx);
+  assert.equal(await acknowledge(expired), false);
+  assert.equal(confirmed, 1);
+});
+
+test("a DSH stdio bundle without its relay credential fails closed", async (t) => {
+  const { base, runtime } = await setup(t);
+  const ctx = context(runtime);
+  const client = new Client({ name: "legacy-fixture", version: "1" });
+  await client.connect(
+    new StdioClientTransport({
+      command: process.execPath,
+      args: ["src/mcp.mjs"],
+      env: { PATH: process.env.PATH, QQ_UNIFIED_URL: base },
+      stderr: "pipe",
+    }),
+  );
+  t.after(() => client.close());
+  const result = await client.callTool({
+    name: "bridge_call",
+    arguments: {
+      context: ctx.token,
+      name: "conversation_read",
+      arguments: {},
+    },
+  });
+  assert.equal(result.isError, true);
+  assert.equal(
+    JSON.parse(result.content[0].text).code,
+    "MCP_RELAY_AUTH_REQUIRED",
+  );
 });
 
 test("scheduler HTTP CRUD and preview persist while isolated execution is refused", async (t) => {

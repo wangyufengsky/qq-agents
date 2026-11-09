@@ -196,10 +196,14 @@ test("converted replies preserve burst and rate limits and do not spend proactiv
   await f.runtime.callTool(f.ctx, "conversation_read", {});
   await send(f);
   await f.runtime.callTool(f.ctx, "conversation_read", {});
-  await assert.rejects(send(f, "reread"), /REPLY_BURST_LIMIT/);
+  const exhausted = await send(f, "reread");
+  assert.equal(exhausted.error, "REPLY_BURST_LIMIT");
+  assert.equal(exhausted.attemptedThisCall, false);
   await f.runtime.ingest("qq-0", raw(2));
   await f.runtime.callTool(f.ctx, "conversation_read", {});
-  await assert.rejects(send(f, "new-human"), /SEND_RATE_LIMIT/);
+  const limited = await send(f, "new-human");
+  assert.equal(limited.error, "SEND_RATE_LIMIT");
+  assert.equal(limited.attemptedThisCall, false);
   assert.equal(
     f.store.bind("agent-0").state("@subject").contacts?.length || 0,
     0,
@@ -230,13 +234,11 @@ test("conversion keeps unknown receipts and backend recovery delivery fences", a
   await f.runtime.callTool(f.ctx, "conversation_read", {});
   const transport = f.runtime.transports.get("qq-0");
   transport.failure = "DELIVERY_UNCONFIRMED";
-  let attemptId;
-  await assert.rejects(send(f), (error) => {
-    const result = safeToolFailure(error);
-    assert.equal(result.code, "DELIVERY_UNKNOWN");
-    attemptId = result.draft.items[0].requestId;
-    return true;
-  });
+  const failed = await send(f);
+  assert.equal(failed.error, "DELIVERY_UNKNOWN");
+  assert.equal(failed.actionResult, "unknown");
+  assert.equal(failed.attemptedThisCall, true);
+  const attemptId = failed.draft.items[0].requestId;
   transport.failure = null;
   f.ctx.recoveryDeliveryBlocked = true;
   await f.runtime.ingest("qq-0", raw(2));

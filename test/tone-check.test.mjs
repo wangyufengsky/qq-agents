@@ -207,10 +207,18 @@ test("a stopped burst reports matches and can confirm unchanged without replayin
   const repeated = await runtime.callTool(ctx, "qq_send_burst", args);
   assert.equal(repeated.status, "stopped");
   assert.equal(repeated.receipts[0].duplicate, true);
-  const confirmed = await runtime.callTool(ctx, "qq_draft", {
-    action: "continue",
+  const ref = {
     draftId: first.draft.draftId,
     expectedVersion: first.draft.version,
+  };
+  const prepared = await runtime.callTool(ctx, "qq_draft", {
+    ...ref,
+    action: "prepare",
+  });
+  const confirmed = await runtime.callTool(ctx, "qq_draft", {
+    ...ref,
+    action: "continue",
+    inputReview: { token: prepared.preparation.token, decision: "continue" },
   });
   assert.equal(confirmed.status, "sent");
   assert.equal(confirmed.receipts[0].recordId, first.receipts[0].recordId);

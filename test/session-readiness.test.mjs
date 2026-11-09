@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { toolSpecs } from "../src/tools/index.mjs";
-import { fixture, config } from "../test/helpers.mjs";
+import { fixture, config, deliverFixtureToolOutput } from "../test/helpers.mjs";
 import { CodexBackend } from "../src/backends/codex.mjs";
 import { sessionSignature } from "../src/backends/session-contract.mjs";
 class Rpc extends EventEmitter {
@@ -382,10 +382,10 @@ test("Codex App tools change retires through lifecycle with ordinary task handof
   const run = backend.run.bind(backend);
   backend.run = async (p) => {
     await run(p);
-    const page = await p.callTool("conversation_read", {
-      conversation: "group:20000",
-    });
-    p.onToolResultSubmitted(page);
+    const page = await deliverFixtureToolOutput(
+      p,
+      await p.callTool("conversation_read", { conversation: "group:20000" }),
+    );
     await p.callTool("qq_mark_read", { throughSeq: page.readThroughSeq });
   };
   runtime.backends.set("agent-0", backend);
@@ -477,10 +477,10 @@ test("DSH preset changes load Self and retain task handoff before prompting", as
     const run = backend.run.bind(backend);
     backend.run = async (p) => {
       await run(p);
-      const page = await p.callTool("conversation_read", {
-        conversation: "group:20000",
-      });
-      p.onToolResultSubmitted(page);
+      const page = await deliverFixtureToolOutput(
+        p,
+        await p.callTool("conversation_read", { conversation: "group:20000" }),
+      );
       await p.callTool("qq_mark_read", { throughSeq: page.readThroughSeq });
     };
     return backend;

@@ -110,6 +110,66 @@ test("Codex delivers every decoded animation frame and its time label in order",
   rpc.complete();
   await run;
 });
+test("Codex confirms the final tool text only after a successful write for the active turn", async (t) => {
+  const rpc = new Rpc();
+  const cfg = config();
+  const backend = new CodexBackend(cfg.backends[0], cfg.agents[0], {
+    root: temp(t),
+    rpc,
+  });
+  t.after(() => backend.close());
+  const writes = [];
+  rpc.respond = (id, value, acknowledge) => {
+    writes.push({ id, value, acknowledge });
+  };
+  const commits = [];
+  const run = backend.run({
+    prompt: "Fixture input review",
+    signal: new AbortController().signal,
+    tools: toolSpecs(["memory_search"]),
+    callTool: async (_name, args) => ({ fixture: args.fixture }),
+    saveSession() {},
+    finalizeToolOutput: async (original, { encode, maxBytes }) => {
+      assert.equal(maxBytes, 65535);
+      const { wire, text } = await encode({
+        fixture: original.fixture,
+        input: '甲 "乙"',
+      });
+      assert.equal(text, wire.result.contentItems[0].text);
+      return { wire, receipt: original.fixture };
+    },
+    commitToolOutput: (receipt, text) => commits.push({ receipt, text }),
+  });
+  await tick();
+  for (const fixture of ["failed", "delivered", "late"]) {
+    await backend.request({
+      id: fixture,
+      method: "item/tool/call",
+      params: {
+        threadId: "fixture-thread",
+        turnId: "fixture-turn",
+        tool: "memory_search",
+        arguments: { fixture },
+      },
+    });
+  }
+  assert.equal(writes.length, 3);
+  assert.deepEqual(commits, []);
+  writes[0].acknowledge(Error("fixture write failed"));
+  assert.deepEqual(commits, []);
+  writes[1].acknowledge();
+  const text = writes[1].value.contentItems[0].text;
+  assert.deepEqual(JSON.parse(text), {
+    fixture: "delivered",
+    input: '甲 "乙"',
+  });
+  assert.deepEqual(commits, [{ receipt: "delivered", text }]);
+  rpc.complete();
+  await run;
+  writes[2].acknowledge();
+  assert.deepEqual(commits, [{ receipt: "delivered", text }]);
+});
+
 test("Codex protocol uses restricted dynamic tools and isolated session state", async (t) => {
   const root = temp(t),
     rpc = new Rpc(),

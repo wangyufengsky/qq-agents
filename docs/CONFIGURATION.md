@@ -192,8 +192,12 @@ Antigravity 可选 `cliReuse` 只适用于此后端：`enabled` 默认 `false`�
 DSH bundle 仅生成，不自动安装、改 profile 或重启应用：
 
 ```sh
-npm run dsh:bundle -- --out /path/to/private-data/dsh-bundle --url http://127.0.0.1:3210
+npm run dsh:bundle -- --data /path/to/private-data --out /path/to/private-data/dsh-bundle --url http://127.0.0.1:3210
 ```
+
+`--data` 必须指向桥接进程使用的数据目录，省略时为当前目录下的 `.runtime`。桥接启动时在该目录写入私有 `relay-token`。bundle 只记录该文件的绝对路径。模型回合的 `context` 凭据继续由作用域单独约束，无法代替 relay 凭据确认工具结果。
+
+升级早期 bundle 时，用对应发布版本重新生成，更新目标 profile 中的 bundle，并重启对应 DSH Host。旧 bundle 缺少 relay 文件路径时，工具调用会返回 `MCP_RELAY_AUTH_REQUIRED`。核对 `--data`、桥接已启动和 DSH Host 已加载新版 bundle。凭据内容留在本机私有数据目录。
 
 新运行时只注册 `memory_search`、`memory_read`、`conversation_read`、`diary_write`、`diary_revise` 等新工具。旧 `qq_memory_*`、双写和 1800 字自动注入不在执行路径中。短期上下文使用已核对的后端压缩接口，并由桥接统一管理用量阈值和安全退休，不全局修改用户的记忆插件。
 

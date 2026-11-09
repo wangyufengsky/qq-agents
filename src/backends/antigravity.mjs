@@ -1,4 +1,5 @@
 // @ts-check
+import { finalizeMcpOutput, toolOutputText } from "./tool-output.mjs";
 import { closeSocialSessions } from "./social-sessions.mjs";
 import { runNativeSocial } from "./native-social.mjs";
 import fs from "node:fs";
@@ -24,9 +25,7 @@ import {
   SessionUnavailableFailure,
   beforeSessionInput,
 } from "./turn-failure.mjs";
-import { mcpResult } from "../tools/index.mjs";
 import { AntigravityMedia } from "./antigravity-media.mjs";
-import { safeToolFailure } from "../tools/errors.mjs";
 import { AntigravityStreamWorker } from "./antigravity-stream.mjs";
 
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
@@ -909,6 +908,7 @@ export class AntigravityBackend {
           images: media.catalog(),
         });
       if (req.method !== "POST" || req.url !== "/call") return reply(404, {});
+      /** @type {import("./session-contract.mjs").ToolSpec | undefined} */
       let spec;
       try {
         let body = "";
@@ -938,35 +938,38 @@ export class AntigravityBackend {
           pending.delete(accepted);
         }
         if (!live || params.signal.aborted) return reply(403, {});
-        const content = await media.fromTool(mcpResult(result), params.signal);
+        const { wire: content, receipt } = await finalizeMcpOutput(
+          params,
+          result,
+          (value) => media.fromTool(value, params.signal),
+        );
         if (!live || params.signal.aborted) return reply(403, {});
         res.once("finish", () => {
           if (live && !params.signal.aborted)
-            params.onToolResultSubmitted?.(result);
+            params.commitToolOutput?.(receipt, toolOutputText(content));
         });
         reply(200, content);
       } catch (error) {
+        const { wire: content, receipt } = await finalizeMcpOutput(
+          params,
+          error,
+          (value) => {
+            if (spec && value.isError) {
+              const failure = JSON.parse(value.content[0].text);
+              if (failure.code === "INVALID_TOOL_ARGUMENTS")
+                value.content[0].text = JSON.stringify({
+                  ...failure,
+                  tool: { name: spec.name, inputSchema: spec.inputSchema },
+                });
+            }
+            return value;
+          },
+        );
         res.once("finish", () => {
           if (live && !params.signal.aborted)
-            params.onToolResultSubmitted?.(error);
+            params.commitToolOutput?.(receipt, toolOutputText(content));
         });
-        const failure = safeToolFailure(error);
-        reply(200, {
-          isError: true,
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                ...failure,
-                ...(failure.code === "INVALID_TOOL_ARGUMENTS" && spec
-                  ? {
-                      tool: { name: spec.name, inputSchema: spec.inputSchema },
-                    }
-                  : {}),
-              }),
-            },
-          ],
-        });
+        reply(200, content);
       }
     });
     await new Promise((resolve, reject) => {

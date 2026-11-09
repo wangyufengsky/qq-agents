@@ -8,6 +8,7 @@ import {
   context,
   settle,
   FakeTransport,
+  deliverFixtureToolOutput,
   temp,
 } from "./helpers.mjs";
 import { MemoryStore } from "../src/memory/store.mjs";
@@ -96,10 +97,10 @@ test("F1: automatic pressure rebuild and Self refresh retain observed task facts
       p.onInputSubmitted();
       prompts.push(p);
       p.saveSession({ id: `session-${prompts.length}`, backend: "fixture" });
-      const page = await p.callTool("conversation_read", {
-        conversation: chat,
-      });
-      p.onToolResultSubmitted(page);
+      const page = await deliverFixtureToolOutput(
+        p,
+        await p.callTool("conversation_read", { conversation: chat }),
+      );
       if (page.readThroughSeq)
         await p.callTool("qq_mark_read", { throughSeq: page.readThroughSeq });
       p.onUsage({

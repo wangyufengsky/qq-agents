@@ -1,3 +1,5 @@
+import { deriveRelayToken } from "./core/relay-auth.mjs";
+import { finalizeMcpOutput, toolOutputText } from "./backends/tool-output.mjs";
 import { disabledMessageTimingSnapshot } from "./core/message-timing.mjs";
 import { homeModeration } from "./tools/home.mjs";
 import { serveHomePreview } from "./home/static.mjs";
@@ -12,7 +14,7 @@ import { participateInProject } from "./core/project-participation.mjs";
 import { readProjects, projectReadSchema } from "./tools/activities.mjs";
 import { readConversationState } from "./memory/conversation-state.mjs";
 import { scopedCatalog } from "./tools/catalog.mjs";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { saveGithubCredential } from "./github/credentials.mjs";
 import { shareList, cancelShare } from "./apps/sharing.mjs";
 import { appService } from "./apps/tools.mjs";
@@ -153,6 +155,7 @@ export function createServer({
   exportOptions,
   publicPort,
 }) {
+  const relayToken = deriveRelayToken(token);
   let stopping = false,
     closing;
   const requests = new Set();
@@ -300,16 +303,90 @@ export function createServer({
           });
         }
       }
+      if (url.pathname === "/agent/output-ack") {
+        if (req.method !== "POST") return send({ error: "METHOD" }, 405);
+        if (!equal(req.headers["x-agent-relay-token"], relayToken))
+          return send(
+            { accepted: false, error: "MCP_RELAY_AUTH_REQUIRED" },
+            403,
+          );
+        const ctx = runtime.capability(req.headers["x-agent-capability"]);
+        const data = await readBody(2048, ctx);
+        if (
+          typeof data?.receipt !== "string" ||
+          typeof data.requestId !== "string" ||
+          typeof data.digest !== "string" ||
+          !/^[a-f0-9]{64}$/.test(data.digest)
+        )
+          return send({ accepted: false }, 400);
+        const pending = ctx.relayOutputReceipts?.get(data.receipt);
+        ctx.relayOutputReceipts?.delete(data.receipt);
+        const accepted =
+          !!pending &&
+          pending.requestId === data.requestId &&
+          pending.epoch === ctx.inputEpoch &&
+          runtime.commitToolOutputDigest(ctx, data.receipt, data.digest);
+        return send({ accepted });
+      }
       if (url.pathname === "/agent/tools") {
         const ctx = runtime.capability(req.headers["x-agent-capability"]);
         if (req.method !== "POST") return send({ error: "METHOD" }, 405);
+        const epoch = ctx.inputEpoch;
         const data = await readBody(undefined, ctx);
+        const relayRequest = req.headers["x-agent-output-request"];
+        const stdio = req.headers["x-agent-output-protocol"] === "stdio-v1";
+        const relay =
+          stdio &&
+          equal(req.headers["x-agent-relay-token"], relayToken) &&
+          typeof relayRequest === "string" &&
+          relayRequest.length > 0 &&
+          relayRequest.length <= 256;
+        const present = async (original) => {
+          const { wire, receipt } = await finalizeMcpOutput(
+            {
+              finalizeToolOutput: (value, options) =>
+                runtime.finalizeToolOutput(ctx, value, {
+                  ...options,
+                  maxBytes: 65024,
+                }),
+            },
+            original,
+          );
+          if (ctx.inputEpoch !== epoch) throw Error("INPUT_EPOCH_CHANGED");
+          if (receipt) {
+            const text = toolOutputText(wire);
+            if (relay) {
+              (ctx.relayOutputReceipts ??= new Map()).set(receipt, {
+                requestId: relayRequest,
+                epoch,
+              });
+              res.setHeader("x-agent-output-receipt", receipt);
+              res.setHeader(
+                "x-agent-output-digest",
+                createHash("sha256").update(text).digest("hex"),
+              );
+            } else if (!ctx.requiresInputSubmission) {
+              res.once("finish", () =>
+                runtime.commitToolOutput(ctx, receipt, text),
+              );
+            }
+          }
+          return send(wire);
+        };
         try {
+          if (ctx.inputEpoch !== epoch) throw Error("INPUT_EPOCH_CHANGED");
           if (
             ctx.requiresInputSubmission &&
             ctx.backendInputEpoch !== ctx.inputEpoch
           )
             throw Error("BACKEND_INPUT_NOT_SUBMITTED");
+          if (
+            !relay &&
+            (stdio ||
+              (ctx.requiresInputSubmission &&
+                ctx.runtimeKind !== "subject-social"))
+          )
+            throw Error("MCP_RELAY_AUTH_REQUIRED");
           if (ctx.runtimeKind === "subject-social") {
             runtime.socialRuntime.assertContext(ctx);
             runtime.socialRuntime.assertToolAllowed(ctx, data.name);
@@ -325,13 +402,10 @@ export function createServer({
               }));
           if (ctx.runtimeKind === "subject-social")
             runtime.socialRuntime.assertContext(ctx);
-          const content = mcpResult(result);
-          if (ctx.runtimeKind !== "subject-social")
-            res.once("finish", () => runtime.commitToolInput(ctx, result));
-          return send(content);
+          if (ctx.runtimeKind === "subject-social")
+            return send(mcpResult(result));
+          return await present(result);
         } catch (e) {
-          if (ctx.runtimeKind !== "subject-social")
-            res.once("finish", () => runtime.commitToolInput(ctx, e));
           runtime.diagnostics.report(e, {
             component: "http",
             requestId,
@@ -339,6 +413,8 @@ export function createServer({
             conversation: ctx.conversation,
             durationMs: Date.now() - startedAt,
           });
+          if (ctx.runtimeKind !== "subject-social" && ctx.inputEpoch === epoch)
+            return await present(e);
           return send({
             isError: true,
             content: [

@@ -12,8 +12,14 @@ import { analyzeMessageTiming } from "../src/core/message-timing-analysis.mjs";
 import { Runtime } from "../src/core/runtime.mjs";
 import { MemoryStore } from "../src/memory/store.mjs";
 import { createServer } from "../src/server.mjs";
-import { safeToolFailure } from "../src/tools/errors.mjs";
-import { config, FakeTransport, raw, settle, temp } from "./helpers.mjs";
+import {
+  config,
+  deliverFixtureToolOutput,
+  FakeTransport,
+  raw,
+  settle,
+  temp,
+} from "./helpers.mjs";
 
 const epoch = Date.UTC(2030, 0, 1);
 const target = "group:20000";
@@ -33,7 +39,19 @@ function setup(t, { run, capture = true, configure = () => {} } = {}) {
     clock: () => new Date(epoch + now),
     messageTiming: timing,
     backendFactory: () => ({
-      run,
+      run: (params) =>
+        run({
+          ...params,
+          callTool: async (...args) => {
+            let result;
+            try {
+              result = await params.callTool(...args);
+            } catch (error) {
+              throw await deliverFixtureToolOutput(params, error);
+            }
+            return deliverFixtureToolOutput(params, result);
+          },
+        }),
       cancel: async () => {},
       close: async () => {},
     }),
@@ -286,18 +304,17 @@ for (const revise of ["never", "before", "after"])
           f.at(8);
           await p.callTool("qq_draft", { action: "read", draftId: draft.id });
           f.at(12);
-          const expectedVersion =
+          const revised =
             revise === "before"
-              ? (
-                  await p.callTool("qq_draft", {
-                    action: "revise",
-                    draftId: draft.id,
-                    expectedVersion: draft.revision,
-                    position: 0,
-                    input: { text: "修改后的合成回复" },
-                  })
-                ).version
-              : draft.revision;
+              ? await p.callTool("qq_draft", {
+                  action: "revise",
+                  draftId: draft.id,
+                  expectedVersion: draft.revision,
+                  position: 0,
+                  input: { text: "修改后的合成回复" },
+                })
+              : undefined;
+          const expectedVersion = revised?.draft.version ?? draft.revision;
           f.at(15);
           await p.callTool("qq_draft", {
             action: "discard",
@@ -309,19 +326,20 @@ for (const revise of ["never", "before", "after"])
             draftId: draft.id,
             expectedVersion,
           };
-          let challenge;
           f.at(20);
-          await assert.rejects(
-            p.callTool("qq_draft", continuation),
-            (error) => {
-              challenge = safeToolFailure(error).inputReview;
-              return error.message === "INPUT_REVIEW_REQUIRED";
-            },
-          );
+          const prepared = await p.callTool("qq_draft", {
+            ...continuation,
+            action: "prepare",
+          });
+          assert.equal(prepared.actionResult, "not_sent");
+          assert.equal(prepared.preparation.state, "ready");
           f.at(30);
           const sent = await p.callTool("qq_draft", {
             ...continuation,
-            inputReview: { token: challenge.token, decision: "continue" },
+            inputReview: {
+              token: prepared.preparation.token,
+              decision: "continue",
+            },
           });
           assert.equal(sent.status, "sent");
           if (other) {
@@ -356,7 +374,7 @@ for (const revise of ["never", "before", "after"])
       await settle(f.runtime);
       const snapshot = f.timing.snapshot();
       const [sample] = snapshot.samples;
-      assert.equal(sample.marks.sendRequested, 20);
+      assert.equal(sample.marks.sendRequested, 30);
       assert.equal(
         sample.marks.draftStored,
         revise === "before" ? 12 : other ? 50 : undefined,
@@ -368,8 +386,8 @@ for (const revise of ["never", "before", "after"])
         ),
         false,
       );
-      assert.equal(sample.deliveries[0].outcome, "review-required");
-      assert.equal(sample.deliveries[1].marks.ledgerConfirmed, 30);
+      assert.equal(sample.deliveries.length, 1);
+      assert.equal(sample.deliveries[0].marks.ledgerConfirmed, 30);
     },
   );
 
@@ -400,7 +418,8 @@ test("a partially confirmed burst retains its structured stop reason", async (t)
   await f.runtime.ingest("qq-0", raw(1));
   await settle(f.runtime);
   assert.equal(result.status, "stopped");
-  assert.equal(result.error, "INPUT_REVIEW_REQUIRED");
+  assert.equal(result.actionResult, "partially_sent");
+  assert.equal(result.preparation.reason, "NEW_INPUT");
   assert.equal(f.transport.sent.length, 1);
   const snapshot = f.timing.snapshot();
   const sample = snapshot.samples.find(({ stoppedBy }) => stoppedBy);
@@ -476,7 +495,8 @@ test("replaying a historical unresolved burst records a lock without another sen
   await settle(f.runtime);
   assert.equal(f.transport.sent.length, 1);
   assert.equal(results[0].error, "DELIVERY_UNKNOWN");
-  assert.equal(results[1].error, "QQ_DRAFT_CONTINUE_REQUIRED");
+  assert.equal(results[1].actionResult, "unknown");
+  assert.equal(results[1].attemptedThisCall, false);
   assert.equal(results[1].draft.items[0].status, "unknown");
   const [initial, replay] = f.timing.snapshot().samples;
   assert.equal(initial.outcome, "unknown");

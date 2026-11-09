@@ -108,7 +108,7 @@ function dropRepeats(handoff, history, materials, schedule) {
 function draftPrompt(runtime, ctx) {
   const page = draftHints(runtime, ctx);
   return page.items.length || page.nextOffset !== null
-    ? `本聊天待处理草稿（qq_draft 查看原稿、修改、放弃或显式继续；已发送和未知项不可重发）：${JSON.stringify(page)}`
+    ? `本聊天待处理草稿（qq_draft 查看原稿、修改、放弃或准备；只有 ready 的当前版本可带令牌继续，已发送和未知项不可重发）：${JSON.stringify(page)}`
     : "";
 }
 export class ContextLifecycle {
@@ -173,7 +173,8 @@ export class ContextLifecycle {
     ctx.conversationPageThroughSeq = undefined;
     ctx.inputEpoch = randomUUID();
     ctx.openingCommitted = false;
-    ctx.stagedToolInputs = undefined;
+    ctx.toolOutputReceipts = undefined;
+    ctx.relayOutputReceipts = undefined;
     ctx.presentedInput?.clear();
     ctx.openingReviewInput?.clear();
     ctx.confirmedReviewInput?.clear();

@@ -19,10 +19,8 @@ export function safeToolFailure(error) {
   const { draft, draftRefs } = details;
   const hint =
     error instanceof ToneReviewSuggested
-      ? "Review the wording. Use qq_draft revise to edit an unsent item or qq_draft continue with its current version to confirm it."
-      : error instanceof InputReviewRequired
-        ? "Read the current input and decide whether to revise, discard, or continue this exact draft version with the review token. Earlier receipts remain final."
-        : failure.hint;
+      ? "Review the wording. Use qq_draft revise to edit an unsent item or prepare its current version before deciding whether to continue."
+      : failure.hint;
   return {
     ...failure,
     hint,
@@ -202,7 +200,7 @@ function safeFailure(error) {
     QQ_DRAFT_DELIVERY_UNRESOLVED:
       "A prior delivery in this chat is pending or unknown. Check qq_delivery_status; only a verified receipt or an administrator's explicit verdict settles it. Do not try another request ID, wording, or send tool.",
     QQ_DRAFT_CONTINUE_REQUIRED:
-      "Use qq_draft to read, revise, discard, or explicitly continue the saved version. Repeating the original send call only returns the existing status.",
+      "Use qq_draft to read, revise, prepare, or discard the saved version. Continue requires the token from a ready preparation. Repeating the original send call only returns the existing status.",
     DELIVERY_UNKNOWN:
       "The gateway could not confirm whether this message reached QQ (for example QQ dropped offline mid-send); it may already be visible. Do not send it again or change requestId. The program marks it sent when QQ's own copy arrives, otherwise the administrator checks it in the console.",
     MOOD_CHANGE_NEEDS_CAUSE:

@@ -106,7 +106,14 @@ test("workspace traversal, hidden credentials and symlink escapes are refused", 
   const f = setup(t);
   await level(f);
   fs.symlinkSync(f.root, path.join(f.root, "workspace", "escape"));
-  for (const file of ["../x", ".env", "config.json", "escape/config.json"])
+  for (const file of [
+    "../x",
+    ".env",
+    "config.json",
+    "relay-token",
+    "relay-token.copy.tmp",
+    "escape/config.json",
+  ])
     assert.throws(
       () => f.ops.propose(f.ctx, { type: "write", file, text: "x" }),
       /PATH_DENIED|SYMLINK_DENIED/,

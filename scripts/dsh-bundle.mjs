@@ -8,6 +8,7 @@ import { RESTRICTED_TOOL_NAMES } from "../vendor/dsh-qq/qq-tool-restrict.mjs";
 const args = process.argv.slice(2),
   option = (k) => (args.includes(k) ? args[args.indexOf(k) + 1] : undefined);
 const root = path.resolve(option("--out") || ".runtime/dsh-bundle"),
+  dataRoot = path.resolve(option("--data") || ".runtime"),
   base = option("--url") || "http://127.0.0.1:3210";
 if (fs.existsSync(root)) throw Error("BUNDLE_DESTINATION_EXISTS");
 const u = new URL(base);
@@ -51,7 +52,10 @@ const patch = [
           transport: "stdio",
           command: process.execPath,
           args: [fileURLToPath(new URL("../src/mcp.mjs", import.meta.url))],
-          env: { QQ_UNIFIED_URL: base },
+          env: {
+            QQ_UNIFIED_URL: base,
+            QQ_UNIFIED_RELAY_TOKEN_FILE: path.join(dataRoot, "relay-token"),
+          },
           toolCallTimeoutMs: 660000,
         },
       },
@@ -107,7 +111,7 @@ const patch = [
 write("unified.patch.yml", YAML.dump(patch));
 write(
   "README.md",
-  "# Generated DSH bundle\n\nThis command only generated files. It did not install a bundle, edit a DSH profile, restart DSH, or affect any existing QQ preset. Link this package in the intended profile and enable its bundle using DSH’s supported bundle workflow, then verify agentPresets/list and the MCP tool surface before live use. Keep the original profile backed up.\n",
+  "# Generated DSH bundle\n\nThis command only generated files. It did not install a bundle, edit a DSH profile, restart DSH, or affect any existing QQ preset. Link this package in the intended profile and enable its bundle using DSH’s supported bundle workflow, then verify agentPresets/list and the MCP tool surface before live use. The bridge writes the private relay-token into the --data directory at startup. Regenerate the bundle and reload the DSH Host after updating a bundle created without this path. Keep the original profile backed up.\n",
 );
 console.log(
   "Isolated DSH bundle generated; installation remains an explicit deployment step.",

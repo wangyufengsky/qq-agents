@@ -14,6 +14,7 @@ import {
   BackendTurnFailure,
   runWithRecovery,
 } from "../src/backends/turn-failure.mjs";
+import { mediaLease } from "../src/tools/media-lease.mjs";
 import { validateConfig } from "../src/core/config.mjs";
 import { fixture, config, raw, settle, temp } from "./helpers.mjs";
 
@@ -81,6 +82,74 @@ function params(overrides = {}) {
       ...overrides,
     },
   };
+}
+
+for (const outcome of ["accepted", "malformed", "revoked"]) {
+  test(`OpenAI tool output evidence follows the submitted text when completion is ${outcome}`, async (t) => {
+    process.env.QQ_TEST_OPENAI_KEY = "fixture-key-value-0000";
+    t.after(() => delete process.env.QQ_TEST_OPENAI_KEY);
+    const commits = [];
+    let lease = true;
+    const payload = { input: '甲 "乙"' };
+    const server = scripted([
+      reply({
+        content: null,
+        tool_calls: [
+          call("read", "qq_send", { text: "read" }),
+          ...(outcome === "revoked"
+            ? [call("revoke", "qq_send", { text: "revoke" })]
+            : []),
+        ],
+      }),
+      (init) => {
+        assert.deepEqual(commits, []);
+        const body = JSON.parse(init.body);
+        const sent = body.messages.find((m) => m.tool_call_id === "read");
+        if (outcome === "revoked") {
+          assert.match(sent.content, /授权或版本已失效/);
+          assert.doesNotMatch(sent.content, /甲/);
+        } else {
+          assert.deepEqual(JSON.parse(sent.content), payload);
+        }
+        return outcome === "malformed"
+          ? status(200, { choices: [{ message: {} }] })
+          : reply({ content: "完成" });
+      },
+    ]);
+    const backend = new OpenAIBackend(
+      backendConfig(),
+      { id: "agent-a" },
+      {
+        root: temp(t),
+        fetch: server.fetch,
+      },
+    );
+    const p = params({
+      callTool: async (_name, args) => {
+        if (args.text === "revoke") {
+          lease = false;
+          return { revoked: true };
+        }
+        return { ...payload, [mediaLease]: () => lease };
+      },
+      finalizeToolOutput: async (original, { encode, maxBytes }) => {
+        assert.equal(maxBytes, 65536);
+        const { wire, text } = await encode(original);
+        assert.equal(text, wire.tool.content);
+        return { wire, ...(original.input ? { receipt: "proof" } : {}) };
+      },
+      commitToolOutput: (receipt, text) => commits.push({ receipt, text }),
+    });
+    if (outcome === "malformed") await assert.rejects(backend.run(p.value));
+    else await backend.run(p.value);
+    const sent = server.requests[1].body.messages.find(
+      (m) => m.tool_call_id === "read",
+    );
+    assert.deepEqual(
+      commits,
+      outcome === "accepted" ? [{ receipt: "proof", text: sent.content }] : [],
+    );
+  });
 }
 
 test("OpenAI-compatible backend runs the tool loop in process and keeps history locally", async (t) => {

@@ -529,10 +529,35 @@ export async function runBenchmarkTrial(
     p.onInputSubmitted?.();
     timing.mark(trace?.id, "backendInputSubmitted");
     const opening = openingHistory(p.prompt);
+    const explicitPreparation = typeof p.finalizeToolOutput === "function";
+    const callTool = async (...args) => {
+      if (!explicitPreparation) return p.callTool(...args);
+      let original;
+      try {
+        original = await p.callTool(...args);
+      } catch (error) {
+        original = error;
+      }
+      const { wire, receipt } = await p.finalizeToolOutput(original, {
+        encode(value) {
+          const text = JSON.stringify(
+            value instanceof Error ? source.safeToolFailure(value) : value,
+          );
+          return { wire: text, text };
+        },
+      });
+      if (receipt) p.commitToolOutput(receipt, wire);
+      const output = JSON.parse(wire);
+      if (original instanceof Error) {
+        original.inputReview = output.inputReview;
+        throw original;
+      }
+      return output;
+    };
     let read = shownItems(opening.items);
     if (opening.truncated) {
       quality.openingContinuations++;
-      read |= await readAvailable(p.callTool, opening.nextAfterSeq);
+      read |= await readAvailable(callTool, opening.nextAfterSeq);
     }
     await promisedTimers.setTimeout(plan.modelMs, undefined, {
       signal: p.signal,
@@ -542,6 +567,21 @@ export async function runBenchmarkTrial(
       return;
     }
     let inputReview, draft, draftText;
+    const review = async (preparation) => {
+      quality.reviewChallenges++;
+      const included = shownItems(preparation?.items);
+      quality.reviewOriginalInputs += bitCount(included & ~read);
+      read |= included;
+      if (preparation?.token) {
+        inputReview = { token: preparation.token, decision: "continue" };
+      } else {
+        read |= await readAvailable(callTool, 0);
+        inputReview = undefined;
+      }
+      await promisedTimers.setTimeout(plan.reviewMs, undefined, {
+        signal: p.signal,
+      });
+    };
     for (let attempt = 0; attempt < 12; attempt++) {
       if ((read & ~acknowledged) === 0) {
         if (((1 << arrived) - 1) & ~acknowledged) quality.missingModelInput++;
@@ -554,29 +594,45 @@ export async function runBenchmarkTrial(
       const text = "B" + read.toString(36) + ":" + "答".repeat(plan.replyChars);
       try {
         if (draft && text !== draftText) {
-          draft = await p.callTool("qq_draft", {
+          const revised = await callTool("qq_draft", {
             action: "revise",
             draftId: draft.draftId,
             expectedVersion: draft.version,
             position: 0,
             input: { text },
           });
+          draft = revised.draft ?? revised;
           draftText = text;
           inputReview = undefined;
           quality.draftRevisions++;
+          if (revised.preparation) {
+            if (revised.preparation.state === "blocked") {
+              quality.otherToolFailures++;
+              return;
+            }
+            const pending = revised.preparation;
+            if (pending.token && !(shownItems(pending.items) & ~read)) {
+              inputReview = { token: pending.token, decision: "continue" };
+            } else {
+              await review(pending);
+              continue;
+            }
+          }
         }
         let receipt;
         if (draft) {
-          quality.draftContinueCalls++;
-          receipt = await p.callTool("qq_draft", {
-            action: "continue",
+          const action =
+            explicitPreparation && !inputReview ? "prepare" : "continue";
+          if (action === "continue") quality.draftContinueCalls++;
+          receipt = await callTool("qq_draft", {
+            action,
             draftId: draft.draftId,
             expectedVersion: draft.version,
             ...(inputReview ? { inputReview } : {}),
           });
         } else {
           draftText = text;
-          receipt = await p.callTool("qq_send", {
+          receipt = await callTool("qq_send", {
             requestId: "fixture-turn-" + turn,
             text,
             ...(inputReview ? { inputReview } : {}),
@@ -592,6 +648,11 @@ export async function runBenchmarkTrial(
           quality.confirmed++;
           return;
         }
+        if (receipt?.preparation && receipt.preparation.state !== "blocked") {
+          draft = receipt.draft;
+          await review(receipt.preparation);
+          continue;
+        }
         quality.otherToolFailures++;
         return;
       } catch (error) {
@@ -599,22 +660,9 @@ export async function runBenchmarkTrial(
           quality.otherToolFailures++;
           return;
         }
-        quality.reviewChallenges++;
         const failure = source.safeToolFailure(error);
         draft = failure.draft ?? draft;
-        const challenge = failure.inputReview;
-        const included = shownItems(challenge?.items);
-        quality.reviewOriginalInputs += bitCount(included & ~read);
-        read |= included;
-        if (challenge?.token) {
-          inputReview = { token: challenge.token, decision: "continue" };
-        } else {
-          read |= await readAvailable(p.callTool, 0);
-          inputReview = undefined;
-        }
-        await promisedTimers.setTimeout(plan.reviewMs, undefined, {
-          signal: p.signal,
-        });
+        await review(failure.inputReview);
       }
     }
     quality.otherToolFailures++;

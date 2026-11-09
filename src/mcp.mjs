@@ -1,6 +1,7 @@
 // @ts-check
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { ReceiptStdioTransport } from "./mcp-output.mjs";
+import { readRelayToken } from "./core/relay-auth.mjs";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -24,13 +25,34 @@ const server = new Server(
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: mcpEntrySpecs(),
 }));
-server.setRequestHandler(CallToolRequestSchema, async (req) => {
+const transport = new ReceiptStdioTransport(async (context, body, signal) => {
+  const response = await fetch(new URL("/agent/output-ack", base), {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-agent-capability": context,
+      "x-agent-relay-token": readRelayToken(
+        process.env.QQ_UNIFIED_RELAY_TOKEN_FILE,
+      ),
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.any([signal, AbortSignal.timeout(10000)]),
+    redirect: "error",
+  });
+  if (!response.ok || !(await response.json()).accepted)
+    throw Error("TOOL_OUTPUT_INCOMPLETE");
+});
+server.setRequestHandler(CallToolRequestSchema, async (req, extra) => {
   try {
     const { context, ...args } = parseMcpEntry(
       req.params.name,
       req.params.arguments || {},
     );
     if (typeof context !== "string") throw Error();
+    await transport.beforeCall(context);
+    extra.signal.throwIfAborted();
+    const requestId = JSON.stringify(extra.requestId);
+    if (requestId.length > 256) throw Error("INVALID_TOOL_ARGUMENTS");
     const response = await fetch(
       new URL(
         req.params.name === "bridge_tools" ? "/agent/catalog" : "/agent/tools",
@@ -41,14 +63,30 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         headers: {
           "content-type": "application/json",
           "x-agent-capability": context,
+          "x-agent-relay-token": readRelayToken(
+            process.env.QQ_UNIFIED_RELAY_TOKEN_FILE,
+          ),
+          "x-agent-output-protocol": "stdio-v1",
+          "x-agent-output-request": requestId,
         },
         body: JSON.stringify(args),
-        signal: AbortSignal.timeout(660000),
+        signal: AbortSignal.any([extra.signal, AbortSignal.timeout(660000)]),
         redirect: "error",
       },
     );
     if (!response.ok) throw Error();
-    return await response.json();
+    const result = await response.json();
+    const receipt = response.headers.get("x-agent-output-receipt");
+    if (receipt)
+      transport.stage(
+        extra.requestId,
+        context,
+        receipt,
+        response.headers.get("x-agent-output-digest") ?? "",
+        extra.signal,
+        result,
+      );
+    return result;
   } catch (error) {
     return {
       isError: true,
@@ -56,4 +94,4 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     };
   }
 });
-await server.connect(new StdioServerTransport());
+await server.connect(transport);

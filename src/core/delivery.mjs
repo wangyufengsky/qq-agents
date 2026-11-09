@@ -2,6 +2,8 @@ import { assertHomeSceneMedia } from "../home/scene-media.mjs";
 import { assertNoSocialDisclosure } from "./social-protection.mjs";
 import { peerQzoneSources } from "./peer-qzone-protection.mjs";
 import {
+  assertDraftReview,
+  DraftReviewInterrupted,
   assertInputReviewed,
   recordReviewedDelivery,
 } from "./input-review.mjs";
@@ -10,7 +12,6 @@ import {
   applyDeliveryCheckpoint,
   bindSubmission,
   draftScope,
-  markDraftReservation,
   recoverDraftArchives,
 } from "./draft-delivery.mjs";
 import { recallBoundary } from "./recall-boundary.mjs";
@@ -222,7 +223,9 @@ export class DeliveryService {
       capture?.finishDelivery(
         timingId,
         timingIndex,
-        timedDeliveryFailure(error),
+        error instanceof DraftReviewInterrupted
+          ? "review-required"
+          : timedDeliveryFailure(error),
       );
       throw error;
     } finally {
@@ -244,15 +247,20 @@ export class DeliveryService {
       ["official-collect", "official-remark"].includes(operation.intent?.kind)
     )
       return undefined;
+    const execution = operation.submission?.execution;
+    if (execution)
+      return assertDraftReview(
+        this.runtime,
+        ctx,
+        execution.binding,
+        execution.grant,
+      );
     return assertInputReviewed(
       this.runtime,
       ctx,
       checked.requestId,
-      operation.submission?.execution.reviewIntent ??
-        operation.reviewIntent ??
-        operation.intent,
+      operation.reviewIntent ?? operation.intent,
       operation.inputReview,
-      operation.submission?.execution.reviewOptions,
     );
   }
   async enqueue(ctx, operation) {
@@ -565,8 +573,7 @@ export class DeliveryService {
         },
       });
     });
-    if (operation.submission)
-      markDraftReservation(operation.submission.execution, inputReview);
+    if (operation.submission) operation.submission.execution.reserved = true;
     mark?.("reserved");
     if (!actionBudget)
       ctx.replyBatchSends = (ctx.replyBatchSends ?? ctx.sendCount) + 1;

@@ -14,10 +14,12 @@ Antigravity CLI 使用独立的 `scripts/antigravity-acceptance.mjs`，验收会
 默认数据目录是 `work/live-acceptance/bridge`。现有目录的角色标识必须属于本验收环境；脚本取得 `process.lock` 后才运行。异常退出留下锁时先检查 PID，不自动删除活跃进程的锁。
 
 ```sh
-node scripts/dsh-bundle.mjs --out work/unified-test-bundle --url http://127.0.0.1:3212
+node scripts/dsh-bundle.mjs --data work/live-acceptance/bridge --out work/unified-test-bundle --url http://127.0.0.1:3212
 # 按 DSH 支持的 bundle/profile 流程启用上述包，并完成专用登录。
 DSH_HOME=/path/to/independent-dsh-home npm run acceptance:live -- --allow-real-models --run-all
 ```
+
+bundle 的 `--data` 和验收脚本的 `--data` 必须指向同一个独立目录。脚本启动时生成该目录的私有 relay 凭据。已有测试 bundle 若缺少凭据文件路径，先重新生成并重启专用 DSH Host，再调用工具。
 
 当前验收配置使用 `deepseek-account/deepseek-flash/high` 与 `gpt-6-astra/high`。执行前通过实际模型目录核对可用性；不同部署请在脚本的验收配置中明确选择自己的模型。
 

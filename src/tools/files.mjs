@@ -634,7 +634,9 @@ export class FileStore {
           (s) =>
             !s ||
             s.startsWith(".") ||
-            /^(?:auth|config|credentials|admin-token|secrets)(?:\.|$)/i.test(s),
+            /^(?:auth|config|credentials|admin-token|relay-token|secrets)(?:\.|$)/i.test(
+              s,
+            ),
         )
     )
       throw Error("FILE_PATH_DENIED");

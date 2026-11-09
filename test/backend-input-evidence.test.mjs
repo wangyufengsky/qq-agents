@@ -1,12 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { fileURLToPath } from "node:url";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { CodexBackend } from "../src/backends/codex.mjs";
 import { OpenAIBackend } from "../src/backends/openai.mjs";
 import { BackendTurnFailure } from "../src/backends/turn-failure.mjs";
 import { createServer } from "../src/server.mjs";
 import { toolSpecs } from "../src/tools/specs.mjs";
-import { config, fixture, raw, temp } from "./helpers.mjs";
+import { config, fixture, raw, temp, relayEnvironment } from "./helpers.mjs";
 
 const conversation = "group:20000";
 
@@ -287,25 +290,33 @@ test("a delayed prior Codex turn notification cannot confirm an unsent opening",
 });
 
 test("DSH HTTP tools need submission in each epoch and can reread after recovery", async (t) => {
-  let capability, previousSubmission, opening, port;
+  const adminToken = "synthetic-admin-token";
+  let capability, previousSubmission, opening, port, client;
   const results = [];
-  const call = async (name, args = {}) => {
-    const response = await fetch(`http://127.0.0.1:${port}/agent/tools`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-agent-capability": capability,
-      },
-      body: JSON.stringify({ name, arguments: args }),
-    });
-    const result = await response.json();
+  const call = async (name, args = {}, direct = false) => {
+    const result = direct
+      ? await fetch(`http://127.0.0.1:${port}/agent/tools`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-agent-capability": capability,
+            "x-agent-output-protocol": "stdio-v1",
+            "x-agent-output-request": "1",
+          },
+          body: JSON.stringify({ name, arguments: args }),
+        }).then((response) => response.json())
+      : await client.callTool({
+          name: "bridge_call",
+          arguments: { context: capability, name, arguments: args },
+        });
     results.push(JSON.parse(result.content[0].text));
   };
   const f = setup(t, async (params) => {
     if (!params.recovery) {
       capability = /context=([A-Za-z0-9_-]+)/.exec(params.prompt)[1];
-      await call("conversation_read");
+      await call("conversation_read", {}, true);
       params.onInputSubmitted();
+      await call("conversation_read", {}, true);
       await call("conversation_read");
       previousSubmission = params.onInputSubmitted;
       params.saveSession({
@@ -326,7 +337,7 @@ test("DSH HTTP tools need submission in each epoch and can reread after recovery
 
     // The old attempt's late submission must not open the replacement epoch.
     previousSubmission();
-    await call("conversation_read");
+    await call("conversation_read", {}, true);
     params.onInputSubmitted();
     await call("qq_mark_read", { throughSeq: opening.seq });
     await call("conversation_read");
@@ -335,20 +346,35 @@ test("DSH HTTP tools need submission in each epoch and can reread after recovery
   f.runtime.config.backends[0].type = "dsh";
   const app = createServer({
     runtime: f.runtime,
-    token: "synthetic-admin-token",
+    token: adminToken,
   });
   port = await app.listen();
-  t.after(() => app.close());
+  client = new Client({ name: "synthetic", version: "1" });
+  await client.connect(
+    new StdioClientTransport({
+      command: process.execPath,
+      args: [fileURLToPath(new URL("../src/mcp.mjs", import.meta.url))],
+      env: {
+        QQ_UNIFIED_URL: `http://127.0.0.1:${port}`,
+        ...relayEnvironment(f.root, adminToken),
+      },
+    }),
+  );
+  t.after(async () => {
+    await client.close();
+    await app.close();
+  });
   opening = await ingest(f, 1, "合成待处理输入");
   assert.equal(
     (await f.runtime.wake("agent-0", conversation)).status,
     "completed-no-send",
   );
-  assert.equal(results.length, 6);
+  assert.equal(results.length, 7);
   assert.equal(results[0].code, "BACKEND_INPUT_NOT_SUBMITTED");
-  assert.equal(results[1].items[0].id, opening.id);
-  assert.equal(results[2].code, "BACKEND_INPUT_NOT_SUBMITTED");
-  assert.equal(results[3].code, "UNSEEN_WATERMARK");
-  assert.equal(results[4].items[0].id, opening.id);
-  assert.equal(results[5].readThroughSeq, opening.seq);
+  assert.equal(results[1].code, "MCP_RELAY_AUTH_REQUIRED");
+  assert.equal(results[2].items[0].id, opening.id);
+  assert.equal(results[3].code, "BACKEND_INPUT_NOT_SUBMITTED");
+  assert.equal(results[4].code, "UNSEEN_WATERMARK");
+  assert.equal(results[5].items[0].id, opening.id);
+  assert.equal(results[6].readThroughSeq, opening.seq);
 });

@@ -174,6 +174,7 @@ export async function runWithRecovery(
   let session = params.session;
   /** @type {RecoveryFailure | undefined} */
   let recovery;
+  const { finalizeToolOutput, commitToolOutput } = params;
   for (let attempt = 0; ; attempt++) {
     // A continuation must not inherit late diagnostics from its predecessor.
     let diagnosticLease = true;
@@ -189,10 +190,15 @@ export async function runWithRecovery(
               if (diagnosticLease) params.onInputSubmitted?.();
             }
           : undefined,
-        onToolResultSubmitted: params.onToolResultSubmitted
-          ? (result) => {
-              if (diagnosticLease) params.onToolResultSubmitted?.(result);
+        finalizeToolOutput: finalizeToolOutput
+          ? (original, options) => {
+              if (!diagnosticLease) throw Error("INPUT_EPOCH_CHANGED");
+              return finalizeToolOutput(original, options);
             }
+          : undefined,
+        commitToolOutput: commitToolOutput
+          ? (receipt, text) =>
+              diagnosticLease && commitToolOutput(receipt, text)
           : undefined,
         session,
         recovery,
