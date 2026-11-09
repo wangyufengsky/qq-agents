@@ -173,13 +173,14 @@ export function chatHandoff(handoff, { replay = false } = {}) {
   return result;
 }
 
-export function chatStatus(runtime, ctx, history, handoff) {
+export function chatStatus(runtime, ctx, history, handoff, compact = false) {
   const memory = runtime.memory.bind(ctx.agentId),
     state = memory.state(ctx.conversation);
   const lines = [
     `处理水位：已处理至 seq=${state.readThroughSeq || 0}；本轮开场材料可提供的连续水位=${ctx.stagedOpening?.checkpoint.readThroughSeq ?? ctx.shownSeq ?? 0}。展示不等于处理，结束前只提交实际处理过的部分。`,
   ];
   if (
+    !compact &&
     ctx.allowedTools?.some((name) =>
       [
         "qq_send",
