@@ -187,10 +187,10 @@ export async function runWithRecovery(
     /** @template {any[]} A @template R @param {(...args: A) => R} callback */
     const requireActive =
       (callback) =>
-      (/** @type {A} */ ...args) => {
-        if (!active) throw Error("INPUT_EPOCH_CHANGED");
-        return callback(...args);
-      };
+      (/** @type {A} */ ...args) =>
+        active
+          ? callback(...args)
+          : Promise.reject(Error("INPUT_EPOCH_CHANGED"));
     try {
       return await backend.run({
         ...params,

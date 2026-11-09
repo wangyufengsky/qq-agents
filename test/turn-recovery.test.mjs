@@ -7,6 +7,7 @@ import { DshBackend } from "../src/backends/dsh.mjs";
 import {
   BackendTurnFailure,
   dshTurnFailure,
+  runWithRecovery,
 } from "../src/backends/turn-failure.mjs";
 import { retireSession } from "../src/core/session-records.mjs";
 
@@ -899,4 +900,48 @@ test("superseded backend callbacks cannot mutate the live turn", async (t) => {
     "completed-no-send",
   );
   assert.equal(attempt, 2);
+});
+
+test("the attempt interface returns a rejected promise to stale tool callers", async () => {
+  const session = {
+    backend: "codex",
+    id: "fixture-session",
+    signature: "fixture",
+  };
+  let first;
+  let called = 0;
+  const backend = {
+    async run(params) {
+      if (!first) {
+        first = params;
+        const failure = new BackendTurnFailure(
+          "codex",
+          "fixtureTransient",
+          "response-stream",
+          "fixture-first",
+          true,
+        );
+        failure.sessionReusable = true;
+        throw failure;
+      }
+      await assert.rejects(first.callTool("stale", {}), /INPUT_EPOCH_CHANGED/);
+      await assert.rejects(first.beforeInputSubmitted(), /INPUT_EPOCH_CHANGED/);
+      await assert.rejects(
+        first.finalizeToolOutput({}, {}),
+        /INPUT_EPOCH_CHANGED/,
+      );
+      await params.callTool("current", {});
+    },
+  };
+  await runWithRecovery(backend, {
+    session,
+    prompt: "synthetic",
+    signal: new AbortController().signal,
+    tools: [],
+    saveSession() {},
+    beforeInputSubmitted: async () => {},
+    finalizeToolOutput: async () => ({ wire: {} }),
+    callTool: async () => ++called,
+  });
+  assert.equal(called, 1);
 });
