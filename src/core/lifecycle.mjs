@@ -700,6 +700,7 @@ export class ContextLifecycle {
     r.subject.trackForTurn(ctx);
     const proposals =
       ctx.conversation === SUBJECT ? r.subjectInbox.offer(ctx, a) : null;
+    const feedback = r.subjectInbox.feedback(ctx, a);
     ctx.persistTaint?.();
     const materials =
       ctx.conversation === SUBJECT ? subjectMaterials(r, ctx) : null;
@@ -777,6 +778,9 @@ export class ContextLifecycle {
               ? `最近对话（历史回放）：${JSON.stringify(replay)}`
               : "",
             `新增消息：${JSON.stringify(openingHistory)}`,
+            feedback?.length
+              ? `你在本会话递交的提议回执（资料，不代表已投递或对方已同意）：${JSON.stringify(feedback)}`
+              : "",
             ...chatStatus(r, ctx, history, handoff),
             ctx.allowedTools?.includes("qq_draft") ? draftPrompt(r, ctx) : "",
             ...details,
