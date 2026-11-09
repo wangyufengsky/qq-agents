@@ -148,7 +148,15 @@ test("recipient view is acknowledged only after successful leased model consumpt
     release = Promise.withResolvers(),
     db = f.store.db;
   const c = context(r, "agent-1", "@subject");
-  r.socialRuntime.capabilities(c, {});
+  const capabilities = r.socialRuntime.capabilities(c, {});
+  assert.deepEqual(capabilities.pendingTargets, [
+    { kind: "invitation", id: inv.id },
+  ]);
+  assert.match(
+    capabilities.notice,
+    /home_social_process.*compose.*pendingTargets/,
+  );
+  assert.match(capabilities.notice, /不会唤醒对方/);
   r.capabilities.delete(c.token);
   r.homeSocial.adminRead(SOCIAL_ADMIN_PRINCIPAL, {
     kind: "invitation",
