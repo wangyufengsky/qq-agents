@@ -273,7 +273,12 @@ test("N1 empty-connection upgrade preserves UUIDs, source observations and water
         old.id,
       ),
     );
-    assert.deepEqual(m.export().tables, f.m.export().tables);
+    const { input_legacy_scopes: baselines, ...tables } = m.export().tables;
+    assert.deepEqual(
+      { ...tables, input_legacy_scopes: [] },
+      f.m.export().tables,
+    );
+    assert(baselines.every(({ closed_through }) => closed_through === null));
   } finally {
     restored.close();
   }

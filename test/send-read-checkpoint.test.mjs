@@ -14,6 +14,8 @@ async function showIncoming(runtime, mem, ctx, dedupe) {
   const row = mem.append({
     dedupe,
     conversation: ctx.conversation,
+    connectionId: "qq-0",
+    payload: { trustedInput: true },
     direction: "in",
     senderId: "30000",
     kind: "message.received",
@@ -21,6 +23,7 @@ async function showIncoming(runtime, mem, ctx, dedupe) {
   });
   const page = await runtime.callTool(ctx, "conversation_read", {});
   assert.equal(page.readThroughSeq, row.seq);
+  ctx.openingReviewInput = new Map(ctx.presentedInput);
   return row.seq;
 }
 
@@ -364,6 +367,8 @@ test("a paused sent receipt can only backfill its original checkpoint", async (t
     senderId: "30000",
     kind: "message.received",
     body: "后来补充。",
+    connectionId: "qq-0",
+    payload: { trustedInput: true },
   });
   gate.resolve();
 
@@ -615,12 +620,18 @@ test("complete memory pages repair the first gap without lending presentation to
   const mem = store.bind(ctx.agentId);
   const first = mem.append({
     dedupe: "long-gap",
+    connectionId: "qq-0",
+    senderId: "30000",
+    payload: { trustedInput: true },
     conversation: ctx.conversation,
     kind: "message.received",
     body: "较长内容".repeat(1000),
   });
   const tail = mem.append({
     dedupe: "short-after-gap",
+    connectionId: "qq-0",
+    senderId: "30000",
+    payload: { trustedInput: true },
     conversation: ctx.conversation,
     kind: "message.received",
     body: "后一条",

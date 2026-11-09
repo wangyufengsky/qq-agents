@@ -9,10 +9,7 @@ import { withInteraction } from "../core/closeness.mjs";
 import { recallMessage } from "../core/message-recall.mjs";
 import { deliveryPage } from "../core/chat-context.mjs";
 import { rememberSources } from "../core/context-handoff.mjs";
-import {
-  presentationCheckpoint,
-  recordInputPresentation,
-} from "../core/input-review.mjs";
+import { presentationCheckpoint, processInput } from "../core/input-review.mjs";
 import { sendDraftTool } from "./qq-drafts.mjs";
 import { githubMarker, privateGithubSources } from "../github/policy.mjs";
 import { readEventImage } from "./image-read.mjs";
@@ -126,19 +123,33 @@ async function handle_memory_read(runtime, ctx, args, name) {
     }
     return r;
   }
-  pages.delete(r.id);
   if (r.nextOffset === null) {
-    runtime.observeInput(ctx, [item]);
     if (
       item.conversation === ctx.conversation &&
       Number.isSafeInteger(item.seq)
-    )
-      return { ...r, ...recordInputPresentation(runtime, ctx, [item]) };
+    ) {
+      const staged = runtime.contexts.stageSeen(ctx, [item]);
+      const inputRefs = [...staged.proofs].map(([id, version]) => ({
+        id,
+        version,
+      }));
+      const result = {
+        ...r,
+        ...staged.checkpoint,
+        ...(inputRefs.length ? { inputRefs } : {}),
+      };
+      runtime.stageToolInput(ctx, result, () => {
+        pages.delete(r.id);
+        runtime.contexts.commitSeen(ctx, staged);
+      });
+      return result;
+    }
   } else {
-    // Keep offsets and digests only. Archive projections can exceed the size
-    // of their source messages when payloads carry both raw and decoded forms.
-    if (pages.size === 10) pages.delete(pages.keys().next().value);
-    pages.set(r.id, { version, offset: r.nextOffset });
+    runtime.stageToolInput(ctx, r, () => {
+      pages.delete(r.id);
+      if (pages.size === 10) pages.delete(pages.keys().next().value);
+      pages.set(r.id, { version, offset: r.nextOffset });
+    });
   }
   return r;
 }
@@ -163,11 +174,16 @@ async function handle_conversation_read(runtime, ctx, args, name) {
       rememberSources(mem, ctx.conversation, r.items);
     return r;
   }
-  ctx.conversationPageThroughSeq = Math.max(
-    ctx.conversationPageThroughSeq || 0,
-    r.items.at(-1)?.seq || 0,
-  );
-  return { ...r, ...runtime.contexts.seen(ctx, r.items) };
+  const staged = runtime.contexts.stageSeen(ctx, r.items);
+  const result = { ...r, ...staged.checkpoint };
+  runtime.stageToolInput(ctx, result, () => {
+    runtime.contexts.commitSeen(ctx, staged);
+    ctx.conversationPageThroughSeq = Math.max(
+      ctx.conversationPageThroughSeq || 0,
+      r.items.at(-1)?.seq || 0,
+    );
+  });
+  return result;
 }
 async function handle_diary_write(runtime, ctx, args, name) {
   const mem = runtime.memory.bind(ctx.agentId);
@@ -285,13 +301,6 @@ function checkpointFromIntent(intent) {
     return null;
   return { throughSeq: intent.throughSeq };
 }
-function persistReadCheckpoint(runtime, ctx, throughSeq) {
-  const mem = runtime.memory.bind(ctx.agentId),
-    state = mem.state(ctx.conversation);
-  state.readThroughSeq = Math.max(state.readThroughSeq || 0, throughSeq);
-  mem.setState(ctx.conversation, state);
-  return { readThroughSeq: state.readThroughSeq };
-}
 async function handle_qq_send(runtime, ctx, args, name) {
   if (args.readThroughSeq !== undefined) {
     if (!readCheckpointToolEnabled(runtime, ctx))
@@ -347,7 +356,7 @@ async function handle_qq_send(runtime, ctx, args, name) {
     }
     try {
       assertReadCheckpoint(runtime, ctx, checkpoint.throughSeq);
-      persistReadCheckpoint(runtime, ctx, checkpoint.throughSeq);
+      processInput(runtime, ctx, checkpoint.throughSeq);
       readCheckpoint.applied = true;
     } catch {
       return result;
@@ -394,7 +403,7 @@ async function handle_generated_image_list(runtime, ctx, args, name) {
 }
 async function handle_qq_mark_read(runtime, ctx, args, name) {
   assertReadCheckpoint(runtime, ctx, args.throughSeq);
-  return persistReadCheckpoint(runtime, ctx, args.throughSeq);
+  return processInput(runtime, ctx, args.throughSeq, args.noReply);
 }
 async function handle_qq_set_silence(runtime, ctx, args, name) {
   const mem = runtime.memory.bind(ctx.agentId);

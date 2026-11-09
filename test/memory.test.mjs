@@ -1,3 +1,4 @@
+import { withExportManifest } from "../src/memory/export-format.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -281,7 +282,13 @@ test("export and restore preserve messages, diary revisions, references and wate
     s2 = new MemoryStore(path.join(root, "restore.sqlite"));
   try {
     restoreExport(s2.bind("agent-a"), out);
-    assert.deepEqual(s2.bind("agent-a").export().tables, out.tables);
+    const { input_legacy_scopes: baselines, ...tables } = s2
+      .bind("agent-a")
+      .export().tables;
+    const { input_legacy_scopes: previous, ...before } = out.tables;
+    assert.deepEqual(tables, before);
+    assert.deepEqual(previous, []);
+    assert(baselines.every(({ closed_through }) => closed_through === null));
     assert.throws(
       () => restoreExport(s2.bind("agent-a"), out),
       /EMPTY_DATABASE/,
@@ -297,7 +304,11 @@ test("forged export ownership is rejected transactionally", (t) => {
   out.tables.events[0].agent_id = "agent-b";
   const s = new MemoryStore(path.join(root, "forged.sqlite"));
   try {
-    assert.throws(() => restoreExport(s.bind("agent-a"), out), /FOREIGN_AGENT/);
+    assert.throws(
+      () =>
+        restoreExport(s.bind("agent-a"), withExportManifest(out, out.tables)),
+      /FOREIGN_AGENT/,
+    );
     assert.equal(s.bind("agent-a").search().items.length, 0);
   } finally {
     s.close();

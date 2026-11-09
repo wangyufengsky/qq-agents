@@ -228,6 +228,9 @@ test("read watermarks cannot exceed actually displayed message range", async (t)
       dedupe: String(i),
       conversation: "group:20000",
       kind: "message.received",
+      connectionId: "qq-0",
+      senderId: "30000",
+      payload: { trustedInput: true },
       body: "x",
     });
   const ctx = context(runtime);

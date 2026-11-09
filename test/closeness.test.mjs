@@ -1,3 +1,4 @@
+import { withExportManifest } from "../src/memory/export-format.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -389,7 +390,10 @@ test("both export paths discard legacy derived tiers and keep the administrator 
   data.tables.person_notes[0].value = JSON.stringify(source);
   const restored = new MemoryStore(path.join(temp(t), "restored.sqlite"));
   t.after(() => restored.close());
-  restoreExport(restored.bind("agent-0"), data);
+  restoreExport(
+    restored.bind("agent-0"),
+    withExportManifest(data, data.tables),
+  );
   assert.deepEqual(
     restored.bind("agent-0").identity.personCard("30000").closeness,
     { override: "认识" },

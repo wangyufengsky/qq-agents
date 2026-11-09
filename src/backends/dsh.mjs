@@ -179,6 +179,8 @@ export class DshBackend {
             });
           }
           if (e.type === "turn/start") {
+            if (!t.promptPending || t.previousTurns.has(String(e.data.turn)))
+              continue;
             t.turn = e.data.turn;
             t.onBackendTurn?.({ turnId: String(e.data.turn) });
           }
@@ -341,7 +343,20 @@ export class DshBackend {
       followError = j;
     });
     followReady.catch(() => {});
-    this.turns.set(sessionId, {
+    const active = {
+      promptPending: false,
+      inputSubmitted: false,
+      previousTurns: new Set(),
+      submitInput: () => {
+        if (
+          active.inputSubmitted ||
+          signal.aborted ||
+          this.turns.get(sessionId) !== active
+        )
+          return;
+        active.inputSubmitted = true;
+        onInputSubmitted?.();
+      },
       resolve,
       reject,
       turn: null,
@@ -349,7 +364,8 @@ export class DshBackend {
       followError,
       onUsage,
       onBackendTurn,
-    });
+    };
+    this.turns.set(sessionId, active);
     const abort = () => {
       void client.callUnary("session.cancel", { sessionId }).catch(() => {});
       followError(Error("ABORTED"));
@@ -372,7 +388,10 @@ export class DshBackend {
         throw Error("DSH_RECOVERY_STATE_UNVERIFIED");
       await beforeInputSubmitted?.();
       if (signal.aborted) throw Error("ABORTED");
-      onInputSubmitted?.();
+      for (const record of /** @type {any} */ (snapshot)?.records || [])
+        if (record.event?.data?.turn !== undefined)
+          active.previousTurns.add(String(record.event.data.turn));
+      active.promptPending = true;
       unwrap(
         await client.sessions.prompt({
           sessionId,
@@ -401,6 +420,7 @@ export class DshBackend {
         }),
         "prompt",
       );
+      active.submitInput();
       await done;
     } catch (/** @type {any} */ e) {
       if (!signal.aborted && e instanceof BackendTurnFailure && e.recoverable) {

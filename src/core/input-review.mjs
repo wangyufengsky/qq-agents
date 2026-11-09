@@ -1,10 +1,21 @@
 // @ts-check
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { isPrivateLikeGroup } from "./config.mjs";
-import { liveInput } from "./live-input.mjs";
+import { recordedInput } from "./live-input.mjs";
 import { transcriptKey } from "../memory/store.mjs";
 import { RECALL_NOTICE_BODY } from "../memory/recalls.mjs";
 import { prepared, recallBoundary } from "./recall-boundary.mjs";
+import {
+  inputScope,
+  inputBelongsToScope,
+  refreshInput,
+  findInput,
+  processingInputRows,
+  reviewInputRows,
+  writeProcessed,
+  writeReviewed,
+  readInputDisposition,
+} from "../memory/input-state.mjs";
 import { trackMindRecords } from "./protected-mind.mjs";
 
 /** @typedef {{id: string, seq: number, kind: string, version: string}} InputRef */
@@ -13,66 +24,60 @@ import { trackMindRecords } from "./protected-mind.mjs";
 /** @type {WeakMap<object, Buffer>} */
 const tokenKeys = new WeakMap();
 
-const inputRows = `SELECT e.* FROM events e
-  LEFT JOIN message_progress p ON p.agent_id=e.agent_id AND p.conversation=e.conversation AND p.seq=e.seq
-  WHERE e.agent_id=? AND e.connection_id=? AND e.conversation=? AND e.origin='live'
-    AND (
-      (e.direction='in' AND json_extract(e.payload,'$.trustedInput')=1 AND
-        ((e.sender_id IS NOT ? AND e.kind IN ('message.received','notice.file'))
-          OR e.kind='message.recalled'
-          OR (e.kind='notice.poke' AND CAST(json_extract(e.payload,'$.raw.target_id') AS TEXT)=?)))
-      OR (e.direction='internal' AND e.kind='voice.transcript')
-    )`;
-
 /** @param {any} row @returns {InputRef} */
 function inputRef(row) {
-  return {
-    id: row.id,
-    seq: row.seq,
-    kind: row.kind,
-    version: createHash("sha256")
-      .update(
-        JSON.stringify([
-          row.id,
-          row.seq,
-          row.kind,
-          row.connection_id,
-          row.status,
-          row.sender_id,
-          row.message_id,
-          row.body,
-          row.payload,
-        ]),
-      )
-      .digest("hex"),
-  };
+  return { id: row.id, seq: row.seq, kind: row.kind, version: row.version };
 }
 
 /** @param {any} runtime @param {any} ctx */
-function reviewScope(runtime, ctx) {
-  const agent = runtime.agent(ctx.agentId);
-  const account = runtime.connection(agent.connectionId).accountId;
-  return [agent.id, agent.connectionId, ctx.conversation, account, account];
+function inputs(runtime, ctx) {
+  const scope = inputScope(runtime, ctx);
+  const memory = runtime.memory.bind(ctx.agentId);
+  const state = refreshInput(memory, scope);
+  return { memory, scope, state, db: memory.db };
+}
+/** @param {any} runtime @param {any} ctx @param {any} row */
+function eligible(runtime, ctx, row) {
+  if (row.kind === "message.received")
+    return !!recordedInput(runtime, ctx.agentId, ctx.conversation, row.id);
+  if (row.kind !== "voice.transcript") return true;
+  const sourceId = JSON.parse(row.payload).sourceEventId;
+  if (typeof sourceId !== "string" || row.dedupe !== transcriptKey(sourceId))
+    return false;
+  const source = recordedInput(
+    runtime,
+    ctx.agentId,
+    ctx.conversation,
+    sourceId,
+  );
+  return (
+    !!source &&
+    source.seq < row.seq &&
+    source.sender_id === row.sender_id &&
+    inputBelongsToScope(
+      source,
+      JSON.parse(inputScope(runtime, ctx)),
+      runtime.memory.db,
+    )
+  );
 }
 
 /** @param {any} runtime @param {any} ctx @param {any} row @param {any} boundary */
-function reviewable(runtime, ctx, row, boundary) {
+function visible(runtime, ctx, row, boundary) {
   const payload = JSON.parse(row.payload);
   if (
     !boundary.allowed({ id: row.id, conversation: row.conversation, payload })
   )
     return false;
-  if (row.kind === "message.received")
-    return !!liveInput(runtime, ctx.agentId, ctx.conversation, row.id);
   if (row.kind !== "voice.transcript") return true;
-  const sourceId = payload.sourceEventId;
-  if (typeof sourceId !== "string" || row.dedupe !== transcriptKey(sourceId))
-    return false;
-  const source = liveInput(runtime, ctx.agentId, ctx.conversation, sourceId);
+  const source = recordedInput(
+    runtime,
+    ctx.agentId,
+    ctx.conversation,
+    payload.sourceEventId,
+  );
   return (
     !!source &&
-    source.seq < row.seq &&
-    source.sender_id === row.sender_id &&
     boundary.allowed({
       id: source.id,
       conversation: source.conversation,
@@ -81,183 +86,248 @@ function reviewable(runtime, ctx, row, boundary) {
   );
 }
 
-/**
- * Record the event versions actually presented to this context. The durable
- * progress table preserves summary gaps from older turns for send review.
- * @param {any} runtime @param {any} ctx @param {any[]} items
- */
-export function recordInputPresentation(runtime, ctx, items) {
-  const memory = runtime.memory.bind(ctx.agentId),
-    db = memory.db,
-    state = memory.state(ctx.conversation),
-    baseline = Math.max(
-      state.readThroughSeq || 0,
-      state.inputReviewFromSeq || 0,
-      state.inputReviewThroughSeq || 0,
-    ),
-    boundary = recallBoundary(runtime, ctx),
-    byId = prepared(
-      db,
-      "SELECT * FROM events WHERE agent_id=? AND conversation=? AND id=?",
-    ),
-    reviewById = prepared(db, inputRows + " AND e.id=?"),
-    scope = reviewScope(runtime, ctx),
-    progress = prepared(
-      db,
-      "INSERT INTO message_progress VALUES(?,?,?,?) ON CONFLICT(agent_id,conversation,seq) DO UPDATE SET summary_only=MIN(summary_only,excluded.summary_only)",
-    );
-  /** @param {any} row */
-  function remember(row) {
-    const { id, version } = inputRef(row);
-    (ctx.presentedInput ??= new Map()).set(id, version);
-    if (
-      row.seq > baseline ||
-      !reviewById.get(...scope, id) ||
-      !reviewable(runtime, ctx, row, boundary)
-    )
-      progress.run(ctx.agentId, ctx.conversation, row.seq, 0);
-  }
+/** @param {any} runtime @param {any} ctx @param {any[]} items */
+export function describeInputPresentation(runtime, ctx, items) {
+  const { db, scope } = inputs(runtime, ctx);
+  const boundary = recallBoundary(runtime, ctx);
+  const byId = prepared(
+    db,
+    "SELECT * FROM events WHERE agent_id=? AND conversation=? AND id=?",
+  );
+  /** @type {Map<string,string>} */
+  const proofs = new Map();
   for (const item of items) {
-    if (item.conversation !== ctx.conversation || !item.id) continue;
-    const row = byId.get(ctx.agentId, ctx.conversation, item.id);
+    if (
+      item.conversation !== ctx.conversation ||
+      !item.id ||
+      item.summaryOmitted ||
+      item.bodyTruncated
+    )
+      continue;
+    const version = findInput(db, scope, item.id);
+    const row = version && byId.get(ctx.agentId, ctx.conversation, item.id);
     if (
       !row ||
       item.seq !== row.seq ||
       item.type !== row.kind ||
-      !boundary.allowed({
-        id: row.id,
-        conversation: row.conversation,
-        payload: JSON.parse(row.payload),
-      })
-    )
-      continue;
-    if (
-      item.summaryOmitted ||
-      item.bodyTruncated ||
-      (item.body !==
-        (row.kind === "message.recalled" ? RECALL_NOTICE_BODY : row.body) &&
-        !(item.outcome && item.outcome.id === memory.sendOutcome(row)?.id))
-    ) {
-      progress.run(ctx.agentId, ctx.conversation, row.seq, 1);
-      continue;
-    }
-    if (
       item.status !== row.status ||
-      (!item.outcome &&
-        ((item.senderId ?? null) !== (row.sender_id ?? null) ||
-          (item.messageId ?? null) !== (row.message_id ?? null)))
+      item.body !==
+        (row.kind === "message.recalled" ? RECALL_NOTICE_BODY : row.body) ||
+      (item.senderId ?? null) !== (row.sender_id ?? null) ||
+      (item.messageId ?? null) !== (row.message_id ?? null) ||
+      !eligible(runtime, ctx, row) ||
+      !visible(runtime, ctx, row, boundary)
     )
       continue;
-    remember(row);
+    proofs.set(item.id, version.version);
     const voice = item.voiceTranscript;
-    if (voice?.id && !voice.textTruncated) {
-      const transcript = byId.get(ctx.agentId, ctx.conversation, voice.id);
-      if (
-        transcript?.kind === "voice.transcript" &&
-        transcript.dedupe === transcriptKey(item.id) &&
-        transcript.body === voice.text &&
-        reviewable(runtime, ctx, transcript, boundary)
-      )
-        remember(transcript);
-    }
+    if (!voice?.id || voice.textTruncated) continue;
+    const transcriptVersion = findInput(db, scope, voice.id);
+    const transcript =
+      transcriptVersion && byId.get(ctx.agentId, ctx.conversation, voice.id);
+    if (
+      transcriptVersion &&
+      transcript?.kind === "voice.transcript" &&
+      transcript.dedupe === transcriptKey(item.id) &&
+      transcript.body === voice.text &&
+      eligible(runtime, ctx, transcript) &&
+      visible(runtime, ctx, transcript, boundary)
+    )
+      proofs.set(voice.id, transcriptVersion.version);
   }
-  const checkpoint = presentationCheckpoint(runtime, ctx, state, items);
-  memory.setState(ctx.conversation, {
-    ...state,
-    seenThroughSeq: checkpoint.readThroughSeq,
-  });
+  return proofs;
+}
+
+/** @param {any} runtime @param {any} ctx @param {Map<string,string>} proofs */
+export function commitInputPresentation(runtime, ctx, proofs) {
+  const { db, scope } = inputs(runtime, ctx);
+  const boundary = recallBoundary(runtime, ctx);
+  const byId = prepared(
+    db,
+    "SELECT * FROM events WHERE agent_id=? AND conversation=? AND id=?",
+  );
+  for (const [id, version] of proofs) {
+    const current = findInput(db, scope, id);
+    const row =
+      current?.version === version &&
+      byId.get(ctx.agentId, ctx.conversation, id);
+    if (
+      row &&
+      eligible(runtime, ctx, row) &&
+      visible(runtime, ctx, row, boundary)
+    )
+      (ctx.presentedInput ??= new Map()).set(id, version);
+  }
+  return presentationCheckpoint(runtime, ctx);
+}
+
+/** @param {any} runtime @param {any} ctx @param {any[]} items @param {Map<string,string>} proofs */
+export function inputProjection(runtime, ctx, items, proofs) {
+  const checkpoint = presentationCheckpoint(runtime, ctx, proofs, items);
+  for (const item of items) {
+    const version = proofs.get(item.id);
+    if (version) item.inputRef = { id: item.id, version };
+    const transcript = item.voiceTranscript;
+    if (transcript?.id && proofs.has(transcript.id))
+      transcript.inputRef = {
+        id: transcript.id,
+        version: proofs.get(transcript.id),
+      };
+  }
   return checkpoint;
 }
 
-/** @param {any} runtime @param {any} ctx @param {any} [state] @param {any[]} [items] */
-export function presentationCheckpoint(runtime, ctx, state, items = []) {
-  const memory = runtime.memory.bind(ctx.agentId);
-  let through = (state ?? memory.state(ctx.conversation)).readThroughSeq || 0;
-  const rows = prepared(
-    memory.db,
-    "SELECT * FROM events WHERE agent_id=? AND conversation=? AND seq>? ORDER BY seq",
-  ).iterate(ctx.agentId, ctx.conversation, through);
-  for (const row of rows) {
-    if (ctx.presentedInput?.get(row.id) !== inputRef(row).version) {
+/** @param {any} runtime @param {any} ctx @param {Map<string,string>} [provisional] @param {any[]} [items] */
+export function presentationCheckpoint(runtime, ctx, provisional, items = []) {
+  const { db, scope, state } = inputs(runtime, ctx);
+  const boundary = recallBoundary(runtime, ctx);
+  let through = state.processed_through;
+  let gap;
+  for (const row of processingInputRows(db, scope)) {
+    if (!eligible(runtime, ctx, row)) continue;
+    if (!visible(runtime, ctx, row, boundary)) {
+      through = Math.min(through, row.seq - 1);
+      gap = { reason: "restricted_input" };
+      break;
+    }
+    if (
+      (provisional?.get(row.id) ?? ctx.presentedInput?.get(row.id)) !==
+      row.version
+    ) {
+      through = Math.min(through, row.seq - 1);
       const partial = items.some(
         (item) =>
           item.id === row.id && (item.summaryOmitted || item.bodyTruncated),
       );
-      ctx.shownSeq = through;
-      return {
-        readThroughSeq: through,
-        readGap: partial
-          ? { tool: "memory_read", id: row.id, offset: 0 }
-          : { tool: "conversation_read", afterSeq: through },
-      };
+      gap = partial
+        ? { tool: "memory_read", id: row.id, offset: 0 }
+        : {
+            tool: "conversation_read",
+            afterSeq: Math.min(through, row.seq - 1),
+          };
+      break;
     }
-    through = row.seq;
+    through = Math.max(through, row.seq);
   }
-  ctx.shownSeq = through;
-  return { readThroughSeq: through };
+  if (!provisional) ctx.shownSeq = through;
+  return { readThroughSeq: through, ...(gap ? { readGap: gap } : {}) };
 }
 
-/**
- * A processed checkpoint can be taken from older installs, but a known
- * summary-only gap beneath it still needs review. Never use replyInputSeq.
- * @param {any} runtime @param {any} ctx @param {{readSeq:number,sentSeq:number}} [baseline]
- */
+/** @param {any} runtime @param {any} ctx @param {number} through @param {{id:string,version:string}[]} [noReply] */
+export function processInput(runtime, ctx, through, noReply = []) {
+  const { memory, db, scope, state } = inputs(runtime, ctx);
+  const boundary = recallBoundary(runtime, ctx);
+  return memory.store.transaction(() => {
+    refreshInput(memory, scope);
+    const rows = [...processingInputRows(db, scope, through)].filter((row) =>
+      eligible(runtime, ctx, row),
+    );
+    if (
+      rows.some(
+        (row) =>
+          !visible(runtime, ctx, row, boundary) ||
+          ctx.presentedInput?.get(row.id) !== row.version,
+      )
+    )
+      throw Error("UNSEEN_WATERMARK");
+    for (const row of rows) writeProcessed(db, scope, inputRef(row));
+    for (const ref of noReply) {
+      const row = prepared(
+        db,
+        "SELECT * FROM events WHERE agent_id=? AND conversation=? AND id=?",
+      ).get(ctx.agentId, ctx.conversation, ref.id);
+      const current = row && findInput(db, scope, ref.id);
+      if (
+        !current ||
+        current.seq > through ||
+        current.version !== ref.version ||
+        ctx.presentedInput?.get(ref.id) !== ref.version ||
+        !eligible(runtime, ctx, row) ||
+        !visible(runtime, ctx, row, boundary)
+      )
+        throw Error("UNSEEN_WATERMARK");
+      writeProcessed(db, scope, ref, ctx.inputEpoch);
+    }
+    const readThroughSeq = Math.max(through, state.processed_through);
+    prepared(
+      db,
+      "UPDATE input_scopes SET processed_through=? WHERE scope=?",
+    ).run(readThroughSeq, scope);
+    // Other history projections still use the cursor; decisions use versioned rows.
+    memory.setState(ctx.conversation, {
+      ...memory.state(ctx.conversation),
+      readThroughSeq,
+    });
+    return { readThroughSeq };
+  });
+}
+
+/** @param {any} runtime @param {any} ctx */
+export function processingPending(runtime, ctx) {
+  const { db, scope } = inputs(runtime, ctx);
+  const boundary = recallBoundary(runtime, ctx);
+  const items = [];
+  for (const row of processingInputRows(db, scope)) {
+    if (eligible(runtime, ctx, row) && visible(runtime, ctx, row, boundary))
+      items.push(inputRef(row));
+    if (items.length === 30) break;
+  }
+  return items;
+}
+
+/** @param {any} runtime @param {any} ctx @param {InputRef} ref */
+export function inputDisposition(runtime, ctx, ref) {
+  const { db, scope } = inputs(runtime, ctx);
+  return readInputDisposition(db, scope, ref);
+}
+
+/** @typedef {{readSeq?:number,sentSeq?:number,revision?:number,ids?:string[]}} ReviewBaseline */
+/** @param {any} runtime @param {any} ctx @param {ReviewBaseline} [baseline] */
 export function snapshotReviewInput(runtime, ctx, baseline) {
-  const db = runtime.memory.bind(ctx.agentId).db,
-    scope = reviewScope(runtime, ctx),
-    boundary = recallBoundary(runtime, ctx),
-    sentSeq = baseline?.sentSeq ?? (ctx.reviewSentSeq || 0),
-    base = Math.max(baseline?.readSeq ?? (ctx.reviewReadSeq || 0), sentSeq);
-  const rows = prepared(
+  const { db, scope, state } = inputs(runtime, ctx);
+  const boundary = recallBoundary(runtime, ctx);
+  const keep = [
+    ...new Set([
+      ...(baseline?.ids || []),
+      ...(ctx.confirmedReviewInput?.keys() || []),
+    ]),
+  ];
+  const rows = reviewInputRows(
     db,
-    inputRows +
-      ` AND (e.seq>? OR p.summary_only=1 OR e.seq IN (SELECT value FROM json_each(?)))
-        ORDER BY e.seq`,
-  ).iterate(
-    ...scope,
-    base,
-    JSON.stringify([...(ctx.reviewedProgressGaps || [])]),
+    scope,
+    keep,
+    ctx.inputEpoch,
+    baseline?.revision,
   );
   const items = [];
-  for (const row of rows)
-    if (reviewable(runtime, ctx, row, boundary)) items.push(inputRef(row));
+  const observedIds = [];
+  let blocked = state.history_required ? "history_baseline_required" : null;
+  for (const row of rows) {
+    if (!eligible(runtime, ctx, row)) continue;
+    observedIds.push(row.id);
+    if (!visible(runtime, ctx, row, boundary)) {
+      blocked ||= "restricted_input";
+      continue;
+    }
+    items.push(inputRef(row));
+  }
   return {
     items,
-    fromSeq: base,
-    throughSeq: Math.max(base, items.at(-1)?.seq || 0),
+    fromSeq: state.closed_through,
+    throughSeq: Math.max(state.closed_through, items.at(-1)?.seq || 0),
+    revision: state.revision,
+    scope,
+    observedIds,
+    blocked,
   };
 }
 
-/**
- * Clear a historical presentation gap only once that exact version was
- * accepted and delivered. Keep it in this turn's snapshot for a burst tail.
- * @param {any} memory @param {any} ctx @param {InputRef[]} accepted
- */
-export function confirmReviewedGaps(memory, ctx, accepted) {
-  const clear = prepared(
-    memory.db,
-    "UPDATE message_progress SET summary_only=0 WHERE agent_id=? AND conversation=? AND seq=? AND summary_only=1",
-  );
-  const byId = prepared(
-    memory.db,
-    `SELECT e.* FROM events e JOIN message_progress p
-      ON p.agent_id=e.agent_id AND p.conversation=e.conversation AND p.seq=e.seq
-      WHERE e.agent_id=? AND e.conversation=? AND e.id=? AND p.summary_only=1`,
-  );
-  const cleared = [];
-  for (const { id, seq, version } of accepted) {
-    const row = byId.get(ctx.agentId, ctx.conversation, id);
-    if (
-      row &&
-      inputRef(row).version === version &&
-      clear.run(ctx.agentId, ctx.conversation, seq).changes
-    )
-      cleared.push(seq);
-  }
-  return cleared;
+/** @param {any} memory @param {string} scope @param {string} deliveryId @param {InputRef[]} accepted */
+export function recordReviewedDelivery(memory, scope, deliveryId, accepted) {
+  for (const ref of accepted) writeReviewed(memory.db, scope, deliveryId, ref);
 }
 
-/** @typedef {{key?:string, explicit?:boolean, expected?:string, baseline?:{readSeq:number,sentSeq:number}}} ReviewOptions */
+/** @typedef {{key?:string, explicit?:boolean, expected?:string, baseline?:ReviewBaseline}} ReviewOptions */
 /** @typedef {{requestId:string, intent:any, options:ReviewOptions}} ReviewBinding */
 /** @type {WeakMap<InputReviewRequired, ReviewBinding>} */
 const bindings = new WeakMap();
@@ -270,10 +340,10 @@ export class InputReviewRequired extends Error {
   }
 }
 
-/** @param {any} runtime @param {any} ctx @param {ReviewBinding} binding @param {ReturnType<typeof snapshotReviewInput>} snapshot */
-function assess(runtime, ctx, binding, snapshot) {
+/** @param {any} runtime @param {any} ctx @param {ReviewBinding} binding @param {ReturnType<typeof snapshotReviewInput>} snapshot @param {Map<string,string>} [provisional] */
+function assess(runtime, ctx, binding, snapshot, provisional) {
   const snapshotHash = createHash("sha256")
-    .update(JSON.stringify(snapshot.items))
+    .update(JSON.stringify([snapshot.revision, snapshot.items]))
     .digest("hex");
   const changed =
     binding.options.expected !== undefined &&
@@ -286,16 +356,18 @@ function assess(runtime, ctx, binding, snapshot) {
         ctx.confirmedReviewInput?.get(id) !== version),
   );
   const missing = snapshot.items.filter(
-    ({ id, version }) => ctx.presentedInput?.get(id) !== version,
+    ({ id, version }) =>
+      (provisional?.get(id) ?? ctx.presentedInput?.get(id)) !== version,
   );
   let token;
-  if (!missing.length) {
+  if (!missing.length && !snapshot.blocked) {
     const key = tokenKeys.get(ctx) ?? randomBytes(32);
     tokenKeys.set(ctx, key);
     token = createHmac("sha256", key)
       .update(
         JSON.stringify([
-          reviewScope(runtime, ctx),
+          inputScope(runtime, ctx),
+          ctx.inputEpoch,
           binding.options.key ?? binding.requestId,
           binding.intent,
           snapshot.items,
@@ -313,6 +385,7 @@ function assess(runtime, ctx, binding, snapshot) {
 function challenge(ctx, snapshot, { missing, needed, token, canExclude }) {
   return {
     ...(token ? { token } : {}),
+    ...(snapshot.blocked ? { blocked: snapshot.blocked } : {}),
     fromSeq: snapshot.fromSeq,
     throughSeq: snapshot.throughSeq,
     missing: missing.length,
@@ -359,8 +432,13 @@ export function assertInputReviewed(
   const { throughSeq } = snapshot;
   const assessment = assess(runtime, ctx, binding, snapshot);
   const { needed, token, canExclude, snapshotHash, changed } = assessment;
-  if (!needed.length && !changed && !review)
-    return { throughSeq, accepted: snapshot.items, snapshotHash };
+  if (!snapshot.blocked && !needed.length && !changed && !review)
+    return {
+      throughSeq,
+      scope: snapshot.scope,
+      accepted: snapshot.items,
+      snapshotHash,
+    };
 
   const excluded = review?.unrelated || [];
   if (
@@ -376,6 +454,7 @@ export function assertInputReviewed(
   )
     return {
       snapshotHash,
+      scope: snapshot.scope,
       throughSeq: Math.min(
         throughSeq,
         ...needed
@@ -420,6 +499,9 @@ export function attachReviewOriginals(runtime, ctx, error) {
   const shown = [];
   /** @type {any[]} */
   const tracked = [];
+  const versions = new Map(
+    snapshot.items.map(({ id, version }) => [id, version]),
+  );
   /** @type {any[]} */
   const items = before.items.map((ref) => ({ ...ref, bodyOmitted: true }));
   for (const [index, ref] of before.items.entries()) {
@@ -448,6 +530,7 @@ export function attachReviewOriginals(runtime, ctx, error) {
       occurredAt: row.occurredAt,
       status: row.status,
       body: row.body,
+      inputRef: { id: ref.id, version: versions.get(ref.id) },
       ...(row.epistemic ? { epistemic: row.epistemic } : {}),
       ...(row.mentions?.length ? { mentions: row.mentions } : {}),
       ...(row.replyToMessageIds?.length
@@ -460,17 +543,23 @@ export function attachReviewOriginals(runtime, ctx, error) {
     shown.push(item);
     tracked.push(row);
   }
-  // An interception receipt supplies presentation evidence only.
-  const { readThroughSeq, readGap } = recordInputPresentation(
+  // The temporary proofs can describe the outgoing challenge; only delivery
+  // makes them available to a subsequent tool call.
+  const proofs = describeInputPresentation(runtime, ctx, shown);
+  const { readThroughSeq, readGap } = inputProjection(
     runtime,
     ctx,
     shown,
+    proofs,
   );
-  trackMindRecords(runtime, ctx, tracked, "review-input");
+  runtime.stageToolInput(ctx, error, () => {
+    runtime.contexts.commitSeen(ctx, { items: shown, proofs });
+    trackMindRecords(runtime, ctx, tracked, "review-input");
+  });
   const after = challenge(
     ctx,
     snapshot,
-    assess(runtime, ctx, binding, snapshot),
+    assess(runtime, ctx, binding, snapshot, proofs),
   );
   error.inputReview = {
     ...after,

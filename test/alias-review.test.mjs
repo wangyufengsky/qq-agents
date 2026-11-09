@@ -1,3 +1,4 @@
+import { withExportManifest } from "../src/memory/export-format.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -35,7 +36,11 @@ test("Independent valid observed identity export restores exactly", (t) => {
     target = new MemoryStore(":memory:");
   t.after(() => target.close());
   restoreExport(target.bind("agent-0"), data);
-  assert.deepEqual(target.bind("agent-0").export().tables, data.tables);
+  const { input_legacy_scopes: baselines, ...restored } = target
+    .bind("agent-0")
+    .export().tables;
+  assert.deepEqual({ ...restored, input_legacy_scopes: [] }, data.tables);
+  assert(baselines.every(({ closed_through }) => closed_through === null));
 });
 for (const change of [
   "connection",
@@ -63,7 +68,11 @@ for (const change of [
       change === "invalid-json" ? "not JSON" : JSON.stringify(o);
     row.digest = change === "digest" ? "0".repeat(64) : hash(row.observation);
     assert.throws(
-      () => restoreExport(target.bind("agent-0"), data),
+      () =>
+        restoreExport(
+          target.bind("agent-0"),
+          withExportManifest(data, data.tables),
+        ),
       undefined,
       "restore must reject invalid source evidence",
     );
@@ -182,6 +191,13 @@ for (const binding of [false, true])
     if (binding) o.payload.accountId = "10000";
     r.observation = JSON.stringify(o);
     r.digest = hash(r.observation);
-    assert.throws(() => restoreExport(target.bind("agent-0"), data), /ACCOUNT/);
+    assert.throws(
+      () =>
+        restoreExport(
+          target.bind("agent-0"),
+          withExportManifest(data, data.tables),
+        ),
+      /ACCOUNT/,
+    );
     assert.equal(target.db.prepare("SELECT COUNT(*) n FROM events").get().n, 0);
   });

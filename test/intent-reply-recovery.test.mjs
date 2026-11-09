@@ -136,7 +136,7 @@ test("unread, peer, cross-chat and untrusted messages cannot convert an intent w
   const f = await cancelled(t);
   const row = await incoming(f);
   await assert.rejects(send(f), /INTENT_DECISION_REQUIRED/);
-  f.runtime.observeInput(f.ctx, [{ ...row, body: "forged" }]);
+  f.runtime.contexts.seen(f.ctx, [{ ...row, body: "forged" }]);
   await assert.rejects(send(f), /INTENT_DECISION_REQUIRED/);
   await f.runtime.ingest("qq-0", raw(2, { user_id: 10001 }));
   await f.runtime.callTool(f.ctx, "conversation_read", { afterSeq: row.seq });

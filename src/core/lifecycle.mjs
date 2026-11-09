@@ -38,7 +38,12 @@ import { elsewhereForTurn } from "./elsewhere.mjs";
 import { floorForTurn } from "./floor.mjs";
 import { taskBrief } from "./scheduler.mjs";
 import { recallBoundary, recallPage } from "./recall-boundary.mjs";
-import { recordInputPresentation } from "./input-review.mjs";
+import {
+  commitInputPresentation,
+  describeInputPresentation,
+  inputProjection,
+  processingPending,
+} from "./input-review.mjs";
 import { draftHints } from "../tools/qq-drafts.mjs";
 import {
   retireSession,
@@ -122,18 +127,60 @@ export class ContextLifecycle {
       recoverSessions(m, runtime.now());
     }
   }
-  seen(ctx, items, presentation = items) {
+  seen(ctx, items) {
+    const staged = this.stageSeen(ctx, items);
+    this.commitSeen(ctx, staged);
+    return staged.checkpoint;
+  }
+  stageSeen(ctx, items, presentation = items) {
+    if (!/^(group|private):/.test(ctx.conversation))
+      return { items, proofs: new Map(), checkpoint: { readThroughSeq: 0 } };
+    const proofs = describeInputPresentation(this.runtime, ctx, presentation);
+    const checkpoint = inputProjection(this.runtime, ctx, presentation, proofs);
+    return { items, proofs, checkpoint };
+  }
+  commitSeen(ctx, { items, proofs }) {
     const m = this.runtime.memory.bind(ctx.agentId);
-    this.runtime.observeInput(ctx, items);
-    for (const row of items) {
-      trackPeerQzone(ctx, row);
-      if (row.id && row.privacy !== "public") ctx.privateRead.add(row.id);
-      for (const repo of row.protectedRepositories || [])
-        ctx.privateRead.add(githubMarker(repo));
-    }
-    ctx.persistTaint?.();
-    rememberSources(m, ctx.conversation, items);
-    return recordInputPresentation(this.runtime, ctx, presentation);
+    const commit = () => {
+      if (/^(group|private):/.test(ctx.conversation)) {
+        commitInputPresentation(this.runtime, ctx, proofs);
+        this.runtime.observeInput(ctx, items);
+      }
+      for (const row of items) {
+        trackPeerQzone(ctx, row);
+        if (row.id && row.privacy !== "public") ctx.privateRead.add(row.id);
+        for (const repo of row.protectedRepositories || [])
+          ctx.privateRead.add(githubMarker(repo));
+      }
+      ctx.persistTaint?.();
+      rememberSources(m, ctx.conversation, items);
+    };
+    if (m.db.isTransaction) commit();
+    else m.store.transaction(commit);
+  }
+  commitOpening(ctx) {
+    if (!ctx.stagedOpening || ctx.openingCommitted) return;
+    this.commitSeen(ctx, ctx.stagedOpening);
+    ctx.openingReviewInput = new Map(ctx.presentedInput);
+    ctx.openingCommitted = true;
+  }
+  resetInputEvidence(ctx) {
+    ctx.cancelInputWait?.();
+    ctx.cancelInputWait = undefined;
+    ctx.waiting = false;
+    ctx.waitObservedMs = 0;
+    ctx.observationSatisfied = false;
+    ctx.conversationPageThroughSeq = undefined;
+    ctx.inputEpoch = randomUUID();
+    ctx.openingCommitted = false;
+    ctx.stagedToolInputs = undefined;
+    ctx.presentedInput?.clear();
+    ctx.openingReviewInput?.clear();
+    ctx.confirmedReviewInput?.clear();
+    ctx.inputPages?.clear();
+    ctx.requestEvents.clear();
+    ctx.requestVersions?.clear();
+    ctx.shownSeq = 0;
   }
   handoff(agentId, conversation, options = {}) {
     const boundary = recallBoundary(
@@ -244,12 +291,6 @@ export class ContextLifecycle {
           : [],
       contactHistoryNotice:
         "最近联系结果最多 20 项；更早结果用 intent_list 分页回查。",
-      summaryOnly: m.db
-        .prepare(
-          "SELECT seq FROM message_progress WHERE agent_id=? AND conversation=? AND summary_only=1 ORDER BY seq DESC LIMIT 30",
-        )
-        .all(agentId, conversation)
-        .map((x) => x.seq),
       scheduled:
         this.runtime.scheduler
           ?.list(agentId)
@@ -567,7 +608,7 @@ export class ContextLifecycle {
             ),
           );
     const openingHistory = chatHistory(history);
-    const opening = this.seen(
+    ctx.stagedOpening = this.stageSeen(
       ctx,
       history.items,
       /^(group|private):/.test(ctx.conversation)
@@ -577,8 +618,16 @@ export class ContextLifecycle {
           }))
         : history.items,
     );
-    Object.assign(openingHistory, opening);
-    ctx.openingReviewInput = new Map(ctx.presentedInput);
+    Object.assign(openingHistory, ctx.stagedOpening.checkpoint);
+    if (/^(group|private):/.test(ctx.conversation))
+      openingHistory.processingPending = processingPending(r, ctx).map(
+        ({ id, seq, version }) => ({
+          id,
+          seq,
+          version,
+          continuation: { tool: "memory_read", id, offset: 0 },
+        }),
+      );
     ctx.feedThroughSeq = history.nextAfterSeq || s.feedThroughSeq || 0;
     const people =
       ctx.conversation === SUBJECT

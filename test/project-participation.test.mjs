@@ -233,7 +233,7 @@ test("administrator participation in a QQ activity never substitutes for the wai
     body: "一起写",
     payload: { trustedInput: true },
   });
-  f.runtime.observeInput(ctx, [
+  f.runtime.contexts.seen(ctx, [
     f.m.readRecord({ id: event.id }, ctx.conversation),
   ]);
   const qq = await f.runtime.callTool(ctx, "project", {
@@ -300,7 +300,7 @@ test("administrator participation in a QQ activity never substitutes for the wai
     body: "向左走",
     payload: { trustedInput: true },
   });
-  f.runtime.observeInput(fresh, [
+  f.runtime.contexts.seen(fresh, [
     f.m.readRecord({ id: next.id }, ctx.conversation),
   ]);
   const saved = await f.runtime.callTool(fresh, "project", {

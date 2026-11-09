@@ -342,6 +342,8 @@ test("read-through checkpoint still advances after a pure-face send is confirmed
   const f = setup(t),
     incoming = f.mem.append({
       dedupe: "synthetic-face-checkpoint-input",
+      connectionId: "qq-0",
+      payload: { trustedInput: true },
       conversation: f.ctx.conversation,
       direction: "in",
       senderId: "30000",
@@ -350,6 +352,7 @@ test("read-through checkpoint still advances after a pure-face send is confirmed
     }),
     shown = await f.runtime.callTool(f.ctx, "conversation_read", {});
   assert.equal(shown.readThroughSeq, incoming.seq);
+  f.ctx.openingReviewInput = new Map(f.ctx.presentedInput);
 
   const receipt = await f.runtime.callTool(f.ctx, "qq_send", {
     requestId: "face-checkpoint",

@@ -1,3 +1,4 @@
+import { withExportManifest } from "../src/memory/export-format.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -87,17 +88,20 @@ test("F1: automatic pressure rebuild and Self refresh retain observed task facts
     prompts = [];
   const first = event(m, 1, {
     body: "杭州旅行，三人同行，每晚预算600元。请先帮我考虑路线。",
+    payload: { trustedInput: true },
   });
   let pressure = true;
   runtime.backends.set(id, {
     run: async (p) => {
+      p.onInputSubmitted();
       prompts.push(p);
       p.saveSession({ id: `session-${prompts.length}`, backend: "fixture" });
-      const items = (
-        await p.callTool("conversation_read", { conversation: chat })
-      ).items;
-      if (items.length)
-        await p.callTool("qq_mark_read", { throughSeq: items.at(-1).seq });
+      const page = await p.callTool("conversation_read", {
+        conversation: chat,
+      });
+      p.onToolResultSubmitted(page);
+      if (page.readThroughSeq)
+        await p.callTool("qq_mark_read", { throughSeq: page.readThroughSeq });
       p.onUsage({
         source: "measured",
         contextTokens: pressure ? 28000 : 8000,
@@ -635,7 +639,7 @@ test("F5 large restore remaps a deleted boundary beyond the JS call argument lim
   const target = new MemoryStore(":memory:");
   t.after(() => target.close());
   event(target.bind("other"), 1);
-  restoreExport(target.bind(id), data);
+  restoreExport(target.bind(id), withExportManifest(data, data.tables));
   const restored = target.bind(id).identity.get("intentions", i.id);
   assert.equal(restored.createdAfterSeq, 140001);
   assert.equal(restored.handoffSeq, 140001);

@@ -28,6 +28,7 @@ import { isDeepStrictEqual } from "node:util";
  *   saveSession: (session: StoredSession | null) => void,
  *   onBackendTurn?: (turn: {turnId: string, inputAccepted?: boolean}) => void,
  *   onInputSubmitted?: () => void,
+ *   onToolResultSubmitted?: (result: unknown) => void,
  *   beforeInputSubmitted?: () => Promise<void>,
  *   onTiming?: (timing: {phase: string, elapsedMs: number, processReused?: boolean}) => void,
  *   onDiagnostic?: (event: unknown, attempt?: number) => void,

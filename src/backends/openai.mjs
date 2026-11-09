@@ -297,13 +297,15 @@ export class OpenAIBackend {
   }
   /** @param {any} call @param {RunParams["callTool"]} callTool @param {AbortSignal} signal */
   async toolMessages(call, callTool, signal) {
-    let result;
+    let result, original;
     try {
       const args = call.function?.arguments
         ? JSON.parse(call.function.arguments)
         : {};
-      result = mcpResult(await callTool(call.function?.name, args));
+      original = await callTool(call.function?.name, args);
+      result = mcpResult(original);
     } catch (error) {
+      original = error;
       result = {
         isError: true,
         content: [
@@ -338,6 +340,7 @@ export class OpenAIBackend {
         `工具结果附带 ${images.length} 张图片，见本轮工具结果之后的图片消息。`,
       );
     return {
+      original,
       tool: {
         ...(typeof result[mediaLease] === "function"
           ? { [mediaLease]: result[mediaLease] }
@@ -369,6 +372,8 @@ export class OpenAIBackend {
     saveSession,
     onBackendTurn,
     onInputSubmitted,
+    onToolResultSubmitted,
+    beforeInputSubmitted,
     recovery,
   }) {
     const signature = this.sessionSignature(tools);
@@ -422,7 +427,10 @@ export class OpenAIBackend {
     }));
     state.messages.push({ role: "user", content: prompt });
     this.store(state);
+    const pendingResults = [];
+    let inputSubmitted = false;
     try {
+      await beforeInputSubmitted?.();
       for (let round = 0; ; round++) {
         if (controller.signal.aborted) throw Error("ABORTED");
         if (round >= this.config.maxToolRounds)
@@ -452,7 +460,6 @@ export class OpenAIBackend {
                 : part,
             );
         }
-        onInputSubmitted?.();
         const result = await this.request("/chat/completions", {
           signal: controller.signal,
           body: {
@@ -473,6 +480,13 @@ export class OpenAIBackend {
         const message = result?.choices?.[0]?.message;
         if (!message || typeof message !== "object")
           throw openaiTurnFailure(Error("OPENAI_MALFORMED_RESPONSE"), turnId);
+        if (!inputSubmitted) {
+          inputSubmitted = true;
+          onInputSubmitted?.();
+        }
+        for (const entry of pendingResults.splice(0))
+          if (entry.tool.content === entry.content)
+            onToolResultSubmitted?.(entry.original);
         const u = result.usage;
         if (Number.isFinite(u?.prompt_tokens))
           onUsage?.({
@@ -509,6 +523,11 @@ export class OpenAIBackend {
             callTool,
             controller.signal,
           );
+          pendingResults.push({
+            original: answer.original,
+            tool: answer.tool,
+            content: answer.tool.content,
+          });
           step.push(answer.tool);
           images.push(...answer.images);
         }

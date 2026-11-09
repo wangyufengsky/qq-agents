@@ -20,7 +20,9 @@ function setup(t) {
       body,
       payload: { trustedInput: true },
     });
-    f.runtime.observeInput(ctx, [m.readRecord({ id: e.id }, ctx.conversation)]);
+    f.runtime.contexts.seen(ctx, [
+      m.readRecord({ id: e.id }, ctx.conversation),
+    ]);
     return e;
   };
   const source = say();

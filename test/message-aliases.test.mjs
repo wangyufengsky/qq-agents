@@ -1,3 +1,4 @@
+import { withExportManifest } from "../src/memory/export-format.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -150,7 +151,7 @@ const append = (m, id, payload = {}, extra = {}) =>
     ...extra,
   });
 
-test("v2 HTTP snapshots retain alias and observation identity across restore", async (t) => {
+test("verified HTTP snapshots retain alias and observation identity across restore", async (t) => {
   const runtimeFixture = fixture(t),
     f = setup(t, runtimeFixture.store);
   f.manifest();
@@ -375,7 +376,11 @@ test("N4 alias import and observation-free restore reject conflicting target acc
     mutate(p);
     forged.tables.events[1].payload = JSON.stringify(p);
     assert.throws(
-      () => restoreExport(target.bind(agent), forged),
+      () =>
+        restoreExport(
+          target.bind(agent),
+          withExportManifest(forged, forged.tables),
+        ),
       /ALIAS_ACCOUNT_MISMATCH/,
     );
     assert.deepEqual(target.bind(agent).export().tables, before);
@@ -449,7 +454,14 @@ test("N4 JSON reverse subject restore and consistent SQLite backup preserve alia
   forged.tables.message_aliases[0].connection_id = "other";
   const empty = new MemoryStore(":memory:");
   t.after(() => empty.close());
-  assert.throws(() => restoreExport(empty.bind(agent), forged), /SCOPE/);
+  assert.throws(
+    () =>
+      restoreExport(
+        empty.bind(agent),
+        withExportManifest(forged, forged.tables),
+      ),
+    /SCOPE/,
+  );
   assert.equal(empty.db.prepare("SELECT COUNT(*) n FROM events").get().n, 0);
 });
 

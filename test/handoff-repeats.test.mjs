@@ -9,6 +9,8 @@ const event = (m, n, body) =>
     dedupe: "e" + n,
     conversation: scope,
     kind: "message.received",
+    connectionId: "qq-0",
+    payload: { trustedInput: true },
     body,
     senderId: "30000",
     occurredAt: `2026-10-${String(20 + n).padStart(2, "0")}T00:00:00Z`,
@@ -31,9 +33,9 @@ function chat(t) {
   return { ...f, prompts, m: f.store.bind("agent-0") };
 }
 
-test("a confirmed send reaches the model once while read progress covers both records", async (t) => {
+test("a confirmed send reaches the model once and stays outside the incoming read progress", async (t) => {
   const f = chat(t);
-  event(f.m, 1, "来信一");
+  const inbound = event(f.m, 1, "来信一");
   await f.runtime.wake("agent-0", scope);
   const ctx = context(f.runtime);
   const page = await f.runtime.callTool(ctx, "conversation_read", {
@@ -48,8 +50,8 @@ test("a confirmed send reaches the model once while read progress covers both re
   );
   assert.equal(sent.body, "只说一遍的回复");
   assert.equal(count(JSON.stringify(page), "只说一遍的回复"), 1);
-  // The attempt still counts as shown, so nothing blocks marking it read.
-  await f.runtime.callTool(ctx, "qq_mark_read", { throughSeq: sent.seq });
+  assert.equal(page.readThroughSeq, inbound.seq);
+  await f.runtime.callTool(ctx, "qq_mark_read", { throughSeq: inbound.seq });
   // The console keeps reading the plain archive.
   const archive = f.m.conversation({ conversation: scope });
   assert.equal(count(JSON.stringify(archive), "只说一遍的回复"), 2);

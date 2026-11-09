@@ -554,7 +554,7 @@ test("Antigravity keeps a per-turn session when the input callback throws before
     backend.run({
       ...params,
       session,
-      onInputSubmitted() {
+      beforeInputSubmitted() {
         callbackCalls++;
         throw Error("SYNTHETIC_INPUT_CALLBACK_FAILURE");
       },
@@ -1463,4 +1463,24 @@ test("Antigravity pins the auto-created swarm plugin off and rejects modified pr
     fs.writeFileSync(file, JSON.stringify(value));
     assert.throws(() => backend.checkProfile(), /ANTIGRAVITY_PROFILE_UNSAFE/);
   }
+});
+
+test("a failed submitted-input observer retires the already-used native session", async (t) => {
+  const { backend, params, sessions } = setup(t);
+  await backend.run(params);
+  const session = sessions.at(-1);
+  await assert.rejects(
+    backend.run({
+      ...params,
+      session,
+      onInputSubmitted() {
+        throw Error("SYNTHETIC_SUBMITTED_OBSERVER_FAILURE");
+      },
+    }),
+    (error) =>
+      error.message === "SYNTHETIC_SUBMITTED_OBSERVER_FAILURE" &&
+      !(error instanceof SessionPreparationFailure),
+  );
+  assert.equal(sessions.at(-1), null);
+  assert.equal(backend.active.size, 0);
 });

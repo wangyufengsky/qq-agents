@@ -34,7 +34,7 @@ function setup(t) {
     body: "昨天只是忙，不是讨厌你",
     payload: { trustedInput: true },
   });
-  f.runtime.observeInput(ctx, [
+  f.runtime.contexts.seen(ctx, [
     m.readRecord({ id: source.id }, ctx.conversation),
   ]);
   const card = m.identity.savePersonCard(
@@ -269,7 +269,7 @@ test("a newer explanation supersedes the earlier correction on original targets"
     body: "补充一下，那天手机也坏了",
     payload: { trustedInput: true },
   });
-  f.runtime.observeInput(f.ctx, [
+  f.runtime.contexts.seen(f.ctx, [
     f.m.readRecord({ id: source.id }, f.ctx.conversation),
   ]);
   const next = await f.call("memory_correct", {
@@ -321,7 +321,7 @@ test("shared evidence does not block correction and inherited candidates stay re
     body: "再补充一下",
     payload: { trustedInput: true },
   });
-  f.runtime.observeInput(f.ctx, [
+  f.runtime.contexts.seen(f.ctx, [
     f.m.readRecord({ id: later.id }, f.ctx.conversation),
   ]);
   const next = await f.call("memory_correct", {

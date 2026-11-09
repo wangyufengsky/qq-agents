@@ -529,7 +529,7 @@ test("backup precedes schema3 upgrade, includes WAL, restores to a separate old-
     d.close();
   }
   const upgraded = new DatabaseSync(file, { readOnly: true });
-  assert.equal(upgraded.prepare("PRAGMA user_version").get().user_version, 7);
+  assert.equal(upgraded.prepare("PRAGMA user_version").get().user_version, 8);
   upgraded.close();
 });
 test("backup failure leaves schema3 and source data unchanged; failed import is transactional and recoverable", async (t) => {
@@ -567,44 +567,49 @@ test("backup failure leaves schema3 and source data unchanged; failed import is 
   await backupDatabase(saved.destination, path.join(root, "recover.sqlite"));
 });
 
-test("opening a predecessor database and restoring an export install presentation invalidation", (t) => {
+test("opening a schema-seven database freezes legacy versions and installs an event invalidation queue", (t) => {
   const file = path.join(temp(t), "prior.sqlite");
   const prior = new MemoryStore(file);
-  const agent = "fish";
-  const conversation = "group:20000";
+  const agent = "fish",
+    conversation = "group:20000";
   const item = prior.bind(agent).append({
     dedupe: "predecessor-presentation",
     conversation,
+    connectionId: "qq-0",
     kind: "message.received",
+    senderId: "30000",
     body: "归档版本",
+    payload: { trustedInput: true, raw: { self_id: 10000 } },
   });
-  prior.db.exec("DROP TRIGGER event_presentation_changed");
+  prior.db.exec("PRAGMA user_version=7");
+  prior.bind(agent).setState(conversation, { readThroughSeq: item.seq });
   prior.db
-    .prepare("INSERT INTO message_progress VALUES(?,?,?,0)")
+    .prepare("INSERT INTO message_progress VALUES(?,?,?,1)")
     .run(agent, conversation, item.seq);
-  const version = prior.db.prepare("PRAGMA user_version").get().user_version;
   prior.close();
 
   const upgraded = new MemoryStore(file);
   t.after(() => upgraded.close());
   assert.equal(
     upgraded.db.prepare("PRAGMA user_version").get().user_version,
-    version,
+    8,
   );
-  const restored = new MemoryStore(":memory:");
-  t.after(() => restored.close());
-  restoreExport(restored.bind(agent), upgraded.bind(agent).export());
-  for (const store of [upgraded, restored]) {
-    const read = () =>
-      store.db
-        .prepare(
-          "SELECT summary_only FROM message_progress WHERE agent_id=? AND conversation=? AND seq=?",
-        )
-        .get(agent, conversation, item.seq).summary_only;
-    assert.equal(read(), 0);
-    store.db
-      .prepare("UPDATE events SET body=? WHERE id=?")
-      .run("新版本", item.id);
-    assert.equal(read(), 1);
-  }
+  const saved = upgraded.db
+    .prepare("SELECT version FROM input_legacy_refs WHERE id=?")
+    .get(item.id).version;
+  assert.match(saved, /^1:[a-f0-9]{64}$/);
+  upgraded.db
+    .prepare("UPDATE events SET body=? WHERE id=?")
+    .run("新版本", item.id);
+  assert.equal(
+    upgraded.db
+      .prepare("SELECT version FROM input_legacy_refs WHERE id=?")
+      .get(item.id).version,
+    saved,
+  );
+  assert.equal(
+    upgraded.db.prepare("SELECT id FROM input_dirty WHERE id=?").get(item.id)
+      .id,
+    item.id,
+  );
 });

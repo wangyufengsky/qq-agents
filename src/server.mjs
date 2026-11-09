@@ -305,6 +305,11 @@ export function createServer({
         if (req.method !== "POST") return send({ error: "METHOD" }, 405);
         const data = await readBody(undefined, ctx);
         try {
+          if (
+            ctx.requiresInputSubmission &&
+            ctx.backendInputEpoch !== ctx.inputEpoch
+          )
+            throw Error("BACKEND_INPUT_NOT_SUBMITTED");
           if (ctx.runtimeKind === "subject-social") {
             runtime.socialRuntime.assertContext(ctx);
             runtime.socialRuntime.assertToolAllowed(ctx, data.name);
@@ -315,11 +320,18 @@ export function createServer({
           }
           const result = await (ctx.runtimeKind === "subject-social"
             ? runtime.socialRuntime.callTool(ctx, data.name, data.arguments)
-            : runtime.callTool(ctx, data.name, data.arguments));
+            : runtime.callTool(ctx, data.name, data.arguments, {
+                deferInput: true,
+              }));
           if (ctx.runtimeKind === "subject-social")
             runtime.socialRuntime.assertContext(ctx);
-          return send(mcpResult(result));
+          const content = mcpResult(result);
+          if (ctx.runtimeKind !== "subject-social")
+            res.once("finish", () => runtime.commitToolInput(ctx, result));
+          return send(content);
         } catch (e) {
+          if (ctx.runtimeKind !== "subject-social")
+            res.once("finish", () => runtime.commitToolInput(ctx, e));
           runtime.diagnostics.report(e, {
             component: "http",
             requestId,

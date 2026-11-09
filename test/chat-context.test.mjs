@@ -27,6 +27,7 @@ function message(m, n, body = `来信 ${n}`) {
     kind: "message.received",
     direction: "in",
     senderId: "30000",
+    payload: { trustedInput: true },
     body,
     occurredAt: "2026-10-30T00:00:00Z",
   });
@@ -61,7 +62,7 @@ test("chat starts with speech, keeps IDs and reading gaps, and leaves the durabl
   assert.equal(f.m.state(scope).readThroughSeq || 0, before);
   const full = f.runtime.contexts.handoff("agent-0", scope);
   assert.equal(full.deliveries.length, 20);
-  assert.deepEqual(full.summaryOnly, [long.seq]);
+  assert.equal(section(prompt, "新增消息：").processingPending[0].id, long.id);
   message(f.m, 2, "接着说\n保留这行和句尾呀。");
   await f.runtime.wake("agent-0", scope);
   assert(!f.prompts[1].includes("程序交接状态："));

@@ -1,3 +1,13 @@
+import {
+  INPUT_SCHEMA_VERSION,
+  initializeInputTables,
+  migrateInputBaselines,
+} from "./input-state.mjs";
+import {
+  EXPORT_TABLES,
+  exportHeader,
+  withExportManifest,
+} from "./export-format.mjs";
 import { migrateHomeSocial } from "../home/social-schema.mjs";
 import { socialSafeExportRow, mergeProtection } from "./protection.mjs";
 import { withoutClosenessCache } from "../core/closeness.mjs";
@@ -111,7 +121,7 @@ export class MemoryStore {
     this.db = new DatabaseSync(file);
     try {
       const version = this.db.prepare("PRAGMA user_version").get().user_version;
-      if (version > MEMORY_DRAFT_SCHEMA_VERSION)
+      if (version > INPUT_SCHEMA_VERSION)
         throw Error("MEMORY_SCHEMA_NEWER_THAN_CODE");
       if (file !== ":memory:") fs.chmodSync(file, 0o600);
       // Connection settings must take effect before opening a schema transaction.
@@ -176,25 +186,18 @@ export class MemoryStore {
       this.transcribing = new Set();
       migrateSearch(this.db, version);
       if (version < 4) this.transaction(() => migrateIdentity(this.db));
-      // Existing progress rows can retain revision gaps without changing exports.
-      this.db.exec(`
-        CREATE TRIGGER IF NOT EXISTS event_presentation_changed
-        AFTER UPDATE OF kind, connection_id, status, sender_id, message_id, body, payload ON events
-        WHEN NEW.kind IN ('message.received','message.recalled','notice.file','notice.poke','voice.transcript')
-          AND (OLD.kind IS NOT NEW.kind OR OLD.connection_id IS NOT NEW.connection_id
-            OR OLD.status IS NOT NEW.status OR OLD.sender_id IS NOT NEW.sender_id
-            OR OLD.message_id IS NOT NEW.message_id OR OLD.body IS NOT NEW.body OR OLD.payload IS NOT NEW.payload)
-        BEGIN
-          INSERT INTO message_progress VALUES(NEW.agent_id, NEW.conversation, NEW.seq, 1)
-          ON CONFLICT(agent_id,conversation,seq) DO UPDATE SET summary_only=1;
-        END;
-      `);
       migrateTimeline(this.db, version);
       migrateMessageIds(this.db, version);
       if (version < MEMORY_DRAFT_SCHEMA_VERSION)
         this.transaction(() => {
           createDraftTables(this.db);
           this.db.exec(`PRAGMA user_version=${MEMORY_DRAFT_SCHEMA_VERSION}`);
+        });
+      if (version < INPUT_SCHEMA_VERSION)
+        this.transaction(() => {
+          initializeInputTables(this.db);
+          migrateInputBaselines(this.db);
+          this.db.exec(`PRAGMA user_version=${INPUT_SCHEMA_VERSION}`);
         });
       migrateHomeSocial(this.db);
       this.due = new ConversationDue(this.db);
@@ -1336,37 +1339,14 @@ class AgentMemory {
   export() {
     const tables = {};
     // Restore reassigns seq in export order; keep it ascending so equal-time order survives.
-    for (const name of [
-      "events",
-      "diaries",
-      "people",
-      "deliveries",
-      "runtime",
-      "migrations",
-      "self_versions",
-      "self_candidates",
-      "intentions",
-      "work_notes",
-      "model_turns",
-      "session_history",
-      "message_progress",
-      "message_aliases",
-      "message_observations",
-      "person_notes",
-      "moods",
-      "person_items",
-      "projects",
-      "memory_corrections",
-      "activity_history",
-      "qzone_approvals",
-      "qq_drafts",
-      "qq_draft_items",
-    ])
+    for (const name of EXPORT_TABLES) {
+      if (name === "diary_revisions") continue;
       tables[name] = this.db
         .prepare(
           `SELECT * FROM ${name} WHERE agent_id=?${name === "events" ? " ORDER BY seq" : name === "moods" ? " ORDER BY rowid" : ""}`,
         )
         .all(this.agentId);
+    }
     tables.person_notes = tables.person_notes.map((row) => ({
       ...row,
       value: json(withoutClosenessCache(parse(row.value))),
@@ -1378,6 +1358,6 @@ class AgentMemory {
       .all(this.agentId);
     for (const [table, rows] of Object.entries(tables))
       tables[table] = rows.map((row) => socialSafeExportRow(table, row));
-    return { version: 1, agentId: this.agentId, exportedAt: now(), tables };
+    return withExportManifest(exportHeader(this.agentId, now()), tables);
   }
 }

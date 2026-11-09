@@ -251,7 +251,8 @@ test("non-contiguous reading cannot advance processing across unseen gap", async
   const { runtime, store } = fixture(t),
     m = store.bind("agent-0"),
     ctx = context(runtime);
-  for (let n = 1; n <= 5; n++) event(m, n);
+  for (let n = 1; n <= 5; n++)
+    event(m, n, { connectionId: "qq-0", payload: { trustedInput: true } });
   await runtime.callTool(ctx, "conversation_read", {
     conversation: ctx.conversation,
     afterSeq: 3,
@@ -563,16 +564,20 @@ test("working notes retain source uncertainty, flag missing references and expos
   assert.equal(handoff.notes[0].epistemic, "working-interpretation");
 });
 
-test("legacy processed progress remains authoritative after first session rebuild", async (t) => {
+test("processed progress remains authoritative after a session rebuild", async (t) => {
   const { runtime, store } = fixture(t),
     m = store.bind("agent-0");
-  event(m, 1);
-  const old = event(m, 2),
-    next = event(m, 3);
-  m.setState("group:20000", { readThroughSeq: old.seq });
+  const current = { connectionId: "qq-0", payload: { trustedInput: true } };
+  event(m, 1, current);
+  const old = event(m, 2, current);
+  const initial = context(runtime);
+  await runtime.callTool(initial, "conversation_read", {});
+  await runtime.callTool(initial, "qq_mark_read", { throughSeq: old.seq });
+  const next = event(m, 3, current);
   const ctx = context(runtime);
   const p = runtime.contexts.prepare(ctx, {}, []);
   assert(p.prompt.includes(next.id));
+  runtime.contexts.commitOpening(ctx);
   assert.equal(ctx.shownSeq, next.seq);
   await runtime.callTool(ctx, "qq_mark_read", { throughSeq: next.seq });
   assert.equal(m.state(ctx.conversation).readThroughSeq, next.seq);
@@ -786,7 +791,7 @@ test("mind export restores all tables, remaps activity watermarks and refuses ex
     runtime.now(),
   );
   assert.throws(
-    () => restoreExport(selfOnly, { ...m.export(), agentId: "self-only" }),
+    () => restoreExport(selfOnly, selfOnly.export()),
     /REQUIRES_EMPTY/,
   );
 });

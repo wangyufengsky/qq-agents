@@ -1,6 +1,13 @@
 // @ts-check
 import { observePeerInput } from "./peer-replies.mjs";
 import { liveInput } from "./live-input.mjs";
+import { recallBoundary } from "./recall-boundary.mjs";
+import {
+  admitRequest,
+  inputScope,
+  isHistoricalInput,
+  semanticInputVersion,
+} from "../memory/input-state.mjs";
 // Only transport-authenticated human events can advance human request authority.
 /** @param {any} runtime @param {any} ctx @param {string} id */
 export function humanInput(runtime, ctx, id) {
@@ -15,6 +22,21 @@ export function humanInput(runtime, ctx, id) {
     return null;
   return row;
 }
+/** @param {any} runtime @param {any} ctx @param {string} id */
+export function currentHumanRequest(runtime, ctx, id) {
+  if (!ctx.requestEvents?.has(id)) return null;
+  const row = humanInput(runtime, ctx, id);
+  if (!row || ctx.requestVersions?.get(id) !== semanticInputVersion(row))
+    return null;
+  return recallBoundary(runtime, ctx).allowed({
+    id,
+    payload: JSON.parse(row.payload),
+    conversation: row.conversation,
+  })
+    ? row
+    : null;
+}
+
 /** @param {any} runtime @param {any} ctx @param {any[]} items */
 export function observeInput(runtime, ctx, items) {
   const mem = runtime.memory.bind(ctx.agentId);
@@ -25,6 +47,7 @@ export function observeInput(runtime, ctx, items) {
     ctx.inputBaseline || 0,
   );
   let latest = baseline;
+  const scope = inputScope(runtime, ctx);
   for (const item of items) {
     if (
       item.summaryOmitted ||
@@ -33,11 +56,24 @@ export function observeInput(runtime, ctx, items) {
     )
       continue;
     const row = humanInput(runtime, ctx, item.id);
-    if (!row || row.seq !== item.seq || row.seq <= baseline) continue;
+    if (!row || row.seq !== item.seq) continue;
     // A complete visible body is required; metadata/watermarks alone confer no authority.
-    if (item.body !== row.body) continue;
-    latest = Math.max(latest, row.seq);
-    (ctx.requestEvents ??= new Set()).add(row.id);
+    const version = ctx.presentedInput?.get(row.id);
+    if (
+      item.body !== row.body ||
+      !version ||
+      version !== semanticInputVersion(row)
+    )
+      continue;
+    if (admitRequest(mem.db, scope, { id: row.id, version })) {
+      (ctx.requestEvents ??= new Set()).add(row.id);
+      (ctx.requestVersions ??= new Map()).set(row.id, version);
+    }
+    if (
+      ctx.requestVersions?.get(row.id) === version &&
+      ctx.requestEvents?.has(row.id)
+    )
+      latest = Math.max(latest, row.seq);
   }
   if (latest > baseline) {
     ctx.replyInputSeq = latest;
@@ -61,5 +97,12 @@ export function observeInput(runtime, ctx, items) {
       replyBatchPeer: false,
     });
   }
-  observePeerInput(runtime, ctx, items);
+  observePeerInput(
+    runtime,
+    ctx,
+    items.filter(
+      (item) =>
+        ctx.presentedInput?.has(item.id) && !isHistoricalInput(mem.db, item.id),
+    ),
+  );
 }

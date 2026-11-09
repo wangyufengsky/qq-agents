@@ -385,11 +385,14 @@ test("Codex App tools change retires through lifecycle with ordinary task handof
     const page = await p.callTool("conversation_read", {
       conversation: "group:20000",
     });
-    await p.callTool("qq_mark_read", { throughSeq: page.items.at(-1).seq });
+    p.onToolResultSubmitted(page);
+    await p.callTool("qq_mark_read", { throughSeq: page.readThroughSeq });
   };
   runtime.backends.set("agent-0", backend);
   const first = m.append({
     dedupe: "task-1",
+    connectionId: "qq-0",
+    payload: { trustedInput: true },
     conversation: "group:20000",
     kind: "message.received",
     direction: "in",
@@ -405,6 +408,8 @@ test("Codex App tools change retires through lifecycle with ordinary task handof
   );
   m.append({
     dedupe: "task-2",
+    connectionId: "qq-0",
+    payload: { trustedInput: true },
     conversation: "group:20000",
     kind: "message.received",
     direction: "in",
@@ -475,12 +480,15 @@ test("DSH preset changes load Self and retain task handoff before prompting", as
       const page = await p.callTool("conversation_read", {
         conversation: "group:20000",
       });
-      await p.callTool("qq_mark_read", { throughSeq: page.items.at(-1).seq });
+      p.onToolResultSubmitted(page);
+      await p.callTool("qq_mark_read", { throughSeq: page.readThroughSeq });
     };
     return backend;
   };
   m.append({
     dedupe: "dsh-first",
+    connectionId: "qq-0",
+    payload: { trustedInput: true },
     conversation: "group:20000",
     kind: "message.received",
     direction: "in",
@@ -494,6 +502,8 @@ test("DSH preset changes load Self and retain task handoff before prompting", as
   runtime.transports.set("qq-0", new FakeTransport());
   m.append({
     dedupe: "dsh-second",
+    connectionId: "qq-0",
+    payload: { trustedInput: true },
     conversation: "group:20000",
     kind: "message.received",
     direction: "in",

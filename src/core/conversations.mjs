@@ -452,6 +452,7 @@ export class ConversationEngine {
         readThroughSeq,
       );
     const realStart = Date.now(),
+      epoch = ctx.inputEpoch,
       end = realStart + duration;
     ctx.waiting = true;
     try {
@@ -469,6 +470,7 @@ export class ConversationEngine {
           error ? reject(error) : resolve(value);
         };
         const abort = () => finish(Error("AGENT_PAUSED_OR_EXPIRED"));
+        ctx.cancelInputWait = () => finish(Error("INPUT_EPOCH_CHANGED"));
         const check = () => {
           clearTimeout(timer);
           try {
@@ -506,6 +508,7 @@ export class ConversationEngine {
         else check();
       });
       runtime.assertActive(ctx);
+      if (ctx.inputEpoch !== epoch) throw Error("INPUT_EPOCH_CHANGED");
       const messages = recallPage(
         runtime,
         ctx,
@@ -519,16 +522,13 @@ export class ConversationEngine {
           ctx.conversation,
         ),
       );
-      Object.assign(messages, runtime.contexts.seen(ctx, messages.items));
-      ctx.feedThroughSeq = Math.max(
-        ctx.feedThroughSeq || 0,
-        messages.nextAfterSeq || 0,
-      );
+      const staged = runtime.contexts.stageSeen(ctx, messages.items);
+      Object.assign(messages, staged.checkpoint);
       ctx.waitObservedMs = (ctx.waitObservedMs || 0) + (Date.now() - realStart);
       ctx.observationSatisfied =
         reason === "messages" ||
         ctx.waitObservedMs >= a.behavior.preSleepWaitMs;
-      return {
+      const result = {
         reason,
         waitedMs: Date.now() - realStart,
         newMessages: messages,
@@ -536,9 +536,20 @@ export class ConversationEngine {
           looksLikeUnfinished(x.body || x.summary),
         ),
       };
+      runtime.stageToolInput(ctx, result, () => {
+        runtime.contexts.commitSeen(ctx, staged);
+        ctx.feedThroughSeq = Math.max(
+          ctx.feedThroughSeq || 0,
+          messages.nextAfterSeq || 0,
+        );
+      });
+      return result;
     } finally {
-      ctx.waiting = false;
-      this.waiters.delete(key);
+      if (ctx.inputEpoch === epoch) {
+        ctx.cancelInputWait = undefined;
+        ctx.waiting = false;
+        this.waiters.delete(key);
+      }
     }
   }
   tick() {
