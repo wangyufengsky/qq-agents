@@ -105,7 +105,8 @@ export class ReceiptStdioTransport extends StdioServerTransport {
   }
   /** @param {string} context */
   async beforeCall(context) {
-    await Promise.all(this.barriers.get(context) ?? []);
+    // The bridge revalidates each new call independently of an older ACK.
+    await Promise.allSettled(this.barriers.get(context) ?? []);
   }
   /** @param {string | number} id @param {string} context @param {string} receipt @param {string} digest @param {AbortSignal} [signal] @param {any} [result] */
   stage(id, context, receipt, digest, signal, result) {
