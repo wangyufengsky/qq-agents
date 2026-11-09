@@ -196,8 +196,10 @@ export function restoreExport(memory, data) {
             // A portable receipt preserves what happened, never a local grant
             // to advance processing after the original installation is gone.
             delete payload.submission.checkpoint;
-            row.payload = JSON.stringify(payload);
           }
+          if (payload.submission?.review || payload.deliveryReview)
+            payload.reviewAuditOnly = true;
+          row.payload = JSON.stringify(payload);
         }
         if (table === "deliveries" && row.status === "pending")
           row.status = "unknown";
