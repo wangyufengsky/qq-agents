@@ -185,6 +185,8 @@ docker compose run --rm --no-deps -it --entrypoint node qq-agents src/cli/setup.
 | 跨群统计             | `qq_cross_group_query`、`crossGroup.enabled`、`crossGroup.links`                               | 按来源群、目标群和 `presence`/`activity` 项目逐条授权；不是跨群全文读取或群发许可。不要自动把所有群互联。                                                                        |
 | 外部 MCP / 运维      | `external_tools`、`external_tool` 与后端 `toolServers[].allowedTools`；运维 `operations`       | 每个外部服务可能有独立费用和读写副作用，逐工具确认。运维只在独立受保护任务中，工作区、允许命令、L1–L3 与写入批准仍各自受控；不为“功能完整”授予 L3。                              |
 
+文本生成权限也允许修订。删除自己生成的文件由 `files.delete` 单独控制，默认关闭。
+
 ### 在现有管理台保存选择，不虚构配置命令
 
 `setup init` 的 answers 只接受账号、基础角色和后端信息，**没有能力选择向导，也不接受 `agent.tools` 或 `agent.files` 等任意字段**。不要往 `answers.json` 塞这些字段，也不要发明 `setup capabilities` 命令。先用 setup 生成配置，再在隔离、暂停状态下打开管理台：

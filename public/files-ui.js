@@ -18,7 +18,8 @@ function fileSummary(f) {
     f.download && "下载链接",
     f.receive && "接收",
     f.send && "发送",
-    f.create && "生成文本",
+    f.create && "生成、修订文本",
+    f.delete && "删除自己生成的文件",
   ].filter(Boolean);
   return [
     allowed.length ? `已允许${allowed.join("、")}` : "已开启，未允许任何操作",
@@ -52,7 +53,7 @@ function renderFilePermissions() {
   ${fold(
     "files-permissions",
     "自主文件收发",
-    `<form id="file-permissions" class="file-form"><p class="hint">开启后，AI 可在已允许的群和私聊中自主操作，无需每次确认。发送目标固定为当前会话。</p><div class="form-grid">${check("enabled", "启用此 AI 的文件权限", f.enabled)}</div><h3>允许的操作</h3><div class="form-grid">${check("download", "允许下载公开链接", f.download)}${check("receive", "允许下载 QQ 附件", f.receive)}${check("send", "允许发送文件", f.send)}${check("create", "允许生成文本文件", f.create)}</div><h3>额度</h3><div class="form-grid file-three">${fileNumber("maxMiB", "单文件上限", f.maxBytes / mib, 'min="0.001" max="50" step="any"', "MiB", "最大 50 MiB")}${fileNumber("totalMiB", "文件库容量", f.maxTotalBytes / mib, 'min="0.001" max="5120" step="any"', "MiB", "最大 5120 MiB")}${fileNumber("maxFiles", "文件数量上限", f.maxFiles, 'min="1" max="10000"', "个文件", "1–10000 个")}</div><h3>导入目录</h3><label class="wide">允许导入的本机专用目录（可选，每行一个绝对路径）<textarea name="localRoots" rows="3" placeholder="${esc(fileRootsExample)}">${esc(f.localRoots.join("\n"))}</textarea></label><p class="hint">目录仅用于导入文件，保存后按从 0 开始的顺序编号；留空仍可下载和收发。下载文件不会执行内容，也不代表 AI 已读懂 PDF 或 Office 文档。关闭权限会中止此 AI 的活动回合，已开始的网关投递仍可能完成。</p><button class="primary">保存文件权限</button></form>`,
+    `<form id="file-permissions" class="file-form"><p class="hint">开启后，AI 可在已允许的群和私聊中自主操作，无需每次确认。发送目标固定为当前会话。</p><div class="form-grid">${check("enabled", "启用此 AI 的文件权限", f.enabled)}</div><h3>允许的操作</h3><div class="form-grid">${check("download", "允许下载公开链接", f.download)}${check("receive", "允许下载 QQ 附件", f.receive)}${check("send", "允许发送文件", f.send)}${check("create", "允许生成和修订文本文件", f.create)}${check("delete", "允许删除自己生成的文件", f.delete)}</div><p class="hint">删除仅在主人私聊和角色空闲时间可用。删除会移除库内文件并拦截同内容重新入库。</p><h3>额度</h3><div class="form-grid file-three">${fileNumber("maxMiB", "单文件上限", f.maxBytes / mib, 'min="0.001" max="50" step="any"', "MiB", "最大 50 MiB")}${fileNumber("totalMiB", "文件库容量", f.maxTotalBytes / mib, 'min="0.001" max="5120" step="any"', "MiB", "最大 5120 MiB")}${fileNumber("maxFiles", "文件数量上限", f.maxFiles, 'min="1" max="10000"', "个文件", "1–10000 个")}</div><h3>导入目录</h3><label class="wide">允许导入的本机专用目录（可选，每行一个绝对路径）<textarea name="localRoots" rows="3" placeholder="${esc(fileRootsExample)}">${esc(f.localRoots.join("\n"))}</textarea></label><p class="hint">目录仅用于导入文件，保存后按从 0 开始的顺序编号；留空仍可下载和收发。下载文件不会执行内容，也不代表 AI 已读懂 PDF 或 Office 文档。关闭权限会中止此 AI 的活动回合，已开始的网关投递仍可能完成。</p><button class="primary">保存文件权限</button></form>`,
     { summary: esc(fileSummary(f)) },
   )}`;
   $("#file-permissions").onsubmit = (e) => {
@@ -71,6 +72,7 @@ function renderFilePermissions() {
             receive: data.has("receive"),
             send: data.has("send"),
             create: data.has("create"),
+            delete: data.has("delete"),
             maxBytes: Math.round(Number(data.get("maxMiB")) * mib),
             maxTotalBytes: Math.round(Number(data.get("totalMiB")) * mib),
             maxFiles: Number(data.get("maxFiles")),
@@ -133,7 +135,7 @@ const fileRow = (file) =>
 // How full the library is, against the role's saved limits when known.
 function fileUsage(result, f) {
   const used = result.usedBytes / fileMiB;
-  return `<div class="file-usage"><p><span>已用 <b>${used.toFixed(2)}</b>${f ? ` / ${esc(fileMiBText(f.maxTotalBytes))}` : ""} MiB</span><span>${result.storedFiles}${f ? ` / ${f.maxFiles}` : ""} 个占用条目</span></p>${f ? `<svg class="meter" viewBox="0 0 100 4" preserveAspectRatio="none" aria-hidden="true"><rect class="track" width="100" height="4" rx="2"/><rect class="bar" width="${Math.max(0, Math.min(100, (result.usedBytes / f.maxTotalBytes) * 100))}" height="4" rx="2"/></svg>` : ""}<small class="hint">占用条目含损坏、孤儿文件及拦截记录。</small></div>`;
+  return `<div class="file-usage"><p><span>已用 <b>${used.toFixed(2)}</b>${f ? ` / ${esc(fileMiBText(f.maxTotalBytes))}` : ""} MiB</span><span>${result.storedFiles}${f ? ` / ${f.maxFiles}` : ""} 个占用条目</span></p>${f ? `<svg class="meter" viewBox="0 0 100 4" preserveAspectRatio="none" aria-hidden="true"><rect class="track" width="100" height="4" rx="2"/><rect class="bar" width="${Math.max(0, Math.min(100, (result.usedBytes / f.maxTotalBytes) * 100))}" height="4" rx="2"/></svg>` : ""}<small class="hint">损坏文件和孤儿文件计入占用。已完成的自主删除仅保留拦截记录，占少量空间。</small></div>`;
 }
 async function loadFileLibrary(agentId, offset = 0) {
   const result = await api(

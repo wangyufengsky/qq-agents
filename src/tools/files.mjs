@@ -10,6 +10,20 @@ import { z } from "zod";
 
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const validId = /^[a-f0-9]{64}$/;
+const generatedDeletion = { version: 1, deletedByAgent: true };
+const generatedDeletionBytes = Buffer.from(
+  JSON.stringify(generatedDeletion, null, 2) + "\n",
+);
+function isGeneratedDeletion(marker) {
+  try {
+    return readRegular(marker, generatedDeletionBytes.length).equals(
+      generatedDeletionBytes,
+    );
+  } catch {
+    // Unknown markers keep the existing damaged-file rules.
+    return false;
+  }
+}
 const metadataSchema = z
   .object({
     fileId: z.string().regex(validId),
@@ -240,7 +254,8 @@ export class FileStore {
     let usedBytes = 0,
       extraFiles = 0,
       usageComplete = true,
-      blockedCount = 0;
+      blockedCount = 0,
+      deletedCount = 0;
     for (const name of fs.readdirSync(dir)) {
       const match = /^([a-f0-9]{64})\.(json|bin|blocked)$/.exec(name);
       if (match) ids.add(match[1]);
@@ -258,9 +273,14 @@ export class FileStore {
       corrupt = [];
     for (const fileId of ids) {
       if (stats.has(fileId + ".blocked")) {
-        blockedCount++;
-        if (stats.has(fileId + ".json") || stats.has(fileId + ".bin"))
+        if (stats.has(fileId + ".json") || stats.has(fileId + ".bin")) {
+          blockedCount++;
           corrupt.push({ fileId, code: "FILE_REMOVAL_INCOMPLETE" });
+        } else if (isGeneratedDeletion(path.join(dir, fileId + ".blocked"))) {
+          deletedCount++;
+        } else {
+          blockedCount++;
+        }
         continue;
       }
       try {
@@ -287,7 +307,7 @@ export class FileStore {
       corrupt,
       corruptCount: corrupt.length,
       usedBytes,
-      storedFiles: ids.size + extraFiles,
+      storedFiles: ids.size + extraFiles - deletedCount,
       usageComplete,
       blockedCount,
       orphanFiles: extraFiles,
@@ -587,6 +607,36 @@ export class FileStore {
     atomicJSON(target, meta);
     return meta;
   }
+  deleteGenerated(agentId, fileId, assertSource) {
+    if (!validId.test(fileId)) throw Error("INVALID_FILE_ID");
+    const marker = path.join(this.dir(agentId), fileId + ".blocked");
+    if (!isGeneratedDeletion(marker)) {
+      const { meta } = this.read(agentId, fileId, 52428800);
+      assertSource(meta);
+      // The source list is capped. A full list can have lost a prior import
+      // through deduplication, so it cannot prove sole authorship.
+      if (
+        meta.sources.length === 0 ||
+        meta.sources.length >= 100 ||
+        meta.sources.some(
+          (source) => !["generated-text", "revision"].includes(source.kind),
+        )
+      )
+        throw Error("FILE_DELETE_SOURCE_DENIED");
+      const { items, corruptCount, usageComplete } = this.scan(agentId);
+      if (corruptCount || !usageComplete) throw Error("FILE_QUOTA_UNAVAILABLE");
+      if (items.some((item) => revisionMarker(item)?.revisionOf === fileId))
+        throw Error("FILE_DELETE_HAS_REVISIONS");
+      // IDs are content hashes referenced by drafts and history. Prevent
+      // reimport from reviving those IDs or replacing their provenance.
+      try {
+        atomicJSON(marker, generatedDeletion);
+      } catch (error) {
+        throw fileError(error, "FILE_IO_ERROR");
+      }
+    }
+    return this.#removeEntries(agentId, fileId);
+  }
   removeDamaged(agentId, fileId) {
     if (!validId.test(fileId)) throw Error("INVALID_FILE_ID");
     this.requireDamage(agentId, fileId);
@@ -608,15 +658,19 @@ export class FileStore {
       throw Error("FILE_NOT_FOUND");
     // Persist the provenance tombstone BEFORE removing either file. A crash or
     // same-content upload must not turn unknown protected data into public data.
-    atomicJSON(path.join(dir, fileId + ".blocked"), {
-      version: 1,
-      protectionUnknown: true,
-    });
-    for (const file of entries) {
+    const marker = path.join(dir, fileId + ".blocked");
+    if (!isGeneratedDeletion(marker))
+      atomicJSON(marker, { version: 1, protectionUnknown: true });
+    return this.#removeEntries(agentId, fileId);
+  }
+  #removeEntries(agentId, fileId) {
+    const dir = this.dir(agentId);
+    for (const ext of ["bin", "json"]) {
+      const file = path.join(dir, fileId + "." + ext);
       try {
         fs.unlinkSync(file);
       } catch (error) {
-        if (error.code !== "ENOENT") throw error;
+        if (error.code !== "ENOENT") throw fileError(error, "FILE_IO_ERROR");
       }
     }
     return { removed: true, blockedForReimport: true };

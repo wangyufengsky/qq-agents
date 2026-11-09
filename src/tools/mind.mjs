@@ -382,6 +382,7 @@ export const SUBJECT_TOOLS = [
   "file_read",
   "file_create",
   "file_revise",
+  "file_delete",
   "intent_create",
   "intent_list",
   "intent_update",

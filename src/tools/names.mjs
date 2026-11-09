@@ -65,6 +65,7 @@ export const TOOL_NAMES = Object.freeze([
   "file_download",
   "file_create",
   "file_revise",
+  "file_delete",
   "file_import",
   "qq_send_file",
   "image_save",
