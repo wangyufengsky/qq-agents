@@ -1,5 +1,5 @@
 import { ConversationTiming } from "./message-timing-runtime.mjs";
-import { recordReviewPresentation } from "./input-review.mjs";
+import { presentationCheckpoint } from "./input-review.mjs";
 import { deferForRhythm } from "./rhythm.mjs";
 import { recallPage } from "./recall-boundary.mjs";
 import { looksLikeUnfinished } from "../../vendor/legacy/v2-wait.js";
@@ -441,8 +441,16 @@ export class ConversationEngine {
     if (this.waiters.has(key)) throw Error("ALREADY_WAITING");
     const duration = Math.min(timeoutMs, a.behavior.waitMaxMs),
       quiet = Math.max(quietMs ?? 8000, a.behavior.quietAfterNewMs);
-    const from = afterSeq ?? ctx.shownSeq;
-    if (from > ctx.shownSeq) throw Error("UNSEEN_WATERMARK");
+    const { readThroughSeq } = presentationCheckpoint(runtime, ctx);
+    if (afterSeq > readThroughSeq) throw Error("UNSEEN_WATERMARK");
+    // Waiting tracks newly arriving input even if an earlier read gap is open.
+    const from =
+      afterSeq ??
+      Math.max(
+        ctx.feedThroughSeq || 0,
+        ctx.conversationPageThroughSeq || 0,
+        readThroughSeq,
+      );
     const realStart = Date.now(),
       end = realStart + duration;
     ctx.waiting = true;
@@ -511,8 +519,7 @@ export class ConversationEngine {
           ctx.conversation,
         ),
       );
-      runtime.contexts.seen(ctx, messages.items);
-      recordReviewPresentation(runtime, ctx, messages.items);
+      Object.assign(messages, runtime.contexts.seen(ctx, messages.items));
       ctx.feedThroughSeq = Math.max(
         ctx.feedThroughSeq || 0,
         messages.nextAfterSeq || 0,

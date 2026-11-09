@@ -121,19 +121,30 @@ for (const firstReplyMaxMs of [0, 100, 6000])
     },
   );
 
-test("opening long-body gap survives a higher displayed short message and a new read checkpoint", async (t) => {
+test("opening long-body gap survives a higher displayed short message and a legacy processed checkpoint", async (t) => {
   const f = setup(t);
   const long = await incoming(f, 1, "长".repeat(17000));
   const short = await incoming(f, 2, "简短补充");
   await f.runtime.callTool(f.ctx, "conversation_read", { maxChars: 512 });
   await f.runtime.callTool(f.ctx, "conversation_read", { afterSeq: long.seq });
   assert.equal(f.ctx.replyInputSeq, short.seq);
-  await f.runtime.callTool(f.ctx, "qq_mark_read", { throughSeq: short.seq });
+  await assert.rejects(
+    f.runtime.callTool(f.ctx, "qq_mark_read", { throughSeq: short.seq }),
+    /UNSEEN_WATERMARK/,
+  );
+  f.mem.setState(f.ctx.conversation, {
+    ...f.mem.state(f.ctx.conversation),
+    inputReviewFromSeq: short.seq,
+    readThroughSeq: short.seq,
+  });
 
   const ctx = context(f.runtime);
   const draft = args("with-gap");
   const failure = await blocked(f.runtime.send(ctx, draft));
-  assert(failure.items.some(({ id }) => id === long.id));
+  assert.deepEqual(
+    failure.items.map(({ id, reason }) => ({ id, reason })),
+    [{ id: long.id, reason: "previous_presentation_incomplete_or_stale" }],
+  );
   const first = await f.runtime.callTool(ctx, "memory_read", {
     id: long.id,
     maxChars: 512,
@@ -362,7 +373,8 @@ test("ordinary group exclusions apply only to the reviewed draft and survive as 
       inputReview: confirm(review, unrelated),
     }),
   );
-  assert.equal(challenge.items[0].id, row.id);
+  assert.deepEqual(challenge.items, []);
+  assert.equal(challenge.excludable[0].id, row.id);
   assert.notEqual(challenge.token, review.token);
 });
 
@@ -595,4 +607,47 @@ test("full opening material is enough for a first reply when its versions stay c
   await incoming(f, 1, "完整开场");
   await f.runtime.wake("agent-0", f.ctx.conversation);
   assert.equal(received?.status, "sent");
+});
+
+test("an updated event below an existing processed and sent watermark requires fresh review", async (t) => {
+  const f = setup(t);
+  const old = await incoming(f, 1, "原版本");
+  await f.runtime.callTool(f.ctx, "conversation_read", {});
+  await f.runtime.callTool(f.ctx, "qq_mark_read", { throughSeq: old.seq });
+  const first = args("before-correction");
+  const before = await blocked(f.runtime.send(f.ctx, first));
+  await f.runtime.send(f.ctx, { ...first, inputReview: confirm(before) });
+  assert.equal(f.mem.state(f.ctx.conversation).inputReviewThroughSeq, old.seq);
+
+  f.mem.db.prepare("UPDATE events SET body=? WHERE id=?").run("新版本", old.id);
+  await readAll(f, f.ctx, old.id);
+  const ctx = context(f.runtime);
+  const reply = args("after-correction");
+  const changed = await blocked(f.runtime.send(ctx, reply));
+  assert.deepEqual(
+    changed.items.map(({ id, reason }) => ({ id, reason })),
+    [
+      {
+        id: old.id,
+        reason: "previous_presentation_incomplete_or_stale",
+      },
+    ],
+  );
+  assert.equal(f.mem.state(ctx.conversation).readThroughSeq, old.seq);
+  await readAll(f, ctx, old.id);
+  const rebound = await blocked(
+    f.runtime.send(ctx, {
+      ...reply,
+      inputReview: confirm(before),
+    }),
+  );
+  assert.deepEqual(rebound.items, []);
+  assert.notEqual(rebound.token, before.token);
+  await f.runtime.send(ctx, { ...reply, inputReview: confirm(rebound) });
+
+  const later = context(f.runtime);
+  assert.equal(
+    (await f.runtime.send(later, args("settled-correction"))).status,
+    "sent",
+  );
 });

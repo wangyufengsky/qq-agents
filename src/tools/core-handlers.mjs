@@ -8,7 +8,11 @@ import {
 import { withInteraction } from "../core/closeness.mjs";
 import { recallMessage } from "../core/message-recall.mjs";
 import { deliveryPage } from "../core/chat-context.mjs";
-import { recordReviewPresentation } from "../core/input-review.mjs";
+import { rememberSources } from "../core/context-handoff.mjs";
+import {
+  presentationCheckpoint,
+  recordInputPresentation,
+} from "../core/input-review.mjs";
 import { sendDraftTool } from "./qq-drafts.mjs";
 import { githubMarker, privateGithubSources } from "../github/policy.mjs";
 import { readEventImage } from "./image-read.mjs";
@@ -125,7 +129,11 @@ async function handle_memory_read(runtime, ctx, args, name) {
   pages.delete(r.id);
   if (r.nextOffset === null) {
     runtime.observeInput(ctx, [item]);
-    recordReviewPresentation(runtime, ctx, [item]);
+    if (
+      item.conversation === ctx.conversation &&
+      Number.isSafeInteger(item.seq)
+    )
+      return { ...r, ...recordInputPresentation(runtime, ctx, [item]) };
   } else {
     // Keep offsets and digests only. Archive projections can exceed the size
     // of their source messages when payloads carry both raw and decoded forms.
@@ -150,9 +158,16 @@ async function handle_conversation_read(runtime, ctx, args, name) {
     ),
   );
   track(ctx, r.items);
-  runtime.contexts.seen(ctx, r.items);
-  recordReviewPresentation(runtime, ctx, r.items);
-  return r;
+  if (!r.markReadEligible) {
+    if (r.items.some((item) => item.conversation === ctx.conversation))
+      rememberSources(mem, ctx.conversation, r.items);
+    return r;
+  }
+  ctx.conversationPageThroughSeq = Math.max(
+    ctx.conversationPageThroughSeq || 0,
+    r.items.at(-1)?.seq || 0,
+  );
+  return { ...r, ...runtime.contexts.seen(ctx, r.items) };
 }
 async function handle_diary_write(runtime, ctx, args, name) {
   const mem = runtime.memory.bind(ctx.agentId);
@@ -181,13 +196,13 @@ async function handle_diary_write(runtime, ctx, args, name) {
         socialSources(runtime, ctx),
       );
 }
-function assertReadCheckpoint(ctx, throughSeq) {
+function assertReadCheckpoint(runtime, ctx, throughSeq) {
   if (
     !Number.isSafeInteger(throughSeq) ||
     throughSeq < 0 ||
     !Number.isSafeInteger(ctx.shownSeq) ||
     ctx.shownSeq < 0 ||
-    throughSeq > ctx.shownSeq
+    throughSeq > presentationCheckpoint(runtime, ctx).readThroughSeq
   )
     throw Error("UNSEEN_WATERMARK");
 }
@@ -281,20 +296,21 @@ async function handle_qq_send(runtime, ctx, args, name) {
   if (args.readThroughSeq !== undefined) {
     if (!readCheckpointToolEnabled(runtime, ctx))
       throw Error("TOOL_NOT_ALLOWED");
-    assertReadCheckpoint(ctx, args.readThroughSeq);
+    assertReadCheckpoint(runtime, ctx, args.readThroughSeq);
   }
   const mem = runtime.memory.bind(ctx.agentId);
-  const shownSeq = ctx.shownSeq;
   const receipt = await sendDraftTool(runtime, ctx, "qq_send", args, {
     onReserve: () => {
-      if (args.readThroughSeq !== undefined)
+      if (args.readThroughSeq !== undefined) {
+        assertReadCheckpoint(runtime, ctx, args.readThroughSeq);
         saveReadCheckpointIntent(
           mem,
           ctx.conversation,
           args.requestId,
           args.readThroughSeq,
-          shownSeq,
+          ctx.shownSeq,
         );
+      }
     },
   });
   if (receipt.status !== "sent") return receipt;
@@ -330,6 +346,7 @@ async function handle_qq_send(runtime, ctx, args, name) {
       return result;
     }
     try {
+      assertReadCheckpoint(runtime, ctx, checkpoint.throughSeq);
       persistReadCheckpoint(runtime, ctx, checkpoint.throughSeq);
       readCheckpoint.applied = true;
     } catch {
@@ -376,7 +393,7 @@ async function handle_generated_image_list(runtime, ctx, args, name) {
   return { ...runtime.generatedImages.list(ctx, args), ...recovery };
 }
 async function handle_qq_mark_read(runtime, ctx, args, name) {
-  assertReadCheckpoint(ctx, args.throughSeq);
+  assertReadCheckpoint(runtime, ctx, args.throughSeq);
   return persistReadCheckpoint(runtime, ctx, args.throughSeq);
 }
 async function handle_qq_set_silence(runtime, ctx, args, name) {

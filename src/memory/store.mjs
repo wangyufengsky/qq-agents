@@ -176,6 +176,19 @@ export class MemoryStore {
       this.transcribing = new Set();
       migrateSearch(this.db, version);
       if (version < 4) this.transaction(() => migrateIdentity(this.db));
+      // Existing progress rows can retain revision gaps without changing exports.
+      this.db.exec(`
+        CREATE TRIGGER IF NOT EXISTS event_presentation_changed
+        AFTER UPDATE OF kind, connection_id, status, sender_id, message_id, body, payload ON events
+        WHEN NEW.kind IN ('message.received','message.recalled','notice.file','notice.poke','voice.transcript')
+          AND (OLD.kind IS NOT NEW.kind OR OLD.connection_id IS NOT NEW.connection_id
+            OR OLD.status IS NOT NEW.status OR OLD.sender_id IS NOT NEW.sender_id
+            OR OLD.message_id IS NOT NEW.message_id OR OLD.body IS NOT NEW.body OR OLD.payload IS NOT NEW.payload)
+        BEGIN
+          INSERT INTO message_progress VALUES(NEW.agent_id, NEW.conversation, NEW.seq, 1)
+          ON CONFLICT(agent_id,conversation,seq) DO UPDATE SET summary_only=1;
+        END;
+      `);
       migrateTimeline(this.db, version);
       migrateMessageIds(this.db, version);
       if (version < MEMORY_DRAFT_SCHEMA_VERSION)
@@ -835,7 +848,7 @@ class AgentMemory {
     return {
       items,
       nextAfterSeq: items.at(-1)?.seq ?? afterSeq,
-      readThroughSeq: items.at(-1)?.seq ?? afterSeq,
+      readThroughSeq: null,
       markReadEligible: conversation === current,
       previousBeforeSeq: items.at(0)?.seq ?? null,
       source: rows.length ? provenance(rows[0]).source : null,

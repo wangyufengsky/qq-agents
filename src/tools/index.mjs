@@ -1,12 +1,13 @@
 import { mediaLease } from "./media-lease.mjs";
 import { registry } from "./registry.mjs";
 export { TOOL_NAMES, toolSpecs } from "./specs.mjs";
-export async function dispatchTool(runtime, ctx, name, input) {
+export async function dispatchTool(runtime, ctx, name, input, beforeHandle) {
   const definition = Object.hasOwn(registry, name) ? registry[name] : null;
   if (!definition) throw Error("UNKNOWN_TOOL");
   const args = definition.schema.parse(input);
   if (JSON.stringify(args).includes(ctx.token))
     throw Error("CAPABILITY_EXFILTRATION_BLOCKED");
+  beforeHandle?.(args);
   return definition.handler(runtime, ctx, args, name);
 }
 export function mcpResult(value) {

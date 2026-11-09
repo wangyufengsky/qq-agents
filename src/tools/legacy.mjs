@@ -37,7 +37,7 @@ const taskFields = {
 };
 export const legacyDefinitions = {
   qq_wait_for_messages: [
-    "等待当前会话的新消息并观察安静窗口，暂停会立即中断；不发催话。",
+    "等待当前会话的新消息并观察安静窗口，暂停会立即中断。通常省略 afterSeq，从本轮已展示页尾继续等新消息。显式 afterSeq 只接受当前安全连续水位及之前的位置，不能直接填分页游标 nextAfterSeq。",
     object({
       timeoutMs: z.number().int().min(1).max(600000).optional(),
       quietMs: z.number().int().min(0).max(60000).optional(),

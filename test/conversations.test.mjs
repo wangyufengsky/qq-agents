@@ -348,3 +348,49 @@ test("message wait withholds protected history before exposing new messages", as
   assert.equal(result.newMessages.withheld, 1);
   assert(!ctx.privateRead.has(row.id));
 });
+
+test("waiting after an opening or page read gap does not count already presented arrivals as new", async (t) => {
+  const c = cfg();
+  c.agents[0].behavior.preSleepWaitMs = 1000;
+  const f = fixture(t, { cfg: c });
+  const ctx = context(f.runtime);
+  const mem = f.store.bind(ctx.agentId);
+  for (const [dedupe, body] of [
+    ["opening-long", "较长开场原文".repeat(5000)],
+    ["opening-tail", "已展示的末尾"],
+  ])
+    mem.append({
+      dedupe,
+      body,
+      kind: "message.received",
+      conversation: ctx.conversation,
+    });
+  mem.setState(ctx.conversation, { lastReceivedSeq: 2 });
+  f.runtime.contexts.prepare(ctx, {}, []);
+  assert.equal(ctx.shownSeq, 0);
+  assert.equal(ctx.feedThroughSeq, 2);
+
+  const paged = context(f.runtime);
+  const page = await f.runtime.callTool(paged, "conversation_read", {
+    maxChars: 3000,
+  });
+  assert.equal(page.nextAfterSeq, 2);
+  assert.equal(page.readThroughSeq, 0);
+
+  for (const active of [ctx, paged]) {
+    await assert.rejects(
+      f.runtime.callTool(active, "qq_wait_for_messages", {
+        afterSeq: 2,
+        timeoutMs: 15,
+      }),
+      /UNSEEN_WATERMARK/,
+    );
+    const waited = await f.runtime.callTool(active, "qq_wait_for_messages", {
+      timeoutMs: 15,
+    });
+    assert.equal(waited.reason, "timeout");
+    assert.deepEqual(waited.newMessages.items, []);
+    assert.equal(waited.newMessages.readThroughSeq, 0);
+    assert.equal(active.observationSatisfied, false);
+  }
+});

@@ -38,7 +38,7 @@ import { elsewhereForTurn } from "./elsewhere.mjs";
 import { floorForTurn } from "./floor.mjs";
 import { taskBrief } from "./scheduler.mjs";
 import { recallBoundary, recallPage } from "./recall-boundary.mjs";
-import { recordReviewPresentation } from "./input-review.mjs";
+import { recordInputPresentation } from "./input-review.mjs";
 import { draftHints } from "../tools/qq-drafts.mjs";
 import {
   retireSession,
@@ -109,9 +109,6 @@ function draftPrompt(runtime, ctx) {
 export class ContextLifecycle {
   constructor(runtime) {
     this.runtime = runtime;
-    runtime.memory.db.exec(
-      `CREATE TABLE IF NOT EXISTS message_progress(agent_id TEXT NOT NULL,conversation TEXT NOT NULL,seq INTEGER NOT NULL,summary_only INTEGER NOT NULL,PRIMARY KEY(agent_id,conversation,seq));`,
-    );
     // A prior process cannot still own a local turn. Never replay pending network operations.
     runtime.memory.db
       .prepare("UPDATE deliveries SET status='unknown' WHERE status='pending'")
@@ -125,23 +122,8 @@ export class ContextLifecycle {
       recoverSessions(m, runtime.now());
     }
   }
-  seen(ctx, items) {
-    const m = this.runtime.memory.bind(ctx.agentId),
-      db = m.db;
-    for (const row of items)
-      if (
-        row.conversation === ctx.conversation &&
-        Number.isSafeInteger(row.seq)
-      ) {
-        db.prepare(
-          "INSERT INTO message_progress VALUES(?,?,?,?) ON CONFLICT(agent_id,conversation,seq) DO UPDATE SET summary_only=MIN(summary_only,excluded.summary_only)",
-        ).run(
-          ctx.agentId,
-          ctx.conversation,
-          row.seq,
-          +(!!row.summaryOmitted || !!row.bodyTruncated),
-        );
-      }
+  seen(ctx, items, presentation = items) {
+    const m = this.runtime.memory.bind(ctx.agentId);
     this.runtime.observeInput(ctx, items);
     for (const row of items) {
       trackPeerQzone(ctx, row);
@@ -151,25 +133,7 @@ export class ContextLifecycle {
     }
     ctx.persistTaint?.();
     rememberSources(m, ctx.conversation, items);
-    const state = m.state(ctx.conversation),
-      baseline = state.readThroughSeq || 0;
-    const gap = db
-      .prepare(
-        `SELECT MIN(e.seq) AS seq FROM events e LEFT JOIN message_progress p ON p.agent_id=e.agent_id AND p.conversation=e.conversation AND p.seq=e.seq WHERE e.agent_id=? AND e.conversation=? AND e.seq>? AND p.seq IS NULL`,
-      )
-      .get(ctx.agentId, ctx.conversation, baseline).seq;
-    const through = Math.max(
-      baseline,
-      db
-        .prepare(
-          "SELECT MAX(seq) AS seq FROM message_progress WHERE agent_id=? AND conversation=? AND seq<?",
-        )
-        .get(ctx.agentId, ctx.conversation, gap || Number.MAX_SAFE_INTEGER)
-        .seq || 0,
-    );
-    ctx.shownSeq = through;
-    m.setState(ctx.conversation, { ...state, seenThroughSeq: through });
-    return through;
+    return recordInputPresentation(this.runtime, ctx, presentation);
   }
   handoff(agentId, conversation, options = {}) {
     const boundary = recallBoundary(
@@ -602,7 +566,19 @@ export class ContextLifecycle {
               ctx.conversation,
             ),
           );
-    this.seen(ctx, history.items);
+    const openingHistory = chatHistory(history);
+    const opening = this.seen(
+      ctx,
+      history.items,
+      /^(group|private):/.test(ctx.conversation)
+        ? openingHistory.items.map((item) => ({
+            ...item,
+            conversation: ctx.conversation,
+          }))
+        : history.items,
+    );
+    Object.assign(openingHistory, opening);
+    ctx.openingReviewInput = new Map(ctx.presentedInput);
     ctx.feedThroughSeq = history.nextAfterSeq || s.feedThroughSeq || 0;
     const people =
       ctx.conversation === SUBJECT
@@ -721,7 +697,6 @@ export class ContextLifecycle {
         ? `你和这些人之间还没了结的事（你自己用 person_item 记下的）：boundary 是对方的相处边界，照着调整；promise 是你答应对方的事，做到了就回来交代，做不成就坦白，交代后用 person_item 关掉；shared 是一起经历过的事，合适时自然接回来，不必硬提。fromPrivate 的记在别的私聊里，只用来调整你自己的做法，不要在这里提起内容。${JSON.stringify({ items: between.items, ...(Object.keys(between.more).length ? { more: between.more } : {}) })}`
         : "",
     ];
-    const openingHistory = chatHistory(history);
     const prompt = (
       !/^(group|private):/.test(ctx.conversation)
         ? [
@@ -759,15 +734,6 @@ export class ContextLifecycle {
     )
       .filter(Boolean)
       .join("\n\n");
-    recordReviewPresentation(
-      r,
-      ctx,
-      openingHistory.items.map((item) => ({
-        ...item,
-        conversation: ctx.conversation,
-      })),
-    );
-    ctx.openingReviewInput = new Map(ctx.presentedReviewInput);
     m.setState(ctx.conversation, {
       ...m.state(ctx.conversation),
       loadedSelfVersion: self.version,

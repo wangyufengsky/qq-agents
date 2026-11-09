@@ -1,7 +1,7 @@
 import { assertHomeSceneMedia } from "../home/scene-media.mjs";
 import { assertNoSocialDisclosure } from "./social-protection.mjs";
 import { peerQzoneSources } from "./peer-qzone-protection.mjs";
-import { assertInputReviewed } from "./input-review.mjs";
+import { assertInputReviewed, confirmReviewedGaps } from "./input-review.mjs";
 import { timedDeliveryFailure } from "./message-timing-runtime.mjs";
 import { draftScope, recoverDraftArchives } from "./draft-delivery.mjs";
 import { recallBoundary } from "./recall-boundary.mjs";
@@ -580,7 +580,7 @@ export class DeliveryService {
           runtime.connection(a.connectionId).messageIdNamespace || "onebot",
         ...(receipt.fileId ? { gatewayFileId: receipt.fileId } : {}),
       };
-      let draftLinked;
+      let draftLinked, clearedGaps;
       const persistConfirmation = () => {
         mem.completeDelivery(requestId, "sent", messageId);
         draftLinked = runtime.drafts.recordConfirmation(
@@ -593,6 +593,7 @@ export class DeliveryService {
         mem.store.transaction(() => {
           persistConfirmation();
           if (inputReview) {
+            clearedGaps = confirmReviewedGaps(mem, ctx, inputReview.accepted);
             const current = mem.state(ctx.conversation);
             if (inputReview.throughSeq > (current.inputReviewThroughSeq || 0))
               mem.setState(ctx.conversation, {
@@ -603,6 +604,7 @@ export class DeliveryService {
           if (!contactFreeAction) runtime.subject.delivered(ctx, "sent");
         });
       } catch (error) {
+        clearedGaps = undefined;
         // Optional review or intent bookkeeping must not erase a received ACK.
         mem.store.transaction(persistConfirmation);
         runtime.diagnostics.report(
@@ -620,6 +622,8 @@ export class DeliveryService {
         operation.timingIndex,
         "confirmed",
       );
+      for (const seq of clearedGaps || [])
+        (ctx.reviewedProgressGaps ??= new Set()).add(seq);
       for (const { id, version } of inputReview?.accepted || [])
         (ctx.confirmedReviewInput ??= new Map()).set(id, version);
       if (!actionBudget) {

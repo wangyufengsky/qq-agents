@@ -1015,25 +1015,26 @@ export class Runtime {
       !toolAvailable(a, name, ctx.conversation)
     )
       throw Error("TOOL_DISABLED");
-    const boundary = recallBoundary(this, ctx);
-    for (const id of [
-      args.id,
-      args.eventId,
-      args.recordId,
-      args.aroundId,
-      ...(args.eventIds || []),
-      ...(args.evidence || []),
-      ...(args.evidenceIds || []),
-      ...(args.counterEvidence || []),
-    ].filter((id) => typeof id === "string"))
-      boundary.assertId(id);
-    for (const [id, library] of [
-      [args.fileId, this.files],
-      [args.mediaId, this.media],
-      [args.audioId || args.audioInput?.audioId, this.voices],
-    ])
-      if (id && library) boundary.assert(library.metadata(ctx.agentId, id));
-    let result = await dispatchTool(this, ctx, name, args);
+    let result = await dispatchTool(this, ctx, name, args, (validated) => {
+      const boundary = recallBoundary(this, ctx);
+      for (const id of [
+        validated.id,
+        validated.eventId,
+        validated.recordId,
+        validated.aroundId,
+        ...(validated.eventIds || []),
+        ...(validated.evidence || []),
+        ...(validated.evidenceIds || []),
+        ...(validated.counterEvidence || []),
+      ].filter((id) => typeof id === "string"))
+        boundary.assertId(id);
+      for (const [id, library] of [
+        [validated.fileId, this.files],
+        [validated.mediaId, this.media],
+        [validated.audioId || validated.audioInput?.audioId, this.voices],
+      ])
+        if (id && library) boundary.assert(library.metadata(ctx.agentId, id));
+    });
     if (this.protectedWork.context(ctx) && name !== "protected_work_submit")
       this.protectedWork.record(
         ctx,

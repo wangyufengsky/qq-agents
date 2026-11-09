@@ -566,3 +566,45 @@ test("backup failure leaves schema3 and source data unchanged; failed import is 
   d.close();
   await backupDatabase(saved.destination, path.join(root, "recover.sqlite"));
 });
+
+test("opening a predecessor database and restoring an export install presentation invalidation", (t) => {
+  const file = path.join(temp(t), "prior.sqlite");
+  const prior = new MemoryStore(file);
+  const agent = "fish";
+  const conversation = "group:20000";
+  const item = prior.bind(agent).append({
+    dedupe: "predecessor-presentation",
+    conversation,
+    kind: "message.received",
+    body: "归档版本",
+  });
+  prior.db.exec("DROP TRIGGER event_presentation_changed");
+  prior.db
+    .prepare("INSERT INTO message_progress VALUES(?,?,?,0)")
+    .run(agent, conversation, item.seq);
+  const version = prior.db.prepare("PRAGMA user_version").get().user_version;
+  prior.close();
+
+  const upgraded = new MemoryStore(file);
+  t.after(() => upgraded.close());
+  assert.equal(
+    upgraded.db.prepare("PRAGMA user_version").get().user_version,
+    version,
+  );
+  const restored = new MemoryStore(":memory:");
+  t.after(() => restored.close());
+  restoreExport(restored.bind(agent), upgraded.bind(agent).export());
+  for (const store of [upgraded, restored]) {
+    const read = () =>
+      store.db
+        .prepare(
+          "SELECT summary_only FROM message_progress WHERE agent_id=? AND conversation=? AND seq=?",
+        )
+        .get(agent, conversation, item.seq).summary_only;
+    assert.equal(read(), 0);
+    store.db
+      .prepare("UPDATE events SET body=? WHERE id=?")
+      .run("新版本", item.id);
+    assert.equal(read(), 1);
+  }
+});

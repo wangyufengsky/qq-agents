@@ -155,7 +155,7 @@ export const definitions = {
       .strict(),
   ],
   conversation_read: [
-    "按具体conversation来源键读取账本；省略时仅读当前聊天。查找其他群聊/私聊先用memory_search，不能填写group/private代替具体来源键。aroundId按可靠消息时间展开（同时间按UUID），不能用时间邻文更新已读水位。用nextAroundBefore/After作为aroundCursor继续，保持aroundId和contextSeconds；观察/未知时间只返回锚点，明确引用用memory_related。不把有限窗口当完整历史。",
+    "按具体conversation来源键读取账本；省略时仅读当前聊天。查找其他群聊/私聊先用memory_search，不能填写group/private代替具体来源键。aroundId按可靠消息时间展开（同时间按UUID），不能用时间邻文更新已读水位。用nextAroundBefore/After作为aroundCursor继续，保持aroundId和contextSeconds；观察/未知时间只返回锚点，明确引用用memory_related。顺序分页用 nextAfterSeq；当前聊天的 readThroughSeq 是本轮可提交的连续水位，readGap 指出补读入口。",
     z
       .object({
         conversation: str.optional(),
