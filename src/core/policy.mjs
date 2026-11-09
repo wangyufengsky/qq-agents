@@ -28,6 +28,7 @@ export const behaviorSchema = z
       })
       .strict()
       .prefault({}),
+    focusedGroupReply: z.boolean().default(false),
     batchWindowMs: ms(0, 60000, 0),
     batchMaxMs: ms(0, 60000, 0),
     maxWakePerMinute: ms(1, 60, 6),

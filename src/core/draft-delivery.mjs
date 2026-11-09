@@ -8,6 +8,7 @@ import {
   claimDraftGrant,
   freezeInputCheckpoint,
   processInput,
+  textReplyEvent,
 } from "./input-review.mjs";
 
 const executions = new WeakMap();
@@ -56,6 +57,7 @@ export function draftReviewBinding(draft, checkpoint) {
       )
       .digest("hex"),
     baseline: draft.value.baseline,
+    replyEventId: textReplyEvent(draft.toolName, draft.items[0]?.value),
     checkpoint,
   };
 }

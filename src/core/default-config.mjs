@@ -121,6 +121,7 @@ export function defaultConfig() {
         // Two agents on two QQ accounts can tell each other's owners when one
         // goes offline; the administrator turns it on per agent.
         behavior: {
+          focusedGroupReply: false,
           maxOpenDraftsPerConversation: DEFAULT_MAX_OPEN_DRAFTS,
           imageInput: {
             enabled: false,
@@ -216,6 +217,7 @@ export function defaultConfig() {
         },
         maxConsecutiveSends: 3,
         behavior: {
+          focusedGroupReply: false,
           maxOpenDraftsPerConversation: DEFAULT_MAX_OPEN_DRAFTS,
           imageInput: {
             enabled: false,
