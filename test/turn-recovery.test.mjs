@@ -4,7 +4,10 @@ import { CodexBackend } from "../src/backends/codex.mjs";
 import assert from "node:assert/strict";
 import { config, fixture } from "./helpers.mjs";
 import { DshBackend } from "../src/backends/dsh.mjs";
-import { BackendTurnFailure } from "../src/backends/turn-failure.mjs";
+import {
+  BackendTurnFailure,
+  dshTurnFailure,
+} from "../src/backends/turn-failure.mjs";
 import { retireSession } from "../src/core/session-records.mjs";
 
 const chat = "group:20000";
@@ -14,6 +17,10 @@ const malformed = {
     code: "MALFORMED_RESPONSE",
     message: "DeepSeek Messages stream: tool input is invalid JSON",
   },
+};
+const transportFailure = {
+  kind: "error",
+  error: { code: "TRANSPORT", message: "private provider detail" },
 };
 const ok = (value) => ({ result: { ok: true, value } });
 function dshClient({
@@ -66,11 +73,12 @@ function dshClient({
     },
     events: {
       follow: () => {
-        onFollow(client);
+        const snapshotRecords = [...records];
+        onFollow(client, snapshotRecords);
         push({
           type: "session/snapshot",
           snapshot: {
-            records: [...records],
+            records: snapshotRecords,
             projections: {
               values: {
                 inbox: {
@@ -237,6 +245,122 @@ function setup(t, type, options = {}) {
     attempts: () => (client.prompts || client.starts).length,
   };
 }
+
+test("DSH transport failure continues a verified native turn without repeating QQ delivery", async (t) => {
+  let f;
+  f = setup(t, "dsh", {
+    reasons: [transportFailure, { kind: "completed" }],
+    beforeEnd: async (attempt) => {
+      const ctx = f.ctx();
+      const message = { requestId: "original", text: "已完成的回复" };
+      if (attempt === 1) {
+        await f.runtime.send(ctx, message);
+      } else {
+        await assert.rejects(
+          f.runtime.send(ctx, { requestId: "new-id", text: "改写的回复" }),
+          /RECOVERY_DELIVERY_BLOCKED/,
+        );
+        assert.equal((await f.runtime.send(ctx, message)).duplicate, true);
+      }
+    },
+  });
+
+  assert.equal((await f.runtime.wake("agent-0", chat)).status, "sent");
+  assert.equal(f.attempts(), 2);
+  assert.equal(f.client.creates, 1);
+  assert.equal(f.m.state(chat).session.id, "dsh-session");
+  assert.equal(f.runtime.transports.get("qq-0").sent.length, 1);
+  assert.equal(f.m.delivery("original").status, "sent");
+  const [turn] = f.m.identity.list("model_turns");
+  assert.deepEqual(turn.backendTurnIds, ["1", "2"]);
+  assert.equal(turn.recoveryAttempts, 1);
+  assert.equal(turn.backendFailures[0].code, "TRANSPORT");
+  assert.equal(turn.backendFailures[0].category, "response-stream");
+  assert.equal(turn.backendFailures[0].sessionReusable, true);
+  assert.ok(!JSON.stringify(turn).includes("private provider detail"));
+  assert.match(f.client.prompts[1].content[0].text, /只允许查询原回执/);
+});
+
+test("DSH transport failure cannot continue while native input is queued", async (t) => {
+  const f = setup(t, "dsh", {
+    reasons: [transportFailure],
+    invalidSnapshot: true,
+  });
+  assert.equal((await f.runtime.wake("agent-0", chat)).status, "failed");
+  assert.equal(f.runtime.status().agents[0].error, "DSH_TRANSPORT");
+  assert.equal(f.attempts(), 1);
+  assert.equal(f.m.state(chat).session, null);
+  const [turn] = f.m.identity.list("model_turns");
+  assert.equal(turn.backendFailures[0].code, "TRANSPORT");
+  assert.equal(turn.backendFailures[0].sessionReusable, false);
+});
+
+test("DSH transport continuation verifies the same failed turn and code in both snapshots", async (t) => {
+  for (const phase of [2, 3]) {
+    for (const mismatch of ["turn", "code"]) {
+      await t.test(
+        `snapshot ${phase} has a different ${mismatch}`,
+        async (t) => {
+          let snapshots = 0;
+          const f = setup(t, "dsh", {
+            reasons: [transportFailure],
+            onFollow: (_, records) => {
+              if (++snapshots !== phase) return;
+              const { event } = records.at(-1);
+              records[records.length - 1] = {
+                event: {
+                  ...event,
+                  data:
+                    mismatch === "turn"
+                      ? { ...event.data, turn: 2 }
+                      : { ...event.data, reason: malformed },
+                },
+              };
+            },
+          });
+          assert.equal(
+            (await f.runtime.wake("agent-0", chat)).status,
+            "failed",
+          );
+          assert.equal(snapshots, phase);
+          assert.equal(f.attempts(), 1);
+          assert.equal(f.m.state(chat).session, null);
+        },
+      );
+    }
+  }
+});
+
+test("DSH stops after one verified transport continuation fails", async (t) => {
+  const f = setup(t, "dsh", {
+    reasons: [transportFailure, transportFailure],
+  });
+  assert.equal((await f.runtime.wake("agent-0", chat)).status, "failed");
+  assert.equal(f.attempts(), 2);
+  assert.equal(f.m.state(chat).session.id, "dsh-session");
+  const [turn] = f.m.identity.list("model_turns");
+  assert.equal(turn.recoveryAttempts, 1);
+  assert.deepEqual(
+    turn.backendFailures.map((failure) => failure.code),
+    ["TRANSPORT", "TRANSPORT"],
+  );
+});
+
+test("DSH transport recovery depends on the terminal kind and exact protocol code", () => {
+  for (const code of ["ABORTED", "TIMEOUT", "HTTP_401", "HTTP_429", "OTHER"]) {
+    const failure = dshTurnFailure(
+      { kind: "error", error: { code, message: "TRANSPORT" } },
+      "1",
+    );
+    assert.equal(failure.recoverable, false, code);
+  }
+  const cancelled = dshTurnFailure(
+    { ...transportFailure, kind: "cancelled" },
+    "1",
+  );
+  assert.equal(cancelled.category, "cancelled");
+  assert.equal(cancelled.recoverable, false);
+});
 
 test("diagnostics follow their running turn across recovery and classify worker retirement", async (t) => {
   const f = fixture(t, { cfg: config(1) }),
