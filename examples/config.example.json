@@ -110,6 +110,7 @@
       },
       "maxConsecutiveSends": 3,
       "behavior": {
+        "maxOpenDraftsPerConversation": 4,
         "imageInput": {
           "enabled": false,
           "maxImages": 4,
@@ -221,6 +222,7 @@
       },
       "maxConsecutiveSends": 3,
       "behavior": {
+        "maxOpenDraftsPerConversation": 4,
         "imageInput": {
           "enabled": false,
           "maxImages": 4,

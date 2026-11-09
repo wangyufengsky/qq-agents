@@ -213,8 +213,32 @@ export function presentationCheckpoint(runtime, ctx, provisional, items = []) {
   return { readThroughSeq: through, ...(gap ? { readGap: gap } : {}) };
 }
 
-/** @param {any} runtime @param {any} ctx @param {number} through @param {{id:string,version:string}[]} [noReply] */
-export function processInput(runtime, ctx, through, noReply = []) {
+/** @param {any} runtime @param {any} ctx @param {number} through */
+export function assertReadCheckpoint(runtime, ctx, through) {
+  if (
+    !Number.isSafeInteger(through) ||
+    through < 0 ||
+    !Number.isSafeInteger(ctx.shownSeq) ||
+    ctx.shownSeq < 0 ||
+    through > presentationCheckpoint(runtime, ctx).readThroughSeq
+  )
+    throw Error("UNSEEN_WATERMARK");
+}
+
+/** @typedef {{scope:string, throughSeq:number, refs: {id:string,version:string}[]}} FrozenCheckpoint */
+
+/** @param {any} runtime @param {any} ctx @param {number} throughSeq @returns {FrozenCheckpoint} */
+export function freezeInputCheckpoint(runtime, ctx, throughSeq) {
+  assertReadCheckpoint(runtime, ctx, throughSeq);
+  const { db, scope } = inputs(runtime, ctx);
+  const refs = [...processingInputRows(db, scope, throughSeq)]
+    .filter((row) => eligible(runtime, ctx, row))
+    .map((row) => ({ id: row.id, version: row.version }));
+  return { scope, throughSeq, refs };
+}
+
+/** @param {any} runtime @param {any} ctx @param {number} through @param {{id:string,version:string}[]} [noReply] @param {FrozenCheckpoint} [expected] */
+export function processInput(runtime, ctx, through, noReply = [], expected) {
   const { memory, db, scope, state } = inputs(runtime, ctx);
   const boundary = recallBoundary(runtime, ctx);
   return memory.store.transaction(() => {
@@ -222,6 +246,31 @@ export function processInput(runtime, ctx, through, noReply = []) {
     const rows = [...processingInputRows(db, scope, through)].filter((row) =>
       eligible(runtime, ctx, row),
     );
+    const byId = prepared(
+      db,
+      "SELECT * FROM events WHERE agent_id=? AND conversation=? AND id=?",
+    );
+    if (expected) {
+      const refs = new Map(
+        expected.refs.map(({ id, version }) => [id, version]),
+      );
+      if (
+        expected.scope !== scope ||
+        expected.throughSeq !== through ||
+        rows.some((row) => refs.get(row.id) !== row.version) ||
+        expected.refs.some(({ id, version }) => {
+          const row = byId.get(ctx.agentId, ctx.conversation, id);
+          return (
+            !row ||
+            row.seq > through ||
+            findInput(db, scope, id)?.version !== version ||
+            !eligible(runtime, ctx, row) ||
+            !visible(runtime, ctx, row, boundary)
+          );
+        })
+      )
+        throw Error("UNSEEN_WATERMARK");
+    }
     if (
       rows.some(
         (row) =>
@@ -232,10 +281,7 @@ export function processInput(runtime, ctx, through, noReply = []) {
       throw Error("UNSEEN_WATERMARK");
     for (const row of rows) writeProcessed(db, scope, inputRef(row));
     for (const ref of noReply) {
-      const row = prepared(
-        db,
-        "SELECT * FROM events WHERE agent_id=? AND conversation=? AND id=?",
-      ).get(ctx.agentId, ctx.conversation, ref.id);
+      const row = byId.get(ctx.agentId, ctx.conversation, ref.id);
       const current = row && findInput(db, scope, ref.id);
       if (
         !current ||
@@ -327,7 +373,7 @@ export function recordReviewedDelivery(memory, scope, deliveryId, accepted) {
   for (const ref of accepted) writeReviewed(memory.db, scope, deliveryId, ref);
 }
 
-/** @typedef {{key?:string, explicit?:boolean, expected?:string, baseline?:ReviewBaseline}} ReviewOptions */
+/** @typedef {{key?:string, explicit?:boolean, expected?:string, baseline?:ReviewBaseline, generation?:number}} ReviewOptions */
 /** @typedef {{requestId:string, intent:any, options:ReviewOptions}} ReviewBinding */
 /** @type {WeakMap<InputReviewRequired, ReviewBinding>} */
 const bindings = new WeakMap();
@@ -369,6 +415,7 @@ function assess(runtime, ctx, binding, snapshot, provisional) {
           inputScope(runtime, ctx),
           ctx.inputEpoch,
           binding.options.key ?? binding.requestId,
+          binding.options.generation ?? 0,
           binding.intent,
           snapshot.items,
         ]),

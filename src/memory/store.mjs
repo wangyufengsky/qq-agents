@@ -415,11 +415,13 @@ class AgentMemory {
     return recallAnnotation(this.db, this.agentId, id);
   }
   event(row, current, summary = false) {
+    const payload = parse(row.payload);
+    if (row.kind === "message.send-attempt") delete payload.submission;
     const recall = row.kind === "message.recalled";
     const body = recall ? RECALL_NOTICE_BODY : row.body;
     const transcript = row.kind === "voice.transcript",
       voiceTranscript = this.voiceTranscript(row, summary),
-      faces = qqFaces(parse(row.payload).segments);
+      faces = qqFaces(payload.segments);
     return {
       id: row.id,
       seq: row.seq,
@@ -434,9 +436,9 @@ class AgentMemory {
       direction: row.direction,
       origin: row.origin,
       disclosure: disclosure(row.conversation, current),
-      ...mergeProtection(parse(row.payload)),
-      protectedRepositories: parse(row.payload).protectedRepositories || [],
-      ...(parse(row.payload).protectedOperations === true
+      ...mergeProtection(payload),
+      protectedRepositories: payload.protectedRepositories || [],
+      ...(payload.protectedOperations === true
         ? { protectedOperations: true }
         : {}),
       privacy: row.conversation.startsWith("private:")
@@ -449,15 +451,13 @@ class AgentMemory {
         : "Observed speech/event; not independently verified fact",
       body: summary ? body.slice(0, 200) : body,
       bodyTruncated: summary && body.length > 200,
-      ...(transcript
-        ? { sourceEventId: parse(row.payload).sourceEventId }
-        : {}),
+      ...(transcript ? { sourceEventId: payload.sourceEventId } : {}),
       ...(voiceTranscript ? { voiceTranscript } : {}),
       ...(faces ? { qqFaces: faces } : {}),
       ...provenance(row),
       ...this.corrections.annotation("event", row.id),
       ...this.recallAnnotation(row.id),
-      ...(!summary && !recall ? { payload: parse(row.payload) } : {}),
+      ...(!summary && !recall ? { payload } : {}),
     };
   }
   diary(row, summary = false) {
@@ -1173,7 +1173,9 @@ class AgentMemory {
           "SELECT connection_id,sender_id,body,payload FROM events WHERE agent_id=? AND dedupe=?",
         )
         .get(this.agentId, "send:" + requestId + ":pending");
-      const payload = attempt ? parse(attempt.payload) : {};
+      const { submission: _submission, ...payload } = attempt
+        ? parse(attempt.payload)
+        : {};
       const action = actionDelivery(payload);
       // An action has no new QQ message identity, even if an administrator's
       // reconciliation request happens to include a message ID.
@@ -1207,7 +1209,10 @@ class AgentMemory {
         if (
           drafts.recordConfirmation(this.agentId, requestId, {
             action,
-            messageNamespace: payload.referenceNamespace || "onebot",
+            messageNamespace:
+              payload.messageNamespace ||
+              payload.referenceNamespace ||
+              "onebot",
           })
         )
           drafts.recordArchive(this.agentId, requestId, archive.id);
@@ -1280,6 +1285,8 @@ class AgentMemory {
           connectionId &&
           (row.connection_id !== connectionId ||
             row.sender_id !== accountId ||
+            (payload.messageNamespace &&
+              payload.messageNamespace !== namespace) ||
             (payload.referenceNamespace &&
               payload.referenceNamespace !== namespace))
         )

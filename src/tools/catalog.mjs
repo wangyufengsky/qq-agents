@@ -6,7 +6,7 @@ import {
 import { SOCIAL_TOOLS } from "../home/social-tool-names.mjs";
 import { z } from "zod";
 import { toolSpecs } from "./specs.mjs";
-import { canUseDraftTool } from "./qq-drafts.mjs";
+import { canUseDraftTool } from "../core/draft-input.mjs";
 import { profileConversation } from "../core/profile.mjs";
 
 export const discoveryInput = z

@@ -1,9 +1,12 @@
 // @ts-check
 import { createHash, randomUUID } from "node:crypto";
 import { mergeProtection } from "./protection.mjs";
+import { canonical } from "../backends/session-contract.mjs";
+import { DEFAULT_MAX_OPEN_DRAFTS } from "../core/policy.mjs";
 
 export const MEMORY_DRAFT_SCHEMA_VERSION = 7;
 export const DRAFT_LIFETIME_MS = 7 * 86400000;
+const CREATION_VERSION = 2;
 
 /** @param {import("node:sqlite").DatabaseSync} db */
 export function createDraftTables(db) {
@@ -39,7 +42,8 @@ export function createDraftTables(db) {
 /** @typedef {{agentId:string,connectionId:string,accountId:string,conversation:string}} DraftScope */
 /** @typedef {{requestId:string,input:object}} DraftInput */
 /** @typedef {{id:string,revision:number,position:number}} DraftItemRef */
-/** @typedef {{toolName:string,requestId:string,items:DraftInput[],value:{gapMs?:number,[key:string]:unknown},legacyDeliveries?: Set<string>}} DraftInputGroup */
+/** @typedef {{items:object[],gapMs:number|null,readThroughSeq:number|null}} DraftCreation */
+/** @typedef {{toolName:string,requestId:string,items:DraftInput[],value:{gapMs?:number,[key:string]:unknown},legacyDeliveries?: Set<string>,creation?:DraftCreation,maxOpenDrafts?:number}} DraftInputGroup */
 /** @typedef {{position:number,input:object}} DraftEdit */
 /** @typedef {{messageNamespace:string, action:boolean, gatewayFileId?:string}} DraftConfirmation */
 
@@ -47,6 +51,17 @@ const scopeSQL =
   "agent_id=? AND connection_id=? AND account_id=? AND conversation=?";
 const receiptJoin = `LEFT JOIN deliveries d ON d.agent_id=i.agent_id
   AND d.request_id=i.delivery_request_id AND d.conversation=g.conversation`;
+const openDraft = `AND EXISTS(
+  SELECT 1 FROM qq_draft_items i ${receiptJoin}
+  WHERE i.draft_id=g.id AND
+    ((i.delivery_request_id IS NOT NULL AND (d.status IS NULL OR d.status IN ('pending','unknown')))
+      OR (i.delivery_request_id IS NULL AND i.abandoned=0 AND g.imported=0 AND g.expires_at>?)))`;
+const creationColumns =
+  "id,tool_name,request_hash,json_extract(value,'$.creationVersion') AS creation_version";
+
+/** @param {unknown} value */
+const hash = (value) =>
+  createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
 /** @param {DraftScope} scope */
 function scopeArgs(scope) {
@@ -137,13 +152,7 @@ export class QQDraftStore {
   /** @param {DraftScope} scope @param {{offset?:number,limit?:number,includeSettled?:boolean}} [options] */
   list(scope, { offset = 0, limit = 10, includeSettled = false } = {}) {
     const args = scopeArgs(scope);
-    const filter = includeSettled
-      ? ""
-      : `AND EXISTS(
-      SELECT 1 FROM qq_draft_items i ${receiptJoin}
-      WHERE i.draft_id=g.id AND
-        ((i.delivery_request_id IS NOT NULL AND (d.status IS NULL OR d.status IN ('pending','unknown')))
-          OR (i.delivery_request_id IS NULL AND i.abandoned=0 AND g.imported=0 AND g.expires_at>?)))`;
+    const filter = includeSettled ? "" : openDraft;
     const rows = this.db
       .prepare(
         `SELECT * FROM qq_drafts g WHERE ${scopeSQL}
@@ -189,33 +198,72 @@ export class QQDraftStore {
 
   /** @param {DraftScope} scope @param {string} toolName @param {string} requestId */
   find(scope, toolName, requestId) {
+    const args = scopeArgs(scope);
+    const exact = this.db
+      .prepare(
+        `SELECT ${creationColumns} FROM qq_drafts WHERE ${scopeSQL} AND tool_name=? AND request_id=?`,
+      )
+      .get(...args, toolName, requestId);
+    if (exact) return exact;
+    // Pre-versioned drafts were keyed by tool. Prefer the exact historical row,
+    // but a new request cannot reuse the same creation ID through another tool.
     return this.db
       .prepare(
-        `SELECT id,request_hash FROM qq_drafts WHERE ${scopeSQL} AND tool_name=? AND request_id=?`,
+        `SELECT ${creationColumns} FROM qq_drafts WHERE ${scopeSQL} AND request_id=? LIMIT 1`,
       )
-      .get(...scopeArgs(scope), toolName, requestId);
+      .get(...args, requestId);
   }
 
   /** @param {DraftScope} scope @param {DraftInputGroup} draft */
-  stage(scope, { toolName, requestId, items, value, legacyDeliveries }) {
+  stage(
+    scope,
+    {
+      toolName,
+      requestId,
+      items,
+      value,
+      legacyDeliveries,
+      creation,
+      maxOpenDrafts = DEFAULT_MAX_OPEN_DRAFTS,
+    },
+  ) {
     if (!items.length || items.length > 10) throw Error("QQ_DRAFT_INVALID");
     return this.store.transaction(() => {
-      const digest = createHash("sha256")
-        .update(
-          JSON.stringify([
-            items.map((item) => item.input),
-            value.gapMs ?? null,
-          ]),
-        )
-        .digest("hex");
       const prior = this.find(scope, toolName, requestId);
+      const initial = creation ?? {
+        items: items.map((item) => item.input),
+        gapMs: value.gapMs ?? null,
+        readThroughSeq: null,
+      };
       if (prior) {
-        if (prior.request_hash !== digest) throw Error("IDEMPOTENCY_CONFLICT");
-        return { draft: this.read(scope, String(prior.id)), created: false };
+        const matches =
+          prior.tool_name === toolName &&
+          (prior.creation_version == null
+            ? prior.request_hash ===
+              hash([items.map((item) => item.input), value.gapMs ?? null])
+            : prior.creation_version === CREATION_VERSION &&
+              prior.request_hash ===
+                hash(canonical([CREATION_VERSION, toolName, initial])));
+        if (!matches) throw Error("IDEMPOTENCY_CONFLICT");
+        const draft = this.read(scope, String(prior.id));
+        return {
+          draft,
+          created: false,
+          superseded: draft.items.some((item) => item.revision > 1),
+        };
       }
       if (this.unresolved(scope)) throw Error("QQ_DRAFT_DELIVERY_UNRESOLVED");
-      const id = randomUUID(),
-        now = this.clock();
+      const now = this.clock();
+      if (
+        this.db
+          .prepare(
+            `SELECT 1 FROM qq_drafts g WHERE ${scopeSQL} ${openDraft} LIMIT 1 OFFSET ?`,
+          )
+          .get(...scopeArgs(scope), now, maxOpenDrafts - 1)
+      )
+        throw Error("DRAFT_LIMIT_REACHED");
+      const id = randomUUID();
+      const digest = hash(canonical([CREATION_VERSION, toolName, initial]));
       this.db
         .prepare(
           `INSERT INTO qq_drafts(id,agent_id,connection_id,account_id,conversation,tool_name,request_id,request_hash,revision,created_at,expires_at,value)
@@ -229,7 +277,7 @@ export class QQDraftStore {
           digest,
           now,
           now + DRAFT_LIFETIME_MS,
-          JSON.stringify(value),
+          JSON.stringify({ ...value, creationVersion: CREATION_VERSION }),
         );
       const existing = this.db.prepare(
         "SELECT 1 FROM qq_draft_items WHERE agent_id=? AND request_id=?",
@@ -238,9 +286,12 @@ export class QQDraftStore {
         .prepare(`INSERT INTO qq_draft_items(agent_id,draft_id,position,revision,request_id,value,delivery_request_id)
         VALUES(?,?,?,1,?,?,?)`);
       for (const [position, item] of items.entries()) {
-        if (existing.get(scope.agentId, item.requestId))
-          throw Error("IDEMPOTENCY_CONFLICT");
         const legacy = legacyDeliveries?.has(item.requestId);
+        if (legacy && existing.get(scope.agentId, item.requestId))
+          throw Error("IDEMPOTENCY_CONFLICT");
+        // The public creation ID is scoped to its draft. Ledger IDs are
+        // unique across the agent and cannot be reused for a new attempt.
+        const candidate = legacy ? item.requestId : `draft:${id}:1:${position}`;
         if (
           legacy &&
           !this.db
@@ -263,12 +314,12 @@ export class QQDraftStore {
           scope.agentId,
           id,
           position,
-          item.requestId,
+          candidate,
           JSON.stringify(item.input),
-          legacy ? item.requestId : null,
+          legacy ? candidate : null,
         );
       }
-      return { draft: this.read(scope, id), created: true };
+      return { draft: this.read(scope, id), created: true, superseded: false };
     });
   }
 

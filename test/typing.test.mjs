@@ -296,9 +296,11 @@ test("burst review stops between items and preserves the confirmed prefix", asyn
     ["sent", "unsubmitted", "unsubmitted"],
   );
   const m = f.store.bind("agent-0");
-  assert.equal(m.delivery("long-burst:0").status, "sent");
-  assert.equal(m.delivery("long-burst:1"), undefined);
-  assert.equal(m.delivery("long-burst:2"), undefined);
+  const [first, second, third] = result.draft.items;
+  assert.equal(result.receipts[0].requestId, first.requestId);
+  assert.equal(m.delivery(first.requestId).status, "sent");
+  assert.equal(m.delivery(second.requestId), undefined);
+  assert.equal(m.delivery(third.requestId), undefined);
 });
 
 test("tone review reserves nothing and exact confirmation retains duplicate receipts", async (t) => {

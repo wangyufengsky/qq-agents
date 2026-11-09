@@ -346,3 +346,102 @@ test("a pending draft does not prevent a read checkpoint for a complete review r
   });
   assert.equal(draft.items[0].status, "unsubmitted");
 });
+
+test("one burst owns the full draft while active and its used token cannot reclaim a stopped tail", async (t) => {
+  const f = make(t);
+  await f.runtime.ingest("qq-0", raw(1, { message: "先核对" }));
+  const first = await f.runtime.callTool(f.ctx, "qq_send_burst", {
+    requestId: "whole-manifest",
+    messages: ["第一条", "尾条"],
+    gapMs: 0,
+  });
+  assert.equal(first.error, "INPUT_REVIEW_REQUIRED");
+  const review = { token: first.inputReview.token, decision: "continue" };
+  const gateway = f.runtime.transports.get("qq-0");
+  const entered = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  const deliver = gateway.send.bind(gateway);
+  gateway.send = async (...args) => {
+    if (gateway.sent.length === 0) {
+      entered.resolve();
+      await release.promise;
+      await f.runtime.ingest("qq-0", raw(2, { message: "再补一条" }));
+    }
+    return deliver(...args);
+  };
+  const execution = send(f, first.draft, review);
+  try {
+    await Promise.race([
+      entered.promise,
+      execution.then(() =>
+        assert.fail("submission completed before gateway entry"),
+      ),
+    ]);
+    const progress = await send(f, first.draft, review);
+    assert.equal(progress.status, "pending");
+    assert.equal(progress.error, undefined);
+    assert.equal(progress.hint, undefined);
+    assert.equal(progress.draft.draftId, first.draft.draftId);
+    const ref = {
+      draftId: first.draft.draftId,
+      expectedVersion: first.draft.version,
+    };
+    await assert.rejects(
+      f.runtime.callTool(f.ctx, "qq_draft", {
+        ...ref,
+        action: "revise",
+        position: 1,
+        input: { text: "不能替换" },
+      }),
+      /DRAFT_EXECUTING/,
+    );
+    await assert.rejects(
+      f.runtime.callTool(f.ctx, "qq_draft", {
+        ...ref,
+        action: "discard",
+      }),
+      /DRAFT_EXECUTING/,
+    );
+  } finally {
+    release.resolve();
+  }
+  const stopped = await execution;
+  assert.equal(stopped.error, "INPUT_REVIEW_REQUIRED");
+  assert.deepEqual(
+    stopped.draft.items.map(({ status }) => status),
+    ["sent", "unsubmitted"],
+  );
+  const replay = await send(f, first.draft, review);
+  assert.equal(replay.status, "stopped");
+  assert.deepEqual(replay.draft.items, stopped.draft.items);
+  assert.equal(gateway.sent.length, 1);
+  assert.notEqual(stopped.inputReview.token, review.token);
+  const sent = await send(f, stopped.draft, {
+    token: stopped.inputReview.token,
+    decision: "continue",
+  });
+  assert.equal(sent.status, "sent");
+  assert.deepEqual(
+    gateway.sent.map(({ segments }) => segments[0].data.text),
+    ["第一条", "尾条"],
+  );
+});
+
+test("creation IDs are scoped and an existing actual delivery ID cannot impersonate a creation", async (t) => {
+  const f = make(t);
+  const original = { requestId: "shared-creation", text: "同一句" };
+  const first = await f.runtime.callTool(f.ctx, "qq_send", original);
+  const other = context(f.runtime, f.ctx.agentId, "group:20001");
+  const second = await f.runtime.callTool(other, "qq_send", original);
+  assert.equal(first.status, "sent");
+  assert.equal(second.status, "sent");
+  assert.notEqual(first.requestId, original.requestId);
+  assert.notEqual(first.requestId, second.requestId);
+  const third = await f.runtime.callTool(f.ctx, "qq_send", {
+    ...original,
+    requestId: first.requestId,
+  });
+  assert.equal(third.status, "sent");
+  assert.notEqual(third.requestId, first.requestId);
+  assert.equal(f.runtime.transports.get("qq-0").sent.length, 3);
+});

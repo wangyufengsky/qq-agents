@@ -67,8 +67,18 @@ test("shutdown waits for an in-flight HTTP tool receipt after its model turn can
     await request;
     await shutdown;
   }
+  const linked = f.store.db
+    .prepare(
+      `
+    SELECT i.delivery_request_id AS requestId FROM qq_drafts g
+    JOIN qq_draft_items i ON i.draft_id=g.id
+    WHERE g.agent_id='agent-0' AND g.request_id='shutdown-receipt'
+  `,
+    )
+    .get();
+  assert(linked.requestId);
   assert.equal(
-    f.store.bind("agent-0").delivery("shutdown-receipt").status,
+    f.store.bind("agent-0").delivery(linked.requestId).status,
     "sent",
   );
   assert.equal(f.runtime.status().agents[0].activeTurns, 0);
@@ -102,8 +112,24 @@ test("shutdown rejects queued sends and preserves an unknown result for the alre
   receipt.resolve();
   await Promise.all([first, second, closing]);
   assert.equal(sends, 1);
-  assert.equal(f.store.bind("agent-0").delivery("issued").status, "unknown");
-  assert.equal(f.store.bind("agent-0").delivery("queued"), undefined);
+  const attempts = f.store.db
+    .prepare(
+      `
+    SELECT g.request_id AS creationId,d.status FROM deliveries d
+    JOIN qq_draft_items i ON i.agent_id=d.agent_id AND i.delivery_request_id=d.request_id
+    JOIN qq_drafts g ON g.id=i.draft_id
+    WHERE d.agent_id='agent-0'
+  `,
+    )
+    .all();
+  assert.deepEqual(
+    attempts.map(({ creationId, status }) => ({ creationId, status })),
+    [{ creationId: "issued", status: "unknown" }],
+  );
+  assert.equal(
+    f.store.db.prepare("SELECT count(*) AS n FROM deliveries").get().n,
+    1,
+  );
 });
 
 test("direct turns and owner contexts finish before an idempotent shutdown completes", async (t) => {

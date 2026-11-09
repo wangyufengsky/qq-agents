@@ -42,9 +42,12 @@ test("failed local archive after ACK never downgrades or resends", async (t) => 
     mem = f.store.bind("agent-0");
   const prototype = Object.getPrototypeOf(mem),
     append = prototype.append;
+  let failedArchiveRequestId;
   const mocked = t.mock.method(prototype, "append", function (event) {
-    if (event.dedupe === "send:draft-ack:sent")
+    if (event.kind === "message.sent" && event.body === "confirmed fixture") {
+      failedArchiveRequestId = event.payload.requestId;
       throw Error("fixture archive fault");
+    }
     return append.call(this, event);
   });
   const result = await f.runtime.callTool(ctx, "qq_send", {
@@ -53,7 +56,8 @@ test("failed local archive after ACK never downgrades or resends", async (t) => 
   });
   assert.equal(result.status, "sent");
   assert.equal(result.archivePending, true);
-  assert.equal(mem.delivery("draft-ack").status, "sent");
+  assert.equal(failedArchiveRequestId, result.requestId);
+  assert.equal(mem.delivery(result.requestId).status, "sent");
   assert.equal(f.runtime.drafts.unarchived().length, 1);
   mocked.mock.restore();
   recoverDraftArchives(f.store, f.runtime.drafts);
@@ -61,10 +65,8 @@ test("failed local archive after ACK never downgrades or resends", async (t) => 
   assert.equal(f.runtime.drafts.unarchived().length, 0);
   assert.equal(
     f.store.db
-      .prepare(
-        "SELECT count(*) n FROM events WHERE dedupe='send:draft-ack:sent'",
-      )
-      .get().n,
+      .prepare("SELECT count(*) n FROM events WHERE agent_id=? AND dedupe=?")
+      .get(ctx.agentId, `send:${result.requestId}:sent`).n,
     1,
   );
   assert.equal(f.runtime.transports.get("qq-0").sent.length, 1);
@@ -238,8 +240,10 @@ test("an unknown draft is locked across tool calls and reconciliation reuses its
   );
   const lookup = await f.runtime.callTool(ctx, "qq_delivery_status", {});
   assert.equal(lookup.items[0].status, "unknown");
+  const attemptId = failed.draft.items[0].requestId;
+  assert.equal(lookup.items[0].requestId, attemptId);
   const mem = f.store.bind("agent-0");
-  mem.reconcileDelivery("draft-unknown", "sent");
+  mem.reconcileDelivery(attemptId, "sent");
   const read = await f.runtime.callTool(ctx, "qq_draft", {
     action: "read",
     draftId: failed.draft.draftId,
@@ -285,22 +289,23 @@ test("a role archive restores pending draft receipts conservatively and rejects 
       },
     },
   }).draft;
+  const pendingAttemptId = pending.items[0].requestId;
   f.store.transaction(() => {
-    mem.reserveDelivery("draft-import-pending", scope.conversation, {});
+    mem.reserveDelivery(pendingAttemptId, scope.conversation, {});
     f.runtime.drafts.bindDelivery(
       scope,
       { id: pending.id, revision: 1, position: 0 },
-      "draft-import-pending",
+      pendingAttemptId,
     );
     mem.append({
-      dedupe: "send:draft-import-pending:pending",
+      dedupe: `send:${pendingAttemptId}:pending`,
       connectionId: scope.connectionId,
       conversation: scope.conversation,
       senderId: scope.accountId,
       kind: "message.send-attempt",
       direction: "out",
       status: "pending",
-      payload: { requestId: "draft-import-pending" },
+      payload: { requestId: pendingAttemptId },
     });
   });
   const source = mem.export();
@@ -321,6 +326,7 @@ test("a role archive restores pending draft receipts conservatively and rejects 
     "sent",
   );
   assert.equal(restored.unresolved(scope).status, "unknown");
+  assert.equal(restored.unresolved(scope).requestId, pendingAttemptId);
   assert.throws(
     () => restored.assertEditable(scope, pending.id, 1),
     /QQ_DRAFT_IMPORTED/,

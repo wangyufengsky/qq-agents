@@ -521,10 +521,12 @@ test("an unconfirmed OneBot submission stays unknown in timing analysis", async 
     0,
   );
   const memory = f.runtime.memory.bind("agent-0");
-  memory.reconcileDelivery("timing-unknown-fixture", "sent", {
+  const [unconfirmed] = memory.unresolvedDeliveries().items;
+  assert.match(unconfirmed.requestId, /^draft:/);
+  memory.reconcileDelivery(unconfirmed.requestId, "sent", {
     messageId: "50000",
   });
-  assert.equal(memory.delivery("timing-unknown-fixture").status, "sent");
+  assert.equal(memory.delivery(unconfirmed.requestId).status, "sent");
   assert.deepEqual(f.timing.snapshot(), snapshot);
 });
 

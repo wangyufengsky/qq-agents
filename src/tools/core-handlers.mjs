@@ -9,7 +9,7 @@ import { withInteraction } from "../core/closeness.mjs";
 import { recallMessage } from "../core/message-recall.mjs";
 import { deliveryPage } from "../core/chat-context.mjs";
 import { rememberSources } from "../core/context-handoff.mjs";
-import { presentationCheckpoint, processInput } from "../core/input-review.mjs";
+import { assertReadCheckpoint, processInput } from "../core/input-review.mjs";
 import { sendDraftTool } from "./qq-drafts.mjs";
 import { githubMarker, privateGithubSources } from "../github/policy.mjs";
 import { readEventImage } from "./image-read.mjs";
@@ -212,190 +212,57 @@ async function handle_diary_write(runtime, ctx, args, name) {
         socialSources(runtime, ctx),
       );
 }
-function assertReadCheckpoint(runtime, ctx, throughSeq) {
-  if (
-    !Number.isSafeInteger(throughSeq) ||
-    throughSeq < 0 ||
-    !Number.isSafeInteger(ctx.shownSeq) ||
-    ctx.shownSeq < 0 ||
-    throughSeq > presentationCheckpoint(runtime, ctx).readThroughSeq
-  )
-    throw Error("UNSEEN_WATERMARK");
-}
-function readCheckpointToolEnabled(runtime, ctx) {
-  // Proactive delivery rewrites requestId to its selected intent's ledger key.
-  // Keep this shortcut on ordinary replies so a duplicate intent cannot acquire
-  // a new checkpoint through a different model-supplied requestId.
-  if (ctx.activeIntentId) return false;
-  return (
-    ctx.allowedTools ||
-    runtime.toolsFor(runtime.agent(ctx.agentId), ctx.conversation)
-  ).includes("qq_mark_read");
-}
-function readCheckpointReceipts(mem, conversation) {
-  const receipts = mem.state(conversation).readCheckpointReceipts;
-  if (receipts == null) return {};
-  if (typeof receipts !== "object" || Array.isArray(receipts))
-    throw Error("READ_CHECKPOINT_STATE_INVALID");
-  return receipts;
-}
-function saveReadCheckpointIntent(
-  mem,
-  conversation,
-  requestId,
-  throughSeq,
-  shownSeq,
-) {
-  const state = mem.state(conversation),
-    previous = state.readCheckpointReceipts || {},
-    intent = { throughSeq, shownSeq },
-    entries = [
-      ...Object.entries(previous).filter(([key]) => key !== requestId),
-      [requestId, intent],
-    ];
-  let next = Object.fromEntries(entries);
-  if (entries.length > 100) next = Object.fromEntries(entries.slice(-100));
-  mem.setState(conversation, { ...state, readCheckpointReceipts: next });
-  return intent;
-}
-function saveReadCheckpointReceipt(
-  mem,
-  conversation,
-  requestId,
-  intent,
-  receipt,
-) {
-  const state = mem.state(conversation),
-    previous = state.readCheckpointReceipts || {};
-  if (!Object.hasOwn(previous, requestId)) return false;
-  const saved = previous[requestId];
-  if (
-    saved.throughSeq !== intent.throughSeq ||
-    saved.shownSeq !== intent.shownSeq
-  )
-    return false;
-  if (saved.sentReceipt === true) return true;
-  const next = Object.fromEntries(
-    Object.entries(previous).map(([key, value]) => [
-      key,
-      key === requestId
-        ? {
-            ...value,
-            sentReceipt: true,
-            recordId: receipt.recordId || null,
-          }
-        : value,
-    ]),
-  );
-  mem.setState(conversation, { ...state, readCheckpointReceipts: next });
-  return true;
-}
-function checkpointFromIntent(intent) {
-  if (
-    !intent ||
-    !Number.isSafeInteger(intent.throughSeq) ||
-    intent.throughSeq < 0 ||
-    !Number.isSafeInteger(intent.shownSeq) ||
-    intent.throughSeq > intent.shownSeq
-  )
-    return null;
-  return { throughSeq: intent.throughSeq };
-}
 async function handle_qq_send(runtime, ctx, args, name) {
-  if (args.readThroughSeq !== undefined) {
-    if (!readCheckpointToolEnabled(runtime, ctx))
-      throw Error("TOOL_NOT_ALLOWED");
-    assertReadCheckpoint(runtime, ctx, args.readThroughSeq);
-  }
+  const result = await sendDraftTool(runtime, ctx, "qq_send", args);
+  if (result.status !== "sent") return result;
   const mem = runtime.memory.bind(ctx.agentId);
-  const receipt = await sendDraftTool(runtime, ctx, "qq_send", args, {
-    onReserve: () => {
-      if (args.readThroughSeq !== undefined) {
-        assertReadCheckpoint(runtime, ctx, args.readThroughSeq);
-        saveReadCheckpointIntent(
-          mem,
-          ctx.conversation,
-          args.requestId,
-          args.readThroughSeq,
-          ctx.shownSeq,
-        );
-      }
-    },
-  });
-  if (receipt.status !== "sent") return receipt;
-  const receipts = readCheckpointReceipts(mem, ctx.conversation);
-  const intent = Object.hasOwn(receipts, args.requestId)
-    ? receipts[args.requestId]
-    : null;
-  const checkpoint = checkpointFromIntent(intent);
-  const readCheckpoint =
-    intent && Number.isSafeInteger(intent.throughSeq) && intent.throughSeq >= 0
-      ? { throughSeq: intent.throughSeq, applied: false }
-      : null;
-  let result = readCheckpoint ? { ...receipt, readCheckpoint } : receipt;
-  if (checkpoint) {
-    if (!readCheckpointToolEnabled(runtime, ctx)) return result;
-    try {
-      if (
-        !saveReadCheckpointReceipt(
-          mem,
-          ctx.conversation,
-          args.requestId,
-          intent,
-          receipt,
-        )
-      )
-        return result;
-    } catch {
-      return result;
-    }
-    try {
-      runtime.assertActive(ctx);
-    } catch {
-      return result;
-    }
-    try {
-      assertReadCheckpoint(runtime, ctx, checkpoint.throughSeq);
-      processInput(runtime, ctx, checkpoint.throughSeq);
-      readCheckpoint.applied = true;
-    } catch {
-      return result;
-    }
-  }
   if (!args.atUserId) return result;
-  // Someone addressed before they spoke here has not had their card shown.
-  // It comes once with the receipt, so the rest of the turn can use it.
-  const saved = mem.identity.personCard(args.atUserId),
-    card = saved
-      ? withInteraction(
-          mem,
-          saved,
-          runtime.now(),
-          runtime.connection(runtime.agent(ctx.agentId).connectionId).accountId,
-        )
-      : null;
-  if (
-    !card ||
-    // The same seen key as person-cards.mjs: this card, at this revision.
-    mem.state(ctx.conversation).personCardsShown?.[card.personId] ===
-      personCardSeenKey(card)
-  )
+  try {
+    // Someone addressed before they spoke here has not had their card shown.
+    // It comes once with the receipt, so the rest of the turn can use it.
+    const saved = mem.identity.personCard(args.atUserId),
+      card = saved
+        ? withInteraction(
+            mem,
+            saved,
+            runtime.now(),
+            runtime.connection(runtime.agent(ctx.agentId).connectionId)
+              .accountId,
+          )
+        : null;
+    if (
+      !card ||
+      // The same seen key as person-cards.mjs: this card, at this revision.
+      mem.state(ctx.conversation).personCardsShown?.[card.personId] ===
+        personCardSeenKey(card)
+    )
+      return result;
+    markPersonCardShown(mem, ctx.conversation, card);
+    return {
+      ...result,
+      personCard: {
+        personId: card.personId,
+        call: card.call,
+        impression: card.body,
+        interaction: card.interaction,
+        ...(card.adminCloseness ? { adminCloseness: card.adminCloseness } : {}),
+        ...(card.recalledEvidence?.length
+          ? { recalledEvidence: card.recalledEvidence }
+          : {}),
+        revision: card.revision,
+      },
+    };
+  } catch (error) {
+    runtime.diagnostics.report(
+      Error("DELIVERY_CONFIRMED_AUDIT_FAILED", { cause: error }),
+      {
+        component: "runtime",
+        agentId: ctx.agentId,
+        conversation: ctx.conversation,
+      },
+    );
     return result;
-  markPersonCardShown(mem, ctx.conversation, card);
-  return {
-    ...result,
-    personCard: {
-      personId: card.personId,
-      call: card.call,
-      impression: card.body,
-      interaction: card.interaction,
-      ...(card.adminCloseness ? { adminCloseness: card.adminCloseness } : {}),
-      ...(card.recalledEvidence?.length
-        ? { recalledEvidence: card.recalledEvidence }
-        : {}),
-      revision: card.revision,
-    },
-  };
+  }
 }
 async function handle_generated_image_list(runtime, ctx, args, name) {
   const recovery = await runtime.generatedImages.recover(ctx, args);

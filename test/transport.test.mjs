@@ -342,11 +342,14 @@ test("external image MCP protocol registers owned media then sends through audit
   });
   const media = JSON.parse(result.content[0].text).generatedMedia;
   assert.equal(media.mimeType, "image/png");
-  await runtime.callTool(ctx, "qq_send", {
+  const receipt = await runtime.callTool(ctx, "qq_send", {
     requestId: "image-1",
     mediaId: media.id,
   });
-  assert.equal(store.bind("agent-0").delivery("image-1").status, "sent");
+  assert.equal(
+    store.bind("agent-0").delivery(receipt.requestId).status,
+    "sent",
+  );
   assert.equal(
     runtime.transports.get("qq-0").sent[0].segments[0].type,
     "image",
