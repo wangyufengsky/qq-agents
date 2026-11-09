@@ -27,6 +27,25 @@ function inputRef(row) {
 }
 
 /** @param {any} runtime @param {any} ctx */
+function usesInlineChatInput(runtime, ctx) {
+  const { backendId } = runtime.agent(ctx.agentId);
+  const backend = runtime.config.backends.find(
+    (/** @type {any} */ backend) => backend.id === backendId,
+  );
+  return backend?.type === "antigravity" && backend.cliProtocol === "acp";
+}
+
+/**
+ * Leave room for ACP's serialized JSON, page metadata and read proof.
+ * @param {any} runtime @param {any} ctx @param {number} [requested]
+ */
+export function inlineChatInputChars(runtime, ctx, requested) {
+  return usesInlineChatInput(runtime, ctx)
+    ? Math.min(requested ?? 1600, 1600)
+    : requested;
+}
+
+/** @param {any} runtime @param {any} ctx */
 function inputs(runtime, ctx) {
   const scope = inputScope(runtime, ctx);
   const memory = runtime.memory.bind(ctx.agentId);
@@ -662,9 +681,9 @@ function reviewMaterials(runtime, ctx, missing) {
   };
 }
 
-/** @param {any} ctx @param {InputRef[]} missing */
-function missingItems(ctx, missing) {
-  return missing.slice(0, 20).map(({ id, seq, kind, version }) => {
+/** @param {any} ctx @param {InputRef[]} missing @param {number} [limit] */
+function missingItems(ctx, missing, limit = 20) {
+  return missing.slice(0, limit).map(({ id, seq, kind, version }) => {
     const page = ctx.inputPages?.get(id);
     return {
       id,
@@ -700,6 +719,10 @@ export function prepareDraftReview(
   const token = randomBytes(32).toString("hex");
   const missing = missingInput(ctx, snapshot);
   const materials = reviewMaterials(runtime, ctx, missing);
+  // Reserve room for complete originals instead of repeating a long list of
+  // pointers on every page. The grant still covers the entire input snapshot.
+  const inline = usesInlineChatInput(runtime, ctx);
+  const pointerLimit = inline ? 6 : 20;
   const change = () =>
     grantMismatch(runtime, ctx, grant, binding) ||
     ((grant.generations.get(binding.draftId) ?? 0) !== grant.generation
@@ -716,7 +739,12 @@ export function prepareDraftReview(
       ...(candidateToken ? { token: candidateToken } : {}),
       reason:
         reason ?? (remaining.length ? "READ_GAP" : "REVIEW_DECISION_REQUIRED"),
-      missing: missingItems(ctx, remaining),
+      missing: missingItems(ctx, remaining, pointerLimit),
+      ...(inline && remaining.length && shown.proofs.size
+        ? {
+            hint: "本页已附部分原文。用同一草稿的 qq_draft prepare 继续；若一页没有原文，按 missing 中的入口补读。",
+          }
+        : {}),
       pendingDecision: snapshot.items.length,
       ...(binding.checkpoint
         ? { readThroughSeq: binding.checkpoint.throughSeq }
@@ -728,7 +756,7 @@ export function prepareDraftReview(
       ...(grant.policy
         ? {
             excludable: snapshot.items
-              .slice(0, 20)
+              .slice(0, pointerLimit)
               .map(({ id, seq, kind }) => ({ id, seq, kind })),
           }
         : {}),
