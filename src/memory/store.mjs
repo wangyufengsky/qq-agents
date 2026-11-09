@@ -2,6 +2,7 @@ import {
   INPUT_SCHEMA_VERSION,
   initializeInputTables,
   migrateInputBaselines,
+  writeReviewed,
 } from "./input-state.mjs";
 import {
   EXPORT_TABLES,
@@ -1142,6 +1143,75 @@ class AgentMemory {
       )
       .run(status, messageId, now(), this.agentId, requestId);
   }
+  // The authoritative confirmation and the reviewed inputs describe the same
+  // submission, regardless of which source confirmed it.
+  confirmDelivery(
+    requestId,
+    messageId,
+    confirmation,
+    drafts = new QQDraftStore(this.store),
+  ) {
+    const settle = () => {
+      const delivery = this.delivery(requestId);
+      if (!delivery) throw Error("DELIVERY_NOT_FOUND");
+      if (!["pending", "unknown"].includes(delivery.status))
+        throw Error("DELIVERY_ALREADY_SETTLED");
+      const attempt = this.db
+        .prepare(
+          `SELECT sender_id, connection_id, conversation, payload FROM events
+          WHERE agent_id=? AND dedupe=? AND kind='message.send-attempt'
+            AND direction='out' AND conversation=?`,
+        )
+        .get(
+          this.agentId,
+          "send:" + requestId + ":pending",
+          delivery.conversation,
+        );
+      const payload = attempt && parse(attempt.payload);
+      const review =
+        payload?.submission?.version === 1
+          ? payload.submission.review
+          : payload?.deliveryReview;
+      const scope =
+        attempt &&
+        JSON.stringify([
+          this.agentId,
+          attempt.connection_id,
+          attempt.sender_id,
+          attempt.conversation,
+          payload.messageNamespace || payload.referenceNamespace || "onebot",
+        ]);
+      const imported =
+        review &&
+        this.db
+          .prepare(
+            `SELECT 1 FROM qq_draft_items i
+        JOIN qq_drafts g ON g.id=i.draft_id
+        WHERE i.agent_id=? AND i.delivery_request_id=? AND g.imported=1`,
+          )
+          .get(this.agentId, requestId);
+      const reviewed =
+        !imported &&
+        !payload?.reviewAuditOnly &&
+        payload?.requestId === requestId &&
+        review?.scope === scope &&
+        Array.isArray(review?.refs)
+          ? review.refs.filter(
+              (ref) =>
+                typeof ref?.id === "string" && typeof ref.version === "string",
+            )
+          : [];
+      this.completeDelivery(requestId, "sent", messageId);
+      const draftLinked = drafts.recordConfirmation(
+        this.agentId,
+        requestId,
+        confirmation,
+      );
+      for (const ref of reviewed) writeReviewed(this.db, scope, requestId, ref);
+      return { draftLinked, reviewed };
+    };
+    return this.db.isTransaction ? settle() : this.store.transaction(settle);
+  }
   unresolvedDeliveryCount() {
     return this.db
       .prepare(
@@ -1173,14 +1243,32 @@ class AgentMemory {
           "SELECT connection_id,sender_id,body,payload FROM events WHERE agent_id=? AND dedupe=?",
         )
         .get(this.agentId, "send:" + requestId + ":pending");
-      const { submission: _submission, ...payload } = attempt
-        ? parse(attempt.payload)
-        : {};
+      const {
+        submission: _submission,
+        deliveryReview: _review,
+        reviewAuditOnly: _audit,
+        ...payload
+      } = attempt ? parse(attempt.payload) : {};
       const action = actionDelivery(payload);
       // An action has no new QQ message identity, even if an administrator's
       // reconciliation request happens to include a message ID.
       const resolvedMessageId = action ? null : messageId;
-      this.completeDelivery(requestId, resolution, resolvedMessageId);
+      const drafts = new QQDraftStore(this.store);
+      const confirmation =
+        resolution === "sent"
+          ? this.confirmDelivery(
+              requestId,
+              resolvedMessageId,
+              {
+                action,
+                messageNamespace:
+                  payload.messageNamespace ||
+                  payload.referenceNamespace ||
+                  "onebot",
+              },
+              drafts,
+            )
+          : this.completeDelivery(requestId, resolution, resolvedMessageId);
       const archive = this.append({
         dedupe: "send:" + requestId + ":reconciled",
         connectionId: attempt?.connection_id || "",
@@ -1204,19 +1292,8 @@ class AgentMemory {
           ...(resolvedMessageId ? { messageId: resolvedMessageId } : {}),
         },
       });
-      if (resolution === "sent") {
-        const drafts = new QQDraftStore(this.store);
-        if (
-          drafts.recordConfirmation(this.agentId, requestId, {
-            action,
-            messageNamespace:
-              payload.messageNamespace ||
-              payload.referenceNamespace ||
-              "onebot",
-          })
-        )
-          drafts.recordArchive(this.agentId, requestId, archive.id);
-      }
+      if (confirmation?.draftLinked)
+        drafts.recordArchive(this.agentId, requestId, archive.id);
       return { requestId, status: resolution };
     });
   }

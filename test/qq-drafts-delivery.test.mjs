@@ -6,6 +6,10 @@ import { restoreExport } from "../src/memory/migrate.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { fixture, config, context, raw, sendReviewed } from "./helpers.mjs";
+import {
+  inputDisposition,
+  snapshotReviewInput,
+} from "../src/core/input-review.mjs";
 import { recoverDraftArchives } from "../src/core/draft-delivery.mjs";
 
 test("entire burst exists before the first gateway submission", async (t) => {
@@ -365,3 +369,66 @@ test("a role archive restores pending draft receipts conservatively and rejects 
     /QQ_DRAFT_ARCHIVE_MISMATCH/,
   );
 });
+
+for (const source of ["gateway", "administrator", "echo"]) {
+  test(`confirmed delivery settles its frozen review through ${source}`, async (t) => {
+    const cfg = config(1);
+    Object.assign(cfg.agents[0].wake, {
+      participation: 0,
+      mentions: false,
+      names: false,
+    });
+    const f = fixture(t, { cfg });
+    const { runtime } = f;
+    const ctx = context(runtime);
+    const mem = f.store.bind(ctx.agentId);
+    const transport = runtime.transports.get("qq-0");
+    await runtime.ingest("qq-0", raw(901));
+    const [input] = snapshotReviewInput(runtime, ctx).items;
+    assert.ok(input);
+    await runtime.callTool(ctx, "conversation_read", {});
+    const text = "synthetic reply";
+    if (source !== "gateway") transport.failure = "DELIVERY_UNCONFIRMED";
+    const send = () =>
+      sendReviewed(
+        (args) => runtime.callTool(ctx, "qq_send", args),
+        { requestId: "synthetic-review-reconcile", text },
+        (args) => runtime.callTool(ctx, "qq_draft", args),
+      );
+    if (source === "gateway") assert.equal((await send()).status, "sent");
+    else
+      await send().catch((error) =>
+        assert.equal(error.message, "DELIVERY_UNKNOWN"),
+      );
+    const { request_id: requestId } = f.store.db
+      .prepare("SELECT request_id FROM deliveries")
+      .get();
+    if (source !== "gateway") {
+      assert.equal(mem.delivery(requestId).status, "unknown");
+      assert.deepEqual(inputDisposition(runtime, ctx, input).deliveryIds, []);
+      if (source === "administrator")
+        mem.reconcileDelivery(requestId, "sent", { messageId: "40001" });
+      else
+        assert.ok(
+          mem.reconcileFromEcho({
+            connectionId: "qq-0",
+            accountId: "10000",
+            namespace: "onebot",
+            conversation: ctx.conversation,
+            text,
+            segments: [{ type: "text", data: { text } }],
+            messageId: "40001",
+          }),
+        );
+    }
+    assert.equal(mem.delivery(requestId).status, "sent");
+    assert.deepEqual(inputDisposition(runtime, ctx, input).deliveryIds, [
+      requestId,
+    ]);
+    assert.equal(
+      snapshotReviewInput(runtime, context(runtime)).items.length,
+      0,
+    );
+    assert.equal(transport.sent.length, 1);
+  });
+}

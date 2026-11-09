@@ -5,7 +5,6 @@ import {
   assertDraftReview,
   DraftReviewInterrupted,
   assertInputReviewed,
-  recordReviewedDelivery,
 } from "./input-review.mjs";
 import { timedDeliveryFailure } from "./message-timing-runtime.mjs";
 import {
@@ -569,7 +568,16 @@ export class DeliveryService {
         status: "pending",
         payload: {
           ...event.payload,
-          ...(submitted ? { submission: submitted } : {}),
+          ...(submitted
+            ? { submission: submitted }
+            : inputReview?.accepted.length
+              ? {
+                  deliveryReview: {
+                    scope: inputReview.scope,
+                    refs: inputReview.accepted,
+                  },
+                }
+              : {}),
         },
       });
     });
@@ -626,38 +634,18 @@ export class DeliveryService {
         messageNamespace,
         ...(receipt.fileId ? { gatewayFileId: receipt.fileId } : {}),
       };
-      let draftLinked, recordedReview;
-      mem.store.transaction(() => {
-        mem.completeDelivery(requestId, "sent", messageId);
-        draftLinked = runtime.drafts.recordConfirmation(
-          a.id,
-          requestId,
-          confirmation,
-        );
-      });
-      const reviewed =
-        submitted?.review ??
-        (inputReview && {
-          scope: inputReview.scope,
-          refs: inputReview.accepted,
-        });
-      try {
-        mem.store.transaction(() => {
-          if (reviewed) {
-            recordReviewedDelivery(
-              mem,
-              reviewed.scope,
-              requestId,
-              reviewed.refs,
-            );
-            recordedReview = reviewed.refs;
-          }
-          if (!contactFreeAction) runtime.subject.delivered(ctx, "sent");
-        });
-      } catch (error) {
-        // A local follow-up cannot invalidate the ACK already recorded above.
-        recordedReview = undefined;
-        reportAuditFailure(error);
+      const { draftLinked, reviewed } = mem.confirmDelivery(
+        requestId,
+        messageId,
+        confirmation,
+        runtime.drafts,
+      );
+      if (!contactFreeAction) {
+        try {
+          mem.store.transaction(() => runtime.subject.delivered(ctx, "sent"));
+        } catch (error) {
+          reportAuditFailure(error);
+        }
       }
       const readCheckpoint = applyDeliveryCheckpoint(
         runtime,
@@ -676,7 +664,7 @@ export class DeliveryService {
         reportAuditFailure(error);
       }
       if (ctx.inputEpoch === reservedEpoch)
-        for (const { id, version } of recordedReview || [])
+        for (const { id, version } of reviewed)
           (ctx.confirmedReviewInput ??= new Map()).set(id, version);
       if (!actionBudget) {
         ctx.confirmedSends = (ctx.confirmedSends || 0) + 1;
