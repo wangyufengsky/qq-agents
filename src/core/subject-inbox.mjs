@@ -76,6 +76,10 @@ export class SubjectInbox {
     const a = this.assertScope(ctx, false),
       now = this.runtime.now();
     this.assertSource(a, ctx);
+    const state = this.state(a.id);
+    const items = state.items || [];
+    const id = `${ctx.conversation}/${requestId}`;
+    const old = items.find((item) => item.id === id);
     if (
       proposal.kind === "room_scene_patch" ||
       proposal.kind === "room_publish"
@@ -86,6 +90,7 @@ export class SubjectInbox {
         !homeRequestId.safeParse(requestId).success
       )
         throw Error("INVALID_REQUEST");
+      if (old) throw Error("IDEMPOTENCY_CONFLICT");
       const result = this.runtime.home.rooms.tool(ctx, "room_intent_submit", {
         requestId,
         identityGeneration,
@@ -96,10 +101,15 @@ export class SubjectInbox {
     if (identityGeneration !== undefined) throw Error("INVALID_REQUEST");
     if (proposal.kind === "social") this.assertSocial(a, proposal.target);
     this.runtime.assertSafeOutput(ctx, JSON.stringify(proposal));
-    const state = this.state(a.id),
-      items = state.items || [];
-    const id = `${ctx.conversation}/${requestId}`;
-    const old = items.find((item) => item.id === id);
+    if (
+      a.home?.enabled &&
+      this.runtime.home.rooms.intents.inboxRequestExists(
+        a.id,
+        ctx.conversation,
+        requestId,
+      )
+    )
+      throw Error("IDEMPOTENCY_CONFLICT");
     if (old) {
       if (
         !isDeepStrictEqual(old.proposal, proposal) ||

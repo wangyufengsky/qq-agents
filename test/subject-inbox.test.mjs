@@ -393,6 +393,27 @@ test("unified room submissions still require the old identity and atomic executi
   const list = await f.runtime.callTool(ctx, "subject_inbox_list", {});
   assert.equal(list.items[0].id, receipt.id);
   assert.equal(list.items[0].proposal.roomKind, "room_scene_patch");
+  await assert.rejects(
+    f.runtime.callTool(
+      chat,
+      "subject_inbox_submit",
+      submission("unified-room", { kind: "rest" }),
+    ),
+    /IDEMPOTENCY_CONFLICT/,
+  );
+  await f.runtime.callTool(
+    chat,
+    "subject_inbox_submit",
+    submission("native-room", { kind: "rest" }),
+  );
+  await assert.rejects(
+    f.runtime.callTool(chat, "subject_inbox_submit", {
+      requestId: "native-room",
+      identityGeneration: room.identityGeneration,
+      proposal,
+    }),
+    /IDEMPOTENCY_CONFLICT/,
+  );
   const accepted = await f.runtime.callTool(
     ctx,
     "subject_inbox_decide",

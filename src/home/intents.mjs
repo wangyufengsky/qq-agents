@@ -52,6 +52,14 @@ export class HomeIntents {
       )
       .all(generation, ...(source ? [source] : []));
   }
+  /** @param {string} agentId @param {string} source @param {string} requestId */
+  inboxRequestExists(agentId, source, requestId) {
+    return !!this.db
+      .prepare(
+        "SELECT 1 FROM home_intents WHERE generation=? AND source_session=? AND request_id=?",
+      )
+      .get(this.rooms.home.generation(agentId), source, requestId);
+  }
   /** @param {string} agentId @param {string} id @param {number} now */
   inboxItem(agentId, id, now) {
     const generation = this.rooms.home.generation(agentId);
