@@ -1,7 +1,8 @@
 // @ts-check
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { isPrivateLikeGroup } from "./config.mjs";
-import { recordedInput } from "./live-input.mjs";
+import { liveInput, recordedInput } from "./live-input.mjs";
+import { quotedMessage, references } from "./person-cards.mjs";
 import { transcriptKey } from "../memory/store.mjs";
 import { RECALL_NOTICE_BODY } from "../memory/recalls.mjs";
 import { prepared, recallBoundary } from "./recall-boundary.mjs";
@@ -386,15 +387,58 @@ export function inputDisposition(runtime, ctx, ref) {
   return readInputDisposition(db, scope, ref);
 }
 
+/** @param {any} runtime @param {any} ctx */
+export function focusedGroupReplyEnabled(runtime, ctx) {
+  return (
+    ctx.conversation.startsWith("group:") &&
+    isPrivateLikeGroup(runtime.config, ctx.conversation) &&
+    runtime.agent(ctx.agentId).behavior.focusedGroupReply === true &&
+    ctx.allowedTools?.includes("qq_send") &&
+    !ctx.activeIntentId &&
+    !ctx.scheduleRunId
+  );
+}
+
+/** @param {string} toolName @param {any} input */
+export function textReplyEvent(toolName, input) {
+  return toolName === "qq_send" && !input?.mediaId && !input?.atUserId
+    ? input?.replyEventId
+    : undefined;
+}
+
+/** @param {any} db @param {any} row @param {any} focus @param {Set<string>} related */
+function inFocusedReview(db, row, focus, related) {
+  if (row.id === focus.id) return true;
+  if (row.seq <= focus.seq) return false;
+  if (row.kind === "voice.transcript")
+    return related.has(JSON.parse(row.payload).sourceEventId);
+  if (
+    row.kind !== "message.received" ||
+    !references(row).replies.includes(focus.message_id) ||
+    quotedMessage(db, row, focus.message_id)?.id !== focus.id
+  )
+    return false;
+  related.add(row.id);
+  return true;
+}
+
 /** @typedef {{readSeq?:number,sentSeq?:number,revision?:number,ids?:string[]}} ReviewBaseline */
-/** @param {any} runtime @param {any} ctx @param {ReviewBaseline} [baseline] */
-export function snapshotReviewInput(runtime, ctx, baseline) {
+/** @param {any} runtime @param {any} ctx @param {ReviewBaseline} [baseline] @param {string} [replyEventId] */
+export function snapshotReviewInput(runtime, ctx, baseline, replyEventId) {
   const { db, scope, state } = inputs(runtime, ctx);
   const boundary = recallBoundary(runtime, ctx);
+  const focus =
+    replyEventId &&
+    replyEventId === ctx.focusedReplyId &&
+    focusedGroupReplyEnabled(runtime, ctx)
+      ? liveInput(runtime, ctx.agentId, ctx.conversation, replyEventId)
+      : null;
+  const related = new Set(focus ? [focus.id] : []);
   const keep = [
     ...new Set([
       ...(baseline?.ids || []),
       ...(ctx.confirmedReviewInput?.keys() || []),
+      ...related,
     ]),
   ];
   const rows = reviewInputRows(
@@ -408,6 +452,7 @@ export function snapshotReviewInput(runtime, ctx, baseline) {
   const observedIds = [];
   let blocked = state.history_required ? "history_baseline_required" : null;
   for (const row of rows) {
+    if (focus && !inFocusedReview(db, row, focus, related)) continue;
     if (!eligible(runtime, ctx, row)) continue;
     observedIds.push(row.id);
     if (!visible(runtime, ctx, row, boundary)) {
@@ -421,13 +466,14 @@ export function snapshotReviewInput(runtime, ctx, baseline) {
     fromSeq: state.closed_through,
     throughSeq: Math.max(state.closed_through, items.at(-1)?.seq || 0),
     revision: state.revision,
+    focus: focus?.id ?? null,
     scope,
     observedIds,
     blocked,
   };
 }
 
-/** @typedef {{draftId:string, version:number, content:unknown, baseline?:ReviewBaseline, checkpoint?:any}} DraftBinding */
+/** @typedef {{draftId:string, version:number, content:unknown, baseline?:ReviewBaseline, checkpoint?:any, replyEventId?:string}} DraftBinding */
 /** @typedef {ReturnType<typeof snapshotReviewInput>} ReviewSnapshot */
 /** @typedef {{scope:string, throughSeq:number, accepted:InputRef[], snapshotHash:string}} ReviewedInput */
 /** @typedef {{binding:DraftBinding, epoch:string, snapshot:ReviewSnapshot, policy:boolean, checkpoint:any, generation:number, generations:Map<string,number>, review?:ReviewedInput, executionId?:string, original?:DraftGrant, confirmation?:string}} DraftGrant */
@@ -451,9 +497,15 @@ function grantState(ctx) {
 
 /** @param {ReviewSnapshot} snapshot */
 function snapshotDigest(snapshot) {
-  return createHash("sha256")
-    .update(JSON.stringify([snapshot.revision, snapshot.items]))
-    .digest("hex");
+  return (
+    createHash("sha256")
+      // Unrelated arrivals still advance the conversation revision. A quoted
+      // reply binds only the live target and the input versions in its scope.
+      .update(
+        JSON.stringify([snapshot.focus ?? snapshot.revision, snapshot.items]),
+      )
+      .digest("hex")
+  );
 }
 
 /** @param {any} runtime @param {any} ctx */
@@ -517,8 +569,14 @@ function grantMismatch(runtime, ctx, grant, binding) {
   )
     return "DRAFT_CHANGED";
   if (grant.policy !== allowsExclusion(runtime, ctx)) return "POLICY_CHANGED";
-  const current = snapshotReviewInput(runtime, ctx, binding.baseline);
+  const current = snapshotReviewInput(
+    runtime,
+    ctx,
+    binding.baseline,
+    binding.replyEventId,
+  );
   if (current.scope !== grant.snapshot.scope) return "CONTEXT_CHANGED";
+  if (current.focus !== grant.snapshot.focus) return "POLICY_CHANGED";
   if (current.blocked) return blockedReason(current);
   if (snapshotDigest(current) !== snapshotDigest(grant.snapshot)) {
     const versions = new Map(
@@ -565,7 +623,12 @@ function draftGrant(runtime, ctx, binding, snapshot) {
 
 /** @param {any} runtime @param {any} ctx @param {DraftBinding} binding */
 export function initialDraftReview(runtime, ctx, binding) {
-  const snapshot = snapshotReviewInput(runtime, ctx, binding.baseline);
+  const snapshot = snapshotReviewInput(
+    runtime,
+    ctx,
+    binding.baseline,
+    binding.replyEventId,
+  );
   if (
     snapshot.blocked ||
     (ctx.requiresInputSubmission && !ctx.openingCommitted) ||
@@ -709,7 +772,12 @@ export function prepareDraftReview(
   binding,
   { reason, currentReason } = {},
 ) {
-  const snapshot = snapshotReviewInput(runtime, ctx, binding.baseline);
+  const snapshot = snapshotReviewInput(
+    runtime,
+    ctx,
+    binding.baseline,
+    binding.replyEventId,
+  );
   const blocked = blockedReason(snapshot);
   if (blocked) {
     result.preparation = { state: "blocked", reason: blocked };

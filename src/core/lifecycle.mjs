@@ -41,9 +41,11 @@ import { recallBoundary, recallPage } from "./recall-boundary.mjs";
 import {
   commitInputPresentation,
   describeInputPresentation,
+  focusedGroupReplyEnabled,
   inputProjection,
   processingPending,
 } from "./input-review.mjs";
+import { liveInput } from "./live-input.mjs";
 import { draftHints } from "../tools/qq-drafts.mjs";
 import {
   retireSession,
@@ -498,6 +500,39 @@ export class ContextLifecycle {
       m.setState(row.conversation, s);
     }
   }
+  focusedOpening(ctx, memory, reasons, items) {
+    const r = this.runtime;
+    if (!focusedGroupReplyEnabled(r, ctx)) return null;
+    const seqs = reasons.map(({ seq }) => seq).filter(Number.isSafeInteger);
+    if (!seqs.length) return null;
+    const latest = memory.db
+      .prepare(
+        "SELECT id,seq FROM events WHERE agent_id=? AND conversation=? AND kind='message.received' AND seq IN (SELECT value FROM json_each(?)) ORDER BY seq DESC LIMIT 1",
+      )
+      .get(ctx.agentId, ctx.conversation, JSON.stringify(seqs));
+    if (
+      !latest ||
+      !liveInput(r, ctx.agentId, ctx.conversation, latest.id)?.message_id
+    )
+      return null;
+    const existing = items.find(({ id }) => id === latest.id);
+    if (existing) return existing;
+    const page = recallPage(
+      r,
+      ctx,
+      memory.conversation(
+        {
+          conversation: ctx.conversation,
+          afterSeq: latest.seq - 1,
+          limit: 1,
+          maxChars: 4000,
+          fullText: true,
+        },
+        ctx.conversation,
+      ),
+    );
+    return page.items.find(({ id }) => id === latest.id) ?? null;
+  }
   prepare(ctx, backend, reasons, tools = []) {
     if (ctx.controller.signal.aborted) throw Error("ABORTED");
     const r = this.runtime,
@@ -609,11 +644,21 @@ export class ContextLifecycle {
             ),
           );
     const openingHistory = chatHistory(history);
+    const focus = this.focusedOpening(ctx, m, reasons, history.items);
+    ctx.focusedReplyId = focus?.id;
+    const separateFocus =
+      focus && !history.items.some(({ id }) => id === focus.id);
+    const focusedMessage = separateFocus
+      ? chatHistory({ items: [focus] }).items[0]
+      : null;
     ctx.stagedOpening = this.stageSeen(
       ctx,
-      history.items,
+      separateFocus ? [...history.items, focus] : history.items,
       /^(group|private):/.test(ctx.conversation)
-        ? openingHistory.items.map((item) => ({
+        ? [
+            ...openingHistory.items,
+            ...(focusedMessage ? [focusedMessage] : []),
+          ].map((item) => ({
             ...item,
             conversation: ctx.conversation,
           }))
@@ -775,6 +820,9 @@ export class ContextLifecycle {
               replay.quotesOmitted ||
               replay.earlierOmitted)
               ? `最近对话（历史回放）：${JSON.stringify(replay)}`
+              : "",
+            focus
+              ? `本轮可优先引用回复：用 qq_send 的 replyTo=${JSON.stringify(focus.messageId)} 回复这条来信。只针对这条消息及明确引用它的补充，遇到续读入口先读齐。旧积压保留，之后按处理水位继续；不要为这条引用回复提交跨过缺口的已读水位。${focusedMessage ? ` 当前来信：${JSON.stringify(focusedMessage)}` : ""}`
               : "",
             `新增消息：${JSON.stringify(openingHistory)}`,
             ...chatStatus(r, ctx, history, handoff),

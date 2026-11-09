@@ -24,6 +24,7 @@ import {
   initialDraftReview,
   prepareDraftReview,
   snapshotReviewInput,
+  textReplyEvent,
   validateDraftGrant,
 } from "../core/input-review.mjs";
 import {
@@ -289,7 +290,12 @@ export async function sendDraftTool(runtime, ctx, toolName, args) {
     throw Error("RECOVERY_DELIVERY_BLOCKED");
   const value = { ...(gapMs !== undefined ? { gapMs } : {}) };
   if (!prior) {
-    const basis = snapshotReviewInput(runtime, ctx);
+    const basis = snapshotReviewInput(
+      runtime,
+      ctx,
+      undefined,
+      textReplyEvent(toolName, items[0].input),
+    );
     Object.assign(value, {
       baseline: {
         revision: basis.revision,
