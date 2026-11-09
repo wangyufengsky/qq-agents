@@ -1,5 +1,8 @@
 import { ConversationTiming } from "./message-timing-runtime.mjs";
-import { presentationCheckpoint } from "./input-review.mjs";
+import {
+  inlineChatInputChars,
+  presentationCheckpoint,
+} from "./input-review.mjs";
 import { deferForRhythm, refreshAgentRhythm } from "./rhythm.mjs";
 import { interruptRoleRest, roleRest } from "./role-rest.mjs";
 import { recallPage } from "./recall-boundary.mjs";
@@ -539,7 +542,7 @@ export class ConversationEngine {
             conversation: ctx.conversation,
             afterSeq: from,
             limit: 50,
-            maxChars: 16000,
+            maxChars: inlineChatInputChars(runtime, ctx, 16000),
           },
           ctx.conversation,
         ),

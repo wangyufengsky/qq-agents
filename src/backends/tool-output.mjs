@@ -11,12 +11,14 @@ export function toolOutputText(wire) {
  * @param {Pick<import("./session-contract.mjs").RunParams, "finalizeToolOutput">} params
  * @param {unknown} original
  * @param {(value: any) => any | Promise<any>} [project]
+ * @param {number} [maxBytes]
  * @returns {Promise<{wire: any, receipt?: string}>}
  */
 export async function finalizeMcpOutput(
   params,
   original,
   project = (value) => value,
+  maxBytes = 65536,
 ) {
   const encode = async (/** @type {any} */ value) => {
     const content =
@@ -33,7 +35,7 @@ export async function finalizeMcpOutput(
   };
   try {
     return await (params.finalizeToolOutput
-      ? params.finalizeToolOutput(original, { encode, maxBytes: 65536 })
+      ? params.finalizeToolOutput(original, { encode, maxBytes })
       : encode(original));
   } catch (error) {
     // Encoding failure must not escape an async HTTP listener or reuse a grant.

@@ -11,6 +11,7 @@ import { deliveryPage } from "../core/chat-context.mjs";
 import { rememberSources } from "../core/context-handoff.mjs";
 import {
   assertReadCheckpoint,
+  inlineChatInputChars,
   presentationVersion,
   processInput,
 } from "../core/input-review.mjs";
@@ -106,12 +107,16 @@ async function handle_memory_read(runtime, ctx, args, name) {
   const item = mem.readRecord(args, ctx.conversation);
   recallBoundary(runtime, ctx).assert(item);
   let version;
-  const r = mem.read(args, ctx.conversation, {
-    item,
-    captureVersion: (value) => {
-      version = value;
+  const r = mem.read(
+    { ...args, maxChars: inlineChatInputChars(runtime, ctx, args.maxChars) },
+    ctx.conversation,
+    {
+      item,
+      captureVersion: (value) => {
+        version = value;
+      },
     },
-  });
+  );
   track(ctx, [r]);
   const stage = (result, commit) => {
     runtime.stageToolInput(ctx, result, commit, [item]);
@@ -178,7 +183,11 @@ async function handle_conversation_read(runtime, ctx, args, name) {
     runtime,
     ctx,
     mem.conversation(
-      { conversation: ctx.conversation, ...args },
+      {
+        conversation: ctx.conversation,
+        ...args,
+        maxChars: inlineChatInputChars(runtime, ctx, args.maxChars),
+      },
       ctx.conversation,
     ),
   );

@@ -938,10 +938,21 @@ export class AntigravityBackend {
           pending.delete(accepted);
         }
         if (!live || params.signal.aborted) return reply(403, {});
+        // ACP can replace large textual MCP results with a file path. The
+        // model must receive the inline review page before it can act on it.
+        const inlineChatInput =
+          this.config.cliProtocol === "acp" &&
+          ((result && typeof result === "object" && "preparation" in result) ||
+            [
+              "conversation_read",
+              "memory_read",
+              "qq_wait_for_messages",
+            ].includes(value.name));
         const { wire: content, receipt } = await finalizeMcpOutput(
           params,
           result,
           (value) => media.fromTool(value, params.signal),
+          inlineChatInput ? 8192 : undefined,
         );
         if (!live || params.signal.aborted) return reply(403, {});
         res.once("finish", () => {
