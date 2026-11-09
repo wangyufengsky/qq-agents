@@ -775,3 +775,142 @@ for (const kind of ["codex", "openai"])
       attempt({ token: actual.inputReview.token, decision: "continue" }),
     );
   });
+
+test("Antigravity ACP keeps a draft review inline and submits only after the last page", async (t) => {
+  const cfg = config(1);
+  cfg.privateLikeGroups = ["20000"];
+  cfg.agents[0].wake.private = false;
+  cfg.backends[0] = validateConfig({
+    ...cfg,
+    backends: [
+      {
+        id: "fixture",
+        label: "Fixture",
+        type: "antigravity",
+        cliProtocol: "acp",
+      },
+    ],
+  }).backends[0];
+  const f = outputFixture(t, { cfg });
+  const ctx = f.runtime.makeContext("agent-0", "group:20000");
+  for (let id = 1; id <= 34; id++)
+    await f.runtime.ingest(
+      "qq-0",
+      raw(id, { message: "合成聊天输入。".repeat(30) }),
+    );
+  const children = [];
+  const backend = new AntigravityBackend(cfg.backends[0], cfg.agents[0], {
+    root: f.root,
+    spawn: (_command, args, options) => {
+      const { profile } = JSON.parse(args.at(-1));
+      const fixture = spawnFixture(
+        process.execPath,
+        [repo + "/test/antigravity-fixture.mjs", "--gemini_dir", profile],
+        {
+          ...options,
+          env: { ...options.env, AGY_FIXTURE_MODE: "success" },
+        },
+      );
+      children.push(fixture);
+      return fixture.child;
+    },
+  });
+  f.cleanup.defer(async () => {
+    try {
+      await backend.close();
+    } finally {
+      await Promise.all(children.map((child) => child.close()));
+    }
+  });
+  const call = (name, args) => f.runtime.callTool(ctx, name, args);
+  let reply;
+  let request = {
+    name: "qq_send",
+    args: { requestId: "inline-review", text: "合成回复" },
+  };
+  let shown = 0;
+  for (let page = 0; page < 12; page++) {
+    let output;
+    await backend.run({
+      conversation: ctx.conversation,
+      prompt: "synthetic",
+      instructions: "synthetic role",
+      tools: [
+        {
+          name: "probe",
+          description: "synthetic",
+          inputSchema: { type: "object" },
+        },
+      ],
+      signal: ctx.controller.signal,
+      saveSession: () => {},
+      callTool: () =>
+        f.runtime.callTool(ctx, request.name, request.args, {
+          deferInput: true,
+        }),
+      finalizeToolOutput: (value, options) =>
+        f.runtime.finalizeToolOutput(ctx, value, options),
+      commitToolOutput: (receipt, text) => {
+        if (!receipt) return false;
+        output = text;
+        return f.runtime.commitToolOutput(ctx, receipt, text);
+      },
+    });
+    assert(output, "the review page must carry a presentation receipt");
+    assert(
+      Buffer.byteLength(output) <= 8192,
+      "the CLI would spill a large review page to disk",
+    );
+    reply = JSON.parse(output);
+    const { preparation, draft } = reply;
+    shown += preparation.items.length;
+    assert.equal(f.runtime.transports.get("qq-0").sent.length, 0);
+    if (preparation.state === "ready") break;
+    assert.equal(preparation.state, "needs_input");
+    assert(preparation.items.length > 0);
+    assert(preparation.missing.length > 0);
+    assert.equal(preparation.token, undefined);
+    request = {
+      name: "qq_draft",
+      args: {
+        action: "prepare",
+        draftId: draft.draftId,
+        expectedVersion: draft.version,
+      },
+    };
+  }
+  assert.equal(shown, 34);
+  assert.equal(reply.preparation.state, "ready");
+  const sent = await call("qq_draft", {
+    action: "continue",
+    draftId: reply.draft.draftId,
+    expectedVersion: reply.draft.version,
+    inputReview: { decision: "continue", token: reply.preparation.token },
+  });
+  assert.equal(sent.actionResult, "sent");
+  assert.equal(f.runtime.transports.get("qq-0").sent.length, 1);
+
+  await f.runtime.ingest(
+    "qq-0",
+    raw(35, { message: "较长的合成原文。".repeat(450) }),
+  );
+  const source = f.store.db
+    .prepare("SELECT id,seq FROM events WHERE message_id='35'")
+    .get();
+  const page = await call("conversation_read", { afterSeq: source.seq - 1 });
+  assert.equal(page.nextAfterSeq, source.seq);
+  assert(page.readThroughSeq < source.seq);
+  assert.equal(page.readGap.tool, "memory_read");
+  let offset = 0;
+  let read;
+  do {
+    read = await call("memory_read", {
+      id: source.id,
+      offset,
+      maxChars: 16000,
+    });
+    assert(read.chunk.length <= 1600);
+    offset = read.nextOffset;
+  } while (offset !== null);
+  assert.equal(read.readThroughSeq, source.seq);
+});
