@@ -4,7 +4,10 @@ import {
   socialWindowHistoryAllowed,
   socialInputLeaseAllowed,
 } from "../core/social-protection.mjs";
-import { effectiveSocialResourceBudget } from "./social-policy.mjs";
+import {
+  effectiveSocialResourceBudget,
+  socialBackendContract,
+} from "./social-policy.mjs";
 import {
   createHash,
   createHmac,
@@ -28,6 +31,25 @@ const same = (/** @type {any} */ a, /** @type {any} */ b) =>
   JSON.stringify(a) === JSON.stringify(b);
 const day = (/** @type {number} */ now) =>
   new Date(now).toISOString().slice(0, 10);
+// The persisted legacy policy kept the full backend array. Normalize it
+// before comparing so upgrading does not itself revoke any participant.
+function participantPolicies(
+  /** @type {any[]} */ agents,
+  /** @type {any[]} */ backends,
+) {
+  return Object.fromEntries(
+    agents.map(({ id, backendId, model, ...policy }) => [
+      id,
+      {
+        ...policy,
+        backend: socialBackendContract(
+          backends.find((b) => b.id === backendId),
+          model,
+        ),
+      },
+    ]),
+  );
+}
 const HOUR = 3600000;
 const safeFailures = new Set([
   "SOURCE_RESTRICTED",
@@ -225,8 +247,6 @@ export class HomeSocialService {
       throw Error("IDENTITY_DENIED");
     const identity = b.actorIdentity;
     this.assertActor(identity);
-    if (b.policyRevision !== this.policy().revision)
-      throw Error("AUDIENCE_DENIED");
     if (!allowExpired && this.runtime.now() >= b.deadline)
       throw Error(
         b.target.kind === "invitation"
@@ -1103,26 +1123,6 @@ export class HomeSocialService {
       };
     });
   }
-  /** @param {any} window @param {number} now @param {string} reason */
-  closeWindow(window, now, reason) {
-    if (!["proposed", "active"].includes(window.status)) return false;
-    this.db
-      .prepare(
-        "UPDATE home_social_windows SET status='closed',revision=revision+1,fence=fence+1,closed_at=?,closed_reason=? WHERE id=?",
-      )
-      .run(now, reason, window.id);
-    this.db
-      .prepare(
-        "UPDATE home_social_turns SET status='cancelled',fence=fence+1,finished_at=? WHERE window_id=? AND status IN ('queued','running','reserved')",
-      )
-      .run(now, window.id);
-    this.db
-      .prepare(
-        "UPDATE home_social_dispatches SET status='cancelled',fence=fence+1,finished_at=? WHERE window_id=? AND status IN ('queued','claimed')",
-      )
-      .run(now, window.id);
-    return true;
-  }
   /** Background-only materialization; reads never invoke this or create events. */
   maintain() {
     const result = this.store.transaction((now) => {
@@ -1150,7 +1150,7 @@ export class HomeSocialService {
           "SELECT * FROM home_social_windows WHERE (status='proposed' AND expires_at<=?) OR (status='active' AND deadline<=?)",
         )
         .all(now, now))
-        this.closeWindow(window, now, "expired");
+        this.store.closeWindow(window, now, "expired");
       return { invitations: invitations.length, visits: visits.length };
     });
     const cleared = this.store.pruneBodies({
@@ -1173,37 +1173,13 @@ export class HomeSocialService {
         "UPDATE home_social_grants SET revoked_at=?,revision=revision+1,fence=fence+1 WHERE visit_id=? AND revoked_at IS NULL",
       )
       .run(now, row.id);
-    this.db
-      .prepare(
-        "UPDATE home_social_windows SET status='closed',revision=revision+1,fence=fence+1,closed_at=?,closed_reason=? WHERE visit_id=? AND status IN ('proposed','active')",
-      )
-      .run(now, state, row.id);
-    this.db
-      .prepare(
-        "UPDATE home_social_turns SET status='cancelled',fence=fence+1,finished_at=?,safe_error=? WHERE visit_id=? AND status IN ('queued','running','reserved')",
-      )
-      .run(
-        now,
-        ["ended", "expired"].includes(state)
-          ? "VISIT_CLOSED"
-          : "AUDIENCE_DENIED",
-        row.id,
-      );
-    this.db
-      .prepare(
-        "UPDATE home_social_dispatches SET status='cancelled',fence=fence+1,finished_at=? WHERE visit_id=? AND status IN ('queued','claimed')",
-      )
-      .run(now, row.id);
-    this.db
-      .prepare(
-        "UPDATE home_social_contexts SET status='invalidated',epoch=epoch+1,fence=fence+1,updated_at=? WHERE visit_id=? AND status<>'invalidated'",
-      )
-      .run(now, row.id);
-    this.db
-      .prepare(
-        "UPDATE home_social_outbox SET status='cancelled',fence=fence+1,finished_at=? WHERE entity_id=? AND status IN ('pending','claimed')",
-      )
-      .run(now, row.id);
+    const scope = { visitId: row.id };
+    this.store.transitionWindows(now, scope, state, "closed");
+    this.store.stopWork(now, scope, {
+      reason: ["ended", "expired"].includes(state)
+        ? "VISIT_CLOSED"
+        : "AUDIENCE_DENIED",
+    });
     this.event(state, row.id, actor || "system", now);
     return true;
   }
@@ -2346,7 +2322,7 @@ export class HomeSocialService {
           revision: row.revision,
         };
       if (row.revision !== a.expectedRevision) throw Error("REVISION_CONFLICT");
-      this.closeWindow(row, now, "administrator");
+      this.store.closeWindow(row, now, "administrator");
       return { changed: true, windowId: row.id, revision: row.revision + 1 };
     });
   }
@@ -2423,27 +2399,44 @@ export class HomeSocialService {
       exchangeEnabled: cfg.exchangeEnabled,
       mode: r.config.mode,
       globalPaused: r.config.globalPaused,
-      agents: r.config.agents.map((/** @type {any} */ a) => ({
-        id: a.id,
-        paused: a.paused,
-        subjectEnabled: a.subject.enabled,
-        proactiveEnabled: a.behavior.proactive.enabled,
-        offlineReview: a.subject.offlineReview,
-        reviewInSilence: a.subject.reviewInSilence,
-        enabled: a.home?.enabled,
-        social: a.home?.social?.enabled,
-        publishing: a.home?.publishing,
-        snapshots: a.home?.projectSnapshots?.enabled,
-        backendId: a.backendId,
-        model: a.model,
-      })),
-      backends: r.config.backends,
+      participants: participantPolicies(
+        r.config.agents.map((/** @type {any} */ a) => ({
+          id: a.id,
+          paused: a.paused,
+          subjectEnabled: a.subject.enabled,
+          proactiveEnabled: a.behavior.proactive.enabled,
+          offlineReview: a.subject.offlineReview,
+          reviewInSilence: a.subject.reviewInSilence,
+          enabled: a.home?.enabled,
+          social: a.home?.social?.enabled,
+          publishing: a.home?.publishing,
+          snapshots: a.home?.projectSnapshots?.enabled,
+          backendId: a.backendId,
+          model: a.model,
+        })),
+        r.config.backends,
+      ),
     };
-    const previousPermission = previous.permission && {
-      ...previous.permission,
-    };
-    if (previousPermission) delete previousPermission.resourceEnabled;
-    const rightsChanged = !same(previousPermission, permission);
+    const prior = previous.permission;
+    const previousParticipants =
+      prior?.participants ??
+      participantPolicies(prior?.agents ?? [], prior?.backends ?? []);
+    const changedParticipants = Object.entries(permission.participants)
+      .filter(([id, policy]) => !same(previousParticipants[id], policy))
+      .map(([id]) => id);
+    const instanceChanged =
+      !prior ||
+      prior.enabled !== permission.enabled ||
+      prior.mode !== permission.mode ||
+      prior.globalPaused !== permission.globalPaused;
+    const exchangeChanged =
+      prior?.exchangeEnabled !== permission.exchangeEnabled;
+    const rightsChanged =
+      instanceChanged ||
+      exchangeChanged ||
+      changedParticipants.length > 0 ||
+      Object.keys(previousParticipants).length !==
+        Object.keys(permission.participants).length;
     const recoveryBlocked =
       !!p.recovery_epoch &&
       !p.enabled &&
@@ -2465,27 +2458,34 @@ export class HomeSocialService {
           );
       }
     }
-    if (rightsChanged && previous.permission) {
-      this.db
-        .prepare(
-          "UPDATE home_social_windows SET status='closed',revision=revision+1,fence=fence+1,closed_at=?,closed_reason='permission_changed' WHERE status IN ('proposed','active')",
-        )
-        .run(now);
-      this.db
-        .prepare(
-          "UPDATE home_social_turns SET status='cancelled',fence=fence+1,finished_at=? WHERE status IN ('queued','running','reserved')",
-        )
-        .run(now);
-      this.db
-        .prepare(
-          "UPDATE home_social_dispatches SET status='cancelled',fence=fence+1,finished_at=? WHERE status IN ('queued','claimed')",
-        )
-        .run(now);
-      this.db
-        .prepare(
-          "UPDATE home_social_contexts SET status='invalidated',epoch=epoch+1,fence=fence+1,updated_at=? WHERE status<>'invalidated'",
-        )
-        .run(now);
+    if (prior && instanceChanged) {
+      const scope = /** @type {const} */ ({ all: true });
+      this.store.transitionWindows(now, scope, "permission_changed", "closed");
+      this.store.stopWork(now, scope);
+    } else if (prior) {
+      if (exchangeChanged)
+        for (const window of this.db
+          .prepare(
+            "SELECT * FROM home_social_windows WHERE status IN ('proposed','active')",
+          )
+          .all())
+          this.store.closeWindow(window, now, "permission_changed");
+      for (const agentId of changedParticipants) {
+        const row = this.db
+          .prepare(
+            "SELECT generation FROM home_identities WHERE agent_id=? AND active=1",
+          )
+          .get(agentId);
+        if (!row) continue;
+        const scope = { generation: String(row.generation) };
+        this.store.transitionWindows(
+          now,
+          scope,
+          "permission_changed",
+          "closed",
+        );
+        this.store.stopWork(now, scope);
+      }
     }
     // Accepted limits never grow; tightening remains effective without revoking unrelated authority.
     for (const window of this.db
@@ -2520,7 +2520,7 @@ export class HomeSocialService {
           "UPDATE home_social_windows SET effective_limits=?,deadline=? WHERE id=?",
         )
         .run(JSON.stringify(limits), deadline, window.id);
-      if (exhausted) this.closeWindow(window, now, "limits_reduced");
+      if (exhausted) this.store.closeWindow(window, now, "limits_reduced");
     }
     this.db
       .prepare(
