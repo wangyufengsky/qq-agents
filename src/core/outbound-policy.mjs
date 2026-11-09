@@ -4,7 +4,7 @@ import {
 } from "./social-protection.mjs";
 import { peerQzoneSources } from "./peer-qzone-protection.mjs";
 import { createHash } from "node:crypto";
-import { humanInput } from "./input-progress.mjs";
+import { currentHumanRequest } from "./input-progress.mjs";
 import { publicUrl } from "../apps/urls.mjs";
 import { privateGithubSources } from "../github/policy.mjs";
 
@@ -154,8 +154,7 @@ export function assertCredentials(runtime, ctx, request) {
 }
 // Authority comes from a visible transport-authenticated human message, never a model flag.
 export function requestedByHuman(runtime, ctx, request, eventId) {
-  if (!eventId || !ctx.requestEvents?.has(eventId)) return false;
-  const row = humanInput(runtime, ctx, eventId);
+  const row = eventId && currentHumanRequest(runtime, ctx, eventId);
   if (!row) return false;
   const text = row.body.trim();
   const { tool, args } = request;

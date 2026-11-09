@@ -51,6 +51,9 @@ test("new messages wait for quiet time and return real safe read watermark", asy
   });
   const saved = mem.append({
     dedupe: "waiting",
+    connectionId: "qq-0",
+    senderId: "30000",
+    payload: { trustedInput: true },
     conversation: ctx.conversation,
     kind: "message.received",
     body: "然后，",

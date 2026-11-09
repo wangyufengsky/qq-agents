@@ -7,6 +7,7 @@ import { MemoryStore } from "../src/memory/store.mjs";
 import { restoreExport } from "../src/memory/migrate.mjs";
 import {
   EXPORT_TABLES,
+  INPUT_EXPORT_TABLES,
   exportDigest,
   validateExport,
 } from "../src/memory/export-format.mjs";
@@ -426,6 +427,11 @@ test("items travel with an export, keep their closing boundary, and older export
     { writtenIn: scope, now: 1 },
   );
   const sign = (tables) => {
+    tables = Object.fromEntries(
+      Object.entries(tables).filter(
+        ([name]) => !INPUT_EXPORT_TABLES.includes(name),
+      ),
+    );
     const data = {
       version: 2,
       agentId: "agent-a",

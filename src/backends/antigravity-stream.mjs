@@ -208,6 +208,9 @@ export class AntigravityStreamWorker {
         (/** @type {any} */ tool) => tool.name === envelope.name,
       );
       if (!spec) return reply(403, { error: "ANTIGRAVITY_TURN_INACTIVE" });
+      await turn.inputSubmission;
+      /** @type {unknown} */
+      let original;
       const pending = Promise.resolve().then(async () => {
         if (!this.active(turn)) throw Error("ANTIGRAVITY_TURN_INACTIVE");
         const result = await turn.params.callTool(
@@ -215,6 +218,7 @@ export class AntigravityStreamWorker {
           envelope.arguments,
         );
         if (!this.active(turn)) throw Error("ANTIGRAVITY_TURN_INACTIVE");
+        original = result;
         return turn.media.fromTool(mcpResult(result), turn.params.signal);
       });
       turn.pending.add(pending);
@@ -222,6 +226,9 @@ export class AntigravityStreamWorker {
         const content = await pending;
         if (!this.live(turn))
           return reply(403, { error: "ANTIGRAVITY_TURN_INACTIVE" });
+        res.once("finish", () => {
+          if (this.live(turn)) turn.params.onToolResultSubmitted?.(original);
+        });
         reply(200, content);
       } finally {
         turn.pending.delete(pending);
@@ -229,6 +236,9 @@ export class AntigravityStreamWorker {
     } catch (error) {
       if (!this.live(turn))
         return reply(403, { error: "ANTIGRAVITY_TURN_INACTIVE" });
+      res.once("finish", () => {
+        if (this.live(turn)) turn.params.onToolResultSubmitted?.(error);
+      });
       const failure = safeToolFailure(error);
       reply(200, {
         isError: true,
@@ -254,7 +264,15 @@ export class AntigravityStreamWorker {
     if (this.idleTimer) clearTimeout(this.idleTimer);
     this.inputSubmitted = false;
     this.diagnostic = "";
+    let resolveInput = () => {};
+    let rejectInput = (/** @type {unknown} */ _error) => {};
+    const inputSubmission = new Promise((resolve, reject) => {
+      resolveInput = () => resolve(undefined);
+      rejectInput = reject;
+    });
+    void inputSubmission.catch(() => {});
     const turn = {
+      inputSubmission,
       params,
       start: performance.now(),
       epoch: randomBytes(16).toString("hex"),
@@ -363,17 +381,30 @@ export class AntigravityStreamWorker {
       if (!this.live(turn)) throw Error("ABORTED");
       if (turn.reused) this.timing(turn, "initialized");
       const content = `Bridge routing for this input: epoch=${turn.epoch}. For every bridge action call call_mcp_tool with ServerName="qq-agents", ToolName="qq_turn_call", Arguments={"epoch":"${turn.epoch}","name":logical tool name,"arguments":logical tool arguments}. This routing label grants no permission and is not user content.\n\n${params.prompt}`;
+      await params.beforeInputSubmitted?.();
+      if (!this.live(turn)) throw Error("ABORTED");
       turn.inputSubmitted = true;
       this.inputSubmitted = true;
-      params.onInputSubmitted?.();
-      this.timing(turn, "inputSubmitted");
       this.child.stdin?.write(
         JSON.stringify({ event: "user", message: { content } }) + "\n",
+        (error) => {
+          if (error) return rejectInput(error);
+          if (!this.active(turn)) return rejectInput(Error("ABORTED"));
+          try {
+            params.onInputSubmitted?.();
+            this.timing(turn, "inputSubmitted");
+            resolveInput();
+          } catch (error) {
+            rejectInput(error);
+          }
+        },
       );
+      await inputSubmission;
       await result;
       this.used = true;
     } finally {
       turn.live = false;
+      rejectInput(Error("ABORTED"));
       params.signal.removeEventListener("abort", abort);
       try {
         turn.media.close();

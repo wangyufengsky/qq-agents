@@ -3,8 +3,8 @@ import { withoutClosenessCache } from "../core/closeness.mjs";
 import fs from "node:fs";
 import { DatabaseSync, backup } from "node:sqlite";
 import { parentPort, workerData } from "node:worker_threads";
-import { EXPORT_TABLES, exportDigest } from "./export-format.mjs";
-import { MEMORY_DRAFT_SCHEMA_VERSION } from "./qq-drafts.mjs";
+import { EXPORT_TABLES, exportDigest, exportHeader } from "./export-format.mjs";
+import { INPUT_SCHEMA_VERSION } from "./input-state.mjs";
 
 const { source, snapshot, output, agentId, limits } = workerData;
 const cancelled = new Int32Array(workerData.cancelled);
@@ -46,7 +46,7 @@ try {
   db.exec("PRAGMA cache_size=-2048; PRAGMA mmap_size=0");
   if (
     db.prepare("PRAGMA user_version").get().user_version !==
-    MEMORY_DRAFT_SCHEMA_VERSION
+    INPUT_SCHEMA_VERSION
   )
     throw Error("UNSUPPORTED_EXPORT_SCHEMA");
   fd = fs.openSync(output, "wx", 0o600);
@@ -59,7 +59,7 @@ try {
     let offset = 0;
     while (offset < buffer.length) offset += fs.writeSync(fd, buffer, offset);
   };
-  const header = { version: 2, agentId, exportedAt: new Date().toISOString() };
+  const header = exportHeader(agentId, new Date().toISOString());
   const digest = exportDigest(header),
     counts = {};
   write(JSON.stringify(header).slice(0, -1) + ',"tables":{');

@@ -130,7 +130,15 @@ test("conversation_read remains current-chat by default and exact-source reads p
   const { runtime, store } = fixture(t),
     mem = store.bind("agent-0");
   const ctx = context(runtime, "agent-0", "private:30000");
-  const own = append(mem, "private", "private:30000", "PRIVATE_HISTORY");
+  const own = mem.append({
+    dedupe: "private",
+    conversation: "private:30000",
+    connectionId: "qq-0",
+    kind: "message.received",
+    body: "PRIVATE_HISTORY",
+    senderId: "30000",
+    payload: { trustedInput: true },
+  });
   const allowed = append(mem, "group", "group:20000", "GROUP_HISTORY");
   const withheld = append(
     mem,

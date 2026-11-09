@@ -213,11 +213,13 @@ class RecoveryRpc extends EventEmitter {
         method: "turn/started",
         params: { threadId: "codex-session", turn: { id: turn.id } },
       });
-      await this.beforeEnd(index);
-      this.turns.push(turn);
-      this.emit("notification", {
-        method: "turn/completed",
-        params: { threadId: "codex-session", turn },
+      setImmediate(async () => {
+        await this.beforeEnd(index);
+        this.turns.push(turn);
+        this.emit("notification", {
+          method: "turn/completed",
+          params: { threadId: "codex-session", turn },
+        });
       });
       return { turn };
     }

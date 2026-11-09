@@ -1,3 +1,4 @@
+import { withExportManifest } from "../src/memory/export-format.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { fixture, config, settle } from "./helpers.mjs";
@@ -49,7 +50,10 @@ test("derived timers roll back with state, rebuild after reopen, and restore fro
     (x) => x.conversation === "group:20000",
   ).value = JSON.stringify(value);
   const restored = new MemoryStore(":memory:");
-  restoreExport(restored.bind("agent-0"), exportData);
+  restoreExport(
+    restored.bind("agent-0"),
+    withExportManifest(exportData, exportData.tables),
+  );
   const reopened = new MemoryStore(f.store.file);
   for (const store of [restored, reopened]) {
     const runtime = new Runtime({

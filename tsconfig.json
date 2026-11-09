@@ -21,6 +21,7 @@
     "src/core/closeness.mjs",
     "src/core/message-recall.mjs",
     "src/memory/recalls.mjs",
+    "src/memory/input-state.mjs",
     "src/memory/qq-drafts.mjs",
     "src/core/draft-delivery.mjs",
     "src/backends/*.mjs",

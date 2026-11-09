@@ -3,16 +3,22 @@ import { socialSafeExportRow } from "./protection.mjs";
 import { QQDraftStore } from "./qq-drafts.mjs";
 import { withoutClosenessCache } from "../core/closeness.mjs";
 export { inspectLegacy, importLegacy } from "./legacy-import.mjs";
-import { validateExport } from "./export-format.mjs";
+import { INPUT_EXPORT_TABLES, validateExport } from "./export-format.mjs";
+import {
+  inputBelongsToScope,
+  migrateInputBaselines,
+  semanticInputVersion,
+} from "./input-state.mjs";
 import {
   validateRestoredAliases,
   validateRestoredObservations,
 } from "./message-ids.mjs";
 /** @param {any} memory Bound AgentMemory. @param {any} data Parsed export file. */
 export function restoreExport(memory, data) {
-  if (![1, 2].includes(data.version) || data.agentId !== memory.agentId)
+  if (![1, 2, 3].includes(data.version) || data.agentId !== memory.agentId)
     throw Error("EXPORT_IDENTITY_MISMATCH");
   validateExport(data);
+  const archivedScopes = validateArchivedInputScopes(data);
   if (
     Object.hasOwn(data.tables, "qq_drafts") !==
     Object.hasOwn(data.tables, "qq_draft_items")
@@ -132,9 +138,13 @@ export function restoreExport(memory, data) {
   };
   // An empty target identity can be restored beside other identities. Remap only local seq watermarks.
   if (
-    Object.entries(columns).some(
-      ([table, cols]) =>
-        cols.includes("agent_id") &&
+    [
+      ...INPUT_EXPORT_TABLES,
+      ...Object.entries(columns)
+        .filter(([, cols]) => cols.includes("agent_id"))
+        .map(([table]) => table),
+    ].some(
+      (table) =>
         memory.db
           .prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE agent_id=?`)
           .get(memory.agentId).n,
@@ -162,6 +172,8 @@ export function restoreExport(memory, data) {
             basis,
             baseline: _baseline,
             origin: _origin,
+            checkpointIntent: _checkpointIntent,
+            observation: _observation,
             ...metadata
           } = JSON.parse(row.value);
           row.value = JSON.stringify({
@@ -208,6 +220,8 @@ export function restoreExport(memory, data) {
           throw Error("EXPORT_FOREIGN_DIARY");
         if (table === "runtime") {
           const state = JSON.parse(row.value);
+          // Local acknowledgement/repair credentials belong to the original installation.
+          delete state.readCheckpointReceipts;
           if (
             /^(group|private):/.test(row.conversation) &&
             (state.inputReviewFromSeq !== undefined ||
@@ -303,5 +317,71 @@ export function restoreExport(memory, data) {
       );
     validateRestoredAliases(memory);
     validateRestoredObservations(memory);
+    if (archivedScopes)
+      preserveArchivedInputGaps(memory.db, data, archivedScopes);
+    // The manifest detects corruption. It does not authenticate input dispositions
+    // or a history floor. Rebuild the candidates from the restored events and
+    // require an explicit local baseline selection before activating a floor.
+    migrateInputBaselines(memory.db, memory.agentId, "import");
   });
+}
+
+/** @param {any} data */
+function validateArchivedInputScopes(data) {
+  if (data.version !== 3) return;
+  /** @type {Map<string, [string, string, string, string, string]>} */
+  const scopes = new Map();
+  for (const row of data.tables.input_scopes) {
+    let scope;
+    try {
+      scope = JSON.parse(row.scope);
+    } catch {
+      throw Error("EXPORT_INTEGRITY_FAILED");
+    }
+    if (
+      !Array.isArray(scope) ||
+      scope.length !== 5 ||
+      scope.some((value) => typeof value !== "string" || !value) ||
+      scope[0] !== data.agentId ||
+      scope[3] !== row.conversation ||
+      row.agent_id !== data.agentId ||
+      JSON.stringify(scope) !== row.scope ||
+      scopes.has(row.scope)
+    )
+      throw Error("EXPORT_INTEGRITY_FAILED");
+    scopes.set(row.scope, [scope[0], scope[1], scope[2], scope[3], scope[4]]);
+  }
+  for (const row of data.tables.input_versions)
+    if (row.agent_id !== data.agentId || !scopes.has(row.scope))
+      throw Error("EXPORT_INTEGRITY_FAILED");
+  for (const row of data.tables.input_legacy_scopes)
+    if (row.agent_id !== data.agentId) throw Error("EXPORT_INTEGRITY_FAILED");
+  return scopes;
+}
+
+/** @param {import("node:sqlite").DatabaseSync} db @param {any} data @param {Map<string, [string, string, string, string, string]>} scopes */
+function preserveArchivedInputGaps(db, data, scopes) {
+  const event = db.prepare("SELECT * FROM events WHERE id=? AND agent_id=?");
+  const gap = db.prepare(`
+    INSERT INTO message_progress VALUES(?,?,?,1)
+    ON CONFLICT(agent_id,conversation,seq) DO UPDATE SET summary_only=1
+  `);
+  for (const version of data.tables.input_versions) {
+    if (version.current !== 1) continue;
+    const scope = scopes.get(version.scope);
+    const row = /** @type {import("./input-state.mjs").EventRow|undefined} */ (
+      event.get(version.id, data.agentId)
+    );
+    if (!row || !scope || !inputBelongsToScope(row, scope, db)) continue;
+    // Only conservative holds travel. Account/version mismatches and
+    // altered projections never inherit closed or processed dispositions.
+    if (
+      version.legacy_gap === 1 ||
+      version.original === 0 ||
+      (!version.processed && !version.legacy_processed) ||
+      (!version.legacy_closed && version.reviewed_deliveries === "[]") ||
+      semanticInputVersion(row) !== version.version
+    )
+      gap.run(data.agentId, row.conversation, row.seq);
+  }
 }

@@ -210,10 +210,19 @@ export class CodexBackend {
         });
     }
     if (method === "turn/started") {
+      // Only turn/start's receipt identifies our submitted input. Earlier
+      // notifications can belong to a prior turn on the resumed thread.
+      if (r.submitInput && (!r.inputSubmitted || p.turn.id !== r.turnId))
+        return;
+      if (p.turn.id === r.recoveryTurnId) return;
       r.turnId = p.turn.id;
       r.onBackendTurn?.({ turnId: p.turn.id });
     }
     if (method === "turn/completed") {
+      if (r.submitInput && !r.inputSubmitted) {
+        r.earlyCompletions.set(p.turn.id, p);
+        return;
+      }
       if (
         (r.turnId && p.turn.id !== r.turnId) ||
         p.turn.id === r.recoveryTurnId
@@ -232,6 +241,7 @@ export class CodexBackend {
       method !== "item/tool/call" ||
       !r ||
       !r.callTool ||
+      (r.submitInput && !r.inputSubmitted) ||
       r.turnId !== p.turnId ||
       r.signal.aborted
     ) {
@@ -241,38 +251,60 @@ export class CodexBackend {
     try {
       const args =
         typeof p.arguments === "string" ? JSON.parse(p.arguments) : p.arguments;
-      const result = mcpResult(await r.callTool(p.tool, args));
+      const original = await r.callTool(p.tool, args);
+      const result = mcpResult(original);
       if (r.signal.aborted) return this.rpc.reject(id);
-      this.rpc.respond(id, {
-        success: !result.isError,
-        contentItems: result.content.flatMap((/** @type {any} */ c) =>
-          c.type === "text"
-            ? [{ type: "inputText", text: c.text }]
-            : c.type === "image"
-              ? [
-                  {
-                    type: "inputImage",
-                    imageUrl: `data:${c.mimeType};base64,${c.data}`,
-                  },
-                ]
-              : c.type === "audio"
+      this.rpc.respond(
+        id,
+        {
+          success: !result.isError,
+          contentItems: result.content.flatMap((/** @type {any} */ c) =>
+            c.type === "text"
+              ? [{ type: "inputText", text: c.text }]
+              : c.type === "image"
                 ? [
                     {
-                      type: "inputText",
-                      text: "音频已读取并登记，但此 Codex 动态工具通道未提供音频输入；没有转录，不得声称听懂语音内容。",
+                      type: "inputImage",
+                      imageUrl: `data:${c.mimeType};base64,${c.data}`,
                     },
                   ]
-                : [],
-        ),
-      });
+                : c.type === "audio"
+                  ? [
+                      {
+                        type: "inputText",
+                        text: "音频已读取并登记，但此 Codex 动态工具通道未提供音频输入；没有转录，不得声称听懂语音内容。",
+                      },
+                    ]
+                  : [],
+          ),
+        },
+        (/** @type {Error | null | undefined} */ error) => {
+          if (!error && !r.signal.aborted && this.active.get(p.threadId) === r)
+            r.onToolResultSubmitted?.(original);
+        },
+      );
     } catch (error) {
       try {
-        this.rpc.respond(id, {
-          success: false,
-          contentItems: [
-            { type: "inputText", text: JSON.stringify(safeToolFailure(error)) },
-          ],
-        });
+        this.rpc.respond(
+          id,
+          {
+            success: false,
+            contentItems: [
+              {
+                type: "inputText",
+                text: JSON.stringify(safeToolFailure(error)),
+              },
+            ],
+          },
+          (/** @type {Error | null | undefined} */ failure) => {
+            if (
+              !failure &&
+              !r.signal.aborted &&
+              this.active.get(p.threadId) === r
+            )
+              r.onToolResultSubmitted?.(error);
+          },
+        );
       } catch {
         // The app-server may already be gone; nothing more to report.
       }
@@ -284,7 +316,7 @@ export class CodexBackend {
   }
   /** @param {StoredSession | null | undefined} session @param {import("./session-contract.mjs").ToolSpec[]} tools @param {import("./session-contract.mjs").SessionContract} [previous] */
   acceptsSession(session, tools, previous) {
-    return acceptsSession(this, session, tools, previous);
+    return acceptsSession(this, session, tools);
   }
   /** @param {{windowId?: string, actorGeneration?: string}} [filter] */
   async closeSocialSessions(filter = {}) {
@@ -314,6 +346,7 @@ export class CodexBackend {
     saveSession,
     onBackendTurn,
     onInputSubmitted,
+    onToolResultSubmitted,
     beforeInputSubmitted,
     onImageSession,
     onGeneratedImage,
@@ -425,6 +458,14 @@ export class CodexBackend {
       onBackendTurn,
       onGeneratedImage,
       onImageError,
+      onToolResultSubmitted,
+      inputSubmitted: false,
+      earlyCompletions: new Map(),
+      submitInput: () => {
+        if (active.inputSubmitted || signal.aborted) return;
+        active.inputSubmitted = true;
+        onInputSubmitted?.();
+      },
       turnId: null,
       recoveryTurnId: recovery?.turnId,
     };
@@ -441,7 +482,6 @@ export class CodexBackend {
       if (signal.aborted) throw Error("ABORTED");
       await beforeInputSubmitted?.();
       if (signal.aborted) throw Error("ABORTED");
-      onInputSubmitted?.();
       const receipt = await this.rpc.request("turn/start", {
         threadId,
         input: [
@@ -462,7 +502,12 @@ export class CodexBackend {
         effort: this.config.effort || "high",
       });
       active.turnId = receipt.turn.id;
+      active.submitInput();
       onBackendTurn?.({ turnId: receipt.turn.id });
+      const completed = active.earlyCompletions.get(receipt.turn.id);
+      active.earlyCompletions.clear();
+      if (completed)
+        this.notification({ method: "turn/completed", params: completed });
       if (signal.aborted) abort();
       await done;
     } catch (/** @type {any} */ e) {

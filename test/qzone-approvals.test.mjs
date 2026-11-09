@@ -414,7 +414,7 @@ test("an old SQLite database receives the approval table during schema initializ
   );
   assert.equal(
     upgraded.db.prepare("PRAGMA user_version").get().user_version,
-    7,
+    8,
   );
 });
 

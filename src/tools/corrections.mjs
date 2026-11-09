@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { humanInput } from "../core/input-progress.mjs";
+import { currentHumanRequest } from "../core/input-progress.mjs";
 import { recallBoundary } from "../core/recall-boundary.mjs";
 const type = z.enum(["event", "diary", "person", "item", "note", "intent"]);
 const text = z.string().trim().min(1).max(600);
@@ -50,10 +50,9 @@ export function correctionTool(runtime, ctx, name, args) {
     corrections = memory.corrections;
   const boundary = recallBoundary(runtime, ctx);
   if (name === "memory_correct") {
-    const source = humanInput(runtime, ctx, args.sourceId);
+    const source = currentHumanRequest(runtime, ctx, args.sourceId);
     if (
       !source ||
-      !ctx.requestEvents?.has(source.id) ||
       (source.sender_id !== args.personId &&
         !runtime.agent(ctx.agentId).ownerIds.includes(source.sender_id))
     )

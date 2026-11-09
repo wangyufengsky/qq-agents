@@ -339,10 +339,6 @@ export async function sendDraftTool(
       { ...items[0].input, requestId, inputReview },
       { onReserve },
     );
-  const baseline = {
-    readSeq: ctx.reviewReadSeq || 0,
-    sentSeq: ctx.reviewSentSeq || 0,
-  };
   if (
     !runtime.drafts.find(scope, toolName, requestId) &&
     ctx.recoveryDeliveryBlocked
@@ -355,7 +351,11 @@ export async function sendDraftTool(
         item.input.mediaId,
         item.requestId,
       );
-  const basis = snapshotReviewInput(runtime, ctx, baseline);
+  const basis = snapshotReviewInput(runtime, ctx);
+  const baseline = {
+    revision: basis.revision,
+    ids: basis.observedIds,
+  };
   const { draft, created } = runtime.drafts.stage(scope, {
     requestId,
     toolName,
@@ -488,7 +488,7 @@ async function runDraft(
       if (!burst) throw error;
       attachReviewOriginals(runtime, ctx, error);
       const failure = safeToolFailure(error);
-      return {
+      const result = {
         status: "stopped",
         receipts,
         failedIndex: item.position,
@@ -499,6 +499,10 @@ async function runDraft(
         draft: saved,
         doNotReplay: true,
       };
+      runtime.stageToolInput(ctx, result, () =>
+        runtime.commitToolInput(ctx, error),
+      );
+      return result;
     }
   }
   const saved = runtime.drafts.read(scope, draft.id);

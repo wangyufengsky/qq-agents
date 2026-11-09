@@ -941,7 +941,7 @@ test("a reused session survives an input callback failure before stdin", async (
 
   await assert.rejects(
     conversation.run("success", {
-      onInputSubmitted() {
+      beforeInputSubmitted() {
         callbackCalls++;
         throw Error("SYNTHETIC_INPUT_CALLBACK_FAILURE");
       },
@@ -1276,4 +1276,22 @@ test("isolates a late malformed stdout tail from a saved idle session", async (t
   assert.equal([...fixture.backend.workers.values()][0], replacementWorker);
   assert.equal(fixture.backend.active.size, 0);
   assert.equal(fixture.backend.conversations.size, 0);
+});
+
+test("a reused worker contains a submitted-input observer failure", async (t) => {
+  const { backend, chat } = setup(t);
+  const conversation = chat("private:submitted-observer");
+  await conversation.run("success");
+  await assert.rejects(
+    conversation.run("success", {
+      onInputSubmitted() {
+        throw Error("SYNTHETIC_SUBMITTED_OBSERVER_FAILURE");
+      },
+    }),
+    (error) =>
+      error.message === "SYNTHETIC_SUBMITTED_OBSERVER_FAILURE" &&
+      !(error instanceof SessionPreparationFailure),
+  );
+  assert.equal(conversation.state.session, null);
+  assert.equal(backend.active.size, 0);
 });

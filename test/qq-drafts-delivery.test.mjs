@@ -1,3 +1,4 @@
+import { withExportManifest } from "../src/memory/export-format.mjs";
 import { safeToolFailure } from "../src/tools/errors.mjs";
 import { draftScope } from "../src/core/draft-delivery.mjs";
 import { MemoryStore } from "../src/memory/store.mjs";
@@ -335,7 +336,11 @@ test("a role archive restores pending draft receipts conservatively and rejects 
   );
   broken.tables.qq_draft_items = [];
   assert.throws(
-    () => restoreExport(invalid.bind(scope.agentId), broken),
+    () =>
+      restoreExport(
+        invalid.bind(scope.agentId),
+        withExportManifest(broken, broken.tables),
+      ),
     /QQ_DRAFT_INVALID/,
   );
   broken.tables.qq_draft_items = structuredClone(source.tables.qq_draft_items);
@@ -346,7 +351,11 @@ test("a role archive restores pending draft receipts conservatively and rejects 
   falseRecord.kind = "notice";
   falseRecord.message_id = "45678";
   assert.throws(
-    () => restoreExport(invalid.bind(scope.agentId), broken),
+    () =>
+      restoreExport(
+        invalid.bind(scope.agentId),
+        withExportManifest(broken, broken.tables),
+      ),
     /QQ_DRAFT_ARCHIVE_MISMATCH/,
   );
 });

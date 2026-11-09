@@ -233,8 +233,16 @@ export const definitions = {
       .strict(),
   ],
   qq_mark_read: [
-    "仅提交当前会话已看到的安全消息水位；不能使用跨会话结果的readThroughSeq。conversation_read的markReadEligible必须为true，不能超过已展示水位。",
-    z.object({ throughSeq: z.number().int().min(0) }).strict(),
+    "仅提交当前会话已看到的安全消息水位；不能使用跨会话结果的readThroughSeq。conversation_read 的 markReadEligible 必须为 true，不能超过已展示水位。默认只提交已处理；明确决定无需回复的消息可在 noReply 传入当前回合完整展示所返回的 id 和 version，每批最多 50 项。该决定只影响以后独立回合的审阅。",
+    z
+      .object({
+        throughSeq: z.number().int().min(0),
+        noReply: z
+          .array(z.object({ id: str, version: str }).strict())
+          .max(50)
+          .optional(),
+      })
+      .strict(),
   ],
   qq_set_silence: [
     "让当前会话潜水指定分钟；不解除管理员暂停。",

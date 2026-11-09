@@ -10,6 +10,7 @@ import { MemoryStore } from "../src/memory/store.mjs";
 import { restoreExport } from "../src/memory/migrate.mjs";
 import {
   EXPORT_TABLES,
+  INPUT_EXPORT_TABLES,
   exportDigest,
   validateExport,
 } from "../src/memory/export-format.mjs";
@@ -185,6 +186,11 @@ test("projects travel with an export, and the console lists them read-only", asy
   );
   const tables = memory.export().tables;
   const sign = (tables) => {
+    tables = Object.fromEntries(
+      Object.entries(tables).filter(
+        ([name]) => !INPUT_EXPORT_TABLES.includes(name),
+      ),
+    );
     const data = {
       version: 2,
       agentId: "agent-a",

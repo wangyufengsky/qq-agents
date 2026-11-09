@@ -1,8 +1,13 @@
 // @ts-check
+import {
+  inputBelongsToScope,
+  inputScope,
+  isLogicalImportInput,
+} from "../memory/input-state.mjs";
 // Recall notices are append-only. The original row keeps status=observed;
 // consult its scoped notice links whenever live input is used as authority.
 /** @param {any} runtime @param {string} agentId @param {string} conversation @param {string} id */
-export function liveInput(runtime, agentId, conversation, id) {
+export function recordedInput(runtime, agentId, conversation, id) {
   const a = runtime.agent(agentId),
     db = runtime.memory.bind(a.id).db;
   const row = db
@@ -35,4 +40,19 @@ export function liveInput(runtime, agentId, conversation, id) {
       JSON.parse(row.payload).messageNamespace || "onebot",
     );
   return recalled ? null : row;
+}
+
+/** @param {any} runtime @param {string} agentId @param {string} conversation @param {string} id */
+export function liveInput(runtime, agentId, conversation, id) {
+  const row = recordedInput(runtime, agentId, conversation, id);
+  const db = runtime.memory.bind(agentId).db;
+  return row &&
+    inputBelongsToScope(
+      row,
+      JSON.parse(inputScope(runtime, { agentId, conversation })),
+      db,
+    ) &&
+    !isLogicalImportInput(db, id)
+    ? row
+    : null;
 }

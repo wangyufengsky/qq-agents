@@ -37,7 +37,7 @@ npm run export -- --data /path/to/new-data --agent agent-a --file /path/to/priva
 npm run export -- --data /path/to/restore-data --agent agent-a --file /path/to/private-export.json --restore
 ```
 
-包含消息草稿的角色归档保留草稿和账本关联。导入的草稿只供查看，未决投递仍需核对。原库序号、发送审阅令牌、旧回合授权都不用于恢复发送。原有未包含草稿的归档仍可恢复。数据库升级至结构版本 7，回退旧代码时使用升级前的一致 SQLite 备份。
+包含消息草稿的角色归档保留草稿和账本关联。导入的草稿只供查看，未决投递仍需核对。原库序号、发送审阅令牌、旧回合授权都不用于恢复发送。原有未包含草稿的归档仍可恢复。当前数据库结构版本为 8，回退旧代码时使用升级前的一致 SQLite 备份。
 
 恢复不覆盖已有目标主体。可以逐主体恢复到一个新 SQLite 数据库；跨主体冲突会事务回退，局部 seq 水位按需重映射，证据 ID 和日记修订保留。备份需另含 `media/` 和 `voices/`；JSON 中是媒体引用，不包含全部图片字节。凭据、角色配置和模型 home 需要按用户选择单独保留在本机。
 
@@ -150,3 +150,42 @@ schema 6 新增 message_aliases 和 message_observations。明确别名解析统
 单角色 JSON 导出新增可选的 `qzone_approvals` 表，旧版导出缺少该表仍可恢复。新导出恢复时保留编号与终态历史，将待审或正在发布的申请设为取消；导出文件不能携带实例发布授权。完整数据库恢复可保留未过期待审稿，需重新由管理员明确批准；中断发布依据同一 `requestId` 的账本结果关闭，不自动重放。
 
 本次不修改开关或扩充权限，已有 Qzone 开启角色改为使用具体正文审批，原通用回合授权不再批准任意说说。工具说明变化可能使受影响模型会话按现有契约正常退休，持久经历、日记和 Self 保留。回退须使用升级前配置及一致数据库备份，旧版不能承接此审批流程；新版 JSON 导出不要交给不认识该表的旧版恢复。
+
+## 输入状态升级与基线预检
+
+数据库升级保留逐版本的输入处理状态、草稿和投递事实。旧库能明确推导历史边界时沿用该边界。已知缺口仍需处理。缺少可靠边界的聊天会报告需要确认历史基线。
+
+先为待升级数据做一致 SQLite 备份，在隔离副本中完成 schema 升级。让副本的数据目录包含其对应的 `config.json`，随后用只读预检生成私有清单。清单包含角色、连接、账号、聊天、消息命名空间和基线证据摘要，以及历史输入、缺口、未结束草稿、未知投递的数量。清单不包含聊天正文或凭据。
+
+```bash
+node scripts/input-state-preflight.mjs preview --data UPGRADED_COPY --manifest BASELINE_MANIFEST.json
+```
+
+逐项核对标有 `needsConfirmation` 的聊天。另存私有批准文件，填入原清单的 `digest`。每项须给出清单中完整的 `scope`、所选的历史输入序号 `closedThrough` 和确认理由。可以选 `0` 保留所有历史输入待处理。下面的序号和身份均为占位值。
+
+```json
+{
+  "manifestDigest": "清单的原始摘要",
+  "choices": [
+    {
+      "scope": [
+        "example-role",
+        "example-connection",
+        "10000",
+        "group:20000",
+        "onebot"
+      ],
+      "closedThrough": 0,
+      "reason": "暂不确认旧消息的处理边界，保留历史待处理"
+    }
+  ]
+}
+```
+
+```bash
+node scripts/input-state-preflight.mjs apply --data UPGRADED_COPY --manifest BASELINE_MANIFEST.json --confirm BASELINE_APPROVAL.json
+```
+
+应用时目标数据目录须停止运行。脚本在单一事务内验证清单、当前角色绑定、所选范围和范围内输入版本。原范围变化时重新预检。预检后新到的输入保持未决，已知缺口和重开的版本继续保留。默认须处理全部待确认聊天。明确接受部分升级时可在批准文件中加入 `"allowPartial": true`，其余聊天保持受限。保留清单和批准文件作为私有运维记录。
+
+逻辑导出 v3 包含输入算法版本、scope、逐版本事实和完整性清单。支持读取 v1、v2 和 v3。校验和用于检查文件完整性。普通逻辑导入重建待确认的本地基线，保留可映射的已知缺口，历史处置留在源归档供核对。换账号、脱敏或重新计算校验和不会授予处理或发送权限。整库一致备份恢复可保留精确处置。两种恢复都从新的回合重新建立展示证据和发送凭证。

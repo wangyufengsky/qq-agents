@@ -81,7 +81,7 @@ test("an ordinary voice source does not expose the protected transcript in its r
   const result = await blocked(f);
   assert(result.items.some(({ id }) => id === source.id));
   assert(!JSON.stringify(result).includes(marker));
-  assert.equal(f.ctx.requestEvents.size, 0);
+  assert.equal(f.ctx.requestEvents.size, 1);
   assert.equal(f.mem.state(f.ctx.conversation).readThroughSeq || 0, 0);
 });
 
@@ -141,7 +141,7 @@ test("only final original projection counts, and complete pagination is required
   assert.equal(out.items[0].bodyOmitted, true);
   assert.equal(out.items[1].body, "Short fixture");
   assert.equal(out.token, undefined);
-  assert.equal(f.ctx.requestEvents.size, 0);
+  assert.equal(f.ctx.requestEvents.size, 1);
   assert.equal(f.mem.state(f.ctx.conversation).readThroughSeq || 0, 0);
   const { id } = out.items[0];
   let offset = 0;
@@ -190,7 +190,7 @@ test("a burst stop keeps original, source, token and draft receipt in the same t
     ["unsubmitted", "unsubmitted"],
   );
   assert.deepEqual(out.receipts, []);
-  assert.equal(f.ctx.requestEvents.size, 0);
+  assert.equal(f.ctx.requestEvents.size, 1);
   assert.equal(f.mem.state(f.ctx.conversation).readThroughSeq || 0, 0);
   const sent = await send(f, out.draft, {
     token: out.inputReview.token,
@@ -236,8 +236,8 @@ test("a partial burst returns its confirmed prefix and never replays it after re
     ["sent", "unsubmitted"],
   );
   assert.equal(gateway.sent.length, 1);
-  assert.equal(f.ctx.requestEvents.size, 0);
-  assert.equal(f.mem.state(f.ctx.conversation).replyBatchSends, 1);
+  assert.equal(f.ctx.requestEvents.size, 1);
+  assert.equal(f.mem.state(f.ctx.conversation).replyBatchSends, 0);
   const pending = await send(f, out.draft);
   assert.equal(pending.error, "INPUT_REVIEW_REQUIRED");
   assert.deepEqual(pending.inputReview.items, []);
@@ -333,8 +333,8 @@ test("a pending draft does not prevent a read checkpoint for a complete review r
   const review = await blocked(f);
   const seq = review.items[0].seq;
   assert.equal(review.completeThroughSeq, seq);
-  assert.equal(f.ctx.requestEvents.size, 0);
-  assert.equal(f.mem.state(f.ctx.conversation).replyInputSeq || 0, 0);
+  assert.equal(f.ctx.requestEvents.size, 1);
+  assert.equal(f.mem.state(f.ctx.conversation).replyInputSeq, seq);
   assert.equal(f.mem.state(f.ctx.conversation).readThroughSeq || 0, 0);
   const duplicate = await f.runtime.callTool(f.ctx, "qq_mark_read", {
     throughSeq: seq,

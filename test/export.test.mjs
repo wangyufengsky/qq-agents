@@ -141,7 +141,7 @@ test("CLI exports a verified snapshot and restores revisions, identities and mes
     exported = run(root, file);
   assert.equal(exported.status, 0, exported.stderr);
   const data = JSON.parse(fs.readFileSync(file, "utf8"));
-  assert.equal(data.version, 2);
+  assert.equal(data.version, 3);
   assert.equal(data.manifest.counts.events, 2);
   assert.deepEqual(data.tables, expected);
   // Windows has no POSIX permission bits to check.
@@ -153,10 +153,11 @@ test("CLI exports a verified snapshot and restores revisions, identities and mes
   assert.equal(run(restored, file, true).status, 0);
   const target = new MemoryStore(path.join(restored, "memory.sqlite"));
   try {
-    assert.deepEqual(
-      JSON.parse(JSON.stringify(target.bind("agent-a").export().tables)),
-      expected,
+    const { input_legacy_scopes: baselines, ...restoredTables } = JSON.parse(
+      JSON.stringify(target.bind("agent-a").export().tables),
     );
+    assert.deepEqual({ ...restoredTables, input_legacy_scopes: [] }, expected);
+    assert(baselines.every(({ closed_through }) => closed_through === null));
   } finally {
     target.close();
   }

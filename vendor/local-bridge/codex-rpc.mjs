@@ -37,9 +37,9 @@ export class CodexRpc extends EventEmitter {
     this.write({method:'initialized',params:{}});
     return result;
   }
-  write(message) {
+  write(message, onSent) {
     if(!this.child?.stdin?.writable)throw new Error('CODEX_NOT_CONNECTED');
-    this.child.stdin.write(JSON.stringify(message)+'\n');
+    this.child.stdin.write(JSON.stringify(message)+'\n', onSent);
   }
   request(method,params={},timeoutMs=this.timeoutMs) {
     const id=++this.sequence;
@@ -49,7 +49,7 @@ export class CodexRpc extends EventEmitter {
       try{this.write({id,method,params});}catch(error){clearTimeout(timer);this.pending.delete(id);reject(error);}
     });
   }
-  respond(id,result) { this.write({id,result}); }
+  respond(id,result,onSent) { this.write({id,result},onSent); }
   reject(id) { this.write({id,error:{code:-32601,message:'Tool or approval request is not enabled for QQ'}}); }
   fail(error) {
     for(const p of this.pending.values()){clearTimeout(p.timer);p.reject(error);}

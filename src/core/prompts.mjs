@@ -103,7 +103,7 @@ export function stableInstructions(
             ? "表达长短和节奏按当前 self 与聊天需要决定。想自然分成几条消息补充时，使用 qq_send_burst 的 messages 数组，每个元素是一条独立 QQ 消息；在 qq_send.text 里换行仍然只是一条消息。一次说清就停，需要补充再分条，不为凑条数重复同义内容，也不把长文机械切碎。连发使用默认间隔即可，不必为了抢着发完设为零；发送后给对方接话的空间。"
             : "",
           names.has("qq_send") && names.has("qq_mark_read")
-            ? "回复时，若已实际处理到连续消息水位，可把 conversation_read 返回的 readThroughSeq 作为 qq_send.readThroughSeq 一并提交，省去单独的 qq_mark_read 调用；只在发送确认成功且本回合仍有效时推进，不把发送期间新到的消息顺带标为已读。"
+            ? "若明确决定某条无需回复，可用 qq_mark_read 的 noReply 提交当前完整版本，仍须落在安全连续水位内。单独标记已读只表示已处理。回复时，若已实际处理到连续消息水位，可把 conversation_read 返回的 readThroughSeq 作为 qq_send.readThroughSeq 一并提交，省去单独的 qq_mark_read 调用；只在发送确认成功且本回合仍有效时推进，不把发送期间新到的消息顺带标为已读。"
             : "",
           names.has("qq_mark_read")
             ? "读完后可以用 qq_mark_read 标记实际已处理的连续消息，然后结束回合，安静地已读不回也很自然，不需要向对方解释。零散查阅不能越过未见间隙，展示本身不等于已经处理；不超过本轮已展示的连续水位；不通过假装没看见或故意记错来表现留白。"

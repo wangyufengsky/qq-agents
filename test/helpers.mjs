@@ -119,7 +119,28 @@ export function fixture(t, { run = async () => {}, cfg = config() } = {}) {
     memory: store,
     configStore,
     backendFactory: () => {
-      const b = { run, cancel: async () => {}, close: async () => {} };
+      const b = {
+        run: async (params) => {
+          const preparing = params.beforeInputSubmitted?.();
+          if (preparing) await preparing;
+          params.onInputSubmitted?.();
+          return run({
+            ...params,
+            callTool: async (...args) => {
+              try {
+                const result = await params.callTool(...args);
+                params.onToolResultSubmitted?.(result);
+                return result;
+              } catch (error) {
+                params.onToolResultSubmitted?.(error);
+                throw error;
+              }
+            },
+          });
+        },
+        cancel: async () => {},
+        close: async () => {},
+      };
       backends.push(b);
       return b;
     },

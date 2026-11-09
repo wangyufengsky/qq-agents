@@ -121,7 +121,7 @@ test("activity comparisons resolve the actual inherited draft for any saved revi
     body: "一起写",
     payload: { trustedInput: true },
   });
-  f.runtime.observeInput(ctx, [
+  f.runtime.contexts.seen(ctx, [
     m.readRecord({ id: event.id }, ctx.conversation),
   ]);
   const p = await f.runtime.callTool(ctx, "project", {
@@ -173,7 +173,7 @@ test("draft pages keep joined emoji intact and only a contiguous complete read p
     body: "一起写",
     payload: { trustedInput: true },
   });
-  f.runtime.observeInput(ctx, [
+  f.runtime.contexts.seen(ctx, [
     m.readRecord({ id: event.id }, ctx.conversation),
   ]);
   const body = "x".repeat(7999) + "👍🏽" + "结尾";

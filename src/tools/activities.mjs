@@ -1,7 +1,7 @@
 import { projectSnapshotProof } from "../home/project-snapshots.mjs";
 import { acknowledgeActivity } from "./activity-acknowledgements.mjs";
 import { z } from "zod";
-import { humanInput } from "../core/input-progress.mjs";
+import { currentHumanRequest } from "../core/input-progress.mjs";
 
 const person = z.string().regex(/^\d{5,12}$/);
 const pending = z
@@ -122,7 +122,7 @@ export function writeActivity(runtime, ctx, args, old) {
     administratorRevisions.length + acknowledged.length > 0;
   const source =
     args.participantEventId &&
-    humanInput(runtime, ctx, args.participantEventId);
+    currentHumanRequest(runtime, ctx, args.participantEventId);
   const participants = old?.activity.participants || args.shared?.participants;
   if (
     !participants?.length ||
@@ -135,11 +135,7 @@ export function writeActivity(runtime, ctx, args, old) {
     JSON.stringify(args.shared.participants) !== JSON.stringify(participants)
   )
     throw Error("ACTIVITY_PARTICIPANTS_IMMUTABLE");
-  if (
-    source &&
-    (!ctx.requestEvents?.has(source.id) ||
-      !participants.includes(source.sender_id))
-  )
+  if (source && !participants.includes(source.sender_id))
     throw Error("ACTIVITY_HUMAN_INPUT_REQUIRED");
   if (args.participantEventId && !source)
     throw Error("ACTIVITY_HUMAN_INPUT_REQUIRED");
@@ -153,7 +149,8 @@ export function writeActivity(runtime, ctx, args, old) {
       participants.some(
         (id) =>
           ![...(ctx.requestEvents || [])].some(
-            (eventId) => humanInput(runtime, ctx, eventId)?.sender_id === id,
+            (eventId) =>
+              currentHumanRequest(runtime, ctx, eventId)?.sender_id === id,
           ),
       )
     )

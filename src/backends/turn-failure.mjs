@@ -184,6 +184,16 @@ export async function runWithRecovery(
           ? (event) =>
               diagnosticLease ? params.onDiagnostic?.(event, attempt) : false
           : undefined,
+        onInputSubmitted: params.onInputSubmitted
+          ? () => {
+              if (diagnosticLease) params.onInputSubmitted?.();
+            }
+          : undefined,
+        onToolResultSubmitted: params.onToolResultSubmitted
+          ? (result) => {
+              if (diagnosticLease) params.onToolResultSubmitted?.(result);
+            }
+          : undefined,
         session,
         recovery,
         ...(recovery

@@ -276,15 +276,6 @@ export class Runtime {
       throw Error("PROTECTED_WORK_NOT_ACTIVE");
     const state = mem.state(conversation);
     const recallGeneration = state.recallRecovery?.generation || 0;
-    // Inherit the old read cursor once. New read marks remain independent of
-    // the send review, including when the next turn opens another context.
-    if (
-      /^(group|private):/.test(conversation) &&
-      state.inputReviewFromSeq === undefined
-    ) {
-      state.inputReviewFromSeq = state.readThroughSeq || 0;
-      mem.setState(conversation, state);
-    }
     const ctx = {
       token: randomBytes(32).toString("base64url"),
       agentId,
@@ -296,8 +287,7 @@ export class Runtime {
       grants: new Set(),
       sendCount: 0,
       replyBatchSends: mem.state(conversation).replyBatchSends || 0,
-      reviewReadSeq: state.inputReviewFromSeq || 0,
-      reviewSentSeq: state.inputReviewThroughSeq || 0,
+      inputEpoch: randomUUID(),
       inputBaseline: Math.max(
         mem.state(conversation).readThroughSeq || 0,
         mem.state(conversation).replyInputSeq || 0,
@@ -953,12 +943,42 @@ export class Runtime {
   runBackend(...args) {
     return this.turns.runBackend(...args);
   }
+  stageToolInput(ctx, result, commit) {
+    (ctx.stagedToolInputs ??= new WeakMap()).set(result, commit);
+  }
+  commitToolInput(ctx, result) {
+    const commit = ctx.stagedToolInputs?.get(result);
+    if (commit) {
+      ctx.stagedToolInputs.delete(result);
+      if (
+        this.capabilities.get(ctx.token) !== ctx ||
+        ctx.controller.signal.aborted
+      )
+        return result;
+      try {
+        commit();
+      } catch (error) {
+        this.contexts.resetInputEvidence(ctx);
+        delete ctx.stagedOpening;
+        this.diagnostics.report(
+          Error("INPUT_PRESENTATION_COMMIT_FAILED", { cause: error }),
+          {
+            component: "runtime",
+            agentId: ctx.agentId,
+            conversation: ctx.conversation,
+          },
+        );
+      }
+    }
+    return result;
+  }
   callTool(...args) {
     return this.trackWork(this.runTool(...args));
   }
   // Records name, outcome and duration of every call (never arguments or
   // results), so a turn's actual activity can be measured afterwards.
-  async runTool(ctx, name, args = {}) {
+  async runTool(ctx, name, args = {}, { deferInput = false } = {}) {
+    const epoch = ctx.inputEpoch;
     const startedAt = Date.now(),
       calls = (ctx.toolCalls ||= []);
     const tracedSend =
@@ -974,6 +994,10 @@ export class Runtime {
         ctx.subjectToolReservations = (ctx.subjectToolReservations || 0) + 1;
       }
       const result = await this.executeTool(ctx, name, args);
+      if (ctx.inputEpoch !== epoch) {
+        ctx.stagedToolInputs?.delete(result);
+        throw Error("INPUT_EPOCH_CHANGED");
+      }
       if (tracedSend && result?.status === "stopped") {
         const reason = timedStoppedSend(result, ctx.controller.signal.aborted);
         ctx.messageTimingToolOutcome = reason;
@@ -981,9 +1005,12 @@ export class Runtime {
       }
       if (calls.length < 50)
         calls.push({ name, ok: true, ms: Date.now() - startedAt });
-      return result;
+      return deferInput ? result : this.commitToolInput(ctx, result);
     } catch (error) {
+      if (ctx.inputEpoch !== epoch)
+        throw Error("INPUT_EPOCH_CHANGED", { cause: error });
       attachReviewOriginals(this, ctx, error);
+      if (!deferInput) this.commitToolInput(ctx, error);
       if (tracedSend)
         ctx.messageTimingToolOutcome = timedDeliveryFailure(error);
       if (calls.length < 50)

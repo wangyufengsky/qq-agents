@@ -176,7 +176,7 @@ test("export and restore keep moodId, and older records without it still read an
   const file = path.join(root, "agent-a.json");
   await exportToFile(store, "agent-a", file);
   const data = JSON.parse(fs.readFileSync(file, "utf8"));
-  assert.equal(data.version, 2);
+  assert.equal(data.version, 3);
 
   const target = new MemoryStore(path.join(root, "restored.sqlite"));
   t.after(() => target.close());

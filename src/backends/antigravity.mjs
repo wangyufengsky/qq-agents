@@ -751,8 +751,8 @@ export class AntigravityBackend {
       await worker.run({
         ...params,
         onInputSubmitted: () => {
-          params.onInputSubmitted?.();
           inputSubmitted = true;
+          params.onInputSubmitted?.();
         },
         onTiming: (value) =>
           params.onTiming?.({
@@ -862,6 +862,13 @@ export class AntigravityBackend {
     );
     const { key, workspace, binding } = details;
     const token = randomBytes(32).toString("hex");
+    let resolveInput = () => {};
+    let rejectInput = (/** @type {unknown} */ _error) => {};
+    const inputSubmission = new Promise((resolve, reject) => {
+      resolveInput = () => resolve(undefined);
+      rejectInput = reject;
+    });
+    void inputSubmission.catch(() => {});
     let live = true;
     let hookDenied = false;
     let ioFailed = false;
@@ -910,6 +917,7 @@ export class AntigravityBackend {
           if (body.length > 1048576) return reply(413, {});
         }
         const value = JSON.parse(body);
+        await inputSubmission;
         if (!live || params.signal.aborted || !names.has(value.name))
           return reply(403, {});
         spec = params.tools.find((tool) => tool.name === value.name);
@@ -932,8 +940,16 @@ export class AntigravityBackend {
         if (!live || params.signal.aborted) return reply(403, {});
         const content = await media.fromTool(mcpResult(result), params.signal);
         if (!live || params.signal.aborted) return reply(403, {});
+        res.once("finish", () => {
+          if (live && !params.signal.aborted)
+            params.onToolResultSubmitted?.(result);
+        });
         reply(200, content);
       } catch (error) {
+        res.once("finish", () => {
+          if (live && !params.signal.aborted)
+            params.onToolResultSubmitted?.(error);
+        });
         const failure = safeToolFailure(error);
         reply(200, {
           isError: true,
@@ -975,6 +991,7 @@ export class AntigravityBackend {
       if (cancelled) return;
       cancelled = true;
       live = false;
+      rejectInput(Error("ABORTED"));
       abortSettlement();
       server.closeAllConnections();
       if (child) {
@@ -1123,7 +1140,11 @@ export class AntigravityBackend {
           if (terminal) {
             ioFailed = true;
             resolve(null);
-          } else reject(Error("ANTIGRAVITY_NOT_FOUND"));
+          } else {
+            const failure = Error("ANTIGRAVITY_NOT_FOUND");
+            rejectInput(failure);
+            reject(failure);
+          }
         });
         child?.once("close", (code, signal) => {
           live = false;
@@ -1151,19 +1172,21 @@ export class AntigravityBackend {
             workerOutcome: "exit-warning",
           });
           if (!terminal) {
-            reject(antigravityFailure(diagnostic));
+            const failure = antigravityFailure(diagnostic);
+            rejectInput(failure);
+            reject(failure);
           }
           if (child) this.stop(child, "SIGKILL");
         });
       });
+      // Startup can fail while the submission fence is still being awaited.
+      void completed.catch(() => {});
       // Prompts and credentials never appear in process arguments. EOF ends this
       // turn's process after its result; subsequent turns explicitly resume by ID.
       await params.beforeInputSubmitted?.();
       if (params.signal.aborted) throw Error("ABORTED");
-      params.onInputSubmitted?.();
-      timing("inputSubmitted");
       inputSubmitted = true;
-      child.stdin?.end(
+      child.stdin?.write(
         JSON.stringify({
           event: "user",
           message: {
@@ -1173,7 +1196,26 @@ export class AntigravityBackend {
               : {}),
           },
         }) + "\n",
+        (error) => {
+          if (error) return rejectInput(error);
+          if (
+            cancelled ||
+            params.signal.aborted ||
+            protocolError ||
+            (!live && !terminalObserved)
+          )
+            return rejectInput(Error("ABORTED"));
+          try {
+            params.onInputSubmitted?.();
+            timing("inputSubmitted");
+            resolveInput();
+          } catch (error) {
+            rejectInput(error);
+          }
+        },
       );
+      child.stdin?.end();
+      await inputSubmission;
       const code = await completed;
       if (cancelled || params.signal.aborted) throw Error("ABORTED");
       if (protocolError) throw protocolError;
@@ -1251,6 +1293,7 @@ export class AntigravityBackend {
     } finally {
       diagnosticActive = false;
       live = false;
+      rejectInput(Error("ABORTED"));
       try {
         media.close();
       } catch {

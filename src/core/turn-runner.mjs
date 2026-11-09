@@ -145,6 +145,7 @@ export class TurnRunner {
           )
         : { images: [], beforeSubmit() {}, submitted() {} };
       runtime.assertActive(ctx);
+      ctx.requiresInputSubmission = true;
       await this.runBackend(ctx, backend, {
         inputImages: imageInput.images,
         beforeInputSubmitted: imageInput.beforeSubmit,
@@ -156,7 +157,9 @@ export class TurnRunner {
           !runtime.stopped && runtime.contexts.usage(ctx, usage),
         signal: controller.signal,
         tools,
-        callTool: (name, args) => runtime.callTool(ctx, name, args),
+        callTool: (name, args) =>
+          runtime.callTool(ctx, name, args, { deferInput: true }),
+        onToolResultSubmitted: (result) => runtime.commitToolInput(ctx, result),
         session: prepared.session,
         saveSession: (session) =>
           !runtime.stopped &&
@@ -177,7 +180,9 @@ export class TurnRunner {
         onBackendTurn: (reference) =>
           !runtime.stopped && recordBackendTurn(mem, ctx.turnId, reference),
         onInputSubmitted: () => {
-          if (!runtime.stopped) {
+          if (!runtime.stopped && !controller.signal.aborted) {
+            runtime.contexts.commitOpening(ctx);
+            ctx.backendInputEpoch = ctx.inputEpoch;
             runtime.messageTiming?.mark(timingId, "backendInputSubmitted");
             imageInput.submitted();
             recordInputSubmission(mem, ctx.turnId);
@@ -361,6 +366,10 @@ export class TurnRunner {
         onRecovery: (error, attempt) => {
           runtime.assertActive(ctx);
           recoveryStarted = true;
+          // The recovery prompt contains no original input manifest. A native
+          // session id alone cannot establish what its new context retained.
+          runtime.contexts.resetInputEvidence(ctx);
+          delete ctx.stagedOpening;
           ctx.recoveryDeliveryBlocked =
             ctx.deliveryAttempted === true || ctx.pendingDeliveries > 0;
           error.deliveryBlocked = ctx.recoveryDeliveryBlocked;
