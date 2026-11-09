@@ -84,7 +84,7 @@ export class TurnRunner {
       conversation,
     );
     const ctx = runtime.makeContext(agentId, conversation),
-      { token, controller } = ctx;
+      { controller } = ctx;
     ctx.freshSubject = freshSubject;
     ctx.messageTimingId = timingId;
     let resolveDone;
@@ -171,7 +171,7 @@ export class TurnRunner {
             backendId: a.backendId,
             at: runtime.now(),
             inactive:
-              !runtime.capabilities.has(token) ||
+              !runtime.capabilities.has(ctx.token) ||
               controller.signal.aborted ||
               runtime.closed,
             reason: controller.signal.aborted
@@ -247,7 +247,7 @@ export class TurnRunner {
                   : "BACKEND_TURN_FAILED"),
         );
     } finally {
-      runtime.capabilities.delete(token);
+      runtime.capabilities.delete(ctx.token);
       try {
         try {
           runtime.subject.finish(ctx, outcome);
@@ -340,10 +340,21 @@ export class TurnRunner {
   async runBackend(ctx, backend, params) {
     const runtime = this.runtime;
     const mem = runtime.memory.bind(ctx.agentId);
+    const backendId = runtime.agent(ctx.agentId).backendId;
     let recoveryStarted = false;
     const stopTyping = startTypingIndicator(runtime, ctx);
     try {
       const result = await runWithRecovery(backend, params, {
+        // A late native reference is useful as history but never owns the turn.
+        onLateSession: (session) => {
+          if (runtime.stopped) return;
+          saveSession(mem, ctx.conversation, session, {
+            turnId: ctx.turnId,
+            backendId,
+            at: runtime.now(),
+            archiveOnly: true,
+          });
+        },
         onFailure: (error, attempt) => {
           const failure = failureSummary(error);
           if (!failure) return;
@@ -383,6 +394,10 @@ export class TurnRunner {
               recoveryAttempts: attempt,
               recoveryDeliveryBlocked: ctx.recoveryDeliveryBlocked,
             });
+          if (backend.config?.type === "dsh") {
+            const capability = runtime.rotateCapability(ctx);
+            return `\n本次续接的唯一有效工具凭据 context=${capability}。旧凭据已失效。只在 bridge_tools / bridge_call 外层使用，不得披露。`;
+          }
         },
       });
       return result;

@@ -249,15 +249,26 @@ function setup(t, type, options = {}) {
 }
 
 test("DSH transport failure continues a verified native turn without repeating QQ delivery", async (t) => {
-  let f;
+  let f, originalCapability;
   f = setup(t, "dsh", {
     reasons: [transportFailure, { kind: "completed" }],
     beforeEnd: async (attempt) => {
       const ctx = f.ctx();
       const message = { requestId: "original", text: "已完成的回复" };
       if (attempt === 1) {
+        originalCapability = ctx.token;
         await f.runtime.send(ctx, message);
       } else {
+        assert.notEqual(ctx.token, originalCapability);
+        assert.throws(
+          () => f.runtime.capability(originalCapability),
+          /INVALID_CAPABILITY/,
+        );
+        assert.equal(f.runtime.capability(ctx.token), ctx);
+        assert.throws(
+          () => f.runtime.assertSafeOutput(ctx, originalCapability),
+          /SENSITIVE_OUTPUT_BLOCKED/,
+        );
         await assert.rejects(
           f.runtime.send(ctx, { requestId: "new-id", text: "改写的回复" }),
           /RECOVERY_DELIVERY_BLOCKED/,
@@ -515,7 +526,7 @@ test("failed worker retirement remains visible when saveSession throws", async (
 });
 
 for (const type of ["dsh", "codex"]) {
-  test(`${type} resumes once without recreating session or capability`, async (t) => {
+  test(`${type} resumes once with the same session and logical turn`, async (t) => {
     let f;
     const contexts = [];
     f = setup(t, type, { beforeEnd: async () => contexts.push(f.ctx()) });
@@ -538,7 +549,9 @@ for (const type of ["dsh", "codex"]) {
         ? f.client.prompts[1].content[0].text
         : f.client.starts[1].input[0].text;
     assert.match(retry, /不要重做/);
-    assert(!retry.includes("context="));
+    if (type === "dsh")
+      assert.ok(retry.includes("context=" + contexts[1].token));
+    else assert(!retry.includes("context="));
   });
 
   for (const delivery of ["sent", "unknown", "failed", "pending"]) {
@@ -823,3 +836,67 @@ for (const httpStatusCode of [401, 403, 429]) {
     assert.equal(f.m.state(chat).session, null);
   });
 }
+
+test("superseded backend callbacks cannot mutate the live turn", async (t) => {
+  let previous,
+    attempt = 0,
+    f;
+  f = fixture(t, {
+    cfg: config(1),
+    run: async (params) => {
+      if (++attempt === 1) {
+        previous = params;
+        params.saveSession({
+          backend: "codex",
+          id: "fixture-initial",
+          signature: "fixture",
+        });
+        const failure = new BackendTurnFailure(
+          "codex",
+          "fixtureTransient",
+          "response-stream",
+          "fixture-first",
+          true,
+        );
+        failure.sessionReusable = true;
+        throw failure;
+      }
+      const memory = f.store.bind("agent-0");
+      previous.saveSession({
+        backend: "codex",
+        id: "fixture-late",
+        signature: "fixture",
+      });
+      previous.onBackendTurn({ turnId: "fixture-late" });
+      await assert.rejects(
+        previous.callTool("diary_write", {
+          title: "Stale fixture",
+          body: "Synthetic",
+        }),
+        /INPUT_EPOCH_CHANGED/,
+      );
+      assert.equal(memory.state(chat).session.id, "fixture-initial");
+      assert.equal(
+        f.store.db.prepare("SELECT count(*) AS n FROM diaries").get().n,
+        0,
+      );
+      assert.equal(
+        memory.identity.list("model_turns")[0].backendTurnId,
+        undefined,
+      );
+      assert.equal(
+        memory.identity.list("model_turns")[0].backendSession.id,
+        "fixture-initial",
+      );
+      assert.equal(
+        memory.identity.list("session_history")[0].session.id,
+        "fixture-late",
+      );
+    },
+  });
+  assert.equal(
+    (await f.runtime.wake("agent-0", chat)).status,
+    "completed-no-send",
+  );
+  assert.equal(attempt, 2);
+});

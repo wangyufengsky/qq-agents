@@ -370,7 +370,7 @@ export class DeliveryService {
     runtime.assertDisclosure(ctx);
     beforeShareDelivery(appService(runtime), ctx, metadata);
     const serialized = JSON.stringify(intent);
-    if (serialized.includes(ctx.token) || containsCredential(body))
+    if (runtime.containsCapability(ctx, serialized) || containsCredential(body))
       throw Error("SENSITIVE_OUTPUT_BLOCKED");
     const previous = mem.delivery(requestId);
     if (previous) {
