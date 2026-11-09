@@ -169,8 +169,7 @@ async function api(url, data, method) {
         FILE_METADATA_CORRUPT: "文件元数据损坏，请在文件库中查看并修复。",
         FILE_METADATA_MISSING:
           "文件内容仍存在但元数据缺失，请先修复，不能直接重传覆盖。",
-        FILE_REMOVED_PROTECTED:
-          "该内容已保留保护拦截记录，不能通过重新导入清除保护。",
+        FILE_REMOVED_PROTECTED: "该内容已删除并保留拦截记录，无法再次导入。",
         FILE_QUOTA_EXCEEDED:
           "文件库容量或数量额度不足；损坏、孤儿文件和元数据仍计入占用。",
         FILE_QUOTA_UNAVAILABLE:

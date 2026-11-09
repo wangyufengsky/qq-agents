@@ -1182,7 +1182,9 @@ export class Runtime {
       ].filter((id) => typeof id === "string"))
         boundary.assertId(id);
       for (const [id, library] of [
-        [validated.fileId, this.files],
+        // Deletion checks the live metadata under the file lock. Its own
+        // tombstone must also be reachable to finish an interrupted delete.
+        [name === "file_delete" ? undefined : validated.fileId, this.files],
         [validated.mediaId, this.media],
         [validated.audioId || validated.audioInput?.audioId, this.voices],
       ])
