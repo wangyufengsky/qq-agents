@@ -114,6 +114,7 @@
       "maxConsecutiveSends": 3,
       "behavior": {
         "focusedGroupReply": false,
+        "compactChatGroups": [],
         "maxOpenDraftsPerConversation": 4,
         "imageInput": {
           "enabled": false,
@@ -230,6 +231,7 @@
       "maxConsecutiveSends": 3,
       "behavior": {
         "focusedGroupReply": false,
+        "compactChatGroups": [],
         "maxOpenDraftsPerConversation": 4,
         "imageInput": {
           "enabled": false,

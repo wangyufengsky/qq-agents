@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { fixture, config, context, raw } from "./helpers.mjs";
+import { safeToolFailure } from "../src/tools/errors.mjs";
 import { recallBoundary } from "../src/core/recall-boundary.mjs";
 import { processingPending } from "../src/core/input-review.mjs";
 
@@ -581,4 +582,72 @@ test("creation IDs are scoped and an existing actual delivery ID cannot imperson
   assert.equal(third.status, "sent");
   assert.notEqual(third.requestId, first.requestId);
   assert.equal(f.runtime.transports.get("qq-0").sent.length, 3);
+});
+
+test("draft results distinguish missing input, waiting for confirmation and a tone rejection", async (t) => {
+  const f = make(t);
+  const gateway = f.runtime.transports.get("qq-0");
+  const call = (name, args) => f.runtime.callTool(f.ctx, name, args);
+  await f.runtime.ingest("qq-0", raw(1, { message: "夹具来信" }));
+  await assert.rejects(
+    call("qq_send", {
+      requestId: "unseen-watermark",
+      text: "夹具回复",
+      readThroughSeq: 1000000,
+    }),
+    (error) => {
+      const result = safeToolFailure(error);
+      assert.equal(result.code, "UNSEEN_WATERMARK");
+      assert.equal(result.readCheckpoint.readThroughSeq, 0);
+      assert.deepEqual(result.readCheckpoint.readGap, {
+        tool: "conversation_read",
+        afterSeq: 0,
+      });
+      return true;
+    },
+  );
+  assert.equal((await call("qq_draft", { action: "list" })).items.length, 0);
+  await call("conversation_read", {});
+  const makeDraft = (requestId) =>
+    call("qq_send", {
+      requestId,
+      text: "总结一下，夹具回复",
+      inputReview: { token: "0".repeat(64), decision: "continue" },
+    });
+  const first = await makeDraft("first");
+  const latest = await makeDraft("latest");
+  assert.deepEqual(latest.draftRefs, [
+    { draftId: first.draft.draftId, version: first.draft.version },
+  ]);
+  assert.equal(latest.preparation.state, "ready");
+  assert.deepEqual(latest.preparation.items, []);
+  assert.match(latest.preparation.hint, /没有新增待展示材料。待你决定/);
+  assert.equal(gateway.sent.length, 0);
+  const submit = ({ draft, preparation }) =>
+    call("qq_draft", {
+      action: "continue",
+      draftId: draft.draftId,
+      expectedVersion: draft.version,
+      inputReview: { token: preparation.token, decision: "continue" },
+    });
+  const stopped = await submit(latest);
+  assert.equal(stopped.error, "TONE_REVIEW_SUGGESTED");
+  assert.equal(stopped.actionResult, "not_sent");
+  assert.equal(stopped.draft.version, latest.draft.version);
+  assert.match(stopped.hint, /qq_draft revise/);
+  assert.equal(gateway.sent.length, 0);
+  const revised = await call("qq_draft", {
+    action: "revise",
+    draftId: latest.draft.draftId,
+    expectedVersion: latest.draft.version,
+    position: 0,
+    input: { text: "夹具回复，收到。" },
+  });
+  assert.equal(gateway.sent.length, 0);
+  assert.equal((await submit(revised)).status, "sent");
+  assert.equal(gateway.sent.length, 1);
+  assert.deepEqual(
+    (await call("qq_draft", { action: "list" })).items.map((x) => x.draftId),
+    [first.draft.draftId],
+  );
 });
