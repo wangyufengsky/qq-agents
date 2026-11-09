@@ -645,6 +645,7 @@ for (const reuse of [false, true])
           commitToolOutput: (receipt, text) =>
             f.runtime.commitToolOutput(ctx, receipt, text),
         });
+        if (!reuse) assert.equal(children[0].child.exitCode, 0);
         assert.equal(output.length, altered === "failure" ? 0 : 1);
         if (altered) {
           assert(

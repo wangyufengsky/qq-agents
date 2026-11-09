@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
+import { waitForTerminalObservation } from "./antigravity-fixture-terminal.mjs";
 
 const args = process.argv.slice(2);
 const option = (name) => {
@@ -272,8 +273,9 @@ async function handleInput(line) {
     status: terminal.result.status,
   });
   if (terminal.result.status === "SUCCESS") {
-    await new Promise((resolve) => setTimeout(resolve, 25));
-    await postTool(epoch, "terminal-late");
+    await waitForTerminalObservation(endpoint, headers, epoch);
+    if ((await postTool(epoch, "terminal-late")) !== 403)
+      throw Error("COMPLETED_TURN_ALLOWED");
   }
   if (mode === "idle-probe") {
     await waitForControl("probeIdle");
