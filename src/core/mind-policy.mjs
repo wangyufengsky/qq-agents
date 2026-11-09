@@ -30,6 +30,7 @@ export const contextPolicySchema = z
 export const subjectPolicySchema = z
   .object({
     enabled: z.boolean().default(false),
+    inboxEnabled: z.boolean().default(false),
     intervalMs: ms(60000, 86400000, 3600000),
     maxChecksPerDay: ms(1, 96, 6),
     maxContactsPerDay: ms(1, 100, 4),

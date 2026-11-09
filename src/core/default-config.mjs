@@ -93,6 +93,7 @@ export function defaultConfig() {
         connectionId: "napcat-a",
         backendId: "dsh-desktop",
         paused: true,
+        subject: { inboxEnabled: false },
         home: {
           enabled: false,
           publishing: false,
@@ -189,6 +190,7 @@ export function defaultConfig() {
         connectionId: "napcat-b",
         backendId: "codex-cli",
         paused: true,
+        subject: { inboxEnabled: false },
         home: {
           enabled: false,
           publishing: false,

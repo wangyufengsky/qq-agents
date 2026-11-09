@@ -30,6 +30,12 @@ import { markMoodShown } from "../core/mood.mjs";
 const text = z.string().min(1),
   ids = z.array(text).max(30),
   version = z.number().int().min(1);
+const timestamp = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
+const restFields = {
+  durationMs: z.number().int().min(60000).max(86400000),
+  earlyWake: z.enum(["none", "owner", "direct"]).default("owner"),
+};
+const reviewFields = { id: text.max(180), expectedRevision: version };
 export const mindDefinitions = {
   ...frameworkDefinitions,
   ...correctionDefinitions,
@@ -257,6 +263,75 @@ export const mindDefinitions = {
       })
       .strict(),
   ],
+  subject_inbox_submit: [
+    "普通聊天里把休息、联系或接力的提议交给自己的主人格。有空尽快看，忙时等收尾。usefulUntil 是参考时间；同一 requestId 重试不会再提交。休息和发送以实际决定和回执为准。",
+    z
+      .object({
+        requestId: text.regex(/^[A-Za-z0-9_-]{1,100}$/),
+        usefulUntil: timestamp.optional(),
+        proposal: z.discriminatedUnion("kind", [
+          z
+            .object({
+              kind: z.literal("rest"),
+              durationMs: restFields.durationMs.optional(),
+            })
+            .strict(),
+          z
+            .object({
+              kind: z.literal("contact"),
+              target: text.regex(/^(group|private):\d{1,20}$/),
+              note: text.max(400).optional(),
+            })
+            .strict(),
+          z
+            .object({
+              kind: z.literal("handoff"),
+              reference: z
+                .object({
+                  type: z.enum(["work-note", "project"]),
+                  id: text.max(100),
+                })
+                .strict(),
+              note: text.max(400).optional(),
+            })
+            .strict(),
+        ]),
+      })
+      .strict(),
+  ],
+  subject_inbox_list: [
+    "主人格按页查看当前可处理的休息、联系和工作接力提议。已经看过但没处理的也在这里。",
+    z.object({ offset: z.number().int().min(0).default(0) }).strict(),
+  ],
+  subject_inbox_decide: [
+    "主人格决定提议。rest 选时长和叫醒条件；contact 生成由目标聊天自行决定的问候机会，须填 expiresAt，可定 eligibleAt；take 取回现有项目或笔记，需再用原工具推进；defer 定下次 reviewAt；dismiss 放下。时间用 Unix 毫秒。",
+    z.discriminatedUnion("action", [
+      z
+        .object({ ...reviewFields, action: z.literal("rest"), ...restFields })
+        .strict(),
+      z
+        .object({
+          ...reviewFields,
+          action: z.literal("contact"),
+          eligibleAt: timestamp.optional(),
+          expiresAt: timestamp,
+        })
+        .strict(),
+      z.object({ ...reviewFields, action: z.literal("take") }).strict(),
+      z
+        .object({
+          ...reviewFields,
+          action: z.literal("defer"),
+          reviewAt: timestamp,
+        })
+        .strict(),
+      z.object({ ...reviewFields, action: z.literal("dismiss") }).strict(),
+    ]),
+  ],
+  subject_rest: [
+    "主人格自主决定休息 1 分钟至 24 小时。已有回合收尾后开始计时。earlyWake 选 none（到期）、owner（主人私聊）或 direct（也允许符合唤醒策略的 @ 或引用）；原有暂停、权限和额度仍生效。",
+    z.object(restFields).strict(),
+  ],
   intent_decide: [
     "仅目标聊天结合现场决定 send/defer/cancel/complete。send 后使用启用 QQ 工具发一次；无关来信不能 complete，完成需提供相关新来信证据。",
     z
@@ -311,6 +386,9 @@ export const SUBJECT_TOOLS = [
   "intent_list",
   "intent_update",
   "subject_log",
+  "subject_inbox_list",
+  "subject_inbox_decide",
+  "subject_rest",
   "qq_profile_read",
   "qq_profile_update",
   "qzone_read",
@@ -549,6 +627,13 @@ function executeMindTool(runtime, ctx, name, args) {
     ctx.subjectLogged = true;
     return { id: record.id, recorded: true };
   }
+  if (name === "subject_inbox_submit")
+    return runtime.subjectInbox.submit(ctx, args);
+  if (name === "subject_inbox_list")
+    return runtime.subjectInbox.list(ctx, args);
+  if (name === "subject_inbox_decide")
+    return runtime.subjectInbox.decide(ctx, args);
+  if (name === "subject_rest") return runtime.subjectInbox.rest(ctx, args);
   if (name === "intent_create") return runtime.subject.create(ctx, args);
   if (name === "intent_list") {
     const rows = recallBoundary(runtime, ctx)

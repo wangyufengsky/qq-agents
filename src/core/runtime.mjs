@@ -47,6 +47,7 @@ import { toolAvailable } from "../tools/catalog.mjs";
 import { appsPolicySchema } from "../apps/policy.mjs";
 import { appDefinitions } from "../apps/tools.mjs";
 import { ContextLifecycle, SUBJECT } from "./lifecycle.mjs";
+import { SubjectInbox } from "./subject-inbox.mjs";
 import { SubjectCoordinator } from "./subject.mjs";
 import { CHAT_MIND_TOOLS, SUBJECT_TOOLS } from "../tools/mind.mjs";
 import { BOARD_TOOLS } from "./board.mjs";
@@ -146,6 +147,7 @@ export class Runtime {
     this.contexts = new ContextLifecycle(this);
     this.generatedImages = new GeneratedImages(this);
     this.subject = new SubjectCoordinator(this);
+    this.subjectInbox = new SubjectInbox(this);
     this.transcripts = new VoiceTranscription(this);
     this.games = new GameHost(this);
     this.protectedWork = new ProtectedWork(this);
@@ -370,7 +372,7 @@ export class Runtime {
                     "deployment_info",
                     "diagnostics_read",
                   ].includes(n) ||
-                  n === "subject_log" ||
+                  n.startsWith("subject_") ||
                   a.tools.includes(n),
               ),
               ...a.subject.readTools.filter((n) => a.tools.includes(n)),
@@ -852,6 +854,7 @@ export class Runtime {
         continue;
       }
       const wake = this.conversations.request(a.id, e.conversation, reason, {
+        allowRestInterrupt: !redactConfirmation && !redactGame,
         seq: archived.seq,
         senderId: e.senderId,
         addressed,

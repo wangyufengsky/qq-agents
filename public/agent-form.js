@@ -184,6 +184,19 @@ const AGENT_TOOL_GROUPS = [
     },
   },
   {
+    id: "subject-inbox",
+    builtin: true,
+    builtinLabel: "在「空闲时间」页开关",
+    title: "会话提议与自主休息",
+    desc: "普通会话递交提议，主人格决定是否休息、联系或接力。",
+    tools: {
+      subject_inbox_submit: "递交会话提议",
+      subject_inbox_list: "查看会话提议",
+      subject_inbox_decide: "处理会话提议",
+      subject_rest: "自主休息",
+    },
+  },
+  {
     id: "chat-drafts",
     builtin: true,
     builtinLabel: "随对应聊天发送权限提供",

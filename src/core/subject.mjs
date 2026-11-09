@@ -1,4 +1,5 @@
-import { rhythmStatus } from "./rhythm.mjs";
+import { refreshAgentRhythm, rhythmStatus } from "./rhythm.mjs";
+import { roleRest, settleRoleRest, subjectInboxEnabled } from "./role-rest.mjs";
 import { randomUUID } from "node:crypto";
 import { allowed, inSilence } from "./config.mjs";
 import { SUBJECT } from "./lifecycle.mjs";
@@ -137,6 +138,7 @@ export class SubjectCoordinator {
       now = r.now();
     return (
       this.internalAllowed(a) &&
+      !roleRest(r, a) &&
       rhythmStatus(r, a, true).state !== "sleeping" &&
       this.targetAllowed(a, target) &&
       r.writable(a, target) &&
@@ -181,7 +183,8 @@ export class SubjectCoordinator {
       state = "silenced";
     else if (r.backendConnections.blocked.has(a.id)) state = "recovering";
     else if (r.running.has(a.id + "|" + SUBJECT)) state = "running";
-    else if (rhythmStatus(r, a).state === "sleeping") state = "sleeping";
+    else if (roleRest(r, a) || rhythmStatus(r, a).state === "sleeping")
+      state = "sleeping";
     else if (checks.length >= limit) state = "budget-exhausted";
     else state = nextEligibleAt > now ? "waiting" : "due";
     return {
@@ -555,6 +558,8 @@ export class SubjectCoordinator {
     const r = this.runtime,
       now = r.now();
     for (const a of r.config.agents) {
+      if (subjectInboxEnabled(a) && settleRoleRest(r, a))
+        refreshAgentRhythm(r, a);
       const m = this.memory(a.id);
       // Terminal intentions accumulate forever; the 1 Hz tick only needs open ones.
       const open = m.db
@@ -588,8 +593,10 @@ export class SubjectCoordinator {
           });
         }
       }
+      if (r.subjectInbox.dispatch(a)) continue;
       if (
         !this.internalAllowed(a) ||
+        roleRest(r, a) ||
         rhythmStatus(r, a, true).state === "sleeping" ||
         r.running.has(a.id + "|" + SUBJECT) ||
         r.subjectExecution?.busy(a.id) ||

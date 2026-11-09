@@ -442,7 +442,7 @@ function homeRoleCard(a) {
     can = s && !s.blockers?.length;
   const sub = s?.blockers?.length
     ? `暂不发言：${s.blockers.map((x) => blockerLabels[x] || x).join("、")}`
-    : s?.rhythm?.state === "sleeping"
+    : ["sleeping", "rest-pending"].includes(s?.rhythm?.state)
       ? s.rhythm.label
       : `QQ ${c?.connected ? "已连接" : "未连接"} · ${backendLabels[b?.state] || "后端尚未检测"}`;
   const place = (l) =>
