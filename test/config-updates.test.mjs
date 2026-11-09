@@ -340,7 +340,9 @@ test("actual backend failures remain visible", async (t) => {
 });
 
 test("real console role form changes only participation and shows the server's reconnect result", async (t) => {
-  const f = fixture(t, { cfg: config(1) });
+  const cfg = config(1);
+  cfg.agents[0].behavior.maxOpenDraftsPerConversation = 9;
+  const f = fixture(t, { cfg });
   const request = await httpConfig(t, f);
   const original = structuredClone(f.runtime.config);
   const a = original.agents[0];

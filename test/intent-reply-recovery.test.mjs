@@ -230,7 +230,13 @@ test("conversion keeps unknown receipts and backend recovery delivery fences", a
   await f.runtime.callTool(f.ctx, "conversation_read", {});
   const transport = f.runtime.transports.get("qq-0");
   transport.failure = "DELIVERY_UNCONFIRMED";
-  await assert.rejects(send(f), /DELIVERY_UNKNOWN/);
+  let attemptId;
+  await assert.rejects(send(f), (error) => {
+    const result = safeToolFailure(error);
+    assert.equal(result.code, "DELIVERY_UNKNOWN");
+    attemptId = result.draft.items[0].requestId;
+    return true;
+  });
   transport.failure = null;
   f.ctx.recoveryDeliveryBlocked = true;
   await f.runtime.ingest("qq-0", raw(2));
@@ -238,7 +244,7 @@ test("conversion keeps unknown receipts and backend recovery delivery fences", a
   await assert.rejects(send(f), /DELIVERY_ALREADY_ATTEMPTED_UNKNOWN/);
   await assert.rejects(send(f, "new-id"), /RECOVERY_DELIVERY_BLOCKED/);
   assert.equal(transport.sent.length, 1);
-  assert.equal(f.store.bind("agent-0").delivery("reply").status, "unknown");
+  assert.equal(f.store.bind("agent-0").delivery(attemptId).status, "unknown");
 });
 
 test("new input cannot detach a selected intention from its stale-send guard or receipt", async (t) => {

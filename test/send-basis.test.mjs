@@ -234,8 +234,32 @@ test("qq_send brings the card of someone addressed before they spoke, once per v
       "draft",
       "messageId",
       "recordId",
+      "requestId",
       "status",
     ]);
+});
+
+test("a person card audit failure preserves the confirmed send receipt", async (t) => {
+  const f = setup(t);
+  card(f, "30000", "阿明", "合成人物卡");
+  const ctx = context(f.runtime);
+  const prototype = Object.getPrototypeOf(f.m);
+  const setState = prototype.setState;
+  t.mock.method(prototype, "setState", function (conversation, value) {
+    if (conversation === group && value.personCardsShown?.["30000"])
+      throw Error("SYNTHETIC_CARD_AUDIT_FAILED");
+    return setState.call(this, conversation, value);
+  });
+  const receipt = await f.tool(ctx, {
+    requestId: "card-audit-fault",
+    text: "欢迎",
+    atUserId: "30000",
+  });
+  assert.equal(receipt.status, "sent");
+  assert.equal(receipt.personCard, undefined);
+  assert.equal(f.m.delivery(receipt.requestId).status, "sent");
+  assert(f.m.readRecord({ id: receipt.recordId }, group));
+  assert.equal(f.runtime.transports.get("qq-0").sent.length, 1);
 });
 
 test("a failed qq_send neither shows nor marks the card", async (t) => {

@@ -6,6 +6,7 @@ import { EventEmitter } from "node:events";
 import { CodexBackend } from "../src/backends/codex.mjs";
 import { MediaStore } from "../src/tools/media.mjs";
 import { GeneratedImages } from "../src/core/generated-images.mjs";
+import { safeToolFailure } from "../src/tools/errors.mjs";
 import { config, fixture, context } from "./helpers.mjs";
 
 const png = Buffer.from(
@@ -215,12 +216,18 @@ test("unknown image delivery survives reload and blocks a new request ID without
   const image = f.runtime.generatedImages.list(f.ctx, {}).items[0];
   const transport = f.runtime.transports.get("qq-0");
   transport.failure = "fixture-timeout";
+  let attemptId;
   await assert.rejects(
     f.runtime.callTool(f.ctx, "qq_send", {
       requestId: "unknown",
       mediaId: image.mediaId,
     }),
-    /DELIVERY_UNKNOWN/,
+    (error) => {
+      const result = safeToolFailure(error);
+      assert.equal(result.code, "DELIVERY_UNKNOWN");
+      attemptId = result.draft.items[0].requestId;
+      return true;
+    },
   );
   f.runtime.generatedImages = new GeneratedImages(f.runtime);
   f.runtime.media = new MediaStore(path.join(f.root, "media"));
@@ -229,7 +236,7 @@ test("unknown image delivery survives reload and blocks a new request ID without
   ).items[0];
   assert.equal(recovered.mediaId, image.mediaId);
   assert.equal(recovered.delivery.status, "unknown");
-  assert.equal(recovered.delivery.requestId, "unknown");
+  assert.equal(recovered.delivery.requestId, attemptId);
   transport.failure = null;
   await assert.rejects(
     f.runtime.callTool(f.ctx, "qq_send", {

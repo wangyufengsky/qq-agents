@@ -4,25 +4,31 @@ import { InputReviewRequired } from "../core/input-review.mjs";
 
 const draftFailures = new WeakMap();
 
-/** @param {object} error @param {object} draft */
-export function attachDraftFailure(error, draft) {
-  draftFailures.set(error, draft);
+/** @param {object} error @param {object|undefined} draft @param {object[]} [draftRefs] */
+export function attachDraftFailure(error, draft, draftRefs) {
+  draftFailures.set(error, { draft, draftRefs });
 }
 
 // Report actionable validation bounds without echoing input values, paths,
 // stack traces, provider errors or credentials into either model backend.
 /** @param {any} error */
 export function safeToolFailure(error) {
-  const draft = draftFailures.get(error);
   const failure = safeFailure(error);
-  if (!draft) return failure;
+  const details = draftFailures.get(error);
+  if (!details) return failure;
+  const { draft, draftRefs } = details;
   const hint =
     error instanceof ToneReviewSuggested
       ? "Review the wording. Use qq_draft revise to edit an unsent item or qq_draft continue with its current version to confirm it."
       : error instanceof InputReviewRequired
         ? "Read the current input and decide whether to revise, discard, or continue this exact draft version with the review token. Earlier receipts remain final."
         : failure.hint;
-  return { ...failure, hint, draft };
+  return {
+    ...failure,
+    hint,
+    ...(draft ? { draft } : {}),
+    ...(draftRefs ? { draftRefs } : {}),
+  };
 }
 
 const validationCodes = new Set([
@@ -187,6 +193,12 @@ function safeFailure(error) {
       "The gateway does not support this reaction action. No reaction was confirmed. Do not retry another message, face or requestId to work around missing gateway support.",
     INVALID_MEMORY_SCOPE:
       "The source selector is invalid, not an empty memory result. memory_search conversationType=group/private filters a kind of chat. conversation must be an exact source key such as group:20000 or private:30000; do not use group/private or wildcard keys. Omit conversation to search your own memories across chats, then use the returned source key. conversation_read without conversation only reads the current chat. Keep protected-source restrictions unchanged.",
+    DRAFT_EXECUTING:
+      "This draft has an active submission. Check its progress before editing or discarding it.",
+    DRAFT_LIMIT_REACHED:
+      "The chat has reached its open draft limit. Review the visible drafts or discard an unsubmitted draft before creating another.",
+    QQ_DRAFT_SUPERSEDED:
+      "This creation request refers to an older version of the draft. Read the current draft for the revised content and exact receipts.",
     QQ_DRAFT_DELIVERY_UNRESOLVED:
       "A prior delivery in this chat is pending or unknown. Check qq_delivery_status; only a verified receipt or an administrator's explicit verdict settles it. Do not try another request ID, wording, or send tool.",
     QQ_DRAFT_CONTINUE_REQUIRED:

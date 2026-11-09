@@ -467,32 +467,32 @@ test("pending input review cannot bypass quotas, pause, or revoked chat admissio
   assert.equal(f.transport.sent.length, 1);
 });
 
-test("a blocked checkpoint is not reserved or recovered by a later duplicate", async (t) => {
+test("a blocked checkpoint is not reserved until same-epoch continue is confirmed", async (t) => {
   const f = setup(t);
   const row = await incoming(f, 1, "补充");
   await f.runtime.callTool(f.ctx, "conversation_read", {});
   const draft = args("review-checkpoint");
   const send = (values) => f.runtime.callTool(f.ctx, "qq_send", values);
   const review = await blocked(send({ ...draft, readThroughSeq: row.seq }));
-  assert.equal(
-    f.mem.state(f.ctx.conversation).readCheckpointReceipts,
-    undefined,
-  );
-  assert.equal(
-    (
-      await f.runtime.callTool(f.ctx, "qq_draft", {
-        action: "continue",
-        draftId: review.draft.draftId,
-        expectedVersion: review.draft.version,
-        inputReview: confirm(review),
-      })
-    ).status,
-    "sent",
-  );
+  assert.equal(f.mem.delivery(review.draft.items[0].requestId), undefined);
+  assert.equal(f.mem.state(f.ctx.conversation).readThroughSeq || 0, 0);
+  const receipt = await f.runtime.callTool(f.ctx, "qq_draft", {
+    action: "continue",
+    draftId: review.draft.draftId,
+    expectedVersion: review.draft.version,
+    inputReview: confirm(review),
+  });
+  assert.equal(receipt.status, "sent");
+  assert.deepEqual(receipt.readCheckpoint, {
+    throughSeq: row.seq,
+    applied: true,
+  });
   const duplicate = await send({ ...draft, readThroughSeq: row.seq });
   assert.equal(duplicate.duplicate, true);
-  assert.equal(duplicate.readCheckpoint, undefined);
-  assert.equal(f.mem.state(f.ctx.conversation).readThroughSeq || 0, 0);
+  assert.equal(duplicate.requestId, receipt.requestId);
+  assert.deepEqual(duplicate.readCheckpoint, receipt.readCheckpoint);
+  assert.equal(f.mem.state(f.ctx.conversation).readThroughSeq, row.seq);
+  assert.equal(f.transport.sent.length, 1);
 });
 
 test("a new file notice joins review without supplying human reply authority", async (t) => {

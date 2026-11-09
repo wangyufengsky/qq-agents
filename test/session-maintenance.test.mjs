@@ -209,9 +209,13 @@ test("draining admits existing HTTP tools and receipts, queues new input, and bl
     ]);
     assert.ok(f.runtime.maintenance.snapshot().pending >= 2);
     receipt.resolve();
-    assert.equal((await tool).data.isError, undefined);
+    const completed = (await tool).data;
+    assert.equal(completed.isError, undefined);
+    const sent = JSON.parse(completed.content[0].text);
+    assert.equal(sent.status, "sent");
+    assert(sent.requestId);
     assert.equal(
-      f.store.bind("agent-0").delivery("drained-delivery").status,
+      f.store.bind("agent-0").delivery(sent.requestId).status,
       "sent",
     );
   } finally {

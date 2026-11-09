@@ -1,16 +1,25 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import {
-  assertMessageAccount,
-  resolveMessage,
-} from "../memory/message-ids.mjs";
 import { mergeProtection } from "../memory/protection.mjs";
-import { draftScope } from "../core/draft-delivery.mjs";
+import {
+  assertDraftTool,
+  canUseDraftTool,
+  validateDraftInput,
+} from "../core/draft-input.mjs";
+import {
+  assertDraftIdle,
+  assertDraftOrigin,
+  claimDraftExecution,
+  draftCheckpointIntent,
+  draftScope,
+  releaseDraftExecution,
+  repairDeliveryCheckpoint,
+  rotateDraftReview,
+} from "../core/draft-delivery.mjs";
 import {
   attachReviewOriginals,
   snapshotReviewInput,
 } from "../core/input-review.mjs";
-import { liveInput } from "../core/live-input.mjs";
 import {
   contextProtection,
   trackMindRecords,
@@ -18,21 +27,10 @@ import {
 import { recallBoundary } from "../core/recall-boundary.mjs";
 import { burstDelay, waitTyping } from "../core/typing.mjs";
 import { attachDraftFailure, safeToolFailure } from "./errors.mjs";
-import { fileName } from "./files.mjs";
 import { sendFile } from "./file-tools.mjs";
 import { inputReviewSchema } from "./input-review.mjs";
 import { sendVoice } from "./legacy.mjs";
 import { qqMessage, qqSegmentsSchema } from "./qq-message.mjs";
-
-export function canUseDraftTool(agent, tool) {
-  return (
-    ["qq_send", "qq_send_burst", "qq_send_voice", "qq_send_file"].includes(
-      tool,
-    ) &&
-    agent.tools.includes(tool) &&
-    (tool !== "qq_send_file" || (agent.files.enabled && agent.files.send))
-  );
-}
 
 const ref = { draftId: z.uuid(), expectedVersion: z.number().int().positive() };
 const contents = z.union([
@@ -104,17 +102,6 @@ export const draftDefinitions = {
   ],
 };
 
-function permitted(runtime, ctx, toolName) {
-  const agent = runtime.assertActive(ctx);
-  if (
-    !/^(private|group):\d+$/.test(ctx.conversation) ||
-    !canUseDraftTool(agent, toolName) ||
-    (ctx.allowedTools && !ctx.allowedTools.includes(toolName))
-  )
-    throw Error("TOOL_DISABLED");
-  return agent;
-}
-
 function draftSummary(draft) {
   return {
     draftId: draft.id,
@@ -143,11 +130,11 @@ function draftSummary(draft) {
   };
 }
 
-export function draftHints(runtime, ctx) {
+export function draftHints(runtime, ctx, limit = 10) {
   const scope = draftScope(runtime, ctx);
   const agent = runtime.agent(ctx.agentId);
   const boundary = recallBoundary(runtime, ctx);
-  const entries = runtime.drafts.list(scope, { limit: 10 });
+  const entries = runtime.drafts.list(scope, { limit });
   return {
     items: entries.items
       .filter(
@@ -161,83 +148,13 @@ export function draftHints(runtime, ctx) {
   };
 }
 
-function safeInput(runtime, ctx, toolName, input, { resolving = true } = {}) {
-  const a = permitted(runtime, ctx, toolName);
-  const scope = draftScope(runtime, ctx);
-  const mem = runtime.memory.bind(a.id);
-  const boundary = recallBoundary(runtime, ctx);
-  runtime.assertSafeOutput(ctx, JSON.stringify(input));
-
-  if (toolName === "qq_send_voice" || toolName === "qq_send_file") {
-    const file = toolName === "qq_send_file";
-    if (file ? !input.fileId : !input.audioId) throw Error("QQ_DRAFT_INVALID");
-    const lib = file ? runtime.files : runtime.voices;
-    if (!lib)
-      throw Error(file ? "FILE_LIBRARY_UNAVAILABLE" : "VOICE_UNAVAILABLE");
-    const meta = lib.metadata(a.id, file ? input.fileId : input.audioId);
-    boundary.assert(meta);
-    trackMindRecords(runtime, ctx, [meta], "draft-media");
-    if (!file) {
-      runtime.assertSafeOutput(ctx, meta.title || "");
-      return input;
-    }
-    if (meta.bytes > a.files.maxBytes) throw Error("FILE_TOO_LARGE");
-    const name = fileName(input.name || meta.name);
-    runtime.assertSafeOutput(ctx, name);
-    return { fileId: input.fileId, name };
-  }
-
-  if (input.audioId || input.fileId) throw Error("QQ_DRAFT_INVALID");
-  const burst = toolName === "qq_send_burst";
-  if (burst && (input.replyTo || input.atUserId || input.mediaId))
-    throw Error("QQ_DRAFT_INVALID");
-  const message = qqMessage(input, burst ? 2000 : 8000);
-  for (const part of [message.sourceText, message.text, message.body])
-    runtime.assertSafeOutput(ctx, part);
-  if (!message.segments.length && !input.mediaId) throw Error("EMPTY_MESSAGE");
-  if (input.atUserId && !/^\d+$/.test(input.atUserId))
-    throw Error("INVALID_PERSON");
-  if (input.mediaId) {
-    if (!runtime.media) throw Error("MEDIA_UNAVAILABLE");
-    const meta = runtime.media.metadata(a.id, input.mediaId);
-    boundary.assert(meta);
-    trackMindRecords(runtime, ctx, [meta], "draft-media");
-  }
-  if (!input.replyTo) return input;
-  assertMessageAccount(mem, scope.connectionId, scope.accountId);
-  const row = resolving
-    ? resolveMessage(mem.db, scope, input.replyTo)
-    : mem.db
-        .prepare(
-          `SELECT * FROM events WHERE id=? AND agent_id=? AND connection_id=? AND conversation=?`,
-        )
-        .get(
-          input.replyEventId,
-          scope.agentId,
-          scope.connectionId,
-          scope.conversation,
-        );
-  if (!row) throw Error("UNKNOWN_REPLY_TARGET");
-  const source = mem.event(row, ctx.conversation);
-  boundary.assert(source);
-  if (
-    source.recalled ||
-    (row.kind === "message.received" &&
-      row.origin === "live" &&
-      JSON.parse(row.payload).trustedInput === true &&
-      !liveInput(runtime, a.id, ctx.conversation, row.id))
-  )
-    throw Error("QQ_DRAFT_SOURCE_RECALLED");
-  trackMindRecords(runtime, ctx, [source], "draft-reply");
-  return { ...input, replyEventId: row.id };
-}
-
 function response(draft, { duplicate = false } = {}) {
   const summary = draftSummary(draft);
   const receipts = summary.items
     .filter((item) => item.status === "sent")
     .map((item) => ({
       status: "sent",
+      requestId: item.requestId,
       messageId: item.messageId ?? null,
       ...(item.recordId ? { recordId: item.recordId } : {}),
       ...(duplicate ? { duplicate: true } : {}),
@@ -253,11 +170,34 @@ function response(draft, { duplicate = false } = {}) {
       };
 }
 
-function recordedLegacy(runtime, scope, items) {
+function scopedLegacyDelivery(runtime, ctx, scope, requestId) {
   const mem = runtime.memory.bind(scope.agentId);
+  const row = mem.delivery(requestId);
+  if (!row || row.conversation !== scope.conversation) return null;
+  const attempt = mem.db
+    .prepare(
+      `
+    SELECT *,json_type(payload,'$.submission') AS submission_type FROM events
+    WHERE agent_id=? AND dedupe=? AND conversation=? AND kind='message.send-attempt' AND direction='out'
+  `,
+    )
+    .get(scope.agentId, "send:" + requestId + ":pending", scope.conversation);
+  if (!attempt) throw Error("IDEMPOTENCY_CONFLICT");
+  // A legacy attempt can still be queried after a draft adopts its receipt.
+  if (
+    attempt.submission_type === "object" ||
+    attempt.connection_id !== scope.connectionId ||
+    attempt.sender_id !== scope.accountId
+  )
+    return null;
+  recallBoundary(runtime, ctx).assert(mem.event(attempt, ctx.conversation));
+  return row;
+}
+
+function recordedLegacy(runtime, ctx, scope, items) {
   const found = new Set();
   for (const item of items) {
-    const row = mem.delivery(item.requestId);
+    const row = scopedLegacyDelivery(runtime, ctx, scope, item.requestId);
     if (!row) continue;
     // The old burst sent exactly these normalized segments. Check the existing
     // ledger digest without reserving or changing the historical request.
@@ -271,26 +211,21 @@ function recordedLegacy(runtime, scope, items) {
   return found;
 }
 
-export async function sendDraftTool(
-  runtime,
-  ctx,
-  toolName,
-  args,
-  { onReserve } = {},
-) {
-  const a = permitted(runtime, ctx, toolName);
+export async function sendDraftTool(runtime, ctx, toolName, args) {
+  const a = assertDraftTool(runtime, ctx, toolName);
   const scope = draftScope(runtime, ctx);
   const burst = toolName === "qq_send_burst";
-  const {
-    requestId,
-    inputReview,
-    readThroughSeq: _checkpoint,
-    gapMs,
-    messages,
-    ...input
-  } = args;
+  const { requestId, inputReview, readThroughSeq, gapMs, messages, ...input } =
+    args;
+  let prior = runtime.drafts.find(scope, toolName, requestId);
+  let legacyReceipt =
+    !prior && !burst && scopedLegacyDelivery(runtime, ctx, scope, requestId);
+  const checkpointIntent =
+    !prior && !legacyReceipt && readThroughSeq !== undefined
+      ? draftCheckpointIntent(runtime, ctx, readThroughSeq)
+      : undefined;
   if (burst && requestId.length > 198) throw Error("INVALID_REQUEST_ID");
-  if (burst && messages.length > a.behavior.burstMax)
+  if (!prior && burst && messages.length > a.behavior.burstMax)
     throw Error("BURST_LIMIT");
   const inputs = burst
     ? messages.map((message) =>
@@ -299,11 +234,16 @@ export async function sendDraftTool(
     : [input];
   const items = inputs.map((part, index) => ({
     requestId: burst ? requestId + ":" + index : requestId,
-    input: safeInput(runtime, ctx, toolName, part),
+    input:
+      prior && (prior.creation_version != null || prior.tool_name !== toolName)
+        ? part
+        : validateDraftInput(runtime, ctx, scope, toolName, part),
   }));
   try {
-    runtime.subject.beforeDelivery(ctx);
-    runtime.assertDisclosure(ctx);
+    if (!prior) {
+      runtime.subject.beforeDelivery(ctx);
+      runtime.assertDisclosure(ctx);
+    }
   } catch (error) {
     if (!burst) throw error;
     const { code, hint } = safeToolFailure(error);
@@ -316,54 +256,43 @@ export async function sendDraftTool(
       doNotReplay: true,
     };
   }
-  const pending = runtime.drafts.unresolved(scope);
+  const pending = !prior && runtime.drafts.unresolved(scope);
   if (pending?.status === "pending") {
     const chain = runtime.delivery.conversations.get(
       scope.connectionId + "|" + ctx.conversation,
     );
     if (chain) await chain.catch(() => {});
-    permitted(runtime, ctx, toolName);
+    assertDraftTool(runtime, ctx, toolName);
+    prior = runtime.drafts.find(scope, toolName, requestId);
+    legacyReceipt =
+      !prior && !burst && scopedLegacyDelivery(runtime, ctx, scope, requestId);
   }
-  const legacyDeliveries = burst
-    ? recordedLegacy(runtime, scope, items)
-    : undefined;
-  if (
-    !burst &&
-    !runtime.drafts.find(scope, toolName, requestId) &&
-    runtime.memory.bind(a.id).delivery(requestId)
-  )
-    return deliverItem(
+  const legacyDeliveries =
+    !prior && burst ? recordedLegacy(runtime, ctx, scope, items) : undefined;
+  if (legacyReceipt) {
+    const receipt = await deliverItem(runtime, ctx, toolName, {
+      ...items[0].input,
+      requestId,
+      inputReview,
+    });
+    const readCheckpoint = repairDeliveryCheckpoint(
       runtime,
       ctx,
-      toolName,
-      { ...items[0].input, requestId, inputReview },
-      { onReserve },
+      scope,
+      requestId,
     );
-  if (
-    !runtime.drafts.find(scope, toolName, requestId) &&
-    ctx.recoveryDeliveryBlocked
-  )
+    return readCheckpoint ? { ...receipt, readCheckpoint } : receipt;
+  }
+  if (!prior && ctx.recoveryDeliveryBlocked)
     throw Error("RECOVERY_DELIVERY_BLOCKED");
-  for (const item of items)
-    if (item.input.mediaId)
-      runtime.generatedImages.assertDelivery(
-        ctx,
-        item.input.mediaId,
-        item.requestId,
-      );
-  const basis = snapshotReviewInput(runtime, ctx);
-  const baseline = {
-    revision: basis.revision,
-    ids: basis.observedIds,
-  };
-  const { draft, created } = runtime.drafts.stage(scope, {
-    requestId,
-    toolName,
-    items,
-    legacyDeliveries,
-    value: {
-      ...(gapMs !== undefined ? { gapMs } : {}),
-      baseline,
+  const value = { ...(gapMs !== undefined ? { gapMs } : {}) };
+  if (!prior) {
+    const basis = snapshotReviewInput(runtime, ctx);
+    Object.assign(value, {
+      baseline: {
+        revision: basis.revision,
+        ids: basis.items.map(({ id }) => id),
+      },
       basis: {
         fromSeq: basis.fromSeq,
         throughSeq: basis.throughSeq,
@@ -373,24 +302,66 @@ export async function sendDraftTool(
       sources: items.flatMap(({ input }) =>
         input.replyEventId ? [{ eventId: input.replyEventId }] : [],
       ),
+      ...(checkpointIntent ? { checkpointIntent } : {}),
       ...(ctx.activeIntentId || ctx.scheduleRunId
         ? {
             origin: {
               turnId: ctx.turnId,
+              epoch: ctx.inputEpoch,
               intentId: ctx.activeIntentId,
               scheduleRunId: ctx.scheduleRunId,
             },
           }
         : {}),
       ...contextProtection(runtime, ctx),
-    },
-  });
+    });
+  }
+  let staged;
+  try {
+    staged = runtime.drafts.stage(scope, {
+      requestId,
+      toolName,
+      items,
+      legacyDeliveries,
+      creation: {
+        items: inputs,
+        gapMs: gapMs ?? null,
+        readThroughSeq: readThroughSeq ?? null,
+      },
+      maxOpenDrafts: a.behavior.maxOpenDraftsPerConversation,
+      value,
+    });
+  } catch (error) {
+    if (error.message === "DRAFT_LIMIT_REACHED")
+      attachDraftFailure(error, undefined, draftHints(runtime, ctx, 16).items);
+    if (error.message === "QQ_DRAFT_DELIVERY_UNRESOLVED")
+      for (const item of items)
+        if (item.input.mediaId)
+          runtime.generatedImages.assertDelivery(ctx, item.input.mediaId);
+    throw error;
+  }
+  const { draft, created, superseded } = staged;
   if (created) runtime.messageTiming?.mark(ctx.messageTimingId, "draftStored");
   if (!created || legacyDeliveries?.size) {
+    recallBoundary(runtime, ctx).assert(draft.value);
+    if (superseded) {
+      const error = Error("QQ_DRAFT_SUPERSEDED");
+      attachDraftFailure(error, draftSummary(draft));
+      throw error;
+    }
     if (burst) return response(draft, { duplicate: true });
     const item = draftSummary(draft).items[0];
-    if (item.status === "sent")
-      return { ...item, messageId: item.messageId ?? null, duplicate: true };
+    if (item.status === "sent") {
+      const readCheckpoint =
+        !draft.imported &&
+        repairDeliveryCheckpoint(runtime, ctx, scope, item.requestId);
+      return {
+        ...item,
+        messageId: item.messageId ?? null,
+        duplicate: true,
+        ...(readCheckpoint ? { readCheckpoint } : {}),
+      };
+    }
     const error = Error(
       ["pending", "unknown", "failed"].includes(item.status)
         ? "DELIVERY_ALREADY_ATTEMPTED_" + item.status.toUpperCase()
@@ -399,7 +370,7 @@ export async function sendDraftTool(
     attachDraftFailure(error, draftSummary(draft));
     throw error;
   }
-  return runDraft(runtime, ctx, scope, draft, inputReview, { onReserve });
+  return runDraft(runtime, ctx, scope, draft, inputReview);
 }
 
 function deliverItem(runtime, ctx, toolName, args, options) {
@@ -418,15 +389,44 @@ async function runDraft(
   scope,
   draft,
   inputReview,
-  { onReserve, explicit = false } = {},
+  { explicit = false } = {},
 ) {
-  const remaining = draft.items.filter((item) => item.status === "unsubmitted");
+  const { execution, active, replay } = claimDraftExecution(
+    runtime,
+    ctx,
+    scope,
+    draft,
+    inputReview,
+    explicit,
+  );
+  if (active || replay) {
+    const current = response(runtime.drafts.read(scope, draft.id), {
+      duplicate: true,
+    });
+    if (!active) return current;
+    return {
+      status: "pending",
+      draft: current.draft,
+      receipts: current.receipts,
+      doNotReplay: true,
+    };
+  }
+  try {
+    if (explicit) assertDraftOrigin(runtime, ctx, draft);
+    if (runtime.drafts.unresolved(scope))
+      throw Error("QQ_DRAFT_DELIVERY_UNRESOLVED");
+    return await deliverDraft(runtime, ctx, scope, draft, execution);
+  } finally {
+    releaseDraftExecution(runtime, execution);
+  }
+}
+
+async function deliverDraft(runtime, ctx, scope, draft, execution) {
   const burst = draft.toolName === "qq_send_burst";
   const receipts = [];
-  let snapshotHash;
-  for (const item of remaining) {
+  for (const item of execution.manifest) {
     try {
-      const a = permitted(runtime, ctx, draft.toolName);
+      const a = assertDraftTool(runtime, ctx, draft.toolName);
       if (receipts.length)
         await waitTyping(
           runtime,
@@ -438,65 +438,46 @@ async function runDraft(
             draft.value.gapMs,
           ),
         );
-      const args = safeInput(runtime, ctx, draft.toolName, item.value, {
-        resolving: false,
-      });
+      const args = validateDraftInput(
+        runtime,
+        ctx,
+        scope,
+        draft.toolName,
+        item.value,
+        {
+          resolving: false,
+        },
+      );
       const receipt = await deliverItem(
         runtime,
         ctx,
         draft.toolName,
-        { ...args, requestId: item.requestId, inputReview },
         {
-          reviewIntent: {
-            draftId: draft.id,
-            version: draft.revision,
-            content: draft.items.map(({ revision, requestId }) => [
-              revision,
-              requestId,
-            ]),
-          },
-          reviewOptions: {
-            key: draft.id,
-            baseline: draft.value.baseline,
-            explicit,
-            expected: snapshotHash,
-          },
-          onReserve: (requestId, reviewed) => {
-            safeInput(runtime, ctx, draft.toolName, item.value, {
-              resolving: false,
-            });
-            runtime.assertDisclosure(ctx);
-            assertOrigin(runtime, ctx, draft);
-            runtime.drafts.bindDelivery(
-              scope,
-              {
-                id: draft.id,
-                revision: draft.revision,
-                position: item.position,
-              },
-              requestId,
-            );
-            snapshotHash = reviewed?.snapshotHash;
-            onReserve?.(requestId);
-          },
+          ...args,
+          requestId: item.requestId,
+          inputReview: execution.inputReview,
+        },
+        {
+          submission: { execution, item },
         },
       );
       receipts.push(receipt);
     } catch (error) {
-      const saved = draftSummary(runtime.drafts.read(scope, draft.id));
-      attachDraftFailure(error, saved);
+      const saved = response(runtime.drafts.read(scope, draft.id));
+      attachDraftFailure(error, saved.draft);
       if (!burst) throw error;
+      rotateDraftReview(execution);
       attachReviewOriginals(runtime, ctx, error);
       const failure = safeToolFailure(error);
       const result = {
         status: "stopped",
-        receipts,
+        receipts: saved.receipts,
         failedIndex: item.position,
         error: failure.code,
         hint: failure.hint,
         ...(failure.matches ? { matches: failure.matches } : {}),
         ...(failure.inputReview ? { inputReview: failure.inputReview } : {}),
-        draft: saved,
+        draft: saved.draft,
         doNotReplay: true,
       };
       runtime.stageToolInput(ctx, result, () =>
@@ -532,7 +513,7 @@ export async function draftTool(runtime, ctx, _toolName, args) {
     };
   }
   const draft = runtime.drafts.read(scope, args.draftId);
-  permitted(runtime, ctx, draft.toolName);
+  assertDraftTool(runtime, ctx, draft.toolName);
   boundary.assert(draft.value);
   trackMindRecords(runtime, ctx, [draft.value], "qq-draft");
   if (args.action === "read") {
@@ -548,13 +529,21 @@ export async function draftTool(runtime, ctx, _toolName, args) {
       input: { index: item.position, ...item.value },
     };
   }
+  if (args.action === "discard" || args.action === "revise")
+    assertDraftIdle(runtime, draft.id);
   if (args.action === "discard")
     return draftSummary(
       runtime.drafts.discard(scope, draft.id, args.expectedVersion),
     );
   runtime.drafts.assertEditable(scope, draft.id, args.expectedVersion);
   if (args.action === "revise") {
-    const input = safeInput(runtime, ctx, draft.toolName, args.input);
+    const input = validateDraftInput(
+      runtime,
+      ctx,
+      scope,
+      draft.toolName,
+      args.input,
+    );
     runtime.assertDisclosure(ctx);
     const revised = runtime.drafts.revise(
       scope,
@@ -566,23 +555,7 @@ export async function draftTool(runtime, ctx, _toolName, args) {
     runtime.messageTiming?.mark(ctx.messageTimingId, "draftStored");
     return draftSummary(revised);
   }
-  assertOrigin(runtime, ctx, draft);
-  if (runtime.drafts.unresolved(scope))
-    throw Error("QQ_DRAFT_DELIVERY_UNRESOLVED");
   return runDraft(runtime, ctx, scope, draft, args.inputReview, {
     explicit: true,
   });
-}
-
-function assertOrigin(runtime, ctx, draft) {
-  const origin = draft.value.origin;
-  if (
-    origin &&
-    (!origin.turnId ||
-      origin.turnId !== ctx.turnId ||
-      origin.intentId !== ctx.activeIntentId ||
-      origin.scheduleRunId !== ctx.scheduleRunId)
-  )
-    throw Error("QQ_DRAFT_TURN_EXPIRED");
-  runtime.subject.beforeDelivery(ctx);
 }

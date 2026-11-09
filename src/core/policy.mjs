@@ -14,6 +14,7 @@ export const timezone = z.string().refine((s) => {
     return false;
   }
 }, "INVALID_TIMEZONE");
+export const DEFAULT_MAX_OPEN_DRAFTS = 4;
 export const behaviorSchema = z
   .object({
     imageInput: z
@@ -66,6 +67,7 @@ export const behaviorSchema = z
       })
       .strict()
       .prefault({}),
+    maxOpenDraftsPerConversation: ms(1, 16, DEFAULT_MAX_OPEN_DRAFTS),
     burstMax: ms(1, 10, 8),
     burstMinMs: ms(0, 10000, 1000),
     burstMaxMs: ms(0, 10000, 3000),

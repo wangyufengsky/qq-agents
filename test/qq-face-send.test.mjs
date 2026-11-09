@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { config, fixture, context, raw } from "./helpers.mjs";
 import { MediaStore } from "../src/tools/media.mjs";
+import { safeToolFailure } from "../src/tools/errors.mjs";
 
 const faceInput = (id) => ({ type: "face", id });
 const textInput = (text) => ({ type: "text", text });
@@ -29,12 +30,15 @@ function sentEvent(mem, requestId) {
 
 async function makeUnknown(f, name, args) {
   f.transport.failure = "GATEWAY_TIMEOUT";
-  await assert.rejects(
-    f.runtime.callTool(f.ctx, name, args),
-    /DELIVERY_UNKNOWN/,
-  );
+  let deliveryId;
+  await assert.rejects(f.runtime.callTool(f.ctx, name, args), (error) => {
+    const failure = safeToolFailure(error);
+    deliveryId = failure.draft?.items[0].requestId;
+    return failure.code === "DELIVERY_UNKNOWN";
+  });
   f.transport.failure = null;
-  assert.equal(f.mem.delivery(args.requestId)?.status, "unknown");
+  assert.equal(f.mem.delivery(deliveryId)?.status, "unknown");
+  return deliveryId;
 }
 
 async function echo(f, messageId, segments) {
@@ -66,17 +70,13 @@ test("qq_send mixes repeated text and faces in order, normalizes IDs, and suppor
       faceWire("5"),
     ];
 
-  assert.equal(
-    (
-      await f.runtime.callTool(f.ctx, "qq_send", {
-        requestId: "mixed-faces",
-        segments: input,
-      })
-    ).status,
-    "sent",
-  );
+  const mixedReceipt = await f.runtime.callTool(f.ctx, "qq_send", {
+    requestId: "mixed-faces",
+    segments: input,
+  });
+  assert.equal(mixedReceipt.status, "sent");
   assert.deepEqual(f.transport.sent[0].segments, wire);
-  const mixed = sentEvent(f.mem, "mixed-faces"),
+  const mixed = sentEvent(f.mem, mixedReceipt.requestId),
     mixedPayload = JSON.parse(mixed.payload);
   assert.equal(
     mixed.body,
@@ -85,17 +85,13 @@ test("qq_send mixes repeated text and faces in order, normalizes IDs, and suppor
   assert.deepEqual(mixedPayload.segments, wire);
   assert.equal(mixedPayload.segments[3].data.id, "20");
 
-  assert.equal(
-    (
-      await f.runtime.callTool(f.ctx, "qq_send", {
-        requestId: "face-only",
-        segments: [faceInput("20")],
-      })
-    ).status,
-    "sent",
-  );
+  const faceReceipt = await f.runtime.callTool(f.ctx, "qq_send", {
+    requestId: "face-only",
+    segments: [faceInput("20")],
+  });
+  assert.equal(faceReceipt.status, "sent");
   assert.deepEqual(f.transport.sent[1].segments, [faceWire("20")]);
-  const faceOnly = sentEvent(f.mem, "face-only");
+  const faceOnly = sentEvent(f.mem, faceReceipt.requestId);
   assert.equal(faceOnly.body, "[QQ表情：偷笑]");
   assert.deepEqual(JSON.parse(faceOnly.payload).segments, [faceWire("20")]);
 });
@@ -103,11 +99,11 @@ test("qq_send mixes repeated text and faces in order, normalizes IDs, and suppor
 test("legacy text keeps CQ and QQ-face-looking markers literal without structured metadata", async (t) => {
   const f = setup(t),
     text = "占位 [CQ:face,id=20] [QQ表情：偷笑]";
-  await f.runtime.callTool(f.ctx, "qq_send", {
+  const receipt = await f.runtime.callTool(f.ctx, "qq_send", {
     requestId: "literal-text",
     text,
   });
-  const row = sentEvent(f.mem, "literal-text"),
+  const row = sentEvent(f.mem, receipt.requestId),
     payload = JSON.parse(row.payload);
   assert.equal(row.body, text);
   assert.equal(f.transport.sent[0].segments.length, 1);
@@ -369,15 +365,15 @@ test("read-through checkpoint still advances after a pure-face send is confirmed
 test("a face echo cannot be replaced by its text marker or another face ID", async (t) => {
   const f = setup(t),
     args = { requestId: "echo-face-only", segments: [faceInput("20")] };
-  await makeUnknown(f, "qq_send", args);
+  const deliveryId = await makeUnknown(f, "qq_send", args);
 
   await echo(f, "90001", [textWire("[QQ表情：偷笑]")]);
-  assert.equal(f.mem.delivery(args.requestId).status, "unknown");
+  assert.equal(f.mem.delivery(deliveryId).status, "unknown");
   await echo(f, "90002", [faceWire("21")]);
-  assert.equal(f.mem.delivery(args.requestId).status, "unknown");
+  assert.equal(f.mem.delivery(deliveryId).status, "unknown");
   await echo(f, "90003", [faceWire("20")]);
-  assert.equal(f.mem.delivery(args.requestId).status, "sent");
-  assert.equal(f.mem.delivery(args.requestId).message_id, "90003");
+  assert.equal(f.mem.delivery(deliveryId).status, "sent");
+  assert.equal(f.mem.delivery(deliveryId).message_id, "90003");
   assert.equal(f.transport.sent.length, 1);
 });
 
@@ -392,7 +388,7 @@ test("a mixed face echo must match text, order, and every face ID exactly", asyn
         faceInput("20"),
       ],
     };
-  await makeUnknown(f, "qq_send", args);
+  const deliveryId = await makeUnknown(f, "qq_send", args);
 
   await echo(f, "90101", [
     faceWire("5"),
@@ -400,22 +396,22 @@ test("a mixed face echo must match text, order, and every face ID exactly", asyn
     textWire("补充"),
     faceWire("20"),
   ]);
-  assert.equal(f.mem.delivery(args.requestId).status, "unknown");
+  assert.equal(f.mem.delivery(deliveryId).status, "unknown");
   await echo(f, "90102", [
     textWire("占位"),
     faceWire("5"),
     textWire("补充"),
     faceWire("21"),
   ]);
-  assert.equal(f.mem.delivery(args.requestId).status, "unknown");
+  assert.equal(f.mem.delivery(deliveryId).status, "unknown");
   await echo(f, "90103", [
     textWire("占位"),
     faceWire("5"),
     textWire("补充"),
     faceWire("20"),
   ]);
-  assert.equal(f.mem.delivery(args.requestId).status, "sent");
-  assert.equal(f.mem.delivery(args.requestId).message_id, "90103");
+  assert.equal(f.mem.delivery(deliveryId).status, "sent");
+  assert.equal(f.mem.delivery(deliveryId).message_id, "90103");
 });
 
 test("structured face echo preserves exact text whitespace", async (t) => {
@@ -424,22 +420,22 @@ test("structured face echo preserves exact text whitespace", async (t) => {
       requestId: "echo-exact-whitespace",
       segments: [textInput("AB"), faceInput("20")],
     };
-  await makeUnknown(f, "qq_send", args);
+  const deliveryId = await makeUnknown(f, "qq_send", args);
 
   await echo(f, "90111", [textWire("A B"), faceWire("20")]);
-  assert.equal(f.mem.delivery(args.requestId).status, "unknown");
+  assert.equal(f.mem.delivery(deliveryId).status, "unknown");
   await echo(f, "90112", [textWire("AB"), faceWire("20")]);
-  assert.equal(f.mem.delivery(args.requestId).status, "sent");
-  assert.equal(f.mem.delivery(args.requestId).message_id, "90112");
+  assert.equal(f.mem.delivery(deliveryId).status, "sent");
+  assert.equal(f.mem.delivery(deliveryId).message_id, "90112");
 });
 
 test("legacy text echo matching is unchanged", async (t) => {
   const f = setup(t),
     args = { requestId: "echo-legacy-text", text: "[QQ表情：偷笑]" };
-  await makeUnknown(f, "qq_send", args);
+  const deliveryId = await makeUnknown(f, "qq_send", args);
   await echo(f, "90201", [textWire(args.text)]);
-  assert.equal(f.mem.delivery(args.requestId).status, "sent");
-  assert.equal(f.mem.delivery(args.requestId).message_id, "90201");
+  assert.equal(f.mem.delivery(deliveryId).status, "sent");
+  assert.equal(f.mem.delivery(deliveryId).message_id, "90201");
 });
 
 test("reply, at, and image segments remain part of echo matching and keep ambiguous receipts unknown", async (t) => {
@@ -454,7 +450,7 @@ test("reply, at, and image segments remain part of echo matching and keep ambigu
       requestId: "reply-source",
       text: "占位引用源",
     });
-  await makeUnknown(f, "qq_send", {
+  const deliveryId = await makeUnknown(f, "qq_send", {
     requestId: "echo-with-controls",
     replyTo: source.messageId,
     atUserId: "30000",
@@ -468,10 +464,10 @@ test("reply, at, and image segments remain part of echo matching and keep ambigu
     ["reply", "at", "face", "image"],
   );
   await echo(f, "90301", [faceWire("20")]);
-  assert.equal(f.mem.delivery("echo-with-controls").status, "unknown");
+  assert.equal(f.mem.delivery(deliveryId).status, "unknown");
   const attempt = f.mem.db
     .prepare("SELECT payload FROM events WHERE agent_id=? AND dedupe=?")
-    .get("agent-0", "send:echo-with-controls:pending");
+    .get("agent-0", `send:${deliveryId}:pending`);
   const payload = JSON.parse(attempt.payload);
   assert.deepEqual(payload.segments, [
     ...actual.slice(0, 3),

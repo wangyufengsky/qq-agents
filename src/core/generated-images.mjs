@@ -275,7 +275,7 @@ export class GeneratedImages {
         "ready 仅表示已生成并登记。QQ 投递以 delivery 为准；pending/unknown 不得换 requestId 重发。使用 qq_send(mediaId) 发送原图，无需重新生图。",
     };
   }
-  assertDelivery(ctx, mediaId, requestId) {
+  assertDelivery(ctx, mediaId, requestId = "") {
     if (
       !this.db
         .prepare(

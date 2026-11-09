@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import path from "node:path";
+import { behaviorSchema } from "../src/core/policy.mjs";
 import { MemoryStore } from "../src/memory/store.mjs";
 import {
   createDraftTables,
@@ -80,8 +82,9 @@ test("stages the whole group and duplicate lookup does not reserve any delivery"
   );
   const collision = args("another");
   collision.items[2].requestId = "draft-test:2";
-  assert.throws(() => drafts.stage(scope, collision), /IDEMPOTENCY_CONFLICT/);
-  assert.equal(drafts.list(scope).items.length, 1);
+  const independent = drafts.stage(scope, collision).draft;
+  assert.equal(independent.items[2].requestId, `draft:${independent.id}:1:2`);
+  assert.equal(drafts.list(scope).items.length, 2);
 });
 
 test("versions serialize revision/discard and never overwrite a submitted child", (t) => {
@@ -204,6 +207,11 @@ test("unknown lock follows the ledger across process restarts, expiry and other 
     () => recovered.drafts.discard(scope, draft.id, 1),
     /QQ_DRAFT_EXPIRED/,
   );
+  assert.equal(recovered.drafts.list(scope).items[0].id, draft.id);
+  assert.throws(
+    () => recovered.drafts.stage(scope, args("still-unresolved")),
+    /QQ_DRAFT_DELIVERY_UNRESOLVED/,
+  );
   recovered.memory.reconcileDelivery(link, "failed");
   assert.equal(recovered.drafts.unresolved(scope), undefined);
   assert.equal(recovered.drafts.list(scope).items.length, 0);
@@ -252,4 +260,208 @@ test("a confirmation marker survives before local archiving and never regresses 
     );
   });
   assert.deepEqual(recovered.drafts.unarchived(), []);
+});
+
+test("creation identity is canonical, immutable and distinct from revised or discarded versions", (t) => {
+  const { store, drafts } = setup(t);
+  const input = args("creation");
+  input.creation = {
+    items: [{ text: "初稿", atUserId: "30000" }],
+    gapMs: 20,
+    readThroughSeq: 8,
+  };
+  const created = drafts.stage(scope, input);
+  assert.equal(created.superseded, false);
+  const { draft } = created;
+  const initialHash = drafts.find(
+    scope,
+    input.toolName,
+    input.requestId,
+  ).request_hash;
+  assert.equal(draft.value.creationVersion, 2);
+  const equivalent = {
+    ...input,
+    creation: {
+      readThroughSeq: 8,
+      gapMs: 20,
+      items: [{ atUserId: "30000", text: "初稿" }],
+    },
+    value: { ...input.value, basis: { fromSeq: 9 } },
+  };
+  assert.equal(drafts.stage(scope, equivalent).draft.id, draft.id);
+  for (const change of [
+    { readThroughSeq: 9 },
+    { gapMs: 30 },
+    { items: [{ text: "异文" }] },
+  ])
+    assert.throws(
+      () =>
+        drafts.stage(scope, {
+          ...input,
+          creation: { ...input.creation, ...change },
+        }),
+      /IDEMPOTENCY_CONFLICT/,
+    );
+  assert.throws(
+    () => drafts.stage(scope, { ...input, toolName: "qq_send" }),
+    /IDEMPOTENCY_CONFLICT/,
+  );
+  drafts.revise(
+    scope,
+    draft.id,
+    draft.revision,
+    [{ position: 0, input: { text: "修订稿" } }],
+    {},
+  );
+  const replay = drafts.stage(scope, equivalent);
+  assert.equal(replay.created, false);
+  assert.equal(replay.superseded, true);
+  assert.equal(replay.draft.items[0].value.text, "修订稿");
+  assert.equal(
+    drafts.find(scope, input.toolName, input.requestId).request_hash,
+    initialHash,
+  );
+
+  const discarded = drafts.stage(scope, args("discard-only")).draft;
+  drafts.discard(scope, discarded.id, discarded.revision);
+  assert.equal(drafts.stage(scope, args("discard-only")).superseded, false);
+  assert.equal(
+    store.db.prepare("SELECT count(*) AS n FROM deliveries").get().n,
+    0,
+  );
+});
+
+test("a historical creation hash permits only its known comparison without backfilling missing parameters", (t) => {
+  const { store, drafts } = setup(t);
+  const input = args("legacy-creation");
+  const { draft } = drafts.stage(scope, input);
+  const oldHash = createHash("sha256")
+    .update(
+      JSON.stringify([
+        input.items.map(({ input }) => input),
+        input.value.gapMs,
+      ]),
+    )
+    .digest("hex");
+  store.db
+    .prepare("UPDATE qq_drafts SET request_hash=?,value=? WHERE id=?")
+    .run(oldHash, JSON.stringify(input.value), draft.id);
+  const result = drafts.stage(scope, {
+    ...input,
+    creation: {
+      items: input.items.map(({ input }) => input),
+      gapMs: 20,
+      readThroughSeq: 9,
+    },
+  });
+  assert.equal(result.created, false);
+  assert.equal(result.draft.value.creationVersion, undefined);
+  assert.equal(
+    drafts.find(scope, input.toolName, input.requestId).request_hash,
+    oldHash,
+  );
+  assert.throws(
+    () =>
+      drafts.stage(scope, { ...input, value: { ...input.value, gapMs: 30 } }),
+    /IDEMPOTENCY_CONFLICT/,
+  );
+});
+
+test("open capacity is shared by one scope, with lookup before the limit and no eviction", (t) => {
+  const file = path.join(temp(t), "draft-capacity.sqlite");
+  const first = setup(t, file);
+  const second = setup(t, file);
+  const { drafts } = first;
+  const existing = [];
+  for (let i = 0; i < 4; i++) {
+    const current = i % 2 ? second.drafts : drafts;
+    existing.push(current.stage(scope, args("scope-" + i)).draft);
+  }
+  assert.equal(drafts.list(scope).items.length, 4);
+  assert.throws(
+    () => second.drafts.stage(scope, args("too-many")),
+    /DRAFT_LIMIT_REACHED/,
+  );
+  assert.equal(
+    second.drafts.stage(scope, args("scope-0")).draft.id,
+    existing[0].id,
+  );
+  assert.equal(
+    second.drafts.stage(
+      { ...scope, conversation: "group:20001" },
+      args("other-scope"),
+    ).created,
+    true,
+  );
+  drafts.discard(scope, existing[0].id, existing[0].revision);
+  assert.equal(second.drafts.stage(scope, args("after-discard")).created, true);
+  assert.equal(drafts.list(scope, { includeSettled: true }).items.length, 5);
+  second.advance(DRAFT_LIFETIME_MS);
+  assert.equal(second.drafts.list(scope).items.length, 0);
+  const afterExpiry = second.drafts.stage(scope, {
+    ...args("after-expiry"),
+    maxOpenDrafts: 1,
+  });
+  assert.equal(afterExpiry.created, true);
+  assert.throws(
+    () =>
+      second.drafts.stage(scope, {
+        ...args("override-limit"),
+        maxOpenDrafts: 1,
+      }),
+    /DRAFT_LIMIT_REACHED/,
+  );
+  for (const item of afterExpiry.draft.items) {
+    reserve(second, afterExpiry.draft, item.position, item.requestId);
+    second.memory.completeDelivery(
+      item.requestId,
+      item.position === 1 ? "failed" : "sent",
+    );
+  }
+  assert.equal(second.drafts.list(scope).items.length, 0);
+  assert.equal(
+    second.drafts.stage(scope, { ...args("after-terminal"), maxOpenDrafts: 1 })
+      .created,
+    true,
+  );
+});
+
+test("configured draft capacity defaults to four and validates integer limits", () => {
+  assert.equal(behaviorSchema.parse({}).maxOpenDraftsPerConversation, 4);
+  for (const value of [1, 16])
+    assert.equal(
+      behaviorSchema.parse({ maxOpenDraftsPerConversation: value })
+        .maxOpenDraftsPerConversation,
+      value,
+    );
+  for (const value of [0, 17, 1.5, "4"])
+    assert.equal(
+      behaviorSchema.safeParse({ maxOpenDraftsPerConversation: value }).success,
+      false,
+    );
+});
+
+test("scoped creation reuse never aliases another scope's actual attempt IDs", (t) => {
+  const { drafts, memory } = setup(t);
+  const input = args("cross-scope");
+  const first = drafts.stage(scope, input).draft;
+  const other = { ...scope, conversation: "group:20001" };
+  const second = drafts.stage(other, input).draft;
+  assert.notEqual(first.id, second.id);
+  assert.equal(drafts.stage(other, input).draft.id, second.id);
+  assert.equal(drafts.stage(scope, input).draft.id, first.id);
+  assert.deepEqual(
+    second.items.map(({ requestId }) => requestId),
+    [0, 1, 2].map((position) => `draft:${second.id}:1:${position}`),
+  );
+
+  memory.reserveDelivery("standalone:0", scope.conversation, [
+    { type: "text" },
+  ]);
+  const standalone = drafts.stage(other, args("standalone")).draft;
+  assert.equal(standalone.items[0].requestId, `draft:${standalone.id}:1:0`);
+  assert.equal(
+    memory.delivery("standalone:0").conversation,
+    scope.conversation,
+  );
 });

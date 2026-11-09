@@ -24,6 +24,7 @@
     "src/memory/input-state.mjs",
     "src/memory/qq-drafts.mjs",
     "src/core/draft-delivery.mjs",
+    "src/core/draft-input.mjs",
     "src/backends/*.mjs",
     "src/core/config-impact.mjs",
     "src/core/typing-indicator.mjs",

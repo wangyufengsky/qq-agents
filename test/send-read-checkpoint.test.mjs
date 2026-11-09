@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { fixture, config, context } from "./helpers.mjs";
 import { TOOL_NAMES, toolSpecs } from "../src/tools/index.mjs";
 import { stableInstructions } from "../src/core/prompts.mjs";
+import { MemoryStore } from "../src/memory/store.mjs";
 
 function setup(t) {
   const cfg = config(1);
@@ -226,8 +227,9 @@ test("a sent receipt with no retained checkpoint cannot acquire one after receip
   assert.equal(fresh.status, "sent");
   const receipts = mem.state(ctx.conversation).readCheckpointReceipts;
   assert.equal(Object.keys(receipts).length, 100);
-  assert.equal(Object.hasOwn(receipts, "retained-0"), false);
-  assert.equal(Object.hasOwn(receipts, "fresh-after-cap"), true);
+  assert.equal(Object.hasOwn(receipts, "retained-0"), true);
+  assert.equal(Object.hasOwn(receipts, "fresh-after-cap"), false);
+  assert.equal(fresh.readCheckpoint.applied, true);
 });
 
 test("qq_send saves only the supplied checkpoint after confirmation and never absorbs a later message", async (t) => {
@@ -326,9 +328,16 @@ test("failed, unknown, and pending deliveries do not advance the read checkpoint
     readThroughSeq: shown,
   });
   await started.promise;
-  assert.equal(mem.delivery("pending").status, "pending");
-  assert.equal(mem.state(ctx.conversation).readThroughSeq || 0, 0);
-  gate.resolve();
+  try {
+    const pending = mem.db
+      .prepare("SELECT request_id,status FROM deliveries")
+      .get();
+    assert.equal(pending.status, "pending");
+    assert.match(pending.request_id, /^draft:/);
+    assert.equal(mem.state(ctx.conversation).readThroughSeq || 0, 0);
+  } finally {
+    gate.resolve();
+  }
   const receipt = await sending;
   assert.equal(receipt.status, "sent");
   assert.deepEqual(receipt.readCheckpoint, {
@@ -377,6 +386,7 @@ test("a paused sent receipt can only backfill its original checkpoint", async (t
   assert.deepEqual(receipt.readCheckpoint, {
     throughSeq: original,
     applied: false,
+    reason: "context_changed",
   });
   assert.equal(mem.state(ctx.conversation).readThroughSeq || 0, 0);
 
@@ -387,10 +397,18 @@ test("a paused sent receipt can only backfill its original checkpoint", async (t
     {},
   );
   assert(shownAfterResume.readThroughSeq >= later.seq);
+  await assert.rejects(
+    runtime.callTool(resumed, "qq_send", {
+      requestId: "paused-checkpoint",
+      text: "收到。",
+      readThroughSeq: shownAfterResume.readThroughSeq,
+    }),
+    /IDEMPOTENCY_CONFLICT/,
+  );
   const duplicate = await runtime.callTool(resumed, "qq_send", {
     requestId: "paused-checkpoint",
     text: "收到。",
-    readThroughSeq: shownAfterResume.readThroughSeq,
+    readThroughSeq: original,
   });
   assert.equal(duplicate.duplicate, true);
   assert.deepEqual(duplicate.readCheckpoint, {
@@ -402,7 +420,7 @@ test("a paused sent receipt can only backfill its original checkpoint", async (t
   assert.equal(transport.sent.length, 1);
 });
 
-test("a confirmed send stays successful and its original requestId repairs a failed receipt write", async (t) => {
+test("a confirmed send stays successful and its original request repairs a failed checkpoint write", async (t) => {
   const { runtime, store } = setup(t),
     ctx = context(runtime),
     mem = store.bind(ctx.agentId),
@@ -417,10 +435,7 @@ test("a confirmed send stays successful and its original requestId repairs a fai
     const bound = bind(agentId),
       setState = bound.setState.bind(bound);
     bound.setState = (conversation, state) => {
-      if (
-        failReceiptWrite &&
-        state.readCheckpointReceipts?.recoverable?.sentReceipt === true
-      ) {
+      if (failReceiptWrite && state.readThroughSeq === shown) {
         failReceiptWrite = false;
         throw Error("SYNTHETIC_RECEIPT_WRITE_FAILURE");
       }
@@ -448,13 +463,36 @@ test("a confirmed send stays successful and its original requestId repairs a fai
   assert.deepEqual(receipt.readCheckpoint, {
     throughSeq: shown,
     applied: false,
+    reason: "write_failed",
   });
-  assert.equal(mem.delivery("recoverable").status, "sent");
+  assert.equal(mem.delivery(receipt.requestId).status, "sent");
   assert.equal(mem.state(ctx.conversation).readThroughSeq || 0, 0);
-  assert.equal(
-    mem.state(ctx.conversation).readCheckpointReceipts.recoverable.sentReceipt,
-    undefined,
-  );
+  const reopened = new MemoryStore(store.file);
+  try {
+    const mem = reopened.bind(ctx.agentId);
+    const attempt = mem.db
+      .prepare("SELECT id,payload FROM events WHERE agent_id=? AND dedupe=?")
+      .get(ctx.agentId, "send:" + receipt.requestId + ":pending");
+    const { submission } = JSON.parse(attempt.payload);
+    assert.equal(submission.version, 1);
+    assert.equal(submission.checkpoint.throughSeq, shown);
+    assert.deepEqual(
+      submission.checkpoint.refs,
+      submission.review.refs.map(({ id, version }) => ({ id, version })),
+    );
+    assert.equal(submission.checkpoint.refs.length, 1);
+    assert.equal(
+      mem.readRecord({ id: attempt.id }, ctx.conversation).payload.submission,
+      undefined,
+    );
+    assert.equal(
+      mem.readRecord({ id: receipt.recordId }, ctx.conversation).payload
+        .submission,
+      undefined,
+    );
+  } finally {
+    reopened.close();
+  }
 
   runtime.config.agents[0].tools = runtime.config.agents[0].tools.filter(
     (name) => name !== "qq_mark_read",
@@ -462,29 +500,34 @@ test("a confirmed send stays successful and its original requestId repairs a fai
   const duplicate = await runtime.callTool(ctx, "qq_send", {
     requestId: "recoverable",
     text: "收到。",
+    readThroughSeq: shown,
   });
   assert.equal(duplicate.duplicate, true);
   assert.deepEqual(duplicate.readCheckpoint, {
     throughSeq: shown,
     applied: false,
+    reason: "tool_disabled",
   });
   assert.equal(mem.state(ctx.conversation).readThroughSeq || 0, 0);
 
   runtime.config.agents[0].tools.push("qq_mark_read");
-  const recovered = await runtime.callTool(ctx, "qq_send", {
+  const freshCtx = context(runtime);
+  const retry = {
     requestId: "recoverable",
     text: "收到。",
-  });
+    readThroughSeq: shown,
+  };
+  const unread = await runtime.callTool(freshCtx, "qq_send", retry);
+  assert.equal(unread.status, "sent");
+  assert.equal(unread.readCheckpoint.applied, false);
+  await runtime.callTool(freshCtx, "conversation_read", {});
+  const recovered = await runtime.callTool(freshCtx, "qq_send", retry);
   assert.equal(recovered.duplicate, true);
   assert.deepEqual(recovered.readCheckpoint, {
     throughSeq: shown,
     applied: true,
   });
   assert.equal(mem.state(ctx.conversation).readThroughSeq, shown);
-  assert.equal(
-    mem.state(ctx.conversation).readCheckpointReceipts.recoverable.sentReceipt,
-    true,
-  );
   assert.equal(transport.sent.length, 1);
 });
 
@@ -564,7 +607,7 @@ test("in-flight checkpoint intents are isolated between Runtime instances", asyn
   );
 });
 
-test("checkpoint intents require a safe shown sequence that covers the watermark", async (t) => {
+test("historical checkpoint receipts without exact input versions remain read-only", async (t) => {
   const { runtime, store } = setup(t),
     ctx = context(runtime),
     mem = store.bind(ctx.agentId),
@@ -573,8 +616,10 @@ test("checkpoint intents require a safe shown sequence that covers the watermark
     ["missing-shown", { throughSeq: shown }],
     ["fractional-shown", { throughSeq: shown, shownSeq: shown + 0.5 }],
     ["short-shown", { throughSeq: shown, shownSeq: shown - 1 }],
+    ["valid-old-shown", { throughSeq: shown, shownSeq: shown }],
   ];
 
+  runtime.agent(ctx.agentId).maxConsecutiveSends = invalidIntents.length;
   for (const [requestId, intent] of invalidIntents) {
     await runtime.send(ctx, { requestId, text: "收到。" });
     const state = mem.state(ctx.conversation);
@@ -592,6 +637,7 @@ test("checkpoint intents require a safe shown sequence that covers the watermark
     assert.deepEqual(duplicate.readCheckpoint, {
       throughSeq: shown,
       applied: false,
+      reason: "legacy_unverified",
     });
     assert.equal(mem.state(ctx.conversation).readThroughSeq || 0, 0);
   }
