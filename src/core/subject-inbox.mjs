@@ -21,6 +21,7 @@ import { rhythmStatus } from "./rhythm.mjs";
 const SUBJECT = "@subject";
 const INBOX = "@subject-inbox";
 const BATCH = 8;
+const BACKLOG_SLOTS = 2;
 const LIMIT = 64;
 const DAY = 86400000;
 const chat = /^(group|private):\d+$/;
@@ -190,12 +191,20 @@ export class SubjectInbox {
     const due = pending
       .filter((item) => item.reviewAt != null)
       .sort((a, b) => a.reviewAt - b.reviewAt);
-    const items = [
-      ...due,
-      ...pending.filter((item) => item.reviewAt == null),
-    ].slice(0, BATCH);
+    const order = new Map(
+      (state.openingOrder || []).map((id, index) => [id, index]),
+    );
+    const backlog = pending
+      .filter((item) => item.reviewAt == null)
+      .sort(
+        (a, b) =>
+          (order.get(a.id) ?? -1) - (order.get(b.id) ?? -1) ||
+          a.createdAt - b.createdAt,
+      );
+    const fresh = due.slice(0, BATCH - Math.min(BACKLOG_SLOTS, backlog.length));
+    const items = [...fresh, ...backlog.slice(0, BATCH - fresh.length)];
     if (!items.length) return null;
-    ctx.subjectInboxOffered = items.filter((item) => item.reviewAt != null);
+    ctx.subjectInboxOffered = items;
     return {
       items: this.view(ctx, items, now),
       more: pending.length - items.length,
@@ -261,8 +270,10 @@ export class SubjectInbox {
     if (!ctx.subjectInboxOffered?.length) return;
     const state = this.state(ctx.agentId);
     const now = this.runtime.now();
+    const offered = ctx.subjectInboxOffered;
+    const due = offered.filter((item) => item.reviewAt != null);
     const roomReview = { ...state.roomReview };
-    for (const item of ctx.subjectInboxOffered) {
+    for (const item of due) {
       if (item.proposal.kind === "room") {
         const id = item.id.slice(5);
         if (roomReview[id]?.reviewAt === item.reviewAt)
@@ -282,12 +293,25 @@ export class SubjectInbox {
           });
       }
     }
+    // A successful opening moves presented work to the end, even when the
+    // clock has not advanced. Keep ordering metadata only for eligible work.
+    const pendingIds = new Set(
+      this.pending(this.runtime.agent(ctx.agentId), state, now).map(
+        (item) => item.id,
+      ),
+    );
+    const openingOrder = new Set(state.openingOrder || []);
+    for (const { id } of offered) {
+      openingOrder.delete(id);
+      openingOrder.add(id);
+    }
     this.save(ctx.agentId, {
       ...state,
+      openingOrder: [...openingOrder].filter((id) => pendingIds.has(id)),
       roomReview,
-      retryAt: null,
+      retryAt: due.length ? null : state.retryAt,
       items: (state.items || []).map((item) =>
-        ctx.subjectInboxOffered.some(
+        due.some(
           (offered) =>
             offered.id === item.id && offered.revision === item.revision,
         )
