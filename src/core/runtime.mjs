@@ -488,6 +488,20 @@ export class Runtime {
       throw Error("AGENT_PAUSED_OR_EXPIRED");
     return this.agent(ctx.agentId);
   }
+  rotateCapability(ctx) {
+    this.assertActive(ctx);
+    this.capabilities.delete(ctx.token);
+    (ctx.retiredCapabilities ??= []).push(ctx.token);
+    ctx.token = randomBytes(32).toString("base64url");
+    this.capabilities.set(ctx.token, ctx);
+    return ctx.token;
+  }
+  containsCapability(ctx, text) {
+    return (
+      text.includes(ctx.token) ||
+      ctx.retiredCapabilities?.some((token) => text.includes(token))
+    );
+  }
   capability(token) {
     const ctx = this.capabilities.get(token);
     if (!ctx) throw Error("INVALID_CAPABILITY");
@@ -1334,7 +1348,7 @@ export class Runtime {
     return result;
   }
   assertSafeOutput(ctx, text) {
-    if (text.includes(ctx.token) || containsCredential(text))
+    if (this.containsCapability(ctx, text) || containsCredential(text))
       throw Error("SENSITIVE_OUTPUT_BLOCKED");
   }
   send(...args) {

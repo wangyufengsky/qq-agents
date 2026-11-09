@@ -314,7 +314,7 @@ function archive(
   memory,
   scope,
   session,
-  { turnId, backendId, reason, at, ...extra },
+  { turnId, backendId, reason, at, linkTurn = true, ...extra },
 ) {
   const reference = sessionReference(session);
   const id =
@@ -370,10 +370,11 @@ function archive(
       details,
     });
   }
-  patchTurn(memory, turnId, {
-    backendSession: reference,
-    sessionHistoryId: id,
-  });
+  if (linkTurn)
+    patchTurn(memory, turnId, {
+      backendSession: reference,
+      sessionHistoryId: id,
+    });
   return id;
 }
 
@@ -434,16 +435,25 @@ export function saveSession(
   memory,
   scope,
   session,
-  { turnId, backendId, at, inactive = false, reason = "backend-failure" },
+  {
+    turnId,
+    backendId,
+    at,
+    inactive = false,
+    archiveOnly = false,
+    reason = "backend-failure",
+  },
 ) {
   if (!session)
     return retireSession(memory, scope, reason, at, { turnId, backendId });
   const reference = sessionReference(session);
   memory.store.transaction(() => {
     const value = memory.state(scope);
-    patchTurn(memory, turnId, { backendSession: reference, backendId });
+    if (!archiveOnly)
+      patchTurn(memory, turnId, { backendSession: reference, backendId });
     const turn = turnRecord(memory, turnId);
     if (
+      archiveOnly ||
       inactive ||
       value.lastTurnId !== turnId ||
       (turn && JSON.parse(turn.value).status !== "running")
@@ -453,6 +463,7 @@ export function saveSession(
         backendId,
         reason: "cancelled-during-session-creation",
         at,
+        linkTurn: !archiveOnly,
       });
       return;
     }
