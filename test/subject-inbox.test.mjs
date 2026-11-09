@@ -495,3 +495,64 @@ test("reflection accepts only nonprotected evidence from the source chat", async
   assert.equal(feedback.status, "accepted");
   assert.equal(feedback.evidence, undefined);
 });
+
+test("old proposals rotate through reserved slots without scheduling their own turn", async (t) => {
+  const openings = [];
+  let failOpening = false;
+  const f = setup(t, async (p) => {
+    if (p.conversation !== subject) return;
+    const line = p.prompt
+      .split("\n")
+      .find((line) => line.startsWith("会话交给你的提议"));
+    const batch = JSON.parse(line.slice(line.indexOf('{"items"')));
+    openings.push(batch.items.map((item) => item.id));
+    if (failOpening) throw Error("fixture subject turn failed");
+  });
+  const chat = context(f.runtime);
+  const submit = async (prefix, count) => {
+    const items = [];
+    for (let index = 0; index < count; index++) {
+      items.push(
+        await f.runtime.callTool(
+          chat,
+          "subject_inbox_submit",
+          submission(prefix + index, { kind: "rest" }),
+        ),
+      );
+    }
+    return items.map(({ id }) => id);
+  };
+  const tick = async () => {
+    f.runtime.tick();
+    await settle(f.runtime);
+  };
+  const old = await submit("backlog-", 4);
+  await tick();
+  assert.deepEqual(openings[0], old);
+  await tick();
+  assert.equal(openings.length, 1);
+
+  const first = await submit("first-", 8);
+  await tick();
+  assert.deepEqual(openings[1], [...first.slice(0, 6), ...old.slice(0, 2)]);
+
+  f.runtime.subjectInbox = new f.runtime.subjectInbox.constructor(f.runtime);
+  const second = await submit("second-", 8);
+  await tick();
+  assert.deepEqual(openings[2], [
+    ...first.slice(6),
+    ...second.slice(0, 4),
+    ...old.slice(2),
+  ]);
+
+  await tick();
+  await tick();
+  assert.equal(openings.length, 4);
+  assert.equal(openings[3].length, 8);
+  failOpening = true;
+  assert.equal((await f.runtime.wake(agentId, subject)).status, "failed");
+  assert.equal(openings[4].length, 8);
+  failOpening = false;
+  await f.runtime.wake(agentId, subject);
+  assert.deepEqual(openings[5], openings[4]);
+});
