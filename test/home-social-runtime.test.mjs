@@ -2660,3 +2660,48 @@ test("configuration revokes only affected exchanges and ignores backend display 
   });
   assert.equal(status(), "closed");
 });
+
+test("unified social decisions queue a visit or an activity without auto-inviting or starting a window", async (t) => {
+  const f = setup(t),
+    r = f.runtime;
+  r.agent("agent-0").subject.inboxEnabled = true;
+  const visit = await visitFixture(f);
+  f.setScript(() => []);
+  const chat = context(r, "agent-0", "group:20000");
+  const subject = context(r, "agent-0", "@subject");
+  const invitations = f.store.db
+    .prepare("SELECT count(*) AS n FROM home_social_invitations")
+    .get().n;
+  for (const [key, target] of [
+    ["compose", { kind: "compose", id: "agent-1" }],
+    ["activity", { kind: "visit", id: visit.id }],
+  ]) {
+    const intent = await r.callTool(chat, "subject_inbox_submit", {
+      requestId: key,
+      proposal: { kind: "social", target, note: "仅主人格可见的聊天备注" },
+    });
+    const args = { id: intent.id, expectedRevision: 1, action: "social" };
+    assert.equal(
+      (await r.callTool(subject, "subject_inbox_decide", args)).socialStatus,
+      "queued",
+    );
+    assert.equal(
+      (await r.callTool(subject, "subject_inbox_decide", args)).socialStatus,
+      "queued",
+    );
+    await f.pump();
+    const prompt = JSON.stringify(f.requests.at(-1).body);
+    assert.doesNotMatch(prompt, /仅主人格可见的聊天备注/);
+    if (key === "activity") assert.match(prompt, /商量共同活动/);
+  }
+  assert.equal(
+    f.store.db
+      .prepare("SELECT count(*) AS n FROM home_social_invitations")
+      .get().n,
+    invitations,
+  );
+  assert.equal(
+    f.store.db.prepare("SELECT count(*) AS n FROM home_social_windows").get().n,
+    0,
+  );
+});

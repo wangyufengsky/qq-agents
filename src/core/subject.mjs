@@ -1,3 +1,4 @@
+import { needsSubjectReview } from "./subject-inbox-sources.mjs";
 import { refreshAgentRhythm, rhythmStatus } from "./rhythm.mjs";
 import { roleRest, settleRoleRest, subjectInboxEnabled } from "./role-rest.mjs";
 import { randomUUID } from "node:crypto";
@@ -139,6 +140,7 @@ export class SubjectCoordinator {
     return (
       this.internalAllowed(a) &&
       !roleRest(r, a) &&
+      !r.subjectInbox.focus(a) &&
       rhythmStatus(r, a, true).state !== "sleeping" &&
       this.targetAllowed(a, target) &&
       r.writable(a, target) &&
@@ -310,6 +312,8 @@ export class SubjectCoordinator {
         ...proof.references.map((ref) => ref.metadata),
       ),
     };
+    if (subjectInboxEnabled(a) && needsSubjectReview(i))
+      i.subjectReview = { reviewAt: now };
     const saved = this.save(a.id, i);
     trackMindRecords(r, ctx, [saved], "intent");
     return saved;
@@ -574,6 +578,10 @@ export class SubjectCoordinator {
         else if (
           ["waiting", "deferred"].includes(i.status) &&
           i.eligibleAt <= now &&
+          !(
+            (subjectInboxEnabled(a) || i.subjectReview) &&
+            needsSubjectReview(i)
+          ) &&
           this.canAutoDisclose(a, i) &&
           this.contactOpportunity(a, i.target)
         ) {
