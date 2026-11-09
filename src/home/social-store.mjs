@@ -217,42 +217,96 @@ export class SocialStore {
         "DELETE FROM home_social_handoffs WHERE host_generation=? OR guest_generation=?",
       )
       .run(generation, generation);
-    const visits =
-      "SELECT id FROM home_social_visits WHERE host_generation=? OR guest_generation=?";
-    this.db
-      .prepare(
-        `UPDATE home_social_windows SET status='invalidated',revision=revision+1,fence=fence+1,closed_at=?,closed_reason=? WHERE status IN ('proposed','active') AND visit_id IN (${visits})`,
-      )
-      .run(now, reasonCode, generation, generation);
-    this.db
-      .prepare(
-        `UPDATE home_social_turns SET status='cancelled',fence=fence+1,finished_at=? WHERE status IN ('queued','running','reserved') AND (target_host_generation=? OR target_guest_generation=?)`,
-      )
-      .run(now, generation, generation);
-    this.db
-      .prepare(
-        `UPDATE home_social_dispatches SET status='cancelled',fence=fence+1,finished_at=? WHERE status IN ('queued','claimed') AND (target_host_generation=? OR target_guest_generation=?)`,
-      )
-      .run(now, generation, generation);
-    this.db
-      .prepare(
-        `UPDATE home_social_contexts SET status='invalidated',epoch=epoch+1,fence=fence+1,updated_at=? WHERE status<>'invalidated' AND (target_host_generation=? OR target_guest_generation=?)`,
-      )
-      .run(now, generation, generation);
-    this.db
-      .prepare(
-        `UPDATE home_social_outbox SET status='cancelled',fence=fence+1,finished_at=? WHERE status IN ('pending','claimed') AND (entity_id IN (${visits}) OR entity_id IN (SELECT id FROM home_social_invitations WHERE host_generation=? OR guest_generation=?) OR entity_id IN (SELECT id FROM home_social_contexts WHERE target_host_generation=? OR target_guest_generation=?))`,
-      )
-      .run(
-        now,
-        generation,
-        generation,
-        generation,
-        generation,
-        generation,
-        generation,
-      );
+    this.transitionWindows(now, { generation }, reasonCode, "invalidated");
+    this.stopWork(now, { generation });
     return { invalidated: true };
+  }
+  /** Close windows by their domain scope while holding the write transaction.
+   * @param {number} now @param {{windowId?:string, visitId?:string, generation?:string, all?:true}} scope
+   * @param {string} reason @param {string} status */
+  transitionWindows(now, scope, reason, status) {
+    if (!this.db.isTransaction) throw Error("SOCIAL_TRANSACTION_REQUIRED");
+    const { windowId, visitId, generation } = scope;
+    if (!windowId && !visitId && !generation && scope.all !== true)
+      throw Error("INVALID_REQUEST");
+    const [predicate, args] = windowId
+      ? ["id=?", [windowId]]
+      : visitId
+        ? ["visit_id=?", [visitId]]
+        : generation
+          ? [
+              "visit_id IN (SELECT id FROM home_social_visits WHERE host_generation=? OR guest_generation=?)",
+              [generation, generation],
+            ]
+          : ["1", []];
+    return this.db
+      .prepare(
+        `UPDATE home_social_windows
+      SET status=?,revision=revision+1,fence=fence+1,closed_at=?,closed_reason=?
+      WHERE status IN ('proposed','active') AND ${predicate} RETURNING id`,
+      )
+      .all(status, now, reason, ...args);
+  }
+  /** Keep the three representations of a dispatch synchronized by exact key.
+   * @param {number} now @param {{windowId?:string, visitId?:string, generation?:string, all?:true}} scope
+   * @param {{reason?:string, status?:"cancelled"|"interrupted"}} [options] */
+  stopWork(now, scope, { reason, status = "cancelled" } = {}) {
+    if (!this.db.isTransaction) throw Error("SOCIAL_TRANSACTION_REQUIRED");
+    const { windowId, visitId, generation } = scope;
+    if (!windowId && !visitId && !generation && scope.all !== true)
+      throw Error("INVALID_REQUEST");
+    const [predicate, args] = windowId
+      ? ["window_id=?", [windowId]]
+      : visitId
+        ? ["visit_id=?", [visitId]]
+        : generation
+          ? [
+              "(target_host_generation=? OR target_guest_generation=?)",
+              [generation, generation],
+            ]
+          : ["1", []];
+    this.db
+      .prepare(
+        `UPDATE home_social_outbox
+      SET status='cancelled',fence=fence+1,finished_at=?
+      WHERE type='social-dispatch' AND status IN ('pending','claimed')
+        AND dedupe_key IN (SELECT dedupe_key FROM home_social_dispatches WHERE ${predicate})`,
+      )
+      .run(now, ...args);
+    this.db
+      .prepare(
+        `UPDATE home_social_dispatches
+      SET status=?,fence=fence+1,finished_at=?,safe_error=?
+      WHERE status IN ('queued','claimed') AND ${predicate}`,
+      )
+      .run(status, now, reason ?? null, ...args);
+    this.db
+      .prepare(
+        `UPDATE home_social_turns
+      SET status=?,fence=fence+1,finished_at=?,safe_error=?
+      WHERE status IN ('queued','running','reserved') AND ${predicate}`,
+      )
+      .run(status, now, reason ?? null, ...args);
+    const contextPredicate = windowId
+      ? "id IN (SELECT id FROM home_social_turns WHERE window_id=?)"
+      : predicate;
+    this.db
+      .prepare(
+        `UPDATE home_social_contexts
+      SET status='invalidated',epoch=epoch+1,fence=fence+1,updated_at=?
+      WHERE status<>'invalidated' AND ${contextPredicate}`,
+      )
+      .run(now, ...args);
+  }
+  /** @param {any} window @param {number} now @param {string} reason */
+  closeWindow(window, now, reason) {
+    const scope = { windowId: window.id };
+    const status =
+      reason === "expired" || reason === "declined" ? reason : "closed";
+    const changed =
+      this.transitionWindows(now, scope, reason, status).length > 0;
+    if (changed) this.stopWork(now, scope);
+    return changed;
   }
   /** Ordinary restarts preserve logical visits and conservative resource reservations.
    * @param {string} runtimeEpoch */
@@ -274,26 +328,7 @@ export class SocialStore {
         "UPDATE home_social_windows SET status='interrupted',revision=revision+1,fence=fence+1,closed_at=?,closed_reason=? WHERE status='active'",
       )
       .run(now, reason);
-    this.db
-      .prepare(
-        "UPDATE home_social_turns SET status='interrupted',fence=fence+1,finished_at=? WHERE status IN ('queued','running','reserved')",
-      )
-      .run(now);
-    this.db
-      .prepare(
-        "UPDATE home_social_dispatches SET status='interrupted',fence=fence+1,finished_at=? WHERE status IN ('queued','claimed')",
-      )
-      .run(now);
-    this.db
-      .prepare(
-        "UPDATE home_social_outbox SET status='cancelled',fence=fence+1,finished_at=? WHERE status IN ('pending','claimed')",
-      )
-      .run(now);
-    this.db
-      .prepare(
-        "UPDATE home_social_contexts SET status='invalidated',epoch=epoch+1,fence=fence+1,updated_at=? WHERE status<>'invalidated'",
-      )
-      .run(now);
+    this.stopWork(now, { all: true }, { status: "interrupted" });
   }
   /** Explicit offline recovery barrier; never inferred from an ordinary restart.
    * @param {{recoveryEpoch:string}} options */
