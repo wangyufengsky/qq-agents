@@ -115,6 +115,7 @@
       "behavior": {
         "focusedGroupReply": false,
         "focusedGroupMentionReply": false,
+        "optionalGroupBacklog": false,
         "compactChatGroups": [],
         "relationshipRecallGroups": [],
         "maxOpenDraftsPerConversation": 4,
@@ -234,6 +235,7 @@
       "behavior": {
         "focusedGroupReply": false,
         "focusedGroupMentionReply": false,
+        "optionalGroupBacklog": false,
         "compactChatGroups": [],
         "relationshipRecallGroups": [],
         "maxOpenDraftsPerConversation": 4,
