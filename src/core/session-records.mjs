@@ -17,6 +17,9 @@ export function sessionReference(session) {
     )
       ? { nativeSignature: session.nativeSignature }
       : {}),
+    ...(session.backend === "dsh" && session.dshStreamUnverified === true
+      ? { dshStreamUnverified: true }
+      : {}),
     ...(typeof session.signature === "string"
       ? { signature: session.signature.slice(0, 128) }
       : {}),
