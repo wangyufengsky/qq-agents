@@ -59,6 +59,7 @@ export function groupRecall(runtime, ctx, history, focus, accountId) {
     item.writtenIn === ctx.conversation &&
     item.evidence?.length &&
     boundary.allowed(item);
+  const isOptional = (id) => result.optional.some((item) => item.id === id);
   const result = {
     correctionAllowed,
     required: [],
@@ -66,10 +67,27 @@ export function groupRecall(runtime, ctx, history, focus, accountId) {
     // Keep the ordinary reminders within the same source boundary as recall.
     allowsPersonItem: (item) =>
       item.kind !== "boundary" &&
-      !result.optional.some(({ id }) => id === item.id) &&
+      !isOptional(item.id) &&
       inGroup(item) &&
       item.evidence.every((id) => available(get(id))) &&
       !annotation("item", item.id, item.revision).needsReview,
+    // Revalidate the displayed IDs without consulting the session's seen set.
+    reviewPersonItems: (ids) =>
+      ids
+        .filter((id) => !isOptional(id))
+        .map((id) => {
+          const item = memory.identity.personItem(id);
+          return item?.status === "open" && result.allowsPersonItem(item)
+            ? {
+                id,
+                personId: item.personId,
+                kind: item.kind,
+                revision: item.revision,
+                body: item.body,
+                sourceIds: item.evidence,
+              }
+            : { id, needsReview: true };
+        }),
   };
   const require = (entry) => {
     if (JSON.stringify([...result.required, entry]).length <= REQUIRED_CHARS)
@@ -221,12 +239,14 @@ export function groupRecall(runtime, ctx, history, focus, accountId) {
   return { ...result, personIds: [...people.keys()] };
 }
 
-export function groupRecallMaterial(recall) {
+export function groupRecallMaterial(recall, displayedPersonItemIds = []) {
   if (!recall) return undefined;
   const { required, optional, quoteNeedsReview, moreRequired } = recall;
+  const personItems = recall.reviewPersonItems(displayedPersonItemIds);
   return {
     required,
     optional,
+    ...(personItems.length ? { personItems } : {}),
     ...(quoteNeedsReview
       ? { quoteNeedsReview: "引用原文已撤回、缺失或无法核对。" }
       : {}),
@@ -241,7 +261,11 @@ export function groupRecallMaterial(recall) {
 
 export function trackGroupRecall(ctx, material) {
   if (!material) return;
-  for (const item of [...material.required, ...material.optional]) {
+  for (const item of [
+    ...material.required,
+    ...material.optional,
+    ...(material.personItems || []),
+  ]) {
     if (item.id) ctx.privateRead.add(item.id);
     for (const sourceId of item.sourceIds || []) ctx.privateRead.add(sourceId);
     for (const correction of item.corrections || [])

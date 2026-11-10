@@ -654,13 +654,10 @@ export class ContextLifecycle {
     const relationship = groupRecall(r, ctx, history, focus, accountId);
     const correctionAllowed = relationship?.correctionAllowed;
     const openingHistory = chatHistory(history, correctionAllowed);
-    const relationshipMaterial = groupRecallMaterial(relationship);
-    if (relationshipMaterial) {
-      ctx.openingGroupRecall = JSON.stringify(relationshipMaterial);
-      ctx.currentGroupRecall = () =>
-        groupRecallMaterial(groupRecall(r, ctx, history, focus, accountId));
-    }
-    const relationshipLine = groupRecallLine(ctx, relationshipMaterial);
+    const relationshipLine = groupRecallLine(
+      ctx,
+      groupRecallMaterial(relationship),
+    );
     ctx.focusedReplyId = focus?.id;
     const separateFocus =
       focus && !history.items.some(({ id }) => id === focus.id);
@@ -718,6 +715,19 @@ export class ContextLifecycle {
               reserved: relationship.optional.length,
             }),
           });
+    const displayedPersonItemIds = between?.items.map(({ id }) => id);
+    const relationshipMaterial = groupRecallMaterial(
+      relationship,
+      displayedPersonItemIds,
+    );
+    if (relationshipMaterial) {
+      ctx.openingGroupRecall = JSON.stringify(relationshipMaterial);
+      ctx.currentGroupRecall = () =>
+        groupRecallMaterial(
+          groupRecall(r, ctx, history, focus, accountId),
+          displayedPersonItemIds,
+        );
+    }
     if (relationship && between)
       trackMindRecords(
         r,

@@ -228,6 +228,70 @@ test("a changed relationship reminder invalidates draft confirmation and returns
   assert.equal(f.gateway.sent.length, 0);
 });
 
+test("a draft rechecks an ordinary commitment that was shown without a quote", async (t) => {
+  const f = setup(t);
+  const source = await f.add(1, person, "夹具里的原始约定");
+  const item = f.memory.identity.savePersonItem(
+    {
+      personId: person,
+      kind: "promise",
+      body: "先给一份清单",
+      evidence: [source.id],
+    },
+    { writtenIn: group, now: Date.now() },
+  );
+  let checked = false;
+  f.setRun(async (p) => {
+    assert.match(p.prompt, /先给一份清单/);
+    assert.equal(recall(p.prompt), undefined);
+    const prepared = await p.callTool("qq_send", {
+      requestId: "group-commitment-review",
+      text: "我先给一份清单。",
+      inputReview: { token: "0".repeat(64), decision: "continue" },
+    });
+    assert.equal(prepared.preparation.state, "ready");
+    const submit = (token) =>
+      p.callTool("qq_draft", {
+        action: "continue",
+        draftId: prepared.draft.draftId,
+        expectedVersion: prepared.draft.version,
+        inputReview: { token, decision: "continue" },
+      });
+    f.memory.identity.savePersonItem(
+      {
+        id: item.id,
+        expectedRevision: item.revision,
+        personId: person,
+        body: "先给一份摘要",
+        evidence: [source.id],
+      },
+      { writtenIn: group, now: Date.now() },
+    );
+    const refreshed = await submit(prepared.preparation.token);
+    assert.equal(refreshed.actionResult, "not_sent");
+    assert.equal(refreshed.preparation.reason, "GROUP_RECALL_CHANGED");
+    assert.equal(
+      refreshed.preparation.groupRecall.personItems[0].body,
+      "先给一份摘要",
+    );
+    await f.add(1, person, "", {
+      post_type: "notice",
+      notice_type: "group_recall",
+    });
+    const withdrawn = await submit(refreshed.preparation.token);
+    assert.equal(withdrawn.actionResult, "not_sent");
+    assert.equal(withdrawn.preparation.reason, "GROUP_RECALL_CHANGED");
+    assert.deepEqual(withdrawn.preparation.groupRecall.personItems, [
+      { id: item.id, needsReview: true },
+    ]);
+    assert.equal(f.gateway.sent.length, 0);
+    checked = true;
+  });
+  await f.wake();
+  assert.equal(f.gateway.sent.length, 0);
+  assert.ok(checked);
+});
+
 test("a private correction suppresses a stale boundary without putting private text in the group opening", async (t) => {
   const f = setup(t);
   const original = await f.add(1, person, "我自己确认是否接活");
