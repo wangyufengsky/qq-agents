@@ -118,6 +118,25 @@ test("ACP resumes only the supplied session and sets the configured model and ef
   assert.equal(f.calls[2].params.modelId, "synthetic");
   assert.equal(f.calls[3].params.value, "low");
 });
+test("ACP resumes with a current tool route when a native alias is unavailable", async () => {
+  const f = fake();
+  await runAcp(
+    { ...options, session: id },
+    "send with qq_send",
+    () => {},
+    f.launch,
+  );
+  const [{ text }] = f.calls.at(-1).params.prompt;
+  assert.match(text, /if it is listed for this turn/i);
+  assert.match(text, /unknown tool.*before execution/i);
+  assert.match(
+    text,
+    /call_mcp_tool.*ServerName="qq-agents".*ToolName.*logical/i,
+  );
+  assert.match(text, /same requestId/);
+  assert.match(text, /tool errors from earlier turns do not determine/i);
+  assert(text.endsWith("\n\nsend with qq_send"));
+});
 for (const [name, overrides] of Object.entries({
   missingVision: { initialize: { protocolVersion: 1, agentCapabilities: {} } },
   malformed: { "session/prompt": "not json" },
