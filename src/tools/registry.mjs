@@ -6,6 +6,7 @@ import { gameDefinitions, gameTool } from "../games/framework/tools.mjs";
 import { definitions } from "./definitions.mjs";
 import { FUNCTIONAL_AGENT_RESULT, TOOL_NAMES } from "./names.mjs";
 import { coreHandlers } from "./core-handlers.mjs";
+import { recallFromChat } from "../core/memory-recall.mjs";
 import { draftDefinitions, draftTool } from "./qq-drafts.mjs";
 import { appDefinitions, appTool } from "../apps/tools.mjs";
 import { githubDefinitions, githubTool } from "../github/tools.mjs";
@@ -21,6 +22,7 @@ import { boardDefinitions, boardTool } from "./board.mjs";
 // Discovery and dispatch use this same registry. Fail at load time on drift.
 const handlers = {
   ...coreHandlers,
+  memory_recall: recallFromChat,
   [FUNCTIONAL_AGENT_RESULT]: (runtime, ctx, args) => {
     runtime.validateFunctionalEvidence(ctx, args.evidenceIds);
     return runtime.functionalDelegation.submit(ctx, args);

@@ -179,13 +179,19 @@ export function selectDshInstance(
   if (!candidates.length) throw Error("DSH_NOT_FOUND");
   return candidates[0];
 }
-/** @param {import("./session-contract.mjs").BackendConfig} config @returns {Promise<{url: string}>} */
-export async function resolveDshInstance(config) {
+/** @param {import("./session-contract.mjs").BackendConfig} config
+ * @param {(url: string) => boolean} reserved
+ * @returns {Promise<{url: string}>} */
+export async function resolveDshInstance(config, reserved = () => false) {
   // An explicit endpoint stays explicit until the administrator chooses an instance.
   if (!config.recovery?.dshInstance && config.baseUrl) {
     const url = localDshUrl(config.baseUrl);
+    if (reserved(url)) throw Error("DSH_SELECTION_REQUIRED");
     if (!(await looksLikeDsh(url))) throw Error("DSH_NOT_FOUND");
     return { url };
   }
-  return selectDshInstance(config, await discoverDshInstances());
+  return selectDshInstance(
+    config,
+    (await discoverDshInstances()).filter(({ url }) => !reserved(url)),
+  );
 }

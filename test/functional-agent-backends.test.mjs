@@ -181,7 +181,7 @@ test("functional acquisition rejects missing, unsupported, and unavailable backe
   assert.equal(created.length, 0);
 });
 
-test("dedicated selection rejects shared aliases and unresolved ordinary DSH routes", () => {
+test("dedicated selection rejects shared aliases while ordinary discovery excludes the reserved endpoint", () => {
   const { runtime, connections, roles, created } = fixture();
   const [ordinary, dedicated] = runtime.config.backends;
   const acquire = () =>
@@ -191,24 +191,29 @@ test("dedicated selection rejects shared aliases and unresolved ordinary DSH rou
       connections.acquireFunctionalBackend(roles[0], { backendId: "fixture" }),
     /FUNCTIONAL_AGENT_BACKEND_UNSUPPORTED/,
   );
-  for (const url of [
-    undefined,
-    "http://127.0.0.1:23231",
-    "http://[::1]:23231",
-  ]) {
+  for (const url of ["http://127.0.0.1:23231", "http://[::1]:23231"]) {
     ordinary.baseUrl = url;
     assert.throws(acquire, /FUNCTIONAL_AGENT_BACKEND_UNAVAILABLE/);
   }
   ordinary.baseUrl = "http://127.0.0.1:23230";
-  ordinary.recovery.dshInstance = "relay:fixture";
-  assert.throws(acquire, /FUNCTIONAL_AGENT_BACKEND_UNAVAILABLE/);
+  ordinary.recovery = { ...ordinary.recovery, dshInstance: "relay:fixture" };
+  assert.equal(
+    connections.adapter(roles[0]).reservedEndpoint("http://[::1]:23231"),
+    true,
+  );
+  assert.equal(
+    connections.adapter(roles[0]).reservedEndpoint("http://localhost:23230"),
+    false,
+  );
+  const lease = acquire();
   delete ordinary.recovery.dshInstance;
   dedicated.provider = "";
   assert.throws(acquire, /FUNCTIONAL_AGENT_BACKEND_UNAVAILABLE/);
   dedicated.provider = "alternate-provider";
   dedicated.baseUrl = "http://localhost";
   assert.throws(acquire, /FUNCTIONAL_AGENT_BACKEND_UNAVAILABLE/);
-  assert.equal(created.length, 0);
+  assert.equal(created.length, 2);
+  return lease.release();
 });
 
 test("unconfirmed native cleanup quarantines the dedicated endpoint and its aliases", async () => {

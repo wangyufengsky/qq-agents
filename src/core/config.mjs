@@ -181,6 +181,13 @@ const functionalAgents = z
           .array(z.enum(MEMORY_AGENT_TOOLS))
           .max(MEMORY_AGENT_TOOLS.length)
           .default(() => [...MEMORY_AGENT_TOOLS]),
+        pilot: z
+          .object({
+            groups: z.array(qq).min(1).max(20),
+            openingTimeoutMs: z.number().int().min(1).max(4000).default(4000),
+          })
+          .strict()
+          .optional(),
         onDemand: z
           .object({
             timeoutMs: z
@@ -597,6 +604,8 @@ export function validateConfig(input) {
 
     const memory = a.functionalAgents?.memory;
     if (!memory) continue;
+    if (memory.pilot?.groups.some((group) => !allowed(a, "group:" + group, c)))
+      throw Error("CONFIG_SCHEMA_INVALID");
     if (!memory.backendId) {
       if (memory.enabled) throw Error("CONFIG_SCHEMA_INVALID");
       continue;

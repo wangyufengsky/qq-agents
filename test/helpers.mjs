@@ -127,10 +127,12 @@ export function fixture(t, { run = async () => {}, cfg = config() } = {}) {
         run: async (params) => {
           const preparing = params.beforeInputSubmitted?.();
           if (preparing) await preparing;
+          const supplement = params.appendPrompt?.() || "";
           params.onInputSubmitted?.();
 
           return run({
             ...params,
+            prompt: params.prompt + supplement,
             callTool: async (...args) => {
               try {
                 const result = await params.callTool(...args);

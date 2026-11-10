@@ -324,7 +324,15 @@ export class Runtime {
   }
   makeFunctionalContext(
     parent,
-    { invocationId, profile, deadline, controller, assertCurrent, maxLookups },
+    {
+      invocationId,
+      profile,
+      deadline,
+      controller,
+      assertCurrent,
+      maxLookups,
+      evidenceBeforeSeq,
+    },
   ) {
     const a = this.assertActive(parent);
     const allowedTools = this.toolsFor(a, parent.conversation).filter(
@@ -346,6 +354,7 @@ export class Runtime {
       privateRead: new Set(),
       grants: new Set(),
       maxLookups,
+      evidenceBeforeSeq,
       lookups: 0,
       assertCurrent,
       requiresInputSubmission: true,

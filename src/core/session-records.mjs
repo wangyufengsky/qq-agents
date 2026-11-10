@@ -50,6 +50,62 @@ function patchTurn(memory, id, patch) {
   if (row)
     memory.identity.put("model_turns", { ...JSON.parse(row.value), ...patch });
 }
+export function recordMemoryRecall(memory, id, route, details) {
+  const row = turnRecord(memory, id);
+  if (!row) return;
+  const turn = JSON.parse(row.value);
+  const recall = turn.memoryRecall || {};
+  memory.identity.put("model_turns", {
+    ...turn,
+    memoryRecall: { ...recall, [route]: { ...recall[route], ...details } },
+  });
+}
+const recallReasons = new Set([
+  "no-live-cue",
+  "explicit-reference",
+  "ambiguous",
+  "past-reference",
+  "no-cue",
+  "tool",
+]);
+const recallStatuses = new Set([
+  "skipped",
+  "running",
+  "matched",
+  "empty",
+  "withheld",
+  "no-cue",
+  "timeout",
+  "busy",
+  "denied",
+  "stale",
+  "cancelled",
+  "unavailable",
+  "no-result",
+]);
+
+export function memoryRecallDiagnostic(turn) {
+  const entries = ["opening", "active"].flatMap((route) => {
+    const value = turn?.memoryRecall?.[route];
+    if (!recallReasons.has(value?.reason) || !recallStatuses.has(value?.status))
+      return [];
+    const count = (n, max) =>
+      Number.isSafeInteger(n) && n >= 0 ? Math.min(n, max) : 0;
+    return [
+      [
+        route,
+        {
+          reason: value.reason,
+          status: value.status,
+          matched: count(value.matched, 2),
+          presented: count(value.presented, 2),
+          waitMs: count(value.waitMs, 60000),
+        },
+      ],
+    ];
+  });
+  return entries.length ? Object.fromEntries(entries) : undefined;
+}
 const diagnosticFields = {
   origin: new Set([
     "terminal",

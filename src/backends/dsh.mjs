@@ -110,6 +110,8 @@ export class DshBackend {
     this.root = root;
     this.client = client;
     this.discover = discover;
+    /** @type {(url: string) => boolean} */
+    this.reservedEndpoint = () => false;
     this.external = new ExternalTools(config.toolServers);
     this.turns = new Map();
     this.capacities = new Map();
@@ -118,7 +120,11 @@ export class DshBackend {
     this.streamAbort = null;
   }
   async ready() {
-    if (this.client) return this.client;
+    if (this.client) {
+      if (this.endpoint && this.reservedEndpoint(this.endpoint))
+        throw Error("DSH_SELECTION_REQUIRED");
+      return this.client;
+    }
     if (!this.connecting)
       this.connecting = this.connectClient().finally(() => {
         this.connecting = null;
@@ -126,8 +132,9 @@ export class DshBackend {
     return this.connecting;
   }
   async connectClient() {
-    const found = await this.discover(this.config);
+    const found = await this.discover(this.config, this.reservedEndpoint);
     const base = found.url;
+    if (this.reservedEndpoint(base)) throw Error("DSH_SELECTION_REQUIRED");
     this.endpoint = base;
     this.client = new NodeApiClient(base, 30000, {});
     return this.client;
@@ -427,6 +434,7 @@ export class DshBackend {
     onBackendTurn,
     onInputSubmitted,
     beforeInputSubmitted,
+    appendPrompt,
     recovery,
   }) {
     // Capture the requested selection before any await. It applies only to
@@ -650,6 +658,7 @@ export class DshBackend {
       for (const record of /** @type {any} */ (snapshot)?.records || [])
         if (record.event?.data?.turn !== undefined)
           active.previousTurns.add(String(record.event.data.turn));
+      if (appendPrompt) active.inputText += appendPrompt();
       active.promptPending = true;
       const submission = client.sessions.prompt(
         {

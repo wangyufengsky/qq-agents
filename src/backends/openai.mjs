@@ -407,6 +407,7 @@ export class OpenAIBackend {
     finalizeToolOutput,
     commitToolOutput,
     beforeInputSubmitted,
+    appendPrompt,
     recovery,
   }) {
     const signature = this.sessionSignature(tools);
@@ -458,12 +459,16 @@ export class OpenAIBackend {
         parameters: t.inputSchema,
       },
     }));
-    state.messages.push({ role: "user", content: prompt });
-    this.store(state);
     const pendingResults = [];
     let inputSubmitted = false;
     try {
       await beforeInputSubmitted?.();
+      if (controller.signal.aborted) throw Error("ABORTED");
+      state.messages.push({
+        role: "user",
+        content: prompt + (appendPrompt?.() || ""),
+      });
+      this.store(state);
       for (let round = 0; ; round++) {
         if (controller.signal.aborted) throw Error("ABORTED");
         if (round >= this.config.maxToolRounds)

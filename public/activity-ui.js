@@ -296,6 +296,41 @@ function activityEntry(e) {
     parts.push(
       `<p class="hint">有 ${e.unknownSends} 条发送结果未知（原因未记录），可在概览的待核对发送中处理。</p>`,
     );
+  if (e.memoryRecall) {
+    const statuses = {
+      skipped: "跳过",
+      running: "查证中",
+      matched: "命中",
+      empty: "无匹配",
+      withheld: "证据未通过复核",
+      timeout: "超时",
+      busy: "执行位忙",
+      denied: "权限不足",
+      stale: "已失效",
+      cancelled: "已取消",
+      unavailable: "暂不可用",
+      "no-result": "未返回结果",
+      "no-cue": "当前来信没有该线索",
+    };
+    const reasons = {
+      "past-reference": "旧事指代",
+      ambiguous: "候选有歧义",
+      "explicit-reference": "已有明确引用",
+      "no-live-cue": "没有可用的本轮来信",
+      "no-cue": "没有旧事线索",
+      tool: "对话主动查证",
+    };
+    for (const [kind, label] of [
+      ["opening", "回复前"],
+      ["active", "主动回想"],
+    ]) {
+      const trace = e.memoryRecall[kind];
+      if (trace)
+        parts.push(
+          `<p class="hint">记忆 Agent · ${label} · ${esc(reasons[trace.reason] || "")} · ${esc(statuses[trace.status] || "")} · 命中 ${esc(trace.matched)} 条 · 交给模型 ${esc(trace.presented)} 条 · 等待 ${esc(trace.waitMs)} ms</p>`,
+        );
+    }
+  }
   const diagnosticSummaries = Array.isArray(e.backendDiagnostics)
     ? e.backendDiagnostics.map(activityDiagnosticSummary).filter(Boolean)
     : [];

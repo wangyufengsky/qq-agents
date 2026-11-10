@@ -52,6 +52,7 @@ const AGENT_TOOL_GROUPS = [
     desc: "回忆过去的经历、翻阅聊天记录、写日记。",
     tools: {
       memory_search: "检索经历与日记",
+      memory_recall: "主动回想（需指定群试点）",
       memory_related: "查看引用与撤回关系",
       memory_read: "展开记录原文",
       conversation_read: "按会话翻阅聊天记录",

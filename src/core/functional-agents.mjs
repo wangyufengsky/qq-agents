@@ -54,3 +54,17 @@ export function resolveFunctionalAgent(role, conversation, key) {
     definition,
   };
 }
+
+/** @param {Role} role @param {string} conversation */
+export function memoryRecallPilot(role, conversation) {
+  const { qq, memory } = role.functionalAgents || {};
+  return memory?.enabled &&
+    qq?.delegatesTo?.includes("memory") &&
+    /^group:\d+$/.test(conversation) &&
+    role.tools.includes("memory_search") &&
+    (!qq.tools || qq.tools.includes("memory_search")) &&
+    memory.tools.includes("memory_search") &&
+    memory.pilot?.groups.includes(conversation.slice(6))
+    ? memory.pilot
+    : undefined;
+}

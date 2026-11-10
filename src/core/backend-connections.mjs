@@ -111,6 +111,15 @@ export class BackendConnections {
   list() {
     return this.runtime.config.backends.map((b) => this.snapshot(b.id));
   }
+  reservedEndpoint(url) {
+    const port = fixedDshPort({ baseUrl: url });
+    return Boolean(
+      port &&
+      this.runtime.config.backends.some(
+        (item) => item.functionalAgentOnly && fixedDshPort(item) === port,
+      ),
+    );
+  }
   adapter(a) {
     if (this.runtime.closed) throw Error("BACKEND_RECOVERY_FAILED");
     if (this.runtime.reconfiguringAgents.has(a.id))
@@ -126,6 +135,8 @@ export class BackendConnections {
         },
         a,
       );
+      if (config.type === "dsh")
+        b.reservedEndpoint = (url) => this.reservedEndpoint(url);
       this.runtime.backends.set(a.id, b);
       b.onDisconnect = (error) => {
         if (
@@ -191,17 +202,18 @@ export class BackendConnections {
     )
       throw Error("FUNCTIONAL_AGENT_BUSY");
 
-    // DSH also updates the profile-wide default when it selects a model.
-    // An unresolved ordinary route could pick the dedicated endpoint.
+    // A dedicated profile keeps its model defaults separate. Ordinary dynamic
+    // discovery also excludes its port, including during reconnect.
     const port = fixedDshPort(config);
     if (
       !port ||
       this.functionalBackendQuarantinedPorts.has(port) ||
-      r.config.backends.some((item) => {
-        if (item.type !== "dsh" || item.functionalAgentOnly) return false;
-        const ordinary = fixedDshPort(item);
-        return !ordinary || ordinary === port;
-      })
+      r.config.backends.some(
+        (item) => !item.functionalAgentOnly && fixedDshPort(item) === port,
+      ) ||
+      [...r.backends.values()].some(
+        (backend) => fixedDshPort({ baseUrl: backend.endpoint }) === port,
+      )
     )
       throw Error("FUNCTIONAL_AGENT_BACKEND_UNAVAILABLE");
     const modelSelection = Object.freeze({
@@ -336,26 +348,23 @@ export class BackendConnections {
       let selected;
       try {
         if (!agents.length) throw Error("BACKEND_NO_AGENTS");
-        if (config.type === "dsh")
-          selected = selectDshInstance(
-            config,
-            await this.discover({ configuredUrl: config.baseUrl }),
-            candidateId,
-            { automatic },
-          );
-        else if (candidateId) throw Error("BACKEND_RECOVERY_FAILED");
-        if (selected) {
-          const selectedPort = fixedDshPort({ baseUrl: selected.url });
+        if (config.type === "dsh") {
+          const candidates = await this.discover({
+            configuredUrl: config.baseUrl,
+          });
           if (
-            selectedPort &&
-            r.config.backends.some(
-              (item) =>
-                item.functionalAgentOnly === true &&
-                fixedDshPort(item) === selectedPort,
+            candidates.some(
+              ({ id, url }) => id === candidateId && this.reservedEndpoint(url),
             )
           )
             throw Error("DSH_SELECTION_REQUIRED");
-        }
+          selected = selectDshInstance(
+            config,
+            candidates.filter(({ url }) => !this.reservedEndpoint(url)),
+            candidateId,
+            { automatic },
+          );
+        } else if (candidateId) throw Error("BACKEND_RECOVERY_FAILED");
         if (
           automatic &&
           (r.config.globalPaused ||
@@ -455,7 +464,12 @@ export class BackendConnections {
     if (args.action === "discover") {
       if (config.type !== "dsh") throw Error("DSH_BACKEND_REQUIRED");
       return {
-        candidates: await this.discover({ configuredUrl: config.baseUrl }),
+        candidates: (
+          await this.discover({ configuredUrl: config.baseUrl })
+        ).filter(
+          ({ url }) =>
+            config.functionalAgentOnly || !this.reservedEndpoint(url),
+        ),
       };
     }
     if (args.action === "settings") {

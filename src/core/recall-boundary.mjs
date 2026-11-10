@@ -87,7 +87,8 @@ export function recallBoundary(runtime, ctx, { publicOnly = false } = {}) {
         memory.db,
         "SELECT * FROM events WHERE agent_id=? AND id=? AND connection_id=? AND conversation=? AND ((kind='message.received' AND status='observed') OR (kind='message.sent' AND status='confirmed'))",
       ).get(agent.id, row?.id ?? null, agent.connectionId, ctx.conversation);
-      if (!stored) return false;
+      if (!stored || stored.seq >= (ctx.evidenceBeforeSeq ?? Infinity))
+        return false;
       const record = memory.event(stored, ctx.conversation);
       if (record.recalled) return false;
       row = record;
