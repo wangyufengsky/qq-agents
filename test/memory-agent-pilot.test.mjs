@@ -421,3 +421,52 @@ test("a source already visible in the dialogue input is not sent again", async (
   assert.equal(memoryRecallDiagnostic(turn).opening.status, "skipped");
   assert.equal(memoryRecallDiagnostic(turn).familiarity.presented, 0);
 });
+
+test("opening retrieves a short topic from beyond the recent window", async (t) => {
+  let old, prompt;
+  let reviews = 0;
+  const f = setupFamiliarity(t, async (p) => {
+    if (!p.modelSelection) {
+      prompt = p.prompt;
+      return;
+    }
+    reviews++;
+    const data = JSON.parse(p.prompt.split("任务资料：\n")[1]);
+    assert.deepEqual(
+      data.candidates.map(({ id }) => id),
+      [old.id],
+    );
+    assert.match(data.candidates[0].body, /木牌/);
+    await p.callTool("functional_agent_result", { evidenceIds: [old.id] });
+  });
+  old = await f.add(1, "小亭的入口有一块木牌", 20000, 30000, 1799990000);
+  await f.add(2, "小亭在另一座城", 20001, 30000, 1799990100);
+  for (let i = 0; i < 260; i++)
+    f.memory.append({
+      dedupe: "historical-window-" + i,
+      connectionId: "qq-0",
+      conversation: group,
+      kind: "message.received",
+      body: "应该触发词表",
+      occurredAt: new Date(1799990200000 + i * 1000).toISOString(),
+    });
+  const input = await f.add(300, "AI 小亭的情况怎么样？");
+  const turn = await f.turn(input);
+  assert.equal(reviews, 1);
+  assert.equal(memoryRecallDiagnostic(turn).familiarity.matched, 0);
+  assert.equal(memoryRecallDiagnostic(turn).opening.presented, 1);
+  assert.match(prompt.split("本轮记忆查证 ")[1], /木牌/);
+  assert.doesNotMatch(prompt.split("本轮记忆查证 ")[1], /另一座城|词表/);
+});
+
+test("generic discussion words alone do not nominate previous evidence", async (t) => {
+  let reviews = 0;
+  const f = setupFamiliarity(t, async (p) => {
+    if (p.modelSelection) reviews++;
+  });
+  await f.add(1, "应该触发词表", 20000, 30000, 1799990000);
+  const turn = await f.turn(await f.add(2, "应该、触发、词表"));
+  assert.equal(reviews, 0);
+  assert.equal(memoryRecallDiagnostic(turn).familiarity.matched, 0);
+  assert.equal(memoryRecallDiagnostic(turn).opening.status, "skipped");
+});
