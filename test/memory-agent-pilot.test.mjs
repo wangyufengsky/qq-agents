@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { validateConfig } from "../src/core/config.mjs";
+import { semanticDigest } from "../src/core/semantic-recall.mjs";
 import { recallBoundary } from "../src/core/recall-boundary.mjs";
 import { memoryRecallDiagnostic } from "../src/core/session-records.mjs";
 import { config, fixture, raw } from "./helpers.mjs";
@@ -469,4 +472,155 @@ test("generic discussion words alone do not nominate previous evidence", async (
   assert.equal(reviews, 0);
   assert.equal(memoryRecallDiagnostic(turn).familiarity.matched, 0);
   assert.equal(memoryRecallDiagnostic(turn).opening.status, "skipped");
+});
+
+function enableSemanticPilot() {
+  const cfg = pilotConfig();
+  cfg.agents[0].functionalAgents.memory.pilot.semantic = true;
+  cfg.agents[0].behavior.optionalGroupBacklog = true;
+  return cfg;
+}
+
+test("semantic pilot reviews a paraphrase, withholds recent and unauthorized sources, and skips reactions", async (t) => {
+  let old,
+    recent,
+    other,
+    reviews = 0,
+    searches = 0,
+    prompt;
+  const oldText = "小亭入口的木牌写着暂停来访";
+  const recentText = "门口的钥匙已经交给值班人";
+  const privateText = "隔壁的入场暗号";
+  const f = setup(
+    t,
+    async (p) => {
+      if (!p.modelSelection) {
+        prompt = p.prompt;
+        return;
+      }
+      reviews++;
+      assert.match(p.prompt, /小亭入口的木牌/);
+      const candidateText = p.prompt.split('"candidates":')[1];
+      assert.doesNotMatch(candidateText, /门口的钥匙|隔壁的入场暗号/);
+      await p.callTool("functional_agent_result", { evidenceIds: [old.id] });
+    },
+    enableSemanticPilot(),
+  );
+  old = await f.add(1, oldText, 20000, 30000, 1799990000);
+  recent = await f.add(2, recentText, 20000, 30000, 1799999940);
+  other = await f.add(3, privateText, 20001, 30000, 1799990000);
+  f.runtime.semanticRecall.search = async (_role, conversation, text) => {
+    searches++;
+    assert.equal(conversation, group);
+    assert.match(text, /^客人还能进来吗/u);
+    return {
+      status: "ready",
+      waitMs: 4,
+      hits: [
+        { id: recent.id, digest: semanticDigest(recentText) },
+        { id: other.id, digest: semanticDigest(privateText) },
+        { id: old.id, digest: semanticDigest(oldText) },
+      ],
+    };
+  };
+  const turn = await f.turn(await f.add(4, "客人还能进来吗？"));
+  assert.match(prompt.split("本轮记忆查证 ")[1], /暂停来访/);
+  const trace = memoryRecallDiagnostic(turn).opening;
+  assert.equal(trace.reason, "local-semantic");
+  assert.equal(trace.presented, 1);
+  assert.deepEqual(trace.semantic, {
+    status: "matched",
+    candidates: 1,
+    waitMs: 4,
+  });
+  assert.ok(Number.isSafeInteger(trace.agentMs));
+  const reaction = await f.turn(await f.add(5, "喵，哈哈，诶"));
+  assert.equal(
+    memoryRecallDiagnostic(reaction).opening.semantic.status,
+    "no-cue",
+  );
+  assert.equal(searches, 1);
+  assert.equal(reviews, 1);
+});
+
+test("semantic recall falls back to lexical evidence on worker timeout", async (t) => {
+  let old,
+    reviews = 0;
+  const f = setup(
+    t,
+    async (p) => {
+      if (!p.modelSelection) return;
+      reviews++;
+      await p.callTool("functional_agent_result", { evidenceIds: [old.id] });
+    },
+    enableSemanticPilot(),
+  );
+  old = await f.add(1, "橙色雨伞放在值班室", 20000, 30000, 1799990000);
+  f.runtime.semanticRecall.search = async () => ({
+    status: "timeout",
+    waitMs: 150,
+  });
+  const turn = await f.turn(await f.add(2, "橙色雨伞放哪了？"));
+  assert.equal(reviews, 1);
+  const trace = memoryRecallDiagnostic(turn).opening;
+  assert.equal(trace.presented, 1);
+  assert.equal(trace.semantic.status, "timeout");
+});
+
+test("the worker receives only its eligible pilot scope and picks up new history after an empty scan", async (t) => {
+  const f = setup(t, undefined, enableSemanticPilot());
+  const service = f.runtime.semanticRecall;
+  service.tick();
+  assert.equal(service.pending, undefined);
+
+  const writes = [];
+  let starts = 0;
+  service.start = () => {
+    starts++;
+    const child = new EventEmitter();
+    child.stdin = new PassThrough();
+    child.stdout = new PassThrough();
+    child.kill = () => child.stdout.end();
+    child.stdin.on("data", (chunk) => {
+      const request = JSON.parse(chunk.toString());
+      writes.push(request);
+      child.stdout.write("[]\n");
+    });
+    return child;
+  };
+  await f.add(1, "另一个群的旧话", 20001, 30000, 1799990000);
+  const eligible = await f.add(2, "试点群的旧话", 20000, 30000, 1799990000);
+  const protectedRow = f.memory.append({
+    dedupe: "protected-semantic-history",
+    connectionId: "qq-0",
+    conversation: group,
+    kind: "message.received",
+    status: "observed",
+    body: "受保护的旧话",
+    payload: { protectedOperations: true },
+    occurredAt: new Date(1799990002000).toISOString(),
+  });
+  service.tick();
+  assert.deepEqual(
+    writes[0].rows.map(({ id }) => id),
+    [eligible.id],
+  );
+  assert.notEqual(eligible.id, protectedRow.id);
+  const role = f.runtime.agent("agent-0");
+  const options = {
+    beforeSeq: 9999,
+    to: Date.parse("2027-01-01"),
+    known: [],
+    signal: new AbortController().signal,
+    budget: 150,
+  };
+  assert.equal(
+    (await service.search(role, "group:20001", "另一个群", options)).status,
+    "unavailable",
+  );
+  const result = await service.search(role, group, "试点群", options);
+  assert.equal(result.status, "ready");
+  assert.equal(writes.length, 2);
+  assert.equal(writes[0].scope, writes[1].scope);
+  assert.equal(starts, 1);
 });

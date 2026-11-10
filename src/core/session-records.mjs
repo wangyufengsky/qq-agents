@@ -68,6 +68,7 @@ const recallReasons = new Set([
   "no-cue",
   "tool",
   "local-familiarity",
+  "local-semantic",
 ]);
 const recallStatuses = new Set([
   "skipped",
@@ -83,6 +84,16 @@ const recallStatuses = new Set([
   "cancelled",
   "unavailable",
   "no-result",
+]);
+
+const semanticStatuses = new Set([
+  "matched",
+  "empty",
+  "no-cue",
+  "warming",
+  "timeout",
+  "unavailable",
+  "cancelled",
 ]);
 
 export function memoryRecallDiagnostic(turn) {
@@ -102,6 +113,16 @@ export function memoryRecallDiagnostic(turn) {
           presented: count(value.presented, 2),
           waitMs: count(value.waitMs, 60000),
           ...(route === "familiarity" && { checked: count(value.checked, 31) }),
+          ...(semanticStatuses.has(value.semantic?.status) && {
+            semantic: {
+              status: value.semantic.status,
+              candidates: count(value.semantic.candidates, 12),
+              waitMs: count(value.semantic.waitMs, 60000),
+            },
+          }),
+          ...(Number.isSafeInteger(value.agentMs) && {
+            agentMs: count(value.agentMs, 60000),
+          }),
         },
       ],
     ];

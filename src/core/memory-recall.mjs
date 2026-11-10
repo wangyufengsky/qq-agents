@@ -4,6 +4,7 @@ import { liveInput } from "./live-input.mjs";
 import { prepared, recallBoundary } from "./recall-boundary.mjs";
 import { rememberSources } from "./context-handoff.mjs";
 import { recordMemoryRecall } from "./session-records.mjs";
+import { semanticDigest } from "./semantic-recall.mjs";
 
 const OLD_REFERENCE =
   /还记得|记不记得|你记得|之前.{0,8}(?:说|提|聊|定|约|答应)|上次|上回|前几天|那次|老规矩/u;
@@ -69,6 +70,7 @@ const FAMILIARITY_GENERIC = new Set([
   "ai",
 ]);
 const INTERJECTION = /^[哈喵嘿呵嘻嚯嗷呀哎诶唉呃额嗯哦噢哇欸呜啊]+$/u;
+const SEMANTIC_WAIT_MS = 150;
 const FAMILIARITY_WINDOW = 256;
 const FAMILIARITY_MARKS = 512;
 const RECENT_CHAT_MS = 10 * 60_000;
@@ -142,6 +144,25 @@ function keywords(segments, ignored = GENERIC) {
     .map(({ segment }) => segment);
 }
 
+function substantiveWord(word) {
+  return (
+    !FAMILIARITY_GENERIC.has(word) &&
+    !INTERJECTION.test(word) &&
+    !/^\p{N}+$/u.test(word)
+  );
+}
+
+function semanticQuery(cues, recent, cue) {
+  const text = cue || cues.map(({ body }) => body.slice(0, 110)).join("\n");
+  const meaningful = keywords([...WORDS.segment(text.toLowerCase())]).some(
+    substantiveWord,
+  );
+  if (!meaningful && !OLD_REFERENCE.test(text)) return "";
+  // Keep the live cue first when the encoder trims a long input.
+  const prior = recent.slice(-2).map(({ body }) => body.slice(0, 45));
+  return [text.slice(-160), ...prior].join("\n");
+}
+
 export function observeFamiliarity(runtime, role, conversation, id) {
   if (
     !memoryRecallPilot(role, conversation) ||
@@ -156,14 +177,10 @@ export function observeFamiliarity(runtime, role, conversation, id) {
   const input = boundary.project(memory.event(row, conversation));
   if (!input?.body) return;
   const segments = [...WORDS.segment(input.body.slice(0, 240))];
-  const useful = (word) =>
-    !FAMILIARITY_GENERIC.has(word) &&
-    !INTERJECTION.test(word) &&
-    !/^\p{N}+$/u.test(word);
   const segmented = new Set(
     keywords(segments)
       .map((word) => word.toLowerCase())
-      .filter(useful),
+      .filter(substantiveWord),
   );
   const words = new Set(segmented);
   // ICU can split short names into individual Han characters. Keep adjacent
@@ -176,7 +193,11 @@ export function observeFamiliarity(runtime, role, conversation, id) {
   for (let i = 1; i < segments.length && words.size < 8; i++) {
     const previous = segments[i - 1].segment;
     const current = segments[i].segment;
-    if (singleHan(previous) && singleHan(current) && useful(previous + current))
+    if (
+      singleHan(previous) &&
+      singleHan(current) &&
+      substantiveWord(previous + current)
+    )
       words.add(previous + current);
   }
   const terms = [...words].slice(0, 8);
@@ -370,6 +391,29 @@ function familiarityCandidates(runtime, ctx, cues, known, beforeSeq, to) {
   return [...historical.values(), ...local.values()].slice(0, 5);
 }
 
+function semanticCandidates(runtime, ctx, hits, known, beforeSeq, to) {
+  return hits.flatMap(({ id, digest }) => {
+    const [row] = evidence(runtime, ctx, [id], beforeSeq);
+    if (
+      !row ||
+      row.id !== id ||
+      row.occurredAt > to ||
+      !novelEvidence(row, known) ||
+      semanticDigest(row.body) !== digest
+    )
+      return [];
+    return [{ id, body: row.body.slice(0, 200) }];
+  });
+}
+
+function mergeCandidates(lexical, semantic) {
+  const unique = new Map();
+  for (let i = 0; i < Math.max(lexical.length, semantic.length); i++)
+    for (const candidate of [lexical[i], semantic[i]])
+      if (candidate) unique.set(candidate.id, candidate);
+  return [...unique.values()].slice(0, 5);
+}
+
 function renderFamiliarity(runtime, ctx, verified) {
   const marks = ctx.recallOpening.familiarity;
   if (!marks.length) return [];
@@ -561,19 +605,6 @@ async function lookup(runtime, ctx, route, reason, cues, query) {
   const ids = cues.map(({ id }) => id);
   const review = reason === "local-familiarity";
   const known = knownContext(runtime, ctx, cues);
-  const getCandidates = (context) =>
-    review
-      ? familiarityCandidates(runtime, ctx, cues, context, beforeSeq, to)
-      : shortlist(runtime, ctx, cues, query, beforeSeq);
-  const candidates = getCandidates(known);
-  if (review && !candidates.length) return;
-  const prompt = JSON.stringify({
-    task: "快速判断旧话能否给当前对话补上有用的细节。先识别当前话题，再读 recent。只有泛用词相同、已经说清或属于另一件事的记录应当跳过。候选够用就立即用 functional_agent_result 提交最多两条证据 ID。有明确缺口时，自选一个具体查询词补查，优先找能回答该缺口的原话。找不到有用出处就立即提交空数组。recent 只是理解上下文的资料。",
-    cue: query,
-    current: cues.map(({ body }) => body.slice(0, 480)),
-    recent: known.recent,
-    candidates,
-  });
   const current = () =>
     runtime.config === config &&
     ctx.inputEpoch === epoch &&
@@ -581,13 +612,87 @@ async function lookup(runtime, ctx, route, reason, cues, query) {
     runtime.capabilities.get(ctx.token) === ctx &&
     Boolean(memoryRecallPilot(runtime.agent(ctx.agentId), ctx.conversation)) &&
     isDeepStrictEqual(anchors(runtime, ctx, ids), cues);
+  let semantic;
+  if (memoryRecallPilot(role, ctx.conversation)?.semantic) {
+    const text = semanticQuery(cues, known.recent, query);
+    semantic = text
+      ? await runtime.semanticRecall.search(role, ctx.conversation, text, {
+          beforeSeq,
+          to: Date.parse(to),
+          known: [...known.knownIds],
+          signal: ctx.controller.signal,
+          budget: Math.min(SEMANTIC_WAIT_MS, Math.floor(budget / 4)),
+        })
+      : { status: "no-cue", waitMs: 0 };
+  }
+  const semanticRows = (context) =>
+    semanticCandidates(
+      runtime,
+      ctx,
+      semantic?.hits || [],
+      context,
+      beforeSeq,
+      to,
+    );
+  const lexicalRows = (context) =>
+    review
+      ? familiarityCandidates(runtime, ctx, cues, context, beforeSeq, to)
+      : shortlist(runtime, ctx, cues, query, beforeSeq);
+  const getCandidates = (context) =>
+    mergeCandidates(lexicalRows(context), semanticRows(context));
+  const empty = (status, why = reason, trace = {}) => {
+    const details = {
+      reason: why,
+      status,
+      matched: 0,
+      presented: 0,
+      waitMs: Math.round(performance.now() - start),
+      ...trace,
+    };
+    record(runtime, ctx, route, details);
+    return { details, rows: () => [] };
+  };
+  if (semantic && !current()) return empty("stale");
+  const semanticMatches = semanticRows(known);
+  const trace = semantic
+    ? {
+        semantic: {
+          status:
+            semantic.status === "ready"
+              ? semanticMatches.length
+                ? "matched"
+                : "empty"
+              : semantic.status,
+          waitMs: semantic.waitMs,
+          candidates: semanticMatches.length,
+        },
+      }
+    : {};
+  const lexical = lexicalRows(known);
+  const candidates = mergeCandidates(lexical, semanticMatches);
+  if (review && !candidates.length)
+    return semantic ? empty("skipped", "no-cue", trace) : undefined;
+  const lexicalIds = new Set(lexical.map(({ id }) => id));
+  const semanticOnly = new Set(
+    semanticMatches.map(({ id }) => id).filter((id) => !lexicalIds.has(id)),
+  );
+  if (review && !lexical.length) reason = "local-semantic";
+  const prompt = JSON.stringify({
+    task: "快速判断旧话能否给当前对话补上有用的细节。先识别当前话题，再读 recent。只有泛用词相同、已经说清或属于另一件事的记录应当跳过。候选够用就立即用 functional_agent_result 提交最多两条证据 ID。有明确缺口时，自选一个具体查询词补查，优先找能回答该缺口的原话。找不到有用出处就立即提交空数组。recent 只是理解上下文的资料。",
+    cue: query,
+    current: cues.map(({ body }) => body.slice(0, 480)),
+    recent: known.recent,
+    candidates,
+  });
   record(runtime, ctx, route, {
     reason,
     status: "running",
     matched: 0,
     presented: 0,
     waitMs: 0,
+    ...trace,
   });
+  const agentStarted = performance.now();
   const remaining = budget - Math.ceil(performance.now() - start);
   const result =
     remaining <= 0
@@ -620,6 +725,8 @@ async function lookup(runtime, ctx, route, reason, cues, query) {
     matched: sourceIds.length,
     presented: 0,
     waitMs: Math.round(performance.now() - start),
+    ...(semantic && { agentMs: Math.round(performance.now() - agentStarted) }),
+    ...trace,
   };
   record(runtime, ctx, route, details);
   return {
@@ -628,7 +735,11 @@ async function lookup(runtime, ctx, route, reason, cues, query) {
       if (!current()) return [];
       const context = knownContext(runtime, ctx, cues);
       if (!isDeepStrictEqual(known.recent, context.recent)) return [];
-      const rows = evidence(runtime, ctx, sourceIds, beforeSeq);
+      const stillSemantic = new Set(semanticRows(context).map(({ id }) => id));
+      const approved = sourceIds.filter(
+        (id) => !semanticOnly.has(id) || stillSemantic.has(id),
+      );
+      const rows = evidence(runtime, ctx, approved, beforeSeq);
       return review
         ? rows.filter(
             (row) => row.occurredAt <= to && novelEvidence(row, context),
@@ -659,13 +770,22 @@ export async function prepareRecallOpening(runtime, ctx) {
       ctx,
       input.familiarity.filter(({ terms }) => terms.length).map(({ id }) => id),
     ).slice(-3);
-    if (marked.length)
+    const useSemantic = memoryRecallPilot(
+      runtime.agent(ctx.agentId),
+      ctx.conversation,
+    )?.semantic;
+    const review = useSemantic
+      ? [...new Map([...marked, ...cues].map((row) => [row.id, row])).values()]
+          .sort((a, b) => a.seq - b.seq)
+          .slice(-3)
+      : marked;
+    if (review.length)
       ctx.openingRecall = await lookup(
         runtime,
         ctx,
         "opening",
         "local-familiarity",
-        marked,
+        review,
       );
   }
   if (!ctx.openingRecall) {
