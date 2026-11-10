@@ -40,7 +40,7 @@ function setup(
   t,
   mode = "success",
   root = temp(t),
-  { fakeChild = false } = {},
+  { fakeChild = false, cliProtocol } = {},
 ) {
   const cfg = config();
   const backendConfig = validateConfig({
@@ -52,6 +52,7 @@ function setup(
         type: "antigravity",
         model: "fixture-model",
         effort: "",
+        ...(cliProtocol ? { cliProtocol } : {}),
       },
     ],
   }).backends[0];
@@ -249,6 +250,60 @@ function startFakeTurn(fixture, overrides = {}) {
   });
   return { run, inputSubmitted };
 }
+
+test("ACP reply entry forwards original arguments only to permitted reply tools", async (t) => {
+  const fixture = setup(t, "success", temp(t), {
+    fakeChild: true,
+    cliProtocol: "acp",
+  });
+  const { run, inputSubmitted } = startFakeTurn(fixture, {
+    tools: toolSpecs(["qq_send", "board_read"]),
+  });
+  await inputSubmitted;
+  const { child, options } = fixture.launches[0];
+  await child.inputReady;
+  const endpoint = options.env.QQ_AGY_ENDPOINT;
+  const headers = {
+    authorization: `Bearer ${options.env.QQ_AGY_TOKEN}`,
+    "content-type": "application/json",
+  };
+  const call = (name, argumentsJson) =>
+    fetch(`${endpoint}/call`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        name: "qq_reply_call",
+        arguments: { name, argumentsJson },
+      }),
+    });
+  try {
+    const { tools } = await (
+      await fetch(`${endpoint}/catalog`, { headers })
+    ).json();
+    const dispatch = tools.find(({ name }) => name === "qq_reply_call");
+    assert.deepEqual(dispatch.inputSchema.properties.name.enum, ["qq_send"]);
+    assert.equal((await call("qq_draft", "{}")).status, 403);
+    assert.equal((await call("board_read", "{}")).status, 403);
+    const malformed = await (await call("qq_send", "[]")).json();
+    assert.equal(
+      JSON.parse(malformed.content[0].text).code,
+      "INVALID_TOOL_ARGUMENTS",
+    );
+    const args = {
+      requestId: "fixture",
+      segments: [{ type: "text", text: "Synthetic reply" }],
+    };
+    const result = await (await call("qq_send", JSON.stringify(args))).json();
+    assert.deepEqual(JSON.parse(result.content[0].text), { ok: true });
+    assert.deepEqual(fixture.calls, [{ name: "qq_send", args }]);
+  } finally {
+    child.emitFrames(
+      ...successfulFrames("00000000-0000-4000-8000-000000000238"),
+    );
+    child.closeWith(0);
+    await run;
+  }
+});
 
 test("Antigravity registers without changing existing backend defaults", async (t) => {
   const { backend, backendConfig, root } = setup(t);

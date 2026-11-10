@@ -1,9 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { EventEmitter } from "node:events";
 import { PassThrough, Writable } from "node:stream";
 import { antigravityHookAllowed } from "../src/backends/antigravity-guard.mjs";
 import { runAcp } from "../src/backends/antigravity-acp.mjs";
+import { AntigravityBackend } from "../src/backends/antigravity.mjs";
+import { temp } from "./helpers.mjs";
 import { AntigravityMedia } from "../src/backends/antigravity-media.mjs";
 import { validateConfig } from "../src/core/config.mjs";
 import { mediaLease } from "../src/tools/media-lease.mjs";
@@ -210,6 +214,50 @@ test("ACP is opt-in and cannot be assigned to unrelated backends", () => {
       backends: [{ ...config.backends[0], type: "codex", cliProtocol: "acp" }],
     }),
   );
+});
+
+test("ACP pre-registers the permitted reply tools in the native catalogue", async (t) => {
+  const root = temp(t);
+  const backend = new AntigravityBackend(
+    { type: "antigravity", cliProtocol: "acp", toolServers: [] },
+    { id: "probe" },
+    { root },
+  );
+  t.after(() => backend.close());
+  const media = new AntigravityMedia(undefined, true);
+  const custom = path.join(root, ".agents");
+  const agents = path.join(custom, "agents");
+  fs.mkdirSync(agents, { recursive: true });
+  const params = {
+    tools: ["qq_send", "qq_draft", "qq_delivery_status", "board_read"].map(
+      (name) => ({ name, inputSchema: { type: "object" } }),
+    ),
+  };
+  const workspace = { workspace: root, custom, agents };
+  const check = () => {
+    const server = JSON.parse(
+      fs.readFileSync(path.join(custom, "mcp_config.json"), "utf8"),
+    ).mcpServers["qq-agents"];
+    assert.deepEqual(server.enabledTools, [
+      ...params.tools.map(({ name }) => name),
+      "qq_reply_call",
+    ]);
+    assert.deepEqual(server.tools, {
+      qq_reply_call: { eager: true },
+      qq_delivery_status: { eager: true },
+    });
+    const guide = fs.readFileSync(path.join(agents, "qq-agents.md"), "utf8");
+    assert.match(
+      guide,
+      /use the native MCP tool if it is listed for this turn/i,
+    );
+    assert.match(guide, /qq_reply_call.*argumentsJson/);
+    assert.doesNotMatch(guide, /Call call_mcp_tool with ServerName/);
+  };
+  backend.configure(params, workspace, media);
+  check();
+  backend.configure({ ...params, session: { id } }, workspace, media);
+  check();
 });
 
 test("ACP native MCP aliases require exact server, tool and active catalogue", () => {
