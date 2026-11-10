@@ -165,7 +165,7 @@ export async function runAcp(
         {
           type: "text",
           text: options.session
-            ? "ACP session resumed: bridge tools are now exposed as mcp_qq-agents_<ToolName>. Use those exact native MCP names and their current schemas instead of call_mcp_tool. Authorization is still limited to the current bridge catalogue.\n\n" +
+            ? 'ACP session resumed. For a bridge action, use the native MCP tool if it is listed for this turn. If the native name is absent or returns unknown tool before execution, use the available call_mcp_tool with ServerName="qq-agents", ToolName equal to the logical tool name (for example qq_send), and the same Arguments. Reuse the same requestId for the same send. A pending or unknown delivery is not a tool lookup error. Check its receipt before any further send. Tool errors from earlier turns do not determine the current catalogue. Only tools authorized by the current bridge may run.\n\n' +
               prompt
             : prompt,
         },
