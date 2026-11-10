@@ -2,6 +2,11 @@ import { startTypingIndicator } from "./typing-indicator.mjs";
 import { prepareMessageImages } from "./message-images.mjs";
 import { randomUUID } from "node:crypto";
 import { SUBJECT } from "./lifecycle.mjs";
+import {
+  prepareRecallOpening,
+  renderRecallOpening,
+  commitRecallOpening,
+} from "./memory-recall.mjs";
 import { toolSpecs } from "../tools/specs.mjs";
 import {
   runWithRecovery,
@@ -145,6 +150,8 @@ export class TurnRunner {
           )
         : { images: [], beforeSubmit() {}, submitted() {} };
       runtime.assertActive(ctx);
+      if (ctx.recallOpening) await prepareRecallOpening(runtime, ctx);
+      runtime.assertActive(ctx);
       ctx.requiresInputSubmission = true;
       const result = await this.runBackend(ctx, backend, {
         inputImages: imageInput.images,
@@ -152,6 +159,9 @@ export class TurnRunner {
         agent: a,
         conversation,
         prompt: prepared.prompt,
+        ...(ctx.openingRecall && {
+          appendPrompt: () => renderRecallOpening(runtime, ctx),
+        }),
         instructions: prepared.instructions,
         onUsage: (usage) =>
           !runtime.stopped && runtime.contexts.usage(ctx, usage),
@@ -185,6 +195,7 @@ export class TurnRunner {
         onInputSubmitted: () => {
           if (!runtime.stopped && !controller.signal.aborted) {
             runtime.contexts.commitOpening(ctx);
+            commitRecallOpening(runtime, ctx);
             ctx.subjectInboxInputSubmitted = true;
             ctx.backendInputEpoch = ctx.inputEpoch;
             runtime.messageTiming?.mark(timingId, "backendInputSubmitted");
@@ -401,6 +412,7 @@ export class TurnRunner {
           // session id alone cannot establish what its new context retained.
           runtime.contexts.resetInputEvidence(ctx);
           delete ctx.stagedOpening;
+          delete ctx.openingRecallSent;
           ctx.recoveryDeliveryBlocked =
             ctx.deliveryAttempted === true || ctx.pendingDeliveries > 0;
           error.deliveryBlocked = ctx.recoveryDeliveryBlocked;

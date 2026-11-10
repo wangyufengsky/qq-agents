@@ -388,7 +388,10 @@ export class AntigravityStreamWorker {
       turn.inputSubmitted = true;
       this.inputSubmitted = true;
       this.child.stdin?.write(
-        JSON.stringify({ event: "user", message: { content } }) + "\n",
+        JSON.stringify({
+          event: "user",
+          message: { content: content + (params.appendPrompt?.() || "") },
+        }) + "\n",
         (error) => {
           if (error) return rejectInput(error);
           if (!this.active(turn)) return rejectInput(Error("ABORTED"));

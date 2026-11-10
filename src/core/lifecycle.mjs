@@ -17,6 +17,7 @@ export { stableInstructions } from "./prompts.mjs";
 import { randomUUID, createHash } from "node:crypto";
 import { githubMarker } from "../github/policy.mjs";
 import { resolveFunctionalAgent } from "./functional-agents.mjs";
+import { captureRecallOpening } from "./memory-recall.mjs";
 import { trackMindRecords } from "./protected-mind.mjs";
 import { subjectMaterials } from "./subject-materials.mjs";
 import { mergeProtection } from "../memory/protection.mjs";
@@ -692,6 +693,13 @@ export class ContextLifecycle {
     const focus = this.focusedOpening(ctx, m, reasons, history.items);
     const accountId = r.connection(a.connectionId).accountId;
     const relationship = groupRecall(r, ctx, history, focus, accountId);
+    captureRecallOpening(r, ctx, {
+      history,
+      focus,
+      previous: s.feedThroughSeq || 0,
+      reasons,
+      relationship,
+    });
     const correctionAllowed = relationship?.correctionAllowed;
     const openingHistory = chatHistory(history, correctionAllowed);
     const relationshipLine = groupRecallLine(

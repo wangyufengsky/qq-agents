@@ -88,7 +88,15 @@ async function handle_memory_search(runtime, ctx, args, name) {
         conversationType: undefined,
         type: "event",
         offset: 0,
-        cursor: undefined,
+        cursor: ctx.evidenceBeforeSeq
+          ? {
+              beforeSeq: ctx.evidenceBeforeSeq,
+              eventOffset: 0,
+              diaryOffset: 0,
+              eventsDone: false,
+              diariesDone: true,
+            }
+          : undefined,
         contextBefore: 0,
         contextAfter: 0,
       }

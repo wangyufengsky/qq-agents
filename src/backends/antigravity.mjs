@@ -1204,7 +1204,7 @@ export class AntigravityBackend {
         JSON.stringify({
           event: "user",
           message: {
-            content: params.prompt,
+            content: params.prompt + (params.appendPrompt?.() || ""),
             ...(this.config.cliProtocol === "acp"
               ? { inputImages: params.inputImages }
               : {}),

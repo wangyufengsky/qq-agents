@@ -33,6 +33,7 @@ import { isDeepStrictEqual } from "node:util";
  *   finalizeToolOutput?: (original: unknown, options: {encode: (value: any) => {wire: any, text?: string} | Promise<{wire: any, text?: string}>, maxBytes?: number}) => Promise<{wire: any, receipt?: string}>,
  *   commitToolOutput?: (receipt: string | undefined, observedText: string | undefined) => boolean | void,
  *   beforeInputSubmitted?: () => Promise<void>,
+ *   appendPrompt?: () => string,
  *   onTiming?: (timing: {phase: string, elapsedMs: number, processReused?: boolean}) => void,
  *   onDiagnostic?: (event: unknown, attempt?: number) => void,
  *   recovery?: import("./turn-failure.mjs").RecoveryFailure,
