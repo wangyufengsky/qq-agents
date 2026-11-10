@@ -635,13 +635,12 @@ export class ContextLifecycle {
     if (usesOptionalGroupBacklog(r, ctx)) {
       // Wake anchors are bridge-owned. Keep the current batch and later input
       // in review while leaving the earlier history available to read on demand.
-      ctx.optionalBacklogThroughSeq = reasons.reduce(
-        (through, { seq }) =>
-          Number.isSafeInteger(seq) && seq > 0
-            ? Math.min(through, seq - 1)
-            : through,
-        ctx.sourceStartSeq,
-      );
+      ctx.optionalBacklogThroughSeq = reasons.reduce((through, wake) => {
+        const seq = wake.firstSeq ?? wake.seq;
+        return Number.isSafeInteger(seq) && seq > 0
+          ? Math.min(through, seq - 1)
+          : through;
+      }, ctx.sourceStartSeq);
     }
     const history =
       ctx.conversation === SUBJECT

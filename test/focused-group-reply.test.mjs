@@ -346,3 +346,37 @@ test("optional backlog still reviews inputs that arrive during the current turn"
   assert.equal(sent.actionResult, "sent");
   assert.deepEqual(f.reviewed(), ["42", "300"]);
 });
+
+test("optional backlog keeps the beginning of a merged wake and its intervening inputs", async (t) => {
+  let prompt, result;
+  const f = await group(
+    t,
+    async (p) => {
+      prompt = p.prompt;
+      result = await p.callTool("qq_send", { ...reply, replyTo: undefined });
+    },
+    { privateLike: false, optionalBacklog: true },
+  );
+  const a = f.runtime.agent("agent-0");
+  a.behavior.batchWindowMs = 1000;
+  a.behavior.batchMaxMs = 2000;
+  let now = Date.now();
+  f.runtime.clock = () => new Date(now);
+  await f.ingest(300, [
+    ...mentioned("10000"),
+    { type: "text", data: { text: "本轮问题第一段" } },
+  ]);
+  await f.ingest(301, "本轮中间补充");
+  await f.ingest(302, [
+    ...mentioned("10000"),
+    { type: "text", data: { text: "本轮问题最后一段" } },
+  ]);
+  now += 2001;
+  f.runtime.conversations.tick();
+  await settle(f.runtime);
+  assert.match(prompt, /本轮问题第一段/);
+  assert.match(prompt, /本轮中间补充/);
+  assert.match(prompt, /本轮问题最后一段/);
+  assert.equal(result.actionResult, "sent");
+  assert.deepEqual(f.reviewed(), ["300", "301", "302"]);
+});
