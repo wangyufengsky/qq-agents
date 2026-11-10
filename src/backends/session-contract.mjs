@@ -17,7 +17,7 @@ import { isDeepStrictEqual } from "node:util";
  *   toolServers: ToolServerConfig[]}} BackendConfig
  * @typedef {{id: string}} BackendAgent
  * @typedef {{onDisconnect?: (error: Error) => void}} DisconnectHook Assigned by BackendConnections.
- * @typedef {{backend: string, id: string, signature: string, nativeSignature?: string}} StoredSession
+ * @typedef {{backend: string, id: string, signature: string, nativeSignature?: string, dshStreamUnverified?: true}} StoredSession
  * @typedef {{name: string, description?: string, inputSchema?: object}} ToolSpec
  * @typedef {{source: string, contextTokens: number, capacityTokens?: number,
  *   cumulativeTokens?: number, basis: string}} UsageReport

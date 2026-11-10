@@ -146,7 +146,7 @@ export class TurnRunner {
         : { images: [], beforeSubmit() {}, submitted() {} };
       runtime.assertActive(ctx);
       ctx.requiresInputSubmission = true;
-      await this.runBackend(ctx, backend, {
+      const result = await this.runBackend(ctx, backend, {
         inputImages: imageInput.images,
         beforeInputSubmitted: imageInput.beforeSubmit,
         agent: a,
@@ -209,6 +209,13 @@ export class TurnRunner {
           }
         },
       });
+      if (result?.streamReattached && ctx.pendingDeliveries) {
+        // The native terminal and an already accepted HTTP tool request can
+        // settle independently. Keep this turn alive for its existing receipt.
+        await runtime.delivery.conversations
+          .get(a.connectionId + "|" + conversation)
+          ?.catch(() => {});
+      }
       outcome = controller.signal.aborted
         ? "cancelled"
         : ctx.confirmedSends
@@ -225,6 +232,8 @@ export class TurnRunner {
           conversation,
         });
       const failure = failureSummary(e);
+      ctx.backendTurnUnverified =
+        failure?.backend === "dsh" && failure.category === "event-stream";
       const classifiedFault =
         failure && failure.code !== "TURN_FAILED"
           ? (
@@ -314,7 +323,13 @@ export class TurnRunner {
   // per cooldown, through the same outbox and limits as scheduled text.
   async failureNotice(ctx, reasons) {
     const runtime = this.runtime;
-    if (runtime.closed || ctx.deliveryAttempted) return;
+    if (
+      runtime.closed ||
+      ctx.deliveryAttempted ||
+      ctx.pendingDeliveries ||
+      ctx.backendTurnUnverified
+    )
+      return;
     if (!reasons.some((r) => r.addressed || ADDRESSED.has(r.reason))) return;
     const a = runtime.config.agents.find((x) => x.id === ctx.agentId),
       notice = a?.behavior.failureNotice;

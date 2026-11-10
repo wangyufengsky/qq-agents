@@ -26,23 +26,32 @@ const transportFailure = {
 const ok = (value) => ({ result: { ok: true, value } });
 function dshClient({
   reasons = [malformed, { kind: "completed" }],
+  beforeStart = () => {},
   beforeEnd = async () => {},
   invalidSnapshot = false,
   onFollow = () => {},
 } = {}) {
   const queue = [];
   const records = [];
-  let wake;
+  let wake, disconnected, follow;
   const push = (payload) => {
     if (payload.type === "session/event")
       records.push({ type: "event", event: payload.event });
-    queue.push({ payload: { sessionId: "dsh-session", ...payload } });
+    if (!disconnected)
+      queue.push({ payload: { sessionId: "dsh-session", ...payload } });
     wake?.();
     wake = null;
   };
   const client = {
     prompts: [],
     creates: 0,
+    streams: 0,
+    available: true,
+    push,
+    disconnect() {
+      disconnected = true;
+      wake?.();
+    },
     invalidSnapshot,
     agentPresets: { list: async () => ok({ presets: [{ id: "qq-unified" }] }) },
     workspace: {
@@ -57,9 +66,17 @@ function dshClient({
       prompt: async (request) => {
         client.prompts.push(request);
         const turn = client.prompts.length;
+        beforeStart(client, turn);
         push({
           type: "session/event",
           event: { type: "turn/start", data: { turn } },
+        });
+        push({
+          type: "session/event",
+          event: {
+            type: "user/message",
+            data: { source: { kind: "user" }, content: request.content },
+          },
         });
         await beforeEnd(turn);
         push({
@@ -74,6 +91,7 @@ function dshClient({
     },
     events: {
       follow: () => {
+        follow = true;
         const snapshotRecords = [...records];
         onFollow(client, snapshotRecords);
         push({
@@ -91,13 +109,19 @@ function dshClient({
           },
         });
       },
-      forget() {},
+      forget() {
+        follow = false;
+      },
       async *mux(_, signal, ready) {
+        disconnected = false;
+        client.streams++;
+        if (!client.available) return;
+        if (follow) client.events.follow();
         ready();
         signal.addEventListener("abort", () => wake?.(), { once: true });
-        while (!signal.aborted) {
-          while (queue.length) yield queue.shift();
-          if (!signal.aborted)
+        while (!signal.aborted && !disconnected) {
+          while (queue.length && !disconnected) yield queue.shift();
+          if (!signal.aborted && !disconnected)
             await new Promise((resolve) => {
               wake = resolve;
             });
@@ -248,6 +272,201 @@ function setup(t, type, options = {}) {
     attempts: () => (client.prompts || client.starts).length,
   };
 }
+
+test("DSH recovers a lost terminal event without repeating an existing QQ delivery", async (t) => {
+  let f;
+  f = setup(t, "dsh", {
+    reasons: [{ kind: "completed" }],
+    beforeEnd: async () => {
+      const ctx = f.ctx();
+      await f.runtime.send(ctx, {
+        requestId: "original",
+        text: "已发出的回复",
+      });
+      f.client.disconnect();
+    },
+  });
+  assert.equal((await f.runtime.wake("agent-0", chat)).status, "sent");
+  assert.equal(f.client.streams, 2);
+  assert.equal(f.client.prompts.length, 1);
+  assert.equal(f.client.creates, 1);
+  assert.equal(f.m.delivery("original").status, "sent");
+  assert.equal(f.m.state(chat).session.id, "dsh-session");
+  assert.equal(f.m.identity.list("session_history").length, 0);
+});
+
+test("DSH resumes an active turn after reconnect and ignores a foreign terminal", async (t) => {
+  const refollowed = Promise.withResolvers();
+  let f;
+  f = setup(t, "dsh", {
+    reasons: [{ kind: "completed" }],
+    onFollow: (client) => {
+      if (client.streams === 2) refollowed.resolve();
+    },
+    beforeEnd: async () => {
+      const ctx = f.ctx();
+      f.client.disconnect();
+      await refollowed.promise;
+      f.client.push({
+        type: "session/event",
+        event: { type: "turn/start", data: { turn: "desktop" } },
+      });
+      f.client.push({
+        type: "session/event",
+        event: {
+          type: "turn/end",
+          data: { turn: "desktop", reason: { kind: "completed" } },
+        },
+      });
+      // Let the adapter process both foreign events before doing a tool call.
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(f.runtime.capability(ctx.token), ctx);
+      await f.runtime.send(ctx, {
+        requestId: "after-reconnect",
+        text: "继续原回合",
+      });
+    },
+  });
+  assert.equal((await f.runtime.wake("agent-0", chat)).status, "sent");
+  assert.equal(f.m.delivery("after-reconnect").status, "sent");
+  assert.equal(f.client.prompts.length, 1);
+  assert.equal(f.m.identity.list("model_turns")[0].backendTurnId, "1");
+  assert.equal(f.m.identity.list("session_history").length, 0);
+});
+
+test("DSH matches the opening input if both turn boundaries were lost", async (t) => {
+  const f = setup(t, "dsh", {
+    reasons: [{ kind: "completed" }],
+    beforeStart: (client) => {
+      client.disconnect();
+      client.push({
+        type: "session/event",
+        event: { type: "turn/start", data: { turn: "desktop" } },
+      });
+      client.push({
+        type: "session/event",
+        event: {
+          type: "turn/end",
+          data: { turn: "desktop", reason: { kind: "completed" } },
+        },
+      });
+    },
+  });
+  assert.equal(
+    (await f.runtime.wake("agent-0", chat)).status,
+    "completed-no-send",
+  );
+  assert.equal(f.client.prompts.length, 1);
+  assert.equal(f.m.identity.list("model_turns")[0].backendTurnId, "1");
+  assert.equal(f.m.identity.list("session_history").length, 0);
+});
+
+test("DSH retains an unverified session through adapter replacement and waits for idle evidence", async (t) => {
+  let f;
+  f = setup(t, "dsh", {
+    reasons: [{ kind: "completed" }, { kind: "completed" }],
+    beforeEnd: async (turn) => {
+      if (turn !== 1) return;
+      f.client.available = false;
+      f.client.disconnect();
+    },
+  });
+  assert.equal((await f.runtime.wake("agent-0", chat)).status, "failed");
+  assert.equal(f.client.streams, 4);
+  assert.equal(f.client.prompts.length, 1);
+  assert.equal(f.m.state(chat).session.dshStreamUnverified, true);
+  const adapter = f.runtime.backends.get("agent-0");
+  await adapter.close();
+  f.runtime.backends.delete("agent-0");
+  f.client.available = true;
+  f.client.invalidSnapshot = true;
+  assert.equal((await f.runtime.wake("agent-0", chat)).status, "failed");
+  assert.equal(f.client.prompts.length, 1);
+  assert.equal(f.m.state(chat).session.dshStreamUnverified, true);
+  f.client.invalidSnapshot = false;
+  assert.equal(
+    (await f.runtime.wake("agent-0", chat)).status,
+    "completed-no-send",
+  );
+  assert.equal(f.client.prompts.length, 2);
+  assert.equal(f.client.creates, 1);
+  assert.equal(f.m.state(chat).session.dshStreamUnverified, undefined);
+  assert.equal(f.m.identity.list("session_history").length, 0);
+});
+
+test("DSH waits for an accepted QQ send to settle after recovering the terminal", async (t) => {
+  const gatewayEntered = Promise.withResolvers();
+  const gatewayReceipt = Promise.withResolvers();
+  const terminal = Promise.withResolvers();
+  let f, delivery;
+  f = setup(t, "dsh", {
+    reasons: [{ kind: "completed" }],
+    onFollow(client, records) {
+      if (client.streams === 2 && records.at(-1)?.event.type === "turn/end")
+        terminal.resolve();
+    },
+    beforeEnd: async () => {
+      delivery = f.runtime.send(f.ctx(), {
+        requestId: "in-flight",
+        text: "投递中",
+      });
+      delivery.catch(() => {});
+      await gatewayEntered.promise;
+      f.client.disconnect();
+    },
+  });
+  f.runtime.transports.get("qq-0").send = async () => {
+    gatewayEntered.resolve();
+    return gatewayReceipt.promise;
+  };
+  const wake = f.runtime.wake("agent-0", chat);
+  await terminal.promise;
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(f.m.delivery("in-flight").status, "pending");
+  gatewayReceipt.resolve({ messageId: "40001" });
+  assert.equal((await wake).status, "sent");
+  assert.equal((await delivery).status, "sent");
+  assert.equal(f.client.prompts.length, 1);
+});
+
+test("DSH matching native input cancels the evidence deadline after losing the HTTP receipt", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const received = Promise.withResolvers();
+  const f = setup(t, "dsh");
+  f.client.sessions.prompt = async (request) => {
+    received.resolve(request.content);
+    throw TypeError("fixture HTTP connection lost");
+  };
+  const wake = f.runtime.wake("agent-0", chat);
+  const content = await received.promise;
+  const ctx = f.ctx();
+  await new Promise((resolve) => setImmediate(resolve));
+  f.client.push({
+    type: "session/event",
+    event: { type: "turn/start", data: { turn: "original" } },
+  });
+  f.client.push({
+    type: "session/event",
+    event: {
+      type: "user/message",
+      data: { source: { kind: "user" }, content },
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  t.mock.timers.tick(10001);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(f.runtime.capability(ctx.token), ctx);
+  assert.equal(ctx.backendInputEpoch, ctx.inputEpoch);
+  f.client.push({
+    type: "session/event",
+    event: {
+      type: "turn/end",
+      data: { turn: "original", reason: { kind: "completed" } },
+    },
+  });
+  assert.equal((await wake).status, "completed-no-send");
+  assert.equal(f.m.identity.list("session_history").length, 0);
+});
 
 test("DSH transport failure continues a verified native turn without repeating QQ delivery", async (t) => {
   let f, originalCapability;

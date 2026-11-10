@@ -3,6 +3,7 @@ import { closeSocialSessions } from "./social-sessions.mjs";
 import fs from "node:fs";
 import { runNativeSocial } from "./native-social.mjs";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { NodeApiClient, unwrap } from "../../vendor/dsh-qq/dsh-client.js";
 import { resolveDshInstance } from "./dsh-discovery.mjs";
 import { ExternalTools } from "./external.mjs";
@@ -25,23 +26,65 @@ import { dshTurnFailure, BackendTurnFailure } from "./turn-failure.mjs";
  * @typedef {import("./session-contract.mjs").DisconnectHook} DisconnectHook
  */
 
+function deferred() {
+  /** @type {(value?: unknown) => void} */
+  let resolve = () => {};
+  /** @type {(reason?: unknown) => void} */
+  let reject = () => {};
+  const promise = new Promise((r, j) => {
+    resolve = r;
+    reject = j;
+  });
+  return { promise, resolve, reject };
+}
+
+/** @param {any} snapshot */
+function dshInboxEmpty(snapshot) {
+  const inbox = snapshot?.projections?.values?.inbox;
+  return ["next-turn", "next-step"].every(
+    (lane) => Array.isArray(inbox?.[lane]) && !inbox[lane].length,
+  );
+}
+
+/** @param {any} snapshot */
+function lastDshTurnEvent(snapshot) {
+  return snapshot?.records?.findLast(
+    (/** @type {any} */ r) =>
+      r.event?.type === "turn/start" || r.event?.type === "turn/end",
+  )?.event;
+}
+
+/** @param {any} event @param {string} text */
+function dshInputMatches(event, text) {
+  return (
+    event?.type === "user/message" &&
+    event.data.source?.kind === "user" &&
+    event.data.content?.[0]?.type === "text" &&
+    event.data.content[0].text === text
+  );
+}
+
+/**
+ * DSH's prompt receipt does not include a turn ID. If the subscription lost
+ * turn/start, match the exact opening text (including the per-turn bridge
+ * capability) within the new native turn instead of adopting a desktop turn.
+ * @param {any} snapshot @param {string} text @param {Set<string>} previous
+ */
+function dshTurnForInput(snapshot, text, previous) {
+  let current = null;
+  for (const { event } of snapshot?.records || []) {
+    if (event?.type === "turn/start") current = String(event.data.turn);
+    if (event?.type === "turn/end") current = null;
+    if (current && !previous.has(current) && dshInputMatches(event, text))
+      return current;
+  }
+  return null;
+}
+
 /** @param {any} snapshot @param {BackendTurnFailure} failure */
 export function dshRecoveryReady(snapshot, failure) {
-  const inbox = snapshot?.projections?.values?.inbox;
-  if (
-    !Array.isArray(inbox?.["next-turn"]) ||
-    !Array.isArray(inbox?.["next-step"]) ||
-    inbox["next-turn"].length ||
-    inbox["next-step"].length
-  )
-    return false;
-  const last = snapshot.records
-    ?.map((/** @type {any} */ r) => r.event)
-    .filter(
-      (/** @type {any} */ e) =>
-        e?.type === "turn/start" || e?.type === "turn/end",
-    )
-    .at(-1);
+  if (!dshInboxEmpty(snapshot)) return false;
+  const last = lastDshTurnEvent(snapshot);
   return (
     last?.type === "turn/end" &&
     String(last.data?.turn) === failure.turnId &&
@@ -120,99 +163,155 @@ export class DshBackend {
     if (this.streamReady) return this.streamReady;
     const client = this.client;
     if (!client) throw Error("DSH_NOT_READY");
-    this.streamAbort = new AbortController();
-    /** @type {(value?: unknown) => void} */
-    let resolve = /** @type {any} */ (undefined);
-    /** @type {(reason?: unknown) => void} */
-    let reject = /** @type {any} */ (undefined);
-    this.streamReady = new Promise((r, j) => {
-      resolve = r;
-      reject = j;
-    });
+    const lifetime = new AbortController();
+    this.streamAbort = lifetime;
+    const { promise: ready, resolve, reject } = deferred();
+    this.streamReady = ready;
     this.pump = (async () => {
       try {
-        for await (const frame of client.events.mux(
-          {},
-          /** @type {AbortController} */ (this.streamAbort).signal,
-          resolve,
-        )) {
-          const p = frame.payload;
-          const t = this.turns.get(p?.sessionId);
-          if (!t) continue;
-          if (p.type === "stream/error") {
-            const error =
-              p.error?.code === "session/not-found"
-                ? new SessionUnavailableFailure("DSH_SESSION_UNAVAILABLE")
-                : Error("DSH_STREAM_FAILED");
-            t.followError?.(error);
-            t.reject(error);
-            continue;
-          }
-          if (p.type === "session/snapshot") {
-            const capacity =
-              p.snapshot?.projections?.values?.contextPressure?.contextWindow;
-            if (Number.isFinite(capacity) && capacity > 0)
-              this.capacities.set(p.sessionId, capacity);
-            t.followed?.(p.snapshot);
-            continue;
-          }
-          if (p.type !== "session/event") continue;
-          const e = p.event;
-          if (
-            e.type === "request/context" &&
-            Number.isFinite(e.data?.contextWindow) &&
-            e.data.contextWindow > 0
-          )
-            this.capacities.set(p.sessionId, e.data.contextWindow);
-          if (e.type === "assistant/message" && e.data?.usage) {
-            const u = e.data.usage;
-            t.onUsage?.({
-              source: "measured",
-              contextTokens:
-                u.inputTokens +
-                (u.cacheReadTokens || 0) +
-                (u.cacheWriteTokens || 0) +
-                u.outputTokens,
-              capacityTokens: this.capacities.get(p.sessionId),
-              basis:
-                "last provider request including disjoint cache counts and output",
+        let retries = 0;
+        for (;;) {
+          if (retries) {
+            await delay(250 * 2 ** (retries - 1), undefined, {
+              signal: lifetime.signal,
             });
+            if (!this.turns.size) break;
           }
-          if (e.type === "turn/start") {
-            if (!t.promptPending || t.previousTurns.has(String(e.data.turn)))
-              continue;
-            t.turn = e.data.turn;
-            t.onBackendTurn?.({ turnId: String(e.data.turn) });
+          const started = performance.now();
+          const connection = new AbortController();
+          const timer = setTimeout(() => connection.abort(), 10000);
+          try {
+            await this.pumpEvents(
+              client,
+              AbortSignal.any([lifetime.signal, connection.signal]),
+              () => {
+                clearTimeout(timer);
+                resolve();
+              },
+            );
+          } catch {
+            // A failed handshake is also a lost subscription.
+          } finally {
+            clearTimeout(timer);
           }
-          if (e.type === "turn/end" && e.data.turn === t.turn) {
-            if (["completed", "done", "stop"].includes(e.data.reason?.kind))
-              t.resolve();
-            else t.reject(dshTurnFailure(e.data.reason, e.data.turn));
+          if (lifetime.signal.aborted || !this.turns.size) break;
+          if (
+            performance.now() - started >= 10000 &&
+            !connection.signal.aborted
+          )
+            retries = 0;
+          if (++retries > 3) break;
+          for (const t of this.turns.values()) {
+            t.interrupted = true;
+            if (t.promptPending) t.awaitEvidence();
           }
+          // NodeApiClient retains desired follows and opens them on the
+          // replacement socket. Keep the original client and native session IDs.
         }
-      } catch {
-        reject(Error("DSH_STREAM_FAILED"));
+      } catch (error) {
+        if (!lifetime.signal.aborted) throw error;
       } finally {
+        const error = Error("DSH_STREAM_ENDED");
+        reject(error);
         for (const t of this.turns.values()) {
-          t.followError?.(Error("DSH_STREAM_ENDED"));
-          t.reject(Error("DSH_STREAM_ENDED"));
+          if (t.promptPending) t.failReattachment();
+          t.failFollow(error);
         }
         this.streamReady = null;
         this.client = null;
         if (!this.closing)
-          /** @type {this & DisconnectHook} */ (this).onDisconnect?.(
-            Error("DSH_STREAM_ENDED"),
-          );
+          /** @type {this & DisconnectHook} */ (this).onDisconnect?.(error);
       }
     })();
-    const timeout = setTimeout(() => {
-      reject(Error("DSH_STREAM_TIMEOUT"));
-      /** @type {AbortController} */ (this.streamAbort).abort();
-    }, 10000);
-    try {
-      await this.streamReady;
-    } finally {
-      clearTimeout(timeout);
+    return ready;
+  }
+  /** @param {NodeApiClient} client @param {AbortSignal} signal @param {() => void} open */
+  async pumpEvents(client, signal, open) {
+    for await (const frame of client.events.mux({}, signal, open)) {
+      const p = frame.payload;
+      const t = this.turns.get(p?.sessionId);
+      if (!t) continue;
+      if (p.type === "stream/error") {
+        if (p.error?.code !== "session/not-found") return;
+        const error = new SessionUnavailableFailure("DSH_SESSION_UNAVAILABLE");
+        t.failFollow(error);
+        if (t.promptPending) t.reject(error);
+        continue;
+      }
+      if (p.type === "session/snapshot") {
+        const capacity =
+          p.snapshot?.projections?.values?.contextPressure?.contextWindow;
+        if (Number.isFinite(capacity) && capacity > 0)
+          this.capacities.set(p.sessionId, capacity);
+        t.followed(p.snapshot);
+        if (!t.promptPending) continue;
+        const last = lastDshTurnEvent(p.snapshot);
+        const open =
+          last?.type === "turn/start" ? String(last.data.turn) : null;
+        t.observedTurn = open && !t.previousTurns.has(open) ? open : null;
+        if (!t.turn || !t.inputSubmitted) {
+          const inputTurn = dshTurnForInput(
+            p.snapshot,
+            t.inputText,
+            t.previousTurns,
+          );
+          if (!t.turn) t.bindTurn(inputTurn);
+          if (inputTurn && t.turn === inputTurn) t.submitInput();
+        }
+        if (!t.turn) continue;
+        const terminal = p.snapshot?.records?.find(
+          (/** @type {any} */ { event }) =>
+            event?.type === "turn/end" && String(event.data.turn) === t.turn,
+        )?.event;
+        // A snapshot can also be the result of reopening just this follow.
+        // Only matching native evidence proves that the active turn reattached.
+        if (terminal || t.observedTurn === t.turn) {
+          t.interrupted = true;
+          if (terminal) t.finish(terminal);
+          else t.reattached();
+        }
+        continue;
+      }
+      if (p.type !== "session/event") continue;
+      const e = p.event;
+      if (
+        e.type === "request/context" &&
+        Number.isFinite(e.data?.contextWindow) &&
+        e.data.contextWindow > 0
+      )
+        this.capacities.set(p.sessionId, e.data.contextWindow);
+      if (e.type === "assistant/message" && e.data?.usage) {
+        const u = e.data.usage;
+        t.onUsage?.({
+          source: "measured",
+          contextTokens:
+            u.inputTokens +
+            (u.cacheReadTokens || 0) +
+            (u.cacheWriteTokens || 0) +
+            u.outputTokens,
+          capacityTokens: this.capacities.get(p.sessionId),
+          basis:
+            "last provider request including disjoint cache counts and output",
+        });
+      }
+      if (!t.promptPending) continue;
+      if (e.type === "turn/start") {
+        const id = String(e.data.turn);
+        t.observedTurn = t.previousTurns.has(id) ? null : id;
+        if (!t.turn && !t.interrupted) t.bindTurn(t.observedTurn);
+      }
+      if (t.observedTurn && dshInputMatches(e, t.inputText)) {
+        if (!t.turn) t.bindTurn(t.observedTurn);
+        if (t.turn === t.observedTurn) {
+          t.submitInput();
+          t.reattached();
+        }
+      }
+      if (e.type === "turn/end") {
+        const id = String(e.data.turn);
+        if (t.observedTurn === id) t.observedTurn = null;
+        if (t.turn === id) t.finish(e);
+      }
     }
   }
   /** @param {import("./session-contract.mjs").ToolSpec[]} tools */
@@ -307,43 +406,33 @@ export class DshBackend {
       ).sessionId;
       saveSession({ backend: "dsh", id: sessionId, signature });
     }
-    if (this.config.model)
-      await beforeSessionInput(session, async () => {
-        const result = await client.sessions.selectModel({
-          sessionId,
-          // Omitted when unset, although the SDK type asks for a string.
-          provider: /** @type {string} */ (this.config.provider || undefined),
-          model: this.config.model,
-          reasoningEffort: this.config.effort,
-        });
-        if (
-          !result.result.ok &&
-          ["session/not-found", "session-not-found"].includes(
-            result.result.error.code,
-          )
-        )
-          throw new SessionUnavailableFailure("DSH_SESSION_UNAVAILABLE");
-        unwrap(result, "model");
-      });
-    /** @type {(value?: unknown) => void} */
-    let resolve = /** @type {any} */ (undefined);
-    /** @type {(reason?: unknown) => void} */
-    let reject = /** @type {any} */ (undefined);
-    /** @type {(snapshot: unknown) => void} */
-    let followed = /** @type {any} */ (undefined);
-    /** @type {(reason?: unknown) => void} */
-    let followError = /** @type {any} */ (undefined);
-    const done = new Promise((r, j) => {
-      resolve = r;
-      reject = j;
-    });
+    const { promise: done, resolve, reject } = deferred();
+    const {
+      promise: followReady,
+      resolve: followed,
+      reject: followError,
+    } = deferred();
     done.catch(() => {});
-    const followReady = new Promise((r, j) => {
-      followed = r;
-      followError = j;
-    });
     followReady.catch(() => {});
+    /** @type {ReturnType<typeof setTimeout> | undefined} */
+    let reconnectTimer;
+    const unverified = new BackendTurnFailure(
+      "dsh",
+      "RECOVERY_STATE_UNVERIFIED",
+      "event-stream",
+      "",
+    );
+    // Retain the reference and require a verified idle snapshot on the next
+    // wake. This does not make the interrupted prompt eligible for replay.
+    unverified.sessionReusable = true;
     const active = {
+      interrupted: false,
+      /** @type {Error | undefined} */
+      followFailure: undefined,
+      failFollow: (/** @type {Error} */ error) => {
+        active.followFailure = error;
+        active.followError(error);
+      },
       promptPending: false,
       inputSubmitted: false,
       previousTurns: new Set(),
@@ -355,23 +444,53 @@ export class DshBackend {
         )
           return;
         active.inputSubmitted = true;
+        if (session?.dshStreamUnverified)
+          saveSession({ backend: "dsh", id: sessionId, signature });
         onInputSubmitted?.();
+      },
+      failReattachment: () => reject(unverified),
+      awaitEvidence: () => {
+        if (this.turns.get(sessionId) === active)
+          reconnectTimer ??= setTimeout(active.failReattachment, 10000);
+      },
+      reattached: () => {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = undefined;
+      },
+      finish: (/** @type {any} */ event) => {
+        active.reattached();
+        active.submitInput();
+        if (["completed", "done", "stop"].includes(event.data.reason?.kind))
+          resolve();
+        else reject(dshTurnFailure(event.data.reason, event.data.turn));
       },
       resolve,
       reject,
+      /** @type {string | null} */
       turn: null,
+      /** @type {string | null} */
+      observedTurn: null,
+      inputText:
+        initializing && instructions ? instructions + "\n\n" + prompt : prompt,
+      bindTurn: (/** @type {string | null} */ id) => {
+        if (!id) return;
+        active.turn = id;
+        onBackendTurn?.({ turnId: id });
+      },
       followed,
       followError,
       onUsage,
-      onBackendTurn,
+      abort: () => {
+        if (active.promptPending)
+          void client
+            .callUnary("session.cancel", { sessionId })
+            .catch(() => {});
+        active.failFollow(Error("ABORTED"));
+        reject(Error("ABORTED"));
+      },
     };
     this.turns.set(sessionId, active);
-    const abort = () => {
-      void client.callUnary("session.cancel", { sessionId }).catch(() => {});
-      followError(Error("ABORTED"));
-      reject(Error("ABORTED"));
-    };
-    signal.addEventListener("abort", abort, { once: true });
+    signal.addEventListener("abort", active.abort, { once: true });
     const followTimer = setTimeout(
       () => followError(Error("DSH_FOLLOW_TIMEOUT")),
       10000,
@@ -380,29 +499,54 @@ export class DshBackend {
       if (signal.aborted) throw Error("ABORTED");
       const snapshot = await beforeSessionInput(session, async () => {
         client.events.follow(sessionId);
-        return await followReady;
+        const current = await followReady;
+        if (
+          session?.dshStreamUnverified &&
+          (!dshInboxEmpty(current) ||
+            lastDshTurnEvent(current)?.type !== "turn/end")
+        )
+          throw Error("DSH_RECOVERY_STATE_UNVERIFIED");
+        return current;
       });
       clearTimeout(followTimer);
       if (signal.aborted) throw Error("ABORTED");
       if (recovery && !dshRecoveryReady(snapshot, recovery))
         throw Error("DSH_RECOVERY_STATE_UNVERIFIED");
+      if (this.config.model)
+        await beforeSessionInput(session, async () => {
+          const result = await client.sessions.selectModel({
+            sessionId,
+            // Omitted when unset, although the SDK type asks for a string.
+            provider: /** @type {string} */ (this.config.provider || undefined),
+            model: this.config.model,
+            reasoningEffort: this.config.effort,
+          });
+          if (
+            !result.result.ok &&
+            ["session/not-found", "session-not-found"].includes(
+              result.result.error.code,
+            )
+          )
+            throw new SessionUnavailableFailure("DSH_SESSION_UNAVAILABLE");
+          unwrap(result, "model");
+        });
       await beforeInputSubmitted?.();
       if (signal.aborted) throw Error("ABORTED");
+      await beforeSessionInput(session, async () => {
+        if (active.followFailure) throw active.followFailure;
+      });
       for (const record of /** @type {any} */ (snapshot)?.records || [])
         if (record.event?.data?.turn !== undefined)
           active.previousTurns.add(String(record.event.data.turn));
       active.promptPending = true;
-      unwrap(
-        await client.sessions.prompt({
+      const submission = client.sessions.prompt(
+        {
           sessionId,
           mode: "queue",
           content: [
             {
               type: "text",
-              text:
-                initializing && instructions
-                  ? instructions + "\n\n" + prompt
-                  : prompt,
+              text: active.inputText,
             },
             ...inputImages.flatMap((image) => [
               { type: /** @type {const} */ ("text"), text: image.label },
@@ -417,12 +561,43 @@ export class DshBackend {
                 : []),
             ]),
           ],
-        }),
-        "prompt",
+        },
+        signal,
       );
-      active.submitInput();
-      await done;
+      await Promise.race([
+        submission.then(
+          (response) => {
+            unwrap(response, "prompt");
+            active.submitInput();
+            return done;
+          },
+          () => {
+            // HTTP may lose the receipt before the socket reports its loss.
+            // Only the native terminal can resolve an ambiguous submission.
+            if (!active.turn) active.awaitEvidence();
+            return done;
+          },
+        ),
+        done.then(() => active.submitInput()),
+      ]);
+      return { streamReattached: active.interrupted };
     } catch (/** @type {any} */ e) {
+      if (
+        !signal.aborted &&
+        (e === unverified ||
+          (active.interrupted && e instanceof BackendTurnFailure))
+      ) {
+        // A confirmed terminal failure after reattachment still belongs to
+        // this native session. Inspect idle state before the next normal wake.
+        e.recoverable = false;
+        e.sessionReusable = true;
+        saveSession({
+          backend: "dsh",
+          id: sessionId,
+          signature,
+          dshStreamUnverified: true,
+        });
+      }
       if (!signal.aborted && e instanceof BackendTurnFailure && e.recoverable) {
         // A fresh native snapshot must still end at this exact failed turn and
         // have no queued input. A stream error alone is never replay evidence.
@@ -430,10 +605,8 @@ export class DshBackend {
         try {
           const snapshot = await new Promise((r, j) => {
             timer = setTimeout(() => j(Error("DSH_FOLLOW_TIMEOUT")), 10000);
-            followed = r;
-            followError = j;
-            this.turns.get(sessionId).followed = r;
-            this.turns.get(sessionId).followError = j;
+            active.followed = r;
+            active.followError = j;
             client.events.forget?.(sessionId);
             client.events.follow(sessionId);
           });
@@ -449,7 +622,8 @@ export class DshBackend {
       throw e;
     } finally {
       clearTimeout(followTimer);
-      signal.removeEventListener("abort", abort);
+      active.reattached();
+      signal.removeEventListener("abort", active.abort);
       this.turns.delete(sessionId);
       client.events.forget?.(sessionId);
     }
@@ -491,12 +665,7 @@ export class DshBackend {
     };
   }
   async cancel() {
-    for (const [sessionId, t] of this.turns) {
-      void this.client
-        ?.callUnary("session.cancel", { sessionId })
-        .catch(() => {});
-      t.reject(Error("ABORTED"));
-    }
+    for (const t of this.turns.values()) t.abort();
   }
   async close() {
     this.closing = true;
