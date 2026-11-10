@@ -57,6 +57,16 @@ const FAMILIARITY_GENERIC = new Set([
   "行吧",
   "好吧",
   "明白",
+  "应该",
+  "触发",
+  "词表",
+  "情况",
+  "最近",
+  "有没有",
+  "知道",
+  "可能",
+  "东西",
+  "ai",
 ]);
 const INTERJECTION = /^[哈喵嘿呵嘻嚯嗷呀哎诶唉呃额嗯哦噢哇欸呜啊]+$/u;
 const FAMILIARITY_WINDOW = 256;
@@ -146,8 +156,14 @@ export function observeFamiliarity(runtime, role, conversation, id) {
   const input = boundary.project(memory.event(row, conversation));
   if (!input?.body) return;
   const segments = [...WORDS.segment(input.body.slice(0, 240))];
+  const useful = (word) =>
+    !FAMILIARITY_GENERIC.has(word) &&
+    !INTERJECTION.test(word) &&
+    !/^\p{N}+$/u.test(word);
   const segmented = new Set(
-    keywords(segments, FAMILIARITY_GENERIC).map((word) => word.toLowerCase()),
+    keywords(segments)
+      .map((word) => word.toLowerCase())
+      .filter(useful),
   );
   const words = new Set(segmented);
   // ICU can split short names into individual Han characters. Keep adjacent
@@ -160,14 +176,10 @@ export function observeFamiliarity(runtime, role, conversation, id) {
   for (let i = 1; i < segments.length && words.size < 8; i++) {
     const previous = segments[i - 1].segment;
     const current = segments[i].segment;
-    if (singleHan(previous) && singleHan(current))
+    if (singleHan(previous) && singleHan(current) && useful(previous + current))
       words.add(previous + current);
   }
-  const terms = [...words]
-    .filter(
-      (word) => !FAMILIARITY_GENERIC.has(word) && !INTERJECTION.test(word),
-    )
-    .slice(0, 8);
+  const terms = [...words].slice(0, 8);
   const oldEnough = Date.parse(input.occurredAt) - RECENT_CHAT_MS;
   const history =
     terms.length && Number.isFinite(oldEnough)
@@ -233,6 +245,7 @@ export function observeFamiliarity(runtime, role, conversation, id) {
     id,
     seq: input.seq,
     candidates: candidates.slice(0, 2),
+    terms: distinctive,
     ms: Math.round(performance.now() - start),
   });
 }
@@ -309,19 +322,52 @@ function novelEvidence(row, known) {
   );
 }
 
-function familiarityCandidates(runtime, ctx, cues, known) {
-  const anchors = new Set(cues.map(({ id }) => id));
-  const candidates = new Map();
+function familiarityCandidates(runtime, ctx, cues, known, beforeSeq, to) {
+  const inputIds = new Set(cues.map(({ id }) => id));
+  const local = new Map();
+  const queries = new Set();
   for (const mark of ctx.recallOpening.familiarity) {
-    if (!anchors.has(mark.id)) continue;
-    for (const { id } of mark.candidates) {
-      const [row] = evidence(runtime, ctx, [id], mark.seq);
-      if (row && novelEvidence(row, known)) {
-        candidates.set(row.id, { id: row.id, body: row.body.slice(0, 200) });
+    if (!inputIds.has(mark.id)) continue;
+    const covered = new Set();
+    for (const { id, overlap } of mark.candidates) {
+      const [row] = evidence(runtime, ctx, [id], beforeSeq);
+      if (row && row.occurredAt <= to && novelEvidence(row, known)) {
+        local.set(row.id, { id: row.id, body: row.body.slice(0, 200) });
+        for (const term of overlap) covered.add(term);
       }
     }
+    for (const term of mark.terms) {
+      if (!covered.has(term)) queries.add(term);
+    }
   }
-  return [...candidates.values()].slice(0, 5);
+
+  // Recent chat remains cheap to scan. Missing topic terms get a small
+  // retrieval budget at reply time, even when the recent window found nothing.
+  const scope = sources(runtime, ctx);
+  const historical = new Map();
+  for (const term of [...queries].slice(0, 3)) {
+    const hits = searchRecallHistory(
+      scope,
+      ctx.conversation,
+      term,
+      beforeSeq,
+      to,
+    );
+    for (const hit of hits) {
+      const [row] = evidence(runtime, ctx, [hit.id], beforeSeq);
+      if (
+        !row ||
+        local.has(row.id) ||
+        historical.has(row.id) ||
+        row.occurredAt > to ||
+        !novelEvidence(row, known)
+      )
+        continue;
+      historical.set(row.id, { id: row.id, body: row.body.slice(0, 200) });
+      break;
+    }
+  }
+  return [...historical.values(), ...local.values()].slice(0, 5);
 }
 
 function renderFamiliarity(runtime, ctx, verified) {
@@ -369,8 +415,37 @@ function renderFamiliarity(runtime, ctx, verified) {
   return [...lines.values()];
 }
 
+function searchRecallHistory(
+  { role, memory, boundary },
+  conversation,
+  query,
+  beforeSeq,
+  to,
+) {
+  return memory.search(
+    {
+      query,
+      connectionId: role.connectionId,
+      conversation,
+      type: "event",
+      to,
+      cursor: {
+        beforeSeq,
+        eventOffset: 0,
+        diaryOffset: 0,
+        eventsDone: false,
+        diariesDone: true,
+      },
+      limit: 6,
+      maxChars: 4000,
+    },
+    conversation,
+    { projectEvent: boundary.project },
+  ).items;
+}
+
 function shortlist(runtime, ctx, cues, cue, beforeSeq) {
-  const { role, memory, boundary } = sources(runtime, ctx);
+  const scope = sources(runtime, ctx);
   const words = [
     ...new Set([
       ...(cue ? [cue] : []),
@@ -381,24 +456,11 @@ function shortlist(runtime, ctx, cues, cue, beforeSeq) {
   ].slice(0, 4);
   const entries = new Map();
   for (const query of words) {
-    const { items } = memory.search(
-      {
-        query,
-        connectionId: role.connectionId,
-        conversation: ctx.conversation,
-        type: "event",
-        cursor: {
-          beforeSeq,
-          eventOffset: 0,
-          diaryOffset: 0,
-          eventsDone: false,
-          diariesDone: true,
-        },
-        limit: 6,
-        maxChars: 4000,
-      },
+    const items = searchRecallHistory(
+      scope,
       ctx.conversation,
-      { projectEvent: boundary.project },
+      query,
+      beforeSeq,
     );
     for (const item of items) {
       if (!item.body) continue;
@@ -486,6 +548,9 @@ async function lookup(runtime, ctx, route, reason, cues, query) {
   const start = performance.now();
   const first = cues.reduce((a, b) => (a.seq < b.seq ? a : b));
   const beforeSeq = first.seq;
+  const to = new Date(
+    Date.parse(first.occurredAt) - RECENT_CHAT_MS,
+  ).toISOString();
   const config = runtime.config;
   const role = runtime.agent(ctx.agentId);
   const budget =
@@ -498,12 +563,12 @@ async function lookup(runtime, ctx, route, reason, cues, query) {
   const known = knownContext(runtime, ctx, cues);
   const getCandidates = (context) =>
     review
-      ? familiarityCandidates(runtime, ctx, cues, context)
+      ? familiarityCandidates(runtime, ctx, cues, context, beforeSeq, to)
       : shortlist(runtime, ctx, cues, query, beforeSeq);
   const candidates = getCandidates(known);
   if (review && !candidates.length) return;
   const prompt = JSON.stringify({
-    task: "快速判断旧话能否给当前对话补上有用的细节。先读 current 和 recent，跳过已经说清、只是撞词或属于另一件事的记录。候选够用就立即用 functional_agent_result 提交最多两条证据 ID。有明确缺口时，自选一个具体查询词补查，优先找能回答该缺口的原话。找不到有用出处就立即提交空数组。recent 只是理解上下文的资料。",
+    task: "快速判断旧话能否给当前对话补上有用的细节。先识别当前话题，再读 recent。只有泛用词相同、已经说清或属于另一件事的记录应当跳过。候选够用就立即用 functional_agent_result 提交最多两条证据 ID。有明确缺口时，自选一个具体查询词补查，优先找能回答该缺口的原话。找不到有用出处就立即提交空数组。recent 只是理解上下文的资料。",
     cue: query,
     current: cues.map(({ body }) => body.slice(0, 480)),
     recent: known.recent,
@@ -564,12 +629,9 @@ async function lookup(runtime, ctx, route, reason, cues, query) {
       const context = knownContext(runtime, ctx, cues);
       if (!isDeepStrictEqual(known.recent, context.recent)) return [];
       const rows = evidence(runtime, ctx, sourceIds, beforeSeq);
-      const oldEnough = Date.parse(first.occurredAt) - RECENT_CHAT_MS;
       return review
         ? rows.filter(
-            (row) =>
-              Date.parse(row.occurredAt) <= oldEnough &&
-              novelEvidence(row, context),
+            (row) => row.occurredAt <= to && novelEvidence(row, context),
           )
         : rows;
     },
@@ -595,9 +657,7 @@ export async function prepareRecallOpening(runtime, ctx) {
     const marked = anchors(
       runtime,
       ctx,
-      input.familiarity
-        .filter(({ candidates }) => candidates.length)
-        .map(({ id }) => id),
+      input.familiarity.filter(({ terms }) => terms.length).map(({ id }) => id),
     ).slice(-3);
     if (marked.length)
       ctx.openingRecall = await lookup(
