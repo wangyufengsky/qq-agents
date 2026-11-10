@@ -56,6 +56,7 @@ function failureState(code) {
       : "disconnected";
 }
 const FUNCTIONAL_SLOTS_PER_ROLE = 2;
+const FUNCTIONAL_SLOTS_PER_PORT = 3;
 
 function fixedDshPort(config) {
   if (!config?.baseUrl || config.recovery?.dshInstance) return null;
@@ -216,6 +217,11 @@ export class BackendConnections {
       )
     )
       throw Error("FUNCTIONAL_AGENT_BACKEND_UNAVAILABLE");
+    if (
+      [...this.functionalBackendLeases].filter((lease) => lease.port === port)
+        .length >= FUNCTIONAL_SLOTS_PER_PORT
+    )
+      throw Error("FUNCTIONAL_AGENT_BUSY");
     const modelSelection = Object.freeze({
       provider: definition.provider ?? config.provider,
       model: definition.model ?? config.model,
@@ -233,7 +239,7 @@ export class BackendConnections {
       throw Error("FUNCTIONAL_AGENT_BACKEND_UNAVAILABLE", { cause });
     }
     const { promise: done, resolve } = Promise.withResolvers();
-    const lease = { roleId: role.id, backendId, parentBackendId, done };
+    const lease = { roleId: role.id, backendId, parentBackendId, port, done };
     this.functionalBackendLeases.add(lease);
     let closing;
     return {

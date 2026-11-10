@@ -46,6 +46,7 @@ function setup(t, run, cfg = pilotConfig()) {
     groupId = 20000,
     user = 30000,
     time = 1800000000,
+    extra = {},
   ) {
     await f.runtime.ingest(
       "qq-0",
@@ -54,6 +55,7 @@ function setup(t, run, cfg = pilotConfig()) {
         user_id: user,
         time,
         message: [{ type: "text", data: { text } }],
+        ...extra,
       }),
     );
     return memory.db
@@ -122,7 +124,11 @@ test("opening searches only previous same-group evidence and attaches an authori
   const turn = await f.turn(input);
   assert.equal(checks, 1);
   assert.match(main.split("本轮记忆查证 ")[1], /夹具地点改在北楼/);
-  assert.doesNotMatch(main.split("本轮记忆查证 ")[1], /南楼|无关任务|私密例子/);
+  const delivered = main.split("本轮记忆查证 ")[1].split("。回想资料")[0];
+  const [row] = JSON.parse(delivered).evidence;
+  assert.equal(row.corrects, old.id);
+  assert.doesNotMatch(row.body, /无关任务/);
+  assert.doesNotMatch(delivered, /南楼|私密例子/);
   assert.deepEqual(memoryRecallDiagnostic(turn).opening, {
     reason: "past-reference",
     status: "matched",
@@ -681,4 +687,153 @@ test("semantic recall shows the tenth candidate and stops at ten", async (t) => 
   const turn = await f.turn(await f.add(13, "游客可以进入建筑吗？"));
   assert.equal(reviews, 1);
   assert.equal(memoryRecallDiagnostic(turn).opening.presented, 1);
+});
+
+test("active question carries speaker metadata and expands only the selected original quote", async (t) => {
+  const entered = Promise.withResolvers();
+  const finish = Promise.withResolvers();
+  let old,
+    quoted,
+    reviews = 0,
+    attempts = 0;
+  const f = setupFamiliarity(t, async (p) => {
+    if (p.modelSelection) {
+      reviews++;
+      const data = JSON.parse(p.prompt.split("任务资料：\n")[1]);
+      assert.equal(data.query, "青铜牌最早摆在哪？");
+      assert.ok(data.current.includes("这件东西原来摆在哪里？"));
+      const candidate = data.candidates.find(({ id }) => id === old.id);
+      assert.equal(candidate.senderId, "30002");
+      assert.equal(candidate.senderName, "记录员");
+      assert.equal(candidate.occurredAt, new Date(1799990100000).toISOString());
+      assert.equal(candidate.direction, "in");
+      assert.equal(candidate.scene, undefined);
+      entered.resolve();
+      await finish.promise;
+      await p.callTool("functional_agent_result", { evidenceIds: [old.id] });
+      return;
+    }
+    const pending = p.callTool("memory_recall", {
+      query: "青铜牌最早摆在哪？",
+    });
+    try {
+      await Promise.race([
+        entered.promise,
+        pending.then(() => assert.fail("child did not start")),
+      ]);
+      assert.deepEqual(
+        await p.callTool("memory_recall", { query: "另一个问题" }),
+        { status: "busy" },
+      );
+    } finally {
+      finish.resolve();
+    }
+    const result = await pending;
+    assert.equal(result.status, "matched");
+    const [row] = result.evidence;
+    assert.equal(row.senderName, "记录员");
+    assert.equal(row.scene.kind, "quote");
+    assert.deepEqual(
+      row.scene.messages.map(({ id, senderName, excerpt }) => ({
+        id,
+        senderName,
+        excerpt,
+      })),
+      [{ id: quoted.id, senderName: "访客甲", excerpt: "展柜还没腾空" }],
+    );
+    assert.deepEqual(await p.callTool("memory_recall", { query: "再问一遍" }), {
+      status: "budget",
+    });
+  });
+  const delegate = f.runtime.functionalDelegation.run.bind(
+    f.runtime.functionalDelegation,
+  );
+  f.runtime.functionalDelegation.run = (parent, target, options) => {
+    if (!options.opening && ++attempts === 1) return { status: "busy" };
+    return delegate(parent, target, options);
+  };
+  quoted = await f.add(1, "展柜还没腾空", 20000, 30001, 1799989800, {
+    sender: { nickname: "访客甲" },
+  });
+  old = await f.add(2, "", 20000, 30002, 1799990100, {
+    sender: { nickname: "记录员" },
+    message: [
+      { type: "reply", data: { id: "1" } },
+      { type: "text", data: { text: "青铜牌放在靠窗的架子" } },
+    ],
+  });
+  await f.add(3, "旁边一句与摆放无关", 20000, 30001, 1799990110);
+  const turn = await f.turn(await f.add(4, "这件东西原来摆在哪里？"));
+  assert.equal(attempts, 2);
+  assert.equal(reviews, 1);
+  assert.equal(memoryRecallDiagnostic(turn).active.presented, 1);
+  assert.ok(f.memory.state(group).continuity.recent.includes(quoted.id));
+});
+
+test("opening evidence omits protected and recalled context and keeps authorized neighbors", async (t) => {
+  let old, prompt;
+  const f = setupFamiliarity(t, async (p) => {
+    if (p.modelSelection) {
+      const { candidates } = JSON.parse(p.prompt.split("任务资料：\n")[1]);
+      assert.equal(candidates.find(({ id }) => id === old.id).scene, undefined);
+      assert.doesNotMatch(
+        JSON.stringify(candidates),
+        /开门说明|墙上挂牌|受保护片段|已撤回片段/,
+      );
+      await p.callTool("functional_agent_result", { evidenceIds: [old.id] });
+    } else {
+      prompt = p.prompt;
+    }
+  });
+  const before = await f.add(1, "开门说明", 20000, 30001, 1799990000);
+  const recalled = await f.add(2, "已撤回片段", 20000, 30001, 1799990010);
+  f.memory.db
+    .prepare("UPDATE events SET status='recalled' WHERE id=?")
+    .run(recalled.id);
+  old = await f.add(3, "陶器展台周末暂停使用", 20000, 30002, 1799990020);
+  f.memory.append({
+    dedupe: "protected-recall-neighbor",
+    connectionId: "qq-0",
+    conversation: group,
+    kind: "message.received",
+    status: "observed",
+    body: "受保护片段",
+    payload: { protectedOperations: true },
+    occurredAt: new Date(1799990025000).toISOString(),
+  });
+  const after = await f.add(4, "墙上挂牌", 20000, 30001, 1799990030);
+  await f.add(5, "其他群的附近内容", 20001, 30001, 1799990031);
+  const turn = await f.turn(await f.add(6, "还记得上次陶器展台的安排吗？"));
+  const suffix = prompt.split("本轮记忆查证 ")[1];
+  const { evidence } = JSON.parse(suffix.split("。回想资料")[0]);
+  const row = [...evidence, ...clues(prompt)].find(({ id }) => id === old.id);
+  assert.ok(row, suffix);
+  assert.equal(row.id, old.id);
+  assert.equal(row.scene.kind, "nearby");
+  assert.deepEqual(
+    row.scene.messages.map(({ id, position }) => [id, position]),
+    [
+      [before.id, "before"],
+      [after.id, "after"],
+    ],
+  );
+  assert.doesNotMatch(suffix, /受保护片段|已撤回片段|其他群的附近内容/);
+  assert.equal(memoryRecallDiagnostic(turn).opening.presented, 1);
+});
+
+test("an active question requires a current owner message", async (t) => {
+  let ordinary = 0;
+  const f = setupFamiliarity(t, async (p) => {
+    assert.equal(p.modelSelection, undefined);
+    ordinary++;
+    assert.deepEqual(
+      await p.callTool("memory_recall", { query: "旧的访客安排是什么？" }),
+      { status: "no-cue" },
+    );
+  });
+  await f.add(1, "之前的安排只在同群讨论过", 20000, 30000, 1799990000);
+  const input = await f.add(2, "能查一下吗？", 20000, 30001);
+  const turn = await f.turn(input);
+  assert.equal(ordinary, 1);
+  assert.equal(memoryRecallDiagnostic(turn).active.status, "no-cue");
 });
