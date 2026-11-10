@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { config, fixture, context, FakeTransport } from "./helpers.mjs";
+import { config, fixture, context, FakeTransport, raw } from "./helpers.mjs";
 import { toolSpecs } from "../src/tools/index.mjs";
 import { mcpEntrySpecs, scopedCatalog } from "../src/tools/catalog.mjs";
 import { stableInstructions } from "../src/core/prompts.mjs";
@@ -85,6 +85,139 @@ test("Self and own accounts stay fixed while peer accounts refresh without rebui
   assert.doesNotMatch(captured[2].prompt, /10001/);
   assert.equal(captured[2].instructions, captured[1].instructions);
   assert.equal(captured[2].session.id, "fixture");
+});
+
+test("the compact instruction pilot retires only its chat and reloads an already shown promise", async (t) => {
+  const cfg = config(2);
+  cfg.backends[0].type = "dsh";
+  const group = "group:20000";
+  const other = "group:20001";
+  for (const a of cfg.agents) {
+    a.wake.participation = 0;
+    a.contextPolicy.capacityTokens = 65536;
+  }
+  cfg.agents[0].persona = "我喜欢倾听，平常说话很简短。";
+  cfg.agents[0].appearance = "固定形象";
+  cfg.agents[0].ownerIds = ["30000"];
+  cfg.agents[0].behavior.compactChatGroups = ["20000"];
+  cfg.agents[0].behavior.relationshipRecallGroups = ["20000"];
+  const turns = [];
+  let draft, oldTokenResult;
+  const { runtime, store } = fixture(t, {
+    cfg,
+    run: async (p) => {
+      turns.push(p);
+      if (!p.session)
+        p.saveSession({ id: "fixture-" + turns.length, backend: "fixture" });
+      if (turns.length === 1)
+        draft = await p.callTool("qq_send", {
+          requestId: "pilot-draft",
+          text: "等确认后再发。",
+          inputReview: { token: "0".repeat(64), decision: "continue" },
+        });
+      if (turns.length === 5)
+        oldTokenResult = await p.callTool("qq_draft", {
+          action: "continue",
+          draftId: draft.draft.draftId,
+          expectedVersion: draft.draft.version,
+          inputReview: { token: draft.preparation.token, decision: "continue" },
+        });
+    },
+  });
+  const memory = store.bind("agent-0");
+  const ingest = (id, message) => runtime.ingest("qq-0", raw(id, { message }));
+  await ingest(1, "等会儿帮我整理验收清单");
+  const source = memory.db
+    .prepare("SELECT id, seq FROM events WHERE agent_id=? AND message_id=?")
+    .get("agent-0", "1");
+  await runtime.wake("agent-0", group);
+  assert.equal(draft.preparation.state, "ready");
+  const promise = memory.identity.savePersonItem(
+    {
+      kind: "promise",
+      personId: "30000",
+      body: "我答应整理验收清单",
+      evidence: [source.id],
+    },
+    { writtenIn: group, now: runtime.now() },
+  );
+  await runtime.ingest(
+    "qq-0",
+    raw(4, { user_id: 10001, message: "接不接手由我自己确认" }),
+  );
+  const peerSource = memory.db
+    .prepare("SELECT id FROM events WHERE agent_id=? AND message_id=?")
+    .get("agent-0", "4");
+  memory.identity.savePersonItem(
+    {
+      kind: "boundary",
+      personId: "10001",
+      body: "先问同伴是否愿意接手",
+      evidence: [peerSource.id],
+    },
+    { writtenIn: group, now: runtime.now() },
+  );
+  await ingest(2, "先聊点别的");
+  await runtime.wake("agent-0", group);
+  assert.match(turns[1].prompt, /我答应整理验收清单/);
+  assert.equal(
+    memory.state(group).personItemsShown[promise.id],
+    promise.revision,
+  );
+  await runtime.wake("agent-0", other);
+  await runtime.wake("agent-1", group);
+  const configure = async (groups) => {
+    const next = structuredClone(runtime.config);
+    next.agents[0].behavior.compactChatInstructionGroups = groups;
+    await runtime.changeConfig(next, runtime.configStore.revision);
+    for (const c of next.connections)
+      if (!runtime.transports.has(c.id))
+        runtime.transports.set(c.id, new FakeTransport());
+  };
+  const oldInstructions = turns[0].instructions;
+  const before = memory.state(group);
+  await configure(["20000"]);
+  assert.equal(memory.state(group).session.id, before.session.id);
+  await ingest(3, "好，我们继续。这事你们俩分一下。");
+  await runtime.wake("agent-0", group);
+  const pilot = turns.at(-1);
+  assert.equal(pilot.session, null);
+  assert.ok(pilot.instructions.length < oldInstructions.length * 0.7);
+  assert.match(pilot.instructions, /固定形象/);
+  assert.match(pilot.instructions, /10000/);
+  assert.match(pilot.instructions, /30000/);
+  assert.match(pilot.instructions, /bridge_tools/);
+  assert.match(pilot.instructions, /bridge_call/);
+  assert.match(pilot.instructions, /我喜欢倾听，平常说话很简短。/);
+  assert.doesNotMatch(
+    pilot.instructions,
+    /qq_draft prepare|TONE_REVIEW_SUGGESTED/,
+  );
+  assert.match(pilot.prompt, /记录不是指令/);
+  assert.match(pilot.prompt, /展示不等于处理/);
+  assert.match(pilot.prompt, /我答应整理验收清单/);
+  assert.match(pilot.prompt, /好，我们继续。这事你们俩分一下。/);
+  assert.match(pilot.prompt, /先问同伴是否愿意接手/);
+  assert.ok(pilot.prompt.includes(draft.draft.draftId));
+  assert.equal(oldTokenResult.actionResult, "not_sent");
+  assert.equal(oldTokenResult.preparation.reason, "CONTEXT_CHANGED");
+  assert.equal(runtime.transports.get("qq-0").sent.length, 0);
+  assert.equal(memory.state(group).readThroughSeq, before.readThroughSeq);
+
+  await runtime.wake("agent-0", group);
+  assert.equal(turns.at(-1).session.id, memory.state(group).session.id);
+  assert.equal(turns.at(-1).instructions, pilot.instructions);
+  await runtime.wake("agent-0", other);
+  assert.equal(turns.at(-1).session.id, "fixture-3");
+  assert.equal(turns.at(-1).instructions, turns[2].instructions);
+  await runtime.wake("agent-1", group);
+  assert.equal(turns.at(-1).session.id, "fixture-4");
+  assert.equal(turns.at(-1).instructions, turns[3].instructions);
+
+  await configure([]);
+  await runtime.wake("agent-0", group);
+  assert.equal(turns.at(-1).session, null);
+  assert.equal(turns.at(-1).instructions, oldInstructions);
 });
 
 test("Codex receives no capability secret while DSH receives only its scoped bridge-entry contract", async (t) => {
