@@ -185,7 +185,7 @@ const functionalAgents = z
           .object({
             groups: z.array(qq).min(1).max(20),
             semantic: z.boolean().optional(),
-            openingTimeoutMs: z.number().int().min(1).max(4000).default(4000),
+            openingTimeoutMs: z.number().int().min(1).max(6000).default(4000),
           })
           .strict()
           .optional(),
