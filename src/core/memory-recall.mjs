@@ -759,7 +759,7 @@ async function lookup(runtime, ctx, route, reason, cues, { cue, query } = {}) {
   );
   if (review && !lexical.length) reason = "local-semantic";
   const prompt = JSON.stringify({
-    task: "先判断 current 和 recent 已经说清了什么，还缺什么；有 query 时核对它问的具体缺口。只有旧话能补上这个缺口才选，话题相同、泛词重合或内容已在当前上下文时提交空数组。选中最多两条证据，用 functional_agent_result 的 contribution 写一句它们合起来补了什么，例如补上上次确认的访客规则。用自己的话概括这组证据的作用，省略原话、身份编号和凭据。有更正时优先选更正消息的 ID。候选够用就立即提交，有明确缺口时可用具体词补查一次；找不到有用出处就提交空数组并省略 contribution。",
+    task: "先判断 current 和 recent 已经说清了什么，还缺什么；有 query 时核对它问的具体缺口。只有旧话能补上这个缺口才选，仅有话题或泛词重合，或旧话内容已在当前上下文时，提交空数组。选中最多两条证据，用 functional_agent_result 的 contribution 写一句它们合起来补了什么，例如补上上次确认的访客规则。用自己的话概括这组证据的作用，省略原话、身份编号和凭据。有更正时优先选更正消息的 ID。候选够用就立即提交，有明确缺口时可用具体词补查一次；找不到有用出处就提交空数组并省略 contribution。",
     cue,
     query,
     current: cues.map(({ body }) => body.slice(0, 480)),
