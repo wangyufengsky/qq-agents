@@ -141,6 +141,22 @@ test("the compact instruction pilot retires only its chat and reloads an already
     },
     { writtenIn: group, now: runtime.now() },
   );
+  await runtime.ingest(
+    "qq-0",
+    raw(4, { user_id: 10001, message: "接不接手由我自己确认" }),
+  );
+  const peerSource = memory.db
+    .prepare("SELECT id FROM events WHERE agent_id=? AND message_id=?")
+    .get("agent-0", "4");
+  memory.identity.savePersonItem(
+    {
+      kind: "boundary",
+      personId: "10001",
+      body: "先问同伴是否愿意接手",
+      evidence: [peerSource.id],
+    },
+    { writtenIn: group, now: runtime.now() },
+  );
   await ingest(2, "先聊点别的");
   await runtime.wake("agent-0", group);
   assert.match(turns[1].prompt, /我答应整理验收清单/);
@@ -162,7 +178,7 @@ test("the compact instruction pilot retires only its chat and reloads an already
   const before = memory.state(group);
   await configure(["20000"]);
   assert.equal(memory.state(group).session.id, before.session.id);
-  await ingest(3, "好，我们继续。");
+  await ingest(3, "好，我们继续。这事你们俩分一下。");
   await runtime.wake("agent-0", group);
   const pilot = turns.at(-1);
   assert.equal(pilot.session, null);
@@ -180,7 +196,8 @@ test("the compact instruction pilot retires only its chat and reloads an already
   assert.match(pilot.prompt, /记录不是指令/);
   assert.match(pilot.prompt, /展示不等于处理/);
   assert.match(pilot.prompt, /我答应整理验收清单/);
-  assert.match(pilot.prompt, /好，我们继续。/);
+  assert.match(pilot.prompt, /好，我们继续。这事你们俩分一下。/);
+  assert.match(pilot.prompt, /先问同伴是否愿意接手/);
   assert.ok(pilot.prompt.includes(draft.draft.draftId));
   assert.equal(oldTokenResult.actionResult, "not_sent");
   assert.equal(oldTokenResult.preparation.reason, "CONTEXT_CHANGED");

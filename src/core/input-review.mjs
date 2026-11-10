@@ -399,6 +399,17 @@ export function inputDisposition(runtime, ctx, ref) {
 }
 
 /** @param {any} runtime @param {any} ctx */
+export function usesOptionalGroupBacklog(runtime, ctx) {
+  return (
+    ctx.conversation.startsWith("group:") &&
+    !isPrivateLikeGroup(runtime.config, ctx.conversation) &&
+    runtime.agent(ctx.agentId).behavior.optionalGroupBacklog === true &&
+    !ctx.activeIntentId &&
+    !ctx.scheduleRunId
+  );
+}
+
+/** @param {any} runtime @param {any} ctx */
 export function focusedGroupReplyMode(runtime, ctx) {
   if (
     !ctx.conversation.startsWith("group:") ||
@@ -476,6 +487,12 @@ export function snapshotReviewInput(runtime, ctx, baseline, replyEventId) {
     replyEventId && replyEventId === ctx.focusedReplyId
       ? focusedReplyInput(runtime, ctx, replyEventId)
       : null;
+  const backlogThrough =
+    !focus &&
+    usesOptionalGroupBacklog(runtime, ctx) &&
+    Number.isSafeInteger(ctx.optionalBacklogThroughSeq)
+      ? ctx.optionalBacklogThroughSeq
+      : null;
   const related = new Set(focus ? [focus.id] : []);
   const keep = [
     ...new Set([
@@ -496,6 +513,7 @@ export function snapshotReviewInput(runtime, ctx, baseline, replyEventId) {
   let blocked = state.history_required ? "history_baseline_required" : null;
   for (const row of rows) {
     if (focus && !inFocusedReview(db, row, focus, related)) continue;
+    if (backlogThrough !== null && row.seq <= backlogThrough) continue;
     if (!eligible(runtime, ctx, row)) continue;
     observedIds.push(row.id);
     if (!visible(runtime, ctx, row, boundary)) {
@@ -510,6 +528,7 @@ export function snapshotReviewInput(runtime, ctx, baseline, replyEventId) {
     throughSeq: Math.max(state.closed_through, items.at(-1)?.seq || 0),
     revision: state.revision,
     focus: focus?.id ?? null,
+    backlogThrough,
     scope,
     observedIds,
     blocked,
@@ -540,15 +559,15 @@ function grantState(ctx) {
 
 /** @param {ReviewSnapshot} snapshot */
 function snapshotDigest(snapshot) {
-  return (
-    createHash("sha256")
-      // Unrelated arrivals still advance the conversation revision. A quoted
-      // reply binds only the live target and the input versions in its scope.
-      .update(
-        JSON.stringify([snapshot.focus ?? snapshot.revision, snapshot.items]),
-      )
-      .digest("hex")
-  );
+  // In a scoped review, unrelated revisions must not invalidate a draft.
+  const boundary =
+    snapshot.focus ??
+    (snapshot.backlogThrough === null
+      ? snapshot.revision
+      : ["optional-backlog", snapshot.backlogThrough]);
+  return createHash("sha256")
+    .update(JSON.stringify([boundary, snapshot.items]))
+    .digest("hex");
 }
 
 /** @param {any} runtime @param {any} ctx @param {string|null} [focus] */
@@ -623,7 +642,11 @@ function grantMismatch(runtime, ctx, grant, binding) {
     binding.replyEventId,
   );
   if (current.scope !== grant.snapshot.scope) return "CONTEXT_CHANGED";
-  if (current.focus !== grant.snapshot.focus) return "POLICY_CHANGED";
+  if (
+    current.focus !== grant.snapshot.focus ||
+    current.backlogThrough !== grant.snapshot.backlogThrough
+  )
+    return "POLICY_CHANGED";
   if (current.blocked) return blockedReason(current);
   if (snapshotDigest(current) !== snapshotDigest(grant.snapshot)) {
     const versions = new Map(

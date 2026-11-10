@@ -50,6 +50,7 @@ import {
   focusedReplyInput,
   inputProjection,
   processingPending,
+  usesOptionalGroupBacklog,
 } from "./input-review.mjs";
 import { draftHints } from "../tools/qq-drafts.mjs";
 import {
@@ -644,6 +645,16 @@ export class ContextLifecycle {
       m.db
         .prepare("SELECT MAX(seq) AS seq FROM events WHERE agent_id=?")
         .get(a.id).seq || 0;
+    if (usesOptionalGroupBacklog(r, ctx)) {
+      // Wake anchors are bridge-owned. Keep the current batch and later input
+      // in review while leaving the earlier history available to read on demand.
+      ctx.optionalBacklogThroughSeq = reasons.reduce((through, wake) => {
+        const seq = wake.firstSeq ?? wake.seq;
+        return Number.isSafeInteger(seq) && seq > 0
+          ? Math.min(through, seq - 1)
+          : through;
+      }, ctx.sourceStartSeq);
+    }
     const history =
       ctx.conversation === SUBJECT
         ? { items: [] }
@@ -653,8 +664,10 @@ export class ContextLifecycle {
             m.conversation(
               {
                 conversation: ctx.conversation,
-                afterSeq:
+                afterSeq: Math.max(
                   (s.session ? s.feedThroughSeq : s.readThroughSeq) || 0,
+                  ctx.optionalBacklogThroughSeq ?? 0,
+                ),
                 limit: 30,
                 maxChars: 12000,
                 fullText: /^(group|private):/.test(ctx.conversation),
@@ -882,6 +895,9 @@ export class ContextLifecycle {
               : "",
             focus
               ? `本轮可优先引用回复：用 qq_send 的 replyTo=${JSON.stringify(focus.messageId)} 回复这条来信。只针对这条消息及明确引用它的补充，遇到续读入口先读齐。旧积压保留，之后按处理水位继续；不要为这条引用回复提交跨过缺口的已读水位。${focusedMessage ? ` 当前来信：${JSON.stringify(focusedMessage)}` : ""}`
+              : "",
+            ctx.optionalBacklogThroughSeq !== undefined
+              ? "旧积压可按需回看。可先用发送工具接当前话题，之后再分批补读。连续已读范围尚未处理完时，发送可省略 readThroughSeq。"
               : "",
             `新增消息：${JSON.stringify(openingHistory)}`,
             relationshipLine,

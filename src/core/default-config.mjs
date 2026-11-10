@@ -123,6 +123,7 @@ export function defaultConfig() {
         behavior: {
           focusedGroupReply: false,
           focusedGroupMentionReply: false,
+          optionalGroupBacklog: false,
           compactChatGroups: [],
           compactChatInstructionGroups: [],
           relationshipRecallGroups: [],
@@ -223,6 +224,7 @@ export function defaultConfig() {
         behavior: {
           focusedGroupReply: false,
           focusedGroupMentionReply: false,
+          optionalGroupBacklog: false,
           compactChatGroups: [],
           compactChatInstructionGroups: [],
           relationshipRecallGroups: [],

@@ -9,6 +9,7 @@ async function group(
     privateLike = true,
     enabled = true,
     mentionEnabled = false,
+    optionalBacklog = false,
     backlog = 41,
   } = {},
 ) {
@@ -21,6 +22,8 @@ async function group(
   });
   cfg.agents[0].behavior.focusedGroupReply = enabled;
   cfg.agents[0].behavior.focusedGroupMentionReply = mentionEnabled;
+  cfg.agents[0].behavior.optionalGroupBacklog = optionalBacklog;
+  cfg.agents[0].tools.push("qq_send_burst");
   const f = fixture(t, { cfg, run });
   const ingest = (id, message) =>
     f.runtime.ingest("qq-0", raw(id, { message }));
@@ -271,4 +274,109 @@ test("ordinary draft review guides and delivers batches of pending originals", a
   assert(pages.length < 10);
   assert.equal(f.sent().length, 0);
   assert.equal(f.memory.state("group:20000").readThroughSeq || 0, 0);
+});
+
+for (const [label, tool, input, preview] of [
+  [
+    "an unquoted reply without reading old input",
+    "qq_send",
+    { ...reply, replyTo: undefined },
+    false,
+  ],
+  ["a new quote after only reading some old input", "qq_send", reply, true],
+  ["a quote of a past message", "qq_send", { ...reply, replyTo: "100" }, false],
+  [
+    "a text burst",
+    "qq_send_burst",
+    { requestId: "group-burst", messages: ["合成回复"] },
+    false,
+  ],
+]) {
+  test(`optional ordinary group backlog allows ${label}`, async (t) => {
+    let result, prompt, read, after;
+    const f = await group(
+      t,
+      async ({ callTool, prompt: opening }) => {
+        prompt = opening;
+        if (preview) {
+          read = await callTool("conversation_read", { afterSeq: 0, limit: 2 });
+        }
+        result = await callTool(tool, input);
+        if (preview) {
+          after = await callTool("conversation_read", {
+            afterSeq: read.nextAfterSeq,
+            limit: 2,
+          });
+        }
+      },
+      { privateLike: false, optionalBacklog: true, backlog: 100 },
+    );
+    await f.wake();
+    assert.equal(result?.actionResult, "sent");
+    assert(prompt.includes("当前来信"));
+    assert.deepEqual(f.reviewed(), ["42"]);
+    if (preview) {
+      assert.equal(read.items.length, 2);
+      assert.equal(after.items.length, 2);
+      assert(after.items[0].seq > read.items.at(-1).seq);
+    }
+    assert.equal(f.memory.state("group:20000").readThroughSeq || 0, 0);
+    assert.equal(f.sent().length, 1);
+  });
+}
+
+test("optional backlog still reviews inputs that arrive during the current turn", async (t) => {
+  let first, sent;
+  const f = await group(
+    t,
+    async ({ callTool }) => {
+      await f.ingest(300, "本轮新来信");
+      first = await callTool("qq_send", { ...reply, replyTo: undefined });
+      sent = await callTool("qq_draft", resumeDraft(first));
+    },
+    { privateLike: false, optionalBacklog: true },
+  );
+  await f.wake();
+  assert.equal(first.preparation.state, "ready");
+  assert.equal(first.preparation.pendingDecision, 2);
+  assert.deepEqual(
+    first.preparation.items.map((x) => x.messageId),
+    ["300"],
+  );
+  assert.equal(sent.actionResult, "sent");
+  assert.deepEqual(f.reviewed(), ["42", "300"]);
+});
+
+test("optional backlog keeps the beginning of a merged wake and its intervening inputs", async (t) => {
+  let prompt, result;
+  const f = await group(
+    t,
+    async (p) => {
+      prompt = p.prompt;
+      result = await p.callTool("qq_send", { ...reply, replyTo: undefined });
+    },
+    { privateLike: false, optionalBacklog: true },
+  );
+  const a = f.runtime.agent("agent-0");
+  a.behavior.batchWindowMs = 1000;
+  a.behavior.batchMaxMs = 2000;
+  let now = Date.now();
+  f.runtime.clock = () => new Date(now);
+  await f.ingest(300, [
+    ...mentioned("10000"),
+    { type: "text", data: { text: "本轮问题第一段" } },
+  ]);
+  await f.ingest(301, "本轮中间补充");
+  await f.ingest(302, [
+    ...mentioned("10000"),
+    { type: "text", data: { text: "本轮问题最后一段" } },
+  ]);
+  now += 2001;
+  f.runtime.conversations.tick();
+  await settle(f.runtime);
+  assert.match(prompt, /本轮问题第一段/);
+  assert.match(prompt, /本轮中间补充/);
+  assert.match(prompt, /本轮问题最后一段/);
+  assert.equal(result.actionResult, "sent");
+  assert.deepEqual(f.reviewed(), ["300", "301", "302"]);
 });

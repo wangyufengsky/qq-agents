@@ -115,6 +115,7 @@
       "behavior": {
         "focusedGroupReply": false,
         "focusedGroupMentionReply": false,
+        "optionalGroupBacklog": false,
         "compactChatGroups": [],
         "compactChatInstructionGroups": [],
         "relationshipRecallGroups": [],
@@ -235,6 +236,7 @@
       "behavior": {
         "focusedGroupReply": false,
         "focusedGroupMentionReply": false,
+        "optionalGroupBacklog": false,
         "compactChatGroups": [],
         "compactChatInstructionGroups": [],
         "relationshipRecallGroups": [],

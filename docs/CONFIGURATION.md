@@ -511,6 +511,8 @@ DSH、Codex、Antigravity 可沿用角色现有后端按回合运行，使用独
 
 `home_visit_inbox` 的 `limit` 是可见结果上限；每次最多扫描 200 条候选，SQL 最多取 201 条元数据用于判断续页。拒绝、删除或禁用角色的记录不返回给调用者；拒绝记录密集时可能出现空 `items` 但仍有 `nextCursor`，须继续使用该游标，只有 `nextCursor=null` 才表示扫描结束。邀请收件游标采用仅在当前服务实例内有效的认证加密，绑定读者身份代次及策略修订，不透露隐藏记录的行号；错误、超长、其他读者或重启前游标返回 `INVALID_CURSOR`，须省略 `cursor` 从首屏重读。新客户端不会重置运行实例的密钥，其他小窝分页协议不变。
 
+`agents[].behavior.optionalGroupBacklog` 默认为 `false`。在同一高级设置开启后，普通群聊天回合的旧积压可按需查看，发送继续核对本轮来信和原有投递权限。详见 [普通群旧积压按需补读](CHAT-CONTEXT.md#普通群旧积压按需补读)。
+
 ### Antigravity 图片通道
 
 `backends[].cliProtocol` 仅用于 Antigravity，可选 `headless` / `acp`，省略时保持 headless。ACP 将已授权工具返回的图片内容块直接送给模型，保留媒体检查与工具权限；要求 CLI 声明图片能力并通过隔离验收。ACP 当前按回合启动与续接，`cliReuse` 设置仅对 headless 生效。切换协议会重建对应模型会话一次，详见 [Antigravity 图片输入](ANTIGRAVITY.md#ACP-图片直接输入)。其他后端和已有显式配置不变。

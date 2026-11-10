@@ -212,6 +212,11 @@ export class ConversationEngine {
         x.intentId === intentId,
     );
     if (existing) {
+      // Keep the first input for the review boundary and the latest for the wake.
+      if (seq > 0) {
+        const first = existing.firstSeq ?? existing.seq;
+        existing.firstSeq = first > 0 ? Math.min(first, seq) : seq;
+      }
       existing.seq = Math.max(existing.seq, seq);
       if (addressed) existing.addressed = true;
     } else
