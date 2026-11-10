@@ -39,11 +39,10 @@ export async function commitConfig(runtime, next, revision) {
   const dshRoutesChanged = [...before.backends, ...next.backends].some(
     (backend) => backend.type === "dsh" && backendIds.has(backend.id),
   );
-  for (const [id, lease] of runtime.backendConnections
-    .functionalBackendLeases) {
+  for (const lease of runtime.backendConnections.functionalBackendLeases) {
     if (
       dshRoutesChanged ||
-      agentIds.has(id) ||
+      agentIds.has(lease.roleId) ||
       backendIds.has(lease.parentBackendId)
     )
       finishing.push(lease.done);

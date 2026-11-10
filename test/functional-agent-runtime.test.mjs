@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { validateConfig } from "../src/core/config.mjs";
+import { recallBoundary } from "../src/core/recall-boundary.mjs";
 import { scopedCatalog } from "../src/tools/catalog.mjs";
 import { config, fixture } from "./helpers.mjs";
 
@@ -131,4 +132,115 @@ test("native delegation uses same-scope evidence, isolated permissions and no ch
   assert.deepEqual(memory.state("group:20000"), before);
   assert.equal(parent.privateRead.size, 0);
   assert.equal(f.runtime.transports.get("qq-0").sent.length, 0);
+});
+
+test("delegated reads exclude nested cross-chat annotations and restricted match metadata", async (t) => {
+  const cfg = config(1);
+  cfg.backends.push({
+    ...cfg.backends[0],
+    id: "fixture-recall",
+    type: "dsh",
+    baseUrl: "http://127.0.0.1:9",
+    preset: "qq-unified",
+    provider: "fixture-provider",
+    model: "fixture-model",
+    functionalAgentOnly: true,
+  });
+  cfg.agents[0].tools.push("memory_related");
+  cfg.agents[0].functionalAgents = {
+    qq: { kind: "qq-dialogue", delegatesTo: ["memory"] },
+    memory: {
+      kind: "memory",
+      enabled: true,
+      backendId: "fixture-recall",
+    },
+  };
+  let visible, reply, bridgeFailure;
+  const f = fixture(t, {
+    cfg: validateConfig(cfg),
+    run: async ({ callTool }) => {
+      try {
+        const found = await callTool("memory_search", { query: "same chat" });
+        assert.deepEqual(Object.keys(found), ["items"]);
+        assert.deepEqual(
+          found.items.map(({ id, body }) => ({ id, body })),
+          [
+            { id: reply.id, body: "same chat reply" },
+            { id: visible.id, body: "same chat original" },
+          ],
+        );
+        for (const row of found.items) {
+          assert.equal(row.corrections, undefined);
+          assert.equal(row.scene, undefined);
+        }
+        const direct = await callTool("memory_read", { id: visible.id });
+        const message = JSON.parse(direct.chunk);
+        assert.equal(message.body, "same chat original");
+        assert.equal(message.corrections, undefined);
+        assert.equal(message.payload, undefined);
+        const related = await callTool("memory_related", { id: visible.id });
+        assert.deepEqual(Object.keys(related), ["anchorId", "items"]);
+        assert.deepEqual(Object.keys(related.items[0]), ["record", "links"]);
+        assert.equal(related.items[0].record.id, reply.id);
+        assert.equal(related.items[0].record.corrections, undefined);
+        assert.equal(related.items[0].links[0].toId, visible.id);
+        await callTool("functional_agent_result", {
+          evidenceIds: [visible.id],
+        });
+      } catch (error) {
+        bridgeFailure = error;
+        throw error;
+      }
+    },
+  });
+  const memory = f.store.bind("agent-0");
+  const append = (group, messageId, body, payload = {}) =>
+    memory.append({
+      connectionId: "qq-0",
+      conversation: "group:" + group,
+      dedupe: "scope-proof-" + messageId,
+      messageId,
+      kind: "message.received",
+      direction: "in",
+      status: "observed",
+      senderId: "30000",
+      body,
+      payload,
+    });
+  visible = append("20000", "501", "same chat original");
+  reply = append("20000", "502", "same chat reply", {
+    segments: [{ type: "reply", data: { id: "501" } }],
+  });
+  const other = append("20001", "503", "other chat only");
+  append("20000", "504", "same chat protected term", {
+    protectedOperations: true,
+  });
+  const correctionCtx = f.runtime.makeContext("agent-0", "group:20001");
+  memory.corrections.create(
+    {
+      personId: "30000",
+      oldBelief: "old belief",
+      current: "other chat only",
+      kind: "clarification",
+      scope: "other chat scope",
+      targets: [visible, reply].map(({ id }) => ({ type: "event", id })),
+    },
+    other,
+    recallBoundary(f.runtime, correctionCtx),
+    new Date().toISOString(),
+  );
+  const parent = f.runtime.makeContext("agent-0", "group:20000");
+  assert.equal(
+    JSON.parse(
+      (await f.runtime.callTool(parent, "memory_read", { id: visible.id }))
+        .chunk,
+    ).corrections[0].current,
+    "other chat only",
+  );
+  const result = await f.runtime.functionalDelegation.run(parent, "memory", {
+    prompt: "查证本轮相关原话",
+  });
+  if (bridgeFailure) throw bridgeFailure;
+  assert.equal(result.status, "completed");
+  assert.deepEqual(result.evidenceIds, [visible.id]);
 });

@@ -58,6 +58,11 @@ test("dedicated DSH leases isolate ordinary adapters and bound capacity per role
     backendId: "alternate",
     model: "child-model",
   });
+  const secondLease = connections.acquireFunctionalBackend(role, {
+    backendId: "alternate",
+    model: "second-model",
+    effort: "low",
+  });
   const peerLease = connections.acquireFunctionalBackend(peer, {
     backendId: "alternate",
     model: "peer-model",
@@ -65,28 +70,38 @@ test("dedicated DSH leases isolate ordinary adapters and bound capacity per role
   try {
     assert.notEqual(lease.backend, backend);
     assert.notEqual(peerLease.backend, lease.backend);
+    assert.notEqual(secondLease.backend, lease.backend);
     assert.equal(Object.isFrozen(lease.modelSelection), true);
     assert.deepEqual(lease.modelSelection, {
       provider: "alternate-provider",
       model: "child-model",
       effort: "high",
     });
+    assert.deepEqual(secondLease.modelSelection, {
+      provider: "alternate-provider",
+      model: "second-model",
+      effort: "low",
+    });
     assert.equal(peerLease.modelSelection.model, "peer-model");
     assert.equal(backend.config.model, "role-model");
     assert.equal(runtime.backends.get(role.id), backend);
-    assert.equal(created.length, 3);
+    assert.equal(created.length, 4);
     assert.throws(
       () =>
         connections.acquireFunctionalBackend(role, { backendId: "alternate" }),
       /FUNCTIONAL_AGENT_BUSY/,
     );
   } finally {
-    await Promise.all([lease.release(), peerLease.release()]);
+    await Promise.all([
+      lease.release(),
+      secondLease.release(),
+      peerLease.release(),
+    ]);
   }
   await connections
     .acquireFunctionalBackend(role, { backendId: "alternate" })
     .release();
-  assert.equal(created.length, 4);
+  assert.equal(created.length, 5);
 });
 
 test("an alternate DSH adapter is isolated and keeps its lease through close", async () => {
@@ -94,6 +109,9 @@ test("an alternate DSH adapter is isolated and keeps its lease through close", a
   const role = roles[0];
   const retained = connections.adapter(role);
   const lease = connections.acquireFunctionalBackend(role, {
+    backendId: "alternate",
+  });
+  const otherLease = connections.acquireFunctionalBackend(role, {
     backendId: "alternate",
   });
   const close = Promise.withResolvers();
@@ -106,7 +124,7 @@ test("an alternate DSH adapter is isolated and keeps its lease through close", a
   try {
     assert.equal(release, lease.release());
     assert.notEqual(lease.backend, retained);
-    assert.equal(created.length, 2);
+    assert.equal(created.length, 3);
     assert.equal(lease.backend.role.backendId, "alternate");
     assert.deepEqual(lease.backend.config.toolServers, []);
     assert.equal(runtime.backends.get(role.id), retained);
@@ -120,12 +138,14 @@ test("an alternate DSH adapter is isolated and keeps its lease through close", a
         connections.acquireFunctionalBackend(role, { backendId: "alternate" }),
       /FUNCTIONAL_AGENT_BUSY/,
     );
-    assert.equal(connections.functionalBackendWork("alternate").length, 1);
-    assert.equal(connections.functionalBackendWork("fixture").length, 1);
+    assert.equal(connections.functionalBackendWork("alternate").length, 2);
+    assert.equal(connections.functionalBackendWork("fixture").length, 2);
   } finally {
     close.resolve();
     await release;
   }
+  assert.equal(connections.functionalBackendWork("alternate").length, 1);
+  await otherLease.release();
   assert.equal(closed, 1);
   assert.equal(connections.functionalBackendWork("alternate").length, 0);
   assert.equal(connections.functionalBackendWork("fixture").length, 0);

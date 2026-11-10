@@ -55,6 +55,8 @@ function failureState(code) {
       ? "selection-required"
       : "disconnected";
 }
+const FUNCTIONAL_SLOTS_PER_ROLE = 2;
+
 function fixedDshPort(config) {
   if (!config?.baseUrl || config.recovery?.dshInstance) return null;
   try {
@@ -71,7 +73,7 @@ export class BackendConnections {
     this.operations = new Map();
     this.blocked = new Set();
     this.drainingContexts = new Set();
-    this.functionalBackendLeases = new Map();
+    this.functionalBackendLeases = new Set();
     this.functionalBackendQuarantinedPorts = new Set();
   }
   config(id) {
@@ -182,7 +184,11 @@ export class BackendConnections {
       state.error !== "BACKEND_NO_AGENTS"
     )
       throw Error("FUNCTIONAL_AGENT_BACKEND_UNAVAILABLE");
-    if (this.functionalBackendLeases.has(role.id))
+    if (
+      [...this.functionalBackendLeases].filter(
+        (lease) => lease.roleId === role.id,
+      ).length >= FUNCTIONAL_SLOTS_PER_ROLE
+    )
       throw Error("FUNCTIONAL_AGENT_BUSY");
 
     // DSH also updates the profile-wide default when it selects a model.
@@ -215,11 +221,8 @@ export class BackendConnections {
       throw Error("FUNCTIONAL_AGENT_BACKEND_UNAVAILABLE", { cause });
     }
     const { promise: done, resolve } = Promise.withResolvers();
-    this.functionalBackendLeases.set(role.id, {
-      backendId,
-      parentBackendId,
-      done,
-    });
+    const lease = { roleId: role.id, backendId, parentBackendId, done };
+    this.functionalBackendLeases.add(lease);
     let closing;
     return {
       backend,
@@ -237,7 +240,7 @@ export class BackendConnections {
             throw Error("FUNCTIONAL_AGENT_BACKEND_UNAVAILABLE", { cause });
           })
           .finally(() => {
-            this.functionalBackendLeases.delete(role.id);
+            this.functionalBackendLeases.delete(lease);
             resolve();
           })),
     };

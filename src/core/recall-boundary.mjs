@@ -29,6 +29,35 @@ export function storedMindRecords(db, agentId, id) {
   });
 }
 
+const functionalEventFields = [
+  "id",
+  "seq",
+  "type",
+  "conversation",
+  "connectionId",
+  "senderId",
+  "senderName",
+  "messageId",
+  "occurredAt",
+  "observedAt",
+  "status",
+  "direction",
+  "timeBasis",
+  "body",
+  "bodyTruncated",
+];
+
+// Only the message's own text and basic metadata belong to this projection.
+// Corrections can reference another chat, and raw payloads or scene children
+// can have separate sources and protection.
+function functionalEventProjection(row) {
+  return Object.fromEntries(
+    functionalEventFields
+      .filter((key) => Object.hasOwn(row, key))
+      .map((key) => [key, row[key]]),
+  );
+}
+
 // This is a read boundary, not declassification. Stored records and the
 // protection of any context that already saw them remain unchanged.
 export function recallBoundary(runtime, ctx, { publicOnly = false } = {}) {
@@ -153,6 +182,7 @@ export function recallBoundary(runtime, ctx, { publicOnly = false } = {}) {
   }
   function project(row) {
     if (!allowed(row)) return null;
+    if (functional) return functionalEventProjection(row);
     // Scene projections omit protection metadata. Check their durable source
     // IDs too, and withhold the whole scene (including participant summaries).
     if (
@@ -170,6 +200,7 @@ export function recallBoundary(runtime, ctx, { publicOnly = false } = {}) {
   }
   return {
     allowed,
+    project,
     assert(row) {
       if (!allowed(row)) throw Error("RECALL_SOURCE_NOT_ALLOWED");
     },

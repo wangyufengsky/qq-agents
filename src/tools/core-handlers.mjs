@@ -87,10 +87,21 @@ async function handle_memory_search(runtime, ctx, args, name) {
         connectionId: runtime.agent(ctx.agentId).connectionId,
         conversationType: undefined,
         type: "event",
+        offset: 0,
+        cursor: undefined,
         contextBefore: 0,
         contextAfter: 0,
       }
     : args;
+  if (functional) {
+    const { project } = recallBoundary(runtime, ctx);
+    const { items } = mem.search(query, ctx.conversation, {
+      projectEvent: project,
+    });
+    track(ctx, items);
+    // Pagination can also describe matches outside this projection.
+    return { items };
+  }
   const r = recallPage(runtime, ctx, mem.search(query, ctx.conversation));
   track(ctx, [...r.items, ...r.diaries]);
   return r;
@@ -100,24 +111,36 @@ async function handle_memory_related(runtime, ctx, args, name) {
 
   const boundary = recallBoundary(runtime, ctx);
   boundary.assert(mem.readRecord({ id: args.id }, ctx.conversation));
-  const r = mem.related(args, ctx.conversation);
-  r.items = r.items
-    .filter((x) => boundary.allowed(x.record))
-    .map((x) => ({
-      ...x,
-      links: x.links?.filter((link) => boundary.allowed({ id: link.toId })),
-    }));
+  const functional = ctx.runtimeKind === "functional-agent";
+  const r = mem.related(
+    functional ? { ...args, afterSeq: 0 } : args,
+    ctx.conversation,
+  );
+  r.items = r.items.flatMap((x) => {
+    const record = functional
+      ? boundary.project(x.record)
+      : boundary.allowed(x.record) && x.record;
+    if (!record) return [];
+    const links = x.links?.filter((link) =>
+      boundary.allowed({ id: link.toId }),
+    );
+    return [functional ? { record, links: links || [] } : { ...x, links }];
+  });
   track(
     ctx,
     r.items.map((x) => x.record),
   );
-  return r;
+  return functional ? { anchorId: r.anchorId, items: r.items } : r;
 }
 async function handle_memory_read(runtime, ctx, args, name) {
   const mem = runtime.memory.bind(ctx.agentId);
 
-  const item = mem.readRecord(args, ctx.conversation);
-  recallBoundary(runtime, ctx).assert(item);
+  const row = mem.readRecord(args, ctx.conversation);
+  const boundary = recallBoundary(runtime, ctx);
+  const functional = ctx.runtimeKind === "functional-agent";
+  const item = functional ? boundary.project(row) : row;
+  if (!item) throw Error("RECALL_SOURCE_NOT_ALLOWED");
+  if (!functional) boundary.assert(item);
   let version;
   const r = mem.read(
     { ...args, maxChars: inlineChatInputChars(runtime, ctx, args.maxChars) },
@@ -131,7 +154,7 @@ async function handle_memory_read(runtime, ctx, args, name) {
   );
   track(ctx, [r]);
   // A delegated read is evidence for the child only, never a QQ input receipt.
-  if (ctx.runtimeKind === "functional-agent") return r;
+  if (functional) return r;
   const stage = (result, commit) => {
     runtime.stageToolInput(ctx, result, commit, [item]);
     return result;
