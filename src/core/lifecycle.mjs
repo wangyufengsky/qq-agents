@@ -46,11 +46,11 @@ import { recallBoundary, recallPage } from "./recall-boundary.mjs";
 import {
   commitInputPresentation,
   describeInputPresentation,
-  focusedGroupReplyEnabled,
+  focusedGroupReplyMode,
+  focusedReplyInput,
   inputProjection,
   processingPending,
 } from "./input-review.mjs";
-import { liveInput } from "./live-input.mjs";
 import { draftHints } from "../tools/qq-drafts.mjs";
 import {
   retireSession,
@@ -508,19 +508,19 @@ export class ContextLifecycle {
   }
   focusedOpening(ctx, memory, reasons, items) {
     const r = this.runtime;
-    if (!focusedGroupReplyEnabled(r, ctx)) return null;
-    const seqs = reasons.map(({ seq }) => seq).filter(Number.isSafeInteger);
+    const mode = focusedGroupReplyMode(r, ctx);
+    if (!mode) return null;
+    const seqs = reasons
+      .filter(({ reason }) => mode === "private-like" || reason === "mention")
+      .map(({ seq }) => seq)
+      .filter(Number.isSafeInteger);
     if (!seqs.length) return null;
     const latest = memory.db
       .prepare(
         "SELECT id,seq FROM events WHERE agent_id=? AND conversation=? AND kind='message.received' AND seq IN (SELECT value FROM json_each(?)) ORDER BY seq DESC LIMIT 1",
       )
       .get(ctx.agentId, ctx.conversation, JSON.stringify(seqs));
-    if (
-      !latest ||
-      !liveInput(r, ctx.agentId, ctx.conversation, latest.id)?.message_id
-    )
-      return null;
+    if (!latest || !focusedReplyInput(r, ctx, latest.id)) return null;
     const existing = items.find(({ id }) => id === latest.id);
     if (existing) return existing;
     const page = recallPage(

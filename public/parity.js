@@ -334,7 +334,7 @@ async function renderSchedules() {
     </div><p class="hint">合并唤醒时每来一条消息都重新等待，从第一条算起不超过最长等待；最长等待不大于每条后等待时，从第一条起固定等待。</p>${fold(
       "schedule-wake-more",
       "高级设置：观察、回复检查与投递额度",
-      `<div class="form-grid">${parityCheck("focusedGroupReply", "私聊模式群优先引用回复", b.focusedGroupReply)}${parityNumber("observe", "睡前观察（秒；0 关闭要求）", b.preSleepWaitMs / 1000)}${parityNumber("reply", "发言后回复检查（秒）", b.replyCheckMs / 1000, 1)}
+      `<div class="form-grid">${parityCheck("focusedGroupReply", "私聊模式群优先引用回复", b.focusedGroupReply)}${parityCheck("focusedGroupMentionReply", "普通群被 @ 时优先引用回复", b.focusedGroupMentionReply)}${parityNumber("observe", "睡前观察（秒；0 关闭要求）", b.preSleepWaitMs / 1000)}${parityNumber("reply", "发言后回复检查（秒）", b.replyCheckMs / 1000, 1)}
     ${parityNumber("wakeHour", "单会话每小时唤醒上限", b.maxWakePerHour, 1)}${parityNumber("sendMinute", "角色总投递上限／分钟", b.maxSendPerMinute, 1)}${parityNumber("sendHour", "角色总投递上限／小时", b.maxSendPerHour, 1)}
     ${parityOptionalNumber("conversationSendMinute", "单会话投递上限／分钟（可选）", b.conversationMaxSendPerMinute)}${parityOptionalNumber("conversationSendHour", "单会话投递上限／小时（可选）", b.conversationMaxSendPerHour)}
     <p class="hint">角色总额度由所有群和私聊共享，文本、文件及其他投递统一计数；失败或未知回执也占用额度。连续回复批次另按角色设置限制。</p></div>`,
@@ -404,6 +404,7 @@ async function renderSchedules() {
         agent = next.agents.find((x) => x.id === id);
       Object.assign(agent.behavior, {
         focusedGroupReply: f.has("focusedGroupReply"),
+        focusedGroupMentionReply: f.has("focusedGroupMentionReply"),
         preSleepWaitMs: num("observe") * 1000,
         quietAfterNewMs: num("quiet") * 1000,
         batchWindowMs: num("batch") * 1000,
