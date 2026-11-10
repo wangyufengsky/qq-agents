@@ -17,7 +17,10 @@ export { stableInstructions } from "./prompts.mjs";
 import { randomUUID, createHash } from "node:crypto";
 import { githubMarker } from "../github/policy.mjs";
 import { resolveFunctionalAgent } from "./functional-agents.mjs";
-import { captureRecallOpening } from "./memory-recall.mjs";
+import {
+  captureRecallContext,
+  captureRecallOpening,
+} from "./memory-recall.mjs";
 import { trackMindRecords } from "./protected-mind.mjs";
 import { subjectMaterials } from "./subject-materials.mjs";
 import { mergeProtection } from "../memory/protection.mjs";
@@ -849,6 +852,15 @@ export class ContextLifecycle {
             correctionAllowed,
           )
         : null;
+    if (ctx.recallOpening)
+      captureRecallContext(ctx, [
+        ...openingHistory.items,
+        ...(focusedMessage ? [focusedMessage] : []),
+        ...(replay?.items || []),
+        ...(replay?.quoted || []),
+        ...(replay?.earlier || []),
+        ...(relationshipMaterial?.optional || []),
+      ]);
     const scene = `当前场景 ${ctx.conversation}。本回合采用 self v${self.version}。主人/管理员：${a.ownerIds.join(",") || "未设置"}。`;
     const wake = reasons.map((reason) =>
       reason.intentId &&

@@ -237,13 +237,25 @@ function clues(prompt) {
   return section ? JSON.parse(section.split("。triggers")[0]) : [];
 }
 
+function setupFamiliarity(t, run) {
+  const cfg = pilotConfig();
+  cfg.agents[0].behavior.optionalGroupBacklog = true;
+  return setup(t, run, cfg);
+}
+
 test("natural messages are scanned at intake and share one clue across the reply batch", async (t) => {
-  let prompt;
-  const f = setup(t, async (p) => {
-    assert.equal(p.modelSelection, undefined);
-    prompt = p.prompt;
+  let prompt, history;
+  const f = setupFamiliarity(t, async (p) => {
+    if (p.modelSelection) {
+      assert.match(p.prompt, /"recent":\[/);
+      assert.match(p.prompt, /蓝色背包要带去北门吗/);
+      assert.doesNotMatch(p.prompt, /隔壁群|南楼/);
+      await p.callTool("functional_agent_result", {
+        evidenceIds: [history.id],
+      });
+    } else prompt = p.prompt;
   });
-  const history = await f.add(
+  history = await f.add(
     1,
     "蓝色背包放在北门的柜子里",
     20000,
@@ -278,13 +290,14 @@ test("natural messages are scanned at intake and share one clue across the reply
   assert.equal(diagnostic.presented, 1);
 });
 
-test("a short unsegmented name is a weak clue and a recalled source is withheld", async (t) => {
-  let prompt;
-  const f = setup(t, async (p) => {
-    assert.equal(p.modelSelection, undefined);
-    prompt = p.prompt;
+test("an unsegmented name can be approved by the agent and a recalled source is withheld", async (t) => {
+  let prompt, old;
+  const f = setupFamiliarity(t, async (p) => {
+    if (p.modelSelection)
+      await p.callTool("functional_agent_result", { evidenceIds: [old.id] });
+    else prompt = p.prompt;
   });
-  const old = await f.add(1, "群里约过北门碰头", 20000, 30000, 1799990000);
+  old = await f.add(1, "群里约过北门碰头", 20000, 30000, 1799990000);
   const input = await f.add(2, "北门还封着，咱们走哪边？");
   await f.turn(input);
   assert.deepEqual(
@@ -297,8 +310,8 @@ test("a short unsegmented name is a weak clue and a recalled source is withheld"
     [
       {
         id: old.id,
-        status: "待核对",
-        excerpt: undefined,
+        status: "眼熟",
+        excerpt: "群里约过北门碰头",
         triggers: [{ inputEventId: input.id, sharedTerms: ["北门"] }],
       },
     ],
@@ -313,14 +326,20 @@ test("a short unsegmented name is a weak clue and a recalled source is withheld"
   assert.equal(memoryRecallDiagnostic(turn).familiarity.presented, 0);
 });
 
-test("competing old clues remain uncertain and a protected candidate stays hidden", async (t) => {
+test("the agent can reject all competing clues without seeing a protected candidate", async (t) => {
   let prompt;
-  const f = setup(t, async (p) => {
-    assert.equal(p.modelSelection, undefined);
-    prompt = p.prompt;
+  let reviews = 0;
+  const f = setupFamiliarity(t, async (p) => {
+    if (p.modelSelection) {
+      reviews++;
+      assert.match(p.prompt, /背包放北门/);
+      assert.match(p.prompt, /背包放南楼/);
+      assert.doesNotMatch(p.prompt, /内部权限测试/);
+      await p.callTool("functional_agent_result", { evidenceIds: [] });
+    } else prompt = p.prompt;
   });
-  const north = await f.add(1, "蓝色背包放北门", 20000, 30000, 1799990000);
-  const south = await f.add(2, "蓝色背包放南楼", 20000, 30000, 1799990001);
+  await f.add(1, "蓝色背包放北门", 20000, 30000, 1799990000);
+  await f.add(2, "蓝色背包放南楼", 20000, 30000, 1799990001);
   f.memory.append({
     dedupe: "protected-history",
     connectionId: "qq-0",
@@ -332,20 +351,73 @@ test("competing old clues remain uncertain and a protected candidate stays hidde
   });
   const input = await f.add(4, "蓝色背包交给谁拿着？");
   const turn = await f.turn(input);
-  const result = clues(prompt);
-  assert.deepEqual(
-    new Set(result.map(({ id }) => id)),
-    new Set([north.id, south.id]),
-  );
-  assert.ok(
-    result.every(
-      ({ status, triggers }) =>
-        status === "待核对" && triggers[0].inputEventId === input.id,
-    ),
-  );
-  assert.equal(memoryRecallDiagnostic(turn).familiarity.presented, 2);
-  const chatter = await f.add(5, "大家好，今天晚上一起聊聊天");
-  const next = await f.turn(chatter);
+  assert.equal(reviews, 1);
   assert.deepEqual(clues(prompt), []);
-  assert.equal(memoryRecallDiagnostic(next).familiarity.status, "empty");
+  assert.equal(memoryRecallDiagnostic(turn).opening.status, "empty");
+  assert.equal(memoryRecallDiagnostic(turn).familiarity.presented, 0);
+});
+
+test("interjections and a speaker's catchphrase do not launch memory review", async (t) => {
+  let prompt;
+  const f = setupFamiliarity(t, async (p) => {
+    assert.equal(p.modelSelection, undefined);
+    prompt = p.prompt;
+  });
+  for (let i = 1; i <= 4; i++) {
+    await f.add(
+      i,
+      "叮咚，喵喵喵，哈哈哈，诶，看来好了",
+      20000,
+      30000,
+      1799990000 + i,
+    );
+  }
+  for (let i = 5; i <= 30; i++) {
+    await f.add(i, "其他人的日常内容", 20000, 30001, 1799990000 + i);
+  }
+  const input = await f.add(31, "看来好了！叮咚，喵喵喵，哈哈哈，诶");
+  const turn = await f.turn(input);
+  assert.deepEqual(clues(prompt), []);
+  assert.equal(memoryRecallDiagnostic(turn).opening.status, "skipped");
+  assert.equal(memoryRecallDiagnostic(turn).familiarity.status, "empty");
+});
+
+test("recent context removes repetition and lets the agent search for an extra detail", async (t) => {
+  let prompt, route;
+  let reviews = 0;
+  const f = setupFamiliarity(t, async (p) => {
+    if (p.modelSelection) {
+      reviews++;
+      const data = JSON.parse(p.prompt.split("任务资料：\n")[1]);
+      assert.ok(data.recent.some(({ body }) => body === "北门今天封了"));
+      assert.ok(data.candidates.every(({ body }) => body !== "北门今天封了"));
+      const result = await p.callTool("memory_search", { query: "东门绕行" });
+      assert.ok(result.items.some(({ id }) => id === route.id));
+      await p.callTool("functional_agent_result", { evidenceIds: [route.id] });
+    } else prompt = p.prompt;
+  });
+  await f.add(1, "北门今天封了", 20000, 30000, 1799990000);
+  await f.add(2, "北门维修期间临时关闭", 20000, 30000, 1799990001);
+  route = await f.add(3, "走东门绕行，穿过小广场", 20000, 30000, 1799990002);
+  await f.add(4, "北门今天封了", 20000, 30001, 1799999880);
+  const input = await f.add(5, "北门还封着的话，从哪里进去？");
+  const turn = await f.turn(input);
+  assert.equal(reviews, 1);
+  assert.match(prompt.split("本轮记忆查证 ")[1], /走东门绕行/);
+  assert.doesNotMatch(prompt.split("本轮记忆查证 ")[1], /今天封了/);
+  assert.equal(memoryRecallDiagnostic(turn).opening.presented, 1);
+});
+
+test("a source already visible in the dialogue input is not sent again", async (t) => {
+  let prompt;
+  const f = setup(t, async (p) => {
+    assert.equal(p.modelSelection, undefined);
+    prompt = p.prompt;
+  });
+  await f.add(1, "蓝色背包存放在北门", 20000, 30000, 1799990000);
+  const turn = await f.turn(await f.add(2, "蓝色背包在哪里？"));
+  assert.match(prompt.split("本轮记忆查证 ")[0], /蓝色背包存放在北门/);
+  assert.deepEqual(clues(prompt), []);
+  assert.equal(memoryRecallDiagnostic(turn).opening.status, "skipped");
+  assert.equal(memoryRecallDiagnostic(turn).familiarity.presented, 0);
 });
