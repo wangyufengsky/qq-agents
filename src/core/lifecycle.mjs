@@ -16,6 +16,7 @@ import {
 export { stableInstructions } from "./prompts.mjs";
 import { randomUUID, createHash } from "node:crypto";
 import { githubMarker } from "../github/policy.mjs";
+import { resolveFunctionalAgent } from "./functional-agents.mjs";
 import { trackMindRecords } from "./protected-mind.mjs";
 import { subjectMaterials } from "./subject-materials.mjs";
 import { mergeProtection } from "../memory/protection.mjs";
@@ -418,7 +419,7 @@ export class ContextLifecycle {
         conversation.startsWith("group:") &&
         a.behavior.compactChatInstructionGroups.includes(conversation.slice(6)),
       hash = (text) => createHash("sha256").update(text).digest("hex");
-    const instructions = stableInstructions(a, self, subject, anchors, {
+    const baseInstructions = stableInstructions(a, self, subject, anchors, {
       ...options,
       identity: {
         self: identity.self,
@@ -427,7 +428,20 @@ export class ContextLifecycle {
       dynamicPeers: true,
       compactChat,
     });
+    const extra = resolveFunctionalAgent(a, conversation)?.definition
+      .instructions;
+    const instructions = extra
+      ? baseInstructions + "\n\n" + extra
+      : baseInstructions;
     const instructionsHash = hash(instructions);
+    // A configured instruction is part of the session contract.
+    if (extra)
+      return {
+        instructions,
+        instructionsHash,
+        legacyHashes: new Set(),
+        backendType,
+      };
     // The compact prompt must be sent to a fresh backend session.
     if (compactChat)
       return {
@@ -946,6 +960,9 @@ export class ContextLifecycle {
     m.identity.put("model_turns", {
       id: ctx.turnId,
       conversation: ctx.conversation,
+      ...(ctx.functionalAgent && {
+        functionalAgentKey: ctx.functionalAgent.instanceKey,
+      }),
       selfVersion: self.version,
       startedAt: r.now(),
       status: "running",

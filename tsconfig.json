@@ -34,6 +34,7 @@
     "src/core/message-timing-analysis.mjs",
     "src/tools/input-review.mjs",
     "src/core/default-config.mjs",
+    "src/core/functional-agents.mjs",
     "src/memory/conversation-state.mjs",
     "src/memory/conversation-due.mjs",
     "src/github/*.mjs",

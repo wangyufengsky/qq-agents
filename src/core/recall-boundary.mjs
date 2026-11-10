@@ -32,6 +32,8 @@ export function storedMindRecords(db, agentId, id) {
 // This is a read boundary, not declassification. Stored records and the
 // protection of any context that already saw them remain unchanged.
 export function recallBoundary(runtime, ctx, { publicOnly = false } = {}) {
+  const functional = ctx.runtimeKind === "functional-agent";
+  publicOnly ||= functional;
   const privileged = !publicOnly && !!runtime.protectedWork?.context(ctx);
   const restricted = (value) =>
     (value?.protectedPeerQzoneTargets?.length > 0 &&
@@ -49,6 +51,18 @@ export function recallBoundary(runtime, ctx, { publicOnly = false } = {}) {
     return ["operations", "private-repository"].includes(classes.get(id));
   }
   function allowed(row) {
+    if (functional) {
+      const agent = runtime.agent(ctx.agentId);
+      const memory = runtime.memory.bind(agent.id);
+      const stored = prepared(
+        memory.db,
+        "SELECT * FROM events WHERE agent_id=? AND id=? AND connection_id=? AND conversation=? AND ((kind='message.received' AND status='observed') OR (kind='message.sent' AND status='confirmed'))",
+      ).get(agent.id, row?.id ?? null, agent.connectionId, ctx.conversation);
+      if (!stored) return false;
+      const record = memory.event(stored, ctx.conversation);
+      if (record.recalled) return false;
+      row = record;
+    }
     try {
       assertHomeSceneMedia(runtime, ctx, row);
     } catch {

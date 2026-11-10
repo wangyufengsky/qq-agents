@@ -13,6 +13,7 @@ import { fileDefinitions } from "./file-tools.mjs";
 import { savedMediaDefinitions } from "./saved-media.mjs";
 import { screenshotDefinitions } from "./screenshots.mjs";
 import { z } from "zod";
+import { FUNCTIONAL_AGENT_RESULT } from "./names.mjs";
 import { qqSegmentsSchema } from "./qq-message.mjs";
 import { legacyDefinitions } from "./legacy.mjs";
 import { homeDefinitions } from "./home.mjs";
@@ -64,6 +65,10 @@ const animation = z
   .strict()
   .optional();
 export const definitions = {
+  [FUNCTIONAL_AGENT_RESULT]: [
+    "提交本次查证读到的证据记录 ID。没有可用证据时提交空数组。",
+    z.object({ evidenceIds: z.array(str.min(1).max(120)).max(2) }).strict(),
+  ],
   qq_recall: [
     "撤回自己在当前聊天刚确认发出的消息。messageRef 用记录 ID 或本会话消息号；默认限 110 秒、每小时 3 次。超时或未知结果不可换 requestId 重试，撤回不恢复回复额度，原始经历保留。",
     z

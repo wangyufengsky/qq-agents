@@ -1,5 +1,6 @@
 // Shared by configuration defaults and the tool registry without loading handlers.
 import { SOCIAL_TOOLS } from "../home/social-tool-names.mjs";
+export const FUNCTIONAL_AGENT_RESULT = "functional_agent_result";
 export const TOOL_NAMES = Object.freeze([
   "qq_recall",
   "protected_work_submit",

@@ -16,7 +16,13 @@ export async function commitConfig(runtime, next, revision) {
   const affectedBackends = new Set(
     [...before.agents, ...next.agents]
       .filter((a) => agentIds.has(a.id))
-      .map((a) => a.backendId),
+      .flatMap((a) => [
+        a.backendId,
+        ...(a.functionalAgents?.memory?.enabled &&
+        a.functionalAgents.memory.backendId
+          ? [a.functionalAgents.memory.backendId]
+          : []),
+      ]),
   );
   for (const id of new Set([...affectedBackends, ...backendIds]))
     if (runtime.backendConnections.operations.has(id))
@@ -29,6 +35,19 @@ export async function commitConfig(runtime, next, revision) {
   ]
     .filter((ctx) => agentIds.has(ctx.agentId) && ctx.done)
     .map((ctx) => ctx.done);
+  // A changed ordinary DSH route could claim the port of an outstanding lease.
+  const dshRoutesChanged = [...before.backends, ...next.backends].some(
+    (backend) => backend.type === "dsh" && backendIds.has(backend.id),
+  );
+  for (const [id, lease] of runtime.backendConnections
+    .functionalBackendLeases) {
+    if (
+      dshRoutesChanged ||
+      agentIds.has(id) ||
+      backendIds.has(lease.parentBackendId)
+    )
+      finishing.push(lease.done);
+  }
   runtime.configChanging = true;
   let settle;
   // Lets a safety control (pause) wait out this commit instead of failing.
@@ -98,6 +117,7 @@ export async function commitConfig(runtime, next, revision) {
     }
     // Commit before revoking permissions; a failed disk write leaves old work usable.
     runtime.configStore.save(next, revision);
+    runtime.functionalDelegation?.invalidate();
     refreshRhythm(runtime, before, next);
     for (const [token, ctx] of runtime.capabilities)
       if (agentIds.has(ctx.agentId)) {

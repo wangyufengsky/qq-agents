@@ -79,7 +79,19 @@ function track(ctx, items) {
 async function handle_memory_search(runtime, ctx, args, name) {
   const mem = runtime.memory.bind(ctx.agentId);
 
-  const r = recallPage(runtime, ctx, mem.search(args, ctx.conversation));
+  const functional = ctx.runtimeKind === "functional-agent";
+  const query = functional
+    ? {
+        ...args,
+        conversation: ctx.conversation,
+        connectionId: runtime.agent(ctx.agentId).connectionId,
+        conversationType: undefined,
+        type: "event",
+        contextBefore: 0,
+        contextAfter: 0,
+      }
+    : args;
+  const r = recallPage(runtime, ctx, mem.search(query, ctx.conversation));
   track(ctx, [...r.items, ...r.diaries]);
   return r;
 }
@@ -118,6 +130,8 @@ async function handle_memory_read(runtime, ctx, args, name) {
     },
   );
   track(ctx, [r]);
+  // A delegated read is evidence for the child only, never a QQ input receipt.
+  if (ctx.runtimeKind === "functional-agent") return r;
   const stage = (result, commit) => {
     runtime.stageToolInput(ctx, result, commit, [item]);
     return result;

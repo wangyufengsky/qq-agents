@@ -4,7 +4,7 @@ import { profileDefinitions, profileTool } from "./profile.mjs";
 import { qzoneDefinitions, qzoneTool } from "./qzone.mjs";
 import { gameDefinitions, gameTool } from "../games/framework/tools.mjs";
 import { definitions } from "./definitions.mjs";
-import { TOOL_NAMES } from "./names.mjs";
+import { FUNCTIONAL_AGENT_RESULT, TOOL_NAMES } from "./names.mjs";
 import { coreHandlers } from "./core-handlers.mjs";
 import { draftDefinitions, draftTool } from "./qq-drafts.mjs";
 import { appDefinitions, appTool } from "../apps/tools.mjs";
@@ -21,6 +21,10 @@ import { boardDefinitions, boardTool } from "./board.mjs";
 // Discovery and dispatch use this same registry. Fail at load time on drift.
 const handlers = {
   ...coreHandlers,
+  [FUNCTIONAL_AGENT_RESULT]: (runtime, ctx, args) => {
+    runtime.validateFunctionalEvidence(ctx, args.evidenceIds);
+    return runtime.functionalDelegation.submit(ctx, args);
+  },
   protected_work_submit: (runtime, ctx, args) =>
     runtime.protectedWork.submit(ctx, args),
 };
@@ -46,10 +50,11 @@ for (const [group, dispatch] of [
     if (Object.hasOwn(handlers, name)) throw Error("DUPLICATE_TOOL_HANDLER");
     handlers[name] = (runtime, ctx, args) => dispatch(runtime, ctx, name, args);
   }
+const registeredNames = [...TOOL_NAMES, FUNCTIONAL_AGENT_RESULT];
 if (
-  new Set(TOOL_NAMES).size !== TOOL_NAMES.length ||
-  TOOL_NAMES.length !== Object.keys(definitions).length ||
-  TOOL_NAMES.some((name) => !Object.hasOwn(definitions, name)) ||
+  new Set(registeredNames).size !== registeredNames.length ||
+  registeredNames.length !== Object.keys(definitions).length ||
+  registeredNames.some((name) => !Object.hasOwn(definitions, name)) ||
   Object.keys(handlers).length !== Object.keys(definitions).length ||
   Object.keys(definitions).some((name) => typeof handlers[name] !== "function")
 )

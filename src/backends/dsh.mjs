@@ -1,6 +1,7 @@
 // @ts-check
 import { closeSocialSessions } from "./social-sessions.mjs";
 import fs from "node:fs";
+import { randomUUID } from "node:crypto";
 import { runNativeSocial } from "./native-social.mjs";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -112,6 +113,7 @@ export class DshBackend {
     this.external = new ExternalTools(config.toolServers);
     this.turns = new Map();
     this.capacities = new Map();
+    this.functionalSessionUnverified = false;
     /** @type {AbortController | null} */
     this.streamAbort = null;
   }
@@ -314,9 +316,15 @@ export class DshBackend {
       }
     }
   }
-  /** @param {import("./session-contract.mjs").ToolSpec[]} tools */
-  sessionSignature(tools) {
-    return sessionSignature(this, tools);
+  /**
+   * @param {import("./session-contract.mjs").ToolSpec[]} tools
+   * @param {import("./session-contract.mjs").ModelSelection} [modelSelection]
+   */
+  sessionSignature(tools, modelSelection) {
+    return sessionSignature(
+      modelSelection ? { config: { ...this.config, ...modelSelection } } : this,
+      tools,
+    );
   }
   /** @param {StoredSession | null | undefined} session @param {import("./session-contract.mjs").ToolSpec[]} tools @param {import("./session-contract.mjs").SessionContract} [previous] */
   acceptsSession(session, tools, previous) {
@@ -351,6 +359,59 @@ export class DshBackend {
       },
     );
   }
+  /**
+   * @param {NodeApiClient} client
+   * @param {string} sessionId
+   * @param {Promise<unknown> | undefined} submission
+   * @param {{terminalObserved: boolean, promptPending: boolean,
+   *   followed: (snapshot: unknown) => void, followError: (error: unknown) => void}} active
+   */
+  async stopFunctionalSession(client, sessionId, submission, active) {
+    try {
+      // Do not drain before a pending submission has returned its receipt.
+      // Cancellation of the HTTP wait does not cancel the host's admission.
+      const receiptObserved = await submission?.then(
+        () => true,
+        () => false,
+      );
+      await client.stopSessionWork(sessionId);
+      if (!submission || active.terminalObserved) return;
+      // The cancel RPC acknowledges the request, not the host's quiescence.
+      // Re-follow after queue cleanup to verify that this session is idle.
+      active.promptPending = false;
+      const signal = AbortSignal.timeout(4000);
+      for (;;) {
+        signal.throwIfAborted();
+        const { promise, resolve, reject } = deferred();
+        active.followed = resolve;
+        active.followError = reject;
+        const abort = () => reject(signal.reason);
+        signal.addEventListener("abort", abort, { once: true });
+        let snapshot;
+        try {
+          client.events.forget?.(sessionId);
+          client.events.follow(sessionId);
+          snapshot = await promise;
+        } finally {
+          signal.removeEventListener("abort", abort);
+        }
+        if (
+          dshInboxEmpty(snapshot) &&
+          Array.isArray(/** @type {any} */ (snapshot)?.records) &&
+          lastDshTurnEvent(snapshot)?.type !== "turn/start"
+        ) {
+          // An idle snapshot cannot prove that a request whose receipt was
+          // lost will never reach this session.
+          if (!receiptObserved) throw Error("DSH_RECOVERY_STATE_UNVERIFIED");
+          return;
+        }
+        await delay(100, undefined, { signal });
+      }
+    } catch (cause) {
+      if (submission) this.functionalSessionUnverified = true;
+      throw Error("FUNCTIONAL_AGENT_BACKEND_UNAVAILABLE", { cause });
+    }
+  }
   /** @param {RunParams} params */
   async run({
     conversation,
@@ -360,6 +421,7 @@ export class DshBackend {
     onUsage,
     signal,
     tools,
+    modelSelection,
     session,
     saveSession,
     onBackendTurn,
@@ -367,7 +429,22 @@ export class DshBackend {
     beforeInputSubmitted,
     recovery,
   }) {
-    const signature = this.sessionSignature(tools);
+    // Capture the requested selection before any await. It applies only to
+    // this invocation's newly created native session.
+    const selection = modelSelection && { ...modelSelection };
+    if (Boolean(selection) !== (this.config.functionalAgentOnly === true))
+      throw Error("FUNCTIONAL_AGENT_BACKEND_UNSUPPORTED");
+    if (selection) {
+      if (
+        this.config.preset !== "qq-unified" ||
+        !selection.provider ||
+        !selection.model
+      )
+        throw Error("FUNCTIONAL_AGENT_BACKEND_UNSUPPORTED");
+      if (session || recovery) throw Error("SESSION_REQUIRES_HANDOFF");
+      if (signal.aborted) throw Error("ABORTED");
+    }
+    const signature = this.sessionSignature(tools, selection);
     assertSession(session, "dsh", signature);
     const client = await beforeSessionInput(session, async () => {
       const connected = await this.ready();
@@ -380,7 +457,10 @@ export class DshBackend {
     let sessionId = session?.id;
     const initializing = !sessionId;
     if (!sessionId) {
-      const presets = unwrap(await client.agentPresets.list({}), "presets");
+      const presets = unwrap(
+        await client.agentPresets.list({}, selection ? signal : undefined),
+        "presets",
+      );
       const list = presets.presets || presets.items || [];
       const preset = list.find(
         (/** @type {any} */ p) => (p.id || p.name) === this.config.preset,
@@ -389,22 +469,32 @@ export class DshBackend {
       if (preset.broken) throw Error("DSH_UNIFIED_PRESET_BROKEN");
       const dir = path.join(
         /** @type {string} */ (this.root),
-        "dsh-workspaces",
+        selection ? "dsh-functional-workspaces" : "dsh-workspaces",
         this.agent.id,
       );
       fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
       const w = unwrap(
-        await client.workspace.create({ path: dir }),
+        await client.workspace.create(
+          { path: dir },
+          selection ? signal : undefined,
+        ),
         "workspace",
       );
+      // Keep the create receipt even on abort: it names the session to clean up.
+      if (selection && signal.aborted) throw Error("ABORTED");
       sessionId = unwrap(
         await client.sessions.create({
           workspaceId: w.workspace.workspaceId,
           agentPreset: this.config.preset,
+          // Name an invocation-owned session rather than adopting a blank
+          // desktop session that might already exist in this workspace.
+          ...(selection
+            ? { sessionId: /** @type {any} */ ("session-" + randomUUID()) }
+            : {}),
         }),
         "session",
       ).sessionId;
-      saveSession({ backend: "dsh", id: sessionId, signature });
+      if (!selection) saveSession({ backend: "dsh", id: sessionId, signature });
     }
     const { promise: done, resolve, reject } = deferred();
     const {
@@ -416,6 +506,8 @@ export class DshBackend {
     followReady.catch(() => {});
     /** @type {ReturnType<typeof setTimeout> | undefined} */
     let reconnectTimer;
+    /** @type {Promise<unknown> | undefined} */
+    let pendingSubmission;
     const unverified = new BackendTurnFailure(
       "dsh",
       "RECOVERY_STATE_UNVERIFIED",
@@ -434,6 +526,7 @@ export class DshBackend {
         active.followError(error);
       },
       promptPending: false,
+      terminalObserved: false,
       inputSubmitted: false,
       previousTurns: new Set(),
       submitInput: () => {
@@ -458,6 +551,7 @@ export class DshBackend {
         reconnectTimer = undefined;
       },
       finish: (/** @type {any} */ event) => {
+        active.terminalObserved = true;
         active.reattached();
         active.submitInput();
         if (["completed", "done", "stop"].includes(event.data.reason?.kind))
@@ -481,7 +575,7 @@ export class DshBackend {
       followError,
       onUsage,
       abort: () => {
-        if (active.promptPending)
+        if (active.promptPending && !selection)
           void client
             .callUnary("session.cancel", { sessionId })
             .catch(() => {});
@@ -512,15 +606,33 @@ export class DshBackend {
       if (signal.aborted) throw Error("ABORTED");
       if (recovery && !dshRecoveryReady(snapshot, recovery))
         throw Error("DSH_RECOVERY_STATE_UNVERIFIED");
-      if (this.config.model)
+      const chosen = selection || this.config;
+      if (chosen.model)
         await beforeSessionInput(session, async () => {
-          const result = await client.sessions.selectModel({
-            sessionId,
-            // Omitted when unset, although the SDK type asks for a string.
-            provider: /** @type {string} */ (this.config.provider || undefined),
-            model: this.config.model,
-            reasoningEffort: this.config.effort,
-          });
+          const result = await client.sessions.selectModel(
+            {
+              sessionId,
+              // Omitted when unset, although the SDK type asks for a string.
+              provider: /** @type {string} */ (chosen.provider || undefined),
+              model: chosen.model,
+              reasoningEffort: selection
+                ? chosen.effort || undefined
+                : chosen.effort,
+            },
+            selection ? signal : undefined,
+          );
+          if (selection) {
+            const selected = result.result.ok && result.result.value?.selected;
+            if (
+              !selected ||
+              selected.provider !== selection.provider ||
+              selected.model !== selection.model ||
+              (selection.effort &&
+                selected.reasoningEffort !== selection.effort)
+            )
+              throw Error("BACKEND_MODEL_UNAVAILABLE");
+            return;
+          }
           if (
             !result.result.ok &&
             ["session/not-found", "session-not-found"].includes(
@@ -562,8 +674,9 @@ export class DshBackend {
             ]),
           ],
         },
-        signal,
+        selection ? undefined : signal,
       );
+      if (selection) pendingSubmission = submission;
       await Promise.race([
         submission.then(
           (response) => {
@@ -582,6 +695,7 @@ export class DshBackend {
       ]);
       return { streamReattached: active.interrupted };
     } catch (/** @type {any} */ e) {
+      if (selection) throw e;
       if (
         !signal.aborted &&
         (e === unverified ||
@@ -624,8 +738,19 @@ export class DshBackend {
       clearTimeout(followTimer);
       active.reattached();
       signal.removeEventListener("abort", active.abort);
-      this.turns.delete(sessionId);
-      client.events.forget?.(sessionId);
+      try {
+        if (selection)
+          await this.stopFunctionalSession(
+            client,
+            sessionId,
+            pendingSubmission,
+            active,
+          );
+      } finally {
+        this.turns.delete(sessionId);
+        client.events.forget?.(sessionId);
+        if (selection) this.capacities.delete(sessionId);
+      }
     }
   }
   /** @param {{session: StoredSession, signal: AbortSignal}} params */

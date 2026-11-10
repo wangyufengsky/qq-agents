@@ -35,6 +35,9 @@ import { observeInput } from "./input-progress.mjs";
 import { AppCursors } from "../apps/cursors.mjs";
 import { Diagnostics } from "./diagnostics.mjs";
 import { GeneratedImages } from "./generated-images.mjs";
+import { resolveFunctionalAgent } from "./functional-agents.mjs";
+import { FunctionalDelegation } from "./functional-delegation.mjs";
+import { FUNCTIONAL_AGENT_RESULT } from "../tools/names.mjs";
 import { BackendConnections } from "./backend-connections.mjs";
 import { backendCapabilities } from "../backends/capabilities.mjs";
 import { ConnectionRecovery } from "./connection-recovery.mjs";
@@ -141,6 +144,7 @@ export class Runtime {
     this.sendChains = this.delivery.chains;
     this.maintenance = new MaintenanceDrain(this);
     this.turns = new TurnRunner(this);
+    this.functionalDelegation = new FunctionalDelegation(this);
     this.conversations = new ConversationEngine(this);
     this.scheduler = new TaskScheduler(this);
     this.operations = new Operations(this);
@@ -283,6 +287,7 @@ export class Runtime {
       token: randomBytes(32).toString("base64url"),
       agentId,
       conversation,
+      functionalAgent: resolveFunctionalAgent(a, conversation),
       expires: Date.now() + a.behavior.turnTimeoutMs,
       subjectToolBudget: a.subject.maxToolCallsPerTurn,
       controller: new AbortController(),
@@ -316,6 +321,61 @@ export class Runtime {
     };
     this.capabilities.set(ctx.token, ctx);
     return ctx;
+  }
+  makeFunctionalContext(
+    parent,
+    { invocationId, profile, deadline, controller, assertCurrent, maxLookups },
+  ) {
+    const a = this.assertActive(parent);
+    const allowedTools = this.toolsFor(a, parent.conversation).filter(
+      (name) =>
+        profile.definition.tools.includes(name) &&
+        (!parent.allowedTools || parent.allowedTools.includes(name)),
+    );
+    const ctx = {
+      token: randomBytes(32).toString("base64url"),
+      runtimeKind: "functional-agent",
+      agentId: parent.agentId,
+      conversation: parent.conversation,
+      functionalAgent: profile,
+      invocationId,
+      controller,
+      expires: deadline,
+      inputEpoch: randomUUID(),
+      allowedTools: [...allowedTools, FUNCTIONAL_AGENT_RESULT],
+      privateRead: new Set(),
+      grants: new Set(),
+      maxLookups,
+      lookups: 0,
+      assertCurrent,
+      requiresInputSubmission: true,
+    };
+    this.capabilities.set(ctx.token, ctx);
+    return ctx;
+  }
+  closeFunctionalContext(ctx) {
+    if (this.capabilities.get(ctx.token) === ctx)
+      this.capabilities.delete(ctx.token);
+  }
+  callFunctionalTool(ctx, name, args) {
+    return this.callTool(ctx, name, args, { deferInput: true });
+  }
+  validateFunctionalEvidence(ctx, evidenceIds) {
+    this.assertActive(ctx);
+    if (ctx.runtimeKind !== "functional-agent") throw Error("TOOL_DISABLED");
+    const boundary = recallBoundary(this, ctx);
+    for (const id of evidenceIds) {
+      if (!ctx.privateRead.has(id)) throw Error("RECALL_SOURCE_NOT_ALLOWED");
+      boundary.assertId(id);
+    }
+  }
+  toolsForContext(agent, ctx) {
+    if (ctx.runtimeKind !== "functional-agent")
+      return this.toolsFor(agent, ctx.conversation);
+    const current = this.toolsFor(agent, ctx.conversation);
+    return ctx.allowedTools.filter(
+      (name) => name === FUNCTIONAL_AGENT_RESULT || current.includes(name),
+    );
   }
   withContext(...args) {
     return this.trackWork(this.runWithContext(...args));
@@ -410,8 +470,11 @@ export class Runtime {
     if (conversation !== SUBJECT && selected.includes("qq_send"))
       selected.push("qq_delivery_status");
     selected.push(...HOME_TOOLS);
+    const configured = resolveFunctionalAgent(a, conversation)?.definition
+      .tools;
     return [...new Set(selected)].filter(
       (name) =>
+        (!configured || configured.includes(name)) &&
         toolAvailable(a, name, conversation) &&
         (!name.startsWith("game_") || this.config.games.enabled) &&
         // Every chat and free-time session may use the board once it is on;
@@ -478,6 +541,7 @@ export class Runtime {
     );
   }
   assertActive(ctx) {
+    ctx.assertCurrent?.();
     const stored = this.capabilities.get(ctx.token);
     if (
       stored !== ctx ||
@@ -1002,7 +1066,12 @@ export class Runtime {
   }
   async finalizeToolOutput(ctx, original, { encode, maxBytes = Infinity }) {
     const plan = ctx.stagedToolOutputs?.get(original);
-    if (!plan) return { wire: (await encode(original)).wire };
+    if (!plan) {
+      if (ctx.runtimeKind === "functional-agent") this.assertActive(ctx);
+      const { wire } = await encode(original);
+      if (ctx.runtimeKind === "functional-agent") this.assertActive(ctx);
+      return { wire };
+    }
     ctx.stagedToolOutputs.delete(original);
     const stale = () => !this.activeOutputEpoch(ctx, plan.epoch, plan.scope);
     if (stale()) throw Error("INPUT_EPOCH_CHANGED");
@@ -1114,6 +1183,17 @@ export class Runtime {
       this.messageTiming.mark(ctx.messageTimingId, "sendRequested");
     try {
       // Reserved before any await, so concurrent calls share one budget.
+      if (
+        ctx.runtimeKind === "functional-agent" &&
+        name !== FUNCTIONAL_AGENT_RESULT
+      ) {
+        this.assertActive(ctx);
+        if (!this.toolsForContext(this.agent(ctx.agentId), ctx).includes(name))
+          throw Error("TOOL_DISABLED");
+        if (ctx.lookups >= ctx.maxLookups)
+          throw Error("FUNCTIONAL_AGENT_TOOL_BUDGET");
+        ctx.lookups++;
+      }
       if (ctx.conversation === SUBJECT && name !== "subject_log") {
         const limit = ctx.subjectToolBudget;
         if ((ctx.subjectToolReservations || 0) >= limit)
@@ -1121,6 +1201,7 @@ export class Runtime {
         ctx.subjectToolReservations = (ctx.subjectToolReservations || 0) + 1;
       }
       const result = await this.executeTool(ctx, name, args);
+      if (ctx.runtimeKind === "functional-agent") this.assertActive(ctx);
       if (ctx.inputEpoch !== epoch) {
         ctx.stagedToolOutputs?.delete(result);
         throw Error("INPUT_EPOCH_CHANGED");
@@ -1161,11 +1242,19 @@ export class Runtime {
     for (const id of peerQzoneSources(this, ctx))
       ctx.privateRead.add(peerQzoneMarker(id));
     ctx.persistTaint?.();
+    const scoped =
+      ctx.runtimeKind === "functional-agent" ||
+      ctx.functionalAgent?.definition.tools;
+    const current = scoped ? this.toolsForContext(a, ctx) : null;
     if (
-      !(ctx.allowedTools || this.toolsFor(a, ctx.conversation)).includes(
-        name,
-      ) ||
-      !toolAvailable(a, name, ctx.conversation)
+      !(
+        ctx.allowedTools ||
+        current ||
+        this.toolsFor(a, ctx.conversation)
+      ).includes(name) ||
+      (current
+        ? !current.includes(name)
+        : !toolAvailable(a, name, ctx.conversation))
     )
       throw Error("TOOL_DISABLED");
     let result = await dispatchTool(this, ctx, name, args, (validated) => {
