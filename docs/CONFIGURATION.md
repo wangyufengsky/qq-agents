@@ -18,6 +18,33 @@
 
 回复前的模型查证和主动回想仍从角色主人发来的本轮消息取得线索。对话 Agent 可在开场或 `diagnostics_read` 核对结果。管理台「动态」记录入站检查数、命中和交给模型的条数，以及各路径的耗时。
 
+### 本地语义召回（可选）
+
+在已经配置的 `agents[].functionalAgents.memory.pilot` 内添加 `"semantic": true`，即可为该角色的现有试点群启用语义候选。省略该字段或设为 `false` 时使用字面检索。语义检索只在回复前或主动回想时尝试，在原查证预算内最多等待 150 毫秒。未配置环境、索引准备中或超时时仍可使用字面候选。
+
+在桥接所在的系统内，把以下文件准备到数据目录的 `semantic-recall/`。Python 环境、模型和分词文件只需准备一次，所有角色共用。
+
+```sh
+cd "<数据目录绝对路径>"
+mkdir -p semantic-recall
+cd semantic-recall
+python3 -m venv venv
+venv/bin/python -m pip --isolated install onnxruntime==1.31.1 tokenizers==0.23.3
+curl -fL https://huggingface.co/Xenova/bge-small-zh-v1.5/resolve/75c43b0/onnx/model_int8.onnx -o model_int8.onnx
+curl -fL https://huggingface.co/Xenova/bge-small-zh-v1.5/resolve/75c43b0/tokenizer.json -o tokenizer.json
+```
+
+Windows 使用 `py -m venv venv` 和 `venv\Scripts\python.exe`，下载命令使用 `curl.exe`。Python 和系统须有对应的 [ONNX Runtime wheel](https://pypi.org/project/onnxruntime/1.31.1/#files)。官方 Docker 镜像可直接使用原有字面检索，启用语义召回须在容器内自行准备兼容的 Python 和虚拟环境。模型来自 [智源 BGE](https://huggingface.co/BAAI/bge-small-zh-v1.5)，按 MIT 许可发布。上述模型和分词文件的 SHA-256 分别为：
+
+```text
+b9837c19ce154ff0726d398ee77abbc03a7faf0476c6f93016c84e531be7ebb5  model_int8.onnx
+48cea5d44424912a6fd1ea647bf4fe50b55ab8b1e5879c3275f80e339e8fae26  tokenizer.json
+```
+
+权重就绪后，检索在本机完成。桥接启动一个共用工作进程，以角色、连接和群聊隔开各自的索引。后台从较新的消息开始分批建立索引，每个范围最多 5 万条，所有范围合计最多 10 万条，超过上限的历史仍可用原有字面检索。索引只驻留内存，重启后自动重建。进程只接收试点范围内经来源核验的消息，命中后框架重新读取 SQLite 检查撤回、更正、时效和上下文重复。是否呈现证据由记忆 Agent 判断。
+
+管理台「动态」中的每轮记忆状态分别记录语义候选数量、检索耗时和 Agent 查证耗时。运行环境暂不可用时先检查数据目录中的虚拟环境与模型文件。
+
 ## 数据目录
 
 默认数据目录是启动时当前目录下的 `.runtime/`，可用 `--data /path/to/private-data` 指定。目录内主要文件：

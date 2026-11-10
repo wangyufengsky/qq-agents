@@ -31,6 +31,7 @@ import { inputScope } from "../memory/input-state.mjs";
 import { safeToolFailure } from "../tools/errors.mjs";
 import { TurnRunner } from "./turn-runner.mjs";
 import { observeFamiliarity } from "./memory-recall.mjs";
+import { SemanticRecall } from "./semantic-recall.mjs";
 import { runtimeStatus } from "./runtime-status.mjs";
 import { observeInput } from "./input-progress.mjs";
 import { AppCursors } from "../apps/cursors.mjs";
@@ -146,6 +147,7 @@ export class Runtime {
     this.maintenance = new MaintenanceDrain(this);
     this.turns = new TurnRunner(this);
     this.functionalDelegation = new FunctionalDelegation(this);
+    this.semanticRecall = new SemanticRecall(this);
     this.conversations = new ConversationEngine(this);
     this.scheduler = new TaskScheduler(this);
     this.operations = new Operations(this);
@@ -266,6 +268,7 @@ export class Runtime {
     this.contexts.tick();
     this.subject.tick();
     this.conversations.tick();
+    this.semanticRecall.tick();
     this.scheduler.tick();
     this.operations.expire();
   }
@@ -1489,6 +1492,7 @@ export class Runtime {
     this.updates?.close();
     clearInterval(this.ticker);
     this.autoResume.cancel("stopped");
+    this.semanticRecall.close();
     this.closing = this.closeResources();
     return this.closing;
   }
