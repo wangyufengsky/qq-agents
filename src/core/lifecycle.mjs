@@ -654,13 +654,10 @@ export class ContextLifecycle {
     const relationship = groupRecall(r, ctx, history, focus, accountId);
     const correctionAllowed = relationship?.correctionAllowed;
     const openingHistory = chatHistory(history, correctionAllowed);
-    const relationshipMaterial = groupRecallMaterial(relationship);
-    if (relationshipMaterial) {
-      ctx.openingGroupRecall = JSON.stringify(relationshipMaterial);
-      ctx.currentGroupRecall = () =>
-        groupRecallMaterial(groupRecall(r, ctx, history, focus, accountId));
-    }
-    const relationshipLine = groupRecallLine(ctx, relationshipMaterial);
+    const relationshipLine = groupRecallLine(
+      ctx,
+      groupRecallMaterial(relationship),
+    );
     ctx.focusedReplyId = focus?.id;
     const separateFocus =
       focus && !history.items.some(({ id }) => id === focus.id);
@@ -699,20 +696,45 @@ export class ContextLifecycle {
             now: r.now(),
             accountId: r.connection(a.connectionId).accountId,
           });
-    const elsewhere = relationship
-      ? null
-      : elsewhereForTurn(r, ctx, history.items, {
-          fresh: ctx.initialSession,
-          now: r.now(),
-          accountId,
-        });
+    const elsewhere = elsewhereForTurn(r, ctx, history.items, {
+      fresh: ctx.initialSession,
+      now: r.now(),
+      accountId,
+      groupsOnly: Boolean(relationship),
+      personIds: relationship?.personIds,
+    });
     const between =
-      relationship || ctx.conversation === SUBJECT
+      ctx.conversation === SUBJECT
         ? null
         : personItemsForTurn(m, ctx.conversation, history.items, {
             fresh: ctx.initialSession,
-            accountId: r.connection(a.connectionId).accountId,
+            accountId,
+            ...(relationship && {
+              personIds: relationship.personIds,
+              allowed: relationship.allowsPersonItem,
+              reserved: relationship.optional.length,
+            }),
           });
+    const displayedPersonItemIds = between?.items.map(({ id }) => id);
+    const relationshipMaterial = groupRecallMaterial(
+      relationship,
+      displayedPersonItemIds,
+    );
+    if (relationshipMaterial) {
+      ctx.openingGroupRecall = JSON.stringify(relationshipMaterial);
+      ctx.currentGroupRecall = () =>
+        groupRecallMaterial(
+          groupRecall(r, ctx, history, focus, accountId),
+          displayedPersonItemIds,
+        );
+    }
+    if (relationship && between)
+      trackMindRecords(
+        r,
+        ctx,
+        between.items.map(({ id }) => m.identity.personItem(id)),
+        "person-item",
+      );
     const floor = floorForTurn(
       m,
       ctx.conversation,

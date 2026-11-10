@@ -28,8 +28,14 @@ function addressees(memory, row, payload) {
  * message in this chat, so it hears what it said elsewhere since it last
  * spoke here; afterwards only newer words appear.
  * @param {any} runtime @param {any} ctx @param {any} memory @param {any} boundary
- * @param {{fresh: boolean, now: number, lookbackMs: number}} options */
-function ownWords(runtime, ctx, memory, boundary, { fresh, now, lookbackMs }) {
+ * @param {{fresh: boolean, now: number, lookbackMs: number, groupsOnly: boolean}} options */
+function ownWords(
+  runtime,
+  ctx,
+  memory,
+  boundary,
+  { fresh, now, lookbackMs, groupsOnly },
+) {
   const sent =
     "agent_id=? AND kind='message.sent' AND direction='out' AND status='confirmed'";
   let through = fresh
@@ -60,6 +66,7 @@ function ownWords(runtime, ctx, memory, boundary, { fresh, now, lookbackMs }) {
   let privateMessages = 0,
     latest = through;
   for (const row of rows) {
+    if (groupsOnly && !row.conversation.startsWith("group:")) continue;
     const payload = JSON.parse(row.payload || "{}");
     if (
       payload.protectedSocialSources?.length ||
@@ -113,12 +120,12 @@ function ownWords(runtime, ctx, memory, boundary, { fresh, now, lookbackMs }) {
 
 // This read-only projection never advances source chat watermarks.
 /** @param {any} runtime @param {any} ctx @param {any[]} historyItems
- * @param {{fresh: boolean, now?: number, accountId: string}} options */
+ * @param {{fresh: boolean, now?: number, accountId: string, groupsOnly?: boolean, personIds?: string[]}} options */
 export function elsewhereForTurn(
   runtime,
   ctx,
   historyItems,
-  { fresh, now = Date.now(), accountId },
+  { fresh, now = Date.now(), accountId, groupsOnly = false, personIds },
 ) {
   const config = runtime.agent(ctx.agentId).behavior.elsewhere;
   if (!config.enabled || !/^(group|private):/.test(ctx.conversation))
@@ -129,16 +136,13 @@ export function elsewhereForTurn(
     : { ...memory.state(ctx.conversation).elsewhereShown };
   const boundary = recallBoundary(runtime, ctx);
   const candidates = [];
-  for (const personId of peopleInTurn(
-    memory,
-    ctx.conversation,
-    historyItems,
-    accountId,
-  )) {
+  for (const personId of personIds ??
+    peopleInTurn(memory, ctx.conversation, historyItems, accountId)) {
     const events = interactionEvents(memory, personId, now, accountId, {
       since: now - config.windowMs,
       allowed: (row) =>
         row.conversation !== ctx.conversation &&
+        (!groupsOnly || row.conversation.startsWith("group:")) &&
         boundary.allowed(row) &&
         (row.direction !== "in" ||
           row.seq <= (memory.state(row.conversation).readThroughSeq || 0)),
@@ -201,6 +205,7 @@ export function elsewhereForTurn(
     fresh,
     now,
     lookbackMs: config.ownLookbackMs ?? 86400000,
+    groupsOnly,
   });
   return { items, more, shown, words };
 }
