@@ -54,10 +54,22 @@ export function groupRecall(runtime, ctx, history, focus, accountId) {
       ...(entries.length ? { needsReview: true } : {}),
     };
   };
+  const inGroup = (item) =>
+    item.createdIn === ctx.conversation &&
+    item.writtenIn === ctx.conversation &&
+    item.evidence?.length &&
+    boundary.allowed(item);
   const result = {
     correctionAllowed,
     required: [],
     optional: [],
+    // Keep the ordinary reminders within the same source boundary as recall.
+    allowsPersonItem: (item) =>
+      item.kind !== "boundary" &&
+      !result.optional.some(({ id }) => id === item.id) &&
+      inGroup(item) &&
+      item.evidence.every((id) => available(get(id))) &&
+      !annotation("item", item.id, item.revision).needsReview,
   };
   const require = (entry) => {
     if (JSON.stringify([...result.required, entry]).length <= REQUIRED_CHARS)
@@ -161,13 +173,7 @@ export function groupRecall(runtime, ctx, history, focus, accountId) {
         sourceIds: card.evidence,
       });
     for (const item of memory.identity.personItems(personId)) {
-      if (
-        item.createdIn !== ctx.conversation ||
-        item.writtenIn !== ctx.conversation ||
-        !item.evidence?.length ||
-        !boundary.allowed(item)
-      )
-        continue;
+      if (!inGroup(item)) continue;
       const known = item.evidence.map(get);
       if (!known.every(visible)) continue;
       const subject = {
@@ -212,7 +218,7 @@ export function groupRecall(runtime, ctx, history, focus, accountId) {
       }
     }
   }
-  return result;
+  return { ...result, personIds: [...people.keys()] };
 }
 
 export function groupRecallMaterial(recall) {

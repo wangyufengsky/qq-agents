@@ -699,20 +699,32 @@ export class ContextLifecycle {
             now: r.now(),
             accountId: r.connection(a.connectionId).accountId,
           });
-    const elsewhere = relationship
-      ? null
-      : elsewhereForTurn(r, ctx, history.items, {
-          fresh: ctx.initialSession,
-          now: r.now(),
-          accountId,
-        });
+    const elsewhere = elsewhereForTurn(r, ctx, history.items, {
+      fresh: ctx.initialSession,
+      now: r.now(),
+      accountId,
+      groupsOnly: Boolean(relationship),
+      personIds: relationship?.personIds,
+    });
     const between =
-      relationship || ctx.conversation === SUBJECT
+      ctx.conversation === SUBJECT
         ? null
         : personItemsForTurn(m, ctx.conversation, history.items, {
             fresh: ctx.initialSession,
-            accountId: r.connection(a.connectionId).accountId,
+            accountId,
+            ...(relationship && {
+              personIds: relationship.personIds,
+              allowed: relationship.allowsPersonItem,
+              reserved: relationship.optional.length,
+            }),
           });
+    if (relationship && between)
+      trackMindRecords(
+        r,
+        ctx,
+        between.items.map(({ id }) => m.identity.personItem(id)),
+        "person-item",
+      );
     const floor = floorForTurn(
       m,
       ctx.conversation,

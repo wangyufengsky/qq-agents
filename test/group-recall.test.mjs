@@ -108,6 +108,70 @@ test("a joint request brings back a relevant same-group boundary in an ongoing s
   assert.equal(recall(f.prompts[3]), undefined);
 });
 
+test("pilot openings retain same-group commitments and other group updates alongside a boundary", async (t) => {
+  const f = setup(t);
+  const original = await f.add(1, person, "夹具里的分工原话");
+  const quoted = await f.add(2, person, "夹具里的共同经历原话");
+  await f.wake();
+  const reminder = boundary(f, original, "先等本人确认接活");
+  const save = (kind, body, source, writtenIn = group) =>
+    f.memory.identity.savePersonItem(
+      { personId: person, kind, body, evidence: [source.id] },
+      { writtenIn, now: Date.now() },
+    );
+  const promise = save("promise", "夹具里的未完成约定", original);
+  const shared = save("shared", "夹具里的共同经历记录", quoted);
+  boundary(f, original, "夹具里的无关称呼边界");
+  const now = Math.floor(Date.now() / 1000);
+  const other = await f.add(
+    3,
+    person,
+    [at("10000"), text("另一个群的夹具原话")],
+    {
+      group_id: 20001,
+      time: now,
+    },
+  );
+  f.memory.setState("group:20001", { readThroughSeq: other.seq });
+  const privateSource = await f.add(4, person, "夹具私聊原话", {
+    message_type: "private",
+    time: now,
+  });
+  f.memory.setState("private:" + person, { readThroughSeq: privateSource.seq });
+  save("shared", "夹具私聊往事", privateSource, "private:" + person);
+  save("shared", "夹具搬进群的私聊往事", privateSource);
+  await f.add(5, "30000", "这事你们俩分一下");
+  await f.wake();
+  const joint = f.prompts.at(-1);
+  assert.deepEqual(
+    recall(joint).required.map(({ id }) => id),
+    [reminder.id],
+  );
+  assert.match(joint, /夹具里的未完成约定/);
+  assert.match(joint, /别处近况/);
+  assert.match(joint, new RegExp(other.id));
+  assert.doesNotMatch(
+    joint,
+    /夹具私聊|夹具搬进群|无关称呼边界|"fromPrivate":true/,
+  );
+  assert.ok(!joint.includes(privateSource.id));
+  assert.equal(f.memory.state("group:20001").readThroughSeq, other.seq);
+
+  const updated = save("promise", "夹具里的另一条未完成约定", original);
+  await f.add(6, "30000", [
+    at("10000"),
+    at(person),
+    reply("2"),
+    text("接着聊"),
+  ]);
+  await f.wake();
+  const followup = f.prompts.at(-1);
+  assert.ok(recall(followup).optional.some(({ id }) => id === shared.id));
+  assert.equal(followup.split(shared.id).length, 2);
+  assert.ok(followup.includes(updated.id));
+  assert.ok(!followup.includes(promise.id));
+});
+
 test("explicit quotes have a two-item budget separate from required boundaries", async (t) => {
   const f = setup(t);
   const original = await f.add(1, person, "接不接活由我自己确认");

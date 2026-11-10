@@ -165,7 +165,7 @@ const fromPrivate = (item, conversation) =>
  * @param {any} memory Bound agent memory.
  * @param {string} conversation
  * @param {any[]} items Records this turn shows the model.
- * @param {{fresh: boolean, accountId: string}} options
+ * @param {{fresh: boolean, accountId: string, personIds?: string[], allowed?: (item: any) => boolean, reserved?: number}} options
  */
 export function personItemsForTurn(memory, conversation, items, options) {
   const open = new Map(
@@ -179,14 +179,17 @@ export function personItemsForTurn(memory, conversation, items, options) {
   );
   const listed = [],
     /** @type {Record<string, number>} */ more = {};
-  for (const personId of peopleInTurn(
-    memory,
-    conversation,
-    items,
-    options.accountId,
-  )) {
+  const personIds =
+    options.personIds ??
+    peopleInTurn(memory, conversation, items, options.accountId);
+  for (const personId of personIds) {
     const unseen = [...open.values()]
-      .filter((x) => x.personId === personId && shown[x.id] !== x.revision)
+      .filter(
+        (x) =>
+          x.personId === personId &&
+          shown[x.id] !== x.revision &&
+          (!options.allowed || options.allowed(x)),
+      )
       .sort(
         (a, b) =>
           KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) ||
@@ -194,7 +197,7 @@ export function personItemsForTurn(memory, conversation, items, options) {
       );
     const room = Math.min(
       MAX_ITEMS_PER_PERSON,
-      MAX_ITEMS_PER_TURN - listed.length,
+      MAX_ITEMS_PER_TURN - listed.length - (options.reserved ?? 0),
     );
     for (const x of unseen.slice(0, Math.max(0, room))) {
       listed.push({
