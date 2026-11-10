@@ -413,6 +413,9 @@ export class ContextLifecycle {
       backendType = r.config.backends.find((b) => b.id === a.backendId)?.type,
       options = { backendType, toolNames },
       subject = conversation === SUBJECT,
+      compactChat =
+        conversation.startsWith("group:") &&
+        a.behavior.compactChatInstructionGroups.includes(conversation.slice(6)),
       hash = (text) => createHash("sha256").update(text).digest("hex");
     const instructions = stableInstructions(a, self, subject, anchors, {
       ...options,
@@ -421,7 +424,17 @@ export class ContextLifecycle {
         administrators: identity.administrators,
       },
       dynamicPeers: true,
+      compactChat,
     });
+    const instructionsHash = hash(instructions);
+    // The compact prompt must be sent to a fresh backend session.
+    if (compactChat)
+      return {
+        instructions,
+        instructionsHash,
+        legacyHashes: new Set(),
+        backendType,
+      };
     const legacyIdentity = identityAnchors(r.config, a, false);
     const legacyHashes = new Set([
       hash(
@@ -451,7 +464,7 @@ export class ContextLifecycle {
         );
     return {
       instructions,
-      instructionsHash: hash(instructions),
+      instructionsHash,
       // A legacy digest is accepted only when the entire original prompt still
       // matches, including the old peer list; unknown identity changes stay fenced.
       legacyHashes,

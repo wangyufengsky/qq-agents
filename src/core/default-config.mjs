@@ -124,6 +124,7 @@ export function defaultConfig() {
           focusedGroupReply: false,
           focusedGroupMentionReply: false,
           compactChatGroups: [],
+          compactChatInstructionGroups: [],
           relationshipRecallGroups: [],
           maxOpenDraftsPerConversation: DEFAULT_MAX_OPEN_DRAFTS,
           imageInput: {
@@ -223,6 +224,7 @@ export function defaultConfig() {
           focusedGroupReply: false,
           focusedGroupMentionReply: false,
           compactChatGroups: [],
+          compactChatInstructionGroups: [],
           relationshipRecallGroups: [],
           maxOpenDraftsPerConversation: DEFAULT_MAX_OPEN_DRAFTS,
           imageInput: {
