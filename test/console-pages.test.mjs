@@ -287,6 +287,41 @@ test("activity keeps a slim filter bar and one head line per entry, long text cu
   assert.doesNotMatch(a.run("activityEntry(entry)"), /act-basis/);
 });
 
+test("activity displays the delivered contribution and distinguishes an empty recall", () => {
+  const a = activityScripts();
+  a.sandbox.entry = {
+    kind: "chat",
+    conversation: "group:20000",
+    reasons: [],
+    status: "completed",
+    startedAt: T0,
+    sent: [],
+    browsing: { items: [], searches: [], failures: [] },
+    diaries: [],
+    intents: { created: [], decided: [] },
+    memoryRecall: {
+      opening: {
+        status: "matched",
+        reason: "local-semantic",
+        matched: 1,
+        presented: 1,
+        waitMs: 100,
+        contribution: "核对了<访客>安排。",
+      },
+      active: {
+        status: "empty",
+        reason: "tool",
+        matched: 0,
+        presented: 0,
+        waitMs: 100,
+      },
+    },
+  };
+  const html = a.run("activityEntry(entry)");
+  assert.match(html, /回复前补充的信息 · 核对了&lt;访客&gt;安排/);
+  assert.match(html, /主动回想[^<]*无新增信息/);
+});
+
 test("activity separates delivery, model, process and session outcomes", () => {
   const a = activityScripts();
   a.sandbox.entry = {

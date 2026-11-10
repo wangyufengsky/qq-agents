@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
+import { activityPage } from "../src/core/activity.mjs";
 import { validateConfig } from "../src/core/config.mjs";
 import { semanticDigest } from "../src/core/semantic-recall.mjs";
 import { recallBoundary } from "../src/core/recall-boundary.mjs";
@@ -9,6 +10,7 @@ import { memoryRecallDiagnostic } from "../src/core/session-records.mjs";
 import { config, fixture, raw } from "./helpers.mjs";
 
 const group = "group:20000";
+const contribution = "补上了上次已经确认的安排。";
 
 function pilotConfig() {
   const cfg = config(1);
@@ -92,7 +94,10 @@ test("opening searches only previous same-group evidence and attaches an authori
         p.callTool("memory_search", {}),
         /FUNCTIONAL_AGENT_TOOL_BUDGET/,
       );
-      await p.callTool("functional_agent_result", { evidenceIds: [old.id] });
+      await p.callTool("functional_agent_result", {
+        evidenceIds: [old.id],
+        contribution,
+      });
     } else {
       main = p.prompt;
       assert.deepEqual(
@@ -125,8 +130,10 @@ test("opening searches only previous same-group evidence and attaches an authori
   assert.equal(checks, 1);
   assert.match(main.split("本轮记忆查证 ")[1], /夹具地点改在北楼/);
   const delivered = main.split("本轮记忆查证 ")[1].split("。回想资料")[0];
-  const [row] = JSON.parse(delivered).evidence;
+  const { evidence, contribution: explanation } = JSON.parse(delivered);
+  const [row] = evidence;
   assert.equal(row.corrects, old.id);
+  assert.equal(explanation, undefined);
   assert.doesNotMatch(row.body, /无关任务/);
   assert.doesNotMatch(delivered, /南楼|私密例子/);
   assert.deepEqual(memoryRecallDiagnostic(turn).opening, {
@@ -147,7 +154,10 @@ test("active recall uses a current cue, returns an acknowledged result once and 
       childCount++;
       assert.doesNotMatch(p.prompt, /隔壁的隐藏线索/);
       await p.callTool("memory_read", { id: old.id });
-      await p.callTool("functional_agent_result", { evidenceIds: [old.id] });
+      await p.callTool("functional_agent_result", {
+        evidenceIds: [old.id],
+        contribution,
+      });
       return;
     }
     if (p.conversation !== group) {
@@ -166,6 +176,12 @@ test("active recall uses a current cue, returns an acknowledged result once and 
     const result = await p.callTool("memory_recall", { cue: "夹具安排" });
     assert.equal(result.status, "matched");
     assert.equal(result.evidence[0].id, old.id);
+    assert.equal(result.contribution, contribution);
+    assert.equal(
+      (await p.callTool("diagnostics_read", {})).memoryRecall.currentTurn.active
+        .contribution,
+      undefined,
+    );
     assert.deepEqual(await p.callTool("memory_recall", { cue: "夹具安排" }), {
       status: "budget",
     });
@@ -176,6 +192,8 @@ test("active recall uses a current cue, returns an acknowledged result once and 
   assert.equal(childCount, 1);
   assert.equal(turn.memoryRecall.opening.reason, "no-cue");
   assert.equal(turn.memoryRecall.active.presented, 1);
+  const [entry] = activityPage(f.store, "agent-0").items;
+  assert.equal(entry.memoryRecall.active.contribution, contribution);
   assert.equal(
     (await f.turn(await f.add(3, "上次的夹具安排是什么", 20001), "group:20001"))
       .memoryRecall,
@@ -239,7 +257,32 @@ test("rechecks matched evidence at the ordinary backend submission fence", async
     assert.ok(p.modelSelection);
     // The candidate was already shown in the child input and needs no query.
     assert.match(p.prompt, /约定八点见/);
-    await p.callTool("functional_agent_result", { evidenceIds: [old.id] });
+    await assert.rejects(
+      p.callTool("functional_agent_result", { evidenceIds: [old.id] }),
+    );
+    await assert.rejects(
+      p.callTool("functional_agent_result", { evidenceIds: [], contribution }),
+    );
+    const token = /context=([A-Za-z0-9_-]+)/u.exec(p.prompt)?.[1];
+    assert.ok(token);
+    await assert.rejects(
+      p.callTool("functional_agent_result", {
+        evidenceIds: [old.id],
+        contribution: token,
+      }),
+      /CAPABILITY_EXFILTRATION_BLOCKED/,
+    );
+    await assert.rejects(
+      p.callTool("functional_agent_result", {
+        evidenceIds: [old.id],
+        contribution: "Bearer " + "x".repeat(24),
+      }),
+      /SENSITIVE_OUTPUT_BLOCKED/,
+    );
+    await p.callTool("functional_agent_result", {
+      evidenceIds: [old.id],
+      contribution,
+    });
   });
   old = await f.add(1, "柚子取件中约定八点见");
   const input = await f.add(2, "还记得上次的柚子取件吗");
@@ -260,6 +303,12 @@ test("rechecks matched evidence at the ordinary backend submission fence", async
   assert.doesNotMatch(suffix, /八点见/);
   assert.equal(turn.memoryRecall.opening.matched, 1);
   assert.equal(turn.memoryRecall.opening.presented, 0);
+  assert.doesNotMatch(suffix, /补上了上次已经确认的安排/);
+  assert.equal(
+    memoryRecallDiagnostic(turn, { includeContribution: true }).opening
+      .contribution,
+    undefined,
+  );
 });
 
 function clues(prompt) {
@@ -282,6 +331,7 @@ test("natural messages are scanned at intake and share one clue across the reply
       assert.doesNotMatch(p.prompt, /隔壁群|南楼/);
       await p.callTool("functional_agent_result", {
         evidenceIds: [history.id],
+        contribution,
       });
     } else prompt = p.prompt;
   });
@@ -324,7 +374,10 @@ test("an unsegmented name can be approved by the agent and a recalled source is 
   let prompt, old;
   const f = setupFamiliarity(t, async (p) => {
     if (p.modelSelection)
-      await p.callTool("functional_agent_result", { evidenceIds: [old.id] });
+      await p.callTool("functional_agent_result", {
+        evidenceIds: [old.id],
+        contribution,
+      });
     else prompt = p.prompt;
   });
   old = await f.add(1, "群里约过北门碰头", 20000, 30000, 1799990000);
@@ -383,8 +436,13 @@ test("the agent can reject all competing clues without seeing a protected candid
   const turn = await f.turn(input);
   assert.equal(reviews, 1);
   assert.deepEqual(clues(prompt), []);
-  assert.equal(memoryRecallDiagnostic(turn).opening.status, "empty");
-  assert.equal(memoryRecallDiagnostic(turn).familiarity.presented, 0);
+  const diagnostic = memoryRecallDiagnostic(turn, {
+    includeContribution: true,
+  });
+  assert.equal(diagnostic.opening.status, "empty");
+  assert.equal(diagnostic.opening.contribution, undefined);
+  assert.equal(diagnostic.familiarity.presented, 0);
+  assert.doesNotMatch(prompt.split("本轮记忆查证 ")[1], /"contribution"/);
 });
 
 test("interjections and a speaker's catchphrase do not launch memory review", async (t) => {
@@ -423,7 +481,10 @@ test("recent context removes repetition and lets the agent search for an extra d
       assert.ok(data.candidates.every(({ body }) => body !== "北门今天封了"));
       const result = await p.callTool("memory_search", { query: "东门绕行" });
       assert.ok(result.items.some(({ id }) => id === route.id));
-      await p.callTool("functional_agent_result", { evidenceIds: [route.id] });
+      await p.callTool("functional_agent_result", {
+        evidenceIds: [route.id],
+        contribution,
+      });
     } else prompt = p.prompt;
   });
   await f.add(1, "北门今天封了", 20000, 30000, 1799990000);
@@ -467,7 +528,10 @@ test("opening retrieves a short topic from beyond the recent window", async (t) 
       [old.id],
     );
     assert.match(data.candidates[0].body, /木牌/);
-    await p.callTool("functional_agent_result", { evidenceIds: [old.id] });
+    await p.callTool("functional_agent_result", {
+      evidenceIds: [old.id],
+      contribution,
+    });
   });
   old = await f.add(1, "小亭的入口有一块木牌", 20000, 30000, 1799990000);
   await f.add(2, "小亭在另一座城", 20001, 30000, 1799990100);
@@ -529,7 +593,10 @@ test("semantic pilot reviews a paraphrase, withholds recent and unauthorized sou
       assert.match(p.prompt, /小亭入口的木牌/);
       const candidateText = p.prompt.split('"candidates":')[1];
       assert.doesNotMatch(candidateText, /门口的钥匙|隔壁的入场暗号/);
-      await p.callTool("functional_agent_result", { evidenceIds: [old.id] });
+      await p.callTool("functional_agent_result", {
+        evidenceIds: [old.id],
+        contribution,
+      });
     },
     enableSemanticPilot(),
   );
@@ -552,6 +619,10 @@ test("semantic pilot reviews a paraphrase, withholds recent and unauthorized sou
   };
   const turn = await f.turn(await f.add(4, "客人还能进来吗？"));
   assert.match(prompt.split("本轮记忆查证 ")[1], /暂停来访/);
+  const header = prompt.split("本轮记忆查证 ")[1].split("。回想资料")[0];
+  assert.equal(JSON.parse(header).contribution, contribution);
+  const [entry] = activityPage(f.store, "agent-0").items;
+  assert.equal(entry.memoryRecall.opening.contribution, contribution);
   const trace = memoryRecallDiagnostic(turn).opening;
   assert.equal(trace.reason, "local-semantic");
   assert.equal(trace.presented, 1);
@@ -578,7 +649,10 @@ test("semantic recall falls back to lexical evidence on worker timeout", async (
     async (p) => {
       if (!p.modelSelection) return;
       reviews++;
-      await p.callTool("functional_agent_result", { evidenceIds: [old.id] });
+      await p.callTool("functional_agent_result", {
+        evidenceIds: [old.id],
+        contribution,
+      });
     },
     enableSemanticPilot(),
   );
@@ -670,6 +744,7 @@ test("semantic recall shows the tenth candidate and stops at ten", async (t) => 
       );
       await p.callTool("functional_agent_result", {
         evidenceIds: [hits[9].id],
+        contribution,
       });
     },
     cfg,
@@ -710,7 +785,10 @@ test("active question carries speaker metadata and expands only the selected ori
       assert.equal(candidate.scene, undefined);
       entered.resolve();
       await finish.promise;
-      await p.callTool("functional_agent_result", { evidenceIds: [old.id] });
+      await p.callTool("functional_agent_result", {
+        evidenceIds: [old.id],
+        contribution,
+      });
       return;
     }
     const pending = p.callTool("memory_recall", {
@@ -780,7 +858,10 @@ test("opening evidence omits protected and recalled context and keeps authorized
         JSON.stringify(candidates),
         /开门说明|墙上挂牌|受保护片段|已撤回片段/,
       );
-      await p.callTool("functional_agent_result", { evidenceIds: [old.id] });
+      await p.callTool("functional_agent_result", {
+        evidenceIds: [old.id],
+        contribution,
+      });
     } else {
       prompt = p.prompt;
     }

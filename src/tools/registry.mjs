@@ -25,6 +25,7 @@ const handlers = {
   memory_recall: recallFromChat,
   [FUNCTIONAL_AGENT_RESULT]: (runtime, ctx, args) => {
     runtime.validateFunctionalEvidence(ctx, args.evidenceIds);
+    if (args.contribution) runtime.assertSafeOutput(ctx, args.contribution);
     return runtime.functionalDelegation.submit(ctx, args);
   },
   protected_work_submit: (runtime, ctx, args) =>
