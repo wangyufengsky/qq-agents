@@ -137,6 +137,10 @@ export const definitions = {
       })
       .strict(),
   ],
+  memory_recall: [
+    "委托记忆 Agent 核对本轮来信里的旧事。cue 填当前来信的短原文线索。返回获准的同群历史证据和查证状态。每轮可发起一次。",
+    z.object({ cue: z.string().trim().min(2).max(120) }).strict(),
+  ],
   memory_related: [
     "读取同一来源里明确引用/撤回关系，可跨越很长时间。更正与同意仍需读原文判断；无关系不代表没有后续。按 nextAfterSeq 继续。",
     z

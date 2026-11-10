@@ -388,6 +388,7 @@ export class CodexBackend {
     finalizeToolOutput,
     commitToolOutput,
     beforeInputSubmitted,
+    appendPrompt,
     onImageSession,
     onGeneratedImage,
     onImageError,
@@ -526,7 +527,11 @@ export class CodexBackend {
       const receipt = await this.rpc.request("turn/start", {
         threadId,
         input: [
-          { type: "text", text: prompt, text_elements: [] },
+          {
+            type: "text",
+            text: prompt + (appendPrompt?.() || ""),
+            text_elements: [],
+          },
           ...inputImages.flatMap((image) => [
             { type: "text", text: image.label, text_elements: [] },
             ...(image.data

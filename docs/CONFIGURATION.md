@@ -4,9 +4,15 @@
 
 每个角色可以在 `agents[].functionalAgents` 配置功能 Agent。字段省略时，现有主人格和 QQ 对话沿用原来的行为、提示和工具。定义键 `subject` 对应主人格（`kind: "subject"`），`qq` 对应普通 QQ 对话（`kind: "qq-dialogue"`）。两者可设置 `instructions`，并用可选的 `tools` 从当前授权的工具中进一步限缩。
 
-`memory`（`kind: "memory"`）默认关闭。本阶段提供框架内部调用基础。调用方的 QQ 定义须列出 `delegatesTo: ["memory"]`，目标定义也须显式启用。目标显式指定带 `functionalAgentOnly: true` 的 DSH 后端，并使用 `qq-unified` 预设、固定回环地址和独立 DSH profile。DSH 会把选模型操作保存为当前 profile 的默认值，所以不同端口仍须分别使用独立 profile。普通角色后端与委托后端须使用不同的 DSH 实例。每次委托都指定有效提供方和模型，`model` 与 `effort` 可覆盖专用后端的默认配置。记忆工具限 `memory_search`、`memory_read`、`memory_related`，实际仍取调用方权限与该范围的交集。查证预算通过 `onDemand.timeoutMs` 和 `onDemand.maxLookups` 缩小，默认分别为 10000 毫秒和 3 次。普通 QQ 回合继续使用已有记忆流程。
+`memory`（`kind: "memory"`）默认关闭。调用方的 QQ 定义须列出 `delegatesTo: ["memory"]`，目标定义也须显式启用。目标显式指定带 `functionalAgentOnly: true` 的 DSH 后端，并使用 `qq-unified` 预设、固定回环地址和独立 DSH profile。DSH 会把选模型操作保存为当前 profile 的默认值，所以不同端口仍须分别使用独立 profile。普通角色后端与委托后端须使用不同的 DSH 实例。每次委托都指定有效提供方和模型，`model` 与 `effort` 可覆盖专用后端的默认配置。记忆工具限 `memory_search`、`memory_read`、`memory_related`，实际仍取调用方权限与该范围的交集。查证预算通过 `onDemand.timeoutMs` 和 `onDemand.maxLookups` 缩小，默认分别为 10000 毫秒和 3 次。
 
-桥接通过其 `DSH_HOME` 中的签名凭据访问专用 Host。使用 DSH 后端的普通角色须有固定路由，桥接才能确认普通角色与委托没有共用 Host。
+桥接通过其 `DSH_HOME` 中的签名凭据访问专用 Host。普通 DSH 自动发现和恢复会排除专用 Host 的端口。
+
+### 记忆 Agent 群聊试点
+
+在 `agents[].functionalAgents.memory.pilot` 设置 `groups`，范围须已获该角色的 QQ 群准入。省略 `pilot` 保持普通聊天流程。自动查证使用 `openingTimeoutMs`，默认且最多 4000 毫秒、最多一次只读工具查询。主动回想使用同一段 `onDemand` 预算，每个普通 QQ 回合可主动发起一次。角色、QQ Agent 及记忆 Agent 都需允许 `memory_search`。主动查证还须在角色的 `tools` 授予 `memory_recall`。如果 QQ Agent 另有显式工具列表，也须列出该工具。
+
+试点只处理本群获准的来信与历史。本轮线索从角色主人发来的实际消息中取得。对话 Agent 在开场或 `diagnostics_read` 中可核对本轮查证状态。管理台「动态」显示触发原因、结果、命中及交给模型的证据条数、额外等待时间。
 
 ## 数据目录
 

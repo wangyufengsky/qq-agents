@@ -7,6 +7,8 @@ import {
 import { backendCapabilities } from "../backends/capabilities.mjs";
 import { classifyError } from "../core/diagnostics.mjs";
 import { connectionError } from "../core/backend-connections.mjs";
+import { memoryRecallPilot } from "../core/functional-agents.mjs";
+import { memoryRecallDiagnostic } from "../core/session-records.mjs";
 
 export const frameworkDefinitions = {
   framework_read: [
@@ -85,6 +87,17 @@ export function frameworkTool(runtime, ctx, name, args) {
       count,
       component,
     }));
+  const recallEnabled = Boolean(memoryRecallPilot(agent, ctx.conversation));
+  const memory = runtime.memory.bind(agent.id);
+  const recentRecall = recallEnabled
+    ? memory.db
+        .prepare(
+          "SELECT value FROM model_turns WHERE agent_id=? AND json_extract(value,'$.conversation')=? AND json_extract(value,'$.memoryRecall') IS NOT NULL AND id<>? ORDER BY json_extract(value,'$.startedAt') DESC LIMIT 5",
+        )
+        .all(agent.id, ctx.conversation, ctx.turnId || "")
+        .map(({ value }) => memoryRecallDiagnostic(JSON.parse(value)))
+        .filter(Boolean)
+    : [];
   const blockers = runtime.blockers(agent, ctx.conversation, ctx);
   const connected = !!runtime.transports.get(agent.connectionId)?.connected;
   const unknownDeliveries = runtime.memory.db
@@ -95,6 +108,15 @@ export function frameworkTool(runtime, ctx, name, args) {
   return {
     sampledAt: new Date(runtime.now()).toISOString(),
     scope: "own-role/current-conversation",
+    memoryRecall: {
+      enabled: recallEnabled,
+      recent: recentRecall,
+      ...(ctx.turnId && {
+        currentTurn: memoryRecallDiagnostic(
+          memory.identity.get("model_turns", ctx.turnId),
+        ),
+      }),
+    },
     mode: runtime.config.mode,
     connection: {
       connected,

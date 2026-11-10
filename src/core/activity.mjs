@@ -1,7 +1,10 @@
 // A role's activity timeline: one entry per model turn (a chat reply or a
 // free-time turn), with what that turn actually did attached. Records are
 // linked by conversation and the turn's time window; nothing is stored here.
-import { sanitizeBackendDiagnostic } from "./session-records.mjs";
+import {
+  memoryRecallDiagnostic,
+  sanitizeBackendDiagnostic,
+} from "./session-records.mjs";
 
 const SUBJECT = "@subject";
 const GRACE_MS = 5000;
@@ -397,6 +400,7 @@ export function activityPage(
       endedAt: t.endedAt || null,
       status: t.status,
       ...outcomes,
+      ...(t.memoryRecall && { memoryRecall: memoryRecallDiagnostic(t) }),
       tools: calls && {
         total: calls.length,
         failed: calls.filter((c) => !c.ok).length,
