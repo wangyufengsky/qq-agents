@@ -310,25 +310,26 @@ function dshFake() {
     sessions: {
       create: async (args) => {
         calls.push({ name: "create", args });
-        return ok({ sessionId: "s" });
+        return ok({ sessionId: args.sessionId || "s" });
       },
       selectModel: async (args) => {
         calls.push({ name: "model", args });
-        return ok({});
+        const { provider, model, reasoningEffort } = args;
+        return ok({ selected: { provider, model, reasoningEffort } });
       },
       prompt: async (args) => {
         calls.push({ name: "prompt", args });
         push({
           payload: {
             type: "session/snapshot",
-            sessionId: "s",
+            sessionId: args.sessionId,
             snapshot: { records: [{ type: "turn/end" }] },
           },
         });
         push({
           payload: {
             type: "session/event",
-            sessionId: "s",
+            sessionId: args.sessionId,
             event: { type: "turn/start", data: { turn: "t" } },
           },
         });
@@ -419,6 +420,203 @@ test("DSH uses required preset, workspace, model selection and ignores historica
   await run;
   assert.equal(completed, true);
 });
+
+test("DSH pins concurrent functional selections on separate fresh sessions", async (t) => {
+  const { client, push } = dshFake();
+  const original = {
+    id: "dsh",
+    preset: "qq-unified",
+    provider: "default-provider",
+    model: "default-model",
+    effort: "high",
+  };
+  const root = temp(t),
+    role = config().agents[0];
+  const ordinary = new DshBackend(original, role, { root, client });
+  t.after(() => ordinary.close());
+  const backend = new DshBackend(
+    { ...original, functionalAgentOnly: true },
+    role,
+    { root, client },
+  );
+  t.after(() => backend.close());
+  const selection = {
+    provider: "first-provider",
+    model: "first-model",
+    effort: "low",
+  };
+  const secondSelection = {
+    provider: "second-provider",
+    model: "second-model",
+    effort: "medium",
+  };
+  const signal = new AbortController().signal;
+  const signature = backend.sessionSignature([]);
+  assert.notEqual(backend.sessionSignature([], selection), signature);
+  await assert.rejects(
+    ordinary.run({ signal, tools: [], modelSelection: selection }),
+    /FUNCTIONAL_AGENT_BACKEND_UNSUPPORTED/,
+  );
+  await assert.rejects(
+    backend.run({ signal, tools: [] }),
+    /FUNCTIONAL_AGENT_BACKEND_UNSUPPORTED/,
+  );
+  await assert.rejects(
+    backend.run({
+      signal,
+      tools: [],
+      modelSelection: selection,
+      session: { id: "chat", backend: "dsh", signature },
+    }),
+    /SESSION_REQUIRES_HANDOFF/,
+  );
+  assert.equal(client.calls.length, 0);
+  const stopped = [];
+  client.stopSessionWork = async (id) => stopped.push(id);
+  const run = (modelSelection) =>
+    backend.run({
+      signal,
+      tools: [],
+      prompt: "child",
+      modelSelection,
+      saveSession: () => assert.fail("a child session must stay ephemeral"),
+    });
+  const first = run(selection);
+  selection.model = "changed-after-start";
+  const second = run(secondSelection);
+  await tick();
+  const selected = client.calls
+    .filter((c) => c.name === "model")
+    .map((c) => c.args);
+  assert.deepEqual(
+    selected.map(({ provider, model, reasoningEffort }) => ({
+      provider,
+      model,
+      reasoningEffort,
+    })),
+    [
+      {
+        provider: "first-provider",
+        model: "first-model",
+        reasoningEffort: "low",
+      },
+      {
+        provider: "second-provider",
+        model: "second-model",
+        reasoningEffort: "medium",
+      },
+    ],
+  );
+  const ids = selected.map(({ sessionId }) => sessionId);
+  assert.equal(new Set(ids).size, 2);
+  assert(ids.every((id) => id.startsWith("session-")));
+  for (const sessionId of ids)
+    push({
+      payload: {
+        type: "session/event",
+        sessionId,
+        event: {
+          type: "turn/end",
+          data: { turn: "t", reason: { kind: "completed" } },
+        },
+      },
+    });
+  await Promise.all([first, second]);
+  assert.deepEqual(stopped.sort(), ids.sort());
+  assert.equal(backend.sessionSignature([]), signature);
+  assert.equal(backend.config.model, "default-model");
+});
+
+for (const receiptLost of [false, true])
+  test(`DSH abort waits for child cleanup with a ${receiptLost ? "lost" : "confirmed"} receipt`, async (t) => {
+    const { client, push } = dshFake();
+    const backend = new DshBackend(
+      { id: "dsh", preset: "qq-unified", functionalAgentOnly: true },
+      config().agents[0],
+      { root: temp(t), client },
+    );
+    t.after(() => backend.close());
+    const sent = Promise.withResolvers();
+    const submission = Promise.withResolvers();
+    const stopped = Promise.withResolvers();
+    let sessionId;
+    const refresh = Promise.withResolvers();
+    let follows = 0;
+    client.events.follow = (id) => {
+      if (++follows === 1) {
+        sessionId = id;
+        push({
+          payload: {
+            type: "session/snapshot",
+            sessionId,
+            snapshot: { records: [] },
+          },
+        });
+      } else refresh.resolve();
+    };
+    const cleanup = Promise.withResolvers();
+    client.sessions.prompt = () => {
+      sent.resolve();
+      return submission.promise;
+    };
+    let stopCalls = 0;
+    client.stopSessionWork = (id) => {
+      assert.equal(id, sessionId);
+      stopCalls++;
+      stopped.resolve();
+      return cleanup.promise;
+    };
+    const controller = new AbortController();
+    let settled = false;
+    const rejected = assert
+      .rejects(
+        backend.run({
+          signal: controller.signal,
+          tools: [],
+          prompt: "child",
+          modelSelection: {
+            provider: "fixture",
+            model: "child",
+            effort: "low",
+          },
+          saveSession: () => assert.fail("a child session must stay ephemeral"),
+        }),
+        receiptLost ? /FUNCTIONAL_AGENT_BACKEND_UNAVAILABLE/ : /ABORTED/,
+      )
+      .then(() => (settled = true));
+    await sent.promise;
+    controller.abort();
+    await tick();
+    assert.equal(settled, false);
+    assert.equal(stopCalls, 0);
+    assert.equal(
+      client.calls.some((c) => c.name === "session.cancel"),
+      false,
+    );
+    if (receiptLost) submission.reject(Error("fixture lost receipt"));
+    else
+      submission.resolve({ result: { ok: true, value: { accepted: true } } });
+    await stopped.promise;
+    assert.equal(settled, false);
+    cleanup.resolve();
+    await refresh.promise;
+    assert.equal(settled, false);
+    push({
+      payload: {
+        type: "session/snapshot",
+        sessionId,
+        snapshot: {
+          records: [],
+          projections: {
+            values: { inbox: { "next-turn": [], "next-step": [] } },
+          },
+        },
+      },
+    });
+    await rejected;
+    assert.equal(stopCalls, 1);
+    assert.equal(backend.functionalSessionUnverified, receiptLost);
+  });
 
 test("DSH resumes measured capacity from a fresh subscription snapshot", async (t) => {
   const { client, push } = dshFake();

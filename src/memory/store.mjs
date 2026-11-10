@@ -483,7 +483,7 @@ class AgentMemory {
       protectedRepositories: parse(row.metadata).protectedRepositories || [],
     };
   }
-  search(q = {}, current = "") {
+  search(q = {}, current = "", { projectEvent } = {}) {
     recallScope(q.conversation, q.conversationType);
     const limit = num(q.limit, 10, 1, 50),
       offset = num(q.cursor?.eventOffset ?? q.offset, 0, 0, 10000000),
@@ -566,12 +566,17 @@ class AgentMemory {
               `SELECT * FROM events WHERE ${where.join(" AND ")} ORDER BY seq DESC LIMIT ? OFFSET ?`,
             )
             .all(...args, limit + 1, q.cursor?.beforeSeq != null ? 0 : offset)
-            .map((r) => ({
-              ...this.event(r, current, true),
-              scene: this.corrections.scene(
-                sceneForMatch(this.db, this.agentId, r, sceneOptions),
-              ),
-            }));
+            .map((r) => {
+              const event = this.event(r, current, true);
+              if (projectEvent) return projectEvent(event);
+              return {
+                ...event,
+                scene: this.corrections.scene(
+                  sceneForMatch(this.db, this.agentId, r, sceneOptions),
+                ),
+              };
+            })
+            .filter(Boolean);
     // Separate pagination lanes prevent diary offsets from hiding message rows.
     let diaries = [];
     const diaryCeiling = q.cursor?.diaryCeiling || now();

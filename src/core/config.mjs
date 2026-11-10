@@ -22,6 +22,11 @@ import {
   operationsSchema,
 } from "./policy.mjs";
 
+import {
+  MEMORY_AGENT_LIMITS,
+  MEMORY_AGENT_TOOLS,
+} from "./functional-agents.mjs";
+
 const id = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/);
 const qq = z.string().regex(/^\d{1,20}$/);
 const envName = z.string().regex(/^[A-Z][A-Z0-9_]{0,100}$/);
@@ -41,6 +46,14 @@ const loopback = z.string().refine((s) => {
   }
 }, "Loopback URL required");
 const loopbackHosts = ["127.0.0.1", "localhost", "[::1]"];
+function loopbackPort(value) {
+  if (!value) return undefined;
+  const url = new URL(value);
+  // Localhost may resolve to either address family. Treat aliases on the
+  // same port as overlapping instead of relying on host resolver order.
+  if (loopbackHosts.includes(url.hostname))
+    return url.port || (url.protocol === "https:" ? "443" : "80");
+}
 // Names a container network can reach without leaving the machine or LAN: a
 // single-label Docker service name, host.docker.internal, an RFC 1918 IPv4
 // address or an IPv6 unique-local address. Link-local (cloud metadata),
@@ -140,6 +153,57 @@ const toolServer = z
       s.transport === "stdio" ? !!s.command && !s.url : !!s.url && !s.command,
     "Select a command for stdio or URL for HTTP/SSE",
   );
+const functionalInstructions = z.string().max(32000).optional();
+const conversationAgentFields = {
+  instructions: functionalInstructions,
+  tools: z.array(z.enum(TOOL_NAMES)).max(TOOL_NAMES.length).optional(),
+  delegatesTo: z.array(z.literal("memory")).max(1).optional(),
+};
+const functionalAgents = z
+  .object({
+    subject: z
+      .object({ kind: z.literal("subject"), ...conversationAgentFields })
+      .strict()
+      .optional(),
+    qq: z
+      .object({ kind: z.literal("qq-dialogue"), ...conversationAgentFields })
+      .strict()
+      .optional(),
+    memory: z
+      .object({
+        kind: z.literal("memory"),
+        enabled: z.boolean().default(false),
+        backendId: id.optional(),
+        model: z.string().trim().min(1).max(256).optional(),
+        effort: z.string().trim().min(1).max(80).optional(),
+        instructions: functionalInstructions,
+        tools: z
+          .array(z.enum(MEMORY_AGENT_TOOLS))
+          .max(MEMORY_AGENT_TOOLS.length)
+          .default(() => [...MEMORY_AGENT_TOOLS]),
+        onDemand: z
+          .object({
+            timeoutMs: z
+              .number()
+              .int()
+              .min(1)
+              .max(MEMORY_AGENT_LIMITS.timeoutMs)
+              .default(MEMORY_AGENT_LIMITS.timeoutMs),
+            maxLookups: z
+              .number()
+              .int()
+              .min(1)
+              .max(MEMORY_AGENT_LIMITS.maxLookups)
+              .default(MEMORY_AGENT_LIMITS.maxLookups),
+          })
+          .strict()
+          .prefault({}),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict()
+  .optional();
 export const configSchema = z
   .object({
     version: z.literal(1),
@@ -253,6 +317,7 @@ export const configSchema = z
           label: z.string(),
           provider: z.string().default(""),
           baseUrl: z.string().optional(),
+          functionalAgentOnly: z.boolean().optional(),
           // OpenAI-compatible only. No schema defaults: existing DSH/Codex
           // configs must parse unchanged so their session signatures hold.
           apiKeyEnv: envName.optional(),
@@ -349,6 +414,22 @@ export const configSchema = z
             path: ["baseUrl"],
           },
         )
+        .refine(
+          (backend) =>
+            backend.functionalAgentOnly !== true ||
+            (backend.type === "dsh" &&
+              backend.preset === "qq-unified" &&
+              !!backend.baseUrl &&
+              URL.canParse(backend.baseUrl) &&
+              new URL(backend.baseUrl).protocol === "http:" &&
+              new URL(backend.baseUrl).pathname === "/" &&
+              !backend.recovery.dshInstance),
+          {
+            message:
+              "A dedicated functional backend requires a fixed DSH loopback origin",
+            path: ["functionalAgentOnly"],
+          },
+        )
         .refine((backend) => backend.type !== "openai" || !!backend.baseUrl, {
           message: "An OpenAI-compatible backend needs baseUrl",
           path: ["baseUrl"],
@@ -378,6 +459,7 @@ export const configSchema = z
           paused: z.boolean().default(true),
           model: z.string().default(""),
           effort: z.string().default(""),
+          functionalAgents,
           persona: z.string().max(32000).default(""),
           appearance: z.string().max(2000).default(""),
           selfPolicy: selfPolicySchema,
@@ -495,12 +577,38 @@ export function validateConfig(input) {
     new Set(c.connections.map((r) => r.accountId)).size !== c.connections.length
   )
     throw Error("DUPLICATE_QQ_ACCOUNT");
-  for (const a of c.agents) {
+  const ordinaryPorts = new Set(
+    c.backends
+      .filter((backend) => !backend.functionalAgentOnly)
+      .map((backend) => loopbackPort(backend.baseUrl)),
+  );
+  for (const backend of c.backends) {
     if (
-      !c.connections.some((x) => x.id === a.connectionId) ||
-      !c.backends.some((x) => x.id === a.backendId)
+      backend.functionalAgentOnly &&
+      ordinaryPorts.has(loopbackPort(backend.baseUrl))
     )
+      throw Error("CONFIG_SCHEMA_INVALID");
+  }
+  for (const a of c.agents) {
+    const roleBackend = c.backends.find((x) => x.id === a.backendId);
+    if (!c.connections.some((x) => x.id === a.connectionId) || !roleBackend)
       throw Error("INVALID_REFERENCE");
+    if (roleBackend.functionalAgentOnly) throw Error("CONFIG_SCHEMA_INVALID");
+
+    const memory = a.functionalAgents?.memory;
+    if (!memory) continue;
+    if (!memory.backendId) {
+      if (memory.enabled) throw Error("CONFIG_SCHEMA_INVALID");
+      continue;
+    }
+    const backend = c.backends.find((x) => x.id === memory.backendId);
+    if (!backend) throw Error("INVALID_REFERENCE");
+    if (
+      !backend.functionalAgentOnly ||
+      (memory.enabled &&
+        (!backend.provider.trim() || !(memory.model ?? backend.model).trim()))
+    )
+      throw Error("CONFIG_SCHEMA_INVALID");
   }
   // An account is one public identity; multiple backend choices do not create ambiguous authors.
   if (new Set(c.agents.map((a) => a.connectionId)).size !== c.agents.length)

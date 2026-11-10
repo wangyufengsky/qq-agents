@@ -9,7 +9,7 @@ import { isDeepStrictEqual } from "node:util";
  *   allowedTools: string[]}} ToolServerConfig
  * @typedef {{id: string, type: "dsh" | "codex" | "openai" | "antigravity", label: string, provider: string,
  *   baseUrl?: string, apiKeyEnv?: string, contextWindow?: number, maxToolRounds?: number, socialProfile?: string|null,
- *   requestTimeoutMs?: number, vision?: boolean, sendEffort?: boolean,
+ *   requestTimeoutMs?: number, vision?: boolean, sendEffort?: boolean, functionalAgentOnly?: boolean,
  *   recovery: {autoReconnect: boolean, dshInstance?: string}, command: string,
  *   env?: Record<string, string>, home?: string, preset: string, model: string, effort: string,
  *   cliProtocol?: "headless" | "acp",
@@ -22,7 +22,9 @@ import { isDeepStrictEqual } from "node:util";
  * @typedef {{source: string, contextTokens: number, capacityTokens?: number,
  *   cumulativeTokens?: number, basis: string}} UsageReport
  * @typedef {{eventId: string, index: number, label: string, mediaId?: string, data?: string, mimeType?: string}} InputImage
+ * @typedef {Readonly<{provider: string, model: string, effort: string}>} ModelSelection
  * @typedef {{inputImages?: InputImage[], conversation?: string, game?: boolean, protectedWork?: boolean, social?: boolean, prompt: string, instructions?: string,
+ *   modelSelection?: ModelSelection,
  *   onUsage?: (usage: UsageReport) => void, signal: AbortSignal, tools: ToolSpec[],
  *   callTool: (name: string, args: any) => Promise<unknown>, session?: StoredSession | null,
  *   saveSession: (session: StoredSession | null) => void,

@@ -29,9 +29,40 @@ export function storedMindRecords(db, agentId, id) {
   });
 }
 
+const functionalEventFields = [
+  "id",
+  "seq",
+  "type",
+  "conversation",
+  "connectionId",
+  "senderId",
+  "senderName",
+  "messageId",
+  "occurredAt",
+  "observedAt",
+  "status",
+  "direction",
+  "timeBasis",
+  "body",
+  "bodyTruncated",
+];
+
+// Only the message's own text and basic metadata belong to this projection.
+// Corrections can reference another chat, and raw payloads or scene children
+// can have separate sources and protection.
+function functionalEventProjection(row) {
+  return Object.fromEntries(
+    functionalEventFields
+      .filter((key) => Object.hasOwn(row, key))
+      .map((key) => [key, row[key]]),
+  );
+}
+
 // This is a read boundary, not declassification. Stored records and the
 // protection of any context that already saw them remain unchanged.
 export function recallBoundary(runtime, ctx, { publicOnly = false } = {}) {
+  const functional = ctx.runtimeKind === "functional-agent";
+  publicOnly ||= functional;
   const privileged = !publicOnly && !!runtime.protectedWork?.context(ctx);
   const restricted = (value) =>
     (value?.protectedPeerQzoneTargets?.length > 0 &&
@@ -49,6 +80,18 @@ export function recallBoundary(runtime, ctx, { publicOnly = false } = {}) {
     return ["operations", "private-repository"].includes(classes.get(id));
   }
   function allowed(row) {
+    if (functional) {
+      const agent = runtime.agent(ctx.agentId);
+      const memory = runtime.memory.bind(agent.id);
+      const stored = prepared(
+        memory.db,
+        "SELECT * FROM events WHERE agent_id=? AND id=? AND connection_id=? AND conversation=? AND ((kind='message.received' AND status='observed') OR (kind='message.sent' AND status='confirmed'))",
+      ).get(agent.id, row?.id ?? null, agent.connectionId, ctx.conversation);
+      if (!stored) return false;
+      const record = memory.event(stored, ctx.conversation);
+      if (record.recalled) return false;
+      row = record;
+    }
     try {
       assertHomeSceneMedia(runtime, ctx, row);
     } catch {
@@ -139,6 +182,7 @@ export function recallBoundary(runtime, ctx, { publicOnly = false } = {}) {
   }
   function project(row) {
     if (!allowed(row)) return null;
+    if (functional) return functionalEventProjection(row);
     // Scene projections omit protection metadata. Check their durable source
     // IDs too, and withhold the whole scene (including participant summaries).
     if (
@@ -156,6 +200,7 @@ export function recallBoundary(runtime, ctx, { publicOnly = false } = {}) {
   }
   return {
     allowed,
+    project,
     assert(row) {
       if (!allowed(row)) throw Error("RECALL_SOURCE_NOT_ALLOWED");
     },

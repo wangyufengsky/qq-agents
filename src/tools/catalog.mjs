@@ -6,6 +6,7 @@ import {
 import { SOCIAL_TOOLS } from "../home/social-tool-names.mjs";
 import { subjectInboxEnabled } from "../core/role-rest.mjs";
 import { z } from "zod";
+import { FUNCTIONAL_AGENT_RESULT } from "./names.mjs";
 import { toolSpecs } from "./specs.mjs";
 import { canUseDraftTool } from "../core/draft-input.mjs";
 import { profileConversation } from "../core/profile.mjs";
@@ -53,7 +54,7 @@ export function parseMcpEntry(name, input) {
 export function scopedCatalog(runtime, ctx, input) {
   const args = discoveryInput.parse(input),
     a = runtime.assertActive(ctx);
-  const current = runtime.toolsFor(a, ctx.conversation);
+  const current = runtime.toolsForContext(a, ctx);
   const allowed = (ctx.allowedTools || current).filter((n) =>
     current.includes(n),
   );
@@ -61,7 +62,11 @@ export function scopedCatalog(runtime, ctx, input) {
     throw Error("TOOL_DISABLED");
   const names = args.names || allowed.slice(args.offset, args.offset + 20);
   return {
-    network: { autonomous: a.network?.autonomous === true },
+    network: {
+      autonomous:
+        ctx.runtimeKind !== "functional-agent" &&
+        a.network?.autonomous === true,
+    },
     tools: toolSpecs(names).map((s) =>
       args.names ? s : { name: s.name, description: s.description },
     ),
@@ -74,6 +79,7 @@ export function scopedCatalog(runtime, ctx, input) {
 }
 
 export function toolAvailable(agent, name, conversation) {
+  if (name === FUNCTIONAL_AGENT_RESULT) return false;
   if (name.startsWith("subject_inbox_") || name === "subject_rest")
     return (
       subjectInboxEnabled(agent) &&

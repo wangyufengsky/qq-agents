@@ -4,6 +4,7 @@ import { backendRequestConfig } from "../backends/session-contract.mjs";
 import { waitForDrain } from "../updates/drain.mjs";
 import {
   discoverDshInstances,
+  localDshUrl,
   selectDshInstance,
 } from "../backends/dsh-discovery.mjs";
 
@@ -54,6 +55,16 @@ function failureState(code) {
       ? "selection-required"
       : "disconnected";
 }
+const FUNCTIONAL_SLOTS_PER_ROLE = 2;
+
+function fixedDshPort(config) {
+  if (!config?.baseUrl || config.recovery?.dshInstance) return null;
+  try {
+    return new URL(localDshUrl(config.baseUrl)).port || null;
+  } catch {
+    return null;
+  }
+}
 export class BackendConnections {
   constructor(runtime, { discover = discoverDshInstances } = {}) {
     this.runtime = runtime;
@@ -62,6 +73,8 @@ export class BackendConnections {
     this.operations = new Map();
     this.blocked = new Set();
     this.drainingContexts = new Set();
+    this.functionalBackendLeases = new Set();
+    this.functionalBackendQuarantinedPorts = new Set();
   }
   config(id) {
     const b = this.runtime.config.backends.find((x) => x.id === id);
@@ -142,6 +155,100 @@ export class BackendConnections {
       };
     }
     return b;
+  }
+  acquireFunctionalBackend(role, definition) {
+    const r = this.runtime,
+      parentBackendId = role.backendId,
+      backendId = definition.backendId,
+      config = r.config.backends.find((item) => item.id === backendId);
+    if (!config) throw Error("FUNCTIONAL_AGENT_BACKEND_UNAVAILABLE");
+    if (
+      config.type !== "dsh" ||
+      config.preset !== "qq-unified" ||
+      config.functionalAgentOnly !== true ||
+      r.config.agents.some((agent) => agent.backendId === backendId)
+    )
+      throw Error("FUNCTIONAL_AGENT_BACKEND_UNSUPPORTED");
+    if (
+      r.closed ||
+      r.configChanging ||
+      this.blocked.has(role.id) ||
+      this.operations.has(parentBackendId) ||
+      this.operations.has(backendId)
+    )
+      throw Error("FUNCTIONAL_AGENT_BACKEND_UNAVAILABLE");
+    const state = this.states.get(backendId);
+    if (
+      state &&
+      !["ready", "unchecked"].includes(state.state) &&
+      state.error !== "BACKEND_NO_AGENTS"
+    )
+      throw Error("FUNCTIONAL_AGENT_BACKEND_UNAVAILABLE");
+    if (
+      [...this.functionalBackendLeases].filter(
+        (lease) => lease.roleId === role.id,
+      ).length >= FUNCTIONAL_SLOTS_PER_ROLE
+    )
+      throw Error("FUNCTIONAL_AGENT_BUSY");
+
+    // DSH also updates the profile-wide default when it selects a model.
+    // An unresolved ordinary route could pick the dedicated endpoint.
+    const port = fixedDshPort(config);
+    if (
+      !port ||
+      this.functionalBackendQuarantinedPorts.has(port) ||
+      r.config.backends.some((item) => {
+        if (item.type !== "dsh" || item.functionalAgentOnly) return false;
+        const ordinary = fixedDshPort(item);
+        return !ordinary || ordinary === port;
+      })
+    )
+      throw Error("FUNCTIONAL_AGENT_BACKEND_UNAVAILABLE");
+    const modelSelection = Object.freeze({
+      provider: definition.provider ?? config.provider,
+      model: definition.model ?? config.model,
+      effort: definition.effort ?? config.effort,
+    });
+    if (!modelSelection.model || !modelSelection.provider)
+      throw Error("FUNCTIONAL_AGENT_BACKEND_UNAVAILABLE");
+    let backend;
+    try {
+      backend = r.backendFactory(
+        { ...config, toolServers: [] },
+        { ...role, backendId },
+      );
+    } catch (cause) {
+      throw Error("FUNCTIONAL_AGENT_BACKEND_UNAVAILABLE", { cause });
+    }
+    const { promise: done, resolve } = Promise.withResolvers();
+    const lease = { roleId: role.id, backendId, parentBackendId, done };
+    this.functionalBackendLeases.add(lease);
+    let closing;
+    return {
+      backend,
+      modelSelection,
+      // The caller holds this lease until the native invocation settles. An
+      // dedicated adapter never replaces or closes the role's ordinary adapter.
+      release: () =>
+        (closing ??= Promise.resolve()
+          .then(() => {
+            if (backend.functionalSessionUnverified)
+              this.functionalBackendQuarantinedPorts.add(port);
+            return backend.close?.();
+          })
+          .catch((cause) => {
+            throw Error("FUNCTIONAL_AGENT_BACKEND_UNAVAILABLE", { cause });
+          })
+          .finally(() => {
+            this.functionalBackendLeases.delete(lease);
+            resolve();
+          })),
+    };
+  }
+  functionalBackendWork(id) {
+    return [...this.functionalBackendLeases.values()]
+      .filter((lease) => lease.backendId === id || lease.parentBackendId === id)
+      .map((lease) => lease.done);
   }
   failed(id, error) {
     const s = this.state(id),
@@ -237,11 +344,24 @@ export class BackendConnections {
             { automatic },
           );
         else if (candidateId) throw Error("BACKEND_RECOVERY_FAILED");
+        if (selected) {
+          const selectedPort = fixedDshPort({ baseUrl: selected.url });
+          if (
+            selectedPort &&
+            r.config.backends.some(
+              (item) =>
+                item.functionalAgentOnly === true &&
+                fixedDshPort(item) === selectedPort,
+            )
+          )
+            throw Error("DSH_SELECTION_REQUIRED");
+        }
         if (
           automatic &&
           (r.config.globalPaused ||
             r.closed ||
             agents.every((a) => r.agent(a.id).paused) ||
+            this.functionalBackendWork(id).length > 0 ||
             [...r.capabilities.values()].some((ctx) =>
               agents.some((a) => a.id === ctx.agentId),
             ))
@@ -256,9 +376,10 @@ export class BackendConnections {
           ...new Set([...r.capabilities.values(), ...r.running.values()]),
         ].filter((ctx) => agents.some((a) => a.id === ctx.agentId));
         for (const ctx of contexts) this.drainingContexts.add(ctx);
-        const pending = new Set(
-          contexts.filter((ctx) => ctx.done).map((ctx) => ctx.done),
-        );
+        const pending = new Set([
+          ...contexts.filter((ctx) => ctx.done).map((ctx) => ctx.done),
+          ...this.functionalBackendWork(id),
+        ]);
         for (const promise of pending) {
           const finished = () => pending.delete(promise);
           promise.then(finished, finished);
@@ -385,6 +506,7 @@ export class BackendConnections {
       } else if (now >= (s.nextRetryAt || 0)) {
         // A live turn is never interrupted by the automatic health monitor.
         if (
+          this.functionalBackendWork(config.id).length > 0 ||
           [...r.capabilities.values()].some((ctx) =>
             this.agents(config.id).some((a) => a.id === ctx.agentId),
           )
@@ -400,8 +522,9 @@ export class BackendConnections {
     }
   }
   async drain() {
-    await Promise.allSettled(
-      [...this.operations.values()].map((x) => x.promise),
-    );
+    await Promise.allSettled([
+      ...[...this.operations.values()].map((x) => x.promise),
+      ...[...this.functionalBackendLeases.values()].map((x) => x.done),
+    ]);
   }
 }
