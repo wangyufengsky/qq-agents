@@ -86,6 +86,18 @@ test("dedicated DSH leases isolate ordinary adapters and bound capacity per role
     assert.equal(backend.config.model, "role-model");
     assert.equal(runtime.backends.get(role.id), backend);
     assert.equal(created.length, 4);
+    runtime.config.backends.push({
+      ...lease.backend.config,
+      id: "alternate-alias",
+      baseUrl: "http://127.0.0.1:23231",
+    });
+    assert.throws(
+      () =>
+        connections.acquireFunctionalBackend(peer, {
+          backendId: "alternate-alias",
+        }),
+      /FUNCTIONAL_AGENT_BUSY/,
+    );
     assert.throws(
       () =>
         connections.acquireFunctionalBackend(role, { backendId: "alternate" }),
