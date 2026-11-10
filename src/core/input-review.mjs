@@ -399,15 +399,42 @@ export function inputDisposition(runtime, ctx, ref) {
 }
 
 /** @param {any} runtime @param {any} ctx */
-export function focusedGroupReplyEnabled(runtime, ctx) {
-  return (
-    ctx.conversation.startsWith("group:") &&
-    isPrivateLikeGroup(runtime.config, ctx.conversation) &&
-    runtime.agent(ctx.agentId).behavior.focusedGroupReply === true &&
-    ctx.allowedTools?.includes("qq_send") &&
-    !ctx.activeIntentId &&
-    !ctx.scheduleRunId
-  );
+export function focusedGroupReplyMode(runtime, ctx) {
+  if (
+    !ctx.conversation.startsWith("group:") ||
+    !ctx.allowedTools?.includes("qq_send") ||
+    ctx.activeIntentId ||
+    ctx.scheduleRunId
+  )
+    return null;
+  const { behavior } = runtime.agent(ctx.agentId);
+  if (isPrivateLikeGroup(runtime.config, ctx.conversation))
+    return behavior.focusedGroupReply === true ? "private-like" : null;
+  return behavior.focusedGroupMentionReply === true ? "mention" : null;
+}
+
+/** @param {any} runtime @param {any} ctx @param {string} id */
+export function focusedReplyInput(runtime, ctx, id) {
+  const mode = focusedGroupReplyMode(runtime, ctx);
+  if (!mode) return null;
+  const row = liveInput(runtime, ctx.agentId, ctx.conversation, id);
+  if (!row?.message_id) return null;
+  if (mode === "mention") {
+    // Text that looks like an @ is not a gateway mention of this account.
+    const { segments } = JSON.parse(row.payload);
+    const { accountId } = runtime.connection(
+      runtime.agent(ctx.agentId).connectionId,
+    );
+    if (
+      !Array.isArray(segments) ||
+      !segments.some(
+        (segment) =>
+          segment?.type === "at" && String(segment.data?.qq) === accountId,
+      )
+    )
+      return null;
+  }
+  return row;
 }
 
 /** @param {string} toolName @param {any} input */
@@ -446,10 +473,8 @@ export function snapshotReviewInput(runtime, ctx, baseline, replyEventId) {
   const { db, scope, state } = inputs(runtime, ctx);
   const boundary = recallBoundary(runtime, ctx);
   const focus =
-    replyEventId &&
-    replyEventId === ctx.focusedReplyId &&
-    focusedGroupReplyEnabled(runtime, ctx)
-      ? liveInput(runtime, ctx.agentId, ctx.conversation, replyEventId)
+    replyEventId && replyEventId === ctx.focusedReplyId
+      ? focusedReplyInput(runtime, ctx, replyEventId)
       : null;
   const related = new Set(focus ? [focus.id] : []);
   const keep = [
@@ -526,9 +551,10 @@ function snapshotDigest(snapshot) {
   );
 }
 
-/** @param {any} runtime @param {any} ctx */
-function allowsExclusion(runtime, ctx) {
+/** @param {any} runtime @param {any} ctx @param {string|null} [focus] */
+function allowsExclusion(runtime, ctx, focus = null) {
   return (
+    !focus &&
     ctx.conversation.startsWith("group:") &&
     !isPrivateLikeGroup(runtime.config, ctx.conversation)
   );
@@ -586,7 +612,8 @@ function grantMismatch(runtime, ctx, grant, binding) {
     !isDeepStrictEqual(grant.binding.baseline, binding.baseline)
   )
     return "DRAFT_CHANGED";
-  if (grant.policy !== allowsExclusion(runtime, ctx)) return "POLICY_CHANGED";
+  if (grant.policy !== allowsExclusion(runtime, ctx, grant.snapshot.focus))
+    return "POLICY_CHANGED";
   if (grant.groupRecall !== JSON.stringify(ctx.currentGroupRecall?.()))
     return "GROUP_RECALL_CHANGED";
   const current = snapshotReviewInput(
@@ -636,7 +663,7 @@ function draftGrant(runtime, ctx, binding, snapshot, groupRecall) {
     snapshot,
     generations,
     generation: generations.get(binding.draftId) ?? 0,
-    policy: allowsExclusion(runtime, ctx),
+    policy: allowsExclusion(runtime, ctx, snapshot.focus),
     checkpoint: binding.checkpoint,
     groupRecall,
   };
@@ -843,9 +870,13 @@ export function prepareDraftReview(
         : {}),
       hint: candidateToken
         ? `${shown.items.length ? "已附审阅材料。" : "没有新增待展示材料。"}待你决定是否提交当前草稿。决定发送时，用 qq_draft continue 和本次 token 提交当前版本。`
-        : inline && remaining.length && shown.proofs.size
-          ? "本页已附部分原文。用同一草稿的 qq_draft prepare 继续；若一页没有原文，按 missing 中的入口补读。"
-          : "草稿等待补读。按 missing 的入口读齐后，用 qq_draft prepare 核对当前版本。",
+        : shown.proofs.size
+          ? "本页已附部分原文。用同一草稿的 qq_draft prepare 分批补读；没有附原文时，再看 missing 的续读入口。"
+          : !snapshot.focus &&
+              remaining.length > 1 &&
+              ctx.allowedTools?.includes("conversation_read")
+            ? "积压可用 conversation_read 分页，从 missing 第一项的 seq 前一位开始，按 nextAfterSeq 顺序续读。单条超长原文用 missing 的入口。读完再用 qq_draft prepare。"
+            : "按 missing 的入口续读未附上的原文，再用 qq_draft prepare 核对当前版本。",
       pendingDecision: snapshot.items.length,
       ...(binding.checkpoint
         ? { readThroughSeq: binding.checkpoint.throughSeq }

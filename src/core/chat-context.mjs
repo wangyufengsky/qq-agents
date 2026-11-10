@@ -206,7 +206,7 @@ export function chatStatus(runtime, ctx, history, handoff, compact = false) {
     )
   )
     lines.push(
-      "发送返回草稿时，先看 preparation。needs_input 按入口补齐原文，再用 qq_draft prepare 核对当前版本。ready 后自行决定，可修改或放弃，也可带 inputReview={token,decision:'continue'} 提交。普通群仅对确实无关的输入按记录 ID 给出原因。审阅和已读分别提交。",
+      "发送返回草稿时，先看 preparation。needs_input 按 hint 分批补齐原文，再核对当前草稿版本。ready 后自行决定，可修改或放弃，也可带 inputReview={token,decision:'continue'} 提交。普通群仅对确实无关的输入按记录 ID 给出原因。审阅和已读分别提交。",
     );
   const incomplete = history.items.filter(
     (x) => x.bodyTruncated || x.summaryOmitted,

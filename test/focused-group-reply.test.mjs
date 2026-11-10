@@ -1,20 +1,30 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { config, fixture, raw } from "./helpers.mjs";
+import { config, fixture, raw, settle } from "./helpers.mjs";
 
-async function group(t, run, enabled = true) {
+async function group(
+  t,
+  run,
+  {
+    privateLike = true,
+    enabled = true,
+    mentionEnabled = false,
+    backlog = 41,
+  } = {},
+) {
   const cfg = config(1);
-  cfg.privateLikeGroups = ["20000"];
+  cfg.privateLikeGroups = privateLike ? ["20000"] : [];
   Object.assign(cfg.agents[0].wake, {
     private: false,
     participation: 0,
     names: false,
   });
   cfg.agents[0].behavior.focusedGroupReply = enabled;
+  cfg.agents[0].behavior.focusedGroupMentionReply = mentionEnabled;
   const f = fixture(t, { cfg, run });
   const ingest = (id, message) =>
     f.runtime.ingest("qq-0", raw(id, { message }));
-  for (let id = 1; id < 42; id++) await ingest(id, "合成积压消息");
+  for (let id = 0; id < backlog; id++) await ingest(100 + id, "合成积压消息");
   await ingest(42, "当前来信");
   const memory = f.store.bind("agent-0");
   const source = memory.db
@@ -27,7 +37,9 @@ async function group(t, run, enabled = true) {
     memory,
     wake: () =>
       f.runtime.wake("agent-0", "group:20000", {
-        reasons: [{ reason: "private", seq: source.seq }],
+        reasons: [
+          { reason: privateLike ? "private" : "message", seq: source.seq },
+        ],
       }),
     sent: () => f.runtime.transports.get("qq-0").sent,
     reviewed: () =>
@@ -100,7 +112,7 @@ test("disabled focused replies still require review of the whole pending convers
     async ({ callTool }) => {
       result = await callTool("qq_send", reply);
     },
-    false,
+    { enabled: false },
   );
   await f.wake();
   assert.equal(result?.actionResult, "not_sent");
@@ -111,7 +123,7 @@ test("disabled focused replies still require review of the whole pending convers
 test("quoting an old message uses the ordinary review scope", async (t) => {
   let result;
   const f = await group(t, async ({ callTool }) => {
-    result = await callTool("qq_send", { ...reply, replyTo: "1" });
+    result = await callTool("qq_send", { ...reply, replyTo: "100" });
   });
   await f.wake();
   assert.equal(result?.actionResult, "not_sent");
@@ -167,4 +179,96 @@ test("a recalled follow-up must be shown before its draft can be confirmed again
   );
   assert.equal(result?.actionResult, "sent");
   assert.equal(f.sent().length, 1);
+});
+
+const mentioned = (id) => [
+  { type: "at", data: { qq: id } },
+  { type: "text", data: { text: "请答这条合成提问" } },
+];
+
+test("a direct mention in an ordinary group can be quoted ahead of hundreds of old messages", async (t) => {
+  let result, prompt;
+  const f = await group(
+    t,
+    async (p) => {
+      prompt = p.prompt;
+      await f.ingest(301, "同时出现的不相关群消息");
+      result = await p.callTool("qq_send", { ...reply, replyTo: "300" });
+    },
+    { privateLike: false, enabled: false, mentionEnabled: true, backlog: 200 },
+  );
+  await f.ingest(300, mentioned("10000"));
+  await settle(f.runtime);
+  assert.equal(result?.actionResult, "sent");
+  assert.match(prompt, /replyTo="300"/);
+  assert.deepEqual(f.reviewed(), ["300"]);
+  assert.equal(f.memory.state("group:20000").readThroughSeq || 0, 0);
+  assert.deepEqual(f.sent()[0].segments[0], {
+    type: "reply",
+    data: { id: "300" },
+  });
+});
+
+for (const [name, mentionEnabled, target, quote] of [
+  ["a disabled policy", false, "10000", "300"],
+  ["a mention of another account", true, "10001", "300"],
+  ["an at-all mention", true, "all", "300"],
+  ["a send without a quote", true, "10000", undefined],
+  ["a quote of old input", true, "10000", "100"],
+]) {
+  test(`an ordinary group keeps whole-chat review for ${name}`, async (t) => {
+    let result;
+    const f = await group(
+      t,
+      async ({ callTool }) => {
+        result = await callTool("qq_send", { ...reply, replyTo: quote });
+      },
+      { privateLike: false, mentionEnabled },
+    );
+    await f.ingest(300, mentioned(target));
+    if (target !== "10000") {
+      const { seq } = f.memory.db
+        .prepare("SELECT seq FROM events WHERE message_id='300'")
+        .get();
+      await f.runtime.wake("agent-0", "group:20000", {
+        reasons: [{ reason: "mention", seq }],
+      });
+    }
+    await settle(f.runtime);
+    assert.equal(result?.actionResult, "not_sent");
+    assert(result.preparation.pendingDecision > 1);
+    assert.equal(f.sent().length, 0);
+  });
+}
+
+test("ordinary draft review guides and delivers batches of pending originals", async (t) => {
+  let pages;
+  const f = await group(
+    t,
+    async ({ callTool }) => {
+      const first = await callTool("qq_send", {
+        requestId: "batch-review",
+        text: "合成回复",
+      });
+      pages = [first.preparation];
+      const { draftId, version } = first.draft;
+      for (let i = 0; i < 10 && pages.at(-1).state === "needs_input"; i++) {
+        const next = await callTool("qq_draft", {
+          action: "prepare",
+          draftId,
+          expectedVersion: version,
+        });
+        pages.push(next.preparation);
+      }
+    },
+    { privateLike: false, backlog: 99 },
+  );
+  await f.wake();
+  assert.equal(pages[0].state, "needs_input");
+  assert.match(pages[0].hint, /qq_draft prepare.*分批/);
+  assert(pages[0].items.length > 1);
+  assert.equal(pages.at(-1).state, "ready");
+  assert(pages.length < 10);
+  assert.equal(f.sent().length, 0);
+  assert.equal(f.memory.state("group:20000").readThroughSeq || 0, 0);
 });
