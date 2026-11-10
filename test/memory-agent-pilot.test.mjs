@@ -200,6 +200,27 @@ test("an opening deadline lets ordinary QQ continue and records no presented evi
   assert.equal(turn.memoryRecall.opening.presented, 0);
 });
 
+test("pilot opening timeout accepts six seconds while the default stays four", () => {
+  const cfg = pilotConfig();
+  const pilot = cfg.agents[0].functionalAgents.memory.pilot;
+  assert.equal(
+    validateConfig(cfg).agents[0].functionalAgents.memory.pilot
+      .openingTimeoutMs,
+    4000,
+  );
+  pilot.openingTimeoutMs = 6000;
+  assert.equal(
+    validateConfig(cfg).agents[0].functionalAgents.memory.pilot
+      .openingTimeoutMs,
+    6000,
+  );
+  pilot.openingTimeoutMs = 6001;
+  assert.throws(
+    () => validateConfig(cfg),
+    (error) => error.issues?.[0]?.maximum === 6000,
+  );
+});
+
 test("pilot configuration does not authorize an unlisted group", () => {
   const cfg = pilotConfig();
   cfg.agents[0].functionalAgents.memory.pilot.groups.push("20002");
@@ -623,4 +644,41 @@ test("the worker receives only its eligible pilot scope and picks up new history
   assert.equal(writes.length, 2);
   assert.equal(writes[0].scope, writes[1].scope);
   assert.equal(starts, 1);
+});
+
+test("semantic recall shows the tenth candidate and stops at ten", async (t) => {
+  const hits = [];
+  let reviews = 0;
+  const cfg = enableSemanticPilot();
+  cfg.agents[0].functionalAgents.memory.effort = "off";
+  const f = setup(
+    t,
+    async (p) => {
+      if (!p.modelSelection) return;
+      reviews++;
+      assert.equal(p.modelSelection.effort, "off");
+      const { candidates } = JSON.parse(p.prompt.split("任务资料：\n")[1]);
+      assert.deepEqual(
+        candidates.map(({ id }) => id),
+        hits.slice(0, 10).map(({ id }) => id),
+      );
+      await p.callTool("functional_agent_result", {
+        evidenceIds: [hits[9].id],
+      });
+    },
+    cfg,
+  );
+  for (let i = 1; i <= 12; i++) {
+    const body = `石碑的刻字是第${i}号标记`;
+    const { id } = await f.add(i, body, 20000, 30000, 1799990000 + i);
+    hits.push({ id, digest: semanticDigest(body) });
+  }
+  f.runtime.semanticRecall.search = async () => ({
+    status: "ready",
+    hits,
+    waitMs: 4,
+  });
+  const turn = await f.turn(await f.add(13, "游客可以进入建筑吗？"));
+  assert.equal(reviews, 1);
+  assert.equal(memoryRecallDiagnostic(turn).opening.presented, 1);
 });

@@ -71,6 +71,7 @@ const FAMILIARITY_GENERIC = new Set([
 ]);
 const INTERJECTION = /^[哈喵嘿呵嘻嚯嗷呀哎诶唉呃额嗯哦噢哇欸呜啊]+$/u;
 const SEMANTIC_WAIT_MS = 150;
+const MAX_RECALL_CANDIDATES = 10;
 const FAMILIARITY_WINDOW = 256;
 const FAMILIARITY_MARKS = 512;
 const RECENT_CHAT_MS = 10 * 60_000;
@@ -388,7 +389,7 @@ function familiarityCandidates(runtime, ctx, cues, known, beforeSeq, to) {
       break;
     }
   }
-  return [...historical.values(), ...local.values()].slice(0, 5);
+  return [...historical.values(), ...local.values()];
 }
 
 function semanticCandidates(runtime, ctx, hits, known, beforeSeq, to) {
@@ -411,7 +412,7 @@ function mergeCandidates(lexical, semantic) {
   for (let i = 0; i < Math.max(lexical.length, semantic.length); i++)
     for (const candidate of [lexical[i], semantic[i]])
       if (candidate) unique.set(candidate.id, candidate);
-  return [...unique.values()].slice(0, 5);
+  return [...unique.values()].slice(0, MAX_RECALL_CANDIDATES);
 }
 
 function renderFamiliarity(runtime, ctx, verified) {
@@ -519,7 +520,6 @@ function shortlist(runtime, ctx, cues, cue, beforeSeq) {
   }
   return [...entries.values()]
     .sort((a, b) => b.score - a.score || b.seq - a.seq)
-    .slice(0, 5)
     .map(({ id, body }) => ({ id, body }));
 }
 
