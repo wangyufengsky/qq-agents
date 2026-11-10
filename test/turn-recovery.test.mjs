@@ -429,6 +429,45 @@ test("DSH waits for an accepted QQ send to settle after recovering the terminal"
   assert.equal(f.client.prompts.length, 1);
 });
 
+test("DSH matching native input cancels the evidence deadline after losing the HTTP receipt", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const received = Promise.withResolvers();
+  const f = setup(t, "dsh");
+  f.client.sessions.prompt = async (request) => {
+    received.resolve(request.content);
+    throw TypeError("fixture HTTP connection lost");
+  };
+  const wake = f.runtime.wake("agent-0", chat);
+  const content = await received.promise;
+  const ctx = f.ctx();
+  await new Promise((resolve) => setImmediate(resolve));
+  f.client.push({
+    type: "session/event",
+    event: { type: "turn/start", data: { turn: "original" } },
+  });
+  f.client.push({
+    type: "session/event",
+    event: {
+      type: "user/message",
+      data: { source: { kind: "user" }, content },
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  t.mock.timers.tick(10001);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(f.runtime.capability(ctx.token), ctx);
+  assert.equal(ctx.backendInputEpoch, ctx.inputEpoch);
+  f.client.push({
+    type: "session/event",
+    event: {
+      type: "turn/end",
+      data: { turn: "original", reason: { kind: "completed" } },
+    },
+  });
+  assert.equal((await wake).status, "completed-no-send");
+  assert.equal(f.m.identity.list("session_history").length, 0);
+});
+
 test("DSH transport failure continues a verified native turn without repeating QQ delivery", async (t) => {
   let f, originalCapability;
   f = setup(t, "dsh", {

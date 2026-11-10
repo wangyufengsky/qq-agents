@@ -249,8 +249,15 @@ export class DshBackend {
         const open =
           last?.type === "turn/start" ? String(last.data.turn) : null;
         t.observedTurn = open && !t.previousTurns.has(open) ? open : null;
-        if (!t.turn)
-          t.bindTurn(dshTurnForInput(p.snapshot, t.inputText, t.previousTurns));
+        if (!t.turn || !t.inputSubmitted) {
+          const inputTurn = dshTurnForInput(
+            p.snapshot,
+            t.inputText,
+            t.previousTurns,
+          );
+          if (!t.turn) t.bindTurn(inputTurn);
+          if (inputTurn && t.turn === inputTurn) t.submitInput();
+        }
         if (!t.turn) continue;
         const terminal = p.snapshot?.records?.find(
           (/** @type {any} */ { event }) =>
@@ -293,9 +300,12 @@ export class DshBackend {
         t.observedTurn = t.previousTurns.has(id) ? null : id;
         if (!t.turn && !t.interrupted) t.bindTurn(t.observedTurn);
       }
-      if (!t.turn && t.observedTurn && dshInputMatches(e, t.inputText)) {
-        t.bindTurn(t.observedTurn);
-        t.reattached();
+      if (t.observedTurn && dshInputMatches(e, t.inputText)) {
+        if (!t.turn) t.bindTurn(t.observedTurn);
+        if (t.turn === t.observedTurn) {
+          t.submitInput();
+          t.reattached();
+        }
       }
       if (e.type === "turn/end") {
         const id = String(e.data.turn);
