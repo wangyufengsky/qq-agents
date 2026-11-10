@@ -8,6 +8,7 @@ import http from "node:http";
 import { createHash, randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import crossSpawn from "cross-spawn";
+import { z } from "zod";
 import { execFileSync } from "node:child_process";
 import { buildChildEnv } from "../core/child-env.mjs";
 import { sanitizeBackendDiagnostic } from "../core/session-records.mjs";
@@ -31,6 +32,56 @@ import { AntigravityStreamWorker } from "./antigravity-stream.mjs";
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 const here = path.dirname(fileURLToPath(import.meta.url));
 const MAX_OUTPUT = 16 * 1024 * 1024;
+const acpReplyName = "qq_reply_call";
+const acpReplyActions = new Set(["qq_send", "qq_send_burst", "qq_draft"]);
+const acpEagerTools = new Set([
+  acpReplyName,
+  "conversation_read",
+  "qq_delivery_status",
+]);
+
+/** @param {Set<string>} names */
+function acpReplyTool(names) {
+  const actions = [...names].filter((name) => acpReplyActions.has(name));
+  if (!actions.length) return null;
+  return {
+    name: acpReplyName,
+    description:
+      "Run an allowed QQ text or draft action. Use its logical name and serialize its original argument object as argumentsJson. Delivery and draft checks still apply.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", enum: actions },
+        argumentsJson: { type: "string" },
+      },
+      required: ["name", "argumentsJson"],
+      additionalProperties: false,
+    },
+  };
+}
+
+const acpReplyEnvelope = z
+  .object({
+    name: z.string(),
+    argumentsJson: z
+      .string()
+      .transform((text, ctx) => {
+        try {
+          return JSON.parse(text);
+        } catch {
+          ctx.addIssue({ code: "custom", message: "Expected a JSON object" });
+          return z.NEVER;
+        }
+      })
+      .pipe(z.record(z.string(), z.unknown())),
+  })
+  .strict();
+
+const genericMcpGuide =
+  'Call call_mcp_tool with ServerName="qq-agents", ToolName equal to an allowed name, and Arguments matching that tool\'s JSON schema below. ';
+const acpMcpGuide =
+  'For qq_send, qq_send_burst, or qq_draft, use mcp_qq-agents_qq_reply_call if listed. Pass the logical tool name as name and serialize its original argument object as argumentsJson. For other actions, use the native MCP tool if it is listed for this turn. Otherwise, if call_mcp_tool is available, use ServerName="qq-agents", the logical ToolName, and Arguments matching the schema below. ';
+
 /** Headless result usage is cumulative; only a completed model-response step
  * describes the latest request. Cache reads are excluded from input_tokens.
  * @param {any} usage */
@@ -475,6 +526,8 @@ export class AntigravityBackend {
     const names = new Set(
       reuse ? ["qq_turn_call"] : params.tools.map((tool) => tool.name),
     );
+    if (this.config.cliProtocol === "acp" && acpReplyTool(names))
+      names.add(acpReplyName);
     let hook = [process.execPath, path.join(here, "antigravity-guard.mjs")]
       .map((v) => antigravityShellQuote(v))
       .join(" ");
@@ -509,6 +562,17 @@ export class AntigravityBackend {
             command: process.execPath,
             args: [path.join(here, "antigravity-mcp.mjs")],
             enabledTools: [...names],
+            // ACP can switch between lazy and native routes across sessions.
+            // Register the reply path before generation using the same allowlist.
+            ...(this.config.cliProtocol === "acp"
+              ? {
+                  tools: Object.fromEntries(
+                    [...names]
+                      .filter((name) => acpEagerTools.has(name))
+                      .map((name) => [name, { eager: true }]),
+                  ),
+                }
+              : {}),
             timeoutSeconds: 660,
           },
         },
@@ -525,7 +589,7 @@ export class AntigravityBackend {
     )
       managedFile(
         agentFile,
-        `---\nname: qq-agents\ndescription: QQ Agents restricted role\nmainAgent: true\nsubagent: false\ntools:\n  - finish\n  - view_file\nenable_mcp_tools: true\ncommandExecutionPolicy: off\n---\n${params.instructions || ""}\n\n${routing}Use the qq-agents MCP tools for actions. ${reuse ? "" : 'Call call_mcp_tool with ServerName="qq-agents", ToolName equal to an allowed name, and Arguments matching that tool\'s JSON schema below. '}Do not guess parameter names or read framework source to discover arguments. The current chat and authorization are bound by the bridge; never add target, chatId or context fields unless the schema requires them. Ordinary assistant text is never delivered to QQ. Only native read_file (Path) or legacy view_file (AbsolutePath) on the exact image paths returned by an authorized tool in the CURRENT turn is allowed. Always call the native image reader before describing those pixels; MCP path text is not visual evidence. Never read other files or reuse a previous turn image path; request the original bridge tool again. No native task, filesystem writes, shell, browser, scheduling or subagent actions are authorized.\n\nAllowed tool argument schemas keyed by ToolName (required fields and additionalProperties are binding):\n${JSON.stringify(Object.fromEntries(params.tools.map(({ name, inputSchema }) => [name, antigravitySchemaContract(inputSchema)])))}\n`,
+        `---\nname: qq-agents\ndescription: QQ Agents restricted role\nmainAgent: true\nsubagent: false\ntools:\n  - finish\n  - view_file\nenable_mcp_tools: true\ncommandExecutionPolicy: off\n---\n${params.instructions || ""}\n\n${routing}Use the qq-agents MCP tools for actions. ${reuse ? "" : genericMcpGuide}Do not guess parameter names or read framework source to discover arguments. The current chat and authorization are bound by the bridge; never add target, chatId or context fields unless the schema requires them. Ordinary assistant text is never delivered to QQ. Only native read_file (Path) or legacy view_file (AbsolutePath) on the exact image paths returned by an authorized tool in the CURRENT turn is allowed. Always call the native image reader before describing those pixels; MCP path text is not visual evidence. Never read other files or reuse a previous turn image path; request the original bridge tool again. No native task, filesystem writes, shell, browser, scheduling or subagent actions are authorized.\n\nAllowed tool argument schemas keyed by ToolName (required fields and additionalProperties are binding):\n${JSON.stringify(Object.fromEntries(params.tools.map(({ name, inputSchema }) => [name, antigravitySchemaContract(inputSchema)])))}\n`,
       );
     else {
       // Preserve the role instructions while refreshing compatible optional fields.
@@ -578,6 +642,7 @@ export class AntigravityBackend {
         fs
           .readFileSync(agentFile, "utf8")
           .replace("  - view_file\n", "")
+          .replace(genericMcpGuide, acpMcpGuide)
           .replace(
             headless,
             "Authorized MCP image content blocks contain visible pixels. Inspect those pixels directly; never read files to view an image. ",
@@ -881,6 +946,10 @@ export class AntigravityBackend {
       this.config.cliProtocol === "acp",
     );
     const names = new Set(params.tools.map((tool) => tool.name));
+    // Native ACP can drop declarations containing unions. Use a simple
+    // transport envelope for replies and keep the original tool validation.
+    const replyTool =
+      this.config.cliProtocol === "acp" ? acpReplyTool(names) : null;
     const server = http.createServer(async (req, res) => {
       const reply = (
         /** @type {number} */ status,
@@ -903,7 +972,7 @@ export class AntigravityBackend {
       }
       if (req.method === "GET" && req.url === "/catalog")
         return reply(200, {
-          tools: params.tools,
+          tools: replyTool ? [...params.tools, replyTool] : params.tools,
           nativeMcp: this.config.cliProtocol === "acp",
           images: media.catalog(),
         });
@@ -917,10 +986,18 @@ export class AntigravityBackend {
           if (body.length > 1048576) return reply(413, {});
         }
         const value = JSON.parse(body);
+        let { name, arguments: args } = value;
         await inputSubmission;
-        if (!live || params.signal.aborted || !names.has(value.name))
-          return reply(403, {});
-        spec = params.tools.find((tool) => tool.name === value.name);
+        if (!live || params.signal.aborted) return reply(403, {});
+        if (name === acpReplyName) {
+          if (!replyTool) return reply(403, {});
+          const envelope = acpReplyEnvelope.parse(args);
+          if (!acpReplyActions.has(envelope.name)) return reply(403, {});
+          name = envelope.name;
+          args = envelope.argumentsJson;
+        }
+        if (!names.has(name)) return reply(403, {});
+        spec = params.tools.find((tool) => tool.name === name);
         const accepted = Promise.resolve().then(() => {
           if (
             cancelled ||
@@ -928,7 +1005,7 @@ export class AntigravityBackend {
             (!live && !terminalObserved)
           )
             throw Error("ABORTED");
-          return params.callTool(value.name, value.arguments || {});
+          return params.callTool(name, args || {});
         });
         pending.add(accepted);
         let result;
@@ -947,7 +1024,7 @@ export class AntigravityBackend {
               "conversation_read",
               "memory_read",
               "qq_wait_for_messages",
-            ].includes(value.name));
+            ].includes(name));
         const { wire: content, receipt } = await finalizeMcpOutput(
           params,
           result,
