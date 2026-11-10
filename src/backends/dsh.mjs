@@ -245,8 +245,6 @@ export class DshBackend {
           this.capacities.set(p.sessionId, capacity);
         t.followed(p.snapshot);
         if (!t.promptPending) continue;
-        // A new snapshot also follows a single session/follow stream restart.
-        t.interrupted = true;
         const last = lastDshTurnEvent(p.snapshot);
         const open =
           last?.type === "turn/start" ? String(last.data.turn) : null;
@@ -258,8 +256,13 @@ export class DshBackend {
           (/** @type {any} */ { event }) =>
             event?.type === "turn/end" && String(event.data.turn) === t.turn,
         )?.event;
-        if (terminal) t.finish(terminal);
-        else if (t.observedTurn === t.turn) t.reattached();
+        // A snapshot can also be the result of reopening just this follow.
+        // Only matching native evidence proves that the active turn reattached.
+        if (terminal || t.observedTurn === t.turn) {
+          t.interrupted = true;
+          if (terminal) t.finish(terminal);
+          else t.reattached();
+        }
         continue;
       }
       if (p.type !== "session/event") continue;
