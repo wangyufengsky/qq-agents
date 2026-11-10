@@ -400,7 +400,9 @@ export function activityPage(
       endedAt: t.endedAt || null,
       status: t.status,
       ...outcomes,
-      ...(t.memoryRecall && { memoryRecall: memoryRecallDiagnostic(t) }),
+      ...(t.memoryRecall && {
+        memoryRecall: memoryRecallDiagnostic(t, { includeContribution: true }),
+      }),
       tools: calls && {
         total: calls.length,
         failed: calls.filter((c) => !c.ok).length,

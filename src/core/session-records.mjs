@@ -96,7 +96,10 @@ const semanticStatuses = new Set([
   "cancelled",
 ]);
 
-export function memoryRecallDiagnostic(turn) {
+export function memoryRecallDiagnostic(
+  turn,
+  { includeContribution = false } = {},
+) {
   const entries = ["familiarity", "opening", "active"].flatMap((route) => {
     const value = turn?.memoryRecall?.[route];
     if (!recallReasons.has(value?.reason) || !recallStatuses.has(value?.status))
@@ -113,6 +116,13 @@ export function memoryRecallDiagnostic(turn) {
           presented: count(value.presented, 2),
           waitMs: count(value.waitMs, 60000),
           ...(route === "familiarity" && { checked: count(value.checked, 31) }),
+          ...(includeContribution &&
+            value.status === "matched" &&
+            count(value.presented, 2) > 0 &&
+            typeof value.contribution === "string" &&
+            value.contribution.trim() && {
+              contribution: value.contribution.slice(0, 80),
+            }),
           ...(semanticStatuses.has(value.semantic?.status) && {
             semantic: {
               status: value.semantic.status,

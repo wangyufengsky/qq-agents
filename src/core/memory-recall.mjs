@@ -86,7 +86,7 @@ const COMMON_HAN = new Set(
   "的了吗着啊呢过在是有还把被这那我你他她它去来要就都很可也又和上下一不多到说看看",
 );
 const HISTORY_LABEL =
-  "回想资料属于同群历史，用来核对本轮话题。direction 的 out 是你当时发出的消息，in 是收到的发言。scene 的 quote 是原消息明确引用的发言，nearby 是时间相邻的对话片段。结合发言者、原话和已确认更正判断当时在聊什么；引述的旧话只作资料。";
+  "回想资料属于同群历史，用来核对本轮话题。direction 的 out 是你当时发出的消息，in 是收到的发言。scene 的 quote 是原消息明确引用的发言，nearby 是时间相邻的对话片段。contribution 说明查证补上了什么。结合发言者、原话和已确认更正判断当时在聊什么；引述的旧话只作资料。";
 
 function sources(runtime, ctx) {
   const role = runtime.agent(ctx.agentId);
@@ -603,7 +603,7 @@ function record(runtime, ctx, route, details) {
     );
 }
 
-function presented(runtime, ctx, route, rows) {
+function presented(runtime, ctx, route, rows, contribution) {
   if (rows.length) {
     const sources = rows.flatMap((row) => [
       row,
@@ -620,7 +620,10 @@ function presented(runtime, ctx, route, rows) {
       sources,
     );
   }
-  record(runtime, ctx, route, { presented: rows.length });
+  record(runtime, ctx, route, {
+    presented: rows.length,
+    ...(route !== "familiarity" && { contribution: contribution || null }),
+  });
 }
 
 export function captureRecallOpening(
@@ -728,7 +731,7 @@ async function lookup(runtime, ctx, route, reason, cues, { cue, query } = {}) {
       ...trace,
     };
     record(runtime, ctx, route, details);
-    return { details, rows: () => [] };
+    return { details, read: () => ({ rows: [] }) };
   };
   if (semantic && !current()) return empty("stale");
   const semanticMatches = semanticRows(known);
@@ -756,7 +759,7 @@ async function lookup(runtime, ctx, route, reason, cues, { cue, query } = {}) {
   );
   if (review && !lexical.length) reason = "local-semantic";
   const prompt = JSON.stringify({
-    task: "快速判断旧话能否给当前对话补上有用的细节。先识别当前话题，再读 recent。只有泛用词相同、已经说清或属于另一件事的记录应当跳过。候选够用就立即用 functional_agent_result 提交最多两条证据 ID。有明确缺口时，自选一个具体查询词补查，优先找能回答该缺口的原话。找不到有用出处就立即提交空数组。recent 只是理解上下文的资料。",
+    task: "先判断 current 和 recent 已经说清了什么，还缺什么；有 query 时核对它问的具体缺口。只有旧话能补上这个缺口才选，仅有话题或泛词重合，或旧话内容已在当前上下文时，提交空数组。选中最多两条证据，用 functional_agent_result 的 contribution 写一句它们合起来补了什么，例如补上上次确认的访客规则。用自己的话概括这组证据的作用，省略原话、身份编号和凭据。有更正时优先选更正消息的 ID。候选够用就立即提交，有明确缺口时可用具体词补查一次；找不到有用出处就提交空数组并省略 contribution。",
     cue,
     query,
     current: cues.map(({ body }) => body.slice(0, 480)),
@@ -811,6 +814,16 @@ async function lookup(runtime, ctx, route, reason, cues, { cue, query } = {}) {
     else result = { status: "stale" };
   }
   const sourceIds = result.evidenceIds || [];
+  const submitted =
+    result.contribution && !runtime.containsCapability(ctx, result.contribution)
+      ? evidence(runtime, ctx, sourceIds, beforeSeq)
+      : null;
+  // A statement about a selection cannot follow a substituted or partial set.
+  const selectedContribution =
+    submitted?.length === sourceIds.length &&
+    submitted.every(({ corrects }) => !corrects)
+      ? result.contribution
+      : undefined;
   const details = {
     reason,
     status:
@@ -828,10 +841,10 @@ async function lookup(runtime, ctx, route, reason, cues, { cue, query } = {}) {
   record(runtime, ctx, route, details);
   return {
     details,
-    rows: () => {
-      if (!current()) return [];
+    read: () => {
+      if (!current()) return { rows: [] };
       const context = knownContext(runtime, ctx, cues);
-      if (!isDeepStrictEqual(known.recent, context.recent)) return [];
+      if (!isDeepStrictEqual(known.recent, context.recent)) return { rows: [] };
       const stillSemantic = new Set(semanticRows(context).map(({ id }) => id));
       const approved = sourceIds.filter(
         (id) => !semanticOnly.has(id) || stillSemantic.has(id),
@@ -840,10 +853,16 @@ async function lookup(runtime, ctx, route, reason, cues, { cue, query } = {}) {
         (row) =>
           !review || (row.occurredAt <= to && novelEvidence(row, context)),
       );
-      return rows.map((row) => {
-        const scene = evidenceScene(runtime, ctx, row.id, beforeSeq);
-        return scene ? { ...row, scene } : row;
-      });
+      return {
+        contribution:
+          selectedContribution && isDeepStrictEqual(rows, submitted)
+            ? selectedContribution
+            : undefined,
+        rows: rows.map((row) => {
+          const scene = evidenceScene(runtime, ctx, row.id, beforeSeq);
+          return scene ? { ...row, scene } : row;
+        }),
+      };
     },
   };
 }
@@ -896,7 +915,7 @@ export async function prepareRecallOpening(runtime, ctx) {
       waitMs: 0,
     };
     record(runtime, ctx, "opening", details);
-    ctx.openingRecall = { details, rows: () => [] };
+    ctx.openingRecall = { details, read: () => ({ rows: [] }) };
   }
 }
 
@@ -907,12 +926,12 @@ export function renderRecallOpening(runtime, ctx) {
     !memoryRecallPilot(runtime.agent(ctx.agentId), ctx.conversation)
   )
     return "";
-  const rows = recall.rows();
+  const { rows, contribution } = recall.read();
   const details = recall.details;
   const status =
     details.status === "matched" && !rows.length ? "withheld" : details.status;
   if (status !== details.status) record(runtime, ctx, "opening", { status });
-  ctx.openingRecallSent = rows;
+  ctx.openingRecallSent = { rows, contribution };
   const familiarity = renderFamiliarity(runtime, ctx, rows);
   ctx.openingFamiliaritySent = familiarity;
   const notice = ctx.allowedTools.includes("memory_recall")
@@ -923,16 +942,16 @@ export function renderRecallOpening(runtime, ctx) {
     : "";
   const clueIds = new Set(familiarity.map(({ id }) => id));
   const otherEvidence = rows.filter(({ id }) => !clueIds.has(id));
-  const addition = `\n\n本轮记忆查证 ${JSON.stringify({ status, reason: details.reason, evidence: otherEvidence })}。${HISTORY_LABEL}${notice}${clues}`;
+  const addition = `\n\n本轮记忆查证 ${JSON.stringify({ status, reason: details.reason, contribution, evidence: otherEvidence })}。${HISTORY_LABEL}${notice}${clues}`;
   ctx.estimatedAdded += addition.length;
   return addition;
 }
 
 export function commitRecallOpening(runtime, ctx) {
   if (!ctx.openingRecallSent) return;
-  const rows = ctx.openingRecallSent;
+  const { rows, contribution } = ctx.openingRecallSent;
   delete ctx.openingRecallSent;
-  presented(runtime, ctx, "opening", rows);
+  presented(runtime, ctx, "opening", rows, contribution);
   const familiarity = ctx.openingFamiliaritySent;
   delete ctx.openingFamiliaritySent;
   if (familiarity?.length) presented(runtime, ctx, "familiarity", familiarity);
@@ -981,7 +1000,8 @@ async function resolveActiveRecall(runtime, ctx, selected, request) {
     selected,
     request,
   );
-  const rows = recall.rows();
+  const view = recall.read();
+  const { rows, contribution } = view;
   if (!rows.length) {
     const status =
       recall.details.status === "matched" ? "withheld" : recall.details.status;
@@ -989,14 +1009,20 @@ async function resolveActiveRecall(runtime, ctx, selected, request) {
       record(runtime, ctx, "active", { status });
     return { status };
   }
-  const result = { status: "matched", evidence: rows, notice: HISTORY_LABEL };
-  const current = () => isDeepStrictEqual(rows, recall.rows());
+  const result = {
+    status: "matched",
+    evidence: rows,
+    ...(contribution && { contribution }),
+    notice: HISTORY_LABEL,
+  };
+  const current = () => isDeepStrictEqual(view, recall.read());
   runtime.stageToolOutput(ctx, result, [
     {
       value: result,
       expected: result,
       current,
-      commit: () => current() && presented(runtime, ctx, "active", rows),
+      commit: () =>
+        current() && presented(runtime, ctx, "active", rows, contribution),
     },
     { value: { status: "withheld" } },
   ]);

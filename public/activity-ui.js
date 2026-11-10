@@ -338,7 +338,11 @@ function activityEntry(e) {
           : ` · Agent 查证 ${esc(trace.agentMs)} ms`;
       if (trace)
         parts.push(
-          `<p class="hint">记忆 Agent · ${label} · ${esc(reasons[trace.reason] || "")} · ${esc(statuses[trace.status] || "")}${kind === "familiarity" ? ` · 检查 ${esc(trace.checked)} 条消息` : ""} · ${kind === "familiarity" ? "本地候选" : "命中"} ${esc(trace.matched)} 条 · 交给模型 ${esc(trace.presented)} 条 · ${kind === "familiarity" ? "耗时" : "等待"} ${esc(trace.waitMs)} ms${semantic}${agent}</p>`,
+          `<p class="hint">记忆 Agent · ${label} · ${esc(reasons[trace.reason] || "")} · ${esc(trace.status === "empty" && kind !== "familiarity" ? "无新增信息" : statuses[trace.status] || "")}${kind === "familiarity" ? ` · 检查 ${esc(trace.checked)} 条消息` : ""} · ${kind === "familiarity" ? "本地候选" : "命中"} ${esc(trace.matched)} 条 · 交给模型 ${esc(trace.presented)} 条 · ${kind === "familiarity" ? "耗时" : "等待"} ${esc(trace.waitMs)} ms${semantic}${agent}</p>`,
+        );
+      if (trace?.contribution)
+        parts.push(
+          `<p class="hint">${label}补充的信息 · ${esc(trace.contribution)}</p>`,
         );
     }
   }

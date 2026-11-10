@@ -93,10 +93,16 @@ test("native delegation uses same-scope evidence, isolated permissions and no ch
         /FUNCTIONAL_AGENT_TOOL_BUDGET/,
       );
       await assert.rejects(
-        callTool("functional_agent_result", { evidenceIds: [other.id] }),
+        callTool("functional_agent_result", {
+          evidenceIds: [other.id],
+          contribution: "核对了上次的安排。",
+        }),
         /RECALL_SOURCE_NOT_ALLOWED/,
       );
-      await callTool("functional_agent_result", { evidenceIds: [same.id] });
+      await callTool("functional_agent_result", {
+        evidenceIds: [same.id],
+        contribution: "核对了上次的安排。",
+      });
     },
   });
   const memory = f.store.bind("agent-0");
@@ -186,6 +192,7 @@ test("delegated reads exclude nested cross-chat annotations and restricted match
         assert.equal(related.items[0].links[0].toId, visible.id);
         await callTool("functional_agent_result", {
           evidenceIds: [visible.id],
+          contribution: "补上了原话的出处。",
         });
       } catch (error) {
         bridgeFailure = error;
