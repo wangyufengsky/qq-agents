@@ -6,7 +6,7 @@
 
 ## 未发布
 
-### 修复 Antigravity ACP 续接后的工具选择
+### 修复 Antigravity ACP 续接后的工具选择（[#229](https://github.com/wangyufengsky/qq-agents/pull/229)）
 
 - 续接时根据本轮实际提供的工具选择调用入口。原生别名缺失或在执行前被拒为未知工具时，可经已提供的 `call_mcp_tool` 调用同一个桥接工具。沿用现有会话、工具授权和投递账本，投递状态未知时先核对回执。
 
