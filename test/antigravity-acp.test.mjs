@@ -238,13 +238,12 @@ test("ACP pre-registers the permitted reply tools in the native catalogue", asyn
     const server = JSON.parse(
       fs.readFileSync(path.join(custom, "mcp_config.json"), "utf8"),
     ).mcpServers["qq-agents"];
-    assert.deepEqual(
-      server.enabledTools,
-      params.tools.map(({ name }) => name),
-    );
+    assert.deepEqual(server.enabledTools, [
+      ...params.tools.map(({ name }) => name),
+      "qq_reply_call",
+    ]);
     assert.deepEqual(server.tools, {
-      qq_send: { eager: true },
-      qq_draft: { eager: true },
+      qq_reply_call: { eager: true },
       qq_delivery_status: { eager: true },
     });
     const guide = fs.readFileSync(path.join(agents, "qq-agents.md"), "utf8");
@@ -252,6 +251,7 @@ test("ACP pre-registers the permitted reply tools in the native catalogue", asyn
       guide,
       /use the native MCP tool if it is listed for this turn/i,
     );
+    assert.match(guide, /qq_reply_call.*argumentsJson/);
     assert.doesNotMatch(guide, /Call call_mcp_tool with ServerName/);
   };
   backend.configure(params, workspace, media);

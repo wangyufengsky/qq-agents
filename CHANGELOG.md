@@ -6,9 +6,9 @@
 
 ## 未发布
 
-### 修复 Antigravity ACP 聊天工具按需加载导致的发送失败（[#238](https://github.com/wangyufengsky/qq-agents/pull/238)）
+### 修复 Antigravity ACP 聊天工具注册缺失导致的发送失败（[#238](https://github.com/wangyufengsky/qq-agents/pull/238)）
 
-- 当回合获准的文字发送、连发、草稿、补读和回执工具在模型运行前注册，避免续接时通用入口与原生工具名称不一致。沿用现有模型会话、权限和投递账本，无需数据库迁移。
+- ACP 为文字发送、连发和草稿提供参数简单的原生入口，避免复杂参数定义被省略后无法调用。补读和回执工具提前注册。沿用现有会话、权限、原工具参数校验和投递账本，无需数据库迁移。
 
 ### 功能 Agent 实例与受控委托基础（[#235](https://github.com/wangyufengsky/qq-agents/pull/235)）
 
