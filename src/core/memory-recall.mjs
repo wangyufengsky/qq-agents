@@ -51,7 +51,14 @@ const FAMILIARITY_GENERIC = new Set([
   "早上好",
   "晚上好",
   "哈哈",
+  "看来",
+  "好了",
+  "行了",
+  "行吧",
+  "好吧",
+  "明白",
 ]);
+const INTERJECTION = /^[哈喵嘿呵嘻嚯嗷呀哎诶唉呃额嗯哦噢哇欸呜啊]+$/u;
 const FAMILIARITY_WINDOW = 256;
 const FAMILIARITY_MARKS = 512;
 const RECENT_CHAT_MS = 10 * 60_000;
@@ -146,23 +153,31 @@ export function observeFamiliarity(runtime, role, conversation, id) {
   // ICU can split short names into individual Han characters. Keep adjacent
   // pairs as weak clues so common particles do not count as shared names.
   const singleHan = (word) =>
-    word && /^\p{Script=Han}$/u.test(word) && !COMMON_HAN.has(word);
+    word &&
+    /^\p{Script=Han}$/u.test(word) &&
+    !COMMON_HAN.has(word) &&
+    !INTERJECTION.test(word);
   for (let i = 1; i < segments.length && words.size < 8; i++) {
     const previous = segments[i - 1].segment;
     const current = segments[i].segment;
     if (singleHan(previous) && singleHan(current))
       words.add(previous + current);
   }
-  const terms = [...words].slice(0, 8);
+  const terms = [...words]
+    .filter(
+      (word) => !FAMILIARITY_GENERIC.has(word) && !INTERJECTION.test(word),
+    )
+    .slice(0, 8);
   const oldEnough = Date.parse(input.occurredAt) - RECENT_CHAT_MS;
-  const candidates =
+  const history =
     terms.length && Number.isFinite(oldEnough)
       ? prepared(
           memory.db,
-          `SELECT id,seq,substr(body,1,300) AS body
+          `SELECT id,seq,sender_id,substr(body,1,300) AS body
            FROM events
            WHERE agent_id=? AND connection_id=? AND conversation=?
              AND occurred_at<=? AND seq<?
+             AND kind IN ('message.received','message.sent')
            ORDER BY occurred_at DESC,seq DESC LIMIT ?`,
         )
           .all(
@@ -173,31 +188,40 @@ export function observeFamiliarity(runtime, role, conversation, id) {
             input.seq,
             FAMILIARITY_WINDOW,
           )
-          .map(({ id, seq, body }) => {
-            const lower = body.toLowerCase();
-            const overlap = terms.filter((word) => lower.includes(word));
-            const strong =
-              overlap.some((word) => word.length >= 4) ||
-              overlap.filter((word) => segmented.has(word)).length >= 2;
-            return { id, seq, overlap, strong };
-          })
-          .filter(({ overlap }) => overlap.length)
-          .sort(
-            (a, b) =>
-              Number(b.strong) - Number(a.strong) ||
-              b.overlap.length - a.overlap.length ||
-              b.seq - a.seq,
-          )
-          .slice(0, 6)
-          .filter(({ id }) => evidence(runtime, ctx, [id], input.seq).length)
+          .map(({ id, seq, sender_id, body }) => ({
+            id,
+            seq,
+            sender: sender_id,
+            text: body.toLowerCase(),
+          }))
       : [];
-  const first = candidates[0];
-  const other = candidates[1];
-  const selected = !first
-    ? []
-    : first.strong && other?.strong
-      ? [first, other]
-      : [first];
+  const speakerHistory = history.filter(
+    ({ sender }) => sender === row.sender_id,
+  );
+  const common = (word, sample, ratio) => {
+    const count = sample.filter(({ text }) => text.includes(word)).length;
+    return count >= 4 && count / sample.length >= ratio;
+  };
+  const distinctive = terms.filter(
+    (word) => !common(word, history, 0.2) && !common(word, speakerHistory, 0.5),
+  );
+  const candidates = history
+    .map(({ id, seq, text }) => {
+      const overlap = distinctive.filter((word) => text.includes(word));
+      const strong =
+        overlap.some((word) => word.length >= 4) ||
+        overlap.filter((word) => segmented.has(word)).length >= 2;
+      return { id, seq, overlap, strong };
+    })
+    .filter(({ overlap }) => overlap.length)
+    .sort(
+      (a, b) =>
+        Number(b.strong) - Number(a.strong) ||
+        b.overlap.length - a.overlap.length ||
+        b.seq - a.seq,
+    )
+    .slice(0, 6)
+    .filter(({ id }) => evidence(runtime, ctx, [id], input.seq).length);
   let cache = familiarityMarks.get(runtime);
   if (cache?.config !== runtime.config) {
     cache = { config: runtime.config, messages: new Map() };
@@ -208,8 +232,7 @@ export function observeFamiliarity(runtime, role, conversation, id) {
   cache.messages.set(id, {
     id,
     seq: input.seq,
-    candidates: selected,
-    uncertain: !first?.strong || selected.length > 1,
+    candidates: candidates.slice(0, 2),
     ms: Math.round(performance.now() - start),
   });
 }
@@ -220,25 +243,102 @@ function capturedFamiliarity(runtime, items) {
   return items.map(({ id }) => cache.messages.get(id)).filter(Boolean);
 }
 
+function comparableBody(body) {
+  return body.normalize("NFKC").trim().replace(/\s+/gu, " ");
+}
+
+export function captureRecallContext(ctx, items) {
+  if (!ctx.recallOpening) return;
+  ctx.recallOpening.visible = items.filter(
+    (item) =>
+      item.body &&
+      !item.bodyTruncated &&
+      !item.summaryOmitted &&
+      !item.recalled,
+  );
+}
+
+function knownContext(runtime, ctx, cues) {
+  const { role, memory, boundary } = sources(runtime, ctx);
+  const latest = cues.reduce((a, b) => (a.seq > b.seq ? a : b));
+  const since = new Date(
+    Date.parse(latest.occurredAt) - RECENT_CHAT_MS,
+  ).toISOString();
+  const cueIds = new Set(cues.map(({ id }) => id));
+  const visible = ctx.recallOpening.visible.filter((item) =>
+    boundary.allowed(item),
+  );
+  const recent = prepared(
+    memory.db,
+    `
+    SELECT * FROM events WHERE agent_id=? AND connection_id=? AND conversation=?
+      AND occurred_at>=? AND occurred_at<=? AND seq<?
+      AND kind IN ('message.received','message.sent')
+    ORDER BY occurred_at DESC,seq DESC LIMIT 6
+  `,
+  )
+    .all(
+      role.id,
+      role.connectionId,
+      ctx.conversation,
+      since,
+      latest.occurredAt,
+      latest.seq,
+    )
+    .map((row) => boundary.project(memory.event(row, ctx.conversation)))
+    .filter((row) => row?.body);
+  const context = new Map([...recent, ...visible].map((row) => [row.id, row]));
+  const prior = [...context.values()]
+    .filter(({ id, seq }) => !cueIds.has(id) && seq < latest.seq)
+    .sort((a, b) => a.seq - b.seq);
+  return {
+    knownIds: new Set(context.keys()),
+    knownBodies: new Set(
+      [...context.values(), ...cues].map(({ body }) => comparableBody(body)),
+    ),
+    recent: prior
+      .slice(-6)
+      .map(({ id, body }) => ({ id, body: body.slice(0, 220) })),
+  };
+}
+
+function novelEvidence(row, known) {
+  return (
+    !known.knownIds.has(row.id) &&
+    !known.knownBodies.has(comparableBody(row.body))
+  );
+}
+
+function familiarityCandidates(runtime, ctx, cues, known) {
+  const anchors = new Set(cues.map(({ id }) => id));
+  const candidates = new Map();
+  for (const mark of ctx.recallOpening.familiarity) {
+    if (!anchors.has(mark.id)) continue;
+    for (const { id } of mark.candidates) {
+      const [row] = evidence(runtime, ctx, [id], mark.seq);
+      if (row && novelEvidence(row, known)) {
+        candidates.set(row.id, { id: row.id, body: row.body.slice(0, 200) });
+      }
+    }
+  }
+  return [...candidates.values()].slice(0, 5);
+}
+
 function renderFamiliarity(runtime, ctx, verified) {
   const marks = ctx.recallOpening.familiarity;
   if (!marks.length) return [];
+  const matched = new Set(
+    marks.flatMap((mark) => mark.candidates.map(({ id }) => id)),
+  );
+  const approved = new Map(verified.map((row) => [row.id, row]));
   const lines = new Map();
-  const matched = new Set();
-  for (const mark of marks) {
-    for (const { id } of mark.candidates) matched.add(id);
-  }
-  const verifiedIds = new Set(verified.map(({ id }) => id));
   const { boundary } = sources(runtime, ctx);
-  const relevant = marks
-    .filter(({ candidates }) => candidates.length)
-    .sort((a, b) => Number(a.uncertain) - Number(b.uncertain) || b.seq - a.seq)
-    .slice(0, 6);
-  for (const mark of relevant) {
+  for (const mark of marks) {
     const input = liveInput(runtime, ctx.agentId, ctx.conversation, mark.id);
     if (!input || !boundary.allowed({ id: mark.id })) continue;
     for (const candidate of mark.candidates) {
-      const [row] = evidence(runtime, ctx, [candidate.id], mark.seq);
+      const [source] = evidence(runtime, ctx, [candidate.id], mark.seq);
+      const row = approved.get(source?.id);
       if (!row) continue;
       const trigger = {
         inputEventId: mark.id,
@@ -247,18 +347,15 @@ function renderFamiliarity(runtime, ctx, verified) {
       const previous = lines.get(row.id);
       if (previous) {
         if (previous.triggers.length < 3) previous.triggers.push(trigger);
-        continue;
+      } else if (lines.size < 2) {
+        const { body, ...source } = row;
+        lines.set(row.id, {
+          ...source,
+          status: "眼熟",
+          excerpt: body.slice(0, 180),
+          triggers: [trigger],
+        });
       }
-      if (lines.size === 2) continue;
-      const { body, ...source } = row;
-      lines.set(row.id, {
-        ...source,
-        status: mark.uncertain ? "待核对" : "眼熟",
-        ...(candidate.strong && !verifiedIds.has(row.id)
-          ? { excerpt: body.slice(0, 180) }
-          : {}),
-        triggers: [trigger],
-      });
     }
   }
   record(runtime, ctx, "familiarity", {
@@ -363,6 +460,7 @@ export function captureRecallOpening(
     incoming.push(focus);
   ctx.recallOpening = {
     familiarity: capturedFamiliarity(runtime, incoming),
+    visible: [],
     anchors: (focus ? [focus] : history.items)
       .filter((item) => item.direction === "in" && item.seq > after)
       .slice(-3)
@@ -386,7 +484,8 @@ export function captureRecallOpening(
 
 async function lookup(runtime, ctx, route, reason, cues, query) {
   const start = performance.now();
-  const beforeSeq = Math.min(...cues.map(({ seq }) => seq));
+  const first = cues.reduce((a, b) => (a.seq < b.seq ? a : b));
+  const beforeSeq = first.seq;
   const config = runtime.config;
   const role = runtime.agent(ctx.agentId);
   const budget =
@@ -395,11 +494,19 @@ async function lookup(runtime, ctx, route, reason, cues, query) {
       : role.functionalAgents.memory.onDemand.timeoutMs;
   const epoch = ctx.inputEpoch;
   const ids = cues.map(({ id }) => id);
-  const candidates = shortlist(runtime, ctx, cues, query, beforeSeq);
+  const review = reason === "local-familiarity";
+  const known = knownContext(runtime, ctx, cues);
+  const getCandidates = (context) =>
+    review
+      ? familiarityCandidates(runtime, ctx, cues, context)
+      : shortlist(runtime, ctx, cues, query, beforeSeq);
+  const candidates = getCandidates(known);
+  if (review && !candidates.length) return;
   const prompt = JSON.stringify({
-    task: "找能回答本轮线索的同群旧话。候选够用时直接用 functional_agent_result 提交候选 ID。候选不足才查工具。相同人物、物件或词语但不同事件时跳过，无把握就提交空数组。",
+    task: "快速判断旧话能否给当前对话补上有用的细节。先读 current 和 recent，跳过已经说清、只是撞词或属于另一件事的记录。候选够用就立即用 functional_agent_result 提交最多两条证据 ID。有明确缺口时，自选一个具体查询词补查，优先找能回答该缺口的原话。找不到有用出处就立即提交空数组。recent 只是理解上下文的资料。",
     cue: query,
     current: cues.map(({ body }) => body.slice(0, 480)),
+    recent: known.recent,
     candidates,
   });
   const current = () =>
@@ -427,12 +534,14 @@ async function lookup(runtime, ctx, route, reason, cues, query) {
           resultOnReceipt: true,
           evidenceBeforeSeq: beforeSeq,
           shownEvidenceIds: candidates.map(({ id }) => id),
-          beforeInput: () =>
-            current() &&
-            isDeepStrictEqual(
-              candidates,
-              shortlist(runtime, ctx, cues, query, beforeSeq),
-            ),
+          beforeInput: () => {
+            if (!current()) return false;
+            const context = knownContext(runtime, ctx, cues);
+            return (
+              isDeepStrictEqual(context.recent, known.recent) &&
+              isDeepStrictEqual(candidates, getCandidates(context))
+            );
+          },
         });
   const sourceIds = result.evidenceIds || [];
   const details = {
@@ -450,7 +559,20 @@ async function lookup(runtime, ctx, route, reason, cues, query) {
   record(runtime, ctx, route, details);
   return {
     details,
-    rows: () => (current() ? evidence(runtime, ctx, sourceIds, beforeSeq) : []),
+    rows: () => {
+      if (!current()) return [];
+      const context = knownContext(runtime, ctx, cues);
+      if (!isDeepStrictEqual(known.recent, context.recent)) return [];
+      const rows = evidence(runtime, ctx, sourceIds, beforeSeq);
+      const oldEnough = Date.parse(first.occurredAt) - RECENT_CHAT_MS;
+      return review
+        ? rows.filter(
+            (row) =>
+              Date.parse(row.occurredAt) <= oldEnough &&
+              novelEvidence(row, context),
+          )
+        : rows;
+    },
   };
 }
 
@@ -469,7 +591,24 @@ export async function prepareRecallOpening(runtime, ctx) {
           : "no-cue";
   if (reason === "past-reference" || reason === "ambiguous")
     ctx.openingRecall = await lookup(runtime, ctx, "opening", reason, cues);
-  else {
+  else if (reason !== "explicit-reference") {
+    const marked = anchors(
+      runtime,
+      ctx,
+      input.familiarity
+        .filter(({ candidates }) => candidates.length)
+        .map(({ id }) => id),
+    ).slice(-3);
+    if (marked.length)
+      ctx.openingRecall = await lookup(
+        runtime,
+        ctx,
+        "opening",
+        "local-familiarity",
+        marked,
+      );
+  }
+  if (!ctx.openingRecall) {
     const details = {
       reason,
       status: "skipped",
@@ -501,9 +640,11 @@ export function renderRecallOpening(runtime, ctx) {
     ? "需要再查时可用 memory_recall，cue 选当前来信中的原文线索。"
     : "";
   const clues = familiarity.length
-    ? `\n\n同群眼熟线索 ${JSON.stringify(familiarity)}。triggers 对应引发联想的本轮消息 ID。线索仅供判断相关性，待核对的细节可以按来源展开。`
+    ? `\n\n同群眼熟线索 ${JSON.stringify(familiarity)}。triggers 对应引发联想的本轮消息 ID。线索仅供判断相关性，需要完整原话时可按来源展开。`
     : "";
-  const addition = `\n\n本轮记忆查证 ${JSON.stringify({ status, reason: details.reason, evidence: rows })}。${HISTORY_LABEL}${notice}${clues}`;
+  const clueIds = new Set(familiarity.map(({ id }) => id));
+  const otherEvidence = rows.filter(({ id }) => !clueIds.has(id));
+  const addition = `\n\n本轮记忆查证 ${JSON.stringify({ status, reason: details.reason, evidence: otherEvidence })}。${HISTORY_LABEL}${notice}${clues}`;
   ctx.estimatedAdded += addition.length;
   return addition;
 }
