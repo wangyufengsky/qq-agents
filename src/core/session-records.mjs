@@ -67,6 +67,7 @@ const recallReasons = new Set([
   "past-reference",
   "no-cue",
   "tool",
+  "local-familiarity",
 ]);
 const recallStatuses = new Set([
   "skipped",
@@ -85,7 +86,7 @@ const recallStatuses = new Set([
 ]);
 
 export function memoryRecallDiagnostic(turn) {
-  const entries = ["opening", "active"].flatMap((route) => {
+  const entries = ["familiarity", "opening", "active"].flatMap((route) => {
     const value = turn?.memoryRecall?.[route];
     if (!recallReasons.has(value?.reason) || !recallStatuses.has(value?.status))
       return [];
@@ -97,9 +98,10 @@ export function memoryRecallDiagnostic(turn) {
         {
           reason: value.reason,
           status: value.status,
-          matched: count(value.matched, 2),
+          matched: count(value.matched, route === "familiarity" ? 62 : 2),
           presented: count(value.presented, 2),
           waitMs: count(value.waitMs, 60000),
+          ...(route === "familiarity" && { checked: count(value.checked, 31) }),
         },
       ],
     ];

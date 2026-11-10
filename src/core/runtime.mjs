@@ -30,6 +30,7 @@ import { QQDraftStore } from "../memory/qq-drafts.mjs";
 import { inputScope } from "../memory/input-state.mjs";
 import { safeToolFailure } from "../tools/errors.mjs";
 import { TurnRunner } from "./turn-runner.mjs";
+import { observeFamiliarity } from "./memory-recall.mjs";
 import { runtimeStatus } from "./runtime-status.mjs";
 import { observeInput } from "./input-progress.mjs";
 import { AppCursors } from "../apps/cursors.mjs";
@@ -874,6 +875,24 @@ export class Runtime {
           ...subject,
           lastActivitySeq: archived.seq,
         });
+      }
+      if (
+        e.kind === "message.received" &&
+        !ownEcho &&
+        e.direction === "in" &&
+        e.senderId !== c.accountId &&
+        !redactGame &&
+        !redactConfirmation
+      ) {
+        try {
+          observeFamiliarity(this, a, e.conversation, archived.id);
+        } catch (cause) {
+          this.diagnostics.report(Error("EVENT_PROCESSING_FAILED", { cause }), {
+            component: "runtime",
+            agentId: a.id,
+            conversation: e.conversation,
+          });
+        }
       }
       this.conversations.notify(a.id, e.conversation);
       if (

@@ -37,12 +37,19 @@ function pilotConfig() {
 function setup(t, run, cfg = pilotConfig()) {
   const f = fixture(t, { cfg: validateConfig(cfg), run });
   const memory = f.store.bind("agent-0");
-  async function add(num, text, groupId = 20000, user = 30000) {
+  async function add(
+    num,
+    text,
+    groupId = 20000,
+    user = 30000,
+    time = 1800000000,
+  ) {
     await f.runtime.ingest(
       "qq-0",
       raw(num, {
         group_id: groupId,
         user_id: user,
+        time,
         message: [{ type: "text", data: { text } }],
       }),
     );
@@ -223,4 +230,122 @@ test("rechecks matched evidence at the ordinary backend submission fence", async
   assert.doesNotMatch(suffix, /八点见/);
   assert.equal(turn.memoryRecall.opening.matched, 1);
   assert.equal(turn.memoryRecall.opening.presented, 0);
+});
+
+function clues(prompt) {
+  const section = prompt.split("同群眼熟线索 ")[1];
+  return section ? JSON.parse(section.split("。triggers")[0]) : [];
+}
+
+test("natural messages are scanned at intake and share one clue across the reply batch", async (t) => {
+  let prompt;
+  const f = setup(t, async (p) => {
+    assert.equal(p.modelSelection, undefined);
+    prompt = p.prompt;
+  });
+  const history = await f.add(
+    1,
+    "蓝色背包放在北门的柜子里",
+    20000,
+    30000,
+    1799990000,
+  );
+  await f.add(2, "蓝色背包隔壁群才知道的存放地点", 20001, 30000, 1799990000);
+  const first = await f.add(3, "蓝色背包要带去北门吗", 20000, 30001);
+  const second = await f.add(4, "蓝色背包可以先放着吗");
+  // Intake cannot have seen an event archived after the messages it marked.
+  const later = f.memory.append({
+    dedupe: "late-history",
+    connectionId: "qq-0",
+    conversation: group,
+    kind: "message.received",
+    body: "蓝色背包放在南楼",
+    occurredAt: new Date(1799990001000).toISOString(),
+  });
+  const turn = await f.turn(first);
+  const result = clues(prompt);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].id, history.id);
+  assert.notEqual(result[0].id, later.id);
+  assert.equal(result[0].status, "眼熟");
+  assert.match(result[0].excerpt, /柜子/);
+  assert.deepEqual(
+    new Set(result[0].triggers.map((x) => x.inputEventId)),
+    new Set([first.id, second.id]),
+  );
+  const diagnostic = memoryRecallDiagnostic(turn).familiarity;
+  assert.equal(diagnostic.checked, 2);
+  assert.equal(diagnostic.presented, 1);
+});
+
+test("a short unsegmented name is a weak clue and a recalled source is withheld", async (t) => {
+  let prompt;
+  const f = setup(t, async (p) => {
+    assert.equal(p.modelSelection, undefined);
+    prompt = p.prompt;
+  });
+  const old = await f.add(1, "群里约过北门碰头", 20000, 30000, 1799990000);
+  const input = await f.add(2, "北门还封着，咱们走哪边？");
+  await f.turn(input);
+  assert.deepEqual(
+    clues(prompt).map(({ id, status, excerpt, triggers }) => ({
+      id,
+      status,
+      excerpt,
+      triggers,
+    })),
+    [
+      {
+        id: old.id,
+        status: "待核对",
+        excerpt: undefined,
+        triggers: [{ inputEventId: input.id, sharedTerms: ["北门"] }],
+      },
+    ],
+  );
+  const next = await f.add(3, "北门还封着，咱们走哪边？");
+  f.memory.db
+    .prepare("UPDATE events SET status='recalled' WHERE id=?")
+    .run(old.id);
+  const turn = await f.turn(next);
+  assert.deepEqual(clues(prompt), []);
+  assert.equal(memoryRecallDiagnostic(turn).familiarity.status, "withheld");
+  assert.equal(memoryRecallDiagnostic(turn).familiarity.presented, 0);
+});
+
+test("competing old clues remain uncertain and a protected candidate stays hidden", async (t) => {
+  let prompt;
+  const f = setup(t, async (p) => {
+    assert.equal(p.modelSelection, undefined);
+    prompt = p.prompt;
+  });
+  const north = await f.add(1, "蓝色背包放北门", 20000, 30000, 1799990000);
+  const south = await f.add(2, "蓝色背包放南楼", 20000, 30000, 1799990001);
+  f.memory.append({
+    dedupe: "protected-history",
+    connectionId: "qq-0",
+    conversation: group,
+    kind: "message.received",
+    body: "蓝色背包内部权限测试",
+    payload: { protectedOperations: true },
+    occurredAt: new Date(1799990002000).toISOString(),
+  });
+  const input = await f.add(4, "蓝色背包交给谁拿着？");
+  const turn = await f.turn(input);
+  const result = clues(prompt);
+  assert.deepEqual(
+    new Set(result.map(({ id }) => id)),
+    new Set([north.id, south.id]),
+  );
+  assert.ok(
+    result.every(
+      ({ status, triggers }) =>
+        status === "待核对" && triggers[0].inputEventId === input.id,
+    ),
+  );
+  assert.equal(memoryRecallDiagnostic(turn).familiarity.presented, 2);
+  const chatter = await f.add(5, "大家好，今天晚上一起聊聊天");
+  const next = await f.turn(chatter);
+  assert.deepEqual(clues(prompt), []);
+  assert.equal(memoryRecallDiagnostic(next).familiarity.status, "empty");
 });

@@ -319,15 +319,17 @@ function activityEntry(e) {
       "no-live-cue": "没有可用的本轮来信",
       "no-cue": "没有旧事线索",
       tool: "对话主动查证",
+      "local-familiarity": "同群历史匹配",
     };
     for (const [kind, label] of [
+      ["familiarity", "入站眼熟"],
       ["opening", "回复前"],
       ["active", "主动回想"],
     ]) {
       const trace = e.memoryRecall[kind];
       if (trace)
         parts.push(
-          `<p class="hint">记忆 Agent · ${label} · ${esc(reasons[trace.reason] || "")} · ${esc(statuses[trace.status] || "")} · 命中 ${esc(trace.matched)} 条 · 交给模型 ${esc(trace.presented)} 条 · 等待 ${esc(trace.waitMs)} ms</p>`,
+          `<p class="hint">记忆 Agent · ${label} · ${esc(reasons[trace.reason] || "")} · ${esc(statuses[trace.status] || "")}${kind === "familiarity" ? ` · 检查 ${esc(trace.checked)} 条消息` : ""} · 命中 ${esc(trace.matched)} 条 · 交给模型 ${esc(trace.presented)} 条 · ${kind === "familiarity" ? "耗时" : "等待"} ${esc(trace.waitMs)} ms</p>`,
         );
     }
   }
