@@ -31,6 +31,18 @@ import { AntigravityStreamWorker } from "./antigravity-stream.mjs";
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 const here = path.dirname(fileURLToPath(import.meta.url));
 const MAX_OUTPUT = 16 * 1024 * 1024;
+const acpReplyTools = new Set([
+  "conversation_read",
+  "qq_send",
+  "qq_send_burst",
+  "qq_draft",
+  "qq_delivery_status",
+]);
+const genericMcpGuide =
+  'Call call_mcp_tool with ServerName="qq-agents", ToolName equal to an allowed name, and Arguments matching that tool\'s JSON schema below. ';
+const acpMcpGuide =
+  'Use the native MCP tool if it is listed for this turn. Otherwise, if call_mcp_tool is available, use ServerName="qq-agents", the logical ToolName, and Arguments matching the schema below. ';
+
 /** Headless result usage is cumulative; only a completed model-response step
  * describes the latest request. Cache reads are excluded from input_tokens.
  * @param {any} usage */
@@ -509,6 +521,17 @@ export class AntigravityBackend {
             command: process.execPath,
             args: [path.join(here, "antigravity-mcp.mjs")],
             enabledTools: [...names],
+            // ACP can switch between lazy and native routes across sessions.
+            // Register the reply path before generation using the same allowlist.
+            ...(this.config.cliProtocol === "acp"
+              ? {
+                  tools: Object.fromEntries(
+                    [...names]
+                      .filter((name) => acpReplyTools.has(name))
+                      .map((name) => [name, { eager: true }]),
+                  ),
+                }
+              : {}),
             timeoutSeconds: 660,
           },
         },
@@ -525,7 +548,7 @@ export class AntigravityBackend {
     )
       managedFile(
         agentFile,
-        `---\nname: qq-agents\ndescription: QQ Agents restricted role\nmainAgent: true\nsubagent: false\ntools:\n  - finish\n  - view_file\nenable_mcp_tools: true\ncommandExecutionPolicy: off\n---\n${params.instructions || ""}\n\n${routing}Use the qq-agents MCP tools for actions. ${reuse ? "" : 'Call call_mcp_tool with ServerName="qq-agents", ToolName equal to an allowed name, and Arguments matching that tool\'s JSON schema below. '}Do not guess parameter names or read framework source to discover arguments. The current chat and authorization are bound by the bridge; never add target, chatId or context fields unless the schema requires them. Ordinary assistant text is never delivered to QQ. Only native read_file (Path) or legacy view_file (AbsolutePath) on the exact image paths returned by an authorized tool in the CURRENT turn is allowed. Always call the native image reader before describing those pixels; MCP path text is not visual evidence. Never read other files or reuse a previous turn image path; request the original bridge tool again. No native task, filesystem writes, shell, browser, scheduling or subagent actions are authorized.\n\nAllowed tool argument schemas keyed by ToolName (required fields and additionalProperties are binding):\n${JSON.stringify(Object.fromEntries(params.tools.map(({ name, inputSchema }) => [name, antigravitySchemaContract(inputSchema)])))}\n`,
+        `---\nname: qq-agents\ndescription: QQ Agents restricted role\nmainAgent: true\nsubagent: false\ntools:\n  - finish\n  - view_file\nenable_mcp_tools: true\ncommandExecutionPolicy: off\n---\n${params.instructions || ""}\n\n${routing}Use the qq-agents MCP tools for actions. ${reuse ? "" : genericMcpGuide}Do not guess parameter names or read framework source to discover arguments. The current chat and authorization are bound by the bridge; never add target, chatId or context fields unless the schema requires them. Ordinary assistant text is never delivered to QQ. Only native read_file (Path) or legacy view_file (AbsolutePath) on the exact image paths returned by an authorized tool in the CURRENT turn is allowed. Always call the native image reader before describing those pixels; MCP path text is not visual evidence. Never read other files or reuse a previous turn image path; request the original bridge tool again. No native task, filesystem writes, shell, browser, scheduling or subagent actions are authorized.\n\nAllowed tool argument schemas keyed by ToolName (required fields and additionalProperties are binding):\n${JSON.stringify(Object.fromEntries(params.tools.map(({ name, inputSchema }) => [name, antigravitySchemaContract(inputSchema)])))}\n`,
       );
     else {
       // Preserve the role instructions while refreshing compatible optional fields.
@@ -578,6 +601,7 @@ export class AntigravityBackend {
         fs
           .readFileSync(agentFile, "utf8")
           .replace("  - view_file\n", "")
+          .replace(genericMcpGuide, acpMcpGuide)
           .replace(
             headless,
             "Authorized MCP image content blocks contain visible pixels. Inspect those pixels directly; never read files to view an image. ",
