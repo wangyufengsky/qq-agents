@@ -204,11 +204,11 @@ function safeFailure(error) {
     QQ_DRAFT_SUPERSEDED:
       "This creation request refers to an older version of the draft. Read the current draft for the revised content and exact receipts.",
     QQ_DRAFT_DELIVERY_UNRESOLVED:
-      "A prior delivery in this chat is pending or unknown. Check qq_delivery_status; only a verified receipt or an administrator's explicit verdict settles it. Do not try another request ID, wording, or send tool.",
+      "A prior delivery in this chat is pending or unknown. Use qq_delivery_status with verifyRequestId to check an actual receipt in this group. After 60 seconds a later human message can receive a separate reply. Leave the original draft and content untouched until the receipt is resolved.",
     QQ_DRAFT_CONTINUE_REQUIRED:
       "Use qq_draft to read, revise, prepare, or discard the saved version. Continue requires the token from a ready preparation. Repeating the original send call only returns the existing status.",
     DELIVERY_UNKNOWN:
-      "The gateway could not confirm whether this message reached QQ (for example QQ dropped offline mid-send); it may already be visible. Do not send it again or change requestId. The program marks it sent when QQ's own copy arrives, otherwise the administrator checks it in the console.",
+      "The gateway could not confirm delivery. Use qq_delivery_status with the actual verifyRequestId to check this group. Do not send it again or change requestId. If evidence is missing, the receipt stays unknown for the administrator to review.",
     MOOD_CHANGE_NEEDS_CAUSE:
       "Your current mood is strong (intensity 4 or 5) and still in effect, so it was not changed. Read it with mood_read. To change or clear it, cite in evidence at least one record that happened after it was written: someone's later explanation or message, or your own subject_log after you thought the misunderstanding over or did something else and settled down. You do not need anyone to coax you out of it. Without a new cause, keep the mood; it ends on its own when it expires.",
     PERSON_ITEM_CLOSE_NEEDS_MESSAGE:

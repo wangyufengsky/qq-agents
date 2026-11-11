@@ -256,12 +256,13 @@ export const definitions = {
       .strict(),
   ],
   qq_delivery_status: [
-    "只读查询本角色当前聊天的投递账本，默认只看 pending/unknown；可按 nextOffset 分页，unresolvedOnly=false 查看其他结果。按发送回执或 draft.items.requestId 中的实际投递编号核对；创建编号用于查询原稿件。不发送、不重试、不确认状态，不可换编号重发未知结果。",
+    "查询本角色当前聊天的投递账本，默认只列 pending/unknown，并尝试向网关核对同群的未知投递。latest 为最近更新的回执。可用 verifyRequestId 指定实际投递编号。只有可验证的回执会补记成功。创建编号用于查询原稿件。未知请求仍受防重发保护。",
     z
       .object({
         offset: z.number().int().min(0).optional(),
         limit,
         unresolvedOnly: z.boolean().optional(),
+        verifyRequestId: str.optional(),
       })
       .strict(),
   ],

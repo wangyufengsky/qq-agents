@@ -519,8 +519,16 @@ export const coreHandlers = {
   diary_revise: handle_diary_write,
   qq_send: handle_qq_send,
   qq_recall: recallMessage,
-  qq_delivery_status: (runtime, ctx, args) =>
-    deliveryPage(runtime.memory.bind(ctx.agentId), ctx.conversation, args),
+  qq_delivery_status: async (runtime, ctx, { verifyRequestId, ...page }) => {
+    const verification = await runtime.deliveryRecovery.verify(
+      ctx,
+      verifyRequestId,
+    );
+    return {
+      ...deliveryPage(runtime.memory.bind(ctx.agentId), ctx.conversation, page),
+      ...(verification ? { verification } : {}),
+    };
+  },
   generated_image_list: handle_generated_image_list,
   qq_mark_read: handle_qq_mark_read,
   qq_set_silence: handle_qq_set_silence,

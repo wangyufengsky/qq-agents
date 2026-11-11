@@ -24,6 +24,7 @@ import { recallBoundary } from "./recall-boundary.mjs";
 import { containsCredential } from "./secrets.mjs";
 import { sessionReference, recordRetirementCause } from "./session-records.mjs";
 import { isDeepStrictEqual } from "node:util";
+import { DeliveryRecovery } from "./delivery-recovery.mjs";
 import { DeliveryService } from "./delivery.mjs";
 import { recoverDraftArchives } from "./draft-delivery.mjs";
 import { QQDraftStore } from "../memory/qq-drafts.mjs";
@@ -144,6 +145,7 @@ export class Runtime {
     this.reconfiguringConnections = new Set();
     this.drafts = new QQDraftStore(memory, { clock: () => this.now() });
     this.delivery = new DeliveryService(this);
+    this.deliveryRecovery = new DeliveryRecovery(this);
     this.sendChains = this.delivery.chains;
     this.maintenance = new MaintenanceDrain(this);
     this.turns = new TurnRunner(this);
@@ -814,7 +816,16 @@ export class Runtime {
         results.push({ agentId: a.id, duplicate: true, ownEcho: true });
         continue;
       }
-      if (ownEcho)
+      if (ownEcho && e.senderId === c.accountId) {
+        this.deliveryRecovery.observeEcho(
+          {
+            agentId: a.id,
+            connectionId,
+            accountId: c.accountId,
+            conversation: e.conversation,
+          },
+          raw,
+        );
         mem.reconcileFromEcho({
           connectionId,
           accountId: c.accountId,
@@ -827,6 +838,7 @@ export class Runtime {
             .join(""),
           messageId: e.messageId,
         });
+      }
       const key = e.messageId
         ? `${connectionId}:${c.messageIdNamespace || "onebot"}:${e.conversation}:${e.kind}:${e.messageId}`
         : `${connectionId}:${e.kind}:${digest(raw)}`;
@@ -944,6 +956,13 @@ export class Runtime {
         if (await this.operations.command(a, e, archived)) continue;
         if (await this.scheduler.command(a, e, archived)) continue;
       }
+      if (e.kind === "message.received")
+        this.deliveryRecovery.checkInBackground({
+          agentId: a.id,
+          connectionId,
+          accountId: c.accountId,
+          conversation: e.conversation,
+        });
       const reason = this.conversations.reason(a, e, c.accountId, archived),
         addressed = this.conversations.addressed(a, e, c.accountId);
       if (voice) voice.reason = reason;

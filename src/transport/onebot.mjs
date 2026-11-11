@@ -1,3 +1,4 @@
+import { readGroupDeliveryEvidence } from "./delivery-history.mjs";
 import { readGroupGateway } from "./group-read.mjs";
 import { EventEmitter } from "node:events";
 import WebSocket from "ws";
@@ -316,6 +317,9 @@ export class OneBot extends EventEmitter {
       throw error;
     }
     return body.data;
+  }
+  readGroupDeliveryEvidence(groupId) {
+    return readGroupDeliveryEvidence(this, this.config.accountId, groupId);
   }
   async recall(messageId) {
     await this.call("delete_msg", { message_id: String(messageId) });
