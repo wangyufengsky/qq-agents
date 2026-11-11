@@ -142,6 +142,7 @@ test("opening searches only previous same-group evidence and attaches an authori
     matched: 1,
     presented: 1,
     waitMs: turn.memoryRecall.opening.waitMs,
+    agentMs: turn.memoryRecall.opening.agentMs,
   });
   assert.equal(f.memory.state(group).readThroughSeq || 0, 0);
 });
@@ -171,7 +172,7 @@ test("active recall uses a current cue, returns an acknowledged result once and 
     assert.match(p.prompt, /"status":"skipped"/);
     assert.deepEqual(
       await p.callTool("memory_recall", { cue: "隔壁的隐藏线索" }),
-      { status: "no-cue" },
+      { status: "no-cue", reason: "cue-not-found" },
     );
     const result = await p.callTool("memory_recall", { cue: "夹具安排" });
     assert.equal(result.status, "matched");
@@ -311,9 +312,9 @@ test("rechecks matched evidence at the ordinary backend submission fence", async
   );
 });
 
-function clues(prompt) {
-  const section = prompt.split("同群眼熟线索 ")[1];
-  return section ? JSON.parse(section.split("。triggers")[0]) : [];
+function openingEvidence(prompt) {
+  const section = prompt.split("本轮记忆查证 ")[1];
+  return section ? JSON.parse(section.split("。回想资料")[0]).evidence : [];
 }
 
 function setupFamiliarity(t, run) {
@@ -322,7 +323,7 @@ function setupFamiliarity(t, run) {
   return setup(t, run, cfg);
 }
 
-test("natural messages are scanned at intake and share one clue across the reply batch", async (t) => {
+test("intake matches across a reply batch deliver one verified source", async (t) => {
   let prompt, history;
   const f = setupFamiliarity(t, async (p) => {
     if (p.modelSelection) {
@@ -344,7 +345,7 @@ test("natural messages are scanned at intake and share one clue across the reply
   );
   await f.add(2, "蓝色背包隔壁群才知道的存放地点", 20001, 30000, 1799990000);
   const first = await f.add(3, "蓝色背包要带去北门吗", 20000, 30001);
-  const second = await f.add(4, "蓝色背包可以先放着吗");
+  await f.add(4, "蓝色背包可以先放着吗");
   // Intake cannot have seen an event archived after the messages it marked.
   const later = f.memory.append({
     dedupe: "late-history",
@@ -355,16 +356,12 @@ test("natural messages are scanned at intake and share one clue across the reply
     occurredAt: new Date(1799990001000).toISOString(),
   });
   const turn = await f.turn(first);
-  const result = clues(prompt);
+  const result = openingEvidence(prompt);
   assert.equal(result.length, 1);
   assert.equal(result[0].id, history.id);
   assert.notEqual(result[0].id, later.id);
-  assert.equal(result[0].status, "眼熟");
-  assert.match(result[0].excerpt, /柜子/);
-  assert.deepEqual(
-    new Set(result[0].triggers.map((x) => x.inputEventId)),
-    new Set([first.id, second.id]),
-  );
+  assert.match(result[0].body, /柜子/);
+  assert.doesNotMatch(prompt, /同群眼熟线索/);
   const diagnostic = memoryRecallDiagnostic(turn).familiarity;
   assert.equal(diagnostic.checked, 2);
   assert.equal(diagnostic.presented, 1);
@@ -384,27 +381,15 @@ test("an unsegmented name can be approved by the agent and a recalled source is 
   const input = await f.add(2, "北门还封着，咱们走哪边？");
   await f.turn(input);
   assert.deepEqual(
-    clues(prompt).map(({ id, status, excerpt, triggers }) => ({
-      id,
-      status,
-      excerpt,
-      triggers,
-    })),
-    [
-      {
-        id: old.id,
-        status: "眼熟",
-        excerpt: "群里约过北门碰头",
-        triggers: [{ inputEventId: input.id, sharedTerms: ["北门"] }],
-      },
-    ],
+    openingEvidence(prompt).map(({ id, body }) => ({ id, body })),
+    [{ id: old.id, body: "群里约过北门碰头" }],
   );
   const next = await f.add(3, "北门还封着，咱们走哪边？");
   f.memory.db
     .prepare("UPDATE events SET status='recalled' WHERE id=?")
     .run(old.id);
   const turn = await f.turn(next);
-  assert.deepEqual(clues(prompt), []);
+  assert.deepEqual(openingEvidence(prompt), []);
   assert.equal(memoryRecallDiagnostic(turn).familiarity.status, "withheld");
   assert.equal(memoryRecallDiagnostic(turn).familiarity.presented, 0);
 });
@@ -435,7 +420,7 @@ test("the agent can reject all competing clues without seeing a protected candid
   const input = await f.add(4, "蓝色背包交给谁拿着？");
   const turn = await f.turn(input);
   assert.equal(reviews, 1);
-  assert.deepEqual(clues(prompt), []);
+  assert.deepEqual(openingEvidence(prompt), []);
   const diagnostic = memoryRecallDiagnostic(turn, {
     includeContribution: true,
   });
@@ -465,7 +450,7 @@ test("interjections and a speaker's catchphrase do not launch memory review", as
   }
   const input = await f.add(31, "看来好了！叮咚，喵喵喵，哈哈哈，诶");
   const turn = await f.turn(input);
-  assert.deepEqual(clues(prompt), []);
+  assert.deepEqual(openingEvidence(prompt), []);
   assert.equal(memoryRecallDiagnostic(turn).opening.status, "skipped");
   assert.equal(memoryRecallDiagnostic(turn).familiarity.status, "empty");
 });
@@ -508,7 +493,7 @@ test("a source already visible in the dialogue input is not sent again", async (
   await f.add(1, "蓝色背包存放在北门", 20000, 30000, 1799990000);
   const turn = await f.turn(await f.add(2, "蓝色背包在哪里？"));
   assert.match(prompt.split("本轮记忆查证 ")[0], /蓝色背包存放在北门/);
-  assert.deepEqual(clues(prompt), []);
+  assert.deepEqual(openingEvidence(prompt), []);
   assert.equal(memoryRecallDiagnostic(turn).opening.status, "skipped");
   assert.equal(memoryRecallDiagnostic(turn).familiarity.presented, 0);
 });
@@ -776,7 +761,12 @@ test("active question carries speaker metadata and expands only the selected ori
       reviews++;
       const data = JSON.parse(p.prompt.split("任务资料：\n")[1]);
       assert.equal(data.query, "青铜牌最早摆在哪？");
-      assert.ok(data.current.includes("这件东西原来摆在哪里？"));
+      assert.ok(
+        data.current.some(
+          ({ body, senderId }) =>
+            body === "这件东西原来摆在哪里？" && senderId === "30000",
+        ),
+      );
       const candidate = data.candidates.find(({ id }) => id === old.id);
       assert.equal(candidate.senderId, "30002");
       assert.equal(candidate.senderName, "记录员");
@@ -792,6 +782,7 @@ test("active question carries speaker metadata and expands only the selected ori
       return;
     }
     const pending = p.callTool("memory_recall", {
+      cue: "不是本轮的原话",
       query: "青铜牌最早摆在哪？",
     });
     try {
@@ -887,7 +878,7 @@ test("opening evidence omits protected and recalled context and keeps authorized
   const turn = await f.turn(await f.add(6, "还记得上次陶器展台的安排吗？"));
   const suffix = prompt.split("本轮记忆查证 ")[1];
   const { evidence } = JSON.parse(suffix.split("。回想资料")[0]);
-  const row = [...evidence, ...clues(prompt)].find(({ id }) => id === old.id);
+  const row = evidence.find(({ id }) => id === old.id);
   assert.ok(row, suffix);
   assert.equal(row.id, old.id);
   assert.equal(row.scene.kind, "nearby");
@@ -909,7 +900,7 @@ test("an active question requires a current owner message", async (t) => {
     ordinary++;
     assert.deepEqual(
       await p.callTool("memory_recall", { query: "旧的访客安排是什么？" }),
-      { status: "no-cue" },
+      { status: "no-cue", reason: "no-owner-input" },
     );
   });
   await f.add(1, "之前的安排只在同群讨论过", 20000, 30000, 1799990000);
@@ -917,4 +908,85 @@ test("an active question requires a current owner message", async (t) => {
   const turn = await f.turn(input);
   assert.equal(ordinary, 1);
   assert.equal(memoryRecallDiagnostic(turn).active.status, "no-cue");
+  assert.equal(memoryRecallDiagnostic(turn).active.reason, "no-owner-input");
+});
+
+test("automatic recall gives the reviewer current and recent speakers and delivers selected evidence intact", async (t) => {
+  let confirmed, reviewInput, dialogue;
+  const f = setupFamiliarity(t, async (p) => {
+    if (p.modelSelection) {
+      reviewInput = JSON.parse(p.prompt.split("任务资料：\n")[1]);
+      await p.callTool("functional_agent_result", {
+        evidenceIds: [confirmed.id],
+        contribution,
+      });
+    } else dialogue = p.prompt;
+  });
+  confirmed = await f.add(1, "帐篷安检记录已签字", 20000, 30000, 1799990000);
+  await f.add(2, "参观员在问帐篷安检", 20000, 30001, 1799999990);
+  const trigger = await f.add(3, "我这次还得做帐篷安检吗？");
+  const turn = await f.turn(trigger);
+  assert.equal(reviewInput.current[0].senderId, "30000");
+  assert.equal(reviewInput.current[0].id, trigger.id);
+  assert.equal(
+    reviewInput.recent.find(({ body }) => body.includes("参观员")).senderId,
+    "30001",
+  );
+  const section = dialogue.split("本轮记忆查证 ")[1];
+  const delivered = JSON.parse(section.split("。回想资料")[0]);
+  assert.equal(delivered.status, "matched");
+  assert.equal(delivered.evidence[0].id, confirmed.id);
+  assert.equal(delivered.evidence[0].body, "帐篷安检记录已签字");
+  assert.equal(turn.memoryRecall.opening.presented, 1);
+});
+
+test("active query keeps a current owner anchor when other speakers fill the end of the batch", async (t) => {
+  let old,
+    answer,
+    requests = 0;
+  const f = setup(t, async (p) => {
+    if (p.modelSelection) {
+      requests++;
+      const data = JSON.parse(p.prompt.split("任务资料：\n")[1]);
+      assert.equal(data.query, "展台接线用什么接口？");
+      await p.callTool("functional_agent_result", {
+        evidenceIds: [old.id],
+        contribution,
+      });
+      return;
+    }
+    answer = await p.callTool("memory_recall", {
+      query: "展台接线用什么接口？",
+    });
+  });
+  old = await f.add(1, "展台接线使用圆形接口", 20000, 30000, 1799990000);
+  const owner = await f.add(2, "帮我查一下展台接线。");
+  for (let i = 3; i <= 6; i++)
+    await f.add(i, "其他人正在讨论布置", 20000, 30001);
+  await f.turn(owner);
+  assert.equal(requests, 1);
+  assert.equal(answer.status, "matched");
+  assert.equal(answer.evidence[0].id, old.id);
+});
+
+test("active recall timeout tells the dialogue how to search without claiming verified evidence", async (t) => {
+  let answer;
+  const f = setup(t, async (p) => {
+    if (!p.modelSelection)
+      answer = await p.callTool("memory_recall", {
+        query: "展台接线用什么接口？",
+      });
+  });
+  const run = f.runtime.functionalDelegation.run.bind(
+    f.runtime.functionalDelegation,
+  );
+  f.runtime.functionalDelegation.run = (parent, target, options) =>
+    options.opening ? run(parent, target, options) : { status: "timeout" };
+  await f.add(1, "展台接线使用圆形接口", 20000, 30000, 1799990000);
+  const turn = await f.turn(await f.add(2, "帮我查一下展台接线。"));
+  assert.equal(answer.status, "timeout");
+  assert.equal(answer.evidence, undefined);
+  assert.match(answer.notice, /memory_search/);
+  assert.equal(turn.memoryRecall.active.presented, 0);
+  assert.ok(Number.isInteger(turn.memoryRecall.active.agentMs));
 });

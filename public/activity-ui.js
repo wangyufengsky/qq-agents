@@ -311,13 +311,15 @@ function activityEntry(e) {
       unavailable: "暂不可用",
       "no-result": "未返回结果",
       warming: "索引准备中",
-      "no-cue": "当前来信没有该线索",
+      "no-cue": "没有可用线索",
     };
     const reasons = {
       "past-reference": "旧事指代",
       ambiguous: "候选有歧义",
       "explicit-reference": "已有明确引用",
       "no-live-cue": "没有可用的本轮来信",
+      "no-owner-input": "没有可用的本轮主人来信",
+      "cue-not-found": "主人来信中找不到指定原话",
       "no-cue": "没有旧事线索",
       tool: "对话主动查证",
       "local-familiarity": "同群历史匹配",

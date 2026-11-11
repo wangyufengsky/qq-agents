@@ -62,6 +62,8 @@ export function recordMemoryRecall(memory, id, route, details) {
 }
 const recallReasons = new Set([
   "no-live-cue",
+  "no-owner-input",
+  "cue-not-found",
   "explicit-reference",
   "ambiguous",
   "past-reference",
