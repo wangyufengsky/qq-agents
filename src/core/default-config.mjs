@@ -121,6 +121,7 @@ export function defaultConfig() {
         // Two agents on two QQ accounts can tell each other's owners when one
         // goes offline; the administrator turns it on per agent.
         behavior: {
+          replyCheckEnabled: false,
           focusedGroupReply: false,
           focusedGroupMentionReply: false,
           optionalGroupBacklog: false,
@@ -222,6 +223,7 @@ export function defaultConfig() {
         },
         maxConsecutiveSends: 3,
         behavior: {
+          replyCheckEnabled: false,
           focusedGroupReply: false,
           focusedGroupMentionReply: false,
           optionalGroupBacklog: false,

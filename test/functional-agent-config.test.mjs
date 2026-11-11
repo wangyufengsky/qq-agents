@@ -54,6 +54,18 @@ test("legacy roles retain their config shape and resolve stable instances by rol
   assert.equal(resolveFunctionalAgent(role, "@memory"), undefined);
 });
 
+test("ordinary effort overrides require a configured DSH model", () => {
+  const cfg = defaultConfig();
+  const [role] = cfg.agents;
+  role.functionalAgents = { qq: { kind: "qq-dialogue", effort: " low " } };
+  assert.throws(() => validateConfig(cfg), /CONFIG_SCHEMA_INVALID/);
+  role.model = "fixture-model";
+  const parsed = validateConfig(cfg);
+  assert.equal(parsed.agents[0].functionalAgents.qq.effort, "low");
+  role.backendId = cfg.backends.find(({ type }) => type === "codex").id;
+  assert.throws(() => validateConfig(cfg), /CONFIG_SCHEMA_INVALID/);
+});
+
 test("explicit definitions retain their configuration and memory has one internal instance per role", () => {
   const config = defaultConfig();
   config.backends.push(dedicatedBackend);

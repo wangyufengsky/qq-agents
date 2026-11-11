@@ -404,6 +404,14 @@ const agentForm = {
         row.effort || "",
         this.effortOptions(backend, row.effort),
       ) +
+      this.dshEffortField(row, backend, "qq", "qqEffort", "QQ 对话思考强度") +
+      this.dshEffortField(
+        row,
+        backend,
+        "subject",
+        "subjectEffort",
+        "主人格思考强度",
+      ) +
       `<div class="agent-models"><button type="button" class="ghost" data-models ${disabledAttr(this.modelsOff(row, row.backendId))}>读取可用模型</button><span class="hint" data-models-hint>${esc(this.modelsHint(row, backend))}</span></div>` +
       check("paused", "保持角色暂停", row.paused) +
       "<h3>聊天范围</h3>" +
@@ -995,6 +1003,15 @@ const agentForm = {
       options.push([value, `${value}（当前值）`]);
     return options;
   },
+  dshEffortField(row, backend, key, name, label) {
+    const value = row.functionalAgents?.[key]?.effort || "";
+    return select(name, label, value, this.dshEffortOptions(backend, value));
+  },
+  dshEffortOptions(backend, value, levels) {
+    const options = this.effortOptions(backend, value, levels);
+    options[0] = ["", "继承角色的思考强度"];
+    return options;
+  },
   // The catalog is read through the saved role, so it needs one on the
   // backend it was saved with, outside isolated mode.
   modelsOff(row, backendId) {
@@ -1152,6 +1169,10 @@ const agentForm = {
     const backend = root.querySelector('select[name="backendId"]'),
       model = root.querySelector('input[name="model"]'),
       effort = root.querySelector('select[name="effort"]'),
+      dshEfforts = [
+        root.querySelector('select[name="qqEffort"]'),
+        root.querySelector('select[name="subjectEffort"]'),
+      ],
       offers = root.querySelector("#agent-model-list"),
       button = root.querySelector("[data-models]"),
       hint = root.querySelector("[data-models-hint]"),
@@ -1171,10 +1192,21 @@ const agentForm = {
         efforts = catalog?.find((m) => m.id === id)?.efforts;
       return efforts?.length ? efforts : undefined;
     };
+    const refreshEfforts = () => {
+      const b = this.backendOf(backend.value);
+      fill(effort, this.effortOptions(b, effort.value, levels()));
+      for (const field of dshEfforts) {
+        if (!field) continue;
+        field.disabled = b?.type !== "dsh" || !(model.value.trim() || b.model);
+        field.closest("label").hidden = field.disabled;
+        if (!field.disabled)
+          fill(field, this.dshEffortOptions(b, field.value, levels()));
+      }
+    };
     const refresh = () => {
       const b = this.backendOf(backend.value),
         off = this.modelsOff(row, backend.value);
-      fill(effort, this.effortOptions(b, effort.value, levels()));
+      refreshEfforts();
       model.placeholder = this.modelPlaceholder(b);
       const seen = new Set(catalog?.map((m) => m.id));
       offers.innerHTML = this.modelOptions([
@@ -1190,17 +1222,8 @@ const agentForm = {
       refresh();
       fill(tool, this.asrToolOptions(backend.value, row.voice?.asr));
     });
-    model.addEventListener("input", () => {
-      if (catalog)
-        fill(
-          effort,
-          this.effortOptions(
-            this.backendOf(backend.value),
-            effort.value,
-            levels(),
-          ),
-        );
-    });
+    refreshEfforts();
+    model.addEventListener("input", refreshEfforts);
     button.onclick = () =>
       action(async () => {
         const r = await api("/api/models", { agentId: row.id });
@@ -1637,6 +1660,22 @@ const agentForm = {
       ],
       silence: JSON.parse(get("silence") || "[]"),
     };
+    const definitions = { ...row.functionalAgents };
+    for (const [key, field, kind] of [
+      ["qq", "qqEffort", "qq-dialogue"],
+      ["subject", "subjectEffort", "subject"],
+    ]) {
+      const { effort: previous, ...definition } = definitions[key] || { kind };
+      const value = f.has(field)
+        ? get(field)
+        : row.backendId === original.backendId && row.model === original.model
+          ? previous
+          : undefined;
+      if (value) definitions[key] = { ...definition, effort: value };
+      else if (definitions[key]) definitions[key] = definition;
+    }
+    if (Object.keys(definitions).length) row.functionalAgents = definitions;
+    else delete row.functionalAgents;
     delete row.enabled;
     delete row.toolServers;
     // Keep the compatibility alias unchanged when the displayed value was

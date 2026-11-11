@@ -43,6 +43,7 @@ export const behaviorSchema = z
     maxWakePerMinute: ms(1, 60, 6),
     maxWakePerHour: ms(1, 360, 60),
     noActionLimit: ms(1, 10, 3),
+    replyCheckEnabled: z.boolean().default(false),
     replyCheckMs: ms(1000, 3600000, 30000),
     turnTimeoutMs: ms(60000, 7200000, 1800000),
     preSleepWaitMs: ms(0, 600000, 300000),

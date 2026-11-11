@@ -113,6 +113,7 @@
       },
       "maxConsecutiveSends": 3,
       "behavior": {
+        "replyCheckEnabled": false,
         "focusedGroupReply": false,
         "focusedGroupMentionReply": false,
         "optionalGroupBacklog": false,
@@ -234,6 +235,7 @@
       },
       "maxConsecutiveSends": 3,
       "behavior": {
+        "replyCheckEnabled": false,
         "focusedGroupReply": false,
         "focusedGroupMentionReply": false,
         "optionalGroupBacklog": false,

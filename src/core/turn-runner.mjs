@@ -158,6 +158,7 @@ export class TurnRunner {
         beforeInputSubmitted: imageInput.beforeSubmit,
         agent: a,
         conversation,
+        effort: ctx.functionalAgent?.definition.effort,
         prompt: prepared.prompt,
         ...(ctx.openingRecall && {
           appendPrompt: () => renderRecallOpening(runtime, ctx),

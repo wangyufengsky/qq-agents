@@ -157,6 +157,7 @@ const toolServer = z
 const functionalInstructions = z.string().max(32000).optional();
 const conversationAgentFields = {
   instructions: functionalInstructions,
+  effort: z.string().trim().min(1).max(80).optional(),
   tools: z.array(z.enum(TOOL_NAMES)).max(TOOL_NAMES.length).optional(),
   delegatesTo: z.array(z.literal("memory")).max(1).optional(),
 };
@@ -603,6 +604,12 @@ export function validateConfig(input) {
     if (!c.connections.some((x) => x.id === a.connectionId) || !roleBackend)
       throw Error("INVALID_REFERENCE");
     if (roleBackend.functionalAgentOnly) throw Error("CONFIG_SCHEMA_INVALID");
+
+    if (
+      (a.functionalAgents?.qq?.effort || a.functionalAgents?.subject?.effort) &&
+      (roleBackend.type !== "dsh" || !(a.model || roleBackend.model))
+    )
+      throw Error("CONFIG_SCHEMA_INVALID");
 
     const memory = a.functionalAgents?.memory;
     if (!memory) continue;

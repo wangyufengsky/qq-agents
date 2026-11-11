@@ -41,6 +41,55 @@ test("ordinary contexts get stable functional identities and can narrow legacy p
   );
 });
 
+test("ordinary DSH sends per-agent effort without replacing the adapter or interrupting a turn", async (t) => {
+  const cfg = config(1);
+  Object.assign(cfg.backends[0], {
+    type: "dsh",
+    model: "fixture-model",
+    effort: "high",
+  });
+  cfg.agents[0].subject.enabled = true;
+  const used = [];
+  let release;
+  const holding = new Promise((resolve) => (release = resolve));
+  const f = fixture(t, {
+    cfg,
+    run: async ({ conversation, effort, signal }) => {
+      used.push({ conversation, effort, signal });
+      if (used.length === 1) await holding;
+    },
+  });
+  const id = "agent-0";
+  const running = f.runtime.wake(id, "group:20000");
+  assert.equal(used[0].effort, undefined);
+  const next = structuredClone(f.runtime.config);
+  next.agents[0].functionalAgents = {
+    qq: { kind: "qq-dialogue", effort: "low" },
+    subject: { kind: "subject", effort: "high" },
+  };
+  try {
+    const saved = await f.runtime.changeConfig(next, f.configStore.revision);
+    assert.deepEqual(saved.affectedAgents, []);
+    assert.equal(used[0].signal.aborted, false);
+  } finally {
+    release();
+  }
+  await running;
+  await f.runtime.wake(id, "group:20000");
+  await f.runtime.wake(id, "private:30000");
+  await f.runtime.wake(id, "@subject");
+  assert.deepEqual(
+    used.map(({ conversation, effort }) => [conversation, effort]),
+    [
+      ["group:20000", undefined],
+      ["group:20000", "low"],
+      ["private:30000", "low"],
+      ["@subject", "high"],
+    ],
+  );
+  assert.equal(f.backends.length, 1);
+});
+
 test("native delegation uses same-scope evidence, isolated permissions and no chat input receipt", async (t) => {
   const cfg = config(1);
   cfg.backends.push({
