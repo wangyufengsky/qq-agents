@@ -181,7 +181,7 @@ function panel() {
       controls.append(decline, action);
       node.append(avatar(role), info, controls);
       guestList.append(node);
-      guests.set(role.id, { state, action, decline });
+      guests.set(role.id, { node, state, action, decline });
     }
     const { state, action, decline } = guests.get(role.id);
     decline.hidden = room.live || role.state !== "invited";
@@ -217,7 +217,8 @@ function panel() {
     if (latest === lastId) return;
     const pinned =
       thread.scrollHeight - thread.scrollTop - thread.clientHeight < 65;
-    if (lastId === undefined || lastId === 0) thread.replaceChildren();
+    if (latest < (lastId ?? 0)) lastId = undefined;
+    if (!lastId) thread.replaceChildren();
     if (room.messages.length) {
       for (const entry of room.messages) {
         if (entry.id > (lastId ?? 0)) thread.append(line(entry));
@@ -286,6 +287,12 @@ function panel() {
         const role = room.roles.find(({ id }) => id === room.knock.actor);
         select(".knock-label").textContent =
           `${role.name}敲门了。${room.knock.text}`;
+      }
+    }
+    for (const [id, { node }] of guests) {
+      if (!room.roles.some((role) => role.id === id)) {
+        node.remove();
+        guests.delete(id);
       }
     }
     for (const role of room.roles) guest(role);
