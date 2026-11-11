@@ -421,6 +421,66 @@ test("DSH uses required preset, workspace, model selection and ignores historica
   assert.equal(completed, true);
 });
 
+test("DSH ordinary effort overrides use the retained session and validate the model receipt", async (t) => {
+  const { client, push } = dshFake();
+  const backend = new DshBackend(
+    {
+      id: "dsh",
+      preset: "qq-unified",
+      provider: "fixture",
+      model: "fixture-model",
+      effort: "high",
+    },
+    config().agents[0],
+    { root: temp(t), client },
+  );
+  t.after(() => backend.close());
+  const session = {
+    id: "s",
+    backend: "dsh",
+    signature: backend.sessionSignature([]),
+  };
+  const params = {
+    conversation: "group:20000",
+    prompt: "context fixture",
+    signal: new AbortController().signal,
+    tools: [],
+    session,
+    saveSession: () =>
+      assert.fail("the retained session should not be replaced"),
+    effort: "low",
+  };
+  const run = backend.run(params);
+  await tick();
+  assert.equal(
+    client.calls.find((call) => call.name === "model").args.reasoningEffort,
+    "low",
+  );
+  assert.ok(client.calls.some((call) => call.name === "prompt"));
+  push({
+    payload: {
+      type: "session/event",
+      sessionId: "s",
+      event: {
+        type: "turn/end",
+        data: { turn: "t", reason: { kind: "completed" } },
+      },
+    },
+  });
+  await run;
+  assert.equal(backend.config.effort, "high");
+
+  client.calls.length = 0;
+  client.sessions.selectModel = async () => ({
+    result: { ok: true, value: { selected: { reasoningEffort: "high" } } },
+  });
+  await assert.rejects(backend.run(params), /BACKEND_MODEL_UNAVAILABLE/);
+  assert.equal(
+    client.calls.some((call) => call.name === "prompt"),
+    false,
+  );
+});
+
 test("DSH pins concurrent functional selections on separate fresh sessions", async (t) => {
   const { client, push } = dshFake();
   const original = {

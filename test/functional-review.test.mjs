@@ -274,7 +274,9 @@ test("a paused owner message does not overwrite state changed while commands wer
 
 test("the narrowed tick still fires due reply checks and sleep timers", async (t) => {
   let runs = 0;
-  const f = fixture(t, { cfg: quiet(), run: async () => void runs++ }),
+  const cfg = quiet();
+  cfg.agents[0].behavior.replyCheckEnabled = true;
+  const f = fixture(t, { cfg, run: async () => void runs++ }),
     mem = f.store.bind("agent-0"),
     now = f.runtime.now();
   mem.setState("group:20000", { replyCheckAt: now - 1 });

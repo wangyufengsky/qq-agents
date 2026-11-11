@@ -28,6 +28,80 @@ test("sleep requires a real observation window and sending resets it", async (t)
     /PRE_SLEEP/,
   );
 });
+test("default-disabled reply checks suppress legacy timers and queued checks while real messages still wake", async (t) => {
+  const c = cfg();
+  const id = "agent-0",
+    scope = "group:20000";
+  const wakes = [];
+  const f = fixture(t, {
+    cfg: c,
+    run: async ({ callTool }) => {
+      wakes.push(f.store.bind(id).state(scope).lastWakeReason);
+      await callTool("qq_send", { requestId: "fixture-reply", text: "收到" });
+    },
+  });
+  const mem = f.store.bind(id);
+  assert.equal(f.runtime.agent(id).behavior.replyCheckEnabled, false);
+  const now = f.runtime.now();
+  mem.setState(scope, {
+    replyCheckAt: now - 1,
+    wakeDueAt: now - 1,
+    pendingWakes: [{ reason: "replyCheck", seq: 0 }],
+  });
+  f.runtime.tick();
+  await settle(f.runtime);
+  assert.deepEqual(wakes, []);
+  assert.equal(mem.state(scope).replyCheckAt, null);
+  assert.deepEqual(mem.state(scope).pendingWakes, []);
+
+  await f.runtime.ingest("qq-0", raw(1));
+  await settle(f.runtime);
+  assert.deepEqual(wakes, ["message"]);
+  assert.equal(f.runtime.transports.get("qq-0").sent.length, 1);
+  assert.equal(mem.state(scope).replyCheckAt, null);
+
+  await f.runtime.callTool(context(f.runtime), "qq_set_wake_config", {
+    mode: "active",
+  });
+  assert.equal(mem.state(scope).replyCheckAt, null);
+});
+
+test("toggling reply checks clears their old timers while retaining incoming wakes", async (t) => {
+  const c = cfg();
+  c.agents[0].behavior.replyCheckEnabled = true;
+  const { runtime, store, configStore } = fixture(t, { cfg: c });
+  const id = "agent-0",
+    scope = "group:20000";
+  const mem = store.bind(id);
+  await runtime.callTool(context(runtime), "qq_set_wake_config", {
+    mode: "active",
+  });
+  const due = mem.state(scope).replyCheckAt;
+  assert.ok(due > runtime.now());
+  const incoming = { reason: "mention", seq: 1 };
+  mem.setState(scope, {
+    ...mem.state(scope),
+    wakeDueAt: due,
+    pendingWakes: [{ reason: "replyCheck", seq: 0 }, incoming],
+  });
+
+  for (const enabled of [false, true]) {
+    const next = structuredClone(runtime.config);
+    next.agents[0].behavior.replyCheckEnabled = enabled;
+    assert.deepEqual(
+      (await runtime.changeConfig(next, configStore.revision)).affectedAgents,
+      [],
+    );
+    assert.equal(mem.state(scope).replyCheckAt, null);
+    assert.deepEqual(mem.state(scope).pendingWakes, [incoming]);
+    assert.equal(mem.state(scope).wakeDueAt, due);
+  }
+  const ordinary = context(runtime);
+  ordinary.confirmedSends = 1;
+  runtime.conversations.finish(ordinary);
+  assert.ok(mem.state(scope).replyCheckAt > runtime.now());
+});
+
 test("pause aborts a long wait immediately without a QQ send", async (t) => {
   const f = fixture(t, { cfg: cfg() }),
     ctx = context(f.runtime);

@@ -66,6 +66,33 @@ export class ConversationEngine {
   write(id, conversation, state) {
     this.runtime.memory.bind(id).setState(conversation, state);
   }
+  clearReplyChecks(id) {
+    const mem = this.runtime.memory.bind(id);
+    const rows = mem.db
+      .prepare(
+        `SELECT conversation,value FROM runtime WHERE agent_id=?
+          AND (conversation LIKE 'group:%' OR conversation LIKE 'private:%')
+          AND (json_extract(value,'$.replyCheckAt') IS NOT NULL
+            OR EXISTS (SELECT 1 FROM json_each(value,'$.pendingWakes') AS wake
+              WHERE json_extract(wake.value,'$.reason')='replyCheck'))`,
+      )
+      .all(id);
+    for (const row of rows) {
+      const state = JSON.parse(row.value);
+      state.replyCheckAt = null;
+      if (state.pendingWakes?.length) {
+        state.pendingWakes = state.pendingWakes.filter(
+          (wake) => wake.reason !== "replyCheck",
+        );
+        if (!state.pendingWakes.length) {
+          delete state.wakeDueAt;
+          endBatch(state);
+          this.timing?.take(id, row.conversation, false);
+        }
+      }
+      mem.setState(row.conversation, state);
+    }
+  }
   notify(id, conversation) {
     this.waiters.get(id + "|" + conversation)?.();
   }
@@ -353,6 +380,8 @@ export class ConversationEngine {
       return { queued: true, rateLimited: true };
     }
     const pending = state.pendingWakes.filter((x) => {
+      if (x.reason === "replyCheck" && !a.behavior.replyCheckEnabled)
+        return false;
       if (x.intentId) {
         const i = runtime.memory
           .bind(id)
@@ -429,6 +458,7 @@ export class ConversationEngine {
       s = this.state(ctx.agentId, ctx.conversation);
     s.noActionCount = ctx.confirmedSends ? 0 : (s.noActionCount || 0) + 1;
     if (
+      a.behavior.replyCheckEnabled &&
       !ctx.wakeConfigured &&
       s.noActionCount < a.behavior.noActionLimit &&
       ctx.confirmedSends &&
@@ -459,7 +489,9 @@ export class ConversationEngine {
         mode === "active" || infinite ? null : this.now() + (sleepMs || 300000),
     };
     state.replyCheckAt =
-      mode === "active" ? this.now() + a.behavior.replyCheckMs : null;
+      mode === "active" && a.behavior.replyCheckEnabled
+        ? this.now() + a.behavior.replyCheckMs
+        : null;
     ctx.wakeConfigured = true;
     this.write(a.id, ctx.conversation, state);
     return state.wakeConfig;
@@ -615,11 +647,12 @@ export class ConversationEngine {
       if (
         s.replyCheckAt &&
         s.replyCheckAt <= now &&
-        !(s.proactiveCooldownUntil > now)
+        (!a.behavior.replyCheckEnabled || !(s.proactiveCooldownUntil > now))
       ) {
         s.replyCheckAt = null;
         this.write(a.id, conversation, s);
-        this.request(a.id, conversation, "replyCheck");
+        if (a.behavior.replyCheckEnabled)
+          this.request(a.id, conversation, "replyCheck");
       }
       const result = this.flush(a.id, conversation);
       if (result.queued && !result.rateLimited) {

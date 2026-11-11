@@ -50,6 +50,12 @@ function agentBackend(config, agentId) {
   if (!b) return undefined;
   return backendSessionConfig(roleBackendConfig(a, b));
 }
+/** @param {NonNullable<Agent["functionalAgents"]>["subject" | "qq"]} value */
+function conversationAgentPolicy(value) {
+  if (!value) return undefined;
+  const { kind: _kind, effort: _effort, ...policy } = value;
+  return Object.keys(policy).length ? policy : undefined;
+}
 /** @param {Agent} value */
 function agentPolicy(value) {
   // Scheduling, display and limits do not revoke a transcript's authority.
@@ -63,6 +69,7 @@ function agentPolicy(value) {
     persona: _persona,
     effort: _effort,
     model: _model,
+    functionalAgents,
     ...rest
   } = value;
   const {
@@ -93,6 +100,11 @@ function agentPolicy(value) {
   } = value.scheduler;
   return {
     ...rest,
+    functionalAgents: {
+      subject: conversationAgentPolicy(functionalAgents?.subject),
+      qq: conversationAgentPolicy(functionalAgents?.qq),
+      memory: functionalAgents?.memory,
+    },
     imageInputEnabled: value.behavior.imageInput.enabled,
     scheduler,
     tools: unordered(value.tools),

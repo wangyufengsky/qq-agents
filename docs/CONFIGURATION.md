@@ -2,7 +2,7 @@
 
 ## 功能 Agent 配置
 
-每个角色可以在 `agents[].functionalAgents` 配置功能 Agent。字段省略时，现有主人格和 QQ 对话沿用原来的行为、提示和工具。定义键 `subject` 对应主人格（`kind: "subject"`），`qq` 对应普通 QQ 对话（`kind: "qq-dialogue"`）。两者可设置 `instructions`，并用可选的 `tools` 从当前授权的工具中进一步限缩。
+每个角色可以在 `agents[].functionalAgents` 配置功能 Agent。字段省略时，现有主人格和 QQ 对话沿用原来的行为、提示和工具。定义键 `subject` 对应主人格（`kind: "subject"`），`qq` 对应普通 QQ 对话（`kind: "qq-dialogue"`）。两者可设置 `instructions`，并用可选的 `tools` 从当前授权的工具中进一步限缩。使用 DSH 且角色或后端指定了模型时，可以分别设置 `functionalAgents.qq.effort` 和 `functionalAgents.subject.effort`，例如 QQ 对话用 `low`、主人格用 `high`。请选模型目录实际支持的档位。省略时继承角色或后端的思考强度。修改这两项从下一回合生效，沿用已有 Session。 DSH 的选档接口也会保存当前 profile 的默认档位，同一 profile 新开的会话可能继承最近一次选择。
 
 `memory`（`kind: "memory"`）默认关闭。调用方的 QQ 定义须列出 `delegatesTo: ["memory"]`，目标定义也须显式启用。目标显式指定带 `functionalAgentOnly: true` 的 DSH 后端，并使用 `qq-unified` 预设、固定回环地址和独立 DSH profile。DSH 会把选模型操作保存为当前 profile 的默认值，所以不同端口仍须分别使用独立 profile。普通角色后端与委托后端须使用不同的 DSH 实例。每次委托都指定有效提供方和模型，`model` 与 `effort` 可覆盖专用后端的默认配置。记忆工具限 `memory_search`、`memory_read`、`memory_related`，实际仍取调用方权限与该范围的交集。查证预算通过 `onDemand.timeoutMs` 和 `onDemand.maxLookups` 缩小，默认分别为 10000 毫秒和 3 次。
 

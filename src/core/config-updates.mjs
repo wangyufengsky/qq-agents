@@ -169,6 +169,16 @@ export async function commitConfig(runtime, next, revision) {
         }
       }
     });
+    await apply(() => {
+      for (const a of next.agents) {
+        const previous = before.agents.find((role) => role.id === a.id);
+        // A fresh opt-in must not revive checks persisted before it was enabled.
+        if (
+          previous?.behavior.replyCheckEnabled !== a.behavior.replyCheckEnabled
+        )
+          runtime.conversations.clearReplyChecks(a.id);
+      }
+    });
     await apply(() => runtime.home.syncAgents());
     await Promise.all(
       [...impact.paused].map((id) =>

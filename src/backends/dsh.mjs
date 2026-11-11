@@ -429,6 +429,7 @@ export class DshBackend {
     signal,
     tools,
     modelSelection,
+    effort,
     session,
     saveSession,
     onBackendTurn,
@@ -625,7 +626,7 @@ export class DshBackend {
               model: chosen.model,
               reasoningEffort: selection
                 ? chosen.effort || undefined
-                : chosen.effort,
+                : (effort ?? chosen.effort),
             },
             selection ? signal : undefined,
           );
@@ -648,7 +649,9 @@ export class DshBackend {
             )
           )
             throw new SessionUnavailableFailure("DSH_SESSION_UNAVAILABLE");
-          unwrap(result, "model");
+          const model = unwrap(result, "model");
+          if (effort && model.selected?.reasoningEffort !== effort)
+            throw Error("BACKEND_MODEL_UNAVAILABLE");
         });
       await beforeInputSubmitted?.();
       if (signal.aborted) throw Error("ABORTED");

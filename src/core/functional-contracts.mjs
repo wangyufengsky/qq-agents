@@ -22,6 +22,7 @@ export function conversationExchange(
   return {
     inputImages: imageInput.images,
     beforeInputSubmitted: imageInput.beforeSubmit,
+    effort: ctx.functionalAgent?.definition.effort,
     prompt: prepared.prompt,
     ...(ctx.openingRecall && {
       appendPrompt: () => renderRecallOpening(runtime, ctx),

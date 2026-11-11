@@ -672,3 +672,28 @@ test("social participation remains default off and round trips independently of 
     false,
   );
 });
+
+test("DSH effort controls round trip without replacing existing agent definitions", async () => {
+  const cfg = await sampleConfig(),
+    row = cfg.agents[0];
+  row.model = "fixture-model";
+  row.functionalAgents = {
+    qq: { kind: "qq-dialogue", instructions: "对话职责", effort: "low" },
+    subject: { kind: "subject", effort: "high" },
+  };
+  const run = editor(cfg);
+  const build = run("agentForm.build.bind(agentForm)");
+  const parse = run("agentForm.parse.bind(agentForm)");
+  const html = build(row, "");
+  const edited = parse(
+    formOf(html, { qqEffort: "", subjectEffort: "low" }),
+    row,
+  ).row;
+  assert.equal(edited.functionalAgents.qq.instructions, "对话职责");
+  assert.equal(edited.functionalAgents.qq.effort, undefined);
+  assert.equal(edited.functionalAgents.subject.effort, "low");
+  row.functionalAgents.subject = { kind: "subject" };
+  const inherited = parse(formOf(build(row, "")), row).row;
+  assert.equal(inherited.functionalAgents.subject.kind, "subject");
+  assert.equal(inherited.functionalAgents.subject.effort, undefined);
+});
