@@ -72,6 +72,82 @@ for (const phase of ["writeFileSync", "renameSync"])
     }
   });
 
+test("ordinary group revocation cancels only the scope that loses admission", async (t) => {
+  const cfg = config(1);
+  cfg.privateLikeGroups = ["20001"];
+  const f = fixture(t, { cfg });
+  const id = "agent-0";
+  const removed = "group:20000";
+  const kept = ["group:20001", "private:30000"];
+  const scopes = [removed, ...kept];
+  const contexts = new Map(
+    scopes.map((scope) => [scope, f.runtime.makeContext(id, scope)]),
+  );
+  const mem = f.store.bind(id);
+  const queued = [{ reason: "mention" }];
+  const scheduler = f.runtime.scheduler;
+  const schedule = scheduler.state(id);
+  schedule.history.push({
+    id: "queued-task",
+    status: "queued",
+    target: removed,
+  });
+  scheduler.save(id, schedule);
+  mem.identity.put("intentions", {
+    id: "queued-intent",
+    target: removed,
+    status: "handedoff",
+    revision: 1,
+    expiresAt: f.runtime.now() + 3600000,
+    history: [],
+  });
+  for (const scope of scopes) {
+    f.runtime.pending.set(id + "|" + scope, {});
+    mem.setState(scope, {
+      pendingWakes:
+        scope === removed
+          ? [
+              ...queued,
+              { reason: "scheduled", taskRunId: "queued-task" },
+              { reason: "intent", intentId: "queued-intent" },
+            ]
+          : queued,
+      wakeDueAt: f.runtime.now() + 60000,
+      replyCheckAt: f.runtime.now() + 60000,
+    });
+  }
+  const backend = f.runtime.backendConnections.adapter(f.runtime.agent(id));
+  const next = structuredClone(f.runtime.config);
+  next.agents[0].allow.groups = [];
+  const result = await f.runtime.changeConfig(next, f.configStore.revision);
+
+  assert.equal(result.revokedGroupScopes, 1);
+  assert.deepEqual(result.affectedAgents, []);
+  assert.equal(f.runtime.backends.get(id), backend);
+  assert(contexts.get(removed).controller.signal.aborted);
+  assert.throws(() => f.runtime.capability(contexts.get(removed).token));
+  assert(!f.runtime.pending.has(id + "|" + removed));
+  assert.deepEqual(mem.state(removed).pendingWakes, []);
+  assert.equal(mem.state(removed).wakeDueAt, undefined);
+  assert.equal(mem.state(removed).replyCheckAt, null);
+  assert.equal(scheduler.state(id).history[0].status, "skipped");
+  assert.equal(
+    scheduler.state(id).history[0].reason,
+    "TASK_TARGET_NOT_ALLOWED",
+  );
+  assert.equal(
+    mem.identity.get("intentions", "queued-intent").status,
+    "deferred",
+  );
+  for (const scope of kept) {
+    const ctx = contexts.get(scope);
+    assert.equal(f.runtime.capability(ctx.token), ctx);
+    assert(!ctx.controller.signal.aborted);
+    assert(f.runtime.pending.has(id + "|" + scope));
+    assert.deepEqual(mem.state(scope).pendingWakes, queued);
+  }
+});
+
 test("a stale page cannot overwrite a changed configuration after restart", (t) => {
   const f = fixture(t);
   const old = structuredClone(f.configStore.value);
@@ -339,9 +415,12 @@ test("actual backend failures remain visible", async (t) => {
   }
 });
 
-test("real console role form changes only participation and shows the server's reconnect result", async (t) => {
+test("real console role form saves participation, autonomy and scoped group admission", async (t) => {
   const cfg = config(1);
   cfg.agents[0].behavior.maxOpenDraftsPerConversation = 9;
+  cfg.agents[0].functionalAgents = {
+    memory: { kind: "memory", enabled: false, pilot: { groups: ["20001"] } },
+  };
   const f = fixture(t, { cfg });
   const request = await httpConfig(t, f);
   const original = structuredClone(f.runtime.config);
@@ -445,6 +524,20 @@ test("real console role form changes only participation and shows the server's r
     );
     assert.equal(f.runtime.agent(a.id).wake.participation, 0.4);
   }
+  vm.runInContext(
+    'editing = { type: "agents", id: config.agents[0].id, row: config.agents[0] };',
+    sandbox,
+  );
+  fields.set("groups", "20000");
+  const kept = f.runtime.makeContext(a.id, "group:20000");
+  const removed = f.runtime.makeContext(a.id, "group:20001");
+  node("#edit-form").onsubmit({ preventDefault() {}, target: fields });
+  await vm.runInContext("submitted", sandbox);
+  assert.deepEqual(f.runtime.agent(a.id).allow.groups, ["20000"]);
+  assert.equal(f.runtime.agent(a.id).functionalAgents.memory.pilot, undefined);
+  assert.equal(f.runtime.capability(kept.token), kept);
+  assert(removed.controller.signal.aborted);
+  assert.match(node("#notice").textContent, /已停止失去准入的群会话/);
 });
 
 test("real console backend form drops OpenAI-only fields on a type change and clears an emptied key", async (t) => {

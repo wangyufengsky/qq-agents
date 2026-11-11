@@ -2212,7 +2212,9 @@ function savedNotice(result) {
     return "已保存。改动的 QQ 账号未启用，无需重新连接。";
   return result.affectedAgents?.length
     ? "已保存并生效。受影响角色的旧回合已结束，其他角色继续运行。"
-    : "已保存并生效，现有 QQ 连接和回合保持不变。";
+    : result.revokedGroupScopes
+      ? "已保存并生效。已停止失去准入的群会话，其他会话继续运行。"
+      : "已保存并生效，现有 QQ 连接和回合保持不变。";
 }
 // A speaker in memory results by QQ name and QQ; one with a person card by
 // the call it gives instead, with a way to open the card. people is the

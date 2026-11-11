@@ -139,6 +139,7 @@ export class Runtime {
     this.retiredResources = new Set();
     this.closed = false;
     this.configDrain = null;
+    this.configChangesGroupAdmissionOnly = false;
     this.reconfiguringAgents = new Set();
     this.reconfiguringConnections = new Set();
     this.drafts = new QQDraftStore(memory, { clock: () => this.now() });
@@ -687,12 +688,17 @@ export class Runtime {
     await this.backends.get(agentId)?.cancel?.();
   }
   // Stops one conversation's turn; the agent's other conversations and owner grants continue.
-  async cancelConversation(agentId, conversation) {
+  async cancelConversation(
+    agentId,
+    conversation,
+    source = "conversation-pause",
+    changes = [],
+  ) {
     this.games.worker.cancel(agentId, conversation);
     const key = agentId + "|" + conversation;
     for (const [token, ctx] of this.capabilities)
       if (ctx.agentId === agentId && ctx.conversation === conversation) {
-        this.abortContext(ctx, "conversation-pause");
+        this.abortContext(ctx, source, changes);
         this.capabilities.delete(token);
       }
     this.pending.delete(key);
@@ -700,7 +706,7 @@ export class Runtime {
     this.conversations.notify(agentId, conversation);
     const ctx = this.running.get(key);
     if (ctx) {
-      this.abortContext(ctx, "conversation-pause");
+      this.abortContext(ctx, source, changes);
       await ctx.done;
     }
   }

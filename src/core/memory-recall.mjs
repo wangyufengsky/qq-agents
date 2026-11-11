@@ -3,7 +3,10 @@ import { setTimeout as delay } from "node:timers/promises";
 import { resolveMessage, scopeFor } from "../memory/message-ids.mjs";
 import { provenance } from "../memory/scenes.mjs";
 import { timelineAnchor, timelineNeighbors } from "../memory/timeline.mjs";
-import { memoryRecallPilot } from "./functional-agents.mjs";
+import {
+  functionalConfigVersion,
+  memoryRecallPilot,
+} from "./functional-agents.mjs";
 import { liveInput } from "./live-input.mjs";
 import { prepared, recallBoundary } from "./recall-boundary.mjs";
 import { rememberSources } from "./context-handoff.mjs";
@@ -673,7 +676,7 @@ async function lookup(runtime, ctx, route, reason, cues, { cue, query } = {}) {
   const to = new Date(
     Date.parse(first.occurredAt) - RECENT_CHAT_MS,
   ).toISOString();
-  const config = runtime.config;
+  const configVersion = functionalConfigVersion(runtime.config);
   const role = runtime.agent(ctx.agentId);
   const budget =
     route === "opening"
@@ -684,7 +687,7 @@ async function lookup(runtime, ctx, route, reason, cues, { cue, query } = {}) {
   const review = reason === "local-familiarity";
   const known = knownContext(runtime, ctx, cues);
   const current = () =>
-    runtime.config === config &&
+    functionalConfigVersion(runtime.config) === configVersion &&
     ctx.inputEpoch === epoch &&
     !ctx.controller.signal.aborted &&
     runtime.capabilities.get(ctx.token) === ctx &&
