@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { resolveFunctionalContract } from "./functional-contracts.mjs";
 import {
+  functionalConfigVersion,
   memoryRecallPilot,
   resolveFunctionalAgent,
 } from "./functional-agents.mjs";
@@ -101,7 +102,7 @@ export class FunctionalDelegation {
       };
     }
     const invocationId = randomUUID();
-    const config = runtime.config;
+    const configVersion = functionalConfigVersion(runtime.config);
     const inputEpoch = parent.inputEpoch;
     const controller = new AbortController();
     const stopped = Promise.withResolvers();
@@ -116,7 +117,10 @@ export class FunctionalDelegation {
       if (controller.signal.aborted) return false;
       if (parentSignal.aborted) stop("cancelled");
       else if (Date.now() >= deadline) stop("timeout");
-      else if (runtime.config !== config || parent.inputEpoch !== inputEpoch)
+      else if (
+        functionalConfigVersion(runtime.config) !== configVersion ||
+        parent.inputEpoch !== inputEpoch
+      )
         stop("stale");
       if (!stopStatus) {
         try {

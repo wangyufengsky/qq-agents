@@ -1,6 +1,7 @@
 import { refreshRhythm } from "./rhythm.mjs";
 import { isPrivateLikeGroup, validateConfig } from "./config.mjs";
 import { configImpact, changedConfigFields } from "./config-impact.mjs";
+import { retainFunctionalConfigVersion } from "./functional-agents.mjs";
 import { waitForDrain } from "../updates/drain.mjs";
 import { SUBJECT } from "./lifecycle.mjs";
 import { BanterCoordinator } from "../../vendor/local-bridge/banter.mjs";
@@ -12,7 +13,14 @@ export async function commitConfig(runtime, next, revision) {
   if (revision !== runtime.configStore.revision) throw Error("CONFIG_CONFLICT");
   const before = runtime.config;
   const impact = configImpact(before, next);
-  const { agentIds, connectionIds, backendIds } = impact;
+  const {
+    agentIds,
+    connectionIds,
+    backendIds,
+    groupAdmissionOnly,
+    revokedGroups,
+  } = impact;
+  let revokedGroupScopes = 0;
   const affectedBackends = new Set(
     [...before.agents, ...next.agents]
       .filter((a) => agentIds.has(a.id))
@@ -48,6 +56,7 @@ export async function commitConfig(runtime, next, revision) {
       finishing.push(lease.done);
   }
   runtime.configChanging = true;
+  runtime.configChangesGroupAdmissionOnly = groupAdmissionOnly;
   let settle;
   // Lets a safety control (pause) wait out this commit instead of failing.
   runtime.configSettled = new Promise((resolve) => (settle = resolve));
@@ -115,8 +124,29 @@ export async function commitConfig(runtime, next, revision) {
       runtime.configDrain = null;
     }
     // Commit before revoking permissions; a failed disk write leaves old work usable.
-    runtime.configStore.save(next, revision);
-    runtime.functionalDelegation?.invalidate();
+    const saved = runtime.configStore.save(next, revision);
+    if (groupAdmissionOnly) retainFunctionalConfigVersion(before, saved);
+    else runtime.functionalDelegation?.invalidate();
+    for (const [id, groups] of revokedGroups) {
+      const changes = changedConfigFields(before, next, id);
+      for (const group of groups) {
+        revokedGroupScopes++;
+        const conversation = "group:" + group;
+        finishing.push(
+          apply(() =>
+            runtime.cancelConversation(
+              id,
+              conversation,
+              "configuration",
+              changes,
+            ),
+          ),
+        );
+        finishing.push(
+          apply(() => runtime.conversations.revokeAdmission(id, conversation)),
+        );
+      }
+    }
     refreshRhythm(runtime, before, next);
     for (const [token, ctx] of runtime.capabilities)
       if (agentIds.has(ctx.agentId)) {
@@ -241,6 +271,7 @@ export async function commitConfig(runtime, next, revision) {
     return {
       saved: true,
       affectedAgents: [...agentIds],
+      revokedGroupScopes,
       reconnectRequired: connectionIds.size > 0,
       reconnectConnections: [...connectionIds].filter((id) =>
         next.connections.some((c) => c.id === id && c.enabled),
@@ -253,6 +284,7 @@ export async function commitConfig(runtime, next, revision) {
     runtime.reconfiguringAgents = new Set();
     runtime.reconfiguringConnections = new Set();
     runtime.configChanging = false;
+    runtime.configChangesGroupAdmissionOnly = false;
     settle();
   }
 }

@@ -177,7 +177,7 @@ export class BackendConnections {
       throw Error("FUNCTIONAL_AGENT_BACKEND_UNSUPPORTED");
     if (
       r.closed ||
-      r.configChanging ||
+      (r.configChanging && !r.configChangesGroupAdmissionOnly) ||
       this.blocked.has(role.id) ||
       this.operations.has(parentBackendId) ||
       this.operations.has(backendId)

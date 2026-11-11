@@ -120,7 +120,7 @@ const cases = [
   ["own account change", (c) => (c.connections[0].accountId = "10009"), false],
   ["appearance change", (c) => (c.agents[0].appearance = "另一形象"), false],
 ];
-async function runCase(t, name, change, expectedRetain, scope, active) {
+async function runCase(t, change, expectedRetain, scope, active) {
   const cfg = config(2);
   Object.assign(cfg.agents[0], {
     model: "role-fixed-model",
@@ -227,4 +227,12 @@ for (const [name, change, expectedRetain] of cases)
   for (const scope of ["@subject", "group:20000"])
     for (const active of [false, true])
       test(`${name}: ${scope} ${active ? "active" : "idle"} session boundary`, (t) =>
-        runCase(t, name, change, expectedRetain, scope, active));
+        runCase(t, change, expectedRetain, scope, active));
+
+for (const [name, change] of [
+  ["adding a group", (c) => c.agents[0].allow.groups.push("20002")],
+  ["removing a different group", (c) => (c.agents[0].allow.groups = ["20000"])],
+])
+  for (const scope of ["group:20000", "private:30000"])
+    test(`${name} keeps the active ${scope} session`, (t) =>
+      runCase(t, change, true, scope, true));

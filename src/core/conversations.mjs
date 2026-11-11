@@ -29,6 +29,19 @@ const endBatch = (state) => {
   delete state.wakeBatchAt;
   delete state.wakeBatchSenders;
 };
+function discardWakes(state) {
+  state.pendingWakes = [];
+  delete state.rhythmDeferredUntil;
+  delete state.roleRestDeferred;
+  delete state.roleRestWake;
+  delete state.rhythmSleepPeriod;
+  delete state.rhythmBaseDueAt;
+  delete state.rhythmDirect;
+  delete state.rhythmLateChecked;
+  delete state.rhythmLateUntil;
+  delete state.wakeDueAt;
+  endBatch(state);
+}
 // Wait batchWindowMs after the latest message, at most batchMaxMs after the first;
 // a cap below the window keeps the window fixed from the first message.
 function slide(a, state, now, senderId) {
@@ -65,6 +78,43 @@ export class ConversationEngine {
   }
   write(id, conversation, state) {
     this.runtime.memory.bind(id).setState(conversation, state);
+  }
+  deferQueuedContact(id, intent, now, cooldown) {
+    if (intent.status !== "handedoff") return;
+    this.runtime.subject.transition(
+      id,
+      intent,
+      intent.expiresAt <= now ? "expired" : "deferred",
+      "queued contact opportunity no longer allowed",
+      { eligibleAt: now + cooldown },
+    );
+  }
+  revokeAdmission(id, conversation) {
+    const { runtime } = this;
+    const mem = runtime.memory.bind(id);
+    const state = mem.state(conversation);
+    const pending = state.pendingWakes || [];
+    discardWakes(state);
+    state.replyCheckAt = null;
+    if (state.wakeConfig?.sleepUntil != null)
+      state.wakeConfig.sleepUntil = null;
+    this.timing?.take(id, conversation, false);
+    this.write(id, conversation, state);
+    const now = this.now();
+    const cooldown = runtime.agent(id).subject.contactCooldownMs;
+    for (const wake of pending) {
+      if (wake.taskRunId)
+        runtime.scheduler.finish(
+          id,
+          wake.taskRunId,
+          "skipped",
+          "TASK_TARGET_NOT_ALLOWED",
+        );
+      if (wake.intentId) {
+        const intent = mem.identity.get("intentions", wake.intentId);
+        this.deferQueuedContact(id, intent, now, cooldown);
+      }
+    }
   }
   clearReplyChecks(id) {
     const mem = this.runtime.memory.bind(id);
@@ -390,14 +440,8 @@ export class ConversationEngine {
           i.status === "handedoff" &&
           i.expiresAt > now &&
           runtime.subject.contactOpportunity(a, conversation);
-        if (!valid && i.status === "handedoff")
-          runtime.subject.transition(
-            id,
-            i,
-            i.expiresAt <= now ? "expired" : "deferred",
-            "queued contact opportunity no longer allowed",
-            { eligibleAt: now + a.subject.contactCooldownMs },
-          );
+        if (!valid)
+          this.deferQueuedContact(id, i, now, a.subject.contactCooldownMs);
         return valid;
       }
       return x.taskRunId || !x.seq || x.seq > (state.readThroughSeq || 0);
@@ -405,17 +449,7 @@ export class ConversationEngine {
     const rhythmWake =
       state.roleRestWake ??
       (state.rhythmDeferredUntil <= now ? state.rhythmSleepPeriod : null);
-    state.pendingWakes = [];
-    delete state.rhythmDeferredUntil;
-    delete state.roleRestDeferred;
-    delete state.roleRestWake;
-    delete state.rhythmSleepPeriod;
-    delete state.rhythmBaseDueAt;
-    delete state.rhythmDirect;
-    delete state.rhythmLateChecked;
-    delete state.rhythmLateUntil;
-    delete state.wakeDueAt;
-    endBatch(state);
+    discardWakes(state);
     if (!pending.length) {
       this.timing?.take(id, conversation, false);
       this.write(id, conversation, state);

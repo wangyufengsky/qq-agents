@@ -1,6 +1,7 @@
 // @ts-check
 import { isDeepStrictEqual } from "node:util";
 import { backendSessionConfig } from "../backends/session-contract.mjs";
+import { allowed } from "./config.mjs";
 import { roleBackendConfig } from "./functional-agents.mjs";
 /** @typedef {{id: string, [key: string]: unknown}} Entity */
 /** @typedef {ReturnType<typeof import("./config.mjs").validateConfig>} Configuration */
@@ -110,10 +111,7 @@ function agentPolicy(value) {
     tools: unordered(value.tools),
     ownerIds: unordered(value.ownerIds),
     aliases: unordered(value.aliases),
-    allow: {
-      groups: unordered(value.allow.groups),
-      users: unordered(value.allow.users),
-    },
+    allow: { users: unordered(value.allow.users) },
     voice: { ...value.voice, tts: { enabled: value.voice.tts.enabled } },
     subject: {
       ...subject,
@@ -157,6 +155,61 @@ function backendPolicy(value) {
   const { tools: _t, apps: _a, files: _f, ...rest } = agentPolicy(value);
   return rest;
 }
+/** @param {Agent} before @param {Agent} after @param {Set<string>} lostGroups */
+function retainPilotPolicy(before, after, lostGroups) {
+  const oldMemory = before.functionalAgents?.memory;
+  const pilot = oldMemory?.pilot;
+  if (!pilot || !after.functionalAgents) return after;
+  const groups = pilot.groups.filter((id) => !lostGroups.has(id));
+  if (groups.length === pilot.groups.length) return after;
+  const { pilot: _pilot, ...memory } = oldMemory;
+  const expected = groups.length
+    ? { ...memory, pilot: { ...pilot, groups } }
+    : memory;
+  // A trial entry for a revoked group must be removed in the same save.
+  // Compare the rest of the memory policy under the existing role-wide rules.
+  if (!isDeepStrictEqual(after.functionalAgents.memory, expected)) return after;
+  return {
+    ...after,
+    functionalAgents: { ...after.functionalAgents, memory: oldMemory },
+  };
+}
+
+/** @param {Configuration} before @param {Configuration} after */
+function groupAdmissionImpact(before, after) {
+  const previous = new Map(before.agents.map((a) => [a.id, a]));
+  /** @type {Map<string, Set<string>>} */
+  const revokedGroups = new Map();
+  let groupsChanged = false;
+  const agents = after.agents.map((a) => {
+    const old = previous.get(a.id);
+    if (
+      !old ||
+      isDeepStrictEqual(unordered(old.allow.groups), unordered(a.allow.groups))
+    )
+      return a;
+    groupsChanged = true;
+    const lost = new Set(
+      old.allow.groups.filter((id) => !allowed(a, "group:" + id, after)),
+    );
+    if (lost.size) revokedGroups.set(a.id, lost);
+    return retainPilotPolicy(old, a, lost);
+  });
+  const groupAdmissionOnly =
+    groupsChanged &&
+    isDeepStrictEqual(before, {
+      ...after,
+      agents: agents.map((a) => ({
+        ...a,
+        allow: {
+          ...a.allow,
+          groups: previous.get(a.id)?.allow.groups ?? a.allow.groups,
+        },
+      })),
+    });
+  return { agents, revokedGroups, groupAdmissionOnly };
+}
+
 /** Scheduling rates affect future opportunities without revoking a live turn.
  * @param {Configuration} before @param {Configuration} after */
 export function configImpact(before, after) {
@@ -173,8 +226,12 @@ export function configImpact(before, after) {
     after.backends,
     backendSessionConfig,
   );
-  const agentIds = changed(before.agents, after.agents, agentPolicy);
-  const backendAgentIds = changed(before.agents, after.agents, backendPolicy);
+  const { agents, revokedGroups, groupAdmissionOnly } = groupAdmissionImpact(
+    before,
+    after,
+  );
+  const agentIds = changed(before.agents, agents, agentPolicy);
+  const backendAgentIds = changed(before.agents, agents, backendPolicy);
   const {
     agents: _a,
     connections: _c,
@@ -255,9 +312,15 @@ export function configImpact(before, after) {
       resumed.add(a.id);
   }
   // A transaction containing revocation or pause keeps the immediate safety path.
-  if (paused.size || [...agentIds].some((id) => !drainAgentIds.has(id)))
+  if (
+    revokedGroups.size ||
+    paused.size ||
+    [...agentIds].some((id) => !drainAgentIds.has(id))
+  )
     drainAgentIds.clear();
   return {
+    revokedGroups,
+    groupAdmissionOnly,
     drainAgentIds,
     agentIds,
     backendAgentIds,

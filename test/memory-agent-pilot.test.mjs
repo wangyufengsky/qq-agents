@@ -147,6 +147,42 @@ test("opening searches only previous same-group evidence and attaches an authori
   assert.equal(f.memory.state(group).readThroughSeq || 0, 0);
 });
 
+test("removing a different group's admission and pilot entry preserves in-flight recall", async (t) => {
+  const cfg = pilotConfig();
+  cfg.agents[0].functionalAgents.memory.pilot.groups.push("20001");
+  const entered = Promise.withResolvers();
+  const resume = Promise.withResolvers();
+  let old;
+  const f = setup(
+    t,
+    async (p) => {
+      if (!p.modelSelection) return;
+      entered.resolve();
+      await resume.promise;
+      await p.callTool("memory_read", { id: old.id });
+      await p.callTool("functional_agent_result", {
+        evidenceIds: [old.id],
+        contribution,
+      });
+    },
+    cfg,
+  );
+  old = await f.add(1, "夹具地点原定在南楼");
+  const input = await f.add(2, "还记得上次的夹具地点吗");
+  const turn = f.turn(input);
+  await entered.promise;
+  const next = structuredClone(f.runtime.config);
+  next.agents[0].allow.groups = ["20000"];
+  next.agents[0].functionalAgents.memory.pilot.groups = ["20000"];
+  const save = f.runtime.changeConfig(next, f.configStore.revision);
+  resume.resolve();
+  const [result, record] = await Promise.all([save, turn]);
+
+  assert.equal(result.revokedGroupScopes, 1);
+  assert.equal(record.memoryRecall.opening.status, "matched");
+  assert.equal(record.memoryRecall.opening.presented, 1);
+});
+
 test("active recall uses a current cue, returns an acknowledged result once and does not run outside the pilot", async (t) => {
   let childCount = 0;
   let old;

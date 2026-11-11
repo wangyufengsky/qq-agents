@@ -11,6 +11,22 @@ export const MEMORY_AGENT_LIMITS = Object.freeze({
 /** @typedef {ReturnType<typeof import("./config.mjs").validateConfig>["agents"][number]} Role */
 /** @typedef {NonNullable<Role["functionalAgents"]>} Definitions */
 
+/** @typedef {ReturnType<typeof import("./config.mjs").validateConfig>} Configuration */
+/** @type {WeakMap<Configuration, Configuration>} */
+const functionalConfigVersions = new WeakMap();
+
+/** @param {Configuration} config */
+export function functionalConfigVersion(config) {
+  return functionalConfigVersions.get(config) ?? config;
+}
+
+/** @param {Configuration} before @param {Configuration} saved */
+export function retainFunctionalConfigVersion(before, saved) {
+  // Surviving scopes have the same policy after a group-only edit.
+  // Each lookup still checks the current admission of its parent conversation.
+  functionalConfigVersions.set(saved, functionalConfigVersion(before));
+}
+
 /** @type {Readonly<NonNullable<Definitions["subject"]>>} */
 const subjectDefinition = Object.freeze({
   kind: /** @type {const} */ ("subject"),

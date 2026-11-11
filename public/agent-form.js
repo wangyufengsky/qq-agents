@@ -1674,6 +1674,17 @@ const agentForm = {
       if (value) definitions[key] = { ...definition, effort: value };
       else if (definitions[key]) definitions[key] = definition;
     }
+    const memory = definitions.memory;
+    if (memory?.pilot) {
+      const admitted = new Set(allowedGroupIds(row));
+      const { pilot, ...policy } = memory;
+      const groups = pilot.groups.filter((id) => admitted.has(id));
+      // Saving the ordinary allowlist also removes trials in groups it revoked.
+      if (groups.length !== pilot.groups.length)
+        definitions.memory = groups.length
+          ? { ...policy, pilot: { ...pilot, groups } }
+          : policy;
+    }
     if (Object.keys(definitions).length) row.functionalAgents = definitions;
     else delete row.functionalAgents;
     delete row.enabled;
