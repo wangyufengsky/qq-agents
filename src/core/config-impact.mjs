@@ -1,6 +1,7 @@
 // @ts-check
 import { isDeepStrictEqual } from "node:util";
 import { backendSessionConfig } from "../backends/session-contract.mjs";
+import { roleBackendConfig } from "./functional-agents.mjs";
 /** @typedef {{id: string, [key: string]: unknown}} Entity */
 /** @typedef {ReturnType<typeof import("./config.mjs").validateConfig>} Configuration */
 /** @typedef {Configuration["agents"][number]} Agent */
@@ -47,7 +48,7 @@ function agentBackend(config, agentId) {
   if (!a) return undefined;
   const b = config.backends.find((b) => b.id === a.backendId);
   if (!b) return undefined;
-  return backendSessionConfig({ ...b, model: a.model || b.model });
+  return backendSessionConfig(roleBackendConfig(a, b));
 }
 /** @param {Agent} value */
 function agentPolicy(value) {

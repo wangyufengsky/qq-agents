@@ -25,6 +25,7 @@ import {
 import {
   MEMORY_AGENT_LIMITS,
   MEMORY_AGENT_TOOLS,
+  memoryModelSelection,
 } from "./functional-agents.mjs";
 
 const id = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/);
@@ -613,12 +614,12 @@ export function validateConfig(input) {
     }
     const backend = c.backends.find((x) => x.id === memory.backendId);
     if (!backend) throw Error("INVALID_REFERENCE");
-    if (
-      !backend.functionalAgentOnly ||
-      (memory.enabled &&
-        (!backend.provider.trim() || !(memory.model ?? backend.model).trim()))
-    )
-      throw Error("CONFIG_SCHEMA_INVALID");
+    if (!backend.functionalAgentOnly) throw Error("CONFIG_SCHEMA_INVALID");
+    if (memory.enabled) {
+      const { provider, model } = memoryModelSelection(memory, backend);
+      if (!provider.trim() || !model.trim())
+        throw Error("CONFIG_SCHEMA_INVALID");
+    }
   }
   // An account is one public identity; multiple backend choices do not create ambiguous authors.
   if (new Set(c.agents.map((a) => a.connectionId)).size !== c.agents.length)

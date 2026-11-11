@@ -16,7 +16,10 @@ import {
 export { stableInstructions } from "./prompts.mjs";
 import { randomUUID, createHash } from "node:crypto";
 import { githubMarker } from "../github/policy.mjs";
-import { resolveFunctionalAgent } from "./functional-agents.mjs";
+import {
+  resolveFunctionalAgent,
+  roleBackendConfig,
+} from "./functional-agents.mjs";
 import {
   captureRecallContext,
   captureRecallOpening,
@@ -517,11 +520,7 @@ export class ContextLifecycle {
         s.loadedInstructionsHash = contract.instructionsHash;
       const configured = r.config.backends.find((b) => b.id === a.backendId);
       const backend = {
-        config: effectiveBackendConfig({
-          ...configured,
-          model: a.model || configured.model,
-          effort: a.effort || configured.effort,
-        }),
+        config: effectiveBackendConfig(roleBackendConfig(a, configured)),
         sessionProtocol:
           configured.type === "antigravity"
             ? "antigravity-tools-v3"
