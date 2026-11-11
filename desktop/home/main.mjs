@@ -502,7 +502,7 @@ ipcMain.on("room:action", (event, action, data) => {
         },
         { type: "separator" },
         { label: "请回家", click: () => returnHome(role) },
-        ...(live
+        ...(live || framework
           ? []
           : [
               {
