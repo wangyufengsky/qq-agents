@@ -66,6 +66,7 @@ const browserScripts = {
   ],
   "project-participation.js": ["bindProjectParticipation"],
   "mind-ui.js": ["mindAgentId", "renderMind"],
+  "session-transcripts-ui.js": ["renderTranscripts"],
   "projects-ui.js": [
     "projectAgentId",
     "renderProjects",

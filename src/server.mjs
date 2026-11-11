@@ -31,6 +31,10 @@ import { readiness } from "./core/readiness.mjs";
 import { defaultAgentCapabilities } from "./core/default-config.mjs";
 import { activityPage, homeSummary } from "./core/activity.mjs";
 import {
+  listSessionTranscripts,
+  sessionTranscript,
+} from "./core/session-transcripts.mjs";
+import {
   ADMIN_AUTHOR,
   Board,
   BOARD_LIMITS,
@@ -249,6 +253,8 @@ export function createServer({
           "/document-reader.js",
           "/apps-ui.js",
           "/mind-ui.js",
+          "/session-transcripts-ui.js",
+          "/session-transcripts.css",
           "/projects-ui.js",
           "/project-participation.js",
           "/mood-ui.js",
@@ -1067,6 +1073,38 @@ export function createServer({
             homeSummary(runtime.memory, a.id, { now: runtime.now() }),
           ),
         });
+      if (req.method === "GET" && url.pathname === "/api/session-transcripts") {
+        const agent = runtime.agent(url.searchParams.get("agentId"));
+        const db = runtime.memory.db;
+        const key = url.searchParams.get("key");
+        const before = url.searchParams.get("before");
+        if (!key && !before) return send(listSessionTranscripts(db, agent.id));
+        if (
+          !key ||
+          !/^[a-f0-9]{64}$/.test(key) ||
+          (before && before.length > 100)
+        )
+          return send({ error: "INVALID_REQUEST" }, 400);
+        const read = new AbortController();
+        const disconnect = () => read.abort();
+        res.once("close", disconnect);
+        try {
+          const result = await sessionTranscript({
+            db,
+            dataRoot: path.dirname(runtime.memory.file),
+            agentId: agent.id,
+            key,
+            before,
+            now: runtime.now(),
+            signal: read.signal,
+          });
+          return result
+            ? send(result)
+            : send({ error: "RECORD_NOT_FOUND" }, 404);
+        } finally {
+          res.removeListener("close", disconnect);
+        }
+      }
       if (req.method === "GET" && url.pathname === "/api/activity") {
         const a = runtime.agent(url.searchParams.get("agentId"));
         const filter = url.searchParams.get("filter") || "all";

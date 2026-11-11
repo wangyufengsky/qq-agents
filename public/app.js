@@ -28,7 +28,9 @@ let token = sessionStorage.getItem("qq-unified-token") || "",
     initialRecordPage?.get("view") === "memory" &&
     initialRecordPage.get("type") === "diary"
       ? "diary"
-      : ["memory", "diary", "visits"].includes(initialRecordPage?.get("view"))
+      : ["memory", "diary", "visits", "transcripts"].includes(
+            initialRecordPage?.get("view"),
+          )
         ? initialRecordPage.get("view")
         : "overview",
   editing,
@@ -42,8 +44,9 @@ const titles = {
   projects: ["项目与活动", "持续推进的事情、共同原稿与作品历史。"],
   subject: ["空闲时间", "空闲时间的检查状态、日志，以及检查与联系的设置。"],
   intents: ["主动联系", "空闲时间里想主动找人留下的意图，以及最后的结果。"],
+  transcripts: ["会话", "查看本机保留的 QQ 模型会话。"],
   sessions: [
-    "会话",
+    "会话状态",
     "每个聊天和空闲时间的模型会话与上下文用量，可结束后重新初始化。",
   ],
   permissions: ["权限", "分别设置每个 AI 的文件收发能力与独立文件库。"],
@@ -568,6 +571,7 @@ const sections = {
     ],
   },
   links: { pages: ["links"] },
+  transcripts: { pages: ["transcripts"] },
   board: { pages: ["board"] },
   system: { pages: ["operations", "updates", "settings"] },
 };
@@ -580,7 +584,8 @@ const pageLabels = {
   subject: "空闲时间",
   projects: "项目与活动",
   intents: "主动联系",
-  sessions: "会话",
+  sessions: "会话状态",
+  transcripts: "会话",
   memory: "记忆",
   diary: "日记",
   visits: "访问",
@@ -621,17 +626,20 @@ function renderSectionBar(section) {
   const bar = $("#section-bar");
   document.body.classList.toggle("in-role", section === "role");
   if (!bar) return;
-  if (!["role", "system"].includes(section)) {
+  if (!["role", "system", "transcripts"].includes(section)) {
     bar.hidden = true;
     bar.innerHTML = "";
     return;
   }
   const role = section === "role" && find("agents", roleId);
   const picker =
-    section === "role"
-      ? `<div class="role-pick">${config.agents.map((a) => `<button type="button" data-role="${esc(a.id)}" class="${a.id === roleId ? "primary" : "ghost"}">${esc(a.name)}</button>`).join("")}<button type="button" class="ghost" data-role-add>${icon("plus", "sm")}添加角色</button></div>${role ? blockersMarkup(status.agents.find((s) => s.id === role.id)) : '<p class="hint">还没有角色。</p>'}`
+    section !== "system"
+      ? `<div class="role-pick" aria-label="选择角色">${config.agents.map((a) => `<button type="button" data-role="${esc(a.id)}" aria-pressed="${a.id === roleId}" class="${a.id === roleId ? "primary" : "ghost"}">${esc(a.name)}</button>`).join("")}${section === "role" ? `<button type="button" class="ghost" data-role-add>${icon("plus", "sm")}添加角色</button>` : ""}</div>${section === "role" ? (role ? blockersMarkup(status.agents.find((s) => s.id === role.id)) : '<p class="hint">还没有角色。</p>') : ""}`
       : "";
-  bar.innerHTML = `${picker}<div class="sub-tabs" role="tablist">${sections[section].pages.map((p) => `<button type="button" role="tab" data-page="${p}" aria-selected="${p === tab}" class="${p === tab ? "active" : ""}">${pageLabels[p]}</button>`).join("")}</div>`;
+  bar.innerHTML =
+    section === "transcripts"
+      ? picker
+      : `${picker}<div class="sub-tabs" role="tablist">${sections[section].pages.map((p) => `<button type="button" role="tab" data-page="${p}" aria-selected="${p === tab}" class="${p === tab ? "active" : ""}">${pageLabels[p]}</button>`).join("")}</div>`;
   bar.hidden = false;
   bar.querySelectorAll?.("[data-role]").forEach(
     (b) =>
@@ -672,7 +680,7 @@ function render() {
   const section = sectionOf(tab);
   lastPage[section] = tab;
   if (tab !== "overview") homeShown = false;
-  if (section === "role" && config) syncRole();
+  if (["role", "transcripts"].includes(section) && config) syncRole();
   const role = section === "role" && config && find("agents", roleId);
   const [pageTitle, subtitle] = titles[tab];
   const title = role ? `${role.name} · ${pageLabels[tab]}` : pageTitle;
@@ -699,6 +707,10 @@ function render() {
   const content = $("#content");
   if (!config) return;
   renderSectionBar(section);
+  if (tab === "transcripts") {
+    renderTranscripts();
+    return;
+  }
   // Self, mood, people, free time, contacts and sessions share one renderer.
   if (
     ["mind", "mood", "people", "subject", "intents", "sessions"].includes(tab)

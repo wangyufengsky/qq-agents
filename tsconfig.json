@@ -140,6 +140,8 @@
     "src/home/social-resources.mjs",
     "src/home/social-tool-names.mjs",
     "src/tools/home-social.mjs",
+    "src/backends/local-session-logs.mjs",
+    "src/core/session-transcripts.mjs",
     "src/core/message-images.mjs",
     "src/tools/image-preview.mjs"
   ]
