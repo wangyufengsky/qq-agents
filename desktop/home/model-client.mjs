@@ -39,7 +39,7 @@ export function startModelClient(root, node) {
   child.on("error", offline);
   child.on("exit", offline);
   child.on("message", ({ roles, id, decision }) => {
-    if (roles) return ready();
+    if (roles) return ready(roles);
     const job = pending.get(id);
     if (!job) return;
     pending.delete(id);
@@ -55,7 +55,8 @@ export function startModelClient(root, node) {
   }
 
   return {
-    roles: ["dragon", "cat"],
+    roles: [],
+    ready: online,
     async run(request, signal) {
       await online;
       signal.throwIfAborted();

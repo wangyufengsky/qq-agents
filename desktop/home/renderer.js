@@ -45,6 +45,21 @@ function floating() {
   root.append(space);
 
   if (door) {
+    const indicator = element("span", "door-knock", "有人敲门");
+    indicator.hidden = true;
+    art.append(indicator);
+    function updateDoor(data) {
+      const visitor = data.roles.find(({ id }) => id === data.knock?.actor);
+      indicator.hidden = !visitor;
+      art.setAttribute(
+        "aria-label",
+        visitor ? `${visitor.name}敲门，打开小窝的门` : "打开小窝的门",
+      );
+    }
+    window.nest.onRoom(updateDoor);
+    window.nest.get().then((value) => {
+      if (value) updateDoor(value.data);
+    });
     art.addEventListener("click", () => window.nest.act("open"));
     return;
   }
@@ -174,7 +189,7 @@ function panel() {
     }[role.state];
     const status = role.available ? label : "本轮未接入";
     if (state.textContent !== status) state.textContent = status;
-    action.hidden = !role.available;
+    action.hidden = !role.available || room.knock?.actor === role.id;
     if (action.textContent !== text) action.textContent = text;
     action.setAttribute("aria-label", `${text} · ${role.name}`);
   }
@@ -245,7 +260,26 @@ function panel() {
 
   function update(next) {
     room = next;
-    if (room.live) select(".edition").textContent = "隔离试聊";
+    if (room.live) {
+      select(".edition").textContent = "隔离试聊";
+      select(".door-settings").hidden = false;
+      select("#door-mode").value = room.doorMode;
+      const trial = select(".knock-trial");
+      trial.disabled =
+        room.doorMode !== "welcome" ||
+        room.opportunity ||
+        Boolean(room.knock) ||
+        Boolean(room.thinking) ||
+        (room.opportunityAt !== undefined &&
+          Date.now() - room.opportunityAt < 30 * 60_000);
+      trial.textContent = room.opportunity ? "等角色决定…" : "试一次敲门";
+      select(".knock-card").hidden = !room.knock;
+      if (room.knock) {
+        const role = room.roles.find(({ id }) => id === room.knock.actor);
+        select(".knock-label").textContent =
+          `${role.name}敲门了。${room.knock.text}`;
+      }
+    }
     for (const role of room.roles) guest(role);
     const notice = select(".room-notice");
     if (notice.textContent !== room.notice) notice.textContent = room.notice;
@@ -323,6 +357,19 @@ function panel() {
     closeSettings();
     settings.focus();
   });
+
+  select("#door-mode").addEventListener("change", (event) =>
+    window.nest.act("door-mode", event.target.value),
+  );
+  select(".knock-trial").addEventListener("click", () =>
+    window.nest.act("knock-trial"),
+  );
+  select(".knock-accept").addEventListener("click", () =>
+    window.nest.act("knock-answer", true),
+  );
+  select(".knock-dismiss").addEventListener("click", () =>
+    window.nest.act("knock-answer", false),
+  );
 
   window.nest.onRoom(update);
   window.nest.onSection(switchSection);

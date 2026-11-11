@@ -14,6 +14,9 @@ import {
   startTurn,
 } from "./room.mjs";
 
+const OPPORTUNITY_GAP = 30 * 60_000;
+const KNOCK_TTL = 5 * 60_000;
+
 export class LiveRoom {
   constructor(room, runner, onChange) {
     this.room = room;
@@ -25,6 +28,19 @@ export class LiveRoom {
     this.invites = new Map();
     this.active = null;
     this.closed = false;
+    this.doorMode = "off";
+    this.nextOpportunityAt = 0;
+    this.opportunityIndex = 0;
+    this.opportunity = null;
+    this.knock = null;
+    runner.ready?.then(
+      (ids) => {
+        if (this.closed) return;
+        this.supported = new Set(ids);
+        this.onChange();
+      },
+      () => this.onChange(),
+    );
   }
 
   context(cursor) {
@@ -53,7 +69,12 @@ export class LiveRoom {
   }
 
   async invite(role) {
-    if (this.closed || !this.supported.has(role.id)) return;
+    if (
+      this.closed ||
+      !this.supported.has(role.id) ||
+      this.knock?.actor === role.id
+    )
+      return;
     const pending = this.invites.get(role.id);
     if (pending) {
       if (!pending.controller.signal.aborted) {
@@ -78,16 +99,8 @@ export class LiveRoom {
         controller.signal,
       );
       if (controller.signal.aborted || this.closed) return;
-      if (reply.action === "accept" && arrive(this.room, role)) {
-        // A wider audience starts a fresh model context for everyone in the room.
-        this.audienceStart = this.room.sequence;
-        this.room.waiting = [];
-        this.room.turn = null;
-        this.active?.controller.abort();
-        for (const [id, visit] of this.visits)
-          this.runner.retire(id, visit.session);
-        for (const { id } of this.here()) this.visits.set(id, this.newVisit());
-      } else decline(this.room, role);
+      if (reply.action === "accept") this.admit(role);
+      else decline(this.room, role);
     } catch {
       if (
         !controller.signal.aborted &&
@@ -99,6 +112,114 @@ export class LiveRoom {
       this.invites.delete(role.id);
       this.onChange();
     }
+  }
+
+  admit(role) {
+    if (!arrive(this.room, role)) return;
+    // A wider audience starts a fresh model context for everyone in the room.
+    this.audienceStart = this.room.sequence;
+    this.room.waiting = [];
+    this.room.turn = null;
+    this.active?.controller.abort();
+    for (const [id, visit] of this.visits)
+      this.runner.retire(id, visit.session);
+    for (const { id } of this.here()) this.visits.set(id, this.newVisit());
+  }
+
+  setDoorMode(mode, now = Date.now()) {
+    if (!["off", "welcome", "busy"].includes(mode) || this.doorMode === mode)
+      return;
+    this.doorMode = mode;
+    if (mode === "welcome") {
+      this.nextOpportunityAt = Math.max(
+        this.nextOpportunityAt,
+        now + OPPORTUNITY_GAP,
+      );
+    } else {
+      if (this.knock || this.opportunity)
+        this.room.notice =
+          mode === "busy" ? "正在忙，主动来访已暂停。" : "主动敲门已关闭。";
+      this.opportunity?.controller.abort();
+      this.knock = null;
+    }
+    this.onChange();
+  }
+
+  async offerOpportunity({ now = Date.now(), trial = false } = {}) {
+    if (
+      this.closed ||
+      this.doorMode !== "welcome" ||
+      this.knock ||
+      this.opportunity ||
+      this.active ||
+      (!trial && now < this.nextOpportunityAt) ||
+      (trial &&
+        this.lastOpportunityAt !== undefined &&
+        now - this.lastOpportunityAt < OPPORTUNITY_GAP)
+    )
+      return;
+    const candidates = roles.filter(
+      ({ id }) =>
+        this.supported.has(id) &&
+        this.room.members[id] === "home" &&
+        !this.invites.has(id),
+    );
+    if (!candidates.length) return;
+    const role = candidates[this.opportunityIndex++ % candidates.length];
+    const controller = new AbortController();
+    this.lastOpportunityAt = now;
+    this.nextOpportunityAt = now + OPPORTUNITY_GAP;
+    this.opportunity = { actor: role.id, controller };
+    this.onChange();
+    try {
+      const reply = await this.runner.run(
+        {
+          actor: role.id,
+          kind: "opportunity",
+          session: randomUUID(),
+          people: this.here().map(({ name }) => name),
+        },
+        controller.signal,
+      );
+      if (
+        controller.signal.aborted ||
+        this.closed ||
+        this.doorMode !== "welcome" ||
+        this.room.members[role.id] !== "home" ||
+        this.invites.has(role.id)
+      )
+        return;
+      if (reply.action === "knock") {
+        this.knock = {
+          actor: role.id,
+          text: reply.text,
+          expiresAt: Date.now() + KNOCK_TTL,
+        };
+        this.room.notice = `${role.name}在门外等你。`;
+      } else if (trial) this.room.notice = `${role.name}这次选择在家休息。`;
+    } catch {
+      if (trial && !controller.signal.aborted && !this.closed)
+        this.room.notice = `${role.name}暂时无法决定是否来访。`;
+    } finally {
+      this.opportunity = null;
+      this.onChange();
+    }
+  }
+
+  answerKnock(accept) {
+    const knock = this.knock;
+    if (!knock) return;
+    this.knock = null;
+    const role = roles.find(({ id }) => id === knock.actor);
+    if (
+      accept &&
+      this.doorMode === "welcome" &&
+      Date.now() < knock.expiresAt &&
+      invite(this.room, role)
+    )
+      this.admit(role);
+    else this.room.notice = `${role.name}这次先回去了。`;
+    this.onChange();
   }
 
   newVisit() {
@@ -136,6 +257,9 @@ export class LiveRoom {
 
   tick(now = Date.now()) {
     if (refreshIfDue(this.room, now)) this.onChange();
+    if (this.knock && now >= this.knock.expiresAt) this.answerKnock(false);
+    if (this.doorMode === "welcome" && now >= this.nextOpportunityAt)
+      void this.offerOpportunity({ now });
   }
 
   interval(minutes) {
@@ -208,6 +332,7 @@ export class LiveRoom {
   close() {
     this.closed = true;
     this.active?.controller.abort();
+    this.opportunity?.controller.abort();
     for (const { controller } of this.invites.values()) controller.abort();
     return this.runner.close();
   }

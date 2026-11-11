@@ -72,6 +72,10 @@ function savePreferences() {
 function snapshot() {
   return {
     live: Boolean(liveRoot),
+    doorMode: live?.doorMode,
+    opportunity: Boolean(live?.opportunity),
+    opportunityAt: live?.lastOpportunityAt,
+    knock: live?.knock ?? null,
     roles: roles.map(({ id, name, title, color }) => ({
       id,
       name,
@@ -479,6 +483,10 @@ ipcMain.on("room:action", (event, action, data) => {
     savePreferences();
     update();
   }
+  if (action === "door-mode") live?.setDoorMode(data);
+  if (action === "knock-trial") void live?.offerOpportunity({ trial: true });
+  if (action === "knock-answer" && typeof data === "boolean")
+    live?.answerKnock(data);
   if (action === "close") entry.win.hide();
 });
 

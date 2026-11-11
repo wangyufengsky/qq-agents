@@ -38,6 +38,24 @@
             <h2>想见谁？</h2>
             <p>邀请角色来桌边坐一会儿。</p>
           </div>
+          <div class="door-settings" hidden>
+            <label for="door-mode">主动来访</label>
+            <select id="door-mode">
+              <option value="off">关闭敲门</option>
+              <option value="welcome">欢迎敲门</option>
+              <option value="busy">正在忙</option>
+            </select>
+            <button type="button" class="secondary knock-trial">
+              试一次敲门
+            </button>
+          </div>
+          <div class="knock-card" hidden>
+            <span class="knock-label"></span>
+            <button type="button" class="primary knock-accept">请进</button>
+            <button type="button" class="secondary knock-dismiss">
+              下次吧
+            </button>
+          </div>
           <div class="guest-list"></div>
           <p class="room-notice" role="status"></p>
         </section>

@@ -146,3 +146,40 @@ test("cancelled invitations cannot join and a new admin message replaces an acti
   assert.notEqual(jobs.at(-1).request.session, previous.request.session);
   assert(jobs.at(-1).request.messages.some(({ text }) => text === "第二条"));
 });
+
+test("opt-in knocks require permission, are rate-limited, and preserve the shared chat quota", async () => {
+  const { room, live, jobs, settle } = harness();
+  const now = Date.now();
+  await live.offerOpportunity({ trial: true, now });
+  assert.equal(jobs.length, 0);
+  live.setDoorMode("welcome", now);
+  await live.offerOpportunity({ now });
+  assert.equal(jobs.length, 0);
+  void live.offerOpportunity({ trial: true, now });
+  const opportunity = jobs.at(-1);
+  assert.equal(opportunity.request.kind, "opportunity");
+  await settle(opportunity, { action: "knock", text: "来坐一会儿" });
+  assert.equal(room.members.dragon, "home");
+  assert.equal(room.budget, 6);
+  await live.offerOpportunity({ trial: true, now: now + 1 });
+  assert.equal(jobs.length, 1);
+  live.answerKnock(true);
+  assert.equal(room.members.dragon, "here");
+  assert.equal(room.budget, 6);
+  assert.equal(jobs.length, 1);
+});
+
+test("busy mode cancels a pending opportunity and suppresses its late knock", async () => {
+  const { room, live, jobs, settle } = harness();
+  live.setDoorMode("welcome");
+  void live.offerOpportunity({ trial: true });
+  const opportunity = jobs.at(-1);
+  live.setDoorMode("busy");
+  assert.equal(room.notice, "正在忙，主动来访已暂停。");
+  assert.equal(opportunity.signal.aborted, true);
+  await settle(opportunity, { action: "knock", text: "late" });
+  assert.equal(live.knock, null);
+  assert.equal(room.members.dragon, "home");
+  await live.offerOpportunity({ trial: true });
+  assert.equal(jobs.length, 1);
+});
