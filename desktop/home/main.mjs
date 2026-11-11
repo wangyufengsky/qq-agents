@@ -10,6 +10,7 @@ import {
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createFrameworkClient } from "./framework-client.mjs";
 import { LiveRoom } from "./live-room.mjs";
 import { startModelClient } from "./model-client.mjs";
 import {
@@ -23,7 +24,7 @@ import {
   invite,
   leave,
   refreshIfDue,
-  roles,
+  roles as prototypeRoles,
   setIntervalMinutes,
   speak,
   startTurn,
@@ -49,6 +50,7 @@ const saved = readPreferences();
 const positions = saved.positions ?? {};
 const validInterval = (value) =>
   Number.isInteger(value) && value >= 0 && value <= 1440;
+let roles = prototypeRoles;
 const room = createRoom(
   validInterval(saved.minutes) ? saved.minutes : DEFAULT_MINUTES,
 );
@@ -59,6 +61,12 @@ let finishTimer;
 let hidden = false;
 let tray;
 const liveRoot = process.env.DESKTOP_HOME_LIVE_ROOT;
+const dataArgument = process.argv.indexOf("--data");
+const frameworkRoot =
+  process.env.DESKTOP_HOME_DATA_ROOT ||
+  (dataArgument >= 0 ? process.argv[dataArgument + 1] : null);
+let framework;
+let remoteState;
 let live;
 let shuttingDown = false;
 
@@ -70,6 +78,24 @@ function savePreferences() {
 }
 
 function snapshot() {
+  if (frameworkRoot)
+    return (
+      remoteState ?? {
+        live: true,
+        framework: true,
+        subjectKnocks: true,
+        roles: [],
+        messages: [],
+        budget: MAX_TURNS,
+        maxTurns: MAX_TURNS,
+        minutes: DEFAULT_MINUTES,
+        nextRefill: null,
+        thinking: null,
+        bubbles: {},
+        knock: null,
+        notice: "正在连接管理台…",
+      }
+    );
   return {
     live: Boolean(liveRoot),
     subjectKnocks: Boolean(live?.runner.subjectActor),
@@ -288,6 +314,36 @@ function animateHome(role) {
   }
 }
 
+function applyFramework(value) {
+  const state = value.room ?? {
+    ...snapshot(),
+    roles: [],
+    messages: [],
+    bubbles: {},
+    knock: null,
+    thinking: null,
+    notice: value.offline
+      ? "连接管理台失败，正在重试。"
+      : value.busy
+        ? "另一个桌面小窝正在使用这个实例。"
+        : "请在管理台的纸页小窝里开启桌面小窝。",
+  };
+  for (const role of roles)
+    if (!state.roles.some(({ id }) => id === role.id)) animateHome(role);
+  roles = state.roles;
+  remoteState = {
+    ...state,
+    live: true,
+    framework: true,
+    subjectKnocks: true,
+    connected: !!value.room,
+  };
+  room.members = Object.fromEntries(roles.map(({ id, state }) => [id, state]));
+  room.bubbles = { ...state.bubbles };
+  room.turn = state.thinking ? { actor: state.thinking } : null;
+  syncLive();
+}
+
 function syncLive() {
   for (const role of roles) {
     if (room.members[role.id] === "here") {
@@ -309,6 +365,7 @@ function syncLive() {
 }
 
 function returnHome(role, self = false) {
+  if (framework) return framework.act("leave", role.id);
   if (live) return live.leave(role);
   const turn = room.turn;
   if (!leave(room, role, Date.now(), self)) return;
@@ -460,6 +517,14 @@ ipcMain.on("room:action", (event, action, data) => {
     return;
   }
   const role = roles.find(({ id }) => id === data);
+  if (framework) {
+    if (action === "close") entry.win.hide();
+    else if (
+      ["invite", "leave", "send", "door-mode", "knock-answer"].includes(action)
+    )
+      framework.act(action, data);
+    return;
+  }
   if (action === "invite" && role) {
     if (live) void live.invite(role);
     else changeInvitation(role);
@@ -496,14 +561,17 @@ else {
   app.on("second-instance", showDoor);
   app.on("window-all-closed", () => {});
   app.on("before-quit", (event) => {
-    if (!live || shuttingDown) return;
+    if ((!live && !framework) || shuttingDown) return;
     event.preventDefault();
     shuttingDown = true;
-    void live.close().finally(() => app.quit());
+    void (framework ?? live).close().finally(() => app.quit());
   });
   app.whenReady().then(() => {
     if (process.platform === "darwin") app.setActivationPolicy("accessory");
-    if (liveRoot) {
+    if (frameworkRoot) {
+      roles = [];
+      framework = createFrameworkClient(frameworkRoot, applyFramework);
+    } else if (liveRoot) {
       live = new LiveRoom(
         room,
         startModelClient(liveRoot, process.env.DESKTOP_HOME_NODE),
@@ -515,7 +583,13 @@ else {
     );
     trayImage.setTemplateImage(true);
     tray = new Tray(trayImage.resize({ width: 16, height: 16 }));
-    tray.setToolTip(live ? "桌面小窝 · 隔离试聊" : "桌面小窝 · 模拟样机");
+    tray.setToolTip(
+      framework
+        ? "桌面小窝"
+        : live
+          ? "桌面小窝 · 隔离试聊"
+          : "桌面小窝 · 模拟样机",
+    );
     tray.setContextMenu(
       Menu.buildFromTemplate([
         { label: "显示小门", click: showDoor },
@@ -529,7 +603,7 @@ else {
     setInterval(updatePointerRegions, 32);
     setInterval(() => {
       if (live) live.tick();
-      else if (refreshIfDue(room)) update();
+      else if (!framework && refreshIfDue(room)) update();
     }, 500);
   });
 }

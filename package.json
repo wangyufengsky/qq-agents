@@ -26,6 +26,7 @@
     "node": ">=24.0.0"
   },
   "scripts": {
+    "desktop:home": "npx --yes electron@45.3.0 desktop/home",
     "start": "node src/main.mjs",
     "test": "node --test --test-timeout=120000 test/*.test.mjs",
     "check": "node scripts/check.mjs",

@@ -23,6 +23,7 @@ import { MemoryStore } from "./memory/store.mjs";
 import { MediaStore } from "./tools/media.mjs";
 import { Runtime } from "./core/runtime.mjs";
 import { BackendRegistry } from "./backends/index.mjs";
+import { writeDesktopToken } from "./home/desktop-auth.mjs";
 import { createServer } from "./server.mjs";
 import { Lifecycle } from "./transport/lifecycle.mjs";
 import { VoiceStore } from "./tools/voice.mjs";
@@ -92,6 +93,7 @@ try {
   const token = fs.readFileSync(tokenFile, "utf8").trim();
   if (!/^[a-f0-9]{64}$/.test(token)) throw Error("INVALID_ADMIN_TOKEN_FILE");
   writeRelayToken(root, token);
+  writeDesktopToken(root, token);
   const memory = (lifecycle.memory = new MemoryStore(
     path.join(root, "memory.sqlite"),
   ));

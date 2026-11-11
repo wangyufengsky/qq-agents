@@ -20,7 +20,7 @@ function image(asset) {
 
 function avatar(role) {
   const node = element("span", `portrait ${role.color}`);
-  node.append(image(role.id));
+  node.append(image(role.art ?? role.id));
   return node;
 }
 
@@ -112,6 +112,9 @@ function floating() {
     const role = data.roles.find((item) => item.id === id);
     if (!role) return;
     art.setAttribute("aria-label", `${role.name} · 打开聊天`);
+    const sprite = art.querySelector("img");
+    const asset = `art/${role.art ?? role.id}.png`;
+    if (sprite.getAttribute("src") !== asset) sprite.src = asset;
     const message =
       data.bubbles[id]?.text ?? (data.thinking === id ? "正在想…" : "");
     words.textContent = message;
@@ -260,10 +263,14 @@ function panel() {
 
   function update(next) {
     room = next;
+    settings.hidden = Boolean(room.framework);
     if (room.live) {
-      select(".edition").textContent = "隔离试聊";
+      select(".edition").textContent = room.framework
+        ? "QQ Agents"
+        : "隔离试聊";
       select(".door-settings").hidden = false;
-      select("#door-mode").value = room.doorMode;
+      select("#door-mode").value = room.doorMode ?? "off";
+      select("#door-mode").disabled = room.framework && !room.connected;
       const trial = select(".knock-trial");
       trial.hidden = room.subjectKnocks;
       trial.disabled =

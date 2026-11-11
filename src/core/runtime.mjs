@@ -1,6 +1,7 @@
 import { QzoneApprovals } from "./qzone-approvals.mjs";
 import { SubjectExecution } from "./subject-execution.mjs";
 import { SocialRuntime } from "../home/social-runtime.mjs";
+import { DesktopHost } from "../home/desktop-host.mjs";
 import { DESKTOP_VISIT_TOOL } from "../home/desktop-visits.mjs";
 import { HOME_TOOLS } from "../home/policy.mjs";
 import { HomeService } from "../home/service.mjs";
@@ -133,6 +134,7 @@ export class Runtime {
     this.autoResume = new AutoResume(this);
     this.running = new Map();
     this.subjectExecution = new SubjectExecution();
+    this.desktopVisits = new DesktopHost(this);
     this.pending = new Map();
     this.capabilities = new Map();
     this.faults = new Map();
@@ -258,6 +260,7 @@ export class Runtime {
       this.homeSocial.maintain();
       this.nextSocialMaintenanceAt = this.now() + 60000;
     }
+    this.desktopVisits.refresh?.();
     if (this.maintenance.active) {
       this.socialRuntime?.stop("maintenance");
       return;
@@ -1519,6 +1522,7 @@ export class Runtime {
   close() {
     if (this.closing) return this.closing;
     this.closed = true;
+    this.desktopVisits.reset?.();
     this.configDrain?.controller.abort(Error("RUNTIME_CLOSING"));
     this.updates?.close();
     clearInterval(this.ticker);

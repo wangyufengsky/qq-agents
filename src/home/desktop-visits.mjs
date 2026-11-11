@@ -25,6 +25,11 @@ export class DesktopVisits {
     this.door = { open, epoch };
   }
 
+  resetDoor() {
+    this.door = { open: false, epoch: 0 };
+    this.pending = null;
+  }
+
   doorStatus() {
     if (!this.door.open) return "暂不接待";
     if (this.runtime.now() - this.lastRequestAt < COOLDOWN)
@@ -62,12 +67,15 @@ export class DesktopVisits {
     if (agentId !== this.agentId || !this.pending) return;
     const knock = this.pending;
     this.pending = null;
+    const agent = this.runtime.config.agents.find(({ id }) => id === agentId);
     if (
       completed &&
+      agent &&
+      !inSilence(agent, this.runtime.clock()) &&
       this.door.open &&
       knock.epoch === this.door.epoch &&
       knock.expiresAt > this.runtime.now() &&
-      this.runtime.writable(this.runtime.agent(agentId), "@subject")
+      this.runtime.writable(agent, "@subject")
     )
       this.notify(knock);
   }
@@ -92,6 +100,7 @@ export class DesktopVisits {
     if (this.qqClaims || this.pendingQq()) throw Error("DESKTOP_QQ_PRIORITY");
     if (
       runtime.blockers(agent).length ||
+      runtime.games.busy(agent.backendId) ||
       [...runtime.running.values()].some((ctx) => ctx.agentId === agentId)
     )
       throw Error("DESKTOP_MODEL_BUSY");

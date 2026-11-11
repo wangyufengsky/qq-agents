@@ -129,6 +129,7 @@ export async function commitConfig(runtime, next, revision) {
     }
     // Commit before revoking permissions; a failed disk write leaves old work usable.
     const saved = runtime.configStore.save(next, revision);
+    runtime.desktopVisits.refresh?.();
     if (groupAdmissionOnly) retainFunctionalConfigVersion(before, saved);
     else runtime.functionalDelegation?.invalidate();
     for (const [id, groups] of revokedGroups) {
