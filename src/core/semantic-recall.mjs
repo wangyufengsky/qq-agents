@@ -3,7 +3,8 @@ import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
-import { memoryRecallPilot } from "./functional-agents.mjs";
+import { allowedGroups } from "./config.mjs";
+import { memoryRecallPolicy } from "./functional-agents.mjs";
 import { prepared, recallBoundary } from "./recall-boundary.mjs";
 
 const SCRIPT = fileURLToPath(
@@ -77,9 +78,12 @@ export class SemanticRecall {
       for (const role of config.agents) {
         const pilot = role.functionalAgents?.memory?.pilot;
         if (!pilot?.semantic) continue;
-        for (const group of pilot.groups) {
-          const conversation = `group:${group}`;
-          if (memoryRecallPilot(role, conversation))
+        const conversations = [
+          ...allowedGroups(role, config).map((group) => `group:${group}`),
+          ...role.allow.users.map((user) => `private:${user}`),
+        ];
+        for (const conversation of conversations) {
+          if (memoryRecallPolicy(role, conversation, config)?.semantic)
             scopes.set(scopeKey(role, conversation), { role, conversation });
         }
       }

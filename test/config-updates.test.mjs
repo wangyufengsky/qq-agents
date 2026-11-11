@@ -538,6 +538,16 @@ test("real console role form saves participation, autonomy and scoped group admi
   assert.equal(f.runtime.capability(kept.token), kept);
   assert(removed.controller.signal.aborted);
   assert.match(node("#notice").textContent, /已停止失去准入的群会话/);
+  for (const mode of ["enabled", "disabled", "auto"]) {
+    vm.runInContext(
+      'editing = { type: "agents", id: config.agents[0].id, row: config.agents[0] };',
+      sandbox,
+    );
+    fields.set("memoryRecall", mode);
+    node("#edit-form").onsubmit({ preventDefault() {}, target: fields });
+    await vm.runInContext("submitted", sandbox);
+    assert.equal(f.runtime.agent(a.id).memoryRecall, mode);
+  }
 });
 
 test("real console backend form drops OpenAI-only fields on a type change and clears an emptied key", async (t) => {

@@ -1026,3 +1026,128 @@ test("active recall timeout tells the dialogue how to search without claiming ve
   assert.equal(turn.memoryRecall.active.presented, 0);
   assert.ok(Number.isInteger(turn.memoryRecall.active.agentMs));
 });
+
+test("expanded group recall combines a non-owner question with a later speaker in the same batch", async (t) => {
+  const cfg = pilotConfig();
+  cfg.agents[0].memoryRecall = "enabled";
+  let past, early, followup, modelInput, prompt;
+  const f = setup(
+    t,
+    async (p) => {
+      if (!p.modelSelection) {
+        prompt = p.prompt;
+        return;
+      }
+      modelInput = JSON.parse(p.prompt.split("任务资料：\n")[1]);
+      const result = await p.callTool("memory_search", { query: "夹具地点" });
+      assert.deepEqual(
+        result.items.map(({ id }) => id),
+        [past.id],
+      );
+      await p.callTool("functional_agent_result", {
+        evidenceIds: [past.id],
+        contribution,
+      });
+    },
+    cfg,
+  );
+  past = await f.add(100, "周六那场夹具地点在北楼", 20001, 30001, 1799990000);
+  await f.add(101, "夹具地点在别的群里", 20000, 30000, 1799990001);
+  early = await f.add(102, "还记得上次的夹具地点吗？", 20001, 30001);
+  for (let num = 103; num < 107; num++)
+    await f.add(num, "我也想知道", 20001, 30002);
+  followup = await f.add(107, "我是指周六那场", 20001, 30003);
+  const turn = await f.turn(early, "group:20001");
+  assert.equal(
+    modelInput.current.some(
+      ({ id, senderId }) => id === early.id && senderId === "30001",
+    ),
+    true,
+  );
+  assert.equal(
+    [...modelInput.current, ...modelInput.recent].some(
+      ({ id, senderId }) => id === followup.id && senderId === "30003",
+    ),
+    true,
+  );
+  assert.doesNotMatch(JSON.stringify(modelInput), /在别的群里/);
+  assert.match(prompt.split("本轮记忆查证 ")[1], /北楼/);
+  assert.equal(memoryRecallDiagnostic(turn).opening.presented, 1);
+});
+
+test("expanded private recall is on demand and confined to the current allowed contact", async (t) => {
+  const cfg = pilotConfig();
+  cfg.agents[0].memoryRecall = "enabled";
+  cfg.agents[0].allow.users.push("30001", "30002");
+  cfg.agents[0].wake.private = false;
+  let past,
+    other,
+    result,
+    attempts = 0;
+  const f = setup(
+    t,
+    async (p) => {
+      if (p.modelSelection) {
+        attempts++;
+        const found = await p.callTool("memory_search", {
+          query: "夹具地点",
+          conversation: "private:30002",
+        });
+        assert.deepEqual(
+          found.items.map(({ id }) => id),
+          [past.id],
+        );
+        await assert.rejects(
+          p.callTool("memory_read", { id: other.id }),
+          /RECALL_SOURCE_NOT_ALLOWED/,
+        );
+        await p.callTool("functional_agent_result", {
+          evidenceIds: [past.id],
+          contribution,
+        });
+      } else {
+        assert.equal(attempts, 0);
+        assert.doesNotMatch(p.prompt, /本轮记忆查证/);
+        result = await p.callTool("memory_recall", {
+          query: "上次的夹具地点是什么？",
+        });
+      }
+    },
+    cfg,
+  );
+  const extra = { message_type: "private", group_id: undefined };
+  past = await f.add(
+    110,
+    "夹具地点在北楼",
+    undefined,
+    30001,
+    1799990000,
+    extra,
+  );
+  other = await f.add(
+    111,
+    "夹具地点在南楼",
+    undefined,
+    30002,
+    1799990001,
+    extra,
+  );
+  await f.add(112, "群聊的夹具地点在西楼", 20000, 30000, 1799990002);
+  const input = await f.add(
+    113,
+    "你还记得上次的夹具地点吗？",
+    undefined,
+    30001,
+    1800000000,
+    extra,
+  );
+  const turn = await f.turn(input, "private:30001");
+  assert.equal(attempts, 1, JSON.stringify(memoryRecallDiagnostic(turn)));
+  assert.equal(result.status, "matched");
+  assert.deepEqual(
+    result.evidence.map(({ id }) => id),
+    [past.id],
+  );
+  assert.equal(memoryRecallDiagnostic(turn).opening, undefined);
+  assert.equal(memoryRecallDiagnostic(turn).active.presented, 1);
+});

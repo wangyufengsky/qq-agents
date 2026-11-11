@@ -7,7 +7,7 @@ import {
 import { backendCapabilities } from "../backends/capabilities.mjs";
 import { classifyError } from "../core/diagnostics.mjs";
 import { connectionError } from "../core/backend-connections.mjs";
-import { memoryRecallPilot } from "../core/functional-agents.mjs";
+import { memoryRecallPolicy } from "../core/functional-agents.mjs";
 import { memoryRecallDiagnostic } from "../core/session-records.mjs";
 
 export const frameworkDefinitions = {
@@ -87,7 +87,9 @@ export function frameworkTool(runtime, ctx, name, args) {
       count,
       component,
     }));
-  const recallEnabled = Boolean(memoryRecallPilot(agent, ctx.conversation));
+  const recallEnabled = Boolean(
+    memoryRecallPolicy(agent, ctx.conversation, runtime.config),
+  );
   const memory = runtime.memory.bind(agent.id);
   const recentRecall = recallEnabled
     ? memory.db
