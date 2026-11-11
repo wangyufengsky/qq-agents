@@ -265,6 +265,7 @@ function panel() {
       select(".door-settings").hidden = false;
       select("#door-mode").value = room.doorMode;
       const trial = select(".knock-trial");
+      trial.hidden = room.subjectKnocks;
       trial.disabled =
         room.doorMode !== "welcome" ||
         room.opportunity ||

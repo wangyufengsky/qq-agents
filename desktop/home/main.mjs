@@ -72,6 +72,7 @@ function savePreferences() {
 function snapshot() {
   return {
     live: Boolean(liveRoot),
+    subjectKnocks: Boolean(live?.runner.subjectActor),
     doorMode: live?.doorMode,
     opportunity: Boolean(live?.opportunity),
     opportunityAt: live?.lastOpportunityAt,

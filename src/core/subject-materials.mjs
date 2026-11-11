@@ -330,6 +330,9 @@ export function subjectMaterials(runtime, ctx) {
         }
       : {}),
     shares: shares.map(strip),
+    ...(runtime.desktopVisits?.allows(a, ctx.conversation)
+      ? { desktopHome: runtime.desktopVisits.doorStatus() }
+      : {}),
     ...(runtime.config.homeSocial?.enabled &&
     a.home?.enabled &&
     a.home.social?.enabled &&

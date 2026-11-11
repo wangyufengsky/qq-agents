@@ -21,12 +21,19 @@ export class LiveRoom {
   constructor(room, runner, onChange) {
     this.room = room;
     this.runner = runner;
-    this.onChange = onChange;
+    this.doorEpoch = 0;
+    this.doorState = null;
+    this.onChange = () => {
+      this.publishDoor();
+      onChange();
+    };
+    runner.onKnock?.((knock) => this.receiveKnock(knock));
     this.supported = new Set(runner.roles);
     this.audienceStart = 0;
     this.visits = new Map();
     this.invites = new Map();
     this.active = null;
+    this.qqDeferred = new Set();
     this.closed = false;
     this.doorMode = "off";
     this.nextOpportunityAt = 0;
@@ -41,6 +48,36 @@ export class LiveRoom {
       },
       () => this.onChange(),
     );
+  }
+
+  publishDoor() {
+    const actor = this.runner.subjectActor;
+    if (!actor) return;
+    const open =
+      !this.closed &&
+      this.doorMode === "welcome" &&
+      this.room.members[actor] === "home" &&
+      !this.knock;
+    if (open === this.doorState) return;
+    this.doorState = open;
+    this.runner.setDoor(open, ++this.doorEpoch);
+  }
+
+  receiveKnock(knock) {
+    if (
+      this.closed ||
+      this.doorMode !== "welcome" ||
+      this.knock ||
+      knock.actor !== this.runner.subjectActor ||
+      this.room.members[knock.actor] !== "home" ||
+      knock.epoch !== this.doorEpoch ||
+      knock.expiresAt <= Date.now()
+    )
+      return;
+    const role = roles.find(({ id }) => id === knock.actor);
+    this.knock = { ...knock, text: "申请来访，想来桌边坐一会儿。" };
+    this.room.notice = `${role.name}在门外等你。`;
+    this.onChange();
   }
 
   context(cursor) {
@@ -58,7 +95,9 @@ export class LiveRoom {
   }
 
   addCandidates(excluded, first) {
-    const candidates = this.here().filter(({ id }) => id !== excluded);
+    const candidates = this.here().filter(
+      ({ id }) => id !== excluded && !this.qqDeferred.has(id),
+    );
     const next = candidates.find(({ id }) => id === first);
     if (next) candidates.splice(candidates.indexOf(next), 1);
     if (next) candidates.unshift(next);
@@ -148,6 +187,7 @@ export class LiveRoom {
   async offerOpportunity({ now = Date.now(), trial = false } = {}) {
     if (
       this.closed ||
+      this.runner.subjectActor ||
       this.doorMode !== "welcome" ||
       this.knock ||
       this.opportunity ||
@@ -243,6 +283,7 @@ export class LiveRoom {
 
   send(text) {
     if (this.closed || !speak(this.room, text, Date.now(), false)) return;
+    this.qqDeferred.clear();
     if (this.active) {
       this.active.controller.abort();
       this.resetVisit(this.active.actor, this.active.visit);
@@ -311,7 +352,7 @@ export class LiveRoom {
           true,
         );
       if (reply.action === "say") this.addCandidates(actor);
-    } catch {
+    } catch (error) {
       if (
         !controller.signal.aborted &&
         !this.closed &&
@@ -320,7 +361,18 @@ export class LiveRoom {
         this.resetVisit(actor, visit);
         finishTurn(this.room, turn, Date.now(), "");
         const role = roles.find(({ id }) => id === actor);
-        addMessage(this.room, "system", `${role.name}这轮暂时没有连上。`);
+        if (error.message === "DESKTOP_QQ_PRIORITY") {
+          this.qqDeferred.add(actor);
+          this.room.waiting = this.room.waiting.filter(
+            (item) => item.actor !== actor,
+          );
+          addMessage(
+            this.room,
+            "system",
+            `${role.name}先去处理 QQ 消息，仍坐在桌边。`,
+          );
+        } else
+          addMessage(this.room, "system", `${role.name}这轮暂时没有连上。`);
       }
     } finally {
       this.active = null;

@@ -33,6 +33,12 @@ export async function startDshTrial(root, settings, tool, signal) {
   const localSecret = token();
   const relay = deriveRelayToken(localSecret);
   const active = new Map();
+  const subjectRoutes = new Set([
+    "/agent/catalog",
+    "/agent/tools",
+    "/agent/output-ack",
+  ]);
+  let subject;
   const bridge = createServer(async (request, response) => {
     const send = (status, body) => {
       response.writeHead(status, { "content-type": "application/json" });
@@ -47,8 +53,7 @@ export async function startDshTrial(root, settings, tool, signal) {
       request.method !== "POST" ||
       supplied.length !== expected.length ||
       !timingSafeEqual(supplied, expected) ||
-      !scope ||
-      scope.signal.aborted
+      scope?.signal.aborted
     ) {
       request.resume();
       send(403, {});
@@ -61,6 +66,36 @@ export async function startDshTrial(root, settings, tool, signal) {
         if (Buffer.byteLength(body) > 8192)
           throw Error("DESKTOP_TOOL_TOO_LARGE");
       }
+      if (!scope && subject && subjectRoutes.has(request.url)) {
+        const headers = {
+          "content-type": "application/json",
+          "x-agent-relay-token": subject.token,
+        };
+        for (const key of [
+          "x-agent-capability",
+          "x-agent-output-protocol",
+          "x-agent-output-request",
+        ])
+          if (typeof request.headers[key] === "string")
+            headers[key] = request.headers[key];
+        const result = await fetch(
+          `http://127.0.0.1:${subject.port}${request.url}`,
+          {
+            method: "POST",
+            headers,
+            body,
+            signal: AbortSignal.timeout(10_000),
+            redirect: "error",
+          },
+        );
+        const forwarded = { "content-type": "application/json" };
+        for (const key of ["x-agent-output-receipt", "x-agent-output-digest"])
+          if (result.headers.has(key)) forwarded[key] = result.headers.get(key);
+        response.writeHead(result.status, forwarded);
+        response.end(await result.text());
+        return;
+      }
+      if (!scope) return send(403, {});
       const input = JSON.parse(body);
       scope.signal.throwIfAborted();
       if (request.url === "/agent/catalog") {
@@ -153,10 +188,12 @@ export async function startDshTrial(root, settings, tool, signal) {
     startupOutput = "";
     signal?.throwIfAborted();
     if (dead || !launchToken) throw Error("DESKTOP_DSH_START_FAILED");
-    const client = new NodeApiClient(baseUrl, 30000, {
-      token: launchToken,
-      tokenExplicit: true,
-    });
+    const newClient = () =>
+      new NodeApiClient(baseUrl, 30000, {
+        token: launchToken,
+        tokenExplicit: true,
+      });
+    const client = newClient();
     const result = unwrap(
       await client.agentPresets.list({}, signal),
       "presets",
@@ -171,6 +208,10 @@ export async function startDshTrial(root, settings, tool, signal) {
     return {
       baseUrl,
       client,
+      newClient,
+      attachSubject(port, token) {
+        subject = { port, token };
+      },
       scope(signal, call) {
         const id = token();
         active.set(id, { signal, call });

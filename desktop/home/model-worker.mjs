@@ -2,6 +2,7 @@ import { appendFileSync, lstatSync, readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { BackendRegistry } from "../../src/backends/index.mjs";
+import { startSubjectPilot } from "./subject-pilot.mjs";
 import { startDshTrial } from "./dsh-trial.mjs";
 
 const instructions = {
@@ -133,6 +134,25 @@ for (const role of profile.roles) {
   );
 }
 
+let subjectPilot;
+if (profile.subjectPilot && dsh && !startup.signal.aborted) {
+  subjectPilot = await startSubjectPilot({
+    root,
+    dsh,
+    registry,
+    role: profile.roles.find(({ id }) => id === "fish"),
+    fixturePort: profile.subjectPilot.fixturePort,
+    persona:
+      instructions.fish +
+      "。你有自己的空闲时间，会在想找管理员闲聊时考虑到桌边串门，是否行动由你决定。",
+    notify: (knock) => {
+      if (process.connected) process.send({ knock });
+    },
+  }).catch(async (error) => {
+    await dsh.close();
+    throw error;
+  });
+}
 const tasks = new Map();
 const closing = new Set();
 let stopping = false;
@@ -202,7 +222,10 @@ async function run(id, request) {
   const scope =
     request.actor === "fish" ? dsh.scope(signal, callTool) : undefined;
   tasks.set(id, controller);
+  let release;
   try {
+    if (request.actor === "fish")
+      release = subjectPilot?.visits.beginDesktop(controller);
     await backend.runDesktop({
       binding,
       budget: null,
@@ -221,7 +244,12 @@ async function run(id, request) {
     trace("completed", request, id);
     send({ id, decision });
   } catch (error) {
-    const code = [error?.code, error?.message, error?.cause?.message].find(
+    const code = [
+      controller.signal.reason?.message,
+      error?.code,
+      error?.message,
+      error?.cause?.message,
+    ].find(
       (value) =>
         typeof value === "string" &&
         /^(?:DSH|SOCIAL|DESKTOP|ANTIGRAVITY|CODEX|BACKEND|ABORTED)[A-Z0-9_]{0,70}$/.test(
@@ -237,9 +265,10 @@ async function run(id, request) {
       id,
       code ?? stage ?? "UNCLASSIFIED",
     );
-    send({ id, error: true });
+    send({ id, error: code === "DESKTOP_QQ_PRIORITY" ? code : true });
   } finally {
     scope?.close();
+    release?.();
     tasks.delete(id);
   }
 }
@@ -249,16 +278,24 @@ async function shutdown() {
   stopping = true;
   for (const controller of tasks.values()) controller.abort();
   await Promise.allSettled(
-    [...backends.values()].map((backend) => backend.close()),
+    [...backends.values()]
+      .map((backend) => backend.close())
+      .concat(subjectPilot?.close() ?? []),
   );
   await Promise.allSettled(closing);
   await dsh?.close();
   if (process.connected) process.disconnect();
 }
 
-process.on("message", ({ type, id, request, actor, session }) => {
+process.on("message", ({ type, id, request, actor, session, open, epoch }) => {
   if (type === "shutdown") void shutdown();
   if (stopping) return;
+  if (
+    type === "door" &&
+    typeof open === "boolean" &&
+    Number.isSafeInteger(epoch)
+  )
+    subjectPilot?.visits.setDoor(open, epoch);
   if (type === "run") void run(id, request);
   if (type === "abort") tasks.get(id)?.abort();
   if (type === "retire") retire(actor, session);
@@ -266,4 +303,8 @@ process.on("message", ({ type, id, request, actor, session }) => {
 process.on("disconnect", () => void shutdown());
 process.off("message", stopStartup);
 if (startup.signal.aborted) await shutdown();
-else send({ roles: [...backends.keys()] });
+else
+  send({
+    roles: [...backends.keys()],
+    subjectActor: subjectPilot ? "fish" : null,
+  });

@@ -1,6 +1,7 @@
 import { QzoneApprovals } from "./qzone-approvals.mjs";
 import { SubjectExecution } from "./subject-execution.mjs";
 import { SocialRuntime } from "../home/social-runtime.mjs";
+import { DESKTOP_VISIT_TOOL } from "../home/desktop-visits.mjs";
 import { HOME_TOOLS } from "../home/policy.mjs";
 import { HomeService } from "../home/service.mjs";
 import {
@@ -486,10 +487,13 @@ export class Runtime {
     if (conversation !== SUBJECT && selected.includes("qq_send"))
       selected.push("qq_delivery_status");
     selected.push(...HOME_TOOLS);
+    const desktopVisit = this.desktopVisits?.allows(a, conversation);
+    if (desktopVisit) selected.push(DESKTOP_VISIT_TOOL);
     const configured = resolveFunctionalAgent(a, conversation)?.definition
       .tools;
     return [...new Set(selected)].filter(
       (name) =>
+        (name !== DESKTOP_VISIT_TOOL || desktopVisit) &&
         (!configured || configured.includes(name)) &&
         toolAvailable(a, name, conversation, this.config) &&
         (!name.startsWith("game_") || this.config.games.enabled) &&
@@ -987,6 +991,8 @@ export class Runtime {
         });
         continue;
       }
+      if (!peer && e.kind === "message.received")
+        this.desktopVisits?.interrupt(a.id);
       const wake = this.conversations.request(a.id, e.conversation, reason, {
         allowRestInterrupt: !redactConfirmation && !redactGame,
         seq: archived.seq,

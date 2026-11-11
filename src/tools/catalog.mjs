@@ -1,3 +1,4 @@
+import { DESKTOP_VISIT_TOOL } from "../home/desktop-visits.mjs";
 import {
   HOME_INTENT_TOOLS,
   HOME_READ_TOOLS,
@@ -80,6 +81,7 @@ export function scopedCatalog(runtime, ctx, input) {
 }
 
 export function toolAvailable(agent, name, conversation, config) {
+  if (name === DESKTOP_VISIT_TOOL) return conversation === "@subject";
   if (name === FUNCTIONAL_AGENT_RESULT) return false;
   if (name === "memory_recall")
     return Boolean(config && memoryRecallPolicy(agent, conversation, config));

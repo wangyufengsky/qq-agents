@@ -25,6 +25,8 @@ export function startModelClient(root, node) {
   const pending = new Map();
   let ready;
   let failed;
+  let pilotActor = null;
+  let knockListener;
   const online = new Promise((resolve, reject) => {
     ready = resolve;
     failed = reject;
@@ -38,13 +40,22 @@ export function startModelClient(root, node) {
   }
   child.on("error", offline);
   child.on("exit", offline);
-  child.on("message", ({ roles, id, decision }) => {
-    if (roles) return ready(roles);
+  child.on("message", ({ roles, id, decision, error, knock, subjectActor }) => {
+    if (roles) {
+      pilotActor = subjectActor;
+      return ready(roles);
+    }
+    if (knock) return knockListener?.(knock);
     const job = pending.get(id);
     if (!job) return;
     pending.delete(id);
     if (decision) job.resolve(decision);
-    else job.reject(Error("DESKTOP_MODEL_TURN_FAILED"));
+    else
+      job.reject(
+        Error(
+          error === "DESKTOP_QQ_PRIORITY" ? error : "DESKTOP_MODEL_TURN_FAILED",
+        ),
+      );
   });
 
   function send(message) {
@@ -57,6 +68,15 @@ export function startModelClient(root, node) {
   return {
     roles: [],
     ready: online,
+    get subjectActor() {
+      return pilotActor;
+    },
+    onKnock(listener) {
+      knockListener = listener;
+    },
+    setDoor(open, epoch) {
+      send({ type: "door", open, epoch });
+    },
     async run(request, signal) {
       await online;
       signal.throwIfAborted();
