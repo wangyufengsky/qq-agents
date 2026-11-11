@@ -122,6 +122,33 @@ test("AI can check its own receipt after an ambiguous history result", async (t)
   assert.equal(reads, 2);
 });
 
+test("group history cannot reuse an own message archived before the attempt in the same second", async (t) => {
+  const { runtime, memory, transport, send, echo, verify } = setup(t);
+  await runtime.ingest("qq-0", echo(41001));
+  let includeCurrent = false;
+  transport.readGroupDeliveryEvidence = (groupId) =>
+    readGroupDeliveryEvidence(transport, "10000", groupId);
+  transport.call = async () => {
+    const time = Math.floor(
+      Date.parse(memory.delivery("unknown-image").created_at) / 1000,
+    );
+    return {
+      messages: [
+        echo(41001, { time }),
+        ...(includeCurrent ? [echo(41002, { time })] : []),
+      ],
+    };
+  };
+  await assert.rejects(send(), /DELIVERY_UNKNOWN/);
+  await Promise.all([...runtime.work]);
+  assert.equal(memory.delivery("unknown-image").status, "unknown");
+  const now = runtime.now();
+  runtime.clock = () => new Date(now + 61000);
+  includeCurrent = true;
+  assert.equal((await verify()).verification.messageId, "41002");
+  assert.equal(transport.sent.length, 1);
+});
+
 test("a late own-account image echo settles the original receipt without replay", async (t) => {
   const { runtime, memory, transport, send, echo } = setup(t);
   await assert.rejects(send(), /DELIVERY_UNKNOWN/);

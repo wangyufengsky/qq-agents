@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { deliveryContentKey } from "../transport/delivery-content.mjs";
 import { assertHomeSceneMedia } from "../home/scene-media.mjs";
 import { assertNoSocialDisclosure } from "./social-protection.mjs";
 import { peerQzoneSources } from "./peer-qzone-protection.mjs";
@@ -424,6 +425,7 @@ export class DeliveryService {
           guard.freshInputSeq && !metadata?.mediaId
             ? createHash("sha256").update(JSON.stringify(intent)).digest("hex")
             : undefined,
+        contentKey: guard.freshInputSeq ? deliveryContentKey(intent) : null,
         mediaId: metadata?.mediaId,
       })
     )

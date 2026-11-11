@@ -11,7 +11,7 @@ const groupId = (/** @type {string} */ conversation) =>
 
 /** @typedef {import("../memory/qq-drafts.mjs").DraftScope} Scope */
 /** @typedef {NonNullable<ReturnType<typeof groupDeliveryEvidence>>} Evidence */
-/** @typedef {{requestId:string,created:number,text?:string,imageMd5?:string}} Candidate */
+/** @typedef {{requestId:string,created:number,attemptSeq:number,text?:string,imageMd5?:string}} Candidate */
 
 /** @param {any} runtime @param {Scope} scope @param {string} mediaId */
 function imageDigest(runtime, scope, mediaId) {
@@ -70,7 +70,7 @@ export class DeliveryRecovery {
       runtime.connection(scope.connectionId).messageIdNamespace || "onebot";
     const rows = memory.db
       .prepare(
-        `SELECT d.request_id AS requestId,d.created_at AS createdAt,e.body,e.payload
+        `SELECT d.request_id AS requestId,d.created_at AS createdAt,e.seq AS attemptSeq,e.body,e.payload
         FROM deliveries d JOIN events e ON e.agent_id=d.agent_id AND e.dedupe='send:'||d.request_id||':pending'
         WHERE d.agent_id=? AND d.conversation=? AND d.status='unknown' AND d.created_at>=?
           AND e.conversation=d.conversation AND e.connection_id=? AND e.sender_id=?
@@ -103,6 +103,11 @@ export class DeliveryRecovery {
       )
         return [];
       const created = Math.floor(Date.parse(row.createdAt) / 1000) * 1000;
+      const attempt = {
+        requestId: row.requestId,
+        created,
+        attemptSeq: Number(row.attemptSeq),
+      };
       const parts = p.segments ?? [
         { type: "text", data: { text: row.body } },
         ...(p.mediaId ? [{ type: "image", data: { mediaId: p.mediaId } }] : []),
@@ -123,14 +128,11 @@ export class DeliveryRecovery {
       )
         return [];
       const text = textParts.map((part) => part.data.text).join("");
-      if (!image)
-        return text ? [{ requestId: row.requestId, created, text }] : [];
+      if (!image) return text ? [{ ...attempt, text }] : [];
       if (!digests.has(p.mediaId))
         digests.set(p.mediaId, imageDigest(runtime, scope, p.mediaId));
       const digest = digests.get(p.mediaId);
-      return digest
-        ? [{ requestId: row.requestId, created, text, imageMd5: digest }]
-        : [];
+      return digest ? [{ ...attempt, text, imageMd5: digest }] : [];
     });
   }
 
@@ -142,16 +144,37 @@ export class DeliveryRecovery {
     const known = memory.db.prepare(
       "SELECT 1 FROM deliveries WHERE agent_id=? AND conversation=? AND message_id=? LIMIT 1",
     );
+    const archived = memory.db.prepare(
+      `SELECT MIN(seq) AS seq FROM events WHERE agent_id=? AND connection_id=? AND conversation=? AND message_id=?
+        AND coalesce(json_extract(payload,'$.messageNamespace'),'onebot')=?`,
+    );
+    const namespace =
+      runtime.connection(scope.connectionId).messageIdNamespace || "onebot";
     const available = [
       ...new Map(evidence.map((row) => [row.messageId, row])).values(),
-    ].filter(
-      (row) => !known.get(scope.agentId, scope.conversation, row.messageId),
-    );
+    ]
+      .filter(
+        (row) => !known.get(scope.agentId, scope.conversation, row.messageId),
+      )
+      .map((row) => ({
+        ...row,
+        // QQ timestamps have second precision. A message archived before the
+        // attempt cannot be its receipt, even if both share that second.
+        archiveSeq: archived.get(
+          scope.agentId,
+          scope.connectionId,
+          scope.conversation,
+          row.messageId,
+          namespace,
+        )?.seq,
+      }));
     const matches = this.candidates(scope).map((candidate) => ({
       requestId: candidate.requestId,
       evidence: available.filter(
         (row) =>
           candidate.created > after &&
+          (row.archiveSeq == null ||
+            Number(row.archiveSeq) > candidate.attemptSeq) &&
           row.at >= candidate.created &&
           row.at <= candidate.created + EVIDENCE_WINDOW_MS &&
           candidate.imageMd5 === row.imageMd5 &&

@@ -1,5 +1,6 @@
 // @ts-check
 import { createHash, randomUUID } from "node:crypto";
+import { attemptedContentKey } from "../transport/delivery-content.mjs";
 import { mergeProtection } from "./protection.mjs";
 import { canonical } from "../backends/session-contract.mjs";
 import { DEFAULT_MAX_OPEN_DRAFTS } from "../core/policy.mjs";
@@ -46,7 +47,7 @@ export function createDraftTables(db) {
 /** @typedef {{items:object[],gapMs:number|null,readThroughSeq:number|null}} DraftCreation */
 /** @typedef {{toolName:string,requestId:string,items:DraftInput[],value:{gapMs?:number,[key:string]:unknown},legacyDeliveries?: Set<string>,creation?:DraftCreation,maxOpenDrafts?:number,deliveryGuard?:DeliveryGuard}} DraftInputGroup */
 /** @typedef {{position:number,input:object}} DraftEdit */
-/** @typedef {{freshInputSeq?:number,turnStartedAt?:number,draftId?:string,payloadHash?:string,mediaId?:string}} DeliveryGuard */
+/** @typedef {{freshInputSeq?:number,turnStartedAt?:number,draftId?:string,payloadHash?:string,mediaId?:string,contentKey?:string|null}} DeliveryGuard */
 /** @typedef {{messageNamespace:string, action:boolean, gatewayFileId?:string}} DraftConfirmation */
 
 const scopeSQL =
@@ -183,9 +184,10 @@ export class QQDraftStore {
     const turnStartedAt = new Date(guard.turnStartedAt || 0).toISOString();
     // The hold expires for a later human reply. The old draft and content
     // remain fenced, even when the model proposes a new request ID.
-    const blocker = this.db
+    const rows = this.db
       .prepare(
-        `SELECT d.status,d.request_id AS requestId,g.id AS draftId
+        `SELECT d.status,d.request_id AS requestId,g.id AS draftId,d.created_at,d.updated_at,d.payload_hash,
+          e.seq AS attemptSeq,e.body,e.payload
       FROM deliveries d
       LEFT JOIN events e ON e.agent_id=d.agent_id AND e.dedupe='send:'||d.request_id||':pending'
       LEFT JOIN qq_draft_items i ON i.agent_id=d.agent_id AND i.delivery_request_id=d.request_id
@@ -193,26 +195,45 @@ export class QQDraftStore {
       WHERE d.agent_id=? AND d.conversation=? AND d.status IN ('pending','unknown')
         AND (g.id IS NOT NULL OR (e.connection_id=? AND e.sender_id=? AND e.conversation=d.conversation
           AND (coalesce(json_extract(e.payload,'$.deliveryType'),'')<>'action' OR json_extract(e.payload,'$.fileId') IS NOT NULL)))
-        AND (d.status='pending' OR d.updated_at>? OR d.created_at>=?
-          OR e.seq IS NULL OR e.seq>=? OR g.id=? OR d.payload_hash=?
-          OR json_extract(e.payload,'$.mediaId')=?)
-      ORDER BY (d.status='pending') DESC,d.created_at LIMIT 1`,
+      ORDER BY (d.status='pending') DESC,d.created_at`,
       )
-      .get(
+      .all(
         scope.connectionId,
         scope.accountId,
         scope.agentId,
         scope.conversation,
         scope.connectionId,
         scope.accountId,
-        holdSince,
-        turnStartedAt,
-        guard.freshInputSeq || 0,
-        guard.draftId ?? null,
-        guard.payloadHash ?? null,
-        guard.mediaId ?? null,
       );
-    if (blocker) return blocker;
+    const blocker = rows.find((row) => {
+      if (
+        row.status === "pending" ||
+        String(row.updated_at) > holdSince ||
+        String(row.created_at) >= turnStartedAt ||
+        row.attemptSeq == null ||
+        Number(row.attemptSeq) >= (guard.freshInputSeq || 0) ||
+        row.draftId === guard.draftId ||
+        row.payload_hash === guard.payloadHash
+      )
+        return true;
+      if (
+        (!guard.mediaId && !guard.contentKey) ||
+        typeof row.payload !== "string"
+      )
+        return false;
+      const payload = JSON.parse(row.payload);
+      return Boolean(
+        (guard.mediaId && guard.mediaId === payload.mediaId) ||
+        (guard.contentKey &&
+          guard.contentKey === attemptedContentKey(String(row.body), payload)),
+      );
+    });
+    if (blocker)
+      return {
+        status: blocker.status,
+        requestId: blocker.requestId,
+        draftId: blocker.draftId,
+      };
     return this.db
       .prepare(
         `SELECT g.id AS draftId,i.position,'unknown' AS status,i.delivery_request_id AS requestId

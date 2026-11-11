@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { deliveryContentKey } from "../transport/delivery-content.mjs";
 import { mergeProtection } from "../memory/protection.mjs";
 import {
   assertDraftTool,
@@ -349,15 +350,11 @@ export async function sendDraftTool(runtime, ctx, toolName, args) {
     if (!prior && guard.freshInputSeq)
       for (const { input } of items) {
         const { mediaId, replyTo, atUserId, audioId, fileId } = input;
-        const payloadHash =
+        const contentKey =
           mediaId || replyTo || atUserId || audioId || fileId
-            ? undefined
-            : createHash("sha256")
-                .update(JSON.stringify(qqMessage(input).segments))
-                .digest("hex");
-        if (
-          runtime.drafts.unresolved(scope, { ...guard, mediaId, payloadHash })
-        )
+            ? null
+            : deliveryContentKey(qqMessage(input).segments);
+        if (runtime.drafts.unresolved(scope, { ...guard, mediaId, contentKey }))
           throw Error("QQ_DRAFT_DELIVERY_UNRESOLVED");
       }
     staged = runtime.drafts.stage(scope, {

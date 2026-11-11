@@ -157,7 +157,14 @@ for (const linked of [false, true])
         try {
           await callTool("qq_send", {
             requestId: "changed-id",
-            text: "uncertain fixture",
+            ...(linked
+              ? { text: "uncertain fixture" }
+              : {
+                  segments: [
+                    { type: "text", text: "uncer" },
+                    { type: "text", text: "tain fixture" },
+                  ],
+                }),
           });
         } catch (error) {
           duplicate = error.message;
@@ -176,7 +183,17 @@ for (const linked of [false, true])
     const ctx = context(f.runtime);
     const transport = f.runtime.transports.get("qq-0");
     transport.failure = "fixture timeout";
-    const original = { requestId: "old", text: "uncertain fixture" };
+    const original = {
+      requestId: "old",
+      ...(linked
+        ? {
+            segments: [
+              { type: "text", text: "uncer" },
+              { type: "text", text: "tain fixture" },
+            ],
+          }
+        : { text: "uncertain fixture" }),
+    };
     await assert.rejects(
       linked
         ? f.runtime.callTool(ctx, "qq_send", original)
