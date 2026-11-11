@@ -333,76 +333,87 @@ test("ordinary draft review guides and delivers batches of pending originals", a
   assert.equal(f.memory.state("group:20000").readThroughSeq || 0, 0);
 });
 
-for (const [label, tool, input, preview] of [
-  [
-    "an unquoted reply without reading old input",
-    "qq_send",
-    { ...reply, replyTo: undefined },
-    false,
-  ],
-  ["a new quote after only reading some old input", "qq_send", reply, true],
-  ["a quote of a past message", "qq_send", { ...reply, replyTo: "100" }, false],
-  [
-    "a text burst",
-    "qq_send_burst",
-    { requestId: "group-burst", messages: ["合成回复"] },
-    false,
-  ],
-]) {
-  test(`optional ordinary group backlog allows ${label}`, async (t) => {
-    let result, prompt, read, after;
+for (const privateLike of [false, true]) {
+  const groupMode = privateLike ? "private-like group" : "ordinary group";
+  for (const [label, tool, input, preview] of [
+    [
+      "an unquoted reply without reading old input",
+      "qq_send",
+      { ...reply, replyTo: undefined },
+      false,
+    ],
+    ["a new quote after only reading some old input", "qq_send", reply, true],
+    [
+      "a quote of a past message",
+      "qq_send",
+      { ...reply, replyTo: "100" },
+      false,
+    ],
+    [
+      "a text burst",
+      "qq_send_burst",
+      { requestId: "group-burst", messages: ["合成回复"] },
+      false,
+    ],
+  ]) {
+    test(`optional ${groupMode} backlog allows ${label}`, async (t) => {
+      let result, prompt, read, after;
+      const f = await group(
+        t,
+        async ({ callTool, prompt: opening }) => {
+          prompt = opening;
+          if (preview) {
+            read = await callTool("conversation_read", {
+              afterSeq: 0,
+              limit: 2,
+            });
+          }
+          result = await callTool(tool, input);
+          if (preview) {
+            after = await callTool("conversation_read", {
+              afterSeq: read.nextAfterSeq,
+              limit: 2,
+            });
+          }
+        },
+        { privateLike, optionalBacklog: true, backlog: 100 },
+      );
+      await f.wake();
+      assert.equal(result?.actionResult, "sent");
+      assert(prompt.includes("当前来信"));
+      assert.deepEqual(f.reviewed(), ["42"]);
+      if (preview) {
+        assert.equal(read.items.length, 2);
+        assert.equal(after.items.length, 2);
+        assert(after.items[0].seq > read.items.at(-1).seq);
+      }
+      assert.equal(f.memory.state("group:20000").readThroughSeq || 0, 0);
+      assert.equal(f.sent().length, 1);
+    });
+  }
+
+  test(`optional ${groupMode} backlog still reviews inputs that arrive during the current turn`, async (t) => {
+    let first, sent;
     const f = await group(
       t,
-      async ({ callTool, prompt: opening }) => {
-        prompt = opening;
-        if (preview) {
-          read = await callTool("conversation_read", { afterSeq: 0, limit: 2 });
-        }
-        result = await callTool(tool, input);
-        if (preview) {
-          after = await callTool("conversation_read", {
-            afterSeq: read.nextAfterSeq,
-            limit: 2,
-          });
-        }
+      async ({ callTool }) => {
+        await f.ingest(300, "本轮新来信");
+        first = await callTool("qq_send", { ...reply, replyTo: undefined });
+        sent = await callTool("qq_draft", resumeDraft(first));
       },
-      { privateLike: false, optionalBacklog: true, backlog: 100 },
+      { privateLike, optionalBacklog: true },
     );
     await f.wake();
-    assert.equal(result?.actionResult, "sent");
-    assert(prompt.includes("当前来信"));
-    assert.deepEqual(f.reviewed(), ["42"]);
-    if (preview) {
-      assert.equal(read.items.length, 2);
-      assert.equal(after.items.length, 2);
-      assert(after.items[0].seq > read.items.at(-1).seq);
-    }
-    assert.equal(f.memory.state("group:20000").readThroughSeq || 0, 0);
-    assert.equal(f.sent().length, 1);
+    assert.equal(first.preparation.state, "ready");
+    assert.equal(first.preparation.pendingDecision, 2);
+    assert.deepEqual(
+      first.preparation.items.map((x) => x.messageId),
+      ["300"],
+    );
+    assert.equal(sent.actionResult, "sent");
+    assert.deepEqual(f.reviewed(), ["42", "300"]);
   });
 }
-
-test("optional backlog still reviews inputs that arrive during the current turn", async (t) => {
-  let first, sent;
-  const f = await group(
-    t,
-    async ({ callTool }) => {
-      await f.ingest(300, "本轮新来信");
-      first = await callTool("qq_send", { ...reply, replyTo: undefined });
-      sent = await callTool("qq_draft", resumeDraft(first));
-    },
-    { privateLike: false, optionalBacklog: true },
-  );
-  await f.wake();
-  assert.equal(first.preparation.state, "ready");
-  assert.equal(first.preparation.pendingDecision, 2);
-  assert.deepEqual(
-    first.preparation.items.map((x) => x.messageId),
-    ["300"],
-  );
-  assert.equal(sent.actionResult, "sent");
-  assert.deepEqual(f.reviewed(), ["42", "300"]);
-});
 
 test("optional backlog keeps the beginning of a merged wake and its intervening inputs", async (t) => {
   let prompt, result;

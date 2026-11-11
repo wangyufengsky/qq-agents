@@ -402,7 +402,6 @@ export function inputDisposition(runtime, ctx, ref) {
 export function usesOptionalGroupBacklog(runtime, ctx) {
   return (
     ctx.conversation.startsWith("group:") &&
-    !isPrivateLikeGroup(runtime.config, ctx.conversation) &&
     runtime.agent(ctx.agentId).behavior.optionalGroupBacklog === true &&
     !ctx.activeIntentId &&
     !ctx.scheduleRunId
