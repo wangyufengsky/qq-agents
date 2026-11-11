@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { assertHomeSceneMedia } from "../home/scene-media.mjs";
 import { assertNoSocialDisclosure } from "./social-protection.mjs";
 import { peerQzoneSources } from "./peer-qzone-protection.mjs";
@@ -11,6 +12,7 @@ import {
   applyDeliveryCheckpoint,
   bindSubmission,
   draftScope,
+  deliveryGuard,
   recoverDraftArchives,
 } from "./draft-delivery.mjs";
 import { recallBoundary } from "./recall-boundary.mjs";
@@ -338,6 +340,7 @@ export class DeliveryService {
       intent,
       body = "",
       metadata = {},
+      submission,
       action = false,
       actionBudget,
     },
@@ -392,7 +395,11 @@ export class DeliveryService {
     // request ID, wording, media, action or target. Same-ID receipt reads above
     // remain available; new deliveries are fenced for this continuation.
     if (ctx.recoveryDeliveryBlocked) throw Error("RECOVERY_DELIVERY_BLOCKED");
-    this.assertDraftDelivery(ctx, contactFreeAction);
+    this.assertDraftDelivery(
+      ctx,
+      { intent, metadata, submission },
+      contactFreeAction,
+    );
     if (metadata.mediaId) {
       assertHomeSceneMedia(
         runtime,
@@ -404,10 +411,21 @@ export class DeliveryService {
     }
     return { a, mem, proactive, requestId, contactFreeAction };
   }
-  assertDraftDelivery(ctx, contactFreeAction) {
+  assertDraftDelivery(ctx, operation, contactFreeAction) {
+    if (contactFreeAction) return;
+    const { runtime } = this;
+    const { intent, metadata, submission } = operation;
+    const guard = deliveryGuard(runtime, ctx);
     if (
-      !contactFreeAction &&
-      this.runtime.drafts.unresolved(draftScope(this.runtime, ctx))
+      runtime.drafts.unresolved(draftScope(runtime, ctx), {
+        ...guard,
+        draftId: submission?.execution.draft.id,
+        payloadHash:
+          guard.freshInputSeq && !metadata?.mediaId
+            ? createHash("sha256").update(JSON.stringify(intent)).digest("hex")
+            : undefined,
+        mediaId: metadata?.mediaId,
+      })
     )
       throw Error("QQ_DRAFT_DELIVERY_UNRESOLVED");
   }
@@ -516,7 +534,7 @@ export class DeliveryService {
     mem.store.transaction(() => {
       // Intake writes and reservation share this database. Keep the last input
       // check inside its write transaction, with no await before gateway submission.
-      this.assertDraftDelivery(ctx, contactFreeAction);
+      this.assertDraftDelivery(ctx, operation, contactFreeAction);
       const sendTimes = reserveSendBudget(
         mem,
         a.behavior,
@@ -753,6 +771,8 @@ export class DeliveryService {
         status,
         payload: { ...event.payload, ...(reason ? { reason } : {}) },
       });
+      if (status === "unknown" && !action)
+        runtime.deliveryRecovery.checkInBackground(draftScope(runtime, ctx));
       if (
         status === "failed" &&
         e.reason === "ACTION_UNSUPPORTED" &&

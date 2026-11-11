@@ -15,6 +15,7 @@ import {
   draftCheckpointIntent,
   draftReviewBinding,
   draftScope,
+  deliveryGuard,
   releaseDraftExecution,
   repairDeliveryCheckpoint,
   replayDraftExecution,
@@ -271,7 +272,8 @@ export async function sendDraftTool(runtime, ctx, toolName, args) {
       doNotReplay: true,
     };
   }
-  const pending = !prior && runtime.drafts.unresolved(scope);
+  const pending =
+    !prior && runtime.drafts.unresolved(scope, deliveryGuard(runtime, ctx));
   if (pending?.status === "pending") {
     const chain = runtime.delivery.conversations.get(
       scope.connectionId + "|" + ctx.conversation,
@@ -343,6 +345,21 @@ export async function sendDraftTool(runtime, ctx, toolName, args) {
   }
   let staged;
   try {
+    const guard = deliveryGuard(runtime, ctx);
+    if (!prior && guard.freshInputSeq)
+      for (const { input } of items) {
+        const { mediaId, replyTo, atUserId, audioId, fileId } = input;
+        const payloadHash =
+          mediaId || replyTo || atUserId || audioId || fileId
+            ? undefined
+            : createHash("sha256")
+                .update(JSON.stringify(qqMessage(input).segments))
+                .digest("hex");
+        if (
+          runtime.drafts.unresolved(scope, { ...guard, mediaId, payloadHash })
+        )
+          throw Error("QQ_DRAFT_DELIVERY_UNRESOLVED");
+      }
     staged = runtime.drafts.stage(scope, {
       requestId,
       toolName,
@@ -354,6 +371,7 @@ export async function sendDraftTool(runtime, ctx, toolName, args) {
         readThroughSeq: readThroughSeq ?? null,
       },
       maxOpenDrafts: a.behavior.maxOpenDraftsPerConversation,
+      deliveryGuard: guard,
       value,
     });
   } catch (error) {
@@ -491,7 +509,13 @@ function assertPreparable(runtime, ctx, scope, draft) {
     )
   )
     throw Error("QQ_DRAFT_REVISION_CONFLICT");
-  if (ctx.recoveryDeliveryBlocked || runtime.drafts.unresolved(scope))
+  if (
+    ctx.recoveryDeliveryBlocked ||
+    runtime.drafts.unresolved(scope, {
+      ...deliveryGuard(runtime, ctx),
+      draftId: draft.id,
+    })
+  )
     throw Error("QQ_DRAFT_DELIVERY_UNRESOLVED");
   if (!draft.items.some(({ status }) => status === "unsubmitted"))
     throw Error("QQ_DRAFT_SETTLED");

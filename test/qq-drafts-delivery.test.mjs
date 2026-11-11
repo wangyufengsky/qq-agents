@@ -5,7 +5,14 @@ import { QQDraftStore } from "../src/memory/qq-drafts.mjs";
 import { restoreExport } from "../src/memory/migrate.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fixture, config, context, raw, sendReviewed } from "./helpers.mjs";
+import {
+  fixture,
+  config,
+  context,
+  raw,
+  sendReviewed,
+  settle,
+} from "./helpers.mjs";
 import {
   inputDisposition,
   snapshotReviewInput,
@@ -137,6 +144,64 @@ test("an old unlinked unknown receipt blocks new copies only in its scope", asyn
   );
   assert.equal(transport.sent.length, 2);
 });
+
+for (const linked of [false, true])
+  test(`an expired unknown allows a later human reply while fencing replay (linked=${linked})`, async (t) => {
+    let reply;
+    let duplicate;
+    const cfg = config(1);
+    cfg.agents[0].behavior.maxOpenDraftsPerConversation = 1;
+    const f = fixture(t, {
+      cfg,
+      run: async ({ callTool }) => {
+        try {
+          await callTool("qq_send", {
+            requestId: "changed-id",
+            text: "uncertain fixture",
+          });
+        } catch (error) {
+          duplicate = error.message;
+        }
+        try {
+          reply = await sendReviewed(
+            (args) => callTool("qq_send", args),
+            { requestId: "fresh-reply", text: "new answer" },
+            (args) => callTool("qq_draft", args),
+          );
+        } catch (error) {
+          reply = error;
+        }
+      },
+    });
+    const ctx = context(f.runtime);
+    const transport = f.runtime.transports.get("qq-0");
+    transport.failure = "fixture timeout";
+    const original = { requestId: "old", text: "uncertain fixture" };
+    await assert.rejects(
+      linked
+        ? f.runtime.callTool(ctx, "qq_send", original)
+        : f.runtime.send(ctx, original),
+      /DELIVERY_UNKNOWN/,
+    );
+    const mem = f.store.bind("agent-0");
+    const [{ requestId: oldRequestId }] = mem.unresolvedDeliveries().items;
+    const created = Date.parse(mem.delivery(oldRequestId).updated_at);
+    f.runtime.clock = () => new Date(created + 61000);
+    transport.failure = null;
+    await assert.rejects(
+      f.runtime.send(ctx, { requestId: "no-new-input", text: "other" }),
+      /QQ_DRAFT_DELIVERY_UNRESOLVED/,
+    );
+    await f.runtime.ingest(
+      "qq-0",
+      raw(21, { message: "new question", message_type: "group" }),
+    );
+    await settle(f.runtime);
+    assert.equal(reply?.status, "sent", String(reply));
+    assert.match(duplicate || "", /DELIVERY_UNRESOLVED/);
+    assert.equal(mem.delivery(oldRequestId).status, "unknown");
+    assert.equal(transport.sent.length, 2);
+  });
 
 test("a new context must explicitly review the saved draft even after seeing its complete opening", async (t) => {
   const cfg = config(1);

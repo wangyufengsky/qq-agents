@@ -5,6 +5,7 @@ import { canonical } from "../backends/session-contract.mjs";
 import { DEFAULT_MAX_OPEN_DRAFTS } from "../core/policy.mjs";
 
 export const MEMORY_DRAFT_SCHEMA_VERSION = 7;
+const UNKNOWN_DELIVERY_HOLD_MS = 60000;
 export const DRAFT_LIFETIME_MS = 7 * 86400000;
 const CREATION_VERSION = 2;
 
@@ -43,8 +44,9 @@ export function createDraftTables(db) {
 /** @typedef {{requestId:string,input:object}} DraftInput */
 /** @typedef {{id:string,revision:number,position:number}} DraftItemRef */
 /** @typedef {{items:object[],gapMs:number|null,readThroughSeq:number|null}} DraftCreation */
-/** @typedef {{toolName:string,requestId:string,items:DraftInput[],value:{gapMs?:number,[key:string]:unknown},legacyDeliveries?: Set<string>,creation?:DraftCreation,maxOpenDrafts?:number}} DraftInputGroup */
+/** @typedef {{toolName:string,requestId:string,items:DraftInput[],value:{gapMs?:number,[key:string]:unknown},legacyDeliveries?: Set<string>,creation?:DraftCreation,maxOpenDrafts?:number,deliveryGuard?:DeliveryGuard}} DraftInputGroup */
 /** @typedef {{position:number,input:object}} DraftEdit */
+/** @typedef {{freshInputSeq?:number,turnStartedAt?:number,draftId?:string,payloadHash?:string,mediaId?:string}} DeliveryGuard */
 /** @typedef {{messageNamespace:string, action:boolean, gatewayFileId?:string}} DraftConfirmation */
 
 const scopeSQL =
@@ -56,6 +58,9 @@ const openDraft = `AND EXISTS(
   WHERE i.draft_id=g.id AND
     ((i.delivery_request_id IS NOT NULL AND (d.status IS NULL OR d.status IN ('pending','unknown')))
       OR (i.delivery_request_id IS NULL AND i.abandoned=0 AND g.imported=0 AND g.expires_at>?)))`;
+const countsTowardCapacity = `AND NOT EXISTS (
+  SELECT 1 FROM qq_draft_items i JOIN deliveries d ON d.agent_id=i.agent_id AND d.request_id=i.delivery_request_id
+  WHERE i.draft_id=g.id AND d.conversation=g.conversation AND d.status='unknown' AND d.updated_at<=?)`;
 const creationColumns =
   "id,tool_name,request_hash,json_extract(value,'$.creationVersion') AS creation_version";
 
@@ -170,28 +175,50 @@ export class QQDraftStore {
     };
   }
 
-  /** @param {DraftScope} scope */
-  unresolved(scope) {
-    const linked = this.db
+  /** @param {DraftScope} scope @param {DeliveryGuard} [guard] */
+  unresolved(scope, guard = {}) {
+    const holdSince = new Date(
+      this.clock() - UNKNOWN_DELIVERY_HOLD_MS,
+    ).toISOString();
+    const turnStartedAt = new Date(guard.turnStartedAt || 0).toISOString();
+    // The hold expires for a later human reply. The old draft and content
+    // remain fenced, even when the model proposes a new request ID.
+    const blocker = this.db
       .prepare(
-        `SELECT g.id AS draftId,i.position,coalesce(d.status,'unknown') AS status,i.delivery_request_id AS requestId
-      FROM qq_drafts g JOIN qq_draft_items i ON i.draft_id=g.id ${receiptJoin}
-      WHERE g.agent_id=? AND g.connection_id=? AND g.account_id=? AND g.conversation=?
-        AND i.delivery_request_id IS NOT NULL AND (d.status IS NULL OR d.status IN ('pending','unknown'))
-      ORDER BY g.created_at,i.position LIMIT 1`,
+        `SELECT d.status,d.request_id AS requestId,g.id AS draftId
+      FROM deliveries d
+      LEFT JOIN events e ON e.agent_id=d.agent_id AND e.dedupe='send:'||d.request_id||':pending'
+      LEFT JOIN qq_draft_items i ON i.agent_id=d.agent_id AND i.delivery_request_id=d.request_id
+      LEFT JOIN qq_drafts g ON g.id=i.draft_id AND g.connection_id=? AND g.account_id=? AND g.conversation=d.conversation
+      WHERE d.agent_id=? AND d.conversation=? AND d.status IN ('pending','unknown')
+        AND (g.id IS NOT NULL OR (e.connection_id=? AND e.sender_id=? AND e.conversation=d.conversation
+          AND (coalesce(json_extract(e.payload,'$.deliveryType'),'')<>'action' OR json_extract(e.payload,'$.fileId') IS NOT NULL)))
+        AND (d.status='pending' OR d.updated_at>? OR d.created_at>=?
+          OR e.seq IS NULL OR e.seq>=? OR g.id=? OR d.payload_hash=?
+          OR json_extract(e.payload,'$.mediaId')=?)
+      ORDER BY (d.status='pending') DESC,d.created_at LIMIT 1`,
       )
-      .get(...scopeArgs(scope));
-    if (linked) return linked;
-    // An older version may have sent before a draft existed. Its scoped
-    // attempt still provides evidence of an unresolved chat contact.
+      .get(
+        scope.connectionId,
+        scope.accountId,
+        scope.agentId,
+        scope.conversation,
+        scope.connectionId,
+        scope.accountId,
+        holdSince,
+        turnStartedAt,
+        guard.freshInputSeq || 0,
+        guard.draftId ?? null,
+        guard.payloadHash ?? null,
+        guard.mediaId ?? null,
+      );
+    if (blocker) return blocker;
     return this.db
       .prepare(
-        `SELECT d.status,d.request_id AS requestId
-      FROM deliveries d JOIN events e ON e.agent_id=d.agent_id AND e.dedupe='send:'||d.request_id||':pending'
-      WHERE d.agent_id=? AND e.connection_id=? AND e.sender_id=? AND d.conversation=?
-        AND e.conversation=d.conversation AND d.status IN ('pending','unknown')
-        AND (coalesce(json_extract(e.payload,'$.deliveryType'),'')<>'action' OR json_extract(e.payload,'$.fileId') IS NOT NULL)
-      LIMIT 1`,
+        `SELECT g.id AS draftId,i.position,'unknown' AS status,i.delivery_request_id AS requestId
+      FROM qq_drafts g JOIN qq_draft_items i ON i.draft_id=g.id ${receiptJoin}
+      WHERE g.agent_id=? AND g.connection_id=? AND g.account_id=? AND g.conversation=?
+        AND i.delivery_request_id IS NOT NULL AND d.status IS NULL LIMIT 1`,
       )
       .get(...scopeArgs(scope));
   }
@@ -225,6 +252,7 @@ export class QQDraftStore {
       legacyDeliveries,
       creation,
       maxOpenDrafts = DEFAULT_MAX_OPEN_DRAFTS,
+      deliveryGuard,
     },
   ) {
     if (!items.length || items.length > 10) throw Error("QQ_DRAFT_INVALID");
@@ -252,14 +280,20 @@ export class QQDraftStore {
           superseded: draft.items.some((item) => item.revision > 1),
         };
       }
-      if (this.unresolved(scope)) throw Error("QQ_DRAFT_DELIVERY_UNRESOLVED");
+      if (this.unresolved(scope, deliveryGuard))
+        throw Error("QQ_DRAFT_DELIVERY_UNRESOLVED");
       const now = this.clock();
       if (
         this.db
           .prepare(
-            `SELECT 1 FROM qq_drafts g WHERE ${scopeSQL} ${openDraft} LIMIT 1 OFFSET ?`,
+            `SELECT 1 FROM qq_drafts g WHERE ${scopeSQL} ${openDraft} ${countsTowardCapacity} LIMIT 1 OFFSET ?`,
           )
-          .get(...scopeArgs(scope), now, maxOpenDrafts - 1)
+          .get(
+            ...scopeArgs(scope),
+            now,
+            new Date(now - UNKNOWN_DELIVERY_HOLD_MS).toISOString(),
+            maxOpenDrafts - 1,
+          )
       )
         throw Error("DRAFT_LIMIT_REACHED");
       const id = randomUUID();
@@ -390,10 +424,11 @@ export class QQDraftStore {
     });
   }
 
-  /** @param {DraftScope} scope @param {DraftItemRef} ref @param {string} requestId */
-  bindDelivery(scope, ref, requestId) {
+  /** @param {DraftScope} scope @param {DraftItemRef} ref @param {string} requestId @param {DeliveryGuard} [guard] */
+  bindDelivery(scope, ref, requestId, guard) {
     if (!this.db.isTransaction) throw Error("QQ_DRAFT_TRANSACTION_REQUIRED");
-    if (this.unresolved(scope)) throw Error("QQ_DRAFT_DELIVERY_UNRESOLVED");
+    if (this.unresolved(scope, { ...guard, draftId: ref.id }))
+      throw Error("QQ_DRAFT_DELIVERY_UNRESOLVED");
     const draft = this.assertEditable(scope, ref.id, ref.revision);
     if (draft.items[ref.position]?.status !== "unsubmitted")
       throw Error("QQ_DRAFT_ITEM_LOCKED");

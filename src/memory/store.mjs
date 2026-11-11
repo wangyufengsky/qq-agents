@@ -1372,7 +1372,17 @@ class AgentMemory {
       .all(this.agentId, conversation, since)
       .filter((row) => {
         const payload = parse(row.payload);
-        if (actionDelivery(payload)) return false;
+        if (
+          actionDelivery(payload) ||
+          payload.mediaId ||
+          payload.audioId ||
+          payload.fileId ||
+          payload.atUserId ||
+          payload.requestedReplyTo ||
+          payload.replyTo ||
+          payload.eventIds
+        )
+          return false;
         if (
           connectionId &&
           (row.connection_id !== connectionId ||
@@ -1387,12 +1397,7 @@ class AgentMemory {
           if (
             row.connection_id !== connectionId ||
             row.sender_id !== accountId ||
-            payload.referenceNamespace !== namespace ||
-            payload.mediaId ||
-            payload.audioId ||
-            payload.atUserId ||
-            payload.requestedReplyTo ||
-            payload.eventIds
+            payload.referenceNamespace !== namespace
           )
             return false;
           const attempted = content(
@@ -1408,7 +1413,7 @@ class AgentMemory {
             attempted === echoContent
           );
         }
-        if (segments?.some((part) => part.type === "face")) return false;
+        if (segments?.some((part) => part.type !== "text")) return false;
         return !!want && squash(row.body) === want;
       });
     if (candidates.length !== 1) return null;

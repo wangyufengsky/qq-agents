@@ -1,5 +1,6 @@
 // @ts-check
 import { createHash, randomUUID } from "node:crypto";
+import { currentHumanRequest } from "./input-progress.mjs";
 import { canonical } from "../backends/session-contract.mjs";
 import { validateDraftInput } from "./draft-input.mjs";
 import {
@@ -23,6 +24,24 @@ export function draftScope(runtime, ctx) {
     accountId: runtime.connection(connectionId).accountId,
     conversation: ctx.conversation,
   };
+}
+
+/** @param {any} runtime @param {any} ctx */
+export function deliveryGuard(runtime, ctx) {
+  if (
+    !ctx.turnStartedAt ||
+    ctx.internalDelivery ||
+    ctx.scheduleRunId ||
+    ctx.activeIntentId
+  )
+    return {};
+  let freshInputSeq = 0;
+  for (const id of ctx.requestEvents ?? [])
+    freshInputSeq = Math.max(
+      freshInputSeq,
+      currentHumanRequest(runtime, ctx, id)?.seq || 0,
+    );
+  return { freshInputSeq, turnStartedAt: ctx.turnStartedAt };
 }
 
 /** @param {any} runtime @param {string} draftId */
@@ -191,6 +210,7 @@ export function bindSubmission(runtime, ctx, submission, requestId, review) {
       position: item.position,
     },
     requestId,
+    deliveryGuard(runtime, ctx),
   );
   return {
     version: 1,

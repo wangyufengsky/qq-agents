@@ -94,26 +94,28 @@ test("QQ's own copy of an unconfirmed send marks it sent", async (t) => {
   // Other text from the account settles nothing.
   await echo(runtime, 501, [text("别的话")]);
   assert.equal(mem.delivery("e-1").status, "unknown");
-  // The same text with the image the send carried matches.
+  // A mixed image and text echo cannot prove a plain-text send.
   await echo(runtime, 502, [
     text("改好了，大肥猫现在一脸苦闷 "),
     { type: "image", data: { file: "sticker.gif" } },
   ]);
+  assert.equal(mem.delivery("e-1").status, "unknown");
+  await echo(runtime, 503, [text("改好了，大肥猫现在一脸苦闷 ")]);
   const settled = mem.delivery("e-1");
   assert.equal(settled.status, "sent");
-  assert.equal(settled.message_id, "502");
+  assert.equal(settled.message_id, "503");
   assert.equal(mem.unresolvedDeliveryCount(), 0);
   const record = mem
     .search({ kind: "message.send-result" })
     .items.find((x) => x.status === "confirmed");
   const payload = mem.readRecord({ id: record.id }).payload;
   assert.equal(payload.reconciledBy, "gateway-echo");
-  assert.equal(payload.messageId, "502");
+  assert.equal(payload.messageId, "503");
   // The echo itself is still archived as QQ's record of the message.
   assert(
     mem
       .conversation({ conversation: "group:20000" })
-      .items.some((x) => x.messageId === "502" && x.direction === "out"),
+      .items.some((x) => x.messageId === "503" && x.direction === "out"),
   );
 });
 

@@ -17,6 +17,11 @@ export function deliveryPage(
       `SELECT request_id AS requestId,status,message_id AS messageId,created_at AS createdAt FROM deliveries WHERE ${where} ORDER BY created_at,request_id LIMIT ? OFFSET ?`,
     )
     .all(memory.agentId, conversation, limit, offset);
+  const latest = memory.db
+    .prepare(
+      "SELECT request_id AS requestId,status,message_id AS messageId,created_at AS createdAt FROM deliveries WHERE agent_id=? AND conversation=? ORDER BY updated_at DESC,rowid DESC LIMIT 1",
+    )
+    .get(memory.agentId, conversation);
   const nextOffset =
     offset + items.length < total ? offset + items.length : null;
   return {
@@ -24,6 +29,7 @@ export function deliveryPage(
     total,
     offset,
     nextOffset,
+    ...(latest ? { latest } : {}),
     ...(nextOffset !== null
       ? {
           continuation: {
@@ -35,7 +41,7 @@ export function deliveryPage(
         }
       : {}),
     notice:
-      "只读投递账本，不会发送或更改状态；pending/unknown 不得换编号重发，需核对回传或由管理员在管理台确认。",
+      "查询工具可向网关核对当前群的未决投递。verifyRequestId 可指定实际投递编号；结果未知的原请求禁止换编号重发。未知超过 60 秒后可回复之后的新来信，原草稿和相同内容仍受保护。",
   };
 }
 
