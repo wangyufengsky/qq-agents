@@ -30,6 +30,7 @@ export function defaultConfig() {
     port: 3210,
     globalPaused: true,
     homeSocial: { ...HOME_SOCIAL_DEFAULTS },
+    desktopHome: { enabled: false, maxTurns: 6, refreshMinutes: 60 },
     privateLikeGroups: [],
     games: {
       enabled: false,

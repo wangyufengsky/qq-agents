@@ -1,6 +1,8 @@
 import { QzoneApprovals } from "./qzone-approvals.mjs";
 import { SubjectExecution } from "./subject-execution.mjs";
 import { SocialRuntime } from "../home/social-runtime.mjs";
+import { DesktopHost } from "../home/desktop-host.mjs";
+import { DESKTOP_VISIT_TOOL } from "../home/desktop-visits.mjs";
 import { HOME_TOOLS } from "../home/policy.mjs";
 import { HomeService } from "../home/service.mjs";
 import {
@@ -132,6 +134,7 @@ export class Runtime {
     this.autoResume = new AutoResume(this);
     this.running = new Map();
     this.subjectExecution = new SubjectExecution();
+    this.desktopVisits = new DesktopHost(this);
     this.pending = new Map();
     this.capabilities = new Map();
     this.faults = new Map();
@@ -257,6 +260,7 @@ export class Runtime {
       this.homeSocial.maintain();
       this.nextSocialMaintenanceAt = this.now() + 60000;
     }
+    this.desktopVisits.refresh?.();
     if (this.maintenance.active) {
       this.socialRuntime?.stop("maintenance");
       return;
@@ -486,10 +490,13 @@ export class Runtime {
     if (conversation !== SUBJECT && selected.includes("qq_send"))
       selected.push("qq_delivery_status");
     selected.push(...HOME_TOOLS);
+    const desktopVisit = this.desktopVisits?.allows(a, conversation);
+    if (desktopVisit) selected.push(DESKTOP_VISIT_TOOL);
     const configured = resolveFunctionalAgent(a, conversation)?.definition
       .tools;
     return [...new Set(selected)].filter(
       (name) =>
+        (name !== DESKTOP_VISIT_TOOL || desktopVisit) &&
         (!configured || configured.includes(name)) &&
         toolAvailable(a, name, conversation, this.config) &&
         (!name.startsWith("game_") || this.config.games.enabled) &&
@@ -987,6 +994,8 @@ export class Runtime {
         });
         continue;
       }
+      if (!peer && e.kind === "message.received")
+        this.desktopVisits?.interrupt(a.id);
       const wake = this.conversations.request(a.id, e.conversation, reason, {
         allowRestInterrupt: !redactConfirmation && !redactGame,
         seq: archived.seq,
@@ -1513,6 +1522,7 @@ export class Runtime {
   close() {
     if (this.closing) return this.closing;
     this.closed = true;
+    this.desktopVisits.reset?.();
     this.configDrain?.controller.abort(Error("RUNTIME_CLOSING"));
     this.updates?.close();
     clearInterval(this.ticker);

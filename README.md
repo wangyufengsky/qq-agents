@@ -254,6 +254,7 @@ node src/main.mjs --data /path/to/private-data --port 3210
 **设计与参考**
 
 - [纸页小窝：真实居民、公共布局保存与留言板](docs/AI-HOME.md)
+- [Mac 桌面小窝 P2 隔离试聊](docs/DESKTOP-HOME.md)
 - [小窝社交恢复与回退](docs/AI-HOME-SOCIAL-RECOVERY.md)
 - [小窝二阶段社交验收记录](docs/AI-HOME-SOCIAL-ACCEPTANCE.md)
 - [小窝社交后端预算与临时上下文前置契约](docs/SOCIAL-BACKENDS.md)

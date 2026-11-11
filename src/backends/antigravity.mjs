@@ -878,29 +878,42 @@ export class AntigravityBackend {
     await closeSocialSessions(this, filter);
   }
   /** @param {any} params */
+  async runDesktop(params) {
+    return this.runIsolated(params, "desktop");
+  }
+  /** @param {any} params */
   async runSocial(params) {
-    return runNativeSocial(this, params, async (session, conversation) => {
-      const key = createHash("sha256").update(conversation).digest("hex");
-      try {
-        fs.rmSync(path.join(this.root, "workspaces", key), {
-          recursive: true,
-          force: true,
-        });
-        if (session)
-          for (const suffix of ["", "-wal", "-shm"])
-            fs.rmSync(
-              path.join(
-                this.profile,
-                "cli",
-                "conversations",
-                session.id + ".db" + suffix,
-              ),
-              { force: true },
-            );
-      } catch {
-        throw Error("SOCIAL_CONTEXT_FINALIZATION_FAILED");
-      }
-    });
+    return this.runIsolated(params, "social");
+  }
+  /** @param {any} params @param {"social" | "desktop"} surface */
+  async runIsolated(params, surface) {
+    return runNativeSocial(
+      this,
+      params,
+      async (session, conversation) => {
+        const key = createHash("sha256").update(conversation).digest("hex");
+        try {
+          fs.rmSync(path.join(this.root, "workspaces", key), {
+            recursive: true,
+            force: true,
+          });
+          if (session)
+            for (const suffix of ["", "-wal", "-shm"])
+              fs.rmSync(
+                path.join(
+                  this.profile,
+                  "cli",
+                  "conversations",
+                  session.id + ".db" + suffix,
+                ),
+                { force: true },
+              );
+        } catch {
+          throw Error("SOCIAL_CONTEXT_FINALIZATION_FAILED");
+        }
+      },
+      surface,
+    );
   }
   /** @param {RunParams} params */
   async run(params) {

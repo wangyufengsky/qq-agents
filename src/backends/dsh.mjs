@@ -343,6 +343,14 @@ export class DshBackend {
   }
   /** @param {any} params */
   async runSocial(params) {
+    return this.runIsolated(params, "social");
+  }
+  /** @param {any} params */
+  async runDesktop(params) {
+    return this.runIsolated(params, "desktop");
+  }
+  /** @param {any} params @param {"social" | "desktop"} surface */
+  async runIsolated(params, surface) {
     if (
       this.config.preset !== "qq-unified" ||
       typeof params.socialContextToken !== "string" ||
@@ -364,6 +372,7 @@ export class DshBackend {
           throw Error("SOCIAL_CONTEXT_FINALIZATION_FAILED");
         }
       },
+      surface,
     );
   }
   /**

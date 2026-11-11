@@ -50,18 +50,25 @@ export class TurnRunner {
         ? this.runtime.subjectExecution.acquire(agentId, {})
         : () => {};
     if (!release) return { status: "queued" };
+    const qq = this.runtime.desktopVisits?.claimQq(agentId, conversation);
+    let completed = false;
     try {
+      if (qq?.drained) await qq.drained;
       const result = await this.runOrdinaryTurn(agentId, conversation, {
         reasons,
         timingId,
       });
+      completed = result?.status === "completed-no-send";
       if (!result) this.runtime.messageTiming?.finish(timingId, "skipped");
       return result;
     } catch (error) {
       this.runtime.messageTiming?.finish(timingId, "failed");
       throw error;
     } finally {
+      qq?.release();
       release();
+      if (conversation === SUBJECT)
+        this.runtime.desktopVisits?.finishSubject(agentId, completed);
     }
   }
   async runOrdinaryTurn(

@@ -70,3 +70,31 @@
   display: grid;
   gap: 0.75rem;
 }
+
+.desktop-settings {
+  display: grid;
+  gap: 0.8rem;
+}
+.desktop-switch,
+.desktop-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.7rem;
+}
+.desktop-switch {
+  flex-direction: row-reverse;
+}
+.desktop-field input {
+  inline-size: 5.5rem;
+  max-inline-size: 38%;
+}
+.desktop-switch input {
+  accent-color: var(--accent);
+}
+.desktop-settings .primary {
+  justify-self: start;
+}
+.desktop-settings .social-notice {
+  margin: 0;
+}

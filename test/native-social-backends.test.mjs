@@ -110,6 +110,31 @@ test("native social denies QQ, filesystem and unknown tools before running", asy
   );
 });
 
+test("desktop and web social native tools cannot cross surfaces", async () => {
+  const backend = {
+    async run(params) {
+      assert.equal(params.social, true);
+      assert.deepEqual(
+        params.tools.map(({ name }) => name),
+        ["desktop_room_decide"],
+      );
+      await params.beforeInputSubmitted();
+    },
+  };
+  const dispose = async () => {};
+  const params = socialParams();
+  await assert.rejects(
+    runNativeSocial(backend, params, dispose, "desktop"),
+    /SOCIAL_TOOL_DENIED/,
+  );
+  params.tools[0].function.name = "desktop_room_decide";
+  await assert.rejects(
+    runNativeSocial(backend, params, dispose),
+    /SOCIAL_TOOL_DENIED/,
+  );
+  await runNativeSocial(backend, params, dispose, "desktop");
+});
+
 test("setup refusal is uncounted; submitted failure stays failed without replay or consumption", async () => {
   for (const failAfterSubmit of [false, true]) {
     let started = 0,

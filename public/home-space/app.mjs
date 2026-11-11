@@ -746,6 +746,98 @@ async function loadContent() {
     }
   }
 }
+async function desktopSettings(root, ticket) {
+  const active = () => readerAction === "desktop" && contentTicket === ticket;
+  root.append(el("p", "", "正在读取桌面小窝设置…"));
+  try {
+    const { config, revision } = await api("/api/config");
+    if (!active()) return;
+    const policy = config.desktopHome ?? {
+      enabled: false,
+      maxTurns: 6,
+      refreshMinutes: 60,
+    };
+    const form = el("form", "social-settings desktop-settings");
+    const enable = document.createElement("input");
+    enable.type = "checkbox";
+    enable.checked = policy.enabled;
+    const toggle = el("label", "desktop-switch");
+    toggle.append(enable, document.createTextNode("开启桌面小窝"));
+    const fields = [
+      ["maxTurns", "共用回合上限", 1, 24],
+      ["refreshMinutes", "额度补满间隔（分钟）", 0, 1440],
+    ];
+    const inputs = {};
+    form.append(toggle);
+    for (const [key, title, min, max] of fields) {
+      const label = el("label", "desktop-field", title);
+      const input = document.createElement("input");
+      input.type = "number";
+      input.required = true;
+      input.min = String(min);
+      input.max = String(max);
+      input.value = String(policy[key]);
+      label.append(input);
+      inputs[key] = input;
+      form.append(label);
+    }
+    form.append(
+      el(
+        "p",
+        "social-notice",
+        "你发新消息也会补满额度。间隔设为 0 时，由新消息补满。",
+      ),
+    );
+    const status = el("p", "social-notice");
+    status.setAttribute("role", "status");
+    const save = el("button", "primary", "保存设置");
+    save.type = "submit";
+    form.append(save, status);
+    root.replaceChildren(form);
+    form.onsubmit = async (event) => {
+      event.preventDefault();
+      if (!form.reportValidity()) return;
+      save.disabled = true;
+      const desktopHome = {
+        enabled: enable.checked,
+        maxTurns: inputs.maxTurns.valueAsNumber,
+        refreshMinutes: inputs.refreshMinutes.valueAsNumber,
+      };
+      try {
+        const current = await api("/api/config");
+        if (!active()) return;
+        const existing = current.config.desktopHome ?? policy;
+        if (
+          current.revision !== revision &&
+          JSON.stringify(existing) !== JSON.stringify(policy)
+        ) {
+          await desktopSettings(root, ticket);
+          if (active()) toast("桌面小窝设置已更新，请核对后再保存。");
+          return;
+        }
+        await api(
+          "/api/config",
+          {
+            config: { ...current.config, desktopHome },
+            revision: current.revision,
+          },
+          "PUT",
+        );
+        if (active()) {
+          await desktopSettings(root, ticket);
+          if (active()) toast("桌面小窝设置已保存。");
+        }
+      } catch (error) {
+        if (active()) status.textContent = error.message;
+      } finally {
+        save.disabled = false;
+      }
+    };
+  } catch (error) {
+    if (active()) root.replaceChildren(el("p", "", error.message));
+  }
+}
+
 function openReader(action) {
   if (!overview || !envelope || $("stage").inert) return;
   $("reader").dataset.kind = action;
@@ -765,8 +857,14 @@ function openReader(action) {
     intro: "介绍卡",
     works: "作品展示",
     social: "往来管理",
+    desktop: "桌面小窝",
     letters: `${name(route.agentId)}的信件`,
   }[action];
+  if (action === "desktop") {
+    if (!dialog.open) dialog.showModal();
+    void desktopSettings($("reader-content"), contentTicket);
+    return;
+  }
   if (action === "social" || action === "letters") {
     socialView = createSocialView({
       root: $("reader-content"),
@@ -991,6 +1089,11 @@ refresh().then(() => {
     openReader("board");
   }
 });
+
+$("desktop-open").onclick = () => {
+  $("menu").close();
+  openReader("desktop");
+};
 
 $("social-open").onclick = () => {
   $("menu").close();

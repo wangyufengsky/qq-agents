@@ -103,6 +103,7 @@ export const TOOL_NAMES = Object.freeze([
   "board_comment",
   "board_react",
   "board_retract",
+  "desktop_visit_request",
   "room_intent_submit",
   "room_intent_list",
   "room_intent_resolve",

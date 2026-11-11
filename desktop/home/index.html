@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>桌面小窝</title>
+    <link rel="stylesheet" href="style.css" />
+    <script src="renderer.js" defer></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <template id="panel-template">
+      <main class="panel">
+        <header class="header">
+          <div class="header-title">
+            <img src="art/door.png" alt="" />
+            <h1>桌面小窝</h1>
+            <span class="edition">模拟样机</span>
+          </div>
+          <button
+            class="icon-button close"
+            aria-label="收起小窝"
+            title="收起小窝"
+          >
+            ×
+          </button>
+        </header>
+        <nav class="tabs" aria-label="小窝页面">
+          <button data-tab="visits" aria-pressed="true">来访</button>
+          <button data-tab="chat" aria-pressed="false">聊天</button>
+        </nav>
+        <section id="visits">
+          <div class="section-heading">
+            <h2>想见谁？</h2>
+            <p>邀请角色来桌边坐一会儿。</p>
+          </div>
+          <div class="door-settings" hidden>
+            <label for="door-mode">主动来访</label>
+            <select id="door-mode">
+              <option value="off">关闭敲门</option>
+              <option value="welcome">欢迎敲门</option>
+              <option value="busy">正在忙</option>
+            </select>
+            <button type="button" class="secondary knock-trial">
+              试一次敲门
+            </button>
+          </div>
+          <div class="knock-card" hidden>
+            <span class="knock-label"></span>
+            <button type="button" class="primary knock-accept">请进</button>
+            <button type="button" class="secondary knock-dismiss">
+              下次吧
+            </button>
+          </div>
+          <div class="guest-list"></div>
+          <p class="room-notice" role="status"></p>
+        </section>
+        <section id="chat" hidden>
+          <div class="audience" aria-label="在场名单"></div>
+          <div
+            class="thread"
+            tabindex="0"
+            role="log"
+            aria-label="聊天记录"
+          ></div>
+          <form class="composer">
+            <label class="sr-only" for="message">发到房间</label>
+            <input
+              id="message"
+              maxlength="1000"
+              autocomplete="off"
+              placeholder="说点什么…"
+            />
+            <button type="submit" class="primary">发送</button>
+          </form>
+        </section>
+        <footer class="budget">
+          <div class="budget-top">
+            <span class="budget-label"></span>
+            <div class="pips" aria-hidden="true"></div>
+            <button class="settings" aria-expanded="false">刷新设置</button>
+          </div>
+          <div class="budget-detail"></div>
+          <div class="turn-status sr-only" role="status"></div>
+          <form class="timer-settings" hidden>
+            <label for="minutes">定时刷新</label>
+            <input
+              type="number"
+              min="1"
+              max="1440"
+              step="1"
+              id="minutes"
+              value="60"
+              aria-label="刷新间隔（分钟）"
+            />
+            <span>分钟</span>
+            <label class="switch"
+              ><input id="timer-on" type="checkbox" checked /> 启用</label
+            >
+            <button type="submit" class="secondary">保存</button>
+          </form>
+        </footer>
+      </main>
+    </template>
+  </body>
+</html>

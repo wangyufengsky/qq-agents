@@ -1,3 +1,4 @@
+import { desktopToken } from "./home/desktop-auth.mjs";
 import { deriveRelayToken } from "./core/relay-auth.mjs";
 import { finalizeMcpOutput, toolOutputText } from "./backends/tool-output.mjs";
 import { disabledMessageTimingSnapshot } from "./core/message-timing.mjs";
@@ -160,6 +161,7 @@ export function createServer({
   publicPort,
 }) {
   const relayToken = deriveRelayToken(token);
+  const desktopKey = desktopToken(token);
   let stopping = false,
     closing;
   const requests = new Set();
@@ -284,6 +286,34 @@ export function createServer({
         });
         res.end(fs.readFileSync(path.join(publicDir, file)));
         return;
+      }
+      if (url.pathname === "/api/desktop-home/client") {
+        if (req.method !== "POST") return deny("METHOD", 405);
+        const local = ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(
+          req.socket.remoteAddress,
+        );
+        if (!local || !equal(req.headers["x-desktop-home-token"], desktopKey))
+          return deny("UNAUTHORIZED", 401);
+        return send(runtime.desktopVisits.command(await readBody(4096)));
+      }
+      const desktopCapability = req.headers["x-agent-capability"];
+      if (
+        (url.pathname === "/agent/catalog" ||
+          url.pathname === "/agent/tools") &&
+        runtime.desktopVisits?.scopes?.has(desktopCapability)
+      ) {
+        if (req.method !== "POST") return deny("METHOD", 405);
+        if (!equal(req.headers["x-agent-relay-token"], relayToken))
+          return deny("MCP_RELAY_AUTH_REQUIRED", 403);
+        return send(
+          mcpResult(
+            runtime.desktopVisits.bridge(
+              desktopCapability,
+              url.pathname,
+              await readBody(8192),
+            ),
+          ),
+        );
       }
       if (url.pathname === "/agent/catalog") {
         const ctx = runtime.capability(req.headers["x-agent-capability"]);

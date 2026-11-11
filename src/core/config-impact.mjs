@@ -242,6 +242,7 @@ export function configImpact(before, after) {
     privateLikeGroups: _privateLikeGroups,
     peerLimit: _peerLimit,
     homeSocial: _homeSocial,
+    desktopHome: _desktopHome,
     ...oldGlobal
   } = before;
   const {
@@ -253,6 +254,7 @@ export function configImpact(before, after) {
     privateLikeGroups: _newPrivateLikeGroups,
     peerLimit: _newPeerLimit,
     homeSocial: _newHomeSocial,
+    desktopHome: _newDesktopHome,
     ...newGlobal
   } = after;
   const globalChanged = !isDeepStrictEqual(oldGlobal, newGlobal);

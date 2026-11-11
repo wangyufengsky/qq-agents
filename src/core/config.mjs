@@ -1,3 +1,4 @@
+import { desktopHomePolicy } from "../home/desktop-home-policy.mjs";
 import { homeSocialPolicySchema } from "../home/social-policy.mjs";
 import { homePolicySchema } from "../home/policy.mjs";
 import { gamePolicy, agentGamePolicy } from "../games/framework/policy.mjs";
@@ -223,6 +224,7 @@ export const configSchema = z
     port: z.number().int().min(0).max(65535).default(3210),
     games: gamePolicy,
     homeSocial: homeSocialPolicySchema,
+    desktopHome: desktopHomePolicy,
     board: z
       .object({
         // Missing persisted fields retain the legacy disabled policy; new installs set true explicitly.
