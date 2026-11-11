@@ -1151,3 +1151,48 @@ test("expanded private recall is on demand and confined to the current allowed c
   assert.equal(memoryRecallDiagnostic(turn).opening, undefined);
   assert.equal(memoryRecallDiagnostic(turn).active.presented, 1);
 });
+
+test("a compact opening with a resolved quote keeps the source and a short recall notice", async (t) => {
+  const cfg = pilotConfig();
+  const role = cfg.agents[0];
+  role.behavior.compactChatGroups = ["20000"];
+  role.behavior.relationshipRecallGroups = ["20000"];
+  role.wake.mentions = false;
+  role.contextPolicy.capacityTokens = 1000000;
+  role.memoryRecall = "enabled";
+  const prompts = [];
+  let old;
+  const f = setup(
+    t,
+    async (p) => {
+      assert.equal(p.modelSelection, undefined);
+      prompts.push(p.prompt);
+      p.saveSession({ id: "compact-recall", backend: "fixture" });
+      if (prompts.length === 1)
+        await p.callTool("qq_mark_read", { throughSeq: old.seq });
+    },
+    cfg,
+  );
+  old = await f.add(120, "展板的试装在明天进行");
+  await f.turn(old);
+  const incoming = await f.add(121, "", 20000, 30001, 1800000001, {
+    message: [
+      { type: "at", data: { qq: "10000" } },
+      { type: "reply", data: { id: "120" } },
+      { type: "text", data: { text: "接着这条聊" } },
+    ],
+  });
+  const turn = await f.turn(incoming);
+  const prompt = prompts.at(-1);
+  assert.match(prompt, /本轮相关相处与原话.*展板的试装在明天进行/);
+  assert.match(
+    prompt,
+    /本轮记忆查证：已展开原引用。需要补查可用 memory_recall。/,
+  );
+  assert.doesNotMatch(prompt, /回想资料属于当前会话历史/);
+  assert.equal(
+    memoryRecallDiagnostic(turn).opening.reason,
+    "explicit-reference",
+  );
+  assert.equal(memoryRecallDiagnostic(turn).opening.presented, 0);
+});

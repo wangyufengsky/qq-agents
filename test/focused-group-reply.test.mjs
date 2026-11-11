@@ -10,6 +10,8 @@ async function group(
     enabled = true,
     mentionEnabled = false,
     optionalBacklog = false,
+    compact = false,
+    conversationRead = true,
     backlog = 41,
   } = {},
 ) {
@@ -23,6 +25,11 @@ async function group(
   cfg.agents[0].behavior.focusedGroupReply = enabled;
   cfg.agents[0].behavior.focusedGroupMentionReply = mentionEnabled;
   cfg.agents[0].behavior.optionalGroupBacklog = optionalBacklog;
+  if (compact) cfg.agents[0].behavior.compactChatGroups = ["20000"];
+  if (!conversationRead)
+    cfg.agents[0].tools = cfg.agents[0].tools.filter(
+      (name) => name !== "conversation_read",
+    );
   cfg.agents[0].tools.push("qq_send_burst");
   const f = fixture(t, { cfg, run });
   const ingest = (id, message) =>
@@ -87,6 +94,56 @@ test("a quoted reply to the wake input sends despite old and newly arriving unre
     type: "reply",
     data: { id: "42" },
   });
+});
+
+test("compact focused reply keeps the backlog readable on demand with input versions", async (t) => {
+  let prompt, result, gap, page, disposition;
+  const f = await group(
+    t,
+    async (p) => {
+      prompt = p.prompt;
+      const opening = JSON.parse(
+        prompt.split("新增消息：")[1].split("\n\n")[0],
+      );
+      gap = opening.readGap;
+      result = await p.callTool("qq_send", reply);
+      assert.equal(f.memory.state("group:20000").readThroughSeq || 0, 0);
+      const { tool, ...args } = gap;
+      page = await p.callTool(tool, args);
+      const old = page.items.find((item) => item.body === "合成积压消息");
+      disposition = await p.callTool("qq_mark_read", {
+        throughSeq: old.seq,
+        noReply: [old.inputRef],
+      });
+    },
+    { compact: true },
+  );
+  await f.wake();
+  assert.match(prompt, /旧输入有缺口/);
+  assert.doesNotMatch(prompt, /processingPending|唤醒背景/);
+  assert.equal(gap.tool, "conversation_read");
+  assert.equal(result.actionResult, "sent");
+  assert.deepEqual(f.reviewed(), ["42"]);
+  const old = page.items.find((item) => item.body === "合成积压消息");
+  assert.equal(old.inputRef.id, old.id);
+  assert.match(old.inputRef.version, /^1:/);
+  assert.equal(disposition.readThroughSeq, old.seq);
+  assert.ok(disposition.readThroughSeq < f.source.seq);
+});
+
+test("compact opening keeps direct read links when sequential reading is unavailable", async (t) => {
+  let prompt;
+  const f = await group(
+    t,
+    async (p) => {
+      prompt = p.prompt;
+    },
+    { compact: true, conversationRead: false },
+  );
+  await f.wake();
+  const opening = JSON.parse(prompt.split("新增消息：")[1].split("\n\n")[0]);
+  assert.equal(opening.processingPending[0].continuation.tool, "memory_read");
+  assert.doesNotMatch(prompt, /按 readGap 调用 conversation_read/);
 });
 
 test("the current quote's follow-up invalidates its grant while unrelated messages stay queued", async (t) => {

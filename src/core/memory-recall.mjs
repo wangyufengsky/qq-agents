@@ -976,7 +976,10 @@ export function renderRecallOpening(runtime, ctx) {
   const notice = ctx.allowedTools.includes("memory_recall")
     ? "需要再查时可用 memory_recall。query 可写想核对的具体问题，cue 可填写本轮来信的原文线索。"
     : "";
-  const addition = `\n\n本轮记忆查证 ${JSON.stringify({ status, reason: details.reason, contribution, evidence: rows })}。${HISTORY_LABEL}${notice}`;
+  const addition =
+    ctx.compactChat && !rows.length
+      ? `\n\n本轮记忆查证：${status === "skipped" && details.reason === "explicit-reference" ? "已展开原引用" : JSON.stringify({ status, reason: details.reason })}。${notice ? "需要补查可用 memory_recall。" : ""}`
+      : `\n\n本轮记忆查证 ${JSON.stringify({ status, reason: details.reason, contribution, evidence: rows })}。${HISTORY_LABEL}${notice}`;
   ctx.estimatedAdded += addition.length;
   return addition;
 }
