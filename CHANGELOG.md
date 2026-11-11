@@ -6,6 +6,10 @@
 
 ## 未发布
 
+### 更新浏览器与静态检查依赖（[#245](https://github.com/wangyufengsky/qq-agents/pull/245)）
+
+将运行依赖 `playwright-core` 升至 1.65.0，将开发依赖 `globals` 升至 17.14.0。小窝渲染和公开网页截图仍使用本机 Chrome 或 Chromium。升级时按锁文件安装依赖，无配置或数据库迁移。
+
 ### 收口功能 Agent 的现有配置解析（[#252](https://github.com/wangyufengsky/qq-agents/pull/252)）
 
 普通后端创建和 Session 兼容检查共用角色模型覆盖规则，记忆配置校验、后端调用和群试点沿用同一套功能定义与模型选择规则。此项为内部重构，沿用现有配置、实例键、工具协议和 Session 接续规则。
