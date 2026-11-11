@@ -35,7 +35,9 @@ import {
   groupRecallMaterial,
 } from "./group-recall.mjs";
 import {
+  chatFloor,
   chatHistory,
+  compactOpeningRecords,
   chatPersonCards,
   chatHandoff,
   chatStatus,
@@ -703,7 +705,21 @@ export class ContextLifecycle {
       relationship,
     });
     const correctionAllowed = relationship?.correctionAllowed;
-    const openingHistory = chatHistory(history, correctionAllowed);
+    const compactChat =
+      ctx.conversation.startsWith("group:") &&
+      a.behavior.compactChatGroups.includes(ctx.conversation.slice(6));
+    ctx.compactChat = compactChat;
+    const shown = compactChat
+      ? compactOpeningRecords(history.items)
+      : history.items;
+    const openingHistory = chatHistory(
+      { ...history, items: shown },
+      correctionAllowed,
+    );
+    if (compactChat)
+      openingHistory.notice = openingHistory.withheld
+        ? "部分来源受保护。可按返回游标继续翻页。"
+        : undefined;
     const relationshipLine = groupRecallLine(
       ctx,
       groupRecallMaterial(relationship),
@@ -716,7 +732,7 @@ export class ContextLifecycle {
       : null;
     ctx.stagedOpening = this.stageSeen(
       ctx,
-      separateFocus ? [...history.items, focus] : history.items,
+      separateFocus ? [...shown, focus] : shown,
       /^(group|private):/.test(ctx.conversation)
         ? [
             ...openingHistory.items,
@@ -728,7 +744,10 @@ export class ContextLifecycle {
         : history.items,
     );
     Object.assign(openingHistory, ctx.stagedOpening.checkpoint);
-    if (/^(group|private):/.test(ctx.conversation))
+    if (
+      /^(group|private):/.test(ctx.conversation) &&
+      (!compactChat || !ctx.allowedTools?.includes("conversation_read"))
+    )
       openingHistory.processingPending = processingPending(r, ctx).map(
         ({ id, seq, version }) => ({
           id,
@@ -875,9 +894,6 @@ export class ContextLifecycle {
       .forPeople(peopleInTurn(m, ctx.conversation, history.items, accountId))
       .filter((entry) => !correctionAllowed || correctionAllowed(entry));
     const activities = activityForTurn(m, ctx.conversation);
-    const compactChat =
-      ctx.conversation.startsWith("group:") &&
-      a.behavior.compactChatGroups.includes(ctx.conversation.slice(6));
     const details = [
       activities.length
         ? `共同活动（继续时先读当前原稿；多个活动不明确时简短确认；轮到对方时等待真实来信）：${JSON.stringify(activities)}`
@@ -885,9 +901,7 @@ export class ContextLifecycle {
       corrections.length
         ? `已记录的纠正（旧聊天保留，旧判断不能当现状；pending 项仍需检查）：${JSON.stringify(corrections)}`
         : "",
-      floor
-        ? `群聊现场（程序按 @、引用和发言记录算的，只是参考）：toYou 是对你说的；betweenOthers 是别人之间在说的话，to 是对象；answeredByOthers 是已经有别人接了的问题；recent 是最近 ${floor.recent.of} 条里你说了几条。${JSON.stringify(floor)}`
-        : "",
+      chatFloor(floor, compactChat, focus?.id),
       schedule?.line,
       mood.line,
       // Last, closest to the reply, where an address is most likely heeded.
@@ -927,7 +941,7 @@ export class ContextLifecycle {
               ? `最近对话（历史回放）：${JSON.stringify(replay)}`
               : "",
             focus
-              ? `本轮可优先引用回复：用 qq_send 的 replyTo=${JSON.stringify(focus.messageId)} 回复这条来信。只针对这条消息及明确引用它的补充，遇到续读入口先读齐。旧积压保留，之后按处理水位继续；不要为这条引用回复提交跨过缺口的已读水位。${focusedMessage ? ` 当前来信：${JSON.stringify(focusedMessage)}` : ""}`
+              ? `本轮可优先引用回复：用 qq_send 的 replyTo=${JSON.stringify(focus.messageId)}${compactChat ? "。读齐这条来信及引用它的补充。旧积压后续补读，发送可省略 readThroughSeq。" : " 回复这条来信。只针对这条消息及明确引用它的补充，遇到续读入口先读齐。旧积压保留，之后按处理水位继续；不要为这条引用回复提交跨过缺口的已读水位。"}${focusedMessage ? ` 当前来信：${JSON.stringify(focusedMessage)}` : ""}`
               : "",
             ctx.optionalBacklogThroughSeq !== undefined
               ? "旧积压可按需回看。可先用发送工具接当前话题，之后再分批补读。连续已读范围尚未处理完时，发送可省略 readThroughSeq。"
@@ -946,7 +960,7 @@ export class ContextLifecycle {
               ? `程序交接状态：${JSON.stringify(chatHandoff(handoff, { replay: !!replay, correctionAllowed }))}`
               : "",
             environment,
-            ...wakeBackground(wake),
+            ...wakeBackground(wake, compactChat ? focus?.seq : undefined),
           ]
     )
       .filter(Boolean)

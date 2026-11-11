@@ -45,6 +45,21 @@ export function deliveryPage(
   };
 }
 
+export function compactOpeningRecords(items) {
+  const confirmed = new Set(
+    items
+      .filter(
+        (row) => row.type === "message.sent" && row.status === "confirmed",
+      )
+      .map(({ id }) => id),
+  );
+  // Keep attempts whose outcome is unresolved or falls outside this page.
+  return items.filter(
+    (row) =>
+      row.type !== "message.send-attempt" || !confirmed.has(row.outcome?.id),
+  );
+}
+
 export function chatHistory(history, correctionAllowed) {
   return {
     ...history,
@@ -197,6 +212,14 @@ export function chatStatus(runtime, ctx, history, handoff, compact = false) {
     `处理水位：已处理至 seq=${state.readThroughSeq || 0}；本轮开场材料可提供的连续水位=${ctx.stagedOpening?.checkpoint.readThroughSeq ?? ctx.shownSeq ?? 0}。展示不等于处理，结束前只提交实际处理过的部分。`,
   ];
   if (
+    compact &&
+    ctx.allowedTools?.includes("conversation_read") &&
+    ctx.stagedOpening?.checkpoint.readGap?.tool === "conversation_read"
+  )
+    lines.push(
+      "旧输入有缺口，需补读时按 readGap 调用 conversation_read，再按返回的 nextAfterSeq 续页。",
+    );
+  if (
     !compact &&
     ctx.allowedTools?.some((name) =>
       [
@@ -217,7 +240,7 @@ export function chatStatus(runtime, ctx, history, handoff, compact = false) {
   const incomplete = history.items.filter(
     (x) => x.bodyTruncated || x.summaryOmitted,
   );
-  if (incomplete.length)
+  if (incomplete.length && !compact)
     lines.push(
       `未完整读取（先按入口续读，不能当作已读全文）：${JSON.stringify(incomplete.map(({ id, seq }) => ({ id, seq, continuation: { tool: "memory_read", id, offset: 0 } })))}`,
     );
@@ -243,11 +266,45 @@ export function chatStatus(runtime, ctx, history, handoff, compact = false) {
   return lines;
 }
 
-export function wakeBackground(reasons) {
+export function chatFloor(floor, compact, focusId) {
+  if (!floor) return "";
+  if (!compact)
+    return `群聊现场（程序按 @、引用和发言记录算的，只是参考）：toYou 是对你说的；betweenOthers 是别人之间在说的话，to 是对象；answeredByOthers 是已经有别人接了的问题；recent 是最近 ${floor.recent.of} 条里你说了几条。${JSON.stringify(floor)}`;
+  const { toYou = [], betweenOthers, answeredByOthers, recent } = floor;
+  const others = toYou.filter((id) => id !== focusId);
+  if (
+    focusId &&
+    !others.length &&
+    !betweenOthers?.length &&
+    !answeredByOthers?.length
+  )
+    return "";
+  return `群聊现场（按 @ 与引用推断）：${JSON.stringify({
+    ...(others.length ? { toYou: others } : {}),
+    ...(betweenOthers?.length ? { betweenOthers } : {}),
+    ...(answeredByOthers?.length ? { answeredByOthers } : {}),
+    recent,
+  })}`;
+}
+
+export function wakeBackground(reasons, focusSeq) {
   const scheduled = reasons.filter(
     (r) => r.reason === "scheduled" && r.taskRunId,
   );
-  const background = reasons.filter((r) => !scheduled.includes(r));
+  const background = reasons.filter(
+    (r) =>
+      !scheduled.includes(r) &&
+      !(
+        focusSeq !== undefined &&
+        r.seq === focusSeq &&
+        (r.firstSeq === undefined || r.firstSeq === focusSeq) &&
+        ["private", "mention"].includes(r.reason) &&
+        !r.instruction &&
+        !r.intentId &&
+        !r.taskRunId &&
+        !r.rhythmWake
+      ),
+  );
   return [
     scheduled.length
       ? `本轮定时任务（管理员已登记的任务说明，结合当前聊天执行）：${JSON.stringify(scheduled)}`

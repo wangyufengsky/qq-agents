@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { compactOpeningRecords } from "../src/core/chat-context.mjs";
 import { fixture, config, context } from "./helpers.mjs";
 
 const scope = "group:20000";
@@ -204,4 +205,24 @@ test("compact chat openings keep the two short boundaries and scope draft guidan
   assert.match(compact, /展示不等于处理/);
   assert.doesNotMatch(compact, /发送返回草稿时/);
   assert.match(regular, /发送返回草稿时/);
+});
+
+test("compact openings only omit attempts with a confirmed result on the same page", () => {
+  const attempt = (id, outcome) => ({
+    id,
+    type: "message.send-attempt",
+    outcome,
+  });
+  const receipt = {
+    id: "confirmed",
+    type: "message.sent",
+    status: "confirmed",
+  };
+  const items = [
+    attempt("duplicate", { id: receipt.id }),
+    receipt,
+    attempt("outside-page", { id: "other" }),
+    attempt("pending", undefined),
+  ];
+  assert.deepEqual(compactOpeningRecords(items), items.slice(1));
 });
