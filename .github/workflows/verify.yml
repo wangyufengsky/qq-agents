@@ -40,12 +40,12 @@ jobs:
         if: runner.os == 'Linux'
         timeout-minutes: 6
         run: |
-          # Keep Ubuntu's signed sources and add a mirror on independent DNS.
+          # Prefer the independent mirror so DNS failures do not delay every index.
           test -f /etc/apt/apt-mirrors.txt
           printf '%s\tpriority:%s\n' \
-            https://archive.ubuntu.com/ubuntu/ 1 \
-            https://security.ubuntu.com/ubuntu/ 2 \
-            https://mirrors.mit.edu/ubuntu/ 3 | sudo tee /etc/apt/apt-mirrors.txt
+            https://mirrors.mit.edu/ubuntu/ 1 \
+            https://archive.ubuntu.com/ubuntu/ 2 \
+            https://security.ubuntu.com/ubuntu/ 3 | sudo tee /etc/apt/apt-mirrors.txt
           apt_options=(-o Acquire::Retries=1 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15)
           sudo apt-get "${apt_options[@]}" -o APT::Update::Error-Mode=any update
           sudo apt-get "${apt_options[@]}" install -y --no-install-recommends ffmpeg
