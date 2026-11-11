@@ -89,6 +89,9 @@
   inline-size: 5.5rem;
   max-inline-size: 38%;
 }
+.desktop-switch input {
+  accent-color: var(--accent);
+}
 .desktop-settings .primary {
   justify-self: start;
 }
