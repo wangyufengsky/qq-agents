@@ -52,7 +52,7 @@ const AGENT_TOOL_GROUPS = [
     desc: "回忆过去的经历、翻阅聊天记录、写日记。",
     tools: {
       memory_search: "检索经历与日记",
-      memory_recall: "主动回想（需指定群试点）",
+      memory_recall: "主动回想",
       memory_related: "查看引用与撤回关系",
       memory_read: "展开记录原文",
       conversation_read: "按会话翻阅聊天记录",
@@ -415,6 +415,27 @@ const agentForm = {
       `<div class="agent-models"><button type="button" class="ghost" data-models ${disabledAttr(this.modelsOff(row, row.backendId))}>读取可用模型</button><span class="hint" data-models-hint>${esc(this.modelsHint(row, backend))}</span></div>` +
       check("paused", "保持角色暂停", row.paused) +
       "<h3>聊天范围</h3>" +
+      select(
+        "memoryRecall",
+        "记忆 Agent",
+        row.memoryRecall || (row.functionalAgents?.memory ? "" : "auto"),
+        [
+          ...(row.functionalAgents?.memory
+            ? [
+                [
+                  "",
+                  row.functionalAgents.memory.pilot?.groups.length
+                    ? "保留原指定群试点"
+                    : "保留原设置（关闭）",
+                ],
+              ]
+            : []),
+          ["auto", "随主后端（DSH 开启，其他关闭）"],
+          ["enabled", "开启（所有已准入 QQ 会话）"],
+          ["disabled", "关闭"],
+        ],
+      ) +
+      '<p class="hint">群聊按回复批次查证，私聊按需查证。启用需配置独立 DSH 实例，并授权记忆工具。</p>' +
       ids(
         "groups",
         "普通群白名单（私聊模式群在运行设置中统一配置）",
@@ -1660,6 +1681,17 @@ const agentForm = {
       ],
       silence: JSON.parse(get("silence") || "[]"),
     };
+    if (f.has("memoryRecall")) {
+      const recall = get("memoryRecall");
+      if (
+        recall &&
+        (recall !== "auto" ||
+          original.memoryRecall ||
+          original.functionalAgents?.memory)
+      )
+        row.memoryRecall = recall;
+      else delete row.memoryRecall;
+    }
     const definitions = { ...row.functionalAgents };
     for (const [key, field, kind] of [
       ["qq", "qqEffort", "qq-dialogue"],
@@ -1680,10 +1712,14 @@ const agentForm = {
       const { pilot, ...policy } = memory;
       const groups = pilot.groups.filter((id) => admitted.has(id));
       // Saving the ordinary allowlist also removes trials in groups it revoked.
-      if (groups.length !== pilot.groups.length)
-        definitions.memory = groups.length
-          ? { ...policy, pilot: { ...pilot, groups } }
-          : policy;
+      if (
+        groups.length !== pilot.groups.length ||
+        (!groups.length && !row.memoryRecall)
+      )
+        definitions.memory =
+          groups.length || row.memoryRecall
+            ? { ...policy, pilot: { ...pilot, groups } }
+            : policy;
     }
     if (Object.keys(definitions).length) row.functionalAgents = definitions;
     else delete row.functionalAgents;

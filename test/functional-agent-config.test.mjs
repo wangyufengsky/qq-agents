@@ -2,7 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { validateConfig } from "../src/core/config.mjs";
 import { defaultConfig } from "../src/core/default-config.mjs";
-import { resolveFunctionalAgent } from "../src/core/functional-agents.mjs";
+import {
+  memoryRecallPolicy,
+  resolveFunctionalAgent,
+} from "../src/core/functional-agents.mjs";
 
 const dedicatedBackend = {
   id: "recall-backend",
@@ -203,4 +206,42 @@ test("the dedicated backend marker accepts only a fixed managed DSH origin", () 
     config.backends[2] = { ...dedicatedBackend, ...fields };
     assert.throws(() => validateConfig(config));
   }
+});
+
+test("memory recall follows the role backend by default and respects explicit overrides", () => {
+  const raw = defaultConfig();
+  raw.backends.push(dedicatedBackend);
+  for (const agent of raw.agents)
+    agent.allow = { groups: ["20000"], users: ["30000"] };
+  raw.privateLikeGroups = ["20001"];
+  const cfg = validateConfig(raw);
+  const [dsh, codex] = cfg.agents;
+  const policy = (role, scope) => memoryRecallPolicy(role, scope, cfg);
+  assert.equal(policy(dsh, "group:20000").mode, "all");
+  assert.equal(policy(dsh, "group:20001").opening, true);
+  assert.equal(policy(dsh, "private:30000").opening, false);
+  for (const scope of [
+    "group:20002",
+    "private:30001",
+    "@subject",
+    "@work:30000",
+  ])
+    assert.equal(policy(dsh, scope), undefined);
+  assert.equal(policy(codex, "group:20000"), undefined);
+  assert.equal(
+    policy({ ...codex, memoryRecall: "enabled" }, "private:30000").mode,
+    "all",
+  );
+  assert.equal(
+    policy({ ...dsh, memoryRecall: "disabled" }, "group:20000"),
+    undefined,
+  );
+  assert.equal(
+    memoryRecallPolicy(dsh, "group:20000", {
+      ...cfg,
+      backends: cfg.backends.filter((b) => !b.functionalAgentOnly),
+    }),
+    undefined,
+  );
+  assert.equal(policy({ ...dsh, tools: [] }, "group:20000"), undefined);
 });

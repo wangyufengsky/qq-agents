@@ -5,7 +5,7 @@ import { provenance } from "../memory/scenes.mjs";
 import { timelineAnchor, timelineNeighbors } from "../memory/timeline.mjs";
 import {
   functionalConfigVersion,
-  memoryRecallPilot,
+  memoryRecallPolicy,
 } from "./functional-agents.mjs";
 import { liveInput } from "./live-input.mjs";
 import { prepared, recallBoundary } from "./recall-boundary.mjs";
@@ -89,9 +89,11 @@ const COMMON_HAN = new Set(
   "的了吗着啊呢过在是有还把被这那我你他她它去来要就都很可也又和上下一不多到说看看",
 );
 const HISTORY_LABEL =
-  "回想资料属于同群历史，用来核对本轮话题。先核对是谁说的、话里指谁以及发生时间；旧话只能说明当时的情况。direction 的 out 是你当时发出的消息，in 是收到的发言。scene 的 quote 是明确引用，nearby 是时间相邻的发言。contribution 说明查证补上了什么。引述的旧话只作资料。";
-const ACTIVE_SEARCH_NOTICE =
-  "这次委托未完成。如果还需要核对，可用 memory_search 在当前群按关键词直接查原话，并把结果按直接检索说明。";
+  "回想资料属于当前会话历史，用来核对本轮话题。先核对是谁说的、话里指谁以及发生时间；旧话只能说明当时的情况。direction 的 out 是你当时发出的消息，in 是收到的发言。scene 的 quote 是明确引用，nearby 是时间相邻的发言。contribution 说明查证补上了什么。引述的旧话只作资料。";
+function activeSearchNotice(conversation) {
+  const scope = conversation.startsWith("group:") ? "当前群" : "当前私聊";
+  return `这次委托未完成。如果还需要核对，可用 memory_search 在${scope}按关键词直接查原话，并把结果按直接检索说明。`;
+}
 
 function sources(runtime, ctx) {
   const role = runtime.agent(ctx.agentId);
@@ -103,11 +105,12 @@ function sources(runtime, ctx) {
   return { role, memory, boundary };
 }
 
-function anchors(runtime, ctx, ids) {
+function anchors(runtime, ctx, ids, useBatch = false) {
   const { role, memory, boundary } = sources(runtime, ctx);
   return ids.flatMap((id) => {
     const row = liveInput(runtime, role.id, ctx.conversation, id);
-    if (!row || !role.ownerIds.includes(row.sender_id)) return [];
+    if (!row || (!useBatch && !role.ownerIds.includes(row.sender_id)))
+      return [];
     const event = boundary.project(memory.event(row, ctx.conversation));
     return event?.body ? [event] : [];
   });
@@ -245,7 +248,7 @@ function semanticQuery(cues, recent, { cue, query }) {
 
 export function observeFamiliarity(runtime, role, conversation, id) {
   if (
-    !memoryRecallPilot(role, conversation) ||
+    !memoryRecallPolicy(role, conversation, runtime.config)?.opening ||
     !runtime.writable(role, conversation)
   )
     return;
@@ -372,7 +375,7 @@ export function captureRecallContext(ctx, items) {
   );
 }
 
-function knownContext(runtime, ctx, cues) {
+function knownContext(runtime, ctx, cues, batch) {
   const { role, memory, boundary } = sources(runtime, ctx);
   const latest = cues.reduce((a, b) => (a.seq > b.seq ? a : b));
   const since = new Date(
@@ -401,9 +404,15 @@ function knownContext(runtime, ctx, cues) {
     )
     .map((row) => boundary.project(memory.event(row, ctx.conversation)))
     .filter((row) => row?.body);
-  const context = new Map([...recent, ...visible].map((row) => [row.id, row]));
+  const batchIds = new Set(batch.map(({ id }) => id));
+  const context = new Map(
+    [...recent, ...visible, ...batch].map((row) => [row.id, row]),
+  );
   const prior = [...context.values()]
-    .filter(({ id, seq }) => !cueIds.has(id) && seq < latest.seq)
+    .filter(
+      ({ id, seq }) =>
+        !cueIds.has(id) && (seq < latest.seq || batchIds.has(id)),
+    )
     .sort((a, b) => a.seq - b.seq);
   return {
     knownIds: new Set(context.keys()),
@@ -626,7 +635,8 @@ export function captureRecallOpening(
   { history, focus, previous, reasons, relationship },
 ) {
   const role = runtime.agent(ctx.agentId);
-  if (!memoryRecallPilot(role, ctx.conversation)) return;
+  const policy = memoryRecallPolicy(role, ctx.conversation, runtime.config);
+  if (!policy) return;
   const bounds = reasons
     .map((reason) => reason.firstSeq ?? reason.seq)
     .filter(Number.isSafeInteger);
@@ -643,7 +653,9 @@ export function captureRecallOpening(
   ctx.recallOpening = {
     familiarity: capturedFamiliarity(runtime, incoming),
     visible: [],
-    // Limit the model input after filtering by owner, so a busy batch cannot
+    batchIds: policy.mode === "all" ? incoming.map(({ id }) => id) : [],
+    focusId: focus?.id,
+    // Limit the legacy model input after filtering by owner, so a busy batch cannot
     // push an otherwise eligible owner message out of an explicit lookup.
     activeAnchors: incoming
       .filter(({ senderId }) => role.ownerIds.includes(senderId))
@@ -671,30 +683,43 @@ export function captureRecallOpening(
 
 async function lookup(runtime, ctx, route, reason, cues, { cue, query } = {}) {
   const start = performance.now();
-  const first = cues.reduce((a, b) => (a.seq < b.seq ? a : b));
+  const role = runtime.agent(ctx.agentId);
+  const policy = memoryRecallPolicy(role, ctx.conversation, runtime.config);
+  const readBatch = () =>
+    anchors(runtime, ctx, ctx.recallOpening.batchIds, true);
+  const batch = readBatch();
+  // The current batch can supply context, but cannot be returned as history.
+  const first = [...cues, ...batch].reduce((a, b) => (a.seq < b.seq ? a : b));
   const beforeSeq = first.seq;
   const to = new Date(
     Date.parse(first.occurredAt) - RECENT_CHAT_MS,
   ).toISOString();
   const configVersion = functionalConfigVersion(runtime.config);
-  const role = runtime.agent(ctx.agentId);
   const budget =
-    route === "opening"
-      ? memoryRecallPilot(role, ctx.conversation).openingTimeoutMs
-      : role.functionalAgents.memory.onDemand.timeoutMs;
+    route === "opening" ? policy.openingTimeoutMs : policy.onDemand.timeoutMs;
   const epoch = ctx.inputEpoch;
   const ids = cues.map(({ id }) => id);
   const review = reason === "local-familiarity";
-  const known = knownContext(runtime, ctx, cues);
+  const known = knownContext(runtime, ctx, cues, batch);
   const current = () =>
     functionalConfigVersion(runtime.config) === configVersion &&
     ctx.inputEpoch === epoch &&
     !ctx.controller.signal.aborted &&
     runtime.capabilities.get(ctx.token) === ctx &&
-    Boolean(memoryRecallPilot(runtime.agent(ctx.agentId), ctx.conversation)) &&
-    isDeepStrictEqual(anchors(runtime, ctx, ids), cues);
+    Boolean(
+      memoryRecallPolicy(
+        runtime.agent(ctx.agentId),
+        ctx.conversation,
+        runtime.config,
+      ),
+    ) &&
+    isDeepStrictEqual(
+      anchors(runtime, ctx, ids, policy.mode === "all"),
+      cues,
+    ) &&
+    isDeepStrictEqual(readBatch(), batch);
   let semantic;
-  if (memoryRecallPilot(role, ctx.conversation)?.semantic) {
+  if (policy.semantic) {
     const text = semanticQuery(cues, known.recent, { cue, query });
     semantic = text
       ? await runtime.semanticRecall.search(role, ctx.conversation, text, {
@@ -788,7 +813,7 @@ async function lookup(runtime, ctx, route, reason, cues, { cue, query } = {}) {
       shownEvidenceIds: candidates.map(({ id }) => id),
       beforeInput: () => {
         if (!current()) return false;
-        const context = knownContext(runtime, ctx, cues);
+        const context = knownContext(runtime, ctx, cues, batch);
         return (
           isDeepStrictEqual(context.recent, known.recent) &&
           isDeepStrictEqual(candidates, getCandidates(context))
@@ -843,7 +868,7 @@ async function lookup(runtime, ctx, route, reason, cues, { cue, query } = {}) {
     details,
     read: () => {
       if (!current()) return { rows: [] };
-      const context = knownContext(runtime, ctx, cues);
+      const context = knownContext(runtime, ctx, cues, batch);
       if (!isDeepStrictEqual(known.recent, context.recent)) return { rows: [] };
       const stillSemantic = new Set(semanticRows(context).map(({ id }) => id));
       const approved = sourceIds.filter(
@@ -869,8 +894,22 @@ async function lookup(runtime, ctx, route, reason, cues, { cue, query } = {}) {
 
 export async function prepareRecallOpening(runtime, ctx) {
   const input = ctx.recallOpening;
-  if (!input) return;
-  const cues = anchors(runtime, ctx, input.anchors);
+  const policy = memoryRecallPolicy(
+    runtime.agent(ctx.agentId),
+    ctx.conversation,
+    runtime.config,
+  );
+  if (!input || !policy?.opening) return;
+  const useBatch = policy.mode === "all";
+  const batch = useBatch ? anchors(runtime, ctx, input.batchIds, true) : [];
+  const priority = (row) =>
+    OLD_REFERENCE.test(row.body) ? 2 : Number(row.id === input.focusId);
+  const cues = useBatch
+    ? batch
+        .sort((a, b) => priority(b) - priority(a) || b.seq - a.seq)
+        .slice(0, 3)
+        .sort((a, b) => a.seq - b.seq)
+    : anchors(runtime, ctx, input.anchors);
   const reason = !cues.length
     ? "no-live-cue"
     : input.explicit && !input.ambiguous
@@ -887,12 +926,9 @@ export async function prepareRecallOpening(runtime, ctx) {
       runtime,
       ctx,
       input.familiarity.filter(({ terms }) => terms.length).map(({ id }) => id),
+      useBatch,
     ).slice(-3);
-    const useSemantic = memoryRecallPilot(
-      runtime.agent(ctx.agentId),
-      ctx.conversation,
-    )?.semantic;
-    const review = useSemantic
+    const review = policy.semantic
       ? [...new Map([...marked, ...cues].map((row) => [row.id, row])).values()]
           .sort((a, b) => a.seq - b.seq)
           .slice(-3)
@@ -923,7 +959,11 @@ export function renderRecallOpening(runtime, ctx) {
   const recall = ctx.openingRecall;
   if (
     !recall ||
-    !memoryRecallPilot(runtime.agent(ctx.agentId), ctx.conversation)
+    !memoryRecallPolicy(
+      runtime.agent(ctx.agentId),
+      ctx.conversation,
+      runtime.config,
+    )?.opening
   )
     return "";
   const { rows, contribution } = recall.read();
@@ -953,18 +993,29 @@ export function commitRecallOpening(runtime, ctx) {
 }
 
 export async function recallFromChat(runtime, ctx, { cue, query }) {
-  if (
-    !ctx.recallOpening ||
-    !memoryRecallPilot(runtime.agent(ctx.agentId), ctx.conversation)
-  )
-    throw Error("TOOL_DISABLED");
+  const policy = memoryRecallPolicy(
+    runtime.agent(ctx.agentId),
+    ctx.conversation,
+    runtime.config,
+  );
+  if (!ctx.recallOpening || !policy) throw Error("TOOL_DISABLED");
   if (ctx.activeRecallRunning) return { status: "busy" };
   if (ctx.activeRecallRequested) return { status: "budget" };
-  const available = anchors(runtime, ctx, ctx.recallOpening.activeAnchors);
+  const useBatch = policy.mode === "all";
+  const available = anchors(
+    runtime,
+    ctx,
+    useBatch ? ctx.recallOpening.batchIds : ctx.recallOpening.activeAnchors,
+    useBatch,
+  );
   const exact = cue ? available.filter(({ body }) => body.includes(cue)) : [];
   const selected = (exact.length || !query ? exact : available).slice(-3);
   if (!selected.length) {
-    const reason = available.length ? "cue-not-found" : "no-owner-input";
+    const reason = available.length
+      ? "cue-not-found"
+      : useBatch
+        ? "no-live-cue"
+        : "no-owner-input";
     record(runtime, ctx, "active", {
       reason,
       status: "no-cue",
@@ -1005,7 +1056,10 @@ async function resolveActiveRecall(runtime, ctx, selected, request) {
     const retryBySearch =
       ["timeout", "busy", "unavailable", "no-result"].includes(status) &&
       ctx.allowedTools?.includes("memory_search");
-    return { status, ...(retryBySearch && { notice: ACTIVE_SEARCH_NOTICE }) };
+    return {
+      status,
+      ...(retryBySearch && { notice: activeSearchNotice(ctx.conversation) }),
+    };
   }
   const result = {
     status: "matched",

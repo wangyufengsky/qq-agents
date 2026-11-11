@@ -14,6 +14,7 @@ import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
+  allowed,
   behaviorSchema,
   schedulerSchema,
   voiceSchema,
@@ -21,6 +22,7 @@ import {
   crossGroupSchema,
   operationsSchema,
 } from "./policy.mjs";
+export { allowed, allowedGroups, isPrivateLikeGroup } from "./policy.mjs";
 
 import {
   MEMORY_AGENT_LIMITS,
@@ -185,7 +187,7 @@ const functionalAgents = z
           .default(() => [...MEMORY_AGENT_TOOLS]),
         pilot: z
           .object({
-            groups: z.array(qq).min(1).max(20),
+            groups: z.array(qq).max(20).default([]),
             semantic: z.boolean().optional(),
             openingTimeoutMs: z.number().int().min(1).max(6000).default(4000),
           })
@@ -470,6 +472,7 @@ export const configSchema = z
           model: z.string().default(""),
           effort: z.string().default(""),
           functionalAgents,
+          memoryRecall: z.enum(["auto", "enabled", "disabled"]).optional(),
           persona: z.string().max(32000).default(""),
           appearance: z.string().max(2000).default(""),
           selfPolicy: selfPolicySchema,
@@ -613,7 +616,11 @@ export function validateConfig(input) {
 
     const memory = a.functionalAgents?.memory;
     if (!memory) continue;
-    if (memory.pilot?.groups.some((group) => !allowed(a, "group:" + group, c)))
+    if (
+      memory.pilot &&
+      ((!a.memoryRecall && !memory.pilot.groups.length) ||
+        memory.pilot.groups.some((group) => !allowed(a, "group:" + group, c)))
+    )
       throw Error("CONFIG_SCHEMA_INVALID");
     if (!memory.backendId) {
       if (memory.enabled) throw Error("CONFIG_SCHEMA_INVALID");
@@ -719,26 +726,6 @@ export class ConfigStore {
     this.revision = configRevision(c);
     return this.value;
   }
-}
-export function isPrivateLikeGroup(config, conversation) {
-  return (
-    String(conversation).startsWith("group:") &&
-    (config.privateLikeGroups || []).includes(String(conversation).slice(6))
-  );
-}
-
-export function allowedGroups(agent, config) {
-  return [
-    ...new Set([...agent.allow.groups, ...(config.privateLikeGroups || [])]),
-  ];
-}
-
-export function allowed(agent, conversation, config = {}) {
-  const [kind, target] = String(conversation).split(":");
-  return kind === "group"
-    ? agent.allow.groups.includes(target) ||
-        isPrivateLikeGroup(config, conversation)
-    : kind === "private" && agent.allow.users.includes(target);
 }
 export function inSilence(agent, date = new Date()) {
   return agent.silence.some((s) => {

@@ -163,9 +163,10 @@ function retainPilotPolicy(before, after, lostGroups) {
   const groups = pilot.groups.filter((id) => !lostGroups.has(id));
   if (groups.length === pilot.groups.length) return after;
   const { pilot: _pilot, ...memory } = oldMemory;
-  const expected = groups.length
-    ? { ...memory, pilot: { ...pilot, groups } }
-    : memory;
+  const expected =
+    groups.length || after.memoryRecall
+      ? { ...memory, pilot: { ...pilot, groups } }
+      : memory;
   // A trial entry for a revoked group must be removed in the same save.
   // Compare the rest of the memory policy under the existing role-wide rules.
   if (!isDeepStrictEqual(after.functionalAgents.memory, expected)) return after;
