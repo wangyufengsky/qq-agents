@@ -1,4 +1,5 @@
 // @ts-check
+import { allowed } from "./policy.mjs";
 
 export const MEMORY_AGENT_TOOLS = Object.freeze(
   /** @type {const} */ (["memory_search", "memory_read", "memory_related"]),
@@ -41,8 +42,9 @@ const qqDefinition = Object.freeze({
  * @param {Role} role
  * @param {string} conversation
  * @param {"subject" | "qq" | "memory"} [key]
+ * @param {Configuration} [config]
  */
-export function resolveFunctionalAgent(role, conversation, key) {
+export function resolveFunctionalAgent(role, conversation, key, config) {
   const ordinaryKey =
     conversation === "@subject"
       ? "subject"
@@ -52,7 +54,7 @@ export function resolveFunctionalAgent(role, conversation, key) {
   if (!ordinaryKey) return undefined;
   key ??= ordinaryKey;
   if (key === "memory") {
-    const definition = role.functionalAgents?.memory;
+    const definition = memoryAgentDefinition(role, config);
     if (definition?.enabled !== true) return undefined;
     // Reuse the role's memory identity without turning it into a data scope.
     return {
@@ -102,24 +104,74 @@ export function memoryModelSelection(definition, backend) {
   });
 }
 
-/** @param {Role} role @param {string} conversation */
-export function memoryRecallPilot(role, conversation) {
-  if (!conversation?.startsWith("group:")) return undefined;
+/** @param {Role} role @param {Configuration} [config] */
+function memoryRecallMode(role, config) {
+  if (role.memoryRecall === "enabled") return "all";
+  if (role.memoryRecall === "disabled") return "off";
+  const stored = role.functionalAgents?.memory;
+  // An older explicit profile without a trial never delegated from chat.
+  if (!role.memoryRecall && stored) return stored.pilot ? "pilot" : "off";
+  return config?.backends.find(({ id }) => id === role.backendId)?.type ===
+    "dsh"
+    ? "all"
+    : "off";
+}
+
+/**
+ * @param {Role} role
+ * @param {Configuration} [config]
+ * @returns {Definitions["memory"]}
+ */
+export function memoryAgentDefinition(role, config) {
+  if (role.functionalAgents?.memory) return role.functionalAgents.memory;
+  if (memoryRecallMode(role, config) !== "all") return undefined;
+  const dedicated = config?.backends.filter(
+    (backend) => backend.functionalAgentOnly,
+  );
+  if (dedicated?.length !== 1) return undefined;
+  const [backend] = dedicated;
+  if (!backend.provider || !backend.model) return undefined;
+  // Existing isolated Hosts can be selected implicitly only when unambiguous.
+  return {
+    kind: /** @type {const} */ ("memory"),
+    enabled: true,
+    backendId: backend.id,
+    tools: [...MEMORY_AGENT_TOOLS],
+    onDemand: MEMORY_AGENT_LIMITS,
+  };
+}
+
+/** @param {Role} role @param {string} conversation @param {Configuration} config */
+export function memoryRecallPolicy(role, conversation, config) {
+  const mode = memoryRecallMode(role, config);
+  if (mode === "off" || !allowed(role, conversation, config)) return undefined;
   const caller = resolveFunctionalAgent(role, conversation);
   if (
     caller?.kind !== "qq-dialogue" ||
-    !caller.definition.delegatesTo?.includes("memory") ||
+    !(caller.definition.delegatesTo?.includes("memory") ?? mode === "all") ||
     !role.tools.includes("memory_search") ||
     (caller.definition.tools &&
       !caller.definition.tools.includes("memory_search"))
   )
     return undefined;
-  const memory = resolveFunctionalAgent(role, conversation, "memory");
+  const memory = resolveFunctionalAgent(role, conversation, "memory", config);
   if (
     memory?.kind !== "memory" ||
     !memory.definition.tools.includes("memory_search")
   )
     return undefined;
   const pilot = memory.definition.pilot;
-  return pilot?.groups.includes(conversation.slice(6)) ? pilot : undefined;
+  const opening = conversation.startsWith("group:");
+  if (
+    mode === "pilot" &&
+    !(opening && pilot?.groups.includes(conversation.slice(6)))
+  )
+    return undefined;
+  return {
+    mode,
+    opening,
+    semantic: pilot?.semantic,
+    openingTimeoutMs: pilot?.openingTimeoutMs ?? 4000,
+    onDemand: memory.definition.onDemand,
+  };
 }

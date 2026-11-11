@@ -92,6 +92,7 @@ export function defaultConfig() {
         name: "角色 A",
         connectionId: "napcat-a",
         backendId: "dsh-desktop",
+        memoryRecall: "auto",
         paused: true,
         subject: { inboxEnabled: false },
         home: {
@@ -196,6 +197,7 @@ export function defaultConfig() {
         name: "角色 B",
         connectionId: "napcat-b",
         backendId: "codex-cli",
+        memoryRecall: "auto",
         paused: true,
         subject: { inboxEnabled: false },
         home: {

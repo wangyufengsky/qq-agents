@@ -156,7 +156,7 @@ export const definitions = {
       .strict(),
   ],
   memory_recall: [
-    "主动委托记忆 Agent 查证本轮主人来信涉及的旧事。query 写要核对的问题，cue 可填主人来信中的短原文，两者至少填一项。只填 cue 时须匹配原文；同时给 query 时可按问题查。no-cue 表示委托未启动，empty 表示已查证但没有可补充的信息。每轮可发起一次。",
+    "主动委托记忆 Agent 查证本轮来信涉及的旧事。query 写要核对的问题，cue 可填来信中的短原文，两者至少填一项。只填 cue 时须匹配原文；同时给 query 时可按问题查。no-cue 表示委托未启动，empty 表示已查证但没有可补充的信息。每轮可发起一次。",
     z
       .object({
         cue: z.string().trim().min(2).max(120).optional(),

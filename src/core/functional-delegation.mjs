@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { resolveFunctionalContract } from "./functional-contracts.mjs";
 import {
   functionalConfigVersion,
-  memoryRecallPilot,
+  memoryRecallPolicy,
   resolveFunctionalAgent,
 } from "./functional-agents.mjs";
 
@@ -59,16 +59,23 @@ export class FunctionalDelegation {
       return { status: "denied" };
     }
     const source = resolveFunctionalAgent(role, parent.conversation);
+    const recall = memoryRecallPolicy(
+      role,
+      parent.conversation,
+      runtime.config,
+    );
     const profile = resolveFunctionalAgent(
       role,
       parent.conversation,
       targetKey,
+      runtime.config,
     );
     if (
       parent.runtimeKind === "functional-agent" ||
       source?.kind !== "qq-dialogue" ||
       profile?.kind !== "memory" ||
-      !source.definition.delegatesTo?.includes(targetKey) ||
+      role.memoryRecall === "disabled" ||
+      (!recall && !source.definition.delegatesTo?.includes(targetKey)) ||
       typeof prompt !== "string" ||
       !prompt.trim() ||
       runtime.containsCapability(parent, prompt) ||
@@ -78,10 +85,9 @@ export class FunctionalDelegation {
       return { status: "denied" };
 
     const contract = resolveFunctionalContract(profile);
-    const pilot = opening && memoryRecallPilot(role, parent.conversation);
-    if (opening && !pilot) return { status: "denied" };
-    const { timeoutMs: configuredTimeout, maxLookups } = pilot
-      ? { timeoutMs: pilot.openingTimeoutMs, maxLookups: 1 }
+    if (opening && !recall?.opening) return { status: "denied" };
+    const { timeoutMs: configuredTimeout, maxLookups } = opening
+      ? { timeoutMs: recall.openingTimeoutMs, maxLookups: 1 }
       : profile.definition.onDemand;
     const deadline = Math.min(
       parent.expires,

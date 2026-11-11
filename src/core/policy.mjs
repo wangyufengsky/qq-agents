@@ -365,3 +365,27 @@ export const filesSchema = z
   .strict()
   .prefault({})
   .refine((p) => p.maxTotalBytes >= p.maxBytes, "FILE_QUOTA_TOO_SMALL");
+
+/** @param {{privateLikeGroups?: string[]}} config @param {string} conversation */
+export function isPrivateLikeGroup(config, conversation) {
+  return (
+    String(conversation).startsWith("group:") &&
+    (config.privateLikeGroups || []).includes(String(conversation).slice(6))
+  );
+}
+
+/** @param {{allow: {groups: string[]}}} agent @param {{privateLikeGroups?: string[]}} config */
+export function allowedGroups(agent, config) {
+  return [
+    ...new Set([...agent.allow.groups, ...(config.privateLikeGroups || [])]),
+  ];
+}
+
+/** @param {{allow: {groups: string[], users: string[]}}} agent @param {string} conversation @param {{privateLikeGroups?: string[]}} [config] */
+export function allowed(agent, conversation, config = {}) {
+  const [kind, target] = String(conversation).split(":");
+  return kind === "group"
+    ? agent.allow.groups.includes(target) ||
+        isPrivateLikeGroup(config, conversation)
+    : kind === "private" && agent.allow.users.includes(target);
+}

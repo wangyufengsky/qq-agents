@@ -7,7 +7,7 @@ import { SOCIAL_TOOLS } from "../home/social-tool-names.mjs";
 import { subjectInboxEnabled } from "../core/role-rest.mjs";
 import { z } from "zod";
 import { FUNCTIONAL_AGENT_RESULT } from "./names.mjs";
-import { memoryRecallPilot } from "../core/functional-agents.mjs";
+import { memoryRecallPolicy } from "../core/functional-agents.mjs";
 import { toolSpecs } from "./specs.mjs";
 import { canUseDraftTool } from "../core/draft-input.mjs";
 import { profileConversation } from "../core/profile.mjs";
@@ -79,10 +79,10 @@ export function scopedCatalog(runtime, ctx, input) {
   };
 }
 
-export function toolAvailable(agent, name, conversation) {
+export function toolAvailable(agent, name, conversation, config) {
   if (name === FUNCTIONAL_AGENT_RESULT) return false;
   if (name === "memory_recall")
-    return Boolean(memoryRecallPilot(agent, conversation));
+    return Boolean(config && memoryRecallPolicy(agent, conversation, config));
   if (name.startsWith("subject_inbox_") || name === "subject_rest")
     return (
       subjectInboxEnabled(agent) &&

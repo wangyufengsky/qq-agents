@@ -1,7 +1,10 @@
 import { refreshRhythm } from "./rhythm.mjs";
 import { isPrivateLikeGroup, validateConfig } from "./config.mjs";
 import { configImpact, changedConfigFields } from "./config-impact.mjs";
-import { retainFunctionalConfigVersion } from "./functional-agents.mjs";
+import {
+  memoryAgentDefinition,
+  retainFunctionalConfigVersion,
+} from "./functional-agents.mjs";
 import { waitForDrain } from "../updates/drain.mjs";
 import { SUBJECT } from "./lifecycle.mjs";
 import { BanterCoordinator } from "../../vendor/local-bridge/banter.mjs";
@@ -22,15 +25,16 @@ export async function commitConfig(runtime, next, revision) {
   } = impact;
   let revokedGroupScopes = 0;
   const affectedBackends = new Set(
-    [...before.agents, ...next.agents]
-      .filter((a) => agentIds.has(a.id))
-      .flatMap((a) => [
-        a.backendId,
-        ...(a.functionalAgents?.memory?.enabled &&
-        a.functionalAgents.memory.backendId
-          ? [a.functionalAgents.memory.backendId]
-          : []),
-      ]),
+    [before, next].flatMap((config) =>
+      config.agents
+        .filter((a) => agentIds.has(a.id))
+        .flatMap((a) => {
+          const memory = memoryAgentDefinition(a, config);
+          return memory?.enabled && memory.backendId
+            ? [a.backendId, memory.backendId]
+            : [a.backendId];
+        }),
+    ),
   );
   for (const id of new Set([...affectedBackends, ...backendIds]))
     if (runtime.backendConnections.operations.has(id))

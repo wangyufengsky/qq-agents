@@ -489,7 +489,7 @@ export class Runtime {
     return [...new Set(selected)].filter(
       (name) =>
         (!configured || configured.includes(name)) &&
-        toolAvailable(a, name, conversation) &&
+        toolAvailable(a, name, conversation, this.config) &&
         (!name.startsWith("game_") || this.config.games.enabled) &&
         // Every chat and free-time session may use the board once it is on;
         // like mind tools it does not depend on each role's saved list.
@@ -1291,7 +1291,7 @@ export class Runtime {
       ).includes(name) ||
       (current
         ? !current.includes(name)
-        : !toolAvailable(a, name, ctx.conversation))
+        : !toolAvailable(a, name, ctx.conversation, this.config))
     )
       throw Error("TOOL_DISABLED");
     let result = await dispatchTool(this, ctx, name, args, (validated) => {
