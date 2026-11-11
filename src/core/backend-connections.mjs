@@ -3,6 +3,10 @@ import { backendCapabilities } from "../backends/capabilities.mjs";
 import { backendRequestConfig } from "../backends/session-contract.mjs";
 import { waitForDrain } from "../updates/drain.mjs";
 import {
+  memoryModelSelection,
+  roleBackendConfig,
+} from "./functional-agents.mjs";
+import {
   discoverDshInstances,
   localDshUrl,
   selectDshInstance,
@@ -128,14 +132,7 @@ export class BackendConnections {
     let b = this.runtime.backends.get(a.id);
     if (!b) {
       const config = this.config(a.backendId);
-      b = this.runtime.backendFactory(
-        {
-          ...config,
-          model: a.model || config.model,
-          effort: a.effort || config.effort,
-        },
-        a,
-      );
+      b = this.runtime.backendFactory(roleBackendConfig(a, config), a);
       if (config.type === "dsh")
         b.reservedEndpoint = (url) => this.reservedEndpoint(url);
       this.runtime.backends.set(a.id, b);
@@ -160,10 +157,7 @@ export class BackendConnections {
       const config = this.config(a.backendId);
       b.config = {
         ...b.config,
-        ...backendRequestConfig({
-          ...config,
-          effort: a.effort || config.effort,
-        }),
+        ...backendRequestConfig(roleBackendConfig(a, config)),
       };
     }
     return b;
@@ -222,11 +216,7 @@ export class BackendConnections {
         .length >= FUNCTIONAL_SLOTS_PER_PORT
     )
       throw Error("FUNCTIONAL_AGENT_BUSY");
-    const modelSelection = Object.freeze({
-      provider: definition.provider ?? config.provider,
-      model: definition.model ?? config.model,
-      effort: definition.effort ?? config.effort,
-    });
+    const modelSelection = memoryModelSelection(definition, config);
     if (!modelSelection.model || !modelSelection.provider)
       throw Error("FUNCTIONAL_AGENT_BACKEND_UNAVAILABLE");
     let backend;

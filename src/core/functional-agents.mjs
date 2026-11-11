@@ -8,14 +8,17 @@ export const MEMORY_AGENT_LIMITS = Object.freeze({
   maxLookups: 3,
 });
 
+/** @typedef {ReturnType<typeof import("./config.mjs").validateConfig>["agents"][number]} Role */
+/** @typedef {NonNullable<Role["functionalAgents"]>} Definitions */
+
+/** @type {Readonly<NonNullable<Definitions["subject"]>>} */
 const subjectDefinition = Object.freeze({
   kind: /** @type {const} */ ("subject"),
 });
+/** @type {Readonly<NonNullable<Definitions["qq"]>>} */
 const qqDefinition = Object.freeze({
   kind: /** @type {const} */ ("qq-dialogue"),
 });
-
-/** @typedef {ReturnType<typeof import("./config.mjs").validateConfig>["agents"][number]} Role */
 
 /**
  * Resolve a functional identity while leaving the caller's data scope intact.
@@ -55,16 +58,52 @@ export function resolveFunctionalAgent(role, conversation, key) {
   };
 }
 
+/**
+ * Apply the role overrides consistently to native adapters and Session checks.
+ * Empty role settings inherit the ordinary backend defaults.
+ * @template {{model: string, effort: string}} Backend
+ * @param {Pick<Role, "model" | "effort">} role
+ * @param {Backend} backend
+ */
+export function roleBackendConfig(role, backend) {
+  return {
+    ...backend,
+    model: role.model || backend.model,
+    effort: role.effort || backend.effort,
+  };
+}
+
+/**
+ * A memory invocation uses its own settings, independent of the caller's model.
+ * @param {{provider?: string, model?: string, effort?: string}} definition
+ * @param {{provider: string, model: string, effort: string}} backend
+ */
+export function memoryModelSelection(definition, backend) {
+  return Object.freeze({
+    provider: definition.provider ?? backend.provider,
+    model: definition.model ?? backend.model,
+    effort: definition.effort ?? backend.effort,
+  });
+}
+
 /** @param {Role} role @param {string} conversation */
 export function memoryRecallPilot(role, conversation) {
-  const { qq, memory } = role.functionalAgents || {};
-  return memory?.enabled &&
-    qq?.delegatesTo?.includes("memory") &&
-    /^group:\d+$/.test(conversation) &&
-    role.tools.includes("memory_search") &&
-    (!qq.tools || qq.tools.includes("memory_search")) &&
-    memory.tools.includes("memory_search") &&
-    memory.pilot?.groups.includes(conversation.slice(6))
-    ? memory.pilot
-    : undefined;
+  if (!conversation?.startsWith("group:")) return undefined;
+  const caller = resolveFunctionalAgent(role, conversation);
+  if (
+    caller?.kind !== "qq-dialogue" ||
+    !caller.definition.delegatesTo?.includes("memory") ||
+    !role.tools.includes("memory_search") ||
+    (caller.definition.tools &&
+      !caller.definition.tools.includes("memory_search"))
+  )
+    return undefined;
+  const memory = resolveFunctionalAgent(role, conversation, "memory");
+  if (
+    memory?.kind !== "memory" ||
+    !memory.definition.tools.includes("memory_search")
+  )
+    return undefined;
+  const pilot = memory.definition.pilot;
+  return pilot?.groups.includes(conversation.slice(6)) ? pilot : undefined;
 }
