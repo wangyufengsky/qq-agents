@@ -2,11 +2,11 @@ import { startTypingIndicator } from "./typing-indicator.mjs";
 import { prepareMessageImages } from "./message-images.mjs";
 import { randomUUID } from "node:crypto";
 import { SUBJECT } from "./lifecycle.mjs";
+import { prepareRecallOpening } from "./memory-recall.mjs";
 import {
-  prepareRecallOpening,
-  renderRecallOpening,
-  commitRecallOpening,
-} from "./memory-recall.mjs";
+  conversationExchange,
+  resolveFunctionalContract,
+} from "./functional-contracts.mjs";
 import { toolSpecs } from "../tools/specs.mjs";
 import {
   runWithRecovery,
@@ -17,7 +17,6 @@ import { isConnectionFailure } from "./backend-connections.mjs";
 import {
   saveSession,
   recordBackendTurn,
-  recordInputSubmission,
   recordBackendTiming,
   recordBackendDiagnostic,
   retireSession,
@@ -153,28 +152,21 @@ export class TurnRunner {
       if (ctx.recallOpening) await prepareRecallOpening(runtime, ctx);
       runtime.assertActive(ctx);
       ctx.requiresInputSubmission = true;
+      const createExchange =
+        resolveFunctionalContract(ctx.functionalAgent)?.createExchange ??
+        conversationExchange;
       const result = await this.runBackend(ctx, backend, {
-        inputImages: imageInput.images,
-        beforeInputSubmitted: imageInput.beforeSubmit,
+        ...createExchange(runtime, ctx, {
+          prepared,
+          imageInput,
+          tools,
+          memory: mem,
+        }),
         agent: a,
         conversation,
-        effort: ctx.functionalAgent?.definition.effort,
-        prompt: prepared.prompt,
-        ...(ctx.openingRecall && {
-          appendPrompt: () => renderRecallOpening(runtime, ctx),
-        }),
-        instructions: prepared.instructions,
         onUsage: (usage) =>
           !runtime.stopped && runtime.contexts.usage(ctx, usage),
         signal: controller.signal,
-        tools,
-        callTool: (name, args) =>
-          runtime.callTool(ctx, name, args, { deferInput: true }),
-        finalizeToolOutput: (original, options) =>
-          runtime.finalizeToolOutput(ctx, original, options),
-        commitToolOutput: (receipt, text) =>
-          runtime.commitToolOutput(ctx, receipt, text),
-        session: prepared.session,
         saveSession: (session) =>
           !runtime.stopped &&
           saveSession(mem, conversation, session, {
@@ -193,17 +185,6 @@ export class TurnRunner {
           }),
         onBackendTurn: (reference) =>
           !runtime.stopped && recordBackendTurn(mem, ctx.turnId, reference),
-        onInputSubmitted: () => {
-          if (!runtime.stopped && !controller.signal.aborted) {
-            runtime.contexts.commitOpening(ctx);
-            commitRecallOpening(runtime, ctx);
-            ctx.subjectInboxInputSubmitted = true;
-            ctx.backendInputEpoch = ctx.inputEpoch;
-            runtime.messageTiming?.mark(timingId, "backendInputSubmitted");
-            imageInput.submitted();
-            recordInputSubmission(mem, ctx.turnId);
-          }
-        },
         onTiming: (timing) =>
           !runtime.stopped && recordBackendTiming(mem, ctx.turnId, timing),
         onDiagnostic: (event, attempt) =>
