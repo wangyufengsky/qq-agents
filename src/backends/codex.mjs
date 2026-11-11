@@ -362,15 +362,28 @@ export class CodexBackend {
     await closeSocialSessions(this, filter);
   }
   /** @param {any} params */
+  async runDesktop(params) {
+    return this.runIsolated(params, "desktop");
+  }
+  /** @param {any} params */
   async runSocial(params) {
-    return runNativeSocial(this, params, async (session) => {
-      if (!session) return;
-      try {
-        await this.rpc.request("thread/archive", { threadId: session.id });
-      } catch {
-        throw Error("SOCIAL_CONTEXT_FINALIZATION_FAILED");
-      }
-    });
+    return this.runIsolated(params, "social");
+  }
+  /** @param {any} params @param {"social" | "desktop"} surface */
+  async runIsolated(params, surface) {
+    return runNativeSocial(
+      this,
+      params,
+      async (session) => {
+        if (!session) return;
+        try {
+          await this.rpc.request("thread/archive", { threadId: session.id });
+        } catch {
+          throw Error("SOCIAL_CONTEXT_FINALIZATION_FAILED");
+        }
+      },
+      surface,
+    );
   }
   /** @param {RunParams} params */
   async run({

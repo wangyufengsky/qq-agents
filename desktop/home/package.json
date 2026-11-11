@@ -1,0 +1,8 @@
+{
+  "name": "qq-agents-desktop-home-prototype",
+  "productName": "桌面小窝",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "main.mjs"
+}

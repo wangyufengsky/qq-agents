@@ -11,6 +11,7 @@ const allowed = new Set([
   "person_items",
   "mood_read",
 ]);
+const desktopAllowed = new Set(["desktop_room_decide"]);
 
 /** Only the controlled scene tool may add pixels outside the text quota.
  * @param {string} name @param {any} result @param {number} maxTextBytes */
@@ -44,8 +45,14 @@ export function assertSocialToolResult(name, result, maxTextBytes) {
 
 /** Each window owns a separate session per actor; submitted prompts never retry.
  * @param {any} backend @param {any} params
- * @param {(session: any, conversation: string) => Promise<void>} dispose */
-export async function runNativeSocial(backend, params, dispose) {
+ * @param {(session: any, conversation: string) => Promise<void>} dispose
+ * @param {"social" | "desktop"} [surface] */
+export async function runNativeSocial(
+  backend,
+  params,
+  dispose,
+  surface = "social",
+) {
   if (
     params.budget !== null ||
     params.outputCap != null ||
@@ -59,7 +66,8 @@ export async function runNativeSocial(backend, params, dispose) {
     description: tool.function?.description,
     inputSchema: tool.function?.parameters,
   }));
-  if (tools.some((/** @type {any} */ tool) => !allowed.has(tool.name)))
+  const permitted = surface === "desktop" ? desktopAllowed : allowed;
+  if (tools.some((/** @type {any} */ tool) => !permitted.has(tool.name)))
     throw Error("SOCIAL_TOOL_DENIED");
   const names = new Set(tools.map((/** @type {any} */ tool) => tool.name));
   const pool = socialSessionPool(backend, dispose);

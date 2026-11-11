@@ -1,0 +1,526 @@
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  Menu,
+  nativeImage,
+  screen,
+  Tray,
+} from "electron";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { LiveRoom } from "./live-room.mjs";
+import { startModelClient } from "./model-client.mjs";
+import {
+  DEFAULT_MINUTES,
+  MAX_TURNS,
+  arrive,
+  cancelInvite,
+  createRoom,
+  decline,
+  finishTurn,
+  invite,
+  leave,
+  refreshIfDue,
+  roles,
+  setIntervalMinutes,
+  speak,
+  startTurn,
+} from "./room.mjs";
+
+const source = fileURLToPath(new URL(".", import.meta.url));
+const trialProfile = process.env.DESKTOP_HOME_TRIAL_PROFILE;
+if (trialProfile) app.setPath("userData", trialProfile);
+const preferencesPath = join(
+  app.getPath("userData"),
+  "prototype-preferences.json",
+);
+
+function readPreferences() {
+  try {
+    return JSON.parse(readFileSync(preferencesPath, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+const saved = readPreferences();
+const positions = saved.positions ?? {};
+const validInterval = (value) =>
+  Number.isInteger(value) && value >= 0 && value <= 1440;
+const room = createRoom(
+  validInterval(saved.minutes) ? saved.minutes : DEFAULT_MINUTES,
+);
+const entries = new Map();
+const invitations = new Map();
+const bubbles = new Map();
+let finishTimer;
+let hidden = false;
+let tray;
+const liveRoot = process.env.DESKTOP_HOME_LIVE_ROOT;
+let live;
+let shuttingDown = false;
+
+function savePreferences() {
+  mkdirSync(app.getPath("userData"), { recursive: true });
+  const next = `${preferencesPath}.next`;
+  writeFileSync(next, JSON.stringify({ minutes: room.minutes, positions }));
+  renameSync(next, preferencesPath);
+}
+
+function snapshot() {
+  return {
+    live: Boolean(liveRoot),
+    roles: roles.map(({ id, name, title, color }) => ({
+      id,
+      name,
+      title,
+      color,
+      state: room.members[id],
+      available: !liveRoot || live?.supported.has(id),
+    })),
+    messages: room.messages,
+    budget: room.budget,
+    maxTurns: MAX_TURNS,
+    minutes: room.minutes,
+    nextRefill: room.nextRefill,
+    thinking: room.turn?.actor ?? null,
+    bubbles: room.bubbles,
+    notice: room.notice,
+  };
+}
+
+function send(entry, channel, value) {
+  if (entry?.ready && !entry.win.isDestroyed())
+    entry.win.webContents.send(channel, value);
+}
+
+function update() {
+  const data = snapshot();
+  for (const entry of entries.values()) send(entry, "room:update", data);
+}
+
+const sizes = {
+  door: [100, 118],
+  panel: [430, 574],
+  sprite: [194, 156],
+};
+
+function defaultPoint(id) {
+  const { x, y, width, height } = screen.getPrimaryDisplay().workArea;
+  if (id === "door") return { x: x + width - 122, y: y + height - 138 };
+  const index = roles.findIndex((role) => role.id === id);
+  return {
+    x: x + width - 290 - index * 142,
+    y: y + height - 171 - (index % 2) * 28,
+  };
+}
+
+function clampPoint(point, width, height, area) {
+  const work =
+    area ?? screen.getDisplayMatching({ ...point, width, height }).workArea;
+  return {
+    x: Math.round(
+      Math.min(
+        Math.max(point.x, work.x),
+        Math.max(work.x, work.x + work.width - width),
+      ),
+    ),
+    y: Math.round(
+      Math.min(
+        Math.max(point.y, work.y),
+        Math.max(work.y, work.y + work.height - height),
+      ),
+    ),
+  };
+}
+
+function spritePoint(id) {
+  const point = positions[id];
+  return Number.isFinite(point?.x) && Number.isFinite(point?.y)
+    ? point
+    : defaultPoint(id);
+}
+
+function createWindow(id, type, point, options = {}) {
+  const [width, height] = sizes[type];
+  const panel = type === "panel";
+  const win = new BrowserWindow({
+    ...clampPoint(point, width, height, options.area),
+    width,
+    height,
+    show: false,
+    frame: false,
+    transparent: true,
+    hasShadow: panel,
+    resizable: false,
+    movable: panel,
+    focusable: panel,
+    fullscreenable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    enableLargerThanScreen: false,
+    webPreferences: {
+      preload: join(source, "preload.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      backgroundThrottling: false,
+    },
+  });
+  const entry = { win, id, type, ready: false, section: options.section };
+  entries.set(id, entry);
+  if (panel) win.setAlwaysOnTop(true, "floating", 1);
+  win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  win.webContents.on("will-navigate", (event) => event.preventDefault());
+  win.webContents.on("did-finish-load", () => {
+    entry.ready = true;
+    send(entry, "room:update", snapshot());
+    send(entry, "room:section", entry.section);
+  });
+  win.once("ready-to-show", () => {
+    if (hidden && !panel) return;
+    if (panel) win.show();
+    else win.showInactive();
+  });
+  win.on("closed", () => {
+    clearInterval(entry.movement);
+    if (entries.get(id) === entry) entries.delete(id);
+  });
+  win.loadFile(join(source, "index.html"), { query: { type, id } });
+  return entry;
+}
+
+function showDoor() {
+  hidden = false;
+  if (!entries.has("door")) createWindow("door", "door", defaultPoint("door"));
+  for (const entry of entries.values()) {
+    if (entry.ready && entry.type !== "panel") entry.win.showInactive();
+  }
+}
+
+function showPanel(section) {
+  showDoor();
+  const existing = entries.get("panel");
+  if (existing) {
+    existing.section = section;
+    send(existing, "room:section", section);
+    existing.win.show();
+    existing.win.focus();
+    return;
+  }
+  const door = entries.get("door").win.getBounds();
+  const area = screen.getDisplayMatching(door).workArea;
+  createWindow(
+    "panel",
+    "panel",
+    {
+      x: door.x + door.width - sizes.panel[0],
+      y: door.y - sizes.panel[1] - 36,
+    },
+    { area, section },
+  );
+}
+
+function animateTo(entry, point, complete) {
+  clearInterval(entry.movement);
+  const [width, height] = sizes[entry.type];
+  const target = clampPoint(point, width, height);
+  const [x, y] = entry.win.getPosition();
+  const reduced =
+    process.platform === "darwin" && app.isAccessibilitySupportEnabled();
+  const started = Date.now();
+  if (reduced || hidden) {
+    entry.win.setPosition(target.x, target.y);
+    complete?.();
+    return;
+  }
+  entry.movement = setInterval(() => {
+    if (entry.win.isDestroyed()) return clearInterval(entry.movement);
+    const progress = Math.min(1, (Date.now() - started) / 450);
+    const eased = 1 - (1 - progress) ** 3;
+    entry.win.setPosition(
+      Math.round(x + (target.x - x) * eased),
+      Math.round(y + (target.y - y) * eased),
+    );
+    if (progress === 1) {
+      clearInterval(entry.movement);
+      complete?.();
+    }
+  }, 16);
+}
+
+function showSprite(role) {
+  const previous = entries.get(role.id);
+  if (previous) previous.win.destroy();
+  const door = entries.get("door")?.win.getBounds();
+  const point = spritePoint(role.id);
+  const entry = createWindow(
+    role.id,
+    "sprite",
+    door ? { x: door.x - 36, y: door.y - 27 } : point,
+  );
+  entry.win.once("ready-to-show", () => animateTo(entry, point));
+}
+
+function hideAll() {
+  hidden = true;
+  for (const { win } of entries.values()) win.hide();
+}
+
+function animateHome(role) {
+  const entry = entries.get(role.id);
+  if (entry && !entry.departing) {
+    entry.departing = true;
+    entry.win.setIgnoreMouseEvents(true);
+    const door = entries.get("door")?.win.getBounds();
+    if (door)
+      animateTo(entry, { x: door.x - 36, y: door.y - 27 }, () =>
+        entry.win.destroy(),
+      );
+    else entry.win.destroy();
+  }
+}
+
+function syncLive() {
+  for (const role of roles) {
+    if (room.members[role.id] === "here") {
+      const message = room.bubbles[role.id];
+      if (message && bubbles.get(role.id)?.id !== message.id) {
+        clearTimeout(bubbles.get(role.id)?.timer);
+        const timer = setTimeout(() => {
+          if (room.bubbles[role.id] === message) delete room.bubbles[role.id];
+          bubbles.delete(role.id);
+          update();
+        }, 4900);
+        bubbles.set(role.id, { id: message.id, timer });
+      }
+      const entry = entries.get(role.id);
+      if (!entry || entry.departing) showSprite(role);
+    } else animateHome(role);
+  }
+  update();
+}
+
+function returnHome(role, self = false) {
+  if (live) return live.leave(role);
+  const turn = room.turn;
+  if (!leave(room, role, Date.now(), self)) return;
+  clearTimeout(bubbles.get(role.id));
+  bubbles.delete(role.id);
+  animateHome(role);
+  if (room.turn !== turn) {
+    clearTimeout(finishTimer);
+    advance();
+  }
+  update();
+}
+
+function advance() {
+  const turn = startTurn(room);
+  if (!turn) return;
+  update();
+  finishTimer = setTimeout(() => {
+    if (!finishTurn(room, turn)) return;
+    clearTimeout(bubbles.get(turn.actor));
+    const message = room.bubbles[turn.actor];
+    bubbles.set(
+      turn.actor,
+      setTimeout(() => {
+        if (room.bubbles[turn.actor] === message)
+          delete room.bubbles[turn.actor];
+        bubbles.delete(turn.actor);
+        update();
+      }, 4900),
+    );
+    update();
+    advance();
+  }, 1250);
+}
+
+function changeInvitation(role) {
+  if (room.members[role.id] === "invited") {
+    clearTimeout(invitations.get(role.id));
+    invitations.delete(role.id);
+    cancelInvite(room, role);
+  } else if (invite(room, role)) {
+    invitations.set(
+      role.id,
+      setTimeout(() => {
+        invitations.delete(role.id);
+        if (arrive(room, role)) showSprite(role);
+        update();
+      }, 2750),
+    );
+  }
+  update();
+}
+
+function updatePointerRegions() {
+  if (hidden) return;
+  const { x, y } = screen.getCursorScreenPoint();
+  for (const entry of entries.values()) {
+    const { win, type, id } = entry;
+    if (type === "panel" || entry.departing || !win.isVisible()) continue;
+    const bounds = win.getBounds();
+    const dx = x - bounds.x;
+    const dy = y - bounds.y;
+    const active =
+      type === "door"
+        ? dx >= 9 && dx <= 91 && dy >= 6 && dy <= 107
+        : (dx >= 44 && dx <= 150 && dy >= 45 && dy <= 152) ||
+          ((room.bubbles[id] || room.turn?.actor === id) &&
+            dx >= 10 &&
+            dx <= 184 &&
+            dy >= 2 &&
+            dy <= 54);
+    const ignored = !active && !entry.drag;
+    if (ignored === entry.ignored) continue;
+    entry.ignored = ignored;
+    win.setIgnoreMouseEvents(ignored);
+  }
+}
+
+function handleDrag(entry, action, data) {
+  if (!Number.isFinite(data?.x) || !Number.isFinite(data?.y)) return;
+  const [x, y] = entry.win.getPosition();
+  if (action === "drag-start") {
+    clearInterval(entry.movement);
+    entry.drag = { x, y, mouseX: data.x, mouseY: data.y };
+  } else if (entry.drag) {
+    const from = entry.drag;
+    const target = clampPoint(
+      {
+        x: from.x + data.x - from.mouseX,
+        y: from.y + data.y - from.mouseY,
+      },
+      ...sizes.sprite,
+    );
+    entry.win.setPosition(target.x, target.y);
+    if (action === "drag-end") {
+      entry.drag = null;
+      positions[entry.id] = target;
+      savePreferences();
+    }
+  }
+}
+
+ipcMain.handle("room:get", (event) => {
+  const entry = [...entries.values()].find(
+    ({ win }) => win.webContents === event.sender,
+  );
+  if (entry) return { data: snapshot(), section: entry.section };
+});
+
+ipcMain.on("room:action", (event, action, data) => {
+  const entry = [...entries.values()].find(
+    ({ win }) => win.webContents === event.sender,
+  );
+  if (!entry || entry.departing) return;
+  if (live) live.tick();
+  else if (refreshIfDue(room)) update();
+  if (entry.type === "door") {
+    if (action === "open") showPanel("visits");
+    return;
+  }
+  if (entry.type === "sprite") {
+    const role = roles.find(({ id }) => id === entry.id);
+    if (action === "open") showPanel("chat");
+    if (action === "menu") {
+      Menu.buildFromTemplate([
+        { label: "打开聊天", click: () => showPanel("chat") },
+        {
+          label: "坐回默认位置",
+          click: () => {
+            delete positions[role.id];
+            savePreferences();
+            animateTo(entry, defaultPoint(role.id));
+          },
+        },
+        { type: "separator" },
+        { label: "请回家", click: () => returnHome(role) },
+        ...(live
+          ? []
+          : [
+              {
+                label: "模拟角色自行回家",
+                click: () => returnHome(role, true),
+              },
+            ]),
+      ]).popup({ window: entry.win });
+    }
+    if (["drag-start", "drag-move", "drag-end"].includes(action))
+      handleDrag(entry, action, data);
+    return;
+  }
+  const role = roles.find(({ id }) => id === data);
+  if (action === "invite" && role) {
+    if (live) void live.invite(role);
+    else changeInvitation(role);
+  }
+  if (action === "decline" && !live && role && decline(room, role)) {
+    clearTimeout(invitations.get(role.id));
+    invitations.delete(role.id);
+    update();
+  }
+  if (action === "leave" && role) returnHome(role);
+  if (action === "send" && typeof data === "string") {
+    if (live) live.send(data);
+    else if (speak(room, data)) {
+      clearTimeout(finishTimer);
+      advance();
+      update();
+    }
+  }
+  if (action === "interval" && validInterval(data) && data !== room.minutes) {
+    if (live) live.interval(data);
+    else setIntervalMinutes(room, data);
+    savePreferences();
+    update();
+  }
+  if (action === "close") entry.win.hide();
+});
+
+if (!app.requestSingleInstanceLock()) app.quit();
+else {
+  app.on("second-instance", showDoor);
+  app.on("window-all-closed", () => {});
+  app.on("before-quit", (event) => {
+    if (!live || shuttingDown) return;
+    event.preventDefault();
+    shuttingDown = true;
+    void live.close().finally(() => app.quit());
+  });
+  app.whenReady().then(() => {
+    if (process.platform === "darwin") app.setActivationPolicy("accessory");
+    if (liveRoot) {
+      live = new LiveRoom(
+        room,
+        startModelClient(liveRoot, process.env.DESKTOP_HOME_NODE),
+        syncLive,
+      );
+    }
+    const trayImage = nativeImage.createFromPath(
+      join(source, "art", "trayTemplate.png"),
+    );
+    trayImage.setTemplateImage(true);
+    tray = new Tray(trayImage.resize({ width: 16, height: 16 }));
+    tray.setToolTip(live ? "桌面小窝 · 隔离试聊" : "桌面小窝 · 模拟样机");
+    tray.setContextMenu(
+      Menu.buildFromTemplate([
+        { label: "显示小门", click: showDoor },
+        { label: "打开聊天", click: () => showPanel("chat") },
+        { label: "隐藏小窝", click: hideAll },
+        { type: "separator" },
+        { label: "退出桌面小窝", click: () => app.quit() },
+      ]),
+    );
+    showDoor();
+    setInterval(updatePointerRegions, 32);
+    setInterval(() => {
+      if (live) live.tick();
+      else if (refreshIfDue(room)) update();
+    }, 500);
+  });
+}
