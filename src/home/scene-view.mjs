@@ -93,7 +93,7 @@ export async function renderHomeScene(
     });
     const profile = path.join(directory, "profile");
     await fs.mkdir(profile, { mode: 0o700 });
-    // Pinned Playwright 1.64.1 forwards signal to launch cancellation although
+    // Playwright forwards signal to launch cancellation although
     // LaunchOptions omits it. The wrapper supplies independently owned cleanup.
     /** @type {import("playwright-core").LaunchOptions & {signal?: AbortSignal}} */
     const launchOptions = {
