@@ -2,6 +2,12 @@
 
 实现从 0.4.0 / main b60fee1 延续。合并不是部署：现有角色、旧人格、登录、聊天和 Docker 均不迁移或启动。正式规则见 [PROMPT-CONTEXT-DISCUSSION.md](history/PROMPT-CONTEXT-DISCUSSION.md)；本文件记录工程选择及验收边界。
 
+## 在管理台查看本地会话
+
+从左侧「纸页小窝」下方进入「会话」，选角色和群聊或私聊，查看当前及历史会话。每个回合展示本机原生日志可读的模型输入、输出、工具调用和已保存的思考。点击思考标题可展开或收起；Codex 保存的可读摘要单独标注。QQ 已确认送达的正文取自投递事件，与模型输出分别显示。角色页的「会话状态」仍可查看用量和结束会话。
+
+此页沿用管理台鉴权，只按框架已有的角色和 QQ 聊天会话引用读取本机 Codex、Antigravity 和 DSH 日志。原生日志缺失、格式不兼容或处于其他主机时，页面显示框架保留的回合与投递。DSH 的压缩日志使用主机已有的 `zstd`；主机未安装它时仍可查看框架记录。常见凭据和 DSH 回合凭据会被遮盖。模型输入、输出和思考中的超长条目会标明截断。
+
 ## 数据与权限
 
 SQLite schema 4 保存 self_versions、self_candidates、intentions、work_notes、model_turns、session_history、message_progress；原 events、diaries、runtime 和 deliveries 继续作为经历、主观记录、调度状态和发送账本。所有行绑定 agent_id；群/私聊可并行，共享同一主体的 self。

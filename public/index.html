@@ -9,10 +9,12 @@
     <link rel="stylesheet" href="/board.css" />
     <link rel="stylesheet" href="/home-space/letters.css" />
     <link rel="stylesheet" href="/agent-form.css" />
+    <link rel="stylesheet" href="/session-transcripts.css" />
     <!-- Loaded first: the default overview renders it as soon as app.js loads data. -->
     <script src="/onboarding-ui.js" defer></script>
     <script src="/updates-ui.js" defer></script>
     <script src="/visits-ui.js" defer></script>
+    <script src="/session-transcripts-ui.js" defer></script>
     <script src="/app.js" defer></script>
     <script src="/agent-form.js" defer></script>
     <script src="/activity-ui.js" defer></script>
@@ -140,6 +142,8 @@
           <svg class="i"><use href="#i-link" /></svg><span>连接</span></button
         ><a class="home-preview-link" href="/home-space/"
           ><svg class="i"><use href="#i-home" /></svg><span>纸页小窝</span></a
+        ><button data-section="transcripts">
+          <svg class="i"><use href="#i-note" /></svg><span>会话</span></button
         ><button data-section="system">
           <svg class="i"><use href="#i-settings" /></svg><span>系统</span>
         </button>
