@@ -31,7 +31,7 @@ function turn(memory, session, index, extra = {}) {
   });
 }
 
-test("admin transcript lists a role's QQ sessions and separates native steps from confirmed delivery", async (t) => {
+test("admin transcript isolates QQ, subject, protected work and role ownership", async (t) => {
   const f = fixture(t, { cfg: config(2) });
   const m = f.store.bind("agent-0");
   const sid = randomUUID();
@@ -48,8 +48,19 @@ test("admin transcript lists a role's QQ sessions and separates native steps fro
   const shared = { backend: "codex", id: randomUUID() };
   turn(m, shared, 13, { conversation: "private:30000" });
   turn(m, shared, 14, { conversation: "@work:fixture" });
-  turn(m, { backend: "codex", id: randomUUID() }, 15, {
+  const subject = { backend: "codex", id: randomUUID() };
+  const oldSubject = { backend: "codex", id: randomUUID() };
+  m.setState("@subject", { ...m.state("@subject"), session: subject });
+  turn(m, subject, 15, { conversation: "@subject" });
+  turn(m, oldSubject, 16, { conversation: "@subject" });
+  m.identity.put("session_history", {
+    id: "retired-subject",
     conversation: "@subject",
+    session: oldSubject,
+    at: epoch + 170000,
+  });
+  turn(m, { backend: "codex", id: randomUUID() }, 17, {
+    conversation: "@social:fixture",
   });
   turn(f.store.bind("agent-1"), session, 12);
   const log = (offset, type, payload) => ({
@@ -127,6 +138,37 @@ test("admin transcript lists a role's QQ sessions and separates native steps fro
       }),
     ],
   );
+  writeLog(
+    path.join(
+      f.root,
+      "codex",
+      "agent-0",
+      "home",
+      "sessions",
+      "rollout-" + subject.id + ".jsonl",
+    ),
+    [
+      log(150050, "response_item", {
+        type: "reasoning",
+        summary: [{ type: "summary_text", text: "合成主人格思考" }],
+      }),
+      log(150100, "response_item", {
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: "合成主人格输出" }],
+      }),
+    ],
+  );
+  m.append({
+    dedupe: "subject-delivery-fixture",
+    conversation: "@subject",
+    kind: "message.sent",
+    direction: "out",
+    status: "confirmed",
+    body: "internal event",
+    occurredAt: at(150120),
+    observedAt: at(150120),
+  });
   for (const [status, body, owner] of [
     ["confirmed", "合成送达", "agent-0"],
     ["unknown", "unknown delivery", "agent-0"],
@@ -165,14 +207,35 @@ test("admin transcript lists a role's QQ sessions and separates native steps fro
   );
   const { sessions } = await (await request()).json();
   assert.deepEqual(
-    sessions.map((s) => [s.conversation, s.current, s.count]),
+    sessions.map((s) => [s.scope, s.conversation, s.current, s.count]),
     [
-      [group, true, 13],
-      ["private:30000", false, 1],
+      ["subject", "@subject", true, 1],
+      ["chat", group, true, 13],
+      ["subject", "@subject", false, 1],
+      ["chat", "private:30000", false, 1],
     ],
   );
   assert(!JSON.stringify(sessions).includes(sid));
-  const [{ key }, ambiguous] = sessions;
+  const [currentSubject, { key }, historicalSubject, ambiguous] = sessions;
+  assert.equal(
+    (await request({ key: currentSubject.key, agentId: "agent-1" })).status,
+    404,
+  );
+  const subjectPage = await (await request({ key: currentSubject.key })).json();
+  assert.equal(subjectPage.source, "available");
+  assert.deepEqual(
+    subjectPage.turns[0].steps.map((step) => [step.kind, step.text]),
+    [
+      ["summary", "合成主人格思考"],
+      ["output", "合成主人格输出"],
+    ],
+  );
+  assert.deepEqual(subjectPage.turns[0].delivered, []);
+  assert.equal(
+    (await (await request({ key: historicalSubject.key })).json()).turns[0].id,
+    "turn-16",
+  );
+  assert.equal((await request({ key, before: "turn-15" })).status, 400);
   assert.equal((await request({ key, agentId: "agent-1" })).status, 404);
   assert.equal((await request({ key: "../fixture" })).status, 400);
   assert.equal(

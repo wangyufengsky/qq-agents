@@ -1,4 +1,8 @@
 const transcriptSelection = new Map();
+let transcriptScope =
+  new URLSearchParams(location.search).get("scope") === "subject"
+    ? "subject"
+    : "chat";
 const transcriptBackends = {
   codex: "Codex",
   antigravity: "Antigravity",
@@ -70,9 +74,11 @@ function transcriptSteps(steps, errors) {
   return rows.join("");
 }
 
-function transcriptTurn(turn) {
+function transcriptTurn(turn, subject) {
   const [label, tone] =
-    transcriptStatuses[turn.status] || transcriptStatuses.recorded;
+    subject && turn.status === "completed-no-send"
+      ? ["已完成", ""]
+      : transcriptStatuses[turn.status] || transcriptStatuses.recorded;
   const elapsed =
     turn.endedAt > turn.startedAt
       ? `${((turn.endedAt - turn.startedAt) / 1000).toFixed(1)} 秒`
@@ -93,10 +99,13 @@ function transcriptTurn(turn) {
   </article>`;
 }
 
+const transcriptLabel = (item) =>
+  item.scope === "subject" ? "主人格" : conversationLabel(item.conversation);
+
 function transcriptCatalogMarkup(sessions, selection, query) {
   const search = query.trim().toLocaleLowerCase();
   const shown = sessions.filter((item) =>
-    `${conversationLabel(item.conversation)} ${transcriptBackends[item.backend] || item.backend}`
+    `${transcriptLabel(item)} ${transcriptBackends[item.backend] || item.backend}`
       .toLocaleLowerCase()
       .includes(search),
   );
@@ -112,7 +121,7 @@ function transcriptCatalogMarkup(sessions, selection, query) {
             (
               item,
             ) => `<button type="button" class="transcript-option" data-transcript-key="${esc(item.key)}"${item.key === selection ? ' aria-current="true"' : ""}>
-          <span class="transcript-option-title">${esc(conversationLabel(item.conversation))}</span>
+          <span class="transcript-option-title">${esc(transcriptLabel(item))}</span>
           <span class="transcript-option-meta"><span>${esc(transcriptBackends[item.backend] || item.backend)} · ${item.count} 轮</span><time>${esc(transcriptAt(item.at))}</time></span>
         </button>`,
           )
@@ -133,7 +142,11 @@ function renderTranscripts() {
   content.innerHTML = `<div class="transcript-workspace">
     <section class="transcript-library" aria-label="会话列表">
       <div class="transcript-library-head"><h2>会话列表</h2><button type="button" class="ghost transcript-refresh" data-refresh-transcripts>刷新</button></div>
-      <label class="transcript-search"><span>搜索会话</span><input type="search" placeholder="群号、QQ 号或后端" data-transcript-search /></label>
+      <div class="transcript-scopes" role="group" aria-label="会话类型">
+        <button type="button" data-transcript-scope="chat" aria-pressed="${transcriptScope === "chat"}">QQ 聊天</button>
+        <button type="button" data-transcript-scope="subject" aria-pressed="${transcriptScope === "subject"}">主人格</button>
+      </div>
+      <label class="transcript-search"><span>搜索会话</span><input type="search" placeholder="${transcriptScope === "subject" ? "后端名称" : "群号、QQ 号或后端"}" data-transcript-search /></label>
       <div class="transcript-list" data-transcript-list aria-live="polite"><p class="hint transcript-list-empty">正在读取会话列表…</p></div>
     </section>
     <section class="transcript-reader" aria-label="会话记录">
@@ -161,8 +174,16 @@ function renderTranscripts() {
   const earlierButton = older.querySelector("button");
   const latest = findPart("latest");
   const refresh = root.querySelector("[data-refresh-transcripts]");
+  const scopeButtons = root.querySelectorAll("[data-transcript-scope]");
+  const selectionKey = () => agentId + "/" + transcriptScope;
+  const scopedSessions = () =>
+    sessions.filter((item) => item.scope === transcriptScope);
+  const turnMarkup = (turn) =>
+    transcriptTurn(turn, transcriptScope === "subject");
+  const frameworkRecords = () =>
+    transcriptScope === "subject" ? "框架保存的回合" : "框架保存的回合与投递";
   let sessions = [];
-  let key = transcriptSelection.get(agentId);
+  let key = transcriptSelection.get(selectionKey());
   let next = null;
   let generation = 0;
   const current = () =>
@@ -172,7 +193,11 @@ function renderTranscripts() {
       "/api/session-transcripts?" + new URLSearchParams({ agentId, ...params }),
     );
   const listMarkup = () =>
-    (list.innerHTML = transcriptCatalogMarkup(sessions, key, search.value));
+    (list.innerHTML = transcriptCatalogMarkup(
+      scopedSessions(),
+      key,
+      search.value,
+    ));
   const syncScroll = () =>
     (latest.hidden =
       feed.scrollHeight - feed.scrollTop - feed.clientHeight < 80);
@@ -188,9 +213,7 @@ function renderTranscripts() {
     older.hidden = true;
     latest.hidden = true;
     turns.innerHTML = "";
-    title.textContent = session
-      ? conversationLabel(session.conversation)
-      : "会话记录";
+    title.textContent = session ? transcriptLabel(session) : "会话记录";
     subtitle.textContent = session
       ? `${transcriptBackends[session.backend] || session.backend} · ${session.count} 轮`
       : "";
@@ -199,17 +222,17 @@ function renderTranscripts() {
       : "选择一个会话查看回合。";
     listMarkup();
     if (!session) return;
-    transcriptSelection.set(agentId, key);
+    transcriptSelection.set(selectionKey(), key);
     try {
       const result = await request({ key });
       if (!current() || id !== generation) return;
-      turns.innerHTML = result.turns.map(transcriptTurn).join("");
+      turns.innerHTML = result.turns.map(turnMarkup).join("");
       next = result.nextBefore;
       older.hidden = !next;
       state.textContent = !result.turns.length
         ? "这个会话没有可显示的回合。"
         : result.source === "unavailable"
-          ? "此页的原生记录不可读，已显示框架保存的回合与投递。"
+          ? `此页的原生记录不可读，已显示${frameworkRecords()}。`
           : result.source === "partial"
             ? "此页显示可读取的原生记录，部分内容超出读取范围。"
             : "";
@@ -220,15 +243,21 @@ function renderTranscripts() {
     }
   }
 
+  function showSelection() {
+    const options = scopedSessions();
+    return show(options.find((item) => item.key === key) || options[0]);
+  }
+
   async function loadList() {
     const id = ++generation;
     refresh.disabled = true;
     earlierButton.disabled = true;
+    for (const button of scopeButtons) button.disabled = true;
     try {
       const result = await request();
       if (!current() || id !== generation) return;
       sessions = result.sessions;
-      await show(sessions.find((item) => item.key === key) || sessions[0]);
+      void showSelection();
     } catch {
       if (current() && id === generation)
         list.innerHTML =
@@ -237,6 +266,7 @@ function renderTranscripts() {
       if (current()) {
         refresh.disabled = false;
         earlierButton.disabled = false;
+        for (const button of scopeButtons) button.disabled = false;
       }
     }
   }
@@ -251,14 +281,13 @@ function renderTranscripts() {
       const height = feed.scrollHeight;
       turns.insertAdjacentHTML(
         "afterbegin",
-        result.turns.map(transcriptTurn).join(""),
+        result.turns.map(turnMarkup).join(""),
       );
       next = result.nextBefore;
       older.hidden = !next;
       feed.scrollTop += feed.scrollHeight - height;
       if (result.source !== "available")
-        state.textContent =
-          "部分原生记录不可读，框架保存的回合与投递仍可查看。";
+        state.textContent = `部分原生记录不可读，${frameworkRecords()}仍可查看。`;
       syncScroll();
     } catch {
       if (current() && id === generation)
@@ -271,12 +300,28 @@ function renderTranscripts() {
     const button = event.target.closest("[data-transcript-key]");
     const session =
       button &&
-      sessions.find((item) => item.key === button.dataset.transcriptKey);
+      scopedSessions().find(
+        (item) => item.key === button.dataset.transcriptKey,
+      );
     if (session) {
       earlierButton.disabled = false;
       void show(session);
     }
   };
+  for (const button of scopeButtons)
+    button.onclick = () => {
+      const scope = button.dataset.transcriptScope;
+      if (scope === transcriptScope) return;
+      transcriptScope = scope;
+      for (const option of scopeButtons)
+        option.setAttribute("aria-pressed", String(option === button));
+      search.value = "";
+      search.placeholder =
+        scope === "subject" ? "后端名称" : "群号、QQ 号或后端";
+      key = transcriptSelection.get(selectionKey());
+      earlierButton.disabled = false;
+      void showSelection();
+    };
   search.oninput = listMarkup;
   refresh.onclick = loadList;
   latest.onclick = bottom;

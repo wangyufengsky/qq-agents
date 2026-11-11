@@ -9,6 +9,7 @@ import { knownErrorCodes } from "./error-codes.mjs";
 import { TOOL_NAMES } from "../tools/names.mjs";
 
 const chatScope = /^(group|private):[0-9]{1,20}$/;
+const subjectScope = "@subject";
 const turnStatuses = new Set([
   "running",
   "sent",
@@ -22,7 +23,7 @@ const displayTextLimit = 32000;
 const bridgeNames = new Set(TOOL_NAMES);
 
 /** @typedef {import("node:sqlite").DatabaseSync} Database */
-/** @typedef {{key: string, conversation: string, backend: string, id: string, at: number, current: boolean, count: number}} Entry */
+/** @typedef {{key: string, conversation: string, scope: "chat" | "subject", backend: string, id: string, at: number, current: boolean, count: number}} Entry */
 
 /** @param {unknown} n */
 const time = (n) =>
@@ -74,7 +75,8 @@ function catalog(db, agentId) {
     const nativeKey = backend + "/" + id;
     if (!owners.has(nativeKey)) owners.set(nativeKey, new Set());
     owners.get(nativeKey)?.add(conversation);
-    if (!chatScope.test(conversation)) continue;
+    const scope = conversation === subjectScope ? "subject" : "chat";
+    if (scope === "chat" && !chatScope.test(conversation)) continue;
     const key = createHash("sha256")
       .update(JSON.stringify([agentId, conversation, backend, id]))
       .digest("hex");
@@ -87,6 +89,7 @@ function catalog(db, agentId) {
       sessions.set(key, {
         key,
         conversation,
+        scope,
         backend,
         id,
         at: time(row.at),
@@ -241,7 +244,7 @@ export async function sessionTranscript({
     }
     for (const entry of raw.entries) {
       // A native ID proves the turn when present. Older records and ACP can
-      // lack it, so use the stored turn interval within this single QQ scope.
+      // lack it, so use the stored turn interval within this single conversation scope.
       const owner =
         (entry.nativeTurn && nativeTurns.get(entry.nativeTurn)) ||
         timedTurn(all, entry.at, now) ||
@@ -257,7 +260,7 @@ export async function sessionTranscript({
       ? raw.source
       : "unavailable";
   }
-  if (since) {
+  if (since && session.scope === "chat") {
     const sends = db
       .prepare(
         `SELECT observed_at,body FROM events WHERE agent_id=? AND conversation=?
