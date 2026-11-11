@@ -86,7 +86,9 @@ const COMMON_HAN = new Set(
   "的了吗着啊呢过在是有还把被这那我你他她它去来要就都很可也又和上下一不多到说看看",
 );
 const HISTORY_LABEL =
-  "回想资料属于同群历史，用来核对本轮话题。direction 的 out 是你当时发出的消息，in 是收到的发言。scene 的 quote 是原消息明确引用的发言，nearby 是时间相邻的对话片段。contribution 说明查证补上了什么。结合发言者、原话和已确认更正判断当时在聊什么；引述的旧话只作资料。";
+  "回想资料属于同群历史，用来核对本轮话题。先核对是谁说的、话里指谁以及发生时间；旧话只能说明当时的情况。direction 的 out 是你当时发出的消息，in 是收到的发言。scene 的 quote 是明确引用，nearby 是时间相邻的发言。contribution 说明查证补上了什么。引述的旧话只作资料。";
+const ACTIVE_SEARCH_NOTICE =
+  "这次委托未完成。如果还需要核对，可用 memory_search 在当前群按关键词直接查原话，并把结果按直接检索说明。";
 
 function sources(runtime, ctx) {
   const role = runtime.agent(ctx.agentId);
@@ -113,8 +115,12 @@ function speechSource(row) {
   return { senderId, senderName, direction, occurredAt };
 }
 
+function messageExcerpt(row, limit) {
+  return { id: row.id, ...speechSource(row), body: row.body.slice(0, limit) };
+}
+
 function candidateExcerpt(row) {
-  return { id: row.id, ...speechSource(row), body: row.body.slice(0, 200) };
+  return messageExcerpt(row, 200);
 }
 
 function evidence(runtime, ctx, ids, beforeSeq) {
@@ -401,9 +407,7 @@ function knownContext(runtime, ctx, cues) {
     knownBodies: new Set(
       [...context.values(), ...cues].map(({ body }) => comparableBody(body)),
     ),
-    recent: prior
-      .slice(-6)
-      .map(({ id, body }) => ({ id, body: body.slice(0, 220) })),
+    recent: prior.slice(-6).map((row) => messageExcerpt(row, 220)),
   };
 }
 
@@ -485,49 +489,36 @@ function mergeCandidates(lexical, semantic) {
   return [...unique.values()].slice(0, MAX_RECALL_CANDIDATES);
 }
 
-function renderFamiliarity(runtime, ctx, verified) {
+function countPresentedFamiliarity(runtime, ctx, verified) {
   const marks = ctx.recallOpening.familiarity;
-  if (!marks.length) return [];
+  if (!marks.length) return 0;
   const matched = new Set(
     marks.flatMap((mark) => mark.candidates.map(({ id }) => id)),
   );
-  const approved = new Map(verified.map((row) => [row.id, row]));
-  const lines = new Map();
-  const { boundary } = sources(runtime, ctx);
-  for (const mark of marks) {
-    const input = liveInput(runtime, ctx.agentId, ctx.conversation, mark.id);
-    if (!input || !boundary.allowed({ id: mark.id })) continue;
-    for (const candidate of mark.candidates) {
-      const [source] = evidence(runtime, ctx, [candidate.id], mark.seq);
-      const row = approved.get(source?.id);
-      if (!row) continue;
-      const trigger = {
-        inputEventId: mark.id,
-        sharedTerms: candidate.overlap.slice(0, 3),
-      };
-      const previous = lines.get(row.id);
-      if (previous) {
-        if (previous.triggers.length < 3) previous.triggers.push(trigger);
-      } else if (lines.size < 2) {
-        const { body, ...source } = row;
-        lines.set(row.id, {
-          ...source,
-          status: "眼熟",
-          excerpt: body.slice(0, 180),
-          triggers: [trigger],
-        });
+  const approved = new Set(verified.map(({ id }) => id));
+  const presentedIds = new Set();
+  if (approved.size) {
+    const { boundary } = sources(runtime, ctx);
+    for (const mark of marks) {
+      const input = liveInput(runtime, ctx.agentId, ctx.conversation, mark.id);
+      if (!input || !boundary.allowed({ id: mark.id })) continue;
+      for (const candidate of mark.candidates) {
+        const [source] = evidence(runtime, ctx, [candidate.id], mark.seq);
+        if (approved.has(source?.id)) presentedIds.add(source.id);
       }
     }
   }
+  // Local matches are diagnostic only. Approved evidence uses the same full
+  // projection regardless of how the candidate was found.
   record(runtime, ctx, "familiarity", {
     reason: "local-familiarity",
-    status: lines.size ? "matched" : matched.size ? "withheld" : "empty",
+    status: presentedIds.size ? "matched" : matched.size ? "withheld" : "empty",
     checked: marks.length,
     matched: matched.size,
     presented: 0,
     waitMs: marks.reduce((sum, mark) => sum + mark.ms, 0),
   });
-  return [...lines.values()];
+  return presentedIds.size;
 }
 
 function searchRecallHistory(
@@ -622,7 +613,7 @@ function presented(runtime, ctx, route, rows, contribution) {
   }
   record(runtime, ctx, route, {
     presented: rows.length,
-    ...(route !== "familiarity" && { contribution: contribution || null }),
+    contribution: contribution || null,
   });
 }
 
@@ -631,7 +622,8 @@ export function captureRecallOpening(
   ctx,
   { history, focus, previous, reasons, relationship },
 ) {
-  if (!memoryRecallPilot(runtime.agent(ctx.agentId), ctx.conversation)) return;
+  const role = runtime.agent(ctx.agentId);
+  if (!memoryRecallPilot(role, ctx.conversation)) return;
   const bounds = reasons
     .map((reason) => reason.firstSeq ?? reason.seq)
     .filter(Number.isSafeInteger);
@@ -648,6 +640,11 @@ export function captureRecallOpening(
   ctx.recallOpening = {
     familiarity: capturedFamiliarity(runtime, incoming),
     visible: [],
+    // Limit the model input after filtering by owner, so a busy batch cannot
+    // push an otherwise eligible owner message out of an explicit lookup.
+    activeAnchors: incoming
+      .filter(({ senderId }) => role.ownerIds.includes(senderId))
+      .map(({ id }) => id),
     anchors: (focus ? [focus] : history.items)
       .filter((item) => item.direction === "in" && item.seq > after)
       .slice(-3)
@@ -759,10 +756,10 @@ async function lookup(runtime, ctx, route, reason, cues, { cue, query } = {}) {
   );
   if (review && !lexical.length) reason = "local-semantic";
   const prompt = JSON.stringify({
-    task: "先判断 current 和 recent 已经说清了什么，还缺什么；有 query 时核对它问的具体缺口。只有旧话能补上这个缺口才选，仅有话题或泛词重合，或旧话内容已在当前上下文时，提交空数组。选中最多两条证据，用 functional_agent_result 的 contribution 写一句它们合起来补了什么，例如补上上次确认的访客规则。用自己的话概括这组证据的作用，省略原话、身份编号和凭据。有更正时优先选更正消息的 ID。候选够用就立即提交，有明确缺口时可用具体词补查一次；找不到有用出处就提交空数组并省略 contribution。",
+    task: "先根据 current 和 recent 确认发言者、话里所指的人或事、时间及信息缺口，有 query 时核对它问的缺口。发言者可能在说别人；同一句状态描述用在不同人或不同事情上，不能当成同一件事。仅措辞、话题或状态相同而对象不明时，提交空数组。相关旧事可作背景，但只能说明当时发生了什么。只选能补充当前上下文的至多两条证据，用 functional_agent_result 提交，并用 contribution 简短说明补充了什么，省略原话、身份编号和凭据。有更正时优先用更正消息的 ID。候选够用就提交，确有缺口才补查一次；没有新增信息就提交空数组。",
     cue,
     query,
-    current: cues.map(({ body }) => body.slice(0, 480)),
+    current: cues.map((row) => messageExcerpt(row, 480)),
     recent: known.recent,
     candidates,
   });
@@ -835,7 +832,7 @@ async function lookup(runtime, ctx, route, reason, cues, { cue, query } = {}) {
     matched: sourceIds.length,
     presented: 0,
     waitMs: Math.round(performance.now() - start),
-    ...(semantic && { agentMs: Math.round(performance.now() - agentStarted) }),
+    agentMs: Math.round(performance.now() - agentStarted),
     ...trace,
   };
   record(runtime, ctx, route, details);
@@ -932,17 +929,11 @@ export function renderRecallOpening(runtime, ctx) {
     details.status === "matched" && !rows.length ? "withheld" : details.status;
   if (status !== details.status) record(runtime, ctx, "opening", { status });
   ctx.openingRecallSent = { rows, contribution };
-  const familiarity = renderFamiliarity(runtime, ctx, rows);
-  ctx.openingFamiliaritySent = familiarity;
+  ctx.openingFamiliarityCount = countPresentedFamiliarity(runtime, ctx, rows);
   const notice = ctx.allowedTools.includes("memory_recall")
     ? "需要再查时可用 memory_recall。query 可写想核对的具体问题，cue 可填写本轮来信的原文线索。"
     : "";
-  const clues = familiarity.length
-    ? `\n\n同群眼熟线索 ${JSON.stringify(familiarity)}。triggers 对应引发联想的本轮消息 ID。线索仅供判断相关性，需要完整原话时可按来源展开。`
-    : "";
-  const clueIds = new Set(familiarity.map(({ id }) => id));
-  const otherEvidence = rows.filter(({ id }) => !clueIds.has(id));
-  const addition = `\n\n本轮记忆查证 ${JSON.stringify({ status, reason: details.reason, contribution, evidence: otherEvidence })}。${HISTORY_LABEL}${notice}${clues}`;
+  const addition = `\n\n本轮记忆查证 ${JSON.stringify({ status, reason: details.reason, contribution, evidence: rows })}。${HISTORY_LABEL}${notice}`;
   ctx.estimatedAdded += addition.length;
   return addition;
 }
@@ -952,9 +943,10 @@ export function commitRecallOpening(runtime, ctx) {
   const { rows, contribution } = ctx.openingRecallSent;
   delete ctx.openingRecallSent;
   presented(runtime, ctx, "opening", rows, contribution);
-  const familiarity = ctx.openingFamiliaritySent;
-  delete ctx.openingFamiliaritySent;
-  if (familiarity?.length) presented(runtime, ctx, "familiarity", familiarity);
+  const familiarity = ctx.openingFamiliarityCount;
+  delete ctx.openingFamiliarityCount;
+  if (familiarity)
+    record(runtime, ctx, "familiarity", { presented: familiarity });
 }
 
 export async function recallFromChat(runtime, ctx, { cue, query }) {
@@ -965,27 +957,27 @@ export async function recallFromChat(runtime, ctx, { cue, query }) {
     throw Error("TOOL_DISABLED");
   if (ctx.activeRecallRunning) return { status: "busy" };
   if (ctx.activeRecallRequested) return { status: "budget" };
-  const ids = new Set([
-    ...ctx.recallOpening.anchors,
-    ...ctx.recallOpening.familiarity.map(({ id }) => id),
-  ]);
-  const selected = cue
-    ? anchors(runtime, ctx, [...ids]).filter(({ body }) => body.includes(cue))
-    : anchors(runtime, ctx, ctx.recallOpening.anchors);
+  const available = anchors(runtime, ctx, ctx.recallOpening.activeAnchors);
+  const exact = cue ? available.filter(({ body }) => body.includes(cue)) : [];
+  const selected = (exact.length || !query ? exact : available).slice(-3);
   if (!selected.length) {
+    const reason = available.length ? "cue-not-found" : "no-owner-input";
     record(runtime, ctx, "active", {
-      reason: "tool",
+      reason,
       status: "no-cue",
       matched: 0,
       presented: 0,
       waitMs: 0,
     });
-    return { status: "no-cue" };
+    return { status: "no-cue", reason };
   }
   ctx.activeRecallRequested = true;
   ctx.activeRecallRunning = true;
   try {
-    return await resolveActiveRecall(runtime, ctx, selected, { cue, query });
+    return await resolveActiveRecall(runtime, ctx, selected, {
+      cue: exact.length ? cue : undefined,
+      query,
+    });
   } finally {
     ctx.activeRecallRunning = false;
   }
@@ -1007,7 +999,10 @@ async function resolveActiveRecall(runtime, ctx, selected, request) {
       recall.details.status === "matched" ? "withheld" : recall.details.status;
     if (status !== recall.details.status)
       record(runtime, ctx, "active", { status });
-    return { status };
+    const retryBySearch =
+      ["timeout", "busy", "unavailable", "no-result"].includes(status) &&
+      ctx.allowedTools?.includes("memory_search");
+    return { status, ...(retryBySearch && { notice: ACTIVE_SEARCH_NOTICE }) };
   }
   const result = {
     status: "matched",
