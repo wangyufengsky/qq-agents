@@ -305,12 +305,12 @@ test("ACP reply entry forwards original arguments only to permitted reply tools"
   }
 });
 
-test("ACP desktop exposes a strict action entry and a revocable current-turn screenshot", async (t) => {
+test("ACP desktop exposes a strict action entry and a single-use current-turn image handoff", async (t) => {
   const fixture = setup(t, "success", temp(t), {
     fakeChild: true,
     cliProtocol: "acp",
   });
-  const bytes = colorGrid(["red", "green", "blue", "yellow"]);
+  const image = { type: "image", mimeType: "image/jpeg", data: "AQID" };
   let leased = true;
   const { run, inputSubmitted } = startFakeTurn(fixture, {
     desktop: true,
@@ -320,20 +320,12 @@ test("ACP desktop exposes a strict action entry and a revocable current-turn scr
       "desktop_screen_view",
       "desktop_native_control",
       "desktop_browser_control",
+      "desktop_room_decide",
     ]),
     async callTool(name, args) {
       fixture.calls.push({ name, args });
       return name === "desktop_screen_view"
-        ? {
-            [mediaLease]: () => leased,
-            content: [
-              {
-                type: "image",
-                mimeType: "image/png",
-                data: bytes.toString("base64"),
-              },
-            ],
-          }
+        ? { [mediaLease]: () => leased, content: [image] }
         : { ok: true };
     },
   });
@@ -380,17 +372,33 @@ test("ACP desktop exposes a strict action entry and a revocable current-turn scr
     ).json();
     assert.equal(JSON.parse(result.content[0].text).ok, true);
     assert.deepEqual(fixture.calls, [{ name: "desktop_native_control", args }]);
+    const take = () =>
+      fetch(`${endpoint}/desktop-frame`, { method: "POST", headers }).then(
+        (response) => response.json(),
+      );
+    assert.equal(
+      (await fetch(`${endpoint}/desktop-frame`, { method: "POST" })).status,
+      403,
+    );
+    assert.deepEqual(await take(), { image: null });
     const screenshot = await (await call("desktop_screen_view", {})).json();
-    const current = await catalog();
-    assert.equal(current.images.length, 1);
-    const file = current.images[0].path;
-    assert.match(screenshot.content[0].text, /native read_file/);
-    assert.deepEqual(fs.readFileSync(file), bytes);
-    const read = { name: "read_file", args: { Path: file } };
-    assert.equal(antigravityToolAllowed(read, [], current.images), true);
-    leased = false;
+    assert.equal(screenshot.content[0].type, "text");
+    assert.match(screenshot.content[0].text, /继续.*模型请求/);
+    assert.doesNotMatch(JSON.stringify(screenshot), /AQID/);
     assert.deepEqual((await catalog()).images, []);
-    assert.equal(fs.existsSync(file), false);
+    const early = await (await call("desktop_room_decide", {})).json();
+    assert.match(early.content[0].text, /继续.*模型请求/);
+    assert.deepEqual(
+      fixture.calls.map(({ name }) => name),
+      ["desktop_native_control", "desktop_screen_view"],
+    );
+    assert.deepEqual(await take(), { image });
+    assert.deepEqual(await take(), { image: null });
+    const completed = await (await call("desktop_room_decide", {})).json();
+    assert.equal(JSON.parse(completed.content[0].text).ok, true);
+    await call("desktop_screen_view", {});
+    leased = false;
+    assert.deepEqual(await take(), { image: null });
   } finally {
     child.emitFrames(
       ...successfulFrames("00000000-0000-4000-8000-000000000239"),

@@ -122,6 +122,33 @@ test("ACP resumes only the supplied session and sets the configured model and ef
   assert.equal(f.calls[2].params.modelId, "synthetic");
   assert.equal(f.calls[3].params.value, "low");
 });
+test("ACP submits a captured desktop JPEG as native input in the same bridge turn", async () => {
+  const f = fake();
+  const events = [];
+  const image = { type: "image", mimeType: "image/jpeg", data: "AQID" };
+  let takes = 0;
+  await runAcp(
+    { ...options, desktop: true, desktopScreen: true },
+    "capture the fixture",
+    (event) => events.push(event),
+    f.launch,
+    [],
+    async () => {
+      takes++;
+      assert.equal(
+        f.calls.filter(({ method }) => method === "session/prompt").length,
+        1,
+      );
+      return image;
+    },
+  );
+  const prompts = f.calls.filter(({ method }) => method === "session/prompt");
+  assert.equal(takes, 1);
+  assert.equal(prompts.length, 2);
+  assert.equal(prompts[0].params.sessionId, prompts[1].params.sessionId);
+  assert.deepEqual(prompts[1].params.prompt[1], image);
+  assert.equal(events.filter(({ event }) => event === "result").length, 1);
+});
 test("ACP resumes with a current tool route when a native alias is unavailable", async () => {
   const f = fake();
   await runAcp(

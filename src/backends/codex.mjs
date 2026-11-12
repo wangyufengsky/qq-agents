@@ -520,14 +520,16 @@ export class CodexBackend {
           "只使用本回合提供的工具。不得访问本机开发环境。不要在文本中泄露能力凭据。",
         dynamicTools: tools.map(({ name, description, inputSchema }) => {
           const tool = { name, description, inputSchema };
-          return directScreen && name === DESKTOP_SCREEN_VIEW
-            ? {
-                type: "namespace",
-                name: desktopVisualNamespace,
-                description: "Current-turn desktop image observations",
-                tools: [{ type: "function", ...tool }],
-              }
-            : tool;
+          if (!directScreen) return tool;
+          // The app-server requires one declaration format for the full catalogue.
+          const declaration = { type: "function", ...tool };
+          if (name !== DESKTOP_SCREEN_VIEW) return declaration;
+          return {
+            type: "namespace",
+            name: desktopVisualNamespace,
+            description: "Current-turn desktop image observations",
+            tools: [declaration],
+          };
         }),
         config: policy,
         experimentalRawEvents: false,

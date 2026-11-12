@@ -30,9 +30,11 @@ import { AntigravityMedia } from "./antigravity-media.mjs";
 import { AntigravityStreamWorker } from "./antigravity-stream.mjs";
 import {
   DESKTOP_BROWSER_CONTROL,
+  DESKTOP_DECISION,
   DESKTOP_NATIVE_CONTROL,
   DESKTOP_SCREEN_VIEW,
 } from "../tools/names.mjs";
+import { mediaLease } from "../tools/media-lease.mjs";
 
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -114,7 +116,25 @@ const acpMcpGuide =
 const acpImageGuide =
   "Authorized MCP image content blocks contain visible pixels. Inspect those pixels directly; never read files to view an image. ";
 const acpScreenshotGuide =
+  "Inspect inline MCP image blocks directly. The bridge supplies a captured desktop screenshot in the next native prompt of this desktop turn. Do not describe pixels before that image arrives. ";
+const previousAcpScreenshotGuide =
   "Inspect inline MCP image blocks directly. For a desktop screenshot returned as a file, use native read_file (Path) or view_file (AbsolutePath) on the exact path authorized for this turn before describing the pixels. Never read other files or reuse a previous turn image path. ";
+const acpScreenWaiting = {
+  content: [
+    {
+      type: "text",
+      text: "截图已就绪。请结束当前模型请求，先不要提交桌面决定；桥接会在同一桌面回合继续下一次模型请求并提供图片。",
+    },
+  ],
+};
+
+/** @param {RunParams} params */
+function acpDesktopScreen(params) {
+  return (
+    params.desktop === true &&
+    params.tools.some(({ name }) => name === DESKTOP_SCREEN_VIEW)
+  );
+}
 
 /** Headless result usage is cumulative; only a completed model-response step
  * describes the latest request. Cache reads are excluded from input_tokens.
@@ -558,7 +578,6 @@ export class AntigravityBackend {
     mediaRoot,
   ) {
     const acp = this.config.cliProtocol === "acp";
-    const screenFile = acp && params.desktop && !media.direct;
     const names = new Set(
       reuse ? ["qq_turn_call"] : params.tools.map((tool) => tool.name),
     );
@@ -678,17 +697,17 @@ export class AntigravityBackend {
       // Replace only bridge-owned guidance, preserving arbitrary role instructions.
       const headless =
         "Only native read_file (Path) or legacy view_file (AbsolutePath) on the exact image paths returned by an authorized tool in the CURRENT turn is allowed. Always call the native image reader before describing those pixels; MCP path text is not visual evidence. Never read other files or reuse a previous turn image path; request the original bridge tool again. ";
-      const imageGuide = screenFile ? acpScreenshotGuide : acpImageGuide;
+      const imageGuide = acpDesktopScreen(params)
+        ? acpScreenshotGuide
+        : acpImageGuide;
       const guide = fs
         .readFileSync(agentFile, "utf8")
         .replace(genericMcpGuide, acpMcpGuide)
         .replace(headless, imageGuide)
         .replace(acpImageGuide, imageGuide)
+        .replace(previousAcpScreenshotGuide, imageGuide)
         .replace(acpScreenshotGuide, imageGuide);
-      managedFile(
-        agentFile,
-        screenFile ? guide : guide.replace("  - view_file\n", ""),
-      );
+      managedFile(agentFile, guide.replace("  - view_file\n", ""));
     }
     const settings = path.join(workspace, "settings.json");
     managedFile(
@@ -705,7 +724,7 @@ export class AntigravityBackend {
           ],
           allow: [
             ...[...names].map((name) => `mcp(qq-agents/${name})`),
-            ...(acp && !screenFile
+            ...(acp
               ? []
               : [
                   `read_file(${(mediaRoot || media.prepare()).replaceAll("\\", "/")}/*)`,
@@ -741,6 +760,7 @@ export class AntigravityBackend {
             effort: this.config.effort,
             session: params.session?.id,
             desktop: params.desktop === true,
+            desktopScreen: acpDesktopScreen(params),
           }),
         ],
         {
@@ -999,12 +1019,11 @@ export class AntigravityBackend {
     const acp = this.config.cliProtocol === "acp";
     const media = new AntigravityMedia(undefined, acp);
     const names = new Set(params.tools.map((tool) => tool.name));
-    // ACP can offload a native MCP image to a path outside our turn's guard.
-    // Give desktop screenshots a bridge-owned, revocable path instead.
-    const screenshot =
-      acp && params.desktop && names.has(DESKTOP_SCREEN_VIEW)
-        ? new AntigravityMedia()
-        : null;
+    // ACP can offload MCP images, and an ACP session exposes no native file reader.
+    // Only the bridge's ACP client can claim the frame for its next native prompt.
+    const screenContinuation = acp && acpDesktopScreen(params);
+    /** @type {{image: {type: string, mimeType: string, data: string}, current: () => boolean} | undefined} */
+    let screenFrame;
     // Native ACP can drop declarations containing unions. Use a simple
     // transport envelope and keep the original tool validation.
     const replyTool = acp ? acpReplyTool(names) : null;
@@ -1027,6 +1046,21 @@ export class AntigravityBackend {
         return reply(200, { alive: true });
       if (!live || params.signal.aborted)
         return reply(403, { error: "ANTIGRAVITY_TURN_INACTIVE" });
+      if (
+        screenContinuation &&
+        req.method === "POST" &&
+        req.url === "/desktop-frame"
+      ) {
+        const frame = screenFrame;
+        screenFrame = undefined;
+        let image = null;
+        try {
+          if (frame?.current()) image = frame.image;
+        } catch {
+          // A revoked or expired frame must not leave this turn.
+        }
+        return reply(200, { image });
+      }
       if (req.method === "POST" && req.url === "/hook-denied") {
         // The trusted hook reports only a denial bit, never paths or arguments.
         hookDenied = true;
@@ -1036,7 +1070,7 @@ export class AntigravityBackend {
         return reply(200, {
           tools: [...nativeTools, ...[replyTool, desktopTool].filter(Boolean)],
           nativeMcp: acp,
-          images: (screenshot || media).catalog(),
+          images: media.catalog(),
         });
       if (req.method !== "POST" || req.url !== "/call") return reply(404, {});
       /** @type {import("./session-contract.mjs").ToolSpec | undefined} */
@@ -1063,6 +1097,8 @@ export class AntigravityBackend {
           return reply(403, {});
         if (!names.has(name)) return reply(403, {});
         spec = params.tools.find((tool) => tool.name === name);
+        if (name === DESKTOP_DECISION && screenFrame)
+          return reply(200, acpScreenWaiting);
         const accepted = Promise.resolve().then(() => {
           if (
             cancelled ||
@@ -1090,17 +1126,43 @@ export class AntigravityBackend {
               "memory_read",
               "qq_wait_for_messages",
             ].includes(name));
+        /** @type {typeof screenFrame} */
+        let frame;
         const { wire: content, receipt } = await finalizeMcpOutput(
           params,
           result,
-          (value) =>
-            (name === DESKTOP_SCREEN_VIEW && screenshot
-              ? screenshot
-              : media
-            ).fromTool(value, params.signal),
+          (value) => {
+            if (
+              !screenContinuation ||
+              name !== DESKTOP_SCREEN_VIEW ||
+              value.isError
+            )
+              return media.fromTool(value, params.signal);
+            const image = value.content.find(
+              (/** @type {any} */ item) =>
+                item.type === "image" && item.mimeType === "image/jpeg",
+            );
+            const current = value[mediaLease];
+            if (
+              typeof current !== "function" ||
+              typeof image?.data !== "string" ||
+              image.data.length > 65536
+            )
+              throw Error("DESKTOP_SCREEN_UNAVAILABLE");
+            frame = {
+              image: {
+                type: "image",
+                mimeType: image.mimeType,
+                data: image.data,
+              },
+              current,
+            };
+            return acpScreenWaiting;
+          },
           inlineChatInput ? 8192 : undefined,
         );
         if (!live || params.signal.aborted) return reply(403, {});
+        if (frame && !content.isError) screenFrame = frame;
         res.once("finish", () => {
           if (live && !params.signal.aborted)
             params.commitToolOutput?.(receipt, toolOutputText(content));
@@ -1171,7 +1233,7 @@ export class AntigravityBackend {
     this.active.add(entry);
     params.signal.addEventListener("abort", abort, { once: true });
     try {
-      const settings = this.configure(params, details, screenshot || media);
+      const settings = this.configure(params, details, media);
       if (params.signal.aborted || cancelled || this.closing)
         throw Error("ABORTED");
       child = this.spawnCli(params, workspace, settings, endpoint, token);
@@ -1454,13 +1516,12 @@ export class AntigravityBackend {
       diagnosticActive = false;
       live = false;
       rejectInput(Error("ABORTED"));
-      for (const store of [media, screenshot]) {
-        try {
-          store?.close();
-        } catch {
-          // Local media cleanup must not turn a confirmed success into a backend failure.
-          console.warn("Antigravity turn media cleanup failed");
-        }
+      screenFrame = undefined;
+      try {
+        media.close();
+      } catch {
+        // Local media cleanup must not turn a confirmed success into a backend failure.
+        console.warn("Antigravity turn media cleanup failed");
       }
       params.signal.removeEventListener("abort", abort);
       if (force) clearTimeout(force);

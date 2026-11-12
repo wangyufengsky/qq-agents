@@ -160,20 +160,30 @@ function dataOf({ response, code }) {
   return response.data;
 }
 
+function selectableApplication(app, pid, processInstance) {
+  return (
+    Number.isSafeInteger(pid) &&
+    pid > 0 &&
+    typeof processInstance === "string" &&
+    processInstance.length > 0 &&
+    processInstance.length <= 256 &&
+    typeof app === "string" &&
+    app.length > 0 &&
+    app.length <= 256 &&
+    !app.includes("\0")
+  );
+}
+
 function selectableWindow(window) {
   return (
     window &&
     typeof window.id === "string" &&
     windowId.test(window.id) &&
-    Number.isSafeInteger(window.pid) &&
-    window.pid > 0 &&
-    typeof window.process_instance === "string" &&
-    window.process_instance.length > 0 &&
-    window.process_instance.length <= 256 &&
-    typeof window.app_name === "string" &&
-    window.app_name.length > 0 &&
-    window.app_name.length <= 256 &&
-    !window.app_name.includes("\0") &&
+    selectableApplication(
+      window.app_name,
+      window.pid,
+      window.process_instance,
+    ) &&
     window.accessible === true &&
     window.visible !== false &&
     window.minimized !== true
@@ -385,7 +395,7 @@ export function createNativeDesktopDriver({
           typeof window.title === "string" ? window.title.slice(0, 300) : "",
       }));
   }
-  async function listWindows({ signal } = {}) {
+  async function inventory(signal, operation) {
     const current = signal
       ? AbortSignal.any([signal, shutdown.signal])
       : shutdown.signal;
@@ -400,10 +410,53 @@ export function createNativeDesktopDriver({
           if (permissions.accessibility?.state !== "granted")
             fail("DESKTOP_NATIVE_PERMISSION");
         }
-        return (await windows(root, current)).slice(0, 200);
+        return await operation(root, current);
       } finally {
         await rm(root, { recursive: true, force: true });
       }
+    });
+  }
+
+  function listApplications({ signal } = {}) {
+    return inventory(signal, async (root, current) => {
+      const { apps } = dataOf(await execute(root, ["list-apps"], current));
+      if (!Array.isArray(apps)) fail("DESKTOP_NATIVE_BAD_RESPONSE");
+      return apps
+        .filter(
+          (app) =>
+            app?.presentation === "foreground" &&
+            selectableApplication(app.name, app.pid, app.process_instance),
+        )
+        .slice(0, 200)
+        .map(({ name: app, pid, process_instance: processInstance }) => ({
+          app,
+          pid,
+          processInstance,
+        }));
+    });
+  }
+
+  function listWindows({ signal, application } = {}) {
+    if (
+      application &&
+      !selectableApplication(
+        application.app,
+        application.pid,
+        application.processInstance,
+      )
+    )
+      fail("DESKTOP_NATIVE_TARGET_CHANGED");
+    return inventory(signal, async (root, current) => {
+      const available = await windows(root, current, application?.app);
+      return (
+        application
+          ? available.filter(
+              (window) =>
+                window.pid === application.pid &&
+                window.processInstance === application.processInstance,
+            )
+          : available
+      ).slice(0, 200);
     });
   }
 
@@ -538,6 +591,7 @@ export function createNativeDesktopDriver({
   }
 
   return {
+    listApplications,
     listWindows,
     open,
     close() {
