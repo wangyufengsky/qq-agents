@@ -17,8 +17,10 @@ import {
   DESKTOP_DECISION,
   DESKTOP_HISTORY,
   DESKTOP_SCREEN_VIEW,
+  DESKTOP_NATIVE_CONTROL,
   FUNCTIONAL_AGENT_RESULT,
 } from "./names.mjs";
+import { nativeActionSchema } from "../home/desktop-native.mjs";
 import { desktopDecisionDefinition } from "../home/desktop-decision.mjs";
 import { qqSegmentsSchema } from "./qq-message.mjs";
 import { legacyDefinitions } from "./legacy.mjs";
@@ -79,6 +81,10 @@ export const definitions = {
   [DESKTOP_SCREEN_VIEW]: [
     "按需查看管理员为你选定的一个本机窗口或显示器。画面属于当前桌面回合，只用来回应当前桌面对话。每回合最多取得一次截图。",
     z.object({}).strict(),
+  ],
+  [DESKTOP_NATIVE_CONTROL]: [
+    "在管理员本机授权的窗口中操作。先 observe 获取本轮元素引用，再 click、set-value 替换字段或 scroll。每次操作后重新观察。投递未确认时不要自动重试。",
+    nativeActionSchema,
   ],
   [FUNCTIONAL_AGENT_RESULT]: [
     "提交本次查证选中的证据记录 ID。选中证据时，contribution 用一句短话说明它补上了当前对话缺的什么。没有新增信息就提交空数组，省略 contribution。",

@@ -97,7 +97,7 @@ test("the desktop panel drops the old messages and guests when its room closes",
   assert.equal(await page.evaluate(() => window.testAttachmentCalls), 1);
 });
 
-test("the desktop panel exposes screen authorization only while eligible", async (t) => {
+test("the desktop panel exposes each authorization only while eligible", async (t) => {
   let executablePath;
   try {
     executablePath = findScreenshotBrowser();
@@ -134,6 +134,10 @@ test("the desktop panel exposes screen authorization only while eligible", async
         window.testScreenCalls = (window.testScreenCalls ?? 0) + 1;
         return "cancelled";
       },
+      nativeControl: async () => {
+        window.testNativeCalls = (window.testNativeCalls ?? 0) + 1;
+        return "cancelled";
+      },
     };
   }, room);
   await page.goto(
@@ -141,21 +145,35 @@ test("the desktop panel exposes screen authorization only while eligible", async
   );
   const push = (data) => page.evaluate((next) => window.testRoom(next), data);
   const authorize = page.getByRole("button", { name: "授权查看屏幕" });
+  const authorizeNative = page.getByRole("button", { name: "授权控制窗口" });
   assert.equal(await authorize.isVisible(), false);
+  assert.equal(await authorizeNative.isVisible(), false);
   await push({
     ...room,
     screenView: { eligible: ["fish"], grantedAgentId: null },
   });
   await authorize.click();
   assert.equal(await page.evaluate(() => window.testScreenCalls), 1);
+  assert.equal(await authorizeNative.isVisible(), false);
   await push({
     ...room,
     screenView: { eligible: ["fish"], grantedAgentId: "fish" },
+    nativeControl: { eligible: ["fish"], grantedAgentId: null },
   });
   const revoke = page.getByRole("button", { name: "撤销屏幕授权" });
   assert.equal(await revoke.isVisible(), true);
   await revoke.click();
   assert.equal(await page.evaluate(() => window.testScreenCalls), 2);
-  await push({ ...room, connected: false });
+  await authorizeNative.click();
+  assert.equal(await page.evaluate(() => window.testNativeCalls), 1);
+  await push({
+    ...room,
+    nativeControl: { eligible: ["fish"], grantedAgentId: "fish" },
+  });
+  const revokeNative = page.getByRole("button", { name: "撤销窗口控制" });
   assert.equal(await revoke.isVisible(), false);
+  await revokeNative.click();
+  assert.equal(await page.evaluate(() => window.testNativeCalls), 2);
+  await push({ ...room, connected: false });
+  assert.equal(await revokeNative.isVisible(), false);
 });

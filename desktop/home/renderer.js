@@ -139,11 +139,6 @@ function panel() {
   const attach = select(".attach");
   const attachmentStatus = select(".attachment-status");
   let attaching = false;
-  const screenView = select(".screen-view");
-  const screenViewButton = select(".screen-view-button");
-  const screenViewStatus = select(".screen-view-status");
-  let choosingScreen = false;
-  let lastScreenAgent;
   const settings = select(".settings");
   const settingsForm = select(".timer-settings");
   const minutes = select("#minutes");
@@ -158,23 +153,80 @@ function panel() {
     minute: "2-digit",
   });
 
-  function updateScreenView() {
-    const policy = room?.screenView;
-    const agent = room?.roles.find(({ id }) => id === policy?.grantedAgentId);
-    if (lastScreenAgent !== agent?.id) {
-      lastScreenAgent = agent?.id;
-      screenViewStatus.hidden = true;
+  function bindDesktopPermission(selector, key, labels, notices) {
+    const section = select(selector);
+    const button = section.querySelector("button");
+    const notice = section.querySelector(".desktop-permission-status");
+    let choosing = false;
+    let lastAgent;
+    function refresh() {
+      const policy = room?.[key];
+      const agent = room?.roles.find(({ id }) => id === policy?.grantedAgentId);
+      if (lastAgent !== agent?.id) {
+        lastAgent = agent?.id;
+        notice.hidden = true;
+      }
+      section.hidden =
+        !room?.connected ||
+        !window.nest[key] ||
+        (!agent && !policy?.eligible.length);
+      button.disabled = choosing;
+      button.textContent = agent ? labels.revoke : labels.grant;
+      button.title = agent ? `当前授权给${agent.name}` : labels.help;
     }
-    screenView.hidden =
-      !room?.connected ||
-      !window.nest.screenView ||
-      (!agent && !policy?.eligible.length);
-    screenViewButton.disabled = choosingScreen;
-    screenViewButton.textContent = agent ? "撤销屏幕授权" : "授权查看屏幕";
-    screenViewButton.title = agent
-      ? `当前授权给${agent.name}`
-      : "选择可查看的角色和窗口或显示器";
+    button.addEventListener("click", async () => {
+      if (section.hidden || choosing) return;
+      choosing = true;
+      refresh();
+      let status;
+      try {
+        status = await window.nest[key]();
+      } catch {
+        status = "failed";
+      } finally {
+        choosing = false;
+        refresh();
+      }
+      notice.hidden = !notices[status];
+      notice.textContent = notices[status] ?? "";
+    });
+    return refresh;
   }
+
+  const updateScreenView = bindDesktopPermission(
+    ".screen-view",
+    "screenView",
+    {
+      grant: "授权查看屏幕",
+      revoke: "撤销屏幕授权",
+      help: "选择可查看的角色和窗口或显示器",
+    },
+    {
+      granted: "已授权。角色请求时会截取一帧。",
+      revoked: "已撤销屏幕授权。",
+      permission: "请在系统设置中允许屏幕录制后重试。",
+      "no-sources": "当前没有可选窗口或显示器。",
+      unavailable: "当前无法更改屏幕授权。",
+      failed: "屏幕授权操作失败。",
+    },
+  );
+  const updateNativeControl = bindDesktopPermission(
+    ".native-control",
+    "nativeControl",
+    {
+      grant: "授权控制窗口",
+      revoke: "撤销窗口控制",
+      help: "选择可以操作窗口的角色和目标窗口",
+    },
+    {
+      granted: "已授权。角色可以在桌面回合中操作选定窗口。",
+      revoked: "已撤销窗口控制。",
+      permission: "请在系统设置中允许辅助功能访问后重试。",
+      "no-sources": "当前没有可选窗口。",
+      unavailable: "当前无法更改窗口控制授权。",
+      failed: "窗口控制授权操作失败。",
+    },
+  );
 
   function switchSection(section) {
     if (!["chat", "visits"].includes(section)) return;
@@ -371,6 +423,7 @@ function panel() {
       attaching ||
       (!room.attachmentInput?.text && !room.attachmentInput?.image);
     updateScreenView();
+    updateNativeControl();
     updateThread();
     const budget = select(".budget-label");
     const label = `共用回合 ${room.budget} / ${room.maxTurns}`;
@@ -422,30 +475,6 @@ function panel() {
           ? "文件类型不受支持或超过大小限制。"
           : "附件未能发送。";
     }
-  });
-  screenViewButton.addEventListener("click", async () => {
-    if (screenView.hidden || choosingScreen) return;
-    choosingScreen = true;
-    updateScreenView();
-    let status;
-    try {
-      status = await window.nest.screenView();
-    } catch {
-      status = "failed";
-    } finally {
-      choosingScreen = false;
-      updateScreenView();
-    }
-    const notices = {
-      granted: "已授权。角色请求时会截取一帧。",
-      revoked: "已撤销屏幕授权。",
-      permission: "请在系统设置中允许屏幕录制后重试。",
-      "no-sources": "当前没有可选窗口或显示器。",
-      unavailable: "当前无法更改屏幕授权。",
-      failed: "屏幕授权操作失败。",
-    };
-    screenViewStatus.hidden = !notices[status];
-    screenViewStatus.textContent = notices[status] ?? "";
   });
   select(".composer").addEventListener("submit", (event) => {
     event.preventDefault();

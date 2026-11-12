@@ -812,7 +812,12 @@ async function desktopSettings(root, ticket) {
     screenEnabled.type = "checkbox";
     screenEnabled.checked = policy.screenView.enabled;
     screenLabel.prepend(screenEnabled);
-    form.append(screenLabel);
+    const nativeLabel = el("label", "desktop-field", "允许在本机授权操作窗口");
+    const nativeEnabled = document.createElement("input");
+    nativeEnabled.type = "checkbox";
+    nativeEnabled.checked = policy.nativeControl.enabled;
+    nativeLabel.prepend(nativeEnabled);
+    form.append(screenLabel, nativeLabel);
     const status = el("p", "social-notice");
     status.setAttribute("role", "status");
     const save = el("button", "primary", "保存桌面设置");
@@ -827,7 +832,7 @@ async function desktopSettings(root, ticket) {
         !state.enabled || !state.canLaunch || state.window === "open";
       open.disabled = busy || state.window === "opening";
       toggle.disabled = save.disabled = busy;
-      screenEnabled.disabled = busy;
+      screenEnabled.disabled = nativeEnabled.disabled = busy;
       for (const input of roleInputs) input.disabled = busy;
       status.textContent = state.enabled
         ? {
@@ -889,6 +894,7 @@ async function desktopSettings(root, ticket) {
         maxTurns: inputs.maxTurns.valueAsNumber,
         refreshMinutes: inputs.refreshMinutes.valueAsNumber,
         screenView: { enabled: screenEnabled.checked },
+        nativeControl: { enabled: nativeEnabled.checked },
         toolRoles: roleInputs
           .filter((input) => input.checked)
           .map((input) => input.value),
@@ -901,6 +907,7 @@ async function desktopSettings(root, ticket) {
           existing.maxTurns !== policy.maxTurns ||
           existing.refreshMinutes !== policy.refreshMinutes ||
           existing.screenView.enabled !== policy.screenView.enabled ||
+          existing.nativeControl.enabled !== policy.nativeControl.enabled ||
           JSON.stringify(existing.toolRoles) !==
             JSON.stringify(policy.toolRoles)
         ) {
@@ -928,7 +935,7 @@ async function desktopSettings(root, ticket) {
       } finally {
         busy = false;
         toggle.disabled = save.disabled = false;
-        screenEnabled.disabled = false;
+        screenEnabled.disabled = nativeEnabled.disabled = false;
         for (const input of roleInputs) input.disabled = false;
         open.disabled = state.window === "opening";
       }

@@ -351,16 +351,16 @@ h2 {
   font-size: 12px;
   margin: 0 18px 8px;
 }
-.screen-view {
+.desktop-permission {
   margin: 0 18px 8px;
   display: flex;
   align-items: center;
   gap: 7px;
 }
-.screen-view[hidden] {
+.desktop-permission[hidden] {
   display: none;
 }
-.screen-view-status {
+.desktop-permission-status {
   color: var(--muted);
   font-size: 12px;
   margin: 0;

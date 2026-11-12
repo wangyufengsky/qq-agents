@@ -1145,11 +1145,22 @@ export class ContextLifecycle {
       return;
     }
     if (!a) return;
-    if (ctx.runtimeKind === "desktop" && ctx.desktopScreenObserved) {
-      retireSession(m, ctx.conversation, "desktop-screen-observed", r.now(), {
-        turnId: ctx.turnId,
-        backendId: a.backendId,
-      });
+    if (
+      ctx.runtimeKind === "desktop" &&
+      (ctx.desktopScreenObserved || ctx.desktopPrivateObservation)
+    ) {
+      retireSession(
+        m,
+        ctx.conversation,
+        ctx.desktopScreenObserved
+          ? "desktop-screen-observed"
+          : "desktop-local-observed",
+        r.now(),
+        {
+          turnId: ctx.turnId,
+          backendId: a.backendId,
+        },
+      );
       return;
     }
     let usage = s.usage;
