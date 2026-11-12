@@ -35,3 +35,32 @@ export function openNoFollow(file, { noFollowFlag = NOFOLLOW } = {}) {
   }
   return fd;
 }
+
+/**
+ * Keep the same check for callers such as Electron's main process that must
+ * keep filesystem I/O off the event loop.
+ * @param {string} file
+ * @param {{ noFollowFlag?: number }} [options]
+ * @returns {Promise<import("node:fs/promises").FileHandle>}
+ */
+export async function openNoFollowAsync(
+  file,
+  { noFollowFlag = NOFOLLOW } = {},
+) {
+  if (noFollowFlag)
+    return fs.promises.open(
+      file,
+      fs.constants.O_RDONLY | noFollowFlag | NONBLOCK,
+    );
+  const checked = await fs.promises.lstat(file);
+  if (checked.isSymbolicLink()) throw loop();
+  const handle = await fs.promises.open(file, fs.constants.O_RDONLY);
+  try {
+    const opened = await handle.stat();
+    if (opened.dev !== checked.dev || opened.ino !== checked.ino) throw loop();
+  } catch (error) {
+    await handle.close();
+    throw error;
+  }
+  return handle;
+}

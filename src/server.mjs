@@ -320,7 +320,7 @@ export function createServer({
         );
         if (!equal(req.headers["x-admin-token"], token))
           return deny("UNAUTHORIZED", 401);
-        // Proxied consoles may save the policy. Only the Mac's loopback can launch a window.
+        // Proxied consoles may save the policy. Window launch is loopback-only.
         const launcher = local ? desktopLauncher : undefined;
         const desktop = runtime.desktopVisits;
         const status = () => ({

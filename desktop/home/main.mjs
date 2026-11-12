@@ -8,16 +8,10 @@ import {
   screen,
   Tray,
 } from "electron";
-import {
-  constants,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
-import { open } from "node:fs/promises";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { basename, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { openNoFollowAsync } from "../../src/core/no-follow.mjs";
 import { createFrameworkClient } from "./framework-client.mjs";
 import { LiveRoom } from "./live-room.mjs";
 import { startModelClient } from "./model-client.mjs";
@@ -71,8 +65,10 @@ let tray;
 const liveRoot = process.env.DESKTOP_HOME_LIVE_ROOT;
 const dataArgument = process.argv.indexOf("--data");
 const portArgument = process.argv.indexOf("--port");
-const frameworkPort =
-  portArgument >= 0 ? Number(process.argv[portArgument + 1]) : undefined;
+const port =
+  process.env.DESKTOP_HOME_PORT ??
+  (portArgument >= 0 ? process.argv[portArgument + 1] : undefined);
+const frameworkPort = port === undefined ? undefined : Number(port);
 const frameworkRoot =
   process.env.DESKTOP_HOME_DATA_ROOT ||
   (dataArgument >= 0 ? process.argv[dataArgument + 1] : null);
@@ -529,10 +525,7 @@ ipcMain.handle("room:attach", async (event) => {
     const maxBytes = imageExtensions.includes(extension)
       ? 2 * 1024 * 1024
       : 12 * 1024;
-    const file = await open(
-      selected,
-      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-    );
+    const file = await openNoFollowAsync(selected);
     try {
       const stat = await file.stat();
       if (!stat.isFile() || stat.size < 1 || stat.size > maxBytes)
@@ -675,7 +668,7 @@ else {
     const trayImage = nativeImage.createFromPath(
       join(source, "art", "trayTemplate.png"),
     );
-    trayImage.setTemplateImage(true);
+    if (process.platform === "darwin") trayImage.setTemplateImage(true);
     tray = new Tray(trayImage.resize({ width: 16, height: 16 }));
     tray.setToolTip(
       framework
