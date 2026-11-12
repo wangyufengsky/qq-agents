@@ -105,7 +105,14 @@ function floating() {
     ? "点击打开小窝 · 拖动换位置"
     : "点击聊天 · 拖动换座位 · 右键菜单";
   const sprite = image(door ? "door" : undefined);
-  art.append(sprite);
+  if (door) art.append(sprite);
+  else {
+    const pose = element("span", "sprite-pose");
+    const cue = element("span", "sprite-cue");
+    cue.setAttribute("aria-hidden", "true");
+    pose.append(sprite, cue);
+    art.append(pose);
+  }
   space.append(art);
   root.append(space);
   bindFloatingDrag(art);
@@ -148,7 +155,8 @@ function floating() {
     if (!role) return;
     const activity = activityFor(role, data);
     const roleArt = role.art ?? role.id;
-    art.dataset.activity = activity;
+    art.dataset.appearance = roleArt;
+    if (art.dataset.activity !== activity) art.dataset.activity = activity;
     art.setAttribute(
       "aria-label",
       `${role.name} · ${activityLabels[activity]} · 打开聊天`,
