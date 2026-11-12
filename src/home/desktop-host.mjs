@@ -14,6 +14,11 @@ import { createRoom, roles as art } from "./desktop-room-state.mjs";
 import { beginDesktopContext } from "./desktop-context.mjs";
 import { DESKTOP_CONVERSATION, readDecision } from "./desktop-decision.mjs";
 import { DESKTOP_ADMINISTRATOR, DesktopArchive } from "./desktop-archive.mjs";
+import {
+  DesktopScreen,
+  screenGrantSchema,
+  screenRevokeSchema,
+} from "./desktop-screen.mjs";
 
 const requestSchema = z
   .object({
@@ -26,8 +31,17 @@ const requestSchema = z
       "door-mode",
       "knock-answer",
       "disconnect",
+      "screen-grant",
+      "screen-revoke",
     ]),
-    data: z.union([z.string().max(1000), z.boolean()]).optional(),
+    data: z
+      .union([
+        z.string().max(1000),
+        z.boolean(),
+        screenGrantSchema,
+        screenRevokeSchema,
+      ])
+      .optional(),
   })
   .strict();
 const CLIENT_LEASE = 15_000;
@@ -54,6 +68,7 @@ export class DesktopHost {
     this.archive = new DesktopArchive(runtime.memory);
     this.visits = new Map();
     this.invitations = new DesktopInvitations(this);
+    this.screen = new DesktopScreen(this);
   }
 
   configured() {
@@ -305,6 +320,7 @@ export class DesktopHost {
   }
 
   reset() {
+    this.screen.clear();
     if (!this.live) return;
     const previous = this.live;
     this.live = null;
@@ -350,7 +366,13 @@ export class DesktopHost {
       live.setDoorMode(data);
     if (action === "knock-answer" && typeof data === "boolean")
       live.answerKnock(data);
-    return this.clientSnapshot();
+    if (action === "screen-grant")
+      this.screen.change(action, screenGrantSchema.parse(data));
+    if (action === "screen-revoke")
+      this.screen.change(action, screenRevokeSchema.parse(data));
+    const state = this.clientSnapshot();
+    const screenRequest = action === "sync" && this.screen.request();
+    return screenRequest ? { ...state, screenRequest } : state;
   }
 
   clientSnapshot() {
@@ -358,6 +380,7 @@ export class DesktopHost {
       enabled: true,
       room: {
         ...this.live.snapshot(),
+        screenView: this.screen.state(),
         attachmentInput: this.attachments.availability(
           this.runtime.config,
           this.live.here(),

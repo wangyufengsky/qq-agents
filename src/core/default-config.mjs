@@ -33,6 +33,7 @@ export function defaultConfig() {
     desktopHome: {
       enabled: false,
       toolRoles: [],
+      screenView: { enabled: false },
       maxTurns: 6,
       refreshMinutes: 60,
     },

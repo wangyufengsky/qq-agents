@@ -6,6 +6,11 @@
 
 ## 未发布
 
+### 桌面小窝按需看屏（[#278](https://github.com/wangyufengsky/qq-agents/pull/278)）
+
+- 管理员可在本机为一位在场角色选择窗口或显示器，角色在获授权的桌面回合按需取得一张截图。授权可撤销，图片只交给当前模型回合，QQ Agents 不把截图写入房间记录。
+- 新增默认关闭的 `desktopHome.screenView.enabled`。开启后仍须现场选定角色和目标，无需迁移数据库。
+
 ### Windows 桌面小窝（[#276](https://github.com/wangyufengsky/qq-agents/pull/276)）
 
 - 原生 Windows QQ Agents 可在已登录的用户桌面从本机管理台打开、取消启动及关闭桌面小窝，沿用既有房间、会话、记忆、工具权限和数据目录。此项无需更改配置或迁移数据库。

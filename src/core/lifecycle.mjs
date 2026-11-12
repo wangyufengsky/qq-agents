@@ -1145,6 +1145,13 @@ export class ContextLifecycle {
       return;
     }
     if (!a) return;
+    if (ctx.runtimeKind === "desktop" && ctx.desktopScreenObserved) {
+      retireSession(m, ctx.conversation, "desktop-screen-observed", r.now(), {
+        turnId: ctx.turnId,
+        backendId: a.backendId,
+      });
+      return;
+    }
     let usage = s.usage;
     if (!usage || usage.at < ctx.turnStartedAt)
       usage = {

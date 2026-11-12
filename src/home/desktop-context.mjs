@@ -202,7 +202,10 @@ ${selfBody}
           backendFailures: [{ ...failure, attempt: 1, at: runtime.now() }],
         });
       }
-      ctx.retainBackendSession = !signal.aborted && sessionWasUnchanged(error);
+      ctx.retainBackendSession =
+        !ctx.desktopScreenObserved &&
+        !signal.aborted &&
+        sessionWasUnchanged(error);
       return runtime.contexts.finish(
         ctx,
         signal.aborted ? "cancelled" : error ? "failed" : "completed-no-send",

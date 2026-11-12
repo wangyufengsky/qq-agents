@@ -5,6 +5,7 @@ import {
   DESKTOP_DECISION,
   DESKTOP_HISTORY,
   DESKTOP_MEMORY_TOOLS,
+  DESKTOP_SCREEN_VIEW,
 } from "../tools/names.mjs";
 import { desktopToolCandidate } from "../tools/desktop-policy.mjs";
 import { SOCIAL_TOOLS } from "../home/social-tool-names.mjs";
@@ -44,16 +45,17 @@ export function assertSocialToolResult(
     images = content.filter((/** @type {any} */ item) => item.type === "image");
   if (images.length) {
     const regularImage = desktop && desktopMedia.has(name);
+    const screen = desktop && name === DESKTOP_SCREEN_VIEW;
     const imageLimit = (regularImage ? 8 : 4) * 1024 * 1024;
     if (
       (regularImage
         ? images.length > 12
-        : name !== "room_scene_view" || images.length !== 1) ||
+        : (!screen && name !== "room_scene_view") || images.length !== 1) ||
       images.some(
         (/** @type {any} */ image) =>
           !(regularImage
             ? desktopImageTypes.has(image.mimeType)
-            : image.mimeType === "image/png") ||
+            : image.mimeType === (screen ? "image/jpeg" : "image/png")) ||
           typeof image.data !== "string" ||
           image.data.length > Math.ceil(imageLimit / 3) * 4,
       ) ||

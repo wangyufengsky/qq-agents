@@ -48,6 +48,7 @@ import {
   DESKTOP_DECISION,
   DESKTOP_HISTORY,
   DESKTOP_MEMORY_TOOLS,
+  DESKTOP_SCREEN_VIEW,
   FUNCTIONAL_AGENT_RESULT,
 } from "../tools/names.mjs";
 import { BackendConnections } from "./backend-connections.mjs";
@@ -407,6 +408,13 @@ export class Runtime {
     }
   }
   toolsForContext(agent, ctx) {
+    if (ctx.runtimeKind === "desktop" && ctx.desktopScreenObserved)
+      return this.toolsFor(agent, ctx.conversation).filter(
+        (name) =>
+          name === DESKTOP_DECISION ||
+          name === DESKTOP_HISTORY ||
+          DESKTOP_MEMORY_TOOLS.includes(name),
+      );
     if (ctx.runtimeKind !== "functional-agent")
       return this.toolsFor(agent, ctx.conversation);
     const current = this.toolsFor(agent, ctx.conversation);
@@ -447,6 +455,7 @@ export class Runtime {
       if (!this.desktopVisits.configured()) return [];
       const candidates = new Set([
         ...DESKTOP_MEMORY_TOOLS,
+        DESKTOP_SCREEN_VIEW,
         ...a.tools,
         "file_read",
         "file_revise",

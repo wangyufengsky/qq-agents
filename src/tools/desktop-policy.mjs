@@ -1,7 +1,10 @@
 import { subjectInboxEnabled } from "../core/role-rest.mjs";
 import { DESKTOP_CONVERSATION } from "../home/desktop-decision.mjs";
+import { supportsMessageImages } from "../backends/capabilities.mjs";
+import { DESKTOP_SCREEN_VIEW } from "./names.mjs";
 
 const desktopToolNames = new Set([
+  DESKTOP_SCREEN_VIEW,
   "self_read",
   "self_propose",
   "memory_related",
@@ -46,6 +49,14 @@ export function isDesktopToolContext(ctx) {
 export function desktopToolAvailable(agent, name, config) {
   if (!desktopRoleToolsEnabled(config, agent) || !desktopToolCandidate(name))
     return false;
+  if (name === DESKTOP_SCREEN_VIEW) {
+    const backend = config.backends.find(({ id }) => id === agent.backendId);
+    return (
+      config.desktopHome.screenView?.enabled === true &&
+      agent.behavior.imageInput.enabled &&
+      Boolean(backend && supportsMessageImages(backend))
+    );
+  }
   if (name.startsWith("app_") && !agent.apps?.enabled) return false;
   if (name.startsWith("file_") && !agent.files?.enabled) return false;
   if (name === "file_create" || name === "file_revise") {
