@@ -376,7 +376,7 @@ test("floating door distinguishes clicks from dragging", async (t) => {
   assert.equal(await page.evaluate(() => window.testActions.at(-1)), "open");
 });
 
-test("floating resident swaps all six artwork poses and respects reduced motion", async (t) => {
+test("floating resident replays six short actions with a still hold and respects reduced motion", async (t) => {
   let executablePath;
   try {
     executablePath = findScreenshotBrowser();
@@ -433,13 +433,69 @@ test("floating resident swaps all six artwork poses and respects reduced motion"
       );
     }
   }
+  const button = page.locator(".sprite-button");
   assert.equal(
-    await sprite.evaluate((img) => window.getComputedStyle(img).animationName),
-    "none",
+    await button.evaluate(
+      (node) => node.getAnimations({ subtree: true }).length,
+    ),
+    0,
   );
   await page.emulateMedia({ reducedMotion: "no-preference" });
-  assert.equal(
-    await sprite.evaluate((img) => window.getComputedStyle(img).animationName),
-    "paper-sleep",
-  );
+  for (const activity of [
+    "qq",
+    "chat",
+    "observe",
+    "control",
+    "idle",
+    "sleep",
+  ]) {
+    const state = { ...room, roles: [{ ...room.roles[0], activity }] };
+    const timing = await button.evaluate((node, state) => {
+      window.testRoom(state);
+      const animations = node.getAnimations({ subtree: true });
+      const period = animations[0]?.effect.getTiming().duration;
+      for (const animation of animations) animation.pause();
+      const frame = (time) => {
+        for (const animation of animations) animation.currentTime = time;
+        return [...node.querySelectorAll("span, img")].map((part) => {
+          const { transform, opacity } = window.getComputedStyle(part);
+          return [transform, opacity];
+        });
+      };
+      const samples = [180, 340, 560, 740, 960, 1200];
+      const first = samples.map(frame);
+      const rest = [2000, period / 2, period - 100].map(frame);
+      const next = samples.map((time) => frame(period + time));
+      frame(period / 2);
+      window.testRoom(state);
+      const current = node.getAnimations({ subtree: true });
+      const sameCycle =
+        current.length === animations.length &&
+        current.every(
+          (animation) =>
+            animations.includes(animation) &&
+            animation.currentTime === period / 2,
+        );
+      for (const animation of animations) animation.play();
+      return { period, first, rest, next, sameCycle };
+    }, state);
+    assert.ok(timing.period >= 5000, activity);
+    assert.ok(
+      new Set(timing.first.map((frame) => JSON.stringify(frame))).size > 1,
+      activity,
+    );
+    assert.deepEqual(
+      timing.rest,
+      [timing.rest[0], timing.rest[0], timing.rest[0]],
+      activity,
+    );
+    assert.ok(
+      timing.first.some(
+        (frame) => JSON.stringify(frame) !== JSON.stringify(timing.rest[0]),
+      ),
+      activity,
+    );
+    assert.deepEqual(timing.next, timing.first, activity);
+    assert.equal(timing.sameCycle, true, activity);
+  }
 });
