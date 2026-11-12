@@ -75,8 +75,10 @@ test("desktop roles decide invitations and share six charged runs, including sil
 test("new arrival retires old audience sessions and cannot be given earlier messages", async () => {
   const { room, live, jobs, retired, settle, arrive } = harness();
   await arrive(dragon);
+  const invitation = jobs.at(-1).request;
   live.send("旧受众的暗号");
   const old = jobs.at(-1);
+  assert.equal(old.request.session, invitation.session);
   await arrive(cat);
   assert(old.signal.aborted);
   assert(retired.some(({ session }) => session === old.request.session));
