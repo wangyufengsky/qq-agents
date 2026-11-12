@@ -975,6 +975,16 @@ test("Codex desktop screen tools bypass code-mode text projection on a compatibl
   t.after(() => backend.close());
   const params = windowParams("desktop-screen");
   params.tools[0].function.name = "desktop_screen_view";
+  params.tools.push(
+    ...[
+      "desktop_room_decide",
+      "desktop_native_control",
+      "desktop_browser_control",
+    ].map((name) => ({
+      type: "function",
+      function: { name, parameters: { type: "object" } },
+    })),
+  );
   const image = { type: "image", mimeType: "image/jpeg", data: "AQID" };
   params.callTool = async () => ({ content: [image] });
   const run = backend.runDesktop({
@@ -1014,6 +1024,15 @@ test("Codex desktop screen tools bypass code-mode text projection on a compatibl
   assert.deepEqual(
     start.dynamicTools[0].tools.map(({ name }) => name),
     ["desktop_screen_view"],
+  );
+  assert.deepEqual(
+    start.dynamicTools.map(({ name, type }) => ({ name, type })),
+    [
+      { name: "qq_desktop_visual", type: "namespace" },
+      { name: "desktop_room_decide", type: "function" },
+      { name: "desktop_native_control", type: "function" },
+      { name: "desktop_browser_control", type: "function" },
+    ],
   );
   assert.deepEqual(responses[0].result.contentItems, [
     { type: "inputImage", imageUrl: "data:image/jpeg;base64,AQID" },

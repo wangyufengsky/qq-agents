@@ -3,17 +3,53 @@ import { spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const LIMIT = 128 * 1024 * 1024;
+
+/** @returns {Promise<{type: "image", mimeType: "image/jpeg", data: string} | null>} */
+async function takeAcpDesktopFrame() {
+  const endpoint = new URL(process.env.QQ_AGY_ENDPOINT || "http://invalid");
+  const token = process.env.QQ_AGY_TOKEN;
+  if (
+    !token ||
+    endpoint.protocol !== "http:" ||
+    endpoint.hostname !== "127.0.0.1" ||
+    endpoint.username ||
+    endpoint.password ||
+    endpoint.search ||
+    endpoint.hash
+  )
+    throw Error("ANTIGRAVITY_PROTOCOL_ERROR");
+  const response = await fetch(new URL("/desktop-frame", endpoint), {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    redirect: "error",
+    signal: AbortSignal.timeout(5000),
+  });
+  if (!response.ok) throw Error("ANTIGRAVITY_PROTOCOL_ERROR");
+  const { image } = await response.json();
+  if (image === null) return null;
+  if (
+    image?.type !== "image" ||
+    image.mimeType !== "image/jpeg" ||
+    typeof image.data !== "string" ||
+    image.data.length > 65536
+  )
+    throw Error("ANTIGRAVITY_PROTOCOL_ERROR");
+  return image;
+}
+
 /** Translate ACP into the existing supervisor's terminal protocol. The supervisor
  * still owns tool authorization, cancellation, session binding and send settlement.
  * @param {any} options @param {string} prompt
  * @param {(event: any) => void} emit @param {typeof spawn} [launch]
- * @param {import("./session-contract.mjs").InputImage[]} [inputImages] */
+ * @param {import("./session-contract.mjs").InputImage[]} [inputImages]
+ * @param {typeof takeAcpDesktopFrame} [takeDesktopFrame] */
 export async function runAcp(
   options,
   prompt,
   emit,
   launch = spawn,
   inputImages = [],
+  takeDesktopFrame = takeAcpDesktopFrame,
 ) {
   const child = launch(
     options.command,
@@ -169,7 +205,7 @@ export async function runAcp(
               ? 'ACP session resumed. For qq_send, qq_send_burst, or qq_draft, prefer mcp_qq-agents_qq_reply_call if listed: pass the logical name and argumentsJson containing the serialized original arguments. For another bridge action, use the native MCP tool if it is listed for this turn. If the native name is absent or returns unknown tool before execution, use the available call_mcp_tool with ServerName="qq-agents", ToolName equal to the logical tool name (for example qq_send), and the same Arguments. Reuse the same requestId for the same send. A pending or unknown delivery is not a tool lookup error. Check its receipt before any further send. Tool errors from earlier turns do not determine the current catalogue. Only tools authorized by the current bridge may run.\n\n'
               : "") +
             (options.desktop
-              ? "For desktop_native_control or desktop_browser_control, use the listed qq_desktop_call with the logical tool name and argumentsJson. If the screenshot result authorizes an exact image file, use the listed native image reader on that path before describing the pixels.\n\n"
+              ? "For desktop_native_control or desktop_browser_control, use the listed qq_desktop_call with the logical tool name and argumentsJson. If desktop_screen_view says a screenshot is ready, finish that response without a desktop decision so the bridge can supply the image.\n\n"
               : "") +
             prompt,
         },
@@ -183,6 +219,24 @@ export async function runAcp(
     });
     if (closed || result.stopReason !== "end_turn")
       throw Error("ANTIGRAVITY_PROTOCOL_ERROR");
+    if (options.desktopScreen) {
+      const image = await takeDesktopFrame();
+      if (closed) throw Error("ANTIGRAVITY_PROTOCOL_ERROR");
+      if (image) {
+        const result = await request("session/prompt", {
+          sessionId: id,
+          prompt: [
+            {
+              type: "text",
+              text: "这是当前桌面回合已授权的截图。请依据画面回应刚才的请求，并提交一次桌面决定。",
+            },
+            image,
+          ],
+        });
+        if (closed || result.stopReason !== "end_turn")
+          throw Error("ANTIGRAVITY_PROTOCOL_ERROR");
+      }
+    }
     // ACP turn usage can sum several inferences, so never claim it is the latest
     // context occupancy. The framework retains its conservative estimate.
     emit({

@@ -812,14 +812,46 @@ ipcMain.handle("room:native-control", async (event) => {
   try {
     if (policy.grantedAgentId)
       return await nativeControl.revoke(roomEpoch, policy.grantedAgentId);
-    const windows = await nativeDriver.listWindows({
-      signal: AbortSignal.timeout(4000),
-    });
+    let eligible = roles.filter(({ id }) => policy.eligible.includes(id));
+    if (!eligible.length) return "unavailable";
+    let windows;
+    try {
+      windows = await nativeDriver.listWindows({
+        signal: AbortSignal.timeout(4000),
+      });
+    } catch (error) {
+      if (
+        process.platform !== "darwin" ||
+        !["DESKTOP_NATIVE_TIMEOUT", "DESKTOP_NATIVE_CANCELLED"].includes(
+          error?.message,
+        )
+      )
+        throw error;
+      // A stalled global AX inventory need not prevent a scoped app lookup.
+      const applications = (
+        await nativeDriver.listApplications({
+          signal: AbortSignal.timeout(4000),
+        })
+      ).filter(({ pid }) => pid !== process.pid);
+      if (win.isDestroyed() || !win.isFocused()) return "cancelled";
+      if (!applications.length) return "no-sources";
+      const selected = await desktopSourceMenu(
+        win,
+        eligible,
+        applications,
+        ({ app }) => app,
+      );
+      if (!selected || win.isDestroyed() || !win.isVisible())
+        return "cancelled";
+      eligible = eligible.filter(({ id }) => id === selected.agentId);
+      windows = await nativeDriver.listWindows({
+        application: selected.source,
+        signal: AbortSignal.timeout(4000),
+      });
+    }
     const sources = windows.filter(({ pid }) => pid !== process.pid);
     if (win.isDestroyed() || !win.isFocused()) return "cancelled";
     if (!sources.length) return "no-sources";
-    const eligible = roles.filter(({ id }) => policy.eligible.includes(id));
-    if (!eligible.length) return "unavailable";
     const selection = await desktopSourceMenu(
       win,
       eligible,

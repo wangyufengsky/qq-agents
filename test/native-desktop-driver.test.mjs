@@ -38,6 +38,13 @@ const fixture = String.raw`
     case "permissions":
       data = { accessibility: { state: opts.accessibility ?? "granted" } };
       break;
+    case "list-apps":
+      data = { apps: [
+        { name: base.app_name, pid: base.pid, process_instance: base.process_instance, presentation: "foreground" },
+        { name: "Background", pid: 52, process_instance: "background", presentation: "background" },
+        { name: "Invalid", pid: 0, presentation: "foreground" },
+      ] };
+      break;
     case "list-windows":
       data = [{ ...base, process_instance: opts.instance ?? base.process_instance }];
       if (opts.duplicate) data.push({ ...base, pid: 22 });
@@ -206,6 +213,28 @@ test("rejects unsupported versions and ambiguous or changed target observations"
     /DESKTOP_NATIVE_TARGET_CHANGED/,
   );
   assert.ok((await f.events()).every((event) => event.command !== "click"));
+});
+
+test("macOS can enumerate only the application selected from a fresh native inventory", async (t) => {
+  const f = await setup(t);
+  const apps = await f.driver.listApplications();
+  assert.deepEqual(apps, [
+    { app: "--Test App", pid: 19, processInstance: "instance-1" },
+  ]);
+  const windows = await f.driver.listWindows({ application: apps[0] });
+  assert.equal(windows.length, 1);
+  assert.equal(windows[0].title, "Disposable App Window");
+  const enumeration = (await f.events()).filter(
+    ({ command }) => command === "list-windows",
+  );
+  assert.deepEqual(enumeration.at(-1).args, ["--app=--Test App"]);
+  await f.configure({ instance: "replaced-process" });
+  assert.deepEqual(await f.driver.listWindows({ application: apps[0] }), []);
+  await f.configure({ accessibility: "denied" });
+  await assert.rejects(
+    f.driver.listApplications(),
+    /DESKTOP_NATIVE_PERMISSION/,
+  );
 });
 
 test("rejects foreign references and a control that becomes secure before dispatch", async (t) => {
