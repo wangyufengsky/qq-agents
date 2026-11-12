@@ -4,9 +4,10 @@ import { randomUUID } from "node:crypto";
 import spawn from "cross-spawn";
 import { DatabaseSync } from "node:sqlite";
 import { FrameworkKnowledge } from "../core/framework-knowledge.mjs";
+import { updateDirectory } from "./paths.mjs";
 import { compareVersions, releaseTag, UPDATE_REPOSITORY } from "./releases.mjs";
 
-export const updateDirectory = "updates-runtime";
+export { updateDirectory } from "./paths.mjs";
 function syncDirectory(directory) {
   let fd;
   try {
@@ -175,6 +176,24 @@ export async function stageRelease({
     cwd: destination,
     signal,
   });
+  if (
+    dataRoot &&
+    !container &&
+    ["darwin", "win32"].includes(process.platform) &&
+    fs.existsSync(
+      path.join(destination, "src/home/desktop-dependency-installer.mjs"),
+    )
+  ) {
+    try {
+      await run(
+        process.execPath,
+        ["src/cli/setup.mjs", "desktop", "--data", dataRoot],
+        { cwd: destination, signal, timeout: 950000 },
+      );
+    } catch {
+      throw Error("UPDATE_DESKTOP_DEPENDENCY_FAILED");
+    }
+  }
   if (dataRoot && fs.existsSync(path.join(dataRoot, "games", "rooms.sqlite"))) {
     const script = path.join(destination, "scripts", "game-compatibility.mjs");
     if (!fs.existsSync(script))

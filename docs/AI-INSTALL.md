@@ -201,6 +201,14 @@ docker compose run --rm --no-deps -it --entrypoint node qq-agents src/cli/setup.
 
 保存后重新打开相关页面，核对工具与策略、后端和范围是否一致；对所选能力分别记录“已配置 / 依赖未就绪 / 未实测”，不能把 doctor 的 `ok: true` 或模型列表当作全部能力验收。真实发言、文件投递、外部收费调用等测试须另经用户确认，在指定测试会话做最小验证。
 
+在原生 macOS 或 Windows 上，如果用户选择了桌面小窝，在「纸页小窝 → 小窝目录 → 桌面小窝」保存选项。然后用同一个数据目录运行依赖准备命令。
+
+```sh
+npm run setup -- desktop --data "<数据目录>"
+```
+
+此命令按已保存的选择准备 Electron、本机窗口驱动和浏览器。也可以按用户要求添加 `--all`，一次备好三种依赖。已有 Chrome、Chromium 或 Edge 会被复用。软件准备完成后，角色和目标仍须在桌面面板单独授权。macOS 屏幕录制、辅助功能权限由用户在系统设置中授予。Windows 使用已登录的桌面会话。Docker 和 Linux 跳过此步骤。详见 [桌面小窝](DESKTOP-HOME.md#准备桌面依赖)。
+
 **离开本步骤前正常停止刚打开的管理台**（本机 Ctrl+C；Docker `docker compose stop qq-agents`），保持隔离和暂停。随后检查，再由用户确认上线；`setup live` 必须在管理台停止时运行。
 
 ## 第 7 步：检查
@@ -216,6 +224,8 @@ docker compose run --rm --no-deps -T --entrypoint node qq-agents src/cli/doctor.
 ```
 
 逐项诊断 `fail`，说明 `warn` 和 `skip`。期望 `onebot:*` 核对实际 QQ 号、`backend:*` 确认模型目录；未运行管理台时 console 检查可能跳过，角色在隔离或暂停时不能发言是预期。doctor 会访问所配 OneBot/模型服务，但不发送 QQ 消息；模型目录成功不代表真实回合成功。
+
+`desktop:*` 检查只报告桌面依赖状态。已选择的依赖缺失时显示 `warn`，应在桌面验收前准备。系统授权和实际操作需在桌面会话内分别验证。
 
 ## 第 8 步：上线（停下来，需要用户明确确认）
 

@@ -6,6 +6,11 @@
 
 ## 未发布
 
+### 安装和更新时准备桌面依赖（[#282](https://github.com/wangyufengsky/qq-agents/pull/282)）
+
+- 原生 macOS 和 Windows 的 `setup desktop` 支持准备固定版本的 Electron、`agent-desktop` 和网页所需 Chromium。doctor 显示就绪状态，受管更新在停机前按现有配置准备。沿用已有浏览器和显式路径，软件安装与角色、目标及系统权限分别管理。
+- 版本化的桌面依赖可重建，受管备份和恢复保留该缓存目录。已有配置无需迁移。
+
 ### 桌面小窝独立网页操作（[#280](https://github.com/wangyufengsky/qq-agents/pull/280)）
 
 - 管理员可在本机为一位在场角色授权一个公开网站来源。角色可在独立浏览器里导航、读取、点击和填写静态网页，撤销、离席或关闭房间会关闭浏览器。

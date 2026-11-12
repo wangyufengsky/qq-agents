@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import crossSpawn from "cross-spawn";
 import { buildChildEnv } from "../core/child-env.mjs";
 import { taskkillTree } from "../core/windows-process.mjs";
+import { managedDesktopExecutable } from "./desktop-dependencies.mjs";
 
 const release = fileURLToPath(new URL("../..", import.meta.url));
 
@@ -36,13 +37,17 @@ export class DesktopLauncher {
       .filter(Boolean)
       .join(path.delimiter);
     const windows = process.platform === "win32";
-    const args = ["run", "desktop:home"];
-    if (windows) {
+    const executable = managedDesktopExecutable(this.root, "electron");
+    const args = executable ? ["desktop/home"] : ["run", "desktop:home"];
+    if (windows && !executable) {
       // npm runs the script through cmd.exe. Keep user paths out of the command.
       env.DESKTOP_HOME_DATA_ROOT = this.root;
       env.DESKTOP_HOME_PORT = String(port);
-    } else args.push("--", "--data", this.root, "--port", String(port));
-    const child = this.spawn("npm", args, {
+    } else {
+      if (!executable) args.push("--");
+      args.push("--data", this.root, "--port", String(port));
+    }
+    const child = this.spawn(executable || "npm", args, {
       cwd: release,
       env,
       detached: true,

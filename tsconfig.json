@@ -63,6 +63,7 @@
     "src/core/child-env.mjs",
     "src/core/windows-process.mjs",
     "src/home/desktop-launcher.mjs",
+    "src/home/desktop-dependencies.mjs",
     "src/core/auto-resume.mjs",
     "src/core/no-follow.mjs",
     "src/core/local-secrets.mjs",

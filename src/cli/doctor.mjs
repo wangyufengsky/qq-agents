@@ -12,6 +12,7 @@ import { validateConfig } from "../core/config.mjs";
 import { readLocalSecrets } from "../core/local-secrets.mjs";
 import { OneBot } from "../transport/onebot.mjs";
 import { BackendRegistry } from "../backends/index.mjs";
+import { inspectDesktopDependencies } from "../home/desktop-dependency-installer.mjs";
 
 const PLACEHOLDER_ACCOUNTS = new Set(["10001", "10002"]);
 const withTimeout = (promise, ms, code) => {
@@ -133,6 +134,23 @@ export async function runDoctor({
         : "运行 npm run setup -- init --answers <文件>",
     );
     return summarize(checks);
+  }
+  const desktop = await inspectDesktopDependencies({
+    root,
+    policy: config.desktopHome,
+    env,
+  });
+  for (const check of desktop) {
+    const status =
+      check.status === "ready" ? "ok" : check.required ? "warn" : "skip";
+    add(
+      "desktop:" + check.id,
+      status,
+      [check.status, check.version, check.source].filter(Boolean).join(" "),
+      status === "warn"
+        ? "核对本机平台和显式路径，再运行 npm run setup -- desktop"
+        : undefined,
+    );
   }
   for (const c of config.connections)
     if (PLACEHOLDER_ACCOUNTS.has(c.accountId))

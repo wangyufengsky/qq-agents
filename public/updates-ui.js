@@ -37,6 +37,8 @@ const upgradeErrorText = {
   UPDATE_PROCESS_STILL_RUNNING:
     "检测到进程或数据锁，已停止切换以避免并发写入。",
   UPDATE_COMMAND_FAILED: "下载或依赖安装未完成，请检查 Git、npm 和网络。",
+  UPDATE_DESKTOP_DEPENDENCY_FAILED:
+    "桌面依赖准备失败，原服务仍运行。请使用目标版本的安装命令查看详细错误。",
   UPDATE_RECOVERY_REQUIRED: "上次升级中断，已保留现场，需要检查后再恢复发言。",
   UPDATE_STATE_INVALID: "升级状态无法可靠保存或读取，请按恢复指南处理。",
 };

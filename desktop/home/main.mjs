@@ -14,6 +14,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { basename, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openNoFollowAsync } from "../../src/core/no-follow.mjs";
+import { managedDesktopExecutable } from "../../src/home/desktop-dependencies.mjs";
 import { parseBrowserOrigin } from "./browser-origin.mjs";
 import { createFrameworkClient } from "./framework-client.mjs";
 import { NativeControlClient } from "./native-control-client.mjs";
@@ -92,7 +93,11 @@ let screenCapture;
 let choosingDesktopPermission = false;
 let lastBrowserGrant;
 const nativeDriver = ["darwin", "win32"].includes(process.platform)
-  ? createNativeDesktopDriver()
+  ? createNativeDesktopDriver({
+      executable:
+        process.env.QQ_AGENTS_AGENT_DESKTOP_EXECUTABLE ||
+        managedDesktopExecutable(frameworkRoot, "agent-desktop"),
+    })
   : null;
 const nativeControl = nativeDriver
   ? new NativeControlClient(nativeDriver, {
