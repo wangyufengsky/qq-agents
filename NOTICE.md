@@ -17,8 +17,10 @@ Current npm dependency licenses are recorded in package-lock.json. Distributed c
 
 - QQ system-face identifier/name facts are referenced from NapNeko/NapCatQQ `packages/napcat-core/external/face_config.json`, Git blob `ba937ea96f315235c80e34039d5c039f9b8e2d3c`. Only identifier/name pairs are included; no QQ artwork, animation, or NapCat implementation is bundled. See docs/QQ-FACES.md.
 
-## 纸页小窝生成素材
+## 纸页小窝与桌面小窝生成素材
 
 纸页小窝的 `Paper Nest Hand` 网页字体源自 [LXGW WenKai Regular v1.530](https://github.com/lxgw/LxgwWenKai/releases/tag/v1.530)，按 SIL Open Font License 1.1 分发。字体由 LXGW 基于 Fontworks Klee 开发；完整版权和许可保留在 `vendor/fonts/LXGW-OFL.txt`。本项目为遵守保留字体名称要求更改了字体家族名，并转换为 WOFF2；未修改或删减字形，转换版本与哈希记录在 `docs/SOURCES.json`。
 
 `public/home-preview/assets/` 的 27 张手绘纸板与纸片由维护者委托 OpenAI imagegen 生成，作为 QQ Agents 项目贡献按根目录 MIT 许可提供。来源、提示词、原图哈希及 WebP 转换记录见 [素材说明](docs/AI-HOME-ASSETS.md)；原始用户参考附件不包含在发布素材中。
+
+桌面小窝随附的三张 WebP 纸片角色由 OpenAI imagegen 生成。蓝鲸、白龙和星饰猫的拟人方向参考 [ZipZipPipe 的角色设定](https://www.bilibili.com/opus/1233069202138464289)，鲸鱼形象源自上善无形的「溟月」。桌面版本重新设计了衣装、姿势和纸片画法。

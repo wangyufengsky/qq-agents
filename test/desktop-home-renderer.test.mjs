@@ -257,3 +257,82 @@ test("site authorization requires an explicit role and origin and follows the ro
   await page.getByRole("button", { name: "撤销站点授权" }).click();
   assert.equal(await page.evaluate(() => window.testBrowserCalls.at(-1)), null);
 });
+
+test("paper tabs and portraits replace the desktop budget display", async (t) => {
+  let executablePath;
+  try {
+    executablePath = findScreenshotBrowser();
+  } catch {
+    t.skip("local Chromium unavailable");
+    return;
+  }
+  const browser = await chromium.launch({ executablePath, headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 430, height: 574 } });
+  const roles = [
+    ["fish", "小鱼", "teal", "here"],
+    ["dragon", "小龙", "green", "home"],
+    ["cat", "猫猫", "peach", "home"],
+  ].map(([id, name, color, state]) => ({
+    id,
+    name,
+    color,
+    state,
+    available: true,
+  }));
+  const data = {
+    live: true,
+    framework: true,
+    connected: true,
+    roles,
+    messages: [],
+    notice: "",
+    budget: 5,
+    maxTurns: 6,
+    nextRefill: Date.now() + 3600_000,
+    thinking: "fish",
+  };
+  await page.addInitScript((data) => {
+    window.testActions = [];
+    window.nest = {
+      onRoom() {},
+      onSection() {},
+      get: async () => ({ data, section: "visits" }),
+      act: (...args) => window.testActions.push(args),
+    };
+  }, data);
+  await page.goto(
+    new URL("../desktop/home/index.html?type=panel", import.meta.url).href,
+  );
+  const list = page.locator(".guest-list");
+  await list.getByRole("button", { name: "邀请 · 小龙" }).click();
+  assert.deepEqual(await page.evaluate(() => window.testActions), [
+    ["invite", "dragon"],
+  ]);
+  const portraits = list.locator("img");
+  assert.equal(await portraits.count(), 3);
+  assert.ok(
+    await portraits.evaluateAll((images) =>
+      images.every(
+        (img) => img.naturalWidth > 0 && img.src.endsWith("-paper.webp"),
+      ),
+    ),
+  );
+  await page.getByRole("button", { name: "聊天", exact: true }).click();
+  assert.equal(
+    await page.getByRole("log", { name: "聊天记录" }).isVisible(),
+    true,
+  );
+  assert.equal(await page.getByText("小鱼正在想…").isVisible(), true);
+  assert.equal(await page.getByText(/共用回合|后刷新/).count(), 0);
+  assert.equal(
+    await page.getByText("刷新设置", { exact: true }).isVisible(),
+    false,
+  );
+  await page.getByRole("textbox", { name: "发到房间" }).fill("桌边试聊");
+  await page.getByRole("button", { name: "发送", exact: true }).click();
+  assert.deepEqual(await page.evaluate(() => window.testActions.at(-1)), [
+    "send",
+    "桌边试聊",
+  ]);
+});

@@ -54,6 +54,10 @@ let overview = null,
   pending = null,
   contentTimer,
   contentTicket = 0;
+let desktopState = null,
+  desktopRequest = 0,
+  desktopTimer,
+  desktopChanging = false;
 const esc = (value) =>
   String(value ?? "").replace(
     /[&<>"']/g,
@@ -106,6 +110,11 @@ function clearView(message = "登录或连接需要重新验证。") {
   $("editor").hidden = true;
   document.body.classList.remove("editing");
   $("home-tools").hidden = true;
+  $("desktop-controls").hidden = true;
+  clearTimeout(desktopTimer);
+  desktopRequest++;
+  desktopState = null;
+  desktopChanging = false;
   $("stage").inert = false;
   for (const id of [
     "stage",
@@ -529,6 +538,10 @@ async function refresh(animate = false) {
     $("gate").hidden = true;
     $("home-content").hidden = false;
     $("home-tools").hidden = false;
+    if ($("desktop-controls").hidden) {
+      $("desktop-controls").hidden = false;
+      void refreshDesktopControls();
+    }
     if (animate || !next.capabilities.write) editing = false;
     $("editor-more").open = false;
     const drawing = draw(animate ? turnDirection(oldRoute, nextRoute) : 0);
@@ -746,28 +759,90 @@ async function loadContent() {
     }
   }
 }
+function renderDesktopControls(loading = false) {
+  const toggle = $("desktop-toggle"),
+    reopen = $("desktop-reopen");
+  toggle.disabled = desktopChanging || loading;
+  toggle.textContent = desktopState
+    ? desktopState.enabled
+      ? "关闭桌面小窝"
+      : "开启桌面小窝"
+    : loading
+      ? "桌面小窝"
+      : "重试读取桌面小窝";
+  toggle.dataset.enabled = String(desktopState?.enabled === true);
+  reopen.hidden =
+    !desktopState?.enabled ||
+    !desktopState.canLaunch ||
+    desktopState.window === "open";
+  reopen.disabled = desktopChanging || desktopState?.window === "opening";
+  reopen.textContent =
+    {
+      opening: "打开中…",
+      failed: "重试打开",
+    }[desktopState?.window] ?? "打开窗口";
+}
+
+async function refreshDesktopControls(enabled) {
+  clearTimeout(desktopTimer);
+  const request = ++desktopRequest;
+  const changing = typeof enabled === "boolean";
+  desktopChanging = changing;
+  renderDesktopControls(!changing && !desktopState);
+  try {
+    const next = await api(
+      "/api/desktop-home",
+      changing ? { enabled } : undefined,
+    );
+    if (request !== desktopRequest) return;
+    if (
+      changing ||
+      (desktopState?.window === "opening" && next.window !== "opening")
+    ) {
+      toast(
+        next.enabled
+          ? {
+              open: "桌面窗口已打开。",
+              opening: "正在打开桌面窗口…",
+              failed: "桌面窗口启动失败，可以再试一次。",
+              idle: "桌面小窝已开启。",
+            }[next.window]
+          : "桌面小窝已关闭。",
+      );
+    }
+    desktopState = next;
+  } catch (error) {
+    if (changing && request === desktopRequest)
+      toast(
+        error.code === "DESKTOP_VISIT_UNAVAILABLE"
+          ? "请先在管理台恢复运行，再打开桌面小窝。"
+          : error.message,
+      );
+  } finally {
+    if (request === desktopRequest) {
+      desktopChanging = false;
+      renderDesktopControls();
+      desktopTimer = setTimeout(
+        () => void refreshDesktopControls(),
+        desktopState?.window === "opening" ? 1000 : 10000,
+      );
+    }
+  }
+}
+
 async function desktopSettings(root, ticket) {
   const active = () => readerAction === "desktop" && contentTicket === ticket;
   root.append(el("p", "", "正在读取桌面小窝设置…"));
   try {
-    const [current, initial] = await Promise.all([
-      api("/api/config"),
-      api("/api/desktop-home"),
-    ]);
+    const current = await api("/api/config");
     if (!active()) return;
     const policy = current.config.desktopHome;
     const form = el("form", "social-settings desktop-settings");
-    const controls = el("div", "desktop-actions");
-    const toggle = el("button", "primary");
-    const open = el("button", "primary", "打开桌面窗口");
-    toggle.type = open.type = "button";
-    controls.append(toggle, open);
     const fields = [
       ["maxTurns", "共用回合上限", 1, 24],
       ["refreshMinutes", "额度补满间隔（分钟）", 0, 1440],
     ];
     const inputs = {};
-    form.append(controls);
     for (const [key, title, min, max] of fields) {
       const label = el("label", "desktop-field", title);
       const input = document.createElement("input");
@@ -829,75 +904,21 @@ async function desktopSettings(root, ticket) {
     save.type = "submit";
     form.append(save, status);
     root.replaceChildren(form);
-    let state = initial;
     let busy = false;
-    function render() {
-      toggle.textContent = state.enabled ? "关闭桌面小窝" : "开启桌面小窝";
-      open.hidden =
-        !state.enabled || !state.canLaunch || state.window === "open";
-      open.disabled = busy || state.window === "opening";
-      toggle.disabled = save.disabled = busy;
-      screenEnabled.disabled =
-        nativeEnabled.disabled =
-        browserEnabled.disabled =
-          busy;
-      for (const input of roleInputs) input.disabled = busy;
-      status.textContent = state.enabled
-        ? {
-            open: "桌面窗口已打开。",
-            opening: "正在打开桌面窗口…",
-            failed: "桌面窗口启动失败，可以再试一次。",
-            idle: "桌面小窝已开启。",
-          }[state.window]
-        : "桌面小窝已关闭。";
-    }
-    async function watchWindow() {
-      while (active() && form.isConnected) {
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-        if (!active() || !form.isConnected) return;
-        if (busy || !state.enabled) continue;
-        const previous = state;
-        const next = await api("/api/desktop-home");
-        if (!active() || !form.isConnected) return;
-        if (
-          !busy &&
-          state === previous &&
-          (next.window !== previous.window || next.enabled !== previous.enabled)
-        ) {
-          state = next;
-          render();
-        }
-      }
-    }
-    async function changeEnabled(enabled) {
-      busy = true;
-      render();
-      try {
-        state = await api("/api/desktop-home", { enabled });
-        busy = false;
-        if (active()) render();
-      } catch (error) {
-        busy = false;
-        if (!active()) return;
-        render();
-        status.textContent =
-          error.message === "DESKTOP_VISIT_UNAVAILABLE"
-            ? "请先在管理台恢复运行，再打开桌面小窝。"
-            : error.message;
-      }
-    }
-    toggle.onclick = () => changeEnabled(!state.enabled);
-    open.onclick = () => changeEnabled(true);
-    render();
-    if (state.canLaunch)
-      void watchWindow().catch((error) => {
-        if (active() && form.isConnected) status.textContent = error.message;
-      });
+    const fieldsToLock = [
+      ...Object.values(inputs),
+      ...roleInputs,
+      screenEnabled,
+      nativeEnabled,
+      browserEnabled,
+      save,
+    ];
     form.onsubmit = async (event) => {
       event.preventDefault();
       if (!form.reportValidity() || busy) return;
       busy = true;
-      render();
+      for (const field of fieldsToLock) field.disabled = true;
+      status.textContent = "";
       const limits = {
         maxTurns: inputs.maxTurns.valueAsNumber,
         refreshMinutes: inputs.refreshMinutes.valueAsNumber,
@@ -944,13 +965,7 @@ async function desktopSettings(root, ticket) {
         if (active()) status.textContent = error.message;
       } finally {
         busy = false;
-        toggle.disabled = save.disabled = false;
-        screenEnabled.disabled =
-          nativeEnabled.disabled =
-          browserEnabled.disabled =
-            false;
-        for (const input of roleInputs) input.disabled = false;
-        open.disabled = state.window === "opening";
+        for (const field of fieldsToLock) field.disabled = false;
       }
     };
   } catch (error) {
@@ -977,7 +992,7 @@ function openReader(action) {
     intro: "介绍卡",
     works: "作品展示",
     social: "往来管理",
-    desktop: "桌面小窝",
+    desktop: "桌面小窝设置",
     letters: `${name(route.agentId)}的信件`,
   }[action];
   if (action === "desktop") {
@@ -1209,6 +1224,10 @@ refresh().then(() => {
     openReader("board");
   }
 });
+
+$("desktop-toggle").onclick = () =>
+  refreshDesktopControls(desktopState ? !desktopState.enabled : undefined);
+$("desktop-reopen").onclick = () => refreshDesktopControls(true);
 
 $("desktop-open").onclick = () => {
   $("menu").close();

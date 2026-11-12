@@ -81,11 +81,6 @@
   justify-content: space-between;
   gap: 0.7rem;
 }
-.desktop-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
 .desktop-field input {
   inline-size: 5.5rem;
   max-inline-size: 38%;
