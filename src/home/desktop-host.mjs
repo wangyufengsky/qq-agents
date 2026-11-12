@@ -276,7 +276,7 @@ export class DesktopHost {
     try {
       const backend = runtime.backendConnections.adapter(agent);
       if (!backend.runDesktop) throw Error("DESKTOP_VISIT_UNAVAILABLE");
-      if (kind === "chat") this.sessions.set(session, backend);
+      if (kind !== "opportunity") this.sessions.set(session, backend);
       let decision;
       const call = (name, args) => {
         check();
@@ -296,7 +296,7 @@ export class DesktopHost {
       await backend.runDesktop({
         binding: {
           runId: randomUUID(),
-          windowId: kind === "chat" ? session : null,
+          windowId: kind === "opportunity" ? null : session,
           actorIdentity: { generation: actor },
           target: { kind: "desktop-room" },
         },

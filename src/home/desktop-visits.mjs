@@ -97,7 +97,10 @@ export class DesktopVisits {
   beginDesktop(controller) {
     const { runtime, agentId } = this;
     const agent = runtime.agent(agentId);
-    if (this.qqClaims || this.pendingQq()) throw Error("DESKTOP_QQ_PRIORITY");
+    if (this.qqClaims || this.pendingQq())
+      throw Object.assign(Error("DESKTOP_QQ_PRIORITY"), {
+        desktopSessionUntouched: true,
+      });
     if (
       runtime.blockers(agent).length ||
       runtime.games.busy(agent.backendId) ||

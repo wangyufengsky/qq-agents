@@ -62,9 +62,11 @@ test("management policy drives the authenticated desktop room and hot revocation
   );
   const pending = [];
   const closed = [];
+  const windows = [];
   backend.runDesktop = async (p) => {
     p.beforeInput();
-    if (!p.binding.windowId)
+    windows.push(p.binding.windowId);
+    if (p.prompt.startsWith("管理员邀请"))
       return p.callTool("desktop_room_decide", { action: "accept" });
     await new Promise((resolve) => pending.push({ resolve, signal: p.signal }));
     p.signal.throwIfAborted();
@@ -81,6 +83,8 @@ test("management policy drives the authenticated desktop room and hot revocation
   assert.equal((await command("sync")).room.roles[0].state, "here");
   await command("send", "本地桌面消息");
   assert.equal(pending.length, 1);
+  assert(windows[0]);
+  assert.equal(windows[1], windows[0]);
   pending[0].resolve();
   await check();
   const replied = (await command("sync")).room;
@@ -92,7 +96,15 @@ test("management policy drives the authenticated desktop room and hot revocation
   assert.equal(updated.roles[0].state, "here");
   assert.equal(updated.maxTurns, 5);
   assert.equal(updated.nextRefill, null);
+  const claim = f.runtime.desktopVisits.claimQq("agent-0", "private:30000");
+  assert(claim);
+  await command("send", "QQ 优先时的桌面消息");
+  await check();
+  claim.release();
+  assert.equal(windows.length, 2);
+  assert.deepEqual(closed, []);
   await command("send", "新桌面消息");
+  assert.equal(windows[2], windows[0]);
   await f.runtime.ingest(
     "qq-0",
     raw(22, {

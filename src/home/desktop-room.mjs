@@ -161,19 +161,21 @@ export class LiveRoom {
     if (!invite(this.room, role)) return;
     const controller = new AbortController();
     this.invites.set(role.id, { controller });
+    const visit = this.newVisit();
+    let admitted = false;
     this.onChange();
     try {
       const reply = await this.runner.run(
         {
           actor: role.id,
           kind: "invitation",
-          session: randomUUID(),
+          session: visit.session,
           people: this.here().map(({ name }) => name),
         },
         controller.signal,
       );
       if (controller.signal.aborted || this.closed) return;
-      if (reply.action === "accept") this.admit(role);
+      if (reply.action === "accept") admitted = this.admit(role, visit);
       else decline(this.room, role);
     } catch {
       if (
@@ -183,21 +185,26 @@ export class LiveRoom {
       )
         this.room.notice = `${role.name}暂时无法回应邀请。`;
     } finally {
+      if (!admitted) this.runner.retire(role.id, visit.session);
       this.invites.delete(role.id);
       this.onChange();
     }
   }
 
-  admit(role) {
-    if (!arrive(this.room, role)) return;
-    // A wider audience starts a fresh model context for everyone in the room.
+  admit(role, incoming = this.newVisit()) {
+    if (!arrive(this.room, role)) return false;
+    // Only sessions that saw the narrower conversation must be retired.
     this.audienceStart = this.room.sequence;
     this.room.waiting = [];
     this.room.turn = null;
     this.active?.controller.abort();
-    for (const [id, visit] of this.visits)
-      this.runner.retire(id, visit.session);
-    for (const { id } of this.here()) this.visits.set(id, this.newVisit());
+    for (const [id, visit] of this.visits) {
+      if (visit.chatStarted) this.resetVisit(id, visit);
+      else visit.cursor = this.audienceStart;
+    }
+    incoming.cursor = this.audienceStart;
+    this.visits.set(role.id, incoming);
+    return true;
   }
 
   setDoorMode(mode, now = Date.now()) {
@@ -298,7 +305,11 @@ export class LiveRoom {
   }
 
   newVisit() {
-    return { session: randomUUID(), cursor: this.audienceStart };
+    return {
+      session: randomUUID(),
+      cursor: this.audienceStart,
+      chatStarted: false,
+    };
   }
 
   resetVisit(id, visit) {
@@ -350,6 +361,8 @@ export class LiveRoom {
     if (!turn) return;
     const actor = turn.actor;
     const visit = this.visits.get(actor);
+    const previouslyStarted = visit.chatStarted;
+    visit.chatStarted = true;
     const controller = new AbortController();
     this.active = { actor, visit, controller };
     const cursor = this.room.sequence;
@@ -393,7 +406,9 @@ export class LiveRoom {
         !this.closed &&
         this.visits.get(actor) === visit
       ) {
-        this.resetVisit(actor, visit);
+        if (error.desktopSessionUntouched === true)
+          visit.chatStarted = previouslyStarted;
+        else this.resetVisit(actor, visit);
         finishTurn(this.room, turn, Date.now(), "");
         const role = this.room.roles.find(({ id }) => id === actor);
         if (error.message === "DESKTOP_QQ_PRIORITY") {

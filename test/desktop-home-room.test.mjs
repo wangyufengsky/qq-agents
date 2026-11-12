@@ -183,3 +183,36 @@ test("busy mode cancels a pending opportunity and suppresses its late knock", as
   await live.offerOpportunity({ trial: true });
   assert.equal(jobs.length, 1);
 });
+
+test("an accepted invitation is reused for the first chat with the final audience", async () => {
+  const { live, jobs, retired, settle, arrive } = harness();
+  await arrive(dragon);
+  const invitation = jobs.at(-1).request;
+  await arrive(cat);
+  live.send("@龙 你先说");
+  const firstChat = jobs.at(-1);
+  assert.equal(firstChat.request.kind, "chat");
+  assert.equal(firstChat.request.session, invitation.session);
+  assert(!retired.some(({ session }) => session === invitation.session));
+  await settle(firstChat, { action: "silent" });
+});
+
+test("QQ waiting before model admission does not retire the desktop session", async () => {
+  const { live, jobs, room, retired, settle, arrive } = harness();
+  await arrive(dragon);
+  live.send("第一条");
+  const first = jobs.at(-1);
+  await settle(first, { action: "silent" });
+  live.send("第二条");
+  jobs.at(-1).reject(
+    Object.assign(Error("DESKTOP_QQ_PRIORITY"), {
+      desktopSessionUntouched: true,
+    }),
+  );
+  await new Promise(setImmediate);
+  assert.equal(room.members.dragon, "here");
+  assert(room.messages.some(({ text }) => text.includes("先去处理 QQ")));
+  assert(!retired.some(({ session }) => session === first.request.session));
+  live.send("回来以后");
+  assert.equal(jobs.at(-1).request.session, first.request.session);
+});

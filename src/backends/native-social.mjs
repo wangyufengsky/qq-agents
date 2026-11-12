@@ -97,6 +97,7 @@ export async function runNativeSocial(
     await check();
     await backend.run({
       social: true,
+      desktop: surface === "desktop",
       conversation: capsule.conversation,
       instructions: capsule.session ? undefined : params.instructions,
       prompt: params.prompt,

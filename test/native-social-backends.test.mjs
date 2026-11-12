@@ -505,8 +505,10 @@ function dshSocialFixture(t, { hold = false } = {}) {
   const client = {
     agentPresets: { list: async () => ok({ presets: [{ id: "qq-unified" }] }) },
     workspace: {
-      create: async () =>
-        ok({ workspace: { workspaceId: "social-workspace" } }),
+      create: async (args) => {
+        calls.push({ name: "workspace", args });
+        return ok({ workspace: { workspaceId: "social-workspace" } });
+      },
     },
     sessions: {
       create: async (args) => {
@@ -869,6 +871,31 @@ test("DSH window continuation uses its existing native session with only the cur
   );
   await backend.closeSocialSessions({ windowId: "window-one" });
   assert.equal(calls.filter((call) => call.name === "drain").length, 1);
+});
+
+test("DSH desktop invitation and chat share one native session in a desktop workspace", async (t) => {
+  const { backend, calls } = dshSocialFixture(t);
+  for (const runId of ["invitation", "chat"]) {
+    const params = windowParams(runId);
+    params.tools[0].function.name = "desktop_room_decide";
+    await backend.runDesktop({
+      ...params,
+      socialContextToken: "synthetic-desktop-capability-" + runId,
+    });
+  }
+  const workspaces = calls.filter(({ name }) => name === "workspace");
+  assert.equal(workspaces.length, 1);
+  assert.equal(
+    path.basename(path.dirname(workspaces[0].args.path)),
+    "dsh-desktop-workspaces",
+  );
+  assert.equal(path.basename(workspaces[0].args.path), "agent-0-desktop");
+  const created = calls.filter(({ name }) => name === "create");
+  assert.equal(created.length, 1);
+  assert.match(created[0].args.sessionId, /^session-/);
+  const prompts = calls.filter(({ name }) => name === "prompt");
+  assert.equal(prompts.length, 2);
+  assert.equal(prompts[0].args.sessionId, prompts[1].args.sessionId);
 });
 
 test("Codex window continuation resumes only its own thread and installs the latest tool closure", async (t) => {
