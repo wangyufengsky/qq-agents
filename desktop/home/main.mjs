@@ -8,16 +8,10 @@ import {
   screen,
   Tray,
 } from "electron";
-import {
-  constants,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
-import { open } from "node:fs/promises";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { basename, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { openNoFollowAsync } from "../../src/core/no-follow.mjs";
 import { createFrameworkClient } from "./framework-client.mjs";
 import { LiveRoom } from "./live-room.mjs";
 import { startModelClient } from "./model-client.mjs";
@@ -531,10 +525,7 @@ ipcMain.handle("room:attach", async (event) => {
     const maxBytes = imageExtensions.includes(extension)
       ? 2 * 1024 * 1024
       : 12 * 1024;
-    const file = await open(
-      selected,
-      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-    );
+    const file = await openNoFollowAsync(selected);
     try {
       const stat = await file.stat();
       if (!stat.isFile() || stat.size < 1 || stat.size > maxBytes)

@@ -9,6 +9,7 @@
 ### Windows 桌面小窝（[#276](https://github.com/wangyufengsky/qq-agents/pull/276)）
 
 - 原生 Windows QQ Agents 可在已登录的用户桌面从本机管理台打开、取消启动及关闭桌面小窝，沿用既有房间、会话、记忆、工具权限和数据目录。此项无需更改配置或迁移数据库。
+- Windows 桌面客户端通过文件身份检查拒绝附件路径末段的符号链接，延续 macOS 的附件读取限制。
 - 补充 Windows 启动说明和后续本机截图、桌面操作与网页操作的接入位置。
 
 ### 按角色启用桌面聊天工具（[#274](https://github.com/wangyufengsky/qq-agents/pull/274)）

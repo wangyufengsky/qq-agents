@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { openNoFollow } from "../src/core/no-follow.mjs";
+import { openNoFollow, openNoFollowAsync } from "../src/core/no-follow.mjs";
 import { temp } from "./helpers.mjs";
 
 // The flag path is what macOS/Linux use; flag 0 is the lstat + identity check
@@ -34,5 +34,27 @@ for (const [label, options] of [
     assert.throws(() => openNoFollow(path.join(root, "missing"), options), {
       code: "ENOENT",
     });
+  });
+
+  test(`openNoFollowAsync (${label}) reads regular files and refuses symlinks`, async (t) => {
+    if (label === "O_NOFOLLOW" && !fs.constants.O_NOFOLLOW) return t.skip();
+    const root = temp(t),
+      outside = path.join(root, "outside"),
+      link = path.join(root, "link");
+    fs.writeFileSync(outside, "outside bytes");
+    const handle = await openNoFollowAsync(outside, options);
+    try {
+      assert.equal(await handle.readFile("utf8"), "outside bytes");
+    } finally {
+      await handle.close();
+    }
+    fs.symlinkSync(outside, link);
+    await assert.rejects(openNoFollowAsync(link, options), { code: "ELOOP" });
+    await assert.rejects(
+      openNoFollowAsync(path.join(root, "missing"), options),
+      {
+        code: "ENOENT",
+      },
+    );
   });
 }
