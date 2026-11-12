@@ -3,6 +3,8 @@ import { z } from "zod";
 import { SessionPreparationFailure } from "../backends/turn-failure.mjs";
 import { recallBoundary } from "../core/recall-boundary.mjs";
 import { containsCredential } from "../core/secrets.mjs";
+import { roleBackendConfig } from "../core/functional-agents.mjs";
+import { rhythmStatus } from "../core/rhythm.mjs";
 import {
   DesktopAttachments,
   parseDesktopAttachment,
@@ -49,7 +51,23 @@ const requestSchema = z
   })
   .strict();
 const CLIENT_LEASE = 15_000;
-const types = new Set(["codex", "antigravity", "dsh"]);
+const defaultArt = { dsh: "fish", codex: "dragon", antigravity: "cat" };
+
+function residentArt(agent, backend) {
+  const { model, provider } = roleBackendConfig(agent, backend);
+  const family = [model, provider]
+    .map((value) =>
+      /(?:^|[/:._-])(deepseek|gemini|codex|gpt)(?=$|[/:._-])/i
+        .exec(value)?.[1]
+        ?.toLowerCase(),
+    )
+    .find(Boolean);
+  const id =
+    { deepseek: "fish", gemini: "cat", codex: "dragon", gpt: "dragon" }[
+      family
+    ] ?? defaultArt[backend.type];
+  return art.find((style) => style.id === id);
+}
 
 function explicitTargets(text, roles) {
   const names = new Map();
@@ -86,18 +104,17 @@ export class DesktopHost {
       ({ id }) => id === agent.backendId,
     );
     if (
-      types.has(backend?.type) &&
+      Object.hasOwn(defaultArt, backend?.type) &&
       (backend.type !== "dsh" || backend.preset === "qq-unified")
     )
       return backend;
   }
 
   catalog() {
-    return this.runtime.config.agents.flatMap((agent, index) => {
+    return this.runtime.config.agents.flatMap((agent) => {
       const backend = this.backendFor(agent);
       if (!backend) return [];
-      const style =
-        art.find(({ id }) => id === agent.id) || art[index % art.length];
+      const style = residentArt(agent, backend);
       return [
         {
           id: agent.id,
@@ -364,7 +381,7 @@ export class DesktopHost {
       this.client.expiresAt = this.runtime.now() + CLIENT_LEASE;
     const { live } = this;
     if (this.runtime.updateMaintenance)
-      return { enabled: true, room: live.snapshot() };
+      return { enabled: true, room: this.roomSnapshot() };
     const role = live.room.roles.find(({ id }) => id === data);
     if (action === "invite" && role) void live.invite(role);
     if (action === "leave" && role) live.leave(role);
@@ -398,11 +415,49 @@ export class DesktopHost {
     };
   }
 
+  roomSnapshot() {
+    const { runtime, screen, native } = this;
+    const room = this.live.snapshot();
+    const viewing = screen.request() && screen.grant.agentId;
+    const windowAction = native.request();
+    const operating = windowAction && native.grant.agentId;
+    const qq = new Set();
+    for (const ctx of runtime.running.values()) {
+      if (
+        /^(group|private):/.test(ctx.conversation) &&
+        !ctx.controller.signal.aborted
+      )
+        qq.add(ctx.agentId);
+    }
+    return {
+      ...room,
+      roles: room.roles.map((role) => {
+        const { id } = role;
+        const desktop = runtime.running.get(`${id}|${DESKTOP_CONVERSATION}`);
+        let activity = "idle";
+        if (id === operating)
+          activity =
+            windowAction.action.type === "observe" ? "observe" : "control";
+        else if (id === viewing) activity = "observe";
+        else if (qq.has(id)) activity = "qq";
+        else if (
+          (desktop && !desktop.controller.signal.aborted) ||
+          room.thinking === id ||
+          room.bubbles[id]
+        )
+          activity = "chat";
+        else if (rhythmStatus(runtime, runtime.agent(id)).state === "sleeping")
+          activity = "sleep";
+        return { ...role, activity };
+      }),
+    };
+  }
+
   clientSnapshot() {
     return {
       enabled: true,
       room: {
-        ...this.live.snapshot(),
+        ...this.roomSnapshot(),
         screenView: this.screen.state(),
         nativeControl: this.native.state(),
         browserControl: this.browser.state(),

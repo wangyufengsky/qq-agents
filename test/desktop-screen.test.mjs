@@ -134,6 +134,7 @@ test("screen bytes reach only the selected desktop turn and the next turn gets a
   });
   assert.deepEqual(room.screenView.eligible, ["agent-0", "agent-1"]);
   assert.equal(room.screenView.grantedAgentId, "agent-0");
+  assert.equal(room.roles[0].activity, "idle");
   for (const conversation of ["private:30000", "@subject"]) {
     assert(
       !runtime.toolsFor(runtime.agent("agent-0"), conversation).includes(tool),
@@ -150,6 +151,7 @@ test("screen bytes reach only the selected desktop turn and the next turn gets a
     const output = call();
     const request = await waitForRequest(command);
     assert.equal(request.roomEpoch, roomEpoch);
+    assert.equal((await command("sync")).room.roles[0].activity, "observe");
     assert.equal(request.grantId, grantId);
     assert(request.maxEdge >= 16);
     assert(request.maxBytes >= Buffer.from(jpeg, "base64").length);
@@ -186,6 +188,7 @@ test("screen bytes reach only the selected desktop turn and the next turn gets a
     assert.equal((await result(payload)).ok, false);
     assert.equal((await command("sync")).screenRequest, undefined);
     assert.equal((await call()).isError, true);
+    assert.equal((await command("sync")).room.roles[0].activity, "chat");
   });
 
   assert.deepEqual(host.archive.history(), before);
@@ -249,6 +252,7 @@ test("native requests belong to the selected desktop turn and stop when QQ takes
         await delay(10);
       }
       const { nativeRequest, nativeTurnId } = snapshot;
+      assert.equal(snapshot.room.roles[0].activity, "control");
       assert.equal(nativeRequest.turnId, nativeTurnId);
       assert.equal(nativeRequest.grantId, grantId);
       assert.deepEqual(nativeRequest.action, { type: "click", ref: "ref_1" });

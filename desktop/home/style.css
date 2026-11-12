@@ -565,6 +565,7 @@ h2 {
 }
 .door-button {
   inset: 5px 8px 10px;
+  cursor: grab;
 }
 .door-button img,
 .sprite-button img {
@@ -594,8 +595,81 @@ h2 {
   bottom: 4px;
   cursor: grab;
 }
+.door-button:active,
 .sprite-button:active {
   cursor: grabbing;
+}
+.sprite-button[data-activity] img {
+  transform-origin: 50% 88%;
+  animation: var(--pose-motion) var(--pose-duration) ease-in-out infinite;
+}
+.sprite-button[data-dragging] img {
+  animation-play-state: paused;
+}
+.sprite-button[data-activity="qq"] {
+  --pose-motion: paper-qq;
+  --pose-duration: 1.4s;
+}
+.sprite-button[data-activity="chat"] {
+  --pose-motion: paper-chat;
+  --pose-duration: 1.5s;
+}
+.sprite-button[data-activity="observe"] {
+  --pose-motion: paper-observe;
+  --pose-duration: 2.2s;
+}
+.sprite-button[data-activity="control"] {
+  --pose-motion: paper-control;
+  --pose-duration: 1s;
+}
+.sprite-button[data-activity="idle"] {
+  --pose-motion: paper-idle;
+  --pose-duration: 4.4s;
+}
+.sprite-button[data-activity="sleep"] {
+  --pose-motion: paper-sleep;
+  --pose-duration: 5.8s;
+}
+@keyframes paper-qq {
+  28%,
+  60% {
+    transform: translateY(1px) rotate(2deg);
+  }
+  44% {
+    transform: rotate(-1deg);
+  }
+}
+@keyframes paper-chat {
+  40% {
+    transform: translateY(-4px) rotate(-3deg);
+  }
+  72% {
+    transform: translateY(-1px) rotate(1deg);
+  }
+}
+@keyframes paper-observe {
+  42%,
+  65% {
+    transform: translateX(2px) rotate(5deg);
+  }
+}
+@keyframes paper-control {
+  25% {
+    transform: translateY(1px) rotate(-1.5deg);
+  }
+  60% {
+    transform: translateY(1px) rotate(1.5deg);
+  }
+}
+@keyframes paper-idle {
+  50% {
+    transform: translateY(-2px) scaleY(1.015);
+  }
+}
+@keyframes paper-sleep {
+  50% {
+    transform: scale(1.015, 1.025);
+  }
 }
 .speech {
   position: absolute;
@@ -635,5 +709,6 @@ h2 {
   *::before,
   *::after {
     transition: none !important;
+    animation: none !important;
   }
 }

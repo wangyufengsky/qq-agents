@@ -89,6 +89,11 @@ export class DesktopNative extends DesktopLocalGrant {
     this.pending = null;
   }
 
+  request() {
+    const pending = this.pending;
+    if (pending?.current() && !pending.received) return pending.request;
+  }
+
   clientWork() {
     if (!this.current(this.grant)) return {};
     const { runtime } = this.host;
@@ -96,11 +101,10 @@ export class DesktopNative extends DesktopLocalGrant {
       this.grant.agentId + "|" + DESKTOP_CONVERSATION,
     );
     if (!ctx?.turnId || ctx.controller.signal.aborted) return {};
-    const pending = this.pending;
+    const nativeRequest = this.request();
     return {
       nativeTurnId: ctx.turnId,
-      ...(pending?.current() &&
-        !pending.received && { nativeRequest: pending.request }),
+      ...(nativeRequest && { nativeRequest }),
     };
   }
 
