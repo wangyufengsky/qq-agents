@@ -303,15 +303,15 @@ export function createServer({
         const local = ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(
           req.socket.remoteAddress,
         );
-        if (!local || !equal(req.headers["x-admin-token"], token))
+        if (!equal(req.headers["x-admin-token"], token))
           return deny("UNAUTHORIZED", 401);
+        // Proxied consoles may save the policy. Only the Mac's loopback can launch a window.
+        const launcher = local ? desktopLauncher : undefined;
         const desktop = runtime.desktopVisits;
         const status = () => ({
           enabled: desktop.configured(),
-          canLaunch: Boolean(desktopLauncher),
-          window: desktop.connected()
-            ? "open"
-            : (desktopLauncher?.state ?? "idle"),
+          canLaunch: Boolean(launcher),
+          window: desktop.connected() ? "open" : (launcher?.state ?? "idle"),
         });
         if (req.method === "GET") return send(status());
         if (req.method !== "POST") return deny("METHOD", 405);
@@ -321,7 +321,7 @@ export function createServer({
           .safeParse(await readBody(512));
         if (!input.success) throw Error("INVALID_REQUEST");
         const { enabled } = input.data;
-        if (enabled && desktopLauncher && !desktop.available())
+        if (enabled && launcher && !desktop.available())
           throw Error("DESKTOP_VISIT_UNAVAILABLE");
         if (enabled !== desktop.configured()) {
           await runtime.changeConfig(
@@ -334,7 +334,7 @@ export function createServer({
         }
         if (!desktop.configured()) desktopLauncher?.cancel();
         else if (enabled && desktop.available() && !desktop.connected())
-          desktopLauncher?.open(server.address().port);
+          launcher?.open(server.address().port);
         return send(status());
       }
       const desktopCapability = req.headers["x-agent-capability"];
