@@ -162,24 +162,35 @@ export class LiveRoom {
     const controller = new AbortController();
     this.invites.set(role.id, { controller });
     this.onChange();
-    const session = this.sessionFor(role.id);
+    const session = this.runner.requestInvitation
+      ? undefined
+      : this.sessionFor(role.id);
     try {
       if (this.active?.actor === role.id) await this.active.done;
       if (controller.signal.aborted || this.closed) return;
-      const reply = await this.runner.run(
-        {
-          actor: role.id,
-          kind: "invitation",
-          session,
-          people: this.here().map(({ name }) => name),
-        },
-        controller.signal,
-      );
+      const reply = this.runner.requestInvitation
+        ? await this.runner.requestInvitation(
+            { actor: role.id },
+            controller.signal,
+          )
+        : await this.runner.run(
+            {
+              actor: role.id,
+              kind: "invitation",
+              session,
+              people: this.here().map(({ name }) => name),
+            },
+            controller.signal,
+          );
       if (controller.signal.aborted || this.closed) return;
       if (reply.action === "accept") this.admit(role);
       else decline(this.room, role);
     } catch (error) {
-      if (error.desktopSessionUntouched !== true) this.retire(role.id, session);
+      if (
+        !this.runner.requestInvitation &&
+        error.desktopSessionUntouched !== true
+      )
+        this.retire(role.id, session);
       if (
         !controller.signal.aborted &&
         !this.closed &&
@@ -194,11 +205,8 @@ export class LiveRoom {
 
   admit(role) {
     if (!arrive(this.room, role)) return;
-    // Drop a pending reply addressed to the previous audience. The role's
-    // own transcript stays intact, and a new guest starts at this cursor.
-    this.room.waiting = [];
-    this.room.turn = null;
-    for (const visit of this.visits.values()) visit.cursor = this.room.sequence;
+    // Only the newcomer starts at the current cursor. Messages already queued
+    // for other participants still belong to their visits.
     this.visits.set(role.id, { cursor: this.room.sequence });
   }
 
@@ -361,6 +369,7 @@ export class LiveRoom {
           session,
           people: this.here().map(({ name }) => name),
           messages: this.context(visit.cursor),
+          isCurrent: () => this.visits.get(actor) === visit,
         },
         controller.signal,
         () => this.visits.get(actor) === visit && this.room.turn === turn,

@@ -1,4 +1,5 @@
 import { DESKTOP_VISIT_TOOL } from "../home/desktop-visits.mjs";
+import { DESKTOP_INVITATION_TOOL } from "../home/desktop-invitations.mjs";
 import { homeSceneView } from "../home/scene-view.mjs";
 import { z } from "zod";
 import {
@@ -19,6 +20,12 @@ export const homeDefinitions = {
   [DESKTOP_VISIT_TOOL]: [
     "申请到管理员的桌面小窝串门。仅限本人正常主人格回合，想来时可用；可以照常休息或做自己的事。申请只会敲门，需等管理员请进才算到场。无参数。",
     z.object({}).strict(),
+  ],
+  [DESKTOP_INVITATION_TOOL]: [
+    "同意或婉拒本轮展示的管理员桌面小窝邀请。仅限受邀角色的主人格；决定在本轮正常结束、邀请仍有效时生效。",
+    z
+      .object({ id: z.string().uuid(), action: z.enum(["accept", "decline"]) })
+      .strict(),
   ],
   room_intent_submit: [
     "向自己的 @subject 主人格递交一项小窝提议，启用统一会话提议时会安排主人格查看；由主人格决定是否执行。家具提议不带正文；文字提议不得包含聊天或受保护来源。先 room_read 取得身份代次。同一 requestId 只递交一次。",
@@ -150,6 +157,11 @@ export const homeModeration = z
   .object({ ...item, action: z.enum(["hide", "release"]) })
   .strict();
 export function homeTool(runtime, ctx, name, args) {
+  if (name === DESKTOP_INVITATION_TOOL) {
+    if (!runtime.desktopVisits?.invitations)
+      throw Error("DESKTOP_VISIT_UNAVAILABLE");
+    return runtime.desktopVisits.invitations.decide(ctx, args);
+  }
   if (name === DESKTOP_VISIT_TOOL) {
     if (!runtime.desktopVisits) throw Error("DESKTOP_VISIT_UNAVAILABLE");
     return runtime.desktopVisits.request(ctx);

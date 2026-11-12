@@ -295,7 +295,11 @@ export function createServer({
         );
         if (!local || !equal(req.headers["x-desktop-home-token"], desktopKey))
           return deny("UNAUTHORIZED", 401);
-        const state = runtime.desktopVisits.command(await readBody(4096));
+        // An existing desktop client can renew its lease while turns drain.
+        // The desktop host closes admission until maintenance ends.
+        const input = await body(req, 4096);
+        if (stopping || runtime.closed) throw Error("RUNTIME_CLOSING");
+        const state = runtime.desktopVisits.command(input);
         if (state.room) desktopLauncher?.connected();
         return send(state);
       }
@@ -337,28 +341,14 @@ export function createServer({
           launcher?.open(server.address().port);
         return send(status());
       }
-      const desktopCapability = req.headers["x-agent-capability"];
-      if (
-        (url.pathname === "/agent/catalog" ||
-          url.pathname === "/agent/tools") &&
-        runtime.desktopVisits?.scopes?.has(desktopCapability)
-      ) {
-        if (req.method !== "POST") return deny("METHOD", 405);
-        if (!equal(req.headers["x-agent-relay-token"], relayToken))
-          return deny("MCP_RELAY_AUTH_REQUIRED", 403);
-        return send(
-          mcpResult(
-            runtime.desktopVisits.bridge(
-              desktopCapability,
-              url.pathname,
-              await readBody(8192),
-            ),
-          ),
-        );
-      }
       if (url.pathname === "/agent/catalog") {
         const ctx = runtime.capability(req.headers["x-agent-capability"]);
         if (req.method !== "POST") return send({ error: "METHOD" }, 405);
+        if (
+          ctx.runtimeKind === "desktop" &&
+          !equal(req.headers["x-agent-relay-token"], relayToken)
+        )
+          return deny("MCP_RELAY_AUTH_REQUIRED", 403);
         try {
           const catalogRequest = await readBody(undefined, ctx);
           if (ctx.runtimeKind === "subject-social")
@@ -424,7 +414,7 @@ export function createServer({
               finalizeToolOutput: (value, options) =>
                 runtime.finalizeToolOutput(ctx, value, {
                   ...options,
-                  maxBytes: 65024,
+                  maxBytes: ctx.runtimeKind === "desktop" ? 4096 : 65024,
                 }),
             },
             original,
@@ -452,6 +442,13 @@ export function createServer({
         };
         try {
           if (ctx.inputEpoch !== epoch) throw Error("INPUT_EPOCH_CHANGED");
+          if (ctx.runtimeKind === "desktop") {
+            if (!relay) throw Error("MCP_RELAY_AUTH_REQUIRED");
+            // Authenticated relay tools can prove input arrived before the
+            // DSH prompt acknowledgement is returned over HTTP.
+            scopedCatalog(runtime, ctx, { names: [data.name] });
+            await ctx.desktopConsumeInput?.();
+          }
           if (
             ctx.requiresInputSubmission &&
             ctx.backendInputEpoch !== ctx.inputEpoch

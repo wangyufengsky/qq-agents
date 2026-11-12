@@ -1,6 +1,7 @@
 // Shared by configuration defaults and the tool registry without loading handlers.
 import { SOCIAL_TOOLS } from "../home/social-tool-names.mjs";
 export const FUNCTIONAL_AGENT_RESULT = "functional_agent_result";
+export const DESKTOP_DECISION = "desktop_room_decide";
 export const TOOL_NAMES = Object.freeze([
   "qq_recall",
   "protected_work_submit",
@@ -104,6 +105,7 @@ export const TOOL_NAMES = Object.freeze([
   "board_react",
   "board_retract",
   "desktop_visit_request",
+  "desktop_invitation_decide",
   "room_intent_submit",
   "room_intent_list",
   "room_intent_resolve",

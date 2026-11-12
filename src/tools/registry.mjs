@@ -4,7 +4,11 @@ import { profileDefinitions, profileTool } from "./profile.mjs";
 import { qzoneDefinitions, qzoneTool } from "./qzone.mjs";
 import { gameDefinitions, gameTool } from "../games/framework/tools.mjs";
 import { definitions } from "./definitions.mjs";
-import { FUNCTIONAL_AGENT_RESULT, TOOL_NAMES } from "./names.mjs";
+import {
+  DESKTOP_DECISION,
+  FUNCTIONAL_AGENT_RESULT,
+  TOOL_NAMES,
+} from "./names.mjs";
 import { coreHandlers } from "./core-handlers.mjs";
 import { recallFromChat } from "../core/memory-recall.mjs";
 import { draftDefinitions, draftTool } from "./qq-drafts.mjs";
@@ -23,6 +27,10 @@ import { boardDefinitions, boardTool } from "./board.mjs";
 const handlers = {
   ...coreHandlers,
   memory_recall: recallFromChat,
+  [DESKTOP_DECISION]: (_runtime, ctx, args) => {
+    if (ctx.runtimeKind !== "desktop") throw Error("TOOL_DISABLED");
+    return ctx.desktopDecision(args);
+  },
   [FUNCTIONAL_AGENT_RESULT]: (runtime, ctx, args) => {
     runtime.validateFunctionalEvidence(ctx, args.evidenceIds);
     if (args.contribution) runtime.assertSafeOutput(ctx, args.contribution);
@@ -53,7 +61,11 @@ for (const [group, dispatch] of [
     if (Object.hasOwn(handlers, name)) throw Error("DUPLICATE_TOOL_HANDLER");
     handlers[name] = (runtime, ctx, args) => dispatch(runtime, ctx, name, args);
   }
-const registeredNames = [...TOOL_NAMES, FUNCTIONAL_AGENT_RESULT];
+const registeredNames = [
+  ...TOOL_NAMES,
+  FUNCTIONAL_AGENT_RESULT,
+  DESKTOP_DECISION,
+];
 if (
   new Set(registeredNames).size !== registeredNames.length ||
   registeredNames.length !== Object.keys(definitions).length ||
