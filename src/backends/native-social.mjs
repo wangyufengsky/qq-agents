@@ -6,6 +6,7 @@ import {
   DESKTOP_HISTORY,
   DESKTOP_MEMORY_TOOLS,
 } from "../tools/names.mjs";
+import { desktopToolCandidate } from "../tools/desktop-policy.mjs";
 import { SOCIAL_TOOLS } from "../home/social-tool-names.mjs";
 
 const allowed = new Set([
@@ -22,20 +23,45 @@ const desktopAllowed = new Set([
   DESKTOP_HISTORY,
   ...DESKTOP_MEMORY_TOOLS,
 ]);
+const desktopMedia = new Set(["qq_image_read", "sticker_read"]);
+const desktopImageTypes = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+]);
 
-/** Only the controlled scene tool may add pixels outside the text quota.
- * @param {string} name @param {any} result @param {number} maxTextBytes */
-export function assertSocialToolResult(name, result, maxTextBytes) {
+/** Only registered image readers may add pixels outside the text quota.
+ * @param {string} name @param {any} result @param {number} maxTextBytes
+ * @param {boolean} [desktop] */
+export function assertSocialToolResult(
+  name,
+  result,
+  maxTextBytes,
+  desktop = false,
+) {
   const content = Array.isArray(result?.content) ? result.content : [],
     images = content.filter((/** @type {any} */ item) => item.type === "image");
   if (images.length) {
+    const regularImage = desktop && desktopMedia.has(name);
+    const imageLimit = (regularImage ? 8 : 4) * 1024 * 1024;
     if (
-      name !== "room_scene_view" ||
-      images.length !== 1 ||
-      images[0].mimeType !== "image/png" ||
-      typeof images[0].data !== "string" ||
-      images[0].data.length > Math.ceil((4 * 1024 * 1024) / 3) * 4 ||
-      Buffer.from(images[0].data, "base64").length > 4 * 1024 * 1024
+      (regularImage
+        ? images.length > 12
+        : name !== "room_scene_view" || images.length !== 1) ||
+      images.some(
+        (/** @type {any} */ image) =>
+          !(regularImage
+            ? desktopImageTypes.has(image.mimeType)
+            : image.mimeType === "image/png") ||
+          typeof image.data !== "string" ||
+          image.data.length > Math.ceil(imageLimit / 3) * 4,
+      ) ||
+      images.reduce(
+        (/** @type {number} */ bytes, /** @type {any} */ image) =>
+          bytes + Buffer.byteLength(image.data, "base64"),
+        0,
+      ) > imageLimit
     )
       throw Error("SOCIAL_TOOL_RESULT_LIMIT");
   }
@@ -77,7 +103,13 @@ export async function runNativeSocial(
     inputSchema: tool.function?.parameters,
   }));
   const permitted = surface === "desktop" ? desktopAllowed : allowed;
-  if (tools.some((/** @type {any} */ tool) => !permitted.has(tool.name)))
+  if (
+    tools.some(
+      (/** @type {any} */ tool) =>
+        !permitted.has(tool.name) &&
+        !(surface === "desktop" && desktopToolCandidate(tool.name)),
+    )
+  )
     throw Error("SOCIAL_TOOL_DENIED");
   const names = new Set(tools.map((/** @type {any} */ tool) => tool.name));
   const managed = surface === "desktop" ? params.managedContext : undefined;
@@ -117,6 +149,7 @@ export async function runNativeSocial(
       conversation: capsule.conversation,
       instructions: capsule.session ? undefined : params.instructions,
       prompt: params.prompt,
+      inputImages: surface === "desktop" ? params.inputImages : undefined,
       tools,
       session: capsule.session,
       signal,
@@ -147,7 +180,12 @@ export async function runNativeSocial(
         // never of tool results that have not reached a later model request.
         await consume();
         const result = await params.callTool(name, args);
-        assertSocialToolResult(name, result, params.maxToolResultBytes);
+        assertSocialToolResult(
+          name,
+          result,
+          params.maxToolResultBytes,
+          surface === "desktop",
+        );
         if (!params.shouldStop?.()) await check();
         return result;
       },

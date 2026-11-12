@@ -121,14 +121,18 @@ export class LiveRoom {
       .slice(0, 24);
     return {
       through: rows.at(-1)?.id ?? cursor,
-      messages: rows.map(({ actor, text, speaker, speakerType }) => ({
-        speaker:
-          speaker ??
-          (speakerType === "administrator"
-            ? "管理员"
-            : (this.room.roles.find(({ id }) => id === actor)?.name ?? actor)),
-        text,
-      })),
+      messages: rows.map(
+        ({ actor, text, speaker, speakerType, attachments }) => ({
+          speaker:
+            speaker ??
+            (speakerType === "administrator"
+              ? "管理员"
+              : (this.room.roles.find(({ id }) => id === actor)?.name ??
+                actor)),
+          text,
+          ...(attachments?.length ? { attachments } : {}),
+        }),
+      ),
     };
   }
 

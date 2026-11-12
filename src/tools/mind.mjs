@@ -14,6 +14,7 @@ import { correctionDefinitions, correctionTool } from "./corrections.mjs";
 import { frameworkDefinitions, frameworkTool } from "./framework.mjs";
 import { SUBJECT_APP_TOOLS } from "../apps/policy.mjs";
 import { identityAnchors } from "../core/prompts.mjs";
+import { isDesktopToolContext } from "./desktop-policy.mjs";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { privateGithubSources } from "../github/policy.mjs";
@@ -266,7 +267,7 @@ export const mindDefinitions = {
       .strict(),
   ],
   subject_inbox_submit: [
-    "普通聊天里把休息、联系或接力的提议交给自己的主人格。有空尽快看，忙时等收尾。usefulUntil 是参考时间；同一 requestId 重试不会再提交。休息和发送以实际决定和回执为准。",
+    "普通聊天里把休息、联系或接力的提议交给自己的主人格。桌面小窝支持联系和工作接力。有空尽快看，忙时等收尾。usefulUntil 是参考时间；同一 requestId 重试不会再提交。休息和发送以实际决定和回执为准。",
     z
       .object({
         requestId: text.regex(/^[A-Za-z0-9_-]{1,100}$/),
@@ -330,7 +331,7 @@ export const mindDefinitions = {
       .strict(),
   ],
   subject_inbox_list: [
-    "主人格查看当前可处理的全部会话提议。来源聊天只能查看自己已收到的决定回执。",
+    "主人格查看当前可处理的全部会话提议。来源聊天查看自己的决定回执；桌面还可核对已关联的 QQ 投递状态。",
     z.object({ offset: z.number().int().min(0).default(0) }).strict(),
   ],
   subject_inbox_decide: [
@@ -501,19 +502,25 @@ function executeMindTool(runtime, ctx, name, args) {
       nextOffset: args.offset + 10 < rows.length ? args.offset + 10 : null,
     };
   }
-  if (name === "self_propose")
+  if (name === "self_propose") {
+    if (isDesktopToolContext(ctx))
+      runtime.assertSafeOutput(ctx, JSON.stringify(args));
     return identity.propose(args, ctx, a.selfPolicy, now);
+  }
   if (name === "self_review")
     return identity.review(args, ctx, a.selfPolicy, now);
   if (name === "self_withdraw")
     return identity.withdraw(args.id, args.expectedRevision, ctx, now);
-  if (name === "work_note")
+  if (name === "work_note") {
+    if (isDesktopToolContext(ctx))
+      runtime.assertSafeOutput(ctx, JSON.stringify(args));
     return identity.saveNote(
       args,
       ctx.conversation,
       now,
       contextProtection(runtime, ctx),
     );
+  }
   if (name === "work_notes") {
     const rows = recallBoundary(runtime, ctx).rows(
       identity.notes(ctx.conversation),
@@ -714,6 +721,15 @@ function executeMindTool(runtime, ctx, name, args) {
 export function mindTool(runtime, ctx, name, args) {
   const result = executeMindTool(runtime, ctx, name, args);
   trackSocialMindOutput(runtime, ctx, result);
+  if (name === "projects" && isDesktopToolContext(ctx)) {
+    const projects = result.items || [result.project || result];
+    trackMindRecords(
+      runtime,
+      ctx,
+      projects.flatMap((project) => [project, ...(project.steps || [])]),
+      "project",
+    );
+  }
   if (name === "work_note" || name === "work_notes")
     trackMindRecords(
       runtime,

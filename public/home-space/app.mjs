@@ -787,9 +787,29 @@ async function desktopSettings(root, ticket) {
         "你发新消息也会补满额度。间隔设为 0 时，由新消息补满。",
       ),
     );
+    const toolRoles = el("fieldset", "desktop-tools");
+    toolRoles.append(el("legend", "", "允许在桌面使用额外工具"));
+    const roleInputs = current.config.agents.map((agent) => {
+      const label = el("label", "", agent.name);
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.value = agent.id;
+      input.checked = policy.toolRoles.includes(agent.id);
+      label.prepend(input);
+      toolRoles.append(label);
+      return input;
+    });
+    form.append(
+      toolRoles,
+      el(
+        "p",
+        "social-notice",
+        "角色仍受自己的工具和文件权限约束。联系 QQ 由同角色的主人格审阅，再交给目标 QQ 会话。",
+      ),
+    );
     const status = el("p", "social-notice");
     status.setAttribute("role", "status");
-    const save = el("button", "primary", "保存额度设置");
+    const save = el("button", "primary", "保存桌面设置");
     save.type = "submit";
     form.append(save, status);
     root.replaceChildren(form);
@@ -801,6 +821,7 @@ async function desktopSettings(root, ticket) {
         !state.enabled || !state.canLaunch || state.window === "open";
       open.disabled = busy || state.window === "opening";
       toggle.disabled = save.disabled = busy;
+      for (const input of roleInputs) input.disabled = busy;
       status.textContent = state.enabled
         ? {
             open: "Mac 窗口已打开。",
@@ -860,6 +881,9 @@ async function desktopSettings(root, ticket) {
       const limits = {
         maxTurns: inputs.maxTurns.valueAsNumber,
         refreshMinutes: inputs.refreshMinutes.valueAsNumber,
+        toolRoles: roleInputs
+          .filter((input) => input.checked)
+          .map((input) => input.value),
       };
       try {
         const current = await api("/api/config");
@@ -867,7 +891,9 @@ async function desktopSettings(root, ticket) {
         const existing = current.config.desktopHome;
         if (
           existing.maxTurns !== policy.maxTurns ||
-          existing.refreshMinutes !== policy.refreshMinutes
+          existing.refreshMinutes !== policy.refreshMinutes ||
+          JSON.stringify(existing.toolRoles) !==
+            JSON.stringify(policy.toolRoles)
         ) {
           await desktopSettings(root, ticket);
           if (active()) toast("桌面小窝设置已更新，请核对后再保存。");
@@ -893,6 +919,7 @@ async function desktopSettings(root, ticket) {
       } finally {
         busy = false;
         toggle.disabled = save.disabled = false;
+        for (const input of roleInputs) input.disabled = false;
         open.disabled = state.window === "opening";
       }
     };

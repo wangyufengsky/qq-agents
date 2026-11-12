@@ -5,6 +5,7 @@ import {
   sessionDisplayText,
   validLocalSession,
 } from "../backends/local-session-logs.mjs";
+import { DESKTOP_CONVERSATION } from "../home/desktop-decision.mjs";
 import { knownErrorCodes } from "./error-codes.mjs";
 import { TOOL_NAMES } from "../tools/names.mjs";
 
@@ -23,7 +24,7 @@ const displayTextLimit = 32000;
 const bridgeNames = new Set(TOOL_NAMES);
 
 /** @typedef {import("node:sqlite").DatabaseSync} Database */
-/** @typedef {{key: string, conversation: string, scope: "chat" | "subject", backend: string, id: string, at: number, current: boolean, count: number}} Entry */
+/** @typedef {{key: string, conversation: string, scope: "chat" | "subject" | "desktop", backend: string, id: string, at: number, current: boolean, count: number}} Entry */
 
 /** @param {unknown} n */
 const time = (n) =>
@@ -75,7 +76,12 @@ function catalog(db, agentId) {
     const nativeKey = backend + "/" + id;
     if (!owners.has(nativeKey)) owners.set(nativeKey, new Set());
     owners.get(nativeKey)?.add(conversation);
-    const scope = conversation === subjectScope ? "subject" : "chat";
+    const scope =
+      conversation === subjectScope
+        ? "subject"
+        : conversation === DESKTOP_CONVERSATION
+          ? "desktop"
+          : "chat";
     if (scope === "chat" && !chatScope.test(conversation)) continue;
     const key = createHash("sha256")
       .update(JSON.stringify([agentId, conversation, backend, id]))
@@ -259,6 +265,30 @@ export async function sessionTranscript({
     source = turns.some((turn) => turn.steps.length)
       ? raw.source
       : "unavailable";
+  }
+  if (selected.size && session.scope === "desktop") {
+    // The room commits a visible reply after the model turn finishes, so time
+    // overlap cannot establish which turn produced the message.
+    const replies = db
+      .prepare(
+        `SELECT json_extract(payload,'$.desktop.turnId') AS turnId, observed_at, body
+        FROM events WHERE agent_id=? AND conversation=? AND direction='out'
+        AND kind='message.sent' AND status='confirmed'
+        AND json_extract(payload,'$.desktop.turnId') IN (${[...selected].map(() => "?").join(",")})
+        ORDER BY seq`,
+      )
+      .all(agentId, session.conversation, ...selected.keys());
+    for (const reply of replies) {
+      if (
+        typeof reply.turnId !== "string" ||
+        typeof reply.observed_at !== "string"
+      )
+        continue;
+      selected.get(reply.turnId)?.delivered.push({
+        at: Date.parse(reply.observed_at),
+        ...display(reply.body),
+      });
+    }
   }
   if (since && session.scope === "chat") {
     const sends = db

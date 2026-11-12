@@ -1,3 +1,4 @@
+import { DESKTOP_CONVERSATION } from "../home/desktop-decision.mjs";
 import { needsSubjectReview } from "./subject-inbox-sources.mjs";
 import { refreshAgentRhythm, rhythmStatus } from "./rhythm.mjs";
 import { roleRest, settleRoleRest, subjectInboxEnabled } from "./role-rest.mjs";
@@ -425,7 +426,11 @@ export class SubjectCoordinator {
     return i;
   }
   beforeDelivery(ctx, evidence = ctx) {
-    if (ctx.conversation === SUBJECT) throw Error("SUBJECT_CANNOT_SEND_QQ");
+    if (
+      ctx.conversation === SUBJECT ||
+      ctx.conversation === DESKTOP_CONVERSATION
+    )
+      throw Error("SUBJECT_CANNOT_SEND_QQ");
     if (ctx.intentOnly && !ctx.activeIntentId)
       throw Error("INTENT_DECISION_REQUIRED");
     if (!ctx.activeIntentId) return null;

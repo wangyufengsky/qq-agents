@@ -7,13 +7,14 @@ import { desktopToken } from "../src/home/desktop-auth.mjs";
 import { createServer } from "../src/server.mjs";
 import { config, fixture } from "./helpers.mjs";
 
-function desktop(t, { memoryTools = true } = {}) {
+function desktop(t, { memoryTools = true, configure = () => {} } = {}) {
   const cfg = config(1);
   cfg.desktopHome.enabled = true;
   cfg.agents[0].appearance = "测试外形";
   cfg.agents[0].model = "role-model";
   cfg.agents[0].effort = "high";
   if (!memoryTools) cfg.agents[0].tools = [];
+  configure(cfg);
   const { runtime, store } = fixture(t, { cfg });
   const host = runtime.desktopVisits;
   const client = randomUUID();
@@ -343,4 +344,126 @@ test("desktop dialogue omits protected material from the latest Self", async (t)
     memory.identity.list("model_turns")[0].selfVersion,
     version.version,
   );
+});
+
+test("desktop relay requires role opt-in for additional tools and only queues same-role contact", async (t) => {
+  const { runtime, memory, backend, run } = desktop(t, {
+    configure(cfg) {
+      cfg.desktopHome.toolRoles = ["agent-0"];
+      Object.assign(cfg.agents[0].subject, {
+        enabled: true,
+        inboxEnabled: true,
+        users: ["30000"],
+      });
+    },
+  });
+  const token = randomBytes(32).toString("hex");
+  const app = createServer({ runtime, token, allowLive: true });
+  t.after(() => app.close());
+  const base = `http://127.0.0.1:${await app.listen()}`;
+  const admin = { "content-type": "application/json", "x-admin-token": token };
+  let capability;
+  const native = backend.runDesktop;
+  backend.runDesktop = (params) => {
+    capability = params.socialContextToken;
+    return native(params);
+  };
+  const relay = (path, data, authenticated = true) =>
+    fetch(base + path, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-agent-capability": capability,
+        ...(authenticated && {
+          "x-agent-relay-token": deriveRelayToken(token),
+          "x-agent-output-request": randomUUID(),
+          "x-agent-output-protocol": "stdio-v1",
+        }),
+      },
+      body: JSON.stringify(data),
+    });
+  const call = async (name, args, authenticated) => {
+    const response = await relay(
+      "/agent/tools",
+      { name, arguments: args },
+      authenticated,
+    );
+    return JSON.parse((await response.json()).content[0].text);
+  };
+  const diary = { title: "桌边记录", body: "保存这次的试聊心得" };
+  const contact = {
+    requestId: "desktop-contact",
+    proposal: { kind: "contact", target: "private:30000" },
+  };
+  let enabled = true;
+  backend.run = async (params) => {
+    await params.beforeInputSubmitted();
+    params.saveSession(
+      params.session ?? { backend: "codex", id: "desktop-tools" },
+    );
+    assert.equal((await relay("/agent/catalog", {}, false)).status, 403);
+    assert.equal(
+      (await call("diary_write", diary, false)).code,
+      "MCP_RELAY_AUTH_REQUIRED",
+    );
+    const names = ["diary_write", "subject_inbox_submit"];
+    const catalog = await relay("/agent/catalog", { names }).then((r) =>
+      r.json(),
+    );
+    if (enabled) {
+      assert.deepEqual(
+        JSON.parse(catalog.content[0].text).tools.map(({ name }) => name),
+        names,
+      );
+      const saved = await call("diary_write", diary);
+      assert.equal(memory.readRecord({ id: saved.id }).title, diary.title);
+      assert.equal(
+        (await call("subject_inbox_submit", contact)).status,
+        "pending",
+      );
+    } else {
+      assert.equal(JSON.parse(catalog.content[0].text).code, "TOOL_DISABLED");
+      const baseline = ["desktop_room_history", "memory_search", "memory_read"];
+      const historyCatalog = await relay("/agent/catalog", {
+        names: baseline,
+      }).then((r) => r.json());
+      assert.deepEqual(
+        JSON.parse(historyCatalog.content[0].text).tools.map(
+          ({ name }) => name,
+        ),
+        baseline,
+      );
+      assert.equal((await call("diary_write", diary)).code, "TOOL_DISABLED");
+      assert.equal(
+        (await call("subject_inbox_submit", contact)).code,
+        "TOOL_DISABLED",
+      );
+    }
+    assert.equal((await call("qq_send", {})).code, "TOOL_DISABLED");
+    assert.equal(
+      (await call("desktop_room_decide", { action: "silent" })).status,
+      "recorded",
+    );
+  };
+
+  await run();
+  const { config: current, revision } = await fetch(base + "/api/config", {
+    headers: admin,
+  }).then((r) => r.json());
+  const response = await fetch(base + "/api/config", {
+    method: "PUT",
+    headers: admin,
+    body: JSON.stringify({
+      config: {
+        ...current,
+        desktopHome: { ...current.desktopHome, toolRoles: [] },
+      },
+      revision,
+    }),
+  });
+  assert.equal(response.status, 200);
+  enabled = false;
+  await run();
+  assert.equal(runtime.subjectInbox.state("agent-0").items.length, 1);
+  assert.equal(runtime.transports.get("qq-0").sent.length, 0);
 });

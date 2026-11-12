@@ -42,6 +42,10 @@ test("the desktop panel drops the old messages and guests when its room closes",
       onRoom: (update) => (window.testRoom = update),
       onSection() {},
       get: async () => ({ data, section: "chat" }),
+      attach: async () => {
+        window.testAttachmentCalls = (window.testAttachmentCalls ?? 0) + 1;
+        return "cancelled";
+      },
     };
   }, room);
   await page.goto(
@@ -59,10 +63,36 @@ test("the desktop panel drops the old messages and guests when its room closes",
   assert.equal(await thread.locator(".message").count(), 0);
   assert.equal(await page.locator(".guest").count(), 0);
   assert.equal(await thread.locator(".empty").count(), 1);
+  const attach = page.getByRole("button", { name: "发送附件" });
+  assert.equal(await attach.isEnabled(), false);
   await push({
     ...room,
-    messages: [{ id: 1, actor: "owner", text: "新房间", now: 3 }],
+    attachmentInput: { text: true, image: false },
+    messages: [
+      { id: 1, actor: "owner", text: "新房间", now: 3 },
+      {
+        id: 2,
+        actor: "admin",
+        text: "",
+        now: 4,
+        attachments: [
+          {
+            id: "fixture-attachment",
+            name: "<资料>.txt",
+            mimeType: "text/plain",
+            bytes: 8,
+          },
+        ],
+      },
+    ],
   });
-  assert.equal(await thread.locator(".message").count(), 1);
+  assert.equal(await thread.locator(".message").count(), 2);
   assert.equal(await thread.getByText("新房间", { exact: true }).count(), 1);
+  assert.equal(
+    await thread.getByText("附件 · <资料>.txt", { exact: true }).count(),
+    1,
+  );
+  assert.equal(await attach.isEnabled(), true);
+  await attach.click();
+  assert.equal(await page.evaluate(() => window.testAttachmentCalls), 1);
 });

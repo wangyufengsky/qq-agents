@@ -1,3 +1,9 @@
+import { DESKTOP_CONVERSATION } from "../home/desktop-decision.mjs";
+import {
+  isDesktopToolContext,
+  desktopRoleToolsEnabled,
+} from "../tools/desktop-policy.mjs";
+import { desktopProjectReadable } from "../tools/activities.mjs";
 import { createHash } from "node:crypto";
 import { homeRequestId } from "../home/policy.mjs";
 import {
@@ -36,11 +42,21 @@ export class SubjectInbox {
   save(agentId, state) {
     this.runtime.memory.bind(agentId).setState(INBOX, state);
   }
+  sourceAllowed(agent, source) {
+    return source === DESKTOP_CONVERSATION
+      ? desktopRoleToolsEnabled(this.runtime.config, agent)
+      : allowed(agent, source, this.runtime.config);
+  }
   assertScope(ctx, subject) {
     const a = this.runtime.assertActive(ctx);
     if (
       !subjectInboxEnabled(a) ||
-      (subject ? ctx.conversation !== SUBJECT : !chat.test(ctx.conversation)) ||
+      (subject
+        ? ctx.conversation !== SUBJECT
+        : !chat.test(ctx.conversation) &&
+          !(
+            isDesktopToolContext(ctx) && this.sourceAllowed(a, ctx.conversation)
+          )) ||
       ctx.intentOnly ||
       ctx.scheduleRunId
     )
@@ -65,10 +81,19 @@ export class SubjectInbox {
     if (reference.type === "project") return identity.project(reference.id);
     return identity.notes(item.source).find((note) => note.id === reference.id);
   }
+  assertReference(a, ctx, item, reference) {
+    if (!reference) throw Error("RECORD_NOT_FOUND");
+    if (
+      item.source === DESKTOP_CONVERSATION &&
+      item.proposal.reference.type === "project" &&
+      !desktopProjectReadable(this.runtime, ctx, reference)
+    )
+      throw Error("SUBJECT_INBOX_SOURCE_DENIED");
+    this.assertSource(a, ctx, reference);
+  }
   take(ctx, a, item) {
     const reference = this.reference(a, item);
-    if (!reference) throw Error("RECORD_NOT_FOUND");
-    this.assertSource(a, ctx, reference);
+    this.assertReference(a, ctx, item, reference);
     ctx.privateRead.add(`context:${item.source}`);
     trackMindRecords(this.runtime, ctx, [reference]);
     return reference;
@@ -77,6 +102,11 @@ export class SubjectInbox {
     const a = this.assertScope(ctx, false),
       now = this.runtime.now();
     this.assertSource(a, ctx);
+    if (
+      isDesktopToolContext(ctx) &&
+      !["contact", "handoff"].includes(proposal.kind)
+    )
+      throw Error("TOOL_DISABLED");
     const state = this.state(a.id);
     const items = state.items || [];
     const id = `${ctx.conversation}/${requestId}`;
@@ -138,10 +168,8 @@ export class SubjectInbox {
     };
     if (proposal.kind === "reflection") this.reflection(ctx, a, item);
     const reference = this.reference(a, item);
-    if (proposal.kind === "handoff") {
-      if (!reference) throw Error("RECORD_NOT_FOUND");
-      this.assertSource(a, ctx, reference);
-    }
+    if (proposal.kind === "handoff")
+      this.assertReference(a, ctx, item, reference);
     this.save(a.id, { ...state, items: [...items, item] });
     return { id, status: item.status };
   }
@@ -155,7 +183,7 @@ export class SubjectInbox {
         (item.status === "pending" ||
           (item.status === "accepted" && item.proposal.kind === "room")) &&
         (item.reviewAt == null || item.reviewAt <= now) &&
-        allowed(a, item.source, this.runtime.config),
+        this.sourceAllowed(a, item.source),
     );
   }
   view(ctx, items, now) {
@@ -179,7 +207,9 @@ export class SubjectInbox {
       : this.feedbackItems(a, ctx.conversation, now);
     const page = items.slice(offset, offset + BATCH);
     return {
-      items: subject ? this.view(ctx, page, now) : page.map(sourceFeedback),
+      items: subject
+        ? this.view(ctx, page, now)
+        : page.map((item) => this.sourceReceipt(a, item)),
       nextOffset: offset + BATCH < items.length ? offset + BATCH : null,
     };
   }
@@ -210,6 +240,20 @@ export class SubjectInbox {
       more: pending.length - items.length,
     };
   }
+  sourceReceipt(a, item) {
+    const feedback = sourceFeedback(item);
+    const intentId = item.receipt?.contactIntentId;
+    if (item.source !== DESKTOP_CONVERSATION || !intentId) return feedback;
+    const row = this.runtime.memory.bind(a.id).delivery("intent:" + intentId);
+    return {
+      ...feedback,
+      contactIntentId: intentId,
+      deliveryStatus:
+        row?.conversation === item.proposal.target
+          ? row.status
+          : "not-attempted",
+    };
+  }
   feedbackItems(a, source, now) {
     const state = this.state(a.id);
     return [
@@ -223,7 +267,10 @@ export class SubjectInbox {
   }
   feedback(ctx, a) {
     if (
-      !chat.test(ctx.conversation) ||
+      (!chat.test(ctx.conversation) &&
+        !(
+          isDesktopToolContext(ctx) && this.sourceAllowed(a, ctx.conversation)
+        )) ||
       !ctx.allowedTools?.includes("subject_inbox_list")
     )
       return null;
@@ -247,7 +294,7 @@ export class SubjectInbox {
     ctx.subjectFeedbackOffered = items.map((item) =>
       JSON.stringify([item.id, item.status, item.decision, item.decidedAt]),
     );
-    return items.map(sourceFeedback);
+    return items.map((item) => this.sourceReceipt(a, item));
   }
   finish(ctx, outcome) {
     if (
@@ -525,7 +572,7 @@ export class SubjectInbox {
     const apply = () => {
       const state = this.state(a.id);
       const item = (state.items || []).find((value) => value.id === args.id);
-      if (!item || !allowed(a, item.source, r.config))
+      if (!item || !this.sourceAllowed(a, item.source))
         throw Error("RECORD_NOT_FOUND");
       if (item.status !== "pending") {
         if (item.status === "accepted" && item.proposal.kind === "reflection") {

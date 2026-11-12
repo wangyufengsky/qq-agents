@@ -1,8 +1,18 @@
 const transcriptSelection = new Map();
-let transcriptScope =
-  new URLSearchParams(location.search).get("scope") === "subject"
-    ? "subject"
-    : "chat";
+const transcriptScopeLabels = {
+  chat: "QQ 聊天",
+  desktop: "桌面小窝",
+  subject: "主人格",
+};
+const transcriptInitialScope = new URLSearchParams(location.search).get(
+  "scope",
+);
+let transcriptScope = Object.hasOwn(
+  transcriptScopeLabels,
+  transcriptInitialScope,
+)
+  ? transcriptInitialScope
+  : "chat";
 const transcriptBackends = {
   codex: "Codex",
   antigravity: "Antigravity",
@@ -74,11 +84,13 @@ function transcriptSteps(steps, errors) {
   return rows.join("");
 }
 
-function transcriptTurn(turn, subject) {
+function transcriptTurn(turn, scope) {
   const [label, tone] =
-    subject && turn.status === "completed-no-send"
-      ? ["已完成", ""]
-      : transcriptStatuses[turn.status] || transcriptStatuses.recorded;
+    scope === "desktop" && turn.delivered.length
+      ? ["已显示在桌面", "live"]
+      : scope !== "chat" && turn.status === "completed-no-send"
+        ? ["已完成", ""]
+        : transcriptStatuses[turn.status] || transcriptStatuses.recorded;
   const elapsed =
     turn.endedAt > turn.startedAt
       ? `${((turn.endedAt - turn.startedAt) / 1000).toFixed(1)} 秒`
@@ -93,7 +105,7 @@ function transcriptTurn(turn, subject) {
     </header>
     <div class="transcript-steps">
       ${transcriptSteps(turn.steps, turn.errors)}
-      ${turn.delivered.map((item) => `<div class="transcript-delivered"><div><span class="dot live" aria-hidden="true"></span><strong>QQ 已确认送达</strong><time>${esc(transcriptAt(item.at))}</time></div>${transcriptText(item)}</div>`).join("")}
+      ${turn.delivered.map((item) => `<div class="transcript-delivered"><div><span class="dot live" aria-hidden="true"></span><strong>${scope === "desktop" ? "已显示在桌面" : "QQ 已确认送达"}</strong><time>${esc(transcriptAt(item.at))}</time></div>${transcriptText(item)}</div>`).join("")}
     </div>
     ${usage ? `<footer class="transcript-turn-foot">${usage}</footer>` : ""}
   </article>`;
@@ -143,10 +155,14 @@ function renderTranscripts() {
     <section class="transcript-library" aria-label="会话列表">
       <div class="transcript-library-head"><h2>会话列表</h2><button type="button" class="ghost transcript-refresh" data-refresh-transcripts>刷新</button></div>
       <div class="transcript-scopes" role="group" aria-label="会话类型">
-        <button type="button" data-transcript-scope="chat" aria-pressed="${transcriptScope === "chat"}">QQ 聊天</button>
-        <button type="button" data-transcript-scope="subject" aria-pressed="${transcriptScope === "subject"}">主人格</button>
+        ${Object.entries(transcriptScopeLabels)
+          .map(
+            ([scope, label]) =>
+              `<button type="button" data-transcript-scope="${scope}" aria-pressed="${transcriptScope === scope}">${label}</button>`,
+          )
+          .join("")}
       </div>
-      <label class="transcript-search"><span>搜索会话</span><input type="search" placeholder="${transcriptScope === "subject" ? "后端名称" : "群号、QQ 号或后端"}" data-transcript-search /></label>
+      <label class="transcript-search"><span>搜索会话</span><input type="search" placeholder="${transcriptScope === "chat" ? "群号、QQ 号或后端" : "后端名称"}" data-transcript-search /></label>
       <div class="transcript-list" data-transcript-list aria-live="polite"><p class="hint transcript-list-empty">正在读取会话列表…</p></div>
     </section>
     <section class="transcript-reader" aria-label="会话记录">
@@ -178,10 +194,13 @@ function renderTranscripts() {
   const selectionKey = () => agentId + "/" + transcriptScope;
   const scopedSessions = () =>
     sessions.filter((item) => item.scope === transcriptScope);
-  const turnMarkup = (turn) =>
-    transcriptTurn(turn, transcriptScope === "subject");
+  const turnMarkup = (turn) => transcriptTurn(turn, transcriptScope);
   const frameworkRecords = () =>
-    transcriptScope === "subject" ? "框架保存的回合" : "框架保存的回合与投递";
+    transcriptScope === "chat"
+      ? "框架保存的回合与投递"
+      : transcriptScope === "desktop"
+        ? "框架保存的回合与桌面发言"
+        : "框架保存的回合";
   let sessions = [];
   let key = transcriptSelection.get(selectionKey());
   let next = null;
@@ -316,8 +335,7 @@ function renderTranscripts() {
       for (const option of scopeButtons)
         option.setAttribute("aria-pressed", String(option === button));
       search.value = "";
-      search.placeholder =
-        scope === "subject" ? "后端名称" : "群号、QQ 号或后端";
+      search.placeholder = scope === "chat" ? "群号、QQ 号或后端" : "后端名称";
       key = transcriptSelection.get(selectionKey());
       earlierButton.disabled = false;
       void showSelection();

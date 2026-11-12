@@ -87,6 +87,7 @@ export function addMessage(
     text,
     now,
     speakerType,
+    ...(attachments.length ? { attachments } : {}),
     ...archived,
   };
   room.messages.push(message);

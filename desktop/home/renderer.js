@@ -135,7 +135,10 @@ function panel() {
   const audience = select(".audience");
   const thread = select(".thread");
   const message = select("#message");
-  const send = select(".composer button");
+  const send = select('.composer button[type="submit"]');
+  const attach = select(".attach");
+  const attachmentStatus = select(".attachment-status");
+  let attaching = false;
   const settings = select(".settings");
   const settingsForm = select(".timer-settings");
   const minutes = select("#minutes");
@@ -225,7 +228,10 @@ function panel() {
         : (entry.speaker ?? role?.name ?? entry.actor),
     );
     author.title = clock.format(entry.now);
-    words.append(author, element("p", "content", entry.text));
+    words.append(author);
+    if (entry.text) words.append(element("p", "content", entry.text));
+    for (const { name } of entry.attachments || [])
+      words.append(element("p", "content attachment", `附件 · ${name}`));
     if (role) row.append(avatar(role));
     row.append(words);
     return row;
@@ -337,6 +343,10 @@ function panel() {
       ? "说点什么…（可用 @ 名字）"
       : "邀请一位角色开始聊天";
     send.disabled = !here.length;
+    attach.hidden = !room.framework || !window.nest.attach;
+    attach.disabled =
+      attaching ||
+      (!room.attachmentInput?.text && !room.attachmentInput?.image);
     updateThread();
     const budget = select(".budget-label");
     const label = `共用回合 ${room.budget} / ${room.maxTurns}`;
@@ -366,6 +376,28 @@ function panel() {
       closeSettings();
       settings.focus();
     } else window.nest.act("close");
+  });
+  attach.addEventListener("click", async () => {
+    if (attach.disabled || attaching) return;
+    attaching = true;
+    attach.disabled = true;
+    attachmentStatus.hidden = false;
+    attachmentStatus.textContent = "等待选择附件…";
+    let status;
+    try {
+      status = await window.nest.attach();
+    } catch {
+      status = "failed";
+    } finally {
+      attaching = false;
+      attach.disabled =
+        !room.attachmentInput?.text && !room.attachmentInput?.image;
+      attachmentStatus.hidden = status === "cancelled" || status === "sent";
+      attachmentStatus.textContent =
+        status === "invalid"
+          ? "文件类型不受支持或超过大小限制。"
+          : "附件未能发送。";
+    }
   });
   select(".composer").addEventListener("submit", (event) => {
     event.preventDefault();

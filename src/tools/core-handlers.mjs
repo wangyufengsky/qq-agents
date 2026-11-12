@@ -17,6 +17,8 @@ import {
 } from "../core/input-review.mjs";
 import { sendDraftTool } from "./qq-drafts.mjs";
 import { githubMarker, privateGithubSources } from "../github/policy.mjs";
+import { isDesktopToolContext } from "./desktop-policy.mjs";
+import { allowed } from "../core/config.mjs";
 import { readEventImage } from "./image-read.mjs";
 import { synthesize } from "./speech.mjs";
 import { externalArguments, externalResult } from "./external-media.mjs";
@@ -261,6 +263,13 @@ async function handle_conversation_read(runtime, ctx, args, name) {
 }
 async function handle_diary_write(runtime, ctx, args, name) {
   const mem = runtime.memory.bind(ctx.agentId);
+  if (isDesktopToolContext(ctx)) {
+    runtime.assertSafeOutput(ctx, JSON.stringify(args));
+    if (name === "diary_revise")
+      recallBoundary(runtime, ctx).assert(
+        mem.readRecord({ id: args.id }, ctx.conversation),
+      );
+  }
 
   const protectedOperations = [...ctx.privateRead].some((id) =>
     /^(operations|operations-result):/.test(id),
@@ -363,6 +372,14 @@ async function handle_qq_image_read(runtime, ctx, args, name) {
     .get(args.id, ctx.agentId);
   if (!row) throw Error("RECORD_NOT_FOUND");
   const event = mem.event(row, ctx.conversation);
+  if (isDesktopToolContext(ctx)) {
+    const agent = runtime.agent(ctx.agentId);
+    if (
+      event.connectionId !== agent.connectionId ||
+      !allowed(agent, event.conversation, runtime.config)
+    )
+      throw Error("FILE_SOURCE_DENIED");
+  }
   recallBoundary(runtime, ctx).assert(event);
   track(ctx, [event]);
   const media = await readEventImage(runtime, ctx, event, args);
@@ -398,6 +415,7 @@ async function handle_sticker_collect(runtime, ctx, args, name) {
 }
 async function handle_sticker_read(runtime, ctx, args, name) {
   const meta = runtime.media.metadata(ctx.agentId, args.mediaId);
+  if (isDesktopToolContext(ctx)) recallBoundary(runtime, ctx).assert(meta);
   taintMedia(ctx, meta);
   const result = await runtime.media.view(
     ctx.agentId,
