@@ -10,9 +10,15 @@ function element(tag, className, text) {
   return node;
 }
 
+function assetPath(asset) {
+  return asset === "door"
+    ? "../../public/home-preview/assets/door.webp"
+    : `art/${asset}-paper.webp`;
+}
+
 function image(asset) {
   const img = element("img");
-  img.src = `art/${asset}.png`;
+  if (asset) img.src = assetPath(asset);
   img.alt = "";
   img.draggable = false;
   return img;
@@ -40,7 +46,7 @@ function floating() {
     door ? "打开小窝的门" : "打开小窝聊天",
   );
   art.title = door ? "桌面小窝" : "点击聊天 · 拖动换座位 · 右键菜单";
-  art.append(image(door ? "door" : id));
+  art.append(image(door ? "door" : undefined));
   space.append(art);
   root.append(space);
 
@@ -113,7 +119,7 @@ function floating() {
     if (!role) return;
     art.setAttribute("aria-label", `${role.name} · 打开聊天`);
     const sprite = art.querySelector("img");
-    const asset = `art/${role.art ?? role.id}.png`;
+    const asset = assetPath(role.art ?? role.id);
     if (sprite.getAttribute("src") !== asset) sprite.src = asset;
     const message =
       data.bubbles[id]?.text ?? (data.thinking === id ? "正在想…" : "");
@@ -140,6 +146,7 @@ function panel() {
   const attachmentStatus = select(".attachment-status");
   let attaching = false;
   const settings = select(".settings");
+  const turnStatus = select(".turn-status");
   const settingsForm = select(".timer-settings");
   const minutes = select("#minutes");
   const timerOn = select("#timer-on");
@@ -338,6 +345,7 @@ function panel() {
     for (const tab of root.querySelectorAll("[data-tab]"))
       tab.setAttribute("aria-pressed", String(tab.dataset.tab === section));
     if (section === "chat") {
+      closeSettings();
       thread.scrollTop = thread.scrollHeight;
       if (!message.disabled) message.focus();
     }
@@ -365,7 +373,8 @@ function panel() {
       guestList.append(node);
       guests.set(role.id, { node, state, action, decline });
     }
-    const { state, action, decline } = guests.get(role.id);
+    const { node, state, action, decline } = guests.get(role.id);
+    node.dataset.state = role.available ? role.state : "unavailable";
     decline.hidden = room.live || role.state !== "invited";
     const [label, text] = {
       home: ["在家", "邀请"],
@@ -441,41 +450,13 @@ function panel() {
       thread.scrollTop = thread.scrollHeight;
   }
 
-  function showBudget() {
-    if (!room) return;
-    const parts = [];
-    if (room.thinking)
-      parts.push(
-        `${room.roles.find(({ id }) => id === room.thinking)?.name}在想…`,
-      );
-    else if (!room.budget) parts.push("等你接话");
-    if (room.nextRefill === null) parts.push("发出新消息时刷新");
-    else {
-      const remaining = Math.max(
-        0,
-        Math.ceil((room.nextRefill - Date.now()) / 1000),
-      );
-      const formatted =
-        remaining >= 60
-          ? `${Math.ceil(remaining / 60)} 分钟`
-          : `${remaining} 秒`;
-      parts.push(`${formatted}后刷新`);
-    }
-    const detail = select(".budget-detail");
-    const text = parts.join(" · ");
-    if (detail.textContent !== text) detail.textContent = text;
-    const live = select(".turn-status");
-    const status = room.thinking ? parts[0] : room.budget ? "" : "等你接话";
-    if (live.textContent !== status) live.textContent = status;
-  }
-
   function update(next) {
     room = next;
-    settings.hidden = Boolean(room.framework);
+    select(".sample-settings").hidden = Boolean(room.framework);
+    const edition = select(".edition");
+    edition.hidden = Boolean(room.framework);
+    edition.textContent = room.live ? "隔离试聊" : "模拟样机";
     if (room.live) {
-      select(".edition").textContent = room.framework
-        ? "QQ Agents"
-        : "隔离试聊";
       select(".door-settings").hidden = false;
       select("#door-mode").value = room.doorMode ?? "off";
       select("#door-mode").disabled = room.framework && !room.connected;
@@ -512,8 +493,11 @@ function panel() {
         document.createTextNode("在场"),
         element("span", null, "你"),
       );
-      for (const role of here)
-        audience.append(element("span", role.color, role.name));
+      for (const role of here) {
+        const chip = element("span", `audience-role ${role.color}`);
+        chip.append(avatar(role), document.createTextNode(role.name));
+        audience.append(chip);
+      }
       lastRoster = roster;
     }
     message.disabled = !here.length;
@@ -529,18 +513,10 @@ function panel() {
     updateNativeControl();
     updateBrowserControl();
     updateThread();
-    const budget = select(".budget-label");
-    const label = `共用回合 ${room.budget} / ${room.maxTurns}`;
-    if (budget.textContent !== label) {
-      budget.textContent = label;
-      const pips = select(".pips");
-      pips.replaceChildren(
-        ...Array.from({ length: room.maxTurns }, (_, index) =>
-          element("span", index < room.budget ? "pip available" : "pip"),
-        ),
-      );
-    }
-    showBudget();
+    const thinking = here.find(({ id }) => id === room.thinking);
+    const status = thinking ? `${thinking.name}正在想…` : "";
+    turnStatus.hidden = !status;
+    if (turnStatus.textContent !== status) turnStatus.textContent = status;
   }
 
   function closeSettings() {
@@ -630,7 +606,6 @@ function panel() {
     update(value.data);
     switchSection(value.section);
   });
-  setInterval(showBudget, 1000);
 }
 
 if (type === "panel") panel();

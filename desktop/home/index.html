@@ -17,9 +17,9 @@
       <main class="panel">
         <header class="header">
           <div class="header-title">
-            <img src="art/door.png" alt="" />
+            <span class="nest-seal" aria-hidden="true">窝</span>
             <h1>桌面小窝</h1>
-            <span class="edition">模拟样机</span>
+            <span class="edition" hidden></span>
           </div>
           <button
             class="icon-button close"
@@ -35,8 +35,7 @@
         </nav>
         <section id="visits">
           <div class="section-heading">
-            <h2>想见谁？</h2>
-            <p>邀请角色来桌边坐一会儿。</p>
+            <h2>邀请来访</h2>
           </div>
           <div class="door-settings" hidden>
             <label for="door-mode">主动来访</label>
@@ -58,6 +57,28 @@
           </div>
           <div class="guest-list"></div>
           <p class="room-notice" role="status"></p>
+          <div class="sample-settings" hidden>
+            <button class="settings secondary" aria-expanded="false">
+              刷新设置
+            </button>
+            <form class="timer-settings" hidden>
+              <label for="minutes">定时刷新</label>
+              <input
+                type="number"
+                min="1"
+                max="1440"
+                step="1"
+                id="minutes"
+                value="60"
+                aria-label="刷新间隔（分钟）"
+              />
+              <span>分钟</span>
+              <label class="switch"
+                ><input id="timer-on" type="checkbox" checked /> 启用</label
+              >
+              <button type="submit" class="secondary">保存</button>
+            </form>
+          </div>
         </section>
         <section id="chat" hidden>
           <div class="audience" aria-label="在场名单"></div>
@@ -67,40 +88,45 @@
             role="log"
             aria-label="聊天记录"
           ></div>
-          <form class="composer">
-            <label class="sr-only" for="message">发到房间</label>
-            <input
-              id="message"
-              maxlength="1000"
-              autocomplete="off"
-              placeholder="说点什么…"
-            />
-            <button
-              type="button"
-              class="secondary attach"
-              hidden
-              aria-label="发送附件"
-            >
-              附件
-            </button>
-            <button type="submit" class="primary">发送</button>
-          </form>
-          <p class="attachment-status" role="status" hidden></p>
-          <div class="desktop-permission screen-view" hidden>
-            <button type="button" class="secondary screen-view-button">
-              授权查看屏幕
-            </button>
-            <p class="desktop-permission-status" role="status" hidden></p>
-          </div>
-          <div class="desktop-permission native-control" hidden>
-            <button type="button" class="secondary">授权控制窗口</button>
-            <p class="desktop-permission-status" role="status" hidden></p>
-          </div>
-          <div class="desktop-permission browser-control" hidden>
-            <button type="button" class="secondary browser-control-button">
-              授权访问站点
-            </button>
-            <p class="desktop-permission-status" role="status" hidden></p>
+          <div class="chat-tools">
+            <p class="turn-status" role="status" hidden></p>
+            <form class="composer">
+              <label class="sr-only" for="message">发到房间</label>
+              <input
+                id="message"
+                maxlength="1000"
+                autocomplete="off"
+                placeholder="说点什么…"
+              />
+              <button
+                type="button"
+                class="secondary attach"
+                hidden
+                aria-label="发送附件"
+              >
+                附件
+              </button>
+              <button type="submit" class="primary">发送</button>
+            </form>
+            <p class="attachment-status" role="status" hidden></p>
+            <div class="desktop-permissions">
+              <div class="desktop-permission screen-view" hidden>
+                <button type="button" class="secondary screen-view-button">
+                  授权查看屏幕
+                </button>
+                <p class="desktop-permission-status" role="status" hidden></p>
+              </div>
+              <div class="desktop-permission native-control" hidden>
+                <button type="button" class="secondary">授权控制窗口</button>
+                <p class="desktop-permission-status" role="status" hidden></p>
+              </div>
+              <div class="desktop-permission browser-control" hidden>
+                <button type="button" class="secondary browser-control-button">
+                  授权访问站点
+                </button>
+                <p class="desktop-permission-status" role="status" hidden></p>
+              </div>
+            </div>
           </div>
           <dialog
             class="browser-permission-dialog"
@@ -135,32 +161,6 @@
             </form>
           </dialog>
         </section>
-        <footer class="budget">
-          <div class="budget-top">
-            <span class="budget-label"></span>
-            <div class="pips" aria-hidden="true"></div>
-            <button class="settings" aria-expanded="false">刷新设置</button>
-          </div>
-          <div class="budget-detail"></div>
-          <div class="turn-status sr-only" role="status"></div>
-          <form class="timer-settings" hidden>
-            <label for="minutes">定时刷新</label>
-            <input
-              type="number"
-              min="1"
-              max="1440"
-              step="1"
-              id="minutes"
-              value="60"
-              aria-label="刷新间隔（分钟）"
-            />
-            <span>分钟</span>
-            <label class="switch"
-              ><input id="timer-on" type="checkbox" checked /> 启用</label
-            >
-            <button type="submit" class="secondary">保存</button>
-          </form>
-        </footer>
       </main>
     </template>
   </body>
