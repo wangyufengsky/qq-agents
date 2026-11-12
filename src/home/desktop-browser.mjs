@@ -177,7 +177,7 @@ export class DesktopBrowser {
     let outbound;
     if (input.action === "navigate") {
       if (approvedOrigin(input.url) !== grant.origin) throw denied();
-      outbound = { tool: "desktop_browser_control", args: { url: input.url } };
+      outbound = { tool: DESKTOP_BROWSER_CONTROL, args: { url: input.url } };
       runtime.authorizeExternal(ctx, outbound);
     }
 

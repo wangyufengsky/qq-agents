@@ -17,7 +17,18 @@ test("browser control requires the desktop client grant and a current desktop to
   cfg.desktopHome.enabled = true;
   cfg.desktopHome.toolRoles = [agentId];
   cfg.desktopHome.browserControl = { enabled: true };
+  cfg.agents[0].network.autonomous = true;
   const { runtime } = fixture(t, { cfg });
+  const recalled = runtime.memory.bind(agentId).append({
+    dedupe: "browser-prior-chat",
+    conversation: "group:20000",
+    connectionId: "qq-0",
+    kind: "message.received",
+    direction: "in",
+    status: "observed",
+    body: "Synthetic ordinary chat recollection",
+    payload: {},
+  });
   const host = runtime.desktopVisits;
   const token = randomBytes(32).toString("hex");
   const desktopKey = desktopToken(token);
@@ -136,12 +147,33 @@ test("browser control requires the desktop client grant and a current desktop to
     );
     assert.deepEqual(calls, []);
 
+    const memory = await call(capability, "memory_read", { id: recalled.id });
+    assert(!memory.isError);
+    assert.match(
+      memory.content[0].text,
+      /Synthetic ordinary chat recollection/,
+    );
+    const desktopContext = runtime.capabilities.get(capability);
+    assert(desktopContext.privateRead.has(recalled.id));
     const opened = await invoke(navigate);
     assert(!opened.isError);
     const page = JSON.parse(opened.content[0].text);
     assert.equal(page.url, url);
     assert.equal(page.source, "untrusted-public-web");
     assert.equal(page.text, "Synthetic browser observation");
+
+    desktopContext.privateRead.add("operations:fixture");
+    const protectedNavigation = await invoke(navigate);
+    assert.equal(protectedNavigation.isError, true);
+    assert.match(
+      protectedNavigation.content[0].text,
+      /PRIVATE_RECOLLECTION_EXTERNAL_CALL_BLOCKED/,
+    );
+    assert.deepEqual(calls, [
+      ["open", approved],
+      ["navigate", url],
+    ]);
+    desktopContext.privateRead.delete("operations:fixture");
 
     const closed = await invoke({ action: "close" });
     assert(!closed.isError);
