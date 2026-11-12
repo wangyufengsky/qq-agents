@@ -44,7 +44,12 @@ import { Diagnostics } from "./diagnostics.mjs";
 import { GeneratedImages } from "./generated-images.mjs";
 import { resolveFunctionalAgent } from "./functional-agents.mjs";
 import { FunctionalDelegation } from "./functional-delegation.mjs";
-import { DESKTOP_DECISION, FUNCTIONAL_AGENT_RESULT } from "../tools/names.mjs";
+import {
+  DESKTOP_DECISION,
+  DESKTOP_HISTORY,
+  DESKTOP_MEMORY_TOOLS,
+  FUNCTIONAL_AGENT_RESULT,
+} from "../tools/names.mjs";
 import { BackendConnections } from "./backend-connections.mjs";
 import { backendCapabilities } from "../backends/capabilities.mjs";
 import { ConnectionRecovery } from "./connection-recovery.mjs";
@@ -439,7 +444,13 @@ export class Runtime {
   }
   toolsFor(a, conversation) {
     if (conversation === DESKTOP_CONVERSATION)
-      return this.desktopVisits.configured() ? [DESKTOP_DECISION] : [];
+      return this.desktopVisits.configured()
+        ? [
+            DESKTOP_DECISION,
+            DESKTOP_HISTORY,
+            ...DESKTOP_MEMORY_TOOLS.filter((name) => a.tools.includes(name)),
+          ]
+        : [];
     if (conversation?.startsWith("@social:"))
       return this.config.homeSocial?.enabled
         ? this.socialRuntime

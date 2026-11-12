@@ -4,6 +4,7 @@
 // of the conversations and its person card. Only an administrator may state a
 // closeness, and that statement is shown as the administrator's.
 import { resolveMessage, scopeFor } from "../memory/message-ids.mjs";
+import { DESKTOP_CONVERSATION } from "../home/desktop-archive.mjs";
 
 // Values an administrator may set on a card. Never derived by the program.
 export const CLOSENESS_TIERS = Object.freeze(["陌生", "认识", "熟", "很熟"]);
@@ -124,14 +125,17 @@ export function interactionEvents(
 ) {
   const rows = memory.db
     .prepare(
-      "SELECT * FROM events WHERE agent_id=? AND occurred_at>=? AND occurred_at<=? AND kind IN ('message.received','message.sent') AND (sender_id=? OR direction='out') AND (conversation=? OR conversation LIKE 'group:%') ORDER BY occurred_at,seq",
+      "SELECT * FROM events WHERE agent_id=? AND occurred_at>=? AND occurred_at<=? AND kind IN ('message.received','message.sent') AND (sender_id=? OR direction='out' OR (conversation=? AND json_extract(payload,'$.desktop.senderQq')=?)) AND (conversation IN (?,?) OR conversation LIKE 'group:%') ORDER BY occurred_at,seq",
     )
     .iterate(
       memory.agentId,
       new Date(options.since ?? now - WINDOW).toISOString(),
       new Date(now).toISOString(),
       personId,
+      DESKTOP_CONVERSATION,
+      personId,
       "private:" + personId,
+      DESKTOP_CONVERSATION,
     );
   const result = [];
   const seen = new Set();
@@ -147,11 +151,17 @@ export function interactionEvents(
     const incoming =
       row.kind === "message.received" &&
       row.direction === "in" &&
-      row.sender_id === personId;
+      (row.conversation === DESKTOP_CONVERSATION
+        ? p.desktop?.senderQq === personId
+        : row.sender_id === personId);
     // The agent owns its confirmed ledger across connection/account changes.
     const outgoing = sentLedger(memory, row);
     if (!incoming && !outgoing) continue;
     let directed = row.conversation === "private:" + personId;
+    if (row.conversation === DESKTOP_CONVERSATION)
+      directed = incoming
+        ? p.desktop?.targets?.includes(memory.agentId)
+        : p.desktop?.targetQq?.includes(personId);
     if (row.conversation.startsWith("group:")) {
       const segments = Array.isArray(p.segments) ? p.segments : [];
       const observedAccount = String(

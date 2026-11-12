@@ -104,6 +104,7 @@ export class LiveRoom {
       doorMode: this.doorMode,
       knock: this.knock,
       messages: room.messages,
+      roomEpoch: room.epoch,
       budget: room.budget,
       maxTurns: room.maxTurns,
       minutes: room.minutes,
@@ -115,14 +116,20 @@ export class LiveRoom {
   }
 
   context(cursor) {
-    return this.room.messages
-      .filter(({ id, actor }) => id > cursor && actor !== "system")
-      .slice(-24)
-      .map(({ actor, text }) => ({
+    const rows = this.room.messages
+      .filter(({ id, speakerType }) => id > cursor && speakerType !== "system")
+      .slice(0, 24);
+    return {
+      through: rows.at(-1)?.id ?? cursor,
+      messages: rows.map(({ actor, text, speaker, speakerType }) => ({
         speaker:
-          this.room.roles.find(({ id }) => id === actor)?.name ?? "管理员",
+          speaker ??
+          (speakerType === "administrator"
+            ? "管理员"
+            : (this.room.roles.find(({ id }) => id === actor)?.name ?? actor)),
         text,
-      }));
+      })),
+    };
   }
 
   here() {
@@ -207,7 +214,9 @@ export class LiveRoom {
     if (!arrive(this.room, role)) return;
     // Only the newcomer starts at the current cursor. Messages already queued
     // for other participants still belong to their visits.
-    this.visits.set(role.id, { cursor: this.room.sequence });
+    this.visits.set(role.id, {
+      cursor: this.room.archiveSeq ?? this.room.sequence,
+    });
   }
 
   setDoorMode(mode, now = Date.now()) {
@@ -325,8 +334,9 @@ export class LiveRoom {
     void this.advance();
   }
 
-  send(text) {
-    if (this.closed || !speak(this.room, text, Date.now(), false)) return;
+  send(text, attachments = []) {
+    if (this.closed || !speak(this.room, text, Date.now(), false, attachments))
+      return false;
     this.qqDeferred.clear();
     const named = this.here().find(({ name, title }) =>
       [name, title].some((value) => text.includes(`@${value}`)),
@@ -334,6 +344,7 @@ export class LiveRoom {
     this.addCandidates(null, named?.id);
     this.onChange();
     void this.advance();
+    return true;
   }
 
   tick(now = Date.now()) {
@@ -359,16 +370,25 @@ export class LiveRoom {
     const controller = new AbortController();
     const { promise: done, resolve: drained } = Promise.withResolvers();
     this.active = { actor, controller, done };
-    const cursor = this.room.sequence;
     this.onChange();
     try {
+      const archived = this.room.opening?.(actor, visit.cursor);
+      const { messages, through } = archived
+        ? {
+            messages: archived,
+            through: archived.at(-1)?.roomSeq ?? visit.cursor,
+          }
+        : this.context(visit.cursor);
       const reply = await this.runner.run(
         {
           actor,
           kind: "chat",
           session,
           people: this.here().map(({ name }) => name),
-          messages: this.context(visit.cursor),
+          messages,
+          onInputSubmitted: () => {
+            visit.cursor = Math.max(visit.cursor, through);
+          },
           isCurrent: () => this.visits.get(actor) === visit,
         },
         controller.signal,
@@ -380,13 +400,15 @@ export class LiveRoom {
         this.visits.get(actor) !== visit
       )
         return;
-      visit.cursor = Math.max(visit.cursor, cursor);
+      if (!this.room.publishMessage)
+        visit.cursor = Math.max(visit.cursor, through);
       if (
         !finishTurn(
           this.room,
           turn,
           Date.now(),
           reply.action === "say" ? reply.text : "",
+          reply.turnId,
         )
       )
         return;

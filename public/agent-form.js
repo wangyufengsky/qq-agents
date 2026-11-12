@@ -228,6 +228,7 @@ const AGENT_TOOL_GROUPS = [
     tools: {
       desktop_visit_request: "申请桌面来访",
       desktop_invitation_decide: "决定是否赴桌面邀请",
+      desktop_room_history: "回看桌面公开对话",
       room_intent_submit: "递交自己的小窝提议",
       room_intent_list: "查看自己的小窝提议",
       room_intent_resolve: "主人格处理小窝提议",

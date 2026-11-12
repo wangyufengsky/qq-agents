@@ -252,6 +252,7 @@ export function restoreExport(memory, data) {
               "lastActivitySeq",
               "feedThroughSeq",
               "imageInputThroughSeq",
+              "elsewhereWordsThroughSeq",
             ])
               if (state[key] !== undefined)
                 state[key] = seqs.get(state[key]) ?? 0;

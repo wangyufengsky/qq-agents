@@ -142,6 +142,7 @@ function panel() {
   const timerOn = select("#timer-on");
   let room;
   let lastId;
+  let roomEpoch;
   let lastRoster;
   const guests = new Map();
   const clock = new Intl.DateTimeFormat("zh-CN", {
@@ -198,13 +199,31 @@ function panel() {
   }
 
   function line(entry) {
-    if (entry.actor === "system")
+    const speakerType =
+      entry.speakerType ??
+      (entry.actor === "system"
+        ? "system"
+        : entry.actor === "admin"
+          ? "administrator"
+          : "agent");
+    if (speakerType === "system")
       return element("p", "message system", entry.text);
-    const role = room.roles.find(({ id }) => id === entry.actor);
-    const row = element("div", role ? "message" : "message mine");
+    const role =
+      speakerType === "agent" &&
+      room.roles.find(({ id }) => id === entry.actor);
+    const row = element(
+      "div",
+      speakerType === "administrator" ? "message mine" : "message",
+    );
     row.dataset.actor = entry.actor;
     const words = element("div", "words");
-    const author = element("span", "author", role ? role.name : "你");
+    const author = element(
+      "span",
+      "author",
+      speakerType === "administrator"
+        ? "你"
+        : (entry.speaker ?? role?.name ?? entry.actor),
+    );
     author.title = clock.format(entry.now);
     words.append(author, element("p", "content", entry.text));
     if (role) row.append(avatar(role));
@@ -213,6 +232,10 @@ function panel() {
   }
 
   function updateThread() {
+    if (room.roomEpoch !== roomEpoch) {
+      roomEpoch = room.roomEpoch;
+      lastId = undefined;
+    }
     const latest = room.messages.at(-1)?.id ?? 0;
     if (latest === lastId) return;
     const pinned =

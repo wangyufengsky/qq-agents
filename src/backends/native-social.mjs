@@ -1,7 +1,11 @@
 // @ts-check
 import { socialSessionPool } from "./social-sessions.mjs";
 import { sessionWasUnchanged } from "./turn-failure.mjs";
-import { DESKTOP_DECISION } from "../tools/names.mjs";
+import {
+  DESKTOP_DECISION,
+  DESKTOP_HISTORY,
+  DESKTOP_MEMORY_TOOLS,
+} from "../tools/names.mjs";
 import { SOCIAL_TOOLS } from "../home/social-tool-names.mjs";
 
 const allowed = new Set([
@@ -13,7 +17,11 @@ const allowed = new Set([
   "person_items",
   "mood_read",
 ]);
-const desktopAllowed = new Set([DESKTOP_DECISION]);
+const desktopAllowed = new Set([
+  DESKTOP_DECISION,
+  DESKTOP_HISTORY,
+  ...DESKTOP_MEMORY_TOOLS,
+]);
 
 /** Only the controlled scene tool may add pixels outside the text quota.
  * @param {string} name @param {any} result @param {number} maxTextBytes */
