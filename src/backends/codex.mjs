@@ -21,8 +21,8 @@ import {
 } from "./session-contract.mjs";
 import { readGeneratedImage } from "./generated-image-file.mjs";
 import { buildChildEnv } from "../core/child-env.mjs";
+import { taskkillTree } from "../core/windows-process.mjs";
 import crossSpawn from "cross-spawn";
-import { execFileSync } from "node:child_process";
 
 const MAX_TOOL_RESPONSE_BYTES = 65536;
 
@@ -66,18 +66,6 @@ function codexToolError(value) {
   };
 }
 
-/** @param {number} pid */
-function taskkillTree(pid) {
-  execFileSync(
-    path.join(
-      process.env.SystemRoot || "C:\\Windows",
-      "System32",
-      "taskkill.exe",
-    ),
-    ["/pid", String(pid), "/T", "/F"],
-    { stdio: "ignore", windowsHide: true, timeout: 10000 },
-  );
-}
 /**
  * Windows launcher for Codex. cross-spawn starts `codex.cmd` through cmd.exe,
  * so the child is that wrapper and kill() would leave the app-server running

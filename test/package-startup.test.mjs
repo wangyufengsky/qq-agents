@@ -93,6 +93,15 @@ test(
       assert.equal(status.globalPaused, true);
       assert(status.connections.every((c) => !c.connected));
       assert.equal((await fetch(url)).status, 200);
+      const desktop = await fetch(url + "/api/desktop-home", {
+        headers: { "x-admin-token": token },
+      });
+      assert.equal(desktop.status, 200);
+      assert.deepEqual(await desktop.json(), {
+        enabled: false,
+        canLaunch: ["darwin", "win32"].includes(process.platform),
+        window: "idle",
+      });
       child.kill("SIGTERM");
       const [code] = await exited;
       if (process.platform === "win32") {

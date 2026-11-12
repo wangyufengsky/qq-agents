@@ -23,6 +23,12 @@ Get-Content .runtime\admin-token
 node src/main.mjs --data "$env:USERPROFILE\qq-agents-data" --port 3210
 ```
 
+### 打开桌面小窝
+
+登录 Windows 桌面后，用 PowerShell 原生启动 QQ Agents。打开同机管理台，在「纸页小窝 → 小窝目录 → 桌面小窝」点击「开启桌面小窝」。首次打开需要下载固定版本的 Electron，窗口开启后可用 Windows 通知区域里的小窝图标打开小门或聊天面板。关闭小窝或退出窗口后，可以在管理台再次打开。
+
+如果用任务计划程序启动 QQ Agents，选择「只在用户登录时运行」。通过 WSL2、Docker 或 Windows 系统服务启动的实例无法从此入口在 Windows 用户桌面打开窗口。桌面聊天、来访与历史的使用方式见 [桌面小窝](DESKTOP-HOME.md)。
+
 ## 2. 环境变量
 
 配置里只保存环境变量的名字。在 PowerShell 中为当前窗口设置：

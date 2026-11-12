@@ -129,8 +129,9 @@ try {
     allowLive,
     githubSecretFile,
     publicPort,
-    desktopLauncher:
-      process.platform === "darwin" ? new DesktopLauncher(root) : undefined,
+    desktopLauncher: DesktopLauncher.supports()
+      ? new DesktopLauncher(root)
+      : undefined,
   }));
   const port = await server.listen(
     option("--port") === undefined

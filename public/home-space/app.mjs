@@ -759,7 +759,7 @@ async function desktopSettings(root, ticket) {
     const form = el("form", "social-settings desktop-settings");
     const controls = el("div", "desktop-actions");
     const toggle = el("button", "primary");
-    const open = el("button", "primary", "打开 Mac 窗口");
+    const open = el("button", "primary", "打开桌面窗口");
     toggle.type = open.type = "button";
     controls.append(toggle, open);
     const fields = [
@@ -824,9 +824,9 @@ async function desktopSettings(root, ticket) {
       for (const input of roleInputs) input.disabled = busy;
       status.textContent = state.enabled
         ? {
-            open: "Mac 窗口已打开。",
-            opening: "正在打开 Mac 窗口…",
-            failed: "Mac 窗口启动失败，可以再试一次。",
+            open: "桌面窗口已打开。",
+            opening: "正在打开桌面窗口…",
+            failed: "桌面窗口启动失败，可以再试一次。",
             idle: "桌面小窝已开启。",
           }[state.window]
         : "桌面小窝已关闭。";

@@ -71,8 +71,10 @@ let tray;
 const liveRoot = process.env.DESKTOP_HOME_LIVE_ROOT;
 const dataArgument = process.argv.indexOf("--data");
 const portArgument = process.argv.indexOf("--port");
-const frameworkPort =
-  portArgument >= 0 ? Number(process.argv[portArgument + 1]) : undefined;
+const port =
+  process.env.DESKTOP_HOME_PORT ??
+  (portArgument >= 0 ? process.argv[portArgument + 1] : undefined);
+const frameworkPort = port === undefined ? undefined : Number(port);
 const frameworkRoot =
   process.env.DESKTOP_HOME_DATA_ROOT ||
   (dataArgument >= 0 ? process.argv[dataArgument + 1] : null);
@@ -675,7 +677,7 @@ else {
     const trayImage = nativeImage.createFromPath(
       join(source, "art", "trayTemplate.png"),
     );
-    trayImage.setTemplateImage(true);
+    if (process.platform === "darwin") trayImage.setTemplateImage(true);
     tray = new Tray(trayImage.resize({ width: 16, height: 16 }));
     tray.setToolTip(
       framework
