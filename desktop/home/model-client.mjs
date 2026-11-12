@@ -40,23 +40,39 @@ export function startModelClient(root, node) {
   }
   child.on("error", offline);
   child.on("exit", offline);
-  child.on("message", ({ roles, id, decision, error, knock, subjectActor }) => {
-    if (roles) {
-      pilotActor = subjectActor;
-      return ready(roles);
-    }
-    if (knock) return knockListener?.(knock);
-    const job = pending.get(id);
-    if (!job) return;
-    pending.delete(id);
-    if (decision) job.resolve(decision);
-    else
-      job.reject(
-        Error(
-          error === "DESKTOP_QQ_PRIORITY" ? error : "DESKTOP_MODEL_TURN_FAILED",
-        ),
-      );
-  });
+  child.on(
+    "message",
+    ({
+      roles,
+      id,
+      decision,
+      error,
+      knock,
+      subjectActor,
+      desktopSessionUntouched,
+    }) => {
+      if (roles) {
+        pilotActor = subjectActor;
+        return ready(roles);
+      }
+      if (knock) return knockListener?.(knock);
+      const job = pending.get(id);
+      if (!job) return;
+      pending.delete(id);
+      if (decision) job.resolve(decision);
+      else
+        job.reject(
+          Object.assign(
+            Error(
+              error === "DESKTOP_QQ_PRIORITY"
+                ? error
+                : "DESKTOP_MODEL_TURN_FAILED",
+            ),
+            { desktopSessionUntouched },
+          ),
+        );
+    },
+  );
 
   function send(message) {
     if (child.connected)

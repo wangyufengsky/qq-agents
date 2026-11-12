@@ -431,6 +431,7 @@ export class DshBackend {
   /** @param {RunParams} params */
   async run({
     conversation,
+    desktop,
     prompt,
     inputImages = [],
     instructions,
@@ -487,8 +488,12 @@ export class DshBackend {
       if (preset.broken) throw Error("DSH_UNIFIED_PRESET_BROKEN");
       const dir = path.join(
         /** @type {string} */ (this.root),
-        selection ? "dsh-functional-workspaces" : "dsh-workspaces",
-        this.agent.id,
+        desktop
+          ? "dsh-desktop-workspaces"
+          : selection
+            ? "dsh-functional-workspaces"
+            : "dsh-workspaces",
+        desktop ? this.agent.id + "-desktop" : this.agent.id,
       );
       fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
       const w = unwrap(
@@ -499,14 +504,14 @@ export class DshBackend {
         "workspace",
       );
       // Keep the create receipt even on abort: it names the session to clean up.
-      if (selection && signal.aborted) throw Error("ABORTED");
+      if ((selection || desktop) && signal.aborted) throw Error("ABORTED");
       sessionId = unwrap(
         await client.sessions.create({
           workspaceId: w.workspace.workspaceId,
           agentPreset: this.config.preset,
           // Name an invocation-owned session rather than adopting a blank
           // desktop session that might already exist in this workspace.
-          ...(selection
+          ...(selection || desktop
             ? { sessionId: /** @type {any} */ ("session-" + randomUUID()) }
             : {}),
         }),

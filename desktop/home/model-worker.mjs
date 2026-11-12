@@ -152,11 +152,11 @@ async function run(id, request) {
   ]);
   const binding = {
     runId: randomUUID(),
-    windowId: request.kind === "chat" ? request.session : null,
+    windowId: request.kind === "opportunity" ? null : request.session,
     actorIdentity: { generation: request.actor },
     target: {
       kind:
-        request.kind === "chat" ? "desktop-room" : `desktop-${request.kind}`,
+        request.kind === "opportunity" ? "desktop-opportunity" : "desktop-room",
     },
   };
   let decision;
@@ -216,7 +216,11 @@ async function run(id, request) {
       id,
       code ?? stage ?? "UNCLASSIFIED",
     );
-    send({ id, error: code === "DESKTOP_QQ_PRIORITY" ? code : true });
+    send({
+      id,
+      error: code === "DESKTOP_QQ_PRIORITY" ? code : true,
+      desktopSessionUntouched: error?.desktopSessionUntouched === true,
+    });
   } finally {
     scope?.close();
     release?.();

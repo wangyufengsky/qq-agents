@@ -1,9 +1,11 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
+import { SessionPreparationFailure } from "../backends/turn-failure.mjs";
 import { containsCredential } from "../core/secrets.mjs";
 import { DesktopVisits } from "./desktop-visits.mjs";
 import { LiveRoom } from "./desktop-room.mjs";
 import { createRoom, roles as art } from "./desktop-room-state.mjs";
+import { beginDesktopContext } from "./desktop-context.mjs";
 import { decisionTool, promptFor, readDecision } from "./desktop-decision.mjs";
 
 const requestSchema = z
@@ -29,7 +31,6 @@ export class DesktopHost {
     this.runtime = runtime;
     this.visits = new Map();
     this.scopes = new Map();
-    this.sessions = new Map();
   }
 
   configured() {
@@ -181,8 +182,7 @@ export class DesktopHost {
       {
         roles: ids,
         subjectActors: ids,
-        run: (request, signal) => this.run(request, signal),
-        retire: (actor, session) => this.retire(actor, session),
+        run: (request, signal, canStart) => this.run(request, signal, canStart),
         setDoor: (open, epoch, actor) => this.visit(actor).setDoor(open, epoch),
         close: async () => {},
       },
@@ -197,7 +197,6 @@ export class DesktopHost {
     this.client = null;
     for (const visit of this.visits.values()) visit.resetDoor();
     void previous.close();
-    for (const id of this.sessions.keys()) this.retire(null, id);
   }
 
   command(input) {
@@ -236,22 +235,13 @@ export class DesktopHost {
     return { enabled: true, room: live.snapshot() };
   }
 
-  retire(_actor, session) {
-    const backend = this.sessions.get(session);
-    this.sessions.delete(session);
-    if (backend)
-      this.runtime.trackWork(
-        backend.closeSocialSessions({ windowId: session }).catch(() => {}),
-      );
-  }
-
-  async run(request, signal) {
-    const task = this.runModel(request, signal);
+  async run(request, signal, canStart) {
+    const task = this.runModel(request, signal, canStart);
     return this.runtime.trackWork(task);
   }
 
-  async runModel(request, signal) {
-    const { actor, kind, session } = request;
+  async runModel(request, signal, canStart) {
+    const { actor, kind } = request;
     const runtime = this.runtime;
     const agent = runtime.agent(actor);
     const current = this.live;
@@ -276,7 +266,6 @@ export class DesktopHost {
     try {
       const backend = runtime.backendConnections.adapter(agent);
       if (!backend.runDesktop) throw Error("DESKTOP_VISIT_UNAVAILABLE");
-      if (kind === "chat") this.sessions.set(session, backend);
       let decision;
       const call = (name, args) => {
         check();
@@ -293,27 +282,48 @@ export class DesktopHost {
         return { content: [{ type: "text", text: "已记录本回合的决定。" }] };
       };
       this.scopes.set(capability, { check, call });
-      await backend.runDesktop({
-        binding: {
-          runId: randomUUID(),
-          windowId: kind === "chat" ? session : null,
-          actorIdentity: { generation: actor },
-          target: { kind: "desktop-room" },
-        },
-        budget: null,
-        signal: combined,
-        instructions: `${agent.persona}\n你在独立的桌面小窝回合中。只用本轮桌面决定工具行动，房间资料只用于桌面聊天。`,
-        prompt: promptFor(request),
-        tools: [decisionTool],
-        beforeInput: check,
-        onRunStarted: check,
-        maxToolResultBytes: 4096,
-        callTool: call,
-        socialContextToken: capability,
-      });
-      check();
-      if (!decision) throw Error("DESKTOP_DECISION_MISSING");
-      return decision;
+      const instructions = `${agent.persona}
+你在独立的桌面小窝会话中。只用本轮桌面决定工具行动。只根据你在场且被送达的桌边消息参与，不要向当时未在场者主动转述以前的桌边消息。`;
+      const prompt = promptFor(request);
+      const managedContext = beginDesktopContext(
+        runtime,
+        agent,
+        backend,
+        instructions,
+        prompt,
+        combined,
+      );
+      let failure;
+      try {
+        await backend.runDesktop({
+          binding: { runId: randomUUID() },
+          managedContext,
+          budget: null,
+          signal: combined,
+          instructions,
+          prompt,
+          tools: [decisionTool],
+          beforeInput: check,
+          assertCanStart: () => {
+            if (canStart && !canStart())
+              throw new SessionPreparationFailure(
+                Error("DESKTOP_VISIT_UNAVAILABLE"),
+              );
+          },
+          onRunStarted: check,
+          maxToolResultBytes: 4096,
+          callTool: call,
+          socialContextToken: capability,
+        });
+        check();
+        if (!decision) throw Error("DESKTOP_DECISION_MISSING");
+        return decision;
+      } catch (error) {
+        failure = error;
+        throw error;
+      } finally {
+        await managedContext.finish(failure);
+      }
     } catch (error) {
       if (controller.signal.aborted) throw controller.signal.reason;
       throw error;

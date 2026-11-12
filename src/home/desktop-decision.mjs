@@ -26,7 +26,7 @@ export function promptFor(request) {
   });
   const task =
     request.kind === "invitation"
-      ? "管理员邀请你来桌边试聊。你可以自己决定来或不来。用工具选择 accept 或 decline。"
+      ? "你现在不在桌边，离席期间没有收到桌边消息。管理员邀请你来桌边试聊。你可以自己决定来或不来。用工具选择 accept 或 decline。"
       : request.kind === "opportunity"
         ? "桌面的门牌写着欢迎来坐。你可以自己决定此刻是否想来。想来就用 knock，并写一句简短的来访理由；想留在家就用 silent。敲门后由管理员决定是否让你进门。"
         : "请看这次的新消息。自然接话时用 say，写一两句中文。已经聊完、没有要补充的内容或对方想安静时用 silent。想回家时用 leave。如果管理员明确只点了另一位，没必要抢答。";

@@ -5,6 +5,7 @@ import path from "node:path";
 import { EventEmitter } from "node:events";
 import { PassThrough, Writable } from "node:stream";
 import { runNativeSocial } from "../src/backends/native-social.mjs";
+import { SessionPreparationFailure } from "../src/backends/turn-failure.mjs";
 import { CodexBackend } from "../src/backends/codex.mjs";
 import { DshBackend } from "../src/backends/dsh.mjs";
 import { AntigravityBackend } from "../src/backends/antigravity.mjs";
@@ -505,8 +506,10 @@ function dshSocialFixture(t, { hold = false } = {}) {
   const client = {
     agentPresets: { list: async () => ok({ presets: [{ id: "qq-unified" }] }) },
     workspace: {
-      create: async () =>
-        ok({ workspace: { workspaceId: "social-workspace" } }),
+      create: async (args) => {
+        calls.push({ name: "workspace", args });
+        return ok({ workspace: { workspaceId: "social-workspace" } });
+      },
     },
     sessions: {
       create: async (args) => {
@@ -869,6 +872,92 @@ test("DSH window continuation uses its existing native session with only the cur
   );
   await backend.closeSocialSessions({ windowId: "window-one" });
   assert.equal(calls.filter((call) => call.name === "drain").length, 1);
+});
+
+test("DSH desktop invitation and chat share one native session in a desktop workspace", async (t) => {
+  const { backend, calls } = dshSocialFixture(t);
+  const managedContext = {
+    conversation: "@desktop",
+    session: null,
+    saveSession(value) {
+      this.session = value;
+    },
+  };
+  for (const runId of ["invitation", "chat"]) {
+    const params = windowParams(runId);
+    params.tools[0].function.name = "desktop_room_decide";
+    await backend.runDesktop({
+      ...params,
+      managedContext,
+      socialContextToken: "synthetic-desktop-capability-" + runId,
+    });
+  }
+  const workspaces = calls.filter(({ name }) => name === "workspace");
+  assert.equal(workspaces.length, 1);
+  assert.equal(
+    path.basename(path.dirname(workspaces[0].args.path)),
+    "dsh-desktop-workspaces",
+  );
+  assert.equal(path.basename(workspaces[0].args.path), "agent-0-desktop");
+  const created = calls.filter(({ name }) => name === "create");
+  assert.equal(created.length, 1);
+  assert.match(created[0].args.sessionId, /^session-/);
+  const prompts = calls.filter(({ name }) => name === "prompt");
+  assert.equal(prompts.length, 2);
+  assert.equal(prompts[0].args.sessionId, prompts[1].args.sessionId);
+});
+
+test("Codex desktop retains the thread when a role leaves before input", async (t) => {
+  const cfg = config(),
+    rpc = new Rpc();
+  const backend = new CodexBackend(cfg.backends[0], cfg.agents[0], {
+    root: temp(t),
+    rpc,
+  });
+  t.after(() => backend.close());
+  const params = windowParams("desktop-first");
+  params.tools[0].function.name = "desktop_room_decide";
+  const managedContext = {
+    conversation: "@desktop",
+    session: null,
+    saveSession(value) {
+      this.session = value;
+    },
+  };
+  const run = backend.runDesktop({ ...params, managedContext });
+  await tick();
+  rpc.emit("notification", {
+    method: "turn/completed",
+    params: {
+      threadId: "isolated-social-thread",
+      turn: { id: "isolated-social-turn", status: "completed" },
+    },
+  });
+  await run;
+  const session = managedContext.session;
+
+  await assert.rejects(
+    backend.runDesktop({
+      ...params,
+      managedContext,
+      assertCanStart() {
+        if (rpc.calls.some(({ method }) => method === "thread/resume"))
+          throw new SessionPreparationFailure(
+            Error("DESKTOP_VISIT_UNAVAILABLE"),
+          );
+      },
+    }),
+    SessionPreparationFailure,
+  );
+  assert.deepEqual(managedContext.session, session);
+  assert.equal(
+    rpc.calls.filter(({ method }) => method === "turn/start").length,
+    1,
+  );
+  assert.equal(
+    rpc.calls.some(({ method }) => method === "thread/archive"),
+    false,
+  );
 });
 
 test("Codex window continuation resumes only its own thread and installs the latest tool closure", async (t) => {
