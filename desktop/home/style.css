@@ -346,6 +346,14 @@ h2 {
   user-select: text;
   font-size: 13px;
 }
+.attachment-status {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 0 18px 8px;
+}
+.attachment {
+  overflow-wrap: anywhere;
+}
 .budget {
   border-top: 1px solid var(--line);
   background: #f6f0e4;

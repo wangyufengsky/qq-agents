@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("nest", {
   get: () => ipcRenderer.invoke("room:get"),
+  attach: () => ipcRenderer.invoke("room:attach"),
   act: (action, data) => ipcRenderer.send("room:action", action, data),
   onRoom: (callback) =>
     ipcRenderer.on("room:update", (_event, snapshot) => callback(snapshot)),

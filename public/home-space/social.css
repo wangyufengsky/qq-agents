@@ -90,6 +90,13 @@
   inline-size: 5.5rem;
   max-inline-size: 38%;
 }
+.desktop-tools {
+  display: grid;
+  gap: 0.5rem;
+}
+.desktop-tools label {
+  justify-content: flex-start;
+}
 .desktop-settings .primary {
   justify-self: start;
 }

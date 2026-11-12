@@ -344,7 +344,7 @@ function sessionsMarkup(a, data) {
             : conversationLabel(s.conversation),
         capacity = s.usage?.capacityTokens || a.contextPolicy.capacityTokens,
         share = s.usage ? Math.min(1, s.usage.contextTokens / capacity) : 0;
-      return `<article class="mind-row"><div class="mind-row-head"><strong class="mind-title" title="${esc(s.conversation)}">${esc(name)}</strong>${mindTag(sessionStates[status] || status || "尚未初始化", status ? sessionTones[status] || "wait" : "off")}</div>${s.usage ? `<div class="mind-usage"><svg class="meter mind-bar${share > 0.8 ? " is-high" : ""}" viewBox="0 0 100 4" preserveAspectRatio="none" aria-hidden="true"><rect class="track" width="100" height="4" rx="2"/><rect class="bar" width="${(share * 100).toFixed(1)}" height="4" rx="2"/></svg><span>${s.usage.source === "measured" ? "后端实测" : "估算"} ${Number(s.usage.contextTokens).toLocaleString()} / ${Number(capacity).toLocaleString()} tokens · ${Math.round(share * 100)}%（另预留 ${Number(a.contextPolicy.reserveTokens).toLocaleString()}）</span></div>` : '<p class="mind-meta">用量尚不可用</p>'}<p class="mind-meta">self v${s.loadedSelfVersion || "—"} · 连续已见 ${s.seenThroughSeq || 0} · 已处理 ${s.readThroughSeq || 0}</p>${s.lifecycle?.reason ? mindClip("原因：" + s.lifecycle.reason, 1) : ""}<div class="mind-actions"><button type="button" class="ghost" data-reset-session="${esc(s.conversation)}" title="结束当前会话，下次再初始化">结束当前会话</button></div></article>`;
+      return `<article class="mind-row"><div class="mind-row-head"><strong class="mind-title" title="${esc(s.conversation)}">${esc(name)}</strong>${mindTag(sessionStates[status] || status || "尚未初始化", status ? sessionTones[status] || "wait" : "off")}</div>${s.usage ? `<div class="mind-usage"><svg class="meter mind-bar${share > 0.8 ? " is-high" : ""}" viewBox="0 0 100 4" preserveAspectRatio="none" aria-hidden="true"><rect class="track" width="100" height="4" rx="2"/><rect class="bar" width="${(share * 100).toFixed(1)}" height="4" rx="2"/></svg><span>${s.usage.source === "measured" ? "后端实测" : "估算"} ${Number(s.usage.contextTokens).toLocaleString()} / ${Number(capacity).toLocaleString()} tokens · ${Math.round(share * 100)}%（另预留 ${Number(a.contextPolicy.reserveTokens).toLocaleString()}）</span></div>` : '<p class="mind-meta">用量尚不可用</p>'}<p class="mind-meta">self v${s.loadedSelfVersion || "—"} · 连续已见 ${s.seenThroughSeq || 0} · 已处理 ${s.readThroughSeq || 0}</p>${s.lifecycle?.reason ? mindClip("原因：" + s.lifecycle.reason, 1) : ""}${s.conversation === "@desktop" ? "" : `<div class="mind-actions"><button type="button" class="ghost" data-reset-session="${esc(s.conversation)}" title="结束当前会话，下次再初始化">结束当前会话</button></div>`}</article>`;
     })
     .join("");
   return mindPage(
@@ -352,7 +352,7 @@ function sessionsMarkup(a, data) {
     sessions.length ? `共 ${sessions.length} 个` : "",
     rows + retiredSessionsMarkup(data.retired),
     "还没有工作会话。",
-    "每个聊天和空闲时间各有一个模型会话；结束后下一回合重新初始化，聊天记录和记忆都保留。",
+    "聊天、桌面小窝和空闲时间各有独立模型会话。",
   );
 }
 function bindSelf(a, current) {

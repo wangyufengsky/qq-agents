@@ -7,7 +7,7 @@ export function createFrameworkClient(root, onState, listenPort) {
   let queue = Promise.resolve();
   let syncing = false;
   let stopped = false;
-  const request = async (action, data) => {
+  const request = async (action, data, attachment = false) => {
     const port =
       listenPort ??
       JSON.parse(readFileSync(join(root, "config.json"), "utf8")).port ??
@@ -21,16 +21,18 @@ export function createFrameworkClient(root, onState, listenPort) {
     )
       throw Error("DESKTOP_CONNECTION_INVALID");
     const response = await fetch(
-      `http://127.0.0.1:${port}/api/desktop-home/client`,
+      `http://127.0.0.1:${port}/api/desktop-home/${attachment ? "attachment" : "client"}`,
       {
         method: "POST",
         headers: {
           "content-type": "application/json",
           "x-desktop-home-token": token,
         },
-        body: JSON.stringify({ client, action, data }),
+        body: JSON.stringify(
+          attachment ? { ...data, client } : { client, action, data },
+        ),
         redirect: "error",
-        signal: AbortSignal.timeout(2500),
+        signal: AbortSignal.timeout(attachment ? 8000 : 2500),
       },
     );
     if (!response.ok) throw Error("DESKTOP_CONNECTION_FAILED");
@@ -59,6 +61,16 @@ export function createFrameworkClient(root, onState, listenPort) {
   const timer = setInterval(sync, 650);
   return {
     act,
+    attach(data) {
+      if (stopped) return Promise.reject(Error("DESKTOP_CONNECTION_FAILED"));
+      const upload = queue.then(async () => {
+        if (stopped) throw Error("DESKTOP_CONNECTION_FAILED");
+        const value = await request(undefined, data, true);
+        if (!stopped) onState(value);
+      });
+      queue = upload.catch(() => {});
+      return upload;
+    },
     async close() {
       stopped = true;
       clearInterval(timer);

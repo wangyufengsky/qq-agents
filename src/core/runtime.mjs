@@ -443,14 +443,21 @@ export class Runtime {
     return c;
   }
   toolsFor(a, conversation) {
-    if (conversation === DESKTOP_CONVERSATION)
-      return this.desktopVisits.configured()
-        ? [
-            DESKTOP_DECISION,
-            DESKTOP_HISTORY,
-            ...DESKTOP_MEMORY_TOOLS.filter((name) => a.tools.includes(name)),
-          ]
-        : [];
+    if (conversation === DESKTOP_CONVERSATION) {
+      if (!this.desktopVisits.configured()) return [];
+      const candidates = new Set([
+        ...DESKTOP_MEMORY_TOOLS,
+        ...a.tools,
+        "file_read",
+        "file_revise",
+        "subject_inbox_submit",
+        "subject_inbox_list",
+      ]);
+      const permitted = [...candidates].filter((name) =>
+        toolAvailable(a, name, conversation, this.config),
+      );
+      return [DESKTOP_DECISION, DESKTOP_HISTORY, ...permitted];
+    }
     if (conversation?.startsWith("@social:"))
       return this.config.homeSocial?.enabled
         ? this.socialRuntime

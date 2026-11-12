@@ -31,7 +31,7 @@ function turn(memory, session, index, extra = {}) {
   });
 }
 
-test("admin transcript isolates QQ, subject, protected work and role ownership", async (t) => {
+test("admin transcript isolates QQ, desktop, subject, protected work and role ownership", async (t) => {
   const f = fixture(t, { cfg: config(2) });
   const m = f.store.bind("agent-0");
   const sid = randomUUID();
@@ -61,6 +61,31 @@ test("admin transcript isolates QQ, subject, protected work and role ownership",
   });
   turn(m, { backend: "codex", id: randomUUID() }, 17, {
     conversation: "@social:fixture",
+  });
+  const desktop = { backend: "codex", id: randomUUID() };
+  m.setState("@desktop", { ...m.state("@desktop"), session: desktop });
+  turn(m, desktop, 18, { conversation: "@desktop" });
+  m.append({
+    dedupe: "desktop-reply",
+    conversation: "@desktop",
+    kind: "message.sent",
+    direction: "out",
+    status: "confirmed",
+    body: "已显示的桌面回复",
+    occurredAt: at(189000),
+    observedAt: at(189000),
+    payload: { desktop: { turnId: "turn-18" } },
+  });
+  m.append({
+    dedupe: "other-desktop-reply",
+    conversation: "@desktop",
+    kind: "message.sent",
+    direction: "out",
+    status: "confirmed",
+    body: "其他桌面回合",
+    occurredAt: at(185000),
+    observedAt: at(185000),
+    payload: { desktop: { turnId: "another-turn" } },
   });
   turn(f.store.bind("agent-1"), session, 12);
   const log = (offset, type, payload) => ({
@@ -209,6 +234,7 @@ test("admin transcript isolates QQ, subject, protected work and role ownership",
   assert.deepEqual(
     sessions.map((s) => [s.scope, s.conversation, s.current, s.count]),
     [
+      ["desktop", "@desktop", true, 1],
       ["subject", "@subject", true, 1],
       ["chat", group, true, 13],
       ["subject", "@subject", false, 1],
@@ -216,7 +242,19 @@ test("admin transcript isolates QQ, subject, protected work and role ownership",
     ],
   );
   assert(!JSON.stringify(sessions).includes(sid));
-  const [currentSubject, { key }, historicalSubject, ambiguous] = sessions;
+  const [desktopEntry, currentSubject, { key }, historicalSubject, ambiguous] =
+    sessions;
+  assert.equal(
+    (await request({ key: desktopEntry.key, agentId: "agent-1" })).status,
+    404,
+  );
+  const desktopPage = await (await request({ key: desktopEntry.key })).json();
+  assert.equal(desktopPage.session.scope, "desktop");
+  assert.equal(desktopPage.turns[0].id, "turn-18");
+  assert.deepEqual(
+    desktopPage.turns[0].delivered.map(({ text }) => text),
+    ["已显示的桌面回复"],
+  );
   assert.equal(
     (await request({ key: currentSubject.key, agentId: "agent-1" })).status,
     404,

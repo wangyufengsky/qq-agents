@@ -1,14 +1,22 @@
 import {
   app,
   BrowserWindow,
+  dialog,
   ipcMain,
   Menu,
   nativeImage,
   screen,
   Tray,
 } from "electron";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import {
+  constants,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
+import { open } from "node:fs/promises";
+import { basename, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createFrameworkClient } from "./framework-client.mjs";
 import { LiveRoom } from "./live-room.mjs";
@@ -480,6 +488,81 @@ ipcMain.handle("room:get", (event) => {
     ({ win }) => win.webContents === event.sender,
   );
   if (entry) return { data: snapshot(), section: entry.section };
+});
+
+let choosingAttachment = false;
+ipcMain.handle("room:attach", async (event) => {
+  const entry = [...entries.values()].find(
+    ({ win }) => win.webContents === event.sender,
+  );
+  const availability = remoteState?.attachmentInput;
+  const roomEpoch = remoteState?.roomEpoch;
+  if (
+    !framework ||
+    !roomEpoch ||
+    entry?.type !== "panel" ||
+    entry.departing ||
+    entry.section !== "chat" ||
+    !entry.win.isFocused() ||
+    choosingAttachment ||
+    (!availability?.text && !availability?.image)
+  )
+    return "unavailable";
+  const imageExtensions = ["png", "jpg", "jpeg", "webp"];
+  const extensions = [
+    ...(availability.text ? ["txt", "md", "csv", "json"] : []),
+    ...(availability.image ? imageExtensions : []),
+  ];
+  choosingAttachment = true;
+  try {
+    const selection = await dialog.showOpenDialog(entry.win, {
+      title: "发送附件到桌面小窝",
+      buttonLabel: "发送",
+      properties: ["openFile"],
+      filters: [{ name: "桌面小窝支持的附件", extensions }],
+    });
+    if (selection.canceled) return "cancelled";
+    const [selected] = selection.filePaths;
+    const name = basename(selected);
+    const extension = extname(name).slice(1).toLowerCase();
+    if (!extensions.includes(extension) || name.length > 120) return "invalid";
+    const maxBytes = imageExtensions.includes(extension)
+      ? 2 * 1024 * 1024
+      : 12 * 1024;
+    const file = await open(
+      selected,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+    try {
+      const stat = await file.stat();
+      if (!stat.isFile() || stat.size < 1 || stat.size > maxBytes)
+        return "invalid";
+      const buffer = Buffer.alloc(maxBytes + 1);
+      let length = 0;
+      while (length < buffer.length) {
+        const { bytesRead } = await file.read(
+          buffer,
+          length,
+          buffer.length - length,
+        );
+        if (!bytesRead) break;
+        length += bytesRead;
+      }
+      if (!length || length > maxBytes) return "invalid";
+      await framework.attach({
+        roomEpoch,
+        name,
+        data: buffer.subarray(0, length).toString("base64"),
+      });
+      return "sent";
+    } finally {
+      await file.close();
+    }
+  } catch {
+    return "failed";
+  } finally {
+    choosingAttachment = false;
+  }
 });
 
 ipcMain.on("room:action", (event, action, data) => {

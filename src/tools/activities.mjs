@@ -1,3 +1,6 @@
+import { DESKTOP_CONVERSATION } from "../home/desktop-decision.mjs";
+import { recallBoundary } from "../core/recall-boundary.mjs";
+import { isDesktopToolContext } from "./desktop-policy.mjs";
 import { projectSnapshotProof } from "../home/project-snapshots.mjs";
 import { acknowledgeActivity } from "./activity-acknowledgements.mjs";
 import { z } from "zod";
@@ -269,12 +272,27 @@ export function writeActivity(runtime, ctx, args, old) {
     };
   });
 }
+export function desktopProjectReadable(runtime, ctx, project) {
+  const boundary = recallBoundary(runtime, ctx, { publicOnly: true });
+  return (
+    activityVisible(project, DESKTOP_CONVERSATION) &&
+    !project.createdIn?.startsWith?.("@work:") &&
+    boundary.allowed(project) &&
+    (project.steps || []).every(
+      (step) =>
+        !step.writtenIn?.startsWith?.("@work:") && boundary.allowed(step),
+    )
+  );
+}
+
 export function readProjects(runtime, ctx, args) {
   const memory = runtime.memory.bind(ctx.agentId);
+  const visible = (project) =>
+    isDesktopToolContext(ctx)
+      ? desktopProjectReadable(runtime, ctx, project)
+      : activityVisible(project, ctx.conversation);
   if (!args.id) {
-    const rows = memory.identity
-      .projects()
-      .filter((p) => activityVisible(p, ctx.conversation));
+    const rows = memory.identity.projects().filter(visible);
     return {
       items: rows.slice(args.offset, args.offset + 10).map((p) => ({
         ...p,
@@ -286,8 +304,7 @@ export function readProjects(runtime, ctx, args) {
     };
   }
   const project = memory.identity.project(args.id);
-  if (!project || !activityVisible(project, ctx.conversation))
-    throw Error("RECORD_NOT_FOUND");
+  if (!project || !visible(project)) throw Error("RECORD_NOT_FOUND");
   if (!project.activity) return project;
   const entry = activityVersion(
     memory,

@@ -44,10 +44,10 @@ const titles = {
   projects: ["项目与活动", "持续推进的事情、共同原稿与作品历史。"],
   subject: ["空闲时间", "空闲时间的检查状态、日志，以及检查与联系的设置。"],
   intents: ["主动联系", "空闲时间里想主动找人留下的意图，以及最后的结果。"],
-  transcripts: ["会话", "查看本机保留的 QQ 聊天和主人格会话。"],
+  transcripts: ["会话", "查看本机保留的 QQ 聊天、桌面小窝和主人格会话。"],
   sessions: [
     "会话状态",
-    "每个聊天和空闲时间的模型会话与上下文用量，可结束后重新初始化。",
+    "查看 QQ 聊天、桌面小窝和空闲时间的模型会话与上下文用量。",
   ],
   permissions: ["权限", "分别设置每个 AI 的文件收发能力与独立文件库。"],
   schedule: ["主动与定时", "条件唤醒、睡前观察和定时任务，各自按规则运行。"],
@@ -2395,7 +2395,9 @@ function conversationsSummary(rows) {
     .join(" · ");
 }
 const conversationLabel = (conversation) =>
-  conversation.replace(/^group:/, "群 ").replace(/^private:/, "私聊 ");
+  conversation === "@desktop"
+    ? "桌面小窝"
+    : conversation.replace(/^group:/, "群 ").replace(/^private:/, "私聊 ");
 function conversationStateText(c) {
   if (!c) return "尚无会话状态，按角色设置参与";
   return (

@@ -1,3 +1,5 @@
+import { DESKTOP_CONVERSATION } from "../home/desktop-decision.mjs";
+import { desktopToolAvailable } from "./desktop-policy.mjs";
 import { DESKTOP_VISIT_TOOL } from "../home/desktop-visits.mjs";
 import { DESKTOP_INVITATION_TOOL } from "../home/desktop-invitations.mjs";
 import {
@@ -11,6 +13,7 @@ import { z } from "zod";
 import {
   DESKTOP_DECISION,
   DESKTOP_HISTORY,
+  DESKTOP_MEMORY_TOOLS,
   FUNCTIONAL_AGENT_RESULT,
 } from "./names.mjs";
 import { memoryRecallPolicy } from "../core/functional-agents.mjs";
@@ -95,6 +98,13 @@ export function toolAvailable(agent, name, conversation, config) {
     name === FUNCTIONAL_AGENT_RESULT
   )
     return false;
+  if (conversation === DESKTOP_CONVERSATION) {
+    if (DESKTOP_MEMORY_TOOLS.includes(name))
+      return (
+        config?.desktopHome?.enabled === true && agent.tools.includes(name)
+      );
+    return Boolean(config && desktopToolAvailable(agent, name, config));
+  }
   if (name === "memory_recall")
     return Boolean(config && memoryRecallPolicy(agent, conversation, config));
   if (name.startsWith("subject_inbox_") || name === "subject_rest")

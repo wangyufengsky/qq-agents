@@ -19,6 +19,7 @@
   },
   "desktopHome": {
     "enabled": false,
+    "toolRoles": [],
     "maxTurns": 6,
     "refreshMinutes": 60
   },

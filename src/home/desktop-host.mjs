@@ -3,6 +3,10 @@ import { z } from "zod";
 import { SessionPreparationFailure } from "../backends/turn-failure.mjs";
 import { recallBoundary } from "../core/recall-boundary.mjs";
 import { containsCredential } from "../core/secrets.mjs";
+import {
+  DesktopAttachments,
+  parseDesktopAttachment,
+} from "./desktop-attachments.mjs";
 import { DesktopVisits } from "./desktop-visits.mjs";
 import { DesktopInvitations } from "./desktop-invitations.mjs";
 import { LiveRoom } from "./desktop-room.mjs";
@@ -253,6 +257,7 @@ export class DesktopHost {
       room.archiveSeq = archived.seq;
       return archived;
     };
+    this.attachments = new DesktopAttachments();
     this.live = new LiveRoom(
       room,
       {
@@ -304,6 +309,7 @@ export class DesktopHost {
     const previous = this.live;
     this.live = null;
     this.client = null;
+    this.attachments = null;
     for (const visit of this.visits.values()) visit.resetDoor();
     void previous.close();
   }
@@ -344,7 +350,54 @@ export class DesktopHost {
       live.setDoorMode(data);
     if (action === "knock-answer" && typeof data === "boolean")
       live.answerKnock(data);
-    return { enabled: true, room: live.snapshot() };
+    return this.clientSnapshot();
+  }
+
+  clientSnapshot() {
+    return {
+      enabled: true,
+      room: {
+        ...this.live.snapshot(),
+        attachmentInput: this.attachments.availability(
+          this.runtime.config,
+          this.live.here(),
+        ),
+      },
+    };
+  }
+
+  async attach(input) {
+    const upload = parseDesktopAttachment(input);
+    const live = this.live;
+    const attachments = this.attachments;
+    const check = () => {
+      if (
+        !this.connected() ||
+        this.client.id !== upload.client ||
+        !live ||
+        this.live !== live ||
+        live.room.epoch !== upload.roomEpoch
+      )
+        throw Error("DESKTOP_ATTACHMENT_UNAVAILABLE");
+    };
+    check();
+    if (attachments.busy) throw Error("DESKTOP_ATTACHMENT_UNAVAILABLE");
+    attachments.busy = true;
+    try {
+      const entry = await attachments.prepare(
+        upload,
+        this.runtime.config,
+        live.here(),
+      );
+      check();
+      attachments.publish(entry, this.runtime.config, live.visits, (metadata) =>
+        live.send("", [metadata]),
+      );
+      this.client.expiresAt = this.runtime.now() + CLIENT_LEASE;
+      return this.clientSnapshot();
+    } finally {
+      attachments.busy = false;
+    }
   }
 
   async run(request, signal, canStart) {
@@ -365,6 +418,7 @@ export class DesktopHost {
     const abort = () => controller.abort(external.reason);
     if (external.aborted) abort();
     else external.addEventListener("abort", abort, { once: true });
+    let attachmentInput;
     const check = () => {
       controller.signal.throwIfAborted();
       if (
@@ -373,6 +427,12 @@ export class DesktopHost {
         runtime.blockers(agent, DESKTOP_CONVERSATION, ctx).length
       )
         throw Error("DESKTOP_VISIT_UNAVAILABLE");
+      if (ctx?.backendInputEpoch !== ctx?.inputEpoch)
+        attachmentInput?.assertCurrent(
+          runtime.config,
+          runtime.agent(actor),
+          this.live?.visits.get(actor),
+        );
     };
     let ctx, release, exchange, failure, decision;
     const assertOutput = (text) => {
@@ -407,16 +467,25 @@ export class DesktopHost {
       runtime.running.set(key, ctx);
       const backend = runtime.backendConnections.adapter(agent);
       if (!backend.runDesktop) throw Error("DESKTOP_VISIT_UNAVAILABLE");
+      attachmentInput = this.attachments?.project(
+        request.messages || [],
+        runtime.config,
+        agent,
+        this.live?.visits.get(actor),
+      );
       exchange = beginDesktopContext(
         runtime,
         ctx,
         agent,
         backend,
-        request,
+        attachmentInput
+          ? { ...request, messages: attachmentInput.messages }
+          : request,
         controller.signal,
       );
       await backend.runDesktop({
         ...exchange,
+        inputImages: attachmentInput?.images,
         binding: { runId: ctx.turnId },
         budget: null,
         signal: controller.signal,
@@ -431,7 +500,7 @@ export class DesktopHost {
         registerInputConsumer: (consume) => {
           ctx.desktopConsumeInput = consume;
         },
-        maxToolResultBytes: 65024,
+        maxToolResultBytes: 65536,
         socialContextToken: ctx.token,
       });
       check();

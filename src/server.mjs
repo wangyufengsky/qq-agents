@@ -1,3 +1,4 @@
+import { MAX_DESKTOP_ATTACHMENT_BODY } from "./home/desktop-attachments.mjs";
 import { desktopToken } from "./home/desktop-auth.mjs";
 import { deriveRelayToken } from "./core/relay-auth.mjs";
 import { finalizeMcpOutput, toolOutputText } from "./backends/tool-output.mjs";
@@ -302,6 +303,16 @@ export function createServer({
         const state = runtime.desktopVisits.command(input);
         if (state.room) desktopLauncher?.connected();
         return send(state);
+      }
+      if (url.pathname === "/api/desktop-home/attachment") {
+        if (req.method !== "POST") return deny("METHOD", 405);
+        const local = ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(
+          req.socket.remoteAddress,
+        );
+        if (!local || !equal(req.headers["x-desktop-home-token"], desktopKey))
+          return deny("UNAUTHORIZED", 401);
+        const input = await readBody(MAX_DESKTOP_ATTACHMENT_BODY);
+        return send(await runtime.desktopVisits.attach(input));
       }
       if (url.pathname === "/api/desktop-home") {
         const local = ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(
@@ -1013,7 +1024,7 @@ export function createServer({
           turns: m.identity.list("model_turns").slice(0, 50),
           sessions: m.db
             .prepare(
-              "SELECT conversation,value FROM runtime WHERE agent_id=? AND (conversation='@subject' OR conversation LIKE 'group:%' OR conversation LIKE 'private:%')",
+              "SELECT conversation,value FROM runtime WHERE agent_id=? AND (conversation IN ('@subject','@desktop') OR conversation LIKE 'group:%' OR conversation LIKE 'private:%')",
             )
             .all(a.id)
             .map((r) => ({
