@@ -2,6 +2,42 @@
 import { interactionEvents, sentLedger } from "./closeness.mjs";
 import { peopleInTurn, quotedSender } from "./person-cards.mjs";
 import { recallBoundary } from "./recall-boundary.mjs";
+import {
+  DESKTOP_CONVERSATION,
+  desktopInputCommitted,
+  isGroupConversation,
+} from "../home/desktop-archive.mjs";
+
+/** @param {ReturnType<typeof elsewhereForTurn>} elsewhere */
+export function elsewhereLine(elsewhere) {
+  const withThem = elsewhere?.items.length,
+    words = elsewhere?.words,
+    own = words && (words.items.length || words.otherPrivate);
+  if (!withThem && !own) return "";
+  return `别处近况（程序统计的索引，不是完整原文；要用时按 continuation 回查。items 是本轮这些人和你在别处的直接来往，fromPrivate 是对方私聊里的事，不要在群里提起内容，除非对方先提。yourWords 是你自己最近在别的群或桌面说过的话：to 只按明确的 @ 和引用判断，unclear 表示没有明确对象，不要替自己猜；truncated 的摘录只是开头，涉及答应、承诺或结论时先回查上下文再认账；otherPrivate 只告诉你在别人私聊里也说过话，内容不在这里。其他会话的经历由你结合场合判断怎么用）：${JSON.stringify(
+    {
+      ...(withThem
+        ? {
+            items: elsewhere.items,
+            ...(Object.keys(elsewhere.more).length
+              ? { more: elsewhere.more }
+              : {}),
+          }
+        : {}),
+      ...(own
+        ? {
+            yourWords: {
+              items: words.items,
+              ...(Object.keys(words.more).length ? { more: words.more } : {}),
+              ...(words.otherPrivate
+                ? { otherPrivate: words.otherPrivate }
+                : {}),
+            },
+          }
+        : {}),
+    },
+  )}`;
+}
 
 const WORDS_PER_CHAT = 3;
 const WORDS_PER_TURN = 8;
@@ -11,6 +47,8 @@ const EXCERPT_CHARS = 80;
  * message itself says so: an at or a reply. Never inferred from timing.
  * @param {any} memory @param {any} row @param {any} payload */
 function addressees(memory, row, payload) {
+  if (row.conversation === DESKTOP_CONVERSATION)
+    return payload.desktop?.targetQq || [];
   const to = new Set();
   if (payload.atUserId != null) to.add(String(payload.atUserId));
   for (const s of Array.isArray(payload.segments) ? payload.segments : [])
@@ -50,7 +88,7 @@ function ownWords(
         .get(ctx.agentId, ctx.conversation).seq || 0;
   const rows = memory.db
     .prepare(
-      `SELECT * FROM events WHERE ${sent} AND seq>? AND occurred_at>=? AND occurred_at<=? AND conversation<>? AND (conversation LIKE 'group:%' OR conversation LIKE 'private:%') ORDER BY seq DESC`,
+      `SELECT * FROM events WHERE ${sent} AND seq>? AND occurred_at>=? AND occurred_at<=? AND conversation<>? AND (conversation=? OR conversation LIKE 'group:%' OR conversation LIKE 'private:%') ORDER BY seq DESC`,
     )
     .all(
       ctx.agentId,
@@ -58,6 +96,7 @@ function ownWords(
       new Date(now - lookbackMs).toISOString(),
       new Date(now).toISOString(),
       ctx.conversation,
+      DESKTOP_CONVERSATION,
     );
   const items = [],
     /** @type {Record<string, number>} */ more = {},
@@ -66,7 +105,12 @@ function ownWords(
   let privateMessages = 0,
     latest = through;
   for (const row of rows) {
-    if (groupsOnly && !row.conversation.startsWith("group:")) continue;
+    if (
+      ctx.conversation === "@subject" &&
+      row.conversation !== DESKTOP_CONVERSATION
+    )
+      continue;
+    if (groupsOnly && !isGroupConversation(row.conversation)) continue;
     const payload = JSON.parse(row.payload || "{}");
     if (
       payload.protectedSocialSources?.length ||
@@ -128,13 +172,20 @@ export function elsewhereForTurn(
   { fresh, now = Date.now(), accountId, groupsOnly = false, personIds },
 ) {
   const config = runtime.agent(ctx.agentId).behavior.elsewhere;
-  if (!config.enabled || !/^(group|private):/.test(ctx.conversation))
+  if (
+    !config?.enabled ||
+    (!isGroupConversation(ctx.conversation) &&
+      !ctx.conversation.startsWith("private:") &&
+      ctx.conversation !== "@subject")
+  )
     return null;
   const memory = runtime.memory.bind(ctx.agentId);
   const shown = fresh
     ? {}
     : { ...memory.state(ctx.conversation).elsewhereShown };
-  const boundary = recallBoundary(runtime, ctx);
+  const boundary = recallBoundary(runtime, ctx, {
+    publicOnly: ctx.freshSubject === true,
+  });
   const candidates = [];
   for (const personId of personIds ??
     peopleInTurn(memory, ctx.conversation, historyItems, accountId)) {
@@ -142,10 +193,12 @@ export function elsewhereForTurn(
       since: now - config.windowMs,
       allowed: (row) =>
         row.conversation !== ctx.conversation &&
-        (!groupsOnly || row.conversation.startsWith("group:")) &&
+        (!groupsOnly || isGroupConversation(row.conversation)) &&
         boundary.allowed(row) &&
         (row.direction !== "in" ||
-          row.seq <= (memory.state(row.conversation).readThroughSeq || 0)),
+          (row.conversation === DESKTOP_CONVERSATION
+            ? desktopInputCommitted(memory, row)
+            : row.seq <= (memory.state(row.conversation).readThroughSeq || 0))),
     });
     const latest = events.at(-1);
     if (!latest) continue;
@@ -177,7 +230,7 @@ export function elsewhereForTurn(
         startedBy: list[0].direction === "in" ? "them" : "you",
         lastFrom: last.direction === "in" ? "them" : "you",
         ...(conversation.startsWith("private:") &&
-        ctx.conversation.startsWith("group:")
+        isGroupConversation(ctx.conversation)
           ? { fromPrivate: true }
           : {}),
         continuation: { tool: "memory_read", id: last.id },
@@ -207,5 +260,6 @@ export function elsewhereForTurn(
     lookbackMs: config.ownLookbackMs ?? 86400000,
     groupsOnly,
   });
+  if (ctx.conversation === "@subject" && !words.items.length) return null;
   return { items, more, shown, words };
 }

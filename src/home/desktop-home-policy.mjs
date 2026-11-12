@@ -5,6 +5,10 @@ export const desktopHomePolicy = z
     enabled: z.boolean().default(false),
     maxTurns: z.number().int().min(1).max(24).default(6),
     refreshMinutes: z.number().int().min(0).max(1440).default(60),
+    administratorQq: z
+      .string()
+      .regex(/^\d{1,20}$/)
+      .optional(),
   })
   .strict()
   .prefault({});

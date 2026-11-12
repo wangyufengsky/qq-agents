@@ -61,8 +61,34 @@ export function createRoom(
   };
 }
 
-export function addMessage(room, actor, text, now = Date.now()) {
-  const message = { id: ++room.sequence, actor, text, now };
+export function addMessage(
+  room,
+  actor,
+  text,
+  now = Date.now(),
+  attachments = [],
+  turnId,
+  speakerType = "system",
+) {
+  const archived =
+    speakerType === "system"
+      ? null
+      : room.publishMessage?.(
+          actor,
+          text,
+          now,
+          attachments,
+          turnId,
+          speakerType,
+        );
+  const message = {
+    id: ++room.sequence,
+    actor,
+    text,
+    now,
+    speakerType,
+    ...archived,
+  };
   room.messages.push(message);
   if (room.messages.length > 160) room.messages.shift();
   return message;
@@ -124,13 +150,32 @@ export function leave(room, role, now = Date.now(), self = false) {
   return true;
 }
 
-export function speak(room, text, now = Date.now(), simulated = true) {
+export function speak(
+  room,
+  text,
+  now = Date.now(),
+  simulated = true,
+  attachments = [],
+) {
   const here = room.roles.filter(({ id }) => room.members[id] === "here");
   const content = text.trim();
-  if (!here.length || !content || content.length > 1000) return false;
+  if (
+    !here.length ||
+    (!content && !attachments.length) ||
+    content.length > 1000
+  )
+    return false;
 
+  addMessage(
+    room,
+    "admin",
+    content,
+    now,
+    attachments,
+    undefined,
+    "administrator",
+  );
   refill(room, now);
-  addMessage(room, "admin", content, now);
   room.turn = null;
   const named = here.find((role) =>
     [role.name, role.title].some((name) => content.includes(`@${name}`)),
@@ -156,9 +201,24 @@ export function startTurn(room) {
   return room.turn;
 }
 
-export function finishTurn(room, turn, now = Date.now(), text = turn.text) {
+export function finishTurn(
+  room,
+  turn,
+  now = Date.now(),
+  text = turn.text,
+  turnId,
+) {
   if (room.turn !== turn || room.members[turn.actor] !== "here") return false;
+  if (text)
+    room.bubbles[turn.actor] = addMessage(
+      room,
+      turn.actor,
+      text,
+      now,
+      [],
+      turnId,
+      "agent",
+    );
   room.turn = null;
-  if (text) room.bubbles[turn.actor] = addMessage(room, turn.actor, text, now);
   return true;
 }

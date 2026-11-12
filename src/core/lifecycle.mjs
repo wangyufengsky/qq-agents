@@ -49,7 +49,7 @@ import {
   peopleInTurn,
 } from "./person-cards.mjs";
 import { moodForTurn } from "./mood.mjs";
-import { elsewhereForTurn } from "./elsewhere.mjs";
+import { elsewhereForTurn, elsewhereLine } from "./elsewhere.mjs";
 import { floorForTurn } from "./floor.mjs";
 import { taskBrief } from "./scheduler.mjs";
 import { recallBoundary, recallPage } from "./recall-boundary.mjs";
@@ -70,36 +70,6 @@ import {
   recoverSessions,
 } from "./session-records.mjs";
 export const SUBJECT = "@subject";
-// One line for both parts of what happened elsewhere; empty parts are left out.
-function elsewhereLine(elsewhere) {
-  const withThem = elsewhere?.items.length,
-    words = elsewhere?.words,
-    own = words && (words.items.length || words.otherPrivate);
-  if (!withThem && !own) return "";
-  return `别处近况（程序统计的索引，不是完整原文；要用时按 continuation 回查。items 是本轮这些人和你在别处的直接来往，fromPrivate 是对方私聊里的事，不要在群里提起内容，除非对方先提。yourWords 是你自己最近在别的群里说过的话：to 只按 @ 和引用判断，unclear 表示没有明确对象，不要替自己猜；truncated 的摘录只是开头，涉及答应、承诺或结论时先回查上下文再认账；otherPrivate 只告诉你在别人私聊里也说过话，内容不在这里。其他会话的经历由你结合场合判断怎么用）：${JSON.stringify(
-    {
-      ...(withThem
-        ? {
-            items: elsewhere.items,
-            ...(Object.keys(elsewhere.more).length
-              ? { more: elsewhere.more }
-              : {}),
-          }
-        : {}),
-      ...(own
-        ? {
-            yourWords: {
-              items: words.items,
-              ...(Object.keys(words.more).length ? { more: words.more } : {}),
-              ...(words.otherPrivate
-                ? { otherPrivate: words.otherPrivate }
-                : {}),
-            },
-          }
-        : {}),
-    },
-  )}`;
-}
 // The initial prompt gives each record once. Sources already in the new
 // messages or the free-time logs, intents already in the handoff, and timed
 // tasks in the coming-up list are not repeated elsewhere.

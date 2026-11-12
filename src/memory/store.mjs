@@ -10,6 +10,10 @@ import {
   withExportManifest,
 } from "./export-format.mjs";
 import { migrateHomeSocial } from "../home/social-schema.mjs";
+import {
+  initializeDesktopArchive,
+  isGroupConversation,
+} from "../home/desktop-archive.mjs";
 import { socialSafeExportRow, mergeProtection } from "./protection.mjs";
 import { withoutClosenessCache } from "../core/closeness.mjs";
 import { RECALL_NOTICE_BODY, recallAnnotation } from "./recalls.mjs";
@@ -201,6 +205,7 @@ export class MemoryStore {
           this.db.exec(`PRAGMA user_version=${INPUT_SCHEMA_VERSION}`);
         });
       migrateHomeSocial(this.db);
+      initializeDesktopArchive(this.db);
       this.due = new ConversationDue(this.db);
       this.transaction(() => this.due.initialize());
     } catch (error) {
@@ -444,7 +449,7 @@ class AgentMemory {
         : {}),
       privacy: row.conversation.startsWith("private:")
         ? "private-conversation"
-        : row.conversation.startsWith("group:")
+        : isGroupConversation(row.conversation)
           ? "group-conversation"
           : "internal",
       epistemic: transcript
@@ -539,13 +544,19 @@ class AgentMemory {
     for (const [field, key] of [
       ["connection_id", "connectionId"],
       ["conversation", "conversation"],
-      ["sender_id", "person"],
       ["kind", "kind"],
     ])
       if (q[key]) {
         where.push(field + "=?");
         args.push(text(q[key], 100));
       }
+    if (q.person) {
+      const person = text(q.person, 100);
+      where.push(
+        "(sender_id=? OR (conversation='@desktop' AND json_extract(payload,'$.desktop.senderQq')=?))",
+      );
+      args.push(person, person);
+    }
     for (const [key, op] of [
       ["from", ">="],
       ["to", "<="],

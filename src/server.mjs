@@ -414,7 +414,7 @@ export function createServer({
               finalizeToolOutput: (value, options) =>
                 runtime.finalizeToolOutput(ctx, value, {
                   ...options,
-                  maxBytes: ctx.runtimeKind === "desktop" ? 4096 : 65024,
+                  maxBytes: 65024,
                 }),
             },
             original,

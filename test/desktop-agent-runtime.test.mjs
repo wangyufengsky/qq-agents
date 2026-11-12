@@ -7,12 +7,13 @@ import { desktopToken } from "../src/home/desktop-auth.mjs";
 import { createServer } from "../src/server.mjs";
 import { config, fixture } from "./helpers.mjs";
 
-function desktop(t) {
+function desktop(t, { memoryTools = true } = {}) {
   const cfg = config(1);
   cfg.desktopHome.enabled = true;
   cfg.agents[0].appearance = "测试外形";
   cfg.agents[0].model = "role-model";
   cfg.agents[0].effort = "high";
+  if (!memoryTools) cfg.agents[0].tools = [];
   const { runtime, store } = fixture(t, { cfg });
   const host = runtime.desktopVisits;
   const client = randomUUID();
@@ -70,7 +71,12 @@ test("desktop dialogue records the current Self and effective role model without
   assert.match(seen[2].instructions, /最新的桌面角色设定/);
   assert.deepEqual(
     seen[2].tools.map(({ name }) => name),
-    ["desktop_room_decide"],
+    [
+      "desktop_room_decide",
+      "desktop_room_history",
+      "memory_search",
+      "memory_read",
+    ],
   );
   assert.equal(seen[2].conversation, "@desktop");
   const turns = memory.identity.list("model_turns");
@@ -92,12 +98,20 @@ test("desktop dialogue records the current Self and effective role model without
 });
 
 test("desktop relay admits only current authenticated decision tools and allows ordinary Self evidence", async (t) => {
-  const { runtime, memory, backend, run } = desktop(t);
+  const { runtime, memory, backend, run, host } = desktop(t, {
+    memoryTools: false,
+  });
   const token = randomBytes(32).toString("hex");
   const app = createServer({ runtime, token, allowLive: true });
   t.after(() => app.close());
   const base = `http://127.0.0.1:${await app.listen()}`;
-  const submit = (path, data, capability, relay = true) =>
+  const submit = (
+    path,
+    data,
+    capability,
+    relay = true,
+    requestId = randomUUID(),
+  ) =>
     fetch(base + path, {
       method: "POST",
       headers: {
@@ -105,12 +119,26 @@ test("desktop relay admits only current authenticated decision tools and allows 
         "x-agent-capability": capability,
         ...(relay && {
           "x-agent-relay-token": deriveRelayToken(token),
-          "x-agent-output-request": randomUUID(),
+          "x-agent-output-request": requestId,
           "x-agent-output-protocol": "stdio-v1",
         }),
       },
       body: JSON.stringify(data),
     });
+  host.live.room.members["agent-0"] = "here";
+  const historyBodies = ["先前", "之后"].map((text) => text.repeat(500));
+  for (const text of historyBodies) {
+    host.archive.publish({
+      actor: "admin",
+      speakerType: "administrator",
+      speaker: "管理员",
+      text,
+      now: runtime.now(),
+      present: [],
+      identities: {},
+      targets: [],
+    });
+  }
   const source = memory.append({
     dedupe: "desktop-private-evidence",
     conversation: "private:30000",
@@ -148,7 +176,7 @@ test("desktop relay admits only current authenticated decision tools and allows 
     const listed = await submit(catalog, {}, capability).then((r) => r.json());
     assert.deepEqual(
       JSON.parse(listed.content[0].text).tools.map(({ name }) => name),
-      ["desktop_room_decide"],
+      ["desktop_room_decide", "desktop_room_history"],
     );
     const call = (name, args, relay) =>
       submit(tools, { name, arguments: args }, capability, relay).then((r) =>
@@ -171,8 +199,47 @@ test("desktop relay admits only current authenticated decision tools and allows 
       text: "普通角色设定可以正常用于聊天",
     });
     assert.match(JSON.stringify(accepted), /recorded/);
+    const requestId = randomUUID();
+    const history = await submit(
+      tools,
+      {
+        name: "desktop_room_history",
+        arguments: {},
+      },
+      capability,
+      true,
+      requestId,
+    );
+    const page = JSON.parse((await history.json()).content[0].text);
+    assert.deepEqual(
+      page.items.map(({ text }) => text),
+      historyBodies,
+    );
+    const receipt = history.headers.get("x-agent-output-receipt");
+    const digest = history.headers.get("x-agent-output-digest");
+    assert(receipt);
+    assert(
+      !memory.state("@desktop").disclosureTaint.includes("context:@desktop"),
+    );
+    assert.deepEqual(
+      await submit(
+        "/agent/output-ack",
+        {
+          requestId,
+          receipt,
+          digest,
+        },
+        capability,
+      ).then((response) => response.json()),
+      { accepted: true },
+    );
+    assert(
+      memory.state("@desktop").disclosureTaint.includes("context:@desktop"),
+    );
   };
-  assert.deepEqual(await run(), {
+  const { turnId, ...decision } = await run();
+  assert.equal(turnId, memory.identity.list("model_turns")[0].id);
+  assert.deepEqual(decision, {
     action: "say",
     text: "普通角色设定可以正常用于聊天",
   });

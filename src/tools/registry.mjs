@@ -6,6 +6,7 @@ import { gameDefinitions, gameTool } from "../games/framework/tools.mjs";
 import { definitions } from "./definitions.mjs";
 import {
   DESKTOP_DECISION,
+  DESKTOP_HISTORY,
   FUNCTIONAL_AGENT_RESULT,
   TOOL_NAMES,
 } from "./names.mjs";
@@ -26,6 +27,8 @@ import { boardDefinitions, boardTool } from "./board.mjs";
 // Discovery and dispatch use this same registry. Fail at load time on drift.
 const handlers = {
   ...coreHandlers,
+  [DESKTOP_HISTORY]: (runtime, ctx, args) =>
+    runtime.desktopVisits.history(ctx, args),
   memory_recall: recallFromChat,
   [DESKTOP_DECISION]: (_runtime, ctx, args) => {
     if (ctx.runtimeKind !== "desktop") throw Error("TOOL_DISABLED");

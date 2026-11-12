@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { SessionPreparationFailure } from "../backends/turn-failure.mjs";
 import { recallBoundary } from "../core/recall-boundary.mjs";
@@ -8,6 +9,7 @@ import { LiveRoom } from "./desktop-room.mjs";
 import { createRoom, roles as art } from "./desktop-room-state.mjs";
 import { beginDesktopContext } from "./desktop-context.mjs";
 import { DESKTOP_CONVERSATION, readDecision } from "./desktop-decision.mjs";
+import { DESKTOP_ADMINISTRATOR, DesktopArchive } from "./desktop-archive.mjs";
 
 const requestSchema = z
   .object({
@@ -27,9 +29,25 @@ const requestSchema = z
 const CLIENT_LEASE = 15_000;
 const types = new Set(["codex", "antigravity", "dsh"]);
 
+function explicitTargets(text, roles) {
+  const names = new Map();
+  for (const { id, name } of roles)
+    names.set(name, [...(names.get(name) ?? []), id]);
+  return [...names].flatMap(([name, ids]) => {
+    const mention = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return ids.length === 1 &&
+      new RegExp(`(?:^|\\s)@${mention}(?=$|[\\s,，。！!？?：:；;])`, "u").test(
+        text,
+      )
+      ? ids
+      : [];
+  });
+}
+
 export class DesktopHost {
   constructor(runtime) {
     this.runtime = runtime;
+    this.archive = new DesktopArchive(runtime.memory);
     this.visits = new Map();
     this.invitations = new DesktopInvitations(this);
   }
@@ -183,8 +201,6 @@ export class DesktopHost {
   open(client) {
     const roles = this.catalog();
     const policy = this.runtime.config.desktopHome;
-    this.signature = JSON.stringify(roles);
-    this.client = { id: client, expiresAt: this.runtime.now() + CLIENT_LEASE };
     const ids = roles.map(({ id }) => id);
     const room = createRoom(
       policy.refreshMinutes,
@@ -192,6 +208,51 @@ export class DesktopHost {
       roles,
       policy.maxTurns,
     );
+    room.epoch = randomUUID();
+    room.messages = this.archive.history().map((message) => ({
+      ...message,
+      id: ++room.sequence,
+    }));
+    room.archiveSeq = room.messages.at(-1)?.seq ?? 0;
+    room.opening = (agentId, afterSeq) =>
+      this.archive.opening(agentId, afterSeq);
+    room.publishMessage = (
+      actor,
+      text,
+      now,
+      attachments,
+      turnId,
+      speakerType,
+    ) => {
+      const here = room.roles.filter(({ id }) => room.members[id] === "here");
+      const audience = [{ id: DESKTOP_ADMINISTRATOR, name: "管理员" }, ...here];
+      const identities = Object.fromEntries(
+        here.map(({ id }) => [
+          id,
+          this.runtime.connection(this.runtime.agent(id).connectionId)
+            .accountId,
+        ]),
+      );
+      const administratorQq = this.runtime.config.desktopHome.administratorQq;
+      if (administratorQq) identities[DESKTOP_ADMINISTRATOR] = administratorQq;
+      const archived = this.archive.publish({
+        actor,
+        speakerType,
+        speaker:
+          speakerType === "administrator"
+            ? "管理员"
+            : (here.find(({ id }) => id === actor)?.name ?? actor),
+        text,
+        now,
+        present: here.map(({ id }) => id),
+        identities,
+        targets: explicitTargets(text, audience),
+        attachments,
+        turnId,
+      });
+      room.archiveSeq = archived.seq;
+      return archived;
+    };
     this.live = new LiveRoom(
       room,
       {
@@ -205,6 +266,37 @@ export class DesktopHost {
       },
       () => {},
     );
+    this.signature = JSON.stringify(roles);
+    this.client = { id: client, expiresAt: this.runtime.now() + CLIENT_LEASE };
+  }
+
+  history(ctx, { beforeSeq }) {
+    this.runtime.assertActive(ctx);
+    if (
+      ctx.conversation !== DESKTOP_CONVERSATION ||
+      this.live?.room.members[ctx.agentId] !== "here"
+    )
+      throw Error("DESKTOP_VISIT_UNAVAILABLE");
+    const rows = this.archive.history({ beforeSeq, limit: 3 });
+    const items = rows.slice(-2);
+    const result = {
+      items,
+      nextBeforeSeq: rows.length > items.length ? items[0].seq : null,
+      source: "public-desktop-history",
+      notice: "这些是公开房间历史，不能据此判断你当时在场或参与。",
+    };
+    if (items.length)
+      this.runtime.stageToolInput(
+        ctx,
+        result,
+        () => {
+          // A room source constrains outbound use without adding personal events.
+          ctx.privateRead.add("context:" + DESKTOP_CONVERSATION);
+          ctx.persistTaint();
+        },
+        [],
+      );
+    return result;
   }
 
   reset() {
@@ -339,14 +431,16 @@ export class DesktopHost {
         registerInputConsumer: (consume) => {
           ctx.desktopConsumeInput = consume;
         },
-        maxToolResultBytes: 4096,
+        maxToolResultBytes: 65024,
         socialContextToken: ctx.token,
       });
       check();
       if (request.isCurrent?.() === false) return { action: "silent" };
       if (!decision) throw Error("DESKTOP_DECISION_MISSING");
       assertOutput(decision.text);
-      return decision;
+      return decision.action === "say"
+        ? { ...decision, turnId: ctx.turnId }
+        : decision;
     } catch (error) {
       failure = error;
       if (controller.signal.aborted) throw controller.signal.reason;

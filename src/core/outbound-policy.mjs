@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import { currentHumanRequest } from "./input-progress.mjs";
 import { publicUrl } from "../apps/urls.mjs";
 import { privateGithubSources } from "../github/policy.mjs";
+import { isGroupConversation } from "../home/desktop-archive.mjs";
 
 const stable = (v) => JSON.stringify(sort(v));
 function sort(v) {
@@ -32,7 +33,7 @@ export function sourceClass(runtime, ctx, id) {
   if (id.startsWith("context:"))
     return id.startsWith("context:private:")
       ? "private-conversation"
-      : id.startsWith("context:group:")
+      : isGroupConversation(id.slice("context:".length))
         ? "group-conversation"
         : "internal";
   const m = runtime.memory.bind(ctx.agentId);
@@ -57,7 +58,7 @@ export function sourceClass(runtime, ctx, id) {
     const source = app?.source?.conversation || row.conversation;
     return source.startsWith("private:")
       ? "private-conversation"
-      : source.startsWith("group:")
+      : isGroupConversation(source)
         ? "group-conversation"
         : "internal";
   }

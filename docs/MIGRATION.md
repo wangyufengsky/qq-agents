@@ -32,6 +32,8 @@ npm run migrate -- --source /path/to/old-instance --agent agent-a --account 1000
 
 ## 导出与恢复
 
+正式桌面小窝首次打开旧库时会添加公开消息表。升级前尚未持久化的窗口消息无法补建。完整 SQLite 一致备份保存房间公开时间线及各角色的已读记录。单角色导出保留该角色的桌面经历和发言回执，恢复时不把这些记录写入目标实例的公开房间。
+
 ```sh
 npm run export -- --data /path/to/new-data --agent agent-a --file /path/to/private-export.json
 npm run export -- --data /path/to/restore-data --agent agent-a --file /path/to/private-export.json --restore
