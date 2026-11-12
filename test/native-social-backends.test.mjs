@@ -960,6 +960,64 @@ test("Codex desktop retains the thread when a role leaves before input", async (
   );
 });
 
+test("Codex desktop screen tools bypass code-mode text projection on a compatible app-server", async (t) => {
+  const cfg = config();
+  const rpc = new Rpc();
+  rpc.start = async () => ({ userAgent: "qq_bridge_codex/0.167.0-alpha.4.1" });
+  const responses = [];
+  rpc.respond = (id, result) => responses.push({ id, result });
+  const backend = new CodexBackend(cfg.backends[0], cfg.agents[0], {
+    root: temp(t),
+    rpc,
+  });
+  t.after(() => backend.close());
+  const params = windowParams("desktop-screen");
+  params.tools[0].function.name = "desktop_screen_view";
+  const image = { type: "image", mimeType: "image/jpeg", data: "AQID" };
+  params.callTool = async () => ({ content: [image] });
+  const run = backend.runDesktop({
+    ...params,
+    managedContext: {
+      conversation: "@desktop",
+      session: null,
+      saveSession() {},
+    },
+  });
+  await tick();
+  await backend.request({
+    id: 1,
+    method: "item/tool/call",
+    params: {
+      threadId: "isolated-social-thread",
+      turnId: "isolated-social-turn",
+      namespace: "qq_desktop_visual",
+      tool: "desktop_screen_view",
+      arguments: {},
+    },
+  });
+  rpc.emit("notification", {
+    method: "turn/completed",
+    params: {
+      threadId: "isolated-social-thread",
+      turn: { id: "isolated-social-turn", status: "completed" },
+    },
+  });
+  await run;
+  const start = rpc.calls.find(({ method }) => method === "thread/start").args;
+  assert.deepEqual(start.config["features.code_mode"], {
+    enabled: false,
+    direct_only_tool_namespaces: ["qq_desktop_visual"],
+  });
+  assert.equal(start.dynamicTools[0].name, "qq_desktop_visual");
+  assert.deepEqual(
+    start.dynamicTools[0].tools.map(({ name }) => name),
+    ["desktop_screen_view"],
+  );
+  assert.deepEqual(responses[0].result.contentItems, [
+    { type: "inputImage", imageUrl: "data:image/jpeg;base64,AQID" },
+  ]);
+});
+
 test("Codex window continuation resumes only its own thread and installs the latest tool closure", async (t) => {
   const cfg = config(),
     rpc = new Rpc();

@@ -291,6 +291,8 @@ test("real Chromium allows only scoped static-page navigation and refreshes elem
     /DESKTOP_BROWSER_DENIED/,
   );
   const filled = await session.fill(first.elements[2].ref, "literal text");
+  assert.equal(filled.filled, true);
+  assert.doesNotMatch(JSON.stringify(filled), /literal text/);
   await assert.rejects(
     session.click(first.elements[0].ref),
     /DESKTOP_BROWSER_STALE/,

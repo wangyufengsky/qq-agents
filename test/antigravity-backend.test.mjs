@@ -305,6 +305,101 @@ test("ACP reply entry forwards original arguments only to permitted reply tools"
   }
 });
 
+test("ACP desktop exposes a strict action entry and a revocable current-turn screenshot", async (t) => {
+  const fixture = setup(t, "success", temp(t), {
+    fakeChild: true,
+    cliProtocol: "acp",
+  });
+  const bytes = colorGrid(["red", "green", "blue", "yellow"]);
+  let leased = true;
+  const { run, inputSubmitted } = startFakeTurn(fixture, {
+    desktop: true,
+    social: true,
+    conversation: "@desktop",
+    tools: toolSpecs([
+      "desktop_screen_view",
+      "desktop_native_control",
+      "desktop_browser_control",
+    ]),
+    async callTool(name, args) {
+      fixture.calls.push({ name, args });
+      return name === "desktop_screen_view"
+        ? {
+            [mediaLease]: () => leased,
+            content: [
+              {
+                type: "image",
+                mimeType: "image/png",
+                data: bytes.toString("base64"),
+              },
+            ],
+          }
+        : { ok: true };
+    },
+  });
+  await inputSubmitted;
+  const { child, options } = fixture.launches[0];
+  await child.inputReady;
+  const endpoint = options.env.QQ_AGY_ENDPOINT;
+  const headers = {
+    authorization: `Bearer ${options.env.QQ_AGY_TOKEN}`,
+    "content-type": "application/json",
+  };
+  const catalog = () =>
+    fetch(`${endpoint}/catalog`, { headers }).then((response) =>
+      response.json(),
+    );
+  const call = (name, args) =>
+    fetch(`${endpoint}/call`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ name, arguments: args }),
+    });
+  try {
+    const { tools } = await catalog();
+    const entry = tools.find(({ name }) => name === "qq_desktop_call");
+    assert.deepEqual(entry?.inputSchema.properties.name.enum, [
+      "desktop_native_control",
+      "desktop_browser_control",
+    ]);
+    assert.equal(
+      tools.some(({ name }) => name === "desktop_native_control"),
+      false,
+    );
+    assert.equal(
+      (await call("qq_desktop_call", { name: "qq_send", argumentsJson: "{}" }))
+        .status,
+      403,
+    );
+    const args = { type: "observe" };
+    const result = await (
+      await call("qq_desktop_call", {
+        name: "desktop_native_control",
+        argumentsJson: JSON.stringify(args),
+      })
+    ).json();
+    assert.equal(JSON.parse(result.content[0].text).ok, true);
+    assert.deepEqual(fixture.calls, [{ name: "desktop_native_control", args }]);
+    const screenshot = await (await call("desktop_screen_view", {})).json();
+    const current = await catalog();
+    assert.equal(current.images.length, 1);
+    const file = current.images[0].path;
+    assert.match(screenshot.content[0].text, /native read_file/);
+    assert.deepEqual(fs.readFileSync(file), bytes);
+    const read = { name: "read_file", args: { Path: file } };
+    assert.equal(antigravityToolAllowed(read, [], current.images), true);
+    leased = false;
+    assert.deepEqual((await catalog()).images, []);
+    assert.equal(fs.existsSync(file), false);
+  } finally {
+    child.emitFrames(
+      ...successfulFrames("00000000-0000-4000-8000-000000000239"),
+    );
+    child.closeWith(0);
+    await run;
+  }
+});
+
 test("Antigravity registers without changing existing backend defaults", async (t) => {
   const { backend, backendConfig, root } = setup(t);
   assert.equal(backendConfig.command, "agy");

@@ -399,10 +399,12 @@ export function createDesktopBrowserDriver({
         perform(signal, async () => {
           if (typeof text !== "string" || text.length > 1000)
             throw failure("LIMIT");
-          await lookup(ref, ["field"]).fill(text, {
-            timeout: limits.deadlineMs,
-          });
-          return observePage();
+          const field = lookup(ref, ["field"]);
+          const options = { timeout: limits.deadlineMs };
+          await field.fill(text, options);
+          if ((await field.inputValue(options)) !== text)
+            throw failure("UNAVAILABLE");
+          return { ...(await observePage()), filled: true };
         }),
       close,
     };

@@ -6,6 +6,11 @@
 
 ## 未发布
 
+### 修复真实桌面回合的截图与操作交付
+
+- Codex 桌面截图通过独立图片工具路由保留视觉内容，支持新路由的 app-server 才启用命名空间。含截图工具的旧 Codex 桌面会话会按工具契约重新建立。
+- Antigravity ACP 用独立入口传递窗口与网页动作的严格参数，并通过本轮授权的临时图片提供截图。网页填写回读控件值后返回确认结果。
+
 ### 安装和更新时准备桌面依赖（[#282](https://github.com/wangyufengsky/qq-agents/pull/282)）
 
 - 原生 macOS 和 Windows 的 `setup desktop` 支持准备固定版本的 Electron、`agent-desktop` 和网页所需 Chromium。doctor 显示就绪状态，受管更新在停机前按现有配置准备。沿用已有浏览器和显式路径，软件安装与角色、目标及系统权限分别管理。

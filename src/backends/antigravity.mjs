@@ -28,26 +28,36 @@ import {
 } from "./turn-failure.mjs";
 import { AntigravityMedia } from "./antigravity-media.mjs";
 import { AntigravityStreamWorker } from "./antigravity-stream.mjs";
+import {
+  DESKTOP_BROWSER_CONTROL,
+  DESKTOP_NATIVE_CONTROL,
+  DESKTOP_SCREEN_VIEW,
+} from "../tools/names.mjs";
 
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 const here = path.dirname(fileURLToPath(import.meta.url));
 const MAX_OUTPUT = 16 * 1024 * 1024;
 const acpReplyName = "qq_reply_call";
+const acpDesktopName = "qq_desktop_call";
 const acpReplyActions = new Set(["qq_send", "qq_send_burst", "qq_draft"]);
+const acpDesktopActions = new Set([
+  DESKTOP_NATIVE_CONTROL,
+  DESKTOP_BROWSER_CONTROL,
+]);
 const acpEagerTools = new Set([
   acpReplyName,
+  acpDesktopName,
   "conversation_read",
   "qq_delivery_status",
 ]);
 
-/** @param {Set<string>} names */
-function acpReplyTool(names) {
-  const actions = [...names].filter((name) => acpReplyActions.has(name));
+/** @param {string} name @param {Set<string>} names @param {Set<string>} permitted @param {string} description */
+function acpActionTool(name, names, permitted, description) {
+  const actions = [...names].filter((name) => permitted.has(name));
   if (!actions.length) return null;
   return {
-    name: acpReplyName,
-    description:
-      "Run an allowed QQ text or draft action. Use its logical name and serialize its original argument object as argumentsJson. Delivery and draft checks still apply.",
+    name,
+    description,
     inputSchema: {
       type: "object",
       properties: {
@@ -60,7 +70,27 @@ function acpReplyTool(names) {
   };
 }
 
-const acpReplyEnvelope = z
+/** @param {Set<string>} names */
+function acpReplyTool(names) {
+  return acpActionTool(
+    acpReplyName,
+    names,
+    acpReplyActions,
+    "Run an allowed QQ text or draft action. Use its logical name and serialize its original argument object as argumentsJson. Delivery and draft checks still apply.",
+  );
+}
+
+/** @param {Set<string>} names */
+function acpDesktopTool(names) {
+  return acpActionTool(
+    acpDesktopName,
+    names,
+    acpDesktopActions,
+    "Run an authorized desktop window or browser action. Use its logical name and serialize its original argument object as argumentsJson.",
+  );
+}
+
+const acpActionEnvelope = z
   .object({
     name: z.string(),
     argumentsJson: z
@@ -80,7 +110,11 @@ const acpReplyEnvelope = z
 const genericMcpGuide =
   'Call call_mcp_tool with ServerName="qq-agents", ToolName equal to an allowed name, and Arguments matching that tool\'s JSON schema below. ';
 const acpMcpGuide =
-  'For qq_send, qq_send_burst, or qq_draft, use mcp_qq-agents_qq_reply_call if listed. Pass the logical tool name as name and serialize its original argument object as argumentsJson. For other actions, use the native MCP tool if it is listed for this turn. Otherwise, if call_mcp_tool is available, use ServerName="qq-agents", the logical ToolName, and Arguments matching the schema below. ';
+  'For qq_send, qq_send_burst, or qq_draft, use mcp_qq-agents_qq_reply_call if listed. For desktop_native_control or desktop_browser_control, use mcp_qq-agents_qq_desktop_call. For these entries, pass the logical tool name as name and serialize its original argument object as argumentsJson. For other actions, use the native MCP tool if it is listed for this turn. Otherwise, if call_mcp_tool is available, use ServerName="qq-agents", the logical ToolName, and Arguments matching the schema below. ';
+const acpImageGuide =
+  "Authorized MCP image content blocks contain visible pixels. Inspect those pixels directly; never read files to view an image. ";
+const acpScreenshotGuide =
+  "Inspect inline MCP image blocks directly. For a desktop screenshot returned as a file, use native read_file (Path) or view_file (AbsolutePath) on the exact path authorized for this turn before describing the pixels. Never read other files or reuse a previous turn image path. ";
 
 /** Headless result usage is cumulative; only a completed model-response step
  * describes the latest request. Cache reads are excluded from input_tokens.
@@ -523,11 +557,18 @@ export class AntigravityBackend {
     reuse = false,
     mediaRoot,
   ) {
+    const acp = this.config.cliProtocol === "acp";
+    const screenFile = acp && params.desktop && !media.direct;
     const names = new Set(
       reuse ? ["qq_turn_call"] : params.tools.map((tool) => tool.name),
     );
-    if (this.config.cliProtocol === "acp" && acpReplyTool(names))
-      names.add(acpReplyName);
+    if (acp) {
+      if (acpReplyTool(names)) names.add(acpReplyName);
+      if (acpDesktopTool(names)) {
+        for (const name of acpDesktopActions) names.delete(name);
+        names.add(acpDesktopName);
+      }
+    }
     let hook = [process.execPath, path.join(here, "antigravity-guard.mjs")]
       .map((v) => antigravityShellQuote(v))
       .join(" ");
@@ -564,7 +605,7 @@ export class AntigravityBackend {
             enabledTools: [...names],
             // ACP can switch between lazy and native routes across sessions.
             // Register the reply path before generation using the same allowlist.
-            ...(this.config.cliProtocol === "acp"
+            ...(acp
               ? {
                   tools: Object.fromEntries(
                     [...names]
@@ -633,20 +674,20 @@ export class AntigravityBackend {
           "\n",
       );
     }
-    if (this.config.cliProtocol === "acp") {
+    if (acp) {
       // Replace only bridge-owned guidance, preserving arbitrary role instructions.
       const headless =
         "Only native read_file (Path) or legacy view_file (AbsolutePath) on the exact image paths returned by an authorized tool in the CURRENT turn is allowed. Always call the native image reader before describing those pixels; MCP path text is not visual evidence. Never read other files or reuse a previous turn image path; request the original bridge tool again. ";
+      const imageGuide = screenFile ? acpScreenshotGuide : acpImageGuide;
+      const guide = fs
+        .readFileSync(agentFile, "utf8")
+        .replace(genericMcpGuide, acpMcpGuide)
+        .replace(headless, imageGuide)
+        .replace(acpImageGuide, imageGuide)
+        .replace(acpScreenshotGuide, imageGuide);
       managedFile(
         agentFile,
-        fs
-          .readFileSync(agentFile, "utf8")
-          .replace("  - view_file\n", "")
-          .replace(genericMcpGuide, acpMcpGuide)
-          .replace(
-            headless,
-            "Authorized MCP image content blocks contain visible pixels. Inspect those pixels directly; never read files to view an image. ",
-          ),
+        screenFile ? guide : guide.replace("  - view_file\n", ""),
       );
     }
     const settings = path.join(workspace, "settings.json");
@@ -664,7 +705,7 @@ export class AntigravityBackend {
           ],
           allow: [
             ...[...names].map((name) => `mcp(qq-agents/${name})`),
-            ...(this.config.cliProtocol === "acp"
+            ...(acp && !screenFile
               ? []
               : [
                   `read_file(${(mediaRoot || media.prepare()).replaceAll("\\", "/")}/*)`,
@@ -699,6 +740,7 @@ export class AntigravityBackend {
             model: this.config.model,
             effort: this.config.effort,
             session: params.session?.id,
+            desktop: params.desktop === true,
           }),
         ],
         {
@@ -954,15 +996,22 @@ export class AntigravityBackend {
     const pending = new Set();
     const diagnosticEvent = (/** @type {Record<string, unknown>} */ value) =>
       diagnosticActive && antigravityDiagnostic(params, timingStart, value);
-    const media = new AntigravityMedia(
-      undefined,
-      this.config.cliProtocol === "acp",
-    );
+    const acp = this.config.cliProtocol === "acp";
+    const media = new AntigravityMedia(undefined, acp);
     const names = new Set(params.tools.map((tool) => tool.name));
+    // ACP can offload a native MCP image to a path outside our turn's guard.
+    // Give desktop screenshots a bridge-owned, revocable path instead.
+    const screenshot =
+      acp && params.desktop && names.has(DESKTOP_SCREEN_VIEW)
+        ? new AntigravityMedia()
+        : null;
     // Native ACP can drop declarations containing unions. Use a simple
-    // transport envelope for replies and keep the original tool validation.
-    const replyTool =
-      this.config.cliProtocol === "acp" ? acpReplyTool(names) : null;
+    // transport envelope and keep the original tool validation.
+    const replyTool = acp ? acpReplyTool(names) : null;
+    const desktopTool = acp ? acpDesktopTool(names) : null;
+    const nativeTools = desktopTool
+      ? params.tools.filter(({ name }) => !acpDesktopActions.has(name))
+      : params.tools;
     const server = http.createServer(async (req, res) => {
       const reply = (
         /** @type {number} */ status,
@@ -985,9 +1034,9 @@ export class AntigravityBackend {
       }
       if (req.method === "GET" && req.url === "/catalog")
         return reply(200, {
-          tools: replyTool ? [...params.tools, replyTool] : params.tools,
-          nativeMcp: this.config.cliProtocol === "acp",
-          images: media.catalog(),
+          tools: [...nativeTools, ...[replyTool, desktopTool].filter(Boolean)],
+          nativeMcp: acp,
+          images: (screenshot || media).catalog(),
         });
       if (req.method !== "POST" || req.url !== "/call") return reply(404, {});
       /** @type {import("./session-contract.mjs").ToolSpec | undefined} */
@@ -1002,13 +1051,16 @@ export class AntigravityBackend {
         let { name, arguments: args } = value;
         await inputSubmission;
         if (!live || params.signal.aborted) return reply(403, {});
-        if (name === acpReplyName) {
-          if (!replyTool) return reply(403, {});
-          const envelope = acpReplyEnvelope.parse(args);
-          if (!acpReplyActions.has(envelope.name)) return reply(403, {});
+        if (name === acpReplyName || name === acpDesktopName) {
+          const entry = name === acpReplyName ? replyTool : desktopTool;
+          if (!entry) return reply(403, {});
+          const envelope = acpActionEnvelope.parse(args);
+          if (!entry.inputSchema.properties.name.enum.includes(envelope.name))
+            return reply(403, {});
           name = envelope.name;
           args = envelope.argumentsJson;
-        }
+        } else if (desktopTool && acpDesktopActions.has(name))
+          return reply(403, {});
         if (!names.has(name)) return reply(403, {});
         spec = params.tools.find((tool) => tool.name === name);
         const accepted = Promise.resolve().then(() => {
@@ -1041,7 +1093,11 @@ export class AntigravityBackend {
         const { wire: content, receipt } = await finalizeMcpOutput(
           params,
           result,
-          (value) => media.fromTool(value, params.signal),
+          (value) =>
+            (name === DESKTOP_SCREEN_VIEW && screenshot
+              ? screenshot
+              : media
+            ).fromTool(value, params.signal),
           inlineChatInput ? 8192 : undefined,
         );
         if (!live || params.signal.aborted) return reply(403, {});
@@ -1115,7 +1171,7 @@ export class AntigravityBackend {
     this.active.add(entry);
     params.signal.addEventListener("abort", abort, { once: true });
     try {
-      const settings = this.configure(params, details, media);
+      const settings = this.configure(params, details, screenshot || media);
       if (params.signal.aborted || cancelled || this.closing)
         throw Error("ABORTED");
       child = this.spawnCli(params, workspace, settings, endpoint, token);
@@ -1398,11 +1454,13 @@ export class AntigravityBackend {
       diagnosticActive = false;
       live = false;
       rejectInput(Error("ABORTED"));
-      try {
-        media.close();
-      } catch {
-        // Local media cleanup must not turn a confirmed success into a backend failure.
-        console.warn("Antigravity turn media cleanup failed");
+      for (const store of [media, screenshot]) {
+        try {
+          store?.close();
+        } catch {
+          // Local media cleanup must not turn a confirmed success into a backend failure.
+          console.warn("Antigravity turn media cleanup failed");
+        }
       }
       params.signal.removeEventListener("abort", abort);
       if (force) clearTimeout(force);
