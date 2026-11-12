@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes, randomUUID } from "node:crypto";
 import { createServer } from "../src/server.mjs";
+import { validateConfig } from "../src/core/config.mjs";
 import { desktopToken } from "../src/home/desktop-auth.mjs";
 import { config, fixture, raw, settle } from "./helpers.mjs";
 
@@ -16,6 +17,7 @@ const acceptInvitation = (p) =>
 
 test("management policy drives the authenticated desktop room and hot revocation", async (t) => {
   const qq = [];
+  let qqActivity;
   const cfg = config(1);
   cfg.agents[0].subject.enabled = true;
   const f = fixture(t, {
@@ -23,6 +25,8 @@ test("management policy drives the authenticated desktop room and hot revocation
     run: async (p) => {
       if (p.conversation === "@subject") return acceptInvitation(p);
       qq.push(p.conversation);
+      qqActivity = f.runtime.desktopVisits.command({ client, action: "sync" })
+        .room.roles[0].activity;
     },
   });
   const token = randomBytes(32).toString("hex");
@@ -102,6 +106,7 @@ test("management policy drives the authenticated desktop room and hot revocation
   assert.equal(sessions.length, 0);
   await command("send", "本地桌面消息");
   assert.equal(pending.length, 1);
+  assert.equal((await command("sync")).room.roles[0].activity, "chat");
   assert(sessions[0]);
   pending[0].resolve();
   await check();
@@ -139,6 +144,7 @@ test("management policy drives the authenticated desktop room and hot revocation
   pending[1].resolve();
   await settle(f.runtime);
   assert.deepEqual(qq, ["private:30000"]);
+  assert.equal(qqActivity, "qq");
   assert.equal((await command("sync")).room.roles[0].state, "here");
   await setPolicy({ enabled: false, maxTurns: 5, refreshMinutes: 0 });
   assert.deepEqual(await command("sync"), { enabled: false, closed: true });
@@ -367,4 +373,57 @@ test("desktop reconnects with a stored session and uses normal context retiremen
   host.command({ client: second, action: "send", data: "继续聊天" });
   await drain();
   assert.equal(memory.state("@desktop").session.id, "desktop-2");
+});
+
+test("desktop portraits follow backend models and rest follows the role clock", (t) => {
+  const cfg = config(3);
+  cfg.desktopHome.enabled = true;
+  const [first, second, third] = cfg.agents;
+  const base = cfg.backends[0];
+  cfg.backends = [
+    {
+      ...base,
+      id: "deep",
+      type: "dsh",
+      preset: "qq-unified",
+      model: "deepseek-v4",
+    },
+    { ...base, id: "code", type: "codex", model: "gpt-5.4" },
+    {
+      ...base,
+      id: "google",
+      type: "antigravity",
+      command: "agy",
+      model: "gemini-3-pro",
+    },
+  ];
+  Object.assign(first, { id: "dragon", backendId: "deep" });
+  Object.assign(second, { id: "cat", backendId: "code" });
+  Object.assign(third, {
+    id: "fish",
+    backendId: "google",
+    model: "models/gemini-3-flash",
+  });
+  first.behavior.rhythm = {
+    enabled: true,
+    timezone: "Asia/Shanghai",
+    sleep: { start: "23:00", end: "07:00" },
+  };
+  const { runtime } = fixture(t, { cfg: validateConfig(cfg) });
+  let now = "2026-11-12T18:00:00Z";
+  runtime.clock = () => new Date(now);
+  const host = runtime.desktopVisits;
+  const client = randomUUID();
+  const sync = () => host.command({ client, action: "sync" }).room.roles;
+  const roles = sync();
+  assert.deepEqual(
+    roles.map(({ id, art, activity }) => [id, art, activity]),
+    [
+      ["dragon", "fish", "sleep"],
+      ["cat", "dragon", "idle"],
+      ["fish", "cat", "idle"],
+    ],
+  );
+  now = "2026-11-13T00:00:00Z";
+  assert.equal(sync()[0].activity, "idle");
 });

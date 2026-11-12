@@ -61,6 +61,7 @@ function readPreferences() {
 
 const saved = readPreferences();
 const positions = saved.positions ?? {};
+let doorPosition = saved.doorPosition;
 const validInterval = (value) =>
   Number.isInteger(value) && value >= 0 && value <= 1440;
 let roles = prototypeRoles;
@@ -171,7 +172,10 @@ function screenRequest(value, action) {
 function savePreferences() {
   mkdirSync(app.getPath("userData"), { recursive: true });
   const next = `${preferencesPath}.next`;
-  writeFileSync(next, JSON.stringify({ minutes: room.minutes, positions }));
+  writeFileSync(
+    next,
+    JSON.stringify({ minutes: room.minutes, positions, doorPosition }),
+  );
   renameSync(next, preferencesPath);
 }
 
@@ -265,8 +269,8 @@ function clampPoint(point, width, height, area) {
   };
 }
 
-function spritePoint(id) {
-  const point = positions[id];
+function windowPoint(id, type) {
+  const point = type === "door" ? doorPosition : positions[id];
   return Number.isFinite(point?.x) && Number.isFinite(point?.y)
     ? point
     : defaultPoint(id);
@@ -323,7 +327,8 @@ function createWindow(id, type, point, options = {}) {
 
 function showDoor() {
   hidden = false;
-  if (!entries.has("door")) createWindow("door", "door", defaultPoint("door"));
+  if (!entries.has("door"))
+    createWindow("door", "door", windowPoint("door", "door"));
   for (const entry of entries.values()) {
     if (entry.ready && entry.type !== "panel") entry.win.showInactive();
   }
@@ -384,7 +389,7 @@ function showSprite(role) {
   const previous = entries.get(role.id);
   if (previous) previous.win.destroy();
   const door = entries.get("door")?.win.getBounds();
-  const point = spritePoint(role.id);
+  const point = windowPoint(role.id, "sprite");
   const entry = createWindow(
     role.id,
     "sprite",
@@ -573,12 +578,13 @@ function handleDrag(entry, action, data) {
         x: from.x + data.x - from.mouseX,
         y: from.y + data.y - from.mouseY,
       },
-      ...sizes.sprite,
+      ...sizes[entry.type],
     );
     entry.win.setPosition(target.x, target.y);
     if (action === "drag-end") {
       entry.drag = null;
-      positions[entry.id] = target;
+      if (entry.type === "door") doorPosition = target;
+      else positions[entry.id] = target;
       savePreferences();
     }
   }
@@ -956,6 +962,13 @@ ipcMain.on("room:action", (event, action, data) => {
   if (!entry || entry.departing) return;
   if (live) live.tick();
   else if (refreshIfDue(room)) update();
+  if (
+    entry.type !== "panel" &&
+    ["drag-start", "drag-move", "drag-end"].includes(action)
+  ) {
+    handleDrag(entry, action, data);
+    return;
+  }
   if (entry.type === "door") {
     if (action === "open") showPanel("visits");
     return;
@@ -986,8 +999,6 @@ ipcMain.on("room:action", (event, action, data) => {
             ]),
       ]).popup({ window: entry.win });
     }
-    if (["drag-start", "drag-move", "drag-end"].includes(action))
-      handleDrag(entry, action, data);
     return;
   }
   const role = roles.find(({ id }) => id === data);

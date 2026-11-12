@@ -37,6 +37,62 @@ function button(className, text, label = text) {
   return node;
 }
 
+const activityLabels = {
+  qq: "回复 QQ",
+  chat: "桌边聊天",
+  observe: "观察桌面",
+  control: "操控桌面",
+  idle: "待机",
+  sleep: "睡觉",
+};
+
+function activityFor(role, room) {
+  if (Object.hasOwn(activityLabels, role.activity)) return role.activity;
+  return room.thinking === role.id || room.bubbles?.[role.id] ? "chat" : "idle";
+}
+
+function bindFloatingDrag(handle) {
+  let pointer;
+  let moved = false;
+  const point = (event) => ({ x: event.screenX, y: event.screenY });
+  handle.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || pointer) return;
+    const origin = point(event);
+    pointer = { id: event.pointerId, origin, last: origin };
+    moved = false;
+    handle.setPointerCapture(event.pointerId);
+  });
+  handle.addEventListener("pointermove", (event) => {
+    if (pointer?.id !== event.pointerId) return;
+    const last = (pointer.last = point(event));
+    if (
+      !moved &&
+      Math.hypot(last.x - pointer.origin.x, last.y - pointer.origin.y) >= 5
+    ) {
+      moved = true;
+      handle.dataset.dragging = "true";
+      window.nest.act("drag-start", pointer.origin);
+    }
+    if (moved) window.nest.act("drag-move", last);
+  });
+  function endDrag(event) {
+    if (pointer?.id !== event.pointerId) return;
+    if (moved)
+      window.nest.act(
+        "drag-end",
+        event.type === "pointerup" ? point(event) : pointer.last,
+      );
+    pointer = undefined;
+    delete handle.dataset.dragging;
+  }
+  for (const event of ["pointerup", "pointercancel", "lostpointercapture"])
+    handle.addEventListener(event, endDrag);
+  handle.addEventListener("click", (event) => {
+    if (!moved || event.detail === 0) window.nest.act("open");
+    moved = false;
+  });
+}
+
 function floating() {
   const space = element("main", "floating");
   const door = type === "door";
@@ -45,28 +101,34 @@ function floating() {
     "",
     door ? "打开小窝的门" : "打开小窝聊天",
   );
-  art.title = door ? "桌面小窝" : "点击聊天 · 拖动换座位 · 右键菜单";
-  art.append(image(door ? "door" : undefined));
+  art.title = door
+    ? "点击打开小窝 · 拖动换位置"
+    : "点击聊天 · 拖动换座位 · 右键菜单";
+  const sprite = image(door ? "door" : undefined);
+  art.append(sprite);
   space.append(art);
   root.append(space);
+  bindFloatingDrag(art);
+
+  function subscribe(update) {
+    window.nest.onRoom(update);
+    window.nest.get().then((value) => {
+      if (value) update(value.data);
+    });
+  }
 
   if (door) {
     const indicator = element("span", "door-knock", "有人敲门");
     indicator.hidden = true;
     art.append(indicator);
-    function updateDoor(data) {
+    subscribe((data) => {
       const visitor = data.roles.find(({ id }) => id === data.knock?.actor);
       indicator.hidden = !visitor;
       art.setAttribute(
         "aria-label",
         visitor ? `${visitor.name}敲门，打开小窝的门` : "打开小窝的门",
       );
-    }
-    window.nest.onRoom(updateDoor);
-    window.nest.get().then((value) => {
-      if (value) updateDoor(value.data);
     });
-    art.addEventListener("click", () => window.nest.act("open"));
     return;
   }
 
@@ -76,59 +138,27 @@ function floating() {
   speech.hidden = true;
   speech.addEventListener("click", () => window.nest.act("open"));
   space.prepend(speech);
-
-  let pointer;
-  let moved = false;
-  const position = (event) => ({ x: event.screenX, y: event.screenY });
-  art.addEventListener("pointerdown", (event) => {
-    if (event.button !== 0) return;
-    pointer = position(event);
-    moved = false;
-    art.setPointerCapture(event.pointerId);
-  });
-  art.addEventListener("pointermove", (event) => {
-    if (!pointer) return;
-    const current = position(event);
-    if (
-      !moved &&
-      Math.hypot(current.x - pointer.x, current.y - pointer.y) >= 5
-    ) {
-      moved = true;
-      window.nest.act("drag-start", pointer);
-    }
-    if (moved) window.nest.act("drag-move", current);
-  });
-  function endDrag(event) {
-    if (!pointer) return;
-    if (moved) window.nest.act("drag-end", position(event));
-    pointer = null;
-  }
-  art.addEventListener("pointerup", endDrag);
-  art.addEventListener("pointercancel", endDrag);
-  art.addEventListener("click", () => {
-    if (!moved) window.nest.act("open");
-    moved = false;
-  });
   art.addEventListener("contextmenu", (event) => {
     event.preventDefault();
     window.nest.act("menu");
   });
 
-  function update(data) {
+  subscribe((data) => {
     const role = data.roles.find((item) => item.id === id);
     if (!role) return;
-    art.setAttribute("aria-label", `${role.name} · 打开聊天`);
-    const sprite = art.querySelector("img");
-    const asset = assetPath(role.art ?? role.id);
+    const activity = activityFor(role, data);
+    const roleArt = role.art ?? role.id;
+    art.dataset.activity = activity;
+    art.setAttribute(
+      "aria-label",
+      `${role.name} · ${activityLabels[activity]} · 打开聊天`,
+    );
+    const asset = `art/actions/${roleArt}-${activity}.webp`;
     if (sprite.getAttribute("src") !== asset) sprite.src = asset;
     const message =
-      data.bubbles[id]?.text ?? (data.thinking === id ? "正在想…" : "");
+      data.bubbles?.[id]?.text ?? (data.thinking === id ? "正在想…" : "");
     words.textContent = message;
     speech.hidden = !message;
-  }
-  window.nest.onRoom(update);
-  window.nest.get().then((value) => {
-    if (value) update(value.data);
   });
 }
 
@@ -357,7 +387,8 @@ function panel() {
       node.dataset.role = role.id;
       const info = element("div");
       const state = element("small");
-      info.append(element("strong", null, role.name), state);
+      const name = element("strong", null, role.name);
+      info.append(name, state);
       const action = button("secondary");
       action.addEventListener("click", () => {
         const current = room.roles.find(({ id }) => id === role.id);
@@ -369,19 +400,32 @@ function panel() {
       );
       const controls = element("div", "guest-controls");
       controls.append(decline, action);
-      node.append(avatar(role), info, controls);
+      const portrait = avatar(role);
+      node.append(portrait, info, controls);
       guestList.append(node);
-      guests.set(role.id, { node, state, action, decline });
+      guests.set(role.id, { node, name, portrait, state, action, decline });
     }
-    const { node, state, action, decline } = guests.get(role.id);
+    const { node, name, portrait, state, action, decline } = guests.get(
+      role.id,
+    );
     node.dataset.state = role.available ? role.state : "unavailable";
+    if (name.textContent !== role.name) name.textContent = role.name;
+    portrait.className = `portrait ${role.color}`;
+    const sprite = portrait.querySelector("img");
+    const src = assetPath(role.art ?? role.id);
+    if (sprite.getAttribute("src") !== src) sprite.src = src;
     decline.hidden = room.live || role.state !== "invited";
     const [label, text] = {
       home: ["在家", "邀请"],
       invited: ["已邀请 · 等待回应", "取消邀请"],
       here: ["在桌边", "请回家"],
     }[role.state];
-    const status = role.available ? label : "本轮未接入";
+    const activity = activityFor(role, room);
+    const status = !role.available
+      ? "本轮未接入"
+      : activity !== "idle" && (role.state === "here" || activity === "sleep")
+        ? activityLabels[activity]
+        : label;
     if (state.textContent !== status) state.textContent = status;
     action.hidden = !role.available || room.knock?.actor === role.id;
     if (action.textContent !== text) action.textContent = text;
@@ -487,7 +531,9 @@ function panel() {
     const notice = select(".room-notice");
     if (notice.textContent !== room.notice) notice.textContent = room.notice;
     const here = room.roles.filter((role) => role.state === "here");
-    const roster = here.map(({ id }) => id).join();
+    const roster = JSON.stringify(
+      here.map(({ id, name, color, art }) => [id, name, color, art]),
+    );
     if (lastRoster !== roster) {
       audience.replaceChildren(
         document.createTextNode("在场"),

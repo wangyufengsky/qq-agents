@@ -336,3 +336,110 @@ test("paper tabs and portraits replace the desktop budget display", async (t) =>
     "桌边试聊",
   ]);
 });
+
+test("floating door distinguishes clicks from dragging", async (t) => {
+  let executablePath;
+  try {
+    executablePath = findScreenshotBrowser();
+  } catch {
+    t.skip("local Chromium unavailable");
+    return;
+  }
+  const browser = await chromium.launch({ executablePath, headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 100, height: 118 } });
+  await page.addInitScript(() => {
+    window.testActions = [];
+    window.nest = {
+      onRoom() {},
+      get: async () => ({ data: { roles: [] } }),
+      act: (action) => window.testActions.push(action),
+    };
+  });
+  await page.goto(
+    new URL("../desktop/home/index.html?type=door", import.meta.url).href,
+  );
+  const door = page.getByRole("button", { name: "打开小窝的门" });
+  await door.click();
+  await page.mouse.move(40, 45);
+  await page.mouse.down();
+  await page.mouse.move(65, 65);
+  await page.mouse.up();
+  assert.deepEqual(await page.evaluate(() => window.testActions), [
+    "open",
+    "drag-start",
+    "drag-move",
+    "drag-end",
+  ]);
+  await door.focus();
+  await page.keyboard.press("Enter");
+  assert.equal(await page.evaluate(() => window.testActions.at(-1)), "open");
+});
+
+test("floating resident swaps all six artwork poses and respects reduced motion", async (t) => {
+  let executablePath;
+  try {
+    executablePath = findScreenshotBrowser();
+  } catch {
+    t.skip("local Chromium unavailable");
+    return;
+  }
+  const browser = await chromium.launch({ executablePath, headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({
+    viewport: { width: 194, height: 156 },
+    reducedMotion: "reduce",
+  });
+  const room = {
+    roles: [{ id: "resident", name: "小鱼", art: "fish", activity: "idle" }],
+    bubbles: {},
+  };
+  await page.addInitScript((data) => {
+    window.nest = {
+      onRoom: (update) => (window.testRoom = update),
+      get: async () => ({ data }),
+    };
+  }, room);
+  await page.goto(
+    new URL(
+      "../desktop/home/index.html?type=sprite&id=resident",
+      import.meta.url,
+    ).href,
+  );
+  const sprite = page.locator(".sprite-button img");
+  for (const art of ["fish", "dragon", "cat"]) {
+    for (const activity of [
+      "qq",
+      "chat",
+      "observe",
+      "control",
+      "idle",
+      "sleep",
+    ]) {
+      await page.evaluate((next) => window.testRoom(next), {
+        ...room,
+        roles: [{ ...room.roles[0], art, activity }],
+      });
+      assert.equal(
+        await sprite.getAttribute("src"),
+        `art/actions/${art}-${activity}.webp`,
+      );
+      assert.equal(
+        await sprite.evaluate(async (img) => {
+          await img.decode();
+          return img.naturalWidth;
+        }),
+        320,
+      );
+    }
+  }
+  assert.equal(
+    await sprite.evaluate((img) => window.getComputedStyle(img).animationName),
+    "none",
+  );
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  assert.equal(
+    await sprite.evaluate((img) => window.getComputedStyle(img).animationName),
+    "paper-sleep",
+  );
+});
