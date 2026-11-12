@@ -14,6 +14,7 @@ import { CodexRpc } from "../../vendor/local-bridge/codex-rpc.mjs";
 import { ExternalTools } from "./external.mjs";
 import { mcpResult } from "../tools/index.mjs";
 import { safeToolFailure } from "../tools/errors.mjs";
+import { DESKTOP_SCREEN_VIEW } from "../tools/names.mjs";
 import {
   sessionSignature,
   assertSession,
@@ -25,6 +26,12 @@ import { taskkillTree } from "../core/windows-process.mjs";
 import crossSpawn from "cross-spawn";
 
 const MAX_TOOL_RESPONSE_BYTES = 65536;
+const desktopVisualNamespace = "qq_desktop_visual";
+
+/** @param {import("./session-contract.mjs").ToolSpec[]} tools */
+function hasDesktopScreen(tools) {
+  return tools.some(({ name }) => name === DESKTOP_SCREEN_VIEW);
+}
 
 /** @param {number|string} id @param {ReturnType<typeof mcpResult>} result */
 function codexToolOutput(id, result) {
@@ -179,7 +186,13 @@ export class CodexBackend {
   async ready() {
     if (!this.readyPromise)
       this.readyPromise = (async () => {
-        await this.rpc.start();
+        const initialized = await this.rpc.start();
+        const version = /^qq_bridge_codex\/(\d+)\.(\d+)\.\d+/.exec(
+          initialized?.userAgent || "",
+        );
+        // Older app-servers accept only flat dynamic tool declarations.
+        this.desktopVisualDirect =
+          !!version && (Number(version[1]) > 0 || Number(version[2]) >= 167);
         const auth = await this.rpc.request("account/read", {
           refreshToken: false,
         });
@@ -340,10 +353,23 @@ export class CodexBackend {
   }
   /** @param {import("./session-contract.mjs").ToolSpec[]} tools */
   sessionSignature(tools) {
+    if (hasDesktopScreen(tools))
+      return sessionSignature(
+        {
+          config: this.config,
+          sessionProtocol: "desktop-visual-v1",
+        },
+        tools,
+      );
     return sessionSignature(this, tools);
   }
   /** @param {StoredSession | null | undefined} session @param {import("./session-contract.mjs").ToolSpec[]} tools @param {import("./session-contract.mjs").SessionContract} [previous] */
   acceptsSession(session, tools, previous) {
+    if (hasDesktopScreen(tools))
+      return (
+        session?.backend === "codex" &&
+        session.signature === this.sessionSignature(tools)
+      );
     return acceptsSession(this, session, tools);
   }
   /** @param {{windowId?: string, actorGeneration?: string}} [filter] */
@@ -398,6 +424,7 @@ export class CodexBackend {
     protectedWork = false,
     game = false,
     social = false,
+    desktop = false,
   }) {
     const policy =
       protectedWork || game || social
@@ -415,6 +442,29 @@ export class CodexBackend {
     assertSession(session, "codex", signature);
     await beforeSessionInput(session, () => this.ready());
     if (signal.aborted) throw Error("ABORTED");
+    const hasScreen = desktop && hasDesktopScreen(tools);
+    const directScreen = hasScreen && this.desktopVisualDirect;
+    const nativeSignature = hasScreen
+      ? directScreen
+        ? "desktop-screen-direct"
+        : "desktop-screen-flat"
+      : undefined;
+    if (
+      session &&
+      nativeSignature &&
+      session.nativeSignature !== nativeSignature
+    )
+      throw new SessionUnavailableFailure("CODEX_SESSION_UNAVAILABLE");
+    if (directScreen) {
+      // Model-selected code mode serializes nested tool outputs as text.
+      // Keep the screenshot's image block on the direct model tool route.
+      Object.assign(policy, {
+        "features.code_mode": {
+          enabled: false,
+          direct_only_tool_namespaces: [desktopVisualNamespace],
+        },
+      });
+    }
     if (social) {
       // Empty MCP tables merge with inherited config; disable each effective
       // server explicitly instead of assuming mcp_servers={} removes it.
@@ -468,16 +518,27 @@ export class CodexBackend {
           instructions || "你是独立 QQ 人格，只通过启用的 QQ 发送工具投递。",
         developerInstructions:
           "只使用本回合提供的工具。不得访问本机开发环境。不要在文本中泄露能力凭据。",
-        dynamicTools: tools.map((t) => ({
-          name: t.name,
-          description: t.description,
-          inputSchema: t.inputSchema,
-        })),
+        dynamicTools: tools.map(({ name, description, inputSchema }) => {
+          const tool = { name, description, inputSchema };
+          return directScreen && name === DESKTOP_SCREEN_VIEW
+            ? {
+                type: "namespace",
+                name: desktopVisualNamespace,
+                description: "Current-turn desktop image observations",
+                tools: [{ type: "function", ...tool }],
+              }
+            : tool;
+        }),
         config: policy,
         experimentalRawEvents: false,
       });
       threadId = /** @type {string} */ (r.thread.id);
-      saveSession({ backend: "codex", id: threadId, signature });
+      saveSession({
+        backend: "codex",
+        id: threadId,
+        signature,
+        ...(nativeSignature && { nativeSignature }),
+      });
     }
     if (signal.aborted) throw Error("ABORTED");
     if (recovery && !(await this.recoveryReady(threadId, recovery)))
