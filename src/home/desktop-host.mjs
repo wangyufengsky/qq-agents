@@ -1,12 +1,13 @@
-import { randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { SessionPreparationFailure } from "../backends/turn-failure.mjs";
+import { recallBoundary } from "../core/recall-boundary.mjs";
 import { containsCredential } from "../core/secrets.mjs";
 import { DesktopVisits } from "./desktop-visits.mjs";
+import { DesktopInvitations } from "./desktop-invitations.mjs";
 import { LiveRoom } from "./desktop-room.mjs";
 import { createRoom, roles as art } from "./desktop-room-state.mjs";
 import { beginDesktopContext } from "./desktop-context.mjs";
-import { decisionTool, promptFor, readDecision } from "./desktop-decision.mjs";
+import { DESKTOP_CONVERSATION, readDecision } from "./desktop-decision.mjs";
 
 const requestSchema = z
   .object({
@@ -30,7 +31,7 @@ export class DesktopHost {
   constructor(runtime) {
     this.runtime = runtime;
     this.visits = new Map();
-    this.scopes = new Map();
+    this.invitations = new DesktopInvitations(this);
   }
 
   configured() {
@@ -101,6 +102,7 @@ export class DesktopHost {
     return this.visit(ctx.agentId).request(ctx);
   }
   finishSubject(id, completed) {
+    this.invitations.finish(id, completed);
     this.visits.get(id)?.finishSubject(id, completed);
   }
   interrupt(id) {
@@ -110,27 +112,32 @@ export class DesktopHost {
     return this.visits.get(id)?.claimQq(id, conversation);
   }
 
-  available() {
+  operational() {
     return (
       !this.runtime.closed &&
       this.runtime.config.mode === "live" &&
-      !this.runtime.config.globalPaused &&
-      !this.runtime.maintenance.active &&
-      !this.runtime.updateMaintenance
+      !this.runtime.config.globalPaused
     );
   }
 
-  connected() {
+  available(ctx) {
+    return (
+      this.operational() &&
+      (!this.runtime.updateMaintenance || this.runtime.maintenance.allows(ctx))
+    );
+  }
+
+  connected(ctx) {
     return (
       this.configured() &&
-      this.available() &&
+      this.available(ctx) &&
       this.client?.expiresAt > this.runtime.now()
     );
   }
 
   refresh() {
     const now = this.runtime.now();
-    if (!this.configured() || !this.available()) {
+    if (!this.configured() || !this.operational()) {
       this.reset();
       return false;
     }
@@ -142,9 +149,16 @@ export class DesktopHost {
       (now >= this.client.expiresAt || this.signature !== signature)
     )
       this.reset();
+    // Maintenance keeps existing turn capabilities alive and stops admission.
+    if (this.runtime.updateMaintenance) return Boolean(this.live);
     if (this.live) {
       for (const role of roles) {
-        if (this.runtime.blockers(this.runtime.agent(role.id)).length) {
+        if (
+          this.runtime.blockers(
+            this.runtime.agent(role.id),
+            DESKTOP_CONVERSATION,
+          ).length
+        ) {
           this.visits
             .get(role.id)
             ?.desktop?.controller.abort(Error("DESKTOP_VISIT_UNAVAILABLE"));
@@ -161,6 +175,7 @@ export class DesktopHost {
       for (const [id, message] of Object.entries(room.bubbles))
         if (now - message.now > 4900) delete room.bubbles[id];
       this.live.tick(now);
+      this.invitations.dispatch();
     }
     return true;
   }
@@ -182,6 +197,8 @@ export class DesktopHost {
       {
         roles: ids,
         subjectActors: ids,
+        requestInvitation: (request, signal) =>
+          this.invitations.request(request, signal),
         run: (request, signal, canStart) => this.run(request, signal, canStart),
         setDoor: (open, epoch, actor) => this.visit(actor).setDoor(open, epoch),
         close: async () => {},
@@ -217,8 +234,11 @@ export class DesktopHost {
       if (action !== "sync") return { enabled: true, reconnect: true };
       this.open(client);
     }
-    this.client.expiresAt = this.runtime.now() + CLIENT_LEASE;
+    if (!this.runtime.updateMaintenance || action === "sync")
+      this.client.expiresAt = this.runtime.now() + CLIENT_LEASE;
     const { live } = this;
+    if (this.runtime.updateMaintenance)
+      return { enabled: true, room: live.snapshot() };
     const role = live.room.roles.find(({ id }) => id === data);
     if (action === "invite" && role) void live.invite(role);
     if (action === "leave" && role) live.leave(role);
@@ -246,117 +266,102 @@ export class DesktopHost {
     const agent = runtime.agent(actor);
     const current = this.live;
     const controller = new AbortController();
-    const combined = AbortSignal.any([
+    const external = AbortSignal.any([
       signal,
-      controller.signal,
-      AbortSignal.timeout(85_000),
+      AbortSignal.timeout(agent.behavior.turnTimeoutMs),
     ]);
+    const abort = () => controller.abort(external.reason);
+    if (external.aborted) abort();
+    else external.addEventListener("abort", abort, { once: true });
     const check = () => {
-      combined.throwIfAborted();
+      controller.signal.throwIfAborted();
       if (
         this.live !== current ||
-        !this.configured() ||
-        runtime.blockers(agent).length
+        !this.connected(ctx) ||
+        runtime.blockers(agent, DESKTOP_CONVERSATION, ctx).length
       )
         throw Error("DESKTOP_VISIT_UNAVAILABLE");
     };
-    check();
-    const release = this.visit(actor).beginDesktop(controller);
-    const capability = randomBytes(32).toString("base64url");
+    let ctx, release, exchange, failure, decision;
+    const assertOutput = (text) => {
+      if (!text) return;
+      runtime.assertSafeOutput(ctx, text);
+      recallBoundary(runtime, ctx, { publicOnly: true }).assert({
+        evidence: [...ctx.privateRead],
+      });
+    };
+    const key = actor + "|" + DESKTOP_CONVERSATION;
+    const done = Promise.withResolvers();
     try {
+      check();
+      release = this.visit(actor).beginDesktop(controller);
+      ctx = runtime.makeContext(actor, DESKTOP_CONVERSATION, {
+        controller,
+        assertCurrent: () => {
+          check();
+          if (request.isCurrent?.() === false)
+            throw Error("DESKTOP_VISIT_UNAVAILABLE");
+        },
+        decide: (args) => {
+          if (decision) throw Error("DESKTOP_DECISION_DENIED");
+          const next = readDecision(kind, args);
+          if (!next) throw Error("DESKTOP_DECISION_INVALID");
+          assertOutput(next.text);
+          decision = next;
+          return { status: "recorded" };
+        },
+      });
+      ctx.done = done.promise;
+      runtime.running.set(key, ctx);
       const backend = runtime.backendConnections.adapter(agent);
       if (!backend.runDesktop) throw Error("DESKTOP_VISIT_UNAVAILABLE");
-      let decision;
-      const call = (name, args) => {
-        check();
-        if (name !== decisionTool.function.name || decision)
-          throw Error("DESKTOP_DECISION_DENIED");
-        const next = readDecision(kind, args);
-        if (
-          !next ||
-          (next.text &&
-            (containsCredential(next.text) || next.text.includes(capability)))
-        )
-          throw Error("DESKTOP_DECISION_INVALID");
-        decision = next;
-        return { content: [{ type: "text", text: "已记录本回合的决定。" }] };
-      };
-      this.scopes.set(capability, { check, call });
-      const instructions = `${agent.persona}
-你在独立的桌面小窝会话中。只用本轮桌面决定工具行动。只根据你在场且被送达的桌边消息参与，不要向当时未在场者主动转述以前的桌边消息。`;
-      const prompt = promptFor(request);
-      const managedContext = beginDesktopContext(
+      exchange = beginDesktopContext(
         runtime,
+        ctx,
         agent,
         backend,
-        instructions,
-        prompt,
-        combined,
+        request,
+        controller.signal,
       );
-      let failure;
-      try {
-        await backend.runDesktop({
-          binding: { runId: randomUUID() },
-          managedContext,
-          budget: null,
-          signal: combined,
-          instructions,
-          prompt,
-          tools: [decisionTool],
-          beforeInput: check,
-          assertCanStart: () => {
-            if (canStart && !canStart())
-              throw new SessionPreparationFailure(
-                Error("DESKTOP_VISIT_UNAVAILABLE"),
-              );
-          },
-          onRunStarted: check,
-          maxToolResultBytes: 4096,
-          callTool: call,
-          socialContextToken: capability,
-        });
-        check();
-        if (!decision) throw Error("DESKTOP_DECISION_MISSING");
-        return decision;
-      } catch (error) {
-        failure = error;
-        throw error;
-      } finally {
-        await managedContext.finish(failure);
-      }
+      await backend.runDesktop({
+        ...exchange,
+        binding: { runId: ctx.turnId },
+        budget: null,
+        signal: controller.signal,
+        beforeInput: check,
+        assertCanStart: () => {
+          if (canStart && !canStart())
+            throw new SessionPreparationFailure(
+              Error("DESKTOP_VISIT_UNAVAILABLE"),
+            );
+        },
+        onRunStarted: check,
+        registerInputConsumer: (consume) => {
+          ctx.desktopConsumeInput = consume;
+        },
+        maxToolResultBytes: 4096,
+        socialContextToken: ctx.token,
+      });
+      check();
+      if (request.isCurrent?.() === false) return { action: "silent" };
+      if (!decision) throw Error("DESKTOP_DECISION_MISSING");
+      assertOutput(decision.text);
+      return decision;
     } catch (error) {
+      failure = error;
       if (controller.signal.aborted) throw controller.signal.reason;
       throw error;
     } finally {
-      this.scopes.delete(capability);
-      release();
+      try {
+        if (ctx) runtime.capabilities.delete(ctx.token);
+        if (exchange) await exchange.finish(failure);
+      } finally {
+        if (ctx && runtime.running.get(key) === ctx)
+          runtime.running.delete(key);
+        external.removeEventListener("abort", abort);
+        release?.();
+        done.resolve();
+      }
     }
-  }
-
-  bridge(capability, path, input) {
-    const scope = this.scopes.get(capability);
-    if (!scope) throw Error("INVALID_CAPABILITY");
-    scope.check();
-    if (path === "/agent/tools") return scope.call(input.name, input.arguments);
-    const { name, description, parameters } = decisionTool.function;
-    if (
-      input.names &&
-      (!Array.isArray(input.names) || input.names.some((item) => item !== name))
-    )
-      throw Error("TOOL_DISABLED");
-    return {
-      tools:
-        input.offset > 0
-          ? []
-          : [
-              {
-                name,
-                description,
-                ...(input.names ? { inputSchema: parameters } : {}),
-              },
-            ],
-      total: 1,
-      nextOffset: null,
-    };
   }
 }

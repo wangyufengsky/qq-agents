@@ -700,9 +700,9 @@ export class DshBackend {
             ]),
           ],
         },
-        selection ? undefined : signal,
+        selection || desktop ? undefined : signal,
       );
-      if (selection) pendingSubmission = submission;
+      if (selection || desktop) pendingSubmission = submission;
       await Promise.race([
         submission.then(
           (response) => {
@@ -772,6 +772,10 @@ export class DshBackend {
             pendingSubmission,
             active,
           );
+        // Desktop cleanup must wait for the native admission request to settle
+        // before the isolated wrapper stops the session and releases QQ.
+        else if (desktop && signal.aborted)
+          await pendingSubmission?.catch(() => {});
       } finally {
         this.turns.delete(sessionId);
         client.events.forget?.(sessionId);

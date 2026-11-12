@@ -1,5 +1,6 @@
 // @ts-check
 import { allowed } from "./policy.mjs";
+import { DESKTOP_CONVERSATION } from "../home/desktop-decision.mjs";
 
 export const MEMORY_AGENT_TOOLS = Object.freeze(
   /** @type {const} */ (["memory_search", "memory_read", "memory_related"]),
@@ -36,15 +37,26 @@ const subjectDefinition = Object.freeze({
 const qqDefinition = Object.freeze({
   kind: /** @type {const} */ ("qq-dialogue"),
 });
+/** @type {Readonly<{kind: "desktop-dialogue", tools?: never, effort?: never}>} */
+const desktopDefinition = Object.freeze({ kind: "desktop-dialogue" });
 
 /**
  * Resolve a functional identity while leaving the caller's data scope intact.
  * @param {Role} role
  * @param {string} conversation
- * @param {"subject" | "qq" | "memory"} [key]
+ * @param {"subject" | "qq" | "memory" | "desktop"} [key]
  * @param {Configuration} [config]
  */
 export function resolveFunctionalAgent(role, conversation, key, config) {
+  if (conversation === DESKTOP_CONVERSATION) {
+    if (key && key !== "desktop") return undefined;
+    return {
+      key: "desktop",
+      kind: /** @type {const} */ ("desktop-dialogue"),
+      instanceKey: `${role.id}/desktop/${conversation}`,
+      definition: desktopDefinition,
+    };
+  }
   const ordinaryKey =
     conversation === "@subject"
       ? "subject"

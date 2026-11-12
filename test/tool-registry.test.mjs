@@ -1,14 +1,19 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { TOOL_NAMES, toolSpecs, dispatchTool } from "../src/tools/index.mjs";
-import { FUNCTIONAL_AGENT_RESULT } from "../src/tools/names.mjs";
+import {
+  DESKTOP_DECISION,
+  FUNCTIONAL_AGENT_RESULT,
+} from "../src/tools/names.mjs";
 import { registry } from "../src/tools/registry.mjs";
 import { fixture } from "./helpers.mjs";
 
 test("every advertised tool has exactly one schema and handler, and unknown/prototype names fail closed", async (t) => {
   assert.deepEqual(
     toolSpecs().map((tool) => tool.name),
-    Object.keys(registry).filter((name) => name !== FUNCTIONAL_AGENT_RESULT),
+    Object.keys(registry).filter(
+      (name) => ![FUNCTIONAL_AGENT_RESULT, DESKTOP_DECISION].includes(name),
+    ),
   );
   for (const name of TOOL_NAMES) {
     assert.equal(typeof registry[name].handler, "function");

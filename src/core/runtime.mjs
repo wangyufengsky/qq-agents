@@ -2,7 +2,9 @@ import { QzoneApprovals } from "./qzone-approvals.mjs";
 import { SubjectExecution } from "./subject-execution.mjs";
 import { SocialRuntime } from "../home/social-runtime.mjs";
 import { DesktopHost } from "../home/desktop-host.mjs";
+import { DESKTOP_CONVERSATION } from "../home/desktop-decision.mjs";
 import { DESKTOP_VISIT_TOOL } from "../home/desktop-visits.mjs";
+import { DESKTOP_INVITATION_TOOL } from "../home/desktop-invitations.mjs";
 import { HOME_TOOLS } from "../home/policy.mjs";
 import { HomeService } from "../home/service.mjs";
 import {
@@ -42,7 +44,7 @@ import { Diagnostics } from "./diagnostics.mjs";
 import { GeneratedImages } from "./generated-images.mjs";
 import { resolveFunctionalAgent } from "./functional-agents.mjs";
 import { FunctionalDelegation } from "./functional-delegation.mjs";
-import { FUNCTIONAL_AGENT_RESULT } from "../tools/names.mjs";
+import { DESKTOP_DECISION, FUNCTIONAL_AGENT_RESULT } from "../tools/names.mjs";
 import { BackendConnections } from "./backend-connections.mjs";
 import { backendCapabilities } from "../backends/capabilities.mjs";
 import { ConnectionRecovery } from "./connection-recovery.mjs";
@@ -279,7 +281,9 @@ export class Runtime {
     this.scheduler.tick();
     this.operations.expire();
   }
-  makeContext(agentId, conversation) {
+  makeContext(agentId, conversation, desktop) {
+    if ((conversation === DESKTOP_CONVERSATION) !== Boolean(desktop))
+      throw Error("DESKTOP_VISIT_UNAVAILABLE");
     if (this.closed) throw Error("RUNTIME_CLOSING");
     if (this.maintenance.active) throw Error("UPDATE_IN_PROGRESS");
     if (this.reconfiguringAgents.has(agentId)) throw Error("CONFIG_CONFLICT");
@@ -315,6 +319,14 @@ export class Runtime {
       externalGrants: new Map(),
       confirmedSends: 0,
       shownSeq: 0,
+      ...(desktop && {
+        runtimeKind: "desktop",
+        controller: desktop.controller,
+        assertCurrent: desktop.assertCurrent,
+        desktopDecision: desktop.decide,
+        requiresInputSubmission: true,
+        allowedTools: this.toolsFor(a, conversation),
+      }),
     };
     ctx.persistTaint = () => {
       for (const marker of socialSources(this, ctx))
@@ -426,6 +438,8 @@ export class Runtime {
     return c;
   }
   toolsFor(a, conversation) {
+    if (conversation === DESKTOP_CONVERSATION)
+      return this.desktopVisits.configured() ? [DESKTOP_DECISION] : [];
     if (conversation?.startsWith("@social:"))
       return this.config.homeSocial?.enabled
         ? this.socialRuntime
@@ -491,12 +505,14 @@ export class Runtime {
       selected.push("qq_delivery_status");
     selected.push(...HOME_TOOLS);
     const desktopVisit = this.desktopVisits?.allows(a, conversation);
-    if (desktopVisit) selected.push(DESKTOP_VISIT_TOOL);
+    if (desktopVisit)
+      selected.push(DESKTOP_VISIT_TOOL, DESKTOP_INVITATION_TOOL);
     const configured = resolveFunctionalAgent(a, conversation)?.definition
       .tools;
     return [...new Set(selected)].filter(
       (name) =>
-        (name !== DESKTOP_VISIT_TOOL || desktopVisit) &&
+        (![DESKTOP_VISIT_TOOL, DESKTOP_INVITATION_TOOL].includes(name) ||
+          desktopVisit) &&
         (!configured || configured.includes(name)) &&
         toolAvailable(a, name, conversation, this.config) &&
         (!name.startsWith("game_") || this.config.games.enabled) &&
@@ -549,7 +565,13 @@ export class Runtime {
     }
     if (inSilence(a, this.clock())) codes.push("QUIET_HOURS");
     if (conversation === undefined) return codes;
-    if (!allowed(a, conversation, this.config)) codes.push("NOT_ALLOWED");
+    if (
+      conversation === DESKTOP_CONVERSATION
+        ? !this.desktopVisits.configured() ||
+          (this.updateMaintenance && !this.maintenance.allows(ctx))
+        : !allowed(a, conversation, this.config)
+    )
+      codes.push("NOT_ALLOWED");
     const state = this.memory.bind(a.id).state(conversation);
     if (state.paused) codes.push("CONVERSATION_PAUSED");
     // The turn that chose to go quiet may still finish bookkeeping; deliverNow blocks its sends.
@@ -1132,9 +1154,17 @@ export class Runtime {
   async finalizeToolOutput(ctx, original, { encode, maxBytes = Infinity }) {
     const plan = ctx.stagedToolOutputs?.get(original);
     if (!plan) {
-      if (ctx.runtimeKind === "functional-agent") this.assertActive(ctx);
+      if (
+        ctx.runtimeKind === "functional-agent" ||
+        ctx.runtimeKind === "desktop"
+      )
+        this.assertActive(ctx);
       const { wire } = await encode(original);
-      if (ctx.runtimeKind === "functional-agent") this.assertActive(ctx);
+      if (
+        ctx.runtimeKind === "functional-agent" ||
+        ctx.runtimeKind === "desktop"
+      )
+        this.assertActive(ctx);
       return { wire };
     }
     ctx.stagedToolOutputs.delete(original);
@@ -1266,7 +1296,11 @@ export class Runtime {
         ctx.subjectToolReservations = (ctx.subjectToolReservations || 0) + 1;
       }
       const result = await this.executeTool(ctx, name, args);
-      if (ctx.runtimeKind === "functional-agent") this.assertActive(ctx);
+      if (
+        ctx.runtimeKind === "functional-agent" ||
+        ctx.runtimeKind === "desktop"
+      )
+        this.assertActive(ctx);
       if (ctx.inputEpoch !== epoch) {
         ctx.stagedToolOutputs?.delete(result);
         throw Error("INPUT_EPOCH_CHANGED");
@@ -1309,6 +1343,7 @@ export class Runtime {
     ctx.persistTaint?.();
     const scoped =
       ctx.runtimeKind === "functional-agent" ||
+      ctx.runtimeKind === "desktop" ||
       ctx.functionalAgent?.definition.tools;
     const current = scoped ? this.toolsForContext(a, ctx) : null;
     if (

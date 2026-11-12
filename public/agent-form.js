@@ -227,6 +227,7 @@ const AGENT_TOOL_GROUPS = [
     desc: "默认关闭。启用后所有会话可读自己的展示，只有主人格可布置；文字发布需要另开发布开关。",
     tools: {
       desktop_visit_request: "申请桌面来访",
+      desktop_invitation_decide: "决定是否赴桌面邀请",
       room_intent_submit: "递交自己的小窝提议",
       room_intent_list: "查看自己的小窝提议",
       room_intent_resolve: "主人格处理小窝提议",

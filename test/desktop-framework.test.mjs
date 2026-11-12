@@ -6,12 +6,24 @@ import { desktopToken } from "../src/home/desktop-auth.mjs";
 import { config, fixture, raw, settle } from "./helpers.mjs";
 
 const check = () => new Promise(setImmediate);
+const invitationId = (prompt) =>
+  /"desktopInvitation":\{"id":"([a-f0-9-]+)"/.exec(prompt)?.[1];
+const acceptInvitation = (p) =>
+  p.callTool("desktop_invitation_decide", {
+    id: invitationId(p.prompt),
+    action: "accept",
+  });
 
 test("management policy drives the authenticated desktop room and hot revocation", async (t) => {
   const qq = [];
+  const cfg = config(1);
+  cfg.agents[0].subject.enabled = true;
   const f = fixture(t, {
-    cfg: config(1),
-    run: async (p) => qq.push(p.conversation),
+    cfg,
+    run: async (p) => {
+      if (p.conversation === "@subject") return acceptInvitation(p);
+      qq.push(p.conversation);
+    },
   });
   const token = randomBytes(32).toString("hex");
   const app = createServer({ runtime: f.runtime, token, allowLive: true });
@@ -64,6 +76,7 @@ test("management policy drives the authenticated desktop room and hot revocation
   const sessions = [];
   backend.runDesktop = async (p) => {
     p.beforeInput();
+    p.onInputSubmitted?.();
     const context = p.managedContext;
     const session = context.session ?? {
       backend: "codex",
@@ -71,11 +84,12 @@ test("management policy drives the authenticated desktop room and hot revocation
     };
     if (!context.session) context.saveSession(session);
     sessions.push(session.id);
-    if (p.prompt.includes("管理员邀请"))
-      return p.callTool("desktop_room_decide", { action: "accept" });
     await new Promise((resolve) => pending.push({ resolve, signal: p.signal }));
     p.signal.throwIfAborted();
-    p.callTool("desktop_room_decide", { action: "say", text: "桌面回复" });
+    await p.callTool("desktop_room_decide", {
+      action: "say",
+      text: "桌面回复",
+    });
   };
   assert.equal((await command("sync")).room.maxTurns, 3);
   assert.equal(
@@ -85,10 +99,10 @@ test("management policy drives the authenticated desktop room and hot revocation
   await command("invite", "agent-0");
   await check();
   assert.equal((await command("sync")).room.roles[0].state, "here");
+  assert.equal(sessions.length, 0);
   await command("send", "本地桌面消息");
   assert.equal(pending.length, 1);
   assert(sessions[0]);
-  assert.equal(sessions[1], sessions[0]);
   pending[0].resolve();
   await check();
   const replied = (await command("sync")).room;
@@ -105,13 +119,13 @@ test("management policy drives the authenticated desktop room and hot revocation
   await command("send", "QQ 优先时的桌面消息");
   await check();
   claim.release();
-  assert.equal(sessions.length, 2);
+  assert.equal(sessions.length, 1);
   assert.equal(
     f.store.bind("agent-0").state("@desktop").session.id,
     sessions[0],
   );
   await command("send", "新桌面消息");
-  assert.equal(sessions[2], sessions[0]);
+  assert.equal(sessions[1], sessions[0]);
   await f.runtime.ingest(
     "qq-0",
     raw(22, {
@@ -203,10 +217,92 @@ test("only the local administrator can launch and close the desktop window", asy
   assert.equal(f.runtime.config.desktopHome.enabled, false);
 });
 
+test("administrator invitations wait for the subject and fence cancelled decisions", async (t) => {
+  const cfg = config(1);
+  cfg.desktopHome.enabled = true;
+  cfg.agents[0].subject.enabled = true;
+  const turns = [];
+  const f = fixture(t, {
+    cfg,
+    run: async (p) => {
+      const gate = Promise.withResolvers();
+      turns.push({ gate, p });
+      const action = await gate.promise;
+      if (action) {
+        await p.callTool("desktop_invitation_decide", {
+          id: invitationId(p.prompt),
+          action,
+        });
+      }
+    },
+  });
+  let now = Date.now();
+  f.runtime.clock = () => new Date(now);
+  t.after(() => {
+    for (const { gate } of turns) gate.resolve();
+  });
+  const host = f.runtime.desktopVisits;
+  const client = randomUUID();
+  const command = (action, data) => host.command({ client, action, data });
+  const member = () => command("sync").room.roles[0].state;
+  const drain = async () => {
+    await Promise.allSettled([...f.runtime.work]);
+    await check();
+  };
+  command("sync");
+  const busy = f.runtime.wake("agent-0", "@subject");
+  await check();
+  command("invite", "agent-0");
+  assert.equal(member(), "invited");
+  assert.equal(turns.length, 1);
+  assert.equal(invitationId(turns[0].p.prompt), undefined);
+  turns[0].gate.resolve();
+  await busy;
+  command("sync");
+  await check();
+  assert.equal(turns[1].p.conversation, "@subject");
+  assert(invitationId(turns[1].p.prompt));
+
+  command("invite", "agent-0");
+  await check();
+  assert.equal(member(), "home");
+  await assert.rejects(
+    acceptInvitation(turns[1].p),
+    /DESKTOP_VISIT_UNAVAILABLE/,
+  );
+  turns[1].gate.resolve();
+  await drain();
+
+  command("invite", "agent-0");
+  await check();
+  turns[2].gate.resolve("decline");
+  await drain();
+  assert.equal(member(), "home");
+
+  command("invite", "agent-0");
+  await check();
+  assert(invitationId(turns[3].p.prompt));
+  for (let index = 0; index < 30; index++) {
+    now += 10_000;
+    command("sync");
+  }
+  await check();
+  assert.equal(member(), "home");
+  await assert.rejects(
+    acceptInvitation(turns[3].p),
+    /DESKTOP_VISIT_UNAVAILABLE/,
+  );
+  turns[3].gate.resolve();
+  await drain();
+  assert.equal(command("sync").room.budget, 6);
+  assert.equal(f.store.bind("agent-0").state("@desktop").session, undefined);
+});
+
 test("desktop reconnects with a stored session and uses normal context retirement", async (t) => {
   const cfg = config(1);
   cfg.desktopHome.enabled = true;
-  const f = fixture(t, { cfg });
+  cfg.agents[0].subject.enabled = true;
+  const f = fixture(t, { cfg, run: acceptInvitation });
   const host = f.runtime.desktopVisits;
   const memory = f.store.bind("agent-0");
   const backend = f.runtime.backendConnections.adapter(
@@ -221,6 +317,7 @@ test("desktop reconnects with a stored session and uses normal context retiremen
   const refs = [];
   backend.runDesktop = async (p) => {
     p.beforeInput();
+    p.onInputSubmitted?.();
     const context = p.managedContext;
     const session = context.session ?? {
       backend: "codex",
@@ -234,25 +331,27 @@ test("desktop reconnects with a stored session and uses normal context retiremen
         contextTokens: 99_000,
         capacityTokens: 100_000,
       });
-    const action = p.prompt.includes("管理员邀请") ? "accept" : "silent";
-    await p.callTool("desktop_room_decide", { action });
+    await p.callTool("desktop_room_decide", { action: "silent" });
   };
   const first = randomUUID(),
     second = randomUUID();
   host.command({ client: first, action: "sync" });
   host.command({ client: first, action: "invite", data: "agent-0" });
   await drain();
+  assert.equal(memory.state("@desktop").session, undefined);
+  host.command({ client: first, action: "send", data: "第一轮桌边聊天" });
+  await drain();
   assert.equal(memory.state("@desktop").session.id, "desktop-1");
   host.command({ client: first, action: "disconnect" });
   host.command({ client: second, action: "sync" });
   host.command({ client: second, action: "invite", data: "agent-0" });
   await drain();
-  assert.deepEqual(refs, ["desktop-1", "desktop-1"]);
+  assert.deepEqual(refs, ["desktop-1"]);
   assert.equal(host.live.room.members["agent-0"], "here");
   fill = true;
   host.command({ client: second, action: "send", data: "使用接近容量" });
   await drain();
-  assert.equal(refs.length, 3);
+  assert.deepEqual(refs, ["desktop-1", "desktop-1"]);
   const retired = memory.state("@desktop");
   assert.equal(retired.session, null);
   assert.equal(retired.lifecycle.reason, "capacity-guard");

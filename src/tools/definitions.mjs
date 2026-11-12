@@ -13,7 +13,8 @@ import { fileDefinitions } from "./file-tools.mjs";
 import { savedMediaDefinitions } from "./saved-media.mjs";
 import { screenshotDefinitions } from "./screenshots.mjs";
 import { z } from "zod";
-import { FUNCTIONAL_AGENT_RESULT } from "./names.mjs";
+import { DESKTOP_DECISION, FUNCTIONAL_AGENT_RESULT } from "./names.mjs";
+import { desktopDecisionDefinition } from "../home/desktop-decision.mjs";
 import { qqSegmentsSchema } from "./qq-message.mjs";
 import { legacyDefinitions } from "./legacy.mjs";
 import { homeDefinitions } from "./home.mjs";
@@ -65,6 +66,7 @@ const animation = z
   .strict()
   .optional();
 export const definitions = {
+  [DESKTOP_DECISION]: desktopDecisionDefinition,
   [FUNCTIONAL_AGENT_RESULT]: [
     "提交本次查证选中的证据记录 ID。选中证据时，contribution 用一句短话说明它补上了当前对话缺的什么。没有新增信息就提交空数组，省略 contribution。",
     z

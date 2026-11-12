@@ -1,6 +1,7 @@
 // @ts-check
 import { socialSessionPool } from "./social-sessions.mjs";
 import { sessionWasUnchanged } from "./turn-failure.mjs";
+import { DESKTOP_DECISION } from "../tools/names.mjs";
 import { SOCIAL_TOOLS } from "../home/social-tool-names.mjs";
 
 const allowed = new Set([
@@ -12,7 +13,7 @@ const allowed = new Set([
   "person_items",
   "mood_read",
 ]);
-const desktopAllowed = new Set(["desktop_room_decide"]);
+const desktopAllowed = new Set([DESKTOP_DECISION]);
 
 /** Only the controlled scene tool may add pixels outside the text quota.
  * @param {string} name @param {any} result @param {number} maxTextBytes */
@@ -97,6 +98,7 @@ export async function runNativeSocial(
     if (consumed || !submitted) return;
     await check();
     await params.onInputConsumed?.(ticket);
+    if (managed) params.onInputSubmitted?.();
     consumed = true;
   };
   try {
@@ -112,6 +114,11 @@ export async function runNativeSocial(
       signal,
       onUsage: managed?.onUsage,
       onBackendTurn: managed?.onBackendTurn,
+      onTiming: managed?.onTiming,
+      onDiagnostic: managed?.onDiagnostic,
+      onInputSubmitted: managed ? params.onInputSubmitted : undefined,
+      finalizeToolOutput: managed ? params.finalizeToolOutput : undefined,
+      commitToolOutput: managed ? params.commitToolOutput : undefined,
       saveSession: (/** @type {any} */ value) => {
         if (value) capsule.session = value;
         else invalidated = true;

@@ -1,4 +1,5 @@
 import { DESKTOP_VISIT_TOOL } from "../home/desktop-visits.mjs";
+import { DESKTOP_INVITATION_TOOL } from "../home/desktop-invitations.mjs";
 import {
   HOME_INTENT_TOOLS,
   HOME_READ_TOOLS,
@@ -7,7 +8,7 @@ import {
 import { SOCIAL_TOOLS } from "../home/social-tool-names.mjs";
 import { subjectInboxEnabled } from "../core/role-rest.mjs";
 import { z } from "zod";
-import { FUNCTIONAL_AGENT_RESULT } from "./names.mjs";
+import { DESKTOP_DECISION, FUNCTIONAL_AGENT_RESULT } from "./names.mjs";
 import { memoryRecallPolicy } from "../core/functional-agents.mjs";
 import { toolSpecs } from "./specs.mjs";
 import { canUseDraftTool } from "../core/draft-input.mjs";
@@ -67,6 +68,7 @@ export function scopedCatalog(runtime, ctx, input) {
     network: {
       autonomous:
         ctx.runtimeKind !== "functional-agent" &&
+        ctx.runtimeKind !== "desktop" &&
         a.network?.autonomous === true,
     },
     tools: toolSpecs(names).map((s) =>
@@ -81,8 +83,10 @@ export function scopedCatalog(runtime, ctx, input) {
 }
 
 export function toolAvailable(agent, name, conversation, config) {
-  if (name === DESKTOP_VISIT_TOOL) return conversation === "@subject";
-  if (name === FUNCTIONAL_AGENT_RESULT) return false;
+  if (name === DESKTOP_VISIT_TOOL || name === DESKTOP_INVITATION_TOOL)
+    return conversation === "@subject";
+  if (name === DESKTOP_DECISION || name === FUNCTIONAL_AGENT_RESULT)
+    return false;
   if (name === "memory_recall")
     return Boolean(config && memoryRecallPolicy(agent, conversation, config));
   if (name.startsWith("subject_inbox_") || name === "subject_rest")

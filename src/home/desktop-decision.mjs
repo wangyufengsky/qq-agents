@@ -1,23 +1,15 @@
-export const decisionTool = {
-  type: "function",
-  function: {
-    name: "desktop_room_decide",
-    description:
-      "作出本次桌面小窝邀请或聊天回合的唯一决定。只有 say 或 knock 需要提供 text。",
-    parameters: {
-      type: "object",
-      properties: {
-        action: {
-          type: "string",
-          enum: ["accept", "decline", "say", "silent", "leave", "knock"],
-        },
-        text: { type: "string", minLength: 1, maxLength: 320 },
-      },
-      required: ["action"],
-      additionalProperties: false,
-    },
-  },
-};
+import { z } from "zod";
+
+export const DESKTOP_CONVERSATION = "@desktop";
+export const desktopDecisionDefinition = [
+  "作出本次桌面小窝聊天回合的唯一决定。只有 say 需要提供 text。",
+  z
+    .object({
+      action: z.enum(["accept", "decline", "say", "silent", "leave", "knock"]),
+      text: z.string().min(1).max(320).optional(),
+    })
+    .strict(),
+];
 
 export function promptFor(request) {
   const context = JSON.stringify({

@@ -76,25 +76,32 @@ test("new arrival does not rotate other sessions or receive earlier messages", a
   const { room, live, jobs, retired, settle, arrive } = harness();
   await arrive(dragon);
   const invitation = jobs.at(-1).request;
-  live.send("旧受众的暗号");
+  live.send("猫进门前的消息");
   const old = jobs.at(-1);
   assert.equal(old.request.session, invitation.session);
   await arrive(cat);
   assert.equal(old.signal.aborted, false);
   assert.deepEqual(retired, []);
-  await settle(old, { action: "say", text: "迟到的旧回复" });
-  assert(!room.messages.some(({ text }) => text === "迟到的旧回复"));
+  await settle(old, { action: "say", text: "猫进门后的新回复" });
+  assert(room.messages.some(({ text }) => text === "猫进门后的新回复"));
+  const arrivalChat = jobs.at(-1);
+  assert.equal(arrivalChat.request.actor, "cat");
+  assert.deepEqual(arrivalChat.request.messages, [
+    { speaker: "龙", text: "猫进门后的新回复" },
+  ]);
+  await settle(arrivalChat, { action: "silent" });
 
   live.send("新受众的第一句");
   const next = jobs.at(-1);
   assert.equal(next.request.session, old.request.session);
   assert.deepEqual(next.request.messages, [
+    { speaker: "龙", text: "猫进门后的新回复" },
     { speaker: "管理员", text: "新受众的第一句" },
   ]);
   await settle(next, { action: "say", text: "新回复" });
   const peer = jobs.at(-1);
   assert(peer.request.messages.some(({ text }) => text === "新回复"));
-  assert(!peer.request.messages.some(({ text }) => text === "旧受众的暗号"));
+  assert(!peer.request.messages.some(({ text }) => text === "猫进门前的消息"));
 });
 
 test("leaving fences an in-flight reply and rejoining skips missed chat in the same session", async () => {

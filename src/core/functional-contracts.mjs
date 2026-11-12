@@ -48,6 +48,29 @@ export function conversationExchange(
 
 const contracts = Object.freeze({
   "qq-dialogue": Object.freeze({ createExchange: conversationExchange }),
+  "desktop-dialogue": Object.freeze({
+    createExchange(runtime, ctx, { memory, onInputSubmitted }) {
+      return {
+        ...toolOutputReceipts(runtime, ctx),
+        onInputSubmitted: () => {
+          if (
+            runtime.stopped ||
+            ctx.controller.signal.aborted ||
+            ctx.backendInputEpoch === ctx.inputEpoch
+          )
+            return;
+          ctx.backendInputEpoch = ctx.inputEpoch;
+          recordInputSubmission(memory, ctx.turnId);
+          onInputSubmitted?.();
+        },
+        callTool: (name, args) => {
+          if (ctx.backendInputEpoch !== ctx.inputEpoch)
+            throw Error("BACKEND_INPUT_NOT_SUBMITTED");
+          return runtime.callTool(ctx, name, args, { deferInput: true });
+        },
+      };
+    },
+  }),
   memory: Object.freeze({
     createExchange(
       runtime,
