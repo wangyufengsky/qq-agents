@@ -7,6 +7,7 @@ import {
 } from "electron";
 import { fileURLToPath } from "node:url";
 import { setTimeout } from "node:timers";
+import { findScreenSource } from "./screen-source.mjs";
 
 export const screenCaptureSupported = ["darwin", "win32"].includes(
   process.platform,
@@ -80,12 +81,7 @@ export async function captureScreen(selected, maxEdge, maxBytes, signal) {
   )
     return;
   const sources = await listScreenSources();
-  const target = sources.find(
-    ({ id, name, display_id }) =>
-      id === selected.id &&
-      name === selected.name &&
-      display_id === selected.display_id,
-  );
+  const target = findScreenSource(sources, selected);
   if (!target || signal.aborted) return;
 
   const isolated = session.fromPartition("desktop-home-screen-capture");
