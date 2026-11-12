@@ -8,7 +8,7 @@ import {
   validateFetchUrl,
 } from "../../vendor/social-reader/safe-fetch.js";
 import { requestFile, validateWithSignal } from "../tools/file-download.mjs";
-import { findScreenshotBrowser } from "../tools/public-screenshot.mjs";
+import { findDesktopBrowser } from "../tools/public-screenshot.mjs";
 
 const renderingOrigin = "https://desktop-browser.invalid";
 const documentTypes = new Set(["text/html", "application/xhtml+xml"]);
@@ -181,7 +181,8 @@ export function createDesktopBrowserDriver({
     try {
       startup.throwIfAborted();
       browser = await launch({
-        executablePath: executablePath ?? findScreenshotBrowser(),
+        executablePath:
+          executablePath ?? findDesktopBrowser(chromium.executablePath()).path,
         headless: true,
         chromiumSandbox: true,
         ignoreDefaultArgs: [

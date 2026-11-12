@@ -14,6 +14,21 @@ npm run desktop:home -- --data "<data>"
 
 客户端使用数据目录中的桌面专用凭据连接本机 Runtime。已配置的 Codex、Antigravity 和使用 `qq-unified` 预设的 DSH 可参加。桌面使用角色的当前 Self、模型和思考档位，每个角色有自己的 `@desktop` 对话会话。桌边始终按本机群聊运行，在场角色可以自然接话、旁听或回家。选择「欢迎敲门」时，已启用正常主人格回合的角色可自行申请来访。符合唤醒条件的 QQ 来信会先取消同一角色的桌面生成，小窝保留其在场状态。设计与验收范围见[桌面对话 Agent 三阶段计划](plans/desktop-dialogue-agent.md)。
 
+## 准备桌面依赖
+
+在原生 macOS 或 Windows 的 QQ Agents 代码目录运行准备和检查命令。省略 `--all` 会按已有配置准备已启用的项目。
+
+```sh
+npm run setup -- desktop --all --data "<数据目录>"
+npm run doctor -- --data "<数据目录>" --json
+```
+
+- **桌面小窝和看桌面**需要固定版本的 Electron。管理台优先使用已准备的 Electron，未准备时沿用首次打开时下载的入口。
+- **操作窗口**使用固定版本的 `agent-desktop`。Electron 和 `agent-desktop` 都会校验官方 SHA-256，按系统和版本存到数据目录的 `updates-runtime/desktop-dependencies/`。也可通过 `QQ_AGENTS_AGENT_DESKTOP_EXECUTABLE` 使用管理员配置的绝对路径。该路径优先。
+- **操作网页**优先复用管理员指定的浏览器或系统已安装的 Chrome、Chromium、Edge。缺少浏览器时，准备命令安装与锁文件中 Playwright 对应的 Chromium。
+
+软件准备可以重复运行。准备后重新打开桌面窗口，让客户端使用新的本机驱动。系统权限、角色工具开关和每次的操作目标仍在各自的入口管理。
+
 ## 桌面工具与 QQ 接力
 
 在桌面小窝设置中勾选角色的「允许在桌面使用额外工具」。基础记忆工具沿用角色原有权限。勾选后，角色可按自己的权限使用公开网页读取、已启用平台的搜索、附件查看和文件库，也可将文本草稿存进自己的文件库。角色可写日记、修订自己的日记、提出 Self 候选，并查看可见的项目进度。Self 候选仍由主人格回顾。记忆和附件仍按资料来源与保护规则读取。需要联系 QQ 时，角色可以向自己的主人格提交提议，待审阅后由目标 QQ 会话决定是否发送。桌面可查看主人格的决定和已登记的投递状态，显示「接受」时尚不能确认消息已发出。工作接力可引用同一角色在桌面保存的工作笔记。
@@ -39,7 +54,7 @@ npm run desktop:home -- --data "<data>"
 
 ## 操作本机窗口
 
-在管理台桌面小窝设置中开启「允许在本机授权操作窗口」。从 [agent-desktop 官方发布](https://github.com/vercel-labs/agent-desktop/releases/tag/v1.2.0) 安装对应系统和架构的 v1.2.0 原生二进制，保留同包辅助程序。启动 QQ Agents 时，将 `QQ_AGENTS_AGENT_DESKTOP_EXECUTABLE` 指向该二进制的绝对路径。macOS 需要授予启动上下文辅助功能访问权限，Windows 需要已登录且解锁的交互式桌面。
+在管理台桌面小窝设置中开启「允许在本机授权操作窗口」，并按上文准备 [agent-desktop v1.2.0](https://github.com/vercel-labs/agent-desktop/releases/tag/v1.2.0)。macOS 需要授予启动上下文辅助功能访问权限，Windows 需要已登录且解锁的交互式桌面。
 
 桌面聊天面板中选择一位已获额外工具权限的在场角色，再选择一个信任的应用窗口。角色用 `desktop_native_control` 获取该窗口可访问性元素的快照和本回合引用，再点击、滚动或替换文本字段。每次操作后重新观察。文本替换使用控件接口，适用范围由应用支持的辅助功能决定。敏感输入框、坐标点击和系统快捷键不在这套工具范围内。
 
@@ -47,7 +62,7 @@ npm run desktop:home -- --data "<data>"
 
 ## 操作网页
 
-在管理台桌面小窝设置中开启「允许在本机授权浏览网页」。在桌面聊天面板里为一位已获额外工具权限的在场角色选定使用 HTTP 或 HTTPS 默认端口的网站来源，例如 `https://example.com`。本机须安装支持 Chromium 沙箱的 Chrome、Chromium 或 Edge，查找顺序沿用公开网页截图，也可通过 `QQ_SCREENSHOT_BROWSER` 指定路径。
+在管理台桌面小窝设置中开启「允许在本机授权浏览网页」。在桌面聊天面板里为一位已获额外工具权限的在场角色选定使用 HTTP 或 HTTPS 默认端口的网站来源，例如 `https://example.com`。本机须有支持 Chromium 沙箱的浏览器，按上文准备，也可通过 `QQ_SCREENSHOT_BROWSER` 指定路径。
 
 角色用 `desktop_browser_control` 在新的独立浏览器会话里导航、读取页面、点击链接或控件，以及填写当前页面的字段。每次导航或操作后重新观察，元素引用限于生成它的当前回合和页面状态。首版支持静态公开 HTML、同一来源内的导航和页面内操作。页面脚本、登录会话、跨站跳转、下载和表单提交暂未接入。填写内容留在当前页面。隔离渲染可能拦截写全站点来源的样式、字体或图片，样式重定向后的内部相对路径仍按原样式地址解析。
 

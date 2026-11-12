@@ -3,8 +3,8 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
+import { nativeDesktopVersion } from "../../src/home/desktop-dependencies.mjs";
 
-const version = "1.2.0";
 const protocol = "2.6";
 const maxOutputBytes = 1024 * 1024;
 const maxElements = 60;
@@ -360,7 +360,7 @@ export function createNativeDesktopDriver({
   async function checkVersion(root, signal) {
     const data = dataOf(await execute(root, ["version"], signal));
     if (
-      data.version !== version ||
+      data.version !== nativeDesktopVersion ||
       data.os !== (platform === "win32" ? "windows" : "macos")
     )
       fail("DESKTOP_NATIVE_VERSION");

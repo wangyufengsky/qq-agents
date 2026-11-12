@@ -8,6 +8,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { temp, fixture, context } from "./helpers.mjs";
 import { MemoryStore } from "../src/memory/store.mjs";
+import { desktopDependencyCache } from "../src/home/desktop-dependencies.mjs";
 import { UpgradeManager } from "../src/updates/manager.mjs";
 import { ReleaseUpdates } from "../src/updates/releases.mjs";
 import { createServer } from "../src/server.mjs";
@@ -199,6 +200,9 @@ test("a stopped-data backup restores compatible SQLite, config and media, preser
     home = path.join(root, updateDirectory);
   fs.mkdirSync(home);
   fs.mkdirSync(path.join(root, "files"));
+  fs.mkdirSync(desktopDependencyCache(root));
+  const desktopPackage = path.join(desktopDependencyCache(root), "synthetic");
+  fs.writeFileSync(desktopPackage, "verified package");
   fs.writeFileSync(
     path.join(root, "config.json"),
     JSON.stringify({ globalPaused: true }),
@@ -213,6 +217,7 @@ test("a stopped-data backup restores compatible SQLite, config and media, preser
   const stats = backupData(root, backup);
   assert.ok(stats.bytes > 0);
   assert.equal(fs.existsSync(path.join(backup, updateDirectory)), false);
+  assert.equal(fs.existsSync(desktopDependencyCache(backup)), false);
   const candidate = new MemoryStore(path.join(root, "memory.sqlite"));
   candidate.db.exec("PRAGMA user_version=7");
   candidate.close();
@@ -235,6 +240,7 @@ test("a stopped-data backup restores compatible SQLite, config and media, preser
     "after",
   );
   assert.equal(fs.existsSync(path.join(root, "new-event.txt")), false);
+  assert.equal(fs.readFileSync(desktopPackage, "utf8"), "verified package");
 });
 test("backup and restore preserve read-only files and their permissions", (t) => {
   const root = temp(t),
@@ -355,7 +361,7 @@ function git(root, args) {
     stdio: ["ignore", "pipe", "pipe"],
   }).trim();
 }
-function source(t, requiredNode = ">=24.0.0") {
+function source(t, requiredNode = ">=24.0.0", desktopSetup) {
   const root = temp(t),
     codeRoot = path.join(root, "source"),
     home = path.join(root, "home");
@@ -391,6 +397,16 @@ function source(t, requiredNode = ">=24.0.0") {
   git(codeRoot, ["commit", "-m", "synthetic first"]);
   const before = git(codeRoot, ["rev-parse", "HEAD"]);
   writePackage("2.0.0");
+  if (desktopSetup) {
+    fs.mkdirSync(path.join(codeRoot, "src/home"));
+    fs.mkdirSync(path.join(codeRoot, "src/cli"));
+    fs.writeFileSync(
+      path.join(codeRoot, "src/home/desktop-dependency-installer.mjs"),
+      "",
+    );
+    fs.writeFileSync(path.join(codeRoot, "src/cli/setup.mjs"), desktopSetup);
+    git(codeRoot, ["add", "src"]);
+  }
   git(codeRoot, ["add", "."]);
   git(codeRoot, ["commit", "-m", "synthetic release"]);
   git(codeRoot, ["tag", "v2.0.0"]);
@@ -885,6 +901,38 @@ test("staging with existing game rooms refuses a release without compatibility p
     /GAME_COMPATIBILITY_CHECK_UNAVAILABLE/,
   );
 });
+
+test(
+  "native source staging runs the candidate desktop installer before returning a release",
+  {
+    skip: !["darwin", "win32"].includes(process.platform),
+  },
+  async (t) => {
+    const f = source(t, undefined, "process.exit(17);\n");
+    const dataRoot = temp(t);
+    const calls = [];
+    const run = (binary, args, options) => {
+      if (args[0] === "src/cli/setup.mjs")
+        calls.push({ binary, args, cwd: options.cwd });
+      return f.run(binary, args, options);
+    };
+    await assert.rejects(
+      stageRelease({ ...f, run, dataRoot, tag: "v2.0.0" }),
+      /UPDATE_DESKTOP_DEPENDENCY_FAILED/,
+    );
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].binary, process.execPath);
+    assert.notEqual(calls[0].cwd, f.codeRoot);
+    assert.deepEqual(calls[0].args, [
+      "src/cli/setup.mjs",
+      "desktop",
+      "--data",
+      dataRoot,
+    ]);
+    await stageRelease({ ...f, run, dataRoot, container: true, tag: "v2.0.0" });
+    assert.equal(calls.length, 1);
+  },
+);
 
 function startupInstallation(directory, version, commit) {
   fs.mkdirSync(directory, { recursive: true });

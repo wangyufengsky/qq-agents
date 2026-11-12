@@ -2,6 +2,7 @@
 //
 //   node src/cli/setup.mjs init --answers answers.json|- [--data dir] [--napcat-config dir] [--force]
 //   node src/cli/setup.mjs secret NAME [--data dir]        (value from a hidden prompt or stdin)
+//   node src/cli/setup.mjs desktop [--all] [--data dir]
 //   node src/cli/setup.mjs live --confirm [--data dir]     (console stopped)
 //   node src/cli/setup.mjs unpause --confirm [--data dir]  (console running with --live)
 //
@@ -428,11 +429,22 @@ async function main(argv) {
     writeLocalSecret(root, name, value);
     return { ok: true, saved: name, file: path.join(root, "secrets.json") };
   }
+  if (command === "desktop") {
+    const { prepareDesktopDependencies } =
+      await import("../home/desktop-dependency-installer.mjs");
+    const all = rest.includes("--all");
+    const policy = all
+      ? undefined
+      : validateConfig(
+          JSON.parse(fs.readFileSync(path.join(root, "config.json"), "utf8")),
+        ).desktopHome;
+    return prepareDesktopDependencies({ root, policy, all });
+  }
   if (command === "live" || command === "unpause") {
     if (!rest.includes("--confirm")) throw Error("CONFIRM_REQUIRED");
     return command === "live" ? goLive({ root }) : unpause({ root });
   }
-  throw Error("USAGE: setup init|secret|live|unpause");
+  throw Error("USAGE: setup init|secret|desktop|live|unpause");
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url))

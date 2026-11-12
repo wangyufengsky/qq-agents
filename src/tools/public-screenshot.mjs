@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { buildChildEnv } from "../core/child-env.mjs";
+import { executableFile } from "../home/desktop-dependencies.mjs";
 import { validateFetchUrl } from "../../vendor/social-reader/safe-fetch.js";
 import { requestFile, validateWithSignal } from "./file-download.mjs";
 
@@ -80,6 +81,7 @@ const windowsBrowsers = (/** @type {NodeJS.ProcessEnv} */ env) =>
     [env.LOCALAPPDATA, "Google\\Chrome\\Application\\chrome.exe"],
     [env["PROGRAMFILES(X86)"], "Microsoft\\Edge\\Application\\msedge.exe"],
     [env.PROGRAMFILES, "Microsoft\\Edge\\Application\\msedge.exe"],
+    [env.LOCALAPPDATA, "Microsoft\\Edge\\Application\\msedge.exe"],
   ]
     .filter(([root]) => root)
     .map(([root, rest]) => path.win32.join(/** @type {string} */ (root), rest));
@@ -87,6 +89,7 @@ const browserCandidates = {
   darwin: [
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
   ],
   linux: [
     "/usr/bin/google-chrome",
@@ -117,6 +120,21 @@ export function findScreenshotBrowser({
   if (!found) throw Error("SCREENSHOT_BROWSER_MISSING");
   return found;
 }
+
+export function findDesktopBrowser(playwrightBrowser, options = {}) {
+  const { env = process.env } = options;
+  const configured = env.QQ_SCREENSHOT_BROWSER || env.CHROME_PATH;
+  try {
+    return {
+      path: findScreenshotBrowser({ ...options, env, exists: executableFile }),
+      source: configured ? "configured" : "system",
+    };
+  } catch (error) {
+    if (configured || !executableFile(playwrightBrowser)) throw error;
+    return { path: playwrightBrowser, source: "playwright" };
+  }
+}
+
 export async function capturePublicPage(
   url,
   { root, signal, executablePath } = {},
