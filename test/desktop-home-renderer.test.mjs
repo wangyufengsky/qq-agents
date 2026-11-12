@@ -177,3 +177,83 @@ test("the desktop panel exposes each authorization only while eligible", async (
   await push({ ...room, connected: false });
   assert.equal(await revokeNative.isVisible(), false);
 });
+
+test("site authorization requires an explicit role and origin and follows the room", async (t) => {
+  let executablePath;
+  try {
+    executablePath = findScreenshotBrowser();
+  } catch {
+    t.skip("local Chromium unavailable");
+    return;
+  }
+  const browser = await chromium.launch({ executablePath, headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  const room = {
+    live: true,
+    framework: true,
+    connected: true,
+    roomEpoch: "room",
+    roles: [
+      {
+        id: "fish",
+        name: "小鱼",
+        color: "mint",
+        state: "here",
+        available: true,
+      },
+    ],
+    messages: [],
+    budget: 5,
+    maxTurns: 6,
+  };
+  await page.addInitScript((data) => {
+    window.testBrowserCalls = [];
+    window.nest = {
+      onRoom: (update) => (window.testRoom = update),
+      onSection() {},
+      get: async () => ({ data, section: "chat" }),
+      browserControl: async (selection) => {
+        window.testBrowserCalls.push(selection ?? null);
+        return selection ? "granted" : "revoked";
+      },
+    };
+  }, room);
+  await page.goto(
+    new URL("../desktop/home/index.html?type=panel", import.meta.url).href,
+  );
+  const push = (data) => page.evaluate((next) => window.testRoom(next), data);
+  const authorize = page.getByRole("button", { name: "授权访问站点" });
+  const dialog = page.getByRole("dialog", { name: "授权隔离浏览器" });
+  assert.equal(await authorize.isVisible(), false);
+  const eligible = {
+    ...room,
+    browserControl: { eligible: ["fish"], grantedAgentId: null },
+  };
+  await push(eligible);
+  await authorize.click();
+  assert.equal(await dialog.getByLabel("角色").inputValue(), "");
+  await push({ ...eligible, roomEpoch: "new-room" });
+  await dialog.waitFor({ state: "hidden" });
+  assert.deepEqual(await page.evaluate(() => window.testBrowserCalls), []);
+  await authorize.click();
+  await dialog.getByLabel("角色").selectOption("fish");
+  const origin = "https://example.com";
+  await dialog.getByLabel("站点来源").fill(origin);
+  await dialog.getByRole("button", { name: "继续" }).click();
+  await dialog.waitFor({ state: "hidden" });
+  assert.deepEqual(await page.evaluate(() => window.testBrowserCalls), [
+    { agentId: "fish", origin },
+  ]);
+  await push({
+    ...eligible,
+    browserControl: {
+      eligible: ["fish"],
+      grantedAgentId: "fish",
+      grantedOrigin: origin,
+    },
+  });
+  assert.equal(await page.getByText(`小鱼 · ${origin}`).isVisible(), true);
+  await page.getByRole("button", { name: "撤销站点授权" }).click();
+  assert.equal(await page.evaluate(() => window.testBrowserCalls.at(-1)), null);
+});

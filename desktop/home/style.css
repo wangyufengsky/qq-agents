@@ -364,6 +364,50 @@ h2 {
   color: var(--muted);
   font-size: 12px;
   margin: 0;
+  overflow-wrap: anywhere;
+}
+.browser-permission-dialog {
+  width: min(320px, calc(100% - 40px));
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 18px;
+  background: #fffdf6;
+  color: var(--ink);
+}
+.browser-permission-dialog::backdrop {
+  background: rgb(36 30 22 / 36%);
+}
+.browser-permission-form {
+  display: grid;
+  gap: 8px;
+}
+.browser-permission-form h2 {
+  font-size: 16px;
+  margin: 0 0 4px;
+}
+.browser-permission-form label,
+.browser-permission-error {
+  font-size: 12px;
+}
+.browser-permission-form input,
+.browser-permission-form select {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 6px 8px;
+  background: #fffdf6;
+  color: var(--ink);
+  user-select: text;
+}
+.browser-permission-error {
+  color: #9d422e;
+  margin: 2px 0;
+}
+.browser-permission-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+  margin-top: 4px;
 }
 .attachment {
   overflow-wrap: anywhere;

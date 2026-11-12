@@ -18,8 +18,10 @@ import {
   DESKTOP_HISTORY,
   DESKTOP_SCREEN_VIEW,
   DESKTOP_NATIVE_CONTROL,
+  DESKTOP_BROWSER_CONTROL,
   FUNCTIONAL_AGENT_RESULT,
 } from "./names.mjs";
+import { browserActionSchema } from "../home/desktop-browser.mjs";
 import { nativeActionSchema } from "../home/desktop-native.mjs";
 import { desktopDecisionDefinition } from "../home/desktop-decision.mjs";
 import { qqSegmentsSchema } from "./qq-message.mjs";
@@ -85,6 +87,10 @@ export const definitions = {
   [DESKTOP_NATIVE_CONTROL]: [
     "在管理员本机授权的窗口中操作。先 observe 获取本轮元素引用，再 click、set-value 替换字段或 scroll。每次操作后重新观察。投递未确认时不要自动重试。",
     nativeActionSchema,
+  ],
+  [DESKTOP_BROWSER_CONTROL]: [
+    "在管理员授权的独立网页会话内操作。先 navigate 到指定网址或 observe 获取本轮元素引用，再 click 或 fill。只处理授权站点的静态公开网页，fill 只填写当前页面。close 关闭本地会话。",
+    browserActionSchema,
   ],
   [FUNCTIONAL_AGENT_RESULT]: [
     "提交本次查证选中的证据记录 ID。选中证据时，contribution 用一句短话说明它补上了当前对话缺的什么。没有新增信息就提交空数组，省略 contribution。",

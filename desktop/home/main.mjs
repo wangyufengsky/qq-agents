@@ -14,6 +14,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { basename, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openNoFollowAsync } from "../../src/core/no-follow.mjs";
+import { parseBrowserOrigin } from "./browser-origin.mjs";
 import { createFrameworkClient } from "./framework-client.mjs";
 import { NativeControlClient } from "./native-control-client.mjs";
 import { createNativeDesktopDriver } from "./native-desktop-driver.mjs";
@@ -89,6 +90,7 @@ let screenGrant;
 let lastScreenGrant;
 let screenCapture;
 let choosingDesktopPermission = false;
+let lastBrowserGrant;
 const nativeDriver = ["darwin", "win32"].includes(process.platform)
   ? createNativeDesktopDriver()
   : null;
@@ -425,6 +427,9 @@ function applyFramework(value, action) {
         ? "另一个桌面小窝正在使用这个实例。"
         : "请在管理台的纸页小窝里开启桌面小窝。",
   };
+  const browserControl = value.room?.browserControl;
+  if (value.room && value.room.roomEpoch !== lastBrowserGrant?.roomEpoch)
+    lastBrowserGrant = undefined;
   for (const role of roles)
     if (!state.roles.some(({ id }) => id === role.id)) animateHome(role);
   roles = state.roles;
@@ -436,6 +441,13 @@ function applyFramework(value, action) {
     connected: !!value.room,
     screenView: screenCaptureSupported ? value.room?.screenView : undefined,
     nativeControl: nativeControl ? value.room?.nativeControl : undefined,
+    browserControl: browserControl && {
+      ...browserControl,
+      grantedOrigin:
+        browserControl.grantedAgentId === lastBrowserGrant?.agentId
+          ? lastBrowserGrant?.origin
+          : undefined,
+    },
   };
   room.members = Object.fromEntries(roles.map(({ id, state }) => [id, state]));
   room.bubbles = { ...state.bubbles };
@@ -646,11 +658,8 @@ ipcMain.handle("room:attach", async (event) => {
   }
 });
 
-function menuLabel(value) {
-  return value
-    .replace(/[\p{Cc}\p{Cf}]/gu, "")
-    .slice(0, 90)
-    .replaceAll("&", "&&");
+function localLabel(value) {
+  return value.replace(/[\p{Cc}\p{Cf}]/gu, "").slice(0, 90);
 }
 
 function desktopSourceMenu(win, availableRoles, sources, label) {
@@ -658,9 +667,9 @@ function desktopSourceMenu(win, availableRoles, sources, label) {
     let selection;
     const menu = Menu.buildFromTemplate(
       availableRoles.map(({ id, name }) => ({
-        label: menuLabel(name),
+        label: localLabel(name).replaceAll("&", "&&"),
         submenu: sources.map((source) => ({
-          label: menuLabel(label(source)),
+          label: localLabel(label(source)).replaceAll("&", "&&"),
           click: () => {
             selection = { agentId: id, source };
           },
@@ -825,6 +834,79 @@ ipcMain.handle("room:native-control", async (event) => {
     return error?.message === "DESKTOP_NATIVE_PERMISSION"
       ? "permission"
       : "failed";
+  } finally {
+    choosingDesktopPermission = false;
+  }
+});
+
+ipcMain.handle("room:browser-control", async (event, selection) => {
+  const win = entries.get("panel")?.win;
+  const { browserControl: policy, roomEpoch } = remoteState ?? {};
+  if (
+    !framework ||
+    !roomEpoch ||
+    !policy ||
+    !win ||
+    win.webContents !== event.sender ||
+    event.senderFrame !== win.webContents.mainFrame ||
+    !win.isFocused() ||
+    choosingDesktopPermission
+  )
+    return "unavailable";
+  choosingDesktopPermission = true;
+  try {
+    if (selection === undefined && policy.grantedAgentId) {
+      const grant = lastBrowserGrant;
+      if (
+        grant?.roomEpoch !== roomEpoch ||
+        grant.agentId !== policy.grantedAgentId
+      )
+        return "unavailable";
+      const room = await framework.command("browser-revoke", {
+        roomEpoch,
+        grantId: grant.grantId,
+      });
+      if (room?.browserControl?.grantedAgentId) return "failed";
+      lastBrowserGrant = undefined;
+      return "revoked";
+    }
+    const agent = roles.find(({ id }) => id === selection?.agentId);
+    if (policy.grantedAgentId || !agent || !policy.eligible.includes(agent.id))
+      return "unavailable";
+    const origin = parseBrowserOrigin(selection.origin);
+    if (!origin) return "invalid";
+    const confirmed = await dialog.showMessageBox(win, {
+      type: "question",
+      title: "授权隔离浏览器",
+      message: `允许 ${localLabel(agent.name)} 访问此站点？`,
+      detail: origin,
+      buttons: ["取消", "授权"],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    });
+    if (confirmed.response !== 1 || win.isDestroyed() || !win.isVisible())
+      return "cancelled";
+    if (
+      remoteState?.roomEpoch !== roomEpoch ||
+      remoteState?.browserControl?.grantedAgentId ||
+      !remoteState?.browserControl?.eligible.includes(agent.id)
+    )
+      return "unavailable";
+    const grant = {
+      roomEpoch,
+      grantId: randomUUID(),
+      agentId: agent.id,
+      origin,
+    };
+    lastBrowserGrant = grant;
+    const room = await framework.command("browser-grant", grant);
+    return room?.roomEpoch === roomEpoch &&
+      room.browserControl?.grantedAgentId === agent.id
+      ? "granted"
+      : "unavailable";
+  } catch {
+    return "failed";
   } finally {
     choosingDesktopPermission = false;
   }

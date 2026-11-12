@@ -25,7 +25,7 @@ export function validateWithSignal(raw, validate, signal) {
 export function requestFile(
   url,
   addresses,
-  { maxBytes, signal, includeType = false },
+  { maxBytes, signal, includeType = false, onBytes },
 ) {
   return new Promise((resolve, reject) => {
     const request = (url.protocol === "https:" ? https : http).get(
@@ -67,6 +67,8 @@ export function requestFile(
         let size = 0;
         response.on("data", (chunk) => {
           size += chunk.length;
+          // Count the chunk even when it makes this response exceed its limit.
+          onBytes?.(chunk.length);
           if (size > maxBytes) {
             reject(Error("FILE_TOO_LARGE"));
             response.destroy();

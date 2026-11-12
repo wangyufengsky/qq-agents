@@ -16,6 +16,7 @@ import { DESKTOP_CONVERSATION, readDecision } from "./desktop-decision.mjs";
 import { DESKTOP_ADMINISTRATOR, DesktopArchive } from "./desktop-archive.mjs";
 import { DesktopScreen } from "./desktop-screen.mjs";
 import { DesktopNative } from "./desktop-native.mjs";
+import { DesktopBrowser, browserGrantSchema } from "./desktop-browser.mjs";
 import { localGrantSchema, localRevokeSchema } from "./desktop-local-grant.mjs";
 
 const requestSchema = z
@@ -33,6 +34,8 @@ const requestSchema = z
       "screen-revoke",
       "native-grant",
       "native-revoke",
+      "browser-grant",
+      "browser-revoke",
     ]),
     data: z
       .union([
@@ -40,6 +43,7 @@ const requestSchema = z
         z.boolean(),
         localGrantSchema,
         localRevokeSchema,
+        browserGrantSchema,
       ])
       .optional(),
   })
@@ -70,6 +74,7 @@ export class DesktopHost {
     this.invitations = new DesktopInvitations(this);
     this.screen = new DesktopScreen(this);
     this.native = new DesktopNative(this);
+    this.browser = new DesktopBrowser(this);
   }
 
   configured() {
@@ -188,7 +193,10 @@ export class DesktopHost {
     )
       this.reset();
     // Maintenance keeps existing turn capabilities alive and stops admission.
-    if (this.runtime.updateMaintenance) return Boolean(this.live);
+    if (this.runtime.updateMaintenance) {
+      void this.browser.clear();
+      return Boolean(this.live);
+    }
     if (this.live) {
       for (const role of roles) {
         if (
@@ -214,6 +222,7 @@ export class DesktopHost {
         if (now - message.now > 4900) delete room.bubbles[id];
       this.live.tick(now);
       this.invitations.dispatch();
+      this.browser.state();
     }
     return true;
   }
@@ -323,6 +332,7 @@ export class DesktopHost {
   reset() {
     this.screen.clear();
     this.native.clear();
+    void this.browser.clear();
     if (!this.live) return;
     const previous = this.live;
     this.live = null;
@@ -376,6 +386,8 @@ export class DesktopHost {
       this.native.change(false, localGrantSchema.parse(data));
     if (action === "native-revoke")
       this.native.change(true, localRevokeSchema.parse(data));
+    if (action === "browser-grant" || action === "browser-revoke")
+      this.browser.change(action, data);
     const state = this.clientSnapshot();
     if (action !== "sync") return state;
     const screenRequest = this.screen.request();
@@ -393,6 +405,7 @@ export class DesktopHost {
         ...this.live.snapshot(),
         screenView: this.screen.state(),
         nativeControl: this.native.state(),
+        browserControl: this.browser.state(),
         attachmentInput: this.attachments.availability(
           this.runtime.config,
           this.live.here(),
@@ -551,7 +564,11 @@ export class DesktopHost {
       throw error;
     } finally {
       try {
-        if (ctx) runtime.capabilities.delete(ctx.token);
+        if (ctx) {
+          runtime.capabilities.delete(ctx.token);
+          // Cancellation stops an already-open browser, including between tool calls.
+          await this.browser.finish(ctx)?.catch(() => {});
+        }
         if (exchange) await exchange.finish(failure);
       } finally {
         if (ctx && runtime.running.get(key) === ctx)
