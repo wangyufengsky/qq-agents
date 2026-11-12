@@ -50,6 +50,7 @@ import {
   DESKTOP_MEMORY_TOOLS,
   DESKTOP_SCREEN_VIEW,
   DESKTOP_NATIVE_CONTROL,
+  DESKTOP_BROWSER_CONTROL,
   FUNCTIONAL_AGENT_RESULT,
 } from "../tools/names.mjs";
 import { BackendConnections } from "./backend-connections.mjs";
@@ -417,8 +418,10 @@ export class Runtime {
         (name) =>
           name === DESKTOP_DECISION ||
           name === DESKTOP_HISTORY ||
-          name === DESKTOP_NATIVE_CONTROL ||
-          (name === DESKTOP_SCREEN_VIEW && !ctx.desktopScreenObserved) ||
+          (name === DESKTOP_BROWSER_CONTROL && ctx.desktopBrowserObserved) ||
+          (!ctx.desktopBrowserObserved &&
+            (name === DESKTOP_NATIVE_CONTROL ||
+              (name === DESKTOP_SCREEN_VIEW && !ctx.desktopScreenObserved))) ||
           DESKTOP_MEMORY_TOOLS.includes(name),
       );
     if (ctx.runtimeKind !== "functional-agent")
@@ -463,6 +466,7 @@ export class Runtime {
         ...DESKTOP_MEMORY_TOOLS,
         DESKTOP_SCREEN_VIEW,
         DESKTOP_NATIVE_CONTROL,
+        DESKTOP_BROWSER_CONTROL,
         ...a.tools,
         "file_read",
         "file_revise",
@@ -1623,6 +1627,7 @@ export class Runtime {
       ...this.config.agents.map((a) => cleanup(() => this.cancel(a.id))),
       ...[...this.backends.values()].map((b) => cleanup(() => b.close?.())),
       cleanup(() => this.backendConnections.drain()),
+      cleanup(() => this.desktopVisits.browser?.clear()),
     ]);
     while (this.jobs.size || this.work.size || this.sendChains.size)
       await Promise.allSettled([

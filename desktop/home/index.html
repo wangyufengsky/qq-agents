@@ -96,6 +96,44 @@
             <button type="button" class="secondary">授权控制窗口</button>
             <p class="desktop-permission-status" role="status" hidden></p>
           </div>
+          <div class="desktop-permission browser-control" hidden>
+            <button type="button" class="secondary browser-control-button">
+              授权访问站点
+            </button>
+            <p class="desktop-permission-status" role="status" hidden></p>
+          </div>
+          <dialog
+            class="browser-permission-dialog"
+            aria-labelledby="browser-permission-title"
+          >
+            <form class="browser-permission-form">
+              <h2 id="browser-permission-title">授权隔离浏览器</h2>
+              <label for="browser-role">角色</label>
+              <select id="browser-role" required></select>
+              <label for="browser-origin">站点来源</label>
+              <input
+                id="browser-origin"
+                type="url"
+                maxlength="300"
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="https://example.com"
+                required
+              />
+              <p class="browser-permission-error" role="alert" hidden></p>
+              <div class="browser-permission-actions">
+                <button
+                  type="button"
+                  class="secondary browser-permission-cancel"
+                >
+                  取消
+                </button>
+                <button type="submit" class="primary browser-permission-submit">
+                  继续
+                </button>
+              </div>
+            </form>
+          </dialog>
         </section>
         <footer class="budget">
           <div class="budget-top">

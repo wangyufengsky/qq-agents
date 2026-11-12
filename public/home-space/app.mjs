@@ -817,7 +817,12 @@ async function desktopSettings(root, ticket) {
     nativeEnabled.type = "checkbox";
     nativeEnabled.checked = policy.nativeControl.enabled;
     nativeLabel.prepend(nativeEnabled);
-    form.append(screenLabel, nativeLabel);
+    const browserLabel = el("label", "desktop-field", "允许在本机授权浏览网页");
+    const browserEnabled = document.createElement("input");
+    browserEnabled.type = "checkbox";
+    browserEnabled.checked = policy.browserControl.enabled;
+    browserLabel.prepend(browserEnabled);
+    form.append(screenLabel, nativeLabel, browserLabel);
     const status = el("p", "social-notice");
     status.setAttribute("role", "status");
     const save = el("button", "primary", "保存桌面设置");
@@ -832,7 +837,10 @@ async function desktopSettings(root, ticket) {
         !state.enabled || !state.canLaunch || state.window === "open";
       open.disabled = busy || state.window === "opening";
       toggle.disabled = save.disabled = busy;
-      screenEnabled.disabled = nativeEnabled.disabled = busy;
+      screenEnabled.disabled =
+        nativeEnabled.disabled =
+        browserEnabled.disabled =
+          busy;
       for (const input of roleInputs) input.disabled = busy;
       status.textContent = state.enabled
         ? {
@@ -895,6 +903,7 @@ async function desktopSettings(root, ticket) {
         refreshMinutes: inputs.refreshMinutes.valueAsNumber,
         screenView: { enabled: screenEnabled.checked },
         nativeControl: { enabled: nativeEnabled.checked },
+        browserControl: { enabled: browserEnabled.checked },
         toolRoles: roleInputs
           .filter((input) => input.checked)
           .map((input) => input.value),
@@ -908,6 +917,7 @@ async function desktopSettings(root, ticket) {
           existing.refreshMinutes !== policy.refreshMinutes ||
           existing.screenView.enabled !== policy.screenView.enabled ||
           existing.nativeControl.enabled !== policy.nativeControl.enabled ||
+          existing.browserControl.enabled !== policy.browserControl.enabled ||
           JSON.stringify(existing.toolRoles) !==
             JSON.stringify(policy.toolRoles)
         ) {
@@ -935,7 +945,10 @@ async function desktopSettings(root, ticket) {
       } finally {
         busy = false;
         toggle.disabled = save.disabled = false;
-        screenEnabled.disabled = nativeEnabled.disabled = false;
+        screenEnabled.disabled =
+          nativeEnabled.disabled =
+          browserEnabled.disabled =
+            false;
         for (const input of roleInputs) input.disabled = false;
         open.disabled = state.window === "opening";
       }

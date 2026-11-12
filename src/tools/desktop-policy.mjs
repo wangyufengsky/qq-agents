@@ -1,11 +1,16 @@
 import { subjectInboxEnabled } from "../core/role-rest.mjs";
 import { DESKTOP_CONVERSATION } from "../home/desktop-decision.mjs";
 import { supportsMessageImages } from "../backends/capabilities.mjs";
-import { DESKTOP_NATIVE_CONTROL, DESKTOP_SCREEN_VIEW } from "./names.mjs";
+import {
+  DESKTOP_BROWSER_CONTROL,
+  DESKTOP_NATIVE_CONTROL,
+  DESKTOP_SCREEN_VIEW,
+} from "./names.mjs";
 
 const desktopToolNames = new Set([
   DESKTOP_SCREEN_VIEW,
   DESKTOP_NATIVE_CONTROL,
+  DESKTOP_BROWSER_CONTROL,
   "self_read",
   "self_propose",
   "memory_related",
@@ -50,6 +55,8 @@ export function isDesktopToolContext(ctx) {
 export function desktopToolAvailable(agent, name, config) {
   if (!desktopRoleToolsEnabled(config, agent) || !desktopToolCandidate(name))
     return false;
+  if (name === DESKTOP_BROWSER_CONTROL)
+    return config.desktopHome.browserControl?.enabled === true;
   if (name === DESKTOP_NATIVE_CONTROL)
     return config.desktopHome.nativeControl?.enabled === true;
   if (name === DESKTOP_SCREEN_VIEW) {

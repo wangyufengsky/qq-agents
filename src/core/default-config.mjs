@@ -35,6 +35,7 @@ export function defaultConfig() {
       toolRoles: [],
       screenView: { enabled: false },
       nativeControl: { enabled: false },
+      browserControl: { enabled: false },
       maxTurns: 6,
       refreshMinutes: 60,
     },

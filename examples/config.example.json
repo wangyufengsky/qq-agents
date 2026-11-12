@@ -26,6 +26,9 @@
     "nativeControl": {
       "enabled": false
     },
+    "browserControl": {
+      "enabled": false
+    },
     "maxTurns": 6,
     "refreshMinutes": 60
   },

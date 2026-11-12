@@ -8,6 +8,7 @@ import { currentHumanRequest } from "./input-progress.mjs";
 import { publicUrl } from "../apps/urls.mjs";
 import { privateGithubSources } from "../github/policy.mjs";
 import { isGroupConversation } from "../home/desktop-archive.mjs";
+import { DESKTOP_BROWSER_CONTROL } from "../tools/names.mjs";
 
 const stable = (v) => JSON.stringify(sort(v));
 function sort(v) {
@@ -153,13 +154,24 @@ export function assertCredentials(runtime, ctx, request) {
   for (const url of raw.match(/https?:\/\/[^\s"<>]+/g) || [])
     publicRequestUrl(url);
 }
+function publicUrlRequest(ctx, tool) {
+  return (
+    tool === "web_fetch" ||
+    (tool === DESKTOP_BROWSER_CONTROL && ctx.runtimeKind === "desktop")
+  );
+}
+
 // Authority comes from a visible transport-authenticated human message, never a model flag.
 export function requestedByHuman(runtime, ctx, request, eventId) {
   const row = eventId && currentHumanRequest(runtime, ctx, eventId);
   if (!row) return false;
   const text = row.body.trim();
   const { tool, args } = request;
-  if (tool === "web_fetch" || tool === "app_read" || tool === "app_comments") {
+  if (
+    publicUrlRequest(ctx, tool) ||
+    tool === "app_read" ||
+    tool === "app_comments"
+  ) {
     const urls = text.match(/https?:\/\/[^\s<>"'，。！？、）]+/g) || [];
     return urls.some((url) => {
       try {
@@ -228,7 +240,7 @@ function autonomouslyAllowed(runtime, ctx, request) {
   const agent = runtime.agent(ctx.agentId);
   if (agent.network?.autonomous !== true) return false;
   if (request.tool.startsWith("github_")) return agent.github?.enabled === true;
-  if (request.tool === "web_fetch") {
+  if (publicUrlRequest(ctx, request.tool)) {
     publicRequestUrl(request.args.url);
     return true;
   }
@@ -289,7 +301,7 @@ export function authorizeExternal(
     );
   const requested = requestedByHuman(runtime, ctx, request, requestEventId);
   const configured =
-    request.tool === "web_fetch" &&
+    publicUrlRequest(ctx, request.tool) &&
     (runtime.agent(ctx.agentId).network?.publicUrls || []).some((url) => {
       try {
         return publicRequestUrl(url) === publicRequestUrl(request.args.url);

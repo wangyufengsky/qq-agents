@@ -228,6 +228,7 @@ const AGENT_TOOL_GROUPS = [
     tools: {
       desktop_screen_view: "查看管理员选定的桌面窗口或显示器",
       desktop_native_control: "操作管理员选定的本机窗口",
+      desktop_browser_control: "操作独立网页会话",
     },
   },
   {
