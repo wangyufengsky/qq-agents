@@ -4,6 +4,7 @@ export const FUNCTIONAL_AGENT_RESULT = "functional_agent_result";
 export const DESKTOP_DECISION = "desktop_room_decide";
 export const DESKTOP_HISTORY = "desktop_room_history";
 export const DESKTOP_SCREEN_VIEW = "desktop_screen_view";
+export const DESKTOP_NATIVE_CONTROL = "desktop_native_control";
 export const DESKTOP_MEMORY_TOOLS = Object.freeze([
   "memory_search",
   "memory_read",
@@ -11,6 +12,7 @@ export const DESKTOP_MEMORY_TOOLS = Object.freeze([
 export const TOOL_NAMES = Object.freeze([
   DESKTOP_HISTORY,
   DESKTOP_SCREEN_VIEW,
+  DESKTOP_NATIVE_CONTROL,
   "qq_recall",
   "protected_work_submit",
   "github_capabilities",

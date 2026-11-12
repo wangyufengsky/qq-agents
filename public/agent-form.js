@@ -227,6 +227,7 @@ const AGENT_TOOL_GROUPS = [
     desc: "管理员在本机桌面聊天面板为在场角色授权。",
     tools: {
       desktop_screen_view: "查看管理员选定的桌面窗口或显示器",
+      desktop_native_control: "操作管理员选定的本机窗口",
     },
   },
   {

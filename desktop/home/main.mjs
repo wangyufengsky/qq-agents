@@ -15,6 +15,8 @@ import { basename, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openNoFollowAsync } from "../../src/core/no-follow.mjs";
 import { createFrameworkClient } from "./framework-client.mjs";
+import { NativeControlClient } from "./native-control-client.mjs";
+import { createNativeDesktopDriver } from "./native-desktop-driver.mjs";
 import { LiveRoom } from "./live-room.mjs";
 import { startModelClient } from "./model-client.mjs";
 import {
@@ -86,7 +88,19 @@ let shuttingDown = false;
 let screenGrant;
 let lastScreenGrant;
 let screenCapture;
-let choosingScreen = false;
+let choosingDesktopPermission = false;
+const nativeDriver = ["darwin", "win32"].includes(process.platform)
+  ? createNativeDesktopDriver()
+  : null;
+const nativeControl = nativeDriver
+  ? new NativeControlClient(nativeDriver, {
+      command: (action, data) => framework.command(action, data),
+      claim: (data, isCurrent) =>
+        framework.result("native-claim", data, isCurrent),
+      result: (data, isCurrent) =>
+        framework.result("native-result", data, isCurrent),
+    })
+  : null;
 
 function clearScreenGrant() {
   screenGrant = undefined;
@@ -134,7 +148,8 @@ function screenRequest(value, action) {
         controller.signal,
       ).catch(() => undefined);
       if (isCurrent())
-        await framework.screenResult(
+        await framework.result(
+          "screen-result",
           { roomEpoch, grantId, requestId, data },
           isCurrent,
         );
@@ -392,6 +407,7 @@ function animateHome(role) {
 
 function applyFramework(value, action) {
   screenRequest(value, action);
+  nativeControl?.update(value, action);
   if (value.closed) {
     app.quit();
     return;
@@ -419,6 +435,7 @@ function applyFramework(value, action) {
     subjectKnocks: true,
     connected: !!value.room,
     screenView: screenCaptureSupported ? value.room?.screenView : undefined,
+    nativeControl: nativeControl ? value.room?.nativeControl : undefined,
   };
   room.members = Object.fromEntries(roles.map(({ id, state }) => [id, state]));
   room.bubbles = { ...state.bubbles };
@@ -629,17 +646,21 @@ ipcMain.handle("room:attach", async (event) => {
   }
 });
 
-function screenSourceMenu(win, availableRoles, sources) {
+function menuLabel(value) {
+  return value
+    .replace(/[\p{Cc}\p{Cf}]/gu, "")
+    .slice(0, 90)
+    .replaceAll("&", "&&");
+}
+
+function desktopSourceMenu(win, availableRoles, sources, label) {
   return new Promise((resolve) => {
     let selection;
     const menu = Menu.buildFromTemplate(
       availableRoles.map(({ id, name }) => ({
-        label: name.replaceAll("&", "&&"),
+        label: menuLabel(name),
         submenu: sources.map((source) => ({
-          label: `${source.id.startsWith("screen:") ? "显示器" : "窗口"} · ${source.name
-            .replace(/[\p{Cc}\p{Cf}]/gu, "")
-            .slice(0, 90)
-            .replaceAll("&", "&&")}`,
+          label: menuLabel(label(source)),
           click: () => {
             selection = { agentId: id, source };
           },
@@ -666,7 +687,7 @@ ipcMain.handle("room:screen-view", async (event) => {
     win.webContents !== event.sender ||
     event.senderFrame !== win.webContents.mainFrame ||
     !win.isFocused() ||
-    choosingScreen
+    choosingDesktopPermission
   )
     return "unavailable";
   if (screenView.grantedAgentId) {
@@ -678,8 +699,8 @@ ipcMain.handle("room:screen-view", async (event) => {
         grant.agentId !== screenView.grantedAgentId
       )
         return "unavailable";
-      choosingScreen = true;
-      const room = await framework.screenCommand("screen-revoke", {
+      choosingDesktopPermission = true;
+      const room = await framework.command("screen-revoke", {
         roomEpoch,
         grantId: grant.grantId,
       });
@@ -687,10 +708,10 @@ ipcMain.handle("room:screen-view", async (event) => {
     } catch {
       return "failed";
     } finally {
-      choosingScreen = false;
+      choosingDesktopPermission = false;
     }
   }
-  choosingScreen = true;
+  choosingDesktopPermission = true;
   try {
     if (process.platform === "darwin") {
       const status = systemPreferences.getMediaAccessStatus("screen");
@@ -706,7 +727,13 @@ ipcMain.handle("room:screen-view", async (event) => {
     if (!sources.length) return "no-sources";
     const eligible = roles.filter(({ id }) => screenView.eligible.includes(id));
     if (!eligible.length) return "unavailable";
-    const selection = await screenSourceMenu(win, eligible, sources);
+    const selection = await desktopSourceMenu(
+      win,
+      eligible,
+      sources,
+      ({ id, name }) =>
+        `${id.startsWith("screen:") ? "显示器" : "窗口"} · ${name}`,
+    );
     if (!selection || win.isDestroyed() || !win.isVisible()) return "cancelled";
     if (
       remoteState?.roomEpoch !== roomEpoch ||
@@ -727,7 +754,7 @@ ipcMain.handle("room:screen-view", async (event) => {
       agentId: grant.agentId,
     };
     try {
-      const room = await framework.screenCommand("screen-grant", {
+      const room = await framework.command("screen-grant", {
         roomEpoch,
         grantId: grant.grantId,
         agentId: grant.agentId,
@@ -748,7 +775,58 @@ ipcMain.handle("room:screen-view", async (event) => {
   } catch {
     return "failed";
   } finally {
-    choosingScreen = false;
+    choosingDesktopPermission = false;
+  }
+});
+
+ipcMain.handle("room:native-control", async (event) => {
+  const win = entries.get("panel")?.win;
+  const { nativeControl: policy, roomEpoch } = remoteState ?? {};
+  if (
+    !framework ||
+    !nativeControl ||
+    !roomEpoch ||
+    !policy ||
+    !win ||
+    win.webContents !== event.sender ||
+    event.senderFrame !== win.webContents.mainFrame ||
+    !win.isFocused() ||
+    choosingDesktopPermission
+  )
+    return "unavailable";
+  choosingDesktopPermission = true;
+  try {
+    if (policy.grantedAgentId)
+      return await nativeControl.revoke(roomEpoch, policy.grantedAgentId);
+    const windows = await nativeDriver.listWindows({
+      signal: AbortSignal.timeout(4000),
+    });
+    const sources = windows.filter(({ pid }) => pid !== process.pid);
+    if (win.isDestroyed() || !win.isFocused()) return "cancelled";
+    if (!sources.length) return "no-sources";
+    const eligible = roles.filter(({ id }) => policy.eligible.includes(id));
+    if (!eligible.length) return "unavailable";
+    const selection = await desktopSourceMenu(
+      win,
+      eligible,
+      sources,
+      ({ app, title }) => `${app} · ${title}`,
+    );
+    if (!selection || win.isDestroyed() || !win.isVisible()) return "cancelled";
+    if (
+      selection.source.pid === process.pid ||
+      remoteState?.roomEpoch !== roomEpoch ||
+      remoteState?.nativeControl?.grantedAgentId ||
+      !remoteState?.nativeControl?.eligible.includes(selection.agentId)
+    )
+      return "unavailable";
+    return await nativeControl.grant({ ...selection, roomEpoch });
+  } catch (error) {
+    return error?.message === "DESKTOP_NATIVE_PERMISSION"
+      ? "permission"
+      : "failed";
+  } finally {
+    choosingDesktopPermission = false;
   }
 });
 
@@ -842,7 +920,11 @@ else {
     event.preventDefault();
     shuttingDown = true;
     clearScreenGrant();
-    void (framework ?? live).close().finally(() => app.quit());
+    nativeControl?.clear();
+    void Promise.allSettled([
+      (framework ?? live).close(),
+      nativeDriver?.close(),
+    ]).then(() => app.quit());
   });
   app.whenReady().then(() => {
     if (process.platform === "darwin") app.setActivationPolicy("accessory");

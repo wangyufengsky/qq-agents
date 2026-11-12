@@ -6,6 +6,11 @@
 
 ## 未发布
 
+### 桌面小窝原生窗口操作（[#279](https://github.com/wangyufengsky/qq-agents/pull/279)）
+
+- 管理员可在本机授权一位在场角色操作选定窗口。角色通过限于当前回合的元素引用观察、点击、滚动和替换文本字段，撤销、离席和 QQ 抢占会中止本轮操作。
+- 新增默认关闭的 `desktopHome.nativeControl.enabled`，依赖管理员配置固定版本的本机 agent-desktop，无数据库迁移。
+
 ### 桌面小窝按需看屏（[#278](https://github.com/wangyufengsky/qq-agents/pull/278)）
 
 - 管理员可在本机为一位在场角色选择窗口或显示器，角色在获授权的桌面回合按需取得一张截图。授权可撤销，图片只交给当前模型回合，QQ Agents 不把截图写入房间记录。

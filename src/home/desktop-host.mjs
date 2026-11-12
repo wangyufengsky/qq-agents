@@ -14,11 +14,9 @@ import { createRoom, roles as art } from "./desktop-room-state.mjs";
 import { beginDesktopContext } from "./desktop-context.mjs";
 import { DESKTOP_CONVERSATION, readDecision } from "./desktop-decision.mjs";
 import { DESKTOP_ADMINISTRATOR, DesktopArchive } from "./desktop-archive.mjs";
-import {
-  DesktopScreen,
-  screenGrantSchema,
-  screenRevokeSchema,
-} from "./desktop-screen.mjs";
+import { DesktopScreen } from "./desktop-screen.mjs";
+import { DesktopNative } from "./desktop-native.mjs";
+import { localGrantSchema, localRevokeSchema } from "./desktop-local-grant.mjs";
 
 const requestSchema = z
   .object({
@@ -33,13 +31,15 @@ const requestSchema = z
       "disconnect",
       "screen-grant",
       "screen-revoke",
+      "native-grant",
+      "native-revoke",
     ]),
     data: z
       .union([
         z.string().max(1000),
         z.boolean(),
-        screenGrantSchema,
-        screenRevokeSchema,
+        localGrantSchema,
+        localRevokeSchema,
       ])
       .optional(),
   })
@@ -69,6 +69,7 @@ export class DesktopHost {
     this.visits = new Map();
     this.invitations = new DesktopInvitations(this);
     this.screen = new DesktopScreen(this);
+    this.native = new DesktopNative(this);
   }
 
   configured() {
@@ -321,6 +322,7 @@ export class DesktopHost {
 
   reset() {
     this.screen.clear();
+    this.native.clear();
     if (!this.live) return;
     const previous = this.live;
     this.live = null;
@@ -367,12 +369,21 @@ export class DesktopHost {
     if (action === "knock-answer" && typeof data === "boolean")
       live.answerKnock(data);
     if (action === "screen-grant")
-      this.screen.change(action, screenGrantSchema.parse(data));
+      this.screen.change(false, localGrantSchema.parse(data));
     if (action === "screen-revoke")
-      this.screen.change(action, screenRevokeSchema.parse(data));
+      this.screen.change(true, localRevokeSchema.parse(data));
+    if (action === "native-grant")
+      this.native.change(false, localGrantSchema.parse(data));
+    if (action === "native-revoke")
+      this.native.change(true, localRevokeSchema.parse(data));
     const state = this.clientSnapshot();
-    const screenRequest = action === "sync" && this.screen.request();
-    return screenRequest ? { ...state, screenRequest } : state;
+    if (action !== "sync") return state;
+    const screenRequest = this.screen.request();
+    return {
+      ...state,
+      ...(screenRequest && { screenRequest }),
+      ...this.native.clientWork(),
+    };
   }
 
   clientSnapshot() {
@@ -381,6 +392,7 @@ export class DesktopHost {
       room: {
         ...this.live.snapshot(),
         screenView: this.screen.state(),
+        nativeControl: this.native.state(),
         attachmentInput: this.attachments.availability(
           this.runtime.config,
           this.live.here(),

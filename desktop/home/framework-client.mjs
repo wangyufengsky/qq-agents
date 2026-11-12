@@ -77,17 +77,17 @@ export function createFrameworkClient(root, onState, listenPort) {
         if (!stopped) onState(value);
       });
     },
-    screenCommand(action, data) {
+    command(action, data) {
       return enqueue(async () => {
         const value = await request(action, data);
         if (!stopped) onState(value, action);
         return value.room;
       });
     },
-    screenResult(data, isCurrent) {
+    result(endpoint, data, isCurrent) {
       return enqueue(() => {
         // A revoke may happen while this result waits behind another request.
-        if (isCurrent()) return request(undefined, data, "screen-result");
+        if (isCurrent()) return request(undefined, data, endpoint);
       });
     },
     async close() {

@@ -204,6 +204,7 @@ ${selfBody}
       }
       ctx.retainBackendSession =
         !ctx.desktopScreenObserved &&
+        !ctx.desktopPrivateObservation &&
         !signal.aborted &&
         sessionWasUnchanged(error);
       return runtime.contexts.finish(

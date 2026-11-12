@@ -1,5 +1,6 @@
 import { MAX_DESKTOP_ATTACHMENT_BODY } from "./home/desktop-attachments.mjs";
 import { MAX_DESKTOP_SCREEN_BODY } from "./home/desktop-screen.mjs";
+import { MAX_DESKTOP_NATIVE_BODY } from "./home/desktop-native.mjs";
 import { desktopToken } from "./home/desktop-auth.mjs";
 import { deriveRelayToken } from "./core/relay-auth.mjs";
 import { finalizeMcpOutput, toolOutputText } from "./backends/tool-output.mjs";
@@ -307,7 +308,9 @@ export function createServer({
       }
       if (
         url.pathname === "/api/desktop-home/attachment" ||
-        url.pathname === "/api/desktop-home/screen-result"
+        url.pathname === "/api/desktop-home/screen-result" ||
+        url.pathname === "/api/desktop-home/native-result" ||
+        url.pathname === "/api/desktop-home/native-claim"
       ) {
         if (req.method !== "POST") return deny("METHOD", 405);
         const local = ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(
@@ -318,6 +321,14 @@ export function createServer({
         if (url.pathname.endsWith("/screen-result")) {
           const input = await readBody(MAX_DESKTOP_SCREEN_BODY);
           return send(runtime.desktopVisits.screen.receive(input));
+        }
+        if (url.pathname.endsWith("/native-result")) {
+          const input = await readBody(MAX_DESKTOP_NATIVE_BODY);
+          return send(runtime.desktopVisits.native.receive(input));
+        }
+        if (url.pathname.endsWith("/native-claim")) {
+          const input = await readBody(512);
+          return send(runtime.desktopVisits.native.claim(input));
         }
         const input = await readBody(MAX_DESKTOP_ATTACHMENT_BODY);
         return send(await runtime.desktopVisits.attach(input));

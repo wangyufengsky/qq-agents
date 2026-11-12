@@ -14,10 +14,11 @@ const tool = "desktop_screen_view";
 const jpeg =
   "/9j/4AAQSkZJRgABAgAAAQABAAD//gAQTGF2YzYyLjI4LjEwMAD/2wBDAAgEBAQEBAUFBQUFBQYGBgYGBgYGBgYGBgYHBwcICAgHBwcGBgcHCAgICAkJCQgICAgJCQoKCgwMCwsODg4RERT/xABLAAEBAAAAAAAAAAAAAAAAAAAABQEBAAAAAAAAAAAAAAAAAAAABRABAAAAAAAAAAAAAAAAAAAAABEBAAAAAAAAAAAAAAAAAAAAAP/AABEIABAAEAMBIgACEQADEQD/2gAMAwEAAhEDEQA/AIAAok//2Q==";
 
-async function setup(t) {
+async function setup(t, { native = false } = {}) {
   const cfg = config(2);
   cfg.desktopHome.enabled = true;
   cfg.desktopHome.screenView = { enabled: true };
+  cfg.desktopHome.nativeControl = { enabled: native };
   cfg.desktopHome.toolRoles = ["agent-0", "agent-1"];
   for (const agent of cfg.agents) agent.behavior.imageInput.enabled = true;
   const { runtime, root } = fixture(t, { cfg });
@@ -91,6 +92,14 @@ async function setup(t) {
     client,
     command,
     result,
+    nativeClaim: (data) =>
+      post("/api/desktop-home/native-claim", data, {
+        "x-desktop-home-token": desktopToken(token),
+      }),
+    nativeResult: (data) =>
+      post("/api/desktop-home/native-result", data, {
+        "x-desktop-home-token": desktopToken(token),
+      }),
     token,
     run,
   };
@@ -214,3 +223,103 @@ test("revoking screen access cancels an outstanding capture and rejects its late
     assert.notEqual(sync.room.screenView.grantedAgentId, "agent-0");
   });
 });
+
+test("native requests belong to the selected desktop turn and stop when QQ takes priority", async (t) => {
+  const { client, host, roomEpoch, command, nativeClaim, nativeResult, run } =
+    await setup(t, { native: true });
+  const grantId = randomUUID();
+  const { room } = await command("native-grant", {
+    roomEpoch,
+    grantId,
+    agentId: "agent-0",
+  });
+  assert.equal(room.nativeControl.grantedAgentId, "agent-0");
+  const name = "desktop_native_control";
+  await run("agent-1", async (call) => {
+    assert.equal((await call(name, { type: "observe" })).isError, true);
+    assert.equal((await command("sync")).nativeRequest, undefined);
+  });
+  await assert.rejects(
+    run("agent-0", async (call) => {
+      const tool = call(name, { type: "click", ref: "ref_1" });
+      let snapshot;
+      for (let attempt = 0; attempt < 100; attempt++) {
+        snapshot = await command("sync");
+        if (snapshot.nativeRequest) break;
+        await delay(10);
+      }
+      const { nativeRequest, nativeTurnId } = snapshot;
+      assert.equal(nativeRequest.turnId, nativeTurnId);
+      assert.equal(nativeRequest.grantId, grantId);
+      assert.deepEqual(nativeRequest.action, { type: "click", ref: "ref_1" });
+      const claim = {
+        client,
+        roomEpoch,
+        grantId,
+        requestId: nativeRequest.requestId,
+      };
+      const result = {
+        ...claim,
+        result: { ok: true, delivery: "delivered_verified" },
+      };
+      assert.equal(
+        (await nativeClaim({ ...claim, requestId: randomUUID() })).ok,
+        false,
+      );
+      assert.equal((await nativeResult(result)).ok, false);
+      host.interrupt("agent-0");
+      assert.equal((await nativeClaim(claim)).ok, false);
+      assert.equal((await tool).isError, true);
+      assert.equal((await nativeResult(result)).ok, false);
+      assert.equal((await command("sync")).nativeRequest, undefined);
+    }),
+    { message: "DESKTOP_QQ_PRIORITY" },
+  );
+});
+
+test("a mutating native request must be claimed once before returning an attempted receipt", async (t) => {
+  const { client, roomEpoch, command, nativeClaim, nativeResult, run } =
+    await setup(t, { native: true });
+  const grantId = randomUUID();
+  await command("native-grant", { roomEpoch, grantId, agentId: "agent-0" });
+  await run("agent-0", async (call) => {
+    const unsafe = await call("desktop_native_control", {
+      type: "set-value",
+      ref: "ref_1",
+      text: ["sk", "synthetic-fixture-only"].join("-"),
+    });
+    assert.equal(unsafe.isError, true);
+    assert.equal((await command("sync")).nativeRequest, undefined);
+    const output = call("desktop_native_control", {
+      type: "click",
+      ref: "ref_1",
+    });
+    const { requestId, expiresAt } = await waitForNativeRequest(command);
+    const claim = { client, roomEpoch, grantId, requestId };
+    const receipt = { ok: true, delivery: "delivered_verified" };
+    assert.equal((await nativeResult({ ...claim, result: receipt })).ok, false);
+    assert.equal(
+      (await nativeClaim({ ...claim, client: randomUUID() })).ok,
+      false,
+    );
+    const accepted = await nativeClaim(claim);
+    assert.equal(accepted.status, 200);
+    const confirmation = await accepted.json();
+    assert.equal(confirmation.accepted, true);
+    assert(confirmation.expiresAt > Date.now());
+    assert(confirmation.expiresAt <= expiresAt);
+    assert.equal((await nativeClaim(claim)).ok, false);
+    assert.equal((await nativeResult({ ...claim, result: receipt })).ok, true);
+    assert.deepEqual(JSON.parse((await output).content[0].text), receipt);
+    assert.equal((await nativeClaim(claim)).ok, false);
+  });
+});
+
+async function waitForNativeRequest(command) {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const { nativeRequest } = await command("sync");
+    if (nativeRequest) return nativeRequest;
+    await delay(10);
+  }
+  assert.fail("Desktop client did not receive a native request");
+}
