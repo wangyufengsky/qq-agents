@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { extname } from "node:path";
 import { z } from "zod";
-import { supportsMessageImages } from "../core/message-images.mjs";
+import { supportsMessageImages } from "../backends/capabilities.mjs";
 import { containsCredential } from "../core/secrets.mjs";
 import { imagePreview } from "../tools/image-preview.mjs";
 import { imageMime } from "../tools/media.mjs";

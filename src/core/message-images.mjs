@@ -5,15 +5,7 @@ import { readEventImage } from "../tools/image-read.mjs";
 import { taintMedia } from "../tools/legacy.mjs";
 import { imagePreview } from "../tools/image-preview.mjs";
 import { decodeGif, inspectGif } from "../tools/animation.mjs";
-
-/** @param {any} backend */
-export function supportsMessageImages(backend) {
-  const c = backend.config || backend;
-  return (
-    ["dsh", "codex"].includes(c.type) ||
-    (c.type === "antigravity" && c.cliProtocol === "acp")
-  );
-}
+import { supportsMessageImages } from "../backends/capabilities.mjs";
 
 /** Only new, already-presented live messages may supply automatic pixels.
  * The durable watermark records submission, not an acknowledgement or reply.

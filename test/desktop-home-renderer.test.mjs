@@ -96,3 +96,66 @@ test("the desktop panel drops the old messages and guests when its room closes",
   await attach.click();
   assert.equal(await page.evaluate(() => window.testAttachmentCalls), 1);
 });
+
+test("the desktop panel exposes screen authorization only while eligible", async (t) => {
+  let executablePath;
+  try {
+    executablePath = findScreenshotBrowser();
+  } catch {
+    t.skip("local Chromium unavailable");
+    return;
+  }
+  const browser = await chromium.launch({ executablePath, headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  const room = {
+    live: true,
+    framework: true,
+    connected: true,
+    roles: [
+      {
+        id: "fish",
+        name: "小鱼",
+        color: "mint",
+        state: "here",
+        available: true,
+      },
+    ],
+    messages: [],
+    budget: 5,
+    maxTurns: 6,
+  };
+  await page.addInitScript((data) => {
+    window.nest = {
+      onRoom: (update) => (window.testRoom = update),
+      onSection() {},
+      get: async () => ({ data, section: "chat" }),
+      screenView: async () => {
+        window.testScreenCalls = (window.testScreenCalls ?? 0) + 1;
+        return "cancelled";
+      },
+    };
+  }, room);
+  await page.goto(
+    new URL("../desktop/home/index.html?type=panel", import.meta.url).href,
+  );
+  const push = (data) => page.evaluate((next) => window.testRoom(next), data);
+  const authorize = page.getByRole("button", { name: "授权查看屏幕" });
+  assert.equal(await authorize.isVisible(), false);
+  await push({
+    ...room,
+    screenView: { eligible: ["fish"], grantedAgentId: null },
+  });
+  await authorize.click();
+  assert.equal(await page.evaluate(() => window.testScreenCalls), 1);
+  await push({
+    ...room,
+    screenView: { eligible: ["fish"], grantedAgentId: "fish" },
+  });
+  const revoke = page.getByRole("button", { name: "撤销屏幕授权" });
+  assert.equal(await revoke.isVisible(), true);
+  await revoke.click();
+  assert.equal(await page.evaluate(() => window.testScreenCalls), 2);
+  await push({ ...room, connected: false });
+  assert.equal(await revoke.isVisible(), false);
+});

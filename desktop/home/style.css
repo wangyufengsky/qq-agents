@@ -351,6 +351,20 @@ h2 {
   font-size: 12px;
   margin: 0 18px 8px;
 }
+.screen-view {
+  margin: 0 18px 8px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.screen-view[hidden] {
+  display: none;
+}
+.screen-view-status {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 0;
+}
 .attachment {
   overflow-wrap: anywhere;
 }

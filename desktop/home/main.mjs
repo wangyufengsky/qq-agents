@@ -6,8 +6,10 @@ import {
   Menu,
   nativeImage,
   screen,
+  systemPreferences,
   Tray,
 } from "electron";
+import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { basename, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,6 +17,11 @@ import { openNoFollowAsync } from "../../src/core/no-follow.mjs";
 import { createFrameworkClient } from "./framework-client.mjs";
 import { LiveRoom } from "./live-room.mjs";
 import { startModelClient } from "./model-client.mjs";
+import {
+  captureScreen,
+  listScreenSources,
+  screenCaptureSupported,
+} from "./screen-capture.mjs";
 import {
   DEFAULT_MINUTES,
   MAX_TURNS,
@@ -76,6 +83,68 @@ let framework;
 let remoteState;
 let live;
 let shuttingDown = false;
+let screenGrant;
+let lastScreenGrant;
+let screenCapture;
+let choosingScreen = false;
+
+function clearScreenGrant() {
+  screenGrant = undefined;
+  screenCapture?.controller.abort();
+}
+
+function screenRequest(value, action) {
+  const grant = screenGrant;
+  const { room: current, screenRequest: request } = value;
+  if (!grant) return;
+  if (
+    current?.roomEpoch !== grant.roomEpoch ||
+    !current.screenView?.eligible.includes(grant.agentId) ||
+    (!grant.pending && current.screenView.grantedAgentId !== grant.agentId)
+  ) {
+    clearScreenGrant();
+    return;
+  }
+  if (
+    action === "sync" &&
+    screenCapture &&
+    screenCapture.requestId !== request?.requestId
+  )
+    screenCapture.controller.abort();
+  if (
+    !request ||
+    screenCapture ||
+    request.roomEpoch !== grant.roomEpoch ||
+    request.grantId !== grant.grantId ||
+    request.requestId === grant.lastRequest
+  )
+    return;
+  grant.lastRequest = request.requestId;
+  const { roomEpoch, grantId, requestId, maxEdge, maxBytes } = request;
+  const controller = new AbortController();
+  screenCapture = { controller, requestId };
+  const isCurrent = () =>
+    screenGrant === grant && !controller.signal.aborted && !shuttingDown;
+  void (async () => {
+    try {
+      const data = await captureScreen(
+        grant.source,
+        maxEdge,
+        maxBytes,
+        controller.signal,
+      ).catch(() => undefined);
+      if (isCurrent())
+        await framework.screenResult(
+          { roomEpoch, grantId, requestId, data },
+          isCurrent,
+        );
+    } catch {
+      // The host owns request expiry and rejects stale results.
+    } finally {
+      screenCapture = undefined;
+    }
+  })();
+}
 
 function savePreferences() {
   mkdirSync(app.getPath("userData"), { recursive: true });
@@ -321,7 +390,8 @@ function animateHome(role) {
   }
 }
 
-function applyFramework(value) {
+function applyFramework(value, action) {
+  screenRequest(value, action);
   if (value.closed) {
     app.quit();
     return;
@@ -348,6 +418,7 @@ function applyFramework(value) {
     framework: true,
     subjectKnocks: true,
     connected: !!value.room,
+    screenView: screenCaptureSupported ? value.room?.screenView : undefined,
   };
   room.members = Object.fromEntries(roles.map(({ id, state }) => [id, state]));
   room.bubbles = { ...state.bubbles };
@@ -558,6 +629,129 @@ ipcMain.handle("room:attach", async (event) => {
   }
 });
 
+function screenSourceMenu(win, availableRoles, sources) {
+  return new Promise((resolve) => {
+    let selection;
+    const menu = Menu.buildFromTemplate(
+      availableRoles.map(({ id, name }) => ({
+        label: name.replaceAll("&", "&&"),
+        submenu: sources.map((source) => ({
+          label: `${source.id.startsWith("screen:") ? "显示器" : "窗口"} · ${source.name
+            .replace(/[\p{Cc}\p{Cf}]/gu, "")
+            .slice(0, 90)
+            .replaceAll("&", "&&")}`,
+          click: () => {
+            selection = { agentId: id, source };
+          },
+        })),
+      })),
+    );
+    menu.popup({
+      window: win,
+      callback: () => setImmediate(() => resolve(selection)),
+    });
+  });
+}
+
+ipcMain.handle("room:screen-view", async (event) => {
+  const entry = entries.get("panel");
+  const win = entry?.win;
+  const { screenView, roomEpoch } = remoteState ?? {};
+  if (
+    !screenCaptureSupported ||
+    !framework ||
+    !roomEpoch ||
+    !screenView ||
+    !win ||
+    win.webContents !== event.sender ||
+    event.senderFrame !== win.webContents.mainFrame ||
+    !win.isFocused() ||
+    choosingScreen
+  )
+    return "unavailable";
+  if (screenView.grantedAgentId) {
+    const grant = lastScreenGrant;
+    clearScreenGrant();
+    try {
+      if (
+        grant?.roomEpoch !== roomEpoch ||
+        grant.agentId !== screenView.grantedAgentId
+      )
+        return "unavailable";
+      choosingScreen = true;
+      const room = await framework.screenCommand("screen-revoke", {
+        roomEpoch,
+        grantId: grant.grantId,
+      });
+      return room?.screenView?.grantedAgentId ? "failed" : "revoked";
+    } catch {
+      return "failed";
+    } finally {
+      choosingScreen = false;
+    }
+  }
+  choosingScreen = true;
+  try {
+    if (process.platform === "darwin") {
+      const status = systemPreferences.getMediaAccessStatus("screen");
+      if (status === "denied" || status === "restricted") return "permission";
+    }
+    const sources = await listScreenSources();
+    if (
+      process.platform === "darwin" &&
+      systemPreferences.getMediaAccessStatus("screen") !== "granted"
+    )
+      return "permission";
+    if (win.isDestroyed() || !win.isFocused()) return "cancelled";
+    if (!sources.length) return "no-sources";
+    const eligible = roles.filter(({ id }) => screenView.eligible.includes(id));
+    if (!eligible.length) return "unavailable";
+    const selection = await screenSourceMenu(win, eligible, sources);
+    if (!selection || win.isDestroyed() || !win.isVisible()) return "cancelled";
+    if (
+      remoteState?.roomEpoch !== roomEpoch ||
+      remoteState?.screenView?.grantedAgentId ||
+      !remoteState?.screenView?.eligible.includes(selection.agentId)
+    )
+      return "unavailable";
+    const grant = {
+      ...selection,
+      roomEpoch,
+      grantId: randomUUID(),
+      pending: true,
+    };
+    screenGrant = grant;
+    lastScreenGrant = {
+      roomEpoch,
+      grantId: grant.grantId,
+      agentId: grant.agentId,
+    };
+    try {
+      const room = await framework.screenCommand("screen-grant", {
+        roomEpoch,
+        grantId: grant.grantId,
+        agentId: grant.agentId,
+      });
+      grant.pending = false;
+      if (
+        screenGrant === grant &&
+        room?.roomEpoch === roomEpoch &&
+        room.screenView?.grantedAgentId === grant.agentId
+      )
+        return "granted";
+      if (screenGrant === grant) clearScreenGrant();
+      return "unavailable";
+    } catch {
+      if (screenGrant === grant) clearScreenGrant();
+      return "failed";
+    }
+  } catch {
+    return "failed";
+  } finally {
+    choosingScreen = false;
+  }
+});
+
 ipcMain.on("room:action", (event, action, data) => {
   const entry = [...entries.values()].find(
     ({ win }) => win.webContents === event.sender,
@@ -647,6 +841,7 @@ else {
     if ((!live && !framework) || shuttingDown) return;
     event.preventDefault();
     shuttingDown = true;
+    clearScreenGrant();
     void (framework ?? live).close().finally(() => app.quit());
   });
   app.whenReady().then(() => {

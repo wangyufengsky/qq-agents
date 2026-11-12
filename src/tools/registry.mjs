@@ -7,6 +7,7 @@ import { definitions } from "./definitions.mjs";
 import {
   DESKTOP_DECISION,
   DESKTOP_HISTORY,
+  DESKTOP_SCREEN_VIEW,
   FUNCTIONAL_AGENT_RESULT,
   TOOL_NAMES,
 } from "./names.mjs";
@@ -29,6 +30,8 @@ const handlers = {
   ...coreHandlers,
   [DESKTOP_HISTORY]: (runtime, ctx, args) =>
     runtime.desktopVisits.history(ctx, args),
+  [DESKTOP_SCREEN_VIEW]: (runtime, ctx) =>
+    runtime.desktopVisits.screen.view(ctx),
   memory_recall: recallFromChat,
   [DESKTOP_DECISION]: (_runtime, ctx, args) => {
     if (ctx.runtimeKind !== "desktop") throw Error("TOOL_DISABLED");

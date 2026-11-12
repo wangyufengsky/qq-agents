@@ -13,3 +13,12 @@ export const backendCapabilities = (type) =>
   BACKEND_CAPABILITIES[
     /** @type {keyof typeof BACKEND_CAPABILITIES} */ (type)
   ] || { compaction: false, imageGeneration: false };
+
+/** @param {any} backend */
+export function supportsMessageImages(backend) {
+  const c = backend.config || backend;
+  return (
+    ["dsh", "codex"].includes(c.type) ||
+    (c.type === "antigravity" && c.cliProtocol === "acp")
+  );
+}

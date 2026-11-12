@@ -807,6 +807,12 @@ async function desktopSettings(root, ticket) {
         "角色仍受自己的工具和文件权限约束。联系 QQ 由同角色的主人格审阅，再交给目标 QQ 会话。",
       ),
     );
+    const screenLabel = el("label", "desktop-field", "允许在本机授权看桌面");
+    const screenEnabled = document.createElement("input");
+    screenEnabled.type = "checkbox";
+    screenEnabled.checked = policy.screenView.enabled;
+    screenLabel.prepend(screenEnabled);
+    form.append(screenLabel);
     const status = el("p", "social-notice");
     status.setAttribute("role", "status");
     const save = el("button", "primary", "保存桌面设置");
@@ -821,6 +827,7 @@ async function desktopSettings(root, ticket) {
         !state.enabled || !state.canLaunch || state.window === "open";
       open.disabled = busy || state.window === "opening";
       toggle.disabled = save.disabled = busy;
+      screenEnabled.disabled = busy;
       for (const input of roleInputs) input.disabled = busy;
       status.textContent = state.enabled
         ? {
@@ -881,6 +888,7 @@ async function desktopSettings(root, ticket) {
       const limits = {
         maxTurns: inputs.maxTurns.valueAsNumber,
         refreshMinutes: inputs.refreshMinutes.valueAsNumber,
+        screenView: { enabled: screenEnabled.checked },
         toolRoles: roleInputs
           .filter((input) => input.checked)
           .map((input) => input.value),
@@ -892,6 +900,7 @@ async function desktopSettings(root, ticket) {
         if (
           existing.maxTurns !== policy.maxTurns ||
           existing.refreshMinutes !== policy.refreshMinutes ||
+          existing.screenView.enabled !== policy.screenView.enabled ||
           JSON.stringify(existing.toolRoles) !==
             JSON.stringify(policy.toolRoles)
         ) {
@@ -919,6 +928,7 @@ async function desktopSettings(root, ticket) {
       } finally {
         busy = false;
         toggle.disabled = save.disabled = false;
+        screenEnabled.disabled = false;
         for (const input of roleInputs) input.disabled = false;
         open.disabled = state.window === "opening";
       }

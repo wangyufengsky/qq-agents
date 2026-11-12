@@ -220,6 +220,16 @@ const AGENT_TOOL_GROUPS = [
     },
   },
   {
+    id: "desktop-local",
+    builtin: true,
+    builtinLabel: "由桌面小窝设置与现场授权控制",
+    title: "桌面小窝本机工具",
+    desc: "管理员在本机桌面聊天面板为在场角色授权。",
+    tools: {
+      desktop_screen_view: "查看管理员选定的桌面窗口或显示器",
+    },
+  },
+  {
     id: "home",
     builtin: true,
     builtinLabel: "由本角色的小窝开关控制",

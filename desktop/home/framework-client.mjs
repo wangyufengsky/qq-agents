@@ -7,7 +7,7 @@ export function createFrameworkClient(root, onState, listenPort) {
   let queue = Promise.resolve();
   let syncing = false;
   let stopped = false;
-  const request = async (action, data, attachment = false) => {
+  const request = async (action, data, endpoint = "client") => {
     const port =
       listenPort ??
       JSON.parse(readFileSync(join(root, "config.json"), "utf8")).port ??
@@ -21,7 +21,7 @@ export function createFrameworkClient(root, onState, listenPort) {
     )
       throw Error("DESKTOP_CONNECTION_INVALID");
     const response = await fetch(
-      `http://127.0.0.1:${port}/api/desktop-home/${attachment ? "attachment" : "client"}`,
+      `http://127.0.0.1:${port}/api/desktop-home/${endpoint}`,
       {
         method: "POST",
         headers: {
@@ -29,23 +29,33 @@ export function createFrameworkClient(root, onState, listenPort) {
           "x-desktop-home-token": token,
         },
         body: JSON.stringify(
-          attachment ? { ...data, client } : { client, action, data },
+          endpoint === "client"
+            ? { client, action, data }
+            : { ...data, client },
         ),
         redirect: "error",
-        signal: AbortSignal.timeout(attachment ? 8000 : 2500),
+        signal: AbortSignal.timeout(endpoint === "client" ? 2500 : 8000),
       },
     );
     if (!response.ok) throw Error("DESKTOP_CONNECTION_FAILED");
     return response.json();
+  };
+  const enqueue = (run) => {
+    const result = queue.then(() => {
+      if (stopped) throw Error("DESKTOP_CONNECTION_FAILED");
+      return run();
+    });
+    queue = result.catch(() => {});
+    return result;
   };
   const act = (action, data) => {
     if (stopped) return;
     queue = queue.then(async () => {
       try {
         const value = await request(action, data);
-        if (!stopped) onState(value);
+        if (!stopped) onState(value, action);
       } catch {
-        if (!stopped) onState({ offline: true });
+        if (!stopped) onState({ offline: true }, action);
       }
     });
   };
@@ -62,14 +72,23 @@ export function createFrameworkClient(root, onState, listenPort) {
   return {
     act,
     attach(data) {
-      if (stopped) return Promise.reject(Error("DESKTOP_CONNECTION_FAILED"));
-      const upload = queue.then(async () => {
-        if (stopped) throw Error("DESKTOP_CONNECTION_FAILED");
-        const value = await request(undefined, data, true);
+      return enqueue(async () => {
+        const value = await request(undefined, data, "attachment");
         if (!stopped) onState(value);
       });
-      queue = upload.catch(() => {});
-      return upload;
+    },
+    screenCommand(action, data) {
+      return enqueue(async () => {
+        const value = await request(action, data);
+        if (!stopped) onState(value, action);
+        return value.room;
+      });
+    },
+    screenResult(data, isCurrent) {
+      return enqueue(() => {
+        // A revoke may happen while this result waits behind another request.
+        if (isCurrent()) return request(undefined, data, "screen-result");
+      });
     },
     async close() {
       stopped = true;

@@ -16,6 +16,7 @@ import { z } from "zod";
 import {
   DESKTOP_DECISION,
   DESKTOP_HISTORY,
+  DESKTOP_SCREEN_VIEW,
   FUNCTIONAL_AGENT_RESULT,
 } from "./names.mjs";
 import { desktopDecisionDefinition } from "../home/desktop-decision.mjs";
@@ -74,6 +75,10 @@ export const definitions = {
   [DESKTOP_HISTORY]: [
     "在桌面房间里按页回看公开对话。用 nextBeforeSeq 继续向前。回看不表示当时在场，也不作为本轮新消息。",
     z.object({ beforeSeq: z.number().int().positive().optional() }).strict(),
+  ],
+  [DESKTOP_SCREEN_VIEW]: [
+    "按需查看管理员为你选定的一个本机窗口或显示器。画面属于当前桌面回合，只用来回应当前桌面对话。每回合最多取得一次截图。",
+    z.object({}).strict(),
   ],
   [FUNCTIONAL_AGENT_RESULT]: [
     "提交本次查证选中的证据记录 ID。选中证据时，contribution 用一句短话说明它补上了当前对话缺的什么。没有新增信息就提交空数组，省略 contribution。",

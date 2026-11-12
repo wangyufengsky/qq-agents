@@ -1,4 +1,5 @@
 import { MAX_DESKTOP_ATTACHMENT_BODY } from "./home/desktop-attachments.mjs";
+import { MAX_DESKTOP_SCREEN_BODY } from "./home/desktop-screen.mjs";
 import { desktopToken } from "./home/desktop-auth.mjs";
 import { deriveRelayToken } from "./core/relay-auth.mjs";
 import { finalizeMcpOutput, toolOutputText } from "./backends/tool-output.mjs";
@@ -304,13 +305,20 @@ export function createServer({
         if (state.room) desktopLauncher?.connected();
         return send(state);
       }
-      if (url.pathname === "/api/desktop-home/attachment") {
+      if (
+        url.pathname === "/api/desktop-home/attachment" ||
+        url.pathname === "/api/desktop-home/screen-result"
+      ) {
         if (req.method !== "POST") return deny("METHOD", 405);
         const local = ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(
           req.socket.remoteAddress,
         );
         if (!local || !equal(req.headers["x-desktop-home-token"], desktopKey))
           return deny("UNAUTHORIZED", 401);
+        if (url.pathname.endsWith("/screen-result")) {
+          const input = await readBody(MAX_DESKTOP_SCREEN_BODY);
+          return send(runtime.desktopVisits.screen.receive(input));
+        }
         const input = await readBody(MAX_DESKTOP_ATTACHMENT_BODY);
         return send(await runtime.desktopVisits.attach(input));
       }
