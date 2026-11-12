@@ -109,16 +109,27 @@ export class DesktopHost {
     return this.visits.get(id)?.claimQq(id, conversation);
   }
 
+  available() {
+    return (
+      !this.runtime.closed &&
+      this.runtime.config.mode === "live" &&
+      !this.runtime.config.globalPaused &&
+      !this.runtime.maintenance.active &&
+      !this.runtime.updateMaintenance
+    );
+  }
+
+  connected() {
+    return (
+      this.configured() &&
+      this.available() &&
+      this.client?.expiresAt > this.runtime.now()
+    );
+  }
+
   refresh() {
     const now = this.runtime.now();
-    if (
-      !this.configured() ||
-      this.runtime.closed ||
-      this.runtime.config.mode !== "live" ||
-      this.runtime.config.globalPaused ||
-      this.runtime.maintenance.active ||
-      this.runtime.updateMaintenance
-    ) {
+    if (!this.configured() || !this.available()) {
       this.reset();
       return false;
     }
@@ -193,7 +204,10 @@ export class DesktopHost {
     const parsed = requestSchema.safeParse(input);
     if (!parsed.success) throw Error("INVALID_REQUEST");
     const { client, action, data } = parsed.data;
-    if (!this.refresh()) return { enabled: false };
+    if (!this.refresh())
+      return this.configured()
+        ? { enabled: false }
+        : { enabled: false, closed: true };
     if (this.client && this.client.id !== client)
       return { enabled: true, busy: true };
     if (action === "disconnect") {

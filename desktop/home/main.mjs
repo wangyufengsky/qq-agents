@@ -62,6 +62,9 @@ let hidden = false;
 let tray;
 const liveRoot = process.env.DESKTOP_HOME_LIVE_ROOT;
 const dataArgument = process.argv.indexOf("--data");
+const portArgument = process.argv.indexOf("--port");
+const frameworkPort =
+  portArgument >= 0 ? Number(process.argv[portArgument + 1]) : undefined;
 const frameworkRoot =
   process.env.DESKTOP_HOME_DATA_ROOT ||
   (dataArgument >= 0 ? process.argv[dataArgument + 1] : null);
@@ -315,6 +318,10 @@ function animateHome(role) {
 }
 
 function applyFramework(value) {
+  if (value.closed) {
+    app.quit();
+    return;
+  }
   const state = value.room ?? {
     ...snapshot(),
     roles: [],
@@ -570,7 +577,11 @@ else {
     if (process.platform === "darwin") app.setActivationPolicy("accessory");
     if (frameworkRoot) {
       roles = [];
-      framework = createFrameworkClient(frameworkRoot, applyFramework);
+      framework = createFrameworkClient(
+        frameworkRoot,
+        applyFramework,
+        frameworkPort,
+      );
     } else if (liveRoot) {
       live = new LiveRoom(
         room,

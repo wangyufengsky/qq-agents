@@ -68,6 +68,7 @@ const desktop = [
 const components = {
   codex: { network: true },
   antigravity: { network: true },
+  "desktop-home": { network: true, desktop: true },
   "native-qq": { network: true, desktop: true },
   // OpenCLI drives the administrator's logged-in browser through its bridge.
   "app-reader": {

@@ -750,25 +750,24 @@ async function desktopSettings(root, ticket) {
   const active = () => readerAction === "desktop" && contentTicket === ticket;
   root.append(el("p", "", "正在读取桌面小窝设置…"));
   try {
-    const { config, revision } = await api("/api/config");
+    const [current, initial] = await Promise.all([
+      api("/api/config"),
+      api("/api/desktop-home"),
+    ]);
     if (!active()) return;
-    const policy = config.desktopHome ?? {
-      enabled: false,
-      maxTurns: 6,
-      refreshMinutes: 60,
-    };
+    const policy = current.config.desktopHome;
     const form = el("form", "social-settings desktop-settings");
-    const enable = document.createElement("input");
-    enable.type = "checkbox";
-    enable.checked = policy.enabled;
-    const toggle = el("label", "desktop-switch");
-    toggle.append(enable, document.createTextNode("开启桌面小窝"));
+    const controls = el("div", "desktop-actions");
+    const toggle = el("button", "primary");
+    const open = el("button", "primary", "打开 Mac 窗口");
+    toggle.type = open.type = "button";
+    controls.append(toggle, open);
     const fields = [
       ["maxTurns", "共用回合上限", 1, 24],
       ["refreshMinutes", "额度补满间隔（分钟）", 0, 1440],
     ];
     const inputs = {};
-    form.append(toggle);
+    form.append(controls);
     for (const [key, title, min, max] of fields) {
       const label = el("label", "desktop-field", title);
       const input = document.createElement("input");
@@ -790,26 +789,85 @@ async function desktopSettings(root, ticket) {
     );
     const status = el("p", "social-notice");
     status.setAttribute("role", "status");
-    const save = el("button", "primary", "保存设置");
+    const save = el("button", "primary", "保存额度设置");
     save.type = "submit";
     form.append(save, status);
     root.replaceChildren(form);
+    let state = initial;
+    let busy = false;
+    function render() {
+      toggle.textContent = state.enabled ? "关闭桌面小窝" : "开启桌面小窝";
+      open.hidden =
+        !state.enabled || !state.canLaunch || state.window === "open";
+      open.disabled = busy || state.window === "opening";
+      toggle.disabled = save.disabled = busy;
+      status.textContent = state.enabled
+        ? {
+            open: "Mac 窗口已打开。",
+            opening: "正在打开 Mac 窗口…",
+            failed: "Mac 窗口启动失败，可以再试一次。",
+            idle: "桌面小窝已开启。",
+          }[state.window]
+        : "桌面小窝已关闭。";
+    }
+    async function watchWindow() {
+      while (active() && form.isConnected) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        if (!active() || !form.isConnected) return;
+        if (busy || !state.enabled) continue;
+        const previous = state;
+        const next = await api("/api/desktop-home");
+        if (!active() || !form.isConnected) return;
+        if (
+          !busy &&
+          state === previous &&
+          (next.window !== previous.window || next.enabled !== previous.enabled)
+        ) {
+          state = next;
+          render();
+        }
+      }
+    }
+    async function changeEnabled(enabled) {
+      busy = true;
+      render();
+      try {
+        state = await api("/api/desktop-home", { enabled });
+        busy = false;
+        if (active()) render();
+      } catch (error) {
+        busy = false;
+        if (!active()) return;
+        render();
+        status.textContent =
+          error.message === "DESKTOP_VISIT_UNAVAILABLE"
+            ? "请先在管理台恢复运行，再打开桌面小窝。"
+            : error.message;
+      }
+    }
+    toggle.onclick = () => changeEnabled(!state.enabled);
+    open.onclick = () => changeEnabled(true);
+    render();
+    if (state.canLaunch)
+      void watchWindow().catch((error) => {
+        if (active() && form.isConnected) status.textContent = error.message;
+      });
     form.onsubmit = async (event) => {
       event.preventDefault();
-      if (!form.reportValidity()) return;
-      save.disabled = true;
-      const desktopHome = {
-        enabled: enable.checked,
+      if (!form.reportValidity() || busy) return;
+      busy = true;
+      render();
+      const limits = {
         maxTurns: inputs.maxTurns.valueAsNumber,
         refreshMinutes: inputs.refreshMinutes.valueAsNumber,
       };
       try {
         const current = await api("/api/config");
         if (!active()) return;
-        const existing = current.config.desktopHome ?? policy;
+        const existing = current.config.desktopHome;
         if (
-          current.revision !== revision &&
-          JSON.stringify(existing) !== JSON.stringify(policy)
+          existing.maxTurns !== policy.maxTurns ||
+          existing.refreshMinutes !== policy.refreshMinutes
         ) {
           await desktopSettings(root, ticket);
           if (active()) toast("桌面小窝设置已更新，请核对后再保存。");
@@ -818,7 +876,10 @@ async function desktopSettings(root, ticket) {
         await api(
           "/api/config",
           {
-            config: { ...current.config, desktopHome },
+            config: {
+              ...current.config,
+              desktopHome: { ...existing, ...limits },
+            },
             revision: current.revision,
           },
           "PUT",
@@ -830,7 +891,9 @@ async function desktopSettings(root, ticket) {
       } catch (error) {
         if (active()) status.textContent = error.message;
       } finally {
-        save.disabled = false;
+        busy = false;
+        toggle.disabled = save.disabled = false;
+        open.disabled = state.window === "opening";
       }
     };
   } catch (error) {

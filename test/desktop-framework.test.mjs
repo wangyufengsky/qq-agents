@@ -55,7 +55,7 @@ test("management policy drives the authenticated desktop room and hot revocation
     ).status,
     401,
   );
-  assert.deepEqual(await command("sync"), { enabled: false });
+  assert.deepEqual(await command("sync"), { enabled: false, closed: true });
   await setPolicy({ enabled: true, maxTurns: 3, refreshMinutes: 2 });
   const backend = f.runtime.backendConnections.adapter(
     f.runtime.agent("agent-0"),
@@ -108,6 +108,75 @@ test("management policy drives the authenticated desktop room and hot revocation
   assert.deepEqual(qq, ["private:30000"]);
   assert.equal((await command("sync")).room.roles[0].state, "here");
   await setPolicy({ enabled: false, maxTurns: 5, refreshMinutes: 0 });
-  assert.deepEqual(await command("sync"), { enabled: false });
+  assert.deepEqual(await command("sync"), { enabled: false, closed: true });
   assert(closed.length > 0);
+});
+
+test("only the local administrator can launch and close the desktop window", async (t) => {
+  const f = fixture(t, { cfg: config(1) });
+  const token = randomBytes(32).toString("hex");
+  const starts = [];
+  const launcher = {
+    state: "idle",
+    open(port) {
+      starts.push(port);
+      this.state = "opening";
+    },
+    connected() {
+      this.state = "open";
+    },
+    cancel() {
+      this.state = "idle";
+    },
+  };
+  const server = createServer({
+    runtime: f.runtime,
+    token,
+    allowLive: true,
+    desktopLauncher: launcher,
+  });
+  t.after(() => server.close());
+  const port = await server.listen();
+  const base = "http://127.0.0.1:" + port;
+  const control = (enabled, key = token, origin = base) =>
+    fetch(base + "/api/desktop-home", {
+      method: "POST",
+      headers: {
+        "x-admin-token": key,
+        "content-type": "application/json",
+        origin,
+      },
+      body: JSON.stringify({ enabled }),
+    });
+  assert.equal((await control(true, "")).status, 401);
+  assert.equal((await control(true, desktopToken(token))).status, 401);
+  assert.equal((await control(true, token, "http://example.test")).status, 403);
+  assert.equal(f.runtime.config.desktopHome.enabled, false);
+  assert.deepEqual(starts, []);
+  assert.deepEqual(await (await control(true)).json(), {
+    enabled: true,
+    canLaunch: true,
+    window: "opening",
+  });
+  assert.deepEqual(starts, [port]);
+  const client = randomUUID();
+  const sync = () =>
+    fetch(base + "/api/desktop-home/client", {
+      method: "POST",
+      headers: {
+        "x-desktop-home-token": desktopToken(token),
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ client, action: "sync" }),
+    }).then((response) => response.json());
+  assert.equal((await sync()).room.maxTurns, 6);
+  assert.equal((await (await control(true)).json()).window, "open");
+  assert.deepEqual(starts, [port]);
+  assert.deepEqual(await (await control(false)).json(), {
+    enabled: false,
+    canLaunch: true,
+    window: "idle",
+  });
+  assert.deepEqual(await sync(), { enabled: false, closed: true });
+  assert.equal(f.runtime.config.desktopHome.enabled, false);
 });

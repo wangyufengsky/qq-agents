@@ -23,6 +23,7 @@ import { MemoryStore } from "./memory/store.mjs";
 import { MediaStore } from "./tools/media.mjs";
 import { Runtime } from "./core/runtime.mjs";
 import { BackendRegistry } from "./backends/index.mjs";
+import { DesktopLauncher } from "./home/desktop-launcher.mjs";
 import { writeDesktopToken } from "./home/desktop-auth.mjs";
 import { createServer } from "./server.mjs";
 import { Lifecycle } from "./transport/lifecycle.mjs";
@@ -128,6 +129,8 @@ try {
     allowLive,
     githubSecretFile,
     publicPort,
+    desktopLauncher:
+      process.platform === "darwin" ? new DesktopLauncher(root) : undefined,
   }));
   const port = await server.listen(
     option("--port") === undefined
