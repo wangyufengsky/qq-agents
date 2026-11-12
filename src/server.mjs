@@ -159,6 +159,7 @@ export function createServer({
   githubSecretFile,
   exportOptions,
   publicPort,
+  desktopLauncher,
 }) {
   const relayToken = deriveRelayToken(token);
   const desktopKey = desktopToken(token);
@@ -294,7 +295,47 @@ export function createServer({
         );
         if (!local || !equal(req.headers["x-desktop-home-token"], desktopKey))
           return deny("UNAUTHORIZED", 401);
-        return send(runtime.desktopVisits.command(await readBody(4096)));
+        const state = runtime.desktopVisits.command(await readBody(4096));
+        if (state.room) desktopLauncher?.connected();
+        return send(state);
+      }
+      if (url.pathname === "/api/desktop-home") {
+        const local = ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(
+          req.socket.remoteAddress,
+        );
+        if (!equal(req.headers["x-admin-token"], token))
+          return deny("UNAUTHORIZED", 401);
+        // Proxied consoles may save the policy. Only the Mac's loopback can launch a window.
+        const launcher = local ? desktopLauncher : undefined;
+        const desktop = runtime.desktopVisits;
+        const status = () => ({
+          enabled: desktop.configured(),
+          canLaunch: Boolean(launcher),
+          window: desktop.connected() ? "open" : (launcher?.state ?? "idle"),
+        });
+        if (req.method === "GET") return send(status());
+        if (req.method !== "POST") return deny("METHOD", 405);
+        const input = z
+          .object({ enabled: z.boolean() })
+          .strict()
+          .safeParse(await readBody(512));
+        if (!input.success) throw Error("INVALID_REQUEST");
+        const { enabled } = input.data;
+        if (enabled && launcher && !desktop.available())
+          throw Error("DESKTOP_VISIT_UNAVAILABLE");
+        if (enabled !== desktop.configured()) {
+          await runtime.changeConfig(
+            {
+              ...runtime.config,
+              desktopHome: { ...runtime.config.desktopHome, enabled },
+            },
+            runtime.configStore.revision,
+          );
+        }
+        if (!desktop.configured()) desktopLauncher?.cancel();
+        else if (enabled && desktop.available() && !desktop.connected())
+          launcher?.open(server.address().port);
+        return send(status());
       }
       const desktopCapability = req.headers["x-agent-capability"];
       if (

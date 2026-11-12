@@ -6,6 +6,10 @@
 
 ## 未发布
 
+### 在纸页小窝直接开关 Mac 桌面小窝（[#269](https://github.com/wangyufengsky/qq-agents/pull/269)）
+
+- 本机管理员可直接打开 Electron 窗口或关闭桌面小窝。关闭时结束房间并退出客户端。共用回合及补满间隔仍可单独保存，无需迁移数据。
+
 ### 桌面小窝接入框架（[#268](https://github.com/wangyufengsky/qq-agents/pull/268)）
 
 - 管理台纸页小窝新增「开启桌面小窝」与共用回合、补满间隔设置。桌面客户端可沿用已配置的 DSH、Codex 和 Antigravity 角色，支持邀请、主人格申请来访、进出房间与独立桌面聊天。关闭房间后清除面板上的消息和来访角色。

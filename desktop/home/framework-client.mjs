@@ -2,15 +2,16 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
-export function createFrameworkClient(root, onState) {
+export function createFrameworkClient(root, onState, listenPort) {
   const client = randomUUID();
   let queue = Promise.resolve();
   let syncing = false;
   let stopped = false;
   const request = async (action, data) => {
-    const { port = 3210 } = JSON.parse(
-      readFileSync(join(root, "config.json"), "utf8"),
-    );
+    const port =
+      listenPort ??
+      JSON.parse(readFileSync(join(root, "config.json"), "utf8")).port ??
+      3210;
     const token = readFileSync(join(root, "desktop-home-token"), "utf8").trim();
     if (
       !Number.isInteger(port) ||
