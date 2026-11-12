@@ -1,5 +1,6 @@
 // @ts-check
 import { socialSessionPool } from "./social-sessions.mjs";
+import { sessionWasUnchanged } from "./turn-failure.mjs";
 import { SOCIAL_TOOLS } from "../home/social-tool-names.mjs";
 
 const allowed = new Set([
@@ -70,21 +71,26 @@ export async function runNativeSocial(
   if (tools.some((/** @type {any} */ tool) => !permitted.has(tool.name)))
     throw Error("SOCIAL_TOOL_DENIED");
   const names = new Set(tools.map((/** @type {any} */ tool) => tool.name));
-  const pool = socialSessionPool(backend, dispose);
-  const capsule = await pool.acquire(
-    params.binding,
-    backend.sessionSignature?.(tools) || JSON.stringify(tools),
-  );
-  const controller = capsule.controller;
+  const managed = surface === "desktop" ? params.managedContext : undefined;
+  const pool = managed ? null : socialSessionPool(backend, dispose);
+  const capsule =
+    managed ??
+    (await pool.acquire(
+      params.binding,
+      backend.sessionSignature?.(tools) || JSON.stringify(tools),
+    ));
+  const controller = managed ? new AbortController() : capsule.controller;
   const signal = AbortSignal.any([params.signal, controller.signal]);
   let submitted = false,
     consumed = false,
     completed = false,
-    invalidated = false;
+    invalidated = false,
+    unchanged = false;
   /** @type {any} */ let ticket;
   const check = async () => {
     signal.throwIfAborted();
     await params.beforeInput(params.binding);
+    if (!submitted) params.assertCanStart?.();
     signal.throwIfAborted();
   };
   const consume = async () => {
@@ -104,9 +110,12 @@ export async function runNativeSocial(
       tools,
       session: capsule.session,
       signal,
+      onUsage: managed?.onUsage,
+      onBackendTurn: managed?.onBackendTurn,
       saveSession: (/** @type {any} */ value) => {
         if (value) capsule.session = value;
         else invalidated = true;
+        managed?.saveSession(value);
       },
       beforeInputSubmitted: async () => {
         await check();
@@ -129,15 +138,20 @@ export async function runNativeSocial(
       },
     });
     if (!params.shouldStop?.()) await consume();
-    if (capsule.windowId && (invalidated || !capsule.session))
+    if ((managed || capsule.windowId) && (invalidated || !capsule.session))
       throw Error("SOCIAL_TURN_FAILED");
     signal.throwIfAborted();
     completed = true;
     return { status: "completed" };
+  } catch (error) {
+    unchanged = !submitted && sessionWasUnchanged(error);
+    throw error;
   } finally {
     controller.abort();
     params.registerInputConsumer?.(null);
-    await pool.release(capsule, completed);
+    if (pool) await pool.release(capsule, completed);
+    else if (!completed && !unchanged && capsule.session)
+      await dispose(capsule.session, capsule.conversation);
     tools.length = 0;
     ticket = null;
   }

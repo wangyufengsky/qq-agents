@@ -341,7 +341,9 @@ export class ContextLifecycle {
       s = m.state(conversation);
     retireSession(m, conversation, reason, this.runtime.now(), {
       selfVersion: s.loadedSelfVersion,
-      handoff: this.handoff(agentId, conversation),
+      ...(conversation !== "@desktop" && {
+        handoff: this.handoff(agentId, conversation),
+      }),
       details,
     });
   }
@@ -1305,7 +1307,7 @@ export class ContextLifecycle {
     for (const a of r.config.agents)
       for (const row of r.memory.db
         .prepare(
-          "SELECT conversation,value FROM runtime WHERE agent_id=? AND json_extract(value,'$.lifecycle.status')='organizing' AND json_extract(value,'$.session') IS NOT NULL AND (conversation='@subject' OR conversation LIKE 'group:%' OR conversation LIKE 'private:%')",
+          "SELECT conversation,value FROM runtime WHERE agent_id=? AND json_extract(value,'$.lifecycle.status')='organizing' AND json_extract(value,'$.session') IS NOT NULL AND (conversation IN ('@subject','@desktop') OR conversation LIKE 'group:%' OR conversation LIKE 'private:%')",
         )
         .all(a.id)) {
         const s = JSON.parse(row.value);
@@ -1314,7 +1316,8 @@ export class ContextLifecycle {
           s.lifecycle?.status === "organizing" &&
           r.now() - Math.max(s.lastIncomingAt || 0, s.lastTurnEndedAt || 0) >=
             a.contextPolicy.idleMs &&
-          !r.running.has(a.id + "|" + row.conversation)
+          !r.running.has(a.id + "|" + row.conversation) &&
+          !(row.conversation === "@desktop" && r.subjectExecution.busy(a.id))
         )
           this.retire(a.id, row.conversation, "idle-after-pressure");
       }

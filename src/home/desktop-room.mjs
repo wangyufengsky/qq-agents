@@ -27,7 +27,7 @@ export class LiveRoom {
     };
     runner.onKnock?.((knock) => this.receiveKnock(knock));
     this.supported = new Set(runner.roles);
-    this.audienceStart = 0;
+    this.sessions = new Map();
     this.visits = new Map();
     this.invites = new Map();
     this.active = null;
@@ -161,23 +161,25 @@ export class LiveRoom {
     if (!invite(this.room, role)) return;
     const controller = new AbortController();
     this.invites.set(role.id, { controller });
-    const visit = this.newVisit();
-    let admitted = false;
     this.onChange();
+    const session = this.sessionFor(role.id);
     try {
+      if (this.active?.actor === role.id) await this.active.done;
+      if (controller.signal.aborted || this.closed) return;
       const reply = await this.runner.run(
         {
           actor: role.id,
           kind: "invitation",
-          session: visit.session,
+          session,
           people: this.here().map(({ name }) => name),
         },
         controller.signal,
       );
       if (controller.signal.aborted || this.closed) return;
-      if (reply.action === "accept") admitted = this.admit(role, visit);
+      if (reply.action === "accept") this.admit(role);
       else decline(this.room, role);
-    } catch {
+    } catch (error) {
+      if (error.desktopSessionUntouched !== true) this.retire(role.id, session);
       if (
         !controller.signal.aborted &&
         !this.closed &&
@@ -185,26 +187,19 @@ export class LiveRoom {
       )
         this.room.notice = `${role.name}暂时无法回应邀请。`;
     } finally {
-      if (!admitted) this.runner.retire(role.id, visit.session);
       this.invites.delete(role.id);
       this.onChange();
     }
   }
 
-  admit(role, incoming = this.newVisit()) {
-    if (!arrive(this.room, role)) return false;
-    // Only sessions that saw the narrower conversation must be retired.
-    this.audienceStart = this.room.sequence;
+  admit(role) {
+    if (!arrive(this.room, role)) return;
+    // Drop a pending reply addressed to the previous audience. The role's
+    // own transcript stays intact, and a new guest starts at this cursor.
     this.room.waiting = [];
     this.room.turn = null;
-    this.active?.controller.abort();
-    for (const [id, visit] of this.visits) {
-      if (visit.chatStarted) this.resetVisit(id, visit);
-      else visit.cursor = this.audienceStart;
-    }
-    incoming.cursor = this.audienceStart;
-    this.visits.set(role.id, incoming);
-    return true;
+    for (const visit of this.visits.values()) visit.cursor = this.room.sequence;
+    this.visits.set(role.id, { cursor: this.room.sequence });
   }
 
   setDoorMode(mode, now = Date.now()) {
@@ -304,24 +299,19 @@ export class LiveRoom {
     this.onChange();
   }
 
-  newVisit() {
-    return {
-      session: randomUUID(),
-      cursor: this.audienceStart,
-      chatStarted: false,
-    };
+  sessionFor(id) {
+    if (!this.runner.retire) return;
+    if (!this.sessions.has(id)) this.sessions.set(id, randomUUID());
+    return this.sessions.get(id);
   }
 
-  resetVisit(id, visit) {
-    this.runner.retire(id, visit.session);
-    if (this.visits.get(id) === visit) this.visits.set(id, this.newVisit());
+  retire(id, session) {
+    this.runner.retire?.(id, session);
+    if (this.sessions.get(id) === session) this.sessions.delete(id);
   }
 
   leave(role, self = false) {
     if (!leave(this.room, role, Date.now(), self)) return;
-    if (this.active?.actor === role.id) this.active.controller.abort();
-    const visit = this.visits.get(role.id);
-    if (visit) this.runner.retire(role.id, visit.session);
     this.visits.delete(role.id);
     this.onChange();
     void this.advance();
@@ -330,10 +320,6 @@ export class LiveRoom {
   send(text) {
     if (this.closed || !speak(this.room, text, Date.now(), false)) return;
     this.qqDeferred.clear();
-    if (this.active) {
-      this.active.controller.abort();
-      this.resetVisit(this.active.actor, this.active.visit);
-    }
     const named = this.here().find(({ name, title }) =>
       [name, title].some((value) => text.includes(`@${value}`)),
     );
@@ -361,10 +347,10 @@ export class LiveRoom {
     if (!turn) return;
     const actor = turn.actor;
     const visit = this.visits.get(actor);
-    const previouslyStarted = visit.chatStarted;
-    visit.chatStarted = true;
+    const session = this.sessionFor(actor);
     const controller = new AbortController();
-    this.active = { actor, visit, controller };
+    const { promise: done, resolve: drained } = Promise.withResolvers();
+    this.active = { actor, controller, done };
     const cursor = this.room.sequence;
     this.onChange();
     try {
@@ -372,11 +358,12 @@ export class LiveRoom {
         {
           actor,
           kind: "chat",
-          session: visit.session,
+          session,
           people: this.here().map(({ name }) => name),
           messages: this.context(visit.cursor),
         },
         controller.signal,
+        () => this.visits.get(actor) === visit && this.room.turn === turn,
       );
       if (
         controller.signal.aborted ||
@@ -384,7 +371,7 @@ export class LiveRoom {
         this.visits.get(actor) !== visit
       )
         return;
-      visit.cursor = cursor;
+      visit.cursor = Math.max(visit.cursor, cursor);
       if (
         !finishTurn(
           this.room,
@@ -401,14 +388,13 @@ export class LiveRoom {
         );
       if (reply.action === "say") this.addCandidates(actor);
     } catch (error) {
+      if (error.desktopSessionUntouched !== true) this.retire(actor, session);
       if (
         !controller.signal.aborted &&
         !this.closed &&
-        this.visits.get(actor) === visit
+        this.visits.get(actor) === visit &&
+        this.room.turn === turn
       ) {
-        if (error.desktopSessionUntouched === true)
-          visit.chatStarted = previouslyStarted;
-        else this.resetVisit(actor, visit);
         finishTurn(this.room, turn, Date.now(), "");
         const role = this.room.roles.find(({ id }) => id === actor);
         if (error.message === "DESKTOP_QQ_PRIORITY") {
@@ -426,6 +412,7 @@ export class LiveRoom {
       }
     } finally {
       this.active = null;
+      drained();
       this.onChange();
       void this.advance();
     }

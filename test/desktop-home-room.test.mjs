@@ -13,9 +13,9 @@ function harness() {
     room,
     {
       roles: ["dragon", "cat"],
-      run(request, signal) {
+      run(request, signal, canStart) {
         return new Promise((resolve, reject) =>
-          jobs.push({ request, signal, resolve, reject }),
+          jobs.push({ request, signal, canStart, resolve, reject }),
         );
       },
       retire(actor, session) {
@@ -72,7 +72,7 @@ test("desktop roles decide invitations and share six charged runs, including sil
   assert.equal(room.budget, 5);
 });
 
-test("new arrival retires old audience sessions and cannot be given earlier messages", async () => {
+test("new arrival does not rotate other sessions or receive earlier messages", async () => {
   const { room, live, jobs, retired, settle, arrive } = harness();
   await arrive(dragon);
   const invitation = jobs.at(-1).request;
@@ -80,14 +80,14 @@ test("new arrival retires old audience sessions and cannot be given earlier mess
   const old = jobs.at(-1);
   assert.equal(old.request.session, invitation.session);
   await arrive(cat);
-  assert(old.signal.aborted);
-  assert(retired.some(({ session }) => session === old.request.session));
+  assert.equal(old.signal.aborted, false);
+  assert.deepEqual(retired, []);
   await settle(old, { action: "say", text: "迟到的旧回复" });
   assert(!room.messages.some(({ text }) => text === "迟到的旧回复"));
 
   live.send("新受众的第一句");
   const next = jobs.at(-1);
-  assert.notEqual(next.request.session, old.request.session);
+  assert.equal(next.request.session, old.request.session);
   assert.deepEqual(next.request.messages, [
     { speaker: "管理员", text: "新受众的第一句" },
   ]);
@@ -97,14 +97,15 @@ test("new arrival retires old audience sessions and cannot be given earlier mess
   assert(!peer.request.messages.some(({ text }) => text === "旧受众的暗号"));
 });
 
-test("leaving cancels the role in flight, preserves the other role, and rejoins cleanly", async () => {
+test("leaving fences an in-flight reply and rejoining skips missed chat in the same session", async () => {
   const { room, live, jobs, settle, arrive } = harness();
   await arrive(dragon);
   await arrive(cat);
   live.send("@龙 你先说");
   const leaving = jobs.at(-1);
   live.leave(dragon);
-  assert(leaving.signal.aborted);
+  assert.equal(leaving.signal.aborted, false);
+  assert.equal(leaving.canStart(), false);
   await settle(leaving, { action: "say", text: "迟到" });
   assert(!room.messages.some(({ text }) => text === "迟到"));
   assert.equal(jobs.at(-1).request.actor, "cat");
@@ -116,7 +117,7 @@ test("leaving cancels the role in flight, preserves the other role, and rejoins 
   await arrive(dragon);
   live.send("@龙 又见面了");
   const returning = jobs.at(-1);
-  assert.notEqual(returning.request.session, leaving.request.session);
+  assert.equal(returning.request.session, leaving.request.session);
   assert(
     !returning.request.messages.some(({ text }) =>
       text.includes("只有猫能听见"),
@@ -140,12 +141,12 @@ test("cancelled invitations cannot join and a new admin message replaces an acti
   live.send("第一条");
   const previous = jobs.at(-1);
   live.send("第二条");
-  assert(previous.signal.aborted);
+  assert.equal(previous.signal.aborted, false);
   assert.equal(room.budget, 6);
   await settle(previous, { action: "say", text: "迟到的第一条回复" });
   assert.equal(room.budget, 5);
   assert(!room.messages.some(({ text }) => text === "迟到的第一条回复"));
-  assert.notEqual(jobs.at(-1).request.session, previous.request.session);
+  assert.equal(jobs.at(-1).request.session, previous.request.session);
   assert(jobs.at(-1).request.messages.some(({ text }) => text === "第二条"));
 });
 

@@ -6,9 +6,9 @@
 
 ## 未发布
 
-### 减少桌面小窝重复创建会话（[#270](https://github.com/wangyufengsky/qq-agents/pull/270)）
+### 接续每个角色的桌面会话（[#270](https://github.com/wangyufengsky/qq-agents/pull/270)）
 
-- 角色接受邀请后沿用原会话开始桌面聊天，QQ 在桌面模型回合开始前取得优先权时也保留已有会话。成员加入时继续隔开进门前的聊天。DSH 桌面会话进入独立工作区，无需迁移数据。
+- 每个角色独立接续一个桌面会话。进出房间只控制新消息投递，离席期间的消息不补发。会话沿用框架的容量整理和退役，DSH 桌面会话使用独立工作区。无需迁移数据库。
 
 ### 在纸页小窝直接开关 Mac 桌面小窝（[#269](https://github.com/wangyufengsky/qq-agents/pull/269)）
 

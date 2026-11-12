@@ -6,6 +6,7 @@ import {
   codexTurnFailure,
   BackendTurnFailure,
   beforeSessionInput,
+  sessionWasUnchanged,
   SessionUnavailableFailure,
 } from "./turn-failure.mjs";
 import path from "node:path";
@@ -574,7 +575,8 @@ export class CodexBackend {
         e.sessionReusable = await this.recoveryReady(threadId, e).catch(
           () => false,
         );
-      if (!e.sessionReusable || signal.aborted) saveSession(null);
+      if ((!e.sessionReusable && !sessionWasUnchanged(e)) || signal.aborted)
+        saveSession(null);
       throw e;
     } finally {
       signal.removeEventListener("abort", abort);
