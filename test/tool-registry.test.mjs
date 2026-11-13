@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { TOOL_NAMES, toolSpecs, dispatchTool } from "../src/tools/index.mjs";
 import {
+  DESKTOP_ACTIVITY_DECISION,
   DESKTOP_DECISION,
   FUNCTIONAL_AGENT_RESULT,
 } from "../src/tools/names.mjs";
@@ -12,7 +13,12 @@ test("every advertised tool has exactly one schema and handler, and unknown/prot
   assert.deepEqual(
     toolSpecs().map((tool) => tool.name),
     Object.keys(registry).filter(
-      (name) => ![FUNCTIONAL_AGENT_RESULT, DESKTOP_DECISION].includes(name),
+      (name) =>
+        ![
+          FUNCTIONAL_AGENT_RESULT,
+          DESKTOP_ACTIVITY_DECISION,
+          DESKTOP_DECISION,
+        ].includes(name),
     ),
   );
   for (const name of TOOL_NAMES) {

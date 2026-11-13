@@ -1,3 +1,4 @@
+import { DesktopActivity } from "./desktop-activity.mjs";
 import { randomUUID } from "node:crypto";
 import {
   addMessage,
@@ -28,6 +29,8 @@ export class LiveRoom {
     runner.onKnock?.((knock) => this.receiveKnock(knock));
     this.supported = new Set(runner.roles);
     this.sessions = new Map();
+    if (runner.activity)
+      this.activity = new DesktopActivity(runner.activityStarts);
     this.visits = new Map();
     this.invites = new Map();
     this.active = null;
@@ -109,7 +112,12 @@ export class LiveRoom {
       maxTurns: room.maxTurns,
       minutes: room.minutes,
       nextRefill: room.nextRefill,
-      thinking: room.turn?.actor ?? null,
+      thinking:
+        room.turn?.kind === "activity" ? null : (room.turn?.actor ?? null),
+      ...(this.activity && {
+        activityActor: room.turn?.kind === "activity" ? room.turn.actor : null,
+        activityPaused: this.activity.paused,
+      }),
       bubbles: room.bubbles,
       notice: room.notice,
     };
@@ -221,6 +229,7 @@ export class LiveRoom {
     this.visits.set(role.id, {
       cursor: this.room.archiveSeq ?? this.room.sequence,
     });
+    this.activity?.arrive(this.visits.get(role.id), this.runner.now());
   }
 
   setDoorMode(mode, now = Date.now()) {
@@ -334,6 +343,7 @@ export class LiveRoom {
   leave(role, self = false) {
     if (!leave(this.room, role, Date.now(), self)) return;
     this.visits.delete(role.id);
+    if (this.active?.actor === role.id) this.cancelActivity();
     this.onChange();
     void this.advance();
   }
@@ -341,6 +351,7 @@ export class LiveRoom {
   send(text, attachments = []) {
     if (this.closed || !speak(this.room, text, Date.now(), false, attachments))
       return false;
+    this.cancelActivity();
     this.qqDeferred.clear();
     const named = this.here().find(({ name, title }) =>
       [name, title].some((value) => text.includes(`@${value}`)),
@@ -356,6 +367,79 @@ export class LiveRoom {
     if (this.knock && now >= this.knock.expiresAt) this.answerKnock(false);
     if (this.doorMode === "welcome" && now >= this.nextOpportunityAt)
       void this.offerOpportunity({ now });
+  }
+
+  cancelActivity() {
+    if (this.active?.kind === "activity") {
+      if (this.room.turn?.kind === "activity") this.room.turn = null;
+      this.active.controller.abort(Error("DESKTOP_VISIT_UNAVAILABLE"));
+    }
+  }
+
+  pauseActivity(paused) {
+    if (!this.activity) return;
+    this.activity.paused = paused;
+    if (paused) this.cancelActivity();
+    this.onChange();
+  }
+
+  async advanceActivity(now) {
+    if (
+      !this.activity ||
+      this.closed ||
+      this.active ||
+      this.room.turn ||
+      this.room.waiting.length
+    )
+      return;
+    const turn = this.activity.next(
+      this.room.roles,
+      this.visits,
+      now,
+      this.runner.activity,
+    );
+    if (!turn) return;
+    const visit = this.visits.get(turn.actor);
+    const controller = new AbortController();
+    const { promise: done, resolve: drained } = Promise.withResolvers();
+    this.room.turn = turn;
+    this.active = { actor: turn.actor, kind: turn.kind, controller, done };
+    const isCurrent = () =>
+      !this.closed &&
+      !this.activity.paused &&
+      this.visits.get(turn.actor) === visit &&
+      this.room.turn === turn &&
+      this.runner.activityCurrent(turn.actor);
+    this.onChange();
+    try {
+      const reply = await this.runner.run(
+        {
+          ...turn,
+          people: this.here().map(({ name }) => name),
+          messages: [],
+          isCurrent,
+          onBodyResult: (result) =>
+            this.activity.finish(visit, { lastResult: result }),
+        },
+        controller.signal,
+        isCurrent,
+      );
+      if (!isCurrent() || controller.signal.aborted) return;
+      this.activity.finish(visit, { reply, now: this.runner.now() });
+      if (reply.action === "leave")
+        this.leave(
+          this.room.roles.find(({ id }) => id === turn.actor),
+          true,
+        );
+    } catch {
+      // Admission was already counted; a failure must wait for the next cooldown.
+    } finally {
+      if (this.room.turn === turn) this.room.turn = null;
+      this.active = null;
+      drained();
+      this.onChange();
+      void this.advance();
+    }
   }
 
   interval(minutes) {

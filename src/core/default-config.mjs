@@ -34,6 +34,7 @@ export function defaultConfig() {
       enabled: false,
       toolRoles: [],
       bodyControlRoles: [],
+      activityRoles: [],
       screenView: { enabled: false },
       nativeControl: { enabled: false },
       browserControl: { enabled: false },

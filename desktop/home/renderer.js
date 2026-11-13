@@ -38,6 +38,7 @@ function button(className, text, label = text) {
 }
 
 const activityLabels = {
+  move: "正在移动",
   qq: "回复 QQ",
   chat: "桌边聊天",
   observe: "观察桌面",
@@ -168,7 +169,7 @@ function floating() {
       "aria-label",
       `${role.name} · ${activityLabels[activity]} · 打开聊天`,
     );
-    const asset = `art/actions/${roleArt}-${activity}.webp`;
+    const asset = `art/actions/${roleArt}-${activity === "move" ? "idle" : activity}.webp`;
     if (sprite.getAttribute("src") !== asset) sprite.src = asset;
     const message =
       data.bubbles?.[id]?.text ?? (data.thinking === id ? "正在想…" : "");
@@ -192,6 +193,13 @@ function panel() {
   let attaching = false;
   const settings = select(".settings");
   const turnStatus = select(".turn-status");
+  const activityControl = button("quiet", "暂停自主活动");
+  activityControl.hidden = true;
+  activityControl.addEventListener("click", () => {
+    if (room?.activityEnabled)
+      window.nest.act("activity-pause", !room.activityPaused);
+  });
+  turnStatus.after(activityControl);
   const settingsForm = select(".timer-settings");
   const minutes = select("#minutes");
   const timerOn = select("#timer-on");
@@ -575,7 +583,16 @@ function panel() {
     updateBrowserControl();
     updateThread();
     const thinking = here.find(({ id }) => id === room.thinking);
-    const status = thinking ? `${thinking.name}正在想…` : "";
+    const active = here.find(({ id }) => id === room.activityActor);
+    const status = thinking
+      ? `${thinking.name}正在想…`
+      : active
+        ? `${active.name}正在自主活动…`
+        : "";
+    activityControl.hidden = !room.activityEnabled;
+    const activityLabel = room.activityPaused ? "继续自主活动" : "暂停自主活动";
+    if (activityControl.textContent !== activityLabel)
+      activityControl.textContent = activityLabel;
     turnStatus.hidden = !status;
     if (turnStatus.textContent !== status) turnStatus.textContent = status;
   }

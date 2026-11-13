@@ -11,6 +11,7 @@ import { SOCIAL_TOOLS } from "../home/social-tool-names.mjs";
 import { subjectInboxEnabled } from "../core/role-rest.mjs";
 import { z } from "zod";
 import {
+  DESKTOP_ACTIVITY_DECISION,
   DESKTOP_DECISION,
   DESKTOP_HISTORY,
   DESKTOP_MEMORY_TOOLS,
@@ -97,6 +98,7 @@ export function toolAvailable(agent, name, conversation, config) {
   if (name === DESKTOP_VISIT_TOOL || name === DESKTOP_INVITATION_TOOL)
     return conversation === "@subject";
   if (
+    name === DESKTOP_ACTIVITY_DECISION ||
     name === DESKTOP_DECISION ||
     name === DESKTOP_HISTORY ||
     name === FUNCTIONAL_AGENT_RESULT

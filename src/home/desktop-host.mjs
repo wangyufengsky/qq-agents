@@ -4,6 +4,8 @@ import { SessionPreparationFailure } from "../backends/turn-failure.mjs";
 import { recallBoundary } from "../core/recall-boundary.mjs";
 import { containsCredential } from "../core/secrets.mjs";
 import { roleBackendConfig } from "../core/functional-agents.mjs";
+import { roleTurnBusy } from "../core/role-rest.mjs";
+import { DESKTOP_ACTIVITY_TIMEOUT } from "./desktop-activity.mjs";
 import { rhythmStatus } from "../core/rhythm.mjs";
 import {
   DesktopAttachments,
@@ -14,7 +16,11 @@ import { DesktopInvitations } from "./desktop-invitations.mjs";
 import { LiveRoom } from "./desktop-room.mjs";
 import { createRoom, roles as art } from "./desktop-room-state.mjs";
 import { beginDesktopContext } from "./desktop-context.mjs";
-import { DESKTOP_CONVERSATION, readDecision } from "./desktop-decision.mjs";
+import {
+  DESKTOP_ACTIVITY_CONVERSATION,
+  DESKTOP_CONVERSATION,
+  readDecision,
+} from "./desktop-decision.mjs";
 import { DESKTOP_ADMINISTRATOR, DesktopArchive } from "./desktop-archive.mjs";
 import { DesktopScreen } from "./desktop-screen.mjs";
 import { DesktopBody } from "./desktop-body.mjs";
@@ -33,6 +39,7 @@ const requestSchema = z
       "door-mode",
       "knock-answer",
       "disconnect",
+      "activity-pause",
       "screen-grant",
       "screen-revoke",
       "native-grant",
@@ -44,6 +51,12 @@ const requestSchema = z
       .union([
         z.string().max(1000),
         z.boolean(),
+        z
+          .object({
+            visible: z.boolean(),
+            dragged: z.array(z.string().min(1).max(64)).max(24),
+          })
+          .strict(),
         localGrantSchema,
         localRevokeSchema,
         browserGrantSchema,
@@ -52,6 +65,7 @@ const requestSchema = z
   })
   .strict();
 const CLIENT_LEASE = 15_000;
+const ACTIVITY_VISIBILITY_LEASE = 2_500;
 const defaultArt = { dsh: "fish", codex: "dragon", antigravity: "cat" };
 
 function residentArt(agent, backend) {
@@ -90,6 +104,7 @@ export class DesktopHost {
     this.runtime = runtime;
     this.archive = new DesktopArchive(runtime.memory);
     this.visits = new Map();
+    this.activityStarts = new Map();
     this.invitations = new DesktopInvitations(this);
     this.screen = new DesktopScreen(this);
     this.native = new DesktopNative(this);
@@ -197,7 +212,7 @@ export class DesktopHost {
     );
   }
 
-  refresh() {
+  refresh({ syncingClient } = {}) {
     const now = this.runtime.now();
     if (!this.configured() || !this.operational()) {
       this.reset();
@@ -213,6 +228,7 @@ export class DesktopHost {
       this.reset();
     // Maintenance keeps existing turn capabilities alive and stops admission.
     if (this.runtime.updateMaintenance) {
+      this.live?.cancelActivity();
       this.body.clear();
       void this.browser.clear();
       return Boolean(this.live);
@@ -240,11 +256,34 @@ export class DesktopHost {
         this.live.interval(policy.refreshMinutes);
       for (const [id, message] of Object.entries(room.bubbles))
         if (now - message.now > 4900) delete room.bubbles[id];
+      if (
+        this.live.active?.kind === "activity" &&
+        syncingClient !== this.client.id &&
+        !this.activityCurrent(this.live.active.actor)
+      )
+        this.live.cancelActivity();
       this.live.tick(now);
       this.invitations.dispatch();
       this.browser.state();
     }
     return true;
+  }
+
+  activityCurrent(id) {
+    const { runtime } = this;
+    if (
+      !this.connected() ||
+      !(this.client.activityVisibleUntil > runtime.now()) ||
+      !runtime.config.desktopHome.activityRoles.includes(id)
+    )
+      return false;
+    const agent = runtime.agent(id);
+    const rhythm = rhythmStatus(runtime, agent).state;
+    return (
+      rhythm !== "sleeping" &&
+      rhythm !== "rest-pending" &&
+      !runtime.blockers(agent, DESKTOP_ACTIVITY_CONVERSATION).length
+    );
   }
 
   open(client) {
@@ -307,6 +346,15 @@ export class DesktopHost {
       room,
       {
         roles: ids,
+        now: () => this.runtime.now(),
+        activityStarts: this.activityStarts,
+        activity: (id) =>
+          this.activityCurrent(id) &&
+          !roleTurnBusy(this.runtime, id) &&
+          !this.runtime.games.busy(this.runtime.agent(id).backendId) &&
+          !this.visit(id).qqClaims &&
+          !this.visit(id).pendingQq(),
+        activityCurrent: (id) => this.activityCurrent(id),
         subjectActors: ids,
         requestInvitation: (request, signal) =>
           this.invitations.request(request, signal),
@@ -367,7 +415,9 @@ export class DesktopHost {
     const parsed = requestSchema.safeParse(input);
     if (!parsed.success) throw Error("INVALID_REQUEST");
     const { client, action, data } = parsed.data;
-    if (!this.refresh())
+    if (
+      !this.refresh({ syncingClient: action === "sync" ? client : undefined })
+    )
       return this.configured()
         ? { enabled: false }
         : { enabled: false, closed: true };
@@ -386,6 +436,25 @@ export class DesktopHost {
     const { live } = this;
     if (this.runtime.updateMaintenance)
       return { enabled: true, room: this.roomSnapshot() };
+    if (action === "sync") {
+      const visible = typeof data === "boolean" ? data : data?.visible;
+      this.client.activityVisibleUntil =
+        visible === true ? this.runtime.now() + ACTIVITY_VISIBILITY_LEASE : 0;
+      if (data && typeof data === "object" && "visible" in data) {
+        const moved = new Set(data.dragged);
+        for (const id of moved)
+          live.activity.defer(live.visits.get(id), this.runtime.now());
+        if (moved.has(live.active?.actor)) live.cancelActivity();
+      }
+      if (
+        live.active?.kind === "activity" &&
+        !this.activityCurrent(live.active.actor)
+      )
+        live.cancelActivity();
+      if (visible === true) void live.advanceActivity(this.runtime.now());
+    }
+    if (action === "activity-pause" && typeof data === "boolean")
+      live.pauseActivity(data);
     const role = live.room.roles.find(({ id }) => id === data);
     if (action === "invite" && role) void live.invite(role);
     if (action === "leave" && role) live.leave(role);
@@ -446,6 +515,12 @@ export class DesktopHost {
         else if (id === viewing) activity = "observe";
         else if (qq.has(id)) activity = "qq";
         else if (
+          room.activityActor === id &&
+          this.body.pending.get(id)?.claimed &&
+          this.body.pending.get(id)?.request.action.type === "move"
+        )
+          activity = "move";
+        else if (
           (desktop && !desktop.controller.signal.aborted) ||
           room.thinking === id ||
           room.bubbles[id]
@@ -466,6 +541,11 @@ export class DesktopHost {
         screenView: this.screen.state(),
         nativeControl: this.native.state(),
         browserControl: this.browser.state(),
+        activityEnabled: this.live
+          .here()
+          .some(({ id }) =>
+            this.runtime.config.desktopHome.activityRoles.includes(id),
+          ),
         attachmentInput: this.attachments.availability(
           this.runtime.config,
           this.live.here(),
@@ -515,13 +595,21 @@ export class DesktopHost {
 
   async runModel(request, signal, canStart) {
     const { actor, kind } = request;
+    const activity = kind === "activity";
+    const conversation = activity
+      ? DESKTOP_ACTIVITY_CONVERSATION
+      : DESKTOP_CONVERSATION;
     const runtime = this.runtime;
     const agent = runtime.agent(actor);
     const current = this.live;
     const controller = new AbortController();
     const external = AbortSignal.any([
       signal,
-      AbortSignal.timeout(agent.behavior.turnTimeoutMs),
+      AbortSignal.timeout(
+        activity
+          ? Math.min(agent.behavior.turnTimeoutMs, DESKTOP_ACTIVITY_TIMEOUT)
+          : agent.behavior.turnTimeoutMs,
+      ),
     ]);
     const abort = () => controller.abort(external.reason);
     if (external.aborted) abort();
@@ -532,7 +620,8 @@ export class DesktopHost {
       if (
         this.live !== current ||
         !this.connected(ctx) ||
-        runtime.blockers(agent, DESKTOP_CONVERSATION, ctx).length
+        runtime.blockers(agent, conversation, ctx).length ||
+        (activity && request.isCurrent?.() === false)
       )
         throw Error("DESKTOP_VISIT_UNAVAILABLE");
       if (ctx?.backendInputEpoch !== ctx?.inputEpoch)
@@ -550,12 +639,12 @@ export class DesktopHost {
         evidence: [...ctx.privateRead],
       });
     };
-    const key = actor + "|" + DESKTOP_CONVERSATION;
+    const key = actor + "|" + conversation;
     const done = Promise.withResolvers();
     try {
       check();
       release = this.visit(actor).beginDesktop(controller);
-      ctx = runtime.makeContext(actor, DESKTOP_CONVERSATION, {
+      ctx = runtime.makeContext(actor, conversation, {
         controller,
         assertCurrent: () => {
           check();
@@ -572,19 +661,23 @@ export class DesktopHost {
         },
       });
       // Only the new input prepared for this visit can authorize body actions.
-      ctx.desktopBodyInputAt = request.messages?.findLast(
-        ({ speakerType }) => speakerType === "administrator",
-      )?.now;
+      ctx.desktopBodyInputAt = activity
+        ? request.startedAt
+        : request.messages?.findLast(
+            ({ speakerType }) => speakerType === "administrator",
+          )?.now;
+      if (activity) ctx.onDesktopBodyResult = request.onBodyResult;
       ctx.done = done.promise;
       runtime.running.set(key, ctx);
       const backend = runtime.backendConnections.adapter(agent);
       if (!backend.runDesktop) throw Error("DESKTOP_VISIT_UNAVAILABLE");
-      attachmentInput = this.attachments?.project(
-        request.messages || [],
-        runtime.config,
-        agent,
-        this.live?.visits.get(actor),
-      );
+      if (!activity)
+        attachmentInput = this.attachments?.project(
+          request.messages || [],
+          runtime.config,
+          agent,
+          this.live?.visits.get(actor),
+        );
       exchange = beginDesktopContext(
         runtime,
         ctx,

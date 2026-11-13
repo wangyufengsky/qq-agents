@@ -21,6 +21,7 @@
     "enabled": false,
     "toolRoles": [],
     "bodyControlRoles": [],
+    "activityRoles": [],
     "screenView": {
       "enabled": false
     },
