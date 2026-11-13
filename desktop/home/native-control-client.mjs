@@ -56,6 +56,11 @@ export class NativeControlClient {
     this.#closeScope();
   }
 
+  stopWindowTask(id) {
+    if (this.#pending?.windowTaskId === id || this.#scope?.windowTaskId === id)
+      this.#closeScope();
+  }
+
   async grant({ roomEpoch, agentId, source }) {
     const data = { roomEpoch, agentId, grantId: randomUUID() };
     const grant = { ...data, source, pending: true };
@@ -133,7 +138,11 @@ export class NativeControlClient {
     const identity = { roomEpoch, grantId, requestId };
     const controller = new AbortController();
     const { signal } = controller;
-    this.#pending = { controller, requestId };
+    this.#pending = {
+      controller,
+      requestId,
+      windowTaskId: request.windowTaskId,
+    };
     const isCurrent = () =>
       this.#grant === grant &&
       !signal.aborted &&
@@ -166,6 +175,7 @@ export class NativeControlClient {
         if (!isCurrent()) return;
         this.#scope ??= {
           turnId,
+          windowTaskId: request.windowTaskId,
           handle: this.#driver.open(grant.source),
         };
         const { handle } = this.#scope;

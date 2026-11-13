@@ -510,8 +510,13 @@ function controllableResident(agentId, roomEpoch, visitId) {
 }
 
 function stopLocalWindowTask(reason, agentId) {
-  if (!agentId || approachedWindowTask?.agentId === agentId)
+  const task = approachedWindowTask;
+  if (task && (!agentId || task.agentId === agentId)) {
     approachedWindowTask = undefined;
+    if (screenCapture?.windowTaskId === task.id)
+      screenCapture.controller.abort();
+    nativeControl?.stopWindowTask(task.id);
+  }
   for (const entry of entries.values()) {
     if (agentId && entry.id !== agentId) continue;
     const cancel = entry.localComboCancel;
@@ -675,7 +680,12 @@ function screenRequest(value, action) {
   grant.lastRequest = request.requestId;
   const { roomEpoch, grantId, requestId, maxEdge, maxBytes } = request;
   const controller = new AbortController();
-  screenCapture = { controller, requestId, observe };
+  screenCapture = {
+    controller,
+    requestId,
+    observe,
+    windowTaskId: request.windowTaskId,
+  };
   const isCurrent = () =>
     (observe ? observationCurrent(grant) : screenGrant === grant) &&
     !controller.signal.aborted &&

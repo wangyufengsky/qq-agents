@@ -260,3 +260,31 @@ test("a window task checks the original arrival again after claiming native disp
   assert.deepEqual(scopes[0].mutations, []);
   assert.equal(results[0].result, undefined);
 });
+
+test("local stop cancels a window task's in-flight result but preserves its window grant", async () => {
+  const claim = Promise.withResolvers();
+  const { claims, client, grant, results, roomEpoch, scopes, sync } = fixture({
+    acceptClaim: claim.promise,
+    verifyTarget: () => true,
+  });
+  const grantId = await grant();
+  sync("turn", {
+    roomEpoch,
+    grantId,
+    requestId: "window-task-stop",
+    turnId: "turn",
+    windowTaskId: "window-task",
+    action: { type: "click", ref: "fixture" },
+  });
+  await setImmediate();
+  assert.equal(claims.length, 1);
+  client.stopWindowTask("old-task");
+  assert.equal(scopes[0].closed, false);
+  client.stopWindowTask("window-task");
+  claim.resolve(true);
+  await setImmediate();
+  assert.equal(scopes[0].closed, true);
+  assert.deepEqual(scopes[0].mutations, []);
+  assert.deepEqual(results, []);
+  assert.equal(client.selectedWindow("fish", roomEpoch).grantId, grantId);
+});
