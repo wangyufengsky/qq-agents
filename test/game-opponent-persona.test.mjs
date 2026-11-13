@@ -56,6 +56,9 @@ function act(f, roomId, type, payload = {}, extra = {}) {
   });
 }
 async function aiTurn(f) {
+  // The in-process host has no tick to renew its short access lease.
+  const now = f.runtime.now();
+  f.runtime.now = () => now;
   const { roomId } = await create(f);
   const room = f.k.store.room(roomId),
     owner = f.k.actor(room.owner),
