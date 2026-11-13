@@ -111,9 +111,7 @@ export class DesktopBody {
     const { live, client } = host;
     const visit = live?.visits.get(ctx.agentId);
     const turn = live?.room.turn;
-    const input = live?.room.messages.findLast(
-      ({ speakerType }) => speakerType === "administrator",
-    );
+    const inputAt = ctx.desktopBodyInputAt;
     if (
       ctx.runtimeKind !== "desktop" ||
       ctx.conversation !== DESKTOP_CONVERSATION ||
@@ -122,7 +120,7 @@ export class DesktopBody {
       !visit ||
       turn?.actor !== agent.id ||
       host.runtime.running.get(agent.id + "|" + DESKTOP_CONVERSATION) !== ctx ||
-      !input ||
+      !Number.isFinite(inputAt) ||
       !host.runtime.toolsForContext(agent, ctx).includes(DESKTOP_BODY_CONTROL)
     )
       throw Error("DESKTOP_BODY_UNAVAILABLE");
@@ -172,7 +170,7 @@ export class DesktopBody {
         roomEpoch: live.room.epoch,
         commandId: randomUUID(),
         expiresAt: Date.now() + ACTION_TIMEOUT,
-        inputAt: input.now,
+        inputAt,
         action,
       },
       abort: () => this.invalidate(entry, "inactive"),

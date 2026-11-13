@@ -571,6 +571,10 @@ export class DesktopHost {
           return { status: "recorded" };
         },
       });
+      // Only the new input prepared for this visit can authorize body actions.
+      ctx.desktopBodyInputAt = request.messages?.findLast(
+        ({ speakerType }) => speakerType === "administrator",
+      )?.now;
       ctx.done = done.promise;
       runtime.running.set(key, ctx);
       const backend = runtime.backendConnections.adapter(agent);

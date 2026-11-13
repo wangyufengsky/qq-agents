@@ -14,10 +14,13 @@ const move = { type: "move", target: "door", requestId: "move-1" };
 const position = { x: -530, y: 60, displayId: 4 };
 const completed = { status: "completed", position };
 
-async function setup(t, { enabled = true } = {}) {
+async function setup(t, { enabled = true, lateVisitor = false } = {}) {
   const cfg = config(2);
   cfg.desktopHome.enabled = true;
-  if (enabled) cfg.desktopHome.bodyControlRoles = ["agent-0"];
+  if (enabled)
+    cfg.desktopHome.bodyControlRoles = lateVisitor
+      ? ["agent-0", "agent-1"]
+      : ["agent-0"];
   const turns = [];
   let host;
   t.after(() => {
@@ -45,20 +48,26 @@ async function setup(t, { enabled = true } = {}) {
   await act("sync");
   for (const agent of runtime.config.agents) {
     const role = host.live.room.roles.find(({ id }) => id === agent.id);
-    host.live.room.members[role.id] = "invited";
-    host.live.admit(role);
+    if (!lateVisitor || role.id === "agent-0") {
+      host.live.room.members[role.id] = "invited";
+      host.live.admit(role);
+    }
     const backend = runtime.backendConnections.adapter(agent);
     backend.runDesktop = async (params) => {
       params.beforeInput();
       params.onInputSubmitted();
       const gate = Promise.withResolvers();
       turns.push({
+        actor: agent.id,
         call: (args) => params.callTool("desktop_body_control", args),
         gate,
       });
-      await gate.promise;
+      const decision = await gate.promise;
       if (!params.signal.aborted)
-        await params.callTool("desktop_room_decide", { action: "silent" });
+        await params.callTool(
+          "desktop_room_decide",
+          decision ?? { action: "silent" },
+        );
     };
   }
   const start = async () => {
@@ -110,6 +119,25 @@ test("only an opted-in desktop role can submit actions", async (t) => {
   const { call } = await start();
   await assert.rejects(call({ ...move, agentId: "agent-1" }));
   assert.equal(await request(), undefined);
+});
+
+test("a new visitor cannot use a previous administrator message as a body command", async (t) => {
+  const { host, turns, start } = await setup(t, { lateVisitor: true });
+  const first = await start();
+  const role = host.live.room.roles.find(({ id }) => id === "agent-1");
+  host.live.room.members[role.id] = "invited";
+  host.live.admit(role);
+  first.gate.resolve({ action: "say", text: "你好" });
+  for (let i = 0; i < 8 && turns.length < 2; i++) await tick();
+  const visitor = turns.at(-1);
+  assert.equal(visitor.actor, "agent-1");
+  const submitted = visitor.call(move).catch((error) => error);
+  await tick();
+  assert.equal(host.body.pending.size, 0);
+  assert.match(
+    (await submitted).message,
+    /DESKTOP_BODY_UNAVAILABLE|TOOL_DISABLED/,
+  );
 });
 
 test("body receipts wait for the client and duplicate calls share the result", async (t) => {
