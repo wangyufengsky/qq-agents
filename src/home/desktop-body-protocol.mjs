@@ -82,7 +82,7 @@ const spaceSchema = z
           .strict(),
       )
       .min(1)
-      .max(16),
+      .max(32),
     door: geometry.optional(),
     self: geometry.extend({
       facing,
@@ -130,6 +130,7 @@ export const bodyResultSchema = bodyClaimSchema
             "display-changed",
             "target-unavailable",
             "target-blocked",
+            "target-unreachable",
             "stale-layout",
             "disconnect",
             "position-unconfirmed",

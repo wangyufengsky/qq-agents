@@ -112,6 +112,7 @@ let bodyInputAfter = 0;
 let pointerTimer;
 const manuallyMoved = new Set();
 let bodyProtocol = false;
+let bodyCrossDisplay = false;
 let observationProtocol = false;
 let recoveryPositionPending = false;
 let observationEnded;
@@ -133,7 +134,7 @@ const space = new DesktopSpace({
               visit: entry.bodyVisit,
               bounds,
               facing: entry.facing ?? "right",
-              pose: entry.pose ?? "stand",
+              pose: entry.pose ?? "sit",
               action: entry.bodyAction,
             },
           ]
@@ -149,17 +150,24 @@ const spaceEditor = createSpaceEditor({
     space.invalidate();
     bodyInputAfter = Date.now();
     body.clear("stale-layout");
+    for (const entry of entries.values()) stopLocalSeat(entry, "stale-layout");
   },
 });
 
 function visibleBounds(entry) {
-  return entry &&
-    !entry.departing &&
-    !entry.win.isDestroyed() &&
-    entry.win.isVisible()
+  return entry && !entry.departing && windowVisible(entry)
     ? entry.win.getBounds()
     : undefined;
 }
+function windowVisible({ win, pageVisible }) {
+  return (
+    !win.isDestroyed() &&
+    win.isVisible() &&
+    !win.isMinimized() &&
+    pageVisible !== false
+  );
+}
+
 const body = new DesktopBodyClient({
   claim: (data, current) => framework.result("body-claim", data, current),
   result: (data, current) => framework.result("body-result", data, current),
@@ -523,7 +531,7 @@ function snapshot(panel = false) {
               ? "moving"
               : status.state,
           facing: entry.facing ?? "right",
-          pose: entry.pose ?? "stand",
+          pose: entry.pose ?? "sit",
         },
       };
     }),
@@ -622,7 +630,6 @@ function createWindow(id, type, point, options = {}) {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      backgroundThrottling: false,
     },
   });
   const entry = {
@@ -640,6 +647,8 @@ function createWindow(id, type, point, options = {}) {
   win.webContents.on("did-finish-load", () => {
     entry.ready = true;
     entry.reportedMotion = undefined;
+    entry.reportedSpeed = undefined;
+    entry.pageVisible = undefined;
     send(entry, "room:update", snapshot(entry.type === "panel"));
     send(entry, "room:section", entry.section);
     if (entry.facing) send(entry, "room:facing", entry.facing);
@@ -652,7 +661,12 @@ function createWindow(id, type, point, options = {}) {
     updateMotion(entry);
     updatePointerPolling();
   });
+  if (!panel)
+    for (const event of ["show", "hide", "minimize", "restore"])
+      win.on(event, () => windowVisibilityChanged(entry));
   win.on("closed", () => {
+    body.stop(id, "inactive");
+    stopLocalSeat(entry, "inactive");
     stopMovement(entry);
     if (entries.get(id) === entry) entries.delete(id);
     updatePointerPolling();
@@ -695,27 +709,72 @@ function showPanel(section) {
   );
 }
 
+function windowVisibilityChanged(entry) {
+  if (!windowVisible(entry)) {
+    body.stop(entry.id, "hidden");
+    stopLocalSeat(entry, "hidden");
+    if (entry.departing) entry.win.destroy();
+    else stopMovement(entry);
+  } else if (entry.type === "sprite") {
+    send(entry, "room:update", snapshot());
+  }
+  updateMotion(entry);
+  updatePointerPolling();
+}
+
 function updateMotion(entry) {
   if (entry.type !== "sprite" || entry.win.isDestroyed()) return;
-  const suspended = hidden || desktopLocked || !entry.win.isVisible();
+  const suspended = hidden || desktopLocked || !windowVisible(entry);
   const state = suspended ? "suspended" : entry.movement ? "moving" : "still";
   if (entry.reportedMotion === state) return;
   if (!entry.ready) return;
   entry.reportedMotion = state;
   send(entry, "room:motion", state);
+  if (state !== "moving") reportSpeed(entry, 0, performance.now());
   const panel = entries.get("panel");
   if (panel?.ready) send(panel, "room:update", snapshot(true));
 }
 
-function stopMovement(entry) {
-  clearInterval(entry.movement);
-  entry.movement = undefined;
-  updateMotion(entry);
+function reportSpeed(entry, speed, now) {
+  const rounded = speed ? Math.max(25, Math.round(speed / 25) * 25) : 0;
+  if (
+    entry.reportedSpeed === rounded ||
+    (rounded && entry.reportedSpeed && now - entry.speedAt < 125)
+  )
+    return;
+  entry.reportedSpeed = rounded;
+  entry.speedAt = now;
+  send(entry, "room:motion-speed", rounded);
 }
 
-function stopLocalMotion() {
+const movements = new Map();
+let movementTimer;
+function stepMovements() {
+  const now = performance.now();
+  // Route completion can enqueue the next leg during this tick.
+  for (const [entry, motion] of [...movements])
+    if (movements.get(entry) === motion) motion.step(now);
+}
+function stopMovement(entry, notify = true) {
+  movements.delete(entry);
+  entry.movement = undefined;
+  if (!movements.size && movementTimer) {
+    clearInterval(movementTimer);
+    movementTimer = undefined;
+  }
+  if (notify) updateMotion(entry);
+}
+
+function stopLocalSeat(entry, reason) {
+  const cancel = entry.localSeatCancel;
+  entry.localSeatCancel = undefined;
+  cancel?.(reason);
+}
+
+function stopLocalMotion(reason) {
   for (const entry of entries.values()) {
     entry.drag = null;
+    stopLocalSeat(entry, reason);
     if (entry.departing) entry.win.destroy();
     else stopMovement(entry);
   }
@@ -726,7 +785,7 @@ function restoreWindowLayout() {
   space.invalidate();
   bodyInputAfter = Date.now();
   body.clear("display-changed");
-  stopLocalMotion();
+  stopLocalMotion("display-changed");
   const displays = screen.getAllDisplays();
   for (const entry of entries.values()) {
     if (entry.win.isDestroyed()) continue;
@@ -747,41 +806,83 @@ function restoreWindowLayout() {
   updatePointerRegions();
 }
 
+function confirmedStep(requested, actual, from, canStep) {
+  if (requested.x === actual.x && requested.y === actual.y) return true;
+  // Native fractional scaling can round a position by one DIP.
+  return (
+    Math.abs(requested.x - actual.x) <= 1 &&
+    Math.abs(requested.y - actual.y) <= 1 &&
+    canStep(actual, from)
+  );
+}
+
 function animateTo(entry, point, complete, options = {}) {
-  stopMovement(entry);
+  stopMovement(entry, false);
   const [width, height] = sizes[entry.type];
-  const target = clampPoint(point, width, height, options.area);
+  const target = options.canStep ? point : clampPoint(point, width, height);
   const [x, y] = entry.win.getPosition();
-  if (target.x !== x) {
-    entry.facing = target.x < x ? "left" : "right";
-    send(entry, "room:facing", entry.facing);
-  }
-  const started = Date.now();
+  const face = (from, to) => {
+    if (from === to) return;
+    const facing = to < from ? "left" : "right";
+    if (entry.facing === facing) return;
+    entry.facing = facing;
+    send(entry, "room:facing", facing);
+  };
+  const started = performance.now();
+  let previous = { x, y, at: started };
   const validStep = (point) => !options.canStep || options.canStep(point);
-  if (options.current && !options.current()) return options.interrupted?.();
-  const duration = options.duration ?? 450;
+  if (options.current && !options.current()) {
+    updateMotion(entry);
+    return options.interrupted();
+  }
+  const duration = Math.max(16, options.duration ?? 450);
   if (
     entry.reducedMotion ||
     hidden ||
     desktopLocked ||
     (x === target.x && y === target.y)
   ) {
-    if (!validStep(target)) return options.blocked?.();
+    if (!validStep(target)) {
+      updateMotion(entry);
+      return options.blocked?.();
+    }
     entry.win.setPosition(target.x, target.y);
+    const [actualX, actualY] = entry.win.getPosition();
+    if (
+      options.canStep &&
+      !confirmedStep(
+        target,
+        { x: actualX, y: actualY },
+        previous,
+        options.canStep,
+      )
+    ) {
+      updateMotion(entry);
+      return options.unconfirmed();
+    }
+    face(x, actualX);
     complete?.();
+    if (!entry.movement) updateMotion(entry);
     return;
   }
-  entry.movement = setInterval(() => {
+  const step = (now) => {
     if (entry.win.isDestroyed()) return stopMovement(entry);
     if (options.current && !options.current()) {
       stopMovement(entry);
       options.interrupted();
       return;
     }
+    if (!windowVisible(entry) || hidden || desktopLocked) {
+      stopMovement(entry);
+      options.interrupted?.();
+      return;
+    }
     const progress = entry.reducedMotion
       ? 1
-      : Math.min(1, (Date.now() - started) / duration);
-    const eased = options.current ? progress : 1 - (1 - progress) ** 3;
+      : Math.min(1, (now - started) / duration);
+    const eased = options.current
+      ? progress * progress * (3 - 2 * progress)
+      : 1 - (1 - progress) ** 3;
     const step = {
       x: Math.round(x + (target.x - x) * eased),
       y: Math.round(y + (target.y - y) * eased),
@@ -792,11 +893,37 @@ function animateTo(entry, point, complete, options = {}) {
       return;
     }
     entry.win.setPosition(step.x, step.y);
-    if (progress === 1) {
+    const [actualX, actualY] = entry.win.getPosition();
+    if (
+      options.canStep &&
+      !confirmedStep(
+        step,
+        { x: actualX, y: actualY },
+        previous,
+        options.canStep,
+      )
+    ) {
       stopMovement(entry);
-      complete?.();
+      return options.unconfirmed();
     }
-  }, 16);
+    face(previous.x, actualX);
+    if (now > previous.at && (actualX !== previous.x || actualY !== previous.y))
+      reportSpeed(
+        entry,
+        (Math.hypot(actualX - previous.x, actualY - previous.y) * 1000) /
+          (now - previous.at),
+        now,
+      );
+    previous = { x: actualX, y: actualY, at: now };
+    if (progress === 1) {
+      stopMovement(entry, false);
+      complete?.();
+      if (!entry.movement) updateMotion(entry);
+    }
+  };
+  entry.movement = { step };
+  movements.set(entry, entry.movement);
+  movementTimer ??= setInterval(stepMovements, 16);
   updateMotion(entry);
 }
 
@@ -856,7 +983,11 @@ function executeVerifiedBodyAction(request, current, finish) {
   };
 }
 
-function executeBodyAction({ agentId, inputAt, action }, current, finish) {
+function executeBodyAction(
+  { agentId, inputAt, expiresAt, action, crossDisplay = false },
+  current,
+  finish,
+) {
   const entry = entries.get(agentId);
   const fail = (reason, status = "cancelled") => {
     if (entry && reason !== "manual-control") recordBodyFeedback(entry, reason);
@@ -864,15 +995,19 @@ function executeBodyAction({ agentId, inputAt, action }, current, finish) {
   };
   if (!entry || entry.departing || entry.win.isDestroyed())
     return fail("inactive");
-  if (hidden || desktopLocked || !entry.win.isVisible()) return fail("hidden");
+  if (hidden || desktopLocked || !windowVisible(entry)) return fail("hidden");
   if (
     entry.drag ||
     entries.get("door")?.drag ||
     inputAt <= Math.max(entry.bodyInputAfter ?? 0, bodyInputAfter)
   )
     return fail("manual-control");
+  if (action.type !== "state") stopLocalSeat(entry, "stopped");
   if (action.type === "state")
-    return finish({ status: "completed", space: space.snapshot(agentId) });
+    return finish({
+      status: "completed",
+      space: space.snapshot(agentId, { crossDisplay }),
+    });
   if (action.type === "pose") {
     if (entry.movement) stopMovement(entry);
     if (action.facing) {
@@ -884,7 +1019,22 @@ function executeBodyAction({ agentId, inputAt, action }, current, finish) {
     return finish({ status: "completed" });
   }
 
-  let plan = space.plan(agentId, action);
+  return moveResident(entry, action, {
+    current,
+    expiresAt,
+    crossDisplay,
+    finish,
+    fail,
+  });
+}
+
+function moveResident(
+  entry,
+  action,
+  { current, expiresAt, crossDisplay, finish, fail },
+) {
+  const { id: agentId } = entry;
+  let plan = space.plan(agentId, action, { crossDisplay });
   if (plan.reason) return fail(plan.reason, "failed");
   entry.pose = "stand";
   entry.bodyAction = {
@@ -892,54 +1042,62 @@ function executeBodyAction({ agentId, inputAt, action }, current, finish) {
     state: "executing",
     destination: plan.destination,
   };
-  let movement;
   let replanned = false;
   const end = (reason, status) => {
     plan.release();
     entry.bodyAction = undefined;
     if (reason) fail(reason, status);
     else {
-      recordBodyFeedback(entry, "completed");
+      if (action.target === "seat") entry.pose = "sit";
+      entry.bodyFeedback = { reason: "completed", at: Date.now() };
+      update();
       finish({ status: "completed" });
     }
   };
   const next = (index) => {
     const point = plan.path[index];
     if (!point) {
-      const [x, y] = entry.win.getPosition();
-      return x === plan.destination.x && y === plan.destination.y
+      const { position } = bodyPosition(agentId);
+      return position?.x === plan.destination.x &&
+        position.y === plan.destination.y &&
+        position.displayId === plan.displayId &&
+        space.canStep(agentId, position, plan)
         ? end()
         : end("position-unconfirmed", "failed");
     }
     const [x, y] = entry.win.getPosition();
     const distance = Math.hypot(point.x - x, point.y - y);
     animateTo(entry, point, () => next(index + 1), {
-      area: plan.area,
       current,
       interrupted: () => end("inactive", "cancelled"),
-      canStep: (step) => space.canStep(agentId, step, plan),
+      unconfirmed: () => end("position-unconfirmed", "failed"),
+      canStep: (step, from) => space.canStep(agentId, step, plan, from),
       blocked: () => {
         if (replanned || !current()) return end("target-blocked", "cancelled");
         replanned = true;
-        const replacement = space.plan(agentId, action, { replan: plan });
+        const replacement = space.plan(agentId, action, {
+          crossDisplay,
+          replan: plan,
+        });
         if (replacement.reason) return end(replacement.reason, "cancelled");
         plan.release();
         plan = replacement;
         entry.bodyAction.destination = plan.destination;
         next(0);
       },
-      duration:
+      duration: Math.min(
+        Math.max(0, expiresAt - Date.now() - 300) / (plan.path.length - index),
         plan.path.length === 1
           ? Math.min(2200, Math.max(900, Math.round(distance * 3)))
           : Math.min(1050, Math.max(250, Math.round(distance * 3))),
+      ),
     });
-    movement = entry.movement;
   };
   next(0);
   return (reason) => {
     plan.release();
     entry.bodyAction = undefined;
-    if (entry.movement === movement) stopMovement(entry);
+    stopMovement(entry);
     if (reason && reason !== "manual-control")
       recordBodyFeedback(entry, reason);
   };
@@ -953,7 +1111,11 @@ function showSprite(role) {
   const entry = createWindow(
     role.id,
     "sprite",
-    door ? { x: door.x - 36, y: door.y - 27 } : point,
+    door &&
+      screen.getDisplayMatching(door).id ===
+        screen.getDisplayNearestPoint(point).id
+      ? { x: door.x - 36, y: door.y - 27 }
+      : point,
   );
   entry.win.once("ready-to-show", () => animateTo(entry, point));
 }
@@ -965,7 +1127,7 @@ function hideAll() {
   framework?.sync();
   bodyInputAfter = Date.now();
   body.clear("hidden");
-  stopLocalMotion();
+  stopLocalMotion("hidden");
   for (const { win } of entries.values()) win.hide();
   updatePointerPolling();
 }
@@ -974,10 +1136,18 @@ function animateHome(role) {
   const entry = entries.get(role.id);
   if (entry && !entry.departing) {
     body.stop(role.id, "inactive");
+    stopLocalSeat(entry, "inactive");
     entry.departing = true;
     entry.win.setIgnoreMouseEvents(true);
     const door = entries.get("door")?.win.getBounds();
-    if (door)
+    if (
+      door &&
+      windowVisible(entry) &&
+      !hidden &&
+      !desktopLocked &&
+      screen.getDisplayMatching(door).id ===
+        screen.getDisplayMatching(entry.win.getBounds()).id
+    )
       animateTo(entry, { x: door.x - 36, y: door.y - 27 }, () =>
         entry.win.destroy(),
       );
@@ -986,6 +1156,7 @@ function animateHome(role) {
 }
 
 function applyFramework(value, action) {
+  if (action === "sync" && !value.room) bodyCrossDisplay = false;
   if (value.offline && remoteState) {
     body.update(value, action);
     recoveryPositionPending = bodyProtocol;
@@ -1018,6 +1189,7 @@ function applyFramework(value, action) {
   }
   if (action === "sync" && value.room) {
     bodyProtocol = value.bodyProtocol === 2;
+    bodyCrossDisplay = bodyProtocol && value.bodyCrossDisplay === true;
     observationProtocol = value.observationProtocol === 2;
     recoveryPositionPending = false;
   }
@@ -1099,7 +1271,7 @@ function syncLive() {
         resident.bodyVisitId = role.bodyVisitId;
         resident.bodyVisit = {};
         resident.bodyFeedback = undefined;
-        resident.pose = "stand";
+        resident.pose = "sit";
       }
     } else animateHome(role);
   }
@@ -1166,8 +1338,8 @@ function updatePointerPolling() {
     !hidden &&
     !desktopLocked &&
     [...entries.values()].some(
-      ({ type, win }) =>
-        type !== "panel" && !win.isDestroyed() && win.isVisible(),
+      (entry) =>
+        entry.type !== "panel" && !entry.departing && windowVisible(entry),
     );
   if (needed && !pointerTimer) {
     updatePointerRegions();
@@ -1183,13 +1355,7 @@ function updatePointerRegions() {
   const { x, y } = screen.getCursorScreenPoint();
   for (const entry of entries.values()) {
     const { win, type, id } = entry;
-    if (
-      type === "panel" ||
-      entry.departing ||
-      win.isDestroyed() ||
-      !win.isVisible()
-    )
-      continue;
+    if (type === "panel" || entry.departing || !windowVisible(entry)) continue;
     const bounds = win.getBounds();
     const dx = x - bounds.x;
     const dy = y - bounds.y;
@@ -1228,7 +1394,12 @@ function handleDrag(entry, action, data) {
     if (entry.type === "door") {
       bodyInputAfter = entry.bodyInputAfter;
       body.clear("manual-control");
-    } else body.stop(entry.id, "manual-control");
+      for (const resident of entries.values())
+        stopLocalSeat(resident, "manual-control");
+    } else {
+      body.stop(entry.id, "manual-control");
+      stopLocalSeat(entry, "manual-control");
+    }
     stopMovement(entry);
     if (interrupted.length) {
       const at = Date.now();
@@ -1735,14 +1906,14 @@ function controlResident(id, action) {
     entry?.type !== "sprite" ||
     entry.departing ||
     entry.drag ||
-    entry.win.isDestroyed() ||
-    !entry.win.isVisible() ||
+    !windowVisible(entry) ||
     hidden ||
     desktopLocked
   )
     return;
   entry.bodyInputAfter = Date.now();
   body.stop(id, "stopped");
+  stopLocalSeat(entry, "stopped");
   stopMovement(entry);
   if (action === "body-stop") recordBodyFeedback(entry, "stopped");
   if (framework) {
@@ -1750,10 +1921,34 @@ function controlResident(id, action) {
     framework.sync();
   }
   if (action === "body-seat") {
-    space.invalidate();
-    animateTo(entry, windowPoint(id, "sprite"), () =>
-      recordBodyFeedback(entry, "completed"),
+    const expiresAt = Date.now() + 6000;
+    let settled = false;
+    const settle = () => {
+      settled = true;
+      entry.localSeatCancel = undefined;
+    };
+    const cancel = moveResident(
+      entry,
+      { target: "seat" },
+      {
+        current: () =>
+          entries.get(id) === entry &&
+          !entry.departing &&
+          !entry.drag &&
+          !hidden &&
+          !desktopLocked &&
+          windowVisible(entry) &&
+          Date.now() < expiresAt,
+        expiresAt,
+        crossDisplay: true,
+        finish: settle,
+        fail: (reason) => {
+          settle();
+          recordBodyFeedback(entry, reason);
+        },
+      },
     );
+    if (!settled) entry.localSeatCancel = cancel;
   }
 }
 
@@ -1762,6 +1957,16 @@ ipcMain.on("room:action", (event, action, data) => {
     ({ win }) => win.webContents === event.sender,
   );
   if (!entry || entry.departing) return;
+  if (
+    action === "page-visible" &&
+    entry.type !== "panel" &&
+    event.senderFrame === entry.win.webContents.mainFrame &&
+    typeof data === "boolean"
+  ) {
+    entry.pageVisible = data;
+    windowVisibilityChanged(entry);
+    return;
+  }
   if (live) live.tick();
   else if (refreshIfDue(room)) update();
   if (
@@ -1788,11 +1993,9 @@ ipcMain.on("room:action", (event, action, data) => {
         {
           label: "坐回默认位置",
           click: () => {
-            entry.bodyInputAfter = Date.now();
-            body.stop(role.id, "manual-control");
             delete positions[role.id];
             savePreferences();
-            animateTo(entry, defaultPoint(role.id));
+            controlResident(role.id, "body-seat");
           },
         },
         { type: "separator" },
@@ -1910,7 +2113,7 @@ else {
       clearObservation();
       framework?.sync();
       body.clear("hidden");
-      stopLocalMotion();
+      stopLocalMotion("hidden");
       updatePointerPolling();
     });
     powerMonitor.on("unlock-screen", () => {
@@ -1925,7 +2128,7 @@ else {
       clearObservation();
       framework?.sync();
       body.clear("hidden");
-      stopLocalMotion();
+      stopLocalMotion("hidden");
       updatePointerPolling();
     });
     powerMonitor.on("resume", () => {
@@ -1962,8 +2165,10 @@ else {
               !hidden &&
               !desktopLocked &&
               [...entries.values()].some(
-                ({ type, win }) =>
-                  type === "sprite" && !win.isDestroyed() && win.isVisible(),
+                (entry) =>
+                  entry.type === "sprite" &&
+                  !entry.departing &&
+                  windowVisible(entry),
               ),
             dragged,
             ...(observationProtocol &&
@@ -1972,6 +2177,7 @@ else {
               }),
             ...(bodyProtocol && {
               bodyProtocol: 2,
+              ...(bodyCrossDisplay && { bodyCrossDisplay: true }),
               ...(results.length && { bodyResults: results }),
               ...(bodyPositions && {
                 bodyPositions: {

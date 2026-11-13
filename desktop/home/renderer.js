@@ -76,6 +76,7 @@ const bodyReasonLabels = {
   stopped: "动作已停止",
   "display-changed": "显示器布局已变化，请重新选择落点。",
   "target-unavailable": "移动目标已失效，请重新选择落点。",
+  "target-unreachable": "没有可通行的路线，请重新选择落点。",
   "target-blocked": "落点被占用或位于禁停区，请重新选择。",
   "stale-layout": "桌面布局已变化，请重新选择落点。",
   "position-unconfirmed": "位置未确认，请检查桌宠当前所在位置。",
@@ -123,6 +124,7 @@ function bindFloatingDrag(handle) {
     ) {
       moved = true;
       handle.dataset.dragging = "true";
+      delete handle.dataset.motionTransition;
       window.nest.act("drag-start", pointer.origin);
     }
     if (moved) window.nest.act("drag-move", last);
@@ -153,17 +155,39 @@ function floating() {
     "",
     door ? "打开小窝的门" : "打开小窝聊天",
   );
+  let pageVisible;
+  function syncVisibility() {
+    const visible = !document.hidden;
+    if (pageVisible === visible) return;
+    pageVisible = visible;
+    art.toggleAttribute("data-page-hidden", !visible);
+    if (!visible) delete art.dataset.motionTransition;
+    window.nest.act("page-visible", visible);
+  }
+  window.addEventListener("load", syncVisibility, { once: true });
+  document.addEventListener("visibilitychange", syncVisibility);
   art.title = door
     ? "点击打开小窝 · 拖动换位置"
     : "点击聊天 · 拖动换座位 · 右键菜单";
   const sprite = image(door ? "door" : undefined);
+  const walkFrames = [];
   if (door) art.append(sprite);
   else {
+    const body = element("span", "sprite-body");
     const pose = element("span", "sprite-pose");
     const cue = element("span", "sprite-cue");
+    const walk = element("span", "sprite-walk");
+    walkFrames.push(image(), image());
     cue.setAttribute("aria-hidden", "true");
-    pose.append(sprite, cue);
-    art.append(pose);
+    walk.setAttribute("aria-hidden", "true");
+    walk.append(...walkFrames);
+    sprite.className = "sprite-rest";
+    body.addEventListener("animationend", (event) => {
+      if (event.target === body) delete art.dataset.motionTransition;
+    });
+    pose.append(sprite, walk, cue);
+    body.append(pose);
+    art.append(body);
   }
   space.append(art);
   root.append(space);
@@ -192,15 +216,40 @@ function floating() {
   }
 
   const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
-  const syncMotion = () => window.nest.act("motion-preference", motion.matches);
+  const syncMotion = () => {
+    if (motion.matches) delete art.dataset.motionTransition;
+    window.nest.act("motion-preference", motion.matches);
+  };
   syncMotion();
   motion.addEventListener("change", syncMotion);
+  let role;
+  let room;
   window.nest.onMotion?.((state) => {
+    const previous = art.dataset.motion;
+    if (previous === state) return;
     art.dataset.motion = state;
+    if (state !== "moving") art.style.removeProperty("--travel-rate");
+    delete art.dataset.motionTransition;
+    if (!motion.matches && pageVisible && !art.dataset.dragging) {
+      if (state === "moving") art.dataset.motionTransition = "start";
+      if (previous === "moving" && state === "still")
+        art.dataset.motionTransition = "stop";
+    }
+    if (role) renderSprite();
   });
-  window.nest.onFacing?.((facing) => {
-    art.dataset.facing = facing === "left" ? "left" : "right";
+  window.nest.onMotionSpeed?.((speed) => {
+    if (art.dataset.motion !== "moving" || speed <= 0) return;
+    // Keep slow steps legible and cap the cadence of very short, fast moves.
+    const rate =
+      speed < 300
+        ? 1 + 0.4 * (1 - Math.max(speed, 80) / 300)
+        : 1 - 0.32 * Math.min(1, (speed - 300) / 450);
+    art.style.setProperty("--travel-rate", rate);
   });
+  function face(facing) {
+    if (art.dataset.facing !== facing) art.dataset.facing = facing;
+  }
+  window.nest.onFacing?.(face);
   const speech = button("speech", "", "打开小窝聊天");
   const words = element("span");
   speech.append(words);
@@ -212,23 +261,44 @@ function floating() {
     window.nest.act("menu");
   });
 
-  subscribe((data) => {
-    const role = data.roles.find((item) => item.id === id);
-    if (!role) return;
-    const activity = activityFor(role, data);
-    const pose = role.bodyStatus?.pose;
-    art.dataset.pose = pose ?? "stand";
+  function renderSprite() {
+    const moving = art.dataset.motion === "moving";
+    const roomActivity = activityFor(role, room);
+    const activity = moving
+      ? "move"
+      : roomActivity === "move"
+        ? "idle"
+        : roomActivity;
+    const pose = role.bodyStatus?.pose ?? art.dataset.pose ?? "sit";
     const roleArt = role.art ?? role.id;
-    art.dataset.appearance = roleArt;
+    if (art.dataset.pose !== pose) art.dataset.pose = pose;
+    if (art.dataset.appearance !== roleArt) {
+      art.dataset.appearance = roleArt;
+      walkFrames[0].src = `art/actions/${roleArt}-stride.webp`;
+      walkFrames[1].src = `art/actions/${roleArt}-step.webp`;
+    }
     if (art.dataset.activity !== activity) art.dataset.activity = activity;
-    art.setAttribute(
-      "aria-label",
-      [role.name, activityLabels[activity], bodyPoseLabels[pose], "打开聊天"]
-        .filter(Boolean)
-        .join(" · "),
-    );
-    const asset = `art/actions/${roleArt}-${activity === "move" ? "idle" : activity}.webp`;
+    const label = [
+      role.name,
+      activityLabels[activity],
+      bodyPoseLabels[moving ? "stand" : pose],
+      "打开聊天",
+    ].join(" · ");
+    if (art.getAttribute("aria-label") !== label)
+      art.setAttribute("aria-label", label);
+    const stance =
+      moving || (activity === "idle" && pose !== "sit") ? "stand" : activity;
+    const asset = `art/actions/${roleArt}-${stance}.webp`;
     if (sprite.getAttribute("src") !== asset) sprite.src = asset;
+  }
+
+  subscribe((data) => {
+    room = data;
+    role = data.roles.find((item) => item.id === id);
+    if (!role) return;
+    const facing = role.bodyStatus?.facing;
+    if (facing) face(facing);
+    renderSprite();
     const message =
       data.bubbles?.[id]?.text ?? (data.thinking === id ? "正在想…" : "");
     words.textContent = message;
@@ -502,7 +572,7 @@ function panel() {
   let roomEpoch;
   let lastRoster;
   const guests = new Map();
-  const announcedStops = new Map();
+  const announcedBodyFeedback = new Map();
   const clock = new Intl.DateTimeFormat("zh-CN", {
     hour: "2-digit",
     minute: "2-digit",
@@ -943,20 +1013,24 @@ function panel() {
         guests.delete(id);
       }
     }
-    const stopped = [];
+    const feedback = [];
     for (const role of room.roles) {
       guest(role);
       const body = role.bodyStatus;
       if (
-        body?.reason === "manual-control" &&
+        ["manual-control", "target-unreachable"].includes(body?.reason) &&
         Number.isFinite(body.at) &&
-        body.at > (announcedStops.get(role.id) ?? -Infinity)
+        body.at > (announcedBodyFeedback.get(role.id) ?? -Infinity)
       ) {
-        announcedStops.set(role.id, body.at);
-        stopped.push(`已停止${role.name}的移动`);
+        announcedBodyFeedback.set(role.id, body.at);
+        feedback.push(
+          body.reason === "manual-control"
+            ? `已停止${role.name}的移动`
+            : `${role.name}无法到达。${bodyReasonLabels[body.reason]}`,
+        );
       }
     }
-    if (stopped.length) bodyAnnouncement.textContent = stopped.join("。");
+    if (feedback.length) bodyAnnouncement.textContent = feedback.join("。");
     const notice = select(".room-notice");
     if (notice.textContent !== room.notice) notice.textContent = room.notice;
     const observation = room.observation;

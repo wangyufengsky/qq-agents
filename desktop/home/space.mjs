@@ -3,13 +3,18 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { bodyDestination } from "./body-client.mjs";
 import { clampToWorkArea } from "./window-placement.mjs";
+import {
+  GAP,
+  right,
+  bottom,
+  movementRegions,
+  withinRegions,
+  findCrossDisplayPath,
+} from "./space-path.mjs";
 
-const GAP = 12;
 export const MAX_EXCLUSIONS = 24;
 const MAX_DISPLAYS = 32;
 
-const right = (rect) => rect.x + rect.width;
-const bottom = (rect) => rect.y + rect.height;
 const pointOf = ({ x, y }) => ({ x, y });
 const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const fits = (rect, area) =>
@@ -128,21 +133,14 @@ export class DesktopExclusionStore {
   }
 }
 
-function occupiedRange(rect, body, area) {
+function occupiedRange(rect, body) {
   // Expanding obstacles lets a sweep of the window's top left account for its entire size.
-  const range = {
+  return {
     x: rect.x - body.width - GAP,
     y: rect.y - body.height - GAP,
     width: rect.width + body.width + GAP * 2,
     height: rect.height + body.height + GAP * 2,
   };
-  range.exits = [
-    range.x >= area.x,
-    right(range) <= right(area) - body.width,
-    range.y >= area.y,
-    bottom(range) <= bottom(area) - body.height,
-  ];
-  return range;
 }
 
 function depth(point, rect) {
@@ -154,23 +152,23 @@ function depth(point, rect) {
   );
 }
 
-function clears(start, end, obstacle) {
+function clears(start, end, obstacle, regions) {
   if (depth(start, obstacle) > 0) {
     // A manually positioned or arriving sprite can leave its existing overlap.
     if (start.x === end.x && start.y === end.y) return true;
-    const distances = [
-      start.x - obstacle.x,
-      right(obstacle) - start.x,
-      start.y - obstacle.y,
-      bottom(obstacle) - start.y,
-    ].map((length, index) => (obstacle.exits[index] ? length : Infinity));
-    const nearest = Math.min(...distances);
-    return (
-      Number.isFinite(nearest) &&
-      ((distances[0] === nearest && end.x < start.x) ||
-        (distances[1] === nearest && end.x > start.x) ||
-        (distances[2] === nearest && end.y < start.y) ||
-        (distances[3] === nearest && end.y > start.y))
+    const exits = [
+      { x: obstacle.x, y: start.y },
+      { x: right(obstacle), y: start.y },
+      { x: start.x, y: obstacle.y },
+      { x: start.x, y: bottom(obstacle) },
+    ].filter((point) => withinRegions(start, point, regions));
+    const nearest = Math.min(...exits.map((point) => distance(start, point)));
+    return exits.some(
+      (point) =>
+        distance(start, point) === nearest &&
+        (point.x - start.x) * (end.x - start.x) +
+          (point.y - start.y) * (end.y - start.y) >
+          0,
     );
   }
   let entry = 0;
@@ -210,8 +208,7 @@ function nearbySeat(seat, bounds, area, obstacles) {
     .slice(0, 8);
 }
 
-function findPath(start, end, bounds, area, obstacles) {
-  const clear = (a, b) => obstacles.every((rect) => clears(a, b, rect));
+function findPath(start, end, bounds, area, obstacles, clear) {
   if (clear(start, end)) return [end];
 
   // A small visibility graph of obstacle corners bounds the route search.
@@ -297,23 +294,36 @@ export class DesktopSpace {
       displays.map(({ id }) => [id, this.#displayRefs.get(id) ?? randomUUID()]),
     );
     const door = this.door();
+    const zones = this.zones();
     const residents = this.residents().map((resident) => {
       if (!this.#residentRefs.has(resident.visit))
         this.#residentRefs.set(resident.visit, randomUUID());
       return {
         ...resident,
         ref: this.#residentRefs.get(resident.visit),
-        displayId: this.displayAt(resident.bounds).id,
+        displayId: displays.length
+          ? this.displayAt(resident.bounds).id
+          : undefined,
       };
     });
     const signature = JSON.stringify([
       displays
-        .map(({ id, workArea, scaleFactor }) =>
-          JSON.stringify([id, workArea, scaleFactor]),
+        .map(
+          ({ id, bounds, workArea, scaleFactor, rotation, label, internal }) =>
+            JSON.stringify([
+              id,
+              bounds,
+              workArea,
+              scaleFactor,
+              rotation,
+              label,
+              internal,
+            ]),
         )
         .sort(),
-      residents.map(({ ref, displayId }) => ref + ":" + displayId).sort(),
+      residents.map(({ ref }) => ref).sort(),
       door,
+      zones,
     ]);
     if (this.#signature !== undefined && this.#signature !== signature)
       this.layoutVersion++;
@@ -325,56 +335,85 @@ export class DesktopSpace {
     return {
       self,
       display,
-      displayRef: this.#displayRefs.get(display.id),
-      door: door && this.displayAt(door).id === display.id ? door : undefined,
-      doorObstacle: door,
+      displays,
+      door,
+      zones,
+      doorDisplayId: door && this.displayAt(door).id,
       obstacles: residents.filter(({ id }) => id !== agentId),
     };
   }
 
-  snapshot(agentId) {
+  #advertised({ display, displays }, crossDisplay) {
+    if (!crossDisplay) return [display];
+    return [
+      display,
+      ...displays
+        .filter(({ id }) => id !== display.id)
+        .sort((a, b) => a.id - b.id),
+    ].slice(0, MAX_DISPLAYS);
+  }
+
+  snapshot(agentId, { crossDisplay = true } = {}) {
     const context = this.#context(agentId);
     if (!context) return;
-    const { self, display, displayRef, door, obstacles } = context;
+    const { self, display, door, doorDisplayId, obstacles } = context;
+    const displays = this.#advertised(context, crossDisplay);
+    const ids = new Set(displays.map(({ id }) => id));
+    const action = self.action && {
+      kind: self.action.kind,
+      state: self.action.state,
+      ...(displays.some(
+        ({ id }) =>
+          this.#displayRefs.get(id) === self.action.destination?.displayRef,
+      ) && { destination: self.action.destination }),
+    };
     return {
       layoutVersion: this.layoutVersion,
       sampledAt: Date.now(),
-      displays: [
-        {
-          ref: displayRef,
-          workArea: display.workArea,
-          scaleFactor: display.scaleFactor,
+      displays: displays.map(({ id, workArea, scaleFactor }) => ({
+        ref: this.#displayRefs.get(id),
+        workArea,
+        scaleFactor,
+      })),
+      ...(ids.has(doorDisplayId) && {
+        door: {
+          displayRef: this.#displayRefs.get(doorDisplayId),
+          bounds: door,
         },
-      ],
-      ...(door && { door: { displayRef, bounds: door } }),
+      }),
       self: {
-        displayRef,
+        displayRef: this.#displayRefs.get(display.id),
         bounds: self.bounds,
         facing: self.facing ?? "right",
         pose: self.pose ?? "stand",
-        ...(self.action && { action: self.action }),
+        ...(action && { action }),
       },
       residents: obstacles
-        .filter(({ displayId }) => displayId === display.id)
+        .filter(({ displayId }) => ids.has(displayId))
         .slice(0, 24)
-        .map(({ ref, bounds, name }) => ({
+        .map(({ ref, bounds, name, displayId }) => ({
           ref,
-          displayRef,
+          displayRef: this.#displayRefs.get(displayId),
           bounds,
           ...(typeof name === "string" && { name: name.slice(0, 80) }),
         })),
     };
   }
 
-  #obstacles({ self, display, obstacles, doorObstacle }) {
-    const bounds = self.bounds;
-    const key = displayFingerprint(display);
-    const zones =
-      this.zones().find(({ fingerprint }) => fingerprint === key)?.zones ?? [];
+  #obstacles(
+    { self, display, displays, obstacles, door, zones },
+    crossDisplay,
+    regions,
+  ) {
     return [
       ...obstacles.map((resident) => resident.bounds),
-      ...(doorObstacle ? [doorObstacle] : []),
-      ...exclusionBounds(display, zones),
+      ...(door ? [door] : []),
+      ...(crossDisplay ? displays : [display]).flatMap((display) => {
+        const key = displayFingerprint(display);
+        const exclusions =
+          zones.find(({ fingerprint }) => fingerprint === key)?.zones ?? [];
+        return exclusionBounds(display, exclusions);
+      }),
       ...[...this.#reservations]
         .filter(
           ([id, plan]) =>
@@ -382,40 +421,58 @@ export class DesktopSpace {
         )
         .map(([, plan]) => plan.bounds),
     ]
-      .filter((rect) =>
-        overlaps(
-          {
-            x: display.workArea.x - GAP,
-            y: display.workArea.y - GAP,
-            width: display.workArea.width + GAP * 2,
-            height: display.workArea.height + GAP * 2,
-          },
-          rect,
-        ),
-      )
-      .map((rect) => occupiedRange(rect, bounds, display.workArea));
+      .map((rect) => occupiedRange(rect, self.bounds))
+      .filter((rect) => regions.some((region) => overlaps(rect, region)));
   }
 
-  plan(agentId, action, { replan } = {}) {
+  plan(agentId, action, { crossDisplay = true, replan } = {}) {
     const { target, layoutVersion } = action;
     const context = this.#context(agentId);
     if (!context) return { reason: "target-unavailable" };
-    if (replan && this.#reservations.get(agentId) !== replan)
-      return { reason: "stale-layout" };
     if (
       (typeof target === "object" && layoutVersion !== this.layoutVersion) ||
-      (replan && replan.layoutVersion !== this.layoutVersion)
+      (replan &&
+        (this.#reservations.get(agentId) !== replan ||
+          replan.layoutVersion !== this.layoutVersion ||
+          replan.crossDisplay !== crossDisplay))
     )
       return { reason: "stale-layout" };
     replan?.release();
-    const { self, display, displayRef, door, obstacles } = context;
+    const {
+      self,
+      display: source,
+      displays,
+      door,
+      doorDisplayId,
+      obstacles,
+    } = context;
     const bounds = self.bounds;
+    const start = pointOf(bounds);
+    const seat = target === "seat" ? this.seat(agentId) : undefined;
+    const resident =
+      target?.type === "near-resident"
+        ? obstacles.find(({ ref }) => ref === target.residentRef)
+        : undefined;
+    const anchor = target === "door" ? door : resident?.bounds;
+    const available = crossDisplay ? displays : [source];
+    const targetId =
+      target === "door"
+        ? doorDisplayId
+        : seat
+          ? this.displayAt({ ...bounds, ...seat }).id
+          : resident
+            ? resident.displayId
+            : available.find(
+                ({ id }) => this.#displayRefs.get(id) === target?.displayRef,
+              )?.id;
+    const display = available.find(({ id }) => id === targetId);
+    if (!display) return { reason: "target-unavailable" };
+    const displayRef = this.#displayRefs.get(display.id);
     const area = display.workArea;
-    if (!fits(bounds, area)) return { reason: "target-unavailable" };
     const legacy = () =>
       bodyDestination({
         door,
-        seat: this.seat(agentId),
+        seat,
         display,
         displayAt: this.displayAt,
         bounds,
@@ -423,61 +480,67 @@ export class DesktopSpace {
         clamp: clampToWorkArea,
       });
 
-    const occupied = this.#obstacles(context);
     let points;
-    let anchor;
     if (target === "door" && door) {
-      anchor = door;
       points = [legacy(), ...sidePoints(door, bounds, area)];
-    } else if (target === "seat") {
+    } else if (target === "seat" && seat) {
       points = [legacy()];
-    } else if (target?.type === "near-resident") {
-      anchor = obstacles.find(
-        ({ ref, displayId }) =>
-          ref === target.residentRef && displayId === display.id,
-      )?.bounds;
-      if (anchor) points = sidePoints(anchor, bounds, area);
-    } else if (target?.displayRef === displayRef) {
-      if (
-        target.type === "point" &&
-        [target.x, target.y].every(Number.isSafeInteger)
-      ) {
-        points = [pointOf(target)];
-      } else if (
-        target.type === "corner" &&
-        ["nw", "ne", "sw", "se"].includes(target.corner)
-      ) {
-        points = [
-          {
-            x: target.corner.endsWith("w")
-              ? area.x
-              : right(area) - bounds.width,
-            y: target.corner.startsWith("n")
-              ? area.y
-              : bottom(area) - bounds.height,
-          },
-        ];
-      }
+    } else if (resident) {
+      points = sidePoints(anchor, bounds, area);
+    } else if (
+      target?.type === "point" &&
+      [target.x, target.y].every(Number.isSafeInteger)
+    ) {
+      points = [pointOf(target)];
+    } else if (
+      target?.type === "corner" &&
+      ["nw", "ne", "sw", "se"].includes(target.corner)
+    ) {
+      points = [
+        {
+          x: target.corner.endsWith("w") ? area.x : right(area) - bounds.width,
+          y: target.corner.startsWith("n")
+            ? area.y
+            : bottom(area) - bounds.height,
+        },
+      ];
     }
 
     const candidates = points?.filter(
       (point) => point && fits({ ...bounds, ...point }, area),
     );
     if (!candidates?.length) return { reason: "target-unavailable" };
+    const { ids, regions } = movementRegions(available, source.id, bounds);
+    if (!ids.has(display.id)) return { reason: "target-unreachable" };
+    if (!withinRegions(start, start, regions))
+      return { reason: "target-unavailable" };
+    const occupied = this.#obstacles(context, crossDisplay, regions);
+    const clear = (a, b) =>
+      withinRegions(a, b, regions) &&
+      occupied.every((rect) => clears(a, b, rect, regions));
     const destinations =
       target === "seat"
         ? nearbySeat(candidates[0], bounds, area, occupied)
         : candidates;
+    const sameDisplay = source.id === display.id && fits(bounds, area);
     for (const point of destinations) {
       if (occupied.some((rect) => depth(point, rect) > 0)) continue;
-      const path = findPath(pointOf(bounds), point, bounds, area, occupied);
+      const path =
+        (sameDisplay
+          ? findPath(start, point, bounds, area, occupied, clear)
+          : undefined) ??
+        (crossDisplay
+          ? findCrossDisplayPath(start, point, regions, occupied, clear)
+          : undefined);
       if (!path) continue;
       const plan = {
         path,
-        area,
+        regions,
         anchor,
         target,
+        crossDisplay,
         bounds: { ...bounds, ...point },
+        displayId: display.id,
         destination: { displayRef, ...point },
         layoutVersion: this.layoutVersion,
         release: () => {
@@ -491,14 +554,17 @@ export class DesktopSpace {
     return { reason: "target-blocked" };
   }
 
-  canStep(agentId, point, plan) {
+  canStep(agentId, point, plan, from) {
     const context = this.#context(agentId);
+    if (!context) return false;
+    const bounds = context.self.bounds;
+    const start = from ?? bounds;
     if (
-      !context ||
       this.#reservations.get(agentId) !== plan ||
       this.layoutVersion !== plan.layoutVersion ||
-      context.displayRef !== plan.destination.displayRef ||
-      !fits({ ...context.self.bounds, ...point }, context.display.workArea)
+      bounds.width !== plan.bounds.width ||
+      bounds.height !== plan.bounds.height ||
+      !withinRegions(start, point, plan.regions)
     )
       return false;
 
@@ -514,11 +580,11 @@ export class DesktopSpace {
     )
       return false;
 
-    const occupied = this.#obstacles(context);
+    const occupied = this.#obstacles(context, plan.crossDisplay, plan.regions);
     return occupied.every(
       (rect) =>
         depth(plan.destination, rect) <= 0 &&
-        clears(context.self.bounds, point, rect),
+        clears(start, point, rect, plan.regions),
     );
   }
 }

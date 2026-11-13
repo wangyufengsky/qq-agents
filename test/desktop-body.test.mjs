@@ -17,7 +17,12 @@ const completed = { status: "completed", position };
 
 async function setup(
   t,
-  { enabled = true, lateVisitor = false, v2 = false } = {},
+  {
+    enabled = true,
+    lateVisitor = false,
+    v2 = false,
+    crossDisplay = false,
+  } = {},
 ) {
   const cfg = config(2);
   cfg.desktopHome.enabled = true;
@@ -49,7 +54,12 @@ async function setup(
     });
   const act = async (action, data) =>
     (await post("client", { action, data })).json();
-  const syncData = { visible: false, dragged: [], bodyProtocol: 2 };
+  const syncData = {
+    visible: false,
+    dragged: [],
+    bodyProtocol: 2,
+    ...(crossDisplay && { bodyCrossDisplay: true }),
+  };
   const sync = async (data, from = client) =>
     (
       await post("client", {
@@ -91,7 +101,8 @@ async function setup(
     assert(turns.length > turnCount);
     return turns.at(-1);
   };
-  const request = async () => (await act("sync")).bodyRequests?.[0];
+  const request = async () =>
+    (await (v2 ? sync() : act("sync"))).bodyRequests?.[0];
   const identity = ({ roomEpoch, commandId, agentId, visitId }) => ({
     roomEpoch,
     commandId,
@@ -629,3 +640,58 @@ test("door and seat targets stay inside the current display work area", () => {
     null,
   );
 });
+
+for (const crossDisplay of [false, true]) {
+  test(`cross-display action requires the negotiated client capability (${crossDisplay})`, async (t) => {
+    const { post, start, request, identity, sync } = await setup(t, {
+      v2: true,
+      crossDisplay,
+    });
+    assert.equal((await sync()).bodyCrossDisplay, true);
+    const { call } = await start();
+    const otherDisplay = {
+      ref: "other",
+      workArea: { x: 0, y: 0, width: 800, height: 600 },
+      scaleFactor: 1.25,
+    };
+    const state = call({ type: "state", requestId: "displays" });
+    const snapshot = stateResult(1);
+    snapshot.space.displays.push(otherDisplay);
+    const sendResult = async (result) => {
+      const pending = await request();
+      assert.equal(pending.crossDisplay, crossDisplay ? true : undefined);
+      const id = identity(pending);
+      assert.equal((await post("body-claim", id)).ok, true);
+      if (result.space) result.space.sampledAt = Date.now();
+      assert.equal(
+        (await post("body-result", { ...id, finishedAt: Date.now(), result }))
+          .ok,
+        true,
+      );
+    };
+    await sendResult(snapshot);
+    await state;
+    const cross = {
+      ...point,
+      target: { type: "corner", displayRef: "other", corner: "ne" },
+    };
+    if (!crossDisplay) {
+      await assert.rejects(call(cross), /DESKTOP_BODY_INVALID/);
+      return;
+    }
+    await assert.rejects(
+      call({
+        ...cross,
+        target: { type: "point", displayRef: "other", x: 799, y: 1 },
+      }),
+      /DESKTOP_BODY_INVALID/,
+    );
+    const action = call(cross);
+    await sendResult({
+      status: "failed",
+      reason: "target-unreachable",
+      position,
+    });
+    assert.equal((await action).reason, "target-unreachable");
+  });
+}

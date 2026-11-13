@@ -3,7 +3,11 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DesktopExclusionStore, DesktopSpace } from "../desktop/home/space.mjs";
+import {
+  DesktopExclusionStore,
+  DesktopSpace,
+  displayFingerprint,
+} from "../desktop/home/space.mjs";
 
 const area = { x: 0, y: 24, width: 900, height: 600 };
 const primary = {
@@ -39,8 +43,23 @@ function desktop(overrides = {}) {
   };
   const space = new DesktopSpace({
     displays: () => state.displays,
-    displayAt: ({ x, width }) =>
-      state.displays[x + width / 2 < 0 && state.displays.length > 1 ? 1 : 0],
+    displayAt: ({ x, y, width, height }) =>
+      state.displays.reduce(
+        (best, display) => {
+          const area = display.workArea;
+          const overlap =
+            Math.max(
+              0,
+              Math.min(x + width, area.x + area.width) - Math.max(x, area.x),
+            ) *
+            Math.max(
+              0,
+              Math.min(y + height, area.y + area.height) - Math.max(y, area.y),
+            );
+          return overlap > best.overlap ? { display, overlap } : best;
+        },
+        { display: state.displays[0], overlap: 0 },
+      ).display,
     door: () => state.door,
     residents: () => state.residents,
     seat: () => state.seat,
@@ -65,7 +84,8 @@ test("snapshots expose only the current display, same-screen door and residents"
       role("elsewhere", 200, 80),
     ],
   });
-  const snapshot = space.snapshot("self");
+  const options = { crossDisplay: false };
+  const snapshot = space.snapshot("self", options);
   const ref = snapshot.residents[0].ref;
   assert.equal(snapshot.displays.length, 1);
   assert.deepEqual(snapshot.displays[0].workArea, secondary.workArea);
@@ -74,20 +94,25 @@ test("snapshots expose only the current display, same-screen door and residents"
   assert.equal(snapshot.self.pose, "sit");
   assert.equal(snapshot.door, undefined);
   assert.equal(snapshot.residents.length, 1);
+  assert.deepEqual(space.plan("self", { target: "door" }, options), {
+    reason: "target-unavailable",
+  });
   assert.equal(snapshot.residents[0].name, "邻居");
   assert.equal(Object.hasOwn(snapshot.residents[0], "id"), false);
-  assert.equal(space.snapshot("self").residents[0].ref, ref);
+  assert.equal(space.snapshot("self", options).residents[0].ref, ref);
 
   const near = {
     target: { type: "near-resident", residentRef: ref },
     layoutVersion: snapshot.layoutVersion,
   };
   state.residents[1] = role("neighbor", -400, 90);
-  assert.deepEqual(space.plan("self", near), { reason: "stale-layout" });
-  const next = space.snapshot("self");
+  assert.deepEqual(space.plan("self", near, options), {
+    reason: "stale-layout",
+  });
+  const next = space.snapshot("self", options);
   assert.notEqual(next.residents[0].ref, ref);
   assert.deepEqual(
-    space.plan("self", { ...near, layoutVersion: next.layoutVersion }),
+    space.plan("self", { ...near, layoutVersion: next.layoutVersion }, options),
     {
       reason: "target-unavailable",
     },
@@ -246,4 +271,251 @@ test("exclusions are persisted relative to their display and never follow anothe
   assert.deepEqual(restored, { reason: "target-blocked" });
   assert.equal(saved.save(primary, []), true);
   assert.deepEqual(new DesktopExclusionStore(path).list(), []);
+});
+
+function walk(space, state, plan, id = "self") {
+  assert.ok(plan.path?.length, JSON.stringify(plan));
+  const resident = state.residents.find((resident) => resident.id === id);
+  for (const next of plan.path) {
+    const { x, y } = resident.bounds;
+    const steps = Math.ceil(
+      Math.max(Math.abs(next.x - x), Math.abs(next.y - y)) / 9,
+    );
+    for (let i = 1; i <= steps; i++) {
+      const step = {
+        x: Math.round(x + (next.x - x) * (i / steps)),
+        y: Math.round(y + (next.y - y) * (i / steps)),
+      };
+      assert.equal(space.canStep(id, step, plan), true, JSON.stringify(step));
+      resident.bounds = box(step.x, step.y);
+    }
+  }
+}
+
+function onDisplay(space, display, target) {
+  const { layoutVersion, displays } = space.snapshot("self");
+  const { ref } = displays.find(
+    ({ workArea }) => workArea === display.workArea,
+  );
+  return { layoutVersion, target: { displayRef: ref, ...target } };
+}
+
+test("crossing uses negative DIP coordinates and preserves layout revision and references", () => {
+  const { space, state } = desktop({
+    residents: [role("self", 40, 200), role("neighbor", 500, 200)],
+  });
+  const snapshot = space.snapshot("self");
+  assert.equal(snapshot.displays.length, 2);
+  assert.deepEqual(
+    snapshot.displays.map(({ scaleFactor }) => scaleFactor),
+    [2, 1],
+  );
+  assert.deepEqual(snapshot.door.bounds, state.door);
+  assert.equal(snapshot.door.displayRef, snapshot.self.displayRef);
+  assert.equal(Object.hasOwn(snapshot.displays[0], "id"), false);
+  const action = onDisplay(space, secondary, {
+    type: "point",
+    x: -420,
+    y: 200,
+  });
+  const plan = space.plan("self", action);
+  assert.equal(plan.displayId, secondary.id);
+  assert.deepEqual(plan.path, [{ x: -420, y: 200 }]);
+  walk(space, state, plan);
+  const moved = space.snapshot("self");
+  assert.equal(moved.layoutVersion, snapshot.layoutVersion);
+  assert.equal(moved.self.displayRef, action.target.displayRef);
+  assert.equal(moved.door.displayRef, snapshot.door.displayRef);
+  assert.equal(moved.residents[0].ref, snapshot.residents[0].ref);
+  assert.equal(moved.residents[0].displayRef, snapshot.residents[0].displayRef);
+  plan.release();
+
+  const door = space.plan("self", { target: "door" });
+  assert.equal(door.displayId, primary.id);
+  walk(space, state, door);
+  door.release();
+  state.seat = { x: -700, y: 300 };
+  const seat = space.plan("self", { target: "seat" });
+  assert.equal(seat.displayId, secondary.id);
+  assert.deepEqual(seat.destination, {
+    displayRef: action.target.displayRef,
+    ...state.seat,
+  });
+  walk(space, state, seat);
+});
+
+test("touching corners, gaps and narrow shared edges are unreachable", () => {
+  for (const workArea of [
+    { x: -801, y: 0, width: 800, height: 600 },
+    { x: -800, y: 624, width: 800, height: 600 },
+    { x: -800, y: 521, width: 800, height: 600 },
+  ]) {
+    const display = { ...secondary, workArea };
+    const { space } = desktop({ displays: [primary, display] });
+    const action = onDisplay(space, display, { type: "corner", corner: "nw" });
+    assert.deepEqual(space.plan("self", action), {
+      reason: "target-unreachable",
+    });
+  }
+});
+
+test("route can turn through a third display without crossing an uncovered gap", () => {
+  const lower = {
+    ...secondary,
+    id: 103,
+    scaleFactor: 1.5,
+    workArea: { x: -800, y: 600, width: 800, height: 480 },
+  };
+  const { space, state } = desktop({ displays: [lower, primary, secondary] });
+  const action = onDisplay(space, lower, { type: "point", x: -20, y: 700 });
+  assert.deepEqual(space.plan("self", action), {
+    reason: "target-unavailable",
+  });
+  action.target.x = -125;
+  const plan = space.plan("self", action);
+  assert.equal(plan.displayId, lower.id);
+  assert.ok(plan.path.length > 1);
+  assert.equal(space.canStep("self", plan.destination, plan), false);
+  walk(space, state, plan);
+  assert.deepEqual(state.residents[0].bounds, box(-125, 700));
+});
+
+test("avoidance can select a different crossing and detects blocks on the remote work area", () => {
+  const zones = [
+    {
+      fingerprint: displayFingerprint(secondary),
+      zones: [{ x: 0.75, y: 0, width: 0.25, height: 0.56 }],
+    },
+  ];
+  const { space, state } = desktop({ zones });
+  const action = onDisplay(space, secondary, {
+    type: "point",
+    x: -380,
+    y: 120,
+  });
+  const plan = space.plan("self", action);
+  assert.ok(plan.path.length > 1);
+  assert.equal(space.canStep("self", plan.destination, plan), false);
+  walk(space, state, plan);
+  assert.deepEqual(state.residents[0].bounds, box(-380, 120));
+  plan.release();
+  state.residents[0].bounds = box(40, 120);
+  state.zones = [
+    { ...zones[0], zones: [{ x: 0.75, y: 0, width: 0.25, height: 1 }] },
+  ];
+  assert.deepEqual(space.plan("self", action), { reason: "stale-layout" });
+  const next = onDisplay(space, secondary, action.target);
+  assert.deepEqual(space.plan("self", next), { reason: "target-blocked" });
+});
+
+test("a cross-display replan follows a live resident while the source window straddles the seam", () => {
+  const { space, state } = desktop({
+    residents: [role("self", 40, 120), role("neighbor", -430, 120)],
+  });
+  const {
+    layoutVersion,
+    residents: [neighbor],
+  } = space.snapshot("self");
+  const action = {
+    layoutVersion,
+    target: { type: "near-resident", residentRef: neighbor.ref },
+  };
+  const plan = space.plan("self", action);
+  assert.equal(plan.displayId, secondary.id);
+  assert.deepEqual(plan.path, [{ x: -318, y: 120 }]);
+  assert.equal(space.canStep("self", { x: -55, y: 120 }, plan), true);
+  state.residents[0].bounds = box(-55, 120);
+  state.residents[1].bounds = box(400, 120);
+  assert.equal(space.canStep("self", plan.destination, plan), false);
+  assert.equal(space.snapshot("self").layoutVersion, layoutVersion);
+  const replacement = space.plan("self", action, { replan: plan });
+  assert.equal(replacement.displayId, primary.id);
+  assert.deepEqual(replacement.destination, {
+    displayRef: space.snapshot("self").displays[1].ref,
+    x: 288,
+    y: 120,
+  });
+  assert.deepEqual(space.plan("self", action, { replan: plan }), {
+    reason: "stale-layout",
+  });
+  walk(space, state, replacement);
+  state.displays[0] = { ...primary, scaleFactor: 1.75 };
+  assert.equal(
+    space.canStep("self", replacement.destination, replacement),
+    false,
+  );
+  assert.deepEqual(space.plan("self", action, { replan: replacement }), {
+    reason: "stale-layout",
+  });
+});
+
+test("a reserved landing across the seam blocks another role's route", () => {
+  const { space, state } = desktop({
+    residents: [role("self", 40, 120), role("neighbor", -400, 300)],
+  });
+  const { layoutVersion, displays } = space.snapshot("neighbor");
+  const reserve = space.plan("neighbor", {
+    layoutVersion,
+    target: { type: "point", displayRef: displays[0].ref, x: -100, y: 120 },
+  });
+  assert.equal(reserve.displayId, secondary.id);
+  const action = onDisplay(space, secondary, {
+    type: "point",
+    x: -330,
+    y: 120,
+  });
+  const plan = space.plan("self", action);
+  assert.ok(plan.path.length > 1);
+  assert.equal(space.canStep("self", plan.destination, plan), false);
+  walk(space, state, plan);
+  reserve.release();
+  plan.release();
+  state.residents[0].bounds = box(40, 120);
+  assert.deepEqual(space.plan("self", action).path, [{ x: -330, y: 120 }]);
+});
+
+test("mixed-DPI work areas with an overlapping join cover the full window", () => {
+  for (const width of [825, 975]) {
+    const overlapping = {
+      ...secondary,
+      scaleFactor: 1.25,
+      workArea: { ...secondary.workArea, width },
+    };
+    const { space, state } = desktop({
+      displays: [primary, overlapping],
+      residents: [role("self", 250, 200)],
+    });
+    const action = onDisplay(space, overlapping, {
+      type: "point",
+      x: -420,
+      y: 200,
+    });
+    const plan = space.plan("self", action);
+    assert.equal(plan.displayId, overlapping.id);
+    assert.deepEqual(plan.path, [{ x: -420, y: 200 }]);
+    walk(space, state, plan);
+  }
+});
+
+test("a same-display target can detour through a connected neighbor", () => {
+  const { space, state } = desktop({
+    residents: [role("self", 200, 100)],
+    zones: [
+      {
+        fingerprint: displayFingerprint(primary),
+        zones: [{ x: 0, y: 0.5, width: 1, height: 0.04 }],
+      },
+    ],
+  });
+  const move = position(space, 200, 480);
+  assert.deepEqual(space.plan("self", move, { crossDisplay: false }), {
+    reason: "target-blocked",
+  });
+  const plan = space.plan("self", move);
+  assert(plan.path.some(({ x }) => x < 0));
+  assert.equal(plan.displayId, primary.id);
+  for (const point of plan.path) {
+    assert.equal(space.canStep("self", point, plan), true);
+    state.residents[0].bounds = box(point.x, point.y);
+  }
 });
