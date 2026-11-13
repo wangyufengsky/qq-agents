@@ -1,15 +1,25 @@
 // @ts-check
 import { z } from "zod";
 import { registry } from "./registry.mjs";
-import { TOOL_NAMES } from "./names.mjs";
+import { DESKTOP_BODY_CONTROL, TOOL_NAMES } from "./names.mjs";
+import { legacyBodyActionSchema } from "../home/desktop-body-protocol.mjs";
 export { TOOL_NAMES } from "./names.mjs";
-export function toolSpecs(enabled = TOOL_NAMES, { context = false } = {}) {
+
+const legacyBodyDescription =
+  "根据管理员新的桌边指令控制你自己的桌宠浮窗。move 的 door 是去小门旁，seat 是坐回座位，仅限同屏。state 读取位置，pose 调整朝向，stop 停止，status 用原 requestId 查询本轮结果。每个新操作使用不同 requestId，等待 completed 后才确认完成。手动接管后等管理员的新指令，取消或未确认时不换 ID 重试。";
+export function toolSpecs(
+  enabled = TOOL_NAMES,
+  { context = false, desktopBodyV2 = true } = {},
+) {
   return enabled
     .filter((n) => Object.hasOwn(registry, n))
     .map((name) => {
       const { description, schema } = registry[name];
+      const legacyBody = name === DESKTOP_BODY_CONTROL && !desktopBodyV2;
       const inputSchema = z.toJSONSchema(
-        /** @type {import("zod").ZodType} */ (schema),
+        /** @type {import("zod").ZodType} */ (
+          legacyBody ? legacyBodyActionSchema : schema
+        ),
         { target: "draft-7" },
       );
       inputSchema.type = "object";
@@ -30,6 +40,10 @@ export function toolSpecs(enabled = TOOL_NAMES, { context = false } = {}) {
         add(inputSchema);
       }
       delete inputSchema.$schema;
-      return { name, description, inputSchema };
+      return {
+        name,
+        description: legacyBody ? legacyBodyDescription : description,
+        inputSchema,
+      };
     });
 }

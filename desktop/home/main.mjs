@@ -18,7 +18,9 @@ import { openNoFollowAsync } from "../../src/core/no-follow.mjs";
 import { managedDesktopExecutable } from "../../src/home/desktop-dependencies.mjs";
 import { clampToWorkArea, restoreWindowPoint } from "./window-placement.mjs";
 import { parseBrowserOrigin } from "./browser-origin.mjs";
-import { bodyDestination, DesktopBodyClient } from "./body-client.mjs";
+import { DesktopBodyClient } from "./body-client.mjs";
+import { DesktopExclusionStore, DesktopSpace } from "./space.mjs";
+import { createSpaceEditor } from "./space-editor.mjs";
 import { createFrameworkClient } from "./framework-client.mjs";
 import { NativeControlClient } from "./native-control-client.mjs";
 import { createNativeDesktopDriver } from "./native-desktop-driver.mjs";
@@ -102,6 +104,54 @@ let desktopLocked = false;
 let bodyInputAfter = 0;
 let pointerTimer;
 const manuallyMoved = new Set();
+let bodyProtocol = false;
+let recoveryPositionPending = false;
+let observationEnded;
+const exclusions = new DesktopExclusionStore(
+  join(app.getPath("userData"), "desktop-exclusions.json"),
+);
+const space = new DesktopSpace({
+  displays: () => screen.getAllDisplays(),
+  displayAt: (bounds) => screen.getDisplayMatching(bounds),
+  door: () => visibleBounds(entries.get("door")),
+  residents: () =>
+    [...entries.values()].flatMap((entry) => {
+      const bounds = entry.type === "sprite" && visibleBounds(entry);
+      return bounds
+        ? [
+            {
+              id: entry.id,
+              name: roles.find(({ id }) => id === entry.id)?.name,
+              visit: entry.bodyVisit,
+              bounds,
+              facing: entry.facing ?? "right",
+              pose: entry.pose ?? "stand",
+              action: entry.bodyAction,
+            },
+          ]
+        : [];
+    }),
+  seat: (id) => windowPoint(id, "sprite"),
+  zones: () => exclusions.list(),
+});
+const spaceEditor = createSpaceEditor({
+  screen,
+  store: exclusions,
+  changed: () => {
+    space.invalidate();
+    bodyInputAfter = Date.now();
+    body.clear("stale-layout");
+  },
+});
+
+function visibleBounds(entry) {
+  return entry &&
+    !entry.departing &&
+    !entry.win.isDestroyed() &&
+    entry.win.isVisible()
+    ? entry.win.getBounds()
+    : undefined;
+}
 const body = new DesktopBodyClient({
   claim: (data, current) => framework.result("body-claim", data, current),
   result: (data, current) => framework.result("body-result", data, current),
@@ -223,7 +273,15 @@ function screenRequest(value, action) {
           isCurrent,
         );
         if (isCurrent() && digest && data) grant.digest = digest;
-        if (isCurrent() && status === "unavailable") clearObservation();
+        if (isCurrent() && status === "unavailable") {
+          observationEnded =
+            process.platform === "darwin" &&
+            systemPreferences.getMediaAccessStatus("screen") !== "granted"
+              ? "permission"
+              : "target-unavailable";
+          clearObservation();
+          update();
+        }
       }
     } catch {
       // The host owns request expiry and rejects stale results.
@@ -243,7 +301,7 @@ function savePreferences() {
   renameSync(next, preferencesPath);
 }
 
-function snapshot() {
+function baseSnapshot() {
   if (frameworkRoot)
     return (
       remoteState ?? {
@@ -286,6 +344,42 @@ function snapshot() {
     bubbles: room.bubbles,
     notice: room.notice,
   };
+}
+
+function snapshot() {
+  const data = baseSnapshot();
+  return {
+    ...data,
+    bodyZones: !hidden && !desktopLocked,
+    ...(observationEnded && { observationEnded }),
+    roles: data.roles.map((role) => {
+      const entry = entries.get(role.id);
+      if (!entry || !visibleBounds(entry)) return role;
+      const status = role.bodyStatus ?? { state: "idle" };
+      const stopped = ["paused", "qq"].includes(status.state);
+      return {
+        ...role,
+        bodyStatus: {
+          ...status,
+          ...entry.bodyFeedback,
+          ...(status.reason && { stateReason: status.reason }),
+          state: stopped
+            ? status.state
+            : entry.movement
+              ? "moving"
+              : status.state,
+          facing: entry.facing ?? "right",
+          pose: entry.pose ?? "stand",
+        },
+      };
+    }),
+  };
+}
+
+function recordBodyFeedback(entry, reason) {
+  entry.bodyFeedback = { reason, at: Date.now() };
+  const panel = entries.get("panel");
+  if (panel?.ready) send(panel, "room:update", snapshot());
 }
 
 function send(entry, channel, value) {
@@ -368,7 +462,14 @@ function createWindow(id, type, point, options = {}) {
       backgroundThrottling: false,
     },
   });
-  const entry = { win, id, type, ready: false, section: options.section };
+  const entry = {
+    win,
+    id,
+    type,
+    ready: false,
+    section: options.section,
+    bodyVisit: {},
+  };
   entries.set(id, entry);
   if (panel) win.setAlwaysOnTop(true, "floating", 1);
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
@@ -439,6 +540,8 @@ function updateMotion(entry) {
   if (!entry.ready) return;
   entry.reportedMotion = state;
   send(entry, "room:motion", state);
+  const panel = entries.get("panel");
+  if (panel?.ready) send(panel, "room:update", snapshot());
 }
 
 function stopMovement(entry) {
@@ -456,6 +559,8 @@ function stopLocalMotion() {
 }
 
 function restoreWindowLayout() {
+  spaceEditor.close();
+  space.invalidate();
   bodyInputAfter = Date.now();
   body.clear("display-changed");
   stopLocalMotion();
@@ -489,6 +594,8 @@ function animateTo(entry, point, complete, options = {}) {
     send(entry, "room:facing", entry.facing);
   }
   const started = Date.now();
+  const validStep = (point) => !options.canStep || options.canStep(point);
+  if (options.current && !options.current()) return options.interrupted?.();
   const duration = options.duration ?? 450;
   if (
     entry.reducedMotion ||
@@ -496,6 +603,7 @@ function animateTo(entry, point, complete, options = {}) {
     desktopLocked ||
     (x === target.x && y === target.y)
   ) {
+    if (!validStep(target)) return options.blocked?.();
     entry.win.setPosition(target.x, target.y);
     complete?.();
     return;
@@ -511,10 +619,16 @@ function animateTo(entry, point, complete, options = {}) {
       ? 1
       : Math.min(1, (Date.now() - started) / duration);
     const eased = options.current ? progress : 1 - (1 - progress) ** 3;
-    entry.win.setPosition(
-      Math.round(x + (target.x - x) * eased),
-      Math.round(y + (target.y - y) * eased),
-    );
+    const step = {
+      x: Math.round(x + (target.x - x) * eased),
+      y: Math.round(y + (target.y - y) * eased),
+    };
+    if (!validStep(step)) {
+      stopMovement(entry);
+      options.blocked?.();
+      return;
+    }
+    entry.win.setPosition(step.x, step.y);
     if (progress === 1) {
       stopMovement(entry);
       complete?.();
@@ -539,7 +653,10 @@ function bodyPosition(id) {
 
 function executeBodyAction({ agentId, inputAt, action }, current, finish) {
   const entry = entries.get(agentId);
-  const fail = (reason, status = "cancelled") => finish({ status, reason });
+  const fail = (reason, status = "cancelled") => {
+    if (entry && reason !== "manual-control") recordBodyFeedback(entry, reason);
+    finish({ status, reason });
+  };
   if (!entry || entry.departing || entry.win.isDestroyed())
     return fail("inactive");
   if (hidden || desktopLocked || !entry.win.isVisible()) return fail("hidden");
@@ -549,45 +666,77 @@ function executeBodyAction({ agentId, inputAt, action }, current, finish) {
     inputAt <= Math.max(entry.bodyInputAfter ?? 0, bodyInputAfter)
   )
     return fail("manual-control");
-  if (action.type === "state") return finish({ status: "completed" });
+  if (action.type === "state")
+    return finish({ status: "completed", space: space.snapshot(agentId) });
   if (action.type === "pose") {
-    entry.facing = action.facing;
-    send(entry, "room:facing", entry.facing);
+    if (entry.movement) stopMovement(entry);
+    if (action.facing) {
+      entry.facing = action.facing;
+      send(entry, "room:facing", entry.facing);
+    } else entry.pose = action.pose;
+    entry.bodyFeedback = { reason: "completed", at: Date.now() };
+    update();
     return finish({ status: "completed" });
   }
 
-  const bounds = entry.win.getBounds();
-  const display = screen.getDisplayMatching(bounds);
-  const doorWindow = entries.get("door")?.win;
-  const target = bodyDestination({
-    door: doorWindow && !doorWindow.isDestroyed() && doorWindow.getBounds(),
-    seat: windowPoint(agentId, "sprite"),
-    display,
-    displayAt: (rect) => screen.getDisplayMatching(rect),
-    bounds,
-    target: action.target,
-    clamp: clampPoint,
-  });
-  if (!target) return fail("target-unavailable", "failed");
-  const distance = Math.hypot(target.x - bounds.x, target.y - bounds.y);
-  animateTo(
-    entry,
-    target,
-    () => {
+  let plan = space.plan(agentId, action);
+  if (plan.reason) return fail(plan.reason, "failed");
+  entry.pose = "stand";
+  entry.bodyAction = {
+    kind: "move",
+    state: "executing",
+    destination: plan.destination,
+  };
+  let movement;
+  let replanned = false;
+  const end = (reason, status) => {
+    plan.release();
+    entry.bodyAction = undefined;
+    if (reason) fail(reason, status);
+    else {
+      recordBodyFeedback(entry, "completed");
+      finish({ status: "completed" });
+    }
+  };
+  const next = (index) => {
+    const point = plan.path[index];
+    if (!point) {
       const [x, y] = entry.win.getPosition();
-      if (x === target.x && y === target.y) finish({ status: "completed" });
-      else fail("position-unconfirmed", "failed");
-    },
-    {
-      area: display.workArea,
+      return x === plan.destination.x && y === plan.destination.y
+        ? end()
+        : end("position-unconfirmed", "failed");
+    }
+    const [x, y] = entry.win.getPosition();
+    const distance = Math.hypot(point.x - x, point.y - y);
+    animateTo(entry, point, () => next(index + 1), {
+      area: plan.area,
       current,
-      interrupted: () => fail("inactive"),
-      duration: Math.min(2200, Math.max(900, Math.round(distance * 3))),
-    },
-  );
-  const movement = entry.movement;
-  return () => {
+      interrupted: () => end("inactive", "cancelled"),
+      canStep: (step) => space.canStep(agentId, step, plan),
+      blocked: () => {
+        if (replanned || !current()) return end("target-blocked", "cancelled");
+        replanned = true;
+        const replacement = space.plan(agentId, action, { replan: plan });
+        if (replacement.reason) return end(replacement.reason, "cancelled");
+        plan.release();
+        plan = replacement;
+        entry.bodyAction.destination = plan.destination;
+        next(0);
+      },
+      duration:
+        plan.path.length === 1
+          ? Math.min(2200, Math.max(900, Math.round(distance * 3)))
+          : Math.min(1050, Math.max(250, Math.round(distance * 3))),
+    });
+    movement = entry.movement;
+  };
+  next(0);
+  return (reason) => {
+    plan.release();
+    entry.bodyAction = undefined;
     if (entry.movement === movement) stopMovement(entry);
+    if (reason && reason !== "manual-control")
+      recordBodyFeedback(entry, reason);
   };
 }
 
@@ -605,6 +754,7 @@ function showSprite(role) {
 }
 
 function hideAll() {
+  spaceEditor.close();
   hidden = true;
   clearObservation();
   framework?.sync();
@@ -631,6 +781,40 @@ function animateHome(role) {
 }
 
 function applyFramework(value, action) {
+  if (value.offline && remoteState) {
+    body.update(value, action);
+    recoveryPositionPending = bodyProtocol;
+    screenRequest(value, action);
+    nativeControl?.update(value, action);
+    remoteState = {
+      ...remoteState,
+      connected: false,
+      connectionLost: true,
+      screenView: undefined,
+      observation: undefined,
+      nativeControl: undefined,
+      browserControl: undefined,
+      attachmentInput: undefined,
+      thinking: null,
+      activityActor: null,
+      knock: null,
+      bubbles: {},
+      notice: "与管理台断开，正在重连。若持续断开，请确认管理台正在运行。",
+      roles: remoteState.roles.map((role) => ({
+        ...role,
+        activity: "idle",
+        bodyStatus: { state: "idle", reason: "disconnect" },
+      })),
+    };
+    room.bubbles = {};
+    room.turn = null;
+    update();
+    return;
+  }
+  if (action === "sync" && value.room) {
+    bodyProtocol = value.bodyProtocol === 2;
+    recoveryPositionPending = false;
+  }
   screenRequest(value, action);
   nativeControl?.update(value, action);
   if (value.closed) {
@@ -652,6 +836,8 @@ function applyFramework(value, action) {
         : "请在管理台的纸页小窝里开启桌面小窝。",
   };
   const browserControl = value.room?.browserControl;
+  if (value.room && value.room.roomEpoch !== remoteState?.roomEpoch)
+    observationEnded = undefined;
   if (value.room && value.room.roomEpoch !== lastBrowserGrant?.roomEpoch)
     lastBrowserGrant = undefined;
   for (const role of roles)
@@ -663,6 +849,7 @@ function applyFramework(value, action) {
     framework: true,
     subjectKnocks: true,
     connected: !!value.room,
+    connectionLost: Boolean(value.offline),
     screenView: screenCaptureSupported ? value.room?.screenView : undefined,
     observation: screenCaptureSupported &&
       value.room?.observation && {
@@ -700,6 +887,13 @@ function syncLive() {
       }
       const entry = entries.get(role.id);
       if (!entry || entry.departing) showSprite(role);
+      const resident = entries.get(role.id);
+      if (resident && resident.bodyVisitId !== role.bodyVisitId) {
+        resident.bodyVisitId = role.bodyVisitId;
+        resident.bodyVisit = {};
+        resident.bodyFeedback = undefined;
+        resident.pose = "stand";
+      }
     } else animateHome(role);
   }
   update();
@@ -812,6 +1006,13 @@ function handleDrag(entry, action, data) {
   if (!Number.isFinite(data?.x) || !Number.isFinite(data?.y)) return;
   const [x, y] = entry.win.getPosition();
   if (action === "drag-start") {
+    space.invalidate();
+    const interrupted =
+      entry.type === "door"
+        ? [...entries.values()].filter((resident) => resident.bodyAction)
+        : entry.bodyAction
+          ? [entry]
+          : [];
     entry.bodyInputAfter = Date.now();
     if (framework && entry.type === "sprite") {
       manuallyMoved.add(entry.id);
@@ -822,6 +1023,13 @@ function handleDrag(entry, action, data) {
       body.clear("manual-control");
     } else body.stop(entry.id, "manual-control");
     stopMovement(entry);
+    if (interrupted.length) {
+      const at = Date.now();
+      for (const resident of interrupted)
+        resident.bodyFeedback = { reason: "manual-control", at };
+      const panel = entries.get("panel");
+      if (panel?.ready) send(panel, "room:update", snapshot());
+    }
     entry.drag = { x, y, mouseX: data.x, mouseY: data.y };
   } else if (entry.drag) {
     const from = entry.drag;
@@ -835,6 +1043,7 @@ function handleDrag(entry, action, data) {
     entry.win.setPosition(target.x, target.y);
     if (action === "drag-end") {
       entry.drag = null;
+      space.invalidate();
       entry.bodyInputAfter = Date.now();
       if (framework && entry.type === "sprite") {
         manuallyMoved.add(entry.id);
@@ -1046,6 +1255,7 @@ async function chooseScreenGrant(event, observe = false) {
       agentId: grant.agentId,
     };
     if (observe) {
+      observationEnded = undefined;
       observationGrant = grant;
       lastObservationGrant = identity;
     } else {
@@ -1253,13 +1463,19 @@ function controlResident(id, action) {
   )
     return;
   entry.bodyInputAfter = Date.now();
-  body.stop(id, "manual-control");
+  body.stop(id, "stopped");
   stopMovement(entry);
+  if (action === "body-stop") recordBodyFeedback(entry, "stopped");
   if (framework) {
     manuallyMoved.add(id);
     framework.sync();
   }
-  if (action === "body-seat") animateTo(entry, windowPoint(id, "sprite"));
+  if (action === "body-seat") {
+    space.invalidate();
+    animateTo(entry, windowPoint(id, "sprite"), () =>
+      recordBodyFeedback(entry, "completed"),
+    );
+  }
 }
 
 ipcMain.on("room:action", (event, action, data) => {
@@ -1315,6 +1531,16 @@ ipcMain.on("room:action", (event, action, data) => {
     return;
   }
   const role = roles.find(({ id }) => id === data);
+  if (action === "body-zones") {
+    if (
+      event.senderFrame === entry.win.webContents.mainFrame &&
+      entry.win.isFocused() &&
+      !hidden &&
+      !desktopLocked
+    )
+      spaceEditor.open(screen.getDisplayMatching(entry.win.getBounds()));
+    return;
+  }
   if (["body-stop", "body-seat"].includes(action)) {
     if (
       event.senderFrame === entry.win.webContents.mainFrame &&
@@ -1380,6 +1606,7 @@ else {
     if ((!live && !framework) || shuttingDown) return;
     event.preventDefault();
     shuttingDown = true;
+    spaceEditor.close();
     clearScreenGrant(true);
     body.clear("inactive");
     clearScreenGrant();
@@ -1398,6 +1625,7 @@ else {
     ])
       screen.on(event, restoreWindowLayout);
     powerMonitor.on("lock-screen", () => {
+      spaceEditor.close();
       desktopLocked = true;
       clearObservation();
       framework?.sync();
@@ -1412,6 +1640,7 @@ else {
       updatePointerPolling();
     });
     powerMonitor.on("suspend", () => {
+      spaceEditor.close();
       desktopLocked = true;
       clearObservation();
       framework?.sync();
@@ -1435,6 +1664,19 @@ else {
         () => {
           const dragged = [...manuallyMoved].slice(0, 24);
           for (const id of dragged) manuallyMoved.delete(id);
+          const results = body.recovery();
+          const bodyPositions =
+            recoveryPositionPending && remoteState?.roomEpoch
+              ? [...entries.values()]
+                  .flatMap((entry) => {
+                    const position =
+                      entry.type === "sprite" && visibleBounds(entry)
+                        ? bodyPosition(entry.id).position
+                        : undefined;
+                    return position ? [{ agentId: entry.id, ...position }] : [];
+                  })
+                  .slice(0, 24)
+              : undefined;
           return {
             visible:
               !hidden &&
@@ -1444,6 +1686,16 @@ else {
                   type === "sprite" && !win.isDestroyed() && win.isVisible(),
               ),
             dragged,
+            ...(bodyProtocol && {
+              bodyProtocol: 2,
+              ...(results.length && { bodyResults: results }),
+              ...(bodyPositions && {
+                bodyPositions: {
+                  roomEpoch: remoteState.roomEpoch,
+                  positions: bodyPositions,
+                },
+              }),
+            }),
           };
         },
       );

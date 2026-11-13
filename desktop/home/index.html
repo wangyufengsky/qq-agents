@@ -33,6 +33,11 @@
           <button data-tab="visits" aria-pressed="true">来访</button>
           <button data-tab="chat" aria-pressed="false">聊天</button>
         </nav>
+        <p
+          class="body-announcement sr-only"
+          role="status"
+          aria-atomic="true"
+        ></p>
         <section id="visits">
           <div class="section-heading">
             <h2>邀请来访</h2>
@@ -57,6 +62,10 @@
           </div>
           <div class="guest-list"></div>
           <p class="room-notice" role="status"></p>
+          <p class="observation-ended" role="status" hidden></p>
+          <button type="button" class="secondary body-zones" hidden>
+            设置桌宠禁停区
+          </button>
           <div class="sample-settings" hidden>
             <button class="settings secondary" aria-expanded="false">
               刷新设置
@@ -134,6 +143,7 @@
                 <p class="desktop-permission-status" role="status" hidden></p>
               </div>
             </div>
+            <p class="observation-ended" role="status" hidden></p>
           </div>
           <dialog
             class="browser-permission-dialog"

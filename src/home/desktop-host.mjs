@@ -4,6 +4,7 @@ import { SessionPreparationFailure } from "../backends/turn-failure.mjs";
 import { recallBoundary } from "../core/recall-boundary.mjs";
 import { containsCredential } from "../core/secrets.mjs";
 import { roleBackendConfig } from "../core/functional-agents.mjs";
+import { supportsMessageImages } from "../backends/capabilities.mjs";
 import { roleTurnBusy } from "../core/role-rest.mjs";
 import { DESKTOP_ACTIVITY_TIMEOUT } from "./desktop-activity.mjs";
 import { rhythmStatus } from "../core/rhythm.mjs";
@@ -26,6 +27,10 @@ import { DESKTOP_ADMINISTRATOR, DesktopArchive } from "./desktop-archive.mjs";
 import { DesktopObservation } from "./desktop-observation.mjs";
 import { DesktopScreen } from "./desktop-screen.mjs";
 import { DesktopBody } from "./desktop-body.mjs";
+import {
+  bodyRecoveryPositionSchema,
+  bodyResultEvidenceSchema,
+} from "./desktop-body-protocol.mjs";
 import { DesktopNative } from "./desktop-native.mjs";
 import { DesktopBrowser, browserGrantSchema } from "./desktop-browser.mjs";
 import { localGrantSchema, localRevokeSchema } from "./desktop-local-grant.mjs";
@@ -59,6 +64,15 @@ const requestSchema = z
           .object({
             visible: z.boolean(),
             dragged: z.array(z.string().min(1).max(64)).max(24),
+            bodyProtocol: z.literal(2).optional(),
+            bodyResults: z.array(bodyResultEvidenceSchema).max(4).optional(),
+            bodyPositions: z
+              .object({
+                roomEpoch: z.string().uuid(),
+                positions: z.array(bodyRecoveryPositionSchema).max(24),
+              })
+              .strict()
+              .optional(),
           })
           .strict(),
         localGrantSchema,
@@ -268,7 +282,10 @@ export class DesktopHost {
         !this.activityCurrent(this.live.active.actor)
       )
         this.live.cancelActivity();
-      if (syncingClient !== this.client.id) this.observation.state();
+      if (syncingClient !== this.client.id) {
+        this.observation.state();
+        this.body.clientWork();
+      }
       this.live.tick(now);
       this.invitations.dispatch();
       this.browser.state();
@@ -445,11 +462,27 @@ export class DesktopHost {
     const { live } = this;
     if (this.runtime.updateMaintenance)
       return { enabled: true, room: this.roomSnapshot() };
+    let bodyResultAcks;
     if (action === "sync") {
       const visible = typeof data === "boolean" ? data : data?.visible;
       this.client.activityVisibleUntil =
         visible === true ? this.runtime.now() + ACTIVITY_VISIBILITY_LEASE : 0;
       if (data && typeof data === "object" && "visible" in data) {
+        if (data.bodyProtocol === 2) {
+          this.client.bodyProtocol = 2;
+          if (data.bodyPositions?.roomEpoch === live.room.epoch)
+            this.client.bodyPositions = {
+              at: Date.now(),
+              entries: new Map(
+                data.bodyPositions.positions.flatMap(
+                  ({ agentId, ...position }) => {
+                    const visit = live.visits.get(agentId);
+                    return visit ? [[agentId, { visit, position }]] : [];
+                  },
+                ),
+              ),
+            };
+        }
         const moved = new Set(data.dragged);
         for (const id of moved)
           live.activity.defer(live.visits.get(id), this.runtime.now());
@@ -460,6 +493,12 @@ export class DesktopHost {
         !this.activityCurrent(live.active.actor)
       )
         live.cancelActivity();
+      if (
+        this.client.bodyProtocol === 2 &&
+        data?.bodyProtocol === 2 &&
+        data.bodyResults?.length
+      )
+        bodyResultAcks = this.body.reconcile(client, data.bodyResults);
       if (visible === true) void live.advanceActivity(this.runtime.now());
     }
     if (action === "activity-pause" && typeof data === "boolean") {
@@ -506,6 +545,8 @@ export class DesktopHost {
       ...state,
       ...(screenRequest && { screenRequest }),
       ...this.native.clientWork(),
+      bodyProtocol: 2,
+      ...(bodyResultAcks?.length && { bodyResultAcks }),
       bodyRequests: this.body.clientWork(),
     };
   }
@@ -513,6 +554,14 @@ export class DesktopHost {
   roomSnapshot() {
     const { runtime, screen, native } = this;
     const room = this.live.snapshot();
+    const now = runtime.now();
+    const active = this.live.active;
+    const observer =
+      active?.observation &&
+      this.observation.grant === active.observation &&
+      !active.controller.signal.aborted
+        ? active.actor
+        : undefined;
     const viewing =
       screen.request() && (screen.pending.grant ?? screen.grant)?.agentId;
     const windowAction = native.request();
@@ -530,11 +579,13 @@ export class DesktopHost {
       roles: room.roles.map((role) => {
         const { id } = role;
         const desktop = runtime.running.get(`${id}|${DESKTOP_CONVERSATION}`);
+        const agent = runtime.agent(id);
+        const rhythm = rhythmStatus(runtime, agent);
         let activity = "idle";
         if (id === operating)
           activity =
             windowAction.action.type === "observe" ? "observe" : "control";
-        else if (id === viewing) activity = "observe";
+        else if (id === viewing || id === observer) activity = "observe";
         else if (qq.has(id)) activity = "qq";
         else if (
           room.activityActor === id &&
@@ -548,20 +599,74 @@ export class DesktopHost {
           room.bubbles[id]
         )
           activity = "chat";
-        else if (rhythmStatus(runtime, runtime.agent(id)).state === "sleeping")
-          activity = "sleep";
-        return { ...role, activity };
+        else if (rhythm.state === "sleeping") activity = "sleep";
+
+        const bodyStatus = { state: "idle" };
+        const visit = this.live.visits.get(id);
+        const memory = runtime.memory.bind(id);
+        const paused =
+          runtime.config.globalPaused ||
+          agent.paused ||
+          memory.state(DESKTOP_CONVERSATION).paused ||
+          memory.state(DESKTOP_ACTIVITY_CONVERSATION).paused;
+        const resting = ["sleeping", "rest-pending"].includes(rhythm.state);
+        if (paused || resting || (visit && room.activityPaused)) {
+          bodyStatus.state = "paused";
+          bodyStatus.reason = resting ? "rest" : "pause";
+          if (resting && rhythm.until) bodyStatus.until = rhythm.until;
+        } else if (visit && (qq.has(id) || this.visits.get(id)?.qqClaims)) {
+          bodyStatus.state = "qq";
+          bodyStatus.reason = "qq";
+        } else if (activity === "observe") {
+          bodyStatus.state = "observing";
+        } else if (
+          visit?.activity?.reason === "wait-ended" &&
+          visit.activity.dueAt > now
+        ) {
+          bodyStatus.state = "waiting";
+          bodyStatus.until = visit.activity.dueAt;
+        }
+        return {
+          ...role,
+          activity,
+          bodyStatus,
+          ...(visit && { bodyVisitId: this.body.visitId(visit) }),
+        };
       }),
     };
   }
 
   clientSnapshot() {
+    const observation = this.observation.state();
+    const policy = this.runtime.config.desktopHome;
+    const present = this.live
+      .here()
+      .filter(
+        ({ id }) =>
+          policy.activityRoles.includes(id) && policy.toolRoles.includes(id),
+      );
+    const backendUnsupported =
+      policy.autonomousObservation &&
+      policy.screenView.enabled &&
+      !this.live.activity.paused &&
+      !observation.eligible.length &&
+      present.length > 0 &&
+      present.every(({ id }) => {
+        const agent = this.runtime.agent(id);
+        const backend = this.backendFor(agent);
+        return (
+          !agent.behavior.imageInput.enabled ||
+          !backend ||
+          !supportsMessageImages(backend)
+        );
+      });
     return {
       enabled: true,
       room: {
         ...this.roomSnapshot(),
         screenView: this.screen.state(),
-        observation: this.observation.state(),
+        observation,
+        ...(backendUnsupported && { observationEnded: "unsupported" }),
         nativeControl: this.native.state(),
         browserControl: this.browser.state(),
         activityEnabled: this.live

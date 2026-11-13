@@ -96,7 +96,7 @@ export const definitions = {
     nativeActionSchema,
   ],
   [DESKTOP_BODY_CONTROL]: [
-    "根据管理员新的桌边指令控制你自己的桌宠浮窗。move 的 door 是去小门旁，seat 是坐回座位，仅限同屏。state 读取位置，pose 调整朝向，stop 停止，status 用原 requestId 查询本轮结果。每个新操作使用不同 requestId，等待 completed 后才确认完成。手动接管后等管理员的新指令，取消或未确认时不换 ID 重试。",
+    "按本轮权限控制自己的桌宠，移动仅限同屏。state 读取位置和空间快照，move 可用 door、seat 或快照中的角落、在场角色附近及受限坐标。结构化目标要附快照的 layoutVersion。pose 调整朝向或站立、坐下、张望。stop 停止，status 用原 requestId 查询本轮结果。等待 completed 才能确认完成。手动接管、取消或结果未知时，不换 ID 重试。",
     bodyActionSchema,
   ],
   [DESKTOP_BROWSER_CONTROL]: [

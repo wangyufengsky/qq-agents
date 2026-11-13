@@ -348,6 +348,193 @@ test("paper tabs and portraits replace the desktop budget display", async (t) =>
   ]);
 });
 
+test("the visit panel uses confirmed body state and announces each manual interruption once", async (t) => {
+  let executablePath;
+  try {
+    executablePath = findScreenshotBrowser();
+  } catch {
+    t.skip("local Chromium unavailable");
+    return;
+  }
+  const browser = await chromium.launch({ executablePath, headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 430, height: 574 } });
+  const role = {
+    id: "fish",
+    name: "小鱼",
+    color: "teal",
+    state: "here",
+    available: true,
+    activity: "move",
+  };
+  const room = {
+    live: true,
+    framework: true,
+    connected: true,
+    roles: [{ ...role, bodyStatus: { state: "idle" } }],
+    messages: [],
+    notice: "",
+    observation: {
+      eligible: [role.id],
+      grantedAgentId: role.id,
+      target: "合成文档窗口",
+      expiresAt: Date.UTC(2026, 0, 2, 12, 15),
+      remaining: 2,
+    },
+  };
+  await page.addInitScript((data) => {
+    window.testActions = [];
+    window.nest = {
+      onRoom: (update) => (window.testRoom = update),
+      onSection() {},
+      get: async () => ({ data, section: "visits" }),
+      act: (...args) => window.testActions.push(args),
+    };
+  }, room);
+  await page.goto(
+    new URL("../desktop/home/index.html?type=panel", import.meta.url).href,
+  );
+  const push = (data) => page.evaluate((next) => window.testRoom(next), data);
+  const state = page.locator(".guest-state");
+  const detail = page.locator(".guest-detail");
+  const recent = page.locator(".guest-recent");
+  const announcement = page.locator(".body-announcement");
+  const zoneEditor = page.getByRole("button", { name: "设置桌宠禁停区" });
+  const stop = page.getByRole("button", { name: "停止动作 · 小鱼" });
+  await state.waitFor();
+  assert.equal(await state.textContent(), "在桌边");
+  assert.equal(await detail.isVisible(), false);
+  assert.equal(await zoneEditor.isVisible(), false);
+
+  const put = (bodyStatus, other = {}, options = {}) =>
+    push({ ...room, ...options, roles: [{ ...role, ...other, bodyStatus }] });
+  const at = Date.UTC(2026, 0, 2, 12);
+  await put({ state: "waiting", until: at });
+  assert.equal(await state.textContent(), "等待自主活动");
+  assert.match(await detail.textContent(), /^至 \d{2}:\d{2}$/);
+  await put({ state: "observing" });
+  assert.equal(await state.textContent(), "正在观察桌面");
+  assert.match(await detail.textContent(), /合成文档窗口.*许可至.*剩余 2 次/);
+  await put({ state: "qq" });
+  assert.equal(await state.textContent(), "QQ 优先处理");
+  assert.equal(await detail.isVisible(), false);
+  await put(
+    { state: "paused", reason: "rest" },
+    { state: "home", available: false },
+  );
+  assert.equal(await state.textContent(), "休息时段 · 已暂停");
+  await put({ state: "paused", stateReason: "rest", reason: "completed", at });
+  assert.equal(await state.textContent(), "休息时段 · 已暂停");
+  assert.match(await recent.textContent(), /动作已完成$/);
+  await put({ state: "moving", pose: "stand", facing: "left" });
+  assert.equal(await state.textContent(), "正在移动");
+  assert.equal(await detail.textContent(), "站立 · 面向左侧");
+  await stop.focus();
+  await put({ state: "idle", reason: "manual-control" });
+  assert.equal(await announcement.textContent(), "");
+  assert.equal(await recent.isVisible(), false);
+
+  await announcement.evaluate((node) => {
+    window.testAnnouncements = [];
+    new window.MutationObserver(() =>
+      window.testAnnouncements.push(node.textContent),
+    ).observe(node, { childList: true });
+  });
+  const interrupted = { state: "idle", reason: "manual-control", at };
+  await put(interrupted);
+  await put(interrupted);
+  await put({ ...interrupted, state: "waiting", until: at + 120_000 });
+  assert.deepEqual(await page.evaluate(() => window.testAnnouncements), [
+    "已停止小鱼的移动",
+  ]);
+  assert.match(
+    await recent.textContent(),
+    /^最近 · \d{2}:\d{2} · 拖动已打断移动$/,
+  );
+  assert.equal(
+    await stop.evaluate((node) => node === node.ownerDocument.activeElement),
+    true,
+  );
+  await page.keyboard.press("Enter");
+  assert.deepEqual(await page.evaluate(() => window.testActions), [
+    ["body-stop", "fish"],
+  ]);
+  const nextStop = { ...interrupted, at: at + 1 };
+  await push({
+    ...room,
+    roles: [
+      { ...role, bodyStatus: nextStop },
+      { ...role, id: "dragon", name: "小龙", bodyStatus: nextStop },
+    ],
+  });
+  assert.deepEqual(await page.evaluate(() => window.testAnnouncements), [
+    "已停止小鱼的移动",
+    "已停止小鱼的移动。已停止小龙的移动",
+  ]);
+
+  await put(
+    { state: "idle", reason: "target-blocked", at },
+    {},
+    { bodyZones: true },
+  );
+  assert.match(
+    await recent.textContent(),
+    /落点被占用或位于禁停区，请重新选择/,
+  );
+  await zoneEditor.focus();
+  await page.keyboard.press("Enter");
+  assert.deepEqual(await page.evaluate(() => window.testActions.at(-1)), [
+    "body-zones",
+  ]);
+  const observationWarning = page.locator("#visits .observation-ended");
+  await put(
+    { state: "idle", reason: "permission", at },
+    {},
+    { observationEnded: "target-unavailable" },
+  );
+  assert.match(
+    await recent.textContent(),
+    /请在管理台检查该角色的桌宠控制权限/,
+  );
+  assert.match(
+    await observationWarning.textContent(),
+    /选择其他窗口并重新授权/,
+  );
+  await put(
+    { state: "idle", reason: "private diagnostic", at },
+    {},
+    { observationEnded: "permission" },
+  );
+  assert.equal(await recent.isVisible(), false);
+  assert.match(await observationWarning.textContent(), /在系统设置中恢复权限/);
+  await put({ state: "idle" }, {}, { observationEnded: "unsupported" });
+  assert.match(
+    await observationWarning.textContent(),
+    /在管理台检查角色的后端/,
+  );
+
+  const notice = "与管理台断开，正在重连。若持续断开，请确认管理台正在运行。";
+  await put(
+    { state: "moving" },
+    {},
+    { connected: false, connectionLost: true, notice },
+  );
+  assert.equal(await state.textContent(), "连接中断");
+  assert.equal(await page.locator(".room-notice").textContent(), notice);
+  assert.equal(
+    await page.getByRole("button", { name: "请回家 · 小鱼" }).isEnabled(),
+    false,
+  );
+  assert.equal(await stop.isEnabled(), true);
+  assert.equal(await observationWarning.isVisible(), false);
+  await page.getByRole("button", { name: "聊天", exact: true }).click();
+  assert.equal(await page.locator(".turn-status").textContent(), notice);
+  assert.equal(
+    await page.getByRole("textbox", { name: "发到房间" }).isEnabled(),
+    false,
+  );
+});
+
 test("floating door distinguishes clicks from dragging", async (t) => {
   let executablePath;
   try {
@@ -424,9 +611,30 @@ test("floating resident replays six short actions with a still hold and respects
   );
   const artButton = page.locator(".sprite-button");
   const sprite = artButton.locator("img");
+  const pose = artButton.locator(".sprite-pose");
   assert.equal(await page.evaluate(() => window.testReducedMotion), true);
   await page.evaluate(() => window.testFacing("left"));
   assert.equal(await artButton.getAttribute("data-facing"), "left");
+  await page.evaluate((next) => window.testRoom(next), {
+    ...room,
+    roles: [{ ...room.roles[0], bodyStatus: { state: "idle", pose: "sit" } }],
+  });
+  assert.equal(await artButton.getAttribute("data-pose"), "sit");
+  assert.match(await artButton.getAttribute("aria-label"), /坐下/);
+  assert.equal(
+    await pose.evaluate((node) => window.getComputedStyle(node).scale),
+    "-1 0.88",
+  );
+  await page.evaluate((next) => window.testRoom(next), {
+    ...room,
+    roles: [{ ...room.roles[0], bodyStatus: { state: "idle", pose: "look" } }],
+  });
+  assert.equal(await artButton.getAttribute("data-pose"), "look");
+  assert.equal(
+    await pose.evaluate((node) => window.getComputedStyle(node).rotate),
+    "4deg",
+  );
+  assert.equal(await sprite.getAttribute("src"), "art/actions/fish-idle.webp");
   for (const art of ["fish", "dragon", "cat"]) {
     for (const activity of [
       "qq",
@@ -460,7 +668,6 @@ test("floating resident replays six short actions with a still hold and respects
     ),
     0,
   );
-  const pose = button.locator(".sprite-pose");
   await page.evaluate(() => window.testMotion("moving"));
   assert.equal(
     await pose.evaluate((node) => window.getComputedStyle(node).animationName),
