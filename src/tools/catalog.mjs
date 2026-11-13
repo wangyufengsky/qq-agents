@@ -85,6 +85,8 @@ export function scopedCatalog(runtime, ctx, input) {
     },
     tools: toolSpecs(names, {
       desktopBodyV2: runtime.desktopVisits.client?.bodyProtocol === 2,
+      desktopBodyCrossDisplay:
+        runtime.desktopVisits.client?.bodyCrossDisplay === true,
     }).map((s) =>
       args.names ? s : { name: s.name, description: s.description },
     ),

@@ -82,7 +82,10 @@ export class DesktopBodyClient {
           ? { status: "cancelled", reason: entry.stopped }
           : result;
         const body = { ...this.position(agentId), ...terminal };
-        if (!v2 && ["target-blocked", "stale-layout"].includes(body.reason))
+        if (
+          (!v2 && ["target-blocked", "stale-layout"].includes(body.reason)) ||
+          (!request.crossDisplay && body.reason === "target-unreachable")
+        )
           body.reason = "target-unavailable";
         const finishedAt = Date.now();
         entry.finished = true;

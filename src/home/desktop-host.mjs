@@ -68,6 +68,7 @@ const requestSchema = z
             visible: z.boolean(),
             dragged: z.array(z.string().min(1).max(64)).max(24),
             bodyProtocol: z.literal(2).optional(),
+            bodyCrossDisplay: z.literal(true).optional(),
             observationProtocol: z.literal(2).optional(),
             bodyResults: z.array(bodyResultEvidenceSchema).max(4).optional(),
             bodyPositions: z
@@ -483,6 +484,7 @@ export class DesktopHost {
         if (data.observationProtocol === 2) this.client.observationProtocol = 2;
         if (data.bodyProtocol === 2) {
           this.client.bodyProtocol = 2;
+          this.client.bodyCrossDisplay = data.bodyCrossDisplay === true;
           if (data.bodyPositions?.roomEpoch === live.room.epoch)
             this.client.bodyPositions = {
               at: Date.now(),
@@ -564,6 +566,7 @@ export class DesktopHost {
       ...(observationVerify && { observationVerify }),
       ...this.native.clientWork(),
       bodyProtocol: 2,
+      bodyCrossDisplay: true,
       observationProtocol: 2,
       ...(bodyResultAcks?.length && { bodyResultAcks }),
       bodyRequests: this.body.clientWork(),

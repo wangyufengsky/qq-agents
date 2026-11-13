@@ -45,7 +45,7 @@ function validSpace(space, result, now) {
   );
 }
 
-function validateTarget(action, snapshot) {
+function validateTarget(action, snapshot, crossDisplay) {
   const { space, receivedAt } = snapshot ?? {};
   const now = Date.now();
   if (
@@ -61,9 +61,11 @@ function validateTarget(action, snapshot) {
       ? space.residents.find(({ ref }) => ref === target.residentRef)
           ?.displayRef
       : target.displayRef;
-  if (displayRef !== space.self.displayRef) throw Error("DESKTOP_BODY_INVALID");
+  const display = space.displays.find(({ ref }) => ref === displayRef);
+  if (!display || (!crossDisplay && displayRef !== space.self.displayRef))
+    throw Error("DESKTOP_BODY_INVALID");
   if (target.type !== "point") return;
-  const { workArea } = space.displays.find(({ ref }) => ref === displayRef);
+  const { workArea } = display;
   const { width, height } = space.self.bounds;
   if (
     target.x < workArea.x ||
@@ -316,7 +318,8 @@ export class DesktopBody {
     const v2 = client.bodyProtocol === 2;
     if (("layoutVersion" in action || "pose" in action) && !v2)
       throw Error("DESKTOP_BODY_UNAVAILABLE");
-    if ("layoutVersion" in action) validateTarget(action, this.spaces.get(ctx));
+    if ("layoutVersion" in action)
+      validateTarget(action, this.spaces.get(ctx), client.bodyCrossDisplay);
     if (action.type === "state") this.spaces.delete(ctx);
     const expiresAt = Date.now() + ACTION_TIMEOUT;
     const receipt = Promise.withResolvers();
@@ -334,6 +337,7 @@ export class DesktopBody {
       request: {
         agentId: agent.id,
         ...(v2 && { visitId: this.visitId(visit) }),
+        ...(client.bodyCrossDisplay && { crossDisplay: true }),
         roomEpoch: live.room.epoch,
         commandId: randomUUID(),
         expiresAt,

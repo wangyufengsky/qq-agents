@@ -9,7 +9,11 @@ const legacyBodyDescription =
   "根据管理员新的桌边指令控制你自己的桌宠浮窗。move 的 door 是去小门旁，seat 是坐回座位，仅限同屏。state 读取位置，pose 调整朝向，stop 停止，status 用原 requestId 查询本轮结果。每个新操作使用不同 requestId，等待 completed 后才确认完成。手动接管后等管理员的新指令，取消或未确认时不换 ID 重试。";
 export function toolSpecs(
   enabled = TOOL_NAMES,
-  { context = false, desktopBodyV2 = true } = {},
+  {
+    context = false,
+    desktopBodyV2 = true,
+    desktopBodyCrossDisplay = false,
+  } = {},
 ) {
   return enabled
     .filter((n) => Object.hasOwn(registry, n))
@@ -42,7 +46,16 @@ export function toolSpecs(
       delete inputSchema.$schema;
       return {
         name,
-        description: legacyBody ? legacyBodyDescription : description,
+        description: legacyBody
+          ? legacyBodyDescription
+          : name === DESKTOP_BODY_CONTROL &&
+              desktopBodyCrossDisplay &&
+              typeof description === "string"
+            ? description.replace(
+                "移动仅限同屏",
+                "可沿相邻工作区跨屏移动，间隙或过窄边界不可达",
+              )
+            : description,
         inputSchema,
       };
     });

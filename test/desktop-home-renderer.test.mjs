@@ -683,6 +683,18 @@ test("the visit panel uses confirmed body state and announces each manual interr
     await recent.textContent(),
     /落点被占用或位于禁停区，请重新选择/,
   );
+  const unreachable = {
+    state: "idle",
+    reason: "target-unreachable",
+    at: at + 2,
+  };
+  await put(unreachable, {}, { bodyZones: true });
+  await put(unreachable, {}, { bodyZones: true });
+  assert.match(await recent.textContent(), /没有可通行的路线/);
+  assert.deepEqual(
+    (await page.evaluate(() => window.testAnnouncements)).slice(2),
+    ["小鱼无法到达。没有可通行的路线，请重新选择落点。"],
+  );
   await zoneEditor.focus();
   await page.keyboard.press("Enter");
   assert.deepEqual(await page.evaluate(() => window.testActions.at(-1)), [
@@ -766,6 +778,7 @@ test("floating door distinguishes clicks from dragging", async (t) => {
   await page.mouse.move(65, 65);
   await page.mouse.up();
   assert.deepEqual(await page.evaluate(() => window.testActions), [
+    "page-visible",
     "open",
     "drag-start",
     "drag-move",
@@ -799,11 +812,14 @@ test("floating resident replays six short actions with a still hold and respects
       onRoom: (update) => (window.testRoom = update),
       onFacing: (update) => (window.testFacing = update),
       onMotion: (update) => (window.testMotion = update),
+      onMotionSpeed: (update) => (window.testMotionSpeed = update),
       act: (action, data) => {
         if (action === "motion-preference") window.testReducedMotion = data;
+        if (action === "page-visible") window.testPageVisibility.push(data);
       },
       get: async () => ({ data }),
     };
+    window.testPageVisibility = [];
   }, room);
   await page.goto(
     new URL(
@@ -812,8 +828,10 @@ test("floating resident replays six short actions with a still hold and respects
     ).href,
   );
   const artButton = page.locator(".sprite-button");
-  const sprite = artButton.locator("img");
+  const sprite = artButton.locator(".sprite-rest");
+  const body = artButton.locator(".sprite-body");
   const pose = artButton.locator(".sprite-pose");
+  const walk = artButton.locator(".sprite-walk");
   assert.equal(await page.evaluate(() => window.testReducedMotion), true);
   await page.evaluate(() => window.testFacing("left"));
   assert.equal(await artButton.getAttribute("data-facing"), "left");
@@ -823,9 +841,14 @@ test("floating resident replays six short actions with a still hold and respects
   });
   assert.equal(await artButton.getAttribute("data-pose"), "sit");
   assert.match(await artButton.getAttribute("aria-label"), /坐下/);
+  assert.equal(await sprite.getAttribute("src"), "art/actions/fish-idle.webp");
   assert.equal(
     await pose.evaluate((node) => window.getComputedStyle(node).scale),
-    "-1 0.88",
+    "1 0.88",
+  );
+  assert.equal(
+    await body.evaluate((node) => window.getComputedStyle(node).scale),
+    "-1 1",
   );
   await page.evaluate((next) => window.testRoom(next), {
     ...room,
@@ -836,7 +859,11 @@ test("floating resident replays six short actions with a still hold and respects
     await pose.evaluate((node) => window.getComputedStyle(node).rotate),
     "4deg",
   );
-  assert.equal(await sprite.getAttribute("src"), "art/actions/fish-idle.webp");
+  assert.equal(await sprite.getAttribute("src"), "art/actions/fish-stand.webp");
+  await page.evaluate((next) => window.testRoom(next), {
+    ...room,
+    roles: [{ ...room.roles[0], bodyStatus: { state: "idle", pose: "sit" } }],
+  });
   for (const art of ["fish", "dragon", "cat"]) {
     for (const activity of [
       "qq",
@@ -872,33 +899,208 @@ test("floating resident replays six short actions with a still hold and respects
   );
   await page.evaluate(() => window.testMotion("moving"));
   assert.equal(
-    await pose.evaluate((node) => window.getComputedStyle(node).animationName),
+    await walk.evaluate((node) => window.getComputedStyle(node).animationName),
     "none",
   );
+  assert.equal(await sprite.isVisible(), true);
+  await page.evaluate(() => window.testMotion("still"));
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await page.waitForFunction(() => window.testReducedMotion === false);
+  const animate = (state) =>
+    page.evaluate((state) => window.testMotion(state), state);
+  const animations = () =>
+    artButton.evaluate((node) =>
+      node
+        .getAnimations({ subtree: true })
+        .map(({ animationName }) => animationName),
+    );
+  const motionTiming = (state) =>
+    body.evaluate((node, state) => {
+      window.testMotion(state);
+      const animation = node
+        .getAnimations()
+        .find(({ animationName }) => animationName);
+      const { duration, iterations } = animation.effect.getTiming();
+      return [animation.animationName, duration, iterations];
+    }, state);
+  assert.deepEqual(await motionTiming("moving"), ["paper-start", 150, 1]);
   const travelPeriods = new Set();
   for (const art of ["fish", "dragon", "cat"]) {
     await page.evaluate((next) => window.testRoom(next), {
       ...room,
       roles: [{ ...room.roles[0], art }],
     });
-    const { name, period } = await pose.evaluate((node) => {
+    const { name, period } = await walk.evaluate((node) => {
       const style = window.getComputedStyle(node);
       return { name: style.animationName, period: style.animationDuration };
     });
     assert.equal(name, "paper-travel");
     travelPeriods.add(period);
+    assert.deepEqual(
+      await walk.locator("img").evaluateAll(async (imgs) =>
+        Promise.all(
+          imgs.map(async (img) => {
+            await img.decode();
+            return [img.getAttribute("src"), img.naturalWidth];
+          }),
+        ),
+      ),
+      [
+        [`art/actions/${art}-stride.webp`, 320],
+        [`art/actions/${art}-step.webp`, 320],
+      ],
+    );
+    assert.equal(
+      await sprite.getAttribute("src"),
+      `art/actions/${art}-stand.webp`,
+    );
   }
   assert.equal(travelPeriods.size, 3);
-  await page.evaluate(() => window.testMotion("suspended"));
-  assert.equal(
-    await pose.evaluate(
-      (node) => window.getComputedStyle(node).animationPlayState,
+  const gait = await walk.evaluate((node) => {
+    const results = [];
+    for (const speed of [80, 190, 300, 530, 750, 1100]) {
+      window.testMotionSpeed(speed);
+      results.push(node.getAnimations()[0].effect.getTiming().duration);
+    }
+    return results;
+  });
+  assert.ok(gait.slice(1, 5).every((period, index) => period < gait[index]));
+  assert.equal(gait[4], gait[5]);
+  const feet = await walk.evaluate((node) => {
+    const frames = [...node.querySelectorAll("img")];
+    const animations = frames.map((frame) => frame.getAnimations()[0]);
+    const period = animations[0].effect.getTiming().duration;
+    return [0, period * 0.75].map((time) => {
+      for (const animation of animations) {
+        animation.pause();
+        animation.currentTime = time;
+      }
+      return frames.map((frame) => window.getComputedStyle(frame).opacity);
+    });
+  });
+  assert.deepEqual(feet, [
+    ["1", "0"],
+    ["0", "1"],
+  ]);
+  assert.deepEqual(await motionTiming("still"), ["paper-stop", 160, 1]);
+  assert.equal(await walk.isVisible(), false);
+  await animate("moving");
+  await page.mouse.move(90, 100);
+  await page.mouse.down();
+  await page.mouse.move(107, 110);
+  assert.equal(await artButton.getAttribute("data-dragging"), "true");
+  assert.deepEqual(await animations(), []);
+  assert.equal(await walk.isVisible(), false);
+  assert.equal(await sprite.isVisible(), true);
+  await animate("suspended");
+  await page.mouse.up();
+  assert.deepEqual(await animations(), []);
+  await page.evaluate(() => {
+    Object.defineProperty(document, "hidden", {
+      configurable: true,
+      value: true,
+    });
+    document.dispatchEvent(new window.Event("visibilitychange"));
+    document.dispatchEvent(new window.Event("visibilitychange"));
+    window.testMotion("moving");
+  });
+  assert.deepEqual(await animations(), []);
+  assert.deepEqual(await page.evaluate(() => window.testPageVisibility), [
+    true,
+    false,
+  ]);
+  await page.evaluate(() => {
+    window.testMotion("still");
+    window.testRoom({
+      roles: [
+        {
+          id: "resident",
+          name: "小鱼",
+          art: "fish",
+          bodyStatus: { state: "idle", pose: "sit" },
+        },
+      ],
+    });
+    window.getComputedStyle(document.querySelector(".sprite-pose")).scale;
+    delete document.hidden;
+    document.dispatchEvent(new window.Event("visibilitychange"));
+  });
+  assert.deepEqual(await page.evaluate(() => window.testPageVisibility), [
+    true,
+    false,
+    true,
+  ]);
+  const poseState = (posture) =>
+    pose.evaluate(
+      (node, next) => {
+        window.testRoom(next);
+        return node
+          .getAnimations()
+          .map(({ animationName, transitionProperty, effect }) => [
+            animationName ?? transitionProperty,
+            effect.getTiming().duration,
+            effect.getTiming().iterations,
+          ]);
+      },
+      {
+        ...room,
+        roles: [
+          { ...room.roles[0], bodyStatus: { state: "idle", pose: posture } },
+        ],
+      },
+    );
+  assert.ok(
+    (await poseState("stand")).some(
+      ([name, duration]) => name === "scale" && duration === 180,
     ),
-    "paused",
   );
-  await page.evaluate(() => window.testMotion("still"));
+  assert.equal(await sprite.getAttribute("src"), "art/actions/fish-stand.webp");
+  assert.ok(
+    (await poseState("look")).some(
+      ([name, duration, count]) =>
+        name === "paper-look" && duration === 410 && count === 1,
+    ),
+  );
+  await pose.evaluate((node) =>
+    Promise.all(node.getAnimations().map(({ finished }) => finished)),
+  );
+  assert.ok(
+    (await poseState("sit")).some(
+      ([name, duration]) => name === "scale" && duration === 180,
+    ),
+  );
+  assert.equal(await sprite.getAttribute("src"), "art/actions/fish-idle.webp");
+  const turn = await body.evaluate(
+    (node, next) => {
+      window.testRoom(next);
+      return node
+        .getAnimations()
+        .find(({ transitionProperty }) => transitionProperty === "scale")
+        ?.effect.getTiming().duration;
+    },
+    {
+      ...room,
+      roles: [
+        { ...room.roles[0], bodyStatus: { state: "idle", facing: "right" } },
+      ],
+    },
+  );
+  assert.equal(turn, 140);
+  await body.evaluate((node) =>
+    Promise.all(node.getAnimations().map((animation) => animation.finished)),
+  );
+  assert.equal(
+    await body.evaluate((node) => window.getComputedStyle(node).scale),
+    "1",
+  );
+  await pose.evaluate((node) =>
+    Promise.all(
+      node
+        .getAnimations()
+        .filter(({ transitionProperty }) => transitionProperty)
+        .map((animation) => animation.finished),
+    ),
+  );
   for (const activity of [
     "qq",
     "chat",
@@ -910,7 +1112,11 @@ test("floating resident replays six short actions with a still hold and respects
     const state = { ...room, roles: [{ ...room.roles[0], activity }] };
     const timing = await button.evaluate((node, state) => {
       window.testRoom(state);
-      const animations = node.getAnimations({ subtree: true });
+      const cycles = () =>
+        node
+          .getAnimations({ subtree: true })
+          .filter(({ animationName }) => animationName);
+      const animations = cycles();
       const period = animations[0]?.effect.getTiming().duration;
       for (const animation of animations) animation.pause();
       const frame = (time) => {
@@ -926,7 +1132,7 @@ test("floating resident replays six short actions with a still hold and respects
       const next = samples.map((time) => frame(period + time));
       frame(period / 2);
       window.testRoom(state);
-      const current = node.getAnimations({ subtree: true });
+      const current = cycles();
       const sameCycle =
         current.length === animations.length &&
         current.every(
