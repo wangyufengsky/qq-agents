@@ -400,10 +400,17 @@ export class LiveRoom {
     );
     if (!turn) return;
     const visit = this.visits.get(turn.actor);
+    const observation = this.runner.observation?.(turn.actor);
     const controller = new AbortController();
     const { promise: done, resolve: drained } = Promise.withResolvers();
     this.room.turn = turn;
-    this.active = { actor: turn.actor, kind: turn.kind, controller, done };
+    this.active = {
+      actor: turn.actor,
+      kind: turn.kind,
+      observation,
+      controller,
+      done,
+    };
     const isCurrent = () =>
       !this.closed &&
       !this.activity.paused &&
@@ -415,11 +422,12 @@ export class LiveRoom {
       const reply = await this.runner.run(
         {
           ...turn,
+          observation,
           people: this.here().map(({ name }) => name),
           messages: [],
           isCurrent,
           onBodyResult: (result) =>
-            this.activity.finish(visit, { lastResult: result }),
+            !observation && this.activity.finish(visit, { lastResult: result }),
         },
         controller.signal,
         isCurrent,

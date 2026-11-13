@@ -309,6 +309,7 @@ export function createServer({
       if (
         url.pathname === "/api/desktop-home/attachment" ||
         url.pathname === "/api/desktop-home/screen-result" ||
+        url.pathname === "/api/desktop-home/screen-claim" ||
         url.pathname === "/api/desktop-home/native-result" ||
         url.pathname === "/api/desktop-home/native-claim" ||
         url.pathname === "/api/desktop-home/body-claim" ||
@@ -320,6 +321,8 @@ export function createServer({
         );
         if (!local || !equal(req.headers["x-desktop-home-token"], desktopKey))
           return deny("UNAUTHORIZED", 401);
+        if (url.pathname.endsWith("/screen-claim"))
+          return send(runtime.desktopVisits.screen.claim(await readBody(512)));
         if (url.pathname.endsWith("/screen-result")) {
           const input = await readBody(MAX_DESKTOP_SCREEN_BODY);
           return send(runtime.desktopVisits.screen.receive(input));

@@ -3,7 +3,8 @@ import { SubjectExecution } from "./subject-execution.mjs";
 import { SocialRuntime } from "../home/social-runtime.mjs";
 import { DesktopHost } from "../home/desktop-host.mjs";
 import {
-  DESKTOP_ACTIVITY_CONVERSATION,
+  DESKTOP_OBSERVATION_CONVERSATION,
+  isDesktopActivity,
   DESKTOP_CONVERSATION,
   isDesktopConversation,
 } from "../home/desktop-decision.mjs";
@@ -418,6 +419,11 @@ export class Runtime {
   toolsForContext(agent, ctx) {
     if (
       ctx.runtimeKind === "desktop" &&
+      ctx.conversation === DESKTOP_OBSERVATION_CONVERSATION
+    )
+      return this.toolsFor(agent, ctx.conversation);
+    if (
+      ctx.runtimeKind === "desktop" &&
       (ctx.desktopScreenObserved || ctx.desktopPrivateObservation)
     )
       return this.toolsFor(agent, ctx.conversation).filter(
@@ -466,10 +472,12 @@ export class Runtime {
     return c;
   }
   toolsFor(a, conversation) {
-    if (conversation === DESKTOP_ACTIVITY_CONVERSATION) {
+    if (isDesktopActivity(conversation)) {
       if (
         !this.desktopVisits.configured() ||
-        !this.config.desktopHome.activityRoles.includes(a.id)
+        !this.config.desktopHome.activityRoles.includes(a.id) ||
+        (conversation === DESKTOP_OBSERVATION_CONVERSATION &&
+          !this.config.desktopHome.autonomousObservation)
       )
         return [];
       return toolAvailable(
@@ -635,7 +643,7 @@ export class Runtime {
     const state = this.memory.bind(a.id).state(conversation);
     if (
       state.paused ||
-      (conversation === DESKTOP_ACTIVITY_CONVERSATION &&
+      (isDesktopActivity(conversation) &&
         this.memory.bind(a.id).state(DESKTOP_CONVERSATION).paused)
     )
       codes.push("CONVERSATION_PAUSED");

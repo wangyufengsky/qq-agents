@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
-  DESKTOP_ACTIVITY_CONVERSATION,
+  DESKTOP_OBSERVATION_CONVERSATION,
+  isDesktopActivity,
   isDesktopConversation,
 } from "./desktop-decision.mjs";
 import { DESKTOP_BODY_CONTROL } from "../tools/names.mjs";
@@ -165,7 +166,7 @@ export class DesktopBody {
     if (pending) throw Error("DESKTOP_BODY_BUSY");
     if (receipts.size >= TURN_ACTION_LIMIT) throw Error("DESKTOP_BODY_LIMIT");
     if (
-      ctx.conversation === DESKTOP_ACTIVITY_CONVERSATION &&
+      isDesktopActivity(ctx.conversation) &&
       action.type !== "state" &&
       [...receipts.values()].some(
         ({ entry }) => entry.request.action.type !== "state",
@@ -189,6 +190,9 @@ export class DesktopBody {
         commandId: randomUUID(),
         expiresAt: Date.now() + ACTION_TIMEOUT,
         inputAt,
+        ...(ctx.conversation === DESKTOP_OBSERVATION_CONVERSATION && {
+          observation: true,
+        }),
         action,
       },
       abort: () => this.invalidate(entry, "inactive"),

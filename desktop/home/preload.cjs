@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("nest", {
   get: () => ipcRenderer.invoke("room:get"),
   attach: () => ipcRenderer.invoke("room:attach"),
+  observation: () => ipcRenderer.invoke("room:observation"),
   screenView: () => ipcRenderer.invoke("room:screen-view"),
   nativeControl: () => ipcRenderer.invoke("room:native-control"),
   browserControl: (selection) =>
