@@ -59,7 +59,10 @@ export function createFrameworkClient(
     if (stopped) return;
     queue = queue.then(async () => {
       try {
-        const value = await request(action, data);
+        const value = await request(
+          action,
+          typeof data === "function" ? data() : data,
+        );
         if (!stopped) onState(value, action);
       } catch {
         if (!stopped) onState({ offline: true }, action);
@@ -69,7 +72,7 @@ export function createFrameworkClient(
   const sync = () => {
     if (syncing) return;
     syncing = true;
-    act("sync", activityState?.());
+    act("sync", activityState);
     void queue.finally(() => {
       syncing = false;
     });

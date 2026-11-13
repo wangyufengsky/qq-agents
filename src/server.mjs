@@ -300,7 +300,7 @@ export function createServer({
           return deny("UNAUTHORIZED", 401);
         // An existing desktop client can renew its lease while turns drain.
         // The desktop host closes admission until maintenance ends.
-        const input = await body(req, 4096);
+        const input = await body(req, 48 * 1024);
         if (stopping || runtime.closed) throw Error("RUNTIME_CLOSING");
         const state = runtime.desktopVisits.command(input);
         if (state.room) desktopLauncher?.connected();
@@ -334,7 +334,9 @@ export function createServer({
         if (url.pathname.endsWith("/body-claim"))
           return send(runtime.desktopVisits.body.claim(await readBody(512)));
         if (url.pathname.endsWith("/body-result"))
-          return send(runtime.desktopVisits.body.receive(await readBody(1024)));
+          return send(
+            runtime.desktopVisits.body.receive(await readBody(16 * 1024)),
+          );
         if (url.pathname.endsWith("/native-claim")) {
           const input = await readBody(512);
           return send(runtime.desktopVisits.native.claim(input));

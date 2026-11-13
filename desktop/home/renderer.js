@@ -47,8 +47,50 @@ const activityLabels = {
   sleep: "睡觉",
 };
 
+const bodyActivities = { moving: "move", observing: "observe", qq: "qq" };
+const bodyStateLabels = {
+  moving: "正在移动",
+  waiting: "等待自主活动",
+  observing: "正在观察桌面",
+  qq: "QQ 优先处理",
+  paused: "已暂停",
+};
+const bodyPoseLabels = { stand: "站立", sit: "坐下", look: "张望" };
+const bodyFacingLabels = { left: "面向左侧", right: "面向右侧" };
+const observationEndLabels = {
+  "target-unavailable": "观察窗口已失效。请在聊天页选择其他窗口并重新授权。",
+  permission: "屏幕录制权限已失效。请在系统设置中恢复权限，再重新授权观察。",
+  unsupported: "当前后端不支持观察所需的图片输入。请在管理台检查角色的后端。",
+};
+const bodyReasonLabels = {
+  "manual-control": "拖动已打断移动",
+  stopped: "动作已停止",
+  "display-changed": "显示器布局已变化，请重新选择落点。",
+  "target-unavailable": "移动目标已失效，请重新选择落点。",
+  "target-blocked": "落点被占用或位于禁停区，请重新选择。",
+  "stale-layout": "桌面布局已变化，请重新选择落点。",
+  "position-unconfirmed": "位置未确认，请检查桌宠当前所在位置。",
+  disconnect: "连接中断。若持续断开，请确认管理台正在运行。",
+  permission: "桌宠权限已失效，请在管理台检查该角色的桌宠控制权限。",
+  qq: "已让位给 QQ",
+  pause: "自主活动已暂停",
+  rest: "已进入休息时段",
+  hidden: "浮窗已隐藏",
+  arrival: "已来到桌边",
+  "wait-ended": "等待已结束",
+  completed: "动作已完成",
+  inactive: "到访已结束",
+};
+
 function activityFor(role, room) {
-  if (Object.hasOwn(activityLabels, role.activity)) return role.activity;
+  if (role.bodyStatus) {
+    const activity = bodyActivities[role.bodyStatus.state];
+    if (Object.hasOwn(bodyActivities, role.bodyStatus.state)) return activity;
+    if (role.bodyStatus.state === "paused" && role.activity !== "sleep")
+      return "idle";
+    if (["chat", "control", "sleep"].includes(role.activity))
+      return role.activity;
+  } else if (Object.hasOwn(activityLabels, role.activity)) return role.activity;
   return room.thinking === role.id || room.bubbles?.[role.id] ? "chat" : "idle";
 }
 
@@ -165,12 +207,16 @@ function floating() {
     const role = data.roles.find((item) => item.id === id);
     if (!role) return;
     const activity = activityFor(role, data);
+    const pose = role.bodyStatus?.pose;
+    art.dataset.pose = pose ?? "stand";
     const roleArt = role.art ?? role.id;
     art.dataset.appearance = roleArt;
     if (art.dataset.activity !== activity) art.dataset.activity = activity;
     art.setAttribute(
       "aria-label",
-      `${role.name} · ${activityLabels[activity]} · 打开聊天`,
+      [role.name, activityLabels[activity], bodyPoseLabels[pose], "打开聊天"]
+        .filter(Boolean)
+        .join(" · "),
     );
     const asset = `art/actions/${roleArt}-${activity === "move" ? "idle" : activity}.webp`;
     if (sprite.getAttribute("src") !== asset) sprite.src = asset;
@@ -187,6 +233,10 @@ function panel() {
   );
   const select = (selector) => root.querySelector(selector);
   const guestList = select(".guest-list");
+  const bodyAnnouncement = select(".body-announcement");
+  const observationEnded = root.querySelectorAll(".observation-ended");
+  const bodyZones = select(".body-zones");
+  bodyZones.addEventListener("click", () => window.nest.act("body-zones"));
   const audience = select(".audience");
   const thread = select(".thread");
   const message = select("#message");
@@ -224,6 +274,7 @@ function panel() {
   let roomEpoch;
   let lastRoster;
   const guests = new Map();
+  const announcedStops = new Map();
   const clock = new Intl.DateTimeFormat("zh-CN", {
     hour: "2-digit",
     minute: "2-digit",
@@ -430,11 +481,14 @@ function panel() {
       const node = element("article", "guest");
       node.dataset.role = role.id;
       const info = element("div");
-      const state = element("small");
+      const state = element("small", "guest-state");
+      const detail = element("small", "guest-detail");
+      const recent = element("small", "guest-recent");
       const name = element("strong", null, role.name);
-      info.append(name, state);
+      info.append(name, state, detail, recent);
       const action = button("secondary");
       action.addEventListener("click", () => {
+        if (room.connectionLost) return;
         const current = room.roles.find(({ id }) => id === role.id);
         window.nest.act(current.state === "here" ? "leave" : "invite", role.id);
       });
@@ -460,14 +514,26 @@ function panel() {
         name,
         portrait,
         state,
+        detail,
+        recent,
         action,
         decline,
         stop,
         seat,
       });
     }
-    const { node, name, portrait, state, action, decline, stop, seat } =
-      guests.get(role.id);
+    const {
+      node,
+      name,
+      portrait,
+      state,
+      detail,
+      recent,
+      action,
+      decline,
+      stop,
+      seat,
+    } = guests.get(role.id);
     node.dataset.state = role.available ? role.state : "unavailable";
     if (name.textContent !== role.name) name.textContent = role.name;
     portrait.className = `portrait ${role.color}`;
@@ -482,13 +548,60 @@ function panel() {
       here: ["在桌边", "请回家"],
     }[role.state];
     const activity = activityFor(role, room);
-    const status = !role.available
-      ? "本轮未接入"
-      : activity !== "idle" && (role.state === "here" || activity === "sleep")
-        ? activityLabels[activity]
-        : label;
+    const body = role.bodyStatus;
+    const bodyState = body?.state;
+    const paused = bodyState === "paused";
+    const here = role.available && role.state === "here";
+    let status = label;
+    if (room.connectionLost) status = "连接中断";
+    else if (paused)
+      status =
+        (body.stateReason ?? body.reason) === "rest"
+          ? "休息时段 · 已暂停"
+          : bodyStateLabels.paused;
+    else if (!role.available) status = "本轮未接入";
+    else if (here && bodyStateLabels[bodyState])
+      status = bodyStateLabels[bodyState];
+    else if ((here || activity === "sleep") && activity !== "idle")
+      status = activityLabels[activity];
     if (state.textContent !== status) state.textContent = status;
+
+    const details = [];
+    if (here)
+      details.push(bodyPoseLabels[body?.pose], bodyFacingLabels[body?.facing]);
+    if (
+      !room.connectionLost &&
+      (paused || bodyState === "waiting") &&
+      Number.isFinite(body.until)
+    )
+      details.push(`至 ${clock.format(body.until)}`);
+    const observation = room.observation;
+    if (
+      !room.connectionLost &&
+      here &&
+      bodyState === "observing" &&
+      observation?.grantedAgentId === role.id
+    ) {
+      details.push(observation.target ?? "授权窗口");
+      if (Number.isFinite(observation.expiresAt))
+        details.push(`许可至 ${clock.format(observation.expiresAt)}`);
+      if (Number.isInteger(observation.remaining))
+        details.push(`剩余 ${observation.remaining} 次`);
+    }
+    const description = details.filter(Boolean).join(" · ");
+    detail.hidden = !description;
+    if (detail.textContent !== description) detail.textContent = description;
+    const reason = Object.hasOwn(bodyReasonLabels, body?.reason)
+      ? bodyReasonLabels[body.reason]
+      : "";
+    const history =
+      reason && Number.isFinite(body.at)
+        ? `最近 · ${clock.format(body.at)} · ${reason}`
+        : "";
+    recent.hidden = !history;
+    if (recent.textContent !== history) recent.textContent = history;
     action.hidden = !role.available || room.knock?.actor === role.id;
+    action.setAttribute("aria-disabled", String(Boolean(room.connectionLost)));
     if (action.textContent !== text) action.textContent = text;
     action.setAttribute("aria-label", `${text} · ${role.name}`);
   }
@@ -575,8 +688,8 @@ function panel() {
         (room.opportunityAt !== undefined &&
           Date.now() - room.opportunityAt < 30 * 60_000);
       trial.textContent = room.opportunity ? "等角色决定…" : "试一次敲门";
-      select(".knock-card").hidden = !room.knock;
-      if (room.knock) {
+      select(".knock-card").hidden = !room.knock || room.connectionLost;
+      if (room.knock && !room.connectionLost) {
         const role = room.roles.find(({ id }) => id === room.knock.actor);
         select(".knock-label").textContent =
           `${role.name}敲门了。${room.knock.text}`;
@@ -588,9 +701,30 @@ function panel() {
         guests.delete(id);
       }
     }
-    for (const role of room.roles) guest(role);
+    const stopped = [];
+    for (const role of room.roles) {
+      guest(role);
+      const body = role.bodyStatus;
+      if (
+        body?.reason === "manual-control" &&
+        Number.isFinite(body.at) &&
+        body.at > (announcedStops.get(role.id) ?? -Infinity)
+      ) {
+        announcedStops.set(role.id, body.at);
+        stopped.push(`已停止${role.name}的移动`);
+      }
+    }
+    if (stopped.length) bodyAnnouncement.textContent = stopped.join("。");
     const notice = select(".room-notice");
     if (notice.textContent !== room.notice) notice.textContent = room.notice;
+    const ended = Object.hasOwn(observationEndLabels, room.observationEnded)
+      ? observationEndLabels[room.observationEnded]
+      : "";
+    for (const notice of observationEnded) {
+      notice.hidden = !ended;
+      if (notice.textContent !== ended) notice.textContent = ended;
+    }
+    bodyZones.hidden = room.bodyZones !== true;
     const here = room.roles.filter((role) => role.state === "here");
     const roster = JSON.stringify(
       here.map(({ id, name, color, art }) => [id, name, color, art]),
@@ -607,11 +741,11 @@ function panel() {
       }
       lastRoster = roster;
     }
-    message.disabled = !here.length;
+    message.disabled = !here.length || Boolean(room.connectionLost);
     message.placeholder = here.length
       ? "说点什么…（可用 @ 名字）"
       : "邀请一位角色开始聊天";
-    send.disabled = !here.length;
+    send.disabled = message.disabled;
     attach.hidden = !room.framework || !window.nest.attach;
     attach.disabled =
       attaching ||
@@ -630,12 +764,15 @@ function panel() {
     updateThread();
     const thinking = here.find(({ id }) => id === room.thinking);
     const active = here.find(({ id }) => id === room.activityActor);
-    const status = thinking
-      ? `${thinking.name}正在想…`
-      : active
-        ? `${active.name}正在自主活动…`
-        : "";
+    const status = room.connectionLost
+      ? room.notice
+      : thinking
+        ? `${thinking.name}正在想…`
+        : active
+          ? `${active.name}正在自主活动…`
+          : "";
     activityControl.hidden = !room.activityEnabled;
+    activityControl.disabled = Boolean(room.connectionLost);
     const activityLabel = room.activityPaused ? "继续自主活动" : "暂停自主活动";
     if (activityControl.textContent !== activityLabel)
       activityControl.textContent = activityLabel;

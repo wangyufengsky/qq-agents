@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"
+    />
+    <title>桌面小窝禁停区</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font:
+          14px system-ui,
+          sans-serif;
+      }
+      body {
+        margin: 0;
+      }
+      #surface {
+        position: fixed;
+        inset: 0;
+        background: #25211f44;
+        cursor: crosshair;
+        touch-action: none;
+      }
+      .zone {
+        position: absolute;
+        border: 2px solid #b84245;
+        background: #ffb7aa80;
+        padding: 3px;
+        box-sizing: border-box;
+        color: #59191b;
+        pointer-events: none;
+        overflow: hidden;
+      }
+      .draft {
+        border-style: dashed;
+      }
+      aside {
+        position: fixed;
+        top: 12px;
+        left: 12px;
+        max-width: min(360px, calc(100vw - 48px));
+        max-height: calc(100vh - 48px);
+        overflow: auto;
+        padding: 12px;
+        background: #fcf5e8;
+        border: 1px solid #bca68a;
+        border-radius: 12px;
+        box-shadow: 0 4px 16px #25211f44;
+        color: #30281f;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 16px;
+      }
+      p {
+        margin: 8px 0;
+      }
+      button,
+      select {
+        padding: 4px 8px;
+        font: inherit;
+      }
+      #actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+    </style>
+    <script src="./space-editor.js" defer></script>
+  </head>
+  <body>
+    <div id="surface" aria-hidden="true"></div>
+    <aside>
+      <h1>桌面小窝禁停区</h1>
+      <label
+        >显示器
+        <select id="display"></select
+      ></label>
+      <p>在桌面上拖出矩形。桌宠自动移动时会避开这些区域。</p>
+      <p id="status" role="status"></p>
+      <ol id="zones" aria-label="当前显示器的禁停区"></ol>
+      <div id="actions">
+        <button id="save" type="button">保存</button>
+        <button id="cancel" type="button">关闭</button>
+      </div>
+    </aside>
+  </body>
+</html>

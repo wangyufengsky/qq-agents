@@ -83,7 +83,9 @@ export function scopedCatalog(runtime, ctx, input) {
         ctx.runtimeKind !== "desktop" &&
         a.network?.autonomous === true,
     },
-    tools: toolSpecs(names).map((s) =>
+    tools: toolSpecs(names, {
+      desktopBodyV2: runtime.desktopVisits.client?.bodyProtocol === 2,
+    }).map((s) =>
       args.names ? s : { name: s.name, description: s.description },
     ),
     total: allowed.length,

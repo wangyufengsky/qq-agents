@@ -39,7 +39,8 @@ select {
 button {
   cursor: pointer;
 }
-button:disabled {
+button:disabled,
+button[aria-disabled="true"] {
   cursor: default;
   opacity: 0.54;
 }
@@ -232,8 +233,12 @@ h2 {
   color: #6c573c;
   font-size: 11px;
 }
-.guest[data-state="here"] small {
+.guest[data-state="here"] .guest-state {
   color: #4b5c35;
+}
+.guest-detail,
+.guest-recent {
+  line-height: 1.4;
 }
 .guest-controls {
   display: flex;
@@ -277,10 +282,11 @@ h2 {
   background: #fffaf0;
   color: #5b5138;
 }
-.secondary:not(:disabled):hover {
+.secondary:not(:disabled, [aria-disabled="true"]):hover {
   background: #f1e7d2;
 }
-.room-notice {
+.room-notice,
+.observation-ended {
   margin: 12px 4px 0;
   color: var(--muted);
   font-size: 12px;
@@ -288,6 +294,12 @@ h2 {
 }
 .room-notice:empty {
   display: none;
+}
+.body-zones {
+  margin: 12px 4px 0;
+}
+.chat-tools .observation-ended {
+  margin: 0;
 }
 .door-settings,
 .knock-card {
@@ -607,6 +619,7 @@ h2 {
   height: 100%;
   pointer-events: none;
   transform-origin: 50% 88%;
+  scale: var(--facing-scale, 1) var(--pose-scale, 1);
 }
 .sprite-button[data-activity] .sprite-pose {
   animation: var(--pose-motion) var(--pose-period) step-end infinite;
@@ -644,8 +657,14 @@ h2 {
     transform: translateY(var(--travel-lift)) rotate(var(--travel-tilt));
   }
 }
-.sprite-button[data-facing="left"] .sprite-pose {
-  scale: -1 1;
+.sprite-button[data-facing="left"] {
+  --facing-scale: -1;
+}
+.sprite-button[data-pose="sit"]:not([data-motion="moving"]) {
+  --pose-scale: 0.88;
+}
+.sprite-button[data-pose="look"]:not([data-motion="moving"]) .sprite-pose {
+  rotate: 4deg;
 }
 .sprite-cue {
   position: absolute;
