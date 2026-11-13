@@ -227,12 +227,12 @@ export class LiveRoom {
       if (resting && !direct) continue;
       const queued = this.room.waiting.find(({ actor }) => actor === id);
       if (queued && direct) queued.direct = messageId;
+      if (direct && this.publicEnabled()) this.cancelActivity(id);
       if (!queued) {
         this.room.waiting.push({
           actor: id,
           ...(direct && { direct: messageId }),
         });
-        if (this.publicEnabled()) this.cancelActivity(id);
       }
     }
   }
@@ -850,10 +850,15 @@ export class LiveRoom {
         return false;
       },
     );
-    if (this.activities.has(this.room.waiting[0]?.actor)) return;
-    const next = this.room.waiting[0];
-    if (next && this.publicEnabled() && !this.runner.chatReady(next.actor))
-      return;
+    if (this.publicEnabled()) {
+      const ready = this.room.waiting.findIndex(
+        ({ actor }) =>
+          !this.activities.has(actor) && this.runner.chatReady(actor),
+      );
+      if (ready < 0) return;
+      if (ready > 0)
+        this.room.waiting.unshift(this.room.waiting.splice(ready, 1)[0]);
+    }
     const turn = startTurn(this.room);
     if (!turn) return;
     const actor = turn.actor;

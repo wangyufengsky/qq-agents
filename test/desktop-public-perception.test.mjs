@@ -366,3 +366,32 @@ test("quiet desktop offers independent idle turns over two hours without catch-u
   assert.deepEqual(rounds[1], [5, 42, 57, 72, 102, 117]);
   assert.deepEqual(rounds[2], rounds[0]);
 });
+
+test("public chat lets an unaddressed activity finish before that resident catches up", async (t) => {
+  const f = setup(t);
+  for (const actor of ids) f.quietJoin(actor);
+  const { live } = f.host;
+  f.advance(5 * minute);
+  f.sync();
+  const running = [...live.activities.values()];
+  const [, second, third] = f.runs;
+  const visit = live.visits.get(ids[1]);
+  const originalCursor = visit.cursor;
+  f.command("send", "@角色0 一起来门边坐吧。");
+  assert.equal(running[0].controller.signal.aborted, true);
+  assert.equal(running[1].controller.signal.aborted, false);
+  assert.equal(running[2].controller.signal.aborted, false);
+  await f.finish(f.runs[0]);
+  await f.finish(f.runs[3]);
+  assert.equal(visit.cursor, originalCursor);
+  await f.finish(third);
+  assert.equal(f.runs[4].actor, ids[2]);
+  assert(f.runs[4].params.prompt.includes("一起来门边坐吧"));
+  assert.equal(visit.cursor, originalCursor);
+  await f.finish(f.runs[4]);
+  await f.finish(second);
+  assert.equal(f.runs[5].actor, ids[1]);
+  assert(f.runs[5].params.prompt.includes("一起来门边坐吧"));
+  assert(visit.cursor > originalCursor);
+  await f.finish(f.runs[5]);
+});
