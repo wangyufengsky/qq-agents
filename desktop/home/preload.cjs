@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld("nest", {
   nativeControl: () => ipcRenderer.invoke("room:native-control"),
   browserControl: (selection) =>
     ipcRenderer.invoke("room:browser-control", selection),
+  onFacing: (listener) =>
+    ipcRenderer.on("room:facing", (_event, value) => listener(value)),
   act: (action, data) => ipcRenderer.send("room:action", action, data),
   onRoom: (callback) =>
     ipcRenderer.on("room:update", (_event, snapshot) => callback(snapshot)),

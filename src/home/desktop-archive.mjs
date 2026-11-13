@@ -130,6 +130,7 @@ export class DesktopArchive {
       .prepare(
         `
         SELECT e.id, e.seq, d.seq AS roomSeq, e.message_id AS messageId, e.body AS text, e.direction,
+          d.speaker_type AS speakerType, d.sent_at AS now,
           json_extract(e.payload,'$.senderName') AS speaker,
           json_extract(e.payload,'$.desktop.senderQq') AS senderQq,
           json_extract(e.payload,'$.desktop.attachments') AS attachments

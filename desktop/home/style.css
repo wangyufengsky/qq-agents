@@ -611,6 +611,9 @@ h2 {
 .sprite-button[data-activity] .sprite-pose {
   animation: var(--pose-motion) var(--pose-period) step-end infinite;
 }
+.sprite-button[data-facing="left"] .sprite-pose {
+  scale: -1 1;
+}
 .sprite-cue {
   position: absolute;
   left: var(--cue-x, 50%);

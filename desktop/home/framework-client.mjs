@@ -34,7 +34,9 @@ export function createFrameworkClient(root, onState, listenPort) {
             : { ...data, client },
         ),
         redirect: "error",
-        signal: AbortSignal.timeout(endpoint === "client" ? 2500 : 8000),
+        signal: AbortSignal.timeout(
+          endpoint === "client" || endpoint.startsWith("body-") ? 2500 : 8000,
+        ),
       },
     );
     if (!response.ok) throw Error("DESKTOP_CONNECTION_FAILED");

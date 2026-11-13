@@ -17,6 +17,7 @@ import {
   DESKTOP_SCREEN_VIEW,
   DESKTOP_NATIVE_CONTROL,
   DESKTOP_BROWSER_CONTROL,
+  DESKTOP_BODY_CONTROL,
   FUNCTIONAL_AGENT_RESULT,
 } from "./names.mjs";
 import { memoryRecallPolicy } from "../core/functional-agents.mjs";
@@ -111,7 +112,8 @@ export function toolAvailable(agent, name, conversation, config) {
   if (
     name === DESKTOP_SCREEN_VIEW ||
     name === DESKTOP_NATIVE_CONTROL ||
-    name === DESKTOP_BROWSER_CONTROL
+    name === DESKTOP_BROWSER_CONTROL ||
+    name === DESKTOP_BODY_CONTROL
   )
     return false;
   if (name === "memory_recall")

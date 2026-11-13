@@ -33,6 +33,7 @@ export function defaultConfig() {
     desktopHome: {
       enabled: false,
       toolRoles: [],
+      bodyControlRoles: [],
       screenView: { enabled: false },
       nativeControl: { enabled: false },
       browserControl: { enabled: false },

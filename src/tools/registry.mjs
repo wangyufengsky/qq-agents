@@ -10,6 +10,7 @@ import {
   DESKTOP_SCREEN_VIEW,
   DESKTOP_NATIVE_CONTROL,
   DESKTOP_BROWSER_CONTROL,
+  DESKTOP_BODY_CONTROL,
   FUNCTIONAL_AGENT_RESULT,
   TOOL_NAMES,
 } from "./names.mjs";
@@ -32,6 +33,8 @@ const handlers = {
   ...coreHandlers,
   [DESKTOP_HISTORY]: (runtime, ctx, args) =>
     runtime.desktopVisits.history(ctx, args),
+  [DESKTOP_BODY_CONTROL]: (runtime, ctx, args) =>
+    runtime.desktopVisits.body.run(ctx, args),
   [DESKTOP_BROWSER_CONTROL]: (runtime, ctx, args) =>
     runtime.desktopVisits.browser.run(ctx, args),
   [DESKTOP_NATIVE_CONTROL]: (runtime, ctx, args) =>

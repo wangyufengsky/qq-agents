@@ -882,6 +882,19 @@ async function desktopSettings(root, ticket) {
         "角色仍受自己的工具和文件权限约束。联系 QQ 由同角色的主人格审阅，再交给目标 QQ 会话。",
       ),
     );
+    const bodyRoles = el("fieldset", "desktop-tools");
+    bodyRoles.append(el("legend", "", "允许控制自己的桌宠"));
+    const bodyInputs = current.config.agents.map((agent) => {
+      const label = el("label", "", agent.name);
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.value = agent.id;
+      input.checked = policy.bodyControlRoles.includes(agent.id);
+      label.prepend(input);
+      bodyRoles.append(label);
+      return input;
+    });
+    form.append(bodyRoles);
     const screenLabel = el("label", "desktop-field", "允许在本机授权看桌面");
     const screenEnabled = document.createElement("input");
     screenEnabled.type = "checkbox";
@@ -908,6 +921,7 @@ async function desktopSettings(root, ticket) {
     const fieldsToLock = [
       ...Object.values(inputs),
       ...roleInputs,
+      ...bodyInputs,
       screenEnabled,
       nativeEnabled,
       browserEnabled,
@@ -925,6 +939,9 @@ async function desktopSettings(root, ticket) {
         screenView: { enabled: screenEnabled.checked },
         nativeControl: { enabled: nativeEnabled.checked },
         browserControl: { enabled: browserEnabled.checked },
+        bodyControlRoles: bodyInputs
+          .filter((input) => input.checked)
+          .map((input) => input.value),
         toolRoles: roleInputs
           .filter((input) => input.checked)
           .map((input) => input.value),
@@ -939,6 +956,8 @@ async function desktopSettings(root, ticket) {
           existing.screenView.enabled !== policy.screenView.enabled ||
           existing.nativeControl.enabled !== policy.nativeControl.enabled ||
           existing.browserControl.enabled !== policy.browserControl.enabled ||
+          JSON.stringify(existing.bodyControlRoles) !==
+            JSON.stringify(policy.bodyControlRoles) ||
           JSON.stringify(existing.toolRoles) !==
             JSON.stringify(policy.toolRoles)
         ) {

@@ -3,11 +3,13 @@ import { DESKTOP_CONVERSATION } from "../home/desktop-decision.mjs";
 import { supportsMessageImages } from "../backends/capabilities.mjs";
 import {
   DESKTOP_BROWSER_CONTROL,
+  DESKTOP_BODY_CONTROL,
   DESKTOP_NATIVE_CONTROL,
   DESKTOP_SCREEN_VIEW,
 } from "./names.mjs";
 
 const desktopToolNames = new Set([
+  DESKTOP_BODY_CONTROL,
   DESKTOP_SCREEN_VIEW,
   DESKTOP_NATIVE_CONTROL,
   DESKTOP_BROWSER_CONTROL,
@@ -53,6 +55,11 @@ export function isDesktopToolContext(ctx) {
 }
 
 export function desktopToolAvailable(agent, name, config) {
+  if (name === DESKTOP_BODY_CONTROL)
+    return (
+      config.desktopHome?.enabled === true &&
+      config.desktopHome.bodyControlRoles?.includes(agent.id) === true
+    );
   if (!desktopRoleToolsEnabled(config, agent) || !desktopToolCandidate(name))
     return false;
   if (name === DESKTOP_BROWSER_CONTROL)

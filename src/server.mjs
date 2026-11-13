@@ -310,7 +310,9 @@ export function createServer({
         url.pathname === "/api/desktop-home/attachment" ||
         url.pathname === "/api/desktop-home/screen-result" ||
         url.pathname === "/api/desktop-home/native-result" ||
-        url.pathname === "/api/desktop-home/native-claim"
+        url.pathname === "/api/desktop-home/native-claim" ||
+        url.pathname === "/api/desktop-home/body-claim" ||
+        url.pathname === "/api/desktop-home/body-result"
       ) {
         if (req.method !== "POST") return deny("METHOD", 405);
         const local = ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(
@@ -326,6 +328,10 @@ export function createServer({
           const input = await readBody(MAX_DESKTOP_NATIVE_BODY);
           return send(runtime.desktopVisits.native.receive(input));
         }
+        if (url.pathname.endsWith("/body-claim"))
+          return send(runtime.desktopVisits.body.claim(await readBody(512)));
+        if (url.pathname.endsWith("/body-result"))
+          return send(runtime.desktopVisits.body.receive(await readBody(1024)));
         if (url.pathname.endsWith("/native-claim")) {
           const input = await readBody(512);
           return send(runtime.desktopVisits.native.claim(input));
