@@ -611,6 +611,39 @@ h2 {
 .sprite-button[data-activity] .sprite-pose {
   animation: var(--pose-motion) var(--pose-period) step-end infinite;
 }
+/* Movement comes from the local window executor, independent of model status. */
+.sprite-button[data-motion="moving"] {
+  --travel-period: 360ms;
+  --travel-lift: -3px;
+  --travel-tilt: 2deg;
+}
+.sprite-button[data-appearance="fish"][data-motion="moving"] {
+  --travel-period: 430ms;
+  --travel-lift: -4px;
+  --travel-tilt: 1deg;
+}
+.sprite-button[data-appearance="dragon"][data-motion="moving"] {
+  --travel-period: 410ms;
+  --travel-lift: -5px;
+}
+.sprite-button[data-motion="moving"] .sprite-pose {
+  animation: paper-travel var(--travel-period) ease-in-out infinite;
+}
+.sprite-button[data-motion="moving"] .sprite-cue {
+  visibility: hidden;
+}
+.sprite-button[data-motion="suspended"] :is(.sprite-pose, .sprite-cue) {
+  animation-play-state: paused;
+}
+@keyframes paper-travel {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0);
+  }
+  50% {
+    transform: translateY(var(--travel-lift)) rotate(var(--travel-tilt));
+  }
+}
 .sprite-button[data-facing="left"] .sprite-pose {
   scale: -1 1;
 }

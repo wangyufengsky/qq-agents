@@ -144,6 +144,9 @@ function floating() {
   const syncMotion = () => window.nest.act("motion-preference", motion.matches);
   syncMotion();
   motion.addEventListener("change", syncMotion);
+  window.nest.onMotion?.((state) => {
+    art.dataset.motion = state;
+  });
   window.nest.onFacing?.((facing) => {
     art.dataset.facing = facing === "left" ? "left" : "right";
   });
@@ -440,15 +443,31 @@ function panel() {
         window.nest.act("decline", role.id),
       );
       const controls = element("div", "guest-controls");
-      controls.append(decline, action);
+      const stop = button("quiet", "停止动作", `停止动作 · ${role.name}`);
+      const seat = button("quiet", "回到座位", `回到座位 · ${role.name}`);
+      stop.addEventListener("click", () =>
+        window.nest.act("body-stop", role.id),
+      );
+      seat.addEventListener("click", () =>
+        window.nest.act("body-seat", role.id),
+      );
+      controls.append(decline, stop, seat, action);
       const portrait = avatar(role);
       node.append(portrait, info, controls);
       guestList.append(node);
-      guests.set(role.id, { node, name, portrait, state, action, decline });
+      guests.set(role.id, {
+        node,
+        name,
+        portrait,
+        state,
+        action,
+        decline,
+        stop,
+        seat,
+      });
     }
-    const { node, name, portrait, state, action, decline } = guests.get(
-      role.id,
-    );
+    const { node, name, portrait, state, action, decline, stop, seat } =
+      guests.get(role.id);
     node.dataset.state = role.available ? role.state : "unavailable";
     if (name.textContent !== role.name) name.textContent = role.name;
     portrait.className = `portrait ${role.color}`;
@@ -456,6 +475,7 @@ function panel() {
     const src = assetPath(role.art ?? role.id);
     if (sprite.getAttribute("src") !== src) sprite.src = src;
     decline.hidden = room.live || role.state !== "invited";
+    stop.hidden = seat.hidden = role.state !== "here" || !role.available;
     const [label, text] = {
       home: ["在家", "邀请"],
       invited: ["已邀请 · 等待回应", "取消邀请"],
