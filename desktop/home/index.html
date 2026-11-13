@@ -32,6 +32,9 @@
         <nav class="tabs" aria-label="小窝页面">
           <button data-tab="visits" aria-pressed="true">来访</button>
           <button data-tab="chat" aria-pressed="false">聊天</button>
+          <button data-tab="observation" aria-pressed="false" hidden>
+            观察
+          </button>
         </nav>
         <p
           class="body-announcement sr-only"
@@ -126,11 +129,19 @@
                 <p class="desktop-permission-status" role="status" hidden></p>
               </div>
               <div class="desktop-permission observation" hidden>
-                <button type="button" class="secondary">
+                <button
+                  type="button"
+                  class="secondary"
+                  aria-describedby="observation-retention-notice"
+                >
                   授权自主观察窗口
                 </button>
                 <p class="observation-target" hidden></p>
                 <p class="desktop-permission-status" role="status" hidden></p>
+                <p id="observation-retention-notice" hidden>
+                  画面仅交给本次观察的模型服务，服务可能按自身规则保留画面和会话。
+                </p>
+                <ul class="observation-ineligible" hidden></ul>
               </div>
               <div class="desktop-permission native-control" hidden>
                 <button type="button" class="secondary">授权控制窗口</button>
@@ -177,6 +188,42 @@
               </div>
             </form>
           </dialog>
+        </section>
+        <section id="observation-review" aria-label="观察审核" hidden>
+          <h2>观察审核</h2>
+          <p class="review-scope"></p>
+          <p class="observation-ended" role="status" hidden></p>
+          <p class="review-status" role="status" hidden></p>
+          <article class="review-candidate" hidden>
+            <p class="review-candidate-meta"></p>
+            <div class="review-response" hidden>
+              <h3>回复候选</h3>
+              <p class="review-text"></p>
+              <button type="button" class="primary" data-review="publish">
+                发布回复
+              </button>
+            </div>
+            <div class="review-summary" hidden>
+              <h3>摘要候选</h3>
+              <p class="review-text"></p>
+              <button type="button" class="secondary" data-review="save">
+                保存摘要
+              </button>
+            </div>
+            <button type="button" class="secondary" data-review="discard">
+              丢弃候选
+            </button>
+          </article>
+          <article class="review-published" hidden>
+            <h3>已发布回复</h3>
+            <p class="review-published-meta"></p>
+            <p class="review-text"></p>
+          </article>
+          <details class="review-records">
+            <summary>已保存的观察摘要</summary>
+            <p class="review-records-status" role="status"></p>
+            <ul></ul>
+          </details>
         </section>
       </main>
     </template>

@@ -10,6 +10,7 @@ import {
   withExportManifest,
 } from "./export-format.mjs";
 import { migrateHomeSocial } from "../home/social-schema.mjs";
+import { initializeDesktopObservationSummaries } from "./desktop-observation-summaries.mjs";
 import {
   initializeDesktopArchive,
   isGroupConversation,
@@ -206,6 +207,7 @@ export class MemoryStore {
         });
       migrateHomeSocial(this.db);
       initializeDesktopArchive(this.db);
+      initializeDesktopObservationSummaries(this.db);
       this.due = new ConversationDue(this.db);
       this.transaction(() => this.due.initialize());
     } catch (error) {

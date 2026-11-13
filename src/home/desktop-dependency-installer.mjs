@@ -30,7 +30,11 @@ function requirements(policy, all) {
   const enabled = policy?.enabled === true;
   return {
     electron: all || enabled,
-    "agent-desktop": all || (enabled && policy.nativeControl?.enabled === true),
+    "agent-desktop":
+      all ||
+      (enabled &&
+        (policy.nativeControl?.enabled === true ||
+          policy.autonomousObservation === true)),
     chromium: all || (enabled && policy.browserControl?.enabled === true),
   };
 }

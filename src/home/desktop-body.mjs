@@ -311,6 +311,8 @@ export class DesktopBody {
     )
       throw Error("DESKTOP_BODY_LIMIT");
 
+    if (action.type !== "state" && ctx.desktopObservationRequested)
+      throw Error("DESKTOP_BODY_UNAVAILABLE");
     const v2 = client.bodyProtocol === 2;
     if (("layoutVersion" in action || "pose" in action) && !v2)
       throw Error("DESKTOP_BODY_UNAVAILABLE");
@@ -338,6 +340,7 @@ export class DesktopBody {
         inputAt,
         ...(ctx.conversation === DESKTOP_OBSERVATION_CONVERSATION && {
           observation: true,
+          observationGrantId: ctx.desktopObservationGrantId,
         }),
         action,
       },
@@ -348,6 +351,7 @@ export class DesktopBody {
       ),
     };
     receipt.entry = entry;
+    if (action.type !== "state") ctx.desktopBodyActed = true;
     receipts.set(action.requestId, receipt);
     this.pending.set(agent.id, entry);
     ctx.controller.signal.addEventListener("abort", entry.abort, {

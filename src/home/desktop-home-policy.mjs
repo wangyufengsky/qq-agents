@@ -1,10 +1,16 @@
 import { z } from "zod";
 
+// An absent list preserves installations that previously inherited P2 roles.
+export const observationRoles = (policy) =>
+  policy.observationRoles ?? policy.activityRoles;
+
 export const desktopHomePolicy = z
   .object({
     enabled: z.boolean().default(false),
     toolRoles: z.array(z.string().min(1).max(64)).max(64).default([]),
     autonomousObservation: z.boolean().default(false),
+    observationRoles: z.array(z.string().min(1).max(64)).max(64).optional(),
+    observationRetentionDays: z.number().int().min(1).max(30).default(7),
     activityRoles: z.array(z.string().min(1).max(64)).max(64).default([]),
     bodyControlRoles: z.array(z.string().min(1).max(64)).max(64).default([]),
     screenView: z

@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
+import { desktopToken } from "../src/home/desktop-auth.mjs";
+import { createServer } from "../src/server.mjs";
 import { config, fixture } from "./helpers.mjs";
 
 const jpeg =
@@ -24,19 +26,24 @@ function setup(t, enabled = true) {
   let now = runtime.now();
   runtime.now = () => now;
   const command = (action, data) => host.command({ client, action, data });
-  const sync = (visible = true) => command("sync", visible);
+  const sync = (visible = true) =>
+    command("sync", { visible, dragged: [], observationProtocol: 2 });
   const { room } = sync();
   for (const role of host.live.room.roles) {
     host.live.room.members[role.id] = "invited";
     host.live.admit(role);
   }
   const grantId = randomUUID();
-  const grant = (id = "agent-0") =>
+  const target = (state) =>
+    command("observation-state", { roomEpoch: room.roomEpoch, grantId, state });
+  const grant = (id = "agent-0") => {
     command("observation-grant", {
       roomEpoch: room.roomEpoch,
       grantId,
       agentId: id,
     });
+    return target("ready");
+  };
   const revoke = () =>
     command("observation-revoke", { roomEpoch: room.roomEpoch, grantId });
   const payload = (request) => ({
@@ -59,16 +66,20 @@ function setup(t, enabled = true) {
     host,
     client,
     grant,
+    target,
+    review: (action, data) =>
+      host.observation.review({ client, action, ...data }),
     revoke,
     sync,
     command,
     payload,
     backend,
     runs,
-    time(ms) {
+    time(ms, { verify = true } = {}) {
       now += ms;
       host.client.expiresAt = now + 15_000;
       host.client.activityVisibleUntil = now + 2500;
+      if (verify && host.observation.grant) target("ready");
     },
   };
 }
@@ -79,6 +90,9 @@ test("observation requires explicit opt-in and an eligible resident", (t) => {
   assert.throws(() => grant(), /DESKTOP_SCREEN_UNAVAILABLE/);
   runtime.config.desktopHome.autonomousObservation = true;
   assert.throws(() => grant("agent-1"), /DESKTOP_SCREEN_UNAVAILABLE/);
+  assert.deepEqual(sync().room.observation.ineligible, [
+    { id: "agent-1", reason: "activity" },
+  ]);
   assert.equal(grant().room.observation.grantedAgentId, "agent-0");
 });
 
@@ -252,4 +266,269 @@ test("revocation after frame capture fences backend submission", async (t) => {
   assert(params.signal.aborted);
   resume.resolve();
   await active.done;
+});
+
+test("explicit role selection is required for on-request observation", async (t) => {
+  const { host, runtime, grant, sync, payload, backend, time } = setup(t);
+  runtime.config.desktopHome.observationRoles = [];
+  assert.throws(() => grant(), /DESKTOP_SCREEN_UNAVAILABLE/);
+  runtime.config.desktopHome.observationRoles = ["agent-0"];
+  grant();
+  const conversations = [];
+  backend.runDesktop = async (params) => {
+    params.beforeInput();
+    params.onInputSubmitted();
+    const { conversation } = params.managedContext;
+    conversations.push(conversation);
+    if (conversation === observation) {
+      assert.equal(params.inputImages[0].data, jpeg);
+      await params.callTool(decision, { action: "silent" });
+    } else {
+      assert.equal(params.inputImages, undefined);
+      assert.equal(host.screen.request(), undefined);
+      await assert.rejects(
+        params.callTool(decision, { action: "silent", summary: "外部资料" }),
+        /DESKTOP_DECISION_INVALID/,
+      );
+      await params.callTool(decision, { action: "observe" });
+    }
+  };
+  time(2 * minute);
+  sync();
+  const active = host.live.active;
+  await new Promise(setImmediate);
+  const { screenRequest } = sync();
+  host.screen.claim(payload(screenRequest));
+  host.screen.receive({ ...payload(screenRequest), data: jpeg });
+  await active.done;
+  assert.deepEqual(conversations, ["@desktop-activity", observation]);
+  assert.equal(host.activityStarts.get("agent-0").length, 1);
+});
+
+test("valid observation drafts stay private until each local review action", async (t) => {
+  const { host, client, grant, sync, payload, backend, revoke, review, time } =
+    setup(t);
+  grant();
+  const prompts = [];
+  backend.runDesktop = async (params) => {
+    params.beforeInput();
+    params.onInputSubmitted();
+    prompts.push(params.prompt);
+    await params.callTool(decision, {
+      action: "silent",
+      response: "可以检查进度",
+      summary: "观察到进度界面",
+    });
+  };
+  const capture = async () => {
+    time(2 * minute);
+    const { screenRequest } = sync();
+    const active = host.live.active;
+    host.screen.claim(payload(screenRequest));
+    host.screen.receive({ ...payload(screenRequest), data: jpeg });
+    await active.done;
+  };
+  await capture();
+  const { candidate } = review("status");
+  assert.equal(candidate.summary, "观察到进度界面");
+  assert.equal(candidate.agentId, "agent-0");
+  assert(!JSON.stringify(sync()).includes("观察到进度界面"));
+  assert.deepEqual(review("list").records, []);
+  assert.throws(
+    () =>
+      host.observation.review({
+        client: randomUUID(),
+        action: "publish",
+        id: candidate.id,
+      }),
+    /DESKTOP_SCREEN_UNAVAILABLE/,
+  );
+  assert.throws(
+    () => review("publish", { id: randomUUID() }),
+    /DESKTOP_OBSERVATION_REVIEW_UNAVAILABLE/,
+  );
+  const approved = review("publish", { id: candidate.id });
+  assert.equal(approved.published.text, "可以检查进度");
+  assert.equal(approved.candidate.response, undefined);
+  assert.deepEqual(review("list").records, []);
+  review("save", { id: candidate.id });
+  const [saved] = review("list", { agentId: "agent-0" }).records;
+  assert.equal(saved.summary, candidate.summary);
+  assert.equal(saved.expiresAt - saved.createdAt, 7 * 24 * 60 * minute);
+  assert.deepEqual(review("list", { agentId: "agent-1" }).records, []);
+  await capture();
+  assert.match(prompts[1], /观察到进度界面/);
+  assert(!JSON.stringify(host.archive.history()).includes(candidate.summary));
+  revoke();
+  assert.equal(review("status").candidate, undefined);
+  assert.equal(review("status").published, undefined);
+  assert.throws(
+    () =>
+      host.observation.review({
+        client,
+        action: "save",
+        id: candidate.id,
+      }),
+    /DESKTOP_OBSERVATION_REVIEW_UNAVAILABLE/,
+  );
+  assert.equal(review("list").records.length, 1);
+  assert.equal(
+    review("delete", { agentId: "agent-0", id: saved.id }).deleted,
+    true,
+  );
+  assert.deepEqual(review("list").records, []);
+});
+
+test("minimization or a stale target lease cannot capture or expose an observation", async (t) => {
+  const { host, grant, sync, payload, target, review, runs, time } = setup(t);
+  grant();
+  time(2 * minute);
+  const first = sync().screenRequest;
+  host.screen.claim(payload(first));
+  const active = host.live.active;
+  target("minimized");
+  assert.equal(sync().room.observation.targetState, "minimized");
+  assert.throws(
+    () => host.screen.receive({ ...payload(first), data: jpeg }),
+    /DESKTOP_SCREEN_UNAVAILABLE/,
+  );
+  await active.done;
+  assert.equal(runs.length, 0);
+  time(2 * minute, { verify: false });
+  assert.equal(sync().screenRequest, undefined);
+  await host.live.active?.done;
+  target("ready");
+  assert.equal(sync().room.observation.targetState, "ready");
+  time(2 * minute, { verify: false });
+  assert.equal(sync().screenRequest, undefined);
+  assert.equal(sync().room.observation.targetState, "checking");
+  assert.equal(review("status").candidate, undefined);
+  target("permission");
+  assert.equal(sync().room.observation.grantedAgentId, null);
+});
+
+test("observation review and backup use separate local credentials", async (t) => {
+  const { runtime, client } = setup(t);
+  const token = randomBytes(32).toString("hex");
+  const desktopKey = desktopToken(token);
+  const server = createServer({ runtime, token, allowLive: true });
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${await server.listen()}/api/desktop-home/`;
+  const post = (route, body, headers) =>
+    fetch(base + route, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify(body),
+    });
+  const review = { client, action: "status" };
+  const request = { agentId: "agent-0", action: "export" };
+  assert.equal(
+    (await post("observation-review", review, { "x-admin-token": token }))
+      .status,
+    401,
+  );
+  assert.equal(
+    (
+      await post("observation-review", review, {
+        "x-desktop-home-token": desktopKey,
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await post("observation-summaries", request, {
+        "x-desktop-home-token": desktopKey,
+      })
+    ).status,
+    401,
+  );
+  assert.deepEqual(
+    await (
+      await post("observation-summaries", request, { "x-admin-token": token })
+    ).json(),
+    {
+      version: 1,
+      agentId: "agent-0",
+      summaries: [],
+    },
+  );
+});
+
+test("submission waits for a fresh same-window receipt and rejects a minimized target", async (t) => {
+  const { host, client, grant, sync, payload, backend, time } = setup(t);
+  let submitted = 0;
+  backend.runDesktop = async (params) => {
+    params.beforeInput();
+    await params.onRunStarted();
+    params.onInputSubmitted();
+    submitted++;
+    await params.callTool(decision, { action: "silent" });
+  };
+  grant();
+  for (const state of ["ready", "minimized"]) {
+    time(2 * minute);
+    const { screenRequest } = sync();
+    const active = host.live.active;
+    host.screen.claim(payload(screenRequest));
+    host.screen.receive({ ...payload(screenRequest), data: jpeg });
+    await new Promise(setImmediate);
+    const { observationVerify } = sync();
+    assert(observationVerify);
+    assert.equal(submitted, state === "ready" ? 0 : 1);
+    assert.throws(
+      () =>
+        host.observation.verifyResult({
+          client,
+          ...observationVerify,
+          requestId: randomUUID(),
+          state: "ready",
+        }),
+      /DESKTOP_SCREEN_UNAVAILABLE/,
+    );
+    assert.equal(
+      host.observation.verifyResult({ client, ...observationVerify, state })
+        .accepted,
+      true,
+    );
+    await active.done;
+    assert.throws(
+      () =>
+        host.observation.verifyResult({
+          client,
+          ...observationVerify,
+          state: "ready",
+        }),
+      /DESKTOP_SCREEN_UNAVAILABLE/,
+    );
+    assert.equal(submitted, 1);
+  }
+  assert.equal(sync().room.observation.targetState, "minimized");
+});
+
+test("a discarded candidate's summary never reenters the observation prompt", async (t) => {
+  const { host, grant, sync, payload, backend, review, time } = setup(t);
+  grant();
+  const prompts = [];
+  backend.runDesktop = async (params) => {
+    params.onInputSubmitted();
+    prompts.push(params.prompt);
+    await params.callTool(decision, {
+      action: "silent",
+      summary: "放弃的观察摘要",
+    });
+  };
+  for (let i = 0; i < 2; i++) {
+    time(2 * minute);
+    const { screenRequest } = sync();
+    const active = host.live.active;
+    host.screen.claim(payload(screenRequest));
+    host.screen.receive({ ...payload(screenRequest), data: jpeg });
+    await active.done;
+    const { candidate } = review("status");
+    assert(candidate);
+    review("discard", { id: candidate.id });
+  }
+  assert.equal(prompts.length, 2);
+  assert(!prompts[1].includes("放弃的观察摘要"));
 });

@@ -838,6 +838,24 @@ async function desktopSettings(root, ticket) {
     if (!active()) return;
     const policy = current.config.desktopHome;
     const form = el("form", "social-settings desktop-settings");
+    function roleCheckboxes(title, enabled) {
+      const group = el("fieldset", "desktop-tools");
+      group.append(el("legend", "", title));
+      const checkboxes = current.config.agents.map((agent) => {
+        const label = el("label", "", agent.name);
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        input.value = agent.id;
+        input.checked = enabled.includes(agent.id);
+        label.prepend(input);
+        group.append(label);
+        return input;
+      });
+      form.append(group);
+      return checkboxes;
+    }
+    const checkedRoles = (checkboxes) =>
+      checkboxes.filter((input) => input.checked).map((input) => input.value);
     const fields = [
       ["maxTurns", "共用回合上限", 1, 24],
       ["refreshMinutes", "额度补满间隔（分钟）", 0, 1440],
@@ -862,52 +880,25 @@ async function desktopSettings(root, ticket) {
         "你发新消息也会补满额度。间隔设为 0 时，由新消息补满。",
       ),
     );
-    const toolRoles = el("fieldset", "desktop-tools");
-    toolRoles.append(el("legend", "", "允许在桌面使用额外工具"));
-    const roleInputs = current.config.agents.map((agent) => {
-      const label = el("label", "", agent.name);
-      const input = document.createElement("input");
-      input.type = "checkbox";
-      input.value = agent.id;
-      input.checked = policy.toolRoles.includes(agent.id);
-      label.prepend(input);
-      toolRoles.append(label);
-      return input;
-    });
+    const roleInputs = roleCheckboxes(
+      "允许在桌面使用额外工具",
+      policy.toolRoles,
+    );
     form.append(
-      toolRoles,
       el(
         "p",
         "social-notice",
         "角色仍受自己的工具和文件权限约束。联系 QQ 由同角色的主人格审阅，再交给目标 QQ 会话。",
       ),
     );
-    const bodyRoles = el("fieldset", "desktop-tools");
-    bodyRoles.append(el("legend", "", "允许控制自己的桌宠"));
-    const bodyInputs = current.config.agents.map((agent) => {
-      const label = el("label", "", agent.name);
-      const input = document.createElement("input");
-      input.type = "checkbox";
-      input.value = agent.id;
-      input.checked = policy.bodyControlRoles.includes(agent.id);
-      label.prepend(input);
-      bodyRoles.append(label);
-      return input;
-    });
-    form.append(bodyRoles);
-    const activityRoles = el("fieldset", "desktop-tools");
-    activityRoles.append(el("legend", "", "允许在场时自主活动"));
-    const activityInputs = current.config.agents.map((agent) => {
-      const label = el("label", "", agent.name);
-      const input = document.createElement("input");
-      input.type = "checkbox";
-      input.value = agent.id;
-      input.checked = policy.activityRoles.includes(agent.id);
-      label.prepend(input);
-      activityRoles.append(label);
-      return input;
-    });
-    form.append(activityRoles);
+    const bodyInputs = roleCheckboxes(
+      "允许控制自己的桌宠",
+      policy.bodyControlRoles,
+    );
+    const activityInputs = roleCheckboxes(
+      "允许在场时自主活动",
+      policy.activityRoles,
+    );
     const screenLabel = el("label", "desktop-field", "允许在本机授权看桌面");
     const screenEnabled = document.createElement("input");
     screenEnabled.type = "checkbox";
@@ -932,7 +923,62 @@ async function desktopSettings(root, ticket) {
     observationEnabled.type = "checkbox";
     observationEnabled.checked = policy.autonomousObservation;
     observationLabel.prepend(observationEnabled);
-    form.append(screenLabel, observationLabel, nativeLabel, browserLabel);
+    form.append(screenLabel, nativeLabel, browserLabel, observationLabel);
+    const legacyObservation = policy.observationRoles === undefined;
+    const separateObservation = document.createElement("input");
+    separateObservation.type = "checkbox";
+    if (legacyObservation) {
+      const separateLabel = el(
+        "label",
+        "desktop-field",
+        "使用独立观察角色名单",
+      );
+      separateLabel.prepend(separateObservation);
+      form.append(separateLabel);
+    }
+    const observationInputs = roleCheckboxes(
+      "可获窗口观察授权的角色",
+      policy.observationRoles ?? policy.activityRoles,
+    );
+    const initialObservationRoles = JSON.stringify(
+      checkedRoles(observationInputs),
+    );
+    const updateObservationInputs = () => {
+      for (const input of observationInputs)
+        input.disabled = legacyObservation && !separateObservation.checked;
+    };
+    if (legacyObservation) {
+      separateObservation.addEventListener("change", updateObservationInputs);
+      updateObservationInputs();
+      form.append(
+        el(
+          "p",
+          "social-notice",
+          "当前沿用自主活动角色。勾选后可以单独选择可观察的角色。",
+        ),
+      );
+    }
+    form.append(
+      el(
+        "p",
+        "social-notice",
+        "角色须获准自主活动和看屏。每次到访仍需在桌面小窝授权一个窗口。",
+      ),
+    );
+    const retentionLabel = el(
+      "label",
+      "desktop-field",
+      "已保存观察摘要的保留期限",
+    );
+    const retention = document.createElement("select");
+    for (let days = 1; days <= 30; days++) {
+      const option = el("option", "", `${days} 天`);
+      option.value = String(days);
+      retention.append(option);
+    }
+    retention.value = String(policy.observationRetentionDays);
+    retentionLabel.append(retention);
+    form.append(retentionLabel);
     const status = el("p", "social-notice");
     status.setAttribute("role", "status");
     const save = el("button", "primary", "保存桌面设置");
@@ -945,8 +991,11 @@ async function desktopSettings(root, ticket) {
       ...roleInputs,
       ...bodyInputs,
       ...activityInputs,
+      ...observationInputs,
+      retention,
       screenEnabled,
       observationEnabled,
+      separateObservation,
       nativeEnabled,
       browserEnabled,
       save,
@@ -957,22 +1006,23 @@ async function desktopSettings(root, ticket) {
       busy = true;
       for (const field of fieldsToLock) field.disabled = true;
       status.textContent = "";
+      const observationRoles = checkedRoles(observationInputs);
       const limits = {
         maxTurns: inputs.maxTurns.valueAsNumber,
         refreshMinutes: inputs.refreshMinutes.valueAsNumber,
         screenView: { enabled: screenEnabled.checked },
         autonomousObservation: observationEnabled.checked,
+        observationRetentionDays: Number(retention.value),
+        ...((legacyObservation
+          ? separateObservation.checked
+          : JSON.stringify(observationRoles) !== initialObservationRoles) && {
+          observationRoles,
+        }),
         nativeControl: { enabled: nativeEnabled.checked },
         browserControl: { enabled: browserEnabled.checked },
-        activityRoles: activityInputs
-          .filter((input) => input.checked)
-          .map((input) => input.value),
-        bodyControlRoles: bodyInputs
-          .filter((input) => input.checked)
-          .map((input) => input.value),
-        toolRoles: roleInputs
-          .filter((input) => input.checked)
-          .map((input) => input.value),
+        activityRoles: checkedRoles(activityInputs),
+        bodyControlRoles: checkedRoles(bodyInputs),
+        toolRoles: checkedRoles(roleInputs),
       };
       try {
         const current = await api("/api/config");
@@ -983,6 +1033,10 @@ async function desktopSettings(root, ticket) {
           existing.refreshMinutes !== policy.refreshMinutes ||
           existing.screenView.enabled !== policy.screenView.enabled ||
           existing.autonomousObservation !== policy.autonomousObservation ||
+          existing.observationRetentionDays !==
+            policy.observationRetentionDays ||
+          JSON.stringify(existing.observationRoles) !==
+            JSON.stringify(policy.observationRoles) ||
           existing.nativeControl.enabled !== policy.nativeControl.enabled ||
           existing.browserControl.enabled !== policy.browserControl.enabled ||
           JSON.stringify(existing.activityRoles) !==
@@ -1016,6 +1070,7 @@ async function desktopSettings(root, ticket) {
       } finally {
         busy = false;
         for (const field of fieldsToLock) field.disabled = false;
+        updateObservationInputs();
       }
     };
   } catch (error) {

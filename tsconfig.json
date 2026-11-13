@@ -56,6 +56,7 @@
     "src/memory/protection.mjs",
     "src/apps/screenshot-page.mjs",
     "src/memory/export-format.mjs",
+    "src/memory/desktop-observation-summaries.mjs",
     "src/tools/schedule-schema.mjs",
     "src/tools/specs.mjs",
     "scripts/privacy-scan.mjs",

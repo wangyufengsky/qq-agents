@@ -24,6 +24,10 @@ export class DesktopActivity {
     visit.activity.reason = "manual-drag";
   }
 
+  note(visit, reason) {
+    if (visit?.activity) visit.activity.pendingReason = reason;
+  }
+
   next(roles, visits, now, eligible) {
     if (this.paused || !roles.length) return;
     for (let offset = 0; offset < roles.length; offset++) {
@@ -41,13 +45,15 @@ export class DesktopActivity {
         continue;
       this.starts.set(id, [...starts, now]);
       this.cursor = (index + 1) % roles.length;
-      const { reason, lastResult } = visit.activity;
+      const { reason, lastResult, pendingReason } = visit.activity;
+      delete visit.activity.pendingReason;
       visit.activity.dueAt = now + COOLDOWN;
       visit.activity.reason = "idle";
       return {
         actor: id,
         kind: "activity",
         reason,
+        ...(pendingReason && { recentEvent: pendingReason }),
         lastResult,
         startedAt: now,
       };
@@ -55,7 +61,10 @@ export class DesktopActivity {
   }
 
   finish(visit, { reply, lastResult, now }) {
-    if (lastResult) visit.activity.lastResult = lastResult;
+    if (lastResult) {
+      visit.activity.lastResult = lastResult;
+      this.note(visit, "action-result");
+    }
     if (reply?.action === "wait") {
       visit.activity.dueAt = now + reply.waitMinutes * 60_000;
       visit.activity.reason = "wait-ended";

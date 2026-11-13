@@ -1,4 +1,4 @@
-/* global window */
+/* global document, window */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { chromium } from "playwright-core";
@@ -138,6 +138,7 @@ test("the desktop panel exposes each authorization only while eligible", async (
         window.testNativeCalls = (window.testNativeCalls ?? 0) + 1;
         return "cancelled";
       },
+      observation: async () => window.testObservationResult,
     };
   }, room);
   await page.goto(
@@ -146,8 +147,48 @@ test("the desktop panel exposes each authorization only while eligible", async (
   const push = (data) => page.evaluate((next) => window.testRoom(next), data);
   const authorize = page.getByRole("button", { name: "授权查看屏幕" });
   const authorizeNative = page.getByRole("button", { name: "授权控制窗口" });
+  const authorizeObservation = page.getByRole("button", {
+    name: "授权自主观察窗口",
+  });
+  const retention = page.locator("#observation-retention-notice");
+  const ineligible = page.locator(".observation-ineligible");
   assert.equal(await authorize.isVisible(), false);
   assert.equal(await authorizeNative.isVisible(), false);
+  assert.equal(await authorizeObservation.isVisible(), false);
+  await push({
+    ...room,
+    observation: {
+      eligible: [],
+      grantedAgentId: null,
+      ineligible: [{ id: "fish", reason: "image" }],
+    },
+    observationEnded: "unsupported",
+  });
+  assert.equal(await authorizeObservation.isVisible(), false);
+  assert.equal(await retention.isVisible(), false);
+  assert.match(await ineligible.textContent(), /小鱼.*后端不支持图片输入/);
+  assert.equal(
+    await page.locator("#chat .observation-ended").isVisible(),
+    false,
+  );
+  await push({
+    ...room,
+    roles: [...room.roles, { ...room.roles[0], id: "dragon", name: "小龙" }],
+    observation: {
+      eligible: ["fish"],
+      grantedAgentId: null,
+      ineligible: [{ id: "dragon", reason: "activity" }],
+    },
+  });
+  assert.equal(await retention.isVisible(), true);
+  assert.match(await retention.textContent(), /模型服务.*自身规则保留/);
+  assert.match(await ineligible.textContent(), /小龙.*未开启自主活动/);
+  await page.evaluate(() => (window.testObservationResult = "permission"));
+  await authorizeObservation.click();
+  await page.getByText(/录制屏幕.*辅助功能/).waitFor();
+  await page.evaluate(() => (window.testObservationResult = "missing-helper"));
+  await authorizeObservation.click();
+  await page.getByText(/缺少 agent-desktop.*重新打开桌面小窝/).waitFor();
   await push({
     ...room,
     screenView: { eligible: ["fish"], grantedAgentId: null },
@@ -346,6 +387,167 @@ test("paper tabs and portraits replace the desktop budget display", async (t) =>
     "send",
     "桌边试聊",
   ]);
+});
+
+test("observation review keeps candidates and saved summaries separate from room history", async (t) => {
+  let executablePath;
+  try {
+    executablePath = findScreenshotBrowser();
+  } catch {
+    t.skip("local Chromium unavailable");
+    return;
+  }
+  const browser = await chromium.launch({ executablePath, headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 430, height: 574 } });
+  const now = Date.now();
+  const candidate = {
+    id: "observation-candidate",
+    agentId: "fish",
+    response: "<img src=x> 回复草稿",
+    summary: "<script>摘要草稿</script>",
+    expiresAt: now + 10_000,
+  };
+  const room = {
+    framework: true,
+    connected: true,
+    roomEpoch: "observation-room",
+    observationReviewAvailable: true,
+    roles: [{ id: "fish", name: "小鱼", state: "here", available: true }],
+    messages: [{ id: 1, actor: "admin", text: "房间消息", now }],
+    observation: {
+      eligible: ["fish"],
+      grantedAgentId: "fish",
+      target: "合成文档窗口",
+      targetState: "ready",
+      expiresAt: candidate.expiresAt,
+      remaining: 2,
+    },
+  };
+  await page.addInitScript(
+    ({ room, candidate, now }) => {
+      let review = { candidate: { ...candidate } };
+      let records = [];
+      window.reviewCalls = [];
+      window.replaceReview = (next) => (review = next);
+      window.nest = {
+        onRoom: (update) => (window.testRoom = update),
+        onSection() {},
+        get: async () => ({ data: room, section: "chat" }),
+        observationReview: async (action, data) => {
+          window.reviewCalls.push([action, data]);
+          if (action === "list") return { records };
+          if (action === "delete") {
+            records = records.filter(({ id }) => id !== data.id);
+            return { deleted: true };
+          }
+          if (action === "publish") {
+            review.published = { ...candidate, text: candidate.response };
+            delete review.candidate.response;
+          }
+          if (action === "save") {
+            records.push({
+              id: "saved-observation",
+              agentId: candidate.agentId,
+              summary: candidate.summary,
+              createdAt: now,
+              expiresAt: now + 86_400_000,
+            });
+          }
+          if (action === "save" || action === "discard")
+            delete review.candidate;
+          return review;
+        },
+      };
+    },
+    { room, candidate, now },
+  );
+  await page.goto(
+    new URL("../desktop/home/index.html?type=panel", import.meta.url).href,
+  );
+  const reviewTab = page.getByRole("button", { name: "观察", exact: true });
+  const review = page.getByRole("region", { name: "观察审核" });
+  const thread = page.getByRole("log", { name: "聊天记录" });
+  const push = (next) => page.evaluate((data) => window.testRoom(data), next);
+  await reviewTab.waitFor();
+  assert.deepEqual(await page.evaluate(() => window.reviewCalls), []);
+  await reviewTab.click();
+  await review.getByText(candidate.response, { exact: true }).waitFor();
+  assert.match(
+    await review.locator(".review-scope").textContent(),
+    /小鱼.*合成文档窗口.*剩余 2 次/,
+  );
+  assert.equal(await review.locator("img, script").count(), 0);
+  assert.equal(
+    await review.getByText(candidate.summary, { exact: true }).count(),
+    1,
+  );
+  assert.equal(await page.locator("#chat .thread .message").count(), 1);
+  await page.evaluate(() => {
+    const hasFocus = document.hasFocus;
+    document.hasFocus = () => false;
+    window.dispatchEvent(new Event("blur"));
+    document.hasFocus = hasFocus;
+  });
+  assert.equal(
+    await review.locator(".review-response .review-text").textContent(),
+    "",
+  );
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await review.getByText(candidate.response, { exact: true }).waitFor();
+
+  await review.getByRole("button", { name: "发布回复" }).click();
+  await review.getByText("已发布回复").waitFor();
+  assert.equal(await review.locator(".review-response").isVisible(), false);
+  assert.equal(
+    await review.getByRole("button", { name: "保存摘要" }).isVisible(),
+    true,
+  );
+  await review.getByRole("button", { name: "保存摘要" }).click();
+  await review.getByText("摘要已保存。").waitFor();
+  await review.getByText("已保存的观察摘要").click();
+  await review.locator("li").getByText(candidate.summary).waitFor();
+  await review.getByRole("button", { name: "删除摘要" }).click();
+  await review.getByText("暂无已保存的摘要。").waitFor();
+
+  const nextCandidate = { ...candidate, id: "next-observation" };
+  await page.evaluate(
+    (candidate) => window.replaceReview({ candidate }),
+    nextCandidate,
+  );
+  await review.getByRole("button", { name: "丢弃候选" }).click();
+  await review.getByText("候选已丢弃。").waitFor();
+  assert.deepEqual(
+    await page.evaluate(() =>
+      window.reviewCalls.filter(
+        ([action]) => action !== "status" && action !== "list",
+      ),
+    ),
+    [
+      ["publish", { id: candidate.id }],
+      ["save", { id: candidate.id }],
+      ["delete", { id: "saved-observation", agentId: candidate.agentId }],
+      ["discard", { id: nextCandidate.id }],
+    ],
+  );
+
+  await push({
+    ...room,
+    observation: { ...room.observation, targetState: "minimized" },
+    observationEnded: "target-minimized",
+  });
+  await review.getByText("观察窗口已最小化。恢复窗口后可继续观察。").waitFor();
+  assert.equal(await review.locator(".review-candidate").isVisible(), false);
+  await page.getByRole("button", { name: "聊天", exact: true }).click();
+  await thread.getByText("房间消息").waitFor();
+  assert.doesNotMatch(await thread.textContent(), /回复草稿|摘要草稿/);
+  assert.equal(
+    await review
+      .locator(".review-text")
+      .allTextContents()
+      .then((texts) => texts.every((text) => !text)),
+    true,
+  );
 });
 
 test("the visit panel uses confirmed body state and announces each manual interruption once", async (t) => {

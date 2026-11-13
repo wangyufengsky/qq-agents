@@ -161,7 +161,8 @@ h2 {
   border-bottom-color: var(--paper);
 }
 #visits,
-#chat {
+#chat,
+#observation-review {
   min-height: 0;
   background: var(--paper);
 }
@@ -300,6 +301,58 @@ h2 {
 }
 .chat-tools .observation-ended {
   margin: 0;
+}
+#observation-review {
+  padding: 17px 16px 12px;
+  overflow: auto;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+#observation-review h3,
+#observation-review p {
+  margin: 0;
+}
+#observation-review > :not(:first-child),
+.review-candidate > :not(:first-child) {
+  margin-top: 10px;
+}
+.review-scope,
+.review-status,
+.review-candidate-meta,
+.review-published-meta,
+.review-records-status,
+.review-records li > :first-child {
+  color: var(--muted);
+  font-size: 12px;
+}
+.review-candidate,
+.review-published,
+.review-records {
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px 9px 7px 5px;
+  background: var(--cream);
+}
+.review-text {
+  padding: 4px 0 6px;
+  white-space: pre-wrap;
+  user-select: text;
+}
+.review-records summary {
+  cursor: pointer;
+}
+.review-records summary + p:not(:empty),
+.review-records li {
+  padding-top: 8px;
+}
+.review-records ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.review-records li + li {
+  margin-top: 8px;
+  border-top: 1px solid var(--line);
 }
 .door-settings,
 .knock-card {
@@ -496,7 +549,9 @@ h2 {
 }
 .turn-status,
 .attachment-status,
-.desktop-permission-status {
+.desktop-permission-status,
+#observation-retention-notice,
+.observation-ineligible {
   margin: 0;
   color: var(--muted);
   font-size: 12px;
@@ -517,6 +572,16 @@ h2 {
   align-items: center;
   gap: 5px;
   max-width: 100%;
+}
+.desktop-permission.observation {
+  flex-wrap: wrap;
+}
+#observation-retention-notice,
+.observation-ineligible {
+  flex-basis: 100%;
+}
+.observation-ineligible {
+  padding-inline-start: 1.3em;
 }
 .desktop-permission button {
   flex: none;
