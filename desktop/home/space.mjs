@@ -29,6 +29,13 @@ const sameBounds = (a, b) =>
   a?.y === b?.y &&
   a?.width === b?.width &&
   a?.height === b?.height;
+const validBounds = (bounds) =>
+  bounds &&
+  [bounds.x, bounds.y, bounds.width, bounds.height].every(
+    Number.isSafeInteger,
+  ) &&
+  bounds.width > 0 &&
+  bounds.height > 0;
 
 export function displayFingerprint(display) {
   // Electron's invalid or synthetic IDs do not identify a physical display.
@@ -253,7 +260,7 @@ function findPath(start, end, bounds, area, obstacles, clear) {
   return best.get(end)?.path;
 }
 
-function sidePoints(anchor, bounds, area) {
+function sidePoints(anchor, bounds, area, gap = GAP) {
   const { width, height } = bounds;
   const middle = clampToWorkArea(
     {
@@ -265,10 +272,10 @@ function sidePoints(anchor, bounds, area) {
     area,
   );
   return [
-    { x: anchor.x - width - GAP, y: middle.y },
-    { x: right(anchor) + GAP, y: middle.y },
-    { x: middle.x, y: anchor.y - height - GAP },
-    { x: middle.x, y: bottom(anchor) + GAP },
+    { x: anchor.x - width - gap, y: middle.y },
+    { x: right(anchor) + gap, y: middle.y },
+    { x: middle.x, y: anchor.y - height - gap },
+    { x: middle.x, y: bottom(anchor) + gap },
   ].sort((a, b) => distance(bounds, a) - distance(bounds, b));
 }
 
@@ -389,7 +396,10 @@ export class DesktopSpace {
         ...(action && { action }),
       },
       residents: obstacles
-        .filter(({ displayId }) => ids.has(displayId))
+        .filter(
+          ({ displayId, privatePosition }) =>
+            !privatePosition && ids.has(displayId),
+        )
         .slice(0, 24)
         .map(({ ref, bounds, name, displayId }) => ({
           ref,
@@ -404,10 +414,12 @@ export class DesktopSpace {
     { self, display, displays, obstacles, door, zones },
     crossDisplay,
     regions,
+    localAnchor,
   ) {
     return [
       ...obstacles.map((resident) => resident.bounds),
       ...(door ? [door] : []),
+      ...(localAnchor ? [localAnchor] : []),
       ...(crossDisplay ? displays : [display]).flatMap((display) => {
         const key = displayFingerprint(display);
         const exclusions =
@@ -427,10 +439,13 @@ export class DesktopSpace {
 
   plan(agentId, action, { crossDisplay = true, replan } = {}) {
     const { target, layoutVersion } = action;
+    const local = target?.type === "window" || target?.type === "pointer";
     const context = this.#context(agentId);
     if (!context) return { reason: "target-unavailable" };
     if (
-      (typeof target === "object" && layoutVersion !== this.layoutVersion) ||
+      (typeof target === "object" &&
+        !local &&
+        layoutVersion !== this.layoutVersion) ||
       (replan &&
         (this.#reservations.get(agentId) !== replan ||
           replan.layoutVersion !== this.layoutVersion ||
@@ -451,12 +466,23 @@ export class DesktopSpace {
     const seat = target === "seat" ? this.seat(agentId) : undefined;
     const resident =
       target?.type === "near-resident"
-        ? obstacles.find(({ ref }) => ref === target.residentRef)
+        ? obstacles.find(
+            ({ ref, privatePosition }) =>
+              !privatePosition && ref === target.residentRef,
+          )
         : undefined;
-    const anchor = target === "door" ? door : resident?.bounds;
+    const localBounds = local && target.bounds;
+    if (local && !validBounds(localBounds))
+      return { reason: "target-unavailable" };
+    const anchor = local
+      ? localBounds
+      : target === "door"
+        ? door
+        : resident?.bounds;
     const available = crossDisplay ? displays : [source];
-    const targetId =
-      target === "door"
+    const targetId = local
+      ? this.displayAt(localBounds).id
+      : target === "door"
         ? doorDisplayId
         : seat
           ? this.displayAt({ ...bounds, ...seat }).id
@@ -466,7 +492,10 @@ export class DesktopSpace {
                 ({ id }) => this.#displayRefs.get(id) === target?.displayRef,
               )?.id;
     const display = available.find(({ id }) => id === targetId);
-    if (!display) return { reason: "target-unavailable" };
+    if (!display)
+      return { reason: local ? "target-unreachable" : "target-unavailable" };
+    if (local && !overlaps(localBounds, display.bounds ?? display.workArea))
+      return { reason: "target-unavailable" };
     const displayRef = this.#displayRefs.get(display.id);
     const area = display.workArea;
     const legacy = () =>
@@ -485,8 +514,13 @@ export class DesktopSpace {
       points = [legacy(), ...sidePoints(door, bounds, area)];
     } else if (target === "seat" && seat) {
       points = [legacy()];
-    } else if (resident) {
-      points = sidePoints(anchor, bounds, area);
+    } else if (resident || local) {
+      points = sidePoints(
+        anchor,
+        bounds,
+        area,
+        target?.type === "pointer" ? 48 : GAP,
+      );
     } else if (
       target?.type === "point" &&
       [target.x, target.y].every(Number.isSafeInteger)
@@ -509,12 +543,18 @@ export class DesktopSpace {
     const candidates = points?.filter(
       (point) => point && fits({ ...bounds, ...point }, area),
     );
-    if (!candidates?.length) return { reason: "target-unavailable" };
+    if (!candidates?.length)
+      return { reason: local ? "target-blocked" : "target-unavailable" };
     const { ids, regions } = movementRegions(available, source.id, bounds);
     if (!ids.has(display.id)) return { reason: "target-unreachable" };
     if (!withinRegions(start, start, regions))
       return { reason: "target-unavailable" };
-    const occupied = this.#obstacles(context, crossDisplay, regions);
+    const occupied = this.#obstacles(
+      context,
+      crossDisplay,
+      regions,
+      localBounds,
+    );
     const clear = (a, b) =>
       withinRegions(a, b, regions) &&
       occupied.every((rect) => clears(a, b, rect, regions));
@@ -537,6 +577,7 @@ export class DesktopSpace {
         path,
         regions,
         anchor,
+        localBounds,
         target,
         crossDisplay,
         bounds: { ...bounds, ...point },
@@ -574,17 +615,46 @@ export class DesktopSpace {
       plan.target?.type === "near-resident" &&
       !sameBounds(
         plan.anchor,
-        context.obstacles.find(({ ref }) => ref === plan.target.residentRef)
-          ?.bounds,
+        context.obstacles.find(
+          ({ ref, privatePosition }) =>
+            !privatePosition && ref === plan.target.residentRef,
+        )?.bounds,
       )
     )
       return false;
 
-    const occupied = this.#obstacles(context, plan.crossDisplay, plan.regions);
+    const occupied = this.#obstacles(
+      context,
+      plan.crossDisplay,
+      plan.regions,
+      plan.localBounds,
+    );
     return occupied.every(
       (rect) =>
         depth(plan.destination, rect) <= 0 &&
         clears(start, point, rect, plan.regions),
     );
+  }
+
+  pointTarget(agentId, displayId, point) {
+    if (!this.#context(agentId)) return;
+    const displayRef = this.#displayRefs.get(displayId);
+    if (displayRef)
+      return {
+        layoutVersion: this.layoutVersion,
+        target: { type: "point", displayRef, ...point },
+      };
+  }
+
+  residentTarget(agentId, peerId) {
+    const context = this.#context(agentId);
+    const peer = context?.obstacles.find(
+      ({ id, privatePosition }) => id === peerId && !privatePosition,
+    );
+    if (peer)
+      return {
+        layoutVersion: this.layoutVersion,
+        target: { type: "near-resident", residentRef: peer.ref },
+      };
   }
 }

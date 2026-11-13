@@ -2,7 +2,10 @@
 import { z } from "zod";
 import { registry } from "./registry.mjs";
 import { DESKTOP_BODY_CONTROL, TOOL_NAMES } from "./names.mjs";
-import { legacyBodyActionSchema } from "../home/desktop-body-protocol.mjs";
+import {
+  bodyActionSchema,
+  legacyBodyActionSchema,
+} from "../home/desktop-body-protocol.mjs";
 export { TOOL_NAMES } from "./names.mjs";
 
 const legacyBodyDescription =
@@ -13,16 +16,29 @@ export function toolSpecs(
     context = false,
     desktopBodyV2 = true,
     desktopBodyCrossDisplay = false,
+    desktopBodyInteractions = false,
   } = {},
 ) {
   return enabled
     .filter((n) => Object.hasOwn(registry, n))
     .map((name) => {
       const { description, schema } = registry[name];
-      const legacyBody = name === DESKTOP_BODY_CONTROL && !desktopBodyV2;
+      const body = name === DESKTOP_BODY_CONTROL;
+      const legacyBody = body && !desktopBodyV2;
+      const bodyDescription =
+        body && desktopBodyCrossDisplay && typeof description === "string"
+          ? description.replace(
+              "移动仅限同屏",
+              "可沿相邻工作区跨屏移动，间隙或过窄边界不可达",
+            )
+          : description;
       const inputSchema = z.toJSONSchema(
         /** @type {import("zod").ZodType} */ (
-          legacyBody ? legacyBodyActionSchema : schema
+          legacyBody
+            ? legacyBodyActionSchema
+            : body && !desktopBodyInteractions
+              ? bodyActionSchema
+              : schema
         ),
         { target: "draft-7" },
       );
@@ -48,14 +64,10 @@ export function toolSpecs(
         name,
         description: legacyBody
           ? legacyBodyDescription
-          : name === DESKTOP_BODY_CONTROL &&
-              desktopBodyCrossDisplay &&
-              typeof description === "string"
-            ? description.replace(
-                "移动仅限同屏",
-                "可沿相邻工作区跨屏移动，间隙或过窄边界不可达",
-              )
-            : description,
+          : body && desktopBodyInteractions
+            ? bodyDescription +
+              " gesture 播放 jump、climb、land 或 wave。interaction 仅用于本轮双方已同意的互动步骤，填入提示中的 interactionId。"
+            : bodyDescription,
         inputSchema,
       };
     });

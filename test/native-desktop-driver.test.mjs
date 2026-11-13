@@ -46,7 +46,8 @@ const fixture = String.raw`
       ] };
       break;
     case "list-windows":
-      data = opts.closed ? [] : [{ ...base, visible: opts.visible,
+      data = opts.closed ? [] : [{ ...base, visible: opts.visible, bounds: opts.bounds,
+        pid: opts.pid ?? base.pid, id: opts.windowId ?? base.id,
         minimized: opts.minimized, process_instance: opts.instance ?? base.process_instance }];
       if (opts.duplicate) data.push({ ...base, pid: 22 });
       break;
@@ -280,6 +281,44 @@ test("macOS can enumerate only the application selected from a fresh native inve
   await assert.rejects(
     f.driver.listApplications(),
     /DESKTOP_NATIVE_PERMISSION/,
+  );
+});
+
+test("geometry rechecks the same native window identity, visibility and bounds", async (t) => {
+  const f = await setup(t);
+  const bounds = { x: -255, y: 50, width: 250, height: 330 };
+  await f.configure({ visible: true, bounds });
+  const [target] = await f.driver.geometryWindows();
+  assert.deepEqual(target.bounds, bounds);
+  const resized = { ...bounds, y: 70, height: 500 };
+  await f.configure({ visible: true, bounds: resized });
+  assert.deepEqual((await f.driver.windowGeometry(target)).bounds, resized);
+  for (const change of [
+    { closed: true },
+    { duplicate: true },
+    { instance: "changed" },
+    { pid: 92 },
+    { windowId: "w-48" },
+    { visible: false },
+    { bounds: { ...bounds, width: -1 } },
+  ]) {
+    await f.configure({ visible: true, bounds, ...change });
+    assert.equal(await f.driver.windowGeometry(target), null);
+  }
+  await f.configure({ visible: false, minimized: true, bounds });
+  await assert.rejects(
+    f.driver.windowGeometry(target),
+    /DESKTOP_NATIVE_TARGET_MINIMIZED/,
+  );
+  await f.configure({ accessibility: "denied" });
+  await assert.rejects(
+    f.driver.windowGeometry(target),
+    /DESKTOP_NATIVE_PERMISSION/,
+  );
+  assert.ok(
+    (await f.events()).every(({ command }) =>
+      ["version", "permissions", "list-windows"].includes(command),
+    ),
   );
 });
 

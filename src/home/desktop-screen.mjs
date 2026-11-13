@@ -106,10 +106,16 @@ export class DesktopScreen extends DesktopLocalGrant {
     const { runtime } = this.host;
     const agent = runtime.assertActive(ctx);
     const { grant, current } = this.activeGrant(ctx, agent);
+    if (ctx.desktopWindowTask) {
+      if (ctx.desktopWindowTaskActionStarted)
+        throw Error("DESKTOP_SCREEN_UNAVAILABLE");
+      ctx.desktopWindowTaskActionStarted = true;
+    }
     const { data } = await this.capture(ctx, agent, grant, current);
     if (!current()) throw Error("DESKTOP_SCREEN_UNAVAILABLE");
     // The native transcript can contain the pixels even if its receipt is lost.
     ctx.desktopScreenObserved = true;
+    if (ctx.desktopWindowTask) ctx.desktopWindowTaskUsed = true;
     const result = {
       [mediaLease]: current,
       content: [
@@ -136,6 +142,9 @@ export class DesktopScreen extends DesktopLocalGrant {
         grantId: grant.grantId,
         requestId: randomUUID(),
         ...(mode && { mode }),
+        ...(ctx.desktopWindowTask && {
+          windowTaskId: ctx.desktopWindowTask.id,
+        }),
         maxEdge: Math.min(1024, agent.behavior.imageInput.maxEdge),
         maxBytes: mode
           ? Math.min(MAX_BYTES, agent.behavior.imageInput.maxBytes)

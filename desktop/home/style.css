@@ -248,6 +248,17 @@ h2 {
   flex-wrap: wrap;
   gap: 3px;
 }
+.resident-interactions {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+.resident-interactions summary {
+  cursor: pointer;
+}
+.resident-interactions[open] summary {
+  margin-bottom: 3px;
+}
 .quiet {
   border: 0;
   border-radius: 4px;
@@ -533,6 +544,21 @@ h2 {
   background: #f6eedb;
   padding: 8px 13px;
 }
+.window-task-options,
+.window-task-feedback {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+.window-task-options select {
+  max-width: 100%;
+  padding: 3px 5px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--cream);
+  font-size: 12px;
+}
 .composer {
   display: flex;
   gap: 6px;
@@ -549,6 +575,7 @@ h2 {
 }
 .turn-status,
 .attachment-status,
+.window-task-status,
 .desktop-permission-status,
 #observation-retention-notice,
 .observation-ineligible {
@@ -678,6 +705,7 @@ h2 {
   cursor: grabbing;
 }
 .sprite-body,
+.sprite-gesture,
 .sprite-pose {
   display: block;
   position: relative;
@@ -745,6 +773,51 @@ h2 {
 }
 .sprite-button[data-motion-transition="stop"] .sprite-body {
   animation: paper-stop 160ms ease-out;
+}
+.sprite-button[data-gesture="jump"] .sprite-gesture {
+  animation: paper-jump 350ms ease-in-out;
+}
+.sprite-button[data-gesture="climb"] .sprite-gesture {
+  animation: paper-climb 420ms ease-in-out;
+}
+.sprite-button[data-gesture="land"] .sprite-gesture {
+  animation: paper-land 180ms ease-out;
+}
+.sprite-button[data-gesture="wave"] .sprite-gesture {
+  animation: paper-wave 360ms ease-in-out;
+}
+@keyframes paper-jump {
+  15% {
+    transform: scaleY(0.9);
+  }
+  48% {
+    transform: translateY(-11px) scaleY(1.03);
+  }
+  78% {
+    transform: scaleY(0.93);
+  }
+}
+@keyframes paper-climb {
+  30% {
+    transform: translateY(-4px) rotate(5deg);
+  }
+  65% {
+    transform: translateY(-8px) rotate(-3deg);
+  }
+}
+@keyframes paper-land {
+  35% {
+    transform: translateY(1px) scale(1.05, 0.88);
+  }
+}
+@keyframes paper-wave {
+  28%,
+  72% {
+    transform: rotate(-7deg);
+  }
+  50% {
+    transform: rotate(6deg);
+  }
 }
 @keyframes paper-start {
   0% {
@@ -1119,5 +1192,16 @@ h2 {
   }
   .sprite-walk {
     display: none;
+  }
+  .sprite-button[data-gesture]::after {
+    content: attr(data-gesture-label);
+    position: absolute;
+    top: 0;
+    right: 0;
+    padding: 2px 5px;
+    border-radius: 4px;
+    background: var(--paper);
+    font-size: 11px;
+    pointer-events: none;
   }
 }

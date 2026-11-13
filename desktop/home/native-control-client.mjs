@@ -14,12 +14,25 @@ export class NativeControlClient {
   #scope;
   #pending;
   #cleanup;
+  #verifyTarget;
 
-  constructor(driver, { command, claim, result }) {
+  constructor(driver, { command, claim, result, verifyTarget }) {
     this.#driver = driver;
     this.#command = command;
     this.#claim = claim;
     this.#result = result;
+    this.#verifyTarget = verifyTarget;
+  }
+
+  selectedWindow(agentId, roomEpoch) {
+    const grant = this.#grant;
+    if (
+      grant &&
+      grant.agentId === agentId &&
+      grant.roomEpoch === roomEpoch &&
+      !grant.pending
+    )
+      return grant;
   }
 
   #closeScope() {
@@ -125,13 +138,19 @@ export class NativeControlClient {
       this.#grant === grant &&
       !signal.aborted &&
       beforeExpiry(request.expiresAt);
+    const verify = () => this.#verifyTarget?.(request, signal);
     const beforeDispatch = async () => {
       if (!isCurrent()) return false;
+      if (request.windowTaskId && (!(await verify()) || !isCurrent()))
+        return false;
       try {
         const receipt = await this.#claim(identity, isCurrent);
         // A sync reply can outlive its turn. Authorize at the mutation boundary.
         return (
           receipt?.accepted === true &&
+          beforeExpiry(receipt.expiresAt) &&
+          isCurrent() &&
+          (!request.windowTaskId || (await verify())) &&
           beforeExpiry(receipt.expiresAt) &&
           isCurrent()
         );
@@ -150,10 +169,12 @@ export class NativeControlClient {
           handle: this.#driver.open(grant.source),
         };
         const { handle } = this.#scope;
-        result =
-          action.type === "observe"
-            ? await handle.observe({ signal })
-            : await handle.act(action, { signal, beforeDispatch });
+        if (action.type === "observe") {
+          if ((!request.windowTaskId || (await verify())) && isCurrent())
+            result = await handle.observe({ signal });
+          if (result && request.windowTaskId && !(await verify()))
+            result = undefined;
+        } else result = await handle.act(action, { signal, beforeDispatch });
       } catch {
         // Provider or OS error text can contain native window data.
       }

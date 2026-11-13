@@ -749,6 +749,136 @@ test("the visit panel uses confirmed body state and announces each manual interr
   );
 });
 
+test("resident controls are local and a window task stays bound to its selected grant", async (t) => {
+  let executablePath;
+  try {
+    executablePath = findScreenshotBrowser();
+  } catch {
+    t.skip("local Chromium unavailable");
+    return;
+  }
+  const browser = await chromium.launch({ executablePath, headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 430, height: 574 } });
+  const role = {
+    id: "fish",
+    name: "小鱼",
+    color: "mint",
+    state: "here",
+    available: true,
+    bodyControlAvailable: true,
+  };
+  const room = {
+    framework: true,
+    connected: true,
+    interactionsAvailable: true,
+    roles: [role],
+    messages: [],
+    notice: "",
+  };
+  await page.addInitScript((data) => {
+    window.testActions = [];
+    window.nest = {
+      onRoom: (update) => (window.testRoom = update),
+      onSection() {},
+      get: async () => ({ data, section: "visits" }),
+      act: (...args) => window.testActions.push(args),
+      follow: async (...args) => {
+        window.testActions.push(["follow", ...args]);
+        return "started";
+      },
+    };
+  }, room);
+  await page.goto(
+    new URL("../desktop/home/index.html?type=panel", import.meta.url).href,
+  );
+  const push = (update) =>
+    page.evaluate((data) => window.testRoom(data), update);
+  const resident = page.locator(".guest").filter({ hasText: "小鱼" });
+  await resident.getByText("桌宠互动", { exact: true }).click();
+  await resident.getByRole("button", { name: "标记当前停留点" }).click();
+  await resident.getByRole("button", { name: "跟随鼠标" }).click();
+  assert.equal(
+    await resident.getByRole("button", { name: "跟随窗口" }).isVisible(),
+    false,
+  );
+  await push({
+    ...room,
+    roles: [
+      {
+        ...role,
+        place: "unavailable",
+        follow: { mode: "pointer", until: 120_000 },
+      },
+    ],
+  });
+  await resident.getByText("常用停留点不可用", { exact: false }).waitFor();
+  assert.equal(
+    await resident.getByRole("button", { name: "去常用停留点" }).isEnabled(),
+    false,
+  );
+  await resident.getByRole("button", { name: "停止跟随" }).click();
+  await push({
+    ...room,
+    roles: [{ ...role, state: "home", place: "unavailable" }],
+  });
+  await resident.getByRole("button", { name: "清除停留点" }).click();
+  assert.equal(
+    await resident.getByRole("button", { name: "标记当前停留点" }).isVisible(),
+    false,
+  );
+
+  await push(room);
+  await page.getByRole("button", { name: "聊天", exact: true }).click();
+  const scope = page.getByRole("combobox", { name: "发送方式" });
+  const message = page.getByRole("textbox", { name: "发到房间" });
+  const send = page.getByRole("button", { name: "发送", exact: true });
+  assert.equal(await scope.isVisible(), false);
+  await message.fill("桌边消息");
+  await send.click();
+
+  const authorized = { ...room, windowTaskScreenAgentId: role.id };
+  await push({ ...authorized, windowTaskScreenGrantId: "grant-a" });
+  await scope.selectOption("screen");
+  await message.fill("请查看窗口内容");
+  await push({ ...authorized, windowTaskScreenGrantId: "grant-b" });
+  assert.equal(await send.isEnabled(), false);
+  await message.press("Enter");
+  await page.getByText("窗口授权已变化。", { exact: false }).waitFor();
+  await scope.selectOption("");
+  await scope.selectOption("screen");
+  await send.click();
+  assert.equal(await scope.inputValue(), "");
+  await push({
+    ...authorized,
+    windowTaskScreenGrantId: "grant-b",
+    windowTaskStatus: {
+      id: "task-a",
+      agentId: role.id,
+      scope: "screen",
+      stage: "approaching",
+    },
+  });
+  await page.getByRole("button", { name: "取消窗口任务" }).click();
+  assert.deepEqual(await page.evaluate(() => window.testActions), [
+    ["body-mark-place", "fish"],
+    ["follow", "fish", "pointer"],
+    ["follow", "fish", "stop"],
+    ["body-clear-place", "fish"],
+    ["send", "桌边消息"],
+    [
+      "window-task",
+      {
+        agentId: "fish",
+        scope: "screen",
+        grantId: "grant-b",
+        text: "请查看窗口内容",
+      },
+    ],
+    ["window-task-stop", "task-a"],
+  ]);
+});
+
 test("floating door distinguishes clicks from dragging", async (t) => {
   let executablePath;
   try {
@@ -984,6 +1114,58 @@ test("floating resident replays six short actions with a still hold and respects
   ]);
   assert.deepEqual(await motionTiming("still"), ["paper-stop", 160, 1]);
   assert.equal(await walk.isVisible(), false);
+  const gesture = artButton.locator(".sprite-gesture");
+  const pushGesture = (id, kind) =>
+    page.evaluate(
+      ({ id, kind, room }) =>
+        window.testRoom({
+          ...room,
+          roles: [
+            {
+              ...room.roles[0],
+              bodyStatus: {
+                state: "idle",
+                pose: "stand",
+                gesture: { id, kind },
+              },
+            },
+          ],
+        }),
+      { id, kind, room },
+    );
+  await pushGesture("jump-1", "jump");
+  assert.equal(await artButton.getAttribute("data-gesture"), "jump");
+  assert.deepEqual(
+    await gesture.evaluate((node) => {
+      const action = node.getAnimations()[0];
+      return [action.animationName, action.effect.getTiming().iterations];
+    }),
+    ["paper-jump", 1],
+  );
+  await gesture.evaluate((node) => node.getAnimations()[0].finished);
+  await pushGesture("jump-1", "jump");
+  assert.equal(await artButton.getAttribute("data-gesture"), null);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.waitForFunction(() => window.testReducedMotion === true);
+  await pushGesture("land-1", "land");
+  assert.match(await artButton.getAttribute("aria-label"), /站立.*落地/);
+  assert.equal(await artButton.getAttribute("data-gesture"), "land");
+  assert.equal(
+    await gesture.evaluate((node) => node.getAnimations().length),
+    0,
+  );
+  assert.equal(
+    await artButton.evaluate(
+      (node) => window.getComputedStyle(node, "::after").content,
+    ),
+    '"落地"',
+  );
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.waitForFunction(() => window.testReducedMotion === false);
+  await pushGesture("land-1", "land");
+  assert.equal(await artButton.getAttribute("data-gesture"), null);
+  await pushGesture("climb-1", "climb");
+  assert.equal(await artButton.getAttribute("data-gesture"), "climb");
   await animate("moving");
   await page.mouse.move(90, 100);
   await page.mouse.down();

@@ -10,6 +10,7 @@ const maxOutputBytes = 1024 * 1024;
 const maxElements = 60;
 const refLifetimeMs = 20_000;
 const windowId = /^w-[a-zA-Z0-9_-]{1,80}$/;
+const nativeWindowId = /^w-[1-9][0-9]{0,19}$/;
 const snapshotId = /^[a-zA-Z0-9_-]{1,80}$/;
 const deliveryStates = new Set([
   "unknown",
@@ -197,6 +198,31 @@ function sameWindow(window, target) {
     window.processInstance === target.processInstance &&
     window.app === target.app
   );
+}
+
+function geometryWindow(window) {
+  if (
+    !nativeWindowId.test(window.id) ||
+    !selectableApplication(window.app_name, window.pid, window.process_instance)
+  )
+    return;
+  const { x, y, width, height } = window.bounds ?? {};
+  const ready =
+    window.visible === true &&
+    window.minimized !== true &&
+    [x, y, width, height].every(
+      (value) => Number.isFinite(value) && Math.abs(value) <= 1_000_000,
+    ) &&
+    width > 0 &&
+    height > 0;
+  return {
+    id: window.id,
+    pid: window.pid,
+    processInstance: window.process_instance,
+    app: window.app_name,
+    ...(ready && { bounds: { x, y, width, height } }),
+    ...(window.minimized === true && { minimized: true }),
+  };
 }
 
 function collectElements(tree, snapshot, refs) {
@@ -464,7 +490,7 @@ export function createNativeDesktopDriver({
     });
   }
 
-  function observationWindows({ signal, app } = {}) {
+  function readGeometryInventory({ signal, app }, project) {
     const current = signal
       ? AbortSignal.any([signal, shutdown.signal])
       : shutdown.signal;
@@ -481,11 +507,54 @@ export function createNativeDesktopDriver({
         observationVersion = fingerprint;
       }
       await checkAccessibility(root, current);
-      const available = await windowInventory(root, current, app);
-      return available
+      return project(await windowInventory(root, current, app));
+    });
+  }
+
+  function geometryWindows({ signal, app } = {}) {
+    return readGeometryInventory({ signal, app }, (available) =>
+      available
+        .flatMap((window) => {
+          const target = geometryWindow(window);
+          return target?.bounds
+            ? [
+                {
+                  ...target,
+                  title:
+                    typeof window.title === "string"
+                      ? window.title.slice(0, 300)
+                      : "",
+                },
+              ]
+            : [];
+        })
+        .slice(0, 200),
+    );
+  }
+
+  function windowGeometry(target, { signal } = {}) {
+    if (
+      !target ||
+      typeof target.id !== "string" ||
+      !nativeWindowId.test(target.id) ||
+      !selectableApplication(target.app, target.pid, target.processInstance)
+    )
+      return null;
+    return readGeometryInventory({ signal, app: target.app }, (available) => {
+      const row = available.find(({ id }) => id === target.id);
+      const window = row && geometryWindow(row);
+      if (!window || !sameWindow(window, target)) return null;
+      if (window.minimized) fail("DESKTOP_NATIVE_TARGET_MINIMIZED");
+      return window.bounds ? window : null;
+    });
+  }
+
+  function observationWindows({ signal, app } = {}) {
+    return readGeometryInventory({ signal, app }, (available) =>
+      available
         .filter(
           (window) =>
-            /^w-[1-9][0-9]{0,19}$/.test(window.id) &&
+            nativeWindowId.test(window.id) &&
             selectableApplication(
               window.app_name,
               window.pid,
@@ -512,8 +581,8 @@ export function createNativeDesktopDriver({
                   ? "ready"
                   : "unavailable",
           }),
-        );
-    });
+        ),
+    );
   }
 
   function open(selection) {
@@ -649,6 +718,8 @@ export function createNativeDesktopDriver({
   return {
     listApplications,
     listWindows,
+    geometryWindows,
+    windowGeometry,
     observationWindows,
     open,
     close() {
