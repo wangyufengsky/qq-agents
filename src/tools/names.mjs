@@ -5,6 +5,7 @@ export const DESKTOP_DECISION = "desktop_room_decide";
 export const DESKTOP_HISTORY = "desktop_room_history";
 export const DESKTOP_SCREEN_VIEW = "desktop_screen_view";
 export const DESKTOP_NATIVE_CONTROL = "desktop_native_control";
+export const DESKTOP_BODY_CONTROL = "desktop_body_control";
 export const DESKTOP_BROWSER_CONTROL = "desktop_browser_control";
 export const DESKTOP_MEMORY_TOOLS = Object.freeze([
   "memory_search",
@@ -14,6 +15,7 @@ export const TOOL_NAMES = Object.freeze([
   DESKTOP_HISTORY,
   DESKTOP_SCREEN_VIEW,
   DESKTOP_NATIVE_CONTROL,
+  DESKTOP_BODY_CONTROL,
   DESKTOP_BROWSER_CONTROL,
   "qq_recall",
   "protected_work_submit",

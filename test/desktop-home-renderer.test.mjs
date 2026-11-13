@@ -397,6 +397,10 @@ test("floating resident replays six short actions with a still hold and respects
   await page.addInitScript((data) => {
     window.nest = {
       onRoom: (update) => (window.testRoom = update),
+      onFacing: (update) => (window.testFacing = update),
+      act: (action, data) => {
+        if (action === "motion-preference") window.testReducedMotion = data;
+      },
       get: async () => ({ data }),
     };
   }, room);
@@ -406,7 +410,11 @@ test("floating resident replays six short actions with a still hold and respects
       import.meta.url,
     ).href,
   );
-  const sprite = page.locator(".sprite-button img");
+  const artButton = page.locator(".sprite-button");
+  const sprite = artButton.locator("img");
+  assert.equal(await page.evaluate(() => window.testReducedMotion), true);
+  await page.evaluate(() => window.testFacing("left"));
+  assert.equal(await artButton.getAttribute("data-facing"), "left");
   for (const art of ["fish", "dragon", "cat"]) {
     for (const activity of [
       "qq",
@@ -441,6 +449,7 @@ test("floating resident replays six short actions with a still hold and respects
     0,
   );
   await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.waitForFunction(() => window.testReducedMotion === false);
   for (const activity of [
     "qq",
     "chat",

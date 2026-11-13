@@ -539,6 +539,8 @@ QQ 掉线、自动重连用完次数时，管理台会显示，但主人在 QQ �
 
 ## 桌面小窝
 
+`desktopHome.bodyControlRoles` 默认是空列表。管理员可在桌面小窝设置中为指定角色开启浮窗控制。开启后，只有该角色在场且有有效的桌面聊天回合时才可读取自己的位置、移到同屏的小门旁或座位、调整朝向和停止。该设置不授予截图、应用操作或额外模型回合。
+
 `desktopHome.browserControl.enabled` 默认关闭。开启后仍须在本机桌面聊天面板指定一位在场角色及一个公开网站来源。使用独立 Chromium 会话，浏览器路径沿用网页截图配置。
 
 `desktopHome.nativeControl.enabled` 默认关闭。管理员开启后仍须从本机桌面聊天面板为指定在场角色选定窗口。启动时用 `QQ_AGENTS_AGENT_DESKTOP_EXECUTABLE` 指定 agent-desktop v1.2.0 原生二进制的绝对路径。

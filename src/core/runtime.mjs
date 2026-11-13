@@ -51,6 +51,7 @@ import {
   DESKTOP_SCREEN_VIEW,
   DESKTOP_NATIVE_CONTROL,
   DESKTOP_BROWSER_CONTROL,
+  DESKTOP_BODY_CONTROL,
   FUNCTIONAL_AGENT_RESULT,
 } from "../tools/names.mjs";
 import { BackendConnections } from "./backend-connections.mjs";
@@ -467,6 +468,7 @@ export class Runtime {
         DESKTOP_SCREEN_VIEW,
         DESKTOP_NATIVE_CONTROL,
         DESKTOP_BROWSER_CONTROL,
+        DESKTOP_BODY_CONTROL,
         ...a.tools,
         "file_read",
         "file_revise",

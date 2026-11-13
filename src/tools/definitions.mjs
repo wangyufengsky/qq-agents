@@ -19,9 +19,11 @@ import {
   DESKTOP_SCREEN_VIEW,
   DESKTOP_NATIVE_CONTROL,
   DESKTOP_BROWSER_CONTROL,
+  DESKTOP_BODY_CONTROL,
   FUNCTIONAL_AGENT_RESULT,
 } from "./names.mjs";
 import { browserActionSchema } from "../home/desktop-browser.mjs";
+import { bodyActionSchema } from "../home/desktop-body-protocol.mjs";
 import { nativeActionSchema } from "../home/desktop-native.mjs";
 import { desktopDecisionDefinition } from "../home/desktop-decision.mjs";
 import { qqSegmentsSchema } from "./qq-message.mjs";
@@ -87,6 +89,10 @@ export const definitions = {
   [DESKTOP_NATIVE_CONTROL]: [
     "在管理员本机授权的窗口中操作。先 observe 获取本轮元素引用，再 click、set-value 替换字段或 scroll。每次操作后重新观察。投递未确认时不要自动重试。",
     nativeActionSchema,
+  ],
+  [DESKTOP_BODY_CONTROL]: [
+    "根据管理员新的桌边指令控制你自己的桌宠浮窗。move 的 door 是去小门旁，seat 是坐回座位，仅限同屏。state 读取位置，pose 调整朝向，stop 停止，status 用原 requestId 查询本轮结果。每个新操作使用不同 requestId，等待 completed 后才确认完成。手动接管后等管理员的新指令，取消或未确认时不换 ID 重试。",
+    bodyActionSchema,
   ],
   [DESKTOP_BROWSER_CONTROL]: [
     "在管理员授权的独立网页会话内操作。先 navigate 到指定网址或 observe 获取本轮元素引用，再 click 或 fill。只处理授权站点的静态公开网页，fill 只填写当前页面。close 关闭本地会话。",

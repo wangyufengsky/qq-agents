@@ -17,6 +17,7 @@ import { beginDesktopContext } from "./desktop-context.mjs";
 import { DESKTOP_CONVERSATION, readDecision } from "./desktop-decision.mjs";
 import { DESKTOP_ADMINISTRATOR, DesktopArchive } from "./desktop-archive.mjs";
 import { DesktopScreen } from "./desktop-screen.mjs";
+import { DesktopBody } from "./desktop-body.mjs";
 import { DesktopNative } from "./desktop-native.mjs";
 import { DesktopBrowser, browserGrantSchema } from "./desktop-browser.mjs";
 import { localGrantSchema, localRevokeSchema } from "./desktop-local-grant.mjs";
@@ -92,6 +93,7 @@ export class DesktopHost {
     this.invitations = new DesktopInvitations(this);
     this.screen = new DesktopScreen(this);
     this.native = new DesktopNative(this);
+    this.body = new DesktopBody(this);
     this.browser = new DesktopBrowser(this);
   }
 
@@ -211,6 +213,7 @@ export class DesktopHost {
       this.reset();
     // Maintenance keeps existing turn capabilities alive and stops admission.
     if (this.runtime.updateMaintenance) {
+      this.body.clear();
       void this.browser.clear();
       return Boolean(this.live);
     }
@@ -347,6 +350,7 @@ export class DesktopHost {
   }
 
   reset() {
+    this.body.clear();
     this.screen.clear();
     this.native.clear();
     void this.browser.clear();
@@ -412,6 +416,7 @@ export class DesktopHost {
       ...state,
       ...(screenRequest && { screenRequest }),
       ...this.native.clientWork(),
+      bodyRequests: this.body.clientWork(),
     };
   }
 

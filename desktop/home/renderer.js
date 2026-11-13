@@ -139,6 +139,13 @@ function floating() {
     return;
   }
 
+  const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
+  const syncMotion = () => window.nest.act("motion-preference", motion.matches);
+  syncMotion();
+  motion.addEventListener("change", syncMotion);
+  window.nest.onFacing?.((facing) => {
+    art.dataset.facing = facing === "left" ? "left" : "right";
+  });
   const speech = button("speech", "", "打开小窝聊天");
   const words = element("span");
   speech.append(words);
