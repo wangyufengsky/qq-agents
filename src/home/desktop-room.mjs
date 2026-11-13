@@ -2,6 +2,8 @@ import {
   DesktopActivity,
   DESKTOP_ACTIVITY_TIMEOUT,
 } from "./desktop-activity.mjs";
+import { DesktopPerception } from "./desktop-perception.mjs";
+import { DesktopPublicActivity } from "./desktop-public-activity.mjs";
 import { randomUUID } from "node:crypto";
 import {
   addMessage,
@@ -45,7 +47,20 @@ export class LiveRoom {
       );
     this.visits = new Map();
     this.invites = new Map();
-    this.active = null;
+    this.foreground = null;
+    this.activities = new Map();
+    if (runner.publicPolicy) {
+      this.publicActivity = new DesktopPublicActivity(
+        runner.publicStarts,
+        runner.publicPolicy,
+        runner.activityMinutes,
+      );
+      this.perception = new DesktopPerception(
+        this,
+        runner.now,
+        runner.publicPolicy,
+      );
+    }
     this.qqDeferred = new Set();
     this.closed = false;
     this.doorMode = "off";
@@ -61,6 +76,36 @@ export class LiveRoom {
       },
       () => this.onChange(),
     );
+  }
+
+  get active() {
+    return this.foreground ?? this.activities.values().next().value;
+  }
+
+  publicEnabled() {
+    return (
+      this.runner.publicPolicy?.().enabled === true &&
+      this.runner.publicAllowed()
+    );
+  }
+
+  turnFor(actor) {
+    return (
+      this.activities.get(actor)?.turn ??
+      (this.room.turn?.actor === actor ? this.room.turn : undefined)
+    );
+  }
+
+  activityDue(visit) {
+    return this.publicEnabled() && visit.publicActivity
+      ? this.publicActivity.dueAt(visit)
+      : this.activity.dueAt(visit);
+  }
+
+  resumeActivity() {
+    if (!this.publicEnabled()) return;
+    for (const visit of this.visits.values())
+      this.publicActivity.resume(visit, this.runner.now());
   }
 
   get subjectActors() {
@@ -124,10 +169,10 @@ export class LiveRoom {
       maxTurns: room.maxTurns,
       minutes: room.minutes,
       nextRefill: room.nextRefill,
-      thinking:
-        room.turn?.kind === "activity" ? null : (room.turn?.actor ?? null),
+      thinking: room.turn?.actor ?? null,
       ...(this.activity && {
-        activityActor: room.turn?.kind === "activity" ? room.turn.actor : null,
+        activityActor: this.activities.keys().next().value ?? null,
+        activityActors: [...this.activities.keys()],
         activityPaused: this.activity.paused,
       }),
       bubbles: room.bubbles,
@@ -160,16 +205,35 @@ export class LiveRoom {
     return this.room.roles.filter(({ id }) => this.room.members[id] === "here");
   }
 
-  addCandidates(excluded, first) {
+  addCandidates(excluded, first, addressed = [], messageId) {
     const candidates = this.here().filter(
       ({ id }) => id !== excluded && !this.qqDeferred.has(id),
     );
-    const next = candidates.find(({ id }) => id === first);
-    if (next) candidates.splice(candidates.indexOf(next), 1);
-    if (next) candidates.unshift(next);
+    if (first) {
+      candidates.sort(
+        (a, b) => Number(b.id === first) - Number(a.id === first),
+      );
+      const index = this.room.waiting.findIndex(
+        ({ actor, windowTask }) => actor === first && !windowTask,
+      );
+      if (index > 0)
+        this.room.waiting.unshift(this.room.waiting.splice(index, 1)[0]);
+    }
     for (const { id } of candidates) {
-      if (!this.room.waiting.some(({ actor }) => actor === id))
-        this.room.waiting.push({ actor: id });
+      const resting =
+        this.publicEnabled() &&
+        this.publicActivity.resting(this.visits.get(id), this.runner.now());
+      const direct = addressed.includes(id) && messageId !== undefined;
+      if (resting && !direct) continue;
+      const queued = this.room.waiting.find(({ actor }) => actor === id);
+      if (queued && direct) queued.direct = messageId;
+      if (!queued) {
+        this.room.waiting.push({
+          actor: id,
+          ...(direct && { direct: messageId }),
+        });
+        if (this.publicEnabled()) this.cancelActivity(id);
+      }
     }
   }
 
@@ -197,7 +261,8 @@ export class LiveRoom {
       ? undefined
       : this.sessionFor(role.id);
     try {
-      if (this.active?.actor === role.id) await this.active.done;
+      const previous = this.activities.get(role.id) ?? this.foreground;
+      if (previous?.actor === role.id) await previous.done;
       if (controller.signal.aborted || this.closed) return;
       const reply = this.runner.requestInvitation
         ? await this.runner.requestInvitation(
@@ -240,8 +305,15 @@ export class LiveRoom {
     // for other participants still belong to their visits.
     this.visits.set(role.id, {
       cursor: this.room.archiveSeq ?? this.room.sequence,
+      startCursor: this.room.archiveSeq ?? this.room.sequence,
     });
-    this.activity?.arrive(this.visits.get(role.id), this.runner.now(), role.id);
+    const visit = this.visits.get(role.id);
+    this.activity?.arrive(visit, this.runner.now(), role.id);
+    this.publicActivity?.arrive(visit, this.runner.now());
+    this.perception?.add("arrival", role.id, {
+      audiences: [...this.visits].filter(([id]) => id !== role.id),
+      urgent: true,
+    });
   }
 
   setDoorMode(mode, now = Date.now()) {
@@ -357,12 +429,21 @@ export class LiveRoom {
       ({ windowTask }) => windowTask?.actor === role.id,
     )?.windowTask;
     if (!leave(this.room, role, Date.now(), self)) return;
+    const peers =
+      this.interaction?.stage >= 0 &&
+      this.interaction.people.some(({ id }) => id === role.id)
+        ? new Set(this.interaction.people.map(({ id }) => id))
+        : new Set();
+    this.perception?.add("departure", role.id, {
+      audiences: [...this.visits].filter(([id]) => id !== role.id),
+      urgentActors: peers,
+    });
     this.cancelInteraction(role.id);
     pendingTask?.finish("inactive");
     if (this.active?.windowTask?.actor === role.id)
       this.cancelWindowTask(this.active.windowTask);
     this.visits.delete(role.id);
-    if (this.active?.actor === role.id) this.cancelActivity();
+    this.cancelActivity(role.id);
     this.onChange();
     void this.advance();
   }
@@ -375,12 +456,19 @@ export class LiveRoom {
       return false;
     pendingTask?.finish("inactive");
     if (this.active?.windowTask) this.cancelWindowTask(this.active.windowTask);
-    this.cancelActivity();
+    if (!this.publicEnabled()) this.cancelActivity();
     this.qqDeferred.clear();
     const named = this.here().find(({ name, title }) =>
       [name, title].some((value) => text.includes(`@${value}`)),
     );
-    this.addCandidates(null, named?.id);
+    const message = this.room.messages.at(-1);
+    const addressed = message.targets ?? [];
+    this.addCandidates(
+      null,
+      addressed[0] ?? named?.id,
+      addressed,
+      message.messageId,
+    );
     this.onChange();
     void this.advance();
     return true;
@@ -395,7 +483,7 @@ export class LiveRoom {
     )
       return false;
     this.room.waiting.push({ actor: task.actor, windowTask: task });
-    this.cancelActivity();
+    this.cancelActivity(this.publicEnabled() ? task.actor : undefined);
     this.onChange();
     void this.advance();
     return true;
@@ -416,11 +504,10 @@ export class LiveRoom {
       void this.offerOpportunity({ now });
   }
 
-  cancelActivity() {
-    if (this.active?.kind === "activity") {
-      if (this.room.turn?.kind === "activity") this.room.turn = null;
-      this.active.controller.abort(Error("DESKTOP_VISIT_UNAVAILABLE"));
-    }
+  cancelActivity(actor) {
+    for (const active of this.activities.values())
+      if (actor === undefined || active.actor === actor)
+        active.controller.abort(Error("DESKTOP_VISIT_UNAVAILABLE"));
   }
 
   pauseActivity(paused) {
@@ -429,7 +516,7 @@ export class LiveRoom {
     if (paused) {
       this.cancelInteraction();
       this.cancelActivity();
-    }
+    } else this.resumeActivity();
     this.onChange();
   }
 
@@ -509,15 +596,17 @@ export class LiveRoom {
     if (!opportunity) return;
     const current = this.maintainInteraction();
     if (opportunity.step && current?.id === opportunity.step.id) {
-      if (receipt?.status === "completed" && current.stage === 0)
+      if (receipt?.status === "completed" && current.stage === 0) {
         current.stage = 1;
-      else this.cancelInteraction();
+        this.queueInteractionStep(current);
+      } else this.cancelInteraction();
       return;
     }
     if (opportunity.offer && current?.id === opportunity.offer.id) {
       if (decision?.action === "accept") {
         current.stage = 0;
         current.expiresAt = this.runner.now() + INTERACTION_TTL;
+        this.queueInteractionStep(current);
       } else this.cancelInteraction();
       return;
     }
@@ -539,55 +628,106 @@ export class LiveRoom {
         visit: this.visits.get(id),
       })),
       stage: -1,
-      expiresAt: this.runner.now() + INTERACTION_TTL,
+      expiresAt:
+        this.runner.now() +
+        (this.publicEnabled()
+          ? this.runner.publicPolicy().greetingSeconds * 1000
+          : INTERACTION_TTL),
     };
+    this.perception?.add("invitation", actor, {
+      target: decision.recipient,
+      action: decision.kind,
+      urgent: true,
+      interaction: { id: this.interaction.id, stage: -1 },
+    });
+  }
+
+  queueInteractionStep(interaction) {
+    if (!this.publicEnabled()) return;
+    const [next, peer] =
+      interaction.stage === 0
+        ? interaction.people
+        : [...interaction.people].reverse();
+    this.perception.add("interaction-step", peer.id, {
+      target: next.id,
+      action: interaction.kind,
+      urgent: true,
+      interaction: { id: interaction.id, stage: interaction.stage },
+    });
   }
 
   async advanceActivity(now) {
-    if (
-      !this.activity ||
-      this.closed ||
-      this.active ||
-      this.room.turn ||
-      this.room.waiting.length
-    )
+    if (!this.activity || this.closed || this.activity.paused) return;
+    if (!this.publicEnabled()) {
+      if (this.active || this.room.turn || this.room.waiting.length) return;
+      const turn = this.activity.next(
+        this.room.roles,
+        this.visits,
+        now,
+        this.runner.activity,
+      );
+      if (turn) await this.runActivity(turn);
       return;
-    const turn = this.activity.next(
-      this.room.roles,
-      this.visits,
-      now,
-      this.runner.activity,
-    );
-    if (!turn) return;
+    }
+
+    const jobs = [];
+    for (const [actor, visit] of this.visits) {
+      if (this.activities.has(actor)) continue;
+      if (
+        this.foreground?.actor === actor ||
+        this.room.waiting.some((entry) => entry.actor === actor) ||
+        !this.runner.activity(actor)
+      ) {
+        this.publicActivity.resume(visit, now);
+        continue;
+      }
+      const events = this.perception.opportunities(actor, visit, now);
+      const turn = this.publicActivity.take(actor, visit, now, events);
+      if (!turn) continue;
+      this.perception.consume(actor, visit, turn.trigger);
+      jobs.push(this.runActivity(turn));
+    }
+    void this.advance();
+    await Promise.all(jobs);
+  }
+
+  async runActivity(turn) {
+    const publicTurn = Object.hasOwn(turn, "idle");
     const visit = this.visits.get(turn.actor);
+    if (publicTurn) delete visit.activity.pendingReason;
     const observationOffer = this.runner.observation?.(turn.actor);
-    let observation = observationOffer?.direct
-      ? observationOffer.grant
-      : undefined;
+    let observation =
+      observationOffer?.direct && !turn.trigger
+        ? observationOffer.grant
+        : undefined;
     const interaction = observation
       ? undefined
       : this.interactionFor(turn.actor);
     const interactionVisits = interaction?.recipients && new Map(this.visits);
     const offer =
-      interaction?.offer || interaction?.step ? undefined : observationOffer;
-    let interactionDecision, interactionReceipt;
+      interaction?.offer || interaction?.step || turn.trigger
+        ? undefined
+        : observationOffer;
+    let interactionDecision, interactionReceipt, activityReply;
     let completed = false;
     let acted = false;
     const controller = new AbortController();
     const { promise: done, resolve: drained } = Promise.withResolvers();
-    this.room.turn = turn;
-    this.active = {
+    const active = {
+      turn,
       actor: turn.actor,
       kind: turn.kind,
       observation,
       controller,
       done,
     };
+    this.activities.set(turn.actor, active);
     const isCurrent = () =>
       !this.closed &&
       !this.activity.paused &&
       this.visits.get(turn.actor) === visit &&
-      this.room.turn === turn &&
+      this.activities.get(turn.actor) === active &&
+      (!publicTurn || this.publicEnabled()) &&
       this.runner.activityCurrent(turn.actor);
     this.onChange();
     try {
@@ -607,6 +747,15 @@ export class LiveRoom {
               this.runner.observation?.(turn.actor)?.grant === offer?.grant,
             people: this.here().map(({ name }) => name),
             messages: [],
+            ...(publicTurn && {
+              publicContext: this.perception.context(
+                turn.actor,
+                visit,
+                turn.trigger,
+              ),
+              heard: this.runner.heard(turn.actor, visit.startCursor),
+              activityPolicy: this.runner.publicPolicy(),
+            }),
             isCurrent,
             onBodyResult: (result) => {
               acted = true;
@@ -631,7 +780,7 @@ export class LiveRoom {
         )
           return;
         observation = offer.grant;
-        this.active.observation = observation;
+        active.observation = observation;
         this.onChange();
         reply = await run();
       }
@@ -639,7 +788,8 @@ export class LiveRoom {
       if (observation) this.runner.finishObservation?.(observation, reply);
       else interactionDecision = reply.interaction;
       completed = !observation && reply.action !== "leave";
-      this.activity.finish(visit, { reply, now: this.runner.now() });
+      if (publicTurn) activityReply = reply;
+      else this.activity.finish(visit, { reply, now: this.runner.now() });
       if (reply.action === "leave")
         this.leave(
           this.room.roles.find(({ id }) => id === turn.actor),
@@ -655,8 +805,15 @@ export class LiveRoom {
         completed ? interactionReceipt : undefined,
         interactionVisits,
       );
-      if (this.room.turn === turn) this.room.turn = null;
-      this.active = null;
+      if (publicTurn)
+        this.publicActivity.finish(
+          turn.actor,
+          visit,
+          turn,
+          this.runner.now(),
+          activityReply,
+        );
+      this.activities.delete(turn.actor);
       drained();
       this.onChange();
       void this.advance();
@@ -669,13 +826,34 @@ export class LiveRoom {
   }
 
   async advance() {
-    if (this.closed || this.active) return;
-    this.room.waiting = this.room.waiting.filter(({ windowTask }) => {
-      if (this.room.budget && (!windowTask || windowTask.current()))
-        return true;
-      windowTask?.finish("inactive");
-      return false;
-    });
+    if (
+      this.closed ||
+      this.foreground ||
+      (!this.publicEnabled() && this.activities.size)
+    )
+      return;
+    this.room.waiting = this.room.waiting.filter(
+      ({ actor, direct, windowTask }) => {
+        if (
+          this.publicEnabled() &&
+          this.publicActivity.resting(
+            this.visits.get(actor),
+            this.runner.now(),
+          ) &&
+          !direct &&
+          !windowTask
+        )
+          return false;
+        if (this.room.budget && (!windowTask || windowTask.current()))
+          return true;
+        windowTask?.finish("inactive");
+        return false;
+      },
+    );
+    if (this.activities.has(this.room.waiting[0]?.actor)) return;
+    const next = this.room.waiting[0];
+    if (next && this.publicEnabled() && !this.runner.chatReady(next.actor))
+      return;
     const turn = startTurn(this.room);
     if (!turn) return;
     const actor = turn.actor;
@@ -684,12 +862,15 @@ export class LiveRoom {
     const session = windowTask ? undefined : this.sessionFor(actor);
     const controller = new AbortController();
     const { promise: done, resolve: drained } = Promise.withResolvers();
-    this.active = { actor, controller, done, windowTask };
+    this.foreground = { actor, controller, done, windowTask };
     const isCurrent = () =>
       this.visits.get(actor) === visit &&
       (!windowTask || (this.room.turn === turn && windowTask.current()));
     this.onChange();
     try {
+      const resting =
+        this.publicEnabled() &&
+        this.publicActivity.resting(visit, this.runner.now());
       const archived = windowTask
         ? []
         : this.room.opening?.(actor, visit.cursor);
@@ -707,6 +888,11 @@ export class LiveRoom {
           windowTask,
           people: this.here().map(({ name }) => name),
           messages,
+          ...(this.publicEnabled() &&
+            !windowTask && {
+              publicContext: this.perception.context(actor, visit),
+              resting,
+            }),
           onInputSubmitted: () => {
             if (!windowTask) visit.cursor = Math.max(visit.cursor, through);
           },
@@ -733,7 +919,8 @@ export class LiveRoom {
           this.room.roles.find(({ id }) => id === actor),
           true,
         );
-      if (reply.action === "say" && !windowTask) this.addCandidates(actor);
+      if (reply.action === "say" && !windowTask)
+        this.addCandidates(actor, this.room.messages.at(-1)?.targets?.[0]);
     } catch (error) {
       if (!windowTask && error.desktopSessionUntouched !== true)
         this.retire(actor, session);
@@ -761,7 +948,7 @@ export class LiveRoom {
       }
     } finally {
       if (windowTask && this.room.turn === turn) this.room.turn = null;
-      this.active = null;
+      this.foreground = null;
       if (windowTask)
         windowTask.finish(
           Object.hasOwn(windowTask, "failure")
@@ -777,7 +964,8 @@ export class LiveRoom {
   close() {
     this.closed = true;
     this.cancelInteraction();
-    this.active?.controller.abort();
+    this.foreground?.controller.abort();
+    this.cancelActivity();
     this.opportunity?.controller.abort();
     for (const { controller } of this.invites.values()) controller.abort();
     return this.runner.close();

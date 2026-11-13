@@ -46,11 +46,11 @@ export class DesktopActivity {
       const visit = visits.get(id);
       if (!visit || this.dueAt(visit) > now || !eligible(id)) continue;
       const starts = (this.starts.get(id) ?? []).filter(
-        (at) => at > now - HOUR,
+        (entry) => (entry.at ?? entry) > now - HOUR,
       );
       if (
         starts.length >= LIMIT ||
-        now < (starts.at(-1) ?? -Infinity) + COOLDOWN
+        now < (starts.at(-1)?.at ?? starts.at(-1) ?? -Infinity) + COOLDOWN
       )
         continue;
       this.starts.set(id, [...starts, now]);

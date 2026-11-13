@@ -39,6 +39,7 @@ import { DesktopBody } from "./desktop-body.mjs";
 import {
   bodyRecoveryPositionSchema,
   bodyResultEvidenceSchema,
+  publicResidentSchema,
 } from "./desktop-body-protocol.mjs";
 import { DesktopNative } from "./desktop-native.mjs";
 import { DesktopBrowser, browserGrantSchema } from "./desktop-browser.mjs";
@@ -85,8 +86,19 @@ const requestSchema = z
             bodyProtocol: z.literal(2).optional(),
             bodyCrossDisplay: z.literal(true).optional(),
             bodyInteractions: z.literal(true).optional(),
+            bodyPublic: z.literal(true).optional(),
             observationProtocol: z.literal(2).optional(),
             bodyResults: z.array(bodyResultEvidenceSchema).max(4).optional(),
+            publicSpace: z
+              .object({
+                roomEpoch: z.string().uuid(),
+                residents: z.array(publicResidentSchema).max(24),
+                door: publicResidentSchema
+                  .pick({ x: true, y: true, displayId: true })
+                  .optional(),
+              })
+              .strict()
+              .optional(),
             bodyPositions: z
               .object({
                 roomEpoch: z.string().uuid(),
@@ -127,8 +139,9 @@ function residentArt(agent, backend) {
 
 function explicitTargets(text, roles) {
   const names = new Map();
-  for (const { id, name } of roles)
-    names.set(name, [...(names.get(name) ?? []), id]);
+  for (const { id, name, title } of roles)
+    for (const label of new Set([name, title].filter(Boolean)))
+      names.set(label, [...(names.get(label) ?? []), id]);
   return [...names].flatMap(([name, ids]) => {
     const mention = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     return ids.length === 1 &&
@@ -227,12 +240,14 @@ export class DesktopHost {
   interrupt(id) {
     this.live?.cancelInteraction(id);
     if (this.windowTask?.actor === id) this.stopWindowTask("inactive");
+    this.live?.cancelActivity(id);
     this.visits.get(id)?.interrupt(id);
   }
   claimQq(id, conversation) {
     const claim = this.visits.get(id)?.claimQq(id, conversation);
     if (claim) {
       this.live?.cancelInteraction(id);
+      this.live?.cancelActivity(id);
       if (this.windowTask?.actor === id) this.stopWindowTask("inactive");
     }
     return claim;
@@ -287,6 +302,11 @@ export class DesktopHost {
       return Boolean(this.live);
     }
     if (this.live) {
+      if (!policy.publicPerception.enabled) {
+        this.live.perception.clear();
+        for (const [id, active] of this.live.activities)
+          if (Object.hasOwn(active.turn, "idle")) this.live.cancelActivity(id);
+      }
       for (const role of roles) {
         if (
           this.runtime.blockers(
@@ -309,12 +329,9 @@ export class DesktopHost {
         this.live.interval(policy.refreshMinutes);
       for (const [id, message] of Object.entries(room.bubbles))
         if (now - message.now > 4900) delete room.bubbles[id];
-      if (
-        this.live.active?.kind === "activity" &&
-        syncingClient !== this.client.id &&
-        !this.activityCurrent(this.live.active.actor)
-      )
-        this.live.cancelActivity();
+      if (syncingClient !== this.client.id)
+        for (const id of this.live.activities.keys())
+          if (!this.activityCurrent(id)) this.live.cancelActivity(id);
       if (syncingClient !== this.client.id) {
         this.observation.state();
         this.body.clientWork();
@@ -371,6 +388,16 @@ export class DesktopHost {
         .toolsFor(agent, DESKTOP_CONVERSATION)
         .includes(DESKTOP_BODY_CONTROL)
     );
+  }
+
+  publicBodyAvailable() {
+    return (
+      this.client?.bodyPublic === true && this.live?.publicEnabled() === true
+    );
+  }
+
+  socialBodyAvailable() {
+    return this.interactionsAvailable() || this.publicBodyAvailable();
   }
 
   interactionsAvailable() {
@@ -494,6 +521,7 @@ export class DesktopHost {
     ) => {
       const here = room.roles.filter(({ id }) => room.members[id] === "here");
       const audience = [{ id: DESKTOP_ADMINISTRATOR, name: "管理员" }, ...here];
+      const targets = explicitTargets(text, audience);
       const identities = Object.fromEntries(
         here.map(({ id }) => [
           id,
@@ -514,12 +542,12 @@ export class DesktopHost {
         now,
         present: here.map(({ id }) => id),
         identities,
-        targets: explicitTargets(text, audience),
+        targets,
         attachments,
         turnId,
       });
       room.archiveSeq = archived.seq;
-      return archived;
+      return { ...archived, targets };
     };
     this.attachments = new DesktopAttachments();
     this.live = new LiveRoom(
@@ -528,21 +556,39 @@ export class DesktopHost {
         roles: ids,
         now: () => this.runtime.now(),
         activityStarts: this.activityStarts,
-        activityMinutes: (id) =>
-          this.residentPreference(id)?.activityMinutes ?? 2,
+        publicStarts: this.activityStarts,
+        publicPolicy: () => this.runtime.config.desktopHome.publicPerception,
+        publicAllowed: () => this.client?.bodyPublic === true,
+        heard: (actor, sinceSeq) => {
+          const policy = this.runtime.config.desktopHome.publicPerception;
+          return this.archive.heard(
+            actor,
+            sinceSeq,
+            this.runtime.now() - policy.recentMinutes * 60_000,
+            policy.recentLimit,
+          );
+        },
+        activityMinutes: (id) => this.residentPreference(id)?.activityMinutes,
         interactionCurrent: (id) =>
-          this.interactionsAvailable() &&
+          this.socialBodyAvailable() &&
           this.activityCurrent(id) &&
           this.bodyControlAvailable(id) &&
           !this.visit(id).qqClaims &&
           !this.visit(id).pendingQq(),
         activity: (id) =>
           this.activityCurrent(id) &&
+          !this.visit(id).desktop &&
           !roleTurnBusy(this.runtime, id) &&
           !this.runtime.games.busy(this.runtime.agent(id).backendId) &&
           !this.visit(id).qqClaims &&
           !this.visit(id).pendingQq(),
         activityCurrent: (id) => this.activityCurrent(id),
+        chatReady: (id) =>
+          !this.visit(id).desktop &&
+          !roleTurnBusy(this.runtime, id) &&
+          !this.runtime.games.busy(this.runtime.agent(id).backendId) &&
+          !this.visit(id).qqClaims &&
+          !this.visit(id).pendingQq(),
         observation: (id) => this.observation.forActor(id),
         finishObservation: (grant, reply) =>
           this.observation.finish(grant, reply),
@@ -636,15 +682,37 @@ export class DesktopHost {
       const wasVisible = this.client.activityVisibleUntil > this.runtime.now();
       this.client.activityVisibleUntil =
         visible === true ? this.runtime.now() + ACTIVITY_VISIBILITY_LEASE : 0;
-      if (!wasVisible && visible === true)
+      if (!wasVisible && visible === true) {
         for (const visit of live.visits.values())
           live.activity.note(visit, "visible-again");
+        live.resumeActivity();
+      }
+      if (live.publicEnabled()) {
+        const sample = data?.publicSpace;
+        live.perception.update(
+          visible && sample?.roomEpoch === live.room.epoch
+            ? {
+                door: sample.door,
+                until: this.client.activityVisibleUntil,
+                residents: new Map(
+                  sample.residents.flatMap(({ agentId, visitId, ...point }) => {
+                    const visit = live.visits.get(agentId);
+                    return visit && this.body.visitId(visit) === visitId
+                      ? [[agentId, { ...point, visit }]]
+                      : [];
+                  }),
+                ),
+              }
+            : undefined,
+        );
+      }
       if (data && typeof data === "object" && "visible" in data) {
         if (data.observationProtocol === 2) this.client.observationProtocol = 2;
         if (data.bodyProtocol === 2) {
           this.client.bodyProtocol = 2;
           this.client.bodyCrossDisplay = data.bodyCrossDisplay === true;
           this.client.bodyInteractions = data.bodyInteractions === true;
+          this.client.bodyPublic = data.bodyPublic === true;
           if (data.bodyPositions?.roomEpoch === live.room.epoch)
             this.client.bodyPositions = {
               at: Date.now(),
@@ -662,15 +730,16 @@ export class DesktopHost {
         for (const id of moved) live.cancelInteraction(id);
         if (moved.has(this.windowTask?.actor))
           this.stopWindowTask("manual-control");
-        for (const id of moved)
-          live.activity.defer(live.visits.get(id), this.runtime.now());
-        if (moved.has(live.active?.actor)) live.cancelActivity();
+        for (const id of moved) {
+          const visit = live.visits.get(id);
+          live.activity.defer(visit, this.runtime.now());
+          if (visit && live.publicEnabled())
+            live.publicActivity.resume(visit, this.runtime.now(), true);
+          live.cancelActivity(id);
+        }
       }
-      if (
-        live.active?.kind === "activity" &&
-        !this.activityCurrent(live.active.actor)
-      )
-        live.cancelActivity();
+      for (const id of live.activities.keys())
+        if (!this.activityCurrent(id)) live.cancelActivity(id);
       if (
         this.client.bodyProtocol === 2 &&
         data?.bodyProtocol === 2 &&
@@ -744,6 +813,9 @@ export class DesktopHost {
       bodyProtocol: 2,
       bodyCrossDisplay: true,
       bodyInteractions: true,
+      ...(this.runtime.config.desktopHome.publicPerception.enabled && {
+        publicPerception: true,
+      }),
       observationProtocol: 2,
       ...(bodyResultAcks?.length && { bodyResultAcks }),
       bodyRequests: this.body.clientWork(),
@@ -754,7 +826,7 @@ export class DesktopHost {
     const { runtime, screen, native } = this;
     const room = this.live.snapshot();
     const now = runtime.now();
-    const active = this.live.active;
+    const active = this.live.activities.get(this.observation.grant?.agentId);
     const observer =
       active?.observation &&
       this.observation.grant === active.observation &&
@@ -776,6 +848,9 @@ export class DesktopHost {
     return {
       ...room,
       interactionsAvailable: this.interactionsAvailable(),
+      publicPerception: this.live.publicEnabled(),
+      publicWaveAvailable: this.publicBodyAvailable(),
+      socialBodyAvailable: this.socialBodyAvailable(),
       ...(this.windowTaskStatus && { windowTaskStatus: this.windowTaskStatus }),
       roles: room.roles.map((role) => {
         const { id } = role;
@@ -789,7 +864,7 @@ export class DesktopHost {
         else if (id === viewing || id === observer) activity = "observe";
         else if (qq.has(id)) activity = "qq";
         else if (
-          room.activityActor === id &&
+          this.live.activities.has(id) &&
           this.body.pending.get(id)?.claimed &&
           (this.body.pending.get(id)?.request.action.type === "move" ||
             this.body.pending.get(id)?.request.interaction?.step === "move")
@@ -822,11 +897,14 @@ export class DesktopHost {
         } else if (activity === "observe") {
           bodyStatus.state = "observing";
         } else if (
-          visit?.activity?.reason === "wait-ended" &&
-          this.live.activity.dueAt(visit) > now
+          visit &&
+          (visit.activity?.reason === "wait-ended" ||
+            visit.publicActivity?.wait > now ||
+            visit.publicActivity?.rest > now) &&
+          this.live.activityDue(visit) > now
         ) {
           bodyStatus.state = "waiting";
-          bodyStatus.until = this.live.activity.dueAt(visit);
+          bodyStatus.until = this.live.activityDue(visit);
         }
         return {
           ...role,
@@ -935,6 +1013,10 @@ export class DesktopHost {
         !this.connected(ctx) ||
         runtime.blockers(agent, conversation, ctx).length ||
         (activity && request.isCurrent?.() === false) ||
+        (request.resting &&
+          ["sleeping", "rest-pending"].includes(
+            rhythmStatus(runtime, agent).state,
+          )) ||
         (windowTask && !windowTask.current()) ||
         (observation &&
           (!this.observation.current(observation) ||
@@ -1002,6 +1084,14 @@ export class DesktopHost {
         : request.messages?.findLast(
             ({ speakerType }) => speakerType === "administrator",
           )?.now;
+      if (request.resting) ctx.desktopPublicResting = true;
+      if (
+        request.publicContext &&
+        !request.resting &&
+        !windowTask &&
+        !observation
+      )
+        ctx.desktopBodyInputAt ??= request.messages?.at(-1)?.now;
       if (activity) {
         ctx.onDesktopBodyResult = request.onBodyResult;
         if (!observation) {

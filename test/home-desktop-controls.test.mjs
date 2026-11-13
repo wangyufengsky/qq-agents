@@ -106,10 +106,26 @@ test("paper nest opens, retries and closes the desktop home from its header", as
   await quiet.check();
   await cadence.selectOption("15");
   await interactions.check();
+  const publicSettings = page.getByRole("group", {
+    name: "公共感知与自主唤醒",
+  });
+  const perception = publicSettings.getByRole("checkbox");
+  const idleLimit = publicSettings.getByLabel("每小时空闲活动上限");
+  const totalLimit = publicSettings.getByLabel("每小时自主活动总上限");
+  assert.equal(await perception.isChecked(), false);
+  assert.equal(await idleLimit.inputValue(), "3");
+  assert.equal(await totalLimit.inputValue(), "4");
+  await perception.check();
+  await idleLimit.fill("2");
+  await totalLimit.fill("5");
   const save = page.getByRole("button", { name: "保存桌面设置" });
   await save.click();
   await page.getByText("桌面小窝设置已保存。", { exact: true }).waitFor();
   assert.equal(runtime.config.desktopHome.interactionsEnabled, true);
+  assert.equal(runtime.config.desktopHome.publicPerception.enabled, true);
+  assert.equal(runtime.config.desktopHome.publicPerception.idleLimit, 2);
+  assert.equal(runtime.config.desktopHome.publicPerception.totalLimit, 5);
+  assert.equal(await idleLimit.inputValue(), "2");
   assert.deepEqual(runtime.config.desktopHome.residentPreferences, {
     "agent-0": { quiet: true, activityMinutes: 15 },
   });

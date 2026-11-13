@@ -149,8 +149,8 @@ export class DesktopObservation extends DesktopLocalGrant {
   cancel(grant) {
     this.host.screen.cancel(grant);
     if (this.verifying?.grant === grant) this.verifying.fail();
-    if (this.host.live?.active?.observation === grant)
-      this.host.live.cancelActivity();
+    if (this.host.live?.activities.get(grant.agentId)?.observation === grant)
+      this.host.live.cancelActivity(grant.agentId);
   }
 
   note(grant, reason) {

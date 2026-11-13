@@ -67,20 +67,37 @@ export const bodyActionSchema = z.union([
   ]),
 ]);
 
-export const interactiveBodyActionSchema = z.union([
+const interactionAction = z
+  .object({
+    type: z.literal("interaction"),
+    requestId,
+    interactionId: z.string().uuid(),
+  })
+  .strict();
+export const desktopPublicWaveSchema = z.union([
   bodyActionSchema,
+  interactionAction,
   z
     .object({
-      type: z.literal("interaction"),
+      type: z.literal("gesture"),
       requestId,
-      interactionId: z.string().uuid(),
+      gesture: z.literal("wave"),
+      recipient: ref,
+      replyTo: z.string().uuid().optional(),
     })
     .strict(),
+]);
+
+export const interactiveBodyActionSchema = z.union([
+  bodyActionSchema,
+  interactionAction,
   z
     .object({
       type: z.literal("gesture"),
       requestId,
       gesture: z.enum(["jump", "climb", "land", "wave"]),
+      recipient: ref.optional(),
+      replyTo: z.string().uuid().optional(),
     })
     .strict(),
 ]);
@@ -176,6 +193,20 @@ export const bodyResultSchema = bodyClaimSchema
   .strict();
 
 export const bodyResultEvidenceSchema = bodyResultSchema.omit({ client: true });
+
+export const publicResidentSchema = z
+  .object({
+    visitId: z.string().uuid(),
+    halfWidth: dimension,
+    halfHeight: dimension,
+    agentId: ref,
+    displayId: z.number().int(),
+    x: coordinate,
+    y: coordinate,
+    pose: posture,
+    facing,
+  })
+  .strict();
 
 export const bodyRecoveryPositionSchema = z
   .object({

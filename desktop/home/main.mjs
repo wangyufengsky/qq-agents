@@ -129,6 +129,7 @@ const manuallyMoved = new Set();
 let bodyProtocol = false;
 let bodyCrossDisplay = false;
 let bodyInteractions = false;
+let publicPerception = false;
 let observationProtocol = false;
 let recoveryPositionPending = false;
 let observationEnded;
@@ -489,7 +490,7 @@ function controllableResident(agentId, roomEpoch, visitId) {
   const role = remoteState?.roles.find(({ id }) => id === agentId);
   const entry = entries.get(agentId);
   if (
-    remoteState?.interactionsAvailable &&
+    (remoteState?.interactionsAvailable || remoteState?.socialBodyAvailable) &&
     remoteState.roomEpoch === roomEpoch &&
     !remoteState.connectionLost &&
     !hidden &&
@@ -1281,6 +1282,46 @@ function animateTo(entry, point, complete, options = {}) {
   updateMotion(entry);
 }
 
+function publicPoint(entry) {
+  const bounds = visibleBounds(entry);
+  if (!bounds || entry.privatePosition) return;
+  return {
+    x: bounds.x + Math.round(bounds.width / 2),
+    y: bounds.y + Math.round(bounds.height / 2),
+    displayId: screen.getDisplayMatching(bounds).id,
+  };
+}
+
+function publicSpace() {
+  if (!publicPerception || hidden || desktopLocked || !remoteState?.roomEpoch)
+    return;
+  const residents = [...entries.values()]
+    .flatMap((entry) => {
+      if (entry.type !== "sprite" || !entry.bodyVisitId || entry.departing)
+        return [];
+      const point = publicPoint(entry);
+      return point
+        ? [
+            {
+              ...point,
+              agentId: entry.id,
+              visitId: entry.bodyVisitId,
+              halfWidth: Math.round(entry.win.getBounds().width / 2),
+              halfHeight: Math.round(entry.win.getBounds().height / 2),
+              pose: entry.pose ?? "sit",
+              facing: entry.facing ?? "right",
+            },
+          ]
+        : [];
+    })
+    .slice(0, 24);
+  return {
+    roomEpoch: remoteState.roomEpoch,
+    residents,
+    door: publicPoint(entries.get("door")),
+  };
+}
+
 function bodyPosition(id) {
   const entry = entries.get(id);
   if (!entry || entry.win.isDestroyed()) return {};
@@ -1298,6 +1339,21 @@ function bodyPosition(id) {
 function executeVerifiedBodyAction(request, current, finish) {
   if (request.windowTask) return executeWindowTask(request, current, finish);
   if (request.interaction) return executeInteraction(request, current, finish);
+  if (request.greeting) {
+    const { agentId, visitId } = request.greeting;
+    const present = () =>
+      current() &&
+      remoteState?.publicWaveAvailable &&
+      remoteState.roles.some(
+        (role) =>
+          role.id === agentId &&
+          role.bodyVisitId === visitId &&
+          role.state === "here",
+      );
+    if (!present())
+      return finish({ status: "cancelled", reason: "target-unavailable" });
+    return executeBodyAction(request, present, finish);
+  }
   if (!request.observation) return executeBodyAction(request, current, finish);
   const grant = observationGrant;
   const allowed = () =>
@@ -1390,7 +1446,15 @@ function executeInteraction(request, current, finish) {
 }
 
 function executeBodyAction(
-  { agentId, inputAt, expiresAt, action, crossDisplay = false },
+  {
+    agentId,
+    inputAt,
+    expiresAt,
+    action,
+    greeting,
+    interaction,
+    crossDisplay = false,
+  },
   current,
   finish,
 ) {
@@ -1419,7 +1483,12 @@ function executeBodyAction(
     });
   if (action.type === "gesture") {
     if (
-      !remoteState?.interactionsAvailable ||
+      !(greeting
+        ? remoteState?.publicWaveAvailable
+        : interaction
+          ? (remoteState?.socialBodyAvailable ??
+            remoteState?.interactionsAvailable)
+          : remoteState?.interactionsAvailable) ||
       !["jump", "climb", "land", "wave"].includes(action.gesture)
     )
       return fail("inactive");
@@ -1601,6 +1670,7 @@ function applyFramework(value, action) {
   if (action === "sync" && !value.room) {
     bodyCrossDisplay = false;
     bodyInteractions = false;
+    publicPerception = false;
   }
   if (value.offline && remoteState) {
     stopLocalWindowTask("disconnect");
@@ -1641,6 +1711,7 @@ function applyFramework(value, action) {
     bodyProtocol = value.bodyProtocol === 2;
     bodyCrossDisplay = bodyProtocol && value.bodyCrossDisplay === true;
     bodyInteractions = bodyProtocol && value.bodyInteractions === true;
+    publicPerception = bodyProtocol && value.publicPerception === true;
     observationProtocol = value.observationProtocol === 2;
     recoveryPositionPending = false;
   }
@@ -2870,6 +2941,10 @@ else {
               bodyProtocol: 2,
               ...(bodyCrossDisplay && { bodyCrossDisplay: true }),
               ...(bodyInteractions && { bodyInteractions: true }),
+              ...(publicPerception && {
+                bodyPublic: true,
+                publicSpace: publicSpace(),
+              }),
               ...(results.length && { bodyResults: results }),
               ...(bodyPositions && {
                 bodyPositions: {

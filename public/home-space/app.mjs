@@ -919,7 +919,7 @@ async function desktopSettings(root, ticket) {
       quietLabel.prepend(quiet);
       const cadenceLabel = el("label", "desktop-field", "自主活动间隔");
       const cadence = document.createElement("select");
-      const defaultOption = el("option", "", "默认（至少 2 分钟）");
+      const defaultOption = el("option", "", "使用小窝默认间隔");
       defaultOption.value = "";
       cadence.append(defaultOption);
       for (let minutes = 2; minutes <= 30; minutes++) {
@@ -941,6 +941,43 @@ async function desktopSettings(root, ticket) {
       ),
     );
     form.append(interactionsLabel, preferencesGroup);
+    const perception = policy.publicPerception;
+    const perceptionGroup = el("fieldset", "social-budget");
+    perceptionGroup.append(el("legend", "", "公共感知与自主唤醒"));
+    const perceptionLabel = el(
+      "label",
+      "desktop-field",
+      "启用公共感知与自主唤醒",
+    );
+    const perceptionEnabled = document.createElement("input");
+    perceptionEnabled.type = "checkbox";
+    perceptionEnabled.checked = perception.enabled;
+    perceptionLabel.prepend(perceptionEnabled);
+    perceptionGroup.append(
+      perceptionLabel,
+      el(
+        "p",
+        "social-notice",
+        "桌边发言对所有在场角色公开。自主活动与休息仍按角色设置。",
+      ),
+    );
+    const perceptionInputs = Object.fromEntries(
+      Object.entries(current.desktopPublicFields ?? {}).map(
+        ([key, [title, min, max]]) => {
+          const label = el("label", "desktop-field", title);
+          const input = document.createElement("input");
+          input.type = "number";
+          input.required = true;
+          input.min = String(min);
+          input.max = String(max);
+          input.value = String(perception[key]);
+          label.append(input);
+          perceptionGroup.append(label);
+          return [key, input];
+        },
+      ),
+    );
+    form.append(perceptionGroup);
     const screenLabel = el("label", "desktop-field", "允许在本机授权看桌面");
     const screenEnabled = document.createElement("input");
     screenEnabled.type = "checkbox";
@@ -1036,6 +1073,8 @@ async function desktopSettings(root, ticket) {
       ...observationInputs,
       ...preferenceInputs.flatMap(({ quiet, cadence }) => [quiet, cadence]),
       interactionsEnabled,
+      perceptionEnabled,
+      ...Object.values(perceptionInputs),
       retention,
       screenEnabled,
       observationEnabled,
@@ -1062,6 +1101,15 @@ async function desktopSettings(root, ticket) {
       }
       const limits = {
         interactionsEnabled: interactionsEnabled.checked,
+        publicPerception: {
+          enabled: perceptionEnabled.checked,
+          ...Object.fromEntries(
+            Object.entries(perceptionInputs).map(([key, field]) => [
+              key,
+              field.valueAsNumber,
+            ]),
+          ),
+        },
         residentPreferences,
         maxTurns: inputs.maxTurns.valueAsNumber,
         refreshMinutes: inputs.refreshMinutes.valueAsNumber,
@@ -1086,6 +1134,8 @@ async function desktopSettings(root, ticket) {
         if (
           existing.maxTurns !== policy.maxTurns ||
           existing.interactionsEnabled !== policy.interactionsEnabled ||
+          JSON.stringify(existing.publicPerception) !==
+            JSON.stringify(perception) ||
           JSON.stringify(existing.residentPreferences) !==
             JSON.stringify(policy.residentPreferences) ||
           existing.refreshMinutes !== policy.refreshMinutes ||

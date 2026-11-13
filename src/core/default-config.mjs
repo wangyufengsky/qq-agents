@@ -1,4 +1,5 @@
 // @ts-check
+import { DESKTOP_PUBLIC_DEFAULTS } from "../home/desktop-home-policy.mjs";
 import { HOME_SOCIAL_DEFAULTS } from "../home/social-policy.mjs";
 // Runtime defaults are source code; examples are generated documentation.
 import { validateConfig } from "./config.mjs";
@@ -36,6 +37,7 @@ export function defaultConfig() {
       bodyControlRoles: [],
       activityRoles: [],
       interactionsEnabled: false,
+      publicPerception: DESKTOP_PUBLIC_DEFAULTS,
       residentPreferences: {},
       autonomousObservation: false,
       observationRoles: [],
