@@ -46,7 +46,8 @@ const fixture = String.raw`
       ] };
       break;
     case "list-windows":
-      data = [{ ...base, process_instance: opts.instance ?? base.process_instance }];
+      data = opts.closed ? [] : [{ ...base, visible: opts.visible,
+        minimized: opts.minimized, process_instance: opts.instance ?? base.process_instance }];
       if (opts.duplicate) data.push({ ...base, pid: 22 });
       break;
     case "snapshot":
@@ -102,8 +103,10 @@ async function setup(t, options = {}) {
   const configure = (value = {}) => writeFile(settings, JSON.stringify(value));
   await configure();
   const platform = options.platform ?? "darwin";
+  const executable = join(directory, "agent-desktop.exe");
+  await writeFile(executable, "synthetic pinned executable");
   const driver = createNativeDesktopDriver({
-    executable: join(directory, "agent-desktop.exe"),
+    executable,
     platform,
     timeoutMs: 1100,
     stateParent,
@@ -132,6 +135,7 @@ async function setup(t, options = {}) {
   return {
     driver,
     configure,
+    executable,
     stateParent,
     async events() {
       return (await readFile(events, "utf8"))
@@ -141,6 +145,48 @@ async function setup(t, options = {}) {
     },
   };
 }
+
+test("native observation reads fresh validity and permission without rechecking an unchanged binary", async (t) => {
+  const f = await setup(t);
+  await f.configure({ visible: true });
+  const [target] = await f.driver.observationWindows();
+  assert.deepEqual(target, {
+    id: "w-47",
+    pid: 19,
+    processInstance: "instance-1",
+    app: "--Test App",
+    state: "ready",
+  });
+  await f.configure({ visible: false, minimized: true });
+  assert.deepEqual(await f.driver.observationWindows({ app: target.app }), [
+    { ...target, state: "minimized" },
+  ]);
+  await f.configure({ visible: false });
+  assert.deepEqual(await f.driver.observationWindows({ app: target.app }), [
+    { ...target, state: "unavailable" },
+  ]);
+  await f.configure({ closed: true });
+  assert.deepEqual(await f.driver.observationWindows({ app: target.app }), []);
+  await f.configure({ duplicate: true, visible: true });
+  assert.deepEqual(await f.driver.observationWindows({ app: target.app }), []);
+  await f.configure({ accessibility: "denied", visible: true });
+  await assert.rejects(
+    f.driver.observationWindows(),
+    /DESKTOP_NATIVE_PERMISSION/,
+  );
+  const events = await f.events();
+  assert.equal(events.filter(({ command }) => command === "version").length, 1);
+  assert.equal(
+    events.filter(({ command }) => command === "permissions").length,
+    6,
+  );
+  assert.equal(new Set(events.map(({ root }) => root)).size, 1);
+  await writeFile(f.executable, "replacement binary");
+  await f.configure({ version: "1.1.0", visible: true });
+  await assert.rejects(f.driver.observationWindows(), /DESKTOP_NATIVE_VERSION/);
+  await f.driver.close();
+  assert.deepEqual(await readdir(f.stateParent), []);
+});
 
 for (const platform of ["darwin", "win32"]) {
   test(

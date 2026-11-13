@@ -1,4 +1,7 @@
-import { DesktopActivity } from "./desktop-activity.mjs";
+import {
+  DesktopActivity,
+  DESKTOP_ACTIVITY_TIMEOUT,
+} from "./desktop-activity.mjs";
 import { randomUUID } from "node:crypto";
 import {
   addMessage,
@@ -400,7 +403,9 @@ export class LiveRoom {
     );
     if (!turn) return;
     const visit = this.visits.get(turn.actor);
-    const observation = this.runner.observation?.(turn.actor);
+    const offer = this.runner.observation?.(turn.actor);
+    let observation = offer?.direct ? offer.grant : undefined;
+    let acted = false;
     const controller = new AbortController();
     const { promise: done, resolve: drained } = Promise.withResolvers();
     this.room.turn = turn;
@@ -419,20 +424,48 @@ export class LiveRoom {
       this.runner.activityCurrent(turn.actor);
     this.onChange();
     try {
-      const reply = await this.runner.run(
-        {
-          ...turn,
-          observation,
-          people: this.here().map(({ name }) => name),
-          messages: [],
-          isCurrent,
-          onBodyResult: (result) =>
-            !observation && this.activity.finish(visit, { lastResult: result }),
-        },
+      const signal = AbortSignal.any([
         controller.signal,
-        isCurrent,
-      );
-      if (!isCurrent() || controller.signal.aborted) return;
+        AbortSignal.timeout(DESKTOP_ACTIVITY_TIMEOUT),
+      ]);
+      const run = () =>
+        this.runner.run(
+          {
+            ...turn,
+            observation,
+            observationAvailable: Boolean(offer && !observation),
+            canObserve: () =>
+              !acted &&
+              this.runner.observation?.(turn.actor)?.grant === offer?.grant,
+            people: this.here().map(({ name }) => name),
+            messages: [],
+            isCurrent,
+            onBodyResult: (result) => {
+              acted = true;
+              if (!observation)
+                this.activity.finish(visit, { lastResult: result });
+            },
+          },
+          signal,
+          isCurrent,
+        );
+      let reply = await run();
+      if (reply.action === "observe") {
+        if (
+          !isCurrent() ||
+          signal.aborted ||
+          acted ||
+          !offer ||
+          this.runner.observation?.(turn.actor)?.grant !== offer.grant
+        )
+          return;
+        observation = offer.grant;
+        this.active.observation = observation;
+        this.onChange();
+        reply = await run();
+      }
+      if (!isCurrent() || signal.aborted) return;
+      if (observation) this.runner.finishObservation?.(observation, reply);
       this.activity.finish(visit, { reply, now: this.runner.now() });
       if (reply.action === "leave")
         this.leave(

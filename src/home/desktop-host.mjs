@@ -4,7 +4,6 @@ import { SessionPreparationFailure } from "../backends/turn-failure.mjs";
 import { recallBoundary } from "../core/recall-boundary.mjs";
 import { containsCredential } from "../core/secrets.mjs";
 import { roleBackendConfig } from "../core/functional-agents.mjs";
-import { supportsMessageImages } from "../backends/capabilities.mjs";
 import { roleTurnBusy } from "../core/role-rest.mjs";
 import { DESKTOP_ACTIVITY_TIMEOUT } from "./desktop-activity.mjs";
 import { rhythmStatus } from "../core/rhythm.mjs";
@@ -24,7 +23,10 @@ import {
   readDecision,
 } from "./desktop-decision.mjs";
 import { DESKTOP_ADMINISTRATOR, DesktopArchive } from "./desktop-archive.mjs";
-import { DesktopObservation } from "./desktop-observation.mjs";
+import {
+  DesktopObservation,
+  observationStateSchema,
+} from "./desktop-observation.mjs";
 import { DesktopScreen } from "./desktop-screen.mjs";
 import { DesktopBody } from "./desktop-body.mjs";
 import {
@@ -51,6 +53,7 @@ const requestSchema = z
       "screen-revoke",
       "observation-grant",
       "observation-revoke",
+      "observation-state",
       "native-grant",
       "native-revoke",
       "browser-grant",
@@ -65,6 +68,7 @@ const requestSchema = z
             visible: z.boolean(),
             dragged: z.array(z.string().min(1).max(64)).max(24),
             bodyProtocol: z.literal(2).optional(),
+            observationProtocol: z.literal(2).optional(),
             bodyResults: z.array(bodyResultEvidenceSchema).max(4).optional(),
             bodyPositions: z
               .object({
@@ -75,6 +79,7 @@ const requestSchema = z
               .optional(),
           })
           .strict(),
+        observationStateSchema,
         localGrantSchema,
         localRevokeSchema,
         browserGrantSchema,
@@ -233,6 +238,7 @@ export class DesktopHost {
 
   refresh({ syncingClient } = {}) {
     const now = this.runtime.now();
+    this.observation.maintain();
     if (!this.configured() || !this.operational()) {
       this.reset();
       return false;
@@ -380,6 +386,8 @@ export class DesktopHost {
           !this.visit(id).pendingQq(),
         activityCurrent: (id) => this.activityCurrent(id),
         observation: (id) => this.observation.forActor(id),
+        finishObservation: (grant, reply) =>
+          this.observation.finish(grant, reply),
         subjectActors: ids,
         requestInvitation: (request, signal) =>
           this.invitations.request(request, signal),
@@ -465,9 +473,14 @@ export class DesktopHost {
     let bodyResultAcks;
     if (action === "sync") {
       const visible = typeof data === "boolean" ? data : data?.visible;
+      const wasVisible = this.client.activityVisibleUntil > this.runtime.now();
       this.client.activityVisibleUntil =
         visible === true ? this.runtime.now() + ACTIVITY_VISIBILITY_LEASE : 0;
+      if (!wasVisible && visible === true)
+        for (const visit of live.visits.values())
+          live.activity.note(visit, "visible-again");
       if (data && typeof data === "object" && "visible" in data) {
+        if (data.observationProtocol === 2) this.client.observationProtocol = 2;
         if (data.bodyProtocol === 2) {
           this.client.bodyProtocol = 2;
           if (data.bodyPositions?.roomEpoch === live.room.epoch)
@@ -520,6 +533,7 @@ export class DesktopHost {
       live.answerKnock(data);
     if (action === "observation-grant") {
       if (
+        this.client.observationProtocol !== 2 ||
         !this.client.activityVisibleUntil ||
         this.client.activityVisibleUntil <= this.runtime.now()
       )
@@ -528,6 +542,8 @@ export class DesktopHost {
     }
     if (action === "observation-revoke")
       this.observation.change(true, localRevokeSchema.parse(data));
+    if (action === "observation-state")
+      this.observation.updateTarget(observationStateSchema.parse(data));
     if (action === "screen-grant")
       this.screen.change(false, localGrantSchema.parse(data));
     if (action === "screen-revoke")
@@ -541,11 +557,14 @@ export class DesktopHost {
     const state = this.clientSnapshot();
     if (action !== "sync") return state;
     const screenRequest = this.screen.request();
+    const observationVerify = this.observation.verifyWork();
     return {
       ...state,
       ...(screenRequest && { screenRequest }),
+      ...(observationVerify && { observationVerify }),
       ...this.native.clientWork(),
       bodyProtocol: 2,
+      observationProtocol: 2,
       ...(bodyResultAcks?.length && { bodyResultAcks }),
       bodyRequests: this.body.clientWork(),
     };
@@ -638,35 +657,12 @@ export class DesktopHost {
 
   clientSnapshot() {
     const observation = this.observation.state();
-    const policy = this.runtime.config.desktopHome;
-    const present = this.live
-      .here()
-      .filter(
-        ({ id }) =>
-          policy.activityRoles.includes(id) && policy.toolRoles.includes(id),
-      );
-    const backendUnsupported =
-      policy.autonomousObservation &&
-      policy.screenView.enabled &&
-      !this.live.activity.paused &&
-      !observation.eligible.length &&
-      present.length > 0 &&
-      present.every(({ id }) => {
-        const agent = this.runtime.agent(id);
-        const backend = this.backendFor(agent);
-        return (
-          !agent.behavior.imageInput.enabled ||
-          !backend ||
-          !supportsMessageImages(backend)
-        );
-      });
     return {
       enabled: true,
       room: {
         ...this.roomSnapshot(),
         screenView: this.screen.state(),
         observation,
-        ...(backendUnsupported && { observationEnded: "unsupported" }),
         nativeControl: this.native.state(),
         browserControl: this.browser.state(),
         activityEnabled: this.live
@@ -753,7 +749,9 @@ export class DesktopHost {
         !this.connected(ctx) ||
         runtime.blockers(agent, conversation, ctx).length ||
         (activity && request.isCurrent?.() === false) ||
-        (observation && !this.observation.current(observation))
+        (observation &&
+          (!this.observation.current(observation) ||
+            !this.observation.targetReady(observation)))
       )
         throw Error("DESKTOP_VISIT_UNAVAILABLE");
       if (ctx?.backendInputEpoch !== ctx?.inputEpoch)
@@ -785,11 +783,20 @@ export class DesktopHost {
         },
         decide: (args) => {
           if (decision) throw Error("DESKTOP_DECISION_DENIED");
-          const next = readDecision(kind, args);
-          if (observation && next?.action === "leave")
+          const next = readDecision(kind, args, request);
+          if (
+            !next ||
+            (next.action === "observe" &&
+              (ctx.desktopBodyActed || !request.canObserve?.()))
+          )
             throw Error("DESKTOP_DECISION_INVALID");
-          if (!next) throw Error("DESKTOP_DECISION_INVALID");
           assertOutput(next.text);
+          for (const draft of [next.response, next.summary].filter(Boolean)) {
+            assertOutput(draft);
+            if (/[\p{Cc}\p{Cf}]/u.test(draft))
+              throw Error("DESKTOP_DECISION_INVALID");
+          }
+          if (next.action === "observe") ctx.desktopObservationRequested = true;
           decision = next;
           return { status: "recorded" };
         },
@@ -816,10 +823,15 @@ export class DesktopHost {
         const frame = await this.observation.capture(ctx, observation);
         check();
         if (frame.status !== "frame") {
-          if (frame.status === "unavailable") this.observation.clear();
+          if (frame.status !== "duplicate")
+            this.observation.updateTarget({
+              ...observation,
+              state: frame.status,
+            });
           return { action: "silent" };
         }
         ctx.desktopScreenObserved = true;
+        ctx.desktopObservationGrantId = observation.grantId;
         observationImage = {
           mimeType: "image/jpeg",
           data: frame.data,
@@ -831,9 +843,14 @@ export class DesktopHost {
         ctx,
         agent,
         backend,
-        attachmentInput
-          ? { ...request, messages: attachmentInput.messages }
-          : request,
+        observation
+          ? {
+              ...request,
+              priorObservation: observation.prior,
+            }
+          : attachmentInput
+            ? { ...request, messages: attachmentInput.messages }
+            : request,
         controller.signal,
       );
       await backend.runDesktop({
@@ -851,7 +868,16 @@ export class DesktopHost {
               Error("DESKTOP_VISIT_UNAVAILABLE"),
             );
         },
-        onRunStarted: check,
+        onRunStarted: async () => {
+          check();
+          if (observation) {
+            await this.observation.verifyForDelivery(
+              observation,
+              controller.signal,
+            );
+            check();
+          }
+        },
         registerInputConsumer: (consume) => {
           ctx.desktopConsumeInput = consume;
         },

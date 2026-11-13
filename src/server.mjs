@@ -307,6 +307,8 @@ export function createServer({
         return send(state);
       }
       if (
+        url.pathname === "/api/desktop-home/observation-review" ||
+        url.pathname === "/api/desktop-home/observation-verify" ||
         url.pathname === "/api/desktop-home/attachment" ||
         url.pathname === "/api/desktop-home/screen-result" ||
         url.pathname === "/api/desktop-home/screen-claim" ||
@@ -321,6 +323,14 @@ export function createServer({
         );
         if (!local || !equal(req.headers["x-desktop-home-token"], desktopKey))
           return deny("UNAUTHORIZED", 401);
+        if (url.pathname.endsWith("/observation-review"))
+          return send(
+            runtime.desktopVisits.observation.review(await readBody(1024)),
+          );
+        if (url.pathname.endsWith("/observation-verify"))
+          return send(
+            runtime.desktopVisits.observation.verifyResult(await readBody(512)),
+          );
         if (url.pathname.endsWith("/screen-claim"))
           return send(runtime.desktopVisits.screen.claim(await readBody(512)));
         if (url.pathname.endsWith("/screen-result")) {
@@ -343,6 +353,19 @@ export function createServer({
         }
         const input = await readBody(MAX_DESKTOP_ATTACHMENT_BODY);
         return send(await runtime.desktopVisits.attach(input));
+      }
+      if (url.pathname === "/api/desktop-home/observation-summaries") {
+        if (req.method !== "POST") return deny("METHOD", 405);
+        const local = ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(
+          req.socket.remoteAddress,
+        );
+        if (!local || !equal(req.headers["x-admin-token"], token))
+          return deny("UNAUTHORIZED", 401);
+        return send(
+          runtime.desktopVisits.observation.transfer(
+            await readBody(1024 * 1024),
+          ),
+        );
       }
       if (url.pathname === "/api/desktop-home") {
         const local = ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(

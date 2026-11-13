@@ -23,6 +23,8 @@
     "bodyControlRoles": [],
     "activityRoles": [],
     "autonomousObservation": false,
+    "observationRoles": [],
+    "observationRetentionDays": 7,
     "screenView": {
       "enabled": false
     },

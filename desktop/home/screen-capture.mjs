@@ -13,15 +13,19 @@ export const screenCaptureSupported = ["darwin", "win32"].includes(
   process.platform,
 );
 
-export function listScreenSources() {
+export const screenCapturePermission = () =>
+  process.platform !== "darwin" ||
+  systemPreferences.getMediaAccessStatus("screen") === "granted";
+
+export function listScreenSources(windowsOnly = false) {
   // A zero-sized thumbnail enumerates sources without capturing their pixels.
   return desktopCapturer.getSources({
-    types: ["window", "screen"],
+    types: windowsOnly ? ["window"] : ["window", "screen"],
     thumbnailSize: { width: 0, height: 0 },
   });
 }
 
-async function readFrame(maxEdge, maxBytes) {
+async function readFrame(maxEdge, maxBytes, observe) {
   const stream = await navigator.mediaDevices.getDisplayMedia({
     video: { frameRate: { ideal: 1 } },
     audio: false,
@@ -31,6 +35,16 @@ async function readFrame(maxEdge, maxBytes) {
     video.muted = true;
     video.srcObject = stream;
     await video.play();
+    if (observe) {
+      const [track] = stream.getVideoTracks();
+      if (
+        track?.readyState !== "live" ||
+        track.muted ||
+        !video.videoWidth ||
+        !video.videoHeight
+      )
+        return;
+    }
     const scale = Math.min(
       1,
       maxEdge / Math.max(video.videoWidth, video.videoHeight),
@@ -45,6 +59,15 @@ async function readFrame(maxEdge, maxBytes) {
   } finally {
     for (const track of stream.getTracks()) track.stop();
     video.srcObject = null;
+  }
+}
+
+async function captureFrame(maxEdge, maxBytes, observe) {
+  if (!observe) return readFrame(maxEdge, maxBytes, observe);
+  try {
+    return { data: await readFrame(maxEdge, maxBytes, observe) };
+  } catch (error) {
+    return { permission: error.name === "NotAllowedError" };
   }
 }
 
@@ -67,23 +90,33 @@ function encodeFrame(frame, maxBytes) {
   }
 }
 
-export async function captureScreen(selected, maxEdge, maxBytes, signal) {
-  if (
-    signal.aborted ||
-    (process.platform === "darwin" &&
-      systemPreferences.getMediaAccessStatus("screen") !== "granted") ||
-    !Number.isInteger(maxEdge) ||
-    maxEdge < 1 ||
-    maxEdge > 4096 ||
-    !Number.isInteger(maxBytes) ||
-    maxBytes < 1 ||
-    maxBytes > 44 * 1024
-  )
-    return;
-  const sources = await listScreenSources();
-  const target = findScreenSource(sources, selected);
-  if (!target || signal.aborted) return;
+function canCapture(maxEdge, maxBytes, signal) {
+  return (
+    !signal.aborted &&
+    screenCapturePermission() &&
+    Number.isInteger(maxEdge) &&
+    maxEdge >= 1 &&
+    maxEdge <= 4096 &&
+    Number.isInteger(maxBytes) &&
+    maxBytes >= 1 &&
+    maxBytes <= 44 * 1024
+  );
+}
 
+export async function captureScreen(selected, maxEdge, maxBytes, signal) {
+  if (!canCapture(maxEdge, maxBytes, signal)) return;
+  const target = findScreenSource(await listScreenSources(), selected);
+  if (target) return captureScreenSource(target, maxEdge, maxBytes, signal);
+}
+
+export async function captureScreenSource(
+  target,
+  maxEdge,
+  maxBytes,
+  signal,
+  observe = false,
+) {
+  if (!canCapture(maxEdge, maxBytes, signal)) return;
   const isolated = session.fromPartition("desktop-home-screen-capture");
   const win = new BrowserWindow({
     show: false,
@@ -126,7 +159,8 @@ export async function captureScreen(selected, maxEdge, maxBytes, signal) {
     return await contents.executeJavaScript(
       `(() => {
         ${encodeFrame}
-        return (${readFrame})(${maxEdge}, ${maxBytes});
+        ${readFrame}
+        return (${captureFrame})(${maxEdge}, ${maxBytes}, ${observe});
       })()`,
       true,
     );

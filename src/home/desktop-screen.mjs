@@ -18,7 +18,9 @@ const resultSchema = localRevokeSchema
     client: uuid,
     requestId: uuid,
     data: z.string().min(4).max(maxEncoded).optional(),
-    status: z.enum(["duplicate", "unavailable"]).optional(),
+    status: z
+      .enum(["duplicate", "minimized", "unavailable", "permission"])
+      .optional(),
   })
   .strict()
   .refine(({ data, status }) => !(data && status));

@@ -57,10 +57,19 @@ const bodyStateLabels = {
 };
 const bodyPoseLabels = { stand: "站立", sit: "坐下", look: "张望" };
 const bodyFacingLabels = { left: "面向左侧", right: "面向右侧" };
+const observationPermissionHelp =
+  "请在系统设置中恢复权限。macOS 需按系统提示允许桌面小窝录制屏幕，并允许 agent-desktop 使用辅助功能。";
 const observationEndLabels = {
   "target-unavailable": "观察窗口已失效。请在聊天页选择其他窗口并重新授权。",
-  permission: "屏幕录制权限已失效。请在系统设置中恢复权限，再重新授权观察。",
+  "target-minimized": "观察窗口已最小化。恢复窗口后可继续观察。",
+  permission: `观察权限已失效。${observationPermissionHelp}然后重新授权观察。`,
   unsupported: "当前后端不支持观察所需的图片输入。请在管理台检查角色的后端。",
+};
+const observationEligibilityLabels = {
+  activity: "未开启自主活动",
+  screen: "未获准查看屏幕",
+  image: "未启用图片输入或后端不支持图片输入",
+  blocked: "角色当前无法参与观察",
 };
 const bodyReasonLabels = {
   "manual-control": "拖动已打断移动",
@@ -227,6 +236,223 @@ function floating() {
   });
 }
 
+function bindObservationReview(section, clock) {
+  const scope = section.querySelector(".review-scope");
+  const status = section.querySelector(".review-status");
+  const candidate = section.querySelector(".review-candidate");
+  const candidateMeta = candidate.querySelector(".review-candidate-meta");
+  const response = candidate.querySelector(".review-response");
+  const summary = candidate.querySelector(".review-summary");
+  const published = section.querySelector(".review-published");
+  const publishedMeta = published.querySelector(".review-published-meta");
+  const records = section.querySelector(".review-records");
+  const recordsStatus = records.querySelector(".review-records-status");
+  const list = records.querySelector("ul");
+  const dateTime = new Intl.DateTimeFormat("zh-CN", {
+    dateStyle: "short",
+    timeStyle: "short",
+  });
+  const invoke = (action, data) => window.nest.observationReview(action, data);
+  const roleName = (agentId) =>
+    room?.roles.find(({ id }) => id === agentId)?.name ?? agentId;
+  const setStatus = (text) => {
+    if (status.textContent !== text) status.textContent = text;
+    status.hidden = !text;
+  };
+  function setText(container, text = "") {
+    const words = container.querySelector(".review-text");
+    if (words.textContent !== text) words.textContent = text;
+    container.hidden = !text;
+  }
+  let room;
+  let session;
+  let timer;
+
+  function renderReview(review) {
+    const pending = review?.candidate;
+    const posted = review?.published;
+    candidate.hidden = !pending;
+    const candidateDescription = pending
+      ? `${roleName(pending.agentId)} · 候选保留至 ${clock.format(pending.expiresAt)}`
+      : "";
+    if (candidateMeta.textContent !== candidateDescription)
+      candidateMeta.textContent = candidateDescription;
+    setText(response, pending?.response);
+    setText(summary, pending?.summary);
+    const author = posted ? roleName(posted.agentId) : "";
+    if (publishedMeta.textContent !== author)
+      publishedMeta.textContent = author;
+    setText(published, posted?.text);
+  }
+
+  async function refreshReview(current) {
+    if (current.busy || current.reading) return;
+    current.reading = true;
+    const revision = current.revision;
+    try {
+      const review = await invoke("status");
+      if (session !== current || current.revision !== revision) return;
+      current.candidate = review?.candidate;
+      renderReview(review);
+      setStatus(
+        review
+          ? current.notice || (review.candidate ? "" : "暂无待审核内容。")
+          : "当前无法读取观察审核。",
+      );
+    } catch {
+      if (session !== current || current.revision !== revision) return;
+      current.candidate = undefined;
+      renderReview();
+      setStatus("当前无法读取观察审核。");
+    } finally {
+      current.reading = false;
+    }
+  }
+
+  async function refreshRecords(current) {
+    if (!records.open) return;
+    const request = (current.recordRequest = Symbol());
+    const currentRequest = () =>
+      session === current && records.open && current.recordRequest === request;
+    list.replaceChildren();
+    recordsStatus.textContent = "正在读取观察摘要…";
+    try {
+      const result = await invoke("list");
+      if (!currentRequest()) return;
+      recordsStatus.textContent = result?.records.length
+        ? ""
+        : result
+          ? "暂无已保存的摘要。"
+          : "当前无法读取已保存的摘要。";
+      for (const {
+        id,
+        agentId,
+        summary,
+        createdAt,
+        expiresAt,
+      } of result?.records ?? []) {
+        const row = element("li");
+        const remove = button("secondary", "删除摘要");
+        remove.addEventListener("click", async () => {
+          if (session !== current || remove.disabled) return;
+          remove.disabled = true;
+          try {
+            if (!(await invoke("delete", { id, agentId }))?.deleted)
+              throw Error("DESKTOP_OBSERVATION_REVIEW_UNAVAILABLE");
+            if (session === current) await refreshRecords(current);
+          } catch {
+            if (session === current)
+              recordsStatus.textContent = "未能删除摘要。";
+            remove.disabled = false;
+          }
+        });
+        row.append(
+          element(
+            "p",
+            null,
+            `${roleName(agentId)} · ${dateTime.format(createdAt)} 保存 · ${dateTime.format(expiresAt)} 到期`,
+          ),
+          element("p", "review-text", summary),
+          remove,
+        );
+        list.append(row);
+      }
+    } catch {
+      if (currentRequest())
+        recordsStatus.textContent = "当前无法读取已保存的摘要。";
+    }
+  }
+
+  const actions = [...candidate.querySelectorAll("[data-review]")];
+  for (const button of actions) {
+    button.addEventListener("click", async () => {
+      const current = session;
+      if (!current?.candidate || current.busy || button.disabled) return;
+      const { review: action } = button.dataset;
+      current.busy = true;
+      current.revision++;
+      for (const button of actions) button.disabled = true;
+      let result;
+      try {
+        result = await invoke(action, { id: current.candidate.id });
+      } catch {
+        result = undefined;
+      } finally {
+        current.busy = false;
+      }
+      if (session !== current) return;
+      updateActions();
+      current.notice = result
+        ? {
+            publish: "回复已发布。",
+            save: "摘要已保存。",
+            discard: "候选已丢弃。",
+          }[action]
+        : "操作未完成。候选可能已失效。";
+      if (result) {
+        current.candidate = result.candidate;
+        renderReview(result);
+      }
+      setStatus(current.notice);
+      void refreshReview(current);
+      if (result && action === "save") void refreshRecords(current);
+    });
+  }
+
+  function updateActions() {
+    for (const button of actions)
+      button.disabled =
+        Boolean(session?.busy) || room?.observation?.targetState !== "ready";
+  }
+
+  function updateContext() {
+    const active =
+      !section.hidden &&
+      room?.connected &&
+      !document.hidden &&
+      document.hasFocus();
+    const grant = room?.observation;
+    const context = [
+      room?.roomEpoch,
+      grant?.grantedAgentId,
+      grant?.expiresAt,
+      grant?.targetState,
+    ].join("/");
+    if (session && (!active || session.context !== context)) {
+      clearInterval(timer);
+      session = undefined;
+      renderReview();
+      list.replaceChildren();
+      recordsStatus.textContent = "";
+      setStatus("");
+    }
+    if (!active || session) return;
+    session = { context, revision: 0 };
+    const current = session;
+    void refreshReview(current);
+    void refreshRecords(current);
+    timer = setInterval(() => void refreshReview(current), 2000);
+  }
+
+  records.addEventListener("toggle", () => {
+    if (session && records.open) void refreshRecords(session);
+    else list.replaceChildren();
+  });
+  window.addEventListener("focus", updateContext);
+  window.addEventListener("blur", updateContext);
+  document.addEventListener("visibilitychange", updateContext);
+  return (next) => {
+    room = next;
+    const grant = room?.observation;
+    const description = grant?.grantedAgentId
+      ? `${roleName(grant.grantedAgentId)} · ${grant.target ?? "授权窗口"} · 许可至 ${clock.format(grant.expiresAt)} · 剩余 ${grant.remaining} 次`
+      : "当前没有观察授权。可在聊天页为在场角色授权窗口。";
+    if (scope.textContent !== description) scope.textContent = description;
+    updateContext();
+    updateActions();
+  };
+}
+
 function panel() {
   root.append(
     document.getElementById("panel-template").content.cloneNode(true),
@@ -235,6 +461,8 @@ function panel() {
   const guestList = select(".guest-list");
   const bodyAnnouncement = select(".body-announcement");
   const observationEnded = root.querySelectorAll(".observation-ended");
+  const observationTab = select('[data-tab="observation"]');
+  const observationReview = select("#observation-review");
   const bodyZones = select(".body-zones");
   bodyZones.addEventListener("click", () => window.nest.act("body-zones"));
   const audience = select(".audience");
@@ -279,6 +507,10 @@ function panel() {
     hour: "2-digit",
     minute: "2-digit",
   });
+  const updateObservationReview = bindObservationReview(
+    observationReview,
+    clock,
+  );
 
   function bindDesktopPermission(selector, key, labels, notices) {
     const section = select(selector);
@@ -289,6 +521,7 @@ function panel() {
     function refresh() {
       const policy = room?.[key];
       const agent = room?.roles.find(({ id }) => id === policy?.grantedAgentId);
+      const canAuthorize = Boolean(agent || policy?.eligible.length);
       if (lastAgent !== agent?.id) {
         lastAgent = agent?.id;
         notice.hidden = true;
@@ -296,13 +529,14 @@ function panel() {
       section.hidden =
         !room?.connected ||
         !window.nest[key] ||
-        (!agent && !policy?.eligible.length);
+        (!canAuthorize && !policy?.ineligible?.length);
+      button.hidden = !canAuthorize;
       button.disabled = choosing;
       button.textContent = agent ? labels.revoke : labels.grant;
       button.title = agent ? `当前授权给${agent.name}` : labels.help;
     }
     button.addEventListener("click", async () => {
-      if (section.hidden || choosing) return;
+      if (section.hidden || button.hidden || choosing) return;
       choosing = true;
       refresh();
       let status;
@@ -348,13 +582,18 @@ function panel() {
     {
       granted: "已授权。最多尝试观察四次。",
       revoked: "已撤销自主观察。",
-      permission: "请在系统设置中允许屏幕录制后重试。",
+      permission: observationPermissionHelp,
       "no-sources": "当前没有可选窗口。",
+      "missing-helper":
+        "缺少 agent-desktop。请运行 npm run setup -- desktop --data <数据目录> 后重新打开桌面小窝。",
       unavailable: "当前无法更改自主观察授权。",
       failed: "自主观察授权操作失败。",
     },
   );
   const observationTarget = select(".observation-target");
+  const observationRetention = select("#observation-retention-notice");
+  const observationIneligible = select(".observation-ineligible");
+  let lastObservationIneligible;
   const updateNativeControl = bindDesktopPermission(
     ".native-control",
     "nativeControl",
@@ -464,9 +703,11 @@ function panel() {
   });
 
   function switchSection(section) {
-    if (!["chat", "visits"].includes(section)) return;
+    if (section === "observation" && observationTab.hidden) return;
+    if (!["chat", "visits", "observation"].includes(section)) return;
     select("#visits").hidden = section !== "visits";
     select("#chat").hidden = section !== "chat";
+    observationReview.hidden = section !== "observation";
     for (const tab of root.querySelectorAll("[data-tab]"))
       tab.setAttribute("aria-pressed", String(tab.dataset.tab === section));
     if (section === "chat") {
@@ -474,6 +715,7 @@ function panel() {
       thread.scrollTop = thread.scrollHeight;
       if (!message.disabled) message.focus();
     }
+    updateObservationReview(room);
   }
 
   function guest(role) {
@@ -717,13 +959,25 @@ function panel() {
     if (stopped.length) bodyAnnouncement.textContent = stopped.join("。");
     const notice = select(".room-notice");
     if (notice.textContent !== room.notice) notice.textContent = room.notice;
-    const ended = Object.hasOwn(observationEndLabels, room.observationEnded)
-      ? observationEndLabels[room.observationEnded]
-      : "";
+    const observation = room.observation;
+    const ended =
+      !(
+        room.observationEnded === "unsupported" &&
+        observation?.ineligible?.some(({ reason }) => reason === "image")
+      ) && Object.hasOwn(observationEndLabels, room.observationEnded)
+        ? observationEndLabels[room.observationEnded]
+        : "";
     for (const notice of observationEnded) {
       notice.hidden = !ended;
       if (notice.textContent !== ended) notice.textContent = ended;
     }
+    observationTab.hidden =
+      !room.observationReviewAvailable ||
+      !room.connected ||
+      !window.nest.observationReview;
+    if (observationTab.hidden && !observationReview.hidden)
+      switchSection("chat");
+    updateObservationReview(room);
     bodyZones.hidden = room.bodyZones !== true;
     const here = room.roles.filter((role) => role.state === "here");
     const roster = JSON.stringify(
@@ -752,7 +1006,24 @@ function panel() {
       (!room.attachmentInput?.text && !room.attachmentInput?.image);
     updateScreenView();
     updateObservation();
-    const observation = room.observation;
+    observationRetention.hidden =
+      Boolean(observation?.grantedAgentId) || !observation?.eligible.length;
+    const unavailable = (observation?.ineligible ?? []).flatMap(
+      ({ id, reason }) =>
+        Object.hasOwn(observationEligibilityLabels, reason)
+          ? [
+              `${room.roles.find((role) => role.id === id)?.name ?? id} · ${observationEligibilityLabels[reason]}`,
+            ]
+          : [],
+    );
+    const ineligible = JSON.stringify(unavailable);
+    if (lastObservationIneligible !== ineligible) {
+      lastObservationIneligible = ineligible;
+      observationIneligible.hidden = !unavailable.length;
+      observationIneligible.replaceChildren(
+        ...unavailable.map((text) => element("li", null, text)),
+      );
+    }
     observationTarget.hidden = !observation?.grantedAgentId;
     const observationStatus = observation?.grantedAgentId
       ? `${observation.target ?? "授权窗口"} · ${clock.format(observation.expiresAt)} 到期 · 剩余 ${observation.remaining} 次`

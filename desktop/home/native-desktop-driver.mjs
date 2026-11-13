@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { nativeDesktopVersion } from "../../src/home/desktop-dependencies.mjs";
@@ -338,6 +338,8 @@ export function createNativeDesktopDriver({
   const scopes = new Set();
   let running;
   let closing;
+  let observationRoot;
+  let observationVersion;
 
   function execute(root, args, signal, input) {
     return runCommand(
@@ -375,17 +377,25 @@ export function createNativeDesktopDriver({
     )
       fail("DESKTOP_NATIVE_VERSION");
   }
-  async function windows(root, signal, app) {
+  async function checkAccessibility(root, signal) {
+    if (platform !== "darwin") return;
+    const permissions = dataOf(await execute(root, ["permissions"], signal));
+    if (permissions.accessibility?.state !== "granted")
+      fail("DESKTOP_NATIVE_PERMISSION");
+  }
+  async function windowInventory(root, signal, app) {
     const args = app ? ["list-windows", "--app=" + app] : ["list-windows"];
     const data = dataOf(await execute(root, args, signal));
     if (!Array.isArray(data)) fail("DESKTOP_NATIVE_BAD_RESPONSE");
-    const candidates = data.filter(selectableWindow);
     const ids = new Map();
     for (const window of data)
       if (typeof window?.id === "string")
         ids.set(window.id, (ids.get(window.id) || 0) + 1);
-    return candidates
-      .filter((window) => ids.get(window.id) === 1)
+    return data.filter((window) => ids.get(window?.id) === 1);
+  }
+  async function windows(root, signal, app) {
+    return (await windowInventory(root, signal, app))
+      .filter(selectableWindow)
       .map((window) => ({
         id: window.id,
         pid: window.pid,
@@ -403,13 +413,7 @@ export function createNativeDesktopDriver({
       const root = await mkdtemp(join(stateParent, "qq-native-"));
       try {
         await checkVersion(root, current);
-        if (platform === "darwin") {
-          const permissions = dataOf(
-            await execute(root, ["permissions"], current),
-          );
-          if (permissions.accessibility?.state !== "granted")
-            fail("DESKTOP_NATIVE_PERMISSION");
-        }
+        await checkAccessibility(root, current);
         return await operation(root, current);
       } finally {
         await rm(root, { recursive: true, force: true });
@@ -457,6 +461,58 @@ export function createNativeDesktopDriver({
             )
           : available
       ).slice(0, 200);
+    });
+  }
+
+  function observationWindows({ signal, app } = {}) {
+    const current = signal
+      ? AbortSignal.any([signal, shutdown.signal])
+      : shutdown.signal;
+    return exclusive(current, async () => {
+      const root = (observationRoot ??= await mkdtemp(
+        join(stateParent, "qq-native-"),
+      ));
+      const { dev, ino, size, mtimeNs, ctimeNs } = await stat(executable, {
+        bigint: true,
+      });
+      const fingerprint = `${dev}:${ino}:${size}:${mtimeNs}:${ctimeNs}`;
+      if (observationVersion !== fingerprint) {
+        await checkVersion(root, current);
+        observationVersion = fingerprint;
+      }
+      await checkAccessibility(root, current);
+      const available = await windowInventory(root, current, app);
+      return available
+        .filter(
+          (window) =>
+            /^w-[1-9][0-9]{0,19}$/.test(window.id) &&
+            selectableApplication(
+              window.app_name,
+              window.pid,
+              window.process_instance,
+            ),
+        )
+        .map(
+          ({
+            id,
+            pid,
+            process_instance: processInstance,
+            app_name,
+            visible,
+            minimized,
+          }) => ({
+            id,
+            pid,
+            processInstance,
+            app: app_name,
+            state:
+              minimized === true
+                ? "minimized"
+                : visible === true
+                  ? "ready"
+                  : "unavailable",
+          }),
+        );
     });
   }
 
@@ -593,6 +649,7 @@ export function createNativeDesktopDriver({
   return {
     listApplications,
     listWindows,
+    observationWindows,
     open,
     close() {
       closing ??= (async () => {
@@ -601,6 +658,8 @@ export function createNativeDesktopDriver({
           running?.catch(() => {}),
           ...[...scopes].map((scope) => scope.close()),
         ]);
+        if (observationRoot)
+          await rm(observationRoot, { recursive: true, force: true });
       })();
       return closing;
     },

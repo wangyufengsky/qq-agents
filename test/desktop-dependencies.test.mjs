@@ -11,6 +11,7 @@ import {
   managedDesktopExecutable,
 } from "../src/home/desktop-dependencies.mjs";
 import {
+  inspectDesktopDependencies,
   installDesktopAsset,
   prepareDesktopDependencies,
 } from "../src/home/desktop-dependency-installer.mjs";
@@ -156,6 +157,16 @@ test("desktop preparation follows saved settings without granting tools or repla
     [true, false, false],
   );
   assert.equal(result.checks[0].status, "ready");
+  const observation = await inspectDesktopDependencies({
+    root,
+    ...mac,
+    env,
+    policy: { enabled: true, autonomousObservation: true },
+  });
+  assert.deepEqual(
+    observation.map(({ required }) => required),
+    [true, true, false],
+  );
   await assert.rejects(
     prepareDesktopDependencies({ root, all: true, platform: "linux" }),
     /DESKTOP_DEPENDENCY_UNSUPPORTED/,

@@ -14,10 +14,11 @@ await fs.mkdir(output, { recursive: true });
 const cleanup = [],
   cfg = config(7);
 cfg.agents[1].paused = true;
+cfg.desktopHome.activityRoles = ["agent-0"];
 const f = fixture({ after: (fn) => cleanup.push(fn) }, { cfg });
 f.runtime.transports.get("qq-2").connected = false;
 const token = "test-admin-token-placeholder",
-  app = createServer({ runtime: f.runtime, token });
+  app = createServer({ runtime: f.runtime, token, allowLive: true });
 const base = `http://127.0.0.1:${await app.listen()}`;
 const browser = await chromium.launch({
   executablePath: process.env.CHROME_PATH,
@@ -83,6 +84,50 @@ try {
       (await page.locator("#stage").textContent()).includes("暂停") &&
       (await page.locator("#stage").textContent()).includes("离线"),
   );
+  await page.click("#menu-toggle");
+  await page.click("#desktop-open");
+  const observationRoles = page.getByRole("group", {
+    name: "可获窗口观察授权的角色",
+  });
+  const observationRole = observationRoles.getByRole("checkbox", {
+    name: "角色0",
+  });
+  await observationRole.waitFor();
+  check(
+    "legacy observation inherits activity roles",
+    await observationRole.isChecked(),
+  );
+  const retention = page.getByLabel("已保存观察摘要的保留期限");
+  check(
+    "observation retention defaults to seven days",
+    (await retention.inputValue()) === "7",
+  );
+  const saveSettings = async () => {
+    const put = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/config" &&
+        response.request().method() === "PUT",
+    );
+    await page.getByRole("button", { name: "保存桌面设置" }).click();
+    assert.equal((await put).status(), 200);
+    await page.getByText("桌面小窝设置已保存。").waitFor();
+  };
+  await retention.selectOption("1");
+  await saveSettings();
+  check(
+    "unrelated save preserves inherited observation roles",
+    f.runtime.config.desktopHome.observationRoles === undefined &&
+      f.runtime.config.desktopHome.observationRetentionDays === 1,
+  );
+  await page.getByRole("checkbox", { name: "使用独立观察角色名单" }).check();
+  await retention.selectOption("30");
+  await saveSettings();
+  assert.deepEqual(f.runtime.config.desktopHome.observationRoles, ["agent-0"]);
+  assert.equal(f.runtime.config.desktopHome.observationRetentionDays, 30);
+  await observationRole.uncheck();
+  await saveSettings();
+  assert.deepEqual(f.runtime.config.desktopHome.observationRoles, []);
+  await page.click("#close-reader");
   await page.locator("#pagination button").last().click();
   await ready(page, "#hall/2");
   await page.locator('[data-instance="door-agent-3"]').click();

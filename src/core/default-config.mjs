@@ -36,6 +36,8 @@ export function defaultConfig() {
       bodyControlRoles: [],
       activityRoles: [],
       autonomousObservation: false,
+      observationRoles: [],
+      observationRetentionDays: 7,
       screenView: { enabled: false },
       nativeControl: { enabled: false },
       browserControl: { enabled: false },
