@@ -1339,13 +1339,15 @@ function panel() {
     updateBrowserControl();
     updateThread();
     const thinking = here.find(({ id }) => id === room.thinking);
-    const active = here.find(({ id }) => id === room.activityActor);
+    const active = here.filter(({ id }) =>
+      (room.activityActors ?? [room.activityActor]).includes(id),
+    );
     const status = room.connectionLost
       ? room.notice
       : thinking
         ? `${thinking.name}正在想…`
-        : active
-          ? `${active.name}正在自主活动…`
+        : active.length
+          ? `${active.map(({ name }) => name).join("、")}正在自主活动…`
           : "";
     activityControl.hidden = !room.activityEnabled;
     activityControl.disabled = Boolean(room.connectionLost);

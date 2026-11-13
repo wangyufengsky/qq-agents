@@ -108,9 +108,22 @@ export class DesktopBody {
       host.runtime.updateMaintenance ||
       !host.connected(ctx) ||
       live.visits.get(ctx.agentId) !== visit ||
-      live.room.turn !== entry.turn ||
+      live.turnFor(ctx.agentId) !== entry.turn ||
+      (entry.greeting &&
+        (!live.publicEnabled() ||
+          live.visits.get(entry.greeting.recipient) !== entry.greeting.visit ||
+          (entry.greeting.reply &&
+            !live.perception.greeting(
+              ctx.agentId,
+              visit,
+              entry.greeting.reply.id,
+            )))) ||
       (INTERACTIVE_ACTIONS.has(entry.request.action.type) &&
-        !host.interactionsAvailable()) ||
+        !(entry.greeting
+          ? host.publicBodyAvailable()
+          : entry.request.interaction
+            ? host.socialBodyAvailable()
+            : host.interactionsAvailable())) ||
       (entry.request.interaction &&
         !live.interactionStep(
           ctx.agentId,
@@ -267,6 +280,46 @@ export class DesktopBody {
         ...result,
       });
     if (entry.request.interaction) entry.ctx.onDesktopInteractionResult(result);
+    if (
+      result.status !== "completed" ||
+      !result.position ||
+      !entry.live.publicEnabled() ||
+      entry.request.observation ||
+      entry.request.windowTask ||
+      entry.ctx.desktopScreenObserved ||
+      entry.ctx.desktopPrivateObservation
+    )
+      return;
+    const { action } = entry.request;
+    const { perception } = entry.live;
+    if (entry.greeting) {
+      const { recipient, reply } = entry.greeting;
+      if (
+        entry.live.visits.get(recipient) !== entry.greeting.visit ||
+        (reply && reply.replied)
+      )
+        return;
+      if (reply) reply.replied = true;
+      perception.add("greeting", entry.ctx.agentId, {
+        target: recipient,
+        action: "wave",
+        position: result.position,
+        urgent: true,
+        replyTo: reply?.id,
+      });
+    } else if (
+      ["move", "pose", "gesture", "interaction"].includes(action.type)
+    ) {
+      const gesture =
+        entry.request.interaction?.step ??
+        action.gesture ??
+        action.pose ??
+        (typeof action.target === "string" ? action.target : action.type);
+      perception.add("action", entry.ctx.agentId, {
+        action: gesture,
+        position: result.position,
+      });
+    }
   }
 
   invalidate(entry, reason) {
@@ -281,7 +334,7 @@ export class DesktopBody {
     const agent = host.runtime.assertActive(ctx);
     const { live, client } = host;
     const visit = live?.visits.get(ctx.agentId);
-    const turn = live?.room.turn;
+    const turn = live?.turnFor(ctx.agentId);
     const inputAt = ctx.desktopBodyInputAt;
     if (
       ctx.runtimeKind !== "desktop" ||
@@ -343,8 +396,6 @@ export class DesktopBody {
     const v2 = client.bodyProtocol === 2;
     if (("layoutVersion" in action || "pose" in action) && !v2)
       throw Error("DESKTOP_BODY_UNAVAILABLE");
-    if (INTERACTIVE_ACTIONS.has(action.type) && !host.interactionsAvailable())
-      throw Error("DESKTOP_BODY_UNAVAILABLE");
     let interaction;
     if (action.type === "interaction") {
       if (
@@ -361,6 +412,42 @@ export class DesktopBody {
         peerVisitId: this.visitId(step.peer.visit),
       };
     }
+    let greeting;
+    if (action.recipient !== undefined || action.replyTo !== undefined) {
+      if (
+        !host.publicBodyAvailable() ||
+        action.type !== "gesture" ||
+        action.gesture !== "wave" ||
+        !action.recipient ||
+        action.recipient === ctx.agentId ||
+        ctx.desktopScreenObserved ||
+        ctx.desktopPrivateObservation ||
+        ctx.conversation === DESKTOP_OBSERVATION_CONVERSATION
+      )
+        throw Error("DESKTOP_BODY_UNAVAILABLE");
+      const recipient = live.visits.get(action.recipient);
+      const reply = action.replyTo
+        ? live.perception.greeting(ctx.agentId, visit, action.replyTo)
+        : live.perception.incomingGreeting(
+            ctx.agentId,
+            visit,
+            action.recipient,
+          );
+      if (
+        !recipient ||
+        (action.replyTo && (!reply || reply.actor !== action.recipient))
+      )
+        throw Error("DESKTOP_BODY_UNAVAILABLE");
+      greeting = { recipient: action.recipient, visit: recipient, reply };
+    }
+    if (
+      INTERACTIVE_ACTIONS.has(action.type) &&
+      !greeting &&
+      !(action.type === "interaction"
+        ? host.socialBodyAvailable()
+        : host.interactionsAvailable())
+    )
+      throw Error("DESKTOP_BODY_UNAVAILABLE");
     const windowTask = ctx.desktopWindowTask;
     if (
       action.type === "window-task" &&
@@ -381,6 +468,7 @@ export class DesktopBody {
       client,
       visit,
       turn,
+      greeting,
       receipt,
       v2,
       recoverUntil: expiresAt + RECOVERY_WINDOW,
@@ -395,6 +483,12 @@ export class DesktopBody {
         expiresAt,
         inputAt,
         ...(interaction && { interaction }),
+        ...(greeting && {
+          greeting: {
+            agentId: greeting.recipient,
+            visitId: this.visitId(greeting.visit),
+          },
+        }),
         ...(action.type === "window-task" && {
           windowTask: {
             id: windowTask.id,

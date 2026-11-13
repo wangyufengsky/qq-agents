@@ -418,6 +418,10 @@ export class Runtime {
     }
   }
   toolsForContext(agent, ctx) {
+    if (ctx.desktopPublicResting)
+      return this.toolsFor(agent, ctx.conversation).filter(
+        (name) => name === DESKTOP_DECISION,
+      );
     if (ctx.conversation === DESKTOP_WINDOW_TASK_CONVERSATION)
       return this.toolsFor(agent, ctx.conversation);
     if (

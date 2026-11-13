@@ -32,6 +32,7 @@ import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { mcpResult, TOOL_NAMES } from "./tools/index.mjs";
 import { readiness } from "./core/readiness.mjs";
+import { DESKTOP_PUBLIC_FIELDS } from "./home/desktop-home-policy.mjs";
 import { defaultAgentCapabilities } from "./core/default-config.mjs";
 import { activityPage, homeSummary } from "./core/activity.mjs";
 import {
@@ -1583,6 +1584,7 @@ export function createServer({
           migrationWarnings: runtime.configStore.migrationWarnings || [],
           tools: TOOL_NAMES,
           agentDefaults: defaultAgentCapabilities(),
+          desktopPublicFields: DESKTOP_PUBLIC_FIELDS,
         });
       if (req.method === "PUT" && url.pathname === "/api/config") {
         const data = await readBody();

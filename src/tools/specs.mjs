@@ -4,6 +4,7 @@ import { registry } from "./registry.mjs";
 import { DESKTOP_BODY_CONTROL, TOOL_NAMES } from "./names.mjs";
 import {
   bodyActionSchema,
+  desktopPublicWaveSchema,
   legacyBodyActionSchema,
 } from "../home/desktop-body-protocol.mjs";
 export { TOOL_NAMES } from "./names.mjs";
@@ -17,6 +18,7 @@ export function toolSpecs(
     desktopBodyV2 = true,
     desktopBodyCrossDisplay = false,
     desktopBodyInteractions = false,
+    desktopPublicWave = false,
   } = {},
 ) {
   return enabled
@@ -37,7 +39,9 @@ export function toolSpecs(
           legacyBody
             ? legacyBodyActionSchema
             : body && !desktopBodyInteractions
-              ? bodyActionSchema
+              ? desktopPublicWave
+                ? desktopPublicWaveSchema
+                : bodyActionSchema
               : schema
         ),
         { target: "draft-7" },
@@ -66,8 +70,14 @@ export function toolSpecs(
           ? legacyBodyDescription
           : body && desktopBodyInteractions
             ? bodyDescription +
-              " gesture 播放 jump、climb、land 或 wave。interaction 仅用于本轮双方已同意的互动步骤，填入提示中的 interactionId。"
-            : bodyDescription,
+              " gesture 播放 jump、climb、land 或 wave。interaction 仅用于本轮双方已同意的互动步骤，填入提示中的 interactionId。" +
+              (desktopPublicWave
+                ? " 点名挥手用 recipient，回应已有招呼可附 replyTo。"
+                : "")
+            : body && desktopPublicWave
+              ? bodyDescription +
+                " 可向在场角色挥手。用 gesture 的 wave 搭配 recipient，回礼可附 publicSpace.recent 中的 replyTo。双方同意的协作步骤使用 interaction 和提示里的 interactionId。"
+              : bodyDescription,
         inputSchema,
       };
     });

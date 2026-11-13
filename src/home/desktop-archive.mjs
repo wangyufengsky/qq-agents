@@ -153,6 +153,33 @@ export class DesktopArchive {
       }));
   }
 
+  heard(agentId, sinceSeq, sinceTime, limit) {
+    return this.db
+      .prepare(
+        `
+      SELECT d.id AS messageId, d.speaker, d.text, d.sent_at AS now,
+        json_extract(e.payload,'$.desktop.targets') AS targets
+      FROM events e JOIN desktop_messages d ON d.id=e.message_id
+      WHERE e.agent_id=? AND e.conversation=? AND e.connection_id=?
+        AND e.kind IN ('message.received','message.sent') AND d.seq>? AND d.sent_at>?
+      ORDER BY d.seq DESC LIMIT ?
+    `,
+      )
+      .all(
+        agentId,
+        DESKTOP_CONVERSATION,
+        connectionId,
+        sinceSeq,
+        sinceTime,
+        limit,
+      )
+      .reverse()
+      .map(({ targets, ...row }) => ({
+        ...row,
+        addressedToYou: JSON.parse(targets ?? "[]").includes(agentId),
+      }));
+  }
+
   commitOpening(agentId, messages, elsewhere) {
     this.store.transaction(() => {
       const insert = this.db.prepare(

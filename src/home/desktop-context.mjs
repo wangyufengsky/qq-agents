@@ -50,6 +50,7 @@ ${selfBody}
     desktopBodyCrossDisplay:
       runtime.desktopVisits.client?.bodyCrossDisplay === true,
     desktopBodyInteractions: runtime.desktopVisits.interactionsAvailable(),
+    desktopPublicWave: runtime.desktopVisits.publicBodyAvailable(),
   });
   const signature = backend.sessionSignature?.(tools);
   const instructionsHash = createHash("sha256")
@@ -199,10 +200,12 @@ ${selfBody}
     ...exchange,
     instructions,
     prompt,
-    tools: tools.map(({ name, description, inputSchema }) => ({
-      type: "function",
-      function: { name, description, parameters: inputSchema },
-    })),
+    tools: tools
+      .filter(({ name }) => !request.resting || name === "desktop_room_decide")
+      .map(({ name, description, inputSchema }) => ({
+        type: "function",
+        function: { name, description, parameters: inputSchema },
+      })),
     managedContext: {
       conversation,
       session,
