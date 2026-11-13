@@ -1,10 +1,11 @@
-const { document, spaceEditor } = globalThis;
-const surface = document.querySelector("#surface");
-const list = document.querySelector("#zones");
-const display = document.querySelector("#display");
-const status = document.querySelector("#status");
-const save = document.querySelector("#save");
-const cancel = document.querySelector("#cancel");
+const editorBridge = globalThis.spaceEditor;
+const dom = globalThis.document;
+const surface = dom.querySelector("#surface");
+const list = dom.querySelector("#zones");
+const display = dom.querySelector("#display");
+const status = dom.querySelector("#status");
+const save = dom.querySelector("#save");
+const cancel = dom.querySelector("#cancel");
 let state;
 let zones = [];
 let drag;
@@ -13,7 +14,7 @@ let saving = false;
 let switching = false;
 
 function element(rect, index) {
-  const zone = document.createElement("div");
+  const zone = dom.createElement("div");
   zone.className = index === undefined ? "zone draft" : "zone";
   for (const [property, value] of [
     ["left", rect.x],
@@ -30,8 +31,8 @@ function render() {
   surface.replaceChildren(...zones.map(element));
   list.replaceChildren(
     ...zones.map((_zone, index) => {
-      const item = document.createElement("li");
-      const remove = document.createElement("button");
+      const item = dom.createElement("li");
+      const remove = dom.createElement("button");
       remove.type = "button";
       remove.textContent = "删除禁停区 " + (index + 1);
       remove.addEventListener("click", () => {
@@ -62,7 +63,7 @@ function apply(next) {
   zones = [...next.zones];
   display.replaceChildren(
     ...next.displays.map(({ id, label }, index) => {
-      const option = document.createElement("option");
+      const option = dom.createElement("option");
       option.value = id;
       option.textContent = label || "显示器 " + (index + 1);
       return option;
@@ -126,7 +127,7 @@ display.addEventListener("change", async () => {
   const previous = state;
   switching = true;
   display.disabled = true;
-  const next = await spaceEditor
+  const next = await editorBridge
     .select(Number(display.value))
     .catch(() => undefined);
   switching = false;
@@ -136,7 +137,7 @@ save.addEventListener("click", async () => {
   if (saving) return;
   saving = true;
   save.disabled = true;
-  const saved = await spaceEditor.save(zones).catch(() => false);
+  const saved = await editorBridge.save(zones).catch(() => false);
   saving = false;
   if (saved) {
     dirty = false;
@@ -147,8 +148,8 @@ save.addEventListener("click", async () => {
     status.textContent = "无法保存禁停区，请重试。";
   }
 });
-cancel.addEventListener("click", spaceEditor.close);
-document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") spaceEditor.close();
+cancel.addEventListener("click", editorBridge.close);
+dom.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") editorBridge.close();
 });
-void spaceEditor.get().then(apply);
+void editorBridge.get().then(apply);
