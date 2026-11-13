@@ -309,6 +309,17 @@ test("paper tabs and portraits replace the desktop budget display", async (t) =>
   assert.deepEqual(await page.evaluate(() => window.testActions), [
     ["invite", "dragon"],
   ]);
+  await list.getByRole("button", { name: "停止动作 · 小鱼" }).click();
+  await list.getByRole("button", { name: "回到座位 · 小鱼" }).click();
+  assert.deepEqual(await page.evaluate(() => window.testActions), [
+    ["invite", "dragon"],
+    ["body-stop", "fish"],
+    ["body-seat", "fish"],
+  ]);
+  assert.equal(
+    await list.getByRole("button", { name: "停止动作 · 小龙" }).isVisible(),
+    false,
+  );
   const portraits = list.locator("img");
   assert.equal(await portraits.count(), 3);
   assert.ok(
@@ -398,6 +409,7 @@ test("floating resident replays six short actions with a still hold and respects
     window.nest = {
       onRoom: (update) => (window.testRoom = update),
       onFacing: (update) => (window.testFacing = update),
+      onMotion: (update) => (window.testMotion = update),
       act: (action, data) => {
         if (action === "motion-preference") window.testReducedMotion = data;
       },
@@ -448,8 +460,36 @@ test("floating resident replays six short actions with a still hold and respects
     ),
     0,
   );
+  const pose = button.locator(".sprite-pose");
+  await page.evaluate(() => window.testMotion("moving"));
+  assert.equal(
+    await pose.evaluate((node) => window.getComputedStyle(node).animationName),
+    "none",
+  );
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await page.waitForFunction(() => window.testReducedMotion === false);
+  const travelPeriods = new Set();
+  for (const art of ["fish", "dragon", "cat"]) {
+    await page.evaluate((next) => window.testRoom(next), {
+      ...room,
+      roles: [{ ...room.roles[0], art }],
+    });
+    const { name, period } = await pose.evaluate((node) => {
+      const style = window.getComputedStyle(node);
+      return { name: style.animationName, period: style.animationDuration };
+    });
+    assert.equal(name, "paper-travel");
+    travelPeriods.add(period);
+  }
+  assert.equal(travelPeriods.size, 3);
+  await page.evaluate(() => window.testMotion("suspended"));
+  assert.equal(
+    await pose.evaluate(
+      (node) => window.getComputedStyle(node).animationPlayState,
+    ),
+    "paused",
+  );
+  await page.evaluate(() => window.testMotion("still"));
   for (const activity of [
     "qq",
     "chat",
