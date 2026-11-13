@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { DESKTOP_CONVERSATION } from "./desktop-decision.mjs";
+import {
+  DESKTOP_ACTIVITY_CONVERSATION,
+  isDesktopConversation,
+} from "./desktop-decision.mjs";
 import { DESKTOP_BODY_CONTROL } from "../tools/names.mjs";
 import { bodyClaimSchema, bodyResultSchema } from "./desktop-body-protocol.mjs";
 
@@ -29,8 +32,7 @@ export class DesktopBody {
       !host.connected(ctx) ||
       live.visits.get(ctx.agentId) !== visit ||
       live.room.turn !== entry.turn ||
-      host.runtime.running.get(ctx.agentId + "|" + DESKTOP_CONVERSATION) !==
-        ctx ||
+      host.runtime.running.get(ctx.agentId + "|" + ctx.conversation) !== ctx ||
       Date.now() >= request.expiresAt
     )
       return false;
@@ -96,6 +98,14 @@ export class DesktopBody {
       requestId: entry.request.action.requestId,
     };
     entry.receipt.resolve(entry.receipt.result);
+    if (["move", "pose"].includes(entry.request.action.type))
+      entry.ctx.onDesktopBodyResult?.({
+        type: entry.request.action.type,
+        ...(entry.request.action.target && {
+          target: entry.request.action.target,
+        }),
+        ...result,
+      });
   }
 
   invalidate(entry, reason) {
@@ -114,12 +124,12 @@ export class DesktopBody {
     const inputAt = ctx.desktopBodyInputAt;
     if (
       ctx.runtimeKind !== "desktop" ||
-      ctx.conversation !== DESKTOP_CONVERSATION ||
+      !isDesktopConversation(ctx.conversation) ||
       !host.connected(ctx) ||
       host.runtime.updateMaintenance ||
       !visit ||
       turn?.actor !== agent.id ||
-      host.runtime.running.get(agent.id + "|" + DESKTOP_CONVERSATION) !== ctx ||
+      host.runtime.running.get(agent.id + "|" + ctx.conversation) !== ctx ||
       !Number.isFinite(inputAt) ||
       !host.runtime.toolsForContext(agent, ctx).includes(DESKTOP_BODY_CONTROL)
     )
@@ -154,6 +164,14 @@ export class DesktopBody {
     }
     if (pending) throw Error("DESKTOP_BODY_BUSY");
     if (receipts.size >= TURN_ACTION_LIMIT) throw Error("DESKTOP_BODY_LIMIT");
+    if (
+      ctx.conversation === DESKTOP_ACTIVITY_CONVERSATION &&
+      action.type !== "state" &&
+      [...receipts.values()].some(
+        ({ entry }) => entry.request.action.type !== "state",
+      )
+    )
+      throw Error("DESKTOP_BODY_LIMIT");
 
     const receipt = Promise.withResolvers();
     const entry = {

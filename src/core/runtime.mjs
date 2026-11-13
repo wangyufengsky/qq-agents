@@ -2,7 +2,11 @@ import { QzoneApprovals } from "./qzone-approvals.mjs";
 import { SubjectExecution } from "./subject-execution.mjs";
 import { SocialRuntime } from "../home/social-runtime.mjs";
 import { DesktopHost } from "../home/desktop-host.mjs";
-import { DESKTOP_CONVERSATION } from "../home/desktop-decision.mjs";
+import {
+  DESKTOP_ACTIVITY_CONVERSATION,
+  DESKTOP_CONVERSATION,
+  isDesktopConversation,
+} from "../home/desktop-decision.mjs";
 import { DESKTOP_VISIT_TOOL } from "../home/desktop-visits.mjs";
 import { DESKTOP_INVITATION_TOOL } from "../home/desktop-invitations.mjs";
 import { HOME_TOOLS } from "../home/policy.mjs";
@@ -45,6 +49,7 @@ import { GeneratedImages } from "./generated-images.mjs";
 import { resolveFunctionalAgent } from "./functional-agents.mjs";
 import { FunctionalDelegation } from "./functional-delegation.mjs";
 import {
+  DESKTOP_ACTIVITY_DECISION,
   DESKTOP_DECISION,
   DESKTOP_HISTORY,
   DESKTOP_MEMORY_TOOLS,
@@ -291,7 +296,7 @@ export class Runtime {
     this.operations.expire();
   }
   makeContext(agentId, conversation, desktop) {
-    if ((conversation === DESKTOP_CONVERSATION) !== Boolean(desktop))
+    if (isDesktopConversation(conversation) !== Boolean(desktop))
       throw Error("DESKTOP_VISIT_UNAVAILABLE");
     if (this.closed) throw Error("RUNTIME_CLOSING");
     if (this.maintenance.active) throw Error("UPDATE_IN_PROGRESS");
@@ -461,6 +466,21 @@ export class Runtime {
     return c;
   }
   toolsFor(a, conversation) {
+    if (conversation === DESKTOP_ACTIVITY_CONVERSATION) {
+      if (
+        !this.desktopVisits.configured() ||
+        !this.config.desktopHome.activityRoles.includes(a.id)
+      )
+        return [];
+      return toolAvailable(
+        a,
+        DESKTOP_BODY_CONTROL,
+        DESKTOP_CONVERSATION,
+        this.config,
+      )
+        ? [DESKTOP_ACTIVITY_DECISION, DESKTOP_BODY_CONTROL]
+        : [DESKTOP_ACTIVITY_DECISION];
+    }
     if (conversation === DESKTOP_CONVERSATION) {
       if (!this.desktopVisits.configured()) return [];
       const candidates = new Set([
@@ -606,14 +626,19 @@ export class Runtime {
     if (inSilence(a, this.clock())) codes.push("QUIET_HOURS");
     if (conversation === undefined) return codes;
     if (
-      conversation === DESKTOP_CONVERSATION
+      isDesktopConversation(conversation)
         ? !this.desktopVisits.configured() ||
           (this.updateMaintenance && !this.maintenance.allows(ctx))
         : !allowed(a, conversation, this.config)
     )
       codes.push("NOT_ALLOWED");
     const state = this.memory.bind(a.id).state(conversation);
-    if (state.paused) codes.push("CONVERSATION_PAUSED");
+    if (
+      state.paused ||
+      (conversation === DESKTOP_ACTIVITY_CONVERSATION &&
+        this.memory.bind(a.id).state(DESKTOP_CONVERSATION).paused)
+    )
+      codes.push("CONVERSATION_PAUSED");
     // The turn that chose to go quiet may still finish bookkeeping; deliverNow blocks its sends.
     if (state.silenceUntil > this.now() && ctx?.selfSilenced !== true)
       codes.push("CONVERSATION_SILENCED");

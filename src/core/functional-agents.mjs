@@ -1,6 +1,6 @@
 // @ts-check
 import { allowed } from "./policy.mjs";
-import { DESKTOP_CONVERSATION } from "../home/desktop-decision.mjs";
+import { isDesktopConversation } from "../home/desktop-decision.mjs";
 
 export const MEMORY_AGENT_TOOLS = Object.freeze(
   /** @type {const} */ (["memory_search", "memory_read", "memory_related"]),
@@ -48,7 +48,7 @@ const desktopDefinition = Object.freeze({ kind: "desktop-dialogue" });
  * @param {Configuration} [config]
  */
 export function resolveFunctionalAgent(role, conversation, key, config) {
-  if (conversation === DESKTOP_CONVERSATION) {
+  if (isDesktopConversation(conversation)) {
     if (key && key !== "desktop") return undefined;
     return {
       key: "desktop",

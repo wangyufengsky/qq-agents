@@ -895,6 +895,19 @@ async function desktopSettings(root, ticket) {
       return input;
     });
     form.append(bodyRoles);
+    const activityRoles = el("fieldset", "desktop-tools");
+    activityRoles.append(el("legend", "", "允许在场时自主活动"));
+    const activityInputs = current.config.agents.map((agent) => {
+      const label = el("label", "", agent.name);
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.value = agent.id;
+      input.checked = policy.activityRoles.includes(agent.id);
+      label.prepend(input);
+      activityRoles.append(label);
+      return input;
+    });
+    form.append(activityRoles);
     const screenLabel = el("label", "desktop-field", "允许在本机授权看桌面");
     const screenEnabled = document.createElement("input");
     screenEnabled.type = "checkbox";
@@ -922,6 +935,7 @@ async function desktopSettings(root, ticket) {
       ...Object.values(inputs),
       ...roleInputs,
       ...bodyInputs,
+      ...activityInputs,
       screenEnabled,
       nativeEnabled,
       browserEnabled,
@@ -939,6 +953,9 @@ async function desktopSettings(root, ticket) {
         screenView: { enabled: screenEnabled.checked },
         nativeControl: { enabled: nativeEnabled.checked },
         browserControl: { enabled: browserEnabled.checked },
+        activityRoles: activityInputs
+          .filter((input) => input.checked)
+          .map((input) => input.value),
         bodyControlRoles: bodyInputs
           .filter((input) => input.checked)
           .map((input) => input.value),
@@ -956,6 +973,8 @@ async function desktopSettings(root, ticket) {
           existing.screenView.enabled !== policy.screenView.enabled ||
           existing.nativeControl.enabled !== policy.nativeControl.enabled ||
           existing.browserControl.enabled !== policy.browserControl.enabled ||
+          JSON.stringify(existing.activityRoles) !==
+            JSON.stringify(policy.activityRoles) ||
           JSON.stringify(existing.bodyControlRoles) !==
             JSON.stringify(policy.bodyControlRoles) ||
           JSON.stringify(existing.toolRoles) !==

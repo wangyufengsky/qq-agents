@@ -5,6 +5,7 @@ import { qzoneDefinitions, qzoneTool } from "./qzone.mjs";
 import { gameDefinitions, gameTool } from "../games/framework/tools.mjs";
 import { definitions } from "./definitions.mjs";
 import {
+  DESKTOP_ACTIVITY_DECISION,
   DESKTOP_DECISION,
   DESKTOP_HISTORY,
   DESKTOP_SCREEN_VIEW,
@@ -42,6 +43,14 @@ const handlers = {
   [DESKTOP_SCREEN_VIEW]: (runtime, ctx) =>
     runtime.desktopVisits.screen.view(ctx),
   memory_recall: recallFromChat,
+  [DESKTOP_ACTIVITY_DECISION]: (_runtime, ctx, args) => {
+    if (
+      ctx.runtimeKind !== "desktop" ||
+      ctx.conversation !== "@desktop-activity"
+    )
+      throw Error("TOOL_DISABLED");
+    return ctx.desktopDecision(args);
+  },
   [DESKTOP_DECISION]: (_runtime, ctx, args) => {
     if (ctx.runtimeKind !== "desktop") throw Error("TOOL_DISABLED");
     return ctx.desktopDecision(args);
@@ -79,6 +88,7 @@ for (const [group, dispatch] of [
 const registeredNames = [
   ...TOOL_NAMES,
   FUNCTIONAL_AGENT_RESULT,
+  DESKTOP_ACTIVITY_DECISION,
   DESKTOP_DECISION,
 ];
 if (

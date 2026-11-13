@@ -31,6 +31,7 @@ export function beginDesktopContext(
   const memory = runtime.memory.bind(ctx.agentId);
   const now = runtime.now();
   const { conversation } = ctx;
+  const activity = request.kind === "activity";
   recoverSessions(memory, now, conversation);
   const self = memory.identity.initialize(agent, now);
   const selfAllowed = recallBoundary(runtime, ctx, {
@@ -77,24 +78,33 @@ ${selfBody}
     }
   }
   const turnId = randomUUID();
+  // A visit carries only its bounded activity state between calls.
+  if (activity && state.session) {
+    retireSession(memory, conversation, "desktop-activity-completed", now, {
+      backendId: agent.backendId,
+    });
+    state = memory.state(conversation);
+  }
   const session = state.session;
   const opening = request.messages;
   const accountId = runtime.connection(agent.connectionId).accountId;
-  const elsewhere = elsewhereForTurn(runtime, ctx, [], {
-    fresh: !session,
-    now,
-    accountId,
-    personIds: [
-      ...new Set(
-        opening
-          .filter(
-            ({ direction, senderQq }) =>
-              direction === "in" && senderQq && senderQq !== accountId,
-          )
-          .map(({ senderQq }) => senderQq),
-      ),
-    ],
-  });
+  const elsewhere = activity
+    ? null
+    : elsewhereForTurn(runtime, ctx, [], {
+        fresh: !session,
+        now,
+        accountId,
+        personIds: [
+          ...new Set(
+            opening
+              .filter(
+                ({ direction, senderQq }) =>
+                  direction === "in" && senderQq && senderQq !== accountId,
+              )
+              .map(({ senderQq }) => senderQq),
+          ),
+        ],
+      });
   const prompt = [
     promptFor({
       ...request,
@@ -139,6 +149,7 @@ ${selfBody}
       startedAt: now,
       status: "running",
       phase: "running",
+      ...(activity && { desktopActivityReason: request.reason }),
       inputStage: "not-submitted",
       initialSession: ctx.initialSession,
       promptChars: prompt.length,
@@ -159,7 +170,12 @@ ${selfBody}
       ])
         ctx.privateRead.add(item.continuation.id);
       ctx.persistTaint();
-      runtime.desktopVisits.archive.commitOpening(agent.id, opening, elsewhere);
+      if (!activity)
+        runtime.desktopVisits.archive.commitOpening(
+          agent.id,
+          opening,
+          elsewhere,
+        );
       request.onInputSubmitted?.();
     },
   });
@@ -193,7 +209,7 @@ ${selfBody}
         !runtime.stopped &&
         recordBackendDiagnostic(memory, turnId, event, attempt),
     },
-    finish(error) {
+    async finish(error) {
       const failure = failureSummary(error);
       if (failure) {
         const record = memory.identity.get("model_turns", turnId);
@@ -207,11 +223,25 @@ ${selfBody}
         !ctx.desktopPrivateObservation &&
         !signal.aborted &&
         sessionWasUnchanged(error);
-      return runtime.contexts.finish(
-        ctx,
-        signal.aborted ? "cancelled" : error ? "failed" : "completed-no-send",
-        backend,
-      );
+      try {
+        return await runtime.contexts.finish(
+          ctx,
+          signal.aborted ? "cancelled" : error ? "failed" : "completed-no-send",
+          backend,
+        );
+      } finally {
+        if (activity)
+          retireSession(
+            memory,
+            conversation,
+            "desktop-activity-completed",
+            runtime.now(),
+            {
+              turnId,
+              backendId: agent.backendId,
+            },
+          );
+      }
     },
   };
 }

@@ -2,6 +2,7 @@
 import { socialSessionPool } from "./social-sessions.mjs";
 import { sessionWasUnchanged } from "./turn-failure.mjs";
 import {
+  DESKTOP_ACTIVITY_DECISION,
   DESKTOP_DECISION,
   DESKTOP_HISTORY,
   DESKTOP_MEMORY_TOOLS,
@@ -20,6 +21,7 @@ const allowed = new Set([
   "mood_read",
 ]);
 const desktopAllowed = new Set([
+  DESKTOP_ACTIVITY_DECISION,
   DESKTOP_DECISION,
   DESKTOP_HISTORY,
   ...DESKTOP_MEMORY_TOOLS,

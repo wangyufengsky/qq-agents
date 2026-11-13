@@ -97,6 +97,7 @@ let choosingDesktopPermission = false;
 let lastBrowserGrant;
 let desktopLocked = false;
 let bodyInputAfter = 0;
+const manuallyMoved = new Set();
 const body = new DesktopBodyClient({
   claim: (data, current) => framework.result("body-claim", data, current),
   result: (data, current) => framework.result("body-result", data, current),
@@ -488,6 +489,7 @@ function showSprite(role) {
 
 function hideAll() {
   hidden = true;
+  framework?.sync();
   bodyInputAfter = Date.now();
   body.clear("hidden");
   for (const { win } of entries.values()) win.hide();
@@ -663,6 +665,10 @@ function handleDrag(entry, action, data) {
   const [x, y] = entry.win.getPosition();
   if (action === "drag-start") {
     entry.bodyInputAfter = Date.now();
+    if (framework && entry.type === "sprite") {
+      manuallyMoved.add(entry.id);
+      framework.sync();
+    }
     if (entry.type === "door") {
       bodyInputAfter = entry.bodyInputAfter;
       body.clear("manual-control");
@@ -682,6 +688,10 @@ function handleDrag(entry, action, data) {
     if (action === "drag-end") {
       entry.drag = null;
       entry.bodyInputAfter = Date.now();
+      if (framework && entry.type === "sprite") {
+        manuallyMoved.add(entry.id);
+        framework.sync();
+      }
       if (entry.type === "door") {
         bodyInputAfter = entry.bodyInputAfter;
         doorPosition = target;
@@ -1112,7 +1122,14 @@ ipcMain.on("room:action", (event, action, data) => {
   if (framework) {
     if (action === "close") entry.win.hide();
     else if (
-      ["invite", "leave", "send", "door-mode", "knock-answer"].includes(action)
+      [
+        "invite",
+        "leave",
+        "send",
+        "door-mode",
+        "knock-answer",
+        "activity-pause",
+      ].includes(action)
     ) {
       if (action === "leave" && role) body.stop(role.id, "inactive");
       framework.act(action, data);
@@ -1177,14 +1194,20 @@ else {
         screen.on(event, () => body.clear("display-changed"));
       powerMonitor.on("lock-screen", () => {
         desktopLocked = true;
+        framework?.sync();
         body.clear("hidden");
       });
       powerMonitor.on("unlock-screen", () => {
         desktopLocked = false;
         bodyInputAfter = Date.now();
       });
-      powerMonitor.on("suspend", () => body.clear("hidden"));
+      powerMonitor.on("suspend", () => {
+        desktopLocked = true;
+        framework?.sync();
+        body.clear("hidden");
+      });
       powerMonitor.on("resume", () => {
+        desktopLocked = powerMonitor.getSystemIdleState(1) === "locked";
         bodyInputAfter = Date.now();
       });
       roles = [];
@@ -1192,6 +1215,20 @@ else {
         frameworkRoot,
         applyFramework,
         frameworkPort,
+        () => {
+          const dragged = [...manuallyMoved].slice(0, 24);
+          for (const id of dragged) manuallyMoved.delete(id);
+          return {
+            visible:
+              !hidden &&
+              !desktopLocked &&
+              [...entries.values()].some(
+                ({ type, win }) =>
+                  type === "sprite" && !win.isDestroyed() && win.isVisible(),
+              ),
+            dragged,
+          };
+        },
       );
     } else if (liveRoot) {
       live = new LiveRoom(

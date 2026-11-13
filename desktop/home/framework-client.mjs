@@ -2,7 +2,12 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
-export function createFrameworkClient(root, onState, listenPort) {
+export function createFrameworkClient(
+  root,
+  onState,
+  listenPort,
+  activityState,
+) {
   const client = randomUUID();
   let queue = Promise.resolve();
   let syncing = false;
@@ -64,7 +69,7 @@ export function createFrameworkClient(root, onState, listenPort) {
   const sync = () => {
     if (syncing) return;
     syncing = true;
-    act("sync");
+    act("sync", activityState?.());
     void queue.finally(() => {
       syncing = false;
     });
@@ -73,6 +78,7 @@ export function createFrameworkClient(root, onState, listenPort) {
   const timer = setInterval(sync, 650);
   return {
     act,
+    sync,
     attach(data) {
       return enqueue(async () => {
         const value = await request(undefined, data, "attachment");

@@ -14,6 +14,7 @@ import { savedMediaDefinitions } from "./saved-media.mjs";
 import { screenshotDefinitions } from "./screenshots.mjs";
 import { z } from "zod";
 import {
+  DESKTOP_ACTIVITY_DECISION,
   DESKTOP_DECISION,
   DESKTOP_HISTORY,
   DESKTOP_SCREEN_VIEW,
@@ -25,7 +26,10 @@ import {
 import { browserActionSchema } from "../home/desktop-browser.mjs";
 import { bodyActionSchema } from "../home/desktop-body-protocol.mjs";
 import { nativeActionSchema } from "../home/desktop-native.mjs";
-import { desktopDecisionDefinition } from "../home/desktop-decision.mjs";
+import {
+  desktopActivityDecisionDefinition,
+  desktopDecisionDefinition,
+} from "../home/desktop-decision.mjs";
 import { qqSegmentsSchema } from "./qq-message.mjs";
 import { legacyDefinitions } from "./legacy.mjs";
 import { homeDefinitions } from "./home.mjs";
@@ -77,6 +81,7 @@ const animation = z
   .strict()
   .optional();
 export const definitions = {
+  [DESKTOP_ACTIVITY_DECISION]: desktopActivityDecisionDefinition,
   [DESKTOP_DECISION]: desktopDecisionDefinition,
   [DESKTOP_HISTORY]: [
     "在桌面房间里按页回看公开对话。用 nextBeforeSeq 继续向前。回看不表示当时在场，也不作为本轮新消息。",
