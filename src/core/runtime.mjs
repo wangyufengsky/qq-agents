@@ -4,6 +4,7 @@ import { SocialRuntime } from "../home/social-runtime.mjs";
 import { DesktopHost } from "../home/desktop-host.mjs";
 import {
   DESKTOP_OBSERVATION_CONVERSATION,
+  DESKTOP_WINDOW_TASK_CONVERSATION,
   isDesktopActivity,
   DESKTOP_CONVERSATION,
   isDesktopConversation,
@@ -417,6 +418,8 @@ export class Runtime {
     }
   }
   toolsForContext(agent, ctx) {
+    if (ctx.conversation === DESKTOP_WINDOW_TASK_CONVERSATION)
+      return this.toolsFor(agent, ctx.conversation);
     if (
       ctx.runtimeKind === "desktop" &&
       ctx.conversation === DESKTOP_OBSERVATION_CONVERSATION
@@ -472,6 +475,18 @@ export class Runtime {
     return c;
   }
   toolsFor(a, conversation) {
+    if (conversation === DESKTOP_WINDOW_TASK_CONVERSATION) {
+      if (!this.config.desktopHome.interactionsEnabled) return [];
+      const names = [
+        DESKTOP_DECISION,
+        DESKTOP_BODY_CONTROL,
+        DESKTOP_SCREEN_VIEW,
+        DESKTOP_NATIVE_CONTROL,
+      ];
+      return this.toolsFor(a, DESKTOP_CONVERSATION).filter((name) =>
+        names.includes(name),
+      );
+    }
     if (isDesktopActivity(conversation)) {
       if (
         !this.desktopVisits.configured() ||
@@ -643,7 +658,8 @@ export class Runtime {
     const state = this.memory.bind(a.id).state(conversation);
     if (
       state.paused ||
-      (isDesktopActivity(conversation) &&
+      ((isDesktopActivity(conversation) ||
+        conversation === DESKTOP_WINDOW_TASK_CONVERSATION) &&
         this.memory.bind(a.id).state(DESKTOP_CONVERSATION).paused)
     )
       codes.push("CONVERSATION_PAUSED");

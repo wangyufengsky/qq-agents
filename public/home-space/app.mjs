@@ -899,6 +899,48 @@ async function desktopSettings(root, ticket) {
       "允许在场时自主活动",
       policy.activityRoles,
     );
+    const interactionsLabel = el("label", "desktop-field", "启用桌宠互动");
+    const interactionsEnabled = document.createElement("input");
+    interactionsEnabled.type = "checkbox";
+    interactionsEnabled.checked = policy.interactionsEnabled;
+    interactionsLabel.prepend(interactionsEnabled);
+    const preferencesGroup = el("fieldset", "social-budget");
+    preferencesGroup.append(el("legend", "", "角色生活偏好"));
+    const preferenceInputs = current.config.agents.map(({ id, name }) => {
+      const preference = Object.hasOwn(policy.residentPreferences, id)
+        ? policy.residentPreferences[id]
+        : {};
+      const group = el("fieldset", "desktop-tools");
+      group.append(el("legend", "", name));
+      const quietLabel = el("label", "desktop-field", "安静模式");
+      const quiet = document.createElement("input");
+      quiet.type = "checkbox";
+      quiet.checked = preference.quiet === true;
+      quietLabel.prepend(quiet);
+      const cadenceLabel = el("label", "desktop-field", "自主活动间隔");
+      const cadence = document.createElement("select");
+      const defaultOption = el("option", "", "默认（至少 2 分钟）");
+      defaultOption.value = "";
+      cadence.append(defaultOption);
+      for (let minutes = 2; minutes <= 30; minutes++) {
+        const option = el("option", "", `${minutes} 分钟`);
+        option.value = String(minutes);
+        cadence.append(option);
+      }
+      cadence.value = preference.activityMinutes ?? "";
+      cadenceLabel.append(cadence);
+      group.append(quietLabel, cadenceLabel);
+      preferencesGroup.append(group);
+      return { id, quiet, cadence };
+    });
+    preferencesGroup.append(
+      el(
+        "p",
+        "social-notice",
+        "安静模式暂停该角色的自主活动。活动仍受每小时额度和休息时段限制。",
+      ),
+    );
+    form.append(interactionsLabel, preferencesGroup);
     const screenLabel = el("label", "desktop-field", "允许在本机授权看桌面");
     const screenEnabled = document.createElement("input");
     screenEnabled.type = "checkbox";
@@ -992,6 +1034,8 @@ async function desktopSettings(root, ticket) {
       ...bodyInputs,
       ...activityInputs,
       ...observationInputs,
+      ...preferenceInputs.flatMap(({ quiet, cadence }) => [quiet, cadence]),
+      interactionsEnabled,
       retention,
       screenEnabled,
       observationEnabled,
@@ -1007,7 +1051,18 @@ async function desktopSettings(root, ticket) {
       for (const field of fieldsToLock) field.disabled = true;
       status.textContent = "";
       const observationRoles = checkedRoles(observationInputs);
+      const residentPreferences = { ...policy.residentPreferences };
+      for (const { id, quiet, cadence } of preferenceInputs) {
+        delete residentPreferences[id];
+        if (quiet.checked || cadence.value)
+          residentPreferences[id] = {
+            ...(quiet.checked && { quiet: true }),
+            ...(cadence.value && { activityMinutes: Number(cadence.value) }),
+          };
+      }
       const limits = {
+        interactionsEnabled: interactionsEnabled.checked,
+        residentPreferences,
         maxTurns: inputs.maxTurns.valueAsNumber,
         refreshMinutes: inputs.refreshMinutes.valueAsNumber,
         screenView: { enabled: screenEnabled.checked },
@@ -1030,6 +1085,9 @@ async function desktopSettings(root, ticket) {
         const existing = current.config.desktopHome;
         if (
           existing.maxTurns !== policy.maxTurns ||
+          existing.interactionsEnabled !== policy.interactionsEnabled ||
+          JSON.stringify(existing.residentPreferences) !==
+            JSON.stringify(policy.residentPreferences) ||
           existing.refreshMinutes !== policy.refreshMinutes ||
           existing.screenView.enabled !== policy.screenView.enabled ||
           existing.autonomousObservation !== policy.autonomousObservation ||

@@ -57,6 +57,22 @@ const bodyStateLabels = {
 };
 const bodyPoseLabels = { stand: "站立", sit: "坐下", look: "张望" };
 const bodyFacingLabels = { left: "面向左侧", right: "面向右侧" };
+const bodyGestureLabels = {
+  jump: "跳跃",
+  climb: "攀爬",
+  land: "落地",
+  wave: "挥手",
+};
+const followModeLabels = { pointer: "跟随鼠标", window: "跟随窗口" };
+const followResultLabels = {
+  busy: "请先完成当前窗口选择。",
+  "no-sources": "没有可跟随的窗口。",
+  permission: "请在系统设置中允许访问窗口。",
+  "target-unavailable": "窗口已失效。",
+  "target-unreachable": "无法到达窗口附近。",
+  "target-blocked": "窗口附近没有可用落点。",
+  "follow-target-minimized": "窗口已最小化。",
+};
 const observationPermissionHelp =
   "请在系统设置中恢复权限。macOS 需按系统提示允许桌面小窝录制屏幕，并允许 agent-desktop 使用辅助功能。";
 const observationEndLabels = {
@@ -86,6 +102,11 @@ const bodyReasonLabels = {
   pause: "自主活动已暂停",
   rest: "已进入休息时段",
   hidden: "浮窗已隐藏",
+  "action-unconfirmed": "窗口任务结果未确认，请先核对目标窗口。",
+  "follow-expired": "临时跟随已到期",
+  "follow-permission": "跟随权限已失效",
+  "follow-target-minimized": "跟随窗口已最小化",
+  "follow-qq": "已停止跟随，让位给 QQ",
   arrival: "已来到桌边",
   "wait-ended": "等待已结束",
   completed: "动作已完成",
@@ -125,6 +146,7 @@ function bindFloatingDrag(handle) {
       moved = true;
       handle.dataset.dragging = "true";
       delete handle.dataset.motionTransition;
+      delete handle.dataset.gesture;
       window.nest.act("drag-start", pointer.origin);
     }
     if (moved) window.nest.act("drag-move", last);
@@ -161,7 +183,10 @@ function floating() {
     if (pageVisible === visible) return;
     pageVisible = visible;
     art.toggleAttribute("data-page-hidden", !visible);
-    if (!visible) delete art.dataset.motionTransition;
+    if (!visible) {
+      delete art.dataset.motionTransition;
+      delete art.dataset.gesture;
+    }
     window.nest.act("page-visible", visible);
   }
   window.addEventListener("load", syncVisibility, { once: true });
@@ -171,9 +196,11 @@ function floating() {
     : "点击聊天 · 拖动换座位 · 右键菜单";
   const sprite = image(door ? "door" : undefined);
   const walkFrames = [];
+  let gestureLayer;
   if (door) art.append(sprite);
   else {
     const body = element("span", "sprite-body");
+    gestureLayer = element("span", "sprite-gesture");
     const pose = element("span", "sprite-pose");
     const cue = element("span", "sprite-cue");
     const walk = element("span", "sprite-walk");
@@ -185,8 +212,12 @@ function floating() {
     body.addEventListener("animationend", (event) => {
       if (event.target === body) delete art.dataset.motionTransition;
     });
+    gestureLayer.addEventListener("animationend", (event) => {
+      if (event.target === gestureLayer) delete art.dataset.gesture;
+    });
     pose.append(sprite, walk, cue);
-    body.append(pose);
+    gestureLayer.append(pose);
+    body.append(gestureLayer);
     art.append(body);
   }
   space.append(art);
@@ -218,17 +249,20 @@ function floating() {
   const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
   const syncMotion = () => {
     if (motion.matches) delete art.dataset.motionTransition;
+    delete art.dataset.gesture;
     window.nest.act("motion-preference", motion.matches);
   };
   syncMotion();
   motion.addEventListener("change", syncMotion);
   let role;
   let room;
+  let lastGestureId;
   window.nest.onMotion?.((state) => {
     const previous = art.dataset.motion;
     if (previous === state) return;
     art.dataset.motion = state;
     if (state !== "moving") art.style.removeProperty("--travel-rate");
+    if (state === "suspended") delete art.dataset.gesture;
     delete art.dataset.motionTransition;
     if (!motion.matches && pageVisible && !art.dataset.dragging) {
       if (state === "moving") art.dataset.motionTransition = "start";
@@ -278,12 +312,19 @@ function floating() {
       walkFrames[1].src = `art/actions/${roleArt}-step.webp`;
     }
     if (art.dataset.activity !== activity) art.dataset.activity = activity;
+    const gesture = role.bodyStatus?.gesture;
+    const gestureLabel = bodyGestureLabels[gesture?.kind] ?? "";
+    if (art.dataset.gestureLabel !== gestureLabel)
+      art.dataset.gestureLabel = gestureLabel;
     const label = [
       role.name,
       activityLabels[activity],
       bodyPoseLabels[moving ? "stand" : pose],
+      gestureLabel,
       "打开聊天",
-    ].join(" · ");
+    ]
+      .filter(Boolean)
+      .join(" · ");
     if (art.getAttribute("aria-label") !== label)
       art.setAttribute("aria-label", label);
     const stance =
@@ -292,13 +333,42 @@ function floating() {
     if (sprite.getAttribute("src") !== asset) sprite.src = asset;
   }
 
+  function renderGesture(gesture) {
+    if (
+      gesture?.id === undefined ||
+      !Object.hasOwn(bodyGestureLabels, gesture.kind) ||
+      room.connectionLost
+    ) {
+      delete art.dataset.gesture;
+      return;
+    }
+    if (gesture.id === lastGestureId) return;
+    lastGestureId = gesture.id;
+    if (
+      !pageVisible ||
+      art.dataset.dragging ||
+      art.dataset.motion === "suspended"
+    )
+      return;
+    if (art.dataset.gesture === gesture.kind) {
+      // Flush the previous one-shot animation before replaying the same kind.
+      delete art.dataset.gesture;
+      gestureLayer.getBoundingClientRect();
+    }
+    art.dataset.gesture = gesture.kind;
+  }
+
   subscribe((data) => {
     room = data;
     role = data.roles.find((item) => item.id === id);
-    if (!role) return;
+    if (!role) {
+      delete art.dataset.gesture;
+      return;
+    }
     const facing = role.bodyStatus?.facing;
     if (facing) face(facing);
     renderSprite();
+    renderGesture(role.bodyStatus?.gesture);
     const message =
       data.bubbles?.[id]?.text ?? (data.thinking === id ? "正在想…" : "");
     words.textContent = message;
@@ -539,6 +609,12 @@ function panel() {
   const thread = select(".thread");
   const message = select("#message");
   const send = select('.composer button[type="submit"]');
+  const taskOptions = select(".window-task-options");
+  const taskScope = select("#window-task-scope");
+  const taskRole = select("#window-task-role");
+  const taskFeedback = select(".window-task-feedback");
+  const taskStatus = select(".window-task-status");
+  const taskStop = select(".window-task-stop");
   const attach = select(".attach");
   const attachmentStatus = select(".attachment-status");
   let attaching = false;
@@ -571,6 +647,7 @@ function panel() {
   let lastId;
   let roomEpoch;
   let lastRoster;
+  let selectedWindowGrant;
   const guests = new Map();
   const announcedBodyFeedback = new Map();
   const clock = new Intl.DateTimeFormat("zh-CN", {
@@ -788,6 +865,69 @@ function panel() {
     updateObservationReview(room);
   }
 
+  function bindResidentInteractions(id) {
+    const menu = element("details", "resident-interactions");
+    const heading = element("summary", null, "桌宠互动");
+    const note = element("small");
+    note.setAttribute("role", "status");
+    const controls = element("div", "guest-controls");
+    let choosing = false;
+    const localAction = (text, action) => {
+      const control = button("quiet", text);
+      control.addEventListener("click", () => window.nest.act(action, id));
+      return control;
+    };
+    const mark = localAction("标记当前停留点", "body-mark-place");
+    const go = localAction("去常用停留点", "body-go-place");
+    const clear = localAction("清除停留点", "body-clear-place");
+    const followAction = (text, mode) => {
+      const control = button("quiet", text);
+      control.addEventListener("click", async () => {
+        choosing = true;
+        pointer.disabled = windowFollow.disabled = stop.disabled = true;
+        note.textContent = "";
+        try {
+          const result = await window.nest.follow(id, mode);
+          if (!["started", "stopped", "cancelled"].includes(result))
+            note.textContent =
+              followResultLabels[result] ?? "当前无法改变跟随状态。";
+        } catch {
+          note.textContent = "当前无法改变跟随状态。";
+        } finally {
+          choosing = false;
+          const role = room.roles.find((role) => role.id === id);
+          if (role) updateControls(role);
+        }
+      });
+      return control;
+    };
+    const pointer = followAction(followModeLabels.pointer, "pointer");
+    const windowFollow = followAction(followModeLabels.window, "window");
+    const stop = followAction("停止跟随", "stop");
+    controls.append(mark, go, clear, pointer, windowFollow, stop);
+    menu.append(heading, controls, note);
+    function updateControls(role) {
+      const here =
+        role.state === "here" && role.available && role.bodyControlAvailable;
+      const state = role.bodyStatus?.state;
+      const busy = ["qq", "paused"].includes(state) || Boolean(role.follow);
+      menu.hidden =
+        !room.interactionsAvailable ||
+        room.connectionLost ||
+        (!here && !role.place);
+      mark.hidden = !here;
+      mark.disabled = busy || state === "moving";
+      go.hidden = !here || !role.place;
+      go.disabled = busy || role.place !== "saved";
+      clear.hidden = !role.place;
+      pointer.hidden = !here || !window.nest.follow || Boolean(role.follow);
+      windowFollow.hidden = pointer.hidden || !room.windowFollowAvailable;
+      stop.hidden = !role.follow;
+      pointer.disabled = windowFollow.disabled = stop.disabled = choosing;
+    }
+    return { menu, update: updateControls };
+  }
+
   function guest(role) {
     if (!guests.has(role.id)) {
       const node = element("article", "guest");
@@ -818,8 +958,9 @@ function panel() {
         window.nest.act("body-seat", role.id),
       );
       controls.append(decline, stop, seat, action);
+      const interactions = bindResidentInteractions(role.id);
       const portrait = avatar(role);
-      node.append(portrait, info, controls);
+      node.append(portrait, info, controls, interactions.menu);
       guestList.append(node);
       guests.set(role.id, {
         node,
@@ -832,6 +973,7 @@ function panel() {
         decline,
         stop,
         seat,
+        interactions,
       });
     }
     const {
@@ -845,6 +987,7 @@ function panel() {
       decline,
       stop,
       seat,
+      interactions,
     } = guests.get(role.id);
     node.dataset.state = role.available ? role.state : "unavailable";
     if (name.textContent !== role.name) name.textContent = role.name;
@@ -854,6 +997,7 @@ function panel() {
     if (sprite.getAttribute("src") !== src) sprite.src = src;
     decline.hidden = room.live || role.state !== "invited";
     stop.hidden = seat.hidden = role.state !== "here" || !role.available;
+    interactions.update(role);
     const [label, text] = {
       home: ["在家", "邀请"],
       invited: ["已邀请 · 等待回应", "取消邀请"],
@@ -881,6 +1025,14 @@ function panel() {
     const details = [];
     if (here)
       details.push(bodyPoseLabels[body?.pose], bodyFacingLabels[body?.facing]);
+    if (room.interactionsAvailable && role.place === "unavailable")
+      details.push("常用停留点不可用，可重新标记");
+    if (role.follow)
+      details.push(
+        followModeLabels[role.follow.mode],
+        Number.isFinite(role.follow.until) &&
+          `至 ${clock.format(role.follow.until)}`,
+      );
     if (
       !room.connectionLost &&
       (paused || bodyState === "waiting") &&
@@ -980,7 +1132,87 @@ function panel() {
       thread.scrollTop = thread.scrollHeight;
   }
 
+  function windowTaskGrant(scope) {
+    if (!scope || !room?.interactionsAvailable || room.connectionLost) return;
+    const [id, grantId] =
+      scope === "screen"
+        ? [room.windowTaskScreenAgentId, room.windowTaskScreenGrantId]
+        : [room.windowTaskNativeAgentId, room.windowTaskNativeGrantId];
+    const role = room.roles.find(
+      (role) =>
+        role.id === id &&
+        role.state === "here" &&
+        role.available &&
+        role.bodyControlAvailable,
+    );
+    if (role && grantId) return { role, grantId };
+  }
+
+  function selectedTask() {
+    const current = windowTaskGrant(taskScope.value);
+    if (current?.grantId === selectedWindowGrant) return current;
+  }
+
+  function refreshWindowTask() {
+    const scope = taskScope.value;
+    const status = room.windowTaskStatus;
+    const active = ["approaching", "ready"].includes(status?.stage);
+    let hasTaskOption = false;
+    for (const option of [...taskScope.options].slice(1)) {
+      const available = !active && Boolean(windowTaskGrant(option.value));
+      option.disabled = !available;
+      option.hidden = !available && option.value !== scope;
+      hasTaskOption ||= available;
+    }
+    taskOptions.hidden = !hasTaskOption && !scope;
+    const role = selectedTask()?.role;
+    const roleLabel = role?.name ?? "授权已失效";
+    taskRole.hidden = !scope;
+    if (
+      taskRole.value !== (role?.id ?? "") ||
+      taskRole.options[0]?.text !== roleLabel
+    ) {
+      const option = element("option", null, roleLabel);
+      option.value = role?.id ?? "";
+      taskRole.replaceChildren(option);
+    }
+    taskRole.disabled = !role;
+    const name =
+      room.roles.find(({ id }) => id === status?.agentId)?.name ?? "角色";
+    const taskLabel = status?.scope === "native" ? "操作窗口" : "查看窗口";
+    const reason = bodyReasonLabels[status?.reason] ?? "可在重新授权后再试。";
+    const feedback =
+      {
+        approaching: `${name}正在靠近目标窗口…`,
+        ready: `${name}已到位 · ${taskLabel}`,
+        completed: `${name}已完成窗口任务`,
+        failed: `窗口任务已停止 · ${reason}`,
+      }[status?.stage] ??
+      (scope && !role
+        ? "窗口授权已变化。请切换发送方式后重新选择窗口任务。"
+        : "");
+    taskFeedback.hidden = !feedback;
+    if (taskStatus.textContent !== feedback) taskStatus.textContent = feedback;
+    taskStop.hidden = !active;
+    taskStop.disabled = Boolean(room.connectionLost);
+    send.disabled = message.disabled || Boolean(scope && (!role || active));
+    attach.hidden = Boolean(scope) || !room.framework || !window.nest.attach;
+  }
+
+  taskScope.addEventListener("change", () => {
+    selectedWindowGrant = windowTaskGrant(taskScope.value)?.grantId;
+    refreshWindowTask();
+  });
+  taskStop.addEventListener("click", () =>
+    window.nest.act("window-task-stop", room.windowTaskStatus.id),
+  );
+
   function update(next) {
+    if (room && next.roomEpoch !== room.roomEpoch && taskScope.value) {
+      taskScope.value = "";
+      message.value = "";
+      selectedWindowGrant = undefined;
+    }
     room = next;
     select(".sample-settings").hidden = Boolean(room.framework);
     const edition = select(".edition");
@@ -1073,8 +1305,7 @@ function panel() {
     message.placeholder = here.length
       ? "说点什么…（可用 @ 名字）"
       : "邀请一位角色开始聊天";
-    send.disabled = message.disabled;
-    attach.hidden = !room.framework || !window.nest.attach;
+    refreshWindowTask();
     attach.disabled =
       attaching ||
       (!room.attachmentInput?.text && !room.attachmentInput?.image);
@@ -1166,8 +1397,21 @@ function panel() {
   select(".composer").addEventListener("submit", (event) => {
     event.preventDefault();
     const text = message.value.trim();
-    if (!text || message.disabled) return;
-    window.nest.act("send", text);
+    if (!text || send.disabled) return;
+    const scope = taskScope.value;
+    if (scope) {
+      const selection = selectedTask();
+      if (!selection) return;
+      window.nest.act("window-task", {
+        agentId: selection.role.id,
+        scope,
+        grantId: selection.grantId,
+        text,
+      });
+      taskScope.value = "";
+      selectedWindowGrant = undefined;
+      refreshWindowTask();
+    } else window.nest.act("send", text);
     message.value = "";
     message.focus();
   });

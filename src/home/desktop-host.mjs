@@ -4,6 +4,12 @@ import { SessionPreparationFailure } from "../backends/turn-failure.mjs";
 import { recallBoundary } from "../core/recall-boundary.mjs";
 import { containsCredential } from "../core/secrets.mjs";
 import { roleBackendConfig } from "../core/functional-agents.mjs";
+import {
+  DESKTOP_BODY_CONTROL,
+  DESKTOP_DECISION,
+  DESKTOP_NATIVE_CONTROL,
+  DESKTOP_SCREEN_VIEW,
+} from "../tools/names.mjs";
 import { roleTurnBusy } from "../core/role-rest.mjs";
 import { DESKTOP_ACTIVITY_TIMEOUT } from "./desktop-activity.mjs";
 import { rhythmStatus } from "../core/rhythm.mjs";
@@ -19,6 +25,7 @@ import { beginDesktopContext } from "./desktop-context.mjs";
 import {
   DESKTOP_ACTIVITY_CONVERSATION,
   DESKTOP_OBSERVATION_CONVERSATION,
+  DESKTOP_WINDOW_TASK_CONVERSATION,
   DESKTOP_CONVERSATION,
   readDecision,
 } from "./desktop-decision.mjs";
@@ -37,6 +44,12 @@ import { DesktopNative } from "./desktop-native.mjs";
 import { DesktopBrowser, browserGrantSchema } from "./desktop-browser.mjs";
 import { localGrantSchema, localRevokeSchema } from "./desktop-local-grant.mjs";
 
+const windowTaskInput = localGrantSchema
+  .extend({
+    scope: z.enum(["screen", "native"]),
+    text: z.string().trim().min(1).max(1000),
+  })
+  .strict();
 const requestSchema = z
   .object({
     client: z.string().uuid(),
@@ -54,6 +67,8 @@ const requestSchema = z
       "observation-grant",
       "observation-revoke",
       "observation-state",
+      "window-task",
+      "window-task-stop",
       "native-grant",
       "native-revoke",
       "browser-grant",
@@ -69,6 +84,7 @@ const requestSchema = z
             dragged: z.array(z.string().min(1).max(64)).max(24),
             bodyProtocol: z.literal(2).optional(),
             bodyCrossDisplay: z.literal(true).optional(),
+            bodyInteractions: z.literal(true).optional(),
             observationProtocol: z.literal(2).optional(),
             bodyResults: z.array(bodyResultEvidenceSchema).max(4).optional(),
             bodyPositions: z
@@ -81,6 +97,7 @@ const requestSchema = z
           })
           .strict(),
         observationStateSchema,
+        windowTaskInput,
         localGrantSchema,
         localRevokeSchema,
         browserGrantSchema,
@@ -208,10 +225,17 @@ export class DesktopHost {
     this.visits.get(id)?.finishSubject(id, completed);
   }
   interrupt(id) {
+    this.live?.cancelInteraction(id);
+    if (this.windowTask?.actor === id) this.stopWindowTask("inactive");
     this.visits.get(id)?.interrupt(id);
   }
   claimQq(id, conversation) {
-    return this.visits.get(id)?.claimQq(id, conversation);
+    const claim = this.visits.get(id)?.claimQq(id, conversation);
+    if (claim) {
+      this.live?.cancelInteraction(id);
+      if (this.windowTask?.actor === id) this.stopWindowTask("inactive");
+    }
+    return claim;
   }
 
   operational() {
@@ -254,7 +278,9 @@ export class DesktopHost {
       this.reset();
     // Maintenance keeps existing turn capabilities alive and stops admission.
     if (this.runtime.updateMaintenance) {
+      this.stopWindowTask("inactive");
       this.live?.cancelActivity();
+      this.live?.cancelInteraction();
       this.observation.clear();
       this.body.clear();
       void this.browser.clear();
@@ -293,6 +319,9 @@ export class DesktopHost {
         this.observation.state();
         this.body.clientWork();
       }
+      this.live.maintainInteraction();
+      if (this.windowTask?.current() === false)
+        this.stopWindowTask("target-unavailable");
       this.live.tick(now);
       this.invitations.dispatch();
       this.browser.state();
@@ -304,6 +333,7 @@ export class DesktopHost {
     const { runtime } = this;
     if (
       !this.connected() ||
+      this.residentPreference(id)?.quiet ||
       !(this.client.activityVisibleUntil > runtime.now()) ||
       !runtime.config.desktopHome.activityRoles.includes(id)
     )
@@ -315,6 +345,125 @@ export class DesktopHost {
       rhythm !== "rest-pending" &&
       !runtime.blockers(agent, DESKTOP_ACTIVITY_CONVERSATION).length
     );
+  }
+
+  residentPreference(id) {
+    const preferences = this.runtime.config.desktopHome.residentPreferences;
+    return preferences && Object.hasOwn(preferences, id)
+      ? preferences[id]
+      : undefined;
+  }
+
+  bodyControlAvailable(id) {
+    if (
+      !this.live?.visits.has(id) ||
+      !this.connected() ||
+      this.runtime.updateMaintenance
+    )
+      return false;
+    const agent = this.runtime.agent(id);
+    return (
+      !this.runtime.blockers(agent, DESKTOP_CONVERSATION).length &&
+      !["sleeping", "rest-pending"].includes(
+        rhythmStatus(this.runtime, agent).state,
+      ) &&
+      this.runtime
+        .toolsFor(agent, DESKTOP_CONVERSATION)
+        .includes(DESKTOP_BODY_CONTROL)
+    );
+  }
+
+  interactionsAvailable() {
+    return (
+      this.client?.bodyInteractions === true &&
+      this.runtime.config.desktopHome.interactionsEnabled === true
+    );
+  }
+
+  startWindowTask(input) {
+    if (
+      !this.interactionsAvailable() ||
+      this.windowTask ||
+      !(this.client.activityVisibleUntil > this.runtime.now()) ||
+      this.live?.activity.paused ||
+      containsCredential(input.text) ||
+      !this.bodyControlAvailable(input.agentId)
+    )
+      throw Error("DESKTOP_WINDOW_TASK_UNAVAILABLE");
+    const live = this.live;
+    const visit = live.visits.get(input.agentId);
+    const access = input.scope === "screen" ? this.screen : this.native;
+    const grant = access.grant;
+    if (
+      !grant ||
+      grant.grantId !== input.grantId ||
+      grant.roomEpoch !== input.roomEpoch ||
+      grant.agentId !== input.agentId ||
+      !access.current(grant)
+    )
+      throw Error("DESKTOP_WINDOW_TASK_UNAVAILABLE");
+    const task = {
+      id: randomUUID(),
+      actor: input.agentId,
+      scope: input.scope,
+      grantId: input.grantId,
+      text: input.text,
+      expiresAt: this.runtime.now() + 30_000,
+      finish: (reason) => this.finishWindowTask(task, reason),
+      current: () =>
+        this.windowTask === task &&
+        this.live === live &&
+        live.visits.get(task.actor) === visit &&
+        this.interactionsAvailable() &&
+        this.client.activityVisibleUntil > this.runtime.now() &&
+        !live.activity.paused &&
+        this.bodyControlAvailable(task.actor) &&
+        access.current(grant) &&
+        !this.visit(task.actor).qqClaims &&
+        !this.visit(task.actor).pendingQq() &&
+        task.expiresAt > this.runtime.now(),
+    };
+    this.windowTask = task;
+    this.windowTaskStatus = {
+      id: task.id,
+      agentId: task.actor,
+      scope: task.scope,
+      stage: "approaching",
+    };
+    if (!live.sendWindowTask(task)) {
+      this.windowTask = undefined;
+      this.windowTaskStatus = undefined;
+      throw Error("DESKTOP_WINDOW_TASK_UNAVAILABLE");
+    }
+  }
+
+  stopWindowTask(reason) {
+    const task = this.windowTask;
+    if (!task) return;
+    const ctx = this.runtime.running.get(
+      task.actor + "|" + DESKTOP_WINDOW_TASK_CONVERSATION,
+    );
+    this.finishWindowTask(
+      task,
+      ctx?.desktopWindowTaskUsed
+        ? undefined
+        : ctx?.desktopWindowTaskNativeClaimed
+          ? "action-unconfirmed"
+          : reason,
+    );
+    this.live?.cancelWindowTask(task);
+  }
+
+  finishWindowTask(task, reason) {
+    if (this.windowTask !== task) return;
+    this.windowTask = undefined;
+    this.windowTaskStatus = {
+      id: task.id,
+      agentId: task.actor,
+      scope: task.scope,
+      stage: reason ? "failed" : "completed",
+      ...(reason && { reason }),
+    };
   }
 
   open(client) {
@@ -379,6 +528,14 @@ export class DesktopHost {
         roles: ids,
         now: () => this.runtime.now(),
         activityStarts: this.activityStarts,
+        activityMinutes: (id) =>
+          this.residentPreference(id)?.activityMinutes ?? 2,
+        interactionCurrent: (id) =>
+          this.interactionsAvailable() &&
+          this.activityCurrent(id) &&
+          this.bodyControlAvailable(id) &&
+          !this.visit(id).qqClaims &&
+          !this.visit(id).pendingQq(),
         activity: (id) =>
           this.activityCurrent(id) &&
           !roleTurnBusy(this.runtime, id) &&
@@ -432,6 +589,8 @@ export class DesktopHost {
   }
 
   reset() {
+    this.stopWindowTask("inactive");
+    this.windowTaskStatus = undefined;
     this.body.clear();
     this.observation.clear();
     this.screen.clear();
@@ -485,6 +644,7 @@ export class DesktopHost {
         if (data.bodyProtocol === 2) {
           this.client.bodyProtocol = 2;
           this.client.bodyCrossDisplay = data.bodyCrossDisplay === true;
+          this.client.bodyInteractions = data.bodyInteractions === true;
           if (data.bodyPositions?.roomEpoch === live.room.epoch)
             this.client.bodyPositions = {
               at: Date.now(),
@@ -499,6 +659,9 @@ export class DesktopHost {
             };
         }
         const moved = new Set(data.dragged);
+        for (const id of moved) live.cancelInteraction(id);
+        if (moved.has(this.windowTask?.actor))
+          this.stopWindowTask("manual-control");
         for (const id of moved)
           live.activity.defer(live.visits.get(id), this.runtime.now());
         if (moved.has(live.active?.actor)) live.cancelActivity();
@@ -514,11 +677,16 @@ export class DesktopHost {
         data.bodyResults?.length
       )
         bodyResultAcks = this.body.reconcile(client, data.bodyResults);
+      live.maintainInteraction();
+      if (!visible && this.windowTask) this.stopWindowTask("hidden");
       if (visible === true) void live.advanceActivity(this.runtime.now());
     }
     if (action === "activity-pause" && typeof data === "boolean") {
       live.pauseActivity(data);
-      if (data) this.observation.clear();
+      if (data) {
+        this.observation.clear();
+        this.stopWindowTask("stopped");
+      }
     }
     const role = live.room.roles.find(({ id }) => id === data);
     if (action === "invite" && role) void live.invite(role);
@@ -527,8 +695,10 @@ export class DesktopHost {
       action === "send" &&
       typeof data === "string" &&
       !containsCredential(data)
-    )
+    ) {
+      this.stopWindowTask("stopped");
       live.send(data);
+    }
     if (action === "door-mode" && typeof data === "string")
       live.setDoorMode(data);
     if (action === "knock-answer" && typeof data === "boolean")
@@ -544,6 +714,10 @@ export class DesktopHost {
     }
     if (action === "observation-revoke")
       this.observation.change(true, localRevokeSchema.parse(data));
+    if (action === "window-task")
+      this.startWindowTask(windowTaskInput.parse(data));
+    if (action === "window-task-stop" && data === this.windowTask?.id)
+      this.stopWindowTask("stopped");
     if (action === "observation-state")
       this.observation.updateTarget(observationStateSchema.parse(data));
     if (action === "screen-grant")
@@ -556,6 +730,8 @@ export class DesktopHost {
       this.native.change(true, localRevokeSchema.parse(data));
     if (action === "browser-grant" || action === "browser-revoke")
       this.browser.change(action, data);
+    if (this.windowTask?.current() === false)
+      this.stopWindowTask("target-unavailable");
     const state = this.clientSnapshot();
     if (action !== "sync") return state;
     const screenRequest = this.screen.request();
@@ -567,6 +743,7 @@ export class DesktopHost {
       ...this.native.clientWork(),
       bodyProtocol: 2,
       bodyCrossDisplay: true,
+      bodyInteractions: true,
       observationProtocol: 2,
       ...(bodyResultAcks?.length && { bodyResultAcks }),
       bodyRequests: this.body.clientWork(),
@@ -598,6 +775,8 @@ export class DesktopHost {
     }
     return {
       ...room,
+      interactionsAvailable: this.interactionsAvailable(),
+      ...(this.windowTaskStatus && { windowTaskStatus: this.windowTaskStatus }),
       roles: room.roles.map((role) => {
         const { id } = role;
         const desktop = runtime.running.get(`${id}|${DESKTOP_CONVERSATION}`);
@@ -612,7 +791,8 @@ export class DesktopHost {
         else if (
           room.activityActor === id &&
           this.body.pending.get(id)?.claimed &&
-          this.body.pending.get(id)?.request.action.type === "move"
+          (this.body.pending.get(id)?.request.action.type === "move" ||
+            this.body.pending.get(id)?.request.interaction?.step === "move")
         )
           activity = "move";
         else if (
@@ -643,15 +823,16 @@ export class DesktopHost {
           bodyStatus.state = "observing";
         } else if (
           visit?.activity?.reason === "wait-ended" &&
-          visit.activity.dueAt > now
+          this.live.activity.dueAt(visit) > now
         ) {
           bodyStatus.state = "waiting";
-          bodyStatus.until = visit.activity.dueAt;
+          bodyStatus.until = this.live.activity.dueAt(visit);
         }
         return {
           ...role,
           activity,
           bodyStatus,
+          bodyControlAvailable: this.bodyControlAvailable(id),
           ...(visit && { bodyVisitId: this.body.visitId(visit) }),
         };
       }),
@@ -723,12 +904,14 @@ export class DesktopHost {
   async runModel(request, signal, canStart) {
     const { actor, kind } = request;
     const activity = kind === "activity";
-    const { observation } = request;
-    const conversation = observation
-      ? DESKTOP_OBSERVATION_CONVERSATION
-      : activity
-        ? DESKTOP_ACTIVITY_CONVERSATION
-        : DESKTOP_CONVERSATION;
+    const { observation, windowTask } = request;
+    const conversation = windowTask
+      ? DESKTOP_WINDOW_TASK_CONVERSATION
+      : observation
+        ? DESKTOP_OBSERVATION_CONVERSATION
+        : activity
+          ? DESKTOP_ACTIVITY_CONVERSATION
+          : DESKTOP_CONVERSATION;
     const runtime = this.runtime;
     const agent = runtime.agent(actor);
     const current = this.live;
@@ -752,6 +935,7 @@ export class DesktopHost {
         !this.connected(ctx) ||
         runtime.blockers(agent, conversation, ctx).length ||
         (activity && request.isCurrent?.() === false) ||
+        (windowTask && !windowTask.current()) ||
         (observation &&
           (!this.observation.current(observation) ||
             !this.observation.targetReady(observation)))
@@ -764,7 +948,12 @@ export class DesktopHost {
           this.live?.visits.get(actor),
         );
     };
-    let ctx, release, exchange, failure, decision;
+    let ctx,
+      release,
+      exchange,
+      failure,
+      decision,
+      windowFailure = "action-unconfirmed";
     const assertOutput = (text) => {
       if (!text) return;
       runtime.assertSafeOutput(ctx, text);
@@ -786,7 +975,10 @@ export class DesktopHost {
         },
         decide: (args) => {
           if (decision) throw Error("DESKTOP_DECISION_DENIED");
-          const next = readDecision(kind, args, request);
+          const next = windowTask
+            ? args.action === "silent" &&
+              args.text === undefined && { action: "silent" }
+            : readDecision(kind, args, request);
           if (
             !next ||
             (next.action === "observe" &&
@@ -810,12 +1002,45 @@ export class DesktopHost {
         : request.messages?.findLast(
             ({ speakerType }) => speakerType === "administrator",
           )?.now;
-      if (activity) ctx.onDesktopBodyResult = request.onBodyResult;
+      if (activity) {
+        ctx.onDesktopBodyResult = request.onBodyResult;
+        if (!observation) {
+          ctx.desktopInteractionStep = request.interaction?.step;
+          ctx.onDesktopInteractionResult = request.onInteractionResult;
+        }
+      }
+      if (windowTask) {
+        ctx.desktopBodyInputAt = Date.now();
+        ctx.desktopWindowTask = windowTask;
+        const allowed = [
+          DESKTOP_DECISION,
+          windowTask.scope === "screen"
+            ? DESKTOP_SCREEN_VIEW
+            : DESKTOP_NATIVE_CONTROL,
+        ];
+        ctx.allowedTools = ctx.allowedTools.filter((name) =>
+          allowed.includes(name),
+        );
+      }
       ctx.done = done.promise;
       runtime.running.set(key, ctx);
+      if (windowTask) {
+        const result = await this.body.run(ctx, {
+          type: "window-task",
+          requestId: windowTask.id,
+        });
+        if (result.status !== "completed") {
+          windowFailure = result.reason ?? "position-unconfirmed";
+          return { action: "silent" };
+        }
+        check();
+        ctx.desktopWindowTaskReady = true;
+        ctx.desktopPrivateObservation = true;
+        this.windowTaskStatus.stage = "ready";
+      }
       const backend = runtime.backendConnections.adapter(agent);
       if (!backend.runDesktop) throw Error("DESKTOP_VISIT_UNAVAILABLE");
-      if (!activity)
+      if (!activity && !windowTask)
         attachmentInput = this.attachments?.project(
           request.messages || [],
           runtime.config,
@@ -889,6 +1114,10 @@ export class DesktopHost {
       });
       check();
       if (request.isCurrent?.() === false) return { action: "silent" };
+      if (windowTask) {
+        if (ctx.desktopWindowTaskUsed) windowFailure = undefined;
+        return { action: "silent" };
+      }
       if (!decision) throw Error("DESKTOP_DECISION_MISSING");
       assertOutput(decision.text);
       return decision.action === "say"
@@ -902,6 +1131,7 @@ export class DesktopHost {
       )
         this.observation.clear();
       failure = error;
+      if (windowTask && ctx?.desktopWindowTaskUsed) windowFailure = undefined;
       if (controller.signal.aborted) throw controller.signal.reason;
       throw error;
     } finally {
@@ -916,6 +1146,7 @@ export class DesktopHost {
         if (ctx && runtime.running.get(key) === ctx)
           runtime.running.delete(key);
         external.removeEventListener("abort", abort);
+        if (windowTask) windowTask.failure = windowFailure;
         release?.();
         done.resolve();
       }

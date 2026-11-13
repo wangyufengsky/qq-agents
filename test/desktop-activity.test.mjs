@@ -43,11 +43,31 @@ test("activity uses fair round-robin, per-role hourly limits and visit-local wai
   );
 });
 
-function setup(t, enabled = true) {
-  const cfg = config(1);
+test("role cadence adjusts a live visit and preserves an explicit wait and drag cooldown", () => {
+  let interval = 10;
+  const activity = new DesktopActivity(new Map(), () => interval);
+  const visit = {};
+  activity.arrive(visit, 0, "agent-0");
+  assert.equal(activity.dueAt(visit), 10 * minute);
+  interval = 1;
+  assert.equal(activity.dueAt(visit), 2 * minute);
+  activity.finish(visit, {
+    reply: { action: "wait", waitMinutes: 5 },
+    now: minute,
+  });
+  activity.defer(visit, 2 * minute);
+  assert.equal(activity.dueAt(visit), 6 * minute);
+  interval = 10;
+  assert.equal(activity.dueAt(visit), 12 * minute);
+});
+
+function setup(t, enabled = true, count = 1) {
+  const cfg = config(count);
   cfg.desktopHome.enabled = true;
-  cfg.desktopHome.bodyControlRoles = ["agent-0"];
-  if (enabled) cfg.desktopHome.activityRoles = ["agent-0"];
+  const ids = cfg.agents.map(({ id }) => id);
+  cfg.desktopHome.bodyControlRoles = ids;
+  cfg.desktopHome.interactionsEnabled = count > 1;
+  if (enabled) cfg.desktopHome.activityRoles = ids;
   const gates = [];
   let host;
   t.after(() => {
@@ -60,14 +80,21 @@ function setup(t, enabled = true) {
   let now = runtime.now();
   runtime.now = () => now;
   const cmd = (action, data) => host.command({ client, action, data });
-  const sync = (visible = true) => cmd("sync", visible);
+  const sync = (visible = true) =>
+    cmd(
+      "sync",
+      count === 1
+        ? visible
+        : { visible, dragged: [], bodyProtocol: 2, bodyInteractions: true },
+    );
   sync();
+  for (const role of host.live.room.roles) {
+    host.live.room.members[role.id] = "invited";
+    host.live.admit(role);
+  }
   const role = host.live.room.roles[0];
-  host.live.room.members[role.id] = "invited";
-  host.live.admit(role);
   const runs = [];
-  const backend = runtime.backendConnections.adapter(runtime.agent(role.id));
-  backend.runDesktop = async (params) => {
+  const runDesktop = async (params) => {
     params.beforeInput();
     params.onInputSubmitted();
     const scope = params.managedContext.conversation;
@@ -82,6 +109,9 @@ function setup(t, enabled = true) {
         : "desktop_room_decide";
     await params.callTool(tool, choice ?? { action: "silent" });
   };
+  for (const agent of cfg.agents)
+    runtime.backendConnections.adapter(runtime.agent(agent.id)).runDesktop =
+      runDesktop;
   return {
     runtime,
     store,
@@ -263,3 +293,193 @@ test("manual drag merges into the next eligible wake after cooling down", async 
   runs[0].gate.resolve();
   await active.done;
 });
+
+const promptInteraction = (run) =>
+  JSON.parse(run.params.prompt.trim().split("\n").at(-1)).interaction;
+
+function interactionFixture(t) {
+  const state = setup(t, true, 3);
+  const { host, runs, sync, time } = state;
+  const next = (actor) => {
+    const previous = runs.length;
+    sync();
+    assert.equal(runs.length, previous + 1);
+    assert.equal(host.live.active.actor, actor);
+    return runs.at(-1);
+  };
+  const finish = async (run, decision = { action: "silent" }) => {
+    const { done } = host.live.active;
+    run.gate.resolve(decision);
+    await done;
+  };
+  const offer = async (kind) => {
+    time(2 * minute);
+    const proposer = next("agent-0");
+    assert.deepEqual(
+      promptInteraction(proposer).recipients.map(({ id }) => id),
+      ["agent-1", "agent-2"],
+    );
+    await finish(proposer, {
+      action: "silent",
+      interaction: { action: "propose", kind, recipient: "agent-1" },
+    });
+    assert.equal(runs.length, 1);
+    const recipient = next("agent-1");
+    const { id } = promptInteraction(recipient).offer;
+    return { recipient, id };
+  };
+  return { ...state, next, finish, offer };
+}
+
+test("interaction consent uses existing activity turns and authorizes each participant's own step", async (t) => {
+  const { host, client, sync, time, next, finish, offer } =
+    interactionFixture(t);
+  const { recipient, id } = await offer("together");
+  const act = (run, requestId) =>
+    run.params.callTool("desktop_body_control", {
+      type: "interaction",
+      requestId,
+      interactionId: id,
+    });
+  const receive = async (run, requestId, actor, peer, step) => {
+    const action = act(run, requestId);
+    const [request] = sync().bodyRequests;
+    const { commandId, roomEpoch, agentId, visitId } = request;
+    assert.equal(agentId, actor);
+    assert.equal(visitId, host.body.visitId(host.live.visits.get(actor)));
+    assert.deepEqual(request.interaction, {
+      kind: "together",
+      step,
+      peerAgentId: peer,
+      peerVisitId: host.body.visitId(host.live.visits.get(peer)),
+    });
+    const claim = { client, commandId, roomEpoch, agentId, visitId };
+    assert.equal(host.body.claim(claim).accepted, true);
+    host.body.receive({
+      ...claim,
+      finishedAt: Date.now(),
+      result: { status: "completed", position: { x: 0, y: 0, displayId: 1 } },
+    });
+    assert.equal((await action).status, "completed");
+  };
+  await assert.rejects(act(recipient, "early"), /DESKTOP_BODY_UNAVAILABLE/);
+  await assert.rejects(
+    recipient.params.callTool("desktop_activity_decide", {
+      action: "silent",
+      interaction: { action: "accept", id: randomUUID() },
+    }),
+    /DESKTOP_DECISION_INVALID/,
+  );
+  await finish(recipient, {
+    action: "silent",
+    interaction: { action: "accept", id },
+  });
+  const bystander = next("agent-2");
+  assert.equal(promptInteraction(bystander), undefined);
+  await assert.rejects(
+    act(bystander, "wrong-actor"),
+    /DESKTOP_BODY_UNAVAILABLE/,
+  );
+  await finish(bystander);
+  time(2 * minute);
+  const proposer = next("agent-0");
+  assert.equal(promptInteraction(proposer).step.action, "move");
+  await receive(proposer, "near-recipient", "agent-0", "agent-1", "move");
+  await finish(proposer);
+  const accepted = next("agent-1");
+  assert.equal(promptInteraction(accepted).step.action, "sit");
+  await receive(accepted, "sit", "agent-1", "agent-0", "sit");
+  await finish(accepted);
+  assert.equal(host.live.interaction, undefined);
+  assert.equal(host.live.room.budget, host.live.room.maxTurns);
+  assert.equal(
+    host.live.room.messages.some(({ speakerType }) => speakerType !== "system"),
+    false,
+  );
+});
+
+for (const interruption of ["peer-qq", "target-blocked"]) {
+  test(`an accepted approach releases its first step after ${interruption}`, async (t) => {
+    const { host, client, sync, time, next, finish, offer } =
+      interactionFixture(t);
+    const { recipient, id } = await offer("approach");
+    await finish(recipient, {
+      action: "silent",
+      interaction: { action: "accept", id },
+    });
+    await finish(next("agent-2"));
+    time(2 * minute);
+    const proposer = next("agent-0");
+    const pending = proposer.params.callTool("desktop_body_control", {
+      type: "interaction",
+      requestId: "approach",
+      interactionId: id,
+    });
+    const [{ commandId, roomEpoch, agentId, visitId }] = sync().bodyRequests;
+    const claim = { client, commandId, roomEpoch, agentId, visitId };
+    host.body.claim(claim);
+    const report = (result) =>
+      host.body.receive({ ...claim, finishedAt: Date.now(), result });
+    if (interruption === "peer-qq") {
+      host.interrupt("agent-1");
+      assert.throws(
+        () =>
+          report({
+            status: "completed",
+            position: { x: 0, y: 0, displayId: 1 },
+          }),
+        /DESKTOP_BODY_UNAVAILABLE/,
+      );
+      assert.deepEqual(sync().bodyRequests, []);
+      assert.equal((await pending).status, "unknown");
+    } else {
+      report({ status: "failed", reason: "target-blocked" });
+      assert.equal((await pending).reason, "target-blocked");
+    }
+    await finish(proposer);
+    assert.equal(host.live.interaction, undefined);
+  });
+}
+
+for (const invalidation of [
+  "ignore",
+  "revisit",
+  "qq",
+  "expire",
+  "permission",
+  "manual-drag",
+  "hidden",
+]) {
+  test(`interaction invitation is discarded after ${invalidation}`, async (t) => {
+    const { runtime, host, cmd, sync, time, finish, offer } =
+      interactionFixture(t);
+    const { recipient, id } = await offer("approach");
+    if (invalidation === "ignore") {
+      await finish(recipient, {
+        action: "silent",
+        interaction: { action: "ignore", id },
+      });
+    } else {
+      if (invalidation === "revisit") {
+        const proposer = host.live.room.roles[0];
+        host.live.leave(proposer);
+        host.live.room.members[proposer.id] = "invited";
+        host.live.admit(proposer);
+      }
+      if (invalidation === "qq") host.interrupt("agent-0");
+      if (invalidation === "expire") time(10 * minute);
+      if (invalidation === "permission")
+        runtime.config.desktopHome.bodyControlRoles = ["agent-1", "agent-2"];
+      if (invalidation === "manual-drag")
+        cmd("sync", { visible: true, dragged: ["agent-0"] });
+      if (invalidation === "hidden") sync(false);
+      sync(invalidation !== "hidden");
+      await finish(recipient, {
+        action: "silent",
+        interaction: { action: "accept", id },
+      });
+    }
+    assert.equal(host.live.interaction, undefined);
+    assert.deepEqual(sync().bodyRequests, []);
+  });
+}

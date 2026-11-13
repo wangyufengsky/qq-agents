@@ -72,6 +72,10 @@ export class DesktopLocalGrant {
           ctx.inputEpoch === epoch &&
           ctx.runtimeKind === "desktop" &&
           grant?.agentId === agent.id &&
+          (!ctx.desktopWindowTask ||
+            (ctx.desktopWindowTaskReady &&
+              ctx.desktopWindowTask.grantId === grant.grantId &&
+              ctx.desktopWindowTask.current())) &&
           this.current(grant)
         );
       } catch {

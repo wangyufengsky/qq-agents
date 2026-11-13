@@ -81,7 +81,9 @@ export class DesktopBodyClient {
         const terminal = entry.stopped
           ? { status: "cancelled", reason: entry.stopped }
           : result;
-        const body = { ...this.position(agentId), ...terminal };
+        const body = request.windowTask
+          ? terminal
+          : { ...this.position(agentId), ...terminal };
         if (
           (!v2 && ["target-blocked", "stale-layout"].includes(body.reason)) ||
           (!request.crossDisplay && body.reason === "target-unreachable")
@@ -89,7 +91,11 @@ export class DesktopBodyClient {
           body.reason = "target-unavailable";
         const finishedAt = Date.now();
         entry.finished = true;
-        if (body.status === "completed" && !body.position) {
+        if (
+          body.status === "completed" &&
+          !body.position &&
+          !body.arrivalConfirmed
+        ) {
           body.status = "failed";
           body.reason = "position-unconfirmed";
         }

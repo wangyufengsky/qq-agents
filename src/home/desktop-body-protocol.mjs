@@ -67,6 +67,24 @@ export const bodyActionSchema = z.union([
   ]),
 ]);
 
+export const interactiveBodyActionSchema = z.union([
+  bodyActionSchema,
+  z
+    .object({
+      type: z.literal("interaction"),
+      requestId,
+      interactionId: z.string().uuid(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("gesture"),
+      requestId,
+      gesture: z.enum(["jump", "climb", "land", "wave"]),
+    })
+    .strict(),
+]);
+
 const spaceSchema = z
   .object({
     layoutVersion: version,
@@ -146,10 +164,13 @@ export const bodyResultSchema = bodyClaimSchema
           .optional(),
         facing: facing.optional(),
         space: spaceSchema.optional(),
+        arrivalConfirmed: z.literal(true).optional(),
       })
       .strict()
-      .refine(({ status, reason, position }) =>
-        status === "completed" ? Boolean(position) && !reason : Boolean(reason),
+      .refine(({ status, reason, position, arrivalConfirmed }) =>
+        status === "completed"
+          ? Boolean(position) !== Boolean(arrivalConfirmed) && !reason
+          : Boolean(reason) && !arrivalConfirmed,
       ),
   })
   .strict();

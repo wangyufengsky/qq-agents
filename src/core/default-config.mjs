@@ -35,6 +35,8 @@ export function defaultConfig() {
       toolRoles: [],
       bodyControlRoles: [],
       activityRoles: [],
+      interactionsEnabled: false,
+      residentPreferences: {},
       autonomousObservation: false,
       observationRoles: [],
       observationRetentionDays: 7,

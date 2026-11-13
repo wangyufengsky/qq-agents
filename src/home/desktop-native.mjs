@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { recallBoundary } from "../core/recall-boundary.mjs";
 import { DESKTOP_NATIVE_CONTROL } from "../tools/names.mjs";
-import { DESKTOP_CONVERSATION } from "./desktop-decision.mjs";
+import {
+  DESKTOP_CONVERSATION,
+  DESKTOP_WINDOW_TASK_CONVERSATION,
+} from "./desktop-decision.mjs";
 import { DesktopLocalGrant } from "./desktop-local-grant.mjs";
 
 const uuid = z.string().uuid();
@@ -97,9 +100,10 @@ export class DesktopNative extends DesktopLocalGrant {
   clientWork() {
     if (!this.current(this.grant)) return {};
     const { runtime } = this.host;
-    const ctx = runtime.running.get(
-      this.grant.agentId + "|" + DESKTOP_CONVERSATION,
-    );
+    const id = this.grant.agentId + "|";
+    const ctx =
+      runtime.running.get(id + DESKTOP_WINDOW_TASK_CONVERSATION) ??
+      runtime.running.get(id + DESKTOP_CONVERSATION);
     if (!ctx?.turnId || ctx.controller.signal.aborted) return {};
     const nativeRequest = this.request();
     return {
@@ -130,6 +134,8 @@ export class DesktopNative extends DesktopLocalGrant {
     if (pending.claimed || pending.request.action.type === "observe")
       throw Error("DESKTOP_NATIVE_UNAVAILABLE");
     pending.claimed = true;
+    if (pending.ctx.desktopWindowTask)
+      pending.ctx.desktopWindowTaskNativeClaimed = true;
     return {
       accepted: true,
       expiresAt: Math.min(Date.now() + CLAIM_MS, pending.request.expiresAt),
@@ -172,18 +178,27 @@ export class DesktopNative extends DesktopLocalGrant {
       });
     }
     if (this.pending) throw Error("DESKTOP_NATIVE_UNAVAILABLE");
+    if (ctx.desktopWindowTask) {
+      if (ctx.desktopWindowTaskActionStarted)
+        throw Error("DESKTOP_NATIVE_UNAVAILABLE");
+      if (action.type !== "observe") ctx.desktopWindowTaskActionStarted = true;
+    }
     if ((ctx.desktopNativeCalls ?? 0) >= 12)
       throw Error("DESKTOP_NATIVE_LIMIT");
     ctx.desktopNativeCalls = (ctx.desktopNativeCalls ?? 0) + 1;
     const expiresAt = Date.now() + REQUEST_MS;
     const pending = {
       ...Promise.withResolvers(),
+      ctx,
       current: () => Date.now() < expiresAt && current(),
       request: {
         roomEpoch: grant.roomEpoch,
         grantId: grant.grantId,
         requestId: randomUUID(),
         turnId: ctx.turnId,
+        ...(ctx.desktopWindowTask && {
+          windowTaskId: ctx.desktopWindowTask.id,
+        }),
         expiresAt,
         action,
       },
@@ -197,6 +212,13 @@ export class DesktopNative extends DesktopLocalGrant {
       const result = await pending.promise;
       if (!current()) throw Error("DESKTOP_NATIVE_RESULT_UNKNOWN");
       if (action.type === "observe") ctx.desktopPrivateObservation = true;
+      if (
+        ctx.desktopWindowTask &&
+        action.type !== "observe" &&
+        result.ok &&
+        result.delivery === "delivered_verified"
+      )
+        ctx.desktopWindowTaskUsed = true;
       runtime.stageToolOutput(ctx, result, [{ value: result, current }]);
       return result;
     } finally {

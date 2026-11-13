@@ -19,8 +19,13 @@ import { managedDesktopExecutable } from "../../src/home/desktop-dependencies.mj
 import { clampToWorkArea, restoreWindowPoint } from "./window-placement.mjs";
 import { parseBrowserOrigin } from "./browser-origin.mjs";
 import { DesktopBodyClient } from "./body-client.mjs";
-import { DesktopExclusionStore, DesktopSpace } from "./space.mjs";
+import {
+  DesktopExclusionStore,
+  DesktopSpace,
+  displayFingerprint,
+} from "./space.mjs";
 import { createSpaceEditor } from "./space-editor.mjs";
+import { DesktopFollow, geometryFailure } from "./follow.mjs";
 import { createFrameworkClient } from "./framework-client.mjs";
 import { NativeControlClient } from "./native-control-client.mjs";
 import { createNativeDesktopDriver } from "./native-desktop-driver.mjs";
@@ -73,6 +78,14 @@ function readPreferences() {
 
 const saved = readPreferences();
 const positions = saved.positions ?? {};
+const places = new Map(
+  Object.entries(saved.places ?? {}).filter(
+    ([, place]) =>
+      place &&
+      /^[a-f0-9]{64}$/.test(place.display) &&
+      [place.x, place.y].every(Number.isSafeInteger),
+  ),
+);
 let doorPosition = saved.doorPosition;
 const validInterval = (value) =>
   Number.isInteger(value) && value >= 0 && value <= 1440;
@@ -101,6 +114,8 @@ let remoteState;
 let live;
 let shuttingDown = false;
 let screenGrant;
+let approachedWindowTask;
+let localWindowTaskStatus;
 let lastScreenGrant;
 let observationGrant;
 let lastObservationGrant;
@@ -113,6 +128,7 @@ let pointerTimer;
 const manuallyMoved = new Set();
 let bodyProtocol = false;
 let bodyCrossDisplay = false;
+let bodyInteractions = false;
 let observationProtocol = false;
 let recoveryPositionPending = false;
 let observationEnded;
@@ -136,6 +152,7 @@ const space = new DesktopSpace({
               facing: entry.facing ?? "right",
               pose: entry.pose ?? "sit",
               action: entry.bodyAction,
+              privatePosition: entry.privatePosition,
             },
           ]
         : [];
@@ -150,6 +167,7 @@ const spaceEditor = createSpaceEditor({
     space.invalidate();
     bodyInputAfter = Date.now();
     body.clear("stale-layout");
+    follow.stop("stale-layout");
     for (const entry of entries.values()) stopLocalSeat(entry, "stale-layout");
   },
 });
@@ -172,7 +190,7 @@ const body = new DesktopBodyClient({
   claim: (data, current) => framework.result("body-claim", data, current),
   result: (data, current) => framework.result("body-result", data, current),
   execute: executeVerifiedBodyAction,
-  position: bodyPosition,
+  position: (id) => (entries.get(id)?.privatePosition ? {} : bodyPosition(id)),
 });
 const nativeExecutable =
   screenCaptureSupported &&
@@ -184,6 +202,9 @@ const nativeDriver = screenCaptureSupported
 const observationDriver = nativeExecutable
   ? createNativeDesktopDriver({ executable: nativeExecutable })
   : null;
+const geometryDriver = nativeExecutable
+  ? createNativeDesktopDriver({ executable: nativeExecutable })
+  : null;
 const nativeControl = nativeDriver
   ? new NativeControlClient(nativeDriver, {
       command: (action, data) => framework.command(action, data),
@@ -191,8 +212,98 @@ const nativeControl = nativeDriver
         framework.result("native-claim", data, isCurrent),
       result: (data, isCurrent) =>
         framework.result("native-result", data, isCurrent),
+      verifyTarget: verifyApproachedWindow,
     })
   : null;
+
+async function windowGeometry(source, { signal } = {}) {
+  if (!geometryDriver || !source || source.pid === process.pid) return null;
+  const result = await geometryDriver.windowGeometry(source, { signal });
+  if (!result) return null;
+  const { x, y, width, height } = result.bounds;
+  const rounded = {
+    x: Math.floor(x),
+    y: Math.floor(y),
+    width: Math.ceil(x + width) - Math.floor(x),
+    height: Math.ceil(y + height) - Math.floor(y),
+  };
+  const bounds =
+    process.platform === "win32"
+      ? screen.screenToDipRect(null, rounded)
+      : rounded;
+  return bounds.width > 0 && bounds.height > 0 ? { bounds } : null;
+}
+
+function followBlocked({ entry, roomEpoch, visitId }) {
+  if (!remoteState?.connected) return "disconnect";
+  const role = remoteState.roles.find(({ id }) => id === entry.id);
+  if (
+    !role ||
+    entries.get(entry.id) !== entry ||
+    role.state !== "here" ||
+    !visitId ||
+    role.bodyVisitId !== visitId ||
+    remoteState.roomEpoch !== roomEpoch ||
+    entry.departing ||
+    shuttingDown
+  )
+    return "inactive";
+  if (hidden || desktopLocked || !windowVisible(entry)) return "hidden";
+  if (entry.drag || entries.get("door")?.drag) return "manual-control";
+  if (role.bodyStatus?.state === "qq") return "follow-qq";
+  if (
+    !remoteState.interactionsAvailable ||
+    !role.bodyControlAvailable ||
+    role.bodyStatus?.state === "paused"
+  )
+    return "follow-permission";
+}
+
+const follow = new DesktopFollow({
+  blocked: followBlocked,
+  display: (bounds) => screen.getDisplayMatching(bounds).id,
+  readWindow: async (source, signal) =>
+    (
+      await windowGeometry(source, {
+        signal: AbortSignal.any([signal, AbortSignal.timeout(2500)]),
+      })
+    )?.bounds,
+  move: ({ entry, mode, until }, bounds, current, fail) => {
+    let done = false;
+    const cancel = moveResident(
+      entry,
+      { target: { type: mode, bounds } },
+      {
+        current,
+        expiresAt: until,
+        crossDisplay: false,
+        local: true,
+        duration: mode === "pointer" ? 325 : 525,
+        finish: () => {
+          done = true;
+        },
+        fail: (reason) => {
+          done = true;
+          fail(reason);
+        },
+      },
+    );
+    return () => {
+      if (!done) cancel?.();
+    };
+  },
+  changed: (entry, reason) => {
+    if (reason) recordBodyFeedback(entry, reason);
+    else {
+      entry.bodyFeedback = undefined;
+      update();
+    }
+  },
+});
+
+function activeFollow(entry) {
+  return Boolean(entry && follow.active(entry));
+}
 
 function clearScreenGrant(observe = false) {
   if (observe) {
@@ -353,6 +464,188 @@ function verifyObservationRequest(value, action) {
   })();
 }
 
+function windowTaskGrant(scope, agentId, roomEpoch) {
+  if (!agentId || !roomEpoch || !remoteState?.interactionsAvailable) return;
+  const policy =
+    scope === "screen" ? remoteState.screenView : remoteState.nativeControl;
+  if (
+    policy?.grantedAgentId !== agentId ||
+    remoteState?.roomEpoch !== roomEpoch
+  )
+    return;
+  if (scope === "native")
+    return nativeControl?.selectedWindow(agentId, roomEpoch);
+  if (
+    screenGrant?.geometrySource &&
+    !screenGrant.pending &&
+    screenGrant.roomEpoch === roomEpoch &&
+    screenGrant.agentId === agentId &&
+    screenCapturePermission()
+  )
+    return screenGrant;
+}
+
+function controllableResident(agentId, roomEpoch, visitId) {
+  const role = remoteState?.roles.find(({ id }) => id === agentId);
+  const entry = entries.get(agentId);
+  if (
+    remoteState?.interactionsAvailable &&
+    remoteState.roomEpoch === roomEpoch &&
+    !remoteState.connectionLost &&
+    !hidden &&
+    !desktopLocked &&
+    !shuttingDown &&
+    role?.state === "here" &&
+    role.bodyVisitId === visitId &&
+    role.bodyControlAvailable &&
+    !["paused", "qq"].includes(role.bodyStatus?.state) &&
+    entry &&
+    !entry.departing &&
+    !entry.drag &&
+    !entries.get("door")?.drag &&
+    !activeFollow(entry) &&
+    windowVisible(entry)
+  )
+    return entry;
+}
+
+function stopLocalWindowTask(reason, agentId) {
+  const task = approachedWindowTask;
+  if (task && (!agentId || task.agentId === agentId)) {
+    approachedWindowTask = undefined;
+    if (screenCapture?.windowTaskId === task.id)
+      screenCapture.controller.abort();
+    nativeControl?.stopWindowTask(task.id);
+  }
+  for (const entry of entries.values()) {
+    if (agentId && entry.id !== agentId) continue;
+    const cancel = entry.localComboCancel;
+    entry.localComboCancel = undefined;
+    cancel?.(reason);
+  }
+}
+
+async function verifyApproachedWindow(request, signal) {
+  if (!request.windowTaskId) return true;
+  const task = approachedWindowTask;
+  if (
+    !task ||
+    request.windowTaskId !== task.id ||
+    request.roomEpoch !== task.roomEpoch ||
+    request.grantId !== task.grant.grantId ||
+    !task.current()
+  )
+    return false;
+  try {
+    const result = await windowGeometry(task.source, {
+      signal: AbortSignal.any([signal, AbortSignal.timeout(1800)]),
+    });
+    return (
+      !signal.aborted &&
+      approachedWindowTask === task &&
+      task.current() &&
+      sameRectangle(task.bounds, result?.bounds)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function sameRectangle(a, b) {
+  return (
+    b &&
+    a.x === b.x &&
+    a.y === b.y &&
+    a.width === b.width &&
+    a.height === b.height
+  );
+}
+
+function executeWindowTask(request, current, finish) {
+  const { agentId, roomEpoch, visitId, expiresAt, inputAt, windowTask } =
+    request;
+  const entry = controllableResident(agentId, roomEpoch, visitId);
+  const grant = windowTaskGrant(windowTask.scope, agentId, roomEpoch);
+  if (
+    !entry ||
+    grant?.grantId !== windowTask.grantId ||
+    inputAt <= Math.max(entry.bodyInputAfter ?? 0, bodyInputAfter)
+  )
+    return finish({ status: "cancelled", reason: "target-unavailable" });
+  const source = grant.geometrySource ?? grant.source;
+  const controller = new AbortController();
+  const signal = AbortSignal.any([
+    controller.signal,
+    AbortSignal.timeout(Math.max(1, expiresAt - Date.now())),
+  ]);
+  let cancelMove;
+  const localCurrent = () =>
+    controllableResident(agentId, roomEpoch, visitId) === entry &&
+    windowTaskGrant(windowTask.scope, agentId, roomEpoch) === grant &&
+    inputAt > Math.max(entry.bodyInputAfter ?? 0, bodyInputAfter);
+  const moving = () => !signal.aborted && current() && localCurrent();
+  const complete = (result) => {
+    if (entry.localComboCancel === cancel) entry.localComboCancel = undefined;
+    finish(result);
+  };
+  const cancel = (reason) => {
+    controller.abort();
+    cancelMove?.(reason);
+  };
+  entry.localComboCancel = cancel;
+  stopLocalSeat(entry, "stopped");
+  void (async () => {
+    try {
+      const geometry = await windowGeometry(source, { signal });
+      if (!geometry || !moving()) {
+        complete({ status: "cancelled", reason: "target-unavailable" });
+        return;
+      }
+      const { bounds } = geometry;
+      cancelMove = moveResident(
+        entry,
+        { target: { type: "window", bounds } },
+        {
+          current: moving,
+          expiresAt,
+          crossDisplay: request.crossDisplay === true,
+          local: true,
+          fail: (reason, status) => complete({ status, reason }),
+          finish: () => {
+            cancelMove = undefined;
+            void (async () => {
+              const checked = await windowGeometry(source, { signal });
+              if (!moving() || !sameRectangle(bounds, checked?.bounds)) {
+                complete({ status: "failed", reason: "position-unconfirmed" });
+                return;
+              }
+              const point = entry.win.getBounds();
+              approachedWindowTask = {
+                id: windowTask.id,
+                agentId,
+                roomEpoch,
+                grant,
+                source,
+                bounds,
+                current: () =>
+                  localCurrent() && sameRectangle(point, entry.win.getBounds()),
+              };
+              complete({ status: "completed", arrivalConfirmed: true });
+            })().catch(() =>
+              complete({ status: "failed", reason: "target-unavailable" }),
+            );
+          },
+        },
+      );
+    } catch {
+      complete({ status: "failed", reason: "target-unavailable" });
+    }
+  })();
+  return (reason) => {
+    if (entry.localComboCancel === cancel) stopLocalWindowTask(reason, agentId);
+  };
+}
+
 function screenRequest(value, action) {
   const { room: current, screenRequest: request } = value;
   for (const observe of [false, true]) {
@@ -387,7 +680,12 @@ function screenRequest(value, action) {
   grant.lastRequest = request.requestId;
   const { roomEpoch, grantId, requestId, maxEdge, maxBytes } = request;
   const controller = new AbortController();
-  screenCapture = { controller, requestId, observe };
+  screenCapture = {
+    controller,
+    requestId,
+    observe,
+    windowTaskId: request.windowTaskId,
+  };
   const isCurrent = () =>
     (observe ? observationCurrent(grant) : screenGrant === grant) &&
     !controller.signal.aborted &&
@@ -422,13 +720,18 @@ function screenRequest(value, action) {
             status = "duplicate";
           }
         }
-      } else {
+      } else if (
+        (await verifyApproachedWindow(request, signal)) &&
+        isCurrent()
+      ) {
         data = await captureScreen(
           grant.source,
           maxEdge,
           maxBytes,
           signal,
         ).catch(() => undefined);
+        if (data && !(await verifyApproachedWindow(request, signal)))
+          data = undefined;
       }
       if (isCurrent()) {
         await framework.result(
@@ -457,7 +760,12 @@ function savePreferences() {
   const next = `${preferencesPath}.next`;
   writeFileSync(
     next,
-    JSON.stringify({ minutes: room.minutes, positions, doorPosition }),
+    JSON.stringify({
+      minutes: room.minutes,
+      positions,
+      doorPosition,
+      places: Object.fromEntries(places),
+    }),
   );
   renameSync(next, preferencesPath);
 }
@@ -507,20 +815,69 @@ function baseSnapshot() {
   };
 }
 
+function savedPlace(id) {
+  const place = places.get(id);
+  if (!place) return;
+  const display = screen
+    .getAllDisplays()
+    .find((display) => displayFingerprint(display) === place.display);
+  const entry = entries.get(id);
+  if (!display) return { state: "unavailable" };
+  const { x, y } = display.workArea;
+  const point = { x: x + place.x, y: y + place.y };
+  const [width, height] = sizes.sprite;
+  const size =
+    entry && !entry.win.isDestroyed()
+      ? entry.win.getBounds()
+      : { width, height };
+  const clamped = clampPoint(point, size.width, size.height, display.workArea);
+  if (point.x !== clamped.x || point.y !== clamped.y)
+    return { state: "unavailable" };
+  return { state: "saved", point, displayId: display.id };
+}
+
 function snapshot(panel = false) {
   const data = baseSnapshot();
+  const screen =
+    panel &&
+    windowTaskGrant("screen", data.screenView?.grantedAgentId, data.roomEpoch);
+  const native =
+    panel &&
+    windowTaskGrant(
+      "native",
+      data.nativeControl?.grantedAgentId,
+      data.roomEpoch,
+    );
   return {
     ...data,
     bodyZones: !hidden && !desktopLocked,
-    ...(panel && { observationReviewAvailable: observationProtocol }),
+    windowTaskStatus:
+      panel && data.interactionsAvailable
+        ? (localWindowTaskStatus ?? data.windowTaskStatus)
+        : undefined,
+    ...(panel && {
+      observationReviewAvailable: observationProtocol,
+      windowFollowAvailable: Boolean(geometryDriver),
+      ...(screen && {
+        windowTaskScreenAgentId: screen.agentId,
+        windowTaskScreenGrantId: screen.grantId,
+      }),
+      ...(native && {
+        windowTaskNativeAgentId: native.agentId,
+        windowTaskNativeGrantId: native.grantId,
+      }),
+    }),
     ...(observationEnded && { observationEnded }),
     roles: data.roles.map((role) => {
+      if (panel && places.has(role.id))
+        role = { ...role, place: savedPlace(role.id).state };
       const entry = entries.get(role.id);
       if (!entry || !visibleBounds(entry)) return role;
       const status = role.bodyStatus ?? { state: "idle" };
       const stopped = ["paused", "qq"].includes(status.state);
       return {
         ...role,
+        ...(panel && activeFollow(entry) && { follow: follow.snapshot(entry) }),
         bodyStatus: {
           ...status,
           ...entry.bodyFeedback,
@@ -532,6 +889,7 @@ function snapshot(panel = false) {
               : status.state,
           facing: entry.facing ?? "right",
           pose: entry.pose ?? "sit",
+          ...(entry.gesture && { gesture: entry.gesture }),
         },
       };
     }),
@@ -552,16 +910,7 @@ function send(entry, channel, value) {
 function update() {
   const data = snapshot();
   for (const entry of entries.values()) {
-    send(
-      entry,
-      "room:update",
-      entry.type === "panel"
-        ? {
-            ...data,
-            observationReviewAvailable: observationProtocol,
-          }
-        : data,
-    );
+    send(entry, "room:update", entry.type === "panel" ? snapshot(true) : data);
     updateMotion(entry);
   }
 }
@@ -665,6 +1014,7 @@ function createWindow(id, type, point, options = {}) {
     for (const event of ["show", "hide", "minimize", "restore"])
       win.on(event, () => windowVisibilityChanged(entry));
   win.on("closed", () => {
+    follow.stop("inactive", entry);
     body.stop(id, "inactive");
     stopLocalSeat(entry, "inactive");
     stopMovement(entry);
@@ -711,6 +1061,8 @@ function showPanel(section) {
 
 function windowVisibilityChanged(entry) {
   if (!windowVisible(entry)) {
+    follow.stop("hidden", entry);
+    stopLocalWindowTask("hidden", entry.id);
     body.stop(entry.id, "hidden");
     stopLocalSeat(entry, "hidden");
     if (entry.departing) entry.win.destroy();
@@ -772,6 +1124,8 @@ function stopLocalSeat(entry, reason) {
 }
 
 function stopLocalMotion(reason) {
+  follow.stop(reason);
+  stopLocalWindowTask(reason);
   for (const entry of entries.values()) {
     entry.drag = null;
     stopLocalSeat(entry, reason);
@@ -942,6 +1296,8 @@ function bodyPosition(id) {
 }
 
 function executeVerifiedBodyAction(request, current, finish) {
+  if (request.windowTask) return executeWindowTask(request, current, finish);
+  if (request.interaction) return executeInteraction(request, current, finish);
   if (!request.observation) return executeBodyAction(request, current, finish);
   const grant = observationGrant;
   const allowed = () =>
@@ -983,6 +1339,56 @@ function executeVerifiedBodyAction(request, current, finish) {
   };
 }
 
+function executeInteraction(request, current, finish) {
+  const { agentId, interaction } = request;
+  const { peerAgentId, peerVisitId, kind, step } = interaction;
+  const actor = entries.get(agentId);
+  const peer = entries.get(peerAgentId);
+  const peerCurrent = () =>
+    current() &&
+    peer &&
+    entries.get(peerAgentId) === peer &&
+    peer.bodyVisitId === peerVisitId &&
+    !peer.privatePosition &&
+    controllableResident(peerAgentId, request.roomEpoch, peerVisitId) === peer;
+  if (!actor || !peerCurrent())
+    return finish({ status: "cancelled", reason: "target-unavailable" });
+  let action;
+  if (step === "move") {
+    const target = space.residentTarget(agentId, peerAgentId);
+    if (target) action = { type: "move", ...target };
+  } else {
+    const a = visibleBounds(actor);
+    const b = visibleBounds(peer);
+    const nearby =
+      a &&
+      b &&
+      screen.getDisplayMatching(a).id === screen.getDisplayMatching(b).id &&
+      Math.hypot(
+        Math.max(0, b.x - a.x - a.width, a.x - b.x - b.width),
+        Math.max(0, b.y - a.y - a.height, a.y - b.y - b.height),
+      ) <= 64;
+    if (kind === "wave" || nearby)
+      action =
+        step === "wave"
+          ? { type: "gesture", gesture: "wave" }
+          : { type: "pose", pose: "sit" };
+  }
+  if (!action)
+    return finish({ status: "cancelled", reason: "target-unavailable" });
+  return executeBodyAction({ ...request, action }, peerCurrent, (result) => {
+    if (
+      result.status === "completed" &&
+      kind === "together" &&
+      step === "move"
+    ) {
+      actor.pose = "sit";
+      update();
+    }
+    finish(result);
+  });
+}
+
 function executeBodyAction(
   { agentId, inputAt, expiresAt, action, crossDisplay = false },
   current,
@@ -999,8 +1405,11 @@ function executeBodyAction(
   if (
     entry.drag ||
     entries.get("door")?.drag ||
+    activeFollow(entry) ||
     inputAt <= Math.max(entry.bodyInputAfter ?? 0, bodyInputAfter)
   )
+    return fail("manual-control");
+  if (entry.privatePosition && action.type !== "move")
     return fail("manual-control");
   if (action.type !== "state") stopLocalSeat(entry, "stopped");
   if (action.type === "state")
@@ -1008,6 +1417,31 @@ function executeBodyAction(
       status: "completed",
       space: space.snapshot(agentId, { crossDisplay }),
     });
+  if (action.type === "gesture") {
+    if (
+      !remoteState?.interactionsAvailable ||
+      !["jump", "climb", "land", "wave"].includes(action.gesture)
+    )
+      return fail("inactive");
+    const gesture = { kind: action.gesture, id: randomUUID() };
+    entry.gesture = gesture;
+    update();
+    const clear = () => {
+      if (entry.gesture === gesture) {
+        entry.gesture = undefined;
+        update();
+      }
+    };
+    const timer = setTimeout(() => {
+      clear();
+      if (current() && windowVisible(entry)) finish({ status: "completed" });
+      else fail("inactive");
+    }, 420);
+    return () => {
+      clearTimeout(timer);
+      clear();
+    };
+  }
   if (action.type === "pose") {
     if (entry.movement) stopMovement(entry);
     if (action.facing) {
@@ -1031,17 +1465,19 @@ function executeBodyAction(
 function moveResident(
   entry,
   action,
-  { current, expiresAt, crossDisplay, finish, fail },
+  { current, expiresAt, crossDisplay, finish, fail, local = false, duration },
 ) {
   const { id: agentId } = entry;
   let plan = space.plan(agentId, action, { crossDisplay });
   if (plan.reason) return fail(plan.reason, "failed");
   entry.pose = "stand";
-  entry.bodyAction = {
-    kind: "move",
-    state: "executing",
-    destination: plan.destination,
-  };
+  if (local) entry.privatePosition = true;
+  else
+    entry.bodyAction = {
+      kind: "move",
+      state: "executing",
+      destination: plan.destination,
+    };
   let replanned = false;
   const end = (reason, status) => {
     plan.release();
@@ -1049,7 +1485,10 @@ function moveResident(
     if (reason) fail(reason, status);
     else {
       if (action.target === "seat") entry.pose = "sit";
-      entry.bodyFeedback = { reason: "completed", at: Date.now() };
+      if (!local) {
+        entry.privatePosition = undefined;
+        entry.bodyFeedback = { reason: "completed", at: Date.now() };
+      }
       update();
       finish({ status: "completed" });
     }
@@ -1082,14 +1521,15 @@ function moveResident(
         if (replacement.reason) return end(replacement.reason, "cancelled");
         plan.release();
         plan = replacement;
-        entry.bodyAction.destination = plan.destination;
+        if (!local) entry.bodyAction.destination = plan.destination;
         next(0);
       },
       duration: Math.min(
         Math.max(0, expiresAt - Date.now() - 300) / (plan.path.length - index),
-        plan.path.length === 1
-          ? Math.min(2200, Math.max(900, Math.round(distance * 3)))
-          : Math.min(1050, Math.max(250, Math.round(distance * 3))),
+        duration ??
+          (plan.path.length === 1
+            ? Math.min(2200, Math.max(900, Math.round(distance * 3)))
+            : Math.min(1050, Math.max(250, Math.round(distance * 3)))),
       ),
     });
   };
@@ -1135,7 +1575,9 @@ function hideAll() {
 function animateHome(role) {
   const entry = entries.get(role.id);
   if (entry && !entry.departing) {
-    body.stop(role.id, "inactive");
+    follow.stop("inactive", entry);
+    stopLocalWindowTask("inactive", role.id);
+    body.stop;
     stopLocalSeat(entry, "inactive");
     entry.departing = true;
     entry.win.setIgnoreMouseEvents(true);
@@ -1156,8 +1598,14 @@ function animateHome(role) {
 }
 
 function applyFramework(value, action) {
-  if (action === "sync" && !value.room) bodyCrossDisplay = false;
+  if (action === "sync" && !value.room) {
+    bodyCrossDisplay = false;
+    bodyInteractions = false;
+  }
   if (value.offline && remoteState) {
+    stopLocalWindowTask("disconnect");
+    localWindowTaskStatus = undefined;
+    follow.stop("disconnect");
     body.update(value, action);
     recoveryPositionPending = bodyProtocol;
     screenRequest(value, action);
@@ -1167,6 +1615,8 @@ function applyFramework(value, action) {
       connected: false,
       connectionLost: true,
       screenView: undefined,
+      interactionsAvailable: false,
+      windowTaskStatus: undefined,
       observation: undefined,
       nativeControl: undefined,
       browserControl: undefined,
@@ -1190,6 +1640,7 @@ function applyFramework(value, action) {
   if (action === "sync" && value.room) {
     bodyProtocol = value.bodyProtocol === 2;
     bodyCrossDisplay = bodyProtocol && value.bodyCrossDisplay === true;
+    bodyInteractions = bodyProtocol && value.bodyInteractions === true;
     observationProtocol = value.observationProtocol === 2;
     recoveryPositionPending = false;
   }
@@ -1197,6 +1648,7 @@ function applyFramework(value, action) {
   verifyObservationRequest(value, action);
   nativeControl?.update(value, action);
   if (value.closed) {
+    follow.stop("inactive");
     body.clear("inactive");
     app.quit();
     return;
@@ -1215,6 +1667,8 @@ function applyFramework(value, action) {
         : "请在管理台的纸页小窝里开启桌面小窝。",
   };
   const browserControl = value.room?.browserControl;
+  if (value.room?.roomEpoch !== remoteState?.roomEpoch)
+    localWindowTaskStatus = undefined;
   if (value.room && value.room.roomEpoch !== remoteState?.roomEpoch)
     observationEnded = undefined;
   if (value.room && value.room.roomEpoch !== lastBrowserGrant?.roomEpoch)
@@ -1247,6 +1701,15 @@ function applyFramework(value, action) {
   room.members = Object.fromEntries(roles.map(({ id, state }) => [id, state]));
   room.bubbles = { ...state.bubbles };
   room.turn = state.thinking ? { actor: state.thinking } : null;
+  follow.recheck();
+  const taskStatus = remoteState.windowTaskStatus;
+  if (
+    approachedWindowTask &&
+    (taskStatus?.id !== approachedWindowTask.id ||
+      !["approaching", "ready"].includes(taskStatus.stage) ||
+      !approachedWindowTask.current())
+  )
+    stopLocalWindowTask("inactive", approachedWindowTask.agentId);
   syncLive();
   body.update(value, action);
 }
@@ -1353,6 +1816,7 @@ function updatePointerPolling() {
 function updatePointerRegions() {
   if (hidden || desktopLocked) return;
   const { x, y } = screen.getCursorScreenPoint();
+  follow.pointer({ x, y });
   for (const entry of entries.values()) {
     const { win, type, id } = entry;
     if (type === "panel" || entry.departing || !windowVisible(entry)) continue;
@@ -1380,6 +1844,12 @@ function handleDrag(entry, action, data) {
   const [x, y] = entry.win.getPosition();
   if (action === "drag-start") {
     space.invalidate();
+    // Manual movement of any resident can invalidate the local route.
+    follow.stop("manual-control");
+    stopLocalWindowTask(
+      "manual-control",
+      entry.type === "door" ? undefined : entry.id,
+    );
     const interrupted =
       entry.type === "door"
         ? [...entries.values()].filter((resident) => resident.bodyAction)
@@ -1419,6 +1889,8 @@ function handleDrag(entry, action, data) {
       ...sizes[entry.type],
     );
     entry.win.setPosition(target.x, target.y);
+    if (target.x !== from.x || target.y !== from.y)
+      entry.privatePosition = undefined;
     if (action === "drag-end") {
       entry.drag = null;
       space.invalidate();
@@ -1541,6 +2013,86 @@ function desktopSourceMenu(win, availableRoles, sources, label) {
   });
 }
 
+ipcMain.handle("room:follow", async (event, id, mode) => {
+  if (!["pointer", "window", "stop"].includes(mode)) return "unavailable";
+  const win = entries.get("panel")?.win;
+  const entry = entries.get(id);
+  const role = remoteState?.roles.find(({ id: agentId }) => id === agentId);
+  if (
+    !entry ||
+    !win ||
+    win.isDestroyed() ||
+    !win.isFocused() ||
+    event.sender !== win.webContents ||
+    event.senderFrame !== win.webContents.mainFrame
+  )
+    return "unavailable";
+  if (mode === "stop") {
+    follow.stop("stopped", entry);
+    return "stopped";
+  }
+  const identity = {
+    entry,
+    roomEpoch: remoteState?.roomEpoch,
+    visitId: role?.bodyVisitId,
+  };
+  const layoutVersion = space.layoutVersion;
+  const current = () =>
+    !followBlocked(identity) && layoutVersion === space.layoutVersion;
+  if (!current()) return "unavailable";
+
+  function start(source, bounds) {
+    if (!current()) return "unavailable";
+    if (entry.localComboCancel || approachedWindowTask?.agentId === id)
+      return "busy";
+    entry.bodyInputAfter = Date.now();
+    body.stop(id, "manual-control");
+    stopLocalSeat(entry, "stopped");
+    stopMovement(entry);
+    return follow.start({ ...identity, mode, source, bounds });
+  }
+
+  if (
+    choosingDesktopPermission ||
+    entry.localComboCancel ||
+    approachedWindowTask?.agentId === id
+  )
+    return "busy";
+  if (mode === "pointer")
+    return start(undefined, screen.getCursorScreenPoint());
+  if (!geometryDriver) return "unavailable";
+  choosingDesktopPermission = true;
+  try {
+    const windows = await geometryDriver.geometryWindows({
+      signal: AbortSignal.timeout(4000),
+    });
+    if (win.isDestroyed() || !win.isFocused() || !current()) return "cancelled";
+    const sources = windows.filter(({ pid }) => pid !== process.pid);
+    if (!sources.length) return "no-sources";
+    const selection = await desktopSourceMenu(
+      win,
+      [role],
+      sources,
+      ({ app, title }) => `${app} · ${title}`,
+    );
+    if (!selection || win.isDestroyed() || !win.isVisible() || !current())
+      return "cancelled";
+    const { id: windowId, pid, processInstance, app } = selection.source;
+    const source = { id: windowId, pid, processInstance, app };
+    const result = await windowGeometry(source, {
+      signal: AbortSignal.timeout(2500),
+    });
+    if (win.isDestroyed() || !win.isVisible() || !current()) return "cancelled";
+    if (!result) return "target-unavailable";
+    return start(source, result.bounds);
+  } catch (error) {
+    const reason = geometryFailure(error);
+    return reason === "follow-permission" ? "permission" : reason;
+  } finally {
+    choosingDesktopPermission = false;
+  }
+});
+
 async function chooseScreenGrant(event, observe = false) {
   const entry = entries.get("panel");
   const win = entry?.win;
@@ -1612,6 +2164,7 @@ async function chooseScreenGrant(event, observe = false) {
         `${id.startsWith("screen:") ? "显示器" : "窗口"} · ${name}`,
     );
     if (!selection || win.isDestroyed() || !win.isVisible()) return "cancelled";
+    let geometrySource;
     if (observe) {
       const { state } = await readObservationTarget(
         selection.source,
@@ -1619,6 +2172,20 @@ async function chooseScreenGrant(event, observe = false) {
       );
       if (state !== "ready")
         return state === "permission" ? state : "no-sources";
+      if (win.isDestroyed() || !win.isVisible() || hidden || desktopLocked)
+        return "cancelled";
+    } else if (geometryDriver && selection.source.id.startsWith("window:")) {
+      const windows = await observationDriver
+        .observationWindows({
+          signal: AbortSignal.timeout(2500),
+        })
+        .catch(() => []);
+      geometrySource = observationSources(
+        sources,
+        windows,
+        ownScreenSources(),
+        process.pid,
+      ).find(({ id }) => id === selection.source.id)?.identity;
       if (win.isDestroyed() || !win.isVisible() || hidden || desktopLocked)
         return "cancelled";
     }
@@ -1630,6 +2197,7 @@ async function chooseScreenGrant(event, observe = false) {
       return "unavailable";
     const grant = {
       ...selection,
+      ...(geometrySource && { geometrySource }),
       ...(observe && {
         expiresAt: Date.now() + 15 * 60_000,
         controller: new AbortController(),
@@ -1899,6 +2467,41 @@ ipcMain.handle("room:browser-control", async (event, selection) => {
   }
 });
 
+function editPlace(id, action) {
+  if (action === "body-clear-place") {
+    places.delete(id);
+  } else {
+    const entry = controllableResident(
+      id,
+      remoteState?.roomEpoch,
+      entries.get(id)?.bodyVisitId,
+    );
+    if (!entry) return;
+    if (action === "body-go-place") return controlResident(id, action);
+    if (entry.movement || entry.privatePosition)
+      return recordBodyFeedback(entry, "position-unconfirmed");
+    const bounds = entry.win.getBounds();
+    const display = screen.getDisplayMatching(bounds);
+    const fingerprint = displayFingerprint(display);
+    if (!fingerprint) return recordBodyFeedback(entry, "target-unavailable");
+    const point = clampPoint(
+      bounds,
+      bounds.width,
+      bounds.height,
+      display.workArea,
+    );
+    if (point.x !== bounds.x || point.y !== bounds.y)
+      return recordBodyFeedback(entry, "target-unavailable");
+    places.set(id, {
+      display: fingerprint,
+      x: bounds.x - display.workArea.x,
+      y: bounds.y - display.workArea.y,
+    });
+  }
+  savePreferences();
+  update();
+}
+
 function controlResident(id, action) {
   const entry = entries.get(id);
   if (
@@ -1912,6 +2515,8 @@ function controlResident(id, action) {
   )
     return;
   entry.bodyInputAfter = Date.now();
+  follow.stop("stopped", entry);
+  stopLocalWindowTask("stopped", id);
   body.stop(id, "stopped");
   stopLocalSeat(entry, "stopped");
   stopMovement(entry);
@@ -1920,34 +2525,37 @@ function controlResident(id, action) {
     manuallyMoved.add(id);
     framework.sync();
   }
-  if (action === "body-seat") {
+  if (action === "body-seat" || action === "body-go-place") {
+    const place = action === "body-go-place" && savedPlace(id);
+    const target =
+      action === "body-seat"
+        ? { target: "seat" }
+        : place?.state === "saved" &&
+          space.pointTarget(id, place.displayId, place.point);
+    if (!target) return recordBodyFeedback(entry, "target-unavailable");
     const expiresAt = Date.now() + 6000;
     let settled = false;
     const settle = () => {
       settled = true;
       entry.localSeatCancel = undefined;
     };
-    const cancel = moveResident(
-      entry,
-      { target: "seat" },
-      {
-        current: () =>
-          entries.get(id) === entry &&
-          !entry.departing &&
-          !entry.drag &&
-          !hidden &&
-          !desktopLocked &&
-          windowVisible(entry) &&
-          Date.now() < expiresAt,
-        expiresAt,
-        crossDisplay: true,
-        finish: settle,
-        fail: (reason) => {
-          settle();
-          recordBodyFeedback(entry, reason);
-        },
+    const cancel = moveResident(entry, target, {
+      current: () =>
+        entries.get(id) === entry &&
+        !entry.departing &&
+        !entry.drag &&
+        !hidden &&
+        !desktopLocked &&
+        windowVisible(entry) &&
+        Date.now() < expiresAt,
+      expiresAt,
+      crossDisplay: true,
+      finish: settle,
+      fail: (reason) => {
+        settle();
+        recordBodyFeedback(entry, reason);
       },
-    );
+    });
     if (!settled) entry.localSeatCancel = cancel;
   }
 }
@@ -2023,6 +2631,80 @@ ipcMain.on("room:action", (event, action, data) => {
       spaceEditor.open(screen.getDisplayMatching(entry.win.getBounds()));
     return;
   }
+  const focused =
+    event.senderFrame === entry.win.webContents.mainFrame &&
+    entry.win.isFocused();
+  if (
+    ["body-mark-place", "body-go-place", "body-clear-place"].includes(action)
+  ) {
+    if (
+      focused &&
+      role &&
+      remoteState?.interactionsAvailable &&
+      !hidden &&
+      !desktopLocked
+    )
+      editPlace(role.id, action);
+    return;
+  }
+  if (action === "window-task" || action === "window-task-stop") {
+    if (
+      !focused ||
+      !remoteState?.interactionsAvailable ||
+      hidden ||
+      desktopLocked
+    )
+      return;
+    if (action === "window-task-stop") {
+      localWindowTaskStatus = undefined;
+      const status = remoteState.windowTaskStatus;
+      if (
+        status?.id !== data ||
+        !["approaching", "ready"].includes(status.stage)
+      )
+        return;
+      stopLocalWindowTask("stopped", status.agentId);
+      body.stop(status.agentId, "stopped");
+      void framework.command(action, data).catch(() => {});
+      return;
+    }
+    const { roomEpoch } = remoteState;
+    const { agentId, scope, grantId, text } = data ?? {};
+    if (
+      !["screen", "native"].includes(scope) ||
+      typeof text !== "string" ||
+      !text.trim() ||
+      text.length > 1000
+    )
+      return;
+    const grant = windowTaskGrant(scope, agentId, roomEpoch);
+    const resident = controllableResident(
+      agentId,
+      roomEpoch,
+      entries.get(agentId)?.bodyVisitId,
+    );
+    const fail = () => {
+      if (
+        remoteState?.roomEpoch !== roomEpoch ||
+        ["approaching", "ready"].includes(remoteState.windowTaskStatus?.stage)
+      )
+        return;
+      localWindowTaskStatus = {
+        agentId,
+        scope,
+        stage: "failed",
+        reason: "target-unavailable",
+      };
+      update();
+    };
+    if (!roles.some(({ id }) => id === agentId)) return;
+    if (!resident || !grant || grantId !== grant.grantId) return fail();
+    localWindowTaskStatus = undefined;
+    void framework
+      .command(action, { roomEpoch, agentId, scope, grantId, text })
+      .catch(fail);
+    return;
+  }
   if (["body-stop", "body-seat"].includes(action)) {
     if (
       event.senderFrame === entry.win.webContents.mainFrame &&
@@ -2044,7 +2726,12 @@ ipcMain.on("room:action", (event, action, data) => {
         "activity-pause",
       ].includes(action)
     ) {
-      if (action === "leave" && role) body.stop(role.id, "inactive");
+      if (action === "leave" && role) {
+        stopLocalWindowTask("inactive", role.id);
+        body.stop(role.id, "inactive");
+      }
+      if ((action === "activity-pause" && data === true) || action === "send")
+        stopLocalWindowTask("stopped");
       framework.act(action, data);
     }
     return;
@@ -2088,6 +2775,7 @@ else {
     if ((!live && !framework) || shuttingDown) return;
     event.preventDefault();
     shuttingDown = true;
+    follow.stop("inactive");
     spaceEditor.close();
     clearScreenGrant(true);
     body.clear("inactive");
@@ -2097,6 +2785,7 @@ else {
       (framework ?? live).close(),
       nativeDriver?.close(),
       observationDriver?.close(),
+      geometryDriver?.close(),
     ]).then(() => app.quit());
   });
   app.whenReady().then(() => {
@@ -2153,7 +2842,9 @@ else {
               ? [...entries.values()]
                   .flatMap((entry) => {
                     const position =
-                      entry.type === "sprite" && visibleBounds(entry)
+                      entry.type === "sprite" &&
+                      !entry.privatePosition &&
+                      visibleBounds(entry)
                         ? bodyPosition(entry.id).position
                         : undefined;
                     return position ? [{ agentId: entry.id, ...position }] : [];
@@ -2178,6 +2869,7 @@ else {
             ...(bodyProtocol && {
               bodyProtocol: 2,
               ...(bodyCrossDisplay && { bodyCrossDisplay: true }),
+              ...(bodyInteractions && { bodyInteractions: true }),
               ...(results.length && { bodyResults: results }),
               ...(bodyPositions && {
                 bodyPositions: {

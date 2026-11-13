@@ -102,6 +102,22 @@
           ></div>
           <div class="chat-tools">
             <p class="turn-status" role="status" hidden></p>
+            <div class="window-task-options" hidden>
+              <label class="sr-only" for="window-task-scope">发送方式</label>
+              <select id="window-task-scope">
+                <option value="">普通桌边消息</option>
+                <option value="screen" hidden disabled>先靠近再查看窗口</option>
+                <option value="native" hidden disabled>先靠近再操作窗口</option>
+              </select>
+              <label class="sr-only" for="window-task-role">执行角色</label>
+              <select id="window-task-role" hidden></select>
+            </div>
+            <div class="window-task-feedback" hidden>
+              <p class="window-task-status" role="status"></p>
+              <button type="button" class="quiet window-task-stop" hidden>
+                取消窗口任务
+              </button>
+            </div>
             <form class="composer">
               <label class="sr-only" for="message">发到房间</label>
               <input

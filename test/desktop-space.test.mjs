@@ -76,6 +76,47 @@ const position = (space, x, y) => {
   };
 };
 
+test("local targets keep a gap and never expose a privately positioned resident", () => {
+  const { space, state } = desktop({
+    residents: [
+      role("self", 40, 120),
+      role("private", 48, 310, { privatePosition: true }),
+    ],
+  });
+  const options = { crossDisplay: false };
+  const window = { target: { type: "window", bounds: box(300, 120) } };
+  const plan = space.plan("self", window, options);
+  assert.deepEqual(plan.path, [{ x: 188, y: 120 }]);
+  assert.equal(space.canStep("self", { x: 198, y: 120 }, plan), false);
+  plan.release();
+
+  const pointer = space.plan(
+    "self",
+    {
+      target: {
+        type: "pointer",
+        bounds: { x: 300, y: 160, width: 1, height: 1 },
+      },
+    },
+    options,
+  );
+  assert.deepEqual(pointer.path, [{ x: 152, y: 121 }]);
+  pointer.release();
+  assert.deepEqual(space.plan("self", { target: "seat" }, options).path, [
+    state.seat,
+  ]);
+  assert.equal(space.snapshot("self", options).residents.length, 0);
+  assert.equal(space.residentTarget("self", "private"), undefined);
+  assert.deepEqual(
+    space.plan(
+      "self",
+      { target: { type: "window", bounds: box(-450, 130) } },
+      options,
+    ),
+    { reason: "target-unreachable" },
+  );
+});
+
 test("snapshots expose only the current display, same-screen door and residents", () => {
   const { space, state } = desktop({
     residents: [

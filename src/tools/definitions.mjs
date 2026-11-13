@@ -24,7 +24,7 @@ import {
   FUNCTIONAL_AGENT_RESULT,
 } from "./names.mjs";
 import { browserActionSchema } from "../home/desktop-browser.mjs";
-import { bodyActionSchema } from "../home/desktop-body-protocol.mjs";
+import { interactiveBodyActionSchema } from "../home/desktop-body-protocol.mjs";
 import { nativeActionSchema } from "../home/desktop-native.mjs";
 import {
   desktopActivityDecisionDefinition,
@@ -97,7 +97,7 @@ export const definitions = {
   ],
   [DESKTOP_BODY_CONTROL]: [
     "按本轮权限控制自己的桌宠，移动仅限同屏。state 读取位置和空间快照，move 可用 door、seat 或快照中的角落、在场角色附近及受限坐标。结构化目标要附快照的 layoutVersion。pose 调整朝向或站立、坐下、张望。stop 停止，status 用原 requestId 查询本轮结果。等待 completed 才能确认完成。手动接管、取消或结果未知时，不换 ID 重试。",
-    bodyActionSchema,
+    interactiveBodyActionSchema,
   ],
   [DESKTOP_BROWSER_CONTROL]: [
     "在管理员授权的独立网页会话内操作。先 navigate 到指定网址或 observe 获取本轮元素引用，再 click 或 fill。只处理授权站点的静态公开网页，fill 只填写当前页面。close 关闭本地会话。",

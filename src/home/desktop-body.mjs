@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import {
+  DESKTOP_ACTIVITY_CONVERSATION,
   DESKTOP_OBSERVATION_CONVERSATION,
+  DESKTOP_WINDOW_TASK_CONVERSATION,
   isDesktopActivity,
   isDesktopConversation,
 } from "./desktop-decision.mjs";
@@ -13,6 +15,7 @@ const ACTION_TIMEOUT = 6000;
 const RECOVERY_WINDOW = 3000;
 const LAYOUT_MAX_AGE = 5000;
 const TURN_ACTION_LIMIT = 8;
+const INTERACTIVE_ACTIONS = new Set(["gesture", "interaction", "window-task"]);
 
 function canAct(runtime, agent, ctx) {
   const { state } = rhythmStatus(runtime, agent);
@@ -106,6 +109,13 @@ export class DesktopBody {
       !host.connected(ctx) ||
       live.visits.get(ctx.agentId) !== visit ||
       live.room.turn !== entry.turn ||
+      (INTERACTIVE_ACTIONS.has(entry.request.action.type) &&
+        !host.interactionsAvailable()) ||
+      (entry.request.interaction &&
+        !live.interactionStep(
+          ctx.agentId,
+          entry.request.action.interactionId,
+        )) ||
       host.runtime.running.get(ctx.agentId + "|" + ctx.conversation) !== ctx
     )
       return false;
@@ -205,6 +215,16 @@ export class DesktopBody {
           now - finishedAt >= RECOVERY_WINDOW))
     )
       throw Error("DESKTOP_BODY_UNAVAILABLE");
+    const windowTask = entry.request.action.type === "window-task";
+    if (
+      (result.arrivalConfirmed && !windowTask) ||
+      (windowTask &&
+        (result.position ||
+          result.facing ||
+          result.space ||
+          (result.status === "completed" && !result.arrivalConfirmed)))
+    )
+      throw Error("DESKTOP_BODY_INVALID");
     if (result.space) {
       if (
         recovered ||
@@ -234,7 +254,11 @@ export class DesktopBody {
       requestId: entry.request.action.requestId,
     };
     entry.receipt.resolve(entry.receipt.result);
-    if (["move", "pose"].includes(entry.request.action.type))
+    if (
+      ["move", "pose", "gesture", "interaction"].includes(
+        entry.request.action.type,
+      )
+    )
       entry.ctx.onDesktopBodyResult?.({
         type: entry.request.action.type,
         ...(entry.request.action.target && {
@@ -242,6 +266,7 @@ export class DesktopBody {
         }),
         ...result,
       });
+    if (entry.request.interaction) entry.ctx.onDesktopInteractionResult(result);
   }
 
   invalidate(entry, reason) {
@@ -318,9 +343,36 @@ export class DesktopBody {
     const v2 = client.bodyProtocol === 2;
     if (("layoutVersion" in action || "pose" in action) && !v2)
       throw Error("DESKTOP_BODY_UNAVAILABLE");
+    if (INTERACTIVE_ACTIONS.has(action.type) && !host.interactionsAvailable())
+      throw Error("DESKTOP_BODY_UNAVAILABLE");
+    let interaction;
+    if (action.type === "interaction") {
+      if (
+        ctx.conversation !== DESKTOP_ACTIVITY_CONVERSATION ||
+        ctx.desktopInteractionStep?.id !== action.interactionId
+      )
+        throw Error("DESKTOP_BODY_UNAVAILABLE");
+      const step = live.interactionStep(agent.id, action.interactionId);
+      if (!step) throw Error("DESKTOP_BODY_UNAVAILABLE");
+      interaction = {
+        kind: step.kind,
+        step: step.step,
+        peerAgentId: step.peer.id,
+        peerVisitId: this.visitId(step.peer.visit),
+      };
+    }
+    const windowTask = ctx.desktopWindowTask;
+    if (
+      action.type === "window-task" &&
+      (ctx.conversation !== DESKTOP_WINDOW_TASK_CONVERSATION ||
+        action.requestId !== windowTask?.id)
+    )
+      throw Error("DESKTOP_BODY_UNAVAILABLE");
     if ("layoutVersion" in action)
       validateTarget(action, this.spaces.get(ctx), client.bodyCrossDisplay);
     if (action.type === "state") this.spaces.delete(ctx);
+    if (["move", "window-task"].includes(action.type))
+      live.interruptInteractionMovement(agent.id);
     const expiresAt = Date.now() + ACTION_TIMEOUT;
     const receipt = Promise.withResolvers();
     const entry = {
@@ -342,6 +394,14 @@ export class DesktopBody {
         commandId: randomUUID(),
         expiresAt,
         inputAt,
+        ...(interaction && { interaction }),
+        ...(action.type === "window-task" && {
+          windowTask: {
+            id: windowTask.id,
+            scope: windowTask.scope,
+            grantId: windowTask.grantId,
+          },
+        }),
         ...(ctx.conversation === DESKTOP_OBSERVATION_CONVERSATION && {
           observation: true,
           observationGrantId: ctx.desktopObservationGrantId,

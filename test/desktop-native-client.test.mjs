@@ -6,6 +6,7 @@ import { NativeControlClient } from "../desktop/home/native-control-client.mjs";
 function fixture({
   acceptClaim = true,
   claimExpiresAt = Date.now() + 60_000,
+  verifyTarget,
 } = {}) {
   const roomEpoch = "room";
   const agentId = "fish";
@@ -51,6 +52,7 @@ function fixture({
       },
     },
     {
+      verifyTarget,
       command(action, data) {
         commands.push({ action, data });
         return action === "native-grant" ? room : undefined;
@@ -232,4 +234,57 @@ test("native control aborts a withdrawn request and revokes local access immedia
     action: "native-revoke",
     data: { roomEpoch, grantId },
   });
+});
+
+test("a window task checks the original arrival again after claiming native dispatch", async () => {
+  const claim = Promise.withResolvers();
+  let aligned = true;
+  const { claims, grant, results, roomEpoch, scopes, sync } = fixture({
+    acceptClaim: claim.promise,
+    verifyTarget: () => aligned,
+  });
+  const grantId = await grant();
+  sync("turn", {
+    roomEpoch,
+    grantId,
+    requestId: "window-task-click",
+    turnId: "turn",
+    windowTaskId: "window-task",
+    action: { type: "click", ref: "fixture" },
+  });
+  await setImmediate();
+  assert.equal(claims.length, 1);
+  aligned = false;
+  claim.resolve(true);
+  await setImmediate();
+  assert.deepEqual(scopes[0].mutations, []);
+  assert.equal(results[0].result, undefined);
+});
+
+test("local stop cancels a window task's in-flight result but preserves its window grant", async () => {
+  const claim = Promise.withResolvers();
+  const { claims, client, grant, results, roomEpoch, scopes, sync } = fixture({
+    acceptClaim: claim.promise,
+    verifyTarget: () => true,
+  });
+  const grantId = await grant();
+  sync("turn", {
+    roomEpoch,
+    grantId,
+    requestId: "window-task-stop",
+    turnId: "turn",
+    windowTaskId: "window-task",
+    action: { type: "click", ref: "fixture" },
+  });
+  await setImmediate();
+  assert.equal(claims.length, 1);
+  client.stopWindowTask("old-task");
+  assert.equal(scopes[0].closed, false);
+  client.stopWindowTask("window-task");
+  claim.resolve(true);
+  await setImmediate();
+  assert.equal(scopes[0].closed, true);
+  assert.deepEqual(scopes[0].mutations, []);
+  assert.deepEqual(results, []);
+  assert.equal(client.selectedWindow("fish", roomEpoch).grantId, grantId);
 });
