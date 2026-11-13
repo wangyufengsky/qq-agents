@@ -18,8 +18,10 @@ const resultSchema = localRevokeSchema
     client: uuid,
     requestId: uuid,
     data: z.string().min(4).max(maxEncoded).optional(),
+    status: z.enum(["duplicate", "unavailable"]).optional(),
   })
-  .strict();
+  .strict()
+  .refine(({ data, status }) => !(data && status));
 
 export class DesktopScreen extends DesktopLocalGrant {
   constructor(host) {
@@ -32,15 +34,28 @@ export class DesktopScreen extends DesktopLocalGrant {
     this.pending = null;
   }
 
+  cancel(grant) {
+    if (this.pending?.grant === grant)
+      this.pending.reject(Error("DESKTOP_SCREEN_UNAVAILABLE"));
+  }
+
   request() {
     const pending = this.pending;
     if (pending?.current() && !pending.received) return pending.request;
   }
 
-  receive(input) {
+  claim(input) {
     const parsed = resultSchema.safeParse(input);
-    if (!parsed.success) throw Error("DESKTOP_SCREEN_INVALID");
-    const { client, roomEpoch, grantId, requestId, data } = parsed.data;
+    if (!parsed.success || parsed.data.data || parsed.data.status)
+      throw Error("DESKTOP_SCREEN_INVALID");
+    const pending = this.lookup(parsed.data);
+    if (pending.request.mode !== "observation" || pending.claimed)
+      throw Error("DESKTOP_SCREEN_UNAVAILABLE");
+    pending.claimed = true;
+    return { accepted: true };
+  }
+
+  lookup({ client, roomEpoch, grantId, requestId }) {
     const pending = this.pending;
     if (
       !pending ||
@@ -52,11 +67,22 @@ export class DesktopScreen extends DesktopLocalGrant {
       pending.request.requestId !== requestId
     )
       throw Error("DESKTOP_SCREEN_UNAVAILABLE");
+    return pending;
+  }
+
+  receive(input) {
+    const parsed = resultSchema.safeParse(input);
+    if (!parsed.success) throw Error("DESKTOP_SCREEN_INVALID");
+    const { data, status } = parsed.data;
+    const pending = this.lookup(parsed.data);
+    const observe = pending.request.mode === "observation";
+    if ((observe && !pending.claimed) || (status && !observe))
+      throw Error("DESKTOP_SCREEN_UNAVAILABLE");
     if (data) {
       const bytes = Buffer.from(data, "base64");
       try {
         if (
-          bytes.length > MAX_BYTES ||
+          bytes.length > pending.request.maxBytes ||
           bytes.toString("base64") !== data ||
           imageMime(bytes) !== "image/jpeg" ||
           bytes.at(-2) !== 0xff ||
@@ -68,7 +94,8 @@ export class DesktopScreen extends DesktopLocalGrant {
       }
     }
     pending.received = true;
-    if (data) pending.resolve(data);
+    if (data) pending.resolve({ status: "frame", data });
+    else if (status) pending.resolve({ status });
     else pending.reject(Error("DESKTOP_SCREEN_CAPTURE_FAILED"));
     return { accepted: true };
   }
@@ -77,17 +104,40 @@ export class DesktopScreen extends DesktopLocalGrant {
     const { runtime } = this.host;
     const agent = runtime.assertActive(ctx);
     const { grant, current } = this.activeGrant(ctx, agent);
+    const { data } = await this.capture(ctx, agent, grant, current);
+    if (!current()) throw Error("DESKTOP_SCREEN_UNAVAILABLE");
+    // The native transcript can contain the pixels even if its receipt is lost.
+    ctx.desktopScreenObserved = true;
+    const result = {
+      [mediaLease]: current,
+      content: [
+        {
+          type: "text",
+          text: "管理员为本轮选定的桌面画面。仅用于当前桌面对话。",
+        },
+        { type: "image", mimeType: "image/jpeg", data },
+      ],
+    };
+    runtime.stageToolOutput(ctx, result, [{ value: result, current }]);
+    return result;
+  }
+
+  async capture(ctx, agent, grant, current, mode) {
     if (this.pending || ctx.desktopScreenObserved)
       throw Error("DESKTOP_SCREEN_UNAVAILABLE");
     const pending = {
       ...Promise.withResolvers(),
       current,
+      grant,
       request: {
         roomEpoch: grant.roomEpoch,
         grantId: grant.grantId,
         requestId: randomUUID(),
+        ...(mode && { mode }),
         maxEdge: Math.min(1024, agent.behavior.imageInput.maxEdge),
-        maxBytes: MAX_BYTES,
+        maxBytes: mode
+          ? Math.min(MAX_BYTES, agent.behavior.imageInput.maxBytes)
+          : MAX_BYTES,
       },
     };
     this.pending = pending;
@@ -99,23 +149,9 @@ export class DesktopScreen extends DesktopLocalGrant {
       CAPTURE_MS,
     );
     try {
-      const data = await pending.promise;
+      const frame = await pending.promise;
       if (!current()) throw Error("DESKTOP_SCREEN_UNAVAILABLE");
-      // The native transcript may contain the pixels even if its output
-      // receipt is lost. Retire that session before another turn can resume it.
-      ctx.desktopScreenObserved = true;
-      const result = {
-        [mediaLease]: current,
-        content: [
-          {
-            type: "text",
-            text: "管理员为本轮选定的桌面画面。仅用于当前桌面对话。",
-          },
-          { type: "image", mimeType: "image/jpeg", data },
-        ],
-      };
-      runtime.stageToolOutput(ctx, result, [{ value: result, current }]);
-      return result;
+      return frame;
     } finally {
       clearTimeout(timer);
       signal.removeEventListener("abort", abort);

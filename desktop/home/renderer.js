@@ -283,6 +283,24 @@ function panel() {
       failed: "屏幕授权操作失败。",
     },
   );
+  const updateObservation = bindDesktopPermission(
+    ".observation",
+    "observation",
+    {
+      grant: "授权自主观察窗口",
+      revoke: "撤销自主观察",
+      help: "为在场角色选择一个窗口，许可最长 15 分钟",
+    },
+    {
+      granted: "已授权。最多尝试观察四次。",
+      revoked: "已撤销自主观察。",
+      permission: "请在系统设置中允许屏幕录制后重试。",
+      "no-sources": "当前没有可选窗口。",
+      unavailable: "当前无法更改自主观察授权。",
+      failed: "自主观察授权操作失败。",
+    },
+  );
+  const observationTarget = select(".observation-target");
   const updateNativeControl = bindDesktopPermission(
     ".native-control",
     "nativeControl",
@@ -579,6 +597,14 @@ function panel() {
       attaching ||
       (!room.attachmentInput?.text && !room.attachmentInput?.image);
     updateScreenView();
+    updateObservation();
+    const observation = room.observation;
+    observationTarget.hidden = !observation?.grantedAgentId;
+    const observationStatus = observation?.grantedAgentId
+      ? `${observation.target ?? "授权窗口"} · ${clock.format(observation.expiresAt)} 到期 · 剩余 ${observation.remaining} 次`
+      : "";
+    if (observationTarget.textContent !== observationStatus)
+      observationTarget.textContent = observationStatus;
     updateNativeControl();
     updateBrowserControl();
     updateThread();

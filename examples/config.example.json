@@ -22,6 +22,7 @@
     "toolRoles": [],
     "bodyControlRoles": [],
     "activityRoles": [],
+    "autonomousObservation": false,
     "screenView": {
       "enabled": false
     },

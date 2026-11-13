@@ -3,6 +3,7 @@ import { groupReadDefinitions, groupReadTool } from "./group-read.mjs";
 import { profileDefinitions, profileTool } from "./profile.mjs";
 import { qzoneDefinitions, qzoneTool } from "./qzone.mjs";
 import { gameDefinitions, gameTool } from "../games/framework/tools.mjs";
+import { isDesktopActivity } from "../home/desktop-decision.mjs";
 import { definitions } from "./definitions.mjs";
 import {
   DESKTOP_ACTIVITY_DECISION,
@@ -44,10 +45,7 @@ const handlers = {
     runtime.desktopVisits.screen.view(ctx),
   memory_recall: recallFromChat,
   [DESKTOP_ACTIVITY_DECISION]: (_runtime, ctx, args) => {
-    if (
-      ctx.runtimeKind !== "desktop" ||
-      ctx.conversation !== "@desktop-activity"
-    )
+    if (ctx.runtimeKind !== "desktop" || !isDesktopActivity(ctx.conversation))
       throw Error("TOOL_DISABLED");
     return ctx.desktopDecision(args);
   },

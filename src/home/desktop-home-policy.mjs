@@ -4,6 +4,7 @@ export const desktopHomePolicy = z
   .object({
     enabled: z.boolean().default(false),
     toolRoles: z.array(z.string().min(1).max(64)).max(64).default([]),
+    autonomousObservation: z.boolean().default(false),
     activityRoles: z.array(z.string().min(1).max(64)).max(64).default([]),
     bodyControlRoles: z.array(z.string().min(1).max(64)).max(64).default([]),
     screenView: z

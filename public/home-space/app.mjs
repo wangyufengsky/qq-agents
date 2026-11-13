@@ -923,7 +923,16 @@ async function desktopSettings(root, ticket) {
     browserEnabled.type = "checkbox";
     browserEnabled.checked = policy.browserControl.enabled;
     browserLabel.prepend(browserEnabled);
-    form.append(screenLabel, nativeLabel, browserLabel);
+    const observationLabel = el(
+      "label",
+      "desktop-field",
+      "允许在本机授权自主观察窗口",
+    );
+    const observationEnabled = document.createElement("input");
+    observationEnabled.type = "checkbox";
+    observationEnabled.checked = policy.autonomousObservation;
+    observationLabel.prepend(observationEnabled);
+    form.append(screenLabel, observationLabel, nativeLabel, browserLabel);
     const status = el("p", "social-notice");
     status.setAttribute("role", "status");
     const save = el("button", "primary", "保存桌面设置");
@@ -937,6 +946,7 @@ async function desktopSettings(root, ticket) {
       ...bodyInputs,
       ...activityInputs,
       screenEnabled,
+      observationEnabled,
       nativeEnabled,
       browserEnabled,
       save,
@@ -951,6 +961,7 @@ async function desktopSettings(root, ticket) {
         maxTurns: inputs.maxTurns.valueAsNumber,
         refreshMinutes: inputs.refreshMinutes.valueAsNumber,
         screenView: { enabled: screenEnabled.checked },
+        autonomousObservation: observationEnabled.checked,
         nativeControl: { enabled: nativeEnabled.checked },
         browserControl: { enabled: browserEnabled.checked },
         activityRoles: activityInputs
@@ -971,6 +982,7 @@ async function desktopSettings(root, ticket) {
           existing.maxTurns !== policy.maxTurns ||
           existing.refreshMinutes !== policy.refreshMinutes ||
           existing.screenView.enabled !== policy.screenView.enabled ||
+          existing.autonomousObservation !== policy.autonomousObservation ||
           existing.nativeControl.enabled !== policy.nativeControl.enabled ||
           existing.browserControl.enabled !== policy.browserControl.enabled ||
           JSON.stringify(existing.activityRoles) !==

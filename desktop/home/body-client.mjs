@@ -90,6 +90,11 @@ export class DesktopBodyClient {
     if (reason === "inactive") this.active.delete(agentId);
   }
 
+  stopObservation(agentId) {
+    if (this.active.get(agentId)?.request.observation)
+      this.stop(agentId, "inactive");
+  }
+
   clear(reason) {
     for (const agentId of this.active.keys()) this.stop(agentId, reason);
   }
