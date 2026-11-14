@@ -149,6 +149,30 @@ test("ACP submits a captured desktop JPEG as native input in the same bridge tur
   assert.deepEqual(prompts[1].params.prompt[1], image);
   assert.equal(events.filter(({ event }) => event === "result").length, 1);
 });
+test("ACP checks for a requested screenshot after delivering video", async () => {
+  const f = fake();
+  const calls = () =>
+    f.calls.filter(({ method }) => method === "session/prompt");
+  const video = { type: "image", mimeType: "image/jpeg", data: "AQID" };
+  const screen = { type: "image", mimeType: "image/jpeg", data: "BAUG" };
+  await runAcp(
+    { ...options, desktop: true, desktopScreen: true, videoFrames: true },
+    "watch the fixture",
+    () => {},
+    f.launch,
+    [],
+    async () => (calls().length === 2 ? screen : null),
+    async () => (calls().length === 1 ? [video] : []),
+  );
+  assert.deepEqual(
+    calls().map(({ params }) =>
+      params.prompt.filter(({ type }) => type === "image"),
+    ),
+    [[], [video], [screen]],
+  );
+  assert(calls().every(({ params }) => params.sessionId === id));
+});
+
 test("ACP resumes with a current tool route when a native alias is unavailable", async () => {
   const f = fake();
   await runAcp(

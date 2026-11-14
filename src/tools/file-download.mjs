@@ -22,10 +22,22 @@ export function validateWithSignal(raw, validate, signal) {
 }
 
 // Resolve and pin each hop; never forward cookies, auth headers or local paths.
+function completeRange(value) {
+  const range = /^bytes 0-(\d+)\/(\d+)$/.exec(value || "");
+  return range && Number(range[1]) + 1 === Number(range[2]);
+}
+
 export function requestFile(
   url,
   addresses,
-  { maxBytes, signal, includeType = false, onBytes },
+  {
+    maxBytes,
+    signal,
+    includeType = false,
+    onBytes,
+    headers,
+    allowFullRange = false,
+  },
 ) {
   return new Promise((resolve, reject) => {
     const request = (url.protocol === "https:" ? https : http).get(
@@ -33,7 +45,7 @@ export function requestFile(
       {
         signal,
         agent: false,
-        headers: { "accept-encoding": "identity" },
+        headers: { ...headers, "accept-encoding": "identity" },
         lookup: (_host, options, callback) => {
           const values = addresses.map((address) => ({
             address,
@@ -50,7 +62,12 @@ export function requestFile(
           return;
         }
         if (
-          response.statusCode !== 200 ||
+          (response.statusCode !== 200 &&
+            !(
+              allowFullRange &&
+              response.statusCode === 206 &&
+              completeRange(response.headers["content-range"])
+            )) ||
           (response.headers["content-encoding"] &&
             response.headers["content-encoding"] !== "identity")
         ) {
@@ -104,7 +121,12 @@ export function requestFile(
 export async function downloadFile(
   raw,
   { maxBytes, signal },
-  { validate = validateFetchUrl, request = requestFile } = {},
+  {
+    validate = validateFetchUrl,
+    request = requestFile,
+    headers,
+    allowFullRange,
+  } = {},
 ) {
   const deadline = AbortSignal.timeout(60000);
   const combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
@@ -123,6 +145,8 @@ export async function downloadFile(
       result = await request(checked.url, checked.addresses, {
         maxBytes,
         signal: combined,
+        ...(headers && { headers }),
+        ...(allowFullRange && { allowFullRange }),
       });
     } catch (error) {
       // The response may emit 'aborted' before the request emits AbortError.

@@ -63,7 +63,7 @@ export const appDefinitions = {
     z.object({ platform: z.literal("heybox"), requestEventId }).strict(),
   ],
   app_capabilities: [
-    "发现五个平台实际入口、分页限制、权限和最近探测结果；配置不等于已经登录。contextGate 是一般操作限制，fixedPublicReads 单独说明受保护回忆后仍可用的固定公开读取路径。视频工具仅标题/简介/评论，不能声称看过视频。",
+    "发现五个平台实际入口、分页限制、权限和最近探测结果；配置不等于已经登录。contextGate 是一般操作限制，fixedPublicReads 单独说明受保护回忆后仍可用的固定公开读取路径。App 正文与评论工具返回视频的标题/简介/评论；真正读取画面需使用已授权的 video_read。",
     z.object({}).strict(),
   ],
   app_browse: [

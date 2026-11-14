@@ -131,6 +131,7 @@ const AGENT_TOOL_GROUPS = [
     desc: "读取公开网页、截图、只读社交平台内容，以及管理员允许的外部工具。",
     tools: {
       web_fetch: "读取公开网页",
+      video_read: "视频概览与回看",
       web_screenshot: "网页截图",
       app_screenshot: "已浏览 App 页面截图",
       social_search: "社交平台搜索",

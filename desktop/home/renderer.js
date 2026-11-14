@@ -1308,7 +1308,9 @@ function panel() {
     refreshWindowTask();
     attach.disabled =
       attaching ||
-      (!room.attachmentInput?.text && !room.attachmentInput?.image);
+      (!room.attachmentInput?.text &&
+        !room.attachmentInput?.image &&
+        !room.attachmentInput?.video);
     updateScreenView();
     updateObservation();
     observationRetention.hidden =
@@ -1388,7 +1390,9 @@ function panel() {
     } finally {
       attaching = false;
       attach.disabled =
-        !room.attachmentInput?.text && !room.attachmentInput?.image;
+        !room.attachmentInput?.text &&
+        !room.attachmentInput?.image &&
+        !room.attachmentInput?.video;
       attachmentStatus.hidden = status === "cancelled" || status === "sent";
       attachmentStatus.textContent =
         status === "invalid"

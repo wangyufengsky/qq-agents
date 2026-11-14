@@ -241,6 +241,7 @@ node src/main.mjs --data /path/to/private-data --port 3210
 - [连续聊天与联网策略](docs/CHAT-NETWORK-POLICY.md)
 - [消息链路时序观测与合成基准](docs/MESSAGE-TIMING.md)
 - [自主文件收发](docs/FILE-TRANSFER.md)
+- [视频概览和回看](docs/VIDEO.md)：桌面选本地视频，QQ 分享 B 站视频，角色按兴趣回看片段。
 - [图片、截图与文件资料库](docs/SAVED-MEDIA.md)
 - [平台浏览与分享](docs/APP-EXPLORATION-IMPLEMENTATION.md)
 - [GitHub 只读访问](docs/GITHUB-READ.md)

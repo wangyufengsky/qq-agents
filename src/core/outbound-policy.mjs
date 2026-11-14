@@ -162,11 +162,18 @@ function publicUrlRequest(ctx, tool) {
 }
 
 // Authority comes from a visible transport-authenticated human message, never a model flag.
-export function requestedByHuman(runtime, ctx, request, eventId) {
+export function requestedByHuman(
+  runtime,
+  ctx,
+  request,
+  eventId,
+  matchesHumanInput,
+) {
   const row = eventId && currentHumanRequest(runtime, ctx, eventId);
   if (!row) return false;
   const text = row.body.trim();
   const { tool, args } = request;
+  if (tool === "video_read") return matchesHumanInput?.(row, args) === true;
   if (
     publicUrlRequest(ctx, tool) ||
     tool === "app_read" ||
@@ -269,7 +276,7 @@ export function authorizeExternal(
   runtime,
   ctx,
   request,
-  { requestEventId, fixed = false, privateRepository } = {},
+  { requestEventId, fixed = false, privateRepository, matchesHumanInput } = {},
 ) {
   runtime.assertActive(ctx);
   assertNoSocialDisclosure(runtime, ctx);
@@ -299,7 +306,13 @@ export function authorizeExternal(
       privateRepository &&
       githubSources.every((repo) => repo === privateRepository)
     );
-  const requested = requestedByHuman(runtime, ctx, request, requestEventId);
+  const requested = requestedByHuman(
+    runtime,
+    ctx,
+    request,
+    requestEventId,
+    matchesHumanInput,
+  );
   const configured =
     publicUrlRequest(ctx, request.tool) &&
     (runtime.agent(ctx.agentId).network?.publicUrls || []).some((url) => {
