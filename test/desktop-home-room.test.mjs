@@ -226,3 +226,19 @@ test("QQ waiting before model admission does not retire the desktop session", as
   live.send("回来以后");
   assert.equal(jobs.at(-1).request.session, first.request.session);
 });
+
+test("always-welcome in the isolated room lets a resident choose silence or enter", async () => {
+  const { room, live, jobs, settle } = harness();
+  const now = Date.now();
+  live.setDoorMode("always", now);
+  void live.offerOpportunity({ trial: true, now });
+  assert.equal(jobs[0].request.directVisit, true);
+  await settle(jobs[0], { action: "silent" });
+  assert.equal(room.members.dragon, "home");
+
+  void live.offerOpportunity({ now: now + 30 * 60_000 });
+  await settle(jobs[1], { action: "knock", text: "来坐一会儿" });
+  assert.equal(room.members.cat, "here");
+  assert.equal(live.knock, null);
+  assert.equal(room.budget, room.maxTurns);
+});

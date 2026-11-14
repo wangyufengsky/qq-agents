@@ -115,35 +115,43 @@ export class LiveRoom {
     );
   }
 
+  get welcomesVisits() {
+    return this.doorMode === "welcome" || this.doorMode === "always";
+  }
+
   publishDoor() {
     for (const actor of this.subjectActors) {
       const open =
         !this.closed &&
-        this.doorMode === "welcome" &&
+        this.welcomesVisits &&
         this.room.members[actor] === "home" &&
         !this.knock;
+      const mode = open ? this.doorMode : "off";
       const old = this.doors.get(actor);
-      if (open === old?.open) continue;
+      if (mode === old?.mode) continue;
       const epoch = (old?.epoch ?? 0) + 1;
-      this.doors.set(actor, { open, epoch });
-      this.runner.setDoor(open, epoch, actor);
+      this.doors.set(actor, { mode, epoch });
+      this.runner.setDoor(open, epoch, actor, mode === "always");
     }
   }
 
   receiveKnock(knock) {
     if (
       this.closed ||
-      this.doorMode !== "welcome" ||
+      !this.welcomesVisits ||
       this.knock ||
       !this.subjectActors.includes(knock.actor) ||
+      !this.supported.has(knock.actor) ||
       this.room.members[knock.actor] !== "home" ||
       knock.epoch !== this.doors.get(knock.actor)?.epoch ||
       knock.expiresAt <= Date.now()
     )
       return;
     const role = this.room.roles.find(({ id }) => id === knock.actor);
-    this.knock = { ...knock, text: "申请来访，想来桌边坐一会儿。" };
-    this.room.notice = `${role.name}在门外等你。`;
+    this.handleVisitRequest(role, {
+      ...knock,
+      text: "申请来访，想来桌边坐一会儿。",
+    });
     this.onChange();
   }
 
@@ -317,29 +325,42 @@ export class LiveRoom {
   }
 
   setDoorMode(mode, now = Date.now()) {
-    if (!["off", "welcome", "busy"].includes(mode) || this.doorMode === mode)
+    if (
+      !["off", "welcome", "always", "busy"].includes(mode) ||
+      this.doorMode === mode
+    )
       return;
     this.doorMode = mode;
-    if (mode === "welcome") {
+    if (this.knock || this.opportunity)
+      this.room.notice = this.welcomesVisits
+        ? "门牌已切换，之前的来访申请已结束。"
+        : mode === "busy"
+          ? "正在忙，主动来访已暂停。"
+          : "主动敲门已关闭。";
+    this.opportunity?.controller.abort();
+    this.knock = null;
+    if (this.welcomesVisits)
       this.nextOpportunityAt = Math.max(
         this.nextOpportunityAt,
         now + OPPORTUNITY_GAP,
       );
-    } else {
-      if (this.knock || this.opportunity)
-        this.room.notice =
-          mode === "busy" ? "正在忙，主动来访已暂停。" : "主动敲门已关闭。";
-      this.opportunity?.controller.abort();
-      this.knock = null;
-    }
     this.onChange();
+  }
+
+  handleVisitRequest(role, knock) {
+    if (this.doorMode === "always") {
+      if (invite(this.room, role)) this.admit(role);
+      return;
+    }
+    this.knock = knock;
+    this.room.notice = `${role.name}在门外等你。`;
   }
 
   async offerOpportunity({ now = Date.now(), trial = false } = {}) {
     if (
       this.closed ||
       this.subjectActors.length ||
-      this.doorMode !== "welcome" ||
+      !this.welcomesVisits ||
       this.knock ||
       this.opportunity ||
       this.active ||
@@ -367,6 +388,7 @@ export class LiveRoom {
         {
           actor: role.id,
           kind: "opportunity",
+          directVisit: this.doorMode === "always",
           session: randomUUID(),
           people: this.here().map(({ name }) => name),
         },
@@ -375,18 +397,17 @@ export class LiveRoom {
       if (
         controller.signal.aborted ||
         this.closed ||
-        this.doorMode !== "welcome" ||
+        !this.welcomesVisits ||
         this.room.members[role.id] !== "home" ||
         this.invites.has(role.id)
       )
         return;
       if (reply.action === "knock") {
-        this.knock = {
+        this.handleVisitRequest(role, {
           actor: role.id,
           text: reply.text,
           expiresAt: Date.now() + KNOCK_TTL,
-        };
-        this.room.notice = `${role.name}在门外等你。`;
+        });
       } else if (trial) this.room.notice = `${role.name}这次选择在家休息。`;
     } catch {
       if (trial && !controller.signal.aborted && !this.closed)
@@ -500,7 +521,7 @@ export class LiveRoom {
   tick(now = Date.now()) {
     if (refreshIfDue(this.room, now)) this.onChange();
     if (this.knock && now >= this.knock.expiresAt) this.answerKnock(false);
-    if (this.doorMode === "welcome" && now >= this.nextOpportunityAt)
+    if (this.welcomesVisits && now >= this.nextOpportunityAt)
       void this.offerOpportunity({ now });
   }
 

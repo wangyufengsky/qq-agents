@@ -1226,13 +1226,17 @@ function panel() {
       const trial = select(".knock-trial");
       trial.hidden = room.subjectKnocks;
       trial.disabled =
-        room.doorMode !== "welcome" ||
+        !["welcome", "always"].includes(room.doorMode) ||
         room.opportunity ||
         Boolean(room.knock) ||
         Boolean(room.thinking) ||
         (room.opportunityAt !== undefined &&
           Date.now() - room.opportunityAt < 30 * 60_000);
-      trial.textContent = room.opportunity ? "等角色决定…" : "试一次敲门";
+      trial.textContent = room.opportunity
+        ? "等角色决定…"
+        : room.doorMode === "always"
+          ? "试一次来访"
+          : "试一次敲门";
       select(".knock-card").hidden = !room.knock || room.connectionLost;
       if (room.knock && !room.connectionLost) {
         const role = room.roles.find(({ id }) => id === room.knock.actor);
