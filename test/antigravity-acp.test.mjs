@@ -347,13 +347,16 @@ test("ACP pre-registers permitted reply and video tools in the native catalogue"
       fs.readFileSync(path.join(custom, "mcp_config.json"), "utf8"),
     ).mcpServers["qq-agents"];
     assert.deepEqual(server.enabledTools, [
-      ...params.tools.map(({ name }) => name),
+      ...params.tools
+        .map(({ name }) => name)
+        .filter((name) => name !== "video_read"),
       "qq_reply_call",
+      "qq_video_call",
     ]);
     assert.deepEqual(server.tools, {
       qq_reply_call: { eager: true },
       qq_delivery_status: { eager: true },
-      video_read: { eager: true },
+      qq_video_call: { eager: true },
     });
     const guide = fs.readFileSync(path.join(agents, "qq-agents.md"), "utf8");
     assert.match(
@@ -361,6 +364,7 @@ test("ACP pre-registers permitted reply and video tools in the native catalogue"
       /use the native MCP tool if it is listed for this turn/i,
     );
     assert.match(guide, /qq_reply_call.*argumentsJson/);
+    assert.match(guide, /For video_read, use mcp_qq-agents_qq_video_call/);
     assert.doesNotMatch(guide, /Call call_mcp_tool with ServerName/);
   };
   backend.configure(params, workspace, media);

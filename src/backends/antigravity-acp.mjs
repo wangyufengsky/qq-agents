@@ -223,6 +223,9 @@ export async function runAcp(
             (options.session
               ? 'ACP session resumed. For qq_send, qq_send_burst, or qq_draft, prefer mcp_qq-agents_qq_reply_call if listed: pass the logical name and argumentsJson containing the serialized original arguments. For another bridge action, use the native MCP tool if it is listed for this turn. If the native name is absent or returns unknown tool before execution, use the available call_mcp_tool with ServerName="qq-agents", ToolName equal to the logical tool name (for example qq_send), and the same Arguments. Reuse the same requestId for the same send. A pending or unknown delivery is not a tool lookup error. Check its receipt before any further send. Tool errors from earlier turns do not determine the current catalogue. Only tools authorized by the current bridge may run.\n\n'
               : "") +
+            (options.videoFrames
+              ? 'For video_read, use mcp_qq-agents_qq_video_call with name="video_read" and argumentsJson containing the serialized video arguments.\n\n'
+              : "") +
             (options.desktop
               ? "For desktop_native_control or desktop_browser_control, use the listed qq_desktop_call with the logical tool name and argumentsJson. If desktop_screen_view says a screenshot is ready, finish that response without a desktop decision so the bridge can supply the image.\n\n"
               : "") +
