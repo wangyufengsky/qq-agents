@@ -137,6 +137,8 @@ ${selfBody}
       }),
     ctx.desktopVideoIds?.size &&
       "管理员已发送当前视频附件。用 video_read 带附件 ID 先看概览；看到采样画面后可按兴趣选一小段回看一次，也可直接交流。取不到画面时如实说明。",
+    ctx.desktopRecentVideo &&
+      `本次到访中最近已交付的视频概览：${JSON.stringify(ctx.desktopRecentVideo)}。管理员追问该视频时，可用 video_read 带附件 ID 按时间回看。若所指视频不明确，先确认。`,
     elsewhereLine(elsewhere),
   ]
     .filter(Boolean)

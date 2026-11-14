@@ -176,9 +176,9 @@ function safeFailure(error) {
     VIDEO_FRAMES_PENDING:
       "End this model request now without calling another tool. The bridge will attach the requested frames in the same conversation.",
     VIDEO_SOURCE_DENIED:
-      "Use an available video attachment ID or a visible current Bilibili message event ID. The source is expired, unavailable, or not permitted in this turn.",
+      "Use the current video source or the recent video reference shown in this conversation. For a QQ follow-up, supply the current human message event as requestId. If the source expired or was recalled, no frames are available.",
     VIDEO_RANGE_INVALID:
-      "Start with overview; for rewatch use a positive range of at most 30000 ms within durationMs.",
+      "For rewatch use a positive range of at most 30000 ms within durationMs. If you have no recent video reference, read the current source overview first.",
     VIDEO_TURN_LIMIT:
       "One video overview and one optional rewatch are available in this turn.",
     VIDEO_DECODER_UNAVAILABLE:

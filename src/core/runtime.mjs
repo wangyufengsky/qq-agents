@@ -441,7 +441,8 @@ export class Runtime {
           (!ctx.desktopBrowserObserved &&
             (name === DESKTOP_NATIVE_CONTROL ||
               (name === DESKTOP_SCREEN_VIEW && !ctx.desktopScreenObserved))) ||
-          (name === "video_read" && ctx.desktopVideoIds?.size > 0) ||
+          (name === "video_read" &&
+            (ctx.desktopVideoIds?.size > 0 || ctx.desktopRecentVideo)) ||
           DESKTOP_MEMORY_TOOLS.includes(name),
       );
     if (ctx.runtimeKind !== "functional-agent")

@@ -587,7 +587,7 @@ export class CodexBackend {
       inputSubmitted: false,
       awaitingReceipt: true,
       videoFrames:
-        /** @type {{current: () => boolean, content: any[], setPending: (pending: boolean) => void} | undefined} */ (
+        /** @type {{current: () => boolean, content: any[], setPending: (pending: boolean, submitted?: boolean) => void} | undefined} */ (
           undefined
         ),
       earlyCompletions: new Map(),
@@ -631,8 +631,9 @@ export class CodexBackend {
             : []),
         ]),
       ];
-      /** @type {((pending: boolean) => void) | undefined} */
+      /** @type {((pending: boolean, submitted?: boolean) => void) | undefined} */
       let setPending;
+      let videoSubmitted = false;
       for (let step = 0; step <= 2; step++) {
         active.awaitingReceipt = true;
         const receipt = await this.rpc.request("turn/start", {
@@ -643,7 +644,7 @@ export class CodexBackend {
         });
         active.turnId = receipt.turn.id;
         active.awaitingReceipt = false;
-        setPending?.(false);
+        setPending?.(false, videoSubmitted);
         active.submitInput();
         onBackendTurn?.({ turnId: receipt.turn.id });
         const completed = active.earlyCompletions.get(receipt.turn.id);
@@ -661,6 +662,7 @@ export class CodexBackend {
         if (step === 2) throw Error("VIDEO_TURN_LIMIT");
         signal.throwIfAborted();
         const content = frames.current() ? frames.content : [];
+        videoSubmitted = content.length > 0;
         setPending = frames.setPending;
         input = [
           {

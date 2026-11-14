@@ -280,6 +280,26 @@ export class DesktopAttachments {
     for (const id of this.#entries.keys()) this.discard(id);
   }
 
+  rememberVideo(id, agent, visit) {
+    const entry = this.#entries.get(id);
+    if (visit && entry?.video && entry.recipients.get(agent) === visit)
+      (entry.viewed ??= new Set()).add(agent);
+  }
+
+  recentVideo(config, agent, visit) {
+    if (!visit || !canReceive(config, agent, "video")) return;
+    const entry = [...this.#entries.values()].findLast(
+      (item) =>
+        item.viewed?.has(agent.id) && item.recipients.get(agent.id) === visit,
+    );
+    if (entry)
+      return {
+        sourceId: entry.meta.id,
+        name: entry.meta.name,
+        durationMs: entry.video.duration,
+      };
+  }
+
   videoFor(id, agent, visit) {
     const entry = this.#entries.get(id);
     return visit && entry?.recipients.get(agent) === visit
