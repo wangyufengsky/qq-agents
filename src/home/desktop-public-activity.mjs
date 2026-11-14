@@ -58,8 +58,9 @@ export class DesktopPublicActivity {
     const event = events.find(
       ({ until, direct }) => until > now && (state.wait <= now || direct),
     );
+    const due = this.dueAt(visit);
     const idle =
-      (this.dueAt(visit) <= now || (extra && !event && state.wait <= now)) &&
+      (due <= now || (extra && !event && state.wait <= now)) &&
       idleCount < policy.idleLimit;
     if (
       entries.length >= policy.totalLimit ||
@@ -75,14 +76,25 @@ export class DesktopPublicActivity {
       startedAt: now,
       idle,
       reason: event?.kind ?? "idle",
+      ...(idle && due > now && { observationPreviousDue: due }),
       ...(event && { trigger: event.id }),
       recentEvent: visit.activity.pendingReason,
       lastResult: visit.activity.lastResult,
     };
   }
 
-  finish(actor, visit, turn, now, reply) {
+  finish(actor, visit, turn, now, reply, submitted = true) {
     const state = visit.publicActivity;
+    if (turn.observationPreviousDue !== undefined && !submitted) {
+      this.starts.set(
+        actor,
+        this.recent(actor, now).filter(
+          ({ at, idle }) => at !== turn.startedAt || !idle,
+        ),
+      );
+      if (state.due === Infinity) state.due = turn.observationPreviousDue;
+      return;
+    }
     if (turn.idle) {
       const preference = this.minutes(actor);
       state.due = now + (preference ? preference * MINUTE : this.delay("idle"));

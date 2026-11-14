@@ -779,6 +779,7 @@ export class LiveRoom {
     let interactionDecision, interactionReceipt, activityReply;
     let completed = false;
     let acted = false;
+    let submitted = false;
     const controller = new AbortController();
     const { promise: done, resolve: drained } = Promise.withResolvers();
     const active = {
@@ -796,6 +797,7 @@ export class LiveRoom {
       this.visits.get(turn.actor) === visit &&
       this.activities.get(turn.actor) === active &&
       (!publicTurn || this.publicEnabled()) &&
+      (turn.observationPreviousDue === undefined || submitted || offered()) &&
       this.runner.activityCurrent(turn.actor);
     this.onChange();
     try {
@@ -814,6 +816,7 @@ export class LiveRoom {
             observationChoice: Boolean(display && !observation),
             ownerTouches,
             onInputSubmitted: () => {
+              submitted = true;
               seenTouches();
               if (
                 !observation &&
@@ -913,6 +916,7 @@ export class LiveRoom {
           turn,
           this.runner.now(),
           activityReply,
+          submitted,
         );
       this.activities.delete(turn.actor);
       drained();
