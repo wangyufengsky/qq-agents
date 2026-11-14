@@ -242,19 +242,22 @@ async function shutdown() {
   if (process.connected) process.disconnect();
 }
 
-process.on("message", ({ type, id, request, actor, session, open, epoch }) => {
-  if (type === "shutdown") void shutdown();
-  if (stopping) return;
-  if (
-    type === "door" &&
-    typeof open === "boolean" &&
-    Number.isSafeInteger(epoch)
-  )
-    subjectPilot?.visits.setDoor(open, epoch);
-  if (type === "run") void run(id, request);
-  if (type === "abort") tasks.get(id)?.abort();
-  if (type === "retire") retire(actor, session);
-});
+process.on(
+  "message",
+  ({ type, id, request, actor, session, open, epoch, direct }) => {
+    if (type === "shutdown") void shutdown();
+    if (stopping) return;
+    if (
+      type === "door" &&
+      typeof open === "boolean" &&
+      Number.isSafeInteger(epoch)
+    )
+      subjectPilot?.visits.setDoor(open, epoch, direct === true);
+    if (type === "run") void run(id, request);
+    if (type === "abort") tasks.get(id)?.abort();
+    if (type === "retire") retire(actor, session);
+  },
+);
 process.on("disconnect", () => void shutdown());
 process.off("message", stopStartup);
 if (startup.signal.aborted) await shutdown();

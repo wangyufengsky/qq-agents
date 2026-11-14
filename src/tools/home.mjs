@@ -18,7 +18,7 @@ const item = {
 const scene = { ...base, expectedLayoutRevision: homeRevision };
 export const homeDefinitions = {
   [DESKTOP_VISIT_TOOL]: [
-    "申请到管理员的桌面小窝串门。仅限本人正常主人格回合，想来时可用；可以照常休息或做自己的事。申请只会敲门，需等管理员请进才算到场。无参数。",
+    "申请到管理员的桌面小窝串门。仅限本人正常主人格回合，想来时可用；可以照常休息或做自己的事。本轮正常结束后按当前门牌接待。「欢迎敲门」需管理员请进，「随时欢迎」允许直接入场。无参数。",
     z.object({}).strict(),
   ],
   [DESKTOP_INVITATION_TOOL]: [

@@ -20,9 +20,9 @@ export class DesktopVisits {
     return agent.id === this.agentId && conversation === "@subject";
   }
 
-  setDoor(open, epoch) {
+  setDoor(open, epoch, direct = false) {
     if (epoch < this.door.epoch) return;
-    this.door = { open, epoch };
+    this.door = { open, epoch, direct };
   }
 
   resetDoor() {
@@ -34,7 +34,9 @@ export class DesktopVisits {
     if (!this.door.open) return "暂不接待";
     if (this.runtime.now() - this.lastRequestAt < COOLDOWN)
       return "最近已申请过来访";
-    return "管理员的桌面小窝此刻欢迎敲门。如果你自己想去坐一会儿，可用 desktop_visit_request 申请。";
+    return this.door.direct
+      ? "管理员的桌面小窝此刻随时欢迎。如果你自己想去坐一会儿，可用 desktop_visit_request，本轮正常结束后可直接入场。"
+      : "管理员的桌面小窝此刻欢迎敲门。如果你自己想去坐一会儿，可用 desktop_visit_request 申请。";
   }
 
   request(ctx) {

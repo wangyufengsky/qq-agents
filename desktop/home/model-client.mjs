@@ -90,8 +90,8 @@ export function startModelClient(root, node) {
     onKnock(listener) {
       knockListener = listener;
     },
-    setDoor(open, epoch) {
-      send({ type: "door", open, epoch });
+    setDoor(open, epoch, _actor, direct) {
+      send({ type: "door", open, epoch, direct });
     },
     async run(request, signal) {
       await online;

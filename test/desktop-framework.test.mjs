@@ -427,3 +427,106 @@ test("desktop portraits follow backend models and rest follows the role clock", 
   now = "2026-11-13T00:00:00Z";
   assert.equal(sync()[0].activity, "idle");
 });
+
+test("always-welcome admits completed subject visits independently without a knock or chat charge", async (t) => {
+  const cfg = config(3);
+  cfg.desktopHome.enabled = true;
+  for (const agent of cfg.agents) agent.subject.enabled = true;
+  const switchReady = Promise.withResolvers();
+  const switchDone = Promise.withResolvers();
+  t.after(switchDone.resolve);
+  const { runtime } = fixture(t, {
+    cfg,
+    run: async (p) => {
+      if (p.conversation !== "@subject") return;
+      const result = await p.callTool("desktop_visit_request", {});
+      assert.equal(result.status, "requested");
+      if (!p.prompt.includes("随时欢迎")) return;
+      assert(p.prompt.includes("直接入场"));
+      if (p.agent.id === "agent-1") {
+        switchReady.resolve();
+        await switchDone.promise;
+      }
+    },
+  });
+  const host = runtime.desktopVisits;
+  const client = randomUUID();
+  const command = (action, data) => host.command({ client, action, data });
+  assert.equal(command("sync").room.doorMode, "off");
+  command("door-mode", "always");
+  await runtime.wake("agent-0", "@subject");
+  let room = command("sync").room;
+  assert.equal(room.roles[0].state, "here");
+  assert.equal(room.knock, null);
+  assert.equal(room.budget, room.maxTurns);
+  const first = host.live.visits.get("agent-0");
+  assert(first);
+  const pending = runtime.wake("agent-1", "@subject");
+  assert.equal(
+    await Promise.race([switchReady.promise.then(() => "ready"), pending]),
+    "ready",
+  );
+  assert.equal(command("sync").room.roles[1].state, "home");
+  command("door-mode", "welcome");
+  switchDone.resolve();
+  await pending;
+  room = command("sync").room;
+  assert.equal(room.roles[1].state, "home");
+  assert.equal(room.knock, null);
+
+  await runtime.wake("agent-2", "@subject");
+  assert.equal(command("sync").room.knock.actor, "agent-2");
+  assert.equal(command("sync").room.roles[2].state, "home");
+  command("door-mode", "always");
+  command("knock-answer", true);
+  assert.equal(command("sync").room.roles[2].state, "home");
+  runtime.now = () => Date.now() + 31 * 60_000;
+  host.client.expiresAt = runtime.now() + 15_000;
+  await runtime.wake("agent-2", "@subject");
+  room = command("sync").room;
+  assert.deepEqual(
+    room.roles.map(({ state }) => state),
+    ["here", "home", "here"],
+  );
+  assert.equal(room.knock, null);
+  assert.equal(room.budget, room.maxTurns);
+  assert.equal(host.live.visits.get("agent-0"), first);
+  const newcomer = host.live.visits.get("agent-2");
+  assert.equal(newcomer.startCursor, newcomer.cursor);
+});
+
+test("always-welcome respects desktop pause and invalidates requests across disconnect", async (t) => {
+  const cfg = config(1);
+  cfg.desktopHome.enabled = true;
+  cfg.agents[0].subject.enabled = true;
+  let disconnect = false;
+  const { runtime, store } = fixture(t, {
+    cfg,
+    run: async (p) => {
+      const result = await p.callTool("desktop_visit_request", {});
+      assert.equal(result.status, "requested");
+      if (disconnect) {
+        command("disconnect");
+        command("sync");
+        command("door-mode", "always");
+      }
+    },
+  });
+  const client = randomUUID();
+  const command = (action, data) =>
+    runtime.desktopVisits.command({ client, action, data });
+  const epoch = command("sync").room.roomEpoch;
+  command("door-mode", "always");
+  store.bind("agent-0").setState("@desktop", { paused: true });
+  await runtime.wake("agent-0", "@subject");
+  assert.equal(command("sync").room.roles[0].state, "home");
+  store.bind("agent-0").setState("@desktop", { paused: false });
+  runtime.now = () => Date.now() + 31 * 60_000;
+  runtime.desktopVisits.client.expiresAt = runtime.now() + 15_000;
+  disconnect = true;
+  await runtime.wake("agent-0", "@subject");
+  const { room } = command("sync");
+  assert.notEqual(room.roomEpoch, epoch);
+  assert.equal(room.roles[0].state, "home");
+  assert.equal(room.knock, null);
+});

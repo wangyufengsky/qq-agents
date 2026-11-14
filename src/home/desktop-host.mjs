@@ -209,9 +209,13 @@ export class DesktopHost {
   visit(id) {
     let value = this.visits.get(id);
     if (!value) {
-      value = new DesktopVisits(this.runtime, id, (knock) =>
-        this.live?.receiveKnock(knock),
-      );
+      value = new DesktopVisits(this.runtime, id, (knock) => {
+        if (
+          this.connected() &&
+          this.runtime.writable(this.runtime.agent(id), DESKTOP_CONVERSATION)
+        )
+          this.live?.receiveKnock(knock);
+      });
       this.visits.set(id, value);
     }
     return value;
@@ -596,7 +600,8 @@ export class DesktopHost {
         requestInvitation: (request, signal) =>
           this.invitations.request(request, signal),
         run: (request, signal, canStart) => this.run(request, signal, canStart),
-        setDoor: (open, epoch, actor) => this.visit(actor).setDoor(open, epoch),
+        setDoor: (open, epoch, actor, direct) =>
+          this.visit(actor).setDoor(open, epoch, direct),
         close: async () => {},
       },
       () => {},
