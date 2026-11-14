@@ -152,7 +152,7 @@ test("the desktop panel exposes each authorization only while eligible", async (
   const push = (data) => page.evaluate((next) => window.testRoom(next), data);
   await page.getByRole("button", { name: /小窝工具/ }).click();
   const authorize = page.locator(".screen-view-button");
-  const authorizeNative = page.locator(".native-control button");
+  const authorizeNative = page.locator(".native-control button.secondary");
   const authorizeObservation = page.locator(".observation button");
   const retention = page.locator("#observation-retention-notice");
   const ineligible = page.locator(".observation-ineligible");
@@ -1103,6 +1103,30 @@ test("floating resident replays six short actions with a still hold and respects
     }
   }
   const button = page.locator(".sprite-button");
+  await page.evaluate((next) => window.testRoom(next), {
+    ...room,
+    roles: [
+      {
+        ...room.roles[0],
+        bodyStatus: {
+          state: "idle",
+          gesture: { id: "owner-pet", kind: "pet" },
+        },
+      },
+    ],
+  });
+  assert.equal(await button.getAttribute("data-gesture"), "pet");
+  assert.equal(await page.locator(".sprite-petting").isVisible(), true);
+  assert.equal(await page.locator(".sprite-pet-face").isVisible(), true);
+  assert.equal(await page.locator(".pet-eye").count(), 2);
+
+  assert.equal(
+    await page
+      .locator(".sprite-petting")
+      .evaluate((node) => window.getComputedStyle(node).animationName),
+    "none",
+  );
+  await page.evaluate((next) => window.testRoom(next), room);
   assert.equal(
     await button.evaluate(
       (node) => node.getAnimations({ subtree: true }).length,
@@ -1126,6 +1150,84 @@ test("floating resident replays six short actions with a still hold and respects
         .getAnimations({ subtree: true })
         .map(({ animationName }) => animationName),
     );
+  await page.evaluate((next) => window.testRoom(next), {
+    ...room,
+    roles: [
+      {
+        ...room.roles[0],
+        bodyStatus: {
+          state: "idle",
+          gesture: { id: "owner-pet-motion", kind: "pet" },
+        },
+      },
+    ],
+  });
+  assert((await animations()).includes("paper-pet-lid"));
+  assert((await animations()).includes("paper-petting-hand"));
+
+  for (const art of ["fish", "dragon", "cat"]) {
+    await page.evaluate(
+      ({ data, appearance }) =>
+        window.testRoom({
+          ...data,
+          roles: [
+            {
+              ...data.roles[0],
+              art: appearance,
+              bodyStatus: {
+                state: "idle",
+                gesture: { id: "pet-" + appearance, kind: "pet" },
+              },
+            },
+          ],
+        }),
+      { data: room, appearance: art },
+    );
+    const eyes = await page.locator(".pet-eye").evaluateAll((nodes) =>
+      nodes.map((eye) => {
+        const animations = eye.getAnimations({ subtree: true });
+        return [0, 269, 450, 960].map((time) => {
+          for (const animation of animations) {
+            animation.pause();
+            animation.currentTime = time;
+          }
+          const iris = window.getComputedStyle(eye, "::after");
+          const lid = window.getComputedStyle(eye.firstElementChild);
+          return {
+            center: iris.transformOrigin.split(" ").map(parseFloat),
+            lidPosition: [parseFloat(lid.left), parseFloat(lid.top)],
+            openness: Number(iris.scale.split(" ").at(-1)),
+            lidOpacity: lid.opacity,
+          };
+        });
+      }),
+    );
+    assert.equal(eyes.length, 2);
+    for (const [open, squint, closed, reopened] of eyes) {
+      assert.deepEqual(open.center, squint.center);
+      assert.deepEqual(open.center, closed.center);
+      assert.deepEqual(open.center, reopened.center);
+      assert(
+        open.center.every(
+          (point, i) => Math.abs(point - closed.lidPosition[i]) < 0.02,
+        ),
+      );
+      assert.equal(open.openness, 1);
+      assert(squint.openness > closed.openness && squint.openness < 1);
+      assert(closed.openness < 0.15);
+      assert.equal(closed.lidOpacity, "1");
+      assert.equal(reopened.openness, 1);
+      assert.equal(reopened.lidOpacity, "0");
+    }
+    assert(
+      eyes[0][0].center[0] < eyes[1][0].center[0] &&
+        eyes[0][0].center[1] > eyes[1][0].center[1],
+    );
+    await page.evaluate((next) => window.testRoom(next), room);
+  }
+  await page.evaluate((next) => window.testRoom(next), room);
+  assert.equal(await page.locator(".sprite-pet-face").isVisible(), false);
+
   const motionTiming = (state) =>
     body.evaluate((node, state) => {
       window.testMotion(state);
@@ -1428,7 +1530,7 @@ test("floating resident replays six short actions with a still hold and respects
   }
 });
 
-test("display picker authorizes one screen per resident without shrinking the chat", async (t) => {
+test("one confirmation grants multiple separate targets and displays each observation outcome", async (t) => {
   let executablePath;
   try {
     executablePath = findScreenshotBrowser();
@@ -1449,6 +1551,7 @@ test("display picker authorizes one screen per resident without shrinking the ch
       { id: "fish", name: "小鱼", color: "teal", state: "here" },
       { id: "dragon", name: "小龙", color: "green", state: "here" },
     ],
+    screenView: { eligible: ["fish", "dragon"], grants: [] },
     observation: {
       eligible: ["fish", "dragon"],
       displays: [],
@@ -1457,36 +1560,53 @@ test("display picker authorizes one screen per resident without shrinking the ch
   };
   await page.addInitScript((data) => {
     window.testActions = [];
-    window.nest = {
-      onRoom: (update) => (window.testRoom = update),
-      onSection() {},
-      get: async () => ({ data, section: "chat" }),
-      displayObservation: async (action, value) => {
-        if (action === "list")
-          return {
-            status: "listed",
-            displays: [
-              { id: "main", name: "内建显示器", number: 1, primary: true },
-              { id: "external", name: "外接显示器", number: 2, primary: false },
-            ],
-          };
-        window.testActions.push([action, value]);
-        const { agentId, display } = value;
-        const grants = data.observation.displays.filter(
-          (grant) => grant.agentId !== agentId,
-        );
-        if (action === "grant")
-          grants.push({
+    const change = (policy, list) => async (action, value) => {
+      if (action === "list")
+        return {
+          status: "listed",
+          displays: [
+            { id: "main", name: "内建显示器", number: 1, primary: true },
+            { id: "external", name: "外接显示器", number: 2, primary: false },
+          ],
+        };
+      window.testActions.push([action, value]);
+      if (action === "grant") {
+        for (const { agentId, display } of value.selections) {
+          policy[list] = policy[list].filter(
+            (grant) => grant.agentId !== agentId,
+          );
+          policy[list].push({
             agentId,
             grantId: agentId + "-grant",
             expiresAt: Date.now() + 9 * 60_000,
             target: display === "main" ? "内建显示器" : "外接显示器",
             remaining: 2,
+            opportunity: agentId === "dragon" ? "declined" : "waiting",
           });
-        data.observation.displays = grants;
-        window.testRoom(data);
-        return { status: action === "grant" ? "granted" : "revoked" };
-      },
+        }
+      } else
+        policy[list] = policy[list].filter(
+          (grant) =>
+            grant.agentId !== value?.agentId && action !== "revoke-all",
+        );
+      window.testRoom(data);
+      return { status: action === "grant" ? "granted" : "revoked" };
+    };
+    window.testExpire = (agentId) => {
+      data.observation.displays = data.observation.displays.filter(
+        (grant) => grant.agentId !== agentId,
+      );
+      data.observation.displayHistory = [
+        { agentId, state: "expired", opportunity: "waiting" },
+      ];
+      window.testRoom(data);
+    };
+    window.nest = {
+      onRoom: (update) => (window.testRoom = update),
+      onSection() {},
+      get: async () => ({ data, section: "chat" }),
+      displayObservation: change(data.observation, "displays"),
+      screenView: change(data.screenView, "grants"),
     };
   }, room);
   await page.goto(
@@ -1506,30 +1626,51 @@ test("display picker authorizes one screen per resident without shrinking the ch
   await page.getByRole("button", { name: "选择角色与显示器" }).click();
   const confirm = page.getByRole("button", { name: "确认授权" });
   assert.equal(await confirm.isEnabled(), false);
-  await page
-    .getByRole("dialog", { name: "授权观察显示器" })
-    .getByLabel("角色", { exact: true })
-    .selectOption("fish");
+  await page.getByRole("checkbox", { name: "全选可授权角色" }).check();
   assert.equal(await confirm.isEnabled(), false);
-  await page.getByRole("radio", { name: /外接显示器/ }).check();
+  await page.getByLabel("统一目标").selectOption("main");
+  await page.getByLabel("小鱼的查看目标").selectOption("external");
   assert.match(
     await page.locator(".display-limits").textContent(),
     /9 分钟.*2 次/,
   );
   await confirm.click();
-  await page.getByRole("button", { name: "授权小龙的显示器" }).click();
-  await page.getByRole("radio", { name: /内建显示器/ }).check();
+  await page.getByText("她选择这次不看").waitFor();
+  await page.getByText("等待空闲机会", { exact: true }).waitFor();
+  await page.evaluate(() => window.testExpire("fish"));
+  await page.getByText("授权已到期 · 到期前未轮到").waitFor();
+  await page.getByRole("button", { name: "撤销小龙的显示器授权" }).click();
+  await page.getByText("她选择这次不看").waitFor({ state: "hidden" });
+  await page.getByRole("button", { name: "‹ 小窝工具" }).click();
+  await page.getByRole("button", { name: "管理查看屏幕" }).click();
+  await page.getByRole("button", { name: "选择角色与查看目标" }).click();
+  await page.getByRole("checkbox", { name: "全选可授权角色" }).check();
+  await page.getByLabel("统一目标").selectOption("main");
   await confirm.click();
-  await page.getByRole("button", { name: "撤销小鱼的显示器授权" }).click();
-  assert.equal(
-    await page.getByRole("button", { name: "撤销小龙的显示器授权" }).count(),
-    1,
-  );
+  await page.getByRole("button", { name: "撤销小鱼的看屏授权" }).click();
+  await page.getByRole("button", { name: "撤销小龙的看屏授权" }).waitFor();
   await page.keyboard.press("Escape");
   assert.equal((await thread.boundingBox()).height, height);
   assert.deepEqual(await page.evaluate(() => window.testActions), [
-    ["grant", { agentId: "fish", display: "external" }],
-    ["grant", { agentId: "dragon", display: "main" }],
+    [
+      "grant",
+      {
+        selections: [
+          { agentId: "fish", display: "external" },
+          { agentId: "dragon", display: "main" },
+        ],
+      },
+    ],
+    ["revoke", { agentId: "dragon", grantId: "dragon-grant" }],
+    [
+      "grant",
+      {
+        selections: [
+          { agentId: "fish", display: "main" },
+          { agentId: "dragon", display: "main" },
+        ],
+      },
+    ],
     ["revoke", { agentId: "fish", grantId: "fish-grant" }],
   ]);
 });

@@ -163,6 +163,13 @@ test("independent idle cadence respects both quotas and reserves an idle opportu
   clock.finish("fish", visit, turn, 5 * minute);
   assert.equal(clock.dueAt(visit), 20 * minute);
   assert.equal(clock.take("fish", visit, 20 * minute, []), undefined);
+  const fresh = { activity: {} };
+  clock.arrive(fresh, 0);
+  const early = clock.take("cat", fresh, minute, [], true);
+  assert.equal(early.idle, true);
+  clock.finish("cat", fresh, early, minute, undefined, false);
+  assert.equal(clock.dueAt(fresh), 5 * minute);
+  assert.deepEqual(clock.starts.get("cat"), []);
   const other = { activity: {} };
   clock.arrive(other, 0);
   for (let i = 0; i < 3; i++) {

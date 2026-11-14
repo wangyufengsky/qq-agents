@@ -10,8 +10,9 @@ contextBridge.exposeInMainWorld("nest", {
   observation: () => ipcRenderer.invoke("room:observation"),
   observationReview: (action, data) =>
     ipcRenderer.invoke("room:observation-review", action, data),
-  screenView: () => ipcRenderer.invoke("room:screen-view"),
-  nativeControl: () => ipcRenderer.invoke("room:native-control"),
+  screenView: (action, data) =>
+    ipcRenderer.invoke("room:screen-view", action, data),
+  nativeControl: (action) => ipcRenderer.invoke("room:native-control", action),
   browserControl: (selection) =>
     ipcRenderer.invoke("room:browser-control", selection),
   onMotion: (listener) =>

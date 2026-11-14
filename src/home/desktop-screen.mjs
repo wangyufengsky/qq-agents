@@ -26,12 +26,60 @@ const resultSchema = localRevokeSchema
   .refine(({ data, status }) => !(data && status));
 
 export class DesktopScreen extends DesktopLocalGrant {
+  grants = new Map();
+
   constructor(host) {
     super(host, DESKTOP_SCREEN_VIEW, "DESKTOP_SCREEN_UNAVAILABLE");
   }
 
+  grantFor(agentId) {
+    return this.grants.get(agentId);
+  }
+
+  find(grantId) {
+    return [...this.grants.values()].find((grant) => grant.grantId === grantId);
+  }
+
+  state() {
+    for (const grant of this.grants.values())
+      if (!this.current(grant)) this.clearGrant(grant);
+    return {
+      eligible: this.eligible().map(({ id }) => id),
+      grantedAgentId: this.grants.keys().next().value ?? null,
+      grants: [...this.grants.values()].map(({ agentId, grantId }) => ({
+        agentId,
+        grantId,
+      })),
+    };
+  }
+
+  clearGrant(grant) {
+    this.grants.delete(grant.agentId);
+    this.cancel(grant);
+  }
+
+  change(revoking, value) {
+    const { live } = this.host;
+    if (value.roomEpoch !== live.room.epoch) throw Error(this.unavailable);
+    if (revoking) {
+      const grant = this.find(value.grantId);
+      if (grant) this.clearGrant(grant);
+      return;
+    }
+    const existing = this.find(value.grantId);
+    if (existing && existing.agentId !== value.agentId)
+      throw Error(this.unavailable);
+    const old = this.grantFor(value.agentId);
+    if (old?.grantId === value.grantId) return;
+    if (old) this.clearGrant(old);
+    this.grants.set(value.agentId, {
+      ...value,
+      visit: live.visits.get(value.agentId),
+    });
+  }
+
   clear() {
-    super.clear();
+    this.grants.clear();
     this.pending?.reject(Error("DESKTOP_SCREEN_UNAVAILABLE"));
     this.pending = null;
   }
@@ -131,12 +179,24 @@ export class DesktopScreen extends DesktopLocalGrant {
   }
 
   async capture(ctx, agent, grant, current, mode) {
-    if (this.pending || ctx.desktopScreenObserved)
+    const signal = ctx.controller.signal;
+    while (this.pending) {
+      signal.throwIfAborted();
+      if (!current()) throw Error("DESKTOP_SCREEN_UNAVAILABLE");
+      await this.pending.finished.promise;
+    }
+    if (ctx.desktopScreenObserved || !current())
       throw Error("DESKTOP_SCREEN_UNAVAILABLE");
+    if (mode === "observation") {
+      if (grant.attempts >= grant.limit)
+        throw Error("DESKTOP_SCREEN_UNAVAILABLE");
+      grant.attempts++;
+    }
     const pending = {
       ...Promise.withResolvers(),
       current,
       grant,
+      finished: Promise.withResolvers(),
       request: {
         roomEpoch: grant.roomEpoch,
         grantId: grant.grantId,
@@ -152,7 +212,6 @@ export class DesktopScreen extends DesktopLocalGrant {
       },
     };
     this.pending = pending;
-    const signal = ctx.controller.signal;
     const abort = () => pending.reject(Error("DESKTOP_SCREEN_UNAVAILABLE"));
     signal.addEventListener("abort", abort, { once: true });
     const timer = setTimeout(
@@ -167,6 +226,7 @@ export class DesktopScreen extends DesktopLocalGrant {
       clearTimeout(timer);
       signal.removeEventListener("abort", abort);
       if (this.pending === pending) this.pending = null;
+      pending.finished.resolve();
     }
   }
 }

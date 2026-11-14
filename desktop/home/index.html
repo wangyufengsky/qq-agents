@@ -221,6 +221,7 @@
                 <button type="button" class="secondary screen-view-button">
                   授权查看屏幕
                 </button>
+                <p class="screen-grant-count" hidden></p>
                 <p class="desktop-permission-status" role="status" hidden></p>
               </div>
               <div class="desktop-permission observation" hidden>
@@ -253,8 +254,12 @@
                 </button>
               </div>
               <div class="desktop-permission native-control" hidden>
-                <strong>控制窗口</strong>
+                <strong>操作本机窗口</strong>
                 <button type="button" class="secondary">授权控制窗口</button>
+                <p class="native-holder" hidden></p>
+                <button type="button" class="quiet native-switch" hidden>
+                  更换操作者
+                </button>
                 <p class="desktop-permission-status" role="status" hidden></p>
               </div>
               <div class="desktop-permission browser-control" hidden>
@@ -269,26 +274,32 @@
               <button type="button" class="quiet display-back">
                 ‹ 小窝工具
               </button>
-              <p>角色空闲时，可以自己决定是否看一眼获准的屏幕。</p>
+              <p class="read-help"></p>
               <div class="display-roster"></div>
               <button type="button" class="primary display-add">
                 选择角色与显示器
+              </button>
+              <button type="button" class="quiet read-revoke-all" hidden>
+                撤销全部
               </button>
             </section>
             <form class="display-picker" hidden>
               <button type="button" class="quiet display-cancel">
                 ‹ 自主观察显示器
               </button>
-              <label for="display-role">角色</label
-              ><select id="display-role" required></select>
-              <fieldset class="display-choices">
-                <legend>显示器</legend>
-                <div></div>
+              <fieldset class="read-selection">
+                <legend>角色和查看目标</legend>
+                <label
+                  ><input type="checkbox" class="read-select-all" />
+                  全选可授权角色</label
+                >
+                <label
+                  >统一目标
+                  <select class="read-common-target"></select
+                ></label>
+                <div class="read-choices"></div>
               </fieldset>
               <p class="display-limits"></p>
-              <p class="display-replace" hidden>
-                确认后将替换这位角色原来的显示器授权。
-              </p>
               <div class="sheet-actions">
                 <button type="button" class="secondary display-cancel">
                   取消
