@@ -358,6 +358,47 @@ test("batch screen grants are atomic, visit-bound and revoked independently", as
   assert.equal(host.screen.grantFor("agent-1").grantId, dragon.grantId);
 });
 
+test("parallel captures each wait for and deliver only their own authorized frame", async (t) => {
+  const { host, runtime, roomEpoch, client, command, result } = await setup(t);
+  for (const agentId of ["agent-0", "agent-1"])
+    await command("screen-grant", {
+      roomEpoch,
+      grantId: randomUUID(),
+      agentId,
+    });
+  const grant = (id) => host.screen.grantFor(id);
+  const queue = (id) =>
+    host.screen.capture(
+      { controller: new AbortController() },
+      runtime.agent(id),
+      grant(id),
+      () => host.screen.current(grant(id)),
+    );
+  const a = queue("agent-0");
+  const b = queue("agent-1");
+  const send = (request) =>
+    result({
+      client,
+      roomEpoch,
+      grantId: request.grantId,
+      requestId: request.requestId,
+      data: jpeg,
+    });
+  const first = await waitForRequest(command);
+  assert.equal(first.grantId, grant("agent-0").grantId);
+  assert.equal(
+    (await send({ ...first, grantId: grant("agent-1").grantId })).ok,
+    false,
+  );
+  assert.equal((await send(first)).ok, true);
+  assert.equal((await a).data, jpeg);
+  const second = await waitForRequest(command);
+  assert.equal(second.grantId, grant("agent-1").grantId);
+  assert.equal((await send(first)).ok, false);
+  assert.equal((await send(second)).ok, true);
+  assert.equal((await b).data, jpeg);
+});
+
 test("native handoff requires revocation and an identified outcome", async (t) => {
   const { host, client, roomEpoch, command, run, nativeClaim, nativeResult } =
     await setup(t, { native: true });
