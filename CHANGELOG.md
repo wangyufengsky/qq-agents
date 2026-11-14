@@ -6,7 +6,7 @@
 
 ## 未发布
 
-### 安装和维护使用固定的 NapCat fork 发行包
+### 安装和维护使用固定的 NapCat fork 发行包（[#323](https://github.com/wangyufengsky/qq-agents/pull/323)）
 
 - 一键安装从项目维护的 NapCat fork 获取 `4.18.38` Shell 包。Docker 构建验证下载校验值，管理员同时更新网关时从同一来源获取。旧部署可按原挂载目录切换，框架常规更新沿用现有网关。
 
