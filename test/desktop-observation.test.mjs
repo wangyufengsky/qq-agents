@@ -656,3 +656,99 @@ test("display grants offer optional observation, carry independent limits and re
   policy.displayObservation.minutes = 4;
   assert.equal(sync().room.observation.displays.length, 0);
 });
+
+test("new display access advances an empty idle slot while honoring rest, decline and expiry", async (t) => {
+  const { host, runtime, command, backend, time } = setup(t);
+  const policy = runtime.config.desktopHome;
+  policy.publicPerception.enabled = true;
+  policy.activityRoles = ["agent-0", "agent-1"];
+  const sync = (extra = {}) =>
+    command("sync", {
+      visible: true,
+      dragged: [],
+      bodyProtocol: 2,
+      bodyPublic: true,
+      observationProtocol: 2,
+      displayObservation: true,
+      ...extra,
+    });
+  const { roomEpoch } = sync().room;
+  const [fish, dragon] = [...host.live.visits.values()];
+  const now = runtime.now();
+  for (const visit of [fish, dragon]) {
+    host.live.publicActivity.arrive(visit, now);
+    visit.publicActivity.due = now + 25 * minute;
+  }
+  dragon.publicActivity.rest = now + 20 * minute;
+  const make = (agentId) => ({
+    roomEpoch,
+    grantId: randomUUID(),
+    agentId,
+    visitId: host.body.visitId(host.live.visits.get(agentId)),
+    scope: "display",
+    limits: policy.displayObservation,
+  });
+  const batch = [make("agent-0"), make("agent-1")];
+  assert.throws(
+    () =>
+      command("display-grant-batch", [
+        batch[0],
+        {
+          ...batch[1],
+          visitId: randomUUID(),
+        },
+      ]),
+    /DESKTOP_SCREEN_UNAVAILABLE/,
+  );
+  assert.equal(host.observation.displays.size, 0);
+  command("display-grant-batch", batch);
+  for (const { grantId } of batch)
+    command("observation-state", { roomEpoch, grantId, state: "ready" });
+  const prompts = [];
+  backend.runDesktop = async (params) => {
+    params.beforeInput();
+    params.onInputSubmitted();
+    prompts.push(params.prompt);
+    await params.callTool(decision, { action: "skip-observation" });
+  };
+  const waiting = host.observation.grantState(
+    host.observation.displays.get("agent-1"),
+  );
+  assert.deepEqual(waiting.waiting, {
+    reason: "rest",
+    until: dragon.publicActivity.rest,
+  });
+  sync({
+    ownerTouches: [
+      { agentId: "agent-0", visitId: batch[0].visitId, kind: "pet" },
+    ],
+  });
+  await host.live.activities.get("agent-0").done;
+  assert.equal(prompts.length, 1);
+  assert.match(prompts[0], /管理员刚摸了摸你的头/);
+  assert.equal(
+    host.observation.displays.get("agent-0").opportunity,
+    "declined",
+  );
+  assert.equal(host.observation.displays.get("agent-0").attempts, 0);
+  assert.equal(host.observation.forActor("agent-0"), undefined);
+  assert.equal(host.live.activities.has("agent-1"), false);
+  assert.deepEqual(host.live.publicActivity.starts.get("agent-0"), [
+    { at: now, idle: true },
+  ]);
+  sync({
+    dragged: ["agent-1"],
+    ownerTouches: [
+      { agentId: "agent-1", visitId: batch[1].visitId, kind: "drag" },
+    ],
+  });
+  assert.deepEqual(host.live.ownerTouchInput(dragon).ownerTouches, ["drag"]);
+  assert.deepEqual(host.live.ownerTouchInput(fish).ownerTouches, []);
+  time((policy.displayObservation.minutes + 1) * minute, { verify: false });
+  const { observation } = sync().room;
+  assert.equal(observation.displays.length, 0);
+  assert.deepEqual(observation.displayHistory, [
+    { agentId: "agent-0", state: "expired", opportunity: "declined" },
+    { agentId: "agent-1", state: "expired", opportunity: "waiting" },
+  ]);
+});

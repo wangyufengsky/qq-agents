@@ -86,8 +86,41 @@ export class DesktopNative extends DesktopLocalGrant {
     super(host, DESKTOP_NATIVE_CONTROL, "DESKTOP_NATIVE_UNAVAILABLE");
   }
 
+  state() {
+    const state = super.state();
+    if (
+      this.handoff?.state === "pending" &&
+      Date.now() >= this.handoff.pending.request.expiresAt
+    )
+      this.handoff = { state: "unconfirmed" };
+    return { ...state, handoff: this.handoff?.state };
+  }
+
+  change(revoking, value) {
+    if (revoking) {
+      super.change(true, value);
+      return;
+    }
+    if (this.grant) {
+      if (
+        this.grant.grantId === value.grantId &&
+        this.current(this.grant) &&
+        this.grant.agentId === value.agentId
+      )
+        return;
+      throw Error(this.unavailable);
+    }
+    if (this.state().handoff === "pending") throw Error(this.unavailable);
+    if (this.handoff?.state === "unconfirmed" && value.confirmed !== true)
+      throw Error(this.unavailable);
+    super.change(false, value);
+    this.handoff = undefined;
+  }
+
   clear() {
     super.clear();
+    if (this.pending?.claimed && !this.pending.received)
+      this.handoff = { state: "pending", pending: this.pending };
     this.pending?.reject(Error("DESKTOP_NATIVE_RESULT_UNKNOWN"));
     this.pending = null;
   }
@@ -145,8 +178,25 @@ export class DesktopNative extends DesktopLocalGrant {
   receive(input) {
     const parsed = resultSchema.safeParse(input);
     if (!parsed.success) throw Error("DESKTOP_NATIVE_INVALID");
-    const pending = this.pendingFor(parsed.data);
     const { result } = parsed.data;
+    const unsettled = this.handoff?.pending;
+    if (
+      this.handoff?.state === "pending" &&
+      unsettled &&
+      this.host.client?.id === parsed.data.client &&
+      ["roomEpoch", "grantId", "requestId"].every(
+        (key) => unsettled.request[key] === parsed.data[key],
+      )
+    ) {
+      this.handoff =
+        result &&
+        "delivery" in result &&
+        ["delivered_verified", "not_delivered"].includes(result.delivery)
+          ? undefined
+          : { state: "unconfirmed" };
+      return { accepted: true };
+    }
+    const pending = this.pendingFor(parsed.data);
     if (
       result &&
       !(pending.request.action.type === "observe"
@@ -162,6 +212,13 @@ export class DesktopNative extends DesktopLocalGrant {
     )
       throw Error("DESKTOP_NATIVE_UNAVAILABLE");
     pending.received = true;
+    if (
+      pending.claimed &&
+      (!result ||
+        !("delivery" in result) ||
+        !["delivered_verified", "not_delivered"].includes(result.delivery))
+    )
+      this.handoff = { state: "unconfirmed" };
     if (result) pending.resolve(result);
     else pending.reject(Error("DESKTOP_NATIVE_RESULT_UNKNOWN"));
     return { accepted: true };
@@ -177,7 +234,7 @@ export class DesktopNative extends DesktopLocalGrant {
         evidence: [...ctx.privateRead],
       });
     }
-    if (this.pending) throw Error("DESKTOP_NATIVE_UNAVAILABLE");
+    if (this.pending || this.handoff) throw Error("DESKTOP_NATIVE_UNAVAILABLE");
     if (ctx.desktopWindowTask) {
       if (ctx.desktopWindowTaskActionStarted)
         throw Error("DESKTOP_NATIVE_UNAVAILABLE");
@@ -225,6 +282,8 @@ export class DesktopNative extends DesktopLocalGrant {
       clearTimeout(timer);
       signal.removeEventListener("abort", abort);
       if (this.pending === pending) this.pending = null;
+      if (pending.claimed && !pending.received && !this.handoff)
+        this.handoff = { state: "unconfirmed" };
     }
   }
 }

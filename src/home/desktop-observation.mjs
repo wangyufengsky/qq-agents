@@ -66,6 +66,7 @@ const exportInput = z
   .strict();
 
 export class DesktopObservation extends DesktopLocalGrant {
+  displayHistory = new Map();
   constructor(host) {
     super(host, DESKTOP_SCREEN_VIEW, "DESKTOP_SCREEN_UNAVAILABLE");
     this.displays = new Map();
@@ -134,25 +135,40 @@ export class DesktopObservation extends DesktopLocalGrant {
     return [this.grant, ...this.displays.values()].filter(Boolean);
   }
 
+  canGrantDisplay(value) {
+    const { client, runtime } = this.host;
+    const { minutes, attempts } = runtime.config.desktopHome.displayObservation;
+    const existing = this.find(value.grantId);
+    return (
+      client.observationProtocol === 2 &&
+      client.displayObservation &&
+      client.activityVisibleUntil > runtime.now() &&
+      value.limits.minutes === minutes &&
+      value.limits.attempts === attempts &&
+      (!existing ||
+        (existing.scope === "display" &&
+          existing.agentId === value.agentId &&
+          this.current(existing)))
+    );
+  }
+
   change(revoking, value) {
-    const { live, runtime, client } = this.host;
+    const { live, runtime } = this.host;
     if (value.roomEpoch !== live.room.epoch) throw Error(this.unavailable);
     if (revoking) {
       const grant = this.find(value.grantId);
-      if (grant) this.clear(grant);
+      if (grant)
+        this.clear(
+          grant,
+          grant.expiresAt <= runtime.now() ? "expired" : "revoked",
+        );
       return;
     }
     if (!this.eligible().some(({ id }) => id === value.agentId))
       throw Error(this.unavailable);
     const display = value.scope === "display";
     const { minutes, attempts } = runtime.config.desktopHome.displayObservation;
-    if (
-      display &&
-      (!client.displayObservation ||
-        value.limits.minutes !== minutes ||
-        value.limits.attempts !== attempts)
-    )
-      throw Error(this.unavailable);
+    if (display && !this.canGrantDisplay(value)) throw Error(this.unavailable);
     const existing = this.find(value.grantId);
     if (existing) {
       if (
@@ -170,12 +186,14 @@ export class DesktopObservation extends DesktopLocalGrant {
       visit: live.visits.get(value.agentId),
       expiresAt: runtime.now() + (display ? minutes * 60_000 : OBSERVATION_TTL),
       limit: display ? attempts : OBSERVATION_LIMIT,
-      ...(display && { minutes }),
+      ...(display && { minutes, opportunity: "waiting" }),
       attempts: 0,
       targetState: "checking",
     };
-    if (display) this.displays.set(value.agentId, grant);
-    else this.grant = grant;
+    if (display) {
+      this.displayHistory.delete(value.agentId);
+      this.displays.set(value.agentId, grant);
+    } else this.grant = grant;
     this.note(grant, "observation-granted");
   }
 
@@ -186,13 +204,28 @@ export class DesktopObservation extends DesktopLocalGrant {
       grantId,
       expiresAt,
       remaining: grant.limit - grant.attempts,
+      ...(grant.scope === "display" && {
+        opportunity: grant.opportunity,
+        ...(grant.opportunity === "waiting" && {
+          waiting: this.host.live.observationWaiting(
+            grant.agentId,
+            this.targetReady(grant),
+          ),
+        }),
+      }),
       targetState: this.targetReady(grant) ? "ready" : grant.targetState,
     };
   }
 
   state() {
     for (const grant of this.grants()) {
-      if (!this.current(grant)) this.clear(grant);
+      if (!this.current(grant))
+        this.clear(
+          grant,
+          grant.expiresAt <= this.host.runtime.now()
+            ? "expired"
+            : "unavailable",
+        );
       else if (grant.targetState === "ready" && !this.targetReady(grant)) {
         grant.targetState = "checking";
         grant.candidate = undefined;
@@ -216,18 +249,33 @@ export class DesktopObservation extends DesktopLocalGrant {
         displays: [...this.displays.values()].map((grant) =>
           this.grantState(grant),
         ),
+        displayHistory: [...this.displayHistory.values()].flatMap(
+          ({ visit, ...item }) =>
+            live?.visits.get(item.agentId) === visit ? [item] : [],
+        ),
         displayLimits: runtime.config.desktopHome.displayObservation,
       }),
     };
   }
 
-  clear(grant) {
+  clear(grant, reason = "unavailable") {
     if (!grant) {
-      for (const current of this.grants()) this.clear(current);
+      for (const current of this.grants()) this.clear(current, reason);
+      if (!this.host.connected()) this.displayHistory.clear();
       return;
     }
-    if (grant.scope === "display") this.displays.delete(grant.agentId);
-    else this.grant = null;
+    if (grant.scope === "display") {
+      if (this.displays.get(grant.agentId) !== grant) return;
+      this.displays.delete(grant.agentId);
+      this.displayHistory.set(grant.agentId, {
+        agentId: grant.agentId,
+        visit: grant.visit,
+        state: reason,
+        opportunity: ["deciding", "capturing"].includes(grant.opportunity)
+          ? "incomplete"
+          : grant.opportunity,
+      });
+    } else this.grant = null;
     if (this.published?.grantId === grant.grantId) this.published = undefined;
     this.cancel(grant);
   }
@@ -279,6 +327,7 @@ export class DesktopObservation extends DesktopLocalGrant {
       if (
         grant?.agentId === agentId &&
         grant.attempts < grant.limit &&
+        grant.opportunity !== "declined" &&
         this.current(grant) &&
         this.targetReady(grant)
       )
@@ -476,8 +525,6 @@ export class DesktopObservation extends DesktopLocalGrant {
       this.targetReady(grant);
     if (!current() || grant.attempts >= grant.limit)
       throw Error("DESKTOP_SCREEN_UNAVAILABLE");
-    if (this.host.screen.pending) return { status: "busy" };
-    grant.attempts++;
     const agent = this.host.runtime.agent(ctx.agentId);
     const frame = await this.host.screen.capture(
       ctx,

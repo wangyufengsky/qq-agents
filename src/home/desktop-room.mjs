@@ -677,6 +677,43 @@ export class LiveRoom {
     });
   }
 
+  noteOwnerTouch(visit, kind) {
+    (visit.ownerTouches ??= new Map()).set(kind, {
+      until: this.runner.now() + 30 * 60_000,
+    });
+  }
+
+  ownerTouchInput(visit) {
+    const touches = visit.ownerTouches
+      ? [...visit.ownerTouches].filter(
+          ([, touch]) => touch.until > this.runner.now(),
+        )
+      : [];
+    return {
+      ownerTouches: touches.map(([kind]) => kind),
+      seenTouches: () => {
+        for (const [kind, touch] of touches)
+          if (visit.ownerTouches.get(kind) === touch)
+            visit.ownerTouches.delete(kind);
+      },
+    };
+  }
+
+  observationWaiting(actor, ready) {
+    if (!ready) return { reason: "target" };
+    const state = this.visits.get(actor)?.publicActivity;
+    const now = this.runner.now();
+    if (state?.rest > now) return { reason: "rest", until: state.rest };
+    if (state?.wait > now) return { reason: "wait", until: state.wait };
+    if (
+      this.foreground?.actor === actor ||
+      this.room.waiting.some((entry) => entry.actor === actor)
+    )
+      return { reason: "chat" };
+    if (this.publicEnabled() && !this.publicActivity.hasIdleBudget(actor, now))
+      return { reason: "quota" };
+  }
+
   async advanceActivity(now) {
     if (!this.activity || this.closed || this.activity.paused) return;
     if (!this.publicEnabled()) {
@@ -703,7 +740,13 @@ export class LiveRoom {
         continue;
       }
       const events = this.perception.opportunities(actor, visit, now);
-      const turn = this.publicActivity.take(actor, visit, now, events);
+      const grant = this.runner.observation?.(actor)?.grant;
+      const interaction = this.interactionFor(actor);
+      const extra =
+        grant?.opportunity === "waiting" &&
+        !interaction?.offer &&
+        !interaction?.step;
+      const turn = this.publicActivity.take(actor, visit, now, events, extra);
       if (!turn) continue;
       this.perception.consume(actor, visit, turn.trigger);
       jobs.push(this.runActivity(turn));
@@ -729,6 +772,10 @@ export class LiveRoom {
       interaction?.offer || interaction?.step || turn.trigger
         ? undefined
         : observationOffer;
+    const display = offer?.grant.scope === "display" ? offer.grant : undefined;
+    const once = display?.opportunity === "waiting";
+    const offered = () =>
+      this.runner.observation?.(turn.actor)?.grant === display;
     let interactionDecision, interactionReceipt, activityReply;
     let completed = false;
     let acted = false;
@@ -756,13 +803,26 @@ export class LiveRoom {
         controller.signal,
         AbortSignal.timeout(DESKTOP_ACTIVITY_TIMEOUT),
       ]);
-      const run = () =>
-        this.runner.run(
+      const run = () => {
+        const { ownerTouches, seenTouches } = this.ownerTouchInput(visit);
+        return this.runner.run(
           {
             ...turn,
             observation,
             interaction: observation ? undefined : interaction,
             observationAvailable: Boolean(offer && !observation),
+            observationChoice: Boolean(display && !observation),
+            ownerTouches,
+            onInputSubmitted: () => {
+              seenTouches();
+              if (
+                !observation &&
+                once &&
+                display.opportunity === "waiting" &&
+                offered()
+              )
+                display.opportunity = "deciding";
+            },
             ...(offer?.grant.scope === "display" && {
               observationTarget: "display",
             }),
@@ -793,7 +853,18 @@ export class LiveRoom {
           signal,
           isCurrent,
         );
+      };
       let reply = await run();
+      if (display && offered() && isCurrent() && !signal.aborted) {
+        if (reply.action === "skip-observation")
+          display.opportunity = "declined";
+        else if (
+          once &&
+          display.opportunity === "deciding" &&
+          reply.action !== "observe"
+        )
+          display.opportunity = "incomplete";
+      }
       if (reply.action === "observe") {
         if (
           !isCurrent() ||
@@ -804,6 +875,7 @@ export class LiveRoom {
         )
           return;
         observation = offer.grant;
+        if (display) display.opportunity = "capturing";
         active.observation = observation;
         this.onChange();
         reply = await run();
@@ -822,6 +894,11 @@ export class LiveRoom {
     } catch {
       // Admission was already counted; a failure must wait for the next cooldown.
     } finally {
+      if (
+        display?.opportunity === "deciding" ||
+        display?.opportunity === "capturing"
+      )
+        display.opportunity = "incomplete";
       this.finishInteraction(
         turn.actor,
         interaction,
@@ -909,10 +986,12 @@ export class LiveRoom {
             through: archived.at(-1)?.roomSeq ?? visit.cursor,
           }
         : this.context(visit.cursor);
+      const { ownerTouches, seenTouches } = this.ownerTouchInput(visit);
       const reply = await this.runner.run(
         {
           actor,
           kind: "chat",
+          ...(!windowTask && { ownerTouches }),
           session,
           windowTask,
           people: this.here().map(({ name }) => name),
@@ -923,7 +1002,10 @@ export class LiveRoom {
               resting,
             }),
           onInputSubmitted: () => {
-            if (!windowTask) visit.cursor = Math.max(visit.cursor, through);
+            if (!windowTask) {
+              visit.cursor = Math.max(visit.cursor, through);
+              seenTouches();
+            }
           },
           isCurrent,
         },

@@ -34,18 +34,33 @@ export class DesktopPublicActivity {
     return visit?.publicActivity?.rest > now;
   }
 
-  take(actor, visit, now, events) {
+  recent(actor, now) {
+    return (this.starts.get(actor) ?? []).filter(
+      (entry) => (entry.at ?? entry) > now - HOUR,
+    );
+  }
+
+  hasIdleBudget(actor, now) {
+    const entries = this.recent(actor, now);
+    const policy = this.policy();
+    return (
+      entries.length < policy.totalLimit &&
+      entries.filter((entry) => entry.idle !== false).length < policy.idleLimit
+    );
+  }
+
+  take(actor, visit, now, events, extra = false) {
     const state = visit.publicActivity;
     const policy = this.policy();
     if (!state || state.rest > now) return;
-    const entries = (this.starts.get(actor) ?? []).filter(
-      (entry) => (entry.at ?? entry) > now - HOUR,
-    );
+    const entries = this.recent(actor, now);
     const idleCount = entries.filter((entry) => entry.idle !== false).length;
-    const idle = this.dueAt(visit) <= now && idleCount < policy.idleLimit;
     const event = events.find(
       ({ until, direct }) => until > now && (state.wait <= now || direct),
     );
+    const idle =
+      (this.dueAt(visit) <= now || (extra && !event && state.wait <= now)) &&
+      idleCount < policy.idleLimit;
     if (
       entries.length >= policy.totalLimit ||
       (!idle &&
