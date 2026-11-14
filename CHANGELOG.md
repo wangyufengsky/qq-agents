@@ -6,7 +6,7 @@
 
 ## 未发布
 
-### 修复 Antigravity 和 DSH 视频交付
+### 修复 Antigravity 和 DSH 视频交付（[#320](https://github.com/wangyufengsky/qq-agents/pull/320)）
 
 - Antigravity ACP 提前注册当轮获准的视频工具。DSH 的受信中继可交付超出普通文本预算的受限视频拼图。视频概览和回看在画面交付后才计入本轮次数，交付失败仍可在原消息授权有效时重试。无需修改角色配置或迁移数据。
 
