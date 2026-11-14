@@ -28,6 +28,7 @@ async function main() {
       "comments",
       "boards",
       "screenshot",
+      "video-subtitles",
     ].includes(job.operation)
   )
     throw Error("APP_OPERATION_INVALID");
@@ -131,6 +132,39 @@ async function main() {
         };
       }
       if (job.platform === "bilibili") {
+        if (job.operation === "video-subtitles") {
+          const { bvid, aid, cid } = job.part || {};
+          const key =
+            typeof bvid === "string" && /^BV[A-Za-z0-9]{10}$/.test(bvid)
+              ? { bvid }
+              : typeof aid === "string" &&
+                /^[1-9]\d{0,17}$/.test(aid) && { aid };
+          if (!key || !Number.isSafeInteger(cid) || cid <= 0)
+            throw Error("APP_INPUT_INVALID");
+          await page.goto(APP_LOGIN.bilibili);
+          const { apiGet } = await imp("clis/bilibili/utils.js");
+          const response = await apiGet(page, "/x/player/wbi/v2", {
+            params: { ...key, cid },
+            signed: true,
+          });
+          const tracks = response?.data?.subtitle?.subtitles;
+          if (response?.code !== 0 || !Array.isArray(tracks))
+            throw Error("APP_UPSTREAM_FAILED");
+          return tracks.slice(0, 24).flatMap((item) => {
+            if (
+              typeof item?.subtitle_url !== "string" ||
+              item.subtitle_url.length > 4096
+            )
+              return [];
+            return [
+              {
+                subtitle_url: item.subtitle_url,
+                lan: typeof item.lan === "string" ? item.lan.slice(0, 24) : "",
+                ai_type: item.ai_type === 1 ? 1 : 0,
+              },
+            ];
+          });
+        }
         if (job.operation === "browse" && job.entry === "following") {
           await page.goto(APP_LOGIN.bilibili);
           const { apiGet } = await imp("clis/bilibili/utils.js");

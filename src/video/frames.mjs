@@ -7,7 +7,12 @@ export const MAX_VIDEO_SECONDS = 72 * 60;
 export const VIDEO_EXTENSIONS = ["mp4", "mov", "webm", "mkv"];
 const demuxers = "mov,matroska,webm";
 const execute = promisify(execFile);
-const read = async (command, args, signal, maxBuffer = 2 * 1024 * 1024) => {
+export async function readVideoProcess(
+  command,
+  args,
+  signal,
+  maxBuffer = 2 * 1024 * 1024,
+) {
   signal.throwIfAborted();
   try {
     const { stdout } = await execute(command, args, {
@@ -29,10 +34,10 @@ const read = async (command, args, signal, maxBuffer = 2 * 1024 * 1024) => {
       { cause: error },
     );
   }
-};
+}
 
 export async function probeVideo(file, signal) {
-  const result = await read(
+  const result = await readVideoProcess(
     process.env.FFPROBE_PATH || "ffprobe",
     [
       "-v",
@@ -66,7 +71,7 @@ export async function probeVideo(file, signal) {
 }
 
 const ffmpeg = (args, signal) =>
-  read(
+  readVideoProcess(
     process.env.FFMPEG_PATH || "ffmpeg",
     [
       "-nostdin",
@@ -205,4 +210,88 @@ export async function videoDetails(file, start, end, policy, signal) {
     });
   }
   return frames;
+}
+
+export async function embeddedVideoSubtitles(file, signal) {
+  const result = await readVideoProcess(
+    process.env.FFPROBE_PATH || "ffprobe",
+    [
+      "-v",
+      "error",
+      "-protocol_whitelist",
+      "file",
+      "-format_whitelist",
+      demuxers,
+      "-select_streams",
+      "s",
+      "-show_entries",
+      "stream=index,codec_name:stream_tags=language",
+      "-of",
+      "json",
+      file,
+    ],
+    signal,
+    32 * 1024,
+  );
+  const streams = JSON.parse(result.toString()).streams || [];
+  const textStreams = streams.filter(({ codec_name }) =>
+    ["mov_text", "subrip", "ass", "ssa", "webvtt", "text"].includes(codec_name),
+  );
+  const stream =
+    textStreams.find(({ tags }) =>
+      /^(zh|chi|zho)(?:-|$)/i.test(tags?.language || ""),
+    ) ?? textStreams[0];
+  if (!stream) return "";
+  const bytes = await readVideoProcess(
+    process.env.FFMPEG_PATH || "ffmpeg",
+    [
+      "-nostdin",
+      "-v",
+      "error",
+      "-protocol_whitelist",
+      "file",
+      "-format_whitelist",
+      demuxers,
+      "-i",
+      file,
+      "-map",
+      `0:${stream.index}`,
+      "-c:s",
+      "srt",
+      "-f",
+      "srt",
+      "pipe:1",
+    ],
+    signal,
+  );
+  return bytes.toString("utf8");
+}
+
+export async function videoAudioClip(file, startMs, endMs, target, signal) {
+  const length = (endMs - startMs) / 1000;
+  if (length <= 0 || length > 30) throw Error("VIDEO_RANGE_INVALID");
+  await readVideoProcess(
+    process.env.FFMPEG_PATH || "ffmpeg",
+    [
+      "-nostdin",
+      "-v",
+      "error",
+      ...input(file, startMs),
+      "-t",
+      length.toFixed(3),
+      "-map",
+      "0:a:0",
+      "-vn",
+      "-ac",
+      "1",
+      "-ar",
+      "16000",
+      "-c:a",
+      "pcm_s16le",
+      "-n",
+      target,
+    ],
+    signal,
+    32 * 1024,
+  );
 }

@@ -27,7 +27,15 @@ export function recentQqVideo(runtime, ctx) {
   return video;
 }
 
-export function rememberQqVideo(runtime, ctx, row, linkIndex, url, durationMs) {
+export function rememberQqVideo(
+  runtime,
+  ctx,
+  row,
+  linkIndex,
+  url,
+  durationMs,
+  captions = [],
+) {
   const scope = inputScope(runtime, ctx);
   let videos = windows.get(runtime);
   if (!videos) windows.set(runtime, (videos = new Map()));
@@ -39,6 +47,7 @@ export function rememberQqVideo(runtime, ctx, row, linkIndex, url, durationMs) {
     linkIndex,
     url,
     durationMs,
+    captions: captions.length ? captions : undefined,
     expiresAt: runtime.now() + lifetime,
   });
   if (videos.size > maxScopes) videos.delete(videos.keys().next().value);
