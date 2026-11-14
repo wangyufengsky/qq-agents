@@ -1,6 +1,7 @@
 import { MAX_DESKTOP_ATTACHMENT_BODY } from "./home/desktop-attachments.mjs";
 import { MAX_DESKTOP_SCREEN_BODY } from "./home/desktop-screen.mjs";
 import { MAX_DESKTOP_NATIVE_BODY } from "./home/desktop-native.mjs";
+import { MAX_VIDEO_RELAY_FRAME, VIDEO_READ } from "./video/policy.mjs";
 import { desktopToken } from "./home/desktop-auth.mjs";
 import { deriveRelayToken } from "./core/relay-auth.mjs";
 import { finalizeMcpOutput, toolOutputText } from "./backends/tool-output.mjs";
@@ -484,11 +485,9 @@ export function createServer({
               finalizeToolOutput: (value, options) =>
                 runtime.finalizeToolOutput(ctx, value, {
                   ...options,
-                  // Authenticated video results already pass the role's image
-                  // quotas; this envelope includes their base64 expansion.
                   maxBytes:
-                    relay && data.name === "video_read"
-                      ? 12 * 1024 * 1024
+                    relay && data.name === VIDEO_READ
+                      ? MAX_VIDEO_RELAY_FRAME - 512
                       : 65024,
                 }),
             },

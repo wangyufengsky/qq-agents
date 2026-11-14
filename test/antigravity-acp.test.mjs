@@ -267,7 +267,7 @@ test("ACP is opt-in and cannot be assigned to unrelated backends", () => {
   );
 });
 
-test("ACP pre-registers the permitted reply tools in the native catalogue", async (t) => {
+test("ACP pre-registers permitted reply and video tools in the native catalogue", async (t) => {
   const root = temp(t);
   const backend = new AntigravityBackend(
     { type: "antigravity", cliProtocol: "acp", toolServers: [] },
@@ -280,9 +280,13 @@ test("ACP pre-registers the permitted reply tools in the native catalogue", asyn
   const agents = path.join(custom, "agents");
   fs.mkdirSync(agents, { recursive: true });
   const params = {
-    tools: ["qq_send", "qq_draft", "qq_delivery_status", "board_read"].map(
-      (name) => ({ name, inputSchema: { type: "object" } }),
-    ),
+    tools: [
+      "qq_send",
+      "qq_draft",
+      "qq_delivery_status",
+      "board_read",
+      "video_read",
+    ].map((name) => ({ name, inputSchema: { type: "object" } })),
   };
   const workspace = { workspace: root, custom, agents };
   const check = () => {
@@ -296,6 +300,7 @@ test("ACP pre-registers the permitted reply tools in the native catalogue", asyn
     assert.deepEqual(server.tools, {
       qq_reply_call: { eager: true },
       qq_delivery_status: { eager: true },
+      video_read: { eager: true },
     });
     const guide = fs.readFileSync(path.join(agents, "qq-agents.md"), "utf8");
     assert.match(

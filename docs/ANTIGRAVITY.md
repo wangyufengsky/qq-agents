@@ -77,7 +77,7 @@ CLI 可能从其他目录执行 hook，因此 Windows 回合子进程的 PATH �
 
 ACP 聊天使用较小的补读页和草稿审阅回执，以便 CLI 直接向模型返回结果。消息较多时按返回的分页位置继续补读，取得当前草稿的提交凭证后再决定是否发送。
 
-ACP 提前注册当回合允许的 `conversation_read` 和 `qq_delivery_status`。文字、连发和草稿的复杂参数定义可能被 ACP 省略，因此使用提前注册的适配器入口 `qq_reply_call`，携带逻辑工具名和序列化的原参数。入口只转给当回合允许的 `qq_send`、`qq_send_burst` 或 `qq_draft`，原工具校验、审阅和投递回执照常生效。
+ACP 提前注册当回合允许的 `conversation_read`、`qq_delivery_status` 和 `video_read`。文字、连发和草稿的复杂参数定义可能被 ACP 省略，因此使用提前注册的适配器入口 `qq_reply_call`，携带逻辑工具名和序列化的原参数。入口只转给当回合允许的 `qq_send`、`qq_send_burst` 或 `qq_draft`，原工具校验、审阅和投递回执照常生效。
 
 续接时按当回合提供的入口调用桥接工具。如果原生名称未列出，或 CLI 在执行前返回 `unknown tool`，可用本轮提供的 `call_mcp_tool` 调用同一个桥接工具。相同发送沿用原请求编号，投递待确认或结果未知时先查账本。这个修复适用于已有会话。
 
