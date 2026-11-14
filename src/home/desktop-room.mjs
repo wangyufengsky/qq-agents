@@ -678,17 +678,11 @@ export class LiveRoom {
   }
 
   noteOwnerTouch(visit, kind) {
-    (visit.ownerTouches ??= new Map()).set(kind, {
-      until: this.runner.now() + 30 * 60_000,
-    });
+    (visit.ownerTouches ??= new Map()).set(kind, Symbol(kind));
   }
 
   ownerTouchInput(visit) {
-    const touches = visit.ownerTouches
-      ? [...visit.ownerTouches].filter(
-          ([, touch]) => touch.until > this.runner.now(),
-        )
-      : [];
+    const touches = [...(visit.ownerTouches ?? [])];
     return {
       ownerTouches: touches.map(([kind]) => kind),
       seenTouches: () => {

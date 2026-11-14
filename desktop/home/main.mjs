@@ -2527,16 +2527,18 @@ async function chooseReadGrants(event, action, data, observe) {
   choosingDesktopPermission = true;
   try {
     if (action === "revoke" || action === "revoke-all") {
-      const selected =
-        action === "revoke-all"
-          ? [...grants.values()]
-          : [grants.get(data?.agentId)].filter(
-              (grant) => grant && grant.grantId === data.grantId,
-            );
+      const selected = (remoteGrants(remoteState) ?? []).filter(
+        ({ agentId, grantId }) =>
+          action === "revoke-all" ||
+          (agentId === data?.agentId && grantId === data.grantId),
+      );
       if (!selected.length) return { status: "unavailable" };
-      for (const grant of selected)
+      for (const { agentId, grantId } of selected) {
+        const grant = grants.get(agentId);
+        if (grant?.grantId !== grantId) continue;
         if (observe) removeObservation(grant);
         else clearManualScreen(grant);
+      }
       const room = await framework.command(
         observe ? "display-revoke-batch" : "screen-revoke-batch",
         selected.map(({ grantId }) => ({ roomEpoch, grantId })),
