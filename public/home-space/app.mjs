@@ -1041,9 +1041,26 @@ async function desktopSettings(root, ticket) {
       el(
         "p",
         "social-notice",
-        "角色须获准自主活动和看屏。每次到访仍需在桌面小窝授权一个窗口。",
+        "角色须获准自主活动和看屏。每次到访仍需在桌面小窝选定窗口或显示器。",
       ),
     );
+    const displayLimits = policy.displayObservation;
+    const displayInputs = {};
+    for (const [key, title, max] of [
+      ["minutes", "显示器观察授权时长（分钟）", 60],
+      ["attempts", "显示器观察最多取图尝试次数", 12],
+    ]) {
+      const label = el("label", "desktop-field", title);
+      const input = document.createElement("input");
+      input.type = "number";
+      input.required = true;
+      input.min = "1";
+      input.max = String(max);
+      input.value = String(displayLimits[key]);
+      displayInputs[key] = input;
+      label.append(input);
+      form.append(label);
+    }
     const retentionLabel = el(
       "label",
       "desktop-field",
@@ -1076,6 +1093,7 @@ async function desktopSettings(root, ticket) {
       perceptionEnabled,
       ...Object.values(perceptionInputs),
       retention,
+      ...Object.values(displayInputs),
       screenEnabled,
       observationEnabled,
       separateObservation,
@@ -1116,6 +1134,10 @@ async function desktopSettings(root, ticket) {
         screenView: { enabled: screenEnabled.checked },
         autonomousObservation: observationEnabled.checked,
         observationRetentionDays: Number(retention.value),
+        displayObservation: {
+          minutes: displayInputs.minutes.valueAsNumber,
+          attempts: displayInputs.attempts.valueAsNumber,
+        },
         ...((legacyObservation
           ? separateObservation.checked
           : JSON.stringify(observationRoles) !== initialObservationRoles) && {
@@ -1141,6 +1163,8 @@ async function desktopSettings(root, ticket) {
           existing.refreshMinutes !== policy.refreshMinutes ||
           existing.screenView.enabled !== policy.screenView.enabled ||
           existing.autonomousObservation !== policy.autonomousObservation ||
+          existing.displayObservation.minutes !== displayLimits.minutes ||
+          existing.displayObservation.attempts !== displayLimits.attempts ||
           existing.observationRetentionDays !==
             policy.observationRetentionDays ||
           JSON.stringify(existing.observationRoles) !==

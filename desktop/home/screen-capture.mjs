@@ -17,10 +17,14 @@ export const screenCapturePermission = () =>
   process.platform !== "darwin" ||
   systemPreferences.getMediaAccessStatus("screen") === "granted";
 
-export function listScreenSources(windowsOnly = false) {
+export function listScreenSources(windowsOnly = false, displaysOnly = false) {
   // A zero-sized thumbnail enumerates sources without capturing their pixels.
   return desktopCapturer.getSources({
-    types: windowsOnly ? ["window"] : ["window", "screen"],
+    types: displaysOnly
+      ? ["screen"]
+      : windowsOnly
+        ? ["window"]
+        : ["window", "screen"],
     thumbnailSize: { width: 0, height: 0 },
   });
 }

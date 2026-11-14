@@ -118,6 +118,12 @@ test("paper nest opens, retries and closes the desktop home from its header", as
   await perception.check();
   await idleLimit.fill("2");
   await totalLimit.fill("5");
+  const displayMinutes = page.getByLabel("显示器观察授权时长（分钟）");
+  const displayAttempts = page.getByLabel("显示器观察最多取图尝试次数");
+  assert.equal(await displayMinutes.inputValue(), "15");
+  assert.equal(await displayAttempts.inputValue(), "4");
+  await displayMinutes.fill("9");
+  await displayAttempts.fill("2");
   const save = page.getByRole("button", { name: "保存桌面设置" });
   await save.click();
   await page.getByText("桌面小窝设置已保存。", { exact: true }).waitFor();
@@ -125,6 +131,10 @@ test("paper nest opens, retries and closes the desktop home from its header", as
   assert.equal(runtime.config.desktopHome.publicPerception.enabled, true);
   assert.equal(runtime.config.desktopHome.publicPerception.idleLimit, 2);
   assert.equal(runtime.config.desktopHome.publicPerception.totalLimit, 5);
+  assert.deepEqual(runtime.config.desktopHome.displayObservation, {
+    minutes: 9,
+    attempts: 2,
+  });
   assert.equal(await idleLimit.inputValue(), "2");
   assert.deepEqual(runtime.config.desktopHome.residentPreferences, {
     "agent-0": { quiet: true, activityMinutes: 15 },

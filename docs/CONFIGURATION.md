@@ -541,6 +541,8 @@ QQ 掉线、自动重连用完次数时，管理台会显示，但主人在 QQ �
 
 `desktopHome.autonomousObservation` 默认关闭。`desktopHome.observationRoles` 在新配置中是空列表。旧配置缺少该字段时继承 `activityRoles`，沿用一次调用的观察流程。显式名单内的角色可以在活动中主动申请观察。角色还须具备 P2 自主活动、手动看屏和后端图片输入资格，并从本机面板获得一个窗口的限时授权。观察与 P2 共用额度，单次授权 15 分钟及最多四次尝试。
 
+`desktopHome.displayObservation.minutes` 与 `desktopHome.displayObservation.attempts` 分别设置每位角色的显示器观察授权时长和取图尝试上限，默认 15 分钟及 4 次，范围 1–60 分钟及 1–12 次。在「小窝目录 → 桌面小窝设置」调整。需继续在本机给每位角色单独选择一块显示器。
+
 `desktopHome.observationRetentionDays` 控制管理员逐条批准保存的观察摘要保留期，默认 7 天，范围 1–30 天。缩短保留期也会缩短已有记录的截止时间。
 
 `desktopHome.activityRoles` 默认是空列表。该列表允许在场角色在可见的小窝里按独立的冷却和小时额度作出安静陪伴决定。移动和转向仍需 `desktopHome.bodyControlRoles` 授权。

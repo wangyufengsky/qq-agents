@@ -532,3 +532,127 @@ test("a discarded candidate's summary never reenters the observation prompt", as
   assert.equal(prompts.length, 2);
   assert(!prompts[1].includes("放弃的观察摘要"));
 });
+
+test("display grants offer optional observation, carry independent limits and reject revoked evidence", async (t) => {
+  const f = setup(t);
+  const { host, runtime, command, client, payload, time, backend } = f;
+  const policy = runtime.config.desktopHome;
+  policy.activityRoles = ["agent-0", "agent-1"];
+  policy.displayObservation = { minutes: 9, attempts: 2 };
+  const sync = (capability = true) =>
+    command("sync", {
+      visible: true,
+      dragged: [],
+      observationProtocol: 2,
+      ...(capability && { displayObservation: true }),
+    });
+  const { roomEpoch } = sync(false).room;
+  const add = (agentId, limits = policy.displayObservation) => {
+    const grantId = randomUUID();
+    command("observation-grant", {
+      scope: "display",
+      roomEpoch,
+      agentId,
+      grantId,
+      limits,
+    });
+    command("observation-state", { roomEpoch, grantId, state: "ready" });
+    return grantId;
+  };
+  assert.throws(() => add("agent-0"), /DESKTOP_SCREEN_UNAVAILABLE/);
+  sync();
+  assert.throws(
+    () => add("agent-0", { minutes: 15, attempts: 4 }),
+    /DESKTOP_SCREEN_UNAVAILABLE/,
+  );
+  const first = add("agent-0");
+  const second = add("agent-1");
+  assert.equal(host.observation.forActor("agent-0").direct, false);
+  assert.equal(host.observation.forActor("agent-1").direct, false);
+  assert.equal(
+    host.observation.find(first).expiresAt - runtime.now(),
+    9 * minute,
+  );
+  const tick = () => {
+    time(2 * minute, { verify: false });
+    for (const grantId of [first, second])
+      command("observation-state", { roomEpoch, grantId, state: "ready" });
+    return sync();
+  };
+  let choose = false;
+  const offered = [];
+  runtime.backendConnections.adapter(runtime.agent("agent-1")).runDesktop =
+    backend.runDesktop = async (p) => {
+      p.beforeInput();
+      p.onInputSubmitted();
+      offered.push(p.prompt);
+      assert.equal(p.inputImages, undefined);
+      await p.callTool(decision, { action: choose ? "observe" : "silent" });
+    };
+  tick();
+  await host.live.active.done;
+  await host.live.active?.done;
+  assert(offered[0].includes('"observationTarget":"display"'));
+  assert.equal(host.observation.state().displays[0].remaining, 2);
+  await host.live.active?.done;
+  choose = true;
+  const requestStarted = Promise.withResolvers();
+  const capture = host.screen.capture.bind(host.screen);
+  host.screen.capture = (...args) => {
+    const pending = capture(...args);
+    requestStarted.resolve(host.screen.request());
+    return pending;
+  };
+  tick();
+  const screenRequest = await Promise.race([
+    requestStarted.promise,
+    host.live.active?.done,
+  ]);
+  assert(screenRequest);
+  const captured = screenRequest.grantId;
+  const retained = captured === first ? second : first;
+  assert([first, second].includes(captured));
+  host.screen.claim(payload(screenRequest));
+  const active = host.live.active;
+  command("observation-revoke", { roomEpoch, grantId: captured });
+  assert.throws(
+    () => host.screen.receive({ ...payload(screenRequest), data: jpeg }),
+    /DESKTOP_SCREEN_UNAVAILABLE/,
+  );
+  await active.done;
+  assert.equal(sync().room.observation.displays[0].grantId, retained);
+  assert.equal(sync().room.observation.displays[0].remaining, 2);
+  const retainedAgent = host.observation.find(retained).agentId;
+
+  host.observation.finish(host.observation.find(retained), {
+    summary: "示例摘要",
+  });
+  const { candidate } = host.observation.review({ client, action: "status" });
+  assert.equal(candidate.grantId, retained);
+  assert.throws(
+    () =>
+      host.observation.review({
+        client,
+        action: "save",
+        id: candidate.id,
+        grantId: second,
+      }),
+    /DESKTOP_OBSERVATION_REVIEW_UNAVAILABLE/,
+  );
+  host.observation.review({
+    client,
+    action: "save",
+    id: candidate.id,
+    grantId: retained,
+  });
+  assert.equal(
+    host.observation.review({ client, action: "list", agentId: retainedAgent })
+      .records[0].summary,
+    "示例摘要",
+  );
+  const replacement = add(retainedAgent);
+  assert.equal(host.observation.find(retained), undefined);
+  assert.equal(host.observation.find(replacement).limit, 2);
+  policy.displayObservation.minutes = 4;
+  assert.equal(sync().room.observation.displays.length, 0);
+});

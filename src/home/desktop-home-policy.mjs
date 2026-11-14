@@ -36,6 +36,11 @@ export const DESKTOP_PUBLIC_DEFAULTS = {
   ),
 };
 
+export const DESKTOP_DISPLAY_OBSERVATION_DEFAULTS = {
+  minutes: 15,
+  attempts: 4,
+};
+
 const desktopPublicPolicy = z
   .object({
     enabled: z.boolean().default(false),
@@ -63,6 +68,23 @@ export const desktopHomePolicy = z
     toolRoles: z.array(z.string().min(1).max(64)).max(64).default([]),
     autonomousObservation: z.boolean().default(false),
     observationRoles: z.array(z.string().min(1).max(64)).max(64).optional(),
+    displayObservation: z
+      .object({
+        minutes: z
+          .number()
+          .int()
+          .min(1)
+          .max(60)
+          .default(DESKTOP_DISPLAY_OBSERVATION_DEFAULTS.minutes),
+        attempts: z
+          .number()
+          .int()
+          .min(1)
+          .max(12)
+          .default(DESKTOP_DISPLAY_OBSERVATION_DEFAULTS.attempts),
+      })
+      .strict()
+      .prefault({}),
     observationRetentionDays: z.number().int().min(1).max(30).default(7),
     activityRoles: z.array(z.string().min(1).max(64)).max(64).default([]),
     bodyControlRoles: z.array(z.string().min(1).max(64)).max(64).default([]),

@@ -67,7 +67,7 @@ test("the desktop panel drops the old messages and guests when its room closes",
   assert.equal(await thread.locator(".message").count(), 0);
   assert.equal(await page.locator(".guest").count(), 0);
   assert.equal(await thread.locator(".empty").count(), 1);
-  const attach = page.getByRole("button", { name: "发送附件" });
+  const attach = page.locator(".attach");
   assert.equal(await attach.isEnabled(), false);
   await push({
     ...room,
@@ -97,6 +97,7 @@ test("the desktop panel drops the old messages and guests when its room closes",
     1,
   );
   assert.equal(await attach.isEnabled(), true);
+  await page.getByRole("button", { name: "附件和窗口任务" }).click();
   await attach.click();
   assert.equal(await page.evaluate(() => window.testAttachmentCalls), 1);
 });
@@ -149,11 +150,10 @@ test("the desktop panel exposes each authorization only while eligible", async (
     new URL("../desktop/home/index.html?type=panel", import.meta.url).href,
   );
   const push = (data) => page.evaluate((next) => window.testRoom(next), data);
-  const authorize = page.getByRole("button", { name: "授权查看屏幕" });
-  const authorizeNative = page.getByRole("button", { name: "授权控制窗口" });
-  const authorizeObservation = page.getByRole("button", {
-    name: "授权自主观察窗口",
-  });
+  await page.getByRole("button", { name: /小窝工具/ }).click();
+  const authorize = page.locator(".screen-view-button");
+  const authorizeNative = page.locator(".native-control button");
+  const authorizeObservation = page.locator(".observation button");
   const retention = page.locator("#observation-retention-notice");
   const ineligible = page.locator(".observation-ineligible");
   assert.equal(await authorize.isVisible(), false);
@@ -268,6 +268,7 @@ test("site authorization requires an explicit role and origin and follows the ro
     new URL("../desktop/home/index.html?type=panel", import.meta.url).href,
   );
   const push = (data) => page.evaluate((next) => window.testRoom(next), data);
+  await page.getByRole("button", { name: /小窝工具/ }).click();
   const authorize = page.getByRole("button", { name: "授权访问站点" });
   const dialog = page.getByRole("dialog", { name: "授权隔离浏览器" });
   assert.equal(await authorize.isVisible(), false);
@@ -764,6 +765,7 @@ test("resident controls are local and a window task stays bound to its selected 
   const browser = await chromium.launch({ executablePath, headless: true });
   t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 430, height: 574 } });
+  page.setDefaultTimeout(4500);
   const role = {
     id: "fish",
     name: "小鱼",
@@ -843,16 +845,24 @@ test("resident controls are local and a window task stays bound to its selected 
 
   const authorized = { ...room, windowTaskScreenAgentId: role.id };
   await push({ ...authorized, windowTaskScreenGrantId: "grant-a" });
-  await scope.selectOption("screen");
+  const chooseTask = async () => {
+    await page
+      .getByRole("button", { name: "附件和窗口任务" })
+      .click({ timeout: 5000 });
+    await page.getByRole("button", { name: "窗口任务", exact: true }).click();
+    await scope.selectOption("screen", { timeout: 5000 });
+    await page.getByRole("button", { name: "带入输入框" }).click();
+  };
+  await chooseTask();
   await message.fill("请查看窗口内容");
   await push({ ...authorized, windowTaskScreenGrantId: "grant-b" });
   assert.equal(await send.isEnabled(), false);
   await message.press("Enter");
   await page.getByText("窗口授权已变化。", { exact: false }).waitFor();
-  await scope.selectOption("");
-  await scope.selectOption("screen");
+  await page.locator(".task-clear").click();
+  await chooseTask();
   await send.click();
-  assert.equal(await scope.inputValue(), "");
+  assert.equal(await page.locator("#window-task-scope").inputValue(), "");
   await push({
     ...authorized,
     windowTaskScreenGrantId: "grant-b",
@@ -1348,4 +1358,110 @@ test("floating resident replays six short actions with a still hold and respects
     assert.deepEqual(timing.next, timing.first, activity);
     assert.equal(timing.sameCycle, true, activity);
   }
+});
+
+test("display picker authorizes one screen per resident without shrinking the chat", async (t) => {
+  let executablePath;
+  try {
+    executablePath = findScreenshotBrowser();
+  } catch {
+    t.skip("local Chromium unavailable");
+    return;
+  }
+  const browser = await chromium.launch({ executablePath, headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 430, height: 574 } });
+  const room = {
+    framework: true,
+    live: true,
+    connected: true,
+    messages: [],
+    roomEpoch: "room",
+    roles: [
+      { id: "fish", name: "小鱼", color: "teal", state: "here" },
+      { id: "dragon", name: "小龙", color: "green", state: "here" },
+    ],
+    observation: {
+      eligible: ["fish", "dragon"],
+      displays: [],
+      displayLimits: { minutes: 9, attempts: 2 },
+    },
+  };
+  await page.addInitScript((data) => {
+    window.testActions = [];
+    window.nest = {
+      onRoom: (update) => (window.testRoom = update),
+      onSection() {},
+      get: async () => ({ data, section: "chat" }),
+      displayObservation: async (action, value) => {
+        if (action === "list")
+          return {
+            status: "listed",
+            displays: [
+              { id: "main", name: "内建显示器", number: 1, primary: true },
+              { id: "external", name: "外接显示器", number: 2, primary: false },
+            ],
+          };
+        window.testActions.push([action, value]);
+        const { agentId, display } = value;
+        const grants = data.observation.displays.filter(
+          (grant) => grant.agentId !== agentId,
+        );
+        if (action === "grant")
+          grants.push({
+            agentId,
+            grantId: agentId + "-grant",
+            expiresAt: Date.now() + 9 * 60_000,
+            target: display === "main" ? "内建显示器" : "外接显示器",
+            remaining: 2,
+          });
+        data.observation.displays = grants;
+        window.testRoom(data);
+        return { status: action === "grant" ? "granted" : "revoked" };
+      },
+    };
+  }, room);
+  await page.goto(
+    new URL("../desktop/home/index.html?type=panel", import.meta.url).href,
+  );
+  const thread = page.getByRole("log");
+  await thread.waitFor();
+  const height = (await thread.boundingBox()).height;
+  assert(height >= 340);
+  await page.getByRole("button", { name: "小龙" }).click();
+  assert.equal(
+    await page.getByRole("textbox", { name: "发到房间" }).inputValue(),
+    "@小龙 ",
+  );
+  await page.getByRole("button", { name: /小窝工具/ }).click();
+  await page.getByRole("button", { name: "管理自主观察显示器" }).click();
+  await page.getByRole("button", { name: "选择角色与显示器" }).click();
+  const confirm = page.getByRole("button", { name: "确认授权" });
+  assert.equal(await confirm.isEnabled(), false);
+  await page
+    .getByRole("dialog", { name: "授权观察显示器" })
+    .getByLabel("角色", { exact: true })
+    .selectOption("fish");
+  assert.equal(await confirm.isEnabled(), false);
+  await page.getByRole("radio", { name: /外接显示器/ }).check();
+  assert.match(
+    await page.locator(".display-limits").textContent(),
+    /9 分钟.*2 次/,
+  );
+  await confirm.click();
+  await page.getByRole("button", { name: "授权小龙的显示器" }).click();
+  await page.getByRole("radio", { name: /内建显示器/ }).check();
+  await confirm.click();
+  await page.getByRole("button", { name: "撤销小鱼的显示器授权" }).click();
+  assert.equal(
+    await page.getByRole("button", { name: "撤销小龙的显示器授权" }).count(),
+    1,
+  );
+  await page.keyboard.press("Escape");
+  assert.equal((await thread.boundingBox()).height, height);
+  assert.deepEqual(await page.evaluate(() => window.testActions), [
+    ["grant", { agentId: "fish", display: "external" }],
+    ["grant", { agentId: "dragon", display: "main" }],
+    ["revoke", { agentId: "fish", grantId: "fish-grant" }],
+  ]);
 });
