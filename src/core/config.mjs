@@ -498,7 +498,9 @@ export const configSchema = z
               users: z.array(qq).default([]),
             })
             .strict(),
-          tools: z.array(z.string()).default(() => [...TOOL_NAMES]),
+          tools: z
+            .array(z.string())
+            .default(() => TOOL_NAMES.filter((name) => name !== "video_read")),
           wake: z
             .object({
               mentions: z.boolean().default(true),
