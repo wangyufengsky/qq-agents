@@ -41,8 +41,10 @@ test("the desktop panel drops the old messages and guests when its room closes",
     window.nest = {
       onRoom: (update) => (window.testRoom = update),
       onSection() {},
-      get: async () => ({ data, section: "chat" }),
+      get: async () => ({ data, section: window.testSection ?? "visits" }),
+      setSection: (section) => (window.testSection = section),
       attach: async () => {
+        if (window.testSection !== "chat") return "unavailable";
         window.testAttachmentCalls = (window.testAttachmentCalls ?? 0) + 1;
         return "cancelled";
       },
@@ -51,6 +53,8 @@ test("the desktop panel drops the old messages and guests when its room closes",
   await page.goto(
     new URL("../desktop/home/index.html?type=panel", import.meta.url).href,
   );
+  await page.getByRole("button", { name: "来访" }).waitFor();
+  await page.getByRole("button", { name: "聊天" }).click();
   await page.getByText("上一间的回复", { exact: true }).waitFor();
   const thread = page.getByRole("log", { name: "聊天记录" });
   const push = (data) => page.evaluate((next) => window.testRoom(next), data);

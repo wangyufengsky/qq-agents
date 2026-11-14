@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("nest", {
   get: () => ipcRenderer.invoke("room:get"),
   attach: () => ipcRenderer.invoke("room:attach"),
+  setSection: (section) => ipcRenderer.send("room:action", "section", section),
   follow: (id, mode) => ipcRenderer.invoke("room:follow", id, mode),
   observation: () => ipcRenderer.invoke("room:observation"),
   observationReview: (action, data) =>
