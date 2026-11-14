@@ -416,10 +416,13 @@ test("native handoff requires revocation and an identified outcome", async (t) =
     const { requestId } = await waitForNativeRequest(command);
     const claim = { client, roomEpoch, grantId: first.grantId, requestId };
     assert.equal((await nativeClaim(claim)).ok, true);
-    const { room } = await command("native-revoke", {
-      roomEpoch,
-      grantId: first.grantId,
-    });
+    const revoke = () =>
+      host.command({
+        client,
+        action: "native-revoke",
+        data: { roomEpoch, grantId: first.grantId },
+      });
+    const { room } = revoke();
     assert.equal(room.nativeControl.grantedAgentId, null);
     assert.equal(room.nativeControl.handoff, "pending");
     assert.equal((await output).isError, true);
@@ -451,5 +454,29 @@ test("native handoff requires revocation and an identified outcome", async (t) =
       ).ok,
       false,
     );
+  });
+  await run(second.agentId, async (call) => {
+    const output = call("desktop_native_control", {
+      type: "click",
+      ref: "ref_2",
+    });
+    const { requestId } = await waitForNativeRequest(command);
+    const claim = { client, roomEpoch, grantId: second.grantId, requestId };
+    assert.equal((await nativeClaim(claim)).ok, true);
+    host.command({
+      client,
+      action: "native-revoke",
+      data: {
+        roomEpoch,
+        grantId: second.grantId,
+      },
+    });
+    // The old result can arrive before the cancelled model's promise settles.
+    host.native.receive({
+      ...claim,
+      result: { ok: true, delivery: "delivered_verified" },
+    });
+    assert.equal((await output).isError, true);
+    assert.equal(host.native.state().handoff, undefined);
   });
 });
