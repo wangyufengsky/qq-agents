@@ -1479,16 +1479,48 @@ h2 {
   position: absolute;
   top: 17%;
   left: 48%;
-  width: 28px;
-  height: 15px;
+  width: 24px;
+  height: 11px;
   border: 1px solid #b9845b;
-  border-radius: 55% 62% 45% 45%;
+  border-radius: 72% 28% 42% 58% / 70% 35% 65% 30%;
   background: #ffe7c3;
-  box-shadow:
-    6px -4px 0 -3px #f0bd91,
-    2px 2px 0 #d5a77780;
+  box-shadow: 1px 2px 0 #d5a77780;
   pointer-events: none;
   animation: paper-petting-hand 780ms ease-in-out both;
+}
+.sprite-petting::before,
+.sprite-petting::after {
+  content: "";
+  position: absolute;
+  background: #ffe7c3;
+  border: 1px solid #b9845b;
+}
+.sprite-petting::before {
+  top: 1px;
+  right: -11px;
+  width: 12px;
+  height: 7px;
+  border-left: 0;
+  border-radius: 0 40% 40% 0;
+}
+.sprite-petting::after {
+  left: 3px;
+  bottom: -4px;
+  width: 12px;
+  height: 5px;
+  border-top: 0;
+  border-radius: 0 55% 60% 65%;
+  rotate: -15deg;
+  background:
+    linear-gradient(
+      90deg,
+      transparent 26%,
+      #d7a277 27% 32%,
+      transparent 34% 58%,
+      #d7a277 60% 65%,
+      transparent 67%
+    ),
+    #ffe7c3;
 }
 @keyframes paper-pet-nod {
   24%,
