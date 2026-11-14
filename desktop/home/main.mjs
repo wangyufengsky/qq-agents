@@ -3207,7 +3207,7 @@ ipcMain.on("room:action", (event, action, data) => {
         if (entry.gesture !== gesture) return;
         entry.gesture = undefined;
         update();
-      }, 850);
+      }, 1050);
       if (framework && entry.bodyVisitId) {
         manualTouches.set(entry.id + ":pet", {
           agentId: entry.id,

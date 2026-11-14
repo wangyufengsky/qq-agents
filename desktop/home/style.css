@@ -1468,90 +1468,230 @@ h2 {
 .observation-opportunity {
   font-weight: 600;
 }
-.sprite-petting {
+.sprite-petting,
+.sprite-pet-face {
   display: none;
 }
+.sprite-button[data-appearance="fish"] {
+  --pet-art: url("art/actions/fish-idle.webp");
+  --pet-left-x: 35.5%;
+  --pet-left-y: 38.4%;
+  --pet-right-x: 54%;
+  --pet-right-y: 36.1%;
+  --pet-eye-width: 10.1%;
+  --pet-skin: #fadac0;
+  --pet-lash: #3d3035;
+  --pet-contact: 48%;
+  --pet-head: 12%;
+}
+.sprite-button[data-appearance="dragon"] {
+  --pet-art: url("art/actions/dragon-idle.webp");
+  --pet-left-x: 35.8%;
+  --pet-left-y: 37.2%;
+  --pet-right-x: 50.7%;
+  --pet-right-y: 35.8%;
+  --pet-eye-width: 10.5%;
+  --pet-skin: #f6dbc1;
+  --pet-lash: #675044;
+  --pet-contact: 45%;
+  --pet-head: 17%;
+}
+.sprite-button[data-appearance="cat"] {
+  --pet-art: url("art/actions/cat-idle.webp");
+  --pet-left-x: 34.1%;
+  --pet-left-y: 36.4%;
+  --pet-right-x: 49.2%;
+  --pet-right-y: 34.3%;
+  --pet-eye-width: 11%;
+  --pet-skin: #ffdfc7;
+  --pet-lash: #68404e;
+  --pet-contact: 44%;
+  --pet-head: 15%;
+}
 .sprite-button[data-gesture="pet"] .sprite-gesture {
-  animation: paper-pet-nod 780ms ease-in-out both;
+  animation: paper-pet-nod 960ms ease-in-out both;
+}
+.sprite-button[data-gesture="pet"] .sprite-pose {
+  opacity: 0;
+}
+.sprite-button[data-gesture="pet"] .sprite-pet-face {
+  display: block;
+  position: absolute;
+  inset: 0;
+  background: var(--pet-art) center / contain no-repeat;
+  filter: drop-shadow(0 3px 2px #38271245);
+}
+.pet-eye {
+  position: absolute;
+  top: var(--pet-left-y);
+  left: var(--pet-left-x);
+  width: var(--pet-eye-width);
+  height: 10.7%;
+  border-radius: 44% 55% 46% 46%;
+  background: linear-gradient(105deg, #ffe1c9, var(--pet-skin) 72%, #f8c8af);
+  transform: rotate(-7deg);
+  animation: paper-pet-lid 960ms ease-in-out both;
+}
+.pet-eye + .pet-eye {
+  top: var(--pet-right-y);
+  left: var(--pet-right-x);
+}
+.pet-eye::after {
+  content: "";
+  position: absolute;
+  left: 8%;
+  top: 45%;
+  width: 84%;
+  height: 35%;
+  border-top: 1.35px solid var(--pet-lash);
+  border-radius: 66% 57% 18% 20%;
+  transform: rotate(-4deg);
+  animation: paper-pet-lash 960ms ease-in-out both;
 }
 .sprite-button[data-gesture="pet"] .sprite-petting {
   display: block;
   position: absolute;
-  top: 17%;
-  left: 48%;
-  width: 24px;
-  height: 11px;
-  border: 1px solid #b9845b;
-  border-radius: 72% 28% 42% 58% / 70% 35% 65% 30%;
-  background: #ffe7c3;
-  box-shadow: 1px 2px 0 #d5a77780;
+  top: var(--pet-head);
+  left: var(--pet-contact);
+  width: 37px;
+  height: 22px;
   pointer-events: none;
-  animation: paper-petting-hand 780ms ease-in-out both;
+  transform-origin: 78% 42%;
+  animation: paper-petting-hand 960ms ease-in-out both;
+  filter: drop-shadow(0 1px 0.9px #855b4d50);
 }
-.sprite-petting::before,
+.pet-palm {
+  position: absolute;
+  inset: 4px 7px 4px 6px;
+  box-sizing: border-box;
+  border: 1px solid #ad775e;
+  border-right: 0;
+  border-radius: 70% 36% 44% 52%;
+  background: linear-gradient(158deg, #fff0d9 30%, #fbd4b2 83%);
+  z-index: 1;
+}
+.pet-palm::before {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: -6px;
+  width: 12px;
+  height: 6px;
+  border: 1px solid #ad775e;
+  border-right: 0;
+  border-radius: 65% 25% 25% 62%;
+  background: linear-gradient(178deg, #ffe8ce 46%, #efb68f);
+  box-shadow: 2px 3px 0 -1px #e4a782;
+  transform: rotate(-8deg);
+}
+.pet-palm::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  bottom: -3px;
+  width: 9px;
+  height: 6px;
+  border-bottom: 1px solid #ad775e;
+  border-left: 1px solid #ad775e;
+  border-radius: 45% 40% 55% 75%;
+  background: #ffd8b8;
+  transform: rotate(25deg);
+}
 .sprite-petting::after {
   content: "";
   position: absolute;
-  background: #ffe7c3;
-  border: 1px solid #b9845b;
-}
-.sprite-petting::before {
-  top: 1px;
-  right: -11px;
-  width: 12px;
-  height: 7px;
-  border-left: 0;
-  border-radius: 0 40% 40% 0;
-}
-.sprite-petting::after {
-  left: 3px;
-  bottom: -4px;
-  width: 12px;
-  height: 5px;
-  border-top: 0;
-  border-radius: 0 55% 60% 65%;
-  rotate: -15deg;
-  background:
-    linear-gradient(
-      90deg,
-      transparent 26%,
-      #d7a277 27% 32%,
-      transparent 34% 58%,
-      #d7a277 60% 65%,
-      transparent 67%
-    ),
-    #ffe7c3;
+  top: 3px;
+  right: 0;
+  width: 11px;
+  height: 15px;
+  border: 1px solid #ac8d72;
+  border-radius: 23% 55% 55% 30%;
+  background: repeating-linear-gradient(90deg, #eed1ab 0 2px, #faf0d7 2px 4px);
+  transform: rotate(-8deg);
 }
 @keyframes paper-pet-nod {
-  24%,
-  52% {
-    transform: translateY(3px) scaleY(0.96) rotate(-3deg);
+  0%,
+  100% {
+    transform: none;
   }
-  38%,
-  68% {
-    transform: translateY(-1px) rotate(2deg);
+  24% {
+    transform: translateY(2px) rotate(-2deg);
+  }
+  44% {
+    transform: translateY(3px) rotate(-4deg);
+  }
+  67% {
+    transform: translateY(2px) rotate(-1deg);
+  }
+  85% {
+    transform: rotate(1deg);
+  }
+}
+@keyframes paper-pet-lid {
+  0%,
+  10%,
+  89%,
+  100% {
+    opacity: 0;
+    clip-path: inset(0 0 90% 0);
+  }
+  22%,
+  76% {
+    opacity: 1;
+    clip-path: inset(0 0 21% 0);
+  }
+  30%,
+  64% {
+    opacity: 1;
+    clip-path: inset(0);
+  }
+}
+@keyframes paper-pet-lash {
+  0%,
+  12%,
+  86%,
+  100% {
+    opacity: 0;
+    transform: translateY(-2px) rotate(-4deg);
+  }
+  30%,
+  65% {
+    opacity: 1;
+    transform: rotate(-4deg);
   }
 }
 @keyframes paper-petting-hand {
-  0%,
+  0% {
+    opacity: 0;
+    transform: translate(16px, -16px) rotate(-22deg);
+  }
+  18% {
+    opacity: 1;
+    transform: translate(4px, 1px) rotate(-10deg);
+  }
+  40% {
+    opacity: 1;
+    transform: translate(-11px, 5px) rotate(6deg);
+  }
+  62% {
+    opacity: 1;
+    transform: translate(1px, 3px) rotate(-6deg);
+  }
+  76% {
+    opacity: 1;
+    transform: translate(-6px, 0px) rotate(2deg);
+  }
   100% {
     opacity: 0;
-    transform: translate(17px, -16px) rotate(-22deg);
-  }
-  18%,
-  49% {
-    opacity: 1;
-    transform: translate(8px, 1px) rotate(-12deg);
-  }
-  36%,
-  67% {
-    opacity: 1;
-    transform: translate(-9px, 3px) rotate(13deg);
+    transform: translate(15px, -15px) rotate(-20deg);
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .sprite-button[data-gesture="pet"] .sprite-gesture,
-  .sprite-button[data-gesture="pet"] .sprite-petting {
+  .sprite-button[data-gesture="pet"]
+    :is(.sprite-gesture, .sprite-petting, .pet-eye, .pet-eye::after) {
     animation: none;
+  }
+  .sprite-button[data-gesture="pet"] .sprite-petting {
+    transform: translate(-6px, 3px);
   }
 }

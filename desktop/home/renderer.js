@@ -218,8 +218,14 @@ function floating() {
       if (event.target === gestureLayer) delete art.dataset.gesture;
     });
     pose.append(sprite, walk, cue);
-    gestureLayer.append(pose, element("span", "sprite-petting"));
-    body.append(gestureLayer);
+    const petFace = element("span", "sprite-pet-face");
+    const petHand = element("span", "sprite-petting");
+    petFace.setAttribute("aria-hidden", "true");
+    petHand.setAttribute("aria-hidden", "true");
+    petFace.append(element("span", "pet-eye"), element("span", "pet-eye"));
+    petHand.append(element("span", "pet-palm"));
+    gestureLayer.append(pose, petFace);
+    body.append(gestureLayer, petHand);
     art.append(body);
   }
   space.append(art);

@@ -1117,6 +1117,9 @@ test("floating resident replays six short actions with a still hold and respects
   });
   assert.equal(await button.getAttribute("data-gesture"), "pet");
   assert.equal(await page.locator(".sprite-petting").isVisible(), true);
+  assert.equal(await page.locator(".sprite-pet-face").isVisible(), true);
+  assert.equal(await page.locator(".pet-eye").count(), 2);
+
   assert.equal(
     await page
       .locator(".sprite-petting")
@@ -1147,6 +1150,23 @@ test("floating resident replays six short actions with a still hold and respects
         .getAnimations({ subtree: true })
         .map(({ animationName }) => animationName),
     );
+  await page.evaluate((next) => window.testRoom(next), {
+    ...room,
+    roles: [
+      {
+        ...room.roles[0],
+        bodyStatus: {
+          state: "idle",
+          gesture: { id: "owner-pet-motion", kind: "pet" },
+        },
+      },
+    ],
+  });
+  assert((await animations()).includes("paper-pet-lid"));
+  assert((await animations()).includes("paper-petting-hand"));
+  await page.evaluate((next) => window.testRoom(next), room);
+  assert.equal(await page.locator(".sprite-pet-face").isVisible(), false);
+
   const motionTiming = (state) =>
     body.evaluate((node, state) => {
       window.testMotion(state);
