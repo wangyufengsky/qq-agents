@@ -223,6 +223,74 @@ test("the desktop panel exposes each authorization only while eligible", async (
   assert.equal(await revokeNative.isVisible(), false);
 });
 
+test("the header tools remain interactive outside the chat tab", async (t) => {
+  let executablePath;
+  try {
+    executablePath = findScreenshotBrowser();
+  } catch {
+    t.skip("local Chromium unavailable");
+    return;
+  }
+  const browser = await chromium.launch({ executablePath, headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 430, height: 574 } });
+  await page.addInitScript(() => {
+    window.nest = {
+      onRoom() {},
+      onSection() {},
+      get: async () => ({
+        section: "visits",
+        data: {
+          live: true,
+          framework: true,
+          connected: true,
+          roles: [
+            {
+              id: "fish",
+              name: "小鱼",
+              color: "mint",
+              state: "here",
+              available: true,
+            },
+          ],
+          messages: [],
+          observationReviewAvailable: true,
+          browserControl: { eligible: ["fish"] },
+        },
+      }),
+      browserControl() {},
+      observationReview: async () => ({ records: [] }),
+    };
+  });
+  await page.goto(
+    new URL("../desktop/home/index.html?type=panel", import.meta.url).href,
+  );
+  const tools = page.getByRole("button", { name: "小窝工具" });
+  const sheet = page.getByRole("dialog", { name: "小窝工具" });
+  await tools.click();
+  assert.equal(
+    await sheet.isVisible(),
+    true,
+    "opening tools on Visits must show the modal, which blocks other controls",
+  );
+  await sheet.getByRole("button", { name: "关闭面板" }).click();
+  await page.getByRole("button", { name: "观察", exact: true }).click();
+  await tools.click();
+  await sheet.getByRole("button", { name: "授权访问站点" }).click();
+  const browserPermission = page.getByRole("dialog", {
+    name: "授权隔离浏览器",
+  });
+  assert.equal(await browserPermission.isVisible(), true);
+  await browserPermission.getByRole("button", { name: "取消" }).click();
+  await page.keyboard.press("Escape");
+  assert.equal(await sheet.isVisible(), false);
+  assert.equal(
+    await tools.evaluate((node) => node === document.activeElement),
+    true,
+  );
+  await page.getByRole("button", { name: "聊天" }).click();
+});
+
 test("site authorization requires an explicit role and origin and follows the room", async (t) => {
   let executablePath;
   try {
