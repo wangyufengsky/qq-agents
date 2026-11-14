@@ -1164,6 +1164,67 @@ test("floating resident replays six short actions with a still hold and respects
   });
   assert((await animations()).includes("paper-pet-lid"));
   assert((await animations()).includes("paper-petting-hand"));
+
+  for (const art of ["fish", "dragon", "cat"]) {
+    await page.evaluate(
+      ({ data, appearance }) =>
+        window.testRoom({
+          ...data,
+          roles: [
+            {
+              ...data.roles[0],
+              art: appearance,
+              bodyStatus: {
+                state: "idle",
+                gesture: { id: "pet-" + appearance, kind: "pet" },
+              },
+            },
+          ],
+        }),
+      { data: room, appearance: art },
+    );
+    const eyes = await page.locator(".pet-eye").evaluateAll((nodes) =>
+      nodes.map((eye) => {
+        const animations = eye.getAnimations({ subtree: true });
+        return [0, 269, 450, 960].map((time) => {
+          for (const animation of animations) {
+            animation.pause();
+            animation.currentTime = time;
+          }
+          const iris = window.getComputedStyle(eye, "::after");
+          const lid = window.getComputedStyle(eye.firstElementChild);
+          return {
+            center: iris.transformOrigin.split(" ").map(parseFloat),
+            lidPosition: [parseFloat(lid.left), parseFloat(lid.top)],
+            openness: Number(iris.scale.split(" ").at(-1)),
+            lidOpacity: lid.opacity,
+          };
+        });
+      }),
+    );
+    assert.equal(eyes.length, 2);
+    for (const [open, squint, closed, reopened] of eyes) {
+      assert.deepEqual(open.center, squint.center);
+      assert.deepEqual(open.center, closed.center);
+      assert.deepEqual(open.center, reopened.center);
+      assert(
+        open.center.every(
+          (point, i) => Math.abs(point - closed.lidPosition[i]) < 0.02,
+        ),
+      );
+      assert.equal(open.openness, 1);
+      assert(squint.openness > closed.openness && squint.openness < 1);
+      assert(closed.openness < 0.15);
+      assert.equal(closed.lidOpacity, "1");
+      assert.equal(reopened.openness, 1);
+      assert.equal(reopened.lidOpacity, "0");
+    }
+    assert(
+      eyes[0][0].center[0] < eyes[1][0].center[0] &&
+        eyes[0][0].center[1] > eyes[1][0].center[1],
+    );
+    await page.evaluate((next) => window.testRoom(next), room);
+  }
   await page.evaluate((next) => window.testRoom(next), room);
   assert.equal(await page.locator(".sprite-pet-face").isVisible(), false);
 

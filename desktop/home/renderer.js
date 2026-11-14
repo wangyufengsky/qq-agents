@@ -222,7 +222,11 @@ function floating() {
     const petHand = element("span", "sprite-petting");
     petFace.setAttribute("aria-hidden", "true");
     petHand.setAttribute("aria-hidden", "true");
-    petFace.append(element("span", "pet-eye"), element("span", "pet-eye"));
+    for (let i = 0; i < 2; i++) {
+      const eye = element("span", "pet-eye");
+      eye.append(element("span", "pet-lid"));
+      petFace.append(eye);
+    }
     petHand.append(element("span", "pet-palm"));
     gestureLayer.append(pose, petFace);
     body.append(gestureLayer, petHand);
