@@ -441,6 +441,7 @@ export class Runtime {
           (!ctx.desktopBrowserObserved &&
             (name === DESKTOP_NATIVE_CONTROL ||
               (name === DESKTOP_SCREEN_VIEW && !ctx.desktopScreenObserved))) ||
+          (name === "video_read" && ctx.desktopVideoIds?.size > 0) ||
           DESKTOP_MEMORY_TOOLS.includes(name),
       );
     if (ctx.runtimeKind !== "functional-agent")
@@ -1426,6 +1427,20 @@ export class Runtime {
   }
   async executeTool(ctx, name, args = {}) {
     const a = this.assertActive(ctx);
+    if (
+      ctx.videoFramesPending &&
+      [
+        DESKTOP_DECISION,
+        "video_read",
+        "qq_send",
+        "qq_send_burst",
+        "qq_draft",
+        "qq_send_file",
+        "qq_send_voice",
+        "qq_mark_read",
+      ].includes(name)
+    )
+      throw Error("VIDEO_FRAMES_PENDING");
     if (ctx.runtimeKind === "subject-social")
       this.socialRuntime.assertToolAllowed(ctx, name);
     for (const repo of privateGithubSources(ctx, this))

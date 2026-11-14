@@ -1,5 +1,6 @@
 import { subjectInboxEnabled } from "../core/role-rest.mjs";
 import { DESKTOP_CONVERSATION } from "../home/desktop-decision.mjs";
+import { videoVision } from "../video/policy.mjs";
 import { supportsMessageImages } from "../backends/capabilities.mjs";
 import {
   DESKTOP_BROWSER_CONTROL,
@@ -25,6 +26,7 @@ const desktopToolNames = new Set([
   "app_capabilities",
   "media_list",
   "sticker_read",
+  "video_read",
   "qq_image_read",
   "work_note",
   "work_notes",
@@ -62,6 +64,8 @@ export function desktopToolAvailable(agent, name, config) {
     );
   if (!desktopRoleToolsEnabled(config, agent) || !desktopToolCandidate(name))
     return false;
+  if (name === "video_read")
+    return agent.tools.includes(name) && videoVision(agent, config);
   if (name === DESKTOP_BROWSER_CONTROL)
     return config.desktopHome.browserControl?.enabled === true;
   if (name === DESKTOP_NATIVE_CONTROL)

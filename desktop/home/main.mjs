@@ -14,6 +14,10 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { basename, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  MAX_DESKTOP_VIDEO_BYTES,
+  VIDEO_EXTENSIONS,
+} from "../../src/video/frames.mjs";
 import { openNoFollowAsync } from "../../src/core/no-follow.mjs";
 import { managedDesktopExecutable } from "../../src/home/desktop-dependencies.mjs";
 import { clampToWorkArea, restoreWindowPoint } from "./window-placement.mjs";
@@ -2002,13 +2006,14 @@ ipcMain.handle("room:attach", async (event) => {
     entry.section !== "chat" ||
     !entry.win.isFocused() ||
     choosingAttachment ||
-    (!availability?.text && !availability?.image)
+    (!availability?.text && !availability?.image && !availability?.video)
   )
     return "unavailable";
   const imageExtensions = ["png", "jpg", "jpeg", "webp"];
   const extensions = [
     ...(availability.text ? ["txt", "md", "csv", "json"] : []),
     ...(availability.image ? imageExtensions : []),
+    ...(availability.video ? VIDEO_EXTENSIONS : []),
   ];
   choosingAttachment = true;
   try {
@@ -2023,14 +2028,32 @@ ipcMain.handle("room:attach", async (event) => {
     const name = basename(selected);
     const extension = extname(name).slice(1).toLowerCase();
     if (!extensions.includes(extension) || name.length > 120) return "invalid";
-    const maxBytes = imageExtensions.includes(extension)
-      ? 2 * 1024 * 1024
-      : 12 * 1024;
+    const isVideo = VIDEO_EXTENSIONS.includes(extension);
+    const maxBytes = isVideo
+      ? MAX_DESKTOP_VIDEO_BYTES
+      : imageExtensions.includes(extension)
+        ? 2 * 1024 * 1024
+        : 12 * 1024;
     const file = await openNoFollowAsync(selected);
     try {
       const stat = await file.stat();
       if (!stat.isFile() || stat.size < 1 || stat.size > maxBytes)
         return "invalid";
+      if (isVideo) {
+        const stream = file.createReadStream({
+          autoClose: false,
+          end: stat.size - 1,
+        });
+        try {
+          await framework.attachVideo(
+            { roomEpoch, name },
+            { stream, bytes: stat.size },
+          );
+          return "sent";
+        } finally {
+          stream.destroy();
+        }
+      }
       const buffer = Buffer.alloc(maxBytes + 1);
       let length = 0;
       while (length < buffer.length) {

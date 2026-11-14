@@ -4,8 +4,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const LIMIT = 128 * 1024 * 1024;
 
-/** @returns {Promise<{type: "image", mimeType: "image/jpeg", data: string} | null>} */
-async function takeAcpDesktopFrame() {
+/** @param {string} route */
+async function takeAcpMedia(route) {
   const endpoint = new URL(process.env.QQ_AGY_ENDPOINT || "http://invalid");
   const token = process.env.QQ_AGY_TOKEN;
   if (
@@ -18,14 +18,19 @@ async function takeAcpDesktopFrame() {
     endpoint.hash
   )
     throw Error("ANTIGRAVITY_PROTOCOL_ERROR");
-  const response = await fetch(new URL("/desktop-frame", endpoint), {
+  const response = await fetch(new URL(route, endpoint), {
     method: "POST",
     headers: { authorization: `Bearer ${token}` },
     redirect: "error",
     signal: AbortSignal.timeout(5000),
   });
   if (!response.ok) throw Error("ANTIGRAVITY_PROTOCOL_ERROR");
-  const { image } = await response.json();
+  return response.json();
+}
+
+/** @returns {Promise<{type: "image", mimeType: "image/jpeg", data: string} | null>} */
+async function takeAcpDesktopFrame() {
+  const { image } = await takeAcpMedia("/desktop-frame");
   if (image === null) return null;
   if (
     image?.type !== "image" ||
@@ -231,6 +236,27 @@ export async function runAcp(
               text: "这是当前桌面回合已授权的截图。请依据画面回应刚才的请求，并提交一次桌面决定。",
             },
             image,
+          ],
+        });
+        if (closed || result.stopReason !== "end_turn")
+          throw Error("ANTIGRAVITY_PROTOCOL_ERROR");
+      }
+    }
+    if (options.videoFrames) {
+      // At most one overview and one optional rewatch can be delivered per bridge turn.
+      for (let i = 0; i < 2; i++) {
+        const { contents } = await takeAcpMedia("/video-frames");
+        if (!Array.isArray(contents) || contents.length > 17 || closed)
+          throw Error("ANTIGRAVITY_PROTOCOL_ERROR");
+        if (!contents.length) break;
+        const result = await request("session/prompt", {
+          sessionId: id,
+          prompt: [
+            {
+              type: "text",
+              text: "这是刚才已授权读取的视频采样帧。看完概览后可直接交流，或按自己的兴趣选一小段回看一次。只有实际入眼的画面才可作为观察证据。",
+            },
+            ...contents,
           ],
         });
         if (closed || result.stopReason !== "end_turn")

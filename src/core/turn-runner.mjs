@@ -258,6 +258,7 @@ export class TurnRunner {
         );
     } finally {
       runtime.capabilities.delete(ctx.token);
+      await ctx.videoSource?.dispose?.().catch(() => {});
       try {
         try {
           runtime.subject.finish(ctx, outcome);

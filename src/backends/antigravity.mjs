@@ -34,6 +34,7 @@ import {
   DESKTOP_NATIVE_CONTROL,
   DESKTOP_SCREEN_VIEW,
 } from "../tools/names.mjs";
+import { videoDelivery, videoResponseGuide } from "../video/policy.mjs";
 import { mediaLease } from "../tools/media-lease.mjs";
 
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
@@ -761,6 +762,7 @@ export class AntigravityBackend {
             session: params.session?.id,
             desktop: params.desktop === true,
             desktopScreen: acpDesktopScreen(params),
+            videoFrames: params.tools.some(({ name }) => name === "video_read"),
           }),
         ],
         {
@@ -1022,6 +1024,9 @@ export class AntigravityBackend {
     // ACP can offload MCP images, and an ACP session exposes no native file reader.
     // Only the bridge's ACP client can claim the frame for its next native prompt.
     const screenContinuation = acp && acpDesktopScreen(params);
+    const videoContinuation = acp && names.has("video_read");
+    /** @type {{contents: any[], current: () => boolean, setPending: (pending: boolean) => void} | undefined} */
+    let videoFrames;
     /** @type {{image: {type: string, mimeType: string, data: string}, current: () => boolean} | undefined} */
     let screenFrame;
     // Native ACP can drop declarations containing unions. Use a simple
@@ -1046,6 +1051,22 @@ export class AntigravityBackend {
         return reply(200, { alive: true });
       if (!live || params.signal.aborted)
         return reply(403, { error: "ANTIGRAVITY_TURN_INACTIVE" });
+      if (
+        videoContinuation &&
+        req.method === "POST" &&
+        req.url === "/video-frames"
+      ) {
+        const frames = videoFrames;
+        videoFrames = undefined;
+        frames?.setPending(false);
+        try {
+          return reply(200, {
+            contents: frames?.current() ? frames.contents : [],
+          });
+        } catch {
+          return reply(200, { contents: [] });
+        }
+      }
       if (
         screenContinuation &&
         req.method === "POST" &&
@@ -1128,10 +1149,29 @@ export class AntigravityBackend {
             ].includes(name));
         /** @type {typeof screenFrame} */
         let frame;
+        /** @type {typeof videoFrames} */ let pendingVideo;
         const { wire: content, receipt } = await finalizeMcpOutput(
           params,
           result,
           (value) => {
+            if (videoContinuation && name === "video_read" && !value.isError) {
+              const current = value[mediaLease];
+              if (typeof current !== "function" || videoFrames)
+                throw Error("VIDEO_BUSY");
+              pendingVideo = {
+                contents: value.content,
+                current,
+                setPending: value[videoDelivery],
+              };
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: videoResponseGuide,
+                  },
+                ],
+              };
+            }
             if (
               !screenContinuation ||
               name !== DESKTOP_SCREEN_VIEW ||
@@ -1163,6 +1203,10 @@ export class AntigravityBackend {
         );
         if (!live || params.signal.aborted) return reply(403, {});
         if (frame && !content.isError) screenFrame = frame;
+        if (pendingVideo && !content.isError) {
+          pendingVideo.setPending(true);
+          videoFrames = pendingVideo;
+        }
         res.once("finish", () => {
           if (live && !params.signal.aborted)
             params.commitToolOutput?.(receipt, toolOutputText(content));

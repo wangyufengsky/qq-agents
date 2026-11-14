@@ -12,7 +12,7 @@ export function createFrameworkClient(
   let queue = Promise.resolve();
   let syncing = false;
   let stopped = false;
-  const request = async (action, data, endpoint = "client") => {
+  const request = async (action, data, endpoint = "client", upload) => {
     const port =
       listenPort ??
       JSON.parse(readFileSync(join(root, "config.json"), "utf8")).port ??
@@ -30,17 +30,32 @@ export function createFrameworkClient(
       {
         method: "POST",
         headers: {
-          "content-type": "application/json",
+          "content-type": upload
+            ? "application/octet-stream"
+            : "application/json",
+          ...(upload && {
+            "content-length": String(upload.bytes),
+            "x-video-name": encodeURIComponent(data.name),
+            "x-desktop-client": client,
+            "x-desktop-room-epoch": data.roomEpoch,
+          }),
           "x-desktop-home-token": token,
         },
-        body: JSON.stringify(
-          endpoint === "client"
-            ? { client, action, data }
-            : { ...data, client },
-        ),
+        ...(upload && { duplex: "half" }),
+        body:
+          upload?.stream ??
+          JSON.stringify(
+            endpoint === "client"
+              ? { client, action, data }
+              : { ...data, client },
+          ),
         redirect: "error",
         signal: AbortSignal.timeout(
-          endpoint === "client" || endpoint.startsWith("body-") ? 2500 : 8000,
+          upload
+            ? 120_000
+            : endpoint === "client" || endpoint.startsWith("body-")
+              ? 2500
+              : 8000,
         ),
       },
     );
@@ -87,6 +102,11 @@ export function createFrameworkClient(
         const value = await request(undefined, data, "attachment");
         if (!stopped) onState(value);
       });
+    },
+    async attachVideo(data, upload) {
+      if (stopped) throw Error("DESKTOP_CONNECTION_FAILED");
+      await request(undefined, data, "video", upload);
+      if (!stopped) sync();
     },
     command(action, data) {
       return enqueue(async () => {

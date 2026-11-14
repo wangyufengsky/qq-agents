@@ -87,6 +87,7 @@ export const TOOL_NAMES = Object.freeze([
   "qq_send_file",
   "image_save",
   "media_list",
+  "video_read",
   "web_screenshot",
   "app_screenshot",
   "app_record",

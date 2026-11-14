@@ -16,6 +16,8 @@ import { rhythmStatus } from "../core/rhythm.mjs";
 import {
   DesktopAttachments,
   parseDesktopAttachment,
+  parseDesktopVideo,
+  spoolDesktopVideo,
 } from "./desktop-attachments.mjs";
 import { DesktopVisits } from "./desktop-visits.mjs";
 import { DesktopInvitations } from "./desktop-invitations.mjs";
@@ -646,6 +648,7 @@ export class DesktopHost {
     const previous = this.live;
     this.live = null;
     this.client = null;
+    this.attachments?.clear();
     this.attachments = null;
     for (const visit of this.visits.values()) visit.resetDoor();
     void previous.close();
@@ -974,6 +977,47 @@ export class DesktopHost {
     }
   }
 
+  async attachVideo(headers, request) {
+    const upload = parseDesktopVideo(headers);
+    const live = this.live;
+    const attachments = this.attachments;
+    const check = () => {
+      if (
+        this.runtime.closed ||
+        this.runtime.updateMaintenance ||
+        !this.connected() ||
+        this.client.id !== upload.client ||
+        !live ||
+        this.live !== live ||
+        live.room.epoch !== upload.roomEpoch ||
+        !attachments.availability(this.runtime.config, live.here()).video
+      )
+        throw Error("DESKTOP_ATTACHMENT_UNAVAILABLE");
+    };
+    check();
+    if (attachments.busy) throw Error("DESKTOP_ATTACHMENT_UNAVAILABLE");
+    attachments.busy = true;
+    const selectedVisits = new Map(live.visits);
+    let entry,
+      published = false;
+    try {
+      entry = await spoolDesktopVideo(upload, request, check);
+      const visits = new Map(
+        [...selectedVisits].filter(
+          ([id, visit]) => live.visits.get(id) === visit,
+        ),
+      );
+      attachments.publish(entry, this.runtime.config, visits, (metadata) =>
+        live.send("", [metadata]),
+      );
+      published = true;
+      return this.clientSnapshot();
+    } finally {
+      attachments.busy = false;
+      if (!published) await entry?.video.drop();
+    }
+  }
+
   async run(request, signal, canStart) {
     const task = this.runModel(request, signal, canStart);
     return this.runtime.trackWork(task);
@@ -1137,6 +1181,7 @@ export class DesktopHost {
           agent,
           this.live?.visits.get(actor),
         );
+      ctx.desktopVideoIds = attachmentInput?.videoIds;
       if (observation) {
         const frame = await this.observation.capture(ctx, observation);
         check();

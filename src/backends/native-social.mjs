@@ -26,7 +26,7 @@ const desktopAllowed = new Set([
   DESKTOP_HISTORY,
   ...DESKTOP_MEMORY_TOOLS,
 ]);
-const desktopMedia = new Set(["qq_image_read", "sticker_read"]);
+const desktopMedia = new Set(["qq_image_read", "sticker_read", "video_read"]);
 const desktopImageTypes = new Set([
   "image/png",
   "image/jpeg",
