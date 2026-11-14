@@ -849,9 +849,10 @@ function panel() {
         : "当前无法授权访问这个站点。";
   });
 
-  function switchSection(section) {
+  function switchSection(section, report = false) {
     if (section === "observation" && observationTab.hidden) return;
     if (!["chat", "visits", "observation"].includes(section)) return;
+    if (report) window.nest.setSection?.(section);
     select("#visits").hidden = section !== "visits";
     select("#chat").hidden = section !== "chat";
     observationReview.hidden = section !== "observation";
@@ -1286,7 +1287,7 @@ function panel() {
       !room.connected ||
       !window.nest.observationReview;
     if (observationTab.hidden && !observationReview.hidden)
-      switchSection("chat");
+      switchSection("chat", true);
     updateObservationReview(room);
     bodyZones.hidden = room.bodyZones !== true;
     const here = room.roles.filter((role) => role.state === "here");
@@ -1370,7 +1371,7 @@ function panel() {
   }
 
   for (const tab of root.querySelectorAll("[data-tab]"))
-    tab.addEventListener("click", () => switchSection(tab.dataset.tab));
+    tab.addEventListener("click", () => switchSection(tab.dataset.tab, true));
   select(".close").addEventListener("click", () => window.nest.act("close"));
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;

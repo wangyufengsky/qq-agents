@@ -2714,6 +2714,14 @@ ipcMain.on("room:action", (event, action, data) => {
     }
     return;
   }
+  if (action === "section") {
+    if (
+      event.senderFrame === entry.win.webContents.mainFrame &&
+      ["chat", "visits", "observation"].includes(data)
+    )
+      entry.section = data;
+    return;
+  }
   const role = roles.find(({ id }) => id === data);
   if (action === "body-zones") {
     if (
