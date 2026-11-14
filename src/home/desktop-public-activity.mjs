@@ -34,18 +34,34 @@ export class DesktopPublicActivity {
     return visit?.publicActivity?.rest > now;
   }
 
-  take(actor, visit, now, events) {
+  recent(actor, now) {
+    return (this.starts.get(actor) ?? []).filter(
+      (entry) => (entry.at ?? entry) > now - HOUR,
+    );
+  }
+
+  hasIdleBudget(actor, now) {
+    const entries = this.recent(actor, now);
+    const policy = this.policy();
+    return (
+      entries.length < policy.totalLimit &&
+      entries.filter((entry) => entry.idle !== false).length < policy.idleLimit
+    );
+  }
+
+  take(actor, visit, now, events, extra = false) {
     const state = visit.publicActivity;
     const policy = this.policy();
     if (!state || state.rest > now) return;
-    const entries = (this.starts.get(actor) ?? []).filter(
-      (entry) => (entry.at ?? entry) > now - HOUR,
-    );
+    const entries = this.recent(actor, now);
     const idleCount = entries.filter((entry) => entry.idle !== false).length;
-    const idle = this.dueAt(visit) <= now && idleCount < policy.idleLimit;
     const event = events.find(
       ({ until, direct }) => until > now && (state.wait <= now || direct),
     );
+    const due = this.dueAt(visit);
+    const idle =
+      (due <= now || (extra && !event && state.wait <= now)) &&
+      idleCount < policy.idleLimit;
     if (
       entries.length >= policy.totalLimit ||
       (!idle &&
@@ -60,14 +76,25 @@ export class DesktopPublicActivity {
       startedAt: now,
       idle,
       reason: event?.kind ?? "idle",
+      ...(idle && due > now && { observationPreviousDue: due }),
       ...(event && { trigger: event.id }),
       recentEvent: visit.activity.pendingReason,
       lastResult: visit.activity.lastResult,
     };
   }
 
-  finish(actor, visit, turn, now, reply) {
+  finish(actor, visit, turn, now, reply, submitted = true) {
     const state = visit.publicActivity;
+    if (turn.observationPreviousDue !== undefined && !submitted) {
+      this.starts.set(
+        actor,
+        this.recent(actor, now).filter(
+          ({ at, idle }) => at !== turn.startedAt || !idle,
+        ),
+      );
+      if (state.due === Infinity) state.due = turn.observationPreviousDue;
+      return;
+    }
     if (turn.idle) {
       const preference = this.minutes(actor);
       state.due = now + (preference ? preference * MINUTE : this.delay("idle"));

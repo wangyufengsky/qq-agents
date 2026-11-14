@@ -176,7 +176,9 @@ test("revoking during a claim prevents mutation even if the server accepts it", 
   resolve(true);
   await setImmediate();
   assert.deepEqual(scopes[0].mutations, []);
-  assert.deepEqual(results, []);
+  assert.deepEqual(results, [
+    { roomEpoch, grantId, requestId: "late", result: undefined },
+  ]);
 });
 
 test("a delayed positive claim cannot dispatch after its expiry without a newer poll", async (t) => {

@@ -25,10 +25,14 @@ export class DesktopLocalGrant {
     );
   }
 
+  grantFor() {
+    return this.grant;
+  }
+
   current(grant) {
     return (
       grant &&
-      this.grant === grant &&
+      this.grantFor(grant.agentId) === grant &&
       this.host.connected() &&
       this.host.live.room.epoch === grant.roomEpoch &&
       this.host.live.visits.get(grant.agentId) === grant.visit &&
@@ -63,7 +67,7 @@ export class DesktopLocalGrant {
 
   activeGrant(ctx, agent) {
     const { runtime } = this.host;
-    const grant = this.grant;
+    const grant = this.grantFor(agent.id);
     const epoch = ctx.inputEpoch;
     const current = () => {
       try {

@@ -54,6 +54,18 @@ const windowTaskInput = localGrantSchema
     text: z.string().trim().min(1).max(1000),
   })
   .strict();
+const nativeGrantSchema = localGrantSchema
+  .extend({
+    confirmed: z.literal(true).optional(),
+    visitId: z.string().uuid().optional(),
+  })
+  .strict();
+const batchGrantSchema = localGrantSchema
+  .extend({ visitId: z.string().uuid() })
+  .strict();
+const batchDisplaySchema = displayObservationGrantSchema
+  .extend({ visitId: z.string().uuid() })
+  .strict();
 const requestSchema = z
   .object({
     client: z.string().uuid(),
@@ -68,6 +80,10 @@ const requestSchema = z
       "activity-pause",
       "screen-grant",
       "screen-revoke",
+      "screen-grant-batch",
+      "screen-revoke-batch",
+      "display-grant-batch",
+      "display-revoke-batch",
       "observation-grant",
       "observation-revoke",
       "observation-state",
@@ -86,6 +102,18 @@ const requestSchema = z
           .object({
             visible: z.boolean(),
             dragged: z.array(z.string().min(1).max(64)).max(24),
+            ownerTouches: z
+              .array(
+                z
+                  .object({
+                    agentId: z.string().min(1).max(64),
+                    visitId: z.string().uuid(),
+                    kind: z.enum(["pet", "drag"]),
+                  })
+                  .strict(),
+              )
+              .max(48)
+              .optional(),
             bodyProtocol: z.literal(2).optional(),
             bodyCrossDisplay: z.literal(true).optional(),
             bodyInteractions: z.literal(true).optional(),
@@ -115,9 +143,16 @@ const requestSchema = z
         observationStateSchema,
         displayObservationGrantSchema,
         windowTaskInput,
+        nativeGrantSchema,
         localGrantSchema,
         localRevokeSchema,
         browserGrantSchema,
+        z
+          .array(
+            z.union([batchDisplaySchema, batchGrantSchema, localRevokeSchema]),
+          )
+          .min(1)
+          .max(24),
       ])
       .optional(),
   })
@@ -429,7 +464,7 @@ export class DesktopHost {
     const live = this.live;
     const visit = live.visits.get(input.agentId);
     const access = input.scope === "screen" ? this.screen : this.native;
-    const grant = access.grant;
+    const grant = access.grantFor(input.agentId);
     if (
       !grant ||
       grant.grantId !== input.grantId ||
@@ -744,6 +779,12 @@ export class DesktopHost {
         for (const id of moved) live.cancelInteraction(id);
         if (moved.has(this.windowTask?.actor))
           this.stopWindowTask("manual-control");
+        if (visible)
+          for (const { agentId, visitId, kind } of data.ownerTouches ?? []) {
+            const visit = live.visits.get(agentId);
+            if (visit && this.body.visitId(visit) === visitId)
+              live.noteOwnerTouch(visit, kind);
+          }
         for (const id of moved) {
           const visit = live.visits.get(id);
           live.activity.defer(visit, this.runtime.now());
@@ -809,12 +850,68 @@ export class DesktopHost {
       this.stopWindowTask("stopped");
     if (action === "observation-state")
       this.observation.updateTarget(observationStateSchema.parse(data));
-    if (action === "screen-grant")
-      this.screen.change(false, localGrantSchema.parse(data));
+    if (action === "screen-grant") {
+      const grant = localGrantSchema.parse(data);
+      if (!this.screen.eligible().some(({ id }) => id === grant.agentId))
+        throw Error("DESKTOP_SCREEN_UNAVAILABLE");
+      this.screen.change(false, grant);
+    }
+    if (action === "screen-grant-batch" || action === "display-grant-batch") {
+      const display = action === "display-grant-batch";
+      const access = display ? this.observation : this.screen;
+      const grants = z
+        .array(display ? batchDisplaySchema : batchGrantSchema)
+        .parse(data);
+      const eligible = new Set(access.eligible().map(({ id }) => id));
+      const validIdentity = ({ agentId, roomEpoch, visitId, grantId }) => {
+        if (
+          !eligible.has(agentId) ||
+          roomEpoch !== live.room.epoch ||
+          visitId !== this.body.visitId(live.visits.get(agentId))
+        )
+          return false;
+        const existing = display
+          ? this.observation.find(grantId)
+          : this.screen.find(grantId);
+        return !existing || existing.agentId === agentId;
+      };
+      if (
+        new Set(grants.map(({ agentId }) => agentId)).size !== grants.length ||
+        new Set(grants.map(({ grantId }) => grantId)).size !== grants.length ||
+        !grants.every(validIdentity) ||
+        (display &&
+          grants.some((grant) => !this.observation.canGrantDisplay(grant)))
+      )
+        throw Error("DESKTOP_SCREEN_UNAVAILABLE");
+      for (const { visitId: _, ...grant } of grants)
+        access.change(false, grant);
+    }
+    if (action === "screen-revoke-batch" || action === "display-revoke-batch") {
+      const grants = z.array(localRevokeSchema).parse(data);
+      const display = action === "display-revoke-batch";
+      if (
+        grants.some(
+          ({ roomEpoch, grantId }) =>
+            roomEpoch !== live.room.epoch ||
+            (display && this.observation.find(grantId)?.scope === "window"),
+        )
+      )
+        throw Error("DESKTOP_SCREEN_UNAVAILABLE");
+      for (const grant of grants)
+        (display ? this.observation : this.screen).change(true, grant);
+    }
     if (action === "screen-revoke")
       this.screen.change(true, localRevokeSchema.parse(data));
-    if (action === "native-grant")
-      this.native.change(false, localGrantSchema.parse(data));
+    if (action === "native-grant") {
+      const grant = nativeGrantSchema.parse(data);
+      const visit = live.visits.get(grant.agentId);
+      if (
+        grant.visitId &&
+        (!visit || this.body.visitId(visit) !== grant.visitId)
+      )
+        throw Error("DESKTOP_NATIVE_UNAVAILABLE");
+      this.native.change(false, grant);
+    }
     if (action === "native-revoke")
       this.native.change(true, localRevokeSchema.parse(data));
     if (action === "browser-grant" || action === "browser-revoke")
@@ -843,6 +940,7 @@ export class DesktopHost {
       }),
       observationProtocol: 2,
       displayObservation: true,
+      batchScreenGrants: true,
       ...(bodyResultAcks?.length && { bodyResultAcks }),
       bodyRequests: this.body.clientWork(),
     };
@@ -862,8 +960,7 @@ export class DesktopHost {
         )
         .map(({ actor }) => actor),
     );
-    const viewing =
-      screen.request() && (screen.pending.grant ?? screen.grant)?.agentId;
+    const viewing = screen.request() && screen.pending.grant.agentId;
     const windowAction = native.request();
     const operating = windowAction && native.grant.agentId;
     const qq = new Set();
@@ -1134,7 +1231,8 @@ export class DesktopHost {
           if (
             !next ||
             (next.action === "observe" &&
-              (ctx.desktopBodyActed || !request.canObserve?.()))
+              (ctx.desktopBodyActed || !request.canObserve?.())) ||
+            (next.action === "skip-observation" && !request.canObserve?.())
           )
             throw Error("DESKTOP_DECISION_INVALID");
           assertOutput(next.text);
@@ -1290,6 +1388,8 @@ export class DesktopHost {
         socialContextToken: ctx.token,
       });
       check();
+      if (observation?.scope === "display" && observationImage)
+        observation.opportunity = "viewed";
       if (request.isCurrent?.() === false) return { action: "silent" };
       if (windowTask) {
         if (ctx.desktopWindowTaskUsed) windowFailure = undefined;
@@ -1303,6 +1403,7 @@ export class DesktopHost {
     } catch (error) {
       if (
         observation &&
+        observation.scope !== "display" &&
         error.message === "DESKTOP_SCREEN_CAPTURE_FAILED" &&
         this.observation.find(observation.grantId) === observation
       )

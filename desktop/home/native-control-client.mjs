@@ -11,6 +11,7 @@ export class NativeControlClient {
   #result;
   #grant;
   #lastGrant;
+  #revoking;
   #scope;
   #pending;
   #cleanup;
@@ -61,13 +62,22 @@ export class NativeControlClient {
       this.#closeScope();
   }
 
-  async grant({ roomEpoch, agentId, source }) {
+  target(agentId) {
+    return this.#grant?.agentId === agentId ? this.#grant?.source : undefined;
+  }
+
+  async grant({ roomEpoch, agentId, source, confirmed, visitId }) {
+    if (this.#grant) return "unavailable";
     const data = { roomEpoch, agentId, grantId: randomUUID() };
     const grant = { ...data, source, pending: true };
     this.#grant = grant;
     this.#lastGrant = data;
     try {
-      const room = await this.#command("native-grant", data);
+      const room = await this.#command("native-grant", {
+        ...data,
+        ...(confirmed && { confirmed: true }),
+        ...(visitId && { visitId }),
+      });
       grant.pending = false;
       if (
         this.#grant === grant &&
@@ -85,6 +95,7 @@ export class NativeControlClient {
 
   async revoke(roomEpoch, agentId) {
     const grant = this.#lastGrant;
+    this.#revoking = grant?.grantId;
     this.clear();
     if (grant?.roomEpoch !== roomEpoch || grant.agentId !== agentId)
       return "unavailable";
@@ -148,12 +159,14 @@ export class NativeControlClient {
       !signal.aborted &&
       beforeExpiry(request.expiresAt);
     const verify = () => this.#verifyTarget?.(request, signal);
+    let claimed = false;
     const beforeDispatch = async () => {
       if (!isCurrent()) return false;
       if (request.windowTaskId && (!(await verify()) || !isCurrent()))
         return false;
       try {
         const receipt = await this.#claim(identity, isCurrent);
+        claimed = receipt?.accepted === true;
         // A sync reply can outlive its turn. Authorize at the mutation boundary.
         return (
           receipt?.accepted === true &&
@@ -189,6 +202,11 @@ export class NativeControlClient {
         // Provider or OS error text can contain native window data.
       }
       if (isCurrent()) await this.#result({ ...identity, result }, isCurrent);
+      else if (claimed && this.#revoking === grantId)
+        await this.#result(
+          { ...identity, result },
+          () => this.#revoking === grantId,
+        );
     } catch {
       // The host owns request expiry and rejects stale results.
     } finally {

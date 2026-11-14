@@ -118,10 +118,11 @@ let framework;
 let remoteState;
 let live;
 let shuttingDown = false;
-let screenGrant;
+const screenGrants = new Map();
+let screenPicker;
+let batchScreenGrants = false;
 let approachedWindowTask;
 let localWindowTaskStatus;
-let lastScreenGrant;
 let observationGrant;
 const displayGrants = new Map();
 let displayObservation = false;
@@ -134,6 +135,7 @@ let desktopLocked = false;
 let bodyInputAfter = 0;
 let pointerTimer;
 const manuallyMoved = new Set();
+const manualTouches = new Map();
 let bodyProtocol = false;
 let bodyCrossDisplay = false;
 let bodyInteractions = false;
@@ -319,9 +321,19 @@ function clearScreenGrant(observe = false) {
     const grant = observationGrant;
     observationGrant = undefined;
     if (grant) stopObservation(grant);
-  } else screenGrant = undefined;
-  if (!observe && screenCapture && !screenCapture.observe)
-    screenCapture.controller.abort();
+  } else {
+    for (const grant of screenGrants.values()) clearManualScreen(grant);
+  }
+}
+
+function clearManualScreen(grant) {
+  if (screenGrants.get(grant.agentId) !== grant) return;
+  screenGrants.delete(grant.agentId);
+  if (screenCapture?.grant === grant) screenCapture.controller.abort();
+}
+
+function localScreen(grantId) {
+  return [...screenGrants.values()].find((grant) => grant.grantId === grantId);
 }
 
 function stopObservation(grant) {
@@ -445,7 +457,11 @@ function reportObservationState(grant, state) {
 function monitorObservation(grant) {
   if (grant.monitoring) return;
   if (!observationCurrent(grant)) {
-    if (localObservation(grant.grantId) === grant) clearObservation(grant);
+    if (localObservation(grant.grantId) !== grant) return;
+    if (grant.display && Date.now() >= grant.expiresAt) {
+      removeObservation(grant);
+      framework?.sync();
+    } else clearObservation(grant);
     return;
   }
   grant.monitoring = true;
@@ -475,7 +491,8 @@ function clearObservation(grant) {
   }
   removeObservation(grant);
   if (framework && !shuttingDown)
-    framework.act("observation-revoke", {
+    framework.act(grant.display ? "observation-state" : "observation-revoke", {
+      ...(grant.display && { state: "unavailable" }),
       roomEpoch: grant.roomEpoch,
       grantId: grant.grantId,
     });
@@ -527,15 +544,18 @@ function windowTaskGrant(scope, agentId, roomEpoch) {
   if (!agentId || !roomEpoch || !remoteState?.interactionsAvailable) return;
   const policy =
     scope === "screen" ? remoteState.screenView : remoteState.nativeControl;
-  if (
-    policy?.grantedAgentId !== agentId ||
-    remoteState?.roomEpoch !== roomEpoch
-  )
-    return;
+  if (!policy || remoteState?.roomEpoch !== roomEpoch) return;
   if (scope === "native")
-    return nativeControl?.selectedWindow(agentId, roomEpoch);
+    return (
+      policy.grantedAgentId === agentId &&
+      nativeControl?.selectedWindow(agentId, roomEpoch)
+    );
+  const screenGrant = screenGrants.get(agentId);
   if (
     screenGrant?.geometrySource &&
+    (policy.grants
+      ? policy.grants.some(({ grantId }) => grantId === screenGrant.grantId)
+      : policy.grantedAgentId === agentId) &&
     !screenGrant.pending &&
     screenGrant.roomEpoch === roomEpoch &&
     screenGrant.agentId === agentId &&
@@ -707,16 +727,25 @@ function executeWindowTask(request, current, finish) {
 
 function screenRequest(value, action) {
   const { room: current, screenRequest: request } = value;
-  for (const observe of [false, true]) {
-    const grant = observe ? observationGrant : screenGrant;
-    const policy = observe ? current?.observation : current?.screenView;
+  if (
+    observationGrant &&
+    (current?.roomEpoch !== observationGrant.roomEpoch ||
+      !current.observation?.eligible.includes(observationGrant.agentId) ||
+      (!observationGrant.pending &&
+        current.observation.grantedAgentId !== observationGrant.agentId))
+  )
+    clearScreenGrant(true);
+  for (const grant of screenGrants.values()) {
+    const policy = current?.screenView;
     if (
-      grant &&
-      (current?.roomEpoch !== grant.roomEpoch ||
-        !policy?.eligible.includes(grant.agentId) ||
-        (!grant.pending && policy.grantedAgentId !== grant.agentId))
+      current?.roomEpoch !== grant.roomEpoch ||
+      !policy?.eligible.includes(grant.agentId) ||
+      (!grant.pending &&
+        (policy.grants
+          ? !policy.grants.some(({ grantId }) => grantId === grant.grantId)
+          : policy.grantedAgentId !== grant.agentId))
     )
-      clearScreenGrant(observe);
+      clearManualScreen(grant);
   }
   for (const grant of displayGrants.values()) {
     const policy = current?.observation;
@@ -729,7 +758,9 @@ function screenRequest(value, action) {
       removeObservation(grant);
   }
   const observe = request?.mode === "observation";
-  const grant = observe ? localObservation(request.grantId) : screenGrant;
+  const grant = observe
+    ? localObservation(request.grantId)
+    : localScreen(request?.grantId);
   if (
     action === "sync" &&
     screenCapture &&
@@ -757,7 +788,11 @@ function screenRequest(value, action) {
     windowTaskId: request.windowTaskId,
   };
   const isCurrent = () =>
-    (observe ? observationCurrent(grant) : screenGrant === grant) &&
+    (observe
+      ? observationCurrent(grant)
+      : screenGrants.get(grant.agentId) === grant &&
+        !desktopLocked &&
+        !hidden) &&
     !controller.signal.aborted &&
     !shuttingDown;
   void (async () => {
@@ -794,13 +829,27 @@ function screenRequest(value, action) {
         (await verifyApproachedWindow(request, signal)) &&
         isCurrent()
       ) {
-        data = await captureScreen(
-          grant.source,
-          maxEdge,
-          maxBytes,
-          signal,
-        ).catch(() => undefined);
-        if (data && !(await verifyApproachedWindow(request, signal)))
+        const target = grant.display
+          ? await readDisplayTarget(grant.display, signal)
+          : undefined;
+        const source = grant.display ? target?.source : grant.source;
+        const verifyWindow = () =>
+          !grant.geometrySource ||
+          windowGeometry(grant.geometrySource, {
+            signal: AbortSignal.any([signal, AbortSignal.timeout(2500)]),
+          });
+        if (source && (await verifyWindow()) && isCurrent())
+          data = await captureScreen(source, maxEdge, maxBytes, signal).catch(
+            () => undefined,
+          );
+        if (
+          data &&
+          (!(await verifyApproachedWindow(request, signal)) ||
+            !(await verifyWindow()) ||
+            (grant.display &&
+              (await readDisplayTarget(grant.display, signal)).state !==
+                "ready"))
+        )
           data = undefined;
       }
       if (isCurrent()) {
@@ -908,9 +957,12 @@ function savedPlace(id) {
 
 function snapshot(panel = false) {
   const data = baseSnapshot();
-  const screen =
-    panel &&
-    windowTaskGrant("screen", data.screenView?.grantedAgentId, data.roomEpoch);
+  const screens = panel
+    ? [...screenGrants.keys()]
+        .map((agentId) => windowTaskGrant("screen", agentId, data.roomEpoch))
+        .filter(Boolean)
+    : [];
+  const screen = screens[0];
   const native =
     panel &&
     windowTaskGrant(
@@ -927,6 +979,12 @@ function snapshot(panel = false) {
         : undefined,
     ...(panel && {
       observationReviewAvailable: observationProtocol,
+      ...(screens.length && {
+        windowTaskScreenGrants: screens.map(({ agentId, grantId }) => ({
+          agentId,
+          grantId,
+        })),
+      }),
       windowFollowAvailable: Boolean(geometryDriver),
       ...(screen && {
         windowTaskScreenAgentId: screen.agentId,
@@ -1738,6 +1796,7 @@ function applyFramework(value, action) {
     bodyInteractions = false;
     publicPerception = false;
     displayObservation = false;
+    batchScreenGrants = false;
   }
   if (value.offline && remoteState) {
     stopLocalWindowTask("disconnect");
@@ -1780,6 +1839,7 @@ function applyFramework(value, action) {
     bodyInteractions = bodyProtocol && value.bodyInteractions === true;
     publicPerception = bodyProtocol && value.publicPerception === true;
     observationProtocol = value.observationProtocol === 2;
+    batchScreenGrants = value.batchScreenGrants === true;
     displayObservation =
       observationProtocol &&
       value.displayObservation === true &&
@@ -1834,7 +1894,17 @@ function applyFramework(value, action) {
     subjectKnocks: true,
     connected: !!value.room,
     connectionLost: Boolean(value.offline),
-    screenView: screenCaptureSupported ? value.room?.screenView : undefined,
+    screenView: screenCaptureSupported &&
+      value.room?.screenView && {
+        ...value.room.screenView,
+        ...(batchScreenGrants && {
+          grants:
+            value.room.screenView.grants?.map((grant) => ({
+              ...grant,
+              target: localScreen(grant.grantId)?.source.name,
+            })) ?? [],
+        }),
+      },
     observation: observationProtocol &&
       value.room?.observation && {
         ...value.room.observation,
@@ -1847,7 +1917,12 @@ function applyFramework(value, action) {
             })) ?? [],
         }),
       },
-    nativeControl: nativeControl ? value.room?.nativeControl : undefined,
+    nativeControl: nativeControl &&
+      value.room?.nativeControl && {
+        ...value.room.nativeControl,
+        target: nativeControl.target(value.room.nativeControl.grantedAgentId)
+          ?.title,
+      },
     browserControl: browserControl && {
       ...browserControl,
       grantedOrigin:
@@ -2055,6 +2130,12 @@ function handleDrag(entry, action, data) {
       entry.bodyInputAfter = Date.now();
       if (framework && entry.type === "sprite") {
         manuallyMoved.add(entry.id);
+        if (entry.bodyVisitId)
+          manualTouches.set(entry.id + ":drag", {
+            agentId: entry.id,
+            visitId: entry.bodyVisitId,
+            kind: "drag",
+          });
         framework.sync();
       }
       if (entry.type === "door") {
@@ -2270,16 +2351,14 @@ ipcMain.handle("room:follow", async (event, id, mode) => {
   }
 });
 
-async function chooseScreenGrant(event, observe = false) {
+async function chooseObservationWindow(event) {
   const entry = entries.get("panel");
   const win = entry?.win;
   const { roomEpoch } = remoteState ?? {};
-  const policyKey = observe ? "observation" : "screenView";
-  const command = observe ? "observation" : "screen";
-  const screenView = remoteState?.[policyKey];
+  const screenView = remoteState?.observation;
   if (
     !screenCaptureSupported ||
-    (observe && !observationProtocol) ||
+    !observationProtocol ||
     !framework ||
     !roomEpoch ||
     !screenView ||
@@ -2290,10 +2369,10 @@ async function chooseScreenGrant(event, observe = false) {
     choosingDesktopPermission
   )
     return "unavailable";
-  if (observe && !observationDriver) return "missing-helper";
+  if (!observationDriver) return "missing-helper";
   if (screenView.grantedAgentId) {
-    const grant = observe ? lastObservationGrant : lastScreenGrant;
-    clearScreenGrant(observe);
+    const grant = lastObservationGrant;
+    clearScreenGrant(true);
     try {
       if (
         grant?.roomEpoch !== roomEpoch ||
@@ -2301,11 +2380,11 @@ async function chooseScreenGrant(event, observe = false) {
       )
         return "unavailable";
       choosingDesktopPermission = true;
-      const room = await framework.command(command + "-revoke", {
+      const room = await framework.command("observation-revoke", {
         roomEpoch,
         grantId: grant.grantId,
       });
-      return room?.[policyKey]?.grantedAgentId ? "failed" : "revoked";
+      return room?.observation?.grantedAgentId ? "failed" : "revoked";
     } catch {
       return "failed";
     } finally {
@@ -2318,17 +2397,16 @@ async function chooseScreenGrant(event, observe = false) {
       const status = systemPreferences.getMediaAccessStatus("screen");
       if (status === "denied" || status === "restricted") return "permission";
     }
-    let sources = await listScreenSources(observe);
+    let sources = await listScreenSources(true);
     if (!screenCapturePermission()) return "permission";
-    if (observe)
-      sources = observationSources(
-        sources,
-        await observationDriver.observationWindows({
-          signal: AbortSignal.timeout(2500),
-        }),
-        ownScreenSources(),
-        process.pid,
-      );
+    sources = observationSources(
+      sources,
+      await observationDriver.observationWindows({
+        signal: AbortSignal.timeout(2500),
+      }),
+      ownScreenSources(),
+      process.pid,
+    );
     if (win.isDestroyed() || !win.isFocused()) return "cancelled";
     if (!sources.length) return "no-sources";
     const eligible = roles.filter(({ id }) => screenView.eligible.includes(id));
@@ -2341,46 +2419,25 @@ async function chooseScreenGrant(event, observe = false) {
         `${id.startsWith("screen:") ? "显示器" : "窗口"} · ${name}`,
     );
     if (!selection || win.isDestroyed() || !win.isVisible()) return "cancelled";
-    let geometrySource;
-    if (observe) {
-      const { state } = await readObservationTarget(
-        selection.source,
-        AbortSignal.timeout(3000),
-      );
-      if (state !== "ready")
-        return state === "permission" ? state : "no-sources";
-      if (win.isDestroyed() || !win.isVisible() || hidden || desktopLocked)
-        return "cancelled";
-    } else if (geometryDriver && selection.source.id.startsWith("window:")) {
-      const windows = await observationDriver
-        .observationWindows({
-          signal: AbortSignal.timeout(2500),
-        })
-        .catch(() => []);
-      geometrySource = observationSources(
-        sources,
-        windows,
-        ownScreenSources(),
-        process.pid,
-      ).find(({ id }) => id === selection.source.id)?.identity;
-      if (win.isDestroyed() || !win.isVisible() || hidden || desktopLocked)
-        return "cancelled";
-    }
+    const { state } = await readObservationTarget(
+      selection.source,
+      AbortSignal.timeout(3000),
+    );
+    if (state !== "ready") return state === "permission" ? state : "no-sources";
+    if (win.isDestroyed() || !win.isVisible() || hidden || desktopLocked)
+      return "cancelled";
     if (
       remoteState?.roomEpoch !== roomEpoch ||
-      remoteState?.[policyKey]?.grantedAgentId ||
-      !remoteState?.[policyKey]?.eligible.includes(selection.agentId)
+      remoteState?.observation?.grantedAgentId ||
+      !remoteState?.observation?.eligible.includes(selection.agentId)
     )
       return "unavailable";
     const grant = {
       ...selection,
-      ...(geometrySource && { geometrySource }),
-      ...(observe && {
-        expiresAt: Date.now() + 15 * 60_000,
-        controller: new AbortController(),
-        probe: Promise.resolve(),
-        digests: new Set(),
-      }),
+      expiresAt: Date.now() + 15 * 60_000,
+      controller: new AbortController(),
+      probe: Promise.resolve(),
+      digests: new Set(),
       roomEpoch,
       grantId: randomUUID(),
       pending: true,
@@ -2390,57 +2447,45 @@ async function chooseScreenGrant(event, observe = false) {
       grantId: grant.grantId,
       agentId: grant.agentId,
     };
-    if (observe) {
-      observationEnded = undefined;
-      observationGrant = grant;
-      lastObservationGrant = identity;
-    } else {
-      screenGrant = grant;
-      lastScreenGrant = identity;
-    }
-    const current = () => (observe ? observationGrant : screenGrant) === grant;
+    observationEnded = undefined;
+    observationGrant = grant;
+    lastObservationGrant = identity;
+    const current = () => observationGrant === grant;
     try {
-      const room = await framework.command(command + "-grant", {
+      const room = await framework.command("observation-grant", {
         roomEpoch,
         grantId: grant.grantId,
         agentId: grant.agentId,
       });
       grant.pending = false;
-      if (observe && room?.observation?.expiresAt)
+      if (room?.observation?.expiresAt)
         grant.expiresAt = Math.min(grant.expiresAt, room.observation.expiresAt);
       if (
         current() &&
         room?.roomEpoch === roomEpoch &&
-        room[policyKey]?.grantedAgentId === grant.agentId
+        room.observation?.grantedAgentId === grant.agentId
       ) {
-        if (observe) {
-          grant.monitor = setInterval(() => monitorObservation(grant), 1300);
-          monitorObservation(grant);
-        }
+        grant.monitor = setInterval(() => monitorObservation(grant), 1300);
+        monitorObservation(grant);
         return "granted";
       }
-      if (current()) clearScreenGrant(observe);
+      if (current()) clearScreenGrant(true);
       return "unavailable";
     } catch {
-      if (current()) clearScreenGrant(observe);
+      if (current()) clearScreenGrant(true);
       return "failed";
     }
   } catch (error) {
-    return observe && observationError(error) === "permission"
-      ? "permission"
-      : "failed";
+    return observationError(error) === "permission" ? "permission" : "failed";
   } finally {
     choosingDesktopPermission = false;
   }
 }
-ipcMain.handle("room:screen-view", (event) => chooseScreenGrant(event));
-ipcMain.handle("room:observation", (event) => chooseScreenGrant(event, true));
+ipcMain.handle("room:observation", chooseObservationWindow);
 
-ipcMain.handle("room:display-observation", async (event, action, data) => {
+function permissionPanel(event, roomEpoch) {
   const win = entries.get("panel")?.win;
-  const roomEpoch = remoteState?.roomEpoch;
-  const current = () =>
-    displayObservation &&
+  return (
     framework &&
     remoteState?.connected &&
     remoteState.roomEpoch === roomEpoch &&
@@ -2451,33 +2496,66 @@ ipcMain.handle("room:display-observation", async (event, action, data) => {
     win.isVisible() &&
     win.isFocused() &&
     event.sender === win.webContents &&
-    event.senderFrame === win.webContents.mainFrame;
+    event.senderFrame === win.webContents.mainFrame
+  );
+}
+
+function screenPickerVisits() {
+  return new Map(
+    remoteState.roles
+      .filter(({ state }) => state === "here")
+      .map(({ id, bodyVisitId }) => [id, bodyVisitId]),
+  );
+}
+
+async function chooseReadGrants(event, action, data, observe) {
+  const roomEpoch = remoteState?.roomEpoch;
+  const grants = observe ? displayGrants : screenGrants;
+  const key = observe ? "observation" : "screenView";
+  const remoteGrants = (room) =>
+    observe ? room?.observation?.displays : room?.screenView?.grants;
+  const setPicker = (picker) => {
+    if (observe) displayPicker = picker;
+    else screenPicker = picker;
+  };
+  const current = () =>
+    screenCaptureSupported &&
+    batchScreenGrants &&
+    (!observe || displayObservation) &&
+    permissionPanel(event, roomEpoch);
   if (!current() || choosingDesktopPermission) return { status: "unavailable" };
-  if (action === "revoke") {
-    const grant = displayGrants.get(data?.agentId);
-    if (!grant || grant.grantId !== data.grantId)
-      return { status: "unavailable" };
-    removeObservation(grant);
-    try {
-      const room = await framework.command("observation-revoke", {
-        roomEpoch,
-        grantId: grant.grantId,
-      });
-      return {
-        status: room?.observation?.displays?.some(
-          ({ grantId }) => grantId === grant.grantId,
-        )
-          ? "failed"
-          : "revoked",
-      };
-    } catch {
-      return { status: "failed" };
-    }
-  }
   choosingDesktopPermission = true;
   try {
+    if (action === "revoke" || action === "revoke-all") {
+      const selected = (remoteGrants(remoteState) ?? []).filter(
+        ({ agentId, grantId }) =>
+          action === "revoke-all" ||
+          (agentId === data?.agentId && grantId === data.grantId),
+      );
+      if (!selected.length) return { status: "unavailable" };
+      for (const { agentId, grantId } of selected) {
+        const grant = grants.get(agentId);
+        if (grant?.grantId !== grantId) continue;
+        if (observe) removeObservation(grant);
+        else clearManualScreen(grant);
+      }
+      const room = await framework.command(
+        observe ? "display-revoke-batch" : "screen-revoke-batch",
+        selected.map(({ grantId }) => ({ roomEpoch, grantId })),
+      );
+      return {
+        status:
+          room &&
+          selected.every(
+            ({ grantId }) =>
+              !remoteGrants(room)?.some((grant) => grant.grantId === grantId),
+          )
+            ? "revoked"
+            : "failed",
+      };
+    }
     if (action === "list") {
-      displayPicker = undefined;
+      setPicker(undefined);
       if (
         process.platform === "darwin" &&
         ["denied", "restricted"].includes(
@@ -2505,89 +2583,210 @@ ipcMain.handle("room:display-observation", async (event, action, data) => {
           },
         ];
       });
-      displayPicker = {
+      if (!observe) {
+        const windows = await listScreenSources(false);
+        if (!current()) return { status: "unavailable" };
+        const known = geometryDriver
+          ? await observationDriver
+              .observationWindows({
+                signal: AbortSignal.timeout(2500),
+              })
+              .catch(() => [])
+          : [];
+        if (!current()) return { status: "unavailable" };
+        const identities = observationSources(
+          windows,
+          known,
+          ownScreenSources(),
+          process.pid,
+        );
+        for (const source of windows.filter(({ id }) =>
+          id.startsWith("window:"),
+        )) {
+          choices.push({
+            id: randomUUID(),
+            name: source.name,
+            source,
+            geometrySource: identities.find(({ id }) => id === source.id)
+              ?.identity,
+          });
+        }
+      }
+      setPicker({
         roomEpoch,
         choices,
-        limits: remoteState.observation?.displayLimits,
-      };
+        visits: screenPickerVisits(),
+        limits: observe ? remoteState.observation?.displayLimits : undefined,
+      });
       return {
         status: "listed",
         displays: choices.map(({ id, name, number, primary }) => ({
           id,
-          name,
+          name: localLabel(name),
           number,
           primary,
         })),
       };
     }
     if (action !== "grant") return { status: "unavailable" };
-    const agentId = data?.agentId;
-    const picker = displayPicker;
-    const display = picker?.choices.find(({ id }) => id === data?.display);
+    const picker = observe ? displayPicker : screenPicker;
+    const selections = data?.selections;
+    const samePicker = () =>
+      current() &&
+      picker?.roomEpoch === roomEpoch &&
+      (observe
+        ? displayPicker === picker &&
+          JSON.stringify(picker.limits) ===
+            JSON.stringify(remoteState.observation?.displayLimits)
+        : screenPicker === picker);
     if (
-      picker?.roomEpoch !== roomEpoch ||
-      JSON.stringify(picker.limits) !==
-        JSON.stringify(remoteState.observation?.displayLimits) ||
-      !display ||
-      !remoteState.observation?.eligible.includes(agentId)
+      !samePicker() ||
+      !Array.isArray(selections) ||
+      !selections.length ||
+      selections.length > 24 ||
+      selections.some(
+        (item) =>
+          typeof item?.agentId !== "string" || typeof item.display !== "string",
+      ) ||
+      new Set(selections.map((item) => item?.agentId)).size !==
+        selections.length
     )
       return { status: "unavailable" };
-    const target = await readDisplayTarget(display, AbortSignal.timeout(3000));
-    if (target.state !== "ready") return { status: target.state };
-    if (
-      !current() ||
-      displayPicker !== picker ||
-      JSON.stringify(picker.limits) !==
-        JSON.stringify(remoteState.observation?.displayLimits) ||
-      !remoteState.observation?.eligible.includes(agentId)
-    )
-      return { status: "unavailable" };
-    displayPicker = undefined;
-    const existing = displayGrants.get(agentId);
-    if (existing) clearObservation(existing);
-    const grant = {
-      agentId,
-      roomEpoch,
-      display,
-      grantId: randomUUID(),
-      pending: true,
-      expiresAt:
-        Date.now() + remoteState.observation.displayLimits.minutes * 60_000,
-      controller: new AbortController(),
-      probe: Promise.resolve(),
-      digests: new Set(),
-    };
-    displayGrants.set(agentId, grant);
-    try {
-      const room = await framework.command("observation-grant", {
-        agentId,
-        roomEpoch,
-        grantId: grant.grantId,
-        scope: "display",
-        limits: picker.limits,
-      });
-      const confirmed = room?.observation?.displays?.find(
-        ({ grantId }) => grantId === grant.grantId,
+    const valid = (agentId) =>
+      Boolean(picker.visits.get(agentId)) &&
+      remoteState[key]?.eligible.includes(agentId) &&
+      remoteState.roles.some(
+        ({ id, bodyVisitId, state }) =>
+          id === agentId &&
+          state === "here" &&
+          bodyVisitId === picker.visits.get(agentId),
       );
-      if (!confirmed || !current() || !observationCurrent(grant)) {
-        clearObservation(grant);
-        return { status: "unavailable" };
+    const selected = [];
+    let currentSources;
+    for (const { agentId, display: targetId } of selections) {
+      const target = picker.choices.find(({ id }) => id === targetId);
+      if (!target || !valid(agentId)) return { status: "unavailable", agentId };
+      let source = target.source;
+      if (source) {
+        currentSources ??= await listScreenSources(false);
+        if (
+          !currentSources.some(
+            ({ id, name }) => id === source.id && name === source.name,
+          )
+        )
+          return { status: "unavailable", agentId };
+        if (
+          target.geometrySource &&
+          !(await windowGeometry(target.geometrySource, {
+            signal: AbortSignal.timeout(2500),
+          }))
+        )
+          return { status: "unavailable", agentId };
+      } else {
+        const read = await readDisplayTarget(target, AbortSignal.timeout(3000));
+        if (read.state !== "ready") return { status: read.state, agentId };
+        source = read.source;
       }
-      grant.pending = false;
-      grant.expiresAt = Math.min(grant.expiresAt, confirmed.expiresAt);
-      grant.monitor = setInterval(() => monitorObservation(grant), 1300);
-      monitorObservation(grant);
-      return { status: "granted" };
+      selected.push({ agentId, target, source, grantId: randomUUID() });
+    }
+    if (!samePicker()) return { status: "unavailable" };
+    const ineligible = selected.find(({ agentId }) => !valid(agentId));
+    if (ineligible)
+      return { status: "unavailable", agentId: ineligible.agentId };
+    const previous = new Map(
+      selected.map(({ agentId }) => [agentId, grants.get(agentId)]),
+    );
+    const records = selected.map(({ agentId, grantId, target, source }) => ({
+      agentId,
+      grantId,
+      roomEpoch,
+      source,
+      pending: true,
+      ...(target.geometrySource && { geometrySource: target.geometrySource }),
+      ...(!observe && target.fingerprint && { display: target }),
+      ...(observe && {
+        display: target,
+        expiresAt: Date.now() + picker.limits.minutes * 60_000,
+        controller: new AbortController(),
+        probe: Promise.resolve(),
+        digests: new Set(),
+      }),
+    }));
+    for (const grant of records) grants.set(grant.agentId, grant);
+    let room;
+    try {
+      room = await framework.command(
+        observe ? "display-grant-batch" : "screen-grant-batch",
+        records.map(({ agentId, grantId }) => ({
+          agentId,
+          grantId,
+          roomEpoch,
+          visitId: picker.visits.get(agentId),
+          ...(observe && { scope: "display", limits: picker.limits }),
+        })),
+      );
     } catch {
-      clearObservation(grant);
+      // Restore only locally current grants. Host validation commits the batch in one step.
+      for (const grant of records) {
+        if (grants.get(grant.agentId) !== grant) continue;
+        const old = previous.get(grant.agentId);
+        if (old) grants.set(grant.agentId, old);
+        else grants.delete(grant.agentId);
+      }
       return { status: "failed" };
     }
+    for (const old of previous.values()) {
+      if (!old) continue;
+      if (observe) stopObservation(old);
+      else if (screenCapture?.grant === old) screenCapture.controller.abort();
+    }
+    const confirmed = new Map(
+      (remoteGrants(room) ?? []).map((grant) => [grant.grantId, grant]),
+    );
+    const granted =
+      room?.roomEpoch === roomEpoch &&
+      current() &&
+      records.every(
+        (grant) =>
+          grants.get(grant.agentId) === grant && confirmed.has(grant.grantId),
+      );
+    if (!granted) {
+      for (const grant of records)
+        if (observe) clearObservation(grant);
+        else clearManualScreen(grant);
+      if (room?.roomEpoch === roomEpoch)
+        await framework.command(
+          observe ? "display-revoke-batch" : "screen-revoke-batch",
+          records.map(({ grantId }) => ({ roomEpoch, grantId })),
+        );
+      return { status: "unavailable" };
+    }
+    setPicker(undefined);
+    for (const grant of records) {
+      grant.pending = false;
+      if (observe) {
+        grant.expiresAt = Math.min(
+          grant.expiresAt,
+          confirmed.get(grant.grantId).expiresAt,
+        );
+        grant.monitor = setInterval(() => monitorObservation(grant), 1300);
+        monitorObservation(grant);
+      }
+    }
+    return { status: "granted" };
   } catch (error) {
     return { status: observationError(error) };
   } finally {
     choosingDesktopPermission = false;
   }
-});
+}
+
+ipcMain.handle("room:display-observation", (event, action, data) =>
+  chooseReadGrants(event, action, data, true),
+);
+ipcMain.handle("room:screen-view", (event, action, data) =>
+  chooseReadGrants(event, action, data, false),
+);
 
 ipcMain.handle("room:observation-review", async (event, action, data) => {
   if (
@@ -2652,7 +2851,7 @@ ipcMain.handle("room:observation-review", async (event, action, data) => {
   }
 });
 
-ipcMain.handle("room:native-control", async (event) => {
+ipcMain.handle("room:native-control", async (event, action) => {
   const win = entries.get("panel")?.win;
   const { nativeControl: policy, roomEpoch } = remoteState ?? {};
   if (
@@ -2669,8 +2868,10 @@ ipcMain.handle("room:native-control", async (event) => {
     return "unavailable";
   choosingDesktopPermission = true;
   try {
-    if (policy.grantedAgentId)
+    if (policy.grantedAgentId && action !== "switch")
       return await nativeControl.revoke(roomEpoch, policy.grantedAgentId);
+    if (policy.handoff === "pending") return "pending";
+    const visits = screenPickerVisits();
     let eligible = roles.filter(({ id }) => policy.eligible.includes(id));
     if (!eligible.length) return "unavailable";
     let windows;
@@ -2718,14 +2919,62 @@ ipcMain.handle("room:native-control", async (event) => {
       ({ app, title }) => `${app} · ${title}`,
     );
     if (!selection || win.isDestroyed() || !win.isVisible()) return "cancelled";
+    const valid = () =>
+      remoteState?.roomEpoch === roomEpoch &&
+      !hidden &&
+      !desktopLocked &&
+      !win.isDestroyed() &&
+      win.isVisible() &&
+      selection.source.pid !== process.pid &&
+      remoteState?.nativeControl?.eligible.includes(selection.agentId) &&
+      visits.get(selection.agentId) &&
+      screenPickerVisits().get(selection.agentId) ===
+        visits.get(selection.agentId);
     if (
-      selection.source.pid === process.pid ||
-      remoteState?.roomEpoch !== roomEpoch ||
-      remoteState?.nativeControl?.grantedAgentId ||
-      !remoteState?.nativeControl?.eligible.includes(selection.agentId)
+      !valid() ||
+      remoteState.nativeControl.grantedAgentId !== policy.grantedAgentId
     )
       return "unavailable";
-    return await nativeControl.grant({ ...selection, roomEpoch });
+    const confirmed = await dialog.showMessageBox(win, {
+      type: "question",
+      title: "授权操作本机窗口",
+      message: `允许${roles.find(({ id }) => id === selection.agentId).name}操作此窗口？`,
+      detail: `${policy.handoff === "unconfirmed" ? "确认前请核对上一次操作的窗口。\n" : ""}${localLabel(selection.source.app)} · ${localLabel(selection.source.title)}`,
+      buttons: ["取消", policy.grantedAgentId ? "撤旧权限并授权" : "确认授权"],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    });
+    if (confirmed.response !== 1 || !valid()) return "cancelled";
+    if (policy.grantedAgentId) {
+      const status = await nativeControl.revoke(
+        roomEpoch,
+        policy.grantedAgentId,
+      );
+      if (status !== "revoked") return status;
+    }
+    // A receipt may arrive after revocation. Its identity cannot address the new grant.
+    const deadline = Date.now() + 12_000;
+    while (
+      valid() &&
+      remoteState.nativeControl.handoff === "pending" &&
+      Date.now() < deadline
+    )
+      await new Promise((resolve) => setTimeout(resolve, 160));
+    if (!valid() || remoteState.nativeControl.grantedAgentId)
+      return "unavailable";
+    if (remoteState.nativeControl.handoff === "pending") return "pending";
+    if (
+      remoteState.nativeControl.handoff === "unconfirmed" &&
+      policy.handoff !== "unconfirmed"
+    )
+      return "unconfirmed";
+    return await nativeControl.grant({
+      ...selection,
+      roomEpoch,
+      visitId: visits.get(selection.agentId),
+      confirmed: remoteState.nativeControl.handoff === "unconfirmed",
+    });
   } catch (error) {
     return error?.message === "DESKTOP_NATIVE_PERMISSION"
       ? "permission"
@@ -2905,7 +3154,12 @@ ipcMain.on("room:action", (event, action, data) => {
   const entry = [...entries.values()].find(
     ({ win }) => win.webContents === event.sender,
   );
-  if (!entry || entry.departing) return;
+  if (
+    !entry ||
+    entry.departing ||
+    event.senderFrame !== entry.win.webContents.mainFrame
+  )
+    return;
   if (
     action === "page-visible" &&
     entry.type !== "panel" &&
@@ -2936,6 +3190,33 @@ ipcMain.on("room:action", (event, action, data) => {
     }
     const role = roles.find(({ id }) => id === entry.id);
     if (action === "open") showPanel("chat");
+    if (
+      action === "pet" &&
+      !hidden &&
+      !desktopLocked &&
+      !entry.drag &&
+      windowVisible(entry)
+    ) {
+      const now = Date.now();
+      if (now < (entry.pettedAt ?? 0) + 700) return;
+      entry.pettedAt = now;
+      const gesture = { kind: "pet", id: randomUUID() };
+      entry.gesture = gesture;
+      update();
+      setTimeout(() => {
+        if (entry.gesture !== gesture) return;
+        entry.gesture = undefined;
+        update();
+      }, 1050);
+      if (framework && entry.bodyVisitId) {
+        manualTouches.set(entry.id + ":pet", {
+          agentId: entry.id,
+          visitId: entry.bodyVisitId,
+          kind: "pet",
+        });
+        framework.sync();
+      }
+    }
     if (action === "menu") {
       Menu.buildFromTemplate([
         { label: "打开聊天", click: () => showPanel("chat") },
@@ -3146,10 +3427,19 @@ else {
     ])
       screen.on(event, (_event, display) => {
         displayPicker = undefined;
-        if (event === "display-removed")
-          for (const grant of displayGrants.values()) {
+        screenPicker = undefined;
+        if (event === "display-removed") {
+          for (const grant of displayGrants.values())
             if (grant.display.displayId === display.id) clearObservation(grant);
+          for (const grant of screenGrants.values()) {
+            if (grant.display?.displayId !== display.id) continue;
+            clearManualScreen(grant);
+            framework?.act("screen-revoke", {
+              roomEpoch: grant.roomEpoch,
+              grantId: grant.grantId,
+            });
           }
+        }
         restoreWindowLayout();
       });
     powerMonitor.on("lock-screen", () => {
@@ -3192,6 +3482,8 @@ else {
         () => {
           const dragged = [...manuallyMoved].slice(0, 24);
           for (const id of dragged) manuallyMoved.delete(id);
+          const ownerTouches = [...manualTouches.values()];
+          manualTouches.clear();
           const results = body.recovery();
           const bodyPositions =
             recoveryPositionPending && remoteState?.roomEpoch
@@ -3218,6 +3510,7 @@ else {
                   windowVisible(entry),
               ),
             dragged,
+            ...(batchScreenGrants && ownerTouches.length && { ownerTouches }),
             ...(observationProtocol &&
               (observationDriver || displayObservation) && {
                 observationProtocol: 2,

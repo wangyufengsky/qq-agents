@@ -62,6 +62,7 @@ const bodyGestureLabels = {
   climb: "攀爬",
   land: "落地",
   wave: "挥手",
+  pet: "被摸了摸头",
 };
 const followModeLabels = { pointer: "跟随鼠标", window: "跟随窗口" };
 const followResultLabels = {
@@ -125,7 +126,7 @@ function activityFor(role, room) {
   return room.thinking === role.id || room.bubbles?.[role.id] ? "chat" : "idle";
 }
 
-function bindFloatingDrag(handle) {
+function bindFloatingDrag(handle, door) {
   let pointer;
   let moved = false;
   const point = (event) => ({ x: event.screenX, y: event.screenY });
@@ -164,7 +165,8 @@ function bindFloatingDrag(handle) {
   for (const event of ["pointerup", "pointercancel", "lostpointercapture"])
     handle.addEventListener(event, endDrag);
   handle.addEventListener("click", (event) => {
-    if (!moved || event.detail === 0) window.nest.act("open");
+    if (event.detail === 0) window.nest.act("open");
+    else if (!moved) window.nest.act(door ? "open" : "pet");
     moved = false;
   });
 }
@@ -193,7 +195,7 @@ function floating() {
   document.addEventListener("visibilitychange", syncVisibility);
   art.title = door
     ? "点击打开小窝 · 拖动换位置"
-    : "点击聊天 · 拖动换座位 · 右键菜单";
+    : "点击摸头 · 拖动换座位 · 右键打开聊天";
   const sprite = image(door ? "door" : undefined);
   const walkFrames = [];
   let gestureLayer;
@@ -216,13 +218,23 @@ function floating() {
       if (event.target === gestureLayer) delete art.dataset.gesture;
     });
     pose.append(sprite, walk, cue);
-    gestureLayer.append(pose);
-    body.append(gestureLayer);
+    const petFace = element("span", "sprite-pet-face");
+    const petHand = element("span", "sprite-petting");
+    petFace.setAttribute("aria-hidden", "true");
+    petHand.setAttribute("aria-hidden", "true");
+    for (let i = 0; i < 2; i++) {
+      const eye = element("span", "pet-eye");
+      eye.append(element("span", "pet-lid"));
+      petFace.append(eye);
+    }
+    petHand.append(element("span", "pet-palm"));
+    gestureLayer.append(pose, petFace);
+    body.append(gestureLayer, petHand);
     art.append(body);
   }
   space.append(art);
   root.append(space);
-  bindFloatingDrag(art);
+  bindFloatingDrag(art, door);
 
   function subscribe(update) {
     window.nest.onRoom(update);
@@ -321,7 +333,7 @@ function floating() {
       activityLabels[activity],
       bodyPoseLabels[moving ? "stand" : pose],
       gestureLabel,
-      "打开聊天",
+      "点击摸头，按回车打开聊天",
     ]
       .filter(Boolean)
       .join(" · ");
@@ -677,9 +689,13 @@ function panel() {
   const picker = select(".display-picker");
   const taskPicker = select(".task-picker");
   const grantRoster = select(".display-roster");
-  const displayRole = select("#display-role");
-  const displayChoices = select(".display-choices");
-  const displayCards = displayChoices.querySelector("div");
+  const readSelection = select(".read-selection");
+  const readChoices = select(".read-choices");
+  const readSelectAll = select(".read-select-all");
+  const readCommonTarget = select(".read-common-target");
+  const screenViewButton = select(".screen-view-button");
+  const screenGrantCount = select(".screen-grant-count");
+  const revokeAll = select(".read-revoke-all");
   const displayConfirm = select(".display-confirm");
   const displayError = select(".display-error");
   const plus = select(".composer-plus");
@@ -693,6 +709,8 @@ function panel() {
   let displayBusy = false;
   let displayRosterKey;
   let pickerLimits;
+  let readScope = "display";
+  let readRoster = [];
 
   function toggleComposerMenu(open, focus = false) {
     composerMenu.hidden = !open;
@@ -728,8 +746,10 @@ function panel() {
   }
 
   const openTools = () => openChatSheet(toolsList, "小窝工具");
+  const readTitle = () =>
+    readScope === "display" ? "自主观察显示器" : "查看屏幕";
   const openManager = () => {
-    openChatSheet(manager, "自主观察显示器");
+    openChatSheet(manager, readTitle());
     refreshDisplayGrants();
   };
   toolsLauncher.addEventListener("click", openTools);
@@ -741,65 +761,147 @@ function panel() {
   chatSheet.addEventListener("click", (event) => {
     if (event.target === chatSheet) closeChatSheet();
   });
-  select(".display-manage").addEventListener("click", openManager);
+  select(".display-manage").addEventListener("click", () => {
+    readScope = "display";
+    openManager();
+  });
   select(".display-back").addEventListener("click", openTools);
   for (const cancel of root.querySelectorAll(".display-cancel"))
     cancel.addEventListener("click", openManager);
 
-  function displayNotice(status) {
+  function displayNotice(status, agentId) {
+    const message = {
+      permission: "请在系统设置中允许屏幕录制后重试。",
+      "no-sources": "当前没有可用的显示器或窗口。",
+      unavailable: "角色资格或目标已变更，请重新选择。",
+      failed: "未能更新授权，请重试。",
+    }[status];
+    const role = room?.roles.find(({ id }) => id === agentId);
     displayError.textContent =
-      {
-        permission: "请在系统设置中允许屏幕录制后重试。",
-        "no-sources": "当前没有可用的显示器。",
-        unavailable: "授权目标已变更，请重新选择。",
-        failed: "未能更新显示器授权，请重试。",
-      }[status] ?? "";
-    displayError.hidden = !displayError.textContent;
+      message && role ? `${role.name} · ${message}` : (message ?? "");
+    displayError.hidden = !message;
   }
 
-  async function chooseDisplay(action, data) {
+  async function chooseRead(action, data) {
     try {
-      return await window.nest.displayObservation(action, data);
+      const choose =
+        readScope === "display"
+          ? window.nest.displayObservation
+          : window.nest.screenView;
+      return await choose(action, data);
     } catch {
       return { status: "failed" };
     }
   }
 
+  async function revokeRead(action, data) {
+    if (displayBusy) return;
+    displayBusy = true;
+    refreshDisplayGrants();
+    const result = await chooseRead(action, data);
+    displayBusy = false;
+    if (chatSheet.open && sheetView === manager) {
+      displayNotice(result?.status, result?.agentId);
+      refreshDisplayGrants();
+    }
+  }
+
+  function observationStatus(grant, ended) {
+    if (ended?.state === "revoked") return "已撤销";
+    if (ended?.state === "unavailable") return "授权已失效";
+    const status = {
+      waiting: "等待空闲机会",
+      deciding: "她在决定",
+      declined: "她选择这次不看",
+      capturing: "她想看一眼 · 等待取图",
+      viewed: "已看一眼",
+      incomplete: "本次未完成",
+    }[grant?.opportunity ?? ended?.opportunity];
+    if (ended?.state === "expired")
+      return `授权已到期${ended.opportunity === "waiting" ? " · 到期前未轮到" : status ? ` · ${status}` : ""}`;
+    const waiting = grant?.waiting;
+    const reason = {
+      target: "正在确认显示器",
+      quota: "本小时空闲额度已用完",
+      chat: "正在处理桌边聊天",
+      rest: waiting?.until && `休息到 ${clock.format(waiting.until)}`,
+      wait: waiting?.until && `等待到 ${clock.format(waiting.until)}`,
+    }[waiting?.reason];
+    return status && reason ? `${status} · ${reason}` : status;
+  }
+
   function refreshDisplayGrants() {
-    const policy = room?.observation;
-    const grants = policy?.displays;
-    const eligible = policy?.eligible ?? [];
-    const available =
+    const observation = room?.observation;
+    const screen = room?.screenView;
+    const displays = observation?.displays;
+    const showDisplays =
       room?.connected &&
       window.nest.displayObservation &&
-      Array.isArray(grants);
-    select(".display-observation").hidden = !available;
-    select(".display-grant-count").textContent = grants?.length
-      ? `${grants.length} 位角色已授权`
+      Array.isArray(displays);
+    const showScreens =
+      room?.connected &&
+      window.nest.screenView &&
+      Array.isArray(screen?.grants);
+    select(".display-observation").hidden = !showDisplays;
+    select(".display-grant-count").textContent = displays?.length
+      ? `${displays.length} 位角色已授权`
       : "按角色选择一块屏幕";
-    if (
-      sheetView === picker &&
-      chatSheet.open &&
-      (room?.roomEpoch !== pickerEpoch ||
+    if (showScreens) {
+      select(".screen-view").hidden = false;
+      screenViewButton.hidden = false;
+      screenViewButton.disabled = false;
+      screenViewButton.textContent = "管理 ›";
+      screenViewButton.setAttribute("aria-label", "管理查看屏幕");
+      screenGrantCount.hidden = false;
+      screenGrantCount.textContent = screen.grants.length
+        ? `${screen.grants.length} 位角色已授权`
+        : "可授权多位角色";
+    } else {
+      screenViewButton.removeAttribute("aria-label");
+      screenGrantCount.hidden = true;
+    }
+    const observe = readScope === "display";
+    const available = observe ? showDisplays : showScreens;
+    const policy = observe ? observation : screen;
+    const grants = observe ? displays : screen?.grants;
+    const eligible = policy?.eligible ?? [];
+    if (sheetView === picker && chatSheet.open) {
+      if (
         !available ||
-        pickerLimits !== JSON.stringify(policy.displayLimits))
-    )
-      openManager();
-    if (sheetView === picker) refreshDisplayChoice();
+        room.roomEpoch !== pickerEpoch ||
+        (observe && pickerLimits !== JSON.stringify(observation.displayLimits))
+      ) {
+        openManager();
+        return;
+      }
+      refreshDisplayChoice();
+    }
     if (sheetView !== manager || !chatSheet.open) return;
+    select(".read-help").textContent = observe
+      ? "角色空闲时，可以自己决定是否看一眼获准的屏幕。"
+      : "获准角色可在桌边回合里查看选定的窗口或显示器。";
+    select(".display-add").textContent = observe
+      ? "选择角色与显示器"
+      : "选择角色与查看目标";
     select(".display-add").disabled =
       !available || !eligible.length || displayBusy;
+    revokeAll.hidden = !grants?.length;
+    revokeAll.disabled = displayBusy;
     if (!available) {
       displayRosterKey = undefined;
       grantRoster.replaceChildren();
       return;
     }
     const roles = room.roles.filter(({ state }) => state === "here");
+    const history = observe ? observation.displayHistory : undefined;
     const key = JSON.stringify([
       room.roomEpoch,
+      readScope,
+      displayBusy,
       roles.map(({ id, name, art, color }) => [id, name, art, color]),
       eligible,
       grants,
+      history,
       policy.ineligible,
     ]);
     if (key === displayRosterKey) return;
@@ -807,136 +909,206 @@ function panel() {
     grantRoster.replaceChildren();
     for (const role of roles) {
       const grant = grants.find(({ agentId }) => agentId === role.id);
+      const ended = history?.find(({ agentId }) => agentId === role.id);
       const row = element("div", "resident-grant");
-      const id = element("div", "resident-grant-id");
+      const identity = element("div", "resident-grant-id");
       const words = element("div");
-      const limit = grant
-        ? `${grant.target ?? "显示器"} · ${clock.format(grant.expiresAt)} 到期 · 剩余 ${grant.remaining} 次`
-        : eligible.includes(role.id)
+      const permitted = eligible.includes(role.id);
+      const detail = grant
+        ? observe
+          ? `${grant.target ?? "显示器"} · ${clock.format(grant.expiresAt)} 到期 · 剩余 ${grant.remaining} 次`
+          : (grant.target ?? "已授权")
+        : permitted
           ? "未授权"
           : (observationEligibilityLabels[
               policy.ineligible?.find(({ id }) => id === role.id)?.reason
             ] ?? "暂不可授权");
-      words.append(
-        element("strong", null, role.name),
-        element("p", grant ? "display-active" : null, limit),
-      );
-      id.append(avatar(role), words);
+      words.append(element("strong", null, role.name));
+      if (!ended || grant)
+        words.append(element("p", grant ? "display-active" : null, detail));
+      const state = observe && observationStatus(grant, ended);
+      if (state) words.append(element("p", "observation-opportunity", state));
+      identity.append(avatar(role), words);
       const actions = element("div", "grant-actions");
       if (grant) {
         const revoke = button("quiet", "撤销");
-        revoke.setAttribute("aria-label", `撤销${role.name}的显示器授权`);
-        revoke.addEventListener("click", async () => {
-          if (displayBusy) return;
-          displayBusy = true;
-          revoke.disabled = true;
-          const result = await chooseDisplay("revoke", {
-            agentId: role.id,
-            grantId: grant.grantId,
-          });
-          displayBusy = false;
-          revoke.disabled = false;
-          displayNotice(result?.status);
-          refreshDisplayGrants();
-        });
+        revoke.setAttribute(
+          "aria-label",
+          `撤销${role.name}的${observe ? "显示器授权" : "看屏授权"}`,
+        );
+        revoke.disabled = displayBusy;
+        revoke.addEventListener(
+          "click",
+          () =>
+            void revokeRead("revoke", {
+              agentId: role.id,
+              grantId: grant.grantId,
+            }),
+        );
         actions.append(revoke);
       }
       const edit = button("secondary", grant ? "更换" : "授权");
       edit.setAttribute(
         "aria-label",
-        `${grant ? "更换" : "授权"}${role.name}的显示器`,
+        `${grant ? "更换" : "授权"}${role.name}的${observe ? "显示器" : "看屏目标"}`,
       );
-      edit.disabled = !eligible.includes(role.id);
+      edit.disabled = !permitted || displayBusy;
       edit.addEventListener("click", () => void openPicker(role.id));
       actions.append(edit);
-      row.append(id, actions);
+      row.append(identity, actions);
       grantRoster.append(row);
     }
   }
 
-  async function openPicker(agentId = "") {
+  function targetOptions(targets) {
+    const empty = element("option", null, "请选择目标");
+    empty.value = "";
+    return [
+      empty,
+      ...targets.map(({ id, name, number, primary }) => {
+        const label = number
+          ? `显示器 ${number} · ${name}${primary ? "（主屏）" : ""}`
+          : `窗口 · ${name}`;
+        const option = element("option", null, label);
+        option.value = id;
+        return option;
+      }),
+    ];
+  }
+
+  async function openPicker(agentId) {
     if (displayBusy || !room?.connected) return;
-    displayBusy = true;
     const epoch = room.roomEpoch;
-    const result = await chooseDisplay("list");
+    const scope = readScope;
+    const observe = scope === "display";
+    const policy = observe ? room.observation : room.screenView;
+    const visitAtOpen = new Map(
+      room.roles
+        .filter(
+          ({ id, state }) => state === "here" && policy.eligible.includes(id),
+        )
+        .map((role) => [role.id, role.bodyVisitId]),
+    );
+    displayBusy = true;
+    refreshDisplayGrants();
+    const result = await chooseRead("list");
     displayBusy = false;
-    if (!chatSheet.open || sheetView !== manager || room.roomEpoch !== epoch)
+    if (
+      !chatSheet.open ||
+      sheetView !== manager ||
+      room.roomEpoch !== epoch ||
+      scope !== readScope
+    )
       return;
     if (result?.status !== "listed" || !result.displays?.length) {
       displayNotice(
         result?.status === "listed" ? "no-sources" : result?.status,
       );
+      refreshDisplayGrants();
       return;
     }
-    const { displayLimits, eligible, displays } = room.observation ?? {};
-    if (!displayLimits || !eligible || !displays) return;
     pickerEpoch = epoch;
-    pickerLimits = JSON.stringify(displayLimits);
-    const placeholder = element("option", null, "选择一位角色");
-    placeholder.value = "";
-    displayRole.replaceChildren(placeholder);
-    for (const role of room.roles.filter(({ id }) => eligible.includes(id))) {
-      const option = element("option", null, role.name);
-      option.value = role.id;
-      displayRole.append(option);
-    }
-    displayRole.value = agentId;
-    displayCards.replaceChildren();
-    for (const { id, name, number, primary } of result.displays) {
-      const tile = element("label", "display-choice");
-      const radio = document.createElement("input");
-      radio.type = "radio";
-      radio.name = "display";
-      radio.value = id;
-      const monitor = element("span", "monitor-drawing", String(number));
-      monitor.setAttribute("aria-hidden", "true");
-      tile.append(
-        radio,
-        monitor,
-        element("strong", null, name),
-        element("small", null, primary ? "主屏幕" : "扩展屏幕"),
-      );
-      displayCards.append(tile);
-    }
+    const limits = room.observation?.displayLimits;
+    pickerLimits = JSON.stringify(limits);
+    readChoices.replaceChildren();
+    readCommonTarget.replaceChildren(...targetOptions(result.displays));
+    readRoster = room.roles
+      .filter(
+        ({ id, bodyVisitId }) =>
+          visitAtOpen.has(id) && visitAtOpen.get(id) === bodyVisitId,
+      )
+      .map((role) => {
+        const row = element("div", "read-choice");
+        const label = element("label");
+        const check = document.createElement("input");
+        check.type = "checkbox";
+        check.checked = role.id === agentId;
+        label.append(check, document.createTextNode(role.name));
+        const target = document.createElement("select");
+        target.setAttribute("aria-label", `${role.name}的查看目标`);
+        target.replaceChildren(...targetOptions(result.displays));
+        row.append(label, target);
+        readChoices.append(row);
+        return { role, target, check };
+      });
     select(".display-limits").textContent =
-      `仅观察所选显示器的整屏画面。最长 ${displayLimits.minutes} 分钟，最多尝试取图 ${displayLimits.attempts} 次。`;
-    openChatSheet(
-      picker,
-      displays.some((grant) => grant.agentId === agentId)
-        ? "更换显示器"
-        : "授权观察显示器",
-    );
+      observe && limits
+        ? `每位角色最长 ${limits.minutes} 分钟，最多尝试取图 ${limits.attempts} 次。确认后替换所选角色已有的显示器授权。`
+        : "确认后替换所选角色已有的看屏授权。";
+    select(".display-cancel").textContent = `‹ ${readTitle()}`;
+    openChatSheet(picker, observe ? "授权观察显示器" : "授权查看屏幕");
     refreshDisplayChoice();
-    displayRole.focus();
+    (
+      readRoster.find(({ check }) => check.checked)?.target ?? readSelectAll
+    ).focus();
   }
 
   function refreshDisplayChoice() {
-    const valid = room?.observation?.eligible.includes(displayRole.value);
-    const checked = displayCards.querySelector("input:checked");
-    displayChoices.disabled = !valid || displayBusy;
-    displayConfirm.disabled = !valid || !checked || displayBusy;
-    select(".display-replace").hidden = !room?.observation?.displays?.some(
-      ({ agentId }) => agentId === displayRole.value,
-    );
+    const eligible =
+      (readScope === "display" ? room.observation : room.screenView)
+        ?.eligible ?? [];
+    const stale = [];
+    const valid = readRoster.filter(({ role, check, target }) => {
+      const available =
+        eligible.includes(role.id) &&
+        room.roles.some(
+          ({ id, state, bodyVisitId }) =>
+            id === role.id &&
+            state === "here" &&
+            role.bodyVisitId === bodyVisitId,
+        );
+      check.disabled = !available && !check.checked;
+      if (!available && check.checked) stale.push(role.id);
+      target.disabled = !available || !check.checked;
+      return available;
+    });
+    if (stale.length) displayNotice("unavailable", stale[0]);
+    const selected = valid.filter(({ check }) => check.checked);
+    readSelection.disabled = displayBusy;
+    readSelectAll.disabled = !valid.length;
+    readSelectAll.checked =
+      valid.length > 0 && valid.length === selected.length;
+    readSelectAll.indeterminate = selected.length > 0 && !readSelectAll.checked;
+    readCommonTarget.disabled = !selected.length;
+    displayConfirm.disabled =
+      displayBusy ||
+      stale.length > 0 ||
+      !selected.length ||
+      selected.some(({ target }) => !target.value);
   }
 
+  screenViewButton.addEventListener("click", () => {
+    if (!Array.isArray(room?.screenView?.grants)) return;
+    readScope = "screen";
+    openManager();
+  });
+  revokeAll.addEventListener("click", () => void revokeRead("revoke-all"));
   select(".display-add").addEventListener("click", () => void openPicker());
+  readSelectAll.addEventListener("change", () => {
+    for (const { check } of readRoster)
+      if (!check.disabled) check.checked = readSelectAll.checked;
+  });
+  readCommonTarget.addEventListener("change", () => {
+    for (const { check, target } of readRoster)
+      if (check.checked && !check.disabled && readCommonTarget.value)
+        target.value = readCommonTarget.value;
+    readCommonTarget.value = "";
+  });
   picker.addEventListener("change", refreshDisplayChoice);
   picker.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (displayConfirm.disabled) return;
+    const selections = readRoster
+      .filter(({ check }) => check.checked && !check.disabled)
+      .map(({ role, target }) => ({ agentId: role.id, display: target.value }));
     displayBusy = true;
-    const display = displayCards.querySelector("input:checked").value;
     refreshDisplayChoice();
-    const result = await chooseDisplay("grant", {
-      agentId: displayRole.value,
-      display,
-    });
+    const result = await chooseRead("grant", { selections });
     displayBusy = false;
     if (sheetView !== picker || !chatSheet.open) return;
     if (result?.status === "granted") openManager();
     else {
-      displayNotice(result?.status);
+      displayNotice(result?.status, result?.agentId);
       refreshDisplayChoice();
     }
   });
@@ -993,14 +1165,30 @@ function panel() {
       button.disabled = choosing;
       button.textContent = agent ? labels.revoke : labels.grant;
       button.title = agent ? `当前授权给${agent.name}` : labels.help;
+      if (key === "nativeControl") {
+        const holder = section.querySelector(".native-holder");
+        holder.hidden = !agent && !policy?.handoff;
+        holder.textContent =
+          policy?.handoff === "pending"
+            ? "等待上一项操作回执"
+            : policy?.handoff === "unconfirmed"
+              ? "请先核对窗口"
+              : agent
+                ? `${agent.name} · ${policy.target ?? "已选窗口"}`
+                : "";
+        const change = section.querySelector(".native-switch");
+        change.hidden = !agent || !policy.eligible.length;
+        change.disabled = choosing || policy?.handoff === "pending";
+        if (policy?.handoff === "pending" && !agent) button.disabled = true;
+      }
     }
-    button.addEventListener("click", async () => {
+    const change = async (action) => {
       if (section.hidden || button.hidden || choosing) return;
       choosing = true;
       refresh();
       let status;
       try {
-        status = await window.nest[key]();
+        status = await window.nest[key](action);
       } catch {
         status = "failed";
       } finally {
@@ -1009,7 +1197,15 @@ function panel() {
       }
       notice.hidden = !notices[status];
       notice.textContent = notices[status] ?? "";
+    };
+    button.addEventListener("click", () => {
+      if (key === "screenView" && Array.isArray(room?.screenView?.grants))
+        return;
+      void change();
     });
+    section
+      .querySelector(".native-switch")
+      ?.addEventListener("click", () => void change("switch"));
     return refresh;
   }
 
@@ -1068,6 +1264,8 @@ function panel() {
       "no-sources": "当前没有可选窗口。",
       unavailable: "当前无法更改窗口控制授权。",
       failed: "窗口控制授权操作失败。",
+      pending: "旧权限已撤销，等待操作回执后可授予新角色。",
+      unconfirmed: "请先核对窗口，再确认授予新角色。",
     },
   );
 
@@ -1445,25 +1643,39 @@ function panel() {
       thread.scrollTop = thread.scrollHeight;
   }
 
-  function windowTaskGrant(scope) {
-    if (!scope || !room?.interactionsAvailable || room.connectionLost) return;
-    const [id, grantId] =
+  function windowTaskGrants(scope) {
+    if (!scope || !room?.interactionsAvailable || room.connectionLost)
+      return [];
+    const grants =
       scope === "screen"
-        ? [room.windowTaskScreenAgentId, room.windowTaskScreenGrantId]
-        : [room.windowTaskNativeAgentId, room.windowTaskNativeGrantId];
-    const role = room.roles.find(
-      (role) =>
-        role.id === id &&
-        role.state === "here" &&
-        role.available &&
-        role.bodyControlAvailable,
-    );
-    if (role && grantId) return { role, grantId };
+        ? (room.windowTaskScreenGrants ?? [
+            {
+              agentId: room.windowTaskScreenAgentId,
+              grantId: room.windowTaskScreenGrantId,
+            },
+          ])
+        : [
+            {
+              agentId: room.windowTaskNativeAgentId,
+              grantId: room.windowTaskNativeGrantId,
+            },
+          ];
+    return grants.flatMap(({ agentId, grantId }) => {
+      const role = room.roles.find(
+        (role) =>
+          role.id === agentId &&
+          role.state === "here" &&
+          role.available &&
+          role.bodyControlAvailable,
+      );
+      return role && grantId ? [{ role, grantId }] : [];
+    });
   }
 
   function selectedTask() {
-    const current = windowTaskGrant(taskScope.value);
-    if (current?.grantId === selectedWindowGrant) return current;
+    return windowTaskGrants(taskScope.value).find(
+      ({ grantId }) => grantId === selectedWindowGrant,
+    );
   }
 
   function refreshWindowTask() {
@@ -1472,7 +1684,7 @@ function panel() {
     const active = ["approaching", "ready"].includes(status?.stage);
     let hasTaskOption = false;
     for (const option of [...taskScope.options].slice(1)) {
-      const available = !active && Boolean(windowTaskGrant(option.value));
+      const available = !active && windowTaskGrants(option.value).length > 0;
       option.disabled = !available;
       option.hidden = !available && option.value !== scope;
       hasTaskOption ||= available;
@@ -1486,15 +1698,25 @@ function panel() {
     const role = selectedTask()?.role;
     const roleLabel = role?.name ?? "授权已失效";
     taskRole.hidden = !scope;
-    if (
-      taskRole.value !== (role?.id ?? "") ||
-      taskRole.options[0]?.text !== roleLabel
-    ) {
-      const option = element("option", null, roleLabel);
-      option.value = role?.id ?? "";
-      taskRole.replaceChildren(option);
+    const taskGrants = windowTaskGrants(scope);
+    const roleOptions = taskGrants.map(({ role, grantId }) => [
+      role.id,
+      role.name,
+      grantId,
+    ]);
+    const roleKey = JSON.stringify(roleOptions);
+    if (taskRole.dataset.key !== roleKey) {
+      taskRole.dataset.key = roleKey;
+      taskRole.replaceChildren(
+        ...roleOptions.map(([id, name]) => {
+          const option = element("option", null, name);
+          option.value = id;
+          return option;
+        }),
+      );
     }
-    taskRole.disabled = !role;
+    taskRole.value = role?.id ?? "";
+    taskRole.disabled = taskGrants.length < 2;
     useTask.disabled = !scope || !role;
     taskDraft.hidden = !scope || (chatSheet.open && sheetView === taskPicker);
     taskDraft.firstElementChild.textContent = scope
@@ -1522,8 +1744,14 @@ function panel() {
     attach.hidden = Boolean(scope) || !room.framework || !window.nest.attach;
   }
 
+  taskRole.addEventListener("change", () => {
+    selectedWindowGrant = windowTaskGrants(taskScope.value).find(
+      ({ role }) => role.id === taskRole.value,
+    )?.grantId;
+    refreshWindowTask();
+  });
   taskScope.addEventListener("change", () => {
-    selectedWindowGrant = windowTaskGrant(taskScope.value)?.grantId;
+    selectedWindowGrant = windowTaskGrants(taskScope.value)[0]?.grantId;
     refreshWindowTask();
   });
   taskStop.addEventListener("click", () =>

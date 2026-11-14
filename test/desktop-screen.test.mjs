@@ -327,3 +327,156 @@ async function waitForNativeRequest(command) {
   }
   assert.fail("Desktop client did not receive a native request");
 }
+
+test("batch screen grants are atomic, visit-bound and revoked independently", async (t) => {
+  const { host, client, roomEpoch, command } = await setup(t);
+  const issue = (agentId) => ({
+    roomEpoch,
+    agentId,
+    grantId: randomUUID(),
+    visitId: host.body.visitId(host.live.visits.get(agentId)),
+  });
+  const fish = issue("agent-0");
+  const dragon = issue("agent-1");
+  assert.throws(
+    () =>
+      host.command({
+        client,
+        action: "screen-grant-batch",
+        data: [fish, { ...dragon, visitId: randomUUID() }],
+      }),
+    /DESKTOP_SCREEN_UNAVAILABLE/,
+  );
+  assert.equal(host.screen.grants.size, 0);
+  const { room } = await command("screen-grant-batch", [fish, dragon]);
+  assert.deepEqual(
+    room.screenView.grants.map(({ grantId }) => grantId),
+    [fish.grantId, dragon.grantId],
+  );
+  await command("screen-revoke-batch", [{ roomEpoch, grantId: fish.grantId }]);
+  assert.equal(host.screen.grantFor("agent-0"), undefined);
+  assert.equal(host.screen.grantFor("agent-1").grantId, dragon.grantId);
+});
+
+test("parallel captures each wait for and deliver only their own authorized frame", async (t) => {
+  const { host, runtime, roomEpoch, client, command, result } = await setup(t);
+  for (const agentId of ["agent-0", "agent-1"])
+    await command("screen-grant", {
+      roomEpoch,
+      grantId: randomUUID(),
+      agentId,
+    });
+  const grant = (id) => host.screen.grantFor(id);
+  const queue = (id) =>
+    host.screen.capture(
+      { controller: new AbortController() },
+      runtime.agent(id),
+      grant(id),
+      () => host.screen.current(grant(id)),
+    );
+  const a = queue("agent-0");
+  const b = queue("agent-1");
+  const send = (request) =>
+    result({
+      client,
+      roomEpoch,
+      grantId: request.grantId,
+      requestId: request.requestId,
+      data: jpeg,
+    });
+  const first = await waitForRequest(command);
+  assert.equal(first.grantId, grant("agent-0").grantId);
+  assert.equal(
+    (await send({ ...first, grantId: grant("agent-1").grantId })).ok,
+    false,
+  );
+  assert.equal((await send(first)).ok, true);
+  assert.equal((await a).data, jpeg);
+  const second = await waitForRequest(command);
+  assert.equal(second.grantId, grant("agent-1").grantId);
+  assert.equal((await send(first)).ok, false);
+  assert.equal((await send(second)).ok, true);
+  assert.equal((await b).data, jpeg);
+});
+
+test("native handoff requires revocation and an identified outcome", async (t) => {
+  const { host, client, roomEpoch, command, run, nativeClaim, nativeResult } =
+    await setup(t, { native: true });
+  const first = { roomEpoch, grantId: randomUUID(), agentId: "agent-0" };
+  const second = { roomEpoch, grantId: randomUUID(), agentId: "agent-1" };
+  const switchTo = (value) =>
+    host.command({ client, action: "native-grant", data: value });
+  await command("native-grant", first);
+  assert.throws(() => switchTo(second), /DESKTOP_NATIVE_UNAVAILABLE/);
+  await run(first.agentId, async (call) => {
+    const output = call("desktop_native_control", {
+      type: "click",
+      ref: "ref_1",
+    });
+    const { requestId } = await waitForNativeRequest(command);
+    const claim = { client, roomEpoch, grantId: first.grantId, requestId };
+    assert.equal((await nativeClaim(claim)).ok, true);
+    const revoke = () =>
+      host.command({
+        client,
+        action: "native-revoke",
+        data: { roomEpoch, grantId: first.grantId },
+      });
+    const { room } = revoke();
+    assert.equal(room.nativeControl.grantedAgentId, null);
+    assert.equal(room.nativeControl.handoff, "pending");
+    assert.equal((await output).isError, true);
+    assert.throws(
+      () => switchTo({ ...second, confirmed: true }),
+      /DESKTOP_NATIVE_UNAVAILABLE/,
+    );
+    assert.equal(
+      (
+        await nativeResult({
+          ...claim,
+          result: { ok: false, delivery: "unknown" },
+        })
+      ).ok,
+      true,
+    );
+    assert.throws(() => switchTo(second), /DESKTOP_NATIVE_UNAVAILABLE/);
+    assert.equal(
+      switchTo({ ...second, confirmed: true }).room.nativeControl
+        .grantedAgentId,
+      second.agentId,
+    );
+    assert.equal(
+      (
+        await nativeResult({
+          ...claim,
+          result: { ok: true, delivery: "delivered_verified" },
+        })
+      ).ok,
+      false,
+    );
+  });
+  await run(second.agentId, async (call) => {
+    const output = call("desktop_native_control", {
+      type: "click",
+      ref: "ref_2",
+    });
+    const { requestId } = await waitForNativeRequest(command);
+    const claim = { client, roomEpoch, grantId: second.grantId, requestId };
+    assert.equal((await nativeClaim(claim)).ok, true);
+    host.command({
+      client,
+      action: "native-revoke",
+      data: {
+        roomEpoch,
+        grantId: second.grantId,
+      },
+    });
+    // The old result can arrive before the cancelled model's promise settles.
+    host.native.receive({
+      ...claim,
+      result: { ok: true, delivery: "delivered_verified" },
+    });
+    assert.equal((await output).isError, true);
+    assert.equal(host.native.state().handoff, undefined);
+  });
+});
