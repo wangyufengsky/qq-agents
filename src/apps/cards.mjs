@@ -29,14 +29,17 @@ function urlValue(value) {
   }
 }
 function shape(value, format) {
-  const target = urlValue(
-    value.url ||
-      value.qqdocurl ||
-      value.jumpUrl ||
-      value.jump_url ||
-      value.link ||
-      value.target,
-  );
+  // A miniapp can supply an internal page in url and a web link in qqdocurl.
+  const target = [
+    value.url,
+    value.qqdocurl,
+    value.jumpUrl,
+    value.jump_url,
+    value.link,
+    value.target,
+  ]
+    .map(urlValue)
+    .find(Boolean);
   let platform = null;
   try {
     platform = target ? platformOf(target) : null;
