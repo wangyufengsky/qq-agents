@@ -6,7 +6,7 @@
 
 ## 未发布
 
-### 修复 Antigravity 续接会话无法调用视频工具
+### 修复 Antigravity 续接会话无法调用视频工具（[#321](https://github.com/wangyufengsky/qq-agents/pull/321)）
 
 - Antigravity ACP 通过提前注册的适配入口调用已授权的 `video_read`，避免完整工具目录在续接时过滤视频参数声明。复用现有会话、权限和回看来源检查，无需修改角色配置或迁移数据。
 
