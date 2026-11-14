@@ -6,6 +6,10 @@
 
 ## 未发布
 
+### 安装和维护使用固定的 NapCat fork 发行包
+
+- 一键安装从项目维护的 NapCat fork 获取 `4.18.38` Shell 包。Docker 构建验证下载校验值，管理员同时更新网关时从同一来源获取。旧部署可按原挂载目录切换，框架常规更新沿用现有网关。
+
 ### 修复 Antigravity 续接会话无法调用视频工具（[#321](https://github.com/wangyufengsky/qq-agents/pull/321)）
 
 - Antigravity ACP 通过提前注册的适配入口调用已授权的 `video_read`，避免完整工具目录在续接时过滤视频参数声明。复用现有会话、权限和回看来源检查，无需修改角色配置或迁移数据。
