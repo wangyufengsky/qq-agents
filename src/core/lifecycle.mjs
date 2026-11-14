@@ -1,5 +1,6 @@
 import { trackPeerQzone } from "./peer-qzone-protection.mjs";
 import { activityForTurn } from "../tools/activities.mjs";
+import { recentQqVideoPrompt } from "../video/recent.mjs";
 import {
   sessionContract,
   sessionSignature,
@@ -919,6 +920,7 @@ export class ContextLifecycle {
               ? "旧积压可按需回看。可先用发送工具接当前话题，之后再分批补读。连续已读范围尚未处理完时，发送可省略 readThroughSeq。"
               : "",
             `新增消息：${JSON.stringify(openingHistory)}`,
+            recentQqVideoPrompt(r, ctx),
             relationshipLine,
             feedback?.length
               ? `你在本会话递交的提议回执（资料，不代表已投递或对方已同意）：${JSON.stringify(feedback)}`

@@ -1025,7 +1025,7 @@ export class AntigravityBackend {
     // Only the bridge's ACP client can claim the frame for its next native prompt.
     const screenContinuation = acp && acpDesktopScreen(params);
     const videoContinuation = acp && names.has("video_read");
-    /** @type {{contents: any[], current: () => boolean, setPending: (pending: boolean) => void} | undefined} */
+    /** @type {{contents: any[], current: () => boolean, setPending: (pending: boolean, submitted?: boolean) => void} | undefined} */
     let videoFrames;
     /** @type {{image: {type: string, mimeType: string, data: string}, current: () => boolean} | undefined} */
     let screenFrame;
@@ -1058,11 +1058,14 @@ export class AntigravityBackend {
       ) {
         const frames = videoFrames;
         videoFrames = undefined;
-        frames?.setPending(false);
         try {
-          return reply(200, {
-            contents: frames?.current() ? frames.contents : [],
-          });
+          const contents = frames?.current() ? frames.contents : [];
+          if (frames) {
+            frames.setPending(false);
+            if (contents.length)
+              res.once("finish", () => frames.setPending(false, true));
+          }
+          return reply(200, { contents });
         } catch {
           return reply(200, { contents: [] });
         }

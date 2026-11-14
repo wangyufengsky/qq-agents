@@ -186,7 +186,7 @@ test("Codex gives each video image batch its own native request without resubmit
   let current = true;
   const result = {
     [mediaLease]: () => current,
-    [videoDelivery]: (value) => pending.push(value),
+    [videoDelivery]: (value, submitted) => pending.push([value, submitted]),
     content: [
       { type: "text", text: "00:10" },
       { type: "image", mimeType: "image/jpeg", data: "AQID" },
@@ -217,7 +217,7 @@ test("Codex gives each video image batch its own native request without resubmit
     rpc.calls.filter(({ method }) => method === "turn/start");
   await tick();
   await video(1);
-  assert.deepEqual(pending, [true]);
+  assert.deepEqual(pending, [[true, undefined]]);
   assert(
     rpc.responses[0].value.contentItems.every(
       ({ type }) => type === "inputText",
@@ -239,7 +239,12 @@ test("Codex gives each video image batch its own native request without resubmit
   rpc.complete();
   await run;
   assert.equal(submitted, 1);
-  assert.deepEqual(pending, [true, false, true, false]);
+  assert.deepEqual(pending, [
+    [true, undefined],
+    [false, true],
+    [true, undefined],
+    [false, false],
+  ]);
 });
 
 test("Codex protocol uses restricted dynamic tools and isolated session state", async (t) => {

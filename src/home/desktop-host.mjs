@@ -1208,6 +1208,19 @@ export class DesktopHost {
           this.live?.visits.get(actor),
         );
       ctx.desktopVideoIds = attachmentInput?.videoIds;
+      if (
+        attachmentInput &&
+        !request.resting &&
+        request.messages?.some(
+          ({ speakerType, text }) =>
+            speakerType === "administrator" && text?.trim(),
+        )
+      )
+        ctx.desktopRecentVideo = this.attachments?.recentVideo(
+          runtime.config,
+          agent,
+          this.live?.visits.get(actor),
+        );
       if (observation) {
         const frame = await this.observation.capture(ctx, observation);
         check();
