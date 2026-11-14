@@ -61,7 +61,7 @@ Docker 路径需要 Docker Engine 和 Compose，Node 在镜像中，不要求宿
 
 没有 Node 24 时，先征得用户同意再安装（`winget install OpenJS.NodeJS`、Homebrew 的 `brew install node`，或 nodejs.org 的安装包）。按用户选择的能力准备依赖：语音和动图需要 FFmpeg/FFprobe，截图需要 Chromium；未选择的功能不必安装。doctor 的提示要对应说明哪些能力因此不可用。
 
-下面分两条路径。**A：Docker**（NapCat 和 QQ Agents 都在容器里）；**B：本机**（NapCat 用官方的 Windows/macOS/Linux 版本，QQ Agents 用 `npm start`）。
+下面分两条路径。**A：Docker**（NapCat 和 QQ Agents 都在容器里）；**B：本机**（从项目维护的 fork 取 NapCat Shell 包，QQ Agents 用 `npm start`）。
 
 先核对后端与部署方式：
 
@@ -81,14 +81,19 @@ cp docker-compose.example.yml docker-compose.yml
 
 ```sh
 docker compose build --build-arg SOURCE_COMMIT="<已确认的完整提交SHA>" qq-agents
-docker compose up -d napcat
+docker compose up -d --build napcat
 ```
 
 **停下来**：告诉用户打开 `http://127.0.0.1:6099/webui`，WebUI 登录令牌在 `.env.napcat` 里（请用户自己打开这个文件查看），然后用手机 QQ 扫码。由用户在本机界面确认登录成功，后续 doctor 再核对实际账号；仅配置文件存在不代表当前已登录。需要诊断时，先告知用户 NapCat 日志可能含 WebUI 令牌、认证链接、二维码或聊天信息，取得同意后可由助手读取必要的本机日志。优先在本机先筛选、脱敏，再读取相关时间段的有限行数，例如 `docker compose logs --tail 100 napcat`，不要默认无限串流或读取整份历史。若只能读取原始日志，要先说明敏感内容可能进入助手上下文；读后脱敏不能撤销这种暴露。展示或分享前移除令牌、认证链接、二维码和私人内容；不要上传整份日志到外部服务、Issue 或 PR，不为排错提取密钥值。确需传递含敏感认证信息的原文时，必须另行明确说明内容类别与接收方并取得用户确认，不能以“同意诊断”代替。
 
 **B：本机**
 
-按 NapCat 官方文档（https://napneko.github.io/）安装适合用户系统的版本并启动。**停下来**，让用户扫码登录。登录后，在 NapCat 的配置目录里会出现 `onebot11_<QQ号>.json`，记下这个目录的路径。
+从 [QQ Agents 维护的 NapCat fork](https://github.com/wangyufengsky/NapCatQQ/releases/tag/archive-v4.18.38) 下载 `NapCat.Shell.zip`，校验 SHA-256 后解压到独立目录。当前包对应 `4.18.38`，由上游原版源码构建。Windows 可计算 `Get-FileHash .\NapCat.Shell.zip -Algorithm SHA256`，macOS 可用 `shasum -a 256 NapCat.Shell.zip`，Linux 可用 `sha256sum NapCat.Shell.zip`。三者的期望值均为 `9d8d9a026dd281994d231b4c05e4f22cae25f887538e9c20146e324d885a70f2`。
+
+- Windows 已安装兼容的 QQ NT 时，在解压目录运行 Shell 包内的 `launcher-user.bat`，确认启动器可以找到已安装的 QQ。
+- macOS/Linux 已有原生 NapCat 加载器时，将它指向解压目录中的 `napcat.mjs`，继续使用原有启动方式。新装网关优先使用上面的 Docker 流程。
+
+**停下来**，让用户扫码登录。登录后，在 NapCat 的配置目录里会出现 `onebot11_<QQ号>.json`，记下这个目录的路径。
 
 ## 第 4 步：生成配置
 
