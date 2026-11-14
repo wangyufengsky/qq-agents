@@ -1,6 +1,7 @@
 import { supportsMessageImages } from "../backends/capabilities.mjs";
 
 export const VIDEO_READ = "video_read";
+export const MAX_VIDEO_DETAIL_FRAMES = 8;
 // A video result has already passed the role image budget. Leave room for
 // base64 and the JSON-RPC envelope on the authenticated relay.
 export const MAX_VIDEO_RELAY_FRAME = 12 * 1024 * 1024;
