@@ -790,7 +790,9 @@ function screenRequest(value, action) {
   const isCurrent = () =>
     (observe
       ? observationCurrent(grant)
-      : screenGrants.get(grant.agentId) === grant) &&
+      : screenGrants.get(grant.agentId) === grant &&
+        !desktopLocked &&
+        !hidden) &&
     !controller.signal.aborted &&
     !shuttingDown;
   void (async () => {

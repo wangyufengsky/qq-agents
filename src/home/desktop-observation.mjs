@@ -67,6 +67,7 @@ const exportInput = z
 
 export class DesktopObservation extends DesktopLocalGrant {
   displayHistory = new Map();
+  displayGrantIds = new WeakMap();
   constructor(host) {
     super(host, DESKTOP_SCREEN_VIEW, "DESKTOP_SCREEN_UNAVAILABLE");
     this.displays = new Map();
@@ -139,7 +140,10 @@ export class DesktopObservation extends DesktopLocalGrant {
     const { client, runtime } = this.host;
     const { minutes, attempts } = runtime.config.desktopHome.displayObservation;
     const existing = this.find(value.grantId);
+    const visit = this.host.live?.visits.get(value.agentId);
     return (
+      visit &&
+      (!this.displayGrantIds.get(visit)?.has(value.grantId) || existing) &&
       client.observationProtocol === 2 &&
       client.displayObservation &&
       client.activityVisibleUntil > runtime.now() &&
@@ -191,6 +195,9 @@ export class DesktopObservation extends DesktopLocalGrant {
       targetState: "checking",
     };
     if (display) {
+      const ids = this.displayGrantIds.get(grant.visit) ?? new Set();
+      ids.add(grant.grantId);
+      this.displayGrantIds.set(grant.visit, ids);
       this.displayHistory.delete(value.agentId);
       this.displays.set(value.agentId, grant);
     } else this.grant = grant;

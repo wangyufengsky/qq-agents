@@ -747,6 +747,10 @@ test("new display access advances an empty idle slot while honoring rest, declin
   time((policy.displayObservation.minutes + 1) * minute, { verify: false });
   const { observation } = sync().room;
   assert.equal(observation.displays.length, 0);
+  assert.throws(
+    () => command("display-grant-batch", batch),
+    /DESKTOP_SCREEN_UNAVAILABLE/,
+  );
   assert.deepEqual(observation.displayHistory, [
     { agentId: "agent-0", state: "expired", opportunity: "declined" },
     { agentId: "agent-1", state: "expired", opportunity: "waiting" },
