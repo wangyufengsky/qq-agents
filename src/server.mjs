@@ -311,6 +311,7 @@ export function createServer({
         url.pathname === "/api/desktop-home/observation-review" ||
         url.pathname === "/api/desktop-home/observation-verify" ||
         url.pathname === "/api/desktop-home/attachment" ||
+        url.pathname === "/api/desktop-home/video" ||
         url.pathname === "/api/desktop-home/screen-result" ||
         url.pathname === "/api/desktop-home/screen-claim" ||
         url.pathname === "/api/desktop-home/native-result" ||
@@ -324,6 +325,10 @@ export function createServer({
         );
         if (!local || !equal(req.headers["x-desktop-home-token"], desktopKey))
           return deny("UNAUTHORIZED", 401);
+        if (url.pathname.endsWith("/video"))
+          return send(
+            await runtime.desktopVisits.attachVideo(req.headers, req),
+          );
         if (url.pathname.endsWith("/observation-review"))
           return send(
             runtime.desktopVisits.observation.review(await readBody(1024)),
@@ -479,7 +484,12 @@ export function createServer({
               finalizeToolOutput: (value, options) =>
                 runtime.finalizeToolOutput(ctx, value, {
                   ...options,
-                  maxBytes: 65024,
+                  // Authenticated video results already pass the role's image
+                  // quotas; this envelope includes their base64 expansion.
+                  maxBytes:
+                    relay && data.name === "video_read"
+                      ? 12 * 1024 * 1024
+                      : 65024,
                 }),
             },
             original,

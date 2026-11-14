@@ -12,6 +12,8 @@ import {
 import path from "node:path";
 import { CodexRpc } from "../../vendor/local-bridge/codex-rpc.mjs";
 import { ExternalTools } from "./external.mjs";
+import { videoDelivery, videoResponseGuide } from "../video/policy.mjs";
+import { mediaLease } from "../tools/media-lease.mjs";
 import { mcpResult } from "../tools/index.mjs";
 import { safeToolFailure } from "../tools/errors.mjs";
 import { DESKTOP_SCREEN_VIEW } from "../tools/names.mjs";
@@ -263,7 +265,7 @@ export class CodexBackend {
       r.onBackendTurn?.({ turnId: p.turn.id });
     }
     if (method === "turn/completed") {
-      if (r.submitInput && !r.inputSubmitted) {
+      if (r.submitInput && r.awaitingReceipt) {
         r.earlyCompletions.set(p.turn.id, p);
         return;
       }
@@ -307,17 +309,30 @@ export class CodexBackend {
       failed = true;
     }
     if (!active()) return this.rpc.reject(id);
-    const encode = (/** @type {any} */ value) =>
-      codexToolOutput(
-        id,
-        failed
-          ? codexToolError(
-              value instanceof Error || value === original
-                ? safeToolFailure(value)
-                : value,
-            )
-          : mcpResult(value),
-      );
+    /** @type {any} */
+    let pendingVideo;
+    const encode = (/** @type {any} */ value) => {
+      let output = failed
+        ? codexToolError(
+            value instanceof Error || value === original
+              ? safeToolFailure(value)
+              : value,
+          )
+        : mcpResult(value);
+      if (p.tool === "video_read" && !output.isError) {
+        if (r.videoFrames || typeof value[mediaLease] !== "function")
+          throw Error("VIDEO_BUSY");
+        pendingVideo = {
+          current: value[mediaLease],
+          content: output.content,
+          setPending: value[videoDelivery],
+        };
+        output = mcpResult({
+          notice: videoResponseGuide,
+        });
+      }
+      return codexToolOutput(id, output);
+    };
     try {
       const { wire, receipt } = r.finalizeToolOutput
         ? await r.finalizeToolOutput(original, {
@@ -327,6 +342,10 @@ export class CodexBackend {
           })
         : { wire: encode(original).wire };
       if (!active()) return this.rpc.reject(id);
+      if (pendingVideo) {
+        pendingVideo.setPending(true);
+        r.videoFrames = pendingVideo;
+      }
       this.rpc.respond(
         wire.id,
         wire.result,
@@ -521,7 +540,6 @@ export class CodexBackend {
         dynamicTools: tools.map(({ name, description, inputSchema }) => {
           const tool = { name, description, inputSchema };
           if (!directScreen) return tool;
-          // The app-server requires one declaration format for the full catalogue.
           const declaration = { type: "function", ...tool };
           if (name !== DESKTOP_SCREEN_VIEW) return declaration;
           return {
@@ -550,7 +568,7 @@ export class CodexBackend {
     let resolve = /** @type {any} */ (undefined);
     /** @type {(reason?: unknown) => void} */
     let reject = /** @type {any} */ (undefined);
-    const done = new Promise((r, j) => {
+    let done = new Promise((r, j) => {
       resolve = r;
       reject = j;
     });
@@ -567,6 +585,11 @@ export class CodexBackend {
       finalizeToolOutput,
       commitToolOutput,
       inputSubmitted: false,
+      awaitingReceipt: true,
+      videoFrames:
+        /** @type {{current: () => boolean, content: any[], setPending: (pending: boolean) => void} | undefined} */ (
+          undefined
+        ),
       earlyCompletions: new Map(),
       submitInput: () => {
         if (active.inputSubmitted || signal.aborted) return;
@@ -582,45 +605,91 @@ export class CodexBackend {
         void this.rpc
           .request("turn/interrupt", { threadId, turnId: active.turnId })
           .catch(() => {});
-      reject(Error("ABORTED"));
+      active.reject(Error("ABORTED"));
     };
     signal.addEventListener("abort", abort, { once: true });
     try {
       if (signal.aborted) throw Error("ABORTED");
       await beforeInputSubmitted?.();
       if (signal.aborted) throw Error("ABORTED");
-      const receipt = await this.rpc.request("turn/start", {
-        threadId,
-        input: [
+      /** @type {any[]} */
+      let input = [
+        {
+          type: "text",
+          text: prompt + (appendPrompt?.() || ""),
+          text_elements: [],
+        },
+        ...inputImages.flatMap((image) => [
+          { type: "text", text: image.label, text_elements: [] },
+          ...(image.data
+            ? [
+                {
+                  type: "image",
+                  url: `data:${image.mimeType};base64,${image.data}`,
+                },
+              ]
+            : []),
+        ]),
+      ];
+      /** @type {((pending: boolean) => void) | undefined} */
+      let setPending;
+      for (let step = 0; step <= 2; step++) {
+        active.awaitingReceipt = true;
+        const receipt = await this.rpc.request("turn/start", {
+          threadId,
+          input,
+          ...(this.config.model ? { model: this.config.model } : {}),
+          effort: this.config.effort || "high",
+        });
+        active.turnId = receipt.turn.id;
+        active.awaitingReceipt = false;
+        setPending?.(false);
+        active.submitInput();
+        onBackendTurn?.({ turnId: receipt.turn.id });
+        const completed = active.earlyCompletions.get(receipt.turn.id);
+        active.earlyCompletions.clear();
+        if (completed)
+          this.notification({ method: "turn/completed", params: completed });
+        if (signal.aborted) abort();
+        await done;
+        const frames =
+          /** @type {{current: () => boolean, content: any[], setPending: (pending: boolean) => void} | undefined} */ (
+            active.videoFrames
+          );
+        if (!frames) break;
+        active.videoFrames = undefined;
+        if (step === 2) throw Error("VIDEO_TURN_LIMIT");
+        signal.throwIfAborted();
+        const content = frames.current() ? frames.content : [];
+        setPending = frames.setPending;
+        input = [
           {
             type: "text",
-            text: prompt + (appendPrompt?.() || ""),
+            text: content.length
+              ? "这是刚才获准的视频采样画面。看完概览后可按兴趣回看一次，也可直接交流。只描述实际看到的画面。"
+              : "视频来源或权限已变化，本次图片未交付。",
             text_elements: [],
           },
-          ...inputImages.flatMap((image) => [
-            { type: "text", text: image.label, text_elements: [] },
-            ...(image.data
-              ? [
-                  {
-                    type: "image",
-                    url: `data:${image.mimeType};base64,${image.data}`,
-                  },
-                ]
-              : []),
-          ]),
-        ],
-        ...(this.config.model ? { model: this.config.model } : {}),
-        effort: this.config.effort || "high",
-      });
-      active.turnId = receipt.turn.id;
-      active.submitInput();
-      onBackendTurn?.({ turnId: receipt.turn.id });
-      const completed = active.earlyCompletions.get(receipt.turn.id);
-      active.earlyCompletions.clear();
-      if (completed)
-        this.notification({ method: "turn/completed", params: completed });
-      if (signal.aborted) abort();
-      await done;
+          ...content.map((part) =>
+            part.type === "image"
+              ? {
+                  type: "image",
+                  url: `data:${part.mimeType};base64,${part.data}`,
+                }
+              : { type: "text", text: part.text, text_elements: [] },
+          ),
+        ];
+        // Advance the native request in the same thread without admitting new
+        // chat input or transferring the observation to another bridge turn.
+        done = new Promise((r, j) => {
+          resolve = r;
+          reject = j;
+        });
+        done.catch(() => {});
+        active.resolve = resolve;
+        active.reject = reject;
+        active.turnId = null;
+      }
     } catch (/** @type {any} */ e) {
       if (!signal.aborted && e instanceof BackendTurnFailure && e.recoverable)
         e.sessionReusable = await this.recoveryReady(threadId, e).catch(
@@ -701,7 +770,7 @@ export class CodexBackend {
     let reject = /** @type {any} */ (undefined);
     /** @type {import("./session-contract.mjs").UsageReport | undefined} */
     let usage;
-    const done = new Promise((r, j) => {
+    let done = new Promise((r, j) => {
       resolve = r;
       reject = j;
     });

@@ -1,4 +1,5 @@
 import { DESKTOP_CONVERSATION } from "../home/desktop-decision.mjs";
+import { qqVideoAvailable } from "../video/policy.mjs";
 import { desktopToolAvailable } from "./desktop-policy.mjs";
 import { DESKTOP_VISIT_TOOL } from "../home/desktop-visits.mjs";
 import { DESKTOP_INVITATION_TOOL } from "../home/desktop-invitations.mjs";
@@ -124,6 +125,8 @@ export function toolAvailable(agent, name, conversation, config) {
     name === DESKTOP_BODY_CONTROL
   )
     return false;
+  if (name === "video_read")
+    return qqVideoAvailable(agent, conversation, config);
   if (name === "memory_recall")
     return Boolean(config && memoryRecallPolicy(agent, conversation, config));
   if (name.startsWith("subject_inbox_") || name === "subject_rest")

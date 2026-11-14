@@ -4,6 +4,7 @@ import { profileDefinitions, profileTool } from "./profile.mjs";
 import { qzoneDefinitions, qzoneTool } from "./qzone.mjs";
 import { gameDefinitions, gameTool } from "../games/framework/tools.mjs";
 import { isDesktopActivity } from "../home/desktop-decision.mjs";
+import { videoDefinitions, videoTool } from "../video/tools.mjs";
 import { definitions } from "./definitions.mjs";
 import {
   DESKTOP_ACTIVITY_DECISION,
@@ -63,6 +64,7 @@ const handlers = {
 };
 for (const [group, dispatch] of [
   [appDefinitions, appTool],
+  [videoDefinitions, videoTool],
   [gameDefinitions, gameTool],
   [reactionDefinitions, reactionTool],
   [groupReadDefinitions, groupReadTool],

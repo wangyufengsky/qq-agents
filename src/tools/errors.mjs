@@ -173,6 +173,20 @@ function safeFailure(error) {
     };
   /** @type {Record<string, string>} */
   const hints = {
+    VIDEO_FRAMES_PENDING:
+      "End this model request now without calling another tool. The bridge will attach the requested frames in the same conversation.",
+    VIDEO_SOURCE_DENIED:
+      "Use an available video attachment ID or a visible current Bilibili message event ID. The source is expired, unavailable, or not permitted in this turn.",
+    VIDEO_RANGE_INVALID:
+      "Start with overview; for rewatch use a positive range of at most 30000 ms within durationMs.",
+    VIDEO_TURN_LIMIT:
+      "One video overview and one optional rewatch are available in this turn.",
+    VIDEO_DECODER_UNAVAILABLE:
+      "FFmpeg and FFprobe are required. No video pixels were delivered.",
+    VIDEO_SOURCE_UNAVAILABLE:
+      "Bilibili did not provide a supported public video stream for this link or part. No video pixels were delivered.",
+    VIDEO_TIMEOUT:
+      "The video operation timed out. No pixels from this operation were delivered.",
     INVALID_QQ_FACE:
       "No message was sent. Use a registered standard QQ face ID in segments, such as {type:'face',id:'20'} for 偷笑. Do not guess an unknown ID or use a textual [QQ表情：名称] marker as a send command.",
     REACT_ALREADY_ATTEMPTED:

@@ -87,7 +87,8 @@ test("the add-role form uses server capability defaults and preserves them on sa
   const run = editor(await sampleConfig());
   run("agentForm.bind = () => {}; openEditor('agents');");
   const row = run("editing.row");
-  assert.deepEqual(Array.from(row.tools), TOOL_NAMES);
+  assert.deepEqual(Array.from(row.tools), defaultAgentCapabilities().tools);
+  assert(!row.tools.includes("video_read"));
   const html = run(
     "agentForm.build(editing.row, input('id', '稳定 ID', '', 'required'))",
   );

@@ -4,8 +4,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const LIMIT = 128 * 1024 * 1024;
 
-/** @returns {Promise<{type: "image", mimeType: "image/jpeg", data: string} | null>} */
-async function takeAcpDesktopFrame() {
+/** @param {string} route */
+async function takeAcpMedia(route) {
   const endpoint = new URL(process.env.QQ_AGY_ENDPOINT || "http://invalid");
   const token = process.env.QQ_AGY_TOKEN;
   if (
@@ -18,14 +18,19 @@ async function takeAcpDesktopFrame() {
     endpoint.hash
   )
     throw Error("ANTIGRAVITY_PROTOCOL_ERROR");
-  const response = await fetch(new URL("/desktop-frame", endpoint), {
+  const response = await fetch(new URL(route, endpoint), {
     method: "POST",
     headers: { authorization: `Bearer ${token}` },
     redirect: "error",
     signal: AbortSignal.timeout(5000),
   });
   if (!response.ok) throw Error("ANTIGRAVITY_PROTOCOL_ERROR");
-  const { image } = await response.json();
+  return response.json();
+}
+
+/** @returns {Promise<{type: "image", mimeType: "image/jpeg", data: string} | null>} */
+async function takeAcpDesktopFrame() {
+  const { image } = await takeAcpMedia("/desktop-frame");
   if (image === null) return null;
   if (
     image?.type !== "image" ||
@@ -37,12 +42,20 @@ async function takeAcpDesktopFrame() {
   return image;
 }
 
+async function takeAcpVideoFrames() {
+  const { contents } = await takeAcpMedia("/video-frames");
+  if (!Array.isArray(contents) || contents.length > 17)
+    throw Error("ANTIGRAVITY_PROTOCOL_ERROR");
+  return contents;
+}
+
 /** Translate ACP into the existing supervisor's terminal protocol. The supervisor
  * still owns tool authorization, cancellation, session binding and send settlement.
  * @param {any} options @param {string} prompt
  * @param {(event: any) => void} emit @param {typeof spawn} [launch]
  * @param {import("./session-contract.mjs").InputImage[]} [inputImages]
- * @param {typeof takeAcpDesktopFrame} [takeDesktopFrame] */
+ * @param {typeof takeAcpDesktopFrame} [takeDesktopFrame]
+ * @param {typeof takeAcpVideoFrames} [takeVideoFrames] */
 export async function runAcp(
   options,
   prompt,
@@ -50,6 +63,7 @@ export async function runAcp(
   launch = spawn,
   inputImages = [],
   takeDesktopFrame = takeAcpDesktopFrame,
+  takeVideoFrames = takeAcpVideoFrames,
 ) {
   const child = launch(
     options.command,
@@ -219,23 +233,49 @@ export async function runAcp(
     });
     if (closed || result.stopReason !== "end_turn")
       throw Error("ANTIGRAVITY_PROTOCOL_ERROR");
-    if (options.desktopScreen) {
-      const image = await takeDesktopFrame();
+    // Retain capacity for one screenshot and up to two video batches.
+    // Either tool can be called during any earlier media continuation.
+    const maxVideoBatches = options.videoFrames ? 2 : 0;
+    const maxBatches = maxVideoBatches + Number(Boolean(options.desktopScreen));
+    let screenDelivered = false;
+    let videoBatches = 0;
+    for (let i = 0; i < maxBatches; i++) {
+      const image =
+        options.desktopScreen && !screenDelivered
+          ? await takeDesktopFrame()
+          : null;
+      const video =
+        videoBatches < maxVideoBatches ? await takeVideoFrames() : [];
       if (closed) throw Error("ANTIGRAVITY_PROTOCOL_ERROR");
-      if (image) {
-        const result = await request("session/prompt", {
-          sessionId: id,
-          prompt: [
-            {
-              type: "text",
-              text: "这是当前桌面回合已授权的截图。请依据画面回应刚才的请求，并提交一次桌面决定。",
-            },
-            image,
-          ],
-        });
-        if (closed || result.stopReason !== "end_turn")
-          throw Error("ANTIGRAVITY_PROTOCOL_ERROR");
-      }
+      if (!image && !video.length) break;
+      if (image) screenDelivered = true;
+      if (video.length) videoBatches++;
+      const parts = [
+        ...(image
+          ? [
+              {
+                type: "text",
+                text: "这是当前桌面回合已授权的截图。请依据画面回应刚才的请求，并提交一次桌面决定。",
+              },
+              image,
+            ]
+          : []),
+        ...(video.length
+          ? [
+              {
+                type: "text",
+                text: "这是刚才已授权读取的视频采样帧。看完概览后可直接交流，或按自己的兴趣选一小段回看一次。只有实际入眼的画面才可作为观察证据。",
+              },
+              ...video,
+            ]
+          : []),
+      ];
+      const result = await request("session/prompt", {
+        sessionId: id,
+        prompt: parts,
+      });
+      if (closed || result.stopReason !== "end_turn")
+        throw Error("ANTIGRAVITY_PROTOCOL_ERROR");
     }
     // ACP turn usage can sum several inferences, so never claim it is the latest
     // context occupancy. The framework retains its conservative estimate.

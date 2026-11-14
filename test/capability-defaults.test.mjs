@@ -11,10 +11,12 @@ import { TOOL_NAMES } from "../src/tools/specs.mjs";
 import { APP_NAMES } from "../src/apps/urls.mjs";
 import { config, fixture, context } from "./helpers.mjs";
 
-test("new roles enable the complete tool catalog and capability switches while retaining setup requirements", () => {
+const defaultTools = TOOL_NAMES.filter((name) => name !== "video_read");
+
+test("new roles enable standard tools while retaining setup requirements and explicit video opt-in", () => {
   const cfg = validateConfig(defaultConfig());
   for (const agent of cfg.agents) {
-    assert.deepEqual(agent.tools, TOOL_NAMES);
+    assert.deepEqual(agent.tools, defaultTools);
     for (const name of [
       "apps",
       "files",
@@ -46,7 +48,7 @@ test("new roles enable the complete tool catalog and capability switches while r
   for (const [key, value] of Object.entries(form))
     assert.deepEqual(value, cfg.agents[0][key]);
   form.tools.pop();
-  assert.deepEqual(defaultAgentCapabilities().tools, TOOL_NAMES);
+  assert.deepEqual(defaultAgentCapabilities().tools, defaultTools);
 });
 
 test("saved opt-outs and a deliberately empty tool list survive validation", () => {

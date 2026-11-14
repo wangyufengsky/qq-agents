@@ -11,6 +11,8 @@ import { apply as guard } from "../src/backends/dsh-guard.mjs";
 import { toolSpecs } from "../src/tools/index.mjs";
 import { temp, config } from "./helpers.mjs";
 import { MediaStore } from "../src/tools/media.mjs";
+import { mediaLease } from "../src/tools/media-lease.mjs";
+import { videoDelivery } from "../src/video/policy.mjs";
 import { gif } from "./gif-fixture.mjs";
 
 class Rpc extends EventEmitter {
@@ -168,6 +170,76 @@ test("Codex confirms the final tool text only after a successful write for the a
   await run;
   writes[2].acknowledge();
   assert.deepEqual(commits, [{ receipt: "delivered", text }]);
+});
+
+test("Codex gives each video image batch its own native request without resubmitting the chat", async (t) => {
+  const root = temp(t);
+  const rpc = new Rpc();
+  const cfg = config();
+  const backend = new CodexBackend(cfg.backends[0], cfg.agents[0], {
+    root,
+    rpc,
+  });
+  t.after(() => backend.close());
+  let submitted = 0;
+  const pending = [];
+  let current = true;
+  const result = {
+    [mediaLease]: () => current,
+    [videoDelivery]: (value) => pending.push(value),
+    content: [
+      { type: "text", text: "00:10" },
+      { type: "image", mimeType: "image/jpeg", data: "AQID" },
+    ],
+  };
+  const run = backend.run({
+    prompt: "fixture",
+    signal: new AbortController().signal,
+    tools: toolSpecs(["video_read"]),
+    callTool: async () => result,
+    saveSession() {},
+    onInputSubmitted() {
+      submitted++;
+    },
+  });
+  const video = (id) =>
+    backend.request({
+      id,
+      method: "item/tool/call",
+      params: {
+        threadId: "fixture-thread",
+        turnId: "fixture-turn",
+        tool: "video_read",
+        arguments: {},
+      },
+    });
+  const starts = () =>
+    rpc.calls.filter(({ method }) => method === "turn/start");
+  await tick();
+  await video(1);
+  assert.deepEqual(pending, [true]);
+  assert(
+    rpc.responses[0].value.contentItems.every(
+      ({ type }) => type === "inputText",
+    ),
+  );
+  rpc.complete();
+  await tick();
+  assert.equal(starts().length, 2);
+  assert.deepEqual(starts()[1].args.input.at(-1), {
+    type: "image",
+    url: "data:image/jpeg;base64,AQID",
+  });
+  await video(2);
+  current = false;
+  rpc.complete();
+  await tick();
+  assert.equal(starts().length, 3);
+  assert(starts()[2].args.input.every(({ type }) => type === "text"));
+  rpc.complete();
+  await run;
+  assert.equal(submitted, 1);
+  assert.deepEqual(pending, [true, false, true, false]);
 });
 
 test("Codex protocol uses restricted dynamic tools and isolated session state", async (t) => {

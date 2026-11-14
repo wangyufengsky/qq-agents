@@ -13,6 +13,7 @@ import { fileDefinitions } from "./file-tools.mjs";
 import { savedMediaDefinitions } from "./saved-media.mjs";
 import { screenshotDefinitions } from "./screenshots.mjs";
 import { z } from "zod";
+import { videoDefinitions } from "../video/tools.mjs";
 import {
   DESKTOP_ACTIVITY_DECISION,
   DESKTOP_DECISION,
@@ -144,6 +145,7 @@ export const definitions = {
   ...draftDefinitions,
   ...fileDefinitions,
   ...savedMediaDefinitions,
+  ...videoDefinitions,
   ...screenshotDefinitions,
   ...appDefinitions,
   ...gameDefinitions,
