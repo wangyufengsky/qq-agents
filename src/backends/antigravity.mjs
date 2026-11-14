@@ -34,7 +34,11 @@ import {
   DESKTOP_NATIVE_CONTROL,
   DESKTOP_SCREEN_VIEW,
 } from "../tools/names.mjs";
-import { videoDelivery, videoResponseGuide } from "../video/policy.mjs";
+import {
+  VIDEO_READ,
+  videoDelivery,
+  videoResponseGuide,
+} from "../video/policy.mjs";
 import { mediaLease } from "../tools/media-lease.mjs";
 
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
@@ -52,6 +56,8 @@ const acpEagerTools = new Set([
   acpDesktopName,
   "conversation_read",
   "qq_delivery_status",
+  // Resumed ACP sessions can omit lazily discovered tools.
+  VIDEO_READ,
 ]);
 
 /** @param {string} name @param {Set<string>} names @param {Set<string>} permitted @param {string} description */

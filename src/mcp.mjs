@@ -7,6 +7,7 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { mcpEntrySpecs, parseMcpEntry } from "./tools/catalog.mjs";
+import { VIDEO_READ, MAX_VIDEO_RELAY_FRAME } from "./video/policy.mjs";
 import { safeToolFailure } from "./tools/errors.mjs";
 
 const base = process.env.QQ_UNIFIED_URL || "http://127.0.0.1:3210";
@@ -85,6 +86,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req, extra) => {
         response.headers.get("x-agent-output-digest") ?? "",
         extra.signal,
         result,
+        args.name === VIDEO_READ ? MAX_VIDEO_RELAY_FRAME : undefined,
       );
     return result;
   } catch (error) {
