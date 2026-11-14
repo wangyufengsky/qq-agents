@@ -72,7 +72,8 @@ export async function videoTool(runtime, ctx, _name, args) {
   )
     throw Error("VIDEO_RANGE_INVALID");
 
-  if (active >= 2 || ctx.videoBusy) throw Error("VIDEO_BUSY");
+  if (active >= 2 || ctx.videoBusy || ctx.videoFramesPending)
+    throw Error("VIDEO_BUSY");
   const desktop =
     ctx.runtimeKind === "desktop" && ctx.conversation === DESKTOP_CONVERSATION;
   const epoch = ctx.inputEpoch;
@@ -277,7 +278,6 @@ export async function videoTool(runtime, ctx, _name, args) {
       ) > maxBytes
     )
       throw Error("VIDEO_LIMIT");
-    entry[action === "overview" ? "shown" : "rewatched"] = true;
     const metadata = {
       sourceId,
       action,
@@ -291,11 +291,11 @@ export async function videoTool(runtime, ctx, _name, args) {
         label,
       })),
     };
-    let recorded = false;
     const delivered = () => {
-      if (recorded || action !== "overview" || !result[mediaLease]())
-        return false;
-      recorded = true;
+      const field = readOverview ? "shown" : "rewatched";
+      if (entry[field] || !result[mediaLease]()) return false;
+      entry[field] = true;
+      if (!readOverview) return true;
       if (desktop)
         runtime.desktopVisits.attachments.rememberVideo(
           sourceId,
@@ -373,12 +373,10 @@ export async function videoTool(runtime, ctx, _name, args) {
       {
         value: result,
         current: result[mediaLease],
-        ...(action === "overview" && {
-          matches: (value) =>
-            JSON.stringify(value) === JSON.stringify(metadata) ||
-            value?.content?.[0]?.text === result.content[0].text,
-          commit: delivered,
-        }),
+        matches: (value) =>
+          JSON.stringify(value) === result.content[0].text ||
+          JSON.stringify(value) === JSON.stringify(result),
+        commit: delivered,
       },
     ]);
     return result;

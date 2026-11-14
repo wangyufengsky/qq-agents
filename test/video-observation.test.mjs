@@ -5,6 +5,8 @@ import { createReadStream } from "node:fs";
 import { stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { mediaLease } from "../src/tools/media-lease.mjs";
 import { runNativeSocial } from "../src/backends/native-social.mjs";
 import { desktopToken } from "../src/home/desktop-auth.mjs";
@@ -28,6 +30,7 @@ import {
   deliverFixtureToolOutput,
   fixture,
   raw,
+  relayEnvironment,
   settle,
 } from "./helpers.mjs";
 
@@ -201,6 +204,107 @@ function makeSample(file, subtitles) {
   ]);
 }
 
+test("DSH relay delivers a video above the text frame budget and remembers only its full result", async (t) => {
+  const cfg = config(1);
+  cfg.agents[0].tools.push("video_read");
+  cfg.agents[0].behavior.imageInput.enabled = true;
+  cfg.agents[0].apps.enabled = true;
+  cfg.agents[0].apps.platforms = ["bilibili"];
+  const { runtime, root } = fixture(t, {
+    cfg,
+    async run(params) {
+      try {
+        const ctx = runtime.running.get("agent-0|private:30000");
+        const { id: sourceId } = runtime.memory
+          .bind(ctx.agentId)
+          .db.prepare("SELECT id FROM events WHERE kind='message.received'")
+          .get();
+        ctx.videoSource = { sourceId, origin: url, file, duration: 61000 };
+        const invoke = (args) =>
+          client.callTool({
+            name: "bridge_call",
+            arguments: {
+              context: ctx.token,
+              name: "video_read",
+              arguments: { sourceId, ...args },
+            },
+          });
+        const overview = await invoke({ action: "overview" });
+        assert(!overview.isError, overview.content[0]?.text);
+        assert(overview.content.some(({ type }) => type === "image"));
+        assert(Buffer.byteLength(JSON.stringify(overview)) > 65536);
+        const rewatch = await invoke({
+          action: "rewatch",
+          startMs: 1000,
+          endMs: 8000,
+        });
+        assert(!rewatch.isError);
+        assert.equal(
+          rewatch.content.filter(({ type }) => type === "image").length,
+          4,
+        );
+        const duplicate = await invoke({
+          action: "rewatch",
+          startMs: 1000,
+          endMs: 8000,
+        });
+        assert.equal(
+          JSON.parse(duplicate.content[0].text).code,
+          "VIDEO_TURN_LIMIT",
+        );
+        result.resolve();
+      } catch (error) {
+        result.reject(error);
+      }
+    },
+  });
+  const result = Promise.withResolvers();
+  const token = "synthetic-video-admin";
+  const app = createServer({ runtime, token });
+  const port = await app.listen();
+  const client = new Client({ name: "video-fixture", version: "1" });
+  t.after(async () => {
+    await client.close();
+    await app.close();
+  });
+  await client.connect(
+    new StdioClientTransport({
+      command: process.execPath,
+      args: ["src/mcp.mjs"],
+      env: {
+        PATH: process.env.PATH,
+        QQ_UNIFIED_URL: `http://127.0.0.1:${port}`,
+        ...relayEnvironment(root, token),
+      },
+      stderr: "pipe",
+    }),
+  );
+  const file = path.join(root, "detailed.mp4");
+  execFileSync(process.env.FFMPEG_PATH || "ffmpeg", [
+    "-v",
+    "error",
+    "-f",
+    "lavfi",
+    "-i",
+    "testsrc2=s=640x360:r=1,noise=alls=25:allf=u:all_seed=73",
+    "-t",
+    "61",
+    "-c:v",
+    "mpeg4",
+    file,
+  ]);
+  await runtime.ingest(
+    "qq-0",
+    raw(909, {
+      message_type: "private",
+      group_id: undefined,
+      message: [card(url)],
+    }),
+  );
+  await result.promise;
+  await settle(runtime);
+});
+
 test("QQ follow-up rewatch needs a delivered overview, a fresh human request, and an unrevoked source", async (t) => {
   const cfg = config(1);
   cfg.agents[0].tools.push("video_read");
@@ -261,6 +365,20 @@ test("QQ follow-up rewatch needs a delivered overview, a fresh human request, an
           overview,
           { deferInput: true },
         );
+        await assert.rejects(
+          params.callTool("video_read", { ...rewatch, sourceId: row.id }),
+          /VIDEO_TURN_LIMIT/,
+        );
+        await assert.rejects(
+          params.finalizeToolOutput(rawOverview, {
+            encode: (value) => ({ wire: value, text: value.content[0].text }),
+            maxBytes: 1,
+          }),
+          /TOOL_OUTPUT_INCOMPLETE/,
+        );
+        const retry = await runtime.callTool(ctx, "video_read", overview, {
+          deferInput: true,
+        });
         const output = await deliverFixtureToolOutput(
           {
             ...params,
@@ -268,7 +386,7 @@ test("QQ follow-up rewatch needs a delivered overview, a fresh human request, an
               acks += Number(params.commitToolOutput(receipt, text));
             },
           },
-          rawOverview,
+          retry,
         );
         assert(output.content.some(({ type }) => type === "image"));
       } else if (row.message_id === "912") {
@@ -323,6 +441,7 @@ test("QQ follow-up rewatch needs a delivered overview, a fresh human request, an
             text?.includes("00:02–00:06 已交付字幕"),
           ),
         );
+        await deliverFixtureToolOutput(params, details);
         await assert.rejects(
           params.callTool("video_read", valid),
           /VIDEO_TURN_LIMIT/,
@@ -481,6 +600,7 @@ test("a selected desktop file reaches the role, and detail requires a current ov
         ),
       );
       assert.equal(JSON.parse(detailed.content[0].text).audioRead, false);
+      await deliverFixtureToolOutput(params, detailed);
       await assert.rejects(
         params.callTool("video_read", rewatch),
         /VIDEO_TURN_LIMIT/,

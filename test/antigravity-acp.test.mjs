@@ -5,6 +5,7 @@ import path from "node:path";
 import { EventEmitter } from "node:events";
 import { PassThrough, Writable } from "node:stream";
 import { antigravityHookAllowed } from "../src/backends/antigravity-guard.mjs";
+import http from "node:http";
 import { runAcp } from "../src/backends/antigravity-acp.mjs";
 import { AntigravityBackend } from "../src/backends/antigravity.mjs";
 import { temp } from "./helpers.mjs";
@@ -173,6 +174,58 @@ test("ACP checks for a requested screenshot after delivering video", async () =>
   assert(calls().every(({ params }) => params.sessionId === id));
 });
 
+test("ACP receives the full video rewatch with eight labelled frames and subtitles", async (t) => {
+  const f = fake();
+  const text = (text) => ({ type: "text", text });
+  const image = { type: "image", mimeType: "image/jpeg", data: "AQID" };
+  const parts = [
+    text("metadata"),
+    ...Array.from({ length: 8 }, (_, index) => [
+      text("frame " + index),
+      image,
+    ]).flat(),
+    text("subtitle"),
+  ];
+  let contents = parts;
+  const server = http.createServer((req, res) => {
+    if (req.method !== "POST" || req.url !== "/video-frames")
+      return res.writeHead(404).end();
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ contents }));
+    contents = [];
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const endpoint = process.env.QQ_AGY_ENDPOINT;
+  const token = process.env.QQ_AGY_TOKEN;
+  process.env.QQ_AGY_ENDPOINT = `http://127.0.0.1:${server.address().port}`;
+  process.env.QQ_AGY_TOKEN = "synthetic";
+  t.after(() => {
+    if (endpoint === undefined) delete process.env.QQ_AGY_ENDPOINT;
+    else process.env.QQ_AGY_ENDPOINT = endpoint;
+    if (token === undefined) delete process.env.QQ_AGY_TOKEN;
+    else process.env.QQ_AGY_TOKEN = token;
+  });
+  await runAcp(
+    { ...options, videoFrames: true },
+    "rewatch",
+    () => {},
+    f.launch,
+  );
+  const prompts = f.calls.filter(({ method }) => method === "session/prompt");
+  assert.deepEqual(prompts[1].params.prompt.slice(1), parts);
+  contents = [...parts, text("unexpected part")];
+  await assert.rejects(
+    runAcp(
+      { ...options, videoFrames: true },
+      "rewatch",
+      () => {},
+      fake().launch,
+    ),
+    /ANTIGRAVITY_PROTOCOL_ERROR/,
+  );
+});
+
 test("ACP resumes with a current tool route when a native alias is unavailable", async () => {
   const f = fake();
   await runAcp(
@@ -267,7 +320,7 @@ test("ACP is opt-in and cannot be assigned to unrelated backends", () => {
   );
 });
 
-test("ACP pre-registers the permitted reply tools in the native catalogue", async (t) => {
+test("ACP pre-registers permitted reply and video tools in the native catalogue", async (t) => {
   const root = temp(t);
   const backend = new AntigravityBackend(
     { type: "antigravity", cliProtocol: "acp", toolServers: [] },
@@ -280,9 +333,13 @@ test("ACP pre-registers the permitted reply tools in the native catalogue", asyn
   const agents = path.join(custom, "agents");
   fs.mkdirSync(agents, { recursive: true });
   const params = {
-    tools: ["qq_send", "qq_draft", "qq_delivery_status", "board_read"].map(
-      (name) => ({ name, inputSchema: { type: "object" } }),
-    ),
+    tools: [
+      "qq_send",
+      "qq_draft",
+      "qq_delivery_status",
+      "board_read",
+      "video_read",
+    ].map((name) => ({ name, inputSchema: { type: "object" } })),
   };
   const workspace = { workspace: root, custom, agents };
   const check = () => {
@@ -296,6 +353,7 @@ test("ACP pre-registers the permitted reply tools in the native catalogue", asyn
     assert.deepEqual(server.tools, {
       qq_reply_call: { eager: true },
       qq_delivery_status: { eager: true },
+      video_read: { eager: true },
     });
     const guide = fs.readFileSync(path.join(agents, "qq-agents.md"), "utf8");
     assert.match(

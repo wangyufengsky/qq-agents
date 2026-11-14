@@ -1,6 +1,7 @@
 // @ts-check
 import { spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { MAX_VIDEO_DETAIL_FRAMES } from "../video/policy.mjs";
 
 const LIMIT = 128 * 1024 * 1024;
 
@@ -44,7 +45,11 @@ async function takeAcpDesktopFrame() {
 
 async function takeAcpVideoFrames() {
   const { contents } = await takeAcpMedia("/video-frames");
-  if (!Array.isArray(contents) || contents.length > 17)
+  // Metadata, one label per image, and one optional timed-text block.
+  if (
+    !Array.isArray(contents) ||
+    contents.length > 2 * MAX_VIDEO_DETAIL_FRAMES + 2
+  )
     throw Error("ANTIGRAVITY_PROTOCOL_ERROR");
   return contents;
 }

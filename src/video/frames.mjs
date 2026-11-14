@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { buildChildEnv } from "../core/child-env.mjs";
+import { MAX_VIDEO_DETAIL_FRAMES } from "./policy.mjs";
 
 export const MAX_DESKTOP_VIDEO_BYTES = 256 * 1024 * 1024;
 export const MAX_VIDEO_SECONDS = 72 * 60;
@@ -189,7 +190,11 @@ export async function videoDetails(file, start, end, policy, signal) {
   const width = Math.floor(Math.min(960, policy.maxEdge) / 2) * 2;
   const height = Math.floor((width * 9) / 16 / 2) * 2;
   const frames = [];
-  for (const at of samples(start, end, Math.min(8, policy.maxImages))) {
+  for (const at of samples(
+    start,
+    end,
+    Math.min(MAX_VIDEO_DETAIL_FRAMES, policy.maxImages),
+  )) {
     const bytes = await ffmpeg(
       [
         ...input(file, at),

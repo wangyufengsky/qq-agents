@@ -1,5 +1,6 @@
 // @ts-check
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
 const MAX_FRAME_BYTES = 65536;
@@ -108,8 +109,16 @@ export class ReceiptStdioTransport extends StdioServerTransport {
     // The bridge revalidates each new call independently of an older ACK.
     await Promise.allSettled(this.barriers.get(context) ?? []);
   }
-  /** @param {string | number} id @param {string} context @param {string} receipt @param {string} digest @param {AbortSignal} [signal] @param {any} [result] */
-  stage(id, context, receipt, digest, signal, result) {
+  /** @param {string | number} id @param {string} context @param {string} receipt @param {string} digest @param {AbortSignal} [signal] @param {any} [result] @param {number} [maxBytes] */
+  stage(
+    id,
+    context,
+    receipt,
+    digest,
+    signal,
+    result,
+    maxBytes = MAX_FRAME_BYTES,
+  ) {
     if (this.closed || signal?.aborted) return;
     this.pending.get(id)?.cancel();
     const controller = new AbortController();
@@ -147,6 +156,11 @@ export class ReceiptStdioTransport extends StdioServerTransport {
       finish,
       cancel,
       fallback,
+      maxBytes,
+      mediaContent:
+        maxBytes > MAX_FRAME_BYTES
+          ? structuredClone(result.content)
+          : undefined,
     };
     this.pending.set(id, pending);
     signal?.addEventListener("abort", cancel, { once: true });
@@ -159,11 +173,14 @@ export class ReceiptStdioTransport extends StdioServerTransport {
     this.writing++;
     try {
       let json = JSON.stringify(message) + "\n";
-      const digest = pending && textDigest(resultText(JSON.parse(json).result));
+      const result = pending && JSON.parse(json).result;
+      const digest = pending && textDigest(resultText(result));
       const incomplete =
         pending &&
-        (Buffer.byteLength(json) > MAX_FRAME_BYTES ||
-          digest !== pending.digest);
+        (Buffer.byteLength(json) > pending.maxBytes ||
+          digest !== pending.digest ||
+          (pending.mediaContent &&
+            !isDeepStrictEqual(result?.content, pending.mediaContent)));
       if (incomplete) json = incompleteFrame(id, pending.fallback);
       await new Promise((resolve, reject) => {
         const fail = (/** @type {Error} */ error) => {
