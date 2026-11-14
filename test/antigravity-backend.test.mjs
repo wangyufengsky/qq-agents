@@ -305,6 +305,81 @@ test("ACP reply entry forwards original arguments only to permitted reply tools"
   }
 });
 
+test("ACP video entry forwards only the current video action through the normal validator", async (t) => {
+  const fixture = setup(t, "success", temp(t), {
+    fakeChild: true,
+    cliProtocol: "acp",
+  });
+  const { run, inputSubmitted } = startFakeTurn(fixture, {
+    tools: toolSpecs(["board_read", "video_read"]),
+    async callTool(name, args) {
+      fixture.calls.push({ name, args });
+      throw Error("VIDEO_SOURCE_DENIED");
+    },
+  });
+  await inputSubmitted;
+  const { child, options } = fixture.launches[0];
+  await child.inputReady;
+  const endpoint = options.env.QQ_AGY_ENDPOINT;
+  const headers = {
+    authorization: `Bearer ${options.env.QQ_AGY_TOKEN}`,
+    "content-type": "application/json",
+  };
+  const call = (name, args) =>
+    fetch(`${endpoint}/call`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ name, arguments: args }),
+    });
+  try {
+    const { tools } = await (
+      await fetch(`${endpoint}/catalog`, { headers })
+    ).json();
+    assert.deepEqual(
+      tools.map(({ name }) => name),
+      ["board_read", "qq_video_call"],
+    );
+    assert.deepEqual(tools[1].inputSchema.properties.name.enum, ["video_read"]);
+    const args = {
+      action: "rewatch",
+      sourceId: "00000000-0000-4000-8000-000000000241",
+      requestId: "00000000-0000-4000-8000-000000000242",
+      startMs: 1000,
+      endMs: 2000,
+    };
+    assert.equal((await call("video_read", args)).status, 403);
+    assert.equal(
+      (await call("qq_video_call", { name: "board_read", argumentsJson: "{}" }))
+        .status,
+      403,
+    );
+    const invalid = await (
+      await call("qq_video_call", { name: "video_read", argumentsJson: "[]" })
+    ).json();
+    assert.equal(
+      JSON.parse(invalid.content[0].text).code,
+      "INVALID_TOOL_ARGUMENTS",
+    );
+    const response = await (
+      await call("qq_video_call", {
+        name: "video_read",
+        argumentsJson: JSON.stringify(args),
+      })
+    ).json();
+    assert.equal(
+      JSON.parse(response.content[0].text).code,
+      "VIDEO_SOURCE_DENIED",
+    );
+    assert.deepEqual(fixture.calls, [{ name: "video_read", args }]);
+  } finally {
+    child.emitFrames(
+      ...successfulFrames("00000000-0000-4000-8000-000000000240"),
+    );
+    child.closeWith(0);
+    await run;
+  }
+});
+
 test("ACP desktop exposes a strict action entry and a single-use current-turn image handoff", async (t) => {
   const fixture = setup(t, "success", temp(t), {
     fakeChild: true,

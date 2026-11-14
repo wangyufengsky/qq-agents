@@ -46,7 +46,9 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const MAX_OUTPUT = 16 * 1024 * 1024;
 const acpReplyName = "qq_reply_call";
 const acpDesktopName = "qq_desktop_call";
+const acpVideoName = "qq_video_call";
 const acpReplyActions = new Set(["qq_send", "qq_send_burst", "qq_draft"]);
+const acpVideoActions = new Set([VIDEO_READ]);
 const acpDesktopActions = new Set([
   DESKTOP_NATIVE_CONTROL,
   DESKTOP_BROWSER_CONTROL,
@@ -56,8 +58,7 @@ const acpEagerTools = new Set([
   acpDesktopName,
   "conversation_read",
   "qq_delivery_status",
-  // Resumed ACP sessions can omit lazily discovered tools.
-  VIDEO_READ,
+  acpVideoName,
 ]);
 
 /** @param {string} name @param {Set<string>} names @param {Set<string>} permitted @param {string} description */
@@ -99,6 +100,16 @@ function acpDesktopTool(names) {
   );
 }
 
+/** @param {Set<string>} names */
+function acpVideoTool(names) {
+  return acpActionTool(
+    acpVideoName,
+    names,
+    acpVideoActions,
+    "Watch an authorized video. Set name to video_read and argumentsJson to its serialized arguments: sourceId, action (overview or rewatch), optional linkIndex, and for rewatch, startMs, endMs and the current requestId when following up on an earlier message.",
+  );
+}
+
 const acpActionEnvelope = z
   .object({
     name: z.string(),
@@ -119,7 +130,7 @@ const acpActionEnvelope = z
 const genericMcpGuide =
   'Call call_mcp_tool with ServerName="qq-agents", ToolName equal to an allowed name, and Arguments matching that tool\'s JSON schema below. ';
 const acpMcpGuide =
-  'For qq_send, qq_send_burst, or qq_draft, use mcp_qq-agents_qq_reply_call if listed. For desktop_native_control or desktop_browser_control, use mcp_qq-agents_qq_desktop_call. For these entries, pass the logical tool name as name and serialize its original argument object as argumentsJson. For other actions, use the native MCP tool if it is listed for this turn. Otherwise, if call_mcp_tool is available, use ServerName="qq-agents", the logical ToolName, and Arguments matching the schema below. ';
+  'For qq_send, qq_send_burst, or qq_draft, use mcp_qq-agents_qq_reply_call if listed. For desktop_native_control or desktop_browser_control, use mcp_qq-agents_qq_desktop_call. For video_read, use mcp_qq-agents_qq_video_call. For these entries, pass the logical tool name as name and serialize its original argument object as argumentsJson. For other actions, use the native MCP tool if it is listed for this turn. Otherwise, if call_mcp_tool is available, use ServerName="qq-agents", the logical ToolName, and Arguments matching the schema below. ';
 const acpImageGuide =
   "Authorized MCP image content blocks contain visible pixels. Inspect those pixels directly; never read files to view an image. ";
 const acpScreenshotGuide =
@@ -590,6 +601,7 @@ export class AntigravityBackend {
     );
     if (acp) {
       if (acpReplyTool(names)) names.add(acpReplyName);
+      if (names.delete(VIDEO_READ)) names.add(acpVideoName);
       if (acpDesktopTool(names)) {
         for (const name of acpDesktopActions) names.delete(name);
         names.add(acpDesktopName);
@@ -1039,9 +1051,17 @@ export class AntigravityBackend {
     // transport envelope and keep the original tool validation.
     const replyTool = acp ? acpReplyTool(names) : null;
     const desktopTool = acp ? acpDesktopTool(names) : null;
-    const nativeTools = desktopTool
-      ? params.tools.filter(({ name }) => !acpDesktopActions.has(name))
-      : params.tools;
+    const videoTool = acp ? acpVideoTool(names) : null;
+    const nativeTools = params.tools.filter(
+      ({ name }) =>
+        !(desktopTool && acpDesktopActions.has(name)) &&
+        !(videoTool && name === VIDEO_READ),
+    );
+    const entries = new Map(
+      [replyTool, desktopTool, videoTool].flatMap((tool) =>
+        tool ? [[tool.name, tool]] : [],
+      ),
+    );
     const server = http.createServer(async (req, res) => {
       const reply = (
         /** @type {number} */ status,
@@ -1098,7 +1118,7 @@ export class AntigravityBackend {
       }
       if (req.method === "GET" && req.url === "/catalog")
         return reply(200, {
-          tools: [...nativeTools, ...[replyTool, desktopTool].filter(Boolean)],
+          tools: [...nativeTools, ...entries.values()],
           nativeMcp: acp,
           images: media.catalog(),
         });
@@ -1115,15 +1135,17 @@ export class AntigravityBackend {
         let { name, arguments: args } = value;
         await inputSubmission;
         if (!live || params.signal.aborted) return reply(403, {});
-        if (name === acpReplyName || name === acpDesktopName) {
-          const entry = name === acpReplyName ? replyTool : desktopTool;
-          if (!entry) return reply(403, {});
+        const entry = entries.get(name);
+        if (entry) {
           const envelope = acpActionEnvelope.parse(args);
           if (!entry.inputSchema.properties.name.enum.includes(envelope.name))
             return reply(403, {});
           name = envelope.name;
           args = envelope.argumentsJson;
-        } else if (desktopTool && acpDesktopActions.has(name))
+        } else if (
+          (desktopTool && acpDesktopActions.has(name)) ||
+          (videoTool && name === VIDEO_READ)
+        )
           return reply(403, {});
         if (!names.has(name)) return reply(403, {});
         spec = params.tools.find((tool) => tool.name === name);

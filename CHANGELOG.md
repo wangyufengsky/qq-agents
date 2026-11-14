@@ -6,6 +6,10 @@
 
 ## 未发布
 
+### 修复 Antigravity 续接会话无法调用视频工具（[#321](https://github.com/wangyufengsky/qq-agents/pull/321)）
+
+- Antigravity ACP 通过提前注册的适配入口调用已授权的 `video_read`，避免完整工具目录在续接时过滤视频参数声明。复用现有会话、权限和回看来源检查，无需修改角色配置或迁移数据。
+
 ### 修复 Antigravity 和 DSH 视频交付（[#320](https://github.com/wangyufengsky/qq-agents/pull/320)）
 
 - Antigravity ACP 提前注册当轮获准的视频工具，并完整接收回看的八张带标签画面和字幕。DSH 的受信中继可交付超出普通文本预算的受限视频拼图。视频概览和回看在画面交付后才计入本轮次数，交付失败仍可在原消息授权有效时重试。无需修改角色配置或迁移数据。
