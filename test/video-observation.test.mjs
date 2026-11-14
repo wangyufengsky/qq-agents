@@ -17,7 +17,18 @@ const url = "https://www.bilibili.com/video/BV1xx411c7mD?p=2";
 const text = (text) => ({ type: "text", data: { text } });
 const card = (url) => ({
   type: "json",
-  data: { data: JSON.stringify({ meta: { detail_1: { qqdocurl: url } } }) },
+  data: {
+    data: JSON.stringify({
+      app: "com.tencent.miniapp_01",
+      meta: {
+        detail_1: {
+          appid: "fixture",
+          url: "pages/video/index?scene=share",
+          qqdocurl: url,
+        },
+      },
+    }),
+  },
 });
 
 test("Bilibili sources preserve the selected part and remove tracking without permitting arbitrary URLs", () => {
