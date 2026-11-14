@@ -1,5 +1,8 @@
 // @ts-check
-import { DESKTOP_PUBLIC_DEFAULTS } from "../home/desktop-home-policy.mjs";
+import {
+  DESKTOP_DISPLAY_OBSERVATION_DEFAULTS,
+  DESKTOP_PUBLIC_DEFAULTS,
+} from "../home/desktop-home-policy.mjs";
 import { HOME_SOCIAL_DEFAULTS } from "../home/social-policy.mjs";
 // Runtime defaults are source code; examples are generated documentation.
 import { validateConfig } from "./config.mjs";
@@ -42,6 +45,7 @@ export function defaultConfig() {
       autonomousObservation: false,
       observationRoles: [],
       observationRetentionDays: 7,
+      displayObservation: DESKTOP_DISPLAY_OBSERVATION_DEFAULTS,
       screenView: { enabled: false },
       nativeControl: { enabled: false },
       browserControl: { enabled: false },

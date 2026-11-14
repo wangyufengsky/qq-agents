@@ -48,6 +48,10 @@
     "autonomousObservation": false,
     "observationRoles": [],
     "observationRetentionDays": 7,
+    "displayObservation": {
+      "minutes": 15,
+      "attempts": 4
+    },
     "screenView": {
       "enabled": false
     },

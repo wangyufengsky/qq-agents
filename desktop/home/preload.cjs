@@ -5,6 +5,8 @@ contextBridge.exposeInMainWorld("nest", {
   attach: () => ipcRenderer.invoke("room:attach"),
   setSection: (section) => ipcRenderer.send("room:action", "section", section),
   follow: (id, mode) => ipcRenderer.invoke("room:follow", id, mode),
+  displayObservation: (action, data) =>
+    ipcRenderer.invoke("room:display-observation", action, data),
   observation: () => ipcRenderer.invoke("room:observation"),
   observationReview: (action, data) =>
     ipcRenderer.invoke("room:observation-review", action, data),

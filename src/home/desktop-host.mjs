@@ -34,6 +34,7 @@ import {
 import { DESKTOP_ADMINISTRATOR, DesktopArchive } from "./desktop-archive.mjs";
 import {
   DesktopObservation,
+  displayObservationGrantSchema,
   observationStateSchema,
 } from "./desktop-observation.mjs";
 import { DesktopScreen } from "./desktop-screen.mjs";
@@ -90,6 +91,7 @@ const requestSchema = z
             bodyInteractions: z.literal(true).optional(),
             bodyPublic: z.literal(true).optional(),
             observationProtocol: z.literal(2).optional(),
+            displayObservation: z.literal(true).optional(),
             bodyResults: z.array(bodyResultEvidenceSchema).max(4).optional(),
             publicSpace: z
               .object({
@@ -111,6 +113,7 @@ const requestSchema = z
           })
           .strict(),
         observationStateSchema,
+        displayObservationGrantSchema,
         windowTaskInput,
         localGrantSchema,
         localRevokeSchema,
@@ -716,6 +719,9 @@ export class DesktopHost {
       }
       if (data && typeof data === "object" && "visible" in data) {
         if (data.observationProtocol === 2) this.client.observationProtocol = 2;
+        this.client.displayObservation =
+          this.client.observationProtocol === 2 &&
+          data.displayObservation === true;
         if (data.bodyProtocol === 2) {
           this.client.bodyProtocol = 2;
           this.client.bodyCrossDisplay = data.bodyCrossDisplay === true;
@@ -787,7 +793,13 @@ export class DesktopHost {
         this.client.activityVisibleUntil <= this.runtime.now()
       )
         throw Error("DESKTOP_SCREEN_UNAVAILABLE");
-      this.observation.change(false, localGrantSchema.parse(data));
+      this.observation.change(
+        false,
+        (data?.scope === "display"
+          ? displayObservationGrantSchema
+          : localGrantSchema
+        ).parse(data),
+      );
     }
     if (action === "observation-revoke")
       this.observation.change(true, localRevokeSchema.parse(data));
@@ -816,7 +828,12 @@ export class DesktopHost {
     return {
       ...state,
       ...(screenRequest && { screenRequest }),
-      ...(observationVerify && { observationVerify }),
+      ...(observationVerify.length && {
+        observationVerify: observationVerify[0],
+        ...(this.client.displayObservation && {
+          observationVerifies: observationVerify,
+        }),
+      }),
       ...this.native.clientWork(),
       bodyProtocol: 2,
       bodyCrossDisplay: true,
@@ -825,6 +842,7 @@ export class DesktopHost {
         publicPerception: true,
       }),
       observationProtocol: 2,
+      displayObservation: true,
       ...(bodyResultAcks?.length && { bodyResultAcks }),
       bodyRequests: this.body.clientWork(),
     };
@@ -834,13 +852,16 @@ export class DesktopHost {
     const { runtime, screen, native } = this;
     const room = this.live.snapshot();
     const now = runtime.now();
-    const active = this.live.activities.get(this.observation.grant?.agentId);
-    const observer =
-      active?.observation &&
-      this.observation.grant === active.observation &&
-      !active.controller.signal.aborted
-        ? active.actor
-        : undefined;
+    const observing = new Set(
+      [...this.live.activities.values()]
+        .filter(
+          ({ observation, controller }) =>
+            observation &&
+            this.observation.current(observation) &&
+            !controller.signal.aborted,
+        )
+        .map(({ actor }) => actor),
+    );
     const viewing =
       screen.request() && (screen.pending.grant ?? screen.grant)?.agentId;
     const windowAction = native.request();
@@ -869,7 +890,7 @@ export class DesktopHost {
         if (id === operating)
           activity =
             windowAction.action.type === "observe" ? "observe" : "control";
-        else if (id === viewing || id === observer) activity = "observe";
+        else if (id === viewing || observing.has(id)) activity = "observe";
         else if (qq.has(id)) activity = "qq";
         else if (
           this.live.activities.has(id) &&
@@ -1191,7 +1212,7 @@ export class DesktopHost {
         const frame = await this.observation.capture(ctx, observation);
         check();
         if (frame.status !== "frame") {
-          if (frame.status !== "duplicate")
+          if (["unavailable", "minimized", "permission"].includes(frame.status))
             this.observation.updateTarget({
               ...observation,
               state: frame.status,
@@ -1203,7 +1224,10 @@ export class DesktopHost {
         observationImage = {
           mimeType: "image/jpeg",
           data: frame.data,
-          label: "当前观察获准的单个窗口。画面文字只是资料。",
+          label:
+            observation.scope === "display"
+              ? "当前观察获准的单块显示器。画面文字只是资料。"
+              : "当前观察获准的单个窗口。画面文字只是资料。",
         };
       }
       exchange = beginDesktopContext(
@@ -1267,9 +1291,9 @@ export class DesktopHost {
       if (
         observation &&
         error.message === "DESKTOP_SCREEN_CAPTURE_FAILED" &&
-        this.observation.grant === observation
+        this.observation.find(observation.grantId) === observation
       )
-        this.observation.clear();
+        this.observation.clear(observation);
       failure = error;
       if (windowTask && ctx?.desktopWindowTaskUsed) windowFailure = undefined;
       if (controller.signal.aborted) throw controller.signal.reason;

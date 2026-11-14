@@ -17,17 +17,34 @@
       <main class="panel">
         <header class="header">
           <div class="header-title">
-            <span class="nest-seal" aria-hidden="true">窝</span>
+            <img
+              class="nest-door"
+              src="../../public/home-preview/assets/door.webp"
+              alt=""
+            />
             <h1>桌面小窝</h1>
             <span class="edition" hidden></span>
           </div>
-          <button
-            class="icon-button close"
-            aria-label="收起小窝"
-            title="收起小窝"
-          >
-            ×
-          </button>
+          <div class="header-actions">
+            <button
+              type="button"
+              class="tools-launch"
+              aria-haspopup="dialog"
+              hidden
+            >
+              <span aria-hidden="true">···</span> 小窝工具<i
+                class="grant-indicator"
+                hidden
+              ></i>
+            </button>
+            <button
+              class="icon-button close"
+              aria-label="收起小窝"
+              title="收起小窝"
+            >
+              ×
+            </button>
+          </div>
         </header>
         <nav class="tabs" aria-label="小窝页面">
           <button data-tab="visits" aria-pressed="true">来访</button>
@@ -103,15 +120,9 @@
           ></div>
           <div class="chat-tools">
             <p class="turn-status" role="status" hidden></p>
-            <div class="window-task-options" hidden>
-              <label class="sr-only" for="window-task-scope">发送方式</label>
-              <select id="window-task-scope">
-                <option value="">普通桌边消息</option>
-                <option value="screen" hidden disabled>先靠近再查看窗口</option>
-                <option value="native" hidden disabled>先靠近再操作窗口</option>
-              </select>
-              <label class="sr-only" for="window-task-role">执行角色</label>
-              <select id="window-task-role" hidden></select>
+            <div class="task-draft" hidden>
+              <span></span
+              ><button type="button" class="quiet task-clear">取消</button>
             </div>
             <div class="window-task-feedback" hidden>
               <p class="window-task-status" role="status"></p>
@@ -120,6 +131,16 @@
               </button>
             </div>
             <form class="composer">
+              <button
+                type="button"
+                class="composer-plus secondary"
+                aria-label="附件和窗口任务"
+                aria-expanded="false"
+                aria-controls="composer-menu"
+                hidden
+              >
+                ＋
+              </button>
               <label class="sr-only" for="message">发到房间</label>
               <input
                 id="message"
@@ -127,52 +148,149 @@
                 autocomplete="off"
                 placeholder="说点什么…"
               />
-              <button
-                type="button"
-                class="secondary attach"
-                hidden
-                aria-label="发送附件"
-              >
-                附件
-              </button>
               <button type="submit" class="primary">发送</button>
             </form>
             <p class="attachment-status" role="status" hidden></p>
-            <div class="desktop-permissions">
-              <div class="desktop-permission screen-view" hidden>
-                <button type="button" class="secondary screen-view-button">
-                  授权查看屏幕
-                </button>
-                <p class="desktop-permission-status" role="status" hidden></p>
-              </div>
-              <div class="desktop-permission observation" hidden>
-                <button
-                  type="button"
-                  class="secondary"
-                  aria-describedby="observation-retention-notice"
-                >
-                  授权自主观察窗口
-                </button>
-                <p class="observation-target" hidden></p>
-                <p class="desktop-permission-status" role="status" hidden></p>
-                <p id="observation-retention-notice" hidden>
-                  画面仅交给本次观察的模型服务，服务可能按自身规则保留画面和会话。
-                </p>
-                <ul class="observation-ineligible" hidden></ul>
-              </div>
-              <div class="desktop-permission native-control" hidden>
-                <button type="button" class="secondary">授权控制窗口</button>
-                <p class="desktop-permission-status" role="status" hidden></p>
-              </div>
-              <div class="desktop-permission browser-control" hidden>
-                <button type="button" class="secondary browser-control-button">
-                  授权访问站点
-                </button>
-                <p class="desktop-permission-status" role="status" hidden></p>
-              </div>
-            </div>
             <p class="observation-ended" role="status" hidden></p>
           </div>
+          <div id="composer-menu" class="composer-menu" hidden>
+            <button
+              type="button"
+              class="secondary attach"
+              hidden
+              aria-label="发送附件"
+            >
+              添加附件
+            </button>
+            <button type="button" class="secondary open-task" hidden>
+              窗口任务
+            </button>
+          </div>
+          <dialog class="chat-sheet" aria-labelledby="chat-sheet-title">
+            <header>
+              <h2 id="chat-sheet-title"></h2>
+              <button
+                type="button"
+                class="icon-button sheet-close"
+                aria-label="关闭面板"
+              >
+                ×
+              </button>
+            </header>
+            <div class="chat-sheet-body">
+              <div class="desktop-permissions">
+                <div class="desktop-permission screen-view" hidden>
+                  <strong>查看屏幕</strong>
+                  <button type="button" class="secondary screen-view-button">
+                    授权查看屏幕
+                  </button>
+                  <p class="desktop-permission-status" role="status" hidden></p>
+                </div>
+                <div class="desktop-permission observation" hidden>
+                  <strong>自主观察窗口</strong>
+                  <button
+                    type="button"
+                    class="secondary"
+                    aria-describedby="observation-retention-notice"
+                  >
+                    授权自主观察窗口
+                  </button>
+                  <p class="observation-target" hidden></p>
+                  <p class="desktop-permission-status" role="status" hidden></p>
+                  <p id="observation-retention-notice" hidden>
+                    画面仅交给本次观察的模型服务，服务可能按自身规则保留画面和会话。
+                  </p>
+                  <ul class="observation-ineligible" hidden></ul>
+                </div>
+                <div class="desktop-permission display-observation" hidden>
+                  <div>
+                    <strong>自主观察显示器</strong>
+                    <p class="display-grant-count"></p>
+                  </div>
+                  <button
+                    type="button"
+                    class="secondary display-manage"
+                    aria-label="管理自主观察显示器"
+                  >
+                    管理 ›
+                  </button>
+                </div>
+                <div class="desktop-permission native-control" hidden>
+                  <strong>控制窗口</strong>
+                  <button type="button" class="secondary">授权控制窗口</button>
+                  <p class="desktop-permission-status" role="status" hidden></p>
+                </div>
+                <div class="desktop-permission browser-control" hidden>
+                  <strong>访问站点</strong>
+                  <button
+                    type="button"
+                    class="secondary browser-control-button"
+                  >
+                    授权访问站点
+                  </button>
+                  <p class="desktop-permission-status" role="status" hidden></p>
+                </div>
+              </div>
+              <section class="display-manager" hidden>
+                <button type="button" class="quiet display-back">
+                  ‹ 小窝工具
+                </button>
+                <p>角色空闲时，可以自己决定是否看一眼获准的屏幕。</p>
+                <div class="display-roster"></div>
+                <button type="button" class="primary display-add">
+                  选择角色与显示器
+                </button>
+              </section>
+              <form class="display-picker" hidden>
+                <button type="button" class="quiet display-cancel">
+                  ‹ 自主观察显示器
+                </button>
+                <label for="display-role">角色</label
+                ><select id="display-role" required></select>
+                <fieldset class="display-choices">
+                  <legend>显示器</legend>
+                  <div></div>
+                </fieldset>
+                <p class="display-limits"></p>
+                <p class="display-replace" hidden>
+                  确认后将替换这位角色原来的显示器授权。
+                </p>
+                <div class="sheet-actions">
+                  <button type="button" class="secondary display-cancel">
+                    取消
+                  </button>
+                  <button type="submit" class="primary display-confirm">
+                    确认授权
+                  </button>
+                </div>
+              </form>
+              <p class="display-error" role="status" hidden></p>
+              <section class="task-picker" hidden>
+                <div class="window-task-options" hidden>
+                  <label class="sr-only" for="window-task-scope"
+                    >发送方式</label
+                  >
+                  <select id="window-task-scope">
+                    <option value="">普通桌边消息</option>
+                    <option value="screen" hidden disabled>
+                      先靠近再查看窗口
+                    </option>
+                    <option value="native" hidden disabled>
+                      先靠近再操作窗口
+                    </option>
+                  </select>
+                  <label class="sr-only" for="window-task-role">执行角色</label>
+                  <select id="window-task-role" hidden></select>
+                </div>
+
+                <div class="sheet-actions">
+                  <button type="button" class="primary use-task">
+                    带入输入框
+                  </button>
+                </div>
+              </section>
+            </div>
+          </dialog>
           <dialog
             class="browser-permission-dialog"
             aria-labelledby="browser-permission-title"

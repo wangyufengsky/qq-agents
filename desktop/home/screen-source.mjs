@@ -3,6 +3,14 @@ function sameScreenSource(source, selected) {
   return source.id === selected.id && source.display_id === selected.display_id;
 }
 
+export function observationDisplayTarget(sources, displayId) {
+  const matches = sources.filter(
+    ({ id, display_id }) =>
+      id.startsWith("screen:") && display_id === String(displayId),
+  );
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
 export function findScreenSource(sources, selected) {
   return sources.find((source) => sameScreenSource(source, selected));
 }

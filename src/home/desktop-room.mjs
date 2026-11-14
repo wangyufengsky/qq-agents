@@ -763,6 +763,9 @@ export class LiveRoom {
             observation,
             interaction: observation ? undefined : interaction,
             observationAvailable: Boolean(offer && !observation),
+            ...(offer?.grant.scope === "display" && {
+              observationTarget: "display",
+            }),
             canObserve: () =>
               !acted &&
               this.runner.observation?.(turn.actor)?.grant === offer?.grant,

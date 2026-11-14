@@ -144,8 +144,8 @@ export class DesktopBodyClient {
       this.active.delete(agentId);
   }
 
-  stopObservation(agentId) {
-    if (this.active.get(agentId)?.request.observation)
+  stopObservation(agentId, grantId) {
+    if (this.active.get(agentId)?.request.observationGrantId === grantId)
       this.stop(agentId, "inactive");
   }
 
