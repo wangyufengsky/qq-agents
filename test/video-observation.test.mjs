@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { mediaLease } from "../src/tools/media-lease.mjs";
@@ -10,7 +10,18 @@ import { runNativeSocial } from "../src/backends/native-social.mjs";
 import { desktopToken } from "../src/home/desktop-auth.mjs";
 import { createServer } from "../src/server.mjs";
 import { videoLinks } from "../src/video/bilibili.mjs";
-import { probeVideo, videoOverview } from "../src/video/frames.mjs";
+import {
+  embeddedVideoSubtitles,
+  probeVideo,
+  videoOverview,
+} from "../src/video/frames.mjs";
+import {
+  bilibiliCues,
+  overviewCaptions,
+  segmentCaptions,
+  srtCues,
+} from "../src/video/subtitles.mjs";
+import { transcribeVideoSegment } from "../src/video/transcription.mjs";
 import { currentVideoRequest } from "../src/video/tools.mjs";
 import {
   config,
@@ -36,6 +47,75 @@ const card = (url) => ({
       },
     }),
   },
+});
+
+test("timed subtitles align to page-local tile numbers and use absolute clip boundaries", () => {
+  const cues = bilibiliCues(
+    {
+      body: [
+        { from: 65, to: 70, content: "第二页字幕" },
+        null,
+        { from: 1, to: 3, content: " 第一行\n第二行 " },
+        { from: -1, to: 2, content: "越界" },
+        { from: null, to: 2, content: "无时间" },
+      ],
+    },
+    120000,
+  );
+  assert.deepEqual(
+    overviewCaptions(
+      [{ timestampsMs: [999, 1250, 3000] }, { timestampsMs: [67000] }],
+      cues,
+    ),
+    [
+      [
+        {
+          tile: 2,
+          atMs: 1250,
+          fromMs: 1000,
+          toMs: 3000,
+          text: "第一行 第二行",
+        },
+      ],
+      [
+        {
+          tile: 1,
+          atMs: 67000,
+          fromMs: 65000,
+          toMs: 70000,
+          text: "第二页字幕",
+        },
+      ],
+    ],
+  );
+  assert.deepEqual(segmentCaptions(cues, 2000, 66000), [
+    { fromMs: 2000, toMs: 3000, text: "第一行 第二行" },
+    { fromMs: 65000, toMs: 66000, text: "第二页字幕" },
+  ]);
+  assert.deepEqual(
+    srtCues("1\r\n00:00:01,000 --> 00:00:10,000\r\n片段对白\r\n", 30000, 24000),
+    [{ fromMs: 25000, toMs: 30000, text: "片段对白" }],
+  );
+});
+
+test("an unconfigured recognizer never fetches audio", async () => {
+  const previous = process.env.QQ_VIDEO_WHISPER_MODEL;
+  delete process.env.QQ_VIDEO_WHISPER_MODEL;
+  try {
+    assert.deepEqual(
+      await transcribeVideoSegment(
+        () => {
+          throw Error("fixture must not fetch audio");
+        },
+        1000,
+        2000,
+        new AbortController().signal,
+      ),
+      { status: "transcription-unconfigured" },
+    );
+  } finally {
+    if (previous !== undefined) process.env.QQ_VIDEO_WHISPER_MODEL = previous;
+  }
 });
 
 test("Bilibili sources preserve the selected part and remove tracking without permitting arbitrary URLs", () => {
@@ -104,7 +184,7 @@ test("QQ video tool sees only current human links and cards, and recall revokes 
   assert.deepEqual(found, ["905", "906"]);
 });
 
-function makeSample(file) {
+function makeSample(file, subtitles) {
   execFileSync(process.env.FFMPEG_PATH || "ffmpeg", [
     "-v",
     "error",
@@ -112,6 +192,7 @@ function makeSample(file) {
     "lavfi",
     "-i",
     "testsrc2=s=160x90:r=2",
+    ...(subtitles ? ["-i", subtitles, "-c:s", "mov_text"] : []),
     "-t",
     "61",
     "-c:v",
@@ -147,6 +228,10 @@ test("QQ follow-up rewatch needs a delivered overview, a fresh human request, an
       };
       const seed = (sourceId, origin) => {
         ctx.videoSource = { sourceId, origin, file, duration: 61000 };
+        if (sourceId === row.id)
+          ctx.videoSource.captions = [
+            { fromMs: 2000, toMs: 6000, text: "已交付字幕" },
+          ];
       };
       const overview = { action: "overview", sourceId: row.id };
       if (row.message_id === "910") {
@@ -229,6 +314,15 @@ test("QQ follow-up rewatch needs a delivered overview, a fresh human request, an
           4,
         );
         assert(details[mediaLease]());
+        assert.equal(
+          JSON.parse(details.content[0].text).speechStatus,
+          "source-subtitles",
+        );
+        assert(
+          details.content.some(({ text }) =>
+            text?.includes("00:02–00:06 已交付字幕"),
+          ),
+        );
         await assert.rejects(
           params.callTool("video_read", valid),
           /VIDEO_TURN_LIMIT/,
@@ -279,10 +373,28 @@ test("a selected desktop file reaches the role, and detail requires a current ov
   cfg.agents[0].tools.push("video_read");
   const { runtime, root } = fixture(t, { cfg });
   const file = path.join(root, "sample.mp4");
-  makeSample(file);
+  const subtitles = path.join(root, "sample.srt");
+  await writeFile(
+    subtitles,
+    [
+      "1",
+      "00:00:03,100 --> 00:00:05,900",
+      "视频回看对白",
+      "",
+      "2",
+      "00:00:15,000 --> 00:00:17,900",
+      "概览字幕证据",
+      "",
+    ].join("\n"),
+  );
+  makeSample(file, subtitles);
   const signal = AbortSignal.timeout(12000);
   const duration = await probeVideo(file, signal);
   assert.equal(duration, 61000);
+  assert.equal(
+    srtCues(await embeddedVideoSubtitles(file, signal), duration).length,
+    2,
+  );
   const overview = await videoOverview(
     file,
     duration,
@@ -348,12 +460,27 @@ test("a selected desktop file reaches the role, and detail requires a current ov
         sourceId,
       });
       assert.equal(open.content.filter((x) => x.type === "image").length, 1);
+      assert.deepEqual(
+        JSON.parse(open.content[0].text).speechStatus,
+        "source-subtitles",
+      );
+      assert(
+        open.content.some(({ text }) =>
+          text?.includes("第 1 格 · 00:15–00:17 概览字幕证据"),
+        ),
+      );
       await deliverFixtureToolOutput(params, open);
       const detailed = await params.callTool("video_read", rewatch);
       assert.equal(
         detailed.content.filter((x) => x.type === "image").length,
         4,
       );
+      assert(
+        detailed.content.some(({ text }) =>
+          text?.includes("00:03–00:05 视频回看对白"),
+        ),
+      );
+      assert.equal(JSON.parse(detailed.content[0].text).audioRead, false);
       await assert.rejects(
         params.callTool("video_read", rewatch),
         /VIDEO_TURN_LIMIT/,

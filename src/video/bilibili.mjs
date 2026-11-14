@@ -1,4 +1,5 @@
 import { writeFile } from "node:fs/promises";
+import { bilibiliCues } from "./subtitles.mjs";
 import { validateFetchUrl } from "../../vendor/social-reader/safe-fetch.js";
 import { parseCards } from "../apps/cards.mjs";
 import { publicUrl, requestAppUrl } from "../apps/urls.mjs";
@@ -90,6 +91,128 @@ async function getJson(endpoint, params, signal, current) {
   return result.data;
 }
 
+function tracks(stream) {
+  return [
+    stream.baseUrl ?? stream.base_url,
+    ...(stream.backupUrl ?? stream.backup_url ?? []),
+  ]
+    .filter(Boolean)
+    .slice(0, 3);
+}
+
+async function downloadTrack(stream, file, { signal, current, maxBytes }) {
+  for (const candidate of tracks(stream)) {
+    current();
+    try {
+      const { buffer } = await downloadFile(
+        candidate,
+        { signal, maxBytes },
+        {
+          validate(raw) {
+            current();
+            const url = new URL(raw);
+            if (
+              url.protocol !== "https:" ||
+              url.username ||
+              url.password ||
+              url.port ||
+              (!url.hostname.endsWith(".bilivideo.com") &&
+                !url.hostname.endsWith(".bilivideo.cn"))
+            )
+              throw Error("VIDEO_SOURCE_DENIED");
+            return validateFetchUrl(raw);
+          },
+          headers: { ...fixedHeaders, range: "bytes=0-" },
+          allowFullRange: true,
+        },
+      );
+      current();
+      await writeFile(file, buffer, { flag: "wx", mode: 0o600, signal });
+      return;
+    } catch (error) {
+      signal.throwIfAborted();
+      if (error.message === "FILE_TOO_LARGE")
+        throw Error("VIDEO_LIMIT", { cause: error });
+    }
+  }
+  throw Error("VIDEO_SOURCE_UNAVAILABLE");
+}
+
+export async function fetchBilibiliSubtitles(
+  part,
+  duration,
+  signal,
+  current,
+  signedInTracks,
+) {
+  const deadline = AbortSignal.any([signal, AbortSignal.timeout(12_000)]);
+  try {
+    const info = await getJson("/x/player/wbi/v2", part, deadline, current);
+    let list = info.subtitle?.subtitles;
+    if (
+      signedInTracks &&
+      info.need_login_subtitle === true &&
+      (!Array.isArray(list) || !list.some((item) => item?.subtitle_url))
+    ) {
+      current();
+      list = await signedInTracks(part, deadline);
+      current();
+    }
+    if (!Array.isArray(list)) return [];
+    const candidates = list
+      .slice(0, 24)
+      .filter(
+        (item) => typeof item?.subtitle_url === "string" && item.subtitle_url,
+      );
+    const preference = ({ lan, ai_type }) =>
+      (/^(?:ai-)?zh(?:-|$)/i.test(lan || "") ? 0 : 2) +
+      Number(ai_type === 1 || String(lan).startsWith("ai-"));
+    candidates.sort((a, b) => preference(a) - preference(b));
+    for (const track of candidates.slice(0, 3)) {
+      deadline.throwIfAborted();
+      try {
+        const raw = new URL(track.subtitle_url, "https://www.bilibili.com/");
+        // Legacy manual-subtitle URLs may advertise HTTP even though the CDN serves HTTPS.
+        if (raw.protocol === "http:") raw.protocol = "https:";
+        const { buffer } = await downloadFile(
+          raw.href,
+          { signal: deadline, maxBytes: 1024 * 1024 },
+          {
+            validate(value) {
+              current();
+              const url = publicUrl(value);
+              if (
+                url.protocol !== "https:" ||
+                ![
+                  "aisubtitle.hdslb.com",
+                  "i0.hdslb.com",
+                  "i1.hdslb.com",
+                  "i2.hdslb.com",
+                ].includes(url.hostname) ||
+                !/^\/bfs\/(?:subtitle|ai_subtitle)\//.test(url.pathname)
+              )
+                throw Error("VIDEO_SOURCE_DENIED");
+              return validateFetchUrl(value);
+            },
+            headers: fixedHeaders,
+          },
+        );
+        const cues = bilibiliCues(
+          JSON.parse(buffer.toString("utf8")),
+          duration,
+        );
+        if (cues.length) return cues;
+      } catch {
+        deadline.throwIfAborted();
+      }
+    }
+    return [];
+  } catch {
+    signal.throwIfAborted();
+    return [];
+  }
+}
+
 export async function fetchBilibiliVideo(raw, file, signal, current) {
   try {
     const { id, part } = await resolveVideo(raw, signal, current);
@@ -122,45 +245,23 @@ export async function fetchBilibiliVideo(raw, file, signal, current) {
       )
       .sort((a, b) => b.height - a.height)[0];
     if (!stream) throw Error("VIDEO_SOURCE_UNAVAILABLE");
-    for (const candidate of [
-      stream.baseUrl ?? stream.base_url,
-      ...(stream.backupUrl ?? stream.backup_url ?? []),
-    ]
-      .filter(Boolean)
-      .slice(0, 3)) {
-      current();
-      try {
-        const { buffer } = await downloadFile(
-          candidate,
-          { signal, maxBytes },
-          {
-            validate(raw) {
-              current();
-              const url = new URL(raw);
-              if (
-                url.protocol !== "https:" ||
-                url.username ||
-                url.password ||
-                url.port ||
-                (!url.hostname.endsWith(".bilivideo.com") &&
-                  !url.hostname.endsWith(".bilivideo.cn"))
-              )
-                throw Error("VIDEO_SOURCE_DENIED");
-              return validateFetchUrl(raw);
-            },
-            headers: { ...fixedHeaders, range: "bytes=0-" },
-            allowFullRange: true,
-          },
-        );
-        current();
-        await writeFile(file, buffer, { flag: "wx", mode: 0o600, signal });
-        return;
-      } catch (error) {
-        signal.throwIfAborted();
-        if (error.message === "FILE_TOO_LARGE")
-          throw Error("VIDEO_LIMIT", { cause: error });
-      }
-    }
+    await downloadTrack(stream, file, { signal, current, maxBytes });
+    const audio = Array.isArray(play.dash?.audio)
+      ? play.dash.audio
+          .filter(({ codecs }) => /^mp4a\./.test(codecs))
+          .sort((a, b) => a.bandwidth - b.bandwidth)[0]
+      : undefined;
+    return {
+      part: { ...key, cid: page.cid },
+      ...(audio && {
+        fetchAudio: (target, signal) =>
+          downloadTrack(audio, target, {
+            signal,
+            current,
+            maxBytes: 24 * 1024 * 1024,
+          }),
+      }),
+    };
   } catch (error) {
     signal.throwIfAborted();
     if (
