@@ -188,6 +188,7 @@ export class DesktopNative extends DesktopLocalGrant {
         (key) => unsettled.request[key] === parsed.data[key],
       )
     ) {
+      unsettled.received = true;
       this.handoff =
         result &&
         "delivery" in result &&
