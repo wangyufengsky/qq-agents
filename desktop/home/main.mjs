@@ -20,7 +20,11 @@ import {
 } from "../../src/video/frames.mjs";
 import { openNoFollowAsync } from "../../src/core/no-follow.mjs";
 import { managedDesktopExecutable } from "../../src/home/desktop-dependencies.mjs";
-import { clampToWorkArea, restoreWindowPoint } from "./window-placement.mjs";
+import {
+  clampToWorkArea,
+  desktopBodyBounds,
+  restoreWindowPoint,
+} from "./window-placement.mjs";
 import { parseBrowserOrigin } from "./browser-origin.mjs";
 import { DesktopBodyClient } from "./body-client.mjs";
 import {
@@ -170,6 +174,7 @@ const space = new DesktopSpace({
     }),
   seat: (id) => windowPoint(id, "sprite"),
   zones: () => exclusions.list(),
+  bodyBounds: desktopBodyBounds,
 });
 const spaceEditor = createSpaceEditor({
   screen,
@@ -2056,15 +2061,20 @@ function updatePointerRegions() {
     const bounds = win.getBounds();
     const dx = x - bounds.x;
     const dy = y - bounds.y;
-    const active =
-      type === "door"
-        ? dx >= 9 && dx <= 91 && dy >= 6 && dy <= 107
-        : (dx >= 44 && dx <= 150 && dy >= 45 && dy <= 152) ||
-          ((room.bubbles[id] || room.turn?.actor === id) &&
-            dx >= 10 &&
-            dx <= 184 &&
-            dy >= 2 &&
-            dy <= 54);
+    const body = desktopBodyBounds(type, bounds);
+    const overBody =
+      x >= body.x &&
+      x <= body.x + body.width &&
+      y >= body.y &&
+      y <= body.y + body.height;
+    const overBubble =
+      type === "sprite" &&
+      (room.bubbles[id] || room.turn?.actor === id) &&
+      dx >= 10 &&
+      dx <= 184 &&
+      dy >= 2 &&
+      dy <= 54;
+    const active = overBody || overBubble;
     const ignored = !active && !entry.drag;
     if (ignored === entry.ignored) continue;
     entry.ignored = ignored;
