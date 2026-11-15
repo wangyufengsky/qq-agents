@@ -68,3 +68,88 @@ test("macOS snapshot classifies all owners and preserves front-to-back geometry"
     false,
   );
 });
+
+test("verified Dock backing excludes only targets entirely inside its safe area", () => {
+  const display = { x: 0, y: 0, width: 1000, height: 800 };
+  const safe = { x: 0, y: 20, width: 1000, height: 700 };
+  const dock = {
+    id: "w-2",
+    pid: 11,
+    owner: "Dock",
+    name: "Dock",
+    bundle: "com.apple.dock",
+    layer: 20,
+    bounds: display,
+    dockSafeBounds: safe,
+  };
+  const target = {
+    id: "w-1",
+    pid: 10,
+    owner: "Fixture",
+    name: "Fixture",
+    bundle: "example.fixture",
+    layer: 0,
+    bounds: { x: 20, y: 30, width: 100, height: 100 },
+  };
+  const proof = (rows, sensitive = false) =>
+    macosCoverageSnapshot(
+      { complete: true, foregroundPid: 10, windows: rows },
+      ({ pid }) => sensitive && pid === 11,
+    );
+  assert.equal(
+    verifyCaptureCoverage(proof([dock, target]), { targetId: "w-1" }),
+    true,
+  );
+  assert.equal(
+    verifyCaptureCoverage(proof([dock, target], true), { targetId: "w-1" }),
+    false,
+  );
+  assert.equal(
+    verifyCaptureCoverage(proof([dock, target], true), {
+      displayBounds: display,
+    }),
+    false,
+  );
+  assert.equal(
+    verifyCaptureCoverage(
+      proof([{ ...dock, dockSafeBounds: undefined }, target]),
+      { targetId: "w-1" },
+    ),
+    false,
+  );
+  assert.equal(
+    verifyCaptureCoverage(
+      proof([{ ...dock, dockSafeBounds: { ...safe, width: 2000 } }, target]),
+      { targetId: "w-1" },
+    ),
+    false,
+  );
+  assert.equal(
+    verifyCaptureCoverage(
+      proof([dock, { ...target, bounds: { ...target.bounds, y: 0 } }]),
+      { targetId: "w-1" },
+    ),
+    false,
+  );
+  assert.equal(
+    verifyCaptureCoverage(
+      proof([dock, { ...target, bounds: { ...target.bounds, y: 650 } }]),
+      { targetId: "w-1" },
+    ),
+    false,
+  );
+  assert.equal(
+    verifyCaptureCoverage(
+      proof([dock, { ...target, bounds: { ...target.bounds, x: 950 } }]),
+      { targetId: "w-1" },
+    ),
+    false,
+  );
+  assert.equal(
+    verifyCaptureCoverage(
+      proof([dock, { ...target, id: "w-3", pid: 12 }, target]),
+      { targetId: "w-1" },
+    ),
+    false,
+  );
+});

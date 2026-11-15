@@ -116,6 +116,12 @@ export function verifyCaptureCoverage(
     return false;
   if (new Set(windows.map(({ id }) => id)).size !== windows.length)
     return false;
+  const contained = (inner, outer) =>
+    validBounds(outer) &&
+    inner.x >= outer.x &&
+    inner.y >= outer.y &&
+    inner.x + inner.width <= outer.x + outer.width &&
+    inner.y + inner.height <= outer.y + outer.height;
   if (targetId) {
     const index = windows.findIndex(({ id }) => id === targetId);
     if (index < 0 || snapshot.foregroundId !== targetId) return false;
@@ -124,7 +130,14 @@ export function verifyCaptureCoverage(
       !target.sensitive &&
       !windows
         .slice(0, index)
-        .some((window) => intersects(window.bounds, target.bounds))
+        .some(
+          (window) =>
+            intersects(window.bounds, target.bounds) &&
+            (window.sensitive ||
+              !validBounds(window.dockSafeBounds) ||
+              !contained(window.dockSafeBounds, window.bounds) ||
+              !contained(target.bounds, window.dockSafeBounds)),
+        )
     );
   }
   return (

@@ -103,7 +103,12 @@ export function macosCoverageSnapshot(snapshot, classify) {
     if (typeof sensitive !== "boolean") return { complete: false };
     if (!foregroundId && entry.pid === snapshot.foregroundPid)
       foregroundId = entry.id;
-    windows.push({ id: entry.id, bounds: entry.bounds, sensitive });
+    windows.push({
+      id: entry.id,
+      bounds: entry.bounds,
+      sensitive,
+      ...(entry.dockSafeBounds && { dockSafeBounds: entry.dockSafeBounds }),
+    });
   }
   if (!foregroundId) return { complete: false };
   return { complete: true, foregroundId, windows };
