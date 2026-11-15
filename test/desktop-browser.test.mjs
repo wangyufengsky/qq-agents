@@ -293,3 +293,32 @@ test("opt-out, visit replacement and turn cancellation close the bound browser",
   assert.equal(browser.state().grantedAgentId, first);
   assert.equal(calls.at(-1)[0], "close");
 });
+
+test("revocation drains an action even when session close finishes first", async () => {
+  const started = Promise.withResolvers();
+  const finish = Promise.withResolvers();
+  const { browser, context, grant } = fixture({
+    session: {
+      async navigate() {
+        started.resolve();
+        return finish.promise;
+      },
+    },
+  });
+  const previous = grant();
+  const pending = assert.rejects(
+    browser.run(context(), navigation),
+    /DESKTOP_BROWSER_UNAVAILABLE/,
+  );
+  await started.promise;
+  browser.change("browser-revoke", {
+    roomEpoch: previous.roomEpoch,
+    grantId: previous.grantId,
+  });
+  await Promise.resolve();
+  assert.equal(browser.draining, true);
+  finish.resolve(observation("late"));
+  await pending;
+  await browser.cleanup;
+  assert.equal(browser.draining, false);
+});

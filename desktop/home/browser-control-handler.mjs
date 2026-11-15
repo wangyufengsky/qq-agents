@@ -2,7 +2,9 @@ export function createBrowserControlHandler(ctx) {
   return async (event, selection) => {
     const win = ctx.entries.get("panel")?.win;
     const { browserControl: policy, roomEpoch } = ctx.remoteState ?? {};
+    const modeRevision = ctx.permissionRevision?.();
     if (
+      (ctx.permissionRevision && modeRevision === undefined) ||
       !ctx.framework ||
       !roomEpoch ||
       !policy ||
@@ -53,6 +55,7 @@ export function createBrowserControlHandler(ctx) {
         return "cancelled";
       if (
         ctx.remoteState?.roomEpoch !== roomEpoch ||
+        ctx.permissionRevision?.() !== modeRevision ||
         ctx.remoteState?.browserControl?.grantedAgentId ||
         !ctx.remoteState?.browserControl?.eligible.includes(agent.id)
       )
@@ -62,6 +65,7 @@ export function createBrowserControlHandler(ctx) {
         grantId: ctx.randomUUID(),
         agentId: agent.id,
         origin,
+        ...(modeRevision !== undefined && { modeRevision }),
       };
       ctx.lastBrowserGrant = grant;
       const room = await ctx.framework.command("browser-grant", grant);

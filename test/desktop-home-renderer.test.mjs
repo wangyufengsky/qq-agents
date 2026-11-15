@@ -621,7 +621,9 @@ test("the observation page shows automatic results only while it is active", asy
     observation: { ...room.observation, targetState: "minimized" },
     observationEnded: "target-minimized",
   });
-  await results.getByText("观察窗口已最小化。恢复窗口后可继续观察。").waitFor();
+  await results
+    .getByText("窗口最小化、被遮挡或覆盖范围暂无法核验，取帧已暂停。")
+    .waitFor();
   await page.getByRole("button", { name: "聊天", exact: true }).click();
   await thread.getByText("房间消息").waitFor();
   assert.doesNotMatch(await thread.textContent(), /观察回复|观察文字摘要/);
@@ -774,6 +776,21 @@ test("the visit panel uses confirmed body state and announces each manual interr
   await put({ state: "observing" });
   assert.equal(await state.textContent(), "正在观察桌面");
   assert.match(await detail.textContent(), /合成文档窗口.*许可至.*剩余 2 次/);
+  await put(
+    { state: "observing" },
+    {},
+    {
+      observation: {
+        eligible: [role.id],
+        grantedAgentId: null,
+        target: "批量窗口",
+        windowGrants: [
+          { agentId: role.id, grantId: "window", expiresAt: at, remaining: 3 },
+        ],
+      },
+    },
+  );
+  assert.match(await detail.textContent(), /批量窗口.*许可至.*剩余 3 次/);
   await put({ state: "qq" });
   assert.equal(await state.textContent(), "QQ 优先处理");
   assert.equal(await detail.isVisible(), false);
@@ -2062,4 +2079,109 @@ test("the desktop panel clears an opened status card when its resource is revoke
   });
   await dialog.waitFor({ state: "hidden" });
   assert.equal(await dialog.getByText("只有打开之后才出现的正文").count(), 0);
+});
+
+test("window observation grants show the target and revoke action, with legacy and display compatibility", async (t) => {
+  let executablePath;
+  try {
+    executablePath = findScreenshotBrowser();
+  } catch {
+    t.skip("local Chromium unavailable");
+    return;
+  }
+  const browser = await chromium.launch({ executablePath, headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  const room = {
+    live: true,
+    framework: true,
+    connected: true,
+    roles: [
+      {
+        id: "fish",
+        name: "小鱼",
+        color: "mint",
+        state: "here",
+        available: true,
+      },
+      {
+        id: "dragon",
+        name: "小龙",
+        color: "green",
+        state: "here",
+        available: true,
+      },
+    ],
+    messages: [],
+    observation: {
+      eligible: ["fish", "dragon"],
+      grantedAgentId: "legacy-stale",
+      target: "文档窗口",
+      windowGrants: [
+        { agentId: "fish", grantId: "one", remaining: 3 },
+        { agentId: "dragon", grantId: "two", remaining: 2 },
+      ],
+      displays: [],
+    },
+  };
+  await page.addInitScript((data) => {
+    window.nest = {
+      onRoom: (update) => (window.testRoom = update),
+      onSection() {},
+      get: async () => ({ data, section: "chat" }),
+      observation: async () => {
+        window.testObservationCalls = (window.testObservationCalls ?? 0) + 1;
+        data.observation.windowGrants = [];
+        data.observation.grantedAgentId = null;
+        window.testRoom(data);
+        return "revoked";
+      },
+    };
+  }, room);
+  await page.goto(pageUrl("type=panel"));
+  const tools = page.getByRole("button", { name: /小窝工具/ });
+  await tools.waitFor();
+  assert.equal(await tools.getAttribute("aria-label"), "小窝工具，当前有授权");
+  await tools.click();
+  const action = page.locator(".observation button");
+  assert.equal(await action.textContent(), "撤销自主观察");
+  assert.equal(
+    await page.locator(".observation-target").textContent(),
+    "文档窗口 · 2 位角色已授权",
+  );
+  assert.equal(
+    await page.locator("#observation-retention-notice").isVisible(),
+    false,
+  );
+  await action.click();
+  assert.equal(await page.evaluate(() => window.testObservationCalls), 1);
+  assert.equal(await action.textContent(), "授权自主观察窗口");
+  assert.equal(await page.locator(".observation-target").isVisible(), false);
+  assert.equal(await tools.getAttribute("aria-label"), "小窝工具");
+  const push = (data) => page.evaluate((next) => window.testRoom(next), data);
+  await push({
+    ...room,
+    observation: {
+      eligible: ["fish"],
+      grantedAgentId: "fish",
+      target: "旧窗口",
+      windowGrants: [],
+    },
+  });
+  assert.equal(await action.textContent(), "撤销自主观察");
+  assert.equal(
+    await page.locator(".observation-target").textContent(),
+    "旧窗口 · 1 位角色已授权",
+  );
+  await push({
+    ...room,
+    observation: {
+      eligible: ["fish"],
+      grantedAgentId: null,
+      windowGrants: [],
+      displays: [{ agentId: "fish", grantId: "display" }],
+    },
+  });
+  assert.equal(await action.textContent(), "授权自主观察窗口");
+  assert.equal(await tools.getAttribute("aria-label"), "小窝工具，当前有授权");
 });

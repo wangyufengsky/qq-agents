@@ -113,6 +113,115 @@ export function panel(root) {
   });
   const toolsLauncher = select(".tools-launch");
   const toolsList = select(".desktop-permissions");
+  const companionOptions = select(".companion-options");
+  const companionSelect = select(".companion-mode");
+  const companionStatus = select(".companion-status");
+  const sensitiveInput = select(".sensitive-applications");
+  const sensitiveSave = select(".sensitive-applications-save");
+  const frameReceiptSection = select(".frame-receipts");
+  let displayedFrameReceipts;
+  let displayedApplications;
+  let changingCompanion = false;
+
+  function windowObservationGrants(policy) {
+    if (policy?.windowGrants?.length) return policy.windowGrants;
+    return policy?.grantedAgentId
+      ? [{ ...policy, agentId: policy.grantedAgentId }]
+      : [];
+  }
+
+  function updateCompanion() {
+    const preference = room?.companion;
+    companionOptions.hidden =
+      !room?.connected || !preference || !window.nest.companionMode;
+    if (companionOptions.hidden) return;
+    companionSelect.value = preference.mode;
+    const applying = changingCompanion || !preference.ready;
+    companionSelect.disabled = changingCompanion;
+    sensitiveSave.disabled = applying;
+    const applications = preference.applications?.join("\n") ?? "";
+    if (displayedApplications !== applications) {
+      displayedApplications = applications;
+      sensitiveInput.value = applications;
+    }
+    const controls =
+      room.nativeControl?.grantedAgentId || room.browserControl?.grantedAgentId;
+    const viewing =
+      room.screenView?.grants?.length ||
+      room.screenView?.grantedAgentId ||
+      windowObservationGrants(room.observation).length ||
+      room.observation?.displays?.length;
+    const frameReceipts = room.frameReceipts ?? [];
+    const renderedFrames = JSON.stringify(frameReceipts);
+    frameReceiptSection.hidden = !frameReceipts.length;
+    if (renderedFrames !== displayedFrameReceipts) {
+      displayedFrameReceipts = renderedFrames;
+      const labels = {
+        "model-submitted": "画面已提交模型",
+        "framework-received": "画面已提交给框架，模型接收未确认",
+      };
+      frameReceiptSection
+        .querySelector("ul")
+        .replaceChildren(
+          ...frameReceipts
+            .filter(
+              ({ at, state }) =>
+                Number.isFinite(at) && Object.hasOwn(labels, state),
+            )
+            .map(({ agentId, at, state }) =>
+              element(
+                "li",
+                null,
+                `${clock.format(at)} · ${room.roles.find(({ id }) => id === agentId)?.name ?? "来访角色"} · ${labels[state]}`,
+              ),
+            ),
+        );
+    }
+    const handoff = room.nativeControl?.handoff;
+    companionStatus.textContent =
+      handoff === "pending" || handoff === "unconfirmed"
+        ? "已发出操作，结果未确认。"
+        : applying
+          ? "正在同步陪伴模式…"
+          : preference.mode === "privacy"
+            ? "屏幕、窗口和网页权限已关闭。"
+            : preference.verifiedWindowSurface === false
+              ? "暂无法核验入镜窗口，屏幕与本机窗口权限不可用。"
+              : controls || viewing
+                ? "当前目标已授权。"
+                : "待确认目标";
+  }
+
+  async function changeCompanion(action, value) {
+    if (changingCompanion || !window.nest.companionMode) return;
+    changingCompanion = true;
+    updateCompanion();
+    let applied;
+    try {
+      applied = await window.nest.companionMode({ action, value });
+    } catch {
+      applied = false;
+    } finally {
+      changingCompanion = false;
+      updateCompanion();
+      if (!applied) companionStatus.textContent = "暂无法保存，请重试。";
+    }
+  }
+  companionSelect.addEventListener(
+    "change",
+    () => void changeCompanion("mode", companionSelect.value),
+  );
+  sensitiveSave.addEventListener(
+    "click",
+    () =>
+      void changeCompanion(
+        "applications",
+        sensitiveInput.value
+          .split(/\r?\n/)
+          .map((value) => value.trim())
+          .filter(Boolean),
+      ),
+  );
   const chatSheet = select(".chat-sheet");
   const sheetTitle = select("#chat-sheet-title");
   const manager = select(".display-manager");
@@ -581,10 +690,21 @@ export function panel(root) {
     let lastAgent;
     function refresh() {
       const policy = room?.[key];
-      const agent = room?.roles.find(({ id }) => id === policy?.grantedAgentId);
-      const canAuthorize = Boolean(agent || policy?.eligible.length);
-      if (lastAgent !== agent?.id) {
-        lastAgent = agent?.id;
+      const selected =
+        key === "observation" ? windowObservationGrants(policy) : [];
+      const agentId = selected.length
+        ? selected[0].agentId
+        : policy?.grantedAgentId;
+      const agent = room?.roles.find(({ id }) => id === agentId);
+      const hasAuthorization =
+        key === "observation" ? selected.length > 0 : Boolean(agent);
+      const canAuthorize = Boolean(hasAuthorization || policy?.eligible.length);
+      const grantIdentity =
+        key === "observation"
+          ? selected.map(({ grantId, agentId }) => grantId ?? agentId).join(",")
+          : agent?.id;
+      if (lastAgent !== grantIdentity) {
+        lastAgent = grantIdentity;
         notice.hidden = true;
       }
       section.hidden =
@@ -593,8 +713,12 @@ export function panel(root) {
         (!canAuthorize && !policy?.ineligible?.length);
       button.hidden = !canAuthorize;
       button.disabled = choosing;
-      button.textContent = agent ? labels.revoke : labels.grant;
-      button.title = agent ? `当前授权给${agent.name}` : labels.help;
+      button.textContent = hasAuthorization ? labels.revoke : labels.grant;
+      button.title = hasAuthorization
+        ? agent
+          ? `当前授权给${agent.name}`
+          : "当前已有授权"
+        : labels.help;
       if (key === "nativeControl") {
         const holder = section.querySelector(".native-holder");
         holder.hidden = !agent && !policy?.handoff;
@@ -902,7 +1026,17 @@ export function panel(root) {
       const interactions = bindResidentInteractions(role.id);
       const portrait = avatar(role);
       const visitControls = element("div", "guest-controls");
-      visitControls.append(action, decline);
+      const privateReply = button("quiet", "私密对话");
+      privateReply.addEventListener("click", () => {
+        const target = room?.roles.find(({ id }) => id === role.id);
+        if (target?.state === "here" && target.bodyVisitId)
+          void window.nest.personal?.("open", {
+            agentId: target.id,
+            roomEpoch: room.roomEpoch,
+            visitId: target.bodyVisitId,
+          });
+      });
+      visitControls.append(action, decline, privateReply);
       node.append(portrait, info, visitControls);
       guestList.append(node);
 
@@ -923,6 +1057,7 @@ export function panel(root) {
         recent,
         action,
         decline,
+        privateReply,
         stop,
         seat,
         interactions,
@@ -939,6 +1074,7 @@ export function panel(root) {
       recent,
       action,
       decline,
+      privateReply,
       stop,
       seat,
       interactions,
@@ -954,6 +1090,11 @@ export function panel(root) {
     const src = assetPath(role.art ?? role.id);
     if (sprite.getAttribute("src") !== src) sprite.src = src;
     decline.hidden = room.live || role.state !== "invited";
+    privateReply.hidden =
+      !window.nest.personal ||
+      !room.connected ||
+      role.state !== "here" ||
+      !role.bodyVisitId;
     stop.hidden = seat.hidden = role.state !== "here" || !role.available;
     interactions.update(role);
     const [label, text] = {
@@ -998,17 +1139,20 @@ export function panel(root) {
     )
       details.push(`至 ${clock.format(body.until)}`);
     const observation = room.observation;
+    const observationGrant = windowObservationGrants(observation).find(
+      ({ agentId }) => agentId === role.id,
+    );
     if (
       !room.connectionLost &&
       here &&
       bodyState === "observing" &&
-      observation?.grantedAgentId === role.id
+      observationGrant
     ) {
       details.push(observation.target ?? "授权窗口");
-      if (Number.isFinite(observation.expiresAt))
-        details.push(`许可至 ${clock.format(observation.expiresAt)}`);
-      if (Number.isInteger(observation.remaining))
-        details.push(`剩余 ${observation.remaining} 次`);
+      if (Number.isFinite(observationGrant.expiresAt))
+        details.push(`许可至 ${clock.format(observationGrant.expiresAt)}`);
+      if (Number.isInteger(observationGrant.remaining))
+        details.push(`剩余 ${observationGrant.remaining} 次`);
     }
     const description = details.filter(Boolean).join(" · ");
     detail.hidden = !description;
@@ -1353,10 +1497,12 @@ export function panel(root) {
       (!room.attachmentInput?.text &&
         !room.attachmentInput?.image &&
         !room.attachmentInput?.video);
+    updateCompanion();
     updateScreenView();
     updateObservation();
+    const windowGrants = windowObservationGrants(observation);
     observationRetention.hidden =
-      Boolean(observation?.grantedAgentId) || !observation?.eligible.length;
+      Boolean(windowGrants.length) || !observation?.eligible.length;
     const unavailable = (observation?.ineligible ?? []).flatMap(
       ({ id, reason }) =>
         Object.hasOwn(observationEligibilityLabels, reason)
@@ -1373,9 +1519,9 @@ export function panel(root) {
         ...unavailable.map((text) => element("li", null, text)),
       );
     }
-    observationTarget.hidden = !observation?.grantedAgentId;
-    const observationStatus = observation?.grantedAgentId
-      ? `${observation.target ?? "授权窗口"} · ${clock.format(observation.expiresAt)} 到期 · 剩余 ${observation.remaining} 次`
+    observationTarget.hidden = !windowGrants.length;
+    const observationStatus = windowGrants.length
+      ? `${observation.target ?? "授权窗口"} · ${windowGrants.length} 位角色已授权`
       : "";
     if (observationTarget.textContent !== observationStatus)
       observationTarget.textContent = observationStatus;
@@ -1390,7 +1536,7 @@ export function panel(root) {
         room.nativeControl,
         room.browserControl,
       ].some((policy) => policy?.grantedAgentId) ||
-      Boolean(room.observation?.displays?.length);
+      Boolean(windowGrants.length || room.observation?.displays?.length);
     select(".grant-indicator").hidden = !hasGrant;
     toolsLauncher.setAttribute(
       "aria-label",

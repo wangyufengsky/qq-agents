@@ -193,6 +193,13 @@ test("screen bytes reach only the selected desktop turn and the next turn gets a
   });
 
   assert.deepEqual(host.archive.history(), before);
+  await command("screen-revoke", { roomEpoch, grantId });
+  const receipts = host.clientSnapshot().frameReceipts;
+  assert.deepEqual(
+    receipts.map(({ agentId, source, state }) => ({ agentId, source, state })),
+    [{ agentId: "agent-0", source: "manual", state: "framework-received" }],
+  );
+  assert.ok(!JSON.stringify(receipts).includes(jpeg));
   const { room: after } = await command("sync");
   assert(!JSON.stringify(after).includes(jpeg));
   for (const filename of ["memory.sqlite", "memory.sqlite-wal"]) {
@@ -602,4 +609,37 @@ test("push disconnect after native claim does not replay the unknown action", as
     }),
     { message: "DESKTOP_VISIT_UNAVAILABLE" },
   );
+});
+
+for (const status of ["minimized", "blocked", "unavailable", "permission"]) {
+  test(`manual capture ${status} rejects the image and applies target revocation`, async (t) => {
+    const { roomEpoch, client, command, result, run } = await setup(t);
+    const grantId = randomUUID();
+    await command("screen-grant", { roomEpoch, grantId, agentId: "agent-0" });
+    await run("agent-0", async (call) => {
+      const output = call();
+      const { requestId } = await waitForRequest(command);
+      const receipt = { client, roomEpoch, grantId, requestId };
+      assert.equal((await result({ ...receipt, status })).status, 200);
+      assert.equal((await output).isError, true);
+      assert.equal((await result({ ...receipt, data: jpeg })).ok, false);
+      const { room } = await command("sync");
+      assert.equal(
+        room.screenView.grants.length,
+        ["unavailable", "permission"].includes(status) ? 0 : 1,
+      );
+    });
+  });
+}
+
+test("screen grant replaced after model input cannot be used by that turn", async (t) => {
+  const { roomEpoch, command, run } = await setup(t);
+  const initial = { roomEpoch, grantId: randomUUID(), agentId: "agent-0" };
+  await command("screen-grant", initial);
+  await run("agent-0", async (call) => {
+    await command("screen-revoke", { roomEpoch, grantId: initial.grantId });
+    await command("screen-grant", { ...initial, grantId: randomUUID() });
+    assert.equal((await call()).isError, true);
+    assert.equal((await command("sync")).screenRequest, undefined);
+  });
 });

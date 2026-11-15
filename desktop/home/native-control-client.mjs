@@ -17,13 +17,15 @@ export class NativeControlClient {
   #latest;
   #cleanup;
   #verifyTarget;
+  #verifyGrant;
 
-  constructor(driver, { command, claim, result, verifyTarget }) {
+  constructor(driver, { command, claim, result, verifyTarget, verifyGrant }) {
     this.#driver = driver;
     this.#command = command;
     this.#claim = claim;
     this.#result = result;
     this.#verifyTarget = verifyTarget;
+    this.#verifyGrant = verifyGrant;
   }
 
   selectedWindow(agentId, roomEpoch) {
@@ -73,7 +75,14 @@ export class NativeControlClient {
     return this.#grant?.agentId === agentId ? this.#grant?.source : undefined;
   }
 
-  async grant({ roomEpoch, agentId, source, confirmed, visitId }) {
+  async grant({
+    roomEpoch,
+    agentId,
+    source,
+    confirmed,
+    visitId,
+    modeRevision,
+  }) {
     if (this.#grant) return "unavailable";
     const data = { roomEpoch, agentId, grantId: randomUUID() };
     const grant = { ...data, source, pending: true };
@@ -84,6 +93,7 @@ export class NativeControlClient {
         ...data,
         ...(confirmed && { confirmed: true }),
         ...(visitId && { visitId }),
+        ...(modeRevision !== undefined && { modeRevision }),
       });
       grant.pending = false;
       if (
@@ -168,11 +178,14 @@ export class NativeControlClient {
       this.#grant === grant &&
       !signal.aborted &&
       beforeExpiry(request.expiresAt);
-    const verify = () => this.#verifyTarget?.(request, signal);
+    const needsVerification = this.#verifyGrant || request.windowTaskId;
+    const verify = async () =>
+      (!this.#verifyGrant || (await this.#verifyGrant(grant, signal))) &&
+      (!request.windowTaskId || (await this.#verifyTarget?.(request, signal)));
     let claimed = false;
     const beforeDispatch = async () => {
       if (!isCurrent()) return false;
-      if (request.windowTaskId && (!(await verify()) || !isCurrent()))
+      if ((needsVerification && !(await verify())) || !isCurrent())
         return false;
       try {
         const receipt = await this.#claim(identity, isCurrent);
@@ -182,7 +195,7 @@ export class NativeControlClient {
           receipt?.accepted === true &&
           beforeExpiry(receipt.expiresAt) &&
           isCurrent() &&
-          (!request.windowTaskId || (await verify())) &&
+          (!needsVerification || (await verify())) &&
           beforeExpiry(receipt.expiresAt) &&
           isCurrent()
         );
@@ -203,9 +216,9 @@ export class NativeControlClient {
         };
         const { handle } = this.#scope;
         if (action.type === "observe") {
-          if ((!request.windowTaskId || (await verify())) && isCurrent())
+          if ((!needsVerification || (await verify())) && isCurrent())
             result = await handle.observe({ signal });
-          if (result && request.windowTaskId && !(await verify()))
+          if (result && needsVerification && !(await verify()))
             result = undefined;
         } else result = await handle.act(action, { signal, beforeDispatch });
       } catch {

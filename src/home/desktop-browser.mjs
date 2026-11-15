@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DesktopGrantLease } from "./desktop-grant-lease.mjs";
 import { publicUrl } from "../apps/urls.mjs";
 import { DESKTOP_BROWSER_CONTROL } from "../tools/names.mjs";
 import { DESKTOP_CONVERSATION } from "./desktop-decision.mjs";
@@ -50,6 +51,7 @@ function approvedOrigin(raw, scopeOnly = false) {
 export class DesktopBrowser {
   constructor(host, { driver } = {}) {
     this.host = host;
+    this.lease = new DesktopGrantLease(host, "DESKTOP_BROWSER_UNAVAILABLE");
     this.driver = driver ?? {
       async open(origin, signal) {
         const { createDesktopBrowserDriver } =
@@ -58,6 +60,7 @@ export class DesktopBrowser {
       },
     };
     this.cleanup = Promise.resolve();
+    this.draining = false;
   }
 
   eligible() {
@@ -75,6 +78,7 @@ export class DesktopBrowser {
     return (
       grant &&
       this.grant === grant &&
+      this.lease.valid(grant) &&
       this.host.connected() &&
       client?.id === grant.client &&
       live?.room.epoch === grant.roomEpoch &&
@@ -84,22 +88,31 @@ export class DesktopBrowser {
   }
 
   state() {
-    if (this.grant && !this.current(this.grant)) this.clear();
+    if (this.grant && !this.current(this.grant)) {
+      this.lease.expired(this.grant);
+      this.clear();
+    }
     return {
       eligible: this.eligible().map(({ id }) => id),
       grantedAgentId: this.grant?.agentId ?? null,
+      ...(this.grant?.expiresAt && { expiresAt: this.grant.expiresAt }),
     };
   }
 
   closeSession(grant) {
+    const operation = grant?.operation;
     if (grant) grant.operation = undefined;
     const binding = grant?.binding;
     if (!binding) return this.cleanup;
     grant.binding = undefined;
     binding.controller.abort(unavailable());
-    this.cleanup = binding.ready
-      .catch(() => null)
-      .then((session) => session?.close());
+    this.draining = true;
+    this.cleanup = Promise.all([
+      binding.ready.catch(() => null).then((session) => session?.close()),
+      operation?.finished,
+    ]).then(() => {
+      this.draining = false;
+    });
     // Synchronous host reset and room refresh can initiate process shutdown.
     // Keep the original failure on the barrier so a new browser cannot overlap it.
     void this.cleanup.catch(() => {});
@@ -108,6 +121,7 @@ export class DesktopBrowser {
 
   clear() {
     const grant = this.grant;
+    this.lease.clear(grant);
     this.grant = null;
     return this.closeSession(grant);
   }
@@ -130,8 +144,21 @@ export class DesktopBrowser {
     if (!visit || !this.eligible().some(({ id }) => id === data.agentId))
       throw denied();
     const origin = approvedOrigin(data.origin, true);
+    if (this.grant?.grantId === data.grantId && this.current(this.grant)) {
+      if (this.grant.agentId !== data.agentId || this.grant.origin !== origin)
+        throw unavailable();
+      return;
+    }
+    const grant = { ...data, origin, visit, client: client.id };
+    this.lease.attach(grant, () => {
+      if (this.grant === grant) {
+        this.lease.expired(grant);
+        this.clear();
+        this.host.notify();
+      }
+    });
     this.clear();
-    this.grant = { ...data, origin, visit, client: client.id };
+    this.grant = grant;
   }
 
   finish(ctx) {
@@ -159,6 +186,8 @@ export class DesktopBrowser {
           ctx.conversation === DESKTOP_CONVERSATION &&
           ctx.inputEpoch === epoch &&
           grant?.agentId === agent.id &&
+          (!ctx.desktopGrantBindings ||
+            ctx.desktopGrantBindings.get(DESKTOP_BROWSER_CONTROL) === grant) &&
           this.current(grant)
         );
       } catch {
@@ -182,7 +211,12 @@ export class DesktopBrowser {
     }
 
     let binding = grant.binding;
-    const operation = {};
+    let finishOperation;
+    const operation = {
+      finished: new Promise((resolve) => {
+        finishOperation = resolve;
+      }),
+    };
     grant.operation = operation;
     try {
       if (!binding) {
@@ -224,6 +258,7 @@ export class DesktopBrowser {
       binding.observedEpoch = epoch;
       ctx.desktopPrivateObservation = true;
       ctx.desktopBrowserObserved = true;
+      ctx.recordDesktopRestrictedGrant?.(DESKTOP_BROWSER_CONTROL, grant, this);
       const result = {
         ...observation,
         source: "untrusted-public-web",
@@ -244,6 +279,7 @@ export class DesktopBrowser {
       if (!current()) throw unavailable();
       throw error;
     } finally {
+      finishOperation();
       if (grant.operation === operation) grant.operation = undefined;
     }
   }

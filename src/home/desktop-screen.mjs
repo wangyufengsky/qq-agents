@@ -19,7 +19,7 @@ const resultSchema = localRevokeSchema
     requestId: uuid,
     data: z.string().min(4).max(maxEncoded).optional(),
     status: z
-      .enum(["duplicate", "minimized", "unavailable", "permission"])
+      .enum(["duplicate", "minimized", "blocked", "unavailable", "permission"])
       .optional(),
   })
   .strict()
@@ -42,18 +42,25 @@ export class DesktopScreen extends DesktopLocalGrant {
 
   state() {
     for (const grant of this.grants.values())
-      if (!this.current(grant)) this.clearGrant(grant);
+      if (!this.current(grant)) {
+        this.lease.expired(grant);
+        this.clearGrant(grant);
+      }
     return {
       eligible: this.eligible().map(({ id }) => id),
       grantedAgentId: this.grants.keys().next().value ?? null,
-      grants: [...this.grants.values()].map(({ agentId, grantId }) => ({
-        agentId,
-        grantId,
-      })),
+      grants: [...this.grants.values()].map(
+        ({ agentId, grantId, expiresAt }) => ({
+          agentId,
+          grantId,
+          ...(expiresAt && { expiresAt }),
+        }),
+      ),
     };
   }
 
   clearGrant(grant) {
+    this.lease.clear(grant);
     this.grants.delete(grant.agentId);
     this.cancel(grant);
   }
@@ -70,15 +77,21 @@ export class DesktopScreen extends DesktopLocalGrant {
     if (existing && existing.agentId !== value.agentId)
       throw Error(this.unavailable);
     const old = this.grantFor(value.agentId);
-    if (old?.grantId === value.grantId) return;
-    if (old) this.clearGrant(old);
-    this.grants.set(value.agentId, {
-      ...value,
-      visit: live.visits.get(value.agentId),
+    if (old?.grantId === value.grantId && this.current(old)) return;
+    const grant = { ...value, visit: live.visits.get(value.agentId) };
+    this.lease.attach(grant, () => {
+      if (this.grants.get(grant.agentId) === grant) {
+        this.lease.expired(grant);
+        this.clearGrant(grant);
+        this.host.notify();
+      }
     });
+    if (old) this.clearGrant(old);
+    this.grants.set(value.agentId, grant);
   }
 
   clear() {
+    for (const grant of this.grants.values()) this.lease.clear(grant);
     this.grants.clear();
     this.pending?.reject(Error("DESKTOP_SCREEN_UNAVAILABLE"));
     this.pending = null;
@@ -126,7 +139,7 @@ export class DesktopScreen extends DesktopLocalGrant {
     const { data, status } = parsed.data;
     const pending = this.lookup(parsed.data);
     const observe = pending.request.mode === "observation";
-    if ((observe && !pending.claimed) || (status && !observe))
+    if ((observe && !pending.claimed) || (!observe && status === "duplicate"))
       throw Error("DESKTOP_SCREEN_UNAVAILABLE");
     if (data) {
       const bytes = Buffer.from(data, "base64");
@@ -144,6 +157,14 @@ export class DesktopScreen extends DesktopLocalGrant {
       }
     }
     pending.received = true;
+    if (!observe && status) {
+      if (["unavailable", "permission"].includes(status)) {
+        if (this.host.mode !== null) this.host.modeRevision++;
+        this.clearGrant(pending.grant);
+      }
+      pending.reject(Error("DESKTOP_SCREEN_UNAVAILABLE"));
+      return { accepted: true };
+    }
     if (data) pending.resolve({ status: "frame", data });
     else if (status) pending.resolve({ status });
     else pending.reject(Error("DESKTOP_SCREEN_CAPTURE_FAILED"));
@@ -163,6 +184,7 @@ export class DesktopScreen extends DesktopLocalGrant {
     if (!current()) throw Error("DESKTOP_SCREEN_UNAVAILABLE");
     // The native transcript can contain the pixels even if its receipt is lost.
     ctx.desktopScreenObserved = true;
+    ctx.recordDesktopRestrictedGrant?.(DESKTOP_SCREEN_VIEW, grant, this);
     if (ctx.desktopWindowTask) ctx.desktopWindowTaskUsed = true;
     const result = {
       [mediaLease]: current,
@@ -175,6 +197,7 @@ export class DesktopScreen extends DesktopLocalGrant {
       ],
     };
     runtime.stageToolOutput(ctx, result, [{ value: result, current }]);
+    ctx.onDesktopFramePrepared?.();
     return result;
   }
 

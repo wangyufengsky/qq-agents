@@ -296,6 +296,12 @@ test("revoking after the model decides prevents automatic observation output", a
   await active.done;
   assert.deepEqual(review("status").replies, []);
   assert.deepEqual(review("list").records, []);
+  const receipts = host.clientSnapshot().frameReceipts;
+  assert.deepEqual(
+    receipts.map(({ agentId, source, state }) => ({ agentId, source, state })),
+    [{ agentId: "agent-0", source: "observation", state: "model-submitted" }],
+  );
+  assert.ok(!JSON.stringify(receipts).includes(jpeg));
 });
 
 test("explicit role selection is required for on-request observation", async (t) => {
@@ -783,4 +789,283 @@ test("new display access advances an empty idle slot while honoring rest, declin
     { agentId: "agent-0", state: "expired", opportunity: "declined" },
     { agentId: "agent-1", state: "expired", opportunity: "waiting" },
   ]);
+});
+
+test("window observation batch binds eligible residents to one confirmed target atomically", (t) => {
+  const { host, runtime, command, sync } = setup(t);
+  runtime.config.desktopHome.activityRoles = ["agent-0", "agent-1"];
+  const roomEpoch = sync().room.roomEpoch;
+  const targetId = randomUUID();
+  const make = (agentId) => ({
+    roomEpoch,
+    agentId,
+    grantId: randomUUID(),
+    visitId: host.body.visitId(host.live.visits.get(agentId)),
+  });
+  const first = make("agent-0");
+  const second = make("agent-1");
+  const batch = (id, grants) =>
+    command("window-observation-grant-batch", { targetId: id, grants });
+  assert.throws(
+    () => batch(targetId, [first, { ...second, visitId: randomUUID() }]),
+    /DESKTOP_SCREEN_UNAVAILABLE/,
+  );
+  assert.equal(sync().room.observation.windowGrants.length, 0);
+  let state = batch(targetId, [first, second]).room.observation;
+  assert.deepEqual(
+    state.windowGrants.map((grant) => grant.targetId),
+    [targetId, targetId],
+  );
+  for (const { grantId } of [first, second])
+    command("observation-state", { roomEpoch, grantId, state: "ready" });
+  assert(host.observation.forActor("agent-0"));
+  assert(host.observation.forActor("agent-1"));
+  command("observation-state", {
+    roomEpoch,
+    grantId: first.grantId,
+    state: "minimized",
+  });
+  assert.equal(host.observation.forActor("agent-0"), undefined);
+  assert.equal(host.observation.forActor("agent-1"), undefined);
+  for (const { grantId } of [first, second])
+    command("observation-state", { roomEpoch, grantId, state: "ready" });
+  assert(host.observation.forActor("agent-0"));
+  assert(host.observation.forActor("agent-1"));
+  command("observation-state", {
+    roomEpoch,
+    grantId: second.grantId,
+    state: "unavailable",
+  });
+  assert.equal(sync().room.observation.windowGrants.length, 0);
+  const replacement = make("agent-0");
+  const nextTarget = randomUUID();
+  state = batch(nextTarget, [replacement]).room.observation;
+  assert.deepEqual(
+    state.windowGrants.map(({ grantId }) => grantId),
+    [replacement.grantId],
+  );
+  assert.throws(
+    () => batch(targetId, [make("agent-1")]),
+    /DESKTOP_SCREEN_UNAVAILABLE/,
+  );
+  command("observation-state", {
+    roomEpoch,
+    grantId: replacement.grantId,
+    state: "unavailable",
+  });
+  assert.equal(sync().room.observation.windowGrants.length, 0);
+});
+
+test("negotiated mode fences stale grants and downgrade retains only read access", (t) => {
+  const { host, runtime, command, sync } = setup(t);
+  runtime.config.desktopHome.nativeControl.enabled = true;
+  runtime.config.desktopHome.browserControl.enabled = true;
+  const roomEpoch = sync().room.roomEpoch;
+  let room = command("mode-set", "work").room;
+  const oldRevision = room.companionRevision;
+  const screen = {
+    roomEpoch,
+    agentId: "agent-0",
+    grantId: randomUUID(),
+    modeRevision: oldRevision,
+  };
+  const observe = { ...screen, grantId: randomUUID() };
+  command("screen-grant", screen);
+  command("observation-grant", observe);
+  command("native-grant", { ...screen, grantId: randomUUID() });
+  assert.equal(host.native.grant.agentId, "agent-0");
+  room = command("mode-set", "presence").room;
+  assert.equal(host.native.grant, null);
+  assert.equal(room.screenView.grants[0].grantId, screen.grantId);
+  assert.equal(room.screenView.grants[0].agentId, "agent-0");
+  assert.equal(room.observation.grantId, observe.grantId);
+  let readTask;
+  host.startWindowTask = (input) => {
+    readTask = input;
+  };
+  command("window-task", {
+    ...screen,
+    modeRevision: room.companionRevision,
+    scope: "screen",
+    text: "read",
+  });
+  assert.equal(readTask.grantId, screen.grantId);
+  assert.throws(
+    () =>
+      command("window-task", {
+        ...screen,
+        modeRevision: room.companionRevision,
+        scope: "native",
+        text: "operate",
+      }),
+    /DESKTOP_NATIVE_UNAVAILABLE/,
+  );
+  assert.equal(room.observation.grantedAgentId, "agent-0");
+  assert.throws(
+    () => command("screen-grant", { ...screen, grantId: randomUUID() }),
+    /DESKTOP_SCREEN_UNAVAILABLE/,
+  );
+  assert.throws(
+    () =>
+      command("native-grant", {
+        ...screen,
+        grantId: randomUUID(),
+        modeRevision: room.companionRevision,
+      }),
+    /DESKTOP_NATIVE_UNAVAILABLE/,
+  );
+  assert.throws(
+    () =>
+      command("browser-grant", {
+        ...screen,
+        grantId: randomUUID(),
+        origin: "https://example.com",
+        modeRevision: room.companionRevision,
+      }),
+    /DESKTOP_NATIVE_UNAVAILABLE/,
+  );
+  const work = command("mode-set", "work").room;
+  command("browser-grant", {
+    ...screen,
+    grantId: randomUUID(),
+    origin: "https://example.com",
+    modeRevision: work.companionRevision,
+  });
+  assert.equal(host.browser.grant.agentId, "agent-0");
+  room = command("mode-set", "presence").room;
+  assert.equal(host.browser.grant, null);
+  assert.equal(room.screenView.grants[0].grantId, screen.grantId);
+  room = command("mode-set", "privacy").room;
+  assert.equal(room.screenView.grants.length, 0);
+  assert.equal(room.observation.grantedAgentId, null);
+  assert.throws(
+    () =>
+      command("screen-grant", {
+        ...screen,
+        modeRevision: room.companionRevision,
+      }),
+    /DESKTOP_SCREEN_UNAVAILABLE/,
+  );
+  assert.equal(host.screen.grants.size, 0);
+});
+
+test("QQ interruption discards the old frame while the original observation grant remains usable", async (t) => {
+  const { host, grant, sync, payload, target, runs, time } = setup(t);
+  grant();
+  time(2 * minute);
+  const old = sync().screenRequest;
+  host.screen.claim(payload(old));
+  const active = host.live.active;
+  host.interrupt("agent-0");
+  assert.throws(
+    () => host.screen.receive({ ...payload(old), data: jpeg }),
+    /DESKTOP_SCREEN_UNAVAILABLE/,
+  );
+  await active.done;
+  assert.equal(runs.length, 0);
+  target("ready");
+  assert(host.observation.forActor("agent-0"));
+  time(2 * minute);
+  const next = sync().screenRequest;
+  assert(next);
+  assert.notEqual(next.requestId, old.requestId);
+  host.screen.claim(payload(next));
+  const nextTurn = host.live.active;
+  host.screen.receive({ ...payload(next), data: jpeg });
+  await nextTurn.done;
+  assert.equal(runs.length, 1);
+});
+
+test("negotiated manual grants expire while idle and cannot reuse IDs", (t) => {
+  const { host, runtime, command, sync, time } = setup(t);
+  runtime.config.desktopHome.nativeControl.enabled = true;
+  runtime.config.desktopHome.browserControl.enabled = true;
+  const roomEpoch = sync().room.roomEpoch;
+  let room = command("mode-set", "work").room;
+  const revision = room.companionRevision;
+  const screen = {
+    roomEpoch,
+    agentId: "agent-0",
+    grantId: randomUUID(),
+    modeRevision: revision,
+  };
+  const native = { ...screen, grantId: randomUUID() };
+  room = command("screen-grant", screen).room;
+  assert.equal(
+    room.screenView.grants[0].expiresAt,
+    runtime.now() + 15 * minute,
+  );
+  room = command("native-grant", native).room;
+  assert.equal(room.nativeControl.expiresAt, runtime.now() + 15 * minute);
+  const pending = {
+    claimed: true,
+    received: false,
+    reject() {},
+    current: () => false,
+    request: {
+      roomEpoch,
+      grantId: native.grantId,
+      requestId: randomUUID(),
+      expiresAt: Date.now() + 10_000,
+    },
+  };
+  host.native.pending = pending;
+  let captureCancelled = false;
+  host.screen.pending = {
+    grant: host.screen.grantFor("agent-0"),
+    current: () => false,
+    reject: () => {
+      captureCancelled = true;
+    },
+  };
+  time(15 * minute, { verify: false });
+  room = sync().room;
+  assert.equal(captureCancelled, true);
+  host.screen.pending = null;
+  assert.equal(room.screenView.grants.length, 0);
+  assert.equal(room.nativeControl.grantedAgentId, null);
+  assert.equal(room.nativeControl.handoff, "pending");
+  assert.throws(
+    () =>
+      command("screen-grant", {
+        ...screen,
+        modeRevision: room.companionRevision,
+      }),
+    /DESKTOP_SCREEN_UNAVAILABLE/,
+  );
+  host.native.receive({
+    client: host.client.id,
+    roomEpoch,
+    grantId: native.grantId,
+    requestId: pending.request.requestId,
+    result: { ok: true, delivery: "delivered_verified" },
+  });
+  assert.equal(host.native.state().handoff, undefined);
+  assert.throws(
+    () =>
+      command("native-grant", {
+        ...native,
+        modeRevision: room.companionRevision,
+      }),
+    /DESKTOP_NATIVE_UNAVAILABLE/,
+  );
+  const browser = {
+    ...screen,
+    grantId: randomUUID(),
+    origin: "https://example.com",
+    modeRevision: room.companionRevision,
+  };
+  room = command("browser-grant", browser).room;
+  assert.equal(room.browserControl.expiresAt, runtime.now() + 15 * minute);
+  time(15 * minute, { verify: false });
+  room = sync().room;
+  assert.equal(room.browserControl.grantedAgentId, null);
+  assert.throws(
+    () =>
+      command("browser-grant", {
+        ...browser,
+        modeRevision: room.companionRevision,
+      }),
+    /DESKTOP_BROWSER_UNAVAILABLE/,
+  );
 });

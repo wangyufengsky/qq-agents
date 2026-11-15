@@ -74,7 +74,7 @@ const observationPermissionHelp =
   "请在系统设置中恢复权限。macOS 需按系统提示允许桌面小窝录制屏幕，并允许 agent-desktop 使用辅助功能。";
 const observationEndLabels = {
   "target-unavailable": "观察窗口已失效。请在聊天页选择其他窗口并重新授权。",
-  "target-minimized": "观察窗口已最小化。恢复窗口后可继续观察。",
+  "target-minimized": "窗口最小化、被遮挡或覆盖范围暂无法核验，取帧已暂停。",
   permission: `观察权限已失效。${observationPermissionHelp}然后重新授权观察。`,
   unsupported: "当前后端不支持观察所需的图片输入。请在管理台检查角色的后端。",
 };

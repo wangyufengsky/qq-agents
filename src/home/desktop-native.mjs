@@ -101,6 +101,7 @@ export class DesktopNative extends DesktopLocalGrant {
       super.change(true, value);
       return;
     }
+    this.state();
     if (this.grant) {
       if (
         this.grant.grantId === value.grantId &&
@@ -270,7 +271,10 @@ export class DesktopNative extends DesktopLocalGrant {
     try {
       const result = await pending.promise;
       if (!current()) throw Error("DESKTOP_NATIVE_RESULT_UNKNOWN");
-      if (action.type === "observe") ctx.desktopPrivateObservation = true;
+      if (action.type === "observe") {
+        ctx.desktopPrivateObservation = true;
+        ctx.recordDesktopRestrictedGrant?.(DESKTOP_NATIVE_CONTROL, grant, this);
+      }
       if (
         ctx.desktopWindowTask &&
         action.type !== "observe" &&

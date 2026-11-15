@@ -83,3 +83,67 @@ export async function readObservationFrame(probe, read, current) {
   if (frame?.permission) return { status: "permission" };
   return frame?.data ? { data: frame.data } : { status: "unavailable" };
 }
+
+// A platform adapter must supply a complete, front-to-back snapshot. Unknown
+// bounds or classification cannot establish that sensitive pixels are absent.
+export function verifyCaptureCoverage(
+  snapshot,
+  { targetId, displayBounds } = {},
+) {
+  const validBounds = (bounds) =>
+    bounds &&
+    [bounds.x, bounds.y, bounds.width, bounds.height].every(Number.isFinite) &&
+    bounds.width > 0 &&
+    bounds.height > 0;
+  const intersects = (a, b) =>
+    a.x < b.x + b.width &&
+    b.x < a.x + a.width &&
+    a.y < b.y + b.height &&
+    b.y < a.y + a.height;
+  if (snapshot?.complete !== true || !Array.isArray(snapshot.windows))
+    return false;
+  const windows = snapshot.windows;
+  if (
+    windows.some(
+      (window) =>
+        !window ||
+        typeof window.id !== "string" ||
+        !window.id ||
+        !validBounds(window.bounds) ||
+        typeof window.sensitive !== "boolean",
+    )
+  )
+    return false;
+  if (new Set(windows.map(({ id }) => id)).size !== windows.length)
+    return false;
+  const contained = (inner, outer) =>
+    validBounds(outer) &&
+    inner.x >= outer.x &&
+    inner.y >= outer.y &&
+    inner.x + inner.width <= outer.x + outer.width &&
+    inner.y + inner.height <= outer.y + outer.height;
+  if (targetId) {
+    const index = windows.findIndex(({ id }) => id === targetId);
+    if (index < 0 || snapshot.foregroundId !== targetId) return false;
+    const target = windows[index];
+    return (
+      !target.sensitive &&
+      !windows
+        .slice(0, index)
+        .some(
+          (window) =>
+            intersects(window.bounds, target.bounds) &&
+            (window.sensitive ||
+              !validBounds(window.dockSafeBounds) ||
+              !contained(window.dockSafeBounds, window.bounds) ||
+              !contained(target.bounds, window.dockSafeBounds)),
+        )
+    );
+  }
+  return (
+    validBounds(displayBounds) &&
+    !windows.some(
+      (window) => window.sensitive && intersects(window.bounds, displayBounds),
+    )
+  );
+}

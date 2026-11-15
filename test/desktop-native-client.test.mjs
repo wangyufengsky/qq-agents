@@ -7,6 +7,7 @@ function fixture({
   acceptClaim = true,
   claimExpiresAt = Date.now() + 60_000,
   verifyTarget,
+  verifyGrant,
   resultGate,
 } = {}) {
   const roomEpoch = "room";
@@ -54,6 +55,7 @@ function fixture({
     },
     {
       verifyTarget,
+      verifyGrant,
       command(action, data) {
         commands.push({ action, data });
         return action === "native-grant" ? room : undefined;
@@ -326,4 +328,23 @@ test("a later same-turn request runs in the existing scope while an earlier resu
   sync("turn", second);
   await setImmediate();
   assert.equal(scopes[0].mutations.length, 1);
+});
+
+test("a selected window must still be visible before dispatch after a positive claim", async () => {
+  let checks = 0;
+  const { claims, grant, roomEpoch, scopes, sync } = fixture({
+    verifyGrant: async () => ++checks === 1,
+  });
+  const grantId = await grant();
+  sync("turn", {
+    roomEpoch,
+    grantId,
+    requestId: "changed-visibility",
+    turnId: "turn",
+    action: { type: "click", ref: "button" },
+  });
+  await setImmediate();
+  assert.equal(checks, 2);
+  assert.equal(claims.length, 1);
+  assert.deepEqual(scopes[0].mutations, []);
 });
