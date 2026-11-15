@@ -200,8 +200,7 @@ h2 {
 }
 .guest-list {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 100px), 1fr));
-  align-items: start;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 84px), 1fr));
   gap: 12px 6px;
   padding: 14px 14px 17px 19px;
   background: url("../../public/home-preview/assets/room-board.webp") center /
@@ -216,7 +215,6 @@ h2 {
   justify-items: center;
   gap: 6px;
   min-width: 0;
-  height: 100%;
   text-align: center;
 }
 .portrait {
@@ -261,9 +259,50 @@ h2 {
 .guest[data-state="here"] .guest-state {
   color: #4b5c35;
 }
-.guest-detail,
-.guest-recent {
-  line-height: 1.4;
+.guest-activities {
+  margin: 14px 4px 0;
+}
+.guest-activities h3 {
+  margin: 0 0 7px;
+  font: 17px var(--hand);
+}
+.guest-activity-list {
+  display: grid;
+  gap: 6px;
+}
+.guest-activity {
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--cream);
+  overflow-wrap: anywhere;
+}
+.guest-activity-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 3px 8px;
+}
+.guest-activity-header h4 {
+  margin: 0;
+  font-size: 13px;
+}
+.guest-activity small {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.guest-activity-header .quiet {
+  min-height: 26px;
+}
+.guest-activity .resident-interactions {
+  margin-top: 4px;
+}
+.guest-activity .guest-controls {
+  justify-content: start;
 }
 .guest-controls {
   display: flex;
@@ -341,7 +380,24 @@ h2 {
   padding: 17px 16px 12px;
   overflow: auto;
   font-size: 13px;
+  line-height: 1.5;
   overflow-wrap: anywhere;
+}
+.review-guide {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 9px 10px;
+  border-inline-start: 2px solid var(--line);
+  background: var(--cream);
+}
+.review-guide dt {
+  font-weight: 600;
+}
+.review-guide dd {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
 }
 #observation-review h3,
 #observation-review p {

@@ -542,7 +542,7 @@ function bindObservationReview(section, clock) {
       updateActions();
       current.notice = result
         ? {
-            publish: "回复已发布。",
+            publish: "回复已发布到观察页。",
             save: "摘要已保存。",
             discard: "候选已丢弃。",
           }[action]
@@ -626,6 +626,8 @@ function panel() {
   );
   const select = (selector) => root.querySelector(selector);
   const guestList = select(".guest-list");
+  const guestActivities = select(".guest-activities");
+  const guestActivityList = select(".guest-activity-list");
   const bodyAnnouncement = select(".body-announcement");
   const observationEnded = root.querySelectorAll(".observation-ended");
   const observationTab = select('[data-tab="observation"]');
@@ -1448,7 +1450,7 @@ function panel() {
       const detail = element("small", "guest-detail");
       const recent = element("small", "guest-recent");
       const name = element("strong", null, role.name);
-      info.append(name, state, detail, recent);
+      info.append(name, state);
       const action = button("secondary");
       action.addEventListener("click", () => {
         if (room.connectionLost) return;
@@ -1468,13 +1470,24 @@ function panel() {
       seat.addEventListener("click", () =>
         window.nest.act("body-seat", role.id),
       );
-      controls.append(decline, stop, seat, action);
+      controls.append(stop, seat);
       const interactions = bindResidentInteractions(role.id);
       const portrait = avatar(role);
-      node.append(portrait, info, controls, interactions.menu);
+      const visitControls = element("div", "guest-controls");
+      visitControls.append(action, decline);
+      node.append(portrait, info, visitControls);
       guestList.append(node);
+
+      const activityCard = element("article", "guest-activity");
+      const activityHeader = element("div", "guest-activity-header");
+      const activityName = element("h4", null, role.name);
+      activityHeader.append(activityName, controls);
+      activityCard.append(activityHeader, detail, recent, interactions.menu);
+      guestActivityList.append(activityCard);
       guests.set(role.id, {
         node,
+        activityCard,
+        activityName,
         name,
         portrait,
         state,
@@ -1489,6 +1502,8 @@ function panel() {
     }
     const {
       node,
+      activityCard,
+      activityName,
       name,
       portrait,
       state,
@@ -1501,7 +1516,11 @@ function panel() {
       interactions,
     } = guests.get(role.id);
     node.dataset.state = role.available ? role.state : "unavailable";
-    if (name.textContent !== role.name) name.textContent = role.name;
+    if (name.textContent !== role.name) {
+      name.textContent = activityName.textContent = role.name;
+      stop.setAttribute("aria-label", `停止动作 · ${role.name}`);
+      seat.setAttribute("aria-label", `回到座位 · ${role.name}`);
+    }
     portrait.className = `portrait ${role.color}`;
     const sprite = portrait.querySelector("img");
     const src = assetPath(role.art ?? role.id);
@@ -1575,6 +1594,8 @@ function panel() {
         : "";
     recent.hidden = !history;
     if (recent.textContent !== history) recent.textContent = history;
+    activityCard.hidden =
+      detail.hidden && recent.hidden && stop.hidden && interactions.menu.hidden;
     action.hidden = !role.available || room.knock?.actor === role.id;
     action.setAttribute("aria-disabled", String(Boolean(room.connectionLost)));
     if (action.textContent !== text) action.textContent = text;
@@ -1794,9 +1815,10 @@ function panel() {
           `${role.name}敲门了。${room.knock.text}`;
       }
     }
-    for (const [id, { node }] of guests) {
+    for (const [id, { node, activityCard }] of guests) {
       if (!room.roles.some((role) => role.id === id)) {
         node.remove();
+        activityCard.remove();
         guests.delete(id);
       }
     }
@@ -1817,6 +1839,9 @@ function panel() {
         );
       }
     }
+    guestActivities.hidden = !guestActivityList.querySelector(
+      ":scope > :not([hidden])",
+    );
     if (feedback.length) bodyAnnouncement.textContent = feedback.join("。");
     const notice = select(".room-notice");
     if (notice.textContent !== room.notice) notice.textContent = room.notice;

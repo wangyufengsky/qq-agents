@@ -84,6 +84,14 @@
           <div class="guest-list"></div>
           <p class="room-notice" role="status"></p>
           <p class="observation-ended" role="status" hidden></p>
+          <section
+            class="guest-activities"
+            aria-labelledby="guest-activities-title"
+            hidden
+          >
+            <h3 id="guest-activities-title">桌宠活动</h3>
+            <div class="guest-activity-list"></div>
+          </section>
           <button type="button" class="secondary body-zones" hidden>
             设置桌宠禁停区
           </button>
@@ -169,6 +177,21 @@
         </section>
         <section id="observation-review" aria-label="观察审核" hidden>
           <h2>观察审核</h2>
+          <p>角色看过获准的窗口或屏幕后，可能留下回复或摘要。</p>
+          <dl class="review-guide">
+            <div>
+              <dt>发布到观察页</dt>
+              <dd id="review-publish-help">
+                仅在本页显示角色的回复。小窝聊天和 QQ 都收不到这条消息。
+              </dd>
+            </div>
+            <div>
+              <dt>保存观察摘要</dt>
+              <dd id="review-save-help">
+                将角色对画面的文字记录存入下方，可查看或删除。
+              </dd>
+            </div>
+          </dl>
           <p class="review-scope"></p>
           <p class="observation-ended" role="status" hidden></p>
           <p class="review-status" role="status" hidden></p>
@@ -177,15 +200,25 @@
             <div class="review-response" hidden>
               <h3>回复候选</h3>
               <p class="review-text"></p>
-              <button type="button" class="primary" data-review="publish">
-                发布回复
+              <button
+                type="button"
+                class="primary"
+                data-review="publish"
+                aria-describedby="review-publish-help"
+              >
+                发布到观察页
               </button>
             </div>
             <div class="review-summary" hidden>
               <h3>摘要候选</h3>
               <p class="review-text"></p>
-              <button type="button" class="secondary" data-review="save">
-                保存摘要
+              <button
+                type="button"
+                class="secondary"
+                data-review="save"
+                aria-describedby="review-save-help"
+              >
+                保存观察摘要
               </button>
             </div>
             <button type="button" class="secondary" data-review="discard">
