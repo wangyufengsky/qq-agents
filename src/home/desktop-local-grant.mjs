@@ -92,6 +92,8 @@ export class DesktopLocalGrant {
           ctx.inputEpoch === epoch &&
           ctx.runtimeKind === "desktop" &&
           grant?.agentId === agent.id &&
+          (!ctx.desktopGrantBindings ||
+            ctx.desktopGrantBindings.get(this.tool) === grant) &&
           (!ctx.desktopWindowTask ||
             (ctx.desktopWindowTaskReady &&
               ctx.desktopWindowTask.grantId === grant.grantId &&

@@ -123,6 +123,13 @@ export function panel(root) {
   let displayedApplications;
   let changingCompanion = false;
 
+  function windowObservationGrants(policy) {
+    if (policy?.windowGrants?.length) return policy.windowGrants;
+    return policy?.grantedAgentId
+      ? [{ ...policy, agentId: policy.grantedAgentId }]
+      : [];
+  }
+
   function updateCompanion() {
     const preference = room?.companion;
     companionOptions.hidden =
@@ -141,7 +148,8 @@ export function panel(root) {
       room.nativeControl?.grantedAgentId || room.browserControl?.grantedAgentId;
     const viewing =
       room.screenView?.grants?.length ||
-      room.observation?.windowGrants?.length ||
+      room.screenView?.grantedAgentId ||
+      windowObservationGrants(room.observation).length ||
       room.observation?.displays?.length;
     const frameReceipts = room.frameReceipts ?? [];
     const renderedFrames = JSON.stringify(frameReceipts);
@@ -682,10 +690,21 @@ export function panel(root) {
     let lastAgent;
     function refresh() {
       const policy = room?.[key];
-      const agent = room?.roles.find(({ id }) => id === policy?.grantedAgentId);
-      const canAuthorize = Boolean(agent || policy?.eligible.length);
-      if (lastAgent !== agent?.id) {
-        lastAgent = agent?.id;
+      const selected =
+        key === "observation" ? windowObservationGrants(policy) : [];
+      const agentId = selected.length
+        ? selected[0].agentId
+        : policy?.grantedAgentId;
+      const agent = room?.roles.find(({ id }) => id === agentId);
+      const hasAuthorization =
+        key === "observation" ? selected.length > 0 : Boolean(agent);
+      const canAuthorize = Boolean(hasAuthorization || policy?.eligible.length);
+      const grantIdentity =
+        key === "observation"
+          ? selected.map(({ grantId, agentId }) => grantId ?? agentId).join(",")
+          : agent?.id;
+      if (lastAgent !== grantIdentity) {
+        lastAgent = grantIdentity;
         notice.hidden = true;
       }
       section.hidden =
@@ -694,8 +713,12 @@ export function panel(root) {
         (!canAuthorize && !policy?.ineligible?.length);
       button.hidden = !canAuthorize;
       button.disabled = choosing;
-      button.textContent = agent ? labels.revoke : labels.grant;
-      button.title = agent ? `当前授权给${agent.name}` : labels.help;
+      button.textContent = hasAuthorization ? labels.revoke : labels.grant;
+      button.title = hasAuthorization
+        ? agent
+          ? `当前授权给${agent.name}`
+          : "当前已有授权"
+        : labels.help;
       if (key === "nativeControl") {
         const holder = section.querySelector(".native-holder");
         holder.hidden = !agent && !policy?.handoff;
@@ -1116,17 +1139,20 @@ export function panel(root) {
     )
       details.push(`至 ${clock.format(body.until)}`);
     const observation = room.observation;
+    const observationGrant = windowObservationGrants(observation).find(
+      ({ agentId }) => agentId === role.id,
+    );
     if (
       !room.connectionLost &&
       here &&
       bodyState === "observing" &&
-      observation?.grantedAgentId === role.id
+      observationGrant
     ) {
       details.push(observation.target ?? "授权窗口");
-      if (Number.isFinite(observation.expiresAt))
-        details.push(`许可至 ${clock.format(observation.expiresAt)}`);
-      if (Number.isInteger(observation.remaining))
-        details.push(`剩余 ${observation.remaining} 次`);
+      if (Number.isFinite(observationGrant.expiresAt))
+        details.push(`许可至 ${clock.format(observationGrant.expiresAt)}`);
+      if (Number.isInteger(observationGrant.remaining))
+        details.push(`剩余 ${observationGrant.remaining} 次`);
     }
     const description = details.filter(Boolean).join(" · ");
     detail.hidden = !description;
@@ -1474,8 +1500,9 @@ export function panel(root) {
     updateCompanion();
     updateScreenView();
     updateObservation();
+    const windowGrants = windowObservationGrants(observation);
     observationRetention.hidden =
-      Boolean(observation?.grantedAgentId) || !observation?.eligible.length;
+      Boolean(windowGrants.length) || !observation?.eligible.length;
     const unavailable = (observation?.ineligible ?? []).flatMap(
       ({ id, reason }) =>
         Object.hasOwn(observationEligibilityLabels, reason)
@@ -1492,9 +1519,9 @@ export function panel(root) {
         ...unavailable.map((text) => element("li", null, text)),
       );
     }
-    observationTarget.hidden = !observation?.grantedAgentId;
-    const observationStatus = observation?.grantedAgentId
-      ? `${observation.target ?? "授权窗口"} · ${observation.windowGrants?.length ?? 1} 位角色已授权`
+    observationTarget.hidden = !windowGrants.length;
+    const observationStatus = windowGrants.length
+      ? `${observation.target ?? "授权窗口"} · ${windowGrants.length} 位角色已授权`
       : "";
     if (observationTarget.textContent !== observationStatus)
       observationTarget.textContent = observationStatus;
@@ -1509,7 +1536,7 @@ export function panel(root) {
         room.nativeControl,
         room.browserControl,
       ].some((policy) => policy?.grantedAgentId) ||
-      Boolean(room.observation?.displays?.length);
+      Boolean(windowGrants.length || room.observation?.displays?.length);
     select(".grant-indicator").hidden = !hasGrant;
     toolsLauncher.setAttribute(
       "aria-label",

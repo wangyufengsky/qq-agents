@@ -184,6 +184,7 @@ export class DesktopScreen extends DesktopLocalGrant {
     if (!current()) throw Error("DESKTOP_SCREEN_UNAVAILABLE");
     // The native transcript can contain the pixels even if its receipt is lost.
     ctx.desktopScreenObserved = true;
+    ctx.recordDesktopRestrictedGrant?.(DESKTOP_SCREEN_VIEW, grant, this);
     if (ctx.desktopWindowTask) ctx.desktopWindowTaskUsed = true;
     const result = {
       [mediaLease]: current,

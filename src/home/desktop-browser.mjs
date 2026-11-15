@@ -186,6 +186,8 @@ export class DesktopBrowser {
           ctx.conversation === DESKTOP_CONVERSATION &&
           ctx.inputEpoch === epoch &&
           grant?.agentId === agent.id &&
+          (!ctx.desktopGrantBindings ||
+            ctx.desktopGrantBindings.get(DESKTOP_BROWSER_CONTROL) === grant) &&
           this.current(grant)
         );
       } catch {
@@ -256,6 +258,7 @@ export class DesktopBrowser {
       binding.observedEpoch = epoch;
       ctx.desktopPrivateObservation = true;
       ctx.desktopBrowserObserved = true;
+      ctx.recordDesktopRestrictedGrant?.(DESKTOP_BROWSER_CONTROL, grant, this);
       const result = {
         ...observation,
         source: "untrusted-public-web",

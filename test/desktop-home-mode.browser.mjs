@@ -102,6 +102,17 @@ test("native desktop remembers modes and requires fresh targets after a restart"
       "Panel failed to open",
     );
     await panel.locator(".tools-launch").click();
+    host.recordFrameReceipt(role.id, "observation", "model-submitted");
+    host.recordFrameReceipt(role.id, "manual", "framework-received");
+    const receipts = panel.locator(".frame-receipts");
+    await receipts.waitFor({ state: "visible", timeout: 2500 });
+    await receipts.locator("summary").click();
+    const entries = receipts.locator("li");
+    await entries.nth(1).waitFor({ state: "visible", timeout: 2500 });
+    const [observationReceipt, manualReceipt] = await entries.allTextContents();
+    assert.ok(observationReceipt.includes(role.name));
+    assert.match(observationReceipt, /画面已提交模型/);
+    assert.match(manualReceipt, /画面已提交给框架，模型接收未确认/);
     await panel.locator(".companion-mode").selectOption("presence");
     await waitFor(() => host.mode === "presence", "Downgrade did not commit");
     assert.equal(host.browser.state()?.grantedAgentId ?? null, null);

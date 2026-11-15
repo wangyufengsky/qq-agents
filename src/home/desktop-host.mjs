@@ -1533,6 +1533,7 @@ export class DesktopHost {
     };
     const key = actor + "|" + conversation;
     const done = Promise.withResolvers();
+    const restrictedGrants = new Map();
     try {
       check();
       release = this.visit(actor).beginDesktop(controller);
@@ -1669,6 +1670,11 @@ export class DesktopHost {
       // Freeze restricted tools before opening the provider session. A grant
       // arriving mid-turn is available only in a fresh subsequent turn.
       if (!observation && !windowTask) {
+        ctx.desktopGrantBindings = new Map();
+        ctx.recordDesktopRestrictedGrant = (name, grant, access) => {
+          if (ctx.desktopGrantBindings.get(name) === grant)
+            restrictedGrants.set(name, () => access.current(grant));
+        };
         const grants = [
           [DESKTOP_SCREEN_VIEW, this.screen],
           [DESKTOP_NATIVE_CONTROL, this.native],
@@ -1676,9 +1682,11 @@ export class DesktopHost {
         ];
         for (const [name, access] of grants) {
           const grant = access.grantFor?.(actor) ?? access.grant;
-          if (grant?.agentId === actor && access.current(grant))
+          if (grant?.agentId === actor && access.current(grant)) {
             ctx.desktopRestrictedTurn = true;
-          else
+            // A replacement grant belongs to a later model turn.
+            ctx.desktopGrantBindings.set(name, grant);
+          } else
             ctx.allowedTools = ctx.allowedTools.filter((tool) => tool !== name);
         }
         if (ctx.desktopVideoIds?.size || ctx.desktopRecentVideo)
@@ -1762,17 +1770,17 @@ export class DesktopHost {
         (ctx.desktopScreenObserved || ctx.desktopPrivateObservation)
       ) {
         if (decision.action === "say") {
-          const access = ctx.desktopScreenObserved
-            ? this.screen
-            : ctx.desktopBrowserObserved
-              ? this.browser
-              : this.native;
-          const grant = access.grantFor?.(actor) ?? access.grant;
-          this.personal.recordRestricted(
-            actor,
-            decision.text,
-            grant ? () => access.current(grant) : undefined,
-          );
+          const current = () =>
+            [...restrictedGrants.values()].every((checkGrant) => checkGrant());
+          // A visual or local tool requires its original grant; video input has
+          // its own attachment lifetime and may have no local grant.
+          if (
+            (restrictedGrants.size ||
+              ctx.desktopVideoIds?.size ||
+              ctx.desktopRecentVideo) &&
+            current()
+          )
+            this.personal.recordRestricted(actor, decision.text, current);
         }
         return { action: "silent" };
       }

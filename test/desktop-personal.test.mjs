@@ -375,6 +375,11 @@ test("restricted results cannot become public replies or revive a retired sessio
       saveLate({ backend: "codex", id: "restricted-session" });
       const ctx = runtime.capabilities.get(params.socialContextToken);
       ctx.desktopScreenObserved = true;
+      ctx.recordDesktopRestrictedGrant(
+        "desktop_screen_view",
+        host.screen.grantFor(role.id),
+        host.screen,
+      );
       params.onInputSubmitted();
       await params.callTool("desktop_room_decide", {
         action: "say",
@@ -406,4 +411,182 @@ test("restricted results cannot become public replies or revive a retired sessio
     visitId: host.body.visitId(host.live.visits.get(role.id)),
   });
   assert.ok(!JSON.stringify(afterRevocation).includes(marker));
+});
+
+for (const source of ["screen", "native", "browser"]) {
+  for (const transition of ["valid", "revoked", "replaced"]) {
+    test(`${source} restricted reply uses its original grant after ${transition}`, async (t) => {
+      const { config, fixture } = await import("./helpers.mjs");
+      const cfg = config(1);
+      cfg.desktopHome.enabled = true;
+      const { runtime } = fixture(t, { cfg });
+      const host = runtime.desktopVisits;
+      const client = randomUUID();
+      t.after(() => host.reset());
+      host.command({ client, action: "sync", data: true });
+      const role = host.live.room.roles[0];
+      host.live.room.members[role.id] = "invited";
+      host.live.admit(role);
+      const access = host[source];
+      const original = { agentId: role.id };
+      let active = original;
+      access.grantFor = () => active;
+      access.current = (grant) => grant === active;
+      const marker = `restricted-${source}-${transition}`;
+      runtime.backendConnections.adapter(runtime.agent(role.id)).runDesktop =
+        async (params) => {
+          const ctx = runtime.capabilities.get(params.socialContextToken);
+          if (source === "screen") ctx.desktopScreenObserved = true;
+          else {
+            ctx.desktopPrivateObservation = true;
+            if (source === "browser") ctx.desktopBrowserObserved = true;
+          }
+          const name = {
+            screen: "desktop_screen_view",
+            native: "desktop_native_control",
+            browser: "desktop_browser_control",
+          }[source];
+          ctx.recordDesktopRestrictedGrant(name, original, access);
+          params.onInputSubmitted();
+          if (transition === "revoked") active = null;
+          if (transition === "replaced") active = { agentId: role.id };
+          await params.callTool("desktop_room_decide", {
+            action: "say",
+            text: marker,
+          });
+        };
+      const result = await host.run(
+        { actor: role.id, kind: "chat", people: [], messages: [] },
+        new AbortController().signal,
+      );
+      assert.equal(result.action, "silent");
+      const history = host.personal.history({
+        client,
+        roomEpoch: host.live.room.epoch,
+        agentId: role.id,
+        visitId: host.body.visitId(host.live.visits.get(role.id)),
+      });
+      assert.equal(
+        JSON.stringify(history).includes(marker),
+        transition === "valid",
+      );
+      assert.ok(!JSON.stringify(host.roomSnapshot()).includes(marker));
+      assert.ok(!JSON.stringify(host.archive.history()).includes(marker));
+    });
+  }
+}
+
+test("private follow-up retains original grant dependency despite concurrent sweep", async () => {
+  const f = fixture();
+  f.host.notify = () => {};
+  let granted = true;
+  f.personal.recordRestricted("fish", "restricted-source", () => granted);
+  const ready = Promise.withResolvers();
+  const resume = Promise.withResolvers();
+  f.setHandler(async (params) => {
+    await params.onRunStarted();
+    ready.resolve();
+    await resume.promise;
+    await params.callTool("desktop_room_decide", {
+      action: "say",
+      text: "derived-late",
+    });
+  });
+  const turn = f.personal.drop({ ...f.input, text: "question" });
+  await ready.promise;
+  granted = false;
+  f.personal.sweep();
+  resume.resolve();
+  await assert.rejects(turn, /DESKTOP_VISIT_UNAVAILABLE/);
+  assert.ok(
+    !JSON.stringify(f.personal.history(f.input)).includes("derived-late"),
+  );
+});
+
+test("private follow-up reply inherits source grant while user input does not", async () => {
+  const f = fixture();
+  f.host.notify = () => {};
+  let granted = true;
+  f.personal.recordRestricted("fish", "restricted-source", () => granted);
+  await f.personal.drop({ ...f.input, text: "ordinary-question" });
+  granted = false;
+  const history = JSON.stringify(f.personal.history(f.input));
+  assert.ok(history.includes("ordinary-question"));
+  assert.ok(!history.includes("restricted-source"));
+  assert.ok(!history.includes("收到"));
+});
+
+test("revoking an unused source does not discard a different source's reply", async (t) => {
+  const { config, fixture } = await import("./helpers.mjs");
+  const cfg = config(1);
+  cfg.desktopHome.enabled = true;
+  const { runtime } = fixture(t, { cfg });
+  const host = runtime.desktopVisits;
+  const client = randomUUID();
+  t.after(() => host.reset());
+  host.command({ client, action: "sync", data: true });
+  const role = host.live.room.roles[0];
+  host.live.room.members[role.id] = "invited";
+  host.live.admit(role);
+  const screenGrant = { agentId: role.id },
+    browserGrant = { agentId: role.id };
+  let browserCurrent = true;
+  host.screen.grantFor = () => screenGrant;
+  host.screen.current = (grant) => grant === screenGrant;
+  host.browser.grantFor = () => browserGrant;
+  host.browser.current = (grant) => grant === browserGrant && browserCurrent;
+  runtime.backendConnections.adapter(runtime.agent(role.id)).runDesktop =
+    async (params) => {
+      const ctx = runtime.capabilities.get(params.socialContextToken);
+      ctx.desktopScreenObserved = true;
+      ctx.recordDesktopRestrictedGrant(
+        "desktop_screen_view",
+        screenGrant,
+        host.screen,
+      );
+      params.onInputSubmitted();
+      browserCurrent = false;
+      await params.callTool("desktop_room_decide", {
+        action: "say",
+        text: "valid-screen-result",
+      });
+    };
+  await host.run(
+    { actor: role.id, kind: "chat", people: [], messages: [] },
+    new AbortController().signal,
+  );
+  const history = host.personal.history({
+    client,
+    roomEpoch: host.live.room.epoch,
+    agentId: role.id,
+    visitId: host.body.visitId(host.live.visits.get(role.id)),
+  });
+  assert.ok(JSON.stringify(history).includes("valid-screen-result"));
+});
+
+test("private follow-ups flatten and deduplicate grant dependencies", async () => {
+  const f = fixture();
+  f.host.notify = () => {};
+  let checks = 0;
+  f.personal.recordRestricted("fish", "restricted-source", () => {
+    checks++;
+    return true;
+  });
+  for (let i = 0; i < 15; i++)
+    await f.personal.drop({ ...f.input, text: `question-${i}` });
+  assert.ok(checks < 3000, `unexpected repeated dependency checks: ${checks}`);
+  const history = f.personal.history(f.input);
+  assert.ok(
+    history.messages.every((message) =>
+      Object.keys(message).every((key) => ["role", "text"].includes(key)),
+    ),
+  );
+  assert.ok(
+    f.calls.every(
+      ({ prompt }) =>
+        !prompt.includes("current") && !prompt.includes("Dependencies"),
+    ),
+  );
+  const last = history.messages.at(-1);
+  assert.equal(f.personal.messageDependencies.get(last).length, 1);
 });

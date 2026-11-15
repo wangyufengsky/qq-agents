@@ -35,6 +35,12 @@ export class DesktopPersonal {
   constructor(host) {
     this.host = host;
     this.entries = new Map();
+    this.messageDependencies = new WeakMap();
+  }
+  current(message) {
+    return (this.messageDependencies.get(message) ?? []).every((check) =>
+      check(),
+    );
   }
   check(input, entry) {
     const { host } = this;
@@ -53,8 +59,8 @@ export class DesktopPersonal {
     for (const [key, entry] of this.entries) {
       try {
         this.check(entry.input, entry);
-        entry.messages = entry.messages.filter(
-          (message) => !message.current || message.current(),
+        entry.messages = entry.messages.filter((message) =>
+          this.current(message),
         );
         if (
           entry.controller &&
@@ -80,7 +86,8 @@ export class DesktopPersonal {
     const visit = this.host.live?.visits.get(agentId);
     const client = this.host.client?.id;
     const roomEpoch = this.host.live?.room.epoch;
-    if (!visit || !client || !roomEpoch || !text) return;
+    if (!visit || !client || !roomEpoch || !text || (current && !current()))
+      return;
     const visitId = this.host.body.visitId(visit);
     const input = { client, roomEpoch, agentId, visitId };
     this.check(input);
@@ -90,11 +97,9 @@ export class DesktopPersonal {
       this.entries.set(visitId, entry);
     }
     if (entry.visit !== visit) return;
-    entry.messages.push({
-      role: "assistant",
-      text,
-      ...(current && { current }),
-    });
+    const message = { role: "assistant", text };
+    if (current) this.messageDependencies.set(message, [current]);
+    entry.messages.push(message);
     if (entry.messages.length > 40)
       entry.messages.splice(0, entry.messages.length - 40);
     this.host.notify();
@@ -138,11 +143,13 @@ export class DesktopPersonal {
       agent = runtime.agent(input.agentId);
     const controller = new AbortController();
     entry.controller = controller;
+    let inputDependencies = [];
     const check = () => {
       controller.signal.throwIfAborted();
       this.check(input, entry);
       if (
-        entry.messages.some((message) => message.current && !message.current())
+        inputDependencies.some((current) => !current()) ||
+        entry.messages.some((message) => !this.current(message))
       )
         throw Error("DESKTOP_VISIT_UNAVAILABLE");
       if (
@@ -243,6 +250,15 @@ export class DesktopPersonal {
         agent.behavior.turnTimeoutMs,
       );
       timer.unref();
+      const inputHistory = [...entry.messages];
+      inputDependencies = [
+        ...new Set(
+          inputHistory.flatMap(
+            (item) => this.messageDependencies.get(item) ?? [],
+          ),
+        ),
+      ];
+      check();
       host.observation.maintain();
       const observationSummaries = host.observation.summaries.list(
         input.agentId,
@@ -259,7 +275,7 @@ export class DesktopPersonal {
                 createdAt,
               }),
             ),
-            messages: [...entry.messages, message],
+            messages: [...inputHistory, message],
           }),
           tools,
           inputImages: attachment?.image
@@ -288,8 +304,12 @@ export class DesktopPersonal {
       check();
       if (!decision) throw Error("DESKTOP_DECISION_MISSING");
       entry.messages.push(message);
-      if (decision.action === "say")
-        entry.messages.push({ role: "assistant", text: decision.text });
+      if (decision.action === "say") {
+        const reply = { role: "assistant", text: decision.text };
+        if (inputDependencies.length)
+          this.messageDependencies.set(reply, inputDependencies);
+        entry.messages.push(reply);
+      }
       if (entry.messages.length > 40)
         entry.messages.splice(0, entry.messages.length - 40);
       return {

@@ -631,3 +631,15 @@ for (const status of ["minimized", "blocked", "unavailable", "permission"]) {
     });
   });
 }
+
+test("screen grant replaced after model input cannot be used by that turn", async (t) => {
+  const { roomEpoch, command, run } = await setup(t);
+  const initial = { roomEpoch, grantId: randomUUID(), agentId: "agent-0" };
+  await command("screen-grant", initial);
+  await run("agent-0", async (call) => {
+    await command("screen-revoke", { roomEpoch, grantId: initial.grantId });
+    await command("screen-grant", { ...initial, grantId: randomUUID() });
+    assert.equal((await call()).isError, true);
+    assert.equal((await command("sync")).screenRequest, undefined);
+  });
+});

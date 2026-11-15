@@ -2063,6 +2063,7 @@ function applyFramework(value, action) {
     connected: !!value.room,
     connectionLost: Boolean(value.offline),
     observationRevision: value.observationRevision,
+    frameReceipts: value.frameReceipts,
     screenView: verifiedWindowSurface &&
       screenCaptureSupported &&
       value.room?.screenView && {
