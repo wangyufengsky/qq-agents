@@ -260,6 +260,7 @@ export class DesktopBody {
   finish(entry, result) {
     if (this.pending.get(entry.ctx.agentId) !== entry) return;
     this.pending.delete(entry.ctx.agentId);
+    this.host.notify();
     clearTimeout(entry.timer);
     entry.ctx.controller.signal.removeEventListener("abort", entry.abort);
     entry.receipt.result = {
@@ -355,7 +356,10 @@ export class DesktopBody {
     if (action.type === "stop") {
       if (pending?.ctx !== ctx) return { status: "idle" };
       if (!pending.claimed) this.invalidate(pending, "stopped");
-      else pending.cancel = true;
+      else {
+        pending.cancel = true;
+        host.notify();
+      }
       return pending.receipt.promise;
     }
     const old = receipts.get(action.requestId);
@@ -512,6 +516,7 @@ export class DesktopBody {
     if (action.type !== "state") ctx.desktopBodyActed = true;
     receipts.set(action.requestId, receipt);
     this.pending.set(agent.id, entry);
+    this.host.notify();
     ctx.controller.signal.addEventListener("abort", entry.abort, {
       once: true,
     });

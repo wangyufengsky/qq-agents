@@ -5,15 +5,16 @@ import {
   ipcMain,
   Menu,
   nativeImage,
+  net,
+  protocol,
   powerMonitor,
   screen,
   systemPreferences,
   Tray,
 } from "electron";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { basename, extname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   MAX_DESKTOP_VIDEO_BYTES,
   VIDEO_EXTENSIONS,
@@ -26,6 +27,14 @@ import {
   restoreWindowPoint,
 } from "./window-placement.mjs";
 import { parseBrowserOrigin } from "./browser-origin.mjs";
+import { createPreferencesStore } from "./preferences.mjs";
+import { createDeferredScreenRequest } from "./deferred-screen-request.mjs";
+import { createObservationMonitor } from "./observation-monitor.mjs";
+import { desktopResourcePath } from "./resource-protocol.mjs";
+import { createWindowManager } from "./window-manager.mjs";
+import { createIpcRouter } from "./ipc-router.mjs";
+import { createBrowserControlHandler } from "./browser-control-handler.mjs";
+import { createObservationReviewHandler } from "./observation-review-handler.mjs";
 import { DesktopBodyClient } from "./body-client.mjs";
 import {
   DesktopExclusionStore,
@@ -69,23 +78,15 @@ import {
   startTurn,
 } from "./room.mjs";
 
+protocol.registerSchemesAsPrivileged([
+  { scheme: "nest", privileges: { standard: true, secure: true } },
+]);
+
 const source = fileURLToPath(new URL(".", import.meta.url));
 const trialProfile = process.env.DESKTOP_HOME_TRIAL_PROFILE;
 if (trialProfile) app.setPath("userData", trialProfile);
-const preferencesPath = join(
-  app.getPath("userData"),
-  "prototype-preferences.json",
-);
-
-function readPreferences() {
-  try {
-    return JSON.parse(readFileSync(preferencesPath, "utf8"));
-  } catch {
-    return {};
-  }
-}
-
-const saved = readPreferences();
+const preferences = createPreferencesStore(app.getPath("userData"));
+const saved = preferences.read();
 const positions = saved.positions ?? {};
 const places = new Map(
   Object.entries(saved.places ?? {}).filter(
@@ -459,23 +460,15 @@ function reportObservationState(grant, state) {
   update();
 }
 
-function monitorObservation(grant) {
-  if (grant.monitoring) return;
-  if (!observationCurrent(grant)) {
-    if (localObservation(grant.grantId) !== grant) return;
-    if (grant.display && Date.now() >= grant.expiresAt) {
-      removeObservation(grant);
-      framework?.sync();
-    } else clearObservation(grant);
-    return;
-  }
-  grant.monitoring = true;
-  void probeObservation(grant)
-    .then(({ state }) => reportObservationState(grant, state))
-    .finally(() => {
-      grant.monitoring = false;
-    });
-}
+const monitorObservation = createObservationMonitor({
+  current: observationCurrent,
+  local: localObservation,
+  probe: probeObservation,
+  report: reportObservationState,
+  remove: removeObservation,
+  clear: clearObservation,
+  sync: () => framework?.sync(),
+});
 
 function removeObservation(grant) {
   if (grant.display) {
@@ -730,7 +723,10 @@ function executeWindowTask(request, current, finish) {
   };
 }
 
+const deferredScreenRequest = createDeferredScreenRequest();
+
 function screenRequest(value, action) {
+  deferredScreenRequest.update(value, action, screenCapture);
   const { room: current, screenRequest: request } = value;
   if (
     observationGrant &&
@@ -766,12 +762,6 @@ function screenRequest(value, action) {
   const grant = observe
     ? localObservation(request.grantId)
     : localScreen(request?.grantId);
-  if (
-    action === "sync" &&
-    screenCapture &&
-    screenCapture.requestId !== request?.requestId
-  )
-    screenCapture.controller.abort();
   if (!grant) return;
   if (
     !request ||
@@ -779,10 +769,10 @@ function screenRequest(value, action) {
     screenCapture ||
     request.roomEpoch !== grant.roomEpoch ||
     request.grantId !== grant.grantId ||
-    request.requestId === grant.lastRequest
+    deferredScreenRequest.hasStarted(grant, request.requestId)
   )
     return;
-  grant.lastRequest = request.requestId;
+  deferredScreenRequest.markStarted(grant, request.requestId);
   const { roomEpoch, grantId, requestId, maxEdge, maxBytes } = request;
   const controller = new AbortController();
   screenCapture = {
@@ -875,23 +865,19 @@ function screenRequest(value, action) {
       screenCapture = undefined;
       if (observe && status && status !== "duplicate")
         reportObservationState(grant, status);
+      const deferred = deferredScreenRequest.take();
+      if (deferred) screenRequest(deferred, "deferred");
     }
   })();
 }
 
 function savePreferences() {
-  mkdirSync(app.getPath("userData"), { recursive: true });
-  const next = `${preferencesPath}.next`;
-  writeFileSync(
-    next,
-    JSON.stringify({
-      minutes: room.minutes,
-      positions,
-      doorPosition,
-      places: Object.fromEntries(places),
-    }),
-  );
-  renameSync(next, preferencesPath);
+  preferences.write({
+    minutes: room.minutes,
+    positions,
+    doorPosition,
+    places: Object.fromEntries(places),
+  });
 }
 
 function baseSnapshot() {
@@ -1089,74 +1075,25 @@ function windowPoint(id, type) {
   );
 }
 
-function createWindow(id, type, point, options = {}) {
-  const [width, height] = sizes[type];
-  const panel = type === "panel";
-  const win = new BrowserWindow({
-    ...clampPoint(point, width, height, options.area),
-    width,
-    height,
-    show: false,
-    frame: false,
-    transparent: true,
-    hasShadow: panel,
-    resizable: false,
-    movable: panel,
-    focusable: panel,
-    fullscreenable: false,
-    alwaysOnTop: true,
-    skipTaskbar: true,
-    enableLargerThanScreen: false,
-    webPreferences: {
-      preload: join(source, "preload.cjs"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
-  });
-  const entry = {
-    win,
-    id,
-    type,
-    ready: false,
-    section: options.section,
-    bodyVisit: {},
-  };
-  entries.set(id, entry);
-  if (panel) win.setAlwaysOnTop(true, "floating", 1);
-  win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-  win.webContents.on("will-navigate", (event) => event.preventDefault());
-  win.webContents.on("did-finish-load", () => {
-    entry.ready = true;
-    entry.reportedMotion = undefined;
-    entry.reportedSpeed = undefined;
-    entry.pageVisible = undefined;
-    send(entry, "room:update", snapshot(entry.type === "panel"));
-    send(entry, "room:section", entry.section);
-    if (entry.facing) send(entry, "room:facing", entry.facing);
-    updateMotion(entry);
-  });
-  win.once("ready-to-show", () => {
-    if (hidden && !panel) return;
-    if (panel) win.show();
-    else win.showInactive();
-    updateMotion(entry);
-    updatePointerPolling();
-  });
-  if (!panel)
-    for (const event of ["show", "hide", "minimize", "restore"])
-      win.on(event, () => windowVisibilityChanged(entry));
-  win.on("closed", () => {
+const createWindow = createWindowManager({
+  BrowserWindow,
+  source,
+  sizes,
+  clampPoint,
+  entries,
+  send,
+  snapshot,
+  updateMotion,
+  updatePointerPolling,
+  windowVisibilityChanged,
+  isHidden: () => hidden,
+  onClosed(entry) {
     follow.stop("inactive", entry);
-    body.stop(id, "inactive");
+    body.stop(entry.id, "inactive");
     stopLocalSeat(entry, "inactive");
     stopMovement(entry);
-    if (entries.get(id) === entry) entries.delete(id);
-    updatePointerPolling();
-  });
-  win.loadFile(join(source, "index.html"), { query: { type, id } });
-  return entry;
-}
+  },
+});
 
 function showDoor() {
   hidden = false;
@@ -1192,7 +1129,17 @@ function showPanel(section) {
   );
 }
 
+let positionReportTimer;
+function schedulePositionReport() {
+  if (!framework || positionReportTimer) return;
+  positionReportTimer = setTimeout(() => {
+    positionReportTimer = undefined;
+    framework?.sync();
+  }, 75);
+}
+
 function windowVisibilityChanged(entry) {
+  if (entry.type === "sprite") schedulePositionReport();
   if (!windowVisible(entry)) {
     follow.stop("hidden", entry);
     stopLocalWindowTask("hidden", entry.id);
@@ -1241,6 +1188,7 @@ function stepMovements() {
     if (movements.get(entry) === motion) motion.step(now);
 }
 function stopMovement(entry, notify = true) {
+  if (movements.has(entry)) schedulePositionReport();
   movements.delete(entry);
   entry.movement = undefined;
   if (!movements.size && movementTimer) {
@@ -1334,6 +1282,7 @@ function animateTo(entry, point, complete, options = {}) {
       return options.blocked?.();
     }
     entry.win.setPosition(target.x, target.y);
+    schedulePositionReport();
     const [actualX, actualY] = entry.win.getPosition();
     if (
       options.canStep &&
@@ -1796,6 +1745,7 @@ function animateHome(role) {
 }
 
 function applyFramework(value, action) {
+  if (action === "heartbeat") return body.heartbeat(value);
   if (action === "sync" && !value.room) {
     bodyCrossDisplay = false;
     bodyInteractions = false;
@@ -1899,6 +1849,7 @@ function applyFramework(value, action) {
     subjectKnocks: true,
     connected: !!value.room,
     connectionLost: Boolean(value.offline),
+    observationRevision: value.observationRevision,
     screenView: screenCaptureSupported &&
       value.room?.screenView && {
         ...value.room.screenView,
@@ -2157,19 +2108,17 @@ function handleDrag(entry, action, data) {
   }
 }
 
-ipcMain.handle("room:get", (event) => {
-  const entry = [...entries.values()].find(
-    ({ win }) => win.webContents === event.sender,
-  );
+const ipc = createIpcRouter(ipcMain, entries);
+
+ipc.handle("room:get", (event) => {
+  const entry = ipc.entryFor(event);
   if (entry)
     return { data: snapshot(entry.type === "panel"), section: entry.section };
 });
 
 let choosingAttachment = false;
-ipcMain.handle("room:attach", async (event) => {
-  const entry = [...entries.values()].find(
-    ({ win }) => win.webContents === event.sender,
-  );
+ipc.handle("room:attach", async (event) => {
+  const entry = ipc.entryFor(event);
   const availability = remoteState?.attachmentInput;
   const roomEpoch = remoteState?.roomEpoch;
   if (
@@ -2281,7 +2230,7 @@ function desktopSourceMenu(win, availableRoles, sources, label) {
   });
 }
 
-ipcMain.handle("room:follow", async (event, id, mode) => {
+ipc.handle("room:follow", async (event, id, mode) => {
   if (!["pointer", "window", "stop"].includes(mode)) return "unavailable";
   const win = entries.get("panel")?.win;
   const entry = entries.get(id);
@@ -2491,7 +2440,7 @@ async function chooseObservationWindow(event) {
     choosingDesktopPermission = false;
   }
 }
-ipcMain.handle("room:observation", chooseObservationWindow);
+ipc.handle("room:observation", chooseObservationWindow);
 
 function permissionPanel(event, roomEpoch) {
   const win = entries.get("panel")?.win;
@@ -2791,43 +2740,38 @@ async function chooseReadGrants(event, action, data, observe) {
   }
 }
 
-ipcMain.handle("room:display-observation", (event, action, data) =>
+ipc.handle("room:display-observation", (event, action, data) =>
   chooseReadGrants(event, action, data, true),
 );
-ipcMain.handle("room:screen-view", (event, action, data) =>
+ipc.handle("room:screen-view", (event, action, data) =>
   chooseReadGrants(event, action, data, false),
 );
 
-ipcMain.handle("room:observation-review", async (event, action, data) => {
-  if (!["status", "list", "delete"].includes(action)) return;
-  const win = entries.get("panel")?.win;
-  const roomEpoch = remoteState?.roomEpoch;
-  const focused = () =>
-    framework &&
-    observationProtocol &&
-    !hidden &&
-    !desktopLocked &&
-    remoteState?.connected &&
-    remoteState.roomEpoch === roomEpoch &&
-    win &&
-    !win.isDestroyed() &&
-    win.isFocused() &&
-    event.sender === win.webContents &&
-    event.senderFrame === win.webContents.mainFrame;
-  if (!focused()) return;
-  try {
-    const result = await framework.result(
-      "observation-review",
-      { action, id: data?.id, agentId: data?.agentId },
-      focused,
-    );
-    if (focused()) return result;
-  } catch {
-    // The room may have closed while the local query was in flight.
-  }
-});
+ipc.handle(
+  "room:observation-review",
+  createObservationReviewHandler({
+    get entries() {
+      return entries;
+    },
+    get remoteState() {
+      return remoteState;
+    },
+    get framework() {
+      return framework;
+    },
+    get observationProtocol() {
+      return observationProtocol;
+    },
+    get hidden() {
+      return hidden;
+    },
+    get desktopLocked() {
+      return desktopLocked;
+    },
+  }),
+);
 
-ipcMain.handle("room:native-control", async (event, action) => {
+ipc.handle("room:native-control", async (event, action) => {
   const win = entries.get("panel")?.win;
   const { nativeControl: policy, roomEpoch } = remoteState ?? {};
   if (
@@ -2960,78 +2904,47 @@ ipcMain.handle("room:native-control", async (event, action) => {
   }
 });
 
-ipcMain.handle("room:browser-control", async (event, selection) => {
-  const win = entries.get("panel")?.win;
-  const { browserControl: policy, roomEpoch } = remoteState ?? {};
-  if (
-    !framework ||
-    !roomEpoch ||
-    !policy ||
-    !win ||
-    win.webContents !== event.sender ||
-    event.senderFrame !== win.webContents.mainFrame ||
-    !win.isFocused() ||
-    choosingDesktopPermission
-  )
-    return "unavailable";
-  choosingDesktopPermission = true;
-  try {
-    if (selection === undefined && policy.grantedAgentId) {
-      const grant = lastBrowserGrant;
-      if (
-        grant?.roomEpoch !== roomEpoch ||
-        grant.agentId !== policy.grantedAgentId
-      )
-        return "unavailable";
-      const room = await framework.command("browser-revoke", {
-        roomEpoch,
-        grantId: grant.grantId,
-      });
-      if (room?.browserControl?.grantedAgentId) return "failed";
-      lastBrowserGrant = undefined;
-      return "revoked";
-    }
-    const agent = roles.find(({ id }) => id === selection?.agentId);
-    if (policy.grantedAgentId || !agent || !policy.eligible.includes(agent.id))
-      return "unavailable";
-    const origin = parseBrowserOrigin(selection.origin);
-    if (!origin) return "invalid";
-    const confirmed = await dialog.showMessageBox(win, {
-      type: "question",
-      title: "授权隔离浏览器",
-      message: `允许 ${localLabel(agent.name)} 访问此站点？`,
-      detail: origin,
-      buttons: ["取消", "授权"],
-      defaultId: 0,
-      cancelId: 0,
-      noLink: true,
-    });
-    if (confirmed.response !== 1 || win.isDestroyed() || !win.isVisible())
-      return "cancelled";
-    if (
-      remoteState?.roomEpoch !== roomEpoch ||
-      remoteState?.browserControl?.grantedAgentId ||
-      !remoteState?.browserControl?.eligible.includes(agent.id)
-    )
-      return "unavailable";
-    const grant = {
-      roomEpoch,
-      grantId: randomUUID(),
-      agentId: agent.id,
-      origin,
-    };
-    lastBrowserGrant = grant;
-    const room = await framework.command("browser-grant", grant);
-    return room?.roomEpoch === roomEpoch &&
-      room.browserControl?.grantedAgentId === agent.id
-      ? "granted"
-      : "unavailable";
-  } catch {
-    return "failed";
-  } finally {
-    choosingDesktopPermission = false;
-  }
-});
+ipc.handle(
+  "room:browser-control",
+  createBrowserControlHandler({
+    get entries() {
+      return entries;
+    },
+    get remoteState() {
+      return remoteState;
+    },
+    get framework() {
+      return framework;
+    },
+    get choosingDesktopPermission() {
+      return choosingDesktopPermission;
+    },
+    set choosingDesktopPermission(value) {
+      choosingDesktopPermission = value;
+    },
+    get lastBrowserGrant() {
+      return lastBrowserGrant;
+    },
+    set lastBrowserGrant(value) {
+      lastBrowserGrant = value;
+    },
+    get roles() {
+      return roles;
+    },
+    get parseBrowserOrigin() {
+      return parseBrowserOrigin;
+    },
+    get dialog() {
+      return dialog;
+    },
+    get localLabel() {
+      return localLabel;
+    },
+    get randomUUID() {
+      return randomUUID;
+    },
+  }),
+);
 
 function editPlace(id, action) {
   if (action === "body-clear-place") {
@@ -3126,16 +3039,9 @@ function controlResident(id, action) {
   }
 }
 
-ipcMain.on("room:action", (event, action, data) => {
-  const entry = [...entries.values()].find(
-    ({ win }) => win.webContents === event.sender,
-  );
-  if (
-    !entry ||
-    entry.departing ||
-    event.senderFrame !== entry.win.webContents.mainFrame
-  )
-    return;
+ipc.on("room:action", (event, action, data) => {
+  const entry = ipc.actionEntry(event);
+  if (!entry) return;
   if (
     action === "page-visible" &&
     entry.type !== "panel" &&
@@ -3395,6 +3301,12 @@ else {
     ]).then(() => app.quit());
   });
   app.whenReady().then(() => {
+    protocol.handle("nest", (request) => {
+      const resource = desktopResourcePath(request.url, source);
+      return resource
+        ? net.fetch(pathToFileURL(resource).href)
+        : new Response(null, { status: 404 });
+    });
     if (process.platform === "darwin") app.setActivationPolicy("accessory");
     for (const event of [
       "display-added",

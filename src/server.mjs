@@ -293,6 +293,58 @@ export function createServer({
         res.end(fs.readFileSync(path.join(publicDir, file)));
         return;
       }
+      if (url.pathname === "/api/desktop-home/events") {
+        if (req.method !== "GET") return deny("METHOD", 405);
+        const local = ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(
+          req.socket.remoteAddress,
+        );
+        if (!local || !equal(req.headers["x-desktop-home-token"], desktopKey))
+          return deny("UNAUTHORIZED", 401);
+        if (stopping || runtime.closed) throw Error("RUNTIME_CLOSING");
+        const client = url.searchParams.get("client");
+        const host = runtime.desktopVisits;
+        const epoch = url.searchParams.get("roomEpoch");
+        let started = false;
+        const subscriber = (payload, close) => {
+          if (!started) {
+            started = true;
+            res.writeHead(200, {
+              "content-type": "text/event-stream; charset=utf-8",
+              "cache-control": "no-store",
+              "x-content-type-options": "nosniff",
+            });
+          }
+          if (!res.destroyed) {
+            if (res.writableLength > 256 * 1024) {
+              res.destroy();
+              return;
+            }
+            res.write(`data: ${payload}\n\n`);
+            if (close) res.end();
+          }
+        };
+        if (!host.subscribe(client, epoch, subscriber))
+          return deny("DESKTOP_CONNECTION_FAILED", 409);
+        res.on("close", () => host.unsubscribe(client, epoch, subscriber));
+        return;
+      }
+      if (url.pathname === "/api/desktop-home/heartbeat") {
+        if (req.method !== "POST") return deny("METHOD", 405);
+        const local = ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(
+          req.socket.remoteAddress,
+        );
+        if (!local || !equal(req.headers["x-desktop-home-token"], desktopKey))
+          return deny("UNAUTHORIZED", 401);
+        const input = await body(req, 48 * 1024);
+        if (input.action !== "sync") throw Error("INVALID_REQUEST");
+        if (stopping || runtime.closed) throw Error("RUNTIME_CLOSING");
+        return send(
+          runtime.desktopVisits.command(input, {
+            heartbeat: true,
+            epoch: req.headers["x-desktop-room-epoch"],
+          }),
+        );
+      }
       if (url.pathname === "/api/desktop-home/client") {
         if (req.method !== "POST") return deny("METHOD", 405);
         const local = ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(

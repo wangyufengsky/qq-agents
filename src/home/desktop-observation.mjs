@@ -61,6 +61,7 @@ export class DesktopObservation extends DesktopLocalGrant {
   displayHistory = new Map();
   displayGrantIds = new WeakMap();
   summaryVersion = 0;
+  replyVersion = 0;
   constructor(host) {
     super(host, DESKTOP_SCREEN_VIEW, "DESKTOP_SCREEN_UNAVAILABLE");
     this.displays = new Map();
@@ -358,6 +359,7 @@ export class DesktopObservation extends DesktopLocalGrant {
       fail,
       request: { roomEpoch, grantId, requestId: randomUUID() },
     });
+    this.host.notify();
     signal.addEventListener("abort", fail, { once: true });
     if (signal.aborted) fail();
     const timer = setTimeout(fail, 7000);
@@ -365,6 +367,7 @@ export class DesktopObservation extends DesktopLocalGrant {
       await promise;
     } finally {
       this.verifying.delete(grantId);
+      this.host.notify();
       clearTimeout(timer);
       signal.removeEventListener("abort", fail);
     }
@@ -397,6 +400,8 @@ export class DesktopObservation extends DesktopLocalGrant {
       !this.targetReady(grant)
     )
       return;
+    this.replyVersion++;
+    this.host.notify();
     const { runtime } = this.host;
     const { agentId, grantId } = grant;
     const id = randomUUID();
@@ -470,6 +475,7 @@ export class DesktopObservation extends DesktopLocalGrant {
     if (action === "delete") {
       const deleted = this.summaries.delete(agentId, id);
       if (deleted) {
+        this.host.notify();
         this.summaryVersion++;
         for (const grant of this.grants()) {
           if (grant.agentId === agentId && grant.priorSummaryId === id) {
@@ -505,7 +511,10 @@ export class DesktopObservation extends DesktopLocalGrant {
       return this.summaries.export(agentId, days);
     if (action === "restore" && data !== undefined) {
       const result = this.summaries.restore(agentId, data, days);
-      if (result.restored) this.summaryVersion++;
+      if (result.restored) {
+        this.summaryVersion++;
+        this.host.notify();
+      }
       return result;
     }
     throw Error("INVALID_REQUEST");

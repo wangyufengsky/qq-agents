@@ -1,6 +1,49 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { createFrameworkConnection } from "./framework-connection.mjs";
+
+const LEGACY_POLL_MS = 650;
+const HEARTBEAT_MS = 900;
+const CONNECT_TIMEOUT_MS = 2500;
+const MAX_EVENT_LENGTH = 4 * 1024 * 1024;
+
+function heartbeatData(data, lastActivity) {
+  const { dragged, ownerTouches, bodyResults, bodyPositions, ...state } = data;
+  const signature = JSON.stringify(state);
+  return {
+    signature,
+    data:
+      signature !== lastActivity ||
+      dragged?.length ||
+      ownerTouches?.length ||
+      bodyResults?.length ||
+      bodyPositions
+        ? data
+        : state.visible,
+  };
+}
+
+async function readEvents(body, onState) {
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for await (const chunk of body) {
+    buffer += decoder.decode(chunk, { stream: true });
+    for (;;) {
+      const end = buffer.indexOf("\n\n");
+      if (end < 0) break;
+      if (end > MAX_EVENT_LENGTH) throw Error("DESKTOP_CONNECTION_FAILED");
+      const event = buffer.slice(0, end);
+      buffer = buffer.slice(end + 2);
+      const data = event
+        .split("\n")
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5))
+        .join("\n");
+      if (data) onState(JSON.parse(data));
+    }
+    if (buffer.length > MAX_EVENT_LENGTH)
+      throw Error("DESKTOP_CONNECTION_FAILED");
+  }
+}
 
 export function createFrameworkClient(
   root,
@@ -8,110 +51,248 @@ export function createFrameworkClient(
   listenPort,
   activityState,
 ) {
-  const client = randomUUID();
+  const connection = createFrameworkConnection(root, listenPort);
+  let client = randomUUID();
   let queue = Promise.resolve();
   let syncing = false;
+  let syncAgain = false;
   let stopped = false;
-  const request = async (action, data, endpoint = "client", upload) => {
-    const port =
-      listenPort ??
-      JSON.parse(readFileSync(join(root, "config.json"), "utf8")).port ??
-      3210;
-    const token = readFileSync(join(root, "desktop-home-token"), "utf8").trim();
-    if (
-      !Number.isInteger(port) ||
-      port < 1 ||
-      port > 65535 ||
-      !/^[a-f0-9]{64}$/.test(token)
-    )
-      throw Error("DESKTOP_CONNECTION_INVALID");
+  let timer;
+  let stream;
+
+  async function fetchLocal(endpoint, options) {
+    const credentials = await connection.get();
+    const { port, token } = credentials;
     const response = await fetch(
       `http://127.0.0.1:${port}/api/desktop-home/${endpoint}`,
       {
-        method: "POST",
-        headers: {
-          "content-type": upload
-            ? "application/octet-stream"
-            : "application/json",
-          ...(upload && {
-            "content-length": String(upload.bytes),
-            "x-video-name": encodeURIComponent(data.name),
-            "x-desktop-client": client,
-            "x-desktop-room-epoch": data.roomEpoch,
-          }),
-          "x-desktop-home-token": token,
-        },
-        ...(upload && { duplex: "half" }),
-        body:
-          upload?.stream ??
-          JSON.stringify(
-            endpoint === "client"
-              ? { client, action, data }
-              : { ...data, client },
-          ),
+        ...options,
+        headers: { ...options.headers, "x-desktop-home-token": token },
         redirect: "error",
-        signal: AbortSignal.timeout(
-          upload
-            ? 120_000
-            : endpoint === "client" || endpoint.startsWith("body-")
-              ? 2500
-              : 8000,
-        ),
       },
     );
-    if (!response.ok) throw Error("DESKTOP_CONNECTION_FAILED");
+    if (!response.ok) {
+      if (response.status === 401) connection.invalidate(credentials);
+      await response.body?.cancel();
+      throw Error("DESKTOP_CONNECTION_FAILED");
+    }
+    return response;
+  }
+
+  const request = async (
+    action,
+    data,
+    endpoint = "client",
+    upload,
+    clientId = client,
+  ) => {
+    const heartbeat = endpoint === "heartbeat" ? stream : undefined;
+    const timeout = AbortSignal.timeout(
+      upload
+        ? 120_000
+        : endpoint === "client" ||
+            endpoint === "heartbeat" ||
+            endpoint.startsWith("body-")
+          ? CONNECT_TIMEOUT_MS
+          : 8000,
+    );
+    const response = await fetchLocal(endpoint, {
+      method: "POST",
+      headers: {
+        "content-type": upload
+          ? "application/octet-stream"
+          : "application/json",
+        ...(heartbeat && { "x-desktop-room-epoch": heartbeat.roomEpoch }),
+        ...(upload && {
+          "content-length": String(upload.bytes),
+          "x-video-name": encodeURIComponent(data.name),
+          "x-desktop-client": clientId,
+          "x-desktop-room-epoch": data.roomEpoch,
+        }),
+      },
+      ...(upload && { duplex: "half" }),
+      body:
+        upload?.stream ??
+        JSON.stringify(
+          endpoint === "client" || endpoint === "heartbeat"
+            ? { client: clientId, action, data }
+            : { ...data, client: clientId },
+        ),
+      signal: heartbeat
+        ? AbortSignal.any([timeout, heartbeat.controller.signal])
+        : timeout,
+    });
     return response.json();
   };
+
   const enqueue = (run) => {
+    const clientId = client;
     const result = queue.then(() => {
-      if (stopped) throw Error("DESKTOP_CONNECTION_FAILED");
-      return run();
+      // Mutations queued for the former room must not reach a new visit.
+      if (stopped || clientId !== client)
+        throw Error("DESKTOP_CONNECTION_FAILED");
+      return run(clientId);
     });
     queue = result.catch(() => {});
     return result;
   };
-  const act = (action, data) => {
+
+  function schedule(interval) {
+    clearInterval(timer);
+    timer = setInterval(sync, interval);
+  }
+
+  function endStream(link) {
+    if (stream !== link) return;
+    stream = undefined;
+    link.controller.abort();
     if (stopped) return;
-    queue = queue.then(async () => {
+    client = randomUUID();
+    onState({ offline: true }, "sync");
+    schedule(LEGACY_POLL_MS);
+    // A failed handshake may have opened the old room without a live stream.
+    void request(
+      "disconnect",
+      undefined,
+      "client",
+      undefined,
+      link.client,
+    ).catch(() => {});
+  }
+
+  function startStream(roomEpoch) {
+    const link = {
+      client,
+      roomEpoch,
+      controller: new AbortController(),
+      sequence: -1,
+      ready: false,
+      lastActivity: undefined,
+    };
+    stream = link;
+    const timeout = setTimeout(() => endStream(link), CONNECT_TIMEOUT_MS);
+    void (async () => {
       try {
-        const value = await request(
-          action,
-          typeof data === "function" ? data() : data,
-        );
-        if (!stopped) onState(value, action);
-      } catch {
-        if (!stopped) onState({ offline: true }, action);
+        const query = new URLSearchParams({ client: link.client, roomEpoch });
+        const response = await fetchLocal(`events?${query}`, {
+          headers: { accept: "text/event-stream" },
+          signal: link.controller.signal,
+        });
+        if (
+          !response.body ||
+          !response.headers.get("content-type")?.startsWith("text/event-stream")
+        )
+          throw Error("DESKTOP_CONNECTION_FAILED");
+        await readEvents(response.body, (value) => {
+          if (stream !== link || stopped) return;
+          if (
+            !Number.isSafeInteger(value.sequence) ||
+            value.sequence <= link.sequence
+          )
+            return;
+          link.sequence = value.sequence;
+          if (value.reconnect) return endStream(link);
+          if (!link.ready) {
+            link.ready = true;
+            clearTimeout(timeout);
+            schedule(HEARTBEAT_MS);
+          }
+          onState(value, "sync");
+        });
+      } finally {
+        clearTimeout(timeout);
       }
-    });
-  };
-  const sync = () => {
-    if (syncing) return;
+    })().then(
+      () => endStream(link),
+      () => endStream(link),
+    );
+  }
+
+  function sync() {
+    if (stopped || (stream && !stream.ready)) return;
+    if (syncing) {
+      syncAgain = true;
+      return;
+    }
     syncing = true;
-    act("sync", activityState);
-    void queue.finally(() => {
-      syncing = false;
-    });
-  };
+    const activeStream = stream;
+    const activeClient = client;
+    const synchronize = async () => {
+      const data = activityState();
+      if (activeStream) {
+        const heartbeat = heartbeatData(data, activeStream.lastActivity);
+        const value = await request("sync", heartbeat.data, "heartbeat");
+        if (stopped || stream !== activeStream) return;
+        if (value.closed) return onState(value, "sync");
+        if (value.enabled !== true || value.busy || value.reconnect)
+          return endStream(activeStream);
+        if (value.refreshActivity) {
+          activeStream.lastActivity = undefined;
+          syncAgain = true;
+        } else activeStream.lastActivity = heartbeat.signature;
+        if (value.bodyRequests?.length || value.bodyResultAcks?.length)
+          onState(value, "heartbeat");
+        return;
+      }
+      const value = await request("sync", data);
+      if (stopped || activeClient !== client) return;
+      if (value.desktopPush === true && value.room)
+        startStream(value.room.roomEpoch);
+      else onState(value, "sync");
+    };
+    // A slow upload or command receipt must not expire an otherwise live room.
+    void (activeStream ? synchronize() : enqueue(synchronize))
+      .catch(() => {
+        if (stopped || activeClient !== client) return;
+        if (activeStream) endStream(activeStream);
+        else onState({ offline: true }, "sync");
+      })
+      .finally(() => {
+        syncing = false;
+        if (syncAgain) {
+          syncAgain = false;
+          sync();
+        }
+      });
+  }
+
+  function displayResponse(value, action, clientId) {
+    if (!stopped && client === clientId && !stream) onState(value, action);
+  }
+
+  schedule(LEGACY_POLL_MS);
   sync();
-  const timer = setInterval(sync, 650);
   return {
-    act,
+    act(action, data) {
+      const issuedClient = client;
+      void enqueue(async (clientId) => {
+        displayResponse(await request(action, data), action, clientId);
+      }).catch(() => {
+        if (!stopped && !stream && client === issuedClient)
+          onState({ offline: true }, action);
+      });
+    },
     sync,
     attach(data) {
-      return enqueue(async () => {
-        const value = await request(undefined, data, "attachment");
-        if (!stopped) onState(value);
+      return enqueue(async (clientId) => {
+        displayResponse(
+          await request(undefined, data, "attachment"),
+          undefined,
+          clientId,
+        );
       });
     },
     async attachVideo(data, upload) {
       if (stopped) throw Error("DESKTOP_CONNECTION_FAILED");
       await request(undefined, data, "video", upload);
-      if (!stopped) sync();
+      sync();
     },
     command(action, data) {
-      return enqueue(async () => {
+      return enqueue(async (clientId) => {
         const value = await request(action, data);
-        if (!stopped) onState(value, action);
+        if (stopped || client !== clientId)
+          throw Error("DESKTOP_CONNECTION_FAILED");
+        displayResponse(value, action, clientId);
         return value.room;
       });
     },
@@ -122,10 +303,18 @@ export function createFrameworkClient(
       });
     },
     async close() {
+      if (stopped) return;
       stopped = true;
       clearInterval(timer);
+      if (stream) endStream(stream);
       await queue;
-      await request("disconnect").catch(() => {});
+      try {
+        await request("disconnect");
+      } catch {
+        // A dead transport cannot close its room explicitly.
+      } finally {
+        connection.close();
+      }
     },
   };
 }

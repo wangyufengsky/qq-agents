@@ -262,6 +262,7 @@ export class DesktopNative extends DesktopLocalGrant {
       },
     };
     this.pending = pending;
+    this.host.notify();
     const signal = ctx.controller.signal;
     const abort = () => pending.reject(Error("DESKTOP_NATIVE_RESULT_UNKNOWN"));
     signal.addEventListener("abort", abort, { once: true });
@@ -283,6 +284,7 @@ export class DesktopNative extends DesktopLocalGrant {
       clearTimeout(timer);
       signal.removeEventListener("abort", abort);
       if (this.pending === pending) this.pending = null;
+      this.host.notify();
       if (pending.claimed && !pending.received && !this.handoff)
         this.handoff = { state: "unconfirmed" };
     }
