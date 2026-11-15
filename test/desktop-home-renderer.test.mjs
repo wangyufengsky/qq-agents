@@ -423,15 +423,18 @@ test("paper tabs and portraits replace the desktop budget display", async (t) =>
   assert.deepEqual(await page.evaluate(() => window.testActions), [
     ["invite", "dragon"],
   ]);
-  await list.getByRole("button", { name: "停止动作 · 小鱼" }).click();
-  await list.getByRole("button", { name: "回到座位 · 小鱼" }).click();
+  const activities = page.getByRole("region", { name: "桌宠活动" });
+  await activities.getByRole("button", { name: "停止动作 · 小鱼" }).click();
+  await activities.getByRole("button", { name: "回到座位 · 小鱼" }).click();
   assert.deepEqual(await page.evaluate(() => window.testActions), [
     ["invite", "dragon"],
     ["body-stop", "fish"],
     ["body-seat", "fish"],
   ]);
   assert.equal(
-    await list.getByRole("button", { name: "停止动作 · 小龙" }).isVisible(),
+    await activities
+      .getByRole("button", { name: "停止动作 · 小龙" })
+      .isVisible(),
     false,
   );
   const portraits = list.locator("img");
@@ -462,7 +465,7 @@ test("paper tabs and portraits replace the desktop budget display", async (t) =>
   ]);
 });
 
-test("observation review keeps candidates and saved summaries separate from room history", async (t) => {
+test("the observation page shows automatic results only while it is active", async (t) => {
   let executablePath;
   try {
     executablePath = findScreenshotBrowser();
@@ -474,14 +477,21 @@ test("observation review keeps candidates and saved summaries separate from room
   t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 430, height: 574 } });
   const now = Date.now();
-  const candidate = {
-    id: "observation-candidate",
+  const reply = {
+    id: "observation-reply",
     agentId: "fish",
-    response: "<img src=x> 回复草稿",
-    summary: "<script>摘要草稿</script>",
-    expiresAt: now + 10_000,
+    text: "观察回复 <img src=x>",
+    createdAt: now,
+  };
+  const saved = {
+    id: "saved-observation",
+    agentId: reply.agentId,
+    summary: "观察文字摘要",
+    createdAt: now,
+    expiresAt: now + 86_400_000,
   };
   const room = {
+    live: true,
     framework: true,
     connected: true,
     roomEpoch: "observation-room",
@@ -493,115 +503,89 @@ test("observation review keeps candidates and saved summaries separate from room
       grantedAgentId: "fish",
       target: "合成文档窗口",
       targetState: "ready",
-      expiresAt: candidate.expiresAt,
+      expiresAt: now + 5 * 60_000,
       remaining: 2,
     },
   };
-  await page.addInitScript(
-    ({ room, candidate, now }) => {
-      let review = { candidate: { ...candidate } };
-      let records = [];
-      window.reviewCalls = [];
-      window.replaceReview = (next) => (review = next);
-      window.nest = {
-        onRoom: (update) => (window.testRoom = update),
-        onSection() {},
-        get: async () => ({ data: room, section: "chat" }),
-        observationReview: async (action, data) => {
-          window.reviewCalls.push([action, data]);
-          if (action === "list") return { records };
-          if (action === "delete") {
-            records = records.filter(({ id }) => id !== data.id);
-            return { deleted: true };
-          }
-          if (action === "publish") {
-            review.published = { ...candidate, text: candidate.response };
-            delete review.candidate.response;
-          }
-          if (action === "save") {
-            records.push({
-              id: "saved-observation",
-              agentId: candidate.agentId,
-              summary: candidate.summary,
-              createdAt: now,
-              expiresAt: now + 86_400_000,
-            });
-          }
-          if (action === "save" || action === "discard")
-            delete review.candidate;
-          return review;
-        },
-      };
-    },
-    { room, candidate, now },
-  );
+  await page.addInitScript((room) => {
+    let replies = [];
+    let records = [];
+    let summaryVersion = 0;
+    let summaryLimitReached = false;
+    window.resultCalls = [];
+    window.replaceResults = (next) => {
+      ({ replies, records, summaryLimitReached } = next);
+      summaryVersion++;
+    };
+    window.nest = {
+      onRoom: (update) => (window.testRoom = update),
+      onSection() {},
+      get: async () => ({ data: room, section: "chat" }),
+      observationReview: async (action, data) => {
+        window.resultCalls.push([action, data]);
+        if (action === "list") return { records };
+        if (action === "delete") {
+          records = records.filter(({ id }) => id !== data.id);
+          summaryVersion++;
+          return { deleted: true };
+        }
+        return { replies, summaryVersion, summaryLimitReached };
+      },
+    };
+  }, room);
   await page.goto(
     new URL("../desktop/home/index.html?type=panel", import.meta.url).href,
   );
-  const reviewTab = page.getByRole("button", { name: "观察", exact: true });
-  const review = page.getByRole("region", { name: "观察审核" });
+  const tab = page.getByRole("button", { name: "观察", exact: true });
+  const results = page.getByRole("region", { name: "观察记录" });
   const thread = page.getByRole("log", { name: "聊天记录" });
   const push = (next) => page.evaluate((data) => window.testRoom(data), next);
-  await reviewTab.waitFor();
-  assert.deepEqual(await page.evaluate(() => window.reviewCalls), []);
-  await reviewTab.click();
-  await review.getByText(candidate.response, { exact: true }).waitFor();
+  await tab.waitFor();
+  assert.deepEqual(await page.evaluate(() => window.resultCalls), []);
+  await tab.click();
+  await results.getByText("暂无观察回复。").waitFor();
   assert.match(
-    await review.locator(".review-scope").textContent(),
+    await results.locator(".results-scope").textContent(),
     /小鱼.*合成文档窗口.*剩余 2 次/,
   );
-  assert.equal(await review.locator("img, script").count(), 0);
+  await results.getByText("已保存的观察摘要").click();
+  await results.getByText("暂无已保存的摘要。").waitFor();
+
+  await page.evaluate((next) => window.replaceResults(next), {
+    replies: [
+      reply,
+      { ...reply, id: "earlier-observation", text: "前一条回复" },
+    ],
+    records: [saved],
+    summaryLimitReached: true,
+  });
+  await results.getByText(reply.text, { exact: true }).waitFor();
+  await results.getByText("前一条回复").waitFor();
+  await results.getByText(saved.summary, { exact: true }).waitFor();
+  await results.getByText(/摘要已达到保存上限/).waitFor();
+  assert.equal(await results.locator("img, script").count(), 0);
   assert.equal(
-    await review.getByText(candidate.summary, { exact: true }).count(),
-    1,
+    await results.getByRole("button", { name: /发布|保存|丢弃/ }).count(),
+    0,
   );
-  assert.equal(await page.locator("#chat .thread .message").count(), 1);
   await page.evaluate(() => {
     const hasFocus = document.hasFocus;
     document.hasFocus = () => false;
     window.dispatchEvent(new Event("blur"));
     document.hasFocus = hasFocus;
   });
-  assert.equal(
-    await review.locator(".review-response .review-text").textContent(),
-    "",
-  );
+  assert.equal(await results.locator(".results-text").count(), 0);
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-  await review.getByText(candidate.response, { exact: true }).waitFor();
-
-  await review.getByRole("button", { name: "发布回复" }).click();
-  await review.getByText("已发布回复").waitFor();
-  assert.equal(await review.locator(".review-response").isVisible(), false);
-  assert.equal(
-    await review.getByRole("button", { name: "保存摘要" }).isVisible(),
-    true,
-  );
-  await review.getByRole("button", { name: "保存摘要" }).click();
-  await review.getByText("摘要已保存。").waitFor();
-  await review.getByText("已保存的观察摘要").click();
-  await review.locator("li").getByText(candidate.summary).waitFor();
-  await review.getByRole("button", { name: "删除摘要" }).click();
-  await review.getByText("暂无已保存的摘要。").waitFor();
-
-  const nextCandidate = { ...candidate, id: "next-observation" };
-  await page.evaluate(
-    (candidate) => window.replaceReview({ candidate }),
-    nextCandidate,
-  );
-  await review.getByRole("button", { name: "丢弃候选" }).click();
-  await review.getByText("候选已丢弃。").waitFor();
+  await results.getByText(reply.text, { exact: true }).waitFor();
+  await results.getByRole("button", { name: "删除摘要" }).click();
+  await results.getByText("暂无已保存的摘要。").waitFor();
   assert.deepEqual(
     await page.evaluate(() =>
-      window.reviewCalls.filter(
-        ([action]) => action !== "status" && action !== "list",
+      window.resultCalls.filter(
+        ([action]) => !["status", "list"].includes(action),
       ),
     ),
-    [
-      ["publish", { id: candidate.id }],
-      ["save", { id: candidate.id }],
-      ["delete", { id: "saved-observation", agentId: candidate.agentId }],
-      ["discard", { id: nextCandidate.id }],
-    ],
+    [["delete", { id: saved.id, agentId: saved.agentId }]],
   );
 
   await push({
@@ -609,18 +593,94 @@ test("observation review keeps candidates and saved summaries separate from room
     observation: { ...room.observation, targetState: "minimized" },
     observationEnded: "target-minimized",
   });
-  await review.getByText("观察窗口已最小化。恢复窗口后可继续观察。").waitFor();
-  assert.equal(await review.locator(".review-candidate").isVisible(), false);
+  await results.getByText("观察窗口已最小化。恢复窗口后可继续观察。").waitFor();
   await page.getByRole("button", { name: "聊天", exact: true }).click();
   await thread.getByText("房间消息").waitFor();
-  assert.doesNotMatch(await thread.textContent(), /回复草稿|摘要草稿/);
-  assert.equal(
-    await review
-      .locator(".review-text")
-      .allTextContents()
-      .then((texts) => texts.every((text) => !text)),
-    true,
+  assert.doesNotMatch(await thread.textContent(), /观察回复|观察文字摘要/);
+  assert.equal(await results.locator(".results-text").count(), 0);
+});
+
+test("three active guests keep the illustrated board separate from full-width activity", async (t) => {
+  let executablePath;
+  try {
+    executablePath = findScreenshotBrowser();
+  } catch {
+    t.skip("local Chromium unavailable");
+    return;
+  }
+  const browser = await chromium.launch({ executablePath, headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 430, height: 574 } });
+  const room = {
+    live: true,
+    framework: true,
+    connected: true,
+    interactionsAvailable: true,
+    roles: [
+      { id: "fish", name: "小鱼" },
+      { id: "dragon", name: "小龙" },
+      { id: "cat", name: "小猫" },
+    ].map((role) => ({
+      ...role,
+      state: "here",
+      available: true,
+      bodyControlAvailable: true,
+      bodyStatus: { state: "idle" },
+    })),
+    messages: [],
+    notice: "",
+  };
+  await page.addInitScript((data) => {
+    window.nest = {
+      onRoom: (update) => (window.testRoom = update),
+      onSection() {},
+      get: async () => ({ data, section: "visits" }),
+      act() {},
+    };
+  }, room);
+  await page.goto(
+    new URL("../desktop/home/index.html?type=panel", import.meta.url).href,
   );
+  const board = page.locator(".guest-list");
+  const push = (data) => page.evaluate((next) => window.testRoom(next), data);
+  await board.getByRole("button", { name: "请回家 · 小龙" }).waitFor();
+  await page.evaluate(() => document.fonts.ready.then(() => true));
+  const before = await board.boundingBox();
+  const at = Date.UTC(2026, 0, 2, 12);
+  await push({
+    ...room,
+    roles: room.roles.map((role) => ({
+      ...role,
+      bodyStatus: {
+        state: "waiting",
+        pose: "stand",
+        facing: "left",
+        reason: "target-blocked",
+        at,
+        until: at + 120_000,
+      },
+    })),
+  });
+  assert.equal((await board.boundingBox()).height, before.height);
+  assert.equal(await board.locator(".guest-detail, .guest-recent").count(), 0);
+  const activity = page.locator(".guest-activity").filter({ hasText: "小龙" });
+  const recent = activity.getByText(/落点被占用或位于禁停区/);
+  await recent.waitFor();
+  const activityBox = await activity.boundingBox();
+  assert.ok(activityBox.y >= before.y + before.height);
+  const stop = activity.getByRole("button", { name: "停止动作 · 小龙" });
+  await stop.scrollIntoViewIfNeeded();
+  assert.ok(await stop.isVisible());
+  await page.setViewportSize({ width: 330, height: 574 });
+  assert.equal(
+    await page
+      .locator("#visits")
+      .evaluate((node) => node.scrollWidth > node.clientWidth),
+    false,
+  );
+  await push({ ...room, roles: [] });
+  assert.equal(await board.isVisible(), false);
+  assert.equal(await activity.count(), 0);
 });
 
 test("the visit panel uses confirmed body state and announces each manual interruption once", async (t) => {
@@ -868,7 +928,7 @@ test("resident controls are local and a window task stays bound to its selected 
   );
   const push = (update) =>
     page.evaluate((data) => window.testRoom(data), update);
-  const resident = page.locator(".guest").filter({ hasText: "小鱼" });
+  const resident = page.locator(".guest-activity").filter({ hasText: "小鱼" });
   await resident.getByText("桌宠互动", { exact: true }).click();
   await resident.getByRole("button", { name: "标记当前停留点" }).click();
   await resident.getByRole("button", { name: "跟随鼠标" }).click();

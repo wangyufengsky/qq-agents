@@ -84,6 +84,14 @@
           <div class="guest-list"></div>
           <p class="room-notice" role="status"></p>
           <p class="observation-ended" role="status" hidden></p>
+          <section
+            class="guest-activities"
+            aria-labelledby="guest-activities-title"
+            hidden
+          >
+            <h3 id="guest-activities-title">桌宠活动</h3>
+            <div class="guest-activity-list"></div>
+          </section>
           <button type="button" class="secondary body-zones" hidden>
             设置桌宠禁停区
           </button>
@@ -167,39 +175,25 @@
             </button>
           </div>
         </section>
-        <section id="observation-review" aria-label="观察审核" hidden>
-          <h2>观察审核</h2>
-          <p class="review-scope"></p>
+        <section id="observation-results" aria-label="观察记录" hidden>
+          <h2>观察记录</h2>
+          <p>角色的观察回复直接显示在本页，摘要会自动保存。</p>
+          <p class="results-scope"></p>
           <p class="observation-ended" role="status" hidden></p>
-          <p class="review-status" role="status" hidden></p>
-          <article class="review-candidate" hidden>
-            <p class="review-candidate-meta"></p>
-            <div class="review-response" hidden>
-              <h3>回复候选</h3>
-              <p class="review-text"></p>
-              <button type="button" class="primary" data-review="publish">
-                发布回复
-              </button>
-            </div>
-            <div class="review-summary" hidden>
-              <h3>摘要候选</h3>
-              <p class="review-text"></p>
-              <button type="button" class="secondary" data-review="save">
-                保存摘要
-              </button>
-            </div>
-            <button type="button" class="secondary" data-review="discard">
-              丢弃候选
-            </button>
-          </article>
-          <article class="review-published" hidden>
-            <h3>已发布回复</h3>
-            <p class="review-published-meta"></p>
-            <p class="review-text"></p>
-          </article>
-          <details class="review-records">
+          <section
+            class="results-replies"
+            aria-labelledby="observation-replies-title"
+          >
+            <h3 id="observation-replies-title">观察回复</h3>
+            <p class="results-status" role="status" hidden></p>
+            <ul></ul>
+          </section>
+          <p class="results-summary-limit" role="status" hidden>
+            观察摘要已达到保存上限。删除旧摘要后，新摘要可以继续保存。
+          </p>
+          <details class="results-records">
             <summary>已保存的观察摘要</summary>
-            <p class="review-records-status" role="status"></p>
+            <p class="results-records-status" role="status"></p>
             <ul></ul>
           </details>
         </section>
@@ -236,7 +230,7 @@
                 <p class="observation-target" hidden></p>
                 <p class="desktop-permission-status" role="status" hidden></p>
                 <p id="observation-retention-notice" hidden>
-                  画面仅交给本次观察的模型服务，服务可能按自身规则保留画面和会话。
+                  回复与摘要会自动出现在本机观察页。画面仅交给本次观察的模型服务，服务可能按自身规则保留画面和会话。
                 </p>
                 <ul class="observation-ineligible" hidden></ul>
               </div>

@@ -388,17 +388,13 @@ function floating() {
   });
 }
 
-function bindObservationReview(section, clock) {
-  const scope = section.querySelector(".review-scope");
-  const status = section.querySelector(".review-status");
-  const candidate = section.querySelector(".review-candidate");
-  const candidateMeta = candidate.querySelector(".review-candidate-meta");
-  const response = candidate.querySelector(".review-response");
-  const summary = candidate.querySelector(".review-summary");
-  const published = section.querySelector(".review-published");
-  const publishedMeta = published.querySelector(".review-published-meta");
-  const records = section.querySelector(".review-records");
-  const recordsStatus = records.querySelector(".review-records-status");
+function bindObservationResults(section, clock) {
+  const scope = section.querySelector(".results-scope");
+  const status = section.querySelector(".results-status");
+  const replies = section.querySelector(".results-replies ul");
+  const summaryLimit = section.querySelector(".results-summary-limit");
+  const records = section.querySelector(".results-records");
+  const recordsStatus = records.querySelector(".results-records-status");
   const list = records.querySelector("ul");
   const dateTime = new Intl.DateTimeFormat("zh-CN", {
     dateStyle: "short",
@@ -411,52 +407,58 @@ function bindObservationReview(section, clock) {
     if (status.textContent !== text) status.textContent = text;
     status.hidden = !text;
   };
-  function setText(container, text = "") {
-    const words = container.querySelector(".review-text");
-    if (words.textContent !== text) words.textContent = text;
-    container.hidden = !text;
-  }
   let room;
   let session;
   let timer;
+  let lastReplies = "";
 
-  function renderReview(review) {
-    const pending = review?.candidate;
-    const posted = review?.published;
-    candidate.hidden = !pending;
-    const candidateDescription = pending
-      ? `${roleName(pending.agentId)} · 候选保留至 ${clock.format(pending.expiresAt)}`
-      : "";
-    if (candidateMeta.textContent !== candidateDescription)
-      candidateMeta.textContent = candidateDescription;
-    setText(response, pending?.response);
-    setText(summary, pending?.summary);
-    const author = posted ? roleName(posted.agentId) : "";
-    if (publishedMeta.textContent !== author)
-      publishedMeta.textContent = author;
-    setText(published, posted?.text);
+  function renderReplies(entries) {
+    const authors = entries.map(({ agentId, createdAt }) =>
+      [roleName(agentId), Number.isFinite(createdAt) && clock.format(createdAt)]
+        .filter(Boolean)
+        .join(" · "),
+    );
+    const key = JSON.stringify([entries.map(({ id }) => id), authors]);
+    if (lastReplies === key) return;
+    lastReplies = key;
+    replies.replaceChildren(
+      ...entries.map(({ text }, index) => {
+        const row = element("li");
+        row.append(
+          element("p", "results-meta", authors[index]),
+          element("p", "results-text", text),
+        );
+        return row;
+      }),
+    );
   }
 
-  async function refreshReview(current) {
-    if (current.busy || current.reading) return;
+  async function refreshResults(current) {
+    if (current.reading) return;
     current.reading = true;
-    const revision = current.revision;
     try {
-      const review = await invoke("status");
-      if (session !== current || current.revision !== revision) return;
-      current.candidate = review?.candidate;
-      renderReview(review);
-      updateActions();
+      const result = await invoke("status");
+      if (session !== current) return;
+      const entries =
+        result?.replies ?? (result?.published ? [result.published] : []);
+      renderReplies(entries);
+      summaryLimit.hidden = !result?.summaryLimitReached;
       setStatus(
-        review
-          ? current.notice || (review.candidate ? "" : "暂无待审核内容。")
-          : "当前无法读取观察审核。",
+        result
+          ? entries.length
+            ? ""
+            : "暂无观察回复。"
+          : "当前无法读取观察回复。",
       );
+      if (result && current.summaryVersion !== result.summaryVersion) {
+        current.summaryVersion = result.summaryVersion;
+        void refreshRecords(current);
+      }
     } catch {
-      if (session !== current || current.revision !== revision) return;
-      current.candidate = undefined;
-      renderReview();
-      setStatus("当前无法读取观察审核。");
+      if (session !== current) return;
+      renderReplies([]);
+      summaryLimit.hidden = true;
+      setStatus("当前无法读取观察回复。");
     } finally {
       current.reading = false;
     }
@@ -467,8 +469,8 @@ function bindObservationReview(section, clock) {
     const request = (current.recordRequest = Symbol());
     const currentRequest = () =>
       session === current && records.open && current.recordRequest === request;
-    list.replaceChildren();
-    recordsStatus.textContent = "正在读取观察摘要…";
+    if (!list.childElementCount)
+      recordsStatus.textContent = "正在读取观察摘要…";
     try {
       const result = await invoke("list");
       if (!currentRequest()) return;
@@ -477,6 +479,7 @@ function bindObservationReview(section, clock) {
         : result
           ? "暂无已保存的摘要。"
           : "当前无法读取已保存的摘要。";
+      list.replaceChildren();
       for (const {
         id,
         agentId,
@@ -490,9 +493,13 @@ function bindObservationReview(section, clock) {
           if (session !== current || remove.disabled) return;
           remove.disabled = true;
           try {
-            if (!(await invoke("delete", { id, agentId }))?.deleted)
-              throw Error("DESKTOP_OBSERVATION_REVIEW_UNAVAILABLE");
-            if (session === current) await refreshRecords(current);
+            const result = await invoke("delete", { id, agentId });
+            if (session !== current) return;
+            if (result?.deleted) await refreshRecords(current);
+            else {
+              recordsStatus.textContent = "未能删除摘要。";
+              remove.disabled = false;
+            }
           } catch {
             if (session === current)
               recordsStatus.textContent = "未能删除摘要。";
@@ -502,10 +509,10 @@ function bindObservationReview(section, clock) {
         row.append(
           element(
             "p",
-            null,
+            "results-meta",
             `${roleName(agentId)} · ${dateTime.format(createdAt)} 保存 · ${dateTime.format(expiresAt)} 到期`,
           ),
-          element("p", "review-text", summary),
+          element("p", "results-text", summary),
           remove,
         );
         list.append(row);
@@ -514,57 +521,6 @@ function bindObservationReview(section, clock) {
       if (currentRequest())
         recordsStatus.textContent = "当前无法读取已保存的摘要。";
     }
-  }
-
-  const actions = [...candidate.querySelectorAll("[data-review]")];
-  for (const button of actions) {
-    button.addEventListener("click", async () => {
-      const current = session;
-      if (!current?.candidate || current.busy || button.disabled) return;
-      const { review: action } = button.dataset;
-      current.busy = true;
-      current.revision++;
-      for (const button of actions) button.disabled = true;
-      let result;
-      try {
-        result = await invoke(action, {
-          id: current.candidate.id,
-          ...(current.candidate.grantId && {
-            grantId: current.candidate.grantId,
-          }),
-        });
-      } catch {
-        result = undefined;
-      } finally {
-        current.busy = false;
-      }
-      if (session !== current) return;
-      updateActions();
-      current.notice = result
-        ? {
-            publish: "回复已发布。",
-            save: "摘要已保存。",
-            discard: "候选已丢弃。",
-          }[action]
-        : "操作未完成。候选可能已失效。";
-      if (result) {
-        current.candidate = result.candidate;
-        renderReview(result);
-      }
-      setStatus(current.notice);
-      void refreshReview(current);
-      if (result && action === "save") void refreshRecords(current);
-    });
-  }
-
-  function updateActions() {
-    const policy = room?.observation;
-    const id = session?.candidate?.grantId;
-    const grant =
-      policy?.displays?.find(({ grantId }) => grantId === id) ?? policy;
-    for (const button of actions)
-      button.disabled =
-        Boolean(session?.busy) || grant?.targetState !== "ready";
   }
 
   function updateContext() {
@@ -586,17 +542,17 @@ function bindObservationReview(section, clock) {
     if (session && (!active || session.context !== context)) {
       clearInterval(timer);
       session = undefined;
-      renderReview();
+      renderReplies([]);
       list.replaceChildren();
       recordsStatus.textContent = "";
+      summaryLimit.hidden = true;
       setStatus("");
     }
     if (!active || session) return;
-    session = { context, revision: 0 };
+    session = { context, summaryVersion: null };
     const current = session;
-    void refreshReview(current);
-    void refreshRecords(current);
-    timer = setInterval(() => void refreshReview(current), 2000);
+    void refreshResults(current);
+    timer = setInterval(() => void refreshResults(current), 2000);
   }
 
   records.addEventListener("toggle", () => {
@@ -616,7 +572,6 @@ function bindObservationReview(section, clock) {
         : "可在小窝工具为在场角色授权观察。";
     if (scope.textContent !== description) scope.textContent = description;
     updateContext();
-    updateActions();
   };
 }
 
@@ -626,10 +581,12 @@ function panel() {
   );
   const select = (selector) => root.querySelector(selector);
   const guestList = select(".guest-list");
+  const guestActivities = select(".guest-activities");
+  const guestActivityList = select(".guest-activity-list");
   const bodyAnnouncement = select(".body-announcement");
   const observationEnded = root.querySelectorAll(".observation-ended");
   const observationTab = select('[data-tab="observation"]');
-  const observationReview = select("#observation-review");
+  const observationResults = select("#observation-results");
   const bodyZones = select(".body-zones");
   bodyZones.addEventListener("click", () => window.nest.act("body-zones"));
   const audience = select(".audience");
@@ -1033,7 +990,7 @@ function panel() {
       });
     select(".display-limits").textContent =
       observe && limits
-        ? `每位角色最长 ${limits.minutes} 分钟，最多尝试取图 ${limits.attempts} 次。确认后替换所选角色已有的显示器授权。`
+        ? `每位角色最长 ${limits.minutes} 分钟，最多尝试取图 ${limits.attempts} 次。回复和摘要留在本机观察页。确认后替换所选角色已有的显示器授权。`
         : "确认后替换所选角色已有的看屏授权。";
     select(".display-cancel").textContent = `‹ ${readTitle()}`;
     openChatSheet(picker, observe ? "授权观察显示器" : "授权查看屏幕");
@@ -1138,8 +1095,8 @@ function panel() {
     message.focus();
   });
 
-  const updateObservationReview = bindObservationReview(
-    observationReview,
+  const updateObservationResults = bindObservationResults(
+    observationResults,
     clock,
   );
 
@@ -1365,7 +1322,7 @@ function panel() {
     if (report) window.nest.setSection?.(section);
     select("#visits").hidden = section !== "visits";
     select("#chat").hidden = section !== "chat";
-    observationReview.hidden = section !== "observation";
+    observationResults.hidden = section !== "observation";
     for (const tab of root.querySelectorAll("[data-tab]"))
       tab.setAttribute("aria-pressed", String(tab.dataset.tab === section));
     if (section === "chat") {
@@ -1373,7 +1330,7 @@ function panel() {
       thread.scrollTop = thread.scrollHeight;
       if (!message.disabled) message.focus();
     }
-    updateObservationReview(room);
+    updateObservationResults(room);
   }
 
   function bindResidentInteractions(id) {
@@ -1448,7 +1405,7 @@ function panel() {
       const detail = element("small", "guest-detail");
       const recent = element("small", "guest-recent");
       const name = element("strong", null, role.name);
-      info.append(name, state, detail, recent);
+      info.append(name, state);
       const action = button("secondary");
       action.addEventListener("click", () => {
         if (room.connectionLost) return;
@@ -1468,13 +1425,24 @@ function panel() {
       seat.addEventListener("click", () =>
         window.nest.act("body-seat", role.id),
       );
-      controls.append(decline, stop, seat, action);
+      controls.append(stop, seat);
       const interactions = bindResidentInteractions(role.id);
       const portrait = avatar(role);
-      node.append(portrait, info, controls, interactions.menu);
+      const visitControls = element("div", "guest-controls");
+      visitControls.append(action, decline);
+      node.append(portrait, info, visitControls);
       guestList.append(node);
+
+      const activityCard = element("article", "guest-activity");
+      const activityHeader = element("div", "guest-activity-header");
+      const activityName = element("h4", null, role.name);
+      activityHeader.append(activityName, controls);
+      activityCard.append(activityHeader, detail, recent, interactions.menu);
+      guestActivityList.append(activityCard);
       guests.set(role.id, {
         node,
+        activityCard,
+        activityName,
         name,
         portrait,
         state,
@@ -1489,6 +1457,8 @@ function panel() {
     }
     const {
       node,
+      activityCard,
+      activityName,
       name,
       portrait,
       state,
@@ -1501,7 +1471,11 @@ function panel() {
       interactions,
     } = guests.get(role.id);
     node.dataset.state = role.available ? role.state : "unavailable";
-    if (name.textContent !== role.name) name.textContent = role.name;
+    if (name.textContent !== role.name) {
+      name.textContent = activityName.textContent = role.name;
+      stop.setAttribute("aria-label", `停止动作 · ${role.name}`);
+      seat.setAttribute("aria-label", `回到座位 · ${role.name}`);
+    }
     portrait.className = `portrait ${role.color}`;
     const sprite = portrait.querySelector("img");
     const src = assetPath(role.art ?? role.id);
@@ -1575,6 +1549,8 @@ function panel() {
         : "";
     recent.hidden = !history;
     if (recent.textContent !== history) recent.textContent = history;
+    activityCard.hidden =
+      detail.hidden && recent.hidden && stop.hidden && interactions.menu.hidden;
     action.hidden = !role.available || room.knock?.actor === role.id;
     action.setAttribute("aria-disabled", String(Boolean(room.connectionLost)));
     if (action.textContent !== text) action.textContent = text;
@@ -1794,9 +1770,10 @@ function panel() {
           `${role.name}敲门了。${room.knock.text}`;
       }
     }
-    for (const [id, { node }] of guests) {
+    for (const [id, { node, activityCard }] of guests) {
       if (!room.roles.some((role) => role.id === id)) {
         node.remove();
+        activityCard.remove();
         guests.delete(id);
       }
     }
@@ -1817,6 +1794,9 @@ function panel() {
         );
       }
     }
+    guestActivities.hidden = !guestActivityList.querySelector(
+      ":scope > :not([hidden])",
+    );
     if (feedback.length) bodyAnnouncement.textContent = feedback.join("。");
     const notice = select(".room-notice");
     if (notice.textContent !== room.notice) notice.textContent = room.notice;
@@ -1836,9 +1816,9 @@ function panel() {
       !room.observationReviewAvailable ||
       !room.connected ||
       !window.nest.observationReview;
-    if (observationTab.hidden && !observationReview.hidden)
+    if (observationTab.hidden && !observationResults.hidden)
       switchSection("chat", true);
-    updateObservationReview(room);
+    updateObservationResults(room);
     bodyZones.hidden = room.bodyZones !== true;
     const here = room.roles.filter((role) => role.state === "here");
     const roster = JSON.stringify(

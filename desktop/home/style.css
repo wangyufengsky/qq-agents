@@ -186,7 +186,7 @@ h2 {
 }
 #visits,
 #chat,
-#observation-review {
+#observation-results {
   min-height: 0;
   background: var(--paper);
 }
@@ -200,8 +200,7 @@ h2 {
 }
 .guest-list {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 100px), 1fr));
-  align-items: start;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 84px), 1fr));
   gap: 12px 6px;
   padding: 14px 14px 17px 19px;
   background: url("../../public/home-preview/assets/room-board.webp") center /
@@ -216,7 +215,6 @@ h2 {
   justify-items: center;
   gap: 6px;
   min-width: 0;
-  height: 100%;
   text-align: center;
 }
 .portrait {
@@ -261,9 +259,50 @@ h2 {
 .guest[data-state="here"] .guest-state {
   color: #4b5c35;
 }
-.guest-detail,
-.guest-recent {
-  line-height: 1.4;
+.guest-activities {
+  margin: 14px 4px 0;
+}
+.guest-activities h3 {
+  margin: 0 0 7px;
+  font: 17px var(--hand);
+}
+.guest-activity-list {
+  display: grid;
+  gap: 6px;
+}
+.guest-activity {
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--cream);
+  overflow-wrap: anywhere;
+}
+.guest-activity-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 3px 8px;
+}
+.guest-activity-header h4 {
+  margin: 0;
+  font-size: 13px;
+}
+.guest-activity small {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.guest-activity-header .quiet {
+  min-height: 26px;
+}
+.guest-activity .resident-interactions {
+  margin-top: 4px;
+}
+.guest-activity .guest-controls {
+  justify-content: start;
 }
 .guest-controls {
   display: flex;
@@ -337,57 +376,62 @@ h2 {
 .chat-tools .observation-ended {
   margin: 0;
 }
-#observation-review {
+#observation-results {
   padding: 17px 16px 12px;
   overflow: auto;
   font-size: 13px;
+  line-height: 1.5;
   overflow-wrap: anywhere;
 }
-#observation-review h3,
-#observation-review p {
+#observation-results h3,
+#observation-results p {
   margin: 0;
 }
-#observation-review > :not(:first-child),
-.review-candidate > :not(:first-child) {
+#observation-results > :not(:first-child) {
   margin-top: 10px;
 }
-.review-scope,
-.review-status,
-.review-candidate-meta,
-.review-published-meta,
-.review-records-status,
-.review-records li > :first-child {
+.results-scope,
+.results-status,
+.results-meta,
+.results-records-status,
+.results-summary-limit {
   color: var(--muted);
   font-size: 12px;
 }
-.review-candidate,
-.review-published,
-.review-records {
+.results-replies,
+.results-records {
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 6px 9px 7px 5px;
   background: var(--cream);
 }
-.review-text {
-  padding: 4px 0 6px;
+.results-text {
+  padding-top: 3px;
   white-space: pre-wrap;
   user-select: text;
 }
-.review-records summary {
+.results-records summary {
   cursor: pointer;
 }
-.review-records summary + p:not(:empty),
-.review-records li {
+.results-replies > .results-status,
+.results-records > .results-records-status:not(:empty),
+.results-replies li,
+.results-records li {
   padding-top: 8px;
 }
-.review-records ul {
+.results-replies ul,
+.results-records ul {
   list-style: none;
   margin: 0;
   padding: 0;
 }
-.review-records li + li {
+.results-replies li + li,
+.results-records li + li {
   margin-top: 8px;
   border-top: 1px solid var(--line);
+}
+.results-records li button {
+  margin-top: 6px;
 }
 .door-settings,
 .knock-card {
