@@ -1,0 +1,39 @@
+FROM alpine:3.22 AS certificates
+
+FROM ubuntu:22.04
+
+ARG TARGETARCH
+ENV DEBIAN_FRONTEND=noninteractive \
+    DISPLAY=:1 \
+    FFMPEG_PATH=/usr/bin/ffmpeg \
+    NAPCAT_WORKDIR=/app/napcat
+
+COPY --from=certificates /etc/ssl/cert.pem /etc/ssl/certs/ca-certificates.crt
+RUN sed -i 's|http://|https://|g' /etc/apt/sources.list \
+    && apt-get -o Acquire::Retries=3 update \
+    && apt-get -o Acquire::Retries=3 install -y --no-install-recommends ca-certificates curl dbus-x11 ffmpeg fonts-wqy-zenhei gosu jq libasound2 libgbm1 libgtk-3-0 libnotify4 libnss3 libsecret-1-0 libx11-xcb1 libxss1 libxtst6 unzip xauth xdg-utils xvfb \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --home-dir /app --no-log-init napcat
+
+RUN set -eux; \
+    case "$TARGETARCH" in \
+      amd64) qq_sha=436c65e1dd28422e128a21cbddb5fe4e2e6c079d7f27fec2541e014d38cc336e ;; \
+      arm64) qq_sha=181b895cb573548e396e54bb0548cca92ffdc1b1a4b018fa4551bb062385fdca ;; \
+      *) echo "Unsupported NapCat architecture: $TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL --retry 3 --connect-timeout 30 --max-time 600 -o /tmp/qq.deb "https://qqdl.gtimg.cn/qqfile/QQNT/9.9.36/beta/9ee04bef/linuxqq_3.2.34-53644_${TARGETARCH}.deb"; \
+    echo "$qq_sha  /tmp/qq.deb" | sha256sum -c -; \
+    dpkg -i /tmp/qq.deb; \
+    rm /tmp/qq.deb; \
+    curl -fsSL --retry 3 --connect-timeout 30 --max-time 180 -o /tmp/napcat.zip https://github.com/wangyufengsky/NapCatQQ/releases/download/archive-v4.18.38/NapCat.Shell.zip; \
+    echo '9d8d9a026dd281994d231b4c05e4f22cae25f887538e9c20146e324d885a70f2  /tmp/napcat.zip' | sha256sum -c -; \
+    unzip -q /tmp/napcat.zip -d /app/napcat; \
+    cp /app/napcat/config/napcat.json /app/napcat-default.json; \
+    rm /tmp/napcat.zip; \
+    printf '%s\n' "import('file:///app/napcat/napcat.mjs');" > /opt/QQ/resources/app/loadNapCat.js; \
+    jq '.main = "./loadNapCat.js"' /opt/QQ/resources/app/package.json > /tmp/qq-package.json; \
+    mv /tmp/qq-package.json /opt/QQ/resources/app/package.json
+
+COPY scripts/napcat-container.sh /usr/local/bin/napcat-container
+WORKDIR /app/napcat
+ENTRYPOINT ["bash", "/usr/local/bin/napcat-container"]

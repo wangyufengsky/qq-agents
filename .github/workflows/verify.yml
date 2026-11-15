@@ -106,3 +106,15 @@ jobs:
           test "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: 192.0.2.1:3210' http://127.0.0.1:3210/api/status)" = 403
       - if: failure()
         run: docker logs qq-agents-ci
+      - name: Build and start the pinned NapCat gateway with an empty profile
+        env:
+          WEBUI_TOKEN: ci-napcat-webui-test
+        run: |
+          docker build -f Dockerfile.napcat -t qq-agents-napcat:ci .
+          docker run -d --init --name napcat-ci --network none --env WEBUI_TOKEN qq-agents-napcat:ci
+          for i in $(seq 1 45); do
+            if docker exec napcat-ci curl -fsS http://127.0.0.1:6099/webui/ >/dev/null 2>&1; then exit 0; fi
+            sleep 1
+          done
+          docker logs napcat-ci
+          exit 1

@@ -4,8 +4,11 @@
 # binding.
 services:
   napcat:
-    # Community NapCat image: https://github.com/NapNeko/NapCat-Docker
-    image: mlikiowa/napcat-docker:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.napcat
+    image: qq-agents-napcat:local
+    init: true
     restart: unless-stopped
     # WEBUI_TOKEN (NapCat WebUI login) and optional NAPCAT_UID / NAPCAT_GID.
     env_file: .env.napcat
