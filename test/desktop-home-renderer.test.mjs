@@ -1953,3 +1953,113 @@ test("a public bubble can be replied to inline and remains in recent activity af
   await recent.waitFor({ state: "hidden" });
   assert.equal(await recent.getByText("桌边见闻").count(), 0);
 });
+
+test("floating status card opens with the current visit and leaves sprite gestures intact", async (t) => {
+  let executablePath;
+  try {
+    executablePath = findScreenshotBrowser();
+  } catch {
+    t.skip("local Chromium unavailable");
+    return;
+  }
+  const browser = await chromium.launch({ executablePath, headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 194, height: 156 } });
+  const room = {
+    roomEpoch: "epoch-1",
+    roles: [
+      {
+        id: "fish",
+        name: "小鱼",
+        art: "fish",
+        state: "here",
+        bodyVisitId: "visit-1",
+        statusCard: { title: "今日记录", ref: "ref-1" },
+      },
+    ],
+    bubbles: {},
+  };
+  await page.addInitScript((data) => {
+    window.testActions = [];
+    window.nest = {
+      onRoom: (update) => (window.testRoom = update),
+      onMotion() {},
+      onMotionSpeed() {},
+      onFacing() {},
+      act: (action) => window.testActions.push(action),
+      openStatusCard: async (target) => (window.testTarget = target),
+      get: async () => ({ data }),
+    };
+  }, room);
+  await page.goto(pageUrl("type=sprite&id=fish"));
+  const sprite = page.locator(".sprite-button");
+  await sprite.hover();
+  const card = page.getByRole("button", { name: "打开状态卡：今日记录" });
+  await card.click();
+  assert.deepEqual(await page.evaluate(() => window.testTarget), {
+    roomEpoch: "epoch-1",
+    visitId: "visit-1",
+    ref: "ref-1",
+  });
+  await sprite.click();
+  assert.ok((await page.evaluate(() => window.testActions)).includes("pet"));
+  await page.evaluate((next) => window.testRoom(next), { ...room, roles: [] });
+  assert.equal(await page.locator(".status-card").isHidden(), true);
+});
+
+test("the desktop panel clears an opened status card when its resource is revoked during the same visit", async (t) => {
+  let executablePath;
+  try {
+    executablePath = findScreenshotBrowser();
+  } catch {
+    t.skip("local Chromium unavailable");
+    return;
+  }
+  const browser = await chromium.launch({ executablePath, headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  const role = {
+    id: "fish",
+    name: "小鱼",
+    state: "here",
+    bodyVisitId: "visit",
+    statusCard: { title: "空闲日记", ref: "card" },
+  };
+  const room = {
+    connected: true,
+    framework: true,
+    roomEpoch: "room",
+    roles: [role],
+    messages: [],
+  };
+  await page.addInitScript((data) => {
+    window.nest = {
+      onRoom: (update) => (window.testRoom = update),
+      onStatusCard: (update) => (window.openCard = update),
+      onSection() {},
+      act() {},
+      get: async () => ({ data, section: "chat" }),
+    };
+  }, room);
+  await page.goto(pageUrl("type=panel"));
+  const dialog = page.locator(".status-dialog");
+  await page.evaluate(() =>
+    window.openCard({
+      title: "空闲日记",
+      text: "只有打开之后才出现的正文",
+      target: {
+        agentId: "fish",
+        roomEpoch: "room",
+        visitId: "visit",
+        ref: "card",
+      },
+    }),
+  );
+  await dialog.getByText("只有打开之后才出现的正文").waitFor();
+  await page.evaluate((next) => window.testRoom(next), {
+    ...room,
+    roles: [{ ...role, statusCard: undefined }],
+  });
+  await dialog.waitFor({ state: "hidden" });
+  assert.equal(await dialog.getByText("只有打开之后才出现的正文").count(), 0);
+});

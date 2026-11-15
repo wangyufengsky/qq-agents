@@ -838,10 +838,11 @@ export class LiveRoom {
       );
       if (
         !event ||
-        event.kind !== "bubble" ||
+        !event.bubbleRoot ||
         !event.audience.has(visit) ||
         event.actor === actor ||
-        this.visits.get(event.actor) !== event.source ||
+        (event.kind !== "departure" &&
+          this.visits.get(event.actor) !== event.source) ||
         event.until <= this.runner.now() ||
         event.bubbleRoot.replies >= PUBLIC_BUBBLE_REPLY_LIMIT
       )
@@ -873,6 +874,10 @@ export class LiveRoom {
   async runActivity(turn) {
     const publicTurn = Object.hasOwn(turn, "idle");
     const visit = this.visits.get(turn.actor);
+    const trigger = this.perception?.events.find(
+      (event) => event.id === turn.trigger,
+    );
+    if (trigger?.bubbleRoot) turn.communityTrigger = trigger.id;
     if (publicTurn) delete visit.activity.pendingReason;
     const observationOffer = this.runner.observation?.(turn.actor);
     let observation =
@@ -1002,13 +1007,11 @@ export class LiveRoom {
       if (observation) this.runner.finishObservation?.(observation, reply);
       else {
         interactionDecision = reply.interaction;
-        const trigger = this.perception?.events.find(
-          (event) => event.id === turn.trigger,
-        );
         if (
           publicTurn &&
           reply.bubble &&
-          (trigger?.kind !== "bubble" || reply.bubble.replyTo === trigger.id)
+          (!turn.communityTrigger ||
+            reply.bubble.replyTo === turn.communityTrigger)
         )
           this.publishBubble(turn.actor, visit, reply.bubble);
       }

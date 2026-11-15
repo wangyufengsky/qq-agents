@@ -25,6 +25,32 @@ export function panel(root) {
     document.getElementById("panel-template").content.cloneNode(true),
   );
   const updatePersonal = bindPersonal(root);
+  const statusDialog = document.createElement("dialog");
+  statusDialog.className = "status-dialog";
+  const statusTitle = document.createElement("h2");
+  const statusText = document.createElement("p");
+  statusText.className = "personal-history";
+  const statusClose = document.createElement("button");
+  statusClose.type = "button";
+  statusClose.textContent = "关闭";
+  statusClose.addEventListener("click", () => statusDialog.close());
+  statusDialog.addEventListener("close", () => {
+    if (statusDialog.open) return;
+    statusTarget = undefined;
+    statusTitle.textContent = "";
+    statusText.textContent = "";
+  });
+  statusDialog.append(statusTitle, statusText, statusClose);
+  root.append(statusDialog);
+  let statusTarget;
+  window.nest.onStatusCard?.((value) => {
+    if (typeof value.title !== "string" || typeof value.text !== "string")
+      return;
+    statusTarget = value.target;
+    statusTitle.textContent = value.title;
+    statusText.textContent = value.text;
+    if (!statusDialog.open) statusDialog.showModal();
+  });
   const select = (selector) => root.querySelector(selector);
   const guestList = select(".guest-list");
   const guestActivities = select(".guest-activities");
@@ -1183,6 +1209,24 @@ export function panel(root) {
 
   function update(next) {
     updatePersonal(next);
+    if (
+      statusTarget &&
+      (!next.connected ||
+        next.connectionLost ||
+        next.roomEpoch !== statusTarget.roomEpoch ||
+        !next.roles.some(
+          (role) =>
+            role.id === statusTarget.agentId &&
+            role.state === "here" &&
+            role.bodyVisitId === statusTarget.visitId &&
+            role.statusCard?.ref === statusTarget.ref,
+        ))
+    ) {
+      statusTarget = undefined;
+      statusTitle.textContent = "";
+      statusText.textContent = "";
+      if (statusDialog.open) statusDialog.close();
+    }
     if (room && next.roomEpoch !== room.roomEpoch && taskScope.value) {
       taskScope.value = "";
       message.value = "";

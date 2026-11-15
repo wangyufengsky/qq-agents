@@ -293,6 +293,10 @@ export class DesktopBody {
       return;
     const { action } = entry.request;
     const { perception } = entry.live;
+    // A reaction must not turn its body movement into an independent wake-up.
+    const passive = Boolean(
+      entry.turn.communityTrigger && !entry.request.interaction,
+    );
     if (entry.greeting) {
       const { recipient, reply } = entry.greeting;
       if (
@@ -306,6 +310,7 @@ export class DesktopBody {
         action: "wave",
         position: result.position,
         urgent: true,
+        passive,
         replyTo: reply?.id,
       });
     } else if (
@@ -319,6 +324,7 @@ export class DesktopBody {
       perception.add("action", entry.ctx.agentId, {
         action: gesture,
         position: result.position,
+        passive,
       });
     }
   }
