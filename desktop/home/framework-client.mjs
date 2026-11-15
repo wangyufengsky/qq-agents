@@ -88,13 +88,15 @@ export function createFrameworkClient(
   ) => {
     const heartbeat = endpoint === "heartbeat" ? stream : undefined;
     const timeout = AbortSignal.timeout(
-      upload
-        ? 120_000
-        : endpoint === "client" ||
-            endpoint === "heartbeat" ||
-            endpoint.startsWith("body-")
-          ? CONNECT_TIMEOUT_MS
-          : 8000,
+      endpoint === "personal-drop"
+        ? 7_260_000
+        : upload
+          ? 120_000
+          : endpoint === "client" ||
+              endpoint === "heartbeat" ||
+              endpoint.startsWith("body-")
+            ? CONNECT_TIMEOUT_MS
+            : 8000,
     );
     const response = await fetchLocal(endpoint, {
       method: "POST",
@@ -281,6 +283,21 @@ export function createFrameworkClient(
           clientId,
         );
       });
+    },
+    async personal(endpoint, data) {
+      // A model turn can outlast a lease; keep sync independent of this request.
+      const issuedClient = client;
+      if (stopped) throw Error("DESKTOP_CONNECTION_FAILED");
+      const result = await request(
+        undefined,
+        data,
+        endpoint,
+        undefined,
+        issuedClient,
+      );
+      if (stopped || client !== issuedClient)
+        throw Error("DESKTOP_CONNECTION_FAILED");
+      return result;
     },
     async attachVideo(data, upload) {
       if (stopped) throw Error("DESKTOP_CONNECTION_FAILED");

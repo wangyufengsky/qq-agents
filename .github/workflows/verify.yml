@@ -72,6 +72,21 @@ jobs:
           ffmpeg -version | Select-Object -First 1
           ffprobe -version | Select-Object -First 1
       - run: npm ci
+      - name: Smoke-test native desktop drag on Windows
+        if: runner.os == 'Windows'
+        timeout-minutes: 6
+        shell: pwsh
+        run: |
+          & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File test/fixtures/desktop-drop-pointer.ps1 -Probe
+          if ($LASTEXITCODE -ne 0) { throw 'Native desktop drag requires an interactive Windows desktop.' }
+          $electronDir = Join-Path $env:RUNNER_TEMP 'qq-agents-electron-smoke'
+          New-Item -ItemType Directory -Force -Path $electronDir | Out-Null
+          npm install --prefix $electronDir --no-package-lock --no-save electron@45.3.0
+          if ($LASTEXITCODE -ne 0) { throw "Pinned Electron installation failed: $LASTEXITCODE" }
+          $env:QQ_TEST_ELECTRON = Join-Path $electronDir 'node_modules/electron/dist/electron.exe'
+          if (-not (Test-Path $env:QQ_TEST_ELECTRON)) { throw 'Pinned Electron executable is missing.' }
+          node --test --test-timeout=120000 test/desktop-home-native-drop.browser.mjs
+          if ($LASTEXITCODE -ne 0) { throw "Native desktop drag smoke failed: $LASTEXITCODE" }
       - name: Set public CI commit identity for privacy checks
         run: |
           git config user.name 'github-actions[bot]'

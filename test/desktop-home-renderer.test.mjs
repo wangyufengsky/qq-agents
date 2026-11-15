@@ -1747,3 +1747,209 @@ test("one confirmation grants multiple separate targets and displays each observ
     ["revoke", { agentId: "fish", grantId: "fish-grant" }],
   ]);
 });
+
+test("personal messages stay in their own panel and can be continued", async (t) => {
+  let executablePath;
+  try {
+    executablePath = findScreenshotBrowser();
+  } catch {
+    t.skip("local Chromium unavailable");
+    return;
+  }
+  const browser = await chromium.launch({ executablePath, headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.addInitScript(() => {
+    window.nest = {
+      onRoom: (listener) => (window.pushRoom = listener),
+      onSection() {},
+      get: async () => ({
+        data: {
+          connected: true,
+          roomEpoch: "epoch",
+          roles: [
+            { id: "fish", state: "here", bodyVisitId: "visit" },
+            { id: "dragon", state: "here", bodyVisitId: "visit2" },
+          ],
+          messages: [],
+          budget: 0,
+          maxTurns: 0,
+        },
+        section: "chat",
+      }),
+      onPersonal: (listener) => (window.pushPersonal = listener),
+      personal: async (_action, data) => {
+        window.sentPersonal = data;
+        if (window.delayPersonal)
+          return new Promise((resolve) => (window.resolvePersonal = resolve));
+        return { messages: [{ role: "assistant", text: "私密回复" }] };
+      },
+    };
+  });
+  await page.goto(pageUrl("type=panel"));
+  await page.evaluate(() =>
+    window.pushPersonal({
+      target: { agentId: "fish", roomEpoch: "epoch", visitId: "visit" },
+      name: "小鱼",
+      pending: true,
+    }),
+  );
+  await page.evaluate(() =>
+    window.pushPersonal({
+      target: { agentId: "fish", roomEpoch: "epoch", visitId: "visit" },
+      name: "小鱼",
+      messages: [{ role: "user", text: "独特私密标记" }],
+    }),
+  );
+  const dialog = page.locator(".personal-dialog");
+  await dialog.getByText("我：独特私密标记").waitFor();
+  assert.equal(
+    await page.locator(".thread").getByText("独特私密标记").count(),
+    0,
+  );
+  await dialog.getByLabel("私密消息").fill("继续说");
+  await dialog.getByRole("button", { name: "私密发送" }).click();
+  await dialog.getByText("对方：私密回复").waitFor();
+  assert.equal(await page.evaluate(() => window.sentPersonal.agentId), "fish");
+  await dialog.getByRole("button", { name: "关闭" }).click();
+  await page.getByRole("button", { name: "打开私密对话" }).click();
+  await dialog.getByText("对方：私密回复").waitFor();
+  await page.evaluate(() => {
+    window.delayPersonal = true;
+  });
+  await dialog.getByLabel("私密消息").fill("等待的旧消息");
+  await dialog.getByRole("button", { name: "私密发送" }).click();
+  await page.evaluate(() =>
+    window.pushPersonal({
+      target: { agentId: "dragon", roomEpoch: "epoch", visitId: "visit2" },
+      name: "小龙",
+      pending: true,
+    }),
+  );
+  await page.evaluate(() =>
+    window.resolvePersonal({
+      messages: [{ role: "assistant", text: "旧角色迟到结果" }],
+    }),
+  );
+  assert.equal(await dialog.getByText("旧角色迟到结果").count(), 0);
+  await page.evaluate(() =>
+    window.pushPersonal({
+      target: { agentId: "dragon", roomEpoch: "epoch", visitId: "visit2" },
+      name: "小龙",
+      messages: [{ role: "assistant", text: "新角色私密内容" }],
+    }),
+  );
+  await dialog.getByText("新角色私密内容").waitFor();
+  await page.evaluate(() =>
+    window.pushRoom({
+      connected: true,
+      roomEpoch: "new-epoch",
+      roles: [],
+      messages: [],
+      budget: 0,
+      maxTurns: 0,
+    }),
+  );
+  assert.equal(await dialog.getByText("新角色私密内容").count(), 0);
+  assert.equal(await dialog.isVisible(), false);
+  await page.evaluate(() =>
+    window.pushPersonal({
+      target: { agentId: "dragon", roomEpoch: "epoch", visitId: "visit2" },
+      name: "小龙",
+      messages: [{ role: "assistant", text: "离开后的迟到结果" }],
+    }),
+  );
+  assert.equal(await dialog.getByText("离开后的迟到结果").count(), 0);
+});
+
+test("a public bubble can be replied to inline and remains in recent activity after the floating bubble closes", async (t) => {
+  let executablePath;
+  try {
+    executablePath = findScreenshotBrowser();
+  } catch {
+    t.skip("local Chromium unavailable");
+    return;
+  }
+  const browser = await chromium.launch({ executablePath, headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  const entry = {
+    actor: "fish",
+    bubbleId: "public-bubble",
+    text: "桌边见闻",
+    canReply: true,
+  };
+  const snapshot = {
+    connected: true,
+    framework: true,
+    roomEpoch: "first-room",
+    roles: [{ id: "fish", name: "小鱼", state: "here", available: true }],
+    messages: [],
+    bubbles: { fish: entry },
+    recentBubbles: [entry],
+  };
+  await page.addInitScript((data) => {
+    window.testReplies = [];
+    window.nest = {
+      onRoom: (update) => (window.testRoom = update),
+      onSection() {},
+      onMotion() {},
+      onFacing() {},
+      act() {},
+      get: async () => ({ data, section: "visits" }),
+      bubbleReply: async (action, target) => {
+        window.testReplies.push({ action, target });
+        return true;
+      },
+    };
+  }, snapshot);
+
+  await page.goto(pageUrl("type=sprite&id=fish"));
+  await page.locator(".speech").click();
+  const input = page.getByRole("textbox", { name: "回复公开气泡" });
+  await input.fill("继续说");
+  await input.press("Enter");
+  await input.waitFor({ state: "hidden" });
+  assert.deepEqual(
+    await page.evaluate(() =>
+      window.testReplies.filter(({ action }) => action !== "close"),
+    ),
+    [
+      {
+        action: "open",
+        target: { roomEpoch: "first-room", bubbleId: entry.bubbleId },
+      },
+      {
+        action: "send",
+        target: {
+          roomEpoch: "first-room",
+          bubbleId: entry.bubbleId,
+          text: "继续说",
+        },
+      },
+    ],
+  );
+  await page.evaluate((data) => window.testRoom(data), {
+    ...snapshot,
+    bubbles: {},
+  });
+  await page.locator(".speech").waitFor({ state: "hidden" });
+
+  await page.goto(pageUrl("type=panel"));
+  const recent = page.getByRole("region", { name: "最近动态" });
+  await page.evaluate((data) => window.testRoom(data), {
+    ...snapshot,
+    bubbles: {},
+  });
+  await recent.getByText("桌边见闻").waitFor();
+  await recent.getByRole("button", { name: "回复", exact: true }).click();
+  await recent.getByRole("textbox", { name: "回复公开气泡" }).waitFor();
+  await page.evaluate((data) => window.testRoom(data), {
+    ...snapshot,
+    roomEpoch: "next-room",
+    bubbles: {},
+    recentBubbles: [],
+  });
+  await recent.waitFor({ state: "hidden" });
+  assert.equal(await recent.getByText("桌边见闻").count(), 0);
+});

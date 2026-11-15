@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 
+export const PUBLIC_BUBBLE_REPLY_LIMIT = 3;
+
 const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
 export class DesktopPerception {
@@ -50,6 +52,8 @@ export class DesktopPerception {
       urgentActors,
       replyTo,
       interaction,
+      bubbleRoot,
+      text,
     } = options;
     const now = this.now();
     const policy = this.policy();
@@ -90,7 +94,7 @@ export class DesktopPerception {
             )
             .map(([, visit]) => visit),
     );
-    if (!audience.length) return;
+    if (!audience.length && kind !== "bubble") return;
     this.prune();
     const mergeMs = policy.mergeSeconds * 1000;
     for (const prior of this.events) {
@@ -117,6 +121,8 @@ export class DesktopPerception {
       action,
       replyTo,
       interaction,
+      bubbleRoot,
+      text,
       ...(kind === "action" &&
         this.nearby(point, door) && {
           location: "小门附近",
@@ -242,6 +248,12 @@ export class DesktopPerception {
         actor: event.sourceName,
         actorId: event.actor,
         ...(event.action && { action: event.action }),
+        ...(event.kind === "bubble" && {
+          text: event.text,
+          ...(event.bubbleRoot.replies < PUBLIC_BUBBLE_REPLY_LIMIT &&
+            event.actor !== actor &&
+            event.until > this.now() && { canReplyBubble: true }),
+        }),
         ...(event.location && { location: event.location }),
         ...(event.target && {
           target: event.target === actor ? "你" : event.targetName,

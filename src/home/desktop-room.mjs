@@ -2,7 +2,10 @@ import {
   DesktopActivity,
   DESKTOP_ACTIVITY_TIMEOUT,
 } from "./desktop-activity.mjs";
-import { DesktopPerception } from "./desktop-perception.mjs";
+import {
+  DesktopPerception,
+  PUBLIC_BUBBLE_REPLY_LIMIT,
+} from "./desktop-perception.mjs";
 import { DesktopPublicActivity } from "./desktop-public-activity.mjs";
 import { randomUUID } from "node:crypto";
 import {
@@ -19,6 +22,7 @@ import {
   startTurn,
 } from "./desktop-room-state.mjs";
 
+export const PUBLIC_BUBBLE_DISPLAY_MS = 15_000;
 const OPPORTUNITY_GAP = 30 * 60_000;
 const KNOCK_TTL = 5 * 60_000;
 const INTERACTION_TTL = 10 * 60_000;
@@ -183,7 +187,33 @@ export class LiveRoom {
         activityActors: [...this.activities.keys()],
         activityPaused: this.activity.paused,
       }),
-      bubbles: room.bubbles,
+      recentBubbles: (this.perception?.events ?? [])
+        .filter(
+          (event) =>
+            event.kind === "bubble" &&
+            event.at >
+              this.runner.now() -
+                this.runner.publicPolicy().recentMinutes * 60_000,
+        )
+        .slice(-this.runner.publicPolicy().recentLimit)
+        .map((event) => ({
+          bubbleId: event.id,
+          actor: event.actor,
+          text: event.text,
+          now: event.at,
+          expiresAt: event.at + PUBLIC_BUBBLE_DISPLAY_MS,
+          canReply:
+            this.publicEnabled() &&
+            event.until > this.runner.now() &&
+            event.bubbleRoot.replies < PUBLIC_BUBBLE_REPLY_LIMIT &&
+            this.visits.get(event.actor) === event.source,
+        })),
+      bubbles: Object.fromEntries(
+        Object.entries(room.bubbles).filter(
+          ([, bubble]) =>
+            !bubble.expiresAt || bubble.expiresAt > this.runner.now(),
+        ),
+      ),
       notice: room.notice,
     };
   }
@@ -495,6 +525,51 @@ export class LiveRoom {
     return true;
   }
 
+  replyToBubble(bubbleId, text) {
+    const event = this.perception?.events.find(
+      (entry) => entry.id === bubbleId && entry.kind === "bubble",
+    );
+    const now = this.runner.now();
+    const content = typeof text === "string" ? text.trim() : "";
+    if (
+      this.closed ||
+      !this.publicEnabled() ||
+      !content ||
+      content.length > 1000 ||
+      !event ||
+      event.until <= now ||
+      event.bubbleRoot.replies >= PUBLIC_BUBBLE_REPLY_LIMIT ||
+      this.visits.get(event.actor) !== event.source
+    )
+      return false;
+    const message = addMessage(
+      this.room,
+      "admin",
+      content,
+      now,
+      [],
+      undefined,
+      "administrator",
+      event.actor,
+    );
+    this.room.budget = this.room.maxTurns;
+    setIntervalMinutes(this.room, this.room.minutes, now);
+    event.bubbleRoot.replies++;
+    this.qqDeferred.delete(event.actor);
+    if (event.bubbleRoot.replies < PUBLIC_BUBBLE_REPLY_LIMIT) {
+      event.bubbleRoot.replies++;
+      this.cancelActivity(event.actor);
+      this.room.waiting.push({
+        actor: event.actor,
+        direct: message.messageId,
+        bubbleReply: true,
+      });
+    }
+    this.onChange();
+    void this.advance();
+    return true;
+  }
+
   sendWindowTask(task) {
     if (
       this.closed ||
@@ -749,6 +824,52 @@ export class LiveRoom {
     await Promise.all(jobs);
   }
 
+  publishBubble(actor, visit, bubble) {
+    if (
+      !this.publicEnabled() ||
+      this.visits.get(actor) !== visit ||
+      !this.runner.activityCurrent(actor)
+    )
+      return;
+    let root;
+    if (bubble.replyTo) {
+      const event = this.perception.events.find(
+        (entry) => entry.id === bubble.replyTo,
+      );
+      if (
+        !event ||
+        event.kind !== "bubble" ||
+        !event.audience.has(visit) ||
+        event.actor === actor ||
+        this.visits.get(event.actor) !== event.source ||
+        event.until <= this.runner.now() ||
+        event.bubbleRoot.replies >= PUBLIC_BUBBLE_REPLY_LIMIT
+      )
+        return;
+      root = event.bubbleRoot;
+      root.replies++;
+    } else root = { replies: 0 };
+    const now = this.runner.now();
+    const message = addMessage(
+      this.room,
+      actor,
+      bubble.text,
+      now,
+      [],
+      undefined,
+      "agent",
+    );
+    message.expiresAt = now + PUBLIC_BUBBLE_DISPLAY_MS;
+    this.room.bubbles[actor] = message;
+    const event = this.perception.add("bubble", actor, {
+      text: bubble.text,
+      bubbleRoot: root,
+      audiences: [...this.visits].filter(([id]) => id !== actor),
+      urgent: root.replies < PUBLIC_BUBBLE_REPLY_LIMIT,
+    });
+    message.bubbleId = event.id;
+  }
+
   async runActivity(turn) {
     const publicTurn = Object.hasOwn(turn, "idle");
     const visit = this.visits.get(turn.actor);
@@ -879,7 +1000,18 @@ export class LiveRoom {
       }
       if (!isCurrent() || signal.aborted) return;
       if (observation) this.runner.finishObservation?.(observation, reply);
-      else interactionDecision = reply.interaction;
+      else {
+        interactionDecision = reply.interaction;
+        const trigger = this.perception?.events.find(
+          (event) => event.id === turn.trigger,
+        );
+        if (
+          publicTurn &&
+          reply.bubble &&
+          (trigger?.kind !== "bubble" || reply.bubble.replyTo === trigger.id)
+        )
+          this.publishBubble(turn.actor, visit, reply.bubble);
+      }
       completed = !observation && reply.action !== "leave";
       if (publicTurn) activityReply = reply;
       else this.activity.finish(visit, { reply, now: this.runner.now() });
@@ -1028,7 +1160,7 @@ export class LiveRoom {
           this.room.roles.find(({ id }) => id === actor),
           true,
         );
-      if (reply.action === "say" && !windowTask)
+      if (reply.action === "say" && !windowTask && !turn.bubbleReply)
         this.addCandidates(actor, this.room.messages.at(-1)?.targets?.[0]);
     } catch (error) {
       if (!windowTask && error.desktopSessionUntouched !== true)
