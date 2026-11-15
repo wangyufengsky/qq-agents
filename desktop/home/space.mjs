@@ -580,10 +580,21 @@ export class DesktopSpace {
     const clear = (a, b) =>
       withinRegions(a, b, regions) &&
       occupied.every((rect) => clears(a, b, rect, regions));
+    // Keep the nearest side as the preferred semantic destination, but allow
+    // sliding along that edge when another resident already occupies it.
     const destinations =
       target === "seat"
         ? nearbySeat(candidates[0], bounds, area, occupied)
-        : candidates;
+        : resident || target?.type === "window"
+          ? candidates.flatMap((point) =>
+              nearbySeat(point, bounds, area, occupied).filter((candidate) =>
+                point.x === anchor.x - bounds.width - GAP ||
+                point.x === right(anchor) + GAP
+                  ? candidate.x === point.x
+                  : candidate.y === point.y,
+              ),
+            )
+          : candidates;
     const sameDisplay = source.id === display.id && fits(bounds, area);
     for (const point of destinations) {
       if (occupied.some((rect) => depth(point, rect) > 0)) continue;

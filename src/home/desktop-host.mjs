@@ -94,6 +94,7 @@ const syncDataSchema = z
           .optional(),
         bodyProtocol: z.literal(2).optional(),
         bodyCrossDisplay: z.literal(true).optional(),
+        bodyWindowApproach: z.literal(true).optional(),
         bodyInteractions: z.literal(true).optional(),
         bodyPublic: z.literal(true).optional(),
         observationProtocol: z.literal(2).optional(),
@@ -955,6 +956,10 @@ export class DesktopHost {
             : undefined,
         );
       }
+      // Boolean stream heartbeats renew the existing client capabilities.
+      if (!heartbeat || typeof data === "object")
+        this.client.bodyWindowApproach =
+          data?.bodyProtocol === 2 && data.bodyWindowApproach === true;
       if (data && typeof data === "object" && "visible" in data) {
         if (data.observationProtocol === 2) this.client.observationProtocol = 2;
         this.client.displayObservation =
@@ -1238,6 +1243,7 @@ export class DesktopHost {
       bodyProtocol: 2,
       bodyCrossDisplay: true,
       bodyInteractions: true,
+      bodyWindowApproach: true,
       ...(this.runtime.config.desktopHome.publicPerception.enabled && {
         publicPerception: true,
       }),

@@ -67,6 +67,10 @@ export const bodyActionSchema = z.union([
   ]),
 ]);
 
+export const windowApproachAction = z
+  .object({ type: z.literal("approach-window"), requestId })
+  .strict();
+
 const interactionAction = z
   .object({
     type: z.literal("interaction"),
@@ -88,7 +92,7 @@ export const desktopPublicWaveSchema = z.union([
     .strict(),
 ]);
 
-export const interactiveBodyActionSchema = z.union([
+export const standardInteractiveBodyActionSchema = z.union([
   bodyActionSchema,
   interactionAction,
   z
@@ -100,6 +104,11 @@ export const interactiveBodyActionSchema = z.union([
       replyTo: z.string().uuid().optional(),
     })
     .strict(),
+]);
+
+export const interactiveBodyActionSchema = z.union([
+  standardInteractiveBodyActionSchema,
+  windowApproachAction,
 ]);
 
 const spaceSchema = z

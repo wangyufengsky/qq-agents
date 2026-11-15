@@ -51,6 +51,9 @@ ${selfBody}
       runtime.desktopVisits.client?.bodyCrossDisplay === true,
     desktopBodyInteractions: runtime.desktopVisits.interactionsAvailable(),
     desktopPublicWave: runtime.desktopVisits.publicBodyAvailable(),
+    desktopWindowApproach: Boolean(
+      runtime.desktopVisits.body.windowApproachGrant(ctx),
+    ),
   });
   const signature = backend.sessionSignature?.(tools);
   const instructionsHash = createHash("sha256")

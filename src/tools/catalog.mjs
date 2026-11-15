@@ -90,6 +90,9 @@ export function scopedCatalog(runtime, ctx, input) {
         runtime.desktopVisits.client?.bodyCrossDisplay === true,
       desktopBodyInteractions: runtime.desktopVisits.interactionsAvailable(),
       desktopPublicWave: runtime.desktopVisits.publicBodyAvailable(),
+      desktopWindowApproach: Boolean(
+        runtime.desktopVisits.body.windowApproachGrant(ctx),
+      ),
     }).map((s) =>
       args.names ? s : { name: s.name, description: s.description },
     ),

@@ -1426,6 +1426,20 @@ h2 {
   line-height: 1.3;
   overflow: hidden;
 }
+.floating[data-bubble-collaboration] .speech {
+  padding-right: 48px;
+}
+.bubble-collaboration {
+  position: absolute;
+  z-index: 2;
+  top: 5px;
+  right: 13px;
+  padding: 3px 5px;
+  font-size: 11px;
+}
+.floating[data-bubble-reply] .bubble-collaboration {
+  visibility: hidden;
+}
 .speech span {
   display: -webkit-box;
   -webkit-line-clamp: 2;

@@ -6,6 +6,8 @@ import {
   bodyActionSchema,
   desktopPublicWaveSchema,
   legacyBodyActionSchema,
+  windowApproachAction,
+  standardInteractiveBodyActionSchema,
 } from "../home/desktop-body-protocol.mjs";
 export { TOOL_NAMES } from "./names.mjs";
 
@@ -19,6 +21,7 @@ export function toolSpecs(
     desktopBodyCrossDisplay = false,
     desktopBodyInteractions = false,
     desktopPublicWave = false,
+    desktopWindowApproach = false,
   } = {},
 ) {
   return enabled
@@ -34,15 +37,30 @@ export function toolSpecs(
               "可沿相邻工作区跨屏移动，间隙或过窄边界不可达",
             )
           : description;
+      const actionSchema =
+        body && desktopWindowApproach
+          ? z.union([
+              desktopBodyInteractions
+                ? standardInteractiveBodyActionSchema
+                : desktopPublicWave
+                  ? desktopPublicWaveSchema
+                  : bodyActionSchema,
+              windowApproachAction,
+            ])
+          : undefined;
       const inputSchema = z.toJSONSchema(
         /** @type {import("zod").ZodType} */ (
           legacyBody
             ? legacyBodyActionSchema
-            : body && !desktopBodyInteractions
-              ? desktopPublicWave
-                ? desktopPublicWaveSchema
-                : bodyActionSchema
-              : schema
+            : actionSchema
+              ? actionSchema
+              : body && !desktopBodyInteractions
+                ? desktopPublicWave
+                  ? desktopPublicWaveSchema
+                  : bodyActionSchema
+                : body
+                  ? standardInteractiveBodyActionSchema
+                  : schema
         ),
         { target: "draft-7" },
       );
@@ -64,20 +82,25 @@ export function toolSpecs(
         add(inputSchema);
       }
       delete inputSchema.$schema;
+      const approachDescription =
+        desktopWindowApproach && body
+          ? " 可用 approach-window 靠近当前获准关注的窗口；手动移动会立即接管。"
+          : "";
       return {
         name,
-        description: legacyBody
-          ? legacyBodyDescription
-          : body && desktopBodyInteractions
-            ? bodyDescription +
-              " gesture 播放 jump、climb、land 或 wave。interaction 仅用于本轮双方已同意的互动步骤，填入提示中的 interactionId。" +
-              (desktopPublicWave
-                ? " 点名挥手用 recipient，回应已有招呼可附 replyTo。"
-                : "")
-            : body && desktopPublicWave
+        description:
+          (legacyBody
+            ? legacyBodyDescription
+            : body && desktopBodyInteractions
               ? bodyDescription +
-                " 可向在场角色挥手。用 gesture 的 wave 搭配 recipient，回礼可附 publicSpace.recent 中的 replyTo。双方同意的协作步骤使用 interaction 和提示里的 interactionId。"
-              : bodyDescription,
+                " gesture 播放 jump、climb、land 或 wave。interaction 仅用于本轮双方已同意的互动步骤，填入提示中的 interactionId。" +
+                (desktopPublicWave
+                  ? " 点名挥手用 recipient，回应已有招呼可附 replyTo。"
+                  : "")
+              : body && desktopPublicWave
+                ? bodyDescription +
+                  " 可向在场角色挥手。用 gesture 的 wave 搭配 recipient，回礼可附 publicSpace.recent 中的 replyTo。双方同意的协作步骤使用 interaction 和提示里的 interactionId。"
+                : bodyDescription) + approachDescription,
         inputSchema,
       };
     });
