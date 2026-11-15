@@ -1390,6 +1390,10 @@ export class Runtime {
           throw Error("SUBJECT_TOOL_BUDGET");
         ctx.subjectToolReservations = (ctx.subjectToolReservations || 0) + 1;
       }
+      const recordStatusCard = this.desktopVisits.captureStatusCard?.(
+        ctx,
+        name,
+      );
       const result = await this.executeTool(ctx, name, args);
       if (
         ctx.runtimeKind === "functional-agent" ||
@@ -1400,6 +1404,7 @@ export class Runtime {
         ctx.stagedToolOutputs?.delete(result);
         throw Error("INPUT_EPOCH_CHANGED");
       }
+      recordStatusCard?.(result);
       if (tracedSend && (result?.status === "stopped" || result?.preparation)) {
         const reason = timedStoppedSend(result, ctx.controller.signal.aborted);
         ctx.messageTimingToolOutcome = reason;

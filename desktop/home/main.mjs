@@ -2039,7 +2039,14 @@ function updatePointerRegions() {
       dx <= 184 &&
       dy >= 2 &&
       dy <= 54;
-    const active = overBody || overBubble;
+    const overStatus =
+      type === "sprite" &&
+      remoteState?.roles.some((role) => role.id === id && role.statusCard) &&
+      dx >= 10 &&
+      dx <= 184 &&
+      dy >= 2 &&
+      dy <= 54;
+    const active = overBody || overBubble || overStatus;
     const ignored = !active && !entry.drag;
     if (ignored === entry.ignored) continue;
     entry.ignored = ignored;
@@ -2186,6 +2193,54 @@ ipc.handle("room:get", (event) => {
   const entry = ipc.entryFor(event);
   if (entry)
     return { data: snapshot(entry.type === "panel"), section: entry.section };
+});
+
+let openingStatusCard;
+ipc.handle("room:status-card", async (event, data) => {
+  const entry = ipc.actionEntry(event);
+  const current = () => {
+    const role = remoteState?.roles.find(({ id }) => id === entry?.id);
+    return (
+      entry?.type === "sprite" &&
+      ipc.actionEntry(event) === entry &&
+      windowVisible(entry) &&
+      personalTarget(entry.id, data?.roomEpoch, data?.visitId) &&
+      role?.statusCard?.ref === data?.ref
+    );
+  };
+  if (!current()) return false;
+  const opening = {};
+  openingStatusCard = opening;
+  const currentOpening = () => openingStatusCard === opening && current();
+  try {
+    const value = await framework.personal("status-card", {
+      agentId: entry.id,
+      roomEpoch: data.roomEpoch,
+      visitId: data.visitId,
+      ref: data.ref,
+    });
+    if (!currentOpening() || value?.status !== "ok") return false;
+    showPanel("chat");
+    const panel = entries.get("panel");
+    const deliver = () => {
+      if (currentOpening() && entries.get("panel") === panel)
+        send(panel, "room:status-card", {
+          title: value.title,
+          text: value.text,
+          target: {
+            agentId: entry.id,
+            roomEpoch: data.roomEpoch,
+            visitId: data.visitId,
+            ref: data.ref,
+          },
+        });
+    };
+    if (panel?.ready) deliver();
+    else panel?.win.webContents.once("did-finish-load", deliver);
+    return true;
+  } catch {
+    return false;
+  }
 });
 
 // Personal drops never enter the shared room snapshot or renderer event bus.

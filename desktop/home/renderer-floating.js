@@ -196,6 +196,18 @@ export function floating(root, type, id) {
       void bubbleComposer.open(bubbleId, room);
     } else window.nest.act("open");
   });
+  const statusCard = button("status-card", "", "打开状态卡");
+  statusCard.hidden = true;
+  statusCard.addEventListener("click", () => {
+    const card = role?.statusCard;
+    if (!card || !room?.roomEpoch || !role.bodyVisitId) return;
+    void window.nest.openStatusCard?.({
+      roomEpoch: room.roomEpoch,
+      visitId: role.bodyVisitId,
+      ref: card.ref,
+    });
+  });
+  space.prepend(statusCard);
   space.prepend(speech);
   art.addEventListener("contextmenu", (event) => {
     event.preventDefault();
@@ -271,11 +283,27 @@ export function floating(root, type, id) {
     role = data.roles.find((item) => item.id === id);
     if (!role) {
       delete art.dataset.gesture;
+      statusCard.hidden = true;
+      statusCard.textContent = "";
       return;
     }
     const facing = role.bodyStatus?.facing;
     if (facing) face(facing);
     renderSprite();
+    const card = role.statusCard;
+    statusCard.hidden =
+      !card ||
+      role.state !== "here" ||
+      !role.bodyVisitId ||
+      !room.roomEpoch ||
+      room.connectionLost ||
+      typeof card.title !== "string" ||
+      !card.ref;
+    statusCard.textContent = statusCard.hidden ? "" : card.title;
+    statusCard.setAttribute(
+      "aria-label",
+      `打开状态卡：${statusCard.textContent}`,
+    );
     renderGesture(role.bodyStatus?.gesture);
     const bubble = data.bubbles?.[id];
     const message = bubble?.text ?? (data.thinking === id ? "正在想…" : "");

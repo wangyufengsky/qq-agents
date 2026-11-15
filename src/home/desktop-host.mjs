@@ -40,6 +40,7 @@ import {
 } from "./desktop-observation.mjs";
 import { DesktopScreen } from "./desktop-screen.mjs";
 import { DesktopBody } from "./desktop-body.mjs";
+import { DesktopStatusCards } from "./desktop-status-card.mjs";
 import {
   bodyRecoveryPositionSchema,
   bodyResultEvidenceSchema,
@@ -208,6 +209,7 @@ export class DesktopHost {
   constructor(runtime) {
     this.runtime = runtime;
     this.personal = new DesktopPersonal(this);
+    this.statusCards = new DesktopStatusCards(this);
     this.eventSubscribers = new Map();
     this.eventSequence = 0;
     this.archive = new DesktopArchive(runtime.memory);
@@ -219,6 +221,10 @@ export class DesktopHost {
     this.native = new DesktopNative(this);
     this.body = new DesktopBody(this);
     this.browser = new DesktopBrowser(this);
+  }
+
+  captureStatusCard(ctx, name) {
+    return this.statusCards.capture(ctx, name);
   }
 
   notify() {
@@ -778,6 +784,7 @@ export class DesktopHost {
 
   reset() {
     this.personal.clear();
+    this.statusCards.cards.clear();
     const subscribers = [...this.eventSubscribers.keys()];
     this.eventSubscribers.clear();
     const payload =
@@ -1180,12 +1187,14 @@ export class DesktopHost {
           bodyStatus.state = "waiting";
           bodyStatus.until = this.live.activityDue(visit);
         }
+        const statusCard = visit && this.statusCards.snapshot(id, visit);
         return {
           ...role,
           activity,
           bodyStatus,
           bodyControlAvailable: this.bodyControlAvailable(id),
           ...(visit && { bodyVisitId: this.body.visitId(visit) }),
+          ...(statusCard && { statusCard }),
         };
       }),
     };

@@ -79,6 +79,9 @@ export function promptFor(request) {
     ...(request.kind === "chat" ? { newMessages: request.messages } : {}),
     ...(request.kind === "activity" && {
       reason: request.reason,
+      ...(request.communityTrigger && {
+        triggerEventId: request.communityTrigger,
+      }),
       recentEvent: request.recentEvent,
       lastBodyResult: request.observation ? undefined : request.lastResult,
       observationAvailable: request.observationAvailable,
@@ -113,7 +116,7 @@ export function promptFor(request) {
           : "";
   const bubbleTask =
     request.activityPolicy && !request.observation
-      ? "\n若想分享一句公开近况，可在 wait 或 silent 中附 bubble: {text}；仅对 recent 中 canReplyBubble 的气泡接话时填 replyTo；由气泡唤醒时只能回复触发你的气泡，或不发气泡。公开气泡会被在场同伴看到并归档，不得包含观察画面、窗口、私密内容。没有想说的就不填。"
+      ? "\n若想分享一句公开近况，可在 wait 或 silent 中附 bubble: {text}；回应 recent 中 canReplyBubble 的公开事件或气泡时填 replyTo；由这些事件唤醒时只能回应触发事件，或不发气泡。公开气泡会被在场同伴看到并归档，不得包含观察画面、窗口、私密内容。没有想说的就不填。"
       : "";
   const publicTask = request.resting
     ? "\n管理员点名给了你一次回应机会。你可以回一句或保持沉默，之后继续原来那段休息。"

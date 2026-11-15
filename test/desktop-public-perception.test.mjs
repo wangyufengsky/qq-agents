@@ -244,6 +244,7 @@ test("perception freezes ordinary audiences and named replies do not start a new
       .context(ids[1], visits.get(ids[1]))
       .recent.some(({ action }) => action === "sit"),
   );
+  for (const event of perception.events) event.opportunities.clear();
   const address = perception.add("greeting", ids[0], {
     target: ids[1],
     action: "wave",
@@ -495,4 +496,192 @@ test("bubble reply preserves the current turn and unrelated window tasks while r
   const heard = host.archive.heard(ids[0], 0, 0, 20);
   assert(heard.some((entry) => entry.text === "接话" && entry.addressedToYou));
   live.foreground = null;
+});
+
+test("ordinary public events invite three residents to react under one root limit", async (t) => {
+  const f = setup(t);
+  for (const id of ids) f.quietJoin(id);
+  const layout = ids.map((id, index) => [id, 75 + index * 10]);
+  f.sync({ residents: layout });
+  const { perception, visits } = f.host.live;
+  const event = perception.add("action", ids[0], {
+    action: "sit",
+    position: { x: -22, y: -18, displayId: 1 },
+  });
+  assert(
+    perception
+      .opportunities(ids[1], visits.get(ids[1]), f.runtime.now())
+      .some(({ id }) => id === event.id),
+  );
+  f.sync({ residents: layout });
+  assert.equal(f.runs.length, 2);
+  const first = f.runs.find(({ actor }) => actor === ids[1]);
+  const second = f.runs.find(({ actor }) => actor === ids[2]);
+  await f.finish(first, {
+    action: "silent",
+    bubble: { text: "坐一会儿", replyTo: event.id },
+  });
+  await f.finish(second);
+  const child = perception.events.findLast((entry) => entry.kind === "bubble");
+  assert.equal(child.bubbleRoot, event.bubbleRoot);
+  assert.equal(event.bubbleRoot.replies, 1);
+  f.host.live.publishBubble(ids[2], visits.get(ids[2]), {
+    text: "一起",
+    replyTo: child.id,
+  });
+  f.host.live.publishBubble(ids[1], visits.get(ids[1]), {
+    text: "好",
+    replyTo: event.id,
+  });
+  const count = f.host.live.room.messages.length;
+  f.host.live.publishBubble(ids[0], visits.get(ids[0]), {
+    text: "超额",
+    replyTo: child.id,
+  });
+  assert.equal(f.host.live.room.messages.length, count);
+  assert.equal(event.bubbleRoot.replies, 3);
+  assert.equal(
+    perception
+      .opportunities(ids[0], visits.get(ids[0]), f.runtime.now())
+      .filter(({ kind }) => kind === "bubble").length,
+    0,
+  );
+});
+
+test("ordinary events reject invisible and expired replies and silence creates no bubble", async (t) => {
+  const f = setup(t);
+  for (const id of ids) f.quietJoin(id);
+  const layout = [
+    [ids[0], 75],
+    [ids[1], 90],
+    [ids[2], 90, 2],
+  ];
+  f.sync({ residents: layout });
+  const { perception, visits } = f.host.live;
+  const event = perception.add("action", ids[0], {
+    action: "sit",
+    position: { x: -22, y: -18, displayId: 1 },
+  });
+  f.host.live.publishBubble(ids[2], visits.get(ids[2]), {
+    text: "不可见",
+    replyTo: event.id,
+  });
+  assert.equal(event.bubbleRoot.replies, 0);
+  f.sync({ residents: layout });
+  assert.equal(f.runs.length, 1);
+  await f.finish(f.runs[0]);
+  assert.equal(
+    perception.events.filter(({ kind }) => kind === "bubble").length,
+    0,
+  );
+  f.advance(10 * minute);
+  f.host.live.publishBubble(ids[1], visits.get(ids[1]), {
+    text: "过期",
+    replyTo: event.id,
+  });
+  assert.equal(event.bubbleRoot.replies, 0);
+});
+
+test("evicted trigger cannot become a new bubble root after a delayed activity", async (t) => {
+  const f = setup(t);
+  for (const id of ids) f.quietJoin(id);
+  const layout = [
+    [ids[0], 75],
+    [ids[1], 90],
+    [ids[2], 90, 2],
+  ];
+  f.sync({ residents: layout });
+  const { perception } = f.host.live;
+  const event = perception.add("action", ids[0], {
+    action: "sit",
+    position: { x: -22, y: -18, displayId: 1 },
+  });
+  f.sync({ residents: layout });
+  assert.equal(f.runs.length, 1);
+  assert(f.runs[0].params.prompt.includes(`"triggerEventId":"${event.id}"`));
+  perception.events = perception.events.filter(({ id }) => id !== event.id);
+  await f.finish(f.runs[0], { action: "silent", bubble: { text: "新根" } });
+  assert.equal(
+    perception.events.filter(({ kind }) => kind === "bubble").length,
+    0,
+  );
+});
+
+test("body action caused by a community event stays visible without waking peers", async (t) => {
+  const f = setup(t);
+  for (const id of ids) f.quietJoin(id);
+  const layout = [
+    [ids[0], 75],
+    [ids[1], 90],
+    [ids[2], 90, 2],
+  ];
+  f.sync({ residents: layout });
+  const { perception, visits } = f.host.live;
+  const event = perception.add("action", ids[0], {
+    action: "sit",
+    position: { x: -22, y: -18, displayId: 1 },
+  });
+  f.sync({ residents: layout });
+  const run = f.runs[0];
+  const action = run.params.callTool("desktop_body_control", {
+    type: "move",
+    target: "door",
+    requestId: randomUUID(),
+  });
+  const [request] = f.sync({ residents: layout }).bodyRequests;
+  const { roomEpoch, commandId, agentId, visitId } = request;
+  const input = { client: f.client, roomEpoch, commandId, agentId, visitId };
+  f.host.body.claim(input);
+  // Eviction while the body request is in flight must not change its lineage.
+  perception.events = perception.events.filter(({ id }) => id !== event.id);
+  f.host.body.receive({
+    ...input,
+    finishedAt: Date.now(),
+    result: {
+      status: "completed",
+      position: { x: -7, y: -18, displayId: 1 },
+    },
+  });
+  assert.equal((await action).status, "completed");
+  const derived = perception.events.findLast(({ kind }) => kind === "action");
+  assert(derived.audience.has(visits.get(ids[0])));
+  assert.equal(derived.bubbleRoot, undefined);
+  assert.equal(derived.opportunities.size, 0);
+  assert.equal(
+    perception.context(ids[0], visits.get(ids[0])).recent.at(-1).canReplyBubble,
+    undefined,
+  );
+  await f.finish(run);
+});
+
+test("passive greetings remain visible but cannot initiate a greeting exchange", (t) => {
+  const f = setup(t);
+  for (const id of ids) f.quietJoin(id);
+  const { perception, visits } = f.host.live;
+  const passive = perception.add("greeting", ids[0], {
+    target: ids[1],
+    action: "wave",
+    urgent: true,
+    passive: true,
+  });
+  assert.equal(passive.opportunities.size, 0);
+  assert.equal(
+    perception.greeting(ids[1], visits.get(ids[1]), passive.id),
+    undefined,
+  );
+  assert(
+    perception
+      .context(ids[1], visits.get(ids[1]))
+      .recent.some(({ id }) => id === passive.id),
+  );
+  const independent = perception.add("greeting", ids[0], {
+    target: ids[1],
+    action: "wave",
+    urgent: true,
+  });
+  assert.equal(
+    perception.greeting(ids[1], visits.get(ids[1]), independent.id),
+    independent,
+  );
+  assert(independent.opportunities.has(visits.get(ids[1])));
 });

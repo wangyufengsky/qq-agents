@@ -36,6 +36,9 @@ contextBridge.exposeInMainWorld("nest", {
   onPersonal: (listener) =>
     ipcRenderer.on("room:personal", (_event, value) => listener(value)),
   get: () => ipcRenderer.invoke("room:get"),
+  openStatusCard: (data) => ipcRenderer.invoke("room:status-card", data),
+  onStatusCard: (listener) =>
+    ipcRenderer.on("room:status-card", (_event, value) => listener(value)),
   bubbleReply: (action, data) =>
     ipcRenderer.invoke("room:bubble-reply", action, data),
   attach: () => ipcRenderer.invoke("room:attach"),

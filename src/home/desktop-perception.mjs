@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 
 export const PUBLIC_BUBBLE_REPLY_LIMIT = 3;
 
+const COMMUNITY_EVENTS = new Set(["action", "arrival", "departure", "bubble"]);
+
 const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
 export class DesktopPerception {
@@ -54,6 +56,7 @@ export class DesktopPerception {
       interaction,
       bubbleRoot,
       text,
+      passive = false,
     } = options;
     const now = this.now();
     const policy = this.policy();
@@ -84,12 +87,13 @@ export class DesktopPerception {
       ({ id }) => id === target,
     )?.name;
     const opportunities = new Set(
-      replyTo
+      replyTo || passive
         ? []
         : audience
             .filter(
               ([id]) =>
                 urgentActors?.has(id) ||
+                (COMMUNITY_EVENTS.has(kind) && !replyTo) ||
                 (urgent && (target === undefined || id === target)),
             )
             .map(([, visit]) => visit),
@@ -121,8 +125,11 @@ export class DesktopPerception {
       action,
       replyTo,
       interaction,
-      bubbleRoot,
+      bubbleRoot:
+        bubbleRoot ??
+        (!passive && COMMUNITY_EVENTS.has(kind) ? { replies: 0 } : undefined),
       text,
+      passive,
       ...(kind === "action" &&
         this.nearby(point, door) && {
           location: "小门附近",
@@ -151,6 +158,8 @@ export class DesktopPerception {
       .filter(
         (event) =>
           event.opportunities.has(visit) &&
+          (!event.bubbleRoot ||
+            event.bubbleRoot.replies < PUBLIC_BUBBLE_REPLY_LIMIT) &&
           now < event.until &&
           (!event.interaction ||
             (this.room.interaction?.id === event.interaction.id &&
@@ -194,6 +203,7 @@ export class DesktopPerception {
     const event = this.events.find((event) => event.id === id);
     if (
       event?.kind === "greeting" &&
+      !event.passive &&
       !event.replyTo &&
       event.target === actor &&
       event.recipient === visit &&
@@ -248,12 +258,15 @@ export class DesktopPerception {
         actor: event.sourceName,
         actorId: event.actor,
         ...(event.action && { action: event.action }),
-        ...(event.kind === "bubble" && {
-          text: event.text,
-          ...(event.bubbleRoot.replies < PUBLIC_BUBBLE_REPLY_LIMIT &&
-            event.actor !== actor &&
-            event.until > this.now() && { canReplyBubble: true }),
-        }),
+        ...(event.kind === "bubble" && { text: event.text }),
+        ...(event.bubbleRoot &&
+          event.bubbleRoot.replies < PUBLIC_BUBBLE_REPLY_LIMIT &&
+          event.actor !== actor &&
+          event.until > this.now() &&
+          (event.kind === "departure" ||
+            this.room.visits.get(event.actor) === event.source) && {
+            canReplyBubble: true,
+          }),
         ...(event.location && { location: event.location }),
         ...(event.target && {
           target: event.target === actor ? "你" : event.targetName,
