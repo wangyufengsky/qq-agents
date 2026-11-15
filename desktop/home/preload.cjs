@@ -1,7 +1,43 @@
-const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer, webUtils } = require("electron");
+
+// Only the preload can convert files from a real OS drop into local paths.
+for (const name of ["dragenter", "dragover"])
+  window.addEventListener(name, (event) => {
+    if (
+      !event.isTrusted ||
+      !event.target.closest?.(".door-button, .sprite-button")
+    )
+      return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  });
+window.addEventListener("drop", (event) => {
+  if (
+    !event.isTrusted ||
+    !event.target.closest?.(".door-button, .sprite-button")
+  )
+    return;
+  event.preventDefault();
+  const files = [...event.dataTransfer.files];
+  const path =
+    files.length === 1 ? webUtils.getPathForFile(files[0]) : undefined;
+  ipcRenderer.send("room:personal-drop", {
+    path,
+    fileCount: files.length,
+    text: files.length
+      ? undefined
+      : event.dataTransfer.getData("text/uri-list") ||
+        event.dataTransfer.getData("text/plain"),
+  });
+});
 
 contextBridge.exposeInMainWorld("nest", {
+  personal: (action, data) => ipcRenderer.invoke("room:personal", action, data),
+  onPersonal: (listener) =>
+    ipcRenderer.on("room:personal", (_event, value) => listener(value)),
   get: () => ipcRenderer.invoke("room:get"),
+  bubbleReply: (action, data) =>
+    ipcRenderer.invoke("room:bubble-reply", action, data),
   attach: () => ipcRenderer.invoke("room:attach"),
   setSection: (section) => ipcRenderer.send("room:action", "section", section),
   follow: (id, mode) => ipcRenderer.invoke("room:follow", id, mode),

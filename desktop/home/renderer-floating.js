@@ -1,4 +1,5 @@
 /* global document, window */
+import { bindBubbleComposer } from "./renderer-bubbles.js";
 import {
   element,
   image,
@@ -183,7 +184,18 @@ export function floating(root, type, id) {
   const words = element("span");
   speech.append(words);
   speech.hidden = true;
-  speech.addEventListener("click", () => window.nest.act("open"));
+  const bubbleComposer = bindBubbleComposer(space, true);
+  speech.addEventListener("click", () => {
+    const bubbleId = room?.bubbles?.[id]?.bubbleId;
+    if (
+      bubbleId &&
+      room?.recentBubbles?.some(
+        (bubble) => bubble.bubbleId === bubbleId && bubble.canReply,
+      )
+    ) {
+      void bubbleComposer.open(bubbleId, room);
+    } else window.nest.act("open");
+  });
   space.prepend(speech);
   art.addEventListener("contextmenu", (event) => {
     event.preventDefault();
@@ -255,6 +267,7 @@ export function floating(root, type, id) {
 
   subscribe((data) => {
     room = data;
+    bubbleComposer.update(room);
     role = data.roles.find((item) => item.id === id);
     if (!role) {
       delete art.dataset.gesture;
@@ -264,8 +277,12 @@ export function floating(root, type, id) {
     if (facing) face(facing);
     renderSprite();
     renderGesture(role.bodyStatus?.gesture);
-    const message =
-      data.bubbles?.[id]?.text ?? (data.thinking === id ? "正在想…" : "");
+    const bubble = data.bubbles?.[id];
+    const message = bubble?.text ?? (data.thinking === id ? "正在想…" : "");
+    speech.setAttribute(
+      "aria-label",
+      bubble?.bubbleId ? "回复公开气泡" : "打开小窝聊天",
+    );
     words.textContent = message;
     speech.hidden = !message;
   });

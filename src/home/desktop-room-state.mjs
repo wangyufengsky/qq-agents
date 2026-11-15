@@ -69,6 +69,7 @@ export function addMessage(
   attachments = [],
   turnId,
   speakerType = "system",
+  explicitTarget,
 ) {
   const archived =
     speakerType === "system"
@@ -80,6 +81,7 @@ export function addMessage(
           attachments,
           turnId,
           speakerType,
+          explicitTarget,
         );
   const message = {
     id: ++room.sequence,

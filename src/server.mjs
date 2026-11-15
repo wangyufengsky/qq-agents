@@ -364,6 +364,8 @@ export function createServer({
         url.pathname === "/api/desktop-home/observation-review" ||
         url.pathname === "/api/desktop-home/observation-verify" ||
         url.pathname === "/api/desktop-home/attachment" ||
+        url.pathname === "/api/desktop-home/personal-drop" ||
+        url.pathname === "/api/desktop-home/personal-history" ||
         url.pathname === "/api/desktop-home/video" ||
         url.pathname === "/api/desktop-home/screen-result" ||
         url.pathname === "/api/desktop-home/screen-claim" ||
@@ -378,6 +380,16 @@ export function createServer({
         );
         if (!local || !equal(req.headers["x-desktop-home-token"], desktopKey))
           return deny("UNAUTHORIZED", 401);
+        if (url.pathname.endsWith("/personal-history"))
+          return send(
+            runtime.desktopVisits.personal.history(await readBody(1024)),
+          );
+        if (url.pathname.endsWith("/personal-drop"))
+          return send(
+            await runtime.desktopVisits.personal.drop(
+              await readBody(MAX_DESKTOP_ATTACHMENT_BODY + 16 * 1024),
+            ),
+          );
         if (url.pathname.endsWith("/video"))
           return send(
             await runtime.desktopVisits.attachVideo(req.headers, req),

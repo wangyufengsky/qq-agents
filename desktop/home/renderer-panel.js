@@ -1,4 +1,5 @@
 /* global document, window */
+import { bindRecentBubbles } from "./renderer-bubbles.js";
 import {
   element,
   assetPath,
@@ -17,15 +18,18 @@ import {
   activityFor,
 } from "./renderer-shared.js";
 import { bindObservationResults } from "./renderer-observation.js";
+import { bindPersonal } from "./renderer-personal.js";
 
 export function panel(root) {
   root.append(
     document.getElementById("panel-template").content.cloneNode(true),
   );
+  const updatePersonal = bindPersonal(root);
   const select = (selector) => root.querySelector(selector);
   const guestList = select(".guest-list");
   const guestActivities = select(".guest-activities");
   const guestActivityList = select(".guest-activity-list");
+  const updateRecentBubbles = bindRecentBubbles(select(".recent-bubbles"));
   const bodyAnnouncement = select(".body-announcement");
   const observationEnded = root.querySelectorAll(".observation-ended");
   const observationTab = select('[data-tab="observation"]');
@@ -1178,12 +1182,14 @@ export function panel(root) {
   );
 
   function update(next) {
+    updatePersonal(next);
     if (room && next.roomEpoch !== room.roomEpoch && taskScope.value) {
       taskScope.value = "";
       message.value = "";
       selectedWindowGrant = undefined;
     }
     room = next;
+    updateRecentBubbles(room);
     select(".sample-settings").hidden = Boolean(room.framework);
     const edition = select(".edition");
     edition.hidden = Boolean(room.framework);

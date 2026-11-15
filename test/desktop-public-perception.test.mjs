@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { setImmediate } from "node:timers/promises";
 import test from "node:test";
-import { DESKTOP_ACTIVITY_CONVERSATION } from "../src/home/desktop-decision.mjs";
+import {
+  DESKTOP_ACTIVITY_CONVERSATION,
+  readDecision,
+} from "../src/home/desktop-decision.mjs";
 import { desktopHomePolicy } from "../src/home/desktop-home-policy.mjs";
 import { DesktopPublicActivity } from "../src/home/desktop-public-activity.mjs";
 import { config, fixture } from "./helpers.mjs";
@@ -401,4 +404,95 @@ test("public chat lets an unaddressed activity finish before that resident catch
   assert(f.runs[5].params.prompt.includes("一起来门边坐吧"));
   assert(visit.cursor > originalCursor);
   await f.finish(f.runs[5]);
+});
+
+test("public bubbles share a root cap and expire from display independently of history", (t) => {
+  const { host, quietJoin, advance } = setup(t);
+  quietJoin(ids[0]);
+  quietJoin(ids[1]);
+  const live = host.live;
+  live.publishBubble(ids[0], live.visits.get(ids[0]), { text: "公开近况" });
+  const root = live.snapshot().recentBubbles.at(-1);
+  assert.equal(root.text, "公开近况");
+  assert.equal(live.room.messages.at(-1).speakerType, "agent");
+  assert.equal(live.snapshot().bubbles[ids[0]].bubbleId, root.bubbleId);
+  live.publishBubble(ids[1], live.visits.get(ids[1]), {
+    text: "接一句",
+    replyTo: root.bubbleId,
+  });
+  const child = live.snapshot().recentBubbles.at(-1);
+  live.publishBubble(ids[0], live.visits.get(ids[0]), {
+    text: "再接",
+    replyTo: child.bubbleId,
+  });
+  live.publishBubble(ids[1], live.visits.get(ids[1]), {
+    text: "第三句",
+    replyTo: root.bubbleId,
+  });
+  const count = live.room.messages.length;
+  live.publishBubble(ids[0], live.visits.get(ids[0]), {
+    text: "超额",
+    replyTo: child.bubbleId,
+  });
+  assert.equal(live.room.messages.length, count);
+  assert.equal(live.replyToBubble(root.bubbleId, "超额"), false);
+  advance(15_001);
+  assert.equal(live.snapshot().bubbles[ids[0]], undefined);
+  assert(live.snapshot().recentBubbles.length > 0);
+  assert(live.room.messages.some(({ text }) => text === "公开近况"));
+});
+
+test("only ordinary public activity accepts bubbles and only visible eligible events can be replied to", () => {
+  const policy = { waitMin: 1, waitMax: 10, restMin: 1, restMax: 10 };
+  const id = randomUUID();
+  const args = { action: "silent", bubble: { text: "hello", replyTo: id } };
+  assert.equal(
+    readDecision("activity", args, {
+      activityPolicy: policy,
+      observation: true,
+    }),
+    null,
+  );
+  assert.equal(
+    readDecision("activity", args, { activityPolicy: policy }),
+    null,
+  );
+  assert.deepEqual(
+    readDecision("activity", args, {
+      activityPolicy: policy,
+      publicContext: { recent: [{ id, canReplyBubble: true }] },
+    }),
+    args,
+  );
+});
+
+test("bubble reply preserves the current turn and unrelated window tasks while recording its recipient", (t) => {
+  const { host, quietJoin } = setup(t);
+  quietJoin(ids[0]);
+  quietJoin(ids[1]);
+  const live = host.live;
+  live.publishBubble(ids[0], live.visits.get(ids[0]), { text: "问候" });
+  const bubble = live.snapshot().recentBubbles.at(-1);
+  const current = { actor: ids[1] };
+  const windowTask = {
+    actor: ids[1],
+    current: () => true,
+    finish: () => assert.fail("unrelated window task was cancelled"),
+  };
+  live.room.turn = current;
+  live.foreground = { actor: ids[1] };
+  live.room.waiting.push({ actor: ids[1], windowTask });
+  live.qqDeferred.add(ids[1]);
+  live.room.budget = 0;
+  assert.equal(live.replyToBubble(bubble.bubbleId, "接话"), true);
+  assert.equal(live.room.turn, current);
+  assert.equal(live.room.waiting[0].windowTask, windowTask);
+  assert.equal(live.room.waiting[1].actor, ids[0]);
+  assert.equal(live.room.waiting[1].bubbleReply, true);
+  assert(live.qqDeferred.has(ids[1]));
+  assert.equal(live.room.budget, live.room.maxTurns);
+  assert.deepEqual(live.room.messages.at(-1).targets, [ids[0]]);
+  const heard = host.archive.heard(ids[0], 0, 0, 20);
+  assert(heard.some((entry) => entry.text === "接话" && entry.addressedToYou));
+  live.foreground = null;
 });

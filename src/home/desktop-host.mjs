@@ -20,6 +20,7 @@ import {
   spoolDesktopVideo,
 } from "./desktop-attachments.mjs";
 import { DesktopVisits } from "./desktop-visits.mjs";
+import { DesktopPersonal } from "./desktop-personal.mjs";
 import { DesktopInvitations } from "./desktop-invitations.mjs";
 import { LiveRoom } from "./desktop-room.mjs";
 import { createRoom, roles as art } from "./desktop-room-state.mjs";
@@ -124,6 +125,11 @@ const actionDataSchemas = {
   invite: textDataSchema,
   leave: textDataSchema,
   send: textDataSchema,
+  "bubble-reply": z.strictObject({
+    roomEpoch: z.uuid(),
+    bubbleId: z.uuid(),
+    text: z.string().trim().min(1).max(1000),
+  }),
   "door-mode": textDataSchema,
   "knock-answer": z.boolean(),
   disconnect: z.undefined(),
@@ -201,6 +207,7 @@ function explicitTargets(text, roles) {
 export class DesktopHost {
   constructor(runtime) {
     this.runtime = runtime;
+    this.personal = new DesktopPersonal(this);
     this.eventSubscribers = new Map();
     this.eventSequence = 0;
     this.archive = new DesktopArchive(runtime.memory);
@@ -215,6 +222,7 @@ export class DesktopHost {
   }
 
   notify() {
+    this.personal.sweep();
     if (this.eventQueued || !this.eventSubscribers.size) return;
     this.eventQueued = true;
     queueMicrotask(() => {
@@ -456,7 +464,8 @@ export class DesktopHost {
       if (room.minutes !== policy.refreshMinutes)
         this.live.interval(policy.refreshMinutes);
       for (const [id, message] of Object.entries(room.bubbles))
-        if (now - message.now > 4900) delete room.bubbles[id];
+        if (now >= (message.expiresAt ?? message.now + 4900))
+          delete room.bubbles[id];
       if (syncingClient !== this.client.id)
         for (const id of this.live.activities.keys())
           if (!this.activityCurrent(id)) this.live.cancelActivity(id);
@@ -646,10 +655,14 @@ export class DesktopHost {
       attachments,
       turnId,
       speakerType,
+      explicitTarget,
     ) => {
       const here = room.roles.filter(({ id }) => room.members[id] === "here");
       const audience = [{ id: DESKTOP_ADMINISTRATOR, name: "管理员" }, ...here];
-      const targets = explicitTargets(text, audience);
+      const targets =
+        explicitTarget && here.some(({ id }) => id === explicitTarget)
+          ? [explicitTarget]
+          : explicitTargets(text, audience);
       const identities = Object.fromEntries(
         here.map(({ id }) => [
           id,
@@ -764,6 +777,7 @@ export class DesktopHost {
   }
 
   reset() {
+    this.personal.clear();
     const subscribers = [...this.eventSubscribers.keys()];
     this.eventSubscribers.clear();
     const payload =
@@ -820,6 +834,8 @@ export class DesktopHost {
     if (!this.runtime.updateMaintenance || action === "sync")
       this.client.expiresAt = this.runtime.now() + CLIENT_LEASE;
     const { live } = this;
+    if (this.runtime.updateMaintenance && action === "bubble-reply")
+      throw Error("UPDATE_IN_PROGRESS");
     if (this.runtime.updateMaintenance)
       return heartbeat
         ? { enabled: true }
@@ -930,6 +946,14 @@ export class DesktopHost {
     ) {
       this.stopWindowTask("stopped");
       live.send(data);
+    }
+    if (action === "bubble-reply") {
+      if (
+        data.roomEpoch !== live.room.epoch ||
+        containsCredential(data.text) ||
+        !live.replyToBubble(data.bubbleId, data.text)
+      )
+        throw Error("DESKTOP_VISIT_UNAVAILABLE");
     }
     if (action === "door-mode" && typeof data === "string")
       live.setDoorMode(data);
@@ -1364,7 +1388,11 @@ export class DesktopHost {
           )
             throw Error("DESKTOP_DECISION_INVALID");
           assertOutput(next.text);
-          for (const draft of [next.response, next.summary].filter(Boolean)) {
+          for (const draft of [
+            next.response,
+            next.summary,
+            next.bubble?.text,
+          ].filter(Boolean)) {
             assertOutput(draft);
             if (/[\p{Cc}\p{Cf}]/u.test(draft))
               throw Error("DESKTOP_DECISION_INVALID");
