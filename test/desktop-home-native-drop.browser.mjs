@@ -1,6 +1,6 @@
 /* global window */
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -120,7 +120,7 @@ window.addEventListener("dragstart", (event) => {
   }
   const server = createServer({ runtime, token: admin, allowLive: true });
   const port = await server.listen();
-  let electron;
+  let electron, nativeSource;
   try {
     electron = await _electron.launch({
       executablePath,
@@ -208,9 +208,20 @@ document.ondrop=(event)=>{
 };
 </script>`),
         );
+        const origin = { x: area.x + 44, y: area.y + 234 };
+        const targets = {
+          origin,
+          backdrop: backdrop.id,
+          target: target.id,
+          door: door.id,
+        };
+        if (process.platform === "win32")
+          return {
+            ...targets,
+            physicalOrigin: screen.dipToScreenPoint(origin),
+          };
         const source = new BrowserWindow({
-          x: area.x + 44,
-          y: area.y + 234,
+          ...origin,
           width: 180,
           height: 125,
           frame: false,
@@ -249,24 +260,70 @@ document.getElementById("link").ondragstart=(event) => {
         app.focus({ steal: true });
         source.moveTop();
         source.focus();
-        return {
-          source: source.id,
-          backdrop: backdrop.id,
-          target: target.id,
-          door: door.id,
-        };
+        return { ...targets, source: source.id };
       },
       { preload, file, marker: fixtureToken, link: linkMarker },
     );
+    let nativeSourceOutput = "";
+    if (windows.physicalOrigin) {
+      // OLE runs in the source thread. An external source leaves the target
+      // Electron process free to update pointer regions during the drag.
+      nativeSource = spawn(
+        "powershell.exe",
+        [
+          "-STA",
+          "-NoProfile",
+          "-NonInteractive",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-File",
+          join(tests, "fixtures", "desktop-drop-source.ps1"),
+          "-X",
+          String(windows.physicalOrigin.x),
+          "-Y",
+          String(windows.physicalOrigin.y),
+          "-FilePath",
+          file,
+          "-Text",
+          fixtureToken,
+          "-Link",
+          linkMarker,
+        ],
+        { stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
+      );
+      nativeSource.on(
+        "error",
+        ({ code }) => (nativeSourceOutput += String(code)),
+      );
+      nativeSource.stderr.on("data", (chunk) => {
+        if (nativeSourceOutput.length < 4096) nativeSourceOutput += chunk;
+      });
+      let sourceReady = false;
+      nativeSource.stdout.on("data", (chunk) => {
+        if (nativeSourceOutput.length < 4096) nativeSourceOutput += chunk;
+        if (nativeSourceOutput.includes("READY")) sourceReady = true;
+      });
+      try {
+        await waitFor(() => sourceReady || nativeSource.exitCode !== null);
+        assert.ok(sourceReady);
+      } catch (error) {
+        throw Error(
+          `Native drag source failed to start: ${nativeSourceOutput}`,
+          { cause: error },
+        );
+      }
+    }
     const points = async (variant, transparent = false) => {
       return electron.evaluate(
         ({ app, BrowserWindow, screen }, { windows, variant, transparent }) => {
-          const source = BrowserWindow.fromId(windows.source);
-          source.show();
-          app.focus({ steal: true });
-          source.moveTop();
-          source.focus();
-          const { x, y } = source.getContentBounds();
+          const source = windows.source && BrowserWindow.fromId(windows.source);
+          if (source) {
+            source.show();
+            app.focus({ steal: true });
+            source.moveTop();
+            source.focus();
+          }
+          const { x, y } = source ? source.getContentBounds() : windows.origin;
           const target = BrowserWindow.fromId(
             variant === "link" ? windows.door : windows.target,
           ).getBounds();
@@ -307,7 +364,9 @@ document.getElementById("link").ondragstart=(event) => {
         JSON.stringify({
           transparentPoints,
           trace: trace.stdout,
-          sourceEvents: await source?.evaluate(() => window.fixtureEvents),
+          sourceEvents: source
+            ? await source.evaluate(() => window.fixtureEvents)
+            : nativeSourceOutput,
           backdropEvents: await backdrop.evaluate(() =>
             window.fixtureEvents.slice(-16),
           ),
@@ -402,6 +461,7 @@ document.getElementById("link").ondragstart=(event) => {
     assert.deepEqual(inputs[2].params.inputImages, []);
     assert.ok(!JSON.stringify(host.clientSnapshot()).includes(linkMarker));
   } finally {
+    if (nativeSource && nativeSource.exitCode === null) nativeSource.kill();
     await electron?.close();
     await server.close();
   }
