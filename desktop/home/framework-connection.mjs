@@ -1,4 +1,4 @@
-import { watch } from "node:fs";
+import { unwatchFile, watchFile } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -8,7 +8,11 @@ const tokenFile = "desktop-home-token";
 export function createFrameworkConnection(root, listenPort) {
   let cached;
   let pending;
-  let watcher;
+  const files = [
+    join(root, tokenFile),
+    ...(listenPort === undefined ? [join(root, configFile)] : []),
+  ];
+  let watching = false;
   let closed = false;
 
   function invalidate(credentials) {
@@ -17,29 +21,16 @@ export function createFrameworkConnection(root, listenPort) {
     pending = undefined;
   }
 
-  function watchDirectory() {
-    if (watcher) return;
-    try {
-      // Watch the parent directory so atomic replacement keeps the watch valid.
-      const handle = watch(root, { persistent: false }, (_, filename) => {
-        if (
-          filename === null ||
-          filename === tokenFile ||
-          (listenPort === undefined && filename === configFile)
-        ) {
-          invalidate();
-        }
-      });
-      watcher = handle;
-      handle.on("error", () => {
-        if (watcher !== handle) return;
-        watcher = undefined;
-        handle.close();
-        invalidate();
-      });
-    } catch {
-      // The data directory can be created after the desktop client opens.
-    }
+  function changed() {
+    invalidate();
+  }
+
+  function trackFiles() {
+    if (watching) return;
+    watching = true;
+    // Async stat watches detect atomic replacements even when directory events coalesce.
+    for (const file of files)
+      watchFile(file, { interval: 1000, persistent: false }, changed);
   }
 
   async function readConnection() {
@@ -68,7 +59,7 @@ export function createFrameworkConnection(root, listenPort) {
 
   async function get() {
     if (closed) throw Error("DESKTOP_CONNECTION_FAILED");
-    watchDirectory();
+    trackFiles();
     if (cached) return cached;
     if (!pending) {
       const loading = readConnection()
@@ -96,8 +87,7 @@ export function createFrameworkConnection(root, listenPort) {
     invalidate,
     close() {
       closed = true;
-      watcher?.close();
-      watcher = undefined;
+      if (watching) for (const file of files) unwatchFile(file, changed);
       invalidate();
     },
   };

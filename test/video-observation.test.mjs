@@ -305,6 +305,105 @@ test("DSH relay delivers a video above the text frame budget and remembers only 
   await settle(runtime);
 });
 
+test("a QQ card found by time can be read as current input before its first overview", async (t) => {
+  const cfg = config(1);
+  const role = cfg.agents[0];
+  role.wake.participation = 0;
+  role.behavior.optionalGroupBacklog = true;
+  role.tools.push("video_read");
+  role.behavior.imageInput.enabled = true;
+  role.apps.enabled = true;
+  role.apps.platforms = ["bilibili"];
+
+  const conversation = "group:20000";
+  let source, request, run;
+  const { runtime, root, store } = fixture(t, {
+    cfg,
+    run(params) {
+      run = readVideo(params);
+      return run;
+    },
+  });
+
+  async function readVideo(params) {
+    const ctx = runtime.running.get("agent-0|" + conversation);
+    const around = await params.callTool("conversation_read", {
+      aroundId: request.id,
+      contextSeconds: 120,
+    });
+    assert.equal(around.markReadEligible, false);
+    assert(around.items.some(({ id }) => id === source.id));
+    assert.equal(currentVideoRequest(runtime, ctx, source.id, 0), null);
+
+    const overview = {
+      action: "overview",
+      sourceId: source.id,
+      requestId: request.id,
+    };
+    await assert.rejects(
+      params.callTool("video_read", { ...overview, linkIndex: 1 }),
+      /VIDEO_SOURCE_DENIED/,
+    );
+    await assert.rejects(
+      params.callTool("video_read", overview),
+      /VIDEO_SOURCE_READ_REQUIRED/,
+    );
+    const original = await runtime.callTool(
+      ctx,
+      "memory_read",
+      { id: source.id },
+      { deferInput: true },
+    );
+    assert.equal(currentVideoRequest(runtime, ctx, source.id, 0), null);
+    const read = await deliverFixtureToolOutput(params, original);
+    assert.equal(read.nextOffset, null);
+    assert.equal(
+      currentVideoRequest(runtime, ctx, source.id, 0)?.id,
+      source.id,
+    );
+    assert.equal(
+      store.bind("agent-0").state(conversation).readThroughSeq || 0,
+      0,
+    );
+
+    ctx.videoSource = {
+      sourceId: source.id,
+      origin: url,
+      file,
+      duration: 61000,
+    };
+    const result = await params.callTool("video_read", overview);
+    assert(result.content.some(({ type }) => type === "image"));
+    await runtime.ingest("qq-0", {
+      post_type: "notice",
+      notice_type: "group_recall",
+      self_id: 10000,
+      group_id: 20000,
+      user_id: 30000,
+      message_id: 920,
+      time: 1800000000,
+    });
+    await assert.rejects(
+      params.callTool("video_read", overview),
+      /VIDEO_SOURCE_DENIED/,
+    );
+  }
+  const file = path.join(root, "sample.mp4");
+  makeSample(file);
+  await runtime.ingest("qq-0", raw(920, { message: [card(url)] }));
+  await runtime.ingest("qq-0", raw(921, { message: [text("看看刚才的视频")] }));
+  [source, request] = store.db
+    .prepare(
+      "SELECT id,seq FROM events WHERE kind='message.received' ORDER BY seq",
+    )
+    .all();
+  await runtime.wake("agent-0", conversation, {
+    reasons: [{ reason: "message", seq: request.seq }],
+  });
+  assert(run);
+  await run;
+});
+
 test("QQ follow-up rewatch needs a delivered overview, a fresh human request, and an unrevoked source", async (t) => {
   const cfg = config(1);
   cfg.agents[0].tools.push("video_read");
