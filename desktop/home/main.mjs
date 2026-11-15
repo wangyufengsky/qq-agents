@@ -157,6 +157,7 @@ const manualTouches = new Map();
 let bodyProtocol = false;
 let bodyCrossDisplay = false;
 let bodyInteractions = false;
+let bodyWindowApproach = false;
 let publicPerception = false;
 let observationProtocol = false;
 let recoveryPositionPending = false;
@@ -742,12 +743,14 @@ function windowTaskGrant(scope, agentId, roomEpoch) {
     return screenGrant;
 }
 
-function controllableResident(agentId, roomEpoch, visitId) {
+function controllableResident(agentId, roomEpoch, visitId, approach = false) {
   const role = remoteState?.roles.find(({ id }) => id === agentId);
   const entry = entries.get(agentId);
   if (
-    (remoteState?.interactionsAvailable || remoteState?.socialBodyAvailable) &&
-    remoteState.roomEpoch === roomEpoch &&
+    (approach ||
+      remoteState?.interactionsAvailable ||
+      remoteState?.socialBodyAvailable) &&
+    remoteState?.roomEpoch === roomEpoch &&
     !remoteState.connectionLost &&
     !hidden &&
     !desktopLocked &&
@@ -1211,6 +1214,8 @@ function snapshot(panel = false) {
               : status.state,
           facing: entry.facing ?? "right",
           pose: entry.pose ?? "sit",
+          ...(entry.windowApproach && { intent: "approach-window" }),
+          ...(entry.bodyAction?.intent && { intent: entry.bodyAction.intent }),
           ...(entry.gesture && { gesture: entry.gesture }),
         },
       };
@@ -1630,6 +1635,8 @@ function bodyPosition(id) {
 }
 
 function executeVerifiedBodyAction(request, current, finish) {
+  if (request.windowApproach)
+    return executeWindowApproach(request, current, finish);
   if (request.windowTask) return executeWindowTask(request, current, finish);
   if (request.interaction) return executeInteraction(request, current, finish);
   if (request.greeting) {
@@ -1682,6 +1689,96 @@ function executeVerifiedBodyAction(request, current, finish) {
   return (reason) => {
     controller.abort();
     cancel?.(reason);
+  };
+}
+
+function executeWindowApproach(request, current, finish) {
+  const { agentId, roomEpoch, visitId, inputAt, expiresAt, windowApproach } =
+    request;
+  const entry = controllableResident(agentId, roomEpoch, visitId, true);
+  const grant = windowGrants.get(agentId);
+  if (!entry || !grant || grant.grantId !== windowApproach.grantId)
+    return finish({ status: "cancelled", reason: "target-unavailable" });
+  const controller = new AbortController();
+  const signal = AbortSignal.any([controller.signal, grant.controller.signal]);
+  let cancelMove;
+  const moving = () =>
+    current() &&
+    !signal.aborted &&
+    bodyWindowApproach &&
+    selectedMode === "presence" &&
+    inputAt > Math.max(entry.bodyInputAfter ?? 0, bodyInputAfter) &&
+    controllableResident(agentId, roomEpoch, visitId, true) === entry &&
+    grant.roomEpoch === roomEpoch &&
+    !grant.pending &&
+    observationCurrent(grant) &&
+    grant.state === "ready" &&
+    remoteState.observation?.windowGrants?.some(
+      ({ grantId }) => grantId === grant.grantId,
+    );
+  if (!moving())
+    return finish({ status: "cancelled", reason: "target-unavailable" });
+  const activity = {};
+  entry.windowApproach = activity;
+  stopLocalSeat(entry, "stopped");
+  update();
+  const clear = () => {
+    if (entry.windowApproach !== activity) return;
+    entry.windowApproach = undefined;
+    update();
+  };
+  const complete = (result) => {
+    clear();
+    if (result.status === "completed")
+      recordBodyFeedback(entry, "window-approached");
+    finish(result);
+  };
+  const geometry = () =>
+    windowGeometry(grant.source.identity, {
+      signal: AbortSignal.any([signal, AbortSignal.timeout(1800)]),
+    });
+  void (async () => {
+    const verified = await probeObservation(grant, signal);
+    if (!moving() || verified.state !== "ready") {
+      if (moving()) reportObservationState(grant, verified.state);
+      return complete({ status: "cancelled", reason: "target-unavailable" });
+    }
+    const target = await geometry();
+    if (!target || !moving())
+      return complete({ status: "cancelled", reason: "target-unavailable" });
+    cancelMove = moveResident(
+      entry,
+      { target: { type: "window", bounds: target.bounds } },
+      {
+        current: moving,
+        expiresAt,
+        crossDisplay: request.crossDisplay === true,
+        local: true,
+        fail: (reason, status) => complete({ status, reason }),
+        finish: () => {
+          cancelMove = undefined;
+          void geometry()
+            .then((checked) => {
+              if (!moving() || !sameRectangle(target.bounds, checked?.bounds))
+                return complete({
+                  status: "cancelled",
+                  reason: "target-unavailable",
+                });
+              complete({ status: "completed", arrivalConfirmed: true });
+            })
+            .catch(() =>
+              complete({ status: "cancelled", reason: "target-unavailable" }),
+            );
+        },
+      },
+    );
+  })().catch(() =>
+    complete({ status: "cancelled", reason: "target-unavailable" }),
+  );
+  return (reason) => {
+    controller.abort();
+    cancelMove?.(reason);
+    clear();
   };
 }
 
@@ -1818,13 +1915,28 @@ function executeBodyAction(
     crossDisplay,
     finish,
     fail,
+    intent:
+      interaction?.step === "move"
+        ? interaction.kind === "together"
+          ? "gather"
+          : "approach-peer"
+        : undefined,
   });
 }
 
 function moveResident(
   entry,
   action,
-  { current, expiresAt, crossDisplay, finish, fail, local = false, duration },
+  {
+    current,
+    expiresAt,
+    crossDisplay,
+    finish,
+    fail,
+    local = false,
+    duration,
+    intent,
+  },
 ) {
   const { id: agentId } = entry;
   let plan = space.plan(agentId, action, { crossDisplay });
@@ -1836,7 +1948,9 @@ function moveResident(
       kind: "move",
       state: "executing",
       destination: plan.destination,
+      intent,
     };
+  if (intent) update();
   let replanned = false;
   const end = (reason, status) => {
     plan.release();
@@ -1961,6 +2075,7 @@ function applyFramework(value, action) {
   if (action === "sync" && !value.room) {
     bodyCrossDisplay = false;
     bodyInteractions = false;
+    bodyWindowApproach = false;
     publicPerception = false;
     displayObservation = false;
     batchScreenGrants = false;
@@ -2007,6 +2122,7 @@ function applyFramework(value, action) {
     bodyProtocol = value.bodyProtocol === 2;
     bodyCrossDisplay = bodyProtocol && value.bodyCrossDisplay === true;
     bodyInteractions = bodyProtocol && value.bodyInteractions === true;
+    bodyWindowApproach = bodyProtocol && value.bodyWindowApproach === true;
     publicPerception = bodyProtocol && value.publicPerception === true;
     observationProtocol = value.observationProtocol === 2;
     batchScreenGrants = value.batchScreenGrants === true;
@@ -2277,8 +2393,10 @@ function handleDrag(entry, action, data) {
     stopCompanionControl(entry.type === "door" ? undefined : entry.id);
     const interrupted =
       entry.type === "door"
-        ? [...entries.values()].filter((resident) => resident.bodyAction)
-        : entry.bodyAction
+        ? [...entries.values()].filter(
+            (resident) => resident.bodyAction || resident.windowApproach,
+          )
+        : entry.bodyAction || entry.windowApproach
           ? [entry]
           : [];
     entry.bodyInputAfter = Date.now();
@@ -2409,27 +2527,35 @@ let openingStatusCard;
 ipc.handle("room:status-card", async (event, data) => {
   const entry = ipc.actionEntry(event);
   const current = () => {
-    const role = remoteState?.roles.find(({ id }) => id === entry?.id);
+    const agentId = entry?.type === "sprite" ? entry.id : data?.agentId;
+    const role = remoteState?.roles.find(({ id }) => id === agentId);
     return (
-      entry?.type === "sprite" &&
+      (entry?.type === "sprite" || entry?.type === "panel") &&
       ipc.actionEntry(event) === entry &&
       windowVisible(entry) &&
-      personalTarget(entry.id, data?.roomEpoch, data?.visitId) &&
+      personalTarget(agentId, data?.roomEpoch, data?.visitId) &&
       role?.statusCard?.ref === data?.ref
     );
   };
-  if (!current()) return false;
+  if (!current() || (entry.type === "panel" && !entry.win.isFocused()))
+    return false;
+  const focusedWindow = BrowserWindow.getFocusedWindow();
   const opening = {};
   openingStatusCard = opening;
   const currentOpening = () => openingStatusCard === opening && current();
   try {
     const value = await framework.personal("status-card", {
-      agentId: entry.id,
+      agentId: entry.type === "sprite" ? entry.id : data.agentId,
       roomEpoch: data.roomEpoch,
       visitId: data.visitId,
       ref: data.ref,
     });
-    if (!currentOpening() || value?.status !== "ok") return false;
+    if (
+      !currentOpening() ||
+      value?.status !== "ok" ||
+      BrowserWindow.getFocusedWindow() !== focusedWindow
+    )
+      return false;
     showPanel("chat");
     const panel = entries.get("panel");
     const deliver = () => {
@@ -2438,7 +2564,7 @@ ipc.handle("room:status-card", async (event, data) => {
           title: value.title,
           text: value.text,
           target: {
-            agentId: entry.id,
+            agentId: entry.type === "sprite" ? entry.id : data.agentId,
             roomEpoch: data.roomEpoch,
             visitId: data.visitId,
             ref: data.ref,
@@ -4071,6 +4197,7 @@ else {
               bodyProtocol: 2,
               ...(bodyCrossDisplay && { bodyCrossDisplay: true }),
               ...(bodyInteractions && { bodyInteractions: true }),
+              ...(bodyWindowApproach && { bodyWindowApproach: true }),
               ...(publicPerception && {
                 bodyPublic: true,
                 publicSpace: publicSpace(),

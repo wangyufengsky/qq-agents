@@ -99,6 +99,24 @@ export class DesktopBody {
     return this.visitIds.get(visit);
   }
 
+  windowApproachGrant(ctx) {
+    const { host } = this;
+    if (
+      ctx?.conversation !== DESKTOP_ACTIVITY_CONVERSATION ||
+      host.mode !== "presence" ||
+      host.client?.bodyProtocol !== 2 ||
+      host.client?.bodyWindowApproach !== true
+    )
+      return;
+    const grant = host.observation.windows.get(ctx.agentId);
+    if (
+      grant &&
+      host.observation.current(grant) &&
+      host.observation.targetReady(grant)
+    )
+      return grant;
+  }
+
   current(entry) {
     const { host } = this;
     const { ctx, live, visit, client } = entry;
@@ -124,6 +142,8 @@ export class DesktopBody {
           : entry.request.interaction
             ? host.socialBodyAvailable()
             : host.interactionsAvailable())) ||
+      (entry.request.windowApproach &&
+        this.windowApproachGrant(ctx) !== entry.windowApproachGrant) ||
       (entry.request.interaction &&
         !live.interactionStep(
           ctx.agentId,
@@ -228,7 +248,9 @@ export class DesktopBody {
           now - finishedAt >= RECOVERY_WINDOW))
     )
       throw Error("DESKTOP_BODY_UNAVAILABLE");
-    const windowTask = entry.request.action.type === "window-task";
+    const windowTask =
+      entry.request.action.type === "window-task" ||
+      entry.request.action.type === "approach-window";
     if (
       (result.arrivalConfirmed && !windowTask) ||
       (windowTask &&
@@ -263,8 +285,11 @@ export class DesktopBody {
     this.host.notify();
     clearTimeout(entry.timer);
     entry.ctx.controller.signal.removeEventListener("abort", entry.abort);
+    const visibleResult = entry.request.windowApproach
+      ? (({ position, facing, space, ...rest }) => rest)(result)
+      : result;
     entry.receipt.result = {
-      ...result,
+      ...visibleResult,
       requestId: entry.request.action.requestId,
     };
     entry.receipt.resolve(entry.receipt.result);
@@ -287,6 +312,7 @@ export class DesktopBody {
       !entry.live.publicEnabled() ||
       entry.request.observation ||
       entry.request.windowTask ||
+      entry.request.windowApproach ||
       entry.ctx.desktopScreenObserved ||
       entry.ctx.desktopPrivateObservation
     )
@@ -373,6 +399,7 @@ export class DesktopBody {
       const positions = client.bodyPositions;
       const current = positions?.entries.get(agent.id);
       if (
+        !old?.entry.request.windowApproach &&
         (old?.result?.status === "unknown" || old?.result?.reconciled) &&
         current?.visit === visit &&
         freshSample(positions.at, Date.now())
@@ -458,6 +485,12 @@ export class DesktopBody {
         : host.interactionsAvailable())
     )
       throw Error("DESKTOP_BODY_UNAVAILABLE");
+    const windowApproachGrant =
+      action.type === "approach-window"
+        ? this.windowApproachGrant(ctx)
+        : undefined;
+    if (action.type === "approach-window" && !windowApproachGrant)
+      throw Error("DESKTOP_BODY_UNAVAILABLE");
     const windowTask = ctx.desktopWindowTask;
     if (
       action.type === "window-task" &&
@@ -468,7 +501,7 @@ export class DesktopBody {
     if ("layoutVersion" in action)
       validateTarget(action, this.spaces.get(ctx), client.bodyCrossDisplay);
     if (action.type === "state") this.spaces.delete(ctx);
-    if (["move", "window-task"].includes(action.type))
+    if (["move", "window-task", "approach-window"].includes(action.type))
       live.interruptInteractionMovement(agent.id);
     const expiresAt = Date.now() + ACTION_TIMEOUT;
     const receipt = Promise.withResolvers();
@@ -479,6 +512,7 @@ export class DesktopBody {
       visit,
       turn,
       greeting,
+      windowApproachGrant,
       receipt,
       v2,
       recoverUntil: expiresAt + RECOVERY_WINDOW,
@@ -493,6 +527,9 @@ export class DesktopBody {
         expiresAt,
         inputAt,
         ...(interaction && { interaction }),
+        ...(windowApproachGrant && {
+          windowApproach: { grantId: windowApproachGrant.grantId },
+        }),
         ...(greeting && {
           greeting: {
             agentId: greeting.recipient,

@@ -119,6 +119,60 @@ test("local targets keep a gap and never expose a privately positioned resident"
   );
 });
 
+test("a window edge remains reachable beside an occupied center", () => {
+  const { space } = desktop({
+    residents: [role("self", 40, 100), role("neighbor", 188, 220)],
+  });
+  const plan = space.plan(
+    "self",
+    {
+      target: {
+        type: "window",
+        bounds: { x: 300, y: 120, width: 240, height: 280 },
+      },
+    },
+    { crossDisplay: false },
+  );
+  assert.equal(plan.reason, undefined);
+  assert.equal(plan.destination.x, 188);
+  assert.notEqual(plan.destination.y, 220);
+  assert.equal(space.canStep("self", plan.path[0], plan), true);
+  plan.release();
+});
+
+test("a third resident can approach a shared gathering without moving either neighbor", () => {
+  const { space, state } = desktop({
+    residents: [
+      role("self", 40, 200),
+      role("center", 400, 200),
+      role("first", 288, 200),
+    ],
+  });
+  const snapshot = space.snapshot("self");
+  const center = snapshot.residents.find(
+    (resident) => resident.bounds.x === 400,
+  );
+  const original = structuredClone(
+    state.residents.slice(1).map(({ bounds }) => bounds),
+  );
+  const plan = space.plan("self", {
+    layoutVersion: snapshot.layoutVersion,
+    target: { type: "near-resident", residentRef: center.ref },
+  });
+  assert.equal(plan.reason, undefined);
+  assert.notDeepEqual(plan.destination, {
+    ...snapshot.self.bounds,
+    x: 288,
+    y: 200,
+  });
+  assert.deepEqual(
+    state.residents.slice(1).map(({ bounds }) => bounds),
+    original,
+  );
+  assert.equal(space.canStep("self", plan.path[0], plan), true);
+  plan.release();
+});
+
 test("snapshots expose only the current display, same-screen door and residents", () => {
   const { space, state } = desktop({
     residents: [

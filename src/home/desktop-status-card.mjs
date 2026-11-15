@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { sourceClass } from "../core/outbound-policy.mjs";
 import { containsCredential } from "../core/secrets.mjs";
@@ -62,6 +62,10 @@ function safeSources(runtime, ctx, record) {
   return true;
 }
 
+function fingerprint(value) {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
 function safeContent(result) {
   return result && !containsCredential(JSON.stringify(result))
     ? result
@@ -85,7 +89,7 @@ export class DesktopStatusCards {
     if (
       ctx.conversation !== "@subject" ||
       ctx.runtimeKind ||
-      !["diary_write", "diary_revise", "project"].includes(name)
+      !["diary_write", "diary_revise", "project", "work_note"].includes(name)
     )
       return;
     const host = this.host,
@@ -100,7 +104,7 @@ export class DesktopStatusCards {
           !host.connected() ||
           ctx.controller.signal.aborted ||
           !result?.id ||
-          !Number.isInteger(result.revision)
+          (name !== "work_note" && !Number.isInteger(result.revision))
         )
           return;
         // A new successful write supersedes the previous activity, even if it cannot be shown.
@@ -113,6 +117,7 @@ export class DesktopStatusCards {
           live,
           id: result.id,
           revision: result.revision,
+          fingerprint: name === "work_note" ? fingerprint(result) : undefined,
           tool: name,
           evidence: [...ctx.privateRead],
           expiresAt: host.runtime.now() + lifetime,
@@ -164,6 +169,27 @@ export class DesktopStatusCards {
         kind: "diary",
         title: diary.title,
         text: diary.body,
+      });
+    }
+    if (card.tool === "work_note") {
+      const row = memory.db
+        .prepare(
+          "SELECT value FROM work_notes WHERE agent_id=? AND id=? AND conversation='@subject'",
+        )
+        .get(card.agentId, card.id);
+      if (!row) return;
+      const note = JSON.parse(row.value);
+      if (
+        fingerprint(note) !== card.fingerprint ||
+        note.status !== "open" ||
+        !boundary.allowed(note) ||
+        !safeSources(runtime, ctx, note)
+      )
+        return;
+      return safeContent({
+        kind: "work-note",
+        title: "工作笔记",
+        text: [note.body, note.uncertainty].filter(Boolean).join("\n"),
       });
     }
     const project = memory.identity.project(card.id);

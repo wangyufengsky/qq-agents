@@ -196,6 +196,22 @@ export function floating(root, type, id) {
       void bubbleComposer.open(bubbleId, room);
     } else window.nest.act("open");
   });
+  const bubbleCollaboration = button(
+    "bubble-collaboration",
+    "协作",
+    "查看当前协作内容",
+  );
+  bubbleCollaboration.hidden = true;
+  bubbleCollaboration.addEventListener("click", () => {
+    const card = role?.statusCard;
+    if (!card || !room?.roomEpoch || !role.bodyVisitId) return;
+    void window.nest.openStatusCard?.({
+      roomEpoch: room.roomEpoch,
+      visitId: role.bodyVisitId,
+      ref: card.ref,
+    });
+  });
+  space.prepend(bubbleCollaboration);
   const statusCard = button("status-card", "", "打开状态卡");
   statusCard.hidden = true;
   statusCard.addEventListener("click", () => {
@@ -284,6 +300,7 @@ export function floating(root, type, id) {
     if (!role) {
       delete art.dataset.gesture;
       statusCard.hidden = true;
+      bubbleCollaboration.hidden = true;
       statusCard.textContent = "";
       return;
     }
@@ -306,6 +323,22 @@ export function floating(root, type, id) {
     );
     renderGesture(role.bodyStatus?.gesture);
     const bubble = data.bubbles?.[id];
+    bubbleCollaboration.hidden =
+      !bubble?.bubbleId ||
+      !data.recentBubbles?.some(
+        (item) => item.bubbleId === bubble.bubbleId && item.actor === id,
+      ) ||
+      role.state !== "here" ||
+      !role.bodyVisitId ||
+      !data.roomEpoch ||
+      data.connectionLost ||
+      !["shared-draft", "work-note"].includes(card?.kind) ||
+      !card.ref ||
+      !window.nest.openStatusCard;
+    space.toggleAttribute(
+      "data-bubble-collaboration",
+      !bubbleCollaboration.hidden,
+    );
     const message = bubble?.text ?? (data.thinking === id ? "正在想…" : "");
     speech.setAttribute(
       "aria-label",

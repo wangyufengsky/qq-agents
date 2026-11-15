@@ -20,6 +20,12 @@ import {
 import { bindObservationResults } from "./renderer-observation.js";
 import { bindPersonal } from "./renderer-personal.js";
 
+const bodyIntentLabels = {
+  "approach-window": "正在靠近关注窗口",
+  "approach-peer": "正在靠近同伴",
+  gather: "正在与同伴聚拢",
+};
+
 export function panel(root) {
   root.append(
     document.getElementById("panel-template").content.cloneNode(true),
@@ -1115,6 +1121,12 @@ export function panel(root) {
           ? "休息时段 · 已暂停"
           : bodyStateLabels.paused;
     else if (!role.available) status = "本轮未接入";
+    else if (
+      here &&
+      bodyState !== "qq" &&
+      Object.hasOwn(bodyIntentLabels, body?.intent)
+    )
+      status = bodyIntentLabels[body.intent];
     else if (here && bodyStateLabels[bodyState])
       status = bodyStateLabels[bodyState];
     else if ((here || activity === "sleep") && activity !== "idle")

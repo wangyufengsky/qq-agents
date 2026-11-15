@@ -1,4 +1,4 @@
-/* global document, window */
+/* global window */
 import { button, element } from "./renderer-shared.js";
 
 export function bindBubbleComposer(container, floating = false) {
@@ -131,14 +131,34 @@ export function bindRecentBubbles(section) {
           "click",
           () => void composer.open(entry.bubbleId, room),
         );
-        node.append(author, text, reply);
-        row = { node, author, text, reply };
+        const collaboration = button(
+          "quiet collaboration-link",
+          "查看当前协作内容",
+        );
+        collaboration.addEventListener("click", () => {
+          const role = room.roles.find(({ id }) => id === entry.actor);
+          if (!role?.statusCard || !role.bodyVisitId) return;
+          void window.nest.openStatusCard?.({
+            agentId: role.id,
+            roomEpoch: room.roomEpoch,
+            visitId: role.bodyVisitId,
+            ref: role.statusCard.ref,
+          });
+        });
+        node.append(author, text, reply, collaboration);
+        row = { node, author, text, reply, collaboration };
         rows.set(entry.bubbleId, row);
       }
       row.author.textContent =
         room.roles.find(({ id }) => id === entry.actor)?.name ?? "来访角色";
       row.text.textContent = entry.text;
       row.reply.hidden = !entry.canReply || !window.nest.bubbleReply;
+      const role = room.roles.find(({ id }) => id === entry.actor);
+      row.collaboration.hidden =
+        !window.nest.openStatusCard ||
+        role?.state !== "here" ||
+        !role.bodyVisitId ||
+        !["shared-draft", "work-note"].includes(role.statusCard?.kind);
       if (list.children[index] !== row.node)
         list.insertBefore(row.node, list.children[index] ?? null);
     }

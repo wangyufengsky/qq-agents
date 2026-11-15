@@ -99,9 +99,11 @@ export class DesktopBodyClient {
         const terminal = entry.stopped
           ? { status: "cancelled", reason: entry.stopped }
           : result;
-        const body = request.windowTask
-          ? terminal
-          : { ...this.position(agentId), ...terminal };
+        // Window-relative actions must never report the private desktop position.
+        const body =
+          request.windowTask || request.windowApproach
+            ? terminal
+            : { ...this.position(agentId), ...terminal };
         if (
           (!v2 && ["target-blocked", "stale-layout"].includes(body.reason)) ||
           (!request.crossDisplay && body.reason === "target-unreachable")
@@ -163,7 +165,11 @@ export class DesktopBodyClient {
   }
 
   stopObservation(agentId, grantId) {
-    if (this.active.get(agentId)?.request.observationGrantId === grantId)
+    const request = this.active.get(agentId)?.request;
+    if (
+      request?.observationGrantId === grantId ||
+      request?.windowApproach?.grantId === grantId
+    )
       this.stop(agentId, "inactive");
   }
 

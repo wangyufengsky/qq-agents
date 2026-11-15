@@ -16,6 +16,7 @@ function setup(t) {
       "diary_write",
       "diary_revise",
       "project",
+      "work_note",
     ]),
   ];
   const { runtime, store } = fixture(t, { cfg });
@@ -259,4 +260,62 @@ test("a safe diary title inherited from the idle prompt is rechecked before open
     /DESKTOP_VISIT_UNAVAILABLE/,
   );
   assert.equal(host.statusCards.snapshot(role.id, visit), undefined);
+});
+
+test("work note cards recheck the saved record and source", (t) => {
+  const { runtime, store, host, ctx, visit, input, role } = setup(t);
+  const memory = store.bind(role.id);
+  const source = memory.append({
+    conversation: "@subject",
+    dedupe: "note-source",
+    kind: "message.received",
+    body: "公开来源",
+  });
+  const note = memory.identity.saveNote(
+    {
+      body: "工作内容",
+      evidence: [source.id],
+      uncertainty: "尚待核实",
+      status: "open",
+    },
+    "@subject",
+    runtime.now(),
+  );
+  host.captureStatusCard(ctx, "work_note")(note);
+  const card = host.statusCards.snapshot(role.id, visit);
+  assert.equal(card.kind, "work-note");
+  assert.equal(
+    host.statusCards.open(input(card.ref)).text,
+    "工作内容\n尚待核实",
+  );
+  memory.identity.saveNote(
+    {
+      id: note.id,
+      body: "更新",
+      evidence: [source.id],
+      uncertainty: "尚待核实",
+      status: "open",
+    },
+    "@subject",
+    runtime.now(),
+  );
+  assert.throws(
+    () => host.statusCards.open(input(card.ref)),
+    /DESKTOP_VISIT_UNAVAILABLE/,
+  );
+  const updated = memory.identity.notes("@subject")[0];
+  const raw = JSON.parse(
+    memory.db.prepare("SELECT value FROM work_notes WHERE id=?").get(note.id)
+      .value,
+  );
+  host.captureStatusCard(ctx, "work_note")(raw);
+  const next = host.statusCards.snapshot(role.id, visit);
+  assert.ok(updated && next);
+  memory.db
+    .prepare("DELETE FROM events WHERE agent_id=? AND id=?")
+    .run(role.id, source.id);
+  assert.throws(
+    () => host.statusCards.open(input(next.ref)),
+    /DESKTOP_VISIT_UNAVAILABLE/,
+  );
 });

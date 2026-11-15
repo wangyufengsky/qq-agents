@@ -31,12 +31,36 @@ window.addEventListener("drop", (event) => {
   });
 });
 
+let statusCardGesture;
+window.addEventListener(
+  "click",
+  (event) => {
+    if (
+      !event.isTrusted ||
+      !event.target.closest?.(
+        ".status-card, .bubble-collaboration, .collaboration-link",
+      )
+    )
+      return;
+    statusCardGesture = event;
+    window.setTimeout(() => {
+      if (statusCardGesture === event) statusCardGesture = undefined;
+    }, 0);
+  },
+  true,
+);
+
 contextBridge.exposeInMainWorld("nest", {
   personal: (action, data) => ipcRenderer.invoke("room:personal", action, data),
   onPersonal: (listener) =>
     ipcRenderer.on("room:personal", (_event, value) => listener(value)),
   get: () => ipcRenderer.invoke("room:get"),
-  openStatusCard: (data) => ipcRenderer.invoke("room:status-card", data),
+  openStatusCard: (data) => {
+    // A non-focusable sprite may open local content only from a real click.
+    if (!statusCardGesture) return Promise.resolve(false);
+    statusCardGesture = undefined;
+    return ipcRenderer.invoke("room:status-card", data);
+  },
   onStatusCard: (listener) =>
     ipcRenderer.on("room:status-card", (_event, value) => listener(value)),
   bubbleReply: (action, data) =>

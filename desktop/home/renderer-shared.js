@@ -85,6 +85,7 @@ const observationEligibilityLabels = {
   blocked: "角色当前无法参与观察",
 };
 const bodyReasonLabels = {
+  "window-approached": "已到关注窗口旁",
   "manual-control": "拖动已打断移动",
   stopped: "动作已停止",
   "display-changed": "显示器布局已变化，请重新选择落点。",

@@ -695,3 +695,114 @@ for (const crossDisplay of [false, true]) {
     assert.equal((await action).reason, "target-unreachable");
   });
 }
+
+test("window approach requires a negotiated current ready window grant in presence mode", async () => {
+  const { DesktopBody } = await import("../src/home/desktop-body.mjs");
+  const { toolSpecs } = await import("../src/tools/specs.mjs");
+  const grant = { grantId: randomUUID() };
+  let current = true;
+  let ready = true;
+  const host = {
+    mode: "presence",
+    client: { bodyProtocol: 2, bodyWindowApproach: true },
+    observation: {
+      windows: new Map([["agent-0", grant]]),
+      current: () => current,
+      targetReady: () => ready,
+    },
+  };
+  const body = new DesktopBody(host);
+  const ctx = { agentId: "agent-0", conversation: "@desktop-activity" };
+  assert.equal(body.windowApproachGrant(ctx), grant);
+  for (const mode of ["privacy", "work", null]) {
+    host.mode = mode;
+    assert.equal(body.windowApproachGrant(ctx), undefined);
+  }
+  host.mode = "presence";
+  host.client.bodyWindowApproach = false;
+  assert.equal(body.windowApproachGrant(ctx), undefined);
+  host.client.bodyWindowApproach = true;
+  current = false;
+  assert.equal(body.windowApproachGrant(ctx), undefined);
+  current = true;
+  ready = false;
+  assert.equal(body.windowApproachGrant(ctx), undefined);
+  ready = true;
+  assert.equal(
+    body.windowApproachGrant({ ...ctx, conversation: "@desktop" }),
+    undefined,
+  );
+  assert.equal(
+    body.windowApproachGrant({ ...ctx, agentId: "agent-1" }),
+    undefined,
+  );
+  const specs = (options) =>
+    JSON.stringify(toolSpecs(["desktop_body_control"], options));
+  assert.equal(
+    specs({ desktopBodyInteractions: true }).includes("approach-window"),
+    false,
+  );
+  assert.equal(
+    specs({ desktopWindowApproach: true }).includes("approach-window"),
+    true,
+  );
+});
+
+test("window approach support survives lightweight stream heartbeats", async (t) => {
+  const { host, client, sync } = await setup(t, { v2: true });
+  const { bodyWindowApproach, room } = await sync({ bodyWindowApproach: true });
+  assert.equal(bodyWindowApproach, true);
+  assert.equal(host.client.bodyWindowApproach, true);
+  const subscriber = () => {};
+  assert.equal(host.subscribe(client, room.roomEpoch, subscriber), true);
+  t.after(() => host.unsubscribe(client, room.roomEpoch, subscriber));
+  host.command(
+    { client, action: "sync", data: true },
+    { heartbeat: true, epoch: room.roomEpoch },
+  );
+  assert.equal(host.client.bodyWindowApproach, true);
+  await sync();
+  assert.equal(host.client.bodyWindowApproach, false);
+});
+
+test("client window approach receipts omit position and stop with the original grant", async () => {
+  let complete;
+  const cancellation = [];
+  const reports = [];
+  const client = new DesktopBodyClient({
+    claim: async () => ({ accepted: true }),
+    result: async ({ result }) => {
+      reports.push(result);
+    },
+    position: () => ({ position, facing: "left" }),
+    execute(_request, _current, finish) {
+      complete = finish;
+      return (reason) => cancellation.push(reason);
+    },
+  });
+  const request = {
+    roomEpoch: "room",
+    commandId: "first",
+    agentId: "role",
+    visitId: "visit",
+    expiresAt: Date.now() + 5000,
+    windowApproach: { grantId: "grant" },
+  };
+  const sync = (...bodyRequests) =>
+    client.update(
+      { room: { roomEpoch: "room" }, bodyProtocol: 2, bodyRequests },
+      "sync",
+    );
+  sync(request);
+  await tick();
+  complete({ status: "completed", arrivalConfirmed: true });
+  assert.deepEqual(reports, [{ status: "completed", arrivalConfirmed: true }]);
+  sync({ ...request, commandId: "second" });
+  await tick();
+  client.stopObservation("role", "other-grant");
+  assert.deepEqual(cancellation, []);
+  client.stopObservation("role", "grant");
+  complete({ status: "completed", arrivalConfirmed: true });
+  assert.deepEqual(cancellation, ["inactive"]);
+  assert.deepEqual(reports[1], { status: "cancelled", reason: "inactive" });
+});

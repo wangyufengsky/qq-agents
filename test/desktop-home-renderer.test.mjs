@@ -1900,14 +1900,28 @@ test("a public bubble can be replied to inline and remains in recent activity af
     connected: true,
     framework: true,
     roomEpoch: "first-room",
-    roles: [{ id: "fish", name: "小鱼", state: "here", available: true }],
+    roles: [
+      {
+        id: "fish",
+        name: "小鱼",
+        state: "here",
+        available: true,
+        bodyVisitId: "visit",
+        statusCard: { kind: "work-note", title: "工作笔记", ref: "card" },
+      },
+    ],
     messages: [],
     bubbles: { fish: entry },
     recentBubbles: [entry],
   };
   await page.addInitScript((data) => {
     window.testReplies = [];
+    window.testCards = [];
     window.nest = {
+      openStatusCard: async (target) => {
+        window.testCards.push(target);
+        return true;
+      },
       onRoom: (update) => (window.testRoom = update),
       onSection() {},
       onMotion() {},
@@ -1922,6 +1936,13 @@ test("a public bubble can be replied to inline and remains in recent activity af
   }, snapshot);
 
   await page.goto(pageUrl("type=sprite&id=fish"));
+  await page.getByRole("button", { name: "查看当前协作内容" }).click();
+  assert.deepEqual(await page.evaluate(() => window.testCards), [
+    { roomEpoch: "first-room", visitId: "visit", ref: "card" },
+  ]);
+  await page.evaluate(() => {
+    window.testCards = [];
+  });
   await page.locator(".speech").click();
   const input = page.getByRole("textbox", { name: "回复公开气泡" });
   await input.fill("继续说");
@@ -1951,6 +1972,10 @@ test("a public bubble can be replied to inline and remains in recent activity af
     bubbles: {},
   });
   await page.locator(".speech").waitFor({ state: "hidden" });
+  assert.equal(
+    await page.getByRole("button", { name: "查看当前协作内容" }).count(),
+    0,
+  );
 
   await page.goto(pageUrl("type=panel"));
   const recent = page.getByRole("region", { name: "最近动态" });
@@ -1959,6 +1984,15 @@ test("a public bubble can be replied to inline and remains in recent activity af
     bubbles: {},
   });
   await recent.getByText("桌边见闻").waitFor();
+  await recent.getByRole("button", { name: "查看当前协作内容" }).click();
+  assert.deepEqual(await page.evaluate(() => window.testCards), [
+    {
+      agentId: "fish",
+      roomEpoch: "first-room",
+      visitId: "visit",
+      ref: "card",
+    },
+  ]);
   await recent.getByRole("button", { name: "回复", exact: true }).click();
   await recent.getByRole("textbox", { name: "回复公开气泡" }).waitFor();
   await page.evaluate((data) => window.testRoom(data), {
