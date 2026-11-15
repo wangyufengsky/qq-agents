@@ -141,10 +141,10 @@ export class DesktopExclusionStore {
 }
 
 function occupiedRange(rect, body) {
-  // Expanding obstacles lets a sweep of the window's top left account for its entire size.
+  // Project the swept body, in window-local coordinates, onto window positions.
   return {
-    x: rect.x - body.width - GAP,
-    y: rect.y - body.height - GAP,
+    x: rect.x - body.x - body.width - GAP,
+    y: rect.y - body.y - body.height - GAP,
     width: rect.width + body.width + GAP * 2,
     height: rect.height + body.height + GAP * 2,
   };
@@ -286,8 +286,24 @@ export class DesktopSpace {
   #residentRefs = new WeakMap();
   #reservations = new Map();
 
-  constructor({ displays, displayAt, door, residents, seat, zones }) {
-    Object.assign(this, { displays, displayAt, door, residents, seat, zones });
+  constructor({
+    displays,
+    displayAt,
+    door,
+    residents,
+    seat,
+    zones,
+    bodyBounds = (_, bounds) => bounds,
+  }) {
+    Object.assign(this, {
+      displays,
+      displayAt,
+      door,
+      residents,
+      seat,
+      zones,
+      bodyBounds,
+    });
   }
 
   invalidate() {
@@ -416,9 +432,19 @@ export class DesktopSpace {
     regions,
     localAnchor,
   ) {
-    return [
-      ...obstacles.map((resident) => resident.bounds),
-      ...(door ? [door] : []),
+    const windowRect = { ...self.bounds, x: 0, y: 0 };
+    const body = this.bodyBounds("sprite", windowRect);
+    const occupied = [
+      ...obstacles.map(({ bounds }) => this.bodyBounds("sprite", bounds)),
+      ...(door ? [this.bodyBounds("door", door)] : []),
+      ...[...this.#reservations]
+        .filter(
+          ([id, plan]) =>
+            id !== self.id && plan.layoutVersion === this.layoutVersion,
+        )
+        .map(([, plan]) => this.bodyBounds("sprite", plan.bounds)),
+    ];
+    const protectedBounds = [
       ...(localAnchor ? [localAnchor] : []),
       ...(crossDisplay ? displays : [display]).flatMap((display) => {
         const key = displayFingerprint(display);
@@ -426,15 +452,11 @@ export class DesktopSpace {
           zones.find(({ fingerprint }) => fingerprint === key)?.zones ?? [];
         return exclusionBounds(display, exclusions);
       }),
-      ...[...this.#reservations]
-        .filter(
-          ([id, plan]) =>
-            id !== self.id && plan.layoutVersion === this.layoutVersion,
-        )
-        .map(([, plan]) => plan.bounds),
-    ]
-      .map((rect) => occupiedRange(rect, self.bounds))
-      .filter((rect) => regions.some((region) => overlaps(rect, region)));
+    ];
+    return [
+      ...occupied.map((rect) => occupiedRange(rect, body)),
+      ...protectedBounds.map((rect) => occupiedRange(rect, windowRect)),
+    ].filter((rect) => regions.some((region) => overlaps(rect, region)));
   }
 
   plan(agentId, action, { crossDisplay = true, replan } = {}) {

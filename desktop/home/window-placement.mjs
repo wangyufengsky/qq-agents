@@ -1,3 +1,10 @@
+export function desktopBodyBounds(type, { x, y }) {
+  // The interactive body excludes transparent padding and transient bubbles.
+  return type === "door"
+    ? { x: x + 9, y: y + 6, width: 82, height: 101 }
+    : { x: x + 44, y: y + 45, width: 106, height: 107 };
+}
+
 function fitsWorkArea(bounds, area) {
   return (
     bounds.x >= area.x &&
