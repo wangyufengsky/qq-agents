@@ -2537,7 +2537,9 @@ ipc.handle("room:status-card", async (event, data) => {
       role?.statusCard?.ref === data?.ref
     );
   };
-  if (!current()) return false;
+  if (!current() || (entry.type === "panel" && !entry.win.isFocused()))
+    return false;
+  const focusedWindow = BrowserWindow.getFocusedWindow();
   const opening = {};
   openingStatusCard = opening;
   const currentOpening = () => openingStatusCard === opening && current();
@@ -2548,7 +2550,12 @@ ipc.handle("room:status-card", async (event, data) => {
       visitId: data.visitId,
       ref: data.ref,
     });
-    if (!currentOpening() || value?.status !== "ok") return false;
+    if (
+      !currentOpening() ||
+      value?.status !== "ok" ||
+      BrowserWindow.getFocusedWindow() !== focusedWindow
+    )
+      return false;
     showPanel("chat");
     const panel = entries.get("panel");
     const deliver = () => {

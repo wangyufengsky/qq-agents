@@ -131,7 +131,10 @@ export function bindRecentBubbles(section) {
           "click",
           () => void composer.open(entry.bubbleId, room),
         );
-        const collaboration = button("quiet", "查看当前协作内容");
+        const collaboration = button(
+          "quiet collaboration-link",
+          "查看当前协作内容",
+        );
         collaboration.addEventListener("click", () => {
           const role = room.roles.find(({ id }) => id === entry.actor);
           if (!role?.statusCard || !role.bodyVisitId) return;
