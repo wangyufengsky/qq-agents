@@ -30,8 +30,19 @@ test("desktop client receives pushed states, idles on heartbeats and reconnects 
   const app = createServer({ runtime, token: admin, allowLive: true });
   const port = await app.listen();
   const traffic = [];
-  app.server.on("request", (request) => {
-    traffic.push(request.url.split("?")[0]);
+  const delayedResult = Promise.withResolvers();
+  const handle = app.server.listeners("request")[0];
+  app.server.off("request", handle);
+  app.server.on("request", (request, response) => {
+    const path = request.url.split("?")[0];
+    traffic.push(path);
+    if (path !== "/api/desktop-home/fixture-slow-result")
+      return handle(request, response);
+    request.resume();
+    void delayedResult.promise.then(() => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end('{"accepted":true}');
+    });
   });
 
   let visible = false;
@@ -89,6 +100,19 @@ test("desktop client receives pushed states, idles on heartbeats and reconnects 
   await waitFor(() => perception.view() && perception.view() !== sample);
   assert.equal(last().room.roomEpoch, first.room.roomEpoch);
   assert.equal(count("client"), 2);
+
+  const result = client.result("fixture-slow-result", {}, () => true);
+  try {
+    await waitFor(() => count("fixture-slow-result") === 1);
+    const lease = runtime.desktopVisits.client.activityVisibleUntil;
+    await waitFor(
+      () => runtime.desktopVisits.client.activityVisibleUntil > lease,
+    );
+    assert.ok(perception.view());
+  } finally {
+    delayedResult.resolve();
+    assert.deepEqual(await result, { accepted: true });
+  }
 
   runtime.desktopVisits.reset();
   await waitFor(() => changes.some(({ state }) => state.offline));

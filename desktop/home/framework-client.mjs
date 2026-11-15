@@ -86,15 +86,23 @@ export function createFrameworkClient(
     upload,
     clientId = client,
   ) => {
+    const heartbeat = endpoint === "heartbeat" ? stream : undefined;
+    const timeout = AbortSignal.timeout(
+      upload
+        ? 120_000
+        : endpoint === "client" ||
+            endpoint === "heartbeat" ||
+            endpoint.startsWith("body-")
+          ? CONNECT_TIMEOUT_MS
+          : 8000,
+    );
     const response = await fetchLocal(endpoint, {
       method: "POST",
       headers: {
         "content-type": upload
           ? "application/octet-stream"
           : "application/json",
-        ...(endpoint === "heartbeat" && {
-          "x-desktop-room-epoch": stream.roomEpoch,
-        }),
+        ...(heartbeat && { "x-desktop-room-epoch": heartbeat.roomEpoch }),
         ...(upload && {
           "content-length": String(upload.bytes),
           "x-video-name": encodeURIComponent(data.name),
@@ -110,15 +118,9 @@ export function createFrameworkClient(
             ? { client: clientId, action, data }
             : { ...data, client: clientId },
         ),
-      signal: AbortSignal.timeout(
-        upload
-          ? 120_000
-          : endpoint === "client" ||
-              endpoint === "heartbeat" ||
-              endpoint.startsWith("body-")
-            ? CONNECT_TIMEOUT_MS
-            : 8000,
-      ),
+      signal: heartbeat
+        ? AbortSignal.any([timeout, heartbeat.controller.signal])
+        : timeout,
     });
     return response.json();
   };
@@ -215,7 +217,7 @@ export function createFrameworkClient(
     syncing = true;
     const activeStream = stream;
     const activeClient = client;
-    void enqueue(async () => {
+    const synchronize = async () => {
       const data = activityState();
       if (activeStream) {
         const heartbeat = heartbeatData(data, activeStream.lastActivity);
@@ -237,7 +239,9 @@ export function createFrameworkClient(
       if (value.desktopPush === true && value.room)
         startStream(value.room.roomEpoch);
       else onState(value, "sync");
-    })
+    };
+    // A slow upload or command receipt must not expire an otherwise live room.
+    void (activeStream ? synchronize() : enqueue(synchronize))
       .catch(() => {
         if (stopped || activeClient !== client) return;
         if (activeStream) endStream(activeStream);
