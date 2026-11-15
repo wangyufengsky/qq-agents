@@ -54,12 +54,11 @@ async function pointer(root) {
     join(tests, "fixtures", "desktop-drop-pointer.ps1"),
   ];
   await exec("powershell.exe", [...shell, "-Probe"], { timeout: 15000 });
-  return (from, to, click = false) =>
+  return (from, to) =>
     exec(
       "powershell.exe",
       [
         ...shell,
-        ...(click ? ["-Click"] : []),
         "-StartX",
         String(from.x),
         "-StartY",
@@ -189,9 +188,15 @@ window.addEventListener("dragstart", (event) => {
           return Promise.resolve({ response: 1 });
         };
         const bounds = target.getBounds();
+        // Keep the sprite's transparent corner inside the backdrop's client
+        // area, away from the Windows non-client resize border.
         const backdrop = new BrowserWindow({
-          ...bounds,
+          x: bounds.x - 24,
+          y: bounds.y - 24,
+          width: bounds.width + 48,
+          height: bounds.height + 48,
           frame: false,
+          resizable: false,
           title: "Desktop Drop Fixture Backdrop",
         });
         await backdrop.loadURL(
@@ -199,8 +204,6 @@ window.addEventListener("dragstart", (event) => {
             encodeURIComponent(`<body style="margin:0;height:100vh">
 <script>
 window.fixtureDrops=[];
-window.fixtureClicks=0;
-document.onmousedown=()=>window.fixtureClicks++;
 window.fixtureEvents=[];
 for (const name of ["dragenter", "dragleave", "dragover", "drop"])
   document.addEventListener(name, (event) => window.fixtureEvents.push([name,event.screenX,event.screenY,event.dataTransfer.dropEffect]));
@@ -340,8 +343,8 @@ document.getElementById("link").ondragstart=(event) => {
               y: y + { text: 15, file: 49, link: 84 }[variant],
             }),
             physical({
-              x: target.x + (variant === "link" ? 45 : transparent ? 3 : 94),
-              y: target.y + (variant === "link" ? 48 : transparent ? 3 : 109),
+              x: target.x + (variant === "link" ? 45 : transparent ? 14 : 94),
+              y: target.y + (variant === "link" ? 48 : transparent ? 18 : 109),
             }),
           ];
         },
@@ -352,31 +355,21 @@ document.getElementById("link").ondragstart=(event) => {
       electron.windows().find((page) => page.url().includes("fixtureDrops")),
     );
     const transparentPoints = await points("text", true);
-    const corner = transparentPoints[1];
-    const windowsNative = process.platform === "win32";
-    const trace = windowsNative
-      ? await nativeDrag(corner, corner, true)
-      : await nativeDrag(...transparentPoints);
+    const trace = await nativeDrag(...transparentPoints);
     try {
-      if (windowsNative) {
+      if (process.platform === "win32")
         assert.match(trace.stdout, /Desktop Drop Fixture Backdrop/);
-        // Windows mouse-through and OLE target discovery use different paths.
-        await backdrop.waitForFunction(() => window.fixtureClicks === 1, null, {
+      await backdrop.waitForFunction(
+        () => window.fixtureDrops.length === 1,
+        null,
+        {
           timeout: 5000,
-        });
-      } else {
-        await backdrop.waitForFunction(
-          () => window.fixtureDrops.length === 1,
-          null,
-          {
-            timeout: 5000,
-          },
-        );
-        assert.equal(
-          await backdrop.evaluate(() => window.fixtureDrops[0]),
-          fixtureToken,
-        );
-      }
+        },
+      );
+      assert.equal(
+        await backdrop.evaluate(() => window.fixtureDrops[0]),
+        fixtureToken,
+      );
     } catch (error) {
       throw Error(
         JSON.stringify({

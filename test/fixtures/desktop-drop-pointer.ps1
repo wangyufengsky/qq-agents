@@ -1,7 +1,6 @@
 # Drives only the isolated Electron fixture on an interactive Windows desktop.
 param(
   [switch]$Probe,
-  [switch]$Click,
   [int]$StartX,
   [int]$StartY,
   [int]$EndX,
@@ -62,12 +61,6 @@ function Confirm-Pointer([int]$x, [int]$y) {
 Move-Pointer $StartX $StartY
 Start-Sleep -Milliseconds $HoldMs
 Confirm-Pointer $StartX $StartY
-if ($Click) {
-  [DesktopDropPointer]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
-  Start-Sleep -Milliseconds 100
-  [DesktopDropPointer]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
-  exit 0
-}
 $pressed = $false
 try {
   [DesktopDropPointer]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
