@@ -8,6 +8,7 @@ import {
   DesktopSpace,
   displayFingerprint,
 } from "../desktop/home/space.mjs";
+import { desktopBodyBounds } from "../desktop/home/window-placement.mjs";
 
 const area = { x: 0, y: 24, width: 900, height: 600 };
 const primary = {
@@ -64,6 +65,7 @@ function desktop(overrides = {}) {
     residents: () => state.residents,
     seat: () => state.seat,
     zones: () => state.zones,
+    bodyBounds: state.bodyBounds,
   });
   return { space, state };
 }
@@ -272,6 +274,35 @@ test("concurrent moves reserve the full destination until it is released", () =>
   assert.equal(space.canStep("neighbor", second.path[0], second), true);
 });
 
+test("transparent window padding does not trap the default residents around the door", () => {
+  const { space, state } = desktop({
+    displays: [primary],
+    door: { x: 778, y: 486, width: 100, height: 118 },
+    residents: [
+      role("self", 610, 453, {
+        bounds: { x: 610, y: 453, width: 194, height: 156 },
+      }),
+      role("neighbor", 468, 425, {
+        bounds: { x: 468, y: 425, width: 194, height: 156 },
+      }),
+    ],
+    bodyBounds: desktopBodyBounds,
+  });
+  const plan = space.plan("self", position(space, 0, area.y));
+  walk(space, state, plan);
+  assert.deepEqual(state.residents[0].bounds, {
+    x: 0,
+    y: area.y,
+    width: 194,
+    height: 156,
+  });
+  plan.release();
+
+  assert.deepEqual(space.plan("self", position(space, 468, 425)), {
+    reason: "target-blocked",
+  });
+});
+
 test("a manual overlap can exit on a reachable edge without traversing the obstacle", () => {
   const { space } = desktop({
     residents: [role("self", 0, 520), role("neighbor", 10, 520)],
@@ -328,7 +359,7 @@ function walk(space, state, plan, id = "self") {
         y: Math.round(y + (next.y - y) * (i / steps)),
       };
       assert.equal(space.canStep(id, step, plan), true, JSON.stringify(step));
-      resident.bounds = box(step.x, step.y);
+      resident.bounds = { ...resident.bounds, ...step };
     }
   }
 }
