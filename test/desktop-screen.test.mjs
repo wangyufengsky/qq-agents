@@ -88,6 +88,7 @@ async function setup(t, { native = false } = {}) {
     runtime,
     root,
     host,
+    origin,
     roomEpoch: room.roomEpoch,
     client,
     command,
@@ -479,4 +480,126 @@ test("native handoff requires revocation and an identified outcome", async (t) =
     assert.equal((await output).isError, true);
     assert.equal(host.native.state().handoff, undefined);
   });
+});
+
+test("push revokes a native request when QQ preempts the turn", async (t) => {
+  const { host, client, roomEpoch, command, nativeClaim, run, origin, token } =
+    await setup(t, { native: true });
+  const grantId = randomUUID();
+  await command("native-grant", { roomEpoch, grantId, agentId: "agent-0" });
+  const controller = new AbortController();
+  t.after(() => controller.abort());
+  const response = await fetch(
+    `${origin}/api/desktop-home/events?client=${client}&roomEpoch=${roomEpoch}`,
+    {
+      headers: { "x-desktop-home-token": desktopToken(token) },
+      signal: controller.signal,
+    },
+  );
+  const reader = response.body.getReader();
+  let buffered = "";
+  const next = async (predicate) => {
+    while (true) {
+      const end = buffered.indexOf("\n\n");
+      if (end >= 0) {
+        const frame = buffered.slice(0, end);
+        buffered = buffered.slice(end + 2);
+        const value = JSON.parse(frame.slice(6));
+        if (predicate(value)) return value;
+      } else buffered += new TextDecoder().decode((await reader.read()).value);
+    }
+  };
+  await next((state) => !!state.room);
+  await assert.rejects(
+    run("agent-0", async (call) => {
+      const output = call("desktop_native_control", {
+        type: "click",
+        ref: "ref_1",
+      });
+      const { nativeRequest } = await next((state) => !!state.nativeRequest);
+      const claim = {
+        client,
+        roomEpoch,
+        grantId,
+        requestId: nativeRequest.requestId,
+      };
+      host.interrupt("agent-0");
+      const revoked = await next((state) => !state.nativeRequest);
+      assert.equal(revoked.nativeRequest, undefined);
+      assert.equal((await nativeClaim(claim)).ok, false);
+      assert.equal((await output).isError, true);
+    }),
+    { message: "DESKTOP_QQ_PRIORITY" },
+  );
+});
+
+test("push disconnect after native claim does not replay the unknown action", async (t) => {
+  const { host, client, roomEpoch, command, nativeClaim, run, origin, token } =
+    await setup(t, { native: true });
+  const grantId = randomUUID();
+  await command("native-grant", { roomEpoch, grantId, agentId: "agent-0" });
+  const controller = new AbortController();
+  const headers = { "x-desktop-home-token": desktopToken(token) };
+  const response = await fetch(
+    `${origin}/api/desktop-home/events?client=${client}&roomEpoch=${roomEpoch}`,
+    { headers, signal: controller.signal },
+  );
+  const reader = response.body.getReader();
+  let buffered = "";
+  const next = async (predicate) => {
+    while (true) {
+      const end = buffered.indexOf("\n\n");
+      if (end >= 0) {
+        const frame = buffered.slice(0, end);
+        buffered = buffered.slice(end + 2);
+        const value = JSON.parse(frame.slice(6));
+        if (predicate(value)) return value;
+      } else buffered += new TextDecoder().decode((await reader.read()).value);
+    }
+  };
+  await next((state) => !!state.room);
+  await assert.rejects(
+    run("agent-0", async (call) => {
+      const output = call("desktop_native_control", {
+        type: "click",
+        ref: "ref_1",
+      });
+      const { nativeRequest } = await next((state) => !!state.nativeRequest);
+      const claim = {
+        client,
+        roomEpoch,
+        grantId,
+        requestId: nativeRequest.requestId,
+      };
+      assert.equal((await nativeClaim(claim)).ok, true);
+      controller.abort();
+      for (let i = 0; i < 50 && host.live; i++) await delay(10);
+      assert.equal(host.live, null);
+      assert.equal((await output).isError, true);
+      const reopened = await command("sync");
+      assert.notEqual(reopened.room.roomEpoch, roomEpoch);
+      assert.equal(reopened.nativeRequest, undefined);
+      assert.ok(
+        ["pending", "unconfirmed"].includes(
+          reopened.room.nativeControl.handoff,
+        ),
+      );
+      assert.equal((await nativeClaim(claim)).ok, false);
+      const nextController = new AbortController();
+      t.after(() => nextController.abort());
+      const newStream = await fetch(
+        `${origin}/api/desktop-home/events?client=${client}&roomEpoch=${reopened.room.roomEpoch}`,
+        { headers, signal: nextController.signal },
+      );
+      const first = JSON.parse(
+        new TextDecoder()
+          .decode((await newStream.body.getReader().read()).value)
+          .trim()
+          .slice(6),
+      );
+      assert.equal(first.nativeRequest, undefined);
+      assert.equal(first.room.roomEpoch, reopened.room.roomEpoch);
+    }),
+    { message: "DESKTOP_VISIT_UNAVAILABLE" },
+  );
 });

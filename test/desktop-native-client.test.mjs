@@ -7,6 +7,7 @@ function fixture({
   acceptClaim = true,
   claimExpiresAt = Date.now() + 60_000,
   verifyTarget,
+  resultGate,
 } = {}) {
   const roomEpoch = "room";
   const agentId = "fish";
@@ -61,8 +62,9 @@ function fixture({
         if (current()) claims.push(data);
         return { accepted: await acceptClaim, expiresAt: claimExpiresAt };
       },
-      result(value, current) {
+      async result(value, current) {
         if (current()) results.push(value);
+        if (value.requestId === "first") await resultGate;
       },
     },
   );
@@ -289,4 +291,39 @@ test("local stop cancels a window task's in-flight result but preserves its wind
   assert.deepEqual(scopes[0].mutations, []);
   assert.deepEqual(results, []);
   assert.equal(client.selectedWindow("fish", roomEpoch).grantId, grantId);
+});
+
+test("a later same-turn request runs in the existing scope while an earlier result is uploading", async () => {
+  const gate = Promise.withResolvers();
+  const { grant, results, roomEpoch, scopes, sync } = fixture({
+    resultGate: gate.promise,
+  });
+  const grantId = await grant();
+  const first = {
+    roomEpoch,
+    grantId,
+    requestId: "first",
+    turnId: "turn",
+    action: { type: "observe" },
+  };
+  sync("turn", first);
+  await setImmediate();
+  assert.equal(results.length, 1);
+  sync("turn");
+  const action = { type: "click", ref: scopes[0].ref };
+  const second = { ...first, requestId: "second", action };
+  sync("turn", second);
+  assert.equal(scopes[0].closed, false);
+  assert.equal(scopes[0].calls.length, 0);
+  gate.resolve();
+  await setImmediate();
+  assert.equal(scopes.length, 1);
+  assert.deepEqual(scopes[0].mutations, [action]);
+  assert.deepEqual(
+    results.map(({ requestId }) => requestId),
+    ["first", "second"],
+  );
+  sync("turn", second);
+  await setImmediate();
+  assert.equal(scopes[0].mutations.length, 1);
 });

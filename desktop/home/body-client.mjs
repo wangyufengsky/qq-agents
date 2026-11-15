@@ -21,6 +21,24 @@ export class DesktopBodyClient {
     return [...this.terminals.values()];
   }
 
+  heartbeat({ bodyRequests = [], bodyResultAcks = [] }) {
+    for (const id of bodyResultAcks) this.terminals.delete(id);
+    const now = Date.now();
+    for (const entry of this.active.values()) {
+      const { request } = entry;
+      if (
+        !entry.stopped &&
+        bodyRequests.some(
+          ({ commandId, roomEpoch, cancel }) =>
+            !cancel &&
+            commandId === request.commandId &&
+            roomEpoch === request.roomEpoch,
+        )
+      )
+        entry.syncUntil = now + SYNC_LEASE_MS;
+    }
+  }
+
   update(value, action) {
     if (value.offline) {
       this.clear("disconnect");

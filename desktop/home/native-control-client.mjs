@@ -14,6 +14,7 @@ export class NativeControlClient {
   #revoking;
   #scope;
   #pending;
+  #latest;
   #cleanup;
   #verifyTarget;
 
@@ -53,13 +54,19 @@ export class NativeControlClient {
   }
 
   clear() {
+    this.#latest = undefined;
     this.#grant = undefined;
     this.#closeScope();
   }
 
   stopWindowTask(id) {
-    if (this.#pending?.windowTaskId === id || this.#scope?.windowTaskId === id)
+    if (
+      this.#pending?.windowTaskId === id ||
+      this.#scope?.windowTaskId === id
+    ) {
+      this.#latest = undefined;
       this.#closeScope();
+    }
   }
 
   target(agentId) {
@@ -123,10 +130,13 @@ export class NativeControlClient {
       return;
     }
     if (action !== "sync") return;
+    this.#latest = value;
 
     if (
       (this.#scope && this.#scope.turnId !== nativeTurnId) ||
-      (this.#pending && this.#pending.requestId !== nativeRequest?.requestId)
+      (this.#pending &&
+        !this.#pending.delivering &&
+        this.#pending.requestId !== nativeRequest?.requestId)
     )
       this.#closeScope();
     if (
@@ -201,8 +211,10 @@ export class NativeControlClient {
       } catch {
         // Provider or OS error text can contain native window data.
       }
-      if (isCurrent()) await this.#result({ ...identity, result }, isCurrent);
-      else if (claimed && this.#revoking === grantId)
+      if (isCurrent()) {
+        this.#pending.delivering = true;
+        await this.#result({ ...identity, result }, isCurrent);
+      } else if (claimed && this.#revoking === grantId)
         await this.#result(
           { ...identity, result },
           () => this.#revoking === grantId,
@@ -211,6 +223,7 @@ export class NativeControlClient {
       // The host owns request expiry and rejects stale results.
     } finally {
       this.#pending = undefined;
+      if (this.#latest) this.update(this.#latest, "sync");
     }
   }
 }

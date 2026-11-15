@@ -212,6 +212,7 @@ export class DesktopScreen extends DesktopLocalGrant {
       },
     };
     this.pending = pending;
+    this.host.notify();
     const abort = () => pending.reject(Error("DESKTOP_SCREEN_UNAVAILABLE"));
     signal.addEventListener("abort", abort, { once: true });
     const timer = setTimeout(
@@ -226,6 +227,7 @@ export class DesktopScreen extends DesktopLocalGrant {
       clearTimeout(timer);
       signal.removeEventListener("abort", abort);
       if (this.pending === pending) this.pending = null;
+      this.host.notify();
       pending.finished.resolve();
     }
   }

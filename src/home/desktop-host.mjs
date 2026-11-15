@@ -45,7 +45,11 @@ import {
   publicResidentSchema,
 } from "./desktop-body-protocol.mjs";
 import { DesktopNative } from "./desktop-native.mjs";
-import { DesktopBrowser, browserGrantSchema } from "./desktop-browser.mjs";
+import {
+  DesktopBrowser,
+  browserGrantSchema,
+  browserRevokeSchema,
+} from "./desktop-browser.mjs";
 import { localGrantSchema, localRevokeSchema } from "./desktop-local-grant.mjs";
 
 const windowTaskInput = localGrantSchema
@@ -66,97 +70,98 @@ const batchGrantSchema = localGrantSchema
 const batchDisplaySchema = displayObservationGrantSchema
   .extend({ visitId: z.string().uuid() })
   .strict();
+const syncDataSchema = z
+  .union([
+    z.boolean(),
+    z
+      .object({
+        visible: z.boolean(),
+        dragged: z.array(z.string().min(1).max(64)).max(24),
+        ownerTouches: z
+          .array(
+            z
+              .object({
+                agentId: z.string().min(1).max(64),
+                visitId: z.string().uuid(),
+                kind: z.enum(["pet", "drag"]),
+              })
+              .strict(),
+          )
+          .max(48)
+          .optional(),
+        bodyProtocol: z.literal(2).optional(),
+        bodyCrossDisplay: z.literal(true).optional(),
+        bodyInteractions: z.literal(true).optional(),
+        bodyPublic: z.literal(true).optional(),
+        observationProtocol: z.literal(2).optional(),
+        displayObservation: z.literal(true).optional(),
+        bodyResults: z.array(bodyResultEvidenceSchema).max(4).optional(),
+        publicSpace: z
+          .object({
+            roomEpoch: z.string().uuid(),
+            residents: z.array(publicResidentSchema).max(24),
+            door: publicResidentSchema
+              .pick({ x: true, y: true, displayId: true })
+              .optional(),
+          })
+          .strict()
+          .optional(),
+        bodyPositions: z
+          .object({
+            roomEpoch: z.string().uuid(),
+            positions: z.array(bodyRecoveryPositionSchema).max(24),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict(),
+  ])
+  .optional();
+const textDataSchema = z.string().max(1000);
+const batch = (schema) => z.array(schema).min(1).max(24);
+const actionDataSchemas = {
+  sync: syncDataSchema,
+  invite: textDataSchema,
+  leave: textDataSchema,
+  send: textDataSchema,
+  "door-mode": textDataSchema,
+  "knock-answer": z.boolean(),
+  disconnect: z.undefined(),
+  "activity-pause": z.boolean(),
+  "screen-grant": localGrantSchema,
+  "screen-revoke": localRevokeSchema,
+  "screen-grant-batch": batch(batchGrantSchema),
+  "screen-revoke-batch": batch(localRevokeSchema),
+  "display-grant-batch": batch(batchDisplaySchema),
+  "display-revoke-batch": batch(localRevokeSchema),
+  "observation-grant": z.union([
+    displayObservationGrantSchema,
+    localGrantSchema,
+  ]),
+  "observation-revoke": localRevokeSchema,
+  "observation-state": observationStateSchema,
+  "window-task": windowTaskInput,
+  "window-task-stop": textDataSchema,
+  "native-grant": nativeGrantSchema,
+  "native-revoke": localRevokeSchema,
+  "browser-grant": browserGrantSchema,
+  "browser-revoke": browserRevokeSchema,
+};
 const requestSchema = z
   .object({
     client: z.string().uuid(),
-    action: z.enum([
-      "sync",
-      "invite",
-      "leave",
-      "send",
-      "door-mode",
-      "knock-answer",
-      "disconnect",
-      "activity-pause",
-      "screen-grant",
-      "screen-revoke",
-      "screen-grant-batch",
-      "screen-revoke-batch",
-      "display-grant-batch",
-      "display-revoke-batch",
-      "observation-grant",
-      "observation-revoke",
-      "observation-state",
-      "window-task",
-      "window-task-stop",
-      "native-grant",
-      "native-revoke",
-      "browser-grant",
-      "browser-revoke",
-    ]),
-    data: z
-      .union([
-        z.string().max(1000),
-        z.boolean(),
-        z
-          .object({
-            visible: z.boolean(),
-            dragged: z.array(z.string().min(1).max(64)).max(24),
-            ownerTouches: z
-              .array(
-                z
-                  .object({
-                    agentId: z.string().min(1).max(64),
-                    visitId: z.string().uuid(),
-                    kind: z.enum(["pet", "drag"]),
-                  })
-                  .strict(),
-              )
-              .max(48)
-              .optional(),
-            bodyProtocol: z.literal(2).optional(),
-            bodyCrossDisplay: z.literal(true).optional(),
-            bodyInteractions: z.literal(true).optional(),
-            bodyPublic: z.literal(true).optional(),
-            observationProtocol: z.literal(2).optional(),
-            displayObservation: z.literal(true).optional(),
-            bodyResults: z.array(bodyResultEvidenceSchema).max(4).optional(),
-            publicSpace: z
-              .object({
-                roomEpoch: z.string().uuid(),
-                residents: z.array(publicResidentSchema).max(24),
-                door: publicResidentSchema
-                  .pick({ x: true, y: true, displayId: true })
-                  .optional(),
-              })
-              .strict()
-              .optional(),
-            bodyPositions: z
-              .object({
-                roomEpoch: z.string().uuid(),
-                positions: z.array(bodyRecoveryPositionSchema).max(24),
-              })
-              .strict()
-              .optional(),
-          })
-          .strict(),
-        observationStateSchema,
-        displayObservationGrantSchema,
-        windowTaskInput,
-        nativeGrantSchema,
-        localGrantSchema,
-        localRevokeSchema,
-        browserGrantSchema,
-        z
-          .array(
-            z.union([batchDisplaySchema, batchGrantSchema, localRevokeSchema]),
-          )
-          .min(1)
-          .max(24),
-      ])
-      .optional(),
+    action: z.enum(Object.keys(actionDataSchemas)),
+    data: z.unknown().optional(),
   })
-  .strict();
+  .strict()
+  .superRefine(({ action, data }, ctx) => {
+    if (!actionDataSchemas[action].safeParse(data).success)
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["data"],
+        message: "Invalid action data",
+      });
+  });
 const CLIENT_LEASE = 15_000;
 const ACTIVITY_VISIBILITY_LEASE = 2_500;
 const defaultArt = { dsh: "fish", codex: "dragon", antigravity: "cat" };
@@ -196,6 +201,8 @@ function explicitTargets(text, roles) {
 export class DesktopHost {
   constructor(runtime) {
     this.runtime = runtime;
+    this.eventSubscribers = new Map();
+    this.eventSequence = 0;
     this.archive = new DesktopArchive(runtime.memory);
     this.visits = new Map();
     this.activityStarts = new Map();
@@ -205,6 +212,73 @@ export class DesktopHost {
     this.native = new DesktopNative(this);
     this.body = new DesktopBody(this);
     this.browser = new DesktopBrowser(this);
+  }
+
+  notify() {
+    if (this.eventQueued || !this.eventSubscribers.size) return;
+    this.eventQueued = true;
+    queueMicrotask(() => {
+      this.eventQueued = false;
+      if (!this.eventSubscribers.size) return;
+      const state =
+        this.live && this.client
+          ? this.pushSnapshot()
+          : { enabled: false, reconnect: true };
+      const content = JSON.stringify(state);
+      if (content === this.lastEventContent) return;
+      this.lastEventContent = content;
+      const payload = JSON.stringify({
+        ...state,
+        sequence: ++this.eventSequence,
+      });
+      for (const subscriber of this.eventSubscribers.keys())
+        subscriber(payload);
+    });
+  }
+
+  subscribe(client, epoch, subscriber) {
+    if (
+      !z.string().uuid().safeParse(client).success ||
+      this.client?.id !== client ||
+      !this.live ||
+      this.live.room.epoch !== epoch
+    )
+      return false;
+    if (
+      !this.refresh() ||
+      this.client?.id !== client ||
+      this.live?.room.epoch !== epoch
+    )
+      return false;
+    this.eventSubscribers.set(subscriber, {
+      client,
+      epoch: this.live.room.epoch,
+    });
+    const state = this.pushSnapshot();
+    this.lastEventContent = JSON.stringify(state);
+    subscriber(JSON.stringify({ ...state, sequence: ++this.eventSequence }));
+    return true;
+  }
+
+  hasStream(client, epoch) {
+    return (
+      this.client?.id === client &&
+      this.live?.room.epoch === epoch &&
+      [...this.eventSubscribers.values()].some(
+        (stream) =>
+          stream.client === client && stream.epoch === this.live?.room.epoch,
+      )
+    );
+  }
+
+  unsubscribe(client, epoch, subscriber) {
+    if (!this.eventSubscribers.delete(subscriber)) return;
+    if (
+      !this.eventSubscribers.size &&
+      this.client?.id === client &&
+      this.live?.room.epoch === epoch
+    )
+      this.reset();
   }
 
   configured() {
@@ -282,6 +356,7 @@ export class DesktopHost {
     this.visits.get(id)?.finishSubject(id, completed);
   }
   interrupt(id) {
+    this.notify();
     this.live?.cancelInteraction(id);
     if (this.windowTask?.actor === id) this.stopWindowTask("inactive");
     this.live?.cancelActivity(id);
@@ -294,6 +369,14 @@ export class DesktopHost {
       this.live?.cancelActivity(id);
       if (this.windowTask?.actor === id) this.stopWindowTask("inactive");
     }
+    if (claim) {
+      const release = claim.release;
+      claim.release = () => {
+        release();
+        this.notify();
+      };
+    }
+    this.notify();
     return claim;
   }
 
@@ -321,6 +404,7 @@ export class DesktopHost {
   }
 
   refresh({ syncingClient } = {}) {
+    this.notify();
     const now = this.runtime.now();
     this.observation.maintain();
     if (!this.configured() || !this.operational()) {
@@ -644,7 +728,7 @@ export class DesktopHost {
           this.visit(actor).setDoor(open, epoch, direct),
         close: async () => {},
       },
-      () => {},
+      () => this.notify(),
     );
     this.signature = JSON.stringify(roles);
     this.client = { id: client, expiresAt: this.runtime.now() + CLIENT_LEASE };
@@ -680,6 +764,16 @@ export class DesktopHost {
   }
 
   reset() {
+    const subscribers = [...this.eventSubscribers.keys()];
+    this.eventSubscribers.clear();
+    const payload =
+      subscribers.length &&
+      JSON.stringify({
+        enabled: false,
+        ...(!this.configured() ? { closed: true } : { reconnect: true }),
+        sequence: ++this.eventSequence,
+      });
+    for (const subscriber of subscribers) subscriber(payload, true);
     this.stopWindowTask("inactive");
     this.windowTaskStatus = undefined;
     this.body.clear();
@@ -697,16 +791,22 @@ export class DesktopHost {
     void previous.close();
   }
 
-  command(input) {
+  command(input, { heartbeat = false, epoch } = {}) {
     const parsed = requestSchema.safeParse(input);
     if (!parsed.success) throw Error("INVALID_REQUEST");
     const { client, action, data } = parsed.data;
+    if (heartbeat && (action !== "sync" || !this.hasStream(client, epoch)))
+      return this.configured()
+        ? { enabled: true, reconnect: true }
+        : { enabled: false, closed: true };
     if (
       !this.refresh({ syncingClient: action === "sync" ? client : undefined })
     )
       return this.configured()
         ? { enabled: false }
         : { enabled: false, closed: true };
+    if (heartbeat && !this.hasStream(client, epoch))
+      return { enabled: true, reconnect: true };
     if (this.client && this.client.id !== client)
       return { enabled: true, busy: true };
     if (action === "disconnect") {
@@ -721,7 +821,9 @@ export class DesktopHost {
       this.client.expiresAt = this.runtime.now() + CLIENT_LEASE;
     const { live } = this;
     if (this.runtime.updateMaintenance)
-      return { enabled: true, room: this.roomSnapshot() };
+      return heartbeat
+        ? { enabled: true }
+        : { enabled: true, room: this.roomSnapshot() };
     let bodyResultAcks;
     if (action === "sync") {
       const visible = typeof data === "boolean" ? data : data?.visible;
@@ -733,7 +835,11 @@ export class DesktopHost {
           live.activity.note(visit, "visible-again");
         live.resumeActivity();
       }
-      if (live.publicEnabled()) {
+      if (live.publicEnabled() && heartbeat && typeof data === "boolean") {
+        const sample = live.perception.view();
+        if (visible && sample) sample.until = this.client.activityVisibleUntil;
+        else if (!visible) live.perception.update(undefined);
+      } else if (live.publicEnabled()) {
         const sample = data?.publicSpace;
         live.perception.update(
           visible && sample?.roomEpoch === live.room.epoch
@@ -918,8 +1024,21 @@ export class DesktopHost {
       this.browser.change(action, data);
     if (this.windowTask?.current() === false)
       this.stopWindowTask("target-unavailable");
+    this.notify();
+    if (heartbeat) {
+      const bodyRequests = this.body.clientWork();
+      return {
+        enabled: true,
+        ...(bodyResultAcks?.length && { bodyResultAcks }),
+        ...(bodyRequests.length && { bodyRequests }),
+      };
+    }
     const state = this.clientSnapshot();
     if (action !== "sync") return state;
+    return this.pushSnapshot(state, bodyResultAcks);
+  }
+
+  pushSnapshot(state = this.clientSnapshot(), bodyResultAcks) {
     const screenRequest = this.screen.request();
     const observationVerify = this.observation.verifyWork();
     return {
@@ -932,6 +1051,8 @@ export class DesktopHost {
         }),
       }),
       ...this.native.clientWork(),
+      desktopPush: true,
+      observationRevision: `${this.observation.summaryVersion}:${this.observation.replyVersion}`,
       bodyProtocol: 2,
       bodyCrossDisplay: true,
       bodyInteractions: true,
@@ -1083,6 +1204,7 @@ export class DesktopHost {
     check();
     if (attachments.busy) throw Error("DESKTOP_ATTACHMENT_UNAVAILABLE");
     attachments.busy = true;
+    this.notify();
     try {
       const entry = await attachments.prepare(
         upload,
@@ -1097,6 +1219,7 @@ export class DesktopHost {
       return this.clientSnapshot();
     } finally {
       attachments.busy = false;
+      this.notify();
     }
   }
 
@@ -1120,6 +1243,7 @@ export class DesktopHost {
     check();
     if (attachments.busy) throw Error("DESKTOP_ATTACHMENT_UNAVAILABLE");
     attachments.busy = true;
+    this.notify();
     const selectedVisits = new Map(live.visits);
     let entry,
       published = false;
@@ -1137,6 +1261,7 @@ export class DesktopHost {
       return this.clientSnapshot();
     } finally {
       attachments.busy = false;
+      this.notify();
       if (!published) await entry?.video.drop();
     }
   }

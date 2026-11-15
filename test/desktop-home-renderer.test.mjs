@@ -1,8 +1,40 @@
 /* global document, window */
-import test from "node:test";
+import test, { after } from "node:test";
+import { createServer } from "node:http";
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import { desktopResourcePath } from "../desktop/home/resource-protocol.mjs";
 import assert from "node:assert/strict";
 import { chromium } from "playwright-core";
 import { findScreenshotBrowser } from "../src/tools/public-screenshot.mjs";
+
+const source = fileURLToPath(new URL("../desktop/home/", import.meta.url));
+const server = createServer(async (request, response) => {
+  const path = desktopResourcePath(`nest://app${request.url}`, source);
+  if (!path) {
+    response.writeHead(404).end();
+    return;
+  }
+  try {
+    const data = await readFile(path);
+    const type = path.endsWith(".js")
+      ? "text/javascript"
+      : path.endsWith(".css")
+        ? "text/css"
+        : path.endsWith(".html")
+          ? "text/html"
+          : path.endsWith(".woff2")
+            ? "font/woff2"
+            : "image/webp";
+    response.writeHead(200, { "content-type": type }).end(data);
+  } catch {
+    response.writeHead(404).end();
+  }
+});
+await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+after(() => new Promise((resolve) => server.close(resolve)));
+const pageUrl = (query) =>
+  `http://127.0.0.1:${server.address().port}/desktop/home/index.html?${query}`;
 
 test("the desktop panel drops the old messages and guests when its room closes", async (t) => {
   let executablePath;
@@ -50,9 +82,7 @@ test("the desktop panel drops the old messages and guests when its room closes",
       },
     };
   }, room);
-  await page.goto(
-    new URL("../desktop/home/index.html?type=panel", import.meta.url).href,
-  );
+  await page.goto(pageUrl("type=panel"));
   await page.getByRole("button", { name: "来访" }).waitFor();
   await page.getByRole("button", { name: "聊天" }).click();
   await page.getByText("上一间的回复", { exact: true }).waitFor();
@@ -146,9 +176,7 @@ test("the desktop panel exposes each authorization only while eligible", async (
       observation: async () => window.testObservationResult,
     };
   }, room);
-  await page.goto(
-    new URL("../desktop/home/index.html?type=panel", import.meta.url).href,
-  );
+  await page.goto(pageUrl("type=panel"));
   const push = (data) => page.evaluate((next) => window.testRoom(next), data);
   await page.getByRole("button", { name: /小窝工具/ }).click();
   const authorize = page.locator(".screen-view-button");
@@ -262,9 +290,7 @@ test("the header tools remain interactive outside the chat tab", async (t) => {
       observationReview: async () => ({ records: [] }),
     };
   });
-  await page.goto(
-    new URL("../desktop/home/index.html?type=panel", import.meta.url).href,
-  );
+  await page.goto(pageUrl("type=panel"));
   const tools = page.getByRole("button", { name: "小窝工具" });
   const sheet = page.getByRole("dialog", { name: "小窝工具" });
   await tools.click();
@@ -332,9 +358,7 @@ test("site authorization requires an explicit role and origin and follows the ro
       },
     };
   }, room);
-  await page.goto(
-    new URL("../desktop/home/index.html?type=panel", import.meta.url).href,
-  );
+  await page.goto(pageUrl("type=panel"));
   const push = (data) => page.evaluate((next) => window.testRoom(next), data);
   await page.getByRole("button", { name: /小窝工具/ }).click();
   const authorize = page.getByRole("button", { name: "授权访问站点" });
@@ -415,9 +439,7 @@ test("paper tabs and portraits replace the desktop budget display", async (t) =>
       act: (...args) => window.testActions.push(args),
     };
   }, data);
-  await page.goto(
-    new URL("../desktop/home/index.html?type=panel", import.meta.url).href,
-  );
+  await page.goto(pageUrl("type=panel"));
   const list = page.locator(".guest-list");
   await list.getByRole("button", { name: "邀请 · 小龙" }).click();
   assert.deepEqual(await page.evaluate(() => window.testActions), [
@@ -495,6 +517,7 @@ test("the observation page shows automatic results only while it is active", asy
     framework: true,
     connected: true,
     roomEpoch: "observation-room",
+    observationRevision: "0:0",
     observationReviewAvailable: true,
     roles: [{ id: "fish", name: "小鱼", state: "here", available: true }],
     messages: [{ id: 1, actor: "admin", text: "房间消息", now }],
@@ -533,9 +556,7 @@ test("the observation page shows automatic results only while it is active", asy
       },
     };
   }, room);
-  await page.goto(
-    new URL("../desktop/home/index.html?type=panel", import.meta.url).href,
-  );
+  await page.goto(pageUrl("type=panel"));
   const tab = page.getByRole("button", { name: "观察", exact: true });
   const results = page.getByRole("region", { name: "观察记录" });
   const thread = page.getByRole("log", { name: "聊天记录" });
@@ -550,6 +571,7 @@ test("the observation page shows automatic results only while it is active", asy
   );
   await results.getByText("已保存的观察摘要").click();
   await results.getByText("暂无已保存的摘要。").waitFor();
+  const callsBeforePush = await page.evaluate(() => window.resultCalls.length);
 
   await page.evaluate((next) => window.replaceResults(next), {
     replies: [
@@ -559,6 +581,12 @@ test("the observation page shows automatic results only while it is active", asy
     records: [saved],
     summaryLimitReached: true,
   });
+  await page.waitForTimeout(2100);
+  assert.equal(
+    await page.evaluate(() => window.resultCalls.length),
+    callsBeforePush,
+  );
+  await push({ ...room, observationRevision: "1:1" });
   await results.getByText(reply.text, { exact: true }).waitFor();
   await results.getByText("前一条回复").waitFor();
   await results.getByText(saved.summary, { exact: true }).waitFor();
@@ -638,9 +666,7 @@ test("three active guests keep the illustrated board separate from full-width ac
       act() {},
     };
   }, room);
-  await page.goto(
-    new URL("../desktop/home/index.html?type=panel", import.meta.url).href,
-  );
+  await page.goto(pageUrl("type=panel"));
   const board = page.locator(".guest-list");
   const push = (data) => page.evaluate((next) => window.testRoom(next), data);
   await board.getByRole("button", { name: "请回家 · 小龙" }).waitFor();
@@ -726,9 +752,7 @@ test("the visit panel uses confirmed body state and announces each manual interr
       act: (...args) => window.testActions.push(args),
     };
   }, room);
-  await page.goto(
-    new URL("../desktop/home/index.html?type=panel", import.meta.url).href,
-  );
+  await page.goto(pageUrl("type=panel"));
   const push = (data) => page.evaluate((next) => window.testRoom(next), data);
   const state = page.locator(".guest-state");
   const detail = page.locator(".guest-detail");
@@ -923,9 +947,7 @@ test("resident controls are local and a window task stays bound to its selected 
       },
     };
   }, room);
-  await page.goto(
-    new URL("../desktop/home/index.html?type=panel", import.meta.url).href,
-  );
+  await page.goto(pageUrl("type=panel"));
   const push = (update) =>
     page.evaluate((data) => window.testRoom(data), update);
   const resident = page.locator(".guest-activity").filter({ hasText: "小鱼" });
@@ -1040,9 +1062,7 @@ test("floating door distinguishes clicks from dragging", async (t) => {
       act: (action) => window.testActions.push(action),
     };
   });
-  await page.goto(
-    new URL("../desktop/home/index.html?type=door", import.meta.url).href,
-  );
+  await page.goto(pageUrl("type=door"));
   const door = page.getByRole("button", { name: "打开小窝的门" });
   await door.click();
   await page.mouse.move(40, 45);
@@ -1093,12 +1113,7 @@ test("floating resident replays six short actions with a still hold and respects
     };
     window.testPageVisibility = [];
   }, room);
-  await page.goto(
-    new URL(
-      "../desktop/home/index.html?type=sprite&id=resident",
-      import.meta.url,
-    ).href,
-  );
+  await page.goto(pageUrl("type=sprite&id=resident"));
   const artButton = page.locator(".sprite-button");
   const sprite = artButton.locator(".sprite-rest");
   const body = artButton.locator(".sprite-body");
@@ -1669,9 +1684,7 @@ test("one confirmation grants multiple separate targets and displays each observ
       screenView: change(data.screenView, "grants"),
     };
   }, room);
-  await page.goto(
-    new URL("../desktop/home/index.html?type=panel", import.meta.url).href,
-  );
+  await page.goto(pageUrl("type=panel"));
   const thread = page.getByRole("log");
   await thread.waitFor();
   const height = (await thread.boundingBox()).height;
