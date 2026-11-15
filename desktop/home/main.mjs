@@ -2799,10 +2799,7 @@ ipcMain.handle("room:screen-view", (event, action, data) =>
 );
 
 ipcMain.handle("room:observation-review", async (event, action, data) => {
-  if (
-    !["status", "publish", "save", "discard", "list", "delete"].includes(action)
-  )
-    return;
+  if (!["status", "list", "delete"].includes(action)) return;
   const win = entries.get("panel")?.win;
   const roomEpoch = remoteState?.roomEpoch;
   const focused = () =>
@@ -2818,46 +2815,15 @@ ipcMain.handle("room:observation-review", async (event, action, data) => {
     event.sender === win.webContents &&
     event.senderFrame === win.webContents.mainFrame;
   if (!focused()) return;
-  const needsTarget = action === "publish" || action === "save";
-  const grant =
-    localObservation(data?.grantId) ??
-    (!data?.grantId ? observationGrant : undefined);
-  if (needsTarget) {
-    if (!grant || !observationCurrent(grant) || grant.state !== "ready") return;
-    const { state } = await probeObservation(grant);
-    reportObservationState(grant, state);
-    if (state !== "ready" || !focused()) return;
-  }
-  const checkedUntil = Date.now() + 2500;
-  const current = () =>
-    focused() &&
-    (!needsTarget ||
-      (observationCurrent(grant) &&
-        grant.state === "ready" &&
-        Date.now() < checkedUntil));
   try {
     const result = await framework.result(
       "observation-review",
-      {
-        action,
-        id: data?.id,
-        agentId: data?.agentId,
-        ...(needsTarget && grant && { grantId: grant.grantId }),
-      },
-      current,
+      { action, id: data?.id, agentId: data?.agentId },
+      focused,
     );
-    if (!current() || !result) return;
-    if (action === "list" || action === "delete") return result;
-    const proof =
-      localObservation(result.candidate?.grantId) ??
-      (!result.candidate?.grantId ? observationGrant : undefined);
-    return observationCurrent(proof) &&
-      proof.state === "ready" &&
-      Date.now() < proof.proofUntil
-      ? result
-      : { published: result.published };
+    if (focused()) return result;
   } catch {
-    // The host owns review expiry and rejects stale actions.
+    // The room may have closed while the local query was in flight.
   }
 });
 

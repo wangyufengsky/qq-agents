@@ -186,7 +186,7 @@ h2 {
 }
 #visits,
 #chat,
-#observation-review {
+#observation-results {
   min-height: 0;
   background: var(--paper);
 }
@@ -376,74 +376,62 @@ h2 {
 .chat-tools .observation-ended {
   margin: 0;
 }
-#observation-review {
+#observation-results {
   padding: 17px 16px 12px;
   overflow: auto;
   font-size: 13px;
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
-.review-guide {
-  display: grid;
-  gap: 8px;
-  margin: 0;
-  padding: 9px 10px;
-  border-inline-start: 2px solid var(--line);
-  background: var(--cream);
-}
-.review-guide dt {
-  font-weight: 600;
-}
-.review-guide dd {
-  margin: 0;
-  color: var(--muted);
-  font-size: 12px;
-}
-#observation-review h3,
-#observation-review p {
+#observation-results h3,
+#observation-results p {
   margin: 0;
 }
-#observation-review > :not(:first-child),
-.review-candidate > :not(:first-child) {
+#observation-results > :not(:first-child) {
   margin-top: 10px;
 }
-.review-scope,
-.review-status,
-.review-candidate-meta,
-.review-published-meta,
-.review-records-status,
-.review-records li > :first-child {
+.results-scope,
+.results-status,
+.results-meta,
+.results-records-status,
+.results-summary-limit {
   color: var(--muted);
   font-size: 12px;
 }
-.review-candidate,
-.review-published,
-.review-records {
+.results-replies,
+.results-records {
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 6px 9px 7px 5px;
   background: var(--cream);
 }
-.review-text {
-  padding: 4px 0 6px;
+.results-text {
+  padding-top: 3px;
   white-space: pre-wrap;
   user-select: text;
 }
-.review-records summary {
+.results-records summary {
   cursor: pointer;
 }
-.review-records summary + p:not(:empty),
-.review-records li {
+.results-replies > .results-status,
+.results-records > .results-records-status:not(:empty),
+.results-replies li,
+.results-records li {
   padding-top: 8px;
 }
-.review-records ul {
+.results-replies ul,
+.results-records ul {
   list-style: none;
   margin: 0;
   padding: 0;
 }
-.review-records li + li {
+.results-replies li + li,
+.results-records li + li {
   margin-top: 8px;
   border-top: 1px solid var(--line);
+}
+.results-records li button {
+  margin-top: 6px;
 }
 .door-settings,
 .knock-card {

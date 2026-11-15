@@ -268,6 +268,36 @@ test("revocation after frame capture fences backend submission", async (t) => {
   await active.done;
 });
 
+test("revoking after the model decides prevents automatic observation output", async (t) => {
+  const { host, grant, sync, payload, backend, time, revoke, review } =
+    setup(t);
+  const decided = Promise.withResolvers();
+  const resume = Promise.withResolvers();
+  backend.runDesktop = async (params) => {
+    params.beforeInput();
+    params.onInputSubmitted();
+    await params.callTool(decision, {
+      action: "silent",
+      response: "待取消的回复",
+      summary: "待取消的摘要",
+    });
+    decided.resolve();
+    await resume.promise;
+  };
+  grant();
+  time(2 * minute);
+  const { screenRequest } = sync();
+  const active = host.live.active;
+  host.screen.claim(payload(screenRequest));
+  host.screen.receive({ ...payload(screenRequest), data: jpeg });
+  await decided.promise;
+  revoke();
+  resume.resolve();
+  await active.done;
+  assert.deepEqual(review("status").replies, []);
+  assert.deepEqual(review("list").records, []);
+});
+
 test("explicit role selection is required for on-request observation", async (t) => {
   const { host, runtime, grant, sync, payload, backend, time } = setup(t);
   runtime.config.desktopHome.observationRoles = [];
@@ -305,8 +335,8 @@ test("explicit role selection is required for on-request observation", async (t)
   assert.equal(host.activityStarts.get("agent-0").length, 1);
 });
 
-test("valid observation drafts stay private until each local review action", async (t) => {
-  const { host, client, grant, sync, payload, backend, revoke, review, time } =
+test("completed observations publish local replies and save separate summaries automatically", async (t) => {
+  const { host, grant, sync, payload, backend, revoke, review, time } =
     setup(t);
   grant();
   const prompts = [];
@@ -319,6 +349,7 @@ test("valid observation drafts stay private until each local review action", asy
       response: "可以检查进度",
       summary: "观察到进度界面",
     });
+    assert.deepEqual(review("list").records.length, prompts.length - 1);
   };
   const capture = async () => {
     time(2 * minute);
@@ -329,54 +360,66 @@ test("valid observation drafts stay private until each local review action", asy
     await active.done;
   };
   await capture();
-  const { candidate } = review("status");
-  assert.equal(candidate.summary, "观察到进度界面");
-  assert.equal(candidate.agentId, "agent-0");
-  assert(!JSON.stringify(sync()).includes("观察到进度界面"));
-  assert.deepEqual(review("list").records, []);
+  const { replies, summaryVersion } = review("status");
+  assert.equal(replies[0].text, "可以检查进度");
+  assert.equal(replies[0].agentId, "agent-0");
   assert.throws(
-    () =>
-      host.observation.review({
-        client: randomUUID(),
-        action: "publish",
-        id: candidate.id,
-      }),
+    () => host.observation.review({ client: randomUUID(), action: "status" }),
     /DESKTOP_SCREEN_UNAVAILABLE/,
   );
   assert.throws(
-    () => review("publish", { id: randomUUID() }),
-    /DESKTOP_OBSERVATION_REVIEW_UNAVAILABLE/,
+    () => review("publish", { id: replies[0].id }),
+    /INVALID_REQUEST/,
   );
-  const approved = review("publish", { id: candidate.id });
-  assert.equal(approved.published.text, "可以检查进度");
-  assert.equal(approved.candidate.response, undefined);
-  assert.deepEqual(review("list").records, []);
-  review("save", { id: candidate.id });
   const [saved] = review("list", { agentId: "agent-0" }).records;
-  assert.equal(saved.summary, candidate.summary);
+  assert.equal(saved.summary, "观察到进度界面");
   assert.equal(saved.expiresAt - saved.createdAt, 7 * 24 * 60 * minute);
   assert.deepEqual(review("list", { agentId: "agent-1" }).records, []);
   await capture();
   assert.match(prompts[1], /观察到进度界面/);
-  assert(!JSON.stringify(host.archive.history()).includes(candidate.summary));
+  assert.ok(review("status").summaryVersion > summaryVersion);
+  assert.equal(review("status").replies.length, 2);
+  for (const state of [sync(), host.archive.history()]) {
+    assert.doesNotMatch(JSON.stringify(state), /观察到进度界面|可以检查进度/);
+  }
   revoke();
-  assert.equal(review("status").candidate, undefined);
-  assert.equal(review("status").published, undefined);
-  assert.throws(
-    () =>
-      host.observation.review({
-        client,
-        action: "save",
-        id: candidate.id,
-      }),
-    /DESKTOP_OBSERVATION_REVIEW_UNAVAILABLE/,
-  );
-  assert.equal(review("list").records.length, 1);
+  assert.deepEqual(review("status").replies, []);
+  assert.equal(review("list").records.length, 2);
   assert.equal(
     review("delete", { agentId: "agent-0", id: saved.id }).deleted,
     true,
   );
-  assert.deepEqual(review("list").records, []);
+  assert.equal(review("list").records.length, 1);
+});
+
+test("a full summary archive keeps existing records and still publishes the reply", (t) => {
+  const { host, grant, review } = setup(t);
+  grant();
+  const role = "agent-0";
+  for (let i = 0; i < 100; i++) {
+    host.observation.summaries.save(role, {
+      id: randomUUID(),
+      summary: `现有摘要 ${i}`,
+    });
+  }
+  const existing = review("list").records;
+  host.observation.finish(host.observation.grant, {
+    response: "本机观察回复",
+    summary: "新摘要",
+  });
+  const full = review("status");
+  assert.equal(full.replies[0].text, "本机观察回复");
+  assert.equal(full.summaryLimitReached, true);
+  assert.deepEqual(review("list").records, existing);
+
+  assert.equal(
+    review("delete", { agentId: role, id: existing[0].id }).deleted,
+    true,
+  );
+  host.observation.finish(host.observation.grant, { summary: "新摘要" });
+  assert.equal(review("status").summaryLimitReached, false);
+  assert.equal(review("list").records.length, 100);
+  assert.ok(review("list").records.some(({ summary }) => summary === "新摘要"));
 });
 
 test("minimization or a stale target lease cannot capture or expose an observation", async (t) => {
@@ -402,7 +445,7 @@ test("minimization or a stale target lease cannot capture or expose an observati
   time(2 * minute, { verify: false });
   assert.equal(sync().screenRequest, undefined);
   assert.equal(sync().room.observation.targetState, "checking");
-  assert.equal(review("status").candidate, undefined);
+  assert.deepEqual(review("status").replies, []);
   target("permission");
   assert.equal(sync().room.observation.grantedAgentId, null);
 });
@@ -506,7 +549,7 @@ test("submission waits for a fresh same-window receipt and rejects a minimized t
   assert.equal(sync().room.observation.targetState, "minimized");
 });
 
-test("a discarded candidate's summary never reenters the observation prompt", async (t) => {
+test("deleting an automatically saved summary clears the same grant's prior context", async (t) => {
   const { host, grant, sync, payload, backend, review, time } = setup(t);
   grant();
   const prompts = [];
@@ -515,7 +558,7 @@ test("a discarded candidate's summary never reenters the observation prompt", as
     prompts.push(params.prompt);
     await params.callTool(decision, {
       action: "silent",
-      summary: "放弃的观察摘要",
+      summary: "待删除的观察摘要",
     });
   };
   for (let i = 0; i < 2; i++) {
@@ -525,12 +568,11 @@ test("a discarded candidate's summary never reenters the observation prompt", as
     host.screen.claim(payload(screenRequest));
     host.screen.receive({ ...payload(screenRequest), data: jpeg });
     await active.done;
-    const { candidate } = review("status");
-    assert(candidate);
-    review("discard", { id: candidate.id });
+    const [{ id, agentId }] = review("list").records;
+    assert.equal(review("delete", { id, agentId }).deleted, true);
   }
   assert.equal(prompts.length, 2);
-  assert(!prompts[1].includes("放弃的观察摘要"));
+  assert.doesNotMatch(prompts[1], /待删除的观察摘要/);
 });
 
 test("display grants offer optional observation, carry independent limits and reject revoked evidence", async (t) => {
@@ -625,26 +667,12 @@ test("display grants offer optional observation, carry independent limits and re
   const retainedAgent = host.observation.find(retained).agentId;
 
   host.observation.finish(host.observation.find(retained), {
+    response: "显示器观察回复",
     summary: "示例摘要",
   });
-  const { candidate } = host.observation.review({ client, action: "status" });
-  assert.equal(candidate.grantId, retained);
-  assert.throws(
-    () =>
-      host.observation.review({
-        client,
-        action: "save",
-        id: candidate.id,
-        grantId: second,
-      }),
-    /DESKTOP_OBSERVATION_REVIEW_UNAVAILABLE/,
-  );
-  host.observation.review({
-    client,
-    action: "save",
-    id: candidate.id,
-    grantId: retained,
-  });
+  const { replies } = host.observation.review({ client, action: "status" });
+  assert.equal(replies[0].grantId, retained);
+  assert.equal(replies[0].agentId, retainedAgent);
   assert.equal(
     host.observation.review({ client, action: "list", agentId: retainedAgent })
       .records[0].summary,

@@ -543,7 +543,7 @@ QQ 掉线、自动重连用完次数时，管理台会显示，但主人在 QQ �
 
 `desktopHome.displayObservation.minutes` 与 `desktopHome.displayObservation.attempts` 分别设置每位角色的显示器观察授权时长和取图尝试上限，默认 15 分钟及 4 次，范围 1–60 分钟及 1–12 次。在「小窝目录 → 桌面小窝设置」调整。需继续在本机给每位角色单独选择一块显示器。
 
-`desktopHome.observationRetentionDays` 控制管理员逐条批准保存的观察摘要保留期，默认 7 天，范围 1–30 天。缩短保留期也会缩短已有记录的截止时间。
+`desktopHome.observationRetentionDays` 控制自动保存的观察摘要保留期，默认 7 天，范围 1–30 天。缩短保留期也会缩短已有记录的截止时间。
 
 `desktopHome.activityRoles` 默认是空列表。该列表允许在场角色在可见的小窝里按独立的冷却和小时额度作出安静陪伴决定。移动和转向仍需 `desktopHome.bodyControlRoles` 授权。
 
