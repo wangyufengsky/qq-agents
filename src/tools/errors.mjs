@@ -175,6 +175,8 @@ function safeFailure(error) {
   const hints = {
     VIDEO_FRAMES_PENDING:
       "End this model request now without calling another tool. The bridge will attach the requested frames in the same conversation.",
+    VIDEO_SOURCE_READ_REQUIRED:
+      "Read the exact current-chat card first: call memory_read with id equal to video_read.sourceId and offset=0. Follow nextOffset until the record is complete, then retry overview with the same sourceId and linkIndex in this turn. A conversation_read aroundId result does not count as reading the card as current input. No frames have been delivered yet.",
     VIDEO_SOURCE_DENIED:
       "Use the current video source or the recent video reference shown in this conversation. For a QQ follow-up, supply the current human message event as requestId. If the source expired or was recalled, no frames are available.",
     VIDEO_RANGE_INVALID:
