@@ -79,11 +79,17 @@ jobs:
         run: |
           & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File test/fixtures/desktop-drop-pointer.ps1 -Probe
           if ($LASTEXITCODE -ne 0) { throw 'Native desktop drag requires an interactive Windows desktop.' }
+          # Unpack the pinned Windows binary explicitly. The npm package installs it lazily.
+          $version = '45.3.0'
+          $asset = "electron-v$version-win32-x64.zip"
+          $archive = Join-Path $env:RUNNER_TEMP $asset
           $electronDir = Join-Path $env:RUNNER_TEMP 'qq-agents-electron-smoke'
-          New-Item -ItemType Directory -Force -Path $electronDir | Out-Null
-          npm install --prefix $electronDir --no-package-lock --no-save electron@45.3.0
-          if ($LASTEXITCODE -ne 0) { throw "Pinned Electron installation failed: $LASTEXITCODE" }
-          $env:QQ_TEST_ELECTRON = Join-Path $electronDir 'node_modules/electron/dist/electron.exe'
+          $ProgressPreference = 'SilentlyContinue'
+          Invoke-WebRequest -Uri "https://github.com/electron/electron/releases/download/v$version/$asset" -OutFile $archive -TimeoutSec 150 -MaximumRetryCount 2 -RetryIntervalSec 3
+          $expected = 'b43b532e712a4323f4224627b73808a039c9769fdf7ba1dbc3cb49c1dbfa350b'
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne $expected) { throw 'Electron package checksum mismatch' }
+          Expand-Archive -LiteralPath $archive -DestinationPath $electronDir
+          $env:QQ_TEST_ELECTRON = Join-Path $electronDir 'electron.exe'
           if (-not (Test-Path $env:QQ_TEST_ELECTRON)) { throw 'Pinned Electron executable is missing.' }
           node --test --test-timeout=120000 test/desktop-home-native-drop.browser.mjs
           if ($LASTEXITCODE -ne 0) { throw "Native desktop drag smoke failed: $LASTEXITCODE" }
