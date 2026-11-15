@@ -54,11 +54,12 @@ async function pointer(root) {
     join(tests, "fixtures", "desktop-drop-pointer.ps1"),
   ];
   await exec("powershell.exe", [...shell, "-Probe"], { timeout: 15000 });
-  return (from, to) =>
+  return (from, to, click = false) =>
     exec(
       "powershell.exe",
       [
         ...shell,
+        ...(click ? ["-Click"] : []),
         "-StartX",
         String(from.x),
         "-StartY",
@@ -198,6 +199,8 @@ window.addEventListener("dragstart", (event) => {
             encodeURIComponent(`<body style="margin:0;height:100vh">
 <script>
 window.fixtureDrops=[];
+window.fixtureClicks=0;
+document.onmousedown=()=>window.fixtureClicks++;
 window.fixtureEvents=[];
 for (const name of ["dragenter", "dragleave", "dragover", "drop"])
   document.addEventListener(name, (event) => window.fixtureEvents.push([name,event.screenX,event.screenY,event.dataTransfer.dropEffect]));
@@ -345,52 +348,80 @@ document.getElementById("link").ondragstart=(event) => {
         { windows, variant, transparent },
       );
     };
+    const backdrop = await waitFor(() =>
+      electron.windows().find((page) => page.url().includes("fixtureDrops")),
+    );
     const transparentPoints = await points("text", true);
-    const trace = await nativeDrag(...transparentPoints);
-    const backdrop = electron
-      .windows()
-      .find((page) => page.url().includes("fixtureDrops"));
+    const corner = transparentPoints[1];
+    const windowsNative = process.platform === "win32";
+    const trace = windowsNative
+      ? await nativeDrag(corner, corner, true)
+      : await nativeDrag(...transparentPoints);
     try {
-      await backdrop.waitForFunction(
-        () => window.fixtureDrops.length === 1,
-        null,
-        { timeout: 5000 },
-      );
+      if (windowsNative) {
+        assert.match(trace.stdout, /Desktop Drop Fixture Backdrop/);
+        // Windows mouse-through and OLE target discovery use different paths.
+        await backdrop.waitForFunction(() => window.fixtureClicks === 1, null, {
+          timeout: 5000,
+        });
+      } else {
+        await backdrop.waitForFunction(
+          () => window.fixtureDrops.length === 1,
+          null,
+          {
+            timeout: 5000,
+          },
+        );
+        assert.equal(
+          await backdrop.evaluate(() => window.fixtureDrops[0]),
+          fixtureToken,
+        );
+      }
     } catch (error) {
-      const source = electron
-        .windows()
-        .find((page) => page.url().includes("Test%20text"));
       throw Error(
         JSON.stringify({
           transparentPoints,
           trace: trace.stdout,
-          sourceEvents: source
-            ? await source.evaluate(() => window.fixtureEvents)
-            : nativeSourceOutput,
+          nativeSourceOutput,
           backdropEvents: await backdrop.evaluate(() =>
             window.fixtureEvents.slice(-16),
           ),
-          active: await electron.evaluate(({ BrowserWindow, screen }) => ({
-            window: BrowserWindow.getFocusedWindow()?.id,
-            windows: BrowserWindow.getAllWindows().map((win) => ({
-              id: win.id,
-              bounds: win.getBounds(),
-              visible: win.isVisible(),
-            })),
-            cursor: screen.getCursorScreenPoint(),
-          })),
         }),
         { cause: error },
       );
     }
-    assert.equal(
-      await backdrop.evaluate(() => window.fixtureDrops[0]),
-      fixtureToken,
-    );
     assert.equal(inputs.length, 0);
 
-    await nativeDrag(...(await points("text")));
-    await waitFor(() => inputs.length === 1);
+    const sprite = sprites.find((page) => page.url().includes("id=agent-0"));
+    await sprite.evaluate(() => {
+      window.fixtureEvents = [];
+      for (const name of ["dragenter", "dragover", "drop", "dragleave"])
+        window.addEventListener(name, (event) =>
+          window.fixtureEvents.push([
+            name,
+            event.target.className,
+            ...event.dataTransfer.types,
+          ]),
+        );
+    });
+    const textTrace = await nativeDrag(...(await points("text")));
+    try {
+      await waitFor(
+        () => inputs.length === 1,
+        "Text did not reach the targeted private turn",
+      );
+    } catch (error) {
+      throw Error(
+        JSON.stringify({
+          trace: textTrace.stdout,
+          nativeSourceOutput,
+          spriteEvents: await sprite.evaluate(() =>
+            window.fixtureEvents.slice(-16),
+          ),
+        }),
+        { cause: error },
+      );
+    }
     assert.equal(inputs[0].agentId, "agent-0");
     assert.ok(inputs[0].params.prompt.includes(fixtureToken));
     assert.ok(!JSON.stringify(host.clientSnapshot()).includes(fixtureToken));
