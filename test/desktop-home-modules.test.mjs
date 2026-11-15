@@ -22,7 +22,8 @@ test("preferences recover from missing or invalid data and persist atomically", 
 });
 
 test("desktop protocol only exposes packaged renderer assets", () => {
-  const source = "/app/desktop/home";
+  const release = join(tmpdir(), "nest-resource-fixture");
+  const source = join(release, "desktop", "home");
   assert.equal(
     desktopResourcePath("nest://app/desktop/home/renderer-panel.js", source),
     join(source, "renderer-panel.js"),
@@ -32,7 +33,7 @@ test("desktop protocol only exposes packaged renderer assets", () => {
       "nest://app/public/home-preview/assets/room-board.webp",
       source,
     ),
-    "/app/public/home-preview/assets/room-board.webp",
+    join(release, "public", "home-preview", "assets", "room-board.webp"),
   );
   for (const url of [
     "nest://other/desktop/home/index.html",
