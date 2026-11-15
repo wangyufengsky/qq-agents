@@ -18,7 +18,10 @@ public static class DesktopDropPointer {
   [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr OpenInputDesktop(uint flags, bool inherit, uint access);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool CloseDesktop(IntPtr desktop);
   [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
-  [DllImport("user32.dll", SetLastError=true)] public static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] public static extern int GetSystemMetrics(int index);
+  [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(Point point);
+  [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr hwnd, System.Text.StringBuilder text, int max);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool GetCursorPos(out Point point);
   [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
 }
@@ -32,15 +35,32 @@ if (-not ($PSBoundParameters.ContainsKey('StartX') -and $PSBoundParameters.Conta
   throw 'Supply physical pixel coordinates for both drag endpoints.'
 }
 [void][DesktopDropPointer]::SetProcessDPIAware()
+$desktopLeft = [DesktopDropPointer]::GetSystemMetrics(76)
+$desktopTop = [DesktopDropPointer]::GetSystemMetrics(77)
+$desktopWidth = [DesktopDropPointer]::GetSystemMetrics(78)
+$desktopHeight = [DesktopDropPointer]::GetSystemMetrics(79)
+if ($desktopWidth -le 0 -or $desktopHeight -le 0) { throw 'Invalid input desktop dimensions.' }
 function Move-Pointer([int]$x, [int]$y) {
-  if (-not [DesktopDropPointer]::SetCursorPos($x, $y)) { throw 'SetCursorPos failed on the interactive desktop.' }
+  $absoluteX = [uint32][Math]::Floor(($x - $desktopLeft + 0.5) * 65536 / $desktopWidth)
+  $absoluteY = [uint32][Math]::Floor(($y - $desktopTop + 0.5) * 65536 / $desktopHeight)
+  # MOVE | MOVE_NOCOALESCE | VIRTUALDESK | ABSOLUTE also drives OLE's drag loop.
+  [DesktopDropPointer]::mouse_event(0xE001, $absoluteX, $absoluteY, 0, [UIntPtr]::Zero)
+}
+function Confirm-Pointer([int]$x, [int]$y) {
   $actual = New-Object DesktopDropPointer+Point
   if (-not [DesktopDropPointer]::GetCursorPos([ref]$actual) -or $actual.X -ne $x -or $actual.Y -ne $y) {
-    throw 'The interactive desktop did not accept the requested pointer position.'
+    throw ('Input desktop cursor mismatch: expected {0},{1}, found {2},{3}.' -f $x,$y,$actual.X,$actual.Y)
   }
+  $window = [DesktopDropPointer]::GetAncestor([DesktopDropPointer]::WindowFromPoint($actual), 2)
+  $text = New-Object System.Text.StringBuilder 128
+  [void][DesktopDropPointer]::GetWindowText($window, $text, $text.Capacity)
+  # Only identify fixture titles. Do not log content from another desktop window.
+  if ($text.ToString() -match '^Desktop Drop Fixture (Source|Backdrop)$') { Write-Output $text.ToString() }
+  else { Write-Output 'Other desktop window' }
 }
 Move-Pointer $StartX $StartY
 Start-Sleep -Milliseconds $HoldMs
+Confirm-Pointer $StartX $StartY
 $pressed = $false
 try {
   [DesktopDropPointer]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
@@ -57,6 +77,7 @@ try {
     Move-Pointer ($EndX + $offset) $EndY
     Start-Sleep -Milliseconds 80
   }
+  Confirm-Pointer $EndX $EndY
 } finally {
   if ($pressed) { [DesktopDropPointer]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero) }
 }

@@ -188,7 +188,11 @@ window.addEventListener("dragstart", (event) => {
           return Promise.resolve({ response: 1 });
         };
         const bounds = target.getBounds();
-        const backdrop = new BrowserWindow({ ...bounds, frame: false });
+        const backdrop = new BrowserWindow({
+          ...bounds,
+          frame: false,
+          title: "Desktop Drop Fixture Backdrop",
+        });
         await backdrop.loadURL(
           "data:text/html," +
             encodeURIComponent(`<body style="margin:0;height:100vh">
@@ -210,6 +214,7 @@ document.ondrop=(event)=>{
           width: 180,
           height: 125,
           frame: false,
+          title: "Desktop Drop Fixture Source",
           webPreferences: { preload: input.preload, sandbox: true },
         });
         ipcMain.on("fixture:drag-file", (event) => {
@@ -308,6 +313,11 @@ document.getElementById("link").ondragstart=(event) => {
           ),
           active: await electron.evaluate(({ BrowserWindow, screen }) => ({
             window: BrowserWindow.getFocusedWindow()?.id,
+            windows: BrowserWindow.getAllWindows().map((win) => ({
+              id: win.id,
+              bounds: win.getBounds(),
+              visible: win.isVisible(),
+            })),
             cursor: screen.getCursorScreenPoint(),
           })),
         }),
