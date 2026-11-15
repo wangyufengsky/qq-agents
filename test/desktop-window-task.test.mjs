@@ -20,6 +20,8 @@ async function until(read) {
 }
 
 function setup(t, scope) {
+  // These fixtures deliver each receipt explicitly; host load must not expire the grants.
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: Date.now() });
   const cfg = config(1);
   cfg.desktopHome.enabled = true;
   cfg.desktopHome.interactionsEnabled = true;
