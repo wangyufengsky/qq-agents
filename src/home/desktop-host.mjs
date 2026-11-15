@@ -825,6 +825,7 @@ export class DesktopHost {
         ? { enabled: true }
         : { enabled: true, room: this.roomSnapshot() };
     let bodyResultAcks;
+    let refreshActivity = false;
     if (action === "sync") {
       const visible = typeof data === "boolean" ? data : data?.visible;
       const wasVisible = this.client.activityVisibleUntil > this.runtime.now();
@@ -837,8 +838,9 @@ export class DesktopHost {
       }
       if (live.publicEnabled() && heartbeat && typeof data === "boolean") {
         const sample = live.perception.view();
-        if (visible && sample) sample.until = this.client.activityVisibleUntil;
-        else if (!visible) live.perception.update(undefined);
+        if (!visible) live.perception.update(undefined);
+        else if (sample) sample.until = this.client.activityVisibleUntil;
+        else refreshActivity = Boolean(live.perception.sample);
       } else if (live.publicEnabled()) {
         const sample = data?.publicSpace;
         live.perception.update(
@@ -1029,6 +1031,7 @@ export class DesktopHost {
       const bodyRequests = this.body.clientWork();
       return {
         enabled: true,
+        ...(refreshActivity && { refreshActivity }),
         ...(bodyResultAcks?.length && { bodyResultAcks }),
         ...(bodyRequests.length && { bodyRequests }),
       };

@@ -20,7 +20,11 @@ async function waitFor(condition) {
 test("desktop client receives pushed states, idles on heartbeats and reconnects with a new room", async (t) => {
   const cfg = config(1);
   cfg.desktopHome.enabled = true;
+  cfg.desktopHome.publicPerception.enabled = true;
   const { runtime, root } = fixture(t, { cfg });
+  const now = runtime.now.bind(runtime);
+  let timeOffset = 0;
+  runtime.now = () => now() + timeOffset;
   const admin = randomBytes(32).toString("hex");
   await writeFile(join(root, "desktop-home-token"), desktopToken(admin));
   const app = createServer({ runtime, token: admin, allowLive: true });
@@ -36,7 +40,19 @@ test("desktop client receives pushed states, idles on heartbeats and reconnects 
     root,
     (state, action) => changes.push({ state, action }),
     port,
-    () => ({ visible, dragged: [] }),
+    () => ({
+      visible,
+      dragged: [],
+      bodyProtocol: 2,
+      bodyPublic: true,
+      ...(visible &&
+        runtime.desktopVisits.live && {
+          publicSpace: {
+            roomEpoch: runtime.desktopVisits.live.room.epoch,
+            residents: [],
+          },
+        }),
+    }),
   );
   t.after(async () => {
     await client.close();
@@ -62,6 +78,16 @@ test("desktop client receives pushed states, idles on heartbeats and reconnects 
   const room = await client.command("door-mode", "welcome");
   assert.equal(room.roomEpoch, first.room.roomEpoch);
   await waitFor(() => last().sequence > first.sequence);
+  assert.equal(count("client"), 2);
+
+  const { perception } = runtime.desktopVisits.live;
+  await waitFor(() => perception.view());
+  const sample = perception.view();
+  timeOffset = 3000;
+  assert.equal(perception.view(), undefined);
+  // Unchanged geometry is normally reported by a boolean visibility heartbeat.
+  await waitFor(() => perception.view() && perception.view() !== sample);
+  assert.equal(last().room.roomEpoch, first.room.roomEpoch);
   assert.equal(count("client"), 2);
 
   runtime.desktopVisits.reset();

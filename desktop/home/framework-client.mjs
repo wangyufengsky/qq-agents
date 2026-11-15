@@ -224,7 +224,10 @@ export function createFrameworkClient(
         if (value.closed) return onState(value, "sync");
         if (value.enabled !== true || value.busy || value.reconnect)
           return endStream(activeStream);
-        activeStream.lastActivity = heartbeat.signature;
+        if (value.refreshActivity) {
+          activeStream.lastActivity = undefined;
+          syncAgain = true;
+        } else activeStream.lastActivity = heartbeat.signature;
         if (value.bodyRequests?.length || value.bodyResultAcks?.length)
           onState(value, "heartbeat");
         return;
