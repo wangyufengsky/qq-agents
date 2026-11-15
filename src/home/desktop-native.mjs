@@ -101,6 +101,7 @@ export class DesktopNative extends DesktopLocalGrant {
       super.change(true, value);
       return;
     }
+    this.state();
     if (this.grant) {
       if (
         this.grant.grantId === value.grantId &&

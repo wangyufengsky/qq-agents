@@ -65,6 +65,8 @@ export class DesktopObservation extends DesktopLocalGrant {
   constructor(host) {
     super(host, DESKTOP_SCREEN_VIEW, "DESKTOP_SCREEN_UNAVAILABLE");
     this.displays = new Map();
+    this.windows = new Map();
+    this.windowTargetIds = new Set();
     this.verifying = new Map();
     this.summaries = new DesktopObservationSummaries(host.runtime.memory, () =>
       host.runtime.now(),
@@ -121,13 +123,17 @@ export class DesktopObservation extends DesktopLocalGrant {
   find(grantId) {
     if (!grantId) return;
     if (this.grant?.grantId === grantId) return this.grant;
-    return [...this.displays.values()].find(
+    return [...this.windows.values(), ...this.displays.values()].find(
       (grant) => grant.grantId === grantId,
     );
   }
 
   grants() {
-    return [this.grant, ...this.displays.values()].filter(Boolean);
+    return [
+      this.grant,
+      ...this.windows.values(),
+      ...this.displays.values(),
+    ].filter(Boolean);
   }
 
   canGrantDisplay(value) {
@@ -177,6 +183,9 @@ export class DesktopObservation extends DesktopLocalGrant {
         throw Error(this.unavailable);
       return;
     }
+    if (!display) {
+      for (const current of this.windows.values()) this.clear(current);
+    }
     const previous = display ? this.displays.get(value.agentId) : this.grant;
     if (previous) this.clear(previous);
     const grant = {
@@ -198,11 +207,43 @@ export class DesktopObservation extends DesktopLocalGrant {
     this.note(grant, "observation-granted");
   }
 
+  changeWindowBatch(targetId, values) {
+    const existing = [...this.windows.values()];
+    if (
+      this.windowTargetIds.has(targetId) &&
+      existing.some((grant) => grant.targetId !== targetId)
+    )
+      throw Error(this.unavailable);
+    if (this.windowTargetIds.has(targetId) && !existing.length)
+      throw Error(this.unavailable);
+    if (existing.some((grant) => grant.targetId !== targetId)) {
+      for (const grant of existing) this.clear(grant);
+    }
+    if (this.grant) this.clear(this.grant);
+    this.windowTargetIds.add(targetId);
+    for (const value of values) {
+      const previous = this.windows.get(value.agentId);
+      if (previous) this.clear(previous);
+      const grant = {
+        ...value,
+        targetId,
+        visit: this.host.live.visits.get(value.agentId),
+        expiresAt: this.host.runtime.now() + OBSERVATION_TTL,
+        limit: OBSERVATION_LIMIT,
+        attempts: 0,
+        targetState: "checking",
+      };
+      this.windows.set(value.agentId, grant);
+      this.note(grant, "observation-granted");
+    }
+  }
+
   grantState(grant) {
     const { agentId, grantId, expiresAt } = grant;
     return {
       agentId,
       grantId,
+      ...(grant.targetId && { targetId: grant.targetId }),
       expiresAt,
       remaining: grant.limit - grant.attempts,
       ...(grant.scope === "display" && {
@@ -243,6 +284,9 @@ export class DesktopObservation extends DesktopLocalGrant {
     return {
       eligible: this.eligible().map(({ id }) => id),
       grantedAgentId: this.grant?.agentId ?? null,
+      windowGrants: [...this.windows.values()].map((grant) =>
+        this.grantState(grant),
+      ),
       ...(ineligible.length && { ineligible }),
       ...(this.grant && this.grantState(this.grant)),
       ...(this.host.client?.displayObservation && {
@@ -275,6 +319,9 @@ export class DesktopObservation extends DesktopLocalGrant {
           ? "incomplete"
           : grant.opportunity,
       });
+    } else if (grant.targetId) {
+      if (this.windows.get(grant.agentId) !== grant) return;
+      this.windows.delete(grant.agentId);
     } else this.grant = null;
     this.cancel(grant);
   }
@@ -295,8 +342,16 @@ export class DesktopObservation extends DesktopLocalGrant {
     const grant = this.find(grantId);
     if (!this.current(grant) || grant.roomEpoch !== roomEpoch) return;
     if (state === "unavailable" || state === "permission") {
-      this.clear(grant);
+      if (grant.targetId) {
+        for (const current of this.windows.values()) this.clear(current);
+      } else this.clear(grant);
       return;
+    }
+    if (state === "minimized" && grant.targetId) {
+      for (const current of this.windows.values()) {
+        current.targetState = "minimized";
+        this.cancel(current);
+      }
     }
     const previous = grant.targetState;
     grant.targetState = state;
@@ -318,7 +373,11 @@ export class DesktopObservation extends DesktopLocalGrant {
   }
 
   forActor(agentId) {
-    const choices = [this.displays.get(agentId), this.grant];
+    const choices = [
+      this.displays.get(agentId),
+      this.windows.get(agentId),
+      this.grant,
+    ];
     for (const grant of choices) {
       if (
         grant?.agentId === agentId &&

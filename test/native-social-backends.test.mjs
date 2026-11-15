@@ -1275,3 +1275,117 @@ test("native capsules reject a changed window fence without replacing the sessio
   assert.equal(disposed, 1);
   assert.equal(backend.socialSessionPool.capsules.size, 0);
 });
+
+for (const type of ["dsh", "codex", "antigravity"]) {
+  test(`${type} desktop private frame and tool results stay in a one-run capsule`, async (t) => {
+    const cfg = config(),
+      root = temp(t),
+      inputs = [],
+      disposed = [];
+    let backend;
+    if (type === "dsh")
+      backend = new DshBackend(
+        { ...cfg.backends[0], preset: "qq-unified" },
+        cfg.agents[0],
+        {
+          root,
+          client: { stopSessionWork: async (id) => disposed.push(id) },
+        },
+      );
+    else if (type === "codex") {
+      const rpc = new Rpc();
+      rpc.request = async (method, args) => {
+        if (method === "thread/archive") disposed.push(args.threadId);
+        return {};
+      };
+      backend = new CodexBackend(cfg.backends[0], cfg.agents[0], { root, rpc });
+    } else
+      backend = new AntigravityBackend(cfg.backends[0], cfg.agents[0], {
+        root,
+      });
+    t.after(() => backend.close());
+    backend.run = async (input) => {
+      inputs.push(input);
+      assert.equal(input.session, null);
+      assert.deepEqual(
+        input.tools.map(({ name }) => name),
+        ["desktop_room_decide"],
+      );
+      await input.beforeInputSubmitted();
+      input.saveSession({ id: `isolated-${inputs.length}` });
+      if (inputs.length === 1)
+        assert.deepEqual(input.inputImages, [
+          {
+            mimeType: "image/jpeg",
+            data: "unique-frame-marker",
+            label: "frame",
+          },
+        ]);
+      else {
+        assert.deepEqual(input.inputImages, []);
+        assert.ok(
+          !JSON.stringify(input.prompt).includes("unique-frame-marker"),
+        );
+        assert.ok(
+          !JSON.stringify(input.prompt).includes("unique-tool-result-marker"),
+        );
+      }
+      if (inputs.length === 1)
+        assert.deepEqual(await input.callTool("desktop_room_decide", {}), {
+          text: "unique-tool-result-marker",
+        });
+      await assert.rejects(input.callTool("qq_send", {}), /SOCIAL_TOOL_DENIED/);
+    };
+    for (let i = 0; i < 2; i++) {
+      const params = socialParams();
+      params.binding.runId = `desktop-isolated-${i}`;
+      params.tools[0].function.name = "desktop_room_decide";
+      params.socialContextToken = "synthetic-desktop-capability-token";
+      params.inputImages = i
+        ? []
+        : [
+            {
+              mimeType: "image/jpeg",
+              data: "unique-frame-marker",
+              label: "frame",
+            },
+          ];
+      params.callTool = async () => ({ text: "unique-tool-result-marker" });
+      await backend.runDesktop(params);
+    }
+    assert.notEqual(inputs[0].conversation, inputs[1].conversation);
+    assert.equal(backend.socialSessionPool.capsules.size, 0);
+    if (type !== "antigravity") assert.equal(disposed.length, 2);
+  });
+}
+
+test("DSH desktop forwards a frame only in its current transport submission", async (t) => {
+  const { backend, calls } = dshSocialFixture(t);
+  for (let i = 0; i < 2; i++) {
+    const params = socialParams();
+    params.binding.runId = `frame-transport-${i}`;
+    params.tools[0].function.name = "desktop_room_decide";
+    params.socialContextToken = "synthetic-desktop-capability-token";
+    params.inputImages = i
+      ? []
+      : [
+          {
+            mimeType: "image/jpeg",
+            data: "unique-dsh-frame-marker",
+            label: "frame",
+          },
+        ];
+    await backend.runDesktop(params);
+  }
+  const prompts = calls.filter(({ name }) => name === "prompt");
+  assert.equal(prompts.length, 2);
+  assert.match(
+    JSON.stringify(prompts[0].args.content),
+    /unique-dsh-frame-marker/,
+  );
+  assert.doesNotMatch(
+    JSON.stringify(prompts[1].args.content),
+    /unique-dsh-frame-marker/,
+  );
+  assert.equal(calls.filter(({ name }) => name === "create").length, 2);
+});

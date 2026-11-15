@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DesktopGrantLease } from "./desktop-grant-lease.mjs";
 import { DESKTOP_CONVERSATION } from "./desktop-decision.mjs";
 
 const uuid = z.string().uuid();
@@ -14,6 +15,7 @@ export class DesktopLocalGrant {
     this.host = host;
     this.tool = tool;
     this.unavailable = unavailable;
+    this.lease = new DesktopGrantLease(host, unavailable);
   }
 
   eligible() {
@@ -33,6 +35,7 @@ export class DesktopLocalGrant {
     return (
       grant &&
       this.grantFor(grant.agentId) === grant &&
+      this.lease.valid(grant) &&
       this.host.connected() &&
       this.host.live.room.epoch === grant.roomEpoch &&
       this.host.live.visits.get(grant.agentId) === grant.visit &&
@@ -41,14 +44,19 @@ export class DesktopLocalGrant {
   }
 
   state() {
-    if (this.grant && !this.current(this.grant)) this.clear();
+    if (this.grant && !this.current(this.grant)) {
+      this.lease.expired(this.grant);
+      this.clear();
+    }
     return {
       eligible: this.eligible().map(({ id }) => id),
       grantedAgentId: this.grant?.agentId ?? null,
+      ...(this.grant?.expiresAt && { expiresAt: this.grant.expiresAt }),
     };
   }
 
   clear() {
+    this.lease.clear(this.grant);
     this.grant = null;
   }
 
@@ -61,8 +69,16 @@ export class DesktopLocalGrant {
     }
     if (!this.eligible().some(({ id }) => id === value.agentId))
       throw Error(this.unavailable);
+    const grant = { ...value, visit: live.visits.get(value.agentId) };
+    this.lease.attach(grant, () => {
+      if (this.grant === grant) {
+        this.lease.expired(grant);
+        this.clear();
+        this.host.notify();
+      }
+    });
     this.clear();
-    this.grant = { ...value, visit: live.visits.get(value.agentId) };
+    this.grant = grant;
   }
 
   activeGrant(ctx, agent) {

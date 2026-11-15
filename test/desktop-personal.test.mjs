@@ -26,7 +26,11 @@ function fixture() {
   };
   const runtime = {
     agent: () => agent,
-    config: { agents: [agent], backends: [] },
+    config: {
+      agents: [agent],
+      backends: [],
+      desktopHome: { observationRetentionDays: 7 },
+    },
     capabilities,
     blockers: () => [],
     trackWork: (p) => p,
@@ -48,6 +52,7 @@ function fixture() {
     runtime,
     client: { id: client },
     live: { room: { epoch: roomEpoch }, visits: new Map([["fish", visit]]) },
+    observation: { maintain() {}, summaries: { list: () => [] } },
     connected: () => true,
     body: { visitId: () => visitId },
     visit: () => ({ beginDesktop: () => () => {} }),
@@ -150,11 +155,32 @@ test("private marker never reaches public desktop input or another role", async 
     visitId,
   };
   const marker = "distinct-private-marker-789";
+  const summaryMarker = "restricted-summary-marker-123";
+  host.observation.summaries.save(
+    "agent-0",
+    { id: randomUUID(), summary: summaryMarker },
+    7,
+  );
+  const personalInputs = [];
+  const original = runtime.backendConnections.adapter(
+    runtime.agent("agent-0"),
+  ).runDesktop;
+  runtime.backendConnections.adapter(runtime.agent("agent-0")).runDesktop =
+    async (params) => {
+      if (!params.managedContext) personalInputs.push(params.prompt);
+      return original(params);
+    };
   await host.personal.drop({ ...input, text: marker });
+  assert.match(personalInputs[0], /restricted-summary-marker-123/);
   host.command({ client, action: "send", data: "公开消息" });
   await new Promise((resolve) => setTimeout(resolve, 50));
   assert.ok(publicInputs.length);
-  assert.ok(publicInputs.every(({ prompt }) => !prompt.includes(marker)));
+  assert.ok(
+    publicInputs.every(
+      ({ prompt }) =>
+        !prompt.includes(marker) && !prompt.includes(summaryMarker),
+    ),
+  );
   assert.ok(!JSON.stringify(host.roomSnapshot()).includes(marker));
   assert.ok(!JSON.stringify(host.archive.history()).includes(marker));
   const other = {
@@ -163,6 +189,14 @@ test("private marker never reaches public desktop input or another role", async 
     visitId: host.body.visitId(host.live.visits.get("agent-1")),
   };
   assert.deepEqual(host.personal.history(other).messages, []);
+  const otherInputs = [];
+  runtime.backendConnections.adapter(runtime.agent("agent-1")).runDesktop =
+    async (params) => {
+      otherInputs.push(params.prompt);
+      await params.callTool("desktop_room_decide", { action: "silent" });
+    };
+  await host.personal.drop({ ...other, text: "你好" });
+  assert.ok(otherInputs.every((prompt) => !prompt.includes(summaryMarker)));
 });
 
 test("image upload requires target image entitlement", async () => {
@@ -304,4 +338,72 @@ test("temporary blockers cancel active work without deleting private history", a
   f.personal.sweep();
   await assert.rejects(pending, /DESKTOP_VISIT_UNAVAILABLE/);
   assert.equal(f.personal.history(f.input).messages[0].text, "retain");
+});
+
+test("restricted results cannot become public replies or revive a retired session", async (t) => {
+  const { config, fixture } = await import("./helpers.mjs");
+  const cfg = config(1);
+  cfg.desktopHome.enabled = true;
+  cfg.desktopHome.toolRoles = ["agent-0"];
+  cfg.desktopHome.screenView = { enabled: true };
+  cfg.agents[0].behavior.imageInput.enabled = true;
+  const { runtime } = fixture(t, { cfg });
+  const host = runtime.desktopVisits;
+  const client = randomUUID();
+  t.after(() => host.reset());
+  host.command({ client, action: "sync", data: true });
+  const role = host.live.room.roles[0];
+  host.live.room.members[role.id] = "invited";
+  host.live.admit(role);
+  const grant = {
+    roomEpoch: host.live.room.epoch,
+    grantId: randomUUID(),
+    agentId: role.id,
+  };
+  host.screen.change(false, grant);
+  const marker = "restricted-frame-derived-marker";
+  const memory = runtime.memory.bind(role.id);
+  memory.setState("@desktop", {
+    ...memory.state("@desktop"),
+    session: { backend: "codex", id: "old-public-session" },
+  });
+  let saveLate;
+  runtime.backendConnections.adapter(runtime.agent(role.id)).runDesktop =
+    async (params) => {
+      assert.equal(params.managedContext.session, null);
+      saveLate = params.managedContext.saveSession;
+      saveLate({ backend: "codex", id: "restricted-session" });
+      const ctx = runtime.capabilities.get(params.socialContextToken);
+      ctx.desktopScreenObserved = true;
+      params.onInputSubmitted();
+      await params.callTool("desktop_room_decide", {
+        action: "say",
+        text: marker,
+      });
+    };
+  const result = await host.run(
+    { actor: role.id, kind: "chat", people: [], messages: [] },
+    new AbortController().signal,
+  );
+  assert.equal(result.action, "silent");
+  const privateHistory = host.personal.history({
+    client,
+    roomEpoch: host.live.room.epoch,
+    agentId: role.id,
+    visitId: host.body.visitId(host.live.visits.get(role.id)),
+  });
+  assert.ok(JSON.stringify(privateHistory).includes(marker));
+  assert.equal(memory.state("@desktop").session, null);
+  saveLate({ backend: "codex", id: "late-restricted-session" });
+  assert.equal(memory.state("@desktop").session, null);
+  assert.ok(!JSON.stringify(host.archive.history()).includes(marker));
+  assert.ok(!JSON.stringify(host.roomSnapshot()).includes(marker));
+  host.screen.change(true, grant);
+  const afterRevocation = host.personal.history({
+    client,
+    roomEpoch: host.live.room.epoch,
+    agentId: role.id,
+    visitId: host.body.visitId(host.live.visits.get(role.id)),
+  });
+  assert.ok(!JSON.stringify(afterRevocation).includes(marker));
 });

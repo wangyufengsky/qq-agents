@@ -54,6 +54,7 @@ export function createFrameworkClient(
   const connection = createFrameworkConnection(root, listenPort);
   let client = randomUUID();
   let queue = Promise.resolve();
+  let authorizationQueue = Promise.resolve();
   let syncing = false;
   let syncAgain = false;
   let stopped = false;
@@ -304,6 +305,27 @@ export function createFrameworkClient(
       await request(undefined, data, "video", upload);
       sync();
     },
+    authorization(action, data) {
+      const issuedClient = client;
+      const update = authorizationQueue.then(async () => {
+        if (stopped || client !== issuedClient)
+          throw Error("DESKTOP_CONNECTION_FAILED");
+        const value = await request(
+          action,
+          data,
+          "client",
+          undefined,
+          issuedClient,
+        );
+        if (stopped || client !== issuedClient)
+          throw Error("DESKTOP_CONNECTION_FAILED");
+        displayResponse(value, action, issuedClient);
+        return value.room;
+      });
+      // Revocation must not wait behind file uploads or tool receipts.
+      authorizationQueue = update.catch(() => {});
+      return update;
+    },
     command(action, data) {
       return enqueue(async (clientId) => {
         const value = await request(action, data);
@@ -313,10 +335,12 @@ export function createFrameworkClient(
         return value.room;
       });
     },
-    result(endpoint, data, isCurrent) {
-      return enqueue(() => {
-        // A revoke may happen while this result waits behind another request.
-        if (isCurrent()) return request(undefined, data, endpoint);
+    result(endpoint, data, isCurrent, verify) {
+      return enqueue(async () => {
+        // The source must still be safe when this result leaves the local queue.
+        if (!isCurrent() || (verify && !(await verify())) || !isCurrent())
+          return;
+        return request(undefined, data, endpoint);
       });
     },
     async close() {
@@ -324,7 +348,7 @@ export function createFrameworkClient(
       stopped = true;
       clearInterval(timer);
       if (stream) endStream(stream);
-      await queue;
+      await Promise.all([queue, authorizationQueue]);
       try {
         await request("disconnect");
       } catch {

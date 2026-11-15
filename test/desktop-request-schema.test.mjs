@@ -24,6 +24,8 @@ test("desktop commands validate action data before refreshing state", () => {
     "knock-answer": [true],
     disconnect: [undefined],
     "activity-pause": [false],
+    "mode-set": ["privacy", "presence", "work"],
+    "mode-invalidate": ["lock", "sleep", "hide", "target-closed"],
     "screen-grant": [grant],
     "screen-revoke": [revoke],
     "screen-grant-batch": [[{ ...grant, visitId }]],
@@ -32,6 +34,9 @@ test("desktop commands validate action data before refreshing state", () => {
     "display-revoke-batch": [[revoke]],
     "observation-grant": [grant, display],
     "observation-revoke": [revoke],
+    "window-observation-grant-batch": [
+      { targetId: randomUUID(), grants: [{ ...grant, visitId }] },
+    ],
     "observation-state": [{ ...revoke, state: "ready" }],
     "window-task": [{ ...grant, scope: "native", text: "open" }],
     "window-task-stop": ["task"],

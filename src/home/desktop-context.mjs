@@ -84,6 +84,17 @@ ${selfBody}
     }
   }
   const turnId = randomUUID();
+  // Providers cannot remove individual restricted tool results from a resumed
+  // transcript, so every turn able to access them starts and ends fresh.
+  const isolated = Boolean(
+    request.observation || request.windowTask || ctx.desktopRestrictedTurn,
+  );
+  if (isolated && state.session) {
+    retireSession(memory, conversation, "desktop-restricted-isolation", now, {
+      backendId: agent.backendId,
+    });
+    state = memory.state(conversation);
+  }
   // A visit carries only its bounded activity state between calls.
   if (activity && state.session) {
     retireSession(memory, conversation, "desktop-activity-completed", now, {
@@ -253,11 +264,13 @@ ${selfBody}
           backend,
         );
       } finally {
-        if (activity)
+        if (activity || isolated)
           retireSession(
             memory,
             conversation,
-            "desktop-activity-completed",
+            isolated
+              ? "desktop-restricted-isolation"
+              : "desktop-activity-completed",
             runtime.now(),
             {
               turnId,

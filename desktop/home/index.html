@@ -218,6 +218,42 @@
           </header>
           <div class="chat-sheet-body">
             <div class="desktop-permissions">
+              <section
+                class="desktop-permission companion-options"
+                aria-label="陪伴模式"
+                hidden
+              >
+                <label
+                  >陪伴模式
+                  <select class="companion-mode">
+                    <option value="privacy">独处</option>
+                    <option value="presence">同桌陪伴</option>
+                    <option value="work">一起动手</option>
+                  </select>
+                </label>
+                <p class="companion-status" role="status"></p>
+                <details class="frame-receipts" hidden>
+                  <summary>近期画面交付</summary>
+                  <ul></ul>
+                </details>
+                <details>
+                  <summary>敏感应用黑名单</summary>
+                  <label
+                    >每行填写一个应用名或软件包标识
+                    <textarea
+                      class="sensitive-applications"
+                      rows="3"
+                      maxlength="6060"
+                    ></textarea>
+                  </label>
+                  <button
+                    type="button"
+                    class="quiet sensitive-applications-save"
+                  >
+                    保存黑名单
+                  </button>
+                </details>
+              </section>
               <div class="desktop-permission screen-view" hidden>
                 <strong>查看屏幕</strong>
                 <button type="button" class="secondary screen-view-button">

@@ -621,7 +621,9 @@ test("the observation page shows automatic results only while it is active", asy
     observation: { ...room.observation, targetState: "minimized" },
     observationEnded: "target-minimized",
   });
-  await results.getByText("观察窗口已最小化。恢复窗口后可继续观察。").waitFor();
+  await results
+    .getByText("窗口最小化、被遮挡或覆盖范围暂无法核验，取帧已暂停。")
+    .waitFor();
   await page.getByRole("button", { name: "聊天", exact: true }).click();
   await thread.getByText("房间消息").waitFor();
   assert.doesNotMatch(await thread.textContent(), /观察回复|观察文字摘要/);

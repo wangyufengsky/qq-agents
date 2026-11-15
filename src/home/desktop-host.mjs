@@ -6,6 +6,7 @@ import { containsCredential } from "../core/secrets.mjs";
 import { roleBackendConfig } from "../core/functional-agents.mjs";
 import {
   DESKTOP_BODY_CONTROL,
+  DESKTOP_BROWSER_CONTROL,
   DESKTOP_DECISION,
   DESKTOP_NATIVE_CONTROL,
   DESKTOP_SCREEN_VIEW,
@@ -121,6 +122,8 @@ const syncDataSchema = z
   .optional();
 const textDataSchema = z.string().max(1000);
 const batch = (schema) => z.array(schema).min(1).max(24);
+const revisioned = (schema) =>
+  schema.extend({ modeRevision: z.number().int().nonnegative().optional() });
 const actionDataSchemas = {
   sync: syncDataSchema,
   invite: textDataSchema,
@@ -135,23 +138,35 @@ const actionDataSchemas = {
   "knock-answer": z.boolean(),
   disconnect: z.undefined(),
   "activity-pause": z.boolean(),
-  "screen-grant": localGrantSchema,
+  "mode-set": z.enum(["privacy", "presence", "work"]),
+  "mode-invalidate": z.enum([
+    "lock",
+    "sleep",
+    "hide",
+    "target-closed",
+    "policy-changed",
+  ]),
+  "screen-grant": revisioned(localGrantSchema),
   "screen-revoke": localRevokeSchema,
-  "screen-grant-batch": batch(batchGrantSchema),
+  "screen-grant-batch": batch(revisioned(batchGrantSchema)),
   "screen-revoke-batch": batch(localRevokeSchema),
-  "display-grant-batch": batch(batchDisplaySchema),
+  "display-grant-batch": batch(revisioned(batchDisplaySchema)),
   "display-revoke-batch": batch(localRevokeSchema),
   "observation-grant": z.union([
-    displayObservationGrantSchema,
-    localGrantSchema,
+    revisioned(displayObservationGrantSchema),
+    revisioned(localGrantSchema),
   ]),
   "observation-revoke": localRevokeSchema,
+  "window-observation-grant-batch": z.strictObject({
+    targetId: z.uuid(),
+    grants: batch(revisioned(batchGrantSchema)),
+  }),
   "observation-state": observationStateSchema,
-  "window-task": windowTaskInput,
+  "window-task": revisioned(windowTaskInput),
   "window-task-stop": textDataSchema,
-  "native-grant": nativeGrantSchema,
+  "native-grant": revisioned(nativeGrantSchema),
   "native-revoke": localRevokeSchema,
-  "browser-grant": browserGrantSchema,
+  "browser-grant": revisioned(browserGrantSchema),
   "browser-revoke": browserRevokeSchema,
 };
 const requestSchema = z
@@ -221,6 +236,29 @@ export class DesktopHost {
     this.native = new DesktopNative(this);
     this.body = new DesktopBody(this);
     this.browser = new DesktopBrowser(this);
+    this.mode = null;
+    this.modeRevision = 0;
+    this.frameReceipts = [];
+  }
+
+  invalidateMode() {
+    this.modeRevision++;
+    this.stopWindowTask("inactive");
+    this.observation.clear();
+    this.screen.clear();
+    this.native.clear();
+    void this.browser.clear();
+  }
+
+  setMode(mode) {
+    this.modeRevision++;
+    if (this.mode === null || mode === "privacy") this.invalidateMode();
+    else if (this.mode === "work" && mode === "presence") {
+      this.stopWindowTask("inactive");
+      this.native.clear();
+      void this.browser.clear();
+    }
+    this.mode = mode;
   }
 
   captureStatusCard(ctx, name) {
@@ -484,6 +522,8 @@ export class DesktopHost {
         this.stopWindowTask("target-unavailable");
       this.live.tick(now);
       this.invitations.dispatch();
+      this.screen.state();
+      this.native.state();
       this.browser.state();
     }
     return true;
@@ -783,6 +823,7 @@ export class DesktopHost {
   }
 
   reset() {
+    this.modeRevision++;
     this.personal.clear();
     this.statusCards.cards.clear();
     const subscribers = [...this.eventSubscribers.keys()];
@@ -815,7 +856,8 @@ export class DesktopHost {
   command(input, { heartbeat = false, epoch } = {}) {
     const parsed = requestSchema.safeParse(input);
     if (!parsed.success) throw Error("INVALID_REQUEST");
-    const { client, action, data } = parsed.data;
+    const { client, action } = parsed.data;
+    let { data } = parsed.data;
     if (heartbeat && (action !== "sync" || !this.hasStream(client, epoch)))
       return this.configured()
         ? { enabled: true, reconnect: true }
@@ -837,6 +879,36 @@ export class DesktopHost {
     if (!this.client) {
       if (action !== "sync") return { enabled: true, reconnect: true };
       this.open(client);
+    }
+    const revisionActions = [
+      "screen-grant",
+      "screen-grant-batch",
+      "display-grant-batch",
+      "observation-grant",
+      "window-observation-grant-batch",
+      "window-task",
+      "native-grant",
+      "browser-grant",
+    ];
+    if (revisionActions.includes(action)) {
+      const items =
+        action === "window-observation-grant-batch"
+          ? data.grants
+          : Array.isArray(data)
+            ? data
+            : [data];
+      if (
+        this.mode !== null &&
+        items.some((item) => item.modeRevision !== this.modeRevision)
+      )
+        throw Error("DESKTOP_SCREEN_UNAVAILABLE");
+      const clean = items.map(({ modeRevision: _, ...item }) => item);
+      data =
+        action === "window-observation-grant-batch"
+          ? { ...data, grants: clean }
+          : Array.isArray(data)
+            ? clean
+            : clean[0];
     }
     if (!this.runtime.updateMaintenance || action === "sync")
       this.client.expiresAt = this.runtime.now() + CLIENT_LEASE;
@@ -933,6 +1005,7 @@ export class DesktopHost {
       )
         bodyResultAcks = this.body.reconcile(client, data.bodyResults);
       live.maintainInteraction();
+      if (!visible && this.mode !== null) this.invalidateMode();
       if (!visible && this.windowTask) this.stopWindowTask("hidden");
       if (visible === true) void live.advanceActivity(this.runtime.now());
     }
@@ -966,6 +1039,75 @@ export class DesktopHost {
       live.setDoorMode(data);
     if (action === "knock-answer" && typeof data === "boolean")
       live.answerKnock(data);
+    if (
+      this.mode !== null &&
+      [
+        "screen-revoke",
+        "screen-revoke-batch",
+        "display-revoke-batch",
+        "observation-revoke",
+        "native-revoke",
+        "browser-revoke",
+      ].includes(action)
+    )
+      this.modeRevision++;
+    if (action === "mode-set") this.setMode(data);
+    if (action === "mode-invalidate") this.invalidateMode();
+    if (
+      this.mode === "privacy" &&
+      [
+        "observation-grant",
+        "window-observation-grant-batch",
+        "screen-grant",
+        "screen-grant-batch",
+        "display-grant-batch",
+        "native-grant",
+        "browser-grant",
+        "window-task",
+      ].includes(action)
+    )
+      throw Error("DESKTOP_SCREEN_UNAVAILABLE");
+    if (
+      this.mode !== null &&
+      this.mode !== "work" &&
+      (["native-grant", "browser-grant"].includes(action) ||
+        (action === "window-task" && data.scope === "native"))
+    )
+      throw Error("DESKTOP_NATIVE_UNAVAILABLE");
+    if (
+      this.mode === "work" &&
+      action === "native-grant" &&
+      (this.browser.grant || this.browser.draining)
+    )
+      throw Error("DESKTOP_NATIVE_UNAVAILABLE");
+    if (
+      this.mode === "work" &&
+      action === "browser-grant" &&
+      (this.native.grant || this.native.state().handoff)
+    )
+      throw Error("DESKTOP_BROWSER_UNAVAILABLE");
+    if (action === "window-observation-grant-batch") {
+      const { targetId, grants } = data;
+      const eligible = new Set(this.observation.eligible().map(({ id }) => id));
+      if (
+        this.client.observationProtocol !== 2 ||
+        this.client.activityVisibleUntil <= this.runtime.now() ||
+        new Set(grants.map(({ agentId }) => agentId)).size !== grants.length ||
+        new Set(grants.map(({ grantId }) => grantId)).size !== grants.length ||
+        grants.some(
+          ({ agentId, roomEpoch, visitId, grantId }) =>
+            !eligible.has(agentId) ||
+            roomEpoch !== live.room.epoch ||
+            visitId !== this.body.visitId(live.visits.get(agentId)) ||
+            this.observation.find(grantId),
+        )
+      )
+        throw Error("DESKTOP_SCREEN_UNAVAILABLE");
+      this.observation.changeWindowBatch(
+        targetId,
+        grants.map(({ visitId: _, ...grant }) => grant),
+      );
+    }
     if (action === "observation-grant") {
       if (
         this.client.observationProtocol !== 2 ||
@@ -1012,6 +1154,12 @@ export class DesktopHost {
         const existing = display
           ? this.observation.find(grantId)
           : this.screen.find(grantId);
+        if (
+          !display &&
+          this.screen.lease.used.has(grantId) &&
+          (!existing || !this.screen.current(existing))
+        )
+          return false;
         return !existing || existing.agentId === agentId;
       };
       if (
@@ -1128,6 +1276,8 @@ export class DesktopHost {
     }
     return {
       ...room,
+      companionMode: this.mode,
+      companionRevision: this.modeRevision,
       interactionsAvailable: this.interactionsAvailable(),
       publicPerception: this.live.publicEnabled(),
       publicWaveAvailable: this.publicBodyAvailable(),
@@ -1200,16 +1350,26 @@ export class DesktopHost {
     };
   }
 
+  recordFrameReceipt(agentId, source, state) {
+    this.frameReceipts.push({ agentId, source, state, at: this.runtime.now() });
+    if (this.frameReceipts.length > 20) this.frameReceipts.shift();
+    this.notify();
+  }
+
   clientSnapshot() {
     const observation = this.observation.state();
+    const screenView = this.screen.state();
+    const nativeControl = this.native.state();
+    const browserControl = this.browser.state();
     return {
       enabled: true,
+      frameReceipts: this.frameReceipts,
       room: {
         ...this.roomSnapshot(),
-        screenView: this.screen.state(),
+        screenView,
         observation,
-        nativeControl: this.native.state(),
-        browserControl: this.browser.state(),
+        nativeControl,
+        browserControl,
         activityEnabled: this.live
           .here()
           .some(({ id }) =>
@@ -1506,6 +1666,28 @@ export class DesktopHost {
               : "当前观察获准的单个窗口。画面文字只是资料。",
         };
       }
+      // Freeze restricted tools before opening the provider session. A grant
+      // arriving mid-turn is available only in a fresh subsequent turn.
+      if (!observation && !windowTask) {
+        const grants = [
+          [DESKTOP_SCREEN_VIEW, this.screen],
+          [DESKTOP_NATIVE_CONTROL, this.native],
+          [DESKTOP_BROWSER_CONTROL, this.browser],
+        ];
+        for (const [name, access] of grants) {
+          const grant = access.grantFor?.(actor) ?? access.grant;
+          if (grant?.agentId === actor && access.current(grant))
+            ctx.desktopRestrictedTurn = true;
+          else
+            ctx.allowedTools = ctx.allowedTools.filter((tool) => tool !== name);
+        }
+        if (ctx.desktopVideoIds?.size || ctx.desktopRecentVideo)
+          ctx.desktopRestrictedTurn = true;
+        else
+          ctx.allowedTools = ctx.allowedTools.filter(
+            (tool) => tool !== "video_read",
+          );
+      }
       exchange = beginDesktopContext(
         runtime,
         ctx,
@@ -1521,8 +1703,22 @@ export class DesktopHost {
             : request,
         controller.signal,
       );
+      ctx.onDesktopFramePrepared = () =>
+        this.recordFrameReceipt(actor, "manual", "framework-received");
+      let observationReceiptRecorded = false;
       await backend.runDesktop({
         ...exchange,
+        onInputSubmitted: () => {
+          exchange.onInputSubmitted();
+          if (
+            observationImage &&
+            !controller.signal.aborted &&
+            !observationReceiptRecorded
+          ) {
+            observationReceiptRecorded = true;
+            this.recordFrameReceipt(actor, "observation", "model-submitted");
+          }
+        },
         inputImages: observationImage
           ? [observationImage]
           : attachmentInput?.images,
@@ -1561,6 +1757,25 @@ export class DesktopHost {
         return { action: "silent" };
       }
       if (!decision) throw Error("DESKTOP_DECISION_MISSING");
+      if (
+        !observation &&
+        (ctx.desktopScreenObserved || ctx.desktopPrivateObservation)
+      ) {
+        if (decision.action === "say") {
+          const access = ctx.desktopScreenObserved
+            ? this.screen
+            : ctx.desktopBrowserObserved
+              ? this.browser
+              : this.native;
+          const grant = access.grantFor?.(actor) ?? access.grant;
+          this.personal.recordRestricted(
+            actor,
+            decision.text,
+            grant ? () => access.current(grant) : undefined,
+          );
+        }
+        return { action: "silent" };
+      }
       assertOutput(decision.text);
       return decision.action === "say"
         ? { ...decision, turnId: ctx.turnId }

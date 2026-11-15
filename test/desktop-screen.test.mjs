@@ -193,6 +193,13 @@ test("screen bytes reach only the selected desktop turn and the next turn gets a
   });
 
   assert.deepEqual(host.archive.history(), before);
+  await command("screen-revoke", { roomEpoch, grantId });
+  const receipts = host.clientSnapshot().frameReceipts;
+  assert.deepEqual(
+    receipts.map(({ agentId, source, state }) => ({ agentId, source, state })),
+    [{ agentId: "agent-0", source: "manual", state: "framework-received" }],
+  );
+  assert.ok(!JSON.stringify(receipts).includes(jpeg));
   const { room: after } = await command("sync");
   assert(!JSON.stringify(after).includes(jpeg));
   for (const filename of ["memory.sqlite", "memory.sqlite-wal"]) {
@@ -603,3 +610,24 @@ test("push disconnect after native claim does not replay the unknown action", as
     { message: "DESKTOP_VISIT_UNAVAILABLE" },
   );
 });
+
+for (const status of ["minimized", "blocked", "unavailable", "permission"]) {
+  test(`manual capture ${status} rejects the image and applies target revocation`, async (t) => {
+    const { roomEpoch, client, command, result, run } = await setup(t);
+    const grantId = randomUUID();
+    await command("screen-grant", { roomEpoch, grantId, agentId: "agent-0" });
+    await run("agent-0", async (call) => {
+      const output = call();
+      const { requestId } = await waitForRequest(command);
+      const receipt = { client, roomEpoch, grantId, requestId };
+      assert.equal((await result({ ...receipt, status })).status, 200);
+      assert.equal((await output).isError, true);
+      assert.equal((await result({ ...receipt, data: jpeg })).ok, false);
+      const { room } = await command("sync");
+      assert.equal(
+        room.screenView.grants.length,
+        ["unavailable", "permission"].includes(status) ? 0 : 1,
+      );
+    });
+  });
+}

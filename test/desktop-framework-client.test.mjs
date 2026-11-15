@@ -102,6 +102,18 @@ test("desktop client receives pushed states, idles on heartbeats and reconnects 
   assert.equal(count("client"), 2);
 
   const result = client.result("fixture-slow-result", {}, () => true);
+  let frameCurrent = true;
+  let proving = false;
+  const proof = Promise.withResolvers();
+  const queuedFrame = client.result(
+    "fixture-stale-frame",
+    {},
+    () => frameCurrent,
+    async () => {
+      proving = true;
+      return proof.promise;
+    },
+  );
   try {
     await waitFor(() => count("fixture-slow-result") === 1);
     const lease = runtime.desktopVisits.client.activityVisibleUntil;
@@ -109,10 +121,21 @@ test("desktop client receives pushed states, idles on heartbeats and reconnects 
       () => runtime.desktopVisits.client.activityVisibleUntil > lease,
     );
     assert.ok(perception.view());
+    const mode = await client.authorization("mode-set", "privacy");
+    assert.equal(mode.companionMode, "privacy");
+    assert.equal(proving, false);
   } finally {
     delayedResult.resolve();
     assert.deepEqual(await result, { accepted: true });
   }
+  try {
+    await waitFor(() => proving);
+    frameCurrent = false;
+  } finally {
+    proof.resolve(true);
+  }
+  assert.equal(await queuedFrame, undefined);
+  assert.equal(count("fixture-stale-frame"), 0);
 
   runtime.desktopVisits.reset();
   await waitFor(() => changes.some(({ state }) => state.offline));

@@ -5,6 +5,7 @@ import {
   observationSources,
   observationTarget,
   readObservationFrame,
+  verifyCaptureCoverage,
 } from "../desktop/home/screen-source.mjs";
 
 test("screen capture retains the selected source when its title changes", () => {
@@ -41,6 +42,18 @@ test("observation drops a captured frame if the target or permission changes", a
     ),
     { status: "permission" },
   );
+  let acquired = false;
+  assert.deepEqual(
+    await readObservationFrame(
+      () => ({ state: "unavailable" }),
+      () => {
+        acquired = true;
+      },
+      () => true,
+    ),
+    { status: "unavailable" },
+  );
+  assert.equal(acquired, false);
   let current = true;
   assert.deepEqual(
     await readObservationFrame(
@@ -135,4 +148,57 @@ test("observation revalidates the exact owner, closes on substitution, and pause
     state: "ready",
     source: renamed,
   });
+});
+
+test("capture coverage checks foreground, occlusion and every in-frame window", () => {
+  const target = {
+    id: "w-1",
+    bounds: { x: 0, y: 0, width: 100, height: 100 },
+    sensitive: false,
+  };
+  const cover = {
+    id: "w-2",
+    bounds: { x: 50, y: 50, width: 20, height: 20 },
+    sensitive: true,
+  };
+  const snapshot = { complete: true, foregroundId: "w-1", windows: [target] };
+  const automatic = { targetId: "w-1" };
+  const displayBounds = { x: 0, y: 0, width: 200, height: 200 };
+  assert.equal(verifyCaptureCoverage(snapshot, automatic), true);
+  for (const candidate of [
+    undefined,
+    {},
+    { ...snapshot, complete: false },
+    { ...snapshot, foregroundId: "w-2" },
+    { ...snapshot, windows: [cover, target] },
+    { ...snapshot, windows: [{ ...target, sensitive: true }] },
+    { ...snapshot, windows: [{ ...target, bounds: undefined }] },
+    { ...snapshot, windows: [target, target] },
+  ])
+    assert.equal(verifyCaptureCoverage(candidate, automatic), false);
+  assert.equal(verifyCaptureCoverage(snapshot, { displayBounds }), true);
+  assert.equal(
+    verifyCaptureCoverage(
+      { ...snapshot, windows: [target, cover] },
+      { displayBounds },
+    ),
+    false,
+  );
+  assert.equal(
+    verifyCaptureCoverage(
+      { ...snapshot, windows: [target, { ...cover, sensitive: undefined }] },
+      { displayBounds },
+    ),
+    false,
+  );
+  assert.equal(
+    verifyCaptureCoverage(
+      {
+        ...snapshot,
+        windows: [target, { ...cover, bounds: { ...cover.bounds, x: 300 } }],
+      },
+      { displayBounds },
+    ),
+    true,
+  );
 });
