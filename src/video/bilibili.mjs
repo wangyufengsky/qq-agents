@@ -7,7 +7,8 @@ import { downloadFile, validateWithSignal } from "../tools/file-download.mjs";
 
 const hosts = new Set(["www.bilibili.com", "m.bilibili.com", "bilibili.com"]);
 const videoId = /^\/(?:video)\/(BV[A-Za-z0-9]{10}|av[1-9]\d{0,17})\/?$/;
-const maxBytes = 96 * 1024 * 1024;
+const maxBytes = 192 * 1024 * 1024;
+const maxDurationSeconds = 60 * 60;
 
 function share(value) {
   const url = publicUrl(value);
@@ -224,7 +225,7 @@ export async function fetchBilibiliVideo(raw, file, signal, current) {
     if (
       !Number.isFinite(page.duration) ||
       page.duration <= 0 ||
-      page.duration > 30 * 60
+      page.duration > maxDurationSeconds
     )
       throw Error("VIDEO_LIMIT");
     const play = await getJson(
@@ -238,14 +239,24 @@ export async function fetchBilibiliVideo(raw, file, signal, current) {
       signal,
       current,
     );
-    const stream = play.dash?.video
+    const streams = play.dash?.video
       ?.filter(
         ({ height, codecs }) =>
           height > 0 && height <= 480 && /^avc1\./.test(codecs),
       )
-      .sort((a, b) => b.height - a.height)[0];
-    if (!stream) throw Error("VIDEO_SOURCE_UNAVAILABLE");
-    await downloadTrack(stream, file, { signal, current, maxBytes });
+      .sort((a, b) => b.height - a.height);
+    if (!streams?.length) throw Error("VIDEO_SOURCE_UNAVAILABLE");
+    for (const [index, stream] of streams.entries()) {
+      try {
+        await downloadTrack(stream, file, { signal, current, maxBytes });
+        break;
+      } catch (error) {
+        // A denser encoding may exceed the byte budget even when a smaller
+        // rendition of the same part fits. Reuse the same capped download.
+        if (error.message !== "VIDEO_LIMIT" || index === streams.length - 1)
+          throw error;
+      }
+    }
     const audio = Array.isArray(play.dash?.audio)
       ? play.dash.audio
           .filter(({ codecs }) => /^mp4a\./.test(codecs))
