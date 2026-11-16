@@ -130,6 +130,23 @@ test("the inherited list offers window approach from a scheduled public activity
     const targetPage = await targetApp.firstWindow();
     assert.equal(await targetPage.title(), targetTitle);
     const targetWindow = await targetApp.browserWindow(targetPage);
+    await waitFor(
+      () =>
+        targetApp.evaluate(() => typeof globalThis.focusTarget === "function"),
+      "The synthetic target did not finish starting",
+    );
+    // Renderer load can finish before the OS exposes the new window as a capture source.
+    await waitFor(
+      () =>
+        electron.evaluate(async ({ desktopCapturer }, title) => {
+          const sources = await desktopCapturer.getSources({
+            types: ["window"],
+            thumbnailSize: { width: 0, height: 0 },
+          });
+          return sources.some(({ name }) => name === title);
+        }, targetTitle),
+      "The synthetic source was not enumerated",
+    );
     await electron.evaluate(({ Menu }, title) => {
       // Only select the synthetic fixture through the production observation picker.
       Menu.prototype.popup = function (options) {
@@ -148,7 +165,12 @@ test("the inherited list offers window approach from a scheduled public activity
       "The tools panel did not open",
     );
     const panelWindow = await electron.browserWindow(panel);
+    await electron.evaluate(({ app }) => app.focus({ steal: true }));
     await panelWindow.evaluate((win) => win.focus());
+    await waitFor(
+      () => panelWindow.evaluate((win) => win.isFocused()),
+      "The tools panel did not gain native focus",
+    );
     await panel.locator(".tools-launch").click();
     await panel.getByRole("button", { name: "授权自主观察窗口" }).click();
     const grant = await waitFor(
