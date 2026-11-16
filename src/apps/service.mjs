@@ -219,13 +219,17 @@ export class AppBrowsing {
     if (!id) throw Error("APP_RECORD_STORE_FAILED");
     return { recordId: id, ...value, ...protection };
   }
-  get(ctx, id) {
+  get(ctx, id, { currentConversationOnly = false } = {}) {
     const row = this.memory(ctx.agentId)
       .db.prepare(
         "SELECT * FROM events WHERE id=? AND agent_id=? AND kind='app.observation'",
       )
       .get(id, ctx.agentId);
-    if (!row) throw Error("APP_RECORD_NOT_FOUND");
+    if (
+      !row ||
+      (currentConversationOnly && row.conversation !== ctx.conversation)
+    )
+      throw Error("APP_RECORD_NOT_FOUND");
     const payload = JSON.parse(row.payload);
     recallBoundary(this.runtime, ctx).assert({ id: row.id, payload });
     const protection = mergeProtection(payload);

@@ -263,6 +263,8 @@ function autonomouslyAllowed(runtime, ctx, request) {
     return (
       agent.apps.enabled && agent.apps.platforms.includes(request.args.platform)
     );
+  if (request.tool === "video_read" && ctx.conversation === "@subject")
+    return agent.apps.enabled && agent.apps.platforms.includes("bilibili");
   if (request.tool !== "external_tool" || request.args.audioInput) return false;
   const backend = runtime.config.backends.find((b) => b.id === agent.backendId);
   return !!backend?.toolServers.some(
