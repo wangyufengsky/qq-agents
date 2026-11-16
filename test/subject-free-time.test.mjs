@@ -84,6 +84,146 @@ test("default free-time mode keeps the previous subject session", async (t) => {
   assert.equal(seen[1].session?.id, "kept");
 });
 
+test("subject schedules one wake with its latest note and resumes the regular interval", async (t) => {
+  const agentId = "agent-0";
+  const subject = "@subject";
+  const args = { minutes: 10, note: "继续整理项目草稿" };
+  let now = Date.UTC(2026, 0, 1, 12);
+  const startedAt = now;
+  const prompts = [];
+  const f = fixture(t, {
+    cfg: enabled((a) => (a.subject.intervalMs = 3600000)),
+    run: async (p) => {
+      if (p.conversation !== subject) {
+        assert(!p.tools.some(({ name }) => name === "subject_next_wake"));
+        await assert.rejects(
+          p.callTool("subject_next_wake", args),
+          /TOOL_DISABLED/,
+        );
+        return;
+      }
+      prompts.push(p.prompt);
+      if (prompts.length !== 1) return;
+      await p.callTool("subject_next_wake", {
+        minutes: 15,
+        note: "被替换的备忘",
+      });
+      const result = await p.callTool("subject_next_wake", args);
+      assert.equal(result.nextCheckAt, startedAt + 600000);
+      await assert.rejects(
+        p.callTool("subject_next_wake", { ...args, minutes: 9 }),
+      );
+    },
+  });
+  f.runtime.clock = () => new Date(now);
+  const memory = f.store.bind(agentId);
+  assert.equal(
+    (await f.runtime.wake(agentId, "group:20000")).status,
+    "completed-no-send",
+  );
+  assert.equal(
+    (await f.runtime.wake(agentId, subject)).status,
+    "completed-no-send",
+  );
+  const tick = async () => {
+    f.runtime.subject.tick();
+    await settle(f.runtime);
+  };
+  now += 599999;
+  await tick();
+  assert.equal(prompts.length, 1);
+  now++;
+  await tick();
+  assert.equal(prompts.length, 2);
+  assert.match(prompts[1], /继续整理项目草稿/);
+  assert.doesNotMatch(prompts[1], /被替换的备忘/);
+  assert.equal(memory.state(subject).nextCheckNote, undefined);
+  assert.deepEqual(memory.state(subject).checks, [now]);
+  assert.equal(memory.state(subject).nextCheckAt, now + 3600000);
+  now += 3600000;
+  await tick();
+  assert.equal(prompts.length, 3);
+  assert.doesNotMatch(prompts[2], /继续整理项目草稿/);
+});
+
+test("a due subject wake waits through rest, pause, silence and a spent check budget", async (t) => {
+  let now = Date.UTC(2026, 0, 1, 12);
+  const prompts = [];
+  const f = fixture(t, {
+    cfg: enabled((a) => {
+      a.subject.inboxEnabled = true;
+      a.subject.reviewInSilence = false;
+      a.subject.maxChecksPerDay = 1;
+      a.silence = [
+        { days: [4], start: "12:12", end: "12:13", timezone: "UTC" },
+      ];
+    }),
+    run: async (p) => {
+      prompts.push(p.prompt);
+      if (prompts.length > 1) return;
+      await p.callTool("subject_next_wake", {
+        minutes: 10,
+        note: "读回上次草稿",
+      });
+      await p.callTool("subject_rest", {
+        durationMs: 660000,
+        earlyWake: "none",
+      });
+    },
+  });
+  f.runtime.clock = () => new Date(now);
+  assert.equal(
+    (await f.runtime.wake("agent-0", "@subject")).status,
+    "completed-no-send",
+  );
+  const memory = f.store.bind("agent-0"),
+    wakeAt = now + 600000;
+  const tick = async () => {
+    f.runtime.subject.tick();
+    await settle(f.runtime);
+  };
+  await tick();
+  now = wakeAt;
+  await tick();
+  f.runtime.config.globalPaused = true;
+  now += 60000;
+  await tick();
+  f.runtime.config.globalPaused = false;
+  now += 60000;
+  await tick();
+  assert.equal(prompts.length, 1);
+  assert.equal(memory.state("@subject").nextCheckAt, wakeAt);
+  now += 60000;
+  const spent = now - 86400000 + 60000;
+  memory.setState("@subject", { ...memory.state("@subject"), checks: [spent] });
+  await tick();
+  assert.equal(prompts.length, 1);
+  assert.equal(memory.state("@subject").nextCheckNote, "读回上次草稿");
+  now += 60000;
+  await tick();
+  assert.equal(prompts.length, 2);
+  assert.match(prompts[1], /读回上次草稿/);
+});
+
+test("subject cannot schedule a wake when its check budget will still be full", async (t) => {
+  const f = fixture(t, {
+    cfg: enabled((a) => (a.subject.maxChecksPerDay = 1)),
+    run: async (p) => {
+      await assert.rejects(
+        p.callTool("subject_next_wake", { minutes: 10, note: "继续看草稿" }),
+        /SUBJECT_CHECK_BUDGET/,
+      );
+    },
+  });
+  const memory = f.store.bind("agent-0");
+  memory.setState("@subject", { checks: [f.runtime.now()] });
+  assert.equal(
+    (await f.runtime.wake("agent-0", "@subject")).status,
+    "completed-no-send",
+  );
+  assert.equal(memory.state("@subject").nextCheckAt, undefined);
+});
+
 test("tool calls are traced by name and outcome without arguments", async (t) => {
   const f = fixture(t, {
     cfg: enabled(),

@@ -16,6 +16,8 @@ const terminal = new Set([
   "failed",
   "unknown",
 ]);
+const checksWithinDay = (state, at) =>
+  (state.checks || []).filter((t) => t > at - 86400000);
 const norm = (s) => s.trim().toLocaleLowerCase().replace(/\s+/g, " ");
 export class SubjectCoordinator {
   constructor(runtime) {
@@ -162,9 +164,7 @@ export class SubjectCoordinator {
     const r = this.runtime,
       now = r.now(),
       s = this.memory(a.id).state(SUBJECT);
-    const checks = (s.checks || [])
-      .filter((t) => t > now - 86400000)
-      .sort((a, b) => a - b);
+    const checks = checksWithinDay(s, now).sort((a, b) => a - b);
     const limit = a.subject.maxChecksPerDay;
     // If the limit was lowered, more than one old check may need to expire.
     const budgetReadyAt =
@@ -199,6 +199,41 @@ export class SubjectCoordinator {
         ? nextEligibleAt
         : null,
     };
+  }
+  scheduleNextWake(ctx, { minutes, note }) {
+    const r = this.runtime,
+      a = r.assertActive(ctx);
+    if (ctx.conversation !== SUBJECT) throw Error("TOOL_DISABLED");
+    r.assertSafeOutput(ctx, note);
+    const m = this.memory(a.id),
+      state = m.state(SUBJECT),
+      nextCheckAt = r.now() + minutes * 60000;
+    if (checksWithinDay(state, nextCheckAt).length >= a.subject.maxChecksPerDay)
+      throw Error("SUBJECT_CHECK_BUDGET");
+    m.setState(SUBJECT, { ...state, nextCheckAt, nextCheckNote: note });
+    return { nextCheckAt };
+  }
+  beginOpportunity(a) {
+    const m = this.memory(a.id),
+      state = m.state(SUBJECT),
+      now = this.runtime.now(),
+      checks = checksWithinDay(state, now);
+    if (
+      !state.nextCheckAt ||
+      state.nextCheckAt > now ||
+      checks.length >= a.subject.maxChecksPerDay ||
+      roleRest(this.runtime, a) ||
+      rhythmStatus(this.runtime, a, true).state === "sleeping"
+    )
+      return null;
+    const { nextCheckNote, ...remaining } = state;
+    m.setState(SUBJECT, {
+      ...remaining,
+      nextCheckAt: now + a.subject.intervalMs,
+      checks: [...checks, now],
+      lastOpportunityAt: now,
+    });
+    return { nextCheckNote };
   }
   internalAllowed(a) {
     const r = this.runtime;
@@ -608,7 +643,7 @@ export class SubjectCoordinator {
       }
       if (r.subjectInbox.dispatch(a)) continue;
       if (
-        !this.internalAllowed(a) ||
+        !r.writable(a, SUBJECT) ||
         roleRest(r, a) ||
         rhythmStatus(r, a, true).state === "sleeping" ||
         r.running.has(a.id + "|" + SUBJECT) ||
@@ -622,14 +657,7 @@ export class SubjectCoordinator {
         continue;
       }
       if (s.nextCheckAt > now) continue;
-      const checks = (s.checks || []).filter((t) => t > now - 86400000);
-      if (checks.length >= a.subject.maxChecksPerDay) continue;
-      m.setState(SUBJECT, {
-        ...s,
-        nextCheckAt: now + a.subject.intervalMs,
-        checks: [...checks, now],
-        lastOpportunityAt: now,
-      });
+      if (checksWithinDay(s, now).length >= a.subject.maxChecksPerDay) continue;
       // Busy chats outpace one batch an hour; reading the oldest first left
       // free time a day behind. Show the newest and let older rows be skipped.
       const activities = m.db

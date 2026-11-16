@@ -132,6 +132,11 @@ export function toolAvailable(agent, name, conversation, config) {
     return qqVideoAvailable(agent, conversation, config);
   if (name === "memory_recall")
     return Boolean(config && memoryRecallPolicy(agent, conversation, config));
+  if (name === "subject_next_wake")
+    return (
+      conversation === "@subject" &&
+      (agent.subject.enabled || agent.behavior.proactive.enabled)
+    );
   if (name.startsWith("subject_inbox_") || name === "subject_rest")
     return (
       subjectInboxEnabled(agent) &&

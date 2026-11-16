@@ -246,6 +246,7 @@ export async function commitConfig(runtime, next, revision) {
       await apply(() => {
         const m = runtime.memory.bind(id),
           state = m.state(SUBJECT);
+        if (state.nextCheckNote) return;
         m.setState(SUBJECT, {
           ...state,
           nextCheckAt:

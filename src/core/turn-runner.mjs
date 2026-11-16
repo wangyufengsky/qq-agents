@@ -88,6 +88,19 @@ export class TurnRunner {
     const runKey = agentId + "|" + conversation;
     if (runtime.running.has(runKey)) return;
     if (runtime.games.busy(a.backendId)) throw Error("GAME_BACKEND_BUSY");
+    const opportunity = reasons.find(
+      (reason) => reason.reason === "subject-opportunity",
+    );
+    if (conversation === SUBJECT && opportunity) {
+      const wake = runtime.subject.beginOpportunity(a);
+      if (!wake) return;
+      if (wake.nextCheckNote)
+        reasons = reasons.map((reason) =>
+          reason === opportunity
+            ? { ...reason, nextCheckNote: wake.nextCheckNote }
+            : reason,
+        );
+    }
     const mem = runtime.memory.bind(agentId);
     runtime.protectedWork.prepareDaily(agentId, conversation);
     const freshSubject = runtime.contexts.startFreshSubject(
