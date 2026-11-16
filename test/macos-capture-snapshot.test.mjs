@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   macosCaptureSnapshot,
   macosCoverageSnapshot,
+  macosWindowFrame,
 } from "../desktop/home/macos-capture-snapshot.mjs";
 import { verifyCaptureCoverage } from "../desktop/home/screen-source.mjs";
 
@@ -29,6 +30,41 @@ test("macOS snapshot fails closed on process failure, invalid output and cancell
   );
 });
 
+test("macOS frame helper binds exactly one window and PID to a bounded, cancellable request", async () => {
+  const identity = { id: "w-57", pid: 21 };
+  const signal = new AbortController().signal;
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
+  const executable = "/fixture";
+  const execute = (program, args, options, callback) => {
+    assert.equal(program, executable);
+    assert.deepEqual(args, ["57", "21", "640", "4096"]);
+    assert.equal(options.signal, signal);
+    assert.equal(options.maxBuffer, 4096);
+    assert.equal(options.encoding, "buffer");
+    callback(null, jpeg);
+  };
+  assert.deepEqual(
+    await macosWindowFrame(identity, 640, 4096, signal, {
+      executable,
+      execute,
+    }),
+    { data: jpeg.toString("base64") },
+  );
+  for (const [selected, requestSignal] of [
+    [{ ...identity, id: "screen:1" }, signal],
+    [{ ...identity, pid: 0 }, signal],
+    [identity, AbortSignal.abort()],
+  ]) {
+    assert.equal(
+      await macosWindowFrame(selected, 640, 4096, requestSignal, {
+        executable,
+        execute: () => assert.fail("No native capture should be started"),
+      }),
+      undefined,
+    );
+  }
+});
+
 test("macOS snapshot classifies all owners and preserves front-to-back geometry", () => {
   const entry = {
     id: "w-1",
@@ -52,14 +88,19 @@ test("macOS snapshot classifies all owners and preserves front-to-back geometry"
     macosCoverageSnapshot({ ...raw, foregroundPid: 11 }, () => false).complete,
     false,
   );
-  const overlay = { ...entry, id: "w-2", pid: 11, layer: 1 };
-  assert.equal(
-    verifyCaptureCoverage(
-      macosCoverageSnapshot({ ...raw, windows: [overlay, entry] }, () => false),
-      { targetId: "w-1" },
-    ),
-    false,
-  );
+  for (const pid of [10, 11]) {
+    const overlay = { ...entry, id: "w-2", pid, layer: 0 };
+    assert.equal(
+      verifyCaptureCoverage(
+        macosCoverageSnapshot(
+          { ...raw, windows: [overlay, entry] },
+          () => false,
+        ),
+        { targetId: "w-1" },
+      ),
+      false,
+    );
+  }
   assert.equal(
     verifyCaptureCoverage(
       macosCoverageSnapshot(raw, () => true),

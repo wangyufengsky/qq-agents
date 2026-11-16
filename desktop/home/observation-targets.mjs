@@ -106,7 +106,19 @@ export function createObservationTargets({
       const sources = await listScreenSources(true);
       if (!screenCapturePermission()) return { state: "permission" };
       if (signal.aborted) return { state: "unavailable" };
-      return observationTarget(sources, windows, source, own, process.pid);
+      const verified = observationTarget(
+        sources,
+        windows,
+        source,
+        own,
+        process.pid,
+      );
+      return verified.state === "ready"
+        ? {
+            state: "ready",
+            source: { ...verified.source, identity: source.identity },
+          }
+        : verified;
     } catch (error) {
       return { state: observationError(error) };
     }
