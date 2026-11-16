@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { imageMime } from "../tools/media.mjs";
-import { mediaLease } from "../tools/media-lease.mjs";
+import { mediaLease, mediaSubmitted } from "../tools/media-lease.mjs";
 import { DESKTOP_SCREEN_VIEW } from "../tools/names.mjs";
 import {
   DesktopLocalGrant,
@@ -180,7 +180,7 @@ export class DesktopScreen extends DesktopLocalGrant {
         throw Error("DESKTOP_SCREEN_UNAVAILABLE");
       ctx.desktopWindowTaskActionStarted = true;
     }
-    const { data } = await this.capture(ctx, agent, grant, current);
+    const { data, requestId } = await this.capture(ctx, agent, grant, current);
     if (!current()) throw Error("DESKTOP_SCREEN_UNAVAILABLE");
     // The native transcript can contain the pixels even if its receipt is lost.
     ctx.desktopScreenObserved = true;
@@ -188,6 +188,9 @@ export class DesktopScreen extends DesktopLocalGrant {
     if (ctx.desktopWindowTask) ctx.desktopWindowTaskUsed = true;
     const result = {
       [mediaLease]: current,
+      [mediaSubmitted]: () => {
+        if (current()) ctx.onDesktopFrameSubmitted?.(requestId);
+      },
       content: [
         {
           type: "text",
@@ -197,7 +200,7 @@ export class DesktopScreen extends DesktopLocalGrant {
       ],
     };
     runtime.stageToolOutput(ctx, result, [{ value: result, current }]);
-    ctx.onDesktopFramePrepared?.();
+    ctx.onDesktopFramePrepared?.(requestId);
     return result;
   }
 
@@ -245,7 +248,7 @@ export class DesktopScreen extends DesktopLocalGrant {
     try {
       const frame = await pending.promise;
       if (!current()) throw Error("DESKTOP_SCREEN_UNAVAILABLE");
-      return frame;
+      return { ...frame, requestId: pending.request.requestId };
     } finally {
       clearTimeout(timer);
       signal.removeEventListener("abort", abort);

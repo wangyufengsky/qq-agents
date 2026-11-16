@@ -60,8 +60,11 @@ function fake(overrides = {}) {
             usage: { inputTokens: 999999 },
           },
         };
+        const override = overrides[msg.method];
         const result = Object.hasOwn(overrides, msg.method)
-          ? overrides[msg.method]
+          ? typeof override === "function"
+            ? override(msg, calls)
+            : override
           : defaults[msg.method];
         queueMicrotask(() => {
           if (msg.method === "session/prompt") {
@@ -140,7 +143,11 @@ test("ACP submits a captured desktop JPEG as native input in the same bridge tur
         f.calls.filter(({ method }) => method === "session/prompt").length,
         1,
       );
-      return image;
+      return { image, receiptId: "a".repeat(32) };
+    },
+    undefined,
+    async (receiptId) => {
+      assert.equal(receiptId, "a".repeat(32));
     },
   );
   const prompts = f.calls.filter(({ method }) => method === "session/prompt");
@@ -149,6 +156,68 @@ test("ACP submits a captured desktop JPEG as native input in the same bridge tur
   assert.equal(prompts[0].params.sessionId, prompts[1].params.sessionId);
   assert.deepEqual(prompts[1].params.prompt[1], image);
   assert.equal(events.filter(({ event }) => event === "result").length, 1);
+});
+test("ACP never acknowledges an image when its native prompt fails", async () => {
+  let acknowledgements = 0;
+  const f = fake({
+    "session/prompt": (_msg, calls) => ({
+      stopReason:
+        calls.filter(({ method }) => method === "session/prompt").length === 1
+          ? "end_turn"
+          : "cancelled",
+    }),
+  });
+  await assert.rejects(
+    runAcp(
+      { ...options, desktop: true, desktopScreen: true },
+      "capture",
+      () => {},
+      f.launch,
+      [],
+      async () => ({
+        image: { type: "image", mimeType: "image/jpeg", data: "AQID" },
+        receiptId: "a".repeat(32),
+      }),
+      undefined,
+      async () => {
+        acknowledgements++;
+      },
+    ),
+    /ANTIGRAVITY_PROTOCOL_ERROR/,
+  );
+  assert.equal(acknowledgements, 0);
+});
+test("ACP ignores a mismatched native prompt response for the captured frame", async () => {
+  let acknowledgements = 0;
+  const f = fake({
+    "session/prompt": (_msg, calls) =>
+      calls.filter(({ method }) => method === "session/prompt").length === 1
+        ? { stopReason: "end_turn" }
+        : JSON.stringify({
+            jsonrpc: "2.0",
+            id: 999,
+            result: { stopReason: "end_turn" },
+          }),
+  });
+  await assert.rejects(
+    runAcp(
+      { ...options, desktop: true, desktopScreen: true },
+      "capture",
+      () => {},
+      f.launch,
+      [],
+      async () => ({
+        image: { type: "image", mimeType: "image/jpeg", data: "AQID" },
+        receiptId: "a".repeat(32),
+      }),
+      undefined,
+      async () => {
+        acknowledgements++;
+      },
+    ),
+    /ANTIGRAVITY_PROTOCOL_ERROR/,
+  );
+  assert.equal(acknowledgements, 0);
 });
 test("ACP checks for a requested screenshot after delivering video", async () => {
   const f = fake();
@@ -162,8 +231,12 @@ test("ACP checks for a requested screenshot after delivering video", async () =>
     () => {},
     f.launch,
     [],
-    async () => (calls().length === 2 ? screen : null),
+    async () =>
+      calls().length === 2
+        ? { image: screen, receiptId: "b".repeat(32) }
+        : null,
     async () => (calls().length === 1 ? [video] : []),
+    async () => {},
   );
   assert.deepEqual(
     calls().map(({ params }) =>

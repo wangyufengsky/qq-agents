@@ -39,7 +39,7 @@ import {
   videoDelivery,
   videoResponseGuide,
 } from "../video/policy.mjs";
-import { mediaLease } from "../tools/media-lease.mjs";
+import { mediaLease, mediaSubmitted } from "../tools/media-lease.mjs";
 
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -1045,8 +1045,10 @@ export class AntigravityBackend {
     const videoContinuation = acp && names.has("video_read");
     /** @type {{contents: any[], current: () => boolean, setPending: (pending: boolean, submitted?: boolean) => void} | undefined} */
     let videoFrames;
-    /** @type {{image: {type: string, mimeType: string, data: string}, current: () => boolean} | undefined} */
+    /** @type {{image: {type: string, mimeType: string, data: string}, current: () => boolean, submitted?: () => void} | undefined} */
     let screenFrame;
+    /** @type {{id: string, current: () => boolean, submitted?: () => void} | undefined} */
+    let screenClaim;
     // Native ACP can drop declarations containing unions. Use a simple
     // transport envelope and keep the original tool validation.
     const replyTool = acp ? acpReplyTool(names) : null;
@@ -1105,11 +1107,48 @@ export class AntigravityBackend {
         screenFrame = undefined;
         let image = null;
         try {
-          if (frame?.current()) image = frame.image;
+          if (frame?.current()) {
+            image = frame.image;
+            screenClaim = {
+              id: randomBytes(16).toString("hex"),
+              current: frame.current,
+              submitted: frame.submitted,
+            };
+          }
         } catch {
           // A revoked or expired frame must not leave this turn.
         }
-        return reply(200, { image });
+        return reply(200, {
+          image,
+          ...(image && screenClaim && { receiptId: screenClaim.id }),
+        });
+      }
+      if (
+        screenContinuation &&
+        req.method === "POST" &&
+        req.url === "/desktop-frame-ack"
+      ) {
+        let body = "";
+        for await (const part of req) {
+          body += part;
+          if (body.length > 256) return reply(413, {});
+        }
+        let receiptId;
+        try {
+          ({ receiptId } = JSON.parse(body));
+        } catch {
+          return reply(400, {});
+        }
+        const claim = screenClaim;
+        if (!claim || receiptId !== claim.id) return reply(409, {});
+        screenClaim = undefined;
+        try {
+          if (live && !params.signal.aborted && claim.current())
+            claim.submitted?.();
+        } catch {
+          // An expired grant cannot confirm a late image.
+        }
+        return reply(200, {});
       }
       if (req.method === "POST" && req.url === "/hook-denied") {
         // The trusted hook reports only a denial bit, never paths or arguments.
@@ -1227,6 +1266,7 @@ export class AntigravityBackend {
                 data: image.data,
               },
               current,
+              submitted: value[mediaSubmitted],
             };
             return acpScreenWaiting;
           },
@@ -1592,6 +1632,7 @@ export class AntigravityBackend {
       live = false;
       rejectInput(Error("ABORTED"));
       screenFrame = undefined;
+      screenClaim = undefined;
       try {
         media.close();
       } catch {

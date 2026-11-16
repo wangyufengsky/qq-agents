@@ -52,7 +52,7 @@ async function setup(t, { native = false } = {}) {
     host.live.room.members[role.id] = "invited";
     host.live.admit(role);
   }
-  const run = async (actor, body) => {
+  const run = async (actor, body, signal = new AbortController().signal) => {
     const backend = runtime.backendConnections.adapter(runtime.agent(actor));
     let capability;
     backend.runDesktop = (params) => {
@@ -80,7 +80,7 @@ async function setup(t, { native = false } = {}) {
     };
     const decision = await host.run(
       { actor, kind: "chat", people: [], messages: [] },
-      new AbortController().signal,
+      signal,
     );
     assert.equal(decision.action, "silent");
   };
@@ -181,6 +181,11 @@ test("screen bytes reach only the selected desktop turn and the next turn gets a
     assert.deepEqual(await accepted.json(), { accepted: true });
 
     const delivered = await output;
+    const frameReceipt = host.clientSnapshot().frameReceipts.at(-1);
+    assert.equal(frameReceipt.requestId, request.requestId);
+    assert.equal(frameReceipt.roomEpoch, roomEpoch);
+    assert.equal(frameReceipt.state, "framework-received");
+    assert.ok(frameReceipt.visitId);
     assert(!delivered.isError);
     assert.deepEqual(
       delivered.content.filter(({ type }) => type === "image"),
@@ -197,9 +202,17 @@ test("screen bytes reach only the selected desktop turn and the next turn gets a
   const receipts = host.clientSnapshot().frameReceipts;
   assert.deepEqual(
     receipts.map(({ agentId, source, state }) => ({ agentId, source, state })),
-    [{ agentId: "agent-0", source: "manual", state: "framework-received" }],
+    [{ agentId: "agent-0", source: "manual", state: "result-unconfirmed" }],
   );
   assert.ok(!JSON.stringify(receipts).includes(jpeg));
+  host.recordFrameReceipt(
+    "agent-0",
+    "manual",
+    "result-unconfirmed",
+    randomUUID(),
+    { roomEpoch: randomUUID(), visitId: randomUUID() },
+  );
+  assert.equal(host.clientSnapshot().frameReceipts.length, 1);
   const { room: after } = await command("sync");
   assert(!JSON.stringify(after).includes(jpeg));
   for (const filename of ["memory.sqlite", "memory.sqlite-wal"]) {
@@ -211,6 +224,67 @@ test("screen bytes reach only the selected desktop turn and the next turn gets a
     assert.equal(params.session, null);
   });
 });
+
+for (const ending of ["timeout", "disconnect"]) {
+  test(`received manual screen is fenced after ${ending}`, async (t) => {
+    const { runtime, host, roomEpoch, client, command, result, run } =
+      await setup(t);
+    const grantId = randomUUID();
+    await command("screen-grant", { roomEpoch, grantId, agentId: "agent-0" });
+    const controller = new AbortController();
+    const received = Promise.withResolvers();
+    const finish = Promise.withResolvers();
+    const turn = run(
+      "agent-0",
+      async (call) => {
+        const output = call();
+        const request = await waitForRequest(command);
+        const payload = {
+          client,
+          roomEpoch,
+          grantId,
+          requestId: request.requestId,
+          data: jpeg,
+        };
+        assert.equal((await result(payload)).status, 200);
+        assert.equal((await output).isError, undefined);
+        const ctx = [...runtime.running.values()].find(
+          (item) =>
+            item.agentId === "agent-0" && item.runtimeKind === "desktop",
+        );
+        assert.ok(ctx);
+        assert.equal(
+          host.clientSnapshot().frameReceipts.at(-1).state,
+          "framework-received",
+        );
+        received.resolve({ request, ctx, payload });
+        await finish.promise;
+      },
+      controller.signal,
+    );
+    const { request, ctx, payload } = await received.promise;
+    if (ending === "timeout")
+      controller.abort(new DOMException("Timed out", "TimeoutError"));
+    else {
+      host.reset();
+      const replacement = randomUUID();
+      const { room } = await command("sync", undefined, replacement);
+      assert.notEqual(room.roomEpoch, roomEpoch);
+    }
+    finish.resolve();
+    await assert.rejects(turn);
+    ctx.onDesktopFrameSubmitted(request.requestId);
+    if (ending === "timeout") {
+      const receipts = host.clientSnapshot().frameReceipts;
+      assert.equal(receipts.length, 1);
+      assert.equal(receipts[0].requestId, request.requestId);
+      assert.equal(receipts[0].state, "result-unconfirmed");
+    } else {
+      assert.deepEqual(host.clientSnapshot().frameReceipts, []);
+      assert.equal((await result(payload)).ok, false);
+    }
+  });
+}
 
 test("revoking screen access cancels an outstanding capture and rejects its late result", async (t) => {
   const { roomEpoch, client, command, result, run } = await setup(t);

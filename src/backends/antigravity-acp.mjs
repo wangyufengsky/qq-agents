@@ -5,8 +5,8 @@ import { MAX_VIDEO_DETAIL_FRAMES } from "../video/policy.mjs";
 
 const LIMIT = 128 * 1024 * 1024;
 
-/** @param {string} route */
-async function takeAcpMedia(route) {
+/** @param {string} route @param {{receiptId: string}} [body] */
+async function takeAcpMedia(route, body) {
   const endpoint = new URL(process.env.QQ_AGY_ENDPOINT || "http://invalid");
   const token = process.env.QQ_AGY_TOKEN;
   if (
@@ -21,7 +21,11 @@ async function takeAcpMedia(route) {
     throw Error("ANTIGRAVITY_PROTOCOL_ERROR");
   const response = await fetch(new URL(route, endpoint), {
     method: "POST",
-    headers: { authorization: `Bearer ${token}` },
+    headers: {
+      authorization: `Bearer ${token}`,
+      ...(body && { "content-type": "application/json" }),
+    },
+    ...(body && { body: JSON.stringify(body) }),
     redirect: "error",
     signal: AbortSignal.timeout(5000),
   });
@@ -29,18 +33,20 @@ async function takeAcpMedia(route) {
   return response.json();
 }
 
-/** @returns {Promise<{type: "image", mimeType: "image/jpeg", data: string} | null>} */
+/** @returns {Promise<{image: {type: "image", mimeType: "image/jpeg", data: string}, receiptId: string} | null>} */
 async function takeAcpDesktopFrame() {
-  const { image } = await takeAcpMedia("/desktop-frame");
+  const { image, receiptId } = await takeAcpMedia("/desktop-frame");
   if (image === null) return null;
   if (
     image?.type !== "image" ||
     image.mimeType !== "image/jpeg" ||
     typeof image.data !== "string" ||
-    image.data.length > 65536
+    image.data.length > 65536 ||
+    typeof receiptId !== "string" ||
+    !/^[a-f0-9]{32}$/.test(receiptId)
   )
     throw Error("ANTIGRAVITY_PROTOCOL_ERROR");
-  return image;
+  return { image, receiptId };
 }
 
 async function takeAcpVideoFrames() {
@@ -60,7 +66,8 @@ async function takeAcpVideoFrames() {
  * @param {(event: any) => void} emit @param {typeof spawn} [launch]
  * @param {import("./session-contract.mjs").InputImage[]} [inputImages]
  * @param {typeof takeAcpDesktopFrame} [takeDesktopFrame]
- * @param {typeof takeAcpVideoFrames} [takeVideoFrames] */
+ * @param {typeof takeAcpVideoFrames} [takeVideoFrames]
+ * @param {(receiptId: string) => Promise<void>} [ackDesktopFrame] */
 export async function runAcp(
   options,
   prompt,
@@ -69,6 +76,9 @@ export async function runAcp(
   inputImages = [],
   takeDesktopFrame = takeAcpDesktopFrame,
   takeVideoFrames = takeAcpVideoFrames,
+  ackDesktopFrame = async (receiptId) => {
+    await takeAcpMedia("/desktop-frame-ack", { receiptId });
+  },
 ) {
   const child = launch(
     options.command,
@@ -248,24 +258,25 @@ export async function runAcp(
     let screenDelivered = false;
     let videoBatches = 0;
     for (let i = 0; i < maxBatches; i++) {
-      const image =
+      const video =
+        videoBatches < maxVideoBatches ? await takeVideoFrames() : [];
+      // Claim the screen last so no unrelated media request delays its prompt.
+      const frame =
         options.desktopScreen && !screenDelivered
           ? await takeDesktopFrame()
           : null;
-      const video =
-        videoBatches < maxVideoBatches ? await takeVideoFrames() : [];
       if (closed) throw Error("ANTIGRAVITY_PROTOCOL_ERROR");
-      if (!image && !video.length) break;
-      if (image) screenDelivered = true;
+      if (!frame && !video.length) break;
+      if (frame) screenDelivered = true;
       if (video.length) videoBatches++;
       const parts = [
-        ...(image
+        ...(frame
           ? [
               {
                 type: "text",
                 text: "这是当前桌面回合已授权的截图。请依据画面回应刚才的请求，并提交一次桌面决定。",
               },
-              image,
+              frame.image,
             ]
           : []),
         ...(video.length
@@ -284,6 +295,7 @@ export async function runAcp(
       });
       if (closed || result.stopReason !== "end_turn")
         throw Error("ANTIGRAVITY_PROTOCOL_ERROR");
+      if (frame) await ackDesktopFrame(frame.receiptId).catch(() => {});
     }
     // ACP turn usage can sum several inferences, so never claim it is the latest
     // context occupancy. The framework retains its conservative estimate.
