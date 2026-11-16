@@ -8,9 +8,12 @@ import { fileURLToPath } from "node:url";
 import { _electron } from "playwright-core";
 import { desktopToken } from "../src/home/desktop-auth.mjs";
 import { createServer } from "../src/server.mjs";
+import { mediaSubmitted } from "../src/tools/media-lease.mjs";
 import { config, fixture } from "./helpers.mjs";
 
 const repo = dirname(dirname(fileURLToPath(import.meta.url)));
+const fixtureJpeg =
+  "/9j/4AAQSkZJRgABAgAAAQABAAD//gAQTGF2YzYyLjI4LjEwMAD/2wBDAAgEBAQEBAUFBQUFBQYGBgYGBgYHBwcICAgHBwcGBgcHCAgICAkJCQgICAgJCQoKCgwMCwsODg4RERT/xABLAAEBAAAAAAAAAAAAAAAAAAAABQEBAAAAAAAAAAAAAAAAAAAABRABAAAAAAAAAAAAAAAAAAAAABEBAAAAAAAAAAAAAAAAAAAAAP/AABEIABAAEAMBIgACEQADEQD/2gAMAwEAAhEDEQA/AIAAok//2Q==";
 
 async function waitFor(read, failure) {
   const deadline = Date.now() + 12000;
@@ -82,10 +85,11 @@ test("native desktop remembers modes and requires fresh targets after a restart"
       agentId: role.id,
       modeRevision: host.modeRevision,
     };
+    const screenGrantId = randomUUID();
     host.command({
       client: host.client.id,
       action: "screen-grant",
-      data: { ...grant, grantId: randomUUID() },
+      data: { ...grant, grantId: screenGrantId },
     });
     host.command({
       client: host.client.id,
@@ -102,17 +106,68 @@ test("native desktop remembers modes and requires fresh targets after a restart"
       "Panel failed to open",
     );
     await panel.locator(".tools-launch").click();
-    host.recordFrameReceipt(role.id, "observation", "model-submitted");
-    host.recordFrameReceipt(role.id, "manual", "framework-received");
     const receipts = panel.locator(".frame-receipts");
-    await receipts.waitFor({ state: "visible", timeout: 2500 });
-    await receipts.locator("summary").click();
     const entries = receipts.locator("li");
-    await entries.nth(1).waitFor({ state: "visible", timeout: 2500 });
-    const [observationReceipt, manualReceipt] = await entries.allTextContents();
-    assert.ok(observationReceipt.includes(role.name));
-    assert.match(observationReceipt, /画面已提交模型/);
-    assert.match(manualReceipt, /画面已提交给框架，模型接收未确认/);
+    const backend = runtime.backendConnections.adapter(runtime.agent(role.id));
+    for (const outcome of ["submitted", "no-receipt"]) {
+      const completion = Promise.withResolvers();
+      backend.runDesktop = async (params) => {
+        await params.onRunStarted();
+        params.onInputSubmitted();
+        const frame = await params.callTool("desktop_screen_view", {});
+        assert.equal(frame.content[1].data, fixtureJpeg);
+        await completion.promise;
+        if (outcome === "submitted") frame[mediaSubmitted]();
+        await params.callTool("desktop_room_decide", { action: "silent" });
+      };
+      const controller = new AbortController();
+      const turn = host.run(
+        { actor: role.id, kind: "chat", people: [], messages: [] },
+        controller.signal,
+      );
+      void turn.catch(() => {});
+      try {
+        const request = await waitFor(
+          () => host.screen.request(),
+          "Capture did not start",
+        );
+        const response = await fetch(
+          `http://127.0.0.1:${port}/api/desktop-home/screen-result`,
+          {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-desktop-home-token": desktopToken(admin),
+            },
+            body: JSON.stringify({
+              client: host.client.id,
+              roomEpoch: request.roomEpoch,
+              grantId: screenGrantId,
+              requestId: request.requestId,
+              data: fixtureJpeg,
+            }),
+          },
+        );
+        assert.deepEqual(await response.json(), { accepted: true });
+        await receipts.waitFor({ state: "visible" });
+        if (outcome === "submitted") await receipts.locator("summary").click();
+        const row = receipts.getByTitle(`请求 ${request.requestId}`);
+        await row
+          .filter({ hasText: /框架已收到画面$/ })
+          .waitFor({ state: "visible" });
+        completion.resolve();
+        assert.equal((await turn).action, "silent");
+        const label =
+          outcome === "submitted" ? "画面已提交模型" : "提交结果未确认";
+        await row.filter({ hasText: label }).waitFor({ state: "visible" });
+      } finally {
+        controller.abort();
+        completion.resolve();
+        await turn.catch(() => {});
+      }
+    }
+    assert.equal(await entries.count(), 2);
+    assert.doesNotMatch(await receipts.textContent(), /\/9j\/4AAQ/);
     await panel.locator(".companion-mode").selectOption("presence");
     await waitFor(() => host.mode === "presence", "Downgrade did not commit");
     assert.equal(host.browser.state()?.grantedAgentId ?? null, null);
@@ -127,6 +182,7 @@ test("native desktop remembers modes and requires fresh targets after a restart"
     );
     assert.equal(host.screen.state().grants.length, 0);
     assert.equal(host.browser.state()?.grantedAgentId ?? null, null);
+    assert.deepEqual(host.clientSnapshot().frameReceipts, []);
   } finally {
     try {
       await electron?.close();

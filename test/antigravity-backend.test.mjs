@@ -23,7 +23,7 @@ import { buildChildEnv } from "../src/core/child-env.mjs";
 import { config, temp, fixture as runtimeFixture } from "./helpers.mjs";
 import { toolSpecs } from "../src/tools/specs.mjs";
 import { AntigravityMedia } from "../src/backends/antigravity-media.mjs";
-import { mediaLease } from "../src/tools/media-lease.mjs";
+import { mediaLease, mediaSubmitted } from "../src/tools/media-lease.mjs";
 import { colorGrid } from "../scripts/fixtures/antigravity-media.mjs";
 import { registry } from "../src/tools/registry.mjs";
 import { SessionPreparationFailure } from "../src/backends/turn-failure.mjs";
@@ -387,6 +387,7 @@ test("ACP desktop exposes a strict action entry and a single-use current-turn im
   });
   const image = { type: "image", mimeType: "image/jpeg", data: "AQID" };
   let leased = true;
+  let frameSubmitted = 0;
   const { run, inputSubmitted } = startFakeTurn(fixture, {
     desktop: true,
     social: true,
@@ -400,7 +401,11 @@ test("ACP desktop exposes a strict action entry and a single-use current-turn im
     async callTool(name, args) {
       fixture.calls.push({ name, args });
       return name === "desktop_screen_view"
-        ? { [mediaLease]: () => leased, content: [image] }
+        ? {
+            [mediaLease]: () => leased,
+            [mediaSubmitted]: () => frameSubmitted++,
+            content: [image],
+          }
         : { ok: true };
     },
   });
@@ -467,12 +472,29 @@ test("ACP desktop exposes a strict action entry and a single-use current-turn im
       fixture.calls.map(({ name }) => name),
       ["desktop_native_control", "desktop_screen_view"],
     );
-    assert.deepEqual(await take(), { image });
+    const frame = await take();
+    assert.deepEqual(frame.image, image);
+    assert.match(frame.receiptId, /^[a-f0-9]{32}$/);
+    const ack = (receiptId) =>
+      fetch(`${endpoint}/desktop-frame-ack`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ receiptId }),
+      });
+    assert.equal((await ack("wrong")).status, 409);
+    assert.equal(frameSubmitted, 0);
+    assert.equal((await ack(frame.receiptId)).status, 200);
+    assert.equal(frameSubmitted, 1);
+    assert.equal((await ack(frame.receiptId)).status, 409);
     assert.deepEqual(await take(), { image: null });
     const completed = await (await call("desktop_room_decide", {})).json();
     assert.equal(JSON.parse(completed.content[0].text).ok, true);
     await call("desktop_screen_view", {});
+    const stale = await take();
     leased = false;
+    assert.equal((await ack(stale.receiptId)).status, 200);
+    assert.equal(frameSubmitted, 1);
+    await call("desktop_screen_view", {});
     assert.deepEqual(await take(), { image: null });
   } finally {
     child.emitFrames(

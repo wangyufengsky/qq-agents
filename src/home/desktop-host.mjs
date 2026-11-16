@@ -827,6 +827,7 @@ export class DesktopHost {
     this.modeRevision++;
     this.personal.clear();
     this.statusCards.cards.clear();
+    this.frameReceipts.length = 0;
     const subscribers = [...this.eventSubscribers.keys()];
     this.eventSubscribers.clear();
     const payload =
@@ -1356,8 +1357,20 @@ export class DesktopHost {
     };
   }
 
-  recordFrameReceipt(agentId, source, state) {
-    this.frameReceipts.push({ agentId, source, state, at: this.runtime.now() });
+  recordFrameReceipt(agentId, source, state, requestId, scope) {
+    const receipt = {
+      agentId,
+      source,
+      state,
+      at: this.runtime.now(),
+      ...(requestId && { requestId }),
+      ...scope,
+    };
+    const index = requestId
+      ? this.frameReceipts.findIndex((item) => item.requestId === requestId)
+      : -1;
+    if (index >= 0) this.frameReceipts[index] = receipt;
+    else this.frameReceipts.push(receipt);
     if (this.frameReceipts.length > 20) this.frameReceipts.shift();
     this.notify();
   }
@@ -1369,7 +1382,14 @@ export class DesktopHost {
     const browserControl = this.browser.state();
     return {
       enabled: true,
-      frameReceipts: this.frameReceipts,
+      frameReceipts: this.frameReceipts.filter((receipt) => {
+        const visit = this.live?.visits.get(receipt.agentId);
+        return (
+          visit &&
+          receipt.roomEpoch === this.live.room.epoch &&
+          receipt.visitId === this.body.visitId(visit)
+        );
+      }),
       room: {
         ...this.roomSnapshot(),
         screenView,
@@ -1487,6 +1507,18 @@ export class DesktopHost {
     const runtime = this.runtime;
     const agent = runtime.agent(actor);
     const current = this.live;
+    const client = this.client;
+    const visit = current?.visits.get(actor);
+    const frameScope = visit && {
+      roomEpoch: current.room.epoch,
+      visitId: this.body.visitId(visit),
+    };
+    const frameScopeCurrent = () =>
+      frameScope &&
+      this.live === current &&
+      this.client === client &&
+      this.connected(ctx) &&
+      current.visits.get(actor) === visit;
     const controller = new AbortController();
     const external = AbortSignal.any([
       signal,
@@ -1500,6 +1532,7 @@ export class DesktopHost {
     if (external.aborted) abort();
     else external.addEventListener("abort", abort, { once: true });
     let attachmentInput, observationImage;
+    const pendingFrames = new Set();
     const check = () => {
       controller.signal.throwIfAborted();
       if (
@@ -1717,8 +1750,32 @@ export class DesktopHost {
             : request,
         controller.signal,
       );
-      ctx.onDesktopFramePrepared = () =>
-        this.recordFrameReceipt(actor, "manual", "framework-received");
+      ctx.onDesktopFramePrepared = (requestId) => {
+        if (!frameScopeCurrent()) return;
+        pendingFrames.add(requestId);
+        this.recordFrameReceipt(
+          actor,
+          "manual",
+          "framework-received",
+          requestId,
+          frameScope,
+        );
+      };
+      ctx.onDesktopFrameSubmitted = (requestId) => {
+        if (
+          !controller.signal.aborted &&
+          frameScopeCurrent() &&
+          pendingFrames.delete(requestId)
+        ) {
+          this.recordFrameReceipt(
+            actor,
+            "manual",
+            "model-submitted",
+            requestId,
+            frameScope,
+          );
+        }
+      };
       let observationReceiptRecorded = false;
       await backend.runDesktop({
         ...exchange,
@@ -1727,10 +1784,17 @@ export class DesktopHost {
           if (
             observationImage &&
             !controller.signal.aborted &&
+            frameScopeCurrent() &&
             !observationReceiptRecorded
           ) {
             observationReceiptRecorded = true;
-            this.recordFrameReceipt(actor, "observation", "model-submitted");
+            this.recordFrameReceipt(
+              actor,
+              "observation",
+              "model-submitted",
+              undefined,
+              frameScope,
+            );
           }
         },
         inputImages: observationImage
@@ -1807,6 +1871,16 @@ export class DesktopHost {
       if (controller.signal.aborted) throw controller.signal.reason;
       throw error;
     } finally {
+      if (frameScopeCurrent())
+        for (const requestId of pendingFrames)
+          this.recordFrameReceipt(
+            actor,
+            "manual",
+            "result-unconfirmed",
+            requestId,
+            frameScope,
+          );
+      pendingFrames.clear();
       try {
         if (ctx) {
           runtime.capabilities.delete(ctx.token);
