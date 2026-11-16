@@ -618,6 +618,7 @@ export class SubjectInbox {
     if (args.id.startsWith("contact:"))
       return this.decideContact(ctx, a, args, now);
     const memory = r.memory.bind(a.id);
+    let reviewedReminder = false;
     const apply = () => {
       const state = this.state(a.id);
       const item = (state.items || []).find((value) => value.id === args.id);
@@ -736,6 +737,7 @@ export class SubjectInbox {
           ...recent,
         ],
       });
+      reviewedReminder = item.proposal.kind === "reminder";
       return {
         id: next.id,
         revision: next.revision,
@@ -744,7 +746,11 @@ export class SubjectInbox {
         ...(reference ? { reference } : {}),
       };
     };
-    return args.action === "social" ? apply() : memory.store.transaction(apply);
+    const result =
+      args.action === "social" ? apply() : memory.store.transaction(apply);
+    if (reviewedReminder && ctx.subjectChecklist)
+      ctx.subjectChecklist.reviewedReminder = true;
+    return result;
   }
   rest(ctx, args) {
     const a = this.assertScope(ctx, true);

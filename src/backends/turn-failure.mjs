@@ -163,14 +163,14 @@ export function failureSummary(error) {
 /**
  * @param {{run(params: import("./session-contract.mjs").RunParams): Promise<unknown>}} backend
  * @param {import("./session-contract.mjs").RunParams} params
- * @param {{onFailure?: (error: unknown, attempt: number) => void,
+ * @param {{retry?: boolean, onFailure?: (error: unknown, attempt: number) => void,
  *   onLateSession?: (session: import("./session-contract.mjs").StoredSession) => void,
  *   onRecovery?: (error: BackendTurnFailure, attempt: number) => string | void}} [hooks]
  */
 export async function runWithRecovery(
   backend,
   params,
-  { onFailure, onLateSession, onRecovery } = {},
+  { retry = true, onFailure, onLateSession, onRecovery } = {},
 ) {
   let session = params.session;
   /** @type {RecoveryFailure | undefined} */
@@ -241,6 +241,7 @@ export async function runWithRecovery(
       active = false;
       onFailure?.(error, attempt);
       if (
+        !retry ||
         params.signal.aborted ||
         !(error instanceof BackendTurnFailure) ||
         !error.recoverable ||

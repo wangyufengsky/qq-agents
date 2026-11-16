@@ -9,6 +9,10 @@ import {
 } from "./functional-contracts.mjs";
 import { toolSpecs } from "../tools/specs.mjs";
 import {
+  createSubjectChecklist,
+  subjectChecklistItems,
+} from "./subject-checklist.mjs";
+import {
   runWithRecovery,
   failureSummary,
   sessionWasUnchanged,
@@ -119,6 +123,8 @@ export class TurnRunner {
     const ctx = runtime.makeContext(agentId, conversation),
       { controller } = ctx;
     ctx.freshSubject = freshSubject;
+    if (conversation === SUBJECT)
+      ctx.subjectChecklist = createSubjectChecklist(reasons);
     ctx.messageTimingId = timingId;
     let resolveDone;
     ctx.done = new Promise((resolve) => {
@@ -184,7 +190,7 @@ export class TurnRunner {
       const createExchange =
         resolveFunctionalContract(ctx.functionalAgent)?.createExchange ??
         conversationExchange;
-      const result = await this.runBackend(ctx, backend, {
+      const params = {
         ...createExchange(runtime, ctx, {
           prepared,
           imageInput,
@@ -230,7 +236,8 @@ export class TurnRunner {
             runtime.faults.set(agentId, "GENERATED_IMAGE_REGISTRATION_FAILED");
           }
         },
-      });
+      };
+      const result = await this.runBackend(ctx, backend, params);
       if (result?.streamReattached && ctx.pendingDeliveries) {
         // The native terminal and an already accepted HTTP tool request can
         // settle independently. Keep this turn alive for its existing receipt.
@@ -238,6 +245,8 @@ export class TurnRunner {
           .get(a.connectionId + "|" + conversation)
           ?.catch(() => {});
       }
+      if (ctx.subjectChecklist && !controller.signal.aborted)
+        await this.runSubjectChecklist(ctx, mem, backend, params);
       outcome = controller.signal.aborted
         ? "cancelled"
         : ctx.confirmedSends
@@ -377,7 +386,58 @@ export class TurnRunner {
       });
     }
   }
-  async runBackend(ctx, backend, params) {
+  async runSubjectChecklist(ctx, memory, backend, params) {
+    const runtime = this.runtime;
+    const session = memory.state(ctx.conversation).session;
+    if (
+      !session ||
+      session.dshStreamUnverified ||
+      !ctx.subjectInboxInputSubmitted ||
+      ctx.subjectChecklist.pendingTools
+    )
+      return;
+    try {
+      runtime.assertActive(ctx);
+      const items = subjectChecklistItems(runtime, ctx);
+      if (!items.length) return;
+      const prompt = [
+        "收尾检查单（本回合只提示一次）。只处理有实质变化的事项；可以全部跳过并直接结束。沿用本轮剩余工具额度。",
+        ...items.map((item) => "- " + item),
+        ...(backend.config?.type === "dsh"
+          ? [
+              `本回合工具凭据 context=${ctx.token}，仅用于 bridge_tools / bridge_call 外层参数。`,
+            ]
+          : []),
+      ].join("\n");
+      ctx.estimatedAdded += prompt.length;
+      await this.runBackend(
+        ctx,
+        backend,
+        {
+          ...params,
+          session,
+          prompt,
+          inputImages: [],
+          appendPrompt: undefined,
+          beforeInputSubmitted: undefined,
+          onInputSubmitted: undefined,
+        },
+        { checklist: true },
+      );
+    } catch (error) {
+      // A failed optional check must not replay the completed opening.
+      if (!ctx.controller.signal.aborted)
+        runtime.diagnostics.report(
+          Error("SUBJECT_CHECKLIST_FAILED", { cause: error }),
+          {
+            component: "runtime",
+            agentId: ctx.agentId,
+            conversation: ctx.conversation,
+          },
+        );
+    }
+  }
+  async runBackend(ctx, backend, params, { checklist = false } = {}) {
     const runtime = this.runtime;
     const mem = runtime.memory.bind(ctx.agentId);
     const backendId = runtime.agent(ctx.agentId).backendId;
@@ -385,6 +445,7 @@ export class TurnRunner {
     const stopTyping = startTypingIndicator(runtime, ctx);
     try {
       const result = await runWithRecovery(backend, params, {
+        retry: !checklist,
         // A late native reference is useful as history but never owns the turn.
         onLateSession: (session) => {
           if (runtime.stopped) return;
@@ -443,6 +504,7 @@ export class TurnRunner {
       });
       return result;
     } catch (error) {
+      if (checklist) throw error;
       // A continuation can fail before its own input, after the original
       // prompt was already submitted. Its display markers must stay committed.
       ctx.inputNotSubmitted = sessionWasUnchanged(error) && !recoveryStarted;
