@@ -72,7 +72,7 @@ jobs:
           ffmpeg -version | Select-Object -First 1
           ffprobe -version | Select-Object -First 1
       - run: npm ci
-      - name: Smoke-test native desktop drag on Windows
+      - name: Smoke-test Windows native drag and technical window coverage
         if: runner.os == 'Windows'
         timeout-minutes: 6
         shell: pwsh
@@ -93,6 +93,8 @@ jobs:
           if (-not (Test-Path $env:QQ_TEST_ELECTRON)) { throw 'Pinned Electron executable is missing.' }
           node --test --test-timeout=120000 test/desktop-home-native-drop.browser.mjs
           if ($LASTEXITCODE -ne 0) { throw "Native desktop drag smoke failed: $LASTEXITCODE" }
+          node --test --test-timeout=120000 test/desktop-home-windows-coverage.browser.mjs
+          if ($LASTEXITCODE -ne 0) { throw "Windows window coverage probe failed: $LASTEXITCODE" }
       - name: Set public CI commit identity for privacy checks
         run: |
           git config user.name 'github-actions[bot]'
