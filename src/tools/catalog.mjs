@@ -1,5 +1,5 @@
 import { DESKTOP_CONVERSATION } from "../home/desktop-decision.mjs";
-import { qqVideoAvailable } from "../video/policy.mjs";
+import { linkedVideoAvailable } from "../video/policy.mjs";
 import { desktopToolAvailable } from "./desktop-policy.mjs";
 import { DESKTOP_VISIT_TOOL } from "../home/desktop-visits.mjs";
 import { DESKTOP_INVITATION_TOOL } from "../home/desktop-invitations.mjs";
@@ -129,7 +129,7 @@ export function toolAvailable(agent, name, conversation, config) {
   )
     return false;
   if (name === "video_read")
-    return qqVideoAvailable(agent, conversation, config);
+    return linkedVideoAvailable(agent, conversation, config);
   if (name === "memory_recall")
     return Boolean(config && memoryRecallPolicy(agent, conversation, config));
   if (name === "subject_next_wake")

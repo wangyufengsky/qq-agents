@@ -21,9 +21,12 @@ export function videoVision(agent, config) {
   );
 }
 
-export function qqVideoAvailable(agent, conversation, config) {
+export function linkedVideoAvailable(agent, conversation, config) {
   return (
-    /^(?:private|group):\d+$/.test(conversation) &&
+    (conversation === "@subject"
+      ? agent.subject?.readTools?.includes(VIDEO_READ) &&
+        agent.network?.autonomous === true
+      : /^(?:private|group):\d+$/.test(conversation)) &&
     agent.tools.includes(VIDEO_READ) &&
     agent.apps?.enabled &&
     agent.apps.platforms.includes("bilibili") &&

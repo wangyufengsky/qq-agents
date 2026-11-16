@@ -51,6 +51,7 @@ export const subjectPolicySchema = z
       .array(
         z.enum([
           ...SUBJECT_APP_TOOLS,
+          "video_read",
           "web_fetch",
           "web_screenshot",
           "image_save",

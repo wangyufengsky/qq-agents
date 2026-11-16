@@ -7,6 +7,7 @@ import path from "node:path";
 import test from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { AppBrowsing } from "../src/apps/service.mjs";
 import { mediaLease } from "../src/tools/media-lease.mjs";
 import { runNativeSocial } from "../src/backends/native-social.mjs";
 import { desktopToken } from "../src/home/desktop-auth.mjs";
@@ -203,6 +204,97 @@ function makeSample(file, subtitles) {
     file,
   ]);
 }
+
+test("subject video accepts its own Bilibili browsing records and revokes an outstanding result", async (t) => {
+  const cfg = config(2);
+  for (const role of cfg.agents) {
+    role.tools.push("video_read", "app_browse");
+    role.behavior.imageInput.enabled = true;
+    role.network.autonomous = true;
+    role.apps.enabled = true;
+    role.apps.platforms = ["bilibili"];
+    role.apps.hours = { start: "00:00", end: "00:00", timezone: "UTC" };
+    role.subject.enabled = true;
+    role.subject.maxToolCallsPerTurn = 20;
+  }
+  const { runtime, root } = fixture(t, { cfg });
+  runtime.apps = new AppBrowsing(runtime, {
+    adapter: { perform: async () => ({ items: [{ url, title: "fixture" }] }) },
+  });
+  const role = runtime.agent("agent-0");
+  assert(!runtime.toolsFor(role, "@subject").includes("video_read"));
+  assert(runtime.toolsFor(role, "private:30000").includes("video_read"));
+  role.subject.readTools.push("video_read");
+  assert(runtime.toolsFor(role, "@subject").includes("video_read"));
+  assert(
+    !runtime
+      .toolsFor(runtime.agent("agent-1"), "@subject")
+      .includes("video_read"),
+  );
+
+  const browse = async (ctx) => {
+    const result = await runtime.callTool(ctx, "app_browse", {
+      platform: "bilibili",
+      entry: "hot",
+    });
+    return result.items[0];
+  };
+  const qqRecord = await runtime.withContext(
+    "agent-0",
+    "private:30000",
+    browse,
+  );
+  const peerRecord = await runtime.withContext("agent-1", "@subject", browse);
+  await runtime.withContext("agent-0", "@subject", async (ctx) => {
+    const record = await browse(ctx);
+    const overview = { sourceId: record.recordId, action: "overview" };
+    const read = (args) => runtime.callTool(ctx, "video_read", args);
+    for (const foreign of [qqRecord, peerRecord]) {
+      await assert.rejects(
+        read({ ...overview, sourceId: foreign.recordId }),
+        /APP_RECORD_NOT_FOUND/,
+      );
+    }
+    const card = runtime.apps.record(ctx, {
+      ok: true,
+      origin: "qq-card",
+      platform: "bilibili",
+      kind: "video-metadata",
+      url,
+    });
+    await assert.rejects(
+      read({ ...overview, sourceId: card.recordId }),
+      /VIDEO_SOURCE_DENIED/,
+    );
+    await assert.rejects(
+      read({ ...overview, linkIndex: 1 }),
+      /VIDEO_SOURCE_DENIED/,
+    );
+
+    const file = path.join(root, "subject-video.mp4");
+    makeSample(file);
+    // Reuse a local sample at the download boundary so the tool runs offline.
+    ctx.videoSource = {
+      sourceId: record.recordId,
+      origin: record.url,
+      file,
+      duration: 61000,
+    };
+    const viewed = await read(overview);
+    assert(viewed.content.some(({ type }) => type === "image"));
+    const detail = await runtime.callTool(
+      ctx,
+      "video_read",
+      { ...overview, action: "rewatch", startMs: 1000, endMs: 8000 },
+      { deferInput: true },
+    );
+    assert(detail.content.some(({ type }) => type === "image"));
+    assert(detail[mediaLease]());
+    role.network.autonomous = false;
+    assert(!detail[mediaLease]());
+    await assert.rejects(read(overview), /TOOL_DISABLED/);
+  });
+});
 
 test("DSH relay delivers a video above the text frame budget and remembers only its full result", async (t) => {
   const cfg = config(1);
