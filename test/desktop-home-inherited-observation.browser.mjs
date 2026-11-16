@@ -38,7 +38,7 @@ import { join } from "node:path";
 app.setPath("userData", join(app.getAppPath(), "profile"));
 app.whenReady().then(async () => {
   const win = new BrowserWindow({ x: 70, y: 470, width: 300, height: 220 });
-  await win.loadURL("data:text/html," + encodeURIComponent('<title>${targetTitle}</title><body style="background: rebeccapurple">'));
+  await win.loadURL("data:text/html," + encodeURIComponent('<title>${targetTitle}</title><body style="margin:0;background:linear-gradient(to right,#c82828 50%,#2864c8 50%)">'));
   globalThis.focusTarget = () => { app.focus({ steal: true }); win.moveTop(); win.focus(); };
   globalThis.focusTarget();
 });`,
@@ -47,7 +47,7 @@ app.whenReady().then(async () => {
   return directory;
 }
 
-test("the inherited list offers window approach from a scheduled public activity", async (t) => {
+async function withWindowObservation(t, publicActivity, run) {
   const executablePath = process.env.QQ_TEST_ELECTRON;
   const nativeHelper = process.env.QQ_AGENTS_AGENT_DESKTOP_EXECUTABLE;
   if (process.platform !== "darwin" || !executablePath || !nativeHelper) {
@@ -58,13 +58,13 @@ test("the inherited list offers window approach from a scheduled public activity
   }
   const cfg = config(2);
   cfg.desktopHome.enabled = true;
-  cfg.desktopHome.publicPerception.enabled = true;
+  cfg.desktopHome.publicPerception.enabled = publicActivity;
   cfg.desktopHome.autonomousObservation = true;
   delete cfg.desktopHome.observationRoles;
   cfg.desktopHome.screenView.enabled = true;
   cfg.desktopHome.toolRoles = ["agent-0"];
   cfg.desktopHome.activityRoles = ["agent-0"];
-  cfg.desktopHome.bodyControlRoles = ["agent-0"];
+  cfg.desktopHome.bodyControlRoles = publicActivity ? ["agent-0"] : [];
   cfg.agents[0].behavior.imageInput.enabled = true;
   const { runtime, root } = fixture(t, { cfg });
   const profile = join(root, "electron");
@@ -101,8 +101,9 @@ test("the inherited list offers window approach from a scheduled public activity
     await waitFor(
       () =>
         host.mode === "presence" &&
-        host.client?.bodyWindowApproach &&
-        host.client?.bodyPublic,
+        host.client?.observationProtocol === 2 &&
+        (!publicActivity ||
+          (host.client?.bodyWindowApproach && host.client?.bodyPublic)),
       "Capabilities did not negotiate",
     );
     const role = host.live.room.roles[0];
@@ -177,91 +178,25 @@ test("the inherited list offers window approach from a scheduled public activity
       () => host.observation.windows.get(role.id),
       "The synthetic target was not authorized",
     );
+    if (!publicActivity) await panelWindow.evaluate((win) => win.hide());
     await targetApp.evaluate(() => globalThis.focusTarget());
     await waitFor(
       () =>
         host.observation.targetReady(grant) && host.activityCurrent(role.id),
       "The authorized target did not become ready",
     );
-    const targetBounds = await targetWindow.evaluate((win) => win.getBounds());
-    const adapter = runtime.backendConnections.adapter(runtime.agent(role.id));
-    let receipt, adapterError, submitted;
-    adapter.runDesktop = async (params) => {
-      try {
-        params.beforeInput();
-        await params.onRunStarted();
-        params.onInputSubmitted();
-        assert.equal(params.managedContext.conversation, "@desktop-activity");
-        assert.ok(
-          params.tools.some(
-            ({ function: tool }) =>
-              tool.name === "desktop_body_control" &&
-              JSON.stringify(tool.parameters).includes("approach-window"),
-          ),
-        );
-        assert.equal(params.inputImages, undefined);
-        submitted = true;
-        receipt = await params.callTool("desktop_body_control", {
-          type: "approach-window",
-          requestId: randomUUID(),
-        });
-        if (!params.signal.aborted)
-          await params.callTool("desktop_activity_decide", {
-            action: "silent",
-          });
-      } catch (error) {
-        adapterError = error;
-        throw error;
-      }
-    };
-    const visit = host.live.visits.get(role.id);
-    const runScheduledActivity = () => {
-      receipt = submitted = undefined;
-      visit.publicActivity.due = runtime.now() - 1;
-      return host.live.advanceActivity(runtime.now());
-    };
-    await runScheduledActivity();
-    assert.ifError(adapterError);
-    assert.equal(receipt?.status, "completed");
-    assert.equal(receipt.arrivalConfirmed, true);
-    assert.equal("position" in receipt, false);
-    const arrived = await bounds();
-    const horizontal = Math.max(
-      0,
-      arrived.x - targetBounds.x - targetBounds.width,
-      targetBounds.x - arrived.x - arrived.width,
-    );
-    const vertical = Math.max(
-      0,
-      arrived.y - targetBounds.y - targetBounds.height,
-      targetBounds.y - arrived.y - arrived.height,
-    );
-    assert.ok(horizontal > 0 || vertical > 0);
-    assert.ok(Math.hypot(horizontal, vertical) < 60);
-
-    await moveAway();
-    const second = runScheduledActivity();
-    await waitFor(() => submitted, "The second regular activity did not start");
-    await waitFor(
-      async () => (await bounds()).x < 680,
-      "The second movement did not begin",
-    );
-    const { x, y, width, height } = await spriteButton.boundingBox();
-    const grip = { x: x + width / 2, y: y + height / 2 };
-    await sprite.mouse.move(grip.x, grip.y);
-    await sprite.mouse.down();
-    await sprite.mouse.move(grip.x + 45, grip.y + 15, { steps: 3 });
-    await sprite.mouse.up();
-    await second;
-    // The public scheduler may cancel its turn before the desktop receipt arrives.
-    if (adapterError)
-      assert.equal(adapterError.message, "DESKTOP_VISIT_UNAVAILABLE");
-    else assert.equal(receipt?.status, "cancelled");
-    assert.equal(host.live.visits.get(role.id), visit);
-    assert.equal(host.observation.windows.get(role.id), grant);
-    const stopped = await bounds();
-    await delay(650);
-    assert.deepEqual(await bounds(), stopped);
+    await run({
+      runtime,
+      host,
+      role,
+      grant,
+      electron,
+      targetWindow,
+      bounds,
+      moveAway,
+      sprite,
+      spriteButton,
+    });
   } finally {
     try {
       await targetApp?.close();
@@ -273,4 +208,211 @@ test("the inherited list offers window approach from a scheduled public activity
       }
     }
   }
+}
+
+test("the inherited list offers window approach from a scheduled public activity", async (t) => {
+  await withWindowObservation(
+    t,
+    true,
+    async ({
+      runtime,
+      host,
+      role,
+      grant,
+      targetWindow,
+      bounds,
+      moveAway,
+      sprite,
+      spriteButton,
+    }) => {
+      const targetBounds = await targetWindow.evaluate((win) =>
+        win.getBounds(),
+      );
+      const adapter = runtime.backendConnections.adapter(
+        runtime.agent(role.id),
+      );
+      let receipt, adapterError, submitted;
+      adapter.runDesktop = async (params) => {
+        try {
+          params.beforeInput();
+          await params.onRunStarted();
+          params.onInputSubmitted();
+          assert.equal(params.managedContext.conversation, "@desktop-activity");
+          assert.ok(
+            params.tools.some(
+              ({ function: tool }) =>
+                tool.name === "desktop_body_control" &&
+                JSON.stringify(tool.parameters).includes("approach-window"),
+            ),
+          );
+          assert.equal(params.inputImages, undefined);
+          submitted = true;
+          receipt = await params.callTool("desktop_body_control", {
+            type: "approach-window",
+            requestId: randomUUID(),
+          });
+          if (!params.signal.aborted)
+            await params.callTool("desktop_activity_decide", {
+              action: "silent",
+            });
+        } catch (error) {
+          adapterError = error;
+          throw error;
+        }
+      };
+      const visit = host.live.visits.get(role.id);
+      const runScheduledActivity = () => {
+        receipt = submitted = undefined;
+        visit.publicActivity.due = runtime.now() - 1;
+        return host.live.advanceActivity(runtime.now());
+      };
+      await runScheduledActivity();
+      assert.ifError(adapterError);
+      assert.equal(receipt?.status, "completed");
+      assert.equal(receipt.arrivalConfirmed, true);
+      assert.equal("position" in receipt, false);
+      const arrived = await bounds();
+      const horizontal = Math.max(
+        0,
+        arrived.x - targetBounds.x - targetBounds.width,
+        targetBounds.x - arrived.x - arrived.width,
+      );
+      const vertical = Math.max(
+        0,
+        arrived.y - targetBounds.y - targetBounds.height,
+        targetBounds.y - arrived.y - arrived.height,
+      );
+      assert.ok(horizontal > 0 || vertical > 0);
+      assert.ok(Math.hypot(horizontal, vertical) < 60);
+
+      await moveAway();
+      const second = runScheduledActivity();
+      await waitFor(
+        () => submitted,
+        "The second regular activity did not start",
+      );
+      await waitFor(
+        async () => (await bounds()).x < 680,
+        "The second movement did not begin",
+      );
+      const { x, y, width, height } = await spriteButton.boundingBox();
+      const grip = { x: x + width / 2, y: y + height / 2 };
+      await sprite.mouse.move(grip.x, grip.y);
+      await sprite.mouse.down();
+      await sprite.mouse.move(grip.x + 45, grip.y + 15, { steps: 3 });
+      await sprite.mouse.up();
+      await second;
+      // The public scheduler may cancel its turn before the desktop receipt arrives.
+      if (adapterError)
+        assert.equal(adapterError.message, "DESKTOP_VISIT_UNAVAILABLE");
+      else assert.equal(receipt?.status, "cancelled");
+      assert.equal(host.live.visits.get(role.id), visit);
+      assert.equal(host.observation.windows.get(role.id), grant);
+      const stopped = await bounds();
+      await delay(650);
+      assert.deepEqual(await bounds(), stopped);
+    },
+  );
+});
+
+test("macOS captures an authorized native window and delivers its pixels in the restricted turn", async (t) => {
+  await withWindowObservation(
+    t,
+    false,
+    async ({ runtime, host, role, grant, electron }) => {
+      let input, adapterError;
+      const adapter = runtime.backendConnections.adapter(
+        runtime.agent(role.id),
+      );
+      adapter.runDesktop = async (params) => {
+        try {
+          params.beforeInput();
+          await params.onRunStarted();
+          assert.equal(
+            params.managedContext.conversation,
+            "@desktop-observation",
+          );
+          assert.deepEqual(
+            params.tools.map(({ function: tool }) => tool.name),
+            ["desktop_activity_decide"],
+          );
+          assert.equal(params.inputImages.length, 1);
+          [input] = params.inputImages;
+          params.onInputSubmitted();
+          await params.callTool("desktop_activity_decide", {
+            action: "silent",
+          });
+        } catch (error) {
+          adapterError = error;
+          throw error;
+        }
+      };
+      const observe = () =>
+        host.run(
+          {
+            kind: "activity",
+            actor: role.id,
+            people: [],
+            messages: [],
+            observation: grant,
+          },
+          new AbortController().signal,
+        );
+      const decision = await observe();
+      assert.ifError(adapterError);
+      assert.equal(
+        input?.mimeType,
+        "image/jpeg",
+        "The restricted backend did not receive a native frame",
+      );
+      const colors = await electron.evaluate(({ nativeImage }, data) => {
+        const image = nativeImage.createFromBuffer(Buffer.from(data, "base64"));
+        const { width, height } = image.getSize();
+        const bitmap = image.toBitmap();
+        return [0.25, 0.75].map((x) => {
+          const offset =
+            4 * (Math.floor(height * 0.7) * width + Math.floor(width * x));
+          return Array.from(bitmap.subarray(offset, offset + 3));
+        });
+      }, input.data);
+      const expectedColors = [
+        [40, 40, 200],
+        [200, 100, 40],
+      ];
+      for (const [i, measured] of colors.entries()) {
+        const expected = expectedColors[i];
+        assert.equal(measured.length, 3);
+        assert.ok(
+          measured.every((value, i) => Math.abs(value - expected[i]) <= 22),
+          JSON.stringify(colors),
+        );
+      }
+      assert.ok(
+        host
+          .clientSnapshot()
+          .frameReceipts.some(
+            (receipt) =>
+              receipt.agentId === role.id &&
+              receipt.source === "observation" &&
+              receipt.state === "model-submitted",
+          ),
+      );
+      host.observation.finish(grant, decision);
+      host.command({
+        client: host.client.id,
+        action: "observation-revoke",
+        data: {
+          roomEpoch: grant.roomEpoch,
+          grantId: grant.grantId,
+        },
+      });
+      input = undefined;
+      assert.equal(host.observation.find(grant.grantId), undefined);
+      assert.equal(host.screen.request(), undefined);
+      await assert.rejects(observe(), {
+        message: "DESKTOP_VISIT_UNAVAILABLE",
+      });
+      assert.equal(input, undefined);
+    },
+  );
 });

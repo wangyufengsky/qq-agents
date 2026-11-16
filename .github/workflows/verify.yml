@@ -95,6 +95,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Native desktop drag smoke failed: $LASTEXITCODE" }
           node --test --test-timeout=120000 test/desktop-home-windows-coverage.browser.mjs
           if ($LASTEXITCODE -ne 0) { throw "Windows window coverage probe failed: $LASTEXITCODE" }
+      - name: Compile the macOS capture helper
+        if: runner.os == 'macOS'
+        run: swiftc desktop/home/macos-window-frame.swift -o "$RUNNER_TEMP/desktop-home-window-frame"
       - name: Set public CI commit identity for privacy checks
         run: |
           git config user.name 'github-actions[bot]'

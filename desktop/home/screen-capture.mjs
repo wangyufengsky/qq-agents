@@ -7,6 +7,7 @@ import {
 } from "electron";
 import { fileURLToPath } from "node:url";
 import { setTimeout } from "node:timers";
+import { macosWindowFrame } from "./macos-capture-snapshot.mjs";
 import { findScreenSource } from "./screen-source.mjs";
 
 export const screenCaptureSupported = ["darwin", "win32"].includes(
@@ -121,6 +122,13 @@ export async function captureScreenSource(
   observe = false,
 ) {
   if (!canCapture(maxEdge, maxBytes, signal)) return;
+  if (observe && target.identity && process.platform === "darwin") {
+    const [major, minor] = process.getSystemVersion().split(".").map(Number);
+    // The video stream can give the target a second, frontmost window for its
+    // sharing indicator. Capture one frame without starting that stream.
+    if (major > 14 || (major === 14 && minor >= 2))
+      return macosWindowFrame(target.identity, maxEdge, maxBytes, signal);
+  }
   const isolated = session.fromPartition("desktop-home-screen-capture");
   const win = new BrowserWindow({
     show: false,
