@@ -110,6 +110,25 @@ test("paper nest opens, retries and closes the desktop home from its header", as
     name: "公共感知与自主唤醒",
   });
   const perception = publicSettings.getByRole("checkbox");
+  const publicCadence = publicSettings.getByLabel("公共活动节奏");
+  const advanced = publicSettings.locator("details");
+  assert.equal(await publicCadence.inputValue(), "normal");
+  assert.equal(await advanced.evaluate((element) => element.open), false);
+  await advanced.locator("summary").click();
+  const nearby = publicSettings.getByLabel("普通动作感知距离（DIP）");
+  await nearby.fill("400");
+  await publicCadence.selectOption("quiet");
+  assert.equal(
+    await publicSettings.getByLabel("首次活动最短等待（分钟）").inputValue(),
+    "10",
+  );
+  assert.equal(await nearby.inputValue(), "400");
+  await publicCadence.selectOption("clingy");
+  assert.equal(
+    await publicSettings.getByLabel("恢复后最长等待（分钟）").inputValue(),
+    "3",
+  );
+  await publicCadence.selectOption("normal");
   const idleLimit = publicSettings.getByLabel("每小时空闲活动上限");
   const totalLimit = publicSettings.getByLabel("每小时自主活动总上限");
   assert.equal(await perception.isChecked(), false);
@@ -118,6 +137,7 @@ test("paper nest opens, retries and closes the desktop home from its header", as
   await perception.check();
   await idleLimit.fill("2");
   await totalLimit.fill("5");
+  assert.equal(await publicCadence.inputValue(), "custom");
   const displayMinutes = page.getByLabel("显示器观察授权时长（分钟）");
   const displayAttempts = page.getByLabel("显示器观察最多取图尝试次数");
   assert.equal(await displayMinutes.inputValue(), "15");
@@ -131,11 +151,46 @@ test("paper nest opens, retries and closes the desktop home from its header", as
   assert.equal(runtime.config.desktopHome.publicPerception.enabled, true);
   assert.equal(runtime.config.desktopHome.publicPerception.idleLimit, 2);
   assert.equal(runtime.config.desktopHome.publicPerception.totalLimit, 5);
+  assert.equal(runtime.config.desktopHome.publicPerception.nearbyDip, 400);
   assert.deepEqual(runtime.config.desktopHome.displayObservation, {
     minutes: 9,
     attempts: 2,
   });
   assert.equal(await idleLimit.inputValue(), "2");
+  await page.reload();
+  await page.getByRole("button", { name: "更多入口" }).click();
+  await page.getByRole("button", { name: "桌面小窝设置", exact: true }).click();
+  assert.equal(await page.getByLabel("公共活动节奏").inputValue(), "custom");
+  for (const [preset, expected] of [
+    ["quiet", [10, 15, 25, 40, 5, 8, 1, 2]],
+    ["normal", [5, 8, 15, 25, 2, 5, 3, 4]],
+    ["clingy", [2, 4, 8, 12, 1, 3, 4, 6]],
+  ]) {
+    await page.getByLabel("公共活动节奏").selectOption(preset);
+    await page.getByRole("button", { name: "保存桌面设置" }).click();
+    await page.getByText("桌面小窝设置已保存。", { exact: true }).waitFor();
+    const config = runtime.config.desktopHome.publicPerception;
+    assert.deepEqual(
+      [
+        config.firstMin,
+        config.firstMax,
+        config.idleMin,
+        config.idleMax,
+        config.resumeMin,
+        config.resumeMax,
+        config.idleLimit,
+        config.totalLimit,
+      ],
+      expected,
+    );
+    assert.equal(config.nearbyDip, 400);
+    await page.reload();
+    await page.getByRole("button", { name: "更多入口" }).click();
+    await page
+      .getByRole("button", { name: "桌面小窝设置", exact: true })
+      .click();
+    assert.equal(await page.getByLabel("公共活动节奏").inputValue(), preset);
+  }
   assert.deepEqual(runtime.config.desktopHome.residentPreferences, {
     "agent-0": { quiet: true, activityMinutes: 15 },
   });

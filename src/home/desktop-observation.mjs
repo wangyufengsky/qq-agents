@@ -390,7 +390,16 @@ export class DesktopObservation extends DesktopLocalGrant {
           grant,
           direct:
             grant.scope !== "display" &&
-            this.host.runtime.config.desktopHome.observationRoles === undefined,
+            this.host.runtime.config.desktopHome.observationRoles ===
+              undefined &&
+            !(
+              this.windows.get(agentId) === grant &&
+              this.host.mode === "presence" &&
+              this.host.client?.observationProtocol === 2 &&
+              this.host.client?.bodyProtocol === 2 &&
+              this.host.client?.bodyWindowApproach === true &&
+              this.host.bodyControlAvailable(agentId)
+            ),
         };
     }
   }

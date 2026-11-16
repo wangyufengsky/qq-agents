@@ -1069,3 +1069,162 @@ test("negotiated manual grants expire while idle and cannot reuse IDs", (t) => {
     /DESKTOP_BROWSER_UNAVAILABLE/,
   );
 });
+
+test("inherited observation roles offer a verified window in presence mode", (t) => {
+  const { host, runtime, command, sync } = setup(t);
+  delete runtime.config.desktopHome.observationRoles;
+  const roomEpoch = sync().room.roomEpoch;
+  command("sync", {
+    visible: true,
+    dragged: [],
+    observationProtocol: 2,
+    bodyProtocol: 2,
+    bodyWindowApproach: true,
+  });
+  host.mode = "presence";
+  const grantId = randomUUID();
+  command("window-observation-grant-batch", {
+    targetId: randomUUID(),
+    grants: [
+      {
+        roomEpoch,
+        agentId: "agent-0",
+        grantId,
+        modeRevision: host.modeRevision,
+        visitId: host.body.visitId(host.live.visits.get("agent-0")),
+      },
+    ],
+  });
+  command("observation-state", { roomEpoch, grantId, state: "ready" });
+  assert.equal(host.observation.forActor("agent-0").direct, false);
+  const bodyControlAvailable = host.bodyControlAvailable.bind(host);
+  host.bodyControlAvailable = () => false;
+  assert.equal(host.observation.forActor("agent-0").direct, true);
+  host.bodyControlAvailable = bodyControlAvailable;
+  host.client.bodyWindowApproach = false;
+  assert.equal(host.observation.forActor("agent-0").direct, true);
+  host.client.bodyWindowApproach = true;
+  host.mode = "work";
+  assert.equal(host.observation.forActor("agent-0").direct, true);
+});
+
+for (const outcome of [
+  "observe",
+  "silent",
+  "mode-change",
+  "mode-change-after-decision",
+  "grant-replaced",
+  "unrelated-revoke",
+]) {
+  test(`inherited window observation schedules ${outcome} safely`, async (t) => {
+    const { host, runtime, command, backend, payload, time } = setup(t);
+    delete runtime.config.desktopHome.observationRoles;
+    const sync = () =>
+      command("sync", {
+        visible: true,
+        dragged: [],
+        observationProtocol: 2,
+        bodyProtocol: 2,
+        bodyWindowApproach: true,
+      });
+    const roomEpoch = sync().room.roomEpoch;
+    host.setMode("presence");
+    const grantWindow = () => {
+      const grantId = randomUUID();
+      command("window-observation-grant-batch", {
+        targetId: randomUUID(),
+        grants: [
+          {
+            roomEpoch,
+            agentId: "agent-0",
+            grantId,
+            modeRevision: host.modeRevision,
+            visitId: host.body.visitId(host.live.visits.get("agent-0")),
+          },
+        ],
+      });
+      command("observation-state", { roomEpoch, grantId, state: "ready" });
+      return grantId;
+    };
+    const original = grantWindow();
+    const unrelatedGrant = randomUUID();
+    if (outcome === "unrelated-revoke")
+      command("screen-grant", {
+        agentId: "agent-1",
+        roomEpoch,
+        grantId: unrelatedGrant,
+        modeRevision: host.modeRevision,
+      });
+    const conversations = [];
+    let rejectedDecision = false;
+    let recordedDecision = false;
+    const observes = outcome === "observe" || outcome === "unrelated-revoke";
+    const entered = Promise.withResolvers();
+    const release = Promise.withResolvers();
+    backend.runDesktop = async (params) => {
+      params.beforeInput();
+      params.onInputSubmitted();
+      const conversation = params.managedContext.conversation;
+      conversations.push(conversation);
+      if (conversation === observation) {
+        assert.equal(params.inputImages[0].data, jpeg);
+        await params.callTool(decision, { action: "silent" });
+        return;
+      }
+      assert.equal(params.inputImages, undefined);
+      assert.match(JSON.stringify(params.tools), /approach-window/);
+      if (outcome === "mode-change-after-decision") {
+        await params.callTool(decision, { action: "observe" });
+        recordedDecision = true;
+      }
+      entered.resolve();
+      await release.promise;
+      if (outcome === "mode-change" || outcome === "grant-replaced") {
+        await assert.rejects(
+          params.callTool(decision, { action: "observe" }),
+          /DESKTOP_DECISION_INVALID/,
+        );
+        rejectedDecision = true;
+      } else if (!recordedDecision)
+        await params.callTool(decision, {
+          action: observes ? "observe" : "silent",
+        });
+    };
+    time(2 * minute);
+    command("observation-state", {
+      roomEpoch,
+      grantId: original,
+      state: "ready",
+    });
+    sync();
+    const active = host.live.active;
+    await entered.promise;
+    if (outcome === "mode-change" || outcome === "mode-change-after-decision")
+      host.setMode("work");
+    if (outcome === "unrelated-revoke")
+      command("screen-revoke", { roomEpoch, grantId: unrelatedGrant });
+    if (outcome === "grant-replaced") {
+      command("observation-revoke", { roomEpoch, grantId: original });
+      grantWindow();
+    }
+    release.resolve();
+    if (observes) {
+      await new Promise(setImmediate);
+      const { screenRequest } = sync();
+      assert.equal(screenRequest.grantId, original);
+      host.screen.claim(payload(screenRequest));
+      host.screen.receive({ ...payload(screenRequest), data: jpeg });
+    }
+    await active.done;
+    assert.equal(recordedDecision, outcome === "mode-change-after-decision");
+    assert.equal(
+      rejectedDecision,
+      outcome === "mode-change" || outcome === "grant-replaced",
+    );
+    assert.deepEqual(
+      conversations,
+      observes ? ["@desktop-activity", observation] : ["@desktop-activity"],
+    );
+    assert.equal(sync().screenRequest, undefined);
+  });
+}
