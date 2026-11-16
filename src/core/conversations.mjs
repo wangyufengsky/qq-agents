@@ -86,7 +86,7 @@ export class ConversationEngine {
       intent,
       intent.expiresAt <= now ? "expired" : "deferred",
       "queued contact opportunity no longer allowed",
-      { eligibleAt: now + cooldown },
+      { eligibleAt: now + (intent.reminder ? 0 : cooldown) },
     );
   }
   revokeAdmission(id, conversation) {
@@ -439,7 +439,7 @@ export class ConversationEngine {
         const valid =
           i.status === "handedoff" &&
           i.expiresAt > now &&
-          runtime.subject.contactOpportunity(a, conversation);
+          runtime.subject.contactOpportunity(a, conversation, i);
         if (!valid)
           this.deferQueuedContact(id, i, now, a.subject.contactCooldownMs);
         return valid;

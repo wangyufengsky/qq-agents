@@ -366,6 +366,13 @@ export class DeliveryService {
     const proactive = contactFreeAction
       ? null
       : runtime.subject.beforeDelivery(ctx);
+    if (
+      proactive?.reminder &&
+      (action ||
+        !Array.isArray(intent) ||
+        intent.some(({ type }) => !["text", "at", "reply"].includes(type)))
+    )
+      throw Error("SUBJECT_REMINDER_TEXT_ONLY");
     if (proactive) requestId = "intent:" + proactive.id;
     if (typeof requestId !== "string" || !requestId || requestId.length > 200)
       throw Error("INVALID_REQUEST_ID");
