@@ -196,6 +196,7 @@ const AGENT_TOOL_GROUPS = [
       subject_inbox_submit: "递交会话提议",
       subject_inbox_list: "查看会话提议",
       subject_inbox_decide: "处理会话提议",
+      subject_next_wake: "一次性空闲唤醒",
       subject_rest: "自主休息",
     },
   },

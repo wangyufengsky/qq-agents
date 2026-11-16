@@ -376,6 +376,15 @@ export const mindDefinitions = {
       z.object({ ...reviewFields, action: z.literal("dismiss") }).strict(),
     ]),
   ],
+  subject_next_wake: [
+    "仅主人格可安排一次空闲唤醒。用 minutes 设置 10 至 1440 分钟后的时间，note 简记届时要做什么。新设定替换上次，仍受原有检查额度、作息与暂停规则约束。",
+    z
+      .object({
+        minutes: z.number().int().min(10).max(1440),
+        note: z.string().trim().min(1).max(200),
+      })
+      .strict(),
+  ],
   subject_rest: [
     "主人格自主决定休息 1 分钟至 24 小时。已有回合收尾后开始计时。earlyWake 选 none（到期）、owner（主人私聊）或 direct（也允许符合唤醒策略的 @ 或引用）；原有暂停、权限和额度仍生效。",
     z.object(restFields).strict(),
@@ -394,7 +403,7 @@ export const mindDefinitions = {
   ],
 };
 export const CHAT_MIND_TOOLS = Object.keys(mindDefinitions).filter(
-  (n) => n !== "self_review" && n !== "subject_log",
+  (n) => !["self_review", "subject_log", "subject_next_wake"].includes(n),
 );
 export const SUBJECT_TOOLS = [
   ...Object.keys(frameworkDefinitions),
@@ -438,6 +447,7 @@ export const SUBJECT_TOOLS = [
   "subject_inbox_list",
   "subject_inbox_decide",
   "subject_rest",
+  "subject_next_wake",
   "qq_profile_read",
   "qq_profile_update",
   "qzone_read",
@@ -462,6 +472,7 @@ function executeMindTool(runtime, ctx, name, args) {
       "person_item",
       "project",
       "mood_set",
+      "subject_next_wake",
     ].includes(name) &&
     (socialSources(runtime, ctx).length > 0 ||
       peerQzoneSources(runtime, ctx).length > 0 ||
@@ -689,6 +700,8 @@ function executeMindTool(runtime, ctx, name, args) {
   if (name === "subject_inbox_decide")
     return runtime.subjectInbox.decide(ctx, args);
   if (name === "subject_rest") return runtime.subjectInbox.rest(ctx, args);
+  if (name === "subject_next_wake")
+    return runtime.subject.scheduleNextWake(ctx, args);
   if (name === "intent_create") return runtime.subject.create(ctx, args);
   if (name === "intent_list") {
     const rows = recallBoundary(runtime, ctx)

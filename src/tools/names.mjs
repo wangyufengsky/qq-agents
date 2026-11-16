@@ -52,6 +52,7 @@ export const TOOL_NAMES = Object.freeze([
   "subject_inbox_submit",
   "subject_inbox_list",
   "subject_inbox_decide",
+  "subject_next_wake",
   "subject_rest",
   "intent_decide",
   "qq_wait_for_messages",
