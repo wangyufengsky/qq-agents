@@ -112,7 +112,9 @@ export class DesktopBody {
     if (
       grant &&
       host.observation.current(grant) &&
-      host.observation.targetReady(grant)
+      host.observation.targetReady(grant) &&
+      (!Object.hasOwn(ctx, "desktopWindowApproachGrant") ||
+        ctx.desktopWindowApproachGrant === grant)
     )
       return grant;
   }

@@ -26,6 +26,41 @@ export const DESKTOP_PUBLIC_FIELDS = {
   totalLimit: ["每小时自主活动总上限", 1, 24, 4],
 };
 
+export const DESKTOP_PUBLIC_CADENCES = {
+  quiet: {
+    firstMin: 10,
+    firstMax: 15,
+    idleMin: 25,
+    idleMax: 40,
+    resumeMin: 5,
+    resumeMax: 8,
+    idleLimit: 1,
+    totalLimit: 2,
+  },
+  normal: Object.fromEntries(
+    [
+      "firstMin",
+      "firstMax",
+      "idleMin",
+      "idleMax",
+      "resumeMin",
+      "resumeMax",
+      "idleLimit",
+      "totalLimit",
+    ].map((key) => [key, DESKTOP_PUBLIC_FIELDS[key][3]]),
+  ),
+  clingy: {
+    firstMin: 2,
+    firstMax: 4,
+    idleMin: 8,
+    idleMax: 12,
+    resumeMin: 1,
+    resumeMax: 3,
+    idleLimit: 4,
+    totalLimit: 6,
+  },
+};
+
 export const DESKTOP_PUBLIC_DEFAULTS = {
   enabled: false,
   ...Object.fromEntries(

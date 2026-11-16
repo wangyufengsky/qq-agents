@@ -961,6 +961,8 @@ async function desktopSettings(root, ticket) {
         "桌边发言对所有在场角色公开。自主活动与休息仍按角色设置。",
       ),
     );
+    const advanced = el("details", "board-settings");
+    advanced.append(el("summary", "", "高级设置"));
     const perceptionInputs = Object.fromEntries(
       Object.entries(current.desktopPublicFields ?? {}).map(
         ([key, [title, min, max]]) => {
@@ -972,11 +974,43 @@ async function desktopSettings(root, ticket) {
           input.max = String(max);
           input.value = String(perception[key]);
           label.append(input);
-          perceptionGroup.append(label);
+          advanced.append(label);
           return [key, input];
         },
       ),
     );
+    const cadenceLabel = el("label", "desktop-field", "公共活动节奏");
+    const cadence = document.createElement("select");
+    for (const [value, title] of [
+      ["quiet", "安静"],
+      ["normal", "正常"],
+      ["clingy", "黏人"],
+      ["custom", "自定义"],
+    ]) {
+      const option = el("option", "", title);
+      option.value = value;
+      option.disabled = value === "custom";
+      cadence.append(option);
+    }
+    const presets = current.desktopPublicCadences;
+    const syncCadence = () => {
+      cadence.value =
+        Object.entries(presets).find(([, values]) =>
+          Object.entries(values).every(
+            ([key, value]) => perceptionInputs[key].valueAsNumber === value,
+          ),
+        )?.[0] ?? "custom";
+    };
+    cadence.onchange = () => {
+      if (cadence.value === "custom") return;
+      for (const [key, value] of Object.entries(presets[cadence.value]))
+        perceptionInputs[key].value = String(value);
+    };
+    for (const input of Object.values(perceptionInputs))
+      input.addEventListener("input", syncCadence);
+    syncCadence();
+    cadenceLabel.append(cadence);
+    perceptionGroup.append(cadenceLabel, advanced);
     form.append(perceptionGroup);
     const screenLabel = el("label", "desktop-field", "允许在本机授权看桌面");
     const screenEnabled = document.createElement("input");
@@ -1091,6 +1125,7 @@ async function desktopSettings(root, ticket) {
       ...preferenceInputs.flatMap(({ quiet, cadence }) => [quiet, cadence]),
       interactionsEnabled,
       perceptionEnabled,
+      cadence,
       ...Object.values(perceptionInputs),
       retention,
       ...Object.values(displayInputs),

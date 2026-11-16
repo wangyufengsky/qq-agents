@@ -714,6 +714,12 @@ test("window approach requires a negotiated current ready window grant in presen
   const body = new DesktopBody(host);
   const ctx = { agentId: "agent-0", conversation: "@desktop-activity" };
   assert.equal(body.windowApproachGrant(ctx), grant);
+  ctx.desktopWindowApproachGrant = grant;
+  const replacement = { grantId: randomUUID() };
+  host.observation.windows.set("agent-0", replacement);
+  assert.equal(body.windowApproachGrant(ctx), undefined);
+  host.observation.windows.set("agent-0", grant);
+  assert.equal(body.windowApproachGrant(ctx), grant);
   for (const mode of ["privacy", "work", null]) {
     host.mode = mode;
     assert.equal(body.windowApproachGrant(ctx), undefined);

@@ -900,6 +900,12 @@ export class LiveRoom {
     let completed = false;
     let acted = false;
     let submitted = false;
+    const canObserve = () => {
+      if (acted || !offer) return false;
+      const current = this.runner.observation?.(turn.actor);
+      // Recheck this role's original grant without coupling it to other roles.
+      return current?.grant === offer.grant && !current.direct;
+    };
     const controller = new AbortController();
     const { promise: done, resolve: drained } = Promise.withResolvers();
     const active = {
@@ -949,9 +955,7 @@ export class LiveRoom {
             ...(offer?.grant.scope === "display" && {
               observationTarget: "display",
             }),
-            canObserve: () =>
-              !acted &&
-              this.runner.observation?.(turn.actor)?.grant === offer?.grant,
+            canObserve,
             people: this.here().map(({ name }) => name),
             messages: [],
             ...(publicTurn && {
@@ -989,14 +993,7 @@ export class LiveRoom {
           display.opportunity = "incomplete";
       }
       if (reply.action === "observe") {
-        if (
-          !isCurrent() ||
-          signal.aborted ||
-          acted ||
-          !offer ||
-          this.runner.observation?.(turn.actor)?.grant !== offer.grant
-        )
-          return;
+        if (!isCurrent() || signal.aborted || !canObserve()) return;
         observation = offer.grant;
         if (display) display.opportunity = "capturing";
         active.observation = observation;
