@@ -1,3 +1,4 @@
+import { noteChecklistRead } from "../core/subject-checklist.mjs";
 import { assertHomeSceneMedia } from "../home/scene-media.mjs";
 import { mediaLease } from "./media-lease.mjs";
 import { trackSocial, socialSources } from "../core/social-protection.mjs";
@@ -203,6 +204,11 @@ async function handle_memory_read(runtime, ctx, args, name) {
         runtime.contexts.commitSeen(ctx, staged);
       });
     }
+    if (ctx.subjectChecklist?.activityIds.has(item.id))
+      return stage(r, () => {
+        pages.delete(r.id);
+        noteChecklistRead(runtime, ctx, [item]);
+      });
   } else {
     const inputVersion =
       item.conversation === ctx.conversation &&
@@ -242,7 +248,14 @@ async function handle_conversation_read(runtime, ctx, args, name) {
   if (!r.markReadEligible) {
     if (r.items.some((item) => item.conversation === ctx.conversation))
       rememberSources(mem, ctx.conversation, r.items);
-    runtime.stageToolInput(ctx, r, undefined, r.items);
+    runtime.stageToolInput(
+      ctx,
+      r,
+      r.items.some(({ id }) => ctx.subjectChecklist?.activityIds.has(id))
+        ? () => noteChecklistRead(runtime, ctx, r.items)
+        : undefined,
+      r.items,
+    );
     return r;
   }
   const staged = runtime.contexts.stageSeen(ctx, r.items);

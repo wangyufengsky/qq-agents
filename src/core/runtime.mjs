@@ -76,6 +76,7 @@ import { ContextLifecycle, SUBJECT } from "./lifecycle.mjs";
 import { SubjectInbox } from "./subject-inbox.mjs";
 import { SubjectCoordinator } from "./subject.mjs";
 import { CHAT_MIND_TOOLS, SUBJECT_TOOLS } from "../tools/mind.mjs";
+import { noteChecklistTool } from "./subject-checklist.mjs";
 import { BOARD_TOOLS } from "./board.mjs";
 import {
   githubPrivateContext,
@@ -1367,6 +1368,8 @@ export class Runtime {
     const epoch = ctx.inputEpoch;
     const startedAt = Date.now(),
       calls = (ctx.toolCalls ||= []);
+    const checklist = ctx.subjectChecklist;
+    if (checklist) checklist.pendingTools++;
     const tracedSend =
       ctx.messageTimingId !== undefined && isTimedSendTool(name, args);
     if (tracedSend)
@@ -1410,6 +1413,7 @@ export class Runtime {
         ctx.messageTimingToolOutcome = reason;
         this.messageTiming.stop(ctx.messageTimingId, reason);
       }
+      noteChecklistTool(ctx, name, args, result);
       if (calls.length < 50)
         calls.push({ name, ok: true, ms: Date.now() - startedAt });
       return deferInput ? result : await this.directToolOutput(ctx, result);
@@ -1429,6 +1433,8 @@ export class Runtime {
           ms: Date.now() - startedAt,
         });
       throw error;
+    } finally {
+      if (checklist) checklist.pendingTools--;
     }
   }
   async executeTool(ctx, name, args = {}) {
