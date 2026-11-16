@@ -6,7 +6,7 @@
 
 ## 未发布
 
-### Windows 桌面窗口覆盖的 CI 技术验证
+### Windows 桌面窗口覆盖的 CI 技术验证（[#335](https://github.com/wangyufengsky/qq-agents/pull/335)）
 
 - 在 Windows CI 使用合成窗口验证 Win32 和 Electron 的窗口身份、遮挡层级、焦点和显示器坐标。探针只读取合成测试所需的窗口元数据，当前 Windows 取帧和窗口控制策略继续生效。
 
