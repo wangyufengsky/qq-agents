@@ -88,6 +88,15 @@ export class TurnRunner {
     const runKey = agentId + "|" + conversation;
     if (runtime.running.has(runKey)) return;
     if (runtime.games.busy(a.backendId)) throw Error("GAME_BACKEND_BUSY");
+    const reminder = reasons.find((reason) => reason.subjectReminderId);
+    if (conversation === SUBJECT && reminder) {
+      const briefing = runtime.subject.beginReminder(
+        a,
+        reminder.subjectReminderId,
+      );
+      if (!briefing) return;
+      reasons = [{ ...reminder, ...briefing }];
+    }
     const opportunity = reasons.find(
       (reason) => reason.reason === "subject-opportunity",
     );

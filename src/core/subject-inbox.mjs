@@ -16,6 +16,7 @@ import { isDeepStrictEqual } from "node:util";
 import { allowed } from "./config.mjs";
 import { contextProtection, trackMindRecords } from "./protected-mind.mjs";
 import { recallBoundary } from "./recall-boundary.mjs";
+import { presentationVersion } from "./input-review.mjs";
 import {
   beginRoleRest,
   roleRest,
@@ -30,7 +31,10 @@ const BATCH = 8;
 const BACKLOG_SLOTS = 2;
 const LIMIT = 64;
 const DAY = 86400000;
+const REMINDER_GRACE_MS = 15 * 60000;
 const chat = /^(group|private):\d+$/;
+const reminderExpired = (item, now) =>
+  item.reminder != null && item.reminder.expiresAt <= now;
 
 export class SubjectInbox {
   constructor(runtime) {
@@ -108,7 +112,9 @@ export class SubjectInbox {
     )
       throw Error("TOOL_DISABLED");
     const state = this.state(a.id);
-    const items = state.items || [];
+    const items = (state.items || []).filter(
+      (item) => item.status !== "pending" || !reminderExpired(item, now),
+    );
     const id = `${ctx.conversation}/${requestId}`;
     const old = items.find((item) => item.id === id);
     if (
@@ -156,6 +162,34 @@ export class SubjectInbox {
       !this.runtime.subject.targetAllowed(a, proposal.target)
     )
       throw Error("PROACTIVE_TARGET_NOT_ENABLED");
+    let reminder;
+    if (proposal.kind === "reminder") {
+      const r = this.runtime;
+      const row = r.subject.reminderSource(
+        a,
+        ctx.conversation,
+        proposal.eventId,
+      );
+      const version = presentationVersion(r, ctx, proposal.eventId);
+      if (
+        !row ||
+        !version ||
+        ctx.presentedInput?.get(proposal.eventId) !== version
+      )
+        throw Error("SUBJECT_REMINDER_SOURCE_DENIED");
+      this.assertSource(
+        a,
+        ctx,
+        r.memory.bind(a.id).event(row, ctx.conversation),
+      );
+      if (!r.subject.targetAllowed(a, ctx.conversation))
+        throw Error("PROACTIVE_TARGET_NOT_ENABLED");
+      const dueAt =
+        Math.min(now, Date.parse(row.occurred_at)) + proposal.minutes * 60000;
+      const expiresAt = dueAt + REMINDER_GRACE_MS;
+      if (expiresAt <= now) throw Error("SUBJECT_REMINDER_EXPIRED");
+      reminder = { dueAt, expiresAt };
+    }
     const item = {
       id,
       revision: 1,
@@ -165,6 +199,7 @@ export class SubjectInbox {
       reviewAt: now,
       usefulUntil,
       proposal,
+      ...(reminder && { reminder }),
     };
     if (proposal.kind === "reflection") this.reflection(ctx, a, item);
     const reference = this.reference(a, item);
@@ -183,6 +218,7 @@ export class SubjectInbox {
         (item.status === "pending" ||
           (item.status === "accepted" && item.proposal.kind === "room")) &&
         (item.reviewAt == null || item.reviewAt <= now) &&
+        !reminderExpired(item, now) &&
         this.sourceAllowed(a, item.source),
     );
   }
@@ -242,6 +278,19 @@ export class SubjectInbox {
   }
   sourceReceipt(a, item) {
     const feedback = sourceFeedback(item);
+    const reminderId = item.receipt?.reminderIntentId;
+    if (reminderId) {
+      const memory = this.runtime.memory.bind(a.id);
+      const intent = memory.identity.get("intentions", reminderId);
+      const delivery = memory.delivery("intent:" + reminderId);
+      return {
+        ...feedback,
+        dueAt: item.reminder.dueAt,
+        expiresAt: item.reminder.expiresAt,
+        reminderStatus: intent?.status,
+        deliveryStatus: delivery?.status ?? "not-attempted",
+      };
+    }
     const intentId = item.receipt?.contactIntentId;
     if (item.source !== DESKTOP_CONVERSATION || !intentId) return feedback;
     const row = this.runtime.memory.bind(a.id).delivery("intent:" + intentId);
@@ -614,6 +663,16 @@ export class SubjectInbox {
           expectsResponse: false,
         });
         receipt = { contactIntentId: intent.id };
+      } else if (
+        args.action === "accept" &&
+        item.proposal.kind === "reminder"
+      ) {
+        const intent = r.subject.approveReminder(ctx, item);
+        receipt = {
+          reminderIntentId: intent.id,
+          dueAt: item.reminder.dueAt,
+          expiresAt: item.reminder.expiresAt,
+        };
       } else if (args.action === "take" && item.proposal.kind === "handoff") {
         reference = this.take(ctx, a, item);
       } else if (args.action === "focus" && item.proposal.kind === "focus") {
@@ -646,7 +705,7 @@ export class SubjectInbox {
         if (!queued.result.queued) throw Error("INTENT_STATE");
         receipt = { socialStatus: "queued" };
       } else if (args.action === "defer") {
-        this.checkReviewTime(args.reviewAt, now);
+        this.checkReviewTime(args.reviewAt, now, item.reminder?.expiresAt);
       } else if (args.action !== "dismiss") {
         throw Error("INTENT_STATE");
       }

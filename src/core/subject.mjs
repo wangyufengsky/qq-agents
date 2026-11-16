@@ -9,6 +9,7 @@ import { freezeEvidence } from "../memory/evidence.mjs";
 import { mergeProtection } from "../memory/protection.mjs";
 import { contextProtection, trackMindRecords } from "./protected-mind.mjs";
 import { recallBoundary } from "./recall-boundary.mjs";
+import { liveInput } from "./live-input.mjs";
 const terminal = new Set([
   "completed",
   "cancelled",
@@ -57,7 +58,7 @@ export class SubjectCoordinator {
               creationBaselineOrigin: "legacy-recovery",
             });
           const delivery = m.delivery("intent:" + i.id);
-          if (delivery) {
+          if (delivery && !i.reminder) {
             const at =
               i.contactChargedAt ??
               (Date.parse(delivery.created_at) || runtime.now());
@@ -100,7 +101,9 @@ export class SubjectCoordinator {
                 : "waiting",
               "process-recovery",
               {
-                eligibleAt: runtime.now() + a.subject.contactCooldownMs,
+                eligibleAt:
+                  runtime.now() +
+                  (i.reminder ? 0 : a.subject.contactCooldownMs),
                 ...(delivery
                   ? {
                       deliveryId: delivery.request_id,
@@ -135,7 +138,7 @@ export class SubjectCoordinator {
         .get(id, conversation).seq || 0
     );
   }
-  contactOpportunity(a, target) {
+  contactOpportunity(a, target, item) {
     const r = this.runtime,
       m = this.memory(a.id),
       s = m.state(SUBJECT),
@@ -148,10 +151,14 @@ export class SubjectCoordinator {
       this.targetAllowed(a, target) &&
       r.writable(a, target) &&
       !!r.transports.get(a.connectionId)?.connected &&
-      (m.state(target).proactiveCooldownUntil || 0) <= now &&
-      (s.lastContactAt || 0) + a.subject.contactCooldownMs <= now &&
-      (s.contacts || []).filter((t) => t > now - 86400000).length <
-        a.subject.maxContactsPerDay
+      (item?.reminder
+        ? item.reminder.wakeStartedAt != null &&
+          !r.subjectExecution.busy(a.id) &&
+          this.reminderAllowed(a, item)
+        : (m.state(target).proactiveCooldownUntil || 0) <= now &&
+          (s.lastContactAt || 0) + a.subject.contactCooldownMs <= now &&
+          (s.contacts || []).filter((t) => t > now - 86400000).length <
+            a.subject.maxContactsPerDay)
     );
   }
   save(id, value) {
@@ -306,7 +313,96 @@ export class SubjectCoordinator {
       history: [...item.history, { status, reason, at: this.runtime.now() }],
     });
   }
-  create(ctx, args) {
+  reminderSource(a, target, eventId) {
+    const r = this.runtime;
+    const row = liveInput(r, a.id, target, eventId);
+    return row &&
+      a.ownerIds.includes(row.sender_id) &&
+      row.sender_id !== r.connection(a.connectionId).accountId &&
+      !JSON.parse(row.payload).redacted
+      ? row
+      : null;
+  }
+  reminderAllowed(a, item, ctx) {
+    const r = this.runtime;
+    return (
+      subjectInboxEnabled(a) &&
+      this.canAutoDisclose(a, item) &&
+      !roleRest(r, a) &&
+      rhythmStatus(r, a, true).state !== "sleeping" &&
+      this.targetAllowed(a, item.target) &&
+      r.writable(a, item.target, ctx) &&
+      !!this.reminderSource(a, item.target, item.reminder.eventId)
+    );
+  }
+  approveReminder(ctx, item) {
+    const r = this.runtime,
+      a = r.agent(ctx.agentId),
+      m = this.memory(a.id),
+      now = r.now();
+    const { dueAt, expiresAt } = item.reminder;
+    const { eventId, note } = item.proposal;
+    if (expiresAt <= now) throw Error("SUBJECT_REMINDER_EXPIRED");
+    if (!this.reminderSource(a, item.source, eventId))
+      throw Error("SUBJECT_REMINDER_SOURCE_DENIED");
+    const reminders = m.identity.list("intentions").filter((i) => i.reminder);
+    if (reminders.some((i) => i.reminder.eventId === eventId))
+      throw Error("SUBJECT_REMINDER_ALREADY_PLANNED");
+    if (reminders.some((i) => !terminal.has(i.status) && i.expiresAt > now))
+      throw Error("SUBJECT_REMINDER_PENDING");
+    if (
+      checksWithinDay(m.state(SUBJECT), Math.max(dueAt, now)).length >=
+      a.subject.maxChecksPerDay
+    )
+      throw Error("SUBJECT_CHECK_BUDGET");
+    return this.create(
+      ctx,
+      {
+        target: item.source,
+        topic: "管理员托付的提醒",
+        reason: note,
+        background:
+          "这是已批准的定时提醒。结合原始托付，在本会话送达一次简短提醒。",
+        evidence: [eventId],
+        eligibleAt: dueAt,
+        expiresAt,
+        expectsResponse: false,
+      },
+      { eventId, dueAt },
+    );
+  }
+  beginReminder(a, id) {
+    const m = this.memory(a.id),
+      item = m.identity.get("intentions", id),
+      now = this.runtime.now(),
+      state = m.state(SUBJECT),
+      checks = checksWithinDay(state, now);
+    if (
+      !item?.reminder ||
+      item.status !== "waiting" ||
+      item.reminder.wakeStartedAt != null ||
+      item.eligibleAt > now ||
+      item.expiresAt <= now ||
+      checks.length >= a.subject.maxChecksPerDay ||
+      !this.reminderAllowed(a, item)
+    )
+      return null;
+    m.store.transaction(() => {
+      this.save(a.id, {
+        ...item,
+        reminder: { ...item.reminder, wakeStartedAt: now },
+      });
+      m.setState(SUBJECT, { ...state, checks: [...checks, now] });
+    });
+    return {
+      target: item.target,
+      note: item.reason,
+      eventId: item.reminder.eventId,
+      instruction:
+        "管理员托付的提醒已到期，框架会把已批准的提醒交回来源 QQ 会话投递。",
+    };
+  }
+  create(ctx, args, reminder) {
     const r = this.runtime,
       a = r.agent(ctx.agentId),
       m = this.memory(a.id),
@@ -325,7 +421,11 @@ export class SubjectCoordinator {
     const duplicate = m.identity
       .list("intentions")
       .find(
-        (i) => !terminal.has(i.status) && norm(i.topic) === norm(args.topic),
+        (i) =>
+          !reminder &&
+          !i.reminder &&
+          !terminal.has(i.status) &&
+          norm(i.topic) === norm(args.topic),
       );
     if (duplicate) {
       recallBoundary(r, ctx).assert(duplicate);
@@ -339,6 +439,7 @@ export class SubjectCoordinator {
       createdAt: now,
       createdIn: ctx.conversation,
       ...args,
+      ...(reminder && { reminder }),
       createdAfterSeq: this.incomingCeiling(a.id, args.target),
       eligibleAt: args.eligibleAt || now,
       evidence: args.evidence || [],
@@ -369,7 +470,7 @@ export class SubjectCoordinator {
     trackMindRecords(this.runtime, ctx, [i], "intent");
     if (args.action === "cancel")
       return this.transition(ctx.agentId, i, "cancelled", args.reason);
-    if (!["waiting", "deferred"].includes(i.status))
+    if (i.reminder || !["waiting", "deferred"].includes(i.status))
       throw Error("INTENT_ALREADY_HANDED_OFF");
     const now = this.runtime.now(),
       eligibleAt =
@@ -388,6 +489,7 @@ export class SubjectCoordinator {
     if (i.revision !== args.expectedRevision) throw Error("REVISION_CONFLICT");
     i = { ...i, ...mergeProtection(i, contextProtection(r, ctx)) };
     trackMindRecords(r, ctx, [i], "intent");
+    if (args.action === "complete" && i.reminder) throw Error("INTENT_STATE");
     if (args.action === "complete") {
       if (
         !["awaiting-response", "handedoff", "deferred", "waiting"].includes(
@@ -433,7 +535,7 @@ export class SubjectCoordinator {
       ctx.activeIntentId = i.id;
       return this.transition(ctx.agentId, i, "selected", args.reason);
     }
-    if (args.action === "cancel")
+    if (args.action === "cancel" || i.reminder)
       return this.transition(ctx.agentId, i, "cancelled", args.reason);
     return this.transition(ctx.agentId, i, "deferred", args.reason, {
       eligibleAt: r.now() + r.agent(ctx.agentId).subject.contactCooldownMs,
@@ -451,6 +553,7 @@ export class SubjectCoordinator {
       !this.targetAllowed(a, i.target) ||
       !r.writable(a, i.target, ctx) ||
       i.expiresAt <= r.now() ||
+      (i.reminder && !this.reminderAllowed(a, i, ctx)) ||
       !["handedoff", "selected"].includes(i.status)
     )
       throw Error("INTENT_NO_LONGER_ALLOWED");
@@ -471,6 +574,7 @@ export class SubjectCoordinator {
     if (!ctx.activeIntentId) return null;
     const i = this.assertFresh(ctx);
     trackMindRecords(this.runtime, evidence, [i], "intent");
+    if (i.reminder) return i;
     const s = this.memory(ctx.agentId).state(SUBJECT),
       a = this.runtime.agent(ctx.agentId),
       now = this.runtime.now();
@@ -505,7 +609,7 @@ export class SubjectCoordinator {
     );
   }
   reserveContact(ctx, item) {
-    if (!item || item.contactChargedAt !== undefined) return;
+    if (!item || item.reminder || item.contactChargedAt !== undefined) return;
     const m = this.memory(ctx.agentId),
       now = this.runtime.now(),
       a = this.runtime.agent(ctx.agentId);
@@ -541,6 +645,11 @@ export class SubjectCoordinator {
           ),
       )
       .map((x) => x.intentId);
+    for (const reason of reasons)
+      if (reason.subjectReminderId && ctx.conversation === SUBJECT) {
+        ctx.privateRead.add(`context:${reason.target}`);
+        ctx.privateRead.add(reason.eventId);
+      }
     ctx.intentOnly = reasons.length > 0 && reasons.every((x) => x.intentId);
     ctx.intentSnapshotSeq = m.state(ctx.conversation).lastReceivedSeq || 0;
     ctx.activityThroughSeq = Math.max(
@@ -592,7 +701,7 @@ export class SubjectCoordinator {
         this.transition(
           a.id,
           i,
-          "deferred",
+          i.reminder ? "cancelled" : "deferred",
           "target turn ended without delivery",
           { eligibleAt: this.runtime.now() + a.subject.contactCooldownMs },
         );
@@ -623,7 +732,7 @@ export class SubjectCoordinator {
             needsSubjectReview(i)
           ) &&
           this.canAutoDisclose(a, i) &&
-          this.contactOpportunity(a, i.target)
+          this.contactOpportunity(a, i.target, i)
         ) {
           const c = m.state(i.target);
           if (r.running.has(a.id + "|" + i.target)) continue;
@@ -652,6 +761,29 @@ export class SubjectCoordinator {
       )
         continue;
       const s = m.state(SUBJECT);
+      const reminder = open.find(
+        (i) =>
+          i.reminder &&
+          i.reminder.wakeStartedAt == null &&
+          i.status === "waiting" &&
+          i.eligibleAt <= now &&
+          i.expiresAt > now &&
+          this.reminderAllowed(a, i),
+      );
+      if (
+        reminder &&
+        checksWithinDay(s, now).length < a.subject.maxChecksPerDay
+      ) {
+        r.trackJob(
+          r.wake(a.id, SUBJECT, {
+            reasons: [
+              { reason: "subject-reminder", subjectReminderId: reminder.id },
+            ],
+          }),
+          a.id,
+        );
+        continue;
+      }
       if (!s.nextCheckAt) {
         m.setState(SUBJECT, { ...s, nextCheckAt: now + a.subject.intervalMs });
         continue;

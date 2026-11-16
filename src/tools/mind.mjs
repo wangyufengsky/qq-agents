@@ -267,7 +267,7 @@ export const mindDefinitions = {
       .strict(),
   ],
   subject_inbox_submit: [
-    "普通聊天里把休息、联系或接力的提议交给自己的主人格。桌面小窝支持联系和工作接力。有空尽快看，忙时等收尾。usefulUntil 是参考时间；同一 requestId 重试不会再提交。休息和发送以实际决定和回执为准。",
+    "普通聊天里把休息、联系、QQ 管理员明确托付的定时提醒或接力的提议。提醒用 reminder，eventId 填本轮已读到的管理员原始来信记录 ID，minutes 从来信算起，note 写清提醒事项交给自己的主人格。桌面小窝支持联系和工作接力。有空尽快看，忙时等收尾。usefulUntil 是参考时间；同一 requestId 重试不会再提交。休息和发送以实际决定和回执为准。",
     z
       .object({
         requestId: text.regex(/^[A-Za-z0-9_-]{1,100}$/),
@@ -316,6 +316,14 @@ export const mindDefinitions = {
             .strict(),
           z
             .object({
+              kind: z.literal("reminder"),
+              eventId: text.max(100),
+              minutes: z.number().int().min(10).max(1440),
+              note: z.string().trim().min(1).max(200),
+            })
+            .strict(),
+          z
+            .object({
               kind: z.literal("handoff"),
               reference: z
                 .object({
@@ -335,7 +343,7 @@ export const mindDefinitions = {
     z.object({ offset: z.number().int().min(0).default(0) }).strict(),
   ],
   subject_inbox_decide: [
-    "主人格处理提议。rest 选休息时长；focus 选专注时长并暂缓新的主动联系；take 接下工作或相处回顾；social 排队受控串门或共同活动；accept 采纳原有联系或小窝提议，小窝执行用 execute 并传当前版本；contact 另设联系有效期；defer 指定再看时间，dismiss 放下。",
+    "主人格处理提议。rest 选休息时长；focus 选专注时长并暂缓新的主动联系；take 接下工作或相处回顾；social 排队受控串门或共同活动；accept 采纳 QQ 托付提醒、原有联系或小窝提议；批准提醒前用 memory_read 核对原始来信中的明确托付，小窝执行用 execute 并传当前版本；contact 另设联系有效期；defer 指定再看时间，dismiss 放下。",
     z.discriminatedUnion("action", [
       z.object({ ...reviewFields, action: z.literal("accept") }).strict(),
       z

@@ -80,6 +80,13 @@ export function recallBoundary(runtime, ctx, { publicOnly = false } = {}) {
     return ["operations", "private-repository"].includes(classes.get(id));
   }
   function allowed(row) {
+    if (
+      row?.reminder &&
+      row.target &&
+      (publicOnly ||
+        (ctx.conversation !== "@subject" && ctx.conversation !== row.target))
+    )
+      return false;
     if (functional) {
       const agent = runtime.agent(ctx.agentId);
       const memory = runtime.memory.bind(agent.id);

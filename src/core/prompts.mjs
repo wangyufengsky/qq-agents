@@ -195,7 +195,7 @@ export function turnEnvironment(runtime, agent, ctx, backendType) {
     parts.push(
       ctx.compactChat
         ? "需要主人格决定时用 subject_inbox_submit 提议，决定会在后续开场显示。"
-        : "可用 subject_inbox_submit 把休息、联系、工作接力、专注、相处回顾、串门和共同活动、小窝布置或发布提议交给主人格。决定回执在本会话之后的开场可见；先把当前聊天自然收好。",
+        : "可用 subject_inbox_submit 把休息、联系、管理员托付的 QQ 提醒、工作接力、专注、相处回顾、串门和共同活动、小窝布置或发布提议交给主人格。决定回执在本会话之后的开场可见；先把当前聊天自然收好。",
     );
   if (ctx.allowedTools?.includes("subject_next_wake"))
     parts.push(
