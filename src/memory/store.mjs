@@ -9,6 +9,7 @@ import {
   exportHeader,
   withExportManifest,
 } from "./export-format.mjs";
+import { initializeGardenTables } from "../home/garden-schema.mjs";
 import { migrateHomeSocial } from "../home/social-schema.mjs";
 import { initializeDesktopObservationSummaries } from "./desktop-observation-summaries.mjs";
 import {
@@ -209,7 +210,10 @@ export class MemoryStore {
       initializeDesktopArchive(this.db);
       initializeDesktopObservationSummaries(this.db);
       this.due = new ConversationDue(this.db);
-      this.transaction(() => this.due.initialize());
+      this.transaction(() => {
+        this.due.initialize();
+        initializeGardenTables(this.db);
+      });
     } catch (error) {
       this.db.close();
       throw error;

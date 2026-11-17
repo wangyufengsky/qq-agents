@@ -255,6 +255,7 @@ node src/main.mjs --data /path/to/private-data --port 3210
 **设计与参考**
 
 - [纸页小窝：真实居民、公共布局保存与留言板](docs/AI-HOME.md)
+- [小窝花园 A 批：共享种植与花园时钟](docs/GARDEN-FOUNDATION.md)
 - [桌面小窝（macOS / Windows）](docs/DESKTOP-HOME.md) · [桌面对话 Agent 三阶段计划](docs/plans/desktop-dialogue-agent.md)
 - [小窝社交恢复与回退](docs/AI-HOME-SOCIAL-RECOVERY.md)
 - [小窝二阶段社交验收记录](docs/AI-HOME-SOCIAL-ACCEPTANCE.md)
