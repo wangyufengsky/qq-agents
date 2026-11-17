@@ -11,6 +11,7 @@ import {
 } from "../home/desktop-decision.mjs";
 import { DESKTOP_VISIT_TOOL } from "../home/desktop-visits.mjs";
 import { DESKTOP_INVITATION_TOOL } from "../home/desktop-invitations.mjs";
+import { gardenDelegationScope } from "../home/garden-delegations.mjs";
 import { gardenPublicScope, gardenToolNames } from "../tools/garden.mjs";
 import { HOME_TOOLS } from "../home/policy.mjs";
 import { HomeService } from "../home/service.mjs";
@@ -582,7 +583,8 @@ export class Runtime {
       gardenPublicScope(conversation) && this.home?.garden.initialized();
     if (gardenOpen) {
       selected.push("garden_read");
-      if (conversation === SUBJECT) selected.push("garden_act");
+      if (conversation === SUBJECT || gardenDelegationScope(conversation))
+        selected.push("garden_act");
     }
     if (conversation === SUBJECT && this.config.homeSocial?.enabled)
       selected.push("home_social_capabilities", "home_social_process");

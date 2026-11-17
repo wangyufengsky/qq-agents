@@ -44,6 +44,38 @@ export function initializeGardenTables(db) {
       UNIQUE(actor_kind, actor_id, request_id)
     );
     CREATE INDEX IF NOT EXISTS garden_actions_turn ON garden_actions(actor_id,turn_id);
+    CREATE TABLE IF NOT EXISTS garden_delegations (
+      id TEXT PRIMARY KEY,
+      generation TEXT NOT NULL,
+      source TEXT NOT NULL,
+      event_id TEXT NOT NULL,
+      plot INTEGER,
+      created_at INTEGER NOT NULL,
+      expires_clock REAL NOT NULL,
+      updated_at INTEGER NOT NULL,
+      revision INTEGER NOT NULL DEFAULT 1,
+      viewed INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'queued',
+      targets TEXT,
+      UNIQUE(generation,source,event_id)
+    );
+    CREATE INDEX IF NOT EXISTS garden_delegations_inbox ON garden_delegations(generation,status,created_at);
+    CREATE INDEX IF NOT EXISTS garden_delegations_source ON garden_delegations(generation,source,updated_at);
+    CREATE TABLE IF NOT EXISTS garden_delegation_requests (
+      generation TEXT NOT NULL,
+      source TEXT NOT NULL,
+      request_id TEXT NOT NULL,
+      delegation_id TEXT NOT NULL REFERENCES garden_delegations(id),
+      PRIMARY KEY(generation,source,request_id)
+    );
+    CREATE TABLE IF NOT EXISTS garden_delegation_steps (
+      generation TEXT NOT NULL,
+      request_id TEXT NOT NULL,
+      delegation_id TEXT NOT NULL REFERENCES garden_delegations(id),
+      kind TEXT NOT NULL,
+      result TEXT NOT NULL,
+      PRIMARY KEY(generation,request_id)
+    );
     CREATE TABLE IF NOT EXISTS garden_gifts (
       id TEXT PRIMARY KEY,
       at INTEGER NOT NULL,

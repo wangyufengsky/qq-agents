@@ -34,6 +34,7 @@ const gardenLabels = {
 const gardenFields = [
   ["speed", "全园速度倍率", 0.125, 16, "any"],
   ["turnLimit", "主人格每轮操作次数", 0, 100, 1],
+  ["delegationHours", "浇水委托有效期（花园小时）", 1, 168, "any"],
   ["fertilizerPrice", "肥料单价", 0, 1000000, 1],
   ["startingWater", "播种时水分", 1, 100, "any"],
   ["watering", "单次浇水加水", 1, 100, "any"],

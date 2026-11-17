@@ -31,6 +31,7 @@ export const gardenSettings = z
       .default({}),
     speed: z.number().min(0.125).max(16),
     turnLimit: count.max(100),
+    delegationHours: z.number().min(1).max(168).default(24),
     initialBalance: count,
     fertilizerPrice: count,
     startingWater: water.min(1),
@@ -127,7 +128,7 @@ export function defaultGardenSettings() {
  * settledAt: number, water: number, growth: number, dry: number, low: number,
  * witheredReason?: "drought", fertilizer: number, status: "growing" | "mature" | "withered", quality: Quality | null,
  * crop: Crop, rules: Omit<Settings, "crops" | "enabled" | "speed" | "turnLimit" |
- * "initialBalance" | "fertilizerPrice" | "roles">}} Plant
+ * "initialBalance" | "fertilizerPrice" | "roles" | "delegationHours">}} Plant
  */
 
 /** @param {Plant} plant */
