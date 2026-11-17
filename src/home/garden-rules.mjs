@@ -1,5 +1,6 @@
 // @ts-check
 import { z } from "zod";
+import { defaultWeather, weatherPool } from "./garden-weather.mjs";
 
 export const HOUR = 3_600_000;
 export const DAY = 24 * HOUR;
@@ -8,6 +9,12 @@ export const PLOT_COUNT = 9;
 const count = z.number().int().min(0).max(1_000_000);
 const water = z.number().min(0).max(100);
 export const cropId = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/);
+const lightRate = z.number().min(0).max(4);
+export const lightDefaults = {
+  sun: { high: 1.25, medium: 1, low: 0.75 },
+  neutral: { high: 1, medium: 1, low: 0.85 },
+  shade: { high: 0.8, medium: 1, low: 1.15 },
+};
 const cropSchema = z.strictObject({
   name: z.string().trim().min(1).max(60),
   description: z.string().max(400),
@@ -17,6 +24,14 @@ const cropSchema = z.strictObject({
   hours: z.number().min(0.01).max(8760),
   dailyWater: water,
   light: z.enum(["sun", "neutral", "shade"]),
+  lightRates: z
+    .strictObject({
+      high: lightRate.optional(),
+      medium: lightRate.optional(),
+      low: lightRate.optional(),
+    })
+    .optional(),
+  rainSensitive: z.boolean().optional(),
   fertilizer: count.max(20),
   salePrice: count,
   yield: count.min(1).max(100),
@@ -46,6 +61,7 @@ export const gardenSettings = z
     fineMultiplier: z.number().min(1).max(10),
     perfectMultiplier: z.number().min(1).max(10),
     crops: z.record(cropId, cropSchema),
+    weather: weatherPool.prefault(defaultWeather),
   })
   .refine(
     (settings) =>
@@ -57,6 +73,13 @@ export const gardenSettings = z
           crop.market &&
           crop.seedPrice === 0 &&
           crop.salePrice > 0,
+      ) &&
+      Object.values(settings.weather.entries).every((entry) =>
+        entry.conditions.every(
+          (condition) =>
+            !("cropId" in condition) ||
+            Object.hasOwn(settings.crops, condition.cropId),
+        ),
       ),
   );
 
@@ -109,6 +132,7 @@ export function defaultGardenSettings() {
             hours,
             dailyWater,
             light,
+            rainSensitive: id === "strawberry",
             fertilizer,
             salePrice,
             yield: 1,
@@ -126,9 +150,9 @@ export function defaultGardenSettings() {
 /**
  * @typedef {{id: string, cropId: string, actorId: string, plantedAt: number,
  * settledAt: number, water: number, growth: number, dry: number, low: number,
- * witheredReason?: "drought", fertilizer: number, status: "growing" | "mature" | "withered", quality: Quality | null,
+ * floodDays?: number, floodLoss?: number, witheredReason?: "drought" | "flood", fertilizer: number, status: "growing" | "mature" | "withered", quality: Quality | null,
  * crop: Crop, rules: Omit<Settings, "crops" | "enabled" | "speed" | "turnLimit" |
- * "initialBalance" | "fertilizerPrice" | "roles" | "delegationHours">}} Plant
+ * "initialBalance" | "fertilizerPrice" | "roles" | "delegationHours" | "weather">}} Plant
  */
 
 /** @param {Plant} plant */
@@ -141,7 +165,10 @@ export function qualityOf(plant) {
     100,
     Math.max(
       0,
-      rules.baseQuality + fertilizer - (rules.dryQualityLoss * plant.low) / 24,
+      rules.baseQuality +
+        fertilizer -
+        (rules.dryQualityLoss * plant.low) / 24 -
+        (plant.floodLoss ?? 0),
     ),
   );
   return score >= rules.perfectQuality
@@ -151,23 +178,56 @@ export function qualityOf(plant) {
       : "ordinary";
 }
 
-/** @param {Plant} original @param {number} elapsed */
-export function projectPlant(original, elapsed) {
-  if (original.status !== "growing" || elapsed <= original.settledAt)
+/** @typedef {import("./garden-weather.mjs").WeatherEntry} WeatherEntry */
+const cloud = defaultWeather.entries.cloud;
+const shelteredLight = /** @type {const} */ ({
+  high: "medium",
+  medium: "low",
+  low: "low",
+});
+
+/** @param {Plant} plant @param {WeatherEntry} weather @param {boolean} sheltered */
+export function moistureRate(plant, weather, sheltered) {
+  return (
+    ((sheltered ? 0 : weather.rain) - plant.crop.dailyWater * weather.demand) /
+    24
+  );
+}
+
+/** @param {Plant} original @param {number} elapsed @param {WeatherEntry} [weather] @param {boolean} [sheltered] */
+export function projectPlant(
+  original,
+  elapsed,
+  weather = cloud,
+  sheltered = false,
+) {
+  if (original.status !== "growing" || elapsed < original.settledAt)
     return original;
   const plant = { ...original };
-  const demand = plant.crop.dailyWater / 24;
+  const flooded = weather.kind === "storm" && !sheltered;
+  if (flooded) {
+    plant.water = 100;
+    plant.dry = 0;
+  }
+  const rate = flooded ? 0 : moistureRate(plant, weather, sheltered);
+  const light = sheltered ? shelteredLight[weather.light] : weather.light;
+  const lightGrowth =
+    plant.crop.lightRates?.[light] ?? lightDefaults[plant.crop.light][light];
+  const weatherGrowth = lightGrowth * (sheltered ? 1 : weather.outdoorGrowth);
   const { lowWater, dryHours } = plant.rules;
   let remaining = (elapsed - plant.settledAt) / HOUR;
-  // Split at moisture thresholds so refresh frequency cannot change growth.
+  // Exact threshold crossings keep incremental actions and lazy reads equivalent.
   while (remaining > 0 && plant.status === "growing") {
     const wet =
-      plant.water > lowWater || (plant.water === lowWater && demand === 0);
-    const watered = plant.water > 0;
-    const growthRate = wet ? 1 : watered ? 0.5 : 0;
-    const boundary = wet ? lowWater : 0;
+      plant.water > lowWater || (plant.water === lowWater && rate >= 0);
+    const watered = plant.water > 0 || rate > 0;
+    const growthRate = weatherGrowth * (wet ? 1 : watered ? 0.5 : 0);
+    const boundary = rate > 0 || wet ? lowWater : 0;
     const untilBoundary =
-      demand && watered ? (plant.water - boundary) / demand : Infinity;
+      (rate > 0 && plant.water < lowWater) ||
+      (rate < 0 && plant.water > boundary)
+        ? (boundary - plant.water) / rate
+        : Infinity;
     const untilMature = growthRate
       ? (plant.crop.hours - plant.growth) / growthRate
       : Infinity;
@@ -175,13 +235,14 @@ export function projectPlant(original, elapsed) {
     const time = Math.min(remaining, untilBoundary, untilMature, untilWithered);
     plant.growth += time * growthRate;
     if (!wet) plant.low += time;
-    if (!watered) plant.dry += time;
+    plant.dry = watered ? 0 : plant.dry + time;
     plant.water =
       time === untilBoundary
         ? boundary
-        : Math.max(0, plant.water - demand * time);
+        : Math.min(100, Math.max(0, plant.water + rate * time));
     remaining -= time;
     if (time === untilMature) {
+      plant.growth = plant.crop.hours;
       plant.status = "mature";
       plant.quality = qualityOf(plant);
     } else if (time === untilWithered) {
@@ -191,4 +252,26 @@ export function projectPlant(original, elapsed) {
   }
   plant.settledAt = elapsed - remaining * HOUR;
   return plant;
+}
+
+/** @param {Plant} plant @param {WeatherEntry} weather @param {boolean} sheltered */
+export function closePlantDay(plant, weather, sheltered) {
+  if (plant.status !== "growing") return plant;
+  const storm = !sheltered && weather.kind === "storm";
+  const drizzle =
+    !sheltered &&
+    weather.kind === "drizzle" &&
+    (plant.crop.rainSensitive ?? plant.cropId === "strawberry");
+  const floodDays = storm ? (plant.floodDays ?? 0) + 1 : 0;
+  const floodLoss =
+    (plant.floodLoss ?? 0) + (storm || drizzle ? weather.qualityLoss : 0);
+  return {
+    ...plant,
+    floodDays,
+    floodLoss,
+    ...(floodDays >= plant.crop.floodDays && {
+      status: /** @type {const} */ ("withered"),
+      witheredReason: /** @type {const} */ ("flood"),
+    }),
+  };
 }

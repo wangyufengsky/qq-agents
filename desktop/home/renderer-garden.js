@@ -7,6 +7,8 @@ const verbs = {
   fertilize: "施肥",
   harvest: "收成",
   clear: "铲除枯株",
+  shelter: "搭棚",
+  unshelter: "撤棚",
   buy_seed: "买种子",
   buy_fertilizer: "买肥料",
   sell: "出售",
@@ -16,6 +18,7 @@ const priorityLabels = {
   drought: "缺水严重",
   water: "缺水",
   low_water_forecast: "预计缺水",
+  flood: "暴雨积水",
   harvest: "可收成",
   clear: "可清理枯株",
 };
@@ -23,6 +26,7 @@ const errors = {
   GARDEN_PAUSED: "花园时钟已暂停",
   GARDEN_PRICE_CHANGED: "价格已变化，请刷新花园",
   GARDEN_PLANT_CHANGED: "植株已变化，请刷新花园",
+  GARDEN_SHELTER_UNCHANGED: "棚状态已有变化，请刷新花园",
   GARDEN_PLOT_OCCUPIED: "地块已被占用，请刷新花园",
   GARDEN_STOCK_UNAVAILABLE: "库存已变化，请刷新花园",
   GARDEN_BALANCE_LOW: "公共余额不足",
@@ -97,7 +101,11 @@ export function bindGarden(panel, getRoom) {
         "",
         "第 " +
           garden.day +
-          " 天 · 公共余额 " +
+          " 天 · " +
+          garden.weather.name +
+          " · 本日剩 " +
+          Math.ceil(garden.dayRemaining / 360_000) / 10 +
+          " 花园小时 · 公共余额 " +
           garden.balance +
           " 元" +
           (paused ? " · 已暂停" : ""),
@@ -107,10 +115,18 @@ export function bindGarden(panel, getRoom) {
     const plantable = Object.entries(garden.crops).filter(
       ([id, crop]) => crop.enabled && (crop.market || garden.seeds[id] > 0),
     );
-    for (const { id, plant } of garden.plots) {
+    for (const { id, plant, sheltered } of garden.plots) {
       const tile = element("article", "desktop-garden-tile");
       tile.dataset.plot = id;
-      tile.append(element("strong", "", "第 " + id + " 块"));
+      tile.append(
+        element("strong", "", "第 " + id + " 块"),
+        element("p", "", sheltered ? "有棚" : "露天"),
+        control(
+          sheltered ? "unshelter" : "shelter",
+          () => ({ plot: id }),
+          paused,
+        ),
+      );
       if (!plant) {
         const seeds = picker(
           "第 " + id + " 块作物",
@@ -148,7 +164,13 @@ export function bindGarden(panel, getRoom) {
           );
         else if (plant.status === "withered")
           tile.append(
-            element("p", "", "已枯萎"),
+            element(
+              "p",
+              "",
+              plant.witheredReason === "flood"
+                ? "已枯萎 · 连续暴雨积水"
+                : "已枯萎 · 长期缺水",
+            ),
             control("clear", target, paused),
           );
         else {
@@ -177,7 +199,13 @@ export function bindGarden(panel, getRoom) {
           element(
             "li",
             "",
-            "第 " + item.plot + " 块 · " + priorityLabels[item.kind],
+            "第 " +
+              item.plot +
+              " 块 · " +
+              priorityLabels[item.kind] +
+              (item.kind === "flood"
+                ? ` · 本日剩 ${Math.ceil(item.hours * 10) / 10} 花园小时 · ${item.risk === "critical" ? "日结束前搭棚，否则枯萎" : "建议搭棚"}`
+                : ""),
           ),
         );
       content.append(priorities);

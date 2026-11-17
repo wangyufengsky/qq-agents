@@ -7,6 +7,7 @@ import { GardenService } from "../src/home/garden-service.mjs";
 import { DAY, HOUR, defaultGardenSettings } from "../src/home/garden-rules.mjs";
 import { backupDatabase } from "../src/memory/backup.mjs";
 import { MemoryStore } from "../src/memory/store.mjs";
+import { fixedWeather } from "./garden-fixtures.mjs";
 import { config, fixture, temp } from "./helpers.mjs";
 
 const admin = { kind: "admin", id: "administrator" };
@@ -19,6 +20,7 @@ function setup(t, update = () => {}) {
   t.after(() => store.close());
   const garden = new GardenService(store);
   const settings = defaultGardenSettings();
+  settings.weather = fixedWeather();
   update(settings);
   let now = 1000;
   garden.initialize(now, settings);

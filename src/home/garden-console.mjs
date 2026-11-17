@@ -1,6 +1,7 @@
 // @ts-check
 import { z } from "zod";
-import { defaultGardenSettings } from "./garden-rules.mjs";
+import { defaultGardenSettings, HOUR, moistureRate } from "./garden-rules.mjs";
+import { floodRisk } from "./garden-risks.mjs";
 
 /** @typedef {ReturnType<import("./garden-service.mjs").GardenService["read"]>} GardenState */
 const instanceAdmin = {
@@ -16,15 +17,15 @@ const initializeInput = z.strictObject({
   initialBalance: z.number().int().min(0).max(1_000_000),
 });
 
-/** @param {number} remaining @param {number} dailyWater */
-function dryEstimate(remaining, dailyWater) {
-  return dailyWater ? (Math.max(0, remaining) * 24) / dailyWater : null;
+/** @param {number} remaining @param {number} lossRate */
+function dryEstimate(remaining, lossRate) {
+  return lossRate > 0 ? Math.max(0, remaining) / lossRate : null;
 }
 
 /** @param {GardenState} state */
 export function gardenPriorities(state) {
   return state.plots
-    .flatMap(({ id: plot, plant }) => {
+    .flatMap(({ id: plot, plant, sheltered }) => {
       if (!plant) return [];
       if (plant.status === "mature")
         return [
@@ -34,7 +35,20 @@ export function gardenPriorities(state) {
         return [
           { plot, plantId: plant.id, kind: "clear", priority: 4, hours: 0 },
         ];
-      if (plant.water === 0)
+      const risk = floodRisk(plant, sheltered, state.weather);
+      if (risk)
+        return [
+          {
+            plot,
+            plantId: plant.id,
+            kind: "flood",
+            risk,
+            priority: risk === "critical" ? 0 : 2,
+            hours: state.dayRemaining / HOUR,
+          },
+        ];
+      const lossRate = -moistureRate(plant, state.weather, sheltered);
+      if (plant.water === 0 && lossRate >= 0)
         return [
           {
             plot,
@@ -51,13 +65,10 @@ export function gardenPriorities(state) {
             plantId: plant.id,
             kind: "water",
             priority: 1,
-            hours: dryEstimate(plant.water, plant.crop.dailyWater),
+            hours: dryEstimate(plant.water, lossRate),
           },
         ];
-      const hours = dryEstimate(
-        plant.water - plant.rules.lowWater,
-        plant.crop.dailyWater,
-      );
+      const hours = dryEstimate(plant.water - plant.rules.lowWater, lossRate);
       return hours !== null && hours <= 24
         ? [
             {
@@ -180,7 +191,7 @@ export function adminGardenView(runtime) {
   };
 }
 
-/** @param {any} runtime @param {"initialize"|"settings"|"act"} operation @param {unknown} value */
+/** @param {any} runtime @param {"initialize"|"settings"|"act"|"weather-trial"} operation @param {unknown} value */
 export function adminGardenWrite(runtime, operation, value) {
   if (
     runtime.updateMaintenance ||
@@ -191,6 +202,8 @@ export function adminGardenWrite(runtime, operation, value) {
   /** @type {import("./garden-service.mjs").GardenService} */
   const garden = runtime.home.garden;
   const now = runtime.now();
+  if (operation === "weather-trial")
+    return garden.calendar.trial(garden.requireState(), value);
   if (operation === "initialize") {
     const { initialBalance } = initializeInput.parse(value);
     garden.initialize(now, { ...defaultGardenSettings(), initialBalance });
@@ -231,14 +244,24 @@ export function subjectGardenView(runtime, roleId, turnId) {
     clock: state.clock,
     day: state.day,
     dayRemaining: state.dayRemaining,
+    weather: {
+      id: state.weather.id,
+      name: state.weather.name,
+      kind: state.weather.kind,
+    },
     speed: state.settings.speed,
     running: state.running,
     turnRemaining: Math.max(
       0,
       state.settings.turnLimit - garden.turnUsed(roleId, turnId),
     ),
-    plots: state.plots.map(({ id, plant }) => ({
+    plots: state.plots.map(({ id, plant, sheltered }) => ({
       id,
+      sheltered,
+      shelterAction: {
+        kind: sheltered ? "unshelter" : "shelter",
+        args: { plot: id },
+      },
       plant: plant && {
         id: plant.id,
         cropId: plant.cropId,
@@ -251,6 +274,7 @@ export function subjectGardenView(runtime, roleId, turnId) {
         fertilizer: plant.fertilizer,
         fertilizerRequired: plant.crop.fertilizer,
         witheredReason: plant.witheredReason,
+        floodDays: plant.floodDays ?? 0,
       },
     })),
     priorities: gardenPriorities(state),

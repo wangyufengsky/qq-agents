@@ -1,3 +1,4 @@
+import { keepNeutralWeather } from "./garden-fixtures.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -41,6 +42,7 @@ function setup(t, run = async () => {}, { opened = true } = {}) {
   const { runtime } = f;
   const memory = f.store.bind(agentId);
   const { garden } = runtime.home;
+  keepNeutralWeather(garden);
   const role = runtime.agent(agentId);
   const generation = runtime.home.generation(agentId);
   const refresh = (updates) => {

@@ -13,6 +13,8 @@ import { desktopToken } from "../src/home/desktop-auth.mjs";
 import { createServer } from "../src/server.mjs";
 import { MediaStore } from "../src/tools/media.mjs";
 import { findScreenshotBrowser } from "../src/tools/public-screenshot.mjs";
+import { DAY, HOUR, defaultGardenSettings } from "../src/home/garden-rules.mjs";
+import { fixedWeather } from "./garden-fixtures.mjs";
 import { config, context, fixture } from "./helpers.mjs";
 
 test("actual Chromium produces a shareable nine-tile PNG and renders the desktop operator surface", async (t) => {
@@ -27,7 +29,13 @@ test("actual Chromium produces a shareable nine-tile PNG and renders the desktop
   const host = createServer({ runtime, token: admin, allowLive: true });
   t.after(() => host.close());
   const origin = `http://127.0.0.1:${await host.listen()}`;
-  runtime.home.garden.initialize(runtime.now());
+  let now = Date.UTC(2026, 0, 1);
+  runtime.clock = () => now;
+  const garden = runtime.home.garden;
+  garden.initialize(now, {
+    ...defaultGardenSettings(),
+    weather: fixedWeather("storm"),
+  });
   const callDesktop = (endpoint, body) =>
     fetch(origin + "/api/desktop-home/" + endpoint, {
       method: "POST",
@@ -101,6 +109,8 @@ test("actual Chromium produces a shareable nine-tile PNG and renders the desktop
   const tiles = page.locator(".desktop-garden-tile");
   await tiles.first().getByText("空地", { exact: true }).waitFor();
   assert.equal(await tiles.count(), 9);
+  await tiles.nth(1).getByRole("button", { name: "搭棚", exact: true }).click();
+  await tiles.nth(1).getByText("有棚", { exact: true }).waitFor();
   await tiles
     .first()
     .getByRole("button", { name: "播种", exact: true })
@@ -116,6 +126,24 @@ test("actual Chromium produces a shareable nine-tile PNG and renders the desktop
   );
   assert.deepEqual(pageErrors, []);
 
+  garden.desktopSync(now, 10 * DAY);
+  now += DAY + HOUR;
+  garden.desktopSync(now, 10 * DAY);
+  const renewed = await callDesktop("client", { action: "sync", data: false });
+  await page.evaluate((room) => window.pushGardenRoom(room), {
+    live: true,
+    framework: true,
+    connected: true,
+    roomEpoch: renewed.room.roomEpoch,
+    roles: [],
+    messages: [],
+    budget: 5,
+  });
+  await page
+    .getByRole("button", { name: "刷新", exact: false })
+    .first()
+    .click();
+  await page.getByText(/暴雨积水.*本日剩 23 花园小时.*否则枯萎/).waitFor();
   const ctx = context(runtime);
   const image = await runtime.callTool(ctx, "garden_read", { view: "image" });
   const payload = JSON.parse(image.content[0].text);
@@ -123,6 +151,10 @@ test("actual Chromium produces a shareable nine-tile PNG and renders the desktop
   assert.equal(payload.imageAvailable, true);
   assert.equal(payload.plots.length, 9);
   assert.equal(payload.plots[0].name, "野生三叶草");
+  assert.equal(payload.weather.kind, "storm");
+  assert.equal(payload.plots[0].risk, "critical");
+  assert.equal(payload.plots[1].sheltered, true);
+  assert.match(payload.text, /暴雨.*本日剩 23 花园小时/);
   assert.equal(png.readUInt32BE(16), 720);
   assert.ok(png.readUInt32BE(20) > 300);
   assert.equal(
@@ -185,6 +217,8 @@ test("native Electron garden tab reaches shared state through its focused panel 
     await panel.getByRole("button", { name: "花园", exact: true }).click();
     const tile = panel.locator(".desktop-garden-tile").first();
     await tile.getByText("空地", { exact: true }).waitFor({ timeout: 8000 });
+    await tile.getByRole("button", { name: "搭棚", exact: true }).click();
+    await tile.getByText("有棚", { exact: true }).waitFor();
     await tile.getByRole("button", { name: "播种", exact: true }).click();
     await tile
       .getByText("野生三叶草", { exact: true })

@@ -1,4 +1,6 @@
 // @ts-check
+import { floodRisk, gardenHours } from "./garden-risks.mjs";
+import { HOUR } from "./garden-rules.mjs";
 import { renderOwnedHomeImage } from "./scene-view.mjs";
 
 const stageLabels = {
@@ -24,19 +26,23 @@ article p{margin:2px 0}
 <main><strong>小窝花园</strong><p id="time"></p><div class="grid" id="plots"></div></main>`;
 
 /** @typedef {ReturnType<import("./garden-service.mjs").GardenService["snapshot"]>} GardenState */
-/** @typedef {{plot:number,name:string,stage:keyof typeof stageLabels,water?:number,lowWater?:boolean}} VisiblePlot */
+/** @typedef {{plot:number,name:string,stage:keyof typeof stageLabels,sheltered:boolean,water?:number,lowWater?:boolean,witheredReason?:"drought"|"flood",risk?:"critical"|"waterlogging"}} VisiblePlot */
 
 /** @param {GardenState} state @param {{running:boolean, now:number}} options */
 export function gardenPublicSnapshot(state, { running, now }) {
   /** @type {VisiblePlot[]} */
-  const plots = state.plots.map(({ id, plant }) => {
-    if (!plant) return { plot: id, name: "", stage: "empty" };
+  const plots = state.plots.map(({ id, plant, sheltered }) => {
+    if (!plant) return { plot: id, name: "", stage: "empty", sheltered };
     const stage =
       plant.status === "growing" && plant.growth / plant.crop.hours < 0.25
         ? "seedling"
         : plant.status;
+    const risk = floodRisk(plant, sheltered, state.weather);
     return {
       plot: id,
+      sheltered,
+      ...(risk && { risk }),
+      ...(plant.witheredReason && { witheredReason: plant.witheredReason }),
       name: plant.crop.name.trim().split(/\s+/).join(" "),
       stage,
       ...(plant.status === "growing"
@@ -47,17 +53,14 @@ export function gardenPublicSnapshot(state, { running, now }) {
         : {}),
     };
   });
-  const heading = `小窝花园 · 第 ${state.day} 天${running ? "" : " · 已暂停"}`;
+  const hours = gardenHours(state.dayRemaining / HOUR);
+  const weather = {
+    name: state.weather.name.trim().split(/\s+/).join(" "),
+    kind: state.weather.kind,
+  };
+  const heading = `小窝花园 · 第 ${state.day} 天 · ${weather.name} · 本日剩 ${hours} 花园小时${running ? "" : " · 已暂停"}`;
   const descriptions = plots.map(
-    (p) =>
-      "第 " +
-      p.plot +
-      " 块：" +
-      (p.name ? p.name + " · " : "") +
-      stageLabels[p.stage] +
-      (p.water === undefined
-        ? ""
-        : " · 水分 " + p.water + (p.lowWater ? "（缺水）" : "")),
+    (p) => `第 ${p.plot} 块：${p.name ? p.name + " · " : ""}${plotCaption(p)}`,
   );
   const rows = [0, 3, 6].map((start) =>
     descriptions.slice(start, start + 3).join("；"),
@@ -65,10 +68,35 @@ export function gardenPublicSnapshot(state, { running, now }) {
   return {
     capturedAt: new Date(now).toISOString(),
     day: state.day,
+    dayRemainingHours: hours,
+    weather,
     running,
     plots,
     text: [heading, ...rows].join("\n"),
   };
+}
+
+/** @param {VisiblePlot} plot */
+function plotCaption(plot) {
+  return [
+    stageLabels[plot.stage],
+    plot.sheltered ? "有棚" : "露天",
+    plot.water === undefined
+      ? ""
+      : `水分 ${plot.water}${plot.lowWater ? "（缺水）" : ""}`,
+    plot.witheredReason === "flood"
+      ? "积水枯萎"
+      : plot.witheredReason === "drought"
+        ? "长期缺水"
+        : "",
+    plot.risk === "critical"
+      ? "本日结束前搭棚，否则枯萎"
+      : plot.risk
+        ? "暴雨积水，建议搭棚"
+        : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 /** @typedef {ReturnType<typeof gardenPublicSnapshot>} PublicSnapshot */
@@ -80,7 +108,7 @@ export function renderGardenSnapshot(snapshot, options = {}) {
       const page = await context.newPage();
       await page.setContent(gardenMarkup);
       await page.evaluate(
-        ({ plots, heading, labels }) => {
+        ({ plots, heading }) => {
           const doc = globalThis.document;
           const grid = doc.getElementById("plots");
           const time = doc.getElementById("time");
@@ -92,19 +120,17 @@ export function renderGardenSnapshot(snapshot, options = {}) {
             const title = doc.createElement("strong");
             title.textContent = `第 ${plot.plot} 块 ${plot.name}`;
             const stage = doc.createElement("p");
-            stage.textContent =
-              labels[plot.stage] +
-              (plot.water === undefined
-                ? ""
-                : ` · 水分 ${plot.water}${plot.lowWater ? "（缺水）" : ""}`);
+            stage.textContent = plot.caption;
             tile.append(title, stage);
             grid.append(tile);
           }
         },
         {
-          plots: snapshot.plots,
+          plots: snapshot.plots.map((plot) => ({
+            ...plot,
+            caption: plotCaption(plot),
+          })),
           heading: snapshot.text.split("\n")[0],
-          labels: stageLabels,
         },
       );
       return page
