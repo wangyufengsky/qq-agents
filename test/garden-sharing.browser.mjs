@@ -10,6 +10,10 @@ import { setTimeout as delay } from "node:timers/promises";
 import { _electron, chromium } from "playwright-core";
 import { desktopResourcePath } from "../desktop/home/resource-protocol.mjs";
 import { desktopToken } from "../src/home/desktop-auth.mjs";
+import {
+  gardenPublicSnapshot,
+  renderGardenSnapshot,
+} from "../src/home/garden-public.mjs";
 import { createServer } from "../src/server.mjs";
 import { MediaStore } from "../src/tools/media.mjs";
 import { findScreenshotBrowser } from "../src/tools/public-screenshot.mjs";
@@ -164,6 +168,21 @@ test("actual Chromium produces a shareable nine-tile PNG and renders the desktop
   assert.equal(payload.plots[1].sheltered, true);
   assert.match(payload.text, /暴雨.*本日剩 23 花园小时/);
   assert.equal(png.readUInt32BE(16), 720);
+  assert.doesNotMatch(
+    JSON.stringify(payload),
+    /plant-clover|soil-normal|cropId/,
+  );
+  const readArt = async (file) => {
+    if (file === "soil-normal.webp") return Buffer.from("broken WebP");
+    if (file.startsWith("plant-")) throw new Error("Missing plant sprite");
+    return readFile(new URL("../public/garden-art/" + file, import.meta.url));
+  };
+  const degraded = await renderGardenSnapshot(
+    gardenPublicSnapshot(garden.read(now), { running: true, now }),
+    { executablePath, readArt },
+  );
+  assert.equal(degraded.readUInt32BE(16), 720);
+  assert.notDeepEqual(degraded, png);
   assert.ok(png.readUInt32BE(20) > 300);
   assert.equal(
     (
@@ -231,6 +250,15 @@ test("native Electron garden tab reaches shared state through its focused panel 
     await tile
       .getByText("野生三叶草", { exact: true })
       .waitFor({ timeout: 8000 });
+    await panel.waitForFunction(() => {
+      const images = globalThis.document.querySelectorAll(
+        ".desktop-garden-tile:first-child .garden-art-layer",
+      );
+      return (
+        images.length === 4 &&
+        Array.from(images).every((img) => img.complete && img.naturalWidth > 0)
+      );
+    });
     assert.equal(
       runtime.home.garden.read(runtime.now()).plots[0].plant.cropId,
       "clover",

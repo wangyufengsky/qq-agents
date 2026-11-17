@@ -7,6 +7,7 @@ import { deriveRelayToken } from "./core/relay-auth.mjs";
 import { finalizeMcpOutput, toolOutputText } from "./backends/tool-output.mjs";
 import { disabledMessageTimingSnapshot } from "./core/message-timing.mjs";
 import { desktopGarden } from "./home/desktop-garden.mjs";
+import { isGardenArtResource } from "../public/garden-art/art.js";
 import { adminGardenView, adminGardenWrite } from "./home/garden-console.mjs";
 import { homeModeration } from "./tools/home.mjs";
 import { serveHomePreview } from "./home/static.mjs";
@@ -254,51 +255,59 @@ export function createServer({
       if (stopping || runtime.closed) throw Error("RUNTIME_CLOSING");
       const url = new URL(req.url, "http://" + req.headers.host);
       if (serveHomePreview(req, res, url.pathname)) return;
+      const gardenResource =
+        url.pathname.startsWith("/garden-art/") &&
+        isGardenArtResource(url.pathname.slice("/garden-art/".length));
       if (
         req.method === "GET" &&
-        [
-          "/",
-          "/app.js",
-          "/visits-ui.js",
-          "/parity.js",
-          "/agent-form.js",
-          "/files-ui.js",
-          "/document-reader.js",
-          "/apps-ui.js",
-          "/mind-ui.js",
-          "/session-transcripts-ui.js",
-          "/session-transcripts.css",
-          "/projects-ui.js",
-          "/project-participation.js",
-          "/mood-ui.js",
-          "/people-ui.js",
-          "/onboarding-ui.js",
-          "/updates-ui.js",
-          "/activity-ui.js",
-          "/board-ui.js",
-          "/garden-ui.js",
-          "/garden-weather-ui.js",
-          "/garden.css",
-          "/board.css",
-          "/style.css",
-          "/agent-form.css",
-        ].includes(url.pathname)
+        (gardenResource ||
+          [
+            "/",
+            "/app.js",
+            "/visits-ui.js",
+            "/parity.js",
+            "/agent-form.js",
+            "/files-ui.js",
+            "/document-reader.js",
+            "/apps-ui.js",
+            "/mind-ui.js",
+            "/session-transcripts-ui.js",
+            "/session-transcripts.css",
+            "/projects-ui.js",
+            "/project-participation.js",
+            "/mood-ui.js",
+            "/people-ui.js",
+            "/onboarding-ui.js",
+            "/updates-ui.js",
+            "/activity-ui.js",
+            "/board-ui.js",
+            "/garden-ui.js",
+            "/garden-weather-ui.js",
+            "/garden.css",
+            "/board.css",
+            "/style.css",
+            "/agent-form.css",
+          ].includes(url.pathname))
       ) {
         const file =
           url.pathname === "/" ? "index.html" : url.pathname.slice(1);
+        const resource = path.join(publicDir, file);
+        if (!fs.existsSync(resource)) return deny("NOT_FOUND", 404);
         res.writeHead(200, {
-          "content-type": file.endsWith(".html")
-            ? "text/html; charset=utf-8"
-            : file.endsWith(".js")
-              ? "text/javascript; charset=utf-8"
-              : "text/css; charset=utf-8",
+          "content-type": file.endsWith(".webp")
+            ? "image/webp"
+            : file.endsWith(".html")
+              ? "text/html; charset=utf-8"
+              : file.endsWith(".js")
+                ? "text/javascript; charset=utf-8"
+                : "text/css; charset=utf-8",
           "cache-control": "no-store",
           "referrer-policy": "no-referrer",
           "x-content-type-options": "nosniff",
           "content-security-policy":
             "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
         });
-        res.end(fs.readFileSync(path.join(publicDir, file)));
+        res.end(fs.readFileSync(resource));
         return;
       }
       if (url.pathname === "/api/desktop-home/events") {

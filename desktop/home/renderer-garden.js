@@ -1,4 +1,10 @@
 /* global window */
+import {
+  gardenArtMarkup,
+  gardenIconMarkup,
+  gardenLayers,
+  hideFailedGardenArt,
+} from "../../public/garden-art/art.js";
 import { element, button } from "./renderer-shared.js";
 
 const verbs = {
@@ -51,6 +57,8 @@ function picker(label, items) {
 
 export function bindGarden(panel, getRoom) {
   const content = panel.querySelector(".garden-content");
+  hideFailedGardenArt(content);
+  content.classList.add("garden-paper");
   const message = panel.querySelector(".garden-message");
   const refresh = panel.querySelector(".garden-refresh");
   let pending,
@@ -117,8 +125,17 @@ export function bindGarden(panel, getRoom) {
           (paused ? " · 已暂停" : ""),
       ),
     );
+    content.firstElementChild.insertAdjacentHTML(
+      "afterbegin",
+      gardenIconMarkup("weather", garden.weather.kind),
+    );
     if (garden.event) {
-      content.append(element("h3", "", garden.event.name));
+      const title = element("h3", "", garden.event.name);
+      title.insertAdjacentHTML(
+        "afterbegin",
+        gardenIconMarkup("event", garden.event.kind),
+      );
+      content.append(title);
       const status = { claimed: "奖励已入公共仓库", chased: "小偷已被驱赶" }[
         garden.event.status
       ];
@@ -134,8 +151,9 @@ export function bindGarden(panel, getRoom) {
       ([id, crop]) => crop.enabled && (crop.market || garden.seeds[id] > 0),
     );
     for (const { id, plant, sheltered } of garden.plots) {
-      const tile = element("article", "desktop-garden-tile");
+      const tile = element("article", "desktop-garden-tile garden-paper-tile");
       tile.dataset.plot = id;
+      tile.dataset.stage = plant?.status || "empty";
       tile.append(
         element("strong", "", "第 " + id + " 块"),
         element("p", "", sheltered ? "有棚" : "露天"),
@@ -144,6 +162,10 @@ export function bindGarden(panel, getRoom) {
           () => ({ plot: id }),
           paused,
         ),
+      );
+      tile.firstElementChild.insertAdjacentHTML(
+        "afterend",
+        gardenArtMarkup(gardenLayers({ plant, sheltered })),
       );
       if (!plant) {
         const seeds = picker(
@@ -177,7 +199,17 @@ export function bindGarden(panel, getRoom) {
         const target = () => ({ plot: id, plantId: plant.id });
         if (plant.status === "mature")
           tile.append(
-            element("p", "", "已成熟"),
+            element(
+              "p",
+              "",
+              "已成熟" +
+                (plant.quality
+                  ? " · " +
+                    ({ ordinary: "普通", fine: "优良", perfect: "完美" }[
+                      plant.quality
+                    ] || "")
+                  : ""),
+            ),
             control("harvest", target, paused),
           );
         else if (plant.status === "withered")
@@ -192,14 +224,17 @@ export function bindGarden(panel, getRoom) {
             control("clear", target, paused),
           );
         else {
+          const progress = Math.floor((plant.growth / plant.crop.hours) * 100);
           tile.append(
+            element("p", "", progress < 25 ? "幼苗" : "生长中"),
             element(
               "p",
               "",
               "成长 " +
-                Math.floor((plant.growth / plant.crop.hours) * 100) +
+                progress +
                 "% · 水分 " +
-                Math.floor(plant.water),
+                Math.floor(plant.water) +
+                (plant.water < plant.rules.lowWater ? " · 缺水" : ""),
             ),
             control("water", target, paused || plant.water === 100),
           );

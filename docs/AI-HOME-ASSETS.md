@@ -38,3 +38,23 @@ cwebp -q 84 -m 6 -alpha_q 100 input.png -o output.webp
 用同目录的三张 `*-idle.webp` 作参考，通过 OpenAI 内置 imagegen 生成三分之四侧面朝右的站姿和跨步画面，再以同一生成稿为参考补一张前脚着地、后脚屈起的收步画面。按 PNG 的 alpha 轮廓裁切、清理低透明度噪点，以 Lanczos 缩放到 300 像素高（收步 297 像素），底部对齐到 320×320 的透明画布后用 Pillow 转换为 WebP（质量 85，method 6）。坐姿继续使用原待机图。朝左由渲染器镜像，起停、转身、坐起和张望由 CSS 变换呈现。
 
 动作帧随桌面小窝代码按根目录 [MIT 许可](../LICENSE) 提供。原始 PNG 是制作中间稿。现有纸片角色的创作参考和署名见 [NOTICE](../NOTICE.md#纸页小窝与桌面小窝生成素材)。
+
+## 小窝花园平印纸贴
+
+维护者选定的 C 款使用奶油纸底、棕色轮廓、可辨认的简洁色块与轻印刷颗粒。制作使用 OpenAI imagegen，以 C 款四格样张为风格参考。作物按同种四态生成，土面、棚、天气和事件按组生成。采用生成物自身的透明通道分格裁切，以相同落点排版，使用 Pillow 12.2 的 Lanczos 缩小，以质量 87 转为 WebP。
+
+公开程序只收录 `public/garden-art/` 的 37 个 WebP 文件。纸底为 512 × 512，土面为 256 × 192，作物和棚为 256 × 256，天气和事件为 128 × 128 像素。PNG 分层原稿、完整提示词和下表对应源图保存在维护者的设计工作区。图件按项目根目录 MIT 许可分发。
+
+| 原图组     | PNG 的 SHA-256                                                     |
+| ---------- | ------------------------------------------------------------------ |
+| clover     | `103b8e0182eb5448dfc16631b89d6cb06fad99060c3f3cec64491a87584ccb0e` |
+| radish     | `3ed3bc9068af077960a041ce7be4f0cbf941d16a235294b4e71ffad2bc93060d` |
+| sunflower  | `9b353735b608f3daee12f1cd1217bc9168ffe1983bccac1f64a18d6b0c06544a` |
+| mint       | `5422c2e489d1526a947529a54ed724700b682ef9368d3773acd032375baaf56b` |
+| strawberry | `bbc3367aeb929b8f5f101fa33cf4b0ba26bda0b10832274a68c281fef728f7ba` |
+| moonflower | `1c156bab161b81f0628f46aaaf3f857b293a188730eaa96f13de5f68d580014e` |
+| soil       | `3a4c1d8d52f41ac41aebffba68078a947daa98ec00a31331bdb3583ed6361110` |
+| shelter    | `d95983b2988e1533e1c98601bb7e4e6cec9afd9eafad9f2ec19afa99f0ad569c` |
+| weather    | `7ea11a1106f357b81c7b2f75bb0335ef11c39b3232feecdfc76556e9fdc21223` |
+| event      | `493032ea8d86eab293a3f58fbbda577b8929a9541483ce789f4d32f642f65954` |
+| paper      | `31a6bc8521a57d5005ccdd22ee30fe34630aedaf7c3a77f229dc07e3b4712285` |

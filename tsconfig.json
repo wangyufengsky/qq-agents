@@ -115,6 +115,7 @@
     "src/games/framework/*.mjs",
     "scripts/game-p2-acceptance.mjs",
     "scripts/game-compatibility.mjs",
+    "public/garden-art/art.js",
     "public/home-preview/scene.mjs",
     "public/home-space/book.mjs",
     "public/home-space/interiors.mjs",
