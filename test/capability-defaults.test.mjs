@@ -11,9 +11,11 @@ import { TOOL_NAMES } from "../src/tools/specs.mjs";
 import { APP_NAMES } from "../src/apps/urls.mjs";
 import { config, fixture, context } from "./helpers.mjs";
 
-const defaultTools = TOOL_NAMES.filter((name) => name !== "video_read");
+const defaultTools = TOOL_NAMES.filter(
+  (name) => !["video_read", "garden_read", "garden_act"].includes(name),
+);
 
-test("new roles enable standard tools while retaining setup requirements and explicit video opt-in", () => {
+test("new roles enable standard tools while retaining setup requirements and explicit video and garden opt-in", () => {
   const cfg = validateConfig(defaultConfig());
   for (const agent of cfg.agents) {
     assert.deepEqual(agent.tools, defaultTools);

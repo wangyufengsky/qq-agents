@@ -121,6 +121,7 @@
     "src/home/layout.mjs",
     "src/home/store.mjs",
     "src/home/garden-clock.mjs",
+    "src/home/garden-console.mjs",
     "src/home/garden-rules.mjs",
     "src/home/garden-service.mjs",
     "src/home/garden-schema.mjs",

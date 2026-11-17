@@ -6,6 +6,7 @@ import { desktopToken } from "./home/desktop-auth.mjs";
 import { deriveRelayToken } from "./core/relay-auth.mjs";
 import { finalizeMcpOutput, toolOutputText } from "./backends/tool-output.mjs";
 import { disabledMessageTimingSnapshot } from "./core/message-timing.mjs";
+import { adminGardenView, adminGardenWrite } from "./home/garden-console.mjs";
 import { homeModeration } from "./tools/home.mjs";
 import { serveHomePreview } from "./home/static.mjs";
 import { withInteraction } from "./core/closeness.mjs";
@@ -274,6 +275,8 @@ export function createServer({
           "/updates-ui.js",
           "/activity-ui.js",
           "/board-ui.js",
+          "/garden-ui.js",
+          "/garden.css",
           "/board.css",
           "/style.css",
           "/agent-form.css",
@@ -719,6 +722,45 @@ export function createServer({
         }
       }
 
+      if (url.pathname === "/api/home-garden") {
+        if (req.method !== "GET") return deny("METHOD", 405);
+        return send(adminGardenView(runtime));
+      }
+      if (url.pathname.startsWith("/api/home-garden/")) {
+        if (req.method !== "POST") return deny("METHOD", 405);
+        const operation = url.pathname.slice("/api/home-garden/".length);
+        if (!["initialize", "settings", "act"].includes(operation))
+          return deny("NOT_FOUND", 404);
+        try {
+          return send(
+            adminGardenWrite(runtime, operation, await readBody(128 * 1024)),
+          );
+        } catch (error) {
+          if (
+            [
+              "GARDEN_SETTINGS_CONFLICT",
+              "GARDEN_REQUEST_CONFLICT",
+              "GARDEN_PRICE_CHANGED",
+              "GARDEN_PLANT_CHANGED",
+              "GARDEN_PLOT_OCCUPIED",
+              "GARDEN_PAUSED",
+              "GARDEN_SEED_UNAVAILABLE",
+              "GARDEN_RECIPIENT_UNAVAILABLE",
+              "GARDEN_STOCK_UNAVAILABLE",
+            ].includes(error.message)
+          )
+            return send(
+              {
+                error: error.message,
+                ...(error.message === "GARDEN_STOCK_UNAVAILABLE" && error.cause
+                  ? { stock: error.cause }
+                  : {}),
+              },
+              409,
+            );
+          throw error;
+        }
+      }
       if (url.pathname === "/api/home/overview" && req.method === "GET")
         return send(runtime.home.overview());
       if (url.pathname === "/api/home/content" && req.method === "GET")

@@ -26,6 +26,9 @@ const cropSchema = z.strictObject({
 export const gardenSettings = z
   .strictObject({
     enabled: z.boolean(),
+    roles: z
+      .record(z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/), z.uuid())
+      .default({}),
     speed: z.number().min(0.125).max(16),
     turnLimit: count.max(100),
     initialBalance: count,
@@ -124,7 +127,7 @@ export function defaultGardenSettings() {
  * settledAt: number, water: number, growth: number, dry: number, low: number,
  * witheredReason?: "drought", fertilizer: number, status: "growing" | "mature" | "withered", quality: Quality | null,
  * crop: Crop, rules: Omit<Settings, "crops" | "enabled" | "speed" | "turnLimit" |
- * "initialBalance" | "fertilizerPrice">}} Plant
+ * "initialBalance" | "fertilizerPrice" | "roles">}} Plant
  */
 
 /** @param {Plant} plant */

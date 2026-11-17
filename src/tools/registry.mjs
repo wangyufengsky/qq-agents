@@ -27,6 +27,7 @@ import { fileDefinitions, fileTool } from "./file-tools.mjs";
 import { savedMediaDefinitions, savedMediaTool } from "./saved-media.mjs";
 import { screenshotDefinitions, screenshotTool } from "./screenshots.mjs";
 import { legacyDefinitions, legacyTool } from "./legacy.mjs";
+import { gardenDefinitions, gardenTool } from "./garden.mjs";
 import { homeDefinitions, homeTool } from "./home.mjs";
 import { socialDefinitions, socialTool } from "./home-social.mjs";
 import { boardDefinitions, boardTool } from "./board.mjs";
@@ -79,6 +80,7 @@ for (const [group, dispatch] of [
   [draftDefinitions, draftTool],
   [boardDefinitions, boardTool],
   [homeDefinitions, homeTool],
+  [gardenDefinitions, gardenTool],
   [socialDefinitions, socialTool],
 ])
   for (const name of Object.keys(group)) {

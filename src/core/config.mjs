@@ -500,7 +500,12 @@ export const configSchema = z
             .strict(),
           tools: z
             .array(z.string())
-            .default(() => TOOL_NAMES.filter((name) => name !== "video_read")),
+            .default(() =>
+              TOOL_NAMES.filter(
+                (name) =>
+                  !["video_read", "garden_read", "garden_act"].includes(name),
+              ),
+            ),
           wake: z
             .object({
               mentions: z.boolean().default(true),
