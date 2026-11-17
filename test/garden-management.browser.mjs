@@ -69,6 +69,7 @@ test("management console opens the garden, edits its catalog and trades from the
   await settings.getByRole("button", { name: "新增作物" }).click();
   const newCrop = settings.locator('[data-crop="test-clover"]');
   await newCrop.getByLabel("名称", { exact: true }).fill("试种三叶草");
+  await newCrop.getByLabel("高光照倍率", { exact: true }).fill("1.2");
   await newCrop
     .getByLabel("基础成熟时长（花园小时）", { exact: true })
     .fill("1");
@@ -76,6 +77,9 @@ test("management console opens the garden, edits its catalog and trades from the
   await settings.getByRole("button", { name: "保存花园设置" }).click();
   await page.getByText("设置已保存").waitFor();
   assert.equal(garden.read(now).settings.speed, 4);
+  assert.deepEqual(garden.read(now).settings.crops["test-clover"].lightRates, {
+    high: 1.2,
+  });
   const secondPlot = page.locator('[data-plot="2"]');
   await secondPlot.getByLabel("第 2 块的作物").selectOption("test-clover");
   await secondPlot.getByRole("button", { name: "播种" }).click();

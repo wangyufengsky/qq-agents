@@ -311,11 +311,10 @@ function gardenFormSettings(form, state) {
       crop[key] = read(key).value;
     for (const key of ["enabled", "market", "rainSensitive"])
       crop[key] = read(key).checked;
-    const light = ["high", "medium", "low"];
-    if (light.some((key) => read("light-" + key).value !== ""))
-      crop.lightRates = Object.fromEntries(
-        light.map((key) => [key, read("light-" + key).valueAsNumber]),
-      );
+    const overrides = ["high", "medium", "low"]
+      .filter((key) => read("light-" + key).value !== "")
+      .map((key) => [key, read("light-" + key).valueAsNumber]);
+    if (overrides.length) crop.lightRates = Object.fromEntries(overrides);
     settings.crops[row.dataset.crop] = crop;
   }
   settings.weather = gardenReadWeather(form);

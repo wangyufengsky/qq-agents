@@ -148,7 +148,7 @@ test("sun multiplies light after water and increases demand, while customizable 
   });
   f.plant(2, "sunflower");
   f.configure((s) => {
-    s.crops.mint.lightRates = { high: 0.6, medium: 1.2, low: 1.4 };
+    s.crops.mint.lightRates = { medium: 1.2 };
   });
   f.act({ kind: "shelter", plot: 3 });
   f.plant(3, "mint");

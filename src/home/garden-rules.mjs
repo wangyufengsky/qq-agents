@@ -25,7 +25,11 @@ const cropSchema = z.strictObject({
   dailyWater: water,
   light: z.enum(["sun", "neutral", "shade"]),
   lightRates: z
-    .strictObject({ high: lightRate, medium: lightRate, low: lightRate })
+    .strictObject({
+      high: lightRate.optional(),
+      medium: lightRate.optional(),
+      low: lightRate.optional(),
+    })
     .optional(),
   rainSensitive: z.boolean().optional(),
   fertilizer: count.max(20),
@@ -207,8 +211,8 @@ export function projectPlant(
   }
   const rate = flooded ? 0 : moistureRate(plant, weather, sheltered);
   const light = sheltered ? shelteredLight[weather.light] : weather.light;
-  const lightGrowth = (plant.crop.lightRates ??
-    lightDefaults[plant.crop.light])[light];
+  const lightGrowth =
+    plant.crop.lightRates?.[light] ?? lightDefaults[plant.crop.light][light];
   const weatherGrowth = lightGrowth * (sheltered ? 1 : weather.outdoorGrowth);
   const { lowWater, dryHours } = plant.rules;
   let remaining = (elapsed - plant.settledAt) / HOUR;
