@@ -9,6 +9,7 @@ import {
   gardenPublicSnapshot,
   renderGardenSnapshot,
 } from "../home/garden-public.mjs";
+import { gardenGiftSources } from "../home/garden-gift-sources.mjs";
 import { gardenDelegationScope } from "../home/garden-delegations.mjs";
 import { DESKTOP_CONVERSATION } from "../home/desktop-decision.mjs";
 
@@ -135,10 +136,28 @@ export function gardenTool(
     garden.allowsRole(role.id, runtime.home.generation(role.id));
   if (name === "garden_read") {
     const view = input.view ?? "overview";
+    if (view === "gifts") {
+      if (
+        ctx.conversation !== "@subject" ||
+        ctx.runtimeKind ||
+        ctx.intentOnly ||
+        ctx.scheduleRunId
+      )
+        throw Error("TOOL_DISABLED");
+      return { items: gardenGiftSources(runtime, role.id) };
+    }
     if (!["overview", "public", "image"].includes(view))
       throw Error("INVALID_REQUEST");
-    if (view === "overview" && manages)
-      return subjectGardenView(runtime, role.id, ctx.turnId);
+    if (view === "overview" && manages) {
+      let collectVisitor = true;
+      try {
+        runtime.home.rooms.shareable(ctx);
+      } catch (error) {
+        if (error.message !== "HOME_SOURCE_DENIED") throw error;
+        collectVisitor = false;
+      }
+      return subjectGardenView(runtime, role.id, ctx.turnId, collectVisitor);
+    }
     const now = runtime.now(),
       state = garden.snapshot(now);
     const snapshot = gardenPublicSnapshot(state, {

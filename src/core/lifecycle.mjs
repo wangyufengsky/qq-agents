@@ -1,3 +1,4 @@
+import { gardenGiftSources } from "../home/garden-gift-sources.mjs";
 import { trackPeerQzone } from "./peer-qzone-protection.mjs";
 import { activityForTurn } from "../tools/activities.mjs";
 import { recentQqVideoPrompt } from "../video/recent.mjs";
@@ -831,6 +832,10 @@ export class ContextLifecycle {
     ctx.persistTaint?.();
     const materials =
       ctx.conversation === SUBJECT ? subjectMaterials(r, ctx) : null;
+    const gifts =
+      ctx.conversation === SUBJECT && ctx.allowedTools?.includes("garden_read")
+        ? gardenGiftSources(r, a.id)
+        : [];
     if (handoff) dropRepeats(handoff, history, materials, schedule);
     const replay =
       handoff && /^(group|private):/.test(ctx.conversation)
@@ -895,6 +900,9 @@ export class ContextLifecycle {
             handoff ? `程序交接状态：${JSON.stringify(handoff)}` : "",
             proposals
               ? `会话交给你的提议（资料，时效由你判断；普通提议用 subject_inbox_decide 处理或暂缓；garden-watering 用 garden_act 的 delegate_step 或 delegate_dismiss）：${JSON.stringify(proposals)}`
+              : "",
+            gifts.length
+              ? `你收到的花园礼物（写入日记时可将 evidenceId 放入 evidence）：${JSON.stringify(gifts)}`
               : "",
             ctx.conversation === SUBJECT
               ? `空闲时间素材：${JSON.stringify(materials)}`

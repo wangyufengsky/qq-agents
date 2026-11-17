@@ -10,5 +10,9 @@ export function fixedWeather(kind = "cloud") {
 export function keepNeutralWeather(garden) {
   const initialize = garden.initialize.bind(garden);
   garden.initialize = (now, settings = defaultGardenSettings()) =>
-    initialize(now, { ...settings, weather: fixedWeather() });
+    initialize(now, {
+      ...settings,
+      events: { ...settings.events, rate: 0 },
+      weather: fixedWeather(),
+    });
 }

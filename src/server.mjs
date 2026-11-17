@@ -729,15 +729,19 @@ export function createServer({
 
       if (url.pathname === "/api/home-garden") {
         if (req.method !== "GET") return deny("METHOD", 405);
-        return send(adminGardenView(runtime));
+        return send(adminGardenView(runtime, true));
       }
       if (url.pathname.startsWith("/api/home-garden/")) {
         if (req.method !== "POST") return deny("METHOD", 405);
         const operation = url.pathname.slice("/api/home-garden/".length);
         if (
-          !["initialize", "settings", "act", "weather-trial"].includes(
-            operation,
-          )
+          ![
+            "initialize",
+            "settings",
+            "act",
+            "weather-trial",
+            "event-trial",
+          ].includes(operation)
         )
           return deny("NOT_FOUND", 404);
         try {
@@ -749,6 +753,9 @@ export function createServer({
             [
               "GARDEN_SETTINGS_CONFLICT",
               "GARDEN_SHELTER_UNCHANGED",
+              "GARDEN_EVENT_EXPIRED",
+              "GARDEN_EVENT_HANDLED",
+              "GARDEN_EVENT_OFFER",
               "GARDEN_REQUEST_CONFLICT",
               "GARDEN_PRICE_CHANGED",
               "GARDEN_PLANT_CHANGED",

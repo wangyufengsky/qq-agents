@@ -167,3 +167,68 @@ test("weather form copies a variant, saves conditional weights, and previews exc
     false,
   );
 });
+test("daily event form saves conditional variants, previews no event, and drives the live thief action", async (t) => {
+  const executablePath = process.env.QQ_TEST_GARDEN_BROWSER;
+  assert.ok(executablePath);
+  const cfg = config(1);
+  cfg.desktopHome.enabled = true;
+  const { runtime } = fixture(t, { cfg });
+  const garden = runtime.home.garden;
+  keepNeutralWeather(garden);
+  let now = 1_800_000_000_000;
+  runtime.clock = () => now;
+  const token = randomUUID();
+  const server = createServer({ runtime, token, allowLive: true });
+  t.after(() => server.close());
+  const browser = await chromium.launch({ executablePath, headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 375, height: 812 } });
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto(`http://127.0.0.1:${await server.listen()}/`);
+  await page.locator("#token").fill(token);
+  await page.locator("#login-button").click();
+  await page.getByRole("button", { name: "花园", exact: true }).click();
+  await page.getByRole("button", { name: "开园", exact: true }).click();
+  await page.getByText("已开园", { exact: true }).waitFor();
+  const form = page.locator("[data-garden-settings]");
+  await page.locator("summary").filter({ hasText: "花园设置" }).click();
+  await page.locator("summary").filter({ hasText: "每日事件池" }).click();
+  await form.getByLabel("每日事件触发率（0–1）").fill("1");
+  for (const id of ["merchant", "visitor"]) {
+    const row = form.locator(`[data-event-entry="${id}"]`);
+    await row.locator("summary").click();
+    await row.getByLabel("启用事件").uncheck();
+  }
+  await form.getByLabel("新事件 ID").fill("sunny-thief");
+  await form.getByLabel("复制事件").selectOption("thief");
+  await form.getByRole("button", { name: "新增事件", exact: true }).click();
+  const copy = form.locator('[data-event-entry="sunny-thief"]');
+  await copy.getByLabel("事件名称").fill("晴天小偷");
+  await copy.getByRole("button", { name: "新增事件条件" }).click();
+  await copy.getByLabel("匹配天气").selectOption("kind:sun");
+  await form.getByRole("button", { name: "保存花园设置" }).click();
+  await page.getByText("设置已保存", { exact: true }).waitFor();
+  assert.equal(garden.read(now).event, null);
+  assert.equal(
+    garden.read(now).settings.events.entries["sunny-thief"].conditions[1].field,
+    "today",
+  );
+  await page.locator("summary").filter({ hasText: "试配每日事件" }).click();
+  const trial = page.locator("[data-garden-event-trial]");
+  await trial.getByLabel("模拟当日天气").selectOption("cloud");
+  await trial.getByLabel("模拟日初余额").fill("300");
+  await trial.getByRole("button", { name: "计算事件概率" }).click();
+  await trial.getByText(/无事件.*100%/).waitFor();
+  await trial.getByLabel("模拟日初余额").fill("301");
+  await trial.getByRole("button", { name: "计算事件概率" }).click();
+  await trial.getByText(/小偷踩点.*100%.*入池/).waitFor();
+  garden.desktopSync(now, 72 * HOUR);
+  now += 24 * HOUR;
+  garden.desktopSync(now, 72 * HOUR);
+  await page.getByRole("button", { name: "刷新花园" }).click();
+  await page.getByRole("button", { name: "驱赶小偷", exact: true }).click();
+  await page.getByText("小偷已被驱赶", { exact: true }).waitFor();
+  assert.equal(garden.read(now).balance, 1015);
+  assert.deepEqual(errors, []);
+});

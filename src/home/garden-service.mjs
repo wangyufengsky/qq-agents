@@ -5,6 +5,7 @@ import { canonical } from "../backends/session-contract.mjs";
 import { GardenClock } from "./garden-clock.mjs";
 import { GardenCalendar } from "./garden-calendar.mjs";
 import { defaultWeather } from "./garden-weather.mjs";
+import { defaultEvents } from "./garden-event-rules.mjs";
 import {
   cropId,
   DAY,
@@ -18,10 +19,26 @@ const quantity = z.number().int().min(1).max(1_000_000);
 const quotedPrice = z.number().int().min(0);
 const plot = z.number().int().min(1).max(PLOT_COUNT);
 const plantId = z.uuid();
+const eventId = z.string().regex(/^\d+:[a-z][a-z0-9-]{0,39}$/);
 const person = z.strictObject({ kind: z.enum(["admin", "agent"]), id });
 const inputSchema = z.strictObject({
   requestId: z.string().regex(/^[A-Za-z0-9_-]{8,80}$/),
   action: z.discriminatedUnion("kind", [
+    z.strictObject({ kind: z.literal("chase_thief"), eventId }),
+    z.strictObject({
+      kind: z.literal("merchant_buy"),
+      eventId,
+      cropId,
+      quantity,
+      price: quotedPrice,
+    }),
+    z.strictObject({
+      kind: z.literal("merchant_sell"),
+      eventId,
+      harvestId: z.uuid(),
+      quantity,
+      price: quotedPrice,
+    }),
     z.strictObject({ kind: z.enum(["shelter", "unshelter"]), plot }),
     z.strictObject({
       kind: z.literal("buy_seed"),
@@ -76,7 +93,7 @@ export class GardenService {
   constructor(store) {
     this.store = store;
     this.db = store.db;
-    this.calendar = new GardenCalendar(this.db);
+    this.calendar = new GardenCalendar(this.db, this.changeBalance.bind(this));
     const state = this.load();
     if (state && !this.calendar.latest())
       store.transaction(() => {
@@ -99,6 +116,7 @@ export class GardenService {
         roles: {},
         delegationHours: 24,
         weather: defaultWeather,
+        events: defaultEvents,
         ...JSON.parse(String(row.settings)),
       },
       balance: Number(row.balance),
@@ -198,7 +216,11 @@ export class GardenService {
       const current = this.requireState();
       const next = gardenSettings.parse(
         input && typeof input === "object"
-          ? { weather: current.settings.weather, ...input }
+          ? {
+              weather: current.settings.weather,
+              events: current.settings.events,
+              ...input,
+            }
           : input,
       );
       if (current.settingsRevision !== expectedRevision)
@@ -212,6 +234,7 @@ export class GardenService {
       this.calendar.advance(
         current,
         Math.max(current.clock, this.clock.elapsedAt(now)),
+        now,
       );
       this.db
         .prepare(
@@ -228,18 +251,25 @@ export class GardenService {
     return this.read(now);
   }
 
-  /** @param {number} now @param {boolean} [live] */
-  snapshot(now, live = false) {
+  /** @param {number} now @param {boolean} [live] @param {Actor} [visitorActor] */
+  snapshot(now, live = false, visitorActor) {
     const read = () => {
       const state = this.requireState();
       const elapsed = Math.max(
         state.clock,
         live ? this.clock.elapsedAt(now) : this.clock.elapsed,
       );
-      const current = this.calendar.advance(state, elapsed);
+      const current = this.calendar.advance(state, elapsed, now);
+      const running = this.enabled && this.clock.running(now);
+      const event =
+        running && visitorActor
+          ? this.calendar.events.claimVisitor(current.day, visitorActor, state)
+          : this.calendar.events.get(current.day);
       return {
         ...state,
-        running: this.enabled && this.clock.running(now),
+        event,
+        fertilizerCredits: this.calendar.events.credits(),
+        running,
         day: current.day,
         dayRemaining: DAY - (elapsed % DAY),
         weather: current.weather,
@@ -249,10 +279,10 @@ export class GardenService {
     return this.db.isTransaction ? read() : this.store.transaction(read);
   }
 
-  /** @param {number} now */
-  read(now) {
+  /** @param {number} now @param {Actor} [visitorActor] */
+  read(now, visitorActor) {
     return {
-      ...this.snapshot(now),
+      ...this.snapshot(now, Boolean(visitorActor), visitorActor),
       harvests: this.db
         .prepare(
           "SELECT * FROM garden_harvests WHERE quantity>0 ORDER BY rowid",
@@ -278,8 +308,8 @@ export class GardenService {
     };
   }
 
-  /** @param {number} now @param {Actor} actor @param {unknown} input @param {(action: Action) => void} [validate] */
-  act(now, actor, input, validate) {
+  /** @param {number} now @param {Actor} actor @param {unknown} input @param {(action: Action) => void} [validate] @param {(recipient:{kind:"admin"|"agent",id:string},result:{giftId:string,cropId:string,quantity:number})=>void} [onGift] */
+  act(now, actor, input, validate, onGift) {
     const { requestId, action } = inputSchema.parse(input);
     const turnId = actor.kind === "agent" ? actor.turnId : null;
     const digest = createHash("sha256")
@@ -306,9 +336,21 @@ export class GardenService {
       this.calendar.advance(
         state,
         Math.max(state.clock, this.clock.elapsedAt(now)),
+        now,
       );
       validate?.(action);
       const result = this.apply(now, actor, action, state);
+      if (
+        action.kind === "gift" &&
+        "giftId" in result &&
+        result.giftId &&
+        "cropId" in result &&
+        result.cropId
+      )
+        onGift?.(
+          action.recipient,
+          /** @type {{giftId:string,cropId:string,quantity:number}} */ (result),
+        );
       this.db
         .prepare(
           "UPDATE garden_state SET clock=?,revision=revision+1,balance=?,plots=?,seeds=?,fertilizer=? WHERE id=1",
@@ -356,6 +398,16 @@ export class GardenService {
   apply(now, actor, action, state) {
     const rules = state.settings;
     switch (action.kind) {
+      case "merchant_buy":
+      case "merchant_sell":
+      case "chase_thief":
+        return this.calendar.events.perform(
+          Math.floor(state.clock / DAY) + 1,
+          now,
+          actor,
+          action,
+          state,
+        );
       case "buy_seed": {
         const crop = this.getCrop(rules, action.cropId);
         if (!crop.market || !crop.enabled)
@@ -402,18 +454,23 @@ export class GardenService {
             plant.water = Math.min(100, plant.water + plant.rules.watering);
             plant.dry = 0;
             return { plot: entry.id, plantId: plant.id, water: plant.water };
-          case "fertilize":
+          case "fertilize": {
             if (plant.status !== "growing") throw Error("GARDEN_PLANT_STATE");
             if (plant.fertilizer >= plant.crop.fertilizer)
               throw Error("GARDEN_FERTILIZER_FULL");
-            if (!state.fertilizer) throw Error("GARDEN_STOCK_UNAVAILABLE");
-            state.fertilizer--;
+            const usedCredit = this.calendar.events.useCredit();
+            if (!usedCredit) {
+              if (!state.fertilizer) throw Error("GARDEN_STOCK_UNAVAILABLE");
+              state.fertilizer--;
+            }
             plant.fertilizer++;
             return {
               plot: entry.id,
               plantId: plant.id,
               fertilizer: plant.fertilizer,
+              ...(usedCredit && { usedCredit }),
             };
+          }
           case "harvest": {
             if (plant.status !== "mature" || !plant.quality)
               throw Error("GARDEN_PLANT_STATE");
@@ -485,6 +542,7 @@ export class GardenService {
       crops: _crops,
       roles: _roles,
       weather: _weather,
+      events: _events,
       delegationHours: _delegationHours,
       enabled: _enabled,
       speed: _speed,
@@ -562,7 +620,7 @@ export class GardenService {
     return {
       harvestId: harvest.id,
       quantity: action.quantity,
-      ...(giftId && { giftId }),
+      ...(giftId && { giftId, cropId: harvest.crop_id }),
     };
   }
 

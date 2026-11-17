@@ -1,5 +1,10 @@
 // @ts-check
 import { z } from "zod";
+import {
+  defaultEvents,
+  eventPool,
+  validEventReferences,
+} from "./garden-event-rules.mjs";
 import { defaultWeather, weatherPool } from "./garden-weather.mjs";
 
 export const HOUR = 3_600_000;
@@ -62,6 +67,7 @@ export const gardenSettings = z
     perfectMultiplier: z.number().min(1).max(10),
     crops: z.record(cropId, cropSchema),
     weather: weatherPool.prefault(defaultWeather),
+    events: eventPool.prefault(defaultEvents),
   })
   .refine(
     (settings) =>
@@ -81,7 +87,8 @@ export const gardenSettings = z
             Object.hasOwn(settings.crops, condition.cropId),
         ),
       ),
-  );
+  )
+  .refine(validEventReferences);
 
 const initialCrops = /** @type {const} */ ([
   ["clover", "野生三叶草", 0, 24, 15, "neutral", 0, 25],
@@ -152,7 +159,7 @@ export function defaultGardenSettings() {
  * settledAt: number, water: number, growth: number, dry: number, low: number,
  * floodDays?: number, floodLoss?: number, witheredReason?: "drought" | "flood", fertilizer: number, status: "growing" | "mature" | "withered", quality: Quality | null,
  * crop: Crop, rules: Omit<Settings, "crops" | "enabled" | "speed" | "turnLimit" |
- * "initialBalance" | "fertilizerPrice" | "roles" | "delegationHours" | "weather">}} Plant
+ * "initialBalance" | "fertilizerPrice" | "roles" | "delegationHours" | "weather" | "events">}} Plant
  */
 
 /** @param {Plant} plant */

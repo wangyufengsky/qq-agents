@@ -25,6 +25,15 @@ function operatorView(garden) {
     fertilizerPrice: garden.settings.fertilizerPrice,
     seeds: garden.seeds,
     fertilizer: garden.fertilizer,
+    fertilizerCredits: garden.fertilizerCredits,
+    event: garden.event
+      ? {
+          name: garden.event.name,
+          kind: garden.event.kind,
+          status: garden.event.status,
+        }
+      : null,
+    eventActions: garden.eventActions,
     market: garden.market,
     roles: garden.roles,
   };
@@ -41,7 +50,7 @@ export function desktopGarden(runtime, input) {
   )
     throw Error("DESKTOP_VISIT_UNAVAILABLE");
   if (action === undefined)
-    return { garden: operatorView(adminGardenView(runtime)) };
+    return { garden: operatorView(adminGardenView(runtime, true)) };
   try {
     const result = adminGardenWrite(runtime, "act", action);
     if (!("receipt" in result) || !result.garden)
