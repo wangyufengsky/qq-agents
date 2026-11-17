@@ -404,3 +404,27 @@ test("a plant created between desktop heartbeats starts at its action time", (t)
   garden.desktopSync(6000, LEASE);
   assert.equal(garden.read(6000).plots[0].plant.growth, 1000 / HOUR);
 });
+
+test("garden actions and configuration cannot renew an expired desktop lease", (t) => {
+  const { garden } = setup(t);
+  garden.act(14_000, admin, {
+    requestId: "lease-first-plot",
+    action: { kind: "plant", plot: 1, cropId: "clover" },
+  });
+  const settings = garden.read(14_000).settings;
+  settings.speed = 4;
+  garden.configure(15_000, 0, settings);
+  assert.throws(
+    () =>
+      garden.act(16_000, admin, {
+        requestId: "lease-second-plot",
+        action: { kind: "plant", plot: 2, cropId: "clover" },
+      }),
+    /GARDEN_PAUSED/,
+  );
+  assert.equal(garden.read(16_000).clock, 14_000);
+  garden.desktopSync(20_000, LEASE);
+  assert.equal(garden.read(20_000).clock, 14_000);
+  garden.desktopSync(21_000, LEASE);
+  assert.equal(garden.read(21_000).clock, 18_000);
+});

@@ -5,16 +5,14 @@ export class GardenClock {
   constructor(elapsed, speed) {
     this.elapsed = elapsed;
     this.speed = speed;
-    /** @type {{at: number, lease: number} | null} */
+    /** @type {{at: number, expiresAt: number} | null} */
     this.last = null;
   }
 
   /** @param {number} now */
   running(now) {
     return (
-      this.last !== null &&
-      now >= this.last.at &&
-      now - this.last.at < this.last.lease
+      this.last !== null && now >= this.last.at && now < this.last.expiresAt
     );
   }
 
@@ -22,7 +20,8 @@ export class GardenClock {
   observe(now, lease) {
     if (this.last && now < this.last.at) return;
     this.advance(now);
-    this.last = { at: now, lease };
+    // Only an accepted desktop observation renews the connection lease.
+    this.last = { at: now, expiresAt: now + lease };
   }
 
   /** @param {number} now */
