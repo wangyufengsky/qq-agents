@@ -9,6 +9,7 @@ import {
   gardenPublicSnapshot,
   renderGardenSnapshot,
 } from "../home/garden-public.mjs";
+import { gardenDelegationScope } from "../home/garden-delegations.mjs";
 import { DESKTOP_CONVERSATION } from "../home/desktop-decision.mjs";
 
 export const gardenToolNames = ["garden_read", "garden_act"];
@@ -26,7 +27,7 @@ export const gardenDefinitions = {
     z.strictObject({ view: z.string().min(1).max(40).optional() }),
   ],
   garden_act: [
-    "在当前主人格回合经营花园，每次一个动作，先调用 garden_read。kind=plant，args={plot,cropId,buyPrice?}，buyPrice 为缺种时同笔购买的单价；buy_seed={cropId,quantity,price}；buy_fertilizer={quantity,price}；water/fertilize/harvest/clear={plot,plantId}；sell={harvestId,quantity,price}；gift={harvestId,quantity,recipient:{kind,id}}。交易 price 是总价。requestId 唯一，同一动作重试用原 ID。",
+    "经营花园或处理管理员私聊的浇水委托。管理员私聊明确委托时用 delegate_water={eventId,plot?}，eventId 填本轮已展示的原始来信记录 ID，省略 plot 表示给当前缺水的地浇水。用 delegate_status/delegate_cancel={delegationId} 回查或应明确要求撤回。主人格看到 garden-watering 收件后，用 delegate_step/delegate_dismiss={delegationId} 处理或放下。每步最多浇一块地，续作使用新 requestId。主人格也可以直接经营，每次一个动作，先调用 garden_read。kind=plant，args={plot,cropId,buyPrice?}，buyPrice 为缺种时同笔购买的单价；buy_seed={cropId,quantity,price}；buy_fertilizer={quantity,price}；water/fertilize/harvest/clear={plot,plantId}；sell={harvestId,quantity,price}；gift={harvestId,quantity,recipient:{kind,id}}。交易 price 是总价。requestId 唯一，同一动作重试用原 ID。",
     z.strictObject({
       requestId: z.string().regex(/^[A-Za-z0-9_-]{8,80}$/),
       kind: z.string().min(1).max(40),
@@ -148,6 +149,16 @@ export function gardenTool(
       ? gardenImage(runtime, ctx, snapshot, render)
       : snapshot;
   }
+  const delegations = runtime.home.gardenDelegations;
+  if (gardenDelegationScope(ctx.conversation)) {
+    if (input.kind === "delegate_water")
+      return delegations.submit(ctx, input.requestId, input.args);
+    if (["delegate_status", "delegate_cancel"].includes(input.kind))
+      return delegations.origin(ctx, input.kind, input.args);
+    throw Error("TOOL_DISABLED");
+  }
+  if (["delegate_step", "delegate_dismiss"].includes(input.kind))
+    return delegations.execute(ctx, input.kind, input.requestId, input.args);
   if (!manages) throw Error("GARDEN_ROLE_UNAVAILABLE");
   runtime.home.rooms.shareable(ctx);
   if (Object.hasOwn(input.args, "kind")) throw Error("INVALID_REQUEST");

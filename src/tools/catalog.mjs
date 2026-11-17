@@ -1,4 +1,5 @@
 import { gardenPublicScope } from "./garden.mjs";
+import { gardenDelegationScope } from "../home/garden-delegations.mjs";
 import { DESKTOP_CONVERSATION } from "../home/desktop-decision.mjs";
 import { linkedVideoAvailable } from "../video/policy.mjs";
 import { desktopToolAvailable } from "./desktop-policy.mjs";
@@ -107,7 +108,8 @@ export function scopedCatalog(runtime, ctx, input) {
 
 export function toolAvailable(agent, name, conversation, config) {
   if (name === "garden_read") return gardenPublicScope(conversation);
-  if (name === "garden_act") return conversation === "@subject";
+  if (name === "garden_act")
+    return conversation === "@subject" || gardenDelegationScope(conversation);
   if (name === DESKTOP_VISIT_TOOL || name === DESKTOP_INVITATION_TOOL)
     return conversation === "@subject";
   if (

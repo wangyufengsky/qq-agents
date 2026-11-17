@@ -88,7 +88,11 @@ export class GardenService {
       clock: Number(row.clock),
       revision: Number(row.revision),
       settingsRevision: Number(row.settings_revision),
-      settings: { roles: {}, ...JSON.parse(String(row.settings)) },
+      settings: {
+        roles: {},
+        delegationHours: 24,
+        ...JSON.parse(String(row.settings)),
+      },
       balance: Number(row.balance),
       plots: JSON.parse(String(row.plots)),
       seeds: JSON.parse(String(row.seeds)),
@@ -206,10 +210,13 @@ export class GardenService {
     return this.read(now);
   }
 
-  /** @param {number} now */
-  snapshot(now) {
+  /** @param {number} now @param {boolean} [live] */
+  snapshot(now, live = false) {
     const state = this.requireState();
-    const elapsed = Math.max(state.clock, this.clock.elapsed);
+    const elapsed = Math.max(
+      state.clock,
+      live ? this.clock.elapsedAt(now) : this.clock.elapsed,
+    );
     return {
       ...state,
       clock: elapsed,
@@ -259,7 +266,7 @@ export class GardenService {
     const digest = createHash("sha256")
       .update(JSON.stringify(canonical(action)))
       .digest("hex");
-    const response = this.store.transaction(() => {
+    const write = () => {
       const prior = this.db
         .prepare(
           "SELECT digest,result FROM garden_actions WHERE actor_kind=? AND actor_id=? AND request_id=?",
@@ -312,7 +319,10 @@ export class GardenService {
           JSON.stringify(receipt),
         );
       return { ...receipt, replayed: false };
-    });
+    };
+    // A delegated action and its progress receipt are committed by the same caller.
+    if (this.db.isTransaction) return write();
+    const response = this.store.transaction(write);
     if (!response.replayed) {
       this.clock.advance(now);
       this.savedClock = this.clock.elapsed;

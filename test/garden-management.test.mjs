@@ -245,7 +245,19 @@ test("administrator and authorized subject turns share care and harvest with sta
   const declare = () => toolSpecs(f.runtime.toolsFor(a, "@subject"));
   const original = declare();
   assert.ok(original.some((tool) => tool.name === "garden_read"));
-  assert.ok(!f.runtime.toolsFor(a, "private:30000").includes("garden_act"));
+  assert.ok(f.runtime.toolsFor(a, "private:30000").includes("garden_act"));
+  await assert.rejects(
+    f.runtime.callTool(
+      f.runtime.makeContext(a.id, "private:30000"),
+      "garden_act",
+      {
+        requestId: "private-direct-operation",
+        kind: "plant",
+        args: { plot: 1, cropId: "clover" },
+      },
+    ),
+    /TOOL_DISABLED/,
+  );
   await f.runtime.wake("agent-0", "@subject");
   assert.equal(runs.length, 1);
   await runs[0];

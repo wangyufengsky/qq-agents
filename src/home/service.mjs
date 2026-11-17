@@ -10,6 +10,7 @@ import { HomeSocialService } from "./social-service.mjs";
 import { HomeRooms } from "./rooms.mjs";
 import { randomUUID, createHash } from "node:crypto";
 import { GardenService } from "./garden-service.mjs";
+import { GardenDelegations } from "./garden-delegations.mjs";
 import { HomeStore } from "./store.mjs";
 import { defaultLayout, validateLayout, homeTemplate } from "./layout.mjs";
 export class HomeService {
@@ -18,6 +19,7 @@ export class HomeService {
     this.runtime = runtime;
     this.store = new HomeStore(runtime.memory.db);
     this.garden = new GardenService(runtime.memory);
+    this.gardenDelegations = new GardenDelegations(runtime, this);
     this.identityReady = false;
     this.social = new HomeSocialService(runtime, this, {
       assertSend: assertSocialSend,

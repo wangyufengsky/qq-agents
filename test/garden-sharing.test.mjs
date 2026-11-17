@@ -63,7 +63,7 @@ test("normal chat and desktop can read only the public projection while locked s
       "stage",
       "water",
     ]);
-    if (ctx !== subject)
+    if (ctx === group || ctx === desk)
       assert.ok(!list(ctx.conversation).includes("garden_act"));
   }
   desk.desktopPrivateObservation = true;

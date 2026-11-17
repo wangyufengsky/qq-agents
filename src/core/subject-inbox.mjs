@@ -212,6 +212,7 @@ export class SubjectInbox {
     return [
       ...(state.items || []),
       ...contactItems(this.runtime, a, now),
+      ...this.runtime.home.gardenDelegations.inbox(a, now),
       ...roomItems(this.runtime, a, state, now),
     ].filter(
       (item) =>
@@ -240,7 +241,12 @@ export class SubjectInbox {
     this.assertSource(a, ctx);
     const items = subject
       ? this.pending(a, this.state(a.id), now)
-      : this.feedbackItems(a, ctx.conversation, now);
+      : this.feedbackItems(
+          a,
+          ctx.conversation,
+          now,
+          this.gardenFeedbackAllowed(ctx),
+        );
     const page = items.slice(offset, offset + BATCH);
     return {
       items: subject
@@ -278,6 +284,7 @@ export class SubjectInbox {
   }
   sourceReceipt(a, item) {
     const feedback = sourceFeedback(item);
+    if (item.gardenReceipt) return { ...feedback, ...item.gardenReceipt };
     const reminderId = item.receipt?.reminderIntentId;
     if (reminderId) {
       const memory = this.runtime.memory.bind(a.id);
@@ -303,12 +310,29 @@ export class SubjectInbox {
           : "not-attempted",
     };
   }
-  feedbackItems(a, source, now) {
+  gardenFeedbackAllowed(ctx) {
+    return (
+      ctx.allowedTools?.includes("garden_act") &&
+      !ctx.runtimeKind &&
+      !ctx.intentOnly &&
+      !ctx.scheduleRunId &&
+      !ctx.desktopScreenObserved &&
+      !ctx.desktopPrivateObservation &&
+      this.runtime.subject.canAutoDisclose(
+        this.runtime.agent(ctx.agentId),
+        contextProtection(this.runtime, ctx),
+      )
+    );
+  }
+  feedbackItems(a, source, now, includeGarden) {
     const state = this.state(a.id);
     return [
       ...(state.items || []).filter((item) => item.source === source),
       ...contactItems(this.runtime, a, now, source),
       ...roomItems(this.runtime, a, state, now, source),
+      ...(includeGarden
+        ? this.runtime.home.gardenDelegations.feedback(a, source, now)
+        : []),
     ]
       .filter((item) => item.decidedAt != null)
       .sort((a, b) => b.decidedAt - a.decidedAt)
@@ -327,21 +351,31 @@ export class SubjectInbox {
     const shown = new Set(
       memory.state(ctx.conversation).subjectFeedbackShown || [],
     );
-    const items = this.feedbackItems(a, ctx.conversation, this.runtime.now())
+    const items = this.feedbackItems(
+      a,
+      ctx.conversation,
+      this.runtime.now(),
+      this.gardenFeedbackAllowed(ctx),
+    )
       .filter(
         (item) =>
           !shown.has(
             JSON.stringify([
               item.id,
               item.status,
-              item.decision,
+              item.gardenReceipt?.revision ?? item.decision,
               item.decidedAt,
             ]),
           ),
       )
       .slice(0, BATCH);
     ctx.subjectFeedbackOffered = items.map((item) =>
-      JSON.stringify([item.id, item.status, item.decision, item.decidedAt]),
+      JSON.stringify([
+        item.id,
+        item.status,
+        item.gardenReceipt?.revision ?? item.decision,
+        item.decidedAt,
+      ]),
     );
     return items.map((item) => this.sourceReceipt(a, item));
   }
@@ -370,6 +404,11 @@ export class SubjectInbox {
     const due = offered.filter((item) => item.reviewAt != null);
     const roomReview = { ...state.roomReview };
     for (const item of due) {
+      if (item.proposal.kind === "garden-watering")
+        this.runtime.home.gardenDelegations.viewed(
+          this.runtime.agent(ctx.agentId),
+          item.id.slice(7),
+        );
       if (item.proposal.kind === "room") {
         const id = item.id.slice(5);
         if (roomReview[id]?.reviewAt === item.reviewAt)
