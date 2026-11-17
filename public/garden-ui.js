@@ -80,22 +80,31 @@ const gardenCropName = (state, id) => state.settings.crops[id]?.name || id;
 const gardenActorName = (state, kind, id) =>
   state.roles.find((row) => row.kind === kind && row.id === id)?.name ||
   (id === "system" ? "系统" : id);
-const gardenButton = (kind, text) =>
-  `<button type="button" class="ghost" data-garden-act="${kind}">${text}</button>`;
+const gardenButton = (kind, text, main = false) =>
+  `<button type="button" class="ghost${main ? " garden-main-action" : ""}" data-garden-act="${kind}">${text}</button>`;
 
-function gardenPlotMarkup(state, { id, plant, sheltered }, art) {
-  const artwork =
-    art?.gardenArtMarkup(art.gardenLayers({ plant, sheltered })) || "";
+function gardenPlotMarkup({ id, plant, sheltered }, art, selected) {
+  const status = art?.gardenPlotStatus(plant) || (plant ? "" : "可播种");
+  return `<button type="button" class="garden-plot garden-map-tile" data-plot="${id}" aria-pressed="${id === selected}">
+    <span class="garden-tile-top"><span aria-label="第 ${id} 块">${String(id).padStart(2, "0")}</span><span class="${status === "缺水" ? "garden-dry" : ""}">${status}</span></span>
+    ${art?.gardenArtMarkup(art.gardenLayers({ plant, sheltered })) || ""}
+    <strong>${esc(plant?.crop.name || "空地")}</strong>
+  </button>`;
+}
+
+function gardenPlotDetail(state, { id, plant, sheltered }) {
   const paused = Boolean(state.pauseReason);
-  const canopy = `<p>${sheltered ? "有棚" : "露天"}</p><fieldset${paused ? " disabled" : ""}>${sheltered ? gardenButton("unshelter", "撤棚") : gardenButton("shelter", "搭棚")}</fieldset>`;
+  const canopy = sheltered
+    ? gardenButton("unshelter", "撤棚")
+    : gardenButton("shelter", "搭棚");
   if (!plant) {
     const crops = Object.entries(state.settings.crops).filter(
       ([key, crop]) => crop.enabled && (crop.market || state.seeds[key] > 0),
     );
-    return `<article class="garden-plot garden-paper-tile" data-plot="${id}"><h3>第 ${id} 块</h3>${artwork}<p>空地</p>${canopy}<fieldset${paused || !crops.length ? " disabled" : ""}>
+    return `<article class="garden-inspector" data-garden-detail="${id}"><small>第 ${id} 块地</small><h3>空地</h3><p>${sheltered ? "有棚" : "露天"}</p><fieldset${paused || !crops.length ? " disabled" : ""}>
       <select aria-label="第 ${id} 块的作物" data-garden-crop>${crops.map(([key, crop]) => gardenOption(key, `${crop.name} · ${state.seeds[key] > 0 ? "用库存种子" : gardenMoney(crop.seedPrice)}`)).join("")}</select>
-      ${gardenButton("plant", "播种")}
-    </fieldset></article>`;
+      ${gardenButton("plant", "播种", true)}
+    </fieldset><fieldset${paused ? " disabled" : ""}>${canopy}</fieldset></article>`;
   }
   const progress = Math.min(
     100,
@@ -109,20 +118,27 @@ function gardenPlotMarkup(state, { id, plant, sheltered }, art) {
         : progress < 25
           ? "幼苗"
           : "生长中";
-  return `<article class="garden-plot garden-paper-tile" data-stage="${plant.status}" data-plot="${id}">
-    <h3>第 ${id} 块</h3>${artwork}${canopy}<strong>${esc(plant.crop.name)}</strong>
-    <p>${stage}${plant.quality ? " · " + gardenQuality[plant.quality] : ""}</p>
-    ${plant.status === "growing" ? `<p>成长 ${progress}% · 水分 ${Math.floor(plant.water)}${plant.water < plant.rules.lowWater ? " · 缺水" : ""}</p><p>施肥 ${plant.fertilizer}/${plant.crop.fertilizer}</p>` : ""}
+  return `<article class="garden-inspector" data-garden-detail="${id}">
+    <small>第 ${id} 块地</small><h3>${esc(plant.crop.name)}</h3>
+    <p>${sheltered ? "有棚" : "露天"} · ${stage}${plant.quality ? " · " + gardenQuality[plant.quality] : ""}</p>
+    ${
+      plant.status === "growing"
+        ? `<label>成长 <span>${progress}%</span><progress max="100" value="${progress}"></progress></label>
+    <label>水分 <span>${Math.floor(plant.water)} / 100${plant.water < plant.rules.lowWater ? " · 缺水" : ""}</span><progress class="${plant.water < plant.rules.lowWater ? "garden-dry" : ""}" max="100" value="${plant.water}"></progress></label>
+    <p>施肥 ${plant.fertilizer}/${plant.crop.fertilizer}</p>`
+        : ""
+    }
     ${plant.witheredReason === "drought" ? '<p class="hint">长期缺水</p>' : ""}
     ${plant.witheredReason === "flood" ? '<p class="hint">连续暴雨积水</p>' : ""}
     <fieldset${paused ? " disabled" : ""}>
       ${
         plant.status === "mature"
-          ? gardenButton("harvest", "收成")
+          ? gardenButton("harvest", "收成", true)
           : plant.status === "withered"
-            ? gardenButton("clear", "铲除枯株")
-            : `${gardenButton("water", "浇水")}${plant.fertilizer < plant.crop.fertilizer && (state.fertilizer || state.fertilizerCredits) ? gardenButton("fertilize", "施肥") : ""}`
+            ? gardenButton("clear", "铲除枯株", true)
+            : `${gardenButton("water", "浇水", true)}${plant.fertilizer < plant.crop.fertilizer && (state.fertilizer || state.fertilizerCredits) ? gardenButton("fertilize", "施肥") : ""}`
       }
+      ${canopy}
     </fieldset></article>`;
 }
 
@@ -147,7 +163,7 @@ function gardenWarehouse(state) {
   const market = Object.entries(state.settings.crops).filter(
     ([, crop]) => crop.enabled && crop.market,
   );
-  return `<div class="card">
+  return `<div class="card" data-garden-warehouse>
     <h3>公共仓库</h3>
     <p>肥料 ${state.fertilizer} 包${state.fertilizerCredits ? ` · 免费施肥 ${state.fertilizerCredits} 次` : ""} · ${
       Object.entries(state.seeds)
@@ -265,24 +281,38 @@ function gardenEventSummary(state, art) {
     { open: "进行中", claimed: "奖励已入公共仓库", chased: "小偷已被驱赶" }[
       event.status
     ] || "";
-  return `<section class="card garden-paper garden-console-paper"><h3>${art?.gardenIconMarkup("event", event.kind) || ""}${esc(event.name)}</h3><p>${status}</p>
+  return `<section class="garden-event-summary"><p><strong>${art?.gardenIconMarkup("event", event.kind) || ""}${esc(event.name)}</strong> · <span>${status}</span></p>
     <fieldset${state.pauseReason ? " disabled" : ""}>
     ${state.eventActions.map(({ kind, label }, index) => `<button type="button" class="ghost" data-garden-act="${kind}" data-garden-event-index="${index}">${esc(label)}</button>`).join("")}
     </fieldset></section>`;
 }
 
-function gardenMarkup(state, art) {
+function gardenMarkup(state, art, selected) {
   if (!state.initialized)
     return `<section class="card"><h2>小窝花园</h2><p>开园后建立九块共享花圃。首次开园时，受影响的主人格会话可能交接一次。</p>
       <form data-garden-initialize><label>初始资金<input name="initialBalance" type="number" value="1000" min="0" max="1000000" required /></label>
         <button type="submit" class="primary">开园</button></form></section>`;
   const info = state.pauseReason ? gardenLabels[state.pauseReason] : "运行中";
-  return `<section class="card garden-paper garden-console-paper"><h2>小窝花园</h2><p><strong>${gardenMoney(state.balance)}</strong> · 第 ${state.day} 天 · ${art?.gardenIconMarkup("weather", state.weather.kind) || ""}${esc(state.weather.name)} · ${state.settings.speed}× · ${info}</p>
-      <p class="hint">本日剩 ${gardenDuration(state.dayRemaining / 3600000)} 个花园小时</p>
-      <div class="garden-grid">${state.plots.map((entry) => gardenPlotMarkup(state, entry, art)).join("")}</div>
-      ${state.priorities.length ? `<h3>可以先做</h3><ul>${state.priorities.map((item) => `<li>${gardenPriorityText(item)}</li>`).join("")}</ul>` : ""}
+  return `<section class="card garden-paper garden-console-paper garden-workspace">
+    <header class="garden-workspace-head">
+      <div><h2>小窝花园</h2><p>第 ${state.day} 天 · 本日剩 ${gardenDuration(state.dayRemaining / 3600000)} 个花园小时</p></div>
+      ${art?.gardenBalanceMarkup(state.balance) || gardenMoney(state.balance)}
+    </header>
+    <div class="garden-workspace-meta"><span>${art?.gardenIconMarkup("weather", state.weather.kind) || ""}${esc(state.weather.name)}</span><span>${info} · ${state.settings.speed}×</span><div class="garden-shortcuts"><button type="button" class="ghost" data-garden-section="warehouse">仓库</button><button type="button" class="ghost" data-garden-section="settings">花园设置</button></div></div>
+    <div class="garden-workspace-body">
+      <section><div class="garden-board-title"><h3>共享花圃</h3><small>已种植 ${state.plots.filter(({ plant }) => plant).length} / ${state.plots.length}</small></div>
+        <div class="garden-grid garden-map">${state.plots.map((entry) => gardenPlotMarkup(entry, art, selected)).join("")}</div>
+      </section>
+      <section class="garden-rail" aria-label="地块详情与待办">
+        <div data-garden-inspector>${gardenPlotDetail(
+          state,
+          state.plots.find(({ id }) => id === selected),
+        )}</div>
+        ${state.priorities.length ? `<h3>今天可做</h3><ul class="garden-priorities">${state.priorities.map((item) => `<li><button type="button" data-garden-jump="${item.plot}">${gardenPriorityText(item)} <span aria-hidden="true">↗</span></button></li>`).join("")}</ul>` : ""}
+        ${gardenEventSummary(state, art)}
+      </section>
+    </div>
     </section>
-    ${gardenEventSummary(state, art)}
     ${fold(
       "garden-event-history",
       "每日事件记录",
@@ -383,10 +413,10 @@ function gardenActionFrom(button, state) {
       kind,
       ...state.eventActions[Number(button.dataset.gardenEventIndex)].args,
     };
-  const parent = button.closest("[data-plot]");
+  const parent = button.closest("[data-garden-detail]");
   if (parent) {
     const entry = state.plots.find(
-      (plot) => plot.id === Number(parent.dataset.plot),
+      (plot) => plot.id === Number(parent.dataset.gardenDetail),
     );
     if (kind === "shelter" || kind === "unshelter")
       return { kind, plot: entry.id };
@@ -445,12 +475,13 @@ function renderGarden() {
   const message = page.querySelector("[data-garden-status]");
   let state,
     art,
+    selected = 1,
     busy = false,
     pendingAction;
   const show = (next) => {
     if (!page.isConnected) return;
     state = next;
-    panel.innerHTML = gardenMarkup(next, art);
+    panel.innerHTML = gardenMarkup(next, art, selected);
   };
   const run = async (operation, success = "") => {
     if (busy) return;
@@ -483,6 +514,29 @@ function renderGarden() {
   page.addEventListener("click", (event) => {
     const button = event.target.closest("button");
     if (!button || busy) return;
+    if (button.dataset.gardenSection) {
+      const target = panel.querySelector(
+        "[data-garden-" + button.dataset.gardenSection + "]",
+      );
+      const disclosure = target.closest("details");
+      if (disclosure) disclosure.open = true;
+      (disclosure || target).scrollIntoView({ block: "start" });
+      return;
+    }
+    const plot = button.dataset.plot ?? button.dataset.gardenJump;
+    if (plot !== undefined) {
+      selected = Number(plot);
+      const detail = panel.querySelector("[data-garden-inspector]");
+      detail.innerHTML = gardenPlotDetail(
+        state,
+        state.plots.find(({ id }) => id === selected),
+      );
+      for (const tile of panel.querySelectorAll(".garden-map-tile"))
+        tile.setAttribute("aria-pressed", String(tile.dataset.plot === plot));
+      if (button.dataset.gardenJump)
+        detail.scrollIntoView({ block: "nearest" });
+      return;
+    }
     if (button.hasAttribute("data-garden-refresh"))
       return void run(refresh, "花园已刷新");
     if (button.hasAttribute("data-add-crop")) {

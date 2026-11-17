@@ -24,7 +24,9 @@ test("management console opens the garden, edits its catalog and trades from the
   t.after(() => server.close());
   const browser = await chromium.launch({ executablePath, headless: true });
   t.after(() => browser.close());
-  const page = await browser.newPage({ viewport: { width: 375, height: 812 } });
+  const page = await browser.newPage({
+    viewport: { width: 1440, height: 900 },
+  });
   const jsErrors = [];
   page.on("pageerror", (error) => jsErrors.push(error.message));
   await page.goto(`http://127.0.0.1:${await server.listen()}/`);
@@ -38,6 +40,13 @@ test("management console opens the garden, edits its catalog and trades from the
   assert.equal(await page.locator(".garden-plot").count(), 9);
   assert.equal(
     await page
+      .locator(".garden-workspace-head .garden-coins strong")
+      .textContent(),
+    "0",
+  );
+  assert.equal(await page.locator(".garden-grid button button").count(), 0);
+  assert.equal(
+    await page
       .locator(".garden-grid")
       .evaluate(
         (grid) =>
@@ -47,6 +56,16 @@ test("management console opens the garden, edits its catalog and trades from the
       ),
     3,
   );
+  const map = await page.locator(".garden-grid").boundingBox();
+  const rail = await page.locator(".garden-rail").boundingBox();
+  assert.ok(rail.x >= map.x + map.width);
+  await page.locator('[data-plot="4"]').click();
+  assert.equal(
+    await page.locator(".garden-inspector").getAttribute("data-garden-detail"),
+    "4",
+  );
+  await page.locator('[data-plot="1"]').click();
+  await page.setViewportSize({ width: 375, height: 812 });
   const scrolls = await page
     .locator("#garden-page")
     .evaluate((view) => view.scrollWidth > view.clientWidth);
@@ -71,7 +90,8 @@ test("management console opens the garden, edits its catalog and trades from the
   const failedImage = page.waitForEvent("requestfailed", {
     predicate: (req) => req.url().endsWith("/plant-clover-seedling.webp"),
   });
-  await firstPlot.getByRole("button", { name: "播种" }).click();
+  const detail = page.locator(".garden-inspector");
+  await detail.getByRole("button", { name: "播种" }).click();
   await failedImage;
   await firstPlot.locator(".garden-art-plant").waitFor({ state: "detached" });
   await page.unroute(seedling);
@@ -96,8 +116,11 @@ test("management console opens the garden, edits its catalog and trades from the
     high: 1.2,
   });
   const secondPlot = page.locator('[data-plot="2"]');
-  await secondPlot.getByLabel("第 2 块的作物").selectOption("test-clover");
-  await secondPlot.getByRole("button", { name: "播种" }).click();
+  await secondPlot.click();
+  assert.equal(await secondPlot.getAttribute("aria-pressed"), "true");
+  assert.equal(await firstPlot.getAttribute("aria-pressed"), "false");
+  await detail.getByLabel("第 2 块的作物").selectOption("test-clover");
+  await detail.getByRole("button", { name: "播种" }).click();
   await secondPlot.getByText(longName, { exact: true }).waitFor();
   await page.locator("summary").filter({ hasText: "花园设置" }).click();
   await page.locator("#garden-page").evaluate((view) => {
@@ -121,8 +144,9 @@ test("management console opens the garden, edits its catalog and trades from the
     garden.desktopSync(now, 15_000);
   }
   await page.getByRole("button", { name: "刷新花园" }).click();
-  await page.getByText("第 2 块 · 可收成", { exact: true }).waitFor();
-  await secondPlot.getByRole("button", { name: "收成" }).click();
+  await page.getByRole("button", { name: /第 2 块 · 可收成/ }).click();
+  assert.equal(await detail.getAttribute("data-garden-detail"), "2");
+  await detail.getByRole("button", { name: "收成" }).click();
   await page.getByText("收成完成", { exact: true }).waitFor();
   const lot = page.locator("[data-harvest]");
   await lot.getByRole("button", { name: "赠送" }).click();
