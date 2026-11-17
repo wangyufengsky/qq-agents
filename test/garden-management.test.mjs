@@ -23,7 +23,12 @@ async function setup(t, run) {
   const http = async (suffix = "", payload, token = admin) => {
     const response = await fetch(url + gardenBase + suffix, {
       method: payload === undefined ? "GET" : "POST",
-      headers: { "x-admin-token": token, "content-type": "application/json" },
+      // Advancing the fake clock can outlive an idle pooled connection on a slow runner.
+      headers: {
+        "x-admin-token": token,
+        "content-type": "application/json",
+        connection: "close",
+      },
       ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
     });
     return { status: response.status, body: await response.json() };
@@ -241,6 +246,8 @@ test("administrator and authorized subject turns share care and harvest with sta
   f.startDesktop();
   const configured = await f.modify((settings, grants) => {
     settings.speed = 4;
+    settings.startingWater = 25;
+    settings.crops.clover.hours = 6;
     settings.crops.sunflower.dailyWater = 100;
     settings.crops.sunflower.hours = 100;
     settings.crops.mint.dailyWater = 55;
@@ -258,7 +265,7 @@ test("administrator and authorized subject turns share care and harvest with sta
       (await f.act({ kind: "plant", plot, cropId, buyPrice })).status,
       200,
     );
-  f.advance((25 * HOUR) / 4);
+  f.advance((6 * HOUR) / 4);
   mode = "care";
   await f.runtime.wake("agent-0", "@subject");
   assert.equal(runs.length, 2);
@@ -280,7 +287,7 @@ test("administrator and authorized subject turns share care and harvest with sta
   assert.equal(state.plots[0].plant.water, 35);
   assert.equal(state.plots[2].plant, null);
   assert.equal(state.market[0].cropId, "clover");
-  assert.equal(state.dayRemaining, DAY - HOUR);
+  assert.equal(state.dayRemaining, DAY - 6 * HOUR);
 });
 
 test("a successful administrator action can be retried while the garden is paused", async (t) => {
