@@ -1,3 +1,4 @@
+import { keepNeutralWeather } from "./garden-fixtures.mjs";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
@@ -14,6 +15,7 @@ async function setup(t, run) {
   for (const role of cfg.agents) role.subject.enabled = true;
   const { runtime } = fixture(t, { cfg, run });
   const { garden } = runtime.home;
+  keepNeutralWeather(garden);
   let now = 1_800_000_000_000;
   runtime.clock = () => now;
   const admin = randomUUID();
@@ -68,6 +70,7 @@ test("administrator API initializes explicitly, hot-edits revisions and honors c
     401,
   );
   assert.equal((await f.http()).body.initialized, false);
+  assert.equal((await f.http("/weather-trial", {}, "invalid")).status, 401);
   assert.equal(
     f.runtime
       .toolsFor(f.runtime.agent("agent-0"), "@subject")
@@ -76,6 +79,11 @@ test("administrator API initializes explicitly, hot-edits revisions and honors c
   );
   const first = (await f.http("/initialize", { initialBalance: 0 })).body;
   assert.equal(first.balance, 0);
+  const trial = await f.http("/weather-trial", { balance: 300 });
+  assert.equal(trial.status, 200);
+  assert.equal(trial.body.fallback, "cloud");
+  assert.equal((await f.http("/weather-trial", { balance: -1 })).status, 400);
+  assert.equal((await f.http()).body.weatherRevision, first.weatherRevision);
   assert.equal(first.plots.length, 9);
   assert.deepEqual(first.roleIds, []);
   assert.equal(

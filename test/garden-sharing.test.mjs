@@ -1,3 +1,4 @@
+import { keepNeutralWeather } from "./garden-fixtures.mjs";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
@@ -23,6 +24,7 @@ function setup(t, cfg = config(2)) {
   f.runtime.media = new MediaStore(path.join(f.root, "media"));
   f.runtime.clock = () => Date.parse("2026-10-29T12:00:00Z");
   const garden = f.runtime.home.garden;
+  keepNeutralWeather(garden);
   return { ...f, garden, open: () => garden.initialize(f.runtime.now()) };
 }
 
@@ -48,9 +50,11 @@ test("normal chat and desktop can read only the public projection while locked s
     assert.deepEqual(Object.keys(state).sort(), [
       "capturedAt",
       "day",
+      "dayRemainingHours",
       "plots",
       "running",
       "text",
+      "weather",
     ]);
     assert.equal(state.plots.length, 9);
     assert.equal(state.plots[0].name, "野生三叶草");
@@ -60,6 +64,7 @@ test("normal chat and desktop can read only the public projection while locked s
       "lowWater",
       "name",
       "plot",
+      "sheltered",
       "stage",
       "water",
     ]);

@@ -3,13 +3,14 @@ import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { canonical } from "../backends/session-contract.mjs";
 import { GardenClock } from "./garden-clock.mjs";
+import { GardenCalendar } from "./garden-calendar.mjs";
+import { defaultWeather } from "./garden-weather.mjs";
 import {
   cropId,
   DAY,
   defaultGardenSettings,
   gardenSettings,
   PLOT_COUNT,
-  projectPlant,
 } from "./garden-rules.mjs";
 
 const id = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/);
@@ -21,6 +22,7 @@ const person = z.strictObject({ kind: z.enum(["admin", "agent"]), id });
 const inputSchema = z.strictObject({
   requestId: z.string().regex(/^[A-Za-z0-9_-]{8,80}$/),
   action: z.discriminatedUnion("kind", [
+    z.strictObject({ kind: z.enum(["shelter", "unshelter"]), plot }),
     z.strictObject({
       kind: z.literal("buy_seed"),
       cropId,
@@ -74,7 +76,12 @@ export class GardenService {
   constructor(store) {
     this.store = store;
     this.db = store.db;
+    this.calendar = new GardenCalendar(this.db);
     const state = this.load();
+    if (state && !this.calendar.latest())
+      store.transaction(() => {
+        if (!this.calendar.latest()) this.calendar.initialize(state, true);
+      });
     this.clock = new GardenClock(state?.clock ?? 0, state?.settings.speed ?? 1);
     this.savedClock = this.clock.elapsed;
     this.enabled = state?.settings.enabled ?? false;
@@ -91,6 +98,7 @@ export class GardenService {
       settings: {
         roles: {},
         delegationHours: 24,
+        weather: defaultWeather,
         ...JSON.parse(String(row.settings)),
       },
       balance: Number(row.balance),
@@ -113,6 +121,7 @@ export class GardenService {
       this.db
         .prepare("INSERT INTO garden_state VALUES(1,0,0,0,?,?,?,'{}',0)")
         .run(JSON.stringify(data), data.initialBalance, JSON.stringify(plots));
+      this.calendar.initialize(this.requireState());
       this.recordLedger(
         now,
         { kind: "admin", id: "system" },
@@ -185,24 +194,33 @@ export class GardenService {
 
   /** @param {number} now @param {number} expectedRevision @param {unknown} input */
   configure(now, expectedRevision, input) {
-    const settings = gardenSettings.parse(input);
-    this.store.transaction(() => {
+    const settings = this.store.transaction(() => {
       const current = this.requireState();
+      const next = gardenSettings.parse(
+        input && typeof input === "object"
+          ? { weather: current.settings.weather, ...input }
+          : input,
+      );
       if (current.settingsRevision !== expectedRevision)
         throw Error("GARDEN_SETTINGS_CONFLICT");
       if (
         Object.keys(current.settings.crops).some(
-          (key) => !Object.hasOwn(settings.crops, key),
+          (key) => !Object.hasOwn(next.crops, key),
         )
       )
         throw Error("GARDEN_CROP_ID_REMOVED");
-      this.clock.advance(now);
+      this.calendar.advance(
+        current,
+        Math.max(current.clock, this.clock.elapsedAt(now)),
+      );
       this.db
         .prepare(
           "UPDATE garden_state SET clock=MAX(clock,?),settings_revision=settings_revision+1,settings=? WHERE id=1",
         )
-        .run(this.clock.elapsed, JSON.stringify(settings));
+        .run(this.clock.elapsedAt(now), JSON.stringify(next));
+      return next;
     });
+    this.clock.advance(now);
     if (!settings.enabled) this.clock.stop(now);
     this.savedClock = this.clock.elapsed;
     this.enabled = settings.enabled;
@@ -212,22 +230,23 @@ export class GardenService {
 
   /** @param {number} now @param {boolean} [live] */
   snapshot(now, live = false) {
-    const state = this.requireState();
-    const elapsed = Math.max(
-      state.clock,
-      live ? this.clock.elapsedAt(now) : this.clock.elapsed,
-    );
-    return {
-      ...state,
-      clock: elapsed,
-      running: this.enabled && this.clock.running(now),
-      day: Math.floor(elapsed / DAY) + 1,
-      dayRemaining: DAY - (elapsed % DAY),
-      plots: state.plots.map((entry) => ({
-        ...entry,
-        plant: entry.plant && projectPlant(entry.plant, elapsed),
-      })),
+    const read = () => {
+      const state = this.requireState();
+      const elapsed = Math.max(
+        state.clock,
+        live ? this.clock.elapsedAt(now) : this.clock.elapsed,
+      );
+      const current = this.calendar.advance(state, elapsed);
+      return {
+        ...state,
+        running: this.enabled && this.clock.running(now),
+        day: current.day,
+        dayRemaining: DAY - (elapsed % DAY),
+        weather: current.weather,
+        weatherRevision: current.revision,
+      };
     };
+    return this.db.isTransaction ? read() : this.store.transaction(read);
   }
 
   /** @param {number} now */
@@ -284,7 +303,10 @@ export class GardenService {
         if (this.turnUsed(actor.id, turnId) >= state.settings.turnLimit)
           throw Error("GARDEN_TURN_LIMIT");
       }
-      state.clock = Math.max(state.clock, this.clock.elapsedAt(now));
+      this.calendar.advance(
+        state,
+        Math.max(state.clock, this.clock.elapsedAt(now)),
+      );
       validate?.(action);
       const result = this.apply(now, actor, action, state);
       this.db
@@ -359,10 +381,20 @@ export class GardenService {
         const entry = state.plots[action.plot - 1];
         if (action.kind === "plant")
           return this.plant(now, actor, action, entry, state);
-        if (!entry.plant || entry.plant.id !== action.plantId)
+        if (action.kind === "shelter" || action.kind === "unshelter") {
+          const sheltered = action.kind === "shelter";
+          if (entry.sheltered === sheltered)
+            throw Error("GARDEN_SHELTER_UNCHANGED");
+          entry.sheltered = sheltered;
+          return { plot: entry.id, sheltered };
+        }
+        if (
+          !("plantId" in action) ||
+          !entry.plant ||
+          entry.plant.id !== action.plantId
+        )
           throw Error("GARDEN_PLANT_CHANGED");
-        const plant = projectPlant(entry.plant, state.clock);
-        entry.plant = plant;
+        const plant = entry.plant;
         switch (action.kind) {
           case "water":
             if (plant.status !== "growing") throw Error("GARDEN_PLANT_STATE");
@@ -452,6 +484,8 @@ export class GardenService {
     const {
       crops: _crops,
       roles: _roles,
+      weather: _weather,
+      delegationHours: _delegationHours,
       enabled: _enabled,
       speed: _speed,
       turnLimit: _turnLimit,

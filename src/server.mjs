@@ -277,6 +277,7 @@ export function createServer({
           "/activity-ui.js",
           "/board-ui.js",
           "/garden-ui.js",
+          "/garden-weather-ui.js",
           "/garden.css",
           "/board.css",
           "/style.css",
@@ -733,7 +734,11 @@ export function createServer({
       if (url.pathname.startsWith("/api/home-garden/")) {
         if (req.method !== "POST") return deny("METHOD", 405);
         const operation = url.pathname.slice("/api/home-garden/".length);
-        if (!["initialize", "settings", "act"].includes(operation))
+        if (
+          !["initialize", "settings", "act", "weather-trial"].includes(
+            operation,
+          )
+        )
           return deny("NOT_FOUND", 404);
         try {
           return send(
@@ -743,6 +748,7 @@ export function createServer({
           if (
             [
               "GARDEN_SETTINGS_CONFLICT",
+              "GARDEN_SHELTER_UNCHANGED",
               "GARDEN_REQUEST_CONFLICT",
               "GARDEN_PRICE_CHANGED",
               "GARDEN_PLANT_CHANGED",

@@ -56,6 +56,13 @@ const browserScripts = {
   "visits-ui.js": ["renderVisits", "closeVisits"],
   "activity-ui.js": ["activityAgentId", "renderActivity"],
   "board-ui.js": ["renderBoard", "createBoardView"],
+  "garden-weather-ui.js": [
+    "gardenWeatherSettingsMarkup",
+    "gardenWeatherTrialMarkup",
+    "gardenReadWeather",
+    "gardenWeatherEdit",
+    "gardenRunWeatherTrial",
+  ],
   "garden-ui.js": ["renderGarden"],
   "agent-form.js": ["agentForm"],
   "apps-ui.js": ["appAgentId", "renderApps"],

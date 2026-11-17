@@ -44,6 +44,17 @@ export function initializeGardenTables(db) {
       UNIQUE(actor_kind, actor_id, request_id)
     );
     CREATE INDEX IF NOT EXISTS garden_actions_turn ON garden_actions(actor_id,turn_id);
+    CREATE TABLE IF NOT EXISTS garden_weather_seed (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      seed TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS garden_days (
+      day INTEGER PRIMARY KEY,
+      rules_revision INTEGER NOT NULL,
+      weather TEXT NOT NULL,
+      kind_streak INTEGER NOT NULL,
+      id_streak INTEGER NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS garden_delegations (
       id TEXT PRIMARY KEY,
       generation TEXT NOT NULL,

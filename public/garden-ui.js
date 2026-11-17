@@ -8,6 +8,8 @@ const gardenActions = {
   fertilize: "施肥",
   harvest: "收成",
   clear: "铲除枯株",
+  shelter: "搭棚",
+  unshelter: "撤棚",
   sell: "出售",
   gift: "赠礼",
 };
@@ -23,6 +25,7 @@ const gardenLabels = {
   GARDEN_PRICE_CHANGED: "价格已变化，请刷新后重试。",
   GARDEN_STOCK_UNAVAILABLE: "库存已有变化，请刷新后查看。",
   GARDEN_PLANT_CHANGED: "地块中的作物已变化，请刷新后查看。",
+  GARDEN_SHELTER_UNCHANGED: "棚状态已有变化，请刷新后查看。",
   GARDEN_PLOT_OCCUPIED: "这块地已有作物，请刷新后查看。",
   GARDEN_BALANCE_LOW: "公共账户余额不足。",
   GARDEN_WATER_FULL: "这株作物的水分已满。",
@@ -73,13 +76,14 @@ const gardenActorName = (state, kind, id) =>
 const gardenButton = (kind, text) =>
   `<button type="button" class="ghost" data-garden-act="${kind}">${text}</button>`;
 
-function gardenPlotMarkup(state, { id, plant }) {
+function gardenPlotMarkup(state, { id, plant, sheltered }) {
   const paused = Boolean(state.pauseReason);
+  const canopy = `<p>${sheltered ? "有棚" : "露天"}</p><fieldset${paused ? " disabled" : ""}>${sheltered ? gardenButton("unshelter", "撤棚") : gardenButton("shelter", "搭棚")}</fieldset>`;
   if (!plant) {
     const crops = Object.entries(state.settings.crops).filter(
       ([key, crop]) => crop.enabled && (crop.market || state.seeds[key] > 0),
     );
-    return `<article class="garden-plot" data-plot="${id}"><h3>第 ${id} 块</h3><p>空地</p><fieldset${paused || !crops.length ? " disabled" : ""}>
+    return `<article class="garden-plot" data-plot="${id}"><h3>第 ${id} 块</h3><p>空地</p>${canopy}<fieldset${paused || !crops.length ? " disabled" : ""}>
       <select aria-label="第 ${id} 块的作物" data-garden-crop>${crops.map(([key, crop]) => gardenOption(key, `${crop.name} · ${state.seeds[key] > 0 ? "用库存种子" : gardenMoney(crop.seedPrice)}`)).join("")}</select>
       ${gardenButton("plant", "播种")}
     </fieldset></article>`;
@@ -97,10 +101,11 @@ function gardenPlotMarkup(state, { id, plant }) {
           ? "幼苗"
           : "生长中";
   return `<article class="garden-plot garden-${plant.status}" data-plot="${id}">
-    <h3>第 ${id} 块</h3><strong>${esc(plant.crop.name)}</strong>
+    <h3>第 ${id} 块</h3>${canopy}<strong>${esc(plant.crop.name)}</strong>
     <p>${stage}${plant.quality ? " · " + gardenQuality[plant.quality] : ""}</p>
     ${plant.status === "growing" ? `<p>成长 ${progress}% · 水分 ${Math.floor(plant.water)}</p><p>施肥 ${plant.fertilizer}/${plant.crop.fertilizer}</p>` : ""}
     ${plant.witheredReason === "drought" ? '<p class="hint">长期缺水</p>' : ""}
+    ${plant.witheredReason === "flood" ? '<p class="hint">连续暴雨积水</p>' : ""}
     <fieldset${paused ? " disabled" : ""}>
       ${
         plant.status === "mature"
@@ -112,12 +117,13 @@ function gardenPlotMarkup(state, { id, plant }) {
     </fieldset></article>`;
 }
 
-function gardenPriorityText({ plot, kind, hours }) {
+function gardenPriorityText({ plot, kind, hours, risk }) {
   const time = gardenDuration(hours);
   return `第 ${plot} 块 · ${
     {
       drought: `水分已用完，约 ${time} 个花园小时后枯萎`,
-      water: `缺水，约 ${time} 个花园小时后耗尽`,
+      water: hours === null ? "当前缺水" : `缺水，约 ${time} 个花园小时后耗尽`,
+      flood: `暴雨积水，本日剩 ${Math.ceil(hours * 10) / 10} 花园小时 · ${risk === "critical" ? "日结束前搭棚，否则枯萎" : "建议搭棚"}`,
       low_water_forecast: `按现状约 ${time} 个花园小时后缺水`,
       harvest: "可收成",
       clear: "可以清理枯株",
@@ -180,6 +186,17 @@ function gardenCropEditor(id, crop) {
          .join("")}
       </select></label>
       ${gardenCropFields.map((field) => gardenNumber(field, crop[field[0]])).join("")}
+      <label><input name="rainSensitive" type="checkbox"${gardenChecked(crop.rainSensitive ?? id === "strawberry")}/>怕涝（细雨露天扣品质）</label>
+      ${[
+        ["high", "高"],
+        ["medium", "中"],
+        ["low", "低"],
+      ]
+        .map(
+          ([key, label]) =>
+            `<label>${label}光照倍率<input name="light-${key}" type="number" min="0" max="4" step="any" value="${esc(crop.lightRates?.[key] ?? "")}" placeholder="按偏好默认"/></label>`,
+        )
+        .join("")}
       <label><input name="enabled" type="checkbox"${gardenChecked(crop.enabled)}/>允许播种</label>
       <label><input name="market" type="checkbox"${gardenChecked(crop.market)}/>集市售种</label>
     </div></details>`;
@@ -216,6 +233,7 @@ function gardenSettingsMarkup(state) {
     ${Object.entries(state.settings.crops)
       .map(([id, crop]) => gardenCropEditor(id, crop))
       .join("")}
+    ${gardenWeatherSettingsMarkup(state.settings.weather, Object.fromEntries(Object.entries(state.settings.crops).map(([id, crop]) => [id, crop.name])))}
     <button type="submit" class="primary">保存花园设置</button>
   </form>`,
     {
@@ -236,7 +254,7 @@ function gardenMarkup(state) {
       <form data-garden-initialize><label>初始资金<input name="initialBalance" type="number" value="1000" min="0" max="1000000" required /></label>
         <button type="submit" class="primary">开园</button></form></section>`;
   const info = state.pauseReason ? gardenLabels[state.pauseReason] : "运行中";
-  return `<section class="card"><h2>小窝花园</h2><p><strong>${gardenMoney(state.balance)}</strong> · 第 ${state.day} 天 · ${state.settings.speed}× · ${info}</p>
+  return `<section class="card"><h2>小窝花园</h2><p><strong>${gardenMoney(state.balance)}</strong> · 第 ${state.day} 天 · ${esc(state.weather.name)} · ${state.settings.speed}× · ${info}</p>
       <p class="hint">本日剩 ${gardenDuration(state.dayRemaining / 3600000)} 个花园小时</p>
       <div class="garden-grid">${state.plots.map((entry) => gardenPlotMarkup(state, entry)).join("")}</div>
       ${state.priorities.length ? `<h3>可以先做</h3><ul>${state.priorities.map((item) => `<li>${gardenPriorityText(item)}</li>`).join("")}</ul>` : ""}
@@ -275,7 +293,8 @@ function gardenMarkup(state) {
       ),
       { summary: "最近赠礼" },
     )}
-    ${gardenSettingsMarkup(state)}`;
+    ${gardenSettingsMarkup(state)}
+    ${gardenWeatherTrialMarkup(state.settings.weather)}`;
 }
 
 function gardenFormSettings(form, state) {
@@ -290,9 +309,16 @@ function gardenFormSettings(form, state) {
     );
     for (const key of ["name", "description", "light"])
       crop[key] = read(key).value;
-    for (const key of ["enabled", "market"]) crop[key] = read(key).checked;
+    for (const key of ["enabled", "market", "rainSensitive"])
+      crop[key] = read(key).checked;
+    const light = ["high", "medium", "low"];
+    if (light.some((key) => read("light-" + key).value !== ""))
+      crop.lightRates = Object.fromEntries(
+        light.map((key) => [key, read("light-" + key).valueAsNumber]),
+      );
     settings.crops[row.dataset.crop] = crop;
   }
+  settings.weather = gardenReadWeather(form);
   return {
     settings,
     expectedRevision: state.settingsRevision,
@@ -307,6 +333,8 @@ function gardenActionFrom(button, state) {
     const entry = state.plots.find(
       (plot) => plot.id === Number(parent.dataset.plot),
     );
+    if (kind === "shelter" || kind === "unshelter")
+      return { kind, plot: entry.id };
     if (kind !== "plant")
       return { kind, plot: entry.id, plantId: entry.plant.id };
     const cropId = parent.querySelector("[data-garden-crop]").value;
@@ -412,7 +440,7 @@ function renderGarden() {
           "请填写未使用的作物 ID，以小写字母开头，只含小写字母、数字和短横线。";
         return;
       }
-      const last = form.querySelector(".garden-crop:last-of-type");
+      const last = Array.from(form.querySelectorAll(".garden-crop")).at(-1);
       last.insertAdjacentHTML(
         "afterend",
         gardenCropEditor(id, { ...settings.crops[key], name: id }),
@@ -424,6 +452,8 @@ function renderGarden() {
       form.querySelector("[data-crop-id]").value = "";
       return;
     }
+    if (gardenWeatherEdit(event, (text) => (message.textContent = text)))
+      return;
     if (!button.hasAttribute("data-garden-act")) return;
     const action = gardenActionFrom(button, state);
     if (!action) return;
@@ -439,11 +469,14 @@ function renderGarden() {
       show(garden);
     }, gardenActions[action.kind] + "完成");
   });
+  page.addEventListener("change", (event) =>
+    gardenWeatherEdit(event, (text) => (message.textContent = text)),
+  );
   page.addEventListener(
     "invalid",
     (event) => {
-      const crop = event.target.closest(".garden-crop");
-      if (crop) crop.open = true;
+      for (const detail of page.querySelectorAll("details"))
+        if (detail.contains(event.target)) detail.open = true;
     },
     true,
   );
@@ -451,6 +484,8 @@ function renderGarden() {
     event.preventDefault();
     if (busy) return;
     const form = event.target;
+    if (form.hasAttribute("data-garden-weather-trial"))
+      return void run(() => gardenRunWeatherTrial(form));
     if (form.hasAttribute("data-garden-initialize"))
       void run(
         async () =>

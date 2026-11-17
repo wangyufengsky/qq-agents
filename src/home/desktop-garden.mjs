@@ -19,6 +19,8 @@ function operatorView(garden) {
     balance: garden.balance,
     pauseReason: garden.pauseReason,
     day: garden.day,
+    dayRemaining: garden.dayRemaining,
+    weather: { name: garden.weather.name, kind: garden.weather.kind },
     crops: garden.settings.crops,
     fertilizerPrice: garden.settings.fertilizerPrice,
     seeds: garden.seeds,
