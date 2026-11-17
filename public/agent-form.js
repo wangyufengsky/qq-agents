@@ -260,6 +260,17 @@ const AGENT_TOOL_GROUPS = [
     },
   },
   {
+    id: "garden",
+    builtin: true,
+    builtinLabel: "在花园设置中授权",
+    title: "小窝花园",
+    desc: "开园后，获准角色的主人格可查看花圃和优先事项，并在回合额度内经营。",
+    tools: {
+      garden_read: "查看共享花园与照料提示",
+      garden_act: "主人格经营共享花园",
+    },
+  },
+  {
     id: "home-social",
     builtin: true,
     builtinLabel: "由实例社交与角色参与开关共同控制",

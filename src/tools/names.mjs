@@ -136,6 +136,8 @@ export const TOOL_NAMES = Object.freeze([
   "room_publish_snapshot",
   "room_retract",
   "room_operation_status",
+  "garden_read",
+  "garden_act",
   ...SOCIAL_TOOLS,
   "memory_search",
   "memory_recall",

@@ -1,0 +1,69 @@
+.garden-page {
+  display: grid;
+  gap: 12px;
+}
+.garden-page > button {
+  justify-self: start;
+}
+.garden-page > [role="status"]:empty {
+  display: none;
+}
+.garden-page > [data-garden-body] {
+  display: grid;
+  gap: 12px;
+}
+.garden-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.garden-plot {
+  border: 1px solid currentColor;
+  border-radius: 10px;
+  padding: clamp(5px, 1.5vw, 14px);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.garden-plot > p {
+  margin: 5px 0;
+}
+.garden-growing {
+  background: color-mix(in srgb, #449765 15%, transparent);
+}
+.garden-mature {
+  background: color-mix(in srgb, #c49d32 18%, transparent);
+}
+.garden-withered {
+  background: color-mix(in srgb, #80624b 16%, transparent);
+}
+.garden-page fieldset {
+  border: 0;
+  padding: 0;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 6px;
+}
+.garden-grid select,
+.garden-grid button {
+  max-width: 100%;
+  min-width: 0;
+  white-space: normal;
+}
+.garden-settings-grid,
+.garden-shop {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
+  gap: 8px;
+  align-items: end;
+}
+.garden-page form,
+.garden-page .garden-crop {
+  margin-block: 10px;
+}
+.garden-page label:has(input[type="checkbox"]) {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}

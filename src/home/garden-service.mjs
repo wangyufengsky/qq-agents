@@ -88,7 +88,7 @@ export class GardenService {
       clock: Number(row.clock),
       revision: Number(row.revision),
       settingsRevision: Number(row.settings_revision),
-      settings: JSON.parse(String(row.settings)),
+      settings: { roles: {}, ...JSON.parse(String(row.settings)) },
       balance: Number(row.balance),
       plots: JSON.parse(String(row.plots)),
       seeds: JSON.parse(String(row.seeds)),
@@ -121,6 +121,33 @@ export class GardenService {
     this.enabled = state.settings.enabled;
     this.clock.speed = state.settings.speed;
     return this.read(now);
+  }
+
+  initialized() {
+    return Boolean(
+      this.db.prepare("SELECT 1 FROM garden_state WHERE id=1").get(),
+    );
+  }
+
+  /** @param {string} roleId @param {string} generation */
+  allowsRole(roleId, generation) {
+    const row = this.db
+      .prepare(
+        "SELECT value FROM garden_state,json_each(settings,'$.roles') WHERE garden_state.id=1 AND key=?",
+      )
+      .get(roleId);
+    return row?.value === generation;
+  }
+
+  /** @param {string} roleId @param {string} turnId */
+  turnUsed(roleId, turnId) {
+    return Number(
+      this.db
+        .prepare(
+          "SELECT count(*) AS count FROM garden_actions WHERE actor_kind='agent' AND actor_id=? AND turn_id=?",
+        )
+        .get(roleId, turnId)?.count,
+    );
   }
 
   requireState() {
@@ -211,13 +238,15 @@ export class GardenService {
           result: JSON.parse(String(result)),
         })),
       gifts: this.db
-        .prepare("SELECT * FROM garden_gifts ORDER BY rowid DESC LIMIT 50")
+        .prepare(
+          "SELECT g.*, h.crop_id, h.quality FROM garden_gifts g JOIN garden_harvests h ON h.id=g.harvest_id ORDER BY g.rowid DESC LIMIT 50",
+        )
         .all(),
     };
   }
 
-  /** @param {number} now @param {Actor} actor @param {unknown} input */
-  act(now, actor, input) {
+  /** @param {number} now @param {Actor} actor @param {unknown} input @param {(action: Action) => void} [validate] */
+  act(now, actor, input, validate) {
     const { requestId, action } = inputSchema.parse(input);
     const turnId = actor.kind === "agent" ? actor.turnId : null;
     const digest = createHash("sha256")
@@ -238,15 +267,11 @@ export class GardenService {
         throw Error("GARDEN_PAUSED");
       if (actor.kind === "agent") {
         if (!turnId) throw Error("GARDEN_TURN_REQUIRED");
-        const used = this.db
-          .prepare(
-            "SELECT count(*) AS count FROM garden_actions WHERE actor_kind='agent' AND actor_id=? AND turn_id=?",
-          )
-          .get(actor.id, turnId)?.count;
-        if (Number(used) >= state.settings.turnLimit)
+        if (this.turnUsed(actor.id, turnId) >= state.settings.turnLimit)
           throw Error("GARDEN_TURN_LIMIT");
       }
       state.clock = Math.max(state.clock, this.clock.elapsedAt(now));
+      validate?.(action);
       const result = this.apply(now, actor, action, state);
       this.db
         .prepare(
@@ -409,6 +434,7 @@ export class GardenService {
     }
     const {
       crops: _crops,
+      roles: _roles,
       enabled: _enabled,
       speed: _speed,
       turnLimit: _turnLimit,

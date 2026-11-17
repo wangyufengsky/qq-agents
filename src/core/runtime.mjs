@@ -11,6 +11,7 @@ import {
 } from "../home/desktop-decision.mjs";
 import { DESKTOP_VISIT_TOOL } from "../home/desktop-visits.mjs";
 import { DESKTOP_INVITATION_TOOL } from "../home/desktop-invitations.mjs";
+import { gardenToolNames } from "../tools/garden.mjs";
 import { HOME_TOOLS } from "../home/policy.mjs";
 import { HomeService } from "../home/service.mjs";
 import {
@@ -572,6 +573,10 @@ export class Runtime {
               ...BOARD_TOOLS,
             ]),
           ];
+    // Opening the garden changes this declaration once. Settings and grants are checked at call time.
+    const gardenOpen =
+      conversation === SUBJECT && this.home?.garden.initialized();
+    if (gardenOpen) selected.push(...gardenToolNames);
     if (conversation === SUBJECT && this.config.homeSocial?.enabled)
       selected.push("home_social_capabilities", "home_social_process");
     const imageGeneration = backendCapabilities(
@@ -604,6 +609,7 @@ export class Runtime {
         (![DESKTOP_VISIT_TOOL, DESKTOP_INVITATION_TOOL].includes(name) ||
           desktopVisit) &&
         (!configured || configured.includes(name)) &&
+        (!gardenToolNames.includes(name) || gardenOpen) &&
         toolAvailable(a, name, conversation, this.config) &&
         (!name.startsWith("game_") || this.config.games.enabled) &&
         // Every chat and free-time session may use the board once it is on;

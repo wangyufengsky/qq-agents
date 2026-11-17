@@ -54,6 +54,7 @@ const titles = {
   voices: ["语音库", "导入、试听和管理每个角色自己的语音素材。"],
   operations: ["受保护工作", "独立处理私有仓库与运维，审阅结果后再交回聊天。"],
   overview: ["首页", "在一个地方，照看每个独立的 AI。"],
+  garden: ["小窝花园", "一起照料九块共享花圃。"],
   links: [
     "连接",
     "QQ 账号与 AI 后端。连接前核对登录账号，后端可单独检测与恢复。",
@@ -192,6 +193,7 @@ async function api(url, data, method) {
           : ""),
     );
     error.code = value.error;
+    if (value.error === "GARDEN_STOCK_UNAVAILABLE") error.stock = value.stock;
     throw error;
   }
   return value;
@@ -546,10 +548,11 @@ const autoResumeText = (r) => {
 const homeRolesMarkup = () =>
   config.agents.map((a) => homeRoleCard(a)).join("") ||
   '<div class="card empty">还没有角色。到“角色”中添加第一个。</div>';
-// Four sections; existing pages keep their keys and become sub-pages. Role
+// Existing pages keep their keys when they move under navigation sections. Role
 // pages all follow one selected role instead of each keeping its own picker.
 const sections = {
   home: { pages: ["overview"] },
+  garden: { pages: ["garden"] },
   role: {
     pages: [
       "activity",
@@ -597,6 +600,7 @@ const pageLabels = {
   updates: "版本更新",
   settings: "运行设置",
   board: "留言板",
+  garden: "花园",
 };
 const lastPage = {};
 let roleId = initialRecordPage?.get("agentId") || undefined;
@@ -707,6 +711,10 @@ function render() {
   const content = $("#content");
   if (!config) return;
   renderSectionBar(section);
+  if (tab === "garden") {
+    renderGarden();
+    return;
+  }
   if (tab === "transcripts") {
     renderTranscripts();
     return;

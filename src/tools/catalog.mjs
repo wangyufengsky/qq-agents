@@ -1,3 +1,4 @@
+import { gardenToolNames } from "./garden.mjs";
 import { DESKTOP_CONVERSATION } from "../home/desktop-decision.mjs";
 import { linkedVideoAvailable } from "../video/policy.mjs";
 import { desktopToolAvailable } from "./desktop-policy.mjs";
@@ -105,6 +106,7 @@ export function scopedCatalog(runtime, ctx, input) {
 }
 
 export function toolAvailable(agent, name, conversation, config) {
+  if (gardenToolNames.includes(name)) return conversation === "@subject";
   if (name === DESKTOP_VISIT_TOOL || name === DESKTOP_INVITATION_TOOL)
     return conversation === "@subject";
   if (
