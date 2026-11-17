@@ -1,13 +1,28 @@
 import { z } from "zod";
+import { mediaLease } from "./media-lease.mjs";
 import {
+  gardenPauseReason,
   performGardenAction,
   subjectGardenView,
 } from "../home/garden-console.mjs";
+import {
+  gardenPublicSnapshot,
+  renderGardenSnapshot,
+} from "../home/garden-public.mjs";
+import { DESKTOP_CONVERSATION } from "../home/desktop-decision.mjs";
 
 export const gardenToolNames = ["garden_read", "garden_act"];
+export function gardenPublicScope(conversation) {
+  return (
+    conversation === "@subject" ||
+    conversation === DESKTOP_CONVERSATION ||
+    /^(group|private):\d+$/.test(conversation || "")
+  );
+}
+
 export const gardenDefinitions = {
   garden_read: [
-    "查看共享花园九宫格、库存、集市价格和优先照料提示。先看状态和本轮剩余次数，再决定是否行动。view 可省略。",
+    "查看小窝花园。默认是文字与九宫格状态，view=public 可显式读取可分享状态，view=image 同时生成基础图片。可分享文字为 text，可用本会话已有的 qq_send 发送 text、mediaId 或两者；读取不会发送。获准的主人格用 view=overview（或省略）查看经营详情。",
     z.strictObject({ view: z.string().min(1).max(40).optional() }),
   ],
   garden_act: [
@@ -20,24 +35,120 @@ export const gardenDefinitions = {
   ],
 };
 
-export function gardenTool(runtime, ctx, name, input) {
+const lastImage = new WeakMap();
+
+function activeRead(runtime, ctx) {
   const role = runtime.assertActive(ctx);
-  const garden = runtime.home.garden;
   if (
-    ctx.conversation !== "@subject" ||
-    ctx.runtimeKind ||
-    ctx.intentOnly ||
-    ctx.scheduleRunId ||
-    !ctx.turnId ||
-    runtime.running.get(role.id + "|@subject") !== ctx ||
-    !garden.allowsRole(role.id, runtime.home.generation(role.id))
+    !gardenPublicScope(ctx.conversation) ||
+    (ctx.runtimeKind && ctx.runtimeKind !== "desktop") ||
+    ctx.desktopScreenObserved ||
+    ctx.desktopPrivateObservation
   )
-    throw Error("GARDEN_ROLE_UNAVAILABLE");
-  if (name === "garden_read") {
-    if (input.view !== undefined && input.view !== "overview")
-      throw Error("INVALID_REQUEST");
-    return subjectGardenView(runtime, role.id, ctx.turnId);
+    throw Error("TOOL_DISABLED");
+  if (!runtime.home.garden.initialized()) throw Error("GARDEN_NOT_INITIALIZED");
+  return role;
+}
+
+async function gardenImage(runtime, ctx, snapshot, render) {
+  const role = activeRead(runtime, ctx);
+  const now = runtime.now();
+  const fallback = (reason) => ({
+    ...snapshot,
+    imageAvailable: false,
+    modelImageAttached: false,
+    reason,
+    notice: "花园图暂未生成；可分享本快照的文字。",
+  });
+  const perRole = lastImage.get(runtime) || new Map();
+  lastImage.set(runtime, perRole);
+  if (perRole.has(role.id) && now - perRole.get(role.id) < 5000)
+    return fallback("GARDEN_IMAGE_BUSY");
+  perRole.set(role.id, now);
+  let buffer, saved;
+  try {
+    buffer = await render(snapshot, {
+      signal: AbortSignal.any([
+        ctx.controller.signal,
+        AbortSignal.timeout(20_000),
+      ]),
+    });
+    activeRead(runtime, ctx);
+    saved = runtime.media.put(role.id, buffer, "image/png", {
+      saved: true,
+      kind: "garden-snapshot",
+      title: "小窝花园",
+      createdAt: snapshot.capturedAt,
+    });
+  } catch {
+    activeRead(runtime, ctx);
+    return fallback("GARDEN_IMAGE_UNAVAILABLE");
   }
+  const backend = runtime.config.backends.find((b) => b.id === role.backendId);
+  const modelImageAttached =
+    backend?.type !== "openai" || backend.vision === true;
+  const image = {
+    ...snapshot,
+    imageAvailable: true,
+    modelImageAttached,
+    mediaId: saved.id,
+    mimeType: saved.mimeType,
+    notice: "可以使用当前会话已有的发送工具与权限分享这张快照。",
+  };
+  if (!modelImageAttached) return image;
+  return {
+    [mediaLease]: () => {
+      try {
+        activeRead(runtime, ctx);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    content: [
+      { type: "text", text: JSON.stringify(image) },
+      { type: "image", mimeType: "image/png", data: buffer.toString("base64") },
+    ],
+  };
+}
+
+export function gardenTool(
+  runtime,
+  ctx,
+  name,
+  input,
+  render = renderGardenSnapshot,
+) {
+  const role =
+    name === "garden_read"
+      ? activeRead(runtime, ctx)
+      : runtime.assertActive(ctx);
+  const garden = runtime.home.garden;
+  const manages =
+    ctx.conversation === "@subject" &&
+    !ctx.runtimeKind &&
+    !ctx.intentOnly &&
+    !ctx.scheduleRunId &&
+    ctx.turnId &&
+    runtime.running.get(role.id + "|@subject") === ctx &&
+    garden.allowsRole(role.id, runtime.home.generation(role.id));
+  if (name === "garden_read") {
+    const view = input.view ?? "overview";
+    if (!["overview", "public", "image"].includes(view))
+      throw Error("INVALID_REQUEST");
+    if (view === "overview" && manages)
+      return subjectGardenView(runtime, role.id, ctx.turnId);
+    const now = runtime.now(),
+      state = garden.snapshot(now);
+    const snapshot = gardenPublicSnapshot(state, {
+      now,
+      running: state.running && !gardenPauseReason(runtime),
+    });
+    return view === "image"
+      ? gardenImage(runtime, ctx, snapshot, render)
+      : snapshot;
+  }
+  if (!manages) throw Error("GARDEN_ROLE_UNAVAILABLE");
   runtime.home.rooms.shareable(ctx);
   if (Object.hasOwn(input.args, "kind")) throw Error("INVALID_REQUEST");
   return performGardenAction(

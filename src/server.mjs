@@ -6,6 +6,7 @@ import { desktopToken } from "./home/desktop-auth.mjs";
 import { deriveRelayToken } from "./core/relay-auth.mjs";
 import { finalizeMcpOutput, toolOutputText } from "./backends/tool-output.mjs";
 import { disabledMessageTimingSnapshot } from "./core/message-timing.mjs";
+import { desktopGarden } from "./home/desktop-garden.mjs";
 import { adminGardenView, adminGardenWrite } from "./home/garden-console.mjs";
 import { homeModeration } from "./tools/home.mjs";
 import { serveHomePreview } from "./home/static.mjs";
@@ -367,6 +368,7 @@ export function createServer({
         return send(state);
       }
       if (
+        url.pathname === "/api/desktop-home/garden" ||
         url.pathname === "/api/desktop-home/status-card" ||
         url.pathname === "/api/desktop-home/observation-review" ||
         url.pathname === "/api/desktop-home/observation-verify" ||
@@ -387,6 +389,8 @@ export function createServer({
         );
         if (!local || !equal(req.headers["x-desktop-home-token"], desktopKey))
           return deny("UNAUTHORIZED", 401);
+        if (url.pathname.endsWith("/garden"))
+          return send(desktopGarden(runtime, await readBody(8192)));
         if (url.pathname.endsWith("/status-card"))
           return send(
             runtime.desktopVisits.statusCards.open(await readBody(1024)),

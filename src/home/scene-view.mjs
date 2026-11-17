@@ -42,18 +42,13 @@ let active = 0;
 /** @type {WeakMap<object, Map<string, number>>} */
 const last = new WeakMap();
 
-// The isolated browser receives only packaged files and a single authorized snapshot.
-// No web listener, authenticated browser profile or arbitrary URL is exposed.
-/** @param {any} snapshot
- * @param {{viewport?: string, signal?: AbortSignal, executablePath?: string, launchTimeoutMs?: number}} options */
-export async function renderHomeScene(
-  snapshot,
-  {
-    viewport = "desktop",
-    signal,
-    executablePath,
-    launchTimeoutMs = 15000,
-  } = {},
+// The owned browser has no authenticated profile. The caller supplies a local,
+// packaged document and a strictly bounded request route.
+/** @param {(context: import("playwright-core").BrowserContext) => Promise<Buffer>} draw
+ * @param {{viewportSize:{width:number,height:number}, signal?:AbortSignal, executablePath?:string, launchTimeoutMs?:number}} options */
+export async function renderOwnedHomeImage(
+  draw,
+  { viewportSize, signal, executablePath, launchTimeoutMs = 15000 },
 ) {
   if (active >= 2) throw Error("HOME_SCENE_BUSY");
   signal?.throwIfAborted();
@@ -114,90 +109,14 @@ export async function renderHomeScene(
     connected = true;
     signal?.throwIfAborted();
     const context = await browser.newContext({
-      viewport: { width: viewport === "mobile" ? 390 : 960, height: 760 },
+      viewport: viewportSize,
       deviceScaleFactor: 1,
       serviceWorkers: "block",
       acceptDownloads: false,
     });
-    await context.route("**/*", async (route) => {
-      const u = new URL(route.request().url());
-      if (u.origin !== origin || route.request().method() !== "GET" || u.search)
-        return route.abort();
-      if (u.pathname === "/")
-        return route.fulfill({
-          contentType: "text/html",
-          body: '<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="/home-preview/style.css"><link rel="stylesheet" href="/home-space/style.css"><link rel="stylesheet" href="/home-space/interiors.css"><body><div id="stage"><div class="book-page"><div class="book-face" id="scene"></div></div></div>',
-        });
-      const contentType = allowed.get(u.pathname);
-      if (!contentType) return route.abort();
-      try {
-        return await route.fulfill({
-          contentType,
-          body: await fs.readFile(
-            new URL(`../../public${u.pathname}`, import.meta.url),
-          ),
-        });
-      } catch {
-        return route.abort();
-      }
-    });
     await context.routeWebSocket(/.*/, (socket) => socket.close());
-    const page = await context.newPage();
-    await page.goto(origin, { waitUntil: "load", timeout: 10000 });
-    await page.evaluate(
-      async ({ snapshot, mobile }) => {
-        const { renderBookScene } = await import(
-          String("/home-space/book.mjs")
-        );
-        const { decorateSceneObject } = await import(
-          String("/home-space/scene-decoration.mjs")
-        );
-        document.body.className = `palette-${snapshot.view.layout.palette}`;
-        document.body.style.margin = "0";
-        const root = /** @type {HTMLElement} */ (
-          document.getElementById("scene")
-        );
-        root.style.width = "100%";
-        /** @type {HTMLElement} */ (
-          document.getElementById("stage")
-        ).style.width = "100%";
-        /** @type {HTMLElement} */ (
-          document.getElementById("stage")
-        ).style.maxWidth = "none";
-        /** @type {HTMLElement} */ (
-          document.getElementById("stage")
-        ).style.margin = "0";
-        root.append(
-          renderBookScene({
-            template: snapshot.template,
-            scene: snapshot.view.layout,
-            kind: snapshot.type,
-            mobile,
-            label: () => "",
-            /** @param {HTMLElement} node @param {any} o */
-            decorate(node, o) {
-              decorateSceneObject(node, o, {
-                type: snapshot.type,
-                residents: snapshot.residents,
-                ownerAgentId: snapshot.view.ownerAgentId,
-              });
-            },
-          }),
-        );
-        await document.fonts.ready;
-        await Promise.all(
-          [...document.images].map(async (image) => {
-            await image.decode();
-            if (!image.naturalWidth) throw Error("asset");
-          }),
-        );
-      },
-      { snapshot, mobile: viewport === "mobile" },
-    );
+    const buffer = await draw(context);
     signal?.throwIfAborted();
-    const buffer = await page
-      .locator(".board")
-      .screenshot({ type: "png", timeout: 10000, animations: "disabled" });
     if (buffer.length > 4 * 1024 * 1024)
       throw Error("HOME_SCENE_RENDER_FAILED");
     return buffer;
@@ -236,6 +155,105 @@ export async function renderHomeScene(
       }
     }
   }
+}
+
+/** @param {any} snapshot
+ * @param {{viewport?:string,signal?:AbortSignal,executablePath?:string,launchTimeoutMs?:number}} [options] */
+export function renderHomeScene(
+  snapshot,
+  { viewport = "desktop", ...options } = {},
+) {
+  const signal = options.signal;
+  return renderOwnedHomeImage(
+    async (context) => {
+      await context.route("**/*", async (route) => {
+        const u = new URL(route.request().url());
+        if (
+          u.origin !== origin ||
+          route.request().method() !== "GET" ||
+          u.search
+        )
+          return route.abort();
+        if (u.pathname === "/")
+          return route.fulfill({
+            contentType: "text/html",
+            body: '<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="/home-preview/style.css"><link rel="stylesheet" href="/home-space/style.css"><link rel="stylesheet" href="/home-space/interiors.css"><body><div id="stage"><div class="book-page"><div class="book-face" id="scene"></div></div></div>',
+          });
+        const contentType = allowed.get(u.pathname);
+        if (!contentType) return route.abort();
+        try {
+          return await route.fulfill({
+            contentType,
+            body: await fs.readFile(
+              new URL(`../../public${u.pathname}`, import.meta.url),
+            ),
+          });
+        } catch {
+          return route.abort();
+        }
+      });
+      const page = await context.newPage();
+      await page.goto(origin, { waitUntil: "load", timeout: 10000 });
+      await page.evaluate(
+        async ({ snapshot, mobile }) => {
+          const { renderBookScene } = await import(
+            String("/home-space/book.mjs")
+          );
+          const { decorateSceneObject } = await import(
+            String("/home-space/scene-decoration.mjs")
+          );
+          document.body.className = `palette-${snapshot.view.layout.palette}`;
+          document.body.style.margin = "0";
+          const root = /** @type {HTMLElement} */ (
+            document.getElementById("scene")
+          );
+          root.style.width = "100%";
+          /** @type {HTMLElement} */ (
+            document.getElementById("stage")
+          ).style.width = "100%";
+          /** @type {HTMLElement} */ (
+            document.getElementById("stage")
+          ).style.maxWidth = "none";
+          /** @type {HTMLElement} */ (
+            document.getElementById("stage")
+          ).style.margin = "0";
+          root.append(
+            renderBookScene({
+              template: snapshot.template,
+              scene: snapshot.view.layout,
+              kind: snapshot.type,
+              mobile,
+              label: () => "",
+              /** @param {HTMLElement} node @param {any} o */
+              decorate(node, o) {
+                decorateSceneObject(node, o, {
+                  type: snapshot.type,
+                  residents: snapshot.residents,
+                  ownerAgentId: snapshot.view.ownerAgentId,
+                });
+              },
+            }),
+          );
+          await document.fonts.ready;
+          await Promise.all(
+            [...document.images].map(async (image) => {
+              await image.decode();
+              if (!image.naturalWidth) throw Error("asset");
+            }),
+          );
+        },
+        { snapshot, mobile: viewport === "mobile" },
+      );
+      signal?.throwIfAborted();
+      return page
+        .locator(".board")
+        .screenshot({ type: "png", timeout: 10000, animations: "disabled" });
+    },
+    {
+      ...options,
+      viewportSize: { width: viewport === "mobile" ? 390 : 960, height: 760 },
+    },
+  );
 }
 
 /** @param {string} type @param {string[]} ids @param {number} [page] */

@@ -54,6 +54,8 @@ contextBridge.exposeInMainWorld("nest", {
   personal: (action, data) => ipcRenderer.invoke("room:personal", action, data),
   onPersonal: (listener) =>
     ipcRenderer.on("room:personal", (_event, value) => listener(value)),
+  garden: (roomEpoch, action) =>
+    ipcRenderer.invoke("room:garden", roomEpoch, action),
   get: () => ipcRenderer.invoke("room:get"),
   openStatusCard: (data) => {
     // A non-focusable sprite may open local content only from a real click.

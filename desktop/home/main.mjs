@@ -1329,6 +1329,23 @@ function permissionPanel(event, roomEpoch) {
   );
 }
 
+ipc.handle("room:garden", async (event, roomEpoch, action) => {
+  if (
+    !permissionPanel(event, roomEpoch) ||
+    entries.get("panel")?.section !== "garden"
+  )
+    return false;
+  try {
+    const response = await framework.personal("garden", { roomEpoch, action });
+    return permissionPanel(event, roomEpoch) &&
+      entries.get("panel")?.section === "garden"
+      ? response
+      : false;
+  } catch {
+    return false;
+  }
+});
+
 registerCompanionIpc(ipc, permissionPanel);
 
 function screenPickerVisits() {
