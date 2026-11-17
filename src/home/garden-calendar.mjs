@@ -1,4 +1,5 @@
 // @ts-check
+import { GardenEvents } from "./garden-events.mjs";
 import { randomUUID } from "node:crypto";
 import { closePlantDay, DAY, projectPlant } from "./garden-rules.mjs";
 import {
@@ -13,9 +14,12 @@ import {
 
 /** Calls that update the calendar run inside the garden service transaction. */
 export class GardenCalendar {
-  /** @param {import("node:sqlite").DatabaseSync} db */
-  constructor(db) {
+  /** @param {import("node:sqlite").DatabaseSync} db
+   * @param {(now:number, actor:import("./garden-service.mjs").Actor,action:string,state:State,delta:number)=>void} changeBalance
+   */
+  constructor(db, changeBalance) {
     this.db = db;
+    this.events = new GardenEvents(db, changeBalance);
   }
 
   /** @returns {GardenDay|null} */
@@ -53,9 +57,11 @@ export class GardenCalendar {
     };
   }
 
-  /** @param {State} state @param {unknown} input */
-  trial(state, input) {
-    const params = weatherTrialInput.parse(input);
+  /** @param {State} state @param {unknown} input @param {boolean} [event] */
+  trial(state, input, event = false) {
+    const { todayId, ...params } = event
+      ? this.events.trialInput(input)
+      : { ...weatherTrialInput.parse(input), todayId: undefined };
     const pool = state.settings.weather;
     let previous = this.latest();
     if (params.previousId !== undefined) {
@@ -73,7 +79,12 @@ export class GardenCalendar {
         kindStreak: params.streak ?? 1,
       };
     } else if (params.streak !== undefined) throw Error("INVALID_REQUEST");
-    const ctx = this.drawContext(state, previous);
+    const ctx = {
+      ...this.drawContext(state, previous),
+      balance: params.balance ?? state.balance,
+    };
+    if (event)
+      return this.events.trial(state, ctx, todayId, this.latest()?.weather);
     return {
       previous: previous
         ? {
@@ -82,7 +93,7 @@ export class GardenCalendar {
             name: previous.weather.name,
           }
         : null,
-      ...weatherOdds(pool, { ...ctx, balance: params.balance ?? ctx.balance }),
+      ...weatherOdds(pool, ctx),
     };
   }
 
@@ -114,6 +125,14 @@ export class GardenCalendar {
           seed,
           day,
         );
+    if (!legacy)
+      this.events.draw(
+        state,
+        this.drawContext(state, null),
+        weather,
+        seed,
+        day,
+      );
     this.save({
       day,
       weather,
@@ -123,8 +142,8 @@ export class GardenCalendar {
     });
   }
 
-  /** @param {State} state @param {number} elapsed */
-  advance(state, elapsed) {
+  /** @param {State} state @param {number} elapsed @param {number} now */
+  advance(state, elapsed, now) {
     let current = this.latest();
     if (!current) throw Error("GARDEN_NOT_INITIALIZED");
     const day = Math.floor(elapsed / DAY) + 1;
@@ -133,7 +152,6 @@ export class GardenCalendar {
         this.db.prepare("SELECT seed FROM garden_weather_seed WHERE id=1").get()
           ?.seed,
       );
-      const ctx = this.drawContext(state, current);
       while (current.day < day) {
         const { weather, day: priorDay } = current;
         state.plots = state.plots.map((entry) => ({
@@ -151,14 +169,15 @@ export class GardenCalendar {
               entry.sheltered,
             ),
         }));
-        // Later events can change day-opening inventory before this next draw.
-        ctx.previous = current;
+        this.events.close(priorDay, state, now);
+        const ctx = this.drawContext(state, current);
         const next = drawWeather(
           state.settings.weather,
           ctx,
           seed,
           priorDay + 1,
         );
+        this.events.draw(state, ctx, next, seed, priorDay + 1);
         current = this.save({
           day: priorDay + 1,
           revision: state.settingsRevision,
@@ -169,9 +188,13 @@ export class GardenCalendar {
       }
       this.db
         .prepare(
-          "UPDATE garden_state SET plots=?,clock=MAX(clock,?) WHERE id=1",
+          "UPDATE garden_state SET plots=?,clock=MAX(clock,?),balance=? WHERE id=1",
         )
-        .run(JSON.stringify(state.plots), (current.day - 1) * DAY);
+        .run(
+          JSON.stringify(state.plots),
+          (current.day - 1) * DAY,
+          state.balance,
+        );
     }
     state.plots = state.plots.map((entry) => ({
       ...entry,

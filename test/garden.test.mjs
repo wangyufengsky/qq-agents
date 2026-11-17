@@ -21,6 +21,7 @@ function setup(t, update = () => {}) {
   const garden = new GardenService(store);
   const settings = defaultGardenSettings();
   settings.weather = fixedWeather();
+  settings.events.rate = 0;
   update(settings);
   let now = 1000;
   garden.initialize(now, settings);

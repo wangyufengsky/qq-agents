@@ -37,9 +37,9 @@ function gardenWeatherSelect(name, label, options, selected) {
     .join("")}</select></label>`;
 }
 
-function gardenWeatherConditionRow(condition, entries, crops) {
-  const hasWeather = ["previous", "streak"].includes(condition.field);
-  const hasCount = condition.field !== "previous";
+function gardenWeatherConditionRow(condition, entries, crops, event = false) {
+  const hasWeather = ["previous", "today", "streak"].includes(condition.field);
+  const hasCount = !["previous", "today"].includes(condition.field);
   const needCrop = ["seed", "harvest"].includes(condition.field);
   const matchOptions = {
     ...Object.fromEntries(
@@ -54,7 +54,7 @@ function gardenWeatherConditionRow(condition, entries, crops) {
     ? condition.match.by + ":" + condition.match.value
     : "kind:cloud";
   return `<div data-weather-condition class="record">
-    ${gardenWeatherSelect("weatherField", "条件字段", gardenWeatherFields, condition.field)}
+    ${gardenWeatherSelect("weatherField", "条件字段", event ? { today: "当天抽到的天气", ...gardenWeatherFields } : gardenWeatherFields, condition.field)}
     ${hasWeather ? gardenWeatherSelect("weatherMatch", "匹配天气", matchOptions, match) : ""}
     ${needCrop ? gardenWeatherSelect("weatherCrop", "库存作物", crops, condition.cropId) : ""}
     ${hasCount ? `${gardenWeatherSelect("weatherOp", "比较方式", gardenWeatherOps, condition.op || "gt")}<label>阈值<input name="weatherValue" type="number" min="0" max="${condition.field === "streak" ? 365 : Number.MAX_SAFE_INTEGER}" step="1" value="${condition.value ?? 0}" required/></label>` : ""}
@@ -121,22 +121,7 @@ function gardenReadWeather(form) {
       const read = (name) => row.querySelector(`[name="${name}"]`);
       const conditions = Array.from(
         row.querySelectorAll("[data-weather-condition]"),
-        (node) => {
-          const field = node.querySelector('[name="weatherField"]').value;
-          const selection = node.querySelector('[name="weatherMatch"]')?.value;
-          const [by, value] = selection?.split(":") || [];
-          return {
-            field,
-            ...(selection && { match: { by, value } }),
-            ...(field !== "previous" && {
-              op: node.querySelector('[name="weatherOp"]').value,
-              value: node.querySelector('[name="weatherValue"]').valueAsNumber,
-            }),
-            ...(["seed", "harvest"].includes(field) && {
-              cropId: node.querySelector('[name="weatherCrop"]').value,
-            }),
-          };
-        },
+        gardenReadPoolCondition,
       );
       return [
         row.dataset.weatherEntry,
@@ -159,7 +144,7 @@ function gardenReadWeather(form) {
 
 function gardenWeatherEdit(event, show) {
   const form = event.target.closest("[data-garden-settings]");
-  if (!form) return false;
+  if (!form || event.target.closest("[data-event-entry]")) return false;
   const ids = Array.from(
     form.querySelectorAll("[data-weather-entry]"),
     (node) => node.dataset.weatherEntry,
@@ -264,4 +249,297 @@ async function gardenRunWeatherTrial(form) {
           }</li>`,
       )
       .join("")}</ul>`;
+}
+
+function gardenReadPoolCondition(node) {
+  const read = (name) => node.querySelector(`[name="${name}"]`);
+  const field = read("weatherField").value;
+  const selection = read("weatherMatch")?.value;
+  const [by, value] = selection?.split(":") || [];
+  return {
+    field,
+    ...(selection && { match: { by, value } }),
+    ...(read("weatherOp") && {
+      op: read("weatherOp").value,
+      value: read("weatherValue").valueAsNumber,
+    }),
+    ...(read("weatherCrop") && { cropId: read("weatherCrop").value }),
+  };
+}
+const gardenEventKinds = {
+  merchant: "流浪商人",
+  thief: "小偷",
+  visitor: "幸运访客",
+};
+const gardenRewardKinds = {
+  seed: "种子",
+  fertilizer: "肥料",
+  fertilizer_credit: "一次免费施肥",
+};
+const gardenEventNumbers = {
+  merchant: [
+    ["offers", "种子报价种类数", 1, 2, 1],
+    ["discount", "种子售价倍率", 0, 1, "any"],
+    ["minPremium", "最低收购倍率", 1.3, 1.6, "any"],
+    ["maxPremium", "最高收购倍率", 1.3, 1.6, "any"],
+  ],
+  thief: [
+    ["reward", "驱赶奖励（元）", 0, 1000, 1],
+    ["coinLoss", "无人处理时零钱损失上限", 0, 1000, 1],
+    ["cropLoss", "成品损失上限", 1, 5, 1],
+  ],
+};
+const gardenEventNumber = ([key, label, min, max, step], value) =>
+  `<label>${label}<input name="${key}" type="number" min="${min}" max="${max}" step="${step}" value="${esc(value)}" required/></label>`;
+
+function gardenEventEffect(kind, effect, crops) {
+  const choose = (id, label, selected) =>
+    `<label>${label}<select name="${id}" multiple required size="4">${Object.entries(
+      crops,
+    )
+      .map(
+        ([key, name]) =>
+          `<option value="${esc(key)}"${selected.includes(key) ? " selected" : ""}>${esc(name)}</option>`,
+      )
+      .join("")}</select></label>`;
+  if (kind === "visitor") {
+    const reward = effect.reward ?? { kind: "fertilizer", quantity: 1 };
+    return `${gardenWeatherSelect("rewardKind", "奖励类型", gardenRewardKinds, reward.kind)}
+      ${reward.kind === "seed" ? gardenWeatherSelect("rewardCrop", "奖励作物", crops, reward.cropId) : ""}
+      ${reward.kind === "fertilizer_credit" ? "" : gardenEventNumber(["quantity", "奖励数量", 1, 100, 1], reward.quantity)}`;
+  }
+  return `${kind === "merchant" ? choose("seeds", "可报价种子", effect.seeds) + choose("harvests", "可收购作物", effect.harvests) : ""}
+    ${gardenEventNumbers[kind].map((field) => gardenEventNumber(field, effect[field[0]])).join("")}`;
+}
+
+function gardenEventEntry(id, entry, weatherIds, crops) {
+  return `<details class="card" data-event-entry="${esc(id)}"><summary>${esc(entry.name)} · ${esc(id)}${entry.enabled ? "" : " · 已停用"}</summary>
+    <div class="garden-settings-grid">
+      <label>事件名称<input name="eventName" value="${esc(entry.name)}" maxlength="40" required/></label>
+      <label><input type="checkbox" name="eventEnabled"${entry.enabled ? " checked" : ""}/>启用事件</label>
+      ${gardenEventNumber(["weight", "事件权重", 0, 10000, "any"], entry.weight)}
+      ${gardenWeatherSelect("eventMode", "组合条件", { all: "全部满足", any: "任一满足" }, entry.mode)}
+      ${gardenWeatherSelect("eventKind", "事件类型", gardenEventKinds, entry.effect.kind)}
+    </div>
+    <div class="garden-settings-grid" data-event-effect>${gardenEventEffect(entry.effect.kind, entry.effect, crops)}</div>
+    <div data-event-conditions>${entry.conditions.map((row) => gardenWeatherConditionRow(row, weatherIds, crops, true)).join("")}</div>
+    <button type="button" class="ghost" data-add-event-condition>新增事件条件</button>
+  </details>`;
+}
+
+function gardenEventSettingsMarkup(pool, weather, crops) {
+  const ids = Object.keys(pool.entries);
+  const names = Object.fromEntries(
+    ids.map((id) => [id, pool.entries[id].name]),
+  );
+  const options = { "": "新建默认条目", ...names };
+  return fold(
+    "garden-event-settings",
+    "每日事件池",
+    `
+    <p class="hint">天气抽取后筛选事件。设置从下一花园日起生效。</p>
+    <div class="garden-settings-grid">
+    ${gardenEventNumber(["eventRate", "每日事件触发率（0–1）", 0, 1, "any"], pool.rate)}
+    <label>新事件 ID<input data-event-id maxlength="40" placeholder="例如 sunny-trader"/></label>
+    ${gardenWeatherSelect("eventParent", "复制事件", options, "")}
+    </div>
+    <button type="button" class="ghost" data-add-event-entry>新增事件</button>
+    <div data-event-entries>${ids.map((id) => gardenEventEntry(id, pool.entries[id], Object.keys(weather.entries), crops)).join("")}</div>
+    `,
+    { summary: "保存后次日生效" },
+  );
+}
+
+function gardenReadEvents(form) {
+  const entries = Object.fromEntries(
+    Array.from(form.querySelectorAll("[data-event-entry]"), (row) => {
+      const read = (key) => row.querySelector(`[name="${key}"]`);
+      const kind = read("eventKind").value;
+      let effect;
+      if (kind === "visitor") {
+        const rewardKind = read("rewardKind").value;
+        effect = {
+          kind,
+          reward: {
+            kind: rewardKind,
+            quantity: read("quantity")?.valueAsNumber ?? 1,
+            ...(rewardKind === "seed" && { cropId: read("rewardCrop").value }),
+          },
+        };
+      } else {
+        effect = {
+          kind,
+          ...Object.fromEntries(
+            gardenEventNumbers[kind].map(([key]) => [
+              key,
+              read(key).valueAsNumber,
+            ]),
+          ),
+        };
+        if (kind === "merchant")
+          for (const key of ["seeds", "harvests"])
+            effect[key] = Array.from(
+              read(key).selectedOptions,
+              (option) => option.value,
+            );
+      }
+      return [
+        row.dataset.eventEntry,
+        {
+          name: read("eventName").value,
+          enabled: read("eventEnabled").checked,
+          weight: read("weight").valueAsNumber,
+          mode: read("eventMode").value,
+          conditions: Array.from(
+            row.querySelectorAll("[data-weather-condition]"),
+            gardenReadPoolCondition,
+          ),
+          effect,
+        },
+      ];
+    }),
+  );
+  return { rate: form.elements.eventRate.valueAsNumber, entries };
+}
+
+function gardenEventEdit(event, show) {
+  const node = event.target;
+  const form = node.closest("[data-garden-settings]");
+  const row = node.closest("[data-event-entry]");
+  const button = node.closest("button");
+  if (!form || (!row && !button?.hasAttribute("data-add-event-entry")))
+    return false;
+  const weather = Array.from(
+    form.querySelectorAll("[data-weather-entry]"),
+    (entry) => entry.dataset.weatherEntry,
+  );
+  const crops = Object.fromEntries(
+    Array.from(form.querySelectorAll("[data-crop]"), (entry) => [
+      entry.dataset.crop,
+      entry.querySelector('[name="name"]').value,
+    ]),
+  );
+  const first = Object.keys(crops)[0];
+  const defaults = {
+    merchant: {
+      kind: "merchant",
+      seeds: [first],
+      harvests: [first],
+      offers: 1,
+      discount: 0.75,
+      minPremium: 1.3,
+      maxPremium: 1.6,
+    },
+    thief: { kind: "thief", reward: 15, coinLoss: 30, cropLoss: 1 },
+    visitor: { kind: "visitor", reward: { kind: "fertilizer", quantity: 1 } },
+  };
+  if (event.type === "change") {
+    if (node.name === "eventKind")
+      row.querySelector("[data-event-effect]").innerHTML = gardenEventEffect(
+        node.value,
+        defaults[node.value],
+        crops,
+      );
+    else if (node.name === "rewardKind")
+      row.querySelector("[data-event-effect]").innerHTML = gardenEventEffect(
+        "visitor",
+        { reward: { kind: node.value, quantity: 1, cropId: first } },
+        crops,
+      );
+    else if (node.name === "weatherField")
+      node.closest("[data-weather-condition]").outerHTML =
+        gardenWeatherConditionRow({ field: node.value }, weather, crops, true);
+    return true;
+  }
+  if (button?.hasAttribute("data-remove-weather-condition")) {
+    button.closest("[data-weather-condition]").remove();
+    return true;
+  }
+  if (button?.hasAttribute("data-add-event-condition")) {
+    const target = row.querySelector("[data-event-conditions]");
+    if (target.children.length < 12)
+      target.insertAdjacentHTML(
+        "beforeend",
+        gardenWeatherConditionRow({ field: "today" }, weather, crops, true),
+      );
+    else show("每个事件最多 12 个条件。");
+    return true;
+  }
+  if (!button?.hasAttribute("data-add-event-entry")) return false;
+  const idInput = form.querySelector("[data-event-id]");
+  const id = idInput.value.trim();
+  const existing = gardenReadEvents(form).entries;
+  if (
+    !/^[a-z][a-z0-9-]{0,39}$/.test(id) ||
+    Object.hasOwn(existing, id) ||
+    Object.keys(existing).length >= 40
+  ) {
+    show("请填写未占用的小写事件 ID，每池最多 40 个条目。");
+    return true;
+  }
+  if (!form.reportValidity()) return true;
+  const entry = existing[form.elements.eventParent.value] ?? {
+    enabled: true,
+    weight: 1,
+    mode: "all",
+    conditions: [],
+    effect: defaults.visitor,
+  };
+  const target = form.querySelector("[data-event-entries]");
+  target.insertAdjacentHTML(
+    "beforeend",
+    gardenEventEntry(id, { ...entry, name: id }, weather, crops),
+  );
+  target.lastElementChild.open = true;
+  form.elements.eventParent.add(new Option(id, id));
+  idInput.value = "";
+  return true;
+}
+
+function gardenEventTrialMarkup(weather) {
+  const names = Object.fromEntries(
+    Object.entries(weather.entries).map(([id, row]) => [
+      id,
+      row.name + " · " + id,
+    ]),
+  );
+  return fold(
+    "garden-event-trial",
+    "试配每日事件",
+    `<form data-garden-event-trial>
+    <div class="garden-settings-grid">
+    ${gardenWeatherSelect("todayId", "模拟当日天气", { "": "当前天气", ...names }, "")}
+    ${gardenWeatherSelect("previousId", "模拟前一日天气", { "": "最近结算天气", ...names }, "")}
+    <label>模拟连续天数<input name="streak" type="number" min="1" max="365" step="1" value="1"/></label>
+    <label>模拟日初余额<input name="balance" type="number" min="0" max="${Number.MAX_SAFE_INTEGER}" step="1" placeholder="当前余额"/></label>
+    </div>
+    <button class="ghost" type="submit">计算事件概率</button><div data-event-trial-result role="status"></div>
+  </form>`,
+    { summary: "查看入池与无事件概率" },
+  );
+}
+
+async function gardenRunEventTrial(form) {
+  const { todayId, previousId, streak, balance } = form.elements;
+  const result = await api("/api/home-garden/event-trial", {
+    ...(todayId.value && { todayId: todayId.value }),
+    ...(previousId.value && {
+      previousId: previousId.value,
+      ...(streak.value && { streak: streak.valueAsNumber }),
+    }),
+    ...(balance.value && { balance: balance.valueAsNumber }),
+  });
+  const format = new Intl.NumberFormat("zh-CN", {
+    style: "percent",
+    maximumFractionDigits: 3,
+  });
+  const labels = {
+    disabled: "已停用",
+    zero_weight: "权重为零",
+    conditions: "条件未满足",
+  };
+  form.querySelector("[data-event-trial-result]").innerHTML =
+    `<p>无事件 · ${format.format(result.noEvent)}</p><ul>
+    ${result.rows.map((row) => `<li>${esc(row.name)} · ${format.format(row.probability)} · ${row.reason ? labels[row.reason] : "入池"}</li>`).join("")}
+    </ul>`;
 }

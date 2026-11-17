@@ -9,6 +9,9 @@ const verbs = {
   clear: "铲除枯株",
   shelter: "搭棚",
   unshelter: "撤棚",
+  merchant_buy: "购买商人种子",
+  merchant_sell: "卖给商人",
+  chase_thief: "驱赶小偷",
   buy_seed: "买种子",
   buy_fertilizer: "买肥料",
   sell: "出售",
@@ -26,6 +29,9 @@ const errors = {
   GARDEN_PAUSED: "花园时钟已暂停",
   GARDEN_PRICE_CHANGED: "价格已变化，请刷新花园",
   GARDEN_PLANT_CHANGED: "植株已变化，请刷新花园",
+  GARDEN_EVENT_EXPIRED: "当天事件已过期，请刷新花园",
+  GARDEN_EVENT_HANDLED: "已有成员处理此事件，请刷新花园",
+  GARDEN_EVENT_OFFER: "报价已不可用，请刷新花园",
   GARDEN_SHELTER_UNCHANGED: "棚状态已有变化，请刷新花园",
   GARDEN_PLOT_OCCUPIED: "地块已被占用，请刷新花园",
   GARDEN_STOCK_UNAVAILABLE: "库存已变化，请刷新花园",
@@ -111,6 +117,18 @@ export function bindGarden(panel, getRoom) {
           (paused ? " · 已暂停" : ""),
       ),
     );
+    if (garden.event) {
+      content.append(element("h3", "", garden.event.name));
+      const status = { claimed: "奖励已入公共仓库", chased: "小偷已被驱赶" }[
+        garden.event.status
+      ];
+      if (status) content.append(element("p", "", status));
+      for (const { kind, args, label } of garden.eventActions) {
+        const action = control(kind, () => args, paused);
+        action.textContent = label;
+        content.append(action);
+      }
+    }
     const grid = element("div", "desktop-garden-grid");
     const plantable = Object.entries(garden.crops).filter(
       ([id, crop]) => crop.enabled && (crop.market || garden.seeds[id] > 0),
@@ -185,7 +203,10 @@ export function bindGarden(panel, getRoom) {
             ),
             control("water", target, paused || plant.water === 100),
           );
-          if (plant.fertilizer < plant.crop.fertilizer && garden.fertilizer > 0)
+          if (
+            plant.fertilizer < plant.crop.fertilizer &&
+            (garden.fertilizer > 0 || garden.fertilizerCredits > 0)
+          )
             tile.append(control("fertilize", target, paused));
         }
       }
@@ -218,6 +239,9 @@ export function bindGarden(panel, getRoom) {
         "肥料 " +
           garden.fertilizer +
           " 包 · " +
+          (garden.fertilizerCredits
+            ? `免费施肥 ${garden.fertilizerCredits} 次 · `
+            : "") +
           (Object.entries(garden.seeds)
             .filter(([, count]) => count > 0)
             .map(([id, count]) => garden.crops[id].name + " " + count + " 颗")

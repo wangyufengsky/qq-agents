@@ -58,7 +58,14 @@ export function gardenPublicSnapshot(state, { running, now }) {
     name: state.weather.name.trim().split(/\s+/).join(" "),
     kind: state.weather.kind,
   };
-  const heading = `小窝花园 · 第 ${state.day} 天 · ${weather.name} · 本日剩 ${hours} 花园小时${running ? "" : " · 已暂停"}`;
+  const event = state.event
+    ? {
+        name: state.event.name.trim().split(/\s+/).join(" "),
+        kind: state.event.kind,
+        status: state.event.status,
+      }
+    : null;
+  const heading = `小窝花园 · 第 ${state.day} 天 · ${weather.name} · 本日剩 ${hours} 花园小时${running ? "" : " · 已暂停"}${event ? " · " + event.name + ({ open: "", claimed: "（已领取）", chased: "（已驱赶）", expired: "", missed: "" }[event.status] || "") : ""}`;
   const descriptions = plots.map(
     (p) => `第 ${p.plot} 块：${p.name ? p.name + " · " : ""}${plotCaption(p)}`,
   );
@@ -70,6 +77,7 @@ export function gardenPublicSnapshot(state, { running, now }) {
     day: state.day,
     dayRemainingHours: hours,
     weather,
+    ...(event && { event }),
     running,
     plots,
     text: [heading, ...rows].join("\n"),

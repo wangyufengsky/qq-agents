@@ -2,19 +2,19 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 
-const entryId = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/);
+export const poolEntryId = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/);
 export const weatherKinds = z.enum(["sun", "cloud", "drizzle", "storm"]);
 const comparison = z.enum(["eq", "gt", "gte", "lt", "lte"]);
 const limit = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
-const match = z.discriminatedUnion("by", [
+export const weatherMatch = z.discriminatedUnion("by", [
   z.strictObject({ by: z.literal("kind"), value: weatherKinds }),
-  z.strictObject({ by: z.literal("id"), value: entryId }),
+  z.strictObject({ by: z.literal("id"), value: poolEntryId }),
 ]);
 export const weatherCondition = z.discriminatedUnion("field", [
-  z.strictObject({ field: z.literal("previous"), match }),
+  z.strictObject({ field: z.literal("previous"), match: weatherMatch }),
   z.strictObject({
     field: z.literal("streak"),
-    match,
+    match: weatherMatch,
     op: comparison,
     value: limit.max(365),
   }),
@@ -26,7 +26,7 @@ export const weatherCondition = z.discriminatedUnion("field", [
   }),
   z.strictObject({
     field: z.enum(["seed", "harvest"]),
-    cropId: entryId,
+    cropId: poolEntryId,
     op: comparison,
     value: limit,
   }),
@@ -47,8 +47,8 @@ const weatherEntry = z.strictObject({
 
 export const weatherPool = z
   .strictObject({
-    fallback: entryId,
-    entries: z.record(entryId, weatherEntry),
+    fallback: poolEntryId,
+    entries: z.record(poolEntryId, weatherEntry),
   })
   .superRefine(({ fallback, entries }, ctx) => {
     const permanent = Object.hasOwn(entries, fallback) && entries[fallback];
@@ -80,7 +80,7 @@ export const weatherPool = z
 
 export const weatherTrialInput = z.strictObject({
   balance: limit.optional(),
-  previousId: entryId.optional(),
+  previousId: poolEntryId.optional(),
   streak: limit.min(1).max(365).optional(),
 });
 
@@ -159,7 +159,7 @@ const compare = {
 };
 
 /** @param {WeatherCondition} condition @param {DrawContext} ctx */
-function matches(condition, ctx) {
+export function matches(condition, ctx) {
   if ("match" in condition) {
     const { previous } = ctx;
     const same =
@@ -188,14 +188,19 @@ function matches(condition, ctx) {
   return compare[condition.op](value, condition.value);
 }
 
-/** @param {WeatherPool} pool @param {DrawContext} ctx */
-export function weatherOdds(pool, ctx) {
-  const rows = Object.keys(pool.entries)
+/** @template T
+ * @param {Record<string,{name:string,enabled:boolean,weight:number,mode:"all"|"any",conditions:T[]}>} entries
+ * @param {(condition:T)=>boolean} accepts
+ * @param {string|null} fallback
+ * @param {number} rate
+ */
+export function poolOdds(entries, accepts, fallback, rate) {
+  const rows = Object.keys(entries)
     .sort()
     .map((id) => {
-      const entry = pool.entries[id];
+      const entry = entries[id];
       const failedConditions = entry.conditions.flatMap((condition, index) =>
-        matches(condition, ctx) ? [] : [index],
+        accepts(condition) ? [] : [index],
       );
       const eligible =
         !entry.conditions.length ||
@@ -219,30 +224,46 @@ export function weatherOdds(pool, ctx) {
     });
   const total = rows.reduce((sum, row) => sum + row.weight, 0);
   return {
-    fallback: total === 0 ? pool.fallback : null,
+    fallback: total === 0 ? fallback : null,
+    noEvent: total > 0 ? 1 - rate : Number(!fallback),
     rows: rows.map(({ weight, ...row }) => ({
       ...row,
       probability:
-        total > 0 ? weight / total : Number(row.id === pool.fallback),
+        total > 0 ? (weight / total) * rate : Number(row.id === fallback),
     })),
   };
 }
 
-/** @param {WeatherPool} pool @param {DrawContext} ctx @param {string} seed @param {number} day */
-export function drawWeather(pool, ctx, seed, day) {
-  const odds = weatherOdds(pool, ctx);
+/** @param {WeatherPool} pool @param {DrawContext} ctx */
+export function weatherOdds(pool, ctx) {
+  return poolOdds(
+    pool.entries,
+    (condition) => matches(condition, ctx),
+    pool.fallback,
+    1,
+  );
+}
+
+/** @param {ReturnType<typeof poolOdds>} odds @param {string} seed @param {string} stream @param {number} day */
+export function drawPool(odds, seed, stream, day) {
   let roll =
     createHash("sha256")
-      .update(`${seed}:weather:${day}`)
+      .update(`${seed}:${stream}:${day}`)
       .digest()
       .readUInt32BE() /
     2 ** 32;
-  const choices = odds.rows.filter(({ probability }) => probability > 0);
-  for (const choice of choices) {
+  for (const choice of odds.rows.filter(({ probability }) => probability > 0)) {
     roll -= choice.probability;
-    if (roll < 0) return { ...pool.entries[choice.id], id: choice.id };
+    if (roll < 0) return choice.id;
   }
-  // Rounding can leave the final subtraction just above zero.
-  const id = choices.at(-1)?.id ?? pool.fallback;
+  return odds.noEvent
+    ? null
+    : (odds.rows.findLast(({ probability }) => probability > 0)?.id ?? null);
+}
+
+/** @param {WeatherPool} pool @param {DrawContext} ctx @param {string} seed @param {number} day */
+export function drawWeather(pool, ctx, seed, day) {
+  const id =
+    drawPool(weatherOdds(pool, ctx), seed, "weather", day) ?? pool.fallback;
   return { ...pool.entries[id], id };
 }

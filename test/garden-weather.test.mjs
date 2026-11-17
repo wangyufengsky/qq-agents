@@ -29,6 +29,7 @@ function use(store, kind = "cloud", edit = () => {}) {
   const garden = new GardenService(store);
   const rules = defaultGardenSettings();
   rules.weather = fixedWeather(kind);
+  rules.events.rate = 0;
   edit(rules);
   let now = 0;
   garden.initialize(now, rules);

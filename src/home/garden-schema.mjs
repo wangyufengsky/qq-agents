@@ -55,6 +55,15 @@ export function initializeGardenTables(db) {
       kind_streak INTEGER NOT NULL,
       id_streak INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS garden_events (
+      day INTEGER PRIMARY KEY,
+      value TEXT
+    );
+    CREATE TABLE IF NOT EXISTS garden_reward_stock (
+      id INTEGER PRIMARY KEY CHECK (id=1),
+      fertilizer_credits INTEGER NOT NULL CHECK (fertilizer_credits>=0)
+    );
+    INSERT OR IGNORE INTO garden_reward_stock VALUES (1,0);
     CREATE TABLE IF NOT EXISTS garden_delegations (
       id TEXT PRIMARY KEY,
       generation TEXT NOT NULL,

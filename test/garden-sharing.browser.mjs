@@ -32,10 +32,12 @@ test("actual Chromium produces a shareable nine-tile PNG and renders the desktop
   let now = Date.UTC(2026, 0, 1);
   runtime.clock = () => now;
   const garden = runtime.home.garden;
-  garden.initialize(now, {
-    ...defaultGardenSettings(),
-    weather: fixedWeather("storm"),
-  });
+  const rules = defaultGardenSettings();
+  rules.weather = fixedWeather("storm");
+  rules.events.rate = 1;
+  for (const [id, event] of Object.entries(rules.events.entries))
+    event.enabled = id === "thief";
+  garden.initialize(now, rules);
   const callDesktop = (endpoint, body) =>
     fetch(origin + "/api/desktop-home/" + endpoint, {
       method: "POST",
@@ -152,6 +154,12 @@ test("actual Chromium produces a shareable nine-tile PNG and renders the desktop
   assert.equal(payload.plots.length, 9);
   assert.equal(payload.plots[0].name, "野生三叶草");
   assert.equal(payload.weather.kind, "storm");
+  assert.deepEqual(payload.event, {
+    name: "小偷踩点",
+    kind: "thief",
+    status: "open",
+  });
+  assert.match(payload.text, /小偷踩点/);
   assert.equal(payload.plots[0].risk, "critical");
   assert.equal(payload.plots[1].sheltered, true);
   assert.match(payload.text, /暴雨.*本日剩 23 花园小时/);
