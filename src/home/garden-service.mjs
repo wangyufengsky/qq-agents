@@ -207,7 +207,7 @@ export class GardenService {
   }
 
   /** @param {number} now */
-  read(now) {
+  snapshot(now) {
     const state = this.requireState();
     const elapsed = Math.max(state.clock, this.clock.elapsed);
     return {
@@ -220,6 +220,13 @@ export class GardenService {
         ...entry,
         plant: entry.plant && projectPlant(entry.plant, elapsed),
       })),
+    };
+  }
+
+  /** @param {number} now */
+  read(now) {
+    return {
+      ...this.snapshot(now),
       harvests: this.db
         .prepare(
           "SELECT * FROM garden_harvests WHERE quantity>0 ORDER BY rowid",

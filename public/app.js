@@ -28,7 +28,7 @@ let token = sessionStorage.getItem("qq-unified-token") || "",
     initialRecordPage?.get("view") === "memory" &&
     initialRecordPage.get("type") === "diary"
       ? "diary"
-      : ["memory", "diary", "visits", "transcripts"].includes(
+      : ["memory", "diary", "visits", "transcripts", "garden"].includes(
             initialRecordPage?.get("view"),
           )
         ? initialRecordPage.get("view")

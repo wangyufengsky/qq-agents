@@ -49,6 +49,7 @@
         <nav class="tabs" aria-label="小窝页面">
           <button data-tab="visits" aria-pressed="true">来访</button>
           <button data-tab="chat" aria-pressed="false">聊天</button>
+          <button data-tab="garden" aria-pressed="false" hidden>花园</button>
           <button data-tab="observation" aria-pressed="false" hidden>
             观察
           </button>
@@ -182,6 +183,11 @@
               窗口任务
             </button>
           </div>
+        </section>
+        <section id="garden-panel" aria-label="花园" hidden>
+          <button type="button" class="quiet garden-refresh">刷新花园</button>
+          <p class="garden-message" role="status"></p>
+          <div class="garden-content"></div>
         </section>
         <section id="observation-results" aria-label="观察记录" hidden>
           <h2>观察记录</h2>

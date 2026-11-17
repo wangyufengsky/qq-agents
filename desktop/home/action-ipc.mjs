@@ -220,7 +220,7 @@ export function registerActionIpc({
     if (action === "section") {
       if (
         event.senderFrame === entry.win.webContents.mainFrame &&
-        ["chat", "visits", "observation"].includes(data)
+        ["chat", "visits", "observation", "garden"].includes(data)
       )
         entry.section = data;
       return;

@@ -18,6 +18,7 @@ import { desktopPermissionFactory } from "./renderer-panelpermission.js";
 import { bindBrowserControl } from "./renderer-panelbrowser.js";
 import { bindPanelSheet } from "./renderer-panelsheet.js";
 import { bindWindowTask } from "./renderer-paneltask.js";
+import { bindGarden } from "./renderer-garden.js";
 import { bindPersonal } from "./renderer-personal.js";
 
 export function panel(root) {
@@ -58,6 +59,9 @@ export function panel(root) {
   const minutes = select("#minutes");
   const timerOn = select("#timer-on");
   let room;
+  const gardenPanel = select("#garden-panel"),
+    gardenTab = select('[data-tab="garden"]');
+  const garden = bindGarden(gardenPanel, () => room);
   let lastRoster;
   const announcedBodyFeedback = new Map();
   const clock = new Intl.DateTimeFormat("zh-CN", {
@@ -187,11 +191,17 @@ export function panel(root) {
 
   function switchSection(section, report = false) {
     if (section === "observation" && observationTab.hidden) return;
-    if (!["chat", "visits", "observation"].includes(section)) return;
+    if (section === "garden" && gardenTab.hidden) return;
+    if (!["chat", "visits", "observation", "garden"].includes(section)) return;
     if (report) window.nest.setSection?.(section);
     select("#visits").hidden = section !== "visits";
     select("#chat").hidden = section !== "chat";
     observationResults.hidden = section !== "observation";
+    gardenPanel.hidden = section !== "garden";
+    if (section === "garden") {
+      closeSettings();
+      garden.refresh();
+    }
     for (const tab of root.querySelectorAll("[data-tab]"))
       tab.setAttribute("aria-pressed", String(tab.dataset.tab === section));
     if (section === "chat") {
@@ -220,7 +230,11 @@ export function panel(root) {
       message.value = "";
       clearWindowGrant();
     }
+    if (room?.roomEpoch !== next.roomEpoch || !next.connected) garden.clear();
     room = next;
+    gardenTab.hidden =
+      !room.framework || !room.connected || !window.nest.garden;
+    if (gardenTab.hidden && !gardenPanel.hidden) switchSection("visits", true);
     updateRecentBubbles(room);
     select(".sample-settings").hidden = Boolean(room.framework);
     const edition = select(".edition");

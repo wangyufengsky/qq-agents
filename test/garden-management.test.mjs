@@ -186,8 +186,16 @@ test("administrator and authorized subject turns share care and harvest with sta
       (async () => {
         assert.ok(tools.some((tool) => tool.name === "garden_read"));
         if (mode === "deny") {
+          const view = await callTool("garden_read", {});
+          assert.equal(view.plots.length, 9);
+          assert.equal(view.balance, undefined);
           await assert.rejects(
-            () => callTool("garden_read", {}),
+            () =>
+              callTool("garden_act", {
+                kind: "plant",
+                args: { plot: 1, cropId: "clover" },
+                requestId: "garden-without-grant",
+              }),
             /GARDEN_ROLE_UNAVAILABLE/,
           );
           return;
@@ -222,8 +230,10 @@ test("administrator and authorized subject turns share care and harvest with sta
           ).status,
           200,
         );
+        const publicView = await callTool("garden_read", {});
+        assert.equal(publicView.balance, undefined);
         await assert.rejects(
-          () => callTool("garden_read", {}),
+          () => invoke("plant", { plot: 9, cropId: "clover" }),
           /GARDEN_ROLE_UNAVAILABLE/,
         );
       })(),
@@ -235,11 +245,7 @@ test("administrator and authorized subject turns share care and harvest with sta
   const declare = () => toolSpecs(f.runtime.toolsFor(a, "@subject"));
   const original = declare();
   assert.ok(original.some((tool) => tool.name === "garden_read"));
-  assert.ok(
-    !f.runtime
-      .toolsFor(a, "private:30000")
-      .some((n) => n.startsWith("garden_")),
-  );
+  assert.ok(!f.runtime.toolsFor(a, "private:30000").includes("garden_act"));
   await f.runtime.wake("agent-0", "@subject");
   assert.equal(runs.length, 1);
   await runs[0];

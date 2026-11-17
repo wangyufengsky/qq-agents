@@ -11,7 +11,7 @@ import {
 } from "../home/desktop-decision.mjs";
 import { DESKTOP_VISIT_TOOL } from "../home/desktop-visits.mjs";
 import { DESKTOP_INVITATION_TOOL } from "../home/desktop-invitations.mjs";
-import { gardenToolNames } from "../tools/garden.mjs";
+import { gardenPublicScope, gardenToolNames } from "../tools/garden.mjs";
 import { HOME_TOOLS } from "../home/policy.mjs";
 import { HomeService } from "../home/service.mjs";
 import {
@@ -526,8 +526,12 @@ export class Runtime {
         "subject_inbox_submit",
         "subject_inbox_list",
       ]);
-      const permitted = [...candidates].filter((name) =>
-        toolAvailable(a, name, conversation, this.config),
+      const gardenOpen = this.home?.garden.initialized();
+      if (gardenOpen) candidates.add("garden_read");
+      const permitted = [...candidates].filter(
+        (name) =>
+          (name !== "garden_read" || gardenOpen) &&
+          toolAvailable(a, name, conversation, this.config),
       );
       return [DESKTOP_DECISION, DESKTOP_HISTORY, ...permitted];
     }
@@ -575,8 +579,11 @@ export class Runtime {
           ];
     // Opening the garden changes this declaration once. Settings and grants are checked at call time.
     const gardenOpen =
-      conversation === SUBJECT && this.home?.garden.initialized();
-    if (gardenOpen) selected.push(...gardenToolNames);
+      gardenPublicScope(conversation) && this.home?.garden.initialized();
+    if (gardenOpen) {
+      selected.push("garden_read");
+      if (conversation === SUBJECT) selected.push("garden_act");
+    }
     if (conversation === SUBJECT && this.config.homeSocial?.enabled)
       selected.push("home_social_capabilities", "home_social_process");
     const imageGeneration = backendCapabilities(

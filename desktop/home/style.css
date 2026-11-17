@@ -2021,3 +2021,23 @@ h2 {
 .companion-options details + details {
   margin-top: 8px;
 }
+
+.desktop-garden-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+.desktop-garden-tile {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  padding: 5px;
+}
+.desktop-garden-tile > p {
+  margin-block: 4px;
+}
+.desktop-garden-tile select,
+.desktop-garden-stock select {
+  max-width: 100%;
+}
