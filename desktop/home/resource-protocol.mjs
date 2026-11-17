@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { isGardenArtResource } from "../../public/garden-art/art.js";
 
 // Only packaged desktop assets are exposed to the isolated renderer.
 export function desktopResourcePath(value, source) {
@@ -23,6 +24,8 @@ export function desktopResourcePath(value, source) {
   )
     return join(source, path.slice("/desktop/home/".length));
   if (
+    (path.startsWith("/public/garden-art/") &&
+      isGardenArtResource(path.slice("/public/garden-art/".length))) ||
     [
       "/public/home-preview/assets/door.webp",
       "/public/home-preview/assets/room-board.webp",

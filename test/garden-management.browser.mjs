@@ -60,7 +60,21 @@ test("management console opens the garden, edits its catalog and trades from the
   });
   await page.getByRole("button", { name: "刷新花园" }).click();
   const firstPlot = page.locator('[data-plot="1"]');
+  await page.waitForFunction(
+    () =>
+      Array.from(
+        globalThis.document.querySelectorAll(".garden-art-soil"),
+      ).filter((img) => img.complete && img.naturalWidth > 0).length === 9,
+  );
+  const seedling = "**/garden-art/plant-clover-seedling.webp";
+  await page.route(seedling, (route) => route.abort());
+  const failedImage = page.waitForEvent("requestfailed", {
+    predicate: (req) => req.url().endsWith("/plant-clover-seedling.webp"),
+  });
   await firstPlot.getByRole("button", { name: "播种" }).click();
+  await failedImage;
+  await firstPlot.locator(".garden-art-plant").waitFor({ state: "detached" });
+  await page.unroute(seedling);
   await firstPlot.getByText("野生三叶草", { exact: true }).waitFor();
   const settings = page.locator("[data-garden-settings]");
   await page.locator("summary").filter({ hasText: "花园设置" }).click();
@@ -68,7 +82,8 @@ test("management console opens the garden, edits its catalog and trades from the
   await settings.getByLabel("作物 ID").fill("test-clover");
   await settings.getByRole("button", { name: "新增作物" }).click();
   const newCrop = settings.locator('[data-crop="test-clover"]');
-  await newCrop.getByLabel("名称", { exact: true }).fill("试种三叶草");
+  const longName = "试种三叶草及其他耐旱多年生景观地被植物";
+  await newCrop.getByLabel("名称", { exact: true }).fill(longName);
   await newCrop.getByLabel("高光照倍率", { exact: true }).fill("1.2");
   await newCrop
     .getByLabel("基础成熟时长（花园小时）", { exact: true })
@@ -83,7 +98,23 @@ test("management console opens the garden, edits its catalog and trades from the
   const secondPlot = page.locator('[data-plot="2"]');
   await secondPlot.getByLabel("第 2 块的作物").selectOption("test-clover");
   await secondPlot.getByRole("button", { name: "播种" }).click();
-  await secondPlot.getByText("试种三叶草", { exact: true }).waitFor();
+  await secondPlot.getByText(longName, { exact: true }).waitFor();
+  await page.locator("summary").filter({ hasText: "花园设置" }).click();
+  await page.locator("#garden-page").evaluate((view) => {
+    view.style.zoom = "125%";
+  });
+  const gridFits = await page.locator(".garden-grid").evaluate((grid) => {
+    const bounds = grid.getBoundingClientRect();
+    return (
+      grid.scrollWidth === grid.clientWidth &&
+      bounds.right <= grid.ownerDocument.documentElement.clientWidth
+    );
+  });
+  assert.equal(gridFits, true);
+  assert.equal(await secondPlot.locator(".garden-art-plant").count(), 0);
+  await page.locator("#garden-page").evaluate((view) => {
+    view.style.zoom = "";
+  });
   const end = now + HOUR / 4;
   while (now < end) {
     now = Math.min(now + 10_000, end);
@@ -97,7 +128,9 @@ test("management console opens the garden, edits its catalog and trades from the
   await lot.getByRole("button", { name: "赠送" }).click();
   await page.getByText("赠礼完成", { exact: true }).waitFor();
   await page.locator("summary").filter({ hasText: "赠礼记录" }).click();
-  await page.getByText(/管理员 送给 管理员 · 试种三叶草/).waitFor();
+  await page
+    .getByText("管理员 送给 管理员 · " + longName, { exact: false })
+    .waitFor();
   assert.equal(await lot.count(), 0);
   assert.equal(
     await firstPlot.getByText("野生三叶草", { exact: true }).count(),

@@ -27,14 +27,32 @@
 .garden-plot > p {
   margin: 5px 0;
 }
-.garden-growing {
-  background: color-mix(in srgb, #449765 15%, transparent);
+.garden-console-paper {
+  --ink: var(--garden-ink);
+  --ink-strong: var(--garden-ink);
+  --sub: var(--garden-muted);
+  --muted: var(--garden-muted);
+  --line-2: #c99e6f;
+  --line-3: #af7e4d;
+  --raised: #fff8e8;
+  --fill-2: #b27a4014;
+  --fill-4: #b27a402f;
+  color-scheme: light;
+  border-color: #c99e6f;
 }
-.garden-mature {
-  background: color-mix(in srgb, #c49d32 18%, transparent);
+.garden-console-paper button.ghost {
+  min-height: 30px;
+  padding: 4px 7px;
+  color: var(--garden-ink);
+  border-color: #c99e6f;
 }
-.garden-withered {
-  background: color-mix(in srgb, #80624b 16%, transparent);
+.garden-console-paper .garden-plot {
+  border-color: var(--garden-frame);
+  border-radius: 5px;
+}
+.garden-console-paper .garden-plot select {
+  background: #fff8e8;
+  color: var(--garden-ink);
 }
 .garden-page fieldset {
   border: 0;
