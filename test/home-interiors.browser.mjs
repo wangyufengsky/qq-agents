@@ -411,7 +411,7 @@ try {
         return (
           images.length === 2 &&
           images.every((img) => img.complete && img.naturalWidth > 0) &&
-          images.some((img) => img.src.endsWith("/gift-wrapped.webp"))
+          images.some((img) => img.src.endsWith("/gift-origami-dragon.webp"))
         );
       });
       check(`shelf uses loaded gift stickers at ${width}px`, true);

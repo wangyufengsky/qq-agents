@@ -15,7 +15,7 @@ test("all runtime garden artwork is WebP and individually allowlisted", async ()
   const files = (await readdir(directory)).filter((file) =>
     file.endsWith(".webp"),
   );
-  assert.equal(files.length, 50);
+  assert.equal(files.length, 65);
   assert.equal(isGardenArtResource("gifts.js"), true);
   assert.equal(isGardenArtResource("workspace.js"), true);
   for (const [group, id] of [
@@ -28,10 +28,9 @@ test("all runtime garden artwork is WebP and individually allowlisted", async ()
   assert.equal(Object.keys(gardenGifts).length, 18);
   for (const id of Object.keys(gardenGifts)) {
     const specific = `gift-${id}.webp`;
-    assert.equal(
-      gardenIconFile("gift", id),
-      files.includes(specific) ? specific : "gift-wrapped.webp",
-    );
+    assert.equal(gardenIconFile("gift", id), specific);
+    assert.ok(files.includes(specific), specific);
+    assert.ok(isGardenArtResource(specific), specific);
   }
   assert.equal(gardenIconFile("gift", "../gift"), null);
   assert.equal(gardenIconFile("gift", "constructor"), null);
