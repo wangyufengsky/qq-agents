@@ -618,3 +618,26 @@ test("explicitly empty merchant shelf survives settings saves until switched to 
   );
   assert.deepEqual(v.errors, []);
 });
+
+test("copying a merchant preserves its gift catalog and allows an independent shelf", async (t) => {
+  const fixed = [{ giftId: "shell-music-box", stock: 3, price: 40 }];
+  const v = await openEventSettings(t, ({ events }) => {
+    events.entries.merchant.effect.giftOffers = fixed;
+  });
+  await v.form.getByLabel("新事件 ID").fill("shell-merchant");
+  await v.form.getByLabel("复制事件").selectOption("merchant");
+  await v.form.getByRole("button", { name: "新增事件", exact: true }).click();
+  assert.deepEqual(v.errors, []);
+  const copy = v.row("shell-merchant");
+  assert.equal(await copy.count(), 1);
+  assert.equal(await copy.getByLabel("礼物货单").inputValue(), "fixed");
+  const box = copy.locator('[data-gift-offer="shell-music-box"]');
+  assert.equal(await box.getByLabel("礼物单价").inputValue(), "40");
+  await box.getByLabel(/每日库存/).fill("1");
+  await v.save();
+  assert.deepEqual(v.pool().entries.merchant.effect.giftOffers, fixed);
+  assert.deepEqual(v.pool().entries["shell-merchant"].effect.giftOffers, [
+    { giftId: "shell-music-box", stock: 1, price: 40 },
+  ]);
+  assert.deepEqual(v.errors, []);
+});

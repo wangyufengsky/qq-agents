@@ -723,7 +723,7 @@ function gardenEventEdit(event, show, catalog) {
   const target = form.querySelector("[data-event-entries]");
   target.insertAdjacentHTML(
     "beforeend",
-    gardenEventEntry(id, { ...entry, name: id }, weather, crops),
+    gardenEventEntry(id, { ...entry, name: id }, weather, crops, catalog),
   );
   target.lastElementChild.open = true;
   form.elements.eventParent.add(new Option(id, id));
