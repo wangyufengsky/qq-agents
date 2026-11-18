@@ -276,6 +276,9 @@ export function createFrameworkClient(
       });
     },
     sync,
+    sharedImage(data) {
+      return request(undefined, data, "shared-image");
+    },
     attach(data) {
       return enqueue(async (clientId) => {
         displayResponse(

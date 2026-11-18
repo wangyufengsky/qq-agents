@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { canonical } from "../backends/session-contract.mjs";
 import { GardenGifts, giftActions, isGiftAction } from "./garden-items.mjs";
+import { GardenJournal, gardenPlantRef } from "./garden-journal.mjs";
 import { GardenClock } from "./garden-clock.mjs";
 import { GardenCalendar } from "./garden-calendar.mjs";
 import { defaultWeather } from "./garden-weather.mjs";
@@ -12,6 +13,7 @@ import {
   DAY,
   defaultGardenSettings,
   gardenSettings,
+  withNeighborCrops,
   gardenPlantRules,
   PLOT_COUNT,
 } from "./garden-rules.mjs";
@@ -104,11 +106,17 @@ export class GardenService {
     this.store = store;
     this.db = store.db;
     this.gifts = new GardenGifts(this.db);
-    this.calendar = new GardenCalendar(this.db, this.changeBalance.bind(this));
+    this.journal = new GardenJournal(this.db);
+    this.calendar = new GardenCalendar(
+      this.db,
+      this.changeBalance.bind(this),
+      this.journal,
+    );
     const state = this.load();
-    if (state && !this.calendar.latest())
+    if (state)
       store.transaction(() => {
         if (!this.calendar.latest()) this.calendar.initialize(state, true);
+        this.journal.initialize(state, true);
       });
     this.clock = new GardenClock(state?.clock ?? 0, state?.settings.speed ?? 1);
     this.savedClock = this.clock.elapsed;
@@ -119,6 +127,7 @@ export class GardenService {
   load() {
     const row = this.db.prepare("SELECT * FROM garden_state WHERE id=1").get();
     if (!row) return;
+    const saved = JSON.parse(String(row.settings));
     return {
       clock: Number(row.clock),
       revision: Number(row.revision),
@@ -130,7 +139,9 @@ export class GardenService {
         delegationHours: 24,
         weather: defaultWeather,
         events: legacyEvents,
-        ...JSON.parse(String(row.settings)),
+        careMode: "classic",
+        ...saved,
+        crops: withNeighborCrops(saved.crops),
       },
       balance: Number(row.balance),
       plots: JSON.parse(String(row.plots)),
@@ -141,7 +152,8 @@ export class GardenService {
 
   /** @param {number} now @param {unknown} settings */
   initialize(now, settings = defaultGardenSettings()) {
-    const data = gardenSettings.parse(settings);
+    const parsed = gardenSettings.parse(settings);
+    const data = { ...parsed, crops: withNeighborCrops(parsed.crops) };
     this.store.transaction(() => {
       if (this.load()) return;
       const plots = Array.from({ length: PLOT_COUNT }, (_, i) => ({
@@ -152,7 +164,9 @@ export class GardenService {
       this.db
         .prepare("INSERT INTO garden_state VALUES(1,0,0,0,?,?,?,'{}',0)")
         .run(JSON.stringify(data), data.initialBalance, JSON.stringify(plots));
-      this.calendar.initialize(this.requireState());
+      const state = this.requireState();
+      this.journal.initialize(state, false);
+      this.calendar.initialize(state);
       this.recordLedger(
         now,
         { kind: "admin", id: "system" },
@@ -206,31 +220,38 @@ export class GardenService {
     this.clock.observe(now, lease);
     // Use existing heartbeats, coalescing durable checkpoints during normal use.
     if (this.clock.elapsed - this.savedClock >= 15_000 * this.clock.speed)
-      this.checkpoint();
+      this.checkpoint(now);
   }
 
   /** @param {number} now */
   desktopStop(now) {
     this.clock.stop(now);
-    this.checkpoint();
+    this.checkpoint(now);
   }
 
-  checkpoint() {
+  /** @param {number} now */
+  checkpoint(now) {
     if (this.clock.elapsed <= this.savedClock) return;
-    this.db
-      .prepare("UPDATE garden_state SET clock=MAX(clock,?) WHERE id=1")
-      .run(this.clock.elapsed);
+    this.store.transaction(() => {
+      const state = this.requireState();
+      const elapsed = Math.max(state.clock, this.clock.elapsed);
+      this.calendar.advance(state, elapsed, now);
+      this.db
+        .prepare("UPDATE garden_state SET clock=MAX(clock,?) WHERE id=1")
+        .run(elapsed);
+    });
     this.savedClock = this.clock.elapsed;
   }
 
-  /** @param {number} now @param {number} expectedRevision @param {unknown} input */
-  configure(now, expectedRevision, input) {
+  /** @param {number} now @param {number} expectedRevision @param {unknown} input @param {"future" | "growing"} [scope] */
+  configure(now, expectedRevision, input, scope = "future") {
     const settings = this.store.transaction(() => {
       const current = this.requireState();
       const next = gardenSettings.parse(
         input && typeof input === "object"
           ? {
               weather: current.settings.weather,
+              careMode: current.settings.careMode,
               events: current.settings.events,
               giftBudgets: current.settings.giftBudgets,
               giftBudgetGenerations: current.settings.giftBudgetGenerations,
@@ -251,11 +272,23 @@ export class GardenService {
         Math.max(current.clock, this.clock.elapsedAt(now)),
         now,
       );
+      if (next.careMode === "gentle" && scope === "growing") {
+        for (const { plant } of current.plots) {
+          if (plant?.status !== "growing" || plant.rules.careMode === "gentle")
+            continue;
+          plant.rules.careMode = "gentle";
+          this.journal.updatePlant(plant);
+        }
+      }
       this.db
         .prepare(
-          "UPDATE garden_state SET clock=MAX(clock,?),settings_revision=settings_revision+1,settings=? WHERE id=1",
+          "UPDATE garden_state SET clock=MAX(clock,?),settings_revision=settings_revision+1,settings=?,plots=? WHERE id=1",
         )
-        .run(this.clock.elapsedAt(now), JSON.stringify(next));
+        .run(
+          current.clock,
+          JSON.stringify(next),
+          JSON.stringify(current.plots),
+        );
       return next;
     });
     this.clock.advance(now);
@@ -270,6 +303,9 @@ export class GardenService {
   snapshot(now, live = true, visitorActor) {
     const read = () => {
       const state = this.requireState();
+      const changes = this.db.prepare("SELECT total_changes() AS count");
+      const before = changes.get()?.count;
+      const storedClock = state.clock;
       // Retain observed progress without extending the desktop lease.
       if (live) this.clock.advance(now);
       const elapsed = Math.max(state.clock, this.clock.elapsed);
@@ -279,20 +315,96 @@ export class GardenService {
         running && visitorActor
           ? this.calendar.events.claimVisitor(current.day, visitorActor, state)
           : undefined;
+      // Keep archived changes and their clock in one commit. An uneventful read
+      // still leaves the last durable checkpoint alone.
+      const durable = before === changes.get()?.count ? storedClock : elapsed;
+      if (durable > storedClock)
+        this.db
+          .prepare("UPDATE garden_state SET clock=MAX(clock,?) WHERE id=1")
+          .run(durable);
       return {
-        ...state,
-        event: this.calendar.events.view(current.day, state, claimed),
-        mysterySeeds: this.calendar.events.mysteryStock(),
-        fertilizerCredits: this.calendar.events.credits(),
-        running,
-        day: current.day,
-        dayRemaining: DAY - (elapsed % DAY),
-        weather: current.effectiveWeather,
-        weatherForecast: current.weather,
-        weatherRevision: current.revision,
+        view: this.snapshotView(state, current, running, claimed),
+        durable,
       };
     };
-    return this.db.isTransaction ? read() : this.store.transaction(read);
+    if (this.db.isTransaction) return read().view;
+    const { view, durable } = this.store.transaction(read);
+    this.savedClock = Math.max(this.savedClock, durable);
+    return view;
+  }
+
+  /** @param {number} now */
+  observe(now) {
+    const state = this.requireState();
+    const current = this.calendar.latest();
+    if (!current) throw Error("GARDEN_NOT_INITIALIZED");
+    const dayStart = (current.day - 1) * DAY;
+    const dayEnd = current.day * DAY;
+    // Legacy clock-only checkpoints can precede settlement of later calendar days.
+    if (state.clock >= dayEnd) {
+      state.clock = Math.max(
+        dayStart,
+        ...state.plots.map(({ plant }) => plant?.settledAt ?? 0),
+      );
+    }
+    const effectiveWeather = this.calendar.conditions(
+      current,
+      state.clock,
+    ).weather;
+    state.plots = state.plots.map((entry) => ({
+      ...entry,
+      plant: entry.plant && this.journal.settledPlant(entry.plant),
+    }));
+    return this.snapshotView(
+      state,
+      { ...current, effectiveWeather },
+      this.enabled && this.clock.running(now),
+    );
+  }
+
+  /** @param {State} state @param {ReturnType<GardenCalendar["advance"]>} current
+   * @param {boolean} running @param {ReturnType<GardenCalendar["events"]["claimVisitor"]>} [claimed] */
+  snapshotView(state, current, running, claimed) {
+    return {
+      ...state,
+      event: this.calendar.events.view(current.day, state, claimed),
+      mysterySeeds: this.calendar.events.mysteryStock(),
+      fertilizerCredits: this.calendar.events.credits(),
+      running,
+      day: current.day,
+      dayRemaining: DAY - (state.clock % DAY),
+      weather: current.effectiveWeather,
+      weatherForecast: current.weather,
+      weatherRevision: current.revision,
+      ...this.calendar.neighbors.view(state, current.effectiveWeather.kind),
+    };
+  }
+
+  /** @param {import("./garden-journal.mjs").Query} [query]
+   * @param {{publicView?:boolean}} [options] */
+  timeline(query = {}, { publicView = false } = {}) {
+    this.requireState();
+    return this.journal.query(query, publicView);
+  }
+
+  /** @param {import("./garden-journal.mjs").Query} query
+   * @param {{publicView?:boolean}} [options] */
+  plantHistory(query, { publicView = false } = {}) {
+    this.requireState();
+    return this.journal.plantHistory(query, publicView);
+  }
+
+  /** @param {import("./garden-journal.mjs").Identity} actor
+   * @param {{publicView?:boolean}} [options] */
+  digest(actor, { publicView = false } = {}) {
+    this.requireState();
+    return this.journal.digest(actor, publicView);
+  }
+
+  /** @param {import("./garden-journal.mjs").Identity} actor @param {number} through */
+  ackDigest(actor, through) {
+    this.requireState();
+    return this.journal.ackDigest(actor, through);
   }
 
   /** @param {number} now @param {Actor} [visitorActor] */
@@ -503,6 +615,7 @@ export class GardenService {
             if (plant.water >= 100) throw Error("GARDEN_WATER_FULL");
             plant.water = Math.min(100, plant.water + plant.rules.watering);
             plant.dry = 0;
+            this.recordCare(action.kind, entry.id, plant, state.clock, actor);
             return { plot: entry.id, plantId: plant.id, water: plant.water };
           case "fertilize": {
             if (plant.status !== "growing") throw Error("GARDEN_PLANT_STATE");
@@ -521,6 +634,7 @@ export class GardenService {
             }
             if (usedEarthworm) delete plant.earthwormDay;
             plant.fertilizer++;
+            this.recordCare(action.kind, entry.id, plant, state.clock, actor);
             return {
               plot: entry.id,
               plantId: plant.id,
@@ -548,6 +662,14 @@ export class GardenService {
                 quantity,
                 now,
               );
+            this.recordCare(
+              action.kind,
+              entry.id,
+              plant,
+              state.clock,
+              actor,
+              "harvested",
+            );
             entry.plant = null;
             return {
               plot: entry.id,
@@ -559,6 +681,14 @@ export class GardenService {
           }
           case "clear":
             if (plant.status !== "withered") throw Error("GARDEN_PLANT_STATE");
+            this.recordCare(
+              action.kind,
+              entry.id,
+              plant,
+              state.clock,
+              actor,
+              "cleared",
+            );
             entry.plant = null;
             return { plot: entry.id, plantId: plant.id };
         }
@@ -620,6 +750,7 @@ export class GardenService {
       cropId,
       actorId: actor.id,
       plantedAt: now,
+      sownClock: state.clock,
       settledAt: state.clock,
       water: rules.startingWater,
       growth: 0,
@@ -629,9 +760,30 @@ export class GardenService {
       status: "growing",
       quality: null,
       crop,
-      rules,
+      rules: { ...rules, careMode: state.settings.careMode },
     };
+    const ref = gardenPlantRef(entry.id, entry.plant);
+    this.journal.addPlant(ref, entry.plant, state.clock, actor);
+    this.journal.record({
+      type: "planted",
+      clock: state.clock,
+      plants: [ref],
+      actor,
+      source: "action",
+    });
     return { plot: entry.id, plantId };
+  }
+
+  /** @param {string} type @param {number} plot @param {Plant} plant @param {number} clock @param {Actor} actor @param {string} [status] */
+  recordCare(type, plot, plant, clock, actor, status) {
+    this.journal.updatePlant(plant, status);
+    this.journal.record({
+      type,
+      clock,
+      plants: [gardenPlantRef(plot, plant)],
+      actor,
+      source: "action",
+    });
   }
 
   /** @param {number} now @param {Actor} actor @param {Extract<Action, {kind:"sell"|"gift"}>} action @param {State} state */

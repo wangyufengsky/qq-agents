@@ -73,6 +73,13 @@ function gardenSettingsMarkup(state, catalog) {
       <label><input name="garden-enabled" type="checkbox"${gardenChecked(state.settings.enabled)}/>花园继续运行</label>
       ${gardenFields.map((field) => gardenNumber(field, state.settings[field[0]])).join("")}
     </div>
+    <fieldset><legend>照料方式</legend>
+      <label>新播种作物<select name="careMode">
+        <option value="gentle"${state.settings.careMode === "gentle" ? " selected" : ""}>安心照料 · 无水休眠，补水复苏</option>
+        <option value="classic"${state.settings.careMode !== "gentle" ? " selected" : ""}>经典照料 · 长期无水会枯萎</option>
+      </select></label>
+      <label><input type="checkbox" name="careGrowing" ${state.settings.careMode === "gentle" ? "" : "disabled"}/>同时保护园中 ${state.plots.filter(({ plant }) => plant?.status === "growing" && plant.rules.careMode !== "gentle").length} 株仍按经典规则生长的作物</label>
+    </fieldset>
     <fieldset><legend>允许使用主人格工具经营</legend>
     ${state.roles
       .filter((r) => r.kind === "agent")
@@ -121,6 +128,7 @@ function gardenInitializeMarkup(state) {
 
 function gardenFormSettings(form, state) {
   const settings = { ...state.settings, crops: Object.create(null) };
+  settings.careMode = form.elements.careMode.value;
   settings.enabled = form.elements["garden-enabled"].checked;
   for (const [key] of gardenFields)
     settings[key] = form.elements[key].valueAsNumber;
@@ -155,6 +163,10 @@ function gardenFormSettings(form, state) {
   settings.events = gardenReadEvents(form);
   return {
     settings,
+    careScope:
+      settings.careMode === "gentle" && form.elements.careGrowing.checked
+        ? "growing"
+        : "future",
     expectedRevision: state.settingsRevision,
     roleIds: new FormData(form).getAll("roleIds"),
   };
@@ -181,6 +193,7 @@ function renderGarden() {
     }
     workspace ||= shared.bindGardenWorkspace(panel, {
       act,
+      journal: (query) => api("/api/home-garden/journal", query),
       records: (current) => shared.gardenRecordsMarkup(current, fold),
       settings: (
         current,
@@ -277,6 +290,13 @@ function renderGarden() {
       return shared.gardenEventOperation(action.kind) ? "" : status;
     });
   }
+  page.addEventListener("change", ({ target }) => {
+    if (target.name === "careMode") {
+      const growing = target.form.elements.careGrowing;
+      growing.disabled = target.value !== "gentle";
+      growing.checked = !growing.disabled;
+    }
+  });
   page.addEventListener(
     "change",
     (event) =>

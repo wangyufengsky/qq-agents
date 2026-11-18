@@ -6,6 +6,7 @@ import { desktopToken } from "./home/desktop-auth.mjs";
 import { deriveRelayToken } from "./core/relay-auth.mjs";
 import { finalizeMcpOutput, toolOutputText } from "./backends/tool-output.mjs";
 import { disabledMessageTimingSnapshot } from "./core/message-timing.mjs";
+import { operatorGardenJournal } from "./home/garden-journal-console.mjs";
 import { desktopGarden } from "./home/desktop-garden.mjs";
 import { isGardenArtResource } from "../public/garden-art/art.js";
 import { adminGardenView, adminGardenWrite } from "./home/garden-console.mjs";
@@ -383,6 +384,7 @@ export function createServer({
         url.pathname === "/api/desktop-home/observation-review" ||
         url.pathname === "/api/desktop-home/observation-verify" ||
         url.pathname === "/api/desktop-home/attachment" ||
+        url.pathname === "/api/desktop-home/shared-image" ||
         url.pathname === "/api/desktop-home/personal-drop" ||
         url.pathname === "/api/desktop-home/personal-history" ||
         url.pathname === "/api/desktop-home/video" ||
@@ -399,8 +401,12 @@ export function createServer({
         );
         if (!local || !equal(req.headers["x-desktop-home-token"], desktopKey))
           return deny("UNAUTHORIZED", 401);
+        if (url.pathname.endsWith("/shared-image"))
+          return send(
+            await runtime.desktopVisits.sharedImage(await readBody(2048)),
+          );
         if (url.pathname.endsWith("/garden"))
-          return send(desktopGarden(runtime, await readBody(8192)));
+          return send(await desktopGarden(runtime, await readBody(8192)));
         if (url.pathname.endsWith("/status-card"))
           return send(
             runtime.desktopVisits.statusCards.open(await readBody(1024)),
@@ -739,6 +745,10 @@ export function createServer({
       if (url.pathname === "/api/home-garden") {
         if (req.method !== "GET") return deny("METHOD", 405);
         return send(adminGardenView(runtime, true));
+      }
+      if (url.pathname === "/api/home-garden/journal") {
+        if (req.method !== "POST") return deny("METHOD", 405);
+        return send(await operatorGardenJournal(runtime, await readBody(8192)));
       }
       if (url.pathname.startsWith("/api/home-garden/")) {
         if (req.method !== "POST") return deny("METHOD", 405);

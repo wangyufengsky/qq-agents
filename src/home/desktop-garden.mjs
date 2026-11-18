@@ -1,12 +1,14 @@
 // @ts-check
 import { z } from "zod";
 import { adminGardenView, adminGardenWrite } from "./garden-console.mjs";
+import { operatorGardenJournal } from "./garden-journal-console.mjs";
 import { knownErrorCodes } from "../core/error-codes.mjs";
 
 const inputSchema = z.strictObject({
   client: z.uuid(),
   roomEpoch: z.uuid(),
   action: z.unknown().optional(),
+  journal: z.unknown().optional(),
 });
 
 /** @param {ReturnType<typeof adminGardenView>} garden */
@@ -31,6 +33,9 @@ function operatorView(garden) {
     mysterySeeds: garden.mysterySeeds,
     weatherForecast: garden.weatherForecast,
     speed: garden.settings.speed,
+    nightScene: garden.nightScene,
+    pollenPairs: garden.pollenPairs,
+    mistbellDiscovered: garden.mistbellDiscovered,
     eventHistory: garden.eventHistory,
     activity: garden.activity,
     ledger: garden.ledger,
@@ -43,7 +48,7 @@ function operatorView(garden) {
 
 /** @param {any} runtime @param {unknown} input */
 export function desktopGarden(runtime, input) {
-  const { client, roomEpoch, action } = inputSchema.parse(input);
+  const { client, roomEpoch, action, journal } = inputSchema.parse(input);
   const host = runtime.desktopVisits;
   if (
     !host.connected() ||
@@ -51,6 +56,10 @@ export function desktopGarden(runtime, input) {
     host.live?.room.epoch !== roomEpoch
   )
     throw Error("DESKTOP_VISIT_UNAVAILABLE");
+  if (journal !== undefined) {
+    if (action !== undefined) throw Error("INVALID_REQUEST");
+    return operatorGardenJournal(runtime, journal);
+  }
   if (action === undefined)
     return { garden: operatorView(adminGardenView(runtime, true)) };
   try {

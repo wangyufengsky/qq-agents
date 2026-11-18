@@ -54,8 +54,8 @@ contextBridge.exposeInMainWorld("nest", {
   personal: (action, data) => ipcRenderer.invoke("room:personal", action, data),
   onPersonal: (listener) =>
     ipcRenderer.on("room:personal", (_event, value) => listener(value)),
-  garden: (roomEpoch, action) =>
-    ipcRenderer.invoke("room:garden", roomEpoch, action),
+  garden: (roomEpoch, action, journal) =>
+    ipcRenderer.invoke("room:garden", roomEpoch, action, journal),
   get: () => ipcRenderer.invoke("room:get"),
   openStatusCard: (data) => {
     // A non-focusable sprite may open local content only from a real click.
@@ -67,6 +67,8 @@ contextBridge.exposeInMainWorld("nest", {
     ipcRenderer.on("room:status-card", (_event, value) => listener(value)),
   bubbleReply: (action, data) =>
     ipcRenderer.invoke("room:bubble-reply", action, data),
+  sharedImage: (roomEpoch, messageId) =>
+    ipcRenderer.invoke("room:shared-image", roomEpoch, messageId),
   attach: () => ipcRenderer.invoke("room:attach"),
   setSection: (section) => ipcRenderer.send("room:action", "section", section),
   follow: (id, mode) => ipcRenderer.invoke("room:follow", id, mode),

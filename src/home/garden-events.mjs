@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { gardenPlantRef } from "./garden-journal.mjs";
 import {
   adjustPlantQuality,
   DAY,
@@ -34,9 +35,10 @@ const trial = weatherTrialInput.extend({
  * {kind:"mystery_box",effect:Extract<EventEffect,{kind:"mystery_box"}>,purchased?:number,available?:boolean}
  * )} GardenEvent */
 export class GardenEvents {
-  constructor(db, changeBalance) {
+  constructor(db, changeBalance, journal) {
     this.db = db;
     this.changeBalance = changeBalance;
+    this.journal = journal;
   }
 
   /** @param {number|undefined} day @returns {GardenEvent|null} */
@@ -64,6 +66,14 @@ export class GardenEvents {
 
   draw(state, ctx, weather, seed, day) {
     const entry = drawGardenEvent(state.settings, ctx, weather, seed, day);
+    if (entry)
+      this.journal.record({
+        type: entry.kind === "visitor" ? "visitor" : "event",
+        clock: (day - 1) * DAY,
+        source: "event",
+        detail: { name: entry.name },
+        key: `event:${day}`,
+      });
     if (entry?.kind === "blessing") this.bless(entry, state, seed, day);
     if (entry?.kind === "nuisance") entry.startedAt = (day - 1) * DAY;
     this.db
@@ -109,11 +119,25 @@ export class GardenEvents {
           const before = plant.water;
           plant.water = Math.min(100, before + water);
           if (water > 0 && plant.water > 0) plant.dry = 0;
+          const previousGrowth = plant.growth;
+          const qualityChange = adjustPlantQuality(plant, quality);
+          const growthChange = grantGrowth(plant, growth);
+          const clock = (day - 1) * DAY;
+          this.journal.growth(
+            gardenPlantRef(id, plant),
+            plant,
+            previousGrowth,
+            plant.growth,
+            clock,
+            0,
+            entry,
+          );
+          this.journal.updatePlant(plant);
           return {
             plotId: id,
             plantId: plant.id,
-            quality: adjustPlantQuality(plant, quality),
-            growth: grantGrowth(plant, growth),
+            quality: qualityChange,
+            growth: growthChange,
             water: plant.water - before,
           };
         })
@@ -368,6 +392,14 @@ export class GardenEvents {
       actor: { kind: actor.kind, id: actor.id },
     };
     this.update(day, claimed);
+    this.journal.record({
+      type: "visitor_reward",
+      clock: state.clock,
+      actor,
+      source: "event",
+      detail: { name: entry.name },
+      key: `visitor_reward:${day}`,
+    });
     return claimed;
   }
 

@@ -1,3 +1,5 @@
+import { bindGardenJournal } from "./journal.js";
+import { gardenStageAt, gardenStageLabel } from "./stages.js";
 import * as art from "./art.js";
 
 export { gardenGifts } from "./art.js";
@@ -82,10 +84,13 @@ const gardenButton = (kind, text, main = false, disabled = false) =>
 
 function gardenPlotMarkup({ id, plant, sheltered }, selected) {
   const status = art.gardenPlotStatus(plant);
+  const stage = plant
+    ? gardenStageLabel(plant.cropId, gardenStageAt(plant))
+    : status;
   return `<button type="button" class="garden-plot desktop-garden-tile garden-map-tile" data-stage="${status}" data-plot="${id}" aria-pressed="${id === selected}">
     <span class="garden-tile-top"><span aria-label="第 ${id} 块">${String(id).padStart(2, "0")}</span></span>
     ${art.gardenArtMarkup(art.gardenLayers({ plant, sheltered }))}
-    <strong>${esc(plant?.crop.name || "空地")}</strong><small class="garden-plot-status">${status}</small>
+    <strong>${esc(plant?.crop.name || "空地")}</strong><small class="garden-plot-status">${stage}${status === "缺水" ? " · 缺水" : ""}</small>
   </button>`;
 }
 
@@ -108,22 +113,15 @@ function gardenPlotDetail(state, { id, plant, sheltered }) {
     100,
     Math.floor((100 * plant.growth) / plant.crop.hours),
   );
-  const stage =
-    plant.status === "mature"
-      ? "已成熟"
-      : plant.status === "withered"
-        ? "已枯萎"
-        : progress < 25
-          ? "幼苗"
-          : "生长中";
+  const stage = gardenStageLabel(plant.cropId, gardenStageAt(plant));
   return `<article class="garden-inspector" data-garden-detail="${id}">
-    <small>第 ${id} 块地</small><h3>${esc(plant.crop.name)}</h3>
+    <small>第 ${id} 块地</small><h3>${esc(plant.crop.name)}</h3><button type="button" data-journal-plant="${esc(plant.id)}">看这株 · 生长手帐</button>
     <p>${sheltered ? "有棚" : "露天"} · ${stage}${plant.quality ? " · " + gardenQuality[plant.quality] : ""}</p>
     ${
       plant.status === "growing"
         ? `<label>成长 <span>${progress}%</span><progress max="100" value="${progress}"></progress></label>
     <label>水分 <span>${Math.floor(plant.water)} / 100${plant.water < plant.rules.lowWater ? " · 缺水" : ""}</span><progress class="${plant.water < plant.rules.lowWater ? "garden-dry" : ""}" max="100" value="${plant.water}"></progress></label>
-    <p>施肥 ${plant.fertilizer}/${plant.crop.fertilizer}</p>`
+    <p>${plant.water === 0 ? (plant.rules.careMode === "gentle" ? "等水中 · 浇水后继续长" : "已连续无水 " + gardenDuration(plant.dry) + " / " + gardenDuration(plant.rules.dryHours) + " 花园小时") : ""}</p><p>施肥 ${plant.fertilizer}/${plant.crop.fertilizer}</p>`
         : ""
     }
     ${plant.witheredReason === "drought" ? '<p class="hint">长期缺水</p>' : ""}
@@ -144,6 +142,7 @@ function gardenPriorityText({ plot, kind, hours, risk }) {
   const time = gardenDuration(hours);
   return `第 ${plot} 块 · ${
     {
+      dormant: "等水中，浇水后继续长",
       drought: `水分已用完，约 ${time} 个花园小时后枯萎`,
       water: hours === null ? "当前缺水" : `缺水，约 ${time} 个花园小时后耗尽`,
       flood: `暴雨积水，本日剩 ${Math.ceil(hours * 10) / 10} 花园小时 · ${risk === "critical" ? "日结束前搭棚，否则枯萎" : "建议搭棚"}`,
@@ -154,7 +153,7 @@ function gardenPriorityText({ plot, kind, hours, risk }) {
   }`;
 }
 
-function gardenWarehouse(state) {
+function gardenWarehouse(state, guideOpen) {
   const recipients = state.roles
     .map((r, index) => gardenOption(index, r.name))
     .join("");
@@ -179,6 +178,7 @@ function gardenWarehouse(state) {
       ${gardenButton("buy_seed", "买种子", false, !market.length)}
       ${gardenButton("buy_fertilizer", `买肥料 · ${gardenMoney(state.fertilizerPrice)}/包`)}
     </fieldset>
+    ${gardenCropGuide(state, guideOpen)}
     <h3>收成</h3><div class="garden-shelf">${
       state.market
         .map(
@@ -665,6 +665,71 @@ export const gardenEventOperation = (kind) =>
     "buy_mystery_seed",
   ].includes(kind);
 
+function sceneCaption(scene) {
+  if (!scene || scene.period === "day") return "";
+  const sky =
+    scene.stars === "clear"
+      ? "晴夜繁星"
+      : scene.stars === "sparse"
+        ? "云间疏星"
+        : scene.period === "dusk"
+          ? "暮色花圃"
+          : "夜间花圃";
+  const caption = [
+    sky,
+    scene.butterflies && "小蝴蝶停在猫薄荷上",
+    scene.fireflies && "花间有萤点",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return `<p class="garden-scene-caption">${caption}</p>`;
+}
+
+function gardenSceneDecor(scene) {
+  if (!scene || scene.period === "day") return "";
+  const stars = scene.stars === "clear" ? 6 : scene.stars === "sparse" ? 3 : 0;
+  return `<div class="garden-night-scene" aria-hidden="true">
+    ${'<i class="garden-scene-star"></i>'.repeat(stars)}
+    ${scene.fireflies ? '<i class="garden-scene-firefly"></i><i class="garden-scene-firefly"></i>' : ""}
+    ${scene.butterflies ? '<i class="garden-scene-butterfly"></i>' : ""}
+  </div>`;
+}
+
+function gardenPollenMarkup(state) {
+  return (state.pollenPairs ?? [])
+    .map(
+      ({ plots }) => `
+    <aside class="garden-pollen">
+      <span class="garden-pollen-dust" aria-hidden="true"></span>
+      <div><strong>蓝紫色花粉</strong><p>第 ${plots.map(esc).join("、")} 号地之间落了一点花粉。</p></div>
+    </aside>`,
+    )
+    .join("");
+}
+
+function gardenCropGuide(state, guideOpen) {
+  const catnip = state.crops.catnip;
+  const mistbell = state.crops.mistbell;
+  if (!catnip || !mistbell) return "";
+  const revealed =
+    state.mistbellDiscovered ||
+    state.seeds.mistbell > 0 ||
+    state.plots.some(({ plant }) => plant?.cropId === "mistbell");
+  return `<details class="garden-crop-guide" data-garden-crop-guide${guideOpen ? " open" : ""}>
+    <summary>作物图鉴</summary>
+    <div class="garden-crop-guide-pair">
+      <article class="garden-crop-guide-entry">
+        ${productArt("crop", "catnip")}
+        <div><h4>${esc(catnip.name)}</h4><p>${esc(catnip.description)}</p></div>
+      </article>
+      <article class="garden-crop-guide-entry" data-discovered="${Boolean(revealed)}">
+        ${productArt("crop", "mistbell")}
+        <div><h4>${revealed ? esc(mistbell.name) : "未知邻株种子"}</h4><p>${revealed ? esc(mistbell.description) : "月光夜来香旁的成熟猫薄荷，或许会留下新种子的线索。"}</p></div>
+      </article>
+    </div>
+  </details>`;
+}
+
 function header(state) {
   const time = Math.floor((24 * 3600000 - state.dayRemaining) / 60000);
   const clock = [Math.floor(time / 60), time % 60]
@@ -673,16 +738,23 @@ function header(state) {
   const pause = state.pauseReason
     ? gardenLabels[state.pauseReason] || "花园已暂停"
     : "";
-  return `<header class="garden-workspace-head">
-    <div><h2>小窝花园</h2><p>第 ${state.day} 个花园日 · ${esc(state.weather.name)} · ${clock}${state.speed ? ` · ${state.speed}×` : ""}${pause ? " · " + pause : ""}</p></div>
-    <div class="garden-cover-flora" aria-hidden="true">${["moonflower", "sunflower", "strawberry", "mint"].map((id) => productArt("crop", id)).join("")}</div>
+  const flora =
+    state.nightScene?.period === "night"
+      ? ["moonflower", ...(state.mistbellDiscovered ? ["mistbell"] : [])]
+      : state.nightScene?.period === "dusk"
+        ? ["moonflower", "catnip", "strawberry"]
+        : ["moonflower", "sunflower", "strawberry", "mint"];
+  return `<header class="garden-workspace-head" data-period="${esc(state.nightScene?.period)}">
+    ${gardenSceneDecor(state.nightScene)}
+    <div><h2>小窝花园</h2><p>第 ${state.day} 个花园日 · ${esc(state.weather.name)} · ${clock}${state.speed ? ` · ${state.speed}×` : ""}${pause ? " · " + pause : ""}</p>${sceneCaption(state.nightScene)}</div>
+    <div class="garden-cover-flora" aria-hidden="true">${flora.map((id) => productArt("crop", id)).join("")}</div>
     ${art.gardenBalanceMarkup(state.balance)}
   </header>`;
 }
 
 export function bindGardenWorkspace(
   root,
-  { act, records, settings, onStatus, compact = false },
+  { act, records, settings, journal, onStatus, compact = false },
 ) {
   art.hideFailedGardenArt(root);
   const view = {
@@ -694,6 +766,8 @@ export function bindGardenWorkspace(
     eventReceipt: "",
   };
   let state;
+  const book =
+    journal && bindGardenJournal(root, journal, esc, showTab, onStatus);
   function showTab(tab) {
     view.tab = tab;
     for (const nav of root.querySelectorAll("[data-garden-tab]")) {
@@ -805,6 +879,7 @@ export function bindGardenWorkspace(
   });
   return {
     draw(garden, receipt) {
+      const guideOpen = root.querySelector("[data-garden-crop-guide]")?.open;
       state = {
         ...garden,
         crops: garden.settings?.crops ?? garden.crops,
@@ -829,6 +904,8 @@ export function bindGardenWorkspace(
         <div class="garden-view">
           <div class="garden-workspace-body" data-garden-pane="board">
             <section class="garden-board">
+              <div class="garden-digest" data-journal-note hidden></div>
+              ${gardenPollenMarkup(state)}
               ${state.event ? `<button type="button" class="garden-event-shortcut" data-garden-tab="event">${art.gardenIconMarkup("event", art.gardenEventArtId(state.event))}<span>${esc(state.event.name)}</span><b>${state.event.kind === "merchant" ? "逛小摊 ↗" : "查看 ↗"}</b></button>` : ""}
               <div class="garden-board-title"><h3>共享花圃</h3><small>已种植 ${state.plots.filter(({ plant }) => plant).length} / ${state.plots.length} 块</small></div>
               <div class="garden-grid garden-map">${state.plots.map((entry) => gardenPlotMarkup(entry, view.selected)).join("")}</div>
@@ -836,16 +913,18 @@ export function bindGardenWorkspace(
             </section>
             <section class="garden-rail" aria-label="今日事件与待办"><div data-garden-ticket>${gardenEventMarkup(state, view)}</div>${gardenTodo(state)}</section>
           </div>
-          <div data-garden-pane="warehouse">${gardenWarehouse(state)}</div>
+          <div data-garden-pane="warehouse">${gardenWarehouse(state, guideOpen)}</div>
           <div data-garden-pane="items">${personalGiftMarkup(state, view)}</div>
-          ${records ? `<div data-garden-pane="records"><h3>花园记录</h3>${records(state)}</div>` : ""}
+          ${records ? `<div data-garden-pane="records"><div class="garden-journal" data-journal-body></div><h3>花园记录</h3>${records(state)}</div>` : ""}
           ${settings ? `<div data-garden-pane="settings">${settings(state)}</div>` : ""}
         </div>
       </section>`;
       selectPlot(view.selected, false);
       showTab(view.tab);
+      book?.draw(state, view.tab);
     },
     clear() {
+      book?.clear();
       state = undefined;
       Object.assign(view, {
         tab: "board",

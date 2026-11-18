@@ -272,6 +272,7 @@ test("administrator and authorized subject turns share care and harvest with sta
   f.startDesktop();
   const configured = await f.modify((settings, grants) => {
     settings.speed = 4;
+    settings.careMode = "classic";
     settings.startingWater = 25;
     settings.crops.clover.hours = 6;
     settings.crops.sunflower.dailyWater = 100;

@@ -276,6 +276,14 @@ export class GeneratedImages {
     };
   }
   assertDelivery(ctx, mediaId, requestId = "") {
+    const media = this.runtime.media.metadata(ctx.agentId, mediaId);
+    if (
+      media?.gardenSnapshot === true &&
+      !media.sources?.some(
+        ({ conversation }) => conversation === ctx.conversation,
+      )
+    )
+      throw Error("HOME_SOURCE_DENIED");
     if (
       !this.db
         .prepare(

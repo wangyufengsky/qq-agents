@@ -2041,3 +2041,16 @@ h2 {
 .desktop-garden-stock select {
   max-width: 100%;
 }
+
+.chat-image {
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 24px);
+}
+
+.chat-image img {
+  display: block;
+  margin: 0 auto 12px;
+  max-width: 100%;
+  max-height: calc(100vh - 100px);
+  object-fit: contain;
+}

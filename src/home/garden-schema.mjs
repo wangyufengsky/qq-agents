@@ -4,6 +4,38 @@ import { initializeGiftTables } from "./garden-items.mjs";
 export function initializeGardenTables(db) {
   initializeGiftTables(db);
   db.exec(`
+    CREATE TABLE IF NOT EXISTS garden_history_start (
+      id INTEGER PRIMARY KEY CHECK (id=1),
+      clock REAL NOT NULL,
+      legacy INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS garden_plant_archive (
+      plant_id TEXT PRIMARY KEY,
+      plot INTEGER NOT NULL,
+      crop_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      planted_clock REAL,
+      actor_kind TEXT,
+      actor_id TEXT,
+      status TEXT NOT NULL,
+      snapshot TEXT
+    );
+    CREATE TABLE IF NOT EXISTS garden_facts (
+      id INTEGER PRIMARY KEY,
+      type TEXT NOT NULL,
+      clock REAL,
+      plants TEXT NOT NULL,
+      actor_kind TEXT,
+      actor_id TEXT,
+      source TEXT NOT NULL,
+      detail TEXT NOT NULL,
+      unique_key TEXT UNIQUE
+    );
+    CREATE INDEX IF NOT EXISTS garden_facts_type_clock ON garden_facts(type,clock,id);
+    CREATE TABLE IF NOT EXISTS garden_journal_reads (
+      reader TEXT PRIMARY KEY,
+      through_id INTEGER NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS garden_state (
       id INTEGER PRIMARY KEY CHECK (id = 1),
       clock REAL NOT NULL CHECK (clock >= 0),
@@ -56,6 +88,12 @@ export function initializeGardenTables(db) {
       weather TEXT NOT NULL,
       kind_streak INTEGER NOT NULL,
       id_streak INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS garden_neighbor_pairs (
+      pair TEXT PRIMARY KEY,
+      attempts INTEGER NOT NULL CHECK (attempts BETWEEN 1 AND 3),
+      night INTEGER NOT NULL,
+      discovered INTEGER NOT NULL CHECK (discovered IN (0,1))
     );
     CREATE TABLE IF NOT EXISTS garden_events (
       day INTEGER PRIMARY KEY,
