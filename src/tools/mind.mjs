@@ -451,6 +451,7 @@ export const SUBJECT_TOOLS = [
   "intent_create",
   "intent_list",
   "intent_update",
+  "story_circle",
   "subject_log",
   "subject_inbox_list",
   "subject_inbox_decide",

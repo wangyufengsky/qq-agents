@@ -539,6 +539,8 @@ QQ 掉线、自动重连用完次数时，管理台会显示，但主人在 QQ �
 
 新增 `home.intents` 独立配置：`enabled` 默认 false，`hints` 默认 true（仅启用时有效）；`ttlDays` 默认 7、范围 1–30；`maxPending` 和 `maxSubmissionsPerDay` 默认 20、范围 1–100。额度按 UTC 日统计，已接受未执行项仍占待处理数。提示只加入已运行主体回合，不唤醒、不标已读。详见 [纸页小窝](AI-HOME.md)。
 
+在 `agents[].tools` 显式加入 `story_circle` 后，角色可在自己的空闲主体回合参加故事会。角色配置未列此工具时默认关闭。详见 [小窝故事会](STORY-CIRCLE.md)。
+
 ## 桌面小窝
 
 `desktopHome.autonomousObservation` 默认关闭。`desktopHome.observationRoles` 在新配置中是空列表。旧配置缺少该字段时继承 `activityRoles`。在「同桌陪伴」下，支持靠窗的客户端会让获准看当前单窗口且具备桌宠控制资格的角色在活动中选择靠窗、观察或沉默。显式名单内的角色继续在活动中主动申请观察。角色还须具备 P2 自主活动、手动看屏和后端图片输入资格，并从本机面板获得一个窗口的限时授权。观察与 P2 共用额度，单次授权 15 分钟及最多四次尝试。

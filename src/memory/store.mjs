@@ -9,6 +9,7 @@ import {
   exportHeader,
   withExportManifest,
 } from "./export-format.mjs";
+import { initializeStoryTables } from "../home/story-circle.mjs";
 import { initializeGardenTables } from "../home/garden-schema.mjs";
 import { migrateHomeSocial } from "../home/social-schema.mjs";
 import { initializeDesktopObservationSummaries } from "./desktop-observation-summaries.mjs";
@@ -216,6 +217,7 @@ export class MemoryStore {
       this.transaction(() => {
         this.due.initialize();
         initializeGardenTables(this.db);
+        initializeStoryTables(this.db);
       });
     } catch (error) {
       this.db.close();
