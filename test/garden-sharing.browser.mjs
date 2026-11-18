@@ -315,6 +315,28 @@ test("native Electron garden tab reaches shared state through its focused panel 
     await panel.getByRole("button", { name: "花园", exact: true }).click();
     const tile = panel.locator(".desktop-garden-tile").first();
     await tile.getByText("空地", { exact: true }).waitFor({ timeout: 8000 });
+    const scrollArea = panel.locator("#garden-panel");
+    const tabs = panel.locator(".tabs");
+    const tabBounds = await tabs.boundingBox();
+    await tile.hover();
+    await panel.mouse.wheel(0, 4000);
+    await panel.waitForFunction(
+      () => {
+        const pane = globalThis.document.querySelector("#garden-panel");
+        return (
+          pane.scrollTop > 0 &&
+          pane.scrollTop + pane.clientHeight >= pane.scrollHeight - 2
+        );
+      },
+      null,
+      { timeout: 5000 },
+    );
+    assert.deepEqual(await tabs.boundingBox(), tabBounds);
+    await scrollArea.focus();
+    await panel.keyboard.press("Home");
+    await panel.waitForFunction(
+      () => globalThis.document.querySelector("#garden-panel").scrollTop === 0,
+    );
     const detail = panel.locator(".garden-inspector");
     await panel.locator(".garden-workspace-head .garden-coin-icon").waitFor();
     await detail.getByRole("button", { name: "搭棚", exact: true }).click();

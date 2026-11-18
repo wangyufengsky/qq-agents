@@ -14,6 +14,7 @@
 }
 .garden-console-paper {
   --ink: var(--garden-ink);
+  --ink-2: var(--garden-ink);
   --ink-strong: var(--garden-ink);
   --sub: var(--garden-muted);
   --muted: var(--garden-muted);
