@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { assertMemoryAgentId } from "./store.mjs";
 import os from "node:os";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
@@ -18,9 +19,14 @@ export async function withExport(
   store,
   agentId,
   consume,
-  { signal, limits = EXPORT_LIMITS, tempRoot = os.tmpdir() } = {},
+  {
+    signal,
+    limits = EXPORT_LIMITS,
+    tempRoot = os.tmpdir(),
+    offline = false,
+  } = {},
 ) {
-  store.bind(agentId);
+  assertMemoryAgentId(agentId);
   if (active.has(store)) throw Error("EXPORT_DOWNLOAD_BUSY");
   if (!store.file || store.file === ":memory:")
     throw Error("EXPORT_FILE_REQUIRED");
@@ -49,6 +55,7 @@ export async function withExport(
     worker = new Worker(new URL("./export-worker.mjs", import.meta.url), {
       workerData: {
         source: store.file,
+        offline,
         snapshot: path.join(root, "snapshot.sqlite"),
         output,
         agentId,

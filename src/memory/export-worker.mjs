@@ -26,6 +26,15 @@ try {
   // the live connection restart each incremental backup and can starve exports.
   // No live transaction remains open while rows are encoded or downloaded.
   db.exec("BEGIN");
+  if (
+    workerData.offline &&
+    !db
+      .prepare(
+        "SELECT 1 FROM sqlite_schema WHERE type='table' AND name='events'",
+      )
+      .get()
+  )
+    throw Error("UNSUPPORTED_EXPORT_SOURCE");
   db.prepare("SELECT count(*) FROM sqlite_schema").get();
   const snapshotDeadline = Date.now() + limits.snapshotMs;
   const checkSnapshot = () => {
@@ -42,6 +51,12 @@ try {
   });
   checkSnapshot();
   db.close();
+  db = undefined;
+  if (workerData.offline) {
+    // Older installations can be upgraded for export on the private copy.
+    const { MemoryStore } = await import("./store.mjs");
+    new MemoryStore(snapshot).close();
+  }
   db = new DatabaseSync(snapshot, { readOnly: true });
   db.exec("PRAGMA cache_size=-2048; PRAGMA mmap_size=0");
   if (
@@ -119,7 +134,9 @@ try {
 } catch (error) {
   // Never send SQLite messages, private paths, or row data across this boundary.
   parentPort.postMessage({
-    error: /^(EXPORT_[A-Z_]+|UNSUPPORTED_EXPORT_SCHEMA)$/.test(error.message)
+    error: /^(EXPORT_[A-Z_]+|UNSUPPORTED_EXPORT_(SCHEMA|SOURCE))$/.test(
+      error.message,
+    )
       ? error.message
       : "EXPORT_FAILED",
   });

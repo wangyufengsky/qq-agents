@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { Writable } from "node:stream";
@@ -184,5 +185,48 @@ test("CLI exports a verified snapshot and restores revisions, identities and mes
     } finally {
       empty.close();
     }
+  }
+});
+
+test("offline export fails without creating a missing source or output", (t) => {
+  const root = temp(t),
+    missing = path.join(root, "missing"),
+    file = path.join(root, "out.json");
+  assert.notEqual(run(missing, file).status, 0);
+  assert.equal(fs.existsSync(missing), false);
+  assert.equal(fs.existsSync(file), false);
+});
+test("offline export migrates only its snapshot and rejects unrelated SQLite files", (t) => {
+  const root = temp(t),
+    dbFile = path.join(root, "memory.sqlite"),
+    file = path.join(root, "out.json");
+  let db = new DatabaseSync(dbFile);
+  db.exec("CREATE TABLE unrelated(value TEXT)");
+  db.close();
+  assert.match(run(root, file).stderr, /UNSUPPORTED_EXPORT_SOURCE/);
+  const store = new MemoryStore(dbFile);
+  store.bind("agent-a").append({
+    kind: "fixture.event",
+    conversation: "@subject",
+    dedupe: "fixture",
+  });
+  store.close();
+  db = new DatabaseSync(dbFile);
+  db.exec("DROP TABLE input_legacy_scopes; PRAGMA user_version=7");
+  db.close();
+  const exported = run(root, file);
+  assert.equal(exported.status, 0, exported.stderr);
+  assert.equal(JSON.parse(fs.readFileSync(file)).manifest.counts.events, 1);
+  db = new DatabaseSync(dbFile, { readOnly: true });
+  try {
+    assert.equal(db.prepare("PRAGMA user_version").get().user_version, 7);
+    assert.equal(
+      db
+        .prepare("SELECT 1 FROM sqlite_schema WHERE name='input_legacy_scopes'")
+        .get(),
+      undefined,
+    );
+  } finally {
+    db.close();
   }
 });

@@ -120,6 +120,9 @@ function budget(items, maxChars) {
   return out;
 }
 
+export function assertMemoryAgentId(agentId) {
+  if (!/^[a-z][a-z0-9_-]{0,63}$/.test(agentId)) throw Error("INVALID_AGENT");
+}
 export class MemoryStore {
   constructor(file) {
     this.file = file === ":memory:" ? file : path.resolve(file);
@@ -242,7 +245,7 @@ export class MemoryStore {
     }
   }
   bind(agentId) {
-    if (!/^[a-z][a-z0-9_-]{0,63}$/.test(agentId)) throw Error("INVALID_AGENT");
+    assertMemoryAgentId(agentId);
     return new AgentMemory(this, agentId);
   }
 }

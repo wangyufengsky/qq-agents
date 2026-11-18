@@ -17,18 +17,29 @@ if (
 const root = path.resolve(get("--data"));
 if (fs.existsSync(path.join(root, "process.lock")))
   throw Error("STOP_DESTINATION_BEFORE_EXPORT_OR_RESTORE");
-const store = new MemoryStore(path.join(root, "memory.sqlite"));
+const file = path.join(root, "memory.sqlite");
 const controller = new AbortController();
 const cancel = () => controller.abort();
 process.once("SIGINT", cancel);
 process.once("SIGTERM", cancel);
 try {
-  const memory = store.bind(get("--agent"));
+  const agentId = get("--agent");
   if (args.includes("--restore")) {
-    restoreExport(memory, JSON.parse(fs.readFileSync(get("--file"), "utf8")));
+    const store = new MemoryStore(file);
+    try {
+      restoreExport(
+        store.bind(agentId),
+        JSON.parse(fs.readFileSync(get("--file"), "utf8")),
+      );
+    } finally {
+      store.close();
+    }
     console.log("Restored into empty database. Start paused.");
   } else {
-    await exportToFile(store, memory.agentId, get("--file"), {
+    if (!fs.statSync(file, { throwIfNoEntry: false })?.isFile())
+      throw Error("EXPORT_FILE_REQUIRED");
+    await exportToFile({ file }, agentId, get("--file"), {
+      offline: true,
       signal: controller.signal,
     });
     console.log(
@@ -38,5 +49,4 @@ try {
 } finally {
   process.off("SIGINT", cancel);
   process.off("SIGTERM", cancel);
-  store.close();
 }
