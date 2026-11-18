@@ -193,8 +193,9 @@ export function matches(condition, ctx) {
  * @param {(condition:T)=>boolean} accepts
  * @param {string|null} fallback
  * @param {number} rate
+ * @param {(id: string) => string | null} [unavailable]
  */
-export function poolOdds(entries, accepts, fallback, rate) {
+export function poolOdds(entries, accepts, fallback, rate, unavailable) {
   const rows = Object.keys(entries)
     .sort()
     .map((id) => {
@@ -213,7 +214,7 @@ export function poolOdds(entries, accepts, fallback, rate) {
           ? "zero_weight"
           : !eligible
             ? "conditions"
-            : null;
+            : (unavailable?.(id) ?? null);
       return {
         id,
         name: entry.name,

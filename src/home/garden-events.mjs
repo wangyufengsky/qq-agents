@@ -58,7 +58,7 @@ export class GardenEvents {
     }
     return {
       today: today?.name ?? null,
-      ...eventOdds(state.settings.events, ctx, today),
+      ...eventOdds(state.settings, ctx, today),
     };
   }
 

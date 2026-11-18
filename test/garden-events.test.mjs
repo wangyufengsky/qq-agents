@@ -72,7 +72,7 @@ test("event odds use selected weather and strict balance thresholds, with indepe
   };
   const cloudy = s.weather.entries.cloud,
     sunny = s.weather.entries.sun;
-  const trial = (weather) => eventOdds(s.events, ctx, weather);
+  const trial = (weather) => eventOdds(s, ctx, weather);
   assert.equal(trial(cloudy).noEvent, 1);
   assert.equal(
     trial(sunny).rows.find(({ id }) => id === "merchant").probability,
@@ -433,3 +433,20 @@ for (const speed of [1, 4]) {
     assert.equal(status.status, "expired");
   });
 }
+
+test("a merchant without any enabled seed has no trial or daily draw probability", (t) => {
+  const settings = rules("merchant");
+  for (const id of settings.events.entries.merchant.effect.seeds)
+    settings.crops[id].enabled = false;
+  const f = setup(t, settings),
+    state = f.read();
+  const odds = f.garden.calendar.events.trial(
+    state,
+    { balance: 300, seeds: {}, harvests: {}, fertilizer: 0, previous: null },
+    undefined,
+    state.weather,
+  );
+  assert.equal(odds.rows.find((row) => row.id === "merchant").probability, 0);
+  assert.equal(odds.noEvent, 1);
+  assert.equal(state.event, null);
+});
