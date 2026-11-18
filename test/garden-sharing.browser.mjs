@@ -203,6 +203,10 @@ test("actual Chromium produces a shareable nine-tile PNG and renders the desktop
   rules.events.entries.thief.enabled = false;
   rules.events.entries.merchant.enabled = true;
   rules.events.entries.merchant.conditions = [];
+  rules.events.entries.merchant.effect.giftOffers = [
+    { giftId: "dried-fish", stock: 3 },
+    { giftId: "catnip-candy", stock: 2 },
+  ];
   garden.configure(now, garden.requireState().settingsRevision, rules);
   garden.desktopSync(now, 10 * DAY);
   now += DAY;
@@ -225,6 +229,10 @@ test("actual Chromium produces a shareable nine-tile PNG and renders the desktop
   await panel.getByRole("button", { name: "刷新花园", exact: true }).click();
   await panel.getByRole("button", { name: "今日事件", exact: true }).click();
   await panel.getByRole("button", { name: "小礼物", exact: true }).click();
+  const candy = panel.locator(".garden-merchant .garden-good", {
+    hasText: "薄荷糖罐",
+  });
+  await candy.locator('img[src$="/gift-wrapped.webp"]').waitFor();
   const fish = panel
     .locator(".garden-merchant .garden-good")
     .filter({ hasText: "小鱼干" });

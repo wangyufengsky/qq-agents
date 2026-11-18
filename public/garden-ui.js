@@ -61,7 +61,7 @@ function gardenCropEditor(id, crop) {
     </div></details>`;
 }
 
-function gardenSettingsMarkup(state) {
+function gardenSettingsMarkup(state, catalog) {
   const roles = state.roles.filter(({ kind }) => kind === "agent");
   const budgets = state.settings.giftBudgets;
   return fold(
@@ -103,7 +103,7 @@ function gardenSettingsMarkup(state) {
       .map(([id, crop]) => gardenCropEditor(id, crop))
       .join("")}
     ${gardenWeatherSettingsMarkup(state.settings.weather, Object.fromEntries(Object.entries(state.settings.crops).map(([id, crop]) => [id, crop.name])))}
-    ${gardenEventSettingsMarkup(state.settings.events, state.settings.weather, Object.fromEntries(Object.entries(state.settings.crops).map(([id, crop]) => [id, crop.name])), state.eventPresets)}
+    ${gardenEventSettingsMarkup(state.settings.events, state.settings.weather, Object.fromEntries(Object.entries(state.settings.crops).map(([id, crop]) => [id, crop.name])), catalog, state.eventPresets)}
     <button type="submit" class="primary">保存花园设置</button>
   </form>`,
     {
@@ -182,7 +182,9 @@ function renderGarden() {
     workspace ||= shared.bindGardenWorkspace(panel, {
       act,
       records: (current) => shared.gardenRecordsMarkup(current, fold),
-      settings: (current) => `${gardenSettingsMarkup(current)}
+      settings: (
+        current,
+      ) => `${gardenSettingsMarkup(current, shared.gardenGifts)}
         ${gardenWeatherTrialMarkup(current.settings.weather)}
         ${gardenEventTrialMarkup(current.settings.weather)}`,
       onStatus: (text) => (message.textContent = text),
@@ -248,7 +250,14 @@ function renderGarden() {
       form.querySelector("[data-crop-id]").value = "";
       return;
     }
-    if (gardenEventEdit(event, (text) => (message.textContent = text))) return;
+    if (
+      gardenEventEdit(
+        event,
+        (text) => (message.textContent = text),
+        shared?.gardenGifts,
+      )
+    )
+      return;
     if (gardenWeatherEdit(event, (text) => (message.textContent = text)))
       return;
   });
@@ -271,8 +280,11 @@ function renderGarden() {
   page.addEventListener(
     "change",
     (event) =>
-      gardenEventEdit(event, (text) => (message.textContent = text)) ||
-      gardenWeatherEdit(event, (text) => (message.textContent = text)),
+      gardenEventEdit(
+        event,
+        (text) => (message.textContent = text),
+        shared?.gardenGifts,
+      ) || gardenWeatherEdit(event, (text) => (message.textContent = text)),
   );
   page.addEventListener(
     "invalid",

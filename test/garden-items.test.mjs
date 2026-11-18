@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { gardenGifts } from "../public/garden-art/gifts.js";
 import { createServer } from "../src/server.mjs";
 import path from "node:path";
 import { readFile } from "node:fs/promises";
@@ -58,7 +59,7 @@ function fixture(t, options = {}) {
   settings.events.rate = 1;
   for (const [key, entry] of Object.entries(settings.events.entries))
     entry.enabled = key === "merchant";
-  settings.events.entries.merchant.effect.giftOffers = [
+  settings.events.entries.merchant.effect.giftOffers = options.giftOffers ?? [
     { giftId: "dried-fish", stock: 2 },
     { giftId: "yarn-ball", stock: 1 },
     { giftId: "pressed-bookmark", stock: 2 },
@@ -172,6 +173,48 @@ test("a direct gift charges once, gives one private paper note, and supports she
     f.view().event.giftOffers.find((row) => row.giftId === "dried-fish").stock,
     0,
   );
+});
+
+test("the expanded gift catalog supports purchasing, gifting and displaying each item", async (t) => {
+  assert.equal(Object.keys(gardenGifts).length, 18);
+  for (const [giftId, { name, price, usable }] of Object.entries(gardenGifts))
+    await t.test(giftId, (itemTest) => {
+      const f = fixture(itemTest, { giftOffers: [{ giftId, stock: 1 }] });
+      const { itemId } = f.act(admin, f.buy(giftId, price));
+      assert.equal(f.view().event.giftOffers[0].stock, 0);
+      const { transferId } = f.act(admin, {
+        kind: "send_gift",
+        itemId,
+        recipient: { kind: "agent", id: cat.id },
+        note: "花园里挑的",
+      });
+      const [item] = f.role(cat).items;
+      assert.equal(item.giftId, giftId);
+      assert.equal(item.name, name);
+      assert.equal(item.usable, usable);
+      assert.equal(item.source.id, transferId);
+      assert.equal(item.source.note, "花园里挑的");
+      const sources = gardenGiftSources(f.runtime, cat.id);
+      assert.equal(sources.length, 1);
+      assert.ok(sources[0].text.includes(name));
+      assert.ok(!sources[0].text.includes(item.source.note));
+      for (const slot of [1, 2, 3]) {
+        f.act(cat, { kind: "display_gift", itemId, slot, publishNote: true });
+        assert.deepEqual(
+          f.role(cat).shelf.map((row) => ({ ...row })),
+          [{ slot, giftId, name, description: "", note: "花园里挑的" }],
+        );
+      }
+      const use = () => f.act(cat, { kind: "use_gift", itemId });
+      if (usable) {
+        use();
+        assert.deepEqual(f.role(cat).items, []);
+        assert.deepEqual(f.role(cat).shelf, []);
+      } else {
+        assert.throws(use, /GARDEN_ITEM_NOT_USABLE/);
+        assert.equal(f.role(cat).items[0].id, itemId);
+      }
+    });
 });
 
 test("daily shared budgets, invalid recipient and failures do not spend stock or turn actions", (t) => {
@@ -322,22 +365,22 @@ test("a normal subject turn discovers the market and gift actions while room vis
           assert.equal(state.personalGifts.budget.available, 30);
           assert.ok(Object.hasOwn(state.giftActions, "buy_gift"));
           const quote = state.event.giftOffers.find(
-            (item) => item.giftId === "pressed-bookmark",
+            (item) => item.giftId === "catnip-candy",
           );
           direct = await callTool("garden_act", {
             kind: "buy_gift",
-            requestId: "subject-direct-bookmark",
+            requestId: "subject-direct-candy",
             args: {
               eventId: state.event.id,
               giftId: quote.giftId,
               price: quote.price,
               recipient: { kind: "admin", id: admin.id },
-              note: "主动挑的书签",
+              note: "主动挑的糖",
             },
           });
           const inventory = (await callTool("garden_read", { view: "gifts" }))
             .personalGifts;
-          assert.equal(inventory.sent[0].note, "主动挑的书签");
+          assert.equal(inventory.sent[0].note, "主动挑的糖");
           assert.equal(inventory.received[0].note, "留在房间的纸条");
           await callTool("garden_act", {
             kind: "display_gift",
@@ -359,6 +402,10 @@ test("a normal subject turn discovers the market and gift actions while room vis
   settings.events.rate = 1;
   for (const [key, entry] of Object.entries(settings.events.entries))
     entry.enabled = key === "merchant";
+  settings.events.entries.merchant.effect.giftOffers = [
+    { giftId: "dried-fish", stock: 2 },
+    { giftId: "catnip-candy", stock: 2 },
+  ];
   settings.roles[cat.id] = runtime.home.generation(cat.id);
   settings.giftBudgets = { total: 60, roles: { [cat.id]: 30 } };
   settings.giftBudgetGenerations[cat.id] = settings.roles[cat.id];
@@ -380,10 +427,10 @@ test("a normal subject turn discovers the market and gift actions while room vis
   assert.equal(runs.length, 1);
   await runs[0];
   assert.equal(direct.recipient.id, admin.id);
-  assert.equal(direct.name, "压花书签");
+  assert.equal(direct.name, "薄荷糖罐");
   assert.equal(
     adminGardenView(runtime).personalGifts.received[0].note,
-    "主动挑的书签",
+    "主动挑的糖",
   );
   const token = randomUUID();
   const server = createServer({ runtime, token, allowLive: true });

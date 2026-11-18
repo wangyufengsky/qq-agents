@@ -2,34 +2,28 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
-const catalog = {
-  "dried-fish": { name: "小鱼干", price: 12, usable: true },
-  "yarn-ball": { name: "毛线球", price: 18, usable: false },
-  "pressed-bookmark": { name: "压花书签", price: 24, usable: false },
-};
+import { gardenGifts } from "../../public/garden-art/gifts.js";
 
 export const gardenGiftId = z.enum(
-  /** @type {[keyof typeof catalog, ...(keyof typeof catalog)[]]} */ (
-    Object.keys(catalog)
+  /** @type {[keyof typeof gardenGifts, ...(keyof typeof gardenGifts)[]]} */ (
+    Object.keys(gardenGifts)
   ),
 );
 /** @typedef {{kind:"admin"|"agent",id:string,generation:string}} Owner */
 /** @typedef {Owner & {name:string}} Person */
 /** @typedef {{owner:Person,recipient:(recipient:{kind:"admin"|"agent",id:string})=>Person|undefined}} GiftContext */
-/** @typedef {{giftId:keyof typeof catalog,name:string,price:number,originalPrice:number,stock:number,usable:boolean}} GiftOffer */
+/** @typedef {{giftId:keyof typeof gardenGifts,name:string,price:number,originalPrice:number,stock:number,usable:boolean}} GiftOffer */
 /** @typedef {{id:string,giftId:string,name:string,usable:number,slot:number|null,sourceId:string|null,description:string,note:string}} Item */
 /** @typedef {{id:string,itemId:string,giftId:string,name:string,note:string,day:number,at:number,giver:Person,recipient:Person}} Transfer */
 
-/** @param {{giftId:keyof typeof catalog,price?:number,stock:number}[]} [configured] */
-export function gardenGiftOffers(
-  configured = gardenGiftId.options.map((giftId) => ({ giftId, stock: 3 })),
-) {
+/** @param {{giftId:keyof typeof gardenGifts,price?:number,stock:number}[]} configured */
+export function gardenGiftOffers(configured) {
   return configured.map(({ giftId, price, stock }) => ({
-    ...catalog[giftId],
+    ...gardenGifts[giftId],
     giftId,
     stock,
-    originalPrice: catalog[giftId].price,
-    price: price ?? catalog[giftId].price,
+    originalPrice: gardenGifts[giftId].price,
+    price: price ?? gardenGifts[giftId].price,
   }));
 }
 

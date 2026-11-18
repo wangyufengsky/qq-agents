@@ -1,5 +1,7 @@
 import * as art from "./art.js";
 
+export { gardenGifts } from "./art.js";
+
 export const gardenActions = {
   initialize: "开园",
   plant: "播种",

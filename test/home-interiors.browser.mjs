@@ -72,12 +72,16 @@ try {
   settings.events.rate = 1;
   for (const [key, entry] of Object.entries(settings.events.entries))
     entry.enabled = key === "merchant";
+  settings.events.entries.merchant.effect.giftOffers = [
+    { giftId: "dried-fish", stock: 3 },
+    { giftId: "origami-dragon", stock: 2 },
+  ];
   garden.initialize(f.runtime.now(), settings);
   garden.desktopSync(f.runtime.now(), 60_000);
   const { id: eventId } = garden.read(f.runtime.now()).event;
   for (const [slot, giftId, price, note, publishNote] of [
     [1, "dried-fish", 12, "请别公开这张纸条", false],
-    [3, "pressed-bookmark", 24, "公开的<em>字面纸条</em>", true],
+    [3, "origami-dragon", 32, "公开的<em>字面纸条</em>", true],
   ]) {
     const recipient = { kind: "agent", id: "agent-0" };
     const receipt = performGardenAction(
@@ -390,7 +394,7 @@ try {
       check(
         `shelf keeps slot order at ${width}px`,
         (await shelf.locator("li").allTextContents()).join("|") ===
-          "小鱼干窗边展示|空位|压花书签窗边展示公开的<em>字面纸条</em>",
+          "小鱼干窗边展示|空位|纸折小龙摆件窗边展示公开的<em>字面纸条</em>",
       );
       check(
         `gift paper notes remain plain text at ${width}px`,
@@ -406,7 +410,8 @@ try {
         ];
         return (
           images.length === 2 &&
-          images.every((img) => img.complete && img.naturalWidth > 0)
+          images.every((img) => img.complete && img.naturalWidth > 0) &&
+          images.some((img) => img.src.endsWith("/gift-wrapped.webp"))
         );
       });
       check(`shelf uses loaded gift stickers at ${width}px`, true);

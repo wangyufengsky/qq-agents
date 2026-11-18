@@ -29,7 +29,7 @@ const effect = z.discriminatedUnion("kind", [
             stock: quantity,
           }),
         )
-        .max(3)
+        .max(gardenGiftId.options.length)
         .refine(
           (rows) => new Set(rows.map((row) => row.giftId)).size === rows.length,
         )
@@ -565,7 +565,15 @@ export function drawGardenEvent(settings, ctx, weather, seed, day) {
   return {
     ...base,
     seedOffers,
-    giftOffers: gardenGiftOffers(effect.giftOffers),
+    giftOffers: gardenGiftOffers(
+      effect.giftOffers ??
+        choose(gardenGiftId.options, "gift:")
+          .slice(0, 3 + (rank("gift-count") % 3))
+          .map((giftId) => ({
+            giftId,
+            stock: 2 + (rank("gift-stock:" + giftId) % 2),
+          })),
+    ),
     fertilizerOffers: effect.fertilizerOffers ?? [],
     offers,
     offer: offers[0],

@@ -47,6 +47,13 @@
   gap: 8px;
   align-items: end;
 }
+.garden-page [data-fixed-gifts] {
+  grid-column: 1 / -1;
+  display: block;
+}
+.garden-page [data-fixed-gifts][hidden] {
+  display: none;
+}
 .garden-page form,
 .garden-page .garden-crop {
   margin-block: 10px;
