@@ -144,7 +144,9 @@
       "path": "vendor/scheduler/schedule.js",
       "origin": "h-D-ACE/dsh-qq",
       "sourcePath": "src/scheduler/schedule.js",
-      "sha256": "3c7139f96d4a15f393fc2056cb6117842197fe50f467d6641f3c2dc8c2eb93e1"
+      "sha256": "e899f55b2dc3a51411fbaa4c528cf511bf178c7750ea01b367c7872e341c38a6",
+      "upstreamSha256": "3c7139f96d4a15f393fc2056cb6117842197fe50f467d6641f3c2dc8c2eb93e1",
+      "modification": "Resolve distant one-time dates directly and account for sparse recurrence schedules and explicit exclusions."
     },
     {
       "path": "vendor/scheduler/time.js",
