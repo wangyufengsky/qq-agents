@@ -80,7 +80,7 @@ test("actual Chromium produces a shareable nine-tile PNG and renders the desktop
   });
   const browser = await chromium.launch({ executablePath, headless: true });
   t.after(() => browser.close());
-  const page = await browser.newPage({ viewport: { width: 410, height: 780 } });
+  const page = await browser.newPage({ viewport: { width: 430, height: 780 } });
   const pageErrors = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
   await page.exposeFunction("gardenBridge", (epoch, action) =>
@@ -200,6 +200,53 @@ test("actual Chromium produces a shareable nine-tile PNG and renders the desktop
     receipt.segments.map((x) => x.type),
     ["text", "image"],
   );
+  rules.events.entries.thief.enabled = false;
+  rules.events.entries.merchant.enabled = true;
+  rules.events.entries.merchant.conditions = [];
+  garden.configure(now, garden.requireState().settingsRevision, rules);
+  garden.desktopSync(now, 10 * DAY);
+  now += DAY;
+  garden.desktopSync(now, 10 * DAY);
+  const next = await callDesktop("client", { action: "sync", data: false });
+  await page.evaluate(
+    (epoch) =>
+      window.pushGardenRoom({
+        live: true,
+        framework: true,
+        connected: true,
+        roomEpoch: epoch,
+        roles: [],
+        messages: [],
+        budget: 5,
+      }),
+    next.room.roomEpoch,
+  );
+  const panel = page.locator("#garden-panel");
+  await panel.getByRole("button", { name: "刷新花园", exact: true }).click();
+  await panel.getByRole("button", { name: "今日事件", exact: true }).click();
+  await panel.getByRole("button", { name: "小礼物", exact: true }).click();
+  const fish = panel
+    .locator(".garden-merchant .garden-good")
+    .filter({ hasText: "小鱼干" });
+  await fish.getByText("选购").click();
+  await fish.getByRole("button", { name: "确认购买" }).click();
+  await panel.getByText("小鱼干已收入我的物品栏，支出 12 元。").waitFor();
+  await panel.getByRole("button", { name: "我的物品", exact: true }).click();
+  const item = panel.locator(".garden-good").filter({ hasText: "小鱼干" });
+  await item.getByText("查看物品").click();
+  await item.getByText("摆入展示栏").click();
+  await item.getByLabel("展示格").selectOption("2");
+  await item.getByLabel("公开说明").fill("花园里带回来的小鱼干");
+  await item.getByRole("button", { name: "确认展示" }).click();
+  await panel
+    .locator(".garden-display")
+    .getByText("花园里带回来的小鱼干")
+    .waitFor();
+  const layout = await panel
+    .locator(".garden-content")
+    .evaluate((view) => view.scrollWidth <= view.clientWidth);
+  assert.equal(layout, true);
+  assert.deepEqual(pageErrors, []);
 });
 
 test("native Electron garden tab reaches shared state through its focused panel IPC", async (t) => {

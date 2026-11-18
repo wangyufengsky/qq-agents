@@ -3,6 +3,7 @@ import { readFile, readdir } from "node:fs/promises";
 import test from "node:test";
 import {
   gardenArtMarkup,
+  gardenIconFile,
   gardenLayers,
   isGardenArtImage,
   isGardenArtResource,
@@ -13,7 +14,16 @@ test("all runtime garden artwork is WebP and individually allowlisted", async ()
   const files = (await readdir(directory)).filter((file) =>
     file.endsWith(".webp"),
   );
-  assert.equal(files.length, 37);
+  assert.equal(files.length, 49);
+  assert.equal(isGardenArtResource("workspace.js"), true);
+  for (const [group, id] of [
+    ["event", "stray-cat"],
+    ["gift", "dried-fish"],
+    ["supply", "fertilizer"],
+    ["crop", "mint"],
+  ])
+    assert.ok(files.includes(gardenIconFile(group, id)));
+  assert.equal(gardenIconFile("gift", "../gift"), null);
   for (const file of files) {
     assert.equal(isGardenArtImage(file), true, file);
     const bytes = await readFile(new URL(file, directory));
@@ -39,7 +49,7 @@ test("garden artwork layers follow crop stages and omit an unillustrated crop", 
     [
       "soil-low.webp",
       "shelter-back.webp",
-      "plant-clover-seedling.webp",
+      "plant-seedling.webp",
       "shelter-front.webp",
     ],
   );

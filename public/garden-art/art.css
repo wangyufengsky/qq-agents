@@ -71,7 +71,7 @@
 }
 .garden-workspace-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 10px;
 }
@@ -79,65 +79,6 @@
   margin: 0;
   font-size: clamp(26px, 5cqi, 44px);
   line-height: 1.2;
-}
-.garden-workspace-head p,
-.garden-workspace-meta,
-.garden-workspace small {
-  color: var(--garden-muted);
-}
-.garden-workspace-head p {
-  margin: 5px 0 0;
-}
-.garden-coins {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 5px 10px 5px 7px;
-  border: 1px solid #d7b65f;
-  border-radius: 6px;
-  background: #f8edcc;
-  color: #593711;
-  font-variant-numeric: tabular-nums;
-  line-height: 1.2;
-  white-space: nowrap;
-}
-.garden-coins small {
-  display: block;
-  color: #684c26;
-  font-size: 10px;
-}
-.garden-coins strong {
-  font-size: clamp(15px, 2.5cqi, 21px);
-}
-.garden-coin-icon {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: 25px;
-  aspect-ratio: 1;
-  border: 1px solid #996418;
-  border-radius: 50%;
-  background: #f0c253;
-  color: #734612;
-  box-shadow:
-    inset 0 0 0 2px #ffe293,
-    0 1px 0 #ae7922;
-  font-size: 14px;
-}
-.garden-workspace-meta,
-.garden-board-title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 3px 12px;
-}
-.garden-workspace-meta {
-  padding: 8px 0;
-  border-bottom: 1px solid var(--garden-line);
-  margin-bottom: 12px;
-  font-size: 12px;
-  overflow-wrap: anywhere;
 }
 .garden-board-title h3 {
   margin: 0 0 5px;
@@ -293,33 +234,522 @@
 .garden-priorities button > span {
   color: var(--garden-olive);
 }
-.garden-shortcuts {
-  display: flex;
-  gap: 5px;
+.garden-workspace.garden-paper {
+  --garden-ink: #303c2b;
+  --garden-olive: #355b46;
+  --garden-line: #c8c7a9;
+  --garden-muted: #5c6351;
+  background: linear-gradient(#faf8edf4, #faf8edf4), url("paper.webp");
+  border: 1px solid #c8c7a9;
+  border-radius: 15px;
+  color: var(--garden-ink);
+  container-type: inline-size;
+  overflow: hidden;
+  padding: 0;
 }
-@container (min-width: 700px) {
-  .garden-workspace-body {
-    grid-template-columns: minmax(0, 1fr) minmax(218px, 27%);
-    gap: 24px;
+.garden-workspace [hidden] {
+  display: none !important;
+}
+.garden-workspace :is(h2, h3, h4) {
+  color: inherit;
+  font-family: "Songti SC", "Noto Serif CJK SC", SimSun, serif;
+}
+.garden-workspace .garden-workspace-head {
+  position: relative;
+  isolation: isolate;
+  min-height: 142px;
+  flex-wrap: nowrap;
+  padding: 14px clamp(12px, 4%, 48px) 23px;
+  background: #345c4d;
+  color: #fff4d6;
+}
+.garden-workspace-head::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 8px;
+  border-bottom: 1px dashed #e1dbac77;
+}
+.garden-workspace .garden-workspace-head h2 {
+  margin: 0;
+  font-size: clamp(35px, 5cqi, 62px);
+  font-weight: 750;
+  letter-spacing: 0.05em;
+}
+.garden-workspace .garden-workspace-head p {
+  margin: 5px 0 0;
+  color: #f9e4b7;
+}
+.garden-cover-flora {
+  position: absolute;
+  z-index: -1;
+  inset: 4% 16% 6% 42%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.garden-cover-flora img {
+  width: 25%;
+  height: 82%;
+  object-fit: contain;
+  transform: rotate(-10deg);
+  filter: drop-shadow(0 4px 0 #203e3250);
+}
+.garden-cover-flora img:nth-child(even) {
+  transform: rotate(10deg);
+}
+.garden-workspace-head .garden-coins {
+  border: 0;
+  border-radius: 13px;
+  background: #294b3c;
+  color: #fff4d6;
+  white-space: nowrap;
+  padding: 9px 13px;
+  align-items: center;
+  line-height: 1.16;
+  display: flex;
+  gap: 8px;
+  font-variant-numeric: tabular-nums;
+}
+.garden-workspace-head .garden-coins :is(small, strong) {
+  display: block;
+  color: inherit;
+}
+.garden-workspace-head .garden-coins small {
+  font-size: 11px;
+}
+.garden-workspace-head .garden-coins strong {
+  font-size: clamp(18px, 2.2cqi, 24px);
+}
+.garden-coin-icon {
+  display: grid;
+  place-items: center;
+  width: 25px;
+  aspect-ratio: 1;
+  border: 1px solid #996418;
+  border-radius: 50%;
+  background: #f0c253;
+  color: #734612;
+  box-shadow: inset 0 0 0 2px #ffe293;
+}
+.garden-nav,
+.garden-selector {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.garden-nav {
+  gap: 0 clamp(4px, 2cqi, 28px);
+  padding: 0 clamp(10px, 4%, 48px);
+  background: #f1eddc;
+  border-bottom: 1px solid var(--garden-line);
+}
+.garden-workspace :is(.garden-nav, .garden-selector) button {
+  background: transparent;
+  padding: 8px 7px;
+  color: #3b503a;
+  white-space: normal;
+  font-weight: 650;
+}
+.garden-workspace .garden-nav button {
+  padding: 10px 6px 8px;
+  min-height: 42px;
+  border: 0;
+  border-radius: 0;
+  border-bottom: 3px solid transparent;
+}
+.garden-workspace .garden-nav [aria-current="true"] {
+  border-color: #516b52;
+}
+.garden-workspace [data-garden-tab="event"] {
+  display: none;
+}
+.garden-message:empty {
+  display: none;
+}
+.garden-view {
+  padding: clamp(11px, 3%, 34px) clamp(10px, 4%, 48px);
+}
+.garden-view > div,
+.garden-board,
+.garden-rail {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.garden-workspace .garden-workspace-body {
+  grid-template-columns: minmax(0, 1.19fr) minmax(300px, 1fr);
+  gap: clamp(12px, 3cqi, 34px);
+}
+.garden-workspace .garden-rail {
+  padding: 0;
+  border: 0;
+}
+.garden-board-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 2px 8px;
+  margin-bottom: 8px;
+}
+.garden-board-title h3,
+.garden-view > div > h3 {
+  margin: 0;
+  font-size: clamp(23px, 3cqi, 29px);
+}
+.garden-workspace .garden-map {
+  padding: 6px;
+  gap: 6px;
+  border: 1px solid #b9bd9e;
+  border-radius: 17px;
+  background: #ecebd9;
+  box-shadow: 0 3px 0 #d9d9c1;
+}
+.garden-workspace .garden-map .garden-map-tile {
+  position: relative;
+  min-height: 140px;
+  grid-template: 1fr auto auto / minmax(0, 1fr);
+  align-content: end;
+  border: 1px solid #dbdac3;
+  border-radius: 11px;
+  padding: 9px 3px 6px;
+  background: #fbf7e9;
+  color: var(--garden-ink);
+}
+.garden-workspace .garden-map .garden-map-tile[data-stage="可播种"] {
+  background: #f7f3e7;
+}
+.garden-workspace .garden-map .garden-map-tile[aria-pressed="true"] {
+  background: #edf1da;
+  box-shadow: inset 0 0 0 2px #5e7959;
+  border-color: transparent;
+}
+.garden-workspace .garden-map-tile[aria-pressed="true"]::after {
+  position: absolute;
+  inset: 5px 5px auto auto;
+  content: "✓";
+  border-radius: 50%;
+  background: #567554;
+  color: #fff7d9;
+  width: 18px;
+  line-height: 18px;
+  font-size: 11px;
+}
+.garden-tile-top {
+  position: absolute;
+  top: 5px;
+  left: 6px;
+  width: auto;
+}
+.garden-map-tile .garden-art-plot {
+  width: min(94%, 135px);
+  height: 80px;
+}
+.garden-map-tile .garden-art-plant {
+  filter: drop-shadow(0 2px 1px #593e2a31);
+  transition: translate 150ms ease;
+}
+.garden-map-tile[aria-pressed="true"] .garden-art-plant {
+  translate: 0 -3px;
+}
+.garden-map-tile .garden-art-soil {
+  opacity: 0.78;
+}
+.garden-plot-status {
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 5px;
+}
+.garden-map-tile[data-stage="可收成"] .garden-plot-status {
+  background: #e0e9c7;
+  color: #3f5f35;
+}
+.garden-map-tile[data-stage="缺水"] .garden-plot-status {
+  background: #f6e1cc;
+  color: #8c482e;
+}
+.garden-workspace .garden-inspector {
+  margin-top: 11px;
+  padding: 9px 10px;
+  border-radius: 10px;
+}
+.garden-ticket {
+  position: relative;
+  border: 1px solid #c8ac91;
+  border-radius: 16px;
+  background: #fbefda;
+  padding: 16px;
+  box-shadow: 0 3px 0 #d8c7b2;
+}
+.garden-ticket header {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin: 3px 0 9px;
+}
+.garden-ticket header img,
+.garden-good > img {
+  width: 76px;
+  height: 72px;
+  object-fit: contain;
+  flex-shrink: 0;
+  filter: drop-shadow(0 2px 1px #593e2a31);
+}
+.garden-ticket header h3 {
+  margin: 3px 0;
+  font-size: clamp(20px, 2.5cqi, 27px);
+}
+.garden-ticket header small {
+  color: #8b5046;
+  font-weight: 650;
+}
+.garden-ticket p,
+.garden-ticket ul {
+  color: #5d483d;
+  font-size: 13px;
+}
+.garden-ticket.garden-merchant {
+  background: #f8eadc;
+  padding-top: 21px;
+}
+.garden-merchant::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 13px;
+  border-radius: 16px 16px 0 0;
+  background: repeating-linear-gradient(
+    90deg,
+    #bb7468 0 22px,
+    #f9ddc7 22px 44px
+  );
+  mask: radial-gradient(circle at 11px 0, #000 12px, transparent 12.7px) 0
+    0/22px 14px repeat-x;
+}
+.garden-selector {
+  margin-bottom: 9px;
+  padding-bottom: 7px;
+  border-bottom: 1px dashed #c6aa94;
+}
+.garden-workspace .garden-selector button {
+  background: #fff9ec;
+  border: 1px solid #c6b59c;
+  border-radius: 20px;
+  padding: 5px 10px;
+  font-size: 13px;
+}
+.garden-workspace .garden-selector [aria-pressed="true"],
+.garden-workspace button.garden-main-action {
+  background: #516b52;
+  color: #fffdf1;
+  border-color: #516b52;
+}
+.garden-shelf,
+.garden-display {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  align-items: start;
+}
+.garden-good {
+  display: grid;
+  justify-items: center;
+  align-self: stretch;
+  align-content: start;
+  gap: 3px;
+  min-width: 0;
+  padding: 7px 5px;
+  border: 1px solid #d3c3a8;
+  border-radius: 11px;
+  background: #fff9ea;
+  box-shadow: 0 2px 0 #dfcbb7;
+  font-size: 13px;
+  text-align: center;
+}
+.garden-good > img {
+  width: 60px;
+  height: 54px;
+}
+.garden-good :is(label, details, form, fieldset) {
+  min-width: 0;
+  max-width: 100%;
+}
+.garden-good:has(> details[open]) {
+  grid-column: 1 / -1;
+}
+.garden-good details,
+.garden-gift-copy {
+  width: 100%;
+  text-align: start;
+}
+.garden-gift-copy {
+  border-top: 1px dashed #c6aa94;
+  margin-top: 8px;
+  padding-top: 6px;
+}
+.garden-good :is(h4, p, blockquote) {
+  margin: 4px 0;
+}
+.garden-price {
+  color: #8a4934;
+  font-weight: 700;
+}
+.garden-price del {
+  font-size: 11px;
+  color: #716a57;
+  font-weight: 400;
+}
+.garden-workspace :is(button, select, input, textarea):focus-visible,
+.garden-workspace summary:focus-visible {
+  outline: 2px solid #3a654e;
+  outline-offset: 2px;
+}
+.garden-workspace :is(select, input:not([type="checkbox"]), textarea) {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  font: inherit;
+  color: #273a2e;
+  background: #fffbef;
+  border: 1px solid #919a80;
+  border-radius: 8px;
+  padding: 6px;
+}
+.garden-workspace :is(fieldset, label) {
+  min-width: 0;
+}
+.garden-workspace fieldset {
+  border-color: #c8c7a9;
+}
+.garden-workspace .garden-good fieldset,
+.garden-inspector fieldset {
+  padding: 3px 0;
+  margin: 4px 0;
+  border: 0;
+}
+.garden-workspace .garden-good label {
+  display: grid;
+  gap: 3px;
+  color: var(--garden-ink);
+  margin: 4px 0;
+}
+.garden-workspace .garden-good fieldset {
+  display: grid;
+  align-items: start;
+}
+.garden-workspace .garden-good textarea {
+  min-height: unset;
+  resize: vertical;
+}
+.garden-good [data-garden-form] {
+  margin: 4px 0;
+}
+.garden-good [data-gift-confirmation] {
+  margin: 3px 0;
+}
+.garden-workspace .garden-good [type="submit"] {
+  justify-self: start;
+}
+.garden-workspace button:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+.garden-record {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--garden-line);
+}
+.garden-received {
+  margin: 16px 0 0;
+}
+.garden-workspace blockquote {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.garden-received article {
+  border-bottom: 1px solid var(--garden-line);
+  padding: 8px 0;
+}
+.garden-todo :is(h3, p) {
+  margin: 12px 0 3px;
+}
+.garden-todo button span {
+  flex-shrink: 0;
+}
+@container (max-width: 680px) {
+  .garden-view {
+    padding: 11px 10px;
   }
-  .garden-workspace .garden-map-tile {
-    min-height: 151px;
-    padding: 8px 10px 10px;
-    font-size: 13px;
+  .garden-workspace .garden-workspace-head {
+    min-height: 101px;
   }
-  .garden-map-tile .garden-art-plot {
-    width: min(100%, 108px);
+  .garden-workspace-head .garden-coins {
+    padding: 6px 8px;
   }
-  .garden-tile-top {
+  .garden-coin-icon {
+    width: 20px;
+  }
+  .garden-workspace-head p {
     font-size: 11px;
   }
-  .garden-rail {
-    padding-left: 18px;
-    border-left: 1px solid var(--garden-line);
+  .garden-cover-flora {
+    inset: 6% 23% 9% 56%;
+  }
+  .garden-cover-flora img {
+    display: none;
+  }
+  .garden-cover-flora img:nth-child(2) {
+    display: block;
+    width: 95%;
+  }
+  .garden-workspace .garden-workspace-body {
+    display: block;
+  }
+  .garden-workspace:not([data-active="event"]) [data-garden-ticket],
+  .garden-workspace[data-active="event"] :is(.garden-board, .garden-todo) {
+    display: none;
+  }
+  .garden-workspace [data-garden-tab="event"] {
+    display: block;
+  }
+  .garden-workspace .garden-map {
+    padding: 4px;
+    gap: 4px;
+    border-radius: 13px;
+  }
+  .garden-workspace .garden-map .garden-map-tile {
+    min-height: 101px;
+    border-radius: 8px;
+  }
+  .garden-map-tile .garden-art-plot {
+    height: 59px;
+  }
+  .garden-workspace .garden-event-shortcut {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    margin: 0 0 9px;
+    border-radius: 8px;
+    border: 1px solid #c8ac91;
+    background: #f8ebda;
+    color: #68483b;
+    white-space: normal;
+    text-align: start;
+  }
+  .garden-event-shortcut b {
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+  .garden-shelf {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .garden-map-tile {
+  .garden-workspace *,
+  .garden-workspace *::before,
+  .garden-workspace *::after {
     transition: none;
+    scroll-behavior: auto;
   }
 }

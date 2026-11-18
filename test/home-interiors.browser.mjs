@@ -6,6 +6,9 @@ import path from "node:path";
 import { chromium } from "playwright-core";
 import { fixture, config, context as turnContext } from "./helpers.mjs";
 import { createServer } from "../src/server.mjs";
+import { performGardenAction } from "../src/home/garden-console.mjs";
+import { defaultGardenSettings } from "../src/home/garden-rules.mjs";
+import { fixedWeather } from "./garden-fixtures.mjs";
 
 if (!process.env.CHROME_PATH) throw Error("CHROME_PATH_REQUIRED");
 const output =
@@ -63,6 +66,43 @@ try {
       body,
       requestId: `interiors-post-${index}`,
     });
+  const { garden } = f.runtime.home;
+  const settings = defaultGardenSettings();
+  settings.weather = fixedWeather();
+  settings.events.rate = 1;
+  for (const [key, entry] of Object.entries(settings.events.entries))
+    entry.enabled = key === "merchant";
+  garden.initialize(f.runtime.now(), settings);
+  garden.desktopSync(f.runtime.now(), 60_000);
+  const { id: eventId } = garden.read(f.runtime.now()).event;
+  for (const [slot, giftId, price, note, publishNote] of [
+    [1, "dried-fish", 12, "请别公开这张纸条", false],
+    [3, "pressed-bookmark", 24, "公开的<em>字面纸条</em>", true],
+  ]) {
+    const recipient = { kind: "agent", id: "agent-0" };
+    const receipt = performGardenAction(
+      f.runtime,
+      { kind: "admin", id: "administrator" },
+      {
+        requestId: `interior-gift-${slot}`,
+        action: { kind: "buy_gift", eventId, giftId, price, recipient, note },
+      },
+    );
+    performGardenAction(
+      f.runtime,
+      { ...recipient, turnId: "shelf-setup" },
+      {
+        requestId: `interior-shelf-${slot}`,
+        action: {
+          kind: "display_gift",
+          itemId: receipt.itemId,
+          slot,
+          publishNote,
+          description: "窗边展示",
+        },
+      },
+    );
+  }
   const ctx = turnContext(f.runtime, "agent-0", "@subject");
   let room = await f.runtime.executeTool(ctx, "room_read", {});
   for (const slot of ["intro", "work-1", "work-2", "work-3"]) {
@@ -98,7 +138,7 @@ try {
     (await nav.evaluate(
       (n) =>
         n.previousElementSibling?.dataset.section === "links" &&
-        n.nextElementSibling?.dataset.section === "system",
+        n.nextElementSibling?.dataset.section === "garden",
     )) && (await page.locator('[data-section="board"]').count()) === 0,
   );
   async function go(route = "living") {
@@ -335,6 +375,45 @@ try {
         "content refresh preserves long-text reading position",
         await text.evaluate((n) => n.scrollTop === 250),
       );
+    }
+    if (width === 390 || width === 1440) {
+      const tabs = page.getByRole("navigation", { name: "展示架页签" });
+      await tabs
+        .getByRole("button", { name: "礼物", exact: true })
+        .press("Enter");
+      const shelf = page.locator(".gift-shelf");
+      await shelf.waitFor();
+      check(
+        `shelf has exactly three slots at ${width}px`,
+        (await shelf.locator("li").count()) === 3,
+      );
+      check(
+        `shelf keeps slot order at ${width}px`,
+        (await shelf.locator("li").allTextContents()).join("|") ===
+          "小鱼干窗边展示|空位|压花书签窗边展示公开的<em>字面纸条</em>",
+      );
+      check(
+        `gift paper notes remain plain text at ${width}px`,
+        (await shelf.locator("em").count()) === 0,
+      );
+      check(
+        `private paper note is absent at ${width}px`,
+        !(await shelf.textContent()).includes("请别公开这张纸条"),
+      );
+      await page.waitForFunction(() => {
+        const images = [
+          ...document.querySelectorAll(".gift-shelf-sticker img"),
+        ];
+        return (
+          images.length === 2 &&
+          images.every((img) => img.complete && img.naturalWidth > 0)
+        );
+      });
+      check(`shelf uses loaded gift stickers at ${width}px`, true);
+      await fits(`gift shelf fits ${width}`);
+      if (width === 390) await shot("gift-shelf-mobile");
+      await tabs.getByRole("button", { name: "作品", exact: true }).click();
+      await page.locator(".home-text-card").first().waitFor();
     }
     await page.click("#close-reader");
   }

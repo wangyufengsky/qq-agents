@@ -4,12 +4,12 @@ import {
   gardenPauseReason,
   performGardenAction,
   subjectGardenView,
+  subjectGardenGifts,
 } from "../home/garden-console.mjs";
 import {
   gardenPublicSnapshot,
   renderGardenSnapshot,
 } from "../home/garden-public.mjs";
-import { gardenGiftSources } from "../home/garden-gift-sources.mjs";
 import { gardenDelegationScope } from "../home/garden-delegations.mjs";
 import { DESKTOP_CONVERSATION } from "../home/desktop-decision.mjs";
 
@@ -144,7 +144,7 @@ export function gardenTool(
         ctx.scheduleRunId
       )
         throw Error("TOOL_DISABLED");
-      return { items: gardenGiftSources(runtime, role.id) };
+      return subjectGardenGifts(runtime, role.id);
     }
     if (!["overview", "public", "image"].includes(view))
       throw Error("INVALID_REQUEST");

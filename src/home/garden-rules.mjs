@@ -5,6 +5,7 @@ import {
   eventPool,
   validEventReferences,
 } from "./garden-event-rules.mjs";
+import { giftBudgetLimits } from "./garden-items.mjs";
 import { defaultWeather, weatherPool } from "./garden-weather.mjs";
 
 export const HOUR = 3_600_000;
@@ -51,6 +52,8 @@ export const gardenSettings = z
       .default({}),
     speed: z.number().min(0.125).max(16),
     turnLimit: count.max(100),
+    giftBudgets: giftBudgetLimits.default(() => ({ total: 0, roles: {} })),
+    giftBudgetGenerations: z.record(z.string(), z.uuid()).default({}),
     delegationHours: z.number().min(1).max(168).default(24),
     initialBalance: count,
     fertilizerPrice: count,
@@ -151,38 +154,86 @@ export function defaultGardenSettings() {
   });
 }
 
+/** @param {Settings} settings */
+export function gardenPlantRules(settings) {
+  const {
+    crops: _crops,
+    roles: _roles,
+    weather: _weather,
+    events: _events,
+    giftBudgets: _giftBudgets,
+    giftBudgetGenerations: _giftBudgetGenerations,
+    delegationHours: _delegationHours,
+    enabled: _enabled,
+    speed: _speed,
+    turnLimit: _turnLimit,
+    initialBalance: _initialBalance,
+    fertilizerPrice: _price,
+    ...rules
+  } = settings;
+  return rules;
+}
+
 /** @typedef {ReturnType<typeof gardenSettings.parse>} Settings */
 /** @typedef {Settings["crops"][string]} Crop */
 /** @typedef {"ordinary" | "fine" | "perfect"} Quality */
 /**
  * @typedef {{id: string, cropId: string, actorId: string, plantedAt: number,
  * settledAt: number, water: number, growth: number, dry: number, low: number,
- * floodDays?: number, floodLoss?: number, witheredReason?: "drought" | "flood", fertilizer: number, status: "growing" | "mature" | "withered", quality: Quality | null,
- * crop: Crop, rules: Omit<Settings, "crops" | "enabled" | "speed" | "turnLimit" |
- * "initialBalance" | "fertilizerPrice" | "roles" | "delegationHours" | "weather" | "events">}} Plant
+ * floodDays?: number, floodLoss?: number, qualityAdjustment?: number, earthwormDay?: number, witheredReason?: "drought" | "flood", fertilizer: number, status: "growing" | "mature" | "withered", quality: Quality | null,
+ * crop: Crop, rules: ReturnType<typeof gardenPlantRules>}} Plant
  */
 
 /** @param {Plant} plant */
-export function qualityOf(plant) {
+function rawQualityScore(plant) {
   const { crop, rules } = plant;
   const fertilizer = crop.fertilizer
     ? (rules.fertilizerBonus * plant.fertilizer) / crop.fertilizer
     : 0;
-  const score = Math.min(
-    100,
-    Math.max(
-      0,
-      rules.baseQuality +
-        fertilizer -
-        (rules.dryQualityLoss * plant.low) / 24 -
-        (plant.floodLoss ?? 0),
-    ),
+  return (
+    rules.baseQuality +
+    fertilizer -
+    (rules.dryQualityLoss * plant.low) / 24 -
+    (plant.floodLoss ?? 0) +
+    (plant.qualityAdjustment ?? 0)
   );
+}
+
+/** @param {number} value */
+function clampScore(value) {
+  return Math.min(100, Math.max(0, value));
+}
+
+/** @param {Plant} plant @param {number} amount */
+export function adjustPlantQuality(plant, amount) {
+  if (!amount) return 0;
+  const raw = rawQualityScore(plant);
+  const before = clampScore(raw);
+  const after = clampScore(before + amount);
+  plant.qualityAdjustment = (plant.qualityAdjustment ?? 0) + after - raw;
+  return after - before;
+}
+
+/** @param {Plant} plant */
+export function qualityOf(plant) {
+  const { rules } = plant;
+  const score = clampScore(rawQualityScore(plant));
   return score >= rules.perfectQuality
     ? "perfect"
     : score >= rules.fineQuality
       ? "fine"
       : "ordinary";
+}
+
+/** @param {Plant} plant @param {number} hours */
+export function grantGrowth(plant, hours) {
+  const before = plant.growth;
+  plant.growth = Math.min(plant.crop.hours, before + hours);
+  if (plant.growth === plant.crop.hours) {
+    plant.status = "mature";
+    plant.quality = qualityOf(plant);
+  }
+  return plant.growth - before;
 }
 
 /** @typedef {import("./garden-weather.mjs").WeatherEntry} WeatherEntry */
@@ -201,12 +252,13 @@ export function moistureRate(plant, weather, sheltered) {
   );
 }
 
-/** @param {Plant} original @param {number} elapsed @param {WeatherEntry} [weather] @param {boolean} [sheltered] */
+/** @param {Plant} original @param {number} elapsed @param {WeatherEntry} [weather] @param {boolean} [sheltered] @param {number} [growthMultiplier] */
 export function projectPlant(
   original,
   elapsed,
   weather = cloud,
   sheltered = false,
+  growthMultiplier = 1,
 ) {
   if (original.status !== "growing" || elapsed < original.settledAt)
     return original;
@@ -220,7 +272,8 @@ export function projectPlant(
   const light = sheltered ? shelteredLight[weather.light] : weather.light;
   const lightGrowth =
     plant.crop.lightRates?.[light] ?? lightDefaults[plant.crop.light][light];
-  const weatherGrowth = lightGrowth * (sheltered ? 1 : weather.outdoorGrowth);
+  const weatherGrowth =
+    lightGrowth * (sheltered ? 1 : weather.outdoorGrowth) * growthMultiplier;
   const { lowWater, dryHours } = plant.rules;
   let remaining = (elapsed - plant.settledAt) / HOUR;
   // Exact threshold crossings keep incremental actions and lazy reads equivalent.

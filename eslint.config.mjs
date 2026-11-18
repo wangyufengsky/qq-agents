@@ -145,7 +145,7 @@ export default [
     files: [
       "public/home-preview/*.mjs",
       "public/home-space/*.mjs",
-      "public/garden-art/art.js",
+      "public/garden-art/*.js",
     ],
     languageOptions: { sourceType: "module", globals: globals.browser },
   },
