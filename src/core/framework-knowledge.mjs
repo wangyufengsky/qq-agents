@@ -99,6 +99,7 @@ export function frameworkBuildDigest(root) {
   for (const name of [
     "src",
     "vendor",
+    "desktop",
     "public",
     "scripts",
     "docs",
