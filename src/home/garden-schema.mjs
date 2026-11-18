@@ -1,6 +1,8 @@
 // @ts-check
+import { initializeGiftTables } from "./garden-items.mjs";
 /** @param {import("node:sqlite").DatabaseSync} db */
 export function initializeGardenTables(db) {
+  initializeGiftTables(db);
   db.exec(`
     CREATE TABLE IF NOT EXISTS garden_state (
       id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -58,6 +60,11 @@ export function initializeGardenTables(db) {
     CREATE TABLE IF NOT EXISTS garden_events (
       day INTEGER PRIMARY KEY,
       value TEXT
+    );
+    CREATE TABLE IF NOT EXISTS garden_mystery_bags (
+      id TEXT PRIMARY KEY,
+      candidates TEXT NOT NULL,
+      rules TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS garden_reward_stock (
       id INTEGER PRIMARY KEY CHECK (id=1),

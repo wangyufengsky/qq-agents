@@ -1,7 +1,7 @@
 // @ts-check
 import { GardenEvents } from "./garden-events.mjs";
 import { randomUUID } from "node:crypto";
-import { closePlantDay, DAY, projectPlant } from "./garden-rules.mjs";
+import { closePlantDay, DAY, HOUR, projectPlant } from "./garden-rules.mjs";
 import {
   defaultWeather,
   drawWeather,
@@ -22,11 +22,18 @@ export class GardenCalendar {
     this.events = new GardenEvents(db, changeBalance);
   }
 
-  /** @returns {GardenDay|null} */
-  latest() {
-    const row = this.db
-      .prepare("SELECT * FROM garden_days ORDER BY day DESC LIMIT 1")
-      .get();
+  /** @param {number} [before] @returns {GardenDay|null} */
+  latest(before) {
+    const row =
+      before === undefined
+        ? this.db
+            .prepare("SELECT * FROM garden_days ORDER BY day DESC LIMIT 1")
+            .get()
+        : this.db
+            .prepare(
+              "SELECT * FROM garden_days WHERE day<? ORDER BY day DESC LIMIT 1",
+            )
+            .get(before);
     return row
       ? {
           day: Number(row.day),
@@ -54,16 +61,23 @@ export class GardenCalendar {
       fertilizer: state.fertilizer,
       seeds: state.seeds,
       harvests,
+      plots: state.plots,
+      day: (previous?.day ?? 0) + 1,
     };
   }
 
   /** @param {State} state @param {unknown} input @param {boolean} [event] */
   trial(state, input, event = false) {
-    const { todayId, ...params } = event
+    const { todayId, day, ...params } = event
       ? this.events.trialInput(input)
-      : { ...weatherTrialInput.parse(input), todayId: undefined };
+      : {
+          ...weatherTrialInput.parse(input),
+          todayId: undefined,
+          day: undefined,
+        };
     const pool = state.settings.weather;
-    let previous = this.latest();
+    const current = this.latest();
+    let previous = event && current ? this.latest(current.day) : current;
     if (params.previousId !== undefined) {
       if (!Object.hasOwn(pool.entries, params.previousId))
         throw Error("INVALID_REQUEST");
@@ -84,7 +98,12 @@ export class GardenCalendar {
       balance: params.balance ?? state.balance,
     };
     if (event)
-      return this.events.trial(state, ctx, todayId, this.latest()?.weather);
+      return this.events.trial(
+        state,
+        { ...ctx, day: day ?? current?.day ?? 1 },
+        todayId,
+        current?.weather,
+      );
     return {
       previous: previous
         ? {
@@ -142,6 +161,40 @@ export class GardenCalendar {
     });
   }
 
+  /** @param {State} state @param {GardenDay} current @param {number} elapsed */
+  project(state, current, elapsed) {
+    const event = this.events.get(current.day);
+    const boundary =
+      event?.kind === "weather_flip"
+        ? (current.day - 1) * DAY + event.effect.hour * HOUR
+        : Infinity;
+    const weather =
+      event?.kind === "weather_flip" && elapsed >= boundary
+        ? event.targetWeather
+        : current.weather;
+    const slow =
+      event?.kind === "nuisance" &&
+      event.effect.effect === "aphids" &&
+      event.status === "open"
+        ? (event.effect.growthRate ?? 0.5)
+        : 1;
+    state.plots = state.plots.map((entry) => {
+      let plant = entry.plant;
+      if (plant && elapsed >= boundary && plant.settledAt < boundary)
+        plant = projectPlant(
+          plant,
+          boundary,
+          current.weather,
+          entry.sheltered,
+          slow,
+        );
+      if (plant)
+        plant = projectPlant(plant, elapsed, weather, entry.sheltered, slow);
+      return { ...entry, plant };
+    });
+    return weather;
+  }
+
   /** @param {State} state @param {number} elapsed @param {number} now */
   advance(state, elapsed, now) {
     let current = this.latest();
@@ -154,20 +207,12 @@ export class GardenCalendar {
       );
       while (current.day < day) {
         const { weather, day: priorDay } = current;
+        const closingWeather = this.project(state, current, priorDay * DAY);
         state.plots = state.plots.map((entry) => ({
           ...entry,
           plant:
             entry.plant &&
-            closePlantDay(
-              projectPlant(
-                entry.plant,
-                priorDay * DAY,
-                weather,
-                entry.sheltered,
-              ),
-              weather,
-              entry.sheltered,
-            ),
+            closePlantDay(entry.plant, closingWeather, entry.sheltered),
         }));
         this.events.close(priorDay, state, now);
         const ctx = this.drawContext(state, current);
@@ -196,13 +241,8 @@ export class GardenCalendar {
           state.balance,
         );
     }
-    state.plots = state.plots.map((entry) => ({
-      ...entry,
-      plant:
-        entry.plant &&
-        projectPlant(entry.plant, elapsed, current.weather, entry.sheltered),
-    }));
+    const effectiveWeather = this.project(state, current, elapsed);
     state.clock = elapsed;
-    return current;
+    return { ...current, effectiveWeather };
   }
 }

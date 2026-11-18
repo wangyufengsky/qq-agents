@@ -9,9 +9,54 @@ export const cropArtIds = [
 ];
 const stages = ["seedling", "growing", "mature", "withered"];
 const weatherKinds = ["sun", "cloud", "drizzle", "storm"];
-const eventKinds = ["merchant", "thief", "visitor"];
+const eventKinds = [
+  "merchant",
+  "thief",
+  "visitor",
+  "cat",
+  "aphids",
+  "blessing",
+  "weather-flip",
+  "twin",
+  "sketch",
+  "mystery-box",
+];
+const giftIds = ["dried-fish", "yarn-ball", "pressed-bookmark"];
+const eventIcons = new Map([
+  ["rain-merchant", "merchant"],
+  ["sunny-market", "merchant"],
+  ["clearance-oldman", "merchant"],
+  ["banquet-buyer", "merchant"],
+  ["fox-thief", "thief"],
+  ["hedgehog-thief", "thief"],
+  ["stray-cat", "cat"],
+  ["aphid-squad", "aphids"],
+  ["nuisance", "cat"],
+  ["weather_flip", "weather-flip"],
+  ["weather-blunder", "weather-flip"],
+  ["twin-fruit", "twin"],
+  ["harvest_bonus", "twin"],
+  ["sketch-contest", "sketch"],
+  ["mystery_box", "mystery-box"],
+  ["mystery-seed-bag", "mystery-box"],
+  ...[
+    "meteor-shower",
+    "morning-dew",
+    "firefly-concert",
+    "golden-earthworm",
+  ].map((id) => /** @type {[string,string]} */ ([id, "blessing"])),
+  ...[
+    "sparrow-visitor",
+    "wind-moonflower",
+    "gardener-aid",
+    "snail-express",
+  ].map((id) => /** @type {[string,string]} */ ([id, "visitor"])),
+]);
 const artwork = new Set([
   "paper.webp",
+  "plant-seedling.webp",
+  "supply-fertilizer.webp",
+  ...giftIds.map((id) => "gift-" + id + ".webp"),
   ...["normal", "low", "saturated"].map((soil) => `soil-${soil}.webp`),
   "shelter-back.webp",
   "shelter-front.webp",
@@ -26,7 +71,10 @@ const artwork = new Set([
 export const isGardenArtImage = (file) => artwork.has(file);
 /** @param {string} file */
 export const isGardenArtResource = (file) =>
-  file === "art.js" || file === "art.css" || isGardenArtImage(file);
+  file === "art.js" ||
+  file === "workspace.js" ||
+  file === "art.css" ||
+  isGardenArtImage(file);
 
 /** @typedef {{file:string, layer:"soil"|"rear"|"plant"|"roof"}} Layer */
 /** @typedef {{cropId:string,status:string,growth:number,crop:{hours:number},water:number,rules:{lowWater:number}}} Plant */
@@ -50,7 +98,10 @@ export function gardenLayers({ plant, sheltered }) {
         : plant.status;
     if (stages.includes(stage))
       layers.push({
-        file: `plant-${plant.cropId}-${stage}.webp`,
+        file:
+          stage === "seedling"
+            ? "plant-seedling.webp"
+            : `plant-${plant.cropId}-${stage}.webp`,
         layer: "plant",
       });
   }
@@ -58,8 +109,28 @@ export function gardenLayers({ plant, sheltered }) {
   return layers;
 }
 
-/** @param {"weather"|"event"} group @param {string} kind */
+/** @param {{kind:string,id?:string,effect?:{effect?:string}|unknown}} event */
+export function gardenEventArtId(event) {
+  const id = event.id?.split(":").at(-1) ?? "";
+  if (eventIcons.has(id)) return id;
+  const variant =
+    event.effect && typeof event.effect === "object" && "effect" in event.effect
+      ? event.effect.effect
+      : null;
+  return typeof variant === "string" && eventKinds.includes(variant)
+    ? variant
+    : event.kind;
+}
+
+/** @param {"weather"|"event"|"gift"|"crop"|"supply"} group @param {string} kind */
 export function gardenIconFile(group, kind) {
+  if (group === "gift")
+    return giftIds.includes(kind) ? "gift-" + kind + ".webp" : null;
+  if (group === "crop")
+    return cropArtIds.includes(kind) ? "plant-" + kind + "-mature.webp" : null;
+  if (group === "supply")
+    return kind === "fertilizer" ? "supply-fertilizer.webp" : null;
+  if (group === "event") kind = eventIcons.get(kind) ?? kind;
   const kinds = group === "weather" ? weatherKinds : eventKinds;
   return kinds.includes(kind) ? `${group}-${kind}.webp` : null;
 }
@@ -82,7 +153,7 @@ export function gardenArtMarkup(layers, url = browserUrl) {
     : "";
 }
 
-/** @param {"weather"|"event"} group @param {string} kind @param {(file:string)=>string|undefined} [url] */
+/** @param {"weather"|"event"|"gift"|"crop"|"supply"} group @param {string} kind @param {(file:string)=>string|undefined} [url] */
 export function gardenIconMarkup(group, kind, url = browserUrl) {
   const file = gardenIconFile(group, kind);
   const src = file && url(file);

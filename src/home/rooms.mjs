@@ -91,6 +91,13 @@ export class HomeRooms {
         audience: HOME_AUDIENCE,
         enabled: a.home?.enabled === true,
         publishing: visible,
+        giftShelf: visible
+          ? this.home.garden.gifts.shelfFor({
+              kind: "agent",
+              id: agentId,
+              generation,
+            })
+          : [],
         ...this.store.content(
           generation,
           visible,

@@ -1,10 +1,11 @@
 // @ts-check
 
-/** @param {import("./garden-rules.mjs").Plant} plant @param {boolean} sheltered @param {import("./garden-weather.mjs").Weather} weather */
-export function floodRisk(plant, sheltered, weather) {
+/** @param {import("./garden-rules.mjs").Plant} plant @param {boolean} sheltered @param {import("./garden-weather.mjs").Weather} weather @param {import("./garden-weather.mjs").Weather} [closingWeather] */
+export function floodRisk(plant, sheltered, weather, closingWeather = weather) {
   if (sheltered || weather.kind !== "storm" || plant.status !== "growing")
     return null;
-  return (plant.floodDays ?? 0) + 1 >= plant.crop.floodDays
+  return closingWeather.kind === "storm" &&
+    (plant.floodDays ?? 0) + 1 >= plant.crop.floodDays
     ? "critical"
     : "waterlogging";
 }

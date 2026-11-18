@@ -150,7 +150,7 @@ export const defaultWeather = {
   },
 };
 
-const compare = {
+export const compare = {
   eq: (/** @type {number} */ a, /** @type {number} */ b) => a === b,
   gt: (/** @type {number} */ a, /** @type {number} */ b) => a > b,
   gte: (/** @type {number} */ a, /** @type {number} */ b) => a >= b,

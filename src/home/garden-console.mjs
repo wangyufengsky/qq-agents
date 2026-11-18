@@ -1,7 +1,13 @@
 // @ts-check
 import { z } from "zod";
 import { defaultGardenSettings, HOUR, moistureRate } from "./garden-rules.mjs";
-import { gardenGiftSources, recordGardenGift } from "./garden-gift-sources.mjs";
+import {
+  gardenGiftSources,
+  recordGardenGift,
+  recordGardenItemGift,
+} from "./garden-gift-sources.mjs";
+import { defaultEvents, validEventReferences } from "./garden-event-rules.mjs";
+import { giftBudgetLimits } from "./garden-items.mjs";
 import { floodRisk } from "./garden-risks.mjs";
 
 /** @typedef {ReturnType<import("./garden-service.mjs").GardenService["read"]>} GardenState */
@@ -36,7 +42,14 @@ export function gardenPriorities(state) {
         return [
           { plot, plantId: plant.id, kind: "clear", priority: 4, hours: 0 },
         ];
-      const risk = floodRisk(plant, sheltered, state.weather);
+      const risk = floodRisk(
+        plant,
+        sheltered,
+        state.weather,
+        state.event?.kind === "weather_flip"
+          ? state.event.targetWeather
+          : state.weather,
+      );
       if (risk)
         return [
           {
@@ -118,6 +131,38 @@ function recipients(runtime) {
   ];
 }
 
+/** @param {any} runtime @param {{kind:string,id:string}} person */
+function giftPerson(runtime, person) {
+  const entry = recipients(runtime).find(
+    (row) => row.kind === person.kind && row.id === person.id,
+  );
+  if (!entry) return undefined;
+  return {
+    ...entry,
+    kind: /** @type {"admin"|"agent"} */ (entry.kind),
+    generation:
+      entry.kind === "admin" ? "instance" : runtime.home.generation(entry.id),
+  };
+}
+
+/** @param {any} runtime @param {string} roleId @param {GardenState} state */
+function roleGifts(runtime, roleId, state) {
+  const owner = giftPerson(runtime, { kind: "agent", id: roleId });
+  if (!owner) throw Error("GARDEN_ROLE_UNAVAILABLE");
+  return runtime.home.garden.gifts.view(owner, state.day, state);
+}
+
+/** @param {any} runtime @param {string} roleId */
+export function subjectGardenGifts(runtime, roleId) {
+  const state = runtime.home.garden.snapshot(runtime.now(), false);
+  const { budget: _budget, ...personalGifts } = roleGifts(
+    runtime,
+    roleId,
+    state,
+  );
+  return { items: gardenGiftSources(runtime, roleId), personalGifts };
+}
+
 /** @param {GardenState} state */
 export function marketHarvests(state) {
   return state.harvests.map((harvest) => {
@@ -143,6 +188,8 @@ export function marketHarvests(state) {
 export function performGardenAction(runtime, actor, value) {
   /** @type {import("./garden-service.mjs").GardenService} */
   const garden = runtime.home.garden;
+  const owner = giftPerson(runtime, actor);
+  if (!owner) throw Error("GARDEN_ROLE_UNAVAILABLE");
   return garden.act(
     runtime.now(),
     actor,
@@ -161,6 +208,8 @@ export function performGardenAction(runtime, actor, value) {
         throw Error("GARDEN_RECIPIENT_UNAVAILABLE");
     },
     (recipient, gift) => recordGardenGift(runtime, actor, recipient, gift),
+    { owner, recipient: (person) => giftPerson(runtime, person) },
+    (transfer) => recordGardenItemGift(runtime, transfer),
   );
 }
 
@@ -181,7 +230,21 @@ export function adminGardenView(runtime, collectVisitor = false) {
       : !state.running
         ? "DESKTOP_NOT_CONNECTED"
         : null);
-  const { roles: _grants, ...settings } = state.settings;
+  const { roles: _grants, giftBudgetGenerations, ...settings } = state.settings;
+  settings.giftBudgets = {
+    ...settings.giftBudgets,
+    roles: Object.fromEntries(
+      roles
+        .filter(
+          (role) =>
+            role.kind === "agent" &&
+            giftBudgetGenerations[role.id] ===
+              runtime.home.generation(role.id) &&
+            Object.hasOwn(settings.giftBudgets.roles, role.id),
+        )
+        .map((role) => [role.id, settings.giftBudgets.roles[role.id]]),
+    ),
+  };
   const roleIds = roles
     .filter(
       (role) =>
@@ -193,6 +256,11 @@ export function adminGardenView(runtime, collectVisitor = false) {
     initialized: true,
     ...state,
     settings,
+    personalGifts: garden.gifts.view(
+      { ...instanceAdmin, generation: "instance" },
+      state.day,
+      state,
+    ),
     roles,
     roleIds,
     pauseReason,
@@ -200,6 +268,14 @@ export function adminGardenView(runtime, collectVisitor = false) {
     market: marketHarvests(state),
     eventActions: eventActions(state),
     eventHistory: garden.calendar.events.history(),
+    eventPresets: Object.entries(defaultEvents.entries).map(([id, entry]) => ({
+      id,
+      entry,
+      available: validEventReferences({
+        ...state.settings,
+        events: { entries: { [id]: entry } },
+      }),
+    })),
   };
 }
 
@@ -234,10 +310,33 @@ export function adminGardenWrite(runtime, operation, value) {
     );
     if (roleIds.some((id) => !eligible.has(id)))
       throw Error("GARDEN_ROLE_UNAVAILABLE");
-    if (Object.hasOwn(settings, "roles")) throw Error("INVALID_REQUEST");
+    if (
+      Object.hasOwn(settings, "roles") ||
+      Object.hasOwn(settings, "giftBudgetGenerations")
+    )
+      throw Error("INVALID_REQUEST");
+    const current = garden.requireState().settings;
+    const giftBudgets = Object.hasOwn(settings, "giftBudgets")
+      ? giftBudgetLimits.parse(settings.giftBudgets)
+      : current.giftBudgets;
+    if (
+      Object.hasOwn(settings, "giftBudgets") &&
+      Object.keys(giftBudgets.roles).some((id) => !eligible.has(id))
+    )
+      throw Error("GARDEN_ROLE_UNAVAILABLE");
+    const giftBudgetGenerations = Object.hasOwn(settings, "giftBudgets")
+      ? Object.fromEntries(
+          Object.keys(giftBudgets.roles).map((id) => [
+            id,
+            runtime.home.generation(id),
+          ]),
+        )
+      : current.giftBudgetGenerations;
     garden.configure(now, expectedRevision, {
       ...settings,
-      initialBalance: garden.requireState().settings.initialBalance,
+      initialBalance: current.initialBalance,
+      giftBudgets,
+      giftBudgetGenerations,
       roles: Object.fromEntries(
         roleIds.map((id) => [id, runtime.home.generation(id)]),
       ),
@@ -259,30 +358,56 @@ export function subjectGardenView(
 ) {
   /** @type {import("./garden-service.mjs").GardenService} */
   const garden = runtime.home.garden;
+  const now = runtime.now();
+  const active = collectVisitor && !gardenPauseReason(runtime);
   const state = garden.read(
-    runtime.now(),
-    !collectVisitor || gardenPauseReason(runtime)
-      ? undefined
-      : { kind: "agent", id: roleId, turnId },
+    now,
+    active ? { kind: "agent", id: roleId, turnId } : undefined,
   );
   const event = state.event;
+  const observation =
+    active &&
+    state.running &&
+    event?.kind === "blessing" &&
+    event.effect.effect === "firefly"
+      ? recordGardenObservation(runtime, roleId, event.id, now)
+      : undefined;
   const actions = eventActions(state);
   return {
     balance: state.balance,
     event: event
-      ? {
-          id: event.id,
-          name: event.name,
-          kind: event.kind,
-          status: event.status,
-          actions,
-          ...(event.kind === "merchant" && {
-            seedOffers: event.seedOffers,
-            offer: event.offer,
-          }),
-        }
+      ? { ...event, actions, ...(observation && { observation }) }
       : null,
+    mysterySeeds: state.mysterySeeds,
+    mysteryPlantActions: state.mysterySeeds.count
+      ? state.plots.flatMap(({ id, plant }) =>
+          plant ? [] : [{ kind: "plant_mystery_seed", args: { plot: id } }],
+        )
+      : [],
     gifts: gardenGiftSources(runtime, roleId),
+    personalGifts: roleGifts(runtime, roleId, state),
+    giftActions: {
+      buy_gift: {
+        eventId: "当前商人事件 ID",
+        giftId: "礼物货品 ID",
+        price: "成交价",
+        recipient: "可选 {kind,id}，省略为收好",
+        note: "直送时可选纸条",
+      },
+      send_gift: {
+        itemId: "自己的单份物品 ID",
+        recipient: "{kind,id}",
+        note: "可选纸条",
+      },
+      use_gift: { itemId: "自己的可食用物品 ID" },
+      display_gift: {
+        itemId: "自己的单份物品 ID",
+        slot: "1–3",
+        description: "可选公开说明",
+        publishNote: "默认为 false",
+      },
+      withdraw_gift: { slot: "1–3" },
+    },
     clock: state.clock,
     day: state.day,
     dayRemaining: state.dayRemaining,
@@ -315,6 +440,8 @@ export function subjectGardenView(
         quality: plant.quality,
         fertilizer: plant.fertilizer,
         fertilizerRequired: plant.crop.fertilizer,
+        freeFertilizer:
+          plant.status === "growing" && plant.earthwormDay !== undefined,
         witheredReason: plant.witheredReason,
         floodDays: plant.floodDays ?? 0,
       },
@@ -341,13 +468,63 @@ export function subjectGardenView(
   };
 }
 
+/** @param {any} runtime @param {string} roleId @param {string} eventId @param {number} now */
+function recordGardenObservation(runtime, roleId, eventId, now) {
+  const generation = runtime.home.generation(roleId);
+  const memory = runtime.memory.bind(roleId);
+  const dedupe = `garden-observation:${generation}:${eventId}`;
+  const timestamp = new Date(now).toISOString();
+  const record = memory.append({
+    dedupe,
+    kind: "garden.observation",
+    direction: "internal",
+    origin: "garden",
+    conversation: "@garden",
+    connectionId: runtime.agent(roleId).connectionId,
+    occurredAt: timestamp,
+    observedAt: timestamp,
+    body: "你在小窝花园观察了萤火虫音乐会。",
+    payload: { eventId, generation },
+  });
+  return { evidenceId: record.id };
+}
+
 /** @param {GardenState} state */
 export function eventActions(state) {
   const { event } = state;
   if (!event || event.status !== "open") return [];
+  const args = { eventId: event.id };
   if (event.kind === "thief")
+    return [{ label: "驱赶小偷", kind: "chase_thief", args }];
+  if (event.kind === "nuisance")
     return [
-      { label: "驱赶小偷", kind: "chase_thief", args: { eventId: event.id } },
+      {
+        label:
+          event.effect.effect === "cat"
+            ? "哄走野猫"
+            : `除虫 · ${event.effect.cost ?? 10} 元`,
+        kind: "resolve_event",
+        args,
+      },
+    ];
+  if (
+    event.kind === "harvest_bonus" &&
+    event.effect.effect === "sketch" &&
+    event.progress &&
+    event.progress.current >= event.progress.required
+  )
+    return [{ label: "领取写生奖励", kind: "resolve_event", args }];
+  if (
+    event.kind === "mystery_box" &&
+    event.available &&
+    (event.purchased ?? 0) < event.effect.limit
+  )
+    return [
+      {
+        label: `买 1 袋种子盲盒 · ${event.effect.price} 元`,
+        kind: "buy_mystery_seed",
+        args: { ...args, quantity: 1, price: event.effect.price },
+      },
     ];
   if (event.kind !== "merchant") return [];
   const buys = event.seedOffers.map((row) => {
@@ -355,23 +532,29 @@ export function eventActions(state) {
     return {
       label: `买 1 颗${row.name} · ${price} 元`,
       kind: "merchant_buy",
-      args: { eventId: event.id, cropId: row.cropId, quantity: 1, price },
+      args: { ...args, cropId: row.cropId, quantity: 1, price },
     };
   });
-  const offers = state.harvests
-    .filter((row) => row.crop_id === event.offer.cropId)
-    .map((row) => {
-      const price = Math.round(event.offer.rates[String(row.quality)]);
-      return {
-        label: `溢价出售 1 份${event.offer.name} · ${price} 元`,
+  const fertilizerBuys = (event.fertilizerOffers ?? []).map(
+    ({ rate: price }) => ({
+      label: `买 1 份肥料 · ${price} 元`,
+      kind: "merchant_buy_fertilizer",
+      args: { ...args, quantity: 1, price },
+    }),
+  );
+  const offers = state.harvests.flatMap((row) => {
+    const offer = (event.offers ?? (event.offer ? [event.offer] : [])).find(
+      ({ cropId }) => cropId === row.crop_id,
+    );
+    if (!offer) return [];
+    const price = Math.round(offer.rates[String(row.quality)]);
+    return [
+      {
+        label: `溢价出售 1 份${offer.name} · ${price} 元`,
         kind: "merchant_sell",
-        args: {
-          eventId: event.id,
-          harvestId: String(row.id),
-          quantity: 1,
-          price,
-        },
-      };
-    });
-  return [...buys, ...offers];
+        args: { ...args, harvestId: String(row.id), quantity: 1, price },
+      },
+    ];
+  });
+  return [...buys, ...fertilizerBuys, ...offers];
 }

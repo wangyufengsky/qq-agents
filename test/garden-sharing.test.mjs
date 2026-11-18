@@ -244,12 +244,14 @@ test("desktop garden endpoint binds client and room epoch and writes the same ga
   });
   const { body: result } = await send({ action: fakePlot });
   assert.equal(result.garden.plots[0].plant.cropId, "clover");
-  assert.equal(result.garden.ledger, undefined);
+  assert.ok(Array.isArray(result.garden.ledger));
+  assert.equal(result.garden.settings, undefined);
   const adminView = await fetch(origin + "/api/home-garden", {
     headers: { connection: "close", "x-admin-token": token },
   }).then((r) => r.json());
   assert.equal(adminView.plots[0].plant.id, result.garden.plots[0].plant.id);
   assert.deepEqual(adminView.seeds, result.garden.seeds);
+  assert.deepEqual(adminView.ledger, result.garden.ledger);
   assert.deepEqual(adminView.priorities, result.garden.priorities);
   assert.equal(
     (

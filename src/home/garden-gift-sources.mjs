@@ -24,17 +24,44 @@ export function recordGardenGift(runtime, giver, recipient, gift) {
   });
 }
 
+export function recordGardenItemGift(runtime, gift) {
+  const { recipient, giver, at } = gift;
+  if (recipient.kind !== "agent") return;
+  const role = runtime.agent(recipient.id);
+  const timestamp = new Date(at).toISOString();
+  // Retain an experience citation without copying the participants' private paper note into memory.
+  runtime.memory.bind(role.id).append({
+    dedupe: "garden-item-gift:" + gift.id,
+    kind: "garden.item_gift",
+    direction: "internal",
+    origin: "garden",
+    conversation: "@garden",
+    connectionId: role.connectionId,
+    occurredAt: timestamp,
+    observedAt: timestamp,
+    body: `${giver.name} 送了你一份${gift.name}。来历和赠言可在花园的个人物品栏中查看。`,
+    payload: { transferId: gift.id, generation: recipient.generation },
+  });
+}
+
 export function gardenGiftSources(runtime, agentId) {
   if (!runtime.home.garden.initialized()) return [];
   const memory = runtime.memory.bind(agentId);
   return memory.db
     .prepare(
       `SELECT e.id,e.body,e.occurred_at FROM events e
-       JOIN garden_gifts g ON g.id=json_extract(e.payload,'$.giftId')
-       AND g.recipient_kind='agent' AND g.recipient_id=e.agent_id
        WHERE e.agent_id=? AND e.conversation='@garden'
-       AND e.kind='garden.gift' AND e.origin='garden' AND json_extract(e.payload,'$.generation')=?
-       ORDER BY e.seq DESC LIMIT 12`,
+       AND e.origin='garden' AND json_extract(e.payload,'$.generation')=?
+       AND (
+         (e.kind='garden.gift' AND EXISTS (
+           SELECT 1 FROM garden_gifts g WHERE g.id=json_extract(e.payload,'$.giftId')
+             AND g.recipient_kind='agent' AND g.recipient_id=e.agent_id
+         )) OR (e.kind='garden.item_gift' AND EXISTS (
+           SELECT 1 FROM garden_item_transfers t
+           WHERE t.id=json_extract(e.payload,'$.transferId')
+             AND t.recipient=json_array('agent',e.agent_id,json_extract(e.payload,'$.generation'))
+         ))
+       ) ORDER BY e.seq DESC LIMIT 12`,
     )
     .all(agentId, runtime.home.generation(agentId))
     .map((row) => ({

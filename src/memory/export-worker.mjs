@@ -82,7 +82,12 @@ try {
     const from =
       name === "diary_revisions"
         ? "diary_revisions r JOIN diaries d ON d.id=r.id WHERE d.agent_id=?"
-        : `${name} r WHERE r.agent_id=?`;
+        : name === "events"
+          ? `events r WHERE r.agent_id=? AND (r.kind<>'garden.item_gift' OR EXISTS (
+            SELECT 1 FROM home_identities h WHERE h.agent_id=r.agent_id AND h.active=1
+            AND h.generation=json_extract(r.payload,'$.generation')
+          ))`
+          : `${name} r WHERE r.agent_id=?`;
     // Check encoded column sizes in SQLite before materializing a large row in JS.
     const columns = db
       .prepare(`PRAGMA table_info(${name})`)

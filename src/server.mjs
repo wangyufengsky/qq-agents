@@ -772,6 +772,8 @@ export function createServer({
               "GARDEN_PAUSED",
               "GARDEN_SEED_UNAVAILABLE",
               "GARDEN_RECIPIENT_UNAVAILABLE",
+              "GARDEN_ITEM_UNAVAILABLE",
+              "GARDEN_ITEM_NOT_USABLE",
               "GARDEN_STOCK_UNAVAILABLE",
             ].includes(error.message)
           )

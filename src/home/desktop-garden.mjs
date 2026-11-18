@@ -26,13 +26,15 @@ function operatorView(garden) {
     seeds: garden.seeds,
     fertilizer: garden.fertilizer,
     fertilizerCredits: garden.fertilizerCredits,
-    event: garden.event
-      ? {
-          name: garden.event.name,
-          kind: garden.event.kind,
-          status: garden.event.status,
-        }
-      : null,
+    personalGifts: garden.personalGifts,
+    event: garden.event,
+    mysterySeeds: garden.mysterySeeds,
+    weatherForecast: garden.weatherForecast,
+    speed: garden.settings.speed,
+    eventHistory: garden.eventHistory,
+    activity: garden.activity,
+    ledger: garden.ledger,
+    gifts: garden.gifts,
     eventActions: garden.eventActions,
     market: garden.market,
     roles: garden.roles,

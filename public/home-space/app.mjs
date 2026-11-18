@@ -5,7 +5,11 @@ import { createTemplate } from "../home-preview/templates.mjs";
 import { makeScene } from "../home-preview/scene.mjs";
 import { paperElement as el } from "../home-preview/paper-board.mjs";
 import { renderBookScene, createPageTurn, turnDirection } from "./book.mjs";
-import { renderGuide, renderBoardPreferences } from "./interiors.mjs";
+import {
+  renderGuide,
+  renderBoardPreferences,
+  renderGiftShelf,
+} from "./interiors.mjs";
 const pageTurn = createPageTurn(document.getElementById("stage"));
 const $ = (id) => document.getElementById(id),
   mobile = matchMedia("(max-width:640px)");
@@ -607,7 +611,7 @@ async function loadContent() {
   if (
     !overview ||
     route?.type !== "room" ||
-    !["intro", "works"].includes(readerAction)
+    !["intro", "works", "gifts"].includes(readerAction)
   )
     return;
   const request = ++contentTicket,
@@ -631,6 +635,22 @@ async function loadContent() {
     }
     clearTimeout(contentTimer);
     const root = $("reader-content");
+    contentTimer = setTimeout(() => {
+      contentTicket++;
+      root.replaceChildren(
+        el(
+          "p",
+          "",
+          action === "gifts"
+            ? "展示验证已到期，连接恢复后重新读取。"
+            : "内容验证已到期，已隐藏旧正文；连接恢复后重新读取。",
+        ),
+      );
+    }, 15000);
+    if (action === "gifts") {
+      renderGiftShelf(root, value.giftShelf || []);
+      return;
+    }
     const openItems = new Set(
       [...root.querySelectorAll(".home-text-card")]
         .filter((card) => card.querySelector("details")?.open)
@@ -743,12 +763,6 @@ async function loadContent() {
       if (position?.revision === card.dataset.revision)
         card.querySelector(".home-text").scrollTop = position.top;
     }
-    contentTimer = setTimeout(() => {
-      contentTicket++;
-      root.replaceChildren(
-        el("p", "", "内容验证已到期，已隐藏旧正文；连接恢复后重新读取。"),
-      );
-    }, 15000);
   } catch (e) {
     if (request === contentTicket) {
       clearTimeout(contentTimer);
@@ -1258,11 +1272,29 @@ function openReader(action) {
   boardView?.close();
   boardView = null;
   $("reader-content").replaceChildren();
+  const shelfPages = $("shelf-pages");
+  shelfPages.hidden = !["works", "gifts"].includes(action);
+  shelfPages.replaceChildren();
+  if (!shelfPages.hidden) {
+    for (const [page, label] of [
+      ["works", "作品"],
+      ["gifts", "礼物"],
+    ]) {
+      const tab = button(label, () => {
+        if (readerAction === page) return;
+        openReader(page);
+        shelfPages.querySelector('[aria-current="page"]')?.focus();
+      });
+      if (page === action) tab.setAttribute("aria-current", "page");
+      shelfPages.append(tab);
+    }
+  }
   $("reader-title").textContent = {
     board: "客厅留言板",
     guide: "参观小册",
     intro: "介绍卡",
     works: "作品展示",
+    gifts: "礼物展示",
     social: "往来管理",
     desktop: "桌面小窝设置",
     letters: `${name(route.agentId)}的信件`,
@@ -1314,8 +1346,14 @@ function openReader(action) {
     boardView.render().catch((e) => toast(e.message));
     return;
   }
-  if (["intro", "works"].includes(action)) {
-    $("reader-content").append(el("p", "", "正在读取已发布文字…"));
+  if (["intro", "works", "gifts"].includes(action)) {
+    $("reader-content").append(
+      el(
+        "p",
+        "",
+        action === "gifts" ? "正在查看展示架…" : "正在读取已发布文字…",
+      ),
+    );
     if (!dialog.open) dialog.showModal();
     loadContent();
     return;
@@ -1465,7 +1503,7 @@ setInterval(async () => {
     const presentationChanged =
       JSON.stringify(info) !== JSON.stringify(overview);
     overview = info;
-    if (["intro", "works"].includes(readerAction)) await loadContent();
+    if (["intro", "works", "gifts"].includes(readerAction)) await loadContent();
     if (currentTicket !== ticket) return;
     if (presentationChanged) {
       draw();

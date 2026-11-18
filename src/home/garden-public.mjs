@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import {
   gardenArtMarkup,
   gardenIconFile,
+  gardenEventArtId,
   gardenIconMarkup,
   gardenLayers,
 } from "../../public/garden-art/art.js";
@@ -18,6 +19,7 @@ const stageLabels = {
   withered: "已枯萎",
 };
 const artwork = Symbol("gardenSnapshotArtwork");
+const eventArtwork = Symbol("gardenEventArtwork");
 const artRoot = new URL("../../public/garden-art/", import.meta.url);
 const gardenMarkup = `<!doctype html><meta charset="utf-8">
 <style>
@@ -48,7 +50,14 @@ export function gardenPublicSnapshot(state, { running, now }) {
       plant.status === "growing" && plant.growth / plant.crop.hours < 0.25
         ? "seedling"
         : plant.status;
-    const risk = floodRisk(plant, sheltered, state.weather);
+    const risk = floodRisk(
+      plant,
+      sheltered,
+      state.weather,
+      state.event?.kind === "weather_flip"
+        ? state.event.targetWeather
+        : state.weather,
+    );
     return {
       plot: id,
       sheltered,
@@ -92,6 +101,7 @@ export function gardenPublicSnapshot(state, { running, now }) {
     running,
     plots,
     text: [heading, ...rows].join("\n"),
+    [eventArtwork]: state.event ? gardenEventArtId(state.event) : null,
     [artwork]: state.plots.map((plot) => gardenLayers(plot)),
   };
 }
@@ -135,7 +145,8 @@ export async function renderGardenSnapshot(
     "paper.webp",
     ...layers.flatMap((plot) => plot.map(({ file }) => file)),
     gardenIconFile("weather", snapshot.weather.kind),
-    snapshot.event && gardenIconFile("event", snapshot.event.kind),
+    snapshot.event &&
+      gardenIconFile("event", snapshot[eventArtwork] ?? snapshot.event.kind),
   ]);
   const optional = (/** @type {string} */ file) =>
     readArt(file).catch(() => null);
@@ -208,7 +219,11 @@ export async function renderGardenSnapshot(
           icons: css
             ? gardenIconMarkup("weather", snapshot.weather.kind, url) +
               (snapshot.event
-                ? gardenIconMarkup("event", snapshot.event.kind, url)
+                ? gardenIconMarkup(
+                    "event",
+                    snapshot[eventArtwork] ?? snapshot.event.kind,
+                    url,
+                  )
                 : "")
             : "",
         },

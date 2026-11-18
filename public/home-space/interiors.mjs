@@ -1,5 +1,34 @@
 // @ts-check
 import { paperElement as el } from "../home-preview/paper-board.mjs";
+import { gardenIconMarkup } from "../garden-art/art.js";
+
+/** @param {HTMLElement} root @param {{slot:number,giftId:string,name:string,description:string,note:string}[]} gifts */
+export function renderGiftShelf(root, gifts) {
+  const shelf = el("ol", "gift-shelf");
+  for (const slot of [1, 2, 3]) {
+    const card = el("li", "gift-shelf-card");
+    const gift = gifts.find((item) => item.slot === slot);
+    if (!gift) {
+      card.append(el("p", "display-note", "空位"));
+    } else {
+      const art = el("span", "gift-shelf-sticker");
+      art.setAttribute("aria-hidden", "true");
+      // The shared asset helper resolves only packaged art, while gift text uses text nodes.
+      art.innerHTML = gardenIconMarkup("gift", gift.giftId);
+      art
+        .querySelector("img")
+        ?.addEventListener("error", () => art.remove(), { once: true });
+      if (art.childElementCount) card.append(art);
+      card.append(el("h3", "", gift.name));
+      if (gift.description)
+        card.append(el("p", "gift-shelf-description", gift.description));
+      if (gift.note)
+        card.append(el("blockquote", "gift-shelf-note", gift.note));
+    }
+    shelf.append(card);
+  }
+  root.replaceChildren(shelf);
+}
 
 /** @param {string} text @param {() => void} action */
 function button(text, action) {

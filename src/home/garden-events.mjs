@@ -1,14 +1,37 @@
-import { drawGardenEvent, eventOdds } from "./garden-event-rules.mjs";
+import { randomUUID } from "node:crypto";
+import { z } from "zod";
+import {
+  adjustPlantQuality,
+  DAY,
+  gardenPlantRules,
+  grantGrowth,
+} from "./garden-rules.mjs";
+import {
+  drawGardenEvent,
+  eventOdds,
+  mysteryCrops,
+  rankEventTarget,
+} from "./garden-event-rules.mjs";
 import { poolEntryId, weatherTrialInput } from "./garden-weather.mjs";
 
 const system = { kind: "admin", id: "system" };
-const trial = weatherTrialInput.extend({ todayId: poolEntryId.optional() });
+const trial = weatherTrialInput.extend({
+  todayId: poolEntryId.optional(),
+  day: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
+});
 
-/** @typedef {{id:string,name:string,status:"open"|"expired"|"claimed"|"chased"|"missed"}} EventBase */
+/** @typedef {{id:string,name:string,status:"open"|"expired"|"claimed"|"chased"|"missed",outcome?:any}} EventBase */
+/** @typedef {{cropId:string,name:string,premium:number,originalRate?:number,rates:Record<string,number>}} HarvestOffer */
+/** @typedef {ReturnType<import("./garden-event-rules.mjs").eventPool["parse"]>["entries"][string]["effect"]} EventEffect */
 /** @typedef {EventBase & (
- * {kind:"merchant",seedOffers:{cropId:string,name:string,rate:number}[],offer:{cropId:string,name:string,premium:number,rates:Record<string,number>}} |
- * {kind:"thief",reward:number,coinLoss:number,cropLoss:number} |
- * {kind:"visitor",reward:{kind:"seed",cropId:string,quantity:number}|{kind:"fertilizer"|"fertilizer_credit",quantity:number}}
+ * {kind:"merchant",seedOffers:{cropId:string,name:string,rate:number,originalRate?:number,discount?:number}[],offer?:HarvestOffer,offers?:HarvestOffer[],fertilizerOffers?:{rate:number}[],giftOffers?:import("./garden-items.mjs").GiftOffer[]} |
+ * {kind:"thief",reward:number,coinLoss:number,cropLoss:number,targetCropId?:string} |
+ * {kind:"visitor",reward:{kind:"seed",cropId:string,quantity:number}|{kind:"fertilizer"|"fertilizer_credit",quantity:number}} |
+ * {kind:"blessing",effect:Extract<EventEffect,{kind:"blessing"}>} |
+ * {kind:"nuisance",effect:Extract<EventEffect,{kind:"nuisance"}>,startedAt:number,handledAt?:number} |
+ * {kind:"weather_flip",effect:Extract<EventEffect,{kind:"weather_flip"}>,targetWeather:import("./garden-weather.mjs").Weather,forecast:import("./garden-weather.mjs").Weather} |
+ * {kind:"harvest_bonus",effect:Extract<EventEffect,{kind:"harvest_bonus"}>,progress?:{current:number,required:number}} |
+ * {kind:"mystery_box",effect:Extract<EventEffect,{kind:"mystery_box"}>,purchased?:number,available?:boolean}
  * )} GardenEvent */
 export class GardenEvents {
   constructor(db, changeBalance) {
@@ -16,7 +39,7 @@ export class GardenEvents {
     this.changeBalance = changeBalance;
   }
 
-  /** @param {number} day @returns {GardenEvent|null} */
+  /** @param {number|undefined} day @returns {GardenEvent|null} */
   get(day) {
     const row = this.db
       .prepare("SELECT value FROM garden_events WHERE day=?")
@@ -41,9 +64,172 @@ export class GardenEvents {
 
   draw(state, ctx, weather, seed, day) {
     const entry = drawGardenEvent(state.settings, ctx, weather, seed, day);
+    if (entry?.kind === "blessing") this.bless(entry, state, seed, day);
+    if (entry?.kind === "nuisance") entry.startedAt = (day - 1) * DAY;
     this.db
       .prepare("INSERT INTO garden_events(day,value) VALUES(?,?)")
       .run(day, JSON.stringify(entry));
+  }
+
+  bless(entry, state, seed, day) {
+    const {
+      effect,
+      quality = effect === "meteor" ? 15 : effect === "firefly" ? 20 : 0,
+      growth = effect === "meteor" ? 5 : 0,
+      water = effect === "dew" ? 30 : 0,
+    } = entry.effect;
+    const targets = state.plots.filter(
+      ({ plant }) =>
+        plant?.status === "growing" &&
+        (effect !== "firefly" || plant.crop.light === "shade"),
+    );
+    entry.status = "claimed";
+    if (effect === "earthworm") {
+      const eligible = targets.filter(
+        ({ plant }) =>
+          plant.earthwormDay === undefined &&
+          plant.fertilizer < plant.crop.fertilizer,
+      );
+      const target = rankEventTarget(
+        seed,
+        "earthworm",
+        day,
+        eligible,
+        ({ id }) => id,
+      )[0];
+      if (target) target.plant.earthwormDay = day;
+      entry.outcome = target
+        ? { plotId: target.id, plantId: target.plant.id, used: false }
+        : null;
+      return;
+    }
+    entry.outcome = {
+      plots: targets
+        .map(({ id, plant }) => {
+          const before = plant.water;
+          plant.water = Math.min(100, before + water);
+          if (water > 0 && plant.water > 0) plant.dry = 0;
+          return {
+            plotId: id,
+            plantId: plant.id,
+            quality: adjustPlantQuality(plant, quality),
+            growth: grantGrowth(plant, growth),
+            water: plant.water - before,
+          };
+        })
+        .filter(({ quality, growth, water }) => quality || growth || water),
+    };
+  }
+
+  progress(entry, state) {
+    return {
+      current: new Set(
+        state.plots.flatMap(({ plant }) =>
+          plant && plant.status !== "withered" ? [plant.cropId] : [],
+        ),
+      ).size,
+      required: entry.effect.required ?? 3,
+    };
+  }
+
+  /** @returns {GardenEvent|null} */
+  view(day, state, claimed) {
+    const entry = claimed ?? this.get(day);
+    if (entry?.kind === "harvest_bonus" && entry.effect.effect === "sketch")
+      return { ...entry, progress: this.progress(entry, state) };
+    if (
+      entry?.kind === "blessing" &&
+      entry.effect.effect === "earthworm" &&
+      entry.outcome
+    ) {
+      const { plotId, plantId } = entry.outcome;
+      const plant = state.plots.find(({ id }) => id === plotId)?.plant;
+      if (plant?.id !== plantId || plant.status !== "growing")
+        return { ...entry, outcome: { ...entry.outcome, unavailable: true } };
+    }
+    if (entry?.kind === "mystery_box")
+      return {
+        ...entry,
+        available: mysteryCrops.some((id) => state.settings.crops[id]?.enabled),
+      };
+    return entry;
+  }
+
+  useEarthworm(day, plotId, plantId) {
+    if (day === undefined) return false;
+    const entry = this.get(day);
+    const target = entry?.outcome;
+    if (
+      entry?.kind !== "blessing" ||
+      entry.effect.effect !== "earthworm" ||
+      !target ||
+      target.used ||
+      target.plotId !== plotId ||
+      target.plantId !== plantId
+    )
+      return false;
+    this.update(day, { ...entry, outcome: { ...target, used: true } });
+    return true;
+  }
+
+  harvestQuantity(day, plot, plant) {
+    const entry = this.get(day);
+    if (
+      entry?.kind !== "harvest_bonus" ||
+      entry.effect.effect !== "twin" ||
+      entry.status !== "open"
+    )
+      return plant.crop.yield;
+    const quantity = plant.crop.yield * (entry.effect.multiplier ?? 2);
+    this.update(day, {
+      ...entry,
+      status: "claimed",
+      outcome: { plotId: plot, plantId: plant.id, quantity },
+    });
+    return quantity;
+  }
+
+  mysteryStock() {
+    const bags = this.db
+      .prepare("SELECT candidates FROM garden_mystery_bags ORDER BY rowid")
+      .all()
+      .map(({ candidates }) => ({
+        candidates: JSON.parse(candidates).map(({ cropId, crop }) => ({
+          cropId,
+          name: crop.name,
+        })),
+      }));
+    return { count: bags.length, bags };
+  }
+
+  openBag() {
+    const bag = this.db
+      .prepare(
+        "SELECT id,candidates,rules FROM garden_mystery_bags ORDER BY rowid LIMIT 1",
+      )
+      .get();
+    if (!bag) throw Error("GARDEN_STOCK_UNAVAILABLE");
+    const candidates = JSON.parse(bag.candidates);
+    const result = rankEventTarget(
+      this.seed(),
+      "mystery-seed",
+      bag.id,
+      candidates,
+      ({ cropId }) => cropId,
+    )[0];
+    this.db.prepare("DELETE FROM garden_mystery_bags WHERE id=?").run(bag.id);
+    return {
+      ...result,
+      bagId: bag.id,
+      rules: bag.rules && JSON.parse(bag.rules),
+    };
+  }
+
+  seed() {
+    return String(
+      this.db.prepare("SELECT seed FROM garden_weather_seed WHERE id=1").get()
+        ?.seed,
+    );
   }
 
   trialInput(input) {
@@ -58,6 +244,8 @@ export class GardenEvents {
     }
     return {
       today: today?.name ?? null,
+      day: ctx.day,
+      weatherBasis: "forecast",
       ...eventOdds(state.settings, ctx, today),
     };
   }
@@ -69,9 +257,9 @@ export class GardenEvents {
     if (entry.kind === "thief") {
       const lot = this.db
         .prepare(
-          "SELECT id,crop_id,quantity FROM garden_harvests WHERE quantity>0 ORDER BY rowid LIMIT 1",
+          "SELECT id,crop_id,quantity FROM garden_harvests WHERE quantity>0 AND (crop_id=? OR ? IS NULL) ORDER BY rowid LIMIT 1",
         )
-        .get();
+        .get(entry.targetCropId ?? null, entry.targetCropId ?? null);
       if (lot) {
         const quantity = Math.min(lot.quantity, entry.cropLoss);
         this.db
@@ -80,15 +268,52 @@ export class GardenEvents {
           )
           .run(quantity, lot.id);
         outcome = { harvestId: lot.id, cropId: lot.crop_id, quantity };
+      } else if (entry.targetCropId && entry.coinLoss === 0) {
+        outcome = { empty: true };
       } else {
         const coins = Math.min(state.balance, entry.coinLoss);
         this.changeBalance(now, system, "thief_loss", state, -coins);
         outcome = { coins };
       }
     }
+    if (entry.kind === "nuisance") {
+      if (entry.effect.effect === "cat") {
+        const shelved = state.plots.filter(({ sheltered }) => sheltered);
+        const target = rankEventTarget(
+          this.seed(),
+          "stray-cat",
+          day,
+          shelved,
+          ({ id }) => id,
+        )[0];
+        if (target) target.sheltered = false;
+        outcome = target
+          ? { plotId: target.id, sheltered: false }
+          : { empty: true };
+      } else {
+        const plots = state.plots.flatMap(({ id, plant }) =>
+          plant?.status === "growing"
+            ? [
+                {
+                  plotId: id,
+                  plantId: plant.id,
+                  quality: adjustPlantQuality(
+                    plant,
+                    -(entry.effect.qualityLoss ?? 10),
+                  ),
+                },
+              ]
+            : [],
+        );
+        outcome = { plots };
+      }
+    }
     this.update(day, {
       ...entry,
-      status: entry.kind === "thief" ? "missed" : "expired",
+      status:
+        entry.kind === "thief" || entry.kind === "nuisance"
+          ? "missed"
+          : "expired",
       outcome,
     });
   }
@@ -162,7 +387,64 @@ export class GardenEvents {
       });
       return { eventId: entry.id, reward: entry.reward };
     }
+    if (action.kind === "resolve_event") {
+      let delta;
+      if (entry.kind === "nuisance") {
+        delta =
+          entry.effect.effect === "cat"
+            ? (entry.effect.reward ?? 10)
+            : -(entry.effect.cost ?? 10);
+      } else if (
+        entry.kind === "harvest_bonus" &&
+        entry.effect.effect === "sketch"
+      ) {
+        const { current, required } = this.progress(entry, state);
+        if (current < required) throw Error("GARDEN_EVENT_OFFER");
+        delta = entry.effect.reward ?? 80;
+      } else throw Error("GARDEN_EVENT_OFFER");
+      this.changeBalance(now, actor, action.kind, state, delta);
+      const outcome = { reward: Math.max(delta, 0), cost: Math.max(-delta, 0) };
+      this.update(day, {
+        ...entry,
+        status: "claimed",
+        handledAt: state.clock,
+        actor: { kind: actor.kind, id: actor.id },
+        outcome,
+      });
+      return { eventId: entry.id, ...outcome };
+    }
+    if (action.kind === "buy_mystery_seed") {
+      if (entry.kind !== "mystery_box") throw Error("GARDEN_EVENT_OFFER");
+      const purchased = (entry.purchased ?? 0) + action.quantity;
+      if (purchased > entry.effect.limit)
+        throw Error("GARDEN_STOCK_UNAVAILABLE");
+      const candidates = mysteryCrops
+        .filter((cropId) => state.settings.crops[cropId]?.enabled)
+        .map((cropId) => ({ cropId, crop: state.settings.crops[cropId] }));
+      if (!candidates.length) throw Error("GARDEN_SEED_UNAVAILABLE");
+      const price = entry.effect.price * action.quantity;
+      if (price !== action.price) throw Error("GARDEN_PRICE_CHANGED");
+      this.changeBalance(now, actor, action.kind, state, -price);
+      const insert = this.db.prepare(
+        "INSERT INTO garden_mystery_bags VALUES(?,?,?)",
+      );
+      const snapshot = JSON.stringify(candidates);
+      const plantRules = JSON.stringify(gardenPlantRules(state.settings));
+      for (let i = 0; i < action.quantity; i++)
+        insert.run(randomUUID(), snapshot, plantRules);
+      this.update(day, { ...entry, purchased });
+      return { eventId: entry.id, price, quantity: action.quantity, purchased };
+    }
     if (entry.kind !== "merchant") throw Error("GARDEN_EVENT_OFFER");
+    if (action.kind === "merchant_buy_fertilizer") {
+      const offer = entry.fertilizerOffers?.[0];
+      if (!offer) throw Error("GARDEN_EVENT_OFFER");
+      const price = offer.rate * action.quantity;
+      if (price !== action.price) throw Error("GARDEN_PRICE_CHANGED");
+      this.changeBalance(now, actor, action.kind, state, -price);
+      state.fertilizer += action.quantity;
+      return { eventId: entry.id, price, quantity: action.quantity };
+    }
     if (action.kind === "merchant_buy") {
       const offer = entry.seedOffers.find(
         ({ cropId }) => cropId === action.cropId,
@@ -187,8 +469,11 @@ export class GardenEvents {
           lastUse: lot?.last_use ?? null,
         },
       });
-    if (lot.crop_id !== entry.offer.cropId) throw Error("GARDEN_EVENT_OFFER");
-    const price = Math.round(entry.offer.rates[lot.quality] * action.quantity);
+    const offer = (entry.offers ?? (entry.offer ? [entry.offer] : [])).find(
+      ({ cropId }) => cropId === lot.crop_id,
+    );
+    if (!offer) throw Error("GARDEN_EVENT_OFFER");
+    const price = Math.round(offer.rates[lot.quality] * action.quantity);
     if (price !== action.price) throw Error("GARDEN_PRICE_CHANGED");
     this.changeBalance(now, actor, action.kind, state, price);
     this.db
