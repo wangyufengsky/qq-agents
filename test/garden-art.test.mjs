@@ -15,14 +15,17 @@ test("all runtime garden artwork is WebP and individually allowlisted", async ()
   const files = (await readdir(directory)).filter((file) =>
     file.endsWith(".webp"),
   );
-  assert.equal(files.length, 65);
+  assert.equal(files.length, 73);
   assert.equal(isGardenArtResource("gifts.js"), true);
   assert.equal(isGardenArtResource("workspace.js"), true);
+  assert.equal(isGardenArtResource("stages.js"), true);
   for (const [group, id] of [
     ["event", "stray-cat"],
     ["gift", "dried-fish"],
     ["supply", "fertilizer"],
     ["crop", "mint"],
+    ["crop", "catnip"],
+    ["crop", "mistbell"],
   ])
     assert.ok(files.includes(gardenIconFile(group, id)));
   assert.equal(Object.keys(gardenGifts).length, 18);
@@ -49,7 +52,7 @@ test("garden artwork layers follow crop stages and omit an unillustrated crop", 
   const plant = {
     cropId: "clover",
     status: "growing",
-    growth: 2,
+    growth: 1,
     crop: { hours: 12 },
     water: 9,
     rules: { lowWater: 10 },
@@ -65,7 +68,7 @@ test("garden artwork layers follow crop stages and omit an unillustrated crop", 
   );
   assert.deepEqual(
     gardenLayers({
-      plant: { ...plant, growth: 3, water: 100 },
+      plant: { ...plant, growth: 9, water: 100 },
       sheltered: false,
     }).map(({ file }) => file),
     ["soil-saturated.webp", "plant-clover-growing.webp"],

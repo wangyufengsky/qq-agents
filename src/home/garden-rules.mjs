@@ -44,6 +44,9 @@ const cropSchema = z.strictObject({
   floodDays: count.min(1).max(30),
 });
 
+export const careMode = z.enum(["classic", "gentle"]);
+export const careScope = z.enum(["future", "growing"]);
+
 export const gardenSettings = z
   .strictObject({
     enabled: z.boolean(),
@@ -60,6 +63,7 @@ export const gardenSettings = z
     startingWater: water.min(1),
     watering: water.min(1),
     lowWater: water.min(1),
+    careMode: careMode.default("gentle"),
     dryHours: z.number().min(1).max(8760),
     dryQualityLoss: water,
     baseQuality: water,
@@ -102,6 +106,50 @@ const initialCrops = /** @type {const} */ ([
   ["moonflower", "月光夜来香", 140, 96, 25, "shade", 2, 460],
 ]);
 
+export const CATNIP = "catnip";
+export const MISTBELL = "mistbell";
+
+/** @type {Record<string, Crop>} */
+const neighborCrops = {
+  [CATNIP]: {
+    name: "猫薄荷",
+    description: "傍晚有时引来小蝴蝶。",
+    enabled: true,
+    market: true,
+    seedPrice: 65,
+    hours: 48,
+    dailyWater: 28,
+    light: "neutral",
+    fertilizer: 1,
+    salePrice: 195,
+    yield: 1,
+    floodDays: 2,
+  },
+  [MISTBELL]: {
+    name: "星雾铃",
+    description: "月光下开出蓝紫色的花，种子来自邻株发现。",
+    enabled: true,
+    market: false,
+    seedPrice: 0,
+    hours: 72,
+    dailyWater: 30,
+    light: "shade",
+    fertilizer: 2,
+    salePrice: 390,
+    yield: 1,
+    floodDays: 2,
+  },
+};
+
+/** @param {Settings["crops"]} crops */
+export function withNeighborCrops(crops) {
+  const result = { ...crops };
+  for (const [id, crop] of Object.entries(neighborCrops)) {
+    if (!Object.hasOwn(result, id)) result[id] = { ...crop };
+  }
+  return result;
+}
+
 export function defaultGardenSettings() {
   return gardenSettings.parse({
     enabled: true,
@@ -120,35 +168,37 @@ export function defaultGardenSettings() {
     perfectQuality: 95,
     fineMultiplier: 1.25,
     perfectMultiplier: 1.5,
-    crops: Object.fromEntries(
-      initialCrops.map(
-        ([
-          id,
-          name,
-          seedPrice,
-          hours,
-          dailyWater,
-          light,
-          fertilizer,
-          salePrice,
-        ]) => [
-          id,
-          {
+    crops: withNeighborCrops(
+      Object.fromEntries(
+        initialCrops.map(
+          ([
+            id,
             name,
-            description: "",
-            enabled: true,
-            market: true,
             seedPrice,
             hours,
             dailyWater,
             light,
-            rainSensitive: id === "strawberry",
             fertilizer,
             salePrice,
-            yield: 1,
-            floodDays: 2,
-          },
-        ],
+          ]) => [
+            id,
+            {
+              name,
+              description: "",
+              enabled: true,
+              market: true,
+              seedPrice,
+              hours,
+              dailyWater,
+              light,
+              rainSensitive: id === "strawberry",
+              fertilizer,
+              salePrice,
+              yield: 1,
+              floodDays: 2,
+            },
+          ],
+        ),
       ),
     ),
   });
@@ -178,10 +228,10 @@ export function gardenPlantRules(settings) {
 /** @typedef {Settings["crops"][string]} Crop */
 /** @typedef {"ordinary" | "fine" | "perfect"} Quality */
 /**
- * @typedef {{id: string, cropId: string, actorId: string, plantedAt: number,
- * settledAt: number, water: number, growth: number, dry: number, low: number,
+ * @typedef {{id: string, cropId: string, actorId: string, plantedAt: number, sownClock?: number,
+ * settledAt: number, maturedAt?: number, water: number, growth: number, dry: number, low: number,
  * floodDays?: number, floodLoss?: number, qualityAdjustment?: number, earthwormDay?: number, witheredReason?: "drought" | "flood", fertilizer: number, status: "growing" | "mature" | "withered", quality: Quality | null,
- * crop: Crop, rules: ReturnType<typeof gardenPlantRules>}} Plant
+ * crop: Crop, rules: Omit<ReturnType<typeof gardenPlantRules>, "careMode"> & {careMode?: Settings["careMode"]}}} Plant
  */
 
 /** @param {Plant} plant */
@@ -231,6 +281,7 @@ export function grantGrowth(plant, hours) {
   plant.growth = Math.min(plant.crop.hours, before + hours);
   if (plant.growth === plant.crop.hours) {
     plant.status = "mature";
+    plant.maturedAt = plant.settledAt;
     plant.quality = qualityOf(plant);
   }
   return plant.growth - before;
@@ -252,13 +303,14 @@ export function moistureRate(plant, weather, sheltered) {
   );
 }
 
-/** @param {Plant} original @param {number} elapsed @param {WeatherEntry} [weather] @param {boolean} [sheltered] @param {number} [growthMultiplier] */
+/** @param {Plant} original @param {number} elapsed @param {WeatherEntry} [weather] @param {boolean} [sheltered] @param {number} [growthMultiplier] @param {(before:number,after:number,clock:number,clockPerGrowth:number)=>void} [onGrowth] */
 export function projectPlant(
   original,
   elapsed,
   weather = cloud,
   sheltered = false,
   growthMultiplier = 1,
+  onGrowth,
 ) {
   if (original.status !== "growing" || elapsed < original.settledAt)
     return original;
@@ -272,9 +324,11 @@ export function projectPlant(
   const light = sheltered ? shelteredLight[weather.light] : weather.light;
   const lightGrowth =
     plant.crop.lightRates?.[light] ?? lightDefaults[plant.crop.light][light];
-  const weatherGrowth =
-    lightGrowth * (sheltered ? 1 : weather.outdoorGrowth) * growthMultiplier;
   const { lowWater, dryHours } = plant.rules;
+  const gentle = plant.rules.careMode === "gentle";
+  const outdoorGrowth = flooded && gentle ? 0 : weather.outdoorGrowth;
+  const weatherGrowth =
+    lightGrowth * (sheltered ? 1 : outdoorGrowth) * growthMultiplier;
   let remaining = (elapsed - plant.settledAt) / HOUR;
   // Exact threshold crossings keep incremental actions and lazy reads equivalent.
   while (remaining > 0 && plant.status === "growing") {
@@ -291,19 +345,28 @@ export function projectPlant(
     const untilMature = growthRate
       ? (plant.crop.hours - plant.growth) / growthRate
       : Infinity;
-    const untilWithered = watered ? Infinity : dryHours - plant.dry;
+    const untilWithered = watered || gentle ? Infinity : dryHours - plant.dry;
     const time = Math.min(remaining, untilBoundary, untilMature, untilWithered);
+    const before = plant.growth;
     plant.growth += time * growthRate;
-    if (!wet) plant.low += time;
+    if (!wet && !gentle) plant.low += time;
     plant.dry = watered ? 0 : plant.dry + time;
     plant.water =
       time === untilBoundary
         ? boundary
         : Math.min(100, Math.max(0, plant.water + rate * time));
+    if (growthRate && time > 0)
+      onGrowth?.(
+        before,
+        time === untilMature ? plant.crop.hours : plant.growth,
+        elapsed - remaining * HOUR,
+        HOUR / growthRate,
+      );
     remaining -= time;
     if (time === untilMature) {
       plant.growth = plant.crop.hours;
       plant.status = "mature";
+      plant.maturedAt = elapsed - remaining * HOUR;
       plant.quality = qualityOf(plant);
     } else if (time === untilWithered) {
       plant.status = "withered";
@@ -316,7 +379,8 @@ export function projectPlant(
 
 /** @param {Plant} plant @param {WeatherEntry} weather @param {boolean} sheltered */
 export function closePlantDay(plant, weather, sheltered) {
-  if (plant.status !== "growing") return plant;
+  if (plant.status !== "growing" || plant.rules.careMode === "gentle")
+    return plant;
   const storm = !sheltered && weather.kind === "storm";
   const drizzle =
     !sheltered &&

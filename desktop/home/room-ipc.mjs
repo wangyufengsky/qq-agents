@@ -62,9 +62,49 @@ export function registerRoomIpc({
     }
   });
 
+  ipc.handle("room:shared-image", async (event, roomEpoch, messageId) => {
+    const entry = ipc.actionEntry(event);
+    if (
+      entry?.type !== "panel" ||
+      !windowVisible(entry) ||
+      context.hidden ||
+      context.desktopLocked ||
+      context.shuttingDown ||
+      !context.framework ||
+      !context.remoteState?.connected ||
+      !roomEpoch ||
+      context.remoteState.roomEpoch !== roomEpoch ||
+      typeof messageId !== "string" ||
+      messageId.length !== 36
+    )
+      return null;
+    try {
+      const image = await context.framework.sharedImage({
+        roomEpoch,
+        messageId,
+      });
+      return context.remoteState?.roomEpoch === roomEpoch &&
+        popupAllowed(context, entry, windowVisible)
+        ? image
+        : null;
+    } catch {
+      return null;
+    }
+  });
+
   ipc.handle("room:get", (event) => {
     const entry = ipc.entryFor(event);
     if (entry)
       return { data: snapshot(entry.type === "panel"), section: entry.section };
   });
+}
+
+function popupAllowed(context, entry, windowVisible) {
+  return (
+    !entry.departing &&
+    windowVisible(entry) &&
+    !context.hidden &&
+    !context.desktopLocked &&
+    !context.shuttingDown
+  );
 }

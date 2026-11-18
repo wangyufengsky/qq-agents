@@ -516,6 +516,7 @@ test("weather blunder changes live water at noon, keeps storm forecasts, and end
   const settings = rules("weather-blunder");
   settings.weather = fixedWeather("storm");
   settings.crops.clover.hours = 100;
+  settings.careMode = "classic";
   settings.crops.clover.floodDays = 1;
   const f = setup(t, settings);
   f.act({ kind: "plant", plot: 1, cropId: "clover" });

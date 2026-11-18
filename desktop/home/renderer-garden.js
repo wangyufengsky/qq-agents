@@ -16,6 +16,19 @@ export function bindGarden(panel, getRoom) {
     onStatus: (text) => (message.textContent = text),
     compact: true,
     records: gardenRecordsMarkup,
+    journal: async (query) => {
+      const epoch = getRoom()?.roomEpoch;
+      if (!epoch || panel.hidden) throw Error("花园未连接");
+      const reply = await window.nest.garden(epoch, undefined, query);
+      if (
+        !reply ||
+        reply.error ||
+        panel.hidden ||
+        getRoom()?.roomEpoch !== epoch
+      )
+        throw Error("花园记录暂不可用");
+      return reply;
+    },
   });
   let pending;
   let active;

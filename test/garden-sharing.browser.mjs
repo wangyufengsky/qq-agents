@@ -9,6 +9,7 @@ import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { _electron, chromium } from "playwright-core";
 import { desktopResourcePath } from "../desktop/home/resource-protocol.mjs";
+import { runNativeSocial } from "../src/backends/native-social.mjs";
 import { desktopToken } from "../src/home/desktop-auth.mjs";
 import {
   gardenPublicSnapshot,
@@ -37,6 +38,7 @@ test("actual Chromium produces a shareable nine-tile PNG and renders the desktop
   runtime.clock = () => now;
   const garden = runtime.home.garden;
   const rules = defaultGardenSettings();
+  rules.careMode = "classic";
   rules.weather = fixedWeather("storm");
   rules.events.rate = 1;
   for (const [id, event] of Object.entries(rules.events.entries))
@@ -86,6 +88,9 @@ test("actual Chromium produces a shareable nine-tile PNG and renders the desktop
   await page.exposeFunction("gardenBridge", (epoch, action) =>
     callDesktop("garden", { roomEpoch: epoch, action }),
   );
+  await page.exposeFunction("gardenImageBridge", (epoch, messageId) =>
+    callDesktop("shared-image", { roomEpoch: epoch, messageId }),
+  );
   await page.addInitScript((epoch) => {
     window.nest = {
       onRoom: (listener) => {
@@ -106,6 +111,7 @@ test("actual Chromium produces a shareable nine-tile PNG and renders the desktop
         section: "visits",
       }),
       garden: (...args) => window.gardenBridge(...args),
+      sharedImage: (...args) => window.gardenImageBridge(...args),
     };
   }, roomEpoch);
   await page.goto(
@@ -269,6 +275,76 @@ test("actual Chromium produces a shareable nine-tile PNG and renders the desktop
     .locator(".garden-content")
     .evaluate((view) => view.scrollWidth <= view.clientWidth);
   assert.equal(layout, true);
+  const desktop = runtime.desktopVisits;
+  const live = desktop.live;
+  const role = live.room.roles[0];
+  live.room.members[role.id] = "invited";
+  live.admit(role);
+  const backend = runtime.backendConnections.adapter(runtime.agent(role.id));
+  let received;
+  backend.runDesktop = (params) =>
+    runNativeSocial(backend, params, async () => {}, "desktop");
+  backend.run = async (params) => {
+    await params.beforeInputSubmitted();
+    params.onInputSubmitted?.();
+    params.saveSession(
+      params.session ?? { backend: "codex", id: "fixture-desktop-plant-png" },
+    );
+    const result = await params.callTool("garden_read", {
+      view: "plant_image",
+      plot: 1,
+    });
+    received = result;
+    const card = JSON.parse(result.content[0].text);
+    await params.callTool("desktop_room_decide", {
+      action: "say",
+      text: "这是这株花的快照。",
+      mediaId: card.mediaId,
+    });
+  };
+  await callDesktop("client", { action: "send", data: "看看一号地的花。" });
+  await live.foreground?.done;
+  const card = JSON.parse(received.content[0].text);
+  const plantPng = Buffer.from(received.content[1].data, "base64");
+  assert.equal(card.modelImageAttached, true);
+  assert.equal(card.name, "野生三叶草");
+  assert.equal(card.plantId, garden.read(now).plots[0].plant.id);
+  assert.doesNotMatch(JSON.stringify(card), /actorId|administrator/);
+  assert.equal(plantPng.readUInt32BE(16), 500);
+  const chat = await callDesktop("client", { action: "sync", data: false });
+  const attachment = chat.room.messages.at(-1).attachments[0];
+  assert.equal(attachment.id, card.mediaId);
+  assert.doesNotMatch(
+    JSON.stringify(chat.room),
+    new RegExp(plantPng.toString("base64").slice(0, 20)),
+  );
+  await page.evaluate(
+    (room) =>
+      window.pushGardenRoom({
+        ...room,
+        live: true,
+        framework: true,
+        connected: true,
+      }),
+    chat.room,
+  );
+  await page.getByRole("button", { name: "聊天", exact: true }).click();
+  await page.getByRole("button", { name: /查看图片 · 野生三叶草/ }).click();
+  const dialog = page.getByRole("dialog", { name: "野生三叶草.png" });
+  await dialog.waitFor();
+  assert.equal(
+    await dialog.getByRole("img").evaluate(async (img) => {
+      await img.decode();
+      return img.naturalWidth;
+    }),
+    500,
+  );
+  assert.equal(
+    await dialog.getByRole("img").getAttribute("src"),
+    "data:image/png;base64," + plantPng.toString("base64"),
+  );
+  await dialog.getByRole("button", { name: "关闭图片" }).click();
+  await dialog.waitFor({ state: "detached" });
   assert.deepEqual(pageErrors, []);
 });
 

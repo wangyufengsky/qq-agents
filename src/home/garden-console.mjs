@@ -1,6 +1,11 @@
 // @ts-check
 import { z } from "zod";
-import { defaultGardenSettings, HOUR, moistureRate } from "./garden-rules.mjs";
+import {
+  careScope,
+  defaultGardenSettings,
+  HOUR,
+  moistureRate,
+} from "./garden-rules.mjs";
 import {
   gardenGiftSources,
   recordGardenGift,
@@ -19,6 +24,7 @@ const settingsInput = z.strictObject({
   expectedRevision: z.number().int().min(0),
   settings: z.record(z.string(), z.unknown()),
   roleIds: z.array(z.string()).max(100),
+  careScope: careScope.default("future"),
 });
 const initializeInput = z.strictObject({
   initialBalance: z.number().int().min(0).max(1_000_000),
@@ -67,9 +73,12 @@ export function gardenPriorities(state) {
           {
             plot,
             plantId: plant.id,
-            kind: "drought",
-            priority: 0,
-            hours: Math.max(0, plant.rules.dryHours - plant.dry),
+            kind: plant.rules.careMode === "gentle" ? "dormant" : "drought",
+            priority: plant.rules.careMode === "gentle" ? 1 : 0,
+            hours:
+              plant.rules.careMode === "gentle"
+                ? null
+                : Math.max(0, plant.rules.dryHours - plant.dry),
           },
         ];
       if (plant.water < plant.rules.lowWater)
@@ -302,7 +311,8 @@ export function adminGardenWrite(runtime, operation, value) {
     return adminGardenView(runtime);
   }
   if (operation === "settings") {
-    const { settings, expectedRevision, roleIds } = settingsInput.parse(value);
+    const { settings, expectedRevision, roleIds, careScope } =
+      settingsInput.parse(value);
     const eligible = new Set(
       recipients(runtime)
         .filter((entry) => entry.kind === "agent")
@@ -332,15 +342,20 @@ export function adminGardenWrite(runtime, operation, value) {
           ]),
         )
       : current.giftBudgetGenerations;
-    garden.configure(now, expectedRevision, {
-      ...settings,
-      initialBalance: current.initialBalance,
-      giftBudgets,
-      giftBudgetGenerations,
-      roles: Object.fromEntries(
-        roleIds.map((id) => [id, runtime.home.generation(id)]),
-      ),
-    });
+    garden.configure(
+      now,
+      expectedRevision,
+      {
+        ...settings,
+        initialBalance: current.initialBalance,
+        giftBudgets,
+        giftBudgetGenerations,
+        roles: Object.fromEntries(
+          roleIds.map((id) => [id, runtime.home.generation(id)]),
+        ),
+      },
+      careScope,
+    );
     return adminGardenView(runtime);
   }
   return {

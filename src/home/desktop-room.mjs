@@ -1121,6 +1121,7 @@ export class LiveRoom {
         {
           actor,
           kind: "chat",
+          bubbleReply: turn.bubbleReply,
           ...(!windowTask && { ownerTouches }),
           session,
           windowTask,
@@ -1152,6 +1153,7 @@ export class LiveRoom {
           Date.now(),
           reply.action === "say" ? reply.text : "",
           reply.turnId,
+          reply.action === "say" ? reply.attachments : [],
         )
       )
         return;

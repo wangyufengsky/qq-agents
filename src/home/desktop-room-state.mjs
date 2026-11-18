@@ -210,18 +210,21 @@ export function finishTurn(
   now = Date.now(),
   text = turn.text,
   turnId,
+  attachments = [],
 ) {
   if (room.turn !== turn || room.members[turn.actor] !== "here") return false;
-  if (text)
-    room.bubbles[turn.actor] = addMessage(
+  if (text || attachments.length) {
+    const message = addMessage(
       room,
       turn.actor,
       text,
       now,
-      [],
+      attachments,
       turnId,
       "agent",
     );
+    if (text) room.bubbles[turn.actor] = message;
+  }
   room.turn = null;
   return true;
 }

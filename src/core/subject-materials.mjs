@@ -292,11 +292,14 @@ export function subjectMaterials(runtime, ctx) {
       diaryTitles: diaries.map((d) => ({ title: d.title, at: d.updatedAt })),
     },
     inbox,
-    ...(ctx.allowedTools?.includes("garden_read") &&
-    runtime.home.garden.allowsRole(a.id, runtime.home.generation(a.id))
+    ...(ctx.allowedTools?.includes("garden_read")
       ? {
-          garden:
-            "可以先用 garden_read 查看共享花园和优先照料提示。若你想帮忙，再用 garden_act；动作受本回合额度约束。",
+          garden: runtime.home.garden.allowsRole(
+            a.id,
+            runtime.home.generation(a.id),
+          )
+            ? "可以先用 garden_read 查看共享花园和优先照料提示，也可读年表、单株手帐、便笺和花卡。若你想帮忙，再用 garden_act；动作受本回合额度约束。"
+            : "可以用 garden_read 只读翻阅共享花园、年表、单株手帐、便笺和花卡。",
         }
       : {}),
     reach,

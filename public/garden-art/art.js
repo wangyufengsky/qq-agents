@@ -1,4 +1,5 @@
 // @ts-check
+import { gardenStageAt } from "./stages.js";
 import { gardenGifts } from "./gifts.js";
 
 export { gardenGifts };
@@ -10,6 +11,8 @@ export const cropArtIds = [
   "mint",
   "strawberry",
   "moonflower",
+  "catnip",
+  "mistbell",
 ];
 const stages = ["seedling", "growing", "mature", "withered"];
 const weatherKinds = ["sun", "cloud", "drizzle", "storm"];
@@ -78,6 +81,8 @@ export const isGardenArtResource = (file) =>
   file === "art.js" ||
   file === "gifts.js" ||
   file === "workspace.js" ||
+  file === "journal.js" ||
+  file === "stages.js" ||
   file === "art.css" ||
   isGardenArtImage(file);
 
@@ -97,14 +102,17 @@ export function gardenLayers({ plant, sheltered }) {
   const layers = [{ file: `soil-${soil}.webp`, layer: "soil" }];
   if (sheltered) layers.push({ file: "shelter-back.webp", layer: "rear" });
   if (plant && cropArtIds.includes(plant.cropId)) {
+    const milestone = gardenStageAt(plant);
     const stage =
-      plant.status === "growing" && plant.growth / plant.crop.hours < 0.25
+      milestone === "sprouted"
         ? "seedling"
-        : plant.status;
-    if (stages.includes(stage))
+        : milestone === "developed"
+          ? "growing"
+          : milestone;
+    if (milestone === "planted" || stages.includes(stage))
       layers.push({
         file:
-          stage === "seedling"
+          milestone === "planted"
             ? "plant-seedling.webp"
             : `plant-${plant.cropId}-${stage}.webp`,
         layer: "plant",
@@ -185,7 +193,7 @@ export function gardenPlotStatus(plant) {
   if (plant.status === "mature") return "可收成";
   if (plant.status === "withered") return "已枯萎";
   if (plant.water < plant.rules.lowWater) return "缺水";
-  return plant.growth / plant.crop.hours < 0.25 ? "幼苗" : "生长中";
+  return "生长中";
 }
 
 /** @param {number} amount */

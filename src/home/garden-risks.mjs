@@ -4,6 +4,7 @@
 export function floodRisk(plant, sheltered, weather, closingWeather = weather) {
   if (sheltered || weather.kind !== "storm" || plant.status !== "growing")
     return null;
+  if (plant.rules.careMode === "gentle") return "waterlogging";
   return closingWeather.kind === "storm" &&
     (plant.floodDays ?? 0) + 1 >= plant.crop.floodDays
     ? "critical"

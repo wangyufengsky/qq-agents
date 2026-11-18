@@ -28,6 +28,7 @@ function fixture(t, kind = "cloud", edit = () => {}, file = ":memory:") {
 function use(store, kind = "cloud", edit = () => {}) {
   const garden = new GardenService(store);
   const rules = defaultGardenSettings();
+  rules.careMode = "classic";
   rules.weather = fixedWeather(kind);
   rules.events.rate = 0;
   edit(rules);
@@ -253,13 +254,13 @@ test("two storms count at day end, evening shelter saves the crop, and shelter b
   assert.equal(f.read().plots[1].plant, null);
 });
 
-test("cross-day configuration backfills untouched days with their prior revision and reopens with exactly the committed results", (t) => {
+test("cross-day configuration preserves the prior revision of days settled by the clock and reopens with exactly the committed results", (t) => {
   const file = path.join(temp(t), "weather.sqlite");
   const store = new MemoryStore(file);
   const f = use(store, "storm");
   f.plant(1);
   f.advance(2 * DAY + HOUR);
-  assert.equal(f.rows().length, 1);
+  assert.equal(f.rows().length, 3);
   const patched = f.configure((s) => {
     s.weather = fixedWeather("sun");
   });

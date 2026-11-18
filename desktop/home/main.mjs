@@ -1329,14 +1329,18 @@ function permissionPanel(event, roomEpoch) {
   );
 }
 
-ipc.handle("room:garden", async (event, roomEpoch, action) => {
+ipc.handle("room:garden", async (event, roomEpoch, action, journal) => {
   if (
     !permissionPanel(event, roomEpoch) ||
     entries.get("panel")?.section !== "garden"
   )
     return false;
   try {
-    const response = await framework.personal("garden", { roomEpoch, action });
+    const response = await framework.personal("garden", {
+      roomEpoch,
+      action,
+      journal,
+    });
     return permissionPanel(event, roomEpoch) &&
       entries.get("panel")?.section === "garden"
       ? response

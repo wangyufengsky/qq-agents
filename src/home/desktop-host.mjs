@@ -1411,6 +1411,36 @@ export class DesktopHost {
     };
   }
 
+  sharedImage(input) {
+    const { client, roomEpoch, messageId } = z
+      .strictObject({
+        client: z.uuid(),
+        roomEpoch: z.uuid(),
+        messageId: z.uuid(),
+      })
+      .parse(input);
+    if (
+      !this.connected() ||
+      this.client.id !== client ||
+      this.live?.room.epoch !== roomEpoch
+    )
+      throw Error("DESKTOP_ATTACHMENT_UNAVAILABLE");
+    const message = this.live.room.messages.find(
+      (item) => item.messageId === messageId && item.speakerType === "agent",
+    );
+    const image = message?.attachments?.find(
+      ({ kind }) => kind === "garden-snapshot",
+    );
+    if (!image) throw Error("DESKTOP_ATTACHMENT_UNAVAILABLE");
+    let saved;
+    try {
+      saved = this.runtime.media.read(message.actor, image.id);
+    } catch {
+      throw Error("DESKTOP_ATTACHMENT_UNAVAILABLE");
+    }
+    return { data: saved.data, mimeType: saved.mimeType };
+  }
+
   async attach(input) {
     const upload = parseDesktopAttachment(input);
     const live = this.live;
@@ -1565,9 +1595,9 @@ export class DesktopHost {
       failure,
       decision,
       windowFailure = "action-unconfirmed";
-    const assertOutput = (text) => {
-      if (!text) return;
-      runtime.assertSafeOutput(ctx, text);
+    const assertOutput = (text, mediaId) => {
+      if (!text && !mediaId) return;
+      if (text) runtime.assertSafeOutput(ctx, text);
       recallBoundary(runtime, ctx, { publicOnly: true }).assert({
         evidence: [...ctx.privateRead],
       });
@@ -1589,7 +1619,8 @@ export class DesktopHost {
           if (decision) throw Error("DESKTOP_DECISION_DENIED");
           const next = windowTask
             ? args.action === "silent" &&
-              args.text === undefined && { action: "silent" }
+              args.text === undefined &&
+              args.mediaId === undefined && { action: "silent" }
             : readDecision(kind, args, request);
           if (
             !next ||
@@ -1598,7 +1629,29 @@ export class DesktopHost {
             (next.action === "skip-observation" && !request.canObserve?.())
           )
             throw Error("DESKTOP_DECISION_INVALID");
-          assertOutput(next.text);
+          assertOutput(next.text, next.mediaId);
+          if (next.mediaId) {
+            const media = runtime.media.metadata(actor, next.mediaId);
+            if (
+              media?.kind !== "garden-snapshot" ||
+              media.mimeType !== "image/png" ||
+              media.bytes > 2 * 1024 * 1024 ||
+              !media.sources?.some(
+                ({ conversation }) => conversation === DESKTOP_CONVERSATION,
+              )
+            )
+              throw Error("DESKTOP_ATTACHMENT_UNAVAILABLE");
+            recallBoundary(runtime, ctx, { publicOnly: true }).assert(media);
+            next.attachments = [
+              {
+                id: media.id,
+                name: media.title + ".png",
+                mimeType: media.mimeType,
+                bytes: media.bytes,
+                kind: "garden-snapshot",
+              },
+            ];
+          }
           for (const draft of [
             next.response,
             next.summary,
@@ -1841,7 +1894,7 @@ export class DesktopHost {
         !observation &&
         (ctx.desktopScreenObserved || ctx.desktopPrivateObservation)
       ) {
-        if (decision.action === "say") {
+        if (decision.action === "say" && decision.text) {
           const current = () =>
             [...restrictedGrants.values()].every((checkGrant) => checkGrant());
           // A visual or local tool requires its original grant; video input has
@@ -1856,7 +1909,7 @@ export class DesktopHost {
         }
         return { action: "silent" };
       }
-      assertOutput(decision.text);
+      assertOutput(decision.text, decision.mediaId);
       return decision.action === "say"
         ? { ...decision, turnId: ctx.turnId }
         : decision;

@@ -1,5 +1,8 @@
-import { keepNeutralWeather } from "./garden-fixtures.mjs";
+import { gardenLayers } from "../public/garden-art/art.js";
+import { fixedWeather, keepNeutralWeather } from "./garden-fixtures.mjs";
 import assert from "node:assert/strict";
+import { HOUR, defaultGardenSettings } from "../src/home/garden-rules.mjs";
+import { runNativeSocial } from "../src/backends/native-social.mjs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import test from "node:test";
@@ -51,7 +54,9 @@ test("normal chat and desktop can read only the public projection while locked s
       "capturedAt",
       "day",
       "dayRemainingHours",
+      "nightScene",
       "plots",
+      "pollenPairs",
       "running",
       "text",
       "weather",
@@ -61,11 +66,14 @@ test("normal chat and desktop can read only the public projection while locked s
     assert.equal(state.plots[0].stage, "seedling");
     assert.ok(!state.text.includes("管理员"));
     assert.deepEqual(Object.keys(state.plots[0]).sort(), [
+      "careMode",
+      "dormant",
       "lowWater",
       "name",
       "plot",
       "sheltered",
       "stage",
+      "stageLabel",
       "water",
     ]);
     if (ctx === group || ctx === desk)
@@ -263,4 +271,429 @@ test("desktop garden endpoint binds client and room epoch and writes the same ga
   );
   await post("/api/desktop-home/client", { client, action: "disconnect" });
   assert.equal((await send()).body.error, "DESKTOP_VISIT_UNAVAILABLE");
+});
+
+test("read-only plant snapshots keep identity, strip actors, and preserve original images after harvest", async (t) => {
+  const f = setup(t);
+  const { runtime, garden } = f;
+  let now = runtime.now();
+  runtime.clock = () => now;
+  const rules = defaultGardenSettings();
+  rules.crops.clover.hours = 0.5;
+  rules.events.rate = 0;
+  garden.initialize(now, rules);
+  garden.desktopSync(now, 10 * HOUR);
+  garden.act(now, admin, fakePlot);
+  garden.act(now, admin, {
+    requestId: "garden-second-plot",
+    action: { ...seed, plot: 2 },
+  });
+  const ctx = context(runtime);
+  const read = (args) => runtime.callTool(ctx, "garden_read", args);
+  const choices = await read({ view: "plant", cropId: "野生三叶草" });
+  assert.equal(choices.status, "ambiguous");
+  assert.deepEqual(
+    choices.choices.map(({ plot, planted }) => [plot, planted.day]),
+    [
+      [1, 1],
+      [2, 1],
+    ],
+  );
+  assert.equal((await read({ view: "plant", plot: 3 })).status, "empty");
+  const current = await read({ view: "plant", plot: 1 });
+  const { plantId } = current;
+  assert.equal(current.stageLabel, "已播种");
+  assert.doesNotMatch(JSON.stringify(current), /actorId|administrator/);
+  assert.equal(
+    (await read({ view: "plant_history", plantId })).plant.actor,
+    undefined,
+  );
+  const subject = context(runtime, "agent-0", "@subject");
+  subject.turnId = randomUUID();
+  runtime.running.set("agent-0|@subject", subject);
+  try {
+    const history = await runtime.callTool(subject, "garden_read", {
+      view: "plant_history",
+      plantId,
+    });
+    assert.equal(history.plant.actor.id, admin.id);
+  } finally {
+    runtime.running.delete("agent-0|@subject");
+  }
+  const page = await read({ view: "timeline", limit: 1 });
+  assert.equal(page.entries.length, 1);
+  assert.notEqual(
+    (await read({ view: "timeline", limit: 1, cursor: page.nextCursor }))
+      .entries[0].id,
+    page.entries[0].id,
+  );
+  const exact = await read({ view: "timeline", factId: page.entries[0].id });
+  assert.deepEqual(exact.entries, page.entries);
+  await assert.rejects(
+    read({ view: "timeline", actorId: admin.id }),
+    /INVALID_REQUEST/,
+  );
+  const digest = await read({ view: "digest" });
+  assert.equal(digest.initial, true);
+  assert.deepEqual(await read({ view: "digest" }), digest);
+  assert.equal(digest.through, undefined);
+  let rendered;
+  const result = await gardenTool(
+    runtime,
+    ctx,
+    "garden_read",
+    { view: "plant_image", plot: 1 },
+    undefined,
+    async (snapshot) => {
+      rendered = snapshot;
+      return png;
+    },
+  );
+  const card = JSON.parse(result.content[0].text);
+  assert.equal(card.snapshotId, current.snapshotId);
+  assert.equal(card.text, rendered.text);
+  assert.equal(card.modelImageAttached, true);
+
+  const clockBeforeHistory = garden.requireState().clock;
+  now += HOUR;
+  await read({ view: "timeline" });
+  await read({ view: "plant_history", plantId });
+  await read({ view: "digest" });
+  assert.equal(garden.requireState().clock, clockBeforeHistory);
+  garden.act(now, admin, {
+    requestId: "garden-first-harvest",
+    action: { kind: "harvest", plot: 1, plantId },
+  });
+  garden.act(now, admin, { requestId: "garden-replant", action: seed });
+  assert.notEqual((await read({ view: "plant", plot: 1 })).plantId, plantId);
+  const archived = await read({ view: "plant", plantId });
+  assert.equal(archived.status, "harvested");
+  assert.match(archived.text, /已收成/);
+  assert.ok(archived.quality);
+  garden.desktopStop(now);
+  assert.match((await read({ view: "plant", plantId })).text, /花园时钟已停/);
+  const wrongScope = context(runtime, "agent-0", "private:30000");
+  await assert.rejects(
+    runtime.callTool(wrongScope, "qq_send", {
+      requestId: "garden-wrong-chat",
+      mediaId: card.mediaId,
+    }),
+    /HOME_SOURCE_DENIED/,
+  );
+  assert.equal(
+    (
+      await runtime.callTool(ctx, "qq_send", {
+        requestId: "garden-original-card",
+        mediaId: card.mediaId,
+      })
+    ).status,
+    "sent",
+  );
+  assert.equal(
+    runtime.media.read("agent-0", card.mediaId).data,
+    png.toString("base64"),
+  );
+});
+
+test("desktop replies publish an authorized garden attachment and retrieve the same PNG", async (t) => {
+  const { runtime, open } = setup(t, config(1));
+  open();
+  const token = randomUUID();
+  const server = createServer({ runtime, token, allowLive: true });
+  t.after(() => server.close());
+  const origin = `http://127.0.0.1:${await server.listen()}/api/desktop-home/`;
+  const client = randomUUID();
+  const post = (route, input, key = desktopToken(token)) =>
+    fetch(origin + route, {
+      method: "POST",
+      headers: {
+        connection: "close",
+        "x-desktop-home-token": key,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ client, ...input }),
+    });
+  const {
+    room: { roomEpoch },
+  } = await post("client", { action: "sync" }).then((r) => r.json());
+  const host = runtime.desktopVisits;
+  const { live } = host;
+  const role = live.room.roles[0];
+  live.room.members[role.id] = "invited";
+  live.admit(role);
+  const backend = runtime.backendConnections.adapter(runtime.agent(role.id));
+  const meta = {
+    gardenSnapshot: true,
+    kind: "garden-snapshot",
+    title: "野生三叶草",
+  };
+  const { id: mediaId } = runtime.media.put(role.id, png, "image/png", {
+    ...meta,
+    conversation: "group:20000",
+  });
+  backend.runDesktop = (params) =>
+    runNativeSocial(backend, params, async () => {}, "desktop");
+  backend.run = async (params) => {
+    await params.beforeInputSubmitted();
+    params.onInputSubmitted?.();
+    params.saveSession(
+      params.session ?? { backend: "codex", id: "fixture-garden-shared-image" },
+    );
+    await assert.rejects(
+      params.callTool("desktop_room_decide", { action: "say", mediaId }),
+      /DESKTOP_ATTACHMENT_UNAVAILABLE/,
+    );
+    runtime.media.put(role.id, png, "image/png", {
+      ...meta,
+      conversation: "@desktop",
+    });
+    const decision = await params.callTool("desktop_room_decide", {
+      action: "say",
+      mediaId,
+    });
+    assert.equal(decision.status, "recorded");
+  };
+  assert.equal(
+    (await post("client", { action: "send", data: "看看花卡" })).status,
+    200,
+  );
+  await live.foreground?.done;
+  const archived = host.archive.history().at(-1);
+  assert.equal(archived.actor, role.id);
+  assert.equal(archived.text, "");
+  assert.equal(archived.attachments[0].id, mediaId);
+  const input = { roomEpoch, messageId: archived.messageId };
+  assert.equal((await post("shared-image", input, token)).status, 401);
+  assert.equal(
+    (await post("shared-image", { ...input, roomEpoch: randomUUID() })).ok,
+    false,
+  );
+  assert.equal(
+    (await post("shared-image", { ...input, messageId: randomUUID() })).ok,
+    false,
+  );
+  assert.deepEqual(await post("shared-image", input).then((r) => r.json()), {
+    data: png.toString("base64"),
+    mimeType: "image/png",
+  });
+});
+
+test("a text-only backend retains the card media and cannot resend an unconfirmed image under another request", async (t) => {
+  const cfg = config(1);
+  cfg.backends[0] = {
+    id: "fixture",
+    type: "openai",
+    label: "Fixture",
+    baseUrl: "http://127.0.0.1:9",
+    model: "synthetic",
+    vision: false,
+  };
+  const { runtime, garden, open } = setup(t, cfg);
+  open();
+  garden.desktopSync(runtime.now(), HOUR);
+  garden.act(runtime.now(), admin, fakePlot);
+  const ctx = context(runtime);
+  const card = await gardenTool(
+    runtime,
+    ctx,
+    "garden_read",
+    { view: "plant_image", plot: 1 },
+    undefined,
+    async () => png,
+  );
+  assert.equal(card.imageAvailable, true);
+  assert.equal(card.modelImageAttached, false);
+  assert.equal(card.content, undefined);
+  assert.match(card.text, /野生三叶草/);
+  const transport = runtime.transports.get("qq-0");
+  transport.failure = "GATEWAY_TIMEOUT";
+  const send = (requestId, text) =>
+    runtime.send(ctx, { requestId, text, mediaId: card.mediaId });
+  await assert.rejects(send("card-unknown", "第一次分享"), /DELIVERY_UNKNOWN/);
+  await Promise.allSettled(runtime.work);
+  transport.failure = null;
+  await assert.rejects(
+    send("card-retry-with-a-different-id", "换一条说明"),
+    /QQ_DRAFT_DELIVERY_UNRESOLVED/,
+  );
+  await assert.rejects(
+    send("card-unknown", "第一次分享"),
+    /DELIVERY_ALREADY_ATTEMPTED_UNKNOWN/,
+  );
+  assert.equal(transport.sent.length, 1);
+});
+
+test("a subject can acknowledge only its own observed digest without swallowing later facts", async (t) => {
+  const cfg = config(2);
+  cfg.agents[1].subject.enabled = true;
+  const { runtime, garden, open } = setup(t, cfg);
+  open();
+  garden.desktopSync(runtime.now(), HOUR);
+  garden.act(runtime.now(), admin, fakePlot);
+  const subject = (role) => {
+    const ctx = context(runtime, role, "@subject");
+    ctx.turnId = randomUUID();
+    runtime.running.set(role + "|@subject", ctx);
+    return ctx;
+  };
+  t.after(() => {
+    runtime.running.delete("agent-0|@subject");
+    runtime.running.delete("agent-1|@subject");
+  });
+  const first = subject("agent-0");
+  const other = subject("agent-1");
+  const publicChat = context(runtime);
+  const read = (ctx) =>
+    runtime.callTool(ctx, "garden_read", { view: "digest" });
+  const ack = (ctx, readToken) =>
+    runtime.callTool(ctx, "garden_read", { view: "ack_digest", readToken });
+  const publicDigest = await read(publicChat);
+  assert.equal(publicDigest.initial, true);
+  assert.equal(publicDigest.readToken, undefined);
+  const { readToken: earlierToken } = await read(first);
+  const { initial, readToken } = await read(first);
+  assert.equal(initial, true);
+  assert.notEqual(readToken, earlierToken);
+  await assert.rejects(ack(first, earlierToken), /INVALID_REQUEST/);
+  await assert.rejects(ack(first, randomUUID()), /INVALID_REQUEST/);
+  await assert.rejects(ack(publicChat, readToken), /TOOL_DISABLED/);
+  await assert.rejects(ack(other, readToken), /INVALID_REQUEST/);
+  const earlierTurn = await read(other);
+  const otherNextTurn = subject("agent-1");
+  await assert.rejects(
+    ack(otherNextTurn, earlierTurn.readToken),
+    /INVALID_REQUEST/,
+  );
+
+  garden.act(runtime.now(), admin, {
+    requestId: "garden-new-after-digest",
+    action: { ...seed, plot: 2 },
+  });
+  assert.deepEqual(await ack(first, readToken), { acknowledged: true });
+  assert.deepEqual(await ack(first, readToken), { acknowledged: true });
+  const next = await read(first);
+  assert.equal(next.initial, false);
+  assert.deepEqual(
+    next.entries.map(({ plants }) => plants[0]?.plot),
+    [2],
+  );
+  assert.equal((await read(otherNextTurn)).initial, true);
+  assert.equal(garden.digest({ kind: "admin", id: admin.id }).initial, true);
+});
+
+test("public and single-plant reads leave pending garden rewards and turn budgets untouched", async (t) => {
+  const cfg = config(1);
+  cfg.agents[0].subject.enabled = true;
+  const { runtime, store, root } = fixture(t, { cfg });
+  runtime.media = new MediaStore(path.join(root, "media"));
+  const garden = runtime.home.garden;
+  let now = runtime.now();
+  runtime.clock = () => now;
+  const settings = defaultGardenSettings();
+  settings.weather = fixedWeather();
+  settings.events.rate = 1;
+  for (const [id, event] of Object.entries(settings.events.entries))
+    event.enabled = id === "visitor";
+  settings.events.entries.visitor.conditions = [];
+  for (const cropId of ["moonflower", "catnip"]) {
+    settings.crops[cropId].hours = 4;
+    settings.crops[cropId].dailyWater = 0;
+  }
+  garden.initialize(now, settings);
+  garden.desktopSync(now, 170 * HOUR);
+  for (const [plot, cropId] of [
+    [1, "moonflower"],
+    [2, "catnip"],
+  ])
+    garden.act(now, admin, {
+      requestId: randomUUID(),
+      action: {
+        kind: "plant",
+        plot,
+        cropId,
+        buyPrice: settings.crops[cropId].seedPrice,
+      },
+    });
+  const ctx = context(runtime, "agent-0", "@subject");
+  ctx.turnId = randomUUID();
+  runtime.running.set("agent-0|@subject", ctx);
+  t.after(() => runtime.running.delete("agent-0|@subject"));
+  const read = (view, query = {}) =>
+    runtime.callTool(ctx, "garden_read", { view, ...query });
+  const count = () =>
+    store.db
+      .prepare(
+        "SELECT COUNT(*) AS count FROM garden_facts WHERE type IN ('visitor_reward', 'discovery')",
+      )
+      .get().count;
+  assert.equal((await read("public")).event.status, "open");
+  assert.equal((await read("plant", { plot: 1 })).name, "月光夜来香");
+  assert.equal(count(), 0);
+  const before = garden.requireState();
+  now += 160 * HOUR;
+  await read("public");
+  await read("plant", { plot: 1 });
+  const image = await gardenTool(
+    runtime,
+    ctx,
+    "garden_read",
+    { view: "plant_image", plot: 1 },
+    undefined,
+    async () => png,
+  );
+  assert.equal(JSON.parse(image.content[0].text).imageAvailable, true);
+  assert.equal(count(), 0);
+  assert.deepEqual(garden.requireState(), before);
+  assert.equal(garden.turnUsed(ctx.agentId, ctx.turnId), 0);
+
+  // The regular clock can still settle the pending pair and its reward.
+  garden.desktopSync(now, 170 * HOUR);
+  assert.equal(garden.requireState().seeds.mistbell, 1);
+});
+
+test("sunflower milestones align between the timeline, whole garden, individual plant and stickers", async (t) => {
+  const { runtime, garden } = setup(t);
+  const start = runtime.now();
+  let now = start;
+  runtime.clock = () => now;
+  const settings = defaultGardenSettings();
+  settings.crops.sunflower.hours = 10;
+  garden.initialize(now, settings);
+  garden.desktopSync(now, 24 * HOUR);
+  const { plantId } = garden.act(now, admin, {
+    requestId: randomUUID(),
+    action: { kind: "plant", plot: 1, cropId: "sunflower", buyPrice: 60 },
+  });
+  const ctx = context(runtime);
+  for (const [hours, label, stage, milestone, sticker] of [
+    [0, "已播种", "seedling", "planted", "plant-seedling.webp"],
+    [1.5, "发芽", "growing", "sprouted", "plant-sunflower-seedling.webp"],
+    [7, "现蕾", "growing", "developed", "plant-sunflower-growing.webp"],
+    [10, "开花", "mature", "mature", "plant-sunflower-mature.webp"],
+  ]) {
+    now = start + hours * HOUR;
+    garden.desktopSync(now, 24 * HOUR);
+    const whole = await runtime.callTool(ctx, "garden_read", {
+      view: "public",
+    });
+    const card = await runtime.callTool(ctx, "garden_read", {
+      view: "plant",
+      plantId,
+    });
+    assert.equal(whole.plots[0].stage, stage);
+    assert.equal(card.stage, stage);
+    assert.equal(whole.plots[0].stageLabel, label);
+    assert.equal(card.stageLabel, label);
+    const layers = gardenLayers(garden.read(now).plots[0]);
+    assert.equal(layers.find(({ layer }) => layer === "plant").file, sticker);
+    if (milestone !== "planted") {
+      const timeline = await runtime.callTool(ctx, "garden_read", {
+        view: "timeline",
+        plantId,
+        type: milestone,
+      });
+      assert.equal(timeline.entries.length, 1);
+      assert.ok(timeline.entries[0].text.endsWith(label));
+    }
+  }
 });

@@ -68,7 +68,7 @@ test("an existing memory database opens without initializing a garden and backup
     const defaults = garden.initialize(0);
     assert.equal(defaults.plots.length, 9);
     assert.equal(defaults.balance, 1000);
-    assert.equal(Object.keys(defaults.settings.crops).length, 6);
+    assert.equal(Object.keys(defaults.settings.crops).length, 8);
     assert.equal(defaults.ledger.length, 1);
     garden.desktopSync(0, LEASE);
     garden.act(0, admin, {
@@ -196,6 +196,7 @@ test("shared care applies exact water increments, respects turn budgets, locks q
 
 test("projected growth is refresh independent, dries out, withers and can be cleared by another member", (t) => {
   const f = setup(t, (s) => {
+    s.careMode = "classic";
     s.startingWater = 30;
     s.crops.mint.hours = 100;
     s.crops.mint.dailyWater = 24;

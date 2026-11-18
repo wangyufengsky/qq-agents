@@ -179,6 +179,25 @@ test("management console opens the garden, edits its catalog and trades from the
   await page
     .getByText("管理员 送给 管理员 · " + longName, { exact: false })
     .waitFor();
+  const journal = page.locator("[data-journal-body]");
+  await journal.getByRole("heading", { name: "花园年表" }).waitFor();
+  await journal.getByLabel("地块", { exact: true }).selectOption("2");
+  await journal.getByLabel("记录", { exact: true }).selectOption("harvest");
+  await journal.getByRole("button", { name: "筛选", exact: true }).click();
+  await journal
+    .getByRole("button", { name: longName + "手帐 ↗" })
+    .first()
+    .click();
+  await journal.getByRole("heading", { name: longName + "的手帐" }).waitFor();
+  await journal.getByRole("button", { name: "查看单株花卡" }).click();
+  await journal.locator("canvas[role=img]").waitFor({ timeout: 30000 });
+  await journal
+    .getByRole("button", { name: "返回花园年表", exact: false })
+    .click();
+  assert.equal(
+    await journal.getByLabel("地块", { exact: true }).inputValue(),
+    "2",
+  );
   assert.equal(await lot.count(), 0);
   assert.equal(
     await firstPlot.getByText("野生三叶草", { exact: true }).count(),

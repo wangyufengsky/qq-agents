@@ -25,6 +25,7 @@ const desktopAllowed = new Set([
   DESKTOP_DECISION,
   DESKTOP_HISTORY,
   ...DESKTOP_MEMORY_TOOLS,
+  "garden_read",
 ]);
 const desktopMedia = new Set(["qq_image_read", "sticker_read", "video_read"]);
 const desktopImageTypes = new Set([
@@ -48,11 +49,13 @@ export function assertSocialToolResult(
   if (images.length) {
     const regularImage = desktop && desktopMedia.has(name);
     const screen = desktop && name === DESKTOP_SCREEN_VIEW;
+    const garden = desktop && name === "garden_read";
     const imageLimit = (regularImage ? 8 : 4) * 1024 * 1024;
     if (
       (regularImage
         ? images.length > 12
-        : (!screen && name !== "room_scene_view") || images.length !== 1) ||
+        : (!screen && !garden && name !== "room_scene_view") ||
+          images.length !== 1) ||
       images.some(
         (/** @type {any} */ image) =>
           !(regularImage
