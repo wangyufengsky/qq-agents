@@ -100,6 +100,43 @@ test("normal chat and desktop can read only the public projection while locked s
     assert.ok(!list(scope).includes("garden_read"));
 });
 
+test("an authorized subject can plant after reading chat while gift text still uses publication checks", async (t) => {
+  const { runtime, garden } = setup(t);
+  const ctx = context(runtime, "agent-0", "@subject");
+  ctx.turnId = randomUUID();
+  runtime.running.set("agent-0|@subject", ctx);
+  t.after(() => runtime.running.delete("agent-0|@subject"));
+  const settings = defaultGardenSettings();
+  settings.roles[ctx.agentId] = runtime.home.generation(ctx.agentId);
+  garden.initialize(runtime.now(), settings);
+  garden.desktopSync(runtime.now(), 15_000);
+  ctx.privateRead.add("context:private:30000");
+  ctx.privateRead.add("context:group:20000");
+  const call = (kind, args) =>
+    runtime.callTool(ctx, "garden_act", {
+      kind,
+      args,
+      requestId: randomUUID(),
+    });
+  const view = await runtime.callTool(ctx, "garden_read", {});
+  assert.equal(view.turnRemaining, settings.turnLimit);
+  const receipt = await call("plant", {
+    plot: 4,
+    cropId: "moonflower",
+    buyPrice: settings.crops.moonflower.seedPrice,
+  });
+  await call("water", { plot: 4, plantId: receipt.plantId });
+  assert.equal(garden.turnUsed(ctx.agentId, ctx.turnId), 2);
+  await assert.rejects(
+    call("send_gift", {
+      itemId: randomUUID(),
+      recipient: admin,
+      note: "一张纸条",
+    }),
+    /HOME_SOURCE_DENIED/,
+  );
+});
+
 test("garden image and text share the existing QQ delivery ledger and budget", async (t) => {
   const cfg = config(1);
   cfg.agents[0].maxSendsPerTurn = 10;

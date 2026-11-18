@@ -169,16 +169,8 @@ export function gardenTool(
         throw Error("TOOL_DISABLED");
       return subjectGardenGifts(runtime, role.id);
     }
-    if (view === "overview" && manages) {
-      let collectVisitor = true;
-      try {
-        runtime.home.rooms.shareable(ctx);
-      } catch (error) {
-        if (error.message !== "HOME_SOURCE_DENIED") throw error;
-        collectVisitor = false;
-      }
-      return subjectGardenView(runtime, role.id, ctx.turnId, collectVisitor);
-    }
+    if (view === "overview" && manages)
+      return subjectGardenView(runtime, role.id, ctx.turnId);
     if (
       ![
         "overview",
@@ -282,8 +274,18 @@ export function gardenTool(
   if (["delegate_step", "delegate_dismiss"].includes(input.kind))
     return delegations.execute(ctx, input.kind, input.requestId, input.args);
   if (!manages) throw Error("GARDEN_ROLE_UNAVAILABLE");
-  runtime.home.rooms.shareable(ctx);
   if (Object.hasOwn(input.args, "kind")) throw Error("INVALID_REQUEST");
+  // Only gift messages and public captions carry authored text out of the turn.
+  if (
+    ((input.kind === "buy_gift" || input.kind === "send_gift") &&
+      typeof input.args.note === "string" &&
+      input.args.note.trim()) ||
+    (input.kind === "display_gift" &&
+      ((typeof input.args.description === "string" &&
+        input.args.description.trim()) ||
+        input.args.publishNote === true))
+  )
+    runtime.home.rooms.shareable(ctx);
   return performGardenAction(
     runtime,
     { kind: "agent", id: role.id, turnId: ctx.turnId },

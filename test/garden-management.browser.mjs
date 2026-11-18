@@ -189,6 +189,28 @@ test("management console opens the garden, edits its catalog and trades from the
     .first()
     .click();
   await journal.getByRole("heading", { name: longName + "的手帐" }).waitFor();
+  const viewport = page.viewportSize();
+  for (const width of [1440, 430]) {
+    await page.setViewportSize({ ...viewport, width });
+    const summary = journal.locator(".garden-digest");
+    const box = await summary.boundingBox();
+    const heading = await journal
+      .getByRole("heading", { name: longName + "的手帐" })
+      .boundingBox();
+    const cardButton = await journal
+      .getByRole("button", { name: "查看单株花卡" })
+      .boundingBox();
+    assert.ok(box.y >= heading.y + heading.height - 1);
+    assert.ok(box.y + box.height <= cardButton.y + 1);
+    assert.equal(
+      await summary.evaluate(
+        (node) =>
+          node.ownerDocument.defaultView.getComputedStyle(node).position,
+      ),
+      "static",
+    );
+  }
+  await page.setViewportSize(viewport);
   await journal.getByRole("button", { name: "查看单株花卡" }).click();
   await journal.locator("canvas[role=img]").waitFor({ timeout: 30000 });
   await journal
