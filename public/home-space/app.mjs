@@ -1421,12 +1421,6 @@ $("console-return").onclick = (event) => {
   if (dirty && !confirm("离开后会放弃尚未保存的草稿，继续吗？"))
     event.preventDefault();
 };
-document.querySelector(".story-circle-entry").onclick = (event) => {
-  if (overview) {
-    event.preventDefault();
-    act("study");
-  }
-};
 $("bookmark-living").onclick = () => act("living");
 $("bookmark-study").onclick = () => act("study");
 $("bookmark-hall").onclick = () => act(route.type === "room" ? "back" : "hall");

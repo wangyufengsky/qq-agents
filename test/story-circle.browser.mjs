@@ -33,7 +33,15 @@ test("paper pages take an open draft through overlapping writes, notes and libra
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(url + "/home-space/");
-  await page.getByRole("link", { name: "故事会" }).click();
+  await page.getByRole("button", { name: "书房", exact: true }).click();
+  assert.equal(await page.getByRole("link", { name: "故事会" }).count(), 0);
+  const header = await page.locator(".masthead").boundingBox();
+  const admin = await page
+    .getByRole("link", { name: "返回管理台" })
+    .boundingBox();
+  assert.ok(
+    admin.y >= header.y && admin.y + admin.height <= header.y + header.height,
+  );
   await page.getByRole("button", { name: "写书", exact: true }).click();
   await page.getByRole("button", { name: "＋ 开一本书" }).click();
   await page.getByLabel("书名", { exact: true }).fill("纸船和雨");
