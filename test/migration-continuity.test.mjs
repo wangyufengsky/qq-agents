@@ -105,6 +105,10 @@ test("N3 multi-agent restoration remaps the read watermark, keeps old learner st
   const records = [live(f.m, "1"), live(f.m, "2"), live(f.m, "3")];
   f.m.setState(chat, {
     readThroughSeq: records[1].seq,
+    pendingWakes: [
+      { reason: "mention", firstSeq: records[1].seq, seq: records[2].seq },
+      { reason: "scheduled", seq: 0 },
+    ],
     slang: { entries: [], throughSeq: records[1].seq },
   });
   const target = new MemoryStore(":memory:");
@@ -116,6 +120,10 @@ test("N3 multi-agent restoration remaps the read watermark, keeps old learner st
       .all();
     const state = target.bind("fish").state(chat);
     assert.equal(state.readThroughSeq, rows[1].seq);
+    assert.deepEqual(state.pendingWakes, [
+      { reason: "mention", firstSeq: rows[1].seq, seq: rows[2].seq },
+      { reason: "scheduled", seq: 0 },
+    ]);
     assert.equal(
       target.db
         .prepare(

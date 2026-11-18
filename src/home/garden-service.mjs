@@ -252,13 +252,12 @@ export class GardenService {
   }
 
   /** @param {number} now @param {boolean} [live] @param {Actor} [visitorActor] */
-  snapshot(now, live = false, visitorActor) {
+  snapshot(now, live = true, visitorActor) {
     const read = () => {
       const state = this.requireState();
-      const elapsed = Math.max(
-        state.clock,
-        live ? this.clock.elapsedAt(now) : this.clock.elapsed,
-      );
+      // Retain observed progress without extending the desktop lease.
+      if (live) this.clock.advance(now);
+      const elapsed = Math.max(state.clock, this.clock.elapsed);
       const current = this.calendar.advance(state, elapsed, now);
       const running = this.enabled && this.clock.running(now);
       const event =
@@ -282,7 +281,7 @@ export class GardenService {
   /** @param {number} now @param {Actor} [visitorActor] */
   read(now, visitorActor) {
     return {
-      ...this.snapshot(now, Boolean(visitorActor), visitorActor),
+      ...this.snapshot(now, true, visitorActor),
       harvests: this.db
         .prepare(
           "SELECT * FROM garden_harvests WHERE quantity>0 ORDER BY rowid",

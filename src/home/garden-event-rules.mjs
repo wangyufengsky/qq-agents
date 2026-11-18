@@ -134,7 +134,8 @@ export function validEventReferences(settings) {
   );
 }
 
-export function eventOdds(pool, ctx, weather) {
+export function eventOdds(settings, ctx, weather) {
+  const pool = settings.events;
   return poolOdds(
     pool.entries,
     (condition) =>
@@ -143,12 +144,24 @@ export function eventOdds(pool, ctx, weather) {
         : matches(condition, ctx),
     null,
     pool.rate,
+    (id) => {
+      const { effect } = pool.entries[id];
+      return effect.kind === "merchant" &&
+        !effect.seeds.some((cropId) => settings.crops[cropId].enabled)
+        ? "no_seeds"
+        : null;
+    },
   );
 }
 
 export function drawGardenEvent(settings, ctx, weather, seed, day) {
   const pool = settings.events;
-  const entryId = drawPool(eventOdds(pool, ctx, weather), seed, "event", day);
+  const entryId = drawPool(
+    eventOdds(settings, ctx, weather),
+    seed,
+    "event",
+    day,
+  );
   if (!entryId) return null;
   const { name, effect } = pool.entries[entryId];
   const base = {

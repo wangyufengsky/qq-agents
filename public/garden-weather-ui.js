@@ -535,6 +535,7 @@ async function gardenRunEventTrial(form) {
   });
   const labels = {
     disabled: "已停用",
+    no_seeds: "没有可售种子",
     zero_weight: "权重为零",
     conditions: "条件未满足",
   };

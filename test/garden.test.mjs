@@ -431,3 +431,16 @@ test("garden actions and configuration cannot renew an expired desktop lease", (
   garden.desktopSync(21_000, LEASE);
   assert.equal(garden.read(21_000).clock, 18_000);
 });
+
+test("public and operator snapshots agree between heartbeats and retain observed progress on expiry", (t) => {
+  const { garden } = setup(t, (settings) => {
+    settings.speed = 16;
+  });
+  const adminView = garden.read(5000, admin);
+  assert.equal(adminView.clock, 64000);
+  assert.equal(garden.snapshot(5000).clock, adminView.clock);
+  const frozen = garden.snapshot(1000 + LEASE);
+  assert.equal(frozen.running, false);
+  assert.ok(frozen.clock >= adminView.clock);
+  assert.equal(garden.read(1000 + 2 * LEASE, admin).clock, frozen.clock);
+});

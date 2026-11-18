@@ -46,6 +46,7 @@ async function echo(f, messageId, segments) {
     "qq-0",
     raw(messageId, {
       post_type: "message_sent",
+      time: Math.floor(Date.now() / 1000),
       user_id: 10000,
       message_id: String(messageId),
       message: segments,

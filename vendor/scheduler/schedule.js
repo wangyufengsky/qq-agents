@@ -87,7 +87,8 @@ function cronDayMatches(c, day) {
   return domHit || dowHit;
 }
 export const MAX_TIMES_PER_DAY = 24;
-const SEARCH_DAYS = 800; // 每年 2 月 29 日最远要找 4 年 → 另行处理；其余规则 800 天内必有结果
+// February 29 can skip a century year. Allow one complete eight-year gap.
+const LEAP_SEARCH_DAYS = 366 * 8 + 1;
 
 function fail(message) { throw new Error(message); }
 
@@ -260,7 +261,7 @@ function dayAllowed(day, s, holidays) {
 }
 
 /** 某一天（日历日）按规则应在哪些分钟执行；不执行返回 []。seed 用于随机规则。 */
-export function minutesForDay(day, s, { seed = '', holidays = new Set() } = {}) {
+export function minutesForDay(day, s, { seed = '', holidays = new Set(), cron } = {}) {
   if (!dayAllowed(day, s, holidays)) return [];
   const key = fmtDate(day);
   const wd = weekdayOf(day);
@@ -302,7 +303,7 @@ export function minutesForDay(day, s, { seed = '', holidays = new Set() } = {}) 
       return randomMinutes(seededRandom(`${seed}|${key}`), s.count, a, b, s.minGapMin);
     }
     case 'cron': {
-      const c = parseCron(s.expr);
+      const c = cron ?? parseCron(s.expr);
       if (!cronDayMatches(c, day)) return [];
       const out = [];
       for (const h of [...c.hour.set].sort((a, b) => a - b)) for (const m of [...c.minute.set].sort((a, b) => a - b)) out.push(h * 60 + m);
@@ -328,8 +329,8 @@ export function minutesForDay(day, s, { seed = '', holidays = new Set() } = {}) 
  * @param {{ tz: string, seed?: string, holidays?: Set<string> }} ctx
  */
 export function nextOccurrence(s, afterMs, { tz, seed = '', holidays = new Set() }) {
-  if (s.type === 'dates') {
-    for (const it of s.items) {
+  if (s.type === 'once' || s.type === 'dates') {
+    for (const it of s.type === 'once' ? [s] : s.items) {
       const d = parseDate(it.date); const t = parseTime(it.time);
       if (!dayAllowed(d, s, holidays)) continue;
       const at = zonedToUtc({ ...d, ...t }, tz);
@@ -339,11 +340,16 @@ export function nextOccurrence(s, afterMs, { tz, seed = '', holidays = new Set()
   }
   const start = zonedParts(afterMs, tz);
   let day = { year: start.year, month: start.month, day: start.day };
-  const limit = s.type === 'yearly' ? 366 * 4 + 2 : SEARCH_DAYS;
-  for (let i = 0; i < limit; i += 1) {
-    if (s.endDate && fmtDate(day) > s.endDate) return null;
-    if (s.type === 'once' && fmtDate(day) > s.date) return null;
-    for (const m of minutesForDay(day, s, { seed, holidays })) {
+  if (s.startDate && fmtDate(day) < s.startDate) day = parseDate(s.startDate);
+  const limit = ['yearly', 'cron'].includes(s.type) ? LEAP_SEARCH_DAYS : 800;
+  const excluded = new Set(s.excludeDates);
+  const context = { seed, holidays, cron: s.type === 'cron' ? parseCron(s.expr) : null };
+  for (let remaining = limit; remaining > 0; remaining--) {
+    const key = fmtDate(day);
+    if (s.endDate && key > s.endDate) return null;
+    // Explicit exceptions can cover several consecutive scheduled dates.
+    if (excluded.has(key) || ((s.excludeHolidays || s.type === 'workdays') && holidays.has(key))) remaining = limit;
+    for (const m of minutesForDay(day, s, context)) {
       const at = zonedToUtc({ ...day, hour: Math.floor(m / 60), minute: m % 60 }, tz);
       if (at > afterMs) return at;
     }

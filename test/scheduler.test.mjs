@@ -413,3 +413,23 @@ test("peer-tainted owners cannot persist text or AI tasks even with cross-target
     /PEER_SCHEDULE_PRIVATE/,
   );
 });
+
+test("distant once and leap-day cron reminders retain their next occurrence", (t) => {
+  const { s } = setup(t);
+  const once = s.create(
+    "agent-0",
+    task({
+      timezone: "UTC",
+      schedule: { type: "once", date: "2030-01-01", time: "09:00" },
+    }),
+  );
+  assert.equal(once.scheduledAt, Date.parse("2030-01-01T09:00:00Z"));
+  const times = s.preview("agent-0", {
+    timezone: "UTC",
+    schedule: { type: "cron", expr: "0 9 29 2 *" },
+  });
+  assert.deepEqual(
+    times.slice(0, 2).map((x) => x.at),
+    [Date.UTC(2028, 1, 29, 9), Date.UTC(2032, 1, 29, 9)],
+  );
+});

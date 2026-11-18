@@ -500,6 +500,7 @@ for (const source of ["gateway", "administrator", "echo"]) {
           source === "administrator"
             ? mem.reconcileDelivery(requestId, "sent", { messageId: "40001" })
             : mem.reconcileFromEcho({
+                echoTime: Date.now(),
                 connectionId: "qq-0",
                 accountId: "10000",
                 namespace: "onebot",

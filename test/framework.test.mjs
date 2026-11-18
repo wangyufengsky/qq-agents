@@ -413,3 +413,15 @@ test("a stale successful role probe cannot conceal a newer backend failure", asy
   assert.equal(result.backend.lastRoleProbe.state, "ready");
   assert.ok(result.advice.some((s) => s.includes("后端未确认就绪")));
 });
+
+test("desktop-only changes invalidate a release manifest", (t) => {
+  const s = source(t);
+  const dir = path.join(s.root, "desktop", "home");
+  fs.mkdirSync(dir, { recursive: true });
+  const client = path.join(dir, "renderer.js");
+  fs.writeFileSync(client, "// original");
+  s.manifest();
+  assert.equal(new FrameworkKnowledge(s).version.commit, commit);
+  fs.writeFileSync(client, "// changed");
+  assert.equal(new FrameworkKnowledge(s).version.commit, null);
+});
