@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>小窝故事会</title>
+    <link rel="stylesheet" href="/home-space/stories.css" />
+    <script type="module" src="/home-space/stories.mjs"></script>
+  </head>
+  <body>
+    <header class="story-masthead">
+      <a href="/home-space/" aria-label="返回纸页小窝"
+        ><span aria-hidden="true">⌂</span></a
+      >
+      <h1>小窝故事会</h1>
+    </header>
+    <nav class="story-nav" aria-label="故事会书签">
+      <button type="button" data-action="writing">在写</button>
+      <button type="button" data-action="library">图书馆</button>
+      <button type="button" data-action="refresh" class="refresh">刷新</button>
+      <button type="button" data-action="open" class="primary">
+        ＋ 开一本书
+      </button>
+    </nav>
+    <main id="story-workspace" aria-label="故事会">正在打开故事会…</main>
+    <p id="story-status" role="status"></p>
+  </body>
+</html>

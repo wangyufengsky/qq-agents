@@ -16,6 +16,9 @@ const ioCodes = new Set([
 const conflicts = new Set([
   "CONFIG_CONFLICT",
   "REVISION_CONFLICT",
+  "STORY_REQUEST_CONFLICT",
+  "STORY_REVISION_CONFLICT",
+  "STORY_PUBLISHED",
   "SELF_VERSION_CONFLICT",
   "SELF_VERSION_CONFLICT_REPROPOSE",
   "IDEMPOTENCY_CONFLICT",
@@ -65,6 +68,7 @@ export function classifyError(error) {
   )
     status = 503;
   if (conflicts.has(code)) status = 409;
+  if (code === "STORY_NOT_FOUND") status = 404;
   if (code === "BODY_TOO_LARGE") status = 413;
   if (
     /(?:_RATE_LIMIT|_RATE_LIMITED|_BUDGET|_BUDGET_EXHAUSTED|_TRANSFER_BUSY|_DOWNLOAD_BUSY)$/.test(

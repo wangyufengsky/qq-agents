@@ -12,7 +12,8 @@ import { APP_NAMES } from "../src/apps/urls.mjs";
 import { config, fixture, context } from "./helpers.mjs";
 
 const defaultTools = TOOL_NAMES.filter(
-  (name) => !["video_read", "garden_read", "garden_act"].includes(name),
+  (name) =>
+    !["video_read", "garden_read", "garden_act", "story_circle"].includes(name),
 );
 
 test("new roles enable standard tools while retaining setup requirements and explicit video and garden opt-in", () => {

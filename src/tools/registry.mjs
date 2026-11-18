@@ -30,6 +30,7 @@ import { legacyDefinitions, legacyTool } from "./legacy.mjs";
 import { gardenDefinitions, gardenTool } from "./garden.mjs";
 import { homeDefinitions, homeTool } from "./home.mjs";
 import { socialDefinitions, socialTool } from "./home-social.mjs";
+import { storyDefinitions, storyTool } from "./story-circle.mjs";
 import { boardDefinitions, boardTool } from "./board.mjs";
 
 // Discovery and dispatch use this same registry. Fail at load time on drift.
@@ -81,6 +82,7 @@ for (const [group, dispatch] of [
   [boardDefinitions, boardTool],
   [homeDefinitions, homeTool],
   [gardenDefinitions, gardenTool],
+  [storyDefinitions, storyTool],
   [socialDefinitions, socialTool],
 ])
   for (const name of Object.keys(group)) {

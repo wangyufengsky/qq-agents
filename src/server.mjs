@@ -11,6 +11,8 @@ import { desktopGarden } from "./home/desktop-garden.mjs";
 import { isGardenArtResource } from "../public/garden-art/art.js";
 import { adminGardenView, adminGardenWrite } from "./home/garden-console.mjs";
 import { homeModeration } from "./tools/home.mjs";
+import { containsCredential } from "./core/secrets.mjs";
+import { storyAdmin, storyInput } from "./home/story-circle.mjs";
 import { serveHomePreview } from "./home/static.mjs";
 import { withInteraction } from "./core/closeness.mjs";
 import { readFileText } from "./tools/file-text.mjs";
@@ -742,6 +744,18 @@ export function createServer({
         }
       }
 
+      if (url.pathname === "/api/home-stories") {
+        if (req.method !== "POST") return deny("METHOD", 405);
+        const args = storyInput.parse(await readBody(8192));
+        if ("requestId" in args) {
+          const contents = JSON.stringify(args);
+          if (contents.includes(token) || containsCredential(contents))
+            throw Error("SENSITIVE_OUTPUT_BLOCKED");
+        }
+        return send(
+          runtime.home.stories.perform(storyAdmin, args, runtime.now()),
+        );
+      }
       if (url.pathname === "/api/home-garden") {
         if (req.method !== "GET") return deny("METHOD", 405);
         return send(adminGardenView(runtime, true));

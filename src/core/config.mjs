@@ -503,7 +503,12 @@ export const configSchema = z
             .default(() =>
               TOOL_NAMES.filter(
                 (name) =>
-                  !["video_read", "garden_read", "garden_act"].includes(name),
+                  ![
+                    "video_read",
+                    "garden_read",
+                    "garden_act",
+                    "story_circle",
+                  ].includes(name),
               ),
             ),
           wake: z

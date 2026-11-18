@@ -302,6 +302,12 @@ export function subjectMaterials(runtime, ctx) {
             : "可以用 garden_read 只读翻阅共享花园、年表、单株手帐、便笺和花卡。",
         }
       : {}),
+    ...(ctx.allowedTools?.includes("story_circle")
+      ? {
+          storyCircle:
+            "有创作兴致时，可以用 story_circle 自由开书、续写、写批注或去图书馆读完结作品，有兴趣时随时继续。",
+        }
+      : {}),
     reach,
     explore: {
       platforms,

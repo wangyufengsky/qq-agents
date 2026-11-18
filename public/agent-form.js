@@ -260,6 +260,12 @@ const AGENT_TOOL_GROUPS = [
     },
   },
   {
+    id: "story-circle",
+    title: "小窝故事会",
+    desc: "允许主人格自由开书、续写、批注和查阅图书馆。",
+    tools: { story_circle: "参加故事会" },
+  },
+  {
     id: "garden",
     builtin: true,
     builtinLabel: "在花园设置中授权",

@@ -19,6 +19,13 @@ export function serveHomePreview(req, res, pathname) {
     pathname === "/home-space" || pathname.startsWith("/home-space/");
   const liveFiles = new Map([
     ["/home-space/", ["index.html", "text/html; charset=utf-8"]],
+    ["/home-space/stories/", ["stories.html", "text/html; charset=utf-8"]],
+    [
+      "/home-space/stories.mjs",
+      ["stories.mjs", "text/javascript; charset=utf-8"],
+    ],
+    ["/home-space/stories.css", ["stories.css", "text/css; charset=utf-8"]],
+    ["/home-space/story-header.webp", ["story-header.webp", "image/webp"]],
     ["/home-space/app.mjs", ["app.mjs", "text/javascript; charset=utf-8"]],
     ["/home-space/book.mjs", ["book.mjs", "text/javascript; charset=utf-8"]],
     [

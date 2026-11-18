@@ -107,6 +107,8 @@ export function scopedCatalog(runtime, ctx, input) {
 }
 
 export function toolAvailable(agent, name, conversation, config) {
+  if (name === "story_circle")
+    return conversation === "@subject" && agent.tools.includes(name);
   if (name === "garden_read") return gardenPublicScope(conversation);
   if (name === "garden_act")
     return conversation === "@subject" || gardenDelegationScope(conversation);
