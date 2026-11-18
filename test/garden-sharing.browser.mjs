@@ -232,24 +232,39 @@ test("actual Chromium produces a shareable nine-tile PNG and renders the desktop
   const candy = panel.locator(".garden-merchant .garden-good", {
     hasText: "薄荷糖罐",
   });
-  await candy.locator('img[src$="/gift-wrapped.webp"]').waitFor();
-  const fish = panel
-    .locator(".garden-merchant .garden-good")
-    .filter({ hasText: "小鱼干" });
-  await fish.getByText("选购").click();
-  await fish.getByRole("button", { name: "确认购买" }).click();
-  await panel.getByText("小鱼干已收入我的物品栏，支出 12 元。").waitFor();
+  await candy.locator('img[src$="/gift-catnip-candy.webp"]').waitFor();
+  await candy.getByText("选购").click();
+  await candy.getByRole("button", { name: "确认购买" }).click();
+  await panel.getByText("薄荷糖罐已收入我的物品栏，支出 15 元。").waitFor();
   await panel.getByRole("button", { name: "我的物品", exact: true }).click();
-  const item = panel.locator(".garden-good").filter({ hasText: "小鱼干" });
+  const item = panel
+    .locator('[data-garden-pane="items"] .garden-shelf > .garden-good')
+    .filter({ hasText: "薄荷糖罐" });
+  const sticker = 'img[src$="/gift-catnip-candy.webp"]';
+  assert.ok(
+    await item.locator(sticker).evaluate(async (img) => {
+      await img.decode();
+      return img.naturalWidth > 0;
+    }),
+  );
   await item.getByText("查看物品").click();
   await item.getByText("摆入展示栏").click();
   await item.getByLabel("展示格").selectOption("2");
-  await item.getByLabel("公开说明").fill("花园里带回来的小鱼干");
+  await item.getByLabel("公开说明").fill("花园里带回来的薄荷糖");
   await item.getByRole("button", { name: "确认展示" }).click();
   await panel
     .locator(".garden-display")
-    .getByText("花园里带回来的小鱼干")
+    .getByText("花园里带回来的薄荷糖")
     .waitFor();
+  assert.ok(
+    await panel
+      .locator(".garden-display")
+      .locator(sticker)
+      .evaluate(async (img) => {
+        await img.decode();
+        return img.naturalWidth > 0;
+      }),
+  );
   const layout = await panel
     .locator(".garden-content")
     .evaluate((view) => view.scrollWidth <= view.clientWidth);

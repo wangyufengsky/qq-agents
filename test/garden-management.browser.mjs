@@ -352,11 +352,11 @@ test("merchant shelf and gift delivery work at 430 px without exposing the note 
     2,
   );
   const candy = shelf.locator("article", { hasText: "薄荷糖罐" });
-  await candy.locator('img[src$="/gift-wrapped.webp"]').waitFor();
+  await candy.locator('img[src$="/gift-catnip-candy.webp"]').waitFor();
   await page.waitForFunction(() =>
     Array.from(
       globalThis.document.querySelectorAll(
-        '.garden-merchant img[src$="/gift-wrapped.webp"]',
+        '.garden-merchant img[src$="/gift-catnip-candy.webp"]',
       ),
     ).some((img) => img.complete && img.naturalWidth > 0),
   );

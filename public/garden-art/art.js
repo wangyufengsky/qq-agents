@@ -25,7 +25,6 @@ const eventKinds = [
   "sketch",
   "mystery-box",
 ];
-const illustratedGiftIds = ["dried-fish", "yarn-ball", "pressed-bookmark"];
 const eventIcons = new Map([
   ["rain-merchant", "merchant"],
   ["sunny-market", "merchant"],
@@ -61,7 +60,7 @@ const artwork = new Set([
   "plant-seedling.webp",
   "supply-fertilizer.webp",
   "gift-wrapped.webp",
-  ...illustratedGiftIds.map((id) => "gift-" + id + ".webp"),
+  ...Object.keys(gardenGifts).map((id) => "gift-" + id + ".webp"),
   ...["normal", "low", "saturated"].map((soil) => `soil-${soil}.webp`),
   "shelter-back.webp",
   "shelter-front.webp",
@@ -130,12 +129,8 @@ export function gardenEventArtId(event) {
 
 /** @param {"weather"|"event"|"gift"|"crop"|"supply"} group @param {string} kind */
 export function gardenIconFile(group, kind) {
-  if (group === "gift") {
-    if (!Object.hasOwn(gardenGifts, kind)) return null;
-    return illustratedGiftIds.includes(kind)
-      ? `gift-${kind}.webp`
-      : "gift-wrapped.webp";
-  }
+  if (group === "gift")
+    return Object.hasOwn(gardenGifts, kind) ? `gift-${kind}.webp` : null;
   if (group === "crop")
     return cropArtIds.includes(kind) ? "plant-" + kind + "-mature.webp" : null;
   if (group === "supply")
