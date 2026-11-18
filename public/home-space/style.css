@@ -16,12 +16,6 @@
   border-radius: 16px;
   background: var(--paper);
 }
-.story-circle-entry {
-  white-space: nowrap;
-  color: var(--ink);
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
 #gate a {
   text-decoration: underline;
   margin-right: 20px;

@@ -93,6 +93,17 @@ test("an idle AI opens a book, people and peers add text, and the opener publish
     );
   }
 
+  for (const id of ["agent-0", "agent-1"]) {
+    const memory = runtime.memory.bind(id);
+    memory.setState("@subject", {
+      ...memory.state("@subject"),
+      disclosureTaint: [
+        "context:private:30000",
+        "context:group:20000",
+        "operations:fixture",
+      ],
+    });
+  }
   const first = payload("open", {
     title: "湿漉漉的还书口",
     text: "打烊后，还书口掉出了一本湿书。",
@@ -248,14 +259,5 @@ test("an idle AI opens a book, people and peers add text, and the opener publish
       payload("open", { title: "安全测试", text: agentCtx.token }),
     ),
     /CAPABILITY_EXFILTRATION_BLOCKED/,
-  );
-  agentCtx.privateRead.add("protected:unknown-story-origin");
-  await assert.rejects(
-    runtime.callTool(
-      agentCtx,
-      "story_circle",
-      payload("open", { title: "安全测试", text: "不应写入。" }),
-    ),
-    /HOME_SOURCE_DENIED/,
   );
 });

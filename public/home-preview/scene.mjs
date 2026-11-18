@@ -63,7 +63,7 @@ export function validateScene(value, template, catalog) {
     typeof value.sceneId !== "string" ||
     !(value.kind === "scene-layout"
       ? /^(living|hall|room)$/.test(value.sceneId)
-      : /^(living|hall|room-[1-8])$/.test(value.sceneId)) ||
+      : /^(living|study|hall|room-[1-8])$/.test(value.sceneId)) ||
     value.templateId !== template.templateId ||
     value.templateId !==
       `paperbook-${value.sceneId.startsWith("room-") ? "room" : value.sceneId}-v1` ||

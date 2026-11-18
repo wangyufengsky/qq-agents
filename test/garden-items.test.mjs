@@ -423,6 +423,15 @@ test("a normal subject turn discovers the market and gift actions while room vis
       note: "留在房间的纸条",
     },
   });
+  const memory = runtime.memory.bind(cat.id);
+  memory.setState("@subject", {
+    ...memory.state("@subject"),
+    disclosureTaint: [
+      "context:private:30000",
+      "context:group:20000",
+      "operations:fixture",
+    ],
+  });
   await runtime.wake(cat.id, "@subject");
   assert.equal(runs.length, 1);
   await runs[0];

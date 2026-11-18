@@ -1,14 +1,15 @@
 // @ts-check
 import { renderPaperBoard } from "../home-preview/paper-board.mjs";
 
-/** @typedef {{type: "living" | "hall" | "room", page?: number}} BookRoute */
+/** @typedef {{type: "living" | "study" | "hall" | "room", page?: number}} BookRoute */
 
 // The portrait presentation uses the same saved overrides and asset catalog.
 // Keep attached papers on their furniture when the page becomes taller.
 /** @param {Parameters<typeof renderPaperBoard>[0]} options */
 export function renderBookScene(options) {
   const { template, mobile, kind } = options;
-  if (!mobile || kind === "living") return renderPaperBoard(options);
+  if (!mobile || kind === "living" || kind === "study")
+    return renderPaperBoard(options);
   const attachedY = /** @type {Record<string, number>} */ ({
     lamp: 71,
     card: 71,
@@ -41,7 +42,7 @@ export function renderBookScene(options) {
 /** @param {BookRoute | null} from @param {BookRoute} to */
 export function turnDirection(from, to) {
   if (!from) return 0;
-  const rank = { living: 0, hall: 1, room: 2 };
+  const rank = { living: 0, study: 1, hall: 2, room: 3 };
   return Math.sign(
     rank[to.type] - rank[from.type] || (to.page || 1) - (from.page || 1),
   );
