@@ -256,6 +256,21 @@ export function restoreExport(memory, data) {
             ])
               if (state[key] !== undefined)
                 state[key] = seqs.get(state[key]) ?? 0;
+          if (!empty && Array.isArray(state.pendingWakes)) {
+            state.pendingWakes = state.pendingWakes.filter(
+              (/** @type {{seq:number,firstSeq?:number}} */ wake) => {
+                if (wake.seq > 0) {
+                  // A missing event must not become the zero sentinel for unconditional wakes.
+                  const mapped = seqs.get(wake.seq);
+                  if (mapped === undefined) return false;
+                  wake.seq = mapped;
+                }
+                if (wake.firstSeq !== undefined && wake.firstSeq > 0)
+                  wake.firstSeq = seqs.get(wake.firstSeq) ?? wake.seq;
+                return true;
+              },
+            );
+          }
           row.value = JSON.stringify(state);
         }
         if (table === "message_progress" && !empty) row.seq = seqs.get(row.seq);
