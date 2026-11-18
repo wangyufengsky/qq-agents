@@ -1333,6 +1333,7 @@ class AgentMemory {
   // conversation, matching content, within ten minutes, and only one candidate.
   // Rich sends with unverifiable media/references stay for the administrator.
   reconcileFromEcho({
+    echoTime,
     connectionId,
     accountId,
     namespace,
@@ -1343,7 +1344,7 @@ class AgentMemory {
   }) {
     const squash = (s) => String(s || "").replace(/\s+/g, "");
     const want = squash(text);
-    if (!messageId) return null;
+    if (!messageId || !Number.isFinite(echoTime)) return null;
     // Compare real face identifiers, never their textual display labels. Keep
     // legacy text matching separate so a literal marker cannot confirm a face.
     const content = (parts) => {
@@ -1378,16 +1379,20 @@ class AgentMemory {
         .get(this.agentId, conversation, id, this.agentId, conversation, id)
     )
       return null;
-    const since = new Date(Date.now() - 10 * 60000).toISOString();
+    const windowMs = 10 * 60000;
+    const since = new Date(Date.now() - windowMs).toISOString();
     const candidates = this.db
       .prepare(
-        `SELECT d.request_id AS requestId,e.body,e.payload,e.connection_id,e.sender_id,
+        `SELECT d.request_id AS requestId,d.created_at AS createdAt,e.body,e.payload,e.connection_id,e.sender_id,
           EXISTS(SELECT 1 FROM qq_draft_items i WHERE i.agent_id=d.agent_id AND i.delivery_request_id=d.request_id) AS draftLinked
           FROM deliveries d JOIN events e ON e.agent_id=d.agent_id AND e.dedupe='send:' || d.request_id || ':pending'
           WHERE d.agent_id=? AND d.conversation=? AND d.status='unknown' AND d.created_at>=?`,
       )
       .all(this.agentId, conversation, since)
       .filter((row) => {
+        // OneBot timestamps have second precision. Compare the message to its own attempt.
+        const start = Math.floor(Date.parse(row.createdAt) / 1000) * 1000;
+        if (!(echoTime >= start && echoTime <= start + windowMs)) return false;
         const payload = parse(row.payload);
         if (
           actionDelivery(payload) ||

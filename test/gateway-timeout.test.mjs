@@ -68,10 +68,15 @@ test("a gateway timeout leaves the outcome unknown instead of failed", async (t)
   assert.equal(mem.delivery("t-2").status, "failed");
 });
 
-async function echo(runtime, id, message) {
+async function echo(
+  runtime,
+  id,
+  message,
+  time = Math.floor(Date.now() / 1000),
+) {
   await runtime.ingest(
     "qq-0",
-    raw(id, { post_type: "message_sent", user_id: 10000, message }),
+    raw(id, { post_type: "message_sent", user_id: 10000, message, time }),
   );
   await settle(runtime);
 }
@@ -91,6 +96,14 @@ test("QQ's own copy of an unconfirmed send marks it sent", async (t) => {
     }),
     /UNKNOWN/,
   );
+  for (const [id, time] of [
+    [510, Math.floor(Date.now() / 1000) - 3600],
+    [511, 0],
+    [512, Math.floor(Date.now() / 1000) + 3600],
+  ]) {
+    await echo(runtime, id, [text("改好了，大肥猫现在一脸苦闷")], time);
+    assert.equal(mem.delivery("e-1").status, "unknown");
+  }
   // Other text from the account settles nothing.
   await echo(runtime, 501, [text("别的话")]);
   assert.equal(mem.delivery("e-1").status, "unknown");

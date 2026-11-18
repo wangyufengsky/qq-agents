@@ -85,6 +85,7 @@ for (const kind of ["react", "recall", "poke"]) {
     );
     assert.deepEqual(
       f.mem.reconcileFromEcho({
+        echoTime: Date.now(),
         conversation: f.ctx.conversation,
         text: f.pending.body,
         messageId: "90001",
@@ -187,6 +188,7 @@ for (const kind of ["react", "recall"])
       .run(JSON.stringify(payload), f.pending.id);
     assert.equal(
       f.mem.reconcileFromEcho({
+        echoTime: Date.now(),
         conversation: f.ctx.conversation,
         text: f.pending.body,
         messageId: "90000",

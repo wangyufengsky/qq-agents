@@ -967,6 +967,7 @@ export class Runtime {
           raw,
         );
         mem.reconcileFromEcho({
+          echoTime: e.timeKnown ? Date.parse(e.occurredAt) : null,
           connectionId,
           accountId: c.accountId,
           namespace: c.messageIdNamespace || "onebot",
