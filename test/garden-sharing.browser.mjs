@@ -115,12 +115,13 @@ test("actual Chromium produces a shareable nine-tile PNG and renders the desktop
   const tiles = page.locator(".desktop-garden-tile");
   await tiles.first().getByText("空地", { exact: true }).waitFor();
   assert.equal(await tiles.count(), 9);
-  await tiles.nth(1).getByRole("button", { name: "搭棚", exact: true }).click();
-  await tiles.nth(1).getByText("有棚", { exact: true }).waitFor();
-  await tiles
-    .first()
-    .getByRole("button", { name: "播种", exact: true })
-    .click();
+  const detail = page.locator(".garden-inspector");
+  await tiles.nth(1).click();
+  await detail.getByRole("button", { name: "搭棚", exact: true }).click();
+  await detail.getByText("有棚", { exact: true }).waitFor();
+  assert.equal(await tiles.nth(1).getAttribute("aria-pressed"), "true");
+  await tiles.first().click();
+  await detail.getByRole("button", { name: "播种", exact: true }).click();
   await tiles.first().getByText("野生三叶草", { exact: true }).waitFor();
   assert.equal(
     (
@@ -244,9 +245,11 @@ test("native Electron garden tab reaches shared state through its focused panel 
     await panel.getByRole("button", { name: "花园", exact: true }).click();
     const tile = panel.locator(".desktop-garden-tile").first();
     await tile.getByText("空地", { exact: true }).waitFor({ timeout: 8000 });
-    await tile.getByRole("button", { name: "搭棚", exact: true }).click();
-    await tile.getByText("有棚", { exact: true }).waitFor();
-    await tile.getByRole("button", { name: "播种", exact: true }).click();
+    const detail = panel.locator(".garden-inspector");
+    await panel.locator(".garden-workspace-head .garden-coin-icon").waitFor();
+    await detail.getByRole("button", { name: "搭棚", exact: true }).click();
+    await detail.getByText("有棚", { exact: true }).waitFor();
+    await detail.getByRole("button", { name: "播种", exact: true }).click();
     await tile
       .getByText("野生三叶草", { exact: true })
       .waitFor({ timeout: 8000 });

@@ -50,3 +50,276 @@
 .garden-paper-tile[data-risk="critical"] {
   border-color: #934329;
 }
+
+.garden-paper.garden-workspace {
+  --garden-ink: #292e22;
+  --garden-muted: #656654;
+  --garden-line: #d5d2bf;
+  --garden-olive: #3c5032;
+  background: linear-gradient(#fdfbf1ed, #fdfbf1ed), url("./paper.webp");
+  background-color: #fdfbf0;
+  padding: clamp(10px, 2.4%, 28px);
+  border: 1px solid #cfccb9;
+  border-radius: 9px;
+  box-shadow: 0 4px 0 -1px #e1decf;
+  container-type: inline-size;
+}
+.garden-workspace :is(h2, h3) {
+  color: var(--garden-ink);
+  font-family: "Songti SC", "Noto Serif CJK SC", serif;
+  font-weight: 750;
+}
+.garden-workspace-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.garden-workspace-head h2 {
+  margin: 0;
+  font-size: clamp(26px, 5cqi, 44px);
+  line-height: 1.2;
+}
+.garden-workspace-head p,
+.garden-workspace-meta,
+.garden-workspace small {
+  color: var(--garden-muted);
+}
+.garden-workspace-head p {
+  margin: 5px 0 0;
+}
+.garden-coins {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px 5px 7px;
+  border: 1px solid #d7b65f;
+  border-radius: 6px;
+  background: #f8edcc;
+  color: #593711;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.garden-coins small {
+  display: block;
+  color: #684c26;
+  font-size: 10px;
+}
+.garden-coins strong {
+  font-size: clamp(15px, 2.5cqi, 21px);
+}
+.garden-coin-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 25px;
+  aspect-ratio: 1;
+  border: 1px solid #996418;
+  border-radius: 50%;
+  background: #f0c253;
+  color: #734612;
+  box-shadow:
+    inset 0 0 0 2px #ffe293,
+    0 1px 0 #ae7922;
+  font-size: 14px;
+}
+.garden-workspace-meta,
+.garden-board-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 3px 12px;
+}
+.garden-workspace-meta {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--garden-line);
+  margin-bottom: 12px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.garden-board-title h3 {
+  margin: 0 0 5px;
+  font-size: 19px;
+}
+.garden-workspace-body {
+  display: grid;
+  gap: 12px;
+}
+.garden-workspace .garden-map {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid #c9c4aa;
+  border-radius: 6px;
+  background: #f4f0dd;
+}
+.garden-workspace .garden-map-tile {
+  display: grid;
+  grid-template: auto 1fr auto / minmax(0, 1fr);
+  justify-items: center;
+  align-items: stretch;
+  justify-content: stretch;
+  gap: 2px;
+  width: 100%;
+  min-width: 0;
+  min-height: 80px;
+  padding: 4px 6px 7px;
+  border: 0;
+  border-inline-end: 1px dashed #d3ccb3;
+  border-block-end: 1px dashed #d3ccb3;
+  border-radius: 0;
+  background: transparent;
+  color: var(--garden-ink);
+  cursor: pointer;
+  white-space: normal;
+  font-size: 12px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+  transition: background-color 150ms ease;
+}
+.garden-workspace .garden-map-tile:nth-child(3n) {
+  border-inline-end: 0;
+}
+.garden-workspace .garden-map-tile:nth-last-child(-n + 3) {
+  border-block-end: 0;
+}
+.garden-workspace .garden-map-tile:hover {
+  background: #ecebd7;
+}
+.garden-workspace .garden-map-tile[aria-pressed="true"] {
+  background: #e5ead7;
+  box-shadow: inset 0 0 0 1.5px #778263;
+}
+.garden-map-tile:focus-visible {
+  outline: 2px solid var(--garden-olive);
+  outline-offset: -3px;
+}
+.garden-tile-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px 5px;
+  width: 100%;
+  color: #526248;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.garden-map-tile .garden-art-plot {
+  align-self: center;
+  width: min(100%, 80px);
+}
+.garden-rail {
+  min-width: 0;
+}
+.garden-rail > h3 {
+  margin: 12px 0 5px;
+  font-size: 19px;
+}
+.garden-inspector {
+  padding: 10px 12px;
+  border: 1px solid #cfd4bf;
+  border-radius: 6px;
+  background: #eef0e1;
+  overflow-wrap: anywhere;
+}
+.garden-inspector h3 {
+  margin: 1px 0 5px;
+  font-size: 21px;
+}
+.garden-inspector p {
+  margin: 3px 0 6px;
+  color: var(--garden-muted);
+  font-size: 12px;
+}
+.garden-inspector label {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 3px;
+  margin: 5px 0;
+  color: var(--garden-ink);
+  font-size: 12px;
+}
+.garden-inspector progress {
+  grid-column: 1 / -1;
+  display: block;
+  width: 100%;
+  height: 6px;
+  accent-color: #667950;
+}
+.garden-inspector progress.garden-dry {
+  accent-color: #a95431;
+}
+.garden-workspace span.garden-dry {
+  color: #884521;
+}
+.garden-inspector select {
+  max-width: 100%;
+}
+.garden-workspace .garden-inspector button.garden-main-action {
+  background: var(--garden-olive);
+  border-color: var(--garden-olive);
+  color: #fffdf1;
+  font-weight: 650;
+}
+.garden-priorities {
+  list-style: none;
+  margin: 5px 0 12px;
+  padding: 0;
+  border-top: 1px solid var(--garden-line);
+}
+.garden-priorities button {
+  display: flex;
+  justify-content: space-between;
+  border-radius: 0;
+  width: 100%;
+  text-align: start;
+  white-space: normal;
+  color: var(--garden-ink);
+  border: 0;
+  border-bottom: 1px solid var(--garden-line);
+  background: transparent;
+  padding: 7px 0;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+.garden-priorities button:hover {
+  background: #efeee1;
+}
+.garden-priorities button > span {
+  color: var(--garden-olive);
+}
+.garden-shortcuts {
+  display: flex;
+  gap: 5px;
+}
+@container (min-width: 700px) {
+  .garden-workspace-body {
+    grid-template-columns: minmax(0, 1fr) minmax(218px, 27%);
+    gap: 24px;
+  }
+  .garden-workspace .garden-map-tile {
+    min-height: 151px;
+    padding: 8px 10px 10px;
+    font-size: 13px;
+  }
+  .garden-map-tile .garden-art-plot {
+    width: min(100%, 108px);
+  }
+  .garden-tile-top {
+    font-size: 11px;
+  }
+  .garden-rail {
+    padding-left: 18px;
+    border-left: 1px solid var(--garden-line);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .garden-map-tile {
+    transition: none;
+  }
+}

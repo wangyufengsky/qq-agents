@@ -102,3 +102,18 @@ export function hideFailedGardenArt(root) {
     true,
   );
 }
+
+/** @param {Plant|null|undefined} plant */
+export function gardenPlotStatus(plant) {
+  if (!plant) return "可播种";
+  if (plant.status === "mature") return "可收成";
+  if (plant.status === "withered") return "已枯萎";
+  if (plant.water < plant.rules.lowWater) return "缺水";
+  return plant.growth / plant.crop.hours < 0.25 ? "幼苗" : "生长中";
+}
+
+/** @param {number} amount */
+export function gardenBalanceMarkup(amount) {
+  const formatted = amount.toLocaleString("zh-CN");
+  return `<span class="garden-coins"><span class="garden-coin-icon" aria-hidden="true">✦</span><span><small>公共金币</small><strong>${formatted}</strong></span></span>`;
+}

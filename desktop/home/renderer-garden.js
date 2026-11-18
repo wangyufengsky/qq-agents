@@ -1,8 +1,10 @@
 /* global window */
 import {
   gardenArtMarkup,
+  gardenBalanceMarkup,
   gardenIconMarkup,
   gardenLayers,
+  gardenPlotStatus,
   hideFailedGardenArt,
 } from "../../public/garden-art/art.js";
 import { element, button } from "./renderer-shared.js";
@@ -58,10 +60,11 @@ function picker(label, items) {
 export function bindGarden(panel, getRoom) {
   const content = panel.querySelector(".garden-content");
   hideFailedGardenArt(content);
-  content.classList.add("garden-paper");
+  content.classList.add("garden-paper", "garden-workspace");
   const message = panel.querySelector(".garden-message");
   const refresh = panel.querySelector(".garden-refresh");
   let pending,
+    selected = 1,
     busy = false;
   async function request(action) {
     if (busy) return;
@@ -109,63 +112,68 @@ export function bindGarden(panel, getRoom) {
       return;
     }
     const paused = Boolean(garden.pauseReason);
-    content.append(
-      element(
-        "p",
-        "",
-        "第 " +
-          garden.day +
-          " 天 · " +
-          garden.weather.name +
-          " · 本日剩 " +
-          Math.ceil(garden.dayRemaining / 360_000) / 10 +
-          " 花园小时 · 公共余额 " +
-          garden.balance +
-          " 元" +
-          (paused ? " · 已暂停" : ""),
-      ),
-    );
-    content.firstElementChild.insertAdjacentHTML(
+    const head = element("header", "garden-workspace-head");
+    head.append(element("h2", "", "小窝花园"));
+    head.insertAdjacentHTML("beforeend", gardenBalanceMarkup(garden.balance));
+    const meta = element("div", "garden-workspace-meta");
+    const weather = element("span", "", garden.weather.name);
+    weather.insertAdjacentHTML(
       "afterbegin",
       gardenIconMarkup("weather", garden.weather.kind),
     );
-    if (garden.event) {
-      const title = element("h3", "", garden.event.name);
-      title.insertAdjacentHTML(
-        "afterbegin",
-        gardenIconMarkup("event", garden.event.kind),
-      );
-      content.append(title);
-      const status = { claimed: "奖励已入公共仓库", chased: "小偷已被驱赶" }[
-        garden.event.status
-      ];
-      if (status) content.append(element("p", "", status));
-      for (const { kind, args, label } of garden.eventActions) {
-        const action = control(kind, () => args, paused);
-        action.textContent = label;
-        content.append(action);
-      }
-    }
-    const grid = element("div", "desktop-garden-grid");
+    meta.append(
+      weather,
+      element(
+        "span",
+        "",
+        "第 " +
+          garden.day +
+          " 天 · 本日剩 " +
+          Math.ceil(garden.dayRemaining / 360_000) / 10 +
+          " 花园小时" +
+          (paused ? " · 已暂停" : ""),
+      ),
+    );
+    content.append(head, meta);
+    const workspace = element("div", "garden-workspace-body");
+    const board = element("section");
+    const title = element("div", "garden-board-title");
+    title.append(
+      element("h3", "", "共享花圃"),
+      element(
+        "small",
+        "",
+        "已种植 " +
+          garden.plots.filter(({ plant }) => plant).length +
+          " / " +
+          garden.plots.length,
+      ),
+    );
+    const rail = element("section", "garden-rail");
+    rail.setAttribute("aria-label", "地块详情与待办");
+    const detail = element("div");
+    rail.append(detail);
+    const grid = element("div", "desktop-garden-grid garden-map");
+    board.append(title, grid);
+    workspace.append(board, rail);
+    content.append(workspace);
     const plantable = Object.entries(garden.crops).filter(
       ([id, crop]) => crop.enabled && (crop.market || garden.seeds[id] > 0),
     );
-    for (const { id, plant, sheltered } of garden.plots) {
-      const tile = element("article", "desktop-garden-tile garden-paper-tile");
-      tile.dataset.plot = id;
-      tile.dataset.stage = plant?.status || "empty";
+    function selectPlot(id) {
+      selected = id;
+      const { plant, sheltered } = garden.plots.find((plot) => plot.id === id);
+      for (const cell of grid.children)
+        cell.setAttribute(
+          "aria-pressed",
+          String(Number(cell.dataset.plot) === selected),
+        );
+      const tile = element("article", "garden-inspector");
+      tile.dataset.gardenDetail = id;
       tile.append(
-        element("strong", "", "第 " + id + " 块"),
+        element("small", "", "第 " + id + " 块地"),
+        element("h3", "", plant?.crop.name || "空地"),
         element("p", "", sheltered ? "有棚" : "露天"),
-        control(
-          sheltered ? "unshelter" : "shelter",
-          () => ({ plot: id }),
-          paused,
-        ),
-      );
-      tile.firstElementChild.insertAdjacentHTML(
-        "afterend",
-        gardenArtMarkup(gardenLayers({ plant, sheltered })),
       );
       if (!plant) {
         const seeds = picker(
@@ -180,7 +188,6 @@ export function bindGarden(panel, getRoom) {
         );
         seeds.disabled = paused;
         tile.append(
-          element("p", "", "空地"),
           seeds,
           control(
             "plant",
@@ -195,7 +202,6 @@ export function bindGarden(panel, getRoom) {
           ),
         );
       } else {
-        tile.append(element("p", "", plant.crop.name));
         const target = () => ({ plot: id, plantId: plant.id });
         if (plant.status === "mature")
           tile.append(
@@ -225,18 +231,36 @@ export function bindGarden(panel, getRoom) {
           );
         else {
           const progress = Math.floor((plant.growth / plant.crop.hours) * 100);
+          const growing = element("div", "garden-growth");
+          for (const [name, value, suffix, dry] of [
+            ["成长", progress, "%", false],
+            [
+              "水分",
+              Math.floor(plant.water),
+              " / 100",
+              plant.water < plant.rules.lowWater,
+            ],
+          ]) {
+            const label = element("label", "", name);
+            label.append(
+              element(
+                "span",
+                dry ? "garden-dry" : "",
+                value + suffix + (dry ? " · 缺水" : ""),
+              ),
+            );
+            const meter = element("progress", dry ? "garden-dry" : "");
+            meter.max = 100;
+            meter.value = value;
+            label.append(meter);
+            growing.append(label);
+          }
+          const water = control("water", target, paused || plant.water === 100);
+          water.classList.add("garden-main-action");
           tile.append(
             element("p", "", progress < 25 ? "幼苗" : "生长中"),
-            element(
-              "p",
-              "",
-              "成长 " +
-                progress +
-                "% · 水分 " +
-                Math.floor(plant.water) +
-                (plant.water < plant.rules.lowWater ? " · 缺水" : ""),
-            ),
-            control("water", target, paused || plant.water === 100),
+            growing,
+            water,
           );
           if (
             plant.fertilizer < plant.crop.fertilizer &&
@@ -245,26 +269,74 @@ export function bindGarden(panel, getRoom) {
             tile.append(control("fertilize", target, paused));
         }
       }
-      grid.append(tile);
+      tile.append(
+        control(
+          sheltered ? "unshelter" : "shelter",
+          () => ({ plot: id }),
+          paused,
+        ),
+      );
+      detail.replaceChildren(tile);
     }
-    content.append(grid);
+    for (const { id, plant, sheltered } of garden.plots) {
+      const cell = button("desktop-garden-tile garden-map-tile", "");
+      cell.dataset.plot = id;
+      const status = gardenPlotStatus(plant);
+      const header = element("span", "garden-tile-top");
+      header.append(
+        element("span", "", String(id).padStart(2, "0")),
+        element("span", status === "缺水" ? "garden-dry" : "", status),
+      );
+      cell.append(header);
+      cell.insertAdjacentHTML(
+        "beforeend",
+        gardenArtMarkup(gardenLayers({ plant, sheltered })),
+      );
+      cell.append(element("strong", "", plant?.crop.name || "空地"));
+      cell.onclick = () => selectPlot(id);
+      grid.append(cell);
+    }
+    selectPlot(selected);
     if (garden.priorities.length) {
-      const priorities = element("ul");
-      for (const item of garden.priorities)
-        priorities.append(
-          element(
-            "li",
-            "",
-            "第 " +
-              item.plot +
-              " 块 · " +
-              priorityLabels[item.kind] +
-              (item.kind === "flood"
-                ? ` · 本日剩 ${Math.ceil(item.hours * 10) / 10} 花园小时 · ${item.risk === "critical" ? "日结束前搭棚，否则枯萎" : "建议搭棚"}`
-                : ""),
-          ),
+      const priorities = element("ul", "garden-priorities");
+      rail.append(element("h3", "", "今天可做"));
+      for (const item of garden.priorities) {
+        const row = element("li");
+        const jump = button(
+          "",
+          "第 " +
+            item.plot +
+            " 块 · " +
+            priorityLabels[item.kind] +
+            (item.kind === "flood"
+              ? ` · 本日剩 ${Math.ceil(item.hours * 10) / 10} 花园小时 · ${item.risk === "critical" ? "日结束前搭棚，否则枯萎" : "建议搭棚"}`
+              : ""),
         );
-      content.append(priorities);
+        jump.onclick = () => {
+          selectPlot(item.plot);
+          detail.scrollIntoView({ block: "nearest" });
+        };
+        row.append(jump);
+        priorities.append(row);
+      }
+      rail.append(priorities);
+    }
+    if (garden.event) {
+      const title = element("h3", "", garden.event.name);
+      title.insertAdjacentHTML(
+        "afterbegin",
+        gardenIconMarkup("event", garden.event.kind),
+      );
+      rail.append(title);
+      const status = { claimed: "奖励已入公共仓库", chased: "小偷已被驱赶" }[
+        garden.event.status
+      ];
+      if (status) rail.append(element("p", "", status));
+      for (const { kind, args, label } of garden.eventActions) {
+        const action = control(kind, () => args, paused);
+        action.textContent = label;
+        rail.append(action);
+      }
     }
     content.append(
       element("h3", "", "公共仓库"),
@@ -351,6 +423,7 @@ export function bindGarden(panel, getRoom) {
     refresh: () => void request(),
     clear: () => {
       pending = undefined;
+      selected = 1;
       message.textContent = "";
       content.replaceChildren();
     },
