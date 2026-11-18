@@ -186,9 +186,25 @@ h2 {
 }
 #visits,
 #chat,
+#garden-panel,
 #observation-results {
   min-height: 0;
   background: var(--paper);
+}
+#garden-panel {
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+}
+#garden-panel::-webkit-scrollbar {
+  width: 10px;
+}
+#garden-panel::-webkit-scrollbar-track {
+  background: var(--paper);
+}
+#garden-panel::-webkit-scrollbar-thumb {
+  background: var(--muted);
+  border: 2px solid var(--paper);
+  border-radius: 5px;
 }
 #visits {
   padding: 17px 16px 12px;

@@ -104,6 +104,22 @@ test("management console opens the garden, edits its catalog and trades from the
   const settings = page.locator("[data-garden-settings]");
   await page.getByRole("button", { name: "花园设置", exact: true }).click();
   await page.locator("summary").filter({ hasText: "花园设置" }).click();
+  for (const field of [
+    settings.getByLabel("全园速度倍率"),
+    settings.getByLabel("花园继续运行"),
+    settings.getByLabel("全园总额"),
+    settings.locator("[data-crop-parent]"),
+  ]) {
+    const colors = await field.evaluate((control) => {
+      const win = control.ownerDocument.defaultView;
+      return {
+        label: win.getComputedStyle(control.labels[0]).color,
+        paperInk: win.getComputedStyle(control.closest(".garden-console-paper"))
+          .color,
+      };
+    });
+    assert.equal(colors.label, colors.paperInk);
+  }
   await settings.getByLabel("全园速度倍率").fill("4");
   await settings.getByLabel("作物 ID").fill("test-clover");
   await settings.getByRole("button", { name: "新增作物" }).click();
