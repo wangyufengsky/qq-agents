@@ -214,5 +214,13 @@
     "prompt": "Use case: illustration-story. Create ONE transparent-background game/UI prop for a cozy hand-drawn paper pop-up book room. Subject: a single closed cream parchment envelope hanging from a short curved natural twine loop above it, as a wall-mounted correspondence pocket. Front-on flat view, no perspective or surrounding room. Envelope width approximately 1.5 times its height, triangular folded flap and a small round muted terracotta wax seal, softly rounded handmade paper cutout silhouette. Warm fine brown pencil outlines, subtle watercolor/colored pencil paper texture, warm cream cut edges and a very light self-shadow between paper layers, matching honey wood and cream picture-book furnishings. Center entire prop with generous transparent padding, keep the loop fully visible. No letters, no writing, no typography, no characters, no wall/background, no UI frame, no extra objects. Genuine alpha transparency outside the single envelope-and-loop cutout. Warm, welcoming, simple and legible at small display sizes.",
     "reference": "envelope-source-v1",
     "provenance": "本任务按小窝纸页风格委托生成，并以同一工具清理对象外背景、保留信封与挂环的透明裁切；未下载第三方素材。"
+  },
+  {
+    "assetId": "study-bookcase",
+    "name": "小窝书房书架",
+    "tool": "OpenAI built-in imagegen",
+    "prompt": "Generate one transparent game UI paper-sticker asset, a low honey-color wooden bookcase with books, matching the attached existing shelf's artisanal hand-drawn amber watercolor paper cutout and ivory die-cut boundary. FRONT elevation only, no room, no background, no floor, no wall, no white background, no text or lettering, no plinth behind the asset. Wide low bookshelf 1.35 width to height, lightly rounded edges, two broad stacked open shelves, straight vertical sides and a honey amber top with a slightly curved decorative lip, tiny short feet. Upper shelf holds three simple vertical hardcover books in olive green, slate blue and ochre on its left and a face-out cream book with small leafy motif on the right. Lower shelf has two vertical books on its left and two horizontal green/book stacks on its right. Fine dark brown drawn lines, warm natural paper grain and deliberate cream cutout edges with soft shadow within the silhouette. The entire bookcase completely visible including feet and correct clean alpha outside, with enough transparent margins for trimming. It should read at small UI sizes as an inviting bookshelf and fit a front-on storybook room. This is a single transparent asset without any labels.",
+    "reference": "shelf-wide.webp",
+    "provenance": "参考小窝现有纸片书架，生成书房专用的双层馆藏书架。"
   }
 ]

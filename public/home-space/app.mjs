@@ -15,6 +15,9 @@ const $ = (id) => document.getElementById(id),
   mobile = matchMedia("(max-width:640px)");
 const labels = {
   living: "返回客厅",
+  study: "去书房",
+  "write-story": "写书",
+  "read-story": "读书",
   hall: "去房间走廊",
   back: "返回走廊",
   board: "打开留言板",
@@ -22,6 +25,34 @@ const labels = {
   intro: "查看介绍卡",
   works: "查看作品展示",
   letters: "查看往来信件",
+};
+const pages = {
+  living: {
+    folio: "01",
+    title: "客厅",
+    chapter: "第 一 页",
+    corner: ["去书房", "study"],
+  },
+  study: {
+    folio: "02",
+    title: "书房",
+    chapter: "第 二 页",
+    corner: ["去走廊", "hall"],
+    back: ["← 客厅", "living"],
+  },
+  hall: {
+    folio: "03",
+    title: "走廊",
+    chapter: "第 三 页",
+    corner: ["回书房", "study"],
+    back: ["← 书房", "study"],
+  },
+  room: {
+    folio: "04",
+    chapter: "第 四 页",
+    corner: ["回走廊", "back"],
+    back: ["← 走廊", "back"],
+  },
 };
 const hints = {
   HOME_REVISION_CONFLICT:
@@ -199,6 +230,11 @@ function parseRoute() {
     }
     return { type: "room", agentId: id };
   }
+  if (parts[0] === "study")
+    return {
+      type: "study",
+      focus: ["desk", "shelf"].includes(parts[1]) ? parts[1] : null,
+    };
   if (parts[0] === "hall")
     return {
       type: "hall",
@@ -221,13 +257,17 @@ function sceneURL(r) {
     })
   );
 }
-function template() {
-  return createTemplate(
-    route.type,
-    route.type === "hall" ? overview.residents.length : 3,
-    route.page || 1,
-    route.type === "hall" ? overview.residents.map((r) => r.id) : null,
+function template(r = route) {
+  const scene = createTemplate(
+    r.type,
+    r.type === "hall" ? overview.residents.length : 3,
+    r.page || 1,
+    r.type === "hall"
+      ? overview.residents.map((resident) => resident.id)
+      : null,
   );
+  if (r.type === "living") scene.hotspots.door = "study";
+  return scene;
 }
 function name(id) {
   return overview?.residents.find((r) => r.id === id)?.name || "房间已不存在";
@@ -250,8 +290,13 @@ function navigate(hash) {
 }
 function act(action) {
   if ($("entries").open) $("entries").close();
-  if (action === "living" || action === "hall")
-    navigate(action === "hall" ? "hall/1" : "living");
+  if (["living", "study", "hall"].includes(action))
+    navigate(action === "hall" ? "hall/1" : action);
+  else if (action === "write-story" || action === "read-story")
+    location.assign(
+      "/home-space/stories/" +
+        (action === "read-story" ? "?shelf=library" : ""),
+    );
   else if (action === "back") {
     const at = overview.residents.findIndex((r) => r.id === route.agentId);
     navigate(`hall/${Math.max(1, Math.floor(at / 3) + 1)}`);
@@ -308,32 +353,17 @@ function draw(direction = 0) {
     "editing",
     editing && envelope.capabilities.write,
   );
-  const heading = el("div", "book-heading"),
-    chapter = { living: "第 一 页", hall: "第 二 页", room: "第 三 页" }[
-      route.type
-    ],
-    title =
-      route.type === "living"
-        ? "客厅"
-        : route.type === "hall"
-          ? "走廊"
-          : `${name(route.agentId)} 的房间`;
+  const {
+    chapter,
+    title: roomTitle,
+    corner: nextPage,
+    folio,
+    back,
+  } = pages[route.type];
+  const title = roomTitle || `${name(route.agentId)} 的房间`;
+  const heading = el("div", "book-heading");
   heading.append(el("span", "", chapter), el("h2", "", title));
-  const corner = button(
-    route.type === "living"
-      ? "去走廊"
-      : route.type === "hall"
-        ? "回客厅"
-        : "回走廊",
-    () =>
-      act(
-        route.type === "living"
-          ? "hall"
-          : route.type === "hall"
-            ? "living"
-            : "back",
-      ),
-  );
+  const corner = button(nextPage[0], () => act(nextPage[1]));
   corner.className = "page-corner";
   corner.setAttribute("aria-label", `翻页${corner.textContent}`);
   face.append(scene, heading, corner);
@@ -348,16 +378,16 @@ function draw(direction = 0) {
   }
   stage.dataset.route = location.hash || "#living";
   $("title").textContent = title;
-  $("folio").textContent =
-    `${{ living: "01", hall: "02", room: "03" }[route.type]} / ${title}`;
-  for (const type of ["living", "hall"]) {
+  $("folio").textContent = `${folio} / ${title}`;
+  for (const type of ["living", "study", "hall"]) {
     const active =
       route.type === type || (type === "hall" && route.type === "room");
     if (active) $("bookmark-" + type).setAttribute("aria-current", "page");
     else $("bookmark-" + type).removeAttribute("aria-current");
   }
-  $("page-back").hidden = route.type === "living";
-  $("page-back").textContent = route.type === "hall" ? "← 客厅" : "← 走廊";
+  $("page-back").hidden = !back;
+  $("page-back").textContent = back?.[0] || "";
+  $("page-back").onclick = back ? () => act(back[1]) : null;
   $("subtitle").textContent =
     route.type === "hall"
       ? `${overview.residents.length} 位居民 · 离线也保留房间`
@@ -370,15 +400,12 @@ function draw(direction = 0) {
   nav.replaceChildren();
   const actions =
     route.type === "living"
-      ? ["board", "guide", "hall"]
-      : route.type === "hall"
-        ? [
-            "living",
-            ...Object.values(t.hotspots).filter(
-              (x, i, a) => a.indexOf(x) === i,
-            ),
-          ]
-        : ["back", "living", "intro", "works", "letters"];
+      ? ["board", "guide", "study"]
+      : route.type === "study"
+        ? ["write-story", "read-story", "living", "hall"]
+        : route.type === "hall"
+          ? ["study", ...new Set(Object.values(t.hotspots))]
+          : ["back", "living", "intro", "works", "letters"];
   actions.forEach((a) => nav.append(button(actionLabel(a), () => act(a))));
   $("pagination").replaceChildren();
   if (route.type === "hall" && overview.residents.length > 3) {
@@ -528,7 +555,15 @@ async function refresh(animate = false) {
     if (request !== ticket) return;
     overview = info;
     const nextRoute = parseRoute(),
-      next = await api(sceneURL(nextRoute));
+      next =
+        nextRoute.type === "study"
+          ? {
+              rosterRevision: info.rosterRevision,
+              layout: makeScene(template(nextRoute), "study"),
+              capabilities: { write: false },
+              layoutRevision: 0,
+            }
+          : await api(sceneURL(nextRoute));
     if (request !== ticket) return;
     if (next.rosterRevision !== info.rosterRevision)
       throw Error("居民列表已变化，请重试。");
@@ -562,6 +597,8 @@ async function refresh(animate = false) {
         .querySelector(`[data-instance="${CSS.escape("door-" + oldFocus.id)}"]`)
         ?.focus({ preventScroll: true });
       window.scrollTo(0, oldFocus.y);
+    } else if (nextRoute.type === "study" && nextRoute.focus) {
+      $("stage").querySelector(`[data-instance="${nextRoute.focus}"]`)?.focus();
     } else {
       $("title").tabIndex = -1;
       $("title").focus({ preventScroll: true });
@@ -1384,9 +1421,15 @@ $("console-return").onclick = (event) => {
   if (dirty && !confirm("离开后会放弃尚未保存的草稿，继续吗？"))
     event.preventDefault();
 };
+document.querySelector(".story-circle-entry").onclick = (event) => {
+  if (overview) {
+    event.preventDefault();
+    act("study");
+  }
+};
 $("bookmark-living").onclick = () => act("living");
+$("bookmark-study").onclick = () => act("study");
 $("bookmark-hall").onclick = () => act(route.type === "room" ? "back" : "hall");
-$("page-back").onclick = () => act(route.type === "hall" ? "living" : "back");
 $("entry-toggle").onclick = () => $("entries").showModal();
 $("menu-toggle").onclick = () => $("menu").showModal();
 for (const id of ["entries", "menu"]) {
@@ -1510,7 +1553,7 @@ setInterval(async () => {
       editor();
     }
     renewLease();
-    if (!dirty) {
+    if (!dirty && route.type !== "study") {
       const next = await api(sceneURL(route));
       // Editing may begin while the layout request is in flight.
       if (currentTicket !== ticket || dirty) return;

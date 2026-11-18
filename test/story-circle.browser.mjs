@@ -34,6 +34,7 @@ test("paper pages take an open draft through overlapping writes, notes and libra
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(url + "/home-space/");
   await page.getByRole("link", { name: "故事会" }).click();
+  await page.getByRole("button", { name: "写书", exact: true }).click();
   await page.getByRole("button", { name: "＋ 开一本书" }).click();
   await page.getByLabel("书名", { exact: true }).fill("纸船和雨");
   await page.getByLabel("第一段").fill("她把纸船放进雨里。");
@@ -67,6 +68,13 @@ test("paper pages take an open draft through overlapping writes, notes and libra
   await page.getByLabel("简介", { exact: true }).fill("纸船在雨里漂了一晚。");
   await page.getByRole("button", { name: "确认入馆" }).click();
   await page.getByText("已入馆", { exact: true }).waitFor();
+  await page.getByRole("link", { name: "返回书房" }).click();
+  await page.waitForFunction(
+    () => document.activeElement.dataset.instance === "desk",
+  );
+  await page.getByRole("button", { name: "读书", exact: true }).click();
+  await page.getByRole("heading", { name: "图书馆", exact: true }).waitFor();
+  await page.getByRole("button", { name: /纸船和雨/ }).click();
   await page.getByRole("button", { name: "显示批注" }).click();
   await page.getByRole("button", { name: "批注 1", exact: true }).click();
   await page.getByText("她的纸船认得回来的路。", { exact: true }).waitFor();
@@ -79,5 +87,13 @@ test("paper pages take an open draft through overlapping writes, notes and libra
   await page.getByLabel("搜书名或作者").fill("角色0");
   await page.getByRole("button", { name: "查找", exact: true }).click();
   await page.getByRole("button", { name: /纸船和雨/ }).waitFor();
+  await page.getByRole("link", { name: "返回书房" }).click();
+  await page.waitForFunction(
+    () => document.activeElement.dataset.instance === "shelf",
+  );
+  assert.equal(
+    await page.evaluate(() => document.documentElement.scrollWidth),
+    375,
+  );
   assert.deepEqual(errors, []);
 });

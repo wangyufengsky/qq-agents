@@ -1,5 +1,22 @@
 export const catalogVersion = "paperbook-v1";
 export const catalog = {
+  "study-bookcase": {
+    name: "小窝书房书架",
+    file: "assets/study-bookcase.webp",
+    width: 1457,
+    height: 1080,
+    bounds: [42, 50, 1373, 985],
+    assetVersion: 1,
+    sha256: "c6c494fc7ac79f066190f14b5bea1b3448bca1e1f9af1cb2261e1f5b79b1e4e6",
+    bytes: 308942,
+    transparent: true,
+    sourceSha256:
+      "e3e676852c3cfe4e01f9b2ec51a47efc1a04bdc90e6248323a5d88eb1f43786f",
+    sourceBytes: 2727148,
+    license: "MIT",
+    attribution:
+      "QQ Agents commissioned AI artwork; see docs/AI-HOME-ASSETS.md",
+  },
   "room-board": {
     name: "空房间纸板",
     file: "assets/room-board.webp",

@@ -11,10 +11,8 @@ export function storyTool(runtime, ctx, _name, args) {
   const agent = runtime.assertActive(ctx);
   if (ctx.conversation !== "@subject" || !agent.tools.includes("story_circle"))
     throw Error("TOOL_DISABLED");
-  if ("requestId" in args && args.kind !== "withdraw_note") {
-    runtime.home.rooms.shareable(ctx);
+  if ("requestId" in args && args.kind !== "withdraw_note")
     runtime.assertSafeOutput(ctx, JSON.stringify(args));
-  }
   const actor = {
     key: runtime.home.generation(agent.id),
     name: agent.name,

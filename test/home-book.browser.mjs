@@ -79,6 +79,16 @@ try {
       .evaluate((n) => getComputedStyle(n).transform !== "none"),
   );
   await page.screenshot({ path: path.join(output, "turning.png") });
+  await ready(page, "#study");
+  await page.screenshot({
+    path: path.join(output, "study-desktop.png"),
+    fullPage: true,
+  });
+  check(
+    "the study has both story entrances",
+    (await page.locator(".study button.paper-object").count()) === 2,
+  );
+  await page.getByRole("button", { name: "翻页去走廊" }).click();
   await ready(page, "#hall/1");
   check(
     "finished turns discard the old scene",

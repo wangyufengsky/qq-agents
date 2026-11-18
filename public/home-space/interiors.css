@@ -1327,3 +1327,26 @@ body.editing {
     grid-template-columns: 1fr;
   }
 }
+
+.book-face:has(.study) .book-heading {
+  display: none;
+}
+.study .ink-nameplate {
+  font-size: clamp(13px, 3vw, 30px);
+}
+.study .paper-object .label {
+  top: 76%;
+  color: #403321;
+  visibility: visible;
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+.study button.paper-object:is(:hover, :focus-visible) .label {
+  background: #f6e2a9;
+}
+@media (max-width: 640px) {
+  .study .paper-object .label {
+    font-size: 13px;
+    padding: 3px 8px;
+  }
+}

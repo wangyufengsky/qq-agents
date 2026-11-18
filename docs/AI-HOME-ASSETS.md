@@ -2,7 +2,7 @@
 
 本套素材按维护者提供的手绘立体书参考图委托 AI 生成：奶油纸纹、蜂蜜色木材、细棕色手绘线、米白裁切边与轻微纸层阴影。房间是一块不透明纸板，家具和装饰是独立透明纸片。所有姓名、状态和阅读内容由 HTML 呈现。
 
-运行目录为 `public/home-preview/assets/`，共有 27 个 WebP 文件：
+运行目录为 `public/home-preview/assets/`，共有 28 个 WebP 文件：
 
 - 房间纸板 1 张。
 - 房门、书桌、展示架、床、窗、窗帘、台灯、植物、地毯、挂画、介绍卡 11 张。
@@ -10,8 +10,9 @@
 - 简桌、宽展示架、落地灯、高植物、短窗帘 5 张。
 - 浅蓝、豆沙床和地毯 4 张。
 - 墙上信封 1 张，采用奶油纸、麻绳挂环和陶红封蜡；信件标题与内容由 HTML 呈现。
+- 书房馆藏书架 1 张，带松绿、蓝灰和赭黄书脊。
 
-目录清单 `public/home-preview/catalog.mjs` 保存稳定 ID、`assetVersion`、原始尺寸与 alpha 显示边界、运行文件 SHA-256 和字节数，以及原始 PNG 的 `sourceSha256`、`sourceBytes`。运行文件总计 5,277,540 字节，原始 PNG 合计 54,929,577 字节。26 张纸片保留 alpha；纸板不透明。
+目录清单 `public/home-preview/catalog.mjs` 保存稳定 ID、`assetVersion`、原始尺寸与 alpha 显示边界、运行文件 SHA-256 和字节数，以及原始 PNG 的 `sourceSha256`、`sourceBytes`。运行文件总计 5,586,482 字节，原始 PNG 合计 57,656,725 字节。27 张纸片保留 alpha；纸板不透明。
 
 ## 来源与许可
 

@@ -15,7 +15,7 @@ import { fixture } from "./helpers.mjs";
 
 const room = () => createTemplate("room");
 test("home assets have verified WebP bytes, bounded display rectangles and provenance", () => {
-  assert.equal(Object.keys(catalog).length, 27);
+  assert.equal(Object.keys(catalog).length, 28);
   let total = 0;
   for (const [id, a] of Object.entries(catalog)) {
     const b = fs.readFileSync(
@@ -59,6 +59,24 @@ test("home templates use stable anchors, semantic actions and bounded hall pagin
     assert.deepEqual(
       doors,
       Array.from({ length: count }, (_, i) => `door-${i + 1}`),
+    );
+  }
+  const study = createTemplate("study");
+  assert.deepEqual(study.hotspots, {
+    desk: "write-story",
+    shelf: "read-story",
+  });
+  for (const mobile of [false, true]) {
+    const objects = resolveScene(
+      makeScene(study, "study"),
+      study,
+      catalog,
+      mobile,
+    );
+    assert.equal(objects.find((o) => o.id === "shelf").asset, "study-bookcase");
+    assert.ok(
+      objects.find((o) => o.id === "desk").x <
+        objects.find((o) => o.id === "shelf").x,
     );
   }
   assert.throws(() => createTemplate("hall", 7, 4), /HOME_SCENE_INVALID/);

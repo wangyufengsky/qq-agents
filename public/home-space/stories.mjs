@@ -3,8 +3,14 @@ const statusLine = document.querySelector("#story-status");
 const navigation = document.querySelector(".story-nav");
 const narrow = matchMedia("(max-width: 850px)");
 const emptyPage = { items: [], nextOffset: null };
+const entryShelf =
+  new URLSearchParams(location.search).get("shelf") === "library"
+    ? "library"
+    : "writing";
+document.querySelector("#back-to-study").href =
+  "/home-space/#study/" + (entryShelf === "library" ? "shelf" : "desk");
 const state = {
-  shelf: "writing",
+  shelf: entryShelf,
   books: emptyPage,
   book: null,
   query: "",

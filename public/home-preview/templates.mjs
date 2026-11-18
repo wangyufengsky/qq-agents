@@ -39,6 +39,20 @@ function layout(type, count, page) {
         envelope: "letters",
       },
     };
+  if (type === "study")
+    return {
+      objects: [
+        item("nameplate", "nameplate", 50, 21, 17, 2, [50, 19, 25]),
+        item("window", "window", 28, 43, 20, 1, [27, 48, 28]),
+        item("curtains", "curtains", 28, 45, 26, 2, [27, 50, 34]),
+        item("desk", "desk", 28, 86, 36, 3, [28, 84, 38]),
+        item("lamp", "lamp", 17, 60, 10, 5, [17, 69, 12]),
+        item("manuscript", "guide", 33, 61, 14, 5, [34, 69, 16]),
+        item("shelf", "study-bookcase", 73, 86, 33, 3, [73, 84, 38]),
+        item("rug", "rug", 50, 95, 36, 1, [50, 93, 36]),
+      ],
+      hotspots: { desk: "write-story", shelf: "read-story" },
+    };
   if (type === "living")
     return {
       objects: [
@@ -87,14 +101,16 @@ function parentOf(o, type) {
   return (
     (type === "room"
       ? { card: "desk", lamp: "desk", curtains: "window", nameplate: "door" }
-      : { guide: "table", nameplate: "door" })[o.id] || null
+      : type === "study"
+        ? { manuscript: "desk", lamp: "desk", curtains: "window" }
+        : { guide: "table", nameplate: "door" })[o.id] || null
   );
 }
 
 /** @param {string} type @param {number} count @param {number} page @param {string[]|null} residentIds @returns {import("./scene.mjs").Template} */
 export function createTemplate(type, count = 3, page = 1, residentIds = null) {
   if (
-    !["living", "hall", "room"].includes(type) ||
+    !["living", "study", "hall", "room"].includes(type) ||
     !Number.isInteger(count) ||
     count < 0 ||
     count > 1000 ||

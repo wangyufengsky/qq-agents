@@ -18,7 +18,7 @@ export function decorateSceneObject(
     if (object.id === "nameplate") {
       const owner = residents.find((r) => r.id === ownerAgentId);
       const text =
-        type === "room" ? owner?.tagline || owner?.name || "房间" : "走廊";
+        type === "room" ? owner?.tagline || owner?.name || "房间" : "书房";
       const ink = el("object-ink ink-nameplate", text);
       ink.title = text;
       node.append(ink);

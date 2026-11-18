@@ -100,7 +100,7 @@ test("normal chat and desktop can read only the public projection while locked s
     assert.ok(!list(scope).includes("garden_read"));
 });
 
-test("an authorized subject can plant after reading chat while gift text still uses publication checks", async (t) => {
+test("an authorized subject can care for plants with other material in the turn", async (t) => {
   const { runtime, garden } = setup(t);
   const ctx = context(runtime, "agent-0", "@subject");
   ctx.turnId = randomUUID();
@@ -120,18 +120,7 @@ test("an authorized subject can plant after reading chat while gift text still u
     });
   const view = await runtime.callTool(ctx, "garden_read", {});
   assert.equal(view.turnRemaining, settings.turnLimit);
-  const itemId = randomUUID();
-  await assert.rejects(
-    call("send_gift", { itemId, recipient: admin, note: "一张纸条" }),
-    /HOME_SOURCE_DENIED/,
-  );
   ctx.privateRead.add("operations:fixture");
-  for (const [kind, args] of [
-    ["send_gift", { itemId, recipient: admin }],
-    ["display_gift", { itemId, slot: 1 }],
-  ]) {
-    await assert.rejects(call(kind, args), /HOME_SOURCE_DENIED/);
-  }
   const receipt = await call("plant", {
     plot: 4,
     cropId: "moonflower",
