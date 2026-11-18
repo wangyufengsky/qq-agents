@@ -33,8 +33,8 @@ export class HomeRooms {
       throw Error("HOME_WRITE_DENIED");
     return a;
   }
-  /** Layout choices carry no free text, but protected turns still cannot affect shared display. @param {any} ctx */
-  shareable(ctx, layoutProposal = false) {
+  /** Structured changes to shared displays or inventories may use ordinary chat sources. @param {any} ctx */
+  shareable(ctx, allowChatSources = false) {
     const r = this.runtime,
       p = contextProtection(r, ctx);
     if (
@@ -66,7 +66,7 @@ export class HomeRooms {
         ]
           .filter(
             (kind) =>
-              !layoutProposal ||
+              !allowChatSources ||
               !["private-conversation", "group-conversation"].includes(kind),
           )
           .includes(sourceClass(r, ctx, id))

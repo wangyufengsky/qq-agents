@@ -120,6 +120,18 @@ test("an authorized subject can plant after reading chat while gift text still u
     });
   const view = await runtime.callTool(ctx, "garden_read", {});
   assert.equal(view.turnRemaining, settings.turnLimit);
+  const itemId = randomUUID();
+  await assert.rejects(
+    call("send_gift", { itemId, recipient: admin, note: "一张纸条" }),
+    /HOME_SOURCE_DENIED/,
+  );
+  ctx.privateRead.add("operations:fixture");
+  for (const [kind, args] of [
+    ["send_gift", { itemId, recipient: admin }],
+    ["display_gift", { itemId, slot: 1 }],
+  ]) {
+    await assert.rejects(call(kind, args), /HOME_SOURCE_DENIED/);
+  }
   const receipt = await call("plant", {
     plot: 4,
     cropId: "moonflower",
@@ -127,14 +139,6 @@ test("an authorized subject can plant after reading chat while gift text still u
   });
   await call("water", { plot: 4, plantId: receipt.plantId });
   assert.equal(garden.turnUsed(ctx.agentId, ctx.turnId), 2);
-  await assert.rejects(
-    call("send_gift", {
-      itemId: randomUUID(),
-      recipient: admin,
-      note: "一张纸条",
-    }),
-    /HOME_SOURCE_DENIED/,
-  );
 });
 
 test("garden image and text share the existing QQ delivery ledger and budget", async (t) => {

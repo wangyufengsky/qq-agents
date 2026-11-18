@@ -275,17 +275,19 @@ export function gardenTool(
     return delegations.execute(ctx, input.kind, input.requestId, input.args);
   if (!manages) throw Error("GARDEN_ROLE_UNAVAILABLE");
   if (Object.hasOwn(input.args, "kind")) throw Error("INVALID_REQUEST");
-  // Only gift messages and public captions carry authored text out of the turn.
+  // Transfers write to another inventory; using or withdrawing an item can also change a shared shelf.
   if (
-    ((input.kind === "buy_gift" || input.kind === "send_gift") &&
-      typeof input.args.note === "string" &&
-      input.args.note.trim()) ||
-    (input.kind === "display_gift" &&
-      ((typeof input.args.description === "string" &&
-        input.args.description.trim()) ||
-        input.args.publishNote === true))
-  )
-    runtime.home.rooms.shareable(ctx);
+    ["gift", "send_gift", "display_gift", "withdraw_gift", "use_gift"].includes(
+      input.kind,
+    ) ||
+    (input.kind === "buy_gift" && input.args.recipient)
+  ) {
+    const sharesText =
+      [input.args.note, input.args.description].some(
+        (text) => typeof text === "string" && text.trim(),
+      ) || input.args.publishNote === true;
+    runtime.home.rooms.shareable(ctx, !sharesText);
+  }
   return performGardenAction(
     runtime,
     { kind: "agent", id: role.id, turnId: ctx.turnId },
