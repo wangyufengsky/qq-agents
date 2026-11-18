@@ -314,6 +314,10 @@ test("merchant shelf and gift delivery work at 430 px without exposing the note 
   for (const [id, entry] of Object.entries(settings.events.entries))
     entry.enabled = id === "merchant";
   settings.events.entries.merchant.conditions = [];
+  settings.events.entries.merchant.effect.giftOffers = [
+    { giftId: "dried-fish", stock: 3 },
+    { giftId: "catnip-candy", stock: 2 },
+  ];
   const start = 1_800_000_000_000;
   runtime.clock = () => start;
   garden.initialize(start, settings);
@@ -346,6 +350,15 @@ test("merchant shelf and gift delivery work at 430 px without exposing the note 
           .gridTemplateColumns.split(" ").length,
     ),
     2,
+  );
+  const candy = shelf.locator("article", { hasText: "薄荷糖罐" });
+  await candy.locator('img[src$="/gift-wrapped.webp"]').waitFor();
+  await page.waitForFunction(() =>
+    Array.from(
+      globalThis.document.querySelectorAll(
+        '.garden-merchant img[src$="/gift-wrapped.webp"]',
+      ),
+    ).some((img) => img.complete && img.naturalWidth > 0),
   );
   const fish = shelf.locator("article").filter({ hasText: "小鱼干" });
   await fish.locator("summary").click();
@@ -484,15 +497,25 @@ test("event settings import all 20 previews, round-trip optional effects and con
   await v.row("merchant").locator("summary").click();
   await v.row("merchant").getByLabel("可报价种子").selectOption([]);
   await v.row("merchant").getByLabel("可收购作物").selectOption([]);
-  for (const id of ["yarn-ball", "pressed-bookmark"])
-    await v
-      .row("merchant")
-      .locator(`[data-gift-offer="${id}"]`)
-      .getByLabel(/每日库存/)
-      .fill("0");
+  const mode = v.row("merchant").getByLabel("礼物货单");
+  const fixed = v.row("merchant").locator("[data-fixed-gifts]");
+  assert.equal(await mode.inputValue(), "random");
+  assert.equal(await fixed.isHidden(), true);
+  assert.equal(await fixed.locator("[data-gift-offer]").count(), 18);
+  await mode.selectOption("fixed");
   const fish = v.row("merchant").locator('[data-gift-offer="dried-fish"]');
   await fish.getByLabel(/每日库存/).fill("4");
   await fish.getByLabel("礼物单价").fill("13");
+  const candy = fixed.locator('[data-gift-offer="catnip-candy"]');
+  await candy.getByLabel(/每日库存/).fill("2");
+  assert.equal(
+    await candy.getByLabel("礼物单价").getAttribute("placeholder"),
+    "默认 15",
+  );
+  await mode.selectOption("random");
+  assert.equal(await fixed.isHidden(), true);
+  await mode.selectOption("fixed");
+  assert.equal(await fish.getByLabel(/每日库存/).inputValue(), "4");
   await v.save();
   const saved = v.pool();
   assert.deepEqual(
@@ -504,6 +527,7 @@ test("event settings import all 20 previews, round-trip optional effects and con
   assert.deepEqual(saved.entries.merchant.effect.harvests, []);
   assert.deepEqual(saved.entries.merchant.effect.giftOffers, [
     { giftId: "dried-fish", stock: 4, price: 13 },
+    { giftId: "catnip-candy", stock: 2 },
   ]);
   for (const [id, entry] of Object.entries(defaultEvents.entries))
     if (!Object.hasOwn(legacyEvents.entries, id))
@@ -527,6 +551,10 @@ test("event settings import all 20 previews, round-trip optional effects and con
   assert.deepEqual(v.pool().entries["custom-dew"].conditions, [
     { field: "alive", cropId: "strawberry", op: "gte", value: 4 },
   ]);
+  assert.deepEqual(
+    v.pool().entries.merchant.effect.giftOffers,
+    saved.entries.merchant.effect.giftOffers,
+  );
   await v.expand("试配每日事件");
   const trial = v.page.locator("[data-garden-event-trial]");
   await trial.getByLabel("模拟花园日").fill("6");
@@ -564,5 +592,52 @@ test("event preset preview detects the 40-entry cap without changing saved setti
   assert.equal(Object.keys(v.pool().entries).length, 40);
   assert.equal(v.pool().entries["custom-18"].enabled, false);
   assert.equal(v.pool().entries["twin-fruit"], undefined);
+  assert.deepEqual(v.errors, []);
+});
+
+test("explicitly empty merchant shelf survives settings saves until switched to random", async (t) => {
+  const v = await openEventSettings(t, ({ events }) => {
+    events.entries.merchant.effect.giftOffers = [];
+  });
+  const merchant = v.row("merchant");
+  await merchant.locator("summary").click();
+  const mode = merchant.getByLabel("礼物货单");
+  assert.equal(await mode.inputValue(), "fixed");
+  assert.equal(await merchant.locator("[data-fixed-gifts]").isVisible(), true);
+  await v.save();
+  assert.deepEqual(v.pool().entries.merchant.effect.giftOffers, []);
+  await v.expand("花园设置");
+  await v.expand("每日事件池");
+  if (!(await merchant.evaluate((details) => details.open)))
+    await merchant.locator("summary").click();
+  await mode.selectOption("random");
+  await v.save();
+  assert.equal(
+    Object.hasOwn(v.pool().entries.merchant.effect, "giftOffers"),
+    false,
+  );
+  assert.deepEqual(v.errors, []);
+});
+
+test("copying a merchant preserves its gift catalog and allows an independent shelf", async (t) => {
+  const fixed = [{ giftId: "shell-music-box", stock: 3, price: 40 }];
+  const v = await openEventSettings(t, ({ events }) => {
+    events.entries.merchant.effect.giftOffers = fixed;
+  });
+  await v.form.getByLabel("新事件 ID").fill("shell-merchant");
+  await v.form.getByLabel("复制事件").selectOption("merchant");
+  await v.form.getByRole("button", { name: "新增事件", exact: true }).click();
+  assert.deepEqual(v.errors, []);
+  const copy = v.row("shell-merchant");
+  assert.equal(await copy.count(), 1);
+  assert.equal(await copy.getByLabel("礼物货单").inputValue(), "fixed");
+  const box = copy.locator('[data-gift-offer="shell-music-box"]');
+  assert.equal(await box.getByLabel("礼物单价").inputValue(), "40");
+  await box.getByLabel(/每日库存/).fill("1");
+  await v.save();
+  assert.deepEqual(v.pool().entries.merchant.effect.giftOffers, fixed);
+  assert.deepEqual(v.pool().entries["shell-merchant"].effect.giftOffers, [
+    { giftId: "shell-music-box", stock: 1, price: 40 },
+  ]);
   assert.deepEqual(v.errors, []);
 });

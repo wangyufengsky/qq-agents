@@ -13,7 +13,8 @@ import {
   performGardenAction,
 } from "../src/home/garden-console.mjs";
 import { DAY, HOUR, defaultGardenSettings } from "../src/home/garden-rules.mjs";
-import { eventOdds } from "../src/home/garden-event-rules.mjs";
+import { gardenGifts } from "../public/garden-art/gifts.js";
+import { drawGardenEvent, eventOdds } from "../src/home/garden-event-rules.mjs";
 import { fixedWeather } from "./garden-fixtures.mjs";
 import { config, context, fixture, raw, settle } from "./helpers.mjs";
 
@@ -869,10 +870,38 @@ test("legacy saves without an events setting retain the legacy pool on reopen", 
   assert.deepEqual(state.event, prior);
 });
 
-test("both configured and default gift shelves can open with all of a merchant's garden seeds disabled", (t) => {
+test("default gift shelves draw three to five different catalog gifts per day with two to three of each", () => {
+  const settings = rules("merchant");
+  const ctx = { harvests: {} };
+  const draw = (day) => drawGardenEvent(settings, ctx, null, "gift-shelf", day);
+  const seenIds = new Set();
+  const seenCounts = new Set();
+  const seenStocks = new Set();
+  for (let day = 1; day <= 64; day++) {
+    const { giftOffers } = draw(day);
+    assert.deepEqual(draw(day).giftOffers, giftOffers);
+    assert.equal(
+      new Set(giftOffers.map(({ giftId }) => giftId)).size,
+      giftOffers.length,
+    );
+    seenCounts.add(giftOffers.length);
+    for (const { giftId, originalPrice, stock, ...gift } of giftOffers) {
+      assert.deepEqual(gift, gardenGifts[giftId]);
+      assert.equal(originalPrice, gift.price);
+      seenStocks.add(stock);
+      seenIds.add(giftId);
+    }
+  }
+  assert.deepEqual(seenCounts, new Set([3, 4, 5]));
+  assert.deepEqual(seenStocks, new Set([2, 3]));
+  assert.deepEqual(seenIds, new Set(Object.keys(gardenGifts)));
+});
+
+test("configured and default gift shelves can open with all of a merchant's seeds disabled", (t) => {
   for (const giftOffers of [
     undefined,
-    [{ giftId: "dried-fish", price: 12, stock: 1 }],
+    [{ giftId: "dried-fish", price: 13, stock: 1 }],
+    Object.keys(gardenGifts).map((giftId) => ({ giftId, stock: 2 })),
   ]) {
     const settings = rules("merchant");
     const { effect } = settings.events.entries.merchant;
@@ -880,12 +909,30 @@ test("both configured and default gift shelves can open with all of a merchant's
     effect.giftOffers = giftOffers;
     for (const id of effect.seeds) settings.crops[id].enabled = false;
     const f = setup(t, settings);
-    assert.equal(f.read().event.kind, "merchant");
-    assert.deepEqual(f.read().event.seedOffers, []);
-    assert.ok(
-      f.read().event.giftOffers.some(({ giftId }) => giftId === "dried-fish"),
-    );
+    const { event } = f.read();
+    assert.equal(event.kind, "merchant");
+    assert.deepEqual(event.seedOffers, []);
+    if (giftOffers)
+      assert.deepEqual(
+        event.giftOffers.map(({ giftId, price, stock }) => ({
+          giftId,
+          price,
+          stock,
+        })),
+        giftOffers.map((offer) => ({
+          price: gardenGifts[offer.giftId].price,
+          ...offer,
+        })),
+      );
+    else assert.ok(event.giftOffers.length >= 3);
+    assert.deepEqual(new GardenService(f.store).read(0).event, event);
   }
+});
+
+test("an explicitly empty gift shelf stays empty", (t) => {
+  const f = setup(t, rules("merchant", { giftOffers: [] }));
+  assert.equal(f.read().event.kind, "merchant");
+  assert.deepEqual(f.read().event.giftOffers, []);
 });
 
 test("restart retains day-start blessing, a claimed sketch, and the frozen forecast change", (t) => {

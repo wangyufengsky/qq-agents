@@ -1,4 +1,8 @@
 // @ts-check
+import { gardenGifts } from "./gifts.js";
+
+export { gardenGifts };
+
 export const cropArtIds = [
   "clover",
   "radish",
@@ -21,7 +25,7 @@ const eventKinds = [
   "sketch",
   "mystery-box",
 ];
-const giftIds = ["dried-fish", "yarn-ball", "pressed-bookmark"];
+const illustratedGiftIds = ["dried-fish", "yarn-ball", "pressed-bookmark"];
 const eventIcons = new Map([
   ["rain-merchant", "merchant"],
   ["sunny-market", "merchant"],
@@ -56,7 +60,8 @@ const artwork = new Set([
   "paper.webp",
   "plant-seedling.webp",
   "supply-fertilizer.webp",
-  ...giftIds.map((id) => "gift-" + id + ".webp"),
+  "gift-wrapped.webp",
+  ...illustratedGiftIds.map((id) => "gift-" + id + ".webp"),
   ...["normal", "low", "saturated"].map((soil) => `soil-${soil}.webp`),
   "shelter-back.webp",
   "shelter-front.webp",
@@ -72,6 +77,7 @@ export const isGardenArtImage = (file) => artwork.has(file);
 /** @param {string} file */
 export const isGardenArtResource = (file) =>
   file === "art.js" ||
+  file === "gifts.js" ||
   file === "workspace.js" ||
   file === "art.css" ||
   isGardenArtImage(file);
@@ -124,8 +130,12 @@ export function gardenEventArtId(event) {
 
 /** @param {"weather"|"event"|"gift"|"crop"|"supply"} group @param {string} kind */
 export function gardenIconFile(group, kind) {
-  if (group === "gift")
-    return giftIds.includes(kind) ? "gift-" + kind + ".webp" : null;
+  if (group === "gift") {
+    if (!Object.hasOwn(gardenGifts, kind)) return null;
+    return illustratedGiftIds.includes(kind)
+      ? `gift-${kind}.webp`
+      : "gift-wrapped.webp";
+  }
   if (group === "crop")
     return cropArtIds.includes(kind) ? "plant-" + kind + "-mature.webp" : null;
   if (group === "supply")

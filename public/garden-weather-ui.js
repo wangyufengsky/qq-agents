@@ -355,11 +355,23 @@ const gardenMechanicDefaults = {
   weather_flip: { hour: 12 },
   mystery_box: { price: 25, limit: 2 },
 };
-const gardenGiftCatalog = [
-  ["dried-fish", "小鱼干", 12],
-  ["yarn-ball", "毛线球", 18],
-  ["pressed-bookmark", "压花书签", 24],
-];
+function gardenGiftSettings(giftOffers, catalog) {
+  const fixed = giftOffers !== undefined;
+  const byId = new Map(
+    (giftOffers ?? []).map((offer) => [offer.giftId, offer]),
+  );
+  const ids = new Set([...byId.keys(), ...Object.keys(catalog)]);
+  return `${gardenWeatherSelect("giftMode", "礼物货单", { random: "每日随机", fixed: "固定货单" }, fixed ? "fixed" : "random")}
+    <p class="hint" data-random-gifts${fixed ? " hidden" : ""}>每天从礼物池抽出 3–5 款，每款起始库存 2 或 3 件。</p>
+    <fieldset data-fixed-gifts${fixed ? "" : " hidden disabled"}>
+      <legend>固定礼物</legend>
+      <div class="garden-settings-grid">${Array.from(ids, (id) => {
+        const { name, price } = catalog[id];
+        const offer = byId.get(id);
+        return `<fieldset data-gift-offer="${esc(id)}"><legend>${esc(name)}</legend>${gardenEventNumber(["giftStock", "每日库存（0 表示停售）", 0, 100, 1], offer?.stock ?? 0)}${gardenEventNumber(["giftPrice", "礼物单价", 0, 1000, 1], offer?.price, price)}</fieldset>`;
+      }).join("")}</div>
+    </fieldset>`;
+}
 function multiSelect(name, label, options, selected, required = true) {
   const ids = required
     ? Object.keys(options)
@@ -374,7 +386,7 @@ function multiSelect(name, label, options, selected, required = true) {
     )
     .join("")}</select></label>`;
 }
-function gardenEventEffect(kind, effect, crops, weatherIds) {
+function gardenEventEffect(kind, effect, crops, weatherIds, catalog) {
   const variants = gardenEventVariants[kind],
     variant = effect.effect ?? Object.keys(variants ?? {})[0] ?? kind;
   if (gardenMechanicFields[variant]) {
@@ -427,12 +439,7 @@ function gardenEventEffect(kind, effect, crops, weatherIds) {
         1,
       ) +
       `<label>肥料单价（留空停售）<input type="number" min="0" max="1000" step="1" name="fertilizerRate" value="${esc(effect.fertilizerOffers?.[0]?.rate ?? "")}"></label>` +
-      gardenGiftCatalog
-        .map(([id, name, price]) => {
-          const offer = effect.giftOffers?.find((o) => o.giftId === id);
-          return `<fieldset data-gift-offer="${id}"${effect.giftOffers ? "" : " data-default-gift-offer"}><legend>${name}</legend>${gardenEventNumber(["giftStock", "每日库存（0 表示停售）", 0, 100, 1], offer?.stock ?? (effect.giftOffers ? 0 : 3))}${gardenEventNumber(["giftPrice", "礼物单价", 0, 1000, 1], offer?.price, price)}</fieldset>`;
-        })
-        .join("");
+      gardenGiftSettings(effect.giftOffers, catalog);
   }
   return (
     extras +
@@ -442,7 +449,7 @@ function gardenEventEffect(kind, effect, crops, weatherIds) {
   );
 }
 
-function gardenEventEntry(id, entry, weatherIds, crops) {
+function gardenEventEntry(id, entry, weatherIds, crops, catalog) {
   return `<details class="card" data-event-entry="${esc(id)}"><summary>${esc(entry.name)} · ${esc(id)}${entry.enabled ? "" : " · 已停用"}</summary>
     <div class="garden-settings-grid">
       <label>事件名称<input name="eventName" value="${esc(entry.name)}" maxlength="40" required/></label>
@@ -451,13 +458,19 @@ function gardenEventEntry(id, entry, weatherIds, crops) {
       ${gardenWeatherSelect("eventMode", "组合条件", { all: "全部满足", any: "任一满足" }, entry.mode)}
       ${gardenWeatherSelect("eventKind", "事件类型", gardenEventKinds, entry.effect.kind)}
     </div>
-    <div class="garden-settings-grid" data-event-effect>${gardenEventEffect(entry.effect.kind, entry.effect, crops, weatherIds)}</div>
+    <div class="garden-settings-grid" data-event-effect>${gardenEventEffect(entry.effect.kind, entry.effect, crops, weatherIds, catalog)}</div>
     <div data-event-conditions>${entry.conditions.map((row) => gardenWeatherConditionRow(row, weatherIds, crops, true)).join("")}</div>
     <button type="button" class="ghost" data-add-event-condition>新增事件条件</button>
   </details>`;
 }
 
-function gardenEventSettingsMarkup(pool, weather, crops, presets = []) {
+function gardenEventSettingsMarkup(
+  pool,
+  weather,
+  crops,
+  catalog,
+  presets = [],
+) {
   const ids = Object.keys(pool.entries);
   const names = Object.fromEntries(
     ids.map((id) => [id, pool.entries[id].name]),
@@ -482,7 +495,7 @@ function gardenEventSettingsMarkup(pool, weather, crops, presets = []) {
       })
       .join("")}
     <button type="button" class="ghost" data-import-event-presets>把选中预设加入表单</button></details>
-    <div data-event-entries>${ids.map((id) => gardenEventEntry(id, pool.entries[id], Object.keys(weather.entries), crops)).join("")}</div>
+    <div data-event-entries>${ids.map((id) => gardenEventEntry(id, pool.entries[id], Object.keys(weather.entries), crops, catalog)).join("")}</div>
     `,
     { summary: "保存后次日生效" },
   );
@@ -537,24 +550,18 @@ function gardenReadEvents(form) {
             effect.fertilizerOffers = [
               { rate: read("fertilizerRate").valueAsNumber },
             ];
-          const giftFields = Array.from(
-            row.querySelectorAll("[data-gift-offer]"),
-          );
-          const gifts = giftFields.map((box) => {
-            const price = box.querySelector('[name="giftPrice"]');
-            return {
-              giftId: box.dataset.giftOffer,
-              stock: box.querySelector('[name="giftStock"]').valueAsNumber,
-              ...(price.value !== "" && { price: price.valueAsNumber }),
-            };
-          });
-          if (
-            !giftFields.every((box) =>
-              box.hasAttribute("data-default-gift-offer"),
-            ) ||
-            !gifts.every((gift) => gift.stock === 3 && gift.price === undefined)
-          )
-            effect.giftOffers = gifts.filter((gift) => gift.stock > 0);
+          if (read("giftMode").value === "fixed")
+            effect.giftOffers = Array.from(
+              row.querySelectorAll("[data-gift-offer]"),
+              (box) => {
+                const price = box.querySelector('[name="giftPrice"]');
+                return {
+                  giftId: box.dataset.giftOffer,
+                  stock: box.querySelector('[name="giftStock"]').valueAsNumber,
+                  ...(price.value !== "" && { price: price.valueAsNumber }),
+                };
+              },
+            ).filter((gift) => gift.stock > 0);
         }
         if (kind === "merchant")
           for (const key of ["seeds", "harvests"])
@@ -582,7 +589,7 @@ function gardenReadEvents(form) {
   return { rate: form.elements.eventRate.valueAsNumber, entries };
 }
 
-function gardenEventEdit(event, show) {
+function gardenEventEdit(event, show, catalog) {
   const node = event.target;
   const form = node.closest("[data-garden-settings]");
   const row = node.closest("[data-event-entry]");
@@ -634,7 +641,7 @@ function gardenEventEdit(event, show) {
         entry = JSON.parse(input.dataset.template);
       container.insertAdjacentHTML(
         "beforeend",
-        gardenEventEntry(id, entry, weather, crops),
+        gardenEventEntry(id, entry, weather, crops, catalog),
       );
       form.elements.eventParent.add(new Option(entry.name, id));
       input.checked = false;
@@ -648,12 +655,17 @@ function gardenEventEdit(event, show) {
     return true;
   }
   if (event.type === "change") {
-    if (node.name === "variant")
+    if (node.name === "giftMode") {
+      const fields = row.querySelector("[data-fixed-gifts]");
+      fields.hidden = fields.disabled = node.value !== "fixed";
+      row.querySelector("[data-random-gifts]").hidden = !fields.hidden;
+    } else if (node.name === "variant")
       row.querySelector("[data-event-effect]").innerHTML = gardenEventEffect(
         row.querySelector('[name="eventKind"]').value,
         { effect: node.value },
         crops,
         weather,
+        catalog,
       );
     else if (node.name === "eventKind")
       row.querySelector("[data-event-effect]").innerHTML = gardenEventEffect(
@@ -661,6 +673,7 @@ function gardenEventEdit(event, show) {
         defaults[node.value] ?? {},
         crops,
         weather,
+        catalog,
       );
     else if (node.name === "rewardKind")
       row.querySelector("[data-event-effect]").innerHTML = gardenEventEffect(
@@ -710,7 +723,7 @@ function gardenEventEdit(event, show) {
   const target = form.querySelector("[data-event-entries]");
   target.insertAdjacentHTML(
     "beforeend",
-    gardenEventEntry(id, { ...entry, name: id }, weather, crops),
+    gardenEventEntry(id, { ...entry, name: id }, weather, crops, catalog),
   );
   target.lastElementChild.open = true;
   form.elements.eventParent.add(new Option(id, id));
