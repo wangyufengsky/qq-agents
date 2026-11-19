@@ -1,6 +1,12 @@
 // @ts-check
 import { closeSocialSessions } from "./social-sessions.mjs";
 import fs from "node:fs";
+import { setTimeout as delay } from "node:timers/promises";
+import {
+  CodexDesktopBridge,
+  codexDesktopBridgeName,
+  codexDesktopBridgeSignature,
+} from "./codex-desktop-bridge.mjs";
 import { runNativeSocial } from "./native-social.mjs";
 import {
   codexTurnFailure,
@@ -22,6 +28,7 @@ import {
   sessionSignature,
   assertSession,
   acceptsSession,
+  authenticatesSessionContract,
 } from "./session-contract.mjs";
 import { readGeneratedImage } from "./generated-image-file.mjs";
 import { buildChildEnv } from "../core/child-env.mjs";
@@ -34,6 +41,17 @@ const desktopVisualNamespace = "qq_desktop_visual";
 /** @param {import("./session-contract.mjs").ToolSpec[]} tools */
 function hasDesktopScreen(tools) {
   return tools.some(({ name }) => name === DESKTOP_SCREEN_VIEW);
+}
+
+/** @param {any} error */
+function threadMissing(error) {
+  return (
+    error.rpcRejected &&
+    error.rpcCode === -32600 &&
+    /^(?:no rollout found for thread|thread not found|unknown thread)/i.test(
+      error.message,
+    )
+  );
 }
 
 /** @param {number|string} id @param {ReturnType<typeof mcpResult>} result */
@@ -173,6 +191,8 @@ export class CodexBackend {
       );
     this.external = new ExternalTools(config.toolServers);
     this.active = new Map();
+    /** @type {CodexDesktopBridge | undefined} */
+    this.desktopBridge = undefined;
     this.rpc.on("notification", (/** @type {any} */ m) => this.notification(m));
     this.rpc.on("request", (/** @type {any} */ m) => void this.request(m));
     this.rpc.on("disconnected", () => {
@@ -395,6 +415,94 @@ export class CodexBackend {
       );
     return acceptsSession(this, session, tools);
   }
+  /** @param {StoredSession} session @param {import("./session-contract.mjs").ToolSpec[]} tools @param {import("./session-contract.mjs").SessionContract} [previous] */
+  upgradeDesktopSession(session, tools, previous) {
+    const visual = {
+      config: this.config,
+      sessionProtocol: "desktop-visual-v1",
+    };
+    if (
+      !authenticatesSessionContract(this, session, previous) &&
+      !authenticatesSessionContract(visual, session, previous)
+    )
+      return undefined;
+    return {
+      ...session,
+      signature: this.sessionSignature(tools),
+      nativeSignature: codexDesktopBridgeSignature,
+    };
+  }
+  /** @param {string} threadId @param {Record<string, any>} policy @param {AbortSignal} signal */
+  async resumeDesktopBridge(threadId, policy, signal) {
+    this.desktopBridge ??= new CodexDesktopBridge();
+    const url = await this.desktopBridge.ready;
+    const resume = async () => {
+      signal.throwIfAborted();
+      const result = await this.rpc
+        .request("thread/resume", {
+          threadId,
+          excludeTurns: true,
+          sandbox: "read-only",
+          approvalPolicy: "never",
+          config: {
+            ...policy,
+            mcp_servers: {
+              ...policy.mcp_servers,
+              [codexDesktopBridgeName]: { url, enabled: true },
+            },
+          },
+        })
+        .catch((error) => {
+          if (threadMissing(error))
+            throw new SessionUnavailableFailure("CODEX_SESSION_UNAVAILABLE");
+          throw error;
+        });
+      if (result.thread?.id !== threadId)
+        throw Error("CODEX_DESKTOP_BRIDGE_UNAVAILABLE");
+    };
+    const listed = async () => {
+      const result = await this.rpc.request("mcpServerStatus/list", {
+        threadId,
+        serverName: codexDesktopBridgeName,
+      });
+      return result.data?.some(
+        (/** @type {any} */ value) =>
+          value.name === codexDesktopBridgeName &&
+          value.httpOrigin === new URL(url).origin &&
+          Object.hasOwn(value.tools || {}, "bridge_tools") &&
+          Object.hasOwn(value.tools || {}, "bridge_call"),
+      );
+    };
+    await resume();
+    if (await listed()) return;
+    // Resume overrides apply while loading a thread from disk, not while
+    // rejoining a live thread. Unsubscribe only this idle desktop thread.
+    if (this.active.has(threadId))
+      throw Error("CODEX_DESKTOP_BRIDGE_UNAVAILABLE");
+    const { thread } = await this.rpc.request("thread/read", {
+      threadId,
+      includeTurns: false,
+    });
+    if (thread?.id !== threadId || thread?.status?.type !== "idle")
+      throw Error("CODEX_DESKTOP_BRIDGE_UNAVAILABLE");
+    await this.rpc.request("thread/unsubscribe", { threadId });
+    for (let attempt = 0; attempt < 30; attempt++) {
+      signal.throwIfAborted();
+      try {
+        await resume();
+        break;
+      } catch (/** @type {any} */ error) {
+        if (
+          error.rpcCode !== -32600 ||
+          error.message !==
+            `thread ${threadId} is closing; retry thread/resume after the thread is closed`
+        )
+          throw error;
+        await delay(50, undefined, { signal });
+      }
+    }
+    if (!(await listed())) throw Error("CODEX_DESKTOP_BRIDGE_UNAVAILABLE");
+  }
   /** @param {{windowId?: string, actorGeneration?: string}} [filter] */
   async closeSocialSessions(filter = {}) {
     await closeSocialSessions(this, filter);
@@ -427,6 +535,8 @@ export class CodexBackend {
   async run({
     prompt,
     inputImages = [],
+    desktopBridgeContext,
+    desktopUnified,
     instructions,
     onUsage,
     signal,
@@ -465,6 +575,8 @@ export class CodexBackend {
     assertSession(session, "codex", signature);
     await beforeSessionInput(session, () => this.ready());
     if (signal.aborted) throw Error("ABORTED");
+    const useDesktopBridge =
+      desktop && session?.nativeSignature === codexDesktopBridgeSignature;
     const hasScreen = desktop && hasDesktopScreen(tools);
     const directScreen = hasScreen && this.desktopVisualDirect;
     const nativeSignature = hasScreen
@@ -475,10 +587,11 @@ export class CodexBackend {
     if (
       session &&
       nativeSignature &&
+      !useDesktopBridge &&
       session.nativeSignature !== nativeSignature
     )
       throw new SessionUnavailableFailure("CODEX_SESSION_UNAVAILABLE");
-    if (directScreen) {
+    if (directScreen || useDesktopBridge) {
       // Model-selected code mode serializes nested tool outputs as text.
       // Keep the screenshot's image block on the direct model tool route.
       Object.assign(policy, {
@@ -511,7 +624,17 @@ export class CodexBackend {
       }
     }
     let threadId = session?.id;
-    if (threadId)
+    if (threadId && useDesktopBridge) {
+      await beforeSessionInput(session, async () => {
+        if (!desktopBridgeContext)
+          throw Error("CODEX_DESKTOP_BRIDGE_UNAVAILABLE");
+        await this.resumeDesktopBridge(
+          /** @type {string} */ (threadId),
+          policy,
+          signal,
+        );
+      });
+    } else if (threadId)
       await beforeSessionInput(session, async () => {
         try {
           await this.rpc.request("thread/resume", {
@@ -526,7 +649,11 @@ export class CodexBackend {
             error.rpcCode === -32600 &&
             error.message ===
               `thread ${threadId} is closing; retry thread/resume after the thread is closed`;
-          if (error.rpcRejected && !closing)
+          if (
+            error.rpcRejected &&
+            !closing &&
+            (!desktopUnified || threadMissing(error))
+          )
             throw new SessionUnavailableFailure("CODEX_SESSION_UNAVAILABLE");
           throw error;
         }
@@ -564,6 +691,15 @@ export class CodexBackend {
         ...(nativeSignature && { nativeSignature }),
       });
     }
+    if (desktopUnified && session)
+      await beforeSessionInput(session, async () => {
+        const { thread } = await this.rpc.request("thread/read", {
+          threadId,
+          includeTurns: false,
+        });
+        if (thread?.id !== threadId || thread?.status?.type !== "idle")
+          throw Error("CODEX_DESKTOP_SESSION_NOT_IDLE");
+      });
     if (signal.aborted) throw Error("ABORTED");
     if (recovery && !(await this.recoveryReady(threadId, recovery)))
       throw Error("CODEX_RECOVERY_STATE_UNVERIFIED");
@@ -604,6 +740,20 @@ export class CodexBackend {
       recoveryTurnId: recovery?.turnId,
     };
     this.active.set(threadId, active);
+    const bridgeTurn =
+      useDesktopBridge && desktopBridgeContext ? this.desktopBridge : undefined;
+    if (bridgeTurn && desktopBridgeContext)
+      bridgeTurn.turn = {
+        context: desktopBridgeContext,
+        tools,
+        callTool,
+        finalizeToolOutput,
+        commitToolOutput,
+        active: () =>
+          this.active.get(threadId) === active &&
+          active.inputSubmitted &&
+          !signal.aborted,
+      };
     const abort = () => {
       if (active.turnId)
         void this.rpc
@@ -620,7 +770,13 @@ export class CodexBackend {
       let input = [
         {
           type: "text",
-          text: prompt + (appendPrompt?.() || ""),
+          text:
+            prompt +
+            (appendPrompt?.() || "") +
+            (bridgeTurn
+              ? `
+可用 bridge_tools 查询本轮完整工具目录，bridge_call 调用其中工具；历史线程中的旧工具目录并不完整。只在工具外层使用本轮凭据 context=${desktopBridgeContext}，不要在可见回复披露此值。`
+              : ""),
           text_elements: [],
         },
         ...inputImages.flatMap((image) => [
@@ -701,11 +857,15 @@ export class CodexBackend {
         e.sessionReusable = await this.recoveryReady(threadId, e).catch(
           () => false,
         );
-      if ((!e.sessionReusable && !sessionWasUnchanged(e)) || signal.aborted)
+      if (
+        !desktopUnified &&
+        ((!e.sessionReusable && !sessionWasUnchanged(e)) || signal.aborted)
+      )
         saveSession(null);
       throw e;
     } finally {
       signal.removeEventListener("abort", abort);
+      if (bridgeTurn) bridgeTurn.turn = undefined;
       this.active.delete(threadId);
     }
   }
@@ -826,6 +986,7 @@ export class CodexBackend {
     await this.cancel();
     await this.closeSocialSessions();
     this.rpc.close();
+    this.desktopBridge?.close();
     await this.external.close();
   }
 }

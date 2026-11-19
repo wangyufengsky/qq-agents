@@ -47,11 +47,19 @@ const handlers = {
     runtime.desktopVisits.browser.run(ctx, args),
   [DESKTOP_NATIVE_CONTROL]: (runtime, ctx, args) =>
     runtime.desktopVisits.native.run(ctx, args),
-  [DESKTOP_SCREEN_VIEW]: (runtime, ctx) =>
-    runtime.desktopVisits.screen.view(ctx),
+  [DESKTOP_SCREEN_VIEW]: (runtime, ctx) => {
+    const access = ctx.desktopUnified
+      ? runtime.desktopVisits.fullDesktop
+      : runtime.desktopVisits.screen;
+    if (!access) throw Error("DESKTOP_SCREEN_UNAVAILABLE");
+    return access.view(ctx);
+  },
   memory_recall: recallFromChat,
   [DESKTOP_ACTIVITY_DECISION]: (_runtime, ctx, args) => {
-    if (ctx.runtimeKind !== "desktop" || !isDesktopActivity(ctx.conversation))
+    if (
+      ctx.runtimeKind !== "desktop" ||
+      (!ctx.desktopUnified && !isDesktopActivity(ctx.conversation))
+    )
       throw Error("TOOL_DISABLED");
     return ctx.desktopDecision(args);
   },

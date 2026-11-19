@@ -432,6 +432,7 @@ export class DshBackend {
   async run({
     conversation,
     desktop,
+    desktopUnified,
     prompt,
     inputImages = [],
     instructions,
@@ -623,6 +624,13 @@ export class DshBackend {
             lastDshTurnEvent(current)?.type !== "turn/end")
         )
           throw Error("DSH_RECOVERY_STATE_UNVERIFIED");
+        if (
+          desktopUnified &&
+          session &&
+          (!dshInboxEmpty(current) ||
+            lastDshTurnEvent(current)?.type === "turn/start")
+        )
+          throw Error("DSH_RECOVERY_STATE_UNVERIFIED");
         return current;
       });
       clearTimeout(followTimer);
@@ -757,7 +765,10 @@ export class DshBackend {
           clearTimeout(timer);
         }
       }
-      if ((!e.sessionReusable && !sessionWasUnchanged(e)) || signal.aborted)
+      if (
+        !desktopUnified &&
+        ((!e.sessionReusable && !sessionWasUnchanged(e)) || signal.aborted)
+      )
         saveSession(null);
       throw e;
     } finally {
@@ -774,8 +785,11 @@ export class DshBackend {
           );
         // Desktop cleanup must wait for the native admission request to settle
         // before the isolated wrapper stops the session and releases QQ.
-        else if (desktop && signal.aborted)
+        else if (desktop && signal.aborted) {
           await pendingSubmission?.catch(() => {});
+          if (desktopUnified && pendingSubmission)
+            await client.stopSessionWork(sessionId);
+        }
       } finally {
         this.turns.delete(sessionId);
         client.events.forget?.(sessionId);

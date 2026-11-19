@@ -16,9 +16,11 @@ export function sessionReference(session) {
         session.nativeSignature,
       )) ||
       (session.backend === "codex" &&
-        ["desktop-screen-direct", "desktop-screen-flat"].includes(
-          session.nativeSignature,
-        )))
+        [
+          "desktop-screen-direct",
+          "desktop-screen-flat",
+          "desktop-mcp-bridge",
+        ].includes(session.nativeSignature)))
       ? { nativeSignature: session.nativeSignature }
       : {}),
     ...(session.backend === "dsh" && session.dshStreamUnverified === true
@@ -400,7 +402,7 @@ export function recoverSessions(memory, at, scope) {
     const t = JSON.parse(row.value);
     // Slang learner turns (removed in 0.5.3) keep their records, but nothing
     // owns their scope any more, so only the turn itself is closed.
-    if (!t.conversation.startsWith("learner:"))
+    if (!t.desktopUnified && !t.conversation.startsWith("learner:"))
       retireSession(memory, t.conversation, "process-recovery", at, {
         turnId: t.id,
         backendId: t.backendId,
