@@ -12,7 +12,7 @@ export function sessionReference(session) {
       : {}),
     ...(typeof session.nativeSignature === "string" &&
     ((session.backend === "antigravity" &&
-      /^antigravity-tools-v3:contract-v[23]:[a-f0-9]{64}$/.test(
+      /^(?:antigravity-tools-v3:contract-v[234]|antigravity-acp-v1:contract-v4):[a-f0-9]{64}$/.test(
         session.nativeSignature,
       )) ||
       (session.backend === "codex" &&

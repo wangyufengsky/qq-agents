@@ -28,6 +28,7 @@ import { mediaLease, mediaSubmitted } from "../src/tools/media-lease.mjs";
 import { colorGrid } from "../scripts/fixtures/antigravity-media.mjs";
 import { registry } from "../src/tools/registry.mjs";
 import { SessionPreparationFailure } from "../src/backends/turn-failure.mjs";
+import { sessionReference } from "../src/core/session-records.mjs";
 
 const fixture = fileURLToPath(
   new URL("./antigravity-fixture.mjs", import.meta.url),
@@ -1716,6 +1717,107 @@ test("Antigravity consumes a verified legacy binding after compatible request se
     backend.sessionSignature(params.tools),
   );
 });
+
+for (const cliProtocol of [undefined, "acp"]) {
+  test(`Antigravity ${cliProtocol ?? "native"} refreshes a desktop catalogue on the original provider conversation`, async (t) => {
+    const { backend, params, sessions, calls, launches } = setup(
+      t,
+      "catalogue-refresh",
+      temp(t),
+      { cliProtocol },
+    );
+    const desktop = {
+      ...params,
+      conversation: "@desktop",
+      social: true,
+      desktop: true,
+      desktopUnified: true,
+    };
+    await backend.run(desktop);
+    const original = sessions.at(-1);
+    const workspace = launches[0].options.cwd;
+    const bindingFile = path.join(workspace, "session.json");
+    const binding = JSON.parse(fs.readFileSync(bindingFile, "utf8"));
+    const newTool = { ...tool, name: "probe_new" };
+    const tools = [tool, newTool];
+    assert.equal(
+      backend.acceptsSession(original, tools, binding.contract),
+      false,
+    );
+
+    const migrated = sessionReference(
+      backend.upgradeDesktopSession(original, tools, binding.contract),
+    );
+    assert.equal(migrated.id, original.id);
+    assert.equal(migrated.nativeSignature, original.signature);
+    assert.equal(
+      backend.upgradeDesktopSession(original, tools, {
+        ...binding.contract,
+        tools: [],
+      }),
+      undefined,
+    );
+    const model = backend.config.model;
+    backend.config.model = "another-model";
+    assert.equal(
+      backend.upgradeDesktopSession(original, tools, binding.contract),
+      undefined,
+    );
+    backend.config.model = model;
+
+    const request = {
+      ...desktop,
+      tools,
+      session: migrated,
+      instructions: undefined,
+    };
+    fs.writeFileSync(
+      bindingFile,
+      JSON.stringify({
+        ...binding,
+        contract: { ...binding.contract, tools: [] },
+      }),
+    );
+    await assert.rejects(backend.run(request), SessionPreparationFailure);
+    assert.deepEqual(sessions, [original]);
+    assert.equal(launches.length, 1);
+    fs.writeFileSync(bindingFile, JSON.stringify(binding));
+
+    await backend.run(request);
+    const resumed = sessions.at(-1);
+    assert.equal(resumed.id, original.id);
+    assert.equal(resumed.nativeSignature, undefined);
+    assert.equal(resumed.signature, backend.sessionSignature(tools));
+    assert.equal(launches[1].options.cwd, workspace);
+    if (cliProtocol === "acp")
+      assert.equal(JSON.parse(launches[1].args[1]).session, original.id);
+    else {
+      const resumeFlag = launches[1].args.indexOf("--conversation");
+      assert(resumeFlag >= 0);
+      assert.equal(launches[1].args[resumeFlag + 1], original.id);
+    }
+    assert.deepEqual(
+      calls.map(({ name }) => name),
+      ["probe", "probe_new"],
+    );
+    const observed = JSON.parse(
+      fs.readFileSync(path.join(workspace, "catalogue-result.json"), "utf8"),
+    );
+    assert.deepEqual(
+      observed.tools.map(({ name }) => name),
+      ["probe", "probe_new"],
+    );
+    assert.equal(
+      JSON.parse(fs.readFileSync(bindingFile, "utf8")).signature,
+      resumed.signature,
+    );
+
+    await backend.run({ ...request, session: resumed });
+    assert.equal(sessions.at(-1).id, original.id);
+    assert.equal(calls.at(-1).name, "probe_new");
+    assert(sessions.every((session) => session.id === original.id));
+  });
+}
 
 test("Antigravity pins the auto-created swarm plugin off and rejects modified profile settings", (t) => {
   const { backend } = setup(t);

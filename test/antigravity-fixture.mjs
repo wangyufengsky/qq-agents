@@ -30,10 +30,21 @@ if (args.includes("models")) {
   let input = "";
   for await (const chunk of process.stdin) input += chunk;
   JSON.parse(input);
-  const id = args.includes("--conversation")
-    ? flag("--conversation")
-    : randomUUID();
-  const native = path.join(flag("--gemini_dir"), "cli", "conversations");
+  const acp =
+    path.basename(args[0]) === "antigravity-acp.mjs"
+      ? JSON.parse(args[1])
+      : null;
+  const id =
+    (acp
+      ? acp.session
+      : args.includes("--conversation")
+        ? flag("--conversation")
+        : null) || randomUUID();
+  const native = path.join(
+    acp?.profile ?? flag("--gemini_dir"),
+    "cli",
+    "conversations",
+  );
   fs.mkdirSync(native, { recursive: true });
   fs.writeFileSync(path.join(native, id + ".db"), "synthetic native session");
   const event = (value) => process.stdout.write(JSON.stringify(value) + "\n");
@@ -100,6 +111,34 @@ if (args.includes("models")) {
     };
     event(result);
     step(7, { input_tokens: 999999, output_tokens: 1 });
+  } else if (mode === "catalogue-refresh") {
+    const client = new Client({ name: "synthetic-cli", version: "1.0.0" });
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [
+        fileURLToPath(
+          new URL("../src/backends/antigravity-mcp.mjs", import.meta.url),
+        ),
+      ],
+      env: process.env,
+      stderr: "pipe",
+    });
+    try {
+      await client.connect(transport);
+      const { tools } = await client.listTools();
+      const name =
+        tools.find(({ name }) => name === "probe_new")?.name || "probe";
+      const reply = await client.callTool({ name, arguments: {} });
+      if (reply.isError) throw Error("TOOL_FAILED");
+      fs.writeFileSync(
+        path.join(process.cwd(), "catalogue-result.json"),
+        JSON.stringify({ tools, reply }),
+      );
+    } finally {
+      await client.close();
+    }
+    responseStep();
+    event(result);
   } else if (mode === "media") {
     const client = new Client({ name: "synthetic-cli", version: "1.0.0" });
     const transport = new StdioClientTransport({
