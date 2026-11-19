@@ -48,15 +48,10 @@ function validSpace(space, result, now) {
   );
 }
 
-function validateTarget(action, snapshot, crossDisplay) {
-  const { space, receivedAt } = snapshot ?? {};
-  const now = Date.now();
-  if (
-    !space ||
-    space.layoutVersion !== action.layoutVersion ||
-    !freshSample(receivedAt, now) ||
-    !freshSample(space.sampledAt, now)
-  )
+function validateTarget(action, space, crossDisplay) {
+  // The receipt is turn-local. The client checks the current layout version
+  // and replans against live geometry, even if the model took time to respond.
+  if (space?.layoutVersion !== action.layoutVersion)
     throw Error("DESKTOP_BODY_STALE_LAYOUT");
   const { target } = action;
   const displayRef =
@@ -273,7 +268,7 @@ export class DesktopBody {
         !validSpace(result.space, result, now)
       )
         throw Error("DESKTOP_BODY_INVALID");
-      this.spaces.set(entry.ctx, { space: result.space, receivedAt: now });
+      this.spaces.set(entry.ctx, result.space);
     }
     this.finish(
       entry,

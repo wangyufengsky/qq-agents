@@ -22,10 +22,16 @@ async function setup(
     lateVisitor = false,
     v2 = false,
     crossDisplay = false,
+    screen = false,
   } = {},
 ) {
   const cfg = config(2);
   cfg.desktopHome.enabled = true;
+  if (screen) {
+    cfg.desktopHome.screenView.enabled = true;
+    cfg.desktopHome.toolRoles = ["agent-0"];
+    cfg.agents[0].behavior.imageInput.enabled = true;
+  }
   if (enabled)
     cfg.desktopHome.bodyControlRoles = lateVisitor
       ? ["agent-0", "agent-1"]
@@ -84,6 +90,7 @@ async function setup(
       turns.push({
         actor: agent.id,
         call: (args) => params.callTool("desktop_body_control", args),
+        callTool: params.callTool,
         gate,
       });
       const decision = await gate.promise;
@@ -149,6 +156,37 @@ test("only an opted-in desktop role can submit actions", async (t) => {
   const { call } = await start();
   await assert.rejects(call({ ...move, agentId: "agent-1" }));
   assert.equal(await request(), undefined);
+});
+
+test("a role can carry out the administrator's pet movement after viewing the screen", async (t) => {
+  const { host, act, post, start, request, identity } = await setup(t, {
+    screen: true,
+  });
+  const grant = {
+    roomEpoch: host.live.room.epoch,
+    grantId: randomUUID(),
+    agentId: "agent-0",
+  };
+  await act("screen-grant", grant);
+  t.mock.method(host.screen, "capture", async () => ({
+    data: "fixture",
+    requestId: randomUUID(),
+  }));
+  const { call, callTool } = await start();
+  const viewed = await callTool("desktop_screen_view", {});
+  assert.equal(viewed.content.at(-1).type, "image");
+  const action = call(move);
+  action.catch(() => {});
+  const req = await request();
+  if (!req) await action;
+  assert.deepEqual(req.action, move);
+  const id = identity(req);
+  assert.equal((await post("body-claim", id)).ok, true);
+  assert.equal(
+    (await post("body-result", { ...id, result: completed })).ok,
+    true,
+  );
+  assert.deepEqual(await action, { ...completed, requestId: move.requestId });
 });
 
 test("a new visitor cannot use a previous administrator message as a body command", async (t) => {
@@ -424,7 +462,7 @@ const point = {
   target: { type: "point", displayRef, x: -390, y: 60 },
 };
 
-test("structured targets must match the latest fresh state receipt and retry by value", async (t) => {
+test("structured targets use the latest state receipt for the turn and retry by value", async (t) => {
   t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
   const { post, start, request, identity } = await setup(t, { v2: true });
   const { call } = await start();
@@ -467,11 +505,12 @@ test("structured targets must match the latest fresh state receipt and retry by 
     call({ ...point, requestId: "stale-version" }),
     /DESKTOP_BODY_STALE_LAYOUT/,
   );
-  t.mock.timers.tick(5001);
-  await assert.rejects(
-    call({ ...point, requestId: "old-layout", layoutVersion: 2 }),
-    /DESKTOP_BODY_STALE_LAYOUT/,
-  );
+  t.mock.timers.tick(12_000);
+  const delayed = call({ ...point, requestId: "delayed", layoutVersion: 2 });
+  delayed.catch(() => {});
+  if (!(await request())) await delayed;
+  await sendResult(completed);
+  assert.equal((await delayed).status, "completed");
 });
 
 test("client cancels on local drag and suppresses stale requests after connection loss", async () => {
