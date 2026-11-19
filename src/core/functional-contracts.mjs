@@ -14,6 +14,18 @@ function toolOutputReceipts(runtime, ctx) {
   };
 }
 
+function commitInputSubmission(runtime, ctx, memory) {
+  if (!ctx.desktopRoleMailIds?.length) {
+    recordInputSubmission(memory, ctx.turnId);
+    return;
+  }
+  // Persist the model-input marker and the matching mailbox receipts together.
+  memory.store.transaction(() => {
+    recordInputSubmission(memory, ctx.turnId);
+    runtime.desktopRoleMailbox.acknowledge(ctx);
+  });
+}
+
 export function conversationExchange(
   runtime,
   ctx,
@@ -41,7 +53,7 @@ export function conversationExchange(
       ctx.backendInputEpoch = ctx.inputEpoch;
       runtime.messageTiming?.mark(ctx.messageTimingId, "backendInputSubmitted");
       imageInput.submitted();
-      recordInputSubmission(memory, ctx.turnId);
+      commitInputSubmission(runtime, ctx, memory);
     },
   };
 }
@@ -60,7 +72,7 @@ const contracts = Object.freeze({
           )
             return;
           ctx.backendInputEpoch = ctx.inputEpoch;
-          recordInputSubmission(memory, ctx.turnId);
+          commitInputSubmission(runtime, ctx, memory);
           onInputSubmitted?.();
         },
         callTool: (name, args) => {

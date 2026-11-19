@@ -17,6 +17,7 @@ import {
   DESKTOP_ACTIVITY_DECISION,
   DESKTOP_DECISION,
   DESKTOP_HISTORY,
+  DESKTOP_ROLE_MAIL,
   DESKTOP_MEMORY_TOOLS,
   DESKTOP_SCREEN_VIEW,
   DESKTOP_NATIVE_CONTROL,
@@ -107,6 +108,11 @@ export function scopedCatalog(runtime, ctx, input) {
 }
 
 export function toolAvailable(agent, name, conversation, config) {
+  if (name === DESKTOP_ROLE_MAIL)
+    return (
+      config?.desktopHome?.enabled === true &&
+      (conversation === "@subject" || conversation === DESKTOP_CONVERSATION)
+    );
   if (name === "story_circle")
     return conversation === "@subject" && agent.tools.includes(name);
   if (name === "garden_read") return gardenPublicScope(conversation);

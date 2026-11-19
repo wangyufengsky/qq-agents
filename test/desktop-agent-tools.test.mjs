@@ -47,6 +47,7 @@ test("desktop capabilities are limited by the role's opt-in and existing permiss
     "desktop_room_history",
     "memory_search",
     "memory_read",
+    "desktop_role_mail_send",
     "diary_write",
     "diary_revise",
     "file_create",
@@ -63,6 +64,7 @@ test("desktop capabilities are limited by the role's opt-in and existing permiss
     "desktop_room_history",
     "memory_search",
     "memory_read",
+    "desktop_role_mail_send",
   ]);
   first.files.receive = true;
   assert(runtime.toolsFor(first, desktop).includes("file_download"));
@@ -73,6 +75,7 @@ test("desktop capabilities are limited by the role's opt-in and existing permiss
     "desktop_room_history",
     "memory_search",
     "memory_read",
+    "desktop_role_mail_send",
   ]);
 });
 

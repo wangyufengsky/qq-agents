@@ -19,7 +19,7 @@ import { recallBoundary } from "../core/recall-boundary.mjs";
 import { elsewhereForTurn, elsewhereLine } from "../core/elsewhere.mjs";
 import { DESKTOP_BODY_CONTROL } from "../tools/names.mjs";
 import { toolSpecs } from "../tools/specs.mjs";
-import { promptFor } from "./desktop-decision.mjs";
+import { DESKTOP_CONVERSATION, promptFor } from "./desktop-decision.mjs";
 
 export function beginDesktopContext(
   runtime,
@@ -162,6 +162,9 @@ ${selfBody}
       "管理员已发送当前视频附件。用 video_read 带附件 ID 先看概览；看到采样画面后可按兴趣选一小段回看一次，也可直接交流。取不到画面时如实说明。",
     ctx.desktopRecentVideo &&
       `本次到访中最近已交付的视频概览：${JSON.stringify(ctx.desktopRecentVideo)}。管理员追问该视频时，可用 video_read 带附件 ID 按时间回看。若所指视频不明确，先确认。`,
+    conversation === DESKTOP_CONVERSATION &&
+      !request.resting &&
+      runtime.desktopRoleMailbox.opening(ctx),
     elsewhereLine(elsewhere),
   ]
     .filter(Boolean)

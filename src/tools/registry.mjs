@@ -10,6 +10,7 @@ import {
   DESKTOP_ACTIVITY_DECISION,
   DESKTOP_DECISION,
   DESKTOP_HISTORY,
+  DESKTOP_ROLE_MAIL,
   DESKTOP_SCREEN_VIEW,
   DESKTOP_NATIVE_CONTROL,
   DESKTOP_BROWSER_CONTROL,
@@ -36,6 +37,8 @@ import { boardDefinitions, boardTool } from "./board.mjs";
 // Discovery and dispatch use this same registry. Fail at load time on drift.
 const handlers = {
   ...coreHandlers,
+  [DESKTOP_ROLE_MAIL]: (runtime, ctx, args) =>
+    runtime.desktopRoleMailbox.submit(ctx, args),
   [DESKTOP_HISTORY]: (runtime, ctx, args) =>
     runtime.desktopVisits.history(ctx, args),
   [DESKTOP_BODY_CONTROL]: (runtime, ctx, args) =>
