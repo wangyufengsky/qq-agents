@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
+import { DshBackend } from "../src/backends/dsh.mjs";
 import { runNativeSocial } from "../src/backends/native-social.mjs";
-import { sessionSignature } from "../src/backends/session-contract.mjs";
+import {
+  sessionContract,
+  sessionSignature,
+} from "../src/backends/session-contract.mjs";
 import { SessionUnavailableFailure } from "../src/backends/turn-failure.mjs";
 import { beginDesktopContext } from "../src/home/desktop-context.mjs";
 import { DESKTOP_CONVERSATION } from "../src/home/desktop-decision.mjs";
@@ -178,6 +182,70 @@ test("desktop events share the native session and stable tool declarations", asy
   });
   assert.equal(seen.at(-1).session, null);
   assert.match(seen.at(-1).prompt, /回到在场时留下的话题/);
+});
+
+test("desktop opening records a DSH catalogue migration only after input acceptance", async (t) => {
+  const cfg = config(1);
+  cfg.desktopHome.enabled = true;
+  cfg.backends[0].preset = "qq-unified";
+  const { runtime, store, root } = fixture(t, { cfg });
+  const agent = runtime.agent("agent-0");
+  const memory = store.bind(agent.id);
+  const backend = new DshBackend(runtime.config.backends[0], agent, { root });
+  t.after(() => backend.close());
+  const begin = (unified) => {
+    const controller = new AbortController();
+    const ctx = runtime.makeContext(agent.id, DESKTOP_CONVERSATION, {
+      controller,
+      assertCurrent() {},
+      decide() {},
+      unified,
+      kind: "chat",
+    });
+    return beginDesktopContext(
+      runtime,
+      ctx,
+      agent,
+      backend,
+      {
+        kind: "chat",
+        people: [],
+        messages: [],
+      },
+      controller.signal,
+    );
+  };
+
+  const legacy = begin(false);
+  const specs = (exchange) =>
+    exchange.tools.map(({ function: tool }) => ({
+      name: tool.name,
+      inputSchema: tool.parameters,
+    }));
+  const session = {
+    backend: "dsh",
+    id: "old-desktop-session",
+    signature: backend.sessionSignature(specs(legacy)),
+  };
+  legacy.managedContext.saveSession(session);
+  legacy.onInputSubmitted();
+  await legacy.finish();
+
+  const upgraded = begin(true);
+  assert.equal(upgraded.managedContext.session.id, session.id);
+  assert.notEqual(upgraded.managedContext.session.signature, session.signature);
+  assert.deepEqual(memory.state(DESKTOP_CONVERSATION).session, session);
+  upgraded.onInputSubmitted();
+  assert.deepEqual(
+    memory.state(DESKTOP_CONVERSATION).session,
+    upgraded.managedContext.session,
+  );
+  assert.deepEqual(
+    memory.state(DESKTOP_CONVERSATION).backendContract,
+    sessionContract(backend, specs(upgraded)),
+  );
+  assert.deepEqual(memory.identity.list("session_history"), []);
+  await upgraded.finish();
 });
 
 test("starting a unified desktop context preserves an incompatible prior native reference", (t) => {

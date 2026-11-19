@@ -538,6 +538,7 @@ export function saveSession(
   {
     turnId,
     backendId,
+    backendContract,
     at,
     inactive = false,
     archiveOnly = false,
@@ -567,7 +568,11 @@ export function saveSession(
       });
       return;
     }
-    memory.setState(scope, { ...value, session: reference });
+    memory.setState(scope, {
+      ...value,
+      session: reference,
+      ...(backendContract && { backendContract }),
+    });
   });
 }
 

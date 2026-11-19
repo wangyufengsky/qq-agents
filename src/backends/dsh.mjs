@@ -12,6 +12,7 @@ import {
   sessionSignature,
   assertSession,
   acceptsSession,
+  authenticatesSessionContract,
 } from "./session-contract.mjs";
 import {
   beforeSessionInput,
@@ -336,6 +337,17 @@ export class DshBackend {
   /** @param {StoredSession | null | undefined} session @param {import("./session-contract.mjs").ToolSpec[]} tools @param {import("./session-contract.mjs").SessionContract} [previous] */
   acceptsSession(session, tools, previous) {
     return acceptsSession(this, session, tools, previous);
+  }
+  /** The preset exposes the current catalogue through the per-turn bridge.
+   * @param {StoredSession} session @param {import("./session-contract.mjs").ToolSpec[]} tools @param {import("./session-contract.mjs").SessionContract} [previous] */
+  upgradeDesktopSession(session, tools, previous) {
+    if (
+      this.config.preset !== "qq-unified" ||
+      this.config.functionalAgentOnly ||
+      !authenticatesSessionContract(this, session, previous)
+    )
+      return undefined;
+    return { ...session, signature: this.sessionSignature(tools) };
   }
   /** @param {{windowId?: string, actorGeneration?: string}} [filter] */
   async closeSocialSessions(filter = {}) {

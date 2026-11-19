@@ -254,19 +254,12 @@ ${selfBody}
   ).createExchange(runtime, ctx, {
     memory,
     onInputSubmitted() {
-      if (retainedSession)
-        memory.store.transaction(() => {
-          const current = memory.state(conversation);
-          if (current.lastTurnId !== turnId) return;
-          saveSession(memory, conversation, retainedSession, {
-            turnId,
-            backendId: agent.backendId,
-            at: runtime.now(),
-          });
-          memory.setState(conversation, {
-            ...memory.state(conversation),
-            backendContract: contract,
-          });
+      if (retainedSession && memory.state(conversation).lastTurnId === turnId)
+        saveSession(memory, conversation, retainedSession, {
+          turnId,
+          backendId: agent.backendId,
+          backendContract: contract,
+          at: runtime.now(),
         });
       if (selfAllowed) trackMindRecords(runtime, ctx, [self], "desktop-self");
       for (const item of [
