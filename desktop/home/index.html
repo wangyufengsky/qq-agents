@@ -314,6 +314,27 @@
                 </button>
                 <p class="desktop-permission-status" role="status" hidden></p>
               </div>
+              <section class="unified-desktop-grants" hidden>
+                <div class="desktop-permission">
+                  <strong>全桌面观察</strong>
+                  <p class="unified-observation-state"></p>
+                </div>
+                <div class="desktop-permission">
+                  <strong>操作本机窗口</strong>
+                  <button type="button" class="secondary unified-native-add">
+                    选择角色与窗口
+                  </button>
+                  <ul class="unified-native-list"></ul>
+                </div>
+                <div class="desktop-permission">
+                  <strong>操作网页</strong>
+                  <button type="button" class="secondary unified-browser-add">
+                    授权独立标签页
+                  </button>
+                  <ul class="unified-browser-list"></ul>
+                </div>
+                <p class="unified-grant-status" role="status"></p>
+              </section>
             </div>
             <section class="display-manager" hidden>
               <button type="button" class="quiet display-back">
@@ -378,6 +399,23 @@
               </div>
             </section>
           </div>
+        </dialog>
+        <dialog
+          class="unified-browser-dialog"
+          aria-labelledby="unified-browser-title"
+        >
+          <form class="unified-browser-form">
+            <h2 id="unified-browser-title">授权独立网页标签页</h2>
+            <p>所选角色可以持续操作这个独立标签页，直到你或角色撤销授权。</p>
+            <label for="unified-browser-role">角色</label>
+            <select id="unified-browser-role" required></select>
+            <div class="browser-permission-actions">
+              <button class="secondary unified-browser-cancel" type="button">
+                取消
+              </button>
+              <button class="primary" type="submit">授权</button>
+            </div>
+          </form>
         </dialog>
         <dialog
           class="browser-permission-dialog"

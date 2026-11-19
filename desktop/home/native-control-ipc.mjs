@@ -1,3 +1,5 @@
+import * as nativeControls from "./native-control-client.mjs";
+
 export function registerNativeControlIpc({
   ipc,
   context,
@@ -11,10 +13,102 @@ export function registerNativeControlIpc({
   deniedWindow,
   dialog,
   localLabel,
+  identifyTarget = nativeControls.nativeControlTargetId,
 }) {
   ipc.handle("room:native-control", async (event, action) => {
     const win = entries.get("panel")?.win;
     const { nativeControl: policy, roomEpoch } = context.remoteState ?? {};
+    if (context.remoteState?.desktopUnified) {
+      if (
+        !context.framework ||
+        !nativeControl ||
+        !roomEpoch ||
+        !policy ||
+        !win ||
+        win.webContents !== event.sender ||
+        event.senderFrame !== win.webContents.mainFrame ||
+        !win.isFocused() ||
+        context.choosingDesktopPermission
+      )
+        return "unavailable";
+      if (action?.type === "revoke") {
+        const grant = policy.grants?.find(
+          ({ grantId }) => grantId === action.grantId,
+        );
+        if (!grant) return "unavailable";
+        try {
+          return await nativeControl.revoke(
+            roomEpoch,
+            grant.agentId,
+            grant.grantId,
+          );
+        } catch {
+          return "failed";
+        }
+      }
+      if (action?.type !== "grant" || !nativeDriver || !identifyTarget)
+        return "unavailable";
+      context.choosingDesktopPermission = true;
+      try {
+        const visits = screenPickerVisits();
+        const eligible = context.roles.filter(
+          ({ id }) => policy.targetEligible?.includes(id) && visits.get(id),
+        );
+        if (!eligible.length) return "unavailable";
+        const windows = (
+          await nativeDriver.listWindows({
+            unified: true,
+            signal: AbortSignal.timeout(4000),
+          })
+        ).filter(
+          (source) => source.pid !== process.pid && !deniedWindow(source),
+        );
+        if (!windows.length) return "no-sources";
+        if (win.isDestroyed() || !win.isFocused()) return "cancelled";
+        const selection = await desktopSourceMenu(
+          win,
+          eligible,
+          windows,
+          ({ app, title }) => `${app} · ${title}`,
+        );
+        if (!selection || win.isDestroyed()) return "cancelled";
+        const targetId = identifyTarget(selection.source);
+        const agent = eligible.find(({ id }) => id === selection.agentId);
+        if (!agent || !targetId) return "unavailable";
+        const confirmed = await dialog.showMessageBox(win, {
+          type: "question",
+          title: "授权操作本机窗口",
+          message: `允许 ${localLabel(agent.name)} 持续操作此窗口？`,
+          detail: `${localLabel(selection.source.app)} · ${localLabel(selection.source.title)}`,
+          buttons: ["取消", "确认授权"],
+          defaultId: 0,
+          cancelId: 0,
+          noLink: true,
+        });
+        if (confirmed.response !== 1 || win.isDestroyed()) return "cancelled";
+        const room = context.remoteState;
+        if (
+          !room?.desktopUnified ||
+          room.roomEpoch !== roomEpoch ||
+          !room.nativeControl?.targetEligible?.includes(agent.id) ||
+          screenPickerVisits().get(agent.id) !== visits.get(agent.id) ||
+          deniedWindow(selection.source)
+        )
+          return "unavailable";
+        return await nativeControl.grant({
+          ...selection,
+          targetId,
+          roomEpoch,
+          visitId: visits.get(agent.id),
+        });
+      } catch (error) {
+        return error?.message === "DESKTOP_NATIVE_PERMISSION"
+          ? "permission"
+          : "failed";
+      } finally {
+        context.choosingDesktopPermission = false;
+      }
+    }
     let modeRevision = permissionRevision("control");
     if (
       !verifiedWindowSurface ||

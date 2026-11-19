@@ -888,8 +888,9 @@ async function desktopSettings(root, ticket) {
     const current = await api("/api/config");
     if (!active()) return;
     const policy = current.config.desktopHome;
+    const unified = current.desktopUnified === true;
     const form = el("form", "social-settings desktop-settings");
-    function roleCheckboxes(title, enabled) {
+    function roleCheckboxes(title, enabled, visible = true) {
       const group = el("fieldset", "desktop-tools");
       group.append(el("legend", "", title));
       const checkboxes = current.config.agents.map((agent) => {
@@ -902,7 +903,7 @@ async function desktopSettings(root, ticket) {
         group.append(label);
         return input;
       });
-      form.append(group);
+      if (visible) form.append(group);
       return checkboxes;
     }
     const checkedRoles = (checkboxes) =>
@@ -910,6 +911,9 @@ async function desktopSettings(root, ticket) {
     const fields = [
       ["maxTurns", "共用回合上限", 1, 24],
       ["refreshMinutes", "额度补满间隔（分钟）", 0, 1440],
+      ...(unified
+        ? [["autonomyMinutes", "自主唤醒间隔（分钟）", 1, 1440]]
+        : []),
     ];
     const inputs = {};
     for (const [key, title, min, max] of fields) {
@@ -919,7 +923,7 @@ async function desktopSettings(root, ticket) {
       input.required = true;
       input.min = String(min);
       input.max = String(max);
-      input.value = String(policy[key]);
+      input.value = String(policy[key] ?? (key === "maxTurns" ? 6 : 10));
       label.append(input);
       inputs[key] = input;
       form.append(label);
@@ -949,6 +953,7 @@ async function desktopSettings(root, ticket) {
     const activityInputs = roleCheckboxes(
       "允许在场时自主活动",
       policy.activityRoles,
+      !unified,
     );
     const interactionsLabel = el("label", "desktop-field", "启用桌宠互动");
     const interactionsEnabled = document.createElement("input");
@@ -991,7 +996,8 @@ async function desktopSettings(root, ticket) {
         "安静模式暂停该角色的自主活动。活动仍受每小时额度和休息时段限制。",
       ),
     );
-    form.append(interactionsLabel, preferencesGroup);
+    form.append(interactionsLabel);
+    if (!unified) form.append(preferencesGroup);
     const perception = policy.publicPerception;
     const perceptionGroup = el("fieldset", "social-budget");
     perceptionGroup.append(el("legend", "", "公共感知与自主唤醒"));
@@ -1062,11 +1068,17 @@ async function desktopSettings(root, ticket) {
     syncCadence();
     cadenceLabel.append(cadence);
     perceptionGroup.append(cadenceLabel, advanced);
-    form.append(perceptionGroup);
-    const screenLabel = el("label", "desktop-field", "允许在本机授权看桌面");
+    if (!unified) form.append(perceptionGroup);
+    const screenLabel = el(
+      "label",
+      "desktop-field",
+      unified ? "授权观察整个桌面" : "允许在本机授权看桌面",
+    );
     const screenEnabled = document.createElement("input");
     screenEnabled.type = "checkbox";
-    screenEnabled.checked = policy.screenView.enabled;
+    screenEnabled.checked = unified
+      ? policy.observeDesktop === true
+      : policy.screenView.enabled;
     screenLabel.prepend(screenEnabled);
     const nativeLabel = el("label", "desktop-field", "允许在本机授权操作窗口");
     const nativeEnabled = document.createElement("input");
@@ -1087,11 +1099,20 @@ async function desktopSettings(root, ticket) {
     observationEnabled.type = "checkbox";
     observationEnabled.checked = policy.autonomousObservation;
     observationLabel.prepend(observationEnabled);
-    form.append(screenLabel, nativeLabel, browserLabel, observationLabel);
+    form.append(screenLabel);
+    if (unified)
+      form.append(
+        el(
+          "p",
+          "social-notice",
+          "所有在场角色可以按你的请求或自主查看全部显示器。操作窗口或网页请在桌面小窝中选择目标并授权。",
+        ),
+      );
+    else form.append(nativeLabel, browserLabel, observationLabel);
     const legacyObservation = policy.observationRoles === undefined;
     const separateObservation = document.createElement("input");
     separateObservation.type = "checkbox";
-    if (legacyObservation) {
+    if (legacyObservation && !unified) {
       const separateLabel = el(
         "label",
         "desktop-field",
@@ -1103,6 +1124,7 @@ async function desktopSettings(root, ticket) {
     const observationInputs = roleCheckboxes(
       "可获窗口观察授权的角色",
       policy.observationRoles ?? policy.activityRoles,
+      !unified,
     );
     const initialObservationRoles = JSON.stringify(
       checkedRoles(observationInputs),
@@ -1111,7 +1133,7 @@ async function desktopSettings(root, ticket) {
       for (const input of observationInputs)
         input.disabled = legacyObservation && !separateObservation.checked;
     };
-    if (legacyObservation) {
+    if (legacyObservation && !unified) {
       separateObservation.addEventListener("change", updateObservationInputs);
       updateObservationInputs();
       form.append(
@@ -1122,13 +1144,14 @@ async function desktopSettings(root, ticket) {
         ),
       );
     }
-    form.append(
-      el(
-        "p",
-        "social-notice",
-        "角色须获准自主活动和看屏。每次到访仍需在桌面小窝选定窗口或显示器。",
-      ),
-    );
+    if (!unified)
+      form.append(
+        el(
+          "p",
+          "social-notice",
+          "角色须获准自主活动和看屏。每次到访仍需在桌面小窝选定窗口或显示器。",
+        ),
+      );
     const displayLimits = policy.displayObservation;
     const displayInputs = {};
     for (const [key, title, max] of [
@@ -1144,7 +1167,7 @@ async function desktopSettings(root, ticket) {
       input.value = String(displayLimits[key]);
       displayInputs[key] = input;
       label.append(input);
-      form.append(label);
+      if (!unified) form.append(label);
     }
     const retentionLabel = el(
       "label",
@@ -1159,7 +1182,7 @@ async function desktopSettings(root, ticket) {
     }
     retention.value = String(policy.observationRetentionDays);
     retentionLabel.append(retention);
-    form.append(retentionLabel);
+    if (!unified) form.append(retentionLabel);
     const status = el("p", "social-notice");
     status.setAttribute("role", "status");
     const save = el("button", "primary", "保存桌面设置");
@@ -1205,33 +1228,41 @@ async function desktopSettings(root, ticket) {
       }
       const limits = {
         interactionsEnabled: interactionsEnabled.checked,
-        publicPerception: {
-          enabled: perceptionEnabled.checked,
-          ...Object.fromEntries(
-            Object.entries(perceptionInputs).map(([key, field]) => [
-              key,
-              field.valueAsNumber,
-            ]),
-          ),
-        },
-        residentPreferences,
         maxTurns: inputs.maxTurns.valueAsNumber,
         refreshMinutes: inputs.refreshMinutes.valueAsNumber,
-        screenView: { enabled: screenEnabled.checked },
-        autonomousObservation: observationEnabled.checked,
-        observationRetentionDays: Number(retention.value),
-        displayObservation: {
-          minutes: displayInputs.minutes.valueAsNumber,
-          attempts: displayInputs.attempts.valueAsNumber,
-        },
-        ...((legacyObservation
-          ? separateObservation.checked
-          : JSON.stringify(observationRoles) !== initialObservationRoles) && {
-          observationRoles,
-        }),
-        nativeControl: { enabled: nativeEnabled.checked },
-        browserControl: { enabled: browserEnabled.checked },
-        activityRoles: checkedRoles(activityInputs),
+        ...(unified
+          ? {
+              observeDesktop: screenEnabled.checked,
+              autonomyMinutes: inputs.autonomyMinutes.valueAsNumber,
+            }
+          : {
+              screenView: { enabled: screenEnabled.checked },
+              publicPerception: {
+                enabled: perceptionEnabled.checked,
+                ...Object.fromEntries(
+                  Object.entries(perceptionInputs).map(([key, field]) => [
+                    key,
+                    field.valueAsNumber,
+                  ]),
+                ),
+              },
+              residentPreferences,
+              autonomousObservation: observationEnabled.checked,
+              observationRetentionDays: Number(retention.value),
+              displayObservation: {
+                minutes: displayInputs.minutes.valueAsNumber,
+                attempts: displayInputs.attempts.valueAsNumber,
+              },
+              ...((legacyObservation
+                ? separateObservation.checked
+                : JSON.stringify(observationRoles) !==
+                  initialObservationRoles) && {
+                observationRoles,
+              }),
+              nativeControl: { enabled: nativeEnabled.checked },
+              browserControl: { enabled: browserEnabled.checked },
+              activityRoles: checkedRoles(activityInputs),
+            }),
         bodyControlRoles: checkedRoles(bodyInputs),
         toolRoles: checkedRoles(roleInputs),
       };
@@ -1240,6 +1271,10 @@ async function desktopSettings(root, ticket) {
         if (!active()) return;
         const existing = current.config.desktopHome;
         if (
+          (current.desktopUnified === true) !== unified ||
+          (unified &&
+            (existing.autonomyMinutes !== policy.autonomyMinutes ||
+              existing.observeDesktop !== policy.observeDesktop)) ||
           existing.maxTurns !== policy.maxTurns ||
           existing.interactionsEnabled !== policy.interactionsEnabled ||
           JSON.stringify(existing.publicPerception) !==

@@ -259,6 +259,7 @@ async function windowGeometry(source, { signal } = {}) {
 }
 
 async function verifyNativeGrant(grant, signal) {
+  if (grant.unified) return !signal.aborted && !deniedWindow(grant.source);
   const current = () =>
     !signal.aborted &&
     permissionRevision("control") !== undefined &&

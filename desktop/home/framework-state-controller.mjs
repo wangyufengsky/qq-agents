@@ -168,10 +168,19 @@ export function createFrameworkStateController({
                 })) ?? [],
             }),
         },
-      nativeControl: verifiedWindowSurface &&
+      nativeControl: (state.desktopUnified || verifiedWindowSurface) &&
         nativeControl &&
         value.room?.nativeControl && {
           ...value.room.nativeControl,
+          ...(state.desktopUnified && {
+            grants: value.room.nativeControl.grants?.map((grant) => {
+              const source = nativeControl.target(grant.agentId, grant.grantId);
+              return {
+                ...grant,
+                title: [source?.app, source?.title].filter(Boolean).join(" · "),
+              };
+            }),
+          }),
           target: nativeControl.target(value.room.nativeControl.grantedAgentId)
             ?.title,
         },
