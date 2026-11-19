@@ -126,10 +126,12 @@ test("ACP resumes only the supplied session and sets the configured model and ef
   assert.equal(f.calls[2].params.modelId, "synthetic");
   assert.equal(f.calls[3].params.value, "low");
 });
-test("ACP submits a captured desktop JPEG as native input in the same bridge turn", async () => {
+test("ACP submits all desktop JPEGs as native input in the same bridge turn", async () => {
   const f = fake();
   const events = [];
   const image = { type: "image", mimeType: "image/jpeg", data: "AQID" };
+  const second = { type: "image", mimeType: "image/jpeg", data: "BAUG" };
+  const content = [image, { type: "text", text: "Second display" }, second];
   let takes = 0;
   await runAcp(
     { ...options, desktop: true, desktopScreen: true },
@@ -139,11 +141,12 @@ test("ACP submits a captured desktop JPEG as native input in the same bridge tur
     [],
     async () => {
       takes++;
+      if (takes === 2) return null;
       assert.equal(
         f.calls.filter(({ method }) => method === "session/prompt").length,
         1,
       );
-      return { image, receiptId: "a".repeat(32) };
+      return { content, receiptId: "a".repeat(32) };
     },
     undefined,
     async (receiptId) => {
@@ -151,10 +154,10 @@ test("ACP submits a captured desktop JPEG as native input in the same bridge tur
     },
   );
   const prompts = f.calls.filter(({ method }) => method === "session/prompt");
-  assert.equal(takes, 1);
+  assert.equal(takes, 2);
   assert.equal(prompts.length, 2);
   assert.equal(prompts[0].params.sessionId, prompts[1].params.sessionId);
-  assert.deepEqual(prompts[1].params.prompt[1], image);
+  assert.deepEqual(prompts[1].params.prompt.slice(1), content);
   assert.equal(events.filter(({ event }) => event === "result").length, 1);
 });
 test("ACP never acknowledges an image when its native prompt fails", async () => {

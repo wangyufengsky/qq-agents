@@ -1,4 +1,9 @@
 // @ts-check
+import {
+  MAX_DESKTOP_CAPTURE_BYTES,
+  MAX_DESKTOP_CAPTURE_DISPLAYS,
+  MAX_DESKTOP_CAPTURE_ENCODED,
+} from "../home/desktop-capture-protocol.mjs";
 import { socialSessionPool } from "./social-sessions.mjs";
 import { sessionWasUnchanged } from "./turn-failure.mjs";
 import {
@@ -50,19 +55,25 @@ export function assertSocialToolResult(
     const regularImage = desktop && desktopMedia.has(name);
     const screen = desktop && name === DESKTOP_SCREEN_VIEW;
     const garden = desktop && name === "garden_read";
-    const imageLimit = (regularImage ? 8 : 4) * 1024 * 1024;
+    const imageLimit = screen
+      ? MAX_DESKTOP_CAPTURE_BYTES
+      : (regularImage ? 8 : 4) * 1024 * 1024;
     if (
       (regularImage
         ? images.length > 12
-        : (!screen && !garden && name !== "room_scene_view") ||
-          images.length !== 1) ||
+        : screen
+          ? images.length > MAX_DESKTOP_CAPTURE_DISPLAYS
+          : (!garden && name !== "room_scene_view") || images.length !== 1) ||
       images.some(
         (/** @type {any} */ image) =>
           !(regularImage
             ? desktopImageTypes.has(image.mimeType)
             : image.mimeType === (screen ? "image/jpeg" : "image/png")) ||
           typeof image.data !== "string" ||
-          image.data.length > Math.ceil(imageLimit / 3) * 4,
+          image.data.length >
+            (screen
+              ? MAX_DESKTOP_CAPTURE_ENCODED
+              : Math.ceil(imageLimit / 3) * 4),
       ) ||
       images.reduce(
         (/** @type {number} */ bytes, /** @type {any} */ image) =>
