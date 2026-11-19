@@ -224,9 +224,9 @@ const AGENT_TOOL_GROUPS = [
   {
     id: "desktop-local",
     builtin: true,
-    builtinLabel: "由桌面小窝设置与现场授权控制",
+    builtinLabel: "在桌面会话中使用",
     title: "桌面小窝本机工具",
-    desc: "按角色开启桌宠控制。看屏、窗口与网页工具另在本机桌面聊天面板授权。",
+    desc: "在场角色可以控制自己的桌宠。全桌面观察在小窝设置中授权，操作窗口或网页在桌面聊天面板按目标授权。",
     tools: {
       desktop_screen_view: "查看管理员选定的桌面窗口或显示器",
       desktop_native_control: "操作管理员选定的本机窗口",

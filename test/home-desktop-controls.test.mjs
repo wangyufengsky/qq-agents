@@ -228,17 +228,15 @@ test("unified settings present one global observation grant and configurable roo
     (value) => sessionStorage.setItem("qq-unified-token", value),
     token,
   );
-  let saved;
-  await page.route("**/api/config", async (route) => {
-    if (route.request().method() !== "PUT") return route.continue();
-    saved = route.request().postDataJSON().config.desktopHome;
-    return route.fulfill({ json: { accepted: true } });
-  });
   await page.goto(`http://127.0.0.1:${port}/home-space/`);
   await page.getByRole("button", { name: "更多入口" }).click();
   await page.getByRole("button", { name: "桌面小窝设置", exact: true }).click();
-  const observe = page.getByRole("checkbox", { name: "授权观察整个桌面" });
+  const observe = page.getByRole("checkbox", { name: "允许观察整个桌面" });
   await observe.waitFor();
+  assert.equal(
+    await page.locator(".desktop-settings input[type=checkbox]").count(),
+    1,
+  );
   assert.equal(await observe.count(), 1);
   assert.equal(await observe.isChecked(), false);
   assert.equal(
@@ -260,18 +258,27 @@ test("unified settings present one global observation grant and configurable roo
     await page.getByLabel("自主唤醒间隔（分钟）").inputValue(),
     "10",
   );
+  const before = structuredClone(runtime.config.desktopHome);
+  // An old client can save legacy fields while this form is open.
+  await runtime.changeConfig(
+    {
+      ...runtime.config,
+      desktopHome: {
+        ...before,
+        toolRoles: [runtime.config.agents[0].id],
+        interactionsEnabled: !before.interactionsEnabled,
+      },
+    },
+    runtime.configStore.revision,
+  );
+  const latest = structuredClone(runtime.config.desktopHome);
   await observe.check();
   await page.getByLabel("自主唤醒间隔（分钟）").fill("12");
   await page.getByRole("button", { name: "保存桌面设置" }).click();
   await page.getByText("桌面小窝设置已保存。", { exact: true }).waitFor();
-  assert.equal(saved.observeDesktop, true);
-  assert.equal(
-    saved.screenView.enabled,
-    runtime.config.desktopHome.screenView.enabled,
-  );
-  assert.equal(saved.autonomyMinutes, 12);
-  assert.equal(
-    saved.autonomousObservation,
-    runtime.config.desktopHome.autonomousObservation,
-  );
+  assert.deepEqual(runtime.config.desktopHome, {
+    ...latest,
+    observeDesktop: true,
+    autonomyMinutes: 12,
+  });
 });

@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
+import { setImmediate } from "node:timers/promises";
+import { deriveRelayToken } from "../src/core/relay-auth.mjs";
+import { createServer } from "../src/server.mjs";
 import { DshBackend } from "../src/backends/dsh.mjs";
 import { runNativeSocial } from "../src/backends/native-social.mjs";
 import {
@@ -246,6 +249,133 @@ test("desktop opening records a DSH catalogue migration only after input accepta
   );
   assert.deepEqual(memory.identity.list("session_history"), []);
   await upgraded.finish();
+});
+
+test("native and authenticated relay tools wait for the same desktop action queue", async (t) => {
+  const cfg = config(1);
+  cfg.desktopHome.enabled = true;
+  const { runtime } = fixture(t, { cfg });
+  const agent = runtime.agent("agent-0");
+  const controller = new AbortController();
+  const capture = Promise.withResolvers();
+  const captureStarted = Promise.withResolvers();
+  const relayInput = Promise.withResolvers();
+  const calls = [];
+  const ctx = runtime.makeContext(agent.id, DESKTOP_CONVERSATION, {
+    controller,
+    assertCurrent() {},
+    decide({ action }) {
+      calls.push(action);
+      return { action };
+    },
+    unified: true,
+    kind: "chat",
+  });
+  t.after(() => capture.resolve());
+  t.mock.method(runtime.desktopVisits.fullDesktop, "view", async () => {
+    calls.push("capture-started");
+    captureStarted.resolve();
+    await capture.promise;
+    calls.push("capture-finished");
+    return { status: "observed" };
+  });
+  const exchange = beginDesktopContext(
+    runtime,
+    ctx,
+    agent,
+    {},
+    { kind: "chat", people: [], messages: [] },
+    controller.signal,
+  );
+  exchange.onInputSubmitted();
+  ctx.desktopConsumeInput = () => relayInput.resolve();
+  const token = "desktop-relay-fixture";
+  const app = createServer({ runtime, token });
+  t.after(() => app.close());
+  const url = "http://127.0.0.1:" + (await app.listen());
+  const first = exchange.callTool("desktop_screen_view", {});
+  await captureStarted.promise;
+  const second = fetch(url + "/agent/tools", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-agent-capability": ctx.token,
+      "x-agent-relay-token": deriveRelayToken(token),
+      "x-agent-output-protocol": "stdio-v1",
+      "x-agent-output-request": "queued-desktop-test",
+    },
+    body: JSON.stringify({
+      name: "desktop_room_decide",
+      arguments: { action: "say", text: "看完了。" },
+    }),
+  });
+  try {
+    await relayInput.promise;
+    await setImmediate();
+    assert.deepEqual(calls, ["capture-started"]);
+  } finally {
+    capture.resolve();
+    await first;
+    const response = await second;
+    assert.equal(response.status, 200);
+    const result = await response.json();
+    assert.equal(Boolean(result.isError), false);
+    await exchange.finish();
+  }
+  assert.deepEqual(calls, ["capture-started", "capture-finished", "say"]);
+});
+
+test("an explicit desktop backend change archives the old session and carries forward the room context", async (t) => {
+  const cfg = config(1);
+  cfg.desktopHome.enabled = true;
+  const { runtime, store } = fixture(t, { cfg });
+  const agent = runtime.agent("agent-0");
+  const memory = store.bind(agent.id);
+  const backend = {
+    config: runtime.config.backends.find(({ id }) => id === agent.backendId),
+    sessionSignature(tools) {
+      return sessionSignature(this, tools);
+    },
+  };
+  const controller = new AbortController();
+  const ctx = runtime.makeContext(agent.id, DESKTOP_CONVERSATION, {
+    controller,
+    assertCurrent() {},
+    decide() {},
+    unified: true,
+    kind: "chat",
+  });
+  const previous = {
+    backend: backend.config.type,
+    id: "fixture-previous-backend-session",
+    signature: backend.sessionSignature([]),
+  };
+  const { version } = memory.identity.initialize(agent, runtime.now());
+  memory.setState(DESKTOP_CONVERSATION, {
+    session: previous,
+    desktopBackendId: "fixture-previous-backend",
+    loadedSelfVersion: version,
+  });
+  const exchange = beginDesktopContext(
+    runtime,
+    ctx,
+    agent,
+    backend,
+    {
+      kind: "chat",
+      people: [],
+      messages: [],
+      continuity: [{ speaker: "主人", text: "在场时听见的消息。" }],
+    },
+    controller.signal,
+  );
+  assert.equal(exchange.managedContext.session, null);
+  assert.match(exchange.prompt, /在场时听见的消息/);
+  assert.equal(memory.state(DESKTOP_CONVERSATION).session, null);
+  const history = memory.identity.list("session_history");
+  assert.equal(history.length, 1);
+  assert.match(JSON.stringify(history), /fixture-previous-backend-session/);
+  await exchange.finish();
 });
 
 test("starting a unified desktop context preserves an incompatible prior native reference", (t) => {

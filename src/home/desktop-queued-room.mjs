@@ -82,10 +82,11 @@ export class QueuedDesktopRoom extends LiveRoom {
   }
 
   snapshot() {
-    const state = super.snapshot();
+    const { remaining, nextRefill } = this.queue.quota();
     return {
-      ...state,
-      budget: this.queue.remaining(),
+      ...super.snapshot(),
+      budget: remaining,
+      nextRefill,
       thinking: this.activities.keys().next().value ?? null,
     };
   }

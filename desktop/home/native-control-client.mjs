@@ -133,6 +133,11 @@ class NativeControlSlot {
     }
   }
 
+  restore(identity, source) {
+    this.#lastGrant = identity;
+    this.#grant = { ...identity, source, unified: true };
+  }
+
   async revoke(roomEpoch, agentId) {
     const grant = this.#lastGrant;
     const unified = this.#grant?.unified;
@@ -309,6 +314,8 @@ export class NativeControlClient {
   #options;
   #legacy;
   #slots = new Map();
+  #restoring = new Set();
+  #latestUnified;
 
   constructor(driver, options) {
     this.#driver = driver;
@@ -330,6 +337,7 @@ export class NativeControlClient {
   clear() {
     // Legacy mode and transient framework disconnects need not revoke choices
     // for real windows. Their target scopes are suspended until the next sync.
+    this.#latestUnified = undefined;
     this.#legacy.clear();
     for (const slot of this.#slots.values()) slot.update({}, "sync");
   }
@@ -384,10 +392,68 @@ export class NativeControlClient {
   }
 
   update(value, action) {
+    const room = value.room;
+    this.#latestUnified = room?.desktopUnified ? value : undefined;
     this.#legacy.update(value, action);
     for (const [key, slot] of this.#slots) {
       slot.update(value, action);
       if (!slot.active) this.#slots.delete(key);
+    }
+    if (action !== "sync" || !this.#latestUnified) return;
+    for (const request of value.nativeRequests ?? []) {
+      const grant = room.nativeControl?.grants?.find(
+        ({ grantId, targetId }) =>
+          grantId === request.grantId && targetId === request.targetId,
+      );
+      if (!grant || !beforeExpiry(request.expiresAt)) continue;
+      const key = JSON.stringify([grant.agentId, grant.targetId]);
+      if (!this.#slots.has(key) && !this.#restoring.has(key))
+        void this.#restore(key, grant, request);
+    }
+  }
+
+  async #restore(key, grant, request) {
+    this.#restoring.add(key);
+    try {
+      const windows = await this.#driver.listWindows({
+        unified: true,
+        signal: AbortSignal.timeout(
+          Math.max(1, request.expiresAt - Date.now()),
+        ),
+      });
+      // A different window with the same label or PID is not the same grant.
+      const source = windows.find(
+        (window) =>
+          window.processInstance &&
+          nativeControlTargetId(window) === grant.targetId,
+      );
+      const latest = this.#latestUnified;
+      if (
+        !source ||
+        this.#slots.has(key) ||
+        latest?.room.roomEpoch !== request.roomEpoch ||
+        !latest.room.nativeControl?.grants?.some(
+          ({ grantId, targetId, agentId }) =>
+            grantId === grant.grantId &&
+            targetId === grant.targetId &&
+            agentId === grant.agentId,
+        ) ||
+        !latest.nativeRequests?.some(
+          ({ grantId, targetId, expiresAt }) =>
+            grantId === grant.grantId &&
+            targetId === grant.targetId &&
+            beforeExpiry(expiresAt),
+        )
+      )
+        return;
+      const slot = new NativeControlSlot(this.#driver, this.#options);
+      slot.restore({ ...grant, roomEpoch: request.roomEpoch }, source);
+      this.#slots.set(key, slot);
+      slot.update(latest, "sync");
+    } catch {
+      // A missing local inventory cannot prove that the approved target is open.
+    } finally {
+      this.#restoring.delete(key);
     }
   }
 }

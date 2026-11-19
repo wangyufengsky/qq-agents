@@ -126,17 +126,8 @@ export async function runDesktopTurn(host, request, sourceSignal) {
       attachments ? { ...request, messages: attachments.messages } : request,
       controller.signal,
     );
-    let actions = Promise.resolve();
     await backend.runDesktop({
       ...exchange,
-      callTool(name, args) {
-        const result = actions.then(() => exchange.callTool(name, args));
-        actions = result.then(
-          () => {},
-          () => {},
-        );
-        return result;
-      },
       inputImages: attachments?.images,
       binding: { runId: ctx.turnId },
       budget: null,
@@ -158,7 +149,7 @@ export async function runDesktopTurn(host, request, sourceSignal) {
       maxToolResultBytes: 65536,
       socialContextToken: ctx.token,
     });
-    await actions;
+    await ctx.desktopToolTail;
     return lifecycleChoice;
   } catch (error) {
     failure = error;

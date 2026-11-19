@@ -2,7 +2,11 @@
 import { element, button } from "./renderer-shared.js";
 
 export function bindObservationResults(section, clock) {
+  const title = section.querySelector("h2");
+  const explanation = section.querySelector("h2 + p");
+  const legacyExplanation = explanation.textContent;
   const scope = section.querySelector(".results-scope");
+  const replySection = section.querySelector(".results-replies");
   const status = section.querySelector(".results-status");
   const replies = section.querySelector(".results-replies ul");
   const summaryLimit = section.querySelector(".results-summary-limit");
@@ -166,7 +170,12 @@ export function bindObservationResults(section, clock) {
         ({ grantId, targetState }) => `${grantId}:${targetState}`,
       ),
     ].join("/");
-    if (session && (!active || session.context !== context)) {
+    if (
+      session &&
+      (!active ||
+        session.context !== context ||
+        session.historyOnly !== (room?.desktopUnified === true))
+    ) {
       clearInterval(timer);
       session = undefined;
       renderReplies([]);
@@ -181,8 +190,18 @@ export function bindObservationResults(section, clock) {
       if (session.revision === revision) return;
       session.revision = revision;
       clearInterval(timer);
-    } else session = { context, revision, summaryVersion: null };
+    } else
+      session = {
+        context,
+        revision,
+        summaryVersion: null,
+        historyOnly: room.desktopUnified === true,
+      };
     const current = session;
+    if (current.historyOnly) {
+      void refreshRecords(current);
+      return;
+    }
     void refreshResults(current);
     // Older hosts do not publish observation result revisions.
     if (revision === undefined)
@@ -197,7 +216,17 @@ export function bindObservationResults(section, clock) {
   window.addEventListener("blur", updateContext);
   document.addEventListener("visibilitychange", updateContext);
   return (next) => {
+    const historyOnly = next?.desktopUnified === true;
+    if ((room?.desktopUnified === true) !== historyOnly)
+      records.open = historyOnly;
     room = next;
+    title.textContent = historyOnly ? "旧版观察记录" : "观察记录";
+    section.setAttribute("aria-label", title.textContent);
+    explanation.textContent = historyOnly
+      ? "这里保留旧版已保存的观察摘要。全桌面观察在当前桌面会话里使用。"
+      : legacyExplanation;
+    scope.hidden = historyOnly;
+    replySection.hidden = historyOnly;
     const grant = room?.observation;
     const description = grant?.grantedAgentId
       ? `${roleName(grant.grantedAgentId)} · ${grant.target ?? "授权窗口"} · 许可至 ${clock.format(grant.expiresAt)} · 剩余 ${grant.remaining} 次`

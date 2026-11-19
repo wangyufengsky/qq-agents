@@ -64,9 +64,18 @@ export class DesktopTurnQueue {
     }
   }
 
-  remaining() {
+  quota() {
     this.#refresh(this.#now());
-    return Math.max(0, this.#policy().maxTurns - this.#published);
+    const { maxTurns, refreshMinutes } = this.#policy();
+    return {
+      remaining: Math.max(0, maxTurns - this.#published),
+      nextRefill:
+        refreshMinutes > 0 ? this.#refreshedAt + refreshMinutes * MINUTE : null,
+    };
+  }
+
+  remaining() {
+    return this.quota().remaining;
   }
 
   publish(actor, write) {

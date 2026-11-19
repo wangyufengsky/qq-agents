@@ -13,6 +13,8 @@ test("the normal desktop HTTP entry queues chatting and touches for the roles ac
     cfg,
     createDesktopHost: createDesktopRoomHost,
   });
+  let now = runtime.now();
+  runtime.clock = () => new Date(now);
   const host = runtime.desktopVisits;
   const admin = "fixture-admin-token";
   const app = createServer({ runtime, token: admin, allowLive: true });
@@ -37,7 +39,8 @@ test("the normal desktop HTTP entry queues chatting and touches for the roles ac
     return response.json();
   }
 
-  await command("sync", true);
+  const initial = await command("sync", true);
+  assert.equal(initial.room.nextRefill, now + 10 * 60_000);
   const [first, second] = host.live.room.roles;
   const arrive = (role) => {
     host.live.room.members[role.id] = "invited";
@@ -55,7 +58,11 @@ test("the normal desktop HTTP entry queues chatting and touches for the roles ac
   }
 
   arrive(first);
+  now += 1_000;
   await command("send", "只有第一只在场");
+  const afterOwner = await command("sync", true);
+  assert.equal(afterOwner.room.nextRefill, now + 10 * 60_000);
+  assert.equal(afterOwner.room.activityEnabled, false);
   assert.deepEqual(
     runs.map(({ role }) => role),
     [first],

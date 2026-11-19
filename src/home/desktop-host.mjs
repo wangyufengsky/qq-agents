@@ -1561,13 +1561,13 @@ export class DesktopHost {
         observation,
         nativeControl,
         browserControl,
-        activityEnabled: this.live
-          .here()
-          .some(
-            ({ id }) =>
-              this.desktopUnified ||
+        activityEnabled:
+          !this.desktopUnified &&
+          this.live
+            .here()
+            .some(({ id }) =>
               this.runtime.config.desktopHome.activityRoles.includes(id),
-          ),
+            ),
         attachmentInput: this.attachments.availability(
           this.runtime.config,
           this.live.here(),
