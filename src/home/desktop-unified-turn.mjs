@@ -112,6 +112,12 @@ export async function runDesktopTurn(host, request, sourceSignal) {
       agent,
       visit,
     );
+    ctx.desktopVideoIds = attachments?.videoIds;
+    ctx.desktopRecentVideo = host.attachments?.recentVideo(
+      runtime.config,
+      agent,
+      visit,
+    );
     exchange = beginDesktopContext(
       runtime,
       ctx,

@@ -2,7 +2,9 @@
 import { z } from "zod";
 import { registry } from "./registry.mjs";
 import {
+  DESKTOP_ACTIVITY_DECISION,
   DESKTOP_BODY_CONTROL,
+  DESKTOP_DECISION,
   DESKTOP_BROWSER_CONTROL,
   DESKTOP_NATIVE_CONTROL,
   TOOL_NAMES,
@@ -12,6 +14,7 @@ import { legacyBrowserActionSchema } from "../home/desktop-browser.mjs";
 import {
   bodyActionSchema,
   desktopPublicWaveSchema,
+  desktopSessionBodyActionSchema,
   legacyBodyActionSchema,
   windowApproachAction,
   standardInteractiveBodyActionSchema,
@@ -39,7 +42,9 @@ export function toolSpecs(
       const nativeControl = name === DESKTOP_NATIVE_CONTROL;
       const browserControl = name === DESKTOP_BROWSER_CONTROL;
       const scopedSchema = desktopUnified
-        ? schema
+        ? name === DESKTOP_BODY_CONTROL
+          ? desktopSessionBodyActionSchema
+          : schema
         : nativeControl
           ? legacyNativeActionSchema
           : browserControl
@@ -70,17 +75,19 @@ export function toolSpecs(
           : undefined;
       const inputSchema = z.toJSONSchema(
         /** @type {import("zod").ZodType} */ (
-          legacyBody
-            ? legacyBodyActionSchema
-            : actionSchema
-              ? actionSchema
-              : body && !desktopBodyInteractions
-                ? desktopPublicWave
-                  ? desktopPublicWaveSchema
-                  : bodyActionSchema
-                : body
-                  ? standardInteractiveBodyActionSchema
-                  : scopedSchema
+          desktopUnified
+            ? scopedSchema
+            : legacyBody
+              ? legacyBodyActionSchema
+              : actionSchema
+                ? actionSchema
+                : body && !desktopBodyInteractions
+                  ? desktopPublicWave
+                    ? desktopPublicWaveSchema
+                    : bodyActionSchema
+                  : body
+                    ? standardInteractiveBodyActionSchema
+                    : scopedSchema
         ),
         { target: "draft-7" },
       );
@@ -109,20 +116,27 @@ export function toolSpecs(
       return {
         name,
         description:
-          desktopUnified && (nativeControl || browserControl)
-            ? controlDescription
-            : (legacyBody
-                ? legacyBodyDescription
-                : body && desktopBodyInteractions
-                  ? bodyDescription +
-                    " gesture 播放 jump、climb、land 或 wave。interaction 仅用于本轮双方已同意的互动步骤，填入提示中的 interactionId。" +
-                    (desktopPublicWave
-                      ? " 点名挥手用 recipient，回应已有招呼可附 replyTo。"
-                      : "")
-                  : body && desktopPublicWave
-                    ? bodyDescription +
-                      " 可向在场角色挥手。用 gesture 的 wave 搭配 recipient，回礼可附 publicSpace.recent 中的 replyTo。双方同意的协作步骤使用 interaction 和提示里的 interactionId。"
-                    : bodyDescription) + approachDescription,
+          desktopUnified && name === DESKTOP_DECISION
+            ? "向在场同伴和主人说话。say 提供 text 或通过 garden_read 获得的花园 mediaId，也可用 leave 离开桌面。"
+            : desktopUnified && name === DESKTOP_ACTIVITY_DECISION
+              ? "用 wait 或 rest 设置下次自主唤醒的间隔（waitMinutes），用 leave 离开桌面。"
+              : desktopUnified && body
+                ? bodyDescription +
+                  " gesture 播放 jump、climb、land 或 wave。向一位在场同伴挥手时提供 recipient。"
+                : desktopUnified && (nativeControl || browserControl)
+                  ? controlDescription
+                  : (legacyBody
+                      ? legacyBodyDescription
+                      : body && desktopBodyInteractions
+                        ? bodyDescription +
+                          " gesture 播放 jump、climb、land 或 wave。interaction 仅用于本轮双方已同意的互动步骤，填入提示中的 interactionId。" +
+                          (desktopPublicWave
+                            ? " 点名挥手用 recipient，回应已有招呼可附 replyTo。"
+                            : "")
+                        : body && desktopPublicWave
+                          ? bodyDescription +
+                            " 可向在场角色挥手。用 gesture 的 wave 搭配 recipient，回礼可附 publicSpace.recent 中的 replyTo。双方同意的协作步骤使用 interaction 和提示里的 interactionId。"
+                          : bodyDescription) + approachDescription,
         inputSchema,
       };
     });

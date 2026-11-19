@@ -125,7 +125,7 @@ test("desktop events share the native session and stable tool declarations", asy
         ({ function: tool }) => tool.name === "desktop_body_control",
       ).function.parameters,
     );
-    assert(catalog[0].description.includes("approach-window"));
+    assert(catalog[0].description.includes("wave"));
     assert.equal(
       exchange.tools.some(({ function: tool }) => tool.name === "qq_send"),
       false,

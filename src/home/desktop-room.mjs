@@ -187,27 +187,28 @@ export class LiveRoom {
         activityActors: [...this.activities.keys()],
         activityPaused: this.activity.paused,
       }),
-      recentBubbles: (this.perception?.events ?? [])
-        .filter(
-          (event) =>
-            event.kind === "bubble" &&
-            event.at >
-              this.runner.now() -
-                this.runner.publicPolicy().recentMinutes * 60_000,
-        )
-        .slice(-this.runner.publicPolicy().recentLimit)
-        .map((event) => ({
-          bubbleId: event.id,
-          actor: event.actor,
-          text: event.text,
-          now: event.at,
-          expiresAt: event.at + PUBLIC_BUBBLE_DISPLAY_MS,
-          canReply:
-            this.publicEnabled() &&
-            event.until > this.runner.now() &&
-            event.bubbleRoot.replies < PUBLIC_BUBBLE_REPLY_LIMIT &&
-            this.visits.get(event.actor) === event.source,
-        })),
+      recentBubbles:
+        this.perception?.events
+          .filter(
+            (event) =>
+              event.kind === "bubble" &&
+              event.at >
+                this.runner.now() -
+                  this.runner.publicPolicy().recentMinutes * 60_000,
+          )
+          .slice(-this.runner.publicPolicy().recentLimit)
+          .map((event) => ({
+            bubbleId: event.id,
+            actor: event.actor,
+            text: event.text,
+            now: event.at,
+            expiresAt: event.at + PUBLIC_BUBBLE_DISPLAY_MS,
+            canReply:
+              this.publicEnabled() &&
+              event.until > this.runner.now() &&
+              event.bubbleRoot.replies < PUBLIC_BUBBLE_REPLY_LIMIT &&
+              this.visits.get(event.actor) === event.source,
+          })) ?? [],
       bubbles: Object.fromEntries(
         Object.entries(room.bubbles).filter(
           ([, bubble]) =>

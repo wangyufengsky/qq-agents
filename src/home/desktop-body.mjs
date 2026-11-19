@@ -137,7 +137,7 @@ export class DesktopBody {
       live.visits.get(ctx.agentId) !== visit ||
       live.turnFor(ctx.agentId) !== entry.turn ||
       (entry.greeting &&
-        (!live.publicEnabled() ||
+        ((!ctx.desktopUnified && !live.publicEnabled()) ||
           live.visits.get(entry.greeting.recipient) !== entry.greeting.visit ||
           (entry.greeting.reply &&
             !live.perception.greeting(
@@ -475,13 +475,15 @@ export class DesktopBody {
       )
         throw Error("DESKTOP_BODY_UNAVAILABLE");
       const recipient = live.visits.get(action.recipient);
-      const reply = action.replyTo
-        ? live.perception.greeting(ctx.agentId, visit, action.replyTo)
-        : live.perception.incomingGreeting(
-            ctx.agentId,
-            visit,
-            action.recipient,
-          );
+      const reply = ctx.desktopUnified
+        ? undefined
+        : action.replyTo
+          ? live.perception.greeting(ctx.agentId, visit, action.replyTo)
+          : live.perception.incomingGreeting(
+              ctx.agentId,
+              visit,
+              action.recipient,
+            );
       if (
         !recipient ||
         (action.replyTo && (!reply || reply.actor !== action.recipient))

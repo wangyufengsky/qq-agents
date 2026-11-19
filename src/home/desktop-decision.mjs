@@ -37,7 +37,7 @@ export const desktopActivityDecisionDefinition = [
         "observe",
         "skip-observation",
       ]),
-      waitMinutes: z.number().int().min(1).max(120).optional(),
+      waitMinutes: z.number().int().min(1).optional(),
       response: z.string().min(1).max(240).optional(),
       summary: z.string().min(1).max(480).optional(),
       bubble: z

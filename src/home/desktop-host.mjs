@@ -537,7 +537,7 @@ export class DesktopHost {
     this.fullDesktop.maintain();
     this.notify();
     const now = this.runtime.now();
-    this.observation.maintain();
+    if (!this.desktopUnified) this.observation.maintain();
     if (!this.configured() || !this.operational()) {
       this.reset();
       return false;
@@ -594,7 +594,7 @@ export class DesktopHost {
         for (const id of this.live.activities.keys())
           if (!this.activityCurrent(id)) this.live.cancelActivity(id);
       if (syncingClient !== this.client.id) {
-        this.observation.state();
+        if (!this.desktopUnified) this.observation.state();
         this.body.clientWork();
       }
       this.live.maintainInteraction();
@@ -656,6 +656,7 @@ export class DesktopHost {
   }
 
   publicBodyAvailable() {
+    if (this.desktopUnified) return this.interactionsAvailable();
     return (
       this.client?.bodyPublic === true && this.live?.publicEnabled() === true
     );
@@ -668,7 +669,8 @@ export class DesktopHost {
   interactionsAvailable() {
     return (
       this.client?.bodyInteractions === true &&
-      this.runtime.config.desktopHome.interactionsEnabled === true
+      (this.desktopUnified ||
+        this.runtime.config.desktopHome.interactionsEnabled === true)
     );
   }
 
@@ -821,13 +823,49 @@ export class DesktopHost {
       room.archiveSeq = archived.seq;
       return { ...archived, targets };
     };
-    this.attachments = new DesktopAttachments();
+    this.attachments = new DesktopAttachments({ unified: this.desktopUnified });
     const Room = this.createTurnQueue ? QueuedDesktopRoom : LiveRoom;
+    const chatReady = (id) =>
+      !this.visit(id).desktop &&
+      !roleTurnBusy(this.runtime, id) &&
+      !this.runtime.games.busy(this.runtime.agent(id).backendId) &&
+      !this.visit(id).qqClaims &&
+      !this.visit(id).pendingQq();
+    const legacyRunner = this.desktopUnified
+      ? undefined
+      : {
+          activityStarts: this.activityStarts,
+          publicStarts: this.activityStarts,
+          publicPolicy: () => this.runtime.config.desktopHome.publicPerception,
+          publicAllowed: () => this.client?.bodyPublic === true,
+          heard: (actor, sinceSeq) => {
+            const policy = this.runtime.config.desktopHome.publicPerception;
+            return this.archive.heard(
+              actor,
+              sinceSeq,
+              this.runtime.now() - policy.recentMinutes * 60_000,
+              policy.recentLimit,
+            );
+          },
+          activityMinutes: (id) => this.residentPreference(id)?.activityMinutes,
+          interactionCurrent: (id) =>
+            this.socialBodyAvailable() &&
+            this.activityCurrent(id) &&
+            this.bodyControlAvailable(id) &&
+            !this.visit(id).qqClaims &&
+            !this.visit(id).pendingQq(),
+          activity: (id) => this.activityCurrent(id) && chatReady(id),
+          activityCurrent: (id) => this.activityCurrent(id),
+          observation: (id) => this.observation.forActor(id),
+          finishObservation: (grant, reply) =>
+            this.observation.finish(grant, reply),
+        };
     this.live = new Room(
       room,
       {
         roles: ids,
         now: () => this.runtime.now(),
+        ...legacyRunner,
         pending: (id, trigger) => this.archive.pending(id, trigger),
         continuity: (id) => this.archive.delivered(id),
         roleMail: (id) =>
@@ -838,48 +876,7 @@ export class DesktopHost {
             Error("DESKTOP_TURN_FAILED", { cause }),
             { component: "desktop-home", agentId: id },
           ),
-        activityStarts: this.activityStarts,
-        publicStarts: this.activityStarts,
-        publicPolicy: () => this.runtime.config.desktopHome.publicPerception,
-        publicAllowed: () => this.client?.bodyPublic === true,
-        heard: (actor, sinceSeq) => {
-          const policy = this.runtime.config.desktopHome.publicPerception;
-          return this.archive.heard(
-            actor,
-            sinceSeq,
-            this.runtime.now() - policy.recentMinutes * 60_000,
-            policy.recentLimit,
-          );
-        },
-        activityMinutes: (id) => this.residentPreference(id)?.activityMinutes,
-        interactionCurrent: (id) =>
-          this.socialBodyAvailable() &&
-          this.activityCurrent(id) &&
-          this.bodyControlAvailable(id) &&
-          !this.visit(id).qqClaims &&
-          !this.visit(id).pendingQq(),
-        activity: (id) =>
-          this.activityCurrent(id) &&
-          !this.visit(id).desktop &&
-          !roleTurnBusy(this.runtime, id) &&
-          !this.runtime.games.busy(this.runtime.agent(id).backendId) &&
-          !this.visit(id).qqClaims &&
-          !this.visit(id).pendingQq(),
-        activityCurrent: (id) => this.activityCurrent(id),
-        chatReady: (id) =>
-          !this.visit(id).desktop &&
-          !roleTurnBusy(this.runtime, id) &&
-          !this.runtime.games.busy(this.runtime.agent(id).backendId) &&
-          !this.visit(id).qqClaims &&
-          !this.visit(id).pendingQq(),
-        hasRoleMail: (id) =>
-          this.connected() &&
-          this.live?.visits.has(id) &&
-          this.runtime.desktopRoleMailbox.pending(id, DESKTOP_CONVERSATION)
-            .length > 0,
-        observation: (id) => this.observation.forActor(id),
-        finishObservation: (grant, reply) =>
-          this.observation.finish(grant, reply),
+        chatReady,
         subjectActors: ids,
         requestInvitation: (request, signal) =>
           this.invitations.request(request, signal),
@@ -1041,7 +1038,7 @@ export class DesktopHost {
       const wasVisible = this.client.activityVisibleUntil > this.runtime.now();
       this.client.activityVisibleUntil =
         visible === true ? this.runtime.now() + ACTIVITY_VISIBILITY_LEASE : 0;
-      if (!wasVisible && visible === true) {
+      if (!this.desktopUnified && !wasVisible && visible === true) {
         for (const visit of live.visits.values())
           live.activity.note(visit, "visible-again");
         live.resumeActivity();
@@ -1372,7 +1369,9 @@ export class DesktopHost {
   pushSnapshot(state = this.clientSnapshot(), bodyResultAcks) {
     const screenRequest = this.screen.request();
     const desktopCaptureRequest = this.fullDesktop.request();
-    const observationVerify = this.observation.verifyWork();
+    const observationVerify = this.desktopUnified
+      ? []
+      : this.observation.verifyWork();
     return {
       ...state,
       ...(this.createTurnQueue && {
@@ -1480,8 +1479,11 @@ export class DesktopHost {
           runtime.config.globalPaused ||
           agent.paused ||
           memory.state(DESKTOP_CONVERSATION).paused ||
-          memory.state(DESKTOP_ACTIVITY_CONVERSATION).paused;
-        const resting = ["sleeping", "rest-pending"].includes(rhythm.state);
+          (!this.desktopUnified &&
+            memory.state(DESKTOP_ACTIVITY_CONVERSATION).paused);
+        const resting =
+          !this.desktopUnified &&
+          ["sleeping", "rest-pending"].includes(rhythm.state);
         if (paused || resting || (visit && room.activityPaused)) {
           bodyStatus.state = "paused";
           bodyStatus.reason = resting ? "rest" : "pause";
@@ -1533,17 +1535,15 @@ export class DesktopHost {
   }
 
   clientSnapshot() {
-    const observation = this.observation.state();
-    const screenView = this.screen.state();
+    const observation = this.desktopUnified
+      ? undefined
+      : this.observation.state();
+    const screenView = this.desktopUnified ? undefined : this.screen.state();
     const nativeControl = this.native.state();
     const browserControl = this.browser.state();
     if (this.desktopUnified) {
-      nativeControl.targetEligible = this.native.unified
-        .eligible()
-        .map(({ id }) => id);
-      browserControl.targetEligible = this.browser.unified
-        .eligible()
-        .map(({ id }) => id);
+      nativeControl.targetEligible = this.native.unified.eligible();
+      browserControl.targetEligible = this.browser.unified.eligible();
     }
     return {
       enabled: true,

@@ -107,4 +107,55 @@ test("the normal desktop HTTP entry queues chatting and touches for the roles ac
   assert.match(next.prompt, /"from":\{"x":100,"y":50\},"to":\{"x":20,"y":70\}/);
   assert.equal(next.prompt.split(move.eventId).length - 1, 1);
   assert.equal(next.prompt.split(pet.eventId).length - 1, 1);
+
+  const nativeGrant = {
+    agentId: first.id,
+    roomEpoch,
+    visitId: move.visitId,
+    grantId: randomUUID(),
+    targetId: randomUUID(),
+  };
+  const browserGrant = {
+    agentId: first.id,
+    roomEpoch,
+    grantId: randomUUID(),
+    targetId: randomUUID(),
+  };
+  const before = (await command("sync")).room;
+  assert.deepEqual(before.nativeControl.targetEligible, [first.id, second.id]);
+  assert.deepEqual(before.browserControl.targetEligible, [first.id, second.id]);
+  assert.equal(runtime.config.desktopHome.nativeControl.enabled, false);
+  assert.equal(runtime.config.desktopHome.browserControl.enabled, false);
+  await command("native-grant", nativeGrant);
+  await command("browser-grant", browserGrant);
+
+  await command("leave", first.id);
+  await command("send", "第一只离开期间");
+  const away = (await command("sync")).room;
+  assert.deepEqual(away.nativeControl.targetEligible, [second.id]);
+  assert.equal(away.nativeControl.grants[0].grantId, nativeGrant.grantId);
+  assert.equal(away.browserControl.grants[0].grantId, browserGrant.grantId);
+  arrive(first);
+  await command("send", "第一只回来了");
+  assert.ok(
+    runs.some(
+      ({ role, prompt }) => role === first && prompt.includes("第一只回来了"),
+    ),
+  );
+  assert.ok(
+    runs.every(
+      ({ role, prompt }) =>
+        role !== first || !prompt.includes("第一只离开期间"),
+    ),
+  );
+  const back = (await command("sync")).room;
+  assert.equal(back.nativeControl.grants[0].targetId, nativeGrant.targetId);
+  assert.equal(back.browserControl.grants[0].targetId, browserGrant.targetId);
+  await command("native-revoke", { roomEpoch, grantId: nativeGrant.grantId });
+  const revoked = (await command("sync")).room;
+  assert.deepEqual(revoked.nativeControl.grants, []);
+  assert.equal(
+    revoked.browserControl.grants[0].targetId,
+    browserGrant.targetId,
+  );
 });

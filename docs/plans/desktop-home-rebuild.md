@@ -1,6 +1,6 @@
 # 桌面小窝重构
 
-桌面小窝要让 AI 自主决定怎样和主人及同伴相处。愿景及 13 条原文载于 [总 Issue #375](https://github.com/wangyufengsky/qq-agents/issues/375)。遇到现有实现或平台能力与契约冲突时，提交具体情形和方案，请维护者先确认。子任务各自验证，全部接入正常入口后逐条验收。
+桌面小窝要让 AI 自主决定怎样和主人及同伴相处。愿景及 13 条原文见[不可变契约](../DESKTOP-HOME-CONTRACT.md)，交付进度在 [总 Issue #375](https://github.com/wangyufengsky/qq-agents/issues/375)。遇到现有实现或平台能力与契约冲突时，提交具体情形和方案，请维护者先确认。子任务各自验证，全部接入正常入口后逐条验收。
 
 ## 实现顺序
 

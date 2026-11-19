@@ -98,7 +98,7 @@ export function scopedCatalog(runtime, ctx, input) {
     network: {
       autonomous:
         ctx.runtimeKind !== "functional-agent" &&
-        ctx.runtimeKind !== "desktop" &&
+        (ctx.runtimeKind !== "desktop" || ctx.desktopUnified) &&
         a.network?.autonomous === true,
     },
     tools: toolSpecs(

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import test from "node:test";
+import { createDesktopRoomHost } from "../src/home/desktop-host.mjs";
 import { DesktopRoleMailbox } from "../src/home/desktop-role-mailbox.mjs";
 import { MemoryStore } from "../src/memory/store.mjs";
 import { config, context, fixture, settle } from "./helpers.mjs";
@@ -18,6 +19,7 @@ test("one role exchanges durable ordinary mail through both normal model inputs"
   const subjectReceipts = [];
   const f = fixture(t, {
     cfg,
+    createDesktopHost: createDesktopRoomHost,
     run: async (p) => {
       if (p.conversation !== "@subject") return;
       if (/"desktopInvitation":\{"id":/.test(p.prompt)) {
@@ -56,7 +58,7 @@ test("one role exchanges durable ordinary mail through both normal model inputs"
 
   await runtime.wake("agent-0", "@subject");
   assert.equal(subjectReceipts[0].status, "queued");
-  assert.equal(host.live.runner.hasRoleMail("agent-0"), false);
+  assert.equal(host.live.visits.has("agent-0"), false);
   assert.deepEqual(mailbox.pending("agent-1", "@desktop"), []);
   const reopened = new MemoryStore(path.join(f.root, "memory.sqlite"));
   try {
@@ -90,10 +92,10 @@ test("one role exchanges durable ordinary mail through both normal model inputs"
   command("invite", "agent-0");
   await settle(runtime);
   await new Promise(setImmediate);
-  assert.equal(host.live.runner.hasRoleMail("agent-0"), true);
+  assert.equal(host.live.visits.has("agent-0"), true);
 
-  command("send", "本地桌面消息");
-  await host.live.foreground?.done;
+  host.refresh();
+  await host.live.activities.get("agent-0")?.done;
   assert.match(
     desktopPrompts.at(-1),
     /来自你的主人格的留言.*抽空一起看看窗外吧/,
@@ -101,16 +103,16 @@ test("one role exchanges durable ordinary mail through both normal model inputs"
   assert.equal(mailbox.pending("agent-0", "@desktop").length, 1);
 
   command("leave", "agent-0");
-  assert.equal(host.live.runner.hasRoleMail("agent-0"), false);
+  assert.equal(host.live.visits.has("agent-0"), false);
   assert.equal(mailbox.pending("agent-0", "@desktop").length, 1);
 
   command("invite", "agent-0");
   await settle(runtime);
   await new Promise(setImmediate);
-  assert.equal(host.live.runner.hasRoleMail("agent-0"), true);
+  assert.equal(host.live.visits.has("agent-0"), true);
   failBeforeInput = false;
-  command("send", "本地桌面后续消息");
-  await host.live.foreground?.done;
+  host.refresh();
+  await host.live.activities.get("agent-0")?.done;
   assert.match(desktopPrompts.at(-1), /抽空一起看看窗外吧/);
   assert.deepEqual(desktopErrors, []);
   assert.equal(desktopReceipts.at(-1)?.status, "queued");
