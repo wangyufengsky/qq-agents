@@ -440,6 +440,9 @@ export class Runtime {
         (name) =>
           name === DESKTOP_DECISION ||
           name === DESKTOP_HISTORY ||
+          (name === DESKTOP_BODY_CONTROL &&
+            ctx.desktopScreenObserved &&
+            !ctx.desktopPrivateObservation) ||
           (name === DESKTOP_BROWSER_CONTROL && ctx.desktopBrowserObserved) ||
           (!ctx.desktopBrowserObserved &&
             (name === DESKTOP_NATIVE_CONTROL ||
