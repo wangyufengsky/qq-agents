@@ -232,6 +232,7 @@ const AGENT_TOOL_GROUPS = [
       desktop_native_control: "操作管理员选定的本机窗口",
       desktop_browser_control: "操作独立网页会话",
       desktop_body_control: "移动和控制自己的桌宠",
+      desktop_role_mail_send: "同一角色的桌宠和主人格互相留言",
     },
   },
   {

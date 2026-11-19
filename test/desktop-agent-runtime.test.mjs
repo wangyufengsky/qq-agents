@@ -77,6 +77,7 @@ test("desktop dialogue records the current Self and effective role model without
       "desktop_room_history",
       "memory_search",
       "memory_read",
+      "desktop_role_mail_send",
     ],
   );
   assert.equal(seen[2].conversation, "@desktop");
@@ -177,7 +178,7 @@ test("desktop relay admits only current authenticated decision tools and allows 
     const listed = await submit(catalog, {}, capability).then((r) => r.json());
     assert.deepEqual(
       JSON.parse(listed.content[0].text).tools.map(({ name }) => name),
-      ["desktop_room_decide", "desktop_room_history"],
+      ["desktop_room_decide", "desktop_room_history", "desktop_role_mail_send"],
     );
     const call = (name, args, relay) =>
       submit(tools, { name, arguments: args }, capability, relay).then((r) =>

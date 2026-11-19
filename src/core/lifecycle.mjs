@@ -897,6 +897,7 @@ export class ContextLifecycle {
             scene,
             `唤醒原因（资料）: ${JSON.stringify(wake)}`,
             environment,
+            ctx.conversation === SUBJECT && r.desktopRoleMailbox.opening(ctx),
             handoff ? `程序交接状态：${JSON.stringify(handoff)}` : "",
             proposals
               ? `会话交给你的提议（资料，时效由你判断；普通提议用 subject_inbox_decide 处理或暂缓；garden-watering 用 garden_act 的 delegate_step 或 delegate_dismiss）：${JSON.stringify(proposals)}`

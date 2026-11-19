@@ -829,6 +829,11 @@ export class DesktopHost {
           !this.runtime.games.busy(this.runtime.agent(id).backendId) &&
           !this.visit(id).qqClaims &&
           !this.visit(id).pendingQq(),
+        hasRoleMail: (id) =>
+          this.connected() &&
+          this.live?.visits.has(id) &&
+          this.runtime.desktopRoleMailbox.pending(id, DESKTOP_CONVERSATION)
+            .length > 0,
         observation: (id) => this.observation.forActor(id),
         finishObservation: (grant, reply) =>
           this.observation.finish(grant, reply),
@@ -1670,6 +1675,7 @@ export class DesktopHost {
         !this.connected(ctx) ||
         runtime.blockers(agent, conversation, ctx).length ||
         (activity && request.isCurrent?.() === false) ||
+        (ctx?.desktopRoleMailIds?.length && !frameScopeCurrent()) ||
         (request.resting &&
           ["sleeping", "rest-pending"].includes(
             rhythmStatus(runtime, agent).state,
@@ -1888,6 +1894,7 @@ export class DesktopHost {
             (tool) => tool !== "video_read",
           );
       }
+      ctx.desktopRoleMailCurrent = frameScopeCurrent;
       exchange = beginDesktopContext(
         runtime,
         ctx,

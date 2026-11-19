@@ -2,6 +2,7 @@ import { QzoneApprovals } from "./qzone-approvals.mjs";
 import { SubjectExecution } from "./subject-execution.mjs";
 import { SocialRuntime } from "../home/social-runtime.mjs";
 import { DesktopHost } from "../home/desktop-host.mjs";
+import { DesktopRoleMailbox } from "../home/desktop-role-mailbox.mjs";
 import {
   DESKTOP_OBSERVATION_CONVERSATION,
   DESKTOP_WINDOW_TASK_CONVERSATION,
@@ -56,6 +57,7 @@ import {
   DESKTOP_ACTIVITY_DECISION,
   DESKTOP_DECISION,
   DESKTOP_HISTORY,
+  DESKTOP_ROLE_MAIL,
   DESKTOP_MEMORY_TOOLS,
   DESKTOP_SCREEN_VIEW,
   DESKTOP_NATIVE_CONTROL,
@@ -156,6 +158,7 @@ export class Runtime {
     this.running = new Map();
     this.subjectExecution = new SubjectExecution();
     this.desktopVisits = new DesktopHost(this);
+    this.desktopRoleMailbox = new DesktopRoleMailbox(this);
     this.pending = new Map();
     this.capabilities = new Map();
     this.faults = new Map();
@@ -520,6 +523,7 @@ export class Runtime {
       if (!this.desktopVisits.configured()) return [];
       const candidates = new Set([
         ...DESKTOP_MEMORY_TOOLS,
+        DESKTOP_ROLE_MAIL,
         DESKTOP_SCREEN_VIEW,
         DESKTOP_NATIVE_CONTROL,
         DESKTOP_BROWSER_CONTROL,
@@ -570,6 +574,7 @@ export class Runtime {
               ),
               ...a.subject.readTools.filter((n) => a.tools.includes(n)),
               ...BOARD_TOOLS,
+              DESKTOP_ROLE_MAIL,
             ]),
           ]
         : [
