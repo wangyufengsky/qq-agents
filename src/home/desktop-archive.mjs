@@ -126,6 +126,16 @@ export class DesktopArchive {
   }
 
   opening(agentId, afterSeq) {
+    return this.#readOpening(agentId, afterSeq, false, null);
+  }
+
+  pending(agentId, triggerMessageId = null) {
+    // An earlier visit may contain unread input. The per-role event was written
+    // only when that role was present, so a room-wide arrival cursor is unnecessary.
+    return this.#readOpening(agentId, 0, true, triggerMessageId);
+  }
+
+  #readOpening(agentId, afterSeq, incomingOnly, triggerMessageId) {
     return this.db
       .prepare(
         `
@@ -139,14 +149,23 @@ export class DesktopArchive {
         WHERE e.agent_id=? AND e.conversation=? AND e.connection_id=?
           AND e.kind IN ('message.received','message.sent')
           AND d.seq>?
+          AND (?=0 OR e.direction='in')
           AND NOT EXISTS (
             SELECT 1 FROM message_progress p WHERE p.agent_id=e.agent_id
               AND p.conversation=e.conversation AND p.seq=e.seq AND p.summary_only=0
           )
-        ORDER BY d.seq LIMIT 24
+        ORDER BY d.id=? DESC, d.seq LIMIT 24
       `,
       )
-      .all(agentId, DESKTOP_CONVERSATION, connectionId, afterSeq)
+      .all(
+        agentId,
+        DESKTOP_CONVERSATION,
+        connectionId,
+        afterSeq,
+        Number(incomingOnly),
+        triggerMessageId,
+      )
+      .sort((a, b) => a.roomSeq - b.roomSeq)
       .map(({ attachments, ...row }) => ({
         ...row,
         attachments: JSON.parse(attachments || "[]"),
