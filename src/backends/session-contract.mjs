@@ -23,7 +23,7 @@ import { isDeepStrictEqual } from "node:util";
  *   cumulativeTokens?: number, basis: string}} UsageReport
  * @typedef {{eventId: string, index: number, label: string, mediaId?: string, data?: string, mimeType?: string}} InputImage
  * @typedef {Readonly<{provider: string, model: string, effort: string}>} ModelSelection
- * @typedef {{inputImages?: InputImage[], conversation?: string, game?: boolean, protectedWork?: boolean, social?: boolean, desktop?: boolean, prompt: string, instructions?: string,
+ * @typedef {{inputImages?: InputImage[], conversation?: string, game?: boolean, protectedWork?: boolean, social?: boolean, desktop?: boolean, desktopUnified?: boolean, desktopBridgeContext?: string, prompt: string, instructions?: string,
  *   modelSelection?: ModelSelection, effort?: string,
  *   onUsage?: (usage: UsageReport) => void, signal: AbortSignal, tools: ToolSpec[],
  *   callTool: (name: string, args: any) => Promise<unknown>, session?: StoredSession | null,
@@ -212,6 +212,18 @@ export function sessionSignature(backend, tools = [], legacy = false) {
     : prefix(backend) +
         "contract-v4:" +
         digest(sessionContract(backend, tools));
+}
+/** Verify stored tool metadata before adopting a catalogue on a separate native route.
+ * @param {{config: BackendConfig, sessionProtocol?: string}} backend
+ * @param {StoredSession} session @param {SessionContract | undefined} previous
+ */
+export function authenticatesSessionContract(backend, session, previous) {
+  return (
+    previous?.version === 1 &&
+    session.backend === backend.config.type &&
+    previous.backend === digest(backendSessionConfig(backend.config)) &&
+    session.signature === prefix(backend) + "contract-v4:" + digest(previous)
+  );
 }
 /** Accept only additive optional object fields: every old call must remain valid.
  * Unknown schema transformations and permission changes still require handoff.

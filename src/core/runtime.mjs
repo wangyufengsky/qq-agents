@@ -71,7 +71,11 @@ import {
   grantExternal,
   sourceClass,
 } from "./outbound-policy.mjs";
-import { toolAvailable } from "../tools/catalog.mjs";
+import {
+  desktopSessionToolAuthorized,
+  DESKTOP_SESSION_TOOLS,
+  toolAvailable,
+} from "../tools/catalog.mjs";
 import { appsPolicySchema } from "../apps/policy.mjs";
 import { appDefinitions } from "../apps/tools.mjs";
 import { ContextLifecycle, SUBJECT } from "./lifecycle.mjs";
@@ -344,7 +348,13 @@ export class Runtime {
         assertCurrent: desktop.assertCurrent,
         desktopDecision: desktop.decide,
         requiresInputSubmission: true,
-        allowedTools: this.toolsFor(a, conversation),
+        ...(desktop.unified && {
+          desktopUnified: true,
+          desktopRequestKind: desktop.kind,
+        }),
+        allowedTools: desktop.unified
+          ? DESKTOP_SESSION_TOOLS
+          : this.toolsFor(a, conversation),
       }),
     };
     ctx.persistTaint = () => {
@@ -421,6 +431,7 @@ export class Runtime {
     }
   }
   toolsForContext(agent, ctx) {
+    if (ctx.desktopUnified) return ctx.allowedTools;
     if (ctx.desktopPublicResting)
       return this.toolsFor(agent, ctx.conversation).filter(
         (name) => name === DESKTOP_DECISION,
@@ -1494,6 +1505,11 @@ export class Runtime {
       (current
         ? !current.includes(name)
         : !toolAvailable(a, name, ctx.conversation, this.config))
+    )
+      throw Error("TOOL_DISABLED");
+    if (
+      ctx.desktopUnified &&
+      !desktopSessionToolAuthorized(a, name, this.config)
     )
       throw Error("TOOL_DISABLED");
     let result = await dispatchTool(this, ctx, name, args, (validated) => {

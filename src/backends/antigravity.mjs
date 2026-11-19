@@ -1598,7 +1598,10 @@ export class AntigravityBackend {
         trustedTerminal: true,
         backendOutcome: "success",
       });
-      if (code !== 0 || child.signalCode || ioFailed)
+      if (
+        !params.desktopUnified &&
+        (code !== 0 || child.signalCode || ioFailed)
+      )
         this.retireCompletedSession(params, binding, timingStart);
       else
         diagnosticEvent({
@@ -1624,8 +1627,10 @@ export class AntigravityBackend {
         (!inputSubmitted || !child?.pid)
       )
         throw new SessionPreparationFailure(error);
-      if (fs.existsSync(binding)) managedFile(binding, "{}\n");
-      params.saveSession(null);
+      if (!params.desktopUnified) {
+        if (fs.existsSync(binding)) managedFile(binding, "{}\n");
+        params.saveSession(null);
+      }
       throw error;
     } finally {
       diagnosticActive = false;

@@ -18,12 +18,24 @@ const TURN_ACTION_LIMIT = 8;
 const INTERACTIVE_ACTIONS = new Set(["gesture", "interaction", "window-task"]);
 
 function canAct(runtime, agent, ctx) {
+  if (ctx.desktopUnified)
+    return runtime.toolsForContext(agent, ctx).includes(DESKTOP_BODY_CONTROL);
   const { state } = rhythmStatus(runtime, agent);
   return (
     state !== "sleeping" &&
     state !== "rest-pending" &&
     runtime.toolsForContext(agent, ctx).includes(DESKTOP_BODY_CONTROL)
   );
+}
+
+function interactiveAvailable(host, ctx, action, greeting, interaction) {
+  if (ctx.desktopUnified && action.type === "gesture" && !greeting)
+    return host.client?.bodyInteractions === true;
+  return greeting
+    ? host.publicBodyAvailable()
+    : interaction
+      ? host.socialBodyAvailable()
+      : host.interactionsAvailable();
 }
 
 function freshSample(sampledAt, now) {
@@ -134,11 +146,13 @@ export class DesktopBody {
               entry.greeting.reply.id,
             )))) ||
       (INTERACTIVE_ACTIONS.has(entry.request.action.type) &&
-        !(entry.greeting
-          ? host.publicBodyAvailable()
-          : entry.request.interaction
-            ? host.socialBodyAvailable()
-            : host.interactionsAvailable())) ||
+        !interactiveAvailable(
+          host,
+          ctx,
+          entry.request.action,
+          entry.greeting,
+          entry.request.interaction,
+        )) ||
       (entry.request.windowApproach &&
         this.windowApproachGrant(ctx) !== entry.windowApproachGrant) ||
       (entry.request.interaction &&
@@ -477,9 +491,7 @@ export class DesktopBody {
     if (
       INTERACTIVE_ACTIONS.has(action.type) &&
       !greeting &&
-      !(action.type === "interaction"
-        ? host.socialBodyAvailable()
-        : host.interactionsAvailable())
+      !interactiveAvailable(host, ctx, action, greeting, interaction)
     )
       throw Error("DESKTOP_BODY_UNAVAILABLE");
     const windowApproachGrant =

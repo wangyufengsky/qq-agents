@@ -1087,8 +1087,9 @@ export class ContextLifecycle {
     } finally {
       if (ctx.controller.signal.aborted) terminal = "cancelled";
       if (
-        terminal === "cancelled" ||
-        (terminal === "failed" && !ctx.retainBackendSession)
+        !ctx.desktopUnified &&
+        (terminal === "cancelled" ||
+          (terminal === "failed" && !ctx.retainBackendSession))
       )
         retireSession(
           m,
@@ -1136,6 +1137,7 @@ export class ContextLifecycle {
       ["failed", "cancelled"].includes(outcome) ||
       ctx.controller.signal.aborted
     ) {
+      if (ctx.desktopUnified) return;
       if (
         outcome === "failed" &&
         ctx.retainBackendSession &&
@@ -1157,6 +1159,7 @@ export class ContextLifecycle {
     if (!a) return;
     if (
       ctx.runtimeKind === "desktop" &&
+      !ctx.desktopUnified &&
       (ctx.desktopScreenObserved || ctx.desktopPrivateObservation)
     ) {
       retireSession(
@@ -1234,13 +1237,14 @@ export class ContextLifecycle {
           signal: ctx.controller.signal,
         });
         if (ctx.controller.signal.aborted) {
-          retireSession(
-            m,
-            ctx.conversation,
-            "cancelled-during-compaction",
-            r.now(),
-            { turnId: ctx.turnId, backendId: a.backendId },
-          );
+          if (!ctx.desktopUnified)
+            retireSession(
+              m,
+              ctx.conversation,
+              "cancelled-during-compaction",
+              r.now(),
+              { turnId: ctx.turnId, backendId: a.backendId },
+            );
           return;
         }
         if (result?.usage) this.usage(ctx, result.usage);
@@ -1287,13 +1291,14 @@ export class ContextLifecycle {
       }
     }
     if (ctx.controller.signal.aborted) {
-      retireSession(
-        m,
-        ctx.conversation,
-        "cancelled-during-compaction",
-        r.now(),
-        { turnId: ctx.turnId, backendId: a.backendId },
-      );
+      if (!ctx.desktopUnified)
+        retireSession(
+          m,
+          ctx.conversation,
+          "cancelled-during-compaction",
+          r.now(),
+          { turnId: ctx.turnId, backendId: a.backendId },
+        );
       return;
     }
     // Called after running is removed; unknown deliveries are in handoff, not a retirement lock.

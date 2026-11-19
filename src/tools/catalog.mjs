@@ -1,7 +1,8 @@
 import { gardenPublicScope } from "./garden.mjs";
 import { gardenDelegationScope } from "../home/garden-delegations.mjs";
 import { DESKTOP_CONVERSATION } from "../home/desktop-decision.mjs";
-import { linkedVideoAvailable } from "../video/policy.mjs";
+import { linkedVideoAvailable, videoVision } from "../video/policy.mjs";
+import { supportsMessageImages } from "../backends/capabilities.mjs";
 import { desktopToolAvailable } from "./desktop-policy.mjs";
 import { DESKTOP_VISIT_TOOL } from "../home/desktop-visits.mjs";
 import { DESKTOP_INVITATION_TOOL } from "../home/desktop-invitations.mjs";
@@ -23,11 +24,14 @@ import {
   DESKTOP_BROWSER_CONTROL,
   DESKTOP_BODY_CONTROL,
   FUNCTIONAL_AGENT_RESULT,
+  TOOL_NAMES,
 } from "./names.mjs";
 import { memoryRecallPolicy } from "../core/functional-agents.mjs";
 import { toolSpecs } from "./specs.mjs";
 import { canUseDraftTool } from "../core/draft-input.mjs";
 import { profileConversation } from "../core/profile.mjs";
+import { CHAT_MIND_TOOLS } from "./mind.mjs";
+import { BOARD_TOOLS } from "../core/board.mjs";
 
 export const discoveryInput = z
   .object({
@@ -69,6 +73,16 @@ export function parseMcpEntry(name, input) {
   if (!entries[name]) throw Error("UNKNOWN_TOOL");
   return entries[name][1].parse(input);
 }
+// Native adapters and the DSH relay must describe the same session catalogue.
+export const desktopSessionSpecOptions = Object.freeze({
+  desktopUnified: true,
+  desktopBodyV2: true,
+  desktopBodyCrossDisplay: true,
+  desktopBodyInteractions: true,
+  desktopPublicWave: true,
+  desktopWindowApproach: true,
+});
+
 export function scopedCatalog(runtime, ctx, input) {
   const args = discoveryInput.parse(input),
     a = runtime.assertActive(ctx);
@@ -86,16 +100,22 @@ export function scopedCatalog(runtime, ctx, input) {
         ctx.runtimeKind !== "desktop" &&
         a.network?.autonomous === true,
     },
-    tools: toolSpecs(names, {
-      desktopBodyV2: runtime.desktopVisits.client?.bodyProtocol === 2,
-      desktopBodyCrossDisplay:
-        runtime.desktopVisits.client?.bodyCrossDisplay === true,
-      desktopBodyInteractions: runtime.desktopVisits.interactionsAvailable(),
-      desktopPublicWave: runtime.desktopVisits.publicBodyAvailable(),
-      desktopWindowApproach: Boolean(
-        runtime.desktopVisits.body.windowApproachGrant(ctx),
-      ),
-    }).map((s) =>
+    tools: toolSpecs(
+      names,
+      ctx.desktopUnified
+        ? desktopSessionSpecOptions
+        : {
+            desktopBodyV2: runtime.desktopVisits.client?.bodyProtocol === 2,
+            desktopBodyCrossDisplay:
+              runtime.desktopVisits.client?.bodyCrossDisplay === true,
+            desktopBodyInteractions:
+              runtime.desktopVisits.interactionsAvailable(),
+            desktopPublicWave: runtime.desktopVisits.publicBodyAvailable(),
+            desktopWindowApproach: Boolean(
+              runtime.desktopVisits.body.windowApproachGrant(ctx),
+            ),
+          },
+    ).map((s) =>
       args.names ? s : { name: s.name, description: s.description },
     ),
     total: allowed.length,
@@ -106,7 +126,92 @@ export function scopedCatalog(runtime, ctx, input) {
   };
 }
 
-export function toolAvailable(agent, name, conversation, config) {
+const desktopLocalTools = new Set([
+  DESKTOP_DECISION,
+  DESKTOP_ACTIVITY_DECISION,
+  DESKTOP_HISTORY,
+  DESKTOP_BODY_CONTROL,
+  DESKTOP_SCREEN_VIEW,
+  DESKTOP_NATIVE_CONTROL,
+  DESKTOP_BROWSER_CONTROL,
+]);
+const desktopImplicitTools = new Set([
+  ...CHAT_MIND_TOOLS,
+  ...BOARD_TOOLS,
+  ...HOME_TOOLS,
+  "garden_read",
+  "garden_act",
+]);
+const otherScopeTools = new Set([
+  ...SOCIAL_TOOLS,
+  "memory_recall",
+  "generated_image_list",
+  "protected_work_submit",
+  "intent_decide",
+  "subject_log",
+  "subject_inbox_decide",
+  "subject_next_wake",
+  "subject_rest",
+  "self_review",
+  "story_circle",
+  "room_intent_resolve",
+  "room_scene_patch",
+  "room_scene_undo",
+  "room_publish",
+  "room_publish_snapshot",
+  "room_retract",
+  DESKTOP_VISIT_TOOL,
+  DESKTOP_INVITATION_TOOL,
+]);
+export const DESKTOP_SESSION_TOOLS = Object.freeze(
+  [
+    ...new Set([
+      ...desktopLocalTools,
+      ...TOOL_NAMES.filter(
+        (name) =>
+          !otherScopeTools.has(name) &&
+          (!name.startsWith("qq_") || name === "qq_image_read") &&
+          !/^(ops_|qzone_|game_|social_|app_share_)/.test(name),
+      ),
+    ]),
+  ].sort(),
+);
+
+export function desktopSessionToolAuthorized(agent, name, config) {
+  if (name === DESKTOP_SCREEN_VIEW) {
+    const backend = config.backends.find(({ id }) => id === agent.backendId);
+    return Boolean(backend && supportsMessageImages(backend));
+  }
+  if (desktopLocalTools.has(name)) return true;
+  if (name === "subject_inbox_submit" || name === "subject_inbox_list")
+    return subjectInboxEnabled(agent);
+  if (name.startsWith("board_") && !config.board.enabled) return false;
+  const configured =
+    agent.tools.includes(name) ||
+    (name === "file_read" && agent.tools.includes("file_list")) ||
+    (name === "file_revise" && agent.tools.includes("file_create"));
+  if (!configured && !desktopImplicitTools.has(name)) return false;
+  if (name === "video_read") return videoVision(agent, config);
+  if (name === "garden_act") return true;
+  if (name.startsWith("file_")) {
+    if (!agent.files?.enabled) return false;
+    if (name === "file_create" || name === "file_revise")
+      return agent.files.create;
+    if (name === "file_delete") return agent.files.delete;
+    if (name === "file_download")
+      return agent.files.download || agent.files.receive;
+    return true;
+  }
+  return toolAvailable(agent, name, DESKTOP_CONVERSATION, config, true);
+}
+
+export function toolAvailable(
+  agent,
+  name,
+  conversation,
+  config,
+  unifiedDesktop = false,
+) {
   if (name === "story_circle")
     return conversation === "@subject" && agent.tools.includes(name);
   if (name === "garden_read") return gardenPublicScope(conversation);
@@ -121,7 +226,7 @@ export function toolAvailable(agent, name, conversation, config) {
     name === FUNCTIONAL_AGENT_RESULT
   )
     return false;
-  if (conversation === DESKTOP_CONVERSATION) {
+  if (conversation === DESKTOP_CONVERSATION && !unifiedDesktop) {
     if (DESKTOP_MEMORY_TOOLS.includes(name))
       return (
         config?.desktopHome?.enabled === true && agent.tools.includes(name)

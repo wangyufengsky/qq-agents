@@ -1,6 +1,10 @@
 // @ts-check
 import { socialSessionPool } from "./social-sessions.mjs";
-import { sessionWasUnchanged } from "./turn-failure.mjs";
+import {
+  beforeSessionInput,
+  SessionUnavailableFailure,
+  sessionWasUnchanged,
+} from "./turn-failure.mjs";
 import {
   DESKTOP_ACTIVITY_DECISION,
   DESKTOP_DECISION,
@@ -9,6 +13,7 @@ import {
   DESKTOP_SCREEN_VIEW,
 } from "../tools/names.mjs";
 import { desktopToolCandidate } from "../tools/desktop-policy.mjs";
+import { registry } from "../tools/registry.mjs";
 import { SOCIAL_TOOLS } from "../home/social-tool-names.mjs";
 
 const allowed = new Set([
@@ -37,17 +42,22 @@ const desktopImageTypes = new Set([
 
 /** Only registered image readers may add pixels outside the text quota.
  * @param {string} name @param {any} result @param {number} maxTextBytes
- * @param {boolean} [desktop] */
+ * @param {boolean} [desktop]
+ * @param {boolean} [unified] */
 export function assertSocialToolResult(
   name,
   result,
   maxTextBytes,
   desktop = false,
+  unified = false,
 ) {
   const content = Array.isArray(result?.content) ? result.content : [],
     images = content.filter((/** @type {any} */ item) => item.type === "image");
   if (images.length) {
-    const regularImage = desktop && desktopMedia.has(name);
+    const regularImage =
+      desktop &&
+      (desktopMedia.has(name) ||
+        (unified && ![DESKTOP_SCREEN_VIEW, "garden_read"].includes(name)));
     const screen = desktop && name === DESKTOP_SCREEN_VIEW;
     const garden = desktop && name === "garden_read";
     const imageLimit = (regularImage ? 8 : 4) * 1024 * 1024;
@@ -109,12 +119,17 @@ export async function runNativeSocial(
     description: tool.function?.description,
     inputSchema: tool.function?.parameters,
   }));
+  const unified =
+    surface === "desktop" &&
+    params.desktopUnified === true &&
+    params.managedContext;
   const permitted = surface === "desktop" ? desktopAllowed : allowed;
   if (
-    tools.some(
-      (/** @type {any} */ tool) =>
-        !permitted.has(tool.name) &&
-        !(surface === "desktop" && desktopToolCandidate(tool.name)),
+    tools.some((/** @type {any} */ tool) =>
+      unified
+        ? !Object.hasOwn(registry, tool.name)
+        : !permitted.has(tool.name) &&
+          !(surface === "desktop" && desktopToolCandidate(tool.name)),
     )
   )
     throw Error("SOCIAL_TOOL_DENIED");
@@ -149,10 +164,15 @@ export async function runNativeSocial(
     consumed = true;
   };
   try {
-    await check();
+    if (unified) await beforeSessionInput(capsule.session, check);
+    else await check();
     await backend.run({
       social: true,
       desktop: surface === "desktop",
+      ...(unified && {
+        desktopUnified: true,
+        desktopBridgeContext: params.socialContextToken,
+      }),
       conversation: capsule.conversation,
       instructions: capsule.session ? undefined : params.instructions,
       prompt: params.prompt,
@@ -192,6 +212,7 @@ export async function runNativeSocial(
           result,
           params.maxToolResultBytes,
           surface === "desktop",
+          Boolean(unified),
         );
         if (!params.shouldStop?.()) await check();
         return result;
@@ -202,15 +223,18 @@ export async function runNativeSocial(
       throw Error("SOCIAL_TURN_FAILED");
     signal.throwIfAborted();
     completed = true;
+    if (unified) managed.onCompleted?.();
     return { status: "completed" };
   } catch (error) {
     unchanged = !submitted && sessionWasUnchanged(error);
+    if (unified && error instanceof SessionUnavailableFailure)
+      managed.saveSession(null);
     throw error;
   } finally {
     controller.abort();
     params.registerInputConsumer?.(null);
     if (pool) await pool.release(capsule, completed);
-    else if (!completed && !unchanged && capsule.session)
+    else if (!unified && !completed && !unchanged && capsule.session)
       await dispose(capsule.session, capsule.conversation);
     tools.length = 0;
     ticket = null;
