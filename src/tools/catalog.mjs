@@ -87,6 +87,7 @@ export function scopedCatalog(runtime, ctx, input) {
         a.network?.autonomous === true,
     },
     tools: toolSpecs(names, {
+      desktopUnified: ctx.desktopUnified === true,
       desktopBodyV2: runtime.desktopVisits.client?.bodyProtocol === 2,
       desktopBodyCrossDisplay:
         runtime.desktopVisits.client?.bodyCrossDisplay === true,

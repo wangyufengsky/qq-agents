@@ -1,10 +1,20 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+
+export function nativeControlTargetId({ id, pid, processInstance, app }) {
+  const bytes = createHash("sha256")
+    .update(JSON.stringify([id, pid, processInstance, app]))
+    .digest();
+  bytes[6] = (bytes[6] & 15) | 80;
+  bytes[8] = (bytes[8] & 63) | 128;
+  const value = bytes.subarray(0, 16).toString("hex");
+  return `${value.slice(0, 8)}-${value.slice(8, 12)}-${value.slice(12, 16)}-${value.slice(16, 20)}-${value.slice(20)}`;
+}
 
 function beforeExpiry(expiresAt) {
   return Number.isSafeInteger(expiresAt) && Date.now() < expiresAt;
 }
 
-export class NativeControlClient {
+class NativeControlSlot {
   #driver;
   #command;
   #claim;
@@ -71,8 +81,14 @@ export class NativeControlClient {
     }
   }
 
-  target(agentId) {
-    return this.#grant?.agentId === agentId ? this.#grant?.source : undefined;
+  get active() {
+    return Boolean(this.#grant);
+  }
+
+  target(agentId, grantId) {
+    const grant = this.#grant;
+    if (grant?.agentId === agentId && (!grantId || grant.grantId === grantId))
+      return grant.source;
   }
 
   async grant({
@@ -82,16 +98,19 @@ export class NativeControlClient {
     confirmed,
     visitId,
     modeRevision,
+    targetId,
   }) {
     if (this.#grant) return "unavailable";
     const data = { roomEpoch, agentId, grantId: randomUUID() };
-    const grant = { ...data, source, pending: true };
+    const unified = Boolean(targetId);
+    const grant = { ...data, source, targetId, unified, pending: true };
     this.#grant = grant;
     this.#lastGrant = data;
     try {
       const room = await this.#command("native-grant", {
         ...data,
         ...(confirmed && { confirmed: true }),
+        ...(targetId && { targetId }),
         ...(visitId && { visitId }),
         ...(modeRevision !== undefined && { modeRevision }),
       });
@@ -99,7 +118,11 @@ export class NativeControlClient {
       if (
         this.#grant === grant &&
         room?.roomEpoch === roomEpoch &&
-        room.nativeControl?.grantedAgentId === agentId
+        (unified
+          ? room.nativeControl?.grants?.some(
+              (value) => value.grantId === grant.grantId,
+            )
+          : room.nativeControl?.grantedAgentId === agentId)
       )
         return "granted";
       if (this.#grant === grant) this.clear();
@@ -112,16 +135,29 @@ export class NativeControlClient {
 
   async revoke(roomEpoch, agentId) {
     const grant = this.#lastGrant;
+    const unified = this.#grant?.unified;
     this.#revoking = grant?.grantId;
     this.clear();
-    if (grant?.roomEpoch !== roomEpoch || grant.agentId !== agentId)
+    if (
+      !grant ||
+      (!unified && grant.roomEpoch !== roomEpoch) ||
+      grant.agentId !== agentId
+    )
       return "unavailable";
     try {
       const room = await this.#command("native-revoke", {
         roomEpoch,
         grantId: grant.grantId,
       });
-      return room?.nativeControl?.grantedAgentId ? "failed" : "revoked";
+      return (
+        unified
+          ? room?.nativeControl?.grants?.some(
+              (value) => value.grantId === grant.grantId,
+            )
+          : room?.nativeControl?.grantedAgentId
+      )
+        ? "failed"
+        : "revoked";
     } catch {
       return "failed";
     }
@@ -130,11 +166,35 @@ export class NativeControlClient {
   update(value, action) {
     const grant = this.#grant;
     if (!grant) return;
-    const { room, nativeTurnId, nativeRequest } = value;
+    const { room } = value;
+    if (grant.unified) {
+      if (!room?.roomEpoch) {
+        this.#latest = undefined;
+        this.#closeScope();
+        return;
+      }
+      const authorized = room.nativeControl?.grants?.some(
+        ({ grantId, targetId }) =>
+          grantId === grant.grantId && targetId === grant.targetId,
+      );
+      if (!grant.pending && !authorized) {
+        this.clear();
+        return;
+      }
+      grant.roomEpoch = room.roomEpoch;
+      const nativeRequest = value.nativeRequests?.find(
+        ({ grantId, targetId }) =>
+          grantId === grant.grantId && targetId === grant.targetId,
+      );
+      value = { ...value, nativeRequest, nativeTurnId: nativeRequest?.turnId };
+    }
+    const { nativeTurnId, nativeRequest } = value;
     if (
       room?.roomEpoch !== grant.roomEpoch ||
-      !room.nativeControl?.eligible.includes(grant.agentId) ||
-      (!grant.pending && room.nativeControl.grantedAgentId !== grant.agentId)
+      (!grant.unified &&
+        (!room.nativeControl?.eligible.includes(grant.agentId) ||
+          (!grant.pending &&
+            room.nativeControl.grantedAgentId !== grant.agentId)))
     ) {
       this.clear();
       return;
@@ -143,7 +203,9 @@ export class NativeControlClient {
     this.#latest = value;
 
     if (
-      (this.#scope && this.#scope.turnId !== nativeTurnId) ||
+      (this.#scope &&
+        (nativeTurnId || !grant.unified) &&
+        this.#scope.turnId !== nativeTurnId) ||
       (this.#pending &&
         !this.#pending.delivering &&
         this.#pending.requestId !== nativeRequest?.requestId)
@@ -176,6 +238,7 @@ export class NativeControlClient {
     };
     const isCurrent = () =>
       this.#grant === grant &&
+      request.roomEpoch === grant.roomEpoch &&
       !signal.aborted &&
       beforeExpiry(request.expiresAt);
     const needsVerification = this.#verifyGrant || request.windowTaskId;
@@ -212,7 +275,7 @@ export class NativeControlClient {
         this.#scope ??= {
           turnId,
           windowTaskId: request.windowTaskId,
-          handle: this.#driver.open(grant.source),
+          handle: this.#driver.open(grant.source, { unified: grant.unified }),
         };
         const { handle } = this.#scope;
         if (action.type === "observe") {
@@ -237,6 +300,94 @@ export class NativeControlClient {
     } finally {
       this.#pending = undefined;
       if (this.#latest) this.update(this.#latest, "sync");
+    }
+  }
+}
+
+export class NativeControlClient {
+  #driver;
+  #options;
+  #legacy;
+  #slots = new Map();
+
+  constructor(driver, options) {
+    this.#driver = driver;
+    this.#options = options;
+    this.#legacy = new NativeControlSlot(driver, options);
+  }
+
+  selectedWindow(agentId, roomEpoch, grantId) {
+    if (grantId) {
+      for (const slot of this.#slots.values()) {
+        const grant = slot.selectedWindow(agentId, roomEpoch);
+        if (grant?.grantId === grantId) return grant;
+      }
+      return;
+    }
+    return this.#legacy.selectedWindow(agentId, roomEpoch);
+  }
+
+  clear() {
+    // Legacy mode and transient framework disconnects need not revoke choices
+    // for real windows. Their target scopes are suspended until the next sync.
+    this.#legacy.clear();
+    for (const slot of this.#slots.values()) slot.update({}, "sync");
+  }
+
+  stopWindowTask(id) {
+    this.#legacy.stopWindowTask(id);
+  }
+
+  target(agentId, grantId) {
+    if (!grantId) return this.#legacy.target(agentId);
+    for (const slot of this.#slots.values()) {
+      const source = slot.target(agentId, grantId);
+      if (source) return source;
+    }
+  }
+
+  async grant(input) {
+    if (!input.targetId) return this.#legacy.grant(input);
+    const key = JSON.stringify([input.agentId, input.targetId]);
+    if (this.#slots.has(key)) return "unavailable";
+    const slot = new NativeControlSlot(this.#driver, this.#options);
+    this.#slots.set(key, slot);
+    const status = await slot.grant(input);
+    if (status !== "granted") this.#slots.delete(key);
+    return status;
+  }
+
+  async revoke(roomEpoch, agentId, grantId) {
+    if (!grantId) return this.#legacy.revoke(roomEpoch, agentId);
+    for (const [key, slot] of this.#slots) {
+      if (slot.selectedWindow(agentId, roomEpoch)?.grantId !== grantId)
+        continue;
+      const status = await slot.revoke(roomEpoch, agentId);
+      this.#slots.delete(key);
+      return status;
+    }
+    // The framework can still revoke a stale target after the local client
+    // restarts and no longer has a matching AX handle.
+    try {
+      const room = await this.#options.command("native-revoke", {
+        roomEpoch,
+        grantId,
+      });
+      return room?.nativeControl?.grants?.some(
+        (value) => value.grantId === grantId,
+      )
+        ? "failed"
+        : "revoked";
+    } catch {
+      return "failed";
+    }
+  }
+
+  update(value, action) {
+    this.#legacy.update(value, action);
+    for (const [key, slot] of this.#slots) {
+      slot.update(value, action);
+      if (!slot.active) this.#slots.delete(key);
     }
   }
 }

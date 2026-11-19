@@ -175,7 +175,7 @@ function selectableApplication(app, pid, processInstance) {
   );
 }
 
-function selectableWindow(window) {
+function selectableWindow(window, requireVisible = true) {
   return (
     window &&
     typeof window.id === "string" &&
@@ -186,8 +186,7 @@ function selectableWindow(window) {
       window.process_instance,
     ) &&
     window.accessible === true &&
-    window.visible !== false &&
-    window.minimized !== true
+    (!requireVisible || (window.visible !== false && window.minimized !== true))
   );
 }
 
@@ -419,9 +418,9 @@ export function createNativeDesktopDriver({
         ids.set(window.id, (ids.get(window.id) || 0) + 1);
     return data.filter((window) => ids.get(window?.id) === 1);
   }
-  async function windows(root, signal, app) {
+  async function windows(root, signal, app, requireVisible = true) {
     return (await windowInventory(root, signal, app))
-      .filter(selectableWindow)
+      .filter((window) => selectableWindow(window, requireVisible))
       .map((window) => ({
         id: window.id,
         pid: window.pid,
@@ -466,7 +465,7 @@ export function createNativeDesktopDriver({
     });
   }
 
-  function listWindows({ signal, application } = {}) {
+  function listWindows({ signal, application, unified = false } = {}) {
     if (
       application &&
       !selectableApplication(
@@ -477,7 +476,12 @@ export function createNativeDesktopDriver({
     )
       fail("DESKTOP_NATIVE_TARGET_CHANGED");
     return inventory(signal, async (root, current) => {
-      const available = await windows(root, current, application?.app);
+      const available = await windows(
+        root,
+        current,
+        application?.app,
+        !unified,
+      );
       return (
         application
           ? available.filter(
@@ -585,7 +589,9 @@ export function createNativeDesktopDriver({
     );
   }
 
-  function open(selection) {
+  const targetWork = new Map();
+
+  function open(selection, { unified = false } = {}) {
     if (shutdown.signal.aborted) fail("DESKTOP_NATIVE_CANCELLED");
     if (
       !selection ||
@@ -600,6 +606,7 @@ export function createNativeDesktopDriver({
       fail("DESKTOP_NATIVE_TARGET_CHANGED");
     const { id, pid, processInstance, app } = selection;
     const target = { id, pid, processInstance, app };
+    const targetKey = JSON.stringify([id, pid, processInstance, app]);
     const lifecycle = new AbortController();
     const active = AbortSignal.any([shutdown.signal, lifecycle.signal]);
     let root;
@@ -610,7 +617,7 @@ export function createNativeDesktopDriver({
     let expiresAt = 0;
     async function verifyTarget(current) {
       if (
-        !(await windows(root, current, app)).some((window) =>
+        !(await windows(root, current, app, !unified)).some((window) =>
           sameWindow(window, target),
         )
       )
@@ -618,7 +625,15 @@ export function createNativeDesktopDriver({
     }
     function work(signal, task) {
       const current = signal ? AbortSignal.any([signal, active]) : active;
-      const request = exclusive(current, () => task(current));
+      let request;
+      if (unified) {
+        current.throwIfAborted();
+        if (targetWork.has(targetKey)) fail("DESKTOP_NATIVE_BUSY");
+        request = Promise.resolve()
+          .then(() => task(current))
+          .finally(() => targetWork.delete(targetKey));
+        targetWork.set(targetKey, request);
+      } else request = exclusive(current, () => task(current));
       pending = request;
       return request.finally(() => {
         pending = undefined;

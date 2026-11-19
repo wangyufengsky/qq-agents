@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { setImmediate } from "node:timers/promises";
-import { NativeControlClient } from "../desktop/home/native-control-client.mjs";
+import {
+  NativeControlClient,
+  nativeControlTargetId,
+} from "../desktop/home/native-control-client.mjs";
 
 function fixture({
   acceptClaim = true,
@@ -347,4 +350,91 @@ test("a selected window must still be visible before dispatch after a positive c
   assert.equal(checks, 2);
   assert.equal(claims.length, 1);
   assert.deepEqual(scopes[0].mutations, []);
+});
+
+test("unified native targets resume after disconnect without accepting a different window identity", async () => {
+  const data = [];
+  const results = [];
+  const opens = [];
+  const roomEpoch = "room";
+  const agentId = "fish";
+  const first = {
+    id: "w-first",
+    pid: 300,
+    processInstance: "fixture-process",
+    app: "fixture",
+  };
+  const other = { ...first, id: "w-other" };
+  const firstId = nativeControlTargetId(first);
+  const otherId = nativeControlTargetId(other);
+  assert.notEqual(
+    firstId,
+    nativeControlTargetId({ ...first, processInstance: "reopened" }),
+  );
+  const room = () => ({ roomEpoch, nativeControl: { grants: [...data] } });
+  const client = new NativeControlClient(
+    {
+      open(source, options) {
+        assert.equal(options.unified, true);
+        opens.push(source.id);
+        return { observe: () => ({ elements: [] }), close() {} };
+      },
+    },
+    {
+      async command(action, grant) {
+        if (action === "native-grant") data.push(grant);
+        else
+          data.splice(
+            data.findIndex(({ grantId }) => grantId === grant.grantId),
+            1,
+          );
+        return room();
+      },
+      async result(outcome) {
+        results.push(outcome.requestId);
+      },
+    },
+  );
+  assert.equal(
+    await client.grant({
+      roomEpoch,
+      agentId,
+      source: first,
+      targetId: firstId,
+    }),
+    "granted",
+  );
+  assert.equal(
+    await client.grant({
+      roomEpoch,
+      agentId,
+      source: other,
+      targetId: otherId,
+    }),
+    "granted",
+  );
+  client.clear();
+  client.update(
+    {
+      room: room(),
+      nativeRequests: data.map(({ targetId, grantId }, i) => ({
+        roomEpoch,
+        targetId,
+        grantId,
+        requestId: "request-" + i,
+        turnId: "turn",
+        expiresAt: Date.now() + 10_000,
+        action: { type: "observe" },
+      })),
+    },
+    "sync",
+  );
+  await setImmediate();
+  assert.deepEqual(opens, [first.id, other.id]);
+  assert.deepEqual(results.sort(), ["request-0", "request-1"]);
+  assert.equal(
+    await client.revoke(roomEpoch, agentId, data[0].grantId),
+    "revoked",
+  );
+  assert.equal(data.length, 1);
 });
