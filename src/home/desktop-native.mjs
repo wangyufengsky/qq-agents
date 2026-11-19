@@ -6,7 +6,10 @@ import {
   DESKTOP_CONVERSATION,
   DESKTOP_WINDOW_TASK_CONVERSATION,
 } from "./desktop-decision.mjs";
-import { DesktopLocalGrant } from "./desktop-local-grant.mjs";
+import {
+  DesktopControlGrants,
+  DesktopLocalGrant,
+} from "./desktop-local-grant.mjs";
 
 const uuid = z.string().uuid();
 const ref = z
@@ -14,7 +17,7 @@ const ref = z
   .min(1)
   .max(100)
   .regex(/^[a-zA-Z0-9_-]+$/);
-export const nativeActionSchema = z.discriminatedUnion("type", [
+const nativeActions = [
   z.object({ type: z.literal("observe") }).strict(),
   z.object({ type: z.literal("click"), ref }).strict(),
   z
@@ -28,6 +31,15 @@ export const nativeActionSchema = z.discriminatedUnion("type", [
       amount: z.number().int().min(1).max(5).default(1),
     })
     .strict(),
+];
+export const legacyNativeActionSchema = z.discriminatedUnion(
+  "type",
+  nativeActions,
+);
+export const nativeActionSchema = z.discriminatedUnion("type", [
+  ...nativeActions.map((schema) => schema.extend({ grantId: uuid.optional() })),
+  z.strictObject({ type: z.literal("grants") }),
+  z.strictObject({ type: z.literal("revoke"), grantId: uuid }),
 ]);
 const observationSchema = z
   .object({
@@ -84,6 +96,9 @@ const CLAIM_MS = 2_000;
 export class DesktopNative extends DesktopLocalGrant {
   constructor(host) {
     super(host, DESKTOP_NATIVE_CONTROL, "DESKTOP_NATIVE_UNAVAILABLE");
+    this.unified = new DesktopControlGrants(this);
+    this.targetOperations = new Map();
+    this.targetHandoffs = new Map();
   }
 
   state() {
@@ -93,12 +108,22 @@ export class DesktopNative extends DesktopLocalGrant {
       Date.now() >= this.handoff.pending.request.expiresAt
     )
       this.handoff = { state: "unconfirmed" };
-    return { ...state, handoff: this.handoff?.state };
+    return {
+      ...state,
+      handoff: this.handoff?.state,
+      ...this.unified.state(),
+    };
   }
 
   change(revoking, value) {
     if (revoking) {
-      super.change(true, value);
+      if (value.roomEpoch !== this.host.live?.room.epoch)
+        throw Error(this.unavailable);
+      if (!this.revokeUnified(value.grantId)) super.change(true, value);
+      return;
+    }
+    if (value.targetId) {
+      this.unified.change(value);
       return;
     }
     this.state();
@@ -118,6 +143,23 @@ export class DesktopNative extends DesktopLocalGrant {
     this.handoff = undefined;
   }
 
+  revokeUnified(grantId, agentId) {
+    const grant = this.unified.remove(grantId, agentId);
+    if (!grant) return false;
+    const pending = this.targetOperations.get(grant.targetId);
+    if (pending?.grant === grant) {
+      if (pending.claimed && !pending.received)
+        this.targetHandoffs.set(grant.targetId, { state: "pending", pending });
+      pending.reject(Error("DESKTOP_NATIVE_RESULT_UNKNOWN"));
+    }
+    this.host.notify();
+    return true;
+  }
+
+  current(grant) {
+    return grant?.unified ? this.unified.current(grant) : super.current(grant);
+  }
+
   clear() {
     super.clear();
     if (this.pending?.claimed && !this.pending.received)
@@ -132,22 +174,32 @@ export class DesktopNative extends DesktopLocalGrant {
   }
 
   clientWork() {
-    if (!this.current(this.grant)) return {};
+    const nativeRequests = [...this.targetOperations.values()]
+      .filter((pending) => pending.current() && !pending.received)
+      .map(({ request }) => request);
+    const unified = nativeRequests.length ? { nativeRequests } : {};
+    if (!this.current(this.grant)) return unified;
     const { runtime } = this.host;
     const id = this.grant.agentId + "|";
     const ctx =
       runtime.running.get(id + DESKTOP_WINDOW_TASK_CONVERSATION) ??
       runtime.running.get(id + DESKTOP_CONVERSATION);
-    if (!ctx?.turnId || ctx.controller.signal.aborted) return {};
+    if (!ctx?.turnId || ctx.controller.signal.aborted) return unified;
     const nativeRequest = this.request();
     return {
+      ...unified,
       nativeTurnId: ctx.turnId,
       ...(nativeRequest && { nativeRequest }),
     };
   }
 
   pendingFor({ client, roomEpoch, grantId, requestId }) {
-    const pending = this.pending;
+    const pending =
+      this.pending?.request.requestId === requestId
+        ? this.pending
+        : [...this.targetOperations.values()].find(
+            ({ request }) => request.requestId === requestId,
+          );
     if (
       !pending ||
       pending.received ||
@@ -180,9 +232,14 @@ export class DesktopNative extends DesktopLocalGrant {
     const parsed = resultSchema.safeParse(input);
     if (!parsed.success) throw Error("DESKTOP_NATIVE_INVALID");
     const { result } = parsed.data;
-    const unsettled = this.handoff?.pending;
+    const matchingHandoff = [...this.targetHandoffs].find(
+      ([, { pending }]) => pending?.request.requestId === parsed.data.requestId,
+    );
+    const targetId = matchingHandoff?.[0];
+    const handoff = matchingHandoff?.[1] ?? this.handoff;
+    const unsettled = handoff?.pending;
     if (
-      this.handoff?.state === "pending" &&
+      handoff?.state === "pending" &&
       unsettled &&
       this.host.client?.id === parsed.data.client &&
       ["roomEpoch", "grantId", "requestId"].every(
@@ -190,12 +247,16 @@ export class DesktopNative extends DesktopLocalGrant {
       )
     ) {
       unsettled.received = true;
-      this.handoff =
+      this.setHandoff(
+        targetId,
         result &&
-        "delivery" in result &&
-        ["delivered_verified", "not_delivered"].includes(result.delivery)
+          "delivery" in result &&
+          ["delivered_verified", "not_delivered"].includes(result.delivery)
           ? undefined
-          : { state: "unconfirmed" };
+          : targetId
+            ? undefined
+            : { state: "unconfirmed" },
+      );
       return { accepted: true };
     }
     const pending = this.pendingFor(parsed.data);
@@ -220,23 +281,77 @@ export class DesktopNative extends DesktopLocalGrant {
         !("delivery" in result) ||
         !["delivered_verified", "not_delivered"].includes(result.delivery))
     )
-      this.handoff = { state: "unconfirmed" };
+      this.setHandoff(
+        pending.grant.targetId,
+        pending.grant.unified ? undefined : { state: "unconfirmed" },
+      );
     if (result) pending.resolve(result);
     else pending.reject(Error("DESKTOP_NATIVE_RESULT_UNKNOWN"));
     return { accepted: true };
   }
 
+  setHandoff(targetId, value) {
+    if (!targetId) this.handoff = value;
+    else if (value) this.targetHandoffs.set(targetId, value);
+    else this.targetHandoffs.delete(targetId);
+  }
+
+  unifiedGrant(ctx, agent, grantId) {
+    const grant = this.unified.get(grantId, agent.id);
+    const epoch = ctx.inputEpoch;
+    const visit = this.host.live?.visits.get(agent.id);
+    const client = this.host.client;
+    const current = () => {
+      try {
+        this.host.runtime.assertActive(ctx);
+        return (
+          ctx.inputEpoch === epoch &&
+          this.host.client === client &&
+          this.host.live?.visits.get(agent.id) === visit &&
+          this.current(grant)
+        );
+      } catch {
+        return false;
+      }
+    };
+    if (!current()) throw Error(this.unavailable);
+    return { grant, current };
+  }
+
   async run(ctx, action) {
     const { runtime } = this.host;
     const agent = runtime.assertActive(ctx);
-    const { grant, current } = this.activeGrant(ctx, agent);
+    const unified =
+      ctx.desktopUnified &&
+      ctx.runtimeKind === "desktop" &&
+      ctx.conversation === DESKTOP_CONVERSATION;
+    if (action.type === "grants" || action.type === "revoke") {
+      if (!unified) throw Error(this.unavailable);
+      if (action.type === "grants")
+        return { grants: this.unified.list(agent.id) };
+      return { revoked: this.revokeUnified(action.grantId, agent.id) };
+    }
+    if (!unified && action.grantId) throw Error(this.unavailable);
+    const { grant, current } = unified
+      ? this.unifiedGrant(ctx, agent, action.grantId)
+      : this.activeGrant(ctx, agent);
     if (action.type === "set-value") {
       runtime.assertSafeOutput(ctx, action.text);
       recallBoundary(runtime, ctx, { publicOnly: true }).assert({
         evidence: [...ctx.privateRead],
       });
     }
-    if (this.pending || this.handoff) throw Error("DESKTOP_NATIVE_UNAVAILABLE");
+    const { targetId } = grant;
+    if (targetId) {
+      const handoff = this.targetHandoffs.get(targetId);
+      if (handoff && handoff.pending.request.expiresAt <= Date.now())
+        this.targetHandoffs.delete(targetId);
+      if (
+        this.targetOperations.has(targetId) ||
+        this.targetHandoffs.has(targetId)
+      )
+        throw Error(this.unavailable);
+    } else if (this.pending || this.handoff) throw Error(this.unavailable);
     if (ctx.desktopWindowTask) {
       if (ctx.desktopWindowTaskActionStarted)
         throw Error("DESKTOP_NATIVE_UNAVAILABLE");
@@ -249,20 +364,25 @@ export class DesktopNative extends DesktopLocalGrant {
     const pending = {
       ...Promise.withResolvers(),
       ctx,
+      grant,
       current: () => Date.now() < expiresAt && current(),
       request: {
-        roomEpoch: grant.roomEpoch,
+        roomEpoch: targetId ? this.host.live.room.epoch : grant.roomEpoch,
         grantId: grant.grantId,
         requestId: randomUUID(),
         turnId: ctx.turnId,
+        ...(targetId && { targetId }),
         ...(ctx.desktopWindowTask && {
           windowTaskId: ctx.desktopWindowTask.id,
         }),
         expiresAt,
-        action,
+        action: Object.fromEntries(
+          Object.entries(action).filter(([key]) => key !== "grantId"),
+        ),
       },
     };
-    this.pending = pending;
+    if (targetId) this.targetOperations.set(targetId, pending);
+    else this.pending = pending;
     this.host.notify();
     const signal = ctx.controller.signal;
     const abort = () => pending.reject(Error("DESKTOP_NATIVE_RESULT_UNKNOWN"));
@@ -287,10 +407,15 @@ export class DesktopNative extends DesktopLocalGrant {
     } finally {
       clearTimeout(timer);
       signal.removeEventListener("abort", abort);
-      if (this.pending === pending) this.pending = null;
+      if (targetId) this.targetOperations.delete(targetId);
+      else if (this.pending === pending) this.pending = null;
       this.host.notify();
-      if (pending.claimed && !pending.received && !this.handoff)
-        this.handoff = { state: "unconfirmed" };
+      if (pending.claimed && !pending.received) {
+        if (targetId && Date.now() < expiresAt)
+          this.setHandoff(targetId, { state: "pending", pending });
+        else if (!targetId && !this.handoff)
+          this.handoff = { state: "unconfirmed" };
+      }
     }
   }
 }
