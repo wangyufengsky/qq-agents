@@ -24,6 +24,8 @@ import { DesktopVisits } from "./desktop-visits.mjs";
 import { DesktopPersonal } from "./desktop-personal.mjs";
 import { DesktopInvitations } from "./desktop-invitations.mjs";
 import { LiveRoom } from "./desktop-room.mjs";
+import { QueuedDesktopRoom } from "./desktop-queued-room.mjs";
+import { runDesktopTurn } from "./desktop-unified-turn.mjs";
 import { createRoom, roles as art } from "./desktop-room-state.mjs";
 import { beginDesktopContext } from "./desktop-context.mjs";
 import {
@@ -73,6 +75,25 @@ const batchGrantSchema = localGrantSchema
 const batchDisplaySchema = displayObservationGrantSchema
   .extend({ visitId: z.string().uuid() })
   .strict();
+const pointSchema = z.strictObject({
+  x: z.number().int(),
+  y: z.number().int(),
+});
+const ownerEventIdentity = {
+  eventId: z.string().uuid(),
+  roomEpoch: z.string().uuid(),
+  agentId: z.string().min(1).max(64),
+  visitId: z.string().uuid(),
+};
+const desktopOwnerEvent = z.discriminatedUnion("kind", [
+  z.strictObject({ ...ownerEventIdentity, kind: z.literal("pet") }),
+  z.strictObject({
+    ...ownerEventIdentity,
+    kind: z.literal("drag"),
+    from: pointSchema,
+    to: pointSchema,
+  }),
+]);
 const syncDataSchema = z
   .union([
     z.boolean(),
@@ -92,6 +113,7 @@ const syncDataSchema = z
           )
           .max(48)
           .optional(),
+        desktopOwnerEvents: z.array(desktopOwnerEvent).max(48).optional(),
         bodyProtocol: z.literal(2).optional(),
         bodyCrossDisplay: z.literal(true).optional(),
         bodyWindowApproach: z.literal(true).optional(),
@@ -222,8 +244,9 @@ function explicitTargets(text, roles) {
 }
 
 export class DesktopHost {
-  constructor(runtime) {
+  constructor(runtime, { createTurnQueue } = {}) {
     this.runtime = runtime;
+    this.createTurnQueue = createTurnQueue;
     this.personal = new DesktopPersonal(this);
     this.statusCards = new DesktopStatusCards(this);
     this.eventSubscribers = new Map();
@@ -327,11 +350,16 @@ export class DesktopHost {
   unsubscribe(client, epoch, subscriber) {
     if (!this.eventSubscribers.delete(subscriber)) return;
     if (
+      !this.createTurnQueue &&
       !this.eventSubscribers.size &&
       this.client?.id === client &&
       this.live?.room.epoch === epoch
     )
       this.reset();
+  }
+
+  get desktopUnified() {
+    return Boolean(this.createTurnQueue);
   }
 
   configured() {
@@ -409,6 +437,7 @@ export class DesktopHost {
     this.visits.get(id)?.finishSubject(id, completed);
   }
   interrupt(id) {
+    if (this.createTurnQueue) return;
     this.notify();
     this.live?.cancelInteraction(id);
     if (this.windowTask?.actor === id) this.stopWindowTask("inactive");
@@ -416,8 +445,10 @@ export class DesktopHost {
     this.visits.get(id)?.interrupt(id);
   }
   claimQq(id, conversation) {
-    const claim = this.visits.get(id)?.claimQq(id, conversation);
-    if (claim) {
+    const claim = this.visits
+      .get(id)
+      ?.claimQq(id, conversation, { preempt: !this.createTurnQueue });
+    if (claim && !this.createTurnQueue) {
       this.live?.cancelInteraction(id);
       this.live?.cancelActivity(id);
       if (this.windowTask?.actor === id) this.stopWindowTask("inactive");
@@ -483,7 +514,7 @@ export class DesktopHost {
       return Boolean(this.live);
     }
     if (this.live) {
-      if (!policy.publicPerception.enabled) {
+      if (!this.createTurnQueue && !policy.publicPerception.enabled) {
         this.live.perception.clear();
         for (const [id, active] of this.live.activities)
           if (Object.hasOwn(active.turn, "idle")) this.live.cancelActivity(id);
@@ -511,7 +542,7 @@ export class DesktopHost {
       for (const [id, message] of Object.entries(room.bubbles))
         if (now >= (message.expiresAt ?? message.now + 4900))
           delete room.bubbles[id];
-      if (syncingClient !== this.client.id)
+      if (!this.createTurnQueue && syncingClient !== this.client.id)
         for (const id of this.live.activities.keys())
           if (!this.activityCurrent(id)) this.live.cancelActivity(id);
       if (syncingClient !== this.client.id) {
@@ -563,6 +594,8 @@ export class DesktopHost {
     )
       return false;
     const agent = this.runtime.agent(id);
+    if (this.createTurnQueue)
+      return this.runtime.writable(agent, DESKTOP_CONVERSATION);
     return (
       !this.runtime.blockers(agent, DESKTOP_CONVERSATION).length &&
       !["sleeping", "rest-pending"].includes(
@@ -703,8 +736,11 @@ export class DesktopHost {
       turnId,
       speakerType,
       explicitTarget,
+      present,
     ) => {
-      const here = room.roles.filter(({ id }) => room.members[id] === "here");
+      const here = room.roles.filter(({ id }) =>
+        present ? present.includes(id) : room.members[id] === "here",
+      );
       const audience = [{ id: DESKTOP_ADMINISTRATOR, name: "管理员" }, ...here];
       const targets =
         explicitTarget && here.some(({ id }) => id === explicitTarget)
@@ -738,11 +774,22 @@ export class DesktopHost {
       return { ...archived, targets };
     };
     this.attachments = new DesktopAttachments();
-    this.live = new LiveRoom(
+    const Room = this.createTurnQueue ? QueuedDesktopRoom : LiveRoom;
+    this.live = new Room(
       room,
       {
         roles: ids,
         now: () => this.runtime.now(),
+        pending: (id, trigger) => this.archive.pending(id, trigger),
+        continuity: (id) => this.archive.delivered(id),
+        roleMail: (id) =>
+          this.runtime.desktopRoleMailbox?.pending(id, DESKTOP_CONVERSATION)[0]
+            ?.requestId,
+        onError: (id, cause) =>
+          this.runtime.diagnostics.report(
+            Error("DESKTOP_TURN_FAILED", { cause }),
+            { component: "desktop-home", agentId: id },
+          ),
         activityStarts: this.activityStarts,
         publicStarts: this.activityStarts,
         publicPolicy: () => this.runtime.config.desktopHome.publicPerception,
@@ -789,6 +836,7 @@ export class DesktopHost {
         close: async () => {},
       },
       () => this.notify(),
+      this.createTurnQueue?.(this.runtime),
     );
     this.signature = JSON.stringify(roles);
     this.client = { id: client, expiresAt: this.runtime.now() + CLIENT_LEASE };
@@ -923,6 +971,7 @@ export class DesktopHost {
         ? { enabled: true }
         : { enabled: true, room: this.roomSnapshot() };
     let bodyResultAcks;
+    let ownerEventIds;
     let refreshActivity = false;
     if (action === "sync") {
       this.runtime.home?.garden?.desktopSync(this.runtime.now(), CLIENT_LEASE);
@@ -996,7 +1045,7 @@ export class DesktopHost {
             if (visit && this.body.visitId(visit) === visitId)
               live.noteOwnerTouch(visit, kind);
           }
-        for (const id of moved) {
+        for (const id of this.createTurnQueue ? [] : moved) {
           const visit = live.visits.get(id);
           live.activity.defer(visit, this.runtime.now());
           if (visit && live.publicEnabled())
@@ -1004,8 +1053,9 @@ export class DesktopHost {
           live.cancelActivity(id);
         }
       }
-      for (const id of live.activities.keys())
-        if (!this.activityCurrent(id)) live.cancelActivity(id);
+      if (!this.createTurnQueue)
+        for (const id of live.activities.keys())
+          if (!this.activityCurrent(id)) live.cancelActivity(id);
       if (
         this.client.bodyProtocol === 2 &&
         data?.bodyProtocol === 2 &&
@@ -1013,7 +1063,26 @@ export class DesktopHost {
       )
         bodyResultAcks = this.body.reconcile(client, data.bodyResults);
       live.maintainInteraction();
-      if (!visible && this.mode !== null) this.invalidateMode();
+      if (this.createTurnQueue && data?.desktopOwnerEvents) {
+        ownerEventIds = [];
+        for (const {
+          roomEpoch,
+          agentId,
+          visitId,
+          ...event
+        } of data.desktopOwnerEvents) {
+          const visit = live.visits.get(agentId);
+          if (
+            roomEpoch === live.room.epoch &&
+            visit &&
+            this.body.visitId(visit) === visitId &&
+            live.ownerEvent(agentId, visit, event)
+          )
+            ownerEventIds.push(event.eventId);
+        }
+      }
+      if (!this.createTurnQueue && !visible && this.mode !== null)
+        this.invalidateMode();
       if (!visible && this.windowTask) this.stopWindowTask("hidden");
       if (visible === true) void live.advanceActivity(this.runtime.now());
     }
@@ -1032,7 +1101,7 @@ export class DesktopHost {
       typeof data === "string" &&
       !containsCredential(data)
     ) {
-      this.stopWindowTask("stopped");
+      if (!this.createTurnQueue) this.stopWindowTask("stopped");
       live.send(data);
     }
     if (action === "bubble-reply") {
@@ -1214,10 +1283,15 @@ export class DesktopHost {
     if (this.windowTask?.current() === false)
       this.stopWindowTask("target-unavailable");
     this.notify();
+    const ownerInput = this.createTurnQueue && {
+      roomEpoch: live.room.epoch,
+      acknowledged: ownerEventIds ?? [],
+    };
     if (heartbeat) {
       const bodyRequests = this.body.clientWork();
       return {
         enabled: true,
+        ...(ownerInput && { desktopOwnerInput: ownerInput }),
         ...(refreshActivity && { refreshActivity }),
         ...(bodyResultAcks?.length && { bodyResultAcks }),
         ...(bodyRequests.length && { bodyRequests }),
@@ -1225,7 +1299,10 @@ export class DesktopHost {
     }
     const state = this.clientSnapshot();
     if (action !== "sync") return state;
-    return this.pushSnapshot(state, bodyResultAcks);
+    return {
+      ...this.pushSnapshot(state, bodyResultAcks),
+      ...(ownerInput && { desktopOwnerInput: ownerInput }),
+    };
   }
 
   pushSnapshot(state = this.clientSnapshot(), bodyResultAcks) {
@@ -1233,6 +1310,12 @@ export class DesktopHost {
     const observationVerify = this.observation.verifyWork();
     return {
       ...state,
+      ...(this.createTurnQueue && {
+        desktopOwnerInput: {
+          roomEpoch: this.live.room.epoch,
+          acknowledged: [],
+        },
+      }),
       ...(screenRequest && { screenRequest }),
       ...(observationVerify.length && {
         observationVerify: observationVerify[0],
@@ -1285,6 +1368,10 @@ export class DesktopHost {
     }
     return {
       ...room,
+      ...(this.createTurnQueue && {
+        desktopUnified: true,
+        desktopObservationEnabled: runtime.config.desktopHome.observeDesktop,
+      }),
       companionMode: this.mode,
       companionRevision: this.modeRevision,
       interactionsAvailable: this.interactionsAvailable(),
@@ -1526,6 +1613,7 @@ export class DesktopHost {
   }
 
   async runModel(request, signal, canStart) {
+    if (request.desktopUnified) return runDesktopTurn(this, request, signal);
     const { actor, kind } = request;
     const activity = kind === "activity";
     const { observation, windowTask } = request;

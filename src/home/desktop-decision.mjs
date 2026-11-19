@@ -69,6 +69,20 @@ export const desktopActivityDecisionDefinition = [
 ];
 
 export function promptFor(request) {
+  if (request.desktopUnified) {
+    const input = JSON.stringify({
+      present: ["管理员", ...request.people],
+      events: request.events?.map((event) => ({
+        ...event,
+        ...(event.kind === "drag" && {
+          note: `主人把你的桌宠从 (${event.from.x}, ${event.from.y}) 移动到了 (${event.to.x}, ${event.to.y})。`,
+        }),
+        ...(event.kind === "pet" && { note: "主人刚摸了摸你。" }),
+      })),
+      messages: request.messages,
+    });
+    return `你在桌面小窝，可以和主人、在场同伴自由交流，也可以移动、按需观察、休息或离开。按这个回合收到的事件判断你想做什么。你可以先做事再说话，也可以安静待着。以下是本轮收到的内容。\n${input}`;
+  }
   const context = JSON.stringify({
     present: ["管理员", ...request.people],
     ...(request.publicContext && { publicSpace: request.publicContext }),

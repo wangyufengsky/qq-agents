@@ -18,6 +18,8 @@ const TURN_ACTION_LIMIT = 8;
 const INTERACTIVE_ACTIONS = new Set(["gesture", "interaction", "window-task"]);
 
 function canAct(runtime, agent, ctx) {
+  if (ctx.desktopUnified)
+    return runtime.toolsForContext(agent, ctx).includes(DESKTOP_BODY_CONTROL);
   const { state } = rhythmStatus(runtime, agent);
   return (
     state !== "sleeping" &&
@@ -415,7 +417,8 @@ export class DesktopBody {
       return old.promise;
     }
     if (pending) throw Error("DESKTOP_BODY_BUSY");
-    if (receipts.size >= TURN_ACTION_LIMIT) throw Error("DESKTOP_BODY_LIMIT");
+    if (!ctx.desktopUnified && receipts.size >= TURN_ACTION_LIMIT)
+      throw Error("DESKTOP_BODY_LIMIT");
     if (
       isDesktopActivity(ctx.conversation) &&
       action.type !== "state" &&

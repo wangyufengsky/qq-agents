@@ -671,7 +671,14 @@ export class Runtime {
         codes.push("NOT_ALLOWED");
       return codes;
     }
-    if (inSilence(a, this.clock())) codes.push("QUIET_HOURS");
+    if (
+      !(
+        this.desktopVisits?.createTurnQueue &&
+        isDesktopConversation(conversation)
+      ) &&
+      inSilence(a, this.clock())
+    )
+      codes.push("QUIET_HOURS");
     if (conversation === undefined) return codes;
     if (
       isDesktopConversation(conversation)
