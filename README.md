@@ -257,7 +257,7 @@ node src/main.mjs --data /path/to/private-data --port 3210
 - [纸页小窝：真实居民、公共布局保存与留言板](docs/AI-HOME.md)
 - [小窝花园：共享经营、即时设置与花园时钟](docs/GARDEN-FOUNDATION.md)
 - [小窝故事会：自由开书、异步续写、批注与图书馆](docs/STORY-CIRCLE.md)
-- [桌面小窝（macOS / Windows）](docs/DESKTOP-HOME.md) · [桌面小窝不可变契约](docs/DESKTOP-HOME-CONTRACT.md) · [桌面对话 Agent 三阶段计划](docs/plans/desktop-dialogue-agent.md)
+- [桌面小窝（macOS / Windows）](docs/DESKTOP-HOME.md) · [桌面小窝不可变契约](docs/DESKTOP-HOME-CONTRACT.md) · [桌面对话 Agent 三阶段计划](docs/plans/desktop-dialogue-agent.md) · [桌面小窝重构计划](docs/plans/desktop-home-rebuild.md)
 - [小窝社交恢复与回退](docs/AI-HOME-SOCIAL-RECOVERY.md)
 - [小窝二阶段社交验收记录](docs/AI-HOME-SOCIAL-ACCEPTANCE.md)
 - [小窝社交后端预算与临时上下文前置契约](docs/SOCIAL-BACKENDS.md)
