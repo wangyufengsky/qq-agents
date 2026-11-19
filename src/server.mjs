@@ -1,3 +1,5 @@
+import { DESKTOP_SCREEN_VIEW } from "./tools/names.mjs";
+import { MAX_DESKTOP_CAPTURE_WIRE_BYTES } from "./home/desktop-capture-protocol.mjs";
 import { MAX_DESKTOP_ATTACHMENT_BODY } from "./home/desktop-attachments.mjs";
 import { MAX_DESKTOP_SCREEN_BODY } from "./home/desktop-screen.mjs";
 import { MAX_DESKTOP_NATIVE_BODY } from "./home/desktop-native.mjs";
@@ -391,6 +393,7 @@ export function createServer({
         url.pathname === "/api/desktop-home/personal-history" ||
         url.pathname === "/api/desktop-home/video" ||
         url.pathname === "/api/desktop-home/screen-result" ||
+        url.pathname === "/api/desktop-home/desktop-capture-result" ||
         url.pathname === "/api/desktop-home/screen-claim" ||
         url.pathname === "/api/desktop-home/native-result" ||
         url.pathname === "/api/desktop-home/native-claim" ||
@@ -437,6 +440,12 @@ export function createServer({
           );
         if (url.pathname.endsWith("/screen-claim"))
           return send(runtime.desktopVisits.screen.claim(await readBody(512)));
+        if (url.pathname.endsWith("/desktop-capture-result"))
+          return send(
+            runtime.desktopVisits.fullDesktop.receive(
+              await readBody(MAX_DESKTOP_CAPTURE_WIRE_BYTES),
+            ),
+          );
         if (url.pathname.endsWith("/screen-result")) {
           const input = await readBody(MAX_DESKTOP_SCREEN_BODY);
           return send(runtime.desktopVisits.screen.receive(input));
@@ -585,7 +594,11 @@ export function createServer({
                   maxBytes:
                     relay && data.name === VIDEO_READ
                       ? MAX_VIDEO_RELAY_FRAME - 512
-                      : 65024,
+                      : relay &&
+                          ctx.runtimeKind === "desktop" &&
+                          data.name === DESKTOP_SCREEN_VIEW
+                        ? MAX_DESKTOP_CAPTURE_WIRE_BYTES - 512
+                        : 65024,
                 }),
             },
             original,

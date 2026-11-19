@@ -14,7 +14,7 @@ const tool = "desktop_screen_view";
 const jpeg =
   "/9j/4AAQSkZJRgABAgAAAQABAAD//gAQTGF2YzYyLjI4LjEwMAD/2wBDAAgEBAQEBAUFBQUFBQYGBgYGBgYGBgYGBgYHBwcICAgHBwcGBgcHCAgICAkJCQgICAgJCQoKCgwMCwsODg4RERT/xABLAAEBAAAAAAAAAAAAAAAAAAAABQEBAAAAAAAAAAAAAAAAAAAABRABAAAAAAAAAAAAAAAAAAAAABEBAAAAAAAAAAAAAAAAAAAAAP/AABEIABAAEAMBIgACEQADEQD/2gAMAwEAAhEDEQA/AIAAok//2Q==";
 
-async function setup(t, { native = false } = {}) {
+async function setup(t, { native = false, fullDesktop = false } = {}) {
   const cfg = config(2);
   cfg.desktopHome.enabled = true;
   cfg.desktopHome.screenView = { enabled: true };
@@ -61,6 +61,11 @@ async function setup(t, { native = false } = {}) {
     };
     backend.run = async (params) => {
       await params.beforeInputSubmitted();
+      if (fullDesktop) {
+        // Exercise the candidate transport before the unified tool catalogue is enabled.
+        const ctx = runtime.capability(capability);
+        if (!ctx.allowedTools.includes(tool)) ctx.allowedTools.push(tool);
+      }
       params.saveSession(
         params.session ?? { backend: "codex", id: `fixture-${randomUUID()}` },
       );
@@ -93,6 +98,10 @@ async function setup(t, { native = false } = {}) {
     client,
     command,
     result,
+    fullResult: (data, key = desktopToken(token)) =>
+      post("/api/desktop-home/desktop-capture-result", data, {
+        "x-desktop-home-token": key,
+      }),
     nativeClaim: (data) =>
       post("/api/desktop-home/native-claim", data, {
         "x-desktop-home-token": desktopToken(token),
@@ -306,6 +315,108 @@ test("revoking screen access cancels an outstanding capture and rejects its late
     const sync = await command("sync");
     assert.equal(sync.screenRequest, undefined);
     assert.notEqual(sync.room.screenView.grantedAgentId, "agent-0");
+  });
+});
+
+async function waitForFullDesktop(command) {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const state = await command("sync", {
+      visible: true,
+      dragged: [],
+      desktopCaptureProtocol: 1,
+      desktopOwnerInputProtocol: 1,
+    });
+    if (state.desktopCaptureRequest) return state.desktopCaptureRequest;
+    await delay(10);
+  }
+  assert.fail("Desktop client did not receive a full-desktop capture request");
+}
+
+function largeJpeg(byte) {
+  const image = Buffer.from(jpeg, "base64");
+  const comment = Buffer.alloc(50_002, byte);
+  comment.writeUInt16BE(0xfffe, 0);
+  comment.writeUInt16BE(comment.length - 2, 2);
+  return Buffer.concat([
+    image.subarray(0, 2),
+    comment,
+    image.subarray(2),
+  ]).toString("base64");
+}
+
+test("global desktop observation delivers both displays through authenticated HTTP to the fake model", async (t) => {
+  const { host, client, command, fullResult, run } = await setup(t, {
+    fullDesktop: true,
+  });
+  const select = {
+    visible: true,
+    dragged: [],
+    desktopCaptureProtocol: 1,
+    desktopOwnerInputProtocol: 1,
+  };
+  await command("sync", select);
+  host.screen.view = (ctx) => host.fullDesktop.view(ctx);
+  const frames = [1, 2].map((id) => ({
+    displayId: String(id),
+    bounds: { x: (id - 2) * 1920, y: 0, width: 1920, height: 1080 },
+    width: 16,
+    height: 16,
+    data: largeJpeg(id),
+  }));
+  for (const agentId of ["agent-0", "agent-1"]) {
+    await run(agentId, async (call) => {
+      const output = call();
+      const { maxBytes, maxEdge, ...identity } =
+        await waitForFullDesktop(command);
+      assert.equal(identity.agentId, agentId);
+      assert.ok(maxBytes >= 262144);
+      assert.ok(maxEdge >= 512);
+      const receipt = { client, ...identity, frames };
+      assert.equal((await fullResult(receipt, "not-the-token")).status, 401);
+      assert.equal(
+        (await fullResult({ ...receipt, visitId: randomUUID() })).ok,
+        false,
+      );
+      assert.equal(
+        (await fullResult({ ...receipt, frames: [frames[0], frames[0]] })).ok,
+        false,
+      );
+      assert.equal((await fullResult(receipt)).ok, true);
+      const content = (await output).content;
+      assert.deepEqual(
+        content.filter(({ type }) => type === "image").map(({ data }) => data),
+        frames.map(({ data }) => data),
+      );
+      assert.match(content[0].text, /-1920/);
+      assert.equal((await fullResult(receipt)).ok, false);
+    });
+  }
+});
+
+test("global desktop observation rejects a late receipt after the owner disables it", async (t) => {
+  const { host, runtime, client, command, fullResult, run } = await setup(t, {
+    fullDesktop: true,
+  });
+  await command("sync", {
+    visible: true,
+    dragged: [],
+    desktopCaptureProtocol: 1,
+  });
+  host.screen.view = (ctx) => host.fullDesktop.view(ctx);
+  await run("agent-0", async (call) => {
+    const output = call();
+    const {
+      maxBytes: _maxBytes,
+      maxEdge: _maxEdge,
+      ...identity
+    } = await waitForFullDesktop(command);
+    runtime.config.desktopHome.screenView.enabled = false;
+    host.refresh();
+    assert.equal((await output).isError, true);
+    assert.equal(
+      (await fullResult({ client, ...identity, status: "permission" })).ok,
+      false,
+    );
   });
 });
 

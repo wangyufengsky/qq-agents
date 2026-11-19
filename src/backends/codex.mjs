@@ -16,6 +16,7 @@ import { videoDelivery, videoResponseGuide } from "../video/policy.mjs";
 import { mediaLease } from "../tools/media-lease.mjs";
 import { mcpResult } from "../tools/index.mjs";
 import { safeToolFailure } from "../tools/errors.mjs";
+import { MAX_DESKTOP_CAPTURE_WIRE_BYTES } from "../home/desktop-capture-protocol.mjs";
 import { DESKTOP_SCREEN_VIEW } from "../tools/names.mjs";
 import {
   sessionSignature,
@@ -338,7 +339,10 @@ export class CodexBackend {
         ? await r.finalizeToolOutput(original, {
             encode,
             // The local RPC appends a newline after serializing this object.
-            maxBytes: MAX_TOOL_RESPONSE_BYTES - 1,
+            maxBytes:
+              (p.tool === DESKTOP_SCREEN_VIEW
+                ? MAX_DESKTOP_CAPTURE_WIRE_BYTES
+                : MAX_TOOL_RESPONSE_BYTES) - 1,
           })
         : { wire: encode(original).wire };
       if (!active()) return this.rpc.reject(id);

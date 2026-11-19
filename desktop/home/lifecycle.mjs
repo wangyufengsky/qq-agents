@@ -33,6 +33,8 @@ export function startDesktopLifecycle({
   frameworkPort,
   manuallyMoved,
   manualTouches,
+  ownerInput,
+  screenCaptureSupported,
   visibleBounds,
   bodyPosition,
   windowVisible,
@@ -144,6 +146,7 @@ export function startDesktopLifecycle({
             for (const id of dragged) manuallyMoved.delete(id);
             const ownerTouches = [...manualTouches.values()];
             manualTouches.clear();
+            const desktopOwnerEvents = ownerInput.batch();
             const results = body.recovery();
             const bodyPositions =
               context.recoveryPositionPending && context.remoteState?.roomEpoch
@@ -172,6 +175,9 @@ export function startDesktopLifecycle({
                     windowVisible(entry),
                 ),
               dragged,
+              desktopOwnerInputProtocol: 1,
+              ...(screenCaptureSupported && { desktopCaptureProtocol: 1 }),
+              ...(desktopOwnerEvents.length && { desktopOwnerEvents }),
               ...(context.batchScreenGrants &&
                 ownerTouches.length && { ownerTouches }),
               ...(context.observationProtocol &&

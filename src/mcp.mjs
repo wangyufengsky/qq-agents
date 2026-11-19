@@ -7,6 +7,8 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { mcpEntrySpecs, parseMcpEntry } from "./tools/catalog.mjs";
+import { DESKTOP_SCREEN_VIEW } from "./tools/names.mjs";
+import { MAX_DESKTOP_CAPTURE_WIRE_BYTES } from "./home/desktop-capture-protocol.mjs";
 import { VIDEO_READ, MAX_VIDEO_RELAY_FRAME } from "./video/policy.mjs";
 import { safeToolFailure } from "./tools/errors.mjs";
 
@@ -86,7 +88,11 @@ server.setRequestHandler(CallToolRequestSchema, async (req, extra) => {
         response.headers.get("x-agent-output-digest") ?? "",
         extra.signal,
         result,
-        args.name === VIDEO_READ ? MAX_VIDEO_RELAY_FRAME : undefined,
+        args.name === VIDEO_READ
+          ? MAX_VIDEO_RELAY_FRAME
+          : args.name === DESKTOP_SCREEN_VIEW
+            ? MAX_DESKTOP_CAPTURE_WIRE_BYTES
+            : undefined,
       );
     return result;
   } catch (error) {

@@ -40,6 +40,7 @@ import {
   observationStateSchema,
 } from "./desktop-observation.mjs";
 import { DesktopScreen } from "./desktop-screen.mjs";
+import { DesktopFullDesktop } from "./desktop-full-desktop.mjs";
 import { DesktopBody } from "./desktop-body.mjs";
 import { DesktopStatusCards } from "./desktop-status-card.mjs";
 import {
@@ -92,6 +93,8 @@ const syncDataSchema = z
           )
           .max(48)
           .optional(),
+        desktopCaptureProtocol: z.literal(1).optional(),
+        desktopOwnerInputProtocol: z.literal(1).optional(),
         bodyProtocol: z.literal(2).optional(),
         bodyCrossDisplay: z.literal(true).optional(),
         bodyWindowApproach: z.literal(true).optional(),
@@ -233,6 +236,7 @@ export class DesktopHost {
     this.activityStarts = new Map();
     this.invitations = new DesktopInvitations(this);
     this.screen = new DesktopScreen(this);
+    this.fullDesktop = new DesktopFullDesktop(this);
     this.observation = new DesktopObservation(this);
     this.native = new DesktopNative(this);
     this.body = new DesktopBody(this);
@@ -457,6 +461,7 @@ export class DesktopHost {
   }
 
   refresh({ syncingClient } = {}) {
+    this.fullDesktop.maintain();
     this.notify();
     const now = this.runtime.now();
     this.observation.maintain();
@@ -844,6 +849,7 @@ export class DesktopHost {
     this.body.clear();
     this.observation.clear();
     this.screen.clear();
+    this.fullDesktop.clear();
     this.native.clear();
     void this.browser.clear();
     if (!this.live) return;
@@ -964,6 +970,8 @@ export class DesktopHost {
         this.client.bodyWindowApproach =
           data?.bodyProtocol === 2 && data.bodyWindowApproach === true;
       if (data && typeof data === "object" && "visible" in data) {
+        this.client.desktopCaptureProtocol = data.desktopCaptureProtocol;
+        this.client.desktopOwnerInputProtocol = data.desktopOwnerInputProtocol;
         if (data.observationProtocol === 2) this.client.observationProtocol = 2;
         this.client.displayObservation =
           this.client.observationProtocol === 2 &&
@@ -1230,10 +1238,12 @@ export class DesktopHost {
 
   pushSnapshot(state = this.clientSnapshot(), bodyResultAcks) {
     const screenRequest = this.screen.request();
+    const desktopCaptureRequest = this.fullDesktop.request();
     const observationVerify = this.observation.verifyWork();
     return {
       ...state,
       ...(screenRequest && { screenRequest }),
+      ...(desktopCaptureRequest && { desktopCaptureRequest }),
       ...(observationVerify.length && {
         observationVerify: observationVerify[0],
         ...(this.client.displayObservation && {

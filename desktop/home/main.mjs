@@ -1,6 +1,7 @@
 import {
   app,
   BrowserWindow,
+  desktopCapturer,
   dialog,
   ipcMain,
   Menu,
@@ -35,6 +36,11 @@ import { createWindowManager } from "./window-manager.mjs";
 import { createWindowMotion } from "./window-motion.mjs";
 import { createBodyActions } from "./body-actions.mjs";
 import { createDesktopSnapshot } from "./snapshot.mjs";
+import {
+  createDesktopCaptureHandler,
+  createFullDesktopCapture,
+} from "./full-desktop-capture.mjs";
+import { createOwnerInput } from "./owner-input.mjs";
 import { createPointerController } from "./pointer-controller.mjs";
 import { createFrameworkStateController } from "./framework-state-controller.mjs";
 import { startDesktopLifecycle } from "./lifecycle.mjs";
@@ -143,6 +149,21 @@ let desktopLocked = false;
 let bodyInputAfter = 0;
 const manuallyMoved = new Set();
 const manualTouches = new Map();
+const ownerInput = createOwnerInput();
+const desktopCapture = createDesktopCaptureHandler({
+  available: () => screenCaptureSupported,
+  blocked: () => desktopLocked,
+  capture: createFullDesktopCapture({
+    getDisplays: () => screen.getAllDisplays(),
+    getSources: (options) => desktopCapturer.getSources(options),
+    permission: () =>
+      process.platform === "darwin"
+        ? systemPreferences.getMediaAccessStatus("screen")
+        : "granted",
+  }),
+  send: (data, current) =>
+    framework.result("desktop-capture-result", data, current),
+});
 let bodyProtocol = false;
 let bodyCrossDisplay = false;
 let bodyInteractions = false;
@@ -1011,8 +1032,11 @@ const frameworkStateController = createFrameworkStateController({
     },
   },
 });
-function applyFramework(...args) {
-  return frameworkStateController.applyFramework(...args);
+function applyFramework(value, action) {
+  if (action === "sync" || action === "heartbeat" || value.offline)
+    ownerInput.update(value, { heartbeat: action === "heartbeat" });
+  if (action === "sync" || value.offline) void desktopCapture.update(value);
+  return frameworkStateController.applyFramework(value, action);
 }
 function syncLive(...args) {
   return frameworkStateController.syncLive(...args);
@@ -1055,6 +1079,7 @@ const pointerController = createPointerController({
   clampPoint,
   sizes,
   manualTouches,
+  ownerInput,
   positions,
   savePreferences,
   context: {
@@ -1553,6 +1578,7 @@ registerActionIpc({
   showPanel,
   randomUUID,
   manualTouches,
+  ownerInput,
   Menu,
   positions,
   returnHome,
@@ -1629,6 +1655,8 @@ startDesktopLifecycle({
   frameworkPort,
   manuallyMoved,
   manualTouches,
+  ownerInput,
+  screenCaptureSupported,
   visibleBounds,
   bodyPosition,
   windowVisible,

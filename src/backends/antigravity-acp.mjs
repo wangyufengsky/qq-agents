@@ -1,6 +1,11 @@
 // @ts-check
 import { spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  MAX_DESKTOP_CAPTURE_BYTES,
+  MAX_DESKTOP_CAPTURE_DISPLAYS,
+  MAX_DESKTOP_CAPTURE_ENCODED,
+} from "../home/desktop-capture-protocol.mjs";
 import { MAX_VIDEO_DETAIL_FRAMES } from "../video/policy.mjs";
 
 const LIMIT = 128 * 1024 * 1024;
@@ -33,20 +38,42 @@ async function takeAcpMedia(route, body) {
   return response.json();
 }
 
-/** @returns {Promise<{image: {type: "image", mimeType: "image/jpeg", data: string}, receiptId: string} | null>} */
+/** @typedef {{type: "image", mimeType: "image/jpeg", data: string} | {type: "text", text: string}} DesktopFramePart */
+/** @typedef {{content: DesktopFramePart[], receiptId: string}} DesktopFrame */
+/** @typedef {{image: Extract<DesktopFramePart, {type: "image"}>, receiptId: string}} LegacyDesktopFrame */
+
+/** @returns {Promise<DesktopFrame | null>} */
 async function takeAcpDesktopFrame() {
-  const { image, receiptId } = await takeAcpMedia("/desktop-frame");
-  if (image === null) return null;
+  const {
+    image,
+    content = image && [image],
+    receiptId,
+  } = await takeAcpMedia("/desktop-frame");
+  if (content === null) return null;
   if (
-    image?.type !== "image" ||
-    image.mimeType !== "image/jpeg" ||
-    typeof image.data !== "string" ||
-    image.data.length > 65536 ||
+    !Array.isArray(content) ||
+    !content.some((part) => part?.type === "image") ||
+    content.length > MAX_DESKTOP_CAPTURE_DISPLAYS * 2 ||
+    content.some((part) =>
+      part?.type === "image"
+        ? part.mimeType !== "image/jpeg" ||
+          typeof part.data !== "string" ||
+          part.data.length > MAX_DESKTOP_CAPTURE_ENCODED
+        : part?.type !== "text" ||
+          typeof part.text !== "string" ||
+          part.text.length > 512,
+    ) ||
+    content.reduce(
+      (bytes, part) =>
+        bytes +
+        (part.type === "image" ? Buffer.byteLength(part.data, "base64") : 0),
+      0,
+    ) > MAX_DESKTOP_CAPTURE_BYTES ||
     typeof receiptId !== "string" ||
     !/^[a-f0-9]{32}$/.test(receiptId)
   )
     throw Error("ANTIGRAVITY_PROTOCOL_ERROR");
-  return { image, receiptId };
+  return { content, receiptId };
 }
 
 async function takeAcpVideoFrames() {
@@ -65,7 +92,7 @@ async function takeAcpVideoFrames() {
  * @param {any} options @param {string} prompt
  * @param {(event: any) => void} emit @param {typeof spawn} [launch]
  * @param {import("./session-contract.mjs").InputImage[]} [inputImages]
- * @param {typeof takeAcpDesktopFrame} [takeDesktopFrame]
+ * @param {() => Promise<DesktopFrame | LegacyDesktopFrame | null>} [takeDesktopFrame]
  * @param {typeof takeAcpVideoFrames} [takeVideoFrames]
  * @param {(receiptId: string) => Promise<void>} [ackDesktopFrame] */
 export async function runAcp(
@@ -251,32 +278,25 @@ export async function runAcp(
     });
     if (closed || result.stopReason !== "end_turn")
       throw Error("ANTIGRAVITY_PROTOCOL_ERROR");
-    // Retain capacity for one screenshot and up to two video batches.
-    // Either tool can be called during any earlier media continuation.
+    // A desktop prompt may request another observation before it finishes.
     const maxVideoBatches = options.videoFrames ? 2 : 0;
-    const maxBatches = maxVideoBatches + Number(Boolean(options.desktopScreen));
-    let screenDelivered = false;
     let videoBatches = 0;
-    for (let i = 0; i < maxBatches; i++) {
+    while (options.desktopScreen || videoBatches < maxVideoBatches) {
       const video =
         videoBatches < maxVideoBatches ? await takeVideoFrames() : [];
       // Claim the screen last so no unrelated media request delays its prompt.
-      const frame =
-        options.desktopScreen && !screenDelivered
-          ? await takeDesktopFrame()
-          : null;
+      const frame = options.desktopScreen ? await takeDesktopFrame() : null;
       if (closed) throw Error("ANTIGRAVITY_PROTOCOL_ERROR");
       if (!frame && !video.length) break;
-      if (frame) screenDelivered = true;
       if (video.length) videoBatches++;
       const parts = [
         ...(frame
           ? [
               {
                 type: "text",
-                text: "这是当前桌面回合已授权的截图。请依据画面回应刚才的请求，并提交一次桌面决定。",
+                text: "这是当前桌面回合已授权的画面。",
               },
-              frame.image,
+              ...("content" in frame ? frame.content : [frame.image]),
             ]
           : []),
         ...(video.length

@@ -1,3 +1,4 @@
+import { desktopCaptureBatch } from "../src/home/desktop-capture-protocol.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -386,7 +387,14 @@ test("ACP desktop exposes a strict action entry and a single-use current-turn im
     cliProtocol: "acp",
   });
   const image = { type: "image", mimeType: "image/jpeg", data: "AQID" };
+  const captures = [
+    { type: "text", text: "Display 1" },
+    image,
+    { type: "text", text: "Display 2" },
+    { ...image, data: "BAUG" },
+  ];
   let leased = true;
+  let captureBatch = false;
   let frameSubmitted = 0;
   const { run, inputSubmitted } = startFakeTurn(fixture, {
     desktop: true,
@@ -404,7 +412,8 @@ test("ACP desktop exposes a strict action entry and a single-use current-turn im
         ? {
             [mediaLease]: () => leased,
             [mediaSubmitted]: () => frameSubmitted++,
-            content: [image],
+            [desktopCaptureBatch]: captureBatch,
+            content: captureBatch ? captures : [image],
           }
         : { ok: true };
     },
@@ -489,11 +498,17 @@ test("ACP desktop exposes a strict action entry and a single-use current-turn im
     assert.deepEqual(await take(), { image: null });
     const completed = await (await call("desktop_room_decide", {})).json();
     assert.equal(JSON.parse(completed.content[0].text).ok, true);
+    captureBatch = true;
+    await call("desktop_screen_view", {});
+    const batch = await take();
+    assert.deepEqual(batch.content, captures);
+    assert.equal((await ack(batch.receiptId)).status, 200);
+    assert.equal(frameSubmitted, 2);
     await call("desktop_screen_view", {});
     const stale = await take();
     leased = false;
     assert.equal((await ack(stale.receiptId)).status, 200);
-    assert.equal(frameSubmitted, 1);
+    assert.equal(frameSubmitted, 2);
     await call("desktop_screen_view", {});
     assert.deepEqual(await take(), { image: null });
   } finally {
