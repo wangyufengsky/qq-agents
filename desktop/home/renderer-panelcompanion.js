@@ -11,8 +11,10 @@ export function bindCompanion(select, getRoom, clock, windowObservationGrants) {
   const companionOptions = select(".companion-options");
   const companionSelect = select(".companion-mode");
   const companionStatus = select(".companion-status");
+  const applicationsOptions = select(".blocked-applications");
   const sensitiveInput = select(".sensitive-applications");
   const sensitiveSave = select(".sensitive-applications-save");
+  const applicationsStatus = select(".blocked-applications-status");
   const frameReceiptSection = select(".frame-receipts");
   let displayedFrameReceipts;
   let displayedApplications;
@@ -62,18 +64,28 @@ export function bindCompanion(select, getRoom, clock, windowObservationGrants) {
   function updateCompanion() {
     const room = getRoom();
     const preference = room?.companion;
-    companionOptions.hidden =
-      !room?.connected || !preference || !window.nest.companionMode;
-    if (companionOptions.hidden) return;
-    companionSelect.value = preference.mode;
-    const applying = changingCompanion || !preference.ready;
-    companionSelect.disabled = changingCompanion;
-    sensitiveSave.disabled = applying;
-    const applications = preference.applications?.join("\n") ?? "";
+    const connected = room?.connected;
+    const canEdit = connected && window.nest.companionMode;
+    companionOptions.hidden = !canEdit || room.desktopUnified || !preference;
+    applicationsOptions.hidden =
+      !canEdit || (room.desktopUnified ? !room.nativeControl : !preference);
+    const applying = changingCompanion || !preference?.ready;
+    sensitiveSave.disabled = room?.desktopUnified
+      ? changingCompanion
+      : applying;
+    const applications = (
+      room?.blockedApplications ??
+      preference?.applications ??
+      []
+    ).join("\n");
     if (displayedApplications !== applications) {
       displayedApplications = applications;
       sensitiveInput.value = applications;
     }
+    updateFrameReceipts(connected ? room : { roles: [] });
+    if (companionOptions.hidden) return;
+    companionSelect.value = preference.mode;
+    companionSelect.disabled = changingCompanion;
     const controls =
       room.nativeControl?.grantedAgentId || room.browserControl?.grantedAgentId;
     const viewing =
@@ -81,7 +93,6 @@ export function bindCompanion(select, getRoom, clock, windowObservationGrants) {
       room.screenView?.grantedAgentId ||
       windowObservationGrants(room.observation).length ||
       room.observation?.displays?.length;
-    updateFrameReceipts(room);
     const handoff = room.nativeControl?.handoff;
     companionStatus.textContent =
       handoff === "pending" || handoff === "unconfirmed"
@@ -100,6 +111,7 @@ export function bindCompanion(select, getRoom, clock, windowObservationGrants) {
   async function changeCompanion(action, value) {
     if (changingCompanion || !window.nest.companionMode) return;
     changingCompanion = true;
+    if (action === "applications") applicationsStatus.hidden = true;
     updateCompanion();
     let applied;
     try {
@@ -109,7 +121,12 @@ export function bindCompanion(select, getRoom, clock, windowObservationGrants) {
     } finally {
       changingCompanion = false;
       updateCompanion();
-      if (!applied) companionStatus.textContent = "暂无法保存，请重试。";
+      if (action === "applications") {
+        applicationsStatus.hidden = false;
+        applicationsStatus.textContent = applied
+          ? "已保存。"
+          : "暂无法保存，请重试。";
+      } else if (!applied) companionStatus.textContent = "暂无法保存，请重试。";
     }
   }
   companionSelect.addEventListener(

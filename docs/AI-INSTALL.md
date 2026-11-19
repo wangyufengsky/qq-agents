@@ -212,7 +212,7 @@ docker compose run --rm --no-deps -it --entrypoint node qq-agents src/cli/setup.
 npm run setup -- desktop --data "<数据目录>"
 ```
 
-此命令按已保存的选择准备 Electron、本机窗口驱动和浏览器。也可以按用户要求添加 `--all`，一次备好三种依赖。已有 Chrome、Chromium 或 Edge 会被复用。软件准备完成后，角色和目标仍须在桌面面板单独授权。macOS 屏幕录制、辅助功能权限由用户在系统设置中授予。Windows 使用已登录的桌面会话。Docker 和 Linux 跳过此步骤。详见 [桌面小窝](DESKTOP-HOME.md#准备桌面依赖)。
+开启桌面小窝需要 Electron。若用户还想使用窗口或网页操作，在同一命令添加 `--all`，一并准备本机窗口驱动和 Chromium。已有 Chrome、Chromium 或 Edge 会被复用。全桌面观察用设置中的一个观察开关。窗口和网页操作在桌面面板按角色和实际目标分别授权。macOS 屏幕录制、辅助功能权限由用户在系统设置中授予。Windows 使用已登录的桌面会话。Docker 和 Linux 跳过此步骤。详见 [桌面小窝](DESKTOP-HOME.md#准备桌面依赖)。
 
 **离开本步骤前正常停止刚打开的管理台**（本机 Ctrl+C；Docker `docker compose stop qq-agents`），保持隔离和暂停。随后检查，再由用户确认上线；`setup live` 必须在管理台停止时运行。
 

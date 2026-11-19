@@ -239,27 +239,6 @@
                   </select>
                 </label>
                 <p class="companion-status" role="status"></p>
-                <details class="frame-receipts" hidden>
-                  <summary>近期画面交付</summary>
-                  <ul></ul>
-                </details>
-                <details>
-                  <summary>敏感应用黑名单</summary>
-                  <label
-                    >每行填写一个应用名或软件包标识
-                    <textarea
-                      class="sensitive-applications"
-                      rows="3"
-                      maxlength="6060"
-                    ></textarea>
-                  </label>
-                  <button
-                    type="button"
-                    class="quiet sensitive-applications-save"
-                  >
-                    保存黑名单
-                  </button>
-                </details>
               </section>
               <div class="desktop-permission screen-view" hidden>
                 <strong>查看屏幕</strong>
@@ -335,6 +314,25 @@
                 </div>
                 <p class="unified-grant-status" role="status"></p>
               </section>
+              <details class="frame-receipts" hidden>
+                <summary>近期画面交付</summary>
+                <ul></ul>
+              </details>
+              <details class="blocked-applications" hidden>
+                <summary>敏感应用黑名单</summary>
+                <label
+                  >每行填写一个应用名或软件包标识
+                  <textarea
+                    class="sensitive-applications"
+                    rows="3"
+                    maxlength="6060"
+                  ></textarea>
+                </label>
+                <button type="button" class="quiet sensitive-applications-save">
+                  保存黑名单
+                </button>
+                <p class="blocked-applications-status" role="status" hidden></p>
+              </details>
             </div>
             <section class="display-manager" hidden>
               <button type="button" class="quiet display-back">

@@ -78,7 +78,7 @@ const contracts = Object.freeze({
         callTool: (name, args) => {
           if (ctx.backendInputEpoch !== ctx.inputEpoch)
             throw Error("BACKEND_INPUT_NOT_SUBMITTED");
-          return runtime.callTool(ctx, name, args, { deferInput: true });
+          return runtime.callModelTool(ctx, name, args, { deferInput: true });
         },
       };
     },

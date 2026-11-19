@@ -30,7 +30,13 @@ export function createCompanionController({
   }
 
   function syncCompanionMode(state = context.remoteState) {
-    if (!context.framework || !state?.connected || !state.roomEpoch) return;
+    if (
+      !context.framework ||
+      !state?.connected ||
+      !state.roomEpoch ||
+      state.desktopUnified
+    )
+      return;
     if (
       state.companionMode === context.selectedMode &&
       Number.isSafeInteger(state.companionRevision)
@@ -105,7 +111,11 @@ export function createCompanionController({
   function invalidatePermissions(reason) {
     clearVisualPermissions();
     clearControlPermissions();
-    if (context.framework && context.remoteState?.connected)
+    if (
+      context.framework &&
+      context.remoteState?.connected &&
+      !context.remoteState.desktopUnified
+    )
       void context.framework
         .authorization("mode-invalidate", reason)
         .catch(() => {});
@@ -127,11 +137,13 @@ export function createCompanionController({
         )
           return true;
         context.blockedApplications = next;
-        invalidatePermissions("policy-changed");
+        if (!context.remoteState.desktopUnified)
+          invalidatePermissions("policy-changed");
         savePreferences();
         update();
         return true;
       }
+      if (context.remoteState.desktopUnified) return false;
       const next = companionMode(input?.value);
       if (input?.action !== "mode" || !next) return false;
       if (next !== context.selectedMode) {

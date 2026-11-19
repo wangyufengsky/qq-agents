@@ -655,7 +655,7 @@ export function createServer({
           }
           const result = await (ctx.runtimeKind === "subject-social"
             ? runtime.socialRuntime.callTool(ctx, data.name, data.arguments)
-            : runtime.callTool(ctx, data.name, data.arguments, {
+            : runtime.callModelTool(ctx, data.name, data.arguments, {
                 deferInput: true,
               }));
           if (ctx.runtimeKind === "subject-social")

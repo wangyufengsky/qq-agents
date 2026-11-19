@@ -52,7 +52,7 @@ export function panel(root) {
   const activityControl = button("quiet", "暂停自主活动");
   activityControl.hidden = true;
   activityControl.addEventListener("click", () => {
-    if (room?.activityEnabled)
+    if (room?.activityEnabled && !room.desktopUnified)
       window.nest.act("activity-pause", !room.activityPaused);
   });
   select(".desktop-permissions").prepend(activityControl);
@@ -313,6 +313,7 @@ export function panel(root) {
       !room.observationReviewAvailable ||
       !room.connected ||
       !window.nest.observationReview;
+    observationTab.textContent = room.desktopUnified ? "旧版观察记录" : "观察";
     if (observationTab.hidden && !observationResults.hidden)
       switchSection("chat", true);
     updateObservationResults(room);
@@ -426,7 +427,7 @@ export function panel(root) {
         : active.length
           ? `${active.map(({ name }) => name).join("、")}正在自主活动…`
           : "";
-    activityControl.hidden = !room.activityEnabled;
+    activityControl.hidden = room.desktopUnified || !room.activityEnabled;
     activityControl.disabled = Boolean(room.connectionLost);
     const activityLabel = room.activityPaused ? "继续自主活动" : "暂停自主活动";
     if (activityControl.textContent !== activityLabel)

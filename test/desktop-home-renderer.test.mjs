@@ -2233,6 +2233,7 @@ test("unified owner controls show global observation and explicit per-target gra
   const page = await browser.newPage();
   await page.addInitScript(() => {
     window.ownerCalls = [];
+    window.reviewCalls = [];
     window.nest = {
       onRoom() {},
       onSection() {},
@@ -2243,6 +2244,12 @@ test("unified owner controls show global observation and explicit per-target gra
           connected: true,
           desktopUnified: true,
           desktopObservationEnabled: true,
+          activityEnabled: true,
+          companion: { mode: "presence", ready: false },
+          observationReviewAvailable: true,
+          frameReceipts: [
+            { agentId: "fish", at: Date.now(), state: "model-submitted" },
+          ],
           roomEpoch: "room",
           roles: [{ id: "fish", name: "小鱼", color: "mint", state: "here" }],
           messages: [],
@@ -2274,6 +2281,21 @@ test("unified owner controls show global observation and explicit per-target gra
           },
         },
       }),
+      companionMode: async () => false,
+      observationReview: async (action) => {
+        window.reviewCalls.push(action);
+        return {
+          records: [
+            {
+              id: "legacy-summary",
+              agentId: "fish",
+              summary: "旧窗口观察摘要",
+              createdAt: Date.now(),
+              expiresAt: Date.now() + 10_000,
+            },
+          ],
+        };
+      },
       nativeControl: async (input) => {
         window.ownerCalls.push(["native", input]);
         return "granted";
@@ -2287,6 +2309,18 @@ test("unified owner controls show global observation and explicit per-target gra
   await page.goto(pageUrl("type=panel"));
   await page.getByRole("button", { name: /小窝工具/ }).click();
   await page.getByText("已授权所有在场角色查看全部显示器。").waitFor();
+  await page.getByText("近期画面交付", { exact: true }).click();
+  await page.getByText(/画面已提交模型/).waitFor();
+  assert.equal(await page.locator(".blocked-applications").isVisible(), true);
+  assert.equal(await page.locator(".companion-options").isVisible(), false);
+  assert.equal(
+    await page.getByRole("button", { name: "暂停自主活动" }).isVisible(),
+    false,
+  );
+  assert.equal(
+    await page.locator('[data-tab="observation"]').textContent(),
+    "旧版观察记录",
+  );
   assert.equal(await page.locator(".screen-view").isVisible(), false);
   assert.equal(await page.locator(".display-observation").isVisible(), false);
   assert.equal(await page.locator(".observation").isVisible(), false);
@@ -2306,4 +2340,15 @@ test("unified owner controls show global observation and explicit per-target gra
     ["browser", { type: "grant", agentId: "fish" }],
     ["browser", { type: "revoke", grantId: "tab-one" }],
   ]);
+  await page.getByRole("button", { name: "关闭面板" }).click();
+  await page.getByRole("button", { name: "旧版观察记录" }).click();
+  await page.getByText("旧窗口观察摘要").waitFor();
+  assert.equal(
+    await page.getByText("观察回复", { exact: true }).isVisible(),
+    false,
+  );
+  const reviewCalls = await page.evaluate(() => window.reviewCalls);
+  assert.ok(
+    reviewCalls.length && reviewCalls.every((action) => action === "list"),
+  );
 });

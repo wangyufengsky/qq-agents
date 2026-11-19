@@ -81,7 +81,6 @@ export const desktopSessionSpecOptions = Object.freeze({
   desktopBodyCrossDisplay: true,
   desktopBodyInteractions: true,
   desktopPublicWave: true,
-  desktopWindowApproach: true,
 });
 
 export function scopedCatalog(runtime, ctx, input) {

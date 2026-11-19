@@ -1405,6 +1405,21 @@ export class Runtime {
   callTool(...args) {
     return this.trackWork(this.runTool(...args));
   }
+  callModelTool(ctx, name, args, options) {
+    if (!ctx.desktopUnified) return this.callTool(ctx, name, args, options);
+    const epoch = ctx.inputEpoch;
+    // Queue both native and relay requests at entry. Tool-internal calls may
+    // invoke another tool and must finish inside the current queue item.
+    const queued = Promise.resolve(ctx.desktopToolTail).then(() => {
+      if (ctx.inputEpoch !== epoch) throw Error("INPUT_EPOCH_CHANGED");
+      return this.runTool(ctx, name, args, options);
+    });
+    ctx.desktopToolTail = queued.then(
+      () => {},
+      () => {},
+    );
+    return this.trackWork(queued);
+  }
   // Records name, outcome and duration of every call (never arguments or
   // results), so a turn's actual activity can be measured afterwards.
   async runTool(ctx, name, args = {}, { deferInput = false } = {}) {

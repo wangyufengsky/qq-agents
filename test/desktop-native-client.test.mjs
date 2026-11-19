@@ -438,3 +438,66 @@ test("unified native targets resume after disconnect without accepting a differe
   );
   assert.equal(data.length, 1);
 });
+
+test("a restarted unified native client resumes only the still-open authorized window", async () => {
+  const target = {
+    id: "fixture-window",
+    pid: 300,
+    processInstance: "fixture-process",
+    app: "fixture",
+  };
+  const replacement = { ...target, processInstance: "reopened" };
+  const targetId = nativeControlTargetId(target);
+  let sources = [replacement];
+  let listings = 0;
+  const opened = [];
+  const results = [];
+  const client = new NativeControlClient(
+    {
+      async listWindows({ unified }) {
+        assert.equal(unified, true);
+        listings++;
+        return sources;
+      },
+      open(source, { unified }) {
+        assert.equal(unified, true);
+        opened.push(source);
+        return { observe: () => ({ elements: [] }), close() {} };
+      },
+    },
+    {
+      command() {
+        assert.fail("An existing authorization should not send another grant");
+      },
+      async result(outcome) {
+        results.push(outcome.requestId);
+      },
+    },
+  );
+  const grant = { agentId: "fish", grantId: "prior-grant", targetId };
+  const room = {
+    desktopUnified: true,
+    roomEpoch: "room",
+    nativeControl: { grants: [grant] },
+  };
+  const request = {
+    grantId: grant.grantId,
+    targetId,
+    roomEpoch: room.roomEpoch,
+    requestId: "authorized-request",
+    turnId: "turn",
+    expiresAt: Date.now() + 10_000,
+    action: { type: "observe" },
+  };
+  client.update({ room, nativeRequests: [request] }, "sync");
+  await setImmediate();
+  assert.equal(listings, 1);
+  assert.deepEqual(opened, []);
+
+  sources = [target, replacement];
+  client.update({ room, nativeRequests: [request] }, "sync");
+  await setImmediate();
+  assert.deepEqual(opened, [target]);
+  assert.deepEqual(results, [request.requestId]);
+  assert.equal(client.target(grant.agentId, grant.grantId), target);
+});

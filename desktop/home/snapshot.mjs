@@ -128,16 +128,20 @@ export function createDesktopSnapshot({
         observationReviewAvailable: context.observationProtocol,
         frameReceipts,
         ...(context.frameworkRoot && {
-          companion: {
-            mode: context.selectedMode,
-            verifiedWindowSurface,
-            ready:
-              data.companionMode === context.selectedMode &&
-              Number.isSafeInteger(data.companionRevision) &&
-              !context.syncingMode,
-            applications: context.blockedApplications,
-          },
+          blockedApplications: context.blockedApplications,
         }),
+        ...(context.frameworkRoot &&
+          !data.desktopUnified && {
+            companion: {
+              mode: context.selectedMode,
+              verifiedWindowSurface,
+              ready:
+                data.companionMode === context.selectedMode &&
+                Number.isSafeInteger(data.companionRevision) &&
+                !context.syncingMode,
+              applications: context.blockedApplications,
+            },
+          }),
         ...(screens.length && {
           windowTaskScreenGrants: screens.map(({ agentId, grantId }) => ({
             agentId,

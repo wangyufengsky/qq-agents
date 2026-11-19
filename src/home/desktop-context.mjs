@@ -74,6 +74,9 @@ ${selfBody}
   let state = memory.state(conversation);
   let retainedSession;
   if (state.session) {
+    const differentBackend =
+      Boolean(state.desktopBackendId) &&
+      state.desktopBackendId !== agent.backendId;
     const changedContract =
       state.desktopBackendId !== agent.backendId ||
       (signature &&
@@ -98,12 +101,7 @@ ${selfBody}
         tools,
         state.backendContract,
       );
-    if (
-      unified &&
-      changedContract &&
-      !retainedSession &&
-      !request.retireIncompatibleSession
-    )
+    if (unified && changedContract && !retainedSession && !differentBackend)
       throw new SessionPreparationFailure(Error("SESSION_REQUIRES_HANDOFF"));
     if (reason && !retainedSession) {
       retireSession(memory, conversation, reason, now, {
