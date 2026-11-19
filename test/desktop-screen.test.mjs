@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { isDeepStrictEqual } from "node:util";
 import { randomBytes, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -7,6 +8,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { runNativeSocial } from "../src/backends/native-social.mjs";
 import { deriveRelayToken } from "../src/core/relay-auth.mjs";
 import { desktopToken } from "../src/home/desktop-auth.mjs";
+import { createDesktopRoomHost } from "../src/home/desktop-host.mjs";
 import { createServer } from "../src/server.mjs";
 import { config, fixture } from "./helpers.mjs";
 
@@ -14,14 +16,22 @@ const tool = "desktop_screen_view";
 const jpeg =
   "/9j/4AAQSkZJRgABAgAAAQABAAD//gAQTGF2YzYyLjI4LjEwMAD/2wBDAAgEBAQEBAUFBQUFBQYGBgYGBgYGBgYGBgYHBwcICAgHBwcGBgcHCAgICAkJCQgICAgJCQoKCgwMCwsODg4RERT/xABLAAEBAAAAAAAAAAAAAAAAAAAABQEBAAAAAAAAAAAAAAAAAAAABRABAAAAAAAAAAAAAAAAAAAAABEBAAAAAAAAAAAAAAAAAAAAAP/AABEIABAAEAMBIgACEQADEQD/2gAMAwEAAhEDEQA/AIAAok//2Q==";
 
-async function setup(t, { native = false, fullDesktop = false } = {}) {
+async function setup(
+  t,
+  { native = false, fullDesktop = false, unified = false } = {},
+) {
   const cfg = config(2);
   cfg.desktopHome.enabled = true;
   cfg.desktopHome.screenView = { enabled: true };
   cfg.desktopHome.nativeControl = { enabled: native };
-  cfg.desktopHome.toolRoles = ["agent-0", "agent-1"];
-  for (const agent of cfg.agents) agent.behavior.imageInput.enabled = true;
-  const { runtime, root } = fixture(t, { cfg });
+  if (!unified) {
+    cfg.desktopHome.toolRoles = ["agent-0", "agent-1"];
+    for (const agent of cfg.agents) agent.behavior.imageInput.enabled = true;
+  }
+  const { runtime, root } = fixture(t, {
+    cfg,
+    createDesktopHost: unified ? createDesktopRoomHost : undefined,
+  });
   const host = runtime.desktopVisits;
   const token = randomBytes(32).toString("hex");
   const server = createServer({ runtime, token, allowLive: true });
@@ -391,6 +401,104 @@ test("global desktop observation delivers both displays through authenticated HT
       assert.equal((await fullResult(receipt)).ok, false);
     });
   }
+});
+
+test("the normal room gives both present roles full observation and dialogue in their original sessions", async (t) => {
+  const { host, runtime, client, command, fullResult } = await setup(t, {
+    unified: true,
+  });
+  const turnErrors = [];
+  t.mock.method(runtime.diagnostics, "report", (error) =>
+    turnErrors.push(error.cause ?? error),
+  );
+  const sessions = new Map();
+  const catalogues = new Map();
+  const images = new Map();
+  const frames = [1, 2].map((id) => ({
+    displayId: String(id),
+    bounds: { x: (id - 2) * 1920, y: 0, width: 1920, height: 1080 },
+    width: 16,
+    height: 16,
+    data: jpeg,
+  }));
+  const settled = () =>
+    Promise.all([...host.live.activities.values()].map(({ done }) => done));
+  const handshake = await command("sync", {
+    visible: true,
+    dragged: [],
+    desktopCaptureProtocol: 1,
+    desktopOwnerInputProtocol: 1,
+  });
+  assert.equal(handshake.room.desktopObservationEnabled, false);
+  for (const { id } of host.live.here()) {
+    const backend = runtime.backendConnections.adapter(runtime.agent(id));
+    backend.runDesktop = (params) =>
+      runNativeSocial(backend, params, async () => {}, "desktop");
+    backend.run = async (params) => {
+      await params.beforeInputSubmitted();
+      params.onInputSubmitted();
+      if (params.prompt.includes("全屏授权前")) {
+        const session = { backend: "codex", id: "fixture-" + id };
+        params.saveSession(session);
+        sessions.set(id, session);
+        catalogues.set(id, structuredClone(params.tools));
+        assert(params.tools.some(({ name }) => name === tool));
+        await assert.rejects(
+          params.callTool(tool, {}),
+          /DESKTOP_SCREEN_DENIED/,
+        );
+      } else if (params.prompt.includes("全屏授权后")) {
+        assert.equal(params.session?.id, sessions.get(id).id);
+        assert.ok(
+          isDeepStrictEqual(params.tools, catalogues.get(id)),
+          "tool catalogue changed",
+        );
+        const result = await params.callTool(tool, {});
+        images.set(
+          id,
+          result.content.filter(({ type }) => type === "image"),
+        );
+        await params.callTool("memory_search", { query: "桌面" });
+        await params.callTool("desktop_room_decide", {
+          action: "say",
+          text: "看到了两块屏幕。",
+        });
+      }
+    };
+  }
+  await command("send", "全屏授权前");
+  await settled();
+  assert.equal(sessions.size, 2);
+  assert.equal((await command("sync")).desktopCaptureRequest, undefined);
+  runtime.config.desktopHome.observeDesktop = true;
+  assert.equal((await command("sync")).room.desktopObservationEnabled, true);
+  await command("send", "全屏授权后");
+  const served = [];
+  for (let i = 0; i < 2; i++) {
+    const {
+      maxEdge: _edge,
+      maxBytes: _bytes,
+      ...identity
+    } = await waitForFullDesktop(command).catch((error) => {
+      throw turnErrors[0] ?? error;
+    });
+    assert.equal((await fullResult({ ...identity, client, frames })).ok, true);
+    served.push(identity.agentId);
+  }
+  await settled();
+  assert.deepEqual(served.sort(), ["agent-0", "agent-1"]);
+  for (const [id, session] of sessions) {
+    assert.equal(images.get(id)?.length, 2);
+    assert.equal(
+      runtime.memory.bind(id).state("@desktop").session?.id,
+      session.id,
+    );
+  }
+  assert.equal(
+    host.archive.history().filter(({ text }) => text === "看到了两块屏幕。")
+      .length,
+    2,
+  );
 });
 
 test("global desktop observation rejects a late receipt after the owner disables it", async (t) => {

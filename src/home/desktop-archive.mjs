@@ -172,6 +172,27 @@ export class DesktopArchive {
       }));
   }
 
+  delivered(agentId) {
+    return this.db
+      .prepare(
+        `SELECT d.speaker, d.text
+        FROM events e
+        JOIN desktop_messages d ON d.id=e.message_id
+        WHERE e.agent_id=? AND e.conversation=? AND e.connection_id=?
+          AND (
+            e.kind='message.sent' OR (
+              e.kind='message.received' AND EXISTS (
+                SELECT 1 FROM message_progress p WHERE p.agent_id=e.agent_id
+                  AND p.conversation=e.conversation AND p.seq=e.seq AND p.summary_only=0
+              )
+            )
+          )
+        ORDER BY d.seq DESC LIMIT 10`,
+      )
+      .all(agentId, DESKTOP_CONVERSATION, connectionId)
+      .reverse();
+  }
+
   heard(agentId, sinceSeq, sinceTime, limit) {
     return this.db
       .prepare(

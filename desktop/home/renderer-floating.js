@@ -29,9 +29,11 @@ function bindFloatingDrag(handle, door) {
       Math.hypot(last.x - pointer.origin.x, last.y - pointer.origin.y) >= 5
     ) {
       moved = true;
-      handle.dataset.dragging = "true";
-      delete handle.dataset.motionTransition;
-      delete handle.dataset.gesture;
+      if (!handle.hasAttribute("data-unified-drag")) {
+        handle.dataset.dragging = "true";
+        delete handle.dataset.motionTransition;
+        delete handle.dataset.gesture;
+      }
       window.nest.act("drag-start", pointer.origin);
     }
     if (moved) window.nest.act("drag-move", last);
@@ -121,9 +123,16 @@ export function floating(root, type, id) {
   bindFloatingDrag(art, door);
 
   function subscribe(update) {
-    window.nest.onRoom(update);
+    const receive = (data) => {
+      art.toggleAttribute(
+        "data-unified-drag",
+        !door && data.desktopUnified === true,
+      );
+      update(data);
+    };
+    window.nest.onRoom(receive);
     window.nest.get().then((value) => {
-      if (value) update(value.data);
+      if (value) receive(value.data);
     });
   }
 

@@ -12,6 +12,7 @@ import {
   sessionSignature,
   assertSession,
   acceptsSession,
+  authenticatesSessionContract,
 } from "./session-contract.mjs";
 import {
   beforeSessionInput,
@@ -337,6 +338,17 @@ export class DshBackend {
   acceptsSession(session, tools, previous) {
     return acceptsSession(this, session, tools, previous);
   }
+  /** The preset exposes the current catalogue through the per-turn bridge.
+   * @param {StoredSession} session @param {import("./session-contract.mjs").ToolSpec[]} tools @param {import("./session-contract.mjs").SessionContract} [previous] */
+  upgradeDesktopSession(session, tools, previous) {
+    if (
+      this.config.preset !== "qq-unified" ||
+      this.config.functionalAgentOnly ||
+      !authenticatesSessionContract(this, session, previous)
+    )
+      return undefined;
+    return { ...session, signature: this.sessionSignature(tools) };
+  }
   /** @param {{windowId?: string, actorGeneration?: string}} [filter] */
   async closeSocialSessions(filter = {}) {
     await closeSocialSessions(this, filter);
@@ -432,6 +444,7 @@ export class DshBackend {
   async run({
     conversation,
     desktop,
+    desktopUnified,
     prompt,
     inputImages = [],
     instructions,
@@ -623,6 +636,13 @@ export class DshBackend {
             lastDshTurnEvent(current)?.type !== "turn/end")
         )
           throw Error("DSH_RECOVERY_STATE_UNVERIFIED");
+        if (
+          desktopUnified &&
+          session &&
+          (!dshInboxEmpty(current) ||
+            lastDshTurnEvent(current)?.type === "turn/start")
+        )
+          throw Error("DSH_RECOVERY_STATE_UNVERIFIED");
         return current;
       });
       clearTimeout(followTimer);
@@ -757,7 +777,10 @@ export class DshBackend {
           clearTimeout(timer);
         }
       }
-      if ((!e.sessionReusable && !sessionWasUnchanged(e)) || signal.aborted)
+      if (
+        !desktopUnified &&
+        ((!e.sessionReusable && !sessionWasUnchanged(e)) || signal.aborted)
+      )
         saveSession(null);
       throw e;
     } finally {
@@ -774,8 +797,11 @@ export class DshBackend {
           );
         // Desktop cleanup must wait for the native admission request to settle
         // before the isolated wrapper stops the session and releases QQ.
-        else if (desktop && signal.aborted)
+        else if (desktop && signal.aborted) {
           await pendingSubmission?.catch(() => {});
+          if (desktopUnified && pendingSubmission)
+            await client.stopSessionWork(sessionId);
+        }
       } finally {
         this.turns.delete(sessionId);
         client.events.forget?.(sessionId);

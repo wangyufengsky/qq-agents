@@ -46,9 +46,11 @@ export class SubjectInbox {
   save(agentId, state) {
     this.runtime.memory.bind(agentId).setState(INBOX, state);
   }
-  sourceAllowed(agent, source) {
+  sourceAllowed(agent, source, unifiedDesktop = false) {
     return source === DESKTOP_CONVERSATION
-      ? desktopRoleToolsEnabled(this.runtime.config, agent)
+      ? unifiedDesktop
+        ? this.runtime.config.desktopHome.enabled === true
+        : desktopRoleToolsEnabled(this.runtime.config, agent)
       : allowed(agent, source, this.runtime.config);
   }
   assertScope(ctx, subject) {
@@ -59,7 +61,8 @@ export class SubjectInbox {
         ? ctx.conversation !== SUBJECT
         : !chat.test(ctx.conversation) &&
           !(
-            isDesktopToolContext(ctx) && this.sourceAllowed(a, ctx.conversation)
+            isDesktopToolContext(ctx) &&
+            this.sourceAllowed(a, ctx.conversation, ctx.desktopUnified)
           )) ||
       ctx.intentOnly ||
       ctx.scheduleRunId
@@ -194,6 +197,7 @@ export class SubjectInbox {
       id,
       revision: 1,
       source: ctx.conversation,
+      ...(ctx.desktopUnified && { desktopUnified: true }),
       status: "pending",
       createdAt: now,
       reviewAt: now,
@@ -220,7 +224,7 @@ export class SubjectInbox {
           (item.status === "accepted" && item.proposal.kind === "room")) &&
         (item.reviewAt == null || item.reviewAt <= now) &&
         !reminderExpired(item, now) &&
-        this.sourceAllowed(a, item.source),
+        this.sourceAllowed(a, item.source, item.desktopUnified),
     );
   }
   view(ctx, items, now) {
@@ -342,7 +346,8 @@ export class SubjectInbox {
     if (
       (!chat.test(ctx.conversation) &&
         !(
-          isDesktopToolContext(ctx) && this.sourceAllowed(a, ctx.conversation)
+          isDesktopToolContext(ctx) &&
+          this.sourceAllowed(a, ctx.conversation, ctx.desktopUnified)
         )) ||
       !ctx.allowedTools?.includes("subject_inbox_list")
     )
@@ -661,7 +666,7 @@ export class SubjectInbox {
     const apply = () => {
       const state = this.state(a.id);
       const item = (state.items || []).find((value) => value.id === args.id);
-      if (!item || !this.sourceAllowed(a, item.source))
+      if (!item || !this.sourceAllowed(a, item.source, item.desktopUnified))
         throw Error("RECORD_NOT_FOUND");
       if (item.status !== "pending") {
         if (item.status === "accepted" && item.proposal.kind === "reflection") {

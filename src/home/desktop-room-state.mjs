@@ -70,6 +70,7 @@ export function addMessage(
   turnId,
   speakerType = "system",
   explicitTarget,
+  present,
 ) {
   const archived =
     speakerType === "system"
@@ -82,6 +83,7 @@ export function addMessage(
           turnId,
           speakerType,
           explicitTarget,
+          present,
         );
   const message = {
     id: ++room.sequence,

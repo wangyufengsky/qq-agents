@@ -108,3 +108,144 @@ export class DesktopLocalGrant {
     return { grant, current };
   }
 }
+
+export const localControlTargetId = z.string().uuid();
+
+export class DesktopControlGrants {
+  constructor(owner) {
+    this.owner = owner;
+    this.records = new Map();
+    this.revoked = new Set();
+    this.db = owner.host.runtime.memory?.db;
+    this.db?.exec(`
+      CREATE TABLE IF NOT EXISTS desktop_control_grants (
+        tool TEXT NOT NULL,
+        grant_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL,
+        target_id TEXT NOT NULL,
+        origin TEXT,
+        revoked INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (tool, grant_id)
+      )
+    `);
+    for (const { grantId, revoked, ...grant } of this.db
+      ?.prepare(
+        `SELECT grant_id AS grantId, agent_id AS agentId,
+        target_id AS targetId, origin, revoked FROM desktop_control_grants
+        WHERE tool=?`,
+      )
+      .all(owner.tool) ?? []) {
+      if (revoked) this.revoked.add(grantId);
+      else
+        this.records.set(grantId, {
+          ...grant,
+          grantId,
+          origin: grant.origin ?? undefined,
+          unified: true,
+        });
+    }
+  }
+
+  state() {
+    return this.records.size || this.revoked.size
+      ? { grants: this.list() }
+      : {};
+  }
+
+  view(grant) {
+    const { grantId, agentId, targetId, origin } = grant;
+    return { grantId, agentId, targetId, ...(origin && { origin }) };
+  }
+
+  eligible() {
+    const { host } = this.owner;
+    const { live, runtime } = host;
+    if (!host.connected()) return [];
+    return (live?.here() ?? [])
+      .filter(
+        ({ id }) =>
+          live.visits.has(id) &&
+          (runtime.writable?.(runtime.agent(id), DESKTOP_CONVERSATION) ?? true),
+      )
+      .map(({ id }) => id);
+  }
+
+  current(grant) {
+    const { host } = this.owner;
+    return Boolean(
+      grant &&
+      this.records.get(grant.grantId) === grant &&
+      host.connected() &&
+      host.live?.visits.has(grant.agentId) &&
+      this.eligible().includes(grant.agentId),
+    );
+  }
+
+  list(agentId) {
+    return Array.from(this.records.values())
+      .filter((grant) => agentId === undefined || grant.agentId === agentId)
+      .map((grant) => this.view(grant));
+  }
+
+  change(value) {
+    const { host, unavailable } = this.owner;
+    if (
+      !host.connected() ||
+      value.roomEpoch !== host.live?.room.epoch ||
+      !this.eligible().includes(value.agentId)
+    )
+      throw Error(unavailable);
+    const { grantId, targetId, agentId, origin } = value;
+    const existing = this.records.get(grantId);
+    if (existing) {
+      if (
+        existing.targetId !== targetId ||
+        existing.agentId !== agentId ||
+        existing.origin !== origin
+      )
+        throw Error(unavailable);
+      return;
+    }
+    if (
+      this.revoked.has(grantId) ||
+      this.list(agentId).some((grant) => grant.targetId === targetId)
+    )
+      throw Error(unavailable);
+    this.db
+      ?.prepare(
+        `INSERT INTO desktop_control_grants
+        (tool, grant_id, agent_id, target_id, origin) VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(this.owner.tool, grantId, agentId, targetId, origin ?? null);
+    this.records.set(grantId, {
+      grantId,
+      targetId,
+      agentId,
+      origin,
+      unified: true,
+    });
+  }
+
+  get(grantId, agentId) {
+    if (!grantId) {
+      const grants = this.list(agentId);
+      if (grants.length !== 1) return;
+      grantId = grants[0].grantId;
+    }
+    const grant = this.records.get(grantId);
+    if (grant?.agentId === agentId) return grant;
+  }
+
+  remove(grantId, agentId) {
+    const grant = this.records.get(grantId);
+    if (!grant || (agentId !== undefined && grant.agentId !== agentId)) return;
+    this.db
+      ?.prepare(
+        "UPDATE desktop_control_grants SET revoked=1 WHERE tool=? AND grant_id=?",
+      )
+      .run(this.owner.tool, grantId);
+    this.records.delete(grantId);
+    this.revoked.add(grantId);
+    return grant;
+  }
+}

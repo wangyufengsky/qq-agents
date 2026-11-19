@@ -18,6 +18,7 @@ import {
   DESKTOP_ACTIVITY_DECISION,
   DESKTOP_DECISION,
   DESKTOP_HISTORY,
+  DESKTOP_ROLE_MAIL,
   DESKTOP_SCREEN_VIEW,
   DESKTOP_NATIVE_CONTROL,
   DESKTOP_BROWSER_CONTROL,
@@ -89,6 +90,15 @@ export const definitions = {
   [DESKTOP_HISTORY]: [
     "在桌面房间里按页回看公开对话。用 nextBeforeSeq 继续向前。回看不表示当时在场，也不作为本轮新消息。",
     z.object({ beforeSeq: z.number().int().positive().optional() }).strict(),
+  ],
+  [DESKTOP_ROLE_MAIL]: [
+    "给同一身份的另一侧留一条普通文字消息：桌宠寄给主人格，主人格寄给桌宠。桌宠回到桌面才收信。queued 表示已入队，received 表示正文已提交给接收方模型。用相同 requestId 和正文可查询回执。",
+    z
+      .object({
+        requestId: z.string().min(1).max(120),
+        text: z.string().trim().min(1).max(1000),
+      })
+      .strict(),
   ],
   [DESKTOP_SCREEN_VIEW]: [
     "按需查看管理员为你选定的一个本机窗口或显示器。画面属于当前桌面回合，只用来回应当前桌面对话。每回合最多取得一次截图。",

@@ -18,6 +18,10 @@ const exec = promisify(execFile);
 const probe = fileURLToPath(
   new URL("fixtures/windows-window-coverage.ps1", import.meta.url),
 );
+const desktopCaptureModule = new URL(
+  "../desktop/home/full-desktop-capture.mjs",
+  import.meta.url,
+).href;
 
 async function waitFor(read, accept, message) {
   const end = Date.now() + 12_000;
@@ -51,12 +55,18 @@ test("interactive Windows CI supplies window identity and coverage evidence", as
   await writeFile(
     join(root, "main.cjs"),
     `
-const { app, BrowserWindow, screen } = require("electron");
+const { app, BrowserWindow, desktopCapturer, screen } = require("electron");
 const { join } = require("node:path");
 const observer = process.argv.includes("--coverage-observer");
 app.setPath("userData", join(app.getAppPath(), observer ? "observer-profile" : "target-profile"));
 app.whenReady().then(async () => {
   if (observer) {
+    const { createFullDesktopCapture } = await import(${JSON.stringify(desktopCaptureModule)});
+    globalThis.captureFixtureDesktop = createFullDesktopCapture({
+      getDisplays: () => screen.getAllDisplays(),
+      getSources: (options) => desktopCapturer.getSources(options),
+      permission: () => "granted",
+    });
     const win = new BrowserWindow({ show: false });
     await win.loadURL("data:text/html,<title>Coverage Metadata Observer</title>");
     return;
@@ -183,6 +193,40 @@ app.whenReady().then(async () => {
       1,
     );
     assert.ok(observationDisplayTarget(metadata.sources, setup.displayId));
+
+    const desktop = await observer.evaluate(async ({ screen }) => {
+      const result = await globalThis.captureFixtureDesktop(
+        { maxEdge: 256, maxBytes: 1024 * 1024 },
+        new AbortController().signal,
+      );
+      return {
+        status: result.status,
+        displays: screen.getAllDisplays().map(({ id, bounds }) => ({
+          id: String(id),
+          bounds,
+        })),
+        frames: result.frames?.map(
+          ({ displayId, bounds, width, height, data }) => ({
+            id: displayId,
+            bounds,
+            jpeg: data.startsWith("/9j/") && width > 0 && height > 0,
+          }),
+        ),
+      };
+    });
+    assert.equal(desktop.status, undefined);
+    assert.ok(desktop.displays.length > 0);
+    assert.deepEqual(
+      desktop.frames,
+      desktop.displays
+        .sort((left, right) => left.id.localeCompare(right.id))
+        .map((display) => ({ ...display, jpeg: true })),
+    );
+    t.diagnostic(
+      "Full desktop capture covered " +
+        desktop.frames.length +
+        " Windows display(s).",
+    );
 
     await fixture.evaluate(() =>
       globalThis.coverageFixture.blocker.showInactive(),

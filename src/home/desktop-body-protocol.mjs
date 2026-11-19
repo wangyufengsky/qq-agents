@@ -78,6 +78,16 @@ const interactionAction = z
     interactionId: z.string().uuid(),
   })
   .strict();
+export const desktopSessionBodyActionSchema = z.union([
+  bodyActionSchema,
+  z.strictObject({
+    type: z.literal("gesture"),
+    requestId,
+    gesture: z.enum(["jump", "climb", "land", "wave"]),
+    recipient: ref.optional(),
+  }),
+]);
+
 export const desktopPublicWaveSchema = z.union([
   bodyActionSchema,
   interactionAction,

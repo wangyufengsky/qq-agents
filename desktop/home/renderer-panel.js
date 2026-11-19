@@ -15,6 +15,7 @@ import { bindCompanion } from "./renderer-panelcompanion.js";
 import { bindThread } from "./renderer-panelchat.js";
 import { bindGuests } from "./renderer-panelguests.js";
 import { desktopPermissionFactory } from "./renderer-panelpermission.js";
+import { bindUnifiedGrants } from "./renderer-panelgrants.js";
 import { bindBrowserControl } from "./renderer-panelbrowser.js";
 import { bindPanelSheet } from "./renderer-panelsheet.js";
 import { bindWindowTask } from "./renderer-paneltask.js";
@@ -184,6 +185,7 @@ export function panel(root) {
     },
   );
 
+  const updateUnifiedGrants = bindUnifiedGrants(select, () => room);
   const { browserDialog, updateBrowserControl } = bindBrowserControl(
     select,
     () => room,
@@ -386,6 +388,16 @@ export function panel(root) {
     updateNativeControl();
     updateBrowserControl();
     refreshDisplayGrants();
+    if (room.desktopUnified)
+      for (const selector of [
+        ".screen-view",
+        ".observation",
+        ".display-observation",
+        ".native-control",
+        ".browser-control",
+      ])
+        select(selector).hidden = true;
+    updateUnifiedGrants();
     toolsLauncher.hidden = !room.framework || !room.connected;
     const hasGrant =
       [
@@ -393,7 +405,8 @@ export function panel(root) {
         room.observation,
         room.nativeControl,
         room.browserControl,
-      ].some((policy) => policy?.grantedAgentId) ||
+      ].some((policy) => policy?.grantedAgentId || policy?.grants?.length) ||
+      (room.desktopUnified && room.desktopObservationEnabled) ||
       Boolean(windowGrants.length || room.observation?.displays?.length);
     select(".grant-indicator").hidden = !hasGrant;
     toolsLauncher.setAttribute(

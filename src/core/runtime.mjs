@@ -2,6 +2,7 @@ import { QzoneApprovals } from "./qzone-approvals.mjs";
 import { SubjectExecution } from "./subject-execution.mjs";
 import { SocialRuntime } from "../home/social-runtime.mjs";
 import { DesktopHost } from "../home/desktop-host.mjs";
+import { DesktopRoleMailbox } from "../home/desktop-role-mailbox.mjs";
 import {
   DESKTOP_OBSERVATION_CONVERSATION,
   DESKTOP_WINDOW_TASK_CONVERSATION,
@@ -56,6 +57,7 @@ import {
   DESKTOP_ACTIVITY_DECISION,
   DESKTOP_DECISION,
   DESKTOP_HISTORY,
+  DESKTOP_ROLE_MAIL,
   DESKTOP_MEMORY_TOOLS,
   DESKTOP_SCREEN_VIEW,
   DESKTOP_NATIVE_CONTROL,
@@ -71,7 +73,11 @@ import {
   grantExternal,
   sourceClass,
 } from "./outbound-policy.mjs";
-import { toolAvailable } from "../tools/catalog.mjs";
+import {
+  desktopSessionToolAuthorized,
+  DESKTOP_SESSION_TOOLS,
+  toolAvailable,
+} from "../tools/catalog.mjs";
 import { appsPolicySchema } from "../apps/policy.mjs";
 import { appDefinitions } from "../apps/tools.mjs";
 import { ContextLifecycle, SUBJECT } from "./lifecycle.mjs";
@@ -135,6 +141,7 @@ export class Runtime {
     random = Math.random,
     diagnostics = new Diagnostics(),
     messageTiming = undefined,
+    createDesktopHost = (runtime) => new DesktopHost(runtime),
   }) {
     Object.assign(this, {
       configStore,
@@ -155,7 +162,8 @@ export class Runtime {
     this.autoResume = new AutoResume(this);
     this.running = new Map();
     this.subjectExecution = new SubjectExecution();
-    this.desktopVisits = new DesktopHost(this);
+    this.desktopVisits = createDesktopHost(this);
+    this.desktopRoleMailbox = new DesktopRoleMailbox(this);
     this.pending = new Map();
     this.capabilities = new Map();
     this.faults = new Map();
@@ -344,7 +352,13 @@ export class Runtime {
         assertCurrent: desktop.assertCurrent,
         desktopDecision: desktop.decide,
         requiresInputSubmission: true,
-        allowedTools: this.toolsFor(a, conversation),
+        ...(desktop.unified && {
+          desktopUnified: true,
+          desktopRequestKind: desktop.kind,
+        }),
+        allowedTools: desktop.unified
+          ? DESKTOP_SESSION_TOOLS
+          : this.toolsFor(a, conversation),
       }),
     };
     ctx.persistTaint = () => {
@@ -421,6 +435,7 @@ export class Runtime {
     }
   }
   toolsForContext(agent, ctx) {
+    if (ctx.desktopUnified) return ctx.allowedTools;
     if (ctx.desktopPublicResting)
       return this.toolsFor(agent, ctx.conversation).filter(
         (name) => name === DESKTOP_DECISION,
@@ -520,6 +535,7 @@ export class Runtime {
       if (!this.desktopVisits.configured()) return [];
       const candidates = new Set([
         ...DESKTOP_MEMORY_TOOLS,
+        DESKTOP_ROLE_MAIL,
         DESKTOP_SCREEN_VIEW,
         DESKTOP_NATIVE_CONTROL,
         DESKTOP_BROWSER_CONTROL,
@@ -570,6 +586,7 @@ export class Runtime {
               ),
               ...a.subject.readTools.filter((n) => a.tools.includes(n)),
               ...BOARD_TOOLS,
+              DESKTOP_ROLE_MAIL,
             ]),
           ]
         : [
@@ -671,7 +688,14 @@ export class Runtime {
         codes.push("NOT_ALLOWED");
       return codes;
     }
-    if (inSilence(a, this.clock())) codes.push("QUIET_HOURS");
+    if (
+      !(
+        this.desktopVisits?.createTurnQueue &&
+        isDesktopConversation(conversation)
+      ) &&
+      inSilence(a, this.clock())
+    )
+      codes.push("QUIET_HOURS");
     if (conversation === undefined) return codes;
     if (
       isDesktopConversation(conversation)
@@ -1494,6 +1518,11 @@ export class Runtime {
       (current
         ? !current.includes(name)
         : !toolAvailable(a, name, ctx.conversation, this.config))
+    )
+      throw Error("TOOL_DISABLED");
+    if (
+      ctx.desktopUnified &&
+      !desktopSessionToolAuthorized(a, name, this.config)
     )
       throw Error("TOOL_DISABLED");
     let result = await dispatchTool(this, ctx, name, args, (validated) => {

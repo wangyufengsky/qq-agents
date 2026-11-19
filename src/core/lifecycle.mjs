@@ -897,6 +897,7 @@ export class ContextLifecycle {
             scene,
             `唤醒原因（资料）: ${JSON.stringify(wake)}`,
             environment,
+            ctx.conversation === SUBJECT && r.desktopRoleMailbox.opening(ctx),
             handoff ? `程序交接状态：${JSON.stringify(handoff)}` : "",
             proposals
               ? `会话交给你的提议（资料，时效由你判断；普通提议用 subject_inbox_decide 处理或暂缓；garden-watering 用 garden_act 的 delegate_step 或 delegate_dismiss）：${JSON.stringify(proposals)}`
@@ -1087,8 +1088,9 @@ export class ContextLifecycle {
     } finally {
       if (ctx.controller.signal.aborted) terminal = "cancelled";
       if (
-        terminal === "cancelled" ||
-        (terminal === "failed" && !ctx.retainBackendSession)
+        !ctx.desktopUnified &&
+        (terminal === "cancelled" ||
+          (terminal === "failed" && !ctx.retainBackendSession))
       )
         retireSession(
           m,
@@ -1136,6 +1138,7 @@ export class ContextLifecycle {
       ["failed", "cancelled"].includes(outcome) ||
       ctx.controller.signal.aborted
     ) {
+      if (ctx.desktopUnified) return;
       if (
         outcome === "failed" &&
         ctx.retainBackendSession &&
@@ -1157,6 +1160,7 @@ export class ContextLifecycle {
     if (!a) return;
     if (
       ctx.runtimeKind === "desktop" &&
+      !ctx.desktopUnified &&
       (ctx.desktopScreenObserved || ctx.desktopPrivateObservation)
     ) {
       retireSession(
@@ -1234,13 +1238,14 @@ export class ContextLifecycle {
           signal: ctx.controller.signal,
         });
         if (ctx.controller.signal.aborted) {
-          retireSession(
-            m,
-            ctx.conversation,
-            "cancelled-during-compaction",
-            r.now(),
-            { turnId: ctx.turnId, backendId: a.backendId },
-          );
+          if (!ctx.desktopUnified)
+            retireSession(
+              m,
+              ctx.conversation,
+              "cancelled-during-compaction",
+              r.now(),
+              { turnId: ctx.turnId, backendId: a.backendId },
+            );
           return;
         }
         if (result?.usage) this.usage(ctx, result.usage);
@@ -1287,13 +1292,14 @@ export class ContextLifecycle {
       }
     }
     if (ctx.controller.signal.aborted) {
-      retireSession(
-        m,
-        ctx.conversation,
-        "cancelled-during-compaction",
-        r.now(),
-        { turnId: ctx.turnId, backendId: a.backendId },
-      );
+      if (!ctx.desktopUnified)
+        retireSession(
+          m,
+          ctx.conversation,
+          "cancelled-during-compaction",
+          r.now(),
+          { turnId: ctx.turnId, backendId: a.backendId },
+        );
       return;
     }
     // Called after running is removed; unknown deliveries are in handoff, not a retirement lock.

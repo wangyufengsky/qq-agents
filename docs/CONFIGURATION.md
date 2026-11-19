@@ -543,44 +543,18 @@ QQ 掉线、自动重连用完次数时，管理台会显示，但主人在 QQ �
 
 ## 桌面小窝
 
-`desktopHome.autonomousObservation` 默认关闭。`desktopHome.observationRoles` 在新配置中是空列表。旧配置缺少该字段时继承 `activityRoles`。在「同桌陪伴」下，支持靠窗的客户端会让获准看当前单窗口且具备桌宠控制资格的角色在活动中选择靠窗、观察或沉默。显式名单内的角色继续在活动中主动申请观察。角色还须具备 P2 自主活动、手动看屏和后端图片输入资格，并从本机面板获得一个窗口的限时授权。观察与 P2 共用额度，单次授权 15 分钟及最多四次尝试。
+| 字段                          | 默认值  | 用途                                                           |
+| ----------------------------- | ------- | -------------------------------------------------------------- |
+| `desktopHome.enabled`         | `false` | 是否开启桌面小窝                                               |
+| `desktopHome.observeDesktop`  | `false` | 授权在场角色观察整个桌面                                       |
+| `desktopHome.maxTurns`        | `6`     | 两次刷新之间可发布的 AI 桌边消息数，范围 1–24                  |
+| `desktopHome.refreshMinutes`  | `10`    | 发言额度的自动刷新间隔，范围 0–1440。设为 0 时，由主人发言刷新 |
+| `desktopHome.autonomyMinutes` | `10`    | 在场角色的默认自主唤醒间隔，范围 1–1440                        |
+| `desktopHome.administratorQq` | 无      | 可填数字字符串，把桌面主人和同一 QQ 身份关联                   |
 
-`desktopHome.displayObservation.minutes` 与 `desktopHome.displayObservation.attempts` 分别设置每位角色的显示器观察授权时长和取图尝试上限，默认 15 分钟及 4 次，范围 1–60 分钟及 1–12 次。在「小窝目录 → 桌面小窝设置」调整。需继续在本机给每位角色单独选择一块显示器。
+在「小窝目录 → 桌面小窝设置」保存观察开关和节奏。窗口和网页权限在本机桌面聊天面板按具体目标授予。已有的 `refreshMinutes` 取保存值。升级时旧 `screenView.enabled` 只代表原窗口观察功能设置。希望启用整个桌面时，勾选新开关。已保存的旧版设置允许保留在配置文件内。
 
-`desktopHome.observationRetentionDays` 控制自动保存的观察摘要保留期，默认 7 天，范围 1–30 天。缩短保留期也会缩短已有记录的截止时间。
-
-`desktopHome.activityRoles` 默认是空列表。该列表允许在场角色在可见的小窝里按独立的冷却和小时额度作出安静陪伴决定。移动和转向仍需 `desktopHome.bodyControlRoles` 授权。
-
-`desktopHome.residentPreferences` 默认是空对象，按稳定角色 ID 保存生活偏好。`quiet: true` 暂停该角色的桌边自主活动。`activityMinutes` 是两次活动间的最短间隔，范围 2–30 分钟，缺省使用两分钟的安全冷却。偏好可在「小窝目录 → 桌面小窝设置 → 角色生活偏好」编辑。取消安静模式并选择默认间隔可重置该角色。
-
-`desktopHome.publicPerception` 在「小窝目录 → 桌面小窝设置 → 公共感知与自主唤醒」设置，默认关闭。「公共活动节奏」预设仅改动首次、空闲和恢复等待及两项小时额度。「高级设置」可编辑下列数值，已有配置继续使用原有数值。
-
-| 字段                                 | 默认值  | 用途                                     |
-| ------------------------------------ | ------- | ---------------------------------------- |
-| `nearbyDip`                          | 320     | 同屏普通动作的感知距离                   |
-| `firstMin` / `firstMax`              | 5 / 8   | 入场后首次空闲等待分钟                   |
-| `idleMin` / `idleMax`                | 15 / 25 | 空闲决定后的等待分钟                     |
-| `resumeMin` / `resumeMax`            | 2 / 5   | 忙碌结束、恢复可见后重新安排的等待分钟   |
-| `waitMin` / `waitMax`                | 2 / 30  | 角色自主等待分钟范围                     |
-| `restMin` / `restMax`                | 5 / 30  | 角色免打扰分钟范围                       |
-| `greetingSeconds` / `arrivalSeconds` | 60 / 30 | 点名及入场招呼有效秒数                   |
-| `mergeSeconds`                       | 5       | 同类事件合并机会的秒数                   |
-| `recentMinutes` / `recentLimit`      | 10 / 5  | 近期信息保留分钟与每轮条数               |
-| `idleLimit` / `totalLimit`           | 3 / 4   | 每角色滚动一小时的空闲轮和自主活动总上限 |
-
-区间下限须小于或等于上限，空闲轮上限不得超过总上限。角色生活偏好中的活动间隔覆盖该角色的默认空闲间隔。
-
-`desktopHome.interactionsEnabled` 默认关闭。在「小窝目录 → 桌面小窝设置」选择「启用桌宠互动」后，获准控制桌宠的在场角色可以使用本机互动功能。窗口跟随和窗口组合任务仍须使用各自的本机授权。
-
-`desktopHome.bodyControlRoles` 默认是空列表。管理员可在桌面小窝设置中为指定角色开启浮窗控制。开启后，只有该角色在场且有有效的桌面聊天回合时才可读取自己的位置、移到小门旁或座位、调整朝向和停止。该设置不授予截图、应用操作或额外模型回合。 支持跨屏的新客户端默认允许全部已连接显示器，可以按最新布局前往可达的屏幕角落、其他在场角色附近或受限坐标。旧客户端继续在同屏移动。桌宠禁停区在本机设置。
-
-`desktopHome.browserControl.enabled` 默认关闭。开启后仍须在本机桌面聊天面板指定一位在场角色及一个公开网站来源。使用独立 Chromium 会话，浏览器路径沿用网页截图配置。
-
-`desktopHome.nativeControl.enabled` 默认关闭。管理员开启后仍须从本机桌面聊天面板为指定在场角色选定窗口。启动时用 `QQ_AGENTS_AGENT_DESKTOP_EXECUTABLE` 指定 agent-desktop v1.2.0 原生二进制的绝对路径。
-
-`desktopHome.screenView.enabled` 默认关闭。开启后，管理员可以在本机桌面聊天面板为一个已获额外工具和图片输入权限的在场角色选定截图目标。
-
-`desktopHome.enabled` 默认关闭，`maxTurns` 默认 6（1–24），`refreshMinutes` 默认 60（0–1440）。补满间隔设为 0 时，额度在管理员发新消息时补满。可选的 `administratorQq` 是仅包含数字的 QQ 号字符串，用于将桌面管理员与 QQ 中的同一人明确关联。省略时桌面管理员保留独立本地身份。在「纸页小窝」页首开关桌面小窝，原生 macOS 和 Windows 框架可从本机管理台打开窗口。额度和工具权限在「小窝目录 → 桌面小窝设置」调整。客户端连接同机框架，角色桌面会话与 QQ 会话独立。`desktopHome.toolRoles` 默认空列表，可填写允许在桌面使用额外工具的角色 ID。角色原有的工具和文件权限继续生效；桌面历史与角色已启用的基础记忆工具不依赖此列表。详见 [桌面小窝](DESKTOP-HOME.md)。
+详见[桌面小窝](DESKTOP-HOME.md)。
 
 ## 小窝私密往来策略
 

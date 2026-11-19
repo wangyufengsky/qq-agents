@@ -114,7 +114,10 @@ export class FakeTransport extends EventEmitter {
     return { messageId: String(40000 + this.sent.length) };
   }
 }
-export function fixture(t, { run = async () => {}, cfg = config() } = {}) {
+export function fixture(
+  t,
+  { run = async () => {}, cfg = config(), createDesktopHost } = {},
+) {
   const root = temp(t),
     store = new MemoryStore(path.join(root, "memory.sqlite")),
     configStore = new ConfigStore(path.join(root, "config.json"), cfg);
@@ -122,6 +125,7 @@ export function fixture(t, { run = async () => {}, cfg = config() } = {}) {
   const runtime = new Runtime({
     memory: store,
     configStore,
+    createDesktopHost,
     backendFactory: () => {
       const b = {
         run: async (params) => {

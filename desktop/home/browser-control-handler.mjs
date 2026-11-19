@@ -2,6 +2,62 @@ export function createBrowserControlHandler(ctx) {
   return async (event, selection) => {
     const win = ctx.entries.get("panel")?.win;
     const { browserControl: policy, roomEpoch } = ctx.remoteState ?? {};
+    if (ctx.remoteState?.desktopUnified) {
+      if (
+        !ctx.framework ||
+        !roomEpoch ||
+        !policy ||
+        !win ||
+        win.webContents !== event.sender ||
+        event.senderFrame !== win.webContents.mainFrame ||
+        !win.isFocused() ||
+        ctx.choosingDesktopPermission
+      )
+        return "unavailable";
+      ctx.choosingDesktopPermission = true;
+      try {
+        if (selection?.type === "revoke") {
+          const grantId = selection.grantId;
+          if (!policy.grants?.some((grant) => grant.grantId === grantId))
+            return "unavailable";
+          const room = await ctx.framework.command("browser-revoke", {
+            roomEpoch,
+            grantId,
+          });
+          return room?.roomEpoch === roomEpoch &&
+            Array.isArray(room.browserControl?.grants) &&
+            !room.browserControl.grants.some(
+              (grant) => grant.grantId === grantId,
+            )
+            ? "revoked"
+            : "failed";
+        }
+        const { agentId } = selection ?? {};
+        if (
+          selection?.type !== "grant" ||
+          !policy.targetEligible?.includes(agentId)
+        )
+          return "unavailable";
+        const grantId = ctx.randomUUID();
+        const targetId = ctx.randomUUID();
+        const room = await ctx.framework.command("browser-grant", {
+          roomEpoch,
+          grantId,
+          agentId,
+          targetId,
+        });
+        return room?.roomEpoch === roomEpoch &&
+          room.browserControl?.grants?.some(
+            (grant) => grant.grantId === grantId,
+          )
+          ? "granted"
+          : "unavailable";
+      } catch {
+        return "failed";
+      } finally {
+        ctx.choosingDesktopPermission = false;
+      }
+    }
     const modeRevision = ctx.permissionRevision?.();
     if (
       (ctx.permissionRevision && modeRevision === undefined) ||

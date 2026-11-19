@@ -24,6 +24,9 @@ import { DesktopVisits } from "./desktop-visits.mjs";
 import { DesktopPersonal } from "./desktop-personal.mjs";
 import { DesktopInvitations } from "./desktop-invitations.mjs";
 import { LiveRoom } from "./desktop-room.mjs";
+import { QueuedDesktopRoom } from "./desktop-queued-room.mjs";
+import { DesktopTurnQueue } from "./desktop-turn-queue.mjs";
+import { runDesktopTurn } from "./desktop-unified-turn.mjs";
 import { createRoom, roles as art } from "./desktop-room-state.mjs";
 import { beginDesktopContext } from "./desktop-context.mjs";
 import {
@@ -54,7 +57,11 @@ import {
   browserGrantSchema,
   browserRevokeSchema,
 } from "./desktop-browser.mjs";
-import { localGrantSchema, localRevokeSchema } from "./desktop-local-grant.mjs";
+import {
+  localControlTargetId,
+  localGrantSchema,
+  localRevokeSchema,
+} from "./desktop-local-grant.mjs";
 
 const windowTaskInput = localGrantSchema
   .extend({
@@ -65,6 +72,7 @@ const windowTaskInput = localGrantSchema
 const nativeGrantSchema = localGrantSchema
   .extend({
     confirmed: z.literal(true).optional(),
+    targetId: localControlTargetId.optional(),
     visitId: z.string().uuid().optional(),
   })
   .strict();
@@ -74,6 +82,25 @@ const batchGrantSchema = localGrantSchema
 const batchDisplaySchema = displayObservationGrantSchema
   .extend({ visitId: z.string().uuid() })
   .strict();
+const pointSchema = z.strictObject({
+  x: z.number().int(),
+  y: z.number().int(),
+});
+const ownerEventIdentity = {
+  eventId: z.string().uuid(),
+  roomEpoch: z.string().uuid(),
+  agentId: z.string().min(1).max(64),
+  visitId: z.string().uuid(),
+};
+const desktopOwnerEvent = z.discriminatedUnion("kind", [
+  z.strictObject({ ...ownerEventIdentity, kind: z.literal("pet") }),
+  z.strictObject({
+    ...ownerEventIdentity,
+    kind: z.literal("drag"),
+    from: pointSchema,
+    to: pointSchema,
+  }),
+]);
 const syncDataSchema = z
   .union([
     z.boolean(),
@@ -93,6 +120,7 @@ const syncDataSchema = z
           )
           .max(48)
           .optional(),
+        desktopOwnerEvents: z.array(desktopOwnerEvent).max(48).optional(),
         desktopCaptureProtocol: z.literal(1).optional(),
         desktopOwnerInputProtocol: z.literal(1).optional(),
         bodyProtocol: z.literal(2).optional(),
@@ -188,6 +216,24 @@ const requestSchema = z
         message: "Invalid action data",
       });
   });
+const legacyDesktopActions = new Set([
+  "activity-pause",
+  "bubble-reply",
+  "mode-set",
+  "mode-invalidate",
+  "screen-grant",
+  "screen-grant-batch",
+  "screen-revoke",
+  "screen-revoke-batch",
+  "display-grant-batch",
+  "display-revoke-batch",
+  "observation-grant",
+  "observation-revoke",
+  "observation-state",
+  "window-observation-grant-batch",
+  "window-task",
+  "window-task-stop",
+]);
 const CLIENT_LEASE = 15_000;
 const ACTIVITY_VISIBILITY_LEASE = 2_500;
 const defaultArt = { dsh: "fish", codex: "dragon", antigravity: "cat" };
@@ -224,9 +270,28 @@ function explicitTargets(text, roles) {
   });
 }
 
+export function createDesktopRoomHost(runtime) {
+  return new DesktopHost(runtime, {
+    createTurnQueue: () =>
+      new DesktopTurnQueue({
+        now: () => runtime.now(),
+        policy: () => {
+          const { maxTurns, refreshMinutes, autonomyMinutes } =
+            runtime.config.desktopHome;
+          return {
+            maxTurns,
+            refreshMinutes,
+            autonomousMinutes: autonomyMinutes,
+          };
+        },
+      }),
+  });
+}
+
 export class DesktopHost {
-  constructor(runtime) {
+  constructor(runtime, { createTurnQueue } = {}) {
     this.runtime = runtime;
+    this.createTurnQueue = createTurnQueue;
     this.personal = new DesktopPersonal(this);
     this.statusCards = new DesktopStatusCards(this);
     this.eventSubscribers = new Map();
@@ -331,11 +396,16 @@ export class DesktopHost {
   unsubscribe(client, epoch, subscriber) {
     if (!this.eventSubscribers.delete(subscriber)) return;
     if (
+      !this.createTurnQueue &&
       !this.eventSubscribers.size &&
       this.client?.id === client &&
       this.live?.room.epoch === epoch
     )
       this.reset();
+  }
+
+  get desktopUnified() {
+    return Boolean(this.createTurnQueue);
   }
 
   configured() {
@@ -413,6 +483,7 @@ export class DesktopHost {
     this.visits.get(id)?.finishSubject(id, completed);
   }
   interrupt(id) {
+    if (this.createTurnQueue) return;
     this.notify();
     this.live?.cancelInteraction(id);
     if (this.windowTask?.actor === id) this.stopWindowTask("inactive");
@@ -420,8 +491,10 @@ export class DesktopHost {
     this.visits.get(id)?.interrupt(id);
   }
   claimQq(id, conversation) {
-    const claim = this.visits.get(id)?.claimQq(id, conversation);
-    if (claim) {
+    const claim = this.visits
+      .get(id)
+      ?.claimQq(id, conversation, { preempt: !this.createTurnQueue });
+    if (claim && !this.createTurnQueue) {
       this.live?.cancelInteraction(id);
       this.live?.cancelActivity(id);
       if (this.windowTask?.actor === id) this.stopWindowTask("inactive");
@@ -464,7 +537,7 @@ export class DesktopHost {
     this.fullDesktop.maintain();
     this.notify();
     const now = this.runtime.now();
-    this.observation.maintain();
+    if (!this.desktopUnified) this.observation.maintain();
     if (!this.configured() || !this.operational()) {
       this.reset();
       return false;
@@ -485,10 +558,11 @@ export class DesktopHost {
       this.observation.clear();
       this.body.clear();
       void this.browser.clear();
+      if (this.desktopUnified) void this.browser.suspendUnified();
       return Boolean(this.live);
     }
     if (this.live) {
-      if (!policy.publicPerception.enabled) {
+      if (!this.createTurnQueue && !policy.publicPerception.enabled) {
         this.live.perception.clear();
         for (const [id, active] of this.live.activities)
           if (Object.hasOwn(active.turn, "idle")) this.live.cancelActivity(id);
@@ -516,11 +590,11 @@ export class DesktopHost {
       for (const [id, message] of Object.entries(room.bubbles))
         if (now >= (message.expiresAt ?? message.now + 4900))
           delete room.bubbles[id];
-      if (syncingClient !== this.client.id)
+      if (!this.createTurnQueue && syncingClient !== this.client.id)
         for (const id of this.live.activities.keys())
           if (!this.activityCurrent(id)) this.live.cancelActivity(id);
       if (syncingClient !== this.client.id) {
-        this.observation.state();
+        if (!this.desktopUnified) this.observation.state();
         this.body.clientWork();
       }
       this.live.maintainInteraction();
@@ -568,6 +642,8 @@ export class DesktopHost {
     )
       return false;
     const agent = this.runtime.agent(id);
+    if (this.createTurnQueue)
+      return this.runtime.writable(agent, DESKTOP_CONVERSATION);
     return (
       !this.runtime.blockers(agent, DESKTOP_CONVERSATION).length &&
       !["sleeping", "rest-pending"].includes(
@@ -580,6 +656,7 @@ export class DesktopHost {
   }
 
   publicBodyAvailable() {
+    if (this.desktopUnified) return this.interactionsAvailable();
     return (
       this.client?.bodyPublic === true && this.live?.publicEnabled() === true
     );
@@ -592,7 +669,8 @@ export class DesktopHost {
   interactionsAvailable() {
     return (
       this.client?.bodyInteractions === true &&
-      this.runtime.config.desktopHome.interactionsEnabled === true
+      (this.desktopUnified ||
+        this.runtime.config.desktopHome.interactionsEnabled === true)
     );
   }
 
@@ -708,8 +786,11 @@ export class DesktopHost {
       turnId,
       speakerType,
       explicitTarget,
+      present,
     ) => {
-      const here = room.roles.filter(({ id }) => room.members[id] === "here");
+      const here = room.roles.filter(({ id }) =>
+        present ? present.includes(id) : room.members[id] === "here",
+      );
       const audience = [{ id: DESKTOP_ADMINISTRATOR, name: "管理员" }, ...here];
       const targets =
         explicitTarget && here.some(({ id }) => id === explicitTarget)
@@ -742,49 +823,60 @@ export class DesktopHost {
       room.archiveSeq = archived.seq;
       return { ...archived, targets };
     };
-    this.attachments = new DesktopAttachments();
-    this.live = new LiveRoom(
+    this.attachments = new DesktopAttachments({ unified: this.desktopUnified });
+    const Room = this.createTurnQueue ? QueuedDesktopRoom : LiveRoom;
+    const chatReady = (id) =>
+      !this.visit(id).desktop &&
+      !roleTurnBusy(this.runtime, id) &&
+      !this.runtime.games.busy(this.runtime.agent(id).backendId) &&
+      !this.visit(id).qqClaims &&
+      !this.visit(id).pendingQq();
+    const legacyRunner = this.desktopUnified
+      ? undefined
+      : {
+          activityStarts: this.activityStarts,
+          publicStarts: this.activityStarts,
+          publicPolicy: () => this.runtime.config.desktopHome.publicPerception,
+          publicAllowed: () => this.client?.bodyPublic === true,
+          heard: (actor, sinceSeq) => {
+            const policy = this.runtime.config.desktopHome.publicPerception;
+            return this.archive.heard(
+              actor,
+              sinceSeq,
+              this.runtime.now() - policy.recentMinutes * 60_000,
+              policy.recentLimit,
+            );
+          },
+          activityMinutes: (id) => this.residentPreference(id)?.activityMinutes,
+          interactionCurrent: (id) =>
+            this.socialBodyAvailable() &&
+            this.activityCurrent(id) &&
+            this.bodyControlAvailable(id) &&
+            !this.visit(id).qqClaims &&
+            !this.visit(id).pendingQq(),
+          activity: (id) => this.activityCurrent(id) && chatReady(id),
+          activityCurrent: (id) => this.activityCurrent(id),
+          observation: (id) => this.observation.forActor(id),
+          finishObservation: (grant, reply) =>
+            this.observation.finish(grant, reply),
+        };
+    this.live = new Room(
       room,
       {
         roles: ids,
         now: () => this.runtime.now(),
-        activityStarts: this.activityStarts,
-        publicStarts: this.activityStarts,
-        publicPolicy: () => this.runtime.config.desktopHome.publicPerception,
-        publicAllowed: () => this.client?.bodyPublic === true,
-        heard: (actor, sinceSeq) => {
-          const policy = this.runtime.config.desktopHome.publicPerception;
-          return this.archive.heard(
-            actor,
-            sinceSeq,
-            this.runtime.now() - policy.recentMinutes * 60_000,
-            policy.recentLimit,
-          );
-        },
-        activityMinutes: (id) => this.residentPreference(id)?.activityMinutes,
-        interactionCurrent: (id) =>
-          this.socialBodyAvailable() &&
-          this.activityCurrent(id) &&
-          this.bodyControlAvailable(id) &&
-          !this.visit(id).qqClaims &&
-          !this.visit(id).pendingQq(),
-        activity: (id) =>
-          this.activityCurrent(id) &&
-          !this.visit(id).desktop &&
-          !roleTurnBusy(this.runtime, id) &&
-          !this.runtime.games.busy(this.runtime.agent(id).backendId) &&
-          !this.visit(id).qqClaims &&
-          !this.visit(id).pendingQq(),
-        activityCurrent: (id) => this.activityCurrent(id),
-        chatReady: (id) =>
-          !this.visit(id).desktop &&
-          !roleTurnBusy(this.runtime, id) &&
-          !this.runtime.games.busy(this.runtime.agent(id).backendId) &&
-          !this.visit(id).qqClaims &&
-          !this.visit(id).pendingQq(),
-        observation: (id) => this.observation.forActor(id),
-        finishObservation: (grant, reply) =>
-          this.observation.finish(grant, reply),
+        ...legacyRunner,
+        pending: (id, trigger) => this.archive.pending(id, trigger),
+        continuity: (id) => this.archive.delivered(id),
+        roleMail: (id) =>
+          this.runtime.desktopRoleMailbox?.pending(id, DESKTOP_CONVERSATION)[0]
+            ?.requestId,
+        onError: (id, cause) =>
+          this.runtime.diagnostics.report(
+            Error("DESKTOP_TURN_FAILED", { cause }),
+            { component: "desktop-home", agentId: id },
+          ),
+        chatReady,
         subjectActors: ids,
         requestInvitation: (request, signal) =>
           this.invitations.request(request, signal),
@@ -794,6 +886,7 @@ export class DesktopHost {
         close: async () => {},
       },
       () => this.notify(),
+      this.createTurnQueue?.(this.runtime),
     );
     this.signature = JSON.stringify(roles);
     this.client = { id: client, expiresAt: this.runtime.now() + CLIENT_LEASE };
@@ -852,6 +945,7 @@ export class DesktopHost {
     this.fullDesktop.clear();
     this.native.clear();
     void this.browser.clear();
+    if (this.desktopUnified) void this.browser.suspendUnified();
     if (!this.live) return;
     const previous = this.live;
     this.live = null;
@@ -888,6 +982,13 @@ export class DesktopHost {
     if (!this.client) {
       if (action !== "sync") return { enabled: true, reconnect: true };
       this.open(client);
+    }
+    if (this.desktopUnified) {
+      if (legacyDesktopActions.has(action)) throw Error("TOOL_DISABLED");
+      if (action === "native-grant" && !data.targetId)
+        throw Error("DESKTOP_NATIVE_UNAVAILABLE");
+      if (action === "browser-grant" && !data.targetId)
+        throw Error("DESKTOP_BROWSER_DENIED");
     }
     const revisionActions = [
       "screen-grant",
@@ -929,6 +1030,7 @@ export class DesktopHost {
         ? { enabled: true }
         : { enabled: true, room: this.roomSnapshot() };
     let bodyResultAcks;
+    let ownerEventIds;
     let refreshActivity = false;
     if (action === "sync") {
       this.runtime.home?.garden?.desktopSync(this.runtime.now(), CLIENT_LEASE);
@@ -936,7 +1038,7 @@ export class DesktopHost {
       const wasVisible = this.client.activityVisibleUntil > this.runtime.now();
       this.client.activityVisibleUntil =
         visible === true ? this.runtime.now() + ACTIVITY_VISIBILITY_LEASE : 0;
-      if (!wasVisible && visible === true) {
+      if (!this.desktopUnified && !wasVisible && visible === true) {
         for (const visit of live.visits.values())
           live.activity.note(visit, "visible-again");
         live.resumeActivity();
@@ -1004,7 +1106,7 @@ export class DesktopHost {
             if (visit && this.body.visitId(visit) === visitId)
               live.noteOwnerTouch(visit, kind);
           }
-        for (const id of moved) {
+        for (const id of this.createTurnQueue ? [] : moved) {
           const visit = live.visits.get(id);
           live.activity.defer(visit, this.runtime.now());
           if (visit && live.publicEnabled())
@@ -1012,8 +1114,9 @@ export class DesktopHost {
           live.cancelActivity(id);
         }
       }
-      for (const id of live.activities.keys())
-        if (!this.activityCurrent(id)) live.cancelActivity(id);
+      if (!this.createTurnQueue)
+        for (const id of live.activities.keys())
+          if (!this.activityCurrent(id)) live.cancelActivity(id);
       if (
         this.client.bodyProtocol === 2 &&
         data?.bodyProtocol === 2 &&
@@ -1021,7 +1124,26 @@ export class DesktopHost {
       )
         bodyResultAcks = this.body.reconcile(client, data.bodyResults);
       live.maintainInteraction();
-      if (!visible && this.mode !== null) this.invalidateMode();
+      if (this.createTurnQueue && data?.desktopOwnerEvents) {
+        ownerEventIds = [];
+        for (const {
+          roomEpoch,
+          agentId,
+          visitId,
+          ...event
+        } of data.desktopOwnerEvents) {
+          const visit = live.visits.get(agentId);
+          if (
+            roomEpoch === live.room.epoch &&
+            visit &&
+            this.body.visitId(visit) === visitId &&
+            live.ownerEvent(agentId, visit, event)
+          )
+            ownerEventIds.push(event.eventId);
+        }
+      }
+      if (!this.createTurnQueue && !visible && this.mode !== null)
+        this.invalidateMode();
       if (!visible && this.windowTask) this.stopWindowTask("hidden");
       if (visible === true) void live.advanceActivity(this.runtime.now());
     }
@@ -1040,7 +1162,7 @@ export class DesktopHost {
       typeof data === "string" &&
       !containsCredential(data)
     ) {
-      this.stopWindowTask("stopped");
+      if (!this.createTurnQueue) this.stopWindowTask("stopped");
       live.send(data);
     }
     if (action === "bubble-reply") {
@@ -1222,10 +1344,15 @@ export class DesktopHost {
     if (this.windowTask?.current() === false)
       this.stopWindowTask("target-unavailable");
     this.notify();
+    const ownerInput = this.createTurnQueue && {
+      roomEpoch: live.room.epoch,
+      acknowledged: ownerEventIds ?? [],
+    };
     if (heartbeat) {
       const bodyRequests = this.body.clientWork();
       return {
         enabled: true,
+        ...(ownerInput && { desktopOwnerInput: ownerInput }),
         ...(refreshActivity && { refreshActivity }),
         ...(bodyResultAcks?.length && { bodyResultAcks }),
         ...(bodyRequests.length && { bodyRequests }),
@@ -1233,15 +1360,26 @@ export class DesktopHost {
     }
     const state = this.clientSnapshot();
     if (action !== "sync") return state;
-    return this.pushSnapshot(state, bodyResultAcks);
+    return {
+      ...this.pushSnapshot(state, bodyResultAcks),
+      ...(ownerInput && { desktopOwnerInput: ownerInput }),
+    };
   }
 
   pushSnapshot(state = this.clientSnapshot(), bodyResultAcks) {
     const screenRequest = this.screen.request();
     const desktopCaptureRequest = this.fullDesktop.request();
-    const observationVerify = this.observation.verifyWork();
+    const observationVerify = this.desktopUnified
+      ? []
+      : this.observation.verifyWork();
     return {
       ...state,
+      ...(this.createTurnQueue && {
+        desktopOwnerInput: {
+          roomEpoch: this.live.room.epoch,
+          acknowledged: [],
+        },
+      }),
       ...(screenRequest && { screenRequest }),
       ...(desktopCaptureRequest && { desktopCaptureRequest }),
       ...(observationVerify.length && {
@@ -1282,7 +1420,9 @@ export class DesktopHost {
         )
         .map(({ actor }) => actor),
     );
-    const viewing = screen.request() && screen.pending.grant.agentId;
+    const viewing =
+      this.fullDesktop.request()?.agentId ??
+      (screen.request() && screen.pending.grant.agentId);
     const windowAction = native.request();
     const operating = windowAction && native.grant.agentId;
     const qq = new Set();
@@ -1295,6 +1435,10 @@ export class DesktopHost {
     }
     return {
       ...room,
+      ...(this.createTurnQueue && {
+        desktopUnified: true,
+        desktopObservationEnabled: runtime.config.desktopHome.observeDesktop,
+      }),
       companionMode: this.mode,
       companionRevision: this.modeRevision,
       interactionsAvailable: this.interactionsAvailable(),
@@ -1335,8 +1479,11 @@ export class DesktopHost {
           runtime.config.globalPaused ||
           agent.paused ||
           memory.state(DESKTOP_CONVERSATION).paused ||
-          memory.state(DESKTOP_ACTIVITY_CONVERSATION).paused;
-        const resting = ["sleeping", "rest-pending"].includes(rhythm.state);
+          (!this.desktopUnified &&
+            memory.state(DESKTOP_ACTIVITY_CONVERSATION).paused);
+        const resting =
+          !this.desktopUnified &&
+          ["sleeping", "rest-pending"].includes(rhythm.state);
         if (paused || resting || (visit && room.activityPaused)) {
           bodyStatus.state = "paused";
           bodyStatus.reason = resting ? "rest" : "pause";
@@ -1388,10 +1535,16 @@ export class DesktopHost {
   }
 
   clientSnapshot() {
-    const observation = this.observation.state();
-    const screenView = this.screen.state();
+    const observation = this.desktopUnified
+      ? undefined
+      : this.observation.state();
+    const screenView = this.desktopUnified ? undefined : this.screen.state();
     const nativeControl = this.native.state();
     const browserControl = this.browser.state();
+    if (this.desktopUnified) {
+      nativeControl.targetEligible = this.native.unified.eligible();
+      browserControl.targetEligible = this.browser.unified.eligible();
+    }
     return {
       enabled: true,
       frameReceipts: this.frameReceipts.filter((receipt) => {
@@ -1410,8 +1563,10 @@ export class DesktopHost {
         browserControl,
         activityEnabled: this.live
           .here()
-          .some(({ id }) =>
-            this.runtime.config.desktopHome.activityRoles.includes(id),
+          .some(
+            ({ id }) =>
+              this.desktopUnified ||
+              this.runtime.config.desktopHome.activityRoles.includes(id),
           ),
         attachmentInput: this.attachments.availability(
           this.runtime.config,
@@ -1536,6 +1691,7 @@ export class DesktopHost {
   }
 
   async runModel(request, signal, canStart) {
+    if (request.desktopUnified) return runDesktopTurn(this, request, signal);
     const { actor, kind } = request;
     const activity = kind === "activity";
     const { observation, windowTask } = request;
@@ -1582,6 +1738,7 @@ export class DesktopHost {
         !this.connected(ctx) ||
         runtime.blockers(agent, conversation, ctx).length ||
         (activity && request.isCurrent?.() === false) ||
+        (ctx?.desktopRoleMailIds?.length && !frameScopeCurrent()) ||
         (request.resting &&
           ["sleeping", "rest-pending"].includes(
             rhythmStatus(runtime, agent).state,
@@ -1800,6 +1957,7 @@ export class DesktopHost {
             (tool) => tool !== "video_read",
           );
       }
+      ctx.desktopRoleMailCurrent = frameScopeCurrent;
       exchange = beginDesktopContext(
         runtime,
         ctx,

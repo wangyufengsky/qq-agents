@@ -12,13 +12,15 @@ export function sessionReference(session) {
       : {}),
     ...(typeof session.nativeSignature === "string" &&
     ((session.backend === "antigravity" &&
-      /^antigravity-tools-v3:contract-v[23]:[a-f0-9]{64}$/.test(
+      /^(?:antigravity-tools-v3:contract-v[234]|antigravity-acp-v1:contract-v4):[a-f0-9]{64}$/.test(
         session.nativeSignature,
       )) ||
       (session.backend === "codex" &&
-        ["desktop-screen-direct", "desktop-screen-flat"].includes(
-          session.nativeSignature,
-        )))
+        [
+          "desktop-screen-direct",
+          "desktop-screen-flat",
+          "desktop-mcp-bridge",
+        ].includes(session.nativeSignature)))
       ? { nativeSignature: session.nativeSignature }
       : {}),
     ...(session.backend === "dsh" && session.dshStreamUnverified === true
@@ -400,7 +402,7 @@ export function recoverSessions(memory, at, scope) {
     const t = JSON.parse(row.value);
     // Slang learner turns (removed in 0.5.3) keep their records, but nothing
     // owns their scope any more, so only the turn itself is closed.
-    if (!t.conversation.startsWith("learner:"))
+    if (!t.desktopUnified && !t.conversation.startsWith("learner:"))
       retireSession(memory, t.conversation, "process-recovery", at, {
         turnId: t.id,
         backendId: t.backendId,
@@ -536,6 +538,7 @@ export function saveSession(
   {
     turnId,
     backendId,
+    backendContract,
     at,
     inactive = false,
     archiveOnly = false,
@@ -565,7 +568,11 @@ export function saveSession(
       });
       return;
     }
-    memory.setState(scope, { ...value, session: reference });
+    memory.setState(scope, {
+      ...value,
+      session: reference,
+      ...(backendContract && { backendContract }),
+    });
   });
 }
 

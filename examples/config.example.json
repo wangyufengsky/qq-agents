@@ -52,6 +52,7 @@
       "minutes": 15,
       "attempts": 4
     },
+    "observeDesktop": false,
     "screenView": {
       "enabled": false
     },
@@ -62,7 +63,8 @@
       "enabled": false
     },
     "maxTurns": 6,
-    "refreshMinutes": 60
+    "refreshMinutes": 10,
+    "autonomyMinutes": 10
   },
   "privateLikeGroups": [],
   "games": {

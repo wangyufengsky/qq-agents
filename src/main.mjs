@@ -24,6 +24,7 @@ import { MediaStore } from "./tools/media.mjs";
 import { Runtime } from "./core/runtime.mjs";
 import { BackendRegistry } from "./backends/index.mjs";
 import { DesktopLauncher } from "./home/desktop-launcher.mjs";
+import { createDesktopRoomHost } from "./home/desktop-host.mjs";
 import { writeDesktopToken } from "./home/desktop-auth.mjs";
 import { createServer } from "./server.mjs";
 import { Lifecycle } from "./transport/lifecycle.mjs";
@@ -108,6 +109,7 @@ try {
         ? new MessageTiming()
         : undefined,
     backendFactory: (c, a) => registry.create(c, a, { root }),
+    createDesktopHost: createDesktopRoomHost,
   }));
   runtime.initializeRuntime();
   runtime.updateMaintenance = args.includes("--upgrade-hold");

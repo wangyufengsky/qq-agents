@@ -65,9 +65,15 @@ export class DesktopFullDesktop {
     this.host = host;
   }
 
+  isEnabled() {
+    const policy = this.host.runtime.config.desktopHome;
+    return this.host.desktopUnified
+      ? policy.observeDesktop === true
+      : policy.screenView?.enabled === true;
+  }
+
   maintain() {
-    const enabled =
-      this.host.runtime.config.desktopHome.screenView?.enabled === true;
+    const enabled = this.isEnabled();
     if (enabled === this.enabled) return;
     this.enabled = enabled;
     this.revision++;
@@ -131,6 +137,8 @@ export class DesktopFullDesktop {
     const { host } = this;
     const { runtime, live, client } = host;
     const agent = runtime.assertActive(ctx);
+    if (host.desktopUnified && !this.enabled)
+      throw Error("DESKTOP_SCREEN_DENIED");
     const visit = live?.visits.get(agent.id);
     const epoch = ctx.inputEpoch;
     const revision = this.revision;
@@ -141,7 +149,7 @@ export class DesktopFullDesktop {
           ctx.runtimeKind === "desktop" &&
           ctx.inputEpoch === epoch &&
           this.revision === revision &&
-          runtime.config.desktopHome.screenView?.enabled === true &&
+          this.isEnabled() &&
           host.connected(ctx) &&
           host.client === client &&
           client?.desktopCaptureProtocol === 1 &&

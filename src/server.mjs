@@ -1772,6 +1772,9 @@ export function createServer({
           migrationWarnings: runtime.configStore.migrationWarnings || [],
           tools: TOOL_NAMES,
           agentDefaults: defaultAgentCapabilities(),
+          ...(runtime.desktopVisits.desktopUnified === true && {
+            desktopUnified: true,
+          }),
           desktopPublicFields: DESKTOP_PUBLIC_FIELDS,
           desktopPublicCadences: DESKTOP_PUBLIC_CADENCES,
         });

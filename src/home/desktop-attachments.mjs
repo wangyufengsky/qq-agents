@@ -9,6 +9,7 @@ import {
 } from "../video/frames.mjs";
 import { z } from "zod";
 import { supportsMessageImages } from "../backends/capabilities.mjs";
+import { videoVision } from "../video/policy.mjs";
 import { containsCredential } from "../core/secrets.mjs";
 import { imagePreview } from "../tools/image-preview.mjs";
 import { imageMime } from "../tools/media.mjs";
@@ -152,32 +153,39 @@ export function parseDesktopAttachment(input) {
   return { client, roomEpoch, name, mimeType, source };
 }
 
-function canReceive(config, agent, kind) {
-  if (!agent || !desktopRoleToolsEnabled(config, agent)) return false;
-  if (kind === "video")
-    return desktopToolAvailable(agent, "video_read", config);
-  if (kind === "text")
-    return agent.files?.enabled === true && agent.files.receive === true;
-  const backend = config.backends.find(({ id }) => id === agent.backendId);
-  return (
-    agent.behavior.imageInput.enabled &&
-    backend &&
-    supportsMessageImages(backend)
-  );
-}
-
 export class DesktopAttachments {
   #entries = new Map();
   busy = false;
+
+  constructor({ unified = false } = {}) {
+    this.unified = unified;
+  }
+
+  canReceive(config, agent, kind) {
+    if (!agent || (!this.unified && !desktopRoleToolsEnabled(config, agent)))
+      return false;
+    if (kind === "video")
+      return this.unified
+        ? agent.tools.includes("video_read") && videoVision(agent, config)
+        : desktopToolAvailable(agent, "video_read", config);
+    if (kind === "text")
+      return agent.files?.enabled === true && agent.files.receive === true;
+    const backend = config.backends.find(({ id }) => id === agent.backendId);
+    return (
+      agent.behavior.imageInput.enabled &&
+      backend &&
+      supportsMessageImages(backend)
+    );
+  }
 
   availability(config, roles) {
     const agents = config.agents.filter(({ id }) =>
       roles.some((role) => role.id === id),
     );
     return {
-      text: agents.some((agent) => canReceive(config, agent, "text")),
-      image: agents.some((agent) => canReceive(config, agent, "image")),
-      ...(agents.some((agent) => canReceive(config, agent, "video")) && {
+      text: agents.some((agent) => this.canReceive(config, agent, "text")),
+      image: agents.some((agent) => this.canReceive(config, agent, "image")),
+      ...(agents.some((agent) => this.canReceive(config, agent, "video")) && {
         video: true,
       }),
     };
@@ -213,7 +221,7 @@ export class DesktopAttachments {
     const recipients = config.agents.filter(
       (agent) =>
         roles.some(({ id }) => id === agent.id) &&
-        canReceive(config, agent, "image"),
+        this.canReceive(config, agent, "image"),
     );
     if (!recipients.length) throw Error("DESKTOP_ATTACHMENT_UNAVAILABLE");
     if (imageMime(source) !== mimeType)
@@ -241,7 +249,7 @@ export class DesktopAttachments {
     const recipients = new Map(
       config.agents
         .filter((agent) => {
-          if (!visits.has(agent.id) || !canReceive(config, agent, kind))
+          if (!visits.has(agent.id) || !this.canReceive(config, agent, kind))
             return false;
           const policy = agent.behavior.imageInput;
           return (
@@ -287,7 +295,7 @@ export class DesktopAttachments {
   }
 
   recentVideo(config, agent, visit) {
-    if (!visit || !canReceive(config, agent, "video")) return;
+    if (!visit || !this.canReceive(config, agent, "video")) return;
     const entry = [...this.#entries.values()].findLast(
       (item) =>
         item.viewed?.has(agent.id) && item.recipients.get(agent.id) === visit,
@@ -321,7 +329,7 @@ export class DesktopAttachments {
         // A history lookup or a later visit carries only the public descriptor.
         if (!visit || entry?.recipients.get(agent.id) !== visit)
           return { ...metadata, contentUnavailable: true };
-        if (entry.video && canReceive(config, agent, "video")) {
+        if (entry.video && this.canReceive(config, agent, "video")) {
           videoIds.add(metadata.id);
           return {
             ...metadata,
@@ -329,14 +337,14 @@ export class DesktopAttachments {
             videoAvailable: true,
           };
         }
-        if (entry.text && canReceive(config, agent, "text")) {
+        if (entry.text && this.canReceive(config, agent, "text")) {
           const length = Buffer.byteLength(entry.text);
           if (textBytes + length <= MAX_TEXT_BYTES) {
             textBytes += length;
             return { ...metadata, text: entry.text };
           }
         }
-        if (entry.image && canReceive(config, agent, "image")) {
+        if (entry.image && this.canReceive(config, agent, "image")) {
           const length = Buffer.byteLength(entry.image.data, "base64");
           if (
             images.length < Math.min(imageInput.maxImages, 2) &&
@@ -363,13 +371,14 @@ export class DesktopAttachments {
       messages: prepared,
       images,
       videoIds,
-      assertCurrent(currentConfig, currentAgent, currentVisit) {
+      assertCurrent: (currentConfig, currentAgent, currentVisit) => {
         const policy = currentAgent.behavior.imageInput;
         if (
           ((textBytes || images.length) && currentVisit !== visit) ||
-          (textBytes && !canReceive(currentConfig, currentAgent, "text")) ||
+          (textBytes &&
+            !this.canReceive(currentConfig, currentAgent, "text")) ||
           (images.length &&
-            (!canReceive(currentConfig, currentAgent, "image") ||
+            (!this.canReceive(currentConfig, currentAgent, "image") ||
               images.length > policy.maxImages ||
               imageBytes > policy.maxBytes ||
               imageEdge > policy.maxEdge))

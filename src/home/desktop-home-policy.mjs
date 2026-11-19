@@ -136,6 +136,7 @@ export const desktopHomePolicy = z
           .strict(),
       )
       .default({}),
+    observeDesktop: z.boolean().default(false),
     screenView: z
       .object({ enabled: z.boolean().default(false) })
       .strict()
@@ -149,7 +150,8 @@ export const desktopHomePolicy = z
       .strict()
       .prefault({}),
     maxTurns: z.number().int().min(1).max(24).default(6),
-    refreshMinutes: z.number().int().min(0).max(1440).default(60),
+    autonomyMinutes: z.number().int().min(1).max(1440).default(10),
+    refreshMinutes: z.number().int().min(0).max(1440).default(10),
     administratorQq: z
       .string()
       .regex(/^\d{1,20}$/)

@@ -784,6 +784,20 @@ export class SubjectCoordinator {
         );
         continue;
       }
+      if (
+        r.config.desktopHome?.enabled === true &&
+        r.desktopRoleMailbox.pending(a.id, SUBJECT).length &&
+        (this.nextRoleMailWake?.get(a.id) ?? 0) <= now
+      ) {
+        // A provider that fails before submitting input leaves its mail pending.
+        // Let ordinary subject triggers continue between retries.
+        (this.nextRoleMailWake ??= new Map()).set(a.id, now + 30_000);
+        r.trackJob(
+          r.wake(a.id, SUBJECT, { reasons: [{ reason: "desktop-role-mail" }] }),
+          a.id,
+        );
+        continue;
+      }
       if (!s.nextCheckAt) {
         m.setState(SUBJECT, { ...s, nextCheckAt: now + a.subject.intervalMs });
         continue;

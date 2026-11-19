@@ -10,6 +10,7 @@ import {
   DESKTOP_ACTIVITY_DECISION,
   DESKTOP_DECISION,
   DESKTOP_HISTORY,
+  DESKTOP_ROLE_MAIL,
   DESKTOP_SCREEN_VIEW,
   DESKTOP_NATIVE_CONTROL,
   DESKTOP_BROWSER_CONTROL,
@@ -36,6 +37,8 @@ import { boardDefinitions, boardTool } from "./board.mjs";
 // Discovery and dispatch use this same registry. Fail at load time on drift.
 const handlers = {
   ...coreHandlers,
+  [DESKTOP_ROLE_MAIL]: (runtime, ctx, args) =>
+    runtime.desktopRoleMailbox.submit(ctx, args),
   [DESKTOP_HISTORY]: (runtime, ctx, args) =>
     runtime.desktopVisits.history(ctx, args),
   [DESKTOP_BODY_CONTROL]: (runtime, ctx, args) =>
@@ -44,11 +47,19 @@ const handlers = {
     runtime.desktopVisits.browser.run(ctx, args),
   [DESKTOP_NATIVE_CONTROL]: (runtime, ctx, args) =>
     runtime.desktopVisits.native.run(ctx, args),
-  [DESKTOP_SCREEN_VIEW]: (runtime, ctx) =>
-    runtime.desktopVisits.screen.view(ctx),
+  [DESKTOP_SCREEN_VIEW]: (runtime, ctx) => {
+    const access = ctx.desktopUnified
+      ? runtime.desktopVisits.fullDesktop
+      : runtime.desktopVisits.screen;
+    if (!access) throw Error("DESKTOP_SCREEN_UNAVAILABLE");
+    return access.view(ctx);
+  },
   memory_recall: recallFromChat,
   [DESKTOP_ACTIVITY_DECISION]: (_runtime, ctx, args) => {
-    if (ctx.runtimeKind !== "desktop" || !isDesktopActivity(ctx.conversation))
+    if (
+      ctx.runtimeKind !== "desktop" ||
+      (!ctx.desktopUnified && !isDesktopActivity(ctx.conversation))
+    )
       throw Error("TOOL_DISABLED");
     return ctx.desktopDecision(args);
   },

@@ -5,6 +5,7 @@ import path from "node:path";
 import { EventEmitter } from "node:events";
 import { PassThrough, Writable } from "node:stream";
 import { runNativeSocial } from "../src/backends/native-social.mjs";
+import { sessionContract } from "../src/backends/session-contract.mjs";
 import { SessionPreparationFailure } from "../src/backends/turn-failure.mjs";
 import { CodexBackend } from "../src/backends/codex.mjs";
 import { DshBackend } from "../src/backends/dsh.mjs";
@@ -543,7 +544,12 @@ function dshSocialFixture(t, { hold = false } = {}) {
         push({
           type: "session/snapshot",
           sessionId,
-          snapshot: { records: [] },
+          snapshot: {
+            records: [],
+            projections: {
+              values: { inbox: { "next-turn": [], "next-step": [] } },
+            },
+          },
         }),
       forget() {},
       async *mux(_params, signal, onOpen) {
@@ -612,6 +618,69 @@ test("DSH social actual adapter creates a fresh session and counts immediately b
   );
   assert.equal(consumed, 1);
   assert.equal(backend.turns.size, 0);
+});
+
+test("DSH upgrades the bridge catalogue and submits in the original desktop session", async (t) => {
+  const { backend, calls } = dshSocialFixture(t);
+  const previousTools = [
+    { name: "desktop_room_decide", inputSchema: { type: "object" } },
+  ];
+  const tools = [
+    ...previousTools,
+    { name: "memory_search", inputSchema: { type: "object" } },
+  ];
+  const old = {
+    backend: "dsh",
+    id: "retained-desktop-session",
+    signature: backend.sessionSignature(previousTools),
+  };
+  const previous = sessionContract(backend, previousTools);
+  assert.equal(backend.acceptsSession(old, tools, previous), false);
+  assert.equal(
+    backend.upgradeDesktopSession(
+      { ...old, signature: "unverified" },
+      tools,
+      previous,
+    ),
+    undefined,
+  );
+  const changed = new DshBackend(
+    { ...backend.config, model: "different-model" },
+    backend.agent,
+  );
+  assert.equal(changed.upgradeDesktopSession(old, tools, previous), undefined);
+
+  const session = backend.upgradeDesktopSession(old, tools, previous);
+  assert.equal(session?.id, old.id);
+  assert.notEqual(session.signature, old.signature);
+  let accepted = false;
+  await backend.runDesktop({
+    ...socialParams(),
+    desktopUnified: true,
+    tools: tools.map(({ name, inputSchema }) => ({
+      type: "function",
+      function: { name, parameters: inputSchema },
+    })),
+    socialContextToken: "synthetic-desktop-capability-token",
+    managedContext: {
+      conversation: "@desktop",
+      session,
+      saveSession: () => assert.fail("Upgrade must not replace the session"),
+    },
+    onInputSubmitted: () => {
+      accepted = true;
+    },
+  });
+  assert.ok(accepted);
+  assert.ok(
+    !calls.some(({ name }) => ["workspace", "create", "drain"].includes(name)),
+  );
+  const { args } = calls.find(({ name }) => name === "prompt");
+  assert.equal(args.sessionId, old.id);
+  assert.match(
+    args.content[0].text,
+    /context=synthetic-desktop-capability-token/,
+  );
 });
 
 test("DSH social actual adapter submits no prompt when the durable start is refused and drains setup", async (t) => {

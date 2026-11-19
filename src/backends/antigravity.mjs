@@ -23,6 +23,7 @@ import {
   assertSession,
   sessionSignature,
   acceptsSession,
+  authenticatesSessionContract,
   sessionContract,
   toolSchema as antigravitySchemaContract,
 } from "./session-contract.mjs";
@@ -392,6 +393,19 @@ export class AntigravityBackend {
   acceptsSession(session, tools, previous) {
     return acceptsSession(this, session, tools, previous);
   }
+  /** @param {import("./session-contract.mjs").StoredSession} session @param {import("./session-contract.mjs").ToolSpec[]} tools @param {import("./session-contract.mjs").SessionContract} [previous] */
+  upgradeDesktopSession(session, tools, previous) {
+    if (
+      !uuid.test(session.id) ||
+      !authenticatesSessionContract(this, session, previous)
+    )
+      return undefined;
+    return {
+      ...session,
+      signature: this.sessionSignature(tools),
+      nativeSignature: session.nativeSignature ?? session.signature,
+    };
+  }
   profileArgs() {
     return ["--gemini_dir", this.profile, "--app_data_dir", "cli"];
   }
@@ -567,15 +581,28 @@ export class AntigravityBackend {
       } catch {
         /* A lost binding is not permission to resume another chat. */
       }
+      const nativeSignature = params.session.nativeSignature;
+      const desktopMigration =
+        /^antigravity-(?:tools-v3|acp-v1):contract-v4:/.test(
+          nativeSignature || "",
+        );
+      const nativeBindingMatches =
+        nativeSignature &&
+        bound?.signature === nativeSignature &&
+        (!desktopMigration ||
+          (params.desktopUnified &&
+            params.conversation === "@desktop" &&
+            authenticatesSessionContract(
+              this,
+              { ...params.session, signature: nativeSignature },
+              bound.contract,
+            )));
       if (
         !uuid.test(params.session.id) ||
         !fs.existsSync(file) ||
         fs.lstatSync(file).isSymbolicLink() ||
         bound?.id !== params.session.id ||
-        (!(
-          params.session.nativeSignature &&
-          bound?.signature === params.session.nativeSignature
-        ) &&
+        (!nativeBindingMatches &&
           !this.acceptsSession(
             {
               backend: "antigravity",
@@ -586,8 +613,10 @@ export class AntigravityBackend {
             bound?.contract,
           ))
       ) {
+        const error = Error("ANTIGRAVITY_SESSION_UNAVAILABLE");
+        if (desktopMigration) throw new SessionPreparationFailure(error);
         params.saveSession(null);
-        throw new SessionUnavailableFailure("ANTIGRAVITY_SESSION_UNAVAILABLE");
+        throw new SessionUnavailableFailure(error.message);
       }
     }
     return { key, workspace, custom, agents, binding, signature };
@@ -1620,7 +1649,10 @@ export class AntigravityBackend {
         trustedTerminal: true,
         backendOutcome: "success",
       });
-      if (code !== 0 || child.signalCode || ioFailed)
+      if (
+        !params.desktopUnified &&
+        (code !== 0 || child.signalCode || ioFailed)
+      )
         this.retireCompletedSession(params, binding, timingStart);
       else
         diagnosticEvent({
@@ -1646,8 +1678,10 @@ export class AntigravityBackend {
         (!inputSubmitted || !child?.pid)
       )
         throw new SessionPreparationFailure(error);
-      if (fs.existsSync(binding)) managedFile(binding, "{}\n");
-      params.saveSession(null);
+      if (!params.desktopUnified) {
+        if (fs.existsSync(binding)) managedFile(binding, "{}\n");
+        params.saveSession(null);
+      }
       throw error;
     } finally {
       diagnosticActive = false;

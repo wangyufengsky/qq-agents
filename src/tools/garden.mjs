@@ -45,7 +45,7 @@ export const gardenDefinitions = {
     }),
   ],
   garden_act: [
-    "经营花园或处理管理员私聊的浇水委托。管理员私聊明确委托时用 delegate_water={eventId,plot?}，eventId 填本轮已展示的原始来信记录 ID，省略 plot 表示给当前缺水的地浇水。用 delegate_status/delegate_cancel={delegationId} 回查或应明确要求撤回。主人格看到 garden-watering 收件后，用 delegate_step/delegate_dismiss={delegationId} 处理或放下。每步最多浇一块地，续作使用新 requestId。主人格也可以直接经营，每次一个动作，先调用 garden_read。kind=plant，args={plot,cropId,buyPrice?}，buyPrice 为缺种时同笔购买的单价；buy_seed={cropId,quantity,price}；buy_fertilizer={quantity,price}；water/fertilize/harvest/clear={plot,plantId}；sell={harvestId,quantity,price}；gift={harvestId,quantity,recipient:{kind,id}}。交易 price 是总价。requestId 唯一，同一动作重试用原 ID。",
+    "在获准的主人格或桌面回合经营花园，或处理管理员私聊的浇水委托。管理员私聊明确委托时用 delegate_water={eventId,plot?}，eventId 填本轮已展示的原始来信记录 ID，省略 plot 表示给当前缺水的地浇水。用 delegate_status/delegate_cancel={delegationId} 回查或应明确要求撤回。主人格看到 garden-watering 收件后，用 delegate_step/delegate_dismiss={delegationId} 处理或放下。每步最多浇一块地，续作使用新 requestId。主人格也可以直接经营，每次一个动作，先调用 garden_read。kind=plant，args={plot,cropId,buyPrice?}，buyPrice 为缺种时同笔购买的单价；buy_seed={cropId,quantity,price}；buy_fertilizer={quantity,price}；water/fertilize/harvest/clear={plot,plantId}；sell={harvestId,quantity,price}；gift={harvestId,quantity,recipient:{kind,id}}。交易 price 是总价。requestId 唯一，同一动作重试用原 ID。",
     z.strictObject({
       requestId: z.string().regex(/^[A-Za-z0-9_-]{8,80}$/),
       kind: z.string().min(1).max(40),
@@ -62,8 +62,8 @@ function activeRead(runtime, ctx) {
   if (
     !gardenPublicScope(ctx.conversation) ||
     (ctx.runtimeKind && ctx.runtimeKind !== "desktop") ||
-    ctx.desktopScreenObserved ||
-    ctx.desktopPrivateObservation
+    (!ctx.desktopUnified &&
+      (ctx.desktopScreenObserved || ctx.desktopPrivateObservation))
   )
     throw Error("TOOL_DISABLED");
   if (!runtime.home.garden.initialized()) throw Error("GARDEN_NOT_INITIALIZED");
@@ -147,25 +147,26 @@ export function gardenTool(
       ? activeRead(runtime, ctx)
       : runtime.assertActive(ctx);
   const garden = runtime.home.garden;
-  const manages =
-    ctx.conversation === "@subject" &&
-    !ctx.runtimeKind &&
+  const subjectTurn = ctx.conversation === "@subject" && !ctx.runtimeKind;
+  const desktopTurn =
+    ctx.desktopUnified &&
+    ctx.runtimeKind === "desktop" &&
+    ctx.conversation === DESKTOP_CONVERSATION &&
+    runtime.desktopVisits.live?.visits.has(role.id);
+  const runningTurn =
+    (subjectTurn || desktopTurn) &&
     !ctx.intentOnly &&
     !ctx.scheduleRunId &&
     ctx.turnId &&
-    runtime.running.get(role.id + "|@subject") === ctx &&
-    garden.allowsRole(role.id, runtime.home.generation(role.id));
+    runtime.running.get(role.id + "|" + ctx.conversation) === ctx;
+  const manages =
+    runningTurn && garden.allowsRole(role.id, runtime.home.generation(role.id));
   if (name === "garden_read") {
     const { view = "overview", readToken, ...query } = input;
     if (readToken !== undefined && view !== "ack_digest")
       throw Error("INVALID_REQUEST");
     if (view === "gifts") {
-      if (
-        ctx.conversation !== "@subject" ||
-        ctx.runtimeKind ||
-        ctx.intentOnly ||
-        ctx.scheduleRunId
-      )
+      if ((!subjectTurn || ctx.intentOnly || ctx.scheduleRunId) && !manages)
         throw Error("TOOL_DISABLED");
       return subjectGardenGifts(runtime, role.id);
     }
@@ -185,11 +186,7 @@ export function gardenTool(
       ].includes(view)
     )
       throw Error("INVALID_REQUEST");
-    const publicView =
-      ctx.conversation !== "@subject" ||
-      !!(ctx.runtimeKind || ctx.intentOnly || ctx.scheduleRunId) ||
-      !ctx.turnId ||
-      runtime.running.get(role.id + "|@subject") !== ctx;
+    const publicView = !(runningTurn && (subjectTurn || manages));
     if (query.cropId) {
       const crops = garden.requireState().settings.crops;
       if (!Object.hasOwn(crops, query.cropId))
@@ -271,9 +268,10 @@ export function gardenTool(
       return delegations.origin(ctx, input.kind, input.args);
     throw Error("TOOL_DISABLED");
   }
-  if (["delegate_step", "delegate_dismiss"].includes(input.kind))
+  if (subjectTurn && ["delegate_step", "delegate_dismiss"].includes(input.kind))
     return delegations.execute(ctx, input.kind, input.requestId, input.args);
   if (!manages) throw Error("GARDEN_ROLE_UNAVAILABLE");
+  if (input.kind.startsWith("delegate_")) throw Error("TOOL_DISABLED");
   if (Object.hasOwn(input.args, "kind")) throw Error("INVALID_REQUEST");
   return performGardenAction(
     runtime,

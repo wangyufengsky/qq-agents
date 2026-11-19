@@ -96,7 +96,7 @@ export class DesktopVisits {
     );
   }
 
-  beginDesktop(controller) {
+  beginDesktop(controller, conversation) {
     const { runtime, agentId } = this;
     const agent = runtime.agent(agentId);
     if (this.qqClaims || this.pendingQq())
@@ -104,7 +104,7 @@ export class DesktopVisits {
         desktopSessionUntouched: true,
       });
     if (
-      runtime.blockers(agent).length ||
+      runtime.blockers(agent, conversation).length ||
       runtime.games.busy(agent.backendId) ||
       [...runtime.running.values()].some((ctx) => ctx.agentId === agentId)
     )
@@ -128,7 +128,7 @@ export class DesktopVisits {
       this.desktop?.controller.abort(Error("DESKTOP_QQ_PRIORITY"));
   }
 
-  claimQq(agentId, conversation) {
+  claimQq(agentId, conversation, { preempt = true } = {}) {
     if (
       agentId !== this.agentId ||
       !isQq(conversation) ||
@@ -139,7 +139,7 @@ export class DesktopVisits {
       return null;
     this.qqClaims++;
     const drained = this.desktop?.done;
-    this.interrupt(agentId);
+    if (preempt) this.interrupt(agentId);
     return {
       drained,
       release: () => {
