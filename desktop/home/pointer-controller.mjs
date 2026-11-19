@@ -1,3 +1,5 @@
+import { createOwnerDragQueue } from "./owner-drag.mjs";
+
 export function createPointerController({
   context,
   entries,
@@ -18,9 +20,56 @@ export function createPointerController({
   clampPoint,
   sizes,
   manualTouches,
+  ownerInput,
   positions,
   savePreferences,
 }) {
+  const unifiedDrag = (entry) =>
+    entry.type === "sprite" && context.remoteState?.desktopUnified === true;
+  const stopRevision = (entry) =>
+    Math.max(entry.bodyInputAfter ?? 0, context.bodyInputAfter ?? 0);
+  const ownerDrag = createOwnerDragQueue({
+    fence: (entry) => ({
+      roomEpoch: context.remoteState?.roomEpoch,
+      visitId: entry.bodyVisitId,
+      stopRevision: stopRevision(entry),
+    }),
+    valid: (entry, fence) =>
+      unifiedDrag(entry) &&
+      context.remoteState?.connected &&
+      fence.roomEpoch === context.remoteState.roomEpoch &&
+      fence.visitId &&
+      fence.visitId === entry.bodyVisitId &&
+      fence.stopRevision === stopRevision(entry) &&
+      entries.get(entry.id) === entry &&
+      !entry.departing &&
+      !entry.win.isDestroyed() &&
+      !context.hidden &&
+      !context.desktopLocked &&
+      windowVisible(entry),
+    start(entry) {
+      follow.stop("manual-control");
+      stopLocalSeat(entry, "manual-control");
+      stopMovement(entry);
+      const [x, y] = entry.win.getPosition();
+      return { x, y };
+    },
+    move(entry, point) {
+      const { x, y } = clampPoint(point, ...sizes[entry.type]);
+      entry.win.setPosition(x, y);
+    },
+    end(entry, from) {
+      const [x, y] = entry.win.getPosition();
+      if (from.x === x && from.y === y) return;
+      const to = { x, y };
+      space.invalidate();
+      entry.privatePosition = undefined;
+      positions[entry.id] = to;
+      savePreferences();
+      if (ownerInput?.record(entry, { kind: "drag", from, to }))
+        context.framework?.sync();
+    },
+  });
   let pointerTimer;
   function updatePointerPolling() {
     const needed =
@@ -73,7 +122,7 @@ export function createPointerController({
         dy >= 2 &&
         dy <= 54;
       const active = overBody || overBubble || overStatus;
-      const ignored = !active && !entry.drag;
+      const ignored = !active && !entry.drag && !ownerDrag.capturing(entry);
       if (ignored === entry.ignored) continue;
       entry.ignored = ignored;
       win.setIgnoreMouseEvents(ignored);
@@ -82,6 +131,7 @@ export function createPointerController({
 
   function handleDrag(entry, action, data) {
     if (!Number.isFinite(data?.x) || !Number.isFinite(data?.y)) return;
+    if (unifiedDrag(entry)) return ownerDrag.handle(entry, action, data);
     const [x, y] = entry.win.getPosition();
     if (action === "drag-start") {
       space.invalidate();
@@ -158,5 +208,18 @@ export function createPointerController({
     }
   }
 
-  return { updatePointerPolling, updatePointerRegions, handleDrag };
+  function executeBody(request, current, finish, execute) {
+    const entry = entries.get(request.agentId);
+    return entry && unifiedDrag(entry)
+      ? ownerDrag.body(entry, current, finish, execute)
+      : execute(finish);
+  }
+
+  return {
+    updatePointerPolling,
+    updatePointerRegions,
+    handleDrag,
+    executeBody,
+    clearOwnerDrag: ownerDrag.clear,
+  };
 }
