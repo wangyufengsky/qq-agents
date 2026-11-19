@@ -230,7 +230,10 @@ function windowVisible({ win, pageVisible }) {
 const body = new DesktopBodyClient({
   claim: (data, current) => framework.result("body-claim", data, current),
   result: (data, current) => framework.result("body-result", data, current),
-  execute: executeVerifiedBodyAction,
+  execute: (request, current, finish) =>
+    pointerController.executeBody(request, current, finish, (settle) =>
+      executeVerifiedBodyAction(request, current, settle),
+    ),
   position: (id) => (entries.get(id)?.privatePosition ? {} : bodyPosition(id)),
 });
 const nativeExecutable =
@@ -722,6 +725,7 @@ const windowView = createWindowView({
   clampToWorkArea,
   restoreWindowPoint,
   entries,
+  clearOwnerDrag: (entry) => pointerController.clearOwnerDrag(entry),
   createWindow: (...args) => createWindow(...args),
   send,
   snapshot,

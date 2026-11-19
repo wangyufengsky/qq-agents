@@ -6,6 +6,7 @@ export function createWindowView({
   clampToWorkArea,
   restoreWindowPoint,
   entries,
+  clearOwnerDrag,
   createWindow,
   send,
   snapshot,
@@ -108,6 +109,7 @@ export function createWindowView({
       follow.stop("hidden", entry);
       stopLocalWindowTask("hidden", entry.id);
       body.stop(entry.id, "hidden");
+      clearOwnerDrag?.(entry);
       stopLocalSeat(entry, "hidden");
       if (entry.departing) entry.win.destroy();
       else stopMovement(entry);
@@ -137,6 +139,7 @@ export function createWindowView({
     stopLocalWindowTask(reason);
     for (const entry of entries.values()) {
       entry.drag = null;
+      clearOwnerDrag?.(entry);
       stopLocalSeat(entry, reason);
       if (entry.departing) entry.win.destroy();
       else stopMovement(entry);
