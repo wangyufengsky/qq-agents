@@ -910,7 +910,7 @@ h2 {
     animation: none;
   }
 }
-.browser-permission-dialog {
+:is(.browser-permission-dialog, .unified-browser-dialog) {
   width: min(320px, calc(100% - 32px));
   max-height: calc(100% - 32px);
   padding: 16px;
@@ -919,19 +919,19 @@ h2 {
   background: var(--paper);
   color: var(--ink);
 }
-.browser-permission-dialog::backdrop {
+:is(.browser-permission-dialog, .unified-browser-dialog)::backdrop {
   background: rgb(36 30 22 / 36%);
 }
-.browser-permission-form {
+:is(.browser-permission-form, .unified-browser-form) {
   display: grid;
   gap: 8px;
 }
-.browser-permission-form label,
+:is(.browser-permission-form, .unified-browser-form) label,
 .browser-permission-error {
   font-size: 12px;
 }
-.browser-permission-form input,
-.browser-permission-form select {
+:is(.browser-permission-form, .unified-browser-form) input,
+:is(.browser-permission-form, .unified-browser-form) select {
   min-width: 0;
   padding: 6px 8px;
   border: 1px solid var(--line);
@@ -2053,4 +2053,20 @@ h2 {
   max-width: 100%;
   max-height: calc(100vh - 100px);
   object-fit: contain;
+}
+
+.unified-native-list,
+.unified-browser-list {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding-left: 1.2em;
+}
+.unified-native-list:empty,
+.unified-browser-list:empty,
+.unified-grant-status:empty {
+  display: none;
+}
+.unified-native-list button,
+.unified-browser-list button {
+  margin-left: 0.7em;
 }

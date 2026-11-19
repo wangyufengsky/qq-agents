@@ -91,7 +91,9 @@ test("only published agent messages use the shared budget and both refresh paths
     assert.equal(publish(i % 2 ? "first" : "second").status, "published");
   }
   assert.equal(publish("first").status, "awaiting-refresh");
-  assert.equal(queue.take("second"), undefined);
+  const finalListener = queue.take("second");
+  assert.equal(finalListener.events.at(-1).messageId, "6");
+  queue.finish(finalListener, { submitted: true });
   publish(DESKTOP_ADMINISTRATOR);
   assert.equal(queue.remaining(), 6);
   assert.ok(queue.take("second"));

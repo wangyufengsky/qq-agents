@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
-import { DesktopHost } from "../src/home/desktop-host.mjs";
-import { DesktopTurnQueue } from "../src/home/desktop-turn-queue.mjs";
+import { createDesktopRoomHost } from "../src/home/desktop-host.mjs";
 import { desktopToken } from "../src/home/desktop-auth.mjs";
 import { createServer } from "../src/server.mjs";
 import { config, fixture } from "./helpers.mjs";
@@ -10,11 +9,11 @@ import { config, fixture } from "./helpers.mjs";
 test("the normal desktop HTTP entry queues chatting and touches for the roles actually present", async (t) => {
   const cfg = config(2);
   cfg.desktopHome.enabled = true;
-  const { runtime } = fixture(t, { cfg });
-  const host = new DesktopHost(runtime, {
-    createTurnQueue: () => new DesktopTurnQueue(),
+  const { runtime } = fixture(t, {
+    cfg,
+    createDesktopHost: createDesktopRoomHost,
   });
-  runtime.desktopVisits = host;
+  const host = runtime.desktopVisits;
   const admin = "fixture-admin-token";
   const app = createServer({ runtime, token: admin, allowLive: true });
   const url = `http://127.0.0.1:${await app.listen()}/api/desktop-home/client`;

@@ -33,6 +33,7 @@ const conflicts = new Set([
 ]);
 const components = new Set([
   "games",
+  "desktop-home",
   "http",
   "runtime",
   "scheduler",

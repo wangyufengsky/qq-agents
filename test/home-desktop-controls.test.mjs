@@ -5,6 +5,7 @@ import { chromium } from "playwright-core";
 import { createServer } from "../src/server.mjs";
 import { desktopHomePolicy } from "../src/home/desktop-home-policy.mjs";
 import { findScreenshotBrowser } from "../src/tools/public-screenshot.mjs";
+import { createDesktopRoomHost } from "../src/home/desktop-host.mjs";
 import { fixture } from "./helpers.mjs";
 
 test("desktop living preferences preserve legacy defaults and validate per-role cadence", () => {
@@ -94,7 +95,7 @@ test("paper nest opens, retries and closes the desktop home from its header", as
   assert.equal(await limit.inputValue(), "6");
   assert.equal(
     await page.getByLabel("额度补满间隔（分钟）").inputValue(),
-    "60",
+    "10",
   );
   const settings = page.getByRole("group", { name: "角色生活偏好" });
   const role = settings.getByRole("group", { name: "角色0" });
@@ -204,4 +205,73 @@ test("paper nest opens, retries and closes the desktop home from its header", as
     () => !document.querySelector(".desktop-settings .primary").disabled,
   );
   assert.deepEqual(runtime.config.desktopHome.residentPreferences, {});
+});
+
+test("unified settings present one global observation grant and configurable room cadence", async (t) => {
+  let executablePath;
+  try {
+    executablePath = findScreenshotBrowser();
+  } catch {
+    t.skip("local Chromium unavailable");
+    return;
+  }
+  const { runtime } = fixture(t, { createDesktopHost: createDesktopRoomHost });
+  runtime.config.desktopHome.screenView.enabled = true;
+  const token = "test-admin-token-placeholder";
+  const app = createServer({ runtime, token, allowLive: true });
+  const port = await app.listen();
+  t.after(() => app.close());
+  const browser = await chromium.launch({ executablePath, headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.addInitScript(
+    (value) => sessionStorage.setItem("qq-unified-token", value),
+    token,
+  );
+  let saved;
+  await page.route("**/api/config", async (route) => {
+    if (route.request().method() !== "PUT") return route.continue();
+    saved = route.request().postDataJSON().config.desktopHome;
+    return route.fulfill({ json: { accepted: true } });
+  });
+  await page.goto(`http://127.0.0.1:${port}/home-space/`);
+  await page.getByRole("button", { name: "更多入口" }).click();
+  await page.getByRole("button", { name: "桌面小窝设置", exact: true }).click();
+  const observe = page.getByRole("checkbox", { name: "授权观察整个桌面" });
+  await observe.waitFor();
+  assert.equal(await observe.count(), 1);
+  assert.equal(await observe.isChecked(), false);
+  assert.equal(
+    await page.locator(".desktop-settings input[type=number]").count(),
+    3,
+  );
+  assert.equal(await page.getByLabel("允许在本机授权自主观察窗口").count(), 0);
+  assert.equal(await page.getByLabel("显示器观察授权时长（分钟）").count(), 0);
+  assert.equal(
+    await page.getByRole("group", { name: "可获窗口观察授权的角色" }).count(),
+    0,
+  );
+  assert.equal(await page.getByLabel("共用回合上限").inputValue(), "6");
+  assert.equal(
+    await page.getByLabel("额度补满间隔（分钟）").inputValue(),
+    "10",
+  );
+  assert.equal(
+    await page.getByLabel("自主唤醒间隔（分钟）").inputValue(),
+    "10",
+  );
+  await observe.check();
+  await page.getByLabel("自主唤醒间隔（分钟）").fill("12");
+  await page.getByRole("button", { name: "保存桌面设置" }).click();
+  await page.getByText("桌面小窝设置已保存。", { exact: true }).waitFor();
+  assert.equal(saved.observeDesktop, true);
+  assert.equal(
+    saved.screenView.enabled,
+    runtime.config.desktopHome.screenView.enabled,
+  );
+  assert.equal(saved.autonomyMinutes, 12);
+  assert.equal(
+    saved.autonomousObservation,
+    runtime.config.desktopHome.autonomousObservation,
+  );
 });

@@ -141,6 +141,7 @@ export class Runtime {
     random = Math.random,
     diagnostics = new Diagnostics(),
     messageTiming = undefined,
+    createDesktopHost = (runtime) => new DesktopHost(runtime),
   }) {
     Object.assign(this, {
       configStore,
@@ -161,7 +162,7 @@ export class Runtime {
     this.autoResume = new AutoResume(this);
     this.running = new Map();
     this.subjectExecution = new SubjectExecution();
-    this.desktopVisits = new DesktopHost(this);
+    this.desktopVisits = createDesktopHost(this);
     this.desktopRoleMailbox = new DesktopRoleMailbox(this);
     this.pending = new Map();
     this.capabilities = new Map();

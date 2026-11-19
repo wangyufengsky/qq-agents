@@ -110,7 +110,8 @@ export function createDesktopSnapshot({
           screenView: undefined,
           observation: undefined,
         }),
-      ...(data.companionMode &&
+      ...(!data.desktopUnified &&
+        data.companionMode &&
         permissionRevision("control", data) === undefined && {
           nativeControl: data.nativeControl?.handoff
             ? { eligible: [], handoff: data.nativeControl.handoff }

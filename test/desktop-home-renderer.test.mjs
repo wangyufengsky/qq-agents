@@ -2219,3 +2219,91 @@ test("window observation grants show the target and revoke action, with legacy a
   assert.equal(await action.textContent(), "授权自主观察窗口");
   assert.equal(await tools.getAttribute("aria-label"), "小窝工具，当前有授权");
 });
+
+test("unified owner controls show global observation and explicit per-target grants", async (t) => {
+  let executablePath;
+  try {
+    executablePath = findScreenshotBrowser();
+  } catch {
+    t.skip("local Chromium unavailable");
+    return;
+  }
+  const browser = await chromium.launch({ executablePath, headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.addInitScript(() => {
+    window.ownerCalls = [];
+    window.nest = {
+      onRoom() {},
+      onSection() {},
+      get: async () => ({
+        section: "chat",
+        data: {
+          framework: true,
+          connected: true,
+          desktopUnified: true,
+          desktopObservationEnabled: true,
+          roomEpoch: "room",
+          roles: [{ id: "fish", name: "小鱼", color: "mint", state: "here" }],
+          messages: [],
+          screenView: { eligible: ["fish"], grants: [] },
+          observation: { eligible: ["fish"], displays: [] },
+          nativeControl: {
+            eligible: [],
+            targetEligible: ["fish"],
+            grants: [
+              {
+                agentId: "fish",
+                title: "示例窗口",
+                targetId: "window",
+                grantId: "os-one",
+              },
+            ],
+          },
+          browserControl: {
+            eligible: [],
+            targetEligible: ["fish"],
+            grants: [
+              {
+                agentId: "fish",
+                targetStatus: "open",
+                targetId: "tab",
+                grantId: "tab-one",
+              },
+            ],
+          },
+        },
+      }),
+      nativeControl: async (input) => {
+        window.ownerCalls.push(["native", input]);
+        return "granted";
+      },
+      browserControl: async (input) => {
+        window.ownerCalls.push(["browser", input]);
+        return input.type === "grant" ? "granted" : "revoked";
+      },
+    };
+  });
+  await page.goto(pageUrl("type=panel"));
+  await page.getByRole("button", { name: /小窝工具/ }).click();
+  await page.getByText("已授权所有在场角色查看全部显示器。").waitFor();
+  assert.equal(await page.locator(".screen-view").isVisible(), false);
+  assert.equal(await page.locator(".display-observation").isVisible(), false);
+  assert.equal(await page.locator(".observation").isVisible(), false);
+  await page.getByRole("button", { name: "选择角色与窗口" }).click();
+  await page
+    .getByRole("button", { name: "撤销 小鱼 · 示例窗口 的授权" })
+    .click();
+  await page.getByRole("button", { name: "授权独立标签页" }).click();
+  const dialog = page.getByRole("dialog", { name: "授权独立网页标签页" });
+  await dialog.getByRole("combobox", { name: "角色" }).selectOption("fish");
+  await dialog.getByRole("button", { name: "授权", exact: true }).click();
+  await dialog.waitFor({ state: "hidden" });
+  await page.getByRole("button", { name: /撤销 小鱼 · 独立标签页/ }).click();
+  assert.deepEqual(await page.evaluate(() => window.ownerCalls), [
+    ["native", { type: "grant" }],
+    ["native", { type: "revoke", grantId: "os-one" }],
+    ["browser", { type: "grant", agentId: "fish" }],
+    ["browser", { type: "revoke", grantId: "tab-one" }],
+  ]);
+});

@@ -25,6 +25,7 @@ import { DesktopPersonal } from "./desktop-personal.mjs";
 import { DesktopInvitations } from "./desktop-invitations.mjs";
 import { LiveRoom } from "./desktop-room.mjs";
 import { QueuedDesktopRoom } from "./desktop-queued-room.mjs";
+import { DesktopTurnQueue } from "./desktop-turn-queue.mjs";
 import { runDesktopTurn } from "./desktop-unified-turn.mjs";
 import { createRoom, roles as art } from "./desktop-room-state.mjs";
 import { beginDesktopContext } from "./desktop-context.mjs";
@@ -56,7 +57,11 @@ import {
   browserGrantSchema,
   browserRevokeSchema,
 } from "./desktop-browser.mjs";
-import { localGrantSchema, localRevokeSchema } from "./desktop-local-grant.mjs";
+import {
+  localControlTargetId,
+  localGrantSchema,
+  localRevokeSchema,
+} from "./desktop-local-grant.mjs";
 
 const windowTaskInput = localGrantSchema
   .extend({
@@ -67,6 +72,7 @@ const windowTaskInput = localGrantSchema
 const nativeGrantSchema = localGrantSchema
   .extend({
     confirmed: z.literal(true).optional(),
+    targetId: localControlTargetId.optional(),
     visitId: z.string().uuid().optional(),
   })
   .strict();
@@ -210,6 +216,24 @@ const requestSchema = z
         message: "Invalid action data",
       });
   });
+const legacyDesktopActions = new Set([
+  "activity-pause",
+  "bubble-reply",
+  "mode-set",
+  "mode-invalidate",
+  "screen-grant",
+  "screen-grant-batch",
+  "screen-revoke",
+  "screen-revoke-batch",
+  "display-grant-batch",
+  "display-revoke-batch",
+  "observation-grant",
+  "observation-revoke",
+  "observation-state",
+  "window-observation-grant-batch",
+  "window-task",
+  "window-task-stop",
+]);
 const CLIENT_LEASE = 15_000;
 const ACTIVITY_VISIBILITY_LEASE = 2_500;
 const defaultArt = { dsh: "fish", codex: "dragon", antigravity: "cat" };
@@ -243,6 +267,24 @@ function explicitTargets(text, roles) {
       )
       ? ids
       : [];
+  });
+}
+
+export function createDesktopRoomHost(runtime) {
+  return new DesktopHost(runtime, {
+    createTurnQueue: () =>
+      new DesktopTurnQueue({
+        now: () => runtime.now(),
+        policy: () => {
+          const { maxTurns, refreshMinutes, autonomyMinutes } =
+            runtime.config.desktopHome;
+          return {
+            maxTurns,
+            refreshMinutes,
+            autonomousMinutes: autonomyMinutes,
+          };
+        },
+      }),
   });
 }
 
@@ -516,6 +558,7 @@ export class DesktopHost {
       this.observation.clear();
       this.body.clear();
       void this.browser.clear();
+      if (this.desktopUnified) void this.browser.suspendUnified();
       return Boolean(this.live);
     }
     if (this.live) {
@@ -905,6 +948,7 @@ export class DesktopHost {
     this.fullDesktop.clear();
     this.native.clear();
     void this.browser.clear();
+    if (this.desktopUnified) void this.browser.suspendUnified();
     if (!this.live) return;
     const previous = this.live;
     this.live = null;
@@ -941,6 +985,13 @@ export class DesktopHost {
     if (!this.client) {
       if (action !== "sync") return { enabled: true, reconnect: true };
       this.open(client);
+    }
+    if (this.desktopUnified) {
+      if (legacyDesktopActions.has(action)) throw Error("TOOL_DISABLED");
+      if (action === "native-grant" && !data.targetId)
+        throw Error("DESKTOP_NATIVE_UNAVAILABLE");
+      if (action === "browser-grant" && !data.targetId)
+        throw Error("DESKTOP_BROWSER_DENIED");
     }
     const revisionActions = [
       "screen-grant",
@@ -1370,7 +1421,9 @@ export class DesktopHost {
         )
         .map(({ actor }) => actor),
     );
-    const viewing = screen.request() && screen.pending.grant.agentId;
+    const viewing =
+      this.fullDesktop.request()?.agentId ??
+      (screen.request() && screen.pending.grant.agentId);
     const windowAction = native.request();
     const operating = windowAction && native.grant.agentId;
     const qq = new Set();
@@ -1484,6 +1537,14 @@ export class DesktopHost {
     const screenView = this.screen.state();
     const nativeControl = this.native.state();
     const browserControl = this.browser.state();
+    if (this.desktopUnified) {
+      nativeControl.targetEligible = this.native.unified
+        .eligible()
+        .map(({ id }) => id);
+      browserControl.targetEligible = this.browser.unified
+        .eligible()
+        .map(({ id }) => id);
+    }
     return {
       enabled: true,
       frameReceipts: this.frameReceipts.filter((receipt) => {
@@ -1502,8 +1563,10 @@ export class DesktopHost {
         browserControl,
         activityEnabled: this.live
           .here()
-          .some(({ id }) =>
-            this.runtime.config.desktopHome.activityRoles.includes(id),
+          .some(
+            ({ id }) =>
+              this.desktopUnified ||
+              this.runtime.config.desktopHome.activityRoles.includes(id),
           ),
         attachmentInput: this.attachments.availability(
           this.runtime.config,

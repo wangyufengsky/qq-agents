@@ -105,15 +105,7 @@ export class DesktopTurnQueue {
     if (!visit || this.#running.has(actor)) return;
     const now = this.#now();
     const autonomous = this.#wakeDue(visit, now);
-    const promptEvent = visit.events.some(
-      ({ kind, speaker }) => kind !== "message" || speaker === "administrator",
-    );
-    if (
-      !autonomous &&
-      !promptEvent &&
-      !(visit.events.length && this.remaining())
-    )
-      return;
+    if (!autonomous && !visit.events.length) return;
 
     const events = visit.events;
     visit.events = [];
