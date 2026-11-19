@@ -29,6 +29,7 @@ export function registerActionIpc({
   showPanel,
   randomUUID,
   manualTouches,
+  ownerInput,
   Menu,
   positions,
   returnHome,
@@ -172,6 +173,9 @@ export function registerActionIpc({
         !entry.drag &&
         windowVisible(entry)
       ) {
+        const candidatePet = context.framework && ownerInput?.enabled();
+        if (candidatePet && ownerInput.record(entry, { kind: "pet" }))
+          context.framework.sync();
         const now = Date.now();
         if (now < (entry.pettedAt ?? 0) + 700) return;
         entry.pettedAt = now;
@@ -183,7 +187,7 @@ export function registerActionIpc({
           entry.gesture = undefined;
           update();
         }, 1050);
-        if (context.framework && entry.bodyVisitId) {
+        if (!candidatePet && context.framework && entry.bodyVisitId) {
           manualTouches.set(entry.id + ":pet", {
             agentId: entry.id,
             visitId: entry.bodyVisitId,

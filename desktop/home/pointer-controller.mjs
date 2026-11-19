@@ -18,6 +18,7 @@ export function createPointerController({
   clampPoint,
   sizes,
   manualTouches,
+  ownerInput,
   positions,
   savePreferences,
 }) {
@@ -101,7 +102,11 @@ export function createPointerController({
             ? [entry]
             : [];
       entry.bodyInputAfter = Date.now();
-      if (context.framework && entry.type === "sprite") {
+      if (
+        context.framework &&
+        entry.type === "sprite" &&
+        !ownerInput?.enabled()
+      ) {
         manuallyMoved.add(entry.id);
         context.framework.sync();
       }
@@ -122,7 +127,13 @@ export function createPointerController({
         const panel = entries.get("panel");
         if (panel?.ready) send(panel, "room:update", snapshot(true));
       }
-      entry.drag = { x, y, mouseX: data.x, mouseY: data.y };
+      entry.drag = {
+        x,
+        y,
+        visitId: entry.bodyVisitId,
+        mouseX: data.x,
+        mouseY: data.y,
+      };
     } else if (entry.drag) {
       const from = entry.drag;
       const target = clampPoint(
@@ -140,13 +151,26 @@ export function createPointerController({
         space.invalidate();
         entry.bodyInputAfter = Date.now();
         if (context.framework && entry.type === "sprite") {
-          manuallyMoved.add(entry.id);
-          if (entry.bodyVisitId)
-            manualTouches.set(entry.id + ":drag", {
-              agentId: entry.id,
-              visitId: entry.bodyVisitId,
-              kind: "drag",
-            });
+          if (ownerInput?.enabled()) {
+            const [actualX, actualY] = entry.win.getPosition();
+            if (
+              from.visitId === entry.bodyVisitId &&
+              (from.x !== actualX || from.y !== actualY)
+            )
+              ownerInput.record(entry, {
+                kind: "drag",
+                from: { x: from.x, y: from.y },
+                to: { x: actualX, y: actualY },
+              });
+          } else {
+            manuallyMoved.add(entry.id);
+            if (entry.bodyVisitId)
+              manualTouches.set(entry.id + ":drag", {
+                agentId: entry.id,
+                visitId: entry.bodyVisitId,
+                kind: "drag",
+              });
+          }
           context.framework.sync();
         }
         if (entry.type === "door") {

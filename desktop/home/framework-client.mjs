@@ -7,7 +7,14 @@ const CONNECT_TIMEOUT_MS = 2500;
 const MAX_EVENT_LENGTH = 4 * 1024 * 1024;
 
 function heartbeatData(data, lastActivity) {
-  const { dragged, ownerTouches, bodyResults, bodyPositions, ...state } = data;
+  const {
+    dragged,
+    ownerTouches,
+    desktopOwnerEvents,
+    bodyResults,
+    bodyPositions,
+    ...state
+  } = data;
   const signature = JSON.stringify(state);
   return {
     signature,
@@ -15,6 +22,7 @@ function heartbeatData(data, lastActivity) {
       signature !== lastActivity ||
       dragged?.length ||
       ownerTouches?.length ||
+      desktopOwnerEvents?.length ||
       bodyResults?.length ||
       bodyPositions
         ? data
@@ -233,7 +241,11 @@ export function createFrameworkClient(
           activeStream.lastActivity = undefined;
           syncAgain = true;
         } else activeStream.lastActivity = heartbeat.signature;
-        if (value.bodyRequests?.length || value.bodyResultAcks?.length)
+        if (
+          value.bodyRequests?.length ||
+          value.bodyResultAcks?.length ||
+          value.desktopOwnerInput
+        )
           onState(value, "heartbeat");
         return;
       }

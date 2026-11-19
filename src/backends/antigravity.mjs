@@ -1,6 +1,12 @@
 // @ts-check
 import { finalizeMcpOutput, toolOutputText } from "./tool-output.mjs";
 import { closeSocialSessions } from "./social-sessions.mjs";
+import {
+  desktopCaptureBatch,
+  MAX_DESKTOP_CAPTURE_BYTES,
+  MAX_DESKTOP_CAPTURE_DISPLAYS,
+  MAX_DESKTOP_CAPTURE_ENCODED,
+} from "../home/desktop-capture-protocol.mjs";
 import { runNativeSocial } from "./native-social.mjs";
 import fs from "node:fs";
 import path from "node:path";
@@ -1045,7 +1051,7 @@ export class AntigravityBackend {
     const videoContinuation = acp && names.has("video_read");
     /** @type {{contents: any[], current: () => boolean, setPending: (pending: boolean, submitted?: boolean) => void} | undefined} */
     let videoFrames;
-    /** @type {{image: {type: string, mimeType: string, data: string}, current: () => boolean, submitted?: () => void} | undefined} */
+    /** @type {{payload: {image: any} | {content: any[]}, current: () => boolean, submitted?: () => void} | undefined} */
     let screenFrame;
     /** @type {{id: string, current: () => boolean, submitted?: () => void} | undefined} */
     let screenClaim;
@@ -1105,12 +1111,15 @@ export class AntigravityBackend {
       ) {
         const frame = screenFrame;
         screenFrame = undefined;
-        let image = null;
+        /** @type {{image: any} | {content: any[]}} */
+        let payload = { image: null };
+        let receiptId;
         try {
           if (frame?.current()) {
-            image = frame.image;
+            payload = frame.payload;
+            receiptId = randomBytes(16).toString("hex");
             screenClaim = {
-              id: randomBytes(16).toString("hex"),
+              id: receiptId,
               current: frame.current,
               submitted: frame.submitted,
             };
@@ -1119,8 +1128,8 @@ export class AntigravityBackend {
           // A revoked or expired frame must not leave this turn.
         }
         return reply(200, {
-          image,
-          ...(image && screenClaim && { receiptId: screenClaim.id }),
+          ...payload,
+          ...(receiptId && { receiptId }),
         });
       }
       if (
@@ -1248,23 +1257,36 @@ export class AntigravityBackend {
               value.isError
             )
               return media.fromTool(value, params.signal);
-            const image = value.content.find(
-              (/** @type {any} */ item) =>
-                item.type === "image" && item.mimeType === "image/jpeg",
+            const content = value.content;
+            const images = content.filter(
+              (/** @type {any} */ item) => item.type === "image",
             );
             const current = value[mediaLease];
             if (
               typeof current !== "function" ||
-              typeof image?.data !== "string" ||
-              image.data.length > 65536
+              images.length === 0 ||
+              images.length > MAX_DESKTOP_CAPTURE_DISPLAYS ||
+              content.length > MAX_DESKTOP_CAPTURE_DISPLAYS * 2 ||
+              content.some((/** @type {any} */ item) =>
+                item.type === "image"
+                  ? item.mimeType !== "image/jpeg" ||
+                    typeof item.data !== "string" ||
+                    item.data.length > MAX_DESKTOP_CAPTURE_ENCODED
+                  : item.type !== "text" ||
+                    typeof item.text !== "string" ||
+                    item.text.length > 512,
+              ) ||
+              images.reduce(
+                (/** @type {number} */ bytes, /** @type {any} */ image) =>
+                  bytes + Buffer.byteLength(image.data, "base64"),
+                0,
+              ) > MAX_DESKTOP_CAPTURE_BYTES
             )
               throw Error("DESKTOP_SCREEN_UNAVAILABLE");
             frame = {
-              image: {
-                type: "image",
-                mimeType: image.mimeType,
-                data: image.data,
-              },
+              payload: value[desktopCaptureBatch]
+                ? { content }
+                : { image: images[0] },
               current,
               submitted: value[mediaSubmitted],
             };
