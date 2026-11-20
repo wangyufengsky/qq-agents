@@ -1,0 +1,46 @@
+name: Compare isolated Windows scene startup
+on:
+  push:
+    branches: [codex/recall-scene-probe]
+permissions:
+  contents: read
+jobs:
+  cold:
+    runs-on: windows-latest
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [control, software, direct, software-direct, headless-shell]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Select the pinned headless shell for its own runner
+        if: matrix.mode == 'headless-shell'
+        shell: pwsh
+        run: |
+          $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $env:RUNNER_TEMP "scene-shell"
+          npx --no-install playwright-core install --only-shell chromium
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $shells = @(Get-ChildItem $env:PLAYWRIGHT_BROWSERS_PATH -Recurse -File -Filter "chrome-headless-shell.exe")
+          if ($shells.Count -ne 1) { throw "Expected the pinned headless shell" }
+          "QQ_SCREENSHOT_BROWSER=$($shells[0].FullName)" | Out-File $env:GITHUB_ENV -Append
+      - name: Select fixed experimental switches
+        if: matrix.mode != 'headless-shell'
+        shell: pwsh
+        env:
+          SCENE_VARIANT: ${{ matrix.mode }}
+        run: |
+          $file = "src/home/browser-process.mjs"
+          $source = Get-Content $file -Raw
+          $flags = @()
+          if ($env:SCENE_VARIANT -in @("software","software-direct")) { $flags += '"--disable-gpu",' }
+          if ($env:SCENE_VARIANT -in @("direct","software-direct")) { $flags += '"--no-proxy-server",' }
+          $source = $source.Replace('"--disable-field-trial-config",', (($flags + '"--disable-field-trial-config",') -join " "))
+          [IO.File]::WriteAllText((Resolve-Path $file), $source)
+      - name: Run cold desktop and mobile PNG acceptance
+        run: node --test --test-timeout=120000 --test-name-pattern="real browser renders persisted scene" test/home-scene-view.test.mjs
