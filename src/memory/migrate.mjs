@@ -190,6 +190,12 @@ export function restoreExport(memory, data) {
               : {}),
           });
         }
+        if (table === "events" && row.kind === "app.observation") {
+          const payload = JSON.parse(row.payload);
+          // Individual imports do not grant the local fixed App request exception.
+          delete payload.fixedPublicRead;
+          row.payload = JSON.stringify(payload);
+        }
         if (table === "events" && row.kind === "message.send-attempt") {
           const payload = JSON.parse(row.payload);
           if (payload.submission?.checkpoint) {

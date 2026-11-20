@@ -105,10 +105,10 @@ export function resolveProjectSnapshot(rooms, ctx, source) {
     if (prior.homeSnapshotProvenance?.version !== 1)
       throw Error("HOME_SOURCE_DENIED");
   }
+  // Only the frozen draft and its authoritative evidence contribute bytes to this snapshot.
   rooms.shareable({
     ...ctx,
     privateRead: new Set([
-      ...ctx.privateRead,
       ...(entry.homeSnapshotProvenance.evidence || []),
       ...(project.steps || []).flatMap(
         (/** @type {any} */ step) => step.evidence || [],

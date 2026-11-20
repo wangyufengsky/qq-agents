@@ -12,6 +12,15 @@ import { ownedEvent } from "../tools/forward.mjs";
 import { requestedByHuman, sourceClass } from "../core/outbound-policy.mjs";
 import { allowed } from "../core/config.mjs";
 const LEDGER = APP_LEDGER;
+export function isFixedAppRecord(record) {
+  return (
+    record?.fixedPublicRead === true &&
+    record.origin === "app-browser" &&
+    !record.source &&
+    !record.protectedPeerQzoneTargets?.length
+  );
+}
+
 export const clean = (v, max = 12000) =>
   String(v ?? "")
     .replace(
@@ -211,7 +220,11 @@ export class AppBrowsing {
       direction: "internal",
       status: value.ok === false ? "failed" : "observed",
       body: clean(value.title || value.error || "App 浏览记录", 500),
-      payload: { app: value, ...protection },
+      payload: {
+        app: value,
+        ...protection,
+        ...(fixed && { fixedPublicRead: true }),
+      },
       dedupe: "app:" + randomUUID(),
       origin: "app-browser",
     });
@@ -249,7 +262,12 @@ export class AppBrowsing {
       ctx.privateRead.add(row.id);
       ctx.persistTaint?.();
     }
-    return { recordId: row.id, ...value, ...protection };
+    return {
+      recordId: row.id,
+      ...value,
+      ...protection,
+      fixedPublicRead: payload.fixedPublicRead === true,
+    };
   }
   // Reads spent against the daily budget, which counts the last 24 hours.
   readsLastDay(agentId) {
@@ -467,10 +485,7 @@ export class AppBrowsing {
           ["recommend", "following", "hot", "ranking"].includes(job.entry) &&
           !job.board &&
           !job.query) ||
-        (["read", "comments"].includes(operation) &&
-          prior?.origin === "app-browser" &&
-          !prior.source &&
-          !prior.protectedPeerQzoneTargets?.length);
+        (["read", "comments"].includes(operation) && isFixedAppRecord(prior));
       const requested = requestedByHuman(r, ctx, request, requestEventId);
       this.active(ctx, job.platform, { network: true, requested, fixed });
       r.authorizeExternal(ctx, request, { requestEventId, fixed });

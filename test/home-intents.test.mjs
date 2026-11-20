@@ -191,7 +191,7 @@ test("cancel, expiry, revocation and transaction failure cannot leave room side 
     /TOOL_DISABLED/,
   );
 });
-test("safe furniture proposals allow chat provenance while text and protected provenance fail closed", async (t) => {
+test("validated furniture proposals tolerate unrelated history while text and protected provenance fail closed", async (t) => {
   const f = setup(t),
     mem = f.store.bind("agent-0");
   const event = mem.append({
@@ -204,7 +204,20 @@ test("safe furniture proposals allow chat provenance while text and protected pr
     payload: {},
   });
   f.chat.privateRead.add(event.id);
-  await submit(f);
+  f.chat.privateRead.add("unresolved-legacy-source");
+  for (let i = 0; i < 501; i++) f.chat.privateRead.add("context:fixture-" + i);
+  const intent = await submit(f);
+  await resolve(f, intent, "accept");
+  f.subject.privateRead.add("context:group:20000");
+  const scene = await f.call("room_scene_read");
+  assert.equal(
+    (
+      await resolve(f, intent, "execute", {
+        expectedLayoutRevision: scene.layoutRevision,
+      })
+    ).committed,
+    true,
+  );
   await assert.rejects(
     submit(f, f.chat, "intent-text-denied", {
       kind: "room_publish",

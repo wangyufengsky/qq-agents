@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { antigravityHookDenialCodes } from "./error-codes.mjs";
 
 // Deliberate allowlist: never persist RPC errors, connection URLs, credentials,
 // capability tokens, prompts or arbitrary backend session metadata here.
@@ -153,6 +154,7 @@ const diagnosticFields = {
     "process-exit",
     "stdin",
     "protocol",
+    "tool-hook",
     "finalization",
   ]),
   phase: new Set([
@@ -162,6 +164,7 @@ const diagnosticFields = {
     "settling",
     "settled",
   ]),
+  hookReason: antigravityHookDenialCodes,
   terminalStatus: new Set(["SUCCESS", "ERROR", "CANCELLED", "unrecognized"]),
   signal: new Set([
     "SIGABRT",

@@ -1,3 +1,4 @@
+import { safeToolFailure } from "../src/tools/errors.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
@@ -294,11 +295,46 @@ test("rechecks matched evidence at the ordinary backend submission fence", async
     assert.ok(p.modelSelection);
     // The candidate was already shown in the child input and needs no query.
     assert.match(p.prompt, /约定八点见/);
+    assert.match(p.instructions, /"evidenceIds":\[\].*省略 contribution/);
+    assert.match(p.instructions, /1 至 80 字符/);
+    const spec = p.tools.find(({ name }) => name === "functional_agent_result");
+    assert.equal(spec.inputSchema.if.properties.evidenceIds.maxItems, 0);
+    assert.deepEqual(spec.inputSchema.then.not.required, ["contribution"]);
+    assert.deepEqual(spec.inputSchema.else.required, ["contribution"]);
+    const invalidContribution = (rule, hint) => (error) => {
+      const failure = safeToolFailure(error);
+      assert.equal(failure.code, "INVALID_TOOL_ARGUMENTS");
+      assert.equal(failure.issues[0].field, "contribution");
+      assert.equal(failure.issues[0].rule, rule);
+      assert.match(failure.hint, hint);
+      assert.doesNotMatch(
+        JSON.stringify(failure),
+        /SYNTHETIC_PRIVATE_CONTRIBUTION/,
+      );
+      return true;
+    };
     await assert.rejects(
       p.callTool("functional_agent_result", { evidenceIds: [old.id] }),
+      invalidContribution("contribution_required", /必须填写 contribution/),
     );
     await assert.rejects(
-      p.callTool("functional_agent_result", { evidenceIds: [], contribution }),
+      p.callTool("functional_agent_result", {
+        evidenceIds: [],
+        contribution: "SYNTHETIC_PRIVATE_CONTRIBUTION",
+      }),
+      invalidContribution("contribution_must_be_omitted", /省略 contribution/),
+    );
+    await assert.rejects(
+      p.callTool("functional_agent_result", {
+        evidenceIds: [old.id],
+        contribution: "长".repeat(81),
+      }),
+      (error) => {
+        assert.deepEqual(safeToolFailure(error).issues, [
+          { field: "contribution", code: "too_big", maximum: 80 },
+        ]);
+        return true;
+      },
     );
     const token = /context=([A-Za-z0-9_-]+)/u.exec(p.prompt)?.[1];
     assert.ok(token);

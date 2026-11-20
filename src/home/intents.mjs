@@ -1,8 +1,6 @@
 // @ts-check
 import { createHash, randomUUID } from "node:crypto";
-import { homeTemplate, validateLayout } from "./layout.mjs";
-import { validateScene } from "../../public/home-preview/scene.mjs";
-import { catalog } from "../../public/home-preview/catalog.mjs";
+import { applyRoomPatch } from "./layout.mjs";
 /** Intent payloads are immutable proposals, not authority transferred from another session. */
 export class HomeIntents {
   /** @param {any} rooms */
@@ -147,31 +145,14 @@ export class HomeIntents {
       };
     }
     if (name === "room_intent_submit") {
-      rooms.shareable(ctx, args.proposal.kind === "room_scene_patch");
       if (args.proposal.kind === "room_scene_patch") {
-        // Restrict every string to real furniture/palette choices before crossing sessions.
-        const layout = rooms.store.layout(generation).layout,
-          template = homeTemplate("room"),
-          ids = new Set(template.allInstanceIds);
-        for (const op of args.proposal.operations) {
-          if (op.action === "palette") layout.palette = op.palette;
-          else {
-            if (!ids.has(op.instanceId)) throw Error("HOME_SCENE_INVALID");
-            if (op.action === "reset-object")
-              delete layout.objects[op.instanceId];
-            else
-              layout.objects[op.instanceId] = {
-                ...layout.objects[op.instanceId],
-                ...op.value,
-              };
-          }
-          // The stored proposal retains every operation, including values overwritten later.
-          // Validate strings/versions per step, while geometry remains an atomic batch check.
-          validateScene(layout, template, catalog);
-        }
-        validateLayout(layout, "room");
-      }
-      if (args.proposal.kind === "room_publish") {
+        rooms.assertNoProtectedSource(ctx);
+        applyRoomPatch(
+          rooms.store.layout(generation).layout,
+          args.proposal.operations,
+        );
+      } else if (args.proposal.kind === "room_publish") {
+        rooms.shareable(ctx);
         if (!a.home.publishing) throw Error("HOME_PUBLISH_DISABLED");
         r.assertSafeOutput(ctx, JSON.stringify(args.proposal));
       }

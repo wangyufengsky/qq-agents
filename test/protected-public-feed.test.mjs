@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { config, fixture, context } from "./helpers.mjs";
 import { AppBrowsing } from "../src/apps/service.mjs";
+import { MemoryStore } from "../src/memory/store.mjs";
+import { restoreExport } from "../src/memory/migrate.mjs";
 
 const scope = "private:30000";
 const browse = { platform: "heybox", entry: "recommend", limit: 3 };
@@ -107,6 +109,23 @@ test("legacy already-read contexts retain protection while fixed public feeds re
   );
 });
 
+test("individual restore preserves the App observation without granting a fixed request", async (t) => {
+  const f = setup(t);
+  const ctx = context(f.runtime, "agent-0", scope);
+  const page = await f.runtime.callTool(ctx, "app_browse", browse);
+  const { recordId } = page.items[0];
+  assert.equal(f.runtime.apps.get(ctx, recordId).fixedPublicRead, true);
+  const target = new MemoryStore(":memory:");
+  t.after(() => target.close());
+  restoreExport(target.bind("agent-0"), f.m.export());
+  const row = target.db
+    .prepare("SELECT payload FROM events WHERE id=?")
+    .get(recordId);
+  const payload = JSON.parse(row.payload);
+  assert.equal(payload.app.url, url);
+  assert.equal(payload.fixedPublicRead, undefined);
+});
+
 test("protected sources cannot escape through query, URL, board, QQ card or search cursor", async (t) => {
   const f = setup(t),
     ctx = context(f.runtime, "agent-0", scope);
@@ -138,6 +157,8 @@ test("protected sources cannot escape through query, URL, board, QQ card or sear
     ["app_browse", { ...browse, board: "PRIVATE" }],
     ["app_read", { recordId: card.recordId }],
     ["app_comments", { recordId: card.recordId }],
+    ["app_read", { recordId: search.items[0].recordId }],
+    ["app_comments", { recordId: search.items[0].recordId }],
     [
       "app_search",
       { platform: "heybox", query: "old query", cursor: search.nextCursor },

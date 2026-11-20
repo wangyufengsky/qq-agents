@@ -802,10 +802,9 @@ test("Antigravity ACP keeps a draft review inline and submits only after the las
   const backend = new AntigravityBackend(cfg.backends[0], cfg.agents[0], {
     root: f.root,
     spawn: (_command, args, options) => {
-      const { profile } = JSON.parse(args.at(-1));
       const fixture = spawnFixture(
         process.execPath,
-        [repo + "/test/antigravity-fixture.mjs", "--gemini_dir", profile],
+        [repo + "/test/antigravity-fixture.mjs", ...args],
         {
           ...options,
           env: { ...options.env, AGY_FIXTURE_MODE: "success" },
