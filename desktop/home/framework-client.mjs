@@ -153,11 +153,18 @@ export function createFrameworkClient(
     timer = setInterval(sync, interval);
   }
 
-  function endStream(link) {
+  function endStream(link, recover = false) {
     if (stream !== link) return;
     stream = undefined;
     link.controller.abort();
     if (stopped) return;
+    if (recover && link.ready && link.unified) {
+      // The host retains this visit while its lease is live. Prove the same epoch
+      // again before falling back to a new room after a transport interruption.
+      onState({ offline: true }, "sync");
+      startStream(link.roomEpoch);
+      return;
+    }
     client = randomUUID();
     onState({ offline: true }, "sync");
     schedule(LEGACY_POLL_MS);
@@ -178,6 +185,7 @@ export function createFrameworkClient(
       controller: new AbortController(),
       sequence: -1,
       ready: false,
+      missedHeartbeats: 0,
       lastActivity: undefined,
     };
     stream = link;
@@ -203,6 +211,7 @@ export function createFrameworkClient(
             return;
           link.sequence = value.sequence;
           if (value.reconnect) return endStream(link);
+          link.unified = value.room?.desktopUnified === true;
           if (!link.ready) {
             link.ready = true;
             clearTimeout(timeout);
@@ -214,8 +223,8 @@ export function createFrameworkClient(
         clearTimeout(timeout);
       }
     })().then(
-      () => endStream(link),
-      () => endStream(link),
+      () => endStream(link, true),
+      () => endStream(link, true),
     );
   }
 
@@ -237,6 +246,7 @@ export function createFrameworkClient(
         if (value.closed) return onState(value, "sync");
         if (value.enabled !== true || value.busy || value.reconnect)
           return endStream(activeStream);
+        activeStream.missedHeartbeats = 0;
         if (value.refreshActivity) {
           activeStream.lastActivity = undefined;
           syncAgain = true;
@@ -259,8 +269,13 @@ export function createFrameworkClient(
     void (activeStream ? synchronize() : enqueue(synchronize))
       .catch(() => {
         if (stopped || activeClient !== client) return;
-        if (activeStream) endStream(activeStream);
-        else onState({ offline: true }, "sync");
+        if (activeStream) {
+          if (stream !== activeStream) return;
+          // A local heartbeat can time out while the invitation turn prepares.
+          // Retry on the existing stream before discarding a live visit.
+          if (!activeStream.unified || ++activeStream.missedHeartbeats >= 2)
+            endStream(activeStream, true);
+        } else onState({ offline: true }, "sync");
       })
       .finally(() => {
         syncing = false;

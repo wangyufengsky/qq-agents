@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { test } from "node:test";
 import { createFrameworkClient } from "../desktop/home/framework-client.mjs";
+import { createDesktopRoomHost } from "../src/home/desktop-host.mjs";
 import { desktopToken } from "../src/home/desktop-auth.mjs";
 import { createServer } from "../src/server.mjs";
 import { config, fixture } from "./helpers.mjs";
@@ -142,4 +143,87 @@ test("desktop client receives pushed states, idles on heartbeats and reconnects 
   await waitFor(() => last().room.roomEpoch !== first.room.roomEpoch);
   assert.equal(count("events"), 2);
   assert.ok(last().sequence > first.sequence);
+});
+
+test("a transient heartbeat or stream interruption preserves an invitation in the unified room", async (t) => {
+  const cfg = config(1);
+  cfg.desktopHome.enabled = true;
+  cfg.agents[0].subject.enabled = true;
+  const decision = Promise.withResolvers();
+  let invitation;
+  const { runtime, root } = fixture(t, {
+    cfg,
+    createDesktopHost: createDesktopRoomHost,
+    run: async (params) => {
+      if (params.conversation !== "@subject") return;
+      invitation = /"desktopInvitation":\{"id":"([a-f0-9-]+)"/.exec(
+        params.prompt,
+      )?.[1];
+      await decision.promise;
+      await params.callTool("desktop_invitation_decide", {
+        id: invitation,
+        action: "accept",
+      });
+    },
+  });
+  const admin = randomBytes(32).toString("hex");
+  await writeFile(join(root, "desktop-home-token"), desktopToken(admin));
+  const app = createServer({ runtime, token: admin, allowLive: true });
+  const port = await app.listen();
+  const handle = app.server.listeners("request")[0];
+  let stream,
+    stall = false,
+    recovered = false,
+    stalledResponse;
+  app.server.off("request", handle);
+  app.server.on("request", (req, res) => {
+    if (req.url.startsWith("/api/desktop-home/events?")) stream = res;
+    if (req.url === "/api/desktop-home/heartbeat") {
+      if (stall) {
+        stall = false;
+        req.resume();
+        stalledResponse = res;
+        return;
+      }
+      if (stalledResponse) recovered = true;
+    }
+    return handle(req, res);
+  });
+  let room,
+    offline = 0;
+  const client = createFrameworkClient(
+    root,
+    (value) => {
+      if (value.room) room = value.room;
+      if (value.offline) offline++;
+    },
+    port,
+    () => ({ visible: true, dragged: [] }),
+  );
+  t.after(async () => {
+    decision.resolve();
+    stalledResponse?.destroy();
+    await client.close();
+    await app.close();
+  });
+  await waitFor(() => room);
+  const epoch = room.roomEpoch;
+  client.act("invite", "agent-0");
+  await waitFor(() => invitation);
+  stall = true;
+  await waitFor(() => recovered);
+  assert.equal(offline, 0);
+  assert.equal(room.roles[0].state, "invited");
+  const firstStream = stream;
+  firstStream.destroy();
+  await waitFor(
+    () =>
+      stream !== firstStream &&
+      offline > 0 &&
+      runtime.desktopVisits.eventSubscribers.size === 1,
+  );
+  assert.equal(room.roomEpoch, epoch);
+  decision.resolve();
+  await waitFor(() => room.roles[0].state === "here");
+  assert.equal(room.roomEpoch, epoch);
 });

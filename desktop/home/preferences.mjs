@@ -26,7 +26,7 @@ export function createPreferencesStore(directory) {
 }
 
 export const validSpriteSize = (value) =>
-  Number.isInteger(value) && value >= 70 && value <= 125 && value % 5 === 0;
+  Number.isInteger(value) && value >= 70 && value <= 300 && value % 5 === 0;
 
 export const validIdleFrequency = (value) =>
   Number.isInteger(value) && value >= -2 && value <= 2;
