@@ -33,7 +33,8 @@ export function bindPetPlayer(button, read) {
     previous,
     reported,
     visit;
-  const idleDelay = () => 12000 + Math.random() * 20000;
+  let rate = 1;
+  const idleDelay = () => (12000 + Math.random() * 20000) / rate;
   function acknowledge(request, ok) {
     if (!request || request.token === reported) return;
     reported = request.token;
@@ -64,6 +65,13 @@ export function bindPetPlayer(button, read) {
       !s.request &&
       s.motion !== "moving" &&
       !s.reduce;
+    const nextRate = s.idleRate ?? 1;
+    if (rate !== nextRate) {
+      // Preserve progress through this wait and leave any playing clip alone.
+      if (idleAt !== undefined && !idleName)
+        idleAt = now + (Math.max(0, idleAt - now) * rate) / nextRate;
+      rate = nextRate;
+    }
     if (!idle) idleAt = idleName = undefined;
     else {
       idleAt ??= now + idleDelay();

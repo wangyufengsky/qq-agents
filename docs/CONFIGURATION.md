@@ -543,14 +543,14 @@ QQ 掉线、自动重连用完次数时，管理台会显示，但主人在 QQ �
 
 ## 桌面小窝
 
-| 字段                          | 默认值  | 用途                                                           |
-| ----------------------------- | ------- | -------------------------------------------------------------- |
-| `desktopHome.enabled`         | `false` | 是否开启桌面小窝                                               |
-| `desktopHome.observeDesktop`  | `false` | 授权在场角色观察整个桌面                                       |
-| `desktopHome.maxTurns`        | `6`     | 两次刷新之间可发布的 AI 桌边消息数，范围 1–24                  |
-| `desktopHome.refreshMinutes`  | `10`    | 发言额度的自动刷新间隔，范围 0–1440。设为 0 时，由主人发言刷新 |
-| `desktopHome.autonomyMinutes` | `10`    | 在场角色的默认自主唤醒间隔，范围 1–1440                        |
-| `desktopHome.administratorQq` | 无      | 可填数字字符串，把桌面主人和同一 QQ 身份关联                   |
+| 字段                          | 默认值  | 用途                                                                           |
+| ----------------------------- | ------- | ------------------------------------------------------------------------------ |
+| `desktopHome.enabled`         | `false` | 是否开启桌面小窝                                                               |
+| `desktopHome.observeDesktop`  | `false` | 授权在场角色观察整个桌面                                                       |
+| `desktopHome.maxTurns`        | `6`     | 两次刷新之间可发布的 AI 桌边消息数，范围 1–24                                  |
+| `desktopHome.refreshMinutes`  | `10`    | 发言额度的自动刷新间隔，范围 0–1440。设为 0 时，由主人发言、抚摸或拖动桌宠刷新 |
+| `desktopHome.autonomyMinutes` | `10`    | 在场角色的默认自主唤醒间隔，范围 1–1440                                        |
+| `desktopHome.administratorQq` | 无      | 可填数字字符串，把桌面主人和同一 QQ 身份关联                                   |
 
 在「小窝目录 → 桌面小窝设置」保存观察开关和节奏。窗口和网页权限在本机桌面聊天面板按具体目标授予。已有的 `refreshMinutes` 取保存值。升级时旧 `screenView.enabled` 只代表原窗口观察功能设置。希望启用整个桌面时，勾选新开关。已保存的旧版设置允许保留在配置文件内。
 

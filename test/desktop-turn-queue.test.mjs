@@ -4,6 +4,8 @@ import {
   DESKTOP_ADMINISTRATOR,
   DesktopArchive,
 } from "../src/home/desktop-archive.mjs";
+import { QueuedDesktopRoom } from "../src/home/desktop-queued-room.mjs";
+import { createRoom } from "../src/home/desktop-room-state.mjs";
 import { DesktopTurnQueue } from "../src/home/desktop-turn-queue.mjs";
 
 import { config, fixture } from "./helpers.mjs";
@@ -24,6 +26,33 @@ function setup() {
       })),
   };
 }
+
+test("only published role speech becomes a temporary desktop bubble", () => {
+  let now = 5000;
+  const room = createRoom();
+  const queue = new DesktopTurnQueue({ now: () => now });
+  const live = new QueuedDesktopRoom(
+    room,
+    { roles: ["fish"], now: () => now, chatReady: () => false },
+    () => {},
+    queue,
+  );
+  live.visits.set("fish", queue.enter("fish"));
+  live.activities.set("fish", {});
+  assert.equal(live.snapshot().thinking, "fish");
+  assert.deepEqual(live.snapshot().bubbles, {});
+  assert.equal(live.say("fish", "在这里").status, "published");
+  live.activities.clear();
+  assert.equal(live.snapshot().thinking, null);
+  const bubble = live.snapshot().bubbles.fish;
+  assert.equal(bubble.text, "在这里");
+  assert.equal(bubble.id, room.messages.at(-1).id);
+  live.send("收到");
+  assert.deepEqual(live.snapshot().bubbles, { fish: bubble });
+  assert.equal(live.say("absent", "未发表").status, "away");
+  now = bubble.expiresAt;
+  assert.deepEqual(live.snapshot().bubbles, {});
+});
 
 test("a message is addressed to the people present when it is published", () => {
   const { queue, publish } = setup();
@@ -75,6 +104,36 @@ test("human messages and local touches queue behind a running turn", () => {
   assert.deepEqual(replay.events.at(-1), drag);
   queue.finish(replay, { submitted: true });
   assert.equal(queue.take("first"), undefined);
+});
+
+test("a fresh owner touch refills the room before the resident replies, exactly once", () => {
+  for (const kind of ["pet", "drag"]) {
+    const { queue, publish, advance } = setup();
+    const visit = queue.enter("fish");
+    queue.enter("cat");
+    for (let i = 0; i < 6; i++) publish("fish");
+    assert.equal(publish("fish").status, "awaiting-refresh");
+    const event = { kind, eventId: "interaction" };
+    assert.equal(queue.enqueue("fish", event, "stale-visit"), false);
+    queue.enqueue("fish", { kind: "mail", eventId: "mail" });
+    assert.equal(queue.remaining(), 0);
+    advance(2);
+    assert.ok(queue.enqueue("fish", event, visit));
+    const turn = queue.take("fish");
+    assert.ok(turn.events.includes(event));
+    assert.equal(queue.remaining(), 6);
+    assert.equal(publish("fish").status, "published");
+    assert.equal(publish("cat").status, "published");
+    const after = queue.quota();
+    advance(1);
+    assert.ok(queue.enqueue("fish", event, visit));
+    queue.finish(turn);
+    assert.deepEqual(queue.quota(), after);
+    assert.deepEqual(
+      queue.take("fish").events.filter((e) => e.kind === kind),
+      [event],
+    );
+  }
 });
 
 test("only published agent messages use the shared budget and both refresh paths restore it", () => {

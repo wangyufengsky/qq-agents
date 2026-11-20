@@ -25,6 +25,8 @@ import {
 import { parseBrowserOrigin } from "./browser-origin.mjs";
 import {
   createPreferencesStore,
+  validSpriteSize,
+  validIdleFrequency,
   readDesktopPreferences,
   writeDesktopPreferences,
 } from "./preferences.mjs";
@@ -99,6 +101,8 @@ if (trialProfile) app.setPath("userData", trialProfile);
 const preferences = createPreferencesStore(app.getPath("userData"));
 const {
   saved,
+  spriteSize: initialSpriteSize,
+  idleFrequency: initialIdleFrequency,
   positions,
   places,
   doorPosition: initialDoorPosition,
@@ -106,6 +110,10 @@ const {
   blockedApplications: initialBlockedApplications,
 } = readDesktopPreferences(preferences);
 const verifiedWindowSurface = process.platform === "darwin";
+const petPreferences = {
+  spriteSize: initialSpriteSize,
+  idleFrequency: initialIdleFrequency,
+};
 let selectedMode = initialMode;
 let blockedApplications = initialBlockedApplications;
 let syncingMode;
@@ -606,6 +614,7 @@ const screenRequest = screenRequests.handle;
 
 function savePreferences() {
   writeDesktopPreferences(preferences, {
+    ...petPreferences,
     minutes: room.minutes,
     positions,
     doorPosition,
@@ -1070,7 +1079,8 @@ const pointerController = createPointerController({
   windowVisible,
   screen,
   follow,
-  desktopBodyBounds,
+  desktopBodyBounds: (type, bounds) =>
+    desktopBodyBounds(type, bounds, petPreferences.spriteSize),
   room,
   space,
   stopLocalWindowTask,
@@ -1125,6 +1135,20 @@ function handleDrag(...args) {
 }
 
 const ipc = createIpcRouter(ipcMain, entries);
+
+ipc.handle("room:get-pet-preferences", () => petPreferences);
+ipc.on("room:set-pet-preference", (event, name, value) => {
+  if (ipc.actionEntry(event)?.type !== "panel") return;
+  const valid =
+    (name === "spriteSize" && validSpriteSize(value)) ||
+    (name === "idleFrequency" && validIdleFrequency(value));
+  if (!valid || petPreferences[name] === value) return;
+  petPreferences[name] = value;
+  savePreferences();
+  for (const entry of entries.values())
+    if (entry.type === "sprite" && !entry.win.isDestroyed())
+      entry.win.webContents.send("room:pet-preferences", petPreferences);
+});
 
 registerRoomIpc({
   ipc,

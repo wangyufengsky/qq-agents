@@ -3,7 +3,12 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createPreferencesStore } from "../desktop/home/preferences.mjs";
+import { desktopBodyBounds } from "../desktop/home/window-placement.mjs";
+import {
+  createPreferencesStore,
+  readDesktopPreferences,
+  writeDesktopPreferences,
+} from "../desktop/home/preferences.mjs";
 import { desktopResourcePath } from "../desktop/home/resource-protocol.mjs";
 import { createObservationMonitor } from "../desktop/home/observation-monitor.mjs";
 
@@ -16,6 +21,34 @@ test("preferences recover from missing or invalid data and persist atomically", 
   assert.deepEqual(store.read(), {});
   store.write({ minutes: 20, positions: { cat: { x: 4, y: 8 } } });
   assert.equal(store.read().positions.cat.x, 4);
+  for (const spriteSize of [undefined, "100", 0, 130]) {
+    store.write({ ...store.read(), spriteSize });
+    assert.equal(readDesktopPreferences(store).spriteSize, 100);
+  }
+  for (const idleFrequency of [undefined, "2", 0.5, 3]) {
+    store.write({ ...store.read(), idleFrequency });
+    assert.equal(readDesktopPreferences(store).idleFrequency, 0);
+  }
+  writeDesktopPreferences(store, {
+    ...readDesktopPreferences(store),
+    minutes: 20,
+    spriteSize: 125,
+    idleFrequency: -2,
+  });
+  const restored = readDesktopPreferences(store);
+  assert.equal(restored.spriteSize, 125);
+  assert.equal(restored.idleFrequency, -2);
+  assert.deepEqual(restored.positions.cat, { x: 4, y: 8 });
+  const origin = { x: 10, y: 20 };
+  const body = desktopBodyBounds("sprite", origin);
+  const larger = desktopBodyBounds("sprite", origin, restored.spriteSize);
+  assert.equal(larger.x + larger.width / 2, body.x + body.width / 2);
+  assert.equal(larger.y + larger.height, body.y + body.height);
+  assert.equal(larger.width, body.width * 1.25);
+  assert.deepEqual(
+    desktopBodyBounds("door", origin, 125),
+    desktopBodyBounds("door", origin),
+  );
   await assert.rejects(
     readFile(join(directory, "prototype-preferences.json.next")),
   );

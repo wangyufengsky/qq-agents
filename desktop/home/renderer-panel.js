@@ -29,6 +29,26 @@ export function panel(root) {
   const updatePersonal = bindPersonal(root);
   const updateStatusCard = bindStatusCard(root);
   const select = (selector) => root.querySelector(selector);
+  const preferences = window.nest.getPetPreferences?.();
+  function bindPetSlider(id, name, format) {
+    const slider = select("#" + id);
+    const output = select('output[for="' + id + '"]');
+    function show(value) {
+      slider.value = String(value);
+      output.value = format(value);
+      slider.setAttribute("aria-valuetext", output.value);
+    }
+    preferences?.then((values) => {
+      show(values[name]);
+      slider.disabled = false;
+    });
+    slider.addEventListener("input", () => {
+      show(slider.valueAsNumber);
+      window.nest.setPetPreference(name, slider.valueAsNumber);
+    });
+  }
+  bindPetSlider("sprite-size", "spriteSize", (value) => value + "%");
+  bindPetSlider("idle-frequency", "idleFrequency", (value) => 2 ** value + "×");
   const guestList = select(".guest-list");
   const guestActivities = select(".guest-activities");
   const guestActivityList = select(".guest-activity-list");
@@ -310,10 +330,10 @@ export function panel(root) {
       if (notice.textContent !== ended) notice.textContent = ended;
     }
     observationTab.hidden =
+      room.desktopUnified ||
       !room.observationReviewAvailable ||
       !room.connected ||
       !window.nest.observationReview;
-    observationTab.textContent = room.desktopUnified ? "旧版观察记录" : "观察";
     if (observationTab.hidden && !observationResults.hidden)
       switchSection("chat", true);
     updateObservationResults(room);
