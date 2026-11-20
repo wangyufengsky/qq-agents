@@ -373,6 +373,8 @@ test("unified room submissions still require the old identity and atomic executi
   });
   const chat = context(f.runtime),
     ctx = context(f.runtime, agentId, subject);
+  chat.privateRead.add("unresolved-legacy-source");
+  ctx.privateRead.add("context:group:20000");
   const room = await f.runtime.callTool(chat, "room_read", {});
   const proposal = {
     kind: "room_scene_patch",

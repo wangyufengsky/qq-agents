@@ -127,9 +127,19 @@ test("each enabled conversation reads only its own room; protected work is read-
   assert.equal((await f.call("room_read", {}, work)).items[0].body, p.body);
   await assert.rejects(f.call("room_publish", p, work), /TOOL_DISABLED/);
 });
-test("layout batch preview, conflict, replay and undo preserve distinct revisions", async (t) => {
-  const f = setup(t),
-    p = await patch(f);
+test("layout preview, replay and undo work with inherited ordinary and legacy sources", async (t) => {
+  const f = setup(t);
+  const memory = f.store.bind("agent-0");
+  const inherited = [
+    "context:private:30000",
+    "context:group:20000",
+    "unresolved-legacy-source",
+    ...Array.from({ length: 501 }, (_, i) => "context:fixture-" + i),
+  ];
+  memory.setState("@subject", { disclosureTaint: inherited });
+  const ctx = context(f.runtime, "agent-0", "@subject");
+  f.ctx.privateRead = ctx.privateRead;
+  const p = await patch(f);
   const preview = await f.call("room_scene_patch", { ...p, dryRun: true });
   assert.equal(preview.preview, true);
   assert.equal(preview.committed, false);
@@ -166,6 +176,8 @@ test("layout batch preview, conflict, replay and undo preserve distinct revision
   assert.equal(undo.layoutRevision, 2);
   assert.equal(f.runtime.home.read("room", "agent-0").layout.palette, "cream");
   assert.equal(f.runtime.home.read("room", "agent-1").layoutRevision, 0);
+  assert.deepEqual(memory.state("@subject").disclosureTaint, inherited);
+  f.ctx.privateRead = new Set();
   await assert.rejects(
     f.call("room_publish", {
       ...(await publication(f)),
@@ -269,15 +281,45 @@ test("retract and administrator hold erase display text; historical receipts nev
   );
   assert.equal(count(f, "home_items"), 1);
 });
-test("protected sources, inactive capabilities and credentials cannot publish or arrange", async (t) => {
+test("text publishing keeps its source gate and records bounded refusal reasons", async (t) => {
+  const f = setup(t);
+  for (const [sources, refusal] of [
+    [["context:group:20000"], "chat-source"],
+    [["unknown-legacy-record"], "unknown-legacy"],
+    [["operations:synthetic"], "protected-source"],
+    [
+      Array.from({ length: 501 }, (_, i) => "context:fixture-" + i),
+      "source-limit",
+    ],
+  ]) {
+    const ctx = context(f.runtime, "agent-0", "@subject");
+    ctx.privateRead = new Set(sources);
+    const args = await publication(f, "denied-text-01", "intro", ctx);
+    await assert.rejects(
+      f.runtime.callTool(ctx, "room_publish", args),
+      /HOME_SOURCE_DENIED/,
+    );
+    assert.deepEqual(
+      ctx.toolCalls.map(({ ms, ...call }) => call),
+      [
+        {
+          name: "room_publish",
+          ok: false,
+          code: "HOME_SOURCE_DENIED",
+          reason: refusal,
+        },
+      ],
+    );
+  }
+  assert.equal(count(f, "home_items"), 0);
+});
+
+test("protected sources, inactive capabilities and credentials retain their existing restrictions", async (t) => {
   const f = setup(t);
   for (const marker of [
-    "context:private:30000",
-    "context:group:20000",
     "operations:synthetic",
     "github-private:example/private",
     "peer-qzone:30000",
-    "unknown-legacy-record",
   ]) {
     const c = context(f.runtime, "agent-0", "@subject"),
       p = await publication(f, "denied-00001", "intro", c),

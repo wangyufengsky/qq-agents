@@ -42,6 +42,28 @@ export function describeHomeScene(layout, template) {
       "这是模板与自定义覆盖合成后的实际物件清单；layout.objects 只保存自定义覆盖，为空仍有默认家具。customizedObjectCount 是当前模板内的自定义覆盖条目数，不含配色；隐藏状态包含父物件的影响。",
   };
 }
+/** @param {ReturnType<typeof defaultLayout>} layout
+ * @param {import("zod").infer<typeof import("./policy.mjs").homePatch>} operations */
+export function applyRoomPatch(layout, operations) {
+  const template = homeTemplate("room");
+  const ids = new Set(template.allInstanceIds);
+  for (const op of operations) {
+    if (op.action === "palette") layout.palette = op.palette;
+    else {
+      if (!ids.has(op.instanceId)) throw Error("HOME_SCENE_INVALID");
+      if (op.action === "reset-object") delete layout.objects[op.instanceId];
+      else
+        layout.objects[op.instanceId] = {
+          ...layout.objects[op.instanceId],
+          ...op.value,
+        };
+    }
+    // Proposals retain every operation. Reject invalid strings even if overwritten later.
+    validateScene(layout, template, catalog);
+  }
+  validateLayout(layout, "room");
+}
+
 /** @param {any} value @param {string} type @param {string[]} ids */
 export function validateLayout(value, type, ids = []) {
   if (value?.kind !== "scene-layout" || value?.sceneId !== type)
