@@ -2471,7 +2471,8 @@ test("the sprite loads its own atlas, follows the latched gait, and acknowledges
         bubbles: {
           resident: {
             id: 2,
-            text: "这段很长的消息会自然换行。这段很长的消息会自然换行。这段很长的消息会自然换行。这段很长的消息会自然换行。这段很长的消息会自然换行。这段很长的消息会自然换行。这段很长的消息会自然换行。这段很长的消息会自然换行。这段很长的消息会自然换行。这段很长的消息会自然换行。",
+            // Force overflow even when the runner uses narrower fallback glyphs.
+            text: "这段很长的消息会自然换行。".repeat(32),
           },
         },
       }),
