@@ -172,7 +172,11 @@ export function homeBrowserArguments(profile) {
     "--unsafely-disable-devtools-self-xss-warnings",
     "--edge-skip-compat-layer-relaunch",
     "--disable-infobars",
-    "--enable-unsafe-swiftshader",
+    // Windows scene images contain only packaged 2D content. Software rendering
+    // avoids initializing the machine GPU stack for each temporary profile.
+    process.platform === "win32"
+      ? "--disable-gpu"
+      : "--enable-unsafe-swiftshader",
     "--headless",
     "--hide-scrollbars",
     "--mute-audio",

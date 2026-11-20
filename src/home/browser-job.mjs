@@ -3,7 +3,10 @@ import fs from "node:fs/promises";
 import fsSync from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { promisify } from "node:util";
+
+const compile = promisify(execFile);
 
 /** Establish a native kill-on-close job before the wrapper may spawn Chromium.
  * @param {string} controlFile @param {{nonce:string}} control */
@@ -21,39 +24,40 @@ export async function prepareHomeBrowserJob(controlFile, control) {
       JSON.stringify({ nonce: control.nonce, state, ...(pid ? { pid } : {}) }),
       { mode: 0o600 },
     );
-  // An attempt receipt precedes spawn, so a missing receipt proves no helper was
-  // ever created. An interrupted starting receipt remains an unknown, not success.
-  record("starting", undefined);
-  // DETACHED_PROCESS alone makes Windows PowerShell exit without executing.
-  // The fixed system console host supplies a headless console while retaining
-  // independence from the wrapper's libuv kill-on-close job.
-  const helper = spawn(
-    path.join(
-      process.env.SystemRoot || "C:\\Windows",
-      "System32",
-      "conhost.exe",
-    ),
-    [
-      "--headless",
-      path.join(
-        process.env.SystemRoot || "C:\\Windows",
-        "System32",
-        "WindowsPowerShell",
-        "v1.0",
-        "powershell.exe",
-      ),
-      "-NoProfile",
-      "-NonInteractive",
-      "-ExecutionPolicy",
-      "Bypass",
-      "-File",
-      fileURLToPath(new URL("./browser-job.ps1", import.meta.url)),
-      "-ControlFile",
-      controlFile,
-    ],
-    { stdio: ["pipe", "ignore", "ignore"], windowsHide: true, detached: true },
+  // Use the system .NET Framework compiler directly. A console host, PowerShell
+  // startup and Add-Type consumed the admission budget before Chromium started.
+  const deadline = Date.now() + 8000;
+  const framework = path.join(
+    process.env.SystemRoot || "C:\\Windows",
+    "Microsoft.NET",
   );
-  helper.stdin?.on("error", () => {});
+  const compiler = ["Framework64", "Framework"]
+    .map((dir) => path.join(framework, dir, "v4.0.30319", "csc.exe"))
+    .find((file) => fsSync.existsSync(file));
+  if (!compiler) throw Error("HOME_SCENE_RENDER_FAILED");
+  const executable = path.join(path.dirname(controlFile), "browser-job.exe");
+  await compile(
+    compiler,
+    [
+      "/nologo",
+      "/target:winexe",
+      "/optimize+",
+      "/reference:System.Web.Extensions.dll",
+      "/out:" + executable,
+      fileURLToPath(new URL("./browser-job.cs", import.meta.url)),
+    ],
+    { timeout: Math.max(1, deadline - Date.now()), windowsHide: true },
+  );
+  if (JSON.parse(await fs.readFile(controlFile, "utf8")).stopping)
+    throw Error("HOME_SCENE_RENDER_FAILED");
+  // The private GUI-subsystem helper needs no console host. It stays outside
+  // the wrapper's job so it can independently confirm descendant cleanup.
+  record("starting", undefined);
+  const helper = spawn(executable, [controlFile], {
+    stdio: "ignore",
+    windowsHide: true,
+    detached: true,
+  });
   record(helper.pid ? "spawned" : "not-started", helper.pid);
   // libuv assigns non-detached Windows children to the parent Node kill job.
   // This guardian must survive that parent long enough to verify its own job.
@@ -73,10 +77,8 @@ export async function prepareHomeBrowserJob(controlFile, control) {
     } catch {
       /* Exit can follow capture-directory cleanup. */
     }
-    // The console host may exit after the authenticated guardian FreeConsole.
-    // Only a ready receipt identifies the independent native Job owner.
+    failed = true;
   });
-  const deadline = Date.now() + 8000;
   while (!failed && Date.now() < deadline) {
     try {
       const ready = JSON.parse(
