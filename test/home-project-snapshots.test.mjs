@@ -113,6 +113,26 @@ test("snapshot uses exact saved draft bytes, independent copies, atomic receipts
     false,
   );
 });
+test("an exact eligible snapshot ignores unrelated history without admitting protected callers or sources", async (t) => {
+  const f = setup(t),
+    p = await draft(f),
+    request = await args(f, p);
+  f.ctx.privateRead.add("context:group:20000");
+  f.ctx.privateRead.add("unknown-legacy-record");
+  for (let i = 0; i < 501; i++) f.ctx.privateRead.add("context:fixture-" + i);
+  const published = await f.call("room_publish_snapshot", request);
+  assert.equal(
+    published.current.items.find(({ slot }) => slot === request.slot).body,
+    "这是固定版本的一段原创文字。",
+  );
+  assert.equal((await f.call("room_publish_snapshot", request)).replayed, true);
+  f.ctx.privateRead.add("operations:fixture");
+  await assert.rejects(
+    f.call("room_publish_snapshot", request),
+    /HOME_SOURCE_DENIED/,
+  );
+});
+
 test("source validation rejects legacy, contributed, forged, oversized and credential drafts without changing ordinary writes", async (t) => {
   const f = setup(t),
     p = await draft(f),

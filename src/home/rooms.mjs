@@ -245,7 +245,8 @@ export class HomeRooms {
     const layoutWrite =
       name === "room_scene_patch" || name === "room_scene_undo";
     // Layout operations can change only validated scene fields, including when they come from an intent.
-    if (layoutWrite) this.assertNoProtectedSource(ctx);
+    if (layoutWrite || name === "room_publish_snapshot")
+      this.assertNoProtectedSource(ctx);
     else if (name !== "room_retract") this.shareable(ctx);
     if (name === "room_publish") {
       if (
@@ -302,7 +303,6 @@ export class HomeRooms {
           name === "room_publish_snapshot"
             ? resolveProjectSnapshot(this, ctx, args.source)
             : null;
-        this.shareable(ctx);
         const result = this.store.writeItem(
           generation,
           args.slot,

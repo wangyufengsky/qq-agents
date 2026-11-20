@@ -594,8 +594,22 @@ test("reactions are light, counted per day and taken back freely", async (t) => 
   assert.equal(seen.post.reactions[0].by[0].name, "角色1");
   // A reaction is shared, so a restricted turn cannot add one.
   // Taint sticks to its conversation, so use one the rest of the test skips.
+  await f.call("agent-2", "board_react", { id: post.id, emoji: "🎉" });
   const ctx = context(f.runtime, "agent-2", "private:30000");
   ctx.privateRead.add("operations:1");
+  const retracted = await f.runtime.callTool(ctx, "board_react", {
+    id: post.id,
+    emoji: "🎉",
+    remove: true,
+  });
+  assert.equal(
+    retracted.reactions.some(({ emoji }) => emoji === "🎉"),
+    false,
+  );
+  assert.equal(
+    retracted.reactions.find(({ emoji }) => emoji === "👍").by[0].name,
+    "角色1",
+  );
   await assert.rejects(
     f.runtime.callTool(ctx, "board_react", { id: post.id, emoji: "👍" }),
     /RESTRICTED_CONTEXT_MIND_WRITE_BLOCKED/,

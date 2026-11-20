@@ -470,13 +470,17 @@ function executeMindTool(runtime, ctx, name, args) {
   // Shared self and person cards cannot carry restricted material. Scoped notes
   // and intentions instead retain protection on storage, reads, handoff and
   // actual delivery.
+  const stateOnlyCorrection =
+    name === "memory_correction_review" &&
+    args.action === "updated" &&
+    args.reason === undefined;
   if (
+    !stateOnlyCorrection &&
     [
       "memory_correct",
       "memory_correction_review",
       "self_propose",
       "self_review",
-      "self_withdraw",
       "person_note",
       "person_item",
       "project",

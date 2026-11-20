@@ -189,6 +189,37 @@ test("checklist cannot claim an unchanged record was updated; revisions survive 
   assert.ok(f.m.corrections.annotation("person", f.card.id, 1).corrections);
 });
 
+test("an updated correction review needs no new text and still verifies the record", async (t) => {
+  const f = setup(t),
+    correction = await f.call("memory_correct", f.args);
+  const review = {
+    id: correction.id,
+    expectedRevision: 1,
+    targetId: f.card.id,
+    type: "person",
+    action: "updated",
+  };
+  await assert.rejects(
+    f.call("memory_correction_review", review),
+    /CORRECTION_RECORD_UNCHANGED/,
+  );
+  await f.call("person_note", {
+    personId: "30000",
+    body: "昨天忙，未回复。",
+    evidence: [f.source.id],
+    expectedRevision: 1,
+  });
+  f.ctx.privateRead.add("operations:fixture");
+  await assert.rejects(
+    f.call("memory_correction_review", { ...review, reason: "合成说明" }),
+    /RESTRICTED_CONTEXT_MIND_WRITE_BLOCKED/,
+  );
+  const updated = await f.call("memory_correction_review", review);
+  const record = updated.targets.find(({ id }) => id === f.card.id);
+  assert.equal(record.state, "updated");
+  assert.equal(Object.hasOwn(record, "reason"), false);
+});
+
 test("corrections require fully observed trusted human input from the person or administrator", async (t) => {
   const f = setup(t);
   f.ctx.requestEvents.clear();

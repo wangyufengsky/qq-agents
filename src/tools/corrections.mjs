@@ -3,6 +3,14 @@ import { currentHumanRequest } from "../core/input-progress.mjs";
 import { recallBoundary } from "../core/recall-boundary.mjs";
 const type = z.enum(["event", "diary", "person", "item", "note", "intent"]);
 const text = z.string().trim().min(1).max(600);
+const reviewTarget = z
+  .object({
+    id: z.string(),
+    expectedRevision: z.number().int().min(1),
+    targetId: z.string(),
+    type,
+  })
+  .strict();
 export const correctionDefinitions = {
   memory_correct: [
     "保存明确纠正：personId 是被纠正认识涉及的人，sourceId 必须是本轮完整读到的当事人或管理员原始消息。targets 指旧判断所在记录的 type/id；人物卡用 person，日记 diary，相处记录 item，笔记 note，意图 intent，聊天 event。oldBelief 写具体错误判断，current 写新解释，scope 写适用事件/时间，不能扩大为永久结论。后来的解释替代已有纠正时填写 supersedes=旧纠正ID。自动标注旧记录并返回关联检查清单，按原工具更新后用 memory_correction_review 核实；不要只道歉。",
@@ -32,17 +40,17 @@ export const correctionDefinitions = {
       .strict(),
   ],
   memory_correction_review: [
-    "完成一项关联检查。先用原工具更新记录再 action=updated；无需改动用 unaffected 并给理由（直接纠正目标不能跳过）；日记保留当时感受、用 annotated 保留后续纠正说明。此工具不能改写原文、Self、权限或替代发送决定。",
-    z
-      .object({
-        id: z.string(),
-        expectedRevision: z.number().int().min(1),
-        targetId: z.string(),
-        type,
-        action: z.enum(["updated", "unaffected", "annotated"]),
+    "完成一项关联检查。先用原工具更新记录，再用 action=updated 核实实际变化，纯状态核实可省略 reason。无需改动用 unaffected 并给理由，直接纠正目标不能跳过。日记可用 annotated 并说明原因。此工具不能改写原文、Self、权限或替代发送决定。",
+    z.discriminatedUnion("action", [
+      reviewTarget.extend({
+        action: z.literal("updated"),
+        reason: text.optional(),
+      }),
+      reviewTarget.extend({
+        action: z.enum(["unaffected", "annotated"]),
         reason: text,
-      })
-      .strict(),
+      }),
+    ]),
   ],
 };
 export function correctionTool(runtime, ctx, name, args) {
@@ -60,8 +68,10 @@ export function correctionTool(runtime, ctx, name, args) {
     boundary.assert({ id: source.id });
     return corrections.create(args, source, boundary, runtime.now());
   }
-  if (name === "memory_correction_review")
+  if (name === "memory_correction_review") {
+    if (args.reason !== undefined) runtime.assertSafeOutput(ctx, args.reason);
     return corrections.review(args, boundary, runtime.now());
+  }
   if (args.id) return corrections.get(args.id);
   const rows = corrections.list();
   return {

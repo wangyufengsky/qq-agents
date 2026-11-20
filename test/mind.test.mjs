@@ -92,6 +92,35 @@ test("candidate is inert, delayed, reviewed only by subject; current turn versio
   assert.equal(m.identity.current().version, 2);
   assert.equal(m.identity.get("self_candidates", c.id).status, "accepted");
 });
+test("a restricted turn can withdraw its own Self candidate without adding text", async (t) => {
+  const { runtime, store } = fixture(t, { cfg: enabled() });
+  const memory = store.bind("agent-0"),
+    ctx = context(runtime);
+  const candidate = await runtime.callTool(
+    ctx,
+    "self_propose",
+    proposal(memory, event(memory, 1)),
+  );
+  ctx.privateRead.add("operations:fixture");
+  const args = { id: candidate.id, expectedRevision: candidate.revision };
+  const other = context(runtime, "agent-0", "private:30000");
+  await assert.rejects(
+    runtime.callTool(other, "self_withdraw", args),
+    /CANDIDATE_OWNER_REQUIRED/,
+  );
+  await assert.rejects(
+    runtime.callTool(ctx, "self_withdraw", {
+      ...args,
+      expectedRevision: args.expectedRevision + 1,
+    }),
+    /REVISION_CONFLICT/,
+  );
+  const result = await runtime.callTool(ctx, "self_withdraw", args);
+  assert.equal(result.status, "withdrawn");
+  assert.equal(result.body, candidate.body);
+  assert.equal(memory.identity.current().version, 1);
+});
+
 test("diary loops, repeated speech and one discussion cannot inflate major evidence", (t) => {
   const { runtime, store } = fixture(t),
     m = store.bind("agent-0"),
