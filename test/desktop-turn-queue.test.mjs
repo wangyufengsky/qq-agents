@@ -106,6 +106,36 @@ test("human messages and local touches queue behind a running turn", () => {
   assert.equal(queue.take("first"), undefined);
 });
 
+test("a fresh owner touch refills the room before the resident replies, exactly once", () => {
+  for (const kind of ["pet", "drag"]) {
+    const { queue, publish, advance } = setup();
+    const visit = queue.enter("fish");
+    queue.enter("cat");
+    for (let i = 0; i < 6; i++) publish("fish");
+    assert.equal(publish("fish").status, "awaiting-refresh");
+    const event = { kind, eventId: "interaction" };
+    assert.equal(queue.enqueue("fish", event, "stale-visit"), false);
+    queue.enqueue("fish", { kind: "mail", eventId: "mail" });
+    assert.equal(queue.remaining(), 0);
+    advance(2);
+    assert.ok(queue.enqueue("fish", event, visit));
+    const turn = queue.take("fish");
+    assert.ok(turn.events.includes(event));
+    assert.equal(queue.remaining(), 6);
+    assert.equal(publish("fish").status, "published");
+    assert.equal(publish("cat").status, "published");
+    const after = queue.quota();
+    advance(1);
+    assert.ok(queue.enqueue("fish", event, visit));
+    queue.finish(turn);
+    assert.deepEqual(queue.quota(), after);
+    assert.deepEqual(
+      queue.take("fish").events.filter((e) => e.kind === kind),
+      [event],
+    );
+  }
+});
+
 test("only published agent messages use the shared budget and both refresh paths restore it", () => {
   const { queue, advance, publish } = setup();
   queue.enter("first");

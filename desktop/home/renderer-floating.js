@@ -67,6 +67,7 @@ export function floating(root, type, id) {
     door ? "打开小窝的门" : "打开小窝聊天",
   );
   let refreshPet;
+  let idleRate = 1;
   let pageVisible;
   function syncVisibility() {
     const visible = !document.hidden;
@@ -90,15 +91,17 @@ export function floating(root, type, id) {
   let gestureLayer;
   if (door) art.append(sprite);
   else {
-    let receivedSize = false;
-    const size = (value) =>
-      art.style.setProperty("--sprite-scale", String(value / 100));
-    window.nest.onSpriteSize?.((value) => {
-      receivedSize = true;
-      size(value);
+    let receivedPreferences = false;
+    function applyPreferences({ spriteSize, idleFrequency }) {
+      art.style.setProperty("--sprite-scale", String(spriteSize / 100));
+      idleRate = 2 ** idleFrequency;
+    }
+    window.nest.onPetPreferences?.((values) => {
+      receivedPreferences = true;
+      applyPreferences(values);
     });
-    window.nest.getSpriteSize?.().then((value) => {
-      if (!receivedSize) size(value);
+    window.nest.getPetPreferences?.().then((values) => {
+      if (!receivedPreferences) applyPreferences(values);
     });
     const body = element("span", "sprite-body");
     gestureLayer = element("span", "sprite-gesture");
@@ -190,6 +193,7 @@ export function floating(root, type, id) {
     () =>
       role && {
         enabled: room.smallActions,
+        idleRate,
         here: role.state === "here" && !room.connectionLost,
         visit: role.bodyVisitId,
         art: role.art ?? role.id,

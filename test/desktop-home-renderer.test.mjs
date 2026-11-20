@@ -2241,8 +2241,9 @@ test("unified owner controls show global observation and explicit per-target gra
     window.ownerCalls = [];
     window.reviewCalls = [];
     window.nest = {
-      getSpriteSize: async () => 90,
-      setSpriteSize: (size) => (window.sizeChoice = size),
+      getPetPreferences: async () => ({ spriteSize: 90, idleFrequency: 0 }),
+      setPetPreference: (name, value) =>
+        (window.preferenceChoice = [name, value]),
       onRoom() {},
       onSection() {},
       get: async () => ({
@@ -2319,7 +2320,17 @@ test("unified owner controls show global observation and explicit per-target gra
   const slider = page.getByRole("slider", { name: "桌宠小人大小" });
   assert.equal(await slider.inputValue(), "90");
   await slider.press("ArrowRight");
-  assert.equal(await page.evaluate(() => window.sizeChoice), 95);
+  assert.deepEqual(await page.evaluate(() => window.preferenceChoice), [
+    "spriteSize",
+    95,
+  ]);
+  const frequency = page.getByRole("slider", { name: "空闲小动作频率" });
+  await frequency.press("ArrowRight");
+  assert.deepEqual(await page.evaluate(() => window.preferenceChoice), [
+    "idleFrequency",
+    1,
+  ]);
+  assert.equal(await frequency.getAttribute("aria-valuetext"), "2×");
   assert.equal(await slider.getAttribute("aria-valuetext"), "95%");
   await page.getByText("已授权所有在场角色查看全部显示器。").waitFor();
   await page.getByText("近期画面交付", { exact: true }).click();
@@ -2386,7 +2397,7 @@ test("the sprite loads its own atlas, follows the latched gait, and acknowledges
     window.nest = {
       onRoom: (fn) => (window.pushRoom = fn),
       onMotion: (fn) => (window.motion = fn),
-      onSpriteSize: (fn) => (window.resizePet = fn),
+      onPetPreferences: (fn) => (window.updatePetPreferences = fn),
       onGait: (fn) => (window.gait = fn),
       act: (action, data) => {
         if (action === "small-action-ended") window.acks.push(data);
@@ -2401,7 +2412,11 @@ test("the sprite loads its own atlas, follows the latched gait, and acknowledges
   const randomAction = page.waitForResponse((r) =>
     r.url().includes("/art/actions/cat/"),
   );
-  await page.clock.fastForward(32500);
+  await page.evaluate(() =>
+    window.updatePetPreferences({ spriteSize: 100, idleFrequency: 2 }),
+  );
+  await page.clock.runFor(100);
+  await page.clock.fastForward(8100);
   await randomAction;
   await rendered("small-action");
   await page.evaluate(() => {
@@ -2416,7 +2431,9 @@ test("the sprite loads its own atlas, follows the latched gait, and acknowledges
   const width = await page
     .locator(".sprite-button")
     .evaluate((el) => el.getBoundingClientRect().width);
-  await page.evaluate(() => window.resizePet(125));
+  await page.evaluate(() =>
+    window.updatePetPreferences({ spriteSize: 125, idleFrequency: -2 }),
+  );
   assert.equal(
     await page
       .locator('[data-pet-animation="run"]')

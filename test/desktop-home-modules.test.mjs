@@ -25,13 +25,19 @@ test("preferences recover from missing or invalid data and persist atomically", 
     store.write({ ...store.read(), spriteSize });
     assert.equal(readDesktopPreferences(store).spriteSize, 100);
   }
+  for (const idleFrequency of [undefined, "2", 0.5, 3]) {
+    store.write({ ...store.read(), idleFrequency });
+    assert.equal(readDesktopPreferences(store).idleFrequency, 0);
+  }
   writeDesktopPreferences(store, {
     ...readDesktopPreferences(store),
     minutes: 20,
     spriteSize: 125,
+    idleFrequency: -2,
   });
   const restored = readDesktopPreferences(store);
   assert.equal(restored.spriteSize, 125);
+  assert.equal(restored.idleFrequency, -2);
   assert.deepEqual(restored.positions.cat, { x: 4, y: 8 });
   const origin = { x: 10, y: 20 };
   const body = desktopBodyBounds("sprite", origin);

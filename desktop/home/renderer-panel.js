@@ -29,21 +29,26 @@ export function panel(root) {
   const updatePersonal = bindPersonal(root);
   const updateStatusCard = bindStatusCard(root);
   const select = (selector) => root.querySelector(selector);
-  const size = select("#sprite-size");
-  const percent = select('output[for="sprite-size"]');
-  function showSize(value) {
-    size.value = String(value);
-    percent.value = size.value + "%";
-    size.setAttribute("aria-valuetext", percent.value);
+  const preferences = window.nest.getPetPreferences?.();
+  function bindPetSlider(id, name, format) {
+    const slider = select("#" + id);
+    const output = select('output[for="' + id + '"]');
+    function show(value) {
+      slider.value = String(value);
+      output.value = format(value);
+      slider.setAttribute("aria-valuetext", output.value);
+    }
+    preferences?.then((values) => {
+      show(values[name]);
+      slider.disabled = false;
+    });
+    slider.addEventListener("input", () => {
+      show(slider.valueAsNumber);
+      window.nest.setPetPreference(name, slider.valueAsNumber);
+    });
   }
-  window.nest.getSpriteSize?.().then((value) => {
-    showSize(value);
-    size.disabled = false;
-  });
-  size.addEventListener("input", () => {
-    showSize(size.valueAsNumber);
-    window.nest.setSpriteSize(size.valueAsNumber);
-  });
+  bindPetSlider("sprite-size", "spriteSize", (value) => value + "%");
+  bindPetSlider("idle-frequency", "idleFrequency", (value) => 2 ** value + "×");
   const guestList = select(".guest-list");
   const guestActivities = select(".guest-activities");
   const guestActivityList = select(".guest-activity-list");

@@ -49,8 +49,15 @@ export class DesktopTurnQueue {
     if (!visit || visit.id !== visitId) return false;
     if (event.eventId && visit.accepted.has(event.eventId)) return true;
     if (event.eventId) visit.accepted.add(event.eventId);
+    if (event.kind === "pet" || event.kind === "drag")
+      this.#refill(this.#now());
     visit.events.push(event);
     return true;
+  }
+
+  #refill(now) {
+    this.#published = 0;
+    this.#refreshedAt = now;
   }
 
   #refresh(now) {
@@ -58,10 +65,8 @@ export class DesktopTurnQueue {
     if (
       refreshMinutes > 0 &&
       now >= this.#refreshedAt + refreshMinutes * MINUTE
-    ) {
-      this.#published = 0;
-      this.#refreshedAt = now;
-    }
+    )
+      this.#refill(now);
   }
 
   quota() {
@@ -85,10 +90,8 @@ export class DesktopTurnQueue {
     const present = [...this.#visits.keys()];
     // Recording and the audience snapshot must happen before any wake can run.
     const message = write(present);
-    if (owner) {
-      this.#published = 0;
-      this.#refreshedAt = this.#now();
-    } else this.#published++;
+    if (owner) this.#refill(this.#now());
+    else this.#published++;
     for (const recipient of present) {
       if (recipient !== actor)
         this.enqueue(recipient, {
