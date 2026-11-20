@@ -59,34 +59,104 @@ export function antigravityToolAllowed(
   );
 }
 
+/** @param {any} input @param {any} catalogue */
+function currentHookStep(input, catalogue) {
+  return (
+    !catalogue.turnEpoch ||
+    (input?.conversationId === catalogue.conversationId &&
+      Number.isSafeInteger(input.stepIdx) &&
+      input.stepIdx > catalogue.minimumStep)
+  );
+}
+
 /** A native finish/image reader has no MCP envelope. Bind it to the native step
  * watermark; prompt text can quote old epochs and cannot identify authority.
  * @param {any} input @param {any} catalogue */
-export function antigravityHookAllowed(input, catalogue) {
+function hookDenial(input, catalogue) {
+  if (!input?.toolCall || typeof input.toolCall.name !== "string")
+    return "ANTIGRAVITY_HOOK_INVALID_INPUT";
+  if (catalogue.turnEpoch && !currentHookStep(input, catalogue)) {
+    if (
+      typeof input.conversationId !== "string" ||
+      !Number.isSafeInteger(input.stepIdx)
+    )
+      return "ANTIGRAVITY_HOOK_INVALID_INPUT";
+    return input.conversationId !== catalogue.conversationId
+      ? "ANTIGRAVITY_HOOK_WRONG_CONVERSATION"
+      : "ANTIGRAVITY_HOOK_STALE_STEP";
+  }
+  const tools = catalogue.turnTools ?? catalogue.tools;
   if (
-    catalogue.turnEpoch &&
-    (input.conversationId !== catalogue.conversationId ||
-      !Number.isSafeInteger(input.stepIdx) ||
-      input.stepIdx <= catalogue.minimumStep)
+    antigravityToolAllowed(
+      input.toolCall,
+      tools.map((/** @type {any} */ tool) => tool.name),
+      catalogue.images || [],
+      catalogue.turnEpoch,
+      catalogue.nativeMcp === true,
+    )
   )
-    return false;
-  return antigravityToolAllowed(
-    input.toolCall,
-    (catalogue.turnTools || catalogue.tools).map(
-      (/** @type {any} */ tool) => tool.name,
-    ),
-    catalogue.images || [],
-    catalogue.turnEpoch,
-    catalogue.nativeMcp === true,
-  );
+    return null;
+  return ["read_file", "view_file"].includes(input.toolCall.name)
+    ? "ANTIGRAVITY_HOOK_IMAGE_DENIED"
+    : "ANTIGRAVITY_HOOK_TOOL_DENIED";
+}
+
+/** @param {any} input @param {any} catalogue */
+export function antigravityHookAllowed(input, catalogue) {
+  return hookDenial(input, catalogue) === null;
+}
+
+/** @param {URL} endpoint @param {Record<string, string>} headers */
+async function hookCatalogue(endpoint, headers) {
+  const signal = AbortSignal.timeout(2000);
+  try {
+    const response = await fetch(new URL("/catalog", endpoint), {
+      headers,
+      signal,
+      redirect: "error",
+    });
+    if (!response.ok) {
+      if (response.status === 410)
+        return { reason: "ANTIGRAVITY_TURN_INACTIVE" };
+      if (response.status === 403)
+        return { reason: "ANTIGRAVITY_HOOK_CATALOG_FORBIDDEN" };
+      return { reason: "ANTIGRAVITY_HOOK_CATALOG_UNAVAILABLE" };
+    }
+    try {
+      const catalogue = await response.json();
+      const tools = catalogue?.turnTools ?? catalogue?.tools;
+      if (
+        Array.isArray(tools) &&
+        tools.every((tool) => typeof tool?.name === "string") &&
+        (catalogue.images === undefined || Array.isArray(catalogue.images)) &&
+        (catalogue.turnEpoch === undefined ||
+          (typeof catalogue.turnEpoch === "string" &&
+            catalogue.turnEpoch.length > 0 &&
+            typeof catalogue.conversationId === "string" &&
+            Number.isSafeInteger(catalogue.minimumStep)))
+      )
+        return { catalogue };
+    } catch {
+      if (signal.aborted) return { reason: "ANTIGRAVITY_HOOK_CATALOG_TIMEOUT" };
+    }
+    return { reason: "ANTIGRAVITY_HOOK_CATALOG_INVALID" };
+  } catch {
+    return {
+      reason: signal.aborted
+        ? "ANTIGRAVITY_HOOK_CATALOG_TIMEOUT"
+        : "ANTIGRAVITY_HOOK_CATALOG_UNAVAILABLE",
+    };
+  }
 }
 
 /** The hook and MCP child share a turn-scoped endpoint, never a model-visible token. */
 export async function guardMain() {
-  let allowed = false;
+  let reason = "ANTIGRAVITY_HOOK_INVALID_INPUT";
   try {
     const input = fs.readFileSync(0, "utf8");
     if (input.length > 1048576) throw Error();
+    const value = JSON.parse(input);
+    reason = "ANTIGRAVITY_ENDPOINT_INVALID";
     const endpoint = new URL(process.env.QQ_AGY_ENDPOINT || "");
     if (
       endpoint.protocol !== "http:" ||
@@ -97,40 +167,37 @@ export async function guardMain() {
       endpoint.hash
     )
       throw Error();
-    const response = await fetch(new URL("/catalog", endpoint), {
-      headers: { authorization: `Bearer ${process.env.QQ_AGY_TOKEN || ""}` },
-      signal: AbortSignal.timeout(2000),
-      redirect: "error",
-    });
-    if (!response.ok) throw Error();
-    const catalogue = /** @type {any} */ (await response.json());
-    const value = JSON.parse(input);
-    allowed = antigravityHookAllowed(value, catalogue);
-    if (
-      !allowed &&
-      (!catalogue.turnEpoch ||
-        (value.conversationId === catalogue.conversationId &&
-          Number.isSafeInteger(value.stepIdx) &&
-          value.stepIdx > catalogue.minimumStep))
-    ) {
-      // Report only current-turn denials; stale hooks cannot taint another turn.
-      const route = catalogue.turnEpoch
-        ? `/hook-denied?epoch=${encodeURIComponent(catalogue.turnEpoch)}`
-        : "/hook-denied";
-      await fetch(new URL(route, endpoint), {
-        method: "POST",
-        headers: { authorization: `Bearer ${process.env.QQ_AGY_TOKEN || ""}` },
-        signal: AbortSignal.timeout(1000),
-        redirect: "error",
-      }).catch(() => {});
+    const headers = {
+      authorization: `Bearer ${process.env.QQ_AGY_TOKEN || ""}`,
+    };
+    const result = await hookCatalogue(endpoint, headers);
+    const catalogue = result.catalogue;
+    if (!catalogue) {
+      reason = result.reason ?? "ANTIGRAVITY_HOOK_CATALOG_INVALID";
+    } else {
+      reason = "ANTIGRAVITY_HOOK_INVALID_INPUT";
+      const denial = hookDenial(value, catalogue);
+      reason = denial ?? "QQ_AGENTS_TOOL_ALLOWED";
+      if (denial && currentHookStep(value, catalogue)) {
+        // Attribute only current-turn denials, with no tool arguments or paths.
+        const route = catalogue.turnEpoch
+          ? `/hook-denied?epoch=${encodeURIComponent(catalogue.turnEpoch)}`
+          : "/hook-denied";
+        await fetch(new URL(route, endpoint), {
+          method: "POST",
+          headers: { ...headers, "x-qq-hook-reason": denial },
+          signal: AbortSignal.timeout(1000),
+          redirect: "error",
+        }).catch(() => {});
+      }
     }
   } catch {
-    // Failure to read policy or validate the active turn always denies execution.
+    // Unexpected hook errors preserve the current failure category and fail closed.
   }
   process.stdout.write(
     JSON.stringify({
-      decision: allowed ? "auto_approve" : "deny",
-      reason: allowed ? "QQ_AGENTS_TOOL_ALLOWED" : "QQ_AGENTS_TOOL_DENIED",
+      decision: reason === "QQ_AGENTS_TOOL_ALLOWED" ? "auto_approve" : "deny",
+      reason,
     }),
   );
 }

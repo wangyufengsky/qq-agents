@@ -1,5 +1,6 @@
 // @ts-check
 import { z } from "zod";
+import { functionalResultSchemaConditions } from "./functional-result.mjs";
 import { registry } from "./registry.mjs";
 import {
   DESKTOP_ACTIVITY_DECISION,
@@ -7,6 +8,7 @@ import {
   DESKTOP_DECISION,
   DESKTOP_BROWSER_CONTROL,
   DESKTOP_NATIVE_CONTROL,
+  FUNCTIONAL_AGENT_RESULT,
   TOOL_NAMES,
 } from "./names.mjs";
 import { legacyNativeActionSchema } from "../home/desktop-native.mjs";
@@ -92,6 +94,11 @@ export function toolSpecs(
         { target: "draft-7" },
       );
       inputSchema.type = "object";
+      if (name === FUNCTIONAL_AGENT_RESULT)
+        Object.assign(
+          inputSchema,
+          structuredClone(functionalResultSchemaConditions),
+        );
       if (context) {
         /** @param {any} s */
         const add = (s) => {

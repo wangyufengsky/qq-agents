@@ -81,9 +81,12 @@ export class VoiceTranscription {
     // nothing out unprompted, the same as autonomous network grants.
     if (
       (state.disclosureTaint || []).some((id) =>
-        ["operations", "private-repository", "peer-qzone"].includes(
-          sourceClass(r, { agentId: a.id }, id),
-        ),
+        [
+          "operations",
+          "private-repository",
+          "peer-qzone",
+          "social-private",
+        ].includes(sourceClass(r, { agentId: a.id }, id)),
       )
     )
       return "VOICE_TRANSCRIPTION_DENIED";
@@ -195,7 +198,12 @@ export class VoiceTranscription {
         throw Error("VOICE_TRANSCRIPTION_FORMAT_UNSUPPORTED");
       // Content-addressed audio can retain protected provenance even when a
       // fresh conversation has not read its original source event.
-      if (audio.protectedPeerQzoneTargets?.length)
+      if (
+        audio.protectedOperations ||
+        audio.protectedRepositories?.length ||
+        audio.protectedPeerQzoneTargets?.length ||
+        audio.protectedSocialSources?.length
+      )
         throw Error("VOICE_TRANSCRIPTION_DENIED");
       // The download took time: pause, protection, allowlist and limits are
       // checked again, and the call uses the settings in force now.

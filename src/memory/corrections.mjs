@@ -253,6 +253,7 @@ export class Corrections {
       if (c.supersededBy) throw Error("CORRECTION_SUPERSEDED");
       if (c.revision !== args.expectedRevision)
         throw Error("REVISION_CONFLICT");
+      boundary.assert({ id: c.sourceId });
       const target = c.targets.find(
         (t) => t.id === args.targetId && t.type === args.type,
       );
@@ -267,7 +268,7 @@ export class Corrections {
         throw Error("CORRECTION_DIRECT_TARGET");
       Object.assign(target, {
         state: args.action,
-        reason: args.reason,
+        ...(args.reason !== undefined && { reason: args.reason }),
         reviewedAt: now,
       });
       c.revision++;

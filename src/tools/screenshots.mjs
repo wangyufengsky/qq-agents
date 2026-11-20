@@ -1,11 +1,12 @@
 // @ts-check
 import { z } from "zod";
-import { peerQzoneSources } from "../core/peer-qzone-protection.mjs";
+import { contextProtection } from "../core/protected-mind.mjs";
+import { assertNoSocialDisclosure } from "../core/social-protection.mjs";
+import { isFixedAppRecord } from "../apps/service.mjs";
 import { capturePublicPage } from "./public-screenshot.mjs";
 import { saveFileImage } from "./saved-media.mjs";
 import { imageMime } from "./media.mjs";
 import { appService } from "../apps/tools.mjs";
-import { privateGithubSources } from "../github/policy.mjs";
 
 export const screenshotDefinitions = {
   web_screenshot: [
@@ -37,48 +38,60 @@ function enabled(runtime, ctx) {
     !runtime.files
   )
     throw Error("FILE_PERMISSION_DISABLED");
-  runtime.assertDisclosure(ctx);
   return a;
 }
 /** @param {any} runtime @param {any} ctx @param {string} name @param {any} args */
 export async function screenshotTool(runtime, ctx, name, args) {
   const a = enabled(runtime, ctx);
+  if (name === "web_screenshot") runtime.assertDisclosure(ctx);
   return runtime.files.acquire(a.id, async () => {
     let result, record;
+    let fixed = false;
     if (name === "app_screenshot") {
       const service = appService(runtime);
       record = service.get(ctx, args.recordId);
       if (!record.ok || !record.url) throw Error("APP_RECORD_NOT_FOUND");
+      const { platform } = record;
+      fixed = isFixedAppRecord(record);
+      if (!fixed) runtime.assertDisclosure(ctx);
       const auth = runtime.authorizeExternal(
         ctx,
         {
           tool: "app_read",
-          args: { platform: record.platform, url: record.url },
+          args: { platform, url: record.url },
         },
         {
           requestEventId: args.requestEventId,
-          fixed: record.origin === "app-browser" && !record.source,
+          fixed,
         },
       );
-      service.active(ctx, record.platform, {
-        spend: true,
-        requested: auth.requested,
-      });
+      const policy = { network: true, requested: auth.requested, fixed };
+      service.active(ctx, platform, { ...policy, spend: true });
       const resolved = await service.resolve(record.url, {
         signal: ctx.controller.signal,
+        ...(fixed && {
+          authorize: (/** @type {string} */ url) =>
+            runtime.authorizeExternal(
+              ctx,
+              { tool: "app_read", args: { platform, url } },
+              { fixed: true },
+            ),
+        }),
       });
-      if (resolved.platform !== record.platform)
-        throw Error("APP_PLATFORM_MISMATCH");
+      if (resolved.platform !== platform) throw Error("APP_PLATFORM_MISMATCH");
+      if (fixed) assertNoSocialDisclosure(runtime, ctx);
+      else runtime.assertDisclosure(ctx);
+      service.active(ctx, platform, policy);
       const shot = await service.adapter.perform(
         {
-          platform: record.platform,
+          platform,
           operation: "screenshot",
           url: resolved.url,
           streamId: a.id,
         },
         { signal: ctx.controller.signal },
       );
-      service.active(ctx, record.platform);
+      service.active(ctx, platform, policy);
       if (
         typeof shot.data !== "string" ||
         shot.data.length > 12 * 1024 * 1024 ||
@@ -103,8 +116,11 @@ export async function screenshotTool(runtime, ctx, name, args) {
       );
     }
     const current = enabled(runtime, ctx);
+    if (fixed) assertNoSocialDisclosure(runtime, ctx);
+    else runtime.assertDisclosure(ctx);
     if (imageMime(result.buffer) !== "image/png")
       throw Error("INVALID_SCREENSHOT");
+    const provenance = fixed ? null : contextProtection(runtime, ctx);
     const file = runtime.files.put(
       a.id,
       result.buffer,
@@ -116,16 +132,22 @@ export async function screenshotTool(runtime, ctx, name, args) {
         conversation: ctx.conversation,
         ...(record ? { recordId: record.recordId } : {}),
       },
-      false,
-      privateGithubSources(ctx, runtime),
-      peerQzoneSources(runtime, ctx),
+      provenance?.protectedOperations,
+      provenance?.protectedRepositories,
+      provenance?.protectedPeerQzoneTargets,
     );
     return {
-      ...saveFileImage(runtime, ctx, file.fileId, {
-        kind: "screenshot",
-        title: record?.title || "网页截图",
-        ...(record ? { appRecordId: record.recordId } : {}),
-      }),
+      ...saveFileImage(
+        runtime,
+        ctx,
+        file.fileId,
+        {
+          kind: "screenshot",
+          title: record?.title || "网页截图",
+          ...(record ? { appRecordId: record.recordId } : {}),
+        },
+        { independentSource: fixed },
+      ),
       scope: result.scope,
       blockedResources: result.blockedResources,
       notice: result.notice,

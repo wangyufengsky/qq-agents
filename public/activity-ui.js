@@ -73,6 +73,7 @@ const activityDiagnosticOrigin = {
   protocol: "协议检查",
   "process-exit": "进程退出",
   stdin: "进程输入通道",
+  "tool-hook": "工具权限钩子",
   terminal: "模型结果",
 };
 const intentWords = {
@@ -115,6 +116,8 @@ function activityDiagnosticSummary(d) {
   if (d.trustedTerminal === true) parts.push("模型终态已确认");
   else if (d.trustedTerminal === false) parts.push("模型终态未确认");
   if (d.wrapperError === true) parts.push("启动器告警");
+  if (d.origin === "tool-hook" && typeof d.hookReason === "string")
+    parts.push(d.hookReason);
   if (
     Number.isSafeInteger(d.exitCode) &&
     d.exitCode >= -2147483648 &&

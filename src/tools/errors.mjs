@@ -1,6 +1,7 @@
 // @ts-check
 import { ToneReviewSuggested } from "../core/tone-check.mjs";
 import { InputReviewRequired, UnseenWatermark } from "../core/input-review.mjs";
+import { functionalResultHints } from "./functional-result.mjs";
 
 const draftFailures = new WeakMap();
 
@@ -101,6 +102,11 @@ function validationIssues(issues) {
       ...(validationFormats.has(issue.format) ? { format: issue.format } : {}),
       ...(Number.isFinite(issue.minimum) ? { minimum: issue.minimum } : {}),
       ...(Number.isFinite(issue.maximum) ? { maximum: issue.maximum } : {}),
+      ...(issue.code === "custom" &&
+        functionalResultHints.has(issue.params?.rule) && {
+          rule: issue.params.rule,
+          hint: functionalResultHints.get(issue.params.rule),
+        }),
     };
     if (
       !projected.some((entry) => JSON.stringify(entry) === JSON.stringify(safe))
@@ -165,12 +171,16 @@ function safeFailure(error) {
       code: error.message,
       hint: "Animation frames were not read. Do not describe motion or silently treat it as a still. For invalid ranges, omit animation options to get an overview and duration first. Missing decoder requires an administrator to install/configure FFmpeg. Other animated formats currently require a GIF source; processing limits or decode errors do not mean the source is static.",
     };
-  if (error?.name === "ZodError" && Array.isArray(error.issues))
+  if (error?.name === "ZodError" && Array.isArray(error.issues)) {
+    const issues = validationIssues(error.issues);
     return {
       code: "INVALID_TOOL_ARGUMENTS",
-      issues: validationIssues(error.issues),
-      hint: "Correct the named arguments within these bounds, or omit optional budgets and use pagination. The operation did not succeed. Do not infer unread content or claim successful delivery.",
+      issues,
+      hint:
+        issues.find((issue) => typeof issue.hint === "string")?.hint ??
+        "Correct the named arguments within these bounds, or omit optional budgets and use pagination. The operation did not succeed. Do not infer unread content or claim successful delivery.",
     };
+  }
   /** @type {Record<string, string>} */
   const hints = {
     VIDEO_FRAMES_PENDING:

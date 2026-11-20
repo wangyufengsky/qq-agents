@@ -128,8 +128,22 @@ if (args.includes("models")) {
       const { tools } = await client.listTools();
       const name =
         tools.find(({ name }) => name === "probe_new")?.name || "probe";
-      const reply = await client.callTool({ name, arguments: {} });
+      const args = acp?.session
+        ? { name: "qq_tool_call", arguments: { name, argumentsJson: "{}" } }
+        : { name, arguments: {} };
+      const reply = await client.callTool(args);
       if (reply.isError) throw Error("TOOL_FAILED");
+      if (acp?.session) {
+        const denied = await client.callTool({
+          name: "qq_tool_call",
+          arguments: { name: "not_authorized", argumentsJson: "{}" },
+        });
+        if (
+          !denied.isError ||
+          JSON.parse(denied.content[0].text).code !== "TOOL_DISABLED"
+        )
+          throw Error("UNAUTHORIZED_FALLBACK_ALLOWED");
+      }
       fs.writeFileSync(
         path.join(process.cwd(), "catalogue-result.json"),
         JSON.stringify({ tools, reply }),
@@ -270,7 +284,8 @@ if (args.includes("models")) {
   } else {
     const catalogue = await fetch(endpoint + "/catalog", { headers });
     const tools = await catalogue.json();
-    if (tools.tools.length !== 1 || tools.tools[0].name !== "probe")
+    const expectedNames = acp ? "probe,qq_tool_call" : "probe";
+    if (tools.tools.map(({ name }) => name).join(",") !== expectedNames)
       throw Error("CATALOGUE_MISMATCH");
     if ((await call("unknown")).status !== 403)
       throw Error("UNKNOWN_TOOL_ALLOWED");

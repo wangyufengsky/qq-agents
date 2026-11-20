@@ -1,4 +1,5 @@
 // @ts-check
+import { antigravityHookDenialCodes } from "../core/error-codes.mjs";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
@@ -259,18 +260,19 @@ function antigravity(record, add) {
     add(at, "output", blocks(record.content), undefined, order);
   } else if (
     record.type === "ERROR_MESSAGE" ||
-    (record.type === "GENERIC" && record.status === "ERROR")
+    (record.type === "GENERIC" && ["ERROR", "INVALID"].includes(record.status))
   ) {
     // Native error details can contain paths, credentials, or model input.
-    const error = JSON.stringify(
-      record.error || record.content || "",
-    ).toLowerCase();
+    const error = JSON.stringify(record.error || record.content || "");
+    const hook = /pre-tool hook:\s*([A-Z_]+)/i.exec(error)?.[1];
     add(
       at,
       "tool-error",
-      /unknown tool|no tool named|tool not registered/.test(error)
-        ? "NATIVE_TOOL_UNAVAILABLE"
-        : "NATIVE_TOOL_ERROR",
+      hook && antigravityHookDenialCodes.has(hook)
+        ? hook
+        : /unknown tool|no tool named|tool not registered/i.test(error)
+          ? "NATIVE_TOOL_UNAVAILABLE"
+          : "NATIVE_TOOL_ERROR",
       undefined,
       order,
     );

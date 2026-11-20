@@ -1,4 +1,8 @@
 // @ts-check
+import {
+  functionalResultInstructions,
+  functionalResultSchema,
+} from "./functional-result.mjs";
 import { inputReviewSchema } from "./input-review.mjs";
 import { draftDefinitions } from "./qq-drafts.mjs";
 import { reactionDefinitions } from "./reactions.mjs";
@@ -117,26 +121,8 @@ export const definitions = {
     browserActionSchema,
   ],
   [FUNCTIONAL_AGENT_RESULT]: [
-    "提交本次查证选中的证据记录 ID。选中证据时，contribution 用一句短话说明它补上了当前对话缺的什么。没有新增信息就提交空数组，省略 contribution。",
-    z
-      .object({
-        evidenceIds: z.array(str.min(1).max(120)).max(2),
-        contribution: z
-          .string()
-          .trim()
-          .min(1)
-          .max(80)
-          .regex(/^[^\r\n\u2028\u2029]+$/u)
-          .optional(),
-      })
-      .strict()
-      .refine(
-        ({ evidenceIds, contribution }) =>
-          Boolean(evidenceIds.length) === Boolean(contribution),
-        {
-          message: "有证据时须说明补充的信息，空结果省略说明",
-        },
-      ),
+    functionalResultInstructions,
+    functionalResultSchema,
   ],
   qq_recall: [
     "撤回自己在当前聊天刚确认发出的消息。messageRef 用记录 ID 或本会话消息号；默认限 110 秒、每小时 3 次。超时或未知结果不可换 requestId 重试，撤回不恢复回复额度，原始经历保留。",

@@ -16,6 +16,7 @@ import { gardenDelegationScope } from "../home/garden-delegations.mjs";
 import { gardenPublicScope, gardenToolNames } from "../tools/garden.mjs";
 import { HOME_TOOLS } from "../home/policy.mjs";
 import { HomeService } from "../home/service.mjs";
+import { HomeSourceDenied } from "../home/rooms.mjs";
 import {
   assertNoSocialDisclosure,
   socialSources,
@@ -1488,6 +1489,7 @@ export class Runtime {
           code: /^[A-Z][A-Z0-9_]{2,80}$/.test(error?.message || "")
             ? error.message
             : "TOOL_FAILED",
+          ...(error instanceof HomeSourceDenied && { reason: error.reason }),
           ms: Date.now() - startedAt,
         });
       throw error;

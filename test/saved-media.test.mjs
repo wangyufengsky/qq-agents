@@ -281,6 +281,63 @@ test("App screenshot ownership and platform permissions apply before any capture
   assert.equal(captures, 1);
 });
 
+test("only a server-verified fixed App record can be captured with unrelated protected history", async (t) => {
+  const f = setup(t);
+  const captured = [];
+  f.runtime.apps = new AppBrowsing(f.runtime, {
+    resolve: async (url, { authorize } = {}) => {
+      authorize?.(url);
+      return { platform: "bilibili", url };
+    },
+    adapter: {
+      perform: async (job) => {
+        captured.push(job);
+        return { data: png.toString("base64") };
+      },
+    },
+  });
+  const item = {
+    platform: "bilibili",
+    url: "https://www.bilibili.com/video/BV1xx411c7mD",
+    title: "合成公开记录",
+    ok: true,
+    origin: "app-browser",
+  };
+  const fixed = f.runtime.apps.record(f.ctx, item, { fixed: true });
+  const dynamic = f.runtime.apps.record(f.ctx, {
+    ...item,
+    operation: "search",
+    fixedPublicRead: true,
+  });
+  const sources = ["operations:fixture", "peer-qzone:30000"];
+  for (const source of sources) f.ctx.privateRead.add(source);
+  await assert.rejects(
+    f.runtime.callTool(f.ctx, "app_screenshot", { recordId: dynamic.recordId }),
+    /PRIVATE_RECOLLECTION_REQUIRES_DISCLOSURE_GRANT|APP_RESTRICTED_CONTEXT/,
+  );
+  await assert.rejects(
+    f.runtime.callTool(f.ctx, "web_screenshot", { url: item.url }),
+    /PRIVATE_RECOLLECTION_REQUIRES_DISCLOSURE_GRANT/,
+  );
+  assert.equal(captured.length, 0);
+  const screenshot = await f.runtime.callTool(f.ctx, "app_screenshot", {
+    recordId: fixed.recordId,
+  });
+  assert.deepEqual(
+    captured.map(({ operation, url }) => [operation, url]),
+    [["screenshot", item.url]],
+  );
+  const file = f.runtime.files.metadata(f.ctx.agentId, screenshot.fileId);
+  const media = f.runtime.media.metadata(f.ctx.agentId, screenshot.mediaId);
+  assert.equal(file.protectedOperations, false);
+  assert.deepEqual(file.protectedPeerQzoneTargets ?? [], []);
+  assert.deepEqual(media.protectedPeerQzoneTargets ?? [], []);
+  assert.deepEqual(
+    f.store.bind(f.ctx.agentId).state(f.ctx.conversation).disclosureTaint,
+    sources,
+  );
+});
+
 test("App gallery retains ordered public images and saves any selected image as reusable media", async (t) => {
   const f = setup(t);
   const { normalizeRows } = await import("../src/apps/service.mjs");

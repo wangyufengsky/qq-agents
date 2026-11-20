@@ -137,6 +137,24 @@ test("voice transcription is off by default: nothing is downloaded or sent", asy
   assert.deepEqual(codes(f), []);
 });
 
+test("a matching cached audio asset keeps its own protection before automatic ASR", async (t) => {
+  const f = setup(t);
+  await f.runtime.voices.put(
+    "agent-0",
+    wav(),
+    f.runtime.agent("agent-0").voice,
+    {
+      protectedRepositories: ["fixture/private"],
+    },
+  );
+  await f.runtime.ingest("qq-0", voiceRaw(42));
+  await drain(f);
+  assert.equal(f.records.length, 1);
+  assert.equal(f.calls.length, 0);
+  assert.deepEqual(rows(f, "voice.transcript"), []);
+  assert.ok(codes(f).includes("VOICE_TRANSCRIPTION_DENIED"));
+});
+
 test("a transcript is its own record: the model sees it marked, the message stays as it was", async (t) => {
   const f = setup(t);
   await f.runtime.ingest("qq-0", voiceRaw(42));

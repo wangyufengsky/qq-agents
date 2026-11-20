@@ -241,8 +241,8 @@ export function boardTool(runtime, ctx, name, args) {
   // Taking back one's own words discloses nothing, so it works in any turn.
   if (name === "board_retract")
     return show(board.retract(me, args.id, runtime.now()));
-  assertShareable(runtime, ctx);
-  if (name === "board_react")
+  if (name === "board_react") {
+    if (!args.remove) assertShareable(runtime, ctx);
     return show(
       board.react({
         actor: me,
@@ -254,6 +254,8 @@ export function boardTool(runtime, ctx, name, args) {
         limit: policy.dailyReactions,
       }),
     );
+  }
+  assertShareable(runtime, ctx);
   if (args.tag && !policy.tags.includes(args.tag))
     throw Error("BOARD_TAG_UNKNOWN");
   const comment = name === "board_comment";
