@@ -1,3 +1,5 @@
+import { petPacks } from "./renderer-petpacks.js";
+
 export function createBodyActions({
   context,
   executeWindowTask,
@@ -251,6 +253,39 @@ export function createBodyActions({
       return fail("inactive");
     if (context.hidden || context.desktopLocked || !windowVisible(entry))
       return fail("hidden");
+    const role = context.remoteState?.roles?.find(
+      (item) => item.id === agentId,
+    );
+    const pack = petPacks[role?.art ?? agentId];
+    if (action.type === "small-action" && action.operation === "list") {
+      if (!pack || !context.remoteState?.desktopUnified)
+        return fail("inactive");
+      const actions = Object.entries(pack.clips)
+        .filter(([, clip]) => clip.category)
+        .map(([name, clip]) => ({ name, category: clip.category }));
+      return finish({ status: "completed", actions });
+    }
+    function playClip(name) {
+      const token = randomUUID();
+      const clear = () => {
+        if (entry.smallAction?.token === token) {
+          delete entry.smallAction;
+          update();
+        }
+      };
+      entry.smallAction = {
+        token,
+        name,
+        done(ok) {
+          clear();
+          if (ok && current() && windowVisible(entry))
+            finish({ status: "completed" });
+          else fail("inactive");
+        },
+      };
+      update();
+      return clear;
+    }
     if (
       entry.drag ||
       entries.get("door")?.drag ||
@@ -260,6 +295,17 @@ export function createBodyActions({
       return fail("manual-control");
     if (entry.privatePosition && action.type !== "move")
       return fail("manual-control");
+    if (action.type === "small-action") {
+      if (!pack || !context.remoteState?.desktopUnified)
+        return fail("inactive");
+      if (
+        action.operation !== "play" ||
+        !Object.hasOwn(pack.clips, action.name) ||
+        !pack.clips[action.name].category
+      )
+        return fail("target-unavailable", "failed");
+      return playClip(action.name);
+    }
     if (action.type !== "state") stopLocalSeat(entry, "stopped");
     if (action.type === "state")
       return finish({
@@ -277,6 +323,12 @@ export function createBodyActions({
         !["jump", "climb", "land", "wave"].includes(action.gesture)
       )
         return fail("inactive");
+      if (
+        context.remoteState?.desktopUnified &&
+        context.remoteState.smallActions &&
+        pack?.states[action.gesture]
+      )
+        return playClip(pack.states[action.gesture]);
       const gesture = { kind: action.gesture, id: randomUUID() };
       entry.gesture = gesture;
       update();
@@ -349,6 +401,11 @@ export function createBodyActions({
         intent,
       };
     if (intent) update();
+    const [startX, startY] = entry.win.getPosition();
+    const travelDistance = Math.hypot(
+      plan.destination.x - startX,
+      plan.destination.y - startY,
+    );
     let replanned = false;
     const end = (reason, status) => {
       plan.release();
@@ -379,6 +436,7 @@ export function createBodyActions({
       const distance = Math.hypot(point.x - x, point.y - y);
       animateTo(entry, point, () => next(index + 1), {
         current,
+        travelDistance,
         interrupted: () => end("inactive", "cancelled"),
         unconfirmed: () => end("position-unconfirmed", "failed"),
         canStep: (step, from) => space.canStep(agentId, step, plan, from),

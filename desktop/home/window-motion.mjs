@@ -163,6 +163,9 @@ export function createWindowMotion({
         if (!entry.movement) updateMotion(entry);
       }
     };
+    const distance =
+      options.travelDistance ?? Math.hypot(target.x - x, target.y - y);
+    send(entry, "room:gait", distance >= 300 ? "run" : "walk");
     entry.movement = { step };
     movements.set(entry, entry.movement);
     movementTimer ??= setInterval(stepMovements, 16);

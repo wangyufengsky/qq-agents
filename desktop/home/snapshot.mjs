@@ -188,6 +188,12 @@ export function createDesktopSnapshot({
               intent: entry.bodyAction.intent,
             }),
             ...(entry.gesture && { gesture: entry.gesture }),
+            ...(entry.smallAction && {
+              smallAction: {
+                name: entry.smallAction.name,
+                token: entry.smallAction.token,
+              },
+            }),
           },
         };
       }),

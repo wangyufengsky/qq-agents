@@ -101,7 +101,7 @@ export class DesktopBodyClient {
           : result;
         // Window-relative actions must never report the private desktop position.
         const body =
-          request.windowTask || request.windowApproach
+          request.windowTask || request.windowApproach || terminal.actions
             ? terminal
             : { ...this.position(agentId), ...terminal };
         if (
@@ -113,6 +113,7 @@ export class DesktopBodyClient {
         entry.finished = true;
         if (
           body.status === "completed" &&
+          !body.actions &&
           !body.position &&
           !body.arrivalConfirmed
         ) {

@@ -127,6 +127,7 @@ const syncDataSchema = z
         bodyCrossDisplay: z.literal(true).optional(),
         bodyWindowApproach: z.literal(true).optional(),
         bodyInteractions: z.literal(true).optional(),
+        smallActions: z.literal(true).optional(),
         bodyPublic: z.literal(true).optional(),
         observationProtocol: z.literal(2).optional(),
         displayObservation: z.literal(true).optional(),
@@ -1082,6 +1083,7 @@ export class DesktopHost {
           this.client.bodyProtocol = 2;
           this.client.bodyCrossDisplay = data.bodyCrossDisplay === true;
           this.client.bodyInteractions = data.bodyInteractions === true;
+          this.client.smallActions = data.smallActions === true;
           this.client.bodyPublic = data.bodyPublic === true;
           if (data.bodyPositions?.roomEpoch === live.room.epoch)
             this.client.bodyPositions = {
@@ -1394,6 +1396,7 @@ export class DesktopHost {
       bodyProtocol: 2,
       bodyCrossDisplay: true,
       bodyInteractions: true,
+      smallActions: true,
       bodyWindowApproach: true,
       ...(this.runtime.config.desktopHome.publicPerception.enabled && {
         publicPerception: true,

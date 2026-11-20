@@ -1,4 +1,5 @@
 /* global document, window */
+import { bindPetPlayer } from "./renderer-pet.js";
 import { bindBubbleComposer } from "./renderer-bubbles.js";
 import {
   element,
@@ -65,6 +66,7 @@ export function floating(root, type, id) {
     "",
     door ? "打开小窝的门" : "打开小窝聊天",
   );
+  let refreshPet;
   let pageVisible;
   function syncVisibility() {
     const visible = !document.hidden;
@@ -75,6 +77,7 @@ export function floating(root, type, id) {
       delete art.dataset.motionTransition;
       delete art.dataset.gesture;
     }
+    refreshPet?.();
     window.nest.act("page-visible", visible);
   }
   window.addEventListener("load", syncVisibility, { once: true });
@@ -155,12 +158,45 @@ export function floating(root, type, id) {
   const syncMotion = () => {
     if (motion.matches) delete art.dataset.motionTransition;
     delete art.dataset.gesture;
+    refreshPet?.();
     window.nest.act("motion-preference", motion.matches);
   };
   syncMotion();
   motion.addEventListener("change", syncMotion);
   let role;
   let room;
+  let gait = "walk";
+  let ownerDragging = false;
+  window.nest.onGait?.((value) => {
+    gait = value;
+    refreshPet?.();
+  });
+  window.nest.onOwnerDrag?.((value) => {
+    ownerDragging = value;
+    refreshPet?.();
+  });
+  refreshPet = bindPetPlayer(
+    art,
+    () =>
+      role && {
+        enabled: room.smallActions,
+        here: role.state === "here" && !room.connectionLost,
+        visit: role.bodyVisitId,
+        art: role.art ?? role.id,
+        pose: role.bodyStatus?.pose,
+        gesture: role.bodyStatus?.gesture,
+        request: role.bodyStatus?.smallAction,
+        busy:
+          room.thinking === id ||
+          Boolean(room.bubbles?.[id]) ||
+          role.bodyStatus?.state === "paused",
+        activity: activityFor(role, room),
+        drag: ownerDragging || !!art.dataset.dragging,
+        gait,
+        motion: art.dataset.motion,
+        reduce: motion.matches,
+      },
+  );
   let lastGestureId;
   window.nest.onMotion?.((state) => {
     const previous = art.dataset.motion;
@@ -175,6 +211,7 @@ export function floating(root, type, id) {
         art.dataset.motionTransition = "stop";
     }
     if (role) renderSprite();
+    refreshPet?.();
   });
   window.nest.onMotionSpeed?.((speed) => {
     if (art.dataset.motion !== "moving" || speed <= 0) return;
@@ -306,6 +343,7 @@ export function floating(root, type, id) {
     room = data;
     bubbleComposer.update(room);
     role = data.roles.find((item) => item.id === id);
+    refreshPet();
     if (!role) {
       delete art.dataset.gesture;
       statusCard.hidden = true;

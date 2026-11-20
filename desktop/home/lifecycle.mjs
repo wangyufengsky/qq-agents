@@ -189,6 +189,9 @@ export function startDesktopLifecycle({
                 }),
               ...(context.bodyProtocol && {
                 bodyProtocol: 2,
+                ...(context.remoteState?.smallActions && {
+                  smallActions: true,
+                }),
                 ...(context.bodyCrossDisplay && { bodyCrossDisplay: true }),
                 ...(context.bodyInteractions && { bodyInteractions: true }),
                 ...(context.bodyWindowApproach && { bodyWindowApproach: true }),

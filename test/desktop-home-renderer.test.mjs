@@ -440,6 +440,12 @@ test("paper tabs and portraits replace the desktop budget display", async (t) =>
     };
   }, data);
   await page.goto(pageUrl("type=panel"));
+  assert.deepEqual(
+    await page
+      .locator(".guest-list .portrait img")
+      .evaluateAll((images) => images.map((img) => img.getAttribute("src"))),
+    ["art/fish-paper.webp", "art/dragon-paper.webp", "art/cat-paper.webp"],
+  );
   const list = page.locator(".guest-list");
   await list.getByRole("button", { name: "邀请 · 小龙" }).click();
   assert.deepEqual(await page.evaluate(() => window.testActions), [
@@ -2351,4 +2357,86 @@ test("unified owner controls show global observation and explicit per-target gra
   assert.ok(
     reviewCalls.length && reviewCalls.every((action) => action === "list"),
   );
+});
+
+test("the sprite loads its own atlas, follows the latched gait, and acknowledges named playback once", async (t) => {
+  let executablePath;
+  try {
+    executablePath = findScreenshotBrowser();
+  } catch {
+    return t.skip("local Chromium unavailable");
+  }
+  const browser = await chromium.launch({ executablePath, headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.clock.install();
+  const room = {
+    smallActions: true,
+    roles: [
+      {
+        id: "resident",
+        art: "cat",
+        name: "猫",
+        state: "here",
+        bodyVisitId: "visit",
+      },
+    ],
+    bubbles: {},
+  };
+  await page.addInitScript((data) => {
+    window.acks = [];
+    window.nest = {
+      onRoom: (fn) => (window.pushRoom = fn),
+      onMotion: (fn) => (window.motion = fn),
+      onGait: (fn) => (window.gait = fn),
+      act: (action, data) => {
+        if (action === "small-action-ended") window.acks.push(data);
+      },
+      get: async () => ({ data }),
+    };
+  }, room);
+  await page.goto(pageUrl("type=sprite&id=resident"));
+  const rendered = (state) =>
+    page.locator('[data-pet-animation="' + state + '"]').waitFor();
+  await rendered("idle");
+  const randomAction = page.waitForResponse((r) =>
+    r.url().includes("/art/actions/cat/"),
+  );
+  await page.clock.fastForward(32500);
+  await randomAction;
+  await rendered("small-action");
+  await page.evaluate(() => {
+    window.gait("walk");
+    window.motion("moving");
+  });
+  await rendered("walk");
+  await page.evaluate(() => {
+    window.gait("run");
+  });
+  await rendered("run");
+  await page.evaluate(() => window.motion("still"));
+  await rendered("idle");
+  const next = {
+    ...room,
+    roles: [
+      {
+        ...room.roles[0],
+        bodyStatus: {
+          state: "idle",
+          smallAction: { name: "悠闲哼歌", token: "request" },
+        },
+      },
+    ],
+  };
+  await page.evaluate((data) => window.pushRoom(data), next);
+  // Response headers can arrive well before the sprite sheet reaches the canvas.
+  await rendered("small-action");
+  assert.deepEqual(await page.evaluate(() => window.acks), []);
+  await page.clock.runFor(11000);
+  assert.deepEqual(await page.evaluate(() => window.acks), [
+    { token: "request", ok: true },
+  ]);
+  await page.evaluate((data) => window.pushRoom(data), next);
+  await page.clock.runFor(1000);
+  assert.equal(await page.evaluate(() => window.acks.length), 1);
 });

@@ -28,3 +28,12 @@ Current npm dependency licenses are recorded in package-lock.json. Distributed c
 桌面小窝随附的 WebP 纸片角色和六套动作姿势由 OpenAI imagegen 生成。蓝鲸、白龙和星饰猫的拟人方向参考 [ZipZipPipe 的角色设定](https://www.bilibili.com/opus/1233069202138464289)，鲸鱼形象源自上善无形的「溟月」。桌面版本重新设计了衣装、姿势和纸片画法。
 
 桌宠的站姿和步行帧由 OpenAI imagegen 参考上述角色的待机图生成。裁切并转换后的透明 WebP 作为 QQ Agents 项目贡献按根目录 MIT 许可分发，制作和发布路径见 [桌宠动作素材](docs/AI-HOME-ASSETS.md#桌宠动作素材)。
+
+## 桌面角色动画
+
+桌宠浮窗使用 [hunmer/aboutme-pets](https://github.com/hunmer/aboutme-pets/tree/df864c0c7db75857854740b301f6677e50d0b29c) 的 DSH、Gemini 和 GPT 动作。此处缩小、重新排列并压缩透明 WebP 精灵图，按原动作帧率播放；未包含音轨。
+
+- 小鱼素材来自 [PC2005-cloud/dsh-pet](https://github.com/PC2005-cloud/dsh-pet)，由 hunmer 转换。原型「溟月」由上善无形创作，女仆鲸鱼娘设计来自 ZipZipPipe。角色采用 [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/)，公开二创须署名上游。
+- 小猫、小龙的角色立绘由 [lokicorvus/crosspet](https://github.com/lokicorvus/crosspet) 提供，动作由 hunmer 生成。相应素材及此处改编按 [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) 分享，包括署名、非商业使用和相同方式共享条款。
+
+上述素材单独适用各自条款。代码许可见 LICENSE。

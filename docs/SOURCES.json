@@ -169,5 +169,17 @@
       "upstreamSha256": "2d73eea94ad808999d90c0000c239a84a33b09d4bc6ab6c5b8bbf1eda8a7fc8b",
       "modification": "Full glyph set retained; family names changed to Paper Nest Hand to respect reserved names; WOFF2 conversion with fontTools 4.68.0. Original OFL retained in vendor/fonts/LXGW-OFL.txt."
     }
-  ]
+  ],
+  "desktopPetAnimations": {
+    "repository": "https://github.com/hunmer/aboutme-pets",
+    "commit": "df864c0c7db75857854740b301f6677e50d0b29c",
+    "packs": {
+      "fish": "pets/dsh",
+      "cat": "pets/gemini",
+      "dragon": "pets/gpt"
+    },
+    "catalog": "desktop/home/renderer-petpacks.js",
+    "license": "See NOTICE.md for pack-specific attribution and CC BY-NC-SA 4.0 terms.",
+    "modification": "Resized each original transparent frame to 256x144 and retiled eight columns per WebP; kept frame counts and sample rates. File stems are the first twelve hex digits of SHA-256 of the original UTF-8 action ID."
+  }
 }
