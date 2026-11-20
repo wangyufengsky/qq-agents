@@ -2415,6 +2415,7 @@ test("the sprite loads its own atlas, follows the latched gait, and acknowledges
   });
   await rendered("run");
   await page.evaluate(() => window.motion("still"));
+  await rendered("idle");
   const next = {
     ...room,
     roles: [
@@ -2427,11 +2428,10 @@ test("the sprite loads its own atlas, follows the latched gait, and acknowledges
       },
     ],
   };
-  const loaded = page.waitForResponse((r) =>
-    r.url().includes("/art/actions/cat/"),
-  );
   await page.evaluate((data) => window.pushRoom(data), next);
-  await loaded;
+  // Response headers can arrive well before the sprite sheet reaches the canvas.
+  await rendered("small-action");
+  assert.deepEqual(await page.evaluate(() => window.acks), []);
   await page.clock.runFor(11000);
   assert.deepEqual(await page.evaluate(() => window.acks), [
     { token: "request", ok: true },
