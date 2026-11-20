@@ -2377,7 +2377,7 @@ test("the sprite loads its own atlas, follows the latched gait, and acknowledges
   }
   const browser = await chromium.launch({ executablePath, headless: true });
   t.after(() => browser.close());
-  const page = await browser.newPage();
+  const page = await browser.newPage({ viewport: { width: 194, height: 156 } });
   await page.clock.install();
   const room = {
     smallActions: true,
@@ -2400,6 +2400,7 @@ test("the sprite loads its own atlas, follows the latched gait, and acknowledges
       onPetPreferences: (fn) => (window.updatePetPreferences = fn),
       onGait: (fn) => (window.gait = fn),
       act: (action, data) => {
+        window.lastAction = action;
         if (action === "small-action-ended") window.acks.push(data);
       },
       get: async () => ({ data }),
@@ -2457,6 +2458,26 @@ test("the sprite loads its own atlas, follows the latched gait, and acknowledges
     room,
   );
   assert.equal(await speech.innerText(), "我回来了");
+  await page.evaluate(
+    (room) =>
+      window.pushRoom({
+        ...room,
+        bubbles: {
+          resident: {
+            id: 2,
+            text: "我回来了，这条比较长的消息会在小人上方分成两行显示。",
+          },
+        },
+      }),
+    room,
+  );
+  const box = await speech.boundingBox();
+  const x = box.x + box.width / 2,
+    y = box.y + box.height - 5;
+  const pet = await page.locator(".sprite-button").boundingBox();
+  assert.ok(y > pet.y && y < pet.y + pet.height);
+  await page.mouse.click(x, y);
+  assert.equal(await page.evaluate(() => window.lastAction), "open");
   const next = {
     ...room,
     roles: [

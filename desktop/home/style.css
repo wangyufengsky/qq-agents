@@ -1440,6 +1440,7 @@ h2 {
 }
 .speech {
   position: absolute;
+  z-index: 1;
   inset: 2px 10px auto;
   display: block;
   width: calc(100% - 20px);
