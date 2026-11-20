@@ -1,4 +1,11 @@
-export function createOwnerDragQueue({ fence, valid, start, move, end }) {
+export function createOwnerDragQueue({
+  fence,
+  valid,
+  start,
+  move,
+  end,
+  cancelled,
+}) {
   const states = new WeakMap();
 
   function stateFor(entry) {
@@ -50,6 +57,7 @@ export function createOwnerDragQueue({ fence, valid, start, move, end }) {
     state.pointer = undefined;
     state.queue = state.queue.filter((job) => job.run);
     if (state.active && !state.active.run) {
+      cancelled?.(entry);
       state.active = undefined;
       drain(entry, state);
     }

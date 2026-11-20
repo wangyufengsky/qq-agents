@@ -47,7 +47,9 @@ export function createPointerController({
       !context.hidden &&
       !context.desktopLocked &&
       windowVisible(entry),
+    cancelled: (entry) => send(entry, "room:owner-drag", false),
     start(entry) {
+      send(entry, "room:owner-drag", true);
       follow.stop("manual-control");
       stopLocalSeat(entry, "manual-control");
       stopMovement(entry);
@@ -59,6 +61,7 @@ export function createPointerController({
       entry.win.setPosition(x, y);
     },
     end(entry, from) {
+      send(entry, "room:owner-drag", false);
       const [x, y] = entry.win.getPosition();
       if (from.x === x && from.y === y) return;
       const to = { x, y };

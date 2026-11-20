@@ -2070,3 +2070,28 @@ h2 {
 .unified-browser-list button {
   margin-left: 0.7em;
 }
+
+/* Pack sheets are authored facing left with transparent horizontal padding. */
+.pet-animation {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 178%;
+  height: 100%;
+  translate: -50% 0;
+  scale: -1 1;
+  pointer-events: none;
+}
+.sprite-button[data-facing="left"] .pet-animation {
+  scale: 1;
+}
+.sprite-button[data-pet-animation] > .sprite-body {
+  display: none;
+}
+.sprite-button[data-pet-animation][data-gesture="climb"] .pet-animation {
+  animation: paper-climb 350ms ease-in-out;
+}
+.sprite-button[data-pet-animation="idle"][data-pose="sit"] .pet-animation {
+  height: 92%;
+  transform-origin: bottom;
+}

@@ -271,6 +271,11 @@ export class DesktopBody {
           (result.status === "completed" && !result.arrivalConfirmed)))
     )
       throw Error("DESKTOP_BODY_INVALID");
+    const listing =
+      entry.request.action.type === "small-action" &&
+      entry.request.action.operation === "list";
+    if (Boolean(result.actions) !== (listing && result.status === "completed"))
+      throw Error("DESKTOP_BODY_INVALID");
     if (result.space) {
       if (
         recovered ||
@@ -393,6 +398,11 @@ export class DesktopBody {
     )
       throw Error("DESKTOP_BODY_UNAVAILABLE");
 
+    if (
+      action.type === "small-action" &&
+      (!ctx.desktopUnified || !client.smallActions)
+    )
+      throw Error("DESKTOP_BODY_UNAVAILABLE");
     const pending = this.pending.get(agent.id);
     if (!this.receipts.has(ctx)) this.receipts.set(ctx, new Map());
     const receipts = this.receipts.get(ctx);
@@ -515,7 +525,12 @@ export class DesktopBody {
     if (action.type === "state") this.spaces.delete(ctx);
     if (["move", "window-task", "approach-window"].includes(action.type))
       live.interruptInteractionMovement(agent.id);
-    const expiresAt = Date.now() + ACTION_TIMEOUT;
+    const timeout =
+      (action.type === "small-action" && action.operation === "play") ||
+      (ctx.desktopUnified && client.smallActions && action.type === "gesture")
+        ? 20000
+        : ACTION_TIMEOUT;
+    const expiresAt = Date.now() + timeout;
     const receipt = Promise.withResolvers();
     const entry = {
       ctx,
@@ -562,10 +577,7 @@ export class DesktopBody {
         action,
       },
       abort: () => this.invalidate(entry, "inactive"),
-      timer: setTimeout(
-        () => this.invalidate(entry, "timeout"),
-        ACTION_TIMEOUT,
-      ),
+      timer: setTimeout(() => this.invalidate(entry, "timeout"), timeout),
     };
     receipt.entry = entry;
     if (action.type !== "state") ctx.desktopBodyActed = true;

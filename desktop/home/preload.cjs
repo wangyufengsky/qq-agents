@@ -85,6 +85,10 @@ contextBridge.exposeInMainWorld("nest", {
     ipcRenderer.invoke("room:browser-control", selection),
   onMotion: (listener) =>
     ipcRenderer.on("room:motion", (_event, value) => listener(value)),
+  onGait: (listener) =>
+    ipcRenderer.on("room:gait", (_event, value) => listener(value)),
+  onOwnerDrag: (listener) =>
+    ipcRenderer.on("room:owner-drag", (_event, value) => listener(value)),
   onMotionSpeed: (listener) =>
     ipcRenderer.on("room:motion-speed", (_event, value) => listener(value)),
   onFacing: (listener) =>

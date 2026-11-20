@@ -78,7 +78,22 @@ const interactionAction = z
     interactionId: z.string().uuid(),
   })
   .strict();
+const smallActionSchema = z.union([
+  z.strictObject({
+    type: z.literal("small-action"),
+    operation: z.literal("list"),
+    requestId,
+  }),
+  z.strictObject({
+    type: z.literal("small-action"),
+    operation: z.literal("play"),
+    name: z.string().min(1).max(64),
+    requestId,
+  }),
+]);
+
 export const desktopSessionBodyActionSchema = z.union([
+  smallActionSchema,
   bodyActionSchema,
   z.strictObject({
     type: z.literal("gesture"),
@@ -117,6 +132,7 @@ export const standardInteractiveBodyActionSchema = z.union([
 ]);
 
 export const interactiveBodyActionSchema = z.union([
+  smallActionSchema,
   standardInteractiveBodyActionSchema,
   windowApproachAction,
 ]);
@@ -200,12 +216,17 @@ export const bodyResultSchema = bodyClaimSchema
           .optional(),
         facing: facing.optional(),
         space: spaceSchema.optional(),
+        actions: z
+          .array(z.strictObject({ name: ref, category: ref }))
+          .max(256)
+          .optional(),
         arrivalConfirmed: z.literal(true).optional(),
       })
       .strict()
-      .refine(({ status, reason, position, arrivalConfirmed }) =>
+      .refine(({ status, reason, position, arrivalConfirmed, actions }) =>
         status === "completed"
-          ? Boolean(position) !== Boolean(arrivalConfirmed) && !reason
+          ? [position, arrivalConfirmed, actions].filter(Boolean).length ===
+              1 && !reason
           : Boolean(reason) && !arrivalConfirmed,
       ),
   })

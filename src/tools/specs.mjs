@@ -122,7 +122,7 @@ export function toolSpecs(
               ? "用 wait 或 rest 设置下次自主唤醒的间隔（waitMinutes），用 leave 离开桌面。"
               : desktopUnified && body
                 ? bodyDescription +
-                  " gesture 播放 jump、climb、land 或 wave。向一位在场同伴挥手时提供 recipient。"
+                  " gesture 播放 jump、climb、land 或 wave。向一位在场同伴挥手时提供 recipient。小动作用 small-action：operation=list 查询当前外观支持的中文动作名和分类，operation=play 携带 name 按名播放。"
                 : desktopUnified && (nativeControl || browserControl)
                   ? controlDescription
                   : (legacyBody

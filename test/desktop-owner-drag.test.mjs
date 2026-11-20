@@ -21,6 +21,7 @@ function fixture() {
   };
   const noop = () => {};
   const ownerEvents = [];
+  const visuals = [];
   const positions = {};
   const context = {
     remoteState: { connected: true, desktopUnified: true, roomEpoch: "room" },
@@ -29,6 +30,7 @@ function fixture() {
   };
   const controller = createPointerController({
     context,
+    send: (_, channel, value) => visuals.push([channel, value]),
     entries: new Map([[entry.id, entry]]),
     windowVisible: () => true,
     follow: { stop: noop },
@@ -47,6 +49,7 @@ function fixture() {
     controller.executeBody({ agentId: entry.id }, current, finish, execute);
   return {
     controller,
+    visuals,
     entry,
     context,
     ownerEvents,
@@ -70,6 +73,7 @@ test("drag waits for underway motion and reports actual geometry before a queued
     request,
     position,
     movementsStopped,
+    visuals,
   } = fixture();
   let finishFirst;
   const settled = [];
@@ -83,6 +87,7 @@ test("drag waits for underway motion and reports actual geometry before a queued
   drag("start", 40, 40);
   drag("move", 0, 45);
   assert.deepEqual(position(), [15, 20]);
+  assert.deepEqual(visuals, []);
   assert.equal(movementsStopped(), 0);
   drag("end", -10, 55);
   request(
@@ -102,6 +107,10 @@ test("drag waits for underway motion and reports actual geometry before a queued
   ]);
   assert.deepEqual(ownerEvents, [
     { kind: "drag", from: { x: -70, y: 80 }, to: { x: -100, y: 95 } },
+  ]);
+  assert.deepEqual(visuals, [
+    ["room:owner-drag", true],
+    ["room:owner-drag", false],
   ]);
   assert.deepEqual(positions.cat, { x: -100, y: 95 });
   assert.equal(entry.bodyInputAfter, 1);

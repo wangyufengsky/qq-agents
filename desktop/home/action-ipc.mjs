@@ -146,6 +146,16 @@ export function registerActionIpc({
       windowVisibilityChanged(entry);
       return;
     }
+    if (action === "small-action-ended") {
+      if (
+        entry.type === "sprite" &&
+        event.senderFrame === entry.win.webContents.mainFrame &&
+        entry.smallAction &&
+        data?.token === entry.smallAction.token
+      )
+        entry.smallAction.done(data.ok === true);
+      return;
+    }
     if (context.live) context.live.tick();
     else if (refreshIfDue(room)) update();
     if (

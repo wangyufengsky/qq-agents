@@ -133,6 +133,10 @@ export function createFrameworkStateController({
     context.roles = state.roles;
     context.remoteState = {
       ...state,
+      smallActions:
+        action === "sync"
+          ? value.smallActions === true
+          : context.remoteState?.smallActions === true,
       live: true,
       framework: true,
       subjectKnocks: true,
