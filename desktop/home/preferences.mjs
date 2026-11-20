@@ -25,10 +25,14 @@ export function createPreferencesStore(directory) {
   };
 }
 
+export const validSpriteSize = (value) =>
+  Number.isInteger(value) && value >= 70 && value <= 125 && value % 5 === 0;
+
 export function readDesktopPreferences(store) {
   const saved = store.read();
   return {
     saved,
+    spriteSize: validSpriteSize(saved.spriteSize) ? saved.spriteSize : 100,
     selectedMode: companionMode(saved.companionMode) ?? "privacy",
     blockedApplications:
       sensitiveApplications(saved.sensitiveApplications) ?? [],
@@ -48,6 +52,7 @@ export function readDesktopPreferences(store) {
 export function writeDesktopPreferences(
   store,
   {
+    spriteSize,
     minutes,
     positions,
     doorPosition,
@@ -57,6 +62,7 @@ export function writeDesktopPreferences(
   },
 ) {
   store.write({
+    spriteSize,
     minutes,
     positions,
     doorPosition,

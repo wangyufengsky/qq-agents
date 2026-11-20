@@ -25,6 +25,7 @@ import {
 import { parseBrowserOrigin } from "./browser-origin.mjs";
 import {
   createPreferencesStore,
+  validSpriteSize,
   readDesktopPreferences,
   writeDesktopPreferences,
 } from "./preferences.mjs";
@@ -99,6 +100,7 @@ if (trialProfile) app.setPath("userData", trialProfile);
 const preferences = createPreferencesStore(app.getPath("userData"));
 const {
   saved,
+  spriteSize: initialSpriteSize,
   positions,
   places,
   doorPosition: initialDoorPosition,
@@ -106,6 +108,7 @@ const {
   blockedApplications: initialBlockedApplications,
 } = readDesktopPreferences(preferences);
 const verifiedWindowSurface = process.platform === "darwin";
+let spriteSize = initialSpriteSize;
 let selectedMode = initialMode;
 let blockedApplications = initialBlockedApplications;
 let syncingMode;
@@ -606,6 +609,7 @@ const screenRequest = screenRequests.handle;
 
 function savePreferences() {
   writeDesktopPreferences(preferences, {
+    spriteSize,
     minutes: room.minutes,
     positions,
     doorPosition,
@@ -1070,7 +1074,8 @@ const pointerController = createPointerController({
   windowVisible,
   screen,
   follow,
-  desktopBodyBounds,
+  desktopBodyBounds: (type, bounds) =>
+    desktopBodyBounds(type, bounds, spriteSize),
   room,
   space,
   stopLocalWindowTask,
@@ -1125,6 +1130,21 @@ function handleDrag(...args) {
 }
 
 const ipc = createIpcRouter(ipcMain, entries);
+
+ipc.handle("room:get-sprite-size", () => spriteSize);
+ipc.on("room:set-sprite-size", (event, value) => {
+  if (
+    ipc.actionEntry(event)?.type !== "panel" ||
+    !validSpriteSize(value) ||
+    spriteSize === value
+  )
+    return;
+  spriteSize = value;
+  savePreferences();
+  for (const entry of entries.values())
+    if (entry.type === "sprite" && !entry.win.isDestroyed())
+      entry.win.webContents.send("room:sprite-size", value);
+});
 
 registerRoomIpc({
   ipc,

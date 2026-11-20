@@ -1,5 +1,5 @@
 import { DESKTOP_ADMINISTRATOR } from "./desktop-archive.mjs";
-import { LiveRoom } from "./desktop-room.mjs";
+import { LiveRoom, PUBLIC_BUBBLE_DISPLAY_MS } from "./desktop-room.mjs";
 import { addMessage } from "./desktop-room-state.mjs";
 
 export class QueuedDesktopRoom extends LiveRoom {
@@ -55,6 +55,15 @@ export class QueuedDesktopRoom extends LiveRoom {
       ),
     );
     if (published.status === "published") {
+      if (!owner && published.message.text) {
+        const { id, text, now } = published.message;
+        this.room.bubbles[actor] = {
+          id,
+          text,
+          now,
+          expiresAt: now + PUBLIC_BUBBLE_DISPLAY_MS,
+        };
+      }
       this.onChange();
       void this.advance();
     }

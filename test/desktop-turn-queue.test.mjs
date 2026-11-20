@@ -4,6 +4,8 @@ import {
   DESKTOP_ADMINISTRATOR,
   DesktopArchive,
 } from "../src/home/desktop-archive.mjs";
+import { QueuedDesktopRoom } from "../src/home/desktop-queued-room.mjs";
+import { createRoom } from "../src/home/desktop-room-state.mjs";
 import { DesktopTurnQueue } from "../src/home/desktop-turn-queue.mjs";
 
 import { config, fixture } from "./helpers.mjs";
@@ -24,6 +26,33 @@ function setup() {
       })),
   };
 }
+
+test("only published role speech becomes a temporary desktop bubble", () => {
+  let now = 5000;
+  const room = createRoom();
+  const queue = new DesktopTurnQueue({ now: () => now });
+  const live = new QueuedDesktopRoom(
+    room,
+    { roles: ["fish"], now: () => now, chatReady: () => false },
+    () => {},
+    queue,
+  );
+  live.visits.set("fish", queue.enter("fish"));
+  live.activities.set("fish", {});
+  assert.equal(live.snapshot().thinking, "fish");
+  assert.deepEqual(live.snapshot().bubbles, {});
+  assert.equal(live.say("fish", "在这里").status, "published");
+  live.activities.clear();
+  assert.equal(live.snapshot().thinking, null);
+  const bubble = live.snapshot().bubbles.fish;
+  assert.equal(bubble.text, "在这里");
+  assert.equal(bubble.id, room.messages.at(-1).id);
+  live.send("收到");
+  assert.deepEqual(live.snapshot().bubbles, { fish: bubble });
+  assert.equal(live.say("absent", "未发表").status, "away");
+  now = bubble.expiresAt;
+  assert.deepEqual(live.snapshot().bubbles, {});
+});
 
 test("a message is addressed to the people present when it is published", () => {
   const { queue, publish } = setup();

@@ -51,6 +51,10 @@ window.addEventListener(
 );
 
 contextBridge.exposeInMainWorld("nest", {
+  getSpriteSize: () => ipcRenderer.invoke("room:get-sprite-size"),
+  setSpriteSize: (value) => ipcRenderer.send("room:set-sprite-size", value),
+  onSpriteSize: (listener) =>
+    ipcRenderer.on("room:sprite-size", (_event, value) => listener(value)),
   personal: (action, data) => ipcRenderer.invoke("room:personal", action, data),
   onPersonal: (listener) =>
     ipcRenderer.on("room:personal", (_event, value) => listener(value)),

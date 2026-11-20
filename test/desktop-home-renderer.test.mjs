@@ -2241,6 +2241,8 @@ test("unified owner controls show global observation and explicit per-target gra
     window.ownerCalls = [];
     window.reviewCalls = [];
     window.nest = {
+      getSpriteSize: async () => 90,
+      setSpriteSize: (size) => (window.sizeChoice = size),
       onRoom() {},
       onSection() {},
       get: async () => ({
@@ -2314,6 +2316,11 @@ test("unified owner controls show global observation and explicit per-target gra
   });
   await page.goto(pageUrl("type=panel"));
   await page.getByRole("button", { name: /小窝工具/ }).click();
+  const slider = page.getByRole("slider", { name: "桌宠小人大小" });
+  assert.equal(await slider.inputValue(), "90");
+  await slider.press("ArrowRight");
+  assert.equal(await page.evaluate(() => window.sizeChoice), 95);
+  assert.equal(await slider.getAttribute("aria-valuetext"), "95%");
   await page.getByText("已授权所有在场角色查看全部显示器。").waitFor();
   await page.getByText("近期画面交付", { exact: true }).click();
   await page.getByText(/画面已提交模型/).waitFor();
@@ -2324,8 +2331,8 @@ test("unified owner controls show global observation and explicit per-target gra
     false,
   );
   assert.equal(
-    await page.locator('[data-tab="observation"]').textContent(),
-    "旧版观察记录",
+    await page.locator('[data-tab="observation"]').isVisible(),
+    false,
   );
   assert.equal(await page.locator(".screen-view").isVisible(), false);
   assert.equal(await page.locator(".display-observation").isVisible(), false);
@@ -2347,16 +2354,7 @@ test("unified owner controls show global observation and explicit per-target gra
     ["browser", { type: "revoke", grantId: "tab-one" }],
   ]);
   await page.getByRole("button", { name: "关闭面板" }).click();
-  await page.getByRole("button", { name: "旧版观察记录" }).click();
-  await page.getByText("旧窗口观察摘要").waitFor();
-  assert.equal(
-    await page.getByText("观察回复", { exact: true }).isVisible(),
-    false,
-  );
-  const reviewCalls = await page.evaluate(() => window.reviewCalls);
-  assert.ok(
-    reviewCalls.length && reviewCalls.every((action) => action === "list"),
-  );
+  assert.deepEqual(await page.evaluate(() => window.reviewCalls), []);
 });
 
 test("the sprite loads its own atlas, follows the latched gait, and acknowledges named playback once", async (t) => {
@@ -2388,6 +2386,7 @@ test("the sprite loads its own atlas, follows the latched gait, and acknowledges
     window.nest = {
       onRoom: (fn) => (window.pushRoom = fn),
       onMotion: (fn) => (window.motion = fn),
+      onSpriteSize: (fn) => (window.resizePet = fn),
       onGait: (fn) => (window.gait = fn),
       act: (action, data) => {
         if (action === "small-action-ended") window.acks.push(data);
@@ -2414,8 +2413,33 @@ test("the sprite loads its own atlas, follows the latched gait, and acknowledges
     window.gait("run");
   });
   await rendered("run");
+  const width = await page
+    .locator(".sprite-button")
+    .evaluate((el) => el.getBoundingClientRect().width);
+  await page.evaluate(() => window.resizePet(125));
+  assert.equal(
+    await page
+      .locator('[data-pet-animation="run"]')
+      .evaluate((el) => el.getBoundingClientRect().width),
+    width * 1.25,
+  );
   await page.evaluate(() => window.motion("still"));
   await rendered("idle");
+  const speech = page.locator(".speech");
+  await page.evaluate(
+    (room) => window.pushRoom({ ...room, thinking: "resident" }),
+    room,
+  );
+  assert.equal(await speech.innerText(), "正在想…");
+  await page.evaluate(
+    (room) =>
+      window.pushRoom({
+        ...room,
+        bubbles: { resident: { id: 1, text: "我回来了" } },
+      }),
+    room,
+  );
+  assert.equal(await speech.innerText(), "我回来了");
   const next = {
     ...room,
     roles: [

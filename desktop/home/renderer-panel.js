@@ -29,6 +29,21 @@ export function panel(root) {
   const updatePersonal = bindPersonal(root);
   const updateStatusCard = bindStatusCard(root);
   const select = (selector) => root.querySelector(selector);
+  const size = select("#sprite-size");
+  const percent = select('output[for="sprite-size"]');
+  function showSize(value) {
+    size.value = String(value);
+    percent.value = size.value + "%";
+    size.setAttribute("aria-valuetext", percent.value);
+  }
+  window.nest.getSpriteSize?.().then((value) => {
+    showSize(value);
+    size.disabled = false;
+  });
+  size.addEventListener("input", () => {
+    showSize(size.valueAsNumber);
+    window.nest.setSpriteSize(size.valueAsNumber);
+  });
   const guestList = select(".guest-list");
   const guestActivities = select(".guest-activities");
   const guestActivityList = select(".guest-activity-list");
@@ -310,10 +325,10 @@ export function panel(root) {
       if (notice.textContent !== ended) notice.textContent = ended;
     }
     observationTab.hidden =
+      room.desktopUnified ||
       !room.observationReviewAvailable ||
       !room.connected ||
       !window.nest.observationReview;
-    observationTab.textContent = room.desktopUnified ? "旧版观察记录" : "观察";
     if (observationTab.hidden && !observationResults.hidden)
       switchSection("chat", true);
     updateObservationResults(room);

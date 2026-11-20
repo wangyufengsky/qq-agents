@@ -90,6 +90,16 @@ export function floating(root, type, id) {
   let gestureLayer;
   if (door) art.append(sprite);
   else {
+    let receivedSize = false;
+    const size = (value) =>
+      art.style.setProperty("--sprite-scale", String(value / 100));
+    window.nest.onSpriteSize?.((value) => {
+      receivedSize = true;
+      size(value);
+    });
+    window.nest.getSpriteSize?.().then((value) => {
+      if (!receivedSize) size(value);
+    });
     const body = element("span", "sprite-body");
     gestureLayer = element("span", "sprite-gesture");
     const pose = element("span", "sprite-pose");
