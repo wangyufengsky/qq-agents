@@ -374,6 +374,7 @@ export const petPacks = {
         category: "时节",
       },
       被鼠标拖拽悬空反馈: {
+        drag: { lift: 12, hold: [21, 51], land: [96, 106] },
         file: "52cdbcb79a90",
         frames: 120,
         fps: 12,
@@ -850,6 +851,7 @@ export const petPacks = {
         category: "时节",
       },
       被鼠标拖拽悬空反馈: {
+        drag: { lift: 18, hold: [21, 49], land: [90, 95] },
         file: "52cdbcb79a90",
         frames: 120,
         fps: 12,
@@ -1181,6 +1183,7 @@ export const petPacks = {
         category: "时节",
       },
       被鼠标拖拽悬空反馈: {
+        drag: { lift: 35, hold: [43, 66], land: [72, 80] },
         file: "52cdbcb79a90",
         frames: 120,
         fps: 12,

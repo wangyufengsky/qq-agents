@@ -11,7 +11,7 @@ import {
   activityFor,
 } from "./renderer-shared.js";
 
-function bindFloatingDrag(handle, door) {
+function bindFloatingDrag(handle, door, refresh) {
   let pointer;
   let moved = false;
   const point = (event) => ({ x: event.screenX, y: event.screenY });
@@ -34,6 +34,7 @@ function bindFloatingDrag(handle, door) {
         handle.dataset.dragging = "true";
         delete handle.dataset.motionTransition;
         delete handle.dataset.gesture;
+        refresh();
       }
       window.nest.act("drag-start", pointer.origin);
     }
@@ -47,7 +48,10 @@ function bindFloatingDrag(handle, door) {
         event.type === "pointerup" ? point(event) : pointer.last,
       );
     pointer = undefined;
-    delete handle.dataset.dragging;
+    if (handle.dataset.dragging) {
+      delete handle.dataset.dragging;
+      refresh();
+    }
   }
   for (const event of ["pointerup", "pointercancel", "lostpointercapture"])
     handle.addEventListener(event, endDrag);
@@ -136,7 +140,7 @@ export function floating(root, type, id) {
   }
   space.append(art);
   root.append(space);
-  bindFloatingDrag(art, door);
+  bindFloatingDrag(art, door, () => refreshPet?.());
 
   function subscribe(update) {
     const receive = (data) => {

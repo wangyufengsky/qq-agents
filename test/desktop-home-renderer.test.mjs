@@ -2515,3 +2515,97 @@ test("the sprite loads its own atlas, follows the latched gait, and acknowledges
   assert.ok(large.x >= 0 && large.x + large.width <= 560.01);
   assert.ok(large.y >= 0 && large.y + large.height <= 366);
 });
+
+test("owner drags lift immediately, loop aloft, and land only on release", async (t) => {
+  let executablePath;
+  try {
+    executablePath = findScreenshotBrowser();
+  } catch {
+    return t.skip("local Chromium unavailable");
+  }
+  const browser = await chromium.launch({ executablePath, headless: true });
+  t.after(() => browser.close());
+  for (const [art, lift, hold, land] of [
+    ["fish", 12, [21, 51], [96, 106]],
+    ["cat", 18, [21, 49], [90, 95]],
+    ["dragon", 35, [43, 66], [72, 80]],
+  ]) {
+    const page = await browser.newPage();
+    await page.clock.install();
+    await page.addInitScript((art) => {
+      const draw = window.CanvasRenderingContext2D.prototype.drawImage;
+      window.dragFrames = [];
+      window.CanvasRenderingContext2D.prototype.drawImage = function (...args) {
+        if (args[0].src?.includes("/52cdbcb79a90.webp"))
+          window.dragFrames.push(args[1] / 640 + (8 * args[2]) / 360);
+        return draw.apply(this, args);
+      };
+      window.nest = {
+        get: async () => ({
+          data: {
+            desktopUnified: true,
+            smallActions: true,
+            bubbles: {},
+            roles: [
+              {
+                id: "resident",
+                art,
+                state: "here",
+                bodyVisitId: "v",
+                bodyStatus: { state: "idle" },
+              },
+            ],
+          },
+        }),
+        onRoom: () => {},
+        onOwnerDrag: (fn) => {
+          window.confirmDrag = fn;
+        },
+        act(action) {
+          if (action === "drag-start" || action === "drag-end")
+            window.confirmDrag(action === "drag-start");
+        },
+      };
+    }, art);
+    await page.goto(pageUrl("type=sprite&id=resident"));
+    const rendered = (state) =>
+      page.locator('[data-pet-animation="' + state + '"]').waitFor();
+    const button = page.locator(".sprite-button");
+    await rendered("idle");
+    async function drag() {
+      const box = await button.boundingBox();
+      const x = box.x + box.width / 2,
+        y = box.y + box.height / 2;
+      await page.mouse.move(x, y);
+      await page.mouse.down();
+      await page.mouse.move(x + 10, y);
+      await rendered("drag");
+    }
+    await drag();
+    assert.equal(await page.evaluate(() => window.dragFrames[0]), lift);
+    await page.mouse.up();
+    await rendered("landing");
+    assert(
+      await page.evaluate(
+        (first) => window.dragFrames.includes(first),
+        land[0],
+      ),
+    );
+    await drag();
+    await page.clock.fastForward(12000);
+    await page.clock.runFor(300);
+    const frames = await page.evaluate(() => window.dragFrames.slice(-3));
+    assert(frames.every((frame) => frame >= hold[0] && frame <= hold[1]));
+    assert(new Set(frames).size > 1);
+    await page.mouse.up();
+    await rendered("landing");
+    await page.clock.runFor(1100);
+    await rendered("idle");
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await drag();
+    assert.equal(await page.evaluate(() => window.dragFrames.at(-1)), hold[0]);
+    await page.mouse.up();
+    await rendered("idle");
+    await page.close();
+  }
+});
