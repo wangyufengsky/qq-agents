@@ -1,5 +1,5 @@
 // @ts-check
-import { allowed } from "./policy.mjs";
+import { allowed, allowedGroups } from "./policy.mjs";
 import { isDesktopConversation } from "../home/desktop-decision.mjs";
 
 export const MEMORY_AGENT_TOOLS = Object.freeze(
@@ -151,6 +151,20 @@ export function memoryAgentDefinition(role, config) {
     tools: [...MEMORY_AGENT_TOOLS],
     onDemand: MEMORY_AGENT_LIMITS,
   };
+}
+
+/** @param {Role} role @param {Configuration} config */
+export function recallBackendForRole(role, config) {
+  const memory = memoryAgentDefinition(role, config);
+  if (!memory?.enabled) return undefined;
+  const groups = allowedGroups(role, config);
+  const scopes = [
+    ...groups.map((id) => "group:" + id),
+    ...role.allow.users.map((id) => "private:" + id),
+  ];
+  return scopes.some((scope) => memoryRecallPolicy(role, scope, config))
+    ? memory.backendId
+    : undefined;
 }
 
 /** @param {Role} role @param {string} conversation @param {Configuration} config */

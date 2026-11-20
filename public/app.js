@@ -444,11 +444,15 @@ function homeRoleCard(a) {
     c = status.connections.find((x) => x.id === a.connectionId),
     b = status.backends?.find((x) => x.id === a.backendId),
     can = s && !s.blockers?.length;
-  const sub = s?.blockers?.length
+  let sub = s?.blockers?.length
     ? `暂不发言：${s.blockers.map((x) => blockerLabels[x] || x).join("、")}`
     : ["sleeping", "rest-pending"].includes(s?.rhythm?.state)
       ? s.rhythm.label
       : `QQ ${c?.connected ? "已连接" : "未连接"} · ${backendLabels[b?.state] || "后端尚未检测"}`;
+  const recallHost =
+    s?.recallHealth &&
+    status.backends?.find((host) => host.id === s.recallHealth.backendId);
+  if (recallHost?.state === "disconnected") sub += " · 记忆查证不可用";
   const place = (l) =>
     l.kind === "subject"
       ? "空闲时间" + (l.did ? " · " + (homeDid[l.did] || l.did) : "")
@@ -1076,6 +1080,33 @@ function backendCard(b) {
   const checked = s.checkedAt
     ? new Date(s.checkedAt).toLocaleTimeString()
     : "尚未检测";
+  if (b.functionalAgentOnly) {
+    const time = (event) =>
+      event
+        ? (event.estimated ? "约 " : "") + new Date(event.at).toLocaleString()
+        : "暂无记录";
+    const recent = status.agents
+      .filter((role) => role.recallHealth?.backendId === b.id)
+      .map((role) => {
+        const { completed, delivered } = role.recallHealth;
+        const result = completed
+          ? completed.empty
+            ? " · 无补充"
+            : " · 有匹配"
+          : "";
+        return `<h4>${esc(find("agents", role.id)?.name || role.id)}</h4><dl class="link-meta">${linkRow("最近完成查证", time(completed) + result)}${linkRow("最近交付证据", time(delivered))}</dl>`;
+      })
+      .join("");
+    const health =
+      s.state === "ready"
+        ? "服务可达"
+        : s.error === "DSH_RECOVERY_STATE_UNVERIFIED"
+          ? "会话清理待核实"
+          : s.state === "disconnected"
+            ? "服务不可用"
+            : "尚未检测";
+    return `<article class="card link-card">${linkHead("chip", b.label, "记忆查证专用 DSH", tag(health, s.state === "ready" ? "live" : "warn"))}<dl class="link-meta">${linkRow("固定地址", b.baseUrl, "mono")}${linkRow("模型", [b.provider, b.model].filter(Boolean).join(" · ") || "按角色配置", "mono")}${linkRow("最近检测", checked)}${linkRow("自动检测", s.autoReconnect ? "已开启" : "已关闭")}</dl>${recent}<div class="card-actions"><button data-do="backend-check" data-id="${esc(b.id)}" ${disabled}>检测专用服务</button><button data-do="backend-auto" data-id="${esc(b.id)}" ${disabled}>${s.autoReconnect ? "关闭" : "开启"}自动检测</button><button class="ghost" data-do="edit-backend" data-id="${esc(b.id)}" ${disabled}>编辑</button></div></article>`;
+  }
   // The same seven rows for every adapter; the two in the middle say where
   // it runs and what it needs, in that adapter's terms.
   const where = {
@@ -1211,6 +1242,18 @@ async function backendAction(id, operation, extra = {}) {
       ...extra,
     });
     await load();
+    if (find("backends", id)?.functionalAgentOnly) {
+      notice(
+        operation === "settings"
+          ? "记忆服务自动检测设置已保存"
+          : result.error === "DSH_RECOVERY_STATE_UNVERIFIED"
+            ? "专用会话清理待核实"
+            : result.error
+              ? "记忆专用服务不可用，请检查固定地址上的 DSH 进程。"
+              : "记忆专用服务可达",
+      );
+      return;
+    }
     if (result.state === "selection-required") await backendDiscover(id);
     notice(
       result.error

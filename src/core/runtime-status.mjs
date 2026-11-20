@@ -1,4 +1,6 @@
 // @ts-check
+import { recallHealthHistory } from "../memory/recall-health.mjs";
+import { recallBackendForRole } from "./functional-agents.mjs";
 import { rhythmStatus } from "./rhythm.mjs";
 import { sourceCounts } from "./outbound-policy.mjs";
 
@@ -23,8 +25,15 @@ export function runtimeStatus(runtime) {
       const c = runtime.config.connections.find(
         (/** @type {any} */ c) => c.id === a.connectionId,
       );
+      const recallBackendId = recallBackendForRole(a, runtime.config);
       return {
         id: a.id,
+        ...(recallBackendId && {
+          recallHealth: {
+            backendId: recallBackendId,
+            ...recallHealthHistory(runtime.memory.db, a.id),
+          },
+        }),
         paused: a.paused,
         rhythm: rhythmStatus(runtime, a),
         activeTurns: [...runtime.running.values()].filter(

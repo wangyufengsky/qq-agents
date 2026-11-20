@@ -59,11 +59,17 @@ export function dshBaseUrlCandidates(configured, env = process.env) {
   return detectDshDesktop(env) ? [desktop, cli] : [cli, desktop];
 }
 
+// Socket options expect the bare IPv6 literal, while URL.hostname retains its brackets.
+function socketHostname(url) {
+  const host = url.hostname;
+  return host.startsWith('[') ? host.slice(1, -1) : host;
+}
+
 function portOpen(url, timeoutMs) {
   return new Promise((resolve) => {
     let u;
     try { u = new URL(url); } catch { resolve(false); return; }
-    const s = net.connect({ host: u.hostname === 'localhost' ? '127.0.0.1' : u.hostname, port: Number(u.port) || 80 });
+    const s = net.connect({ host: u.hostname === 'localhost' ? '127.0.0.1' : socketHostname(u), port: Number(u.port) || 80 });
     const done = (v) => { try { s.destroy(); } catch {} resolve(v); };
     s.setTimeout(timeoutMs, () => done(false));
     s.once('connect', () => done(true));
@@ -140,7 +146,7 @@ export function looksLikeDsh(url, { timeoutMs = 1500 } = {}) {
   return new Promise((resolve) => {
     let u;
     try { u = new URL('/', url); } catch { resolve(false); return; }
-    const req = http.get({ host: u.hostname, port: u.port, path: '/', timeout: timeoutMs, headers: { accept: 'text/plain' } }, (res) => {
+    const req = http.get({ host: socketHostname(u), port: u.port, path: '/', timeout: timeoutMs, headers: { accept: 'text/plain' } }, (res) => {
       let body = '';
       res.setEncoding('utf8');
       res.on('data', (c) => { if (body.length < 4096) body += c; });

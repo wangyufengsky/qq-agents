@@ -57,11 +57,26 @@ function patchTurn(memory, id, patch) {
   if (row)
     memory.identity.put("model_turns", { ...JSON.parse(row.value), ...patch });
 }
-export function recordMemoryRecall(memory, id, route, details) {
+export function recordMemoryRecall(
+  memory,
+  id,
+  route,
+  details,
+  now = Date.now(),
+) {
   const row = turnRecord(memory, id);
   if (!row) return;
   const turn = JSON.parse(row.value);
   const recall = turn.memoryRecall || {};
+  // Familiarity counts candidates before review. Only the main chat's input
+  // receipt proves delivery; a successful empty review still proves completion.
+  if (route === "opening" || route === "active") {
+    if (details.status === "matched" || details.status === "empty") {
+      recall.completedAt = now;
+      recall.completedResult = details.status;
+    }
+    if (details.presented > 0) recall.deliveredAt = now;
+  }
   memory.identity.put("model_turns", {
     ...turn,
     memoryRecall: { ...recall, [route]: { ...recall[route], ...details } },

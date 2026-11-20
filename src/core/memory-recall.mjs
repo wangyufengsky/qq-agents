@@ -603,6 +603,7 @@ function record(runtime, ctx, route, details) {
       ctx.turnId,
       route,
       details,
+      runtime.now(),
     );
 }
 

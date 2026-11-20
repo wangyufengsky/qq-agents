@@ -429,6 +429,8 @@ test("desktop portraits follow backend models and rest follows the role clock", 
 });
 
 test("always-welcome admits completed subject visits independently without a knock or chat charge", async (t) => {
+  // The simulated client stays online while the subject turns run.
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
   const cfg = config(3);
   cfg.desktopHome.enabled = true;
   for (const agent of cfg.agents) agent.subject.enabled = true;
@@ -480,7 +482,7 @@ test("always-welcome admits completed subject visits independently without a kno
   command("door-mode", "always");
   command("knock-answer", true);
   assert.equal(command("sync").room.roles[2].state, "home");
-  runtime.now = () => Date.now() + 31 * 60_000;
+  t.mock.timers.tick(31 * 60_000);
   host.client.expiresAt = runtime.now() + 15_000;
   await runtime.wake("agent-2", "@subject");
   room = command("sync").room;

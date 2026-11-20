@@ -30,6 +30,22 @@
 
 记忆 Agent 先判断当前对话还缺什么。提交 1 至 2 条本轮可用证据时，用一行 1 至 80 字符的说明写清补上了什么。没有新增信息时提交空证据数组，省略说明字段。工具回执会指出说明缺失、应省略或超长。对话 Agent 收到的说明与证据一起复核，管理台「动态」只展示实际交给对话模型的说明。
 
+### 记忆服务的健康与登录恢复
+
+在管理台「连接 → AI 后端」打开记忆查证专用 DSH 卡片。「检测专用服务」在配置的固定回环地址识别 DSH。「自动检测」开启时，桥接在 live 模式、全局运行且有可用此查证能力的未暂停角色时，每隔约 30 秒检查一次；服务下线后仍按同样间隔检查。首页角色卡会标出服务不可用。检测不调用模型生成，也不发送 QQ。
+
+专用卡片列出当前使用该后端的角色及各自的查证历史。「最近完成查证」包括有匹配与无补充两种结果。「最近交付证据」只统计实际送达主角色的开场输入或主动回想工具回执。时间来自角色的历史回合，更换查证后端后保留。旧回合缺少精确时刻时按回合开始时间显示“约”。具体一次查证的跳过、超时或不可用可在角色动态查看。
+
+macOS 可用用户 LaunchAgent 托管已配置好的独立 DSH profile。把[示例 plist](../examples/macos/memory-dsh.plist) 复制到当前用户的 `~/Library/LaunchAgents/local.qq-agents.memory-dsh.plist`，填写已验证的 DSH 命令绝对路径、原专用 profile 名、DSH_HOME 和端口，使其与记忆后端固定地址一致。服务使用原登录资料和已登记的桥接工具。若同一端口已有手动启动的专用 Host，先等查证结束并正常退出那个 Host，再加载服务。
+
+```sh
+plutil -lint ~/Library/LaunchAgents/local.qq-agents.memory-dsh.plist
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/local.qq-agents.memory-dsh.plist
+launchctl print "gui/$(id -u)/local.qq-agents.memory-dsh"
+```
+
+登录后 launchd 会启动服务，进程退出后会再次启动。需要停止托管时，用 `launchctl bootout "gui/$(id -u)/local.qq-agents.memory-dsh"` 卸载，再将该 plist 移出 LaunchAgents 目录。桥接中的自动检测开关只控制巡检，进程启停由 launchd 管理。其他平台可用原有服务管理器维护同一固定地址。
+
 ### 本地语义召回（可选）
 
 在已经配置的 `agents[].functionalAgents.memory.pilot` 内添加 `"semantic": true`，即可为该角色的查证范围启用语义候选。初次配置全量范围时，可用 `"pilot": {"groups": [], "semantic": true}` 保存语义设置，并将 `memoryRecall` 显式设为 `auto` 或 `enabled`。省略该字段或设为 `false` 时使用字面检索。语义检索只在回复前或主动回想时尝试，在原查证预算内最多等待 150 毫秒。未配置环境、索引准备中或超时时仍可使用字面候选。

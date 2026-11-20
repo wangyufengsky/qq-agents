@@ -118,7 +118,7 @@ for (const termination of [
         ready.created &&
           ready.helperPid &&
           ready.hostPid &&
-          ready.helperPid !== ready.hostPid,
+          ready.helperPid === ready.hostPid,
         "real native Job Object handshake did not run",
       );
     }
@@ -197,13 +197,13 @@ test("packaged native Job helper participates in the release build identity", as
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "home-job-build-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   await fs.mkdir(path.join(root, "src", "home"), { recursive: true });
-  const file = path.join(root, "src", "home", "browser-job.ps1");
+  const file = path.join(root, "src", "home", "browser-job.cs");
   await fs.copyFile(
-    new URL("../src/home/browser-job.ps1", import.meta.url),
+    new URL("../src/home/browser-job.cs", import.meta.url),
     file,
   );
   const before = frameworkBuildDigest(root);
-  await fs.appendFile(file, "\n# synthetic change\n");
+  await fs.appendFile(file, "\n// synthetic change\n");
   assert.notEqual(frameworkBuildDigest(root), before);
 });
 
