@@ -45,3 +45,33 @@ test("every advertised tool has exactly one schema and handler, and unknown/prot
   );
   assert.equal(f.runtime.transports.get("qq-0").sent.length, 0);
 });
+
+test("discovery describes accepted input before defaults and preserves source constraints", () => {
+  const names = [
+    "media_list",
+    "github_read",
+    "board_read",
+    "qq_voice_read",
+    "file_download",
+    "image_save",
+    "qq_profile_update",
+  ];
+  const specs = Object.fromEntries(
+    toolSpecs(names).map((t) => [t.name, t.inputSchema]),
+  );
+  for (const name of ["media_list", "board_read"]) {
+    assert.equal(registry[name].schema.safeParse({}).success, true);
+    assert.deepEqual(specs[name].required ?? [], []);
+  }
+  assert.deepEqual(specs.github_read.required, ["repository"]);
+  for (const [name, fields] of Object.entries({
+    qq_voice_read: ["audioId", "eventId"],
+    file_download: ["url", "eventId"],
+    image_save: ["url", "fileId"],
+    qq_profile_update: ["nickname", "signature", "mediaId"],
+  }))
+    assert.deepEqual(
+      specs[name].oneOf.map((option) => option.required),
+      fields.map((field) => [field]),
+    );
+});

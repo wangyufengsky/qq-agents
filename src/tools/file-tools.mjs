@@ -1,4 +1,4 @@
-import { inputReviewSchema } from "./input-review.mjs";
+import { draftReceiptHelp, inputReviewSchema } from "./input-review.mjs";
 import { sendDraftTool } from "./qq-drafts.mjs";
 import { createHash } from "node:crypto";
 import {
@@ -50,7 +50,8 @@ export const fileDefinitions = {
         name: name.optional(),
       })
       .strict()
-      .refine((x) => !!x.url !== !!x.eventId, "EXACTLY_ONE_SOURCE"),
+      .refine((x) => !!x.url !== !!x.eventId, "EXACTLY_ONE_SOURCE")
+      .meta({ oneOf: [{ required: ["url"] }, { required: ["eventId"] }] }),
   ],
   file_create: [
     "在自己的文件库生成 UTF-8 文本附件，例如 txt、md、csv、json。不能声称生成了 PDF/Office 格式；不会执行内容。",
@@ -81,7 +82,8 @@ export const fileDefinitions = {
       .strict(),
   ],
   qq_send_file: [
-    "将自己文件库中的 fileId 发送到绑定的当前会话。管理员开启后自主发送，无需逐项确认。只有网关文件回执成功才可报告已发送；未知结果不得换 requestId 重试。",
+    "将自己文件库中的 fileId 发送到绑定的当前会话。管理员开启后自主发送，无需逐项确认。只有网关文件回执成功才可报告已发送；未知结果不得换 requestId 重试。" +
+      draftReceiptHelp,
     z
       .object({
         requestId: z.string().min(1).max(200),

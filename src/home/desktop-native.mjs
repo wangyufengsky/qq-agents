@@ -37,6 +37,10 @@ export const legacyNativeActionSchema = z.discriminatedUnion(
   nativeActions,
 );
 export const nativeActionSchema = z.discriminatedUnion("type", [
+  z.strictObject({
+    type: z.literal("request"),
+    target: z.enum(["window", "browser"]),
+  }),
   ...nativeActions.map((schema) => schema.extend({ grantId: uuid.optional() })),
   z.strictObject({ type: z.literal("grants") }),
   z.strictObject({ type: z.literal("revoke"), grantId: uuid }),
@@ -97,8 +101,37 @@ export class DesktopNative extends DesktopLocalGrant {
   constructor(host) {
     super(host, DESKTOP_NATIVE_CONTROL, "DESKTOP_NATIVE_UNAVAILABLE");
     this.unified = new DesktopControlGrants(this);
+    this.controlRequests = new Map();
     this.targetOperations = new Map();
     this.targetHandoffs = new Map();
+  }
+
+  requestReceipts() {
+    const live = this.host.live;
+    for (const [id, item] of this.controlRequests) {
+      if (
+        !this.host.connected() ||
+        live?.visits.get(item.agentId) !== item.visit
+      )
+        this.controlRequests.delete(id);
+    }
+    return [...this.controlRequests.values()].map(
+      ({ requestId, agentId, target, status }) => ({
+        requestId,
+        agentId,
+        target,
+        status,
+      }),
+    );
+  }
+
+  requests() {
+    return this.requestReceipts().filter((item) => item.status === "pending");
+  }
+
+  resolveRequest(requestId, status) {
+    const item = this.controlRequests.get(requestId);
+    if (item?.status === "pending") item.status = status;
   }
 
   state() {
@@ -123,7 +156,17 @@ export class DesktopNative extends DesktopLocalGrant {
       return;
     }
     if (value.targetId) {
+      if (
+        value.requestId &&
+        !this.requests().some(
+          (item) =>
+            item.requestId === value.requestId &&
+            item.agentId === value.agentId,
+        )
+      )
+        throw Error(this.unavailable);
       this.unified.change(value);
+      this.resolveRequest(value.requestId, "granted");
       return;
     }
     this.state();
@@ -325,10 +368,37 @@ export class DesktopNative extends DesktopLocalGrant {
       ctx.desktopUnified &&
       ctx.runtimeKind === "desktop" &&
       ctx.conversation === DESKTOP_CONVERSATION;
+    if (action.type === "request") {
+      if (!unified || !this.unified.eligible().includes(agent.id))
+        throw Error(this.unavailable);
+      const prior = this.requestReceipts().find(
+        (item) => item.agentId === agent.id && item.target === action.target,
+      );
+      if (prior?.status === "pending")
+        return { status: "pending", requestId: prior.requestId };
+      if (prior) this.controlRequests.delete(prior.requestId);
+      const requestId = randomUUID();
+      this.controlRequests.set(requestId, {
+        requestId,
+        agentId: agent.id,
+        target: action.target,
+        status: "pending",
+        visit: this.host.live.visits.get(agent.id),
+      });
+      this.host.notify();
+      return { status: "pending", requestId };
+    }
     if (action.type === "grants" || action.type === "revoke") {
       if (!unified) throw Error(this.unavailable);
-      if (action.type === "grants")
-        return { grants: this.unified.list(agent.id) };
+      if (action.type === "grants") {
+        const requests = this.requestReceipts().filter(
+          (item) => item.agentId === agent.id,
+        );
+        return {
+          grants: this.unified.list(agent.id),
+          ...(requests.length && { requests }),
+        };
+      }
       return { revoked: this.revokeUnified(action.grantId, agent.id) };
     }
     if (!unified && action.grantId) throw Error(this.unavailable);

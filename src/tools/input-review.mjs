@@ -1,6 +1,9 @@
 // @ts-check
 import { z } from "zod";
 
+export const draftReceiptHelp =
+  "若回执包含 draft，按 preparation 用 qq_draft 核对或继续。只有确认投递的项目才算已发；未知结果用实际投递编号查询 qq_delivery_status。";
+
 export const inputReviewSchema = z
   .object({
     token: z.string().regex(/^[a-f0-9]{64}$/),

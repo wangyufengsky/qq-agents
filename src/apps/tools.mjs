@@ -89,7 +89,7 @@ export const appDefinitions = {
           .string()
           .min(1)
           .max(200)
-          .refine((s) => !s.startsWith("-")),
+          .regex(/^[^-]/, "Query cannot begin with a hyphen"),
         cursor,
         limit,
       })

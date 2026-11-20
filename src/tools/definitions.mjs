@@ -203,7 +203,8 @@ export const definitions = {
         query: z.string().trim().min(2).max(240).optional(),
       })
       .strict()
-      .refine(({ cue, query }) => cue || query),
+      .refine(({ cue, query }) => cue || query)
+      .meta({ anyOf: [{ required: ["cue"] }, { required: ["query"] }] }),
   ],
   memory_related: [
     "读取同一来源里明确引用/撤回关系，可跨越很长时间。更正与同意仍需读原文判断；无关系不代表没有后续。按 nextAfterSeq 继续。",
@@ -338,7 +339,7 @@ export const definitions = {
     z.object({ query: str.max(100).optional() }).strict(),
   ],
   sticker_collect: [
-    "收藏已经读取或生成的图片，备注与标签可选。",
+    "收藏已经读取或生成的图片，传 mediaId 和必填的收藏标题 title，标签 tags 可省略。",
     z
       .object({
         mediaId: str,
@@ -352,7 +353,7 @@ export const definitions = {
     z.object({ mediaId: str, animation }).strict(),
   ],
   social_search: [
-    "只读平台搜索；使用已配置的浏览器登录与并发锁。",
+    "按 platform 和 query 搜索。source 可选 auto、native 或 index，依返回的来源区分平台读取和公开索引摘要。",
     z
       .object({
         platform: z.enum([
@@ -387,7 +388,7 @@ export const definitions = {
       .strict(),
   ],
   social_comments: [
-    "只读平台评论。",
+    "读取知乎、小红书、哔哩哔哩、微博或 Twitter 的评论。platform 与内容 url 使用同一平台，limit 为 1–20。Threads 仅在搜索和正文入口支持。",
     z
       .object({
         platform: z.enum([
@@ -415,7 +416,7 @@ export const definitions = {
       .strict(),
   ],
   voice_synthesize: [
-    "使用管理员启用的本机TTS生成语音并登记audioId；这不是ASR识别，不会自动发送。",
+    "在 macOS 上使用管理员启用的本机 TTS 生成语音并登记audioId；这不是ASR识别，不会自动发送。",
     z.object({ text: str.min(1).max(2000) }).strict(),
   ],
   external_tools: [

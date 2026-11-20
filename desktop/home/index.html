@@ -33,10 +33,11 @@
               aria-haspopup="dialog"
               hidden
             >
-              <span aria-hidden="true">···</span> 小窝工具<i
-                class="grant-indicator"
-                hidden
-              ></i>
+              <span aria-hidden="true">···</span> 小窝工具<span
+                class="control-request-count"
+                aria-live="polite"
+              ></span
+              ><i class="grant-indicator" hidden></i>
             </button>
             <button
               class="icon-button close"
@@ -333,11 +334,18 @@
                 </div>
                 <div class="desktop-permission">
                   <strong>操作网页</strong>
+                  <button
+                    type="button"
+                    class="secondary unified-existing-browser"
+                  >
+                    选择角色与已打开的浏览器
+                  </button>
                   <button type="button" class="secondary unified-browser-add">
                     授权独立标签页
                   </button>
                   <ul class="unified-browser-list"></ul>
                 </div>
+                <ul class="unified-control-requests"></ul>
                 <p class="unified-grant-status" role="status"></p>
               </section>
               <details class="frame-receipts" hidden>

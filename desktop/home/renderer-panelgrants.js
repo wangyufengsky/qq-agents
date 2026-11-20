@@ -8,6 +8,9 @@ const browserStatuses = {
 };
 
 const notices = {
+  denied: "已拒绝请求。",
+  timeout: "读取窗口超时，请确认目标应用可以响应后重试。",
+  driver: "窗口驱动未就绪，请在管理台准备桌面组件后重新打开小窝。",
   granted: "已授权。",
   revoked: "已撤销授权。",
   permission: "请在系统设置中允许辅助功能访问后重试。",
@@ -22,6 +25,8 @@ export function bindUnifiedGrants(select, getRoom) {
   const nativeList = select(".unified-native-list");
   const browserList = select(".unified-browser-list");
   const nativeAdd = select(".unified-native-add");
+  const existingBrowser = select(".unified-existing-browser");
+  const requestList = select(".unified-control-requests");
   const browserAdd = select(".unified-browser-add");
   const browserDialog = select(".unified-browser-dialog");
   const browserForm = browserDialog.querySelector("form");
@@ -81,6 +86,12 @@ export function bindUnifiedGrants(select, getRoom) {
         room.roomEpoch !== dialogEpoch)
     )
       browserDialog.close();
+    select(".control-request-count").textContent =
+      room?.connected &&
+      room.desktopUnified &&
+      room.nativeControl?.requests?.length
+        ? " · 待授权 " + room.nativeControl.requests.length
+        : "";
     section.hidden = !room?.desktopUnified || !room.connected;
     if (section.hidden) {
       signature = undefined;
@@ -98,6 +109,7 @@ export function bindUnifiedGrants(select, getRoom) {
     const key = JSON.stringify([
       room.roomEpoch,
       room.roles.map(({ id, name }) => [id, name]),
+      native?.requests,
       native?.grants,
       browser?.grants,
       native?.targetEligible,
@@ -108,6 +120,39 @@ export function bindUnifiedGrants(select, getRoom) {
     signature = key;
     nativeAdd.disabled =
       choosing || !native?.targetEligible?.length || !window.nest.nativeControl;
+    existingBrowser.disabled = nativeAdd.disabled;
+    requestList.replaceChildren(
+      ...(native?.requests ?? []).map(({ requestId, agentId, target }) => {
+        const row = element(
+          "li",
+          null,
+          name(agentId) +
+            (target === "browser"
+              ? " 请求操作浏览器窗口"
+              : " 请求操作本机窗口"),
+        );
+        for (const [type, label] of [
+          ["grant", "选择目标并授权"],
+          ["deny", "拒绝"],
+        ]) {
+          const control = element("button", "quiet", label);
+          control.type = "button";
+          control.disabled = choosing;
+          control.addEventListener(
+            "click",
+            () =>
+              void change("nativeControl", {
+                type,
+                agentId,
+                target,
+                requestId,
+              }),
+          );
+          row.append(control);
+        }
+        return row;
+      }),
+    );
     browserAdd.disabled =
       choosing || !roster.length || !window.nest.browserControl;
     browserForm.querySelector('[type="submit"]').disabled = choosing;
@@ -138,6 +183,10 @@ export function bindUnifiedGrants(select, getRoom) {
     if (roster.some(({ id }) => id === selected)) browserRole.value = selected;
   }
 
+  existingBrowser.addEventListener(
+    "click",
+    () => void change("nativeControl", { type: "grant", target: "browser" }),
+  );
   nativeAdd.addEventListener(
     "click",
     () => void change("nativeControl", { type: "grant" }),

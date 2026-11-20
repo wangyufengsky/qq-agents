@@ -51,6 +51,7 @@ window.addEventListener(
 );
 
 contextBridge.exposeInMainWorld("nest", {
+  speechBounds: (rect) => ipcRenderer.send("room:speech-bounds", rect),
   getPetPreferences: () => ipcRenderer.invoke("room:get-pet-preferences"),
   setPetPreference: (name, value) =>
     ipcRenderer.send("room:set-pet-preference", name, value),

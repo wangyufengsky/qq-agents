@@ -108,12 +108,17 @@ export function createPointerController({
         x <= body.x + body.width &&
         y >= body.y &&
         y <= body.y + body.height;
+      const speech = entry.bubbleReply ? undefined : entry.speechBounds;
+      const overSpeech = speech
+        ? dx >= speech.x &&
+          dx < speech.x + speech.width &&
+          dy >= speech.y &&
+          dy < speech.y + speech.height
+        : Math.abs(dx - bounds.width / 2) <= 87 && dy >= 2 && dy <= 54;
       const overBubble =
         type === "sprite" &&
         (entry.bubbleReply || room.bubbles[id] || room.turn?.actor === id) &&
-        Math.abs(dx - bounds.width / 2) <= 87 &&
-        dy >= 2 &&
-        dy <= 54;
+        overSpeech;
       const overStatus =
         type === "sprite" &&
         context.remoteState?.roles.some(
