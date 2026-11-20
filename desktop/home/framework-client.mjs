@@ -60,6 +60,7 @@ export function createFrameworkClient(
   activityState,
 ) {
   const connection = createFrameworkConnection(root, listenPort);
+  const instance = randomUUID();
   let client = randomUUID();
   let queue = Promise.resolve();
   let authorizationQueue = Promise.resolve();
@@ -113,6 +114,9 @@ export function createFrameworkClient(
         "content-type": upload
           ? "application/octet-stream"
           : "application/json",
+        ...((action === "sync" || (stopped && action === "disconnect")) && {
+          "x-desktop-instance": instance,
+        }),
         ...(heartbeat && { "x-desktop-room-epoch": heartbeat.roomEpoch }),
         ...(upload && {
           "content-length": String(upload.bytes),

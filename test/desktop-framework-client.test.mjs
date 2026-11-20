@@ -226,4 +226,17 @@ test("a transient heartbeat or stream interruption preserves an invitation in th
   decision.resolve();
   await waitFor(() => room.roles[0].state === "here");
   assert.equal(room.roomEpoch, epoch);
+  const host = runtime.desktopVisits;
+  const oldVisit = host.live.queue.visit("agent-0");
+  const beforeSleep = runtime.now();
+  runtime.now = () => beforeSleep + 60_000;
+  host.refresh();
+  assert.equal(host.connected(), false);
+  assert.equal(host.live, null);
+  await waitFor(
+    () => room.roomEpoch !== epoch && room.roles[0].state === "here",
+  );
+  assert.notEqual(host.live.queue.visit("agent-0"), oldVisit);
+  host.reset();
+  await waitFor(() => room.roles[0].state === "home");
 });
