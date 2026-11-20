@@ -180,6 +180,6 @@
     },
     "catalog": "desktop/home/renderer-petpacks.js",
     "license": "See NOTICE.md for pack-specific attribution and CC BY-NC-SA 4.0 terms.",
-    "modification": "Resized each original transparent frame to 256x144 and retiled eight columns per WebP; kept frame counts and sample rates. File stems are the first twelve hex digits of SHA-256 of the original UTF-8 action ID."
+    "modification": "Original eight-column WebP sheets are distributed unchanged, retaining 640x360 frames, transparency and sample rates. File stems are the first twelve hex digits of SHA-256 of the original UTF-8 action ID."
   }
 }

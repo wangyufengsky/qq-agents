@@ -17,8 +17,8 @@ export function pickSmallAction(pack, previous, random = Math.random) {
 export function bindPetPlayer(button, read) {
   const canvas = document.createElement("canvas");
   canvas.className = "pet-animation";
-  canvas.width = 256;
-  canvas.height = 144;
+  canvas.width = 640;
+  canvas.height = 360;
   canvas.hidden = true;
   button.append(canvas);
   const context = canvas.getContext("2d");
@@ -131,17 +131,18 @@ export function bindPetPlayer(button, read) {
         s.request || idleName ? "small-action" : state;
       if (frame !== lastFrame) {
         lastFrame = frame;
-        context.clearRect(0, 0, 256, 144);
+        const { width, height } = canvas;
+        context.clearRect(0, 0, width, height);
         context.drawImage(
           sheet,
-          (frame % 8) * 256,
-          Math.floor(frame / 8) * 144,
-          256,
-          144,
+          (frame % 8) * width,
+          Math.floor(frame / 8) * height,
+          width,
+          height,
           0,
           0,
-          256,
-          144,
+          width,
+          height,
         );
       }
       if (elapsed >= (clip.frames * 1000) / clip.fps) {

@@ -21,7 +21,7 @@ test("preferences recover from missing or invalid data and persist atomically", 
   assert.deepEqual(store.read(), {});
   store.write({ minutes: 20, positions: { cat: { x: 4, y: 8 } } });
   assert.equal(store.read().positions.cat.x, 4);
-  for (const spriteSize of [undefined, "100", 0, 130]) {
+  for (const spriteSize of [undefined, "100", 0, 305]) {
     store.write({ ...store.read(), spriteSize });
     assert.equal(readDesktopPreferences(store).spriteSize, 100);
   }

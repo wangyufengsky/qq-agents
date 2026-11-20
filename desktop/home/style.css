@@ -999,11 +999,9 @@ h2 {
   transform: translateY(1px);
 }
 .sprite-button {
-  scale: var(--sprite-scale, 1);
-  transform-origin: center bottom;
-  width: 106px;
-  height: 105px;
-  left: 44px;
+  width: calc(106px * var(--sprite-scale, 1));
+  height: calc(105px * var(--sprite-scale, 1));
+  left: calc(50% - 53px * var(--sprite-scale, 1));
   bottom: 4px;
   cursor: grab;
 }
@@ -2089,7 +2087,8 @@ h2 {
   position: absolute;
   left: 50%;
   bottom: 0;
-  width: 178%;
+  width: auto;
+  aspect-ratio: 16 / 9;
   height: 100%;
   translate: -50% 0;
   scale: -1 1;
@@ -2104,7 +2103,11 @@ h2 {
 .sprite-button[data-pet-animation][data-gesture="climb"] .pet-animation {
   animation: paper-climb 350ms ease-in-out;
 }
-.sprite-button[data-pet-animation="idle"][data-pose="sit"] .pet-animation {
-  height: 92%;
-  transform-origin: bottom;
+/* Keep speech and its pointer region centered above the feet as the stage grows. */
+.floating:has(.sprite-button) :is(.speech, .status-card, .bubble-composer) {
+  max-width: 174px;
+  margin-inline: auto;
+}
+.floating .bubble-collaboration {
+  right: max(13px, calc(50% - 84px));
 }

@@ -111,8 +111,7 @@ export function createPointerController({
       const overBubble =
         type === "sprite" &&
         (entry.bubbleReply || room.bubbles[id] || room.turn?.actor === id) &&
-        dx >= 10 &&
-        dx <= 184 &&
+        Math.abs(dx - bounds.width / 2) <= 87 &&
         dy >= 2 &&
         dy <= 54;
       const overStatus =
@@ -120,8 +119,7 @@ export function createPointerController({
         context.remoteState?.roles.some(
           (role) => role.id === id && role.statusCard,
         ) &&
-        dx >= 10 &&
-        dx <= 184 &&
+        Math.abs(dx - bounds.width / 2) <= 87 &&
         dy >= 2 &&
         dy <= 54;
       const active = overBody || overBubble || overStatus;

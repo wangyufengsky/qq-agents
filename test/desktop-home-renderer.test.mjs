@@ -2388,6 +2388,7 @@ test("the sprite loads its own atlas, follows the latched gait, and acknowledges
         name: "猫",
         state: "here",
         bodyVisitId: "visit",
+        bodyStatus: { state: "idle", pose: "sit" },
       },
     ],
     bubbles: {},
@@ -2410,6 +2411,9 @@ test("the sprite loads its own atlas, follows the latched gait, and acknowledges
   const rendered = (state) =>
     page.locator('[data-pet-animation="' + state + '"]').waitFor();
   await rendered("idle");
+  const canvas = page.locator(".pet-animation");
+  const idleFrame = await canvas.boundingBox();
+  assert.equal(await canvas.evaluate((el) => el.width), 640);
   const randomAction = page.waitForResponse((r) =>
     r.url().includes("/art/actions/cat/"),
   );
@@ -2420,6 +2424,7 @@ test("the sprite loads its own atlas, follows the latched gait, and acknowledges
   await page.clock.fastForward(8100);
   await randomAction;
   await rendered("small-action");
+  assert.deepEqual(await canvas.boundingBox(), idleFrame);
   await page.evaluate(() => {
     window.gait("walk");
     window.motion("moving");
@@ -2501,4 +2506,12 @@ test("the sprite loads its own atlas, follows the latched gait, and acknowledges
   await page.evaluate((data) => window.pushRoom(data), next);
   await page.clock.runFor(1000);
   assert.equal(await page.evaluate(() => window.acks.length), 1);
+  await page.setViewportSize({ width: 560, height: 366 });
+  await page.evaluate(() =>
+    window.updatePetPreferences({ spriteSize: 300, idleFrequency: 0 }),
+  );
+  const large = await canvas.boundingBox();
+  assert.equal(large.height, 315);
+  assert.ok(large.x >= 0 && large.x + large.width <= 560.01);
+  assert.ok(large.y >= 0 && large.y + large.height <= 366);
 });

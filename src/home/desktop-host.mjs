@@ -546,11 +546,23 @@ export class DesktopHost {
     const roles = this.catalog();
     const policy = this.runtime.config.desktopHome;
     const signature = JSON.stringify(roles);
-    if (
-      this.client &&
-      (now >= this.client.expiresAt || this.signature !== signature)
-    )
+    if (this.signature !== signature) this.suspendedResidents = undefined;
+    if (this.client && this.signature !== signature) this.reset();
+    else if (this.client && now >= this.client.expiresAt) {
+      // Presence can survive sleep. Visit IDs, queued actions and grants cannot.
+      const residents =
+        this.desktopUnified &&
+        this.client.instance &&
+        !this.runtime.updateMaintenance
+          ? {
+              instance: this.client.instance,
+              ids: this.live.here().map(({ id }) => id),
+            }
+          : undefined;
       this.reset();
+      this.suspendedResidents = residents;
+    }
+    if (this.runtime.updateMaintenance) this.suspendedResidents = undefined;
     // Maintenance keeps existing turn capabilities alive and stops admission.
     if (this.runtime.updateMaintenance) {
       this.stopWindowTask("inactive");
@@ -923,6 +935,7 @@ export class DesktopHost {
   }
 
   reset() {
+    this.suspendedResidents = undefined;
     this.runtime.home?.garden?.desktopStop(this.runtime.now());
     this.modeRevision++;
     this.personal.clear();
@@ -957,7 +970,7 @@ export class DesktopHost {
     void previous.close();
   }
 
-  command(input, { heartbeat = false, epoch } = {}) {
+  command(input, { heartbeat = false, epoch, instance } = {}) {
     const parsed = requestSchema.safeParse(input);
     if (!parsed.success) throw Error("INVALID_REQUEST");
     const { client, action } = parsed.data;
@@ -977,12 +990,32 @@ export class DesktopHost {
     if (this.client && this.client.id !== client)
       return { enabled: true, busy: true };
     if (action === "disconnect") {
+      if (!this.client && this.suspendedResidents?.instance !== instance)
+        return { enabled: true };
       this.reset();
       return { enabled: true };
     }
     if (!this.client) {
       if (action !== "sync") return { enabled: true, reconnect: true };
+      const suspended = this.suspendedResidents;
+      this.suspendedResidents = undefined;
       this.open(client);
+      if (this.desktopUnified && z.uuid().safeParse(instance).success) {
+        this.client.instance = instance;
+        if (suspended?.instance === instance)
+          for (const role of this.live.room.roles) {
+            if (
+              !suspended.ids.includes(role.id) ||
+              this.runtime.blockers(
+                this.runtime.agent(role.id),
+                DESKTOP_CONVERSATION,
+              ).length
+            )
+              continue;
+            this.live.room.members[role.id] = "invited";
+            this.live.admit(role);
+          }
+      }
     }
     if (this.desktopUnified) {
       if (legacyDesktopActions.has(action)) throw Error("TOOL_DISABLED");

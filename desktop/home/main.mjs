@@ -20,6 +20,7 @@ import { managedDesktopExecutable } from "../../src/home/desktop-dependencies.mj
 import {
   clampToWorkArea,
   desktopBodyBounds,
+  spriteWindowSize,
   restoreWindowPoint,
 } from "./window-placement.mjs";
 import { parseBrowserOrigin } from "./browser-origin.mjs";
@@ -207,7 +208,8 @@ const space = new DesktopSpace({
     }),
   seat: (id) => windowPoint(id, "sprite"),
   zones: () => exclusions.list(),
-  bodyBounds: desktopBodyBounds,
+  bodyBounds: (type, bounds) =>
+    desktopBodyBounds(type, bounds, petPreferences.spriteSize),
 });
 const spaceEditor = createSpaceEditor({
   screen,
@@ -724,7 +726,7 @@ function update() {
 const sizes = {
   door: [100, 118],
   panel: [430, 574],
-  sprite: [194, 156],
+  sprite: spriteWindowSize(petPreferences.spriteSize),
 };
 
 const windowView = createWindowView({
@@ -1144,10 +1146,23 @@ ipc.on("room:set-pet-preference", (event, name, value) => {
     (name === "idleFrequency" && validIdleFrequency(value));
   if (!valid || petPreferences[name] === value) return;
   petPreferences[name] = value;
+  if (name === "spriteSize") sizes.sprite = spriteWindowSize(value);
+  for (const entry of entries.values()) {
+    if (entry.type !== "sprite" || entry.win.isDestroyed()) continue;
+    if (name === "spriteSize") {
+      const old = entry.win.getBounds();
+      const [width, height] = sizes.sprite;
+      const point = clampPoint(
+        { x: old.x + (old.width - width) / 2, y: old.y + old.height - height },
+        width,
+        height,
+        screen.getDisplayMatching(old).workArea,
+      );
+      entry.win.setBounds({ ...point, width, height });
+    }
+    entry.win.webContents.send("room:pet-preferences", petPreferences);
+  }
   savePreferences();
-  for (const entry of entries.values())
-    if (entry.type === "sprite" && !entry.win.isDestroyed())
-      entry.win.webContents.send("room:pet-preferences", petPreferences);
 });
 
 registerRoomIpc({

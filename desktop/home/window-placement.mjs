@@ -1,10 +1,22 @@
-export function desktopBodyBounds(type, { x, y }, spriteSize = 100) {
+export function spriteWindowSize(percent) {
+  const scale = percent / 100;
+  return [
+    Math.max(194, Math.ceil(((105 * 16) / 9) * scale)),
+    Math.max(156, Math.ceil(105 * scale) + 51),
+  ];
+}
+
+export function desktopBodyBounds(
+  type,
+  { x, y, width = 194, height = 156 },
+  spriteSize = 100,
+) {
   // The interactive body excludes transparent padding and transient bubbles.
   return type === "door"
     ? { x: x + 9, y: y + 6, width: 82, height: 101 }
     : {
-        x: x + 97 - (53 * spriteSize) / 100,
-        y: y + 152 - (107 * spriteSize) / 100,
+        x: x + width / 2 - (53 * spriteSize) / 100,
+        y: y + height - 4 - (107 * spriteSize) / 100,
         width: (106 * spriteSize) / 100,
         height: (107 * spriteSize) / 100,
       };

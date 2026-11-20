@@ -378,7 +378,9 @@ export function createServer({
         // The desktop host closes admission until maintenance ends.
         const input = await body(req, 48 * 1024);
         if (stopping || runtime.closed) throw Error("RUNTIME_CLOSING");
-        const state = runtime.desktopVisits.command(input);
+        const state = runtime.desktopVisits.command(input, {
+          instance: req.headers["x-desktop-instance"],
+        });
         if (state.room) desktopLauncher?.connected();
         return send(state);
       }

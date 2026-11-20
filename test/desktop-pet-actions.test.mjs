@@ -32,7 +32,13 @@ test("every role animates from packaged resources and keeps real events out of t
         ).href,
         source,
       );
-      assert.equal((await readFile(path)).toString("ascii", 8, 12), "WEBP");
+      const atlas = await readFile(path);
+      assert.equal(atlas.toString("ascii", 8, 16), "WEBPVP8X");
+      assert.equal(atlas.readUIntLE(24, 3) + 1, 8 * 640);
+      assert.equal(
+        atlas.readUIntLE(27, 3) + 1,
+        Math.ceil(clip.frames / 8) * 360,
+      );
     }
   }
 });
