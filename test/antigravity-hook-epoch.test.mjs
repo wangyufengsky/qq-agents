@@ -78,6 +78,8 @@ test("persistent MCP hooks reject old envelopes and logical tools outside the cu
 test("the native hook reports only current-turn denials without exposing call details", async (t) => {
   const reports = [];
   const token = "synthetic-hook-report-token";
+  let catalogStatus = 200;
+  let availableCatalogue = catalogue;
   const server = http.createServer(async (req, res) => {
     res.setHeader("content-type", "application/json");
     if (req.headers.authorization !== `Bearer ${token}`) {
@@ -85,12 +87,18 @@ test("the native hook reports only current-turn denials without exposing call de
       return;
     }
     if (req.url === "/catalog") {
-      res.end(JSON.stringify(catalogue));
+      if (catalogStatus === null) return;
+      res.writeHead(catalogStatus).end(JSON.stringify(availableCatalogue));
       return;
     }
     let bytes = 0;
     for await (const chunk of req) bytes += chunk.length;
-    reports.push({ method: req.method, url: req.url, bytes });
+    reports.push({
+      method: req.method,
+      url: req.url,
+      bytes,
+      reason: req.headers["x-qq-hook-reason"],
+    });
     res.end("{}");
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -109,12 +117,7 @@ test("the native hook reports only current-turn denials without exposing call de
       args: { AbsolutePath: "SYNTHETIC_PRIVATE_PATH_DETAIL" },
     },
   };
-  for (const value of [
-    input,
-    denied,
-    { ...denied, stepIdx: catalogue.minimumStep },
-    { ...denied, conversationId: "another-conversation" },
-  ]) {
+  const invoke = async (value, reason) => {
     const child = spawn(process.execPath, [hook], {
       env: {
         ...process.env,
@@ -134,12 +137,46 @@ test("the native hook reports only current-turn denials without exposing call de
     assert.equal(code, 0);
     assert.equal(errors, "");
     assert.deepEqual(JSON.parse(output), {
-      decision: value === input ? "auto_approve" : "deny",
-      reason:
-        value === input ? "QQ_AGENTS_TOOL_ALLOWED" : "QQ_AGENTS_TOOL_DENIED",
+      decision: reason === "QQ_AGENTS_TOOL_ALLOWED" ? "auto_approve" : "deny",
+      reason,
     });
-  }
-  assert.deepEqual(reports, [
-    { method: "POST", url: `/hook-denied?epoch=${epoch}`, bytes: 0 },
-  ]);
+  };
+  await invoke(input, "QQ_AGENTS_TOOL_ALLOWED");
+  await invoke(denied, "ANTIGRAVITY_HOOK_IMAGE_DENIED");
+  await invoke(
+    { ...denied, stepIdx: catalogue.minimumStep },
+    "ANTIGRAVITY_HOOK_STALE_STEP",
+  );
+  await invoke(
+    { ...denied, conversationId: "another-conversation" },
+    "ANTIGRAVITY_HOOK_WRONG_CONVERSATION",
+  );
+  await invoke(
+    { ...input, toolCall: { name: "list_resources" } },
+    "ANTIGRAVITY_HOOK_TOOL_DENIED",
+  );
+  await invoke({ ...input, toolCall: null }, "ANTIGRAVITY_HOOK_INVALID_INPUT");
+  availableCatalogue = { tools: null };
+  await invoke(input, "ANTIGRAVITY_HOOK_CATALOG_INVALID");
+  catalogStatus = 410;
+  await invoke(input, "ANTIGRAVITY_TURN_INACTIVE");
+  catalogStatus = 403;
+  await invoke(input, "ANTIGRAVITY_HOOK_CATALOG_FORBIDDEN");
+  catalogStatus = 503;
+  await invoke(input, "ANTIGRAVITY_HOOK_CATALOG_UNAVAILABLE");
+  catalogStatus = null;
+  await invoke(input, "ANTIGRAVITY_HOOK_CATALOG_TIMEOUT");
+  assert.deepEqual(
+    reports,
+    [
+      "ANTIGRAVITY_HOOK_IMAGE_DENIED",
+      "ANTIGRAVITY_HOOK_TOOL_DENIED",
+      "ANTIGRAVITY_HOOK_INVALID_INPUT",
+    ].map((reason) => ({
+      method: "POST",
+      url: `/hook-denied?epoch=${epoch}`,
+      bytes: 0,
+      reason,
+    })),
+  );
 });

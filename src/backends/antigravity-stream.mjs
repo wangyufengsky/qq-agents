@@ -1,4 +1,5 @@
 // @ts-check
+import { antigravityHookDenialCodes } from "../core/error-codes.mjs";
 import { finalizeMcpOutput, toolOutputText } from "./tool-output.mjs";
 import fs from "node:fs";
 import os from "node:os";
@@ -156,18 +157,25 @@ export class AntigravityStreamWorker {
     };
     if (
       req.headers.origin ||
-      req.headers.authorization !== `Bearer ${this.token}` ||
-      this.closed
+      req.headers.authorization !== `Bearer ${this.token}`
     )
       return reply(403, { error: "ANTIGRAVITY_TURN_INACTIVE" });
-    if (req.method === "GET" && req.url === "/lease")
+    if (req.method === "GET" && req.url === "/lease" && !this.closed)
       return reply(200, { alive: true });
-    if (!this.live(turn))
-      return reply(403, { error: "ANTIGRAVITY_TURN_INACTIVE" });
+    if (this.closed || !this.live(turn))
+      return reply(req.method === "GET" && req.url === "/catalog" ? 410 : 403, {
+        error: "ANTIGRAVITY_TURN_INACTIVE",
+      });
     if (req.method === "POST" && req.url?.startsWith("/hook-denied")) {
       if (req.url !== `/hook-denied?epoch=${turn.epoch}`)
         return reply(403, { error: "ANTIGRAVITY_TURN_INACTIVE" });
       turn.hookDenied = true;
+      const hookReason = req.headers["x-qq-hook-reason"];
+      if (
+        typeof hookReason === "string" &&
+        antigravityHookDenialCodes.has(hookReason)
+      )
+        this.report(turn, { origin: "tool-hook", hookReason });
       return reply(200, {});
     }
     if (req.method === "GET" && req.url === "/catalog")

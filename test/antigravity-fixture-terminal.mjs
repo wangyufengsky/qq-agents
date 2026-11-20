@@ -8,7 +8,7 @@ export async function waitForTerminalObservation(endpoint, headers, epoch) {
       const response = await fetch(endpoint + "/catalog", { headers, signal });
       const catalogue = await response.json();
       if (
-        response.status === 403 &&
+        response.status === 410 &&
         catalogue.error === "ANTIGRAVITY_TURN_INACTIVE"
       )
         return;

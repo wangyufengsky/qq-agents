@@ -258,7 +258,9 @@ test("ACP reply entry forwards original arguments only to permitted reply tools"
     fakeChild: true,
     cliProtocol: "acp",
   });
+  const diagnostics = [];
   const { run, inputSubmitted } = startFakeTurn(fixture, {
+    onDiagnostic: (event) => diagnostics.push(event),
     tools: toolSpecs(["qq_send", "board_read"]),
   });
   await inputSubmitted;
@@ -269,19 +271,46 @@ test("ACP reply entry forwards original arguments only to permitted reply tools"
     authorization: `Bearer ${options.env.QQ_AGY_TOKEN}`,
     "content-type": "application/json",
   };
-  const call = (name, argumentsJson) =>
+  const call = (name, argumentsJson, route = "qq_reply_call") =>
     fetch(`${endpoint}/call`, {
       method: "POST",
       headers,
       body: JSON.stringify({
-        name: "qq_reply_call",
+        name: route,
         arguments: { name, argumentsJson },
       }),
     });
   try {
+    const denial = (reason, auth = headers.authorization) =>
+      fetch(endpoint + "/hook-denied", {
+        method: "POST",
+        headers: { authorization: auth, "x-qq-hook-reason": reason },
+      });
+    assert.equal(
+      (
+        await denial(
+          "ANTIGRAVITY_HOOK_IMAGE_DENIED",
+          "Bearer synthetic-wrong-token",
+        )
+      ).status,
+      403,
+    );
+    assert.equal((await denial("SYNTHETIC_PRIVATE_HOOK_DETAIL")).status, 200);
+    assert.equal((await denial("ANTIGRAVITY_HOOK_TOOL_DENIED")).status, 200);
+    assert.deepEqual(
+      diagnostics
+        .filter(({ origin }) => origin === "tool-hook")
+        .map(({ hookReason }) => hookReason),
+      ["ANTIGRAVITY_HOOK_TOOL_DENIED"],
+    );
     const { tools } = await (
       await fetch(`${endpoint}/catalog`, { headers })
     ).json();
+    assert.deepEqual(
+      tools.find(({ name }) => name === "qq_tool_call").inputSchema.properties
+        .name,
+      { type: "string" },
+    );
     const dispatch = tools.find(({ name }) => name === "qq_reply_call");
     assert.deepEqual(dispatch.inputSchema.properties.name.enum, ["qq_send"]);
     assert.equal((await call("qq_draft", "{}")).status, 403);
@@ -297,7 +326,23 @@ test("ACP reply entry forwards original arguments only to permitted reply tools"
     };
     const result = await (await call("qq_send", JSON.stringify(args))).json();
     assert.deepEqual(JSON.parse(result.content[0].text), { ok: true });
-    assert.deepEqual(fixture.calls, [{ name: "qq_send", args }]);
+    const fallback = await (
+      await call("qq_send", JSON.stringify(args), "qq_tool_call")
+    ).json();
+    assert.deepEqual(JSON.parse(fallback.content[0].text), { ok: true });
+    const unsupported = await (
+      await call("qq_draft", "{}", "qq_tool_call")
+    ).json();
+    assert.equal(unsupported.isError, true);
+    assert.equal(JSON.parse(unsupported.content[0].text).code, "TOOL_DISABLED");
+    const nested = await (
+      await call("qq_reply_call", "{}", "qq_tool_call")
+    ).json();
+    assert.equal(JSON.parse(nested.content[0].text).code, "TOOL_DISABLED");
+    assert.deepEqual(fixture.calls, [
+      { name: "qq_send", args },
+      { name: "qq_send", args },
+    ]);
   } finally {
     child.emitFrames(
       ...successfulFrames("00000000-0000-4000-8000-000000000238"),
@@ -339,7 +384,7 @@ test("ACP video entry forwards only the current video action through the normal 
     ).json();
     assert.deepEqual(
       tools.map(({ name }) => name),
-      ["board_read", "qq_video_call"],
+      ["board_read", "qq_video_call", "qq_tool_call"],
     );
     assert.deepEqual(tools[1].inputSchema.properties.name.enum, ["video_read"]);
     const args = {
@@ -1121,7 +1166,7 @@ test(
       );
       assert.deepEqual(
         await invoke({ toolCall: { name: "run_command", args: {} } }),
-        { decision: "deny", reason: "QQ_AGENTS_TOOL_DENIED" },
+        { decision: "deny", reason: "ANTIGRAVITY_HOOK_TOOL_DENIED" },
       );
     } finally {
       releaseTool();
@@ -1805,7 +1850,9 @@ for (const cliProtocol of [undefined, "acp"]) {
     );
     assert.deepEqual(
       observed.tools.map(({ name }) => name),
-      ["probe", "probe_new"],
+      cliProtocol === "acp"
+        ? ["probe", "probe_new", "qq_tool_call"]
+        : ["probe", "probe_new"],
     );
     assert.equal(
       JSON.parse(fs.readFileSync(bindingFile, "utf8")).signature,
