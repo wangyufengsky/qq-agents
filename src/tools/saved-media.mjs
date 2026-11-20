@@ -31,7 +31,13 @@ export const savedMediaDefinitions = {
       .strict(),
   ],
 };
-export function saveFileImage(runtime, ctx, fileId, extra = {}) {
+export function saveFileImage(
+  runtime,
+  ctx,
+  fileId,
+  extra = {},
+  { independentSource = false } = {},
+) {
   const a = runtime.assertActive(ctx);
   if (!a.files.enabled || !runtime.files)
     throw Error("FILE_PERMISSION_DISABLED");
@@ -48,9 +54,15 @@ export function saveFileImage(runtime, ctx, fileId, extra = {}) {
     conversation: ctx.conversation,
     sources: meta.sources,
     ...extra,
-    ...mergeProtection(meta, extra, {
-      protectedPeerQzoneTargets: peerQzoneSources(runtime, ctx),
-    }),
+    ...mergeProtection(
+      meta,
+      extra,
+      independentSource
+        ? {}
+        : {
+            protectedPeerQzoneTargets: peerQzoneSources(runtime, ctx),
+          },
+    ),
   });
   return {
     mediaId: saved.id,
