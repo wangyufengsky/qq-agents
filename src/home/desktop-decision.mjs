@@ -68,6 +68,21 @@ export const desktopActivityDecisionDefinition = [
     .strict(),
 ];
 
+const quietChoice = z.strictObject({ action: z.enum(["silent", "leave"]) });
+const say = desktopDecisionDefinition[1].extend({ action: z.literal("say") });
+export const unifiedChatSchema = z.union([
+  say.required({ text: true }),
+  say.required({ mediaId: true }),
+  quietChoice,
+]);
+export const unifiedActivitySchema = z.union([
+  z.strictObject({
+    action: z.enum(["wait", "rest"]),
+    waitMinutes: z.number().int().positive(),
+  }),
+  quietChoice,
+]);
+
 export function promptFor(request) {
   if (request.desktopUnified) {
     const input = JSON.stringify({

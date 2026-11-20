@@ -444,3 +444,51 @@ test("real unified browser runs JavaScript, follows a public cross-site link, is
     /Independent cookie jar/,
   );
 });
+
+test("control requests deduplicate per visit and grant only after owner selection", async (t) => {
+  const f = fixture(t);
+  const native = new DesktopNative(f.host);
+  const ask = () =>
+    native.run(f.ctx(owner), { type: "request", target: "browser" });
+  const first = await ask();
+  assert.deepEqual(await ask(), first);
+  assert.equal(native.requests().length, 1);
+  assert.deepEqual(native.unified.list(owner), []);
+  assert.throws(
+    () =>
+      native.change(false, { ...f.grant(peer), requestId: first.requestId }),
+    /DESKTOP_NATIVE_UNAVAILABLE/,
+  );
+  f.visits.set(owner, {});
+  assert.deepEqual(native.requests(), []);
+  assert.throws(
+    () =>
+      native.change(false, { ...f.grant(owner), requestId: first.requestId }),
+    /DESKTOP_NATIVE_UNAVAILABLE/,
+  );
+  const second = await ask();
+  native.change(false, { ...f.grant(owner), requestId: second.requestId });
+  assert.deepEqual(native.requests(), []);
+  assert.equal(native.unified.list(owner).length, 1);
+});
+
+test("owner decisions are queryable only by the requesting resident during this visit", async (t) => {
+  const f = fixture(t);
+  const native = new DesktopNative(f.host);
+  const ask = () =>
+    native.run(f.ctx(owner), { type: "request", target: "window" });
+  const receipts = (id) => native.run(f.ctx(id), { type: "grants" });
+  const first = await ask();
+  native.resolveRequest(first.requestId, "denied");
+  assert.deepEqual(native.requests(), []);
+  assert.equal((await receipts(owner)).requests[0].status, "denied");
+  assert.deepEqual(await receipts(peer), { grants: [] });
+  const second = await ask();
+  assert.notEqual(first.requestId, second.requestId);
+  native.change(false, { ...f.grant(owner), requestId: second.requestId });
+  const result = await receipts(owner);
+  assert.equal(result.requests.length, 1);
+  assert.equal(result.requests[0].status, "granted");
+  f.visits.set(owner, {});
+  assert.equal((await receipts(owner)).requests, undefined);
+});

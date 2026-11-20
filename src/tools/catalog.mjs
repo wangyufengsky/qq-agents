@@ -65,7 +65,10 @@ const entries = {
 };
 export function mcpEntrySpecs() {
   return Object.entries(entries).map(([name, [description, schema]]) => {
-    const inputSchema = z.toJSONSchema(schema, { target: "draft-7" });
+    const inputSchema = z.toJSONSchema(schema, {
+      target: "draft-7",
+      io: "input",
+    });
     delete inputSchema.$schema;
     return { name, description, inputSchema };
   });

@@ -96,6 +96,7 @@ class NativeControlSlot {
     agentId,
     source,
     confirmed,
+    requestId,
     visitId,
     modeRevision,
     targetId,
@@ -109,6 +110,7 @@ class NativeControlSlot {
     try {
       const room = await this.#command("native-grant", {
         ...data,
+        ...(requestId && { requestId }),
         ...(confirmed && { confirmed: true }),
         ...(targetId && { targetId }),
         ...(visitId && { visitId }),

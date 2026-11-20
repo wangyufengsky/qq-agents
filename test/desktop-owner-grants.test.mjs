@@ -150,3 +150,56 @@ test("unified native selection sends a stable window target and rejects a replac
     ["room", "cat", "old-grant"],
   ]);
 });
+
+test("browser request selects a running browser before querying windows and allows rejection", async () => {
+  const { entries, event } = panel();
+  const request = { target: "browser", requestId: "request", agentId: "cat" };
+  const browser = { app: "Google Chrome", pid: process.pid + 1 };
+  const window = { ...browser, title: "Fixture" };
+  const visits = new Map([["cat", "visit"]]);
+  const commands = [];
+  let run;
+  registerNativeControlIpc({
+    ipc: { handle: (_, handler) => (run = handler) },
+    entries,
+    context: {
+      framework: { command: (...args) => commands.push(args) },
+      roles: [{ id: "cat", name: "Cat" }],
+      remoteState: {
+        desktopUnified: true,
+        roomEpoch: "room",
+        nativeControl: { targetEligible: ["cat"], requests: [request] },
+      },
+    },
+    nativeControl: {
+      grant: (input) => {
+        assert.equal(input.requestId, request.requestId);
+        assert.equal(input.source, window);
+        return "granted";
+      },
+    },
+    screenPickerVisits: () => visits,
+    nativeDriver: {
+      listApplications: async () => [
+        { app: "Editor", pid: process.pid + 2 },
+        browser,
+      ],
+      listWindows: async ({ application }) => {
+        assert.equal(application, browser);
+        return [window];
+      },
+    },
+    desktopSourceMenu: async (_, roles, sources) => {
+      assert.equal(sources.length, 1);
+      return { agentId: roles[0].id, source: sources[0] };
+    },
+    deniedWindow: () => false,
+    dialog: { showMessageBox: async () => ({ response: 1 }) },
+    localLabel: String,
+  });
+  assert.equal(await run(event, { type: "grant", ...request }), "granted");
+  assert.equal(await run(event, { type: "deny", ...request }), "denied");
+  assert.deepEqual(commands, [
+    ["native-request-deny", { roomEpoch: "room", requestId: "request" }],
+  ]);
+});

@@ -10,7 +10,7 @@ import { z } from "zod";
 import { ownedEvent, readForward, forwardPayload } from "./forward.mjs";
 import { safeFetchBuffer } from "../../vendor/social-reader/safe-fetch.js";
 import { modelScheduleSchema } from "./schedule-schema.mjs";
-import { inputReviewSchema } from "./input-review.mjs";
+import { draftReceiptHelp, inputReviewSchema } from "./input-review.mjs";
 import { sendDraftTool } from "./qq-drafts.mjs";
 import { transcriptKey } from "../memory/store.mjs";
 import { qqSegmentsSchema } from "./qq-message.mjs";
@@ -63,9 +63,10 @@ export const legacyDefinitions = {
     }),
   ],
   qq_send_burst: [
-    "自然分条补充时使用：messages 中每个元素是一条独立 QQ 消息，可以是文字字符串或 {segments:[{type:'text',text:'好呀'},{type:'face',id:'20'}]}；每条最多32段、累计文字2000字符，表情只用已登记编号，20=偷笑。正文换行不会分条，接收说明 [QQ表情：名称] 写进文字不会转换成表情。按 self 与场景决定长短和条数，不强制连发或机械切碎长文。省略 gapMs 使用配置的自然间隔；每条独立回执，未知结果停止，不自动重发。",
+    "自然分条补充时使用：messages 中每个元素是一条独立 QQ 消息，可以是文字字符串或 {segments:[{type:'text',text:'好呀'},{type:'face',id:'20'}]}；每条最多32段、累计文字2000字符，表情只用已登记编号，20=偷笑。正文换行不会分条，接收说明 [QQ表情：名称] 写进文字不会转换成表情。按 self 与场景决定长短和条数，不强制连发或机械切碎长文。requestId 最多 198 字符，条数还受角色 burstMax 限制。省略 gapMs 使用配置的自然间隔；每条独立回执，未知结果停止，不自动重发。" +
+      draftReceiptHelp,
     object({
-      requestId: id,
+      requestId: id.meta({ maxLength: 198 }),
       inputReview: inputReviewSchema,
       messages: z
         .array(
@@ -88,15 +89,18 @@ export const legacyDefinitions = {
     }),
   ],
   qq_voice_read: [
-    "读取已登记语音或某条经历的语音附件；音频不等于已获得转录。",
+    "语音库用 audioId，聊天附件用 eventId，两者必须选一个。附件可用 index 指定同条消息中的第几段语音，从 0 开始。转录以实际返回为准。",
     object({
       audioId: id.optional(),
       eventId: id.optional(),
       index: z.number().int().min(0).max(20).optional(),
-    }).refine((x) => !!x.audioId !== !!x.eventId, "EXACTLY_ONE_SOURCE"),
+    })
+      .refine((x) => !!x.audioId !== !!x.eventId, "EXACTLY_ONE_SOURCE")
+      .meta({ oneOf: [{ required: ["audioId"] }, { required: ["eventId"] }] }),
   ],
   qq_send_voice: [
-    "向绑定会话发送自己的语音，可调音量或响度；只能用库内 audioId。",
+    "向绑定会话发送自己的语音，可调音量或响度；只能用库内 audioId。" +
+      draftReceiptHelp,
     object({
       requestId: id,
       inputReview: inputReviewSchema,
@@ -190,7 +194,7 @@ export const legacyDefinitions = {
     object({ requestId: id, id, remark: str.max(50) }),
   ],
   ops_request_level: [
-    "仅管理员私聊申请 L1/L2/L3，桥接等待独立确认；模型不能批准自己。",
+    "管理员私聊用 L1/L2/L3 申请运维等级，awaiting-owner-confirmation 表示等待主人确认。L0 立即撤销该角色的运维等级并清除其待审批请求。",
     object({ level: z.enum(["L0", "L1", "L2", "L3"]) }),
   ],
   ops_read: [
@@ -216,7 +220,10 @@ export const legacyDefinitions = {
       }),
     ]),
   ],
-  ops_result: ["仅原管理员私聊读取已确认请求的结果。", object({ id })],
+  ops_result: [
+    "原管理员私聊用申请回执里的 requestId 作为 id 查询结果。RESULT_NOT_FOUND 表示当前没有可读取的结果。",
+    object({ id }),
+  ],
 };
 export function taintMedia(ctx, meta) {
   trackPeerQzone(ctx, meta);

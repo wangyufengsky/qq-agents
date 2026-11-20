@@ -18,7 +18,8 @@ export const savedMediaDefinitions = {
         title: z.string().min(1).max(200).optional(),
       })
       .strict()
-      .refine((x) => !!x.url !== !!x.fileId, "EXACTLY_ONE_SOURCE"),
+      .refine((x) => !!x.url !== !!x.fileId, "EXACTLY_ONE_SOURCE")
+      .meta({ oneOf: [{ required: ["url"] }, { required: ["fileId"] }] }),
   ],
   media_list: [
     "分页搜索自己保存的图片、网页/App 截图和生成图，返回可预览、发送的 mediaId。不会重新下载或自动发送。",

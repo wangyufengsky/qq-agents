@@ -457,10 +457,11 @@ export function createBodyActions({
         duration: Math.min(
           Math.max(0, expiresAt - Date.now() - 300) /
             (plan.path.length - index),
-          duration ??
-            (plan.path.length === 1
-              ? Math.min(2200, Math.max(900, Math.round(distance * 3)))
-              : Math.min(1050, Math.max(250, Math.round(distance * 3)))),
+          3 *
+            (duration ??
+              (plan.path.length === 1
+                ? Math.min(2200, Math.max(900, Math.round(distance * 3)))
+                : Math.min(1050, Math.max(250, Math.round(distance * 3))))),
         ),
       });
     };

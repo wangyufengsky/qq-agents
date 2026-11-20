@@ -26,11 +26,24 @@ export function gardenPublicScope(conversation) {
   );
 }
 
+const gardenViews = [
+  "overview",
+  "public",
+  "image",
+  "timeline",
+  "plant_history",
+  "digest",
+  "ack_digest",
+  "plant",
+  "plant_image",
+  "gifts",
+];
+
 export const gardenDefinitions = {
   garden_read: [
-    "查看小窝花园。public 读整园，image 生成整园图。timeline 可用 factId 查询具体记录，或按 fromDay、toDay、plot、type、cropId 和 limit 查年表，plant_history 按 plantId、plot 或 cropId 查手帐，可用 type 找最近一次照料。下一页沿用查询并填 cursor。digest 看自己还未读到的园内变化，不改变已读位置。主人格确认看过便笺后，可在同一回合用 ack_digest 提交刚才返回的 readToken，确认自己当时看到的范围。plant 和 plant_image 用 plot、plantId 或 cropId 读单株；多个同种时请用返回的 plantId 选择。只有手帐事实支持时才断言时间、照料者或亲历。图像生成成功会返回 mediaId，可用本会话已有的 qq_send 或桌面聊天的 desktop_room_decide({action:'say',mediaId,text?}) 分享；再次分享原照用原 mediaId。读取不会发送或消耗经营次数。获准的主人格用 overview（或省略）查看经营详情。",
+    "查看小窝花园。public 读整园，image 生成整园图。timeline 可用 factId 查询具体记录，或按 fromDay、toDay、plot、type、cropId 和 limit 查年表，plant_history 按 plantId、plot 或 cropId 查手帐，可用 type 找最近一次照料。下一页沿用查询并填 cursor。digest 看自己还未读到的园内变化，不改变已读位置。取得 readToken 的主人格或获准经营的桌面角色确认看过便笺后，可在同一回合用 ack_digest 提交刚才返回的 readToken，确认自己当时看到的范围。plant 和 plant_image 用 plot、plantId 或 cropId 读单株；多个同种时请用返回的 plantId 选择。只有手帐事实支持时才断言时间、照料者或亲历。图像生成成功会返回 mediaId，可用本会话已有的 qq_send 或桌面聊天的 desktop_room_decide({action:'say',mediaId,text?}) 分享；再次分享原照用原 mediaId。读取不会发送或消耗经营次数。获准经营的主人格或在场桌面角色用 overview（或省略）查看经营详情；普通主人格或获准经营的桌面角色可用 gifts 查看礼物。",
     z.strictObject({
-      view: z.string().min(1).max(40).optional(),
+      view: z.string().min(1).max(40).meta({ enum: gardenViews }).optional(),
       plantId: z.string().uuid().optional(),
       plot: z.number().int().min(1).max(9).optional(),
       cropId: z.string().trim().min(1).max(60).optional(),
@@ -45,7 +58,7 @@ export const gardenDefinitions = {
     }),
   ],
   garden_act: [
-    "在获准的主人格或桌面回合经营花园，或处理管理员私聊的浇水委托。管理员私聊明确委托时用 delegate_water={eventId,plot?}，eventId 填本轮已展示的原始来信记录 ID，省略 plot 表示给当前缺水的地浇水。用 delegate_status/delegate_cancel={delegationId} 回查或应明确要求撤回。主人格看到 garden-watering 收件后，用 delegate_step/delegate_dismiss={delegationId} 处理或放下。每步最多浇一块地，续作使用新 requestId。主人格也可以直接经营，每次一个动作，先调用 garden_read。kind=plant，args={plot,cropId,buyPrice?}，buyPrice 为缺种时同笔购买的单价；buy_seed={cropId,quantity,price}；buy_fertilizer={quantity,price}；water/fertilize/harvest/clear={plot,plantId}；sell={harvestId,quantity,price}；gift={harvestId,quantity,recipient:{kind,id}}。交易 price 是总价。requestId 唯一，同一动作重试用原 ID。",
+    '在获准的主人格或桌面回合经营花园，或处理管理员私聊的浇水委托。管理员私聊明确委托时用 {"requestId":"water-001","kind":"delegate_water","args":{"eventId":"来信记录ID"}}，可在 args 加 plot。eventId 填本轮已展示的原始来信记录 ID，省略 plot 表示给当前缺水的地浇水。以下动作名填 kind，括号内字段放入 args。用 delegate_status/delegate_cancel（delegationId）回查或应明确要求撤回。主人格看到 garden-watering 收件后，用 delegate_step/delegate_dismiss={delegationId} 处理或放下。每步最多浇一块地，续作使用新 requestId。主人格也可以直接经营，每次一个动作，用 garden_read 查看当前地块与价格。kind=plant，args={plot,cropId,buyPrice?}，buyPrice 为缺种时同笔购买的单价；buy_seed={cropId,quantity,price}；buy_fertilizer={quantity,price}；water/fertilize/harvest/clear={plot,plantId}；sell={harvestId,quantity,price}；gift={harvestId,quantity,recipient:{kind,id}}。事件、神秘种子、遮棚和礼物操作可从 overview 的 event.actions、mysteryPlantActions、地块 shelterAction 和 giftActions 获取对应 kind 与参数。交易 price 是总价。requestId 唯一，同一动作重试用原 ID。',
     z.strictObject({
       requestId: z.string().regex(/^[A-Za-z0-9_-]{8,80}$/),
       kind: z.string().min(1).max(40),
@@ -172,20 +185,7 @@ export function gardenTool(
     }
     if (view === "overview" && manages)
       return subjectGardenView(runtime, role.id, ctx.turnId);
-    if (
-      ![
-        "overview",
-        "public",
-        "image",
-        "timeline",
-        "plant_history",
-        "digest",
-        "ack_digest",
-        "plant",
-        "plant_image",
-      ].includes(view)
-    )
-      throw Error("INVALID_REQUEST");
+    if (!gardenViews.includes(view)) throw Error("INVALID_REQUEST");
     const publicView = !(runningTurn && (subjectTurn || manages));
     if (query.cropId) {
       const crops = garden.requireState().settings.crops;

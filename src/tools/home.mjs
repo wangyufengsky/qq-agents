@@ -124,7 +124,11 @@ export const homeDefinitions = {
       .refine(
         (v) => v.slot !== "tagline" || v.body.length <= 80,
         "门牌短语最多80字符",
-      ),
+      )
+      .meta({
+        if: { properties: { slot: { const: "tagline" } } },
+        then: { properties: { body: { maxLength: 80 } } },
+      }),
   ],
   room_publish_snapshot: [
     "主人格发布本人已保存项目原稿的固定版本副本到三个 work 槽位。必须明确 project-draft、项目 ID 和精确 revision；仅接受服务端可信来源证明，旧稿或管理员/聊天派生稿不能直接发布。先 room_read；原稿变化不自动更新，回执不含正文，不接受路径、URL或聊天截图。",

@@ -1139,6 +1139,14 @@ function handleDrag(...args) {
 const ipc = createIpcRouter(ipcMain, entries);
 
 ipc.handle("room:get-pet-preferences", () => petPreferences);
+ipc.on("room:speech-bounds", (event, rect) => {
+  const entry = ipc.actionEntry(event);
+  if (entry?.type !== "sprite" || !rect) return;
+  const { x, y, width, height } = rect;
+  if ([x, y, width, height].every(Number.isFinite))
+    entry.speechBounds = { x, y, width, height };
+});
+
 ipc.on("room:set-pet-preference", (event, name, value) => {
   if (ipc.actionEntry(event)?.type !== "panel") return;
   const valid =

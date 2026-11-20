@@ -31,6 +31,21 @@ export function registerNativeControlIpc({
         context.choosingDesktopPermission
       )
         return "unavailable";
+      const request =
+        action?.requestId &&
+        policy.requests?.find(
+          (item) =>
+            item.requestId === action.requestId &&
+            item.agentId === action.agentId,
+        );
+      if (action?.requestId && !request) return "unavailable";
+      if (action?.type === "deny" && request) {
+        await context.framework.command("native-request-deny", {
+          roomEpoch,
+          requestId: request.requestId,
+        });
+        return "denied";
+      }
       if (action?.type === "revoke") {
         const grant = policy.grants?.find(
           ({ grantId }) => grantId === action.grantId,
@@ -51,14 +66,48 @@ export function registerNativeControlIpc({
       context.choosingDesktopPermission = true;
       try {
         const visits = screenPickerVisits();
-        const eligible = context.roles.filter(
-          ({ id }) => policy.targetEligible?.includes(id) && visits.get(id),
+        let eligible = context.roles.filter(
+          ({ id }) =>
+            (!action.agentId || id === action.agentId) &&
+            policy.targetEligible?.includes(id) &&
+            visits.get(id),
         );
         if (!eligible.length) return "unavailable";
+        const browser = (request?.target ?? action.target) === "browser";
+        let application;
+        if (
+          nativeDriver.listApplications &&
+          (process.platform === "darwin" || browser)
+        ) {
+          const apps = (
+            await nativeDriver.listApplications({
+              signal: AbortSignal.timeout(6000),
+            })
+          ).filter(
+            (source) =>
+              source.pid !== process.pid &&
+              !deniedWindow(source) &&
+              (!browser ||
+                /^(google chrome|chrome|chromium|safari|microsoft edge|msedge|firefox|arc|brave browser|brave|vivaldi|opera|zen)( browser| beta| canary| nightly| developer edition)?(\.exe)?$/i.test(
+                  source.app,
+                )),
+          );
+          if (!apps.length) return "no-sources";
+          const choice = await desktopSourceMenu(
+            win,
+            eligible,
+            apps,
+            ({ app }) => app,
+          );
+          if (!choice || win.isDestroyed()) return "cancelled";
+          application = choice.source;
+          eligible = eligible.filter(({ id }) => id === choice.agentId);
+        }
         const windows = (
           await nativeDriver.listWindows({
             unified: true,
-            signal: AbortSignal.timeout(4000),
+            application,
+            signal: AbortSignal.timeout(10000),
           })
         ).filter(
           (source) => source.pid !== process.pid && !deniedWindow(source),
@@ -97,14 +146,21 @@ export function registerNativeControlIpc({
           return "unavailable";
         return await nativeControl.grant({
           ...selection,
+          ...(request && { requestId: request.requestId }),
           targetId,
           roomEpoch,
           visitId: visits.get(agent.id),
         });
       } catch (error) {
-        return error?.message === "DESKTOP_NATIVE_PERMISSION"
-          ? "permission"
-          : "failed";
+        return (
+          {
+            DESKTOP_NATIVE_PERMISSION: "permission",
+            DESKTOP_NATIVE_CANCELLED: "timeout",
+            DESKTOP_NATIVE_TIMEOUT: "timeout",
+            DESKTOP_NATIVE_UNAVAILABLE: "driver",
+            DESKTOP_NATIVE_VERSION: "driver",
+          }[error?.message] ?? "failed"
+        );
       } finally {
         context.choosingDesktopPermission = false;
       }

@@ -73,7 +73,7 @@ export function createWindowMotion({
       updateMotion(entry);
       return options.interrupted();
     }
-    const duration = Math.max(16, options.duration ?? 450);
+    const duration = Math.max(16, options.duration ?? 1350);
     if (
       entry.reducedMotion ||
       context.hidden ||

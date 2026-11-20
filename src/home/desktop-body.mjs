@@ -529,7 +529,12 @@ export class DesktopBody {
       (action.type === "small-action" && action.operation === "play") ||
       (ctx.desktopUnified && client.smallActions && action.type === "gesture")
         ? 20000
-        : ACTION_TIMEOUT;
+        : ctx.desktopUnified &&
+            ["move", "interaction", "window-task", "approach-window"].includes(
+              action.type,
+            )
+          ? 3 * ACTION_TIMEOUT
+          : ACTION_TIMEOUT;
     const expiresAt = Date.now() + timeout;
     const receipt = Promise.withResolvers();
     const entry = {

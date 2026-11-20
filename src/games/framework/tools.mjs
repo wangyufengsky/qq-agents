@@ -14,11 +14,11 @@ export const gameDefinitions = {
     }),
   ],
   game_view: [
-    "读取本角色在指定游戏房间中的参与者视图。",
+    "仅在独立游戏回合读取本人视图，roomId 使用本次游戏任务给出的房间编号。",
     z.strictObject({ roomId }),
   ],
   game_act: [
-    "仅独立游戏执行范围可提交动作，聊天回合不可调用。",
+    "在独立游戏回合为本局提交动作，使用任务绑定的 roomId、当前版本及该动作的参数。",
     actionSchema.extend({ roomId }),
   ],
   game_close: [

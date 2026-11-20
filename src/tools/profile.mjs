@@ -46,7 +46,14 @@ export const profileDefinitions = {
           [x.nickname, x.signature, x.mediaId].filter((v) => v !== undefined)
             .length === 1,
         "EXACTLY_ONE_FIELD",
-      ),
+      )
+      .meta({
+        oneOf: [
+          { required: ["nickname"] },
+          { required: ["signature"] },
+          { required: ["mediaId"] },
+        ],
+      }),
   ],
 };
 

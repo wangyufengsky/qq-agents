@@ -25,7 +25,7 @@ const descriptions = {
   home_visit_mark_read:
     "只提交实际展示过的消息水位，不能把数量或管理浏览算作已读。",
   home_visit_send:
-    "提交本人原创社交消息，逐条以committed/not_sent/unknown回执为准；未知结果用原requestId核对，不能换键重发。最终文本不会发送。",
+    "提交本人原创社交消息，逐条以committed/not_sent/unknown回执为准；未知结果用原requestId核对，不能换键重发。只写在模型最终回答里的文字留作草稿。",
   home_visit_end:
     "结束当前拜访并撤销实时房间授权；终态再次结束正常收敛，不生成对方发言。",
   home_visit_retract: "撤回本人已提交消息，保留墓碑和幂等回执。",
@@ -93,7 +93,7 @@ Object.assign(socialDefinitions, {
     z.object({ windowId: z.uuid() }).strict(),
   ],
   home_exchange_yield: [
-    "显式封口本人当前消息批次并结束回合；自动整理未完话题与约定到handoff并引用实际读过或本人已提交的sourceMessageIds，空数组表示没有待续事项。清理完成后最多触发一次对方接话，空批次关闭时段。",
+    "显式封口本人当前消息批次并结束回合；由你在 handoff.pendingTopics 和 handoff.agreements 填写完整交接笔记，每项用 sourceMessageIds 引用已读或本人已提交的消息。两数组都为空表示清空待续事项。省略 handoff 时保留此前笔记。清理完成后最多触发一次对方接话，空批次关闭时段。",
     z.object({ ...base, handoff: socialHandoffSchema.optional() }).strict(),
   ],
   home_exchange_close: [

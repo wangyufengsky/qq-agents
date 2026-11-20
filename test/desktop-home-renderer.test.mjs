@@ -2463,6 +2463,7 @@ test("the sprite loads its own atlas, follows the latched gait, and acknowledges
     room,
   );
   assert.equal(await speech.innerText(), "我回来了");
+  const short = await speech.boundingBox();
   await page.evaluate(
     (room) =>
       window.pushRoom({
@@ -2470,13 +2471,22 @@ test("the sprite loads its own atlas, follows the latched gait, and acknowledges
         bubbles: {
           resident: {
             id: 2,
-            text: "我回来了，这条比较长的消息会在小人上方分成两行显示。",
+            // Force overflow even when the runner uses narrower fallback glyphs.
+            text: "这段很长的消息会自然换行。".repeat(32),
           },
         },
       }),
     room,
   );
   const box = await speech.boundingBox();
+  assert.ok(box.height > short.height + 30);
+  assert.equal(
+    await speech.evaluate((el) => {
+      el.scrollTop = el.scrollHeight;
+      return el.scrollTop > 0;
+    }),
+    true,
+  );
   const x = box.x + box.width / 2,
     y = box.y + box.height - 5;
   const pet = await page.locator(".sprite-button").boundingBox();

@@ -72,6 +72,7 @@ const windowTaskInput = localGrantSchema
 const nativeGrantSchema = localGrantSchema
   .extend({
     confirmed: z.literal(true).optional(),
+    requestId: z.uuid().optional(),
     targetId: localControlTargetId.optional(),
     visitId: z.string().uuid().optional(),
   })
@@ -197,6 +198,10 @@ const actionDataSchemas = {
   "observation-state": observationStateSchema,
   "window-task": revisioned(windowTaskInput),
   "window-task-stop": textDataSchema,
+  "native-request-deny": z.strictObject({
+    roomEpoch: z.uuid(),
+    requestId: z.uuid(),
+  }),
   "native-grant": revisioned(nativeGrantSchema),
   "native-revoke": localRevokeSchema,
   "browser-grant": revisioned(browserGrantSchema),
@@ -1362,6 +1367,8 @@ export class DesktopHost {
     }
     if (action === "screen-revoke")
       this.screen.change(true, localRevokeSchema.parse(data));
+    if (action === "native-request-deny" && data.roomEpoch === live.room.epoch)
+      this.native.resolveRequest(data.requestId, "denied");
     if (action === "native-grant") {
       const grant = nativeGrantSchema.parse(data);
       const visit = live.visits.get(grant.agentId);
@@ -1578,6 +1585,7 @@ export class DesktopHost {
     const nativeControl = this.native.state();
     const browserControl = this.browser.state();
     if (this.desktopUnified) {
+      nativeControl.requests = this.native.requests();
       nativeControl.targetEligible = this.native.unified.eligible();
       browserControl.targetEligible = this.browser.unified.eligible();
     }

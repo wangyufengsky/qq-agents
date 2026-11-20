@@ -103,13 +103,10 @@ export const BACKEND_CAPABILITIES = {
 
 `src/backends/session-contract.mjs` 提供：
 
-- `sessionSignature(backend, tools)`：对后端配置（去掉显示名称 `label` 和 `recovery`，保留绑定的 DSH 实例）和工具目录（名称、说明、`inputSchema`，按名称排序）做规范化 JSON 后取 SHA-256，前缀 `contract-v3:`；`acceptsSession` 可兼容完整匹配的旧 `contract-v2:` 摘要。
+- `sessionSignature(backend, tools)` 使用 `contract-v4:` 对后端会话配置、工具名称及规范化输入结构签名。独立工具说明和字段说明等文案不参与 v4 摘要。旧 v2/v3 引用按各自签名规则检查。
 - `assertSession(session, backendType, signature)`：会话的 `backend` 或 `signature` 与当前不符时抛 `SESSION_REQUIRES_HANDOFF`。
 
-`run` 一开始应先算签名并调用 `assertSession`。运行时在每个回合前比较签名（`src/core/lifecycle.mjs`），签名变化、self 版本变化或指令变化时退休旧会话，下一回合新建会话，并通过来源交接（`src/core/context-handoff.mjs`）把最近的来源线索带给新会话；原始经历和日记不受影响。所以：
-
-- 新建会话时保存的引用要带上 `backend: "<你的类型>"` 和当前 `signature`；
-- 改了模型、地址或任何工具的说明/schema，现有会话都会重建，这是预期行为。
+新建会话时保存后端类型、当前签名和契约元数据。恢复时由后端和生命周期代码检查兼容性。v4 可凭已验证的旧契约接受兼容的可选字段扩展。改变参数约束或工具集合可能触发交接；单独调整说明不会改变 v4 签名。具体后端是否能原地更新已载入的工具目录，以该后端的续接实现为准。
 
 ### 失败分类与续接
 
@@ -139,7 +136,7 @@ new BackendTurnFailure(backend, code, category, turnId, recoverable);
 | `src/tools/definitions.mjs`   | 汇总所有工具定义：`名称: [说明, zod schema]`。核心工具直接写在这里，其余按分组从 `file-tools.mjs`、`mind.mjs`、`saved-media.mjs`、`screenshots.mjs`、`legacy.mjs`、`src/apps/tools.mjs`、`src/github/tools.mjs` 展开。 |
 | `src/tools/core-handlers.mjs` | 核心工具的处理函数 `coreHandlers`，签名 `(runtime, ctx, args, name)`。                                                                                                                                                 |
 | `src/tools/registry.mjs`      | 把定义和处理函数合成冻结的 `registry`。分组工具用分组的分发函数 `(runtime, ctx, name, args)`。加载时检查：同名处理函数重复抛 `DUPLICATE_TOOL_HANDLER`，定义与处理函数对不上抛 `TOOL_REGISTRY_MISMATCH`。               |
-| `src/tools/specs.mjs`         | `toolSpecs(names)` 把 zod schema 转成 JSON Schema，产出给后端的 `{ name, description, inputSchema }`；`TOOL_NAMES` 是全部工具名，管理台的工具白名单列表也来自它。                                                      |
+| `src/tools/specs.mjs`         | `toolSpecs(names)` 把 zod schema 转成 JSON Schema，产出给后端的 `{ name, description, inputSchema }`；`TOOL_NAMES` 列出常规目录，注册表还包含桌面决定和功能 Agent 结果等专用入口，管理台的工具白名单列表也来自它。     |
 | `src/tools/catalog.mjs`       | `toolAvailable(agent, name, conversation)` 按功能开关决定工具是否可用（如 `github_*` 要求 `github.enabled`，`ops_*` 要求 `operations.enabled`）；另有 DSH 用的两个 MCP 入口和按回合的工具目录。                        |
 | `src/tools/index.mjs`         | `dispatchTool`：按名称查注册表、用 zod 校验参数、拒绝参数中出现本回合能力凭据（`CAPABILITY_EXFILTRATION_BLOCKED`），再调用处理函数。                                                                                   |
 
@@ -152,6 +149,14 @@ new BackendTurnFailure(backend, code, category, turnId, recoverable);
 5. 为角色启用：工具名加进角色的 `tools` 白名单（管理台「角色」页，或配置 `agents[].tools`）。同时更新 `src/tools/names.mjs` 的工具目录，注册表启动时校验名称一致。新角色默认包含全部目录；已保存的工具白名单保持原样。
 
 `test/tool-registry.test.mjs` 会检查每个工具都恰好有一个 schema 和处理函数。
+
+### 工具说明同步契约
+
+新增工具或改变其可观察行为时，在同一改动中同步更新面向模型的 description 和输入 schema。写清适用会话、目标、参数来源与互斥条件；对发送、审批、异步操作说明关键回执及下一步。例子须符合对应动作的实际参数结构。
+
+把 Zod 转成模型的参数规格时使用输入投影（io=input），以保留默认值的可省略性；单独核对 refine 等跨字段约束是否体现在公开规格里。
+
+沿调用路径核对注册表、会话专用规格、独立 worker、工具发现与后端精简参数说明。共用行为尽量复用同一说明；不同模式的说明随对应模式提供。对容易漂移的行为，用定向用例核对模型实际取得的规格、合法与非法参数、执行回执。同步维护相关用户指南，PR 列明影响的入口和验证结果。
 
 ### 权限怎么校验
 

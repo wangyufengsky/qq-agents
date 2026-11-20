@@ -1,6 +1,7 @@
 // @ts-check
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { gameDefinitions } from "./tools.mjs";
 import { actionSchema } from "../core/kernel.mjs";
 import { fail } from "../core/value.mjs";
 
@@ -84,14 +85,17 @@ export class GameWorker {
         ).extend({ roomId: z.literal(job.roomId) }),
       };
       const tools = Object.entries(schemas).map(([name, schema]) => {
-        const inputSchema = z.toJSONSchema(schema, { target: "draft-7" });
+        const inputSchema = z.toJSONSchema(schema, {
+          target: "draft-7",
+          io: "input",
+        });
         delete inputSchema.$schema;
         return {
           name,
           description:
             name === "game_view"
-              ? "读取本参与者视图"
-              : "提交本次游戏动作；只能使用给出的版本和动作 schema",
+              ? gameDefinitions.game_view[0]
+              : gameDefinitions.game_act[0],
           inputSchema,
         };
       });
@@ -124,6 +128,7 @@ export class GameWorker {
               name,
               z.toJSONSchema(/** @type {any} */ (schema), {
                 target: "draft-7",
+                io: "input",
               }),
             ]),
           ),

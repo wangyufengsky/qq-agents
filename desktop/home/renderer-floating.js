@@ -247,6 +247,12 @@ export function floating(root, type, id) {
   const speech = button("speech", "", "打开小窝聊天");
   const words = element("span");
   speech.append(words);
+  if (window.nest.speechBounds) {
+    new window.ResizeObserver(() => {
+      const { x, y, width, height } = speech.getBoundingClientRect();
+      window.nest.speechBounds({ x, y, width, height });
+    }).observe(speech);
+  }
   speech.hidden = true;
   const bubbleComposer = bindBubbleComposer(space, true);
   speech.addEventListener("click", () => {
