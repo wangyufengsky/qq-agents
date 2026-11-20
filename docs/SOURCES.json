@@ -47,7 +47,9 @@
     {
       "path": "vendor/dsh-qq/dsh-endpoint.mjs",
       "origin": "h-D-ACE/dsh-qq",
-      "sha256": "4506b9acecc85eb7e41dabe79cce84a298d70cde1b07e3e459e51f00b698ff6b"
+      "sha256": "c0867dff1c1799a48ce80b82e944f53960052f900314fb7e3f47180a42b24aad",
+      "upstreamSha256": "4506b9acecc85eb7e41dabe79cce84a298d70cde1b07e3e459e51f00b698ff6b",
+      "modification": "Pass unbracketed IPv6 literals to TCP reachability and HTTP fingerprint probes."
     },
     {
       "path": "vendor/dsh-qq/md-to-plain.js",

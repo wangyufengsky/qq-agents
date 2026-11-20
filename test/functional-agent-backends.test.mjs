@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { once } from "node:events";
+import { createServer } from "node:http";
+import { resolveDshBaseUrl } from "../vendor/dsh-qq/dsh-endpoint.mjs";
 import { BackendConnections } from "../src/core/backend-connections.mjs";
 import { config } from "./helpers.mjs";
 
@@ -322,4 +325,22 @@ test("dedicated monitoring checks the fixed host during recall and after prolong
     }),
     /DSH_SELECTION_REQUIRED/,
   );
+});
+
+test("dedicated DSH detects the protocol on a configured IPv6 loopback socket", async (t) => {
+  let body = "dsh web authentication required";
+  const server = createServer((_request, response) => {
+    response.writeHead(401).end(body);
+  });
+  server.listen(0, "::1");
+  await once(server, "listening");
+  t.after(() => server[Symbol.asyncDispose]());
+
+  const { runtime, connections } = fixture();
+  const target = runtime.config.backends.find((b) => b.id === "alternate");
+  target.baseUrl = `http://[::1]:${server.address().port}`;
+  assert.equal((await connections.check(target.id)).state, "ready");
+  assert.equal((await resolveDshBaseUrl(target.baseUrl)).reachable, true);
+  body = "other local service";
+  assert.equal((await connections.check(target.id)).state, "disconnected");
 });
