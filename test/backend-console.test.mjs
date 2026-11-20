@@ -59,6 +59,20 @@ test("console recovery and automatic-recovery controls call real admin routes wi
     sandbox,
   );
   const card = vm.runInContext("backendCard(config.backends[0])", sandbox);
+  const memoryCard = vm.runInContext(
+    `(() => {
+    const dedicated={...config.backends[0], id:"memory-fixture",functionalAgentOnly:true};
+    status.backends.push({id:dedicated.id,state:"disconnected",autoReconnect:true});
+    status.agents[0].recallHealth={backendId:dedicated.id,completed:{at:12345,estimated:false,empty:true},delivered:null};
+    return backendCard(dedicated);
+  })()`,
+    sandbox,
+  );
+  assert.match(memoryCard, /服务不可用/);
+  assert.match(memoryCard, /最近完成查证/);
+  assert.match(memoryCard, /无补充/);
+  assert.match(memoryCard, /最近交付证据/);
+  assert.doesNotMatch(memoryCard, /选择实例|恢复连接/);
   assert.match(card, /检测连接/);
   assert.match(card, /恢复连接/);
   assert.match(card, /开启自动恢复/);

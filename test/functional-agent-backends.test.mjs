@@ -267,3 +267,59 @@ test("ordinary DSH recovery cannot select a dedicated endpoint", async () => {
   assert.equal(state.error, "DSH_SELECTION_REQUIRED");
   assert.equal(created.length, 0);
 });
+
+test("dedicated monitoring checks the fixed host during recall and after prolonged downtime", async () => {
+  const { runtime, connections, roles } = fixture();
+  const role = roles[0],
+    target = runtime.config.backends.find((b) => b.id === "alternate");
+  target.recovery = { autoReconnect: true };
+  runtime.config.mode = "live";
+  runtime.config.globalPaused = false;
+  role.paused = false;
+  role.memoryRecall = "enabled";
+  role.tools = [...new Set([...role.tools, "memory_search"])];
+  let clock = 30000,
+    available = false,
+    checks = 0,
+    job;
+  runtime.now = () => clock;
+  runtime.trackJob = (promise) => {
+    job = promise;
+  };
+  connections.probeRecallHost = async (url) => {
+    assert.equal(url, target.baseUrl);
+    checks++;
+    return available;
+  };
+  for (let i = 0; i < 5; i++) {
+    connections.tick();
+    await job;
+    assert.equal(connections.state(target.id).state, "disconnected");
+    clock += 30000;
+  }
+  assert.equal(checks, 5);
+  const gate = Promise.withResolvers();
+  connections.probeRecallHost = () => gate.promise;
+  connections.tick();
+  const lease = connections.acquireFunctionalBackend(role, {
+    backendId: target.id,
+  });
+  gate.resolve(true);
+  await job;
+  await lease.release();
+  assert.equal(connections.state(target.id).state, "ready");
+  assert.equal(runtime.backends.size, 0);
+  connections.functionalBackendQuarantinedPorts.add("23231");
+  assert.equal(
+    (await connections.check(target.id)).error,
+    "DSH_RECOVERY_STATE_UNVERIFIED",
+  );
+  await assert.rejects(
+    connections.handle({
+      id: target.id,
+      action: "recover",
+      candidateId: "relay:other",
+    }),
+    /DSH_SELECTION_REQUIRED/,
+  );
+});

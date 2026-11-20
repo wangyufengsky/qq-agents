@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>local.qq-agents.memory-dsh</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/absolute/path/to/dsh</string>
+    <string>--profile</string><string>memory-profile</string>
+    <string>--host</string><string>127.0.0.1</string>
+    <string>--port</string><string>EXAMPLE_PORT</string>
+    <string>--no-open</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict><key>DSH_HOME</key><string>/absolute/path/to/dsh-home</string></dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>15</integer>
+  <key>Umask</key><integer>63</integer>
+</dict>
+</plist>

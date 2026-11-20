@@ -1,9 +1,11 @@
+import { looksLikeDsh } from "../../vendor/dsh-qq/dsh-endpoint.mjs";
 import { z } from "zod";
 import { backendCapabilities } from "../backends/capabilities.mjs";
 import { backendRequestConfig } from "../backends/session-contract.mjs";
 import { waitForDrain } from "../updates/drain.mjs";
 import {
   memoryModelSelection,
+  recallBackendForRole,
   roleBackendConfig,
 } from "./functional-agents.mjs";
 import {
@@ -28,6 +30,7 @@ const known = new Set([
   "ANTIGRAVITY_GIT_REQUIRED",
   "ANTIGRAVITY_WORKSPACE_UNSAFE",
   "DSH_NOT_FOUND",
+  "DSH_RECOVERY_STATE_UNVERIFIED",
   "DSH_INSTANCE_UNAVAILABLE",
   "DSH_SELECTION_REQUIRED",
   "DSH_STREAM_ENDED",
@@ -71,9 +74,13 @@ function fixedDshPort(config) {
   }
 }
 export class BackendConnections {
-  constructor(runtime, { discover = discoverDshInstances } = {}) {
+  constructor(
+    runtime,
+    { discover = discoverDshInstances, probeRecallHost = looksLikeDsh } = {},
+  ) {
     this.runtime = runtime;
     this.discover = discover;
+    this.probeRecallHost = probeRecallHost;
     this.states = new Map();
     this.operations = new Map();
     this.blocked = new Set();
@@ -180,13 +187,15 @@ export class BackendConnections {
       (r.configChanging && !r.configChangesGroupAdmissionOnly) ||
       this.blocked.has(role.id) ||
       this.operations.has(parentBackendId) ||
-      this.operations.has(backendId)
+      (this.operations.has(backendId) &&
+        this.operations.get(backendId).key !== "check")
     )
       throw Error("FUNCTIONAL_AGENT_BACKEND_UNAVAILABLE");
     const state = this.states.get(backendId);
     if (
       state &&
       !["ready", "unchecked"].includes(state.state) &&
+      state.error !== "DSH_INSTANCE_UNAVAILABLE" &&
       state.error !== "BACKEND_NO_AGENTS"
     )
       throw Error("FUNCTIONAL_AGENT_BACKEND_UNAVAILABLE");
@@ -275,6 +284,16 @@ export class BackendConnections {
     s.nextRetryAt = null;
   }
   async probe(id) {
+    const config = this.config(id);
+    if (config.functionalAgentOnly) {
+      const port = fixedDshPort(config);
+      if (!port || this.functionalBackendQuarantinedPorts.has(port))
+        throw Error("DSH_RECOVERY_STATE_UNVERIFIED");
+      if (!(await this.probeRecallHost(localDshUrl(config.baseUrl))))
+        throw Error("DSH_INSTANCE_UNAVAILABLE");
+      this.succeeded(id);
+      return this.snapshot(id);
+    }
     const agents = this.agents(id),
       results = [];
     if (!agents.length) throw Error("BACKEND_NO_AGENTS");
@@ -457,6 +476,12 @@ export class BackendConnections {
     if (r.closed) throw Error("BACKEND_RECOVERY_FAILED");
     if (r.configChanging) throw Error("CONFIG_CONFLICT");
     if (r.config.mode !== "live") throw Error("ISOLATED_MODE");
+    if (
+      config.functionalAgentOnly &&
+      args.action === "recover" &&
+      args.candidateId
+    )
+      throw Error("DSH_SELECTION_REQUIRED");
     if (args.action === "discover") {
       if (config.type !== "dsh") throw Error("DSH_BACKEND_REQUIRED");
       return {
@@ -481,6 +506,7 @@ export class BackendConnections {
       this.state(args.id).nextRetryAt = null;
       return this.snapshot(args.id);
     }
+    if (config.functionalAgentOnly) return this.check(args.id);
     if (args.action === "recover") {
       this.state(args.id).attempts = 0;
       return this.recover(args.id, { candidateId: args.candidateId });
@@ -497,6 +523,19 @@ export class BackendConnections {
     )
       return;
     for (const config of r.config.backends) {
+      if (config.functionalAgentOnly) {
+        const checkedAt = this.state(config.id).checkedAt;
+        if (
+          config.recovery?.autoReconnect &&
+          !this.operations.has(config.id) &&
+          (checkedAt === null || r.now() - checkedAt >= 30000) &&
+          r.config.agents.some(
+            (a) => !a.paused && recallBackendForRole(a, r.config) === config.id,
+          )
+        )
+          r.trackJob(this.check(config.id), "backend:" + config.id);
+        continue;
+      }
       if (
         !config.recovery?.autoReconnect ||
         this.operations.has(config.id) ||

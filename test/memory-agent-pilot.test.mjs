@@ -1,5 +1,6 @@
 import { safeToolFailure } from "../src/tools/errors.mjs";
 import test from "node:test";
+import { recordMemoryRecall } from "../src/core/session-records.mjs";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
@@ -1231,4 +1232,49 @@ test("a compact opening with a resolved quote keeps the source and a short recal
     "explicit-reference",
   );
   assert.equal(memoryRecallDiagnostic(turn).opening.presented, 0);
+});
+
+test("recall service history preserves legacy turns, empty reviews and committed receipts independently", (t) => {
+  const f = setupFamiliarity(t, async () => {});
+  const history = () => f.runtime.status().agents[0].recallHealth;
+  assert.deepEqual(history(), {
+    backendId: "recall-fixture",
+    completed: null,
+    delivered: null,
+  });
+  f.memory.identity.put("model_turns", {
+    id: "legacy",
+    startedAt: 10,
+    memoryRecall: { active: { status: "matched", presented: 1 } },
+  });
+  assert.deepEqual(history().completed, {
+    at: 10,
+    estimated: true,
+    empty: false,
+  });
+  assert.deepEqual(history().delivered, { at: 10, estimated: true });
+  f.memory.identity.put("model_turns", { id: "second", startedAt: 11 });
+  const write = (route, details, at) =>
+    recordMemoryRecall(f.memory, "second", route, details, at);
+  write("familiarity", { status: "matched", presented: 2 }, 12);
+  write("opening", { status: "unavailable", presented: 0 }, 13);
+  assert.equal(history().completed.at, 10);
+  write("opening", { status: "empty", presented: 0 }, 14);
+  assert.deepEqual(history().completed, {
+    at: 14,
+    estimated: false,
+    empty: true,
+  });
+  assert.equal(history().delivered.at, 10);
+  write("active", { status: "matched", presented: 0 }, 15);
+  assert.equal(history().delivered.at, 10);
+  write("active", { presented: 1 }, 16);
+  assert.deepEqual(history().completed, {
+    at: 15,
+    estimated: false,
+    empty: false,
+  });
+  assert.deepEqual(history().delivered, { at: 16, estimated: false });
+  f.runtime.config.agents[0].memoryRecall = "disabled";
+  assert.equal(history(), undefined);
 });

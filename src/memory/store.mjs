@@ -29,6 +29,7 @@ import {
   readConversationState,
   writeConversationState,
 } from "./conversation-state.mjs";
+import { initializeRecallHealth } from "./recall-health.mjs";
 import { IdentityMemory, migrateIdentity } from "./identity.mjs";
 import {
   provenance,
@@ -197,6 +198,7 @@ export class MemoryStore {
       this.transcribing = new Set();
       migrateSearch(this.db, version);
       if (version < 4) this.transaction(() => migrateIdentity(this.db));
+      initializeRecallHealth(this.db);
       migrateTimeline(this.db, version);
       migrateMessageIds(this.db, version);
       if (version < MEMORY_DRAFT_SCHEMA_VERSION)
