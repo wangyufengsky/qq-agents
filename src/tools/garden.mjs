@@ -258,7 +258,14 @@ export function gardenTool(
     const snapshot = gardenPublicSnapshot(state, { now, running });
     return view === "image"
       ? gardenImage(runtime, ctx, snapshot, render)
-      : snapshot;
+      : {
+          ...snapshot,
+          imageRequest: {
+            tool: "garden_read",
+            arguments: { view: "image" },
+            result: "mediaId",
+          },
+        };
   }
   const delegations = runtime.home.gardenDelegations;
   if (gardenDelegationScope(ctx.conversation)) {

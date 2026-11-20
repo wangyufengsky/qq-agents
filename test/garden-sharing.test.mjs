@@ -54,6 +54,7 @@ test("normal chat and desktop can read only the public projection while locked s
       "capturedAt",
       "day",
       "dayRemainingHours",
+      "imageRequest",
       "nightScene",
       "plots",
       "pollenPairs",
@@ -142,13 +143,15 @@ test("garden image and text share the existing QQ delivery ledger and budget", a
   const textView = await runtime.callTool(ctx, "garden_read", {
     view: "public",
   });
+  const { imageRequest, ...gardenState } = textView;
+  assert.equal(imageRequest.result, "mediaId");
   const image = await gardenTool(
     runtime,
     ctx,
-    "garden_read",
-    { view: "image" },
+    imageRequest.tool,
+    imageRequest.arguments,
     async (snapshot) => {
-      assert.deepEqual(snapshot, textView);
+      assert.deepEqual(snapshot, gardenState);
       return png;
     },
   );
