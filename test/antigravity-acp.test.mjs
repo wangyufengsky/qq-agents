@@ -305,7 +305,7 @@ test("ACP receives the full video rewatch with eight labelled frames and subtitl
 test("ACP resumes with a current tool route when a native alias is unavailable", async () => {
   const f = fake();
   await runAcp(
-    { ...options, session: id },
+    { ...options, session: id, bridgeTools: true },
     "send with qq_send",
     () => {},
     f.launch,
@@ -315,8 +315,9 @@ test("ACP resumes with a current tool route when a native alias is unavailable",
   assert.match(text, /unknown tool.*before execution/i);
   assert.match(
     text,
-    /call_mcp_tool.*ServerName="qq-agents".*ToolName.*logical/i,
+    /mcp_qq-agents_qq_tool_call.*name.*logical.*argumentsJson/i,
   );
+  assert.doesNotMatch(text, /call_mcp_tool/);
   assert.match(text, /same requestId/);
   assert.match(text, /tool errors from earlier turns do not determine/i);
   assert(text.endsWith("\n\nsend with qq_send"));
@@ -428,11 +429,13 @@ test("ACP pre-registers permitted reply and video tools in the native catalogue"
         .filter((name) => name !== "video_read"),
       "qq_reply_call",
       "qq_video_call",
+      "qq_tool_call",
     ]);
     assert.deepEqual(server.tools, {
       qq_reply_call: { eager: true },
       qq_delivery_status: { eager: true },
       qq_video_call: { eager: true },
+      qq_tool_call: { eager: true },
     });
     const guide = fs.readFileSync(path.join(agents, "qq-agents.md"), "utf8");
     assert.match(
@@ -441,7 +444,8 @@ test("ACP pre-registers permitted reply and video tools in the native catalogue"
     );
     assert.match(guide, /qq_reply_call.*argumentsJson/);
     assert.match(guide, /For video_read, use mcp_qq-agents_qq_video_call/);
-    assert.doesNotMatch(guide, /Call call_mcp_tool with ServerName/);
+    assert.match(guide, /mcp_qq-agents_qq_tool_call/);
+    assert.doesNotMatch(guide, /call_mcp_tool/);
   };
   backend.configure(params, workspace, media);
   check();

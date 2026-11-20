@@ -22,6 +22,7 @@ const DIAGNOSTIC_ORIGINS = {
   protocol: "协议检查",
   "process-exit": "进程退出",
   stdin: "进程输入通道",
+  "tool-hook": "工具权限钩子",
   terminal: "模型结果",
 };
 const BACKEND_OUTCOME_SUMMARIES = {
@@ -69,6 +70,7 @@ function diagnosticSummary(diagnostic) {
   else if (diagnostic.trustedTerminal === false) parts.push("模型终态未确认");
   if (diagnostic.wrapperError === true) parts.push("启动器告警");
   if (diagnostic.ioCode) parts.push("输入通道异常");
+  if (diagnostic.hookReason) parts.push(diagnostic.hookReason);
   if (Number.isSafeInteger(diagnostic.exitCode))
     parts.push(`进程退出码 ${diagnostic.exitCode}`);
   return parts.join(" · ") || "后端诊断记录";

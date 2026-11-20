@@ -17,6 +17,7 @@ import crossSpawn from "cross-spawn";
 import { z } from "zod";
 import { execFileSync } from "node:child_process";
 import { buildChildEnv } from "../core/child-env.mjs";
+import { antigravityHookDenialCodes } from "../core/error-codes.mjs";
 import { sanitizeBackendDiagnostic } from "../core/session-records.mjs";
 import { ExternalTools } from "./external.mjs";
 import {
@@ -33,6 +34,7 @@ import {
   SessionUnavailableFailure,
   beforeSessionInput,
 } from "./turn-failure.mjs";
+import { ACP_TOOL_CALL, acpToolFallback } from "./antigravity-acp.mjs";
 import { AntigravityMedia } from "./antigravity-media.mjs";
 import { AntigravityStreamWorker } from "./antigravity-stream.mjs";
 import {
@@ -61,6 +63,7 @@ const acpDesktopActions = new Set([
   DESKTOP_BROWSER_CONTROL,
 ]);
 const acpEagerTools = new Set([
+  ACP_TOOL_CALL,
   acpReplyName,
   acpDesktopName,
   "conversation_read",
@@ -68,9 +71,11 @@ const acpEagerTools = new Set([
   acpVideoName,
 ]);
 
-/** @param {string} name @param {Set<string>} names @param {Set<string>} permitted @param {string} description */
+/** @param {string} name @param {Set<string>} names @param {Set<string> | undefined} permitted @param {string} description */
 function acpActionTool(name, names, permitted, description) {
-  const actions = [...names].filter((name) => permitted.has(name));
+  const actions = [...names].filter(
+    (name) => !permitted || permitted.has(name),
+  );
   if (!actions.length) return null;
   return {
     name,
@@ -78,7 +83,7 @@ function acpActionTool(name, names, permitted, description) {
     inputSchema: {
       type: "object",
       properties: {
-        name: { type: "string", enum: actions },
+        name: { type: "string", ...(permitted && { enum: actions }) },
         argumentsJson: { type: "string" },
       },
       required: ["name", "argumentsJson"],
@@ -117,6 +122,33 @@ function acpVideoTool(names) {
   );
 }
 
+/** @param {import("./session-contract.mjs").ToolSpec[]} tools */
+function acpToolRouting(tools) {
+  const names = new Set(tools.map(({ name }) => name));
+  const reply = acpReplyTool(names);
+  const desktop = acpDesktopTool(names);
+  const video = acpVideoTool(names);
+  // A stable declaration avoids asking the CLI to register a different schema on every load.
+  const fallback = acpActionTool(
+    ACP_TOOL_CALL,
+    names,
+    undefined,
+    "Call a currently authorized QQ Agents tool by its logical name with its original arguments serialized as argumentsJson.",
+  );
+  return {
+    nativeTools: tools.filter(
+      ({ name }) =>
+        !(desktop && acpDesktopActions.has(name)) &&
+        !(video && name === VIDEO_READ),
+    ),
+    entries: new Map(
+      [reply, desktop, video, fallback].flatMap((tool) =>
+        tool ? [[tool.name, tool]] : [],
+      ),
+    ),
+  };
+}
+
 const acpActionEnvelope = z
   .object({
     name: z.string(),
@@ -136,8 +168,11 @@ const acpActionEnvelope = z
 
 const genericMcpGuide =
   'Call call_mcp_tool with ServerName="qq-agents", ToolName equal to an allowed name, and Arguments matching that tool\'s JSON schema below. ';
-const acpMcpGuide =
-  'For qq_send, qq_send_burst, or qq_draft, use mcp_qq-agents_qq_reply_call if listed. For desktop_native_control or desktop_browser_control, use mcp_qq-agents_qq_desktop_call. For video_read, use mcp_qq-agents_qq_video_call. For these entries, pass the logical tool name as name and serialize its original argument object as argumentsJson. For other actions, use the native MCP tool if it is listed for this turn. Otherwise, if call_mcp_tool is available, use ServerName="qq-agents", the logical ToolName, and Arguments matching the schema below. ';
+const acpNativeGuide =
+  "For qq_send, qq_send_burst, or qq_draft, use mcp_qq-agents_qq_reply_call if listed. For desktop_native_control or desktop_browser_control, use mcp_qq-agents_qq_desktop_call. For video_read, use mcp_qq-agents_qq_video_call. For these entries, pass the logical tool name as name and serialize its original argument object as argumentsJson. For other actions, use the native MCP tool if it is listed for this turn. ";
+const previousAcpMcpGuide =
+  acpNativeGuide +
+  'Otherwise, if call_mcp_tool is available, use ServerName="qq-agents", the logical ToolName, and Arguments matching the schema below. ';
 const acpImageGuide =
   "Authorized MCP image content blocks contain visible pixels. Inspect those pixels directly; never read files to view an image. ";
 const acpScreenshotGuide =
@@ -631,17 +666,17 @@ export class AntigravityBackend {
     mediaRoot,
   ) {
     const acp = this.config.cliProtocol === "acp";
+    const routingTools = acp ? acpToolRouting(params.tools) : null;
     const names = new Set(
-      reuse ? ["qq_turn_call"] : params.tools.map((tool) => tool.name),
+      routingTools
+        ? [
+            ...routingTools.nativeTools.map(({ name }) => name),
+            ...routingTools.entries.keys(),
+          ]
+        : reuse
+          ? ["qq_turn_call"]
+          : params.tools.map(({ name }) => name),
     );
-    if (acp) {
-      if (acpReplyTool(names)) names.add(acpReplyName);
-      if (names.delete(VIDEO_READ)) names.add(acpVideoName);
-      if (acpDesktopTool(names)) {
-        for (const name of acpDesktopActions) names.delete(name);
-        names.add(acpDesktopName);
-      }
-    }
     let hook = [process.execPath, path.join(here, "antigravity-guard.mjs")]
       .map((v) => antigravityShellQuote(v))
       .join(" ");
@@ -754,9 +789,15 @@ export class AntigravityBackend {
       const imageGuide = acpDesktopScreen(params)
         ? acpScreenshotGuide
         : acpImageGuide;
+      const acpMcpGuide =
+        acpNativeGuide +
+        (names.has(ACP_TOOL_CALL) ? acpToolFallback + " " : "");
       const guide = fs
         .readFileSync(agentFile, "utf8")
-        .replace(genericMcpGuide, acpMcpGuide)
+        .replace(acpNativeGuide + acpToolFallback + " ", acpNativeGuide)
+        .replace(previousAcpMcpGuide, acpNativeGuide)
+        .replace(genericMcpGuide, acpNativeGuide)
+        .replace(acpNativeGuide, acpMcpGuide)
         .replace(headless, imageGuide)
         .replace(acpImageGuide, imageGuide)
         .replace(previousAcpScreenshotGuide, imageGuide)
@@ -815,6 +856,7 @@ export class AntigravityBackend {
             session: params.session?.id,
             desktop: params.desktop === true,
             desktopScreen: acpDesktopScreen(params),
+            bridgeTools: params.tools.length > 0,
             videoFrames: params.tools.some(({ name }) => name === "video_read"),
           }),
         ],
@@ -1084,21 +1126,10 @@ export class AntigravityBackend {
     let screenFrame;
     /** @type {{id: string, current: () => boolean, submitted?: () => void} | undefined} */
     let screenClaim;
-    // Native ACP can drop declarations containing unions. Use a simple
-    // transport envelope and keep the original tool validation.
-    const replyTool = acp ? acpReplyTool(names) : null;
-    const desktopTool = acp ? acpDesktopTool(names) : null;
-    const videoTool = acp ? acpVideoTool(names) : null;
-    const nativeTools = params.tools.filter(
-      ({ name }) =>
-        !(desktopTool && acpDesktopActions.has(name)) &&
-        !(videoTool && name === VIDEO_READ),
-    );
-    const entries = new Map(
-      [replyTool, desktopTool, videoTool].flatMap((tool) =>
-        tool ? [[tool.name, tool]] : [],
-      ),
-    );
+    // Keep declarations, eager registration and dispatch in sync on every ACP load.
+    const { nativeTools, entries } = acp
+      ? acpToolRouting(params.tools)
+      : { nativeTools: params.tools, entries: new Map() };
     const server = http.createServer(async (req, res) => {
       const reply = (
         /** @type {number} */ status,
@@ -1113,7 +1144,10 @@ export class AntigravityBackend {
       if (req.method === "GET" && req.url === "/lease")
         return reply(200, { alive: true });
       if (!live || params.signal.aborted)
-        return reply(403, { error: "ANTIGRAVITY_TURN_INACTIVE" });
+        return reply(
+          req.method === "GET" && req.url === "/catalog" ? 410 : 403,
+          { error: "ANTIGRAVITY_TURN_INACTIVE" },
+        );
       if (
         videoContinuation &&
         req.method === "POST" &&
@@ -1189,8 +1223,17 @@ export class AntigravityBackend {
         return reply(200, {});
       }
       if (req.method === "POST" && req.url === "/hook-denied") {
-        // The trusted hook reports only a denial bit, never paths or arguments.
         hookDenied = true;
+        const hookReason = req.headers["x-qq-hook-reason"];
+        if (
+          typeof hookReason === "string" &&
+          antigravityHookDenialCodes.has(hookReason)
+        )
+          diagnosticEvent({
+            origin: "tool-hook",
+            phase: "running",
+            hookReason,
+          });
         return reply(200, {});
       }
       if (req.method === "GET" && req.url === "/catalog")
@@ -1215,16 +1258,21 @@ export class AntigravityBackend {
         const entry = entries.get(name);
         if (entry) {
           const envelope = acpActionEnvelope.parse(args);
-          if (!entry.inputSchema.properties.name.enum.includes(envelope.name))
+          const actions = entry.inputSchema.properties.name.enum;
+          if (actions && !actions.includes(envelope.name))
             return reply(403, {});
           name = envelope.name;
           args = envelope.argumentsJson;
         } else if (
-          (desktopTool && acpDesktopActions.has(name)) ||
-          (videoTool && name === VIDEO_READ)
+          (entries.has(acpDesktopName) && acpDesktopActions.has(name)) ||
+          (entries.has(acpVideoName) && name === VIDEO_READ)
         )
           return reply(403, {});
-        if (!names.has(name)) return reply(403, {});
+        if (!names.has(name)) {
+          if (entry && value.name === ACP_TOOL_CALL)
+            throw Error("TOOL_DISABLED");
+          return reply(403, {});
+        }
         spec = params.tools.find((tool) => tool.name === name);
         if (name === DESKTOP_DECISION && screenFrame)
           return reply(200, acpScreenWaiting);

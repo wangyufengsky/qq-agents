@@ -363,8 +363,17 @@ test("Antigravity and DSH journals expose saved reasoning, omitting raw tool dat
       {
         created_at: at(30),
         step_index: 2,
-        type: "ERROR_MESSAGE",
+        type: "GENERIC",
+        status: "INVALID",
         error: "unknown tool hidden args",
+      },
+      {
+        created_at: at(31),
+        step_index: 3,
+        type: "GENERIC",
+        status: "ERROR",
+        error:
+          "tool call denied by pre-tool hook: ANTIGRAVITY_HOOK_CATALOG_TIMEOUT hidden args",
       },
     ],
   );
@@ -414,6 +423,7 @@ test("Antigravity and DSH journals expose saved reasoning, omitting raw tool dat
         "bridge_call",
         "合成输出",
         "NATIVE_TOOL_UNAVAILABLE",
+        "ANTIGRAVITY_HOOK_CATALOG_TIMEOUT",
       ],
     ],
     ["dsh", dshSid, ["合成思考", "合成输出", "conversation_read"]],
