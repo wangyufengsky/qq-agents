@@ -2,6 +2,7 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { isPrivateLikeGroup } from "./config.mjs";
 import { liveInput, recordedInput } from "./live-input.mjs";
+import { lateOpeningClue } from "./memory-recall.mjs";
 import { trackGroupRecall } from "./group-recall.mjs";
 import { quotedMessage, references } from "./person-cards.mjs";
 import { transcriptKey } from "../memory/store.mjs";
@@ -916,6 +917,7 @@ export function prepareDraftReview(
         : {}),
     };
   }
+  const clue = lateOpeningClue(runtime, ctx, "draft");
   const empty = { items: [], tracked: [], proofs: new Map() };
   result.preparation = preparation(empty);
   const variants = [];
@@ -936,7 +938,7 @@ export function prepareDraftReview(
       ...result,
       preparation: preparation(shown, canGrant ? token : undefined),
     };
-    variants.push({
+    const variant = {
       value,
       expected: JSON.parse(JSON.stringify(value)),
       current,
@@ -951,7 +953,21 @@ export function prepareDraftReview(
           grantState(ctx).draft.set(token, grant);
         return true;
       },
-    });
+    };
+    if (clue) {
+      const withClue = {
+        ...value,
+        preparation: { ...value.preparation, memoryRecall: clue.evidence },
+      };
+      variants.push({
+        value: withClue,
+        expected: withClue,
+        reserve: clue.reserve,
+        current: () => current() && clue.current(),
+        commit: () => current() && clue.commit() && variant.commit(),
+      });
+    }
+    variants.push(variant);
   }
   variants.push({
     render: () => ({

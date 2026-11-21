@@ -337,13 +337,27 @@ function activityEntry(e) {
       const semantic = trace?.semantic
         ? ` · 语义检索 ${esc(statuses[trace.semantic.status] || "")} ${esc(trace.semantic.candidates)} 条 / ${esc(trace.semantic.waitMs)} ms`
         : "";
+      const wait =
+        trace?.openingWaitMs === undefined
+          ? ""
+          : ` · 开场等候 ${esc(trace.openingWaitMs)} ms`;
+      const stages = {
+        opening: "开场输入",
+        active: "主动查证",
+        tool: "领取开场线索",
+        draft: "草稿审阅",
+        correction: "已发回复复核",
+      };
+      const stage = stages[trace?.presentedAtStage]
+        ? " · 交付于" + stages[trace.presentedAtStage]
+        : "";
       const agent =
         trace?.agentMs === undefined
           ? ""
           : ` · Agent 查证 ${esc(trace.agentMs)} ms`;
       if (trace)
         parts.push(
-          `<p class="hint">记忆 Agent · ${label} · ${esc(reasons[trace.reason] || "")} · ${esc(trace.status === "empty" && kind !== "familiarity" ? "无新增信息" : statuses[trace.status] || "")}${kind === "familiarity" ? ` · 检查 ${esc(trace.checked)} 条消息` : ""} · ${kind === "familiarity" ? "本地候选" : "命中"} ${esc(trace.matched)} 条 · 交给模型 ${esc(trace.presented)} 条 · ${kind === "familiarity" ? "耗时" : "等待"} ${esc(trace.waitMs)} ms${semantic}${agent}</p>`,
+          `<p class="hint">记忆 Agent · ${label} · ${esc(reasons[trace.reason] || "")} · ${esc(trace.status === "empty" && kind !== "familiarity" ? "无新增信息" : statuses[trace.status] || "")}${kind === "familiarity" ? ` · 检查 ${esc(trace.checked)} 条消息` : ""} · ${kind === "familiarity" ? "本地候选" : "命中"} ${esc(trace.matched)} 条 · 交给模型 ${esc(trace.presented)} 条 · 总耗时 ${esc(trace.waitMs)} ms${wait}${semantic}${agent}${stage}</p>`,
         );
       if (trace?.contribution)
         parts.push(

@@ -50,7 +50,13 @@ export class FunctionalDelegation {
     } = {},
   ) {
     const runtime = this.runtime;
-    const parentSignal = parent.controller.signal;
+    const parentSignal =
+      opening && parent.openingLookup
+        ? AbortSignal.any([
+            parent.controller.signal,
+            parent.openingLookup.controller.signal,
+          ])
+        : parent.controller.signal;
     if (parentSignal.aborted) return { status: "cancelled" };
     let role;
     try {

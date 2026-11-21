@@ -36,7 +36,7 @@ export function conversationExchange(
     beforeInputSubmitted: imageInput.beforeSubmit,
     effort: ctx.functionalAgent?.definition.effort,
     prompt: prepared.prompt,
-    ...(ctx.openingRecall && {
+    ...(ctx.recallOpening && {
       appendPrompt: () => renderRecallOpening(runtime, ctx),
     }),
     instructions: prepared.instructions,
@@ -108,12 +108,16 @@ const contracts = Object.freeze({
         ...(resultOnReceipt && toolOutputReceipts(runtime, ctx)),
       };
     },
-    captureResult({ evidenceIds, contribution }) {
-      return { evidenceIds: [...evidenceIds], contribution };
+    captureResult({ evidenceIds, contribution, correction }) {
+      return { evidenceIds: [...evidenceIds], contribution, correction };
     },
-    verifyResult(runtime, ctx, { evidenceIds, contribution }) {
+    verifyResult(runtime, ctx, { evidenceIds, contribution, correction }) {
       runtime.validateFunctionalEvidence(ctx, evidenceIds);
-      return { evidenceIds, ...(contribution && { contribution }) };
+      return {
+        evidenceIds,
+        ...(contribution && { contribution }),
+        ...(correction && { correction }),
+      };
     },
   }),
 });

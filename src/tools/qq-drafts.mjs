@@ -76,7 +76,7 @@ const position = z.number().int().min(0).max(9);
 const readThroughSeq = z.number().int().nonnegative().optional();
 export const draftDefinitions = {
   qq_draft: [
-    "处理当前聊天的草稿。list 列出草稿，read 按 position 查看一项，prepare 核对当前版本和新增输入。revise 保存新版并返回该版的准备结果，discard 放弃剩余未提交项。准备结果为 needs_input 时按分页入口补齐，再调用 prepare；ready 时主体决定是否以 inputReview={token,decision:'continue'} 提交该版本。没有 token 的 continue 只核对。已发不重发，未知先核对。",
+    "处理当前聊天的草稿。list 列出草稿，read 按 position 查看一项，prepare 核对当前版本和新增输入。revise 保存新版并返回该版的准备结果，discard 放弃剩余未提交项。准备结果为 needs_input 时按分页入口补齐，再调用 prepare；ready 时主体决定是否以 inputReview={token,decision:'continue'} 提交该版本。草稿审阅若带 preparation.memoryRecall，可核对本轮迟到的历史证据，再决定是否改稿。没有 token 的 continue 只核对。已发不重发，未知先核对。",
     z.discriminatedUnion("action", [
       z
         .object({
@@ -220,6 +220,15 @@ function recordedLegacy(runtime, ctx, scope, items) {
   return found;
 }
 
+function currentCorrectionDraft(ctx, draft) {
+  const origin = draft.value.origin;
+  return (
+    origin?.recallCorrection &&
+    origin.turnId === ctx.turnId &&
+    origin.epoch === ctx.inputEpoch
+  );
+}
+
 export async function sendDraftTool(runtime, ctx, toolName, args) {
   const a = assertDraftTool(runtime, ctx, toolName);
   const scope = draftScope(runtime, ctx);
@@ -227,6 +236,8 @@ export async function sendDraftTool(runtime, ctx, toolName, args) {
   const { requestId, inputReview, readThroughSeq, gapMs, messages, ...input } =
     args;
   let prior = runtime.drafts.find(scope, toolName, requestId);
+  if (ctx.recallCorrection && prior && !currentCorrectionDraft(ctx, prior))
+    throw Error("QQ_DRAFT_TURN_EXPIRED");
   let legacyReceipt =
     !prior && !burst && scopedLegacyDelivery(runtime, ctx, scope, requestId);
   let checkpointIntent;
@@ -331,9 +342,10 @@ export async function sendDraftTool(runtime, ctx, toolName, args) {
         input.replyEventId ? [{ eventId: input.replyEventId }] : [],
       ),
       ...(checkpointIntent ? { checkpointIntent } : {}),
-      ...(ctx.activeIntentId || ctx.scheduleRunId
+      ...(ctx.activeIntentId || ctx.scheduleRunId || ctx.recallCorrection
         ? {
             origin: {
+              ...(ctx.recallCorrection && { recallCorrection: true }),
               turnId: ctx.turnId,
               epoch: ctx.inputEpoch,
               intentId: ctx.activeIntentId,
@@ -752,6 +764,8 @@ export async function draftTool(runtime, ctx, _toolName, args) {
     };
   }
   const draft = runtime.drafts.read(scope, args.draftId);
+  if (ctx.recallCorrection && !currentCorrectionDraft(ctx, draft))
+    throw Error("QQ_DRAFT_TURN_EXPIRED");
   assertDraftTool(runtime, ctx, draft.toolName);
   boundary.assert(draft.value);
   if (args.action === "read") {

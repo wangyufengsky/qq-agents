@@ -607,8 +607,10 @@ function record(runtime, ctx, route, details) {
     );
 }
 
-function presented(runtime, ctx, route, rows, contribution) {
+function presented(runtime, ctx, route, rows, contribution, stage = route) {
   if (rows.length) {
+    if (route === "opening" && ctx.openingLookup)
+      ctx.openingLookup.delivered = true;
     const sources = rows.flatMap((row) => [
       row,
       ...(row.scene?.messages || []),
@@ -626,6 +628,7 @@ function presented(runtime, ctx, route, rows, contribution) {
   }
   record(runtime, ctx, route, {
     presented: rows.length,
+    ...(rows.length && { presentedAtStage: stage }),
     contribution: contribution || null,
   });
 }
@@ -867,6 +870,8 @@ async function lookup(runtime, ctx, route, reason, cues, { cue, query } = {}) {
   record(runtime, ctx, route, details);
   return {
     details,
+    correction:
+      result.correction === true && selectedContribution !== undefined,
     read: () => {
       if (!current()) return { rows: [] };
       const context = knownContext(runtime, ctx, cues, batch);
@@ -920,8 +925,9 @@ export async function prepareRecallOpening(runtime, ctx) {
         : cues.some(({ body }) => OLD_REFERENCE.test(body))
           ? "past-reference"
           : "no-cue";
+  let search;
   if (reason === "past-reference" || reason === "ambiguous")
-    ctx.openingRecall = await lookup(runtime, ctx, "opening", reason, cues);
+    search = { reason, cues };
   else if (reason !== "explicit-reference") {
     const marked = anchors(
       runtime,
@@ -934,16 +940,9 @@ export async function prepareRecallOpening(runtime, ctx) {
           .sort((a, b) => a.seq - b.seq)
           .slice(-3)
       : marked;
-    if (review.length)
-      ctx.openingRecall = await lookup(
-        runtime,
-        ctx,
-        "opening",
-        "local-familiarity",
-        review,
-      );
+    if (review.length) search = { reason: "local-familiarity", cues: review };
   }
-  if (!ctx.openingRecall) {
+  function skipped() {
     const details = {
       reason,
       status: "skipped",
@@ -952,12 +951,54 @@ export async function prepareRecallOpening(runtime, ctx) {
       waitMs: 0,
     };
     record(runtime, ctx, "opening", details);
-    ctx.openingRecall = { details, read: () => ({ rows: [] }) };
+    return { details, read: () => ({ rows: [] }) };
+  }
+  if (!search) {
+    ctx.openingRecall = skipped();
+    return;
+  }
+  const waitingSince = performance.now();
+  const task = {
+    controller: new AbortController(),
+    cueIds: search.cues.map((row) => row.id),
+    anchorSeq: Math.max(...[...batch, ...search.cues].map((row) => row.seq)),
+  };
+  ctx.openingLookup = task;
+  task.done = runtime.trackWork(
+    lookup(runtime, ctx, "opening", search.reason, search.cues).then(
+      (result) => {
+        ctx.openingRecall = result ?? skipped();
+      },
+    ),
+  );
+  const waitMs = search.reason === "local-familiarity" ? 300 : 1200;
+  let timer;
+  try {
+    if (policy.openingTimeoutMs <= waitMs) return await task.done;
+    await Promise.race([
+      task.done,
+      new Promise((resolve) => {
+        timer = setTimeout(
+          resolve,
+          Math.max(0, waitMs - (performance.now() - waitingSince)),
+        );
+      }),
+    ]);
+    task.deferred = !ctx.openingRecall;
+  } finally {
+    clearTimeout(timer);
+    record(runtime, ctx, "opening", {
+      openingWaitMs: Math.round(performance.now() - waitingSince),
+    });
   }
 }
 
 export function renderRecallOpening(runtime, ctx) {
   const recall = ctx.openingRecall;
+  if (!recall && ctx.openingLookup?.deferred)
+    return ctx.allowedTools.includes("memory_recall")
+      ? "\n\n本轮记忆查证还在进行，可先处理对话。需要这批线索时可用 memory_recall({opening:true}) 领取。"
+      : "\n\n本轮记忆查证还在进行，可先处理对话。";
   if (
     !recall ||
     !memoryRecallPolicy(
@@ -972,6 +1013,7 @@ export function renderRecallOpening(runtime, ctx) {
   const status =
     details.status === "matched" && !rows.length ? "withheld" : details.status;
   if (status !== details.status) record(runtime, ctx, "opening", { status });
+  if (rows.length && ctx.openingLookup) ctx.openingLookup.offered = true;
   ctx.openingRecallSent = { rows, contribution };
   ctx.openingFamiliarityCount = countPresentedFamiliarity(runtime, ctx, rows);
   const notice = ctx.allowedTools.includes("memory_recall")
@@ -996,13 +1038,112 @@ export function commitRecallOpening(runtime, ctx) {
     record(runtime, ctx, "familiarity", { presented: familiarity });
 }
 
-export async function recallFromChat(runtime, ctx, { cue, query }) {
+// A clue is delivered only when its enclosing model input or tool result is acknowledged.
+export function lateOpeningClue(runtime, ctx, stage) {
+  const task = ctx.openingLookup;
+  if (!task?.deferred || task.offered || !ctx.openingRecall) return;
+  const recall = ctx.openingRecall;
+  const view = recall.read();
+  if (!view.rows.length) return;
+  const { role, memory } = sources(runtime, ctx);
+  const newer = prepared(
+    memory.db,
+    "SELECT 1 FROM events WHERE agent_id=? AND connection_id=? AND conversation=? AND kind='message.received' AND seq>? LIMIT 1",
+  );
+  const valid = () =>
+    !newer.get(role.id, role.connectionId, ctx.conversation, task.anchorSeq) &&
+    isDeepStrictEqual(view, recall.read());
+  const current = () => !task.offered && valid();
+  if (!current()) return;
+  return {
+    evidence: {
+      evidence: view.rows,
+      ...(view.contribution && { contribution: view.contribution }),
+      notice: HISTORY_LABEL,
+    },
+    correction:
+      (recall.correction && Boolean(view.contribution)) ||
+      view.rows.some((row) => row.corrects),
+    valid,
+    current,
+    reserve: () => {
+      if (!current()) return false;
+      task.offered = true;
+      return true;
+    },
+    commit: () => {
+      if (!task.offered || task.delivered || !valid()) return false;
+      presented(runtime, ctx, "opening", view.rows, view.contribution, stage);
+      const count = countPresentedFamiliarity(runtime, ctx, view.rows);
+      if (count) record(runtime, ctx, "familiarity", { presented: count });
+      return true;
+    },
+  };
+}
+
+export function recallCorrection(runtime, ctx) {
+  const task = ctx.openingLookup;
+  const clue = lateOpeningClue(runtime, ctx, "correction");
+  if (!clue?.correction || !task.replyId) return;
+  const { role, memory, boundary } = sources(runtime, ctx);
+  const reply = () => {
+    const row = prepared(
+      memory.db,
+      "SELECT * FROM events WHERE agent_id=? AND connection_id=? AND conversation=? AND id=? AND kind='message.sent' AND status='confirmed'",
+    ).get(role.id, role.connectionId, ctx.conversation, task.replyId);
+    return row && boundary.project(memory.event(row, ctx.conversation));
+  };
+  const sent = reply();
+  if (!sent?.body) return;
+  const current = () => clue.valid() && isDeepStrictEqual(sent, reply());
+  if (!current()) return;
+  return {
+    current,
+    reserve: clue.reserve,
+    commit: clue.commit,
+    material: {
+      question: anchors(runtime, ctx, task.cueIds, true).map((row) =>
+        messageExcerpt(row, 480),
+      ),
+      confirmedReply: messageExcerpt(sent, sent.body.length),
+      ...clue.evidence,
+    },
+  };
+}
+
+async function collectOpening(runtime, ctx) {
+  const task = ctx.openingLookup;
+  if (!task?.deferred) return { status: "no-pending" };
+  await task.done;
+  if (task.delivered) return { status: "already-presented" };
+  if (task.offered) return { status: "busy" };
+  const clue = lateOpeningClue(runtime, ctx, "tool");
+  if (!clue) {
+    const status = ctx.openingRecall.details.status;
+    return { status: status === "matched" ? "withheld" : status };
+  }
+  const result = { status: "matched", ...clue.evidence };
+  runtime.stageToolOutput(ctx, result, [
+    {
+      value: result,
+      expected: result,
+      current: clue.current,
+      reserve: clue.reserve,
+      commit: clue.commit,
+    },
+    { value: { status: "withheld" } },
+  ]);
+  return result;
+}
+
+export async function recallFromChat(runtime, ctx, { cue, query, opening }) {
   const policy = memoryRecallPolicy(
     runtime.agent(ctx.agentId),
     ctx.conversation,
     runtime.config,
   );
   if (!ctx.recallOpening || !policy) throw Error("TOOL_DISABLED");
+  if (opening) return collectOpening(runtime, ctx);
   if (ctx.activeRecallRunning) return { status: "busy" };
   if (ctx.activeRecallRequested) return { status: "budget" };
   const useBatch = policy.mode === "all";

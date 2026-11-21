@@ -403,6 +403,12 @@ export class DeliveryService {
     // request ID, wording, media, action or target. Same-ID receipt reads above
     // remain available; new deliveries are fenced for this continuation.
     if (ctx.recoveryDeliveryBlocked) throw Error("RECOVERY_DELIVERY_BLOCKED");
+    if (ctx.recallCorrection) {
+      if (!ctx.recallCorrection.submitted || !ctx.recallCorrection.current())
+        throw Error("RECALL_SOURCE_NOT_ALLOWED");
+      if (ctx.sendCount !== ctx.recallCorrection.priorSends)
+        throw Error("REPLY_BURST_LIMIT");
+    }
     this.assertDraftDelivery(
       ctx,
       { intent, metadata, submission },
@@ -734,6 +740,13 @@ export class DeliveryService {
       } catch (error) {
         reportAuditFailure(error);
       }
+      if (
+        ctx.openingLookup?.deferred &&
+        !action &&
+        !ctx.recallCorrection &&
+        ctx.inputEpoch === reservedEpoch
+      )
+        ctx.openingLookup.replyId = record?.id;
       return {
         status: "sent",
         messageId,
