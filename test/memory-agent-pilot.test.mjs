@@ -528,15 +528,54 @@ test("interjections and a speaker's catchphrase do not launch memory review", as
   assert.equal(memoryRecallDiagnostic(turn).familiarity.status, "empty");
 });
 
+test("identical commitments from different speakers remain distinct evidence", async (t) => {
+  const cfg = pilotConfig();
+  cfg.agents[0].memoryRecall = "enabled";
+  cfg.agents[0].behavior.optionalGroupBacklog = true;
+  const text = "我可以负责周六的读书会";
+  let first, main;
+  const f = setup(
+    t,
+    async (p) => {
+      if (!p.modelSelection) {
+        main = p.prompt;
+        return;
+      }
+      const data = JSON.parse(p.prompt.split("任务资料：\n")[1]);
+      assert.ok(
+        data.recent.some(
+          (row) => row.body === text && row.senderId === "30002",
+        ),
+      );
+      assert.ok(
+        data.candidates.some(
+          (row) => row.id === first.id && row.senderId === "30001",
+        ),
+      );
+      await p.callTool("functional_agent_result", {
+        evidenceIds: [first.id],
+        contribution: "另一位发言者也报名负责。",
+      });
+    },
+    cfg,
+  );
+  first = await f.add(1, text, 20000, 30001, 1799900000);
+  for (let i = 2; i < 28; i++)
+    await f.add(i, "路过", 20000, 30001, 1799910000 + i);
+  await f.add(28, text, 20000, 30002, 1799999960);
+  await f.turn(await f.add(29, "周六的读书会有谁报名负责？"));
+  assert.equal(openingEvidence(main)[0]?.id, first.id);
+});
+
 test("recent context removes repetition and lets the agent search for an extra detail", async (t) => {
-  let prompt, route;
+  let prompt, route, repeated;
   let reviews = 0;
   const f = setupFamiliarity(t, async (p) => {
     if (p.modelSelection) {
       reviews++;
       const data = JSON.parse(p.prompt.split("任务资料：\n")[1]);
       assert.ok(data.recent.some(({ body }) => body === "北门今天封了"));
-      assert.ok(data.candidates.every(({ body }) => body !== "北门今天封了"));
+      assert.ok(data.candidates.every(({ id }) => id !== repeated.id));
       const result = await p.callTool("memory_search", { query: "东门绕行" });
       assert.ok(result.items.some(({ id }) => id === route.id));
       await p.callTool("functional_agent_result", {
@@ -545,7 +584,7 @@ test("recent context removes repetition and lets the agent search for an extra d
       });
     } else prompt = p.prompt;
   });
-  await f.add(1, "北门今天封了", 20000, 30000, 1799990000);
+  repeated = await f.add(1, "北门今天封了", 20000, 30001, 1799990000);
   await f.add(2, "北门维修期间临时关闭", 20000, 30000, 1799990001);
   route = await f.add(3, "走东门绕行，穿过小广场", 20000, 30000, 1799990002);
   await f.add(4, "北门今天封了", 20000, 30001, 1799999880);
