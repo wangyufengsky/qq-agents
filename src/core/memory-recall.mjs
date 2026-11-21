@@ -360,8 +360,14 @@ function capturedFamiliarity(runtime, items) {
   return items.map(({ id }) => cache.messages.get(id)).filter(Boolean);
 }
 
-function comparableBody(body) {
-  return body.normalize("NFKC").trim().replace(/\s+/gu, " ");
+function utteranceKey({ id, senderId, direction, body }) {
+  // Unattributed history cannot establish that the same person repeated a line.
+  if (!senderId && direction !== "out") return id;
+  return JSON.stringify([
+    direction,
+    senderId,
+    body.normalize("NFKC").trim().replace(/\s+/gu, " "),
+  ]);
 }
 
 export function captureRecallContext(ctx, items) {
@@ -416,17 +422,14 @@ function knownContext(runtime, ctx, cues, batch) {
     .sort((a, b) => a.seq - b.seq);
   return {
     knownIds: new Set(context.keys()),
-    knownBodies: new Set(
-      [...context.values(), ...cues].map(({ body }) => comparableBody(body)),
-    ),
+    knownUtterances: new Set([...context.values(), ...cues].map(utteranceKey)),
     recent: prior.slice(-6).map((row) => messageExcerpt(row, 220)),
   };
 }
 
 function novelEvidence(row, known) {
   return (
-    !known.knownIds.has(row.id) &&
-    !known.knownBodies.has(comparableBody(row.body))
+    !known.knownIds.has(row.id) && !known.knownUtterances.has(utteranceKey(row))
   );
 }
 
@@ -785,7 +788,7 @@ async function lookup(runtime, ctx, route, reason, cues, { cue, query } = {}) {
   );
   if (review && !lexical.length) reason = "local-semantic";
   const prompt = JSON.stringify({
-    task: "先根据 current 和 recent 确认发言者、话里所指的人或事、时间及信息缺口，有 query 时核对它问的缺口。发言者可能在说别人；同一句状态描述用在不同人或不同事情上，不能当成同一件事。仅措辞、话题或状态相同而对象不明时，不选证据。相关旧事可作背景，但只能说明当时发生了什么。只选能补充当前上下文的证据，说明中省略原话、身份编号和凭据。有更正时优先用更正消息的 ID。候选够用就提交，确有缺口才补查一次。",
+    task: "先根据 current 和 recent 确认发言者、话里所指的人或事、时间及信息缺口，有 query 时核对它问的缺口。发言者可能在说别人；同一句状态描述用在不同人或不同事情上，不能当成同一件事。仅措辞、话题或状态相同而对象不明时，不选证据。相关旧事可作背景，但只能说明当时发生了什么。不同人说同一句话时，报名、承诺等可能新增了参与者；重复转述同一条通知且没有新事实时跳过。只选能补充当前上下文的证据，说明中省略原话、身份编号和凭据。有更正时优先用更正消息的 ID。候选够用就提交，确有缺口才补查一次。",
     cue,
     query,
     current: cues.map((row) => messageExcerpt(row, 480)),
