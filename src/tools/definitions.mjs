@@ -196,15 +196,29 @@ export const definitions = {
       .strict(),
   ],
   memory_recall: [
-    "主动委托记忆 Agent 查证本轮来信涉及的旧事。query 写要核对的问题，cue 可填来信中的短原文，两者至少填一项。只填 cue 时须匹配原文；同时给 query 时可按问题查。no-cue 表示委托未启动，empty 表示已查证但没有可补充的信息。每轮可发起一次。",
+    "主动委托记忆 Agent 查证本轮来信涉及的旧事。新委托至少填 query 或 cue 一项。query 写要核对的问题，cue 可填来信中的短原文。只填 cue 时须匹配原文；同时给 query 时可按问题查。no-cue 表示委托未启动，empty 表示已查证但没有可补充的信息。每轮可主动发起一次。单独传 opening:true 会领取当前群聊开场的迟到线索，等待原委托剩余时间，沿用原查证预算。no-pending 表示没有延后的开场委托，already-presented 表示线索已交付。",
     z
       .object({
+        opening: z.literal(true).optional(),
         cue: z.string().trim().min(2).max(120).optional(),
         query: z.string().trim().min(2).max(240).optional(),
       })
       .strict()
-      .refine(({ cue, query }) => cue || query)
-      .meta({ anyOf: [{ required: ["cue"] }, { required: ["query"] }] }),
+      .refine(({ cue, query, opening }) =>
+        opening ? !cue && !query : cue || query,
+      )
+      .meta({
+        oneOf: [
+          {
+            required: ["opening"],
+            not: { anyOf: [{ required: ["cue"] }, { required: ["query"] }] },
+          },
+          {
+            not: { required: ["opening"] },
+            anyOf: [{ required: ["cue"] }, { required: ["query"] }],
+          },
+        ],
+      }),
   ],
   memory_related: [
     "读取同一来源里明确引用/撤回关系，可跨越很长时间。更正与同意仍需读原文判断；无关系不代表没有后续。按 nextAfterSeq 继续。",
@@ -267,7 +281,7 @@ export const definitions = {
       .strict(),
   ],
   qq_send: [
-    "向服务端绑定的当前会话发送文字、标准 QQ 表情或已登记图片。text 与 segments 只能选一个；segments 按顺序混排文字和表情，最多32段、累计文字8000字符，纯表情也可发送。例如 [{type:'text',text:'好呀'},{type:'face',id:'20'}]；20=偷笑、5=流泪、14=微笑、28=憨笑、76=赞。只用已登记编号，不猜名称；[QQ表情：名称] 是接收说明，写进 text 只会发送文字。mediaId 仍可追加图片。普通回复可选 readThroughSeq 提交本回合实际处理的连续已读水位，要求 qq_mark_read 仍启用且未选择主动意图，只在本次投递确认成功且回合仍有效时生效；省略时保持原行为。同一 requestId 的重复调用只能补写首次已确认回执绑定的水位，不能借重复调用处理后到消息。存在水位时返回 readCheckpoint={throughSeq,applied}；applied=false 仍表示消息已发送；有精确冻结证据时可用原创建参数补写同一水位。requestId 是本会话的创建幂等键，实际投递编号从回执或 draft.items.requestId 获取。开场输入完整时可一次发送。若返回草稿，按 preparation 补读或决定是否用 qq_draft 继续。超时未知绝不换编号重发。",
+    "向服务端绑定的当前会话发送文字、标准 QQ 表情或已登记图片。text 与 segments 只能选一个；segments 按顺序混排文字和表情，最多32段、累计文字8000字符，纯表情也可发送。例如 [{type:'text',text:'好呀'},{type:'face',id:'20'}]；20=偷笑、5=流泪、14=微笑、28=憨笑、76=赞。只用已登记编号，不猜名称；[QQ表情：名称] 是接收说明，写进 text 只会发送文字。mediaId 仍可追加图片。普通回复可选 readThroughSeq 提交本回合实际处理的连续已读水位，要求 qq_mark_read 仍启用且未选择主动意图，只在本次投递确认成功且回合仍有效时生效；省略时保持原行为。同一 requestId 的重复调用只能补写首次已确认回执绑定的水位，不能借重复调用处理后到消息。存在水位时返回 readCheckpoint={throughSeq,applied}；applied=false 仍表示消息已发送；有精确冻结证据时可用原创建参数补写同一水位。requestId 是本会话的创建幂等键，实际投递编号从回执或 draft.items.requestId 获取。开场输入完整时可一次发送。若返回草稿，按 preparation 补读，检查其中可选的 memoryRecall 历史线索，再决定是否用 qq_draft 继续。超时未知绝不换编号重发。",
     z
       .object({
         requestId: str.min(1).max(200),

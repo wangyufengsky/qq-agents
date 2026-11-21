@@ -139,6 +139,12 @@ export function memoryRecallDiagnostic(
           matched: count(value.matched, route === "familiarity" ? 62 : 2),
           presented: count(value.presented, 2),
           waitMs: count(value.waitMs, 60000),
+          ...(Number.isSafeInteger(value.openingWaitMs) && {
+            openingWaitMs: count(value.openingWaitMs, 60000),
+          }),
+          ...(["opening", "active", "tool", "draft", "correction"].includes(
+            value.presentedAtStage,
+          ) && { presentedAtStage: value.presentedAtStage }),
           ...(route === "familiarity" && { checked: count(value.checked, 31) }),
           ...(includeContribution &&
             value.status === "matched" &&

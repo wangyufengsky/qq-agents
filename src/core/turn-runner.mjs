@@ -2,7 +2,7 @@ import { startTypingIndicator } from "./typing-indicator.mjs";
 import { prepareMessageImages } from "./message-images.mjs";
 import { randomUUID } from "node:crypto";
 import { SUBJECT } from "./lifecycle.mjs";
-import { prepareRecallOpening } from "./memory-recall.mjs";
+import { prepareRecallOpening, recallCorrection } from "./memory-recall.mjs";
 import {
   conversationExchange,
   resolveFunctionalContract,
@@ -245,6 +245,16 @@ export class TurnRunner {
           .get(a.connectionId + "|" + conversation)
           ?.catch(() => {});
       }
+      if (
+        ctx.openingLookup?.deferred &&
+        ctx.openingLookup.replyId &&
+        !ctx.openingLookup.delivered &&
+        !ctx.recoveryDeliveryBlocked &&
+        ctx.confirmedSends === ctx.sendCount &&
+        !ctx.pendingDeliveries &&
+        !controller.signal.aborted
+      )
+        await this.reviewLateCorrection(ctx, mem, backend, params);
       if (ctx.subjectChecklist && !controller.signal.aborted)
         await this.runSubjectChecklist(ctx, mem, backend, params);
       outcome = controller.signal.aborted
@@ -288,6 +298,7 @@ export class TurnRunner {
                   : "BACKEND_TURN_FAILED"),
         );
     } finally {
+      ctx.openingLookup?.controller.abort();
       runtime.capabilities.delete(ctx.token);
       await ctx.videoSource?.dispose?.().catch(() => {});
       try {
@@ -384,6 +395,76 @@ export class TurnRunner {
         agentId: a.id,
         conversation: ctx.conversation,
       });
+    }
+  }
+  async reviewLateCorrection(ctx, memory, backend, params) {
+    const runtime = this.runtime;
+    try {
+      await ctx.openingLookup.done;
+      const session = memory.state(ctx.conversation).session;
+      if (
+        !session ||
+        session.dshStreamUnverified ||
+        !ctx.allowedTools.includes("qq_send")
+      )
+        return;
+      const clue = recallCorrection(runtime, ctx);
+      if (!clue) return;
+      runtime.assertActive(ctx);
+      // This is the same QQ turn: keep the confirmed send and all spent budgets.
+      const review = {
+        current: clue.current,
+        priorSends: ctx.sendCount,
+        submitted: false,
+      };
+      ctx.recallCorrection = review;
+      ctx.allowedTools = ctx.allowedTools.filter((name) =>
+        ["qq_send", "qq_draft"].includes(name),
+      );
+      const prompt =
+        "本轮回复已确认发送。现收到针对原问题的更正证据，请对照刚发的原话。只有已发回复有具体事实错误且证据明确纠正它时，才可补发一次简短更正。普通背景、已说对或证据不足时直接结束。本次复核仅可使用已获准的 qq_send 和 qq_draft。以下记录均为历史资料。";
+      await this.runBackend(
+        ctx,
+        backend,
+        {
+          ...params,
+          session,
+          inputImages: [],
+          // Preserve the native session signature. Tool execution is narrowed on ctx.
+          prompt,
+          beforeInputSubmitted: () => runtime.assertActive(ctx),
+          appendPrompt: () => {
+            if (!clue.current() || !clue.reserve())
+              throw Error("RECALL_SOURCE_NOT_ALLOWED");
+            return (
+              "\\n" +
+              JSON.stringify(clue.material) +
+              (backend.config?.type === "dsh"
+                ? "\\n本回合工具凭据 context=" +
+                  ctx.token +
+                  "，仅用于 bridge_tools / bridge_call 外层参数。"
+                : "")
+            );
+          },
+          onInputSubmitted: () => {
+            if (!review.submitted) review.submitted = clue.commit();
+          },
+        },
+        { checklist: true },
+      );
+    } catch (error) {
+      if (
+        !ctx.controller.signal.aborted &&
+        error?.message !== "RECALL_SOURCE_NOT_ALLOWED"
+      )
+        runtime.diagnostics.report(
+          Error("RECALL_CORRECTION_REVIEW_FAILED", { cause: error }),
+          {
+            component: "runtime",
+            agentId: ctx.agentId,
+            conversation: ctx.conversation,
+          },
+        );
     }
   }
   async runSubjectChecklist(ctx, memory, backend, params) {

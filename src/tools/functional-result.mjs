@@ -4,7 +4,7 @@ const maxEvidence = 2;
 const maxIdLength = 120;
 const maxContribution = 80;
 
-export const functionalResultInstructions = `调用 functional_agent_result 只用以下两种提交方式。无新增信息时，参数为 {"evidenceIds":[]}，省略 contribution。有新增信息时，填入 1 至 ${maxEvidence} 条本轮可用的证据记录 ID（每个 ID 1 至 ${maxIdLength} 字符），并用 contribution 写一行 1 至 ${maxContribution} 字符的说明，说明证据补上了什么。`;
+export const functionalResultInstructions = `调用 functional_agent_result 只用以下两种提交方式。无新增信息时，参数为 {"evidenceIds":[]}，省略 contribution。有新增信息时，填入 1 至 ${maxEvidence} 条本轮可用的证据记录 ID（每个 ID 1 至 ${maxIdLength} 字符），并用 contribution 写一行 1 至 ${maxContribution} 字符的说明，说明证据补上了什么。若证据明确更正、推翻了本轮所谈的一项具体事实，可同时填 correction:true；普通背景省略此项。`;
 
 export const functionalResultHints = new Map([
   [
@@ -20,6 +20,7 @@ export const functionalResultHints = new Map([
 export const functionalResultSchema = z
   .strictObject({
     evidenceIds: z.array(z.string().min(1).max(maxIdLength)).max(maxEvidence),
+    correction: z.literal(true).optional(),
     contribution: z
       .string()
       .trim()
@@ -28,7 +29,13 @@ export const functionalResultSchema = z
       .regex(/^[^\r\n\u2028\u2029]+$/u)
       .optional(),
   })
-  .superRefine(({ evidenceIds, contribution }, ctx) => {
+  .superRefine(({ evidenceIds, contribution, correction }, ctx) => {
+    if (!evidenceIds.length && correction)
+      ctx.addIssue({
+        code: "custom",
+        path: ["correction"],
+        message: "更正须附证据",
+      });
     if (
       evidenceIds.length
         ? contribution !== undefined
@@ -52,6 +59,9 @@ export const functionalResultSchemaConditions = {
     properties: { evidenceIds: { maxItems: 0 } },
     required: ["evidenceIds"],
   },
-  then: { not: { required: ["contribution"] } },
+  then: {
+    not: { required: ["contribution"] },
+    properties: { correction: false },
+  },
   else: { required: ["contribution"] },
 };

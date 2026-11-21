@@ -1335,6 +1335,9 @@ export class Runtime {
         if (plan.variants.length === 1 && value === original) return { wire };
         continue;
       }
+      // Reserve a one-shot attachment only after the complete wire fits. A second
+      // concurrent tool may finish encoding while the first awaits its receipt.
+      if (variant.reserve && !variant.reserve()) continue;
       if (!commit) return { wire };
       const receipt = randomUUID();
       let pending = ctx.toolOutputReceipts;

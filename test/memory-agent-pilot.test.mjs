@@ -9,7 +9,7 @@ import { validateConfig } from "../src/core/config.mjs";
 import { semanticDigest } from "../src/core/semantic-recall.mjs";
 import { recallBoundary } from "../src/core/recall-boundary.mjs";
 import { memoryRecallDiagnostic } from "../src/core/session-records.mjs";
-import { config, fixture, raw } from "./helpers.mjs";
+import { config, fixture, raw, sendReviewed } from "./helpers.mjs";
 
 const group = "group:20000";
 const contribution = "补上了上次已经确认的安排。";
@@ -144,6 +144,8 @@ test("opening searches only previous same-group evidence and attaches an authori
     matched: 1,
     presented: 1,
     waitMs: turn.memoryRecall.opening.waitMs,
+    openingWaitMs: turn.memoryRecall.opening.openingWaitMs,
+    presentedAtStage: "opening",
     agentMs: turn.memoryRecall.opening.agentMs,
   });
   assert.equal(f.memory.state(group).readThroughSeq || 0, 0);
@@ -262,6 +264,265 @@ test("an opening deadline lets ordinary QQ continue and records no presented evi
   assert.equal(turn.memoryRecall.opening.status, "timeout");
   assert.equal(turn.memoryRecall.opening.presented, 0);
 });
+
+function delayedLookup(t, chat, { correction = false } = {}) {
+  const release = Promise.withResolvers();
+  let old;
+  let lookups = 0;
+  const cfg = pilotConfig();
+  cfg.agents[0].tools.push("qq_draft");
+  cfg.agents[0].maxSendsPerTurn = 3;
+  cfg.agents[0].maxConsecutiveSends = 3;
+  const f = setup(
+    t,
+    async (p) => {
+      if (!p.modelSelection) return chat(p);
+      lookups++;
+      const stop = () => release.resolve();
+      p.signal.addEventListener("abort", stop, { once: true });
+      await release.promise;
+      p.signal.removeEventListener("abort", stop);
+      if (p.signal.aborted) return;
+      await p.callTool("functional_agent_result", {
+        evidenceIds: [old.id],
+        contribution,
+        ...(correction && { correction: true }),
+      });
+    },
+    cfg,
+  );
+  return {
+    ...f,
+    release: release.resolve,
+    lookups: () => lookups,
+    async start() {
+      old = await f.add(1, "读书会已从北门改到东门", 20000, 30000, 1799900000);
+      const input = await f.add(2, "上次的读书会约在哪里？");
+      return f.runtime.runTurn("agent-0", group, {
+        reasons: [{ reason: "mention", seq: input.seq }],
+      });
+    },
+  };
+}
+
+test("a deferred lookup that finishes before native input is attached at opening", async (t) => {
+  let prompt;
+  const f = delayedLookup(t, (p) => {
+    prompt = p.prompt;
+  });
+  const adapter = f.runtime.backendConnections.adapter(
+    f.runtime.agent("agent-0"),
+  );
+  const run = adapter.run.bind(adapter);
+  adapter.run = async (p) => {
+    f.release();
+    await [...f.runtime.running.values()][0].openingLookup.done;
+    return run(p);
+  };
+  await f.start();
+  assert.match(prompt, /"status":"matched"/);
+  assert.equal(f.lookups(), 1);
+});
+
+test("memory recall collects the original pending lookup once with a tool receipt", async (t) => {
+  let result, repeated;
+  const f = delayedLookup(t, async (p) => {
+    assert.match(p.prompt, /记忆查证还在进行/);
+    const waiting = p.callTool("memory_recall", { opening: true });
+    f.release();
+    result = await waiting;
+    repeated = await p.callTool("memory_recall", { opening: true });
+  });
+  await f.start();
+  assert.equal(result.evidence[0].body, "读书会已从北门改到东门");
+  assert.equal(repeated.status, "already-presented");
+  assert.equal(f.lookups(), 1);
+});
+
+test("pending opening evidence reaches a draft review only once", async (t) => {
+  let first, next;
+  const f = delayedLookup(t, async (p) => {
+    const other = f.runtime.makeContext("agent-0", group);
+    const saved = await f.runtime.callTool(other, "qq_send", {
+      requestId: "draft-before-clue",
+      text: "待核对的约定",
+    });
+    const args = {
+      action: "prepare",
+      draftId: saved.draft.draftId,
+      expectedVersion: saved.draft.version,
+    };
+    f.release();
+    await [...f.runtime.running.values()][0].openingLookup.done;
+    first = await p.callTool("qq_draft", args);
+    next = await p.callTool("qq_draft", args);
+  });
+  const outcome = await f.start();
+  assert.equal(outcome.status, "completed-no-send");
+  assert.equal(
+    first.preparation.memoryRecall.evidence[0].body,
+    "读书会已从北门改到东门",
+  );
+  assert.equal(next.preparation.memoryRecall, undefined);
+  const turn = f.memory.identity.get(
+    "model_turns",
+    f.memory.state(group).lastTurnId,
+  );
+  assert.equal(memoryRecallDiagnostic(turn).opening.presentedAtStage, "draft");
+});
+
+test("concurrent tool outputs reserve a clue once and only record a confirmed receipt", async (t) => {
+  const f = delayedLookup(t, async () => {
+    const ctx = [...f.runtime.running.values()][0];
+    const collect = () =>
+      f.runtime.callTool(
+        ctx,
+        "memory_recall",
+        { opening: true },
+        { deferInput: true },
+      );
+    const pending = [collect(), collect()];
+    f.release();
+    const results = await Promise.all(pending);
+    const encode = async (value) => ({
+      wire: JSON.stringify(value),
+      text: JSON.stringify(value),
+    });
+    const outputs = await Promise.all(
+      results.map((row) => f.runtime.finalizeToolOutput(ctx, row, { encode })),
+    );
+    assert.equal(
+      outputs.filter((out) => JSON.parse(out.wire).evidence).length,
+      1,
+    );
+    const [receipt] = outputs.filter((out) => out.receipt);
+    assert.equal(ctx.openingLookup.delivered, undefined);
+    assert.equal(
+      f.runtime.commitToolOutput(ctx, receipt.receipt, receipt.wire),
+      true,
+    );
+    assert.equal(ctx.openingLookup.delivered, true);
+  });
+  assert.equal((await f.start()).status, "completed-no-send");
+});
+
+test("a chat ending without a send cancels the detached lookup", async (t) => {
+  let job;
+  const f = delayedLookup(t, async () => {
+    job = [...f.runtime.running.values()][0].openingLookup;
+  });
+  assert.equal((await f.start()).status, "completed-no-send");
+  await job.done;
+  const turn = f.memory.identity.get(
+    "model_turns",
+    f.memory.state(group).lastTurnId,
+  );
+  assert.equal(job.controller.signal.aborted, true);
+  assert.equal(turn.memoryRecall.opening.status, "cancelled");
+  assert.equal(turn.memoryRecall.opening.presented, 0);
+});
+
+test("an unknown delivery cannot trigger a late correction", async (t) => {
+  let calls = 0;
+  const f = delayedLookup(
+    t,
+    async (p) => {
+      calls++;
+      p.saveSession({ id: "unconfirmed-recall-session", backend: "fixture" });
+      f.runtime.transports.get("qq-0").failure = "fixture timeout";
+      await assert.rejects(
+        fixtureReply(p, "unconfirmed-before-clue", "约在北门"),
+        /DELIVERY_UNKNOWN/,
+      );
+      f.release();
+    },
+    { correction: true },
+  );
+  await f.start();
+  assert.equal(calls, 1);
+  assert.equal(f.runtime.transports.get("qq-0").sent.length, 1);
+});
+
+async function fixtureReply(p, requestId, text) {
+  return sendReviewed(
+    (args) => p.callTool("qq_send", args),
+    { requestId, text },
+    (args) => p.callTool("qq_draft", args),
+  );
+}
+
+for (const kind of ["correction", "background", "new-input", "withdrawn"]) {
+  test(
+    "confirmed reply receives one bounded late review: " + kind,
+    async (t) => {
+      let reviews = 0,
+        nativeTools,
+        first,
+        second,
+        duplicate,
+        blocked;
+      const f = delayedLookup(
+        t,
+        async (p) => {
+          if (p.prompt.includes("本轮回复已确认发送")) {
+            reviews++;
+            assert.deepEqual(p.tools, nativeTools);
+            assert.equal(p.session.id, "late-recall-session");
+            await assert.rejects(
+              p.callTool("diary_write", { body: "无关工具" }),
+              /TOOL_DISABLED/,
+            );
+            assert.match(p.prompt, /"confirmedReply".*北门/);
+            assert.match(p.prompt, /改到东门/);
+            if (kind === "withdrawn") {
+              f.memory.db
+                .prepare(
+                  "UPDATE events SET status='recalled' WHERE message_id='1'",
+                )
+                .run();
+              await assert.rejects(
+                fixtureReply(p, "late-correction", "更正为东门"),
+                /RECALL_SOURCE_NOT_ALLOWED/,
+              );
+              blocked = true;
+              return;
+            }
+            second = await fixtureReply(p, "late-correction", "更正为东门");
+            try {
+              await fixtureReply(p, "late-extra", "再发一条");
+            } catch (error) {
+              duplicate = error.message;
+            }
+            return;
+          }
+          nativeTools = p.tools;
+          p.saveSession({ id: "late-recall-session", backend: "fixture" });
+          first = await fixtureReply(p, "before-clue", "约在北门");
+          if (kind === "new-input") await f.add(3, "聊个新话题");
+          f.release();
+        },
+        { correction: kind !== "background" },
+      );
+      const outcome = await f.start();
+      assert.equal(first?.status, "sent");
+      assert.equal(outcome.status, "sent");
+      assert.equal(f.lookups(), 1);
+      assert.equal(
+        reviews,
+        kind === "correction" || kind === "withdrawn" ? 1 : 0,
+      );
+      if (kind === "correction") {
+        assert.equal(second?.status, "sent");
+        assert.equal(duplicate, "REPLY_BURST_LIMIT");
+      }
+      if (kind === "withdrawn") assert.equal(blocked, true);
+      assert.equal(
+        f.runtime.transports.get("qq-0").sent.length,
+        kind === "correction" ? 2 : 1,
+      );
+    },
+  );
+}
 
 test("pilot opening timeout accepts six seconds while the default stays four", () => {
   const cfg = pilotConfig();
