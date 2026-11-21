@@ -6,7 +6,7 @@
 
 ## 未发布
 
-### Antigravity 群聊的补读与回复工具
+### Antigravity 群聊的补读与回复工具（[#396](https://github.com/wangyufengsky/qq-agents/pull/396)）
 
 - ACP 每轮按实际许可给出补读与回复入口。CLI 省略原生补读工具时，通过已注册的通用入口调用；模型按本轮调用结果判断入口可用性。已有会话可继续接续，沿用发送幂等、草稿审阅和已读校验。
 
