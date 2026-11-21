@@ -857,6 +857,14 @@ export class AntigravityBackend {
             desktop: params.desktop === true,
             desktopScreen: acpDesktopScreen(params),
             bridgeTools: params.tools.length > 0,
+            groupToolNames: params.conversation?.startsWith("group:")
+              ? params.tools
+                  .map(({ name }) => name)
+                  .filter(
+                    (name) =>
+                      name === "conversation_read" || acpReplyActions.has(name),
+                  )
+              : undefined,
             videoFrames: params.tools.some(({ name }) => name === "video_read"),
           }),
         ],

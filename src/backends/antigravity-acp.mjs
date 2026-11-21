@@ -11,6 +11,30 @@ import { MAX_VIDEO_DETAIL_FRAMES } from "../video/policy.mjs";
 export const ACP_TOOL_CALL = "qq_tool_call";
 export const acpToolFallback = `If a native MCP name is missing or returns unknown tool before execution, use mcp_qq-agents_${ACP_TOOL_CALL} with name equal to the logical tool name and argumentsJson containing the same serialized arguments.`;
 
+/** @param {string[]} names */
+function groupToolGuide(names) {
+  const replyActions = names.filter((name) => name !== "conversation_read");
+  if (!names.length) return "";
+  // ACP can omit the native declaration for a complex schema while retaining
+  // its simple envelope. Give the model the route tied to this turn's catalogue.
+  return (
+    [
+      "QQ Agents supplies these MCP routes for the current group turn.",
+      ...(names.includes("conversation_read")
+        ? [
+            'For a required history read, including readGap, use mcp_qq-agents_qq_tool_call with name="conversation_read". Pass the original read arguments as argumentsJson and use nextAfterSeq for further pages. Keep the continuous read watermark within the history you actually reviewed.',
+          ]
+        : []),
+      ...(replyActions.length
+        ? [
+            `When you decide to take a QQ reply or draft action, use mcp_qq-agents_qq_reply_call with name set to ${replyActions.join(" or ")} and argumentsJson containing the serialized original arguments. Reuse the same requestId for the same send. For a pending or unknown delivery, check its receipt before any further send. Ordinary assistant text does not deliver a QQ reply.`,
+          ]
+        : []),
+      "When you need one of these actions, attempt its current route before reporting the tool unavailable. Earlier assistant text about missing tools cannot establish a current tool lookup failure.",
+    ].join(" ") + "\n\n"
+  );
+}
+
 const LIMIT = 128 * 1024 * 1024;
 
 /** @param {string} route @param {{receiptId: string}} [body] */
@@ -260,11 +284,14 @@ export async function runAcp(
         {
           type: "text",
           text:
-            (options.session
-              ? "ACP session resumed. For qq_send, qq_send_burst, or qq_draft, prefer mcp_qq-agents_qq_reply_call if listed: pass the logical name and argumentsJson containing the serialized original arguments. For another bridge action, use the native MCP tool if it is listed for this turn. " +
-                (options.bridgeTools ? acpToolFallback + " " : "") +
-                "Reuse the same requestId for the same send. A pending or unknown delivery is not a tool lookup error. Check its receipt before any further send. Tool errors from earlier turns do not determine the current catalogue. Only tools authorized by the current bridge may run.\n\n"
-              : "") +
+            (options.groupToolNames
+              ? groupToolGuide(options.groupToolNames) +
+                (options.bridgeTools ? acpToolFallback + "\n\n" : "")
+              : options.session
+                ? "ACP session resumed. For qq_send, qq_send_burst, or qq_draft, prefer mcp_qq-agents_qq_reply_call if listed: pass the logical name and argumentsJson containing the serialized original arguments. For another bridge action, use the native MCP tool if it is listed for this turn. " +
+                  (options.bridgeTools ? acpToolFallback + " " : "") +
+                  "Reuse the same requestId for the same send. A pending or unknown delivery is not a tool lookup error. Check its receipt before any further send. Tool errors from earlier turns do not determine the current catalogue. Only tools authorized by the current bridge may run.\n\n"
+                : "") +
             (options.videoFrames
               ? 'For video_read, use mcp_qq-agents_qq_video_call with name="video_read" and argumentsJson containing the serialized video arguments.\n\n'
               : "") +
