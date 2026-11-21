@@ -126,6 +126,59 @@ test("ACP resumes only the supplied session and sets the configured model and ef
   assert.equal(f.calls[2].params.modelId, "synthetic");
   assert.equal(f.calls[3].params.value, "low");
 });
+test("ACP group turns specify registered routes even if native read and send names are absent", async () => {
+  for (const session of [undefined, id]) {
+    const f = fake();
+    await runAcp(
+      {
+        ...options,
+        session,
+        bridgeTools: true,
+        groupToolNames: ["conversation_read", "qq_send", "qq_draft"],
+      },
+      "Current group input with readGap.",
+      () => {},
+      f.launch,
+    );
+    const text = f.calls.at(-1).params.prompt[0].text;
+    assert.match(
+      text,
+      /mcp_qq-agents_qq_tool_call with name="conversation_read"/,
+    );
+    assert.match(
+      text,
+      /mcp_qq-agents_qq_reply_call with name set to qq_send or qq_draft/,
+    );
+    assert.match(text, /argumentsJson/);
+    assert.match(text, /readGap/);
+    assert.match(text, /before reporting.*unavailable/);
+    assert.doesNotMatch(text, /qq_reply_call if listed|qq_send_burst/);
+    assert.match(text, /Current group input with readGap\./);
+    if (session) assert.equal(f.calls[1].params.sessionId, session);
+  }
+});
+
+test("ACP group turn with only read access gives no reply route", async () => {
+  const f = fake();
+  await runAcp(
+    {
+      ...options,
+      session: id,
+      bridgeTools: true,
+      groupToolNames: ["conversation_read"],
+    },
+    "Current group input.",
+    () => {},
+    f.launch,
+  );
+  const text = f.calls.at(-1).params.prompt[0].text;
+  assert.match(
+    text,
+    /mcp_qq-agents_qq_tool_call with name="conversation_read"/,
+  );
+  assert.doesNotMatch(text, /qq_reply_call|qq_send/);
+});
+
 test("ACP submits all desktop JPEGs as native input in the same bridge turn", async () => {
   const f = fake();
   const events = [];
