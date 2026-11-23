@@ -6,6 +6,10 @@
 
 ## 未发布
 
+### 中英文首页与功能截图（[#397](https://github.com/wangyufengsky/qq-agents/pull/397)）
+
+- 重写首次安装、角色聊天与记忆、小窝和共享活动的入口说明，补充 Antigravity 图片通道的区别。用演示实例的新截图替换旧图册。本次仅更新文档与图片，无需迁移或重启服务。
+
 ### 修复 Docker 网关构建时的 Linux QQ 下载（[#398](https://github.com/wangyufengsky/qq-agents/pull/398)）
 
 - 腾讯旧下载地址返回 404，导致从源码构建 NapCat 镜像失败。改从固定版本归档下载同一份安装包，沿用 amd64、arm64 各自的 SHA-256。已有镜像和数据卷无需更新。
