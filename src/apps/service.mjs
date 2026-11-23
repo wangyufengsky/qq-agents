@@ -1,3 +1,6 @@
+import { currentHumanRequest } from "../core/input-progress.mjs";
+import { videoLinks } from "../video/bilibili.mjs";
+import { VIDEO_READ } from "../video/policy.mjs";
 import { contextProtection } from "../core/protected-mind.mjs";
 import { mergeProtection } from "../memory/protection.mjs";
 import { recallBoundary } from "../core/recall-boundary.mjs";
@@ -410,7 +413,21 @@ export class AppBrowsing {
       senderId: event.senderId,
       occurredAt: event.occurredAt,
     };
+    // Only the live receipt may suggest a follow-up. Stored card summaries
+    // outlive this turn and carry no authority to fetch video.
+    const current =
+      ctx.requestEvents?.has(event.id) &&
+      this.runtime.toolsForContext(a, ctx).includes(VIDEO_READ) &&
+      currentHumanRequest(this.runtime, ctx, event.id);
+    const videoOverviews = current
+      ? videoLinks(current).map((_, linkIndex) => ({
+          sourceId: event.id,
+          action: "overview",
+          linkIndex,
+        }))
+      : [];
     return {
+      ...(videoOverviews.length && { videoOverviews }),
       items: parseCards(event.payload?.segments).map((card) =>
         this.record(ctx, {
           ...card,
