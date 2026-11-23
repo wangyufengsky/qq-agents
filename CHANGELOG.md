@@ -6,6 +6,11 @@
 
 ## 未发布
 
+### 更新浏览器、WebSocket 与开发工具依赖（[#353](https://github.com/wangyufengsky/qq-agents/pull/353)）
+
+- 将 ws 升至 8.23.0，修复远端连接可能耗尽进程内存的问题。playwright-core 升至 1.65.1，使用 Playwright 托管 Chromium 的部署可通过桌面依赖准备安装匹配版本。
+- ESLint 升至 10.15.0，Prettier 升至 3.10.1。项目继续使用 Node.js 24 或更高版本，无需迁移配置或数据库。
+
 ### 中英文首页与功能截图（[#397](https://github.com/wangyufengsky/qq-agents/pull/397)）
 
 - 重写首次安装、角色聊天与记忆、小窝和共享活动的入口说明，补充 Antigravity 图片通道的区别。用演示实例的新截图替换旧图册。本次仅更新文档与图片，无需迁移或重启服务。
