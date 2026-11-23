@@ -49,7 +49,7 @@ QQ Agents 的配置文件只保存这些变量的**名字**（`tokenEnv`、`apiK
 
 ## 2. 启动并扫码登录 QQ
 
-Compose 从 [项目维护的 fork Release](https://github.com/wangyufengsky/NapCatQQ/releases/tag/archive-v4.18.38) 取固定的 NapCat Shell `4.18.38`。`Dockerfile.napcat` 在构建时校验压缩包和腾讯 Linux QQ 安装包，再在本机生成网关镜像。支持 Linux `amd64` 与 `arm64`。
+Compose 从 [项目维护的 fork Release](https://github.com/wangyufengsky/NapCatQQ/releases/tag/archive-v4.18.38) 取固定的 NapCat Shell `4.18.38`。`Dockerfile.napcat` 在构建时校验压缩包，并从[固定版本归档](https://github.com/a1515333102/QQ-Releases/releases/tag/9.9.36%2B3.2.34)下载 Linux QQ `3.2.34-53644`，按架构核对原腾讯安装包的 SHA-256，再在本机生成网关镜像。支持 Linux `amd64` 与 `arm64`。
 
 ```sh
 docker compose up -d --build
