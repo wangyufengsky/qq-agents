@@ -118,7 +118,7 @@ export const appDefinitions = {
       .strict(),
   ],
   qq_read_share_card: [
-    "读取自己已收到的 QQ 分享卡片：JSON/XML/小程序。保留消息来源和发送者，仅卡片摘要不代表正文；仅 App 内可用的目标不会伪装成已阅读。",
+    "读取自己已收到的 QQ 分享卡片：JSON/XML/小程序。保留消息来源和发送者，仅卡片摘要不代表正文；回执含 videoOverviews 时，要看画面可在本回合将对应参数交给 video_read。sourceId 是原来信的经历 ID。网页读取只提供网页内容。",
     z.object({ eventId: z.string().min(1).max(100) }).strict(),
   ],
 };

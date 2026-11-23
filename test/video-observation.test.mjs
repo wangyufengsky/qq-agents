@@ -298,7 +298,7 @@ test("subject video accepts its own Bilibili browsing records and revokes an out
 
 test("DSH relay delivers a video above the text frame budget and remembers only its full result", async (t) => {
   const cfg = config(1);
-  cfg.agents[0].tools.push("video_read");
+  cfg.agents[0].tools.push("video_read", "qq_read_share_card");
   cfg.agents[0].behavior.imageInput.enabled = true;
   cfg.agents[0].apps.enabled = true;
   cfg.agents[0].apps.platforms = ["bilibili"];
@@ -321,7 +321,20 @@ test("DSH relay delivers a video above the text frame budget and remembers only 
               arguments: { sourceId, ...args },
             },
           });
-        const overview = await invoke({ action: "overview" });
+        const receipt = await client.callTool({
+          name: "bridge_call",
+          arguments: {
+            context: ctx.token,
+            name: "qq_read_share_card",
+            arguments: { eventId: sourceId },
+          },
+        });
+        assert(!receipt.isError, receipt.content[0]?.text);
+        const { videoOverviews } = JSON.parse(receipt.content[0].text);
+        assert.deepEqual(videoOverviews, [
+          { sourceId, action: "overview", linkIndex: 0 },
+        ]);
+        const overview = await invoke(videoOverviews[0]);
         assert(!overview.isError, overview.content[0]?.text);
         assert(overview.content.some(({ type }) => type === "image"));
         assert(Buffer.byteLength(JSON.stringify(overview)) > 65536);
