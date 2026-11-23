@@ -6,7 +6,7 @@
 
 ## 未发布
 
-### 修复 Docker 网关构建时的 Linux QQ 下载
+### 修复 Docker 网关构建时的 Linux QQ 下载（[#398](https://github.com/wangyufengsky/qq-agents/pull/398)）
 
 - 腾讯旧下载地址返回 404，导致从源码构建 NapCat 镜像失败。改从固定版本归档下载同一份安装包，沿用 amd64、arm64 各自的 SHA-256。已有镜像和数据卷无需更新。
 
