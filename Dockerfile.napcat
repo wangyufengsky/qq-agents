@@ -21,7 +21,7 @@ RUN set -eux; \
       arm64) qq_sha=181b895cb573548e396e54bb0548cca92ffdc1b1a4b018fa4551bb062385fdca ;; \
       *) echo "Unsupported NapCat architecture: $TARGETARCH" >&2; exit 1 ;; \
     esac; \
-    curl -fsSL --retry 3 --connect-timeout 30 --max-time 600 -o /tmp/qq.deb "https://qqdl.gtimg.cn/qqfile/QQNT/9.9.36/beta/9ee04bef/linuxqq_3.2.34-53644_${TARGETARCH}.deb"; \
+    curl -fsSL --retry 3 --connect-timeout 30 --max-time 600 -o /tmp/qq.deb "https://github.com/a1515333102/QQ-Releases/releases/download/9.9.36%2B3.2.34/QQ_3.2.34_260924_${TARGETARCH}_01.deb"; \
     echo "$qq_sha  /tmp/qq.deb" | sha256sum -c -; \
     dpkg -i /tmp/qq.deb; \
     rm /tmp/qq.deb; \
