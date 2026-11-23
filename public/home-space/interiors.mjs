@@ -1,15 +1,18 @@
 // @ts-check
 import { paperElement as el } from "../home-preview/paper-board.mjs";
+import { giftShelfSlots } from "../garden-art/gifts.js";
 import { gardenIconMarkup } from "../garden-art/art.js";
 
 /** @param {HTMLElement} root @param {{slot:number,giftId:string,name:string,description:string,note:string}[]} gifts */
 export function renderGiftShelf(root, gifts) {
-  const shelf = el("ol", "gift-shelf");
-  for (const slot of [1, 2, 3]) {
-    const card = el("li", "gift-shelf-card");
+  const shelf = el("ol", "gift-shelf gift-cabinet");
+  for (const slot of giftShelfSlots) {
+    const card = el("li", "gift-shelf-card cabinet-cell");
+    card.append(el("small", "", `第 ${slot} 格`));
     const gift = gifts.find((item) => item.slot === slot);
     if (!gift) {
-      card.append(el("p", "display-note", "空位"));
+      card.classList.add("cabinet-empty");
+      card.append(el("span", "", "空位"));
     } else {
       const art = el("span", "gift-shelf-sticker");
       art.setAttribute("aria-hidden", "true");

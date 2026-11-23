@@ -1274,60 +1274,6 @@ body.editing {
   text-underline-offset: 0.2em;
 }
 
-.gift-shelf {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  padding: 0;
-  margin: 0;
-  list-style: none;
-}
-
-.gift-shelf-card {
-  min-height: 92px;
-  padding: 12px;
-  border: 1px solid var(--line, #bca98d);
-  border-radius: 10px;
-  overflow-wrap: anywhere;
-  background: var(--paper, #fff8e9);
-}
-
-.gift-shelf-card > h3,
-.gift-shelf-card > p,
-.gift-shelf-card > blockquote {
-  margin: 0;
-}
-
-.gift-shelf-sticker {
-  display: block;
-  width: 54px;
-  aspect-ratio: 1;
-  margin: 0 0 8px;
-}
-
-.gift-shelf-sticker img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-}
-
-.gift-shelf-description,
-.gift-shelf-note {
-  white-space: pre-wrap;
-}
-
-.gift-shelf-card > .gift-shelf-note {
-  margin-top: 8px;
-  border-inline-start: 2px solid var(--line, #bca98d);
-  padding-inline-start: 6px;
-}
-
-@media (max-width: 520px) {
-  .gift-shelf {
-    grid-template-columns: 1fr;
-  }
-}
-
 .book-face:has(.study) .book-heading {
   display: none;
 }

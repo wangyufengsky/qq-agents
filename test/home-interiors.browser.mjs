@@ -81,7 +81,7 @@ try {
   const { id: eventId } = garden.read(f.runtime.now()).event;
   for (const [slot, giftId, price, note, publishNote] of [
     [1, "dried-fish", 12, "请别公开这张纸条", false],
-    [3, "origami-dragon", 32, "公开的<em>字面纸条</em>", true],
+    [16, "origami-dragon", 32, "公开的<em>字面纸条</em>", true],
   ]) {
     const recipient = { kind: "agent", id: "agent-0" };
     const receipt = performGardenAction(
@@ -388,13 +388,17 @@ try {
       const shelf = page.locator(".gift-shelf");
       await shelf.waitFor();
       check(
-        `shelf has exactly three slots at ${width}px`,
-        (await shelf.locator("li").count()) === 3,
+        `shelf has exactly sixteen slots at ${width}px`,
+        (await shelf.locator("li").count()) === 16,
       );
       check(
         `shelf keeps slot order at ${width}px`,
         (await shelf.locator("li").allTextContents()).join("|") ===
-          "小鱼干窗边展示|空位|纸折小龙摆件窗边展示公开的<em>字面纸条</em>",
+          [
+            "第 1 格小鱼干窗边展示",
+            ...Array.from({ length: 14 }, (_, i) => `第 ${i + 2} 格空位`),
+            "第 16 格纸折小龙摆件窗边展示公开的<em>字面纸条</em>",
+          ].join("|"),
       );
       check(
         `gift paper notes remain plain text at ${width}px`,
