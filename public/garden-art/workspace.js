@@ -1,5 +1,6 @@
 import { bindGardenJournal } from "./journal.js";
 import { gardenStageAt, gardenStageLabel } from "./stages.js";
+import { giftShelfSlots } from "./gifts.js";
 import * as art from "./art.js";
 
 export { gardenGifts } from "./art.js";
@@ -500,12 +501,12 @@ function gardenEventMarkup(state, view) {
 }
 
 function shelfMarkup(shelf, editable, paused) {
-  return `<div class="garden-display">${[1, 2, 3]
+  return `<div class="garden-display gift-cabinet">${giftShelfSlots
     .map((slot) => {
       const item = shelf.find((entry) => entry.slot === slot);
       if (!item?.name)
-        return `<article class="garden-good"><small>第 ${slot} 格</small><p>空位</p></article>`;
-      return `<article class="garden-good"><small>第 ${slot} 格</small>${productArt("gift", item.giftId)}
+        return `<article class="cabinet-cell cabinet-empty"><small>第 ${slot} 格</small><span>空位</span></article>`;
+      return `<article class="cabinet-cell"><small>第 ${slot} 格</small>${productArt("gift", item.giftId)}
       <strong>${esc(item.name)}</strong>${item.description ? `<p>${esc(item.description)}</p>` : ""}${item.note ? `<p>${esc(item.note)}</p>` : ""}
       ${editable ? `<button type="button" class="ghost" data-withdraw="${slot}"${paused ? " disabled" : ""}>收回</button>` : ""}</article>`;
     })
@@ -521,6 +522,9 @@ function personalGiftMarkup(state, view) {
   const gifts = state.personalGifts;
   if (!gifts) return "<p>暂时无法读取物品栏。</p>";
   const { items, received, shelf } = gifts;
+  const firstEmpty = giftShelfSlots.find(
+    (slot) => !shelf.some((entry) => entry.slot === slot),
+  );
   const filtered = items.filter(
     (item) =>
       view.filter === "all" ||
@@ -528,7 +532,9 @@ function personalGiftMarkup(state, view) {
   );
   const groups = Map.groupBy(filtered, (item) => item.giftId);
   const byId = new Map(received.map((source) => [source.id, source]));
-  return `<h3>我的物品</h3><div class="garden-selector" aria-label="物品筛选">
+  return `<header class="cabinet-heading"><h3>我的展示柜</h3><span>${shelf.length} / ${giftShelfSlots.length} 格</span></header>
+    ${shelfMarkup(shelf, true, state.pauseReason)}
+    <h3>我的物品</h3><div class="garden-selector" aria-label="物品筛选">
     ${switchButton("filter", "all", view.filter, "全部")}
     ${switchButton("filter", "received", view.filter, "收到的")}
     ${switchButton("filter", "displayed", view.filter, "展示中")}
@@ -549,10 +555,10 @@ function personalGiftMarkup(state, view) {
         </fieldset></form></details>
         <details><summary>${item.slot ? "换位或更新展示" : "摆入展示栏"}</summary>
           <form data-garden-form="display_gift"><fieldset${state.pauseReason ? " disabled" : ""}>
-          <label>展示格<select name="slot">${[1, 2, 3]
+          <label>展示格<select name="slot">${giftShelfSlots
             .map((slot) => {
               const occupant = shelf.find((entry) => entry.slot === slot);
-              return `<option value="${slot}"${item.slot === slot ? " selected" : ""}>第 ${slot} 格${occupant ? " · " + esc(occupant.name) : " · 空位"}</option>`;
+              return `<option value="${slot}"${(item.slot ?? firstEmpty) === slot ? " selected" : ""}>第 ${slot} 格${occupant ? " · " + esc(occupant.name) : " · 空位"}</option>`;
             })
             .join("")}</select></label>
           <label>公开说明<textarea name="description" rows="2" maxlength="280">${esc(shelf.find((entry) => entry.slot === item.slot)?.description)}</textarea></label>
@@ -565,8 +571,7 @@ function personalGiftMarkup(state, view) {
       .join("")}</details></article>`,
     ).join("") || "<p>这里还没有物品。</p>"
   }</div>
-    <h3>我的展示栏</h3><p>访客能看到以下格位、名称与公开说明。</p>
-    ${shelfMarkup(shelf, true, state.pauseReason)}
+
     <details class="garden-received"><summary>收到的礼物记录 · ${received.length} 份</summary>
       ${received.map((source) => `<article><strong>${esc(source.name)}</strong>${giftSource(source)}</article>`).join("") || "<p>还没有收到小礼物。</p>"}
     </details>

@@ -2,7 +2,10 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
-import { gardenGifts } from "../../public/garden-art/gifts.js";
+import {
+  gardenGifts,
+  giftShelfCapacity,
+} from "../../public/garden-art/gifts.js";
 
 export const gardenGiftId = z.enum(
   /** @type {[keyof typeof gardenGifts, ...(keyof typeof gardenGifts)[]]} */ (
@@ -33,7 +36,7 @@ const recipient = z.strictObject({
   id: roleId,
 });
 const note = z.string().trim().max(280);
-const slot = z.number().int().min(1).max(3);
+const slot = z.number().int().min(1).max(giftShelfCapacity);
 const price = z.number().int().min(0).max(1_000_000);
 export const giftBudgetLimits = z.strictObject({
   total: price,
@@ -89,6 +92,17 @@ function asRecipient({ kind, id, name }) {
 
 /** @param {import("node:sqlite").DatabaseSync} db */
 export function initializeGiftTables(db) {
+  const previous = db
+    .prepare("SELECT sql FROM sqlite_schema WHERE name='garden_items'")
+    .get();
+  const legacy = /slot BETWEEN 1 AND 3\b/i.test(String(previous?.sql));
+  // SQLite cannot alter a CHECK in place. Rebuild parent and child together
+  // inside the store's startup transaction with foreign keys still enabled.
+  if (legacy)
+    db.exec(`
+    ALTER TABLE garden_items RENAME TO garden_items_legacy;
+    ALTER TABLE garden_item_transfers RENAME TO garden_item_transfers_legacy;
+  `);
   db.exec(`
     CREATE TABLE IF NOT EXISTS garden_items (
       id TEXT PRIMARY KEY,
@@ -98,12 +112,11 @@ export function initializeGiftTables(db) {
       owner TEXT NOT NULL,
       consumed INTEGER NOT NULL DEFAULT 0 CHECK (consumed IN (0,1)),
       source_id TEXT,
-      slot INTEGER CHECK (slot BETWEEN 1 AND 3),
+      slot INTEGER CHECK (slot BETWEEN 1 AND ${giftShelfCapacity}),
       description TEXT NOT NULL DEFAULT '',
       public_note TEXT NOT NULL DEFAULT '',
       UNIQUE(owner,slot)
     );
-    CREATE INDEX IF NOT EXISTS garden_items_owned ON garden_items(owner,consumed);
     CREATE TABLE IF NOT EXISTS garden_item_transfers (
       id TEXT PRIMARY KEY,
       item_id TEXT NOT NULL REFERENCES garden_items(id),
@@ -114,14 +127,26 @@ export function initializeGiftTables(db) {
       value TEXT NOT NULL,
       at INTEGER NOT NULL
     );
-    CREATE INDEX IF NOT EXISTS garden_item_received ON garden_item_transfers(recipient);
-    CREATE INDEX IF NOT EXISTS garden_item_sent ON garden_item_transfers(giver);
     CREATE TABLE IF NOT EXISTS garden_gift_spend (
       day INTEGER NOT NULL,
       agent_id TEXT NOT NULL,
       used INTEGER NOT NULL CHECK (used>=0),
       PRIMARY KEY(day,agent_id)
     );
+  `);
+  if (legacy)
+    db.exec(`
+    INSERT INTO garden_items(rowid,id,gift_id,name,usable,owner,consumed,source_id,slot,description,public_note)
+      SELECT rowid,id,gift_id,name,usable,owner,consumed,source_id,slot,description,public_note FROM garden_items_legacy;
+    INSERT INTO garden_item_transfers(rowid,id,item_id,gift_id,name,giver,recipient,value,at)
+      SELECT rowid,id,item_id,gift_id,name,giver,recipient,value,at FROM garden_item_transfers_legacy;
+    DROP TABLE garden_item_transfers_legacy;
+    DROP TABLE garden_items_legacy;
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS garden_items_owned ON garden_items(owner,consumed);
+    CREATE INDEX IF NOT EXISTS garden_item_received ON garden_item_transfers(recipient);
+    CREATE INDEX IF NOT EXISTS garden_item_sent ON garden_item_transfers(giver);
   `);
 }
 

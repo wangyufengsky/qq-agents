@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { gardenGifts } from "../public/garden-art/gifts.js";
 import { createServer } from "../src/server.mjs";
@@ -198,7 +199,7 @@ test("the expanded gift catalog supports purchasing, gifting and displaying each
       assert.equal(sources.length, 1);
       assert.ok(sources[0].text.includes(name));
       assert.ok(!sources[0].text.includes(item.source.note));
-      for (const slot of [1, 2, 3]) {
+      for (const slot of [1, 3, 4, 16]) {
         f.act(cat, { kind: "display_gift", itemId, slot, publishNote: true });
         assert.deepEqual(
           f.role(cat).shelf.map((row) => ({ ...row })),
@@ -260,6 +261,62 @@ test("daily shared budgets, invalid recipient and failures do not spend stock or
     () => f.act(admin, f.buy("yarn-ball", 18)),
     /GARDEN_BALANCE_LOW/,
   );
+});
+
+test("opening a three-slot gift database preserves transfers and expands its constrained slots", (t) => {
+  const file = path.join(temp(t), "legacy.sqlite");
+  const legacy = new DatabaseSync(file);
+  legacy.exec(`
+    CREATE TABLE garden_items (
+      id TEXT PRIMARY KEY, gift_id TEXT, name TEXT, usable INTEGER, owner TEXT, consumed INTEGER,
+      source_id TEXT, slot INTEGER CHECK (slot BETWEEN 1 AND 3), description TEXT, public_note TEXT,
+      UNIQUE(owner,slot)
+    );
+    CREATE TABLE garden_item_transfers (
+      id TEXT PRIMARY KEY, item_id TEXT REFERENCES garden_items(id), gift_id TEXT, name TEXT,
+      giver TEXT, recipient TEXT, value TEXT, at INTEGER
+    );
+    CREATE INDEX garden_items_owned ON garden_items(owner,consumed);
+    CREATE INDEX garden_item_received ON garden_item_transfers(recipient);
+    CREATE INDEX garden_item_sent ON garden_item_transfers(giver);
+    INSERT INTO garden_items VALUES ('gift','yarn-ball','毛线球',0,'owner',0,'transfer',3,'窗边','赠言');
+    INSERT INTO garden_item_transfers VALUES ('transfer','gift','yarn-ball','毛线球','giver','owner','{}',1);
+  `);
+  legacy.close();
+  for (const slot of [3, 16]) {
+    const store = new MemoryStore(file);
+    try {
+      const { db } = store;
+      assert.deepEqual(
+        {
+          ...db
+            .prepare(
+              "SELECT slot,description,public_note,source_id FROM garden_items",
+            )
+            .get(),
+        },
+        {
+          slot,
+          description: "窗边",
+          public_note: "赠言",
+          source_id: "transfer",
+        },
+      );
+      assert.equal(
+        db
+          .prepare(
+            "SELECT item_id FROM garden_item_transfers WHERE id='transfer'",
+          )
+          .get().item_id,
+        "gift",
+      );
+      db.exec("UPDATE garden_items SET slot=16");
+      assert.throws(() => db.exec("UPDATE garden_items SET slot=17"), /CHECK/);
+      assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
+    } finally {
+      store.close();
+    }
+  }
 });
 
 test("backup restores private shelf, budget and replay, while an identity replacement has no old items or gift citations", async (t) => {
