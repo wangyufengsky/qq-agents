@@ -1,4 +1,9 @@
 // @ts-check
+export const giftShelfCapacity = 16;
+export const giftShelfSlots = Array.from(
+  { length: giftShelfCapacity },
+  (_, index) => index + 1,
+);
 export const gardenGifts = {
   "dried-fish": { name: "小鱼干", price: 12, usable: true },
   "yarn-ball": { name: "毛线球", price: 18, usable: false },

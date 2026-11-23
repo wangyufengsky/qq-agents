@@ -255,7 +255,7 @@ test("actual Chromium produces a shareable nine-tile PNG and renders the desktop
   );
   await item.getByText("查看物品").click();
   await item.getByText("摆入展示栏").click();
-  await item.getByLabel("展示格").selectOption("2");
+  await item.getByLabel("展示格").selectOption("16");
   await item.getByLabel("公开说明").fill("花园里带回来的薄荷糖");
   await item.getByRole("button", { name: "确认展示" }).click();
   await panel

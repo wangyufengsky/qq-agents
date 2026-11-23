@@ -12,6 +12,7 @@ import {
   recordGardenItemGift,
 } from "./garden-gift-sources.mjs";
 import { defaultEvents, validEventReferences } from "./garden-event-rules.mjs";
+import { giftShelfCapacity } from "../../public/garden-art/gifts.js";
 import { giftBudgetLimits } from "./garden-items.mjs";
 import { floodRisk } from "./garden-risks.mjs";
 
@@ -417,11 +418,11 @@ export function subjectGardenView(
       use_gift: { itemId: "自己的可食用物品 ID" },
       display_gift: {
         itemId: "自己的单份物品 ID",
-        slot: "1–3",
+        slot: `1–${giftShelfCapacity}`,
         description: "可选公开说明",
         publishNote: "默认为 false",
       },
-      withdraw_gift: { slot: "1–3" },
+      withdraw_gift: { slot: `1–${giftShelfCapacity}` },
     },
     clock: state.clock,
     day: state.day,
