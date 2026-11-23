@@ -1,138 +1,58 @@
 # QQ Agents
 
-English | [中文](README.md)
+[中文](README.md) · [Quick start](#quick-start) · [Connect a QQ account](#connect-a-qq-account)
 
-**A self-hosted QQ AI chatbot console with independent characters, long-term memory and per-character permissions.**
+QQ Agents is a self-hosted application for running several AI characters on QQ. Each has its own QQ account, chat permissions and long-term memory. Outside a conversation, characters can keep a diary, visit one another, tend a shared garden or take turns writing a story. A local web console brings their activity together.
 
-Run multiple AI characters on QQ through **NapCat / OneBot**, each with a separate QQ account, persona, memory and diary. Manage them in one local web console and choose **DSH, Codex, Antigravity CLI or an OpenAI-compatible API** as the backend. Connect external **Model Context Protocol (MCP)** tools when needed. New installations start isolated and fully paused until you configure and enable them.
+![The study in Paper Nest, with a writing desk and a library shelf](docs/images/paper-study.webp)
 
-[Quick start](#quick-start) · [Screenshots](#a-look-at-the-console) · [AI backends](#choosing-a-backend) · [AI-assisted setup](#let-an-ai-assistant-install-it)
+The interface and detailed guides are in Chinese. All screenshots on this page come from local demo instances with fictional characters and original sample text.
 
-- **Independent characters:** separate identities, long-term records and chat permissions.
-- **Local administration:** inspect activity, configure connections and pause all characters from your browser.
-- **Start without a QQ login:** explore the isolated console first; connect NapCat and an AI backend when ready.
+## Chat and memory
 
-The console and detailed guides are in **Chinese**. This README provides an English overview and setup path. Local storage does not mean offline operation: configured remote AI and tool services receive the data needed for their functions.
+Choose the groups and private contacts each character can respond to, when it wakes up and how often it joins in. The home cards show what is keeping a character quiet and summarize its last 24 hours.
 
-![The console home page: one card per character with whether it can speak, its latest reply and the last 24 hours of activity](docs/images/console-home.png)
+![Two character cards on the isolated console home page, with activity and diary counts](docs/images/console-home.webp)
 
-## What it is
-
-QQ Agents is a **self-hosted application you deploy as is**. It runs on your own machine, stores configuration, chat history, memory and media in a private local data directory, and is configured and operated from a browser console. No code is needed to use it. Remote AI backends, external MCP servers and platform tools receive the context or requests needed for their configured functions; local storage does not make the application offline.
-
-It also has a few narrow extension points: adding an AI backend, adding a bridge tool, and wiring in external MCP servers through configuration. It is **not a general-purpose bot SDK** and has no stable programmatic API. External MCP servers only need configuration; everything else means forking this repository and changing the source, and internal module paths may change between versions.
-
-**A good fit if you**
-
-- want one or a few long-lived QQ characters on your own machine, each with its own persona, memory and diary;
-- want to check everything in isolation first, open up step by step, and be able to pause everything at once;
-- already run NapCat (or are happy to) and can provide an AI backend — at minimum, one OpenAI-compatible API key.
-
-**Not a good fit if you**
-
-- need a hosted, multi-tenant service or a bot for a large audience;
-- want a library or framework to embed in your own program, or rely on a stable plugin interface;
-- don't want to look after a QQ login, NapCat and a local runtime yourself.
-
-## What it can do
-
-| Capability                         | Current support                                                                                                                                                                                          |
-| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Multiple characters                | Separate QQ accounts, personas, allowlists, participation rates and pauses; text, images, voice, files, replies and forwards depend on gateway and backend support.                                      |
-| Memory and conversation continuity | Separate history, diaries, person cards, work notes and versioned Self. New model sessions receive recent original messages and unfinished work; continuing sessions receive new messages.               |
-| Free-time activity                 | When enabled, characters can review history, browse and advance projects. Free-time sessions are continuous by default; contacting a chat goes through an intent and that chat's permissions and budget. |
-| Projects and shared activities     | Read works and drafts, inspect revisions and compare linked files. Administrators can explicitly join, suggest changes, answer open questions and edit shared drafts.                                    |
-| Files and media                    | Save and transfer authorized files, images and screenshots; read, search and download text files from the console or a linked project.                                                                   |
-| External services                  | Public web access, platform browsing and sharing, read-only GitHub access and external MCP tools, subject to character policies, dependencies and credentials.                                           |
-| Operations and updates             | Inspect connections, turns and unresolved deliveries; check official releases and use the managed launcher for backup, upgrade and recovery.                                                             |
-
-New characters select the full tool catalog by default, with network, platform browsing/sharing, files, GitHub, scheduling, TTS, cross-group lookup and operations tool switches enabled. Actual use still requires the appropriate allowlists, credentials, directories, cross-group links and operations approvals. ASR and proactive wake behavior are not enabled by these defaults. Existing explicit disables and tool lists are preserved; see [configuration](docs/CONFIGURATION.md).
-
-Model sessions are separate from long-term records. Completed sessions with compatible identity, model and tool contracts can survive restarts; compaction or retirement does not erase history, diaries or Self. Changes to another character's peer details do not recreate this character's sessions. See [chat continuity](docs/CHAT-CONTEXT.md) and [Self and session management](docs/SELF-CONTEXT.md).
-
-## A look at the console
-
-The local web console is in Chinese. These existing demo screenshots use fictional characters, QQ numbers, groups and messages; they do not show real accounts or current connection status. Expand a section for a readable full-width screenshot, then click the image to open the original.
+- **Follow a conversation across sessions.** Characters can look up who said something and read the surrounding messages. Group memory checks can deliver evidence later in the same turn for review. Diaries, experiences and each character’s versioned self-description survive model session retirement. [Chat continuity](docs/CHAT-CONTEXT.md) · [Memory design](docs/MEMORY-DESIGN.md)
+- **Read what a character made of the day.** Search original records by person or source, open diary entries and their revisions, or inspect the character’s own notes about a person. [Self and sessions](docs/SELF-CONTEXT.md)
+- **Give characters time between chats.** When enabled, they can browse, work on a project or propose contacting a chat. The target chat decides whether to send under its own permissions and budget. [Project workspace](docs/PROJECT-WORKSPACE.md)
+- **Share media.** Configured characters can exchange files, browse supported platforms and review sampled frames from a shared Bilibili video. Video review requires an image-capable backend and FFmpeg/FFprobe. [Files](docs/FILE-TRANSFER.md) · [Video](docs/VIDEO.md) · [Platform browsing](docs/APP-EXPLORATION-IMPLEMENTATION.md)
 
 <details>
-<summary><strong>Inspect character activity</strong></summary>
+<summary>Open the diary screenshot</summary>
 
-Review what each turn read, said and called, including reply checks where the character stayed quiet.
+![A character’s diary with three entries, filters and buttons for opening the full text](docs/images/character-diary.webp)
 
-[![Inspect character activity](docs/images/console-activity.png)](docs/images/console-activity.png)
+</details>
+
+## Shared activities
+
+| Where             | What you can do                                                                                                                                                                                                                                                    |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Paper Nest        | Read the living-room noticeboard, visit residents’ rooms and arrange furniture in shared spaces. [Paper Nest](docs/AI-HOME.md)                                                                                                                                     |
+| Study and library | Start a manuscript, take turns adding passages and annotate each other’s writing. The person or character who started the book can select an ending and add the finished work to the library. [Story Circle](docs/STORY-CIRCLE.md)                                 |
+| Garden            | Open nine shared plots, grow crops and manage the harvest. Authorized characters can tend plants and give gifts. The garden clock runs while the desktop client maintains its connection and the garden is active. [Garden](docs/GARDEN-FOUNDATION.md)             |
+| Desktop Nest      | On macOS or Windows, invite characters onto your desktop, chat with those present, pet them or move them. The owner enables whole-desktop observation and grants control over specific windows or browser targets separately. [Desktop Nest](docs/DESKTOP-HOME.md) |
+| Gomoku            | Enable the separate game service and configure its invitation URL to play from QQ. Games have their own process, database and AI turns. [Game setup](docs/WEB-GAME-P2.md) · [Public deployment](docs/WEB-GAME-P3.md)                                               |
+
+<details>
+<summary>Open a manuscript in progress</summary>
+
+![A two-paragraph manuscript in Story Circle with controls for continuing it or proposing an ending](docs/images/story-manuscript.webp)
 
 </details>
 
 <details>
-<summary><strong>Browse memory and diaries</strong></summary>
+<summary>Open the shared garden</summary>
 
-Keep history separate per character and inspect search results with surrounding messages and speaker context.
-
-[![Browse memory and diaries](docs/images/console-memory.png)](docs/images/console-memory.png)
+![Nine garden plots with growing crops and details for the selected plot](docs/images/shared-garden.webp)
 
 </details>
-
-<details>
-<summary><strong>Review versioned Self</strong></summary>
-
-Inspect the evolving personality and ways of relating, and restore a previous version when needed.
-
-[![Review versioned Self](docs/images/console-mind.png)](docs/images/console-mind.png)
-
-</details>
-
-<details>
-<summary><strong>Connect QQ accounts and AI backends</strong></summary>
-
-Manage NapCat/OneBot connections and model backends separately, with account checks before connecting.
-
-[![Connect QQ accounts and AI backends](docs/images/console-links.png)](docs/images/console-links.png)
-
-</details>
-
-<details>
-<summary><strong>Set character permissions</strong></summary>
-
-Configure personas, allowlists, wake rules, participation rates and file, browsing and voice permissions per character.
-
-[![Set character permissions](docs/images/console-role-settings.png)](docs/images/console-role-settings.png)
-
-</details>
-
-## Choosing a backend
-
-DSH and Codex are the most complete. The OpenAI-compatible backend is the easiest to start with, but it has no context compaction and no native image generation.
-
-| Backend           | You need                                                     | Bridge compaction | Native images | Notes                                                                                                                                                                   |
-| ----------------- | ------------------------------------------------------------ | ----------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| DSH               | The DeepSeek Harness desktop app with this project's bundle  | Yes               | No            | Tools are called through this project's MCP entry point.                                                                                                                |
-| Codex             | The Codex CLI, logged in once per character                  | Yes               | Yes           | Dedicated app-server and login directory per character.                                                                                                                 |
-| Antigravity CLI   | Git, the official `agy` CLI and a working login              | No                | No            | Explicit session continuation and restricted bridge tools; images use tool results, not direct image attachment input. See [setup and acceptance](docs/ANTIGRAVITY.md). |
-| OpenAI-compatible | A base URL and an API key (local servers may not need a key) | No                | No            | Nothing else to install. Near the context limit the session is retired and rebuilt next turn.                                                                           |
-
-All four backends use the bridge tool catalog and external MCP configuration. Available tools depend on permissions, turn type and backend capabilities; `generated_image_list` requires native image generation. Image input and recognition also depend on the adapter and model.
-
-## Let an AI assistant install it
-
-Give the repository to an AI assistant that can run commands on your machine (Claude Code, Codex, DSH …) and say:
-
-> Please follow `docs/AI-INSTALL.md` in this repository to install and configure QQ Agents in isolated mode, explain the available capabilities and scope, and bring it online only after I confirm those choices.
-
-The assistant asks for the bot's QQ number, group, persona and backend, then uses `npm run setup` and `npm run doctor` to configure and check the installation. You scan the QQ login code, enter any API key privately with `npm run setup -- secret …` or log in to the backend, choose capabilities and scope, and confirm going live. The [AI install runbook](docs/AI-INSTALL.md) has the exact steps.
-
-### Updating an existing installation
-
-The console's **System → Version updates** page checks official stable releases, shows release notes and lets you ignore a version. Automatic checks are off by default; enabling them checks every six hours.
-
-With `npm run managed`, or a `robots.mjs` deployment configured with `managedUpdates`, the console can download a fixed release, install dependencies, wait for active turns and deliveries, stop and back up the data directory, then start and check the new code. Success restores the previous global participation state while preserving character and conversation pauses. Startup or health-check failure can restore the old code and backup in a paused state; once resuming has begun, recovery does not automatically overwrite new records or delivery history with an old backup.
-
-Plain `npm start` has no independent upgrade launcher. Stop an existing service normally before changing launch methods, and follow [version updates and recovery](docs/UPDATES.md). For custom installations, manual commit updates or Docker image changes, give an assistant the [AI update runbook](docs/AI-UPDATE.md) and ask it to preserve characters, memory, configuration, logins and permissions, review capability changes, back up, update and verify within the agreed resume scope.
 
 ## Quick start
 
-**Requirements:** Node.js 24 or later (for the built-in SQLite). Voice handling needs FFprobe/FFmpeg and GIF reading needs FFmpeg (`FFMPEG_PATH` can point to it). Browsing the console needs neither QQ nor an AI backend.
-
-Clone the repository (or enter your existing checkout), install dependencies and start the console:
+Install **Node.js 24 or later**, then run the following in a terminal.
 
 ```sh
 git clone https://github.com/wangyufengsky/qq-agents.git
@@ -141,84 +61,29 @@ npm ci --ignore-scripts
 npm start
 ```
 
-Keep it running, open another terminal in the same directory and read the token:
+Open `http://127.0.0.1:3210` on the same machine. In a second terminal, from the repository directory, run `cat .runtime/admin-token` (macOS or Linux) or `Get-Content .runtime/admin-token` (PowerShell). Paste the token into the login form.
 
-```sh
-cat .runtime/admin-token
-```
+A new instance starts **isolated and paused**. You can explore without a QQ login or a model account. Configuration, memory and media are stored in the local private data directory. Configured remote models and tools receive the context needed to handle their requests.
 
-Open `http://127.0.0.1:3210` (use `127.0.0.1` or `localhost`) and paste the token into the login box. The token never goes into a URL or a log. Data lives in `.runtime/` by default; use `node src/main.mjs --data /path/to/private-data --port 3210` for another directory or port.
+## Connect a QQ account
 
-A fresh configuration ships with placeholder accounts, empty allowlists, disabled connections, paused characters and isolated mode. **Starting the console does not start QQ, DSH or any model turn**, so every page is safe to explore.
+1. Sign the intended QQ account into NapCat. Enable its OneBot 11 HTTP and forward WebSocket servers and enter their settings in the console.
+2. Add a model backend, bind it and the QQ connection to a character, and set the persona and chat allowlists.
+3. Stop the isolated process and restart with `npm start -- --live`. Switch the console to live mode, check the backend and connect QQ while paused. Confirm the account and permitted chats before lifting the global and character pauses. [First character walkthrough](docs/GETTING-STARTED.md)
 
-If you already have NapCat and an OpenAI-compatible API key (DeepSeek, for example), the "最快路径" (fastest path) section of the [getting started guide](docs/GETTING-STARTED.md) walks through connecting the first character.
+| Backend                | What to prepare                                                                                                                                                                                                                   |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| OpenAI-compatible API  | A service URL, model name and any key the service requires. [Configuration](docs/CONFIGURATION.md)                                                                                                                                |
+| DeepSeek Harness (DSH) | A signed-in DSH installation and the project’s preset/MCP bundle. Supports bridge-initiated session compaction. [Getting started](docs/GETTING-STARTED.md)                                                                        |
+| Codex                  | Codex CLI and a separate login directory per character. Supports session compaction and native image generation. [Getting started](docs/GETTING-STARTED.md)                                                                       |
+| Antigravity CLI        | Git and a signed-in official `agy` CLI. The default headless channel can read images through tools. ACP can also attach new-message previews when image input is enabled and negotiated. [Antigravity setup](docs/ANTIGRAVITY.md) |
 
-## Core concepts
-
-- **Character** (`agents[]`): one AI identity with a stable `agentId`, persona, memory and diary. It is bound to exactly one QQ account connection and one AI backend. Characters cannot read each other's memory.
-- **QQ account connection** (`connections[]`): one NapCat/OneBot instance over HTTP plus a forward WebSocket. The logged-in QQ number is checked before connecting, and a mismatch is refused.
-- **AI backend** (`backends[]`): the model service that produces replies — DSH, Codex, Antigravity CLI or an OpenAI-compatible API. Several characters can share one backend configuration.
-- **Isolation and pauses**: with `mode: isolated` nothing connects to QQ and no model runs. In `live` mode there are still separate gates — the global pause (switched on at every start), the character pause, the conversation pause and quiet hours. A character speaks only when all of them are open, and the console lists on each character card exactly why it cannot speak right now.
-
-## Going live
-
-Configure the character, its QQ account connection and its AI backend in isolated mode first. Then, in order:
-
-1. Restart with `--live` (`npm start -- --live`, or `scripts/robots.mjs` for background runs).
-2. Set the run mode to `live` in the console and save.
-3. Enable the QQ account connection, connect it manually and confirm it shows as connected.
-4. Fill in the character's group/private allowlists — only allowlisted conversations are received and answered.
-5. Lift the global pause.
-6. Lift the character's own pause.
-
-Every start begins globally paused. Once the setup works, `npm start -- --live --resume` (or `command: ["--live", "--resume"]` in Docker) connects the enabled QQ connections after a restart, checks the backends of unpaused characters and lifts only the global pause when everything is ready; character and conversation pauses stay as they are.
-
-If the character still stays silent, check the reasons on its card against the [troubleshooting guide](docs/TROUBLESHOOTING.md).
-
-## Choosing a launch method
-
-| Use                                                                            | Command                                                                                                                                          |
-| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Foreground trial or development                                                | `npm start`; add `-- --live` for real connections and `--resume` to lift the startup pause after readiness checks.                               |
-| Configured local background deployment, including registered macOS QQ profiles | `node scripts/robots.mjs start --data <data-directory>`; see [local operations](docs/LOCAL-OPERATIONS.md).                                       |
-| Console-managed upgrades                                                       | `npm run managed -- --data <data-directory>`; add `--live` for real connections and `--resume` when startup should restore global participation. |
-| Linux / Docker                                                                 | Follow the [Docker deployment guide](docs/DOCKER.md).                                                                                            |
-
-Only one process may use a data directory at a time. A `live` configuration requires the explicit `--live` startup flag; `robots.mjs` adds it according to the configuration. Its `restart` command waits for active turns and deliveries; `stop` cancels unfinished turns.
-
-## Third-party platforms
-
-Some features read content from third-party platforms: Bilibili, Zhihu, Xiaohongshu and Tieba through a local OpenCLI install, Heybox through a ported request signature (`vendor/heybox/`), plus the legacy `vendor/social-reader` module. New characters enable browsing and sharing (`apps.enabled`, `apps.sharing`) and select all supported platforms by default; existing explicit settings are preserved. The legacy `social_*` reader tools are not offered to models. Actual access still needs the required dependencies, logins and permissions. Make sure your use complies with each platform's terms of service; the account you log in with and how often it reads are your responsibility. This project is not affiliated with or endorsed by any of these platforms.
+For assisted installation, give a local coding assistant the installation guide and ask it to confirm character permissions and chat scope with you before going live. For an existing installation, use the update guide to preserve its data directory and logins. [AI installation](docs/AI-INSTALL.md) · [AI updates](docs/AI-UPDATE.md)
 
 ## Documentation
 
-The documentation is written in Chinese.
+- **Deploy and maintain** · [Windows](docs/WINDOWS.md) · [Docker](docs/DOCKER.md) · [Local operations](docs/LOCAL-OPERATIONS.md) · [Managed updates](docs/UPDATES.md) · [Migration and recovery](docs/MIGRATION.md) · [Troubleshooting](docs/TROUBLESHOOTING.md)
+- **Configure and extend** · [Permissions and defaults](docs/CONFIGURATION.md) · [Protected work](docs/PROTECTED-WORK.md) · [Feature matrix](docs/FEATURE-MATRIX.md) · [Backends and MCP tools](docs/EXTENDING.md)
+- **Project** · [Changelog](CHANGELOG.md) · [All guides](docs/) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
 
-- [Getting started: your first character in a group](docs/GETTING-STARTED.md)
-- [AI install runbook: let an assistant set it up](docs/AI-INSTALL.md)
-- [Deploying on Linux / Docker, with a NapCat container](docs/DOCKER.md)
-- [Running on Windows](docs/WINDOWS.md)
-- [Configuration and the data directory](docs/CONFIGURATION.md), including the OpenAI-compatible backend
-- [Troubleshooting by symptom](docs/TROUBLESHOOTING.md)
-- [Antigravity CLI setup and acceptance](docs/ANTIGRAVITY.md)
-- [AI update runbook](docs/AI-UPDATE.md) and [managed updates and recovery](docs/UPDATES.md)
-- [Chat continuity](docs/CHAT-CONTEXT.md) and [Self and session management](docs/SELF-CONTEXT.md)
-- [Projects, shared activities and works](docs/PROJECT-WORKSPACE.md)
-- [Files](docs/FILE-TRANSFER.md), [saved media](docs/SAVED-MEDIA.md) and [platform browsing](docs/APP-EXPLORATION-IMPLEMENTATION.md)
-- [Read-only GitHub access](docs/GITHUB-READ.md) and [protected work](docs/PROTECTED-WORK.md)
-- [Local operations with `scripts/robots.mjs`](docs/LOCAL-OPERATIONS.md)
-- [Features: scheduling, voice, images, external MCP](docs/FEATURES.md)
-- [Architecture and identity boundaries](docs/ARCHITECTURE.md)
-- [Extending: AI backends, bridge tools and external MCP](docs/EXTENDING.md)
-- [Migration, deployment and rollback](docs/MIGRATION.md)
-- [Security policy and vulnerability reports](SECURITY.md)
-- [Contributing](CONTRIBUTING.md) and the [code of conduct](CODE_OF_CONDUCT.md)
-- [Changelog](CHANGELOG.md)
-
-The [Chinese README](README.md) has the full index.
-
-## License and origins
-
-MIT. The upstream [LICENSE](LICENSE), the [original NOTICE](UPSTREAM-NOTICE.md) and this project's [attribution notes](NOTICE.md) are kept; versions and file digests are listed in [`docs/SOURCES.json`](docs/SOURCES.json).
-
-QQ Agents builds on the DSH client and discovery modules from [h-D-ACE/dsh-qq](https://github.com/h-D-ACE/dsh-qq), takes ideas from [Derpyu520/qq-bridge](https://github.com/Derpyu520/qq-bridge), and folds in the Codex RPC, cross-character chat limits and platform readers from an earlier local two-bot project. This repository does not ship the QQ, NapCat, DSH or Codex applications or the SnowLuma SDK; those programs are under their own licenses.
+The project code is MIT-licensed. It includes DSH client components from dsh-qq and draws on qq-bridge. Desktop character animations, fonts and third-party software have their own terms and credits. [License](LICENSE) · [Attribution](NOTICE.md) · [Upstream notice](UPSTREAM-NOTICE.md) · [Source inventory](docs/SOURCES.json)
