@@ -208,6 +208,10 @@ test("administrator and authorized subject turns share care and harvest with sta
           );
           return;
         }
+        assert.match(
+          tools.find((tool) => tool.name === "garden_act").description,
+          /收件人须与赠送者不同/,
+        );
         assert.match(prompt, /可以先用 garden_read/);
         const state = await callTool("garden_read", {});
         assert.equal(state.turnRemaining, 2);

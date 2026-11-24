@@ -172,12 +172,27 @@ test("management console opens the garden, edits its catalog and trades from the
   await page.getByText("收成完成", { exact: true }).waitFor();
   await page.getByRole("button", { name: "公共仓库", exact: true }).click();
   const lot = page.locator("[data-harvest]");
-  await lot.getByRole("button", { name: "赠送" }).click();
-  await page.getByText("赠礼完成", { exact: true }).waitFor();
+  const recipient = lot.getByLabel("送给");
+  const send = lot.getByRole("button", { name: "赠送" });
+  assert.equal(await recipient.inputValue(), "");
+  assert.equal(await send.isDisabled(), true);
+  assert.equal(
+    await recipient.getByRole("option", { name: "管理员" }).count(),
+    0,
+  );
+  await recipient.selectOption({ label: "角色0" });
+  assert.equal(await send.isEnabled(), true);
+  await recipient.selectOption("");
+  assert.equal(await send.isDisabled(), true);
+  await recipient.selectOption({ label: "角色0" });
+  await send.click();
+  await page
+    .getByText(`已将 1 份${longName}送给角色0。`, { exact: true })
+    .waitFor();
   await page.getByRole("button", { name: "花园记录", exact: true }).click();
   await page.locator("summary").filter({ hasText: "赠礼记录" }).click();
   await page
-    .getByText("管理员 送给 管理员 · " + longName, { exact: false })
+    .getByText("管理员 送给 角色0 · " + longName, { exact: false })
     .waitFor();
   const journal = page.locator("[data-journal-body]");
   await journal.getByRole("heading", { name: "花园年表" }).waitFor();

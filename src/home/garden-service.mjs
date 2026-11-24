@@ -813,6 +813,11 @@ export class GardenService {
       if (price !== action.price) throw Error("GARDEN_PRICE_CHANGED");
       this.changeBalance(now, actor, "sell", state, price);
     } else {
+      if (
+        action.recipient.kind === actor.kind &&
+        action.recipient.id === actor.id
+      )
+        throw Error("GARDEN_RECIPIENT_UNAVAILABLE");
       giftId = randomUUID();
       this.db
         .prepare("INSERT INTO garden_gifts VALUES(?,?,?,?,?,?,?,?)")
