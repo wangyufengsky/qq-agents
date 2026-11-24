@@ -179,6 +179,23 @@ test("shared care applies exact water increments, respects turn budgets, locks q
   assert.deepEqual(f.state().plots[1].plant, mature);
   const { harvestId, quality } = f.act({ kind: "harvest", ...care }, actor);
   assert.equal(quality, "perfect");
+  const before = f.state();
+  for (const giver of [admin, { ...actor, turnId: "gift-turn" }]) {
+    assert.throws(
+      () =>
+        f.act(
+          {
+            kind: "gift",
+            harvestId,
+            quantity: 1,
+            recipient: { kind: giver.kind, id: giver.id },
+          },
+          giver,
+        ),
+      /GARDEN_RECIPIENT_UNAVAILABLE/,
+    );
+  }
+  assert.deepEqual(f.state(), before);
   assert.ok(f.act({ kind: "gift", harvestId, quantity: 1, recipient }).giftId);
   assert.equal(f.state().balance, 950);
   assert.deepEqual(

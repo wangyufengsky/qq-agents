@@ -155,9 +155,6 @@ function gardenPriorityText({ plot, kind, hours, risk }) {
 }
 
 function gardenWarehouse(state, guideOpen) {
-  const recipients = state.roles
-    .map((r, index) => gardenOption(index, r.name))
-    .join("");
   const market = Object.entries(state.crops).filter(
     ([, crop]) => crop.enabled && crop.market,
   );
@@ -191,8 +188,8 @@ function gardenWarehouse(state, guideOpen) {
         <label>数量<input data-garden-sale-count type="number" required min="1" max="${item.quantity}" step="1" value="1"/></label>
         <p>总价 <output data-sale-total>${gardenMoney(Math.round(item.saleRate))}</output></p>
         ${gardenButton("sell", "出售")}
-        <label>送给<select data-garden-recipient>${recipients}</select></label>
-        ${gardenButton("gift", "赠送")}
+        ${selectRecipient(state)}
+        ${gardenButton("gift", "赠送", false, true)}
       </fieldset></article>`,
         )
         .join("") || '<p class="hint">还没有收成。</p>'
@@ -245,8 +242,9 @@ function gardenActionFrom(button, state) {
         price: Math.round(item.saleRate * quantity),
       };
     }
-    const { kind: targetKind, id } =
-      state.roles[Number(stock.querySelector("[data-garden-recipient]").value)];
+    const select = stock.querySelector('select[name="recipient"]');
+    if (!select.reportValidity()) return null;
+    const { kind: targetKind, id } = state.roles[select.value];
     return { kind, harvestId, quantity, recipient: { kind: targetKind, id } };
   }
   const shop = button.closest(".garden-shop");
@@ -628,6 +626,10 @@ export function gardenReceipt(state, action, receipt) {
   const result = receipt ?? {};
   const name = (kind, id) =>
     state.roles.find((role) => role.kind === kind && role.id === id)?.name;
+  if (action.kind === "gift") {
+    const crop = (state.settings?.crops ?? state.crops)?.[result.cropId];
+    return `已将 ${result.quantity} 份${crop?.name || result.cropId}送给${name(action.recipient.kind, action.recipient.id) || action.recipient.id}。`;
+  }
   if (action.kind === "buy_gift" || action.kind === "send_gift") {
     const item =
       result.name ||
@@ -861,6 +863,12 @@ export function bindGardenWorkspace(
     }
   });
   root.addEventListener("change", ({ target }) => {
+    if (target.matches('[data-harvest] select[name="recipient"]')) {
+      target
+        .closest("[data-harvest]")
+        .querySelector('[data-garden-act="gift"]').disabled = !target.value;
+      return;
+    }
     const form = target.form;
     if (form?.dataset.gardenForm !== "buy_gift") return;
     const sending = form.elements.delivery.value === "send";
