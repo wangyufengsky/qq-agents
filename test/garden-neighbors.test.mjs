@@ -2,13 +2,12 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { gardenPriorities } from "../src/home/garden-console.mjs";
-import { DAY, HOUR, defaultGardenSettings } from "../src/home/garden-rules.mjs";
+import { HOUR, defaultGardenSettings } from "../src/home/garden-rules.mjs";
 import { GardenService } from "../src/home/garden-service.mjs";
 import { MemoryStore } from "../src/memory/store.mjs";
 import { fixedWeather } from "./garden-fixtures.mjs";
 
 const administrator = { kind: "admin", id: "administrator" };
-const lease = 100 * DAY;
 
 function fixture(t, customize = () => {}) {
   const store = new MemoryStore(":memory:");
@@ -20,7 +19,7 @@ function fixture(t, customize = () => {}) {
   settings.events.rate = 0;
   customize(settings);
   garden.initialize(now, settings);
-  garden.desktopSync(now, lease);
+  garden.syncClock(now, true);
   const action = (value) =>
     garden.act(now, administrator, { requestId: randomUUID(), action: value });
   return {
@@ -30,13 +29,13 @@ function fixture(t, customize = () => {}) {
     },
     read: () => garden.read(now),
     restart: () => {
-      garden.desktopStop(now);
+      garden.syncClock(now, false);
       garden = new GardenService(store);
-      garden.desktopSync(now, lease);
+      garden.syncClock(now, true);
     },
     advance(hours) {
       now += hours * HOUR;
-      garden.desktopSync(now, lease);
+      garden.syncClock(now, true);
     },
     configure(careMode, scope) {
       const { settings, settingsRevision } = garden.requireState();
@@ -156,7 +155,7 @@ test("a full garden settles a mature orthogonal pair on the clock and awards exa
   assert.equal(f.read().nightScene.stars, "sparse");
   f.restart();
   f.advance(50);
-  // The heartbeat has settled all three possible nights before any read.
+  // The runtime tick has settled all three possible nights before any read.
   assert.equal(f.garden.requireState().seeds.mistbell, 1);
   assert.equal(f.read().mistbellDiscovered, true);
   const facts = f.store.db

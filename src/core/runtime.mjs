@@ -12,6 +12,7 @@ import {
 } from "../home/desktop-decision.mjs";
 import { DESKTOP_VISIT_TOOL } from "../home/desktop-visits.mjs";
 import { DESKTOP_INVITATION_TOOL } from "../home/desktop-invitations.mjs";
+import { gardenPauseReason } from "../home/garden-console.mjs";
 import { gardenDelegationScope } from "../home/garden-delegations.mjs";
 import { gardenPublicScope, gardenToolNames } from "../tools/garden.mjs";
 import { HOME_TOOLS } from "../home/policy.mjs";
@@ -200,6 +201,7 @@ export class Runtime {
       this.contexts.upgradeInstructions(a, self);
     }
     this.home = new HomeService(this);
+    this.syncGardenClock();
     this.homeSocialSources = {
       assertSend: assertSocialSend,
       trackSource: trackSocial,
@@ -270,8 +272,21 @@ export class Runtime {
     }, 1000);
     this.ticker.unref?.();
   }
+  syncGardenClock() {
+    try {
+      this.home.garden.syncClock(
+        this.now(),
+        !this.closed && !gardenPauseReason(this),
+      );
+    } catch (error) {
+      // A failed checkpoint is retried on the next tick, even while paused.
+      // Keep the scheduler and pause controls available in the meantime.
+      this.diagnostics.report(error, { component: "runtime" });
+    }
+  }
   tick() {
     if (this.closed) return;
+    this.syncGardenClock();
     this.messageTiming?.sweep();
     try {
       this.games.tick();
@@ -1769,6 +1784,7 @@ export class Runtime {
       this.abortContext(ctx, "service-stop");
     this.capabilities.clear();
     this.pending.clear();
+    await cleanup(() => this.home.garden.syncClock(this.now(), false));
     // Pending handshakes cannot carry a delivery, and must settle before HTTP drains.
     for (const id of this.connecting)
       await cleanup(() => this.transports.get(id)?.close());

@@ -38,7 +38,7 @@ test("normal chat and desktop can read only the public projection while locked s
   const list = (conversation) => runtime.toolsFor(role, conversation);
   assert.ok(!list("group:20000").includes("garden_read"));
   f.open();
-  f.garden.desktopSync(runtime.now(), 15_000);
+
   f.garden.act(runtime.now(), admin, fakePlot);
   const group = context(runtime),
     priv = context(runtime, "agent-0", "private:30000");
@@ -110,7 +110,7 @@ test("an authorized subject can care for plants with other material in the turn"
   const settings = defaultGardenSettings();
   settings.roles[ctx.agentId] = runtime.home.generation(ctx.agentId);
   garden.initialize(runtime.now(), settings);
-  garden.desktopSync(runtime.now(), 15_000);
+
   ctx.privateRead.add("context:private:30000");
   ctx.privateRead.add("context:group:20000");
   const call = (kind, args) =>
@@ -315,7 +315,6 @@ test("read-only plant snapshots keep identity, strip actors, and preserve origin
   rules.crops.clover.hours = 0.5;
   rules.events.rate = 0;
   garden.initialize(now, rules);
-  garden.desktopSync(now, 10 * HOUR);
   garden.act(now, admin, fakePlot);
   garden.act(now, admin, {
     requestId: "garden-second-plot",
@@ -403,7 +402,7 @@ test("read-only plant snapshots keep identity, strip actors, and preserve origin
   assert.equal(archived.status, "harvested");
   assert.match(archived.text, /已收成/);
   assert.ok(archived.quality);
-  garden.desktopStop(now);
+  garden.syncClock(now, false);
   assert.match((await read({ view: "plant", plantId })).text, /花园时钟已停/);
   const wrongScope = context(runtime, "agent-0", "private:30000");
   await assert.rejects(
@@ -523,7 +522,7 @@ test("a text-only backend retains the card media and cannot resend an unconfirme
   };
   const { runtime, garden, open } = setup(t, cfg);
   open();
-  garden.desktopSync(runtime.now(), HOUR);
+
   garden.act(runtime.now(), admin, fakePlot);
   const ctx = context(runtime);
   const card = await gardenTool(
@@ -561,7 +560,7 @@ test("a subject can acknowledge only its own observed digest without swallowing 
   cfg.agents[1].subject.enabled = true;
   const { runtime, garden, open } = setup(t, cfg);
   open();
-  garden.desktopSync(runtime.now(), HOUR);
+
   garden.act(runtime.now(), admin, fakePlot);
   const subject = (role) => {
     const ctx = context(runtime, role, "@subject");
@@ -633,7 +632,6 @@ test("public and single-plant reads leave pending garden rewards and turn budget
     settings.crops[cropId].dailyWater = 0;
   }
   garden.initialize(now, settings);
-  garden.desktopSync(now, 170 * HOUR);
   for (const [plot, cropId] of [
     [1, "moonflower"],
     [2, "catnip"],
@@ -680,7 +678,7 @@ test("public and single-plant reads leave pending garden rewards and turn budget
   assert.equal(garden.turnUsed(ctx.agentId, ctx.turnId), 0);
 
   // The regular clock can still settle the pending pair and its reward.
-  garden.desktopSync(now, 170 * HOUR);
+  garden.syncClock(now, true);
   assert.equal(garden.requireState().seeds.mistbell, 1);
 });
 
@@ -692,7 +690,6 @@ test("sunflower milestones align between the timeline, whole garden, individual 
   const settings = defaultGardenSettings();
   settings.crops.sunflower.hours = 10;
   garden.initialize(now, settings);
-  garden.desktopSync(now, 24 * HOUR);
   const { plantId } = garden.act(now, admin, {
     requestId: randomUUID(),
     action: { kind: "plant", plot: 1, cropId: "sunflower", buyPrice: 60 },
@@ -705,7 +702,7 @@ test("sunflower milestones align between the timeline, whole garden, individual 
     [10, "开花", "mature", "mature", "plant-sunflower-mature.webp"],
   ]) {
     now = start + hours * HOUR;
-    garden.desktopSync(now, 24 * HOUR);
+    garden.syncClock(now, true);
     const whole = await runtime.callTool(ctx, "garden_read", {
       view: "public",
     });

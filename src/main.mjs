@@ -113,6 +113,7 @@ try {
   }));
   runtime.initializeRuntime();
   runtime.updateMaintenance = args.includes("--upgrade-hold");
+  runtime.syncGardenClock();
   runtime.media = new MediaStore(path.join(root, "media"));
   runtime.framework = new FrameworkKnowledge();
   runtime.updates = new ReleaseUpdates({

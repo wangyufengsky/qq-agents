@@ -238,7 +238,7 @@ export function adminGardenView(runtime, collectVisitor = false) {
     (!state.settings.enabled
       ? "GARDEN_DISABLED"
       : !state.running
-        ? "DESKTOP_NOT_CONNECTED"
+        ? "GARDEN_PAUSED"
         : null);
   const { roles: _grants, giftBudgetGenerations, ...settings } = state.settings;
   settings.giftBudgets = {

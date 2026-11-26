@@ -41,7 +41,6 @@ export const gardenLabels = {
   ISOLATED_MODE: "框架处于隔离模式",
   UPDATE_IN_PROGRESS: "框架正在维护",
   GARDEN_DISABLED: "花园已暂停",
-  DESKTOP_NOT_CONNECTED: "等待桌面小窝连接",
   GARDEN_PAUSED: "花园时钟已暂停",
   GARDEN_SETTINGS_CONFLICT: "设置已被更新。请先刷新，再核对你的修改。",
   GARDEN_PRICE_CHANGED: "价格已变化，请刷新后重试。",

@@ -139,9 +139,7 @@ test("actual Chromium produces a shareable nine-tile PNG and renders the desktop
   );
   assert.deepEqual(pageErrors, []);
 
-  garden.desktopSync(now, 10 * DAY);
   now += DAY + HOUR;
-  garden.desktopSync(now, 10 * DAY);
   const renewed = await callDesktop("client", { action: "sync", data: false });
   await page.evaluate((room) => window.pushGardenRoom(room), {
     live: true,
@@ -214,9 +212,7 @@ test("actual Chromium produces a shareable nine-tile PNG and renders the desktop
     { giftId: "catnip-candy", stock: 2 },
   ];
   garden.configure(now, garden.requireState().settingsRevision, rules);
-  garden.desktopSync(now, 10 * DAY);
   now += DAY;
-  garden.desktopSync(now, 10 * DAY);
   const next = await callDesktop("client", { action: "sync", data: false });
   await page.evaluate(
     (epoch) =>

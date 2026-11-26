@@ -23,7 +23,7 @@ function setup(t, edit = () => {}, file = ":memory:") {
   edit(settings);
   let now = 1;
   garden.initialize(now, settings);
-  garden.desktopSync(now, 15_000);
+  garden.syncClock(now, true);
   return {
     db,
     store,
@@ -33,10 +33,7 @@ function setup(t, edit = () => {}, file = ":memory:") {
     },
     wait(ms) {
       now += ms;
-      // Keep wall-time leases out of tests for garden-time settlement.
-      garden.clock.elapsed += ms;
-      garden.clock.observe(now, 15_000);
-      garden.checkpoint(now);
+      garden.syncClock(now, true);
     },
     now: () => now,
   };
@@ -244,6 +241,7 @@ test("saved snapshots stay coherent across an unsettled day and do not change st
     history.entries.find(({ type }) => type === "mature").clock,
     24 * HOUR,
   );
+  garden.syncClock(now(), false);
   const frozen = garden.observe(now() + 15_000);
   assert.equal(frozen.running, false);
   assert.equal(frozen.clock, saved.clock);
