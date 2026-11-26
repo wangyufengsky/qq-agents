@@ -60,7 +60,6 @@ function setup(t, run = async () => {}, { opened = true } = {}) {
       delegationHours: 1,
       ...updates,
     });
-    garden.desktopSync(now, 10 * HOUR);
   };
   if (opened) start();
   const act = (action) =>
@@ -224,7 +223,7 @@ test("existing inbox defers a garden wake while busy, asleep or paused and expir
     if (p.conversation !== owner || delegation) return;
     delegation = await request(p.callTool, f.latest());
   });
-  f.garden.desktopStop(f.runtime.now());
+  f.refresh({ enabled: false });
   await f.receive();
   if (!delegation) await f.wake();
   const ref = { delegationId: delegation.id };
@@ -232,7 +231,8 @@ test("existing inbox defers a garden wake while busy, asleep or paused and expir
   assert.equal(f.dispatch(), false);
   f.advance(72 * HOUR);
   assert.equal((await f.ownerTool("delegate_status", ref)).status, "queued");
-  f.garden.desktopSync(f.runtime.now(), 10 * HOUR);
+
+  f.refresh({ enabled: true });
   f.runtime.config.globalPaused = true;
   assert.equal(f.dispatch(), false);
   f.runtime.config.globalPaused = false;

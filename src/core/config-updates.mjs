@@ -82,6 +82,7 @@ export async function commitConfig(runtime, next, revision) {
     }
   };
   try {
+    runtime.syncGardenClock();
     if (impact.drainAgentIds.size) {
       const contexts = new Set(
         [...runtime.capabilities.values(), ...runtime.running.values()].filter(
@@ -292,5 +293,6 @@ export async function commitConfig(runtime, next, revision) {
     runtime.configChanging = false;
     runtime.configChangesGroupAdmissionOnly = false;
     settle();
+    runtime.syncGardenClock();
   }
 }

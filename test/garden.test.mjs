@@ -25,18 +25,15 @@ function setup(t, update = () => {}) {
   update(settings);
   let now = 1000;
   garden.initialize(now, settings);
-  garden.desktopSync(now, LEASE);
+  garden.syncClock(now, true);
   return {
     garden,
     state: () => garden.read(now),
     act: (action, by = admin, requestId = randomUUID()) =>
       garden.act(now, by, { requestId, action }),
     wait: (ms) => {
-      const target = now + ms;
-      while (now < target) {
-        now = Math.min(now + 10_000, target);
-        garden.desktopSync(now, LEASE);
-      }
+      now += ms;
+      garden.syncClock(now, true);
     },
     configure: (edit) => {
       const state = garden.read(now);
@@ -70,13 +67,13 @@ test("an existing memory database opens without initializing a garden and backup
     assert.equal(defaults.balance, 1000);
     assert.equal(Object.keys(defaults.settings.crops).length, 8);
     assert.equal(defaults.ledger.length, 1);
-    garden.desktopSync(0, LEASE);
+    garden.syncClock(0, true);
     garden.act(0, admin, {
       requestId: "test-backup-plant",
       action: { kind: "plant", plot: 8, cropId: "clover" },
     });
-    garden.desktopSync(4000, LEASE);
-    garden.desktopStop(5000);
+    garden.syncClock(4000, true);
+    garden.syncClock(5000, false);
     assert.equal((await backupDatabase(file, copy)).integrity, "ok");
   } finally {
     store.close();
@@ -269,7 +266,7 @@ test("new settings apply prospectively, while price changes reject stale trades"
   );
 });
 
-test("an open garden accrues only confirmed uptime, changes speed prospectively and freezes while disabled", (t) => {
+test("an open garden accrues only service uptime, changes speed prospectively and freezes while disabled", (t) => {
   const f = setup(t);
   f.wait(2 * HOUR);
   assert.equal(f.state().clock, 2 * HOUR);
@@ -294,16 +291,16 @@ test("an open garden accrues only confirmed uptime, changes speed prospectively 
   f.configure((s) => {
     s.enabled = true;
   });
-  f.wait(18 * HOUR + 10_000);
+  f.wait(18 * HOUR);
   assert.equal(f.state().clock, DAY);
   assert.equal(f.state().day, 2);
   assert.equal(f.state().dayRemaining, DAY);
 });
 
-test("accepted desktop sync, global pause and disconnect control the runtime garden clock", async (t) => {
+test("the live garden grows before desktop connection, after disconnect and beyond the client lease", async (t) => {
   const cfg = config(2);
   cfg.desktopHome.enabled = true;
-  let now = 100_000;
+  let now = Date.UTC(2026, 0, 1);
   const { runtime } = fixture(t, { cfg });
   runtime.clock = () => now;
   const { garden } = runtime.home;
@@ -317,33 +314,59 @@ test("accepted desktop sync, global pause and disconnect control the runtime gar
     });
   const elapsed = () => garden.read(now).clock;
   now += HOUR;
-  assert.equal(elapsed(), 0);
+  runtime.tick();
+  assert.equal(garden.requireState().clock, HOUR);
+  assert.equal(elapsed(), HOUR);
   desktop();
   now += 2000;
+  desktop("disconnect");
+  now += HOUR;
+  assert.equal(elapsed(), 2 * HOUR + 2000);
   desktop();
-  assert.equal(elapsed(), 2000);
+  now += LEASE + HOUR;
+  runtime.desktopVisits.refresh();
+  assert.equal(runtime.desktopVisits.connected(), false);
+  const afterExpiry = 3 * HOUR + 2000 + LEASE;
+  assert.equal(elapsed(), afterExpiry);
   await runtime.pause("agent-0", true);
-  now += 2000;
-  desktop();
-  assert.equal(elapsed(), 4000);
+  now += HOUR;
+  const beforePause = afterExpiry + HOUR;
   await runtime.pause("all", true);
   now += HOUR;
-  desktop();
-  assert.equal(elapsed(), 4000);
+  assert.equal(elapsed(), beforePause);
   await runtime.pause("all", false);
-  desktop();
-  now += 1000;
-  desktop("disconnect");
-  assert.equal(elapsed(), 5000);
+  await runtime.setMode("isolated");
   now += HOUR;
-  desktop();
-  now += LEASE + 1000;
-  desktop();
-  assert.equal(elapsed(), 5000);
+  assert.equal(elapsed(), beforePause);
+  await runtime.setMode("live", runtime.configStore.revision);
+  runtime.maintenance.begin();
+  now += HOUR;
+  assert.equal(elapsed(), beforePause);
+  runtime.updateMaintenance = false;
+  runtime.maintenance.clear();
   now += 500;
-  desktop();
   await runtime.close();
-  assert.equal(elapsed(), 5500);
+  now += HOUR;
+  assert.equal(elapsed(), beforePause + 500);
+});
+
+test("a failed garden checkpoint leaves global pause available and retries the frozen progress", async (t) => {
+  const { runtime } = fixture(t);
+  let now = Date.UTC(2026, 0, 1);
+  runtime.clock = () => now;
+  const { garden } = runtime.home;
+  garden.initialize(now);
+  garden.db.exec(
+    "CREATE TRIGGER reject_clock BEFORE UPDATE OF clock ON garden_state BEGIN SELECT RAISE(ABORT, 'fixture'); END",
+  );
+  now += 20_000;
+  await runtime.pause("all", true);
+  assert.equal(garden.requireState().clock, 0);
+  assert.equal(garden.read(now).running, false);
+  garden.db.exec("DROP TRIGGER reject_clock");
+  now += HOUR;
+  runtime.tick();
+  assert.equal(garden.requireState().clock, 20_000);
 });
 
 test("an interrupted framework reopens at the last durable clock checkpoint", (t) => {
@@ -353,17 +376,17 @@ test("an interrupted framework reopens at the last durable clock checkpoint", (t
   try {
     let garden = new GardenService(store);
     garden.initialize(0);
-    garden.desktopSync(0, LEASE);
-    garden.desktopSync(10_000, LEASE);
-    garden.desktopSync(20_000, LEASE);
-    garden.desktopSync(22_000, LEASE);
+    garden.syncClock(0, true);
+    garden.syncClock(10_000, true);
+    garden.syncClock(20_000, true);
+    garden.syncClock(22_000, true);
     assert.equal(garden.read(22_000).clock, 22_000);
     store.close();
     store = new MemoryStore(file);
     garden = new GardenService(store);
     assert.equal(garden.read(DAY).clock, 20_000);
-    garden.desktopSync(DAY, LEASE);
-    garden.desktopSync(DAY + 5000, LEASE);
+    garden.syncClock(DAY, true);
+    garden.syncClock(DAY + 5000, true);
     assert.equal(garden.read(DAY + 5000).clock, 25_000);
   } finally {
     store.close();
@@ -400,7 +423,7 @@ test("competing sales and gifts settle once and a failed receipt rolls back the 
   assert.equal(f.state().gifts.length, 0);
 });
 
-test("switching speed between heartbeats accounts for the prefix at the old speed", (t) => {
+test("switching speed between runtime ticks accounts for the prefix at the old speed", (t) => {
   const f = setup(t);
   const state = f.state();
   state.settings.speed = 4;
@@ -410,55 +433,40 @@ test("switching speed between heartbeats accounts for the prefix at the old spee
     state.settings,
   );
   assert.equal(updated.clock, 4000);
-  f.garden.desktopSync(6000, LEASE);
+  f.garden.syncClock(6000, true);
   assert.equal(f.garden.read(6000).clock, 8000);
 });
 
-test("a plant created between desktop heartbeats starts at its action time", (t) => {
+test("a plant created between runtime ticks starts at its action time", (t) => {
   const { garden } = setup(t);
   garden.act(5000, admin, {
-    requestId: "between-heartbeats",
+    requestId: "between-ticks",
     action: { kind: "plant", plot: 1, cropId: "clover" },
   });
   assert.equal(garden.read(5000).clock, 4000);
   assert.equal(garden.read(5000).plots[0].plant.growth, 0);
-  garden.desktopSync(6000, LEASE);
+  garden.syncClock(6000, true);
   assert.equal(garden.read(6000).plots[0].plant.growth, 1000 / HOUR);
 });
 
-test("garden actions and configuration cannot renew an expired desktop lease", (t) => {
+test("a runtime pause freezes all projections and retries resume at the configured speed", (t) => {
   const { garden } = setup(t);
-  garden.act(14_000, admin, {
-    requestId: "lease-first-plot",
-    action: { kind: "plant", plot: 1, cropId: "clover" },
-  });
-  const settings = garden.read(14_000).settings;
-  settings.speed = 4;
-  garden.configure(15_000, 0, settings);
-  assert.throws(
-    () =>
-      garden.act(16_000, admin, {
-        requestId: "lease-second-plot",
-        action: { kind: "plant", plot: 2, cropId: "clover" },
-      }),
-    /GARDEN_PAUSED/,
-  );
-  assert.equal(garden.read(16_000).clock, 14_000);
-  garden.desktopSync(20_000, LEASE);
-  assert.equal(garden.read(20_000).clock, 14_000);
-  garden.desktopSync(21_000, LEASE);
-  assert.equal(garden.read(21_000).clock, 18_000);
-});
-
-test("public and operator snapshots agree between heartbeats and retain observed progress on expiry", (t) => {
-  const { garden } = setup(t, (settings) => {
-    settings.speed = 16;
-  });
-  const adminView = garden.read(5000, admin);
-  assert.equal(adminView.clock, 64000);
-  assert.equal(garden.snapshot(5000).clock, adminView.clock);
-  const frozen = garden.snapshot(1000 + LEASE);
+  const state = garden.read(15_000, admin);
+  assert.equal(state.clock, 14_000);
+  garden.syncClock(16_000, false);
+  const frozen = garden.snapshot(20_000);
   assert.equal(frozen.running, false);
-  assert.ok(frozen.clock >= adminView.clock);
-  assert.equal(garden.read(1000 + 2 * LEASE, admin).clock, frozen.clock);
+  assert.equal(frozen.clock, 15_000);
+  const action = {
+    requestId: "paused-plant",
+    action: { kind: "plant", plot: 1, cropId: "clover" },
+  };
+  assert.throws(() => garden.act(21_000, admin, action), /GARDEN_PAUSED/);
+  state.settings.speed = 4;
+  garden.configure(22_000, state.settingsRevision, state.settings);
+  assert.equal(garden.read(25_000, admin).clock, frozen.clock);
+  garden.syncClock(30_000, true);
+  garden.act(31_000, admin, action);
+  assert.equal(garden.snapshot(32_000).clock, frozen.clock + 8_000);
+  assert.equal(garden.read(32_000, admin).clock, garden.snapshot(32_000).clock);
 });

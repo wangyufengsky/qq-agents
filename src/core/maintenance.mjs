@@ -40,6 +40,7 @@ export class MaintenanceDrain {
         .map((/** @type {any} */ c) => c.id),
     };
     r.updateMaintenance = true;
+    r.syncGardenClock();
     r.autoResume.cancel("cancelled");
     for (const ctx of this.contexts) {
       if (!ctx.done) continue;
@@ -80,5 +81,6 @@ export class MaintenanceDrain {
     this.pending = new Set();
     this.deadline = 0;
     this.checkpoint = null;
+    this.runtime.syncGardenClock();
   }
 }

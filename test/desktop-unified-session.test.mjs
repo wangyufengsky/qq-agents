@@ -449,7 +449,7 @@ test("the current garden role can manage the garden from an attended desktop tur
     const settings = defaultGardenSettings();
     settings.roles[agent.id] = runtime.home.generation(agent.id);
     garden.initialize(runtime.now(), settings);
-    garden.desktopSync(runtime.now(), 15000);
+
     const view = await runtime.callTool(ctx, "garden_read", {});
     assert.equal(view.turnRemaining, settings.turnLimit);
     await runtime.callTool(ctx, "garden_act", {

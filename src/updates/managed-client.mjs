@@ -71,6 +71,7 @@ export function attachManagedUpdates({ runtime, lifecycle, installed, port }) {
         const drained =
           message.action === "stop" ? await runtime.maintenance.wait() : null;
         runtime.updateMaintenance = true;
+        runtime.syncGardenClock();
         while (runtime.configChanging) await runtime.configSettled;
         const checkpoint = drained || {
           globalPaused: runtime.config.globalPaused,

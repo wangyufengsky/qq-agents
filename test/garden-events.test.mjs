@@ -18,7 +18,6 @@ import { drawGardenEvent, eventOdds } from "../src/home/garden-event-rules.mjs";
 import { fixedWeather } from "./garden-fixtures.mjs";
 import { config, context, fixture, raw, settle } from "./helpers.mjs";
 
-const lease = 100 * DAY;
 const admin = { kind: "admin", id: "administrator" };
 const actor = { kind: "agent", id: "agent-0", turnId: "turn-01" };
 
@@ -38,7 +37,7 @@ function setup(t, settings) {
   const garden = new GardenService(store);
   let now = 0;
   garden.initialize(now, settings);
-  garden.desktopSync(now, lease);
+  garden.syncClock(now, true);
   return {
     garden,
     store,
@@ -48,7 +47,7 @@ function setup(t, settings) {
     claim: (by = admin) => garden.read(now, by),
     advance: (ms) => {
       now += ms;
-      garden.desktopSync(now, lease);
+      garden.syncClock(now, true);
     },
     configure: (fn) => {
       const state = garden.requireState();
@@ -255,13 +254,13 @@ test("recipient sees authoritative gift evidence in a subject turn and can cite 
   r.clock = () => now;
   const garden = r.home.garden;
   garden.initialize(now, rules("merchant", { harvests: ["clover"] }));
-  garden.desktopSync(now, lease);
+  garden.syncClock(now, true);
   const { plantId } = performGardenAction(r, admin, {
     requestId: randomUUID(),
     action: { kind: "plant", plot: 1, cropId: "clover" },
   });
   now += HOUR;
-  garden.desktopSync(now, lease);
+  garden.syncClock(now, true);
   const { harvestId } = performGardenAction(r, admin, {
     requestId: randomUUID(),
     action: { kind: "harvest", plot: 1, plantId },
@@ -357,7 +356,7 @@ for (const speed of [1, 4]) {
     settings.roles = { [agentId]: r.home.generation(agentId) };
     settings.startingWater = 10;
     garden.initialize(now, settings);
-    garden.desktopSync(now, lease);
+    garden.syncClock(now, true);
     performGardenAction(r, admin, {
       requestId: randomUUID(),
       action: { kind: "shelter", plot: 1 },
@@ -367,7 +366,7 @@ for (const speed of [1, 4]) {
       action: { kind: "plant", plot: 2, cropId: "clover" },
     });
     now += (22 * HOUR) / speed;
-    garden.desktopSync(now, lease);
+    garden.syncClock(now, true);
     await r.ingest(
       "qq-0",
       raw(1, {
@@ -380,7 +379,7 @@ for (const speed of [1, 4]) {
     if (!request) await r.wake(agentId, "private:30000");
     assert.equal(request.status, "queued");
     const event = garden.read(now).event;
-    garden.desktopStop(now);
+    garden.syncClock(now, false);
     now += DAY;
     const frozen = adminGardenView(r);
     assert.equal(frozen.dayRemaining, 2 * HOUR);
@@ -405,9 +404,9 @@ for (const speed of [1, 4]) {
         .get(request.id);
     assert.equal(saved().status, "queued");
     assert.equal(saved().expires_clock, 26 * HOUR);
-    reopened.desktopSync(now, lease);
+    reopened.syncClock(now, true);
     now += (2 * HOUR) / speed;
-    reopened.desktopSync(now, lease);
+    reopened.syncClock(now, true);
     const next = reopened.read(now);
     assert.equal(next.day, 2);
     assert.equal(reopened.calendar.events.get(1).status, "missed");
@@ -420,10 +419,10 @@ for (const speed of [1, 4]) {
       /GARDEN_EVENT_EXPIRED/,
     );
     now += (2 * HOUR) / speed;
-    reopened.desktopSync(now, lease);
+    reopened.syncClock(now, true);
     assert.equal(reopened.read(now).clock, saved().expires_clock);
-    garden.desktopSync(now - (4 * HOUR) / speed, lease);
-    garden.desktopSync(now, lease);
+    garden.syncClock(now - (4 * HOUR) / speed, true);
+    garden.syncClock(now, true);
     const status = await r.callTool(
       context(r, agentId, "private:30000"),
       "garden_act",
@@ -739,7 +738,7 @@ test("public views do not create firefly evidence; one private observation is re
   const settings = rules("firefly-concert");
   settings.roles[roleId] = runtime.home.generation(roleId);
   garden.initialize(now, settings);
-  garden.desktopSync(now, lease);
+  garden.syncClock(now, true);
   assert.equal(
     (await runtime.wake(roleId, "@subject")).status,
     "completed-no-send",
@@ -801,8 +800,8 @@ test("backup retains unopened bag order, frozen crop rules and one reproducible 
   const settings = rules("mystery-seed-bag");
   const boughtAt = 5 * DAY;
   garden.initialize(0, settings);
-  garden.desktopSync(0, lease);
-  garden.desktopSync(boughtAt, lease);
+  garden.syncClock(0, true);
+  garden.syncClock(boughtAt, true);
   const buy = {
     kind: "buy_mystery_seed",
     eventId: garden.read(boughtAt).event.id,
@@ -816,7 +815,7 @@ test("backup retains unopened bag order, frozen crop rules and one reproducible 
   const restored = new MemoryStore(copy);
   t.after(() => restored.close());
   const reopened = new GardenService(restored);
-  reopened.desktopSync(boughtAt, lease);
+  reopened.syncClock(boughtAt, true);
   assert.equal(reopened.act(boughtAt, admin, receipt).replayed, true);
   const open = (g, plot) =>
     g.act(boughtAt, admin, {
@@ -955,7 +954,7 @@ test("restart retains day-start blessing, a claimed sketch, and the frozen forec
   const requestId = randomUUID();
   sketch.act(action, admin, requestId);
   const sketchReopened = new GardenService(sketch.store);
-  sketchReopened.desktopSync(0, lease);
+  sketchReopened.syncClock(0, true);
   assert.equal(
     sketchReopened.act(0, admin, { action, requestId }).replayed,
     true,
@@ -975,8 +974,8 @@ test("restart retains day-start blessing, a claimed sketch, and the frozen forec
     cfg.weather.entries.sun.demand = 10;
   });
   const flipReopened = new GardenService(flip.store);
-  flipReopened.desktopSync(11 * HOUR, lease);
-  flipReopened.desktopSync(12 * HOUR, lease);
+  flipReopened.syncClock(11 * HOUR, true);
+  flipReopened.syncClock(12 * HOUR, true);
   const after = flipReopened.read(12 * HOUR);
   assert.deepEqual(after.weather, oldSun);
   assert.equal(after.weatherForecast.kind, "storm");

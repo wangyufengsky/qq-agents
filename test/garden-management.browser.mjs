@@ -75,14 +75,7 @@ test("management console opens the garden, edits its catalog and trades from the
     .locator("#garden-page")
     .evaluate((view) => view.scrollWidth > view.clientWidth);
   assert.equal(scrolls, false);
-  await page.getByText("等待桌面小窝连接", { exact: false }).waitFor();
   const { garden } = runtime.home;
-  runtime.desktopVisits.command({
-    client: randomUUID(),
-    action: "sync",
-    data: false,
-  });
-  await page.getByRole("button", { name: "刷新花园" }).click();
   const firstPlot = page.locator('[data-plot="1"]');
   await page.waitForFunction(
     () =>
@@ -160,11 +153,7 @@ test("management console opens the garden, edits its catalog and trades from the
   await page.locator("#garden-page").evaluate((view) => {
     view.style.zoom = "";
   });
-  const end = now + HOUR / 4;
-  while (now < end) {
-    now = Math.min(now + 10_000, end);
-    garden.desktopSync(now, 15_000);
-  }
+  now += HOUR / 4;
   await page.getByRole("button", { name: "刷新花园" }).click();
   await page.getByRole("button", { name: /第 2 块 · 可收成/ }).click();
   assert.equal(await detail.getAttribute("data-garden-detail"), "2");
@@ -364,9 +353,7 @@ test("daily event form saves conditional variants, previews no event, and drives
   await trial.getByLabel("模拟日初余额").fill("301");
   await trial.getByRole("button", { name: "计算事件概率" }).click();
   await trial.getByText(/小偷踩点.*100%.*入池/).waitFor();
-  garden.desktopSync(now, 72 * HOUR);
   now += 24 * HOUR;
-  garden.desktopSync(now, 72 * HOUR);
   await page.getByRole("button", { name: "刷新花园" }).click();
   await page.getByRole("button", { name: "今日事件", exact: true }).click();
   await page.getByRole("button", { name: "驱赶小偷", exact: true }).click();

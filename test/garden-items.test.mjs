@@ -66,7 +66,7 @@ function fixture(t, options = {}) {
     { giftId: "pressed-bookmark", stock: 2 },
   ];
   garden.initialize(now, settings);
-  garden.desktopSync(now, DAY * 10);
+  garden.syncClock(now, true);
   const view = () => adminGardenView(runtime);
   return {
     runtime,
@@ -92,7 +92,7 @@ function fixture(t, options = {}) {
       performGardenAction(runtime, actor, { action, requestId }),
     advance: (delta) => {
       now += delta;
-      garden.desktopSync(now, DAY * 10);
+      garden.syncClock(now, true);
     },
   };
 }
@@ -467,7 +467,7 @@ test("a normal subject turn discovers the market and gift actions while room vis
   settings.giftBudgets = { total: 60, roles: { [cat.id]: 30 } };
   settings.giftBudgetGenerations[cat.id] = settings.roles[cat.id];
   garden.initialize(runtime.now(), settings);
-  garden.desktopSync(runtime.now(), 60_000);
+
   const event = garden.read(runtime.now()).event;
   const fish = performGardenAction(runtime, admin, {
     requestId: "admin-fish-for-subject",

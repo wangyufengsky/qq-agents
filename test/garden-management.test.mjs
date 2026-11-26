@@ -11,7 +11,7 @@ const gardenBase = "/api/home-garden";
 
 async function setup(t, run) {
   const cfg = config(2);
-  cfg.desktopHome.enabled = true;
+  cfg.desktopHome.enabled = false;
   for (const role of cfg.agents) role.subject.enabled = true;
   const { runtime } = fixture(t, { cfg, run });
   const { garden } = runtime.home;
@@ -46,20 +46,11 @@ async function setup(t, run) {
       expectedRevision: state.settingsRevision,
     });
   };
-  const startDesktop = () =>
-    runtime.desktopVisits.command({
-      client: randomUUID(),
-      action: "sync",
-      data: false,
-    });
   const advance = (milliseconds) => {
-    const end = now + milliseconds;
-    while (now < end) {
-      now = Math.min(now + 10_000, end);
-      garden.desktopSync(now, 15_000);
-    }
+    now += milliseconds;
+    runtime.syncGardenClock();
   };
-  return { runtime, http, act, modify, startDesktop, advance };
+  return { runtime, http, act, modify, advance };
 }
 
 test("administrator API initializes explicitly, hot-edits revisions and honors crop history and price changes", async (t) => {
@@ -90,11 +81,7 @@ test("administrator API initializes explicitly, hot-edits revisions and honors c
     (await f.http("/initialize", { initialBalance: 1000 })).body.balance,
     0,
   );
-  assert.equal(
-    (await f.act({ kind: "plant", plot: 1, cropId: "clover" })).body.error,
-    "GARDEN_PAUSED",
-  );
-  f.startDesktop();
+  assert.equal(first.pauseReason, null);
   assert.equal(
     (await f.act({ kind: "plant", plot: 1, cropId: "clover" })).status,
     200,
@@ -212,6 +199,10 @@ test("administrator and authorized subject turns share care and harvest with sta
           tools.find((tool) => tool.name === "garden_act").description,
           /收件人须与赠送者不同/,
         );
+        assert.match(
+          tools.find((tool) => tool.name === "garden_act").description,
+          /桌面小窝关闭时/,
+        );
         assert.match(prompt, /可以先用 garden_read/);
         const state = await callTool("garden_read", {});
         assert.equal(state.turnRemaining, 2);
@@ -273,7 +264,6 @@ test("administrator and authorized subject turns share care and harvest with sta
   await f.runtime.wake("agent-0", "@subject");
   assert.equal(runs.length, 1);
   await runs[0];
-  f.startDesktop();
   const configured = await f.modify((settings, grants) => {
     settings.speed = 4;
     settings.careMode = "classic";
@@ -324,7 +314,6 @@ test("administrator and authorized subject turns share care and harvest with sta
 test("a successful administrator action can be retried while the garden is paused", async (t) => {
   const f = await setup(t);
   await f.http("/initialize", { initialBalance: 1000 });
-  f.startDesktop();
   const action = { kind: "plant", cropId: "clover", plot: 1 };
   const first = await f.act(action, "plant-before-pause");
   assert.equal(first.status, 200);

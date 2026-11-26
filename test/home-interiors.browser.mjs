@@ -77,7 +77,7 @@ try {
     { giftId: "origami-dragon", stock: 2 },
   ];
   garden.initialize(f.runtime.now(), settings);
-  garden.desktopSync(f.runtime.now(), 60_000);
+
   const { id: eventId } = garden.read(f.runtime.now()).event;
   for (const [slot, giftId, price, note, publishNote] of [
     [1, "dried-fish", 12, "请别公开这张纸条", false],

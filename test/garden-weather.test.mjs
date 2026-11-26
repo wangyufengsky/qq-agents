@@ -17,7 +17,6 @@ import { fixedWeather } from "./garden-fixtures.mjs";
 import { temp } from "./helpers.mjs";
 
 const admin = { kind: "admin", id: "administrator" };
-const lease = 100 * DAY;
 
 function fixture(t, kind = "cloud", edit = () => {}, file = ":memory:") {
   const store = new MemoryStore(file);
@@ -34,7 +33,7 @@ function use(store, kind = "cloud", edit = () => {}) {
   edit(rules);
   let now = 0;
   garden.initialize(now, rules);
-  garden.desktopSync(now, lease);
+  garden.syncClock(now, true);
   const act = (action, actor = admin, requestId = randomUUID()) =>
     garden.act(now, actor, { requestId, action });
   return {
@@ -52,7 +51,7 @@ function use(store, kind = "cloud", edit = () => {}) {
     read: () => garden.read(now),
     advance: (ms) => {
       now += ms;
-      garden.desktopSync(now, lease);
+      garden.syncClock(now, true);
     },
     skipWall: (ms) => (now += ms),
     configure: (fn) => {
@@ -325,7 +324,7 @@ test("trial validates references, reports real odds and is read-only even when t
     ];
   });
   f.advance(4 * HOUR);
-  f.garden.desktopStop(f.now());
+  f.garden.syncClock(f.now(), false);
   const before = f.read();
   const rows = f.rows();
   const trial = (value) =>

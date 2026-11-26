@@ -941,7 +941,6 @@ export class DesktopHost {
 
   reset() {
     this.suspendedResidents = undefined;
-    this.runtime.home?.garden?.desktopStop(this.runtime.now());
     this.modeRevision++;
     this.personal.clear();
     this.statusCards.cards.clear();
@@ -1072,7 +1071,6 @@ export class DesktopHost {
     let ownerEventIds;
     let refreshActivity = false;
     if (action === "sync") {
-      this.runtime.home?.garden?.desktopSync(this.runtime.now(), CLIENT_LEASE);
       const visible = typeof data === "boolean" ? data : data?.visible;
       const wasVisible = this.client.activityVisibleUntil > this.runtime.now();
       this.client.activityVisibleUntil =

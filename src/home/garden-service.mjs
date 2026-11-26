@@ -119,6 +119,7 @@ export class GardenService {
         this.journal.initialize(state, true);
       });
     this.clock = new GardenClock(state?.clock ?? 0, state?.settings.speed ?? 1);
+    this.runtimeActive = false;
     this.savedClock = this.clock.elapsed;
     this.enabled = state?.settings.enabled ?? false;
   }
@@ -178,6 +179,7 @@ export class GardenService {
     const state = this.requireState();
     this.enabled = state.settings.enabled;
     this.clock.speed = state.settings.speed;
+    this.clock.setRunning(now, this.runtimeActive && this.enabled);
     return this.read(now);
   }
 
@@ -214,19 +216,17 @@ export class GardenService {
     return current;
   }
 
-  /** @param {number} now @param {number} lease */
-  desktopSync(now, lease) {
-    if (!this.enabled) return;
-    this.clock.observe(now, lease);
-    // Use existing heartbeats, coalescing durable checkpoints during normal use.
-    if (this.clock.elapsed - this.savedClock >= 15_000 * this.clock.speed)
+  /** @param {number} now @param {boolean} active */
+  syncClock(now, active) {
+    this.runtimeActive = active;
+    const running = active && this.enabled;
+    this.clock.setRunning(now, running);
+    // Bound crash loss during normal operation and flush the final partial interval on pause.
+    if (
+      !running ||
+      this.clock.elapsed - this.savedClock >= 15_000 * this.clock.speed
+    )
       this.checkpoint(now);
-  }
-
-  /** @param {number} now */
-  desktopStop(now) {
-    this.clock.stop(now);
-    this.checkpoint(now);
   }
 
   /** @param {number} now */
@@ -291,8 +291,7 @@ export class GardenService {
         );
       return next;
     });
-    this.clock.advance(now);
-    if (!settings.enabled) this.clock.stop(now);
+    this.clock.setRunning(now, this.runtimeActive && settings.enabled);
     this.savedClock = this.clock.elapsed;
     this.enabled = settings.enabled;
     this.clock.speed = settings.speed;
@@ -306,7 +305,6 @@ export class GardenService {
       const changes = this.db.prepare("SELECT total_changes() AS count");
       const before = changes.get()?.count;
       const storedClock = state.clock;
-      // Retain observed progress without extending the desktop lease.
       if (live) this.clock.advance(now);
       const elapsed = Math.max(state.clock, this.clock.elapsed);
       const current = this.calendar.advance(state, elapsed, now);
