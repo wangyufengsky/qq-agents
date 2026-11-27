@@ -118,6 +118,10 @@ export async function runDesktopTurn(host, request, sourceSignal) {
       agent,
       visit,
     );
+    if (backend.readContextBudget) {
+      ctx.desktopInputImageCount = attachments?.images?.length;
+      await runtime.contexts.loadContextBudget(ctx, backend);
+    }
     exchange = beginDesktopContext(
       runtime,
       ctx,

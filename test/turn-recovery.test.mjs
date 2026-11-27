@@ -1164,3 +1164,166 @@ test("the attempt interface returns a rejected promise to stale tool callers", a
   });
   assert.equal(called, 1);
 });
+
+test("DSH archives a native context limit with its exact safe code and never retries", async (t) => {
+  const f = fixture(t, { cfg: config(1) });
+  const client = dshClient({
+    reasons: [
+      {
+        kind: "error",
+        error: {
+          code: "CONTEXT_WINDOW_EXCEEDED",
+          message: "private upstream detail",
+        },
+      },
+    ],
+  });
+  f.runtime.backendFactory = (b, a) =>
+    new DshBackend({ ...b, preset: "qq-unified" }, a, { root: f.root, client });
+  await f.runtime.wake("agent-0", chat);
+  const m = f.store.bind("agent-0");
+  const archived = m.identity.list("session_history")[0];
+  assert.deepEqual(archived.details.backendFailure, {
+    backend: "dsh",
+    code: "CONTEXT_WINDOW_EXCEEDED",
+    category: "context-limit",
+    sessionReusable: false,
+  });
+  assert.equal(client.prompts.length, 1);
+  assert.equal(m.state(chat).session, null);
+  assert.equal(
+    f.runtime.diagnostics.snapshot()[0].code,
+    "DSH_CONTEXT_WINDOW_EXCEEDED",
+  );
+});
+
+test("DSH preflights a legacy session using its native output reservation before sending the next opening", async (t) => {
+  const cfg = config(1);
+  cfg.agents[0].contextPolicy.capacityTokens = 1048576;
+  const f = fixture(t, { cfg });
+  const client = dshClient({ reasons: Array(3).fill({ kind: "completed" }) });
+  let projectedTokens = 10000;
+  client.callUnary = async (name) => {
+    if (name === "session/projections")
+      return ok({
+        values: {
+          contextTimeline: { maxOutputTokens: 256000 },
+          contextPressure: { contextWindow: 1048576, projectedTokens },
+        },
+      });
+    return ok({});
+  };
+  f.runtime.backendFactory = (b, a) =>
+    new DshBackend({ ...b, preset: "qq-unified" }, a, { root: f.root, client });
+  await f.runtime.wake("agent-0", chat);
+  await f.runtime.wake("agent-0", chat);
+  assert.equal(client.creates, 1);
+  projectedTokens = 778535;
+  await f.runtime.wake("agent-0", chat);
+  assert.equal(client.creates, 2);
+  assert.equal(client.prompts.length, 3);
+  const m = f.store.bind("agent-0");
+  assert.ok(
+    m.identity
+      .list("session_history")
+      .some((x) => x.reason === "capacity-guard"),
+  );
+  assert.equal(
+    m.identity.get("model_turns", m.state(chat).lastTurnId).initialSession,
+    true,
+  );
+});
+
+test("DSH recovers a legacy budget from paged native headers without the optional timeline", async (t) => {
+  const cfg = config(1);
+  cfg.agents[0].contextPolicy.capacityTokens = 1048576;
+  const f = fixture(t, { cfg }),
+    client = dshClient({
+      reasons: [{ kind: "completed" }, { kind: "completed" }],
+    });
+  const cursors = [];
+  client.callUnary = async (name, args) => {
+    if (name === "session/projections")
+      return ok({
+        values: {
+          contextPressure: { contextWindow: 1048576, projectedTokens: 705000 },
+        },
+      });
+    if (name === "session/page") {
+      cursors.push(args.beforeSeq);
+      return args.beforeSeq === undefined
+        ? ok({
+            hasMore: true,
+            records: [{ event: { seq: 12, type: "turn/end" } }],
+          })
+        : ok({
+            hasMore: false,
+            records: [
+              {
+                event: {
+                  seq: 2,
+                  type: "request/header",
+                  data: { header: { config: { maxTokens: 270000 } } },
+                },
+              },
+            ],
+          });
+    }
+    return ok({});
+  };
+  f.runtime.backendFactory = (b, a) =>
+    new DshBackend({ ...b, preset: "qq-unified" }, a, { root: f.root, client });
+  await f.runtime.wake("agent-0", chat);
+  await f.runtime.wake("agent-0", chat);
+  assert.deepEqual(cursors, [undefined, 12]);
+  assert.equal(client.creates, 2);
+  assert.equal(
+    f.store.bind("agent-0").identity.list("session_history")[0].reason,
+    "capacity-guard",
+  );
+});
+
+test("new opening text can cross the DSH hard guard while existing history is below it", async (t) => {
+  const cfg = config(1);
+  cfg.agents[0].contextPolicy.capacityTokens = 1048576;
+  const f = fixture(t, { cfg }),
+    client = dshClient({
+      reasons: [
+        { kind: "completed" },
+        { kind: "completed" },
+        { kind: "completed" },
+      ],
+    });
+  let pressure = 10000;
+  client.callUnary = async (name) =>
+    name === "session/projections"
+      ? ok({
+          values: {
+            contextPressure: {
+              contextWindow: 1048576,
+              projectedTokens: pressure,
+            },
+            contextTimeline: { maxOutputTokens: 256000 },
+          },
+        })
+      : ok({});
+  f.runtime.backendFactory = (b, a) =>
+    new DshBackend({ ...b, preset: "qq-unified" }, a, { root: f.root, client });
+  await f.runtime.wake("agent-0", chat);
+  await f.runtime.wake("agent-0", chat);
+  const m = f.store.bind("agent-0");
+  const openingSize = client.prompts[1].content[0].text.length;
+  const policy = cfg.agents[0].contextPolicy;
+  pressure = Math.ceil(
+    (1048576 - 256000) * policy.hardRatio -
+      policy.reserveTokens -
+      openingSize / 2,
+  );
+  assert.ok(
+    pressure + policy.reserveTokens < (1048576 - 256000) * policy.hardRatio,
+  );
+  await f.runtime.wake("agent-0", chat);
+  assert.equal(client.creates, 2);
+  assert.equal(client.prompts.length, 3);
+  assert.equal(m.identity.list("session_history")[0].reason, "capacity-guard");
+});
