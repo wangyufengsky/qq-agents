@@ -1,4 +1,5 @@
 // @ts-check
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
   defaultEvents,
@@ -6,7 +7,11 @@ import {
   validEventReferences,
 } from "./garden-event-rules.mjs";
 import { giftBudgetLimits } from "./garden-items.mjs";
-import { defaultWeather, weatherPool } from "./garden-weather.mjs";
+import {
+  defaultWeather,
+  gardenCropId,
+  weatherPool,
+} from "./garden-weather.mjs";
 
 export const HOUR = 3_600_000;
 export const DAY = 24 * HOUR;
@@ -14,7 +19,7 @@ export const PLOT_COUNT = 9;
 
 const count = z.number().int().min(0).max(1_000_000);
 const water = z.number().min(0).max(100);
-export const cropId = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/);
+export const cropId = gardenCropId;
 const lightRate = z.number().min(0).max(4);
 export const lightDefaults = {
   sun: { high: 1.25, medium: 1, low: 0.75 },
@@ -38,6 +43,7 @@ const cropSchema = z.strictObject({
     })
     .optional(),
   rainSensitive: z.boolean().optional(),
+  maxHarvests: count.min(1).max(100).optional(),
   fertilizer: count.max(20),
   salePrice: count,
   yield: count.min(1).max(100),
@@ -108,6 +114,145 @@ const initialCrops = /** @type {const} */ ([
 
 export const CATNIP = "catnip";
 export const MISTBELL = "mistbell";
+export const SUNBERRY = "sunberry";
+export const FOUR_LEAF_CLOVER = "four_leaf_clover";
+export const CHAMOMILE = "chamomile";
+const hydrangea = "hydrangea";
+
+const expandedCrops = /** @type {const} */ ([
+  [
+    hydrangea,
+    "蓝雨绣球",
+    "露天细雨滋养花朵，花色随生长期的天气变化。",
+    true,
+    75,
+    60,
+    35,
+    "shade",
+    1,
+    225,
+  ],
+  [
+    "tomato",
+    "小灯笼番茄",
+    "前两次收获后会继续结果，一株可收三茬。",
+    true,
+    80,
+    48,
+    32,
+    "sun",
+    1,
+    120,
+  ],
+  [
+    "succulent",
+    "玻璃糖多肉",
+    "十分耐旱，细雨天适合放在遮雨棚下。",
+    true,
+    55,
+    72,
+    8,
+    "sun",
+    0,
+    160,
+  ],
+  [
+    CHAMOMILE,
+    "晚风洋甘菊",
+    "成熟后留在地里，能替上下左右的邻株挡蚜虫、减轻晴天耗水。",
+    true,
+    70,
+    48,
+    22,
+    "neutral",
+    1,
+    185,
+  ],
+  [
+    SUNBERRY,
+    "蜜糖太阳莓",
+    "果实像是把阳光酿进了蜜糖。",
+    false,
+    0,
+    72,
+    30,
+    "sun",
+    2,
+    420,
+  ],
+  [
+    FOUR_LEAF_CLOVER,
+    "四叶幸运草",
+    "格外少见的四叶草收成。",
+    false,
+    0,
+    24,
+    15,
+    "neutral",
+    0,
+    260,
+  ],
+]);
+
+/** @param {string} id @param {Crop} crop */
+export function gardenCropTraits(id, crop) {
+  return [
+    { sun: "喜阳", neutral: "光照适应性中等", shade: "喜阴" }[crop.light],
+    ...((crop.rainSensitive ?? id === "strawberry") ? ["怕细雨"] : []),
+    ...((crop.maxHarvests ?? 1) > 1 ? [`多茬采收(${crop.maxHarvests}次)`] : []),
+    ...(id === hydrangea ? ["雨晴变色", "细雨滋养"] : []),
+    ...(id === CHAMOMILE ? ["邻株护卫"] : []),
+    ...(id === "succulent" ? ["耐旱"] : []),
+  ];
+}
+
+/** @param {number} a @param {number} b */
+export function adjacentPlots(a, b) {
+  return (
+    Math.abs(Math.floor((a - 1) / 3) - Math.floor((b - 1) / 3)) +
+      Math.abs(((a - 1) % 3) - ((b - 1) % 3)) ===
+    1
+  );
+}
+
+/** @param {{plots:import("./garden-service.mjs").Plot[]}} state @param {number} plot */
+export function neighborBuffs(state, plot) {
+  return state.plots.some(
+    ({ id, plant }) =>
+      adjacentPlots(id, plot) &&
+      plant?.cropId === CHAMOMILE &&
+      plant.status === "mature",
+  )
+    ? ["洋甘菊护卫"]
+    : [];
+}
+
+export const gardenVariants = /** @type {const} */ ({
+  rain_blue: "雨蓝绣球",
+  sun_pink: "晴粉绣球",
+  mist_lilac: "雾紫绣球",
+});
+
+/** @param {Plant} plant */
+export function gardenVariantDetail(plant) {
+  return plant.variant
+    ? { variant: plant.variant, variantName: gardenVariants[plant.variant] }
+    : {};
+}
+
+/** @param {Plant} plant @param {string} seed */
+export function harvestCropId(plant, seed) {
+  if (
+    plant.cropId !== "clover" ||
+    !(plant.quality === "perfect" || plant.blessed)
+  )
+    return plant.cropId;
+  const roll = createHash("sha256")
+    .update(JSON.stringify([seed, plant.id, FOUR_LEAF_CLOVER]))
+    .digest()
+    .readUInt32BE();
+  return roll < 0x100000000 / 5 ? FOUR_LEAF_CLOVER : plant.cropId;
+}
 
 /** @type {Record<string, Crop>} */
 const neighborCrops = {
@@ -142,10 +287,40 @@ const neighborCrops = {
 };
 
 /** @param {Settings["crops"]} crops */
-export function withNeighborCrops(crops) {
+export function withExpandedCrops(crops) {
   const result = { ...crops };
   for (const [id, crop] of Object.entries(neighborCrops)) {
     if (!Object.hasOwn(result, id)) result[id] = { ...crop };
+  }
+  for (const [
+    id,
+    name,
+    description,
+    market,
+    seedPrice,
+    hours,
+    dailyWater,
+    light,
+    fertilizer,
+    salePrice,
+  ] of expandedCrops) {
+    if (Object.hasOwn(result, id)) continue;
+    result[id] = {
+      name,
+      description,
+      enabled: true,
+      market,
+      seedPrice,
+      hours,
+      dailyWater,
+      light,
+      fertilizer,
+      salePrice,
+      yield: 1,
+      floodDays: 2,
+      ...(id === "tomato" && { maxHarvests: 3 }),
+      ...(id === "succulent" && { rainSensitive: true }),
+    };
   }
   return result;
 }
@@ -168,7 +343,7 @@ export function defaultGardenSettings() {
     perfectQuality: 95,
     fineMultiplier: 1.25,
     perfectMultiplier: 1.5,
-    crops: withNeighborCrops(
+    crops: withExpandedCrops(
       Object.fromEntries(
         initialCrops.map(
           ([
@@ -229,7 +404,9 @@ export function gardenPlantRules(settings) {
 /** @typedef {"ordinary" | "fine" | "perfect"} Quality */
 /**
  * @typedef {{id: string, cropId: string, actorId: string, plantedAt: number, sownClock?: number,
- * settledAt: number, maturedAt?: number, water: number, growth: number, dry: number, low: number,
+ * settledAt: number, maturedAt?: number, harvestCount?: number, blessed?: boolean,
+ * variant?: keyof typeof gardenVariants, variantName?: string, rainHours?: number, sunHours?: number, weatherHours?: number,
+ * drizzleBonusDay?: number, water: number, growth: number, dry: number, low: number,
  * floodDays?: number, floodLoss?: number, qualityAdjustment?: number, earthwormDay?: number, witheredReason?: "drought" | "flood", fertilizer: number, status: "growing" | "mature" | "withered", quality: Quality | null,
  * crop: Crop, rules: Omit<ReturnType<typeof gardenPlantRules>, "careMode"> & {careMode?: Settings["careMode"]}}} Plant
  */
@@ -275,15 +452,46 @@ export function qualityOf(plant) {
       : "ordinary";
 }
 
+/** @param {Plant} plant @param {number} clock */
+function maturePlant(plant, clock) {
+  plant.status = "mature";
+  plant.maturedAt = clock;
+  plant.quality = qualityOf(plant);
+  if (plant.cropId !== hydrangea) return;
+  const rain = plant.rainHours ?? 0;
+  const sun = plant.sunHours ?? 0;
+  const total = plant.weatherHours ?? rain + sun;
+  plant.variant =
+    total > 0 && rain / total >= 0.55
+      ? "rain_blue"
+      : total > 0 && sun / total >= 0.55
+        ? "sun_pink"
+        : "mist_lilac";
+  plant.variantName = gardenVariants[plant.variant];
+}
+
+/** @param {Plant} plant @param {WeatherEntry} weather @param {boolean} sheltered @param {number} clock @param {number} hours */
+function trackHydrangeaWeather(plant, weather, sheltered, clock, hours) {
+  if (plant.cropId !== hydrangea || hours <= 0) return;
+  const rain =
+    !sheltered && (weather.kind === "drizzle" || weather.kind === "storm");
+  const day = Math.floor(clock / DAY) + 1;
+  plant.weatherHours =
+    (plant.weatherHours ?? (plant.rainHours ?? 0) + (plant.sunHours ?? 0)) +
+    hours;
+  if (rain) plant.rainHours = (plant.rainHours ?? 0) + hours;
+  if (weather.kind === "sun") plant.sunHours = (plant.sunHours ?? 0) + hours;
+  if (rain && weather.kind === "drizzle" && plant.drizzleBonusDay !== day) {
+    adjustPlantQuality(plant, 5);
+    plant.drizzleBonusDay = day;
+  }
+}
+
 /** @param {Plant} plant @param {number} hours */
 export function grantGrowth(plant, hours) {
   const before = plant.growth;
   plant.growth = Math.min(plant.crop.hours, before + hours);
-  if (plant.growth === plant.crop.hours) {
-    plant.status = "mature";
-    plant.maturedAt = plant.settledAt;
-    plant.quality = qualityOf(plant);
-  }
+  if (plant.growth === plant.crop.hours) maturePlant(plant, plant.settledAt);
   return plant.growth - before;
 }
 
@@ -295,15 +503,14 @@ const shelteredLight = /** @type {const} */ ({
   low: "low",
 });
 
-/** @param {Plant} plant @param {WeatherEntry} weather @param {boolean} sheltered */
-export function moistureRate(plant, weather, sheltered) {
-  return (
-    ((sheltered ? 0 : weather.rain) - plant.crop.dailyWater * weather.demand) /
-    24
-  );
+/** @param {Plant} plant @param {WeatherEntry} weather @param {boolean} sheltered @param {boolean} [guarded] */
+export function moistureRate(plant, weather, sheltered, guarded = false) {
+  const demand =
+    guarded && weather.kind === "sun" ? weather.demand * 0.85 : weather.demand;
+  return ((sheltered ? 0 : weather.rain) - plant.crop.dailyWater * demand) / 24;
 }
 
-/** @param {Plant} original @param {number} elapsed @param {WeatherEntry} [weather] @param {boolean} [sheltered] @param {number} [growthMultiplier] @param {(before:number,after:number,clock:number,clockPerGrowth:number)=>void} [onGrowth] */
+/** @param {Plant} original @param {number} elapsed @param {WeatherEntry} [weather] @param {boolean} [sheltered] @param {number} [growthMultiplier] @param {(before:number,after:number,clock:number,clockPerGrowth:number,plant:Plant)=>void} [onGrowth] @param {boolean} [guarded] */
 export function projectPlant(
   original,
   elapsed,
@@ -311,6 +518,7 @@ export function projectPlant(
   sheltered = false,
   growthMultiplier = 1,
   onGrowth,
+  guarded = false,
 ) {
   if (original.status !== "growing" || elapsed < original.settledAt)
     return original;
@@ -320,7 +528,7 @@ export function projectPlant(
     plant.water = 100;
     plant.dry = 0;
   }
-  const rate = flooded ? 0 : moistureRate(plant, weather, sheltered);
+  const rate = flooded ? 0 : moistureRate(plant, weather, sheltered, guarded);
   const light = sheltered ? shelteredLight[weather.light] : weather.light;
   const lightGrowth =
     plant.crop.lightRates?.[light] ?? lightDefaults[plant.crop.light][light];
@@ -328,7 +536,9 @@ export function projectPlant(
   const gentle = plant.rules.careMode === "gentle";
   const outdoorGrowth = flooded && gentle ? 0 : weather.outdoorGrowth;
   const weatherGrowth =
-    lightGrowth * (sheltered ? 1 : outdoorGrowth) * growthMultiplier;
+    lightGrowth *
+    (sheltered ? 1 : outdoorGrowth) *
+    (guarded ? (1 + growthMultiplier) / 2 : growthMultiplier);
   let remaining = (elapsed - plant.settledAt) / HOUR;
   // Exact threshold crossings keep incremental actions and lazy reads equivalent.
   while (remaining > 0 && plant.status === "growing") {
@@ -348,6 +558,8 @@ export function projectPlant(
     const untilWithered = watered || gentle ? Infinity : dryHours - plant.dry;
     const time = Math.min(remaining, untilBoundary, untilMature, untilWithered);
     const before = plant.growth;
+    const clock = elapsed - remaining * HOUR;
+    trackHydrangeaWeather(plant, weather, sheltered, clock, time);
     plant.growth += time * growthRate;
     if (!wet && !gentle) plant.low += time;
     plant.dry = watered ? 0 : plant.dry + time;
@@ -355,23 +567,16 @@ export function projectPlant(
       time === untilBoundary
         ? boundary
         : Math.min(100, Math.max(0, plant.water + rate * time));
-    if (growthRate && time > 0)
-      onGrowth?.(
-        before,
-        time === untilMature ? plant.crop.hours : plant.growth,
-        elapsed - remaining * HOUR,
-        HOUR / growthRate,
-      );
     remaining -= time;
     if (time === untilMature) {
       plant.growth = plant.crop.hours;
-      plant.status = "mature";
-      plant.maturedAt = elapsed - remaining * HOUR;
-      plant.quality = qualityOf(plant);
+      maturePlant(plant, elapsed - remaining * HOUR);
     } else if (time === untilWithered) {
       plant.status = "withered";
       plant.witheredReason = "drought";
     }
+    if (growthRate && time > 0)
+      onGrowth?.(before, plant.growth, clock, HOUR / growthRate, plant);
   }
   plant.settledAt = elapsed - remaining * HOUR;
   return plant;
@@ -385,6 +590,7 @@ export function closePlantDay(plant, weather, sheltered) {
   const drizzle =
     !sheltered &&
     weather.kind === "drizzle" &&
+    plant.cropId !== hydrangea &&
     (plant.crop.rainSensitive ?? plant.cropId === "strawberry");
   const floodDays = storm ? (plant.floodDays ?? 0) + 1 : 0;
   const floodLoss =

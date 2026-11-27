@@ -4,6 +4,7 @@ import { z } from "zod";
 import {
   compare,
   drawPool,
+  gardenCropId,
   matches,
   poolEntryId,
   poolOdds,
@@ -14,7 +15,7 @@ import {
 const quantity = z.number().int().min(1).max(100);
 const coins = z.number().int().min(0).max(1000);
 const crops = z
-  .array(poolEntryId)
+  .array(gardenCropId)
   .max(20)
   .refine((ids) => new Set(ids).size === ids.length);
 const effect = z.discriminatedUnion("kind", [
@@ -52,14 +53,14 @@ const effect = z.discriminatedUnion("kind", [
     reward: coins,
     coinLoss: coins,
     cropLoss: quantity.max(5),
-    targetCropId: poolEntryId.optional(),
+    targetCropId: gardenCropId.optional(),
   }),
   z.strictObject({
     kind: z.literal("visitor"),
     reward: z.discriminatedUnion("kind", [
       z.strictObject({
         kind: z.literal("seed"),
-        cropId: poolEntryId,
+        cropId: gardenCropId,
         quantity,
       }),
       z.strictObject({ kind: z.literal("fertilizer"), quantity }),

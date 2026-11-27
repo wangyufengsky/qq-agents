@@ -61,6 +61,20 @@ test("management console opens the garden, edits its catalog and trades from the
       ),
     3,
   );
+  const board = page.locator('[data-garden-note="garden"]').locator("..");
+  await board.locator("summary").click();
+  const boardInput = board.getByLabel("园艺小黑板");
+  await boardInput.fill("🌱".repeat(121));
+  await board.getByRole("button", { name: "保存留言" }).click();
+  await page.getByText("留言最多 120 字。", { exact: true }).waitFor();
+  const noteText = "傍晚再来看 <蝴蝶>" + "🌱".repeat(110);
+  assert.equal([...noteText].length, 120);
+  await boardInput.fill(noteText);
+  await board.getByRole("button", { name: "保存留言" }).click();
+  await page
+    .locator(".garden-note-text")
+    .filter({ hasText: noteText })
+    .waitFor();
   const map = await page.locator(".garden-grid").boundingBox();
   const rail = await page.locator(".garden-rail").boundingBox();
   assert.ok(rail.x >= map.x + map.width);
@@ -69,6 +83,20 @@ test("management console opens the garden, edits its catalog and trades from the
     await page.locator(".garden-inspector").getAttribute("data-garden-detail"),
     "4",
   );
+  const noteContents = page.locator(".garden-note-text");
+  const plotNote = page.locator('[data-garden-note="4"]').locator("..");
+  await plotNote.locator("summary").click();
+  await plotNote.getByLabel("地块便签").fill("这块地留作观察");
+  await plotNote.getByRole("button", { name: "保存留言" }).click();
+  await noteContents.filter({ hasText: "这块地留作观察" }).waitFor();
+  await page.locator('[data-plot="1"]').click();
+  assert.equal(await page.getByText("这块地留作观察").count(), 0);
+  await page.locator('[data-plot="4"]').click();
+  await noteContents.filter({ hasText: "这块地留作观察" }).waitFor();
+  await plotNote.locator("summary").click();
+  await plotNote.getByRole("button", { name: "清除留言" }).click();
+  await page.getByText("留言已清除。", { exact: true }).waitFor();
+  assert.equal(await page.getByText("这块地留作观察").count(), 0);
   await page.locator('[data-plot="1"]').click();
   await page.setViewportSize({ width: 375, height: 812 });
   const scrolls = await page
@@ -123,10 +151,15 @@ test("management console opens the garden, edits its catalog and trades from the
   await newCrop
     .getByLabel("基础成熟时长（花园小时）", { exact: true })
     .fill("1");
+  const hydrangea = settings.locator('[data-crop="hydrangea"]');
+  await hydrangea.locator("summary").click();
+  await hydrangea.getByLabel("种子单价").fill("0");
+  await hydrangea.getByLabel("基础成熟时长（花园小时）").fill("1");
   await settings.getByLabel("角色0", { exact: true }).check();
   await settings.getByRole("button", { name: "保存花园设置" }).click();
   await page.getByText("设置已保存").waitFor();
   assert.equal(garden.read(now).settings.speed, 4);
+  assert.equal(garden.read(now).settings.crops.tomato.maxHarvests, 3);
   assert.deepEqual(garden.read(now).settings.crops["test-clover"].lightRates, {
     high: 1.2,
   });
@@ -229,6 +262,22 @@ test("management console opens the garden, edits its catalog and trades from the
     await firstPlot.getByText("野生三叶草", { exact: true }).count(),
     1,
   );
+  await page.getByRole("button", { name: "花圃", exact: true }).click();
+  await secondPlot.click();
+  await detail.getByLabel("第 2 块的作物").selectOption("hydrangea");
+  await detail.getByRole("button", { name: "播种" }).click();
+  await secondPlot.getByText("蓝雨绣球", { exact: true }).waitFor();
+  now += (2 * HOUR) / 4;
+  await page.getByRole("button", { name: "刷新花园" }).click();
+  await secondPlot.getByText("雾紫绣球", { exact: true }).waitFor();
+  await secondPlot.getByText("开花", { exact: true }).waitFor();
+  assert.equal(await secondPlot.locator(".garden-art-plant").count(), 0);
+  await detail.getByRole("button", { name: "看这株 · 生长手帐" }).click();
+  await journal.getByText(/雾紫绣球/).waitFor();
+  await journal.getByRole("button", { name: "查看单株花卡" }).click();
+  const variantCard = journal.locator("canvas[role=img]");
+  await variantCard.waitFor({ timeout: 30000 });
+  assert.match(await variantCard.getAttribute("aria-label"), /雾紫绣球/);
   assert.deepEqual(jsErrors, []);
 });
 test("weather form copies a variant, saves conditional weights, and previews exclusions and fallback", async (t) => {

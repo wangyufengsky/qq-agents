@@ -119,6 +119,7 @@ export class GardenEvents {
           const before = plant.water;
           plant.water = Math.min(100, before + water);
           if (water > 0 && plant.water > 0) plant.dry = 0;
+          if (effect === "meteor" || effect === "dew") plant.blessed = true;
           const previousGrowth = plant.growth;
           const qualityChange = adjustPlantQuality(plant, quality);
           const growthChange = grantGrowth(plant, growth);

@@ -4,6 +4,8 @@ import {
   careScope,
   defaultGardenSettings,
   HOUR,
+  gardenCropTraits,
+  neighborBuffs,
   moistureRate,
 } from "./garden-rules.mjs";
 import {
@@ -17,6 +19,7 @@ import { giftBudgetLimits } from "./garden-items.mjs";
 import { floodRisk } from "./garden-risks.mjs";
 
 /** @typedef {ReturnType<import("./garden-service.mjs").GardenService["read"]>} GardenState */
+const hiddenCrops = ["mistbell", "sunberry", "four_leaf_clover"];
 const instanceAdmin = {
   kind: /** @type {const} */ ("admin"),
   id: "administrator",
@@ -39,11 +42,18 @@ function dryEstimate(remaining, lossRate) {
 /** @param {GardenState} state */
 export function gardenPriorities(state) {
   return state.plots
-    .flatMap(({ id: plot, plant, sheltered }) => {
+    .flatMap(({ id: plot, plant, sheltered, note }) => {
       if (!plant) return [];
       if (plant.status === "mature")
         return [
-          { plot, plantId: plant.id, kind: "harvest", priority: 3, hours: 0 },
+          {
+            plot,
+            plantId: plant.id,
+            kind: "harvest",
+            priority: 3,
+            hours: 0,
+            ...(note && { hasNote: true }),
+          },
         ];
       if (plant.status === "withered")
         return [
@@ -220,6 +230,20 @@ export function performGardenAction(runtime, actor, value) {
     (recipient, gift) => recordGardenGift(runtime, actor, recipient, gift),
     { owner, recipient: (person) => giftPerson(runtime, person) },
     (transfer) => recordGardenItemGift(runtime, transfer),
+    actor.kind === "agent"
+      ? (surprise) =>
+          recordGardenObservation(
+            runtime,
+            actor.id,
+            {
+              kind: surprise.kind,
+              title: surprise.title,
+              body: surprise.detail,
+              key: `surprise:${surprise.factId}`,
+            },
+            runtime.now(),
+          ).evidenceId
+      : undefined,
   );
 }
 
@@ -265,6 +289,13 @@ export function adminGardenView(runtime, collectVisitor = false) {
   return {
     initialized: true,
     ...state,
+    plots: state.plots.map((plot) => ({
+      ...plot,
+      plant: plot.plant && {
+        ...plot.plant,
+        neighborBuffs: neighborBuffs(state, plot.id),
+      },
+    })),
     settings,
     personalGifts: garden.gifts.view(
       { ...instanceAdmin, generation: "instance" },
@@ -381,16 +412,36 @@ export function subjectGardenView(
     active ? { kind: "agent", id: roleId, turnId } : undefined,
   );
   const event = state.event;
-  const observation =
-    active &&
-    state.running &&
-    event?.kind === "blessing" &&
-    event.effect.effect === "firefly"
-      ? recordGardenObservation(runtime, roleId, event.id, now)
-      : undefined;
+  const observations =
+    active && state.running
+      ? gardenObservations(runtime, roleId, state, now)
+      : [];
+  const observation = observations.find(({ kind }) => kind === "firefly");
+  const identity = {
+    kind: "agent",
+    id: roleId,
+    generation: runtime.home.generation(roleId),
+  };
+  const knownHiddenCrops = new Set([
+    ...Object.entries(state.seeds)
+      .filter(([, count]) => count > 0)
+      .map(([id]) => id),
+    ...state.plots.flatMap(({ plant }) => (plant ? [plant.cropId] : [])),
+    ...garden.knownHistoricalCrops(hiddenCrops),
+    ...(state.mistbellDiscovered ? ["mistbell"] : []),
+    ...(state.sunberryDiscovered ? ["sunberry"] : []),
+  ]);
   const actions = eventActions(state);
   return {
     balance: state.balance,
+    scene: {
+      ...state.nightScene,
+      pollenPairs: state.pollenPairs,
+    },
+    observations,
+    highlights: garden.journal.highlights(identity),
+    boardNotes: state.boardNotes,
+    rumors: state.rumors,
     event: event
       ? { ...event, actions, ...(observation && { observation }) }
       : null,
@@ -438,7 +489,9 @@ export function subjectGardenView(
       0,
       state.settings.turnLimit - garden.turnUsed(roleId, turnId),
     ),
-    plots: state.plots.map(({ id, plant, sheltered }) => ({
+    plots: state.plots.map(({ id, plant, sheltered, note }) => ({
+      note,
+      ...(note && { hasNote: true }),
       id,
       sheltered,
       shelterAction: {
@@ -460,6 +513,11 @@ export function subjectGardenView(
           plant.status === "growing" && plant.earthwormDay !== undefined,
         witheredReason: plant.witheredReason,
         floodDays: plant.floodDays ?? 0,
+        variant: plant.variant,
+        variantName: plant.variantName,
+        harvestCount: plant.harvestCount ?? 0,
+        maxHarvests: plant.crop.maxHarvests ?? 1,
+        neighborBuffs: neighborBuffs(state, id),
       },
     })),
     priorities: gardenPriorities(state),
@@ -472,23 +530,88 @@ export function subjectGardenView(
     market: {
       fertilizerPrice: state.settings.fertilizerPrice,
       crops: Object.entries(state.settings.crops)
-        .filter(([, crop]) => crop.enabled)
+        .filter(
+          ([id, crop]) =>
+            crop.enabled &&
+            (crop.market ||
+              !hiddenCrops.includes(id) ||
+              knownHiddenCrops.has(id)),
+        )
         .map(([id, crop]) => ({
           id,
           name: crop.name,
           market: crop.market,
           seedPrice: crop.seedPrice,
+          description: crop.description,
+          light: crop.light,
+          hours: crop.hours,
+          dailyWater: crop.dailyWater,
+          rainSensitive: crop.rainSensitive ?? id === "strawberry",
+          fertilizer: crop.fertilizer,
+          maxHarvests: crop.maxHarvests ?? 1,
+          traits: gardenCropTraits(id, crop),
         })),
     },
     recipients: recipients(runtime),
   };
 }
 
-/** @param {any} runtime @param {string} roleId @param {string} eventId @param {number} now */
-function recordGardenObservation(runtime, roleId, eventId, now) {
+/** @param {any} runtime @param {string} roleId @param {GardenState} state @param {number} now */
+function gardenObservations(runtime, roleId, state, now) {
+  const { event, day, nightScene, pollenPairs } = state;
+  const moments = [];
+  if (
+    nightScene.period === "night" &&
+    event?.kind === "blessing" &&
+    event.effect.effect === "firefly"
+  )
+    moments.push({
+      kind: "firefly",
+      title: "萤火虫音乐会",
+      key: event.id,
+      eventId: event.id,
+    });
+  if (
+    nightScene.period === "night" &&
+    event?.kind === "blessing" &&
+    event.effect.effect === "meteor"
+  )
+    moments.push({
+      kind: "meteor",
+      title: "流星雨许愿夜",
+      key: event.id,
+      eventId: event.id,
+    });
+  if (nightScene.butterflies)
+    moments.push({
+      kind: "butterflies",
+      title: "傍晚猫薄荷旁的蝴蝶",
+      key: `butterflies:${day}`,
+    });
+  if (pollenPairs.length)
+    moments.push({
+      kind: "pollen",
+      title: "邻株间飘起神秘花粉",
+      key: `pollen:${day}`,
+    });
+  return moments.map((moment) => {
+    const detail = `你在小窝花园观察了${moment.title}。`;
+    const observation = recordGardenObservation(
+      runtime,
+      roleId,
+      { ...moment, body: detail },
+      now,
+    );
+    return { ...observation, surprise: { ...observation, detail } };
+  });
+}
+
+/** @param {any} runtime @param {string} roleId
+ * @param {{kind:string,title:string,key:string,eventId?:string,body?:string}} moment @param {number} now */
+function recordGardenObservation(runtime, roleId, moment, now) {
   const generation = runtime.home.generation(roleId);
   const memory = runtime.memory.bind(roleId);
-  const dedupe = `garden-observation:${generation}:${eventId}`;
+  const dedupe = `garden-observation:${generation}:${moment.key}`;
   const timestamp = new Date(now).toISOString();
   const record = memory.append({
     dedupe,
@@ -499,10 +622,14 @@ function recordGardenObservation(runtime, roleId, eventId, now) {
     connectionId: runtime.agent(roleId).connectionId,
     occurredAt: timestamp,
     observedAt: timestamp,
-    body: "你在小窝花园观察了萤火虫音乐会。",
-    payload: { eventId, generation },
+    body: moment.body ?? `你在小窝花园观察了${moment.title}。`,
+    payload: {
+      eventId: moment.eventId,
+      observationKind: moment.kind,
+      generation,
+    },
   });
-  return { evidenceId: record.id };
+  return { kind: moment.kind, title: moment.title, evidenceId: record.id };
 }
 
 /** @param {GardenState} state */

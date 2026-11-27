@@ -19,6 +19,10 @@ test("the compact garden displays dusk and night, static fireflies and the unloc
   const { settings: saved } = garden.requireState();
   delete saved.crops.catnip;
   delete saved.crops.mistbell;
+  delete saved.crops.hydrangea;
+  delete saved.crops.tomato;
+  delete saved.crops.succulent;
+  delete saved.crops.chamomile;
   delete saved.careMode;
   runtime.memory.db
     .prepare("UPDATE garden_state SET settings=? WHERE id=1")
@@ -67,7 +71,7 @@ test("the compact garden displays dusk and night, static fireflies and the unloc
     { period: "night", stars: "sparse", fireflies: true },
     {
       dayRemaining: 4 * HOUR,
-      pollenPairs: [{ plots: [2, 5] }],
+      pollenPairs: [{ plots: [2, 5], hint: "金色花粉" }],
     },
   );
   await page.getByText(/云间疏星 · 花间有萤点/).waitFor();
@@ -76,6 +80,7 @@ test("the compact garden displays dusk and night, static fireflies and the unloc
     .locator(".garden-pollen")
     .getByText(/第 2、5 号地/)
     .waitFor();
+  await page.getByText("金色花粉", { exact: true }).waitFor();
   const firefly = page.locator(".garden-scene-firefly").first();
   assert.equal(
     await firefly.evaluate(
@@ -96,6 +101,9 @@ test("the compact garden displays dusk and night, static fireflies and the unloc
   const guide = page.locator(".garden-crop-guide");
   await guide.getByRole("heading", { name: "猫薄荷" }).waitFor();
   await guide.getByRole("heading", { name: "未知邻株种子" }).waitFor();
+  const hydrangea = guide.getByRole("heading", { name: "蓝雨绣球" });
+  await hydrangea.waitFor();
+  assert.equal(await hydrangea.locator("../..").locator("img").count(), 0);
   const mistbell = guide.locator("[data-discovered]");
   const sticker = mistbell.locator("img");
   await sticker.evaluate((image) => image.decode());

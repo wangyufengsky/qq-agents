@@ -4,6 +4,12 @@ import { z } from "zod";
 import { canonical } from "../backends/session-contract.mjs";
 import { GardenGifts, giftActions, isGiftAction } from "./garden-items.mjs";
 import { GardenJournal, gardenPlantRef } from "./garden-journal.mjs";
+import {
+  boardNotes,
+  gardenRumors,
+  unlockGardenRumor,
+  writeBoardNote,
+} from "./garden-companion.mjs";
 import { GardenClock } from "./garden-clock.mjs";
 import { GardenCalendar } from "./garden-calendar.mjs";
 import { defaultWeather } from "./garden-weather.mjs";
@@ -13,8 +19,10 @@ import {
   DAY,
   defaultGardenSettings,
   gardenSettings,
-  withNeighborCrops,
+  withExpandedCrops,
   gardenPlantRules,
+  gardenVariantDetail,
+  harvestCropId,
   PLOT_COUNT,
 } from "./garden-rules.mjs";
 
@@ -29,6 +37,12 @@ const inputSchema = z.strictObject({
   requestId: z.string().regex(/^[A-Za-z0-9_-]{8,80}$/),
   action: z.discriminatedUnion("kind", [
     ...giftActions,
+    z.strictObject({
+      kind: z.literal("set_board_note"),
+      scope: z.enum(["garden", "plot"]),
+      plot: plot.optional(),
+      text: z.string().trim(),
+    }),
     z.strictObject({ kind: z.enum(["chase_thief", "resolve_event"]), eventId }),
     z.strictObject({
       kind: z.enum(["buy_mystery_seed", "merchant_buy_fertilizer"]),
@@ -91,7 +105,7 @@ const inputSchema = z.strictObject({
 
 /** @typedef {import("./garden-rules.mjs").Settings} Settings */
 /** @typedef {import("./garden-rules.mjs").Plant} Plant */
-/** @typedef {{id: number, sheltered: boolean, plant: Plant | null}} Plot */
+/** @typedef {{id: number, sheltered: boolean, plant: Plant | null, note?: ReturnType<typeof boardNotes>["garden"]}} Plot */
 /** @typedef {{clock: number, revision: number, settingsRevision: number, settings: Settings,
  * balance: number, plots: Plot[], seeds: Record<string, number>, fertilizer: number}} State */
 /** @typedef {{kind: "admin", id: string} | {kind: "agent", id: string, turnId: string}} Actor */
@@ -142,7 +156,7 @@ export class GardenService {
         events: legacyEvents,
         careMode: "classic",
         ...saved,
-        crops: withNeighborCrops(saved.crops),
+        crops: withExpandedCrops(saved.crops),
       },
       balance: Number(row.balance),
       plots: JSON.parse(String(row.plots)),
@@ -154,7 +168,7 @@ export class GardenService {
   /** @param {number} now @param {unknown} settings */
   initialize(now, settings = defaultGardenSettings()) {
     const parsed = gardenSettings.parse(settings);
-    const data = { ...parsed, crops: withNeighborCrops(parsed.crops) };
+    const data = { ...parsed, crops: withExpandedCrops(parsed.crops) };
     this.store.transaction(() => {
       if (this.load()) return;
       const plots = Array.from({ length: PLOT_COUNT }, (_, i) => ({
@@ -168,6 +182,7 @@ export class GardenService {
       const state = this.requireState();
       this.journal.initialize(state, false);
       this.calendar.initialize(state);
+      unlockGardenRumor(this.db, this.journal, "initial", 1, now);
       this.recordLedger(
         now,
         { kind: "admin", id: "system" },
@@ -204,7 +219,7 @@ export class GardenService {
     return Number(
       this.db
         .prepare(
-          "SELECT count(*) AS count FROM garden_actions WHERE actor_kind='agent' AND actor_id=? AND turn_id=?",
+          "SELECT count(*) AS count FROM garden_actions WHERE actor_kind='agent' AND actor_id=? AND turn_id=? AND action!='set_board_note'",
         )
         .get(roleId, turnId)?.count,
     );
@@ -309,10 +324,20 @@ export class GardenService {
       const elapsed = Math.max(state.clock, this.clock.elapsed);
       const current = this.calendar.advance(state, elapsed, now);
       const running = this.enabled && this.clock.running(now);
+      const openVisitor =
+        running &&
+        visitorActor &&
+        this.calendar.events.get(current.day)?.status === "open";
       const claimed =
         running && visitorActor
           ? this.calendar.events.claimVisitor(current.day, visitorActor, state)
           : undefined;
+      if (
+        openVisitor &&
+        claimed?.kind === "visitor" &&
+        claimed.status === "claimed"
+      )
+        unlockGardenRumor(this.db, this.journal, "visitor", current.day, now);
       // Keep archived changes and their clock in one commit. An uneventful read
       // still leaves the last durable checkpoint alone.
       const durable = before === changes.get()?.count ? storedClock : elapsed;
@@ -363,8 +388,15 @@ export class GardenService {
   /** @param {State} state @param {ReturnType<GardenCalendar["advance"]>} current
    * @param {boolean} running @param {ReturnType<GardenCalendar["events"]["claimVisitor"]>} [claimed] */
   snapshotView(state, current, running, claimed) {
+    const notes = boardNotes(this.db);
     return {
       ...state,
+      plots: state.plots.map((plot) => ({
+        ...plot,
+        note: notes.plots[plot.id] ?? null,
+      })),
+      boardNotes: notes,
+      rumors: gardenRumors(this.db),
       event: this.calendar.events.view(current.day, state, claimed),
       mysterySeeds: this.calendar.events.mysteryStock(),
       fertilizerCredits: this.calendar.events.credits(),
@@ -405,6 +437,18 @@ export class GardenService {
     return this.journal.ackDigest(actor, through);
   }
 
+  /** @param {string[]} cropIds */
+  knownHistoricalCrops(cropIds) {
+    return this.db
+      .prepare(
+        `SELECT value FROM json_each(?) AS crop
+         WHERE EXISTS (SELECT 1 FROM garden_harvests WHERE crop_id=crop.value)
+            OR EXISTS (SELECT 1 FROM garden_plant_archive WHERE crop_id=crop.value)`,
+      )
+      .all(JSON.stringify(cropIds))
+      .map(({ value }) => String(value));
+  }
+
   /** @param {number} now @param {Actor} [visitorActor] */
   read(now, visitorActor) {
     return {
@@ -438,9 +482,24 @@ export class GardenService {
 
   /** @param {number} now @param {Actor} actor @param {unknown} input @param {(action: Action) => void} [validate] @param {(recipient:{kind:"admin"|"agent",id:string},result:{giftId:string,cropId:string,quantity:number})=>void} [onGift]
    * @param {import("./garden-items.mjs").GiftContext} [giftContext]
-   * @param {(transfer:import("./garden-items.mjs").Transfer)=>void} [onItemTransfer] */
-  act(now, actor, input, validate, onGift, giftContext, onItemTransfer) {
+   * @param {(transfer:import("./garden-items.mjs").Transfer)=>void} [onItemTransfer]
+   * @param {(surprise:{kind:string,title:string,detail:string,factId:number})=>string} [onSurprise] */
+  act(
+    now,
+    actor,
+    input,
+    validate,
+    onGift,
+    giftContext,
+    onItemTransfer,
+    onSurprise,
+  ) {
     const { requestId, action } = inputSchema.parse(input);
+    if (action.kind === "set_board_note") {
+      if ((action.scope === "plot") !== (action.plot !== undefined))
+        throw Error("INVALID_REQUEST");
+      if ([...action.text].length > 120) throw Error("GARDEN_NOTE_TOO_LONG");
+    }
     const turnId = actor.kind === "agent" ? actor.turnId : null;
     const digest = createHash("sha256")
       .update(
@@ -461,14 +520,39 @@ export class GardenService {
         .get(actor.kind, actor.id, requestId);
       if (prior) {
         if (prior.digest !== digest) throw Error("GARDEN_REQUEST_CONFLICT");
-        return { ...JSON.parse(String(prior.result)), replayed: true };
+        const result = JSON.parse(String(prior.result));
+        if (
+          typeof result.surprise?.evidenceId === "string" &&
+          !this.db
+            .prepare(
+              `SELECT 1 FROM events WHERE id=? AND agent_id=?
+            AND json_extract(payload,'$.generation')=?`,
+            )
+            .get(
+              result.surprise.evidenceId,
+              actor.id,
+              giftContext?.owner.generation ?? null,
+            )
+        )
+          throw Error("GARDEN_REQUEST_CONFLICT");
+        return { ...result, replayed: true };
       }
       const state = this.requireState();
       if (!state.settings.enabled || !this.clock.running(now))
         throw Error("GARDEN_PAUSED");
       if (actor.kind === "agent") {
         if (!turnId) throw Error("GARDEN_TURN_REQUIRED");
-        if (this.turnUsed(actor.id, turnId) >= state.settings.turnLimit)
+        if (action.kind === "set_board_note") {
+          const count = Number(
+            this.db
+              .prepare(
+                `SELECT count(*) AS count FROM garden_actions
+            WHERE actor_kind='agent' AND actor_id=? AND turn_id=? AND action='set_board_note'`,
+              )
+              .get(actor.id, turnId)?.count,
+          );
+          if (count >= 3) throw Error("GARDEN_NOTE_LIMIT");
+        } else if (this.turnUsed(actor.id, turnId) >= state.settings.turnLimit)
           throw Error("GARDEN_TURN_LIMIT");
       }
       this.calendar.advance(
@@ -477,6 +561,14 @@ export class GardenService {
         now,
       );
       validate?.(action);
+      const day = Math.floor(state.clock / DAY) + 1;
+      const harvested =
+        action.kind === "harvest" &&
+        state.plots.find(({ id }) => id === action.plot)?.plant;
+      const harvestedRef =
+        harvested && "plot" in action
+          ? gardenPlantRef(/** @type {number} */ (action.plot), harvested)
+          : undefined;
       let result;
       if (isGiftAction(action)) {
         if (!giftContext) throw Error("GARDEN_ROLE_UNAVAILABLE");
@@ -488,22 +580,65 @@ export class GardenService {
           state,
           this.calendar.events,
           (price) => this.changeBalance(now, actor, action.kind, state, -price),
-          onItemTransfer,
+          (transfer) => {
+            this.recordGiftHighlight(
+              transfer.recipient,
+              state.clock,
+              transfer.id,
+            );
+            onItemTransfer?.(transfer);
+          },
+        );
+      } else if (action.kind === "set_board_note") {
+        const scope =
+          action.scope === "garden" ? "garden" : `plot:${action.plot}`;
+        result = writeBoardNote(
+          this.db,
+          scope,
+          action.text,
+          giftContext?.owner ?? actor,
+          day,
+          now,
         );
       } else {
         result = this.apply(now, actor, action, state);
       }
+      if (
+        [
+          "merchant_buy",
+          "merchant_buy_fertilizer",
+          "merchant_sell",
+          "buy_gift",
+        ].includes(action.kind)
+      )
+        unlockGardenRumor(this.db, this.journal, "merchant", day, now);
+      const surprise = this.recordSurprise(
+        state,
+        actor,
+        requestId,
+        action,
+        result,
+        harvestedRef,
+      );
       if (
         action.kind === "gift" &&
         "giftId" in result &&
         result.giftId &&
         "cropId" in result &&
         result.cropId
-      )
+      ) {
+        const recipient = giftContext?.recipient(action.recipient);
+        if (recipient)
+          this.recordGiftHighlight(
+            recipient,
+            state.clock,
+            String(result.giftId),
+          );
         onGift?.(
           action.recipient,
           /** @type {{giftId:string,cropId:string,quantity:number}} */ (result),
         );
+      }
       this.db
         .prepare(
           "UPDATE garden_state SET clock=?,revision=revision+1,balance=?,plots=?,seeds=?,fertilizer=? WHERE id=1",
@@ -520,6 +655,12 @@ export class GardenService {
         revision: state.revision + 1,
         balance: state.balance,
         ...result,
+        ...(surprise && {
+          surprise: {
+            ...surprise,
+            evidenceId: onSurprise?.(surprise) ?? surprise.factId,
+          },
+        }),
       };
       this.db
         .prepare(
@@ -547,7 +688,66 @@ export class GardenService {
     return response;
   }
 
-  /** @param {number} now @param {Actor} actor @param {Exclude<Action,import("./garden-items.mjs").GiftAction>} action @param {State} state */
+  /** @param {import("./garden-journal.mjs").Identity} recipient @param {number} clock @param {string} id */
+  recordGiftHighlight(recipient, clock, id) {
+    this.journal.record({
+      type: "private_gift",
+      clock,
+      source: "action",
+      detail: { reader: this.journal.readerKey(recipient) },
+      key: `received:${id}`,
+    });
+  }
+
+  /** @param {State} state @param {Actor} actor @param {string} requestId @param {Action} action @param {any} result @param {ReturnType<typeof gardenPlantRef>} [harvestedRef] */
+  recordSurprise(state, actor, requestId, action, result, harvestedRef) {
+    let surprise = result.surprise;
+    if (action.kind === "plant_mystery_seed") {
+      const name = this.getCrop(state.settings, result.cropId).name;
+      const firstTime = !this.db
+        .prepare(
+          `SELECT 1 FROM garden_facts WHERE type='event'
+        AND json_extract(detail,'$.kind')='mystery_seed' AND json_extract(detail,'$.cropId')=?`,
+        )
+        .get(result.cropId);
+      surprise = {
+        kind: "mystery_seed",
+        title: `盲盒揭晓：${name}`,
+        detail: `${result.plot} 号地种下了一粒${name}种子。`,
+        firstTime,
+      };
+    }
+    if (!surprise) return;
+    const key = JSON.stringify(["surprise", actor.kind, actor.id, requestId]);
+    const plant =
+      "plot" in action &&
+      state.plots.find(({ id }) => id === action.plot)?.plant;
+    this.journal.record({
+      key,
+      type: action.kind === "harvest" ? "variant" : "event",
+      source: "action",
+      clock: state.clock,
+      actor,
+      plants: harvestedRef
+        ? [harvestedRef]
+        : plant
+          ? [gardenPlantRef(/** @type {number} */ (result.plot), plant)]
+          : [],
+      detail: {
+        stage: surprise.title,
+        description: surprise.detail,
+        kind: surprise.kind,
+        cropId: result.cropId,
+        variant: result.variant,
+      },
+    });
+    const fact = this.db
+      .prepare("SELECT id FROM garden_facts WHERE unique_key=?")
+      .get(key);
+    return { ...surprise, factId: Number(fact?.id) };
+  }
+
+  /** @param {number} now @param {Actor} actor @param {Exclude<Action,import("./garden-items.mjs").GiftAction | {kind:"set_board_note"}>} action @param {State} state */
   apply(now, actor, action, state) {
     const rules = state.settings;
     const day = Math.floor(state.clock / DAY) + 1;
@@ -650,31 +850,95 @@ export class GardenService {
               entry.id,
               plant,
             );
+            const cropId = state.settings.crops.four_leaf_clover.enabled
+              ? harvestCropId(plant, this.calendar.neighbors.seed())
+              : plant.cropId;
+            const mutation = cropId !== plant.cropId;
+            const variant = gardenVariantDetail(plant);
+            const hiddenCrop = !state.settings.crops[cropId].market;
+            const firstTime =
+              (hiddenCrop || plant.variant) &&
+              !this.db
+                .prepare(
+                  `SELECT 1 FROM garden_facts WHERE type='harvest'
+               AND json_extract(detail,'$.cropId')=? AND json_extract(detail,'$.variant') IS ? LIMIT 1`,
+                )
+                .get(cropId, plant.variant ?? null) &&
+              (!hiddenCrop ||
+                !this.db
+                  .prepare(
+                    "SELECT 1 FROM garden_harvests WHERE crop_id=? LIMIT 1",
+                  )
+                  .get(cropId));
+            const harvestCount = (plant.harvestCount ?? 0) + 1;
+            const maxHarvests = plant.crop.maxHarvests ?? 1;
+            const regrowing = harvestCount < maxHarvests;
+            const cropName = state.settings.crops[cropId].name;
             this.db
               .prepare("INSERT INTO garden_harvests VALUES(?,?,?,?,?,?,NULL)")
               .run(
                 harvestId,
-                plant.cropId,
+                cropId,
                 plant.actorId,
                 plant.quality,
                 quantity,
                 now,
               );
+            const quality = plant.quality;
+            if (regrowing) {
+              entry.plant = {
+                ...plant,
+                harvestCount,
+                settledAt: state.clock,
+                growth: plant.crop.hours * 0.5,
+                maturedAt: undefined,
+                status: "growing",
+                quality: null,
+              };
+            } else {
+              entry.plant = null;
+            }
             this.recordCare(
               action.kind,
               entry.id,
-              plant,
+              entry.plant ?? { ...plant, harvestCount },
               state.clock,
               actor,
-              "harvested",
+              regrowing ? "growing" : "harvested",
+              {
+                cropId,
+                ...variant,
+                ...(mutation && { name: cropName }),
+                harvestCount,
+              },
             );
-            entry.plant = null;
+            const surprise = mutation
+              ? {
+                  kind: "variant_harvest",
+                  title: `意外发现：${cropName}！`,
+                  detail: `收获 ${entry.id} 号地的${plant.crop.name}时，找到了一株${cropName}。`,
+                  firstTime,
+                }
+              : firstTime
+                ? {
+                    kind: plant.variant ? "variant_harvest" : "hidden_harvest",
+                    title: `首次收获：${variant.variantName ?? cropName}！`,
+                    detail: `${entry.id} 号地收获了${variant.variantName ?? cropName}。`,
+                    firstTime,
+                  }
+                : undefined;
             return {
               plot: entry.id,
               plantId: plant.id,
               harvestId,
-              quality: plant.quality,
+              quality,
               quantity,
+              cropId,
+              ...variant,
+              harvestCount,
+              maxHarvests,
+              regrowing,
+              ...(surprise && { surprise }),
             };
           }
           case "clear":
@@ -772,8 +1036,8 @@ export class GardenService {
     return { plot: entry.id, plantId };
   }
 
-  /** @param {string} type @param {number} plot @param {Plant} plant @param {number} clock @param {Actor} actor @param {string} [status] */
-  recordCare(type, plot, plant, clock, actor, status) {
+  /** @param {string} type @param {number} plot @param {Plant} plant @param {number} clock @param {Actor} actor @param {string} [status] @param {Record<string,unknown>} [detail] */
+  recordCare(type, plot, plant, clock, actor, status, detail) {
     this.journal.updatePlant(plant, status);
     this.journal.record({
       type,
@@ -781,6 +1045,7 @@ export class GardenService {
       plants: [gardenPlantRef(plot, plant)],
       actor,
       source: "action",
+      detail,
     });
   }
 

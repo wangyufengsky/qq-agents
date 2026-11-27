@@ -14,6 +14,12 @@ const cropStages = /** @type {Record<string, string[]>} */ ({
   strawberry: ["发芽", "结果", "可收成"],
   catnip: flowerStages,
   mistbell: flowerStages,
+  hydrangea: flowerStages,
+  chamomile: flowerStages,
+  tomato: ["发芽", "结果", "可收成"],
+  sunberry: ["发芽", "结果", "可收成"],
+  succulent: ["扎根", "饱满", "晶莹"],
+  four_leaf_clover: ["发芽", "展叶", "可收成"],
 });
 
 /** @param {{status:string,growth:number,crop:{hours:number}}|null|undefined} plant */

@@ -916,6 +916,46 @@
   inset: 0 0 0 auto;
   transform: scaleX(-1);
 }
+.garden-board-note {
+  min-width: 0;
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border: 1px solid #cfd4bf;
+  border-radius: 6px;
+  background: #f4f3e6;
+}
+.garden-inspector .garden-board-note {
+  margin: 10px 0 0;
+}
+.garden-board-note h4,
+.garden-board-note p {
+  margin: 0 0 4px;
+}
+.garden-board-note .garden-note-text {
+  color: var(--garden-ink);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.garden-board-note details {
+  margin-top: 5px;
+}
+.garden-board-note summary {
+  cursor: pointer;
+}
+.garden-board-note fieldset {
+  border: 0;
+  margin: 3px 0 0;
+  padding: 0;
+}
+.garden-board-note label {
+  display: block;
+  margin: 3px 0 6px;
+}
+.garden-board-note textarea {
+  display: block;
+  width: 100%;
+  resize: vertical;
+}
 .garden-paper .garden-pollen {
   display: flex;
   align-items: center;

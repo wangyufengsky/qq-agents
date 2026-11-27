@@ -3,6 +3,10 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 
 export const poolEntryId = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/);
+export const gardenCropId = z.union([
+  poolEntryId,
+  z.literal("four_leaf_clover"),
+]);
 export const weatherKinds = z.enum(["sun", "cloud", "drizzle", "storm"]);
 const comparison = z.enum(["eq", "gt", "gte", "lt", "lte"]);
 const limit = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
@@ -26,7 +30,7 @@ export const weatherCondition = z.discriminatedUnion("field", [
   }),
   z.strictObject({
     field: z.enum(["seed", "harvest"]),
-    cropId: poolEntryId,
+    cropId: gardenCropId,
     op: comparison,
     value: limit,
   }),

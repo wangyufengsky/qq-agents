@@ -31,7 +31,7 @@ const gardenOption = (key, label) =>
   `<option value="${esc(key)}">${esc(label)}</option>`;
 const gardenMoney = (value) => `${Number(value).toLocaleString("zh-CN")} 元`;
 function gardenCropEditor(id, crop) {
-  return `<details class="card garden-crop" data-crop="${esc(id)}">
+  return `<details class="card garden-crop" data-crop="${esc(id)}" data-max-harvests="${esc(crop.maxHarvests)}">
     <summary>${esc(crop.name)} · ${esc(id)}${crop.enabled ? "" : " · 已停种"}</summary>
     <div class="garden-settings-grid">
       <label>名称<input name="name" value="${esc(crop.name)}" required maxlength="60"/></label>
@@ -137,6 +137,8 @@ function gardenFormSettings(form, state) {
     const crop = Object.fromEntries(
       gardenCropFields.map(([key]) => [key, read(key).valueAsNumber]),
     );
+    if (row.dataset.maxHarvests)
+      crop.maxHarvests = Number(row.dataset.maxHarvests);
     for (const key of ["name", "description", "light"])
       crop[key] = read(key).value;
     for (const key of ["enabled", "market", "rainSensitive"])

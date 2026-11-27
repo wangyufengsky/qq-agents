@@ -36,6 +36,22 @@ export function initializeGardenTables(db) {
       reader TEXT PRIMARY KEY,
       through_id INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS garden_board_notes (
+      scope TEXT PRIMARY KEY,
+      text TEXT NOT NULL,
+      author_kind TEXT NOT NULL,
+      author_id TEXT NOT NULL,
+      author_name TEXT NOT NULL,
+      day INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS garden_rumors (
+      id TEXT PRIMARY KEY,
+      text TEXT NOT NULL,
+      source TEXT NOT NULL,
+      unlocked_day INTEGER NOT NULL,
+      unlocked_at INTEGER NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS garden_state (
       id INTEGER PRIMARY KEY CHECK (id = 1),
       clock REAL NOT NULL CHECK (clock >= 0),

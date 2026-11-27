@@ -1,7 +1,14 @@
 // @ts-check
 import { createHash } from "node:crypto";
 import { gardenPlantRef } from "./garden-journal.mjs";
-import { CATNIP, DAY, HOUR, MISTBELL } from "./garden-rules.mjs";
+import {
+  adjacentPlots,
+  CATNIP,
+  DAY,
+  HOUR,
+  MISTBELL,
+  SUNBERRY,
+} from "./garden-rules.mjs";
 
 /** @typedef {ReturnType<import("./garden-service.mjs").GardenService["requireState"]>} State */
 /** @typedef {Omit<State["plots"][number], "plant"> & {plant: import("./garden-rules.mjs").Plant}} PlantedPlot */
@@ -9,21 +16,30 @@ import { CATNIP, DAY, HOUR, MISTBELL } from "./garden-rules.mjs";
 const nightStart = 19 * HOUR;
 const nightEnd = 6 * HOUR;
 const minimumAge = 48 * HOUR;
+const recipes = /** @type {const} */ ({
+  [MISTBELL]: {
+    parents: ["moonflower", CATNIP],
+    hint: "蓝紫色花粉",
+    source: "night",
+  },
+  [SUNBERRY]: {
+    parents: ["sunflower", "strawberry"],
+    hint: "金色花粉",
+    source: "day",
+  },
+});
 
-/** @param {State} state */
-function neighborPairs(state) {
+/** @param {State} state @param {(typeof recipes)[keyof typeof recipes]["parents"]} parents */
+function neighborPairs(state, parents) {
   /** @type {Array<[PlantedPlot,PlantedPlot]>} */
   const pairs = [];
   for (const left of state.plots) {
-    if (left.plant?.cropId !== "moonflower" || left.plant.status !== "mature")
+    if (left.plant?.cropId !== parents[0] || left.plant.status !== "mature")
       continue;
     for (const right of state.plots) {
-      if (right.plant?.cropId !== CATNIP || right.plant.status !== "mature")
+      if (right.plant?.cropId !== parents[1] || right.plant.status !== "mature")
         continue;
-      const row =
-        Math.floor((left.id - 1) / 3) - Math.floor((right.id - 1) / 3);
-      const col = ((left.id - 1) % 3) - ((right.id - 1) % 3);
-      if (Math.abs(row) + Math.abs(col) !== 1) continue;
+      if (!adjacentPlots(left.id, right.id)) continue;
       pairs.push([
         { ...left, plant: left.plant },
         { ...right, plant: right.plant },
@@ -84,34 +100,69 @@ export class GardenNeighbors {
     );
   }
 
-  /** @param {State} state @param {number} day @param {number} elapsed @param {import("./garden-journal.mjs").GardenJournal} journal */
-  settle(state, day, elapsed, journal) {
-    if (!state.settings.crops[MISTBELL].enabled) return;
-    const pairs = neighborPairs(state);
-    if (!pairs.length) return;
-    const seed = this.seed();
+  /** @param {State} state @param {number} day @param {number} elapsed @param {import("./garden-journal.mjs").GardenJournal} journal
+   * @param {{before:import("./garden-weather.mjs").Weather["kind"],after:import("./garden-weather.mjs").Weather["kind"],boundary:number}} weather */
+  settle(state, day, elapsed, journal, weather) {
     const dawn = (day - 1) * DAY;
+    const dayEnd = day * DAY;
+    const daylightStart = dawn + nightEnd;
+    const daylightEnd = dawn + 17 * HOUR;
     // A dawn window belongs to the night that began the previous day.
-    const windows = [
-      { night: day - 1, start: dawn, end: dawn + nightEnd },
-      { night: day, start: dawn + nightStart, end: day * DAY },
+    const nightWindows = [
+      { trialDay: day - 1, start: dawn, end: daylightStart },
+      { trialDay: day, start: dawn + nightStart, end: dayEnd },
     ];
+    const sunWindows = [
+      {
+        kind: weather.before,
+        start: daylightStart,
+        end: Math.min(daylightEnd, weather.boundary),
+      },
+      {
+        kind: weather.after,
+        start: Math.max(daylightStart, weather.boundary),
+        end: daylightEnd,
+      },
+    ]
+      .filter(({ kind, start, end }) => kind === "sun" && start < end)
+      .map(({ start, end }) => ({ trialDay: day, start, end }));
+    for (const [cropId, recipe] of Object.entries(recipes)) {
+      if (!state.settings.crops[cropId].enabled) continue;
+      this.settleRecipe(
+        state,
+        elapsed,
+        journal,
+        cropId,
+        recipe,
+        cropId === MISTBELL ? nightWindows : sunWindows,
+      );
+    }
+  }
+
+  /** @param {State} state @param {number} elapsed @param {import("./garden-journal.mjs").GardenJournal} journal
+   * @param {string} cropId @param {(typeof recipes)[keyof typeof recipes]} recipe
+   * @param {{trialDay:number,start:number,end:number}[]} windows */
+  settleRecipe(state, elapsed, journal, cropId, recipe, windows) {
+    const pairs = neighborPairs(state, recipe.parents);
+    if (!pairs.length || !windows.length) return;
+    const seed = this.seed();
     for (const pair of pairs) {
-      const id = pairId(pair);
+      const id =
+        cropId === MISTBELL ? pairId(pair) : `${cropId}:${pairId(pair)}`;
       const ready = Math.max(...pair.map(({ plant }) => eligibleSince(plant)));
       let status = this.status(id);
-      for (const { night, start, end } of windows) {
+      for (const { trialDay, start, end } of windows) {
         const at = Math.max(ready, start);
         if (
-          !night ||
+          !trialDay ||
           at >= end ||
           at > elapsed ||
           status?.discovered ||
-          Number(status?.night ?? 0) >= night
+          Number(status?.night ?? 0) >= trialDay
         )
           continue;
         const attempts = Number(status?.attempts ?? 0) + 1;
-        const discovered = Number(attempts === 3 || trial(seed, id, night));
+        const discovered = Number(attempts === 3 || trial(seed, id, trialDay));
         this.db
           .prepare(
             `
@@ -119,11 +170,11 @@ export class GardenNeighbors {
           ON CONFLICT(pair) DO UPDATE SET attempts=excluded.attempts,night=excluded.night,discovered=excluded.discovered
         `,
           )
-          .run(id, attempts, night, discovered);
-        status = { attempts, night, discovered };
+          .run(id, attempts, trialDay, discovered);
+        status = { attempts, night: trialDay, discovered };
         if (discovered) {
           state.revision++;
-          state.seeds[MISTBELL] = (state.seeds[MISTBELL] ?? 0) + 1;
+          state.seeds[cropId] = (state.seeds[cropId] ?? 0) + 1;
           this.db
             .prepare(
               "UPDATE garden_state SET seeds=?,clock=MAX(clock,?),revision=revision+1 WHERE id=1",
@@ -136,14 +187,14 @@ export class GardenNeighbors {
             type: "discovery",
             clock: at,
             plants: pair.map(({ id, plant }) => gardenPlantRef(id, plant)),
-            source: "night",
+            source: recipe.source,
             detail: discovered
               ? {
-                  cropId: MISTBELL,
-                  name: state.settings.crops[MISTBELL].name,
+                  cropId,
+                  name: state.settings.crops[cropId].name,
                   phase,
                 }
-              : { phase },
+              : { phase, hint: recipe.hint },
             key: `neighbors:${id}:${phase}`,
           });
         }
@@ -186,16 +237,27 @@ export class GardenNeighbors {
           (weather === "sun" || weather === "cloud") &&
           trial(seed, "fireflies", hour < nightEnd ? day - 1 : day),
       },
-      pollenPairs: neighborPairs(state).flatMap((pair) => {
-        const status = this.status(pairId(pair));
-        return status && !status.discovered
-          ? [{ plots: pair.map(({ id }) => id) }]
-          : [];
-      }),
+      pollenPairs: Object.entries(recipes).flatMap(([cropId, recipe]) =>
+        neighborPairs(state, recipe.parents).flatMap((pair) => {
+          const id =
+            cropId === MISTBELL ? pairId(pair) : `${cropId}:${pairId(pair)}`;
+          const status = this.status(id);
+          return status && !status.discovered
+            ? [{ plots: pair.map(({ id }) => id), hint: recipe.hint }]
+            : [];
+        }),
+      ),
+      sunberryDiscovered: Boolean(
+        this.db
+          .prepare(
+            "SELECT 1 FROM garden_neighbor_pairs WHERE discovered=1 AND pair LIKE 'sunberry:%' LIMIT 1",
+          )
+          .get(),
+      ),
       mistbellDiscovered: Boolean(
         this.db
           .prepare(
-            "SELECT 1 FROM garden_neighbor_pairs WHERE discovered=1 LIMIT 1",
+            "SELECT 1 FROM garden_neighbor_pairs WHERE discovered=1 AND pair NOT LIKE 'sunberry:%' LIMIT 1",
           )
           .get(),
       ),
