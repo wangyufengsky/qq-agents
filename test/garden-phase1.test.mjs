@@ -219,7 +219,8 @@ test("blind box surprise cites its garden fact and the actor's reusable diary ev
   assert.equal(
     f.store.db
       .prepare(
-        "SELECT count(*) AS n FROM events WHERE kind='garden.observation'",
+        `SELECT count(*) AS n FROM events WHERE kind='garden.observation'
+          AND json_extract(payload,'$.observationKind')='mystery_seed'`,
       )
       .get().n,
     1,

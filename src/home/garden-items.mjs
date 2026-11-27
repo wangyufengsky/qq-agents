@@ -1,6 +1,7 @@
 // @ts-check
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { gardenRecipeId, prepareGardenCraft } from "./garden-craft.mjs";
 
 import {
   gardenGifts,
@@ -23,8 +24,9 @@ export const gardenGiftId = z.enum(
 /** @typedef {Owner & {name:string}} Person */
 /** @typedef {{owner:Person,recipient:(recipient:{kind:"admin"|"agent",id:string})=>Person|undefined}} GiftContext */
 /** @typedef {{giftId:keyof typeof gardenGifts,name:string,price:number,originalPrice:number,stock:number,usable:boolean}} GiftOffer */
-/** @typedef {{id:string,giftId:string,name:string,usable:number,slot:number|null,sourceId:string|null,description:string,note:string}} Item */
-/** @typedef {{id:string,itemId:string,giftId:string,name:string,note:string,day:number,at:number,giver:Person,recipient:Person}} Transfer */
+/** @typedef {import("./garden-craft.mjs").CraftMeta} CraftMeta */
+/** @typedef {{id:string,giftId:string,name:string,usable:number,slot:number|null,sourceId:string|null,description:string,note:string,craftMeta?:CraftMeta}} Item */
+/** @typedef {{id:string,itemId:string,giftId:string,name:string,note:string,day:number,at:number,giver:Person,recipient:Person,craftMeta?:CraftMeta}} Transfer */
 
 /** @param {{giftId:keyof typeof gardenGifts,price?:number,stock:number}[]} configured */
 export function gardenGiftOffers(configured) {
@@ -52,6 +54,16 @@ export const giftBudgetLimits = z.strictObject({
   roles: z.record(roleId, price),
 });
 export const giftActions = /** @type {const} */ ([
+  z
+    .strictObject({
+      kind: z.literal("craft_gift"),
+      recipeId: gardenRecipeId,
+      harvestIds: z.array(z.uuid()).min(1).max(2),
+      price,
+      recipient: recipient.optional(),
+      note: note.optional(),
+    })
+    .refine((action) => !action.note || action.recipient),
   z
     .strictObject({
       kind: z.literal("buy_gift"),
@@ -153,6 +165,14 @@ export function initializeGiftTables(db) {
     db.exec(
       "ALTER TABLE garden_items ADD COLUMN event_note TEXT NOT NULL DEFAULT ''",
     );
+  if (
+    !db
+      .prepare(
+        "SELECT 1 FROM pragma_table_info('garden_items') WHERE name='craft_meta'",
+      )
+      .get()
+  )
+    db.exec("ALTER TABLE garden_items ADD COLUMN craft_meta TEXT");
   if (legacy)
     db.exec(`
     INSERT INTO garden_items(rowid,id,gift_id,name,usable,owner,consumed,source_id,slot,description,public_note)
@@ -242,16 +262,58 @@ export class GardenGifts {
       });
   }
 
+  /** @param {number} day @param {Owner} owner @param {import("./garden-service.mjs").State} state
+   * @param {number} price @param {(amount:number)=>void} pay */
+  spend(day, owner, state, price, pay) {
+    const budget = this.budget(day, owner, state);
+    if (
+      budget &&
+      (!budget.limit ||
+        !budget.total ||
+        price > Math.min(budget.remaining, budget.totalRemaining))
+    )
+      throw Error("GARDEN_GIFT_BUDGET_LOW");
+    pay(price);
+    if (budget)
+      this.db
+        .prepare(
+          `INSERT INTO garden_gift_spend VALUES(?,?,?)
+        ON CONFLICT(day,agent_id) DO UPDATE SET used=used+excluded.used`,
+        )
+        .run(day, owner.id, price);
+  }
+
   /** @param {Owner} owner */
   shelfFor(owner) {
     return this.db
       .prepare(
         `
-      SELECT slot,gift_id AS giftId,name,COALESCE(NULLIF(description,''),event_note) AS description,public_note AS note
+      SELECT slot,gift_id AS giftId,name,COALESCE(NULLIF(description,''),event_note) AS description,public_note AS note,craft_meta
       FROM garden_items WHERE owner=? AND consumed=0 AND slot IS NOT NULL ORDER BY slot
     `,
       )
-      .all(ownerKey(owner));
+      .all(ownerKey(owner))
+      .map(({ slot, giftId, name, description, note, craft_meta }) => ({
+        slot: Number(slot),
+        giftId: String(giftId),
+        name: String(name),
+        description: String(description),
+        note: String(note),
+        ...(typeof craft_meta === "string" && {
+          craftMeta: JSON.parse(craft_meta),
+        }),
+      }));
+  }
+
+  /** @param {Person[]} owners */
+  communityShelves(owners) {
+    return owners.flatMap((owner) => {
+      const items = this.shelfFor(owner).map(({ note, ...item }) => ({
+        ...item,
+        ...(note && { note }),
+      }));
+      return items.length ? [{ owner: asRecipient(owner), items }] : [];
+    });
   }
 
   /** @param {Owner} owner @param {number} day @param {import("./garden-service.mjs").State} state */
@@ -259,20 +321,21 @@ export class GardenGifts {
     const received = this.transfers(owner, "recipient");
     const sent = this.transfers(owner, "giver");
     const sources = new Map(received.map((row) => [row.id, row]));
-    const items = /** @type {Item[]} */ (
+    const items = /** @type {Array<Item & {craft_meta:string|null}>} */ (
       /** @type {unknown} */ (
         this.db
           .prepare(
             `
-      SELECT id,gift_id AS giftId,name,usable,slot,source_id AS sourceId,COALESCE(NULLIF(description,''),event_note) AS description,public_note AS note
+      SELECT id,gift_id AS giftId,name,usable,slot,source_id AS sourceId,COALESCE(NULLIF(description,''),event_note) AS description,public_note AS note,craft_meta
       FROM garden_items WHERE owner=? AND consumed=0 ORDER BY rowid DESC
     `,
           )
           .all(ownerKey(owner))
       )
-    ).map(({ sourceId, ...row }) => ({
+    ).map(({ sourceId, craft_meta, ...row }) => ({
       ...row,
       usable: Boolean(row.usable),
+      ...(craft_meta && { craftMeta: JSON.parse(craft_meta) }),
       source: sourceId ? sources.get(sourceId) : undefined,
     }));
     return {
@@ -286,27 +349,32 @@ export class GardenGifts {
 
   /** @param {string} id @param {Owner} owner */
   owned(id, owner) {
-    const item = /** @type {Item|undefined} */ (
+    const item = /** @type {(Item & {craft_meta:string|null})|undefined} */ (
       this.db
         .prepare(
           `
-      SELECT id,gift_id AS giftId,name,usable,slot,source_id AS sourceId,COALESCE(NULLIF(description,''),event_note) AS description,public_note AS note
+      SELECT id,gift_id AS giftId,name,usable,slot,source_id AS sourceId,COALESCE(NULLIF(description,''),event_note) AS description,public_note AS note,craft_meta
       FROM garden_items WHERE id=? AND owner=? AND consumed=0
     `,
         )
         .get(id, ownerKey(owner))
     );
     if (!item) throw Error("GARDEN_ITEM_UNAVAILABLE");
-    return item;
+    const { craft_meta, ...fields } = item;
+    return {
+      ...fields,
+      ...(craft_meta && { craftMeta: JSON.parse(craft_meta) }),
+    };
   }
 
-  /** @param {string} itemId @param {{giftId:string,name:string}} gift @param {Person} giver @param {Person} recipient @param {string} note @param {number} day @param {number} at */
+  /** @param {string} itemId @param {{giftId:string,name:string,craftMeta?:CraftMeta}} gift @param {Person} giver @param {Person} recipient @param {string} note @param {number} day @param {number} at */
   transfer(itemId, gift, giver, recipient, note, day, at) {
     const transfer = {
       id: randomUUID(),
       itemId,
       giftId: gift.giftId,
       name: gift.name,
+      ...(gift.craftMeta && { craftMeta: gift.craftMeta }),
       giver,
       recipient,
       note,
@@ -342,8 +410,18 @@ export class GardenGifts {
 
   /** @param {z.infer<typeof giftAction>} action @param {GiftContext} context @param {number} day @param {number} now
    * @param {import("./garden-service.mjs").State} state @param {import("./garden-events.mjs").GardenEvents} events @param {(amount:number)=>void} pay
-   * @param {(transfer:Transfer)=>void} [recordTransfer] */
-  apply(action, context, day, now, state, events, pay, recordTransfer) {
+   * @param {(transfer:Transfer)=>void} [recordTransfer] @param {boolean} [hasRack] */
+  apply(
+    action,
+    context,
+    day,
+    now,
+    state,
+    events,
+    pay,
+    recordTransfer,
+    hasRack = false,
+  ) {
     const { owner } = context;
     const key = ownerKey(owner);
     const recipient =
@@ -371,23 +449,7 @@ export class GardenGifts {
       if (!offer) throw Error("GARDEN_EVENT_OFFER");
       if (!offer.stock) throw Error("GARDEN_STOCK_UNAVAILABLE");
       if (offer.price !== action.price) throw Error("GARDEN_PRICE_CHANGED");
-      const budget = this.budget(day, owner, state);
-      if (
-        budget &&
-        (!budget.limit ||
-          !budget.total ||
-          offer.price > Math.min(budget.remaining, budget.totalRemaining))
-      )
-        throw Error("GARDEN_GIFT_BUDGET_LOW");
-      pay(offer.price);
-      if (budget)
-        this.db
-          .prepare(
-            `
-        INSERT INTO garden_gift_spend VALUES(?,?,?) ON CONFLICT(day,agent_id) DO UPDATE SET used=used+excluded.used
-      `,
-          )
-          .run(day, owner.id, offer.price);
+      this.spend(day, owner, state, offer.price, pay);
       offer.stock--;
       events.update(day, event);
       const itemId = randomUUID();
@@ -414,6 +476,57 @@ export class GardenGifts {
         name: offer.name,
         price: offer.price,
         eventId: event.id,
+        recipient: asRecipient(recipient ?? owner),
+        transferId: transfer?.id,
+      };
+    }
+    if (action.kind === "craft_gift") {
+      const { price, giftId, craftMeta } = prepareGardenCraft(
+        this.db,
+        state,
+        context,
+        action,
+        hasRack,
+      );
+      const gift = gardenGifts[giftId];
+      this.spend(day, owner, state, price, pay);
+      const use = this.db.prepare(
+        "UPDATE garden_harvests SET quantity=quantity-1,last_use='craft_gift' WHERE id=? AND quantity>0",
+      );
+      for (const harvestId of action.harvestIds)
+        if (use.run(harvestId).changes !== 1)
+          throw Error("GARDEN_RECIPE_INGREDIENTS");
+      const itemId = randomUUID();
+      this.db
+        .prepare(
+          "INSERT INTO garden_items(id,gift_id,name,usable,owner,craft_meta) VALUES(?,?,?,?,?,?)",
+        )
+        .run(
+          itemId,
+          giftId,
+          gift.name,
+          Number(gift.usable),
+          key,
+          JSON.stringify(craftMeta),
+        );
+      const transfer =
+        recipient &&
+        this.transfer(
+          itemId,
+          { giftId, name: gift.name, craftMeta },
+          owner,
+          recipient,
+          action.note ?? "",
+          day,
+          now,
+        );
+      if (transfer) recordTransfer?.(transfer);
+      return {
+        itemId,
+        giftId,
+        name: gift.name,
+        price,
+        craftMeta,
         recipient: asRecipient(recipient ?? owner),
         transferId: transfer?.id,
       };

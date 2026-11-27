@@ -8,7 +8,10 @@ import {
   defaultEvents,
   legacyEvents,
 } from "../src/home/garden-event-rules.mjs";
-import { subjectGardenView } from "../src/home/garden-console.mjs";
+import {
+  performGardenAction,
+  subjectGardenView,
+} from "../src/home/garden-console.mjs";
 import { DAY, defaultGardenSettings, HOUR } from "../src/home/garden-rules.mjs";
 import { config, fixture } from "./helpers.mjs";
 
@@ -653,6 +656,188 @@ test("the management garden trades a selected harvest, hosts tea and keeps a ske
     .filter({ hasText: "候鸟羽毛书签" });
   await feather.locator("img[src$='/gift-wrapped.webp']").waitFor();
 
+  assert.deepEqual(errors, []);
+});
+
+test("the management garden builds facilities, crafts with two selected species and shows only public cabinet contents", async (t) => {
+  const cfg = config(1);
+  const { runtime } = fixture(t, { cfg });
+  const garden = runtime.home.garden;
+  const settings = defaultGardenSettings();
+  settings.weather = fixedWeather();
+  settings.events.rate = 0;
+  settings.initialBalance = 3000;
+  const cropIds = [
+    "strawberry",
+    "sunflower",
+    "moonflower",
+    "hydrangea",
+    "mint",
+  ];
+  for (const id of cropIds) settings.crops[id].hours = 1;
+  settings.crops.strawberry.yield = 2;
+  let now = 1_800_000_000_000;
+  runtime.clock = () => now;
+  garden.initialize(now, settings);
+  garden.syncClock(now, true);
+  const admin = { kind: "admin", id: "administrator" };
+  const act = (action, actor = admin) =>
+    performGardenAction(runtime, actor, { requestId: randomUUID(), action });
+  const plants = cropIds.map((cropId, index) =>
+    act({
+      kind: "plant",
+      plot: index + 1,
+      cropId,
+      buyPrice: settings.crops[cropId].seedPrice,
+    }),
+  );
+  now += 3 * HOUR;
+  garden.syncClock(now, true);
+  const harvested = Object.fromEntries(
+    plants.map(({ plot, plantId }, i) => [
+      cropIds[i],
+      act({ kind: "harvest", plot, plantId }).harvestId,
+    ]),
+  );
+  const token = randomUUID();
+  const server = createServer({ runtime, token, allowLive: true });
+  t.after(() => server.close());
+  const browser = await chromium.launch({
+    executablePath: process.env.QQ_TEST_GARDEN_BROWSER,
+    headless: true,
+  });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 375, height: 850 } });
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto(`http://127.0.0.1:${await server.listen()}/`);
+  await page.locator("#token").fill(token);
+  await page.locator("#login-button").click();
+  await page.getByRole("button", { name: "花园", exact: true }).click();
+  const tab = (name) =>
+    page.locator(".garden-nav").getByRole("button", { name, exact: true });
+  const status = page.locator("[data-garden-status]");
+  const currentBalance = () => garden.read(now).balance;
+  await page.getByRole("button", { name: /图鉴已点亮 5/ }).waitFor();
+  await tab("植物图鉴").click();
+  await page
+    .locator('[data-almanac-crop="hydrangea"]')
+    .getByText(/雾紫绣球/)
+    .waitFor();
+  assert.equal(await page.locator('[data-almanac-crop="sunberry"]').count(), 0);
+
+  await tab("手作台").click();
+  const recipe = (id) => page.locator(`[data-garden-recipe="${id}"]`);
+  const jam = recipe("craft-strawberry-jam");
+  const bouquet = recipe("craft-flower-bouquet");
+  assert.equal(await page.locator("[data-garden-recipe]").count(), 6);
+  await bouquet.getByText("建好干花晾晒架后解锁。", { exact: true }).waitFor();
+  const beforeJam = currentBalance();
+  await jam.getByRole("button", { name: "制作", exact: true }).click();
+  await status
+    .getByText("手作草莓果酱已收入我的物品栏，工本费 12 元。")
+    .waitFor();
+  assert.equal(currentBalance(), beforeJam - 12);
+
+  await tab("园角设施").click();
+  for (const [name, price] of [
+    ["晴雨风铃", 280],
+    ["小鸟浴盆", 360],
+    ["干花晾晒架", 420],
+  ]) {
+    const before = currentBalance();
+    await page
+      .getByRole("button", { name: `建造 · ${price} 元`, exact: true })
+      .click();
+    await status.getByText(`${name}已建成，支出 ${price} 元。`).waitFor();
+    assert.equal(currentBalance(), before - price);
+  }
+  await page
+    .locator('[data-garden-pane="facilities"] .garden-forecast')
+    .waitFor();
+  await tab("手作台").click();
+  await jam.getByText(/工本费 6 元/).waitFor();
+  await bouquet.getByText(/工本费 9 元/).waitFor();
+  const primary = bouquet.getByLabel("原料 1", { exact: true });
+  const second = bouquet.getByLabel("原料 2", { exact: true });
+  await primary.selectOption(harvested.hydrangea);
+  assert.equal(
+    await second.locator(`option[value="${harvested.hydrangea}"]`).isDisabled(),
+    true,
+  );
+  await second.selectOption(harvested.sunflower);
+  await bouquet.getByLabel("成品去向").selectOption("send");
+  await bouquet
+    .getByLabel("送给", { exact: true })
+    .selectOption({ label: "角色0" });
+  const privateNote = "只有收礼人可见的花束赠言";
+  await bouquet.getByLabel("赠言（可选）").fill(privateNote);
+  const receipt = page.waitForResponse((response) =>
+    response.url().endsWith("/api/home-garden/act"),
+  );
+  const beforeBouquet = currentBalance();
+  await bouquet.getByRole("button", { name: "制作", exact: true }).click();
+  const result = await (await receipt).json();
+  await status.getByText("晴雨干花束已送给角色0，工本费 9 元。").waitFor();
+  assert.equal(currentBalance(), beforeBouquet - 9);
+  assert.equal(
+    garden.read(now).harvests.some(({ id }) => id === harvested.moonflower),
+    true,
+  );
+  assert.equal(
+    garden.read(now).harvests.some(({ id }) => id === harvested.hydrangea),
+    false,
+  );
+
+  await tab("串门").click();
+  const community = page.locator('[data-garden-pane="community"]');
+  assert.equal(await community.getByText("晴雨干花束").count(), 0);
+  assert.equal(await community.getByText("手作草莓果酱").count(), 0);
+  const role = {
+    kind: "agent",
+    id: cfg.agents[0].id,
+    turnId: "phase3-cabinet-fixture",
+  };
+  const display = (publishNote) =>
+    act(
+      {
+        kind: "display_gift",
+        itemId: result.receipt.itemId,
+        slot: 16,
+        publishNote,
+      },
+      role,
+    );
+  display(false);
+  await page.getByRole("button", { name: "刷新花园", exact: true }).click();
+  const partnerCabinet = community
+    .locator("details")
+    .filter({ hasText: "角色0的展示柜" });
+  await partnerCabinet.locator("summary").click();
+  assert.equal(await partnerCabinet.locator(".cabinet-cell").count(), 16);
+  await partnerCabinet.getByText("晴雨干花束", { exact: true }).waitFor();
+  await partnerCabinet
+    .getByText(/原料.*第 1 天成熟.*蓝雨绣球.*向日葵/)
+    .waitFor();
+  assert.equal(await partnerCabinet.getByText(privateNote).count(), 0);
+  assert.equal(
+    await partnerCabinet.getByRole("button", { name: "收回" }).count(),
+    0,
+  );
+
+  display(true);
+  await page.getByRole("button", { name: "刷新花园", exact: true }).click();
+  await partnerCabinet
+    .getByText(privateNote, { exact: true })
+    .waitFor({ state: "attached" });
+  await partnerCabinet.locator("summary").click();
+  await partnerCabinet.getByText(privateNote, { exact: true }).waitFor();
+  assert.equal(
+    await page
+      .locator("#garden-page")
+      .evaluate((view) => view.scrollWidth > view.clientWidth),
+    false,
+  );
   assert.deepEqual(errors, []);
 });
 

@@ -54,7 +54,7 @@ test("journal settles exact growth milestones and keeps the archived plant after
   const entries = garden.plantHistory({ plantId }).entries;
   assert.deepEqual(
     entries.map(({ type }) => type),
-    ["mature", "developed", "sprouted", "water", "planted"],
+    ["mature", "developed", "sprouted", "water", "almanac", "planted"],
   );
   assert.deepEqual(
     entries.slice(0, 3).map(({ clock }) => Math.round(clock)),
@@ -96,9 +96,14 @@ test("journal pagination pins the fact set and digest cursors isolate reader gen
   const page = garden.timeline({ limit: 2 });
   const original = garden.timeline().entries;
   act({ kind: "water", plot: 1, plantId });
-  const next = garden.timeline({ limit: 1, cursor: page.nextCursor });
-  assert.deepEqual([...page.entries, ...next.entries], original);
-  assert.equal(next.nextCursor, null);
+  const pages = [...page.entries];
+  let cursor = page.nextCursor;
+  while (cursor) {
+    const next = garden.timeline({ limit: 1, cursor });
+    pages.push(...next.entries);
+    cursor = next.nextCursor;
+  }
+  assert.deepEqual(pages, original);
   assert.throws(
     () => garden.timeline({ type: "water", cursor: page.nextCursor }),
     /INVALID_REQUEST/,
