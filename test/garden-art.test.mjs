@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import test from "node:test";
+import { defaultGardenSettings } from "../src/home/garden-rules.mjs";
 import {
   gardenArtMarkup,
   gardenGifts,
@@ -15,7 +16,7 @@ test("all runtime garden artwork is WebP and individually allowlisted", async ()
   const files = (await readdir(directory)).filter((file) =>
     file.endsWith(".webp"),
   );
-  assert.equal(files.length, 73);
+  assert.equal(files.length, 137);
   assert.equal(isGardenArtResource("gifts.js"), true);
   assert.equal(isGardenArtResource("workspace.js"), true);
   assert.equal(isGardenArtResource("stages.js"), true);
@@ -48,8 +49,7 @@ test("all runtime garden artwork is WebP and individually allowlisted", async ()
     assert.ok(files.includes(specific), specific);
     assert.ok(isGardenArtResource(specific), specific);
   }
-  for (const id of ["morning-glory", "rattle-pea", "balsam", "lambs-ear"])
-    assert.equal(gardenIconFile("crop", id), "plant-seedling.webp");
+  assert.equal(gardenIconFile("crop", "custom-crop"), null);
   assert.equal(gardenIconFile("gift", "../gift"), null);
   assert.equal(gardenIconFile("gift", "constructor"), null);
   for (const file of files) {
@@ -100,4 +100,36 @@ test("garden artwork layers follow crop stages and omit an unillustrated crop", 
     gardenArtMarkup(custom, () => undefined),
     "",
   );
+});
+
+test("every built-in crop resolves to its own installed art through all four stages", async () => {
+  const assets = new Set(
+    await readdir(new URL("../public/garden-art/", import.meta.url)),
+  );
+  for (const cropId of Object.keys(defaultGardenSettings().crops)) {
+    assert.equal(gardenIconFile("crop", cropId), `plant-${cropId}-mature.webp`);
+    for (const [growth, status, file] of [
+      [0, "growing", "plant-seedling.webp"],
+      [20, "growing", `plant-${cropId}-seedling.webp`],
+      [75, "growing", `plant-${cropId}-growing.webp`],
+      [100, "mature", `plant-${cropId}-mature.webp`],
+      [40, "withered", `plant-${cropId}-withered.webp`],
+    ]) {
+      const plant = {
+        cropId,
+        growth,
+        status,
+        crop: { hours: 100 },
+        water: 50,
+        rules: { lowWater: 20 },
+      };
+      assert.equal(
+        gardenLayers({ plant, sheltered: false }).find(
+          (layer) => layer.layer === "plant",
+        )?.file,
+        file,
+      );
+      assert.ok(assets.has(file), file);
+    }
+  }
 });
