@@ -253,7 +253,7 @@ export class DreamRunner {
       try {
         const contract = resolveFunctionalContract(profile);
         await adapter.run({
-          ...contract.createExchange(runtime, ctx, { profile, snapshot }),
+          ...contract.createExchange(runtime, ctx, { profile, snapshot, mode }),
           onUsage: (
             /** @type {{source:string,contextTokens:number,cumulativeTokens?:number}} */ usage,
           ) => {
