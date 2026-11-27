@@ -312,3 +312,38 @@ test("cognition list withholds old rows whose current evidence cannot be accesse
     1,
   );
 });
+
+test("cognitive backend receives the framework mode and the same scoped tool contracts", async (t) => {
+  const exchanges = [];
+  const f = fixture(t, {
+    cfg: dreamConfig(),
+    run: async (params) => {
+      const token = /context=(\S+)/.exec(params.prompt)[1];
+      const ctx = f.runtime.capability(token);
+      exchanges.push({
+        prompt: params.prompt,
+        tools: params.tools,
+        discovery: scopedCatalog(f.runtime, ctx, {
+          names: params.tools.map(({ name }) => name),
+        }).tools,
+        session: params.session,
+      });
+      await params.callTool("dream_cognition_submit", empty);
+    },
+  });
+  for (const mode of ["nap", "deep"])
+    assert.equal(
+      (await f.runtime.dreams.run("agent-0", { mode })).status,
+      "COMMITTED",
+    );
+
+  assert.match(exchanges[0].prompt, /小憩（nap）.*ADD.*UPDATE.*REINFORCE/);
+  assert.match(
+    exchanges[1].prompt,
+    /深度睡眠（deep）.*冲突.*纠正.*LINK.*WEAKEN/,
+  );
+  assert.deepEqual(exchanges[0].tools, exchanges[1].tools);
+  assert.deepEqual(exchanges[0].discovery, exchanges[1].discovery);
+  assert.deepEqual(exchanges[0].tools, exchanges[0].discovery);
+  assert.ok(exchanges.every(({ session }) => session === null));
+});

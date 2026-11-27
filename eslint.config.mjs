@@ -78,6 +78,7 @@ const browserScripts = {
     "downloadDocument",
   ],
   "project-participation.js": ["bindProjectParticipation"],
+  "dream-ui.js": ["renderDreams"],
   "mind-ui.js": ["mindAgentId", "renderMind"],
   "session-transcripts-ui.js": ["renderTranscripts"],
   "projects-ui.js": [

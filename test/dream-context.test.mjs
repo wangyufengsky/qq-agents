@@ -89,6 +89,7 @@ test("QQ delivers new versions incrementally and dream configuration retains the
   await wake();
   assert.match(seen[1].prompt, /喜欢听钢琴/);
   assert.match(seen[1].prompt, /"fromPrivate":true/);
+  assert.match(seen[1].prompt, /醒来摘要.*fromPrivate/);
   assert.equal(seen[1].session.id, nativeSession.id);
   assert.equal(seen[1].instructions, seen[0].instructions);
   assert.deepEqual(seen[1].tools, seen[0].tools);
@@ -314,6 +315,7 @@ test("QQ and desktop omit stale cognitions at native input while delivering the 
         }
         assert.doesNotMatch(delivered, /喜欢听钢琴|修订后的偏好/);
         assert.match(delivered, /喜欢阅读散文/);
+        assert.doesNotMatch(delivered, /醒来摘要/);
         assert.deepEqual(memory.state(scope).cognitionsShown, { [valid]: 1 });
         assert.ok(
           !memory.state(scope).disclosureTaint.includes(staleSource.id),
@@ -321,4 +323,196 @@ test("QQ and desktop omit stale cognitions at native input while delivering the 
       });
     }
   }
+});
+
+test("retained QQ and desktop sessions invalidate previously delivered cognition versions once", async (t) => {
+  for (const surface of ["qq", "desktop"])
+    for (const op of ["WEAKEN", "UPDATE", "ARCHIVE", "MERGE"]) {
+      await t.test(`${surface} ${op}`, async (t) => {
+        const cfg = config(1);
+        cfg.agents[0].dream.enabled = true;
+        cfg.agents[0].contextPolicy.capacityTokens = 1000000;
+        cfg.desktopHome.enabled = true;
+        const prompts = [];
+        let nextPatch;
+        const f = fixture(t, {
+          cfg,
+          run: async (p) => {
+            if (p.dream) return p.callTool("dream_cognition_submit", nextPatch);
+            prompts.push({
+              prompt: p.prompt,
+              instructions: p.instructions,
+              session: p.session,
+            });
+            p.saveSession(nativeSession);
+          },
+        });
+        const memory = f.store.bind(role),
+          db = f.store.db;
+        const source = append(f, "invalidation-source", "private:30000");
+        nextPatch = add(source.id);
+        if (op === "MERGE")
+          nextPatch.operations.push({
+            ...add(source.id, "desktop").operations[0],
+            scopeId: "global",
+            subjectKey: "merge:destination",
+            content: "合并保留的认知。",
+          });
+        assert.equal((await f.runtime.dreams.run(role)).status, "COMMITTED");
+        const id = db
+          .prepare(
+            "SELECT id FROM cognitions WHERE subject_key='user:30000:music'",
+          )
+          .get().id;
+        const scope = surface === "desktop" ? DESKTOP_CONVERSATION : group;
+        let wakeCount = 0;
+        const native = {
+          config: cfg.backends[0],
+          sessionSignature(tools) {
+            return sessionSignature(this, tools);
+          },
+          async run(p) {
+            await p.beforeInputSubmitted();
+            prompts.push({
+              prompt: p.prompt + (p.appendPrompt?.() || ""),
+              instructions: p.instructions,
+              session: p.session,
+            });
+            p.onInputSubmitted();
+            p.saveSession(
+              p.session ?? {
+                id: "synthetic-desktop-retained",
+                backend: "codex",
+                signature: this.sessionSignature(p.tools),
+              },
+            );
+          },
+        };
+        async function wake() {
+          if (surface === "qq") {
+            append(f, "invalidation-wake-" + ++wakeCount);
+            return f.runtime.wake(role, scope);
+          }
+          const controller = new AbortController();
+          const ctx = f.runtime.makeContext(role, scope, {
+            controller,
+            assertCurrent() {},
+            decide() {},
+            unified: true,
+            kind: "chat",
+          });
+          const exchange = beginDesktopContext(
+            f.runtime,
+            ctx,
+            f.runtime.agent(role),
+            native,
+            { kind: "chat", messages: [], people: [] },
+            controller.signal,
+          );
+          await runNativeSocial(
+            native,
+            {
+              ...exchange,
+              budget: null,
+              signal: controller.signal,
+              binding: { runId: ctx.turnId },
+              beforeInput() {},
+              onRunStarted() {},
+            },
+            async () => {},
+            "desktop",
+          );
+          await exchange.finish();
+          f.runtime.capabilities.delete(ctx.token);
+        }
+        await wake();
+        assert.match(prompts[0].prompt, /喜欢听钢琴/);
+        assert.equal(memory.state(scope).cognitionsShown[id], 1);
+        const next = append(f, "invalidation-next", "private:30000");
+        const target = {
+          targetId: id,
+          expectedVersion: 1,
+          reason: "旧结论失效",
+        };
+        if (op === "MERGE") {
+          const destination = db
+            .prepare(
+              "SELECT id FROM cognitions WHERE subject_key='merge:destination'",
+            )
+            .get().id;
+          nextPatch = patch({
+            ...target,
+            op,
+            targetId: destination,
+            sourceIds: [id],
+            evidenceIds: [next.id],
+            content: "合并后的有效认知。",
+          });
+        } else {
+          nextPatch = patch({
+            ...target,
+            op,
+            ...(op !== "ARCHIVE" && { evidenceIds: [next.id] }),
+            ...(op === "UPDATE" && {
+              content: "相互矛盾的材料。",
+              epistemicStatus: "disputed",
+            }),
+          });
+        }
+        assert.equal((await f.runtime.dreams.run(role)).status, "COMMITTED");
+        assert.doesNotMatch(
+          cognitionContext(
+            f.runtime,
+            { agentId: role, conversation: scope },
+            { fresh: true },
+          ).line,
+          new RegExp(id),
+        );
+        assert.match(
+          cognitionContext(
+            f.runtime,
+            { agentId: role, conversation: scope },
+            { fresh: false },
+          ).refresh().line,
+          new RegExp(id),
+        );
+        assert.equal(memory.state(scope).cognitionsShown[id], 1);
+
+        const shielded = op === "UPDATE" ? next.id : source.id;
+        const beforeProtection = cognitionContext(
+          f.runtime,
+          { agentId: role, conversation: scope },
+          { fresh: false },
+        );
+        const previousPayload = db
+          .prepare("SELECT payload FROM events WHERE id=?")
+          .get(shielded).payload;
+        const updatePayload = db.prepare(
+          "UPDATE events SET payload=? WHERE id=?",
+        );
+        updatePayload.run(
+          JSON.stringify({ protectedOperations: true }),
+          shielded,
+        );
+        assert.doesNotMatch(beforeProtection.refresh().line, new RegExp(id));
+        assert.equal(memory.state(scope).cognitionsShown[id], 1);
+        updatePayload.run(previousPayload, shielded);
+
+        const status =
+          op === "WEAKEN" || op === "UPDATE" ? "disputed" : "archived";
+        const sameSession = memory.state(scope).session;
+        await wake();
+        assert.match(
+          prompts[1].prompt,
+          new RegExp(`"id":"${id}","version":2[^}]*"status":"${status}"`),
+        );
+        assert.doesNotMatch(prompts[1].prompt, /喜欢听钢琴|相互矛盾的材料/);
+        assert.equal(prompts[1].session.id, sameSession.id);
+        if (surface === "qq")
+          assert.equal(prompts[1].instructions, prompts[0].instructions);
+        assert.equal(memory.state(scope).cognitionsShown[id], 2);
+        await wake();
+        assert.doesNotMatch(prompts[2].prompt, new RegExp(id));
+      });
+    }
 });

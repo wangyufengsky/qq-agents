@@ -12,10 +12,36 @@ const watermarks = {
   corrections: Number.MAX_SAFE_INTEGER,
 };
 
-/** @param {unknown[]} items */
-function cognitionLine(items) {
+/** @typedef {{id:string,version:number,content?:string,status?:string,fromPrivate?:boolean}} OpeningItem */
+/** @typedef {{summary:string,source_refs_json:string,cognition_version:number,scope_id:string}} AwakeningRow */
+/** @param {OpeningItem[]} items @param {AwakeningRow[]} caches @param {number} budget */
+function cognitionLine(items, caches, budget) {
+  const summaries = [];
+  let remaining = budget;
+  for (const cache of caches) {
+    if (!remaining || cache.summary.length > remaining) continue;
+    const refs = /** @type {{id:string,version:number}[]} */ (
+      JSON.parse(cache.source_refs_json)
+    );
+    const matching = refs.map((ref) =>
+      items.find((item) => item.id === ref.id && item.version === ref.version),
+    );
+    if (
+      !matching.length ||
+      matching.some((item) => !item) ||
+      matching.map((item) => item?.content).join("\n") !== cache.summary
+    )
+      continue;
+    summaries.push({
+      scopeId: cache.scope_id,
+      summary: cache.summary,
+      ...(matching.some((item) => item?.fromPrivate) && { fromPrivate: true }),
+    });
+    remaining -= cache.summary.length;
+  }
+
   return items.length
-    ? `长期认知（本轮资料。根据认识状态理解，遇到分歧按原文核对。fromPrivate 仅用于调整理解与表达，不要主动提起其他私聊内容）：${JSON.stringify(items)}`
+    ? `长期认知（本轮资料。根据认识状态理解，遇到分歧按原文核对。标为 disputed 或 archived 时，停止沿用该 ID 的旧认知。fromPrivate 仅用于调整理解与表达，不要主动提起其他私聊内容）：${JSON.stringify(items)}${summaries.length ? `\n\n醒来摘要（同属本轮参考资料）：${JSON.stringify(summaries)}` : ""}`
     : "";
 }
 /** @param {any} runtime @param {{agentId:string,conversation:string}} ctx @param {{fresh:boolean,personIds?:string[]}} options @returns {PreparedOpening|null} */
@@ -39,18 +65,26 @@ export function cognitionContext(runtime, ctx, { fresh, personIds = [] }) {
   const { read } = dreamSources(runtime, ctx, watermarks);
   const candidate = prepared(
     db,
-    `SELECT c.* FROM cognitions c WHERE c.agent_id=? AND c.status='active'
-    AND (c.scope_id=? OR c.scope_id='global' OR EXISTS (
-      SELECT 1 FROM json_each(?) p WHERE c.subject_key LIKE 'user:'||p.value||':%'
-    ))
-    ORDER BY c.importance DESC,c.updated_at DESC,c.id`,
+    `SELECT c.* FROM cognitions c WHERE c.agent_id=? AND (
+      (c.status='active' AND (c.scope_id=? OR c.scope_id='global' OR EXISTS (
+        SELECT 1 FROM json_each(?) p WHERE c.subject_key LIKE 'user:'||p.value||':%'
+      ))) OR (c.status IN ('disputed','archived') AND EXISTS (
+        SELECT 1 FROM json_each(?) s WHERE s.key=c.id AND s.value<c.version
+      ))
+    )
+    ORDER BY c.status='active',c.importance DESC,c.updated_at DESC,c.id`,
   );
   const rows = /** @type {Iterable<Cognition>} */ (
-    candidate.iterate(agentId, scope, JSON.stringify([...people]))
+    candidate.iterate(
+      agentId,
+      scope,
+      JSON.stringify([...people]),
+      JSON.stringify(shown),
+    )
   );
   let core = role.dream.budget.contextCoreChars,
     scene = role.dream.budget.contextSceneChars;
-  /** @type {{item:{id:string,version:number},fingerprints:Map<string,string>}[]} */
+  /** @type {{item:OpeningItem,fingerprints:Map<string,string>}[]} */
   const candidates = [];
   for (const row of rows) {
     if (core < 1 && scene < 1) break;
@@ -77,8 +111,9 @@ export function cognitionContext(runtime, ctx, { fresh, personIds = [] }) {
       id: row.id,
       version: row.version,
       category: row.category,
-      content: row.content,
-      epistemicStatus: row.epistemic_status,
+      ...(row.status === "active"
+        ? { content: row.content, epistemicStatus: row.epistemic_status }
+        : { status: row.status }),
       ...(fromPrivate && { fromPrivate }),
     };
     const size = JSON.stringify(item).length + 1;
@@ -87,7 +122,22 @@ export function cognitionContext(runtime, ctx, { fresh, personIds = [] }) {
     else scene -= size;
     candidates.push({ item, fingerprints });
   }
-  const line = cognitionLine(candidates.map(({ item }) => item));
+  const cacheQuery = prepared(
+    db,
+    `SELECT summary,source_refs_json,cognition_version,scope_id FROM awakening_contexts
+    WHERE agent_id=? AND scope_id IN ('global',?) ORDER BY CASE WHEN scope_id=? THEN 0 ELSE 1 END`,
+  );
+  const caches = /** @type {AwakeningRow[]} */ (
+    cacheQuery.all(agentId, scope, scope)
+  );
+  const version = new Map(
+    caches.map((row) => [row.scope_id, row.cognition_version]),
+  );
+  const line = cognitionLine(
+    candidates.map(({ item }) => item),
+    caches,
+    role.dream.budget.awakeningSummaryChars,
+  );
   return {
     line,
     refresh() {
@@ -100,15 +150,21 @@ export function cognitionContext(runtime, ctx, { fresh, personIds = [] }) {
       const currentSources = dreamSources(runtime, ctx, watermarks);
       const currentRow = prepared(
         db,
-        "SELECT * FROM cognitions WHERE agent_id=? AND id=? AND version=? AND status='active'",
+        "SELECT * FROM cognitions WHERE agent_id=? AND id=? AND version=? AND status=?",
       );
       const items = [],
         evidenceIds = new Set();
       if (currentRole.dream?.enabled && currentRole.dream.cognitive.enabled)
         for (const { item, fingerprints } of candidates) {
           if (item.version <= (currentShown[item.id] ?? 0)) continue;
+          if (item.status && !currentShown[item.id]) continue;
           const record = /** @type {Cognition|undefined} */ (
-            currentRow.get(agentId, item.id, item.version)
+            currentRow.get(
+              agentId,
+              item.id,
+              item.version,
+              item.status ?? "active",
+            )
           );
           if (!record) continue;
           const evidence = visibleCognitionEvidence(db, record, (id) => {
@@ -125,7 +181,15 @@ export function cognitionContext(runtime, ctx, { fresh, personIds = [] }) {
       return {
         shown: currentShown,
         evidenceIds: [...evidenceIds],
-        line: cognitionLine(items),
+        line: cognitionLine(
+          items,
+          /** @type {AwakeningRow[]} */ (
+            cacheQuery.all(agentId, scope, scope)
+          ).filter(
+            (row) => version.get(row.scope_id) === row.cognition_version,
+          ),
+          currentRole.dream.budget.awakeningSummaryChars,
+        ),
       };
     },
   };

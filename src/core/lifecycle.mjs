@@ -1173,6 +1173,7 @@ export class ContextLifecycle {
           this.runtime.now(),
           { turnId: ctx.turnId },
         );
+      this.runtime.dreamScheduler.activity(ctx.agentId);
       // Keep running durable through all async finalization/compaction. On a
       // crash, recovery must still archive before removing the active mapping.
       m.identity.put("model_turns", {

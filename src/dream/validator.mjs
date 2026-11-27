@@ -30,6 +30,17 @@ const change = {
   reason: requiredText,
 };
 
+const target = {
+  targetId: requiredText,
+  expectedVersion: z.number().int().min(1),
+  reason: requiredText,
+};
+const adjustment = {
+  ...target,
+  evidenceIds: change.evidenceIds,
+  confidence: score.optional(),
+  importance: score.optional(),
+};
 export const cognitionPatch = z.strictObject({
   schemaVersion: z.literal(1),
   operations: z.array(
@@ -43,6 +54,29 @@ export const cognitionPatch = z.strictObject({
         confidence: score,
         ...change,
       }),
+      z.strictObject({
+        op: z.literal("MERGE"),
+        ...target,
+        sourceIds: z.array(requiredText).min(1),
+        content: change.content,
+        evidenceIds: change.evidenceIds,
+      }),
+      z.strictObject({
+        op: z.literal("LINK"),
+        fromId: requiredText,
+        toId: requiredText,
+        reason: requiredText,
+        relation: z.enum([
+          "related_to",
+          "supports",
+          "contradicts",
+          "supersedes",
+          "follows_up",
+        ]),
+      }),
+      z.strictObject({ op: z.literal("ARCHIVE"), ...target }),
+      z.strictObject({ op: z.literal("REINFORCE"), ...adjustment }),
+      z.strictObject({ op: z.literal("WEAKEN"), ...adjustment }),
       z.strictObject({
         op: z.literal("UPDATE"),
         targetId: requiredText,
@@ -71,7 +105,7 @@ export function parsePatch(input, maxOps) {
   return parsed.data;
 }
 
-/** @param {CognitionPatch["operations"][number]} operation @param {string} scope @param {string} category @param {(id:string) => Source|null|undefined} read @param {Set<string>} displayed @param {Map<string,string>} fingerprints */
+/** @param {{evidenceIds:string[],epistemicStatus:string}} operation @param {string} scope @param {string} category @param {(id:string) => Source|null|undefined} read @param {Set<string>} displayed @param {Map<string,string>} fingerprints */
 export function validateEvidence(
   operation,
   scope,
