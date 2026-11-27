@@ -464,7 +464,7 @@ test("a merchant without any trading stock has no trial or daily draw probabilit
 
 test("the default pool includes previous presets and gates weather, stock, and weekend entries", () => {
   const settings = defaultGardenSettings();
-  assert.equal(Object.keys(settings.events.entries).length, 31);
+  assert.equal(Object.keys(settings.events.entries).length, 41);
   const ctx = {
     day: 6,
     balance: 401,

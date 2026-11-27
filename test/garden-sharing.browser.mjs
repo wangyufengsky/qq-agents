@@ -12,7 +12,9 @@ import { desktopResourcePath } from "../desktop/home/resource-protocol.mjs";
 import { runNativeSocial } from "../src/backends/native-social.mjs";
 import { desktopToken } from "../src/home/desktop-auth.mjs";
 import {
+  gardenPlantSnapshot,
   gardenPublicSnapshot,
+  renderGardenPlantSnapshot,
   renderGardenSnapshot,
 } from "../src/home/garden-public.mjs";
 import { createServer } from "../src/server.mjs";
@@ -84,9 +86,11 @@ test("actual Chromium produces a shareable nine-tile PNG and renders the desktop
   t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 430, height: 780 } });
   const pageErrors = [];
-  page.on("pageerror", (error) => pageErrors.push(error.message));
-  await page.exposeFunction("gardenBridge", (epoch, action) =>
-    callDesktop("garden", { roomEpoch: epoch, action }),
+  page.on("pageerror", (error) =>
+    pageErrors.push(error.stack || error.message),
+  );
+  await page.exposeFunction("gardenBridge", (epoch, action, journal) =>
+    callDesktop("garden", { roomEpoch: epoch, action, journal }),
   );
   await page.exposeFunction("gardenImageBridge", (epoch, messageId) =>
     callDesktop("shared-image", { roomEpoch: epoch, messageId }),
@@ -479,6 +483,24 @@ test("actual Chromium produces a shareable nine-tile PNG and renders the desktop
   await cabinet.locator("summary").click();
   await cabinet.getByText(/原料.*薄荷盆栽/).waitFor();
   assert.equal(await cabinet.locator(".cabinet-cell").count(), 16);
+
+  rules.crops.balsam.hours = 1;
+  garden.configure(now, garden.requireState().settingsRevision, rules);
+  act({
+    kind: "plant",
+    cropId: "balsam",
+    plot: 2,
+    buyPrice: rules.crops.balsam.seedPrice,
+  });
+  await advance();
+  await panel.getByRole("button", { name: "花圃", exact: true }).click();
+  const balsam = panel.locator('[data-plot="2"]');
+  await balsam.getByText("跳跳凤仙", { exact: true }).waitFor();
+  await balsam.click();
+  const pods = garden.read(now).mysterySeeds.count;
+  await detail.getByRole("button", { name: "轻碰弹籽荚", exact: true }).click();
+  await detail.getByText("果荚已弹过籽", { exact: true }).waitFor();
+  assert.equal(garden.read(now).mysterySeeds.count, pods + 1);
   assert.equal(
     await panel
       .locator(".garden-content")
@@ -501,7 +523,32 @@ test("native Electron garden tab reaches shared state through its focused panel 
     profile = path.join(root, "electron");
   await mkdir(profile);
   await writeFile(path.join(root, "desktop-home-token"), desktopToken(admin));
-  runtime.home.garden.initialize(runtime.now());
+  const garden = runtime.home.garden;
+  const settings = defaultGardenSettings();
+  settings.weather = fixedWeather();
+  settings.events.rate = 1;
+  for (const [id, event] of Object.entries(settings.events.entries))
+    event.weight = Number(id === "windmill-search");
+  settings.crops.balsam.hours = 1;
+  let now = Date.UTC(2026, 0, 1);
+  runtime.clock = () => now;
+  garden.initialize(now, settings);
+  garden.syncClock(now, true);
+  garden.act(
+    now,
+    { kind: "admin", id: "administrator" },
+    {
+      requestId: randomUUID(),
+      action: {
+        kind: "plant",
+        plot: 2,
+        cropId: "balsam",
+        buyPrice: settings.crops.balsam.seedPrice,
+      },
+    },
+  );
+  now += 2 * HOUR;
+  garden.syncClock(now, true);
   const server = createServer({ runtime, token: admin, allowLive: true });
   t.after(() => server.close());
   const port = await server.listen();
@@ -574,7 +621,79 @@ test("native Electron garden tab reaches shared state through its focused panel 
       runtime.home.garden.read(runtime.now()).plots[0].plant.cropId,
       "clover",
     );
+    const balsam = panel.locator('[data-plot="2"]');
+    await balsam.getByText("跳跳凤仙", { exact: true }).waitFor();
+    await balsam.click();
+    await detail
+      .getByRole("button", { name: "轻碰弹籽荚", exact: true })
+      .click();
+    await detail.getByText("果荚已弹过籽", { exact: true }).waitFor();
+    assert.equal(garden.read(now).mysterySeeds.count, 1);
+
+    await panel.getByRole("button", { name: "今日事件", exact: true }).click();
+    const ticket = panel.locator("[data-garden-ticket]");
+    await ticket.getByRole("heading", { name: "小风车找风" }).waitFor();
+    const spot = ticket.getByLabel("选择地块");
+    await spot.selectOption({ label: "第 3 块地" });
+    await ticket
+      .getByRole("button", { name: "插在 3 号地旁", exact: true })
+      .click();
+    await ticket.getByText(/小风车在 3 号地旁转了起来/).waitFor();
+    await spot.selectOption({ label: "第 4 块地" });
+    await ticket
+      .getByRole("button", { name: "把风车挪到 4 号地", exact: true })
+      .click();
+    await ticket.getByText(/小风车在 4 号地旁转了起来.*最快/).waitFor();
   } finally {
     await electron?.close();
   }
+});
+
+test("Chromium renders distinct morning and afternoon flower cards with the same frame and no dedicated sticker", async (t) => {
+  const { runtime } = fixture(t, { cfg: config(1) });
+  let now = Date.UTC(2026, 0, 1);
+  const garden = runtime.home.garden;
+  const settings = defaultGardenSettings();
+  settings.weather = fixedWeather("cloud");
+  settings.events.rate = 0;
+  settings.crops["morning-glory"].hours = 4;
+  garden.initialize(now, settings);
+  garden.syncClock(now, true);
+  const { plantId } = garden.act(
+    now,
+    { kind: "admin", id: "administrator" },
+    {
+      requestId: randomUUID(),
+      action: {
+        kind: "plant",
+        plot: 1,
+        cropId: "morning-glory",
+        buyPrice: settings.crops["morning-glory"].seedPrice,
+      },
+    },
+  );
+  const executablePath = findScreenshotBrowser();
+  const renderAt = async (elapsed) => {
+    now = Date.UTC(2026, 0, 1) + elapsed * HOUR;
+    garden.syncClock(now, true);
+    const state = garden.observe(now);
+    const detail = garden.plantHistory({ plantId }, { publicView: true });
+    const card = gardenPlantSnapshot(state, detail, { running: true, now });
+    // Keep the visible clock stamp fixed so only the flower's appearance
+    // in the card details can make the rendered images different.
+    const image = await renderGardenPlantSnapshot(
+      { ...card, day: 1, time: "08:00" },
+      {
+        signal: AbortSignal.timeout(20000),
+        executablePath,
+      },
+    );
+    assert.equal(image.subarray(1, 4).toString("ascii"), "PNG");
+    return { card, image };
+  };
+  const morning = await renderAt(8);
+  const afternoon = await renderAt(14);
+  assert.equal(morning.card.explorer.bloom, "open");
+  assert.equal(afternoon.card.explorer.bloom, "rolled");
+  assert.notDeepEqual(morning.image, afternoon.image);
 });

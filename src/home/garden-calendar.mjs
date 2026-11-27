@@ -223,6 +223,15 @@ export class GardenCalendar {
 
   /** @param {State} state @param {GardenDay} current @param {number} elapsed */
   project(state, current, elapsed) {
+    for (const due of this.events.explorers.due(elapsed)) {
+      this.projectAt(state, current, due.trigger_clock);
+      this.events.explorers.settleComparison(due, state);
+    }
+    return this.projectAt(state, current, elapsed);
+  }
+
+  /** @param {State} state @param {GardenDay} current @param {number} elapsed */
+  projectAt(state, current, elapsed) {
     const { boundary, weather, slow, pausedPlot } = this.conditions(
       current,
       elapsed,
@@ -359,6 +368,7 @@ export class GardenCalendar {
       if (plant !== entry.plant) this.journal.updatePlant(plant);
       return { ...entry, plant };
     });
+    this.events.explorers.settleVisits(state, priorDay, now, closingWeather);
     this.events.close(priorDay, state, now);
     this.events.settleFollowups(priorDay + 1, state, now, !preview);
     const context = this.drawContext(state, current);
@@ -442,6 +452,12 @@ export class GardenCalendar {
     const effectiveWeather = this.project(state, current, elapsed);
     this.settleNeighbors(state, current, elapsed, now);
     state.clock = elapsed;
+    this.events.explorers.settleVisits(
+      state,
+      current.day,
+      now,
+      effectiveWeather,
+    );
     settleGardenRumors(this.db, this.journal, current.day, now);
     return { ...current, effectiveWeather };
   }

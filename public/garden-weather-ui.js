@@ -286,8 +286,9 @@ const gardenEventKinds = {
   visitor: "幸运访客",
   choice: "花园抉择",
   story: "花园小景",
+  explorer: "花园探索",
 };
-const gardenEventCapacity = 48;
+const gardenEventCapacity = 78;
 const gardenStoryKinds = {
   choice: {
     rain_cat: "雨夜借棚",
@@ -295,6 +296,18 @@ const gardenStoryKinds = {
     sketch: "植物速写",
     trader: "交换种子",
     tea: "园中下午茶",
+  },
+  explorer: {
+    pea_guess: "脆响豆荚猜猜看",
+    snail_map: "蜗牛地图",
+    bamboo_rain: "竹筒引水",
+    sparrow_bath: "麻雀沙场",
+    balsam_game: "凤仙弹射赛",
+    shadow_measure: "影子量身高",
+    boot_pond: "雨靴叶舟",
+    leaf_identity: "辨叶",
+    windmill: "小风车挪位",
+    door_peas: "门口留豆",
   },
   story: {
     migratory_bird: "候鸟借宿",
@@ -811,6 +824,7 @@ async function gardenRunEventTrial(form) {
     no_seeds: "没有可交易库存",
     weather_unavailable: "实况天气不可用",
     story_unavailable: "当前花园条件无法触发",
+    explorer_unavailable: "当前花园里没有需要的探索条件",
     full_moon: "满月事件优先",
     zero_weight: "权重为零",
     conditions: "条件未满足",

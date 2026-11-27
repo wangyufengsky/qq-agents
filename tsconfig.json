@@ -125,6 +125,7 @@
     "src/home/layout.mjs",
     "src/home/store.mjs",
     "src/home/garden-clock.mjs",
+    "src/home/garden-explorer-visits.mjs",
     "src/home/garden-calendar.mjs",
     "src/home/garden-almanac.mjs",
     "src/home/garden-facilities.mjs",

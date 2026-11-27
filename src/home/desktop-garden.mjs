@@ -46,6 +46,7 @@ function operatorView(garden) {
     mistbellDiscovered: garden.mistbellDiscovered,
     eventHistory: garden.eventHistory,
     followups: garden.followups,
+    gardenProjects: garden.gardenProjects,
     activity: garden.activity,
     ledger: garden.ledger,
     gifts: garden.gifts,

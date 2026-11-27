@@ -63,7 +63,7 @@ export function bindGarden(panel, getRoom) {
       if (action) pending = undefined;
       const { garden, receipt } = response;
       const status = action ? gardenReceipt(garden, action, receipt) : "";
-      const eventReceipt = action && gardenEventOperation(action.kind);
+      const eventReceipt = action && gardenEventOperation(action, garden);
       message.textContent = eventReceipt ? "" : status;
       if (garden.initialized)
         workspace.draw(garden, eventReceipt ? status : "");
