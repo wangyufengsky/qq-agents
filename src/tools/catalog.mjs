@@ -25,6 +25,8 @@ import {
   DESKTOP_BROWSER_CONTROL,
   DESKTOP_BODY_CONTROL,
   FUNCTIONAL_AGENT_RESULT,
+  DREAM_LIST,
+  DREAM_SUBMIT,
   TOOL_NAMES,
 } from "./names.mjs";
 import { memoryRecallPolicy } from "../core/functional-agents.mjs";
@@ -100,24 +102,27 @@ export function scopedCatalog(runtime, ctx, input) {
     network: {
       autonomous:
         ctx.runtimeKind !== "functional-agent" &&
+        ctx.runtimeKind !== "dream-cognitive" &&
         (ctx.runtimeKind !== "desktop" || ctx.desktopUnified) &&
         a.network?.autonomous === true,
     },
     tools: toolSpecs(
       names,
-      ctx.desktopUnified
-        ? desktopSessionSpecOptions
-        : {
-            desktopBodyV2: runtime.desktopVisits.client?.bodyProtocol === 2,
-            desktopBodyCrossDisplay:
-              runtime.desktopVisits.client?.bodyCrossDisplay === true,
-            desktopBodyInteractions:
-              runtime.desktopVisits.interactionsAvailable(),
-            desktopPublicWave: runtime.desktopVisits.publicBodyAvailable(),
-            desktopWindowApproach: Boolean(
-              runtime.desktopVisits.body.windowApproachGrant(ctx),
-            ),
-          },
+      ctx.runtimeKind === "dream-cognitive"
+        ? { dream: true }
+        : ctx.desktopUnified
+          ? desktopSessionSpecOptions
+          : {
+              desktopBodyV2: runtime.desktopVisits.client?.bodyProtocol === 2,
+              desktopBodyCrossDisplay:
+                runtime.desktopVisits.client?.bodyCrossDisplay === true,
+              desktopBodyInteractions:
+                runtime.desktopVisits.interactionsAvailable(),
+              desktopPublicWave: runtime.desktopVisits.publicBodyAvailable(),
+              desktopWindowApproach: Boolean(
+                runtime.desktopVisits.body.windowApproachGrant(ctx),
+              ),
+            },
     ).map((s) =>
       args.names ? s : { name: s.name, description: s.description },
     ),
@@ -232,6 +237,8 @@ export function toolAvailable(
     name === DESKTOP_ACTIVITY_DECISION ||
     name === DESKTOP_DECISION ||
     name === DESKTOP_HISTORY ||
+    name === DREAM_LIST ||
+    name === DREAM_SUBMIT ||
     name === FUNCTIONAL_AGENT_RESULT
   )
     return false;

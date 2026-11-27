@@ -175,6 +175,8 @@
     "src/backends/local-session-logs.mjs",
     "src/core/session-transcripts.mjs",
     "src/core/message-images.mjs",
+    "src/dream/*.mjs",
+    "src/tools/dream.mjs",
     "src/tools/image-preview.mjs"
   ]
 }

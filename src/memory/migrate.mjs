@@ -1,4 +1,5 @@
 // @ts-check
+import { DREAM_TABLES, DREAM_PORTABLE_CURSOR } from "../dream/schema.mjs";
 import { socialSafeExportRow } from "./protection.mjs";
 import { QQDraftStore } from "./qq-drafts.mjs";
 import { withoutClosenessCache } from "../core/closeness.mjs";
@@ -24,6 +25,7 @@ export function restoreExport(memory, data) {
     Object.hasOwn(data.tables, "qq_draft_items")
   )
     throw Error("EXPORT_INTEGRITY_FAILED");
+  /** @type {Record<string,string[]>} */
   const columns = {
     events: [
       "seq",
@@ -136,6 +138,11 @@ export function restoreExport(memory, data) {
       "value",
     ],
   };
+  for (const table of DREAM_TABLES)
+    columns[table] = memory.db
+      .prepare(`PRAGMA table_info(${table})`)
+      .all()
+      .map((/** @type {{name:string}} */ column) => column.name);
   // An empty target identity can be restored beside other identities. Remap only local seq watermarks.
   if (
     [
@@ -160,6 +167,7 @@ export function restoreExport(memory, data) {
       if (oldSeq <= boundary && newSeq > mapped) mapped = newSeq;
     return mapped;
   };
+  const dreamSeqs = { diaries: [0], corrections: [0] };
   memory.store.transaction(() => {
     for (const [table, cols] of Object.entries(columns)) {
       for (const original of data.tables[table] || []) {
@@ -295,6 +303,35 @@ export function restoreExport(memory, data) {
               value[key] = remapBoundary(value[key]);
           row.value = JSON.stringify(value);
         }
+        if (table === "dream_checkpoints") {
+          if (row.source_partition === "events") {
+            row.last_event_seq = remapBoundary(row.last_event_seq);
+          } else if (
+            row.source_partition === "diaries" ||
+            row.source_partition === "corrections"
+          ) {
+            const positions =
+              row.source_partition === "diaries"
+                ? dreamSeqs.diaries
+                : dreamSeqs.corrections;
+            const mapped = positions[row.last_event_seq];
+            if (
+              row.last_cursor_token !== DREAM_PORTABLE_CURSOR ||
+              mapped === undefined
+            )
+              throw Error("EXPORT_INTEGRITY_FAILED");
+            row.last_event_seq = mapped;
+            row.last_cursor_token = null;
+          } else throw Error("EXPORT_INTEGRITY_FAILED");
+        }
+        if (
+          table === "dream_runs" &&
+          ["RUNNING", "VALIDATING"].includes(row.status)
+        ) {
+          row.status = "FAILED";
+          row.error_code = "DREAM_INTERRUPTED";
+          row.finished_at = new Date().toISOString();
+        }
         const fields =
           table === "events" && !empty ? cols.filter((c) => c !== "seq") : cols;
         const result = memory.db
@@ -302,6 +339,10 @@ export function restoreExport(memory, data) {
             `INSERT INTO ${table}(${fields.join(",")}) VALUES(${fields.map(() => "?").join(",")})`,
           )
           .run(...fields.map((c) => row[c] ?? null));
+        if (table === "diary_revisions")
+          dreamSeqs.diaries.push(Number(result.lastInsertRowid));
+        if (table === "memory_corrections")
+          dreamSeqs.corrections.push(Number(result.lastInsertRowid));
         if (table === "events")
           seqs.set(row.seq, Number(result.lastInsertRowid));
       }

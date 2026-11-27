@@ -5,7 +5,7 @@ import {
 } from "../home/desktop-home-policy.mjs";
 import { HOME_SOCIAL_DEFAULTS } from "../home/social-policy.mjs";
 // Runtime defaults are source code; examples are generated documentation.
-import { validateConfig } from "./config.mjs";
+import { dreamConfigSchema, validateConfig } from "./config.mjs";
 import { DEFAULT_MAX_OPEN_DRAFTS } from "./policy.mjs";
 
 // Reuse schema defaults for the console's new-role form and shipped examples.
@@ -20,6 +20,7 @@ export function defaultAgentCapabilities() {
     "games",
     "home",
     "scheduler",
+    "dream",
     "voice",
     "crossGroup",
     "operations",
@@ -116,6 +117,7 @@ export function defaultConfig() {
         name: "角色 A",
         connectionId: "napcat-a",
         backendId: "dsh-desktop",
+        dream: dreamConfigSchema.parse({}),
         memoryRecall: "auto",
         paused: true,
         subject: { inboxEnabled: false },
@@ -221,6 +223,7 @@ export function defaultConfig() {
         name: "角色 B",
         connectionId: "napcat-b",
         backendId: "codex-cli",
+        dream: dreamConfigSchema.parse({}),
         memoryRecall: "auto",
         paused: true,
         subject: { inboxEnabled: false },

@@ -4,7 +4,10 @@ import fs from "node:fs";
 import { DatabaseSync, backup } from "node:sqlite";
 import { parentPort, workerData } from "node:worker_threads";
 import { EXPORT_TABLES, exportDigest, exportHeader } from "./export-format.mjs";
-import { INPUT_SCHEMA_VERSION } from "./input-state.mjs";
+import {
+  DREAM_SCHEMA_VERSION,
+  exportDreamCheckpoint,
+} from "../dream/schema.mjs";
 
 const { source, snapshot, output, agentId, limits } = workerData;
 const cancelled = new Int32Array(workerData.cancelled);
@@ -61,7 +64,7 @@ try {
   db.exec("PRAGMA cache_size=-2048; PRAGMA mmap_size=0");
   if (
     db.prepare("PRAGMA user_version").get().user_version !==
-    INPUT_SCHEMA_VERSION
+    DREAM_SCHEMA_VERSION
   )
     throw Error("UNSUPPORTED_EXPORT_SCHEMA");
   fd = fs.openSync(output, "wx", 0o600);
@@ -108,10 +111,15 @@ try {
     for (const original of db
       .prepare(
         // Restore assigns new rowids in file order; moods find the latest by rowid.
-        `SELECT r.* FROM ${from}${name === "events" ? " ORDER BY r.seq" : name === "moods" ? " ORDER BY r.rowid" : ""}`,
+        `SELECT r.* FROM ${from}${name === "events" ? " ORDER BY r.seq" : ["moods", "diary_revisions", "memory_corrections"].includes(name) ? " ORDER BY r.rowid" : ""}`,
       )
       .iterate(agentId)) {
-      const row = socialSafeExportRow(name, original);
+      const row = socialSafeExportRow(
+        name,
+        name === "dream_checkpoints"
+          ? exportDreamCheckpoint(db, original)
+          : original,
+      );
       if (name === "person_notes")
         row.value = JSON.stringify(
           withoutClosenessCache(JSON.parse(row.value)),

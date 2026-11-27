@@ -67,6 +67,7 @@ function agentPolicy(value) {
     behavior: _b,
     contextPolicy: _c,
     selfPolicy: _s,
+    dream: _dream,
     persona: _persona,
     effort: _effort,
     model: _model,

@@ -13,6 +13,15 @@ export const DESKTOP_MEMORY_TOOLS = Object.freeze([
   "memory_search",
   "memory_read",
 ]);
+export const DREAM_SUBMIT = "dream_cognition_submit";
+export const DREAM_LIST = "dream_cognition_list";
+export const DREAM_TOOLS = Object.freeze([
+  "memory_search",
+  "memory_read",
+  "memory_related",
+  DREAM_LIST,
+  DREAM_SUBMIT,
+]);
 export const TOOL_NAMES = Object.freeze([
   DESKTOP_HISTORY,
   DESKTOP_ROLE_MAIL,

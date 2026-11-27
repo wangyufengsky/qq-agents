@@ -1,4 +1,5 @@
 // @ts-check
+import { DREAM_TOOLS } from "../tools/names.mjs";
 import { allowed, allowedGroups } from "./policy.mjs";
 import { isDesktopConversation } from "../home/desktop-decision.mjs";
 
@@ -44,10 +45,14 @@ const desktopDefinition = Object.freeze({ kind: "desktop-dialogue" });
  * Resolve a functional identity while leaving the caller's data scope intact.
  * @param {Role} role
  * @param {string} conversation
- * @param {"subject" | "qq" | "memory" | "desktop"} [key]
+ * @param {"subject" | "qq" | "memory" | "desktop" | "dream-cognitive"} [key]
  * @param {Configuration} [config]
  */
 export function resolveFunctionalAgent(role, conversation, key, config) {
+  if (key === "dream-cognitive") {
+    if (conversation !== "@dream" || !config) return undefined;
+    return dreamAgentProfile(role, config);
+  }
   if (isDesktopConversation(conversation)) {
     if (key && key !== "desktop") return undefined;
     return {
@@ -199,5 +204,37 @@ export function memoryRecallPolicy(role, conversation, config) {
     semantic: pilot?.semantic,
     openingTimeoutMs: pilot?.openingTimeoutMs ?? 4000,
     onDemand: memory.definition.onDemand,
+  };
+}
+
+/** @param {Role} role @param {Configuration} config */
+export function dreamAgentProfile(role, config) {
+  const { dream } = role;
+  if (!dream?.enabled || !dream.cognitive.enabled) return undefined;
+  const dedicated = config.backends.filter(
+    (backend) => backend.functionalAgentOnly,
+  );
+  const implicit =
+    dedicated.length === 1 && dedicated[0].provider && dedicated[0].model
+      ? dedicated[0].id
+      : null;
+  const backend = config.backends.find(
+    ({ id }) => id === (dream.backendId ?? implicit ?? role.backendId),
+  );
+  if (!backend) return undefined;
+  return {
+    key: /** @type {const} */ ("dream-cognitive"),
+    kind: /** @type {const} */ ("dream-cognitive"),
+    instanceKey: `${role.id}/dream-cognitive/@dream`,
+    definition: {
+      kind: /** @type {const} */ ("dream-cognitive"),
+      tools: DREAM_TOOLS,
+      backendId: backend.id,
+      model: dream.cognitive.model || dream.model || backend.model,
+      effort: dream.cognitive.effort || dream.effort || backend.effort,
+      provider: backend.provider,
+      timeoutMs: dream.cognitive.timeoutMs,
+    },
+    backend,
   };
 }

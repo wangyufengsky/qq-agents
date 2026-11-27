@@ -1,3 +1,7 @@
+import {
+  cognitionContext,
+  commitCognitionContext,
+} from "../core/chat-context.mjs";
 import { createHash, randomUUID } from "node:crypto";
 import { sessionContract } from "../backends/session-contract.mjs";
 import {
@@ -149,6 +153,16 @@ ${selfBody}
       ? `你此前在场时收到的桌边记录：${JSON.stringify(request.continuity)}`
       : null;
   const accountId = runtime.connection(agent.connectionId).accountId;
+  const personIds = [
+    ...new Set(
+      opening
+        .filter(
+          ({ direction, senderQq }) =>
+            direction === "in" && senderQq && senderQq !== accountId,
+        )
+        .map(({ senderQq }) => senderQq),
+    ),
+  ];
   const elsewhere =
     activity || request.windowTask
       ? null
@@ -156,17 +170,12 @@ ${selfBody}
           fresh: !session,
           now,
           accountId,
-          personIds: [
-            ...new Set(
-              opening
-                .filter(
-                  ({ direction, senderQq }) =>
-                    direction === "in" && senderQq && senderQq !== accountId,
-                )
-                .map(({ senderQq }) => senderQq),
-            ),
-          ],
+          personIds,
         });
+  const cognition =
+    conversation === DESKTOP_CONVERSATION
+      ? cognitionContext(runtime, ctx, { fresh: !session, personIds })
+      : null;
   const prompt = [
     continuation,
     unified &&
@@ -209,6 +218,7 @@ ${selfBody}
       !request.resting &&
       runtime.desktopRoleMailbox.opening(ctx),
     elsewhereLine(elsewhere),
+    cognition?.line,
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -267,6 +277,7 @@ ${selfBody}
           backendContract: contract,
           at: runtime.now(),
         });
+      commitCognitionContext(memory, ctx, cognition);
       if (selfAllowed) trackMindRecords(runtime, ctx, [self], "desktop-self");
       for (const item of [
         ...(elsewhere?.items || []),

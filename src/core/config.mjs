@@ -164,6 +164,52 @@ const conversationAgentFields = {
   tools: z.array(z.enum(TOOL_NAMES)).max(TOOL_NAMES.length).optional(),
   delegatesTo: z.array(z.literal("memory")).max(1).optional(),
 };
+const dreamNumber = (min, max, value) =>
+  z.number().int().min(min).max(max).default(value);
+const dreamModel = {
+  model: z.string().trim().max(256).nullable().default(null),
+  effort: z.string().trim().max(80).nullable().default(null),
+};
+export const dreamConfigSchema = z
+  .strictObject({
+    enabled: z.boolean().default(false),
+    backendId: id.nullable().default(null),
+    ...dreamModel,
+    cognitive: z
+      .strictObject({
+        enabled: z.boolean().default(true),
+        ...dreamModel,
+        napIdleMs: dreamNumber(0, 86400000, 900000),
+        napMinEvents: dreamNumber(1, 10000, 20),
+        deepDaily: z.boolean().default(true),
+        longWeekly: z.boolean().default(true),
+        longCognitionThreshold: dreamNumber(1, 10000, 120),
+        maxEventsPerBatch: dreamNumber(1, 500, 120),
+        maxOpsPerRun: dreamNumber(1, 100, 20),
+        timeoutMs: dreamNumber(1, 600000, 60000),
+      })
+      .prefault({}),
+    imaginative: z
+      .strictObject({
+        enabled: z.boolean().default(false),
+        ...dreamModel,
+        dailyMax: dreamNumber(1, 100, 1),
+        probability: z.number().min(0).max(1).default(0.5),
+        timeoutMs: dreamNumber(1, 600000, 45000),
+      })
+      .prefault({}),
+    budget: z
+      .strictObject({
+        maxRunsPerDay: dreamNumber(1, 100, 6),
+        maxGlobalConcurrency: dreamNumber(1, 20, 2),
+        contextCoreChars: dreamNumber(0, 10000, 1200),
+        contextSceneChars: dreamNumber(0, 10000, 1200),
+        awakeningSummaryChars: dreamNumber(0, 1000, 400),
+      })
+      .prefault({}),
+  })
+  .prefault({});
+
 const functionalAgents = z
   .object({
     subject: z
@@ -474,6 +520,7 @@ export const configSchema = z
           model: z.string().default(""),
           effort: z.string().default(""),
           functionalAgents,
+          dream: dreamConfigSchema,
           memoryRecall: z.enum(["auto", "enabled", "disabled"]).optional(),
           persona: z.string().max(32000).default(""),
           appearance: z.string().max(2000).default(""),
@@ -621,6 +668,11 @@ export function validateConfig(input) {
     if (!c.connections.some((x) => x.id === a.connectionId) || !roleBackend)
       throw Error("INVALID_REFERENCE");
     if (roleBackend.functionalAgentOnly) throw Error("CONFIG_SCHEMA_INVALID");
+    if (
+      a.dream.backendId &&
+      !c.backends.some((b) => b.id === a.dream.backendId)
+    )
+      throw Error("INVALID_REFERENCE");
 
     if (
       (a.functionalAgents?.qq?.effort || a.functionalAgents?.subject?.effort) &&

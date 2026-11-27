@@ -557,10 +557,12 @@ export class CodexBackend {
     protectedWork = false,
     game = false,
     social = false,
+    dream = false,
     desktop = false,
   }) {
+    const isolatedTools = social || dream;
     const policy =
-      protectedWork || game || social
+      protectedWork || game || isolatedTools
         ? {
             ...restrictions,
             "features.image_generation": false,
@@ -568,7 +570,7 @@ export class CodexBackend {
             "features.computer_use": false,
             "features.in_app_browser": false,
             "features.apps": false,
-            ...(social ? { mcp_servers: {} } : {}),
+            ...(isolatedTools ? { mcp_servers: {} } : {}),
           }
         : restrictions;
     const signature = this.sessionSignature(tools);
@@ -601,7 +603,7 @@ export class CodexBackend {
         },
       });
     }
-    if (social) {
+    if (isolatedTools) {
       // Empty MCP tables merge with inherited config; disable each effective
       // server explicitly instead of assuming mcp_servers={} removes it.
       try {

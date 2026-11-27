@@ -1,4 +1,5 @@
 // @ts-check
+import { DREAM_TABLES } from "../dream/schema.mjs";
 import { createHash } from "node:crypto";
 import { INPUT_VERSION_ALGORITHM } from "./input-state.mjs";
 
@@ -35,7 +36,11 @@ export const INPUT_EXPORT_TABLES = [
   "input_scopes",
   "input_versions",
 ];
-export const EXPORT_TABLES = [...V2_TABLES, ...INPUT_EXPORT_TABLES];
+export const EXPORT_TABLES = [
+  ...V2_TABLES,
+  ...INPUT_EXPORT_TABLES,
+  ...DREAM_TABLES,
+];
 // Appended after v2 shipped. An older v2 export simply lacks them; their
 // absence must not fail the checksum of the tables it does carry.
 const ADDED_AFTER_V2 = new Set([
@@ -94,13 +99,14 @@ export function validateExport(data) {
   )
     throw Error("EXPORT_INTEGRITY_FAILED");
   const digest = exportDigest(data);
-  const tables =
-    data.version === 3
-      ? EXPORT_TABLES
-      : V2_TABLES.filter(
-          (name) =>
-            !ADDED_AFTER_V2.has(name) || Object.hasOwn(data.tables || {}, name),
-        );
+  const present = (/** @type {string} */ name) =>
+    Object.hasOwn(data.tables || {}, name);
+  const tables = [
+    ...(data.version === 3
+      ? [...V2_TABLES, ...INPUT_EXPORT_TABLES]
+      : V2_TABLES.filter((name) => !ADDED_AFTER_V2.has(name) || present(name))),
+    ...DREAM_TABLES.filter(present),
+  ];
   if (Object.keys(data.tables || {}).length !== tables.length)
     throw Error("EXPORT_INTEGRITY_FAILED");
   for (const name of tables) {

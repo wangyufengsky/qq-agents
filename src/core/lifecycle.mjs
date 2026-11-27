@@ -44,6 +44,7 @@ import {
   chatHandoff,
   chatStatus,
   wakeBackground,
+  cognitionContext,
 } from "./chat-context.mjs";
 import {
   personCardsForTurn,
@@ -915,10 +916,20 @@ export class ContextLifecycle {
     );
     ctx.rhythmWake = reasons.find((reason) => reason.rhythmWake)?.rhythmWake;
     const environment = turnEnvironment(r, a, ctx, backendType);
+    const personIds = peopleInTurn(
+      m,
+      ctx.conversation,
+      history.items,
+      accountId,
+    );
     const corrections = m.corrections
-      .forPeople(peopleInTurn(m, ctx.conversation, history.items, accountId))
+      .forPeople(personIds)
       .filter((entry) => !correctionAllowed || correctionAllowed(entry));
     const activities = activityForTurn(m, ctx.conversation);
+    ctx.cognitionOpening = cognitionContext(r, ctx, {
+      fresh: ctx.initialSession,
+      personIds,
+    });
     const details = [
       activities.length
         ? `共同活动（继续时先读当前原稿；多个活动不明确时简短确认；轮到对方时等待真实来信）：${JSON.stringify(activities)}`
@@ -937,6 +948,7 @@ export class ContextLifecycle {
       between?.items.length
         ? `你和这些人之间还没了结的事（你自己用 person_item 记下的）：boundary 是对方的相处边界，照着调整；promise 是你答应对方的事，做到了就回来交代，做不成就坦白，交代后用 person_item 关掉；shared 是一起经历过的事，合适时自然接回来，不必硬提。fromPrivate 的记在别的私聊里，只用来调整你自己的做法，不要在这里提起内容。${JSON.stringify({ items: between.items, ...(Object.keys(between.more).length ? { more: between.more } : {}) })}`
         : "",
+      ctx.cognitionOpening?.line,
     ];
     const prompt = (
       !/^(group|private):/.test(ctx.conversation)

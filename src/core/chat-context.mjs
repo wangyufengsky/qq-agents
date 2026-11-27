@@ -1,3 +1,8 @@
+export {
+  cognitionContext,
+  commitCognitionContext,
+} from "../dream/context-builder.mjs";
+
 // A model-facing projection. The full handoff and delivery ledger remain intact.
 export function deliveryPage(
   memory,

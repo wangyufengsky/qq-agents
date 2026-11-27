@@ -3,6 +3,7 @@ import {
   functionalResultInstructions,
   functionalResultSchema,
 } from "./functional-result.mjs";
+import { dreamDefinitions } from "./dream.mjs";
 import { inputReviewSchema } from "./input-review.mjs";
 import { draftDefinitions } from "./qq-drafts.mjs";
 import { reactionDefinitions } from "./reactions.mjs";
@@ -141,6 +142,7 @@ export const definitions = {
   ...mindDefinitions,
   ...legacyDefinitions,
   ...draftDefinitions,
+  ...dreamDefinitions,
   ...fileDefinitions,
   ...savedMediaDefinitions,
   ...videoDefinitions,
