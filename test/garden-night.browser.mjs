@@ -111,7 +111,14 @@ test("the compact garden displays dusk and night, static fireflies and the unloc
     await sticker.evaluate((image) => window.getComputedStyle(image).filter),
     "none",
   );
-  await draw({ period: "night", stars: "clear" }, { mistbellDiscovered: true });
+  await draw(
+    { period: "night", stars: "clear" },
+    { mistbellDiscovered: true, fullMoon: true },
+  );
+  await page
+    .locator('[data-garden-mood="moon"]')
+    .getByText("满月照着花圃")
+    .waitFor();
   assert.equal(await page.locator(".garden-scene-star").count(), 6);
   await guide.getByRole("heading", { name: "星雾铃", exact: true }).waitFor();
   assert.equal(

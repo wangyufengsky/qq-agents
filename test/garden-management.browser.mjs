@@ -9,7 +9,7 @@ import {
   legacyEvents,
 } from "../src/home/garden-event-rules.mjs";
 import { subjectGardenView } from "../src/home/garden-console.mjs";
-import { defaultGardenSettings, HOUR } from "../src/home/garden-rules.mjs";
+import { DAY, defaultGardenSettings, HOUR } from "../src/home/garden-rules.mjs";
 import { config, fixture } from "./helpers.mjs";
 
 test("management console opens the garden, edits its catalog and trades from the grid", async (t) => {
@@ -525,6 +525,137 @@ test("merchant shelf and gift delivery work at 430 px without exposing the note 
   );
 });
 
+test("the management garden trades a selected harvest, hosts tea and keeps a sketch without custom art", async (t) => {
+  const { runtime } = fixture(t, { cfg: config(1) });
+  const garden = runtime.home.garden;
+  const settings = defaultGardenSettings();
+  settings.weather = fixedWeather();
+  settings.events.rate = 1;
+  const useEvent = (selected) => {
+    for (const [id, event] of Object.entries(settings.events.entries))
+      event.weight = Number(id === selected);
+  };
+  const crops = ["strawberry", "clover", "mint", "radish"];
+  for (const id of crops) settings.crops[id].hours = 1;
+  useEvent("odd-seed-trader");
+  let now = 1_800_000_000_000;
+  runtime.clock = () => now;
+  garden.initialize(now, settings);
+  garden.syncClock(now, true);
+  const act = (action) =>
+    garden.act(
+      now,
+      { kind: "admin", id: "administrator" },
+      { requestId: randomUUID(), action },
+    );
+  const plants = crops.map((cropId, i) =>
+    act({
+      kind: "plant",
+      plot: i + 1,
+      cropId,
+      buyPrice: settings.crops[cropId].seedPrice,
+    }),
+  );
+  now += 2 * HOUR;
+  garden.syncClock(now, true);
+  const lots = plants
+    .slice(0, 2)
+    .map(({ plot, plantId }) => act({ kind: "harvest", plot, plantId }));
+  now += DAY;
+  garden.syncClock(now, true);
+
+  const token = randomUUID();
+  const server = createServer({ runtime, token, allowLive: true });
+  t.after(() => server.close());
+  const browser = await chromium.launch({
+    executablePath: process.env.QQ_TEST_GARDEN_BROWSER,
+    headless: true,
+  });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 375, height: 850 } });
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto(`http://127.0.0.1:${await server.listen()}/`);
+  await page.locator("#token").fill(token);
+  await page.locator("#login-button").click();
+  await page.getByRole("button", { name: "花园", exact: true }).click();
+  await page.getByRole("button", { name: "今日事件", exact: true }).click();
+  const ticket = page.locator("[data-garden-ticket]");
+  const target = ticket.getByLabel("选择一份收成");
+  const options = await target.locator("option").allTextContents();
+  const clover = options.find((label) => label.includes("野生三叶草"));
+  assert.equal(options.length, 2);
+  assert.match(options[0], /奶油草莓/);
+  await target.selectOption({ label: clover });
+  await ticket
+    .getByRole("button", { name: "用一份收成交换", exact: true })
+    .click();
+  await ticket
+    .getByText("交换客留下了一袋神秘种子。", { exact: true })
+    .waitFor();
+  const afterTrade = garden.read(now);
+  assert.equal(afterTrade.mysterySeeds.count, 1);
+  assert.ok(!afterTrade.harvests.some(({ id }) => id === lots[1].harvestId));
+
+  const goToNextEvent = async (id, heading) => {
+    useEvent(id);
+    garden.configure(now, garden.requireState().settingsRevision, settings);
+    now += DAY;
+    garden.syncClock(now, true);
+    await page.getByRole("button", { name: "刷新花园", exact: true }).click();
+    await ticket.getByRole("heading", { name: heading, exact: true }).waitFor();
+  };
+  await goToNextEvent("garden-tea-party", "园中下午茶");
+  assert.equal(await target.locator("option").count(), 1);
+  await ticket
+    .getByRole("button", { name: "开启园中下午茶", exact: true })
+    .click();
+  await page.getByText("园中茶会正在进行", { exact: true }).waitFor();
+  assert.equal(garden.read(now).event.status, "resolved");
+
+  await goToNextEvent("sketch-painter", "路过的植物速写师");
+  await ticket
+    .getByRole("button", { name: "收取写生场地费", exact: true })
+    .waitFor();
+  await ticket
+    .getByRole("button", { name: "请他画下今天的花园", exact: true })
+    .click();
+  await ticket.getByText(/速写师画下了.*薄荷盆栽.*樱桃小萝卜/).waitFor();
+  await page.getByRole("button", { name: "我的物品", exact: true }).click();
+  const sketch = page.locator(".garden-good").filter({ hasText: "花园速写画" });
+  await sketch.waitFor();
+  await sketch.locator("img[src$='/gift-wrapped.webp']").waitFor();
+  await sketch.getByText("查看物品", { exact: true }).click();
+  await sketch.getByText("花园纪念品", { exact: true }).waitFor();
+  await sketch.getByText(/速写师画下了.*薄荷盆栽.*樱桃小萝卜/).waitFor();
+  assert.equal(
+    await sketch.getByRole("button", { name: "吃掉这份" }).count(),
+    0,
+  );
+
+  await page.getByRole("button", { name: "今日事件", exact: true }).click();
+  await goToNextEvent("migratory-bird", "借宿的候鸟");
+  const birdPlot = garden.read(now).event.target.plot;
+  await ticket
+    .getByRole("button", { name: `查看候鸟歇脚的第 ${birdPlot} 块地` })
+    .click();
+  await page.locator(`[data-plot="${birdPlot}"] .garden-bird`).waitFor();
+  now += DAY;
+  garden.syncClock(now, true);
+  await page.getByRole("button", { name: "刷新花园", exact: true }).click();
+  await page
+    .locator(".garden-followups")
+    .getByText(/候鸟平安飞走/)
+    .waitFor();
+  await page.getByRole("button", { name: "我的物品", exact: true }).click();
+  const feather = page
+    .locator(".garden-good")
+    .filter({ hasText: "候鸟羽毛书签" });
+  await feather.locator("img[src$='/gift-wrapped.webp']").waitFor();
+
+  assert.deepEqual(errors, []);
+});
+
 async function openEventSettings(t, prepare) {
   const executablePath = process.env.QQ_TEST_GARDEN_BROWSER;
   assert.ok(executablePath);
@@ -578,13 +709,19 @@ async function openEventSettings(t, prepare) {
   };
 }
 
-test("event settings import all 20 previews, round-trip optional effects and configure an independent gift shelf", async (t) => {
+test("event settings import missing previews, round-trip optional effects and configure an independent gift shelf", async (t) => {
   const v = await openEventSettings(t, ({ events }) => {
     events.entries["similar-name"] = {
       ...structuredClone(events.entries.visitor),
       name: defaultEvents.entries["twin-fruit"].name,
       enabled: false,
     };
+    const customChoice = structuredClone(
+      defaultEvents.entries["rain-cat-shelter"],
+    );
+    customChoice.effect.options[1].description = "带它去我们的木门廊。";
+    customChoice.effect.options[1].immediateReward.amount = 23;
+    events.entries["rain-cat-shelter"] = customChoice;
     events.entries["custom-dew"] = {
       enabled: false,
       mode: "all",
@@ -598,9 +735,9 @@ test("event settings import all 20 previews, round-trip optional effects and con
   });
   const original = v.pool();
   await v.expand("补入新版预设");
-  assert.equal(await v.form.locator("[data-event-preset]:checked").count(), 20);
+  assert.equal(await v.form.locator("[data-event-preset]:checked").count(), 27);
   await v.form.getByRole("button", { name: "把选中预设加入表单" }).click();
-  assert.equal(await v.form.locator("[data-event-entry]").count(), 25);
+  assert.equal(await v.form.locator("[data-event-entry]").count(), 33);
   assert.deepEqual(v.pool(), original);
   await v.row("merchant").locator("summary").click();
   await v.row("merchant").getByLabel("可报价种子").selectOption([]);
@@ -639,7 +776,11 @@ test("event settings import all 20 previews, round-trip optional effects and con
   ]);
   for (const [id, entry] of Object.entries(defaultEvents.entries))
     if (!Object.hasOwn(legacyEvents.entries, id))
-      assert.deepEqual(saved.entries[id], entry, id);
+      assert.deepEqual(
+        saved.entries[id],
+        id === "rain-cat-shelter" ? original.entries[id] : entry,
+        id,
+      );
   await v.page.getByRole("button", { name: "花圃", exact: true }).click();
   await v.page.getByRole("button", { name: "花园设置", exact: true }).click();
   await v.expand("花园设置");
@@ -670,13 +811,21 @@ test("event settings import all 20 previews, round-trip optional effects and con
   await trial.getByRole("button", { name: "计算事件概率" }).click();
   await trial.getByText(/第 6 花园日.*抽取预报/).waitFor();
   await trial.getByText(/周末盲盒种子袋.*入池/).waitFor();
+  await trial.getByText(/雨夜借棚的小猫.*当前花园条件无法触发/).waitFor();
+  await trial.getByLabel("模拟花园日").fill("14");
+  await trial.getByRole("button", { name: "计算事件概率" }).click();
+  await trial.getByText(/满月露台夜.*100%.*入池/).waitFor();
+  assert.deepEqual(
+    v.pool().entries["rain-cat-shelter"].effect,
+    original.entries["rain-cat-shelter"].effect,
+  );
   await trial.getByLabel("模拟花园日").fill("8");
   await trial.getByRole("button", { name: "计算事件概率" }).click();
   await trial.getByText(/周末盲盒种子袋.*条件未满足/).waitFor();
   assert.deepEqual(v.errors, []);
 });
 
-test("event preset preview detects the 40-entry cap without changing saved settings", async (t) => {
+test("event preset preview detects the 48-entry cap without changing saved settings", async (t) => {
   const v = await openEventSettings(t, ({ events }) => {
     for (let i = 1; i <= 18; i++)
       events.entries[`custom-${i}`] = {
@@ -689,15 +838,15 @@ test("event preset preview detects the 40-entry cap without changing saved setti
   const add = v.form.getByRole("button", { name: "把选中预设加入表单" });
   await add.click();
   await v.page
-    .getByText("超过 40 条上限，请减少选中的预设。", { exact: true })
+    .getByText("超过 48 条上限，请减少选中的预设。", { exact: true })
     .waitFor();
   assert.equal(await v.form.locator("[data-event-entry]").count(), 21);
   await v.form.locator('[data-event-preset="twin-fruit"]').uncheck();
   await add.click();
-  assert.equal(await v.form.locator("[data-event-entry]").count(), 40);
+  assert.equal(await v.form.locator("[data-event-entry]").count(), 48);
   assert.equal(Object.keys(v.pool().entries).length, 21);
   await v.save();
-  assert.equal(Object.keys(v.pool().entries).length, 40);
+  assert.equal(Object.keys(v.pool().entries).length, 48);
   assert.equal(v.pool().entries["custom-18"].enabled, false);
   assert.equal(v.pool().entries["twin-fruit"], undefined);
   assert.deepEqual(v.errors, []);

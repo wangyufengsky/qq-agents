@@ -28,8 +28,14 @@ test("all runtime garden artwork is WebP and individually allowlisted", async ()
     ["crop", "mistbell"],
   ])
     assert.ok(files.includes(gardenIconFile(group, id)));
-  assert.equal(Object.keys(gardenGifts).length, 18);
-  for (const id of Object.keys(gardenGifts)) {
+  assert.equal(Object.keys(gardenGifts).length, 20);
+  for (const [id, gift] of Object.entries(gardenGifts)) {
+    if (gift.eventOnly) {
+      assert.equal(gift.usable, false);
+      assert.equal(gardenIconFile("gift", id), "gift-wrapped.webp");
+      assert.equal(isGardenArtImage(`gift-${id}.webp`), false);
+      continue;
+    }
     const specific = `gift-${id}.webp`;
     assert.equal(gardenIconFile("gift", id), specific);
     assert.ok(files.includes(specific), specific);

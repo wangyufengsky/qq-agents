@@ -1,4 +1,8 @@
-import { gardenGiftId, gardenGiftOffers } from "./garden-items.mjs";
+import {
+  gardenCatalogGiftId,
+  gardenGiftId,
+  gardenGiftOffers,
+} from "./garden-items.mjs";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
@@ -18,7 +22,63 @@ const crops = z
   .array(gardenCropId)
   .max(20)
   .refine((ids) => new Set(ids).size === ids.length);
+const choiceId = z.enum([
+  "share_shelter",
+  "guide_eaves",
+  "feed",
+  "shoo",
+  "commission",
+  "fee",
+  "trade",
+  "brew",
+]);
+const choiceOption = z.strictObject({
+  id: choiceId,
+  label: z.string().trim().min(1).max(40),
+  description: z.string().trim().min(1).max(120),
+  cost: z
+    .discriminatedUnion("kind", [
+      z.strictObject({ kind: z.literal("shelter") }),
+      z.strictObject({ kind: z.literal("coins"), amount: coins.min(1) }),
+      z.strictObject({ kind: z.literal("harvest"), cropIds: crops.optional() }),
+    ])
+    .optional(),
+  immediateReward: z
+    .discriminatedUnion("kind", [
+      z.strictObject({ kind: z.literal("coins"), amount: coins }),
+      z.strictObject({
+        kind: z.literal("seed"),
+        cropId: gardenCropId,
+        quantity,
+      }),
+      z.strictObject({ kind: z.literal("fertilizer"), quantity }),
+      z.strictObject({ kind: z.literal("gift"), giftId: gardenCatalogGiftId }),
+    ])
+    .optional(),
+  scheduleFollowup: z
+    .strictObject({
+      kind: z.enum(["cat_gift", "hedgehog_seed"]),
+      delayDays: z.number().int().min(1).max(2),
+    })
+    .optional(),
+});
 const effect = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("choice"),
+    story: z.enum(["rain_cat", "hedgehog", "sketch", "trader", "tea"]),
+    options: z
+      .array(choiceOption)
+      .min(1)
+      .max(2)
+      .refine(
+        (options) =>
+          new Set(options.map(({ id }) => id)).size === options.length,
+      ),
+  }),
+  z.strictObject({
+    kind: z.literal("story"),
+    story: z.enum(["migratory_bird", "fence_note", "full_moon"]),
+  }),
   z
     .strictObject({
       kind: z.literal("merchant"),
@@ -132,7 +192,7 @@ export const eventPool = z
       }),
     ),
   })
-  .refine(({ entries }) => Object.keys(entries).length <= 40);
+  .refine(({ entries }) => Object.keys(entries).length <= 48);
 export const legacyEvents = eventPool.parse({
   rate: 0.4,
   entries: {
@@ -214,10 +274,119 @@ export const mysteryCrops = [
   "strawberry",
   "moonflower",
 ];
+const choose = (story, options) => ({ kind: "choice", story, options });
+const story = (value) => ({ kind: "story", story: value });
+const option = (id, label, description, details = {}) => ({
+  id,
+  label,
+  description,
+  ...details,
+});
+const pay = (amount) => ({ immediateReward: { kind: "coins", amount } });
+const harvestCost = (cropIds) => ({
+  cost: { kind: "harvest", ...(cropIds && { cropIds }) },
+});
+const followup = (kind) => ({ scheduleFollowup: { kind, delayDays: 1 } });
+export const teaCrops = ["mint", "chamomile", "strawberry"];
+
+const storyPresets = {
+  "rain-cat-shelter": entry(
+    "雨夜借棚的小猫",
+    2,
+    [],
+    choose("rain_cat", [
+      option(
+        "share_shelter",
+        "留一块棚给它躲雨",
+        "挑一块有棚的地，今天余下时间暂停这块地的生长。",
+        { cost: { kind: "shelter" }, ...followup("cat_gift") },
+      ),
+      option(
+        "guide_eaves",
+        "轻轻请它去屋檐下",
+        "它可以去屋檐下躲雨，花园收到 15 元。",
+        pay(15),
+      ),
+    ]),
+  ),
+  "hedgehog-share": entry(
+    "眼巴巴的草莓刺猬",
+    2,
+    [],
+    choose("hedgehog", [
+      option("feed", "分它一颗草莓", "从公共仓库取出一份草莓。", {
+        ...harvestCost(["strawberry"]),
+        ...followup("hedgehog_seed"),
+      }),
+      option("shoo", "敲木牌请它离开", "保留草莓，花园收到 20 元。", pay(20)),
+    ]),
+  ),
+  "sketch-painter": entry(
+    "路过的植物速写师",
+    2,
+    [],
+    choose("sketch", [
+      option(
+        "commission",
+        "请他画下今天的花园",
+        "免费留下一幅记录今天成熟植株的速写。",
+      ),
+      option("fee", "收取写生场地费", "花园收到 65 元。", pay(65)),
+    ]),
+  ),
+  "odd-seed-trader": entry(
+    "怪脾气种子交换客",
+    2,
+    [],
+    choose("trader", [
+      option(
+        "trade",
+        "用一份收成交换",
+        "挑一份公共仓库收成，换一袋神秘种子，听他聊聊花园。",
+        harvestCost(),
+      ),
+    ]),
+  ),
+  "garden-tea-party": entry(
+    "园中下午茶",
+    2,
+    [],
+    choose("tea", [
+      option(
+        "brew",
+        "开启园中下午茶",
+        "选一份薄荷、洋甘菊或草莓，邀请今天来园的伙伴共度茶会。",
+        harvestCost(teaCrops),
+      ),
+    ]),
+  ),
+  "migratory-bird": entry("借宿的候鸟", 2, [], story("migratory_bird")),
+  "fence-note": entry("栅栏边的匿名花评", 2, [], story("fence_note")),
+  "full-moon-night": entry("满月露台夜", 1, [], story("full_moon")),
+};
+
+export function withStoryEvents(pool, availableCrops) {
+  const entries = { ...pool.entries };
+  for (const [id, preset] of Object.entries(storyPresets)) {
+    if (Object.keys(entries).length >= 48) break;
+    if (Object.hasOwn(entries, id)) continue;
+    const expanded = structuredClone(preset);
+    for (const { cost } of expanded.effect.options ?? []) {
+      if (cost?.cropIds && availableCrops)
+        cost.cropIds = cost.cropIds.filter((cropId) =>
+          Object.hasOwn(availableCrops, cropId),
+        );
+    }
+    entries[id] = expanded;
+  }
+  return { ...pool, entries };
+}
+
 export const defaultEvents = eventPool.parse({
   ...legacyEvents,
   entries: {
     ...legacyEvents.entries,
+    ...storyPresets,
     merchant: {
       ...legacyEvents.entries.merchant,
       effect: {
@@ -426,6 +595,16 @@ export function validEventReferences(settings) {
         )
       )
         return false;
+      if (effect.kind === "choice")
+        return effect.options.every(
+          ({ cost, immediateReward }) =>
+            (cost?.kind !== "harvest" ||
+              (cost.cropIds ?? []).every((id) =>
+                Object.hasOwn(settings.crops, id),
+              )) &&
+            (immediateReward?.kind !== "seed" ||
+              Object.hasOwn(settings.crops, immediateReward.cropId)),
+        );
       if (effect.kind === "merchant")
         return [...effect.seeds, ...effect.harvests].every((id) =>
           Object.hasOwn(settings.crops, id),
@@ -443,15 +622,71 @@ export function validEventReferences(settings) {
   );
 }
 
+function storyEligible(effect, ctx, weather, settings) {
+  const stock = (id) => (ctx.harvests[id] ?? 0) > 0;
+  const plots = ctx.plots ?? [];
+  const mature = plots.filter(({ plant }) => plant?.status === "mature");
+  const kind = weather?.kind;
+  switch (effect.story) {
+    case "rain_cat":
+      return (
+        (kind === "drizzle" || kind === "storm") &&
+        plots.some(({ sheltered }) => sheltered)
+      );
+    case "hedgehog":
+      return stock("strawberry");
+    case "sketch":
+      return mature.length >= 2;
+    case "trader":
+      return (
+        Object.values(ctx.harvests).some((quantity) => quantity > 0) &&
+        mysteryCrops.some((id) => settings.crops[id]?.enabled)
+      );
+    case "tea":
+      return (kind === "sun" || kind === "cloud") && teaCrops.some(stock);
+    case "migratory_bird":
+      return mature.length > 0;
+    case "fence_note":
+      return plots.some(
+        ({ plant }) =>
+          plant &&
+          plant.status !== "withered" &&
+          (ctx.caretakers?.[plant.id]?.length ?? 0) >= 2,
+      );
+    case "full_moon":
+      return (ctx.day ?? 1) % 14 === 0;
+    default:
+      return false;
+  }
+}
+
 export function eventOdds(settings, ctx, weather) {
   const pool = settings.events;
+  const conditions = (condition) => matchesEvent(condition, ctx, weather);
+  const fullMoon = Object.entries(pool.entries).find(
+    ([, entry]) =>
+      entry.enabled &&
+      entry.weight > 0 &&
+      entry.effect.kind === "story" &&
+      entry.effect.story === "full_moon" &&
+      storyEligible(entry.effect, ctx, weather, settings) &&
+      (!entry.conditions.length ||
+        entry.conditions[entry.mode === "any" ? "some" : "every"](conditions)),
+  )?.[0];
+  const guaranteed = pool.rate > 0 && fullMoon;
   return poolOdds(
     pool.entries,
-    (condition) => matchesEvent(condition, ctx, weather),
+    conditions,
     null,
-    pool.rate,
+    guaranteed ? 1 : pool.rate,
     (id) => {
       const { effect } = pool.entries[id];
+      if (guaranteed && id !== fullMoon) return "full_moon";
+      if (
+        (effect.kind === "choice" || effect.kind === "story") &&
+        !storyEligible(effect, ctx, weather, settings)
+      )
+        return "story_unavailable";
       if (
         effect.kind === "merchant" &&
         !effect.fertilizerOffers?.length &&
@@ -516,6 +751,35 @@ export function drawGardenEvent(settings, ctx, weather, seed, day) {
         id: effect.targetWeatherId,
       },
     };
+  if (effect.kind === "story") {
+    const target = rankEventTarget(
+      seed,
+      effect.story,
+      day,
+      (ctx.plots ?? []).filter(
+        ({ plant }) =>
+          plant &&
+          (effect.story === "migratory_bird"
+            ? plant.status === "mature"
+            : effect.story === "fence_note" &&
+              plant.status !== "withered" &&
+              (ctx.caretakers?.[plant.id]?.length ?? 0) >= 2),
+      ),
+      ({ id }) => id,
+    )[0];
+    return {
+      ...base,
+      effect,
+      ...(target && {
+        target: {
+          plot: target.id,
+          plantId: target.plant.id,
+          cropName: target.plant.crop.name,
+        },
+      }),
+      status: "claimed",
+    };
+  }
   if (effect.kind !== "merchant") return { ...base, effect };
   const rank = (key) =>
     createHash("sha256")

@@ -1,10 +1,11 @@
 // @ts-check
-import { GardenNeighbors } from "./garden-neighbors.mjs";
+import { GARDEN_NIGHT_START, GardenNeighbors } from "./garden-neighbors.mjs";
 import { gardenPlantRef } from "./garden-journal.mjs";
 import { GardenEvents } from "./garden-events.mjs";
 import { settleGardenRumors } from "./garden-companion.mjs";
 import { randomUUID } from "node:crypto";
 import {
+  adjustPlantQuality,
   CHAMOMILE,
   closePlantDay,
   DAY,
@@ -68,12 +69,32 @@ export class GardenCalendar {
         .all()
         .map((row) => [String(row.crop_id), Number(row.count)]),
     );
+    const livePlantIds = state.plots.flatMap(({ plant }) =>
+      plant && plant.status !== "withered" ? [plant.id] : [],
+    );
+    const caretakers = Object.fromEntries(
+      this.db
+        .prepare(
+          `SELECT json_extract(ref.value,'$.plantId') AS plantId,
+        json_group_array(DISTINCT fact.actor_kind || ':' || fact.actor_id) AS people
+       FROM garden_facts fact, json_each(fact.plants) ref
+       WHERE fact.type IN ('planted','water','fertilize') AND fact.actor_id IS NOT NULL
+       AND json_extract(ref.value,'$.plantId') IN (SELECT value FROM json_each(?))
+       GROUP BY plantId`,
+        )
+        .all(JSON.stringify(livePlantIds))
+        .map(({ plantId, people }) => [
+          String(plantId),
+          JSON.parse(String(people)),
+        ]),
+    );
     return {
       previous,
       balance: state.balance,
       fertilizer: state.fertilizer,
       seeds: state.seeds,
       harvests,
+      caretakers,
       plots: state.plots,
       day: (previous?.day ?? 0) + 1,
     };
@@ -191,24 +212,37 @@ export class GardenCalendar {
       event.status === "open"
         ? (event.effect.growthRate ?? 0.5)
         : 1;
-    return { boundary, weather, slow };
+    const pausedPlot =
+      event?.kind === "choice" && event.status === "resolved"
+        ? event.outcome?.pausedPlot
+        : undefined;
+    return { boundary, weather, slow, pausedPlot };
   }
 
   /** @param {State} state @param {GardenDay} current @param {number} elapsed */
   project(state, current, elapsed) {
-    const { boundary, weather, slow } = this.conditions(current, elapsed);
+    const { boundary, weather, slow, pausedPlot } = this.conditions(
+      current,
+      elapsed,
+    );
     if (elapsed >= boundary)
       this.projectSegment(state, boundary, current.weather, slow);
-    this.projectSegment(state, elapsed, weather, slow);
+    const nightfall = (current.day - 1) * DAY + GARDEN_NIGHT_START;
+    if (elapsed >= nightfall && this.fullMoon(current.day)) {
+      this.projectSegment(state, nightfall, weather, slow, pausedPlot);
+      this.blessFullMoon(state, current.day, nightfall);
+    }
+    this.projectSegment(state, elapsed, weather, slow, pausedPlot);
     return weather;
   }
 
-  /** @param {State} state @param {number} elapsed @param {import("./garden-weather.mjs").Weather} weather @param {number} slow */
-  projectSegment(state, elapsed, weather, slow) {
+  /** @param {State} state @param {number} elapsed @param {import("./garden-weather.mjs").Weather} weather @param {number} slow @param {number} [pausedPlot] */
+  projectSegment(state, elapsed, weather, slow, pausedPlot) {
     // Protection starts at the exact maturity crossing, even after a long offline jump.
     let until = elapsed;
     for (const { id, plant, sheltered } of state.plots) {
       if (
+        id === pausedPlot ||
         plant?.cropId !== CHAMOMILE ||
         plant.status !== "growing" ||
         plant.settledAt >= until
@@ -231,23 +265,26 @@ export class GardenCalendar {
       const original = entry.plant;
       if (!original || original.settledAt >= until) return entry;
       const ref = gardenPlantRef(entry.id, original);
-      const plant = projectPlant(
-        original,
-        until,
-        weather,
-        entry.sheltered,
-        slow,
-        (before, after, clock, clockPerGrowth, projected) =>
-          this.journal.growth(
-            ref,
-            projected,
-            before,
-            after,
-            clock,
-            clockPerGrowth,
-          ),
-        neighborBuffs(state, entry.id).length > 0,
-      );
+      const plant =
+        pausedPlot === entry.id && original.status === "growing"
+          ? { ...original, settledAt: until }
+          : projectPlant(
+              original,
+              until,
+              weather,
+              entry.sheltered,
+              slow,
+              (before, after, clock, clockPerGrowth, projected) =>
+                this.journal.growth(
+                  ref,
+                  projected,
+                  before,
+                  after,
+                  clock,
+                  clockPerGrowth,
+                ),
+              neighborBuffs(state, entry.id).length > 0,
+            );
       if (plant.status === "withered" && original.status !== "withered")
         this.journal.record({
           type: "withered",
@@ -259,7 +296,33 @@ export class GardenCalendar {
       if (plant !== original) this.journal.updatePlant(plant);
       return { ...entry, plant };
     });
-    if (until < elapsed) this.projectSegment(state, elapsed, weather, slow);
+    if (until < elapsed)
+      this.projectSegment(state, elapsed, weather, slow, pausedPlot);
+  }
+
+  /** @param {State} state @param {number} day @param {number} nightfall */
+  blessFullMoon(state, day, nightfall) {
+    for (const { plant } of state.plots) {
+      if (
+        plant?.status !== "growing" ||
+        plant.crop.light !== "shade" ||
+        plant.settledAt > nightfall ||
+        plant.sownClock === nightfall ||
+        plant.fullMoonDay === day
+      )
+        continue;
+      adjustPlantQuality(plant, 15);
+      // A clock-only checkpoint can replay from the original plot, while an
+      // action can persist the blessing in its plot snapshot at nightfall.
+      plant.fullMoonDay = day;
+      this.journal.updatePlant(plant);
+    }
+  }
+
+  /** @param {number} day */
+  fullMoon(day) {
+    const event = this.events.get(day);
+    return event?.kind === "story" && event.effect.story === "full_moon";
   }
 
   /** @param {State} state @param {GardenDay} current @param {number} elapsed */
@@ -269,6 +332,8 @@ export class GardenCalendar {
       before: current.weather.kind,
       after: weather.kind,
       boundary,
+      fullMoon: this.fullMoon(current.day),
+      previousFullMoon: this.fullMoon(current.day - 1),
     });
   }
 
@@ -286,8 +351,9 @@ export class GardenCalendar {
         const { weather, day: priorDay } = current;
         const closingWeather = this.project(state, current, priorDay * DAY);
         this.settleNeighbors(state, current, priorDay * DAY);
+        const { pausedPlot } = this.conditions(current, priorDay * DAY);
         state.plots = state.plots.map((entry) => {
-          if (!entry.plant) return entry;
+          if (!entry.plant || entry.id === pausedPlot) return entry;
           const plant = closePlantDay(
             entry.plant,
             closingWeather,
@@ -305,6 +371,7 @@ export class GardenCalendar {
           return { ...entry, plant };
         });
         this.events.close(priorDay, state, now);
+        this.events.settleFollowups(priorDay + 1, state, now);
         const ctx = this.drawContext(state, current);
         const next = drawWeather(
           state.settings.weather,

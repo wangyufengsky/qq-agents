@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { GardenStories } from "./garden-stories.mjs";
 import { gardenPlantRef } from "./garden-journal.mjs";
 import {
   adjustPlantQuality,
@@ -21,7 +22,7 @@ const trial = weatherTrialInput.extend({
   day: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
 });
 
-/** @typedef {{id:string,name:string,status:"open"|"expired"|"claimed"|"chased"|"missed",outcome?:any}} EventBase */
+/** @typedef {{id:string,name:string,status:"open"|"expired"|"claimed"|"chased"|"missed"|"resolved",outcome?:any}} EventBase */
 /** @typedef {{cropId:string,name:string,premium:number,originalRate?:number,rates:Record<string,number>}} HarvestOffer */
 /** @typedef {ReturnType<import("./garden-event-rules.mjs").eventPool["parse"]>["entries"][string]["effect"]} EventEffect */
 /** @typedef {EventBase & (
@@ -32,6 +33,8 @@ const trial = weatherTrialInput.extend({
  * {kind:"nuisance",effect:Extract<EventEffect,{kind:"nuisance"}>,startedAt:number,handledAt?:number} |
  * {kind:"weather_flip",effect:Extract<EventEffect,{kind:"weather_flip"}>,targetWeather:import("./garden-weather.mjs").Weather,forecast:import("./garden-weather.mjs").Weather} |
  * {kind:"harvest_bonus",effect:Extract<EventEffect,{kind:"harvest_bonus"}>,progress?:{current:number,required:number}} |
+ * {kind:"choice",effect:Extract<EventEffect,{kind:"choice"}>} |
+ * {kind:"story",effect:Extract<EventEffect,{kind:"story"}>,target?:{plot:number,plantId:string,cropName:string}} |
  * {kind:"mystery_box",effect:Extract<EventEffect,{kind:"mystery_box"}>,purchased?:number,available?:boolean}
  * )} GardenEvent */
 export class GardenEvents {
@@ -39,6 +42,7 @@ export class GardenEvents {
     this.db = db;
     this.changeBalance = changeBalance;
     this.journal = journal;
+    this.stories = new GardenStories(db, journal);
   }
 
   /** @param {number|undefined} day @returns {GardenEvent|null} */
@@ -74,6 +78,35 @@ export class GardenEvents {
         detail: { name: entry.name },
         key: `event:${day}`,
       });
+    if (entry?.kind === "choice" && entry.effect.story === "sketch")
+      entry.outcome = {
+        matureNames: state.plots.flatMap(({ plant }) =>
+          plant?.status === "mature" ? [plant.crop.name] : [],
+        ),
+      };
+    if (entry?.kind === "story") {
+      if (entry.effect.story === "migratory_bird" && entry.target) {
+        const { plot, cropName } = entry.target;
+        entry.outcome = {
+          detail: `有只候鸟落在 ${plot} 号地的${cropName}旁歇脚。`,
+        };
+        this.stories.schedule(
+          entry.id,
+          day + 1,
+          "migratory_feather",
+          { kind: "admin", id: "administrator", generation: "instance" },
+          entry.target,
+        );
+      }
+      if (entry.effect.story === "fence_note" && entry.target) {
+        const { plot, cropName } = entry.target;
+        entry.outcome = {
+          detail: `${plot} 号地的${cropName}长得真精神，看得出来有好几双手在认真照料。`,
+        };
+      }
+      if (entry.effect.story === "full_moon")
+        entry.outcome = { detail: "今晚的满月会照亮花园露台。" };
+    }
     if (entry?.kind === "blessing") this.bless(entry, state, seed, day);
     if (entry?.kind === "nuisance") entry.startedAt = (day - 1) * DAY;
     this.db
@@ -160,6 +193,21 @@ export class GardenEvents {
   /** @returns {GardenEvent|null} */
   view(day, state, claimed) {
     const entry = claimed ?? this.get(day);
+    if (
+      entry?.kind === "story" &&
+      entry.effect.story === "migratory_bird" &&
+      entry.target
+    ) {
+      const { plot, plantId } = entry.target;
+      if (
+        state.plots.find(({ id }) => id === plot)?.plant?.id !== plantId ||
+        this.stories.wasHarvested(day, plot, plantId)
+      )
+        return {
+          ...entry,
+          outcome: { detail: "候鸟已经从这块地飞走了。", unavailable: true },
+        };
+    }
     if (entry?.kind === "harvest_bonus" && entry.effect.effect === "sketch")
       return { ...entry, progress: this.progress(entry, state) };
     if (
@@ -212,6 +260,20 @@ export class GardenEvents {
       outcome: { plotId: plot, plantId: plant.id, quantity },
     });
     return quantity;
+  }
+
+  grantMysteryBag(state, quantity = 1) {
+    const candidates = mysteryCrops
+      .filter((id) => state.settings.crops[id]?.enabled)
+      .map((cropId) => ({ cropId, crop: state.settings.crops[cropId] }));
+    if (!candidates.length) throw Error("GARDEN_SEED_UNAVAILABLE");
+    const insert = this.db.prepare(
+      "INSERT INTO garden_mystery_bags VALUES(?,?,?)",
+    );
+    const snapshot = JSON.stringify(candidates);
+    const plantRules = JSON.stringify(gardenPlantRules(state.settings));
+    for (let index = 0; index < quantity; index++)
+      insert.run(randomUUID(), snapshot, plantRules);
   }
 
   mysteryStock() {
@@ -275,8 +337,25 @@ export class GardenEvents {
     };
   }
 
+  settleFollowups(day, state, now) {
+    this.stories.settle(day, state, now);
+  }
+
   close(day, state, now) {
     const entry = this.get(day);
+    if (
+      entry?.kind === "story" &&
+      entry.effect.story === "migratory_bird" &&
+      entry.target
+    ) {
+      const { plot, plantId } = entry.target;
+      const plant = state.plots.find(({ id }) => id === plot)?.plant;
+      if (
+        plant?.id !== plantId ||
+        this.stories.wasHarvested(day, plot, plantId)
+      )
+        this.stories.cancel(entry.id, now);
+    }
     if (!entry || entry.status !== "open") return;
     let outcome;
     if (entry.kind === "thief") {
@@ -404,10 +483,32 @@ export class GardenEvents {
     return claimed;
   }
 
-  perform(day, now, actor, action, state) {
+  perform(day, now, actor, action, state, owner) {
     const entry = this.get(day);
     if (!entry || entry.id !== action.eventId)
       throw Error("GARDEN_EVENT_EXPIRED");
+    if (action.kind === "choose_event") {
+      if (entry.kind !== "choice") throw Error("GARDEN_EVENT_CHOICE_INVALID");
+      if (entry.status !== "open") throw Error("GARDEN_EVENT_ALREADY_RESOLVED");
+      if (!owner) throw Error("GARDEN_ROLE_UNAVAILABLE");
+      const receipt = this.stories.choose(
+        entry,
+        state,
+        now,
+        day,
+        action,
+        owner,
+        (coins) => this.changeBalance(now, actor, action.kind, state, coins),
+        () => this.grantMysteryBag(state),
+      );
+      this.update(day, {
+        ...entry,
+        status: "resolved",
+        actor: { kind: actor.kind, id: actor.id },
+        outcome: receipt.outcome,
+      });
+      return receipt;
+    }
     if (entry.status !== "open") throw Error("GARDEN_EVENT_HANDLED");
     if (action.kind === "chase_thief") {
       if (entry.kind !== "thief") throw Error("GARDEN_EVENT_OFFER");
@@ -451,20 +552,10 @@ export class GardenEvents {
       const purchased = (entry.purchased ?? 0) + action.quantity;
       if (purchased > entry.effect.limit)
         throw Error("GARDEN_STOCK_UNAVAILABLE");
-      const candidates = mysteryCrops
-        .filter((cropId) => state.settings.crops[cropId]?.enabled)
-        .map((cropId) => ({ cropId, crop: state.settings.crops[cropId] }));
-      if (!candidates.length) throw Error("GARDEN_SEED_UNAVAILABLE");
       const price = entry.effect.price * action.quantity;
       if (price !== action.price) throw Error("GARDEN_PRICE_CHANGED");
       this.changeBalance(now, actor, action.kind, state, -price);
-      const insert = this.db.prepare(
-        "INSERT INTO garden_mystery_bags VALUES(?,?,?)",
-      );
-      const snapshot = JSON.stringify(candidates);
-      const plantRules = JSON.stringify(gardenPlantRules(state.settings));
-      for (let i = 0; i < action.quantity; i++)
-        insert.run(randomUUID(), snapshot, plantRules);
+      this.grantMysteryBag(state, action.quantity);
       this.update(day, { ...entry, purchased });
       return { eventId: entry.id, price, quantity: action.quantity, purchased };
     }

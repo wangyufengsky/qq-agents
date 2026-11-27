@@ -13,8 +13,15 @@ import {
   performGardenAction,
 } from "../src/home/garden-console.mjs";
 import { DAY, HOUR, defaultGardenSettings } from "../src/home/garden-rules.mjs";
-import { gardenGifts } from "../public/garden-art/gifts.js";
-import { drawGardenEvent, eventOdds } from "../src/home/garden-event-rules.mjs";
+import {
+  gardenGifts,
+  isGardenMerchantGift,
+} from "../public/garden-art/gifts.js";
+import {
+  drawGardenEvent,
+  eventOdds,
+  eventPool,
+} from "../src/home/garden-event-rules.mjs";
 import { fixedWeather } from "./garden-fixtures.mjs";
 import { config, context, fixture, raw, settle } from "./helpers.mjs";
 
@@ -455,9 +462,9 @@ test("a merchant without any trading stock has no trial or daily draw probabilit
   assert.equal(state.event, null);
 });
 
-test("V3 ships 23 presets and gates the new weather, stock, and weekend entries", () => {
+test("the default pool includes previous presets and gates weather, stock, and weekend entries", () => {
   const settings = defaultGardenSettings();
-  assert.equal(Object.keys(settings.events.entries).length, 23);
+  assert.equal(Object.keys(settings.events.entries).length, 31);
   const ctx = {
     day: 6,
     balance: 401,
@@ -851,7 +858,7 @@ test("repeated reads and a bulk catch-up produce the same weather flip day bound
   assert.equal(bulk.read().weather.kind, "sun");
 });
 
-test("legacy saves without an events setting retain the legacy pool on reopen", (t) => {
+test("legacy saves without an events setting retain the legacy pool alongside story presets", (t) => {
   const f = setup(t, rules("thief"));
   const prior = f.read().event;
   f.store.db
@@ -859,13 +866,15 @@ test("legacy saves without an events setting retain the legacy pool on reopen", 
       "UPDATE garden_state SET settings=json_remove(settings, '$.events') WHERE id=1",
     )
     .run();
+  f.store.db.prepare("DELETE FROM garden_story_presets").run();
   const reopened = new GardenService(f.store);
   const state = reopened.read(0);
-  assert.deepEqual(Object.keys(state.settings.events.entries), [
+  assert.deepEqual(Object.keys(state.settings.events.entries).slice(0, 3), [
     "merchant",
     "thief",
     "visitor",
   ]);
+  assert.equal(Object.keys(state.settings.events.entries).length, 11);
   assert.equal(state.settings.events.entries.merchant.effect.offers, 2);
   assert.deepEqual(state.event, prior);
 });
@@ -894,14 +903,19 @@ test("default gift shelves draw three to five different catalog gifts per day wi
   }
   assert.deepEqual(seenCounts, new Set([3, 4, 5]));
   assert.deepEqual(seenStocks, new Set([2, 3]));
-  assert.deepEqual(seenIds, new Set(Object.keys(gardenGifts)));
+  assert.deepEqual(
+    seenIds,
+    new Set(Object.keys(gardenGifts).filter(isGardenMerchantGift)),
+  );
 });
 
 test("configured and default gift shelves can open with all of a merchant's seeds disabled", (t) => {
   for (const giftOffers of [
     undefined,
     [{ giftId: "dried-fish", price: 13, stock: 1 }],
-    Object.keys(gardenGifts).map((giftId) => ({ giftId, stock: 2 })),
+    Object.keys(gardenGifts)
+      .filter(isGardenMerchantGift)
+      .map((giftId) => ({ giftId, stock: 2 })),
   ]) {
     const settings = rules("merchant");
     const { effect } = settings.events.entries.merchant;
@@ -926,6 +940,14 @@ test("configured and default gift shelves can open with all of a merchant's seed
       );
     else assert.ok(event.giftOffers.length >= 3);
     assert.deepEqual(new GardenService(f.store).read(0).event, event);
+  }
+});
+
+test("ordinary merchant fixed offers reject event keepsakes", () => {
+  const { events } = rules("merchant");
+  for (const giftId of ["garden-sketch-card", "migratory-feather"]) {
+    events.entries.merchant.effect.giftOffers = [{ giftId, stock: 2 }];
+    assert.equal(eventPool.safeParse(events).success, false);
   }
 });
 

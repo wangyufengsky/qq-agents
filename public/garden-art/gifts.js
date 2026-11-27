@@ -23,4 +23,22 @@ export const gardenGifts = {
   "coral-pen-rest": { name: "迷你珊瑚笔搁", price: 30, usable: false },
   "water-lily-bowl": { name: "迷你睡莲水碗", price: 34, usable: false },
   "shell-music-box": { name: "贝壳珍珠八音盒", price: 45, usable: false },
+  "garden-sketch-card": {
+    name: "花园速写画",
+    price: 0,
+    usable: false,
+    eventOnly: true,
+  },
+  "migratory-feather": {
+    name: "候鸟羽毛书签",
+    price: 0,
+    usable: false,
+    eventOnly: true,
+  },
 };
+
+/** @param {string} id */
+export function isGardenMerchantGift(id) {
+  const gift = gardenGifts[/** @type {keyof typeof gardenGifts} */ (id)];
+  return Object.hasOwn(gardenGifts, id) && !("eventOnly" in gift);
+}

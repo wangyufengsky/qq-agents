@@ -1,6 +1,6 @@
 // @ts-check
 import { gardenStageAt } from "./stages.js";
-import { gardenGifts } from "./gifts.js";
+import { gardenGifts, isGardenMerchantGift } from "./gifts.js";
 
 export { gardenGifts };
 
@@ -63,7 +63,9 @@ const artwork = new Set([
   "plant-seedling.webp",
   "supply-fertilizer.webp",
   "gift-wrapped.webp",
-  ...Object.keys(gardenGifts).map((id) => "gift-" + id + ".webp"),
+  ...Object.keys(gardenGifts)
+    .filter(isGardenMerchantGift)
+    .map((id) => "gift-" + id + ".webp"),
   ...["normal", "low", "saturated"].map((soil) => `soil-${soil}.webp`),
   "shelter-back.webp",
   "shelter-front.webp",
@@ -138,7 +140,11 @@ export function gardenEventArtId(event) {
 /** @param {"weather"|"event"|"gift"|"crop"|"supply"} group @param {string} kind */
 export function gardenIconFile(group, kind) {
   if (group === "gift")
-    return Object.hasOwn(gardenGifts, kind) ? `gift-${kind}.webp` : null;
+    return Object.hasOwn(gardenGifts, kind)
+      ? isGardenMerchantGift(kind)
+        ? `gift-${kind}.webp`
+        : "gift-wrapped.webp"
+      : null;
   if (group === "crop")
     return cropArtIds.includes(kind) ? "plant-" + kind + "-mature.webp" : null;
   if (group === "supply")
