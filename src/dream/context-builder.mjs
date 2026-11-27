@@ -96,6 +96,28 @@ function cognitionOpening(runtime, ctx, { fresh, personIds = [] }) {
     scene = role.dream.budget.contextSceneChars;
   /** @type {{item:OpeningItem,fingerprints:Map<string,string>,removed?:boolean}[]} */
   const candidates = [];
+  const stillPresent = prepared(
+    db,
+    "SELECT 1 FROM cognitions WHERE agent_id=? AND id=?",
+  );
+  const removed = /** @type {{key:string,value:number}[]} */ (
+    prepared(
+      db,
+      `SELECT s.key,s.value FROM json_each(?) s WHERE NOT EXISTS (
+        SELECT 1 FROM cognitions c WHERE c.agent_id=? AND c.id=s.key
+      ) ORDER BY s.key`,
+    ).all(JSON.stringify(shown), agentId)
+  );
+  for (const { key, value } of removed) {
+    const item = { id: key, version: value, status: "deleted" };
+    const size = JSON.stringify(item).length + 1;
+    // A deleted row no longer identifies its scope. Use either existing
+    // allowance while preserving the core allowance when scene has room.
+    if (size <= scene) scene -= size;
+    else if (size <= core) core -= size;
+    else continue;
+    candidates.push({ item, fingerprints: new Map(), removed: true });
+  }
   for (const row of rows) {
     if (core < 1 && scene < 1) break;
     if (row.version <= (shown[row.id] ?? 0)) continue;
@@ -133,25 +155,6 @@ function cognitionOpening(runtime, ctx, { fresh, personIds = [] }) {
     if (own) core -= size;
     else scene -= size;
     candidates.push({ item, fingerprints });
-  }
-  const stillPresent = prepared(
-    db,
-    "SELECT 1 FROM cognitions WHERE agent_id=? AND id=?",
-  );
-  const removed = /** @type {{key:string,value:number}[]} */ (
-    prepared(
-      db,
-      `SELECT s.key,s.value FROM json_each(?) s WHERE NOT EXISTS (
-        SELECT 1 FROM cognitions c WHERE c.agent_id=? AND c.id=s.key
-      ) ORDER BY s.key`,
-    ).all(JSON.stringify(shown), agentId)
-  );
-  for (const { key, value } of removed) {
-    const item = { id: key, version: value, status: "deleted" };
-    const size = JSON.stringify(item).length + 1;
-    if (size > scene) continue;
-    scene -= size;
-    candidates.push({ item, fingerprints: new Map(), removed: true });
   }
   const cacheQuery = prepared(
     db,

@@ -189,15 +189,28 @@ export function initializeDreamPurge(db) {
 // SQLite triggers existed. Apply the same redaction after all rows load.
 /** @param {import("node:sqlite").DatabaseSync} db @param {string} agentId */
 export function reconcileDreamPurges(db, agentId) {
+  if (
+    !db
+      .prepare("SELECT 1 FROM cognition_evidence WHERE agent_id=? LIMIT 1")
+      .get(agentId)
+  )
+    return;
   const missing = db
     .prepare(
       `SELECT DISTINCT source_id,source_type FROM cognition_evidence e WHERE agent_id=? AND (
       (source_type='event' AND NOT EXISTS(SELECT 1 FROM events WHERE agent_id=e.agent_id AND id=e.source_id))
       OR (source_type='diary' AND NOT EXISTS(SELECT 1 FROM diaries WHERE agent_id=e.agent_id AND id=e.source_id))
       OR (source_type='correction' AND NOT EXISTS(SELECT 1 FROM memory_corrections WHERE agent_id=e.agent_id AND id=e.source_id))
+    )
+    UNION
+    SELECT d.parent_id,'unknown' FROM dream_source_dependencies d
+    WHERE d.agent_id=? AND d.parent_id IS NOT NULL AND NOT EXISTS (
+      SELECT 1 FROM events WHERE agent_id=d.agent_id AND id=d.parent_id
+      UNION ALL
+      SELECT 1 FROM diaries WHERE agent_id=d.agent_id AND id=d.parent_id
     )`,
     )
-    .all(agentId);
+    .all(agentId, agentId);
   const purge = db.prepare("INSERT INTO dream_privacy_purge VALUES(?,?,?)");
   for (const { source_id, source_type } of missing)
     purge.run(agentId, source_id, source_type);

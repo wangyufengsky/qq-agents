@@ -371,6 +371,18 @@ test("diary provenance erasure reaches older dependent revisions and preserves i
     add("derived", [derived.id], secret),
   );
 
+  // An older database could export live cognition after its parent was
+  // manually removed. Use the ordinary export/restore path for that state.
+  db.exec("SAVEPOINT legacy_erasure");
+  db.exec("DROP TRIGGER dream_privacy_event_delete");
+  db.prepare("DELETE FROM events WHERE id=?").run(earlier.id);
+  const legacy = memory.export();
+  db.exec("ROLLBACK TO legacy_erasure; RELEASE legacy_erasure");
+  assert.match(
+    JSON.stringify(legacy.tables.cognition_revisions),
+    new RegExp(secret),
+  );
+
   db.prepare("DELETE FROM events WHERE id=?").run(earlier.id);
   const rows = db
     .prepare("SELECT status,content FROM cognitions ORDER BY status")
@@ -407,6 +419,26 @@ test("diary provenance erasure reaches older dependent revisions and preserves i
       .all(),
     rows,
   );
+  const restoredLegacy = new MemoryStore(":memory:");
+  t.after(() => restoredLegacy.close());
+  const legacyMemory = restoredLegacy.bind(role);
+  restoreExport(legacyMemory, legacy);
+  assert.deepEqual(
+    restoredLegacy.db
+      .prepare("SELECT status,content FROM cognitions ORDER BY status")
+      .all(),
+    rows,
+  );
+  const recoveredTables = legacyMemory.export().tables;
+  for (const table of [
+    "cognitions",
+    "cognition_revisions",
+    "awakening_contexts",
+  ])
+    assert.doesNotMatch(
+      JSON.stringify(recoveredTables[table]),
+      new RegExp(secret),
+    );
 });
 
 test("retained sessions get one content-free invalidation even if all evidence or the cognition is erased", (t) => {
@@ -454,4 +486,72 @@ test("retained sessions get one content-free invalidation even if all evidence o
     cognitionContext(runtime, ctx, { fresh: false }).refresh().line,
     "",
   );
+});
+
+test("physical deletion uses the existing core or scene budget on retained QQ sessions", async (t) => {
+  for (const { name, scopeId, core, scene, clear } of [
+    { name: "core only", scopeId: "global", core: 400, scene: 0 },
+    { name: "scene only", scopeId: scope, core: 0, scene: 400 },
+    {
+      name: "both disabled after initial input",
+      scopeId: "global",
+      core: 400,
+      scene: 0,
+      clear: true,
+    },
+  ]) {
+    await t.test(name, async (t) => {
+      const cfg = config();
+      cfg.agents[0].dream.enabled = true;
+      cfg.agents[0].dream.budget = {
+        contextCoreChars: core,
+        contextSceneChars: scene,
+      };
+      cfg.agents[0].contextPolicy.capacityTokens = 1000000;
+      const seen = [];
+      const session = { backend: "fixture", id: "synthetic-retained" };
+      const f = fixture(t, {
+        cfg,
+        run(p) {
+          seen.push(p);
+          p.saveSession(session);
+        },
+      });
+      const { runtime, store } = f;
+      const memory = store.bind(role);
+      const source = append(memory, "deletion-budget-evidence");
+      commit(runtime, role, { ...add("budget", [source.id], secret), scopeId });
+      const { id } = store.db
+        .prepare("SELECT id FROM cognitions WHERE subject_key='budget'")
+        .get();
+
+      const wake = (name) => {
+        append(memory, name, "来聊天", {
+          trustedInput: true,
+          segments: [{ type: "at", data: { qq: "10000" } }],
+        });
+        return runtime.wake(role, scope);
+      };
+      await wake("first");
+      assert.match(seen[0].prompt, new RegExp(secret));
+      assert.equal(memory.state(scope).cognitionsShown[id], 1);
+      if (clear) {
+        const next = structuredClone(runtime.config);
+        next.agents[0].dream.budget.contextCoreChars = 0;
+        await runtime.changeConfig(next, f.configStore.revision);
+      }
+      deleteCognition(runtime, role, id, 1);
+      const notice = JSON.stringify({ id, version: 1, status: "deleted" });
+      await wake("after-delete");
+      assert.equal(seen[1].session.id, session.id);
+      assert.equal(seen[1].instructions, seen[0].instructions);
+      assert.equal(seen[1].prompt.includes(notice), !clear);
+      assert.equal(
+        memory.state(scope).cognitionsShown[id],
+        clear ? 1 : undefined,
+      );
+      await wake("after-receipt");
+      assert.ok(!seen[2].prompt.includes(notice));
+    });
+  }
 });
