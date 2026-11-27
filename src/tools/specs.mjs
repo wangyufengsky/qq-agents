@@ -1,4 +1,5 @@
 // @ts-check
+import { dreamReadDefinitions } from "./dream.mjs";
 import { z } from "zod";
 import { functionalResultSchemaConditions } from "./functional-result.mjs";
 import { registry } from "./registry.mjs";
@@ -34,6 +35,7 @@ export function toolSpecs(
   enabled = TOOL_NAMES,
   {
     context = false,
+    dream = false,
     desktopUnified = false,
     desktopBodyV2 = true,
     desktopBodyCrossDisplay = false,
@@ -45,7 +47,14 @@ export function toolSpecs(
   return enabled
     .filter((n) => Object.hasOwn(registry, n))
     .map((name) => {
-      const { description, schema } = registry[name];
+      const special =
+        dream &&
+        dreamReadDefinitions[
+          /** @type {keyof typeof dreamReadDefinitions} */ (name)
+        ];
+      const { description, schema } = special
+        ? { description: special[0], schema: special[1] }
+        : registry[name];
       const nativeControl = name === DESKTOP_NATIVE_CONTROL;
       const browserControl = name === DESKTOP_BROWSER_CONTROL;
       const scopedSchema = desktopUnified

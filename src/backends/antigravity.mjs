@@ -1087,6 +1087,7 @@ export class AntigravityBackend {
     if (
       this.config.cliProtocol !== "acp" &&
       !params.social &&
+      !params.dream &&
       this.config.cliReuse?.enabled
     )
       return this.runReusable(params);

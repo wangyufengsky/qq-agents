@@ -1,4 +1,9 @@
 import {
+  DREAM_SCHEMA_VERSION,
+  exportDreamCheckpoint,
+  initializeDreamTables,
+} from "../dream/schema.mjs";
+import {
   INPUT_SCHEMA_VERSION,
   initializeInputTables,
   migrateInputBaselines,
@@ -133,7 +138,7 @@ export class MemoryStore {
     this.db = new DatabaseSync(file);
     try {
       const version = this.db.prepare("PRAGMA user_version").get().user_version;
-      if (version > INPUT_SCHEMA_VERSION)
+      if (version > DREAM_SCHEMA_VERSION)
         throw Error("MEMORY_SCHEMA_NEWER_THAN_CODE");
       if (file !== ":memory:") fs.chmodSync(file, 0o600);
       // Connection settings must take effect before opening a schema transaction.
@@ -211,6 +216,11 @@ export class MemoryStore {
           initializeInputTables(this.db);
           migrateInputBaselines(this.db);
           this.db.exec(`PRAGMA user_version=${INPUT_SCHEMA_VERSION}`);
+        });
+      if (version < DREAM_SCHEMA_VERSION)
+        this.transaction(() => {
+          initializeDreamTables(this.db);
+          this.db.exec(`PRAGMA user_version=${DREAM_SCHEMA_VERSION}`);
         });
       migrateHomeSocial(this.db);
       initializeDesktopArchive(this.db);
@@ -1476,7 +1486,7 @@ class AgentMemory {
       if (name === "diary_revisions") continue;
       tables[name] = this.db
         .prepare(
-          `SELECT * FROM ${name} WHERE agent_id=?${name === "events" ? " ORDER BY seq" : name === "moods" ? " ORDER BY rowid" : ""}`,
+          `SELECT * FROM ${name} WHERE agent_id=?${name === "events" ? " ORDER BY seq" : ["moods", "memory_corrections"].includes(name) ? " ORDER BY rowid" : ""}`,
         )
         .all(this.agentId);
     }
@@ -1486,9 +1496,12 @@ class AgentMemory {
     }));
     tables.diary_revisions = this.db
       .prepare(
-        "SELECT r.* FROM diary_revisions r JOIN diaries d ON d.id=r.id WHERE d.agent_id=?",
+        "SELECT r.* FROM diary_revisions r JOIN diaries d ON d.id=r.id WHERE d.agent_id=? ORDER BY r.rowid",
       )
       .all(this.agentId);
+    tables.dream_checkpoints = tables.dream_checkpoints.map((row) =>
+      exportDreamCheckpoint(this.db, row),
+    );
     for (const [table, rows] of Object.entries(tables))
       tables[table] = rows.map((row) => socialSafeExportRow(table, row));
     return withExportManifest(exportHeader(this.agentId, now()), tables);

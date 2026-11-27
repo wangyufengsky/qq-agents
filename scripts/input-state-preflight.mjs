@@ -1,3 +1,4 @@
+import { DREAM_SCHEMA_VERSION } from "../src/dream/schema.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
@@ -278,10 +279,8 @@ let db;
 try {
   const scopes = configuredScopes();
   db = new DatabaseSync(database, { readOnly: action === "preview" });
-  if (
-    db.prepare("PRAGMA user_version").get().user_version !==
-    INPUT_SCHEMA_VERSION
-  )
+  const schema = db.prepare("PRAGMA user_version").get().user_version;
+  if (![INPUT_SCHEMA_VERSION, DREAM_SCHEMA_VERSION].includes(schema))
     throw Error("INPUT_BASELINE_UPGRADED_COPY_REQUIRED");
   db.exec(
     action === "preview"

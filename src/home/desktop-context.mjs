@@ -1,3 +1,7 @@
+import {
+  cognitionContext,
+  commitCognitionContext,
+} from "../core/chat-context.mjs";
 import { createHash, randomUUID } from "node:crypto";
 import { sessionContract } from "../backends/session-contract.mjs";
 import {
@@ -149,6 +153,16 @@ ${selfBody}
       ? `你此前在场时收到的桌边记录：${JSON.stringify(request.continuity)}`
       : null;
   const accountId = runtime.connection(agent.connectionId).accountId;
+  const personIds = [
+    ...new Set(
+      opening
+        .filter(
+          ({ direction, senderQq }) =>
+            direction === "in" && senderQq && senderQq !== accountId,
+        )
+        .map(({ senderQq }) => senderQq),
+    ),
+  ];
   const elsewhere =
     activity || request.windowTask
       ? null
@@ -156,17 +170,12 @@ ${selfBody}
           fresh: !session,
           now,
           accountId,
-          personIds: [
-            ...new Set(
-              opening
-                .filter(
-                  ({ direction, senderQq }) =>
-                    direction === "in" && senderQq && senderQq !== accountId,
-                )
-                .map(({ senderQq }) => senderQq),
-            ),
-          ],
+          personIds,
         });
+  const cognition =
+    conversation === DESKTOP_CONVERSATION
+      ? cognitionContext(runtime, ctx, { fresh: !session, personIds })
+      : null;
   const prompt = [
     continuation,
     unified &&
@@ -212,11 +221,14 @@ ${selfBody}
   ]
     .filter(Boolean)
     .join("\n\n");
+  const promptChars =
+    prompt.length + (cognition?.line ? cognition.line.length + 2 : 0);
+  let submittedCognition;
   if (
     runtime.contexts.retireBeforeInput(
       ctx,
       state,
-      prompt.length + (ctx.desktopInputImageCount || 0) * 4096,
+      promptChars + (ctx.desktopInputImageCount || 0) * 4096,
     )
   )
     return beginDesktopContext(runtime, ctx, agent, backend, request, signal);
@@ -225,7 +237,7 @@ ${selfBody}
     selfVersion: self.version,
     initialSession: !session,
     turnStartedAt: now,
-    estimatedAdded: prompt.length + (session ? 0 : instructions.length),
+    estimatedAdded: promptChars + (session ? 0 : instructions.length),
   });
   memory.store.transaction(() => {
     memory.setState(conversation, {
@@ -249,7 +261,7 @@ ${selfBody}
       ...(activity && { desktopActivityReason: request.reason }),
       inputStage: "not-submitted",
       initialSession: ctx.initialSession,
-      promptChars: prompt.length,
+      promptChars,
       instructionsChars: ctx.initialSession ? instructions.length : 0,
       instructionsHash,
       selfVersion: self.version,
@@ -267,6 +279,8 @@ ${selfBody}
           backendContract: contract,
           at: runtime.now(),
         });
+      commitCognitionContext(memory, ctx, submittedCognition);
+      submittedCognition = null;
       if (selfAllowed) trackMindRecords(runtime, ctx, [self], "desktop-self");
       for (const item of [
         ...(elsewhere?.items || []),
@@ -290,6 +304,12 @@ ${selfBody}
     desktopUnified: unified,
     instructions,
     prompt,
+    ...(cognition && {
+      appendPrompt: () => {
+        submittedCognition = cognition.refresh();
+        return submittedCognition.line ? "\n\n" + submittedCognition.line : "";
+      },
+    }),
     tools: tools
       .filter(
         ({ name }) =>

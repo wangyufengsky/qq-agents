@@ -44,6 +44,7 @@ import {
   chatHandoff,
   chatStatus,
   wakeBackground,
+  cognitionContext,
 } from "./chat-context.mjs";
 import {
   personCardsForTurn,
@@ -915,10 +916,20 @@ export class ContextLifecycle {
     );
     ctx.rhythmWake = reasons.find((reason) => reason.rhythmWake)?.rhythmWake;
     const environment = turnEnvironment(r, a, ctx, backendType);
+    const personIds = peopleInTurn(
+      m,
+      ctx.conversation,
+      history.items,
+      accountId,
+    );
     const corrections = m.corrections
-      .forPeople(peopleInTurn(m, ctx.conversation, history.items, accountId))
+      .forPeople(personIds)
       .filter((entry) => !correctionAllowed || correctionAllowed(entry));
     const activities = activityForTurn(m, ctx.conversation);
+    ctx.cognitionOpening = cognitionContext(r, ctx, {
+      fresh: ctx.initialSession,
+      personIds,
+    });
     const details = [
       activities.length
         ? `共同活动（继续时先读当前原稿；多个活动不明确时简短确认；轮到对方时等待真实来信）：${JSON.stringify(activities)}`
@@ -995,6 +1006,9 @@ export class ContextLifecycle {
     )
       .filter(Boolean)
       .join("\n\n");
+    const cognitionLine = ctx.cognitionOpening?.line;
+    const promptChars =
+      prompt.length + (cognitionLine ? cognitionLine.length + 2 : 0);
     const imageAllowance =
       a.behavior.imageInput.enabled &&
       history.items.some((item) =>
@@ -1002,7 +1016,7 @@ export class ContextLifecycle {
       )
         ? a.behavior.imageInput.maxImages * 4096
         : 0;
-    if (this.retireBeforeInput(ctx, s, prompt.length + imageAllowance))
+    if (this.retireBeforeInput(ctx, s, promptChars + imageAllowance))
       return this.prepare(ctx, backend, reasons, tools);
     m.setState(ctx.conversation, {
       ...m.state(ctx.conversation),
@@ -1041,7 +1055,7 @@ export class ContextLifecycle {
       inputStage: "not-submitted",
       reason: reasons.map((x) => x.reason),
       initialSession: ctx.initialSession,
-      promptChars: prompt.length,
+      promptChars,
       instructionsChars: ctx.initialSession ? instructions.length : 0,
       instructionsHash,
       backendId: a.backendId,
@@ -1097,7 +1111,7 @@ export class ContextLifecycle {
         : {}),
     });
     ctx.estimatedAdded =
-      prompt.length + (ctx.initialSession ? instructions.length : 0);
+      promptChars + (ctx.initialSession ? instructions.length : 0);
     return {
       instructions,
       prompt,

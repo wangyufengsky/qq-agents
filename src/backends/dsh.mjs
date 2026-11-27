@@ -519,6 +519,7 @@ export class DshBackend {
   async run({
     conversation,
     desktop,
+    dream,
     desktopUnified,
     prompt,
     inputImages = [],
@@ -551,6 +552,9 @@ export class DshBackend {
       if (session || recovery) throw Error("SESSION_REQUIRES_HANDOFF");
       if (signal.aborted) throw Error("ABORTED");
     }
+    const standalone = Boolean(selection || dream);
+    if (dream && (session || recovery || this.config.preset !== "qq-unified"))
+      throw Error("FUNCTIONAL_AGENT_BACKEND_UNSUPPORTED");
     const signature = this.sessionSignature(tools, selection);
     assertSession(session, "dsh", signature);
     const client = await beforeSessionInput(session, async () => {
@@ -578,7 +582,7 @@ export class DshBackend {
         /** @type {string} */ (this.root),
         desktop
           ? "dsh-desktop-workspaces"
-          : selection
+          : standalone
             ? "dsh-functional-workspaces"
             : "dsh-workspaces",
         desktop ? this.agent.id + "-desktop" : this.agent.id,
@@ -592,14 +596,14 @@ export class DshBackend {
         "workspace",
       );
       // Keep the create receipt even on abort: it names the session to clean up.
-      if ((selection || desktop) && signal.aborted) throw Error("ABORTED");
+      if ((standalone || desktop) && signal.aborted) throw Error("ABORTED");
       sessionId = unwrap(
         await client.sessions.create({
           workspaceId: w.workspace.workspaceId,
           agentPreset: this.config.preset,
           // Name an invocation-owned session rather than adopting a blank
           // desktop session that might already exist in this workspace.
-          ...(selection || desktop
+          ...(standalone || desktop
             ? { sessionId: /** @type {any} */ ("session-" + randomUUID()) }
             : {}),
         }),
@@ -797,7 +801,7 @@ export class DshBackend {
         },
         selection || desktop ? undefined : signal,
       );
-      if (selection || desktop) pendingSubmission = submission;
+      if (standalone || desktop) pendingSubmission = submission;
       await Promise.race([
         submission.then(
           (response) => {
@@ -865,7 +869,7 @@ export class DshBackend {
       active.reattached();
       signal.removeEventListener("abort", active.abort);
       try {
-        if (selection)
+        if (standalone)
           await this.stopFunctionalSession(
             client,
             sessionId,
@@ -882,7 +886,7 @@ export class DshBackend {
       } finally {
         this.turns.delete(sessionId);
         client.events.forget?.(sessionId);
-        if (selection) this.capacities.delete(sessionId);
+        if (standalone) this.capacities.delete(sessionId);
       }
     }
   }

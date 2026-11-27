@@ -529,7 +529,7 @@ test("backup precedes schema3 upgrade, includes WAL, restores to a separate old-
     d.close();
   }
   const upgraded = new DatabaseSync(file, { readOnly: true });
-  assert.equal(upgraded.prepare("PRAGMA user_version").get().user_version, 8);
+  assert.equal(upgraded.prepare("PRAGMA user_version").get().user_version, 9);
   upgraded.close();
 });
 test("backup failure leaves schema3 and source data unchanged; failed import is transactional and recoverable", async (t) => {
@@ -592,7 +592,7 @@ test("opening a schema-seven database freezes legacy versions and installs an ev
   t.after(() => upgraded.close());
   assert.equal(
     upgraded.db.prepare("PRAGMA user_version").get().user_version,
-    8,
+    9,
   );
   const saved = upgraded.db
     .prepare("SELECT version FROM input_legacy_refs WHERE id=?")

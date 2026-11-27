@@ -1,3 +1,4 @@
+import { DreamRunner } from "../dream/runner.mjs";
 import { QzoneApprovals } from "./qzone-approvals.mjs";
 import { SubjectExecution } from "./subject-execution.mjs";
 import { SocialRuntime } from "../home/social-runtime.mjs";
@@ -184,6 +185,7 @@ export class Runtime {
     this.maintenance = new MaintenanceDrain(this);
     this.turns = new TurnRunner(this);
     this.functionalDelegation = new FunctionalDelegation(this);
+    this.dreams = new DreamRunner(this);
     this.semanticRecall = new SemanticRecall(this);
     this.conversations = new ConversationEngine(this);
     this.scheduler = new TaskScheduler(this);
@@ -451,6 +453,7 @@ export class Runtime {
     }
   }
   toolsForContext(agent, ctx) {
+    if (ctx.runtimeKind === "dream-cognitive") return ctx.allowedTools;
     if (ctx.desktopUnified) return ctx.allowedTools;
     if (ctx.desktopPublicResting)
       return this.toolsFor(agent, ctx.conversation).filter(
@@ -698,6 +701,7 @@ export class Runtime {
     if (this.config.mode !== "live") codes.push("ISOLATED_MODE");
     if (this.config.globalPaused) codes.push("GLOBAL_PAUSED");
     if (a.paused) codes.push("AGENT_PAUSED");
+    if (ctx?.runtimeKind === "dream-cognitive") return codes;
     // Quiet hours govern QQ chatter; console-started protected work never speaks there.
     if (isWorkScope(conversation)) {
       if (!this.protectedWork.active(a.id, conversation))
@@ -1311,12 +1315,14 @@ export class Runtime {
     if (!plan) {
       if (
         ctx.runtimeKind === "functional-agent" ||
+        ctx.runtimeKind === "dream-cognitive" ||
         ctx.runtimeKind === "desktop"
       )
         this.assertActive(ctx);
       const { wire } = await encode(original);
       if (
         ctx.runtimeKind === "functional-agent" ||
+        ctx.runtimeKind === "dream-cognitive" ||
         ctx.runtimeKind === "desktop"
       )
         this.assertActive(ctx);
@@ -1477,6 +1483,7 @@ export class Runtime {
       const result = await this.executeTool(ctx, name, args);
       if (
         ctx.runtimeKind === "functional-agent" ||
+        ctx.runtimeKind === "dream-cognitive" ||
         ctx.runtimeKind === "desktop"
       )
         this.assertActive(ctx);
@@ -1540,6 +1547,7 @@ export class Runtime {
       ctx.privateRead.add(peerQzoneMarker(id));
     ctx.persistTaint?.();
     const scoped =
+      ctx.runtimeKind === "dream-cognitive" ||
       ctx.runtimeKind === "functional-agent" ||
       ctx.runtimeKind === "desktop" ||
       ctx.functionalAgent?.definition.tools;
@@ -1561,6 +1569,7 @@ export class Runtime {
     )
       throw Error("TOOL_DISABLED");
     let result = await dispatchTool(this, ctx, name, args, (validated) => {
+      if (ctx.runtimeKind === "dream-cognitive") return;
       const boundary = recallBoundary(this, ctx);
       for (const id of [
         validated.id,

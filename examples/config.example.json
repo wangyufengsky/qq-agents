@@ -128,6 +128,40 @@
       "name": "角色 A",
       "connectionId": "napcat-a",
       "backendId": "dsh-desktop",
+      "dream": {
+        "enabled": false,
+        "backendId": null,
+        "model": null,
+        "effort": null,
+        "cognitive": {
+          "enabled": true,
+          "model": null,
+          "effort": null,
+          "napIdleMs": 900000,
+          "napMinEvents": 20,
+          "deepDaily": true,
+          "longWeekly": true,
+          "longCognitionThreshold": 120,
+          "maxEventsPerBatch": 120,
+          "maxOpsPerRun": 20,
+          "timeoutMs": 60000
+        },
+        "imaginative": {
+          "enabled": false,
+          "model": null,
+          "effort": null,
+          "dailyMax": 1,
+          "probability": 0.5,
+          "timeoutMs": 45000
+        },
+        "budget": {
+          "maxRunsPerDay": 6,
+          "maxGlobalConcurrency": 2,
+          "contextCoreChars": 1200,
+          "contextSceneChars": 1200,
+          "awakeningSummaryChars": 400
+        }
+      },
       "memoryRecall": "auto",
       "paused": true,
       "subject": {
@@ -251,6 +285,40 @@
       "name": "角色 B",
       "connectionId": "napcat-b",
       "backendId": "codex-cli",
+      "dream": {
+        "enabled": false,
+        "backendId": null,
+        "model": null,
+        "effort": null,
+        "cognitive": {
+          "enabled": true,
+          "model": null,
+          "effort": null,
+          "napIdleMs": 900000,
+          "napMinEvents": 20,
+          "deepDaily": true,
+          "longWeekly": true,
+          "longCognitionThreshold": 120,
+          "maxEventsPerBatch": 120,
+          "maxOpsPerRun": 20,
+          "timeoutMs": 60000
+        },
+        "imaginative": {
+          "enabled": false,
+          "model": null,
+          "effort": null,
+          "dailyMax": 1,
+          "probability": 0.5,
+          "timeoutMs": 45000
+        },
+        "budget": {
+          "maxRunsPerDay": 6,
+          "maxGlobalConcurrency": 2,
+          "contextCoreChars": 1200,
+          "contextSceneChars": 1200,
+          "awakeningSummaryChars": 400
+        }
+      },
       "memoryRecall": "auto",
       "paused": true,
       "subject": {

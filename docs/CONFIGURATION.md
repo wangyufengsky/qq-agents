@@ -10,6 +10,14 @@
 
 桥接通过其 `DSH_HOME` 中的签名凭据访问专用 Host。普通 DSH 自动发现和恢复会排除专用 Host 的端口。
 
+### 认知梦
+
+每个角色通过 `agents[].dream.enabled` 开启梦境，默认关闭。当前阶段由运行时调用认知梦，自动调度和管理台入口在后续阶段接入。每次运行使用一次性模型会话整理这个角色的经历。它通过 `dream_cognition_list` 核对已有认知，通过 `dream_cognition_submit` 提议新增或更新。聊天和桌面回合只在参考资料中收到相关认知及后续修订。引用私聊经历的认知带有 `fromPrivate` 提示。
+
+可用 `dream.backendId` 指定模型后端。留空时，如果只有一个专用后端（`functionalAgentOnly: true`）且已配置提供方和模型，梦境使用它。其他情况使用角色主后端。`dream.cognitive.model`、`dream.cognitive.effort` 分别覆盖角色的 `dream.model`、`dream.effort`，仍留空的字段继承所选后端。梦境配置和认知版本的变化保留现有聊天会话。
+
+`dream.cognitive.maxEventsPerBatch` 默认 120，`maxOpsPerRun` 默认 20，`timeoutMs` 默认 60000 毫秒。一次有效的空提交通知框架这批经历已整理完。失败批次保留原检查点，供后续运行读取。
+
 ### QQ 会话记忆查证
 
 在管理台「角色 → 聊天范围 → 记忆 Agent」选择「随主后端」「开启」或「关闭」，对应 `agents[].memoryRecall` 的 `auto`、`enabled`、`disabled`。随主后端时，DSH 角色启用，其他后端的角色关闭。「开启」覆盖角色已准入的群聊和私聊，并始终使用独立 DSH 后端执行只读查证。关闭后，普通聊天仍可使用已授权的原有记忆工具。独立 DSH 或工具权限尚未就绪时，普通回复照常进行。

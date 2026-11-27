@@ -24,7 +24,7 @@ for (const inMemory of [false, true]) {
       );
       assert.equal(
         store.db.prepare("PRAGMA user_version").get().user_version,
-        8,
+        9,
       );
       assert.equal(
         store.db.prepare("PRAGMA journal_mode").get().journal_mode,
@@ -129,7 +129,7 @@ test("reopening preserves events and runtime while rebuilding derived due rows",
       readonly.prepare("SELECT count(*) AS count FROM events").get().count,
       1,
     );
-    assert.equal(readonly.prepare("PRAGMA user_version").get().user_version, 8);
+    assert.equal(readonly.prepare("PRAGMA user_version").get().user_version, 9);
   } finally {
     readonly.close();
   }
@@ -161,10 +161,16 @@ for (const stage of [
     version: 7,
   },
   {
+    name: "dream schema",
+    marker: "CREATE TABLE IF NOT EXISTS cognitions (",
+    absent: "dream_checkpoints",
+    version: 8,
+  },
+  {
     name: "due schema",
     marker: "CREATE TABLE IF NOT EXISTS conversation_due(",
     absent: "conversation_due",
-    version: 8,
+    version: 9,
   },
 ]) {
   test(`${stage.name} failure rolls back its batch, closes the connection and permits recovery`, (t) => {
@@ -212,7 +218,7 @@ for (const stage of [
     try {
       assert.equal(
         recovered.db.prepare("PRAGMA user_version").get().user_version,
-        8,
+        9,
       );
       assert.ok(schemaNames(recovered.db).includes(stage.absent));
       assert.equal(recovered.db.isTransaction, false);
@@ -289,7 +295,7 @@ test("future schema is rejected without changing journal mode, schema or data", 
   const initial = new DatabaseSync(file);
   try {
     initial.exec(
-      "CREATE TABLE future_data(value TEXT); INSERT INTO future_data VALUES('fixture'); PRAGMA user_version=9;",
+      "CREATE TABLE future_data(value TEXT); INSERT INTO future_data VALUES('fixture'); PRAGMA user_version=10;",
     );
   } finally {
     initial.close();
@@ -303,7 +309,7 @@ test("future schema is rejected without changing journal mode, schema or data", 
     );
     assert.equal(
       inspection.prepare("PRAGMA user_version").get().user_version,
-      9,
+      10,
     );
     assert.deepEqual(schemaNames(inspection), ["future_data"]);
     assert.equal(

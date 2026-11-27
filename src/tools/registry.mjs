@@ -1,3 +1,4 @@
+import { dreamDefinitions, dreamTool } from "./dream.mjs";
 import { reactionDefinitions, reactionTool } from "./reactions.mjs";
 import { groupReadDefinitions, groupReadTool } from "./group-read.mjs";
 import { profileDefinitions, profileTool } from "./profile.mjs";
@@ -17,6 +18,8 @@ import {
   DESKTOP_BODY_CONTROL,
   FUNCTIONAL_AGENT_RESULT,
   TOOL_NAMES,
+  DREAM_LIST,
+  DREAM_SUBMIT,
 } from "./names.mjs";
 import { coreHandlers } from "./core-handlers.mjs";
 import { recallFromChat } from "../core/memory-recall.mjs";
@@ -90,6 +93,7 @@ for (const [group, dispatch] of [
   [screenshotDefinitions, screenshotTool],
   [legacyDefinitions, legacyTool],
   [draftDefinitions, draftTool],
+  [dreamDefinitions, dreamTool],
   [boardDefinitions, boardTool],
   [homeDefinitions, homeTool],
   [gardenDefinitions, gardenTool],
@@ -101,6 +105,8 @@ for (const [group, dispatch] of [
     handlers[name] = (runtime, ctx, args) => dispatch(runtime, ctx, name, args);
   }
 const registeredNames = [
+  DREAM_LIST,
+  DREAM_SUBMIT,
   ...TOOL_NAMES,
   FUNCTIONAL_AGENT_RESULT,
   DESKTOP_ACTIVITY_DECISION,
