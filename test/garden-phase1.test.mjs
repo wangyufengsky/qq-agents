@@ -8,6 +8,7 @@ import {
   subjectGardenView,
 } from "../src/home/garden-console.mjs";
 import { DAY, HOUR, defaultGardenSettings } from "../src/home/garden-rules.mjs";
+import { GardenService } from "../src/home/garden-service.mjs";
 import { fixedWeather } from "./garden-fixtures.mjs";
 import { config, fixture } from "./helpers.mjs";
 
@@ -388,4 +389,65 @@ test("neighbor seed highlights cite the journal and disappear after acknowledgem
   };
   f.garden.ackDigest(identity, f.garden.digest(identity).through);
   assert.deepEqual(f.overview().highlights, []);
+});
+
+test("discovered crops stay known after all stock is sold and the garden reopens", (t) => {
+  const settings = options();
+  settings.weather = fixedWeather("sun");
+  settings.baseQuality = 100;
+  for (const id of ["sunflower", "strawberry", "sunberry", "clover"]) {
+    settings.crops[id].hours = 4;
+    settings.crops[id].dailyWater = 0;
+  }
+  const f = setup(t, settings);
+  const known = (id) =>
+    f.overview().market.crops.some((crop) => crop.id === id);
+  assert.equal(known("sunberry"), false);
+  assert.equal(known("four_leaf_clover"), false);
+  for (const [index, cropId] of ["sunflower", "strawberry"].entries())
+    f.act({
+      kind: "plant",
+      cropId,
+      plot: index + 1,
+      buyPrice: settings.crops[cropId].seedPrice,
+    });
+  const clover = f.act({ kind: "plant", cropId: "clover", plot: 3 });
+  let seed = 0;
+  const winningRoll = (candidate) =>
+    createHash("sha256")
+      .update(
+        JSON.stringify([String(candidate), clover.plantId, "four_leaf_clover"]),
+      )
+      .digest()
+      .readUInt32BE() <
+    0x100000000 / 5;
+  while (!winningRoll(seed)) seed++;
+  f.store.db
+    .prepare("UPDATE garden_weather_seed SET seed=? WHERE id=1")
+    .run(String(seed));
+  f.advance(4 * DAY + 8 * HOUR);
+  assert.equal(known("sunberry"), true);
+  const sunberry = f.act({ kind: "plant", cropId: "sunberry", plot: 4 });
+  f.advance(8 * HOUR);
+  assert.equal(
+    f.act({ kind: "harvest", plot: 4, plantId: sunberry.plantId }).cropId,
+    "sunberry",
+  );
+  assert.equal(
+    f.act({ kind: "harvest", plot: 3, plantId: clover.plantId }).cropId,
+    "four_leaf_clover",
+  );
+  for (const { id, quantity, saleRate } of f.overview().inventory.harvests)
+    f.act({
+      kind: "sell",
+      harvestId: id,
+      quantity,
+      price: quantity * saleRate,
+    });
+  assert.deepEqual(f.overview().inventory.harvests, []);
+  f.garden.syncClock(f.runtime.now(), false);
+  f.runtime.home.garden = new GardenService(f.store);
+  assert.equal(known("sunberry"), true);
+  assert.equal(known("four_leaf_clover"), true);
+  assert.equal(known("mistbell"), false);
 });

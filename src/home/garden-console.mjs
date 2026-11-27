@@ -19,6 +19,7 @@ import { giftBudgetLimits } from "./garden-items.mjs";
 import { floodRisk } from "./garden-risks.mjs";
 
 /** @typedef {ReturnType<import("./garden-service.mjs").GardenService["read"]>} GardenState */
+const hiddenCrops = ["mistbell", "sunberry", "four_leaf_clover"];
 const instanceAdmin = {
   kind: /** @type {const} */ ("admin"),
   id: "administrator",
@@ -426,8 +427,9 @@ export function subjectGardenView(
       .filter(([, count]) => count > 0)
       .map(([id]) => id),
     ...state.plots.flatMap(({ plant }) => (plant ? [plant.cropId] : [])),
-    ...state.harvests.map(({ crop_id }) => String(crop_id)),
+    ...garden.knownHistoricalCrops(hiddenCrops),
     ...(state.mistbellDiscovered ? ["mistbell"] : []),
+    ...(state.sunberryDiscovered ? ["sunberry"] : []),
   ]);
   const actions = eventActions(state);
   return {
@@ -532,7 +534,7 @@ export function subjectGardenView(
           ([id, crop]) =>
             crop.enabled &&
             (crop.market ||
-              !["mistbell", "sunberry", "four_leaf_clover"].includes(id) ||
+              !hiddenCrops.includes(id) ||
               knownHiddenCrops.has(id)),
         )
         .map(([id, crop]) => ({

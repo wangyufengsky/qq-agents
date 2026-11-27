@@ -437,6 +437,18 @@ export class GardenService {
     return this.journal.ackDigest(actor, through);
   }
 
+  /** @param {string[]} cropIds */
+  knownHistoricalCrops(cropIds) {
+    return this.db
+      .prepare(
+        `SELECT value FROM json_each(?) AS crop
+         WHERE EXISTS (SELECT 1 FROM garden_harvests WHERE crop_id=crop.value)
+            OR EXISTS (SELECT 1 FROM garden_plant_archive WHERE crop_id=crop.value)`,
+      )
+      .all(JSON.stringify(cropIds))
+      .map(({ value }) => String(value));
+  }
+
   /** @param {number} now @param {Actor} [visitorActor] */
   read(now, visitorActor) {
     return {

@@ -247,6 +247,13 @@ export class GardenNeighbors {
             : [];
         }),
       ),
+      sunberryDiscovered: Boolean(
+        this.db
+          .prepare(
+            "SELECT 1 FROM garden_neighbor_pairs WHERE discovered=1 AND pair LIKE 'sunberry:%' LIMIT 1",
+          )
+          .get(),
+      ),
       mistbellDiscovered: Boolean(
         this.db
           .prepare(
