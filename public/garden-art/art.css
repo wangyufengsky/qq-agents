@@ -1138,6 +1138,31 @@
   object-fit: contain;
   margin: 0 auto;
 }
+.garden-workspace
+  :is(
+    .garden-recipes h4,
+    [data-garden-pane="almanac"] h4,
+    [data-garden-pane="facilities"] h4
+  ) {
+  margin: 3px 0;
+  font-size: 17px;
+}
+.garden-workspace .garden-good [data-craft-ingredient] {
+  width: 100%;
+  min-width: 0;
+}
+.garden-visit-shelf {
+  margin-top: 12px;
+}
+.garden-visit-shelf summary {
+  cursor: pointer;
+  padding: 6px 0;
+}
+.garden-forecast {
+  padding: 8px 12px;
+  border-inline-start: 3px solid #6d8053;
+  background: #eef1db;
+}
 .cabinet-empty {
   background: #f3e7ce;
 }
@@ -1147,7 +1172,7 @@
   font-size: 13px;
 }
 @container (max-width: 530px) {
-  .garden-display.gift-cabinet {
+  :is(.garden-display, .garden-visit-display).gift-cabinet {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

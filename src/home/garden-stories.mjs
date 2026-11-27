@@ -72,8 +72,8 @@ export class GardenStories {
       .run(now, id);
   }
 
-  /** @param {number} day @param {State} state @param {number} now */
-  settle(day, state, now) {
+  /** @param {number} day @param {State} state @param {number} now @param {boolean} [observe] */
+  settle(day, state, now, observe = true) {
     const queue = this.db
       .prepare(
         "SELECT * FROM garden_event_followups WHERE trigger_day<=? AND status='pending' ORDER BY trigger_day,id",
@@ -147,7 +147,7 @@ export class GardenStories {
           "UPDATE garden_event_followups SET status='settled',settled_at=?,payload=? WHERE id=?",
         )
         .run(now, JSON.stringify({ ...payload, title, text }), id);
-      if (owner.kind === "agent" && this.active(owner)) {
+      if (observe && owner.kind === "agent" && this.active(owner)) {
         this.recordObservation?.(
           owner,
           {

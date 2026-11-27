@@ -1,5 +1,7 @@
 // @ts-check
 import { z } from "zod";
+import { gardenCraftRecipes } from "./garden-craft.mjs";
+import { hasGardenFacility } from "./garden-facilities.mjs";
 import {
   careScope,
   defaultGardenSettings,
@@ -173,6 +175,25 @@ function roleGifts(runtime, roleId, state) {
   return runtime.home.garden.gifts.view(owner, state.day, state);
 }
 
+/** @param {any} runtime @param {ReturnType<import("./garden-service.mjs").GardenService["snapshot"]>} state */
+function gardenWorkshop(runtime, state) {
+  /** @type {import("./garden-service.mjs").GardenService} */
+  const garden = runtime.home.garden;
+  const people = recipients(runtime).flatMap((role) => {
+    const person = giftPerson(runtime, role);
+    return person ? [person] : [];
+  });
+  return {
+    communityShelves: garden.gifts.communityShelves(people),
+    craftRecipes: gardenCraftRecipes(
+      garden.db,
+      hasGardenFacility(garden.db, "drying_rack"),
+    ),
+    facilities: state.facilities,
+    ...(state.tomorrowForecast && { tomorrowForecast: state.tomorrowForecast }),
+  };
+}
+
 /** @param {any} runtime @param {string} roleId */
 export function subjectGardenGifts(runtime, roleId) {
   const state = runtime.home.garden.snapshot(runtime.now(), false);
@@ -181,7 +202,11 @@ export function subjectGardenGifts(runtime, roleId) {
     roleId,
     state,
   );
-  return { items: gardenGiftSources(runtime, roleId), personalGifts };
+  return {
+    items: gardenGiftSources(runtime, roleId),
+    personalGifts,
+    ...gardenWorkshop(runtime, state),
+  };
 }
 
 /** @param {GardenState} state */
@@ -290,6 +315,8 @@ export function adminGardenView(runtime, collectVisitor = false) {
   return {
     initialized: true,
     ...state,
+    ...gardenWorkshop(runtime, state),
+    almanac: garden.almanac(),
     plots: state.plots.map((plot) => ({
       ...plot,
       plant: plot.plant && {
@@ -445,6 +472,8 @@ export function subjectGardenView(
     boardNotes: state.boardNotes,
     rumors: state.rumors,
     followups: state.followups,
+    almanacSummary: state.almanacSummary,
+    ...gardenWorkshop(runtime, state),
     event: event
       ? {
           ...event,
@@ -464,6 +493,14 @@ export function subjectGardenView(
     gifts: gardenGiftSources(runtime, roleId),
     personalGifts: roleGifts(runtime, roleId, state),
     giftActions: {
+      craft_gift: {
+        recipeId: "手作配方 ID",
+        harvestIds: "原料收成 ID 数组，从 craftRecipes 选择",
+        price: "当前工本费",
+        recipient: "可选 {kind,id}，省略为收好",
+        note: "直送时可选纸条",
+      },
+      build_facility: { facilityId: "设施 ID", price: "当前造价" },
       buy_gift: {
         eventId: "当前商人事件 ID",
         giftId: "礼物货品 ID",

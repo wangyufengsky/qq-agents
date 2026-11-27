@@ -27,6 +27,7 @@ const factLabels = /** @type {Record<string,string>} */ ({
   rumor: "园艺传闻",
   variant: "收获惊喜",
   followup: "花园回响",
+  almanac: "图鉴点亮",
 });
 
 /** @param {number} plot @param {Plant} plant */
@@ -630,7 +631,7 @@ export class GardenJournal {
         `SELECT * FROM garden_facts
       WHERE id > COALESCE((SELECT through_id FROM garden_journal_reads WHERE reader=?),0)
       AND clock IS NOT NULL
-      AND (type IN ('discovery','event','variant','followup','rumor','visitor','visitor_reward')
+      AND (type IN ('discovery','event','variant','followup','almanac','rumor','visitor','visitor_reward')
         OR (type='private_gift' AND json_extract(detail,'$.reader')=?))
       ORDER BY id DESC LIMIT 5`,
       )
@@ -652,6 +653,15 @@ export class GardenJournal {
               kind: "neighbor_seed",
               title: `邻株结种：${detail.name}`,
               detail: `花园手帐记录了${plots.map((plot) => `${plot} 号地`).join("与")}的邻株结种。`,
+              factId: id,
+            },
+          }),
+        ...(type === "almanac" &&
+          detail.stage && {
+            surprise: {
+              kind: "almanac_unlock",
+              title: detail.stage,
+              detail: text,
               factId: id,
             },
           }),
@@ -679,7 +689,7 @@ export class GardenJournal {
       .prepare(
         `SELECT * FROM garden_facts
       WHERE id>? AND id<=? AND clock IS NOT NULL
-      AND (type IN ('mature','discovery','visitor','visitor_reward','harvest','water','fertilize','planted','withered','event','variant','followup','rumor')
+      AND (type IN ('mature','discovery','visitor','visitor_reward','harvest','water','fertilize','planted','withered','event','variant','followup','almanac','rumor')
         OR (type='private_gift' AND json_extract(detail,'$.reader')=?))
       ORDER BY CASE type WHEN 'discovery' THEN 0 WHEN 'private_gift' THEN 0 WHEN 'mature' THEN 1
         WHEN 'visitor' THEN 2 WHEN 'visitor_reward' THEN 2 WHEN 'harvest' THEN 3

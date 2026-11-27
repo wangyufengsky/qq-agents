@@ -15,6 +15,7 @@ const types = {
   visitor_reward: "访客奖励",
   discovery: "邻株发现",
   followup: "隔日回响",
+  almanac: "图鉴点亮",
 };
 export function bindGardenJournal(root, read, esc, showTab, onStatus) {
   let state,

@@ -72,6 +72,25 @@ export function initializeGardenTables(db) {
       delta INTEGER NOT NULL,
       balance INTEGER NOT NULL CHECK (balance >= 0)
     );
+    CREATE TABLE IF NOT EXISTS garden_almanac (
+      crop_id TEXT PRIMARY KEY,
+      planted_count INTEGER NOT NULL DEFAULT 0,
+      harvest_count INTEGER NOT NULL DEFAULT 0,
+      best_quality TEXT,
+      variants TEXT NOT NULL DEFAULT '[]',
+      first_day INTEGER,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS garden_almanac_migration (
+      id INTEGER PRIMARY KEY CHECK (id=1)
+    );
+    CREATE TABLE IF NOT EXISTS garden_facilities (
+      id TEXT PRIMARY KEY,
+      built_day INTEGER NOT NULL,
+      built_at INTEGER NOT NULL,
+      builder_kind TEXT NOT NULL,
+      builder_id TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS garden_story_presets (
       id INTEGER PRIMARY KEY CHECK (id=1)
     );
@@ -184,4 +203,12 @@ export function initializeGardenTables(db) {
     );
     CREATE INDEX IF NOT EXISTS garden_gifts_recipient ON garden_gifts(recipient_kind,recipient_id,at);
   `);
+  if (
+    !db
+      .prepare(
+        "SELECT 1 FROM pragma_table_info('garden_harvests') WHERE name='plant_id'",
+      )
+      .get()
+  )
+    db.exec("ALTER TABLE garden_harvests ADD COLUMN plant_id TEXT");
 }

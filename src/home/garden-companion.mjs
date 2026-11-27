@@ -130,8 +130,17 @@ export function settleGardenRumors(db, journal, day, now) {
       .filter((row) => row.source === "initial" || row.source === "calendar")
       .map((row) => Number(row.day)),
   );
-  for (let milestone = fromDay + 5; milestone <= day; milestone += 5) {
+  const bathDay = Number(
+    db
+      .prepare("SELECT built_day FROM garden_facilities WHERE id='bird_bath'")
+      .get()?.built_day ?? Infinity,
+  );
+  let last = fromDay;
+  while (true) {
+    const milestone = Math.min(last + 5, Math.max(last + 3, bathDay + 1));
+    if (milestone > day) break;
     unlockGardenRumor(db, journal, "calendar", milestone, now);
     if (gardenRumors(db).length === Object.keys(rumors).length) break;
+    last = milestone;
   }
 }

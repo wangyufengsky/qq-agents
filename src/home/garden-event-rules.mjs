@@ -660,8 +660,28 @@ function storyEligible(effect, ctx, weather, settings) {
   }
 }
 
+function friendlyEvent(effect) {
+  return (
+    effect.kind === "visitor" ||
+    (effect.kind === "blessing" && effect.effect === "firefly") ||
+    (effect.kind === "story" && effect.story === "migratory_bird") ||
+    (effect.kind === "choice" &&
+      ["rain_cat", "hedgehog"].includes(effect.story))
+  );
+}
+
 export function eventOdds(settings, ctx, weather) {
   const pool = settings.events;
+  const entries = ctx.birdBath
+    ? Object.fromEntries(
+        Object.entries(pool.entries).map(([id, entry]) => [
+          id,
+          friendlyEvent(entry.effect)
+            ? { ...entry, weight: entry.weight * 1.5 }
+            : entry,
+        ]),
+      )
+    : pool.entries;
   const conditions = (condition) => matchesEvent(condition, ctx, weather);
   const fullMoon = Object.entries(pool.entries).find(
     ([, entry]) =>
@@ -675,7 +695,7 @@ export function eventOdds(settings, ctx, weather) {
   )?.[0];
   const guaranteed = pool.rate > 0 && fullMoon;
   return poolOdds(
-    pool.entries,
+    entries,
     conditions,
     null,
     guaranteed ? 1 : pool.rate,

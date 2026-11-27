@@ -502,7 +502,7 @@ test("targeted thief takes only matching crops and leaves the cash untouched aft
   const settings = rules("hedgehog-thief");
   const f = setup(t, settings);
   const insert = f.store.db.prepare(
-    "INSERT INTO garden_harvests VALUES(?,?,?,?,?,?,NULL)",
+    "INSERT INTO garden_harvests (id,crop_id,planted_by,quality,quantity,harvested_at,last_use) VALUES(?,?,?,?,?,?,NULL)",
   );
   const ordinary = randomUUID();
   const strawberry = randomUUID();
@@ -778,7 +778,9 @@ test("configured merchant garden and buyback slots freeze quotes separately", (t
   const offer = event.offers[1];
   const harvestId = randomUUID();
   f.store.db
-    .prepare("INSERT INTO garden_harvests VALUES(?,?,?,?,?,?,NULL)")
+    .prepare(
+      "INSERT INTO garden_harvests (id,crop_id,planted_by,quality,quantity,harvested_at,last_use) VALUES(?,?,?,?,?,?,NULL)",
+    )
     .run(harvestId, offer.cropId, "owner", "fine", 2, 0);
   f.configure((settings) => {
     settings.fertilizerPrice = 500;
@@ -945,7 +947,9 @@ test("configured and default gift shelves can open with all of a merchant's seed
 
 test("ordinary merchant fixed offers reject event keepsakes", () => {
   const { events } = rules("merchant");
-  for (const giftId of ["garden-sketch-card", "migratory-feather"]) {
+  for (const [giftId] of Object.entries(gardenGifts).filter(
+    ([id]) => !isGardenMerchantGift(id),
+  )) {
     events.entries.merchant.effect.giftOffers = [{ giftId, stock: 2 }];
     assert.equal(eventPool.safeParse(events).success, false);
   }

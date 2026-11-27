@@ -1,9 +1,9 @@
 // @ts-check
 import { paperElement as el } from "../home-preview/paper-board.mjs";
-import { giftShelfSlots } from "../garden-art/gifts.js";
+import { gardenCraftOrigin, giftShelfSlots } from "../garden-art/gifts.js";
 import { gardenIconMarkup } from "../garden-art/art.js";
 
-/** @param {HTMLElement} root @param {{slot:number,giftId:string,name:string,description:string,note:string}[]} gifts */
+/** @param {HTMLElement} root @param {{slot:number,giftId:string,name:string,description:string,note?:string,craftMeta?:import("../garden-art/gifts.js").GardenCraftOrigin}[]} gifts */
 export function renderGiftShelf(root, gifts) {
   const shelf = el("ol", "gift-shelf gift-cabinet");
   for (const slot of giftShelfSlots) {
@@ -27,6 +27,8 @@ export function renderGiftShelf(root, gifts) {
         card.append(el("p", "gift-shelf-description", gift.description));
       if (gift.note)
         card.append(el("blockquote", "gift-shelf-note", gift.note));
+      const origin = gardenCraftOrigin(gift.craftMeta);
+      if (origin) card.append(el("p", "gift-shelf-description", origin));
     }
     shelf.append(card);
   }
