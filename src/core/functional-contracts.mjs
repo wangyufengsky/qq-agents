@@ -33,13 +33,23 @@ export function conversationExchange(
   ctx,
   { prepared, imageInput, tools, memory },
 ) {
+  let submittedCognition;
   return {
     inputImages: imageInput.images,
     beforeInputSubmitted: imageInput.beforeSubmit,
     effort: ctx.functionalAgent?.definition.effort,
     prompt: prepared.prompt,
-    ...(ctx.recallOpening && {
-      appendPrompt: () => renderRecallOpening(runtime, ctx),
+    ...((ctx.recallOpening || ctx.cognitionOpening) && {
+      appendPrompt: () => {
+        const recall = ctx.recallOpening
+          ? renderRecallOpening(runtime, ctx)
+          : "";
+        submittedCognition = ctx.cognitionOpening?.refresh();
+        return (
+          recall +
+          (submittedCognition?.line ? "\n\n" + submittedCognition.line : "")
+        );
+      },
     }),
     instructions: prepared.instructions,
     tools,
@@ -50,7 +60,8 @@ export function conversationExchange(
     onInputSubmitted: () => {
       if (runtime.stopped || ctx.controller.signal.aborted) return;
       runtime.contexts.commitOpening(ctx);
-      commitCognitionContext(memory, ctx, ctx.cognitionOpening);
+      commitCognitionContext(memory, ctx, submittedCognition);
+      submittedCognition = null;
       commitRecallOpening(runtime, ctx);
       ctx.subjectInboxInputSubmitted = true;
       ctx.backendInputEpoch = ctx.inputEpoch;

@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { runNativeSocial } from "../src/backends/native-social.mjs";
 import { sessionSignature } from "../src/backends/session-contract.mjs";
 import { cognitionContext } from "../src/dream/context-builder.mjs";
 import { beginDesktopContext } from "../src/home/desktop-context.mjs";
@@ -162,7 +163,8 @@ test("desktop shares the ordinary Session and records delivery only on native in
     );
   };
   const initial = begin();
-  assert.match(initial.prompt, /喜欢听钢琴/);
+  assert.doesNotMatch(initial.prompt, /喜欢听钢琴/);
+  assert.match(initial.appendPrompt(), /喜欢听钢琴/);
   assert.equal(memory.state(DESKTOP_CONVERSATION).cognitionsShown, undefined);
   const { id } = f.store.db.prepare("SELECT id FROM cognitions").get();
   initial.onInputSubmitted();
@@ -179,7 +181,7 @@ test("desktop shares the ordinary Session and records delivery only on native in
   const retained = begin();
   assert.equal(retained.managedContext.session.id, "synthetic-desktop-session");
   assert.equal(retained.instructions, initial.instructions);
-  assert.doesNotMatch(retained.prompt, /喜欢听钢琴/);
+  assert.doesNotMatch(retained.prompt + retained.appendPrompt(), /喜欢听钢琴/);
   // The opening builder applies the same seen-version map across both surfaces.
   assert.equal(
     cognitionContext(
@@ -205,4 +207,118 @@ test("desktop shares the ordinary Session and records delivery only on native in
     ).line,
     "",
   );
+});
+
+test("QQ and desktop omit stale cognitions at native input while delivering the rest of the turn", async (t) => {
+  for (const surface of ["qq", "compact-qq", "desktop"]) {
+    for (const mutation of ["protection", "revision", "deletion"]) {
+      await t.test(`${surface} with ${mutation}`, async (t) => {
+        const cfg = config(1);
+        cfg.agents[0].dream.enabled = true;
+        cfg.agents[0].contextPolicy.capacityTokens = 1000000;
+        if (surface === "desktop") cfg.desktopHome.enabled = true;
+        if (surface === "compact-qq")
+          cfg.agents[0].behavior.compactChatGroups = ["20000"];
+        let pending;
+        const f = fixture(t, {
+          cfg,
+          run: (p) => p.callTool("dream_cognition_submit", pending),
+        });
+        const staleSource = append(f, "before-stale", "private:30000");
+        const validSource = append(f, "before-valid", "private:30000");
+        pending = add(staleSource.id);
+        pending.operations.push({
+          ...add(validSource.id).operations[0],
+          subjectKey: "user:30000:reading",
+          content: "喜欢阅读散文。",
+        });
+        assert.equal((await f.runtime.dreams.run(role)).status, "COMMITTED");
+
+        const db = f.store.db;
+        const stale = db
+          .prepare("SELECT id FROM cognitions WHERE subject_key=?")
+          .get("user:30000:music").id;
+        const valid = db
+          .prepare("SELECT id FROM cognitions WHERE subject_key=?")
+          .get("user:30000:reading").id;
+        const memory = f.store.bind(role);
+        const scope = surface === "desktop" ? DESKTOP_CONVERSATION : group;
+        let delivered;
+        const backend = {
+          config: cfg.backends[0],
+          sessionSignature(tools) {
+            return sessionSignature(this, tools);
+          },
+          async run(p) {
+            assert.doesNotMatch(p.prompt, /喜欢听钢琴|喜欢阅读散文/);
+            assert.equal(memory.state(scope).cognitionsShown, undefined);
+            // Backend and image preparation can await after the base prompt exists.
+            await p.beforeInputSubmitted();
+            if (mutation === "protection")
+              db.prepare("UPDATE events SET payload=? WHERE id=?").run(
+                JSON.stringify({ protectedOperations: true }),
+                staleSource.id,
+              );
+            if (mutation === "revision")
+              db.prepare(
+                "UPDATE cognitions SET content=?,version=2 WHERE id=?",
+              ).run("修订后的偏好", stale);
+            if (mutation === "deletion")
+              db.prepare("DELETE FROM cognitions WHERE id=?").run(stale);
+            delivered = p.prompt + p.appendPrompt();
+            p.onInputSubmitted();
+            if (surface === "desktop")
+              p.saveSession({
+                backend: this.config.type,
+                id: "synthetic-desktop-tested",
+                signature: this.sessionSignature(p.tools),
+              });
+          },
+          close() {},
+        };
+        if (surface === "desktop") {
+          const controller = new AbortController();
+          const ctx = f.runtime.makeContext(role, scope, {
+            controller,
+            assertCurrent() {},
+            decide() {},
+            unified: true,
+            kind: "chat",
+          });
+          const exchange = beginDesktopContext(
+            f.runtime,
+            ctx,
+            f.runtime.agent(role),
+            backend,
+            { kind: "chat", messages: [], people: [] },
+            controller.signal,
+          );
+          await runNativeSocial(
+            backend,
+            {
+              ...exchange,
+              budget: null,
+              signal: controller.signal,
+              binding: { runId: ctx.turnId },
+              beforeInput() {},
+              onRunStarted() {},
+            },
+            async () => {},
+            "desktop",
+          );
+          await exchange.finish();
+        } else {
+          f.runtime.backendFactory = () => backend;
+          append(f, "wake-after-selection");
+          await f.runtime.wake(role, scope);
+        }
+        assert.doesNotMatch(delivered, /喜欢听钢琴|修订后的偏好/);
+        assert.match(delivered, /喜欢阅读散文/);
+        assert.deepEqual(memory.state(scope).cognitionsShown, { [valid]: 1 });
+        assert.ok(
+          !memory.state(scope).disclosureTaint.includes(staleSource.id),
+        );
+      });
+    }
+  }
 });

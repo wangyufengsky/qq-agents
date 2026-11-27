@@ -948,7 +948,6 @@ export class ContextLifecycle {
       between?.items.length
         ? `你和这些人之间还没了结的事（你自己用 person_item 记下的）：boundary 是对方的相处边界，照着调整；promise 是你答应对方的事，做到了就回来交代，做不成就坦白，交代后用 person_item 关掉；shared 是一起经历过的事，合适时自然接回来，不必硬提。fromPrivate 的记在别的私聊里，只用来调整你自己的做法，不要在这里提起内容。${JSON.stringify({ items: between.items, ...(Object.keys(between.more).length ? { more: between.more } : {}) })}`
         : "",
-      ctx.cognitionOpening?.line,
     ];
     const prompt = (
       !/^(group|private):/.test(ctx.conversation)
@@ -1007,6 +1006,9 @@ export class ContextLifecycle {
     )
       .filter(Boolean)
       .join("\n\n");
+    const cognitionLine = ctx.cognitionOpening?.line;
+    const promptChars =
+      prompt.length + (cognitionLine ? cognitionLine.length + 2 : 0);
     const imageAllowance =
       a.behavior.imageInput.enabled &&
       history.items.some((item) =>
@@ -1014,7 +1016,7 @@ export class ContextLifecycle {
       )
         ? a.behavior.imageInput.maxImages * 4096
         : 0;
-    if (this.retireBeforeInput(ctx, s, prompt.length + imageAllowance))
+    if (this.retireBeforeInput(ctx, s, promptChars + imageAllowance))
       return this.prepare(ctx, backend, reasons, tools);
     m.setState(ctx.conversation, {
       ...m.state(ctx.conversation),
@@ -1053,7 +1055,7 @@ export class ContextLifecycle {
       inputStage: "not-submitted",
       reason: reasons.map((x) => x.reason),
       initialSession: ctx.initialSession,
-      promptChars: prompt.length,
+      promptChars,
       instructionsChars: ctx.initialSession ? instructions.length : 0,
       instructionsHash,
       backendId: a.backendId,
@@ -1109,7 +1111,7 @@ export class ContextLifecycle {
         : {}),
     });
     ctx.estimatedAdded =
-      prompt.length + (ctx.initialSession ? instructions.length : 0);
+      promptChars + (ctx.initialSession ? instructions.length : 0);
     return {
       instructions,
       prompt,

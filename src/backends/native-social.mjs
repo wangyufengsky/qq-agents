@@ -189,6 +189,7 @@ export async function runNativeSocial(
       conversation: capsule.conversation,
       instructions: capsule.session ? undefined : params.instructions,
       prompt: params.prompt,
+      appendPrompt: surface === "desktop" ? params.appendPrompt : undefined,
       inputImages: surface === "desktop" ? params.inputImages : undefined,
       tools,
       session: capsule.session,

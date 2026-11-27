@@ -218,15 +218,17 @@ ${selfBody}
       !request.resting &&
       runtime.desktopRoleMailbox.opening(ctx),
     elsewhereLine(elsewhere),
-    cognition?.line,
   ]
     .filter(Boolean)
     .join("\n\n");
+  const promptChars =
+    prompt.length + (cognition?.line ? cognition.line.length + 2 : 0);
+  let submittedCognition;
   if (
     runtime.contexts.retireBeforeInput(
       ctx,
       state,
-      prompt.length + (ctx.desktopInputImageCount || 0) * 4096,
+      promptChars + (ctx.desktopInputImageCount || 0) * 4096,
     )
   )
     return beginDesktopContext(runtime, ctx, agent, backend, request, signal);
@@ -235,7 +237,7 @@ ${selfBody}
     selfVersion: self.version,
     initialSession: !session,
     turnStartedAt: now,
-    estimatedAdded: prompt.length + (session ? 0 : instructions.length),
+    estimatedAdded: promptChars + (session ? 0 : instructions.length),
   });
   memory.store.transaction(() => {
     memory.setState(conversation, {
@@ -259,7 +261,7 @@ ${selfBody}
       ...(activity && { desktopActivityReason: request.reason }),
       inputStage: "not-submitted",
       initialSession: ctx.initialSession,
-      promptChars: prompt.length,
+      promptChars,
       instructionsChars: ctx.initialSession ? instructions.length : 0,
       instructionsHash,
       selfVersion: self.version,
@@ -277,7 +279,8 @@ ${selfBody}
           backendContract: contract,
           at: runtime.now(),
         });
-      commitCognitionContext(memory, ctx, cognition);
+      commitCognitionContext(memory, ctx, submittedCognition);
+      submittedCognition = null;
       if (selfAllowed) trackMindRecords(runtime, ctx, [self], "desktop-self");
       for (const item of [
         ...(elsewhere?.items || []),
@@ -301,6 +304,12 @@ ${selfBody}
     desktopUnified: unified,
     instructions,
     prompt,
+    ...(cognition && {
+      appendPrompt: () => {
+        submittedCognition = cognition.refresh();
+        return submittedCognition.line ? "\n\n" + submittedCognition.line : "";
+      },
+    }),
     tools: tools
       .filter(
         ({ name }) =>
