@@ -10,6 +10,14 @@ import {
   unlockGardenRumor,
   writeBoardNote,
 } from "./garden-companion.mjs";
+import { GardenAlmanac } from "./garden-almanac.mjs";
+import {
+  buildGardenFacility,
+  gardenFacilityId,
+  gardenForecastHint,
+  hasGardenFacility,
+  viewGardenFacilities,
+} from "./garden-facilities.mjs";
 import { GardenClock } from "./garden-clock.mjs";
 import { GardenCalendar } from "./garden-calendar.mjs";
 import { defaultWeather } from "./garden-weather.mjs";
@@ -38,6 +46,11 @@ const inputSchema = z.strictObject({
   requestId: z.string().regex(/^[A-Za-z0-9_-]{8,80}$/),
   action: z.discriminatedUnion("kind", [
     ...giftActions,
+    z.strictObject({
+      kind: z.literal("build_facility"),
+      facilityId: gardenFacilityId,
+      price: quotedPrice,
+    }),
     z.strictObject({
       kind: z.literal("choose_event"),
       eventId,
@@ -129,6 +142,7 @@ export class GardenService {
     this.db = store.db;
     this.gifts = new GardenGifts(this.db);
     this.journal = new GardenJournal(this.db);
+    this.catalog = new GardenAlmanac(this.db, this.journal);
     this.calendar = new GardenCalendar(
       this.db,
       this.changeBalance.bind(this),
@@ -161,6 +175,7 @@ export class GardenService {
       store.transaction(() => {
         if (!this.calendar.latest()) this.calendar.initialize(state, true);
         this.journal.initialize(state, true);
+        this.catalog.initialize(state, Date.now());
       });
     this.clock = new GardenClock(state?.clock ?? 0, state?.settings.speed ?? 1);
     this.runtimeActive = false;
@@ -211,6 +226,7 @@ export class GardenService {
         .run(JSON.stringify(data), data.initialBalance, JSON.stringify(plots));
       const state = this.requireState();
       this.journal.initialize(state, false);
+      this.catalog.initialize(state, now);
       this.calendar.initialize(state);
       unlockGardenRumor(this.db, this.journal, "initial", 1, now);
       this.recordLedger(
@@ -419,10 +435,17 @@ export class GardenService {
    * @param {boolean} running @param {ReturnType<GardenCalendar["events"]["claimVisitor"]>} [claimed] */
   snapshotView(state, current, running, claimed) {
     const notes = boardNotes(this.db);
+    const almanac = this.catalog.view(state.settings);
+    const { entries: _entries, ...almanacSummary } = almanac;
+    const facilities = viewGardenFacilities(this.db);
+    const tomorrowForecast = hasGardenFacility(this.db, "weather_chime")
+      ? gardenForecastHint(this.calendar.forecast(state, current))
+      : undefined;
     const event = this.calendar.events.view(current.day, state, claimed);
     const neighbors = this.calendar.neighbors.view(
       state,
       current.effectiveWeather.kind,
+      hasGardenFacility(this.db, "bird_bath"),
     );
     const nightDay =
       state.clock % DAY < 6 * HOUR ? current.day - 1 : current.day;
@@ -433,6 +456,10 @@ export class GardenService {
         note: notes.plots[plot.id] ?? null,
       })),
       boardNotes: notes,
+      almanac,
+      almanacSummary,
+      facilities,
+      ...(tomorrowForecast && { tomorrowForecast }),
       rumors: gardenRumors(this.db),
       event,
       storyActions:
@@ -453,6 +480,10 @@ export class GardenService {
         this.calendar.fullMoon(nightDay),
       followups: this.calendar.events.stories.view(current.day),
     };
+  }
+
+  almanac() {
+    return this.catalog.view(this.requireState().settings);
   }
 
   /** @param {import("./garden-journal.mjs").Query} [query]
@@ -509,7 +540,7 @@ export class GardenService {
       activity: this.db
         .prepare(
           `SELECT actor_kind,actor_id,action,at,result FROM garden_actions
-          WHERE action NOT IN ('buy_gift','send_gift','use_gift','display_gift','withdraw_gift')
+          WHERE action NOT IN ('buy_gift','craft_gift','send_gift','use_gift','display_gift','withdraw_gift')
           ORDER BY seq DESC LIMIT 50`,
         )
         .all()
@@ -571,20 +602,22 @@ export class GardenService {
       if (prior) {
         if (prior.digest !== digest) throw Error("GARDEN_REQUEST_CONFLICT");
         const result = JSON.parse(String(prior.result));
-        if (
-          typeof result.surprise?.evidenceId === "string" &&
-          !this.db
-            .prepare(
-              `SELECT 1 FROM events WHERE id=? AND agent_id=?
-            AND json_extract(payload,'$.generation')=?`,
-            )
-            .get(
-              result.surprise.evidenceId,
-              actor.id,
-              giftContext?.owner.generation ?? null,
-            )
-        )
-          throw Error("GARDEN_REQUEST_CONFLICT");
+        for (const surprise of result.surprises ?? [result.surprise]) {
+          if (
+            typeof surprise?.evidenceId === "string" &&
+            !this.db
+              .prepare(
+                `SELECT 1 FROM events WHERE id=? AND agent_id=?
+               AND json_extract(payload,'$.generation')=?`,
+              )
+              .get(
+                surprise.evidenceId,
+                actor.id,
+                giftContext?.owner.generation ?? null,
+              )
+          )
+            throw Error("GARDEN_REQUEST_CONFLICT");
+        }
         return { ...result, replayed: true };
       }
       const state = this.requireState();
@@ -638,6 +671,8 @@ export class GardenService {
             );
             onItemTransfer?.(transfer);
           },
+          action.kind === "craft_gift" &&
+            hasGardenFacility(this.db, "drying_rack"),
         );
       } else if (action.kind === "set_board_note") {
         const scope =
@@ -668,6 +703,10 @@ export class GardenService {
         ].includes(action.kind)
       )
         unlockGardenRumor(this.db, this.journal, "merchant", day, now);
+      const { almanacUnlock, ...resultForReceipt } =
+        /** @type {typeof result & {almanacUnlock?:ReturnType<GardenAlmanac["record"]>}} */ (
+          result
+        );
       const surprise = this.recordSurprise(
         state,
         actor,
@@ -676,6 +715,12 @@ export class GardenService {
         result,
         harvestedRef,
       );
+      const surprises = [surprise, almanacUnlock]
+        .filter(Boolean)
+        .map((item) => ({
+          ...item,
+          evidenceId: onSurprise?.(item) ?? item.factId,
+        }));
       if (
         action.kind === "gift" &&
         "giftId" in result &&
@@ -710,12 +755,10 @@ export class GardenService {
         action: action.kind,
         revision: state.revision + 1,
         balance: state.balance,
-        ...result,
-        ...(surprise && {
-          surprise: {
-            ...surprise,
-            evidenceId: onSurprise?.(surprise) ?? surprise.factId,
-          },
+        ...resultForReceipt,
+        ...(surprises.length && {
+          surprise: surprises[0],
+          ...(surprises.length > 1 && { surprises }),
         }),
       };
       this.db
@@ -808,6 +851,16 @@ export class GardenService {
     const rules = state.settings;
     const day = Math.floor(state.clock / DAY) + 1;
     switch (action.kind) {
+      case "build_facility":
+        return buildGardenFacility(
+          this.db,
+          action.facilityId,
+          action.price,
+          day,
+          now,
+          actor,
+          (delta) => this.changeBalance(now, actor, action.kind, state, delta),
+        );
       case "choose_event":
       case "buy_mystery_seed":
       case "merchant_buy_fertilizer":
@@ -939,7 +992,11 @@ export class GardenService {
             const regrowing = harvestCount < maxHarvests;
             const cropName = state.settings.crops[cropId].name;
             this.db
-              .prepare("INSERT INTO garden_harvests VALUES(?,?,?,?,?,?,NULL)")
+              .prepare(
+                `INSERT INTO garden_harvests
+                (id,crop_id,planted_by,quality,quantity,harvested_at,plant_id)
+                VALUES(?,?,?,?,?,?,?)`,
+              )
               .run(
                 harvestId,
                 cropId,
@@ -947,6 +1004,7 @@ export class GardenService {
                 plant.quality,
                 quantity,
                 now,
+                plant.id,
               );
             const quality = plant.quality;
             if (regrowing) {
@@ -974,7 +1032,19 @@ export class GardenService {
                 ...variant,
                 ...(mutation && { name: cropName }),
                 harvestCount,
+                harvestId,
+                cropName,
+                ...(plant.maturedAt !== undefined && {
+                  maturedDay: Math.floor(plant.maturedAt / DAY) + 1,
+                }),
               },
+            );
+            const almanacUnlock = this.catalog.record(
+              state,
+              now,
+              cropId,
+              [gardenPlantRef(entry.id, plant)],
+              { kind: "harvest", quality, variant: plant.variant },
             );
             const surprise = mutation
               ? {
@@ -1003,6 +1073,7 @@ export class GardenService {
               maxHarvests,
               regrowing,
               ...(surprise && { surprise }),
+              ...(almanacUnlock && { almanacUnlock }),
             };
           }
           case "clear":
@@ -1098,7 +1169,10 @@ export class GardenService {
       actor,
       source: "action",
     });
-    return { plot: entry.id, plantId };
+    const almanacUnlock = this.catalog.record(state, now, cropId, [ref], {
+      kind: "plant",
+    });
+    return { plot: entry.id, plantId, ...(almanacUnlock && { almanacUnlock }) };
   }
 
   /** @param {string} type @param {number} plot @param {Plant} plant @param {number} clock @param {Actor} actor @param {string} [status] @param {Record<string,unknown>} [detail] */

@@ -37,11 +37,12 @@ const gardenViews = [
   "plant",
   "plant_image",
   "gifts",
+  "almanac",
 ];
 
 export const gardenDefinitions = {
   garden_read: [
-    "查看小窝花园。花园按桥接服务的运行时间生长，桌面小窝断线期间也会生长。public 读整园，image 生成整园图。timeline 可用 factId 查询具体记录，或按 fromDay、toDay、plot、type、cropId 和 limit 查年表，plant_history 按 plantId、plot 或 cropId 查手帐，可用 type 找最近一次照料。下一页沿用查询并填 cursor。digest 看自己还未读到的园内变化，不改变已读位置。取得 readToken 的主人格或获准经营的桌面角色确认看过便笺后，可在同一回合用 ack_digest 提交刚才返回的 readToken，确认自己当时看到的范围。plant 和 plant_image 用 plot、plantId 或 cropId 读单株；多个同种时请用返回的 plantId 选择。只有手帐事实支持时才断言时间、照料者或亲历。图像生成成功会返回 mediaId，可用本会话已有的 qq_send 或桌面聊天的 desktop_room_decide({action:'say',mediaId,text?}) 分享；再次分享原照用原 mediaId。读取不会发送或消耗经营次数。获准经营的主人格或在场桌面角色用 overview（或省略）查看经营详情，其中 scene 是昼夜现场，observations 是可引用的亲历证据，highlights 是未确认动态，followups 是已经抵达的花园回响，其中邻株结种的 surprise 引用手帐 factId，不代表你亲眼见到结种；observations 的 surprise 带角色日记可引用的 evidenceId。rumors 是已经听说的园艺传闻，boardNotes 与地块 note 是伙伴留言。普通主人格或获准经营的桌面角色可用 gifts 查看礼物。",
+    "查看小窝花园。花园按桥接服务的运行时间生长，桌面小窝断线期间也会生长。public 读整园，image 生成整园图。timeline 可用 factId 查询具体记录，或按 fromDay、toDay、plot、type、cropId 和 limit 查年表，plant_history 按 plantId、plot 或 cropId 查手帐，可用 type 找最近一次照料。下一页沿用查询并填 cursor。digest 看自己还未读到的园内变化，不改变已读位置。取得 readToken 的主人格或获准经营的桌面角色确认看过便笺后，可在同一回合用 ack_digest 提交刚才返回的 readToken，确认自己当时看到的范围。plant 和 plant_image 用 plot、plantId 或 cropId 读单株；多个同种时请用返回的 plantId 选择。只有手帐事实支持时才断言时间、照料者或亲历。图像生成成功会返回 mediaId，可用本会话已有的 qq_send 或桌面聊天的 desktop_room_decide({action:'say',mediaId,text?}) 分享；再次分享原照用原 mediaId。读取不会发送或消耗经营次数。获准经营的主人格或在场桌面角色用 overview（或省略）查看经营详情，其中 scene 是昼夜现场，observations 是可引用的亲历证据，highlights 是未确认动态，followups 是已经抵达的花园回响，其中邻株结种的 surprise 引用手帐 factId，不代表你亲眼见到结种；observations 的 surprise 带角色日记可引用的 evidenceId。rumors 是已经听说的园艺传闻，boardNotes 与地块 note 是伙伴留言。普通主人格或获准经营的桌面角色可用 gifts 查看自己的礼物。gifts 和 overview 同时有手作配方 craftRecipes、已陈列的 communityShelves、园角设施和已有的明日气象提示。almanac 可公开查看全园已发现的植物图鉴与花色，overview 有 almanacSummary。",
     z.strictObject({
       view: z.string().min(1).max(40).meta({ enum: gardenViews }).optional(),
       plantId: z.string().uuid().optional(),
@@ -58,7 +59,7 @@ export const gardenDefinitions = {
     }),
   ],
   garden_act: [
-    '在获准的主人格或桌面回合经营花园，或处理管理员私聊的浇水委托。管理员私聊明确委托时用 {"requestId":"water-001","kind":"delegate_water","args":{"eventId":"来信记录ID"}}，可在 args 加 plot。eventId 填本轮已展示的原始来信记录 ID，省略 plot 表示给当前缺水的地浇水。以下动作名填 kind，括号内字段放入 args。用 delegate_status/delegate_cancel（delegationId）回查或应明确要求撤回。主人格看到 garden-watering 收件后，用 delegate_step/delegate_dismiss={delegationId} 处理或放下。每步最多浇一块地，续作使用新 requestId。桌面小窝关闭时，获准经营的主人格也可以直接经营。每次一个动作，用 garden_read 查看当前地块与价格。kind=plant，args={plot,cropId,buyPrice?}，buyPrice 为缺种时同笔购买的单价；buy_seed={cropId,quantity,price}；buy_fertilizer={quantity,price}；water/fertilize/harvest/clear={plot,plantId}；sell={harvestId,quantity,price}；gift={harvestId,quantity,recipient:{kind,id}}，收件人须与赠送者不同。事件、神秘种子、遮棚和礼物操作可从 overview 的 event.actions、mysteryPlantActions、地块 shelterAction 和 giftActions 获取对应 kind 与参数。故事抉择用 choose_event={eventId,choiceId,harvestId?,plot?}，从 event.actions 原样取参数；每个事件由首个有效选择解决，回响在后续花园日送达。display_gift 和 withdraw_gift 的 slot 可选第 1 至 16 格。set_board_note={scope,plot?,text} 可给全园（scope="garden"）或指定地块（scope="plot"，必须填 plot）留言，去掉两端空白后最多 120 字，传空字符串清除。每轮最多写 3 次，独立于经营额度。收获优先项带 hasNote 时先看地块留言。拆种子盲盒和特定收获可以返回 surprise，其 evidenceId 可用于角色日记引用，factId 可用 timeline 查询。交易 price 是总价。requestId 唯一，同一动作重试用原 ID。',
+    '在获准的主人格或桌面回合经营花园，或处理管理员私聊的浇水委托。管理员私聊明确委托时用 {"requestId":"water-001","kind":"delegate_water","args":{"eventId":"来信记录ID"}}，可在 args 加 plot。eventId 填本轮已展示的原始来信记录 ID，省略 plot 表示给当前缺水的地浇水。以下动作名填 kind，括号内字段放入 args。用 delegate_status/delegate_cancel（delegationId）回查或应明确要求撤回。主人格看到 garden-watering 收件后，用 delegate_step/delegate_dismiss={delegationId} 处理或放下。每步最多浇一块地，续作使用新 requestId。桌面小窝关闭时，获准经营的主人格也可以直接经营。每次一个动作，用 garden_read 查看当前地块与价格。kind=plant，args={plot,cropId,buyPrice?}，buyPrice 为缺种时同笔购买的单价；buy_seed={cropId,quantity,price}；buy_fertilizer={quantity,price}；water/fertilize/harvest/clear={plot,plantId}；sell={harvestId,quantity,price}；gift={harvestId,quantity,recipient:{kind,id}}，收件人须与赠送者不同。事件、神秘种子、遮棚和礼物操作可从 overview 的 event.actions、mysteryPlantActions、地块 shelterAction 和 giftActions 获取对应 kind 与参数。故事抉择用 choose_event={eventId,choiceId,harvestId?,plot?}，从 event.actions 原样取参数；每个事件由首个有效选择解决，回响在后续花园日送达。craft_gift={recipeId,harvestIds,price,recipient?,note?} 使用 craftRecipes 的当前工本费和原料，依据每日购礼预算；不填收件人则收好，直送时可附纸条。build_facility={facilityId,price} 使用 facilities 的当前造价。display_gift 和 withdraw_gift 的 slot 可选第 1 至 16 格。set_board_note={scope,plot?,text} 可给全园（scope="garden"）或指定地块（scope="plot"，必须填 plot）留言，去掉两端空白后最多 120 字，传空字符串清除。每轮最多写 3 次，独立于经营额度。收获优先项带 hasNote 时先看地块留言。拆种子盲盒和特定收获可以返回 surprise，其 evidenceId 可用于角色日记引用，factId 可用 timeline 查询。交易 price 是总价。requestId 唯一，同一动作重试用原 ID。',
     z.strictObject({
       requestId: z.string().regex(/^[A-Za-z0-9_-]{8,80}$/),
       kind: z.string().min(1).max(40),
@@ -186,6 +187,10 @@ export function gardenTool(
     if (view === "overview" && manages)
       return subjectGardenView(runtime, role.id, ctx.turnId);
     if (!gardenViews.includes(view)) throw Error("INVALID_REQUEST");
+    if (view === "almanac") {
+      if (Object.keys(query).length) throw Error("INVALID_REQUEST");
+      return garden.almanac();
+    }
     const publicView = !(runningTurn && (subjectTurn || manages));
     if (query.cropId) {
       const crops = garden.requireState().settings.crops;

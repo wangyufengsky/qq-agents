@@ -1,6 +1,6 @@
 import { bindGardenJournal } from "./journal.js";
 import { gardenStageAt, gardenStageLabel } from "./stages.js";
-import { giftShelfSlots } from "./gifts.js";
+import { gardenCraftOrigin, giftShelfSlots } from "./gifts.js";
 import * as art from "./art.js";
 
 export { gardenGifts } from "./art.js";
@@ -29,6 +29,8 @@ export const gardenActions = {
   buy_mystery_seed: "购买盲盒",
   plant_mystery_seed: "种下盲盒",
   buy_gift: "购礼",
+  craft_gift: "手作",
+  build_facility: "建造设施",
   send_gift: "赠送物品",
   use_gift: "使用物品",
   display_gift: "展示物品",
@@ -60,7 +62,10 @@ export const gardenLabels = {
   GARDEN_FERTILIZER_FULL: "这株作物已施足肥料。",
   GARDEN_PLANT_STATE: "当前作物状态无法执行此操作。",
   GARDEN_RECIPIENT_UNAVAILABLE: "受赠对象已不可用。",
-  GARDEN_GIFT_BUDGET_LOW: "今天的购礼额度不足。",
+  GARDEN_GIFT_BUDGET_LOW: "今天的购礼与手作额度不足。",
+  GARDEN_RECIPE_LOCKED: "建好干花晾晒架后才能制作。",
+  GARDEN_RECIPE_INGREDIENTS: "原料不符合配方或库存已有变化，请刷新后查看。",
+  GARDEN_FACILITY_ALREADY_BUILT: "这项设施已经建成。",
   GARDEN_ITEM_UNAVAILABLE: "这份物品已不可用，请刷新后查看。",
   GARDEN_ITEM_NOT_USABLE: "这份物品不能食用。",
   GARDEN_NOTE_TOO_LONG: "留言最多 120 字。",
@@ -227,6 +232,12 @@ function gardenWarehouse(state, guideOpen) {
 
 function gardenActionFrom(button, state) {
   const kind = button.dataset.gardenAct;
+  if (kind === "build_facility") {
+    const facility = state.facilities.find(
+      ({ id }) => id === button.dataset.facility,
+    );
+    return { kind, facilityId: facility.id, price: facility.price };
+  }
   if (button.dataset.gardenEventIndex !== undefined)
     return {
       kind,
@@ -608,14 +619,36 @@ function gardenEventMarkup(state, view) {
   </article>`;
 }
 
+function craftOrigin(meta) {
+  const text = gardenCraftOrigin(meta);
+  return text ? `<p class="garden-craft-origin">${esc(text)}</p>` : "";
+}
+
+function communityGiftMarkup(shelves) {
+  return `<h3>串门看展示柜</h3>${
+    shelves.length
+      ? shelves
+          .map(
+            ({ owner, items }) =>
+              `<details class="garden-visit-shelf">
+      <summary>${esc(owner.name)}的展示柜 · ${items.length} / ${giftShelfSlots.length} 格</summary>
+      ${shelfMarkup(items, false)}
+    </details>`,
+          )
+          .join("")
+      : "<p>还没有伙伴摆出展示物。</p>"
+  }`;
+}
+
 function shelfMarkup(shelf, editable, paused) {
-  return `<div class="garden-display gift-cabinet">${giftShelfSlots
+  return `<div class="${editable ? "garden-display" : "garden-visit-display"} gift-cabinet">${giftShelfSlots
     .map((slot) => {
       const item = shelf.find((entry) => entry.slot === slot);
       if (!item?.name)
         return `<article class="cabinet-cell cabinet-empty"><small>第 ${slot} 格</small><span>空位</span></article>`;
       return `<article class="cabinet-cell"><small>第 ${slot} 格</small>${productArt("gift", item.giftId)}
       <strong>${esc(item.name)}</strong>${item.description ? `<p>${esc(item.description)}</p>` : ""}${item.note ? `<p>${esc(item.note)}</p>` : ""}
+      ${craftOrigin(item.craftMeta)}
       ${editable ? `<button type="button" class="ghost" data-withdraw="${slot}"${paused ? " disabled" : ""}>收回</button>` : ""}</article>`;
     })
     .join("")}</div>`;
@@ -657,7 +690,8 @@ function personalGiftMarkup(state, view) {
           typeof item.source === "object" ? item.source : byId.get(item.source);
         return `<section class="garden-gift-copy" data-item="${esc(item.id)}">
         <h4>第 ${index + 1} 份${item.slot ? ` · 展示格 ${item.slot}` : ""}</h4>
-        ${source ? giftSource(source) : art.gardenGifts[giftId]?.eventOnly ? "<p>花园纪念品</p>" : "<p>自己购买</p>"}
+        ${source ? giftSource(source) : item.craftMeta ? "<p>花园手作</p>" : art.gardenGifts[giftId]?.eventOnly ? "<p>花园纪念品</p>" : "<p>自己购买</p>"}
+        ${craftOrigin(item.craftMeta)}
         ${art.gardenGifts[giftId]?.eventOnly && item.description ? `<p>${esc(item.description)}</p>` : ""}
         <details><summary>送给伙伴</summary><form data-garden-form="send_gift"><fieldset${state.pauseReason ? " disabled" : ""}>
           ${selectRecipient(state)}${noteInput()}<button type="submit">确认赠送</button>
@@ -682,7 +716,7 @@ function personalGiftMarkup(state, view) {
   }</div>
 
     <details class="garden-received"><summary>收到的礼物记录 · ${received.length} 份</summary>
-      ${received.map((source) => `<article><strong>${esc(source.name)}</strong>${giftSource(source)}</article>`).join("") || "<p>还没有收到小礼物。</p>"}
+      ${received.map((source) => `<article><strong>${esc(source.name)}</strong>${giftSource(source)}${craftOrigin(source.craftMeta)}</article>`).join("") || "<p>还没有收到小礼物。</p>"}
     </details>
     ${
       gifts.sent?.length
@@ -690,12 +724,111 @@ function personalGiftMarkup(state, view) {
       ${gifts.sent
         .map(
           (source) => `<article><strong>${esc(source.name)}</strong>
-        ${giftSource(source, true)}</article>`,
+        ${giftSource(source, true)}${craftOrigin(source.craftMeta)}</article>`,
         )
         .join("")}
     </details>`
         : ""
     }`;
+}
+
+function gardenCraftMarkup(state) {
+  return `<h3>花园手作台</h3><div class="garden-shelf garden-recipes">
+    ${state.craftRecipes
+      .map((recipe) => {
+        const {
+          id,
+          name,
+          price,
+          usable,
+          locked,
+          ready,
+          harvestIds,
+          ingredientCount,
+          requirements,
+          suggestedHarvestIds,
+        } = recipe;
+        const lots = state.market.filter((lot) => harvestIds.includes(lot.id));
+        const names = (lot) =>
+          `${gardenCropName(state, lot.cropId)} · ${gardenQuality[lot.quality]} · 余 ${lot.quantity} 份`;
+        const ingredients = Array.from(
+          { length: ingredientCount },
+          (_, index) => {
+            const pick = suggestedHarvestIds?.[index];
+            const other = lots.find(
+              (lot) => lot.id === suggestedHarvestIds?.[1 - index],
+            );
+            return `<label>原料 ${index + 1}<select data-craft-ingredient aria-label="原料 ${index + 1}" name="harvestId" required>
+          <option value="">选择收成</option>
+          ${lots.map((lot) => `<option value="${esc(lot.id)}" data-crop="${esc(lot.cropId)}"${lot.id === pick ? " selected" : ""}${lot.cropId === other?.cropId ? " disabled" : ""}>${esc(names(lot))}</option>`).join("")}
+        </select></label>`;
+          },
+        ).join("");
+        return `<article class="garden-good" data-garden-recipe="${esc(id)}">
+        ${productArt("gift", id)}<h4>${esc(name)}</h4>
+        <p>${requirements.map(esc).join(" · ")}</p>
+        <p>工本费 ${gardenMoney(price)}${usable ? " · 可食用" : ""}</p>
+        ${
+          locked
+            ? "<p>建好干花晾晒架后解锁。</p>"
+            : !ready
+              ? "<p>仓库里的原料还不够。</p>"
+              : `<form data-garden-form="craft_gift"><fieldset${state.pauseReason ? " disabled" : ""}>
+            ${ingredients}
+            <label>成品去向<select name="delivery" aria-label="成品去向"><option value="keep">自己收好</option><option value="send">送给伙伴</option></select></label>
+            <fieldset data-gift-delivery hidden disabled>${selectRecipient(state)}${noteInput()}</fieldset>
+            <button type="submit" class="garden-main-action"${price > state.balance ? " disabled" : ""}>制作</button>
+            ${price > state.balance ? "<p>公共金币不足。</p>" : ""}
+          </fieldset></form>`
+        }
+      </article>`;
+      })
+      .join("")}
+  </div>`;
+}
+
+function gardenAlmanacRecent(entries = []) {
+  return entries.length
+    ? `<p>最近点亮 · ${entries.map(({ name, variantName }) => esc(variantName || name)).join("、")}</p>`
+    : "";
+}
+
+function gardenAlmanacMarkup({ entries, unlocked, total, newlyUnlocked }) {
+  return `<h3>植物图鉴</h3><p>已点亮 ${esc(unlocked)} / ${esc(total)} 种</p>
+    ${gardenAlmanacRecent(newlyUnlocked)}
+    <div class="garden-shelf">${
+      entries
+        .map(
+          (
+            entry,
+          ) => `<article class="garden-good" data-almanac-crop="${esc(entry.cropId)}">
+      ${productArt("crop", entry.cropId)}<h4>${esc(entry.name)}</h4>
+      <p>种植 ${esc(entry.plantedCount)} 株 · 收成 ${esc(entry.harvestCount)} 次</p>
+      ${entry.firstDiscoveredDay != null ? `<p>第 ${esc(entry.firstDiscoveredDay)} 天首次点亮</p>` : ""}
+      ${entry.bestQuality ? `<p>最佳品质 · ${esc(gardenQuality[entry.bestQuality])}</p>` : ""}
+      ${entry.variants?.length ? `<p>已见花色 · ${entry.variants.map(({ name }) => esc(name)).join("、")}</p>` : ""}
+    </article>`,
+        )
+        .join("") || "<p>种下第一株作物后，这里会记下它的名字。</p>"
+    }</div>`;
+}
+
+function gardenFacilitiesMarkup(state) {
+  return `<h3>园角设施</h3>
+    ${state.tomorrowForecast?.hint ? `<p class="garden-forecast">${esc(state.tomorrowForecast.hint)}</p>` : ""}
+    <div class="garden-shelf">${state.facilities
+      .map(
+        (facility) => `<article class="garden-good">
+      <h4>${esc(facility.name)}</h4><p>${esc(facility.description)}</p>
+      ${
+        facility.built
+          ? `<p>已建成 · 第 ${esc(facility.builtDay)} 天</p>`
+          : `<button type="button" class="ghost" data-garden-act="build_facility" data-facility="${esc(facility.id)}"${state.pauseReason || facility.price > state.balance ? " disabled" : ""}>建造 · ${gardenMoney(facility.price)}</button>
+        ${facility.price > state.balance ? "<p>公共金币不足。</p>" : ""}`
+      }
+    </article>`,
+      )
+      .join("")}</div>`;
 }
 
 function actionFromGift(form, state) {
@@ -714,6 +847,19 @@ function actionFromGift(form, state) {
       eventId: state.event.id,
       giftId,
       price,
+      ...(fields.get("delivery") === "send"
+        ? { recipient: recipient(), ...(note ? { note } : {}) }
+        : {}),
+    };
+  }
+  if (kind === "craft_gift") {
+    const recipeId = form.closest("[data-garden-recipe]").dataset.gardenRecipe;
+    const { price } = state.craftRecipes.find(({ id }) => id === recipeId);
+    return {
+      kind,
+      recipeId,
+      price,
+      harvestIds: fields.getAll("harvestId"),
       ...(fields.get("delivery") === "send"
         ? { recipient: recipient(), ...(note ? { note } : {}) }
         : {}),
@@ -748,6 +894,16 @@ export function gardenReceipt(state, action, receipt) {
   if (action.kind === "gift") {
     const crop = (state.settings?.crops ?? state.crops)?.[result.cropId];
     return `已将 ${result.quantity} 份${crop?.name || result.cropId}送给${name(action.recipient.kind, action.recipient.id) || action.recipient.id}。`;
+  }
+  if (action.kind === "build_facility")
+    return `${state.facilities?.find(({ id }) => id === action.facilityId)?.name || "设施"}已建成，支出 ${gardenMoney(action.price)}。`;
+  if (action.kind === "craft_gift") {
+    const item =
+      state.craftRecipes?.find(({ id }) => id === action.recipeId)?.name ||
+      "手作礼物";
+    const recipient =
+      action.recipient && name(action.recipient.kind, action.recipient.id);
+    return `${item}${recipient ? "已送给" + recipient : "已收入我的物品栏"}，工本费 ${gardenMoney(action.price)}。`;
   }
   if (action.kind === "buy_gift" || action.kind === "send_gift") {
     const item =
@@ -1008,10 +1164,21 @@ export function bindGardenWorkspace(
       return;
     }
     const form = target.form;
-    if (form?.dataset.gardenForm !== "buy_gift") return;
+    if (target.matches("[data-craft-ingredient]")) {
+      const selects = [...form.querySelectorAll("[data-craft-ingredient]")];
+      for (const select of selects) {
+        const chosen = selects.find((other) => other !== select)
+          ?.selectedOptions[0]?.dataset.crop;
+        for (const option of select.options)
+          option.disabled = Boolean(chosen && option.dataset.crop === chosen);
+      }
+      return;
+    }
+    if (!["buy_gift", "craft_gift"].includes(form?.dataset.gardenForm)) return;
     const sending = form.elements.delivery.value === "send";
     const fields = form.querySelector("[data-gift-delivery]");
     fields.hidden = fields.disabled = !sending;
+    if (form.dataset.gardenForm === "craft_gift") return;
     const { price } = state.event.giftOffers[Number(form.dataset.offer)];
     const choice = form.elements.recipient.value;
     const recipient = sending
@@ -1072,7 +1239,11 @@ export function bindGardenWorkspace(
         ["board", "花圃"],
         ["event", "今日事件"],
         ["warehouse", "公共仓库"],
+        ...(state.craftRecipes ? [["craft", "手作台"]] : []),
         ["items", "我的物品"],
+        ...(state.communityShelves ? [["community", "串门"]] : []),
+        ...(state.almanac ? [["almanac", "植物图鉴"]] : []),
+        ...(state.facilities ? [["facilities", "园角设施"]] : []),
         ...(records ? [["records", "花园记录"]] : []),
         ...(settings ? [["settings", "花园设置"]] : []),
       ];
@@ -1086,6 +1257,8 @@ export function bindGardenWorkspace(
               <div class="garden-digest" data-journal-note hidden></div>
               ${gardenPollenMarkup(state)}
               ${gardenFollowups(state)}
+              ${state.tomorrowForecast?.hint ? `<p class="garden-forecast">${esc(state.tomorrowForecast.hint)}</p>` : ""}
+              ${state.almanacSummary ? `<button type="button" class="ghost" data-garden-tab="almanac">图鉴已点亮 ${esc(state.almanacSummary.unlocked)} / ${esc(state.almanacSummary.total)} 种</button>${gardenAlmanacRecent(state.almanacSummary.newlyUnlocked)}` : ""}
               ${state.event ? `<button type="button" class="garden-event-shortcut" data-garden-tab="event">${art.gardenIconMarkup("event", art.gardenEventArtId(state.event))}<span>${esc(state.event.name)}</span><b>${state.event.kind === "merchant" ? "逛小摊 ↗" : "查看 ↗"}</b></button>` : ""}
               <div class="garden-board-title"><h3>共享花圃</h3><small>已种植 ${state.plots.filter(({ plant }) => plant).length} / ${state.plots.length} 块</small></div>
               <div class="garden-grid garden-map">${state.plots.map((entry) => gardenPlotMarkup(entry, view.selected, gardenBird(state))).join("")}</div>
@@ -1094,7 +1267,11 @@ export function bindGardenWorkspace(
             <section class="garden-rail" aria-label="今日事件与待办"><div data-garden-ticket>${gardenEventMarkup(state, view)}</div>${gardenTodo(state)}</section>
           </div>
           <div data-garden-pane="warehouse">${gardenWarehouse(state, guideOpen)}</div>
+          ${state.craftRecipes ? `<div data-garden-pane="craft">${gardenCraftMarkup(state)}</div>` : ""}
           <div data-garden-pane="items">${personalGiftMarkup(state, view)}</div>
+          ${state.communityShelves ? `<div data-garden-pane="community">${communityGiftMarkup(state.communityShelves)}</div>` : ""}
+          ${state.almanac ? `<div data-garden-pane="almanac">${gardenAlmanacMarkup(state.almanac)}</div>` : ""}
+          ${state.facilities ? `<div data-garden-pane="facilities">${gardenFacilitiesMarkup(state)}</div>` : ""}
           ${records ? `<div data-garden-pane="records"><div class="garden-journal" data-journal-body></div><h3>花园记录</h3>${records(state)}</div>` : ""}
           ${settings ? `<div data-garden-pane="settings">${settings(state)}</div>` : ""}
         </div>

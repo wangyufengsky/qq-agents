@@ -3,6 +3,7 @@ import { GARDEN_NIGHT_START, GardenNeighbors } from "./garden-neighbors.mjs";
 import { gardenPlantRef } from "./garden-journal.mjs";
 import { GardenEvents } from "./garden-events.mjs";
 import { settleGardenRumors } from "./garden-companion.mjs";
+import { hasGardenFacility } from "./garden-facilities.mjs";
 import { randomUUID } from "node:crypto";
 import {
   adjustPlantQuality,
@@ -95,6 +96,7 @@ export class GardenCalendar {
       seeds: state.seeds,
       harvests,
       caretakers,
+      birdBath: hasGardenFacility(this.db, "bird_bath"),
       plots: state.plots,
       day: (previous?.day ?? 0) + 1,
     };
@@ -325,16 +327,84 @@ export class GardenCalendar {
     return event?.kind === "story" && event.effect.story === "full_moon";
   }
 
-  /** @param {State} state @param {GardenDay} current @param {number} elapsed */
-  settleNeighbors(state, current, elapsed) {
+  /** @param {State} state @param {GardenDay} current @param {number} elapsed @param {number} now */
+  settleNeighbors(state, current, elapsed, now) {
     const { weather, boundary } = this.conditions(current, elapsed);
-    this.neighbors.settle(state, current.day, elapsed, this.journal, {
+    this.neighbors.settle(state, current.day, elapsed, this.journal, now, {
       before: current.weather.kind,
       after: weather.kind,
       boundary,
       fullMoon: this.fullMoon(current.day),
       previousFullMoon: this.fullMoon(current.day - 1),
     });
+  }
+
+  /** @param {State} state @param {GardenDay} current @param {number} now @param {boolean} [preview] */
+  closeDay(state, current, now, preview = false) {
+    const priorDay = current.day;
+    const closingWeather = this.project(state, current, priorDay * DAY);
+    this.settleNeighbors(state, current, priorDay * DAY, now);
+    const { pausedPlot } = this.conditions(current, priorDay * DAY);
+    state.plots = state.plots.map((entry) => {
+      if (!entry.plant || entry.id === pausedPlot) return entry;
+      const plant = closePlantDay(entry.plant, closingWeather, entry.sheltered);
+      if (plant.status === "withered" && entry.plant.status !== "withered")
+        this.journal.record({
+          type: "withered",
+          clock: priorDay * DAY,
+          plants: [gardenPlantRef(entry.id, plant)],
+          source: "weather",
+          key: `${plant.id}:withered`,
+        });
+      if (plant !== entry.plant) this.journal.updatePlant(plant);
+      return { ...entry, plant };
+    });
+    this.events.close(priorDay, state, now);
+    this.events.settleFollowups(priorDay + 1, state, now, !preview);
+    const context = this.drawContext(state, current);
+    return { context, next: this.drawNextWeather(state, current, context) };
+  }
+
+  /** @param {State} state @param {GardenDay} current @param {ReturnType<GardenCalendar["drawContext"]>} context */
+  drawNextWeather(state, current, context) {
+    return drawWeather(
+      state.settings.weather,
+      context,
+      this.neighbors.seed(),
+      current.day + 1,
+    );
+  }
+
+  /** @param {State} state @param {GardenDay} current */
+  forecast(state, current) {
+    const usesTallies = Object.values(state.settings.weather.entries).some(
+      ({ enabled, conditions }) =>
+        enabled &&
+        conditions.some(
+          ({ field }) =>
+            field === "balance" ||
+            field === "fertilizer" ||
+            field === "seed" ||
+            field === "harvest",
+        ),
+    );
+    if (!usesTallies)
+      return this.drawNextWeather(
+        state,
+        current,
+        this.drawContext(state, current),
+      );
+
+    // Only a mutable-condition pool needs to simulate the automatic rollover.
+    // Roll back all preview writes and suppress the observer callback.
+    this.db.exec("SAVEPOINT garden_weather_preview");
+    try {
+      return this.closeDay(structuredClone(state), current, 0, true).next;
+    } finally {
+      this.db.exec(
+        "ROLLBACK TO garden_weather_preview; RELEASE garden_weather_preview",
+      );
+    }
   }
 
   /** @param {State} state @param {number} elapsed @param {number} now */
@@ -349,37 +419,8 @@ export class GardenCalendar {
       );
       while (current.day < day) {
         const { weather, day: priorDay } = current;
-        const closingWeather = this.project(state, current, priorDay * DAY);
-        this.settleNeighbors(state, current, priorDay * DAY);
-        const { pausedPlot } = this.conditions(current, priorDay * DAY);
-        state.plots = state.plots.map((entry) => {
-          if (!entry.plant || entry.id === pausedPlot) return entry;
-          const plant = closePlantDay(
-            entry.plant,
-            closingWeather,
-            entry.sheltered,
-          );
-          if (plant.status === "withered" && entry.plant.status !== "withered")
-            this.journal.record({
-              type: "withered",
-              clock: priorDay * DAY,
-              plants: [gardenPlantRef(entry.id, plant)],
-              source: "weather",
-              key: `${plant.id}:withered`,
-            });
-          if (plant !== entry.plant) this.journal.updatePlant(plant);
-          return { ...entry, plant };
-        });
-        this.events.close(priorDay, state, now);
-        this.events.settleFollowups(priorDay + 1, state, now);
-        const ctx = this.drawContext(state, current);
-        const next = drawWeather(
-          state.settings.weather,
-          ctx,
-          seed,
-          priorDay + 1,
-        );
-        this.events.draw(state, ctx, next, seed, priorDay + 1);
+        const { context, next } = this.closeDay(state, current, now);
+        this.events.draw(state, context, next, seed, priorDay + 1);
         current = this.save({
           day: priorDay + 1,
           revision: state.settingsRevision,
@@ -399,7 +440,7 @@ export class GardenCalendar {
         );
     }
     const effectiveWeather = this.project(state, current, elapsed);
-    this.settleNeighbors(state, current, elapsed);
+    this.settleNeighbors(state, current, elapsed, now);
     state.clock = elapsed;
     settleGardenRumors(this.db, this.journal, current.day, now);
     return { ...current, effectiveWeather };

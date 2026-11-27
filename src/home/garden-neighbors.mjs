@@ -1,4 +1,5 @@
 // @ts-check
+import { GardenAlmanac } from "./garden-almanac.mjs";
 import { createHash } from "node:crypto";
 import { gardenPlantRef } from "./garden-journal.mjs";
 import {
@@ -100,9 +101,9 @@ export class GardenNeighbors {
     );
   }
 
-  /** @param {State} state @param {number} day @param {number} elapsed @param {import("./garden-journal.mjs").GardenJournal} journal
+  /** @param {State} state @param {number} day @param {number} elapsed @param {import("./garden-journal.mjs").GardenJournal} journal @param {number} now
    * @param {{before:import("./garden-weather.mjs").Weather["kind"],after:import("./garden-weather.mjs").Weather["kind"],boundary:number,fullMoon?:boolean,previousFullMoon?:boolean}} weather */
-  settle(state, day, elapsed, journal, weather) {
+  settle(state, day, elapsed, journal, now, weather) {
     const dawn = (day - 1) * DAY;
     const dayEnd = day * DAY;
     const daylightStart = dawn + nightEnd;
@@ -142,6 +143,7 @@ export class GardenNeighbors {
         state,
         elapsed,
         journal,
+        now,
         cropId,
         recipe,
         cropId === MISTBELL ? nightWindows : sunWindows,
@@ -149,10 +151,10 @@ export class GardenNeighbors {
     }
   }
 
-  /** @param {State} state @param {number} elapsed @param {import("./garden-journal.mjs").GardenJournal} journal
+  /** @param {State} state @param {number} elapsed @param {import("./garden-journal.mjs").GardenJournal} journal @param {number} now
    * @param {string} cropId @param {(typeof recipes)[keyof typeof recipes]} recipe
    * @param {{trialDay:number,start:number,end:number,boosted?:boolean}[]} windows */
-  settleRecipe(state, elapsed, journal, cropId, recipe, windows) {
+  settleRecipe(state, elapsed, journal, now, cropId, recipe, windows) {
     const pairs = neighborPairs(state, recipe.parents);
     if (!pairs.length || !windows.length) return;
     const seed = this.seed();
@@ -195,10 +197,11 @@ export class GardenNeighbors {
         }
         if (discovered || attempts === 1) {
           const phase = discovered ? "seed" : "pollen";
+          const plants = pair.map(({ id, plant }) => gardenPlantRef(id, plant));
           journal.record({
             type: "discovery",
             clock: at,
-            plants: pair.map(({ id, plant }) => gardenPlantRef(id, plant)),
+            plants,
             source: recipe.source,
             detail: discovered
               ? {
@@ -209,13 +212,21 @@ export class GardenNeighbors {
               : { phase, hint: recipe.hint },
             key: `neighbors:${id}:${phase}`,
           });
+          if (discovered)
+            new GardenAlmanac(this.db, journal).record(
+              { ...state, clock: at },
+              now,
+              cropId,
+              plants,
+              { kind: "discover" },
+            );
         }
       }
     }
   }
 
-  /** @param {State} state @param {import("./garden-weather.mjs").Weather["kind"]} weather */
-  view(state, weather) {
+  /** @param {State} state @param {import("./garden-weather.mjs").Weather["kind"]} weather @param {boolean} [birdBath] */
+  view(state, weather, birdBath = false) {
     const day = Math.floor(state.clock / DAY) + 1;
     const hour = state.clock % DAY;
     const period =
@@ -243,7 +254,7 @@ export class GardenNeighbors {
             ({ plant }) =>
               plant?.cropId === CATNIP && plant.status === "mature",
           ) &&
-          trial(seed, "butterflies", day),
+          trial(seed, "butterflies", day, birdBath ? 0.5 : 1 / 3),
         fireflies:
           period === "night" &&
           (weather === "sun" || weather === "cloud") &&

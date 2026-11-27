@@ -417,6 +417,74 @@ test("actual Chromium produces a shareable nine-tile PNG and renders the desktop
     .getByText(/小猫离开前/)
     .waitFor();
   assert.equal(garden.read(now).event.kind, "choice");
+
+  rules.crops.mint.hours = 1;
+  garden.configure(now, garden.requireState().settingsRevision, rules);
+  const act = (action) =>
+    garden.act(
+      now,
+      { kind: "admin", id: "administrator" },
+      { requestId: randomUUID(), action },
+    );
+  const mint = act({
+    kind: "plant",
+    cropId: "mint",
+    plot: 2,
+    buyPrice: rules.crops.mint.seedPrice,
+  });
+  await advance();
+  act({ kind: "harvest", plot: 2, plantId: mint.plantId });
+  await page.setViewportSize({ width: 375, height: 780 });
+  await panel.getByRole("button", { name: "刷新花园", exact: true }).click();
+  await panel.getByRole("button", { name: "园角设施", exact: true }).click();
+  const beforeRack = garden.read(now).balance;
+  await panel
+    .getByRole("button", { name: "建造 · 420 元", exact: true })
+    .click();
+  await panel
+    .getByText("干花晾晒架已建成，支出 420 元。", { exact: true })
+    .waitFor();
+  assert.equal(garden.read(now).balance, beforeRack - 420);
+  await panel.getByRole("button", { name: "手作台", exact: true }).click();
+  const tea = panel.locator('[data-garden-recipe="craft-mint-tea"]');
+  await tea.getByText("工本费 4 元 · 可食用", { exact: true }).waitFor();
+  await tea.getByRole("button", { name: "制作", exact: true }).click();
+  await panel
+    .getByText("冰薄荷茶已收入我的物品栏，工本费 4 元。", { exact: true })
+    .waitFor();
+  assert.equal(garden.read(now).balance, beforeRack - 424);
+  await panel.getByRole("button", { name: "植物图鉴", exact: true }).click();
+  await panel
+    .locator('[data-almanac-crop="mint"]')
+    .getByText(/收成 1 次/)
+    .waitFor();
+
+  await panel.getByRole("button", { name: "我的物品", exact: true }).click();
+  const teaItem = panel
+    .locator(".garden-good")
+    .filter({ hasText: "冰薄荷茶" })
+    .filter({ visible: true });
+  await teaItem.getByText("查看物品", { exact: true }).click();
+  await teaItem.getByText("摆入展示栏", { exact: true }).click();
+  await teaItem.getByLabel("展示格").selectOption("16");
+  await teaItem.getByRole("button", { name: "确认展示" }).click();
+  await panel
+    .locator(".garden-display")
+    .getByText("冰薄荷茶", { exact: true })
+    .waitFor();
+  await panel.getByRole("button", { name: "串门", exact: true }).click();
+  const cabinet = panel
+    .locator(".garden-visit-shelf")
+    .filter({ hasText: "管理员的展示柜" });
+  await cabinet.locator("summary").click();
+  await cabinet.getByText(/原料.*薄荷盆栽/).waitFor();
+  assert.equal(await cabinet.locator(".cabinet-cell").count(), 16);
+  assert.equal(
+    await panel
+      .locator(".garden-content")
+      .evaluate((view) => view.scrollWidth > view.clientWidth),
+    false,
+  );
   assert.deepEqual(pageErrors, []);
 });
 

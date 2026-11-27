@@ -337,8 +337,8 @@ export class GardenEvents {
     };
   }
 
-  settleFollowups(day, state, now) {
-    this.stories.settle(day, state, now);
+  settleFollowups(day, state, now, observe = true) {
+    this.stories.settle(day, state, now, observe);
   }
 
   close(day, state, now) {
